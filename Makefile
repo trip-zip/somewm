@@ -7,7 +7,7 @@ CFLAGS_PKG_CONFIG!=PKG_CONFIG_PATH=/usr/local/wlroots-0.20/lib/pkgconfig:$$PKG_C
 CFLAGS+=$(CFLAGS_PKG_CONFIG)
 LIBS!=PKG_CONFIG_PATH=/usr/local/wlroots-0.20/lib/pkgconfig:$$PKG_CONFIG_PATH $(PKG_CONFIG) --libs $(PKGS)
 
-all: tinywl
+all: somewm
 
 # wayland-scanner is a tool which generates C headers and rigging for Wayland
 # protocols, which are specified in XML. wlroots requires you to rig these up
@@ -16,12 +16,12 @@ xdg-shell-protocol.h:
 	$(WAYLAND_SCANNER) server-header \
 		$(WAYLAND_PROTOCOLS)/stable/xdg-shell/xdg-shell.xml $@
 
-tinywl.o: tinywl.c xdg-shell-protocol.h
+somewm.o: somewm.c xdg-shell-protocol.h
 	$(CC) -c $< -g -Werror $(CFLAGS) -I. -DWLR_USE_UNSTABLE -o $@
-tinywl: tinywl.o
+somewm: somewm.o
 	$(CC) $^ $> -g -Werror $(CFLAGS) $(LDFLAGS) $(LIBS) -Wl,-rpath,/usr/local/wlroots-0.20/lib -o $@
 
 clean:
-	rm -f tinywl tinywl.o xdg-shell-protocol.h
+	rm -f somewm somewm.o xdg-shell-protocol.h
 
 .PHONY: all clean
