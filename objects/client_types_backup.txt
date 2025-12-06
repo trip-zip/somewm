@@ -1,0 +1,6 @@
+This is a backup note about replacing Client with client_t.
+
+The old somewm Client struct is being completely replaced with AwesomeWM's client_t.
+This file serves as a marker that we're doing the big replacement properly.
+
+See objects/client.h for the new client_t definition.

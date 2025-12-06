@@ -1,0 +1,261 @@
+.Dd January 8, 2021
+.Dt SOMEWM 1
+.Os
+.Sh NAME
+.Nm somewm
+.Nd AwesomeWM-inspired Wayland compositor (based on dwl)
+.Sh SYNOPSIS
+.Nm
+.Op Fl v
+.Op Fl d
+.Op Fl s Ar startup command
+.Sh DESCRIPTION
+.Nm
+is a Wayland compositor based on wlroots and dwl.
+It brings AwesomeWM-style Lua configuration and dynamic features to Wayland,
+while maintaining the compact nature of its dwl origins.
+.Pp
+When given the
+.Fl v
+option,
+.Nm
+writes its name and version to standard error and exits unsuccessfully.
+.Pp
+When given the
+.Fl d
+option,
+.Nm
+enables full wlroots logging, including debug information.
+.Pp
+When given the
+.Fl s
+option,
+.Nm
+starts a shell process running
+.Ar command
+when starting.
+When stopping, it sends
+.Dv SIGTERM
+to the child process group and waits for it to exit.
+.Pp
+Users are encouraged to customize
+.Nm
+by editing the sources, in particular
+.Pa config.h .
+The default key bindings are as follows:
+.Bl -tag -width 20n -offset indent -compact
+.It Mod-[1-9]
+Show only all windows with a tag.
+.It Mod-Ctrl-[1-9]
+Show all windows with a tag.
+.It Mod-Shift-[1-9]
+Move window to a single tag.
+.It Mod-Ctrl-Shift-[1-9]
+Toggle tag for window.
+.It Mod-p
+Spawn
+.Xr wmenu-run 1 .
+.It Mod-Shift-Return
+Spawn
+.Xr foot 1 .
+.It Mod-[jk]
+Move focus down/up the stack.
+.It Mod-[id]
+Increase/decrease number of windows in master area.
+.It Mod-[hl]
+Decrease/increase master area.
+.It Mod-Return
+Move window on top of stack or switch top of stack with second window.
+.It Mod-Tab
+Show only all windows with previous tag.
+.It Mod-Shift-c
+Close window.
+.It Mod-t
+Switch to tabbed layout.
+.It Mod-f
+Switch to floating layout.
+.It Mod-m
+Switch to monocle layout.
+.It Mod-Space
+Switch to previous layout.
+.It Mod-Shift-Space
+Toggle floating state of window.
+.It Mod-e
+Toggle fullscreen state of window.
+.It Mod-0
+Show all windows.
+.It Mod-Shift-0
+Set all tags for window.
+.It Mod-,
+Move focus to previous monitor.
+.It Mod-.
+Move focus to next monitor.
+.It Mod-Shift-,
+Move window to previous monitor.
+.It Mod-Shift-.
+Move window to next monitor.
+.It Mod-Shift-q
+Quit
+.Nm .
+.El
+These might differ depending on your keyboard layout.
+.Ss Mouse commands
+.Bl -tag -width 20n -offset indent -compact
+.It Mod-Button1
+Move focused window while dragging.
+Tiled windows will be toggled to the floating state.
+.It Mod-Button2
+Toggle focused window between floating and tiled state.
+.It Mod-Button3
+Resize focused window while dragging.
+Tiled windows will be toggled to the floating state.
+.El
+.Sh STATUS INFORMATION
+.Nm
+writes its status information to standard output.
+If the
+.Fl s
+option is given, the status information is written to the standard input of the
+child process instead.
+.Pp
+Said information has the following format:
+.Bd -ragged -offset indent
+.Ar <monitor>
+.Ar <component>
+.Ar <data>
+.Ed
+.Pp
+.Bl -tag -width 11n -offset 0 -compact
+.It Ar <monitor>
+is the name given to the output.
+.It Ar <component>
+is one of (in order)
+.Em title ,
+.Em appid ,
+.Em fullscreen ,
+.Em floating ,
+.Em selmon ,
+.Em tags ,
+.Em layout .
+.It Ar <data>
+changes depending on
+.Ar <component> .
+.Bl -tag -width 10n -compact
+.It Em title
+The title of the focused window on
+.Ar <monitor>
+or nothing if there is no focused window.
+.It Em appid
+The app_id of the focused window on
+.Ar <monitor>
+or nothing if there is no focused window.
+.It Em fullscreen
+Prints 1 if the focused window on
+.Ar <monitor>
+is in fullscreen state, otherwise prints 0. If there is no focused
+window it prints nothing.
+.It Em floating
+Prints 1 if the focused window on
+.Ar <monitor>
+is in floating state, otherwise prints 0. If there is no focused
+window it prints nothing.
+.It Em selmon
+Prints 1 if
+.Ar <monitor>
+is the selected monitor, otherwise prints 0.
+.It Em tags
+Prints four bitmasks in the following order:
+.Bl -bullet -width 2n -compact
+.It
+Occupied tags of
+.Ar <monitor> .
+.It
+Selected tags of
+.Ar <monitor> .
+.It
+Tags of the focused window on
+.Ar <monitor> .
+.It
+Tags where a window on
+.Ar <monitor>
+requested activation or has urgency hints.
+.El
+The bitmasks are 32-bit unsigned decimal integers.
+.It Em layout
+Prints the symbol of the current layout.
+.El
+.El
+.Ss Examples
+When there is a selected window:
+.Bd -literal -offset indent
+HDMI\-A\-1 title \(ti/source/repos/somewm > man \-l somewm.1
+HDMI\-A\-1 appid footclient
+HDMI\-A\-1 fullscreen 0
+HDMI\-A\-1 floating 0
+HDMI\-A\-1 selmon 1
+HDMI\-A\-1 tags 271 4 4 0
+HDMI\-A\-1 layout [T]
+.Ed
+.Pp
+When there is no selected window:
+.Bd -literal -offset indent
+HDMI\-A\-1 title
+HDMI\-A\-1 appid
+HDMI\-A\-1 fullscreen
+HDMI\-A\-1 floating
+HDMI\-A\-1 selmon 1
+HDMI\-A\-1 tags 271 512 0 0
+HDMI\-A\-1 layout [T]
+.Ed
+.Sh ENVIRONMENT
+These environment variables are used by
+.Nm :
+.Bl -tag -width XDG_RUNTIME_DIR
+.It Ev XDG_RUNTIME_DIR
+A directory where temporary user files, such as the Wayland socket,
+are stored.
+.It Ev XDG_CONFIG_DIR
+A directory containing configuration of various programs and
+libraries, including libxkbcommon.
+.It Ev DISPLAY , WAYLAND_DISPLAY , WAYLAND_SOCKET
+Tell how to connect to an underlying X11 or Wayland server.
+.It Ev WLR_*
+Various variables specific to wlroots.
+.It Ev XKB_* , XLOCALEDIR , XCOMPOSEFILE
+Various variables specific to libxkbcommon.
+.It Ev XCURSOR_PATH
+List of directories to search for XCursor themes in.
+.It Ev HOME
+A directory where there are always dear files there for you.
+Waiting for you to clean them up.
+.El
+.Pp
+These are set by
+.Nm :
+.Bl -tag -width WAYLAND_DISPLAY
+.It Ev WAYLAND_DISPLAY
+Tell how to connect to
+.Nm .
+.It Ev DISPLAY
+If using
+.Nm Xwayland ,
+tell how to connect to the
+.Nm Xwayland
+server.
+.El
+.Sh EXAMPLES
+Start
+.Nm
+with s6 in the background:
+.Dl somewm \-s \(aqs6\-svscan <&\-\(aq
+.Sh SEE ALSO
+.Xr dwm 1 ,
+.Xr foot 1 ,
+.Xr wmenu 1 ,
+.Xr xkeyboard-config 7
+.Sh ACKNOWLEDGEMENTS
+.Nm
+is based on dwl, which was created by Devin J. Pohly and the dwl community.
+dwl itself was inspired by dwm and the suckless philosophy.
+.Sh BUGS
+All of them.

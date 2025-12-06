@@ -1,0 +1,9 @@
+name: Enhancement idea
+about: Suggest a feature or improvement
+title:
+labels:
+    - 'Kind/Feature'
+body:
+    - type: textarea
+      attributes:
+          label: Description
