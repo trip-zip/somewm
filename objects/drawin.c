@@ -270,6 +270,10 @@ drawin_refresh_drawable(drawin_t *drawin)
 	 * which breaks mouse input on the wibox */
 	wlr_scene_buffer_set_dest_size(drawin->scene_buffer, drawin->width, drawin->height);
 
+	/* Apply opacity if set (native Wayland compositing - no picom needed) */
+	if (drawin->opacity >= 0)
+		wlr_scene_buffer_set_opacity(drawin->scene_buffer, (float)drawin->opacity);
+
 	fprintf(stderr, "[DRAWIN_REFRESH] Buffer attached successfully (dest size: %dx%d)\n",
 	        drawin->width, drawin->height);
 
@@ -691,6 +695,38 @@ luaA_drawin_get_opacity(lua_State *L)
 	else
 		lua_pushnumber(L, drawin->opacity);
 	return 1;
+}
+
+/** drawin.opacity - Set opacity
+ * Applies transparency to the drawin's scene buffer using wlroots compositing.
+ * \param L The Lua VM state.
+ * \return Number of elements pushed on stack.
+ */
+static int
+luaA_drawin_set_opacity(lua_State *L)
+{
+	drawin_t *drawin = luaA_checkdrawin(L, 1);
+	double opacity;
+
+	if (lua_isnil(L, 2)) {
+		/* nil = unset, restore to fully opaque */
+		drawin->opacity = -1;
+		if (drawin->scene_buffer)
+			wlr_scene_buffer_set_opacity(drawin->scene_buffer, 1.0f);
+	} else {
+		opacity = luaL_checknumber(L, 2);
+		if (opacity < 0 || opacity > 1)
+			return luaL_error(L, "opacity must be between 0 and 1");
+		drawin->opacity = opacity;
+		if (drawin->scene_buffer)
+			wlr_scene_buffer_set_opacity(drawin->scene_buffer, (float)opacity);
+	}
+
+	lua_pushvalue(L, 1);  /* Push drawin for signal */
+	luaA_object_emit_signal(L, -1, "property::opacity", 0);
+	lua_pop(L, 1);
+
+	return 0;
 }
 
 /** drawin.cursor - Get cursor name */
@@ -1792,6 +1828,10 @@ static int luaA_drawin_get_opacity_wrapper(lua_State *L, lua_object_t *obj) {
 	(void)obj;
 	return luaA_drawin_get_opacity(L);
 }
+static int luaA_drawin_set_opacity_wrapper(lua_State *L, lua_object_t *obj) {
+	(void)obj;
+	return luaA_drawin_set_opacity(L);
+}
 static int luaA_drawin_get_border_width_wrapper(lua_State *L, lua_object_t *obj) {
 	(void)obj;
 	return luaA_drawin_get_border_width(L);
@@ -1904,9 +1944,9 @@ luaA_drawin_class_setup(lua_State *L)
 	                        luaA_drawin_get_type_wrapper,
 	                        NULL);
 	luaA_class_add_property(&drawin_class, "opacity",
-	                        NULL,
+	                        luaA_drawin_set_opacity_wrapper,
 	                        luaA_drawin_get_opacity_wrapper,
-	                        NULL);
+	                        luaA_drawin_set_opacity_wrapper);
 	/* NOTE: buttons is NOT registered as a property, only as a _buttons method.
 	 * The wibox wrapper handles the buttons accessor via _legacy_accessors */
 	luaA_class_add_property(&drawin_class, "border_width",

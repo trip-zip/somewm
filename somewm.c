@@ -134,7 +134,8 @@ static void cleanupmon(struct wl_listener *listener, void *data);
 static void cleanuplisteners(void);
 static void closemon(Monitor *m);
 static void commitlayersurfacenotify(struct wl_listener *listener, void *data);
-static void commitnotify(struct wl_listener *listener, void *data);
+void initialcommitnotify(struct wl_listener *listener, void *data);
+void commitnotify(struct wl_listener *listener, void *data);
 static void commitpopup(struct wl_listener *listener, void *data);
 static void createdecoration(struct wl_listener *listener, void *data);
 static void createidleinhibitor(struct wl_listener *listener, void *data);
@@ -1057,32 +1058,54 @@ commitlayersurfacenotify(struct wl_listener *listener, void *data)
 	arrangelayers(l->mon);
 }
 
+/* Handle initial XDG commit - sets scale, capabilities, size.
+ * This listener is registered in createnotify before wlr_scene_xdg_surface_create. */
+void
+initialcommitnotify(struct wl_listener *listener, void *data)
+{
+	Client *c = wl_container_of(listener, c, initial_commit);
+	Monitor *m;
+
+	if (!c->surface.xdg->initial_commit)
+		return;
+
+	/* Get the monitor this client will be rendered on for initial scale setting.
+	 * Final monitor/tags will be determined by Lua rules in mapnotify(). */
+	m = c->mon ? c->mon : selmon;
+	if (m) {
+		client_set_scale(client_surface(c), m->wlr_output->scale);
+	}
+
+	wlr_xdg_toplevel_set_wm_capabilities(c->surface.xdg->toplevel,
+			WLR_XDG_TOPLEVEL_WM_CAPABILITIES_FULLSCREEN);
+	if (c->decoration)
+		requestdecorationmode(&c->set_decoration_mode, c->decoration);
+	wlr_xdg_toplevel_set_size(c->surface.xdg->toplevel, 0, 0);
+}
+
+/* Handle subsequent XDG commits - resizing and opacity.
+ * This listener is registered in mapnotify AFTER wlr_scene_xdg_surface_create
+ * so it fires AFTER wlroots' internal surface_reconfigure() which resets opacity. */
 void
 commitnotify(struct wl_listener *listener, void *data)
 {
 	Client *c = wl_container_of(listener, c, commit);
 
-	if (c->surface.xdg->initial_commit) {
-		/* Get the monitor this client will be rendered on for initial scale setting.
-		 * Final monitor/tags will be determined by Lua rules in mapclient(). */
-		Monitor *m = c->mon ? c->mon : selmon;
-		if (m) {
-			client_set_scale(client_surface(c), m->wlr_output->scale);
-		}
-
-		wlr_xdg_toplevel_set_wm_capabilities(c->surface.xdg->toplevel,
-				WLR_XDG_TOPLEVEL_WM_CAPABILITIES_FULLSCREEN);
-		if (c->decoration)
-			requestdecorationmode(&c->set_decoration_mode, c->decoration);
-		wlr_xdg_toplevel_set_size(c->surface.xdg->toplevel, 0, 0);
+	/* Skip initial commit - handled by initialcommitnotify */
+	if (c->surface.xdg->initial_commit)
 		return;
-	}
 
 	resize(c, c->geometry, (some_client_get_floating(c) && !c->fullscreen));
 
 	/* mark a pending resize as completed */
 	if (c->resize && c->resize <= c->surface.xdg->current.configure_serial)
 		c->resize = 0;
+
+	/* Re-apply opacity after wlroots' surface_reconfigure() resets it to 1.0.
+	 * Our listener fires after wlroots' because we registered it after
+	 * wlr_scene_xdg_surface_create() in mapnotify(). */
+	if (c->opacity >= 0)
+		client_apply_opacity_to_scene(c, (float)c->opacity);
 }
 
 void
@@ -1371,8 +1394,11 @@ createnotify(struct wl_listener *listener, void *data)
 	c->client_type = XDGShell;
 	c->bw = get_border_width();
 
-	/* Register Wayland event listeners (adapts X11 event masks to Wayland signals) */
-	LISTEN(&toplevel->base->surface->events.commit, &c->commit, commitnotify);
+	/* Register Wayland event listeners (adapts X11 event masks to Wayland signals)
+	 * Note: The main commit listener is registered in mapnotify() AFTER wlr_scene_xdg_surface_create()
+	 * so our listener fires AFTER wlroots' internal surface_reconfigure() which resets opacity.
+	 * We use a separate listener for the initial commit to handle pre-map setup. */
+	LISTEN(&toplevel->base->surface->events.commit, &c->initial_commit, initialcommitnotify);
 	LISTEN(&toplevel->base->surface->events.map, &c->map, mapnotify);
 	LISTEN(&toplevel->base->surface->events.unmap, &c->unmap, unmapnotify);
 	LISTEN(&toplevel->events.destroy, &c->destroy, destroynotify);
@@ -1666,6 +1692,7 @@ destroynotify(struct wl_listener *listener, void *data)
 		} else
 #endif
 		{
+			wl_list_remove(&c->initial_commit.link);
 			wl_list_remove(&c->commit.link);
 			wl_list_remove(&c->map.link);
 			wl_list_remove(&c->unmap.link);
@@ -1709,6 +1736,7 @@ destroynotify(struct wl_listener *listener, void *data)
 	} else
 #endif
 	{
+		wl_list_remove(&c->initial_commit.link);
 		wl_list_remove(&c->commit.link);
 		wl_list_remove(&c->map.link);
 		wl_list_remove(&c->unmap.link);
@@ -2240,6 +2268,11 @@ mapnotify(struct wl_listener *listener, void *data)
 			? wlr_scene_xdg_surface_create(c->scene, c->surface.xdg)
 			: wlr_scene_subsurface_tree_create(c->scene, client_surface(c));
 	c->scene->node.data = c->scene_surface->node.data = c;
+
+	/* Register commit listener AFTER wlr_scene_xdg_surface_create() so our listener
+	 * fires AFTER wlroots' internal surface_reconfigure() which resets opacity to 1.0.
+	 * This allows our compositor-controlled opacity to take effect. */
+	LISTEN(&client_surface(c)->events.commit, &c->commit, commitnotify);
 
 	client_get_geometry(c, &c->geometry);
 

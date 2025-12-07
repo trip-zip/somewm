@@ -155,7 +155,8 @@ struct client_t
     /** Border rectangles */
     struct wlr_scene_rect *border[4];
     /** Wayland listeners */
-    struct wl_listener commit;
+    struct wl_listener initial_commit; /* For initial XDG commit before scene surface exists */
+    struct wl_listener commit;         /* For subsequent commits after scene surface exists */
     struct wl_listener map;
     struct wl_listener maximize;
     struct wl_listener unmap;
@@ -389,6 +390,7 @@ void client_emit_scanning(void);
 drawable_t *client_get_drawable(client_t *, int, int);
 drawable_t *client_get_drawable_offset(client_t *, int *, int *);
 area_t client_get_undecorated_geometry(client_t *);
+void client_apply_opacity_to_scene(client_t *, float);
 
 /* Forward declarations for inline functions
  * Note: luaA_object_emit_signal() is declared in awm_luaobject.h (included above) */

@@ -4334,6 +4334,87 @@ luaA_client_set_urgent(lua_State *L, client_t *c)
     return 0;
 }
 
+/** Recursively apply opacity to all buffer nodes in a scene tree. */
+static void
+apply_opacity_to_tree(struct wlr_scene_node *node, float opacity)
+{
+    if (node->type == WLR_SCENE_NODE_BUFFER) {
+        struct wlr_scene_buffer *buf = wlr_scene_buffer_from_node(node);
+        wlr_scene_buffer_set_opacity(buf, opacity);
+    } else if (node->type == WLR_SCENE_NODE_TREE) {
+        struct wlr_scene_tree *tree = wlr_scene_tree_from_node(node);
+        struct wlr_scene_node *child;
+        wl_list_for_each(child, &tree->children, link) {
+            apply_opacity_to_tree(child, opacity);
+        }
+    }
+}
+
+/** Apply opacity to all buffers in the client's scene tree.
+ * This includes titlebars and the XDG surface content.
+ * Native Wayland compositing - no picom needed.
+ * Non-static so it can be called from somewm.c on surface commits.
+ */
+void
+client_apply_opacity_to_scene(client_t *c, float opacity)
+{
+    int i;
+
+    /* Apply to titlebars (scene buffers we control) */
+    for (i = 0; i < CLIENT_TITLEBAR_COUNT; i++) {
+        if (c->titlebar[i].scene_buffer) {
+            wlr_scene_buffer_set_opacity(c->titlebar[i].scene_buffer, opacity);
+        }
+    }
+
+    /* Apply to XDG surface subtree - recursively traverse all nodes.
+     * wlr_scene_xdg_surface_create() creates a nested tree structure,
+     * so we need to recurse to find all buffer nodes. */
+    if (c->scene_surface) {
+        apply_opacity_to_tree(&c->scene_surface->node, opacity);
+    }
+}
+
+/** Get client opacity.
+ * \param L The Lua VM state.
+ * \param c The client.
+ * \return Number of elements pushed on stack.
+ */
+static int
+luaA_client_get_opacity(lua_State *L, client_t *c)
+{
+    if (c->opacity >= 0)
+        lua_pushnumber(L, c->opacity);
+    else
+        lua_pushnumber(L, 1.0);  /* Default to fully opaque */
+    return 1;
+}
+
+/** Set client opacity.
+ * Applies transparency to the client's scene buffers using wlroots compositing.
+ * \param L The Lua VM state.
+ * \param c The client.
+ * \return Number of elements pushed on stack.
+ */
+static int
+luaA_client_set_opacity(lua_State *L, client_t *c)
+{
+    if (lua_isnil(L, -1)) {
+        /* nil = unset, restore to fully opaque */
+        c->opacity = -1;
+        client_apply_opacity_to_scene(c, 1.0f);
+    } else {
+        double opacity = luaL_checknumber(L, -1);
+        if (opacity < 0 || opacity > 1)
+            return luaL_error(L, "opacity must be between 0 and 1");
+        c->opacity = opacity;
+        client_apply_opacity_to_scene(c, (float)opacity);
+    }
+
+    luaA_object_emit_signal(L, -3, "property::opacity", 0);
+    return 0;
+}
+
 static int
 luaA_client_set_skip_taskbar(lua_State *L, client_t *c)
 {
@@ -5126,6 +5207,10 @@ client_class_setup(lua_State *L)
                             NULL,
                             (lua_class_propfunc_t) luaA_client_get_icon_sizes,
                             NULL);
+    luaA_class_add_property(&client_class, "opacity",
+                            (lua_class_propfunc_t) luaA_client_set_opacity,
+                            (lua_class_propfunc_t) luaA_client_get_opacity,
+                            (lua_class_propfunc_t) luaA_client_set_opacity);
     luaA_class_add_property(&client_class, "ontop",
                             (lua_class_propfunc_t) luaA_client_set_ontop,
                             (lua_class_propfunc_t) luaA_client_get_ontop,
