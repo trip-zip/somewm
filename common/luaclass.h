@@ -29,13 +29,26 @@
 #include <lua.h>
 #include <lauxlib.h>
 
-/* Undefine simple macros if they exist - we need the real class-based functions */
-#ifdef luaA_checkudata
-#undef luaA_checkudata
+/** Lua 5.1/5.2 compatibility for uservalue functions */
+static inline void
+luaA_getuservalue(lua_State *L, int idx)
+{
+#if LUA_VERSION_NUM >= 502
+    lua_getuservalue(L, idx);
+#else
+    lua_getfenv(L, idx);
 #endif
-#ifdef luaA_toudata
-#undef luaA_toudata
+}
+
+static inline void
+luaA_setuservalue(lua_State *L, int idx)
+{
+#if LUA_VERSION_NUM >= 502
+    lua_setuservalue(L, idx);
+#else
+    lua_setfenv(L, idx);
 #endif
+}
 
 typedef struct lua_class_property lua_class_property_t;
 
@@ -117,7 +130,6 @@ void * luaA_toudata(lua_State *L, int ud, lua_class_t *);
 
 /* Compatibility with existing somewm code */
 int luaA_registerfct(lua_State *L, int fct_idx, int *ref);
-void luaA_registerlib(lua_State *L, const char *libname, const struct luaL_Reg *l);
 
 static inline void luaA_class_set_tostring(lua_class_t *class, lua_class_propfunc_t callback)
 {

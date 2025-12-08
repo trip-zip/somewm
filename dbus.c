@@ -432,8 +432,7 @@ a_dbus_process_request(DBusConnection *dbus_connection, DBusMessage *msg)
         {
             void *func;
             /* there can be only ONE handler to send reply */
-            /* somewm uses refs instead of sigfuncs */
-            func = (void *) sig->refs[0];
+            func = (void *) sig->sigfuncs.tab[0];
 
             int n = lua_gettop(L) - nargs;
 

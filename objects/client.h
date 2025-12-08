@@ -30,6 +30,7 @@
 #include <wlr/util/box.h>
 #include "common/luaclass.h"
 #include "common/luaobject.h"
+#include "luaa.h"
 #include "color.h"
 #include "../window.h"
 

@@ -21,6 +21,7 @@
  */
 
 #include "objects/selection_watcher.h"
+#include "objects/luaa.h"
 #include "common/luaobject.h"
 #include "common/lualib.h"
 #include "globalconf.h"

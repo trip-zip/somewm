@@ -854,54 +854,6 @@ luaA_cleanup(void)
 	}
 }
 
-/** Register a Lua module with methods and metamethods.
- * Creates a new metatable and registers it globally.
- * Based on AwesomeWM's luaA_openlib but simplified.
- *
- * \param L The Lua VM state.
- * \param name The name of the module (e.g., "tag", "client").
- * \param methods The module-level methods (e.g., tag.count()).
- * \param meta The metamethods (e.g., __index, __newindex).
- */
-void
-luaA_openlib(lua_State *L, const char *name,
-             const luaL_Reg methods[], const luaL_Reg meta[])
-{
-	/* Create metatable */
-	luaL_newmetatable(L, name);                    /* stack: [metatable] */
-
-	/* Set metatable.__index = metatable (allows method lookup) */
-	lua_pushvalue(L, -1);                          /* stack: [metatable, metatable] */
-	lua_setfield(L, -2, "__index");                /* stack: [metatable] */
-
-	/* Register metamethods if provided */
-	if (meta) {
-#if LUA_VERSION_NUM >= 502
-		luaL_setfuncs(L, meta, 0);
-#else
-		luaL_register(L, NULL, meta);
-#endif
-	}
-
-	/* Create module table and add methods to IT (not the metatable) */
-	lua_newtable(L);                               /* stack: [metatable, table] */
-	if (methods) {
-#if LUA_VERSION_NUM >= 502
-		luaL_setfuncs(L, methods, 0);              /* stack: [metatable, table (with methods)] */
-#else
-		luaL_register(L, NULL, methods);
-#endif
-	}
-
-	/* Set the metatable on the module table */
-	lua_pushvalue(L, -2);                          /* stack: [metatable, table, metatable] */
-	lua_setmetatable(L, -2);                       /* stack: [metatable, table] (table has metatable) */
-
-	/* Set module table as global */
-	lua_setglobal(L, name);                        /* stack: [metatable] */
-	lua_pop(L, 1);                                 /* stack: empty */
-}
-
 /** Load and execute a Lua file with error reporting.
  * Wrapper around luaL_dofile with better error messages.
  *
@@ -918,41 +870,6 @@ luaA_dofunction_from_file(lua_State *L, const char *path)
 		lua_pop(L, 1);  /* Remove error message */
 		return -1;
 	}
-	return 0;
-}
-
-/** Register a Lua function and store its reference.
- * Stores the function at the given stack index in the registry.
- * If a reference already exists, it is unreferenced first.
- *
- * \param L The Lua VM state.
- * \param idx Stack index of the function to register.
- * \param ref Pointer to store the registry reference.
- * \return 0 on success.
- */
-int
-luaA_registerfct(lua_State *L, int idx, int *ref)
-{
-	int old_ref;
-
-	/* Check that we have a function */
-	luaL_checktype(L, idx, LUA_TFUNCTION);
-
-	/* Push the function to the top of the stack */
-	lua_pushvalue(L, idx);
-
-	/* Unref the old function if one exists */
-	old_ref = *ref;
-	if (*ref != LUA_REFNIL)
-		luaL_unref(L, LUA_REGISTRYINDEX, *ref);
-
-	/* Store in registry and save the reference */
-	*ref = luaL_ref(L, LUA_REGISTRYINDEX);
-
-	/* Debug: log handler registration */
-	fprintf(stderr, "[REGISTERFCT] Registered function: old_ref=%d new_ref=%d ref_addr=%p\n",
-	        old_ref, *ref, (void *)ref);
-
 	return 0;
 }
 
@@ -1046,24 +963,24 @@ globalconf_wipe(void)
 	memset(&globalconf, 0, sizeof(globalconf));
 }
 
-/** Default __index metamethod for D-Bus module (stub).
+/** Default __index metamethod.
+ * Matches AwesomeWM luaa.c:1342-1346.
  * \param L The Lua VM state.
- * \return Always 0 (no value pushed).
+ * \return Number of values pushed.
  */
 int
 luaA_default_index(lua_State *L)
 {
-	/* Stub: D-Bus module doesn't use dynamic indexing */
-	return 0;
+	return luaA_class_index_miss_property(L, NULL);
 }
 
-/** Default __newindex metamethod for D-Bus module (stub).
+/** Default __newindex metamethod.
+ * Matches AwesomeWM luaa.c:1348-1352.
  * \param L The Lua VM state.
- * \return Always 0 (no value pushed).
+ * \return Number of values pushed.
  */
 int
 luaA_default_newindex(lua_State *L)
 {
-	/* Stub: D-Bus module doesn't use dynamic newindex */
-	return 0;
+	return luaA_class_newindex_miss_property(L, NULL);
 }

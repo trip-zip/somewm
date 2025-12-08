@@ -22,6 +22,7 @@
 
 #include "objects/selection_acquire.h"
 #include "objects/selection_transfer.h"
+#include "objects/luaa.h"
 #include "common/luaobject.h"
 #include "common/lualib.h"
 #include "globalconf.h"

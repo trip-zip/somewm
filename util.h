@@ -25,6 +25,12 @@ void *ecalloc(size_t nmemb, size_t size);
 int fd_set_nonblock(int fd);
 
 /* AwesomeWM-compatible utility macros and functions */
+#ifndef MAX
+#define MAX(a,b) ((a) < (b) ? (b) : (a))
+#endif
+#ifndef MIN
+#define MIN(a,b) ((a) < (b) ? (a) : (b))
+#endif
 #define DO_NOTHING(...)
 #define p_alloc_nr(x)           (((x) + 16) * 3 / 2)
 #define p_new(type, count)      ((type *)ecalloc((count), sizeof(type)))
@@ -107,6 +113,23 @@ static inline int a_strncmp(const char *a, const char *b, ssize_t n)
 #define  A_STREQ_N(a, b, n)  (((a) == (b)) || (n) == ((ssize_t) 0) || a_strncmp(a, b, n) == 0)
 #define A_STRNEQ_N(a, b)     (!A_STREQ_N(a, b))
 
+/** Compute a hash for a string (djb2 algorithm).
+ * Used by AwesomeWM's signal system for fast signal lookup.
+ * \param str The string to hash.
+ * \return The hash value.
+ */
+static inline unsigned long __attribute__ ((nonnull(1)))
+a_strhash(const unsigned char *str)
+{
+    unsigned long hash = 5381;
+    int c;
+
+    while((c = *str++))
+        hash = ((hash << 5) + hash) + c; /* hash * 33 + c */
+
+    return hash;
+}
+
 /* Branch prediction hints (AwesomeWM-compatible) */
 #ifdef __GNUC__
 #define likely(expr)    __builtin_expect(!!(expr), 1)
@@ -144,5 +167,31 @@ static inline void * __attribute__ ((malloc)) xmalloc(ssize_t size)
 
     return ptr;
 }
+
+/* AwesomeWM error/warning macros and functions */
+#define fatal(string, ...) _fatal(__LINE__, \
+                                  __func__, \
+                                  string, ## __VA_ARGS__)
+void _fatal(int, const char *, const char *, ...)
+    __attribute__ ((noreturn)) __attribute__ ((format(printf, 3, 4)));
+
+#define warn(string, ...) _warn(__LINE__, \
+                                __func__, \
+                                string, ## __VA_ARGS__)
+void _warn(int, const char *, const char *, ...)
+    __attribute__ ((format(printf, 3, 4)));
+
+#define check(condition) do { \
+        if (!(condition)) \
+            _warn(__LINE__, __func__, \
+                    "Checking assertion failed: " #condition); \
+    } while (0)
+
+const char *a_current_time_str(void);
+
+void a_exec(const char *);
+
+ssize_t a_strncpy(char *dst, ssize_t n, const char *src, ssize_t l) __attribute__((nonnull(1)));
+ssize_t a_strcpy(char *dst, ssize_t n, const char *src) __attribute__((nonnull(1)));
 
 #endif /* UTIL_H */

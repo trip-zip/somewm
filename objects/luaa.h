@@ -22,12 +22,10 @@ void luaA_init(void);
 void luaA_loadrc(void);
 void luaA_cleanup(void);
 
-/* Utility macros for type-safe userdata access */
-#define luaA_checkudata(L, idx, type) \
-	((type *)luaL_checkudata(L, idx, #type))
-
-#define luaA_toudata(L, idx, type) \
-	((type *)lua_touserdata(L, idx))
+/* Note: luaA_checkudata and luaA_toudata are functions declared in common/luaclass.h
+ * They use the AwesomeWM lua_class_t system for type-safe userdata access.
+ * The old macro versions have been removed in favor of the AwesomeWM class system.
+ */
 
 /* Helper functions for module/class registration */
 void luaA_openlib(lua_State *L, const char *name,
@@ -67,26 +65,7 @@ luaA_rawlen(lua_State *L, int idx)
 #endif
 }
 
-/* Lua 5.1 vs 5.2+ compatibility for uservalue (environment tables) */
-static inline void
-luaA_getuservalue(lua_State *L, int idx)
-{
-#if LUA_VERSION_NUM >= 502
-    lua_getuservalue(L, idx);
-#else
-    lua_getfenv(L, idx);
-#endif
-}
-
-static inline void
-luaA_setuservalue(lua_State *L, int idx)
-{
-#if LUA_VERSION_NUM >= 502
-    lua_setuservalue(L, idx);
-#else
-    lua_setfenv(L, idx);
-#endif
-}
+/* luaA_getuservalue and luaA_setuservalue are now defined in common/luaclass.h */
 
 /* Warning helper (simplified version without timestamps) */
 static inline void

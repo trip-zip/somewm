@@ -1,77 +1,88 @@
 /*
- * awm_signal.h - AwesomeWM signal compatibility layer for somewm
+ * common/signal.h - Signal handling functions
  *
- * This provides AwesomeWM's signal interface using somewm's signal implementation.
- * AwesomeWM uses hash-based signals, somewm uses name-based signals.
- *
- * Adapted from AwesomeWM common/signal.h
  * Copyright © 2009 Julien Danjou <julien@danjou.info>
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
  * the Free Software Foundation; either version 2 of the License, or
  * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License along
+ * with this program; if not, write to the Free Software Foundation, Inc.,
+ * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+ *
  */
 
-#ifndef AWESOME_COMMON_SIGNAL_H
-#define AWESOME_COMMON_SIGNAL_H
+#ifndef AWESOME_COMMON_SIGNAL
+#define AWESOME_COMMON_SIGNAL
 
-#include "objects/signal.h"
 #include "common/array.h"
-#include <stdlib.h>
-#include <string.h>
-#include <stdbool.h>
 
-/* For AwesomeWM compatibility, we just use somewm's signal_array_t directly.
- * The LUA_OBJECT_HEADER macro will use this type.
- */
-
-/* Array of const void * for signal function pointers (AwesomeWM compatibility) */
 DO_ARRAY(const void *, cptr, DO_NOTHING)
 
-/** Connect a signal inside a signal array (somewm implementation).
+typedef struct
+{
+    unsigned long id;
+    cptr_array_t sigfuncs;
+} signal_t;
+
+static inline int
+signal_cmp(const void *a, const void *b)
+{
+    const signal_t *x = a, *y = b;
+    return x->id > y->id ? 1 : (x->id < y->id ? -1 : 0);
+}
+
+static inline void
+signal_wipe(signal_t *sig)
+{
+    cptr_array_wipe(&sig->sigfuncs);
+}
+
+DO_BARRAY(signal_t, signal, signal_wipe, signal_cmp)
+
+static inline signal_t *
+signal_array_getbyid(signal_array_t *arr, unsigned long id)
+{
+    signal_t sig = { .id = id };
+    return signal_array_lookup(arr, &sig);
+}
+
+static inline signal_t *
+signal_array_getbyname(signal_array_t *arr, const char *name)
+{
+    signal_t sig = { .id = a_strhash((const unsigned char *) NONULL(name)) };
+    return signal_array_lookup(arr, &sig);
+}
+
+/** Connect a signal inside a signal array.
  * You are in charge of reference counting.
  * \param arr The signal array.
  * \param name The signal name.
- * \param ref The reference to add (as intptr_t).
+ * \param ref The reference to add.
  */
 static inline void
 signal_connect(signal_array_t *arr, const char *name, const void *ref)
 {
-    signal_t *sigfound;
-    signal_t *sig;
-    /* Somewm's signal_array_getbyname is implemented in objects/signal.c */
-    extern signal_t *signal_array_getbyname(signal_array_t *arr, const char *name);
-
-    sigfound = signal_array_getbyname(arr, name);
+    unsigned long tok = a_strhash((const unsigned char *) name);
+    signal_t *sigfound = signal_array_getbyid(arr, tok);
     if(sigfound)
-    {
-        /* Grow refs array if needed */
-        if(sigfound->ref_count >= sigfound->ref_capacity)
-        {
-            sigfound->ref_capacity = sigfound->ref_capacity ? sigfound->ref_capacity * 2 : 4;
-            sigfound->refs = realloc(sigfound->refs, sigfound->ref_capacity * sizeof(intptr_t));
-        }
-        sigfound->refs[sigfound->ref_count++] = (intptr_t)ref;
-    }
+        cptr_array_append(&sigfound->sigfuncs, ref);
     else
     {
-        /* Create new signal */
-        if(arr->count >= arr->capacity)
-        {
-            arr->capacity = arr->capacity ? arr->capacity * 2 : 4;
-            arr->signals = realloc(arr->signals, arr->capacity * sizeof(signal_t));
-        }
-        sig = &arr->signals[arr->count++];
-        sig->name = strdup(name);
-        sig->ref_capacity = 4;
-        sig->refs = malloc(sig->ref_capacity * sizeof(intptr_t));
-        sig->ref_count = 1;
-        sig->refs[0] = (intptr_t)ref;
+        signal_t sig = { .id = tok };
+        cptr_array_append(&sig.sigfuncs, ref);
+        signal_array_insert(arr, sig);
     }
 }
 
-/** Disconnect a signal inside a signal array (somewm implementation).
+/** Disconnect a signal inside a signal array.
  * You are in charge of reference counting.
  * \param arr The signal array.
  * \param name The signal name.
@@ -80,24 +91,21 @@ signal_connect(signal_array_t *arr, const char *name, const void *ref)
 static inline bool
 signal_disconnect(signal_array_t *arr, const char *name, const void *ref)
 {
-    signal_t *sigfound;
-    size_t i, j;
-    extern signal_t *signal_array_getbyname(signal_array_t *arr, const char *name);
-
-    sigfound = signal_array_getbyname(arr, name);
+    signal_t *sigfound = signal_array_getbyname(arr, name);
     if(sigfound)
     {
-        for(i = 0; i < sigfound->ref_count; i++)
-        {
-            if(sigfound->refs[i] == (intptr_t)ref)
+        foreach(func, sigfound->sigfuncs)
+            if(ref == *func)
             {
-                /* Remove by shifting remaining elements */
-                for(j = i; j < sigfound->ref_count - 1; j++)
-                    sigfound->refs[j] = sigfound->refs[j + 1];
-                sigfound->ref_count--;
+                cptr_array_remove(&sigfound->sigfuncs, func);
+                if(sigfound->sigfuncs.len == 0) {
+                    if(sigfound->sigfuncs.tab) {
+                        cptr_array_wipe(&sigfound->sigfuncs);
+                    }
+                    signal_array_remove(arr, sigfound);
+                }
                 return true;
             }
-        }
     }
     return false;
 }

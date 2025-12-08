@@ -22,7 +22,7 @@ SOMECFLAGS = `$(PKG_CONFIG) --cflags $(PKGS)` $(WLR_INCS) $(SOMECPPFLAGS) $(SOME
 LDLIBS    = `$(PKG_CONFIG) --libs $(PKGS)` $(WLR_LIBS) $(LUA_LIBS) $(CAIRO_LIBS) $(GLIB_LIBS) -lm $(LIBS)
 
 # Common utilities from AwesomeWM (now in common/ directory)
-COMMONOBJS = common/luaclass.o common/luaobject.o common/lualib.o common/buffer.o
+COMMONOBJS = common/luaclass.o common/luaobject.o common/lualib.o common/buffer.o common/util.o
 
 # Lua object files (always required)
 # Files at top level match AwesomeWM structure
@@ -94,6 +94,7 @@ objects/selection_watcher.o: objects/selection_watcher.c objects/selection_watch
 # Common library dependencies
 common/luaclass.o: common/luaclass.c common/luaclass.h common/luaobject.h common/signal.h objects/luaa.h util.h
 common/luaobject.o: common/luaobject.c common/luaobject.h common/luaclass.h objects/signal.h util.h
+common/util.o: common/util.c util.h
 
 # wayland-scanner is a tool which generates C headers and rigging for Wayland
 # protocols, which are specified in XML. wlroots requires you to rig these up

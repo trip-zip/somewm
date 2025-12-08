@@ -94,15 +94,8 @@ typedef struct {
 #define MIN_X11_COORDINATE -32768
 #define MAX_X11_COORDINATE 32767
 
-/* AwesomeWM utility macros */
-#define check(expr) do { (void)(expr); } while(0)
-#define fatal(fmt, ...) do { \
-    fprintf(stderr, "FATAL: " fmt "\n", ##__VA_ARGS__); \
-    abort(); \
-} while(0)
-#define warn(fmt, ...) do { \
-    fprintf(stderr, "WARNING: " fmt "\n", ##__VA_ARGS__); \
-} while(0)
+/* warn(), fatal(), check() macros are now in util.h */
+#include "util.h"
 
 /* Area comparison macro */
 #define AREA_EQUAL(a, b) \

@@ -10,6 +10,7 @@
 
 #include "objects/root.h"
 #include "objects/luaa.h"
+#include "objects/signal.h"
 #include "common/luaobject.h"
 #include "common/lualib.h"
 #include "objects/keybinding.h"
@@ -851,36 +852,27 @@ luaA_root_set_newindex_miss_handler(lua_State *L)
 }
 
 /** __index metamethod for root
- * Handles property access, first checking metatable methods,
- * then delegating to miss handler if set
+ * Delegates to miss handler if set, otherwise calls default handler.
+ * Matches AwesomeWM root.c:620-626 exactly.
  */
 static int
 luaA_root_index(lua_State *L)
 {
-	/* First, try to get the key from the metatable (where methods are stored) */
-	if (luaL_getmetafield(L, 1, lua_tostring(L, 2))) {
-		return 1;  /* Found in metatable, return it */
-	}
-
-	/* Not in metatable, try miss handler */
 	if (miss_index_handler != LUA_REFNIL)
 		return luaA_call_handler(L, miss_index_handler);
-
-	/* No handler set - return nil (property doesn't exist) */
-	return 0;
+	return luaA_default_index(L);
 }
 
 /** __newindex metamethod for root
- * Handles property assignment, delegating to miss handler if set
+ * Delegates to miss handler if set, otherwise calls default handler.
+ * Matches AwesomeWM root.c:628-633 exactly.
  */
 static int
 luaA_root_newindex(lua_State *L)
 {
 	if (miss_newindex_handler != LUA_REFNIL)
 		return luaA_call_handler(L, miss_newindex_handler);
-
-	/* No handler set - silently ignore (property can't be set) */
-	return 0;
+	return luaA_default_newindex(L);
 }
 
 static const luaL_Reg root_methods[] = {
@@ -894,16 +886,19 @@ static const luaL_Reg root_methods[] = {
 	{ "size", luaA_root_size },
 	{ "size_mm", luaA_root_size_mm },
 	{ "tags", luaA_root_tags },
+	/* __index and __newindex MUST be in methods, not meta!
+	 * luaA_openlib sets the methods table as its own metatable.
+	 * So __index must be in methods for metamethod lookup to find it.
+	 * This matches AwesomeWM root.c:654-655 exactly. */
+	{ "__index", luaA_root_index },
+	{ "__newindex", luaA_root_newindex },
 	{ "set_index_miss_handler", luaA_root_set_index_miss_handler },
 	{ "set_newindex_miss_handler", luaA_root_set_newindex_miss_handler },
-	/* NOTE: _append_* and _remove_* functions removed - these don't exist in AwesomeWM's C layer.
-	 * The Lua layer (awful/root.lua) creates these wrappers itself. */
 	{ NULL, NULL }
 };
 
+/* Empty meta table - matches AwesomeWM root.c:663-666 */
 static const luaL_Reg root_meta[] = {
-	{ "__index", luaA_root_index },
-	{ "__newindex", luaA_root_newindex },
 	{ NULL, NULL }
 };
 

@@ -19,30 +19,13 @@
  *
  */
 
-#ifndef AWESOME_COMMON_LUAOBJECT_H
-#define AWESOME_COMMON_LUAOBJECT_H
+#ifndef AWESOME_COMMON_LUAOBJECT
+#define AWESOME_COMMON_LUAOBJECT
 
 #include "common/luaclass.h"
-#include "objects/luaa.h"
-
-/* Undefine simple macros from luaa.h so we can use proper class-based functions */
-#ifdef luaA_checkudata
-#undef luaA_checkudata
-#endif
-#ifdef luaA_toudata
-#undef luaA_toudata
-#endif
+#include "common/signal.h"
 
 #define LUAA_OBJECT_REGISTRY_KEY "awesome.object.registry"
-
-/* Lua 5.1/5.2 compatibility macros */
-#if LUA_VERSION_NUM >= 502
-#define luaA_setuservalue lua_setuservalue
-#define luaA_getuservalue lua_getuservalue
-#else
-#define luaA_setuservalue lua_setfenv
-#define luaA_getuservalue lua_getfenv
-#endif
 
 int luaA_settype(lua_State *, lua_class_t *);
 void luaA_object_setup(lua_State *);
@@ -55,7 +38,17 @@ void luaA_object_decref(lua_State *, int, const void *);
  * \param iud The index of the item on the stack.
  * \return The item reference.
  */
-void *luaA_object_ref_item(lua_State *L, int ud, int iud);
+static inline void *
+luaA_object_ref_item(lua_State *L, int ud, int iud)
+{
+    void *pointer;
+    /* Get the env table from the object */
+    luaA_getuservalue(L, ud);
+    pointer = luaA_object_incref(L, -1, iud < 0 ? iud - 1 : iud);
+    /* Remove env table */
+    lua_pop(L, 1);
+    return pointer;
+}
 
 /** Unref an item from the environment table of an object.
  * \param L The Lua VM state.
@@ -79,7 +72,19 @@ luaA_object_unref_item(lua_State *L, int ud, void *pointer)
  * \param pointer The item pointer.
  * \return The number of element pushed on stack.
  */
-int luaA_object_push_item(lua_State *L, int ud, const void *pointer);
+static inline int
+luaA_object_push_item(lua_State *L, int ud, const void *pointer)
+{
+    /* Get env table of the object */
+    luaA_getuservalue(L, ud);
+    /* Push key */
+    lua_pushlightuserdata(L, (void *) pointer);
+    /* Get env.pointer */
+    lua_rawget(L, -2);
+    /* Remove env table */
+    lua_remove(L, -2);
+    return 1;
+}
 
 static inline void
 luaA_object_registry_push(lua_State *L)
@@ -146,21 +151,17 @@ luaA_object_push(lua_State *L, const void *pointer)
     return 1;
 }
 
-int luaA_dofunction(lua_State *, int, int);
-
 void signal_object_emit(lua_State *, signal_array_t *, const char *, int);
-signal_t *signal_array_getbyname(signal_array_t *, const char *);
 
-void luaA_object_emit_signal(lua_State *, int, const char *, int);
 void luaA_object_connect_signal(lua_State *, int, const char *, lua_CFunction);
 void luaA_object_disconnect_signal(lua_State *, int, const char *, lua_CFunction);
 void luaA_object_connect_signal_from_stack(lua_State *, int, const char *, int);
 void luaA_object_disconnect_signal_from_stack(lua_State *, int, const char *, int);
-void luaA_awm_object_emit_signal(lua_State *, int, const char *, int);
+void luaA_object_emit_signal(lua_State *, int, const char *, int);
 
 int luaA_object_connect_signal_simple(lua_State *);
 int luaA_object_disconnect_signal_simple(lua_State *);
-int luaA_awm_object_emit_signal_simple(lua_State *);
+int luaA_object_emit_signal_simple(lua_State *);
 
 #define LUA_OBJECT_FUNCS(lua_class, type, prefix)                              \
     LUA_CLASS_FUNCS(prefix, lua_class)                                         \
@@ -213,7 +214,7 @@ int luaA_object_tostring(lua_State *);
     { "__tostring", luaA_object_tostring }, \
     { "connect_signal", luaA_object_connect_signal_simple }, \
     { "disconnect_signal", luaA_object_disconnect_signal_simple }, \
-    { "emit_signal", luaA_awm_object_emit_signal_simple },
+    { "emit_signal", luaA_object_emit_signal_simple },
 
 #endif
 

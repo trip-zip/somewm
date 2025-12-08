@@ -1,26 +1,27 @@
-#ifndef SIGNAL_H
-#define SIGNAL_H
+/*
+ * objects/signal.h - somewm global signal emission helpers
+ *
+ * This file provides somewm-specific signal emission functions for
+ * emitting global signals from C code. The core signal_t and signal_array_t
+ * types are defined in common/signal.h (AwesomeWM's signal system).
+ */
+
+#ifndef SOMEWM_OBJECTS_SIGNAL_H
+#define SOMEWM_OBJECTS_SIGNAL_H
 
 #include <lua.h>
-#include <stdint.h>
-#include "../somewm_types.h"
+#include "common/signal.h"
+#include "common/luaobject.h"
 
-/* Forward declarations - client_t is declared in somewm_types.h */
+/* Alias for AwesomeWM compatibility - calls luaA_object_emit_signal */
+#define luaA_awm_object_emit_signal(L, idx, name, nargs) \
+    luaA_object_emit_signal(L, idx, name, nargs)
 
-/* Signal array structures (exposed for use by other modules) */
-typedef struct {
-	char *name;
-	intptr_t *refs;  /* Changed from int* to intptr_t* to store 64-bit pointers */
-	size_t ref_count;
-	size_t ref_capacity;
-} signal_t;
+/* Forward declarations */
+typedef struct client_t Client;
+struct screen_t;
 
-typedef struct {
-	signal_t *signals;
-	size_t count;
-	size_t capacity;
-} signal_array_t;
-
+/* Global signal system setup/cleanup */
 void luaA_signal_setup(lua_State *L);
 void luaA_signal_cleanup(void);
 
@@ -31,14 +32,9 @@ void luaA_emit_signal_global(const char *name);
 void luaA_emit_signal_global_with_client(const char *name, Client *c);
 
 /* Emit a global signal with a screen object as argument */
-struct screen_t;
 void luaA_emit_signal_global_with_screen(const char *name, struct screen_t *screen);
 
 /* Emit a global signal with a table argument (for spawn::* signals) */
 void luaA_emit_signal_global_with_table(const char *name, int nargs, ...);
 
-/* Signal array helpers (exposed for per-object signals) */
-void signal_array_init(signal_array_t *arr);
-void signal_array_wipe(signal_array_t *arr);
-
-#endif /* SIGNAL_H */
+#endif /* SOMEWM_OBJECTS_SIGNAL_H */

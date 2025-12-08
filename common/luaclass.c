@@ -19,35 +19,12 @@
  *
  */
 
+#include "objects/luaa.h"
 #include "common/luaclass.h"
 #include "common/luaobject.h"
 #include "common/lualib.h"
-#include "objects/luaa.h"
-#include "util.h"
-#include <string.h>
-
-/* Undefine simple macros from luaa.h so we can use proper class-based functions */
-#ifdef luaA_checkudata
-#undef luaA_checkudata
-#endif
-#ifdef luaA_toudata
-#undef luaA_toudata
-#endif
 
 #define CONNECTED_SUFFIX "::connected"
-
-/* Compatibility macros - A_STREQ and a_strcmp are defined in util.h */
-
-/* Note: luaA_getuservalue and luaA_setuservalue are defined in awm_luaobject.h */
-/* Note: a_strlen is defined in util.h */
-
-/* Forward declarations for helper functions */
-static void luaA_setfuncs(lua_State *L, const struct luaL_Reg *l);
-static void luaA_deprecate(lua_State *L, const char *message);
-
-/* Forward declarations for signal functions (will be in signal.c or awm_luaobject.c) */
-extern void signal_connect_awm(signal_array_t *arr, const char *name, const void *ref);
-extern int signal_disconnect_awm(signal_array_t *arr, const char *name, const void *ref);
 
 struct lua_class_property
 {
@@ -65,50 +42,6 @@ DO_ARRAY(lua_class_t *, lua_class, DO_NOTHING)
 
 static lua_class_array_t luaA_classes;
 
-/** Set functions in a table (Lua 5.1/5.2 compat).
- * \param L The Lua VM state.
- * \param l The functions to set.
- */
-static void
-luaA_setfuncs(lua_State *L, const struct luaL_Reg *l)
-{
-#if LUA_VERSION_NUM >= 502
-    luaL_setfuncs(L, l, 0);
-#else
-    luaL_register(L, NULL, l);
-#endif
-}
-
-/** Register a library (Lua 5.1/5.2 compat).
- * \param L The Lua VM state.
- * \param libname Library name.
- * \param l The functions to register.
- */
-void
-luaA_registerlib(lua_State *L, const char *libname, const struct luaL_Reg *l)
-{
-#if LUA_VERSION_NUM >= 502
-    lua_newtable(L);
-    luaL_setfuncs(L, l, 0);
-    lua_pushvalue(L, -1);
-    lua_setglobal(L, libname);
-#else
-    luaL_register(L, libname, l);
-#endif
-}
-
-/** Deprecation warning (stub).
- * \param L The Lua VM state.
- * \param message Warning message.
- */
-static void
-luaA_deprecate(lua_State *L, const char *message)
-{
-    /* In somewm, we can just print to stderr or ignore */
-    (void)L;
-    (void)message;
-}
-
 /** Convert a object to a udata if possible.
  * \param L The Lua VM state.
  * \param ud The index.
@@ -118,10 +51,8 @@ luaA_deprecate(lua_State *L, const char *message)
 void *
 luaA_toudata(lua_State *L, int ud, lua_class_t *class)
 {
-    void *p;
+    void *p = lua_touserdata(L, ud);
     lua_class_t *metatable_class;
-
-    p = lua_touserdata(L, ud);
     if(p && lua_getmetatable(L, ud)) /* does it have a metatable? */
     {
         /* Get the lua_class_t that matches this metatable */
@@ -163,10 +94,8 @@ luaA_checkudata(lua_State *L, int ud, lua_class_t *class)
 lua_class_t *
 luaA_class_get(lua_State *L, int idx)
 {
-    int type;
+    int type = lua_type(L, idx);
     lua_class_t *class;
-
-    type = lua_type(L, idx);
 
     if(type == LUA_TUSERDATA && lua_getmetatable(L, idx))
     {
@@ -199,7 +128,21 @@ luaA_typename(lua_State *L, int idx)
     return lua_typename(L, type);
 }
 
-/* Note: luaA_openlib is provided by luaa.c, not needed here */
+void
+luaA_openlib(lua_State *L, const char *name,
+             const struct luaL_Reg methods[],
+             const struct luaL_Reg meta[])
+{
+    luaL_newmetatable(L, name);                                        /* 1 */
+    lua_pushvalue(L, -1);           /* dup metatable                      2 */
+    lua_setfield(L, -2, "__index"); /* metatable.__index = metatable      1 */
+
+    luaA_setfuncs(L, meta);                                            /* 1 */
+    luaA_registerlib(L, name, methods);                                /* 2 */
+    lua_pushvalue(L, -1);           /* dup self as metatable              3 */
+    lua_setmetatable(L, -2);        /* set self as metatable              2 */
+    lua_pop(L, 2);
+}
 
 static int
 lua_class_property_cmp(const void *a, const void *b)
@@ -252,11 +195,6 @@ luaA_class_index_invalid(lua_State *L)
     return luaA_class_newindex_invalid(L);
 }
 
-/** Helper to wipe signal arrays for AwesomeWM compatibility.
- * Uses somewm's signal_array_t structure.
- */
-extern void signal_array_wipe(signal_array_t *arr);
-
 /** Garbage collect a Lua object.
  * \param L The Lua VM state.
  * \return The number of elements pushed on stack.
@@ -264,10 +202,8 @@ extern void signal_array_wipe(signal_array_t *arr);
 static int
 luaA_class_gc(lua_State *L)
 {
-    lua_object_t *item;
+    lua_object_t *item = lua_touserdata(L, 1);
     lua_class_t *class;
-
-    item = lua_touserdata(L, 1);
     signal_array_wipe(&item->signals);
     /* Get the object class */
     class = luaA_class_get(L, 1);
@@ -356,13 +292,6 @@ luaA_class_setup(lua_State *L, lua_class_t *class,
     class->index_miss_handler = LUA_REFNIL;
     class->newindex_miss_handler = LUA_REFNIL;
 
-    /* CRITICAL: Initialize class-level signal array to prevent uninitialized memory bugs.
-     * Without this, class->signals contains garbage which causes realloc() crashes
-     * when Lua code connects signals before objects are created. AwesomeWM compatibility fix. */
-    class->signals.signals = NULL;
-    class->signals.count = 0;
-    class->signals.capacity = 0;
-
     lua_class_array_append(&luaA_classes, class);
 }
 
@@ -377,15 +306,13 @@ void
 luaA_class_connect_signal_from_stack(lua_State *L, lua_class_t *lua_class,
                                      const char *name, int ud)
 {
-    lua_Debug ar;
-    void *func_ptr;
-    size_t buf_len = a_strlen(name) + a_strlen(CONNECTED_SUFFIX) + 1;
-    char buf[buf_len];
-
+    char *buf;
     luaA_checkfunction(L, ud);
 
     /* Duplicate the function in the stack */
     lua_pushvalue(L, ud);
+
+    buf = p_alloca(char, a_strlen(name) + a_strlen(CONNECTED_SUFFIX) + 1);
 
     /* Create a new signal to notify there is a global connection. */
     sprintf(buf, "%s%s", name, CONNECTED_SUFFIX);
@@ -399,20 +326,7 @@ luaA_class_connect_signal_from_stack(lua_State *L, lua_class_t *lua_class,
     luaA_class_emit_signal(L, lua_class, buf, 1);
 
     /* Register the signal to the CAPI list */
-    /* Note: This uses luaobject's signal_connect which we'll implement in awm_luaobject.c */
-    fprintf(stderr, "[CLASS_CONNECT] class='%s' registering handler on signal='%s' (emitted='%s')\n",
-            lua_class->name, name, buf);
-
-    /* Debug: Show function info */
-    lua_pushvalue(L, ud);
-    lua_getinfo(L, ">S", &ar);
-    fprintf(stderr, "[CLASS_CONNECT] Function being registered: source=%s linedefined=%d\n",
-            ar.source ? ar.source : "(null)", ar.linedefined);
-
-    func_ptr = luaA_object_ref(L, ud);
-    fprintf(stderr, "[CLASS_CONNECT] Stored function pointer: %p\n", func_ptr);
-    signal_connect_awm(&lua_class->signals, name, func_ptr);
-    fprintf(stderr, "[CLASS_CONNECT] registration complete for signal='%s'\n", name);
+    signal_connect(&lua_class->signals, name, luaA_object_ref(L, ud));
 }
 
 void
@@ -420,19 +334,9 @@ luaA_class_disconnect_signal_from_stack(lua_State *L, lua_class_t *lua_class,
                                         const char *name, int ud)
 {
     void *ref;
-    bool disconnected;
-
-    fprintf(stderr, "[CLASS_DISCONNECT] class='%s' signal='%s' arg_type='%s'\n",
-            lua_class->name, name, lua_typename(L, lua_type(L, ud)));
-
     luaA_checkfunction(L, ud);
     ref = (void *) lua_topointer(L, ud);
-
-    disconnected = signal_disconnect_awm(&lua_class->signals, name, ref);
-    fprintf(stderr, "[CLASS_DISCONNECT] disconnect %s for signal '%s' on class '%s'\n",
-            disconnected ? "SUCCEEDED" : "FAILED", name, lua_class->name);
-
-    if (disconnected)
+    if (signal_disconnect(&lua_class->signals, name, ref))
         luaA_object_unref(L, (void *) ref);
     lua_remove(L, ud);
 }
@@ -441,21 +345,6 @@ void
 luaA_class_emit_signal(lua_State *L, lua_class_t *lua_class,
                        const char *name, int nargs)
 {
-    signal_t *sig;
-
-    /* Check if there are any handlers */
-    sig = signal_array_getbyname(&lua_class->signals, name);
-    if (sig && sig->ref_count > 0) {
-        fprintf(stderr, "[CLASS_EMIT] Found %zu handlers for '%s' on class '%s'\n",
-                sig->ref_count, name, lua_class->name ? lua_class->name : "(null)");
-    } else {
-        fprintf(stderr, "[CLASS_EMIT] No handlers for '%s' on class '%s', skipping\n",
-                name, lua_class->name ? lua_class->name : "(null)");
-        /* Remove args from stack that signal_object_emit would have removed */
-        lua_pop(L, nargs);
-        return;
-    }
-
     signal_object_emit(L, &lua_class->signals, name, nargs);
 }
 
@@ -604,40 +493,29 @@ luaA_class_newindex(lua_State *L)
 {
     lua_class_t *class;
     lua_class_property_t *prop;
-    const char *key = luaL_checkstring(L, 2);
-
-    fprintf(stderr, "[CLASS_NEWINDEX] Called with key='%s'\n", key);
 
     /* Try to use metatable first. */
     if(luaA_usemetatable(L, 1, 2))
-    {
-        fprintf(stderr, "[CLASS_NEWINDEX] Found '%s' in metatable, returning\n", key);
         return 1;
-    }
 
     class = luaA_class_get(L, 1);
-    fprintf(stderr, "[CLASS_NEWINDEX] class=%s\n", class ? class->name : "NULL");
 
     prop = luaA_class_property_get(L, class, 2);
 
     /* Property does exist and has a newindex callback */
     if(prop)
     {
-        fprintf(stderr, "[CLASS_NEWINDEX] Property '%s' found, has newindex=%d\n",
-                key, prop->newindex != NULL);
         if(prop->newindex)
             return prop->newindex(L, luaA_checkudata(L, 1, class));
     }
     else
     {
-        fprintf(stderr, "[CLASS_NEWINDEX] Property '%s' NOT found in class\n", key);
         if(class->newindex_miss_handler != LUA_REFNIL)
             return luaA_call_handler(L, class->newindex_miss_handler);
         if(class->newindex_miss_property)
             return class->newindex_miss_property(L, luaA_checkudata(L, 1, class));
     }
 
-    fprintf(stderr, "[CLASS_NEWINDEX] No handler for '%s', returning 0\n", key);
     return 0;
 }
 
@@ -676,6 +554,45 @@ luaA_class_new(lua_State *L, lua_class_t *lua_class)
     }
 
     return 1;
+}
+
+/* somewm compatibility functions */
+
+/** Store a function reference in the registry.
+ * \param L The Lua VM state.
+ * \param idx The function index on the stack.
+ * \param ref Pointer to store the reference.
+ * \return 0.
+ */
+int
+luaA_registerfct(lua_State *L, int idx, int *ref)
+{
+    luaA_checkfunction(L, idx);
+    lua_pushvalue(L, idx);
+    if (*ref != LUA_REFNIL)
+        luaL_unref(L, LUA_REGISTRYINDEX, *ref);
+    *ref = luaL_ref(L, LUA_REGISTRYINDEX);
+    return 0;
+}
+
+/** Print a deprecation warning.
+ * \param L The Lua VM state.
+ * \param message The deprecation message.
+ */
+void
+luaA_deprecate(lua_State *L, const char *message)
+{
+    lua_Debug ar;
+    if(lua_getstack(L, 2, &ar))
+    {
+        lua_getinfo(L, "Sl", &ar);
+        if(ar.source && ar.currentline > 0)
+        {
+            warn("%s:%d: %s", ar.source, ar.currentline, message);
+            return;
+        }
+    }
+    warn("%s", message);
 }
 
 #undef CONNECTED_SUFFIX
