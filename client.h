@@ -308,7 +308,7 @@ client_send_close(Client *c)
 	fprintf(stderr, "\n[CLIENT_SEND_CLOSE] ==========================================\n");
 	fprintf(stderr, "[CLIENT_SEND_CLOSE] client_send_close() called\n");
 	fprintf(stderr, "[CLIENT_SEND_CLOSE] Client ptr: %p\n", (void*)c);
-	fprintf(stderr, "[CLIENT_SEND_CLOSE] Client type: %d\n", c->client_type);
+	fprintf(stderr, "[CLIENT_SEND_CLOSE] Client type: %u\n", c->client_type);
 #ifdef XWAYLAND
 	if (client_is_x11(c)) {
 		fprintf(stderr, "[CLIENT_SEND_CLOSE] X11/XWayland client - calling wlr_xwayland_surface_close()\n");

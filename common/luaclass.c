@@ -377,16 +377,15 @@ void
 luaA_class_connect_signal_from_stack(lua_State *L, lua_class_t *lua_class,
                                      const char *name, int ud)
 {
-    char *buf;
     lua_Debug ar;
     void *func_ptr;
+    size_t buf_len = a_strlen(name) + a_strlen(CONNECTED_SUFFIX) + 1;
+    char buf[buf_len];
 
     luaA_checkfunction(L, ud);
 
     /* Duplicate the function in the stack */
     lua_pushvalue(L, ud);
-
-    buf = p_alloca(char, a_strlen(name) + a_strlen(CONNECTED_SUFFIX) + 1);
 
     /* Create a new signal to notify there is a global connection. */
     sprintf(buf, "%s%s", name, CONNECTED_SUFFIX);

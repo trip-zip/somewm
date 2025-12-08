@@ -496,7 +496,7 @@ drawin_emit_button_signals(lua_State *L, drawin_t *drawin, uint32_t button,
 	int matched;
 	int i;
 	button_t *btn;
-	bool button_matches;
+	bool btn_matches;
 	bool mods_match;
 
 	signal_name = is_press ? "press" : "release";
@@ -513,18 +513,18 @@ drawin_emit_button_signals(lua_State *L, drawin_t *drawin, uint32_t button,
 	for (i = 0; i < drawin->buttons.len; i++) {
 		btn = drawin->buttons.tab[i];
 
-		fprintf(stderr, "[BUTTON_ARRAY] Button %d: button=%d modifiers=0x%x (checking against button=%u mods=0x%x)\n",
+		fprintf(stderr, "[BUTTON_ARRAY] Button %d: button=%u modifiers=0x%x (checking against button=%u mods=0x%x)\n",
 		        i, btn->button, btn->modifiers, translated_button, masked_mods);
 
 		/* Match button number (0 = any button) - use translated button code */
-		button_matches = (btn->button == 0 || btn->button == translated_button);
+		btn_matches = (btn->button == 0 || btn->button == translated_button);
 
 		/* Match modifiers (BUTTON_MODIFIER_ANY = any modifiers, otherwise exact match)
 		 * This matches AwesomeWM's logic: modifiers == 0 means "NO modifiers", not "any modifiers" */
 		mods_match = (btn->modifiers == BUTTON_MODIFIER_ANY || btn->modifiers == masked_mods);
 
-		if (button_matches && mods_match) {
-			fprintf(stderr, "[BUTTON_ARRAY] Button %d MATCHED (btn->button=%d btn->modifiers=0x%x)\n",
+		if (btn_matches && mods_match) {
+			fprintf(stderr, "[BUTTON_ARRAY] Button %d MATCHED (btn->button=%u btn->modifiers=0x%x)\n",
 			        i, btn->button, btn->modifiers);
 
 			/* Push button object */
@@ -664,7 +664,7 @@ client_emit_button_signals(lua_State *L, int client_idx, client_t *c, uint32_t b
 	int i;
 	int abs_client_idx;
 	button_t *btn;
-	bool button_matches;
+	bool btn_matches;
 	bool mods_match;
 
 	signal_name = is_press ? "press" : "release";
@@ -685,16 +685,16 @@ client_emit_button_signals(lua_State *L, int client_idx, client_t *c, uint32_t b
 		btn = c->buttons.tab[i];
 
 		/* Match button number (0 = any button) - use translated button code */
-		button_matches = (btn->button == 0 || btn->button == translated_button);
+		btn_matches = (btn->button == 0 || btn->button == translated_button);
 
 		/* Match modifiers (BUTTON_MODIFIER_ANY = any modifiers, otherwise exact match) */
 		mods_match = (btn->modifiers == BUTTON_MODIFIER_ANY || btn->modifiers == masked_mods);
 
 		fprintf(stderr, "[BUTTON_MATCH] Button[%d]: btn->button=%u btn->mods=0x%x match=%s\n",
 		        i, btn->button, btn->modifiers,
-		        (button_matches && mods_match) ? "YES" : "NO");
+		        (btn_matches && mods_match) ? "YES" : "NO");
 
-		if (button_matches && mods_match) {
+		if (btn_matches && mods_match) {
 			fprintf(stderr, "[BUTTON_MATCH] MATCHED! Emitting '%s' signal on button object\n", signal_name);
 			fprintf(stderr, "[BUTTON_PUSH] Pushing button[%d] btn=%p button=%u mods=0x%x\n",
 			        i, (void*)btn, btn->button, btn->modifiers);
