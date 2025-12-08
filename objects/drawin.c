@@ -697,38 +697,6 @@ luaA_drawin_get_opacity(lua_State *L)
 	return 1;
 }
 
-/** drawin.opacity - Set opacity
- * Applies transparency to the drawin's scene buffer using wlroots compositing.
- * \param L The Lua VM state.
- * \return Number of elements pushed on stack.
- */
-static int
-luaA_drawin_set_opacity(lua_State *L)
-{
-	drawin_t *drawin = luaA_checkdrawin(L, 1);
-	double opacity;
-
-	if (lua_isnil(L, 2)) {
-		/* nil = unset, restore to fully opaque */
-		drawin->opacity = -1;
-		if (drawin->scene_buffer)
-			wlr_scene_buffer_set_opacity(drawin->scene_buffer, 1.0f);
-	} else {
-		opacity = luaL_checknumber(L, 2);
-		if (opacity < 0 || opacity > 1)
-			return luaL_error(L, "opacity must be between 0 and 1");
-		drawin->opacity = opacity;
-		if (drawin->scene_buffer)
-			wlr_scene_buffer_set_opacity(drawin->scene_buffer, (float)opacity);
-	}
-
-	lua_pushvalue(L, 1);  /* Push drawin for signal */
-	luaA_object_emit_signal(L, -1, "property::opacity", 0);
-	lua_pop(L, 1);
-
-	return 0;
-}
-
 /** drawin.cursor - Get cursor name */
 static int
 luaA_drawin_get_cursor(lua_State *L)
@@ -1828,9 +1796,33 @@ static int luaA_drawin_get_opacity_wrapper(lua_State *L, lua_object_t *obj) {
 	(void)obj;
 	return luaA_drawin_get_opacity(L);
 }
+/** Set drawin opacity via wrapper (called by class system).
+ * Stack: [..., value]  (value is at top of stack)
+ */
 static int luaA_drawin_set_opacity_wrapper(lua_State *L, lua_object_t *obj) {
-	(void)obj;
-	return luaA_drawin_set_opacity(L);
+	drawin_t *drawin = (drawin_t *)obj;
+	double opacity;
+
+	if (lua_isnil(L, -1)) {
+		/* nil = unset, restore to fully opaque */
+		drawin->opacity = -1;
+		if (drawin->scene_buffer)
+			wlr_scene_buffer_set_opacity(drawin->scene_buffer, 1.0f);
+	} else {
+		opacity = luaL_checknumber(L, -1);
+		if (opacity < 0 || opacity > 1)
+			return luaL_error(L, "opacity must be between 0 and 1");
+		drawin->opacity = opacity;
+		if (drawin->scene_buffer)
+			wlr_scene_buffer_set_opacity(drawin->scene_buffer, (float)opacity);
+	}
+
+	/* Emit signal - push drawin to top of stack first */
+	luaA_object_push(L, drawin);
+	luaA_object_emit_signal(L, -1, "property::opacity", 0);
+	lua_pop(L, 1);
+
+	return 0;
 }
 static int luaA_drawin_get_border_width_wrapper(lua_State *L, lua_object_t *obj) {
 	(void)obj;
