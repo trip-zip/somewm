@@ -257,15 +257,13 @@ int
 luaA_key_check_and_emit(uint32_t mods, uint32_t keycode, xkb_keysym_t sym, xkb_keysym_t base_sym)
 {
 	xkb_keysym_t lower_base = xkb_keysym_to_lower(base_sym);
+	int i;
 
 	if (!global_L)
 		return 0;
 
-	fprintf(stderr, "[KEY_CHECK] mods=0x%04x keycode=%u sym=0x%x base_sym=0x%x lower_base=0x%x keys_count=%d\n",
-	        mods, keycode, sym, base_sym, lower_base, globalconf.keys.len);
-
 	/* Iterate through key objects in globalconf.keys */
-	for (int i = 0; i < globalconf.keys.len; i++) {
+	for (i = 0; i < globalconf.keys.len; i++) {
 		keyb_t *key = globalconf.keys.tab[i];
 		int keycode_match = 0;
 		int keysym_match = 0;
@@ -284,14 +282,11 @@ luaA_key_check_and_emit(uint32_t mods, uint32_t keycode, xkb_keysym_t sym, xkb_k
 
 		/* AwesomeWM pattern: match if mods match AND (keycode matches OR keysym matches) */
 		if (key->modifiers == mods && (keycode_match || keysym_match)) {
-			fprintf(stderr, "[KEY_MATCH] Found match: key[%d] mods=0x%04x keysym=0x%x keycode=%u\n",
-			        i, key->modifiers, key->keysym, key->keycode);
 			/* Push key object onto stack and emit signal using AwesomeWM's proper function */
 			luaA_object_push(global_L, key);
 			luaA_awm_object_emit_signal(global_L, -1, "press", 0);
 			lua_pop(global_L, 1);
 
-			fprintf(stderr, "[KEY_MATCH] Signal emitted for key[%d]\n", i);
 			/* Return after emitting - no need for further processing */
 			return 1;
 		}

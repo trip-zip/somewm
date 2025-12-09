@@ -1329,9 +1329,6 @@ drawin_border_refresh_single(drawin_t *d)
 void
 drawin_refresh(void)
 {
-	fprintf(stderr, "[DRAWIN_REFRESH] Processing %d visible drawins\n",
-	        globalconf.drawins.len);
-
 	foreach(item, globalconf.drawins)
 	{
 		drawin_t *d = *item;
@@ -1341,8 +1338,6 @@ drawin_refresh(void)
 		 * In Wayland, geometry already applied via wlr_scene_node_set_position
 		 * in luaA_drawin_set_geometry(), so just clear the flag */
 		if (d->geometry_dirty) {
-			fprintf(stderr, "[DRAWIN_REFRESH] Clearing geometry_dirty for drawin %p\n",
-			        (void*)d);
 			d->geometry_dirty = false;
 		}
 

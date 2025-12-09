@@ -6,6 +6,7 @@
  */
 
 /* Need complete client_t definition for inline functions */
+#include <assert.h>
 #include "somewm_types.h"  /* For Client typedef and Monitor */
 #include "objects/client.h" /* For complete client_t definition */
 
@@ -23,9 +24,12 @@ static inline struct wlr_surface *
 client_surface(Client *c)
 {
 #ifdef XWAYLAND
-	if (client_is_x11(c))
+	if (client_is_x11(c)) {
+		assert(c->surface.xwayland != NULL);
 		return c->surface.xwayland->surface;
+	}
 #endif
+	assert(c->surface.xdg != NULL);
 	return c->surface.xdg->surface;
 }
 

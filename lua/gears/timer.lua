@@ -286,7 +286,6 @@ end
 -- @staticfct gears.timer.run_delayed_calls_now
 -- @noreturn
 function timer.run_delayed_calls_now()
-    io.stderr:write(string.format("[RUN_DELAYED] Executing %d callbacks\n", #delayed_calls))
     for _, callback in ipairs(delayed_calls) do
         protected_call(unpack(callback))
     end

@@ -1410,7 +1410,7 @@ createnotify(struct wl_listener *listener, void *data)
 	LISTEN(&toplevel->base->surface->events.unmap, &c->unmap, unmapnotify);
 	LISTEN(&toplevel->events.destroy, &c->destroy, destroynotify);
 	LISTEN(&toplevel->events.request_fullscreen, &c->request_fullscreen, fullscreennotify);
-	LISTEN(&toplevel->events.request_fullscreen, &c->maximize, maximizenotify);
+	LISTEN(&toplevel->events.request_maximize, &c->maximize, maximizenotify);
 	LISTEN(&toplevel->events.set_title, &c->set_title, updatetitle);
 
 	/* Note: property_register_wayland_listeners() is called in mapnotify() after
@@ -1681,6 +1681,8 @@ destroynotify(struct wl_listener *listener, void *data)
 	bool already_unmanaged;
 	int i;
 
+	fprintf(stderr, "[XWAYLAND] destroynotify: client=%p type=%d\n", (void*)c, c->client_type);
+
 	/* Safety: If Lua state destroyed during cleanup, skip client_unmanage()
 	 * which emits signals. This should never happen with correct cleanup
 	 * order, but guards against race conditions. */
@@ -1696,11 +1698,22 @@ destroynotify(struct wl_listener *listener, void *data)
 			wl_list_remove(&c->configure.link);
 			wl_list_remove(&c->dissociate.link);
 			wl_list_remove(&c->set_hints.link);
+			/* If associate was called, map/unmap listeners need cleanup */
+			if (c->map.link.prev && c->map.link.next) {
+				wl_list_remove(&c->map.link);
+				wl_list_remove(&c->unmap.link);
+			}
+			/* Note: commit listener is NOT registered for XWayland clients,
+			 * so no cleanup needed here. See mapnotify(). */
 		} else
 #endif
 		{
 			wl_list_remove(&c->initial_commit.link);
-			wl_list_remove(&c->commit.link);
+			/* commit.link is removed in unmapnotify for XDG clients.
+			 * Only remove here if unmapnotify didn't run (c->scene still set). */
+			if (c->scene) {
+				wl_list_remove(&c->commit.link);
+			}
 			wl_list_remove(&c->map.link);
 			wl_list_remove(&c->unmap.link);
 			wl_list_remove(&c->maximize.link);
@@ -1740,11 +1753,24 @@ destroynotify(struct wl_listener *listener, void *data)
 		wl_list_remove(&c->configure.link);
 		wl_list_remove(&c->dissociate.link);
 		wl_list_remove(&c->set_hints.link);
+		/* If associate was called, map/unmap listeners were registered.
+		 * Check if they're still active (dissociate wasn't called) by checking
+		 * if the list link is part of a list (non-null prev/next). */
+		if (c->map.link.prev && c->map.link.next) {
+			wl_list_remove(&c->map.link);
+			wl_list_remove(&c->unmap.link);
+		}
+		/* Note: commit listener is NOT registered for XWayland clients,
+		 * so no cleanup needed here. See mapnotify(). */
 	} else
 #endif
 	{
 		wl_list_remove(&c->initial_commit.link);
-		wl_list_remove(&c->commit.link);
+		/* commit.link is removed in unmapnotify for XDG clients.
+		 * Only remove here if unmapnotify didn't run (c->scene still set). */
+		if (c->scene) {
+			wl_list_remove(&c->commit.link);
+		}
 		wl_list_remove(&c->map.link);
 		wl_list_remove(&c->unmap.link);
 		wl_list_remove(&c->maximize.link);
@@ -2105,25 +2131,29 @@ void
 keypress(struct wl_listener *listener, void *data)
 {
 	int i;
+	uint32_t keycode;
+	const xkb_keysym_t *syms;
+	int nsyms;
+	int handled = 0;
+	uint32_t mods;
+	xkb_keysym_t base_sym;
 	/* This event is raised when a key is pressed or released. */
 	KeyboardGroup *group = wl_container_of(listener, group, key);
 	struct wlr_keyboard_key_event *event = data;
 
 	/* Translate libinput keycode -> xkbcommon */
-	uint32_t keycode = event->keycode + 8;
+	keycode = event->keycode + 8;
 	/* Get a list of keysyms based on the keymap for this keyboard */
-	const xkb_keysym_t *syms;
-	int nsyms = xkb_state_key_get_syms(
+	nsyms = xkb_state_key_get_syms(
 			group->wlr_group->keyboard.xkb_state, keycode, &syms);
 
-	int handled = 0;
-	uint32_t mods = wlr_keyboard_get_modifiers(&group->wlr_group->keyboard);
+	mods = wlr_keyboard_get_modifiers(&group->wlr_group->keyboard);
 
 	/* Get the base keysym (level 0, ignoring Shift/Lock modifiers).
 	 * This is what the key produces without any modifiers applied.
 	 * We use this for keybinding matching so that users can bind to
 	 * "2" instead of "at" when using Shift+2. */
-	xkb_keysym_t base_sym = xkb_state_key_get_one_sym(
+	base_sym = xkb_state_key_get_one_sym(
 			group->wlr_group->keyboard.xkb_state, keycode);
 	/* If Shift or Lock is active, get the unmodified keysym */
 	if (mods & (WLR_MODIFIER_SHIFT | WLR_MODIFIER_CAPS)) {
@@ -2266,20 +2296,36 @@ mapnotify(struct wl_listener *listener, void *data)
 	lua_State *L;
 	tag_t *tag;
 
+	fprintf(stderr, "[XWAYLAND] mapnotify: client=%p type=%d\n", (void*)c, c->client_type);
 
 	/* Create scene tree for this client and its border */
 	c->scene = client_surface(c)->data = wlr_scene_tree_create(layers[LyrTile]);
+	fprintf(stderr, "[XWAYLAND] mapnotify: created scene tree=%p\n", (void*)c->scene);
 	/* Enabled later by a call to arrange() */
 	wlr_scene_node_set_enabled(&c->scene->node, client_is_unmanaged(c));
 	c->scene_surface = c->client_type == XDGShell
 			? wlr_scene_xdg_surface_create(c->scene, c->surface.xdg)
 			: wlr_scene_subsurface_tree_create(c->scene, client_surface(c));
+
+	/* Handle scene surface creation failure (can happen with XWayland/Electron apps) */
+	if (!c->scene_surface) {
+		warn("Failed to create scene surface for client (type=%d)", c->client_type);
+		wlr_scene_node_destroy(&c->scene->node);
+		c->scene = NULL;
+		client_surface(c)->data = NULL;
+		return;
+	}
+
 	c->scene->node.data = c->scene_surface->node.data = c;
 
 	/* Register commit listener AFTER wlr_scene_xdg_surface_create() so our listener
 	 * fires AFTER wlroots' internal surface_reconfigure() which resets opacity to 1.0.
-	 * This allows our compositor-controlled opacity to take effect. */
-	LISTEN(&client_surface(c)->events.commit, &c->commit, commitnotify);
+	 * This allows our compositor-controlled opacity to take effect.
+	 * Only for XDG clients - commitnotify references XDG-specific fields.
+	 * XWayland uses configurex11 for resize, not commits. */
+	if (c->client_type == XDGShell) {
+		LISTEN(&client_surface(c)->events.commit, &c->commit, commitnotify);
+	}
 
 	client_get_geometry(c, &c->geometry);
 
@@ -3898,6 +3944,11 @@ unmapnotify(struct wl_listener *listener, void *data)
 	/* Called when the surface is unmapped, and should no longer be shown. */
 	Client *c = wl_container_of(listener, c, unmap);
 
+	/* Safety: If scene was never created (mapnotify failed), nothing to clean up */
+	if (!c->scene) {
+		return;
+	}
+
 	/* Safety: If Lua destroyed during cleanup, skip Lua-dependent operations */
 	if (!globalconf_L) {
 		wlr_scene_node_destroy(&c->scene->node);
@@ -3926,7 +3977,14 @@ unmapnotify(struct wl_listener *listener, void *data)
 		 * This avoids trying to run XCB operations on windows that are already being torn down. */
 	}
 
+	/* Remove commit listener before destroying scene - only registered for XDG clients.
+	 * Must be done before surface destruction as wlroots asserts listener lists are empty. */
+	if (c->client_type == XDGShell) {
+		wl_list_remove(&c->commit.link);
+	}
+
 	wlr_scene_node_destroy(&c->scene->node);
+	c->scene = NULL;  /* Mark as cleaned up so destroynotify won't double-remove */
 	printstatus();
 	motionnotify(0, NULL, 0, 0, 0, 0);
 }
@@ -4380,9 +4438,17 @@ void
 associatex11(struct wl_listener *listener, void *data)
 {
 	Client *c = wl_container_of(listener, c, associate);
+	struct wlr_surface *surface = client_surface(c);
+	fprintf(stderr, "[XWAYLAND] associatex11: client=%p surface=%p\n", (void*)c, (void*)surface);
 
-	LISTEN(&client_surface(c)->events.map, &c->map, mapnotify);
-	LISTEN(&client_surface(c)->events.unmap, &c->unmap, unmapnotify);
+	if (!surface) {
+		fprintf(stderr, "[XWAYLAND] ERROR: associatex11 called with NULL surface!\n");
+		return;
+	}
+
+	LISTEN(&surface->events.map, &c->map, mapnotify);
+	LISTEN(&surface->events.unmap, &c->unmap, unmapnotify);
+	fprintf(stderr, "[XWAYLAND] associatex11: registered map/unmap listeners OK\n");
 }
 
 void
@@ -4419,6 +4485,7 @@ createnotifyx11(struct wl_listener *listener, void *data)
 	Client *c;
 	lua_State *L;
 
+	fprintf(stderr, "[XWAYLAND] createnotifyx11: xsurface=%p window_id=%u\n", (void*)xsurface, xsurface->window_id);
 	L = globalconf_get_lua_State();
 
 	/* Create Lua client object (matches AwesomeWM client_manage line 2138) */
@@ -4429,11 +4496,14 @@ createnotifyx11(struct wl_listener *listener, void *data)
 	xsurface->data = c;
 	c->surface.xwayland = xsurface;
 	c->client_type = X11;
+	/* Set the window ID for EWMH/X11 property lookups */
+	c->window = xsurface->window_id;
 	c->bw = client_is_unmanaged(c) ? 0 : get_border_width();
 
-	/* Check EWMH hints from XWayland client (AwesomeWM pattern)
-	 * This reads _NET_WM_STATE, _NET_WM_DESKTOP, _NET_WM_WINDOW_TYPE, etc. */
-	ewmh_client_check_hints(c);
+	/* NOTE: Do NOT call ewmh_client_check_hints() here!
+	 * At this point the XWayland surface exists but may not be fully initialized.
+	 * Making XCB property queries here can interfere with the XWayland protocol.
+	 * EWMH hints will be read in mapnotify() when the surface is ready. */
 
 	/* Register XWayland event listeners */
 	LISTEN(&xsurface->events.associate, &c->associate, associatex11);
@@ -4460,6 +4530,7 @@ void
 dissociatex11(struct wl_listener *listener, void *data)
 {
 	Client *c = wl_container_of(listener, c, dissociate);
+	fprintf(stderr, "[XWAYLAND] dissociatex11: client=%p\n", (void*)c);
 	wl_list_remove(&c->map.link);
 	wl_list_remove(&c->unmap.link);
 }
