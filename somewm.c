@@ -1395,6 +1395,10 @@ createnotify(struct wl_listener *listener, void *data)
 	c = client_new(L);
 	/* client_new() leaves the client on the Lua stack at index -1 */
 
+	/* Initialize opacity to -1 (unset) so commitnotify doesn't apply 0% opacity.
+	 * -1 means "use default" (fully opaque). 0 would mean fully transparent. */
+	c->opacity = -1;
+
 	/* Link to Wayland surface (adapts X11 window linkage to Wayland) */
 	toplevel->base->data = c;
 	c->surface.xdg = toplevel->base;
