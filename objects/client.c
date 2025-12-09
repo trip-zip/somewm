@@ -5060,6 +5060,37 @@ client_checker(client_t *c)
     return true;
 }
 
+/** Get an X property on a client (stub for Wayland compatibility).
+ * On Wayland, X properties don't exist - always returns nil.
+ * This allows AwesomeWM configs using awful.client.property.persist() to load
+ * without errors, even though the persistence mechanism doesn't apply.
+ *
+ * \param L The Lua VM state.
+ * \return Number of elements pushed on stack (1 - nil).
+ */
+static int
+luaA_client_get_xproperty(lua_State *L)
+{
+    /* X properties don't exist on Wayland - return nil */
+    lua_pushnil(L);
+    return 1;
+}
+
+/** Set an X property on a client (stub for Wayland compatibility).
+ * On Wayland, X properties don't exist - silently ignored.
+ * This allows AwesomeWM configs using awful.client.property.persist() to load
+ * without errors, even though the persistence mechanism doesn't apply.
+ *
+ * \param L The Lua VM state.
+ * \return Number of elements pushed on stack (0).
+ */
+static int
+luaA_client_set_xproperty(lua_State *L)
+{
+    /* X properties don't exist on Wayland - no-op */
+    return 0;
+}
+
 void
 client_class_setup(lua_State *L)
 {
@@ -5093,6 +5124,8 @@ client_class_setup(lua_State *L)
         { "titlebar_bottom", luaA_client_titlebar_bottom },
         { "titlebar_left", luaA_client_titlebar_left },
         { "get_icon", luaA_client_get_some_icon },
+        { "get_xproperty", luaA_client_get_xproperty },
+        { "set_xproperty", luaA_client_set_xproperty },
         { NULL, NULL }
     };
 
