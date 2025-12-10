@@ -129,9 +129,14 @@ make
 # System-wide installation
 sudo make install
 
-# User-local installation
+# User-local installation (no root required)
 make install-local
+
+# Add session to display manager (SDDM, GDM, etc.)
+sudo make install-session
 ```
+
+Note: Most display managers only look for session files in `/usr/share/wayland-sessions/`. The `install-session` target copies the desktop file there so somewm appears in your login screen's session list.
 
 ## Running
 

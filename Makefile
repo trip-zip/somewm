@@ -156,6 +156,11 @@ install-local:
 	$(MAKE) clean
 	$(MAKE) somewm somewm-client DATADIR=$(HOME)/.local/share SYSCONFDIR=$(HOME)/.local/etc
 	$(MAKE) install PREFIX=$(HOME)/.local DATADIR=$(HOME)/.local/share SYSCONFDIR=$(HOME)/.local/etc
+install-session:
+	mkdir -p /usr/share/wayland-sessions
+	cp -f somewm.desktop /usr/share/wayland-sessions/somewm.desktop
+	chmod 644 /usr/share/wayland-sessions/somewm.desktop
+
 uninstall:
 	rm -f $(DESTDIR)$(PREFIX)/bin/somewm $(DESTDIR)$(PREFIX)/bin/somewm-client \
 		$(DESTDIR)$(MANDIR)/man1/somewm.1 \

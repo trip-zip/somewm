@@ -2,6 +2,6 @@
 Name=somewm
 Comment=AwesomeWM-inspired Wayland compositor based on dwl
 Exec=somewm
-TryExec=/usr/local/bin/somewm
+TryExec=somewm
 Type=Application
 DesktopNames=somewm
