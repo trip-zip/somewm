@@ -200,23 +200,24 @@ luaA_key_call(lua_State *L)
 	}
 
 
-	/* Check for keycode syntax (#num) */
+	/* Check for keycode syntax (#num) - AwesomeWM pattern */
 	if (key_str[0] == '#') {
 		k->keycode = atoi(key_str + 1);
-		k->keysym = k->keycode;
-	} else {
-		char keysym_name[64];
-
-		/* Parse as keysym name */
+		k->keysym = 0;  /* Keycode-only binding */
+	}
+	/* Single character - use ASCII/Unicode value directly as keysym (AwesomeWM pattern) */
+	else if (strlen(key_str) == 1) {
+		k->keysym = (xkb_keysym_t)key_str[0];
+		k->keycode = 0;
+	}
+	/* Named keysym - use xkb_keysym_from_name */
+	else {
 		k->keysym = xkb_keysym_from_name(key_str, XKB_KEYSYM_CASE_INSENSITIVE);
 		k->keycode = 0;
 
 		if (k->keysym == XKB_KEY_NoSymbol) {
-			xkb_keysym_get_name(k->keysym, keysym_name, sizeof(keysym_name));
 			return luaL_error(L, "Invalid keysym: %s", key_str);
 		}
-
-		xkb_keysym_get_name(k->keysym, keysym_name, sizeof(keysym_name));
 	}
 	lua_pop(L, 1);
 
