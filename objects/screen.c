@@ -364,24 +364,6 @@ luaA_screen_get_primary_screen(lua_State *L)
 	return NULL;
 }
 
-/** Set primary screen and emit signal if changed
- * \param L Lua state
- * \param screen New primary screen
- */
-static void
-luaA_screen_set_primary(lua_State *L, screen_t *screen)
-{
-	screen_t *old_primary = primary_screen;
-
-	if (old_primary == screen)
-		return;  /* No change */
-
-	primary_screen = screen;
-
-	/* Emit primary_changed signal */
-	luaA_emit_signal_global("screen::primary_changed");
-}
-
 /** Emit _added signal for all existing screens
  * This is called after rc.lua loads to trigger screen initialization
  */
@@ -944,34 +926,6 @@ luaA_screen_count(lua_State *L)
 {
 	lua_pushinteger(L, screen_count);
 	return 1;
-}
-
-/** screen.primary() - Get primary screen
- * \return Primary screen object or nil
- */
-static int
-luaA_screen_primary(lua_State *L)
-{
-	screen_t *primary = luaA_screen_get_primary_screen(L);
-	if (primary) {
-		luaA_screen_push(L, primary);
-	} else {
-		lua_pushnil(L);
-	}
-	return 1;
-}
-
-/** screen.set_primary(screen) - Set primary screen
- * \param screen Screen to set as primary
- */
-static int
-luaA_screen_set_primary_method(lua_State *L)
-{
-	screen_t *screen = luaA_checkscreen(L, 1);
-	if (screen) {
-		luaA_screen_set_primary(L, screen);
-	}
-	return 0;
 }
 
 /** screen._viewports() - Get viewport information for all monitors
@@ -1870,8 +1824,10 @@ static const luaL_Reg screen_methods[] = {
 	/* Class methods */
 	{ "count", luaA_screen_count },
 	{ "get", luaA_screen_get_by_index },
-	{ "primary", luaA_screen_primary },
-	{ "set_primary", luaA_screen_set_primary_method },
+	/* NOTE: "primary" is NOT a method - it's a property handled by __index.
+	 * AwesomeWM's screen.primary returns the primary screen object directly,
+	 * not a function. The __index metamethod (luaA_screen_module_index)
+	 * handles this at lines 1345-1358. */
 	{ "_viewports", luaA_screen_viewports },
 	{ "fake_add", luaA_screen_fake_add },
 	/* Module-level metamethods */
