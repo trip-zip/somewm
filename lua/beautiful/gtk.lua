@@ -1,243 +1,217 @@
 ---------------------------------------------------------------------------
---- Querying current GTK+ 3 theme via GtkStyleContext.
+--- Wayland-safe GTK theme variable provider.
+-- This module provides GTK theme colors without creating GTK windows,
+-- making it safe to use during Wayland compositor startup.
 --
--- @author Yauheni Kirylau &lt;yawghen@gmail.com&gt;
--- @copyright 2016-2017 Yauheni Kirylau
+-- It follows the same pattern as gears/xresources.lua:
+-- 1. Try to read from local config files
+-- 2. Fall back to environment variables
+-- 3. Fall back to sensible defaults
+--
+-- @author somewm contributors
 -- @themelib beautiful.gtk
 ---------------------------------------------------------------------------
-local get_dpi = require("beautiful.xresources").get_dpi
 local gears_debug = require("gears.debug")
-local gears_math = require("gears.math")
-local join = require("gears.table").join
-local unpack = unpack or table.unpack -- luacheck: globals unpack (compatibility with Lua 5.1)
-
 
 local gtk = {
     cached_theme_variables = nil
 }
 
+-- Default GTK theme colors (Adwaita Dark)
+-- These provide a sensible dark theme when GTK config is not available
+local defaults = {
+    -- Core colors
+    bg_color = "#353535ff",
+    fg_color = "#eeeeecff",
+    base_color = "#2d2d2dff",
+    text_color = "#eeeeecff",
+    selected_bg_color = "#215d9cff",
+    selected_fg_color = "#ffffffff",
 
-local function convert_gtk_channel_to_hex(channel_value)
-    return string.format("%02x", gears_math.round(channel_value * 255))
-end
+    -- Button colors
+    button_bg_color = "#444444ff",
+    button_fg_color = "#eeeeecff",
+    button_border_color = "#1c1c1cff",
+    button_border_radius = 5,
+    button_border_width = 1,
 
-local function convert_gtk_color_to_hex(gtk_color)
-    return "#" ..
-        convert_gtk_channel_to_hex(gtk_color.red) ..
-        convert_gtk_channel_to_hex(gtk_color.green) ..
-        convert_gtk_channel_to_hex(gtk_color.blue) ..
-        convert_gtk_channel_to_hex(gtk_color.alpha)
-end
+    -- Header button colors
+    header_button_bg_color = "#444444ff",
+    header_button_fg_color = "#eeeeecff",
+    header_button_border_color = "#1c1c1cff",
 
-local function lookup_gtk_color_to_hex(style_context, color_name)
-    local gtk_color = style_context:lookup_color(color_name)
-    if not gtk_color then
+    -- Menubar colors
+    menubar_bg_color = "#353535ff",
+    menubar_fg_color = "#eeeeecff",
+
+    -- Tooltip colors
+    tooltip_bg_color = "#353535ff",
+    tooltip_fg_color = "#eeeeecff",
+
+    -- OSD colors
+    osd_bg_color = "#353535ff",
+    osd_fg_color = "#eeeeecff",
+    osd_border_color = "#eeeeecff",
+
+    -- Window manager colors
+    wm_bg_color = "#353535ff",
+    wm_border_focused_color = "#215d9cff",
+    wm_border_unfocused_color = "#353535ff",
+    wm_title_focused_color = "#ffffffff",
+    wm_title_unfocused_color = "#eeeeecff",
+    wm_icons_focused_color = "#ffffffff",
+    wm_icons_unfocused_color = "#eeeeecff",
+
+    -- Status colors
+    error_color = "#cc0000ff",
+    error_bg_color = "#cc0000ff",
+    error_fg_color = "#ffffffff",
+    warning_color = "#f57900ff",
+    warning_bg_color = "#f57900ff",
+    warning_fg_color = "#ffffffff",
+    success_color = "#4e9a06ff",
+    success_bg_color = "#4e9a06ff",
+    success_fg_color = "#ffffffff",
+
+    -- Font settings
+    font_family = "Sans",
+    font_size = 10,
+}
+
+--- Parse a GTK settings.ini file
+-- @param path Path to settings.ini file
+-- @return Table of parsed settings or nil
+local function parse_gtk_settings_ini(path)
+    local file = io.open(path, "r")
+    if not file then
         return nil
     end
-    return convert_gtk_color_to_hex(gtk_color)
+
+    local settings = {}
+    for line in file:lines() do
+        -- Skip comments and section headers
+        if not line:match("^[#;%[]") and line:match("%S") then
+            local key, value = line:match("^%s*([^=]+)%s*=%s*(.+)%s*$")
+            if key and value then
+                settings[key:gsub("^%s*(.-)%s*$", "%1")] = value:gsub("^%s*(.-)%s*$", "%1")
+            end
+        end
+    end
+    file:close()
+    return settings
 end
 
-local function get_gtk_property(style_context, property_name)
-    local state = style_context:get_state()
-    local property = style_context:get_property(property_name, state)
-    if not property then
+--- Try to get GTK theme name from gsettings
+-- @return Theme name string or nil
+local function get_gtk_theme_from_gsettings()
+    local handle = io.popen("gsettings get org.gnome.desktop.interface gtk-theme 2>/dev/null")
+    if not handle then
         return nil
     end
-    return property.value
-end
-
-local function get_gtk_color_property_to_hex(style_context, property_name)
-    return convert_gtk_color_to_hex(
-        get_gtk_property(style_context, property_name)
-    )
-end
-
-local function read_gtk_color_properties_from_widget(gtk_widget, properties)
-    local style_context = gtk_widget:get_style_context()
-    local result = {}
-    for result_key, style_context_property in pairs(properties) do
-        result[result_key] = get_gtk_color_property_to_hex(
-            style_context, style_context_property
-        )
+    local result = handle:read("*a")
+    handle:close()
+    if result then
+        -- Remove quotes and whitespace
+        result = result:gsub("^%s*'?", ""):gsub("'?%s*$", "")
+        if result ~= "" then
+            return result
+        end
     end
-    return result
+    return nil
 end
 
+--- Try to detect if the theme is a dark theme
+-- @param theme_name GTK theme name
+-- @return true if dark theme, false otherwise
+local function is_dark_theme(theme_name)
+    if not theme_name then
+        return true  -- Default to dark
+    end
+    local name_lower = theme_name:lower()
+    return name_lower:match("dark") ~= nil or
+           name_lower:match("night") ~= nil or
+           name_lower:match("black") ~= nil
+end
+
+--- Get GTK theme variables
+-- This function provides GTK theme colors without creating GTK windows.
+-- Safe to call during Wayland compositor startup.
+-- @return Table of theme variables
 function gtk.get_theme_variables()
     if gtk.cached_theme_variables then
         return gtk.cached_theme_variables
     end
 
     local result = {}
-    local _gtk_status, Gtk = pcall(function()
-        local lgi = require('lgi')
-        return lgi.require('Gtk', '3.0')
-    end)
-    if not _gtk_status or not Gtk then
-        gears_debug.print_warning(
-            "Can't load GTK+3 introspection. "..
-            "Seems like GTK+3 is not installed or `lua-lgi` was built with an incompatible GTK+3 version."
-        )
-        return nil
-    end
-    local _window_status, window = pcall(function()
-        return Gtk.Window.new(Gtk.WindowType.TOPLEVEL)
-    end)
-    if not _window_status or not window then
-        gears_debug.print_warning(
-            "Can't create GTK+3 window. "..
-            "Seems like GTK+3 theme is not set correctly or `lua-lgi` was built with an incompatible GTK+3 version."
-        )
-        return nil
-    end
-    local style_context = window:get_style_context()
 
-    result = join(result, read_gtk_color_properties_from_widget(
-        window, {
-            bg_color="background-color",
-            fg_color="color",
-        }
-    ))
-    local label = Gtk.Label()
-    local label_style_context = label:get_style_context()
-    local gdk_scale = tonumber(os.getenv("GDK_SCALE") or 1.0)
-    local xrdb_scale = get_dpi() / 96
-    local pt_to_px_ratio = 1+1/3
-    result["font_size"] = get_gtk_property(
-        label_style_context, "font-size"
-    ) * gdk_scale / xrdb_scale / pt_to_px_ratio
-    result["font_family"] = get_gtk_property(
-        label_style_context, "font-family"
-    )[1]
-
-    result = join(result, read_gtk_color_properties_from_widget(
-        Gtk.Entry(), {
-            base_color="background-color",
-            text_color="color",
-        }
-    ))
-    result = join(result, read_gtk_color_properties_from_widget(
-        Gtk.ToggleButton(), {
-            selected_bg_color="background-color",
-            selected_fg_color="color",
-        }
-    ))
-    local button = Gtk.Button()
-    result = join(result, read_gtk_color_properties_from_widget(
-        button, {
-            button_bg_color="background-color",
-            button_fg_color="color",
-            button_border_color="border-color",
-        }
-    ))
-    local button_style_context = button:get_style_context()
-    for result_key, style_context_property in pairs({
-        button_border_radius="border-radius",
-        button_border_width="border-top-width",
-    }) do
-        local state = style_context:get_state()
-        local property = button_style_context:get_property(style_context_property, state)
-        result[result_key] = property.value
-        property:unset()
+    -- Copy defaults first
+    for k, v in pairs(defaults) do
+        result[k] = v
     end
 
-    local headerbar = Gtk.HeaderBar()
-    window:set_titlebar(headerbar)
-    result = join(result, read_gtk_color_properties_from_widget(
-        headerbar, {
-            menubar_bg_color="background-color",
-        }
-    ))
+    -- Try to read user's GTK settings
+    local home = os.getenv("HOME")
+    if home then
+        -- Try GTK 3 settings
+        local gtk3_settings = parse_gtk_settings_ini(home .. "/.config/gtk-3.0/settings.ini")
+        if gtk3_settings then
+            -- Extract theme name if available
+            local theme_name = gtk3_settings["gtk-theme-name"]
+            if theme_name then
+                gears_debug.print_warning("beautiful.gtk: Found GTK theme: " .. theme_name)
+            end
 
-    if result.menubar_bg_color and result.menubar_bg_color ~= "#00000000" then
-        headerbar:add(label)
-        result = join(result, read_gtk_color_properties_from_widget(
-            label, {
-                menubar_fg_color="color",
-            }
-        ))
-    end
-
-    headerbar:add(button)
-    result = join(result, read_gtk_color_properties_from_widget(
-        button, {
-            header_button_bg_color="background-color",
-            header_button_border_color="border-color",
-        }
-    ))
-    if result.header_button_bg_color and result.header_button_bg_color ~= "#00000000" then
-        result = join(result, read_gtk_color_properties_from_widget(
-            button, {
-                header_button_fg_color="color",
-            }
-        ))
-    end
-
-    local error_button = Gtk.Button()
-    error_button:get_style_context():add_class("destructive-action")
-    result = join(result, read_gtk_color_properties_from_widget(
-        error_button, {
-            error_bg_color="background-color",
-            error_fg_color="color",
-        }
-    ))
-
-    for _, color_data in ipairs({
-        {"bg_color", "theme_bg_color"},
-        {"fg_color", "theme_fg_color"},
-        {"base_color", "theme_base_color"},
-        {"text_color", "theme_text_color"},
-        {"selected_bg_color", "theme_selected_bg_color"},
-        {"selected_fg_color", "theme_selected_fg_color"},
-        --
-        {"tooltip_bg_color", "theme_tooltip_bg_color", "bg_color"},
-        {"tooltip_fg_color", "theme_tooltip_fg_color", "fg_color"},
-        {"osd_bg_color", "osd_bg", "tooltip_bg_color"},
-        {"osd_fg_color", "osd_fg", "tooltip_fg_color"},
-        {"osd_border_color", "osd_borders_color", "osd_fg_color"},
-        {"menubar_bg_color", "menubar_bg_color", "bg_color"},
-        {"menubar_fg_color", "menubar_fg_color", "fg_color"},
-        --
-        {"button_bg_color", "button_bg_color", "bg_color"},
-        {"button_fg_color", "button_fg_color", "fg_color"},
-        {"header_button_bg_color", "header_button_bg_color", "menubar_bg_color"},
-        {"header_button_fg_color", "header_button_fg_color", "menubar_fg_color"},
-        --
-        {"wm_bg_color", "wm_bg", "menubar_bg_color"},
-        {"wm_border_focused_color", "wm_border_focused", "selected_bg_color"},
-        {"wm_border_unfocused_color", "wm_border_unfocused", "wm_border", "menubar_bg_color"},
-        {"wm_title_focused_color", "wm_title_focused", "wm_title", "selected_fg_color"},
-        {"wm_title_unfocused_color", "wm_title_unfocused", "wm_unfocused_title", "menubar_fg_color"},
-        {"wm_icons_focused_color", "wm_icons_focused", "wm_title_focused_color", "selected_fg_color"},
-        {"wm_icons_unfocused_color", "wm_icons_unfocused", "wm_title_unfocused_color", "menubar_fg_color"},
-        --
-        {"error_color", "error_color"},
-        {"error_bg_color", "error_bg_color", "error_color"},
-        {"error_fg_color", "error_fg_color", "selected_fg_color"},
-        {"error_color", "error_color", "error_bg_color"},
-        {"warning_color", "warning_color"},
-        {"warning_bg_color", "warning_bg_color", "warning_color"},
-        {"warning_fg_color", "warning_fg_color", "selected_fg_color"},
-        {"warning_color", "warning_color", "warning_bg_color"},
-        {"success_color", "success_color"},
-        {"success_bg_color", "success_bg_color", "success_color"},
-        {"success_fg_color", "success_fg_color", "selected_fg_color"},
-        {"success_color", "success_color", "success_bg_color"},
-    }) do
-        local result_key, style_context_key, fallback_key, fallback_key2 = unpack(color_data)
-        result[result_key] = lookup_gtk_color_to_hex(style_context, style_context_key) or (
-            result[result_key] ~= "#00000000" and
-            result[result_key] or
-            result[fallback_key] or
-            result[fallback_key2] or
-            result[result_key]    -- <-- here is for case if it was meant to be a fully transparent color on purpose
-        )
-        if not result[result_key] then
-            gears_debug.print_warning("Can't read color '" .. style_context_key .. "' from GTK+3 theme.")
+            -- Extract font if available
+            if gtk3_settings["gtk-font-name"] then
+                local font = gtk3_settings["gtk-font-name"]
+                local family, size = font:match("^(.+)%s+(%d+)$")
+                if family and size then
+                    result.font_family = family
+                    result.font_size = tonumber(size) or 10
+                end
+            end
         end
     end
 
-    window:destroy()
+    -- Try gsettings for theme name
+    local gsettings_theme = get_gtk_theme_from_gsettings()
+    if gsettings_theme then
+        -- Adjust colors based on light/dark theme
+        if not is_dark_theme(gsettings_theme) then
+            -- Light theme colors (Adwaita Light)
+            result.bg_color = "#f6f5f4ff"
+            result.fg_color = "#2e3436ff"
+            result.base_color = "#ffffffff"
+            result.text_color = "#2e3436ff"
+            result.button_bg_color = "#e8e8e7ff"
+            result.button_fg_color = "#2e3436ff"
+            result.menubar_bg_color = "#f6f5f4ff"
+            result.menubar_fg_color = "#2e3436ff"
+            result.tooltip_bg_color = "#f6f5f4ff"
+            result.tooltip_fg_color = "#2e3436ff"
+            result.osd_bg_color = "#f6f5f4ff"
+            result.osd_fg_color = "#2e3436ff"
+            result.wm_bg_color = "#f6f5f4ff"
+            result.wm_title_focused_color = "#2e3436ff"
+            result.wm_title_unfocused_color = "#929595ff"
+        end
+    end
+
+    -- Allow environment variable overrides (SOMEWM_GTK_*)
+    local env_overrides = {
+        "bg_color", "fg_color", "base_color", "text_color",
+        "selected_bg_color", "selected_fg_color",
+        "button_bg_color", "button_fg_color",
+        "menubar_bg_color", "menubar_fg_color",
+    }
+    for _, key in ipairs(env_overrides) do
+        local env_name = "SOMEWM_GTK_" .. key:upper()
+        local env_value = os.getenv(env_name)
+        if env_value then
+            result[key] = env_value
+        end
+    end
+
     gtk.cached_theme_variables = result
     return result
 end
