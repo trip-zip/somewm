@@ -242,22 +242,8 @@ static inline void client_set_border_width_callback(void *ctx, uint16_t old_widt
     /* TODO: Implement border width change handling */
 }
 
-/* Key/button array stubs */
-static inline int luaA_key_array_get(void *L, int idx, void *keys) {
-    (void)L;
-    (void)idx;
-    (void)keys;
-    /* TODO: Implement key array getter */
-    return 0;
-}
-
-static inline void luaA_key_array_set(void *L, int idx1, int idx2, void *keys) {
-    (void)L;
-    (void)idx1;
-    (void)idx2;
-    (void)keys;
-    /* TODO: Implement key array setter */
-}
+/* Key/button array functions - now implemented in objects/key.c */
+/* See objects/key.h for declarations of luaA_key_array_set and luaA_key_array_get */
 
 /* Missing class/object stubs */
 typedef struct lua_class_t lua_class_t;

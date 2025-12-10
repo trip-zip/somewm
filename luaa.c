@@ -431,86 +431,12 @@ luaA_init(void)
 	/* Register somewm Lua modules */
 	luaA_signal_setup(globalconf_L);
 	key_class_setup(globalconf_L);  /* AwesomeWM key object class */
-
-	/* Setup tag class and verify */
-	printf("[DEBUG] Setting up tag class...\n");
 	tag_class_setup(globalconf_L);
-	lua_getglobal(globalconf_L, "tag");
-	printf("[DEBUG] tag global type: %s\n", lua_typename(globalconf_L, lua_type(globalconf_L, -1)));
-	lua_pop(globalconf_L, 1);
-
 	window_class_setup(globalconf_L);  /* Setup window base class first */
-
-	/* Setup client class and verify */
-	printf("[DEBUG] Setting up client class...\n");
 	client_class_setup(globalconf_L);
-	lua_getglobal(globalconf_L, "client");
-	printf("[DEBUG] client global type: %s\n", lua_typename(globalconf_L, lua_type(globalconf_L, -1)));
-	if (lua_istable(globalconf_L, -1)) {
-		lua_getfield(globalconf_L, -1, "get");
-		printf("[DEBUG] client.get type: %s\n", lua_typename(globalconf_L, lua_type(globalconf_L, -1)));
-		lua_pop(globalconf_L, 1);
-	}
-	lua_pop(globalconf_L, 1);
-
-	/* Setup screen class and verify */
-	printf("[DEBUG] Setting up screen class...\n");
 	screen_class_setup(globalconf_L);
-	lua_getglobal(globalconf_L, "screen");
-	printf("[DEBUG] screen global type: %s\n", lua_typename(globalconf_L, lua_type(globalconf_L, -1)));
-	if (lua_istable(globalconf_L, -1)) {
-		lua_getfield(globalconf_L, -1, "count");
-		printf("[DEBUG] screen.count type: %s\n", lua_typename(globalconf_L, lua_type(globalconf_L, -1)));
-		lua_pop(globalconf_L, 1);
-	}
-	lua_pop(globalconf_L, 1);
 	luaA_drawable_setup(globalconf_L);
-
-	/* Compare client (working) vs drawin (broken) class registration */
-	fprintf(stderr, "\n[LUAA_INIT] ========== CLASS COMPARISON ==========\n");
-	fprintf(stderr, "[LUAA_INIT] Comparing 'client' (WORKING) vs 'drawin' (BROKEN):\n\n");
-
-	lua_getglobal(globalconf_L, "client");
-	fprintf(stderr, "[LUAA_INIT] client: type=%s, is_table=%s, is_function=%s\n",
-	        lua_typename(globalconf_L, lua_type(globalconf_L, -1)),
-	        lua_istable(globalconf_L, -1) ? "YES" : "NO",
-	        lua_isfunction(globalconf_L, -1) ? "YES" : "NO");
-	if (lua_istable(globalconf_L, -1)) {
-		lua_getfield(globalconf_L, -1, "set_index_miss_handler");
-		fprintf(stderr, "[LUAA_INIT]   client.set_index_miss_handler: %s\n",
-		        lua_typename(globalconf_L, lua_type(globalconf_L, -1)));
-		lua_pop(globalconf_L, 1);
-
-		lua_getfield(globalconf_L, -1, "get");
-		fprintf(stderr, "[LUAA_INIT]   client.get: %s\n",
-		        lua_typename(globalconf_L, lua_type(globalconf_L, -1)));
-		lua_pop(globalconf_L, 1);
-
-		/* Check if client table is callable */
-		lua_getmetatable(globalconf_L, -1);
-		if (lua_istable(globalconf_L, -1)) {
-			lua_getfield(globalconf_L, -1, "__call");
-			fprintf(stderr, "[LUAA_INIT]   client metatable.__call: %s\n",
-			        lua_typename(globalconf_L, lua_type(globalconf_L, -1)));
-			lua_pop(globalconf_L, 1);
-		}
-		lua_pop(globalconf_L, 1);  /* Pop metatable or nil */
-	}
-	lua_pop(globalconf_L, 1);
-
-	fprintf(stderr, "[LUAA_INIT] =====================================\n\n");
-
 	luaA_drawin_setup(globalconf_L);
-
-	/* Now show drawin after setup */
-	fprintf(stderr, "\n[LUAA_INIT] ========== AFTER DRAWIN SETUP ==========\n");
-	lua_getglobal(globalconf_L, "drawin");
-	fprintf(stderr, "[LUAA_INIT] drawin: type=%s, is_table=%s, is_function=%s\n",
-	        lua_typename(globalconf_L, lua_type(globalconf_L, -1)),
-	        lua_istable(globalconf_L, -1) ? "YES" : "NO",
-	        lua_isfunction(globalconf_L, -1) ? "YES" : "NO");
-	lua_pop(globalconf_L, 1);
-	fprintf(stderr, "[LUAA_INIT] ==========================================\n\n");
 	luaA_timer_setup(globalconf_L);
 	luaA_spawn_setup(globalconf_L);
 	luaA_keybinding_setup(globalconf_L);
@@ -620,39 +546,23 @@ luaA_startup_error(const char *err)
 static int
 luaA_dofunction_on_error(lua_State *L)
 {
-	const char *err;
-
-	fprintf(stderr, "[ERROR_HANDLER] Called with error!\n");
-
 	/* Get the error message */
-	err = lua_tostring(L, -1);
+	const char *err = lua_tostring(L, -1);
 	if (!err)
 		err = "(error object is not a string)";
 
-	fprintf(stderr, "[ERROR_HANDLER] Error message: %s\n", err);
-
-	/* NOTE: AwesomeWM emits "debug::error" signal here,
-	 * but we simplify for now - errors are accumulated and shown later */
-
-	fprintf(stderr, "[ERROR_HANDLER] About to get debug global\n");
 	/* Add traceback using debug.traceback */
 	lua_getglobal(L, "debug");
-	fprintf(stderr, "[ERROR_HANDLER] Got debug global\n");
 	if (lua_istable(L, -1)) {
-		fprintf(stderr, "[ERROR_HANDLER] debug is a table\n");
 		lua_getfield(L, -1, "traceback");
-		fprintf(stderr, "[ERROR_HANDLER] Got traceback field\n");
 		if (lua_isfunction(L, -1)) {
-			fprintf(stderr, "[ERROR_HANDLER] traceback is a function, calling it\n");
 			lua_pushvalue(L, -3);  /* Push original error */
 			lua_pushinteger(L, 2);  /* Skip this function and caller */
 			/* Use pcall for safety - debug.traceback could fail */
 			if (lua_pcall(L, 2, 1, 0) == 0) {
-				fprintf(stderr, "[ERROR_HANDLER] traceback succeeded\n");
 				lua_remove(L, -2);      /* Remove debug table */
 				return 1;               /* Return error with traceback */
 			}
-			fprintf(stderr, "[ERROR_HANDLER] traceback failed\n");
 			/* If traceback itself failed, pop the error and fall through */
 			lua_pop(L, 1);
 		}
@@ -660,7 +570,6 @@ luaA_dofunction_on_error(lua_State *L)
 	}
 	lua_pop(L, 1);  /* Pop debug table or nil */
 
-	fprintf(stderr, "[ERROR_HANDLER] Returning fallback error\n");
 	/* Fallback: return original error if debug.traceback not available or failed */
 	return 1;
 }
@@ -684,11 +593,12 @@ luaA_loadrc(void)
 
 	/* Build config search path following AwesomeWM pattern:
 	 * 1. $XDG_CONFIG_HOME/somewm/rc.lua or ~/.config/somewm/rc.lua
-	 * 2. SYSCONFDIR/xdg/somewm/rc.lua (installed example)
-	 * 3. DATADIR/somewm/somewmrc.lua (installed fallback)
+	 * 2. ~/.config/awesome/rc.lua (AwesomeWM compatibility)
+	 * 3. SYSCONFDIR/xdg/somewm/rc.lua (installed example)
+	 * 4. DATADIR/somewm/somewmrc.lua (installed fallback)
 	 */
 
-	/* XDG user config */
+	/* XDG user config - somewm takes priority */
 	xdg_config_home = getenv("XDG_CONFIG_HOME");
 	if (xdg_config_home && xdg_config_home[0] != '\0') {
 		snprintf(xdg_config_path, sizeof(xdg_config_path), "%s/somewm/rc.lua", xdg_config_home);
@@ -699,6 +609,14 @@ luaA_loadrc(void)
 			snprintf(xdg_config_path, sizeof(xdg_config_path), "%s/.config/somewm/rc.lua", home);
 			config_paths[path_count++] = xdg_config_path;
 		}
+	}
+
+	/* AwesomeWM compatibility - check ~/.config/awesome/rc.lua */
+	home = getenv("HOME");
+	if (home && home[0] != '\0') {
+		static char awesome_config_path[512];
+		snprintf(awesome_config_path, sizeof(awesome_config_path), "%s/.config/awesome/rc.lua", home);
+		config_paths[path_count++] = awesome_config_path;
 	}
 
 	/* System-wide installed example config (XDG compliant) */
@@ -719,7 +637,6 @@ luaA_loadrc(void)
 
 	/* Try to load config file */
 	for (i = 0; config_paths[i] != NULL; i++) {
-		fprintf(stderr, "[CONFIG_LOAD] Trying config path %d: %s\n", i, config_paths[i]);
 		/* Use luaL_loadfile + lua_pcall with traceback for better errors */
 		load_result = luaL_loadfile(globalconf_L, config_paths[i]);
 		if (load_result != 0) {
@@ -729,8 +646,6 @@ luaA_loadrc(void)
 			/* Accumulate error for naughty notification */
 			luaA_startup_error(err);
 
-			fprintf(stderr, "[CONFIG_LOAD] Parse error loading %s: %s\n",
-				config_paths[i], err);
 			if (i == 0) {
 				fprintf(stderr, "somewm: error loading %s: %s\n",
 					config_paths[i], err);
@@ -739,7 +654,6 @@ luaA_loadrc(void)
 			lua_pop(globalconf_L, 1);
 			continue;
 		}
-		fprintf(stderr, "[CONFIG_LOAD] Successfully loaded file, now executing...\n");
 
 		/* Add config directory to package.path so require() can find local modules
 		 * (AwesomeWM compatibility - allows require("src.theme.user_variables")) */
@@ -765,8 +679,6 @@ luaA_loadrc(void)
 					config_dir, config_dir, old_path);
 				lua_setfield(globalconf_L, -2, "path");
 				lua_pop(globalconf_L, 1);  /* pop package table */
-
-				fprintf(stderr, "[CONFIG_LOAD] Added config directory to package.path: %s\n", config_dir);
 			}
 		}
 
@@ -778,41 +690,29 @@ luaA_loadrc(void)
 		lua_insert(globalconf_L, -2);   /* Insert error handler before chunk */
 
 		/* Execute with protected call using error handler */
-		fprintf(stderr, "[CONFIG_LOAD] About to call lua_pcall...\n");
 		if (lua_pcall(globalconf_L, 0, 0, -2) == 0) {
 			/* Success */
-			fprintf(stderr, "[CONFIG_LOAD] lua_pcall returned 0 (success)\n");
 			lua_pop(globalconf_L, 1);  /* Pop error handler */
-			fprintf(stderr, "[CONFIG_LOAD] Config executed successfully!\n");
 			printf("somewm: loaded Lua config from %s\n", config_paths[i]);
 
 			/* Automatically load IPC module for CLI support (somewm extension) */
-			fprintf(stderr, "[IPC_INIT] Loading awful.ipc module...\n");
 			lua_getglobal(globalconf_L, "require");
 			lua_pushstring(globalconf_L, "awful.ipc");
 			if (lua_pcall(globalconf_L, 1, 0, 0) != 0) {
 				fprintf(stderr, "Warning: Failed to load IPC module: %s\n",
 					lua_tostring(globalconf_L, -1));
 				lua_pop(globalconf_L, 1);
-			} else {
-				fprintf(stderr, "[IPC_INIT] IPC module loaded successfully\n");
 			}
 
 			loaded = 1;
 			break;
 		} else {
 			/* Runtime error - already handled by error handler */
-			const char *err;
-
-			fprintf(stderr, "[CONFIG_LOAD] lua_pcall returned non-zero (error)\n");
-			err = lua_tostring(globalconf_L, -1);
-			fprintf(stderr, "[CONFIG_LOAD] Got error string: %s\n", err ? err : "(null)");
+			const char *err = lua_tostring(globalconf_L, -1);
 
 			/* Accumulate runtime error for naughty notification */
 			luaA_startup_error(err);
 
-			fprintf(stderr, "[CONFIG_LOAD] Runtime error executing %s:\n%s\n",
-				config_paths[i], err);
 			if (i == 0) {
 				fprintf(stderr, "somewm: error executing %s:\n%s\n",
 					config_paths[i], err);
@@ -921,11 +821,7 @@ globalconf_init(lua_State *L)
 
 	/* Initialize startup errors buffer (AwesomeWM compatibility)
 	 * This accumulates all errors during config loading */
-	fprintf(stderr, "[GLOBALCONF_INIT] Initializing startup_errors buffer...\n");
 	buffer_init(&globalconf.startup_errors);
-	fprintf(stderr, "[GLOBALCONF_INIT] Buffer initialized: s=%p, len=%d, size=%d\n",
-		(void*)globalconf.startup_errors.s, globalconf.startup_errors.len,
-		globalconf.startup_errors.size);
 
 	/* Initialize X11 stubs */
 	globalconf.connection = NULL;

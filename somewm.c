@@ -2094,8 +2094,9 @@ get_urgentcolor(void)
 
 /* ========== KEYBINDING SYSTEM ========== */
 
-/* Forward declaration for AwesomeWM-compatible Lua keybinding system */
+/* Forward declarations for AwesomeWM-compatible Lua keybinding system */
 extern int luaA_key_check_and_emit(uint32_t mods, uint32_t keycode, xkb_keysym_t sym, xkb_keysym_t base_sym);
+extern int luaA_client_key_check_and_emit(client_t *c, uint32_t mods, uint32_t keycode, xkb_keysym_t sym, xkb_keysym_t base_sym);
 
 int
 keybinding(uint32_t mods, uint32_t keycode, xkb_keysym_t sym, xkb_keysym_t base_sym)
@@ -2104,9 +2105,18 @@ keybinding(uint32_t mods, uint32_t keycode, xkb_keysym_t sym, xkb_keysym_t base_
 	 * Here we handle compositor keybindings. This is when the compositor is
 	 * processing keys, rather than passing them on to the client for its own
 	 * processing.
+	 *
+	 * AwesomeWM pattern: check client-specific keybindings first (they receive
+	 * the client as argument), then check global keybindings.
 	 */
 
-	/* Check Lua key objects (AwesomeWM pattern) */
+	/* Check client-specific Lua key objects first (AwesomeWM pattern)
+	 * Client keybindings pass the client as argument to the "press" signal */
+	client_t *focused = some_get_focused_client();
+	if (focused && luaA_client_key_check_and_emit(focused, CLEANMASK(mods), keycode, sym, base_sym))
+		return 1;
+
+	/* Check global Lua key objects (AwesomeWM pattern) */
 	if (luaA_key_check_and_emit(CLEANMASK(mods), keycode, sym, base_sym))
 		return 1;
 
@@ -2252,17 +2262,8 @@ void
 killclient(const Arg *arg)
 {
 	Client *sel = focustop(selmon);
-	fprintf(stderr, "\n[KILLCLIENT] ==========================================\n");
-	fprintf(stderr, "[KILLCLIENT] killclient() called (Mod+Shift+c handler)\n");
-	fprintf(stderr, "[KILLCLIENT] selmon=%p\n", (void*)selmon);
-	fprintf(stderr, "[KILLCLIENT] focused client (sel)=%p\n", (void*)sel);
-	if (sel) {
-		fprintf(stderr, "[KILLCLIENT] Calling client_send_close()...\n");
+	if (sel)
 		client_send_close(sel);
-	} else {
-		fprintf(stderr, "[KILLCLIENT] No focused client to kill\n");
-	}
-	fprintf(stderr, "[KILLCLIENT] ==========================================\n\n");
 }
 
 void

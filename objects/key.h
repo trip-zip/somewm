@@ -74,6 +74,22 @@ void key_array_init(key_array_t *arr);
 void key_array_wipe(key_array_t *arr);
 void key_array_append(key_array_t *arr, keyb_t *elem);
 
+/** Set key array from Lua table (AwesomeWM pattern)
+ * \param L Lua state
+ * \param oidx Owner object index on stack
+ * \param idx Key table index on stack
+ * \param keys Array to fill
+ */
+void luaA_key_array_set(lua_State *L, int oidx, int idx, key_array_t *keys);
+
+/** Push key array as Lua table (AwesomeWM pattern)
+ * \param L Lua state
+ * \param oidx Owner object index on stack
+ * \param keys Array to push
+ * \return Number of values pushed (1)
+ */
+int luaA_key_array_get(lua_State *L, int oidx, key_array_t *keys);
+
 #endif
 /* vim: filetype=c:expandtab:shiftwidth=4:tabstop=8:softtabstop=4:textwidth=80
  */

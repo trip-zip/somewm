@@ -14,6 +14,7 @@
 #include "key.h"
 #include "common/luaclass.h"
 #include "common/luaobject.h"
+#include "common/lualib.h"
 #include "screen.h"
 #include "signal.h"
 #include "luaa.h"
@@ -45,6 +46,54 @@ void key_array_append(key_array_t *arr, keyb_t *elem) {
 		arr->tab = realloc(arr->tab, arr->size * sizeof(keyb_t *));
 	}
 	arr->tab[arr->len++] = elem;
+}
+
+/** Set key array from Lua table (AwesomeWM pattern)
+ * Ported from AwesomeWM objects/key.c:luaA_key_array_set
+ * \param L Lua state
+ * \param oidx Owner object index on stack
+ * \param idx Key table index on stack
+ * \param keys Array to fill
+ */
+void
+luaA_key_array_set(lua_State *L, int oidx, int idx, key_array_t *keys)
+{
+	luaA_checktable(L, idx);
+
+	/* Unref all existing key objects */
+	for (int i = 0; i < keys->len; i++)
+		luaA_object_unref_item(L, oidx, keys->tab[i]);
+
+	/* Clear and reinitialize the array */
+	key_array_wipe(keys);
+	key_array_init(keys);
+
+	/* Iterate through table and add key objects */
+	lua_pushnil(L);
+	while (lua_next(L, idx)) {
+		if (luaA_toudata(L, -1, &key_class))
+			key_array_append(keys, luaA_object_ref_item(L, oidx, -1));
+		else
+			lua_pop(L, 1);
+	}
+}
+
+/** Push key array as Lua table (AwesomeWM pattern)
+ * Ported from AwesomeWM objects/key.c:luaA_key_array_get
+ * \param L Lua state
+ * \param oidx Owner object index on stack
+ * \param keys Array to push
+ * \return Number of values pushed (1)
+ */
+int
+luaA_key_array_get(lua_State *L, int oidx, key_array_t *keys)
+{
+	lua_createtable(L, keys->len, 0);
+	for (int i = 0; i < keys->len; i++) {
+		luaA_object_push_item(L, oidx, keys->tab[i]);
+		lua_rawseti(L, -2, i + 1);
+	}
+	return 1;
 }
 
 /* Setup key object class */

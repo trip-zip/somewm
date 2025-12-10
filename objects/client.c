@@ -91,6 +91,7 @@
 #include "objects/tag.h"
 #include "objects/drawable.h"
 #include "objects/button.h"
+#include "objects/key.h"
 #include "luaa.h"
 #include "common/lualib.h"
 #include "signal.h"
@@ -3313,9 +3314,6 @@ client_unmanage(client_t *c, client_unmanage_t reason)
 void
 client_kill(client_t *c)
 {
-    fprintf(stderr, "\n[CLIENT_KILL] ==========================================\n");
-    fprintf(stderr, "[CLIENT_KILL] client_kill() called\n");
-
     /* Validate client and check if it's an X11/XWayland client.
      * Native Wayland clients (XDGShell, LayerShell) cannot be killed via XCB.
      * For native Wayland clients, the client should handle close requests via
@@ -3323,54 +3321,29 @@ client_kill(client_t *c)
      */
     if (!c) {
         warn("client_kill: NULL client pointer");
-        fprintf(stderr, "[CLIENT_KILL] FAILED: NULL client\n");
-        fprintf(stderr, "[CLIENT_KILL] ==========================================\n\n");
         return;
     }
-
-    fprintf(stderr, "[CLIENT_KILL] Client ptr: %p\n", (void*)c);
-    fprintf(stderr, "[CLIENT_KILL] Client type: %d (0=XDGShell, 1=X11, 2=LayerShell)\n", c->client_type);
 
     if (c->client_type != X11) {
-        fprintf(stderr, "[CLIENT_KILL] Client is NOT X11/XWayland - type=%d\n", c->client_type);
-        fprintf(stderr, "[CLIENT_KILL] For native Wayland clients, need to use xdg_toplevel_send_close()\n");
-
         /* For native Wayland XDG clients, send close request via Wayland protocol */
-        if (c->client_type == XDGShell && c->surface.xdg) {
-            fprintf(stderr, "[CLIENT_KILL] Sending xdg_toplevel_send_close() to native Wayland client\n");
+        if (c->client_type == XDGShell && c->surface.xdg)
             wlr_xdg_toplevel_send_close(c->surface.xdg->toplevel);
-            fprintf(stderr, "[CLIENT_KILL] Close request sent successfully!\n");
-        } else {
-            fprintf(stderr, "[CLIENT_KILL] Cannot close this client type (not XDGShell or no toplevel)\n");
-        }
-
-        fprintf(stderr, "[CLIENT_KILL] ==========================================\n\n");
         return;
     }
-
-    fprintf(stderr, "[CLIENT_KILL] Client is X11/XWayland - using XCB to close\n");
 
     if (c->window == XCB_NONE) {
         warn("client_kill: Client window already destroyed (window=XCB_NONE)");
-        fprintf(stderr, "[CLIENT_KILL] FAILED: window already destroyed\n");
-        fprintf(stderr, "[CLIENT_KILL] ==========================================\n\n");
         return;
     }
 
-    fprintf(stderr, "[CLIENT_KILL] X11 window ID: 0x%x\n", c->window);
-
     if (!globalconf.connection) {
         warn("client_kill: No XCB connection available");
-        fprintf(stderr, "[CLIENT_KILL] FAILED: No XCB connection\n");
-        fprintf(stderr, "[CLIENT_KILL] ==========================================\n\n");
         return;
     }
 
     if(client_hasproto(c, WM_DELETE_WINDOW))
     {
         xcb_client_message_event_t ev;
-
-        fprintf(stderr, "[CLIENT_KILL] Client supports WM_DELETE_WINDOW - sending graceful close\n");
 
         /* Initialize all of event's fields first */
         p_clear(&ev, 1);
@@ -3384,15 +3357,10 @@ client_kill(client_t *c)
 
         xcb_send_event(globalconf.connection, false, c->window,
                        XCB_EVENT_MASK_NO_EVENT, (char *) &ev);
-        fprintf(stderr, "[CLIENT_KILL] WM_DELETE_WINDOW sent successfully\n");
     }
     else {
-        fprintf(stderr, "[CLIENT_KILL] Client does NOT support WM_DELETE_WINDOW - force killing\n");
         xcb_kill_client(globalconf.connection, c->window);
-        fprintf(stderr, "[CLIENT_KILL] xcb_kill_client() sent\n");
     }
-
-    fprintf(stderr, "[CLIENT_KILL] ==========================================\n\n");
 }
 
 /** Get all clients into a table.
@@ -3570,11 +3538,6 @@ static int
 luaA_client_kill(lua_State *L)
 {
     client_t *c = luaA_checkudata(L, 1, &client_class);
-    fprintf(stderr, "\n[LUA_CLIENT_KILL] ==========================================\n");
-    fprintf(stderr, "[LUA_CLIENT_KILL] client:kill() called from Lua\n");
-    fprintf(stderr, "[LUA_CLIENT_KILL] Client ptr: %p\n", (void*)c);
-    fprintf(stderr, "[LUA_CLIENT_KILL] Calling client_kill()...\n");
-    fprintf(stderr, "[LUA_CLIENT_KILL] ==========================================\n\n");
     client_kill(c);
     return 0;
 }

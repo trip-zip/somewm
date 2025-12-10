@@ -53,8 +53,7 @@ static int
 luaA_root_append_key(lua_State *L)
 {
 	(void)L;
-	fprintf(stderr, "[ROOT_APPEND_KEY] DEPRECATED: This function is a hack and should not be called.\n");
-	fprintf(stderr, "[ROOT_APPEND_KEY] Use awful.keyboard.append_global_keybindings() instead.\n");
+	/* Deprecated - use awful.keyboard.append_global_keybindings() instead */
 	return 0;
 }
 
@@ -68,56 +67,28 @@ luaA_root_append_key(lua_State *L)
 static int
 luaA_root_append_keys(lua_State *L)
 {
-	int i, j, count = 0;
+	int i, j;
 	size_t len;
 	keyb_t *key;
-	char keysym_name[64];
 
-	fprintf(stderr, "[ROOT._APPEND_KEYS] Appending keybindings\n");
-
-	if (!lua_istable(L, 1)) {
-		fprintf(stderr, "[ROOT._APPEND_KEYS] ERROR: Expected table, got %s\n",
-		        lua_typename(L, lua_type(L, 1)));
+	if (!lua_istable(L, 1))
 		return 0;
-	}
 
-	/* Check array length */
 	len = luaA_rawlen(L, 1);
-	fprintf(stderr, "[ROOT._APPEND_KEYS] Table length: %zu\n", len);
-	fflush(stderr);
 
 	/* Iterate using integer indices - more reliable than lua_next for arrays */
 	for (i = 1; i <= (int)len && i <= 100; i++) {
-		fprintf(stderr, "[ROOT._APPEND_KEYS] === ENTERING ITERATION %d (len=%zu) ===\n", i, len);
-		fprintf(stderr, "[ROOT._APPEND_KEYS] Stack size before rawgeti: %d\n", lua_gettop(L));
-		fprintf(stderr, "[ROOT._APPEND_KEYS] Type at index 1: %s\n", lua_typename(L, lua_type(L, 1)));
-		fflush(stderr);
-
 		lua_rawgeti(L, 1, i);  /* Get table[i] */
-		fprintf(stderr, "[ROOT._APPEND_KEYS] After lua_rawgeti(%d), stack top type: %s, stack size: %d\n",
-		        i, lua_typename(L, lua_type(L, -1)), lua_gettop(L));
-		fflush(stderr);
-
-		fprintf(stderr, "[ROOT._APPEND_KEYS] Index %d: type=%s\n",
-		        i, lua_typename(L, lua_type(L, -1)));
-		fflush(stderr);
 
 		/* Check if this is a C key object directly */
 		key = luaA_toudata(L, -1, &key_class);
 		if (key) {
 			/* luaA_object_ref REMOVES the object from stack, so no lua_pop needed */
 			key_array_append(&globalconf.keys, luaA_object_ref(L, -1));
-
-			xkb_keysym_get_name(key->keysym, keysym_name, sizeof(keysym_name));
-			fprintf(stderr, "[ROOT._APPEND_KEYS] Adding key %d: mods=0x%04x keysym=%s (%u)\n",
-			        ++count, key->modifiers, keysym_name, key->keysym);
-			/* Stack is now back to just [table] - object was consumed by luaA_object_ref */
 			continue;  /* Skip the lua_pop(L, 1) at the end since object already removed */
 		}
 		/* Or check if it's a table containing key objects */
 		else if (lua_istable(L, -1)) {
-			fprintf(stderr, "[ROOT._APPEND_KEYS] Index %d is a table, iterating its contents\n", i);
-			fflush(stderr);
 			/* Iterate table with integer indices */
 			for (j = 1; j <= 100; j++) {
 				lua_rawgeti(L, -1, j);
@@ -130,35 +101,13 @@ luaA_root_append_keys(lua_State *L)
 				if (key) {
 					/* luaA_object_ref REMOVES the object from stack */
 					key_array_append(&globalconf.keys, luaA_object_ref(L, -1));
-
-					xkb_keysym_get_name(key->keysym, keysym_name, sizeof(keysym_name));
-					fprintf(stderr, "[ROOT._APPEND_KEYS] Adding key %d: mods=0x%04x keysym=%s\n",
-					        ++count, key->modifiers, keysym_name);
-					/* Object already removed by luaA_object_ref, no pop needed */
 				} else {
-					/* Not a key object, pop it */
 					lua_pop(L, 1);
 				}
 			}
-		} else {
-			fprintf(stderr, "[ROOT._APPEND_KEYS] WARNING: Index %d is unknown type, skipping\n", i);
 		}
-		fprintf(stderr, "[ROOT._APPEND_KEYS] About to pop stack for index %d (stack size: %d)\n", i, lua_gettop(L));
-		fflush(stderr);
 		lua_pop(L, 1);  /* Pop table[i] */
-		fprintf(stderr, "[ROOT._APPEND_KEYS] Stack popped successfully (new stack size: %d)\n", lua_gettop(L));
-		fprintf(stderr, "[ROOT._APPEND_KEYS] Type at index 1 after pop: %s\n", lua_typename(L, lua_type(L, 1)));
-		fflush(stderr);
-		fprintf(stderr, "[ROOT._APPEND_KEYS] Completed index %d, continuing to next (i will become %d)\n", i, i+1);
-		fflush(stderr);
 	}
-	fprintf(stderr, "[ROOT._APPEND_KEYS] === EXITED LOOP === Final i=%d, len=%zu\n", i, len);
-	fflush(stderr);
-	fprintf(stderr, "[ROOT._APPEND_KEYS] Loop completed, processed %d indices\n", i-1);
-	fflush(stderr);
-
-	fprintf(stderr, "[ROOT._APPEND_KEYS] Appended %d keys (total now: %d keys)\n",
-	        count, globalconf.keys.len);
 	(void)i;  /* Suppress unused warning */
 	return 0;
 }
@@ -193,20 +142,12 @@ static int
 luaA_root_keys(lua_State *L)
 {
 	if (lua_gettop(L) >= 1 && lua_istable(L, 1)) {
-		int count = 0;
 		int i;
 		int idx;
-		int found_c_objects;
-		char keysym_name[64];
-
-		fprintf(stderr, "[ROOT._KEYS] Setting global keybindings\n");
-		fflush(stderr);
 
 		/* Unref all existing key objects */
-		for (i = 0; i < globalconf.keys.len; i++) {
+		for (i = 0; i < globalconf.keys.len; i++)
 			luaA_object_unref(L, globalconf.keys.tab[i]);
-			fprintf(stderr, "[ROOT._KEYS] Unref old key %d\n", i);
-		}
 
 		/* Clear the array */
 		key_array_wipe(&globalconf.keys);
@@ -214,48 +155,19 @@ luaA_root_keys(lua_State *L)
 
 		/* Add new key objects from the table
 		 * Use lua_next() iteration like AwesomeWM to handle all table types correctly */
-		fprintf(stderr, "[ROOT._KEYS] Iterating table with lua_next(), initial stack size=%d\n",
-		        lua_gettop(L));
-		fflush(stderr);
-
-		/* lua_next() iteration: push nil as first key, then iterate */
 		lua_pushnil(L);  /* First key for lua_next */
 		while (lua_next(L, 1)) {
 			/* Stack now: [table, key, value] */
 			/* key is at index -2, value is at index -1 */
 
-			fprintf(stderr, "[ROOT._KEYS] lua_next() returned entry, key_type=%s, value_type=%s, stack size=%d\n",
-			        lua_typename(L, lua_type(L, -2)),
-			        lua_typename(L, lua_type(L, -1)),
-			        lua_gettop(L));
-			fflush(stderr);
-
-			/* Log the key index if it's a number */
-			if (lua_type(L, -2) == LUA_TNUMBER) {
-				fprintf(stderr, "[ROOT._KEYS]   Key index: %d\n", (int)lua_tointeger(L, -2));
-				fflush(stderr);
-			}
-
 			/* Check if this is a C key object */
 			if (luaA_toudata(L, -1, &key_class)) {
-				keyb_t *key = luaA_checkudata(L, -1, &key_class);
-
-				xkb_keysym_get_name(key->keysym, keysym_name, sizeof(keysym_name));
-				fprintf(stderr, "[ROOT._KEYS]   ✓ C key object: mods=0x%04x keysym=%s (%u) keycode=%u\n",
-				        key->modifiers, keysym_name, key->keysym, key->keycode);
-				fflush(stderr);
-
 				/* luaA_object_ref REMOVES the object from stack.
 				 * After this, stack will be [table, key] which is perfect for lua_next */
 				key_array_append(&globalconf.keys, luaA_object_ref(L, -1));
-				count++;
 				/* Object already removed by luaA_object_ref, stack is [table, key] - ready for next iteration */
 			} else if (lua_type(L, -1) == LUA_TTABLE) {
 				/* Might be an awful.key wrapper table - check for C objects at integer indices */
-				fprintf(stderr, "[ROOT._KEYS]   ✗ Lua table (possible awful.key wrapper) - checking for C objects at integer indices...\n");
-				fflush(stderr);
-
-				found_c_objects = 0;
 				for (idx = 1; idx <= 100; idx++) {
 					lua_rawgeti(L, -1, idx);  /* Get table[idx] */
 					if (lua_isnil(L, -1)) {
@@ -264,33 +176,17 @@ luaA_root_keys(lua_State *L)
 					}
 
 					if (luaA_toudata(L, -1, &key_class)) {
-						keyb_t *key = luaA_checkudata(L, -1, &key_class);
-						xkb_keysym_get_name(key->keysym, keysym_name, sizeof(keysym_name));
-						fprintf(stderr, "[ROOT._KEYS]     Found C object at [%d]: mods=0x%04x keysym=%s (%u) keycode=%u\n",
-						        idx, key->modifiers, keysym_name, key->keysym, key->keycode);
-						fflush(stderr);
-
 						/* Ref and append this C object */
 						key_array_append(&globalconf.keys, luaA_object_ref(L, -1));
-						count++;
-						found_c_objects++;
 						/* Object removed by ref, continue */
 					} else {
 						lua_pop(L, 1);  /* Not a C object, pop it */
 					}
 				}
 
-				if (found_c_objects == 0) {
-					fprintf(stderr, "[ROOT._KEYS]     WARNING: Table has no C key objects at integer indices!\n");
-					fflush(stderr);
-				}
-
 				/* Pop the awful.key wrapper table, leave key for lua_next */
 				lua_pop(L, 1);
 			} else {
-				fprintf(stderr, "[ROOT._KEYS]   ✗ Unexpected type=%s, skipping\n",
-				        lua_typename(L, lua_type(L, -1)));
-				fflush(stderr);
 				/* Not a key object - pop the value, leave key for lua_next */
 				lua_pop(L, 1);
 				/* Stack is now [table, key] - ready for next iteration */
@@ -298,11 +194,6 @@ luaA_root_keys(lua_State *L)
 			/* lua_next will pop the key and push the next key-value pair */
 		}
 		/* lua_next returns 0 when done and has already popped the last key */
-
-		fprintf(stderr, "[ROOT._KEYS] Loop completed\n");
-		fflush(stderr);
-		fprintf(stderr, "[ROOT._KEYS] Registration complete: %d keys stored in globalconf.keys\n", count);
-		fflush(stderr);
 
 		/* Also update root._private.keys for awful.root compatibility */
 		lua_getglobal(L, "root");              /* Push root */
@@ -323,7 +214,6 @@ luaA_root_keys(lua_State *L)
 	}
 
 	/* Get keybindings - return array of key objects */
-	fprintf(stderr, "[ROOT._KEYS] Getting global keybindings (%d keys)\n", globalconf.keys.len);
 	lua_createtable(L, globalconf.keys.len, 0);
 	for (int i = 0; i < globalconf.keys.len; i++) {
 		luaA_object_push(L, globalconf.keys.tab[i]);
@@ -529,8 +419,8 @@ luaA_root_button_check(lua_State *L, uint32_t button, uint32_t mods,
 	const char *signal_name = is_press ? "press" : "release";
 	int matched = 0;
 
-	fprintf(stderr, "[ROOT_BUTTON] Checking %d root buttons for button=%u mods=0x%x at (%.1f, %.1f)\n",
-	        buttons->len, button, mods, x, y);
+	(void)x;
+	(void)y;
 
 	/* Iterate through root button array */
 	for (int i = 0; i < buttons->len; i++) {
@@ -543,9 +433,6 @@ luaA_root_button_check(lua_State *L, uint32_t button, uint32_t mods,
 		bool mods_match = (btn->modifiers == 0 || btn->modifiers == mods);
 
 		if (button_matches && mods_match) {
-			fprintf(stderr, "[ROOT_BUTTON] Button %d matched (btn->button=%d btn->modifiers=0x%x)\n",
-			        i, btn->button, btn->modifiers);
-
 			/* Push button object */
 			luaA_object_push(L, btn);
 
@@ -559,7 +446,6 @@ luaA_root_button_check(lua_State *L, uint32_t button, uint32_t mods,
 		}
 	}
 
-	fprintf(stderr, "[ROOT_BUTTON] Matched %d root buttons\n", matched);
 	return matched;
 }
 
