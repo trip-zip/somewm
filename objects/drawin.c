@@ -12,6 +12,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <wlr/types/wlr_scene.h>
+#include <wlr/types/wlr_output.h>
 #include <wlr/render/allocator.h>
 #include <wlr/render/wlr_texture.h>
 #include <wlr/render/wlr_renderer.h>
@@ -289,6 +290,15 @@ drawin_refresh_drawable(drawin_t *drawin)
 
 	/* Drop our reference - scene buffer holds its own reference */
 	wlr_buffer_drop(buffer);
+
+	/* Schedule a frame render on the output to ensure content is displayed
+	 * immediately, not waiting for the next external event. This mirrors
+	 * AwesomeWM's xcb_flush() which sends pending X requests immediately.
+	 * In Wayland, we request the compositor to render a new frame. */
+	if (drawin->screen && drawin->screen->monitor && drawin->screen->monitor->wlr_output) {
+		fprintf(stderr, "[DRAWIN_REFRESH] Scheduling output frame for immediate display\n");
+		wlr_output_schedule_frame(drawin->screen->monitor->wlr_output);
+	}
 }
 
 /** Assign screen to drawin based on its position
@@ -1151,6 +1161,15 @@ luaA_drawin_set_visible(lua_State *L, drawin_t *drawin, bool visible)
 		wlr_scene_node_set_enabled(&drawin->scene_tree->node, visible);
 		fprintf(stderr, "[DRAWIN_VISIBLE] After set: scene_tree node enabled=%d\n",
 		        drawin->scene_tree->node.enabled);
+
+		/* When becoming visible, immediately refresh the drawable to populate scene buffer.
+		 * This fixes the timing issue where wiboxes don't appear until an external event
+		 * triggers some_refresh(). In AwesomeWM, xcb_flush() sends content immediately;
+		 * in Wayland, we need to ensure the scene buffer is populated before the next frame. */
+		if (visible && drawin->drawable) {
+			fprintf(stderr, "[DRAWIN_VISIBLE] Triggering immediate drawable refresh\n");
+			drawin_refresh_drawable(drawin);
+		}
 	} else {
 		fprintf(stderr, "[DRAWIN_VISIBLE] ERROR: No scene_tree!\n");
 	}

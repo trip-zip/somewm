@@ -3276,6 +3276,15 @@ run(char *startup_cmd)
 		fprintf(stderr, "[SOMEWM] Emitting startup signal\n");
 		luaA_emit_signal_global("startup");
 		fprintf(stderr, "[SOMEWM] Startup signal emitted\n");
+
+		/* Ensure all drawables created during startup have their content
+		 * pushed to scene buffers. This fixes the timing issue where wiboxes
+		 * don't appear until an external event triggers some_refresh().
+		 * In AwesomeWM, xcb_flush() sends everything immediately after config
+		 * loads; in Wayland we need to explicitly refresh all drawables. */
+		fprintf(stderr, "[SOMEWM] Running initial some_refresh() for startup drawables\n");
+		some_refresh();
+		fprintf(stderr, "[SOMEWM] Initial refresh complete\n");
 	}
 
 	/* Now that the socket exists and the backend is started, run the startup command */
