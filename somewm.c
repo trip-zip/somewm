@@ -3209,32 +3209,32 @@ some_refresh(void)
 	/* Step 1: Emit refresh signal - triggers Lua layout calculations */
 	luaA_emit_signal_global("refresh");
 
-	/* Step 2: Apply geometry changes to Wayland scene graph
-	 * THIS IS THE CRITICAL STEP that was missing!
+	/* Step 2: Refresh drawins (wibox/panels) FIRST - matches AwesomeWM order
+	 * AwesomeWM calls drawin_refresh() BEFORE client_refresh() in awesome_refresh().
+	 * This ensures wibar geometry is applied before client layout calculations. */
+	drawin_refresh();
+
+	/* Step 3: Apply geometry changes to Wayland scene graph
 	 * Lua layout code calculates positions, but without this they never
 	 * get applied to wlroots scene nodes. */
 	client_geometry_refresh();
 
-	/* Step 2.5: Apply pending border changes (AwesomeWM deferred pattern)
+	/* Step 4: Apply pending border changes (AwesomeWM deferred pattern)
 	 * Border updates (width/color) are deferred until refresh cycle */
 	client_border_refresh();
 
-	/* Step 3: Refresh drawins (wibox/panels) - apply geometry, update content
-	 * This matches AwesomeWM's awesome_refresh() which calls drawin_refresh() */
-	drawin_refresh();
-
-	/* Step 4: Update client visibility (banning) */
+	/* Step 5: Update client visibility (banning) */
 	banning_refresh();
 
-	/* Step 5: Update window stacking (Z-order)
+	/* Step 6: Update window stacking (Z-order)
 	 * This matches AwesomeWM's awesome_refresh() which calls stack_refresh() */
 	stack_refresh();
 
-	/* Step 6: Apply pending keyboard focus changes
+	/* Step 7: Apply pending keyboard focus changes
 	 * This matches AwesomeWM's awesome_refresh() deferred focus pattern */
 	client_focus_refresh();
 
-	/* Step 7: Destroy windows queued for deferred destruction (XWayland only)
+	/* Step 8: Destroy windows queued for deferred destruction (XWayland only)
 	 * This matches AwesomeWM's deferred destruction pattern to avoid race conditions */
 	client_destroy_later();
 

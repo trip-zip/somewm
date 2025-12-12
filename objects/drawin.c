@@ -7,6 +7,7 @@
 #include "common/luaclass.h"
 #include "common/luaobject.h"
 #include "../somewm_api.h"
+#include "../stack.h"
 #include "../util.h"
 #include <stdio.h>
 #include <stdlib.h>
@@ -1128,6 +1129,8 @@ luaA_drawin_set_visible(lua_State *L, drawin_t *drawin, bool visible)
 			        (void*)drawin, globalconf.drawins.len, globalconf.drawins.len + 1);
 			drawin_array_append(&globalconf.drawins, drawin);
 		}
+		/* Trigger restacking - AwesomeWM calls stack_windows() when mapping drawin */
+		stack_windows();
 	} else {
 		/* Remove from visible drawins array */
 		foreach(item, globalconf.drawins) {
@@ -1569,7 +1572,11 @@ luaA_drawin_newindex(lua_State *L)
 
 	if (strcmp(key, "ontop") == 0) {
 		bool value = lua_toboolean(L, 3);
-		drawin_set_property_bool(L, drawin, &drawin->ontop, value, "property::ontop");
+		if (value != drawin->ontop) {
+			drawin_set_property_bool(L, drawin, &drawin->ontop, value, "property::ontop");
+			/* Trigger restacking - AwesomeWM calls stack_windows() when ontop changes */
+			stack_windows();
+		}
 		return 0;
 	}
 

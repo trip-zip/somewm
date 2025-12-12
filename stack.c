@@ -6,13 +6,14 @@
  *
  * Key differences from AwesomeWM:
  * - Uses wlroots scene graph layers instead of XCB stacking
- * - No drawin stacking yet (TODO when drawin tracking is added)
  * - No EWMH updates
  */
 
 #include "stack.h"
 #include "somewm_types.h"
 #include "objects/client.h"  /* For complete client_t definition */
+#include "objects/drawin.h"  /* For drawin stacking */
+#include "globalconf.h"      /* For globalconf.drawins */
 #include "somewm_api.h"
 #include "util.h"
 #include <stdlib.h>
@@ -332,7 +333,27 @@ stack_refresh(void)
 		prev_in_layer[layer] = stack_transients_above(c, prev_in_layer[layer]);
 	}
 
-	/* TODO: Stack drawins (wiboxes) when drawin tracking is added */
+	/* Stack drawins (wiboxes) - AwesomeWM stacks these after clients
+	 * Drawins with ontop=true go to LAYER_ONTOP, others to LAYER_NORMAL */
+	foreach(drawin, globalconf.drawins) {
+		if (!(*drawin)->scene_tree)
+			continue;
+
+		layer = (*drawin)->ontop ? WINDOW_LAYER_ONTOP : WINDOW_LAYER_NORMAL;
+		scene_layer = get_scene_layer(layer);
+
+		/* Reparent to correct layer if needed */
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wcompare-distinct-pointer-types"
+		if ((*drawin)->scene_tree->node.parent != &layers[scene_layer]->node) {
+#pragma GCC diagnostic pop
+			wlr_scene_node_reparent(&(*drawin)->scene_tree->node, layers[scene_layer]);
+		}
+
+		/* Raise to top of its layer (drawins stack above clients in same layer) */
+		wlr_scene_node_raise_to_top(&(*drawin)->scene_tree->node);
+	}
+
 	/* TODO: Call ewmh_update_net_client_list_stacking() */
 
 	need_stack_refresh = false;
