@@ -230,18 +230,64 @@ luaA_awesome_get_key_name(lua_State *L)
 	return 2;  /* Return two values */
 }
 
-/** awesome.xkb_get_group_names() - Get keyboard layout group names
- * Stub implementation for AwesomeWM compatibility.
- * Returns a simple default layout (US English).
- * \return String of layout names (comma-separated)
+/** awesome.xkb_get_group_names() - Get keyboard layout symbols string
+ * Returns XKB symbols name format used by keyboardlayout widget.
+ * Format: "pc+English (US)+Russian+grp:alt_shift_toggle"
+ * \return String of XKB symbols
  */
 static int
 luaA_awesome_xkb_get_group_names(lua_State *L)
 {
-	/* TODO: Implement actual keyboard layout detection
-	 * For now, return a default US layout to prevent crashes */
-	lua_pushstring(L, "English (US)");
+	const char *symbols = some_xkb_get_group_names();
+
+	if (symbols) {
+		lua_pushstring(L, symbols);
+	} else {
+		/* Fallback: build from globalconf settings */
+		const char *layout = globalconf.keyboard.xkb_layout;
+		if (layout && *layout) {
+			lua_pushfstring(L, "pc+%s", layout);
+		} else {
+			lua_pushstring(L, "pc+us");
+		}
+	}
 	return 1;
+}
+
+/** awesome.xkb_get_layout_group() - Get current keyboard layout index
+ * Returns the currently active keyboard layout group (0-based index).
+ * \return Integer layout group index
+ */
+static int
+luaA_awesome_xkb_get_layout_group(lua_State *L)
+{
+	struct xkb_state *state = some_xkb_get_state();
+	xkb_layout_index_t group;
+
+	if (!state) {
+		lua_pushinteger(L, 0);
+		return 1;
+	}
+
+	group = xkb_state_serialize_layout(state, XKB_STATE_LAYOUT_EFFECTIVE);
+	lua_pushinteger(L, (int)group);
+	return 1;
+}
+
+/** awesome.xkb_set_layout_group(num) - Switch keyboard layout
+ * Sets the active keyboard layout to the specified group index.
+ * \param num Layout group index (0-based)
+ */
+static int
+luaA_awesome_xkb_set_layout_group(lua_State *L)
+{
+	xkb_layout_index_t group = (xkb_layout_index_t)luaL_checkinteger(L, 1);
+
+	if (!some_xkb_set_layout_group(group)) {
+		luaL_error(L, "Failed to set keyboard layout group %d", (int)group);
+	}
+
+	return 0;
 }
 
 /** awesome.register_xproperty() - Register X property for client persistence
@@ -302,8 +348,7 @@ luaA_pixbuf_to_surface(lua_State *L)
 static void
 rebuild_keyboard_keymap(void)
 {
-	/* TODO: Implement keymap rebuild - needs access to keyboard group
-	 * For now, changes take effect on next keyboard device init */
+	some_rebuild_keyboard_keymap();
 }
 
 /* awesome module methods */
@@ -318,6 +363,8 @@ static const luaL_Reg awesome_methods[] = {
 	{ "emit_signal", luaA_awesome_emit_signal },
 	{ "_get_key_name", luaA_awesome_get_key_name },
 	{ "xkb_get_group_names", luaA_awesome_xkb_get_group_names },
+	{ "xkb_get_layout_group", luaA_awesome_xkb_get_layout_group },
+	{ "xkb_set_layout_group", luaA_awesome_xkb_set_layout_group },
 	{ "xrdb_get_value", luaA_awesome_xrdb_get_value },
 	{ "register_xproperty", luaA_awesome_register_xproperty },
 	{ "pixbuf_to_surface", luaA_pixbuf_to_surface },

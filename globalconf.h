@@ -26,6 +26,7 @@
 #include <lua.h>
 #include <stdbool.h>
 #include <stdint.h>
+#include <xkbcommon/xkbcommon.h>
 #include "common/array.h"
 #include "common/buffer.h"
 #include "x11_compat.h"
@@ -186,6 +187,14 @@ typedef struct
         int repeat_rate;      /* Key repeat rate (repeats per second) */
         int repeat_delay;     /* Key repeat delay (milliseconds) */
     } keyboard;
+
+    /** XKB state tracking (for deferred signal emission) */
+    struct {
+        bool update_pending;           /* Deferred signal emission scheduled? */
+        bool group_changed;            /* Layout group changed flag */
+        bool map_changed;              /* Keymap changed flag */
+        xkb_layout_index_t last_group; /* Last known layout group for change detection */
+    } xkb;
 
     /** Input device settings (libinput configuration) */
     struct {

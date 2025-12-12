@@ -1307,3 +1307,205 @@ some_focus_top_client(Monitor *m)
 		focusclient(c, 1);
 	return c;
 }
+
+/*
+ * XKB Keyboard Layout API
+ *
+ * TODO: XKB toggle options (grp:rctrl_toggle, grp:alt_shift_toggle, etc.) don't
+ * trigger layout changes via key presses. The API functions work correctly, but
+ * xkbcommon's built-in toggle handling isn't being activated by wlroots keyboard
+ * group key events. Needs investigation into wlr_keyboard_group's xkb_state
+ * update path. Workaround: use keybindings that call xkb_set_layout_group().
+ */
+
+/* Deferred XKB signal emission (matches AwesomeWM's xkb_refresh pattern) */
+static gboolean
+xkb_refresh(gpointer unused)
+{
+	globalconf.xkb.update_pending = false;
+
+	if (globalconf.xkb.map_changed)
+		luaA_emit_signal_global("xkb::map_changed");
+
+	if (globalconf.xkb.group_changed)
+		luaA_emit_signal_global("xkb::group_changed");
+
+	globalconf.xkb.map_changed = false;
+	globalconf.xkb.group_changed = false;
+
+	return G_SOURCE_REMOVE;
+}
+
+static void
+xkb_schedule_refresh(void)
+{
+	if (globalconf.xkb.update_pending)
+		return;
+	globalconf.xkb.update_pending = true;
+	g_idle_add_full(G_PRIORITY_LOW, xkb_refresh, NULL, NULL);
+}
+
+void
+some_xkb_schedule_group_changed(void)
+{
+	globalconf.xkb.group_changed = true;
+	xkb_schedule_refresh();
+}
+
+void
+some_xkb_schedule_map_changed(void)
+{
+	globalconf.xkb.map_changed = true;
+	xkb_schedule_refresh();
+}
+
+/* Get the current xkb_state from the keyboard group */
+struct xkb_state *
+some_xkb_get_state(void)
+{
+	if (!kb_group || !kb_group->wlr_group)
+		return NULL;
+	return kb_group->wlr_group->keyboard.xkb_state;
+}
+
+/* Get the current xkb_keymap from the keyboard group */
+struct xkb_keymap *
+some_xkb_get_keymap(void)
+{
+	if (!kb_group || !kb_group->wlr_group)
+		return NULL;
+	return kb_group->wlr_group->keyboard.keymap;
+}
+
+/* Set the keyboard layout group
+ * In Wayland, we update the xkb_state directly and notify clients.
+ * Returns 1 on success, 0 on failure
+ */
+int
+some_xkb_set_layout_group(xkb_layout_index_t group)
+{
+	struct xkb_state *xkb_state;
+	struct xkb_keymap *keymap;
+	xkb_layout_index_t num_layouts;
+	xkb_mod_mask_t depressed, latched, locked;
+	xkb_layout_index_t old_group;
+
+	if (!kb_group || !kb_group->wlr_group)
+		return 0;
+
+	xkb_state = kb_group->wlr_group->keyboard.xkb_state;
+	keymap = kb_group->wlr_group->keyboard.keymap;
+
+	if (!xkb_state || !keymap)
+		return 0;
+
+	/* Validate group index */
+	num_layouts = xkb_keymap_num_layouts(keymap);
+	if (group >= num_layouts)
+		return 0;
+
+	/* Get current modifier state (preserve it while changing layout) */
+	depressed = xkb_state_serialize_mods(xkb_state, XKB_STATE_MODS_DEPRESSED);
+	latched = xkb_state_serialize_mods(xkb_state, XKB_STATE_MODS_LATCHED);
+	locked = xkb_state_serialize_mods(xkb_state, XKB_STATE_MODS_LOCKED);
+
+	/* Get current group for comparison */
+	old_group = xkb_state_serialize_layout(xkb_state, XKB_STATE_LAYOUT_EFFECTIVE);
+
+	/* Update xkb_state with new layout group (locked layout) */
+	xkb_state_update_mask(xkb_state,
+		depressed, latched, locked,  /* preserve modifiers */
+		0,      /* depressed_layout */
+		0,      /* latched_layout */
+		group); /* locked_layout = new layout */
+
+	/* Notify clients of modifier change (which includes layout) */
+	wlr_seat_keyboard_notify_modifiers(seat,
+		&kb_group->wlr_group->keyboard.modifiers);
+
+	/* Emit signal if layout actually changed */
+	if (old_group != group) {
+		globalconf.xkb.last_group = group;
+		some_xkb_schedule_group_changed();
+	}
+
+	return 1;
+}
+
+/* Get the XKB group names/symbols string
+ * Returns a static buffer with format like "pc+English (US)+Russian"
+ */
+const char *
+some_xkb_get_group_names(void)
+{
+	static char symbols_buffer[512];
+	struct xkb_keymap *keymap;
+	xkb_layout_index_t num_layouts, i;
+	size_t offset = 0;
+
+	if (!kb_group || !kb_group->wlr_group)
+		return NULL;
+
+	keymap = kb_group->wlr_group->keyboard.keymap;
+	if (!keymap)
+		return NULL;
+
+	/* Build symbols string from keymap layout names */
+	num_layouts = xkb_keymap_num_layouts(keymap);
+
+	/* Start with "pc+" prefix (matches XKB convention) */
+	offset = snprintf(symbols_buffer, sizeof(symbols_buffer), "pc");
+
+	for (i = 0; i < num_layouts && offset < sizeof(symbols_buffer) - 1; i++) {
+		const char *name = xkb_keymap_layout_get_name(keymap, i);
+		if (name) {
+			offset += snprintf(symbols_buffer + offset,
+			                   sizeof(symbols_buffer) - offset,
+			                   "+%s", name);
+		}
+	}
+
+	/* Append XKB options if configured */
+	if (globalconf.keyboard.xkb_options &&
+	    *globalconf.keyboard.xkb_options &&
+	    offset < sizeof(symbols_buffer) - 1) {
+		offset += snprintf(symbols_buffer + offset,
+		                   sizeof(symbols_buffer) - offset,
+		                   "+%s", globalconf.keyboard.xkb_options);
+	}
+
+	return symbols_buffer;
+}
+
+/* External references needed for keymap rebuild */
+extern struct wl_event_loop *some_get_event_loop(void);
+
+/* Rebuild the keyboard keymap from current globalconf settings */
+void
+some_rebuild_keyboard_keymap(void)
+{
+	struct xkb_context *context;
+	struct xkb_keymap *keymap;
+	struct xkb_rule_names rules = {0};
+
+	if (!kb_group || !kb_group->wlr_group)
+		return;
+
+	context = xkb_context_new(XKB_CONTEXT_NO_FLAGS);
+	if (!context)
+		return;
+
+	rules.layout = globalconf.keyboard.xkb_layout;
+	rules.variant = globalconf.keyboard.xkb_variant;
+	rules.options = globalconf.keyboard.xkb_options;
+
+	keymap = xkb_keymap_new_from_names(context, &rules,
+	                                   XKB_KEYMAP_COMPILE_NO_FLAGS);
+	if (keymap) {
+		wlr_keyboard_set_keymap(&kb_group->wlr_group->keyboard, keymap);
+		xkb_keymap_unref(keymap);
+		some_xkb_schedule_map_changed();
+	}
+
+	xkb_context_unref(context);
+}

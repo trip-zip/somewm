@@ -14,6 +14,7 @@
 #include <wayland-server-core.h>
 #include <wlr/util/box.h>
 #include <wlr/types/wlr_output.h>
+#include <xkbcommon/xkbcommon.h>
 
 /* Forward declarations */
 typedef struct drawin_t drawin_t;
@@ -188,5 +189,17 @@ struct wl_event_loop *some_get_event_loop(void);
 struct wlr_layer_shell_v1 *some_get_layer_shell(void);
 struct wlr_renderer *some_get_renderer(void);
 struct wlr_allocator *some_get_allocator(void);
+
+/*
+ * XKB Keyboard Layout API
+ * AwesomeWM-compatible keyboard layout switching and querying
+ */
+struct xkb_state *some_xkb_get_state(void);
+struct xkb_keymap *some_xkb_get_keymap(void);
+int some_xkb_set_layout_group(xkb_layout_index_t group);
+const char *some_xkb_get_group_names(void);
+void some_xkb_schedule_group_changed(void);
+void some_xkb_schedule_map_changed(void);
+void some_rebuild_keyboard_keymap(void);
 
 #endif /* SOMEWM_API_H */

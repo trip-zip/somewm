@@ -2234,11 +2234,22 @@ keypressmod(struct wl_listener *listener, void *data)
 	/* This event is raised when a modifier key, such as shift or alt, is
 	 * pressed. We simply communicate this to the client. */
 	KeyboardGroup *group = wl_container_of(listener, group, modifiers);
+	xkb_layout_index_t current_group;
 
 	wlr_seat_set_keyboard(seat, &group->wlr_group->keyboard);
 	/* Send modifiers to the client. */
 	wlr_seat_keyboard_notify_modifiers(seat,
 			&group->wlr_group->keyboard.modifiers);
+
+	/* Check for layout group change (e.g., from Alt+Shift toggle) */
+	current_group = xkb_state_serialize_layout(
+		group->wlr_group->keyboard.xkb_state,
+		XKB_STATE_LAYOUT_EFFECTIVE);
+
+	if (current_group != globalconf.xkb.last_group) {
+		globalconf.xkb.last_group = current_group;
+		some_xkb_schedule_group_changed();
+	}
 }
 
 int
