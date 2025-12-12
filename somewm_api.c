@@ -108,16 +108,6 @@ some_client_get_appid(Client *c)
 	return client_get_appid(c);
 }
 
-uint32_t
-some_client_get_tags(Client *c)
-{
-	/* Legacy dwl function - tags now managed by arrays */
-	(void)c;
-	return 0;
-}
-
-/* some_client_get_floating() moved lower - now calls Lua property system */
-
 int
 some_client_get_fullscreen(Client *c)
 {
@@ -142,14 +132,6 @@ some_client_get_geometry(Client *c, struct wlr_box *geom)
 	if (!c || !geom)
 		return;
 	client_get_geometry(c, geom);
-}
-
-void
-some_client_set_tags(Client *c, uint32_t tags)
-{
-	/* Legacy dwl function - use Lua c:tags() property instead */
-	(void)c;
-	(void)tags;
 }
 
 void
@@ -262,16 +244,6 @@ some_get_focused_client(void)
 	return focustop(selmon);
 }
 
-struct wl_list *
-some_get_clients(void)
-{
-	/* DEPRECATED: clients list is now managed as array in globalconf.clients
-	 * This function is kept for API compatibility but returns NULL.
-	 * Use globalconf.clients array directly instead.
-	 */
-	return NULL;
-}
-
 Client *
 some_client_at(double lx, double ly)
 {
@@ -291,30 +263,6 @@ some_client_at(double lx, double ly)
  * Monitor API Implementation
  */
 
-float
-some_monitor_get_mfact(Monitor *m)
-{
-	/* Legacy dwl function - mfact is now per-tag, use Lua tag.mfact instead */
-	(void)m;
-	return 0.5f;
-}
-
-int
-some_monitor_get_nmaster(Monitor *m)
-{
-	/* Legacy dwl function - nmaster is now per-tag, use Lua tag.nmaster instead */
-	(void)m;
-	return 1;
-}
-
-uint32_t
-some_monitor_get_tags(Monitor *m)
-{
-	/* Legacy dwl function - tags now managed by arrays */
-	(void)m;
-	return 0;
-}
-
 void
 some_monitor_get_geometry(Monitor *m, struct wlr_box *geom)
 {
@@ -329,32 +277,6 @@ some_monitor_get_window_area(Monitor *m, struct wlr_box *geom)
 	if (!m || !geom)
 		return;
 	*geom = m->w;
-}
-
-/* some_monitor_set_layout removed - layouts managed in Lua */
-
-void
-some_monitor_set_mfact(Monitor *m, float mfact)
-{
-	/* Legacy dwl function - mfact is now per-tag, use Lua tag.mfact instead */
-	(void)m;
-	(void)mfact;
-}
-
-void
-some_monitor_set_nmaster(Monitor *m, int nmaster)
-{
-	/* Legacy dwl function - nmaster is now per-tag, use Lua tag.nmaster instead */
-	(void)m;
-	(void)nmaster;
-}
-
-void
-some_monitor_set_tags(Monitor *m, uint32_t tags)
-{
-	/* Legacy dwl function - use Lua tag.selected property instead */
-	(void)m;
-	(void)tags;
 }
 
 void
@@ -449,38 +371,6 @@ void
 some_set_new_client_placement(int placement)
 {
 	new_client_placement = placement;
-}
-
-/*
- * Tag API Implementation
- */
-
-void
-some_view_tags(uint32_t tags)
-{
-	/* Legacy dwl function - use Lua awful.tag.viewonly() instead */
-	(void)tags;
-}
-
-void
-some_toggle_tags(uint32_t tags)
-{
-	/* Legacy dwl function - use Lua awful.tag.viewtoggle() instead */
-	(void)tags;
-}
-
-void
-some_view_previous_tags(void)
-{
-	/* Legacy dwl function - use Lua awful.tag.history.restore() instead */
-}
-
-void
-some_client_toggle_tags(Client *c, uint32_t tags)
-{
-	/* Legacy dwl function - use Lua c:tags() property instead */
-	(void)c;
-	(void)tags;
 }
 
 /*
@@ -1210,36 +1100,6 @@ uint32_t
 some_get_tag_mask(void)
 {
 	return some_tagmask();
-}
-
-/* Tag queries */
-uint32_t
-some_client_get_visible_tags(Client *c, Monitor *m)
-{
-	/* Legacy dwl function - tags now managed by arrays */
-	(void)c;
-	(void)m;
-	return 0;
-}
-
-int
-some_client_is_on_tag(Client *c, uint32_t tagmask)
-{
-	/* Legacy dwl function - tags now managed by arrays */
-	(void)c;
-	(void)tagmask;
-	return 0;
-}
-
-Client **
-some_get_clients_on_tag(Monitor *m, uint32_t tagmask, size_t *count)
-{
-	/* Legacy dwl function - tags now managed by arrays */
-	(void)m;
-	(void)tagmask;
-	if (count)
-		*count = 0;
-	return NULL;
 }
 
 /*

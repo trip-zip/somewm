@@ -25,7 +25,6 @@ typedef struct drawin_t drawin_t;
 /* Get client properties */
 const char *some_client_get_title(Client *c);
 const char *some_client_get_appid(Client *c);
-uint32_t some_client_get_tags(Client *c);
 int some_client_get_floating(Client *c);
 int some_client_get_fullscreen(Client *c);
 int some_client_get_urgent(Client *c);
@@ -33,7 +32,6 @@ Monitor *some_client_get_monitor(Client *c);
 void some_client_get_geometry(Client *c, struct wlr_box *geom);
 
 /* Set client properties */
-void some_client_set_tags(Client *c, uint32_t tags);
 void some_client_set_floating(Client *c, int floating);
 void some_client_set_fullscreen(Client *c, int fullscreen);
 void some_client_set_urgent(Client *c, int urgent);
@@ -95,7 +93,6 @@ void some_client_swapstack(int direction);
 
 /* Client queries */
 Client *some_get_focused_client(void);
-struct wl_list *some_get_clients(void);
 Client *some_client_at(double lx, double ly);
 Client *some_client_get_parent(Client *c);
 int some_client_has_children(Client *c);
@@ -111,16 +108,8 @@ struct wlr_surface *some_client_get_surface(Client *c);
  */
 
 /* Get monitor properties */
-float some_monitor_get_mfact(Monitor *m);
-int some_monitor_get_nmaster(Monitor *m);
-uint32_t some_monitor_get_tags(Monitor *m);
 void some_monitor_get_geometry(Monitor *m, struct wlr_box *geom);
 void some_monitor_get_window_area(Monitor *m, struct wlr_box *geom);
-
-/* Set monitor properties (layouts now managed in Lua) */
-void some_monitor_set_mfact(Monitor *m, float mfact);
-void some_monitor_set_nmaster(Monitor *m, int nmaster);
-void some_monitor_set_tags(Monitor *m, uint32_t tags);
 
 /* Monitor actions */
 void some_monitor_arrange(Monitor *m);
@@ -142,20 +131,8 @@ void some_monitor_apply_drawin_struts(Monitor *m, struct wlr_box *area);
 /*
  * Tag API
  */
-/* Tag constants */
 int some_get_tag_count(void);
 uint32_t some_get_tag_mask(void);
-
-/* Tag operations (already implemented) */
-void some_view_tags(uint32_t tags);
-void some_toggle_tags(uint32_t tags);
-void some_client_toggle_tags(Client *c, uint32_t tags);
-void some_view_previous_tags(void);
-
-/* Tag queries */
-uint32_t some_client_get_visible_tags(Client *c, Monitor *m);
-int some_client_is_on_tag(Client *c, uint32_t tag);
-Client **some_get_clients_on_tag(Monitor *m, uint32_t tag, size_t *count);
 
 /*
  * Spawn API
