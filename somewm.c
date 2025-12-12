@@ -2813,7 +2813,7 @@ apply_or_test:
 		wlr_output_configuration_v1_send_failed(config);
 	wlr_output_configuration_v1_destroy(config);
 
-	/* https://codeberg.org/dwl/dwl/issues/577 */
+	/* Force monitor refresh after output config change */
 	updatemons(NULL, NULL);
 }
 
@@ -2854,7 +2854,7 @@ printstatus(void)
 	Monitor *m = NULL;
 	Client *c;
 
-	/* Legacy dwl status output - bitmask code removed */
+	/* Status output for external status bars */
 	wl_list_for_each(m, &mons, link) {
 		if ((c = focustop(m))) {
 			printf("%s title %s\n", m->wlr_output->name, client_get_title(c));
@@ -2984,7 +2984,7 @@ client_geometry_refresh(void)
 
 /* Apply geometry to wlroots scene graph - Wayland-specific rendering layer.
  * This function ONLY updates wlroots; it does NOT modify c->geometry or emit signals.
- * Called by both resize() (dwl path) and client_resize_do() (AwesomeWM path).
+ * Called by resize() for interactive resize and client_resize_do() for Lua-initiated resize.
  */
 void
 apply_geometry_to_wlroots(Client *c)
@@ -3036,7 +3036,7 @@ resize(Client *c, struct wlr_box geo, int interact)
 	/* Apply to wlroots rendering */
 	apply_geometry_to_wlroots(c);
 
-	/* Emit global signal for backward compatibility with dwl code */
+	/* Emit signal for geometry change listeners */
 	luaA_emit_signal_global("client::property::geometry");
 }
 

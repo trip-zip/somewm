@@ -1,8 +1,9 @@
 /*
- * Attempt to consolidate unavoidable suck into one file, away from dwl.c.  This
- * file is not meant to be pretty.  We use a .h file with static inline
- * functions instead of a separate .c module, or function pointers like sway, so
- * that they will simply compile out if the chosen #defines leave them unused.
+ * client.h - XWayland/XDG client abstraction layer
+ *
+ * Static inline functions for client operations that differ between XWayland
+ * and native XDG clients. Using inline functions allows unused code paths to
+ * compile out when XWAYLAND is not defined.
  */
 
 /* Need complete client_t definition for inline functions */

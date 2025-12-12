@@ -105,7 +105,7 @@
 #include "../stack.h"
 #include "../util.h"
 
-/* Forward declaration for wlroots geometry application (extracted from dwl's resize) */
+/* Forward declaration - applies client geometry to wlroots scene graph */
 void apply_geometry_to_wlroots(client_t *c);
 
 #include <math.h>
@@ -2093,7 +2093,7 @@ client_border_refresh(void)
         fprintf(stderr, "[BORDER_REFRESH] Updating borders for client %p: width=%d\n",
                 (void*)c, c->border_width);
 
-        /* Sync dwl's bw field with AwesomeWM's border_width field */
+        /* Sync wlroots border width (bw) with Lua-facing border_width */
         c->bw = c->border_width;
 
         /* Update border rectangle sizes based on new border width

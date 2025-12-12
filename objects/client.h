@@ -319,8 +319,9 @@ struct client_t
 };
 
 /* Note: Client and client_t are both forward-declared in somewm_types.h
- * Client = old dwl struct, client_t = new AwesomeWM struct
- * We don't typedef them as aliases to avoid conflicts */
+ * Client = wlroots-level client struct (somewm.c)
+ * client_t = AwesomeWM Lua-exposed client struct (objects/client.c)
+ * These are the same struct, aliased for different contexts */
 
 /* Now include stack.h which expects Client type */
 #include "../stack.h"
