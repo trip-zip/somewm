@@ -129,6 +129,15 @@ typedef struct
     /** Accumulated error messages from rc.lua loading (AwesomeWM-compatible) */
     buffer_t startup_errors;
 
+    /** X11 pattern that caused config fallback (for actionable user feedback) */
+    struct {
+        char *config_path;    /* Path to the config that was skipped */
+        int line_number;      /* Line where pattern was found */
+        char *pattern_desc;   /* Human-readable description (e.g., "io.popen with xrandr") */
+        char *suggestion;     /* Migration suggestion */
+        char *line_content;   /* The actual line of code (truncated) */
+    } x11_fallback;
+
     /** The key grabber function (Lua registry ref) */
     int keygrabber;
 

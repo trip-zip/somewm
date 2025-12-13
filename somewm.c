@@ -894,6 +894,12 @@ cleanup(void)
 	/* Cleanup startup_errors buffer */
 	buffer_wipe(&globalconf.startup_errors);
 
+	/* Cleanup x11_fallback info */
+	free(globalconf.x11_fallback.config_path);
+	free(globalconf.x11_fallback.pattern_desc);
+	free(globalconf.x11_fallback.suggestion);
+	free(globalconf.x11_fallback.line_content);
+
 #ifdef XWAYLAND
 	if (xwayland) {
 		wlr_xwayland_destroy(xwayland);
@@ -1387,7 +1393,6 @@ createnotify(struct wl_listener *listener, void *data)
 	struct wlr_xdg_toplevel *toplevel = data;
 	Client *c = NULL;
 	lua_State *L;
-
 
 	L = globalconf_get_lua_State();
 
@@ -3522,7 +3527,6 @@ setup(void)
 
 	for (i = 0; i < (int)LENGTH(sig); i++)
 		sigaction(sig[i], &sa, NULL);
-
 	wlr_log_init(globalconf.log_level, NULL);
 
 	/* The Wayland display is managed by libwayland. It handles accepting
