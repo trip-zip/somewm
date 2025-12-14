@@ -1974,7 +1974,7 @@ focustop(Monitor *m)
 void
 fullscreennotify(struct wl_listener *listener, void *data)
 {
-	Client *c = wl_container_of(listener, c, fullscreen);
+	Client *c = wl_container_of(listener, c, request_fullscreen);
 	setfullscreen(c, client_wants_fullscreen(c));
 }
 
