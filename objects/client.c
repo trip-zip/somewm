@@ -3314,53 +3314,28 @@ client_unmanage(client_t *c, client_unmanage_t reason)
 void
 client_kill(client_t *c)
 {
-    /* Validate client and check if it's an X11/XWayland client.
-     * Native Wayland clients (XDGShell, LayerShell) cannot be killed via XCB.
-     * For native Wayland clients, the client should handle close requests via
-     * Wayland protocols (e.g., xdg_toplevel.close).
-     */
     if (!c) {
         warn("client_kill: NULL client pointer");
         return;
     }
 
-    if (c->client_type != X11) {
-        /* For native Wayland XDG clients, send close request via Wayland protocol */
-        if (c->client_type == XDGShell && c->surface.xdg)
-            wlr_xdg_toplevel_send_close(c->surface.xdg->toplevel);
+    /* Use wlroots functions for both XDG and XWayland clients.
+     * These handle the protocol details correctly. */
+    if (c->client_type == XDGShell && c->surface.xdg) {
+        wlr_xdg_toplevel_send_close(c->surface.xdg->toplevel);
         return;
     }
 
-    if (c->window == XCB_NONE) {
-        warn("client_kill: Client window already destroyed (window=XCB_NONE)");
+#ifdef XWAYLAND
+    if (c->client_type == X11 && c->surface.xwayland) {
+        /* Use wlroots' XWayland close which properly sends WM_DELETE_WINDOW
+         * or force-closes the window. This is more reliable than manual XCB. */
+        wlr_xwayland_surface_close(c->surface.xwayland);
         return;
     }
+#endif
 
-    if (!globalconf.connection) {
-        warn("client_kill: No XCB connection available");
-        return;
-    }
-
-    if(client_hasproto(c, WM_DELETE_WINDOW))
-    {
-        xcb_client_message_event_t ev;
-
-        /* Initialize all of event's fields first */
-        p_clear(&ev, 1);
-
-        ev.response_type = XCB_CLIENT_MESSAGE;
-        ev.window = c->window;
-        ev.format = 32;
-        ev.data.data32[1] = globalconf.timestamp;
-        ev.type = WM_PROTOCOLS;
-        ev.data.data32[0] = WM_DELETE_WINDOW;
-
-        xcb_send_event(globalconf.connection, false, c->window,
-                       XCB_EVENT_MASK_NO_EVENT, (char *) &ev);
-    }
-    else {
-        xcb_kill_client(globalconf.connection, c->window);
-    }
+    warn("client_kill: Unknown client type or invalid surface");
 }
 
 /** Get all clients into a table.
