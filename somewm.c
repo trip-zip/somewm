@@ -4203,9 +4203,10 @@ updatemons(struct wl_listener *listener, void *data)
 	}
 
 	if (selmon && selmon->wlr_output->enabled) {
+		struct wlr_surface *surf;
 		foreach(client, globalconf.clients) {
 			c = *client;
-			if (!c->mon && client_surface(c)->mapped)
+			if (!c->mon && (surf = client_surface(c)) && surf->mapped)
 				setmon(c, selmon, 0);
 		}
 		focusclient(focustop(selmon), 1);
