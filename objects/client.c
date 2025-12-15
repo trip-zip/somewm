@@ -4157,83 +4157,6 @@ luaA_client_set_maximized_vertical(lua_State *L, client_t *c)
     return 0;
 }
 
-/* luaA_client_isfloating() removed - no longer needed.
- * C doesn't cache floating state anymore (matches AwesomeWM).
- * C queries Lua via some_client_get_floating() when needed. */
-
-/** Get the client floating state.
- * Floating is stored as a Lua property (not in C struct) to match AwesomeWM.
- * This queries the Lua property system.
- */
-static int
-luaA_client_get_floating(lua_State *L, client_t *c)
-{
-    /* Get the floating property from Lua property table
-     * This queries client.property.get(c, "floating") equivalent */
-    luaA_object_push(L, c);
-    lua_getfield(L, -1, "_prop_floating");
-
-    /* If not set, check for implicit floating (window type, fullscreen, etc) */
-    if (lua_isnil(L, -1)) {
-        lua_pop(L, 1);
-        lua_getfield(L, -1, "_prop__implicitly_floating");
-        if (lua_isnil(L, -1)) {
-            lua_pop(L, 2);
-            lua_pushboolean(L, 0);
-            return 1;
-        }
-    }
-
-    /* Remove client object, leave boolean on stack */
-    lua_remove(L, -2);
-    return 1;
-}
-
-/** Set the client floating state.
- * Floating is stored as a Lua property (not in C struct) to match AwesomeWM.
- * This sets via the Lua property system.
- */
-static int
-luaA_client_set_floating(lua_State *L, client_t *c)
-{
-    int top, i, t;
-    bool floating;
-
-    top = lua_gettop(L);
-    fprintf(stderr, "[FLOAT_SET] Stack top=%d\n", top);
-    for (i = 1; i <= top; i++) {
-        t = lua_type(L, i);
-        fprintf(stderr, "[FLOAT_SET]   [%d]: %s", i, lua_typename(L, t));
-        if (t == LUA_TBOOLEAN) {
-            fprintf(stderr, " = %s", lua_toboolean(L, i) ? "true" : "false");
-        }
-        fprintf(stderr, "\n");
-    }
-
-    floating = luaA_checkboolean(L, 3);
-    fprintf(stderr, "[FLOAT_SET] Read from position 3: floating=%d\n", floating);
-
-    /* Debug logging */
-    fprintf(stderr, "[FLOAT_SET] Client %p: setting floating=%d\n", (void*)c, floating);
-
-    /* Store in Lua property table */
-    luaA_object_push(L, c);
-    lua_pushboolean(L, floating);
-    lua_setfield(L, -2, "_prop_floating");
-    lua_pop(L, 1);
-
-    /* Emit property::floating signal */
-    luaA_object_push(L, c);
-    luaA_object_emit_signal(L, -1, "property::floating", 0);
-    lua_pop(L, 1);
-
-    /* Trigger rearrange */
-    if (c->mon)
-        some_monitor_arrange(c->mon);
-
-    return 0;
-}
-
 static int
 luaA_client_set_icon(lua_State *L, client_t *c)
 {
@@ -5167,10 +5090,6 @@ client_class_setup(lua_State *L)
                             (lua_class_propfunc_t) luaA_client_set_fullscreen,
                             (lua_class_propfunc_t) luaA_client_get_fullscreen,
                             (lua_class_propfunc_t) luaA_client_set_fullscreen);
-    luaA_class_add_property(&client_class, "floating",
-                            (lua_class_propfunc_t) luaA_client_set_floating,
-                            (lua_class_propfunc_t) luaA_client_get_floating,
-                            (lua_class_propfunc_t) luaA_client_set_floating);
     luaA_class_add_property(&client_class, "modal",
                             (lua_class_propfunc_t) luaA_client_set_modal,
                             (lua_class_propfunc_t) luaA_client_get_modal,

@@ -919,7 +919,7 @@ some_client_raise(Client *c)
 {
 	if (!c)
 		return;
-	stack_client_push(c);
+	stack_client_append(c);
 	stack_refresh();
 }
 
@@ -928,7 +928,7 @@ some_client_lower(Client *c)
 {
 	if (!c)
 		return;
-	stack_client_append(c);
+	stack_client_push(c);
 	stack_refresh();
 }
 

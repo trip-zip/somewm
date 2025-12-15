@@ -102,6 +102,8 @@ stack_client_remove(Client *c)
 void
 stack_client_push(Client *c)
 {
+	size_t i;
+
 	/* Remove if already in stack */
 	stack_remove_internal(c);
 
@@ -113,8 +115,14 @@ stack_client_push(Client *c)
 			die("stack_client_push: realloc failed");
 	}
 
-	/* Add to end (top of stack) */
-	stack[stack_len++] = c;
+	/* Shift all elements up to make room at beginning */
+	for (i = stack_len; i > 0; i--) {
+		stack[i] = stack[i - 1];
+	}
+
+	/* Add to beginning (bottom of stack) - matches AwesomeWM */
+	stack[0] = c;
+	stack_len++;
 
 	/* TODO: ewmh_update_net_client_list_stacking(); */
 	stack_windows();
@@ -123,8 +131,6 @@ stack_client_push(Client *c)
 void
 stack_client_append(Client *c)
 {
-	size_t i;
-
 	/* Remove if already in stack */
 	stack_remove_internal(c);
 
@@ -136,14 +142,8 @@ stack_client_append(Client *c)
 			die("stack_client_append: realloc failed");
 	}
 
-	/* Shift all elements up to make room at beginning */
-	for (i = stack_len; i > 0; i--) {
-		stack[i] = stack[i - 1];
-	}
-
-	/* Add to beginning (bottom of stack) */
-	stack[0] = c;
-	stack_len++;
+	/* Add to end (top of stack) - matches AwesomeWM */
+	stack[stack_len++] = c;
 
 	/* TODO: ewmh_update_net_client_list_stacking(); */
 	stack_windows();
