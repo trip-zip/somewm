@@ -1853,8 +1853,12 @@ focusclient(Client *c, int lift)
 		return;
 
 	/* Raise client in stacking order if requested */
-	if (c && lift)
-		wlr_scene_node_raise_to_top(&c->scene->node);
+	if (c && lift) {
+		if (!client_is_unmanaged(c))
+			stack_client_append(c);
+		else
+			wlr_scene_node_raise_to_top(&c->scene->node);
+	}
 
 	if (c && client_surface(c) == old)
 		return;
@@ -3446,8 +3450,7 @@ setfullscreen(Client *c, int fullscreen)
 
 	c->bw = fullscreen ? 0 : get_border_width();
 	client_set_fullscreen_internal(c, fullscreen);
-	wlr_scene_node_reparent(&c->scene->node, layers[c->fullscreen
-			? LyrFS : some_client_get_floating(c) ? LyrFloat : LyrTile]);
+	wlr_scene_node_reparent(&c->scene->node, layers[c->fullscreen ? LyrFS : LyrTile]);
 
 	if (fullscreen) {
 		c->prev = c->geometry;
