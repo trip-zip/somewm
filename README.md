@@ -84,12 +84,14 @@ sudo pacman -S wlroots luajit lua-lgi cairo pango gdk-pixbuf2 \
 sudo pacman -S xorg-xwayland libxcb
 
 # Build
-git clone https://github.com/user/somewm
+git clone https://github.com/trip-zip/somewm
 cd somewm
 make
 ```
 
 ### Debian/Ubuntu
+
+**Note:** wlroots 0.19 is only available in Debian unstable (sid) and Ubuntu 25.04+. If you're on Debian stable or Ubuntu 24.04 LTS, you'll need to [build wlroots 0.19 from source](https://gitlab.freedesktop.org/wlroots/wlroots) first.
 
 ```bash
 # Install dependencies
@@ -101,7 +103,7 @@ sudo apt install libwlroots-dev luajit lua-lgi libcairo2-dev \
 sudo apt install xwayland libxcb1-dev libxcb-icccm4-dev
 
 # Build
-git clone https://github.com/user/somewm
+git clone https://github.com/trip-zip/somewm
 cd somewm
 make
 ```
@@ -118,7 +120,7 @@ sudo dnf install wlroots-devel luajit lua-lgi cairo-devel pango-devel \
 sudo dnf install xorg-x11-server-Xwayland libxcb-devel xcb-util-wm-devel
 
 # Build
-git clone https://github.com/user/somewm
+git clone https://github.com/trip-zip/somewm
 cd somewm
 make
 ```
@@ -152,16 +154,13 @@ somewm -s 'alacritty'
 
 somewm uses the same configuration format as AwesomeWM.
 
-**Config location:** `~/.config/somewm/rc.lua`
+**Config locations (checked in order):**
+1. `~/.config/somewm/rc.lua`
+2. `~/.config/awesome/rc.lua`
 
-If you have an existing AwesomeWM configuration, copy it:
+If you already have an AwesomeWM config at `~/.config/awesome/rc.lua`, somewm will use it automatically - no need to copy anything.
 
-```bash
-mkdir -p ~/.config/somewm
-cp ~/.config/awesome/rc.lua ~/.config/somewm/
-```
-
-If no config is found, somewm uses the built-in default theme, same as awesomwwm.
+If no config is found, somewm uses the built-in default theme, same as awesomewm.
 
 ## Known Limitations
 
