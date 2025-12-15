@@ -30,6 +30,9 @@ static size_t screen_capacity = 0;
 /* Primary screen tracking */
 static screen_t *primary_screen = NULL;
 
+/* Track whether initial screen scanning is complete (for hotplug detection) */
+static bool screens_scanned = false;
+
 /* Forward declarations for signal array helpers (from signal.c) */
 extern void signal_array_init(signal_array_t *arr);
 extern void signal_array_wipe(signal_array_t *arr);
@@ -208,7 +211,56 @@ luaA_screen_emit_scanning(lua_State *L)
 void
 luaA_screen_emit_scanned(lua_State *L)
 {
+	screens_scanned = true;
 	luaA_emit_signal_global("screen::scanned");
+}
+
+/** Check if initial screen scanning is complete
+ * Used to distinguish startup from hotplug - screens created after scanning
+ * need their _added signal emitted immediately.
+ */
+bool
+luaA_screen_scanned_done(void)
+{
+	return screens_scanned;
+}
+
+/** Emit screen::list class signal
+ * This notifies Lua code that the screen list has changed.
+ * Should be called after screens are added or removed.
+ */
+void
+luaA_screen_emit_list(lua_State *L)
+{
+	luaA_class_emit_signal(L, &screen_class, "list", 0);
+}
+
+/* Forward declaration for viewports function */
+static int luaA_screen_viewports(lua_State *L);
+
+/** Emit property::_viewports class signal
+ * This notifies Lua code that viewport information has changed.
+ * Used by awful.screen.dpi for DPI handling on multi-monitor setups.
+ */
+void
+luaA_screen_emit_viewports(lua_State *L)
+{
+	/* Push the viewports table onto stack as signal argument */
+	luaA_screen_viewports(L);
+	luaA_class_emit_signal(L, &screen_class, "property::_viewports", 1);
+}
+
+/** Emit primary_changed signal on a screen object
+ * This notifies Lua code that the screen's primary status changed.
+ */
+void
+luaA_screen_emit_primary_changed(lua_State *L, screen_t *screen)
+{
+	if (!screen || !screen->valid)
+		return;
+	luaA_screen_push(L, screen);
+	luaA_object_emit_signal(L, -1, "primary_changed", 0);
+	lua_pop(L, 1);
 }
 
 /** Find screen by coordinates (for client relocation on screen removal)
@@ -1419,6 +1471,7 @@ luaA_screen_connect_signal(lua_State *L)
 }
 
 /** screen:emit_signal(name, ...) - Emit a screen signal
+ * Emits signal on instance, then forwards to class (AwesomeWM pattern).
  */
 static int
 luaA_screen_emit_signal(lua_State *L)
@@ -1427,8 +1480,17 @@ luaA_screen_emit_signal(lua_State *L)
 	const char *name = luaL_checkstring(L, 2);
 	int nargs = lua_gettop(L) - 2;
 
-	if (screen)
+	if (screen) {
+		/* Emit on instance signals first */
 		signal_object_emit(L, &screen->signals, name, nargs);
+
+		/* Then forward to class signals (AwesomeWM pattern).
+		 * This allows class-level handlers connected via screen.connect_signal()
+		 * to receive signals emitted via s:emit_signal(). */
+		lua_pushvalue(L, 1);  /* Push screen object */
+		lua_insert(L, - nargs - 1);  /* Move it before args */
+		luaA_class_emit_signal(L, &screen_class, name, nargs + 1);
+	}
 
 	return 0;
 }

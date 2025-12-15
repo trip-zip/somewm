@@ -45,9 +45,13 @@ screen_t *luaA_screen_get_primary_screen(lua_State *L);
 /* Screen scanning and signals (called from somewm.c) */
 void luaA_screen_emit_scanning(lua_State *L);
 void luaA_screen_emit_scanned(lua_State *L);
+bool luaA_screen_scanned_done(void);
 void luaA_screen_added(lua_State *L, screen_t *screen);
 void luaA_screen_emit_all_added(lua_State *L);
 void luaA_screen_removed(lua_State *L, screen_t *screen);
+void luaA_screen_emit_list(lua_State *L);
+void luaA_screen_emit_viewports(lua_State *L);
+void luaA_screen_emit_primary_changed(lua_State *L, screen_t *screen);
 screen_t *luaA_screen_getbycoord(lua_State *L, int x, int y);
 
 /* Screen geometry and workarea updates */
