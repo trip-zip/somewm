@@ -2394,11 +2394,8 @@ mapnotify(struct wl_listener *listener, void *data)
 	lua_State *L;
 	tag_t *tag;
 
-	fprintf(stderr, "[XWAYLAND] mapnotify: client=%p type=%d\n", (void*)c, c->client_type);
-
 	/* Create scene tree for this client and its border */
 	c->scene = client_surface(c)->data = wlr_scene_tree_create(layers[LyrTile]);
-	fprintf(stderr, "[XWAYLAND] mapnotify: created scene tree=%p\n", (void*)c->scene);
 	/* Enabled later by a call to arrange() */
 	wlr_scene_node_set_enabled(&c->scene->node, client_is_unmanaged(c));
 	c->scene_surface = c->client_type == XDGShell
@@ -3093,10 +3090,15 @@ apply_geometry_to_wlroots(Client *c)
 	wlr_scene_node_set_position(&c->border[2]->node, 0, c->bw);
 	wlr_scene_node_set_position(&c->border[3]->node, c->geometry.width - c->bw, c->bw);
 
-	/* Request size change from client (subtract borders AND titlebars from geometry) */
-	c->resize = client_set_size(c,
-			c->geometry.width - 2 * c->bw - titlebar_left - c->titlebar[CLIENT_TITLEBAR_RIGHT].size,
-			c->geometry.height - 2 * c->bw - titlebar_top - c->titlebar[CLIENT_TITLEBAR_BOTTOM].size);
+	/* Request size change from client (subtract borders AND titlebars from geometry)
+	 * CRITICAL: Only send configure if there's no pending resize waiting for client commit.
+	 * Without this check, we flood the client with configure events on every refresh cycle,
+	 * which crashes Firefox and other clients that can't handle rapid configure floods. */
+	if (!c->resize) {
+		c->resize = client_set_size(c,
+				c->geometry.width - 2 * c->bw - titlebar_left - c->titlebar[CLIENT_TITLEBAR_RIGHT].size,
+				c->geometry.height - 2 * c->bw - titlebar_top - c->titlebar[CLIENT_TITLEBAR_BOTTOM].size);
+	}
 	client_get_clip(c, &clip);
 	wlr_scene_subsurface_tree_set_clip(&c->scene_surface->node, &clip);
 }
