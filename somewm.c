@@ -257,6 +257,11 @@ typedef struct {
 	uint32_t timeout_id;      /* GLib timeout source ID for cleanup */
 } activation_token_t;
 
+/* Deferred screen add for hotplug (matches AwesomeWM's screen_schedule_refresh pattern) */
+typedef struct {
+	screen_t *screen;
+} deferred_screen_add_t;
+
 /* Pending activation tokens (matches AwesomeWM's sn_waits pattern) */
 static activation_token_t *pending_tokens = NULL;
 static size_t pending_tokens_len = 0;
@@ -938,11 +943,25 @@ cleanupmon(struct wl_listener *listener, void *data)
 	size_t i;
 
 	/* Find and remove screen BEFORE destroying monitor data (AwesomeWM pattern)
-	 * This emits instance-level "removed" signal and relocates clients */
+	 * This emits instance-level "removed" signal and relocates clients.
+	 * Also emit viewports and primary_changed signals as needed. */
 	if (globalconf_L) {
 		screen_t *screen = luaA_screen_get_by_monitor(globalconf_L, m);
 		if (screen) {
+			/* Check if this screen was the primary before removing it */
+			screen_t *old_primary = luaA_screen_get_primary_screen(globalconf_L);
+			bool was_primary = (old_primary == screen);
+
 			luaA_screen_removed(globalconf_L, screen);
+			luaA_screen_emit_viewports(globalconf_L);
+
+			/* If removed screen was primary, emit primary_changed on new primary */
+			if (was_primary) {
+				screen_t *new_primary = luaA_screen_get_primary_screen(globalconf_L);
+				if (new_primary && new_primary != screen) {
+					luaA_screen_emit_primary_changed(globalconf_L, new_primary);
+				}
+			}
 		}
 	}
 
@@ -1281,6 +1300,35 @@ createlocksurface(struct wl_listener *listener, void *data)
 		client_notify_enter(lock_surface->surface, wlr_seat_get_keyboard(seat));
 }
 
+/* Idle callback for deferred screen signal emission (AwesomeWM pattern).
+ * This is called after the wlroots output event handler returns, when it's
+ * safe to do complex Lua operations like creating wibars. */
+static void
+screen_added_idle(void *data)
+{
+	deferred_screen_add_t *d = data;
+	screen_t *screen = d->screen;
+
+	if (screen && screen->valid) {
+		screen_t *old_primary = luaA_screen_get_primary_screen(globalconf_L);
+		screen_t *new_primary;
+
+		luaA_screen_added(globalconf_L, screen);
+		luaA_screen_emit_list(globalconf_L);
+		luaA_screen_emit_viewports(globalconf_L);
+
+		new_primary = luaA_screen_get_primary_screen(globalconf_L);
+		if (new_primary == screen && old_primary != screen) {
+			luaA_screen_emit_primary_changed(globalconf_L, screen);
+		}
+
+		banning_refresh();
+		some_refresh();
+	}
+
+	free(d);
+}
+
 void
 createmon(struct wl_listener *listener, void *data)
 {
@@ -1353,7 +1401,9 @@ createmon(struct wl_listener *listener, void *data)
 	else
 		wlr_output_layout_add(output_layout, wlr_output, m->m.x, m->m.y);
 
-	/* Create screen object (signal emission happens later, after rc.lua loads) */
+	/* Create screen object and emit signals.
+	 * During startup: signal emission is deferred to luaA_screen_emit_all_added()
+	 * During runtime (hotplug): emit _added immediately so wibar/tags are created */
 	if (globalconf_L) {
 		Monitor *tmp;
 		int screen_index;
@@ -1372,7 +1422,21 @@ createmon(struct wl_listener *listener, void *data)
 		if (screen) {
 			/* Pop the screen userdata from stack (it's tracked in screen.c globals) */
 			lua_pop(globalconf_L, 1);
-			/* Note: _added signal will be emitted after rc.lua loads */
+
+			/* If startup is complete, this is a hotplugged monitor.
+			 * Defer signal emission to idle callback (AwesomeWM pattern).
+			 * We can't emit signals directly from wlroots output event callback
+			 * because complex Lua operations (wibar creation) may fail. */
+			if (luaA_screen_scanned_done()) {
+				deferred_screen_add_t *d = malloc(sizeof(*d));
+				if (d) {
+					d->screen = screen;
+					wl_event_loop_add_idle(
+						wl_display_get_event_loop(dpy),
+						screen_added_idle,
+						d);
+				}
+			}
 		}
 	}
 }
@@ -3278,15 +3342,16 @@ run(char *startup_cmd)
 	 * Removed C tag initialization to avoid creating duplicate tags without screen assignments */
 	// luaA_tags_init(globalconf_L, TAGCOUNT, tag_names);
 
-	/* Load rc.lua after backend has started and created initial screens.
-	 * At this point, screen objects exist but _added signals haven't been emitted yet.
-	 * After rc.lua loads, user code will be connected and ready to receive signals. */
+	/* Emit _added signals BEFORE rc.lua loads (AwesomeWM pattern).
+	 * At this point, no handlers are connected, so these signals are effectively no-ops.
+	 * This matches AwesomeWM's screen_scan() which emits _added before luaA_parserc().
+	 * The ::connected mechanism in awful/screen.lua handles initial screens when
+	 * rc.lua connects its handlers. */
 	if (globalconf_L) {
-		luaA_loadrc();
-		/* Now emit _added signals for all existing screens.
-		 * This triggers awful.screen's signal bridge which emits request::desktop_decoration */
 		luaA_screen_emit_all_added(globalconf_L);
-		/* Emit screen::scanned to signal that initial screen setup is complete */
+		luaA_loadrc();
+		/* Emit screen::scanned AFTER rc.lua loads (matches AwesomeWM).
+		 * This allows rc.lua handlers to be connected before scanned fires. */
 		luaA_screen_emit_scanned(globalconf_L);
 
 		/* Emit client scanning signals - triggers awful.mouse to set up default mousebindings */
@@ -3473,16 +3538,33 @@ void
 setmon(Client *c, Monitor *m, uint32_t newtags)
 {
 	Monitor *oldmon = c->mon;
+	screen_t *old_screen;
 	lua_State *L;
 
 	if (oldmon == m)
 		return;
+
+	L = globalconf_get_lua_State();
+	old_screen = c->screen;  /* Capture before update */
+
 	c->mon = m;
 	c->prev = c->geometry;
 
 	/* Update c->screen to match c->mon for Lua property access */
-	L = globalconf_get_lua_State();
 	c->screen = luaA_screen_get_by_monitor(L, m);
+
+	/* Emit property::screen signal if screen changed (AwesomeWM pattern).
+	 * This triggers Lua tag management (awful/tag.lua) to assign client
+	 * to tags on the new screen via request::tag signal. */
+	if (c->screen != old_screen) {
+		luaA_object_push(L, c);
+		if (old_screen != NULL)
+			luaA_object_push(L, old_screen);
+		else
+			lua_pushnil(L);
+		luaA_object_emit_signal(L, -2, "property::screen", 1);
+		lua_pop(L, 1);
+	}
 
 	/* Scene graph sends surface leave/enter events on move and resize */
 	if (oldmon)
