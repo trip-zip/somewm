@@ -853,6 +853,15 @@ buttonpress(struct wl_listener *listener, void *data)
 		break;
 	}
 	}
+
+	/* Don't forward button event to client if mousegrabber started during
+	 * Lua callback processing (e.g., awful.mouse.client.move() grabbed it).
+	 * This ensures symmetric handling: if the press was consumed by starting
+	 * a mousegrabber, the client never sees either press or release. */
+	if (mousegrabber_isrunning()) {
+		return;
+	}
+
 	/* If the event wasn't handled by the compositor, notify the client with
 	 * pointer focus that a button press has occurred */
 	wlr_seat_pointer_notify_button(seat,
