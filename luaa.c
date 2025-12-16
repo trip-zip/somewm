@@ -1173,14 +1173,6 @@ luaA_loadrc(void)
 	/* System-wide fallback */
 	config_paths[path_count++] = DATADIR "/somewm/somewmrc.lua";
 
-	/* Development repo fallback (when running from source) */
-	home = getenv("HOME");
-	if (home && home[0] != '\0') {
-		static char repo_fallback[512];
-		snprintf(repo_fallback, sizeof(repo_fallback), "%s/tools/some/somewmrc.lua", home);
-		config_paths[path_count++] = repo_fallback;
-	}
-
 	config_paths[path_count] = NULL;
 
 	/* Set up SIGALRM handler for config loading timeout.

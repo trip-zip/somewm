@@ -151,6 +151,10 @@ install: somewm somewm-client
 	mkdir -p $(DESTDIR)$(DATADIR)/somewm
 	cp -f somewmrc.lua $(DESTDIR)$(DATADIR)/somewm/somewmrc.lua
 	chmod 644 $(DESTDIR)$(DATADIR)/somewm/somewmrc.lua
+	mkdir -p $(DESTDIR)$(DATADIR)/somewm/themes
+	cp -r themes/* $(DESTDIR)$(DATADIR)/somewm/themes/
+	find $(DESTDIR)$(DATADIR)/somewm/themes -type d -exec chmod 755 {} \;
+	find $(DESTDIR)$(DATADIR)/somewm/themes -type f -exec chmod 644 {} \;
 
 install-local:
 	$(MAKE) clean
@@ -167,6 +171,7 @@ uninstall:
 		$(DESTDIR)$(DATADIR)/wayland-sessions/somewm.desktop \
 		$(DESTDIR)$(DATADIR)/somewm/somewmrc.lua
 	rm -rf $(DESTDIR)$(DATADIR)/somewm/lua
+	rm -rf $(DESTDIR)$(DATADIR)/somewm/themes
 	rmdir $(DESTDIR)$(DATADIR)/somewm 2>/dev/null || true
 
 uninstall-local:

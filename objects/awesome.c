@@ -739,9 +739,8 @@ luaA_awesome_setup(lua_State *L)
 	/* awesome.themes_path - path to theme directory
 	 * Used by gears.filesystem.get_themes_dir()
 	 * NOTE: Do NOT include trailing slash - Lua adds it
-	 * Using AwesomeWM's themes directly for 100% compatibility
 	 */
-	lua_pushstring(L, "/home/jimmy/tools/awesome/themes");
+	lua_pushstring(L, DATADIR "/somewm/themes");
 	lua_setfield(L, -2, "themes_path");
 
 	/* awesome.conffile - path to loaded config file
