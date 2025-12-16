@@ -649,17 +649,25 @@ luaA_startup_error(const char *err)
 
 /** Error handler for lua_pcall (AwesomeWM pattern)
  * This is called when a Lua error occurs during protected calls.
- * It adds a traceback to the error message and returns it.
+ * It emits debug::error signal and adds a traceback to the error message.
  * \param L Lua state
  * \return Number of return values (1 = error message with traceback)
  */
 static int
 luaA_dofunction_on_error(lua_State *L)
 {
-	/* Get the error message */
-	const char *err = lua_tostring(L, -1);
-	if (!err)
-		err = "(error object is not a string)";
+	/* Convert error to string to prevent follow-up errors (AwesomeWM pattern) */
+	if (!lua_isstring(L, -1)) {
+		lua_pushliteral(L, "(error object is not a string)");
+		lua_remove(L, -2);
+	}
+
+	/* Duplicate error string for signal emission */
+	lua_pushvalue(L, -1);
+
+	/* Emit debug::error signal (AwesomeWM pattern)
+	 * This allows naughty to catch and display errors */
+	luaA_emit_signal_global_with_stack(L, "debug::error", 1);
 
 	/* Add traceback using debug.traceback */
 	lua_getglobal(L, "debug");

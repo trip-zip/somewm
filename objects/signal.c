@@ -199,3 +199,16 @@ luaA_emit_signal_global_with_table(const char *name, int nargs, ...)
     /* Emit signal with table as argument (table is already on stack) */
     signal_object_emit(globalconf_L, &global_signals, name, 1);
 }
+
+/** Emit a global signal with an argument already on the Lua stack
+ * This is used by luaA_dofunction_on_error to emit debug::error with
+ * the error message that's already on the stack.
+ * \param L Lua state (with argument on top of stack)
+ * \param name Signal name to emit
+ * \param nargs Number of arguments already on stack
+ */
+void
+luaA_emit_signal_global_with_stack(lua_State *L, const char *name, int nargs)
+{
+    signal_object_emit(L, &global_signals, name, nargs);
+}
