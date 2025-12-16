@@ -91,7 +91,7 @@ make
 
 ### Debian/Ubuntu
 
-**Note:** wlroots 0.19 is only available in Debian unstable (sid) and Ubuntu 25.04+. If you're on Debian stable or Ubuntu 24.04 LTS, you'll need to [build wlroots 0.19 from source](https://gitlab.freedesktop.org/wlroots/wlroots) first.
+**Note:** wlroots 0.19 is only available in Debian unstable (sid) and Ubuntu 25.04+. If you're on Debian stable or Ubuntu 24.04 LTS, you'll need to [build wlroots 0.19 from source](https://gitlab.freedesktop.org/wlroots/wlroots) first.  That's my bad, I didn't think of that until just now.  I'll look at the lift it would be to use wlroots.0.18 instead.
 
 ```bash
 # Install dependencies
