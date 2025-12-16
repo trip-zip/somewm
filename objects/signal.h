@@ -37,4 +37,7 @@ void luaA_emit_signal_global_with_screen(const char *name, struct screen_t *scre
 /* Emit a global signal with a table argument (for spawn::* signals) */
 void luaA_emit_signal_global_with_table(const char *name, int nargs, ...);
 
+/* Emit a global signal with argument(s) already on the Lua stack */
+void luaA_emit_signal_global_with_stack(lua_State *L, const char *name, int nargs);
+
 #endif /* SOMEWM_OBJECTS_SIGNAL_H */

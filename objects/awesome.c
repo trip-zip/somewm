@@ -388,6 +388,34 @@ luaA_awesome_index(lua_State *L)
 		return 1;
 	}
 
+	if (A_STREQ(key, "x11_fallback_info")) {
+		/* Return nil if no fallback occurred, otherwise return info table */
+		if (!globalconf.x11_fallback.config_path)
+			return 0;  /* Return nil */
+
+		lua_newtable(L);
+
+		lua_pushstring(L, globalconf.x11_fallback.config_path);
+		lua_setfield(L, -2, "config_path");
+
+		lua_pushinteger(L, globalconf.x11_fallback.line_number);
+		lua_setfield(L, -2, "line_number");
+
+		/* Note: C stores as pattern_desc, Lua expects "pattern" */
+		lua_pushstring(L, globalconf.x11_fallback.pattern_desc);
+		lua_setfield(L, -2, "pattern");
+
+		lua_pushstring(L, globalconf.x11_fallback.suggestion);
+		lua_setfield(L, -2, "suggestion");
+
+		if (globalconf.x11_fallback.line_content) {
+			lua_pushstring(L, globalconf.x11_fallback.line_content);
+			lua_setfield(L, -2, "line_content");
+		}
+
+		return 1;
+	}
+
 	/* Keyboard properties */
 	if (A_STREQ(key, "xkb_layout")) {
 		lua_pushstring(L, globalconf.keyboard.xkb_layout ? globalconf.keyboard.xkb_layout : "");
@@ -722,16 +750,10 @@ luaA_awesome_setup(lua_State *L)
 	lua_pushstring(L, "");
 	lua_setfield(L, -2, "conffile");
 
-	/* awesome.startup_errors - accumulated errors during startup
-	 * AwesomeWM compatibility: errors are accumulated in buffer during config load
-	 * and exposed to Lua for display via naughty notifications
-	 */
-	if (globalconf.startup_errors.len > 0) {
-		lua_pushlstring(L, globalconf.startup_errors.s, globalconf.startup_errors.len);
-	} else {
-		lua_pushnil(L);
-	}
-	lua_setfield(L, -2, "startup_errors");
+	/* NOTE: awesome.startup_errors is accessed dynamically via __index handler
+	 * (luaA_awesome_index). Do NOT set it statically here - a static field
+	 * would shadow the __index metamethod, preventing dynamic access to
+	 * errors accumulated after Lua init. This matches AwesomeWM's pattern. */
 
 	lua_pop(L, 1);  /* pop awesome table */
 }
