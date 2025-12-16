@@ -140,6 +140,19 @@ sudo make install-session
 
 Note: Most display managers only look for session files in `/usr/share/wayland-sessions/`. The `install-session` target copies the desktop file there so somewm appears in your login screen's session list.
 
+### Uninstallation
+
+```bash
+# Remove system-wide installation
+sudo make uninstall
+
+# Remove user-local installation
+make uninstall-local
+
+# Remove session from display manager
+sudo make uninstall-session
+```
+
 ## Running
 
 ```bash
