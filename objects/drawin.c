@@ -1937,19 +1937,19 @@ luaA_drawin_class_setup(lua_State *L)
 	                        luaA_drawin_get_cursor_wrapper,
 	                        NULL);
 	luaA_class_add_property(&drawin_class, "x",
-	                        NULL,
+	                        luaA_drawin_new_x,
 	                        luaA_drawin_get_x_wrapper,
 	                        luaA_drawin_new_x);
 	luaA_class_add_property(&drawin_class, "y",
-	                        NULL,
+	                        luaA_drawin_new_y,
 	                        luaA_drawin_get_y_wrapper,
 	                        luaA_drawin_new_y);
 	luaA_class_add_property(&drawin_class, "width",
-	                        NULL,
+	                        luaA_drawin_new_width,
 	                        luaA_drawin_get_width_wrapper,
 	                        luaA_drawin_new_width);
 	luaA_class_add_property(&drawin_class, "height",
-	                        NULL,
+	                        luaA_drawin_new_height,
 	                        luaA_drawin_get_height_wrapper,
 	                        luaA_drawin_new_height);
 	luaA_class_add_property(&drawin_class, "type",
