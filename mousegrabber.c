@@ -28,6 +28,7 @@
 
 #include "objects/mousegrabber.h"
 #include "objects/luaa.h"
+#include "common/lualib.h"
 #include "globalconf.h"
 #include "somewm_api.h"
 
@@ -210,7 +211,7 @@ luaA_mousegrabber_setup(lua_State *L)
     };
 
     /* Register the methods on the table at the top of the stack */
-    luaL_register(L, NULL, mousegrabber_methods);
+    luaA_setfuncs(L, mousegrabber_methods);
 }
 
 /* vim: filetype=c:expandtab:shiftwidth=4:tabstop=8:softtabstop=4:textwidth=80 */

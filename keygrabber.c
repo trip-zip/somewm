@@ -15,6 +15,7 @@
 #include <lualib.h>
 #include <stddef.h>
 #include <stdbool.h>
+#include "common/lualib.h"
 #include "somewm_types.h"
 #include "objects/keygrabber.h"
 
@@ -171,5 +172,5 @@ luaA_keygrabber_setup(lua_State *L)
     globalL = L;
 
     /* Create the keygrabber module table */
-    luaL_register(L, NULL, keygrabber_methods);
+    luaA_setfuncs(L, keygrabber_methods);
 }

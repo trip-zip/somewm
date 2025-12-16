@@ -13,6 +13,7 @@
 
 #include "timer.h"
 #include "luaa.h"
+#include "../common/lualib.h"
 #include "../somewm_api.h"
 
 #define TIMER_MT "somewm.timer"
@@ -187,11 +188,11 @@ luaA_timer_setup(lua_State *L)
 	lua_setfield(L, -2, "__index");
 
 	/* Register metamethods */
-	luaL_register(L, NULL, timer_meta);
+	luaA_setfuncs(L, timer_meta);
 	lua_pop(L, 1);  /* Pop metatable */
 
 	/* Create global table */
 	lua_newtable(L);
-	luaL_register(L, NULL, timer_methods);
+	luaA_setfuncs(L, timer_methods);
 	lua_setglobal(L, "_timer");
 }
