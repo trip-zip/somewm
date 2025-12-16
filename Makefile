@@ -169,6 +169,12 @@ uninstall:
 	rm -rf $(DESTDIR)$(DATADIR)/somewm/lua
 	rmdir $(DESTDIR)$(DATADIR)/somewm 2>/dev/null || true
 
+uninstall-local:
+	$(MAKE) uninstall PREFIX=$(HOME)/.local DATADIR=$(HOME)/.local/share SYSCONFDIR=$(HOME)/.local/etc
+
+uninstall-session:
+	rm -f /usr/share/wayland-sessions/somewm.desktop
+
 .SUFFIXES: .c .o
 .c.o:
 	$(CC) $(CPPFLAGS) $(SOMECFLAGS) -o $@ -c $<
