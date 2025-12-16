@@ -10,6 +10,7 @@
 
 #include "somewm_api.h"
 #include "somewm_types.h"
+#include "common/lualib.h"
 #include "objects/luaa.h"
 #include "objects/mouse.h"
 #include "objects/client.h"
@@ -234,7 +235,7 @@ luaA_mouse_setup(lua_State *L)
 
 	/* Set metatable */
 	lua_newtable(L);
-	luaL_setfuncs(L, mouse_methods, 0);
+	luaA_setfuncs(L, mouse_methods);
 	lua_setmetatable(L, -2);
 
 	/* Duplicate the mouse table */

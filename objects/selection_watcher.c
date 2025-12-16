@@ -217,7 +217,7 @@ selection_watcher_allocator(lua_State *L)
     lua_newtable(L);
     lua_newtable(L);
     lua_setmetatable(L, -2);
-    lua_setfenv(L, -2);
+    luaA_setuservalue(L, -2);
     lua_pushvalue(L, -1);
 
     return watcher;
