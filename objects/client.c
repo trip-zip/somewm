@@ -2811,54 +2811,16 @@ void
 client_set_minimized(lua_State *L, int cidx, bool s)
 {
     client_t *c = luaA_checkudata(L, cidx, &client_class);
-    uint32_t no_event[] = { 0 };
-    const uint32_t client_select_input_val[] = { CLIENT_SELECT_INPUT_EVENT_MASK };
-    const uint32_t frame_select_input_val[] = { FRAME_SELECT_INPUT_EVENT_MASK };
 
     if(c->minimized != s)
     {
         c->minimized = s;
         banning_need_update();
-        if(s)
-        {
-            /* ICCCM: To transition from ICONIC to NORMAL state, the client
-             * should just map the window. Thus, iconic clients need to be
-             * unmapped, else the MapWindow request doesn't have any effect.
-             */
-            xwindow_set_state(c->window, XCB_ICCCM_WM_STATE_ICONIC);
-            xcb_grab_server(globalconf.connection);
-            xcb_change_window_attributes(globalconf.connection,
-                                         globalconf.screen->root,
-                                         XCB_CW_EVENT_MASK,
-                                         no_event);
-            xcb_change_window_attributes(globalconf.connection,
-                                         c->frame_window,
-                                         XCB_CW_EVENT_MASK,
-                                         no_event);
-            xcb_change_window_attributes(globalconf.connection,
-                                         c->window,
-                                         XCB_CW_EVENT_MASK,
-                                         no_event);
-            xcb_unmap_window(globalconf.connection, c->window);
-            xcb_change_window_attributes(globalconf.connection,
-                                         globalconf.screen->root,
-                                         XCB_CW_EVENT_MASK,
-                                         ROOT_WINDOW_EVENT_MASK);
-            xcb_change_window_attributes(globalconf.connection,
-                                         c->frame_window,
-                                         XCB_CW_EVENT_MASK,
-                                         frame_select_input_val);
-            xcb_change_window_attributes(globalconf.connection,
-                                         c->window,
-                                         XCB_CW_EVENT_MASK,
-                                         client_select_input_val);
-            xutil_ungrab_server(globalconf.connection);
-        }
-        else
-        {
-            xwindow_set_state(c->window, XCB_ICCCM_WM_STATE_NORMAL);
-            xcb_map_window(globalconf.connection, c->window);
-        }
+
+        /* Wayland: Hide/show the client's scene node */
+        if(c->scene)
+            wlr_scene_node_set_enabled(&c->scene->node, !s);
+
         if(strut_has_value(&c->strut))
             screen_update_workarea(c->screen);
         luaA_object_emit_signal(L, cidx, "property::minimized", 0);
