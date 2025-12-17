@@ -2,6 +2,8 @@
  * See LICENSE file for copyright and license details.
  */
 #define _DEFAULT_SOURCE
+#include <errno.h>
+#include <fcntl.h>
 #include <getopt.h>
 #include <glib.h>
 #include <libinput.h>
@@ -78,6 +80,8 @@
 #include "globalconf.h"        /* Global configuration structure (AwesomeWM pattern) */
 #include "banning.h"            /* Client visibility management (banning) */
 #include "objects/luaa.h"
+#include "objects/spawn.h"  /* For spawn_child_exited */
+#include "common/lualib.h"  /* For luaA_dumpstack */
 #include "objects/signal.h"
 #include "common/luaobject.h"  /* For luaA_object_emit_signal */
 #include "objects/button.h"
@@ -266,6 +270,9 @@ typedef struct {
 static activation_token_t *pending_tokens = NULL;
 static size_t pending_tokens_len = 0;
 static size_t pending_tokens_cap = 0;
+
+/* Pipe for async SIGCHLD handling (AwesomeWM pattern) */
+static int sigchld_pipe[2] = {-1, -1};
 static struct wlr_xdg_decoration_manager_v1 *xdg_decoration_mgr;
 static struct wlr_idle_notifier_v1 *idle_notifier;
 static struct wlr_idle_inhibit_manager_v1 *idle_inhibit_mgr;
@@ -2083,10 +2090,47 @@ gpureset(struct wl_listener *listener, void *data)
 void
 handlesig(int signo)
 {
-	if (signo == SIGCHLD)
-		while (waitpid(-1, NULL, WNOHANG) > 0);
-	else if (signo == SIGINT || signo == SIGTERM)
+	if (signo == SIGCHLD) {
+		/* Write to pipe to wake up GLib main loop (AwesomeWM pattern).
+		 * Child reaping is done in reap_children() callback. */
+		if (sigchld_pipe[1] >= 0) {
+			int res = write(sigchld_pipe[1], " ", 1);
+			(void) res;  /* Ignore write errors in signal handler */
+		}
+	} else if (signo == SIGINT || signo == SIGTERM) {
 		wl_display_terminate(dpy);
+	}
+}
+
+/** GLib callback for SIGCHLD pipe (AwesomeWM pattern).
+ * This is called when the SIGCHLD handler writes to the pipe.
+ * We read from the pipe and reap all children with waitpid().
+ */
+static gboolean
+reap_children(GIOChannel *channel, GIOCondition condition, gpointer user_data)
+{
+	pid_t child;
+	int status;
+	char buffer[1024];
+	ssize_t result;
+
+	/* Read from pipe to clear it */
+	result = read(sigchld_pipe[0], buffer, sizeof(buffer));
+	if (result < 0 && errno != EAGAIN && errno != EWOULDBLOCK) {
+		fprintf(stderr, "somewm: error reading from SIGCHLD pipe: %s\n",
+		        strerror(errno));
+	}
+
+	/* Reap all exited children */
+	while ((child = waitpid(-1, &status, WNOHANG)) > 0) {
+		spawn_child_exited(child, status);
+	}
+
+	if (child < 0 && errno != ECHILD) {
+		fprintf(stderr, "somewm: waitpid(-1) failed: %s\n", strerror(errno));
+	}
+
+	return TRUE;  /* Keep watching */
 }
 
 void
@@ -3243,8 +3287,9 @@ some_glib_poll(GPollFD *ufds, guint nfsd, gint timeout)
 
 	/* Check Lua stack integrity (matches AwesomeWM) */
 	if (L && lua_gettop(L) != 0) {
-		fprintf(stderr, "WARNING: Something left %d items on Lua stack!\n",
+		fprintf(stderr, "WARNING: Something left %d items on Lua stack, this is a bug!\n",
 		        lua_gettop(L));
+		luaA_dumpstack(L);
 		lua_settop(L, 0);
 	}
 
@@ -3370,18 +3415,14 @@ run(char *startup_cmd)
 		client_emit_scanned();
 
 		/* Emit startup signal to initialize Lua modules (matches AwesomeWM) */
-		fprintf(stderr, "[SOMEWM] Emitting startup signal\n");
 		luaA_emit_signal_global("startup");
-		fprintf(stderr, "[SOMEWM] Startup signal emitted\n");
 
 		/* Ensure all drawables created during startup have their content
 		 * pushed to scene buffers. This fixes the timing issue where wiboxes
 		 * don't appear until an external event triggers some_refresh().
 		 * In AwesomeWM, xcb_flush() sends everything immediately after config
 		 * loads; in Wayland we need to explicitly refresh all drawables. */
-		fprintf(stderr, "[SOMEWM] Running initial some_refresh() for startup drawables\n");
 		some_refresh();
-		fprintf(stderr, "[SOMEWM] Initial refresh complete\n");
 	}
 
 	/* Now that the socket exists and the backend is started, run the startup command */
@@ -3459,6 +3500,14 @@ run(char *startup_cmd)
 	/* Create and run GLib main loop (matches AwesomeWM) */
 	globalconf.loop = g_main_loop_new(NULL, FALSE);
 
+	/* Check stack before entering main loop (matches AwesomeWM's pattern) */
+	if (globalconf_L && lua_gettop(globalconf_L) != 0) {
+		fprintf(stderr, "WARNING: Stack not empty before main loop! %d items, this is a bug.\n",
+		        lua_gettop(globalconf_L));
+		luaA_dumpstack(globalconf_L);
+		lua_settop(globalconf_L, 0);
+	}
+
 	fprintf(stderr, "somewm: Starting GLib main loop (AwesomeWM architecture)\n");
 	g_main_loop_run(globalconf.loop);
 	fprintf(stderr, "somewm: GLib main loop exited\n");
@@ -3467,6 +3516,16 @@ run(char *startup_cmd)
 	g_source_destroy(wayland_source);
 	g_main_loop_unref(globalconf.loop);
 	globalconf.loop = NULL;
+
+	/* Close SIGCHLD pipe */
+	if (sigchld_pipe[0] >= 0) {
+		close(sigchld_pipe[0]);
+		sigchld_pipe[0] = -1;
+	}
+	if (sigchld_pipe[1] >= 0) {
+		close(sigchld_pipe[1]);
+		sigchld_pipe[1] = -1;
+	}
 }
 
 void
@@ -3620,6 +3679,21 @@ setup(void)
 	int drm_fd, i, sig[] = {SIGCHLD, SIGINT, SIGTERM, SIGPIPE};
 	struct sigaction sa = {.sa_flags = SA_RESTART, .sa_handler = handlesig};
 	sigemptyset(&sa.sa_mask);
+
+	/* Setup pipe for SIGCHLD processing (AwesomeWM pattern).
+	 * The signal handler writes to the pipe, and a GLib IO watch
+	 * reads from it and calls reap_children(). */
+	if (pipe(sigchld_pipe) < 0)
+		die("failed to create SIGCHLD pipe");
+	/* Make read end non-blocking */
+	fcntl(sigchld_pipe[0], F_SETFL, O_NONBLOCK);
+
+	/* Setup GLib IO watch for SIGCHLD pipe */
+	{
+		GIOChannel *channel = g_io_channel_unix_new(sigchld_pipe[0]);
+		g_io_add_watch(channel, G_IO_IN, reap_children, NULL);
+		g_io_channel_unref(channel);
+	}
 
 	for (i = 0; i < (int)LENGTH(sig); i++)
 		sigaction(sig[i], &sa, NULL);
