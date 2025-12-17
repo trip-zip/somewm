@@ -21,7 +21,8 @@ local textbox = require("wibox.widget.textbox")
 local client_focus = require("awful.client.focus")
 local awful_client = require("awful.client")
 local awful_screen = require("awful.screen")
--- signal, _client, _screen, awesome are globals, not modules
+-- _client, _screen, awesome are globals, not modules
+-- Use awesome.connect_signal() for global signals (AwesomeWM pattern)
 local gtimer = require("gears.timer")
 local bitwise = require("gears.bitwise")
 
@@ -146,12 +147,13 @@ function focus_tracker.init()
   -- This avoids trying to create a wibox before monitors are available
 
   -- Connect to signals for immediate updates (when widget exists)
-  signal.connect("client::focus", update_display)
-  signal.connect("client::unfocus", update_display)
-  signal.connect("client::property::name", update_display)
-  signal.connect("client::property::floating", update_display)
-  signal.connect("tag::viewchange", update_display)
-  signal.connect("screen::focus", update_display)
+  -- Use awesome.connect_signal() for global signals (AwesomeWM pattern)
+  awesome.connect_signal("client::focus", update_display)
+  awesome.connect_signal("client::unfocus", update_display)
+  awesome.connect_signal("client::property::name", update_display)
+  awesome.connect_signal("client::property::floating", update_display)
+  awesome.connect_signal("tag::viewchange", update_display)
+  awesome.connect_signal("screen::focus", update_display)
 
   -- Set up timer for cursor position updates (100ms)
   update_timer = gtimer.new({

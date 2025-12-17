@@ -16,94 +16,55 @@
 /** Global signal registry for class-level signals */
 static signal_array_t global_signals;
 
-/** signal.connect(name, callback) - Connect a callback to a global signal
- * \param name Signal name (string)
- * \param callback Lua function to call when signal is emitted
+/** Connect a callback to a global signal (used by awesome.connect_signal)
+ * \param name Signal name
+ * \param ref Lua reference to callback function
  */
-static int
-luaA_signal_connect(lua_State *L)
+void
+luaA_signal_connect(const char *name, const void *ref)
 {
-    const char *name = luaL_checkstring(L, 1);
-    const void *ref;
-    luaL_checktype(L, 2, LUA_TFUNCTION);
-
-    /* Store function in registry and get reference */
-    lua_pushvalue(L, 2);  /* Duplicate function on stack */
-    ref = luaA_object_ref(L, -1);
-
-    /* Add reference to signal */
     signal_connect(&global_signals, name, ref);
-
-    return 0;
 }
 
-/** signal.disconnect(name, callback) - Disconnect a callback from a global signal
- * \param name Signal name (string)
- * \param callback Lua function to disconnect (must be same function object)
+/** Disconnect a callback from a global signal (used by awesome.disconnect_signal)
+ * \param name Signal name
+ * \param ref Pointer to callback function
+ * \return true if the signal was disconnected
  */
-static int
-luaA_signal_disconnect(lua_State *L)
+bool
+luaA_signal_disconnect(const char *name, const void *ref)
 {
-    const char *name = luaL_checkstring(L, 1);
-    const void *ref;
-    luaL_checktype(L, 2, LUA_TFUNCTION);
-
-    ref = lua_topointer(L, 2);
-    if (signal_disconnect(&global_signals, name, ref))
-        luaA_object_unref(L, ref);
-
-    return 0;
+    return signal_disconnect(&global_signals, name, ref);
 }
 
-/** signal.emit(name, ...) - Emit a global signal, calling all connected callbacks
- * \param name Signal name (string)
- * \param ... Additional arguments to pass to callbacks
+/** Emit a global signal (used by awesome.emit_signal)
+ * \param L Lua state
+ * \param name Signal name
+ * \param nargs Number of arguments on stack
  */
-static int
-luaA_signal_emit(lua_State *L)
+void
+luaA_signal_emit(lua_State *L, const char *name, int nargs)
 {
-    const char *name = luaL_checkstring(L, 1);
-    int nargs = lua_gettop(L) - 1;  /* Number of extra arguments */
-
     signal_object_emit(L, &global_signals, name, nargs);
-
-    return 0;
 }
 
-/** signal.list() - List all registered signals (for debugging)
- * \return Table of signal names
- */
-static int
-luaA_signal_list(lua_State *L)
-{
-    lua_newtable(L);
-    for (int i = 0; i < global_signals.len; i++) {
-        lua_pushinteger(L, global_signals.tab[i].id);
-        lua_rawseti(L, -2, i + 1);
-    }
-    return 1;
-}
-
-/* Signal module methods */
-static const luaL_Reg signal_methods[] = {
-    { "connect", luaA_signal_connect },
-    { "disconnect", luaA_signal_disconnect },
-    { "emit", luaA_signal_emit },
-    { "list", luaA_signal_list },
-    { NULL, NULL }
-};
-
-/** Setup the signal Lua module
- * Registers the global 'signal' table with signal functions
+/** Setup the signal system
+ * Initializes the global signal array for C code.
+ * NOTE: We do NOT register a global 'signal' table in Lua because:
+ * 1. AwesomeWM doesn't have this - it uses awesome.connect_signal() instead
+ * 2. A global 'signal' table conflicts with user configs that have a signal/ directory
+ *    (e.g., require('signal') would return the global instead of loading the module)
  */
 void
 luaA_signal_setup(lua_State *L)
 {
+    (void)L;  /* Unused - we no longer register a Lua module */
+
     /* Initialize global signal array */
     signal_array_init(&global_signals);
 
-    /* Register signal module */
-    luaA_openlib(L, "signal", signal_methods, NULL);
+    /* NOTE: Removed luaA_openlib(L, "signal", ...) to avoid conflicts with
+     * user configs. Global signals should be accessed via awesome.connect_signal(). */
 }
 
 /** Cleanup signal system (called on shutdown) */
