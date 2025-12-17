@@ -113,11 +113,15 @@ parse_command(lua_State *L, int idx, GError **error)
 	return argv;
 }
 
-/** Callback for when a spawned process exits */
-static void
-spawn_child_exited(GPid pid, gint status, gpointer user_data)
+/** Called when a spawned process exits (AwesomeWM pattern).
+ * This is called from somewm.c's reap_children() callback.
+ * \param pid Process ID of the exited child
+ * \param status Exit status from waitpid()
+ */
+void
+spawn_child_exited(pid_t pid, int status)
 {
-	lua_State *L = user_data;
+	lua_State *L = globalconf_get_lua_State();
 	running_child_t *child;
 	int exit_callback;
 	guint i;
@@ -125,8 +129,8 @@ spawn_child_exited(GPid pid, gint status, gpointer user_data)
 	child = find_child(pid);
 
 	if (!child) {
-		fprintf(stderr, "somewm: warning: Unknown child %d exited\n", (int)pid);
-		g_spawn_close_pid(pid);
+		/* Not a tracked child - could be from startup command or other source.
+		 * This is normal and expected, don't warn. */
 		return;
 	}
 
@@ -164,7 +168,6 @@ spawn_child_exited(GPid pid, gint status, gpointer user_data)
 
 	/* Unref the callback */
 	luaL_unref(L, LUA_REGISTRYINDEX, exit_callback);
-	g_spawn_close_pid(pid);
 }
 
 /** Child setup callback - just call setsid()
@@ -369,8 +372,8 @@ luaA_spawn(lua_State *L)
 		child.exit_callback = callback_ref;
 		g_array_append_val(running_children, child);
 
-		/* Setup GLib child watch */
-		g_child_watch_add(pid, spawn_child_exited, L);
+		/* Note: No g_child_watch_add() here - child reaping is unified
+		 * in somewm.c's reap_children() callback (AwesomeWM pattern) */
 	}
 
 	/* Return: pid, snid, stdin, stdout, stderr */

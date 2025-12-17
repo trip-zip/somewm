@@ -567,6 +567,7 @@ luaA_init(void)
 
 	/* Register D-Bus library (AwesomeWM compatibility) */
 	luaA_registerlib(globalconf_L, "dbus", awesome_dbus_lib);
+	lua_pop(globalconf_L, 1);  /* luaA_registerlib leaves table on stack */
 
 	/* Setup keygrabber module (AwesomeWM pattern: global variable) */
 	lua_newtable(globalconf_L);  /* Create keygrabber module table */
@@ -1474,6 +1475,7 @@ luaA_create_fresh_state(void)
 
 	/* D-Bus */
 	luaA_registerlib(L, "dbus", awesome_dbus_lib);
+	lua_pop(L, 1);  /* luaA_registerlib leaves table on stack */
 
 	/* Keygrabber */
 	lua_newtable(L);
