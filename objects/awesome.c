@@ -127,56 +127,59 @@ luaA_awesome_get_cursor_monitor(lua_State *L)
 }
 
 /** awesome.connect_signal(name, callback) - Connect to a global signal
- * Delegates to the signal module for AwesomeWM API compatibility
+ * Uses the internal global signal array (AwesomeWM pattern)
  * \param name Signal name (string)
  * \param callback Lua function to call when signal is emitted
  */
 static int
 luaA_awesome_connect_signal(lua_State *L)
 {
-	lua_getglobal(L, "signal");
-	lua_getfield(L, -1, "connect");
-	lua_pushvalue(L, 1);
-	lua_pushvalue(L, 2);
-	lua_call(L, 2, 0);
-	lua_pop(L, 1);
+	const char *name = luaL_checkstring(L, 1);
+	const void *ref;
+	luaL_checktype(L, 2, LUA_TFUNCTION);
+
+	/* Store function in registry and get reference */
+	lua_pushvalue(L, 2);  /* Duplicate function on stack */
+	ref = luaA_object_ref(L, -1);
+
+	/* Add reference to global signal array */
+	luaA_signal_connect(name, ref);
+
 	return 0;
 }
 
 /** awesome.disconnect_signal(name, callback) - Disconnect from a global signal
- * Delegates to the signal module for AwesomeWM API compatibility
+ * Uses the internal global signal array (AwesomeWM pattern)
  * \param name Signal name (string)
  * \param callback Lua function to disconnect
  */
 static int
 luaA_awesome_disconnect_signal(lua_State *L)
 {
-	lua_getglobal(L, "signal");
-	lua_getfield(L, -1, "disconnect");
-	lua_pushvalue(L, 1);
-	lua_pushvalue(L, 2);
-	lua_call(L, 2, 0);
-	lua_pop(L, 1);
+	const char *name = luaL_checkstring(L, 1);
+	const void *ref;
+	luaL_checktype(L, 2, LUA_TFUNCTION);
+
+	ref = lua_topointer(L, 2);
+	if (luaA_signal_disconnect(name, ref))
+		luaA_object_unref(L, ref);
+
 	return 0;
 }
 
 /** awesome.emit_signal(name, ...) - Emit a global signal
- * Delegates to the signal module for AwesomeWM API compatibility
+ * Uses the internal global signal array (AwesomeWM pattern)
  * \param name Signal name (string)
  * \param ... Arguments to pass to callbacks
  */
 static int
 luaA_awesome_emit_signal(lua_State *L)
 {
-	int nargs = lua_gettop(L);
+	const char *name = luaL_checkstring(L, 1);
+	int nargs = lua_gettop(L) - 1;  /* Number of extra arguments */
 
-	lua_getglobal(L, "signal");
-	lua_getfield(L, -1, "emit");
-	for (int i = 1; i <= nargs; i++) {
-		lua_pushvalue(L, i);
-	}
-	lua_call(L, nargs, 0);
-	lua_pop(L, 1);
+	luaA_signal_emit(L, name, nargs);
+
 	return 0;
 }
 
@@ -351,6 +354,23 @@ rebuild_keyboard_keymap(void)
 	some_rebuild_keyboard_keymap();
 }
 
+/** Systray stub - returns 0 entries and nil parent
+ * TODO: Implement proper systray support for Wayland
+ * In AwesomeWM this manages the X11 systray (system tray icons).
+ * For now, return 0 entries so configs using systray don't crash.
+ *
+ * \param L Lua state
+ * \return 2 values: number of entries (0), parent drawin (nil)
+ */
+static int
+luaA_systray(lua_State *L)
+{
+	/* Stub: always return 0 entries and nil parent */
+	lua_pushinteger(L, 0);
+	lua_pushnil(L);
+	return 2;
+}
+
 /* awesome module methods */
 static const luaL_Reg awesome_methods[] = {
 	{ "quit", luaA_awesome_quit },
@@ -368,6 +388,7 @@ static const luaL_Reg awesome_methods[] = {
 	{ "xrdb_get_value", luaA_awesome_xrdb_get_value },
 	{ "register_xproperty", luaA_awesome_register_xproperty },
 	{ "pixbuf_to_surface", luaA_pixbuf_to_surface },
+	{ "systray", luaA_systray },
 	{ NULL, NULL }
 };
 

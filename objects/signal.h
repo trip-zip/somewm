@@ -25,6 +25,11 @@ struct screen_t;
 void luaA_signal_setup(lua_State *L);
 void luaA_signal_cleanup(void);
 
+/* Connect/disconnect/emit for awesome.connect_signal() etc. */
+void luaA_signal_connect(const char *name, const void *ref);
+bool luaA_signal_disconnect(const char *name, const void *ref);
+void luaA_signal_emit(lua_State *L, const char *name, int nargs);
+
 /* Emit a global signal from C code (callable without Lua stack) */
 void luaA_emit_signal_global(const char *name);
 
