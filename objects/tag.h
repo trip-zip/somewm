@@ -35,11 +35,11 @@ typedef struct screen_t screen_t;
 /* Include array support */
 #include "common/array.h"
 
-/* Forward declare client_array_t - full definition in client.h */
-typedef struct client_array_t {
-    client_t **tab;
-    int len, size;
-} client_array_t;
+/* client_array_t is defined in globalconf.h via ARRAY_TYPE macro */
+#ifndef CLIENT_ARRAY_T_DEFINED
+#define CLIENT_ARRAY_T_DEFINED
+ARRAY_TYPE(client_t *, client)
+#endif
 
 /** Tag type - represents a workspace/desktop
  *
@@ -72,7 +72,10 @@ typedef struct tag_t
 } tag_t;
 
 /* Declare tag_array_t type - must come AFTER tag_t typedef */
+#ifndef TAG_ARRAY_T_DEFINED
+#define TAG_ARRAY_T_DEFINED
 ARRAY_TYPE(tag_t *, tag)
+#endif
 
 /* Helper function declarations */
 int tags_get_current_or_first_selected_index(void);

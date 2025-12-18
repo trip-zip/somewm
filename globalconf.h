@@ -47,8 +47,14 @@ typedef struct button_t button_t;
 #define BUTTON_ARRAY_T_DEFINED
 ARRAY_TYPE(button_t *, button)
 #endif
+#ifndef CLIENT_ARRAY_T_DEFINED
+#define CLIENT_ARRAY_T_DEFINED
 ARRAY_TYPE(client_t *, client)
+#endif
+#ifndef TAG_ARRAY_T_DEFINED
+#define TAG_ARRAY_T_DEFINED
 ARRAY_TYPE(tag_t *, tag)
+#endif
 ARRAY_TYPE(screen_t *, screen)
 ARRAY_TYPE(drawin_t *, drawin)
 
