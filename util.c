@@ -22,6 +22,11 @@ void
 die(const char *fmt, ...) {
 	va_list ap;
 
+	if (!fmt) {
+		fprintf(stderr, "fatal error\n");
+		exit(1);
+	}
+
 	va_start(ap, fmt);
 	vfprintf(stderr, fmt, ap);
 	va_end(ap);

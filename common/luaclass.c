@@ -268,13 +268,20 @@ luaA_class_setup(lua_State *L, lua_class_t *class,
 
     /* Duplicate objects metatable */
     lua_pushvalue(L, -1);
-    /* Set garbage collector in the metatable */
-    lua_pushcfunction(L, luaA_class_gc);
-    lua_setfield(L, -2, "__gc");
 
     lua_setfield(L, -2, "__index"); /* metatable.__index = metatable      1 */
 
+    /* Apply meta table from caller FIRST, then override __gc.
+     * This ensures luaA_class_gc is always the __gc handler, even if
+     * the meta table has a custom __gc. luaA_class_gc handles critical
+     * cleanup (calling collectors, replacing metatable with invalid marker)
+     * that prevents use-after-free during GC cycles. */
     luaA_setfuncs(L, meta);                                            /* 1 */
+
+    /* Set garbage collector in the metatable AFTER applying meta,
+     * so our __gc handler always takes precedence */
+    lua_pushcfunction(L, luaA_class_gc);
+    lua_setfield(L, -2, "__gc");
     luaA_registerlib(L, name, methods);                                /* 2 */
     lua_pushvalue(L, -1);           /* dup self as metatable              3 */
     lua_setmetatable(L, -2);        /* set self as metatable              2 */

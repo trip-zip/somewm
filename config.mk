@@ -1,4 +1,4 @@
-_VERSION = 0.8-dev
+_VERSION = 0.2-dev
 VERSION  = `git describe --tags --dirty 2>/dev/null || echo $(_VERSION)`
 
 PKG_CONFIG = pkg-config
@@ -78,3 +78,7 @@ XLIBS = xcb xcb-icccm
 # To avoid warnings about them, we do not use -std=c99 and instead of using the
 # gmake default 'CC=c99', we use cc.
 CC = cc
+
+# Uncomment to always build with AddressSanitizer (for development)
+# ASAN = 1
+# Or create config.local.mk with "ASAN = 1" (gitignored)
