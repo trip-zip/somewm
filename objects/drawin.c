@@ -537,9 +537,6 @@ drawin_wipe(drawin_t *w)
 	if (!w)
 		return;
 
-	/* Clean up signals */
-	signal_array_wipe(&w->signals);
-
 	/* Note: drawable reference cleanup handled by class system */
 	w->drawable = NULL;
 

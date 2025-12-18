@@ -380,9 +380,6 @@ drawable_wipe(drawable_t *d)
 		wlr_buffer_drop(d->buffer);
 		d->buffer = NULL;
 	}
-
-	/* Signal cleanup */
-	signal_array_wipe(&d->signals);
 }
 
 /** Garbage collection */
