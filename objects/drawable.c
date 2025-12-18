@@ -129,6 +129,78 @@ static const struct wlr_buffer_impl drawable_shm_buffer_impl = {
 };
 
 /**
+ * Create an empty SHM buffer for rendering into.
+ * The buffer is zeroed and ready to be used as a render target.
+ *
+ * Returns a wlr_buffer that supports CPU data pointer access.
+ * The caller must call wlr_buffer_drop() when done with the buffer.
+ */
+struct wlr_buffer *
+drawable_create_empty_buffer(int width, int height)
+{
+	DrawableShmBuffer *buffer;
+	size_t size;
+	int fd;
+	void *data;
+
+	if (width <= 0 || height <= 0) {
+		fprintf(stderr, "drawable_create_empty_buffer: invalid dimensions\n");
+		return NULL;
+	}
+
+	/* Allocate buffer structure */
+	buffer = calloc(1, sizeof(DrawableShmBuffer));
+	if (!buffer) {
+		return NULL;
+	}
+
+	/* Calculate buffer size */
+	buffer->stride = width * 4;  /* 4 bytes per pixel (ARGB8888) */
+	size = buffer->stride * height;
+
+	/* Create anonymous file in memory */
+	fd = memfd_create("screenshot-shm", MFD_CLOEXEC);
+	if (fd < 0) {
+		fprintf(stderr, "drawable_create_empty_buffer: memfd_create failed: %s\n", strerror(errno));
+		free(buffer);
+		return NULL;
+	}
+
+	/* Set file size */
+	if (ftruncate(fd, size) < 0) {
+		fprintf(stderr, "drawable_create_empty_buffer: ftruncate failed: %s\n", strerror(errno));
+		close(fd);
+		free(buffer);
+		return NULL;
+	}
+
+	/* Map into memory */
+	data = mmap(NULL, size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+	if (data == MAP_FAILED) {
+		fprintf(stderr, "drawable_create_empty_buffer: mmap failed: %s\n", strerror(errno));
+		close(fd);
+		free(buffer);
+		return NULL;
+	}
+
+	/* Zero buffer */
+	memset(data, 0, size);
+
+	/* Initialize buffer fields */
+	buffer->data = data;
+	buffer->fd = fd;
+	buffer->format = DRM_FORMAT_ARGB8888;
+	buffer->width = width;
+	buffer->height = height;
+	buffer->accessed = false;
+
+	/* Initialize wlr_buffer */
+	wlr_buffer_init(&buffer->base, &drawable_shm_buffer_impl, width, height);
+
+	return &buffer->base;
+}
+
+/**
  * Create an SHM buffer from raw Cairo pixel data.
  * This is the low-level function that handles the actual buffer creation.
  *

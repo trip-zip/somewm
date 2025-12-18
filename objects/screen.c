@@ -1,6 +1,7 @@
 #include "screen.h"
 #include "client.h"
 #include "drawin.h"
+#include "drawable.h"
 #include "signal.h"
 #include "luaa.h"
 #include "common/luaclass.h"
@@ -13,6 +14,12 @@
 #include <stdlib.h>
 #include <string.h>
 #include <limits.h>
+#include <cairo.h>
+#include <drm_fourcc.h>
+#include <wlr/types/wlr_scene.h>
+#include <wlr/interfaces/wlr_buffer.h>
+#include <wlr/render/wlr_renderer.h>
+#include <wlr/render/wlr_texture.h>
 
 /* AwesomeWM-compatible screen class */
 static lua_class_t screen_class;
@@ -21,6 +28,10 @@ LUA_OBJECT_FUNCS(screen_class, screen_t, screen)
 /* External reference to selected monitor */
 extern Monitor *selmon;
 extern struct wl_list mons;  /* Global monitor list from somewm.c */
+
+/* External references for screenshot support */
+extern struct wlr_scene *scene;
+extern struct wlr_renderer *drw;
 
 /* Global array of screen objects - stores Lua registry references */
 static int *screen_refs = NULL;
@@ -932,6 +943,268 @@ luaA_screen_get_managed(lua_State *L)
 
 	return 1;
 }
+
+/* ========== SCREEN CONTENT (SCREENSHOT) SUPPORT ========== */
+
+/** Callback data for scene buffer iteration during screenshot */
+struct screen_screenshot_data {
+	cairo_t *cr;
+	struct wlr_renderer *renderer;
+	int screen_x, screen_y;  /* Screen offset to subtract */
+	int screen_w, screen_h;  /* Screen bounds */
+};
+
+/** Composite a Cairo surface onto the screenshot at the given position */
+static void
+screen_composite_cairo_surface(cairo_t *cr, cairo_surface_t *surface,
+                               int x, int y, int width, int height)
+{
+	if (!surface || cairo_surface_status(surface) != CAIRO_STATUS_SUCCESS)
+		return;
+
+	cairo_save(cr);
+	cairo_set_source_surface(cr, surface, x, y);
+	cairo_set_operator(cr, CAIRO_OPERATOR_OVER);
+	cairo_rectangle(cr, x, y, width, height);
+	cairo_fill(cr);
+	cairo_restore(cr);
+}
+
+/** Check if a box intersects with the screen bounds */
+static bool
+box_intersects_screen(int x, int y, int w, int h,
+                      int sx, int sy, int sw, int sh)
+{
+	return !(x + w <= sx || x >= sx + sw || y + h <= sy || y >= sy + sh);
+}
+
+/** Composite a scene buffer to Cairo surface (for screen screenshot) */
+static void
+screen_composite_scene_buffer(struct wlr_scene_buffer *buffer,
+                              int sx, int sy, void *data)
+{
+	struct screen_screenshot_data *sdata = data;
+	struct wlr_buffer *wlr_buf;
+	struct wlr_texture *texture;
+	void *shm_data;
+	uint32_t shm_format;
+	size_t shm_stride;
+	int rel_x, rel_y;
+	size_t stride;
+	void *pixels;
+
+	if (!buffer->buffer)
+		return;
+
+	wlr_buf = buffer->buffer;
+
+	/* Check if buffer intersects with screen */
+	if (!box_intersects_screen(sx, sy, wlr_buf->width, wlr_buf->height,
+	                           sdata->screen_x, sdata->screen_y,
+	                           sdata->screen_w, sdata->screen_h))
+		return;
+
+	/* Offset position relative to screen origin */
+	rel_x = sx - sdata->screen_x;
+	rel_y = sy - sdata->screen_y;
+
+	/* Try SHM buffer access first */
+	if (wlr_buffer_begin_data_ptr_access(wlr_buf, WLR_BUFFER_DATA_PTR_ACCESS_READ,
+	                                     &shm_data, &shm_format, &shm_stride)) {
+		if (shm_format == DRM_FORMAT_ARGB8888 || shm_format == DRM_FORMAT_XRGB8888) {
+			cairo_format_t fmt = (shm_format == DRM_FORMAT_ARGB8888) ?
+			                     CAIRO_FORMAT_ARGB32 : CAIRO_FORMAT_RGB24;
+			cairo_surface_t *tmp = cairo_image_surface_create_for_data(
+				shm_data, fmt, wlr_buf->width, wlr_buf->height, shm_stride);
+			if (cairo_surface_status(tmp) == CAIRO_STATUS_SUCCESS) {
+				screen_composite_cairo_surface(sdata->cr, tmp,
+				                               rel_x, rel_y,
+				                               wlr_buf->width, wlr_buf->height);
+			}
+			cairo_surface_destroy(tmp);
+		}
+		wlr_buffer_end_data_ptr_access(wlr_buf);
+		return;
+	}
+
+	/* Fall back to GPU texture path */
+	texture = wlr_texture_from_buffer(sdata->renderer, wlr_buf);
+	if (!texture)
+		return;
+
+	stride = wlr_buf->width * 4;
+	pixels = malloc(stride * wlr_buf->height);
+	if (!pixels) {
+		wlr_texture_destroy(texture);
+		return;
+	}
+
+	if (wlr_texture_read_pixels(texture, &(struct wlr_texture_read_pixels_options){
+	    .data = pixels,
+	    .format = DRM_FORMAT_ARGB8888,
+	    .stride = stride,
+	    .src_box = { .x = 0, .y = 0, .width = wlr_buf->width, .height = wlr_buf->height },
+	})) {
+		cairo_surface_t *tmp = cairo_image_surface_create_for_data(
+			pixels, CAIRO_FORMAT_ARGB32, wlr_buf->width, wlr_buf->height, stride);
+		if (cairo_surface_status(tmp) == CAIRO_STATUS_SUCCESS) {
+			screen_composite_cairo_surface(sdata->cr, tmp,
+			                               rel_x, rel_y,
+			                               wlr_buf->width, wlr_buf->height);
+		}
+		cairo_surface_destroy(tmp);
+	}
+
+	free(pixels);
+	wlr_texture_destroy(texture);
+}
+
+/** Composite widgets within the screen bounds */
+static void
+screen_composite_widgets(cairo_t *cr, int sx, int sy, int sw, int sh)
+{
+	int i, bar;
+	drawin_t *drawin;
+	client_t *c;
+
+	/* Composite visible drawins (wibars, wiboxes) within screen bounds */
+	for (i = 0; i < globalconf.drawins.len; i++) {
+		drawin = globalconf.drawins.tab[i];
+		if (!drawin || !drawin->visible || !drawin->drawable)
+			continue;
+
+		if (!box_intersects_screen(drawin->x, drawin->y, drawin->width, drawin->height,
+		                           sx, sy, sw, sh))
+			continue;
+
+		if (drawin->drawable->surface &&
+		    cairo_surface_status(drawin->drawable->surface) == CAIRO_STATUS_SUCCESS) {
+			screen_composite_cairo_surface(cr, drawin->drawable->surface,
+			                               drawin->x - sx, drawin->y - sy,
+			                               drawin->width, drawin->height);
+		}
+	}
+
+	/* Composite client titlebars within screen bounds */
+	for (i = 0; i < globalconf.clients.len; i++) {
+		c = globalconf.clients.tab[i];
+		if (!c)
+			continue;
+
+		for (bar = 0; bar < CLIENT_TITLEBAR_COUNT; bar++) {
+			drawable_t *d = c->titlebar[bar].drawable;
+			int size = c->titlebar[bar].size;
+			int tb_x, tb_y, tb_w, tb_h;
+
+			if (!d || !d->surface || size <= 0)
+				continue;
+
+			/* Calculate titlebar position */
+			switch (bar) {
+			case CLIENT_TITLEBAR_TOP:
+				tb_x = c->geometry.x;
+				tb_y = c->geometry.y;
+				tb_w = c->geometry.width;
+				tb_h = size;
+				break;
+			case CLIENT_TITLEBAR_BOTTOM:
+				tb_x = c->geometry.x;
+				tb_y = c->geometry.y + c->geometry.height - size;
+				tb_w = c->geometry.width;
+				tb_h = size;
+				break;
+			case CLIENT_TITLEBAR_LEFT:
+				tb_x = c->geometry.x;
+				tb_y = c->geometry.y + c->titlebar[CLIENT_TITLEBAR_TOP].size;
+				tb_w = size;
+				tb_h = c->geometry.height - c->titlebar[CLIENT_TITLEBAR_TOP].size
+				       - c->titlebar[CLIENT_TITLEBAR_BOTTOM].size;
+				break;
+			case CLIENT_TITLEBAR_RIGHT:
+				tb_x = c->geometry.x + c->geometry.width - size;
+				tb_y = c->geometry.y + c->titlebar[CLIENT_TITLEBAR_TOP].size;
+				tb_w = size;
+				tb_h = c->geometry.height - c->titlebar[CLIENT_TITLEBAR_TOP].size
+				       - c->titlebar[CLIENT_TITLEBAR_BOTTOM].size;
+				break;
+			default:
+				continue;
+			}
+
+			if (!box_intersects_screen(tb_x, tb_y, tb_w, tb_h, sx, sy, sw, sh))
+				continue;
+
+			screen_composite_cairo_surface(cr, d->surface,
+			                               tb_x - sx, tb_y - sy,
+			                               tb_w, tb_h);
+		}
+	}
+}
+
+/** Get screenshot of this screen
+ * \param L Lua state
+ * \param s Screen object
+ * \return 1 (cairo surface lightuserdata on stack)
+ */
+static int
+luaA_screen_get_content(lua_State *L, screen_t *s)
+{
+	cairo_surface_t *surface;
+	cairo_t *cr;
+	struct screen_screenshot_data sdata;
+	int width, height;
+
+	if (!s || !s->valid)
+		return 0;
+
+	width = s->geometry.width;
+	height = s->geometry.height;
+
+	if (width <= 0 || height <= 0)
+		return 0;
+
+	/* Create Cairo surface for this screen */
+	surface = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, width, height);
+	if (cairo_surface_status(surface) != CAIRO_STATUS_SUCCESS)
+		return 0;
+
+	cr = cairo_create(surface);
+
+	/* Clear to black */
+	cairo_set_source_rgb(cr, 0, 0, 0);
+	cairo_paint(cr);
+
+	/* Set up screenshot data */
+	sdata.cr = cr;
+	sdata.renderer = drw;
+	sdata.screen_x = s->geometry.x;
+	sdata.screen_y = s->geometry.y;
+	sdata.screen_w = width;
+	sdata.screen_h = height;
+
+	/* First, composite wallpaper (cropped to screen area) */
+	if (globalconf.wallpaper) {
+		screen_composite_cairo_surface(cr, globalconf.wallpaper,
+		                               -s->geometry.x, -s->geometry.y,
+		                               cairo_image_surface_get_width(globalconf.wallpaper),
+		                               cairo_image_surface_get_height(globalconf.wallpaper));
+	}
+
+	/* Then iterate scene buffers for client content */
+	wlr_scene_node_for_each_buffer(&scene->tree.node,
+		screen_composite_scene_buffer, &sdata);
+
+	/* Finally, composite widgets on top */
+	screen_composite_widgets(cr, s->geometry.x, s->geometry.y, width, height);
+
+	cairo_destroy(cr);
+
+	/* Return surface as lightuserdata */
+	lua_pushlightuserdata(L, surface);
+	return 1;
+}
+
+/* ========== END SCREEN CONTENT SUPPORT ========== */
 
 /* Property wrappers for luaA_class_add_property - these adapt the existing
  * getter functions to the property system's (lua_State*, screen_t*) signature */
@@ -1938,4 +2211,8 @@ screen_class_setup(lua_State *L)
 	                        (lua_class_propfunc_t) luaA_screen_set_name,
 	                        (lua_class_propfunc_t) luaA_screen_get_name_prop,
 	                        (lua_class_propfunc_t) luaA_screen_set_name);
+	luaA_class_add_property(&screen_class, "content",
+	                        NULL,
+	                        (lua_class_propfunc_t) luaA_screen_get_content,
+	                        NULL);
 }
