@@ -3167,6 +3167,9 @@ apply_geometry_to_wlroots(Client *c)
 	wlr_scene_node_set_position(&c->border[2]->node, 0, c->bw);
 	wlr_scene_node_set_position(&c->border[3]->node, c->geometry.width - c->bw, c->bw);
 
+	/* Update titlebar positions - they depend on current geometry */
+	client_update_titlebar_positions(c);
+
 	/* Request size change from client (subtract borders AND titlebars from geometry)
 	 * CRITICAL: Only send configure if there's no pending resize waiting for client commit.
 	 * Without this check, we flood the client with configure events on every refresh cycle,
