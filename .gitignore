@@ -7,3 +7,5 @@ somewm-client
 config.h
 ideas/
 docker/
+run-asan.sh
+config.local.mk

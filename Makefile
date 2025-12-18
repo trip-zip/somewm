@@ -2,6 +2,7 @@
 .SUFFIXES:
 
 include config.mk
+-include config.local.mk
 
 # flags for compiling
 SOMECPPFLAGS = -I. -DWLR_USE_UNSTABLE -D_POSIX_C_SOURCE=200809L \
@@ -14,6 +15,12 @@ SOMEDEVCFLAGS = -g -Wpedantic -Wall -Wextra -Wdeclaration-after-statement \
 	-Wno-unused-parameter -Wshadow -Wunused-macros -Werror=strict-prototypes \
 	-Werror=implicit -Werror=return-type -Werror=incompatible-pointer-types \
 	-Wfloat-conversion -Werror
+
+# AddressSanitizer support (set ASAN=1 in config.mk or command line)
+ifdef ASAN
+SOMEDEVCFLAGS += -fsanitize=address,undefined -fno-omit-frame-pointer
+LDFLAGS += -fsanitize=address,undefined
+endif
 
 # CFLAGS / LDFLAGS
 PKGS      = wayland-server xkbcommon libinput dbus-1 $(XLIBS)
@@ -40,13 +47,11 @@ somewm-client: somewm-client.o
 	$(CC) somewm-client.o $(LDFLAGS) -o $@
 
 # ASAN/UBSAN instrumented build for memory debugging
-ASAN_CFLAGS = -fsanitize=address,undefined -fno-omit-frame-pointer -g3 -O1
-ASAN_LDFLAGS = -fsanitize=address,undefined
-
-somewm-asan: SOMECFLAGS += $(ASAN_CFLAGS)
-somewm-asan: LDFLAGS += $(ASAN_LDFLAGS)
-somewm-asan: somewm.o somewm_api.o util.o ipc.o color.o draw.o stack.o banning.o ewmh.o window.o event.o property.o dbus.o $(COMMONOBJS) $(LUAOBJS)
-	$(CC) somewm.o somewm_api.o util.o ipc.o color.o draw.o stack.o banning.o ewmh.o window.o event.o property.o dbus.o $(COMMONOBJS) $(LUAOBJS) $(SOMECFLAGS) $(LDFLAGS) $(LDLIBS) -o $@
+# Set ASAN=1 in config.mk to always build with ASAN
+# Or use: make ASAN=1 (one-time build with ASAN)
+#
+# To run with ASAN: ASAN_OPTIONS=detect_leaks=0 ./somewm
+# (detect_leaks=0 avoids false positives from Lua GC)
 somewm.o: somewm.c client.h config.mk somewm_types.h objects/keygrabber.h cursor-shape-v1-protocol.h \
 	pointer-constraints-unstable-v1-protocol.h wlr-layer-shell-unstable-v1-protocol.h \
 	wlr-output-power-management-unstable-v1-protocol.h xdg-shell-protocol.h
@@ -119,7 +124,7 @@ xdg-shell-protocol.h:
 		$(WAYLAND_PROTOCOLS)/stable/xdg-shell/xdg-shell.xml $@
 
 clean:
-	rm -f somewm somewm-client somewm-asan *.o common/*.o objects/*.o *-protocol.h
+	rm -f somewm somewm-client *.o common/*.o objects/*.o *-protocol.h
 
 dist: clean
 	mkdir -p somewm-$(VERSION)
