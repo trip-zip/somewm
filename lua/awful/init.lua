@@ -23,6 +23,7 @@ local ret = {
     util = require("awful.util");
     widget = require("awful.widget");
     keygrabber = require("awful.keygrabber");
+    input = require("awful.input");
     menu = require("awful.menu");
     mouse = require("awful.mouse");
     remote = require("awful.remote");

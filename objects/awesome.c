@@ -371,6 +371,101 @@ luaA_systray(lua_State *L)
 	return 2;
 }
 
+/** Set a libinput pointer/touchpad setting and apply to all devices
+ * Called from awful.input Lua module
+ * \param key The setting name (e.g., "tap_to_click", "natural_scrolling")
+ * \param value The value to set
+ * \return Nothing
+ */
+static int
+luaA_awesome_set_input_setting(lua_State *L)
+{
+	const char *key = luaL_checkstring(L, 1);
+
+	if (strcmp(key, "tap_to_click") == 0) {
+		globalconf.input.tap_to_click = luaL_checkinteger(L, 2);
+	} else if (strcmp(key, "tap_and_drag") == 0) {
+		globalconf.input.tap_and_drag = luaL_checkinteger(L, 2);
+	} else if (strcmp(key, "drag_lock") == 0) {
+		globalconf.input.drag_lock = luaL_checkinteger(L, 2);
+	} else if (strcmp(key, "natural_scrolling") == 0) {
+		globalconf.input.natural_scrolling = luaL_checkinteger(L, 2);
+	} else if (strcmp(key, "disable_while_typing") == 0) {
+		globalconf.input.disable_while_typing = luaL_checkinteger(L, 2);
+	} else if (strcmp(key, "left_handed") == 0) {
+		globalconf.input.left_handed = luaL_checkinteger(L, 2);
+	} else if (strcmp(key, "middle_button_emulation") == 0) {
+		globalconf.input.middle_button_emulation = luaL_checkinteger(L, 2);
+	} else if (strcmp(key, "scroll_method") == 0) {
+		const char *val = lua_isnil(L, 2) ? NULL : luaL_checkstring(L, 2);
+		free(globalconf.input.scroll_method);
+		globalconf.input.scroll_method = val ? strdup(val) : NULL;
+	} else if (strcmp(key, "click_method") == 0) {
+		const char *val = lua_isnil(L, 2) ? NULL : luaL_checkstring(L, 2);
+		free(globalconf.input.click_method);
+		globalconf.input.click_method = val ? strdup(val) : NULL;
+	} else if (strcmp(key, "send_events_mode") == 0) {
+		const char *val = lua_isnil(L, 2) ? NULL : luaL_checkstring(L, 2);
+		free(globalconf.input.send_events_mode);
+		globalconf.input.send_events_mode = val ? strdup(val) : NULL;
+	} else if (strcmp(key, "accel_profile") == 0) {
+		const char *val = lua_isnil(L, 2) ? NULL : luaL_checkstring(L, 2);
+		free(globalconf.input.accel_profile);
+		globalconf.input.accel_profile = val ? strdup(val) : NULL;
+	} else if (strcmp(key, "accel_speed") == 0) {
+		globalconf.input.accel_speed = luaL_checknumber(L, 2);
+	} else if (strcmp(key, "tap_button_map") == 0) {
+		const char *val = lua_isnil(L, 2) ? NULL : luaL_checkstring(L, 2);
+		free(globalconf.input.tap_button_map);
+		globalconf.input.tap_button_map = val ? strdup(val) : NULL;
+	} else {
+		return luaL_error(L, "Unknown input setting: %s", key);
+	}
+
+	/* Apply settings to all connected devices */
+	apply_input_settings_to_all_devices();
+	return 0;
+}
+
+/** Set a keyboard setting and apply
+ * Called from awful.input Lua module
+ * \param key The setting name (e.g., "xkb_layout", "keyboard_repeat_rate")
+ * \param value The value to set
+ * \return Nothing
+ */
+static int
+luaA_awesome_set_keyboard_setting(lua_State *L)
+{
+	const char *key = luaL_checkstring(L, 1);
+
+	if (strcmp(key, "keyboard_repeat_rate") == 0) {
+		globalconf.keyboard.repeat_rate = luaL_checkinteger(L, 2);
+		/* TODO: Apply repeat rate to keyboard group */
+	} else if (strcmp(key, "keyboard_repeat_delay") == 0) {
+		globalconf.keyboard.repeat_delay = luaL_checkinteger(L, 2);
+		/* TODO: Apply repeat delay to keyboard group */
+	} else if (strcmp(key, "xkb_layout") == 0) {
+		const char *val = lua_isnil(L, 2) ? "" : luaL_checkstring(L, 2);
+		free(globalconf.keyboard.xkb_layout);
+		globalconf.keyboard.xkb_layout = strdup(val);
+		rebuild_keyboard_keymap();
+	} else if (strcmp(key, "xkb_variant") == 0) {
+		const char *val = lua_isnil(L, 2) ? "" : luaL_checkstring(L, 2);
+		free(globalconf.keyboard.xkb_variant);
+		globalconf.keyboard.xkb_variant = strdup(val);
+		rebuild_keyboard_keymap();
+	} else if (strcmp(key, "xkb_options") == 0) {
+		const char *val = lua_isnil(L, 2) ? "" : luaL_checkstring(L, 2);
+		free(globalconf.keyboard.xkb_options);
+		globalconf.keyboard.xkb_options = strdup(val);
+		rebuild_keyboard_keymap();
+	} else {
+		return luaL_error(L, "Unknown keyboard setting: %s", key);
+	}
+
+	return 0;
+}
+
 /* awesome module methods */
 static const luaL_Reg awesome_methods[] = {
 	{ "quit", luaA_awesome_quit },
@@ -389,6 +484,8 @@ static const luaL_Reg awesome_methods[] = {
 	{ "register_xproperty", luaA_awesome_register_xproperty },
 	{ "pixbuf_to_surface", luaA_pixbuf_to_surface },
 	{ "systray", luaA_systray },
+	{ "_set_input_setting", luaA_awesome_set_input_setting },
+	{ "_set_keyboard_setting", luaA_awesome_set_keyboard_setting },
 	{ NULL, NULL }
 };
 
@@ -437,82 +534,6 @@ luaA_awesome_index(lua_State *L)
 		return 1;
 	}
 
-	/* Keyboard properties */
-	if (A_STREQ(key, "xkb_layout")) {
-		lua_pushstring(L, globalconf.keyboard.xkb_layout ? globalconf.keyboard.xkb_layout : "");
-		return 1;
-	}
-	if (A_STREQ(key, "xkb_variant")) {
-		lua_pushstring(L, globalconf.keyboard.xkb_variant ? globalconf.keyboard.xkb_variant : "");
-		return 1;
-	}
-	if (A_STREQ(key, "xkb_options")) {
-		lua_pushstring(L, globalconf.keyboard.xkb_options ? globalconf.keyboard.xkb_options : "");
-		return 1;
-	}
-	if (A_STREQ(key, "keyboard_repeat_rate")) {
-		lua_pushinteger(L, globalconf.keyboard.repeat_rate);
-		return 1;
-	}
-	if (A_STREQ(key, "keyboard_repeat_delay")) {
-		lua_pushinteger(L, globalconf.keyboard.repeat_delay);
-		return 1;
-	}
-
-	/* Input device properties */
-	if (A_STREQ(key, "input_tap_to_click")) {
-		lua_pushinteger(L, globalconf.input.tap_to_click);
-		return 1;
-	}
-	if (A_STREQ(key, "input_tap_and_drag")) {
-		lua_pushinteger(L, globalconf.input.tap_and_drag);
-		return 1;
-	}
-	if (A_STREQ(key, "input_drag_lock")) {
-		lua_pushinteger(L, globalconf.input.drag_lock);
-		return 1;
-	}
-	if (A_STREQ(key, "input_natural_scrolling")) {
-		lua_pushinteger(L, globalconf.input.natural_scrolling);
-		return 1;
-	}
-	if (A_STREQ(key, "input_disable_while_typing")) {
-		lua_pushinteger(L, globalconf.input.disable_while_typing);
-		return 1;
-	}
-	if (A_STREQ(key, "input_left_handed")) {
-		lua_pushinteger(L, globalconf.input.left_handed);
-		return 1;
-	}
-	if (A_STREQ(key, "input_middle_button_emulation")) {
-		lua_pushinteger(L, globalconf.input.middle_button_emulation);
-		return 1;
-	}
-	if (A_STREQ(key, "input_scroll_method")) {
-		lua_pushstring(L, globalconf.input.scroll_method ? globalconf.input.scroll_method : "");
-		return 1;
-	}
-	if (A_STREQ(key, "input_click_method")) {
-		lua_pushstring(L, globalconf.input.click_method ? globalconf.input.click_method : "");
-		return 1;
-	}
-	if (A_STREQ(key, "input_send_events_mode")) {
-		lua_pushstring(L, globalconf.input.send_events_mode ? globalconf.input.send_events_mode : "");
-		return 1;
-	}
-	if (A_STREQ(key, "input_accel_profile")) {
-		lua_pushstring(L, globalconf.input.accel_profile ? globalconf.input.accel_profile : "");
-		return 1;
-	}
-	if (A_STREQ(key, "input_accel_speed")) {
-		lua_pushnumber(L, globalconf.input.accel_speed);
-		return 1;
-	}
-	if (A_STREQ(key, "input_tap_button_map")) {
-		lua_pushstring(L, globalconf.input.tap_button_map ? globalconf.input.tap_button_map : "");
-		return 1;
-	}
-
 	/* Logging properties */
 	if (A_STREQ(key, "log_level")) {
 		/* Convert int enum to string */
@@ -545,101 +566,6 @@ static int
 luaA_awesome_newindex(lua_State *L)
 {
 	const char *key = luaL_checkstring(L, 2);
-
-	/* Keyboard properties */
-	if (A_STREQ(key, "xkb_layout")) {
-		const char *val = luaL_checkstring(L, 3);
-		free(globalconf.keyboard.xkb_layout);
-		globalconf.keyboard.xkb_layout = val ? strdup(val) : NULL;
-		rebuild_keyboard_keymap();
-		return 0;
-	}
-	if (A_STREQ(key, "xkb_variant")) {
-		const char *val = luaL_checkstring(L, 3);
-		free(globalconf.keyboard.xkb_variant);
-		globalconf.keyboard.xkb_variant = val ? strdup(val) : NULL;
-		rebuild_keyboard_keymap();
-		return 0;
-	}
-	if (A_STREQ(key, "xkb_options")) {
-		const char *val = luaL_checkstring(L, 3);
-		free(globalconf.keyboard.xkb_options);
-		globalconf.keyboard.xkb_options = val ? strdup(val) : NULL;
-		rebuild_keyboard_keymap();
-		return 0;
-	}
-	if (A_STREQ(key, "keyboard_repeat_rate")) {
-		globalconf.keyboard.repeat_rate = luaL_checkinteger(L, 3);
-		return 0;
-	}
-	if (A_STREQ(key, "keyboard_repeat_delay")) {
-		globalconf.keyboard.repeat_delay = luaL_checkinteger(L, 3);
-		return 0;
-	}
-
-	/* Input device properties */
-	if (A_STREQ(key, "input_tap_to_click")) {
-		globalconf.input.tap_to_click = luaL_checkinteger(L, 3);
-		return 0;
-	}
-	if (A_STREQ(key, "input_tap_and_drag")) {
-		globalconf.input.tap_and_drag = luaL_checkinteger(L, 3);
-		return 0;
-	}
-	if (A_STREQ(key, "input_drag_lock")) {
-		globalconf.input.drag_lock = luaL_checkinteger(L, 3);
-		return 0;
-	}
-	if (A_STREQ(key, "input_natural_scrolling")) {
-		globalconf.input.natural_scrolling = luaL_checkinteger(L, 3);
-		return 0;
-	}
-	if (A_STREQ(key, "input_disable_while_typing")) {
-		globalconf.input.disable_while_typing = luaL_checkinteger(L, 3);
-		return 0;
-	}
-	if (A_STREQ(key, "input_left_handed")) {
-		globalconf.input.left_handed = luaL_checkinteger(L, 3);
-		return 0;
-	}
-	if (A_STREQ(key, "input_middle_button_emulation")) {
-		globalconf.input.middle_button_emulation = luaL_checkinteger(L, 3);
-		return 0;
-	}
-	if (A_STREQ(key, "input_scroll_method")) {
-		const char *val = luaL_checkstring(L, 3);
-		free(globalconf.input.scroll_method);
-		globalconf.input.scroll_method = val ? strdup(val) : NULL;
-		return 0;
-	}
-	if (A_STREQ(key, "input_click_method")) {
-		const char *val = luaL_checkstring(L, 3);
-		free(globalconf.input.click_method);
-		globalconf.input.click_method = val ? strdup(val) : NULL;
-		return 0;
-	}
-	if (A_STREQ(key, "input_send_events_mode")) {
-		const char *val = luaL_checkstring(L, 3);
-		free(globalconf.input.send_events_mode);
-		globalconf.input.send_events_mode = val ? strdup(val) : NULL;
-		return 0;
-	}
-	if (A_STREQ(key, "input_accel_profile")) {
-		const char *val = luaL_checkstring(L, 3);
-		free(globalconf.input.accel_profile);
-		globalconf.input.accel_profile = val ? strdup(val) : NULL;
-		return 0;
-	}
-	if (A_STREQ(key, "input_accel_speed")) {
-		globalconf.input.accel_speed = luaL_checknumber(L, 3);
-		return 0;
-	}
-	if (A_STREQ(key, "input_tap_button_map")) {
-		const char *val = luaL_checkstring(L, 3);
-		free(globalconf.input.tap_button_map);
-		globalconf.input.tap_button_map = val ? strdup(val) : NULL;
-		return 0;
-	}
 
 	/* Logging properties */
 	if (A_STREQ(key, "log_level")) {

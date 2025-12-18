@@ -103,6 +103,7 @@ local function parse_command(command_string)
     ["exec"] = true,
     ["quit"] = true,
     ["eval"] = true,
+    ["input"] = true,
   }
 
   local cmd_name
@@ -1791,6 +1792,98 @@ local function register_builtin_commands()
     end, "crosshair")
 
     return "Started mousegrabber coordinate tracking\nPress any mouse button and move the mouse\nRelease all buttons to stop"
+  end)
+
+  -- ============================================================================
+  -- INPUT COMMANDS
+  -- ============================================================================
+  -- Configure libinput settings at runtime via awful.input module
+
+  local awful_input = require("awful.input")
+
+  -- Map of setting names to their types and descriptions
+  local input_settings = {
+    tap_to_click = { type = "int", desc = "Enable tap-to-click (0=off, 1=on, -1=default)" },
+    tap_and_drag = { type = "int", desc = "Enable tap-and-drag (0=off, 1=on, -1=default)" },
+    drag_lock = { type = "int", desc = "Enable drag lock (0=off, 1=on, -1=default)" },
+    natural_scrolling = { type = "int", desc = "Enable natural scrolling (0=off, 1=on, -1=default)" },
+    disable_while_typing = { type = "int", desc = "Disable touchpad while typing (0=off, 1=on, -1=default)" },
+    left_handed = { type = "int", desc = "Left-handed mode (0=off, 1=on, -1=default)" },
+    middle_button_emulation = { type = "int", desc = "Middle button emulation (0=off, 1=on, -1=default)" },
+    scroll_method = { type = "string", desc = "Scroll method (no_scroll/two_finger/edge/button)" },
+    click_method = { type = "string", desc = "Click method (none/button_areas/clickfinger)" },
+    send_events_mode = { type = "string", desc = "Send events mode (enabled/disabled/disabled_on_external_mouse)" },
+    accel_profile = { type = "string", desc = "Acceleration profile (flat/adaptive)" },
+    accel_speed = { type = "number", desc = "Acceleration speed (-1.0 to 1.0)" },
+    tap_button_map = { type = "string", desc = "Tap button mapping (lrm/lmr)" },
+    keyboard_repeat_rate = { type = "int", desc = "Keyboard repeat rate (repeats per second)" },
+    keyboard_repeat_delay = { type = "int", desc = "Keyboard repeat delay (ms before repeat starts)" },
+    xkb_layout = { type = "string", desc = "XKB keyboard layout (e.g., 'us', 'us,ru')" },
+    xkb_variant = { type = "string", desc = "XKB layout variant (e.g., 'dvorak')" },
+    xkb_options = { type = "string", desc = "XKB options (e.g., 'ctrl:nocaps')" },
+  }
+
+  --- input [setting] [value] - Get or set libinput/keyboard configuration
+  -- No args: list all settings with current values
+  -- One arg: get current value of setting
+  -- Two args: set setting to value
+  ipc.register("input", function(setting, value)
+    -- No args: list all settings
+    if not setting then
+      local lines = { "Input settings (current values):" }
+      -- Sort the keys for consistent output
+      local sorted_keys = {}
+      for k in pairs(input_settings) do
+        table.insert(sorted_keys, k)
+      end
+      table.sort(sorted_keys)
+
+      for _, name in ipairs(sorted_keys) do
+        local info = input_settings[name]
+        local current = awful_input[name]
+        if current == nil then current = "(nil)" end
+        table.insert(lines, string.format("  %-25s = %-10s  # %s", name, tostring(current), info.desc))
+      end
+      return table.concat(lines, "\n")
+    end
+
+    -- Check if setting is valid
+    local info = input_settings[setting]
+    if not info then
+      local valid_settings = {}
+      for k in pairs(input_settings) do
+        table.insert(valid_settings, k)
+      end
+      table.sort(valid_settings)
+      error("Unknown setting: " .. setting .. "\nValid settings: " .. table.concat(valid_settings, ", "))
+    end
+
+    -- One arg: get current value
+    if value == nil then
+      local current = awful_input[setting]
+      if current == nil then return "(nil)" end
+      return tostring(current)
+    end
+
+    -- Two args: set value
+    local new_value
+    if info.type == "int" then
+      new_value = tonumber(value)
+      if not new_value then
+        error("Invalid integer value: " .. value)
+      end
+      new_value = math.floor(new_value)
+    elseif info.type == "number" then
+      new_value = tonumber(value)
+      if not new_value then
+        error("Invalid number value: " .. value)
+      end
+    elseif info.type == "string" then
+      new_value = value
+    end
+
+    awful_input[setting] = new_value
+    return string.format("%s = %s", setting, tostring(new_value))
   end)
 end
 
