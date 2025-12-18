@@ -77,6 +77,12 @@ print_usage(const char *progname)
 	fprintf(stderr, "  screen count                   Get number of screens\n");
 	fprintf(stderr, "  screen clients <ID>            List clients on a screen\n\n");
 
+	fprintf(stderr, "SCREENSHOT COMMANDS:\n");
+	fprintf(stderr, "  screenshot save <path> [--transparent]\n");
+	fprintf(stderr, "                                 Save full desktop screenshot\n");
+	fprintf(stderr, "  screenshot client <path> [ID]  Save client window screenshot\n");
+	fprintf(stderr, "  screenshot screen <path> [ID]  Save single screen screenshot\n\n");
+
 	fprintf(stderr, "ADVANCED:\n");
 	fprintf(stderr, "  eval <lua_code>                Execute arbitrary Lua code\n");
 	fprintf(stderr, "  hotkeys                        Show hotkeys popup\n");

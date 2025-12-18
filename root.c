@@ -970,11 +970,14 @@ composite_scene_buffer_to_cairo(struct wlr_scene_buffer *scene_buffer,
 		free(pixels);
 }
 
-/** root.content() - Get screenshot of entire desktop
+/** root.content([preserve_alpha]) - Get screenshot of entire desktop
  *
  * Returns a Cairo surface containing the current desktop content.
  * Uses CPU-side compositing to avoid GPU buffer compatibility issues.
  *
+ * \param preserve_alpha Optional boolean. If true, skips wallpaper compositing
+ *        and clears to transparent, preserving alpha channel of transparent windows.
+ *        Default is false (normal screenshot with wallpaper).
  * \return cairo_surface_t* as lightuserdata
  */
 static int
@@ -985,6 +988,11 @@ luaA_root_get_content(lua_State *L)
 	cairo_t *cr;
 	int width, height;
 	struct screenshot_render_data rdata;
+	bool preserve_alpha = false;
+
+	/* Check for optional preserve_alpha parameter */
+	if (lua_gettop(L) >= 1 && lua_isboolean(L, 1))
+		preserve_alpha = lua_toboolean(L, 1);
 
 	/* Get virtual screen size (bounding box of all outputs) */
 	wlr_output_layout_get_box(output_layout, NULL, &layout_box);
@@ -1001,9 +1009,21 @@ luaA_root_get_content(lua_State *L)
 
 	cr = cairo_create(surface);
 
-	/* Clear to black */
-	cairo_set_source_rgb(cr, 0, 0, 0);
-	cairo_paint(cr);
+	if (preserve_alpha) {
+		/* Clear to fully transparent for alpha-preserving screenshots */
+		cairo_set_operator(cr, CAIRO_OPERATOR_SOURCE);
+		cairo_set_source_rgba(cr, 0, 0, 0, 0);
+		cairo_paint(cr);
+		cairo_set_operator(cr, CAIRO_OPERATOR_OVER);
+	} else {
+		/* Clear to black and composite wallpaper (normal behavior) */
+		cairo_set_source_rgb(cr, 0, 0, 0);
+		cairo_paint(cr);
+
+		/* Composite wallpaper as background */
+		if (globalconf.wallpaper)
+			composite_cairo_surface(cr, globalconf.wallpaper, 0, 0, width, height);
+	}
 
 	/* Set up render data - no offset since we're using layout coordinates */
 	rdata.cr = cr;
@@ -1011,11 +1031,7 @@ luaA_root_get_content(lua_State *L)
 	rdata.offset_x = 0;
 	rdata.offset_y = 0;
 
-	/* First, composite wallpaper as background */
-	if (globalconf.wallpaper)
-		composite_cairo_surface(cr, globalconf.wallpaper, 0, 0, width, height);
-
-	/* Then iterate scene buffers for client content (GPU-rendered surfaces) */
+	/* Iterate scene buffers for client content (GPU-rendered surfaces) */
 	wlr_scene_node_for_each_buffer(&scene->tree.node,
 		composite_scene_buffer_to_cairo, &rdata);
 
