@@ -57,6 +57,26 @@ extern void luaA_screen_update_workarea_for_drawin(lua_State *L, drawin_t *drawi
 /* Forward declaration for drawable refresh callback */
 static void drawin_refresh_drawable(drawin_t *drawin);
 
+/** Ensure drawable has a surface with correct geometry.
+ * Matches AwesomeWM's drawin_update_drawing (drawin.c:194-200).
+ * Called when drawin becomes visible to ensure Lua has a surface to draw to.
+ * \param L The Lua VM state.
+ * \param widx The drawin stack index.
+ */
+static void
+drawin_update_drawing(lua_State *L, int widx)
+{
+	drawin_t *w = luaA_checkudata(L, widx, &drawin_class);
+	luaA_object_push_item(L, widx, w->drawable);
+	drawable_set_geometry(L, -1, (area_t) {
+		.x = w->x,
+		.y = w->y,
+		.width = w->width,
+		.height = w->height
+	});
+	lua_pop(L, 1);
+}
+
 /* ========================================================================
  * Object signal support - DEPRECATED old signal_array_t system
  * ========================================================================
@@ -153,13 +173,8 @@ static void
 signal_array_emit(lua_State *L, signal_array_t *arr, const char *name, int obj_idx, int nargs)
 {
 	signal_t *sig = signal_find(arr, name);
-	fprintf(stderr, "[DRAWIN_SIGNAL_EMIT] Emitting signal '%s', sig=%p\n", name, (void*)sig);
-	if (!sig) {
-		fprintf(stderr, "[DRAWIN_SIGNAL_EMIT] No signal '%s' found, returning\n", name);
+	if (!sig)
 		return;  /* No callbacks connected, silently return */
-	}
-
-	fprintf(stderr, "[DRAWIN_SIGNAL_EMIT] Signal '%s' has %zu handlers\n", name, sig->ref_count);
 
 	/* Normalize object index to absolute */
 	if (obj_idx < 0)
@@ -167,7 +182,6 @@ signal_array_emit(lua_State *L, signal_array_t *arr, const char *name, int obj_i
 
 	/* Call each connected callback */
 	for (size_t i = 0; i < sig->ref_count; i++) {
-		fprintf(stderr, "[DRAWIN_SIGNAL_EMIT] Calling handler %zu for signal '%s'\n", i, name);
 		/* Get callback function from registry */
 		lua_rawgeti(L, LUA_REGISTRYINDEX, sig->refs[i]);
 
@@ -185,9 +199,7 @@ signal_array_emit(lua_State *L, signal_array_t *arr, const char *name, int obj_i
 			        name, lua_tostring(L, -1));
 			lua_pop(L, 1);  /* Pop error message */
 		}
-		fprintf(stderr, "[DRAWIN_SIGNAL_EMIT] Handler %zu complete\n", i);
 	}
-	fprintf(stderr, "[DRAWIN_SIGNAL_EMIT] Signal '%s' emission complete\n", name);
 }
 
 /** Emit a signal from a drawin object (helper for internal use) */
@@ -195,16 +207,10 @@ static void
 drawin_emit_signal(lua_State *L, int obj_idx, const char *name, int nargs)
 {
 	drawin_t *drawin = luaA_todrawin(L, obj_idx);
-	fprintf(stderr, "[DRAWIN_EMIT_SIGNAL] Called with name='%s', obj_idx=%d, drawin=%p\n",
-	        name, obj_idx, (void*)drawin);
-	if (!drawin) {
-		fprintf(stderr, "[DRAWIN_EMIT_SIGNAL] drawin is NULL, returning\n");
+	if (!drawin)
 		return;
-	}
 
-	fprintf(stderr, "[DRAWIN_EMIT_SIGNAL] Calling signal_array_emit for signal '%s'\n", name);
 	signal_array_emit(L, &drawin->signals, name, obj_idx, nargs);
-	fprintf(stderr, "[DRAWIN_EMIT_SIGNAL] signal_array_emit returned\n");
 }
 
 #endif /* End deprecated signal_array_t system */
@@ -212,56 +218,145 @@ drawin_emit_signal(lua_State *L, int obj_idx, const char *name, int nargs)
 /** Refresh callback for drawable - called when drawable content should be displayed
  * This updates the scene graph buffer with new Cairo-rendered content
  */
+/** Apply shape_bounding mask to a drawable surface.
+ * Creates a copy of the surface with alpha zeroed where shape is 0.
+ * Returns a new cairo_surface_t that the caller must destroy.
+ * Returns NULL if no shape or allocation fails.
+ */
+static cairo_surface_t *
+drawin_apply_shape_mask(drawable_t *d, cairo_surface_t *shape)
+{
+	cairo_surface_t *src, *dst;
+	unsigned char *src_data, *dst_data, *shape_data;
+	int src_stride, dst_stride, shape_stride;
+	int width, height, shape_width, shape_height;
+	int x, y;
+
+	if (!d || !d->surface || !shape)
+		return NULL;
+
+	src = d->surface;
+	cairo_surface_flush(src);
+	cairo_surface_flush(shape);
+
+	width = cairo_image_surface_get_width(src);
+	height = cairo_image_surface_get_height(src);
+	shape_width = cairo_image_surface_get_width(shape);
+	shape_height = cairo_image_surface_get_height(shape);
+
+	/* Create a copy of the surface */
+	dst = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, width, height);
+	if (cairo_surface_status(dst) != CAIRO_STATUS_SUCCESS) {
+		cairo_surface_destroy(dst);
+		return NULL;
+	}
+
+	src_data = cairo_image_surface_get_data(src);
+	dst_data = cairo_image_surface_get_data(dst);
+	shape_data = cairo_image_surface_get_data(shape);
+	src_stride = cairo_image_surface_get_stride(src);
+	dst_stride = cairo_image_surface_get_stride(dst);
+	shape_stride = cairo_image_surface_get_stride(shape);
+
+	/* Copy pixels, zeroing alpha where shape bit is 0 */
+	for (y = 0; y < height; y++) {
+		uint32_t *src_row = (uint32_t *)(src_data + y * src_stride);
+		uint32_t *dst_row = (uint32_t *)(dst_data + y * dst_stride);
+
+		for (x = 0; x < width; x++) {
+			bool visible = true;
+
+			/* Check if this pixel is within shape bounds */
+			if (x < shape_width && y < shape_height) {
+				int byte_offset = (y * shape_stride) + (x / 8);
+				int bit_offset = x % 8;
+				visible = (shape_data[byte_offset] >> bit_offset) & 1;
+			} else {
+				/* Outside shape = transparent */
+				visible = false;
+			}
+
+			if (visible) {
+				dst_row[x] = src_row[x];
+			} else {
+				/* Zero out alpha (ARGB32: alpha is high byte on little-endian) */
+				dst_row[x] = src_row[x] & 0x00FFFFFF;
+			}
+		}
+	}
+
+	cairo_surface_mark_dirty(dst);
+	return dst;
+}
+
 static void
 drawin_refresh_drawable(drawin_t *drawin)
 {
 	drawable_t *d;
 	struct wlr_buffer *buffer;
-
-	fprintf(stderr, "[DRAWIN_REFRESH] Called for drawin %p\n", (void*)drawin);
+	cairo_surface_t *clipped_surface = NULL;
+	cairo_surface_t *masked_surface = NULL;
+	cairo_surface_t *work_surface = NULL;
 
 	if (!drawin || !drawin->scene_buffer || !drawin->drawable) {
-		fprintf(stderr, "[DRAWIN_REFRESH] Early return: drawin=%p scene_buffer=%p drawable=%p\n",
-		        (void*)drawin, (void*)(drawin ? drawin->scene_buffer : NULL),
-		        (void*)(drawin ? drawin->drawable : NULL));
 		return;
 	}
 
 	d = drawin->drawable;
 
-	fprintf(stderr, "[DRAWIN_REFRESH] drawin geometry: %dx%d\n",
-	        drawin->width, drawin->height);
-	fprintf(stderr, "[DRAWIN_REFRESH] drawable geometry: %dx%d\n",
-	        d->geometry.width, d->geometry.height);
-
 	/* Ensure we have a Cairo surface with content */
 	if (!d->surface || !d->refreshed) {
-		fprintf(stderr, "[DRAWIN_REFRESH] No surface or not refreshed: surface=%p refreshed=%d\n",
-		        (void*)d->surface, d->refreshed);
 		return;
 	}
 
-	fprintf(stderr, "[DRAWIN_REFRESH] Creating buffer from surface %dx%d\n",
-	        d->geometry.width, d->geometry.height);
+	work_surface = d->surface;
 
-	/* DEBUG: Save menu surface to PNG for inspection */
-	if (drawin->width == 100 && drawin->height == 30) {
-		static int menu_count = 0;
-		char filename[256];
-		snprintf(filename, sizeof(filename), "/tmp/menu_surface_%d.png", menu_count++);
-		cairo_surface_write_to_png(d->surface, filename);
-		fprintf(stderr, "[DRAWIN_REFRESH] Saved menu surface to %s\n", filename);
+	/* Apply shape_clip first (clips the drawable content area)
+	 * In AwesomeWM, shape_clip restricts what's visible within the content area */
+	if (drawin->shape_clip) {
+		clipped_surface = drawin_apply_shape_mask(d, drawin->shape_clip);
+		if (clipped_surface)
+			work_surface = clipped_surface;
 	}
 
-	/* Create SHM buffer from drawable's Cairo surface
+	/* Apply shape_bounding mask (clips the whole window including border)
+	 * This is applied after shape_clip */
+	if (drawin->shape_bounding) {
+		/* If we already have a clipped surface, use that as the source */
+		if (clipped_surface) {
+			/* Create a temporary drawable struct to pass to apply_shape_mask */
+			drawable_t temp_d = *d;
+			temp_d.surface = clipped_surface;
+			masked_surface = drawin_apply_shape_mask(&temp_d, drawin->shape_bounding);
+		} else {
+			masked_surface = drawin_apply_shape_mask(d, drawin->shape_bounding);
+		}
+		if (masked_surface)
+			work_surface = masked_surface;
+	}
+
+	/* Create SHM buffer from the final surface
 	 * This uses the shared buffer implementation in drawable.c */
-	buffer = drawable_create_buffer(d);
-	if (!buffer) {
-		fprintf(stderr, "[DRAWIN_REFRESH] ERROR: Failed to create buffer from drawable\n");
-		return;
+	if (work_surface != d->surface) {
+		cairo_surface_flush(work_surface);
+		buffer = drawable_create_buffer_from_data(
+			cairo_image_surface_get_width(work_surface),
+			cairo_image_surface_get_height(work_surface),
+			cairo_image_surface_get_data(work_surface),
+			cairo_image_surface_get_stride(work_surface));
+	} else {
+		buffer = drawable_create_buffer(d);
 	}
 
-	fprintf(stderr, "[DRAWIN_REFRESH] Setting buffer on scene_buffer\n");
+	/* Clean up temporary surfaces */
+	if (clipped_surface)
+		cairo_surface_destroy(clipped_surface);
+	if (masked_surface)
+		cairo_surface_destroy(masked_surface);
+
+	if (!buffer) {
+		return;
+	}
 
 	/* Update scene buffer with new content
 	 * NULL damage region means entire buffer is new */
@@ -276,30 +371,22 @@ drawin_refresh_drawable(drawin_t *drawin)
 	if (drawin->opacity >= 0)
 		wlr_scene_buffer_set_opacity(drawin->scene_buffer, (float)drawin->opacity);
 
-	fprintf(stderr, "[DRAWIN_REFRESH] Buffer attached successfully (dest size: %dx%d)\n",
-	        drawin->width, drawin->height);
-
-	/* Verify scene node state for debugging */
-	fprintf(stderr, "[DRAWIN_REFRESH] Scene node enabled: %d\n",
-	        drawin->scene_tree->node.enabled);
-	fprintf(stderr, "[DRAWIN_REFRESH] Scene node position: %d,%d\n",
-	        drawin->scene_tree->node.x, drawin->scene_tree->node.y);
-	fprintf(stderr, "[DRAWIN_REFRESH] Scene buffer size: %dx%d\n",
-	        buffer->width, buffer->height);
-	fprintf(stderr, "[DRAWIN_REFRESH] *** WIBAR SHOULD BE VISIBLE AT %d,%d with size %dx%d ***\n",
-	        drawin->x, drawin->y, drawin->width, drawin->height);
-
 	/* Drop our reference - scene buffer holds its own reference */
 	wlr_buffer_drop(buffer);
+
+	/* Enable scene node now that we have valid content.
+	 * This is the Wayland equivalent of X11's map-then-draw pattern:
+	 * we only show the drawin once content is ready, avoiding smearing. */
+	if (drawin->visible && drawin->scene_tree) {
+		wlr_scene_node_set_enabled(&drawin->scene_tree->node, true);
+	}
 
 	/* Schedule a frame render on the output to ensure content is displayed
 	 * immediately, not waiting for the next external event. This mirrors
 	 * AwesomeWM's xcb_flush() which sends pending X requests immediately.
 	 * In Wayland, we request the compositor to render a new frame. */
-	if (drawin->screen && drawin->screen->monitor && drawin->screen->monitor->wlr_output) {
-		fprintf(stderr, "[DRAWIN_REFRESH] Scheduling output frame for immediate display\n");
+	if (drawin->screen && drawin->screen->monitor && drawin->screen->monitor->wlr_output)
 		wlr_output_schedule_frame(drawin->screen->monitor->wlr_output);
-	}
 }
 
 /** Assign screen to drawin based on its position
@@ -349,8 +436,7 @@ static drawin_t *
 drawin_allocator(lua_State *L)
 {
 	drawin_t *drawin;
-
-	fprintf(stderr, "[DRAWIN_ALLOCATOR] Creating new drawin object\n");
+	int i;  /* Used in border initialization loop */
 
 	/* Call macro-generated drawin_new() to create and initialize the object
 	 * This sets up the userdata, metatable, and basic class infrastructure */
@@ -383,14 +469,16 @@ drawin_allocator(lua_State *L)
 	drawin->strut.bottom_start_x = 0;
 	drawin->strut.bottom_end_x = 0;
 	drawin->screen = NULL;
-	drawin->drawable_ref = LUA_NOREF;
 	drawin->drawable = NULL;  /* Set after drawable creation */
+
+	/* Initialize shape properties (NULL = no custom shape) */
+	drawin->shape_bounding = NULL;
+	drawin->shape_clip = NULL;
+	drawin->shape_input = NULL;
 
 	/* Initialize signal and button arrays */
 	signal_array_init(&drawin->signals);
 	button_array_init(&drawin->buttons);
-
-	fprintf(stderr, "[DRAWIN_ALLOCATOR] Initialized fields, creating scene graph nodes\n");
 
 	/* Create scene graph nodes for rendering (Wayland-specific)
 	 * This replaces AwesomeWM's X11 window creation */
@@ -409,7 +497,6 @@ drawin_allocator(lua_State *L)
 	 * Created as children of scene_tree so they move with the drawin */
 	{
 		float default_border_color[4] = {0.0f, 0.0f, 0.0f, 0.0f};  /* Transparent until set */
-		int i;
 		for (i = 0; i < 4; i++) {
 			drawin->border[i] = wlr_scene_rect_create(drawin->scene_tree, 0, 0, default_border_color);
 			drawin->border[i]->node.data = drawin;
@@ -418,15 +505,14 @@ drawin_allocator(lua_State *L)
 		drawin->border_color_parsed.initialized = false;
 	}
 
-	fprintf(stderr, "[DRAWIN_ALLOCATOR] Scene graph created, creating drawable\n");
-
-	/* Create drawable object for rendering
+	/* Create drawable object for rendering (AwesomeWM pattern)
 	 * Stack: [drawin] */
-	drawin->drawable = luaA_drawable_allocator(L, (drawable_refresh_callback)drawin_refresh_drawable, drawin);
+	luaA_drawable_allocator(L, (drawable_refresh_callback)drawin_refresh_drawable, drawin);
 	/* Stack: [drawin, drawable] */
 
-	/* Store drawable reference in registry */
-	drawin->drawable_ref = luaL_ref(L, LUA_REGISTRYINDEX);
+	/* Store drawable in drawin's uservalue table (AwesomeWM: drawin.c:430)
+	 * luaA_object_ref_item stores item and returns pointer */
+	drawin->drawable = luaA_object_ref_item(L, -2, -1);
 	/* Stack: [drawin] */
 
 	/* Store drawable pointer (not drawin!) and set owner (AwesomeWM pattern)
@@ -435,13 +521,8 @@ drawin_allocator(lua_State *L)
 	drawin->drawable->owner_type = DRAWABLE_OWNER_DRAWIN;
 	drawin->drawable->owner.drawin = drawin;
 
-	fprintf(stderr, "[DRAWIN_ALLOCATOR] Drawable created and stored, drawin=%p drawable=%p\n",
-	        (void*)drawin, (void*)drawin->drawable);
-
 	/* Assign initial screen based on position */
 	drawin_assign_screen(L, drawin, -1);
-
-	fprintf(stderr, "[DRAWIN_ALLOCATOR] Drawin allocated successfully\n");
 
 	return drawin;
 }
@@ -453,8 +534,6 @@ drawin_allocator(lua_State *L)
 static void
 drawin_wipe(drawin_t *w)
 {
-	fprintf(stderr, "[DRAWIN_WIPE] Cleaning up drawin %p\n", (void*)w);
-
 	if (!w)
 		return;
 
@@ -474,6 +553,20 @@ drawin_wipe(drawin_t *w)
 	/* Wipe button array */
 	button_array_wipe(&w->buttons);
 
+	/* Free shape surfaces */
+	if (w->shape_bounding) {
+		cairo_surface_destroy(w->shape_bounding);
+		w->shape_bounding = NULL;
+	}
+	if (w->shape_clip) {
+		cairo_surface_destroy(w->shape_clip);
+		w->shape_clip = NULL;
+	}
+	if (w->shape_input) {
+		cairo_surface_destroy(w->shape_input);
+		w->shape_input = NULL;
+	}
+
 	/* Destroy scene graph nodes */
 	if (w->scene_tree) {
 		wlr_scene_node_destroy(&w->scene_tree->node);
@@ -483,8 +576,6 @@ drawin_wipe(drawin_t *w)
 		for (int i = 0; i < 4; i++)
 			w->border[i] = NULL;
 	}
-
-	fprintf(stderr, "[DRAWIN_WIPE] Drawin cleanup complete\n");
 }
 
 /** Create a new drawin object (LEGACY - will be replaced by allocator)
@@ -531,7 +622,6 @@ luaA_drawin_new(lua_State *L)
 	drawin->strut.bottom_start_x = 0;
 	drawin->strut.bottom_end_x = 0;
 	drawin->screen = NULL;
-	drawin->drawable_ref = LUA_NOREF;
 	drawin->drawable = NULL;  /* Set after drawable creation */
 	signal_array_init(&drawin->signals);
 	button_array_init(&drawin->buttons);
@@ -576,13 +666,14 @@ luaA_drawin_new(lua_State *L)
 
 	lua_pop(L, 1);  /* Pop environment table */
 
-	/* Create drawable object for rendering */
-	/* Stack: [drawin] */
-	drawin->drawable = luaA_drawable_allocator(L, (drawable_refresh_callback)drawin_refresh_drawable, drawin);
+	/* Create drawable object for rendering (AwesomeWM pattern)
+	 * Stack: [drawin] */
+	luaA_drawable_allocator(L, (drawable_refresh_callback)drawin_refresh_drawable, drawin);
 	/* Stack: [drawin, drawable] */
 
-	/* Store drawable reference in registry */
-	drawin->drawable_ref = luaL_ref(L, LUA_REGISTRYINDEX);
+	/* Store drawable in drawin's uservalue table (AwesomeWM: drawin.c:430)
+	 * luaA_object_ref_item stores item and returns pointer */
+	drawin->drawable = luaA_object_ref_item(L, -2, -1);
 	/* Stack: [drawin] */
 
 	/* Store drawable pointer (not drawin!) and set owner (AwesomeWM pattern)
@@ -623,12 +714,10 @@ luaA_drawin_new(lua_State *L)
  * Drawin property getters
  * ======================================================================== */
 
-/** drawin.geometry - Get geometry as table */
+/** Helper to push geometry as table (used by geometry method) */
 static int
-luaA_drawin_get_geometry(lua_State *L)
+luaA_drawin_push_geometry(lua_State *L, drawin_t *drawin)
 {
-	drawin_t *drawin = luaA_checkdrawin(L, 1);
-
 	lua_newtable(L);
 	lua_pushinteger(L, drawin->x);
 	lua_setfield(L, -2, "x");
@@ -642,65 +731,58 @@ luaA_drawin_get_geometry(lua_State *L)
 	return 1;
 }
 
-/** drawin.x - Get x coordinate */
+/** drawin.x - Get x coordinate (AwesomeWM signature: receives drawin pointer) */
 static int
-luaA_drawin_get_x(lua_State *L)
+luaA_drawin_get_x(lua_State *L, drawin_t *drawin)
 {
-	drawin_t *drawin = luaA_checkdrawin(L, 1);
 	lua_pushinteger(L, drawin->x);
 	return 1;
 }
 
-/** drawin.y - Get y coordinate */
+/** drawin.y - Get y coordinate (AwesomeWM signature) */
 static int
-luaA_drawin_get_y(lua_State *L)
+luaA_drawin_get_y(lua_State *L, drawin_t *drawin)
 {
-	drawin_t *drawin = luaA_checkdrawin(L, 1);
 	lua_pushinteger(L, drawin->y);
 	return 1;
 }
 
-/** drawin.width - Get width */
+/** drawin.width - Get width (AwesomeWM signature) */
 static int
-luaA_drawin_get_width(lua_State *L)
+luaA_drawin_get_width(lua_State *L, drawin_t *drawin)
 {
-	drawin_t *drawin = luaA_checkdrawin(L, 1);
 	lua_pushinteger(L, drawin->width);
 	return 1;
 }
 
-/** drawin.height - Get height */
+/** drawin.height - Get height (AwesomeWM signature) */
 static int
-luaA_drawin_get_height(lua_State *L)
+luaA_drawin_get_height(lua_State *L, drawin_t *drawin)
 {
-	drawin_t *drawin = luaA_checkdrawin(L, 1);
 	lua_pushinteger(L, drawin->height);
 	return 1;
 }
 
-/** drawin.visible - Get visibility */
+/** drawin.visible - Get visibility (AwesomeWM signature) */
 static int
-luaA_drawin_get_visible(lua_State *L)
+luaA_drawin_get_visible(lua_State *L, drawin_t *drawin)
 {
-	drawin_t *drawin = luaA_checkdrawin(L, 1);
 	lua_pushboolean(L, drawin->visible);
 	return 1;
 }
 
-/** drawin.ontop - Get ontop flag */
+/** drawin.ontop - Get ontop flag (AwesomeWM signature) */
 static int
-luaA_drawin_get_ontop(lua_State *L)
+luaA_drawin_get_ontop(lua_State *L, drawin_t *drawin)
 {
-	drawin_t *drawin = luaA_checkdrawin(L, 1);
 	lua_pushboolean(L, drawin->ontop);
 	return 1;
 }
 
-/** drawin.opacity - Get opacity */
+/** drawin.opacity - Get opacity (AwesomeWM signature) */
 static int
-luaA_drawin_get_opacity(lua_State *L)
+luaA_drawin_get_opacity(lua_State *L, drawin_t *drawin)
 {
-	drawin_t *drawin = luaA_checkdrawin(L, 1);
 	if (drawin->opacity < 0)
 		lua_pushnil(L);
 	else
@@ -708,20 +790,18 @@ luaA_drawin_get_opacity(lua_State *L)
 	return 1;
 }
 
-/** drawin.cursor - Get cursor name */
+/** drawin.cursor - Get cursor name (AwesomeWM signature) */
 static int
-luaA_drawin_get_cursor(lua_State *L)
+luaA_drawin_get_cursor(lua_State *L, drawin_t *drawin)
 {
-	drawin_t *drawin = luaA_checkdrawin(L, 1);
 	lua_pushstring(L, drawin->cursor);
 	return 1;
 }
 
-/** drawin.type - Get window type */
+/** drawin.type - Get window type (AwesomeWM signature) */
 static int
-luaA_drawin_get_type(lua_State *L)
+luaA_drawin_get_type(lua_State *L, drawin_t *drawin)
 {
-	drawin_t *drawin = luaA_checkdrawin(L, 1);
 	/* Convert enum to string */
 	const char *type_str = "normal";
 	switch (drawin->type) {
@@ -744,66 +824,104 @@ luaA_drawin_get_type(lua_State *L)
 	return 1;
 }
 
-/** drawin.drawable - Get associated drawable object for rendering */
+/** drawin.type - Set window type (AwesomeWM signature)
+ * Note: In Wayland, type doesn't map to any protocol concept (no _NET_WM_WINDOW_TYPE).
+ * We store the value for Lua API compatibility but don't change layer behavior based on it.
+ */
 static int
-luaA_drawin_get_drawable(lua_State *L)
+luaA_drawin_set_type(lua_State *L, drawin_t *drawin)
 {
-	drawin_t *drawin = luaA_checkdrawin(L, 1);
+	window_type_t type;
+	const char *type_str;
 
-	fprintf(stderr, "[DRAWIN_GET_DRAWABLE] drawin=%p drawable=%p drawable_ref=%d\n",
-	        (void*)drawin, (void*)drawin->drawable, drawin->drawable_ref);
+	if (lua_isnil(L, -1))
+		return 0;
 
-	if (drawin->drawable_ref != LUA_NOREF) {
-		/* Push drawable from registry */
-		lua_rawgeti(L, LUA_REGISTRYINDEX, drawin->drawable_ref);
-		fprintf(stderr, "[DRAWIN_GET_DRAWABLE] Retrieved from registry, type=%s\n",
-		        lua_typename(L, lua_type(L, -1)));
-	} else {
-		fprintf(stderr, "[DRAWIN_GET_DRAWABLE] drawable_ref is NOREF, returning nil\n");
-		lua_pushnil(L);
+	type_str = luaL_checkstring(L, -1);
+
+	if (strcmp(type_str, "desktop") == 0)
+		type = WINDOW_TYPE_DESKTOP;
+	else if (strcmp(type_str, "dock") == 0)
+		type = WINDOW_TYPE_DOCK;
+	else if (strcmp(type_str, "splash") == 0)
+		type = WINDOW_TYPE_SPLASH;
+	else if (strcmp(type_str, "dialog") == 0)
+		type = WINDOW_TYPE_DIALOG;
+	else if (strcmp(type_str, "menu") == 0)
+		type = WINDOW_TYPE_MENU;
+	else if (strcmp(type_str, "toolbar") == 0)
+		type = WINDOW_TYPE_TOOLBAR;
+	else if (strcmp(type_str, "utility") == 0)
+		type = WINDOW_TYPE_UTILITY;
+	else if (strcmp(type_str, "dropdown_menu") == 0)
+		type = WINDOW_TYPE_DROPDOWN_MENU;
+	else if (strcmp(type_str, "popup_menu") == 0)
+		type = WINDOW_TYPE_POPUP_MENU;
+	else if (strcmp(type_str, "tooltip") == 0)
+		type = WINDOW_TYPE_TOOLTIP;
+	else if (strcmp(type_str, "notification") == 0)
+		type = WINDOW_TYPE_NOTIFICATION;
+	else if (strcmp(type_str, "combo") == 0)
+		type = WINDOW_TYPE_COMBO;
+	else if (strcmp(type_str, "dnd") == 0)
+		type = WINDOW_TYPE_DND;
+	else if (strcmp(type_str, "normal") == 0)
+		type = WINDOW_TYPE_NORMAL;
+	else {
+		warn("Unknown window type '%s'", type_str);
+		return 0;
 	}
+
+	if (drawin->type != type) {
+		drawin->type = type;
+		luaA_object_emit_signal(L, -3, "property::type", 0);
+	}
+
+	return 0;
+}
+
+/** drawin.drawable - Get associated drawable object (AwesomeWM signature)
+ * AwesomeWM: drawin.c:641-644 - uses luaA_object_push_item */
+static int
+luaA_drawin_get_drawable(lua_State *L, drawin_t *drawin)
+{
+	luaA_object_push_item(L, -2, drawin->drawable);
 	return 1;
 }
 
-/** drawin.border_width - Get border width */
+/** drawin.border_width - Get border width (AwesomeWM signature) */
 static int
-luaA_drawin_get_border_width(lua_State *L)
+luaA_drawin_get_border_width(lua_State *L, drawin_t *drawin)
 {
-	drawin_t *drawin = luaA_checkdrawin(L, 1);
 	lua_pushinteger(L, drawin->border_width);
 	return 1;
 }
 
-/** drawin.border_width - Set border width */
+/** drawin.border_width - Set border width (AwesomeWM signature) */
 static int
-luaA_drawin_set_border_width(lua_State *L)
+luaA_drawin_set_border_width(lua_State *L, drawin_t *drawin)
 {
-	drawin_t *drawin = luaA_checkdrawin(L, 1);
 	int old_width = drawin->border_width;
-	int new_width = luaL_checkinteger(L, 2);
+	int new_width = luaL_checkinteger(L, -1);
 
 	if (new_width < 0)
-		return luaL_error(L, "border_width must be >= 0");
+		new_width = 0;
 
 	drawin->border_width = new_width;
 
 	/* Mark for deferred border update (AwesomeWM pattern) */
 	if (old_width != new_width) {
 		drawin->border_need_update = true;
-
-		lua_pushvalue(L, 1);  /* Push drawin */
-		luaA_awm_object_emit_signal(L, -1, "property::border_width", 0);
-		lua_pop(L, 1);
+		luaA_object_emit_signal(L, -3, "property::border_width", 0);
 	}
 
 	return 0;
 }
 
-/** drawin.border_color - Get border color */
+/** drawin.border_color - Get border color (AwesomeWM signature) */
 static int
-luaA_drawin_get_border_color(lua_State *L)
+luaA_drawin_get_border_color(lua_State *L, drawin_t *drawin)
 {
-	drawin_t *drawin = luaA_checkdrawin(L, 1);
 	if (drawin->border_color.initialized) {
 		return luaA_pushcolor(L, &drawin->border_color);
 	} else {
@@ -812,27 +930,12 @@ luaA_drawin_get_border_color(lua_State *L)
 	}
 }
 
-/** drawin.screen - Get assigned screen */
+/** drawin.border_color - Set border color (AwesomeWM signature) */
 static int
-luaA_drawin_get_screen(lua_State *L)
+luaA_drawin_set_border_color(lua_State *L, drawin_t *drawin)
 {
-	drawin_t *drawin = luaA_checkdrawin(L, 1);
-	if (drawin->screen) {
-		luaA_screen_push(L, drawin->screen);
-	} else {
-		lua_pushnil(L);
-	}
-	return 1;
-}
-
-/** drawin.border_color - Set border color */
-static int
-luaA_drawin_set_border_color(lua_State *L)
-{
-	drawin_t *drawin = luaA_checkdrawin(L, 1);
-
 	/* Parse color from Lua (can be string or table) */
-	if (!luaA_tocolor(L, 2, &drawin->border_color)) {
+	if (!luaA_tocolor(L, -1, &drawin->border_color)) {
 		return luaL_error(L, "Invalid color format");
 	}
 
@@ -845,9 +948,7 @@ luaA_drawin_set_border_color(lua_State *L)
 	}
 
 	/* Emit signal */
-	lua_pushvalue(L, 1);  /* Push drawin */
-	luaA_awm_object_emit_signal(L, -1, "property::border_color", 0);
-	lua_pop(L, 1);
+	luaA_object_emit_signal(L, -3, "property::border_color", 0);
 
 	return 0;
 }
@@ -903,9 +1004,6 @@ luaA_drawin_struts(lua_State *L)
 			new_strut.bottom = luaL_checkinteger(L, -1);
 		lua_pop(L, 1);
 
-		fprintf(stderr, "[DRAWIN_STRUTS] Setting struts for drawin %p: left=%d right=%d top=%d bottom=%d\n",
-		        (void*)drawin, new_strut.left, new_strut.right, new_strut.top, new_strut.bottom);
-
 		/* Update struts */
 		drawin->strut = new_strut;
 
@@ -945,26 +1043,30 @@ luaA_drawin_struts(lua_State *L)
  * Drawin property setters (with signal emission)
  * ======================================================================== */
 
-/** Set drawin geometry and emit signals for changed properties
- * This follows AwesomeWM's pattern of emitting both composite and granular signals
+/** Move and resize drawin (AwesomeWM pattern - takes stack index)
+ * \param L The Lua VM state.
+ * \param udx The drawin stack index.
+ * \param x The new x coordinate.
+ * \param y The new y coordinate.
+ * \param width The new width.
+ * \param height The new height.
  */
-void
-luaA_drawin_set_geometry(lua_State *L, drawin_t *drawin, int x, int y, int width, int height)
+static void
+drawin_moveresize(lua_State *L, int udx, int x, int y, int width, int height)
 {
+	drawin_t *drawin = luaA_checkudata(L, udx, &drawin_class);
 	int old_x = drawin->x;
 	int old_y = drawin->y;
 	int old_width = drawin->width;
 	int old_height = drawin->height;
-	bool geometry_changed = false;
-
-	fprintf(stderr, "[DRAWIN_GEOM] Setting geometry: %dx%d+%d+%d (was %dx%d+%d+%d)\n",
-	        width, height, x, y, old_width, old_height, old_x, old_y);
 
 	/* Update geometry */
 	drawin->x = x;
 	drawin->y = y;
-	drawin->width = width;
-	drawin->height = height;
+	if (width > 0)
+		drawin->width = width;
+	if (height > 0)
+		drawin->height = height;
 	drawin->geometry_dirty = true;
 
 	/* Propagate geometry to drawable (this creates the Cairo surface) */
@@ -973,21 +1075,13 @@ luaA_drawin_set_geometry(lua_State *L, drawin_t *drawin, int x, int y, int width
 		int old_dwidth = d->geometry.width;
 		int old_dheight = d->geometry.height;
 
-		fprintf(stderr, "[DRAWIN_GEOM] Propagating to drawable=%p %dx%d -> %dx%d\n",
-		        (void*)d, old_dwidth, old_dheight, width, height);
-
-		d->geometry.x = x;
-		d->geometry.y = y;
-		d->geometry.width = width;
-		d->geometry.height = height;
-
-		fprintf(stderr, "[DRAWIN_GEOM] Set drawable=%p geometry to %dx%d+%d+%d\n",
-		        (void*)d, d->geometry.width, d->geometry.height, d->geometry.x, d->geometry.y);
+		d->geometry.x = drawin->x;
+		d->geometry.y = drawin->y;
+		d->geometry.width = drawin->width;
+		d->geometry.height = drawin->height;
 
 		/* If size changed, recreate surface */
-		fprintf(stderr, "[DRAWIN_GEOM] Checking size change: old=%dx%d new=%dx%d changed=%d\n",
-		        old_dwidth, old_dheight, width, height, (old_dwidth != width || old_dheight != height));
-		if (old_dwidth != width || old_dheight != height) {
+		if (old_dwidth != drawin->width || old_dheight != drawin->height) {
 			/* Clean up old surface */
 			if (d->surface) {
 				cairo_surface_finish(d->surface);
@@ -1002,120 +1096,85 @@ luaA_drawin_set_geometry(lua_State *L, drawin_t *drawin, int x, int y, int width
 			}
 
 			/* Create new surface if we have valid dimensions */
-			if (width > 0 && height > 0) {
-				fprintf(stderr, "[DRAWIN_GEOM] Creating drawable=%p surface %dx%d\n", (void*)d, width, height);
-				d->surface = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, width, height);
+			if (drawin->width > 0 && drawin->height > 0) {
+				d->surface = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, drawin->width, drawin->height);
 				if (cairo_surface_status(d->surface) != CAIRO_STATUS_SUCCESS) {
-					fprintf(stderr, "[DRAWIN_GEOM] ERROR: Failed to create surface\n");
 					cairo_surface_destroy(d->surface);
 					d->surface = NULL;
 				} else {
-					fprintf(stderr, "[DRAWIN_GEOM] Surface=%p created successfully on drawable=%p\n",
-					        (void*)d->surface, (void*)d);
-
-					/* CRITICAL: Emit property::surface signal to trigger Lua widget repaint
-					 * This notifies wibox/drawable.lua:413 to call redraw_callback() */
-					fprintf(stderr, "[DRAWIN_GEOM] About to emit property::surface signal for drawable=%p\n", (void*)d);
-					luaA_object_push(L, (void *)d);
-					fprintf(stderr, "[DRAWIN_GEOM] Pushed drawable to stack\n");
+					/* Emit property::surface signal on drawable
+					 * AwesomeWM pattern: push from drawin's uservalue table */
+					luaA_object_push_item(L, udx, drawin->drawable);
 					luaA_object_emit_signal(L, -1, "property::surface", 0);
-					fprintf(stderr, "[DRAWIN_GEOM] Emitted property::surface signal\n");
-					lua_pop(L, 1);  /* Pop drawable from stack */
+					lua_pop(L, 1);
 				}
-				d->refreshed = false;
-
-				/* After creating new surface, trigger refresh to attach new buffer to scene graph
-				 * This ensures the buffer with the correct size is displayed
-				 */
-				if (d->refresh_callback) {
-					fprintf(stderr, "[DRAWIN_GEOM] Calling refresh_callback to attach new buffer\n");
-					d->refreshed = true;
-					d->refresh_callback(d->refresh_data);
-				}
+				/* Note: Don't call refresh_callback here!
+				 * AwesomeWM pattern: Lua draws on surface, then calls drawable:refresh()
+				 * which triggers refresh_callback. Calling it here would copy an empty surface. */
 			}
 		}
-	} else {
-		fprintf(stderr, "[DRAWIN_GEOM] No drawable to propagate to!\n");
 	}
 
-	/* Push drawin object for signal emission */
-	luaA_object_push(L, drawin);
-
-	/* Emit property signals for changed values */
-	if (old_x != x || old_y != y || old_width != width || old_height != height) {
-		luaA_awm_object_emit_signal(L, -1, "property::geometry", 0);
-		geometry_changed = true;
-	}
-
-	if (old_x != x) {
-		luaA_awm_object_emit_signal(L, -1, "property::x", 0);
-	}
-
-	if (old_y != y) {
-		luaA_awm_object_emit_signal(L, -1, "property::y", 0);
-	}
-
-	if (old_width != width) {
-		luaA_awm_object_emit_signal(L, -1, "property::width", 0);
-	}
-
-	if (old_height != height) {
-		luaA_awm_object_emit_signal(L, -1, "property::height", 0);
-	}
+	/* Emit property signals using passed stack index (like AwesomeWM) */
+	if (old_x != drawin->x || old_y != drawin->y || old_width != drawin->width || old_height != drawin->height)
+		luaA_object_emit_signal(L, udx, "property::geometry", 0);
+	if (old_x != drawin->x)
+		luaA_object_emit_signal(L, udx, "property::x", 0);
+	if (old_y != drawin->y)
+		luaA_object_emit_signal(L, udx, "property::y", 0);
+	if (old_width != drawin->width)
+		luaA_object_emit_signal(L, udx, "property::width", 0);
+	if (old_height != drawin->height)
+		luaA_object_emit_signal(L, udx, "property::height", 0);
 
 	/* Update screen assignment if position changed */
-	if (old_x != x || old_y != y) {
-		drawin_assign_screen(L, drawin, -1);
-	}
-
-	lua_pop(L, 1);  /* Pop drawin */
+	if (old_x != drawin->x || old_y != drawin->y)
+		drawin_assign_screen(L, drawin, udx);
 
 	/* Update workarea if struts are set and drawin is visible */
-	if (geometry_changed && drawin->visible && drawin->screen &&
+	if (drawin->visible && drawin->screen &&
 	    (drawin->strut.left || drawin->strut.right || drawin->strut.top || drawin->strut.bottom)) {
 		luaA_screen_update_workarea_for_drawin(L, drawin);
 	}
 
 	/* Update scene graph node position if position changed */
-	if (drawin->scene_tree && (old_x != x || old_y != y)) {
-		wlr_scene_node_set_position(&drawin->scene_tree->node, x, y);
-	}
+	if (drawin->scene_tree && (old_x != drawin->x || old_y != drawin->y))
+		wlr_scene_node_set_position(&drawin->scene_tree->node, drawin->x, drawin->y);
 
-	/* Update scene buffer destination size if size changed
-	 * This ensures the hit-test region matches the new geometry */
-	if (drawin->scene_buffer && (old_width != width || old_height != height)) {
-		wlr_scene_buffer_set_dest_size(drawin->scene_buffer, width, height);
-		fprintf(stderr, "[DRAWIN_GEOM] Updated scene buffer dest size to %dx%d\n", width, height);
-	}
-
-	/* Size changes handled by drawable - will recreate buffer on next refresh */
+	/* Update scene buffer destination size if size changed */
+	if (drawin->scene_buffer && (old_width != drawin->width || old_height != drawin->height))
+		wlr_scene_buffer_set_dest_size(drawin->scene_buffer, drawin->width, drawin->height);
 }
 
-/** drawin.visible = value - Set visibility */
+/** Set drawin geometry (wrapper for external callers)
+ * This is called when the object IS in the registry (not during construction).
+ */
 void
-luaA_drawin_set_visible(lua_State *L, drawin_t *drawin, bool visible)
+luaA_drawin_set_geometry(lua_State *L, drawin_t *drawin, int x, int y, int width, int height)
 {
-	fprintf(stderr, "[DRAWIN_SET_VISIBLE] Called: drawin=%p, current_visible=%d, new_visible=%d\n",
-	        (void*)drawin, drawin->visible, visible);
-	fprintf(stderr, "[DRAWIN_SET_VISIBLE] Stack dump - top=%d:\n", lua_gettop(L));
-	for (int i = 1; i <= lua_gettop(L); i++) {
-		fprintf(stderr, "[DRAWIN_SET_VISIBLE]   [%d] type=%s\n", i, lua_typename(L, lua_type(L, i)));
-		if (lua_type(L, i) == LUA_TUSERDATA) {
-			drawin_t *d = luaA_todrawin(L, i);
-			fprintf(stderr, "[DRAWIN_SET_VISIBLE]   [%d] drawin=%p (match=%d)\n", i, (void*)d, d == drawin);
-		}
-	}
+	/* Push drawin to stack, then call drawin_moveresize with stack index */
+	luaA_object_push(L, drawin);
+	drawin_moveresize(L, -1, x, y, width, height);
+	lua_pop(L, 1);
+}
 
-	if (drawin->visible == visible) {
-		fprintf(stderr, "[DRAWIN_SET_VISIBLE] No change, returning early\n");
+/** Set drawin visibility (AwesomeWM pattern - takes stack index)
+ * \param L The Lua VM state.
+ * \param udx The drawin stack index.
+ * \param v The visible value.
+ */
+static void
+drawin_set_visible(lua_State *L, int udx, bool v)
+{
+	drawin_t *drawin = luaA_checkudata(L, udx, &drawin_class);
+	if (drawin->visible == v)
 		return;  /* No change */
-	}
 
-	drawin->visible = visible;
+	drawin->visible = v;
 
 	/* Update globalconf.drawins array to track visible drawins
-	 * This matches AwesomeWM's drawin_map/unmap pattern */
-	if (visible) {
+	 * This matches AwesomeWM's drawin_map/unmap pattern (drawin.c:385-402) */
+	if (v) {
 		/* Add to visible drawins array if not already present */
 		bool already_in_array = false;
 		foreach(item, globalconf.drawins) {
@@ -1124,32 +1183,37 @@ luaA_drawin_set_visible(lua_State *L, drawin_t *drawin, bool visible)
 				break;
 			}
 		}
-		if (!already_in_array) {
-			fprintf(stderr, "[DRAWIN_VISIBLE] Adding drawin %p to globalconf.drawins (count: %d -> %d)\n",
-			        (void*)drawin, globalconf.drawins.len, globalconf.drawins.len + 1);
+		if (!already_in_array)
 			drawin_array_append(&globalconf.drawins, drawin);
-		}
+
+		/* Register drawin in object registry so luaA_object_push() can find it
+		 * (AwesomeWM drawin.c:389-391) */
+		lua_pushvalue(L, udx);
+		luaA_object_ref_class(L, -1, &drawin_class);
+
 		/* Trigger restacking - AwesomeWM calls stack_windows() when mapping drawin */
 		stack_windows();
+
+		/* Ensure drawable has surface before signal (AwesomeWM drawin.c:343-344)
+		 * This is critical: Lua's do_redraw() needs a surface to draw to.
+		 * Without this, the refresh callback never fires and popups don't show. */
+		if (drawin->drawable && !drawin->drawable->surface)
+			drawin_update_drawing(L, udx);
 	} else {
+		/* Unregister from object registry (AwesomeWM drawin.c:402) */
+		luaA_object_unref(L, drawin);
+
 		/* Remove from visible drawins array */
 		foreach(item, globalconf.drawins) {
 			if (*item == drawin) {
-				fprintf(stderr, "[DRAWIN_VISIBLE] Removing drawin %p from globalconf.drawins (count: %d -> %d)\n",
-				        (void*)drawin, globalconf.drawins.len, globalconf.drawins.len - 1);
 				drawin_array_remove(&globalconf.drawins, item);
 				break;
 			}
 		}
 	}
 
-	fprintf(stderr, "[DRAWIN_VISIBLE] Setting drawin %p visible=%d, geometry=%dx%d+%d+%d\n",
-	        (void*)drawin, visible, drawin->width, drawin->height, drawin->x, drawin->y);
-
-	/* Emit signal on the drawin object (already on stack at index 1 from class property setter) */
-	fprintf(stderr, "[DRAWIN_SET_VISIBLE] About to emit property::visible signal (obj at stack index 1)\n");
-	luaA_awm_object_emit_signal(L, 1, "property::visible", 0);
-	fprintf(stderr, "[DRAWIN_SET_VISIBLE] Signal emitted\n");
+	/* Emit signal using the passed stack index (matches AwesomeWM exactly) */
+	luaA_object_emit_signal(L, udx, "property::visible", 0);
 
 	/* Update workarea if struts are set */
 	if (drawin->screen &&
@@ -1157,24 +1221,28 @@ luaA_drawin_set_visible(lua_State *L, drawin_t *drawin, bool visible)
 		luaA_screen_update_workarea_for_drawin(L, drawin);
 	}
 
-	/* Enable/disable scene graph node to show/hide drawin */
+	/* Scene node visibility - differs from AwesomeWM's X11 approach:
+	 * In X11, xcb_map_window() maps immediately and content shows when ready.
+	 * In Wayland, we MUST have content before showing, otherwise we get smearing.
+	 *
+	 * When becoming visible: don't enable scene node yet. Let drawin_refresh_drawable()
+	 * enable it when content is actually ready.
+	 * When becoming invisible: disable scene node immediately. */
 	if (drawin->scene_tree) {
-		fprintf(stderr, "[DRAWIN_VISIBLE] Setting scene_tree node enabled=%d (was: enabled=%d)\n",
-		        visible, drawin->scene_tree->node.enabled);
-		wlr_scene_node_set_enabled(&drawin->scene_tree->node, visible);
-		fprintf(stderr, "[DRAWIN_VISIBLE] After set: scene_tree node enabled=%d\n",
-		        drawin->scene_tree->node.enabled);
-
-		/* When becoming visible, immediately refresh the drawable to populate scene buffer.
-		 * This fixes the timing issue where wiboxes don't appear until an external event
-		 * triggers some_refresh(). In AwesomeWM, xcb_flush() sends content immediately;
-		 * in Wayland, we need to ensure the scene buffer is populated before the next frame. */
-		if (visible && drawin->drawable) {
-			fprintf(stderr, "[DRAWIN_VISIBLE] Triggering immediate drawable refresh\n");
-			drawin_refresh_drawable(drawin);
+		if (!v) {
+			/* Hiding: disable immediately */
+			wlr_scene_node_set_enabled(&drawin->scene_tree->node, false);
+		} else {
+			/* Showing: if content is already ready, refresh and enable.
+			 * Otherwise, wait for Lua's drawable:refresh() callback to enable. */
+			if (drawin->drawable) {
+				drawable_t *d = drawin->drawable;
+				if (d->surface && d->refreshed) {
+					drawin_refresh_drawable(drawin);
+					/* drawin_refresh_drawable will enable the node */
+				}
+			}
 		}
-	} else {
-		fprintf(stderr, "[DRAWIN_VISIBLE] ERROR: No scene_tree!\n");
 	}
 }
 
@@ -1196,50 +1264,6 @@ drawin_set_property_int(lua_State *L, drawin_t *drawin, int *field, int value, c
 	lua_pop(L, 1);
 }
 #endif
-
-/** Helper to set drawin boolean property and emit signal */
-static void
-drawin_set_property_bool(lua_State *L, drawin_t *drawin, bool *field, bool value, const char *signal_name)
-{
-	if (*field == value)
-		return;  /* No change */
-
-	*field = value;
-
-	luaA_object_push(L, drawin);
-	luaA_awm_object_emit_signal(L, -1, signal_name, 0);
-	lua_pop(L, 1);
-}
-
-/** Helper to set drawin double property and emit signal */
-static void
-drawin_set_property_double(lua_State *L, drawin_t *drawin, double *field, double value, const char *signal_name)
-{
-	if (*field == value)
-		return;  /* No change */
-
-	*field = value;
-
-	luaA_object_push(L, drawin);
-	luaA_awm_object_emit_signal(L, -1, signal_name, 0);
-	lua_pop(L, 1);
-}
-
-/** Helper to set drawin string property and emit signal */
-static void
-drawin_set_property_string(lua_State *L, drawin_t *drawin, char **field, const char *value, const char *signal_name)
-{
-	if (*field && value && strcmp(*field, value) == 0)
-		return;  /* No change */
-
-	if (*field)
-		free(*field);
-	*field = value ? strdup(value) : NULL;
-
-	luaA_object_push(L, drawin);
-	luaA_awm_object_emit_signal(L, -1, signal_name, 0);
-	lua_pop(L, 1);
-}
 
 /** Set strut and update workarea */
 void
@@ -1306,9 +1330,6 @@ drawin_border_refresh_single(drawin_t *d)
 
 	bw = d->border_width;
 
-	fprintf(stderr, "[DRAWIN_BORDER] Updating borders for drawin %p: width=%d, geo=%dx%d\n",
-	        (void*)d, bw, d->width, d->height);
-
 	/* Update border rectangle sizes
 	 * Borders go OUTSIDE the content area for drawins/wiboxes
 	 * Top/bottom span full outer width, left/right span inner height */
@@ -1333,10 +1354,6 @@ drawin_border_refresh_single(drawin_t *d)
 
 		for (int i = 0; i < 4; i++)
 			wlr_scene_rect_set_color(d->border[i], color_floats);
-
-		fprintf(stderr, "[DRAWIN_BORDER] Applied color #%02x%02x%02x%02x to drawin %p\n",
-		        d->border_color_parsed.red, d->border_color_parsed.green,
-		        d->border_color_parsed.blue, d->border_color_parsed.alpha, (void*)d);
 	}
 }
 
@@ -1440,216 +1457,13 @@ luaA_drawin_geometry_method(lua_State *L)
 			height = luaL_checkinteger(L, -1);
 		lua_pop(L, 1);
 
-		luaA_drawin_set_geometry(L, drawin, x, y, width, height);
+		drawin_moveresize(L, 1, x, y, width, height);
 
 		return 0;
 	}
 
 	/* Return current geometry */
-	return luaA_drawin_get_geometry(L);
-}
-
-/** drawin:__index - Property getter [UNUSED - class system handles this now] */
-static int __attribute__((unused))
-luaA_drawin_index(lua_State *L)
-{
-	const char *key;
-
-	/* Validate drawin object */
-	luaA_checkdrawin(L, 1);
-	key = luaL_checkstring(L, 2);
-
-	/* Check for methods in metatable FIRST (so d:geometry() works) */
-	if (strcmp(key, "geometry") == 0) {
-		fprintf(stderr, "[DRAWIN_INDEX] Looking up 'geometry'...\n");
-	}
-	luaL_getmetatable(L, DRAWIN_MT);
-	if (strcmp(key, "geometry") == 0) {
-		fprintf(stderr, "[DRAWIN_INDEX] Got metatable, checking for geometry...\n");
-	}
-	lua_getfield(L, -1, key);
-	if (strcmp(key, "geometry") == 0) {
-		fprintf(stderr, "[DRAWIN_INDEX] geometry lookup result: %s\n",
-		        lua_typename(L, lua_type(L, -1)));
-	}
-	if (!lua_isnil(L, -1)) {
-		fprintf(stderr, "[DRAWIN_INDEX] Found '%s' in metatable, type=%s\n",
-		        key, lua_typename(L, lua_type(L, -1)));
-		return 1;
-	}
-	lua_pop(L, 2);  /* Pop nil and metatable */
-
-	/* Check for properties */
-	/* Special case: geometry is ONLY a method, never a property.
-	 * Clear it from environment if present, then return the method function. */
-	if (strcmp(key, "geometry") == 0) {
-		/* Remove geometry from environment if it exists */
-		luaA_getuservalue(L, 1);
-		lua_pushnil(L);
-		lua_setfield(L, -2, "geometry");
-		lua_pop(L, 1);
-
-		/* Return the method function from metatable */
-		luaL_getmetatable(L, DRAWIN_MT);
-		lua_getfield(L, -1, "geometry");
-		lua_remove(L, -2);  /* Remove metatable, leaving just the function */
-		return 1;
-	}
-
-	if (strcmp(key, "x") == 0)
-		return luaA_drawin_get_x(L);
-	if (strcmp(key, "y") == 0)
-		return luaA_drawin_get_y(L);
-	if (strcmp(key, "width") == 0)
-		return luaA_drawin_get_width(L);
-	if (strcmp(key, "height") == 0)
-		return luaA_drawin_get_height(L);
-	if (strcmp(key, "visible") == 0)
-		return luaA_drawin_get_visible(L);
-	if (strcmp(key, "ontop") == 0)
-		return luaA_drawin_get_ontop(L);
-	if (strcmp(key, "opacity") == 0)
-		return luaA_drawin_get_opacity(L);
-	if (strcmp(key, "cursor") == 0)
-		return luaA_drawin_get_cursor(L);
-	if (strcmp(key, "type") == 0)
-		return luaA_drawin_get_type(L);
-	if (strcmp(key, "drawable") == 0)
-		return luaA_drawin_get_drawable(L);
-	if (strcmp(key, "border_width") == 0)
-		return luaA_drawin_get_border_width(L);
-	if (strcmp(key, "border_color") == 0)
-		return luaA_drawin_get_border_color(L);
-	if (strcmp(key, "screen") == 0)
-		return luaA_drawin_get_screen(L);
-
-	/* Check for custom properties in environment table (AwesomeWM compatibility) */
-	luaA_getuservalue(L, 1);  /* Get drawin's environment table */
-	lua_pushvalue(L, 2);  /* Push key */
-	lua_rawget(L, -2);  /* Get env[key] */
-	return 1;
-}
-
-/** drawin:__newindex - Property setter [UNUSED - class system handles this now] */
-static int __attribute__((unused))
-luaA_drawin_newindex(lua_State *L)
-{
-	drawin_t *drawin = luaA_checkdrawin(L, 1);
-	const char *key = luaL_checkstring(L, 2);
-
-	/* Handle writable properties */
-	if (strcmp(key, "x") == 0) {
-		int value = luaL_checkinteger(L, 3);
-		luaA_drawin_set_geometry(L, drawin, value, drawin->y, drawin->width, drawin->height);
-		return 0;
-	}
-
-	if (strcmp(key, "y") == 0) {
-		int value = luaL_checkinteger(L, 3);
-		luaA_drawin_set_geometry(L, drawin, drawin->x, value, drawin->width, drawin->height);
-		return 0;
-	}
-
-	if (strcmp(key, "width") == 0) {
-		int value = luaL_checkinteger(L, 3);
-		if (value < 1) value = 1;  /* Minimum width */
-		luaA_drawin_set_geometry(L, drawin, drawin->x, drawin->y, value, drawin->height);
-		return 0;
-	}
-
-	if (strcmp(key, "height") == 0) {
-		int value = luaL_checkinteger(L, 3);
-		if (value < 1) value = 1;  /* Minimum height */
-		luaA_drawin_set_geometry(L, drawin, drawin->x, drawin->y, drawin->width, value);
-		return 0;
-	}
-
-	if (strcmp(key, "visible") == 0) {
-		bool value = lua_toboolean(L, 3);
-		luaA_drawin_set_visible(L, drawin, value);
-		return 0;
-	}
-
-	if (strcmp(key, "ontop") == 0) {
-		bool value = lua_toboolean(L, 3);
-		if (value != drawin->ontop) {
-			drawin_set_property_bool(L, drawin, &drawin->ontop, value, "property::ontop");
-			/* Trigger restacking - AwesomeWM calls stack_windows() when ontop changes */
-			stack_windows();
-		}
-		return 0;
-	}
-
-	if (strcmp(key, "opacity") == 0) {
-		double value = -1.0;
-		if (!lua_isnil(L, 3))
-			value = luaL_checknumber(L, 3);
-		drawin_set_property_double(L, drawin, &drawin->opacity, value, "property::opacity");
-		return 0;
-	}
-
-	if (strcmp(key, "cursor") == 0) {
-		const char *value = luaL_checkstring(L, 3);
-		drawin_set_property_string(L, drawin, &drawin->cursor, value, "property::cursor");
-		return 0;
-	}
-
-	if (strcmp(key, "type") == 0) {
-		const char *value = luaL_checkstring(L, 3);
-		/* Convert string to enum */
-		window_type_t new_type = WINDOW_TYPE_NORMAL;
-		if (strcmp(value, "desktop") == 0) new_type = WINDOW_TYPE_DESKTOP;
-		else if (strcmp(value, "dock") == 0) new_type = WINDOW_TYPE_DOCK;
-		else if (strcmp(value, "toolbar") == 0) new_type = WINDOW_TYPE_TOOLBAR;
-		else if (strcmp(value, "menu") == 0) new_type = WINDOW_TYPE_MENU;
-		else if (strcmp(value, "utility") == 0) new_type = WINDOW_TYPE_UTILITY;
-		else if (strcmp(value, "splash") == 0) new_type = WINDOW_TYPE_SPLASH;
-		else if (strcmp(value, "dialog") == 0) new_type = WINDOW_TYPE_DIALOG;
-		else if (strcmp(value, "dropdown_menu") == 0) new_type = WINDOW_TYPE_DROPDOWN_MENU;
-		else if (strcmp(value, "popup_menu") == 0) new_type = WINDOW_TYPE_POPUP_MENU;
-		else if (strcmp(value, "tooltip") == 0) new_type = WINDOW_TYPE_TOOLTIP;
-		else if (strcmp(value, "notification") == 0) new_type = WINDOW_TYPE_NOTIFICATION;
-		else if (strcmp(value, "combo") == 0) new_type = WINDOW_TYPE_COMBO;
-		else if (strcmp(value, "dnd") == 0) new_type = WINDOW_TYPE_DND;
-
-		if (drawin->type != new_type) {
-			drawin->type = new_type;
-			luaA_awm_object_emit_signal(L, 1, "property::type", 0);
-		}
-		return 0;
-	}
-
-	if (strcmp(key, "border_width") == 0) {
-		lua_pushvalue(L, 1);  /* Push drawin to stack position 1 for setter */
-		lua_pushvalue(L, 3);  /* Push value to stack position 2 for setter */
-		return luaA_drawin_set_border_width(L);
-	}
-
-	if (strcmp(key, "border_color") == 0) {
-		lua_pushvalue(L, 1);  /* Push drawin to stack position 1 for setter */
-		lua_pushvalue(L, 3);  /* Push value to stack position 2 for setter */
-		return luaA_drawin_set_border_color(L);
-	}
-
-	/* For AwesomeWM compatibility: Allow arbitrary properties to be stored
-	 * in the userdata environment table. This allows Lua code to attach
-	 * methods/properties like get_wibox() that aren't in C.
-	 *
-	 * EXCEPTION: Don't allow "geometry" to be stored, as it should only
-	 * be accessible as a method from the metatable. */
-	if (strcmp(key, "geometry") == 0) {
-		fprintf(stderr, "[DRAWIN_NEWINDEX] Attempt to set geometry blocked! type=%s\n",
-		        lua_typename(L, lua_type(L, 3)));
-		return luaL_error(L, "drawin property 'geometry' is read-only (use d:geometry() method)");
-	}
-
-	luaA_getuservalue(L, 1);  /* Get drawin's environment table */
-	lua_pushvalue(L, 2);  /* Push key */
-	lua_pushvalue(L, 3);  /* Push value */
-	lua_rawset(L, -3);  /* env[key] = value */
-	lua_pop(L, 1);  /* Pop environment table */
-
-	return 0;
+	return luaA_drawin_push_geometry(L, drawin);
 }
 
 /** drawin:__tostring - Convert to string */
@@ -1673,12 +1487,9 @@ luaA_drawin_gc(lua_State *L)
 		/* Clean up signals */
 		signal_array_wipe(&drawin->signals);
 
-		/* Unref drawable */
-		if (drawin->drawable_ref != LUA_NOREF) {
-			luaL_unref(L, LUA_REGISTRYINDEX, drawin->drawable_ref);
-			drawin->drawable_ref = LUA_NOREF;
-		}
-		drawin->drawable = NULL;  /* Drawable will be GC'd separately */
+		/* Note: drawable is stored in drawin's uservalue table via luaA_object_ref_item,
+		 * so it will be garbage collected when the drawin is collected. No explicit unref needed. */
+		drawin->drawable = NULL;
 
 		/* Free allocated strings */
 		if (drawin->cursor) {
@@ -1704,154 +1515,275 @@ luaA_drawin_gc(lua_State *L)
  * Drawin class setup
  * ======================================================================== */
 
-/* Property wrappers that match lua_class_propfunc_t signature
- * These wrap the actual getter functions which have the old signature */
-static int luaA_drawin_get_drawable_wrapper(lua_State *L, lua_object_t *obj) {
-	(void)obj; /* Object already on stack at index 1 */
-	return luaA_drawin_get_drawable(L);
-}
-static int luaA_drawin_get_visible_wrapper(lua_State *L, lua_object_t *obj) {
-	(void)obj;
-	return luaA_drawin_get_visible(L);
-}
+/* ========================================================================
+ * Property setters (AwesomeWM signature: lua_State *L, drawin_t *drawin)
+ * Value is at -1, object is at -3 for signal emission
+ * ======================================================================== */
 
-/** Setter wrapper for visible property (called when Lua sets drawin.visible = value)
- * Stack: [..., value]  (value is at top of stack)
+/** Set the drawin visibility (AwesomeWM signature).
+ * \param L The Lua VM state.
+ * \param drawin The drawin object.
+ * \return The number of elements pushed on stack.
  */
-static int luaA_drawin_set_visible_wrapper(lua_State *L, lua_object_t *obj) {
-	drawin_t *drawin = (drawin_t *)obj;
-	bool value = lua_toboolean(L, -1);
-	fprintf(stderr, "[DRAWIN_SET_VISIBLE_WRAPPER] Setting visible=%d on drawin %p\n",
-	        value, (void*)drawin);
-	luaA_drawin_set_visible(L, drawin, value);
+static int
+luaA_drawin_set_visible(lua_State *L, drawin_t *drawin)
+{
+	drawin_set_visible(L, -3, luaA_checkboolean(L, -1));
 	return 0;
 }
-static int luaA_drawin_get_ontop_wrapper(lua_State *L, lua_object_t *obj) {
-	(void)obj;
-	return luaA_drawin_get_ontop(L);
-}
-static int luaA_drawin_get_cursor_wrapper(lua_State *L, lua_object_t *obj) {
-	(void)obj;
-	return luaA_drawin_get_cursor(L);
-}
-static int luaA_drawin_get_x_wrapper(lua_State *L, lua_object_t *obj) {
-	(void)obj;
-	return luaA_drawin_get_x(L);
-}
-static int luaA_drawin_get_y_wrapper(lua_State *L, lua_object_t *obj) {
-	(void)obj;
-	return luaA_drawin_get_y(L);
-}
-static int luaA_drawin_get_width_wrapper(lua_State *L, lua_object_t *obj) {
-	(void)obj;
-	return luaA_drawin_get_width(L);
-}
-static int luaA_drawin_get_height_wrapper(lua_State *L, lua_object_t *obj) {
-	(void)obj;
-	return luaA_drawin_get_height(L);
-}
 
-/** New callback for width property (called during drawin construction)
- * Stack: [args_table, ..., drawin_object, property_value]
+/** Set the drawin on top status (AwesomeWM signature).
+ * \param L The Lua VM state.
+ * \param drawin The drawin object.
+ * \return The number of elements pushed on stack.
  */
-static int luaA_drawin_new_width(lua_State *L, lua_object_t *obj) {
-	drawin_t *drawin = (drawin_t *)obj;
-	if (!lua_isnil(L, -1)) {
-		int width = luaL_checkinteger(L, -1);
-		if (width < 1) width = 1;
-		fprintf(stderr, "[DRAWIN_NEW] Setting width during construction: %d -> geometry %dx%d\n",
-		        width, width, drawin->height);
-		luaA_drawin_set_geometry(L, drawin, drawin->x, drawin->y, width, drawin->height);
+static int
+luaA_drawin_set_ontop(lua_State *L, drawin_t *drawin)
+{
+	bool b = luaA_checkboolean(L, -1);
+	if(b != drawin->ontop)
+	{
+		drawin->ontop = b;
+		stack_windows();
+		luaA_object_emit_signal(L, -3, "property::ontop", 0);
 	}
 	return 0;
 }
 
-/** New callback for height property (called during drawin construction)
- * Stack: [args_table, ..., drawin_object, property_value]
+/** Set the drawin cursor (AwesomeWM signature).
+ * \param L The Lua VM state.
+ * \param drawin The drawin object.
+ * \return The number of elements pushed on stack.
  */
-static int luaA_drawin_new_height(lua_State *L, lua_object_t *obj) {
-	drawin_t *drawin = (drawin_t *)obj;
-	if (!lua_isnil(L, -1)) {
-		int height = luaL_checkinteger(L, -1);
-		if (height < 1) height = 1;
-		fprintf(stderr, "[DRAWIN_NEW] Setting height during construction: %d -> geometry %dx%d\n",
-		        height, drawin->width, height);
-		luaA_drawin_set_geometry(L, drawin, drawin->x, drawin->y, drawin->width, height);
+static int
+luaA_drawin_set_cursor(lua_State *L, drawin_t *drawin)
+{
+	const char *buf = luaL_checkstring(L, -1);
+	if(buf)
+	{
+		/* In Wayland, cursor is applied when pointer enters drawin (motionnotify).
+		 * We can't validate cursor names like X11's xcursor_new() does. */
+		p_delete(&drawin->cursor);
+		drawin->cursor = a_strdup(buf);
+		luaA_object_emit_signal(L, -3, "property::cursor", 0);
 	}
 	return 0;
 }
 
-/** New callback for x property (called when x is set)
- * Stack: [args_table, ..., drawin_object, property_value]
+/** Set the drawin x (AwesomeWM signature).
+ * \param L The Lua VM state.
+ * \param drawin The drawin object.
+ * \return The number of elements pushed on stack.
  */
-static int luaA_drawin_new_x(lua_State *L, lua_object_t *obj) {
-	drawin_t *drawin = (drawin_t *)obj;
-	if (!lua_isnil(L, -1)) {
-		int x = luaL_checkinteger(L, -1);
-		fprintf(stderr, "[DRAWIN_NEW] Setting x: %d (was %d) -> geometry %dx%d+%d+%d\n",
-		        x, drawin->x, drawin->width, drawin->height, x, drawin->y);
-		luaA_drawin_set_geometry(L, drawin, x, drawin->y, drawin->width, drawin->height);
-	}
+static int
+luaA_drawin_set_x(lua_State *L, drawin_t *drawin)
+{
+	int x = luaL_checkinteger(L, -1);
+	drawin_moveresize(L, -3, x, drawin->y, drawin->width, drawin->height);
 	return 0;
 }
 
-/** New callback for y property (called when y is set)
- * Stack: [args_table, ..., drawin_object, property_value]
+/** Set the drawin y (AwesomeWM signature).
+ * \param L The Lua VM state.
+ * \param drawin The drawin object.
+ * \return The number of elements pushed on stack.
  */
-static int luaA_drawin_new_y(lua_State *L, lua_object_t *obj) {
-	drawin_t *drawin = (drawin_t *)obj;
-	if (!lua_isnil(L, -1)) {
-		int y = luaL_checkinteger(L, -1);
-		fprintf(stderr, "[DRAWIN_NEW] Setting y: %d (was %d) -> geometry %dx%d+%d+%d\n",
-		        y, drawin->y, drawin->width, drawin->height, drawin->x, y);
-		luaA_drawin_set_geometry(L, drawin, drawin->x, y, drawin->width, drawin->height);
-	}
+static int
+luaA_drawin_set_y(lua_State *L, drawin_t *drawin)
+{
+	int y = luaL_checkinteger(L, -1);
+	drawin_moveresize(L, -3, drawin->x, y, drawin->width, drawin->height);
 	return 0;
 }
 
-static int luaA_drawin_get_type_wrapper(lua_State *L, lua_object_t *obj) {
-	(void)obj;
-	return luaA_drawin_get_type(L);
-}
-static int luaA_drawin_get_opacity_wrapper(lua_State *L, lua_object_t *obj) {
-	(void)obj;
-	return luaA_drawin_get_opacity(L);
-}
-/** Set drawin opacity via wrapper (called by class system).
- * Stack: [..., value]  (value is at top of stack)
+/** Set the drawin width (AwesomeWM signature).
+ * \param L The Lua VM state.
+ * \param drawin The drawin object.
+ * \return The number of elements pushed on stack.
  */
-static int luaA_drawin_set_opacity_wrapper(lua_State *L, lua_object_t *obj) {
-	drawin_t *drawin = (drawin_t *)obj;
+static int
+luaA_drawin_set_width(lua_State *L, drawin_t *drawin)
+{
+	int width = (int)ceil(luaL_checknumber(L, -1));
+	if (width < 1) width = 1;
+	drawin_moveresize(L, -3, drawin->x, drawin->y, width, drawin->height);
+	return 0;
+}
+
+/** Set the drawin height (AwesomeWM signature).
+ * \param L The Lua VM state.
+ * \param drawin The drawin object.
+ * \return The number of elements pushed on stack.
+ */
+static int
+luaA_drawin_set_height(lua_State *L, drawin_t *drawin)
+{
+	int height = (int)ceil(luaL_checknumber(L, -1));
+	if (height < 1) height = 1;
+	drawin_moveresize(L, -3, drawin->x, drawin->y, drawin->width, height);
+	return 0;
+}
+
+/** Set the drawin opacity (AwesomeWM signature).
+ * \param L The Lua VM state.
+ * \param drawin The drawin object.
+ * \return The number of elements pushed on stack.
+ */
+static int
+luaA_drawin_set_opacity(lua_State *L, drawin_t *drawin)
+{
 	double opacity;
 
-	if (lua_isnil(L, -1)) {
-		/* nil = unset, restore to fully opaque */
-		drawin->opacity = -1;
-		if (drawin->scene_buffer)
-			wlr_scene_buffer_set_opacity(drawin->scene_buffer, 1.0f);
-	} else {
+	if(lua_isnil(L, -1))
+		opacity = -1;
+	else
+	{
 		opacity = luaL_checknumber(L, -1);
-		if (opacity < 0 || opacity > 1)
-			return luaL_error(L, "opacity must be between 0 and 1");
-		drawin->opacity = opacity;
-		if (drawin->scene_buffer)
-			wlr_scene_buffer_set_opacity(drawin->scene_buffer, (float)opacity);
+		if(opacity < 0 || opacity > 1)
+			return 0;  /* Invalid value, ignore (matches AwesomeWM) */
 	}
 
-	/* Emit signal - push drawin to top of stack first */
-	luaA_object_push(L, drawin);
-	luaA_object_emit_signal(L, -1, "property::opacity", 0);
-	lua_pop(L, 1);
-
+	if(drawin->opacity != opacity)
+	{
+		drawin->opacity = opacity;
+		/* Wayland: apply opacity via scene buffer */
+		if (drawin->scene_buffer)
+			wlr_scene_buffer_set_opacity(drawin->scene_buffer,
+				opacity >= 0 ? (float)opacity : 1.0f);
+		luaA_object_emit_signal(L, -3, "property::opacity", 0);
+	}
 	return 0;
 }
-static int luaA_drawin_get_border_width_wrapper(lua_State *L, lua_object_t *obj) {
-	(void)obj;
-	return luaA_drawin_get_border_width(L);
+
+/* Forward declaration for refresh */
+static void drawin_refresh_drawable(drawin_t *drawin);
+
+/** drawin.shape_bounding - Get visual bounding shape (AwesomeWM signature) */
+static int
+luaA_drawin_get_shape_bounding(lua_State *L, drawin_t *drawin)
+{
+	if (!drawin->shape_bounding)
+		return 0;
+	/* lua has to make sure to free the ref or we have a leak */
+	lua_pushlightuserdata(L, drawin->shape_bounding);
+	return 1;
 }
-static int luaA_drawin_set_border_width_wrapper(lua_State *L, lua_object_t *obj) {
-	(void)obj;
-	return luaA_drawin_set_border_width(L);
+
+/** Set the drawin's bounding shape (AwesomeWM signature).
+ * \param L The Lua VM state.
+ * \param drawin The drawin object.
+ * \return The number of elements pushed on stack.
+ */
+static int
+luaA_drawin_set_shape_bounding(lua_State *L, drawin_t *drawin)
+{
+	cairo_surface_t *surf = NULL;
+	if(!lua_isnil(L, -1))
+		surf = (cairo_surface_t *)lua_touserdata(L, -1);
+
+	/* The drawin might have been resized. Apply pending geometry first.
+	 * (Matches AwesomeWM's drawin_apply_moveresize() call) */
+	luaA_drawin_apply_geometry(drawin);
+
+	/* Reference new surface before releasing old */
+	if (surf)
+		cairo_surface_reference(surf);
+	if (drawin->shape_bounding)
+		cairo_surface_destroy(drawin->shape_bounding);
+
+	drawin->shape_bounding = surf;
+
+	/* Trigger redraw to apply shape (Wayland equivalent of xwindow_set_shape) */
+	if (drawin->visible)
+		drawin_refresh_drawable(drawin);
+
+	luaA_object_emit_signal(L, -3, "property::shape_bounding", 0);
+	return 0;
+}
+
+/** drawin.shape_clip - Get drawing clip shape (AwesomeWM signature) */
+static int
+luaA_drawin_get_shape_clip(lua_State *L, drawin_t *drawin)
+{
+	if (!drawin->shape_clip)
+		return 0;
+	/* lua has to make sure to free the ref or we have a leak */
+	lua_pushlightuserdata(L, drawin->shape_clip);
+	return 1;
+}
+
+/** Set the drawin's clip shape (AwesomeWM signature).
+ * \param L The Lua VM state.
+ * \param drawin The drawin object.
+ * \return The number of elements pushed on stack.
+ */
+static int
+luaA_drawin_set_shape_clip(lua_State *L, drawin_t *drawin)
+{
+	cairo_surface_t *surf = NULL;
+	if(!lua_isnil(L, -1))
+		surf = (cairo_surface_t *)lua_touserdata(L, -1);
+
+	/* The drawin might have been resized. Apply pending geometry first.
+	 * (Matches AwesomeWM's drawin_apply_moveresize() call) */
+	luaA_drawin_apply_geometry(drawin);
+
+	/* Reference new surface before releasing old */
+	if (surf)
+		cairo_surface_reference(surf);
+	if (drawin->shape_clip)
+		cairo_surface_destroy(drawin->shape_clip);
+
+	drawin->shape_clip = surf;
+
+	/* Trigger redraw to apply shape (Wayland equivalent of xwindow_set_shape) */
+	if (drawin->visible)
+		drawin_refresh_drawable(drawin);
+
+	luaA_object_emit_signal(L, -3, "property::shape_clip", 0);
+	return 0;
+}
+
+/** drawin.shape_input - Get input hit-test shape (AwesomeWM signature) */
+static int
+luaA_drawin_get_shape_input(lua_State *L, drawin_t *drawin)
+{
+	if (!drawin->shape_input)
+		return 0;
+	/* lua has to make sure to free the ref or we have a leak */
+	lua_pushlightuserdata(L, drawin->shape_input);
+	return 1;
+}
+
+/** Set the drawin's input shape (AwesomeWM signature).
+ * \param L The Lua VM state.
+ * \param drawin The drawin object.
+ * \return The number of elements pushed on stack.
+ */
+static int
+luaA_drawin_set_shape_input(lua_State *L, drawin_t *drawin)
+{
+	cairo_surface_t *surf = NULL;
+	if(!lua_isnil(L, -1))
+		surf = (cairo_surface_t *)lua_touserdata(L, -1);
+
+	/* The drawin might have been resized. Apply pending geometry first.
+	 * (Matches AwesomeWM's drawin_apply_moveresize() call) */
+	luaA_drawin_apply_geometry(drawin);
+
+	/* Reference new surface before releasing old */
+	if (surf)
+		cairo_surface_reference(surf);
+	if (drawin->shape_input)
+		cairo_surface_destroy(drawin->shape_input);
+
+	drawin->shape_input = surf;
+
+	/* Note: No redraw needed for input shape - it's checked at input time.
+	 * A 0x0 surface means pass through ALL input (AwesomeWM convention). */
+
+	luaA_object_emit_signal(L, -3, "property::shape_input", 0);
+	return 0;
 }
 
 /** Drawin constructor for Lua (called when user does capi.drawin{...})
@@ -1899,9 +1831,6 @@ static const luaL_Reg drawin_meta[] = {
 void
 luaA_drawin_class_setup(lua_State *L)
 {
-	fprintf(stderr, "\n[DRAWIN_CLASS_SETUP] ========================================\n");
-	fprintf(stderr, "[DRAWIN_CLASS_SETUP] Setting up drawin class with luaA_class_setup()\n");
-
 	/* Setup drawin class using AwesomeWM's class infrastructure
 	 * This creates:
 	 * - A CLASS TABLE with methods (set_index_miss_handler, etc.)
@@ -1919,61 +1848,69 @@ luaA_drawin_class_setup(lua_State *L)
 	                 drawin_methods,  /* Class-level methods */
 	                 drawin_meta);    /* Instance metatable methods */
 
-	/* Register drawin properties (matching AwesomeWM) */
+	/* Register drawin properties (AwesomeWM pattern with casts) */
 	luaA_class_add_property(&drawin_class, "drawable",
 	                        NULL,
-	                        luaA_drawin_get_drawable_wrapper,
+	                        (lua_class_propfunc_t) luaA_drawin_get_drawable,
 	                        NULL);
 	luaA_class_add_property(&drawin_class, "visible",
-	                        luaA_drawin_set_visible_wrapper,  // cb_new: for construction
-	                        luaA_drawin_get_visible_wrapper,   // cb_index: getter
-	                        luaA_drawin_set_visible_wrapper);  // cb_newindex: setter (FIX!)
+	                        (lua_class_propfunc_t) luaA_drawin_set_visible,
+	                        (lua_class_propfunc_t) luaA_drawin_get_visible,
+	                        (lua_class_propfunc_t) luaA_drawin_set_visible);
 	luaA_class_add_property(&drawin_class, "ontop",
-	                        NULL,
-	                        luaA_drawin_get_ontop_wrapper,
-	                        NULL);
+	                        (lua_class_propfunc_t) luaA_drawin_set_ontop,
+	                        (lua_class_propfunc_t) luaA_drawin_get_ontop,
+	                        (lua_class_propfunc_t) luaA_drawin_set_ontop);
 	luaA_class_add_property(&drawin_class, "cursor",
-	                        NULL,
-	                        luaA_drawin_get_cursor_wrapper,
-	                        NULL);
+	                        (lua_class_propfunc_t) luaA_drawin_set_cursor,
+	                        (lua_class_propfunc_t) luaA_drawin_get_cursor,
+	                        (lua_class_propfunc_t) luaA_drawin_set_cursor);
 	luaA_class_add_property(&drawin_class, "x",
-	                        luaA_drawin_new_x,
-	                        luaA_drawin_get_x_wrapper,
-	                        luaA_drawin_new_x);
+	                        (lua_class_propfunc_t) luaA_drawin_set_x,
+	                        (lua_class_propfunc_t) luaA_drawin_get_x,
+	                        (lua_class_propfunc_t) luaA_drawin_set_x);
 	luaA_class_add_property(&drawin_class, "y",
-	                        luaA_drawin_new_y,
-	                        luaA_drawin_get_y_wrapper,
-	                        luaA_drawin_new_y);
+	                        (lua_class_propfunc_t) luaA_drawin_set_y,
+	                        (lua_class_propfunc_t) luaA_drawin_get_y,
+	                        (lua_class_propfunc_t) luaA_drawin_set_y);
 	luaA_class_add_property(&drawin_class, "width",
-	                        luaA_drawin_new_width,
-	                        luaA_drawin_get_width_wrapper,
-	                        luaA_drawin_new_width);
+	                        (lua_class_propfunc_t) luaA_drawin_set_width,
+	                        (lua_class_propfunc_t) luaA_drawin_get_width,
+	                        (lua_class_propfunc_t) luaA_drawin_set_width);
 	luaA_class_add_property(&drawin_class, "height",
-	                        luaA_drawin_new_height,
-	                        luaA_drawin_get_height_wrapper,
-	                        luaA_drawin_new_height);
+	                        (lua_class_propfunc_t) luaA_drawin_set_height,
+	                        (lua_class_propfunc_t) luaA_drawin_get_height,
+	                        (lua_class_propfunc_t) luaA_drawin_set_height);
 	luaA_class_add_property(&drawin_class, "type",
-	                        NULL,
-	                        luaA_drawin_get_type_wrapper,
-	                        NULL);
+	                        (lua_class_propfunc_t) luaA_drawin_set_type,
+	                        (lua_class_propfunc_t) luaA_drawin_get_type,
+	                        (lua_class_propfunc_t) luaA_drawin_set_type);
 	luaA_class_add_property(&drawin_class, "opacity",
-	                        luaA_drawin_set_opacity_wrapper,
-	                        luaA_drawin_get_opacity_wrapper,
-	                        luaA_drawin_set_opacity_wrapper);
+	                        (lua_class_propfunc_t) luaA_drawin_set_opacity,
+	                        (lua_class_propfunc_t) luaA_drawin_get_opacity,
+	                        (lua_class_propfunc_t) luaA_drawin_set_opacity);
 	/* NOTE: buttons is NOT registered as a property, only as a _buttons method.
 	 * The wibox wrapper handles the buttons accessor via _legacy_accessors */
 	luaA_class_add_property(&drawin_class, "border_width",
-	                        NULL,
-	                        luaA_drawin_get_border_width_wrapper,
-	                        luaA_drawin_set_border_width_wrapper);
-
-	fprintf(stderr, "[DRAWIN_CLASS_SETUP] Class setup complete!\n");
-	fprintf(stderr, "[DRAWIN_CLASS_SETUP] - Class table created with 7 class methods\n");
-	fprintf(stderr, "[DRAWIN_CLASS_SETUP] - Metatable created with signal methods\n");
-	fprintf(stderr, "[DRAWIN_CLASS_SETUP] - Allocator: drawin_allocator()\n");
-	fprintf(stderr, "[DRAWIN_CLASS_SETUP] - Collector: drawin_wipe()\n");
-	fprintf(stderr, "[DRAWIN_CLASS_SETUP] - Registered 11 properties (border_width added; buttons is a method)\n");
-	fprintf(stderr, "[DRAWIN_CLASS_SETUP] ========================================\n\n");
+	                        (lua_class_propfunc_t) luaA_drawin_set_border_width,
+	                        (lua_class_propfunc_t) luaA_drawin_get_border_width,
+	                        (lua_class_propfunc_t) luaA_drawin_set_border_width);
+	luaA_class_add_property(&drawin_class, "border_color",
+	                        (lua_class_propfunc_t) luaA_drawin_set_border_color,
+	                        (lua_class_propfunc_t) luaA_drawin_get_border_color,
+	                        (lua_class_propfunc_t) luaA_drawin_set_border_color);
+	luaA_class_add_property(&drawin_class, "shape_bounding",
+	                        (lua_class_propfunc_t) luaA_drawin_set_shape_bounding,
+	                        (lua_class_propfunc_t) luaA_drawin_get_shape_bounding,
+	                        (lua_class_propfunc_t) luaA_drawin_set_shape_bounding);
+	luaA_class_add_property(&drawin_class, "shape_clip",
+	                        (lua_class_propfunc_t) luaA_drawin_set_shape_clip,
+	                        (lua_class_propfunc_t) luaA_drawin_get_shape_clip,
+	                        (lua_class_propfunc_t) luaA_drawin_set_shape_clip);
+	luaA_class_add_property(&drawin_class, "shape_input",
+	                        (lua_class_propfunc_t) luaA_drawin_set_shape_input,
+	                        (lua_class_propfunc_t) luaA_drawin_get_shape_input,
+	                        (lua_class_propfunc_t) luaA_drawin_set_shape_input);
 }
 
 /** Constructor for drawin objects - capi.drawin(args)
@@ -2070,9 +2007,6 @@ luaA_drawin_constructor(lua_State *L)
 void
 luaA_drawin_setup(lua_State *L)
 {
-	fprintf(stderr, "\n[DRAWIN_SETUP] ==========================================\n");
-	fprintf(stderr, "[DRAWIN_SETUP] Initializing drawin module with class system\n");
-
 	/* Setup class using luaA_class_setup()
 	 * This automatically:
 	 * - Creates a CLASS TABLE as global 'drawin'
@@ -2082,12 +2016,9 @@ luaA_drawin_setup(lua_State *L)
 	 */
 	luaA_drawin_class_setup(L);
 
-	fprintf(stderr, "[DRAWIN_SETUP] Class setup complete, adding to capi...\n");
-
 	/* Get or create capi table */
 	lua_getglobal(L, "capi");
 	if (lua_isnil(L, -1)) {
-		fprintf(stderr, "[DRAWIN_SETUP] capi table doesn't exist, creating it\n");
 		lua_pop(L, 1);
 		lua_newtable(L);
 		lua_pushvalue(L, -1);
@@ -2099,45 +2030,6 @@ luaA_drawin_setup(lua_State *L)
 
 	/* Set capi.drawin = drawin class table */
 	lua_setfield(L, -2, "drawin");
-	fprintf(stderr, "[DRAWIN_SETUP] Registered drawin class in capi.drawin\n");
 
 	lua_pop(L, 1);  /* Pop capi table */
-
-	/* Verify what we registered */
-	lua_getglobal(L, "drawin");
-	fprintf(stderr, "[DRAWIN_SETUP] ==========================================\n");
-	fprintf(stderr, "[DRAWIN_SETUP] VERIFICATION: global 'drawin' type = %s\n",
-	        lua_typename(L, lua_type(L, -1)));
-	fprintf(stderr, "[DRAWIN_SETUP] VERIFICATION: Is it a table? %s\n",
-	        lua_istable(L, -1) ? "YES ✓" : "NO ✗");
-
-	/* Check if it has class methods that AwesomeWM expects */
-	if (lua_istable(L, -1)) {
-		lua_getfield(L, -1, "set_index_miss_handler");
-		fprintf(stderr, "[DRAWIN_SETUP] Has set_index_miss_handler? %s\n",
-		        lua_isfunction(L, -1) ? "YES ✓" : "NO ✗");
-		lua_pop(L, 1);
-
-		lua_getfield(L, -1, "set_newindex_miss_handler");
-		fprintf(stderr, "[DRAWIN_SETUP] Has set_newindex_miss_handler? %s\n",
-		        lua_isfunction(L, -1) ? "YES ✓" : "NO ✗");
-		lua_pop(L, 1);
-
-		/* Check if it's callable (has __call metamethod) */
-		if (lua_getmetatable(L, -1)) {
-			lua_getfield(L, -1, "__call");
-			fprintf(stderr, "[DRAWIN_SETUP] Is callable (__call)? %s\n",
-			        lua_isfunction(L, -1) ? "YES ✓" : "NO ✗");
-			lua_pop(L, 2);  /* Pop __call and metatable */
-		}
-	}
-	lua_pop(L, 1);
-
-	fprintf(stderr, "[DRAWIN_SETUP] ==========================================\n");
-	fprintf(stderr, "[DRAWIN_SETUP] SUCCESS: drawin is now a proper CLASS TABLE!\n");
-	fprintf(stderr, "[DRAWIN_SETUP] - It has class methods (set_index_miss_handler, etc.)\n");
-	fprintf(stderr, "[DRAWIN_SETUP] - It's callable as a constructor (via __call)\n");
-	fprintf(stderr, "[DRAWIN_SETUP] - Properties will use getter/setter functions\n");
-	fprintf(stderr, "[DRAWIN_SETUP] - This matches AwesomeWM's class system!\n");
-	fprintf(stderr, "[DRAWIN_SETUP] ==========================================\n\n");
 }

@@ -183,6 +183,12 @@ drawable_create_buffer_from_data(int width, int height, const void *cairo_data, 
 		return NULL;
 	}
 
+	/* Zero buffer to ensure clean transparent state.
+	 * ftruncate + mmap doesn't guarantee zeroed memory, and uninitialized
+	 * values (especially in the alpha channel) cause rendering artifacts
+	 * like wallpaper bleeding through in horizontal streaks. */
+	memset(data, 0, size);
+
 	/* Copy Cairo pixel data into shared memory */
 	for (int y = 0; y < height; y++) {
 		memcpy((uint8_t *)data + y * buffer->stride,
@@ -384,6 +390,15 @@ drawable_set_geometry(lua_State *L, int didx, area_t geom)
 		d->surface = cairo_image_surface_create(CAIRO_FORMAT_ARGB32,
 		                                         geom.width, geom.height);
 		if (cairo_surface_status(d->surface) == CAIRO_STATUS_SUCCESS) {
+			/* Clear surface to transparent black.
+			 * Cairo should initialize ARGB32 surfaces to transparent, but
+			 * we do this explicitly to ensure no garbage alpha values. */
+			cairo_t *cr = cairo_create(d->surface);
+			cairo_set_operator(cr, CAIRO_OPERATOR_SOURCE);
+			cairo_set_source_rgba(cr, 0, 0, 0, 0);
+			cairo_paint(cr);
+			cairo_destroy(cr);
+
 			d->refreshed = false;
 			/* Emit property::surface signal (AwesomeWM pattern) */
 			luaA_object_emit_signal(L, didx, "property::surface", 0);
@@ -443,6 +458,15 @@ luaA_drawable_set_geometry(lua_State *L, int didx, int x, int y, int width, int 
 			if (cairo_surface_status(d->surface) != CAIRO_STATUS_SUCCESS) {
 				cairo_surface_destroy(d->surface);
 				d->surface = NULL;
+			} else {
+				/* Clear surface to transparent black.
+				 * Cairo should initialize ARGB32 surfaces to transparent, but
+				 * we do this explicitly to ensure no garbage alpha values. */
+				cairo_t *cr = cairo_create(d->surface);
+				cairo_set_operator(cr, CAIRO_OPERATOR_SOURCE);
+				cairo_set_source_rgba(cr, 0, 0, 0, 0);
+				cairo_paint(cr);
+				cairo_destroy(cr);
 			}
 			d->refreshed = false;
 
