@@ -1512,6 +1512,177 @@ local function register_builtin_commands()
   end)
 
   -- =================================================================
+  -- SCREENSHOT COMMANDS
+  -- =================================================================
+
+  local cairo = require("lgi").cairo
+  local gears_surface = require("gears.surface")
+
+  --- screenshot.save <path> [--transparent] - Save screenshot to file
+  -- Captures the entire desktop and saves to PNG file.
+  -- Use --transparent to preserve alpha channel (no wallpaper).
+  ipc.register("screenshot.save", function(...)
+    local args = { ... }
+    if #args == 0 then
+      error("Missing file path. Usage: screenshot save <path> [--transparent]")
+    end
+
+    local path = nil
+    local transparent = false
+
+    -- Parse arguments
+    for _, arg in ipairs(args) do
+      if arg == "--transparent" or arg == "-t" then
+        transparent = true
+      elseif not path then
+        path = arg
+      end
+    end
+
+    if not path then
+      error("Missing file path")
+    end
+
+    -- Get screenshot dimensions
+    local w, h = capi.root.size()
+
+    -- Get raw surface (with optional transparency preservation)
+    local raw = capi.root.content(transparent)
+    if not raw then
+      error("Failed to capture screen content")
+    end
+
+    -- Create proper Cairo surface (ARGB32 to preserve alpha if requested)
+    local format = transparent and cairo.Format.ARGB32 or cairo.Format.RGB24
+    local surface = cairo.ImageSurface(format, w, h)
+    local cr = cairo.Context(surface)
+    cr:set_source_surface(gears_surface(raw))
+    cr:paint()
+
+    -- Save to file
+    local status = surface:write_to_png(path)
+    if status ~= "SUCCESS" then
+      error("Failed to write PNG: " .. tostring(status))
+    end
+
+    return string.format("Screenshot saved to %s%s", path, transparent and " (with transparency)" or "")
+  end)
+
+  --- screenshot.client <path> [client_id] - Save client screenshot to file
+  -- Captures a specific client window and saves to PNG file.
+  ipc.register("screenshot.client", function(path, target)
+    if not path then
+      error("Missing file path. Usage: screenshot client <path> [client_id|focused]")
+    end
+
+    target = target or "focused"
+
+    -- Get target client
+    local c
+    if target == "focused" then
+      c = capi.client.focus
+      if not c then
+        error("No focused client")
+      end
+    else
+      for _, cl in ipairs(capi.client.get()) do
+        if format_id(cl) == target then
+          c = cl
+          break
+        end
+      end
+      if not c then
+        error("Client not found: " .. target)
+      end
+    end
+
+    -- Get client content
+    local raw = c.content
+    if not raw then
+      error("Failed to capture client content")
+    end
+
+    -- Get client geometry for dimensions
+    local geom = c:geometry()
+    local bw = c.border_width or 0
+    local _, top_size = c:titlebar_top()
+    local _, right_size = c:titlebar_right()
+    local _, bottom_size = c:titlebar_bottom()
+    local _, left_size = c:titlebar_left()
+
+    local w = geom.width - right_size - left_size
+    local h = geom.height - bottom_size - top_size
+
+    -- Create proper Cairo surface
+    local surface = cairo.ImageSurface(cairo.Format.ARGB32, w, h)
+    local cr = cairo.Context(surface)
+    cr:set_source_surface(gears_surface(raw))
+    cr:paint()
+
+    -- Save to file
+    local status = surface:write_to_png(path)
+    if status ~= "SUCCESS" then
+      error("Failed to write PNG: " .. tostring(status))
+    end
+
+    return string.format("Client screenshot saved to %s", path)
+  end)
+
+  --- screenshot.screen <path> [screen_id] - Save screen screenshot to file
+  -- Captures a specific screen/monitor and saves to PNG file.
+  ipc.register("screenshot.screen", function(path, screen_id)
+    if not path then
+      error("Missing file path. Usage: screenshot screen <path> [screen_id]")
+    end
+
+    -- Get target screen
+    local s
+    if not screen_id then
+      s = awful_screen.focused()
+    else
+      local idx = tonumber(screen_id)
+      if idx then
+        s = capi.screen[idx]
+      else
+        -- Try to find by ID string
+        for sc in capi.screen do
+          if format_id(sc) == screen_id then
+            s = sc
+            break
+          end
+        end
+      end
+    end
+
+    if not s then
+      error("Screen not found")
+    end
+
+    -- Get screen content
+    local raw = s.content
+    if not raw then
+      error("Failed to capture screen content")
+    end
+
+    -- Get screen geometry for dimensions
+    local geom = s.geometry
+
+    -- Create proper Cairo surface
+    local surface = cairo.ImageSurface(cairo.Format.RGB24, geom.width, geom.height)
+    local cr = cairo.Context(surface)
+    cr:set_source_surface(gears_surface(raw))
+    cr:paint()
+
+    -- Save to file
+    local status = surface:write_to_png(path)
+    if status ~= "SUCCESS" then
+      error("Failed to write PNG: " .. tostring(status))
+    end
+
+    return string.format("Screen %d screenshot saved to %s", s.index, path)
+  end)
+
+  -- =================================================================
   -- MOUSEGRABBER COMMANDS
   -- =================================================================
 
