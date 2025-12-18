@@ -38,6 +38,7 @@
 typedef struct screen_t screen_t;
 typedef struct drawable_t drawable_t;
 typedef struct Monitor Monitor;
+struct wlr_foreign_toplevel_handle_v1;
 
 /* Type compatibility - map AwesomeWM types to Wayland types */
 typedef struct wlr_box area_t;
@@ -175,6 +176,12 @@ struct client_t
 #endif
     /** Decoration */
     struct wlr_xdg_toplevel_decoration_v1 *decoration;
+    struct wlr_foreign_toplevel_handle_v1 *toplevel_handle;
+    struct wl_listener foreign_request_activate;
+    struct wl_listener foreign_request_close;
+    struct wl_listener foreign_request_fullscreen;
+    struct wl_listener foreign_request_maximize;
+    struct wl_listener foreign_request_minimize;
     /** Pending resize serial for Wayland configure */
     uint32_t resize;
     /** Previous geometry for restore */

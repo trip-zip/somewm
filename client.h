@@ -104,6 +104,10 @@ client_activate_surface(struct wlr_surface *s, int activated)
 	struct wlr_xdg_toplevel *toplevel;
 #ifdef XWAYLAND
 	struct wlr_xwayland_surface *xsurface;
+#endif
+	if (!s)
+		return;
+#ifdef XWAYLAND
 	if ((xsurface = wlr_xwayland_surface_try_from_wlr_surface(s))) {
 		wlr_xwayland_surface_activate(xsurface, activated);
 		return;

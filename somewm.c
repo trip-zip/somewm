@@ -29,6 +29,7 @@
 #include <wlr/types/wlr_data_device.h>
 #include <wlr/types/wlr_drm.h>
 #include <wlr/types/wlr_export_dmabuf_v1.h>
+#include <wlr/types/wlr_foreign_toplevel_management_v1.h>
 #include <wlr/types/wlr_fractional_scale_v1.h>
 #include <wlr/types/wlr_gamma_control_v1.h>
 #include <wlr/types/wlr_idle_inhibit_v1.h>
@@ -170,6 +171,11 @@ void focusclient(Client *c, int lift);
 void focusmon(const Arg *arg);
 Client *focustop(Monitor *m);
 static void fullscreennotify(struct wl_listener *listener, void *data);
+static void foreign_toplevel_request_activate(struct wl_listener *listener, void *data);
+static void foreign_toplevel_request_close(struct wl_listener *listener, void *data);
+static void foreign_toplevel_request_fullscreen(struct wl_listener *listener, void *data);
+static void foreign_toplevel_request_maximize(struct wl_listener *listener, void *data);
+static void foreign_toplevel_request_minimize(struct wl_listener *listener, void *data);
 static void gpureset(struct wl_listener *listener, void *data);
 static void handlesig(int signo);
 static void inputdevice(struct wl_listener *listener, void *data);
@@ -282,6 +288,7 @@ static struct wlr_virtual_keyboard_manager_v1 *virtual_keyboard_mgr;
 static struct wlr_virtual_pointer_manager_v1 *virtual_pointer_mgr;
 static struct wlr_cursor_shape_manager_v1 *cursor_shape_mgr;
 static struct wlr_output_power_manager_v1 *power_mgr;
+static struct wlr_foreign_toplevel_manager_v1 *foreign_toplevel_mgr;
 
 static struct wlr_pointer_constraints_v1 *pointer_constraints;
 static struct wlr_relative_pointer_manager_v1 *relative_pointer_mgr;
@@ -363,6 +370,12 @@ uint32_t
 some_tagmask(void)
 {
 	return TAGMASK;
+}
+
+int
+some_has_exclusive_focus(void)
+{
+	return exclusive_focus != NULL;
 }
 
 /* attempt to encapsulate suck into one file */
@@ -1987,6 +2000,8 @@ focusclient(Client *c, int lift)
 			client_set_border_color(old_c, get_bordercolor());
 
 			client_activate_surface(old, 0);
+			if (old_c->toplevel_handle)
+				wlr_foreign_toplevel_handle_v1_set_activated(old_c->toplevel_handle, false);
 			luaA_emit_signal_global("client::unfocus");
 		}
 	}
@@ -2008,6 +2023,9 @@ focusclient(Client *c, int lift)
 
 	/* Activate the new client */
 	client_activate_surface(client_surface(c), 1);
+
+	if (c->toplevel_handle)
+		wlr_foreign_toplevel_handle_v1_set_activated(c->toplevel_handle, true);
 
 	/* CRITICAL: Apply keyboard focus IMMEDIATELY while surface is valid (not deferred)
 	 * AwesomeWM defers this, but Wayland surface pointers can become invalid by the time
@@ -2060,6 +2078,52 @@ fullscreennotify(struct wl_listener *listener, void *data)
 {
 	Client *c = wl_container_of(listener, c, request_fullscreen);
 	setfullscreen(c, client_wants_fullscreen(c));
+}
+
+/* Foreign toplevel management handlers - allow external tools like rofi
+ * to list windows and request actions on them */
+void
+foreign_toplevel_request_activate(struct wl_listener *listener, void *data)
+{
+	Client *c = wl_container_of(listener, c, foreign_request_activate);
+	focusclient(c, 1);
+}
+
+void
+foreign_toplevel_request_close(struct wl_listener *listener, void *data)
+{
+	Client *c = wl_container_of(listener, c, foreign_request_close);
+	client_send_close(c);
+}
+
+void
+foreign_toplevel_request_fullscreen(struct wl_listener *listener, void *data)
+{
+	struct wlr_foreign_toplevel_handle_v1_fullscreen_event *event = data;
+	Client *c = wl_container_of(listener, c, foreign_request_fullscreen);
+	setfullscreen(c, event->fullscreen);
+}
+
+void
+foreign_toplevel_request_maximize(struct wl_listener *listener, void *data)
+{
+	struct wlr_foreign_toplevel_handle_v1_maximized_event *event = data;
+	Client *c = wl_container_of(listener, c, foreign_request_maximize);
+	lua_State *L = globalconf_get_lua_State();
+	luaA_object_push(L, c);
+	client_set_maximized(L, -1, event->maximized);
+	lua_pop(L, 1);
+}
+
+void
+foreign_toplevel_request_minimize(struct wl_listener *listener, void *data)
+{
+	struct wlr_foreign_toplevel_handle_v1_minimized_event *event = data;
+	Client *c = wl_container_of(listener, c, foreign_request_minimize);
+	lua_State *L = globalconf_get_lua_State();
+	luaA_object_push(L, c);
+	client_set_minimized(L, -1, event->minimized);
+	lua_pop(L, 1);
 }
 
 void
@@ -2486,6 +2550,29 @@ mapnotify(struct wl_listener *listener, void *data)
 		c->border[i] = wlr_scene_rect_create(c->scene, 0, 0,
 				c->urgent ? get_urgentcolor() : get_bordercolor());
 		c->border[i]->node.data = c;
+	}
+
+	/* Create foreign toplevel handle for external tools (rofi, taskbars, etc.) */
+	if (foreign_toplevel_mgr) {
+		c->toplevel_handle = wlr_foreign_toplevel_handle_v1_create(foreign_toplevel_mgr);
+		if (c->toplevel_handle) {
+			const char *title = client_get_title(c);
+			const char *app_id = client_get_appid(c);
+			if (title)
+				wlr_foreign_toplevel_handle_v1_set_title(c->toplevel_handle, title);
+			if (app_id)
+				wlr_foreign_toplevel_handle_v1_set_app_id(c->toplevel_handle, app_id);
+			wlr_foreign_toplevel_handle_v1_set_maximized(c->toplevel_handle, c->maximized);
+			wlr_foreign_toplevel_handle_v1_set_minimized(c->toplevel_handle, c->minimized);
+			wlr_foreign_toplevel_handle_v1_set_fullscreen(c->toplevel_handle, c->fullscreen);
+			if (c->mon && c->mon->wlr_output)
+				wlr_foreign_toplevel_handle_v1_output_enter(c->toplevel_handle, c->mon->wlr_output);
+			LISTEN(&c->toplevel_handle->events.request_activate, &c->foreign_request_activate, foreign_toplevel_request_activate);
+			LISTEN(&c->toplevel_handle->events.request_close, &c->foreign_request_close, foreign_toplevel_request_close);
+			LISTEN(&c->toplevel_handle->events.request_fullscreen, &c->foreign_request_fullscreen, foreign_toplevel_request_fullscreen);
+			LISTEN(&c->toplevel_handle->events.request_maximize, &c->foreign_request_maximize, foreign_toplevel_request_maximize);
+			LISTEN(&c->toplevel_handle->events.request_minimize, &c->foreign_request_minimize, foreign_toplevel_request_minimize);
+		}
 	}
 
 	/* Initialize client geometry with room for border */
@@ -3672,6 +3759,13 @@ setmon(Client *c, Monitor *m, uint32_t newtags)
 		lua_pop(L, 1);
 	}
 
+	if (c->toplevel_handle) {
+		if (oldmon && oldmon->wlr_output)
+			wlr_foreign_toplevel_handle_v1_output_leave(c->toplevel_handle, oldmon->wlr_output);
+		if (m && m->wlr_output)
+			wlr_foreign_toplevel_handle_v1_output_enter(c->toplevel_handle, m->wlr_output);
+	}
+
 	/* Scene graph sends surface leave/enter events on move and resize */
 	if (oldmon)
 		arrange(oldmon);
@@ -3864,6 +3958,10 @@ setup(void)
 	wl_signal_add(&pointer_constraints->events.new_constraint, &new_pointer_constraint);
 
 	relative_pointer_mgr = wlr_relative_pointer_manager_v1_create(dpy);
+
+	/* Foreign toplevel management - allows external tools like rofi to
+	 * list windows and request actions (activate, close, etc.) */
+	foreign_toplevel_mgr = wlr_foreign_toplevel_manager_v1_create(dpy);
 
 	/*
 	 * Creates a cursor, which is a wlroots utility for tracking the cursor
@@ -4192,6 +4290,16 @@ unmapnotify(struct wl_listener *listener, void *data)
 
 	luaA_emit_signal_global("client::unmap");
 
+	if (c->toplevel_handle) {
+		wl_list_remove(&c->foreign_request_activate.link);
+		wl_list_remove(&c->foreign_request_close.link);
+		wl_list_remove(&c->foreign_request_fullscreen.link);
+		wl_list_remove(&c->foreign_request_maximize.link);
+		wl_list_remove(&c->foreign_request_minimize.link);
+		wlr_foreign_toplevel_handle_v1_destroy(c->toplevel_handle);
+		c->toplevel_handle = NULL;
+	}
+
 	/* CRITICAL: If this is the focused client, clear focus immediately
 	 * to prevent client_focus_refresh() from accessing dangling surface pointers */
 	if (globalconf.focus.client == c) {
@@ -4360,6 +4468,12 @@ updatetitle(struct wl_listener *listener, void *data)
 
 	if (c == focustop(c->mon))
 		printstatus();
+
+	if (c->toplevel_handle) {
+		const char *title = client_get_title(c);
+		if (title)
+			wlr_foreign_toplevel_handle_v1_set_title(c->toplevel_handle, title);
+	}
 }
 
 static gboolean
@@ -4676,9 +4790,12 @@ xytonode(double x, double y, struct wlr_surface **psurface,
 			}
 			c = pnode->data;
 		}
-		if (c && c->client_type == LayerShell) {
+		/* Check type at offset 0 - LayerSurface has 'type' as first field,
+		 * but Client has WINDOW_OBJECT_HEADER before client_type.
+		 * LayerSurface.type is at offset 0 and set to LayerShell. */
+		if (c && *((unsigned int *)c) == LayerShell) {
+			l = (LayerSurface *)c;
 			c = NULL;
-			l = pnode->data;
 		}
 	}
 
