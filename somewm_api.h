@@ -165,6 +165,7 @@ void some_compositor_quit(void);
  * These return pointers to internal state - use carefully
  */
 struct wlr_seat *some_get_seat(void);
+int some_has_exclusive_focus(void);
 struct wlr_cursor *some_get_cursor(void);
 struct wl_list *some_get_keyboard_groups(void);
 void some_get_cursor_position(double *x, double *y);

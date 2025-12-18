@@ -112,6 +112,7 @@ void apply_geometry_to_wlroots(client_t *c);
 #include <stdio.h>
 #include <string.h>
 #include <wayland-server-core.h>
+#include <wlr/types/wlr_foreign_toplevel_management_v1.h>
 #include <wlr/types/wlr_scene.h>
 #include <wlr/types/wlr_xdg_shell.h>
 #include <wlr/render/wlr_renderer.h>
@@ -2067,11 +2068,11 @@ client_focus_refresh(void)
     if(!globalconf.focus.need_update)
         return;
 
-    /* Only action needed: clear keyboard focus if no client is focused */
-    if(!globalconf.focus.client)
+    /* Only action needed: clear keyboard focus if no client is focused
+     * BUT don't clear if a layer surface has exclusive focus (e.g., rofi) */
+    if(!globalconf.focus.client && !some_has_exclusive_focus())
     {
         seat = some_get_seat();
-        fprintf(stderr, "[FOCUS_REFRESH] Clearing keyboard focus (no client focused)\n");
         wlr_seat_keyboard_notify_clear_focus(seat);
     }
 
@@ -2830,6 +2831,9 @@ client_set_minimized(lua_State *L, int cidx, bool s)
         if(c->scene)
             wlr_scene_node_set_enabled(&c->scene->node, !s);
 
+        if(c->toplevel_handle)
+            wlr_foreign_toplevel_handle_v1_set_minimized(c->toplevel_handle, s);
+
         if(strut_has_value(&c->strut))
             screen_update_workarea(c->screen);
         luaA_object_emit_signal(L, cidx, "property::minimized", 0);
@@ -2937,6 +2941,8 @@ client_set_fullscreen(lua_State *L, int cidx, bool s)
         c->fullscreen = s;
         luaA_object_emit_signal(L, abs_cidx, "request::geometry", 1);
         luaA_object_emit_signal(L, abs_cidx, "property::fullscreen", 0);
+        if(c->toplevel_handle)
+            wlr_foreign_toplevel_handle_v1_set_fullscreen(c->toplevel_handle, s);
         /* Force a client resize, so that titlebars get shown/hidden */
         client_resize_do(c, c->geometry);
         stack_windows();
@@ -2987,8 +2993,11 @@ client_set_maximized_common(lua_State *L, int cidx, bool s, const char* type, co
             luaA_object_emit_signal(L, abs_cidx, "property::maximized_horizontal", 0);
         if (v_before != c->maximized_vertical)
             luaA_object_emit_signal(L, abs_cidx, "property::maximized_vertical", 0);
-        if(max_before != c->maximized)
+        if(max_before != c->maximized) {
             luaA_object_emit_signal(L, abs_cidx, "property::maximized", 0);
+            if(c->toplevel_handle)
+                wlr_foreign_toplevel_handle_v1_set_maximized(c->toplevel_handle, c->maximized);
+        }
 
         stack_windows();
     }
