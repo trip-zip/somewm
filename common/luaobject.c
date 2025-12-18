@@ -277,10 +277,14 @@ luaA_object_emit_signal(lua_State *L, int oud,
     signal_t *sigfound;
     if(!obj) {
         warn("Trying to emit signal '%s' on non-object", name);
+        /* Still consume args to match successful path behavior */
+        lua_pop(L, nargs);
         return;
     }
     else if(lua_class->checker && !lua_class->checker(obj)) {
         warn("Trying to emit signal '%s' on invalid object", name);
+        /* Still consume args to match successful path behavior */
+        lua_pop(L, nargs);
         return;
     }
     sigfound = signal_array_getbyname(&obj->signals, name);

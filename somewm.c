@@ -2238,7 +2238,8 @@ keybinding(uint32_t mods, uint32_t keycode, xkb_keysym_t sym, xkb_keysym_t base_
 
 	/* Check client-specific Lua key objects first (AwesomeWM pattern)
 	 * Client keybindings pass the client as argument to the "press" signal */
-	client_t *focused = some_get_focused_client();
+	client_t *focused;
+	focused = some_get_focused_client();
 	if (focused && luaA_client_key_check_and_emit(focused, CLEANMASK(mods), keycode, sym, base_sym))
 		return 1;
 
@@ -2666,6 +2667,9 @@ mouse_emit_leave(lua_State *L)
 	} else if (globalconf.mouse_under.type == UNDER_DRAWIN) {
 		drawin_t *d = globalconf.mouse_under.ptr.drawin;
 		luaA_object_push(L, d);
+		if (lua_isnil(L, -1)) {
+			warn("mouse::leave on unregistered drawin %p", (void*)d);
+		}
 		luaA_object_emit_signal(L, -1, "mouse::leave", 0);
 		lua_pop(L, 1);
 	}
@@ -2688,6 +2692,9 @@ static void
 mouse_emit_drawin_enter(lua_State *L, drawin_t *d)
 {
 	luaA_object_push(L, d);
+	if (lua_isnil(L, -1)) {
+		warn("mouse::enter on unregistered drawin %p", (void*)d);
+	}
 	luaA_object_emit_signal(L, -1, "mouse::enter", 0);
 	lua_pop(L, 1);
 	globalconf.mouse_under.type = UNDER_DRAWIN;
@@ -2794,9 +2801,24 @@ motionnotify(uint32_t time, struct wlr_input_device *device, double dx, double d
 		lua_State *L = globalconf_get_lua_State();
 		Client *current_client = NULL;
 		drawin_t *current_drawin = NULL;
+		bool client_valid = false;
 
 		/* Find what's under cursor */
 		xytonode(cursor->x, cursor->y, NULL, &current_client, NULL, &current_drawin, NULL, NULL, NULL);
+
+		/* Validate client pointer - xytonode can return stale pointers from scene graph
+		 * if a node's data field wasn't cleared when the client was destroyed */
+		if (current_client) {
+			foreach(elem, globalconf.clients) {
+				if (*elem == current_client) {
+					client_valid = true;
+					break;
+				}
+			}
+			if (!client_valid) {
+				current_client = NULL;  /* Ignore stale/invalid client pointer */
+			}
+		}
 
 		if (current_client) {
 			/* Mouse is over a client */
@@ -2809,6 +2831,9 @@ motionnotify(uint32_t time, struct wlr_input_device *device, double dx, double d
 
 			/* Always emit mouse::move on current client */
 			luaA_object_push(L, current_client);
+			if (lua_isnil(L, -1)) {
+				warn("mouse::move on unregistered client %p", (void*)current_client);
+			}
 			lua_pushinteger(L, (int)(cursor->x - current_client->geometry.x));
 			lua_pushinteger(L, (int)(cursor->y - current_client->geometry.y));
 			luaA_object_emit_signal(L, -3, "mouse::move", 2);
@@ -2825,6 +2850,9 @@ motionnotify(uint32_t time, struct wlr_input_device *device, double dx, double d
 
 			/* Always emit mouse::move on current drawin */
 			luaA_object_push(L, current_drawin);
+			if (lua_isnil(L, -1)) {
+				warn("mouse::move on unregistered drawin %p", (void*)current_drawin);
+			}
 			lua_pushinteger(L, (int)cursor->x - current_drawin->x);
 			lua_pushinteger(L, (int)cursor->y - current_drawin->y);
 			luaA_object_emit_signal(L, -3, "mouse::move", 2);
@@ -2843,11 +2871,16 @@ motionnotify(uint32_t time, struct wlr_input_device *device, double dx, double d
 		globalconf.mouse_under.ignore_next_enter_leave = false;
 	}
 
-	/* If there's no client surface under the cursor, set the cursor image to a
-	 * default. This is what makes the cursor image appear when you move it
-	 * off of a client or over its border. */
-	if (!surface && !seat->drag)
-		wlr_cursor_set_xcursor(cursor, cursor_mgr, "default");
+	/* If there's no client surface under the cursor, set the cursor image.
+	 * Check if pointer is over a drawin with a custom cursor first. */
+	if (!surface && !seat->drag) {
+		drawin_t *hover_drawin = NULL;
+		xytonode(cursor->x, cursor->y, NULL, NULL, NULL, &hover_drawin, NULL, NULL, NULL);
+		if (hover_drawin && hover_drawin->cursor)
+			wlr_cursor_set_xcursor(cursor, cursor_mgr, hover_drawin->cursor);
+		else
+			wlr_cursor_set_xcursor(cursor, cursor_mgr, "default");
+	}
 
 	pointerfocus(c, surface, sx, sy, time);
 }
@@ -4514,6 +4547,65 @@ xytomon(double x, double y)
 	return o ? o->data : NULL;
 }
 
+/** Check if a drawin accepts input at a given point (relative to drawin).
+ * Returns true if input should be accepted, false if it should pass through.
+ * Used for implementing click-through regions via shape_input and shape_bounding.
+ *
+ * In X11/AwesomeWM, shape_bounding affects both visual AND input regions.
+ * shape_input takes precedence if set; otherwise shape_bounding is used.
+ */
+static bool
+drawin_accepts_input_at(drawin_t *d, double local_x, double local_y)
+{
+	cairo_surface_t *shape;
+	int width, height;
+	unsigned char *data;
+	int stride;
+	int px, py;
+	int byte_offset, bit_offset;
+
+	if (!d)
+		return true;
+
+	/* shape_input takes precedence over shape_bounding */
+	shape = d->shape_input;
+
+	/* If no shape_input, fall back to shape_bounding (X11 compatibility) */
+	if (!shape)
+		shape = d->shape_bounding;
+
+	/* No shape = accept all input */
+	if (!shape)
+		return true;
+
+	/* Get shape dimensions */
+	width = cairo_image_surface_get_width(shape);
+	height = cairo_image_surface_get_height(shape);
+
+	/* 0x0 surface means pass through ALL input (AwesomeWM convention) */
+	if (width == 0 || height == 0)
+		return false;
+
+	/* Convert coordinates to integers */
+	px = (int)local_x;
+	py = (int)local_y;
+
+	/* Bounds check - outside shape = don't accept */
+	if (px < 0 || py < 0 || px >= width || py >= height)
+		return false;
+
+	/* Get pixel data (A1 format: 1 bit per pixel, packed) */
+	cairo_surface_flush(shape);
+	data = cairo_image_surface_get_data(shape);
+	stride = cairo_image_surface_get_stride(shape);
+
+	/* A1 format: pixels packed 8 per byte, LSB first */
+	byte_offset = (py * stride) + (px / 8);
+	bit_offset = px % 8;
+
+	return (data[byte_offset] >> bit_offset) & 1;
+}
+
 void
 xytonode(double x, double y, struct wlr_surface **psurface,
 		Client **pc, LayerSurface **pl, drawin_t **pd, drawable_t **pdrawable, double *nx, double *ny)
@@ -4548,9 +4640,14 @@ xytonode(double x, double y, struct wlr_surface **psurface,
 
 					if (drawable->owner_type == DRAWABLE_OWNER_DRAWIN) {
 						/* This is a drawin's drawable */
-						d = drawable->owner.drawin;
-						/* For drawins, we found what we need - skip client check */
-						goto found;
+						drawin_t *candidate = drawable->owner.drawin;
+						/* Check shape_input to see if input passes through */
+						if (drawin_accepts_input_at(candidate, x - candidate->x, y - candidate->y)) {
+							d = candidate;
+							/* For drawins, we found what we need - skip client check */
+							goto found;
+						}
+						/* Input passes through this drawin, continue searching */
 					} else if (drawable->owner_type == DRAWABLE_OWNER_CLIENT) {
 						/* This is a titlebar drawable - store it and set client
 						 * Matches AwesomeWM event.c:76-77 client_get_drawable_offset() */
@@ -4565,8 +4662,14 @@ xytonode(double x, double y, struct wlr_surface **psurface,
 		for (pnode = node; pnode && !c && !d; pnode = &pnode->parent->node) {
 			/* Check if this node has a drawin */
 			if (pnode->data && layer == LyrWibox) {
-				d = (drawin_t *)pnode->data;
-				break;
+				drawin_t *candidate = (drawin_t *)pnode->data;
+				/* Check shape_input to see if input passes through */
+				if (drawin_accepts_input_at(candidate, x - candidate->x, y - candidate->y)) {
+					d = candidate;
+					break;
+				}
+				/* Input passes through, continue searching */
+				continue;
 			}
 			c = pnode->data;
 		}

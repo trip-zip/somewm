@@ -441,10 +441,13 @@ emit_drawable_button_signal(lua_State *L, drawin_t *drawin, int x, int y,
 	signal_name = is_press ? "button::press" : "button::release";
 	translated_button = translate_button_code(button);
 
+	/* Push drawable from drawin's uservalue table (AwesomeWM pattern)
+	 * First push drawin, then get drawable item from its uservalue */
+	luaA_object_push(L, drawin);
+	luaA_object_push_item(L, -1, drawin->drawable);
+	lua_remove(L, -2);  /* Remove drawin, keep drawable */
 
-	/* Push drawable object (not drawin!) from registry */
-	if (drawin->drawable_ref != LUA_NOREF) {
-		lua_rawgeti(L, LUA_REGISTRYINDEX, drawin->drawable_ref);
+	if (lua_isuserdata(L, -1)) {
 
 		/* Call drawable:emit_signal(signal_name, x, y, button, modifiers) */
 		/* Drawable has its own signal system, not part of awm_object */
@@ -474,6 +477,8 @@ emit_drawable_button_signal(lua_State *L, drawin_t *drawin, int x, int y,
 		/* Pop drawable */
 		lua_pop(L, 1);
 	} else {
+		/* drawable was nil or not userdata */
+		lua_pop(L, 1);
 	}
 }
 
@@ -569,19 +574,13 @@ luaA_drawin_button_check(void *drawin_ptr, int x, int y, uint32_t button,
 	L = globalconf_get_lua_State();
 
 	if (!drawin) {
-		fprintf(stderr, "[DRAWIN_BUTTON_CHECK] drawin is NULL\n");
 		return 0;
 	}
-
-	fprintf(stderr, "[DRAWIN_BUTTON_CHECK] drawin=%p x=%d y=%d button=%u mods=0x%x %s\n",
-	        drawin_ptr, x, y, button, mods, is_press ? "PRESS" : "RELEASE");
 
 	/* Push drawin object to stack */
 	luaA_object_push(L, drawin);
 
 	/* Stage 1: Emit button::press/release on drawable */
-	fprintf(stderr, "[DRAWIN_BUTTON_CHECK] ===== Button event: %s =====\n",
-	        is_press ? "PRESS" : "RELEASE");
 	emit_drawable_button_signal(L, drawin, x, y, button, mods, is_press);
 
 	/* Stage 2: Check button array and emit signals on matching button objects */
