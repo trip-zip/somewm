@@ -14,7 +14,7 @@ SOMECPPFLAGS = -I. -DWLR_USE_UNSTABLE -D_POSIX_C_SOURCE=200809L \
 SOMEDEVCFLAGS = -g -Wpedantic -Wall -Wextra -Wdeclaration-after-statement \
 	-Wno-unused-parameter -Wshadow -Wunused-macros -Werror=strict-prototypes \
 	-Werror=implicit -Werror=return-type -Werror=incompatible-pointer-types \
-	-Wfloat-conversion -Werror
+	-Wfloat-conversion -Werror=pedantic -Werror
 
 # AddressSanitizer support (set ASAN=1 in config.mk or command line)
 ifdef ASAN

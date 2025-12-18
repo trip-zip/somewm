@@ -333,7 +333,10 @@ struct client_t
 /* Now include stack.h which expects Client type */
 #include "../stack.h"
 
+#ifndef CLIENT_ARRAY_T_DEFINED
+#define CLIENT_ARRAY_T_DEFINED
 ARRAY_TYPE(client_t *, client)
+#endif
 ARRAY_FUNCS(client_t *, client, DO_NOTHING)
 
 /** Client class */
