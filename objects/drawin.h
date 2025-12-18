@@ -3,6 +3,7 @@
 
 #include <lua.h>
 #include <stdbool.h>
+#include <cairo.h>
 #include "../somewm_types.h"
 #include "../window.h"  /* For WINDOW_OBJECT_HEADER */
 #include "../color.h"
@@ -47,8 +48,8 @@ typedef struct drawin_t {
 	/* Screen assignment */
 	struct screen_t *screen;       /* Which screen this drawin belongs to */
 
-	/* Drawable for rendering */
-	int drawable_ref;              /* Lua registry reference to drawable object */
+	/* Drawable for rendering (AwesomeWM pattern: stored in uservalue table)
+	 * Pointer retrieved via luaA_object_ref_item, pushed via luaA_object_push_item */
 	struct drawable_t *drawable;   /* Direct C pointer for callback access */
 
 	/* Scene graph integration for rendering (Wayland-specific) */
@@ -58,6 +59,13 @@ typedef struct drawin_t {
 	/* Border rendering (Wayland-specific, mirrors client border pattern) */
 	struct wlr_scene_rect *border[4];       /* [0]=top, [1]=bottom, [2]=left, [3]=right */
 	color_t border_color_parsed;            /* Cached parsed color for efficient refresh */
+
+	/* Shape properties (AwesomeWM compatibility)
+	 * These are cairo_surface_t* in A1 format (1-bit alpha mask).
+	 * NULL means no custom shape (full rectangle). */
+	cairo_surface_t *shape_bounding;        /* Visual bounding shape (rounded corners, etc.) */
+	cairo_surface_t *shape_clip;            /* Drawing clip region */
+	cairo_surface_t *shape_input;           /* Input hit-test region (click-through) */
 } drawin_t;
 
 /* Metatable name for drawin userdata */
@@ -86,9 +94,8 @@ luaA_todrawin(lua_State *L, int idx)
 void luaA_drawin_setup(lua_State *L);
 void luaA_drawin_class_setup(lua_State *L);
 
-/* Drawin property updates (emit signals automatically) */
+/* Drawin geometry synchronization (external API - for wibox code etc) */
 void luaA_drawin_set_geometry(lua_State *L, drawin_t *drawin, int x, int y, int width, int height);
-void luaA_drawin_set_visible(lua_State *L, drawin_t *drawin, bool visible);
 void luaA_drawin_set_strut(lua_State *L, drawin_t *drawin, strut_t strut);
 
 /* Drawin geometry synchronization */

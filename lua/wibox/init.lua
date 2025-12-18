@@ -116,6 +116,9 @@ function wibox:_apply_shape()
     if not shape then
         self.shape_bounding = nil
         self.shape_clip = nil
+        -- Clear surface references so they can be GC'd
+        self._shape_bounding_surface = nil
+        self._shape_clip_surface = nil
         return
     end
 
@@ -131,7 +134,11 @@ function wibox:_apply_shape()
     cr:set_operator(cairo.Operator.SOURCE)
     cr:fill()
     self.shape_bounding = img._native
-    img:finish()
+    -- NOTE: Do NOT call img:finish() here!
+    -- In X11/AwesomeWM, finish() is safe because X11's shape extension immediately
+    -- copies the data. In Wayland/somewm, we read the surface data later in C,
+    -- so the surface must stay alive. Store reference to prevent GC.
+    self._shape_bounding_surface = img
 
     -- Now handle the clip shape (things excluding the border)
     img = cairo.ImageSurface(cairo.Format.A1, geo.width, geo.height)
@@ -150,7 +157,8 @@ function wibox:_apply_shape()
     cr:set_line_width(2*bw)
     cr:stroke()
     self.shape_clip = img._native
-    img:finish()
+    -- NOTE: Do NOT call img:finish() here! (see comment above for shape_bounding)
+    self._shape_clip_surface = img
 end
 
 function wibox:set_shape(shape)
@@ -168,10 +176,12 @@ function wibox:set_input_passthrough(value)
 
     if not value then
         self.shape_input = nil
+        self._shape_input_surface = nil
     else
         local img = cairo.ImageSurface(cairo.Format.A1, 0, 0)
         self.shape_input = img._native
-        img:finish()
+        -- NOTE: Do NOT call img:finish() here! (see comment in _apply_shape)
+        self._shape_input_surface = img
     end
 
     self:emit_signal("property::input_passthrough", value)
