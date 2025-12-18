@@ -3913,6 +3913,23 @@ titlebar_resize(lua_State *L, int cidx, client_t *c, client_titlebar_t bar, int 
     luaA_object_emit_signal(L, cidx, property_name, 0);
 }
 
+/** Update all titlebar scene buffer positions based on current geometry.
+ * Called from apply_geometry_to_wlroots() when client geometry changes.
+ * In X11, drawable_set_geometry() implicitly repositions windows.
+ * In Wayland, we must explicitly update scene_buffer positions.
+ */
+void
+client_update_titlebar_positions(client_t *c)
+{
+    for (client_titlebar_t bar = CLIENT_TITLEBAR_TOP; bar < CLIENT_TITLEBAR_COUNT; bar++) {
+        if (c->titlebar[bar].scene_buffer) {
+            area_t area = titlebar_get_area(c, bar);
+            wlr_scene_node_set_position(&c->titlebar[bar].scene_buffer->node,
+                                        area.x, area.y);
+        }
+    }
+}
+
 #define HANDLE_TITLEBAR(name, index)                              \
 static int                                                        \
 luaA_client_titlebar_ ## name(lua_State *L)                       \
