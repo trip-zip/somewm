@@ -203,4 +203,10 @@ void some_xkb_schedule_group_changed(void);
 void some_xkb_schedule_map_changed(void);
 void some_rebuild_keyboard_keymap(void);
 
+/*
+ * Input Device Configuration API
+ * Re-apply libinput settings to all connected pointer devices
+ */
+void apply_input_settings_to_all_devices(void);
+
 #endif /* SOMEWM_API_H */
