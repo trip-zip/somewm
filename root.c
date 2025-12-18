@@ -19,14 +19,28 @@
 #include "somewm_api.h"
 #include "globalconf.h"
 #include "objects/drawable.h"
+#include "objects/drawin.h"
+#include "objects/client.h"
+#include "somewm_types.h"
 #include <xkbcommon/xkbcommon.h>
 #include <wlr/types/wlr_output_layout.h>
 #include <wlr/types/wlr_scene.h>
+#include <wlr/render/wlr_renderer.h>
+#include <wlr/render/wlr_texture.h>
+#include <wlr/render/pass.h>
+#include <wlr/types/wlr_buffer.h>
+#include <wlr/interfaces/wlr_buffer.h>
+#include <wlr/render/allocator.h>
 #include <cairo.h>
+#include <drm_fourcc.h>
 
 /* External references to somewm.c globals */
 extern struct wlr_output_layout *output_layout;
 extern struct wlr_scene_tree *layers[];
+extern struct wlr_scene *scene;
+extern struct wlr_renderer *drw;
+extern struct wlr_allocator *alloc;
+extern struct wl_list mons;
 
 /* Property miss handlers (AwesomeWM compatibility) */
 static int miss_index_handler = LUA_REFNIL;
@@ -737,6 +751,287 @@ luaA_root_set_newindex_miss_handler(lua_State *L)
 	return luaA_registerfct(L, 1, &miss_newindex_handler);
 }
 
+/* ========== SCREENSHOT SUPPORT ========== */
+
+/** Callback data for scene buffer iteration during screenshot */
+struct screenshot_render_data {
+	cairo_t *cr;             /* Cairo context to draw on */
+	struct wlr_renderer *renderer;
+	int offset_x, offset_y;  /* Offset for this output in virtual screen */
+};
+
+/** Composite a Cairo surface onto the screenshot at the given position.
+ * Used to directly composite widget content from drawable surfaces.
+ */
+static void
+composite_cairo_surface(cairo_t *cr, cairo_surface_t *surface,
+                        int x, int y, int width, int height)
+{
+	if (!surface || cairo_surface_status(surface) != CAIRO_STATUS_SUCCESS)
+		return;
+
+	cairo_save(cr);
+	cairo_set_source_surface(cr, surface, x, y);
+	/* Use OVER operator to handle transparency */
+	cairo_set_operator(cr, CAIRO_OPERATOR_OVER);
+	cairo_rectangle(cr, x, y, width, height);
+	cairo_fill(cr);
+	cairo_restore(cr);
+}
+
+/** Composite all widgets directly from their drawable Cairo surfaces.
+ * This bypasses wlroots scene buffers which may have NULL content between frames.
+ * Note: Wallpaper is handled separately in luaA_root_get_content().
+ */
+static void
+composite_widgets_directly(cairo_t *cr)
+{
+	int i, bar;
+	drawin_t *drawin;
+	client_t *c;
+
+	/* Composite all visible drawins (wibars, wiboxes, etc.) */
+	for (i = 0; i < globalconf.drawins.len; i++) {
+		drawin = globalconf.drawins.tab[i];
+		if (!drawin || !drawin->visible || !drawin->drawable)
+			continue;
+
+		if (drawin->drawable->surface &&
+		    cairo_surface_status(drawin->drawable->surface) == CAIRO_STATUS_SUCCESS) {
+			composite_cairo_surface(cr, drawin->drawable->surface,
+			                        drawin->x, drawin->y,
+			                        drawin->width, drawin->height);
+		}
+	}
+
+	/* Composite client titlebars */
+	for (i = 0; i < globalconf.clients.len; i++) {
+		c = globalconf.clients.tab[i];
+		if (!c)
+			continue;
+
+		for (bar = 0; bar < CLIENT_TITLEBAR_COUNT; bar++) {
+			drawable_t *d = c->titlebar[bar].drawable;
+			int size = c->titlebar[bar].size;
+			int tb_x, tb_y, tb_w, tb_h;
+
+			if (!d || !d->surface || size <= 0)
+				continue;
+
+			if (cairo_surface_status(d->surface) != CAIRO_STATUS_SUCCESS)
+				continue;
+
+			/* Calculate titlebar position based on client geometry and bar type */
+			switch (bar) {
+			case CLIENT_TITLEBAR_TOP:
+				tb_x = c->geometry.x;
+				tb_y = c->geometry.y;
+				tb_w = c->geometry.width;
+				tb_h = size;
+				break;
+			case CLIENT_TITLEBAR_BOTTOM:
+				tb_x = c->geometry.x;
+				tb_y = c->geometry.y + c->geometry.height - size;
+				tb_w = c->geometry.width;
+				tb_h = size;
+				break;
+			case CLIENT_TITLEBAR_LEFT:
+				tb_x = c->geometry.x;
+				tb_y = c->geometry.y + c->titlebar[CLIENT_TITLEBAR_TOP].size;
+				tb_w = size;
+				tb_h = c->geometry.height -
+				       c->titlebar[CLIENT_TITLEBAR_TOP].size -
+				       c->titlebar[CLIENT_TITLEBAR_BOTTOM].size;
+				break;
+			case CLIENT_TITLEBAR_RIGHT:
+				tb_x = c->geometry.x + c->geometry.width - size;
+				tb_y = c->geometry.y + c->titlebar[CLIENT_TITLEBAR_TOP].size;
+				tb_w = size;
+				tb_h = c->geometry.height -
+				       c->titlebar[CLIENT_TITLEBAR_TOP].size -
+				       c->titlebar[CLIENT_TITLEBAR_BOTTOM].size;
+				break;
+			default:
+				continue;
+			}
+
+			composite_cairo_surface(cr, d->surface, tb_x, tb_y, tb_w, tb_h);
+		}
+	}
+}
+
+/** Callback for wlr_scene_output_for_each_buffer
+ * Reads pixels from each scene buffer and composites onto Cairo surface.
+ * Handles both SHM buffers (widgets) and GPU buffers (clients).
+ */
+static void
+composite_scene_buffer_to_cairo(struct wlr_scene_buffer *scene_buffer,
+                                int sx, int sy, void *data)
+{
+	struct screenshot_render_data *rdata = data;
+	struct wlr_buffer *buffer;
+	cairo_surface_t *buf_surface;
+	int buf_width, buf_height;
+	void *shm_data;
+	uint32_t shm_format;
+	size_t shm_stride;
+	void *pixels = NULL;
+	size_t stride;
+	bool need_free = false;
+	cairo_format_t cairo_fmt;
+
+	if (!scene_buffer->buffer)
+		return;
+
+	buffer = scene_buffer->buffer;
+	buf_width = scene_buffer->dst_width;
+	buf_height = scene_buffer->dst_height;
+
+	if (buf_width <= 0 || buf_height <= 0)
+		return;
+
+	/* First try direct buffer access (works for SHM buffers - widgets) */
+	if (wlr_buffer_begin_data_ptr_access(buffer, WLR_BUFFER_DATA_PTR_ACCESS_READ,
+	                                     &shm_data, &shm_format, &shm_stride)) {
+		/* Direct access succeeded - this is an SHM buffer */
+
+		/* Check format compatibility with Cairo */
+		if (shm_format == DRM_FORMAT_ARGB8888 || shm_format == DRM_FORMAT_XRGB8888) {
+			cairo_fmt = (shm_format == DRM_FORMAT_ARGB8888) ?
+			            CAIRO_FORMAT_ARGB32 : CAIRO_FORMAT_RGB24;
+			buf_surface = cairo_image_surface_create_for_data(
+				shm_data, cairo_fmt, buf_width, buf_height, shm_stride);
+
+			if (cairo_surface_status(buf_surface) == CAIRO_STATUS_SUCCESS) {
+				/* Composite onto target surface */
+				cairo_save(rdata->cr);
+				cairo_set_source_surface(rdata->cr, buf_surface,
+					sx + rdata->offset_x, sy + rdata->offset_y);
+				cairo_paint(rdata->cr);
+				cairo_restore(rdata->cr);
+				cairo_surface_destroy(buf_surface);
+			}
+		}
+		wlr_buffer_end_data_ptr_access(buffer);
+		return;
+	}
+
+	/* Direct access failed - try GPU texture path (for DMA-BUF/GPU buffers) */
+	{
+		struct wlr_texture *texture;
+
+		texture = wlr_texture_from_buffer(rdata->renderer, buffer);
+		if (!texture)
+			return;
+
+		/* Allocate pixel buffer for reading */
+		stride = buf_width * 4;
+		pixels = malloc(stride * buf_height);
+		if (!pixels) {
+			wlr_texture_destroy(texture);
+			return;
+		}
+		need_free = true;
+
+		/* Read pixels from texture */
+		if (!wlr_texture_read_pixels(texture, &(struct wlr_texture_read_pixels_options){
+			.data = pixels,
+			.format = DRM_FORMAT_ARGB8888,
+			.stride = stride,
+			.src_box = { .x = 0, .y = 0, .width = buf_width, .height = buf_height },
+		})) {
+			free(pixels);
+			wlr_texture_destroy(texture);
+			return;
+		}
+
+		wlr_texture_destroy(texture);
+	}
+
+	/* Create Cairo surface from pixel data */
+	buf_surface = cairo_image_surface_create_for_data(
+		pixels, CAIRO_FORMAT_ARGB32, buf_width, buf_height, stride);
+
+	if (cairo_surface_status(buf_surface) != CAIRO_STATUS_SUCCESS) {
+		if (need_free)
+			free(pixels);
+		return;
+	}
+
+	/* Composite onto target surface */
+	cairo_save(rdata->cr);
+	cairo_set_source_surface(rdata->cr, buf_surface,
+		sx + rdata->offset_x, sy + rdata->offset_y);
+	cairo_paint(rdata->cr);
+	cairo_restore(rdata->cr);
+
+	cairo_surface_destroy(buf_surface);
+	if (need_free)
+		free(pixels);
+}
+
+/** root.content() - Get screenshot of entire desktop
+ *
+ * Returns a Cairo surface containing the current desktop content.
+ * Uses CPU-side compositing to avoid GPU buffer compatibility issues.
+ *
+ * \return cairo_surface_t* as lightuserdata
+ */
+static int
+luaA_root_get_content(lua_State *L)
+{
+	struct wlr_box layout_box;
+	cairo_surface_t *surface;
+	cairo_t *cr;
+	int width, height;
+	struct screenshot_render_data rdata;
+
+	/* Get virtual screen size (bounding box of all outputs) */
+	wlr_output_layout_get_box(output_layout, NULL, &layout_box);
+	width = layout_box.width;
+	height = layout_box.height;
+
+	if (width <= 0 || height <= 0)
+		return 0;
+
+	/* Create Cairo surface for compositing */
+	surface = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, width, height);
+	if (cairo_surface_status(surface) != CAIRO_STATUS_SUCCESS)
+		return 0;
+
+	cr = cairo_create(surface);
+
+	/* Clear to black */
+	cairo_set_source_rgb(cr, 0, 0, 0);
+	cairo_paint(cr);
+
+	/* Set up render data - no offset since we're using layout coordinates */
+	rdata.cr = cr;
+	rdata.renderer = drw;
+	rdata.offset_x = 0;
+	rdata.offset_y = 0;
+
+	/* First, composite wallpaper as background */
+	if (globalconf.wallpaper)
+		composite_cairo_surface(cr, globalconf.wallpaper, 0, 0, width, height);
+
+	/* Then iterate scene buffers for client content (GPU-rendered surfaces) */
+	wlr_scene_node_for_each_buffer(&scene->tree.node,
+		composite_scene_buffer_to_cairo, &rdata);
+
+	/* Finally, composite widgets on top (wibars, titlebars, notifications).
+	 * This bypasses wlroots scene buffers which may have NULL content between frames. */
+	composite_widgets_directly(cr);
+
+	cairo_destroy(cr);
+
+	/* Return surface as lightuserdata (Lua will use gears.surface to manage it) */
+	lua_pushlightuserdata(L, surface);
+	return 1;
+}
+
+/* ========== END SCREENSHOT SUPPORT ========== */
+
 /** __index metamethod for root
  * Delegates to miss handler if set, otherwise calls default handler.
  * Matches AwesomeWM root.c:620-626 exactly.
@@ -772,6 +1067,7 @@ static const luaL_Reg root_methods[] = {
 	{ "size", luaA_root_size },
 	{ "size_mm", luaA_root_size_mm },
 	{ "tags", luaA_root_tags },
+	{ "content", luaA_root_get_content },
 	/* __index and __newindex MUST be in methods, not meta!
 	 * luaA_openlib sets the methods table as its own metatable.
 	 * So __index must be in methods for metamethod lookup to find it.
