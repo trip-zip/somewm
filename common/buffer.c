@@ -29,6 +29,7 @@
 
 #include "common/buffer.h"
 
+#include <stdbool.h>
 #include <sysexits.h>
 #include <stdio.h>
 #include <stdarg.h>
