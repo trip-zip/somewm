@@ -179,7 +179,7 @@ ipc_handle_connection(int fd, uint32_t mask, void *data)
 		client_fd = accept(fd, (struct sockaddr *)&client_addr, &client_len);
 		if (client_fd >= 0) {
 			const char *msg = "ERROR Too many clients\n\n";
-			write(client_fd, msg, strlen(msg));
+			(void)!write(client_fd, msg, strlen(msg));
 			close(client_fd);
 		}
 		return 0;
@@ -271,7 +271,7 @@ ipc_handle_client_data(int fd, uint32_t mask, void *data)
 	/* Check for buffer overflow */
 	if (client->buffer_used >= client->buffer_size - 1) {
 		const char *msg = "ERROR Command too long\n\n";
-		write(client->fd, msg, strlen(msg));
+		(void)!write(client->fd, msg, strlen(msg));
 		ipc_client_destroy(client);
 		return 0;
 	}
@@ -303,10 +303,10 @@ void
 ipc_send_response(int client_fd, const char *response)
 {
 	if (client_fd >= 0 && response) {
-		write(client_fd, response, strlen(response));
+		(void)!write(client_fd, response, strlen(response));
 		/* Ensure response ends with double newline */
 		if (!strstr(response + strlen(response) - 2, "\n\n")) {
-			write(client_fd, "\n", 1);
+			(void)!write(client_fd, "\n", 1);
 		}
 	}
 }
