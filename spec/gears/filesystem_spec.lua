@@ -5,6 +5,17 @@
 
 local gfs = require("gears.filesystem")
 
+-- Helper to check if running as root (uid 0)
+local function is_root()
+    local f = io.popen("id -u")
+    if f then
+        local uid = f:read("*a")
+        f:close()
+        return tonumber(uid) == 0
+    end
+    return false
+end
+
 describe("gears.filesystem", function()
     local root = (os.getenv("SOURCE_DIRECTORY") or '.') .. "/spec/gears/"
 
@@ -20,6 +31,12 @@ describe("gears.filesystem", function()
 
     -- Check filesystem.file_readable
     it('Check filesystem.file_readable', function()
+        -- Skip permission-based tests when running as root (root ignores permissions)
+        if is_root() then
+            pending("Skipping: root can read any file regardless of permissions")
+            return
+        end
+
         os.execute("chmod g-r,o-r,a-r " .. root .. "filesystem_tests/x/NoRead")
 
         assert.is_true(gfs.file_readable(root .. "filesystem_tests/x/Read"))
@@ -38,6 +55,12 @@ describe("gears.filesystem", function()
 
     -- Check filesystem.dir_readable
     it('Check filesystem.dir_readable', function()
+        -- Skip permission-based tests when running as root (root ignores permissions)
+        if is_root() then
+            pending("Skipping: root can read any directory regardless of permissions")
+            return
+        end
+
         os.execute("chmod g-r,o-r,a-r " .. root .. "filesystem_tests/y")
 
         assert.is_true(gfs.dir_readable(root .. "filesystem_tests/x"))

@@ -322,10 +322,7 @@ stack_refresh(void)
 		scene_layer = get_scene_layer(layer);
 		/* Check if client is in wrong layer - skip the check if already correct
 		 * to avoid unnecessary reparenting */
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wcompare-distinct-pointer-types"
-		if (c->scene->node.parent != &layers[scene_layer]->node) {
-#pragma GCC diagnostic pop
+		if ((void *)c->scene->node.parent != (void *)layers[scene_layer]) {
 			wlr_scene_node_reparent(&c->scene->node, layers[scene_layer]);
 		}
 
@@ -343,10 +340,7 @@ stack_refresh(void)
 		scene_layer = get_scene_layer(layer);
 
 		/* Reparent to correct layer if needed */
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wcompare-distinct-pointer-types"
-		if ((*drawin)->scene_tree->node.parent != &layers[scene_layer]->node) {
-#pragma GCC diagnostic pop
+		if ((void *)(*drawin)->scene_tree->node.parent != (void *)layers[scene_layer]) {
 			wlr_scene_node_reparent(&(*drawin)->scene_tree->node, layers[scene_layer]);
 		}
 
