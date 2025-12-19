@@ -9,6 +9,10 @@ on:
 jobs:
   build-and-test:
     runs-on: ubuntu-24.04
+    strategy:
+      matrix:
+        wlroots: ['0.18', '0.19']
+      fail-fast: false
 
     steps:
       - name: Checkout
@@ -19,7 +23,6 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y \
             build-essential \
-            meson \
             ninja-build \
             pkg-config \
             wayland-protocols \
@@ -53,22 +56,30 @@ jobs:
             libglib2.0-dev \
             libgirepository1.0-dev \
             gir1.2-pango-1.0 \
+            libxml2-dev \
             foot
+
+      # Upgrade meson via pip (Ubuntu's is too old for c23 support)
+      - name: Upgrade meson
+        run: |
+          pip install --upgrade meson
 
       - name: Cache wlroots
         id: cache-wlroots
         uses: actions/cache@v4
         with:
           path: ~/wlroots-install
-          key: wlroots-0.19.0-${{ runner.os }}
+          key: wlroots-${{ matrix.wlroots }}-v3-${{ runner.os }}
 
       - name: Build wlroots
         if: steps.cache-wlroots.outputs.cache-hit != 'true'
         run: |
           cd ~
-          git clone --depth 1 --branch 0.19.0 https://gitlab.freedesktop.org/wlroots/wlroots.git
+          # Full clone needed to get subprojects directory with wrap files
+          git clone --branch ${{ matrix.wlroots }}.0 https://gitlab.freedesktop.org/wlroots/wlroots.git
           cd wlroots
-          meson setup build --prefix=$HOME/wlroots-install -Dexamples=false
+          # Use wrap fallback to auto-download missing dependencies (wayland, pixman)
+          meson setup build --prefix=$HOME/wlroots-install -Dexamples=false --wrap-mode=forcefallback
           ninja -C build
           ninja -C build install
 
@@ -108,7 +119,6 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y \
             build-essential \
-            meson \
             ninja-build \
             pkg-config \
             wayland-protocols \
@@ -141,22 +151,26 @@ jobs:
             libgdk-pixbuf-2.0-dev \
             libglib2.0-dev \
             libgirepository1.0-dev \
-            gir1.2-pango-1.0
+            gir1.2-pango-1.0 \
+            libxml2-dev
+
+      - name: Upgrade meson
+        run: pip install --upgrade meson
 
       - name: Cache wlroots
         id: cache-wlroots
         uses: actions/cache@v4
         with:
           path: ~/wlroots-install
-          key: wlroots-0.19.0-${{ runner.os }}
+          key: wlroots-0.19-v3-${{ runner.os }}
 
       - name: Build wlroots
         if: steps.cache-wlroots.outputs.cache-hit != 'true'
         run: |
           cd ~
-          git clone --depth 1 --branch 0.19.0 https://gitlab.freedesktop.org/wlroots/wlroots.git
+          git clone --branch 0.19.0 https://gitlab.freedesktop.org/wlroots/wlroots.git
           cd wlroots
-          meson setup build --prefix=$HOME/wlroots-install -Dexamples=false
+          meson setup build --prefix=$HOME/wlroots-install -Dexamples=false --wrap-mode=forcefallback
           ninja -C build
           ninja -C build install
 
