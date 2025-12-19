@@ -15,6 +15,7 @@
 #include "objects/luaa.h"
 #include "objects/signal.h"
 
+#include <stdbool.h>
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <unistd.h>

@@ -22,6 +22,7 @@
 #ifndef AWESOME_COMMON_LUALIB
 #define AWESOME_COMMON_LUALIB
 
+#include <stdbool.h>
 #include <lua.h>
 #include <lauxlib.h>
 #include <assert.h>

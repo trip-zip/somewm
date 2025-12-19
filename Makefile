@@ -23,7 +23,7 @@ LDFLAGS += -fsanitize=address,undefined
 endif
 
 # CFLAGS / LDFLAGS
-PKGS      = wayland-server xkbcommon libinput dbus-1 $(XLIBS)
+PKGS      = wayland-server xkbcommon libinput dbus-1 libdrm $(XLIBS)
 SOMECPPFLAGS += $(LUA_CFLAGS) $(CAIRO_CFLAGS) $(GLIB_CFLAGS)
 SOMECFLAGS = `$(PKG_CONFIG) --cflags $(PKGS)` $(WLR_INCS) $(SOMECPPFLAGS) $(SOMEDEVCFLAGS) $(CFLAGS)
 LDLIBS    = `$(PKG_CONFIG) --libs $(PKGS)` $(WLR_LIBS) $(LUA_LIBS) $(CAIRO_LIBS) $(GLIB_LIBS) -lm $(LIBS)
