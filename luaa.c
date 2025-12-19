@@ -703,7 +703,7 @@ config_timeout_handler(int signo)
 	(void)signo;
 	config_timeout_fired = 1;
 	/* Debug: write directly to stderr (signal-safe) */
-	write(STDERR_FILENO, "\n*** CONFIG TIMEOUT - ABORTING ***\n", 35);
+	(void)!write(STDERR_FILENO, "\n*** CONFIG TIMEOUT - ABORTING ***\n", 35);
 
 	/* Use siglongjmp to forcefully abort config loading.
 	 * This is more reliable than lua_sethook which doesn't work well with LuaJIT. */
