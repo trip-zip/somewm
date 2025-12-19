@@ -2029,12 +2029,31 @@ client_focus_update(client_t *c)
 void
 client_focus(client_t *c)
 {
+    struct wlr_surface *surface;
+    struct wlr_seat *seat;
+    struct wlr_keyboard *kb;
+
     /* We have to set focus on first client */
     if(!c && globalconf.clients.len && !(c = globalconf.clients.tab[0]))
         return;
 
-    if(client_focus_update(c))
+    if(client_focus_update(c)) {
         globalconf.focus.need_update = true;
+
+        /* Apply Wayland keyboard focus immediately while surface is valid.
+         * awful.client.focus.byidx()) also update the Wayland seat. */
+        surface = some_client_get_surface(c);
+        if (surface && surface->mapped) {
+            seat = some_get_seat();
+            kb = wlr_seat_get_keyboard(seat);
+            if (kb) {
+                wlr_seat_keyboard_notify_enter(seat, surface,
+                                               kb->keycodes,
+                                               kb->num_keycodes,
+                                               &kb->modifiers);
+            }
+        }
+    }
 }
 
 #if 0  /* Unused for Wayland - X11/XWayland only */
