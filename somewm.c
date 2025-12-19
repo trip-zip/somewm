@@ -78,6 +78,7 @@
 #include "somewm_types.h"
 #include "somewm_api.h"
 #include "stack.h"
+#include "wlr_compat.h"
 #include "globalconf.h"        /* Global configuration structure (AwesomeWM pattern) */
 #include "banning.h"            /* Client visibility management (banning) */
 #include "objects/luaa.h"
@@ -3167,15 +3168,17 @@ void
 powermgrsetmode(struct wl_listener *listener, void *data)
 {
 	struct wlr_output_power_v1_set_mode_event *event = data;
-	struct wlr_output_state state = {0};
+	struct wlr_output_state state;
 	Monitor *m = event->output->data;
 
 	if (!m)
 		return;
 
+	wlr_output_state_init(&state);
 	m->gamma_lut_changed = 1; /* Reapply gamma LUT when re-enabling the ouput */
 	wlr_output_state_set_enabled(&state, event->mode);
 	wlr_output_commit_state(m->wlr_output, &state);
+	wlr_output_state_finish(&state);
 
 	m->asleep = !event->mode;
 	updatemons(NULL, NULL);
@@ -3188,7 +3191,6 @@ rendermon(struct wl_listener *listener, void *data)
 	 * generally at the output's refresh rate (e.g. 60Hz). */
 	Monitor *m = wl_container_of(listener, m, frame);
 	Client *c;
-	struct wlr_output_state pending = {0};
 	struct timespec now;
 
 	/* Render if no XDG clients have an outstanding resize and are visible on
@@ -3205,7 +3207,6 @@ skip:
 	/* Let clients know a frame has been rendered */
 	clock_gettime(CLOCK_MONOTONIC, &now);
 	wlr_scene_output_send_frame_done(m->scene_output, &now);
-	wlr_output_state_finish(&pending);
 }
 
 void
@@ -3851,7 +3852,7 @@ setsel(struct wl_listener *listener, void *data)
 void
 setup(void)
 {
-	int drm_fd, i, sig[] = {SIGCHLD, SIGINT, SIGTERM, SIGPIPE};
+	int i, sig[] = {SIGCHLD, SIGINT, SIGTERM, SIGPIPE};
 	struct sigaction sa = {.sa_flags = SA_RESTART, .sa_handler = handlesig};
 	sigemptyset(&sa.sa_mask);
 
@@ -3915,9 +3916,14 @@ setup(void)
 				wlr_linux_dmabuf_v1_create_with_renderer(dpy, 5, drw));
 	}
 
-	if ((drm_fd = wlr_renderer_get_drm_fd(drw)) >= 0 && drw->features.timeline
-			&& backend->features.timeline)
-		wlr_linux_drm_syncobj_manager_v1_create(dpy, 1, drm_fd);
+#ifdef WLR_VERSION_0_19
+	{
+		int drm_fd;
+		if ((drm_fd = wlr_renderer_get_drm_fd(drw)) >= 0 && drw->features.timeline
+				&& backend->features.timeline)
+			wlr_linux_drm_syncobj_manager_v1_create(dpy, 1, drm_fd);
+	}
+#endif
 
 	/* Autocreates an allocator for us.
 	 * The allocator is the bridge between the renderer and the backend. It
@@ -3942,14 +3948,16 @@ setup(void)
 	wlr_viewporter_create(dpy);
 	wlr_single_pixel_buffer_manager_v1_create(dpy);
 	wlr_fractional_scale_manager_v1_create(dpy, 1);
-	wlr_presentation_create(dpy, backend, 2);
+	COMPAT_PRESENTATION_CREATE(dpy, backend);
 	wlr_alpha_modifier_v1_create(dpy);
 
 	/* Initializes the interface used to implement urgency hints */
 	activation = wlr_xdg_activation_v1_create(dpy);
 	wl_signal_add(&activation->events.request_activate, &request_activate);
 
+#ifdef WLR_VERSION_0_19
 	wlr_scene_set_gamma_control_manager_v1(scene, wlr_gamma_control_manager_v1_create(dpy));
+#endif
 
 	power_mgr = wlr_output_power_manager_v1_create(dpy);
 	wl_signal_add(&power_mgr->events.set_mode, &output_power_mgr_set_mode);

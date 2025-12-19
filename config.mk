@@ -9,8 +9,35 @@ MANDIR = $(PREFIX)/share/man
 DATADIR = $(PREFIX)/share
 SYSCONFDIR = $(PREFIX)/etc
 
-WLR_INCS = `$(PKG_CONFIG) --cflags wlroots-0.19`
-WLR_LIBS = `$(PKG_CONFIG) --libs wlroots-0.19`
+# wlroots detection - supports both 0.18 and 0.19
+# Try wlroots-0.19 first, then 0.18, then generic wlroots
+WLR_PKG := $(shell \
+	if $(PKG_CONFIG) --exists wlroots-0.19 2>/dev/null; then \
+		echo wlroots-0.19; \
+	elif $(PKG_CONFIG) --exists wlroots-0.18 2>/dev/null; then \
+		echo wlroots-0.18; \
+	elif $(PKG_CONFIG) --exists wlroots 2>/dev/null; then \
+		echo wlroots; \
+	else \
+		echo ""; \
+	fi)
+
+# Fail build if wlroots not found
+ifeq ($(WLR_PKG),)
+    $(error wlroots (0.18 or 0.19) is required but not found. Install wlroots development packages.)
+endif
+
+# Get wlroots version for compatibility macros
+WLR_VERSION := $(shell $(PKG_CONFIG) --modversion $(WLR_PKG) 2>/dev/null)
+
+# Set version flag for 0.19-specific code
+WLR_VERSION_FLAGS :=
+ifeq ($(shell echo "$(WLR_VERSION)" | grep -q "^0\.19" && echo yes),yes)
+    WLR_VERSION_FLAGS = -DWLR_VERSION_0_19
+endif
+
+WLR_INCS = `$(PKG_CONFIG) --cflags $(WLR_PKG)` $(WLR_VERSION_FLAGS)
+WLR_LIBS = `$(PKG_CONFIG) --libs $(WLR_PKG)`
 
 # Lua integration - REQUIRED (not optional)
 # Try LuaJIT first (5.1 compatible + JIT), then fall back to Lua 5.4, 5.3, 5.2, 5.1

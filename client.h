@@ -10,6 +10,7 @@
 #include <assert.h>
 #include "somewm_types.h"  /* For Client typedef and Monitor */
 #include "objects/client.h" /* For complete client_t definition */
+#include "wlr_compat.h"  /* For wlroots version compatibility */
 
 /* Leave these functions first; they're used in the others */
 static inline int
@@ -159,8 +160,8 @@ client_get_clip(Client *c, struct wlr_box *clip)
 		return;
 #endif
 
-	clip->x = c->surface.xdg->geometry.x;
-	clip->y = c->surface.xdg->geometry.y;
+	clip->x = COMPAT_XDG_SURFACE_GEOMETRY(c->surface.xdg).x;
+	clip->y = COMPAT_XDG_SURFACE_GEOMETRY(c->surface.xdg).y;
 }
 
 static inline void
@@ -175,7 +176,7 @@ client_get_geometry(Client *c, struct wlr_box *geom)
 		return;
 	}
 #endif
-	*geom = c->surface.xdg->geometry;
+	*geom = COMPAT_XDG_SURFACE_GEOMETRY(c->surface.xdg);
 }
 
 static inline Client *
@@ -229,12 +230,14 @@ client_is_float_type(Client *c)
 		if (surface->modal)
 			return 1;
 
-		if (wlr_xwayland_surface_has_window_type(surface, WLR_XWAYLAND_NET_WM_WINDOW_TYPE_DIALOG)
-				|| wlr_xwayland_surface_has_window_type(surface, WLR_XWAYLAND_NET_WM_WINDOW_TYPE_SPLASH)
-				|| wlr_xwayland_surface_has_window_type(surface, WLR_XWAYLAND_NET_WM_WINDOW_TYPE_TOOLBAR)
-				|| wlr_xwayland_surface_has_window_type(surface, WLR_XWAYLAND_NET_WM_WINDOW_TYPE_UTILITY)) {
+#ifdef WLR_VERSION_0_19
+		if (COMPAT_XWAYLAND_HAS_WINDOW_TYPE(surface, WLR_XWAYLAND_NET_WM_WINDOW_TYPE_DIALOG)
+				|| COMPAT_XWAYLAND_HAS_WINDOW_TYPE(surface, WLR_XWAYLAND_NET_WM_WINDOW_TYPE_SPLASH)
+				|| COMPAT_XWAYLAND_HAS_WINDOW_TYPE(surface, WLR_XWAYLAND_NET_WM_WINDOW_TYPE_TOOLBAR)
+				|| COMPAT_XWAYLAND_HAS_WINDOW_TYPE(surface, WLR_XWAYLAND_NET_WM_WINDOW_TYPE_UTILITY)) {
 			return 1;
 		}
+#endif
 
 		return size_hints && size_hints->min_width > 0 && size_hints->min_height > 0
 			&& (size_hints->max_width == size_hints->min_width
@@ -381,10 +384,9 @@ client_set_tiled(Client *c, uint32_t edges)
 {
 #ifdef XWAYLAND
 	if (client_is_x11(c)) {
-		wlr_xwayland_surface_set_maximized(c->surface.xwayland,
-				edges != WLR_EDGE_NONE, edges != WLR_EDGE_NONE);
+		COMPAT_XWAYLAND_SET_MAXIMIZED(c->surface.xwayland, edges != WLR_EDGE_NONE);
 		return;
-  }
+	}
 #endif
 	if (wl_resource_get_version(c->surface.xdg->toplevel->resource)
 			>= XDG_TOPLEVEL_STATE_TILED_RIGHT_SINCE_VERSION) {
@@ -410,8 +412,8 @@ client_wants_focus(Client *c)
 {
 #ifdef XWAYLAND
 	return client_is_unmanaged(c)
-		&& wlr_xwayland_surface_override_redirect_wants_focus(c->surface.xwayland)
-		&& wlr_xwayland_surface_icccm_input_model(c->surface.xwayland) != WLR_ICCCM_INPUT_MODEL_NONE;
+		&& COMPAT_XWAYLAND_OVERRIDE_REDIRECT_WANTS_FOCUS(c->surface.xwayland)
+		&& COMPAT_XWAYLAND_ICCCM_INPUT_MODEL(c->surface.xwayland) != WLR_ICCCM_INPUT_MODEL_NONE;
 #endif
 	return 0;
 }
