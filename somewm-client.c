@@ -83,6 +83,12 @@ print_usage(const char *progname)
 	fprintf(stderr, "  screenshot client <path> [ID]  Save client window screenshot\n");
 	fprintf(stderr, "  screenshot screen <path> [ID]  Save single screen screenshot\n\n");
 
+	fprintf(stderr, "INPUT SETTINGS:\n");
+	fprintf(stderr, "  input                          Show all input settings\n");
+	fprintf(stderr, "  input <setting> [value]        Get or set an input setting\n");
+	fprintf(stderr, "    Pointer: tap_to_click, natural_scrolling, accel_speed, ...\n");
+	fprintf(stderr, "    Keyboard: xkb_layout, xkb_options, keyboard_repeat_rate, ...\n\n");
+
 	fprintf(stderr, "ADVANCED:\n");
 	fprintf(stderr, "  eval <lua_code>                Execute arbitrary Lua code\n");
 	fprintf(stderr, "  hotkeys                        Show hotkeys popup\n");
@@ -97,6 +103,7 @@ print_usage(const char *progname)
 	fprintf(stderr, "  %s client info focused\n", progname);
 	fprintf(stderr, "  %s screen list\n", progname);
 	fprintf(stderr, "  %s eval 'print(awesome.version)'\n", progname);
+	fprintf(stderr, "  %s input tap_to_click 1\n", progname);
 	fprintf(stderr, "  %s exec firefox\n", progname);
 }
 
