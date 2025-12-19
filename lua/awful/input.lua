@@ -90,7 +90,8 @@ setmetatable(module, {
     end,
 
     __newindex = function(_, key, value)
-        if state[key] == nil then
+        -- Check if property exists using property_types table
+        if property_types[key] == nil then
             error("awful.input: unknown property '" .. tostring(key) .. "'")
         end
 

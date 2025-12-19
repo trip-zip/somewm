@@ -201,8 +201,6 @@ test-unit:
 
 test-integration:
 	@echo "Running integration tests..."
-	@echo "NOTE: Integration tests must be run from outside the compositor"
-	@echo "See tests/README-INTEGRATION.md for details"
 	@bash tests/run-integration.sh
 
 test-compat:
