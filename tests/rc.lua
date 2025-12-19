@@ -29,9 +29,6 @@ awful.screen.connect_for_each_screen(function(s)
     awful.tag({ "test" }, s, awful.layout.layouts[1])
 end)
 
--- Disable error handling popups
-awful.spawn = function() end
-
 -- Redirect errors to stderr for test visibility
 awesome.connect_signal("debug::error", function(err)
     io.stderr:write("ERROR: " .. tostring(err) .. "\n")
