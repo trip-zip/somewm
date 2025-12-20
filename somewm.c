@@ -5,6 +5,7 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <getopt.h>
+#include <stdbool.h>
 #include <glib.h>
 #include <libinput.h>
 #include <linux/input-event-codes.h>
@@ -5173,6 +5174,7 @@ int
 main(int argc, char *argv[])
 {
 	char *startup_cmd = NULL;
+	char *check_config = NULL;
 	int c;
 
 	static struct option long_options[] = {
@@ -5181,13 +5183,17 @@ main(int argc, char *argv[])
 		{"debug",   no_argument,       0, 'd'},
 		{"search",  required_argument, 0, 'L'},
 		{"startup", required_argument, 0, 's'},
+		{"check",   required_argument, 0, 'c'},
 		{0, 0, 0, 0}
 	};
 
-	while ((c = getopt_long(argc, argv, "s:L:hdv", long_options, NULL)) != -1) {
+	while ((c = getopt_long(argc, argv, "s:L:hdvc:", long_options, NULL)) != -1) {
 		switch (c) {
 		case 's':
 			startup_cmd = optarg;
+			break;
+		case 'c':
+			check_config = optarg;
 			break;
 		case 'L':
 			if (num_search_paths < MAX_SEARCH_PATHS) {
@@ -5209,6 +5215,13 @@ main(int argc, char *argv[])
 	if (optind < argc)
 		goto usage;
 
+	/* Check mode: scan config for compatibility issues without starting compositor */
+	if (check_config) {
+		bool use_color = isatty(STDOUT_FILENO);
+		int result = luaA_check_config(check_config, use_color);
+		return result;
+	}
+
 	/* Wayland requires XDG_RUNTIME_DIR for creating its communications socket */
 	if (!getenv("XDG_RUNTIME_DIR"))
 		die("XDG_RUNTIME_DIR must be set");
@@ -5223,9 +5236,10 @@ main(int argc, char *argv[])
 	return EXIT_SUCCESS;
 
 usage:
-	die("Usage: %s [-v] [-d] [-L search_path] [-s startup_command]\n"
-	    "  -v, --version    Show version and exit\n"
-	    "  -d, --debug      Enable debug logging\n"
-	    "  -L, --search DIR Add directory to Lua module search path\n"
-	    "  -s, --startup CMD Run command after startup", argv[0]);
+	die("Usage: %s [-v] [-d] [-L search_path] [-s startup_command] [-c config]\n"
+	    "  -v, --version      Show version and exit\n"
+	    "  -d, --debug        Enable debug logging\n"
+	    "  -L, --search DIR   Add directory to Lua module search path\n"
+	    "  -s, --startup CMD  Run command after startup\n"
+	    "  -c, --check CONFIG Check config for Wayland compatibility issues", argv[0]);
 }

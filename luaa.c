@@ -763,59 +763,192 @@ config_timeout_handler(int signo)
 	}
 }
 
-/** X11-specific patterns that may hang on Wayland.
- * These patterns are scanned BEFORE executing config to prevent hangs.
+/** Pattern severity levels for config scanner */
+typedef enum {
+	SEVERITY_INFO,      /* May not work, but won't break config */
+	SEVERITY_WARNING,   /* Needs Wayland alternative */
+	SEVERITY_CRITICAL   /* Will fail or hang on Wayland */
+} x11_severity_t;
+
+/** X11-specific patterns that may cause issues on Wayland.
+ * These patterns are scanned BEFORE executing config to prevent hangs,
+ * and can also be used with `somewm --check` for config analysis.
  */
 typedef struct {
 	const char *pattern;      /* Simple substring to search for */
 	const char *description;  /* Human-readable description */
 	const char *suggestion;   /* How to fix it */
+	x11_severity_t severity;  /* How serious the issue is */
 } x11_pattern_t;
 
 static const x11_pattern_t x11_patterns[] = {
-	/* Direct io.popen/os.execute with X11 tools */
-	{"io.popen(\"xrandr", "io.popen with xrandr",
-	 "Use screen:geometry() or screen.outputs instead"},
-	{"io.popen('xrandr", "io.popen with xrandr",
-	 "Use screen:geometry() or screen.outputs instead"},
-	{"io.popen(\"xwininfo", "io.popen with xwininfo",
-	 "Use client.geometry or mouse.coords instead"},
-	{"io.popen('xwininfo", "io.popen with xwininfo",
-	 "Use client.geometry or mouse.coords instead"},
-	{"io.popen(\"xdotool", "io.popen with xdotool",
-	 "Use awful.spawn or client:send_key() instead"},
-	{"io.popen('xdotool", "io.popen with xdotool",
-	 "Use awful.spawn or client:send_key() instead"},
-	{"io.popen(\"xprop", "io.popen with xprop",
-	 "Use client.class or client.instance instead"},
-	{"io.popen('xprop", "io.popen with xprop",
-	 "Use client.class or client.instance instead"},
-	{"os.execute(\"xrandr", "os.execute with xrandr",
-	 "Use awful.spawn.easy_async instead"},
-	{"os.execute('xrandr", "os.execute with xrandr",
-	 "Use awful.spawn.easy_async instead"},
-	{"os.execute(\"xdotool", "os.execute with xdotool",
-	 "Use awful.spawn or client:send_key() instead"},
-	{"os.execute('xdotool", "os.execute with xdotool",
-	 "Use awful.spawn or client:send_key() instead"},
-	/* Shell subcommand patterns: $(xrandr, `xrandr`, etc */
+	/* === CRITICAL: Will fail or hang === */
+
+	/* X11 property APIs (not implemented on Wayland) */
+	{"awesome.get_xproperty", "awesome.get_xproperty() [X11 only]",
+	 "Use persistent storage (gears.filesystem) or remove", SEVERITY_CRITICAL},
+	{"awesome.set_xproperty", "awesome.set_xproperty() [X11 only]",
+	 "Use persistent storage (gears.filesystem) or remove", SEVERITY_CRITICAL},
+	{"awesome.register_xproperty", "awesome.register_xproperty() [X11 only]",
+	 "Remove - X11 properties don't exist on Wayland", SEVERITY_CRITICAL},
+
+	/* Blocking X11 tool calls that will hang */
+	{"io.popen(\"xrandr", "io.popen with xrandr (blocks)",
+	 "Use screen:geometry() or screen.outputs instead", SEVERITY_CRITICAL},
+	{"io.popen('xrandr", "io.popen with xrandr (blocks)",
+	 "Use screen:geometry() or screen.outputs instead", SEVERITY_CRITICAL},
+	{"io.popen(\"xwininfo", "io.popen with xwininfo (blocks)",
+	 "Use client.geometry or mouse.coords instead", SEVERITY_CRITICAL},
+	{"io.popen('xwininfo", "io.popen with xwininfo (blocks)",
+	 "Use client.geometry or mouse.coords instead", SEVERITY_CRITICAL},
+	{"io.popen(\"xdotool", "io.popen with xdotool (blocks)",
+	 "Use awful.spawn or client:send_key() instead", SEVERITY_CRITICAL},
+	{"io.popen('xdotool", "io.popen with xdotool (blocks)",
+	 "Use awful.spawn or client:send_key() instead", SEVERITY_CRITICAL},
+	{"io.popen(\"xprop", "io.popen with xprop (blocks)",
+	 "Use client.class or client.instance instead", SEVERITY_CRITICAL},
+	{"io.popen('xprop", "io.popen with xprop (blocks)",
+	 "Use client.class or client.instance instead", SEVERITY_CRITICAL},
+	{"io.popen(\"xrdb", "io.popen with xrdb (blocks)",
+	 "Use beautiful.xresources.get_current_theme() instead", SEVERITY_CRITICAL},
+	{"io.popen('xrdb", "io.popen with xrdb (blocks)",
+	 "Use beautiful.xresources.get_current_theme() instead", SEVERITY_CRITICAL},
+
+	/* os.execute blocks even harder */
+	{"os.execute(\"xrandr", "os.execute with xrandr (blocks)",
+	 "Use awful.spawn.easy_async instead", SEVERITY_CRITICAL},
+	{"os.execute('xrandr", "os.execute with xrandr (blocks)",
+	 "Use awful.spawn.easy_async instead", SEVERITY_CRITICAL},
+	{"os.execute(\"xdotool", "os.execute with xdotool (blocks)",
+	 "Use awful.spawn or client:send_key() instead", SEVERITY_CRITICAL},
+	{"os.execute('xdotool", "os.execute with xdotool (blocks)",
+	 "Use awful.spawn or client:send_key() instead", SEVERITY_CRITICAL},
+
+	/* Shell subcommand patterns in strings */
 	{"$(xrandr", "shell subcommand with xrandr",
-	 "Use screen:geometry() or screen.outputs instead"},
+	 "Use screen:geometry() or screen.outputs instead", SEVERITY_CRITICAL},
 	{"`xrandr", "shell subcommand with xrandr",
-	 "Use screen:geometry() or screen.outputs instead"},
+	 "Use screen:geometry() or screen.outputs instead", SEVERITY_CRITICAL},
 	{"$(xwininfo", "shell subcommand with xwininfo",
-	 "Use client.geometry or mouse.coords instead"},
+	 "Use client.geometry or mouse.coords instead", SEVERITY_CRITICAL},
 	{"`xwininfo", "shell subcommand with xwininfo",
-	 "Use client.geometry or mouse.coords instead"},
+	 "Use client.geometry or mouse.coords instead", SEVERITY_CRITICAL},
 	{"$(xdotool", "shell subcommand with xdotool",
-	 "Use awful.spawn or client:send_key() instead"},
+	 "Use awful.spawn or client:send_key() instead", SEVERITY_CRITICAL},
 	{"`xdotool", "shell subcommand with xdotool",
-	 "Use awful.spawn or client:send_key() instead"},
+	 "Use awful.spawn or client:send_key() instead", SEVERITY_CRITICAL},
 	{"$(xprop", "shell subcommand with xprop",
-	 "Use client.class or client.instance instead"},
+	 "Use client.class or client.instance instead", SEVERITY_CRITICAL},
 	{"`xprop", "shell subcommand with xprop",
-	 "Use client.class or client.instance instead"},
-	{NULL, NULL, NULL}
+	 "Use client.class or client.instance instead", SEVERITY_CRITICAL},
+
+	/* === WARNING: Needs Wayland alternative === */
+
+	/* Screenshot tools (start of string or mid-command) */
+	{"\"maim", "maim screenshot tool",
+	 "Use awful.screenshot or grim instead", SEVERITY_WARNING},
+	{"'maim", "maim screenshot tool",
+	 "Use awful.screenshot or grim instead", SEVERITY_WARNING},
+	{" maim ", "maim screenshot tool",
+	 "Use awful.screenshot or grim instead", SEVERITY_WARNING},
+	{"\"scrot", "scrot screenshot tool",
+	 "Use awful.screenshot or grim instead", SEVERITY_WARNING},
+	{"'scrot", "scrot screenshot tool",
+	 "Use awful.screenshot or grim instead", SEVERITY_WARNING},
+	{" scrot ", "scrot screenshot tool",
+	 "Use awful.screenshot or grim instead", SEVERITY_WARNING},
+	{"\"import ", "ImageMagick import (screenshot)",
+	 "Use awful.screenshot or grim instead", SEVERITY_WARNING},
+	{"'import ", "ImageMagick import (screenshot)",
+	 "Use awful.screenshot or grim instead", SEVERITY_WARNING},
+	{"\"flameshot", "flameshot screenshot tool",
+	 "Use awful.screenshot, grim, or flameshot with XDG portal", SEVERITY_WARNING},
+	{"'flameshot", "flameshot screenshot tool",
+	 "Use awful.screenshot, grim, or flameshot with XDG portal", SEVERITY_WARNING},
+
+	/* Clipboard tools (start of string or piped) */
+	{"\"xclip", "xclip clipboard tool",
+	 "Use wl-copy/wl-paste instead", SEVERITY_WARNING},
+	{"'xclip", "xclip clipboard tool",
+	 "Use wl-copy/wl-paste instead", SEVERITY_WARNING},
+	{"| xclip", "xclip clipboard tool",
+	 "Use wl-copy/wl-paste instead", SEVERITY_WARNING},
+	{" xclip ", "xclip clipboard tool",
+	 "Use wl-copy/wl-paste instead", SEVERITY_WARNING},
+	{"\"xsel", "xsel clipboard tool",
+	 "Use wl-copy/wl-paste instead", SEVERITY_WARNING},
+	{"'xsel", "xsel clipboard tool",
+	 "Use wl-copy/wl-paste instead", SEVERITY_WARNING},
+	{"| xsel", "xsel clipboard tool",
+	 "Use wl-copy/wl-paste instead", SEVERITY_WARNING},
+
+	/* Display/input tools used async */
+	{"\"xset", "xset display settings",
+	 "Most settings are handled by compositor or wlr-randr", SEVERITY_WARNING},
+	{"'xset", "xset display settings",
+	 "Most settings are handled by compositor or wlr-randr", SEVERITY_WARNING},
+	{"\"xinput", "xinput device settings",
+	 "Use compositor input settings or libinput config", SEVERITY_WARNING},
+	{"'xinput", "xinput device settings",
+	 "Use compositor input settings or libinput config", SEVERITY_WARNING},
+	{"\"xmodmap", "xmodmap keyboard settings",
+	 "Use xkb_options in compositor config", SEVERITY_WARNING},
+	{"'xmodmap", "xmodmap keyboard settings",
+	 "Use xkb_options in compositor config", SEVERITY_WARNING},
+	{"\"setxkbmap", "setxkbmap keyboard layout",
+	 "Use awful.keyboard.set_layouts() or compositor config", SEVERITY_WARNING},
+	{"'setxkbmap", "setxkbmap keyboard layout",
+	 "Use awful.keyboard.set_layouts() or compositor config", SEVERITY_WARNING},
+
+	/* Spawn tools that won't work */
+	{"\"xdg-screensaver", "xdg-screensaver",
+	 "Use swayidle or compositor idle settings", SEVERITY_WARNING},
+	{"'xdg-screensaver", "xdg-screensaver",
+	 "Use swayidle or compositor idle settings", SEVERITY_WARNING},
+
+	/* === INFO: May not work, usually harmless === */
+
+	/* Compositor references (no-op on Wayland - built-in) */
+	{"\"picom", "picom compositor",
+	 "Compositing is built into Wayland, remove picom references", SEVERITY_INFO},
+	{"'picom", "picom compositor",
+	 "Compositing is built into Wayland, remove picom references", SEVERITY_INFO},
+	{"\"compton", "compton compositor",
+	 "Compositing is built into Wayland, remove compton references", SEVERITY_INFO},
+	{"'compton", "compton compositor",
+	 "Compositing is built into Wayland, remove compton references", SEVERITY_INFO},
+
+	/* Tray tools (layer-shell based trays work differently) */
+	{"\"stalonetray", "stalonetray system tray",
+	 "Wayland has no XEmbed; use waybar or compositor tray", SEVERITY_INFO},
+	{"'stalonetray", "stalonetray system tray",
+	 "Wayland has no XEmbed; use waybar or compositor tray", SEVERITY_INFO},
+	{"\"trayer", "trayer system tray",
+	 "Wayland has no XEmbed; use waybar or compositor tray", SEVERITY_INFO},
+	{"'trayer", "trayer system tray",
+	 "Wayland has no XEmbed; use waybar or compositor tray", SEVERITY_INFO},
+
+	/* Theming tools that read X resources */
+	{"\"lxappearance", "lxappearance GTK theme tool",
+	 "GTK themes work, but use gsettings or gtk config files", SEVERITY_INFO},
+	{"'lxappearance", "lxappearance GTK theme tool",
+	 "GTK themes work, but use gsettings or gtk config files", SEVERITY_INFO},
+	{"\"qt5ct", "qt5ct Qt theme tool",
+	 "Qt5/6 themes work, but configure via qt5ct/qt6ct config", SEVERITY_INFO},
+	{"'qt5ct", "qt5ct Qt theme tool",
+	 "Qt5/6 themes work, but configure via qt5ct/qt6ct config", SEVERITY_INFO},
+
+	/* X11-only utilities that silently fail */
+	{"\"xhost", "xhost X11 access control",
+	 "Wayland has different security model, remove xhost", SEVERITY_INFO},
+	{"'xhost", "xhost X11 access control",
+	 "Wayland has different security model, remove xhost", SEVERITY_INFO},
+	{"\"xauth", "xauth X11 authentication",
+	 "Wayland uses different auth, remove xauth", SEVERITY_INFO},
+	{"'xauth", "xauth X11 authentication",
+	 "Wayland uses different auth, remove xauth", SEVERITY_INFO},
+
+	{NULL, NULL, NULL, 0}
 };
 
 /* Maximum recursion depth for require scanning */
@@ -1112,6 +1245,463 @@ luaA_prescan_config(const char *config_path, const char *config_dir)
 	}
 
 	prescan_cleanup_visited();
+	return result;
+}
+
+/* ============================================================================
+ * Check Mode: `somewm --check <config>` for config compatibility analysis
+ * ============================================================================
+ * Scans config without starting compositor and outputs a report.
+ */
+
+/* Maximum issues to track in check mode */
+#define CHECK_MAX_ISSUES 200
+
+/* Stored issue for check mode report */
+typedef struct {
+	char *file_path;
+	int line_number;
+	char *line_content;
+	const char *pattern_desc;   /* Points into x11_patterns - don't free */
+	const char *suggestion;     /* Points into x11_patterns - don't free */
+	x11_severity_t severity;
+	bool is_syntax_error;       /* If true, pattern_desc is dynamically allocated */
+} check_issue_t;
+
+/* Global state for check mode */
+static check_issue_t check_issues[CHECK_MAX_ISSUES];
+static int check_issue_count = 0;
+static int check_counts[3] = {0, 0, 0};  /* info, warning, critical */
+
+/** Reset check mode state */
+static void
+check_mode_reset(void)
+{
+	int i;
+	for (i = 0; i < check_issue_count; i++) {
+		free(check_issues[i].file_path);
+		free(check_issues[i].line_content);
+		if (check_issues[i].is_syntax_error)
+			free((void *)check_issues[i].pattern_desc);
+	}
+	check_issue_count = 0;
+	check_counts[0] = check_counts[1] = check_counts[2] = 0;
+}
+
+/** Store an issue found during check mode scan */
+static void
+check_mode_add_issue(const char *file_path, int line_num, const char *line_content,
+                     const x11_pattern_t *pattern)
+{
+	check_issue_t *issue;
+
+	if (check_issue_count >= CHECK_MAX_ISSUES)
+		return;
+
+	issue = &check_issues[check_issue_count++];
+	issue->file_path = strdup(file_path);
+	issue->line_number = line_num;
+	issue->line_content = strdup(line_content);
+	issue->pattern_desc = pattern->description;
+	issue->suggestion = pattern->suggestion;
+	issue->severity = pattern->severity;
+	issue->is_syntax_error = false;
+
+	check_counts[pattern->severity]++;
+}
+
+/** Store a syntax error found during check mode */
+static void
+check_mode_add_syntax_error(const char *file_path, const char *error_msg)
+{
+	check_issue_t *issue;
+	int line_num = 0;
+	const char *line_start;
+	char *colon;
+
+	if (check_issue_count >= CHECK_MAX_ISSUES)
+		return;
+
+	/* Try to extract line number from Lua error message format: "file:line: message" */
+	colon = strrchr(file_path, '/');
+	line_start = colon ? colon + 1 : file_path;
+	colon = strstr(error_msg, line_start);
+	if (colon) {
+		colon = strchr(colon, ':');
+		if (colon)
+			line_num = atoi(colon + 1);
+	}
+
+	issue = &check_issues[check_issue_count++];
+	issue->file_path = strdup(file_path);
+	issue->line_number = line_num;
+	issue->line_content = strdup("");
+	issue->pattern_desc = strdup(error_msg);
+	issue->suggestion = "Fix the syntax error before running";
+	issue->severity = SEVERITY_CRITICAL;
+	issue->is_syntax_error = true;
+
+	check_counts[SEVERITY_CRITICAL]++;
+}
+
+/** Check Lua syntax of a file using luaL_loadfile
+ * Creates a temporary Lua state just for parsing.
+ * \param file_path Path to the Lua file to check
+ * \return true if syntax is valid, false if error (and adds issue)
+ */
+static bool
+check_mode_syntax_check(const char *file_path)
+{
+	lua_State *L;
+	int status;
+	const char *err_msg;
+
+	L = luaL_newstate();
+	if (!L)
+		return true;  /* Can't check, assume OK */
+
+	status = luaL_loadfile(L, file_path);
+	if (status != 0) {
+		err_msg = lua_tostring(L, -1);
+		if (err_msg)
+			check_mode_add_syntax_error(file_path, err_msg);
+		lua_close(L);
+		return false;
+	}
+
+	lua_close(L);
+	return true;
+}
+
+/* ANSI color codes */
+#define COL_RESET   "\033[0m"
+#define COL_RED     "\033[1;31m"
+#define COL_YELLOW  "\033[1;33m"
+#define COL_CYAN    "\033[1;36m"
+#define COL_GREEN   "\033[1;32m"
+#define COL_GRAY    "\033[0;37m"
+#define COL_BOLD    "\033[1m"
+
+/** Print check mode report to stdout with colors */
+static void
+check_mode_print_report(const char *config_path, bool use_color)
+{
+	int i;
+	int total;
+	const char *sev_colors[] = {COL_CYAN, COL_YELLOW, COL_RED};
+	const char *sev_names[] = {"INFO", "WARNING", "CRITICAL"};
+	const char *sev_symbols[] = {"i", "!", "X"};
+
+	total = check_counts[0] + check_counts[1] + check_counts[2];
+
+	printf("\n");
+	if (use_color)
+		printf("%ssomewm config compatibility report%s\n", COL_BOLD, COL_RESET);
+	else
+		printf("somewm config compatibility report\n");
+	printf("====================================\n");
+	printf("Config: %s\n\n", config_path);
+
+	if (total == 0) {
+		if (use_color)
+			printf("%s✓ No compatibility issues found!%s\n\n", COL_GREEN, COL_RESET);
+		else
+			printf("✓ No compatibility issues found!\n\n");
+		return;
+	}
+
+	/* Print issues grouped by severity (critical first) */
+	for (int sev = SEVERITY_CRITICAL; sev >= SEVERITY_INFO; sev--) {
+		bool printed_header = false;
+
+		for (i = 0; i < check_issue_count; i++) {
+			check_issue_t *issue = &check_issues[i];
+			if ((int)issue->severity != sev)
+				continue;
+
+			if (!printed_header) {
+				if (use_color)
+					printf("%s%s %s:%s\n", sev_colors[sev],
+					       sev_symbols[sev], sev_names[sev], COL_RESET);
+				else
+					printf("%s %s:\n", sev_symbols[sev], sev_names[sev]);
+				printed_header = true;
+			}
+
+			/* File:line - description */
+			if (use_color)
+				printf("  %s%s:%d%s - %s\n",
+				       COL_BOLD, issue->file_path, issue->line_number, COL_RESET,
+				       issue->pattern_desc);
+			else
+				printf("  %s:%d - %s\n",
+				       issue->file_path, issue->line_number,
+				       issue->pattern_desc);
+
+			/* Suggestion */
+			if (use_color)
+				printf("    %s→ %s%s\n", COL_GRAY, issue->suggestion, COL_RESET);
+			else
+				printf("    → %s\n", issue->suggestion);
+		}
+		if (printed_header)
+			printf("\n");
+	}
+
+	/* Summary line */
+	if (use_color) {
+		printf("%sSummary:%s ", COL_BOLD, COL_RESET);
+		if (check_counts[2] > 0)
+			printf("%s%d critical%s", COL_RED, check_counts[2], COL_RESET);
+		if (check_counts[1] > 0)
+			printf("%s%s%d warnings%s",
+			       check_counts[2] ? ", " : "",
+			       COL_YELLOW, check_counts[1], COL_RESET);
+		if (check_counts[0] > 0)
+			printf("%s%s%d info%s",
+			       (check_counts[2] || check_counts[1]) ? ", " : "",
+			       COL_CYAN, check_counts[0], COL_RESET);
+		printf("\n\n");
+	} else {
+		printf("Summary: ");
+		if (check_counts[2] > 0)
+			printf("%d critical", check_counts[2]);
+		if (check_counts[1] > 0)
+			printf("%s%d warnings",
+			       check_counts[2] ? ", " : "", check_counts[1]);
+		if (check_counts[0] > 0)
+			printf("%s%d info",
+			       (check_counts[2] || check_counts[1]) ? ", " : "",
+			       check_counts[0]);
+		printf("\n\n");
+	}
+}
+
+/** Scan a file in check mode (all severities, no blocking) */
+static void
+check_mode_scan_file(const char *config_path, const char *config_dir, int depth);
+
+/** Scan requires in check mode */
+static void
+check_mode_scan_requires(const char *content, const char *config_dir, int depth)
+{
+	const char *pos = content;
+	char module_name[256];
+	char resolved_path[PATH_MAX];
+
+	if (depth >= PRESCAN_MAX_DEPTH || !config_dir)
+		return;
+
+	while ((pos = strstr(pos, "require")) != NULL) {
+		const char *start;
+		const char *end;
+		char quote;
+		size_t len;
+
+		pos += 7;
+
+		while (*pos == ' ' || *pos == '\t' || *pos == '(')
+			pos++;
+
+		if (*pos != '"' && *pos != '\'')
+			continue;
+
+		quote = *pos++;
+		start = pos;
+		end = strchr(pos, quote);
+		if (!end || (end - start) >= (int)sizeof(module_name) - 1)
+			continue;
+
+		len = end - start;
+		memcpy(module_name, start, len);
+		module_name[len] = '\0';
+		pos = end + 1;
+
+		/* Skip standard Lua library modules */
+		if (strcmp(module_name, "string") == 0 ||
+		    strcmp(module_name, "table") == 0 ||
+		    strcmp(module_name, "math") == 0 ||
+		    strcmp(module_name, "io") == 0 ||
+		    strcmp(module_name, "os") == 0 ||
+		    strcmp(module_name, "debug") == 0 ||
+		    strcmp(module_name, "coroutine") == 0 ||
+		    strcmp(module_name, "package") == 0 ||
+		    strcmp(module_name, "utf8") == 0 ||
+		    strcmp(module_name, "bit") == 0 ||
+		    strcmp(module_name, "bit32") == 0 ||
+		    strcmp(module_name, "ffi") == 0 ||
+		    strcmp(module_name, "jit") == 0)
+			continue;
+
+		/* Skip AwesomeWM library modules (they're in system paths) */
+		if (strncmp(module_name, "awful", 5) == 0 ||
+		    strncmp(module_name, "gears", 5) == 0 ||
+		    strncmp(module_name, "wibox", 5) == 0 ||
+		    strncmp(module_name, "naughty", 7) == 0 ||
+		    strncmp(module_name, "beautiful", 9) == 0 ||
+		    strncmp(module_name, "menubar", 7) == 0 ||
+		    strcmp(module_name, "ruled") == 0 ||
+		    strncmp(module_name, "ruled.", 6) == 0)
+			continue;
+
+		/* Convert module.name to module/name */
+		for (char *p = module_name; *p; p++) {
+			if (*p == '.') *p = '/';
+		}
+
+		/* Try module_name.lua */
+		snprintf(resolved_path, sizeof(resolved_path),
+		         "%s/%s.lua", config_dir, module_name);
+		if (access(resolved_path, R_OK) == 0) {
+			check_mode_scan_file(resolved_path, config_dir, depth + 1);
+			continue;
+		}
+
+		/* Try module_name/init.lua */
+		snprintf(resolved_path, sizeof(resolved_path),
+		         "%s/%s/init.lua", config_dir, module_name);
+		if (access(resolved_path, R_OK) == 0)
+			check_mode_scan_file(resolved_path, config_dir, depth + 1);
+	}
+}
+
+/** Check mode: scan a file and store all issues found */
+static void
+check_mode_scan_file(const char *config_path, const char *config_dir, int depth)
+{
+	FILE *fp;
+	char *content = NULL;
+	long file_size;
+	const x11_pattern_t *pattern;
+
+	if (depth >= PRESCAN_MAX_DEPTH)
+		return;
+
+	if (prescan_already_visited(config_path))
+		return;
+	prescan_mark_visited(config_path);
+
+	/* Check Lua syntax first */
+	check_mode_syntax_check(config_path);
+
+	fp = fopen(config_path, "r");
+	if (!fp)
+		return;
+
+	fseek(fp, 0, SEEK_END);
+	file_size = ftell(fp);
+	fseek(fp, 0, SEEK_SET);
+
+	if (file_size <= 0 || file_size > 10 * 1024 * 1024) {
+		fclose(fp);
+		return;
+	}
+
+	content = malloc(file_size + 1);
+	if (!content) {
+		fclose(fp);
+		return;
+	}
+
+	if (fread(content, 1, file_size, fp) != (size_t)file_size) {
+		free(content);
+		fclose(fp);
+		return;
+	}
+	content[file_size] = '\0';
+	fclose(fp);
+
+	/* Scan for all patterns (not just critical) */
+	for (pattern = x11_patterns; pattern->pattern != NULL; pattern++) {
+		char *match_pos = strstr(content, pattern->pattern);
+		if (match_pos) {
+			int line_num = 1;
+			char *line_start;
+			char *newline;
+			int line_len;
+			char line_buf[201];
+
+			/* Calculate line number */
+			for (line_start = content; line_start < match_pos; line_start++) {
+				if (*line_start == '\n')
+					line_num++;
+			}
+
+			/* Find the actual line */
+			line_start = match_pos;
+			while (line_start > content && *(line_start - 1) != '\n')
+				line_start--;
+			newline = strchr(line_start, '\n');
+			line_len = newline ? (int)(newline - line_start) : (int)strlen(line_start);
+			if (line_len > 200) line_len = 200;
+
+			/* Skip commented lines */
+			{
+				const char *p = line_start;
+				while (p < match_pos && (*p == ' ' || *p == '\t'))
+					p++;
+				if (p[0] == '-' && p[1] == '-')
+					continue;
+			}
+
+			memcpy(line_buf, line_start, line_len);
+			line_buf[line_len] = '\0';
+
+			check_mode_add_issue(config_path, line_num, line_buf, pattern);
+		}
+	}
+
+	/* Recursively scan required files */
+	if (config_dir)
+		check_mode_scan_requires(content, config_dir, depth);
+
+	free(content);
+}
+
+/** Public API: Run check mode on a config file
+ * \param config_path Path to the main config file
+ * \param use_color Whether to use ANSI colors in output
+ * \return Exit code (0=ok, 1=warnings, 2=critical)
+ */
+int
+luaA_check_config(const char *config_path, bool use_color)
+{
+	char dir_buf[PATH_MAX];
+	const char *dir = NULL;
+	char *last_slash;
+	int result;
+
+	/* Reset state */
+	check_mode_reset();
+	prescan_cleanup_visited();
+
+	/* Derive config_dir from config_path */
+	strncpy(dir_buf, config_path, sizeof(dir_buf) - 1);
+	dir_buf[sizeof(dir_buf) - 1] = '\0';
+	last_slash = strrchr(dir_buf, '/');
+	if (last_slash) {
+		*last_slash = '\0';
+		dir = dir_buf;
+	}
+
+	/* Scan the config and all its dependencies */
+	check_mode_scan_file(config_path, dir, 0);
+
+	/* Print the report */
+	check_mode_print_report(config_path, use_color);
+
+	/* Capture result before cleanup */
+	if (check_counts[2] > 0)
+		result = 2;  /* Critical issues */
+	else if (check_counts[1] > 0)
+		result = 1;  /* Warnings only */
+	else
+		result = 0;  /* No issues */
+
+	/* Cleanup */
+	check_mode_reset();
+	prescan_cleanup_visited();
+
 	return result;
 }
 
