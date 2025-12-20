@@ -481,6 +481,15 @@ luaA_fixups(lua_State *L)
 static const char *extra_search_paths[MAX_SEARCH_PATHS];
 static int num_extra_search_paths = 0;
 
+/* Custom config file path - set via -c/--config flag */
+static const char *custom_confpath = NULL;
+
+void
+luaA_set_confpath(const char *path)
+{
+	custom_confpath = path;
+}
+
 void
 luaA_add_search_paths(const char **paths, int count)
 {
@@ -2006,41 +2015,47 @@ luaA_loadrc(void)
 		return;
 	}
 
-	/* Build config search path following AwesomeWM pattern:
-	 * 1. $XDG_CONFIG_HOME/somewm/rc.lua or ~/.config/somewm/rc.lua
-	 * 2. ~/.config/awesome/rc.lua (AwesomeWM compatibility)
-	 * 3. SYSCONFDIR/xdg/somewm/rc.lua (installed example)
-	 * 4. DATADIR/somewm/somewmrc.lua (installed fallback)
-	 */
-
-	/* XDG user config - somewm takes priority */
-	xdg_config_home = getenv("XDG_CONFIG_HOME");
-	if (xdg_config_home && xdg_config_home[0] != '\0') {
-		snprintf(xdg_config_path, sizeof(xdg_config_path), "%s/somewm/rc.lua", xdg_config_home);
-		config_paths[path_count++] = xdg_config_path;
+	/* If custom config path was specified via -c flag, use only that */
+	if (custom_confpath) {
+		config_paths[path_count++] = custom_confpath;
+		config_paths[path_count] = NULL;
 	} else {
+		/* Build config search path following AwesomeWM pattern:
+		 * 1. $XDG_CONFIG_HOME/somewm/rc.lua or ~/.config/somewm/rc.lua
+		 * 2. ~/.config/awesome/rc.lua (AwesomeWM compatibility)
+		 * 3. SYSCONFDIR/xdg/somewm/rc.lua (installed example)
+		 * 4. DATADIR/somewm/somewmrc.lua (installed fallback)
+		 */
+
+		/* XDG user config - somewm takes priority */
+		xdg_config_home = getenv("XDG_CONFIG_HOME");
+		if (xdg_config_home && xdg_config_home[0] != '\0') {
+			snprintf(xdg_config_path, sizeof(xdg_config_path), "%s/somewm/rc.lua", xdg_config_home);
+			config_paths[path_count++] = xdg_config_path;
+		} else {
+			home = getenv("HOME");
+			if (home && home[0] != '\0') {
+				snprintf(xdg_config_path, sizeof(xdg_config_path), "%s/.config/somewm/rc.lua", home);
+				config_paths[path_count++] = xdg_config_path;
+			}
+		}
+
+		/* AwesomeWM compatibility - check ~/.config/awesome/rc.lua */
 		home = getenv("HOME");
 		if (home && home[0] != '\0') {
-			snprintf(xdg_config_path, sizeof(xdg_config_path), "%s/.config/somewm/rc.lua", home);
-			config_paths[path_count++] = xdg_config_path;
+			static char awesome_config_path[512];
+			snprintf(awesome_config_path, sizeof(awesome_config_path), "%s/.config/awesome/rc.lua", home);
+			config_paths[path_count++] = awesome_config_path;
 		}
+
+		/* System-wide installed example config (XDG compliant) */
+		config_paths[path_count++] = SYSCONFDIR "/xdg/somewm/rc.lua";
+
+		/* System-wide fallback */
+		config_paths[path_count++] = DATADIR "/somewm/somewmrc.lua";
+
+		config_paths[path_count] = NULL;
 	}
-
-	/* AwesomeWM compatibility - check ~/.config/awesome/rc.lua */
-	home = getenv("HOME");
-	if (home && home[0] != '\0') {
-		static char awesome_config_path[512];
-		snprintf(awesome_config_path, sizeof(awesome_config_path), "%s/.config/awesome/rc.lua", home);
-		config_paths[path_count++] = awesome_config_path;
-	}
-
-	/* System-wide installed example config (XDG compliant) */
-	config_paths[path_count++] = SYSCONFDIR "/xdg/somewm/rc.lua";
-
-	/* System-wide fallback */
-	config_paths[path_count++] = DATADIR "/somewm/somewmrc.lua";
-
-	config_paths[path_count] = NULL;
 
 	/* Set up SIGALRM handler for config loading timeout.
 	 * This allows graceful fallback when configs hang (e.g., blocking io.popen). */

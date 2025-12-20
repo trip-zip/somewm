@@ -5170,6 +5170,7 @@ static int num_search_paths = 0;
 
 /* Declared in luaa.c */
 void luaA_add_search_paths(const char **paths, int count);
+void luaA_set_confpath(const char *path);
 
 /* Get distro name from /etc/os-release */
 static const char *
@@ -5364,14 +5365,18 @@ main(int argc, char *argv[])
 		{"help",    no_argument,       0, 'h'},
 		{"version", no_argument,       0, 'v'},
 		{"debug",   no_argument,       0, 'd'},
+		{"config",  required_argument, 0, 'C'},
 		{"search",  required_argument, 0, 'L'},
 		{"startup", required_argument, 0, 's'},
 		{"check",   required_argument, 0, 'c'},
 		{0, 0, 0, 0}
 	};
 
-	while ((c = getopt_long(argc, argv, "s:L:hdvc:", long_options, NULL)) != -1) {
+	while ((c = getopt_long(argc, argv, "C:s:L:hdvc:", long_options, NULL)) != -1) {
 		switch (c) {
+		case 'C':
+			luaA_set_confpath(optarg);
+			break;
 		case 's':
 			startup_cmd = optarg;
 			break;
@@ -5419,9 +5424,10 @@ main(int argc, char *argv[])
 	return EXIT_SUCCESS;
 
 usage:
-	die("Usage: %s [-v] [-d] [-L search_path] [-s startup_command] [-c config]\n"
+	die("Usage: %s [-v] [-d] [-C config] [-L search_path] [-s startup_command] [-c config]\n"
 	    "  -v, --version      Show version and diagnostic info\n"
 	    "  -d, --debug        Enable debug logging\n"
+	    "  -C, --config FILE  Use specified config file\n"
 	    "  -L, --search DIR   Add directory to Lua module search path\n"
 	    "  -s, --startup CMD  Run command after startup\n"
 	    "  -c, --check CONFIG Check config for Wayland compatibility issues", argv[0]);
