@@ -5,10 +5,13 @@ include config.mk
 -include config.local.mk
 
 # flags for compiling
+WLROOTS_VERSION = $(shell $(PKG_CONFIG) --modversion wlroots-0.19 2>/dev/null || $(PKG_CONFIG) --modversion wlroots 2>/dev/null || echo "unknown")
+
 SOMECPPFLAGS = -I. -DWLR_USE_UNSTABLE -D_POSIX_C_SOURCE=200809L \
 	-DVERSION=\"$(VERSION)\" \
 	-DDATADIR=\"$(DATADIR)\" \
 	-DSYSCONFDIR=\"$(SYSCONFDIR)\" \
+	-DWLROOTS_VERSION=\"$(WLROOTS_VERSION)\" \
 	-DWITH_DBUS \
 	$(XWAYLAND)
 SOMEDEVCFLAGS = -g -O1 -D_FORTIFY_SOURCE=2 -Wpedantic -Wall -Wextra \

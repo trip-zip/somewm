@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: AwesomeWM Documentation
+    url: https://awesomewm.org/doc/api/
+    about: somewm uses the same Lua API as AwesomeWM - check their docs first
+  - name: AwesomeWM Wiki
+    url: https://github.com/awesomeWM/awesome/wiki
+    about: Tips, tricks, and configuration examples that work in somewm too
+  - name: Search Existing Issues
+    url: https://github.com/user/somewm/issues
+    about: Check if your issue has already been reported
