@@ -1,6 +1,7 @@
 #ifndef LUAA_H
 #define LUAA_H
 
+#include <stdbool.h>
 #include <lua.h>
 #include <lualib.h>
 #include <lauxlib.h>
@@ -21,6 +22,9 @@ static inline lua_State *globalconf_get_lua_State(void) {
 void luaA_init(void);
 void luaA_loadrc(void);
 void luaA_cleanup(void);
+
+/* Config scanner (somewm --check) */
+int luaA_check_config(const char *config_path, bool use_color);
 
 /* Note: luaA_checkudata and luaA_toudata are functions declared in common/luaclass.h
  * They use the AwesomeWM lua_class_t system for type-safe userdata access.
