@@ -151,6 +151,8 @@ luaA_registerlib(lua_State *L, const char *libname, const luaL_Reg *l)
 static inline void
 luaA_setfuncs(lua_State *L, const luaL_Reg *l)
 {
+    if (l == NULL)
+        return;
 #if LUA_VERSION_NUM >= 502
     luaL_setfuncs(L, l, 0);
 #else
