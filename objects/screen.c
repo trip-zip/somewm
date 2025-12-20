@@ -2069,8 +2069,25 @@ screen_client_moveto(client_t *c, screen_t *new_screen, bool doresize)
 		return;
 	}
 
-	from = old_screen->geometry;
-	to = c->screen->geometry;
+	/* If new_screen is NULL, skip resize logic - can't position relative to nothing */
+	if (!new_screen) {
+		luaA_object_push(L, c);
+		if (old_screen != NULL)
+			luaA_object_push(L, old_screen);
+		else
+			lua_pushnil(L);
+		luaA_object_emit_signal(L, -2, "property::screen", 1);
+		lua_pop(L, 1);
+		if (had_focus)
+			client_focus(c);
+		return;
+	}
+
+	if (old_screen)
+		from = old_screen->geometry;
+	else
+		from = new_screen->geometry;  /* No old screen, use new screen geometry */
+	to = new_screen->geometry;
 
 	new_geometry = c->geometry;
 

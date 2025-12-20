@@ -2710,7 +2710,7 @@ client_resize_do(client_t *c, area_t geometry)
     fprintf(stderr, "[CLIENT_RESIZE_DO] Called for client %p: geo=(%d,%d %dx%d)\n",
             (void*)c, geometry.x, geometry.y, geometry.width, geometry.height);
 
-    if(!screen_area_in_screen(new_screen, geometry))
+    if(!new_screen || !screen_area_in_screen(new_screen, geometry))
         new_screen = screen_getbycoord(geometry.x, geometry.y);
 
     /* Also store geometry including border */
