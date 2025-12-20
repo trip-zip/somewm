@@ -1882,17 +1882,17 @@ luaA_drawin_class_setup(lua_State *L)
 	                        (lua_class_propfunc_t) luaA_drawin_set_type,
 	                        (lua_class_propfunc_t) luaA_drawin_get_type,
 	                        (lua_class_propfunc_t) luaA_drawin_set_type);
-	luaA_class_add_property(&drawin_class, "opacity",
+	luaA_class_add_property(&drawin_class, "_opacity",
 	                        (lua_class_propfunc_t) luaA_drawin_set_opacity,
 	                        (lua_class_propfunc_t) luaA_drawin_get_opacity,
 	                        (lua_class_propfunc_t) luaA_drawin_set_opacity);
 	/* NOTE: buttons is NOT registered as a property, only as a _buttons method.
 	 * The wibox wrapper handles the buttons accessor via _legacy_accessors */
-	luaA_class_add_property(&drawin_class, "border_width",
+	luaA_class_add_property(&drawin_class, "_border_width",
 	                        (lua_class_propfunc_t) luaA_drawin_set_border_width,
 	                        (lua_class_propfunc_t) luaA_drawin_get_border_width,
 	                        (lua_class_propfunc_t) luaA_drawin_set_border_width);
-	luaA_class_add_property(&drawin_class, "border_color",
+	luaA_class_add_property(&drawin_class, "_border_color",
 	                        (lua_class_propfunc_t) luaA_drawin_set_border_color,
 	                        (lua_class_propfunc_t) luaA_drawin_get_border_color,
 	                        (lua_class_propfunc_t) luaA_drawin_set_border_color);
