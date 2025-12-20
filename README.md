@@ -2,6 +2,14 @@
 
 **somewm** is a Wayland compositor that brings AwesomeWM's Lua API to Wayland, built on [wlroots](https://gitlab.freedesktop.org/wlroots/wlroots). The goal is 100% compatibility with AwesomeWM's Lua configuration.
 
+<p align="center">
+  <img src="screenshots/default.png" alt="Default configuration" width="45%">
+  <img src="screenshots/styled.png" alt="Styled configuration" width="45%">
+</p>
+<p align="center">
+  <em>Default config (left) and a styled config (right)</em>
+</p>
+
 ## Quick Start
 
 ### 1. Install Dependencies
