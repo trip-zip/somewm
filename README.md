@@ -35,8 +35,6 @@ sudo dnf install xorg-x11-server-Xwayland libxcb-devel xcb-util-wm-devel
 
 > **Note:** wlroots 0.18+ is required. Debian stable and Ubuntu 24.04 LTS ship older versions - you'll need to [build wlroots from source](https://gitlab.freedesktop.org/wlroots/wlroots) first.
 
-> **Build checks:** The build process will verify that LGI is correctly installed for your Lua version. If the check fails, you'll see instructions for which package to install.
-
 ### 2. Build and Install
 
 ```bash
@@ -45,6 +43,8 @@ cd somewm
 make
 sudo make install
 ```
+
+The build will verify that LGI is correctly installed for your Lua version. If the check fails, you'll see instructions for which package to install.
 
 For user-local installation (no root required):
 ```bash
@@ -62,13 +62,15 @@ From your display manager, select "somewm" as your session.
 
 Or from a TTY:
 ```bash
-somewm
+dbus-run-session somewm
 ```
 
 With a startup command:
 ```bash
-somewm -s 'alacritty'
+dbus-run-session somewm -s 'alacritty'
 ```
+
+> **Note:** `dbus-run-session` ensures DBus services (notifications, media keys, etc.) work correctly. If you're already in a DBus session, you can run `somewm` directly.
 
 ## Configuration
 
