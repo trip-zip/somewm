@@ -5161,21 +5161,50 @@ xwaylandready(struct wl_listener *listener, void *data)
 }
 #endif
 
+/* Search paths for Lua modules - set via -L/--search flag */
+#define MAX_SEARCH_PATHS 16
+static const char *search_paths[MAX_SEARCH_PATHS];
+static int num_search_paths = 0;
+
+/* Declared in luaa.c */
+void luaA_add_search_paths(const char **paths, int count);
+
 int
 main(int argc, char *argv[])
 {
 	char *startup_cmd = NULL;
 	int c;
 
-	while ((c = getopt(argc, argv, "s:hdv")) != -1) {
-		if (c == 's')
+	static struct option long_options[] = {
+		{"help",    no_argument,       0, 'h'},
+		{"version", no_argument,       0, 'v'},
+		{"debug",   no_argument,       0, 'd'},
+		{"search",  required_argument, 0, 'L'},
+		{"startup", required_argument, 0, 's'},
+		{0, 0, 0, 0}
+	};
+
+	while ((c = getopt_long(argc, argv, "s:L:hdv", long_options, NULL)) != -1) {
+		switch (c) {
+		case 's':
 			startup_cmd = optarg;
-		else if (c == 'd')
+			break;
+		case 'L':
+			if (num_search_paths < MAX_SEARCH_PATHS) {
+				search_paths[num_search_paths++] = optarg;
+			} else {
+				fprintf(stderr, "Warning: too many search paths, ignoring %s\n", optarg);
+			}
+			break;
+		case 'd':
 			globalconf.log_level = 3;  /* WLR_DEBUG */
-		else if (c == 'v')
+			break;
+		case 'v':
 			die("somewm " VERSION);
-		else
+			break;
+		default:
 			goto usage;
+		}
 	}
 	if (optind < argc)
 		goto usage;
@@ -5184,11 +5213,19 @@ main(int argc, char *argv[])
 	if (!getenv("XDG_RUNTIME_DIR"))
 		die("XDG_RUNTIME_DIR must be set");
 
+	/* Pass search paths to Lua init */
+	if (num_search_paths > 0)
+		luaA_add_search_paths(search_paths, num_search_paths);
+
 	setup();
 	run(startup_cmd);
 	cleanup();
 	return EXIT_SUCCESS;
 
 usage:
-	die("Usage: %s [-v] [-d] [-s startup command]", argv[0]);
+	die("Usage: %s [-v] [-d] [-L search_path] [-s startup_command]\n"
+	    "  -v, --version    Show version and exit\n"
+	    "  -d, --debug      Enable debug logging\n"
+	    "  -L, --search DIR Add directory to Lua module search path\n"
+	    "  -s, --startup CMD Run command after startup", argv[0]);
 }

@@ -1,6 +1,6 @@
 [Desktop Entry]
 Name=somewm
-Comment=AwesomeWM-inspired Wayland compositor based on dwl
+Comment=AwesomeWM-compatible Wayland compositor
 Exec=somewm
 TryExec=somewm
 Type=Application

@@ -459,6 +459,19 @@ luaA_fixups(lua_State *L)
 	}
 }
 
+/* Search paths added via command line -L/--search */
+#define MAX_SEARCH_PATHS 16
+static const char *extra_search_paths[MAX_SEARCH_PATHS];
+static int num_extra_search_paths = 0;
+
+void
+luaA_add_search_paths(const char **paths, int count)
+{
+	for (int i = 0; i < count && num_extra_search_paths < MAX_SEARCH_PATHS; i++) {
+		extra_search_paths[num_extra_search_paths++] = paths[i];
+	}
+}
+
 void
 luaA_init(void)
 {
@@ -503,6 +516,44 @@ luaA_init(void)
 		DATADIR "/somewm/lua/lib/?.lua;" DATADIR "/somewm/lua/lib/?/init.lua;%s",
 		cur_path);
 	lua_setfield(globalconf_L, -2, "path");
+
+	/* Also set up package.cpath for C modules like lgi */
+	lua_getfield(globalconf_L, -1, "cpath");
+	cur_path = lua_tostring(globalconf_L, -1);
+	lua_pop(globalconf_L, 1);
+
+	/* Prepend C module paths: development paths first, then system-wide paths */
+	lua_pushfstring(globalconf_L,
+		"./lua/?.so;./lua/lib/?.so;"
+		DATADIR "/somewm/lua/?.so;" DATADIR "/somewm/lua/lib/?.so;%s",
+		cur_path);
+	lua_setfield(globalconf_L, -2, "cpath");
+
+	/* Add extra search paths from -L/--search command line options */
+	if (num_extra_search_paths > 0) {
+		for (int i = 0; i < num_extra_search_paths; i++) {
+			const char *dir = extra_search_paths[i];
+
+			/* Add to package.path */
+			lua_getfield(globalconf_L, -1, "path");
+			cur_path = lua_tostring(globalconf_L, -1);
+			lua_pop(globalconf_L, 1);
+			lua_pushfstring(globalconf_L, "%s/?.lua;%s/?/init.lua;%s",
+				dir, dir, cur_path);
+			lua_setfield(globalconf_L, -2, "path");
+
+			/* Add to package.cpath */
+			lua_getfield(globalconf_L, -1, "cpath");
+			cur_path = lua_tostring(globalconf_L, -1);
+			lua_pop(globalconf_L, 1);
+			lua_pushfstring(globalconf_L, "%s/?.so;%s",
+				dir, cur_path);
+			lua_setfield(globalconf_L, -2, "cpath");
+
+			printf("somewm: added search path: %s\n", dir);
+		}
+	}
+
 	lua_pop(globalconf_L, 1);  /* pop package table */
 
 	/* Add user library directory (~/.local/share/somewm) to package.path
