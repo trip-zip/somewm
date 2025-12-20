@@ -154,12 +154,14 @@ somewm is in active development. Most AwesomeWM functionality works, but some fe
 **Not Implemented:**
 - Systray (system tray icons)
 - `root.fake_input()` - Virtual input injection
-- X property APIs (`awesome.register_xproperty()`, etc.)
+- `root.cursor()` - Cursor theme changing
+- X property APIs (`awesome.register_xproperty()`, etc.) - Not needed on Wayland
+- Keybinding removal (`root.keys({})` to clear bindings)
 - WM restart (Wayland architecture differs from X11)
 
 **Partially Implemented:**
 - Strut aggregation (single panel works, multiple panels may not)
-- Keyboard layout detection (returns hardcoded value)
+- XKB toggle options (`grp:alt_shift_toggle`, etc.) don't trigger layout changes via key presses. Workaround: use keybindings that call `awesome.xkb_set_layout_group()`
 - Scroll wheel bindings on root/clients
 
 See the full list in the source code or open an issue if you encounter something that doesn't work.
