@@ -1344,6 +1344,162 @@ check_mode_add_syntax_error(const char *file_path, const char *error_msg)
 	check_counts[SEVERITY_CRITICAL]++;
 }
 
+/** Store a missing module error found during check mode */
+static void
+check_mode_add_missing_module(const char *source_file, const char *module_name,
+                              const char *tried_path1, const char *tried_path2)
+{
+	check_issue_t *issue;
+	char desc[512];
+
+	if (check_issue_count >= CHECK_MAX_ISSUES)
+		return;
+
+	snprintf(desc, sizeof(desc), "require('%s') - module not found", module_name);
+
+	issue = &check_issues[check_issue_count++];
+	issue->file_path = strdup(source_file);
+	issue->line_number = 0;
+	issue->line_content = strdup("");
+	issue->pattern_desc = strdup(desc);
+	issue->suggestion = "Check module path or install missing dependency";
+	issue->severity = SEVERITY_WARNING;
+	issue->is_syntax_error = true;  /* pattern_desc is dynamically allocated */
+
+	check_counts[SEVERITY_WARNING]++;
+}
+
+/* Track if luacheck is available (checked once) */
+static int luacheck_available = -1;  /* -1 = unchecked, 0 = no, 1 = yes */
+
+/** Check if luacheck is installed */
+static bool
+check_luacheck_available(void)
+{
+	if (luacheck_available < 0) {
+		/* Check if luacheck exists in PATH */
+		int ret = system("command -v luacheck >/dev/null 2>&1");
+		luacheck_available = (ret == 0) ? 1 : 0;
+	}
+	return luacheck_available == 1;
+}
+
+/** Store a luacheck issue */
+static void
+check_mode_add_luacheck_issue(const char *file_path, int line_num,
+                              const char *code, const char *message,
+                              x11_severity_t severity)
+{
+	check_issue_t *issue;
+	char desc[512];
+
+	if (check_issue_count >= CHECK_MAX_ISSUES)
+		return;
+
+	snprintf(desc, sizeof(desc), "[%s] %s", code, message);
+
+	issue = &check_issues[check_issue_count++];
+	issue->file_path = strdup(file_path);
+	issue->line_number = line_num;
+	issue->line_content = strdup("");
+	issue->pattern_desc = strdup(desc);
+	issue->suggestion = "See luacheck documentation for details";
+	issue->severity = severity;
+	issue->is_syntax_error = true;  /* pattern_desc is dynamically allocated */
+
+	check_counts[severity]++;
+}
+
+/** Run luacheck on a file and collect issues
+ * \param file_path Path to the Lua file to check
+ * \return Number of issues found, or -1 if luacheck not available
+ */
+static int
+check_mode_run_luacheck(const char *file_path)
+{
+	char cmd[PATH_MAX + 256];
+	FILE *pipe;
+	char line[1024];
+	int issues_found = 0;
+
+	if (!check_luacheck_available())
+		return -1;
+
+	/* Run luacheck with parseable output format
+	 * File path must come first, then options
+	 * --std luajit: use LuaJIT standard
+	 * --no-color: plain text output
+	 * --codes: include warning codes
+	 * --quiet: don't print summary line
+	 * --allow-defined-top: allow globals defined at top level (normal for rc.lua)
+	 * --globals: AwesomeWM global objects
+	 */
+	snprintf(cmd, sizeof(cmd),
+	         "luacheck '%s' --std luajit --no-color --codes --quiet "
+	         "--allow-defined-top "
+	         "--globals awesome client screen tag mouse root "
+	         "beautiful awful gears wibox naughty menubar ruled "
+	         "2>&1", file_path);
+
+	pipe = popen(cmd, "r");
+	if (!pipe)
+		return -1;
+
+	/* Parse luacheck output: "filename:line:col: (Wcode) message" */
+	while (fgets(line, sizeof(line), pipe)) {
+		char *colon1, *colon2, *colon3, *paren_open, *paren_close;
+		char *nl;
+		int line_num = 0;
+		char code[16] = "";
+		char *message;
+		x11_severity_t severity = SEVERITY_WARNING;
+
+		/* Skip lines that don't match the pattern */
+		colon1 = strchr(line, ':');
+		if (!colon1) continue;
+		colon2 = strchr(colon1 + 1, ':');
+		if (!colon2) continue;
+		colon3 = strchr(colon2 + 1, ':');
+		if (!colon3) continue;
+
+		/* Extract line number */
+		line_num = atoi(colon1 + 1);
+
+		/* Find the code in parentheses */
+		paren_open = strchr(colon3, '(');
+		paren_close = paren_open ? strchr(paren_open, ')') : NULL;
+		if (paren_open && paren_close) {
+			size_t code_len = paren_close - paren_open - 1;
+			if (code_len < sizeof(code)) {
+				memcpy(code, paren_open + 1, code_len);
+				code[code_len] = '\0';
+			}
+			message = paren_close + 2;  /* Skip ") " */
+		} else {
+			message = colon3 + 2;
+		}
+
+		/* Remove trailing newline */
+		nl = strchr(message, '\n');
+		if (nl) *nl = '\0';
+
+		/* Determine severity based on code
+		 * E = error (syntax errors, etc.)
+		 * W = warning
+		 */
+		if (code[0] == 'E')
+			severity = SEVERITY_CRITICAL;
+		else
+			severity = SEVERITY_WARNING;
+
+		check_mode_add_luacheck_issue(file_path, line_num, code, message, severity);
+		issues_found++;
+	}
+
+	pclose(pipe);
+	return issues_found;
+}
+
 /** Check Lua syntax of a file using luaL_loadfile
  * Creates a temporary Lua state just for parsing.
  * \param file_path Path to the Lua file to check
@@ -1483,11 +1639,14 @@ check_mode_scan_file(const char *config_path, const char *config_dir, int depth)
 
 /** Scan requires in check mode */
 static void
-check_mode_scan_requires(const char *content, const char *config_dir, int depth)
+check_mode_scan_requires(const char *content, const char *config_dir,
+                         const char *source_file, int depth)
 {
 	const char *pos = content;
 	char module_name[256];
+	char module_path[256];
 	char resolved_path[PATH_MAX];
+	char resolved_path2[PATH_MAX];
 
 	if (depth >= PRESCAN_MAX_DEPTH || !config_dir)
 		return;
@@ -1497,6 +1656,12 @@ check_mode_scan_requires(const char *content, const char *config_dir, int depth)
 		const char *end;
 		char quote;
 		size_t len;
+
+		/* Skip lgi.require, some_module.require, etc. */
+		if (pos > content && *(pos - 1) == '.') {
+			pos += 7;
+			continue;
+		}
 
 		pos += 7;
 
@@ -1544,6 +1709,40 @@ check_mode_scan_requires(const char *content, const char *config_dir, int depth)
 		    strncmp(module_name, "ruled.", 6) == 0)
 			continue;
 
+		/* Skip common third-party modules (installed separately) */
+		if (strcmp(module_name, "lgi") == 0 ||
+		    strncmp(module_name, "lgi.", 4) == 0 ||
+		    strcmp(module_name, "lain") == 0 ||
+		    strncmp(module_name, "lain.", 5) == 0 ||
+		    strcmp(module_name, "freedesktop") == 0 ||
+		    strncmp(module_name, "freedesktop.", 12) == 0 ||
+		    strcmp(module_name, "vicious") == 0 ||
+		    strncmp(module_name, "vicious.", 8) == 0 ||
+		    strcmp(module_name, "revelation") == 0 ||
+		    strcmp(module_name, "collision") == 0 ||
+		    strcmp(module_name, "tyrannical") == 0 ||
+		    strcmp(module_name, "cyclefocus") == 0 ||
+		    strcmp(module_name, "radical") == 0 ||
+		    strcmp(module_name, "cairo") == 0 ||
+		    strcmp(module_name, "posix") == 0 ||
+		    strncmp(module_name, "posix.", 6) == 0 ||
+		    strcmp(module_name, "cjson") == 0 ||
+		    strcmp(module_name, "dkjson") == 0 ||
+		    strcmp(module_name, "json") == 0 ||
+		    strcmp(module_name, "socket") == 0 ||
+		    strncmp(module_name, "socket.", 7) == 0 ||
+		    strcmp(module_name, "http") == 0 ||
+		    strncmp(module_name, "pl.", 3) == 0 ||
+		    strcmp(module_name, "penlight") == 0 ||
+		    strcmp(module_name, "inspect") == 0 ||
+		    strcmp(module_name, "luassert") == 0 ||
+		    strcmp(module_name, "busted") == 0)
+			continue;
+
+		/* Save original module name for error reporting */
+		strncpy(module_path, module_name, sizeof(module_path) - 1);
+		module_path[sizeof(module_path) - 1] = '\0';
+
 		/* Convert module.name to module/name */
 		for (char *p = module_name; *p; p++) {
 			if (*p == '.') *p = '/';
@@ -1558,10 +1757,16 @@ check_mode_scan_requires(const char *content, const char *config_dir, int depth)
 		}
 
 		/* Try module_name/init.lua */
-		snprintf(resolved_path, sizeof(resolved_path),
+		snprintf(resolved_path2, sizeof(resolved_path2),
 		         "%s/%s/init.lua", config_dir, module_name);
-		if (access(resolved_path, R_OK) == 0)
-			check_mode_scan_file(resolved_path, config_dir, depth + 1);
+		if (access(resolved_path2, R_OK) == 0) {
+			check_mode_scan_file(resolved_path2, config_dir, depth + 1);
+			continue;
+		}
+
+		/* Module not found - report it */
+		check_mode_add_missing_module(source_file, module_path,
+		                              resolved_path, resolved_path2);
 	}
 }
 
@@ -1653,7 +1858,7 @@ check_mode_scan_file(const char *config_path, const char *config_dir, int depth)
 
 	/* Recursively scan required files */
 	if (config_dir)
-		check_mode_scan_requires(content, config_dir, depth);
+		check_mode_scan_requires(content, config_dir, config_path, depth);
 
 	free(content);
 }
@@ -1686,6 +1891,9 @@ luaA_check_config(const char *config_path, bool use_color)
 
 	/* Scan the config and all its dependencies */
 	check_mode_scan_file(config_path, dir, 0);
+
+	/* Run luacheck if available (gracefully skips if not installed) */
+	check_mode_run_luacheck(config_path);
 
 	/* Print the report */
 	check_mode_print_report(config_path, use_color);
