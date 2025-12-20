@@ -2633,10 +2633,23 @@ mapnotify(struct wl_listener *listener, void *data)
 	 * we set the same tags and monitor as its parent.
 	 * If there is no parent, apply rules */
 	if ((p = client_get_parent(c))) {
+		/* Wayland transient windows should be treated as dialogs.
+		 * XDG shell doesn't have explicit window type hints like X11's _NET_WM_WINDOW_TYPE,
+		 * so we infer dialog type from the transient_for relationship.
+		 * This makes Lua's update_implicitly_floating() detect them as floating,
+		 * allowing user placement code in request::manage to work correctly. */
+		c->type = WINDOW_TYPE_DIALOG;
+
+		/* Set transient_for so Lua code can access c.transient_for property.
+		 * This is needed for placement rules like awful.placement.centered(c, {parent = c.transient_for}) */
+		L = globalconf_get_lua_State();
+		luaA_object_push(L, c);
+		client_set_transient_for(L, -1, p);
+		lua_pop(L, 1);
+
 		/* Copy tags from parent client (array-based)
 		 * Note: Floating is managed by Lua property system now.
 		 * Transient/dialog windows are detected via update_implicitly_floating() */
-		L = globalconf_get_lua_State();
 
 		/* Tag child with all tags that parent is tagged with */
 		for (i = 0; i < globalconf.tags.len; i++) {
@@ -2651,6 +2664,27 @@ mapnotify(struct wl_listener *listener, void *data)
 
 		/* Set monitor (setmon will handle resize, arrange, etc.) */
 		setmon(c, p->mon, 0);
+
+		/* Emit property and manage signals for transient clients too.
+		 * This is needed for Lua rules and placement code to work. */
+		luaA_object_push(L, c);
+		luaA_object_emit_signal(L, -1, "property::x", 0);
+		luaA_object_emit_signal(L, -1, "property::y", 0);
+		luaA_object_emit_signal(L, -1, "property::width", 0);
+		luaA_object_emit_signal(L, -1, "property::height", 0);
+		luaA_object_emit_signal(L, -1, "property::geometry", 0);
+		luaA_object_emit_signal(L, -1, "property::type", 0);
+
+		lua_pushstring(L, "new");
+		lua_newtable(L);
+		luaA_object_emit_signal(L, -3, "request::manage", 2);
+		luaA_object_emit_signal(L, -1, "manage", 0);
+		lua_pop(L, 1);
+
+		/* Enable scene node for transient client */
+		if (client_on_selected_tags(c)) {
+			wlr_scene_node_set_enabled(&c->scene->node, true);
+		}
 	} else {
 		Monitor *target_mon;
 		screen_t *target_screen;
@@ -2731,10 +2765,15 @@ mapnotify(struct wl_listener *listener, void *data)
 		/* Pop client from Lua stack */
 		lua_pop(L, 1);
 
-		/* Arrange the monitor to position the newly mapped client.
-		 * setmon() was called above, which only arranges if the monitor changed.
-		 * New clients need an initial layout even if they're already on the right monitor. */
-		arrange(target_mon);
+		/* Enable scene node for new client if on selected tags (Wayland-specific).
+		 * Unlike AwesomeWM, we don't call arrange() here - that's triggered by Lua signals.
+		 * We only need to make the client visible in the scene graph.
+		 * AwesomeWM's client_manage() (objects/client.c:2278-2294) does NOT call arrange()
+		 * after request::manage - layout is handled by the Lua signal system.
+		 * Calling arrange() here would overwrite geometry set by Lua placement code. */
+		if (client_on_selected_tags(c)) {
+			wlr_scene_node_set_enabled(&c->scene->node, true);
+		}
 	}
 	printstatus();
 
