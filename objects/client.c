@@ -3728,33 +3728,42 @@ static area_t
 titlebar_get_area(client_t *c, client_titlebar_t bar)
 {
     area_t result = c->geometry;
-    result.x = result.y = 0;
+    int bw = c->bw;
 
-    // Let's try some ascii art:
-    // ---------------------------
-    // |         Top             |
-    // |-------------------------|
-    // |L|                     |R|
-    // |e|                     |i|
-    // |f|                     |g|
-    // |t|                     |h|
-    // | |                     |t|
-    // |-------------------------|
-    // |        Bottom           |
-    // ---------------------------
+    /* Wayland deviation: titlebars must be inset by border_width.
+     * In X11, borders are drawn OUTSIDE the frame by the X server.
+     * In Wayland, we draw borders as scene rects at geometry edges,
+     * so titlebars must start INSIDE the border area. */
+    result.x = bw;
+    result.y = bw;
+    result.width -= 2 * bw;
+    result.height -= 2 * bw;
+
+    // Let's try some ascii art (with borders):
+    // +---------------------------+  <- border
+    // |B|       Top             |B|
+    // |O|-----------------------|O|
+    // |R|L|                   |R|R|
+    // |D|e|                   |i|D|
+    // |E|f|                   |g|E|
+    // |R|t|                   |h|R|
+    // | | |                   |t| |
+    // |B|-----------------------|B|
+    // |O|      Bottom           |O|
+    // +---------------------------+  <- border
 
     switch (bar) {
     case CLIENT_TITLEBAR_BOTTOM:
-        result.y = c->geometry.height - c->titlebar[bar].size;
+        result.y = c->geometry.height - bw - c->titlebar[bar].size;
         /* Fall through */
     case CLIENT_TITLEBAR_TOP:
         result.height = c->titlebar[bar].size;
         break;
     case CLIENT_TITLEBAR_RIGHT:
-        result.x = c->geometry.width - c->titlebar[bar].size;
+        result.x = c->geometry.width - bw - c->titlebar[bar].size;
         /* Fall through */
     case CLIENT_TITLEBAR_LEFT:
-        result.y = c->titlebar[CLIENT_TITLEBAR_TOP].size;
+        result.y = bw + c->titlebar[CLIENT_TITLEBAR_TOP].size;
         result.width = c->titlebar[bar].size;
         result.height -= c->titlebar[CLIENT_TITLEBAR_TOP].size;
         result.height -= c->titlebar[CLIENT_TITLEBAR_BOTTOM].size;
