@@ -397,6 +397,72 @@ some_get_seat(void)
 	return seat;
 }
 
+/** Update Wayland seat keyboard focus to match the given client.
+ * This is the centralized seat focus update function called by client_focus().
+ * It ensures seat keyboard focus stays synchronized with Awesome's client.focus.
+ *
+ * Guards against redundant updates to avoid unnecessary Wayland protocol traffic
+ * and potential focus loops.
+ *
+ * \param c The client to give seat keyboard focus (or NULL to clear focus)
+ */
+void
+some_set_seat_keyboard_focus(Client *c)
+{
+	struct wlr_surface *surface;
+	struct wlr_keyboard *kb;
+
+	if (!c) {
+		/* NULL client = clear focus (handled in client_focus_refresh) */
+		return;
+	}
+
+	/* Get the client's surface */
+	surface = some_client_get_surface(c);
+	if (!surface || !surface->mapped) {
+		/* Surface not ready - skip seat focus update */
+		return;
+	}
+
+	/* Only update if seat focus actually changed (avoid redundant updates) */
+	if (seat->keyboard_state.focused_surface == surface) {
+		return;
+	}
+
+	/* Update seat keyboard focus */
+	kb = wlr_seat_get_keyboard(seat);
+	if (kb) {
+		wlr_seat_keyboard_notify_enter(seat, surface,
+		                               kb->keycodes,
+		                               kb->num_keycodes,
+		                               &kb->modifiers);
+	}
+}
+
+/** Find the Client* that owns a given wlr_surface.
+ * Used to map from Wayland seat keyboard focus to Awesome client object.
+ *
+ * \param surface The wlr_surface to look up
+ * \return The Client* owning the surface, or NULL if not found
+ */
+Client *
+some_client_from_surface(struct wlr_surface *surface)
+{
+	if (!surface) {
+		return NULL;
+	}
+
+	/* Search through all clients to find one whose surface matches.
+	 * The foreach() macro declares elem internally. */
+	foreach(elem, globalconf.clients) {
+		if (client_surface(*elem) == surface) {
+			return *elem;
+		}
+	}
+
+	return NULL;
+}
+
 struct wlr_cursor *
 some_get_cursor(void)
 {

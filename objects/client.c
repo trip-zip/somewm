@@ -1985,23 +1985,26 @@ client_restore_enterleave_events(void)
     sequence_pair_array_append(&globalconf.ignore_enter_leave_events, pair);
 }
 
-/** Record that a client got focus.
- * \param c The client.
- * \return true if the client focus changed, false otherwise.
+/** Update Awesome's internal focus state WITHOUT changing Wayland seat focus.
+ * This is the "raw" focus update used during geometry operations, placement,
+ * and other internal operations where we don't want to trigger compositor-level
+ * focus changes that could cause re-entrancy issues.
+ * 
+ * For user-initiated focus changes (mouse enter, clicks, keybindings), use
+ * client_focus() instead, which updates both Awesome state AND seat focus.
+ * 
+ * \param c The client to focus (internal state only)
+ * \return true if focus changed, false if already focused
  */
 bool
-client_focus_update(client_t *c)
+client_focus_raw(client_t *c)
 {
     lua_State *L = globalconf_get_lua_State();
     bool focused_new;
 
     if(globalconf.focus.client && globalconf.focus.client != c)
     {
-        /* When we are called due to a FocusIn event (=old focused client
-         * already unfocused), we don't want to cause a SetInputFocus,
-         * because the client which has focus now could be using globally
-         * active input model (or 'no input').
-         */
+        /* Unfocus old client (borders, signals, etc.) */
         client_unfocus_internal(globalconf.focus.client);
     }
 
@@ -2024,36 +2027,38 @@ client_focus_update(client_t *c)
     return focused_new;
 }
 
+/** Record that a client got focus.
+ * \param c The client.
+ * \return true if the client focus changed, false otherwise.
+ */
+bool
+client_focus_update(client_t *c)
+{
+    /* client_focus_update is now an alias for client_focus_raw
+     * for API compatibility. New code should use client_focus_raw directly. */
+    return client_focus_raw(c);
+}
+
 /** Give focus to client, or to first client if client is NULL.
  * \param c The client.
  */
 void
 client_focus(client_t *c)
 {
-    struct wlr_surface *surface;
-    struct wlr_seat *seat;
-    struct wlr_keyboard *kb;
+    extern void some_set_seat_keyboard_focus(client_t *c);
 
     /* We have to set focus on first client */
     if(!c && globalconf.clients.len && !(c = globalconf.clients.tab[0]))
         return;
 
-    if(client_focus_update(c)) {
+    /* Update Awesome's internal focus state first */
+    if(client_focus_raw(c)) {
         globalconf.focus.need_update = true;
 
-        /* Apply Wayland keyboard focus immediately while surface is valid.
-         * awful.client.focus.byidx()) also update the Wayland seat. */
-        surface = some_client_get_surface(c);
-        if (surface && surface->mapped) {
-            seat = some_get_seat();
-            kb = wlr_seat_get_keyboard(seat);
-            if (kb) {
-                wlr_seat_keyboard_notify_enter(seat, surface,
-                                               kb->keycodes,
-                                               kb->num_keycodes,
-                                               &kb->modifiers);
-            }
-        }
+        /* Now update Wayland seat keyboard focus via compositor API.
+         * This is separated from the internal state update to allow
+         * geometry operations to use client_focus_raw() without affecting seat. */
+        some_set_seat_keyboard_focus(c);
     }
 }
 
