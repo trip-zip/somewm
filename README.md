@@ -105,6 +105,43 @@ Your existing AwesomeWM config should work with minimal changes. somewm will aut
 
 If your config is skipped, somewm will show a notification explaining which X11 pattern was detected and suggest alternatives.
 
+### Config Compatibility Check
+
+Before migrating, you can scan your config for potential issues without starting the compositor:
+
+```bash
+somewm --check ~/.config/awesome/rc.lua
+```
+
+The scanner checks for:
+- **Lua syntax errors** - Caught before execution
+- **X11-specific APIs** - Functions like `awesome.get_xproperty()` that don't exist on Wayland
+- **Blocking X11 tools** - Calls to `xrandr`, `xdotool`, `xprop` via `io.popen()` that would hang
+- **Missing local modules** - `require()` statements for files that can't be found
+- **Luacheck issues** - Code quality warnings (if luacheck is installed)
+
+Issues are categorized by severity:
+- **CRITICAL** - Will fail or hang on Wayland (must fix)
+- **WARNING** - Needs a Wayland alternative
+- **INFO** - May not work but won't break config
+
+Example output:
+```
+somewm config compatibility report
+====================================
+Config: /home/user/.config/awesome/rc.lua
+
+X CRITICAL:
+  rc.lua:45 - io.popen with xrandr (blocks)
+    → Use screen:geometry() or screen.outputs instead
+
+! WARNING:
+  rc.lua:112 - maim screenshot tool
+    → Use awful.screenshot or grim instead
+
+Summary: 1 critical, 1 warning
+```
+
 ## Troubleshooting
 
 ### "No config found" error
