@@ -48,6 +48,10 @@ int some_client_get_below(Client *c);
 window_type_t some_client_get_window_type(Client *c);
 Client *some_client_get_transient_for(Client *c);
 
+/* Focus synchronization API - internal use */
+void some_set_seat_keyboard_focus(Client *c);
+Client *some_client_from_surface(struct wlr_surface *surface);
+
 /* Window state properties */
 void some_client_set_sticky(Client *c, int sticky);
 void some_client_set_minimized(Client *c, int minimized);
