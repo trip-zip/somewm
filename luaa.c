@@ -1250,22 +1250,26 @@ luaA_loadrc(void)
 			const char *err = lua_tostring(globalconf_L, -1);
 			char enhanced_err[2048];
 
+			/* Check if this is just "file not found" - that's expected in fallback chain,
+			 * not an error worth notifying about. Only real errors (syntax, etc.) should
+			 * trigger notifications. */
+			int is_file_not_found = (strstr(err, "cannot open") != NULL ||
+			                         strstr(err, "No such file") != NULL);
+
 			/* Check for Lua 5.3/5.4 syntax and provide helpful message */
 			if (luaA_enhance_lua_compat_error(err, enhanced_err, sizeof(enhanced_err))) {
 				luaA_startup_error(enhanced_err);
-				if (i == 0) {
-					fprintf(stderr, "somewm: error loading %s:\n%s\n",
-						config_paths[i], enhanced_err);
-					fprintf(stderr, "somewm: trying alternate configs...\n");
-				}
-			} else {
+				fprintf(stderr, "somewm: error loading %s:\n%s\n",
+					config_paths[i], enhanced_err);
+				fprintf(stderr, "somewm: trying alternate configs...\n");
+			} else if (!is_file_not_found) {
+				/* Real error (syntax error, etc.) - notify user */
 				luaA_startup_error(err);
-				if (i == 0) {
-					fprintf(stderr, "somewm: error loading %s: %s\n",
-						config_paths[i], err);
-					fprintf(stderr, "somewm: trying alternate configs...\n");
-				}
+				fprintf(stderr, "somewm: error loading %s: %s\n",
+					config_paths[i], err);
+				fprintf(stderr, "somewm: trying alternate configs...\n");
 			}
+			/* For file-not-found, silently try next config */
 			lua_pop(globalconf_L, 1);
 			continue;
 		}
