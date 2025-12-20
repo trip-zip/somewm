@@ -1,5 +1,6 @@
 somewm
 somewm-client
+lgi-check
 *.o
 *-protocol.c
 *-protocol.h
