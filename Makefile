@@ -40,7 +40,17 @@ LUAOBJS = luaa.o root.o mouse.o spawn.o keygrabber.o mousegrabber.o selection.o 
           objects/ipc.o objects/selection_getter.o objects/selection_acquire.o \
           objects/selection_transfer.o objects/selection_watcher.o
 
-all: somewm somewm-client
+all: check-lgi somewm somewm-client
+
+# Build-time LGI check - verifies lgi is installed for the detected Lua version
+lgi-check: lgi-check.c
+	$(CC) $(LUA_CFLAGS) -o $@ $< $(LUA_LIBS)
+
+check-lgi: lgi-check
+	@./lgi-check || exit 1
+
+.PHONY: check-lgi
+
 somewm: somewm.o somewm_api.o util.o ipc.o color.o draw.o stack.o banning.o ewmh.o window.o event.o strut.o property.o dbus.o $(COMMONOBJS) $(LUAOBJS)
 	$(CC) somewm.o somewm_api.o util.o ipc.o color.o draw.o stack.o banning.o ewmh.o window.o event.o strut.o property.o dbus.o $(COMMONOBJS) $(LUAOBJS) $(SOMECFLAGS) $(LDFLAGS) $(LDLIBS) -o $@
 somewm-client: somewm-client.o
@@ -124,7 +134,7 @@ xdg-shell-protocol.h:
 		$(WAYLAND_PROTOCOLS)/stable/xdg-shell/xdg-shell.xml $@
 
 clean:
-	rm -f somewm somewm-client *.o common/*.o objects/*.o *-protocol.h
+	rm -f somewm somewm-client lgi-check *.o common/*.o objects/*.o *-protocol.h
 
 dist: clean
 	mkdir -p somewm-$(VERSION)
@@ -160,6 +170,12 @@ install: somewm somewm-client
 	cp -r themes/* $(DESTDIR)$(DATADIR)/somewm/themes/
 	find $(DESTDIR)$(DATADIR)/somewm/themes -type d -exec chmod 755 {} \;
 	find $(DESTDIR)$(DATADIR)/somewm/themes -type f -exec chmod 644 {} \;
+	mkdir -p $(DESTDIR)$(DATADIR)/somewm/icons
+	cp -r icons/* $(DESTDIR)$(DATADIR)/somewm/icons/
+	find $(DESTDIR)$(DATADIR)/somewm/icons -type f -exec chmod 644 {} \;
+	mkdir -p $(DESTDIR)$(SYSCONFDIR)/xdg/somewm
+	cp -f somewmrc.lua $(DESTDIR)$(SYSCONFDIR)/xdg/somewm/rc.lua
+	chmod 644 $(DESTDIR)$(SYSCONFDIR)/xdg/somewm/rc.lua
 
 install-local:
 	$(MAKE) clean
@@ -174,10 +190,13 @@ uninstall:
 	rm -f $(DESTDIR)$(PREFIX)/bin/somewm $(DESTDIR)$(PREFIX)/bin/somewm-client \
 		$(DESTDIR)$(MANDIR)/man1/somewm.1 \
 		$(DESTDIR)$(DATADIR)/wayland-sessions/somewm.desktop \
-		$(DESTDIR)$(DATADIR)/somewm/somewmrc.lua
+		$(DESTDIR)$(DATADIR)/somewm/somewmrc.lua \
+		$(DESTDIR)$(SYSCONFDIR)/xdg/somewm/rc.lua
 	rm -rf $(DESTDIR)$(DATADIR)/somewm/lua
 	rm -rf $(DESTDIR)$(DATADIR)/somewm/themes
+	rm -rf $(DESTDIR)$(DATADIR)/somewm/icons
 	rmdir $(DESTDIR)$(DATADIR)/somewm 2>/dev/null || true
+	rmdir $(DESTDIR)$(SYSCONFDIR)/xdg/somewm 2>/dev/null || true
 
 uninstall-local:
 	$(MAKE) uninstall PREFIX=$(HOME)/.local DATADIR=$(HOME)/.local/share SYSCONFDIR=$(HOME)/.local/etc
