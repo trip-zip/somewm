@@ -13,6 +13,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <xkbcommon/xkbcommon.h>
+#include <wayland-server-core.h>
 
 /* External functions */
 extern void wlr_log_init(int verbosity, void *callback);
@@ -371,6 +372,22 @@ luaA_systray(lua_State *L)
 	return 2;
 }
 
+/** awesome.sync() - Synchronize with the compositor
+ * In AwesomeWM this flushes X11 requests via xcb_aux_sync().
+ * For Wayland, we flush pending events to clients.
+ * Used primarily in tests and by awful.screenshot.
+ * \noreturn
+ */
+static int
+luaA_awesome_sync(lua_State *L)
+{
+	struct wl_display *display = some_get_display();
+	if (display) {
+		wl_display_flush_clients(display);
+	}
+	return 0;
+}
+
 /** Set a libinput pointer/touchpad setting and apply to all devices
  * Called from awful.input Lua module
  * \param key The setting name (e.g., "tap_to_click", "natural_scrolling")
@@ -484,6 +501,7 @@ static const luaL_Reg awesome_methods[] = {
 	{ "register_xproperty", luaA_awesome_register_xproperty },
 	{ "pixbuf_to_surface", luaA_pixbuf_to_surface },
 	{ "systray", luaA_systray },
+	{ "sync", luaA_awesome_sync },
 	{ "_set_input_setting", luaA_awesome_set_input_setting },
 	{ "_set_keyboard_setting", luaA_awesome_set_keyboard_setting },
 	{ NULL, NULL }
