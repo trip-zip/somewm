@@ -41,4 +41,9 @@ void event_emit_button(lua_State *L, button_event_t *ev);
 /* Handle mousegrabber if active - returns true if event consumed */
 bool event_handle_mousegrabber(double x, double y, int button_states[5]);
 
+/** Record that the given drawable contains the pointer.
+ * Emits mouse::enter/leave signals on drawables for widget hover events.
+ */
+void event_drawable_under_mouse(lua_State *L, int ud);
+
 #endif /* SOMEWM_EVENT_H */

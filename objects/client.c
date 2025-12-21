@@ -104,6 +104,7 @@
 /* #include "../somewm_types.h" - not needed, causes Client/client_t conflict */
 #include "../stack.h"
 #include "../util.h"
+#include "../event.h"
 
 /* Forward declaration - applies client geometry to wlroots scene graph */
 void apply_geometry_to_wlroots(client_t *c);
