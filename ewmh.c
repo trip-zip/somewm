@@ -227,8 +227,12 @@ ewmh_client_check_hints(client_t *c)
                 c->below = true;
             else if (atoms[i] == _NET_WM_STATE_MODAL)
                 c->modal = true;
-            else if (atoms[i] == _NET_WM_STATE_DEMANDS_ATTENTION)
-                c->urgent = true;
+            else if (atoms[i] == _NET_WM_STATE_DEMANDS_ATTENTION) {
+                lua_State *L = globalconf_get_lua_State();
+                luaA_object_push(L, c);
+                client_set_urgent(L, -1, true);
+                lua_pop(L, 1);
+            }
             else if (atoms[i] == _NET_WM_STATE_SKIP_TASKBAR)
                 c->skip_taskbar = true;
             else if (atoms[i] == _NET_WM_STATE_HIDDEN)

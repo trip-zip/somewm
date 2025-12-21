@@ -577,9 +577,15 @@ some_client_get_floating(Client *c)
 void
 some_client_set_urgent(Client *c, int urgent)
 {
+	lua_State *L;
+
 	if (!c)
 		return;
-	c->urgent = urgent;
+	/* Use proper API for signal emission */
+	L = globalconf_get_lua_State();
+	luaA_object_push(L, c);
+	client_set_urgent(L, -1, urgent);
+	lua_pop(L, 1);
 	printstatus();
 }
 

@@ -2023,7 +2023,10 @@ focusclient(Client *c, int lift)
 		client_array_push(&globalconf.stack, c);
 
 		selmon = c->mon;
-		c->urgent = 0;
+		/* Clear urgent flag via proper API to emit property::urgent signal */
+		luaA_object_push(globalconf_L, c);
+		client_set_urgent(globalconf_L, -1, false);
+		lua_pop(globalconf_L, 1);
 
 		/* Don't change border color if there is an exclusive focus or we are
 		 * handling a drag operation */
@@ -4718,12 +4721,12 @@ void urgent(struct wl_listener *listener, void *data)
 	luaA_object_emit_signal(L, -2, "request::activate", 1);
 	lua_pop(L, 1);
 
-	/* Set urgent flag if not already focused */
+	/* Set urgent flag if not already focused (via proper API for signal emission) */
 	if (c != focustop(selmon)) {
-		c->urgent = 1;
+		luaA_object_push(L, c);
+		client_set_urgent(L, -1, true);
+		lua_pop(L, 1);
 		printstatus();
-		if (client_surface(c)->mapped)
-			client_set_border_color(c, get_urgentcolor());
 	}
 }
 
@@ -5057,7 +5060,6 @@ void
 sethints(struct wl_listener *listener, void *data)
 {
 	Client *c = wl_container_of(listener, c, set_hints);
-	struct wlr_surface *surface = client_surface(c);
 	xcb_icccm_wm_hints_t *hints = c->surface.xwayland->hints;
 	lua_State *L;
 	bool dominated;
@@ -5072,17 +5074,12 @@ sethints(struct wl_listener *listener, void *data)
 	L = globalconf_get_lua_State();
 	luaA_object_push(L, c);
 
-	/* Handle urgency (AwesomeWM pattern: emit request::urgent signal)
+	/* Handle urgency (AwesomeWM pattern: use client_set_urgent for property::urgent signal)
 	 * Only process urgency if client is not focused */
 	if (!dominated) {
 		bool urgent = xcb_icccm_wm_hints_get_urgency(hints);
 		if (c->urgent != urgent) {
-			c->urgent = urgent;
-			lua_pushboolean(L, urgent);
-			luaA_object_emit_signal(L, -2, "request::urgent", 1);
-
-			if (urgent && surface && surface->mapped)
-				client_set_border_color(c, get_urgentcolor());
+			client_set_urgent(L, -1, urgent);
 		}
 	}
 

@@ -273,8 +273,8 @@ property_update_xwayland_properties(client_t *c)
 		if (hints->flags & XCB_ICCCM_WM_HINT_WINDOW_GROUP)
 			client_set_group_window(L, -1, hints->window_group);
 
-		/* Urgency (handled by sethints listener for changes) */
-		c->urgent = xcb_icccm_wm_hints_get_urgency(hints);
+		/* Urgency (use proper API for signal emission) */
+		client_set_urgent(L, -1, xcb_icccm_wm_hints_get_urgency(hints));
 	}
 
 	/* Transient-for relationship */
