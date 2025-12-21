@@ -457,6 +457,23 @@ luaA_fixups(lua_State *L)
 			lua_tostring(L, -1));
 		lua_pop(L, 1);
 	}
+
+	/* CRITICAL: Prevent GTK from calling gtk_init_check() during lgi.require().
+	 *
+	 * When running inside a Wayland compositor, GTK's init tries to connect
+	 * as a Wayland client to WAYLAND_DISPLAY. But the compositor's event loop
+	 * is blocked waiting for Lua to finish loading, causing a deadlock.
+	 *
+	 * The fix: preload an empty table at "lgi.override.Gtk" so lgi skips
+	 * loading the real override file (which calls gtk_init_check()).
+	 * GTK still works fine without init - IconTheme and other non-display
+	 * features work perfectly. */
+	if (luaL_dostring(L,
+		"package.loaded['lgi.override.Gtk'] = {}") != 0) {
+		fprintf(stderr, "somewm: warning: failed to preload Gtk override: %s\n",
+			lua_tostring(L, -1));
+		lua_pop(L, 1);
+	}
 }
 
 /* Search paths added via command line -L/--search */
