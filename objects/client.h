@@ -385,7 +385,6 @@ void client_set_group_window(lua_State *, int, uint32_t);  /* Changed from xcb_w
 /* void client_set_icon_from_pixmaps(client_t *, xcb_pixmap_t, xcb_pixmap_t); */
 void client_set_skip_taskbar(lua_State *, int, bool);
 void client_set_motif_wm_hints(lua_State *, int, motif_wm_hints_t);
-bool client_focus_raw(client_t *c);
 void client_focus(client_t *);
 bool client_focus_update(client_t *);
 void client_focus_refresh(void);
