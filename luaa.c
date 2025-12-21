@@ -2051,6 +2051,9 @@ luaA_loadrc(void)
 		/* System-wide installed example config (XDG compliant) */
 		config_paths[path_count++] = SYSCONFDIR "/xdg/somewm/rc.lua";
 
+		/* Local fallback for development (check current directory) */
+		config_paths[path_count++] = "./somewmrc.lua";
+
 		/* System-wide fallback */
 		config_paths[path_count++] = DATADIR "/somewm/somewmrc.lua";
 
@@ -2237,6 +2240,21 @@ luaA_loadrc(void)
 				fprintf(stderr, "somewm: trying alternate configs...\n");
 			}
 			lua_pop(globalconf_L, 2);  /* Pop error and error handler */
+
+			/* Clear naughty from package.loaded so it reloads fresh in the
+			 * fallback config. This is necessary so naughty/init.lua runs
+			 * again and can check startup_errors. We can't recreate the
+			 * entire Lua state because screens are already registered. */
+			lua_getglobal(globalconf_L, "package");
+			lua_getfield(globalconf_L, -1, "loaded");
+			lua_pushnil(globalconf_L);
+			lua_setfield(globalconf_L, -2, "naughty");
+			lua_pushnil(globalconf_L);
+			lua_setfield(globalconf_L, -2, "naughty.core");
+			lua_pushnil(globalconf_L);
+			lua_setfield(globalconf_L, -2, "naughty.init");
+			lua_pop(globalconf_L, 2);  /* Pop loaded and package */
+
 			continue;  /* Try next config */
 		}
 	}
