@@ -82,6 +82,7 @@
 #include "stack.h"
 #include "wlr_compat.h"
 #include "globalconf.h"        /* Global configuration structure (AwesomeWM pattern) */
+#include "event.h"
 #include "banning.h"            /* Client visibility management (banning) */
 #include "objects/luaa.h"
 #include "objects/spawn.h"  /* For spawn_child_exited */
@@ -2832,7 +2833,8 @@ motionabsolute(struct wl_listener *listener, void *data)
 	motionnotify(event->time_msec, &event->pointer->base, dx, dy, dx, dy);
 }
 
-/* Helper function to emit mouse::leave on the object that previously had the mouse */
+/* Helper function to emit mouse::leave on the object that previously had the mouse.
+ * Also clears drawable_under_mouse tracking to emit leave on the drawable. */
 static void
 mouse_emit_leave(lua_State *L)
 {
@@ -2851,6 +2853,15 @@ mouse_emit_leave(lua_State *L)
 		lua_pop(L, 1);
 	}
 	globalconf.mouse_under.type = UNDER_NONE;
+
+	/* Also clear drawable tracking - emit leave on drawable if any */
+	if (globalconf.drawable_under_mouse != NULL) {
+		luaA_object_push(L, globalconf.drawable_under_mouse);
+		luaA_object_emit_signal(L, -1, "mouse::leave", 0);
+		lua_pop(L, 1);
+		luaA_object_unref(L, globalconf.drawable_under_mouse);
+		globalconf.drawable_under_mouse = NULL;
+	}
 }
 
 /* Helper function to emit mouse::enter on a client */
@@ -2876,6 +2887,37 @@ mouse_emit_drawin_enter(lua_State *L, drawin_t *d)
 	lua_pop(L, 1);
 	globalconf.mouse_under.type = UNDER_DRAWIN;
 	globalconf.mouse_under.ptr.drawin = d;
+}
+
+/** Record that the given drawable contains the pointer.
+ * Emits mouse::enter/leave signals on drawables for widget hover events.
+ */
+void
+event_drawable_under_mouse(lua_State *L, int ud)
+{
+	void *d;
+
+	/* luaA_object_ref pops, so push a copy first */
+	lua_pushvalue(L, ud);
+	d = luaA_object_ref(L, -1);
+
+	if (d == globalconf.drawable_under_mouse) {
+		luaA_object_unref(L, d);
+		return;
+	}
+
+	if (globalconf.drawable_under_mouse != NULL) {
+		luaA_object_push(L, globalconf.drawable_under_mouse);
+		luaA_object_emit_signal(L, -1, "mouse::leave", 0);
+		lua_pop(L, 1);
+		luaA_object_unref(L, globalconf.drawable_under_mouse);
+		globalconf.drawable_under_mouse = NULL;
+	}
+
+	if (d != NULL) {
+		globalconf.drawable_under_mouse = d;
+		luaA_object_emit_signal(L, ud, "mouse::enter", 0);
+	}
 }
 
 void
@@ -3017,23 +3059,27 @@ motionnotify(uint32_t time, struct wlr_input_device *device, double dx, double d
 			lua_pop(L, 1);
 
 		} else if (current_drawin) {
-			/* Mouse is over a drawin */
+			/* Mouse over drawin - emit signals on drawable for widget hover */
 			if (globalconf.mouse_under.type != UNDER_DRAWIN ||
 			    globalconf.mouse_under.ptr.drawin != current_drawin) {
-				/* Different object - emit leave on old, enter on new */
 				mouse_emit_leave(L);
 				mouse_emit_drawin_enter(L, current_drawin);
 			}
 
-			/* Always emit mouse::move on current drawin */
 			luaA_object_push(L, current_drawin);
 			if (lua_isnil(L, -1)) {
-				warn("mouse::move on unregistered drawin %p", (void*)current_drawin);
+				warn("mouse event on unregistered drawin %p", (void*)current_drawin);
+				lua_pop(L, 1);
+			} else {
+				luaA_object_push_item(L, -1, current_drawin->drawable);
+				event_drawable_under_mouse(L, -1);
+
+				lua_pushinteger(L, (int)cursor->x - current_drawin->x);
+				lua_pushinteger(L, (int)cursor->y - current_drawin->y);
+				luaA_object_emit_signal(L, -3, "mouse::move", 2);
+
+				lua_pop(L, 2);
 			}
-			lua_pushinteger(L, (int)cursor->x - current_drawin->x);
-			lua_pushinteger(L, (int)cursor->y - current_drawin->y);
-			luaA_object_emit_signal(L, -3, "mouse::move", 2);
-			lua_pop(L, 1);
 
 		} else {
 			/* Mouse is over empty space - emit leave if we were over something */

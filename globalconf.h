@@ -36,6 +36,7 @@ typedef struct client_t client_t;
 typedef struct tag_t tag_t;
 typedef struct screen_t screen_t;
 typedef struct drawin_t drawin_t;
+typedef struct drawable_t drawable_t;
 typedef struct keyb_t keyb_t;
 
 /* Forward declare button types */
@@ -286,8 +287,8 @@ typedef struct
     } ewmh;
 #endif
 
-    /** Drawable under mouse (stub) */
-    void *drawable_under_mouse;
+    /** Drawable under mouse for enter/leave signals */
+    drawable_t *drawable_under_mouse;
 
     /** X11 colormap (stub for XWayland) */
     uint32_t default_cmap;

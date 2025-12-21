@@ -626,11 +626,6 @@ static inline void *cairo_xcb_surface_create_for_bitmap(void *conn, void *screen
     return NULL;  /* Stub: Returns NULL on Wayland (X11-only function) */
 }
 
-static inline void *event_drawable_under_mouse(void *L, int idx) {
-    (void)L; (void)idx;
-    return NULL;  /* TODO: Get drawable under mouse */
-}
-
 static inline void cairo_surface_array_wipe(cairo_surface_array_t *arr) {
     if (arr->tab) {
         free(arr->tab);
