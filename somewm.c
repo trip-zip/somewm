@@ -2348,14 +2348,13 @@ extern int luaA_client_key_check_and_emit(client_t *c, uint32_t mods, uint32_t k
  * client has keyboard focus, but Awesome's client.focus property must be
  * synchronized before Lua code executes.
  *
- * Uses client_focus_raw() to avoid triggering a seat focus update loop.
+ * Uses client_focus_update() to avoid triggering a seat focus update loop.
  */
 static void
 sync_client_focus_from_seat(void)
 {
 	struct wlr_surface *surface;
 	Client *c;
-	extern bool client_focus_raw(client_t *c);
 	extern Client *some_client_from_surface(struct wlr_surface *surface);
 
 	c = NULL;
@@ -2363,10 +2362,9 @@ sync_client_focus_from_seat(void)
 	/* Get the surface that currently has keyboard focus in the seat */
 	surface = seat->keyboard_state.focused_surface;
 	if (!surface) {
-		/* No surface has focus - ensure client.focus is NULL */
-		if (globalconf.focus.client) {
-			client_focus_raw(NULL);
-		}
+		/* No surface has focus - just return without changing client.focus.
+		 * The seat might have focus on a layer surface or no focus at all.
+		 * Leave client.focus as-is since we're only syncing, not clearing. */
 		return;
 	}
 
@@ -2377,8 +2375,8 @@ sync_client_focus_from_seat(void)
 		return;
 	}
 
-	/* Sync Awesome's focus state without changing seat focus */
-	client_focus_raw(c);
+	/* Sync Awesome's focus state without changing seat focus. */
+	client_focus_update(c);
 }
 
 int
