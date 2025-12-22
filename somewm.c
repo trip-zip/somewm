@@ -2340,49 +2340,12 @@ get_urgentcolor(void)
 extern int luaA_key_check_and_emit(uint32_t mods, uint32_t keycode, xkb_keysym_t sym, xkb_keysym_t base_sym);
 extern int luaA_client_key_check_and_emit(client_t *c, uint32_t mods, uint32_t keycode, xkb_keysym_t sym, xkb_keysym_t base_sym);
 
-/** Sync Awesome's client.focus with Wayland seat keyboard focus.
- * Called before dispatching keybindings to ensure client.focus is current.
- *
- * This is critical for client keybindings to work correctly. The seat's
- * keyboard_state.focused_surface is the authoritative source for which
- * client has keyboard focus, but Awesome's client.focus property must be
- * synchronized before Lua code executes.
- *
- * Uses client_focus_update() to avoid triggering a seat focus update loop.
- */
-static void
-sync_client_focus_from_seat(void)
-{
-	struct wlr_surface *surface;
-	Client *c;
-	extern Client *some_client_from_surface(struct wlr_surface *surface);
-
-	c = NULL;
-
-	/* Get the surface that currently has keyboard focus in the seat */
-	surface = seat->keyboard_state.focused_surface;
-	if (!surface) {
-		/* No surface has focus - just return without changing client.focus.
-		 * The seat might have focus on a layer surface or no focus at all.
-		 * Leave client.focus as-is since we're only syncing, not clearing. */
-		return;
-	}
-
-	/* Find the client_t* that owns this surface */
-	c = some_client_from_surface(surface);
-	if (!c) {
-		/* Surface doesn't belong to a client (might be layer shell, etc.) */
-		return;
-	}
-
-	/* Sync Awesome's focus state without changing seat focus. */
-	client_focus_update(c);
-}
-
 int
 keybinding(uint32_t mods, uint32_t keycode, xkb_keysym_t sym, xkb_keysym_t base_sym)
 {
 	client_t *focused;
+	struct wlr_surface *surface;
+	extern Client *some_client_from_surface(struct wlr_surface *surface);
 
 	/*
 	 * Here we handle compositor keybindings. This is when the compositor is
@@ -2393,18 +2356,16 @@ keybinding(uint32_t mods, uint32_t keycode, xkb_keysym_t sym, xkb_keysym_t base_
 	 * the client as argument), then check global keybindings.
 	 */
 
-	/* Synchronize client.focus from seat keyboard focus BEFORE
-	 * dispatching keybindings. This ensures that:
-	 * 1. Client keybindings receive the correct client
-	 * 2. Global keybindings that reference client.focus see the right value
-	 * 3. Keybindings that do geometry operations start with correct focus state
-	 */
-	sync_client_focus_from_seat();
+	/* Get the client that has keyboard focus from the Wayland seat.
+	 * This matches AwesomeWM's pattern of using the X11 event window
+	 * (event.c:781: client_getbywin(ev->event)) rather than internal
+	 * focus state. We don't modify globalconf.focus.client here to
+	 * avoid emitting focus signals during keybinding dispatch. */
+	surface = seat->keyboard_state.focused_surface;
+	focused = surface ? some_client_from_surface(surface) : NULL;
 
 	/* Check client-specific Lua key objects first (AwesomeWM pattern)
-	 * Client keybindings pass the client as argument to the "press" signal
-	 * Use globalconf.focus.client directly - we just synchronized it */
-	focused = globalconf.focus.client;
+	 * Client keybindings pass the client as argument to the "press" signal */
 	if (focused && luaA_client_key_check_and_emit(focused, CLEANMASK(mods), keycode, sym, base_sym))
 		return 1;
 
