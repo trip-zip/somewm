@@ -5350,9 +5350,37 @@ get_lgi_version(lua_State *L)
 	return version;
 }
 
+/* Add search paths to a Lua state's package.path and package.cpath */
+static void
+add_search_paths_to_lua(lua_State *L, const char **paths, int count)
+{
+	const char *cur_path;
+
+	for (int i = 0; i < count; i++) {
+		const char *dir = paths[i];
+
+		/* Add to package.path */
+		lua_getglobal(L, "package");
+		lua_getfield(L, -1, "path");
+		cur_path = lua_tostring(L, -1);
+		lua_pop(L, 1);
+		lua_pushfstring(L, "%s/?.lua;%s/?/init.lua;%s", dir, dir, cur_path);
+		lua_setfield(L, -2, "path");
+
+		/* Add to package.cpath */
+		lua_getfield(L, -1, "cpath");
+		cur_path = lua_tostring(L, -1);
+		lua_pop(L, 1);
+		lua_pushfstring(L, "%s/?.so;%s", dir, cur_path);
+		lua_setfield(L, -2, "cpath");
+
+		lua_pop(L, 1); /* pop package table */
+	}
+}
+
 /* Print comprehensive version info in markdown format */
 static void
-print_version_info(void)
+print_version_info(const char **paths, int num_paths)
 {
 	struct utsname uts;
 	lua_State *L;
@@ -5369,6 +5397,10 @@ print_version_info(void)
 	/* Create Lua state for version detection */
 	L = luaL_newstate();
 	luaL_openlibs(L);
+
+	/* Apply any -L search paths so we can find lgi */
+	if (num_paths > 0)
+		add_search_paths_to_lua(L, paths, num_paths);
 
 	/* Detect session environment */
 	wayland_display = getenv("WAYLAND_DISPLAY");
@@ -5412,6 +5444,7 @@ main(int argc, char *argv[])
 {
 	char *startup_cmd = NULL;
 	char *check_config = NULL;
+	int show_version = 0;
 	int c;
 
 	static struct option long_options[] = {
@@ -5447,7 +5480,7 @@ main(int argc, char *argv[])
 			globalconf.log_level = 3;  /* WLR_DEBUG */
 			break;
 		case 'v':
-			print_version_info();
+			show_version = 1;
 			break;
 		default:
 			goto usage;
@@ -5455,6 +5488,10 @@ main(int argc, char *argv[])
 	}
 	if (optind < argc)
 		goto usage;
+
+	/* Show version after all args parsed so -L paths are available */
+	if (show_version)
+		print_version_info(search_paths, num_search_paths);
 
 	/* Check mode: scan config for compatibility issues without starting compositor */
 	if (check_config) {
