@@ -41,6 +41,16 @@ sudo dnf install wlroots-devel luajit lua-lgi cairo-devel pango-devel \
 sudo dnf install xorg-x11-server-Xwayland libxcb-devel xcb-util-wm-devel
 ```
 
+**NixOS:**
+
+A `default.nix` is provided for building on NixOS:
+```bash
+nix-build
+./result/bin/somewm
+```
+
+The included derivation sets up LGI and `GI_TYPELIB_PATH` automatically. For custom configurations or third-party Lua libraries, see the [NixOS section](#nixos) below.
+
 > **Note:** wlroots 0.18+ is required. Debian stable and Ubuntu 24.04 LTS ship older versions - you'll need to [build wlroots from source](https://gitlab.freedesktop.org/wlroots/wlroots) first.
 
 ### 2. Build and Install
@@ -222,6 +232,67 @@ make uninstall-local
 
 # Remove session from display manager
 sudo make uninstall-session
+```
+
+## NixOS
+
+### Basic Usage
+
+The included `default.nix` provides a complete derivation:
+
+```bash
+nix-build
+./result/bin/somewm
+```
+
+Or with flakes:
+```bash
+nix build github:trip-zip/somewm
+```
+
+### GI_TYPELIB_PATH and Third-Party Libraries
+
+On NixOS, GObject Introspection typelibs are isolated in `/nix/store` rather than system paths. The `default.nix` sets up `GI_TYPELIB_PATH` with common typelibs (pango, gdk-pixbuf, glib, gtk3).
+
+**If you use third-party Lua libraries** (like [bling](https://github.com/BlingCorp/bling)), they may require additional typelibs. For example, bling's `app_launcher` widget requires GTK3 for icon theme lookups.
+
+To add additional typelibs when packaging somewm, extend the wrapper:
+
+```nix
+postFixup = ''
+  wrapProgram $out/bin/somewm \
+    --prefix GI_TYPELIB_PATH : "${pkgs.gtk3}/lib/girepository-1.0" \
+    --prefix GI_TYPELIB_PATH : "${pkgs.networkmanager}/lib/girepository-1.0" \
+    # Add more as needed for your Lua libraries
+'';
+```
+
+### Extra Lua Modules
+
+To add additional Lua modules (like `luafilesystem`):
+
+```nix
+let
+  luaEnv = pkgs.luajit.withPackages (ps: with ps; [
+    lgi
+    luafilesystem  # Add extra modules here
+  ]);
+in
+# ... use luaEnv in buildInputs and wrapper
+```
+
+### Troubleshooting NixOS
+
+**"Typelib file for namespace 'Gtk' not found"**
+
+Add `pkgs.gtk3` to your `GI_TYPELIB_PATH`. This is commonly needed for bling and other libraries that use GTK for icon theme lookups.
+
+**"module 'lgi' not found"**
+
+Ensure `luaEnv` (with lgi) is in `buildInputs` and the wrapper adds it to `--search` paths:
+```nix
+--add-flags "--search ${luaEnv}/share/lua/5.1"
+--add-flags "--search ${luaEnv}/lib/lua/5.1"
 ```
 
 ## Acknowledgements
