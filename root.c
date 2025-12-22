@@ -31,6 +31,7 @@
 #include <wlr/types/wlr_buffer.h>
 #include <wlr/interfaces/wlr_buffer.h>
 #include <wlr/render/allocator.h>
+#include <wlr/types/wlr_xcursor_manager.h>
 #include <cairo.h>
 #include <drm_fourcc.h>
 
@@ -41,6 +42,8 @@ extern struct wlr_scene *scene;
 extern struct wlr_renderer *drw;
 extern struct wlr_allocator *alloc;
 extern struct wl_list mons;
+extern struct wlr_cursor *cursor;
+extern struct wlr_xcursor_manager *cursor_mgr;
 
 /* Property miss handlers (AwesomeWM compatibility) */
 static int miss_index_handler = LUA_REFNIL;
@@ -564,9 +567,16 @@ luaA_root_size_mm(lua_State *L)
 static int
 luaA_root_cursor(lua_State *L)
 {
-	/* TODO: Implement cursor changing via wlroots
-	 * For now, this is a no-op stub */
-	(void)L;
+	const char *cursor_name = luaL_checkstring(L, 1);
+
+	if(wlr_xcursor_manager_get_xcursor(cursor_mgr, cursor_name, 1.0) == NULL) {
+
+		luaA_warn(L, "invalid cursor %s", cursor_name);
+		return 0;
+	}
+	wlr_cursor_set_xcursor(cursor, cursor_mgr, cursor_name);
+
+	printf("setting cursor to %s\n", cursor_name);
 	return 0;
 }
 
