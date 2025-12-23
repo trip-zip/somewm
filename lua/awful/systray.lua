@@ -500,12 +500,6 @@ local function register_item(service, path)
             end
         end
 
-        -- Set flag for icon_change_triggers_urgent feature
-        -- Apps like Slack bake notification badges into their icon, so users
-        -- can opt-in to treating icon presence as "might have notifications"
-        -- Note: stored in item_data since we can't set arbitrary fields on C userdata
-        item_data.urgent_from_icon_change = true
-
         -- Store in our tracking table
         systray._private.items[item_key] = item
 
@@ -529,11 +523,20 @@ local function register_item(service, path)
 
         -- Connect to request::* signals to handle D-Bus method calls
         item:connect_signal("request::activate", function(_, x, y)
+            -- Clear urgent flag on activation (user acknowledged the notification)
+            -- Also set ignore_next_icon_change so when the app clears its badge
+            -- (which fires NewIcon), we don't immediately show the indicator again
+            local data = systray._private.item_data[item]
+            if data then
+                data.urgent_from_icon_change = false
+                data.ignore_next_icon_change = true
+            end
             systray._private.bus:call(
                 service, path, SNI_ITEM_IFACE, "Activate",
                 GLib.Variant("(ii)", {x or 0, y or 0}),
                 nil, Gio.DBusCallFlags.NONE, -1, nil, nil
             )
+            capi.awesome.emit_signal("systray::update")
         end)
 
         item:connect_signal("request::secondary_activate", function(_, x, y)
@@ -620,7 +623,13 @@ local function register_item(service, path)
                                 -- SNI status/overlay, so this lets users detect that
                                 local data = systray._private.item_data[item]
                                 if data then
-                                    data.urgent_from_icon_change = true
+                                    if data.ignore_next_icon_change then
+                                        -- This icon change was likely the app clearing its badge
+                                        -- after user clicked, so don't set the urgent flag
+                                        data.ignore_next_icon_change = false
+                                    else
+                                        data.urgent_from_icon_change = true
+                                    end
                                 end
                                 -- Emit update for classic widget
                                 capi.awesome.emit_signal("systray::update")
