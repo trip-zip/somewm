@@ -2053,6 +2053,13 @@ focusclient(Client *c, int lift)
 			client_activate_surface(old, 0);
 			if (old_c->toplevel_handle)
 				wlr_foreign_toplevel_handle_v1_set_activated(old_c->toplevel_handle, false);
+
+			/* Emit property::active = false for border updates (AwesomeWM pattern) */
+			luaA_object_push(globalconf_L, old_c);
+			lua_pushboolean(globalconf_L, false);
+			luaA_object_emit_signal(globalconf_L, -2, "property::active", 1);
+			lua_pop(globalconf_L, 1);
+
 			luaA_emit_signal_global("client::unfocus");
 		}
 	}
@@ -2091,6 +2098,14 @@ focusclient(Client *c, int lift)
 			                                kb->num_keycodes,
 			                                &kb->modifiers);
 		}
+	}
+
+	/* Emit property::active = true for border updates (AwesomeWM pattern) */
+	if (!client_is_unmanaged(c)) {
+		luaA_object_push(globalconf_L, c);
+		lua_pushboolean(globalconf_L, true);
+		luaA_object_emit_signal(globalconf_L, -2, "property::active", 1);
+		lua_pop(globalconf_L, 1);
 	}
 
 	luaA_emit_signal_global("client::focus");
