@@ -541,8 +541,6 @@ luaA_screen_update_workarea(lua_State *L, screen_t *screen, struct wlr_box *work
 		/* Update the C Monitor struct's workarea */
 		if (screen->monitor) {
 			screen->monitor->w = new_workarea;
-			fprintf(stderr, "[SCREEN_WORKAREA] Updated monitor->w: %dx%d+%d+%d\n",
-			        new_workarea.width, new_workarea.height, new_workarea.x, new_workarea.y);
 		}
 
 		/* Emit property::workarea signal with old workarea as argument */
@@ -567,15 +565,8 @@ luaA_screen_update_workarea_for_drawin(lua_State *L, struct drawin_t *drawin)
 	screen_t *screen;
 	struct wlr_box new_workarea;
 
-	fprintf(stderr, "[UPDATE_WORKAREA_FOR_DRAWIN] Called with drawin=%p\n", (void*)drawin);
-
-	if (!drawin) {
-		fprintf(stderr, "[UPDATE_WORKAREA_FOR_DRAWIN] NULL drawin, returning\n");
+	if (!drawin)
 		return;
-	}
-
-	fprintf(stderr, "[UPDATE_WORKAREA_FOR_DRAWIN] Drawin visible=%d struts: left=%d right=%d top=%d bottom=%d\n",
-		drawin->visible, drawin->strut.left, drawin->strut.right, drawin->strut.top, drawin->strut.bottom);
 
 	/* Get the screen this drawin is on */
 	screen = drawin->screen;
@@ -616,11 +607,8 @@ luaA_screen_update_workarea_for_drawin(lua_State *L, struct drawin_t *drawin)
 	luaA_screen_update_workarea(L, screen, &new_workarea);
 
 	/* Re-arrange windows to respect the new workarea */
-	if (screen->monitor) {
-		fprintf(stderr, "[SCREEN_WORKAREA] Workarea updated for screen %d: %dx%d+%d+%d, calling arrange()\n",
-		        screen->index, new_workarea.width, new_workarea.height, new_workarea.x, new_workarea.y);
+	if (screen->monitor)
 		some_monitor_arrange(screen->monitor);
-	}
 }
 
 /** Apply all drawin struts for a monitor to a usable area
