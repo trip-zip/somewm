@@ -1059,18 +1059,23 @@ screen_composite_scene_buffer(struct wlr_scene_buffer *buffer,
 	wlr_texture_destroy(texture);
 }
 
-/** Composite widgets within the screen bounds */
+/** Composite widgets within the screen bounds, filtered by ontop state */
 static void
-screen_composite_widgets(cairo_t *cr, int sx, int sy, int sw, int sh)
+screen_composite_widgets(cairo_t *cr, int sx, int sy, int sw, int sh, bool ontop_only)
 {
 	int i, bar;
 	drawin_t *drawin;
 	client_t *c;
+	bool is_ontop;
 
-	/* Composite visible drawins (wibars, wiboxes) within screen bounds */
+	/* Composite visible drawins filtered by ontop state */
 	for (i = 0; i < globalconf.drawins.len; i++) {
 		drawin = globalconf.drawins.tab[i];
 		if (!drawin || !drawin->visible || !drawin->drawable)
+			continue;
+
+		/* Filter by ontop to ensure correct z-order in screenshots */
+		if (drawin->ontop != ontop_only)
 			continue;
 
 		if (!box_intersects_screen(drawin->x, drawin->y, drawin->width, drawin->height,
@@ -1085,10 +1090,15 @@ screen_composite_widgets(cairo_t *cr, int sx, int sy, int sw, int sh)
 		}
 	}
 
-	/* Composite client titlebars within screen bounds */
+	/* Composite client titlebars filtered by ontop/fullscreen state */
 	for (i = 0; i < globalconf.clients.len; i++) {
 		c = globalconf.clients.tab[i];
 		if (!c)
+			continue;
+
+		/* Filter by ontop/fullscreen to ensure correct z-order */
+		is_ontop = c->ontop || c->fullscreen;
+		if (is_ontop != ontop_only)
 			continue;
 
 		for (bar = 0; bar < CLIENT_TITLEBAR_COUNT; bar++) {
@@ -1194,8 +1204,9 @@ luaA_screen_get_content(lua_State *L, screen_t *s)
 	wlr_scene_node_for_each_buffer(&scene->tree.node,
 		screen_composite_scene_buffer, &sdata);
 
-	/* Finally, composite widgets on top */
-	screen_composite_widgets(cr, s->geometry.x, s->geometry.y, width, height);
+	/* Composite widgets in z-order: normal first, then ontop */
+	screen_composite_widgets(cr, s->geometry.x, s->geometry.y, width, height, false);
+	screen_composite_widgets(cr, s->geometry.x, s->geometry.y, width, height, true);
 
 	cairo_destroy(cr);
 
