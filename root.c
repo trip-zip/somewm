@@ -792,16 +792,21 @@ composite_cairo_surface(cairo_t *cr, cairo_surface_t *surface,
  * Note: Wallpaper is handled separately in luaA_root_get_content().
  */
 static void
-composite_widgets_directly(cairo_t *cr)
+composite_widgets_directly(cairo_t *cr, bool ontop_only)
 {
 	int i, bar;
 	drawin_t *drawin;
 	client_t *c;
+	bool is_ontop;
 
-	/* Composite all visible drawins (wibars, wiboxes, etc.) */
+	/* Composite visible drawins filtered by ontop state */
 	for (i = 0; i < globalconf.drawins.len; i++) {
 		drawin = globalconf.drawins.tab[i];
 		if (!drawin || !drawin->visible || !drawin->drawable)
+			continue;
+
+		/* Filter by ontop to ensure correct z-order in screenshots */
+		if (drawin->ontop != ontop_only)
 			continue;
 
 		if (drawin->drawable->surface &&
@@ -812,10 +817,15 @@ composite_widgets_directly(cairo_t *cr)
 		}
 	}
 
-	/* Composite client titlebars */
+	/* Composite client titlebars filtered by ontop/fullscreen state */
 	for (i = 0; i < globalconf.clients.len; i++) {
 		c = globalconf.clients.tab[i];
 		if (!c)
+			continue;
+
+		/* Filter by ontop/fullscreen to ensure correct z-order */
+		is_ontop = c->ontop || c->fullscreen;
+		if (is_ontop != ontop_only)
 			continue;
 
 		for (bar = 0; bar < CLIENT_TITLEBAR_COUNT; bar++) {
@@ -1043,9 +1053,10 @@ luaA_root_get_content(lua_State *L)
 	wlr_scene_node_for_each_buffer(&scene->tree.node,
 		composite_scene_buffer_to_cairo, &rdata);
 
-	/* Finally, composite widgets on top (wibars, titlebars, notifications).
-	 * This bypasses wlroots scene buffers which may have NULL content between frames. */
-	composite_widgets_directly(cr);
+	/* Composite widgets in z-order: normal first, then ontop.
+	 * This ensures correct layering where ontop popups appear above titlebars. */
+	composite_widgets_directly(cr, false);  /* Normal widgets */
+	composite_widgets_directly(cr, true);   /* Ontop widgets */
 
 	cairo_destroy(cr);
 
