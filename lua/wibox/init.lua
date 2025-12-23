@@ -303,14 +303,8 @@ end
 
 local function new(args)
     args = args or {}
-    print("[WIBOX.NEW] Creating wibox with args:")
-    print("[WIBOX.NEW]   width = " .. tostring(args.width))
-    print("[WIBOX.NEW]   height = " .. tostring(args.height))
     local ret = object()
     local w = capi.drawin(args)
-    print("[WIBOX.NEW] drawin created, checking geometry:")
-    print("[WIBOX.NEW]   w.width = " .. tostring(w.width))
-    print("[WIBOX.NEW]   w.height = " .. tostring(w.height))
 
     function w.get_wibox()
         return ret
@@ -324,13 +318,9 @@ local function new(args)
         return ret
     end
 
-    print("[WIBOX_INIT] Initial setup - w.visible=" .. tostring(w.visible))
     ret._drawable:_inform_visible(w.visible)
-    print("[WIBOX_INIT] After _inform_visible(" .. tostring(w.visible) .. ")")
     w:connect_signal("property::visible", function()
-        print("[WIBOX_PROPERTY_VISIBLE] Signal received, w.visible=" .. tostring(w.visible))
         ret._drawable:_inform_visible(w.visible)
-        print("[WIBOX_PROPERTY_VISIBLE] After _inform_visible(" .. tostring(w.visible) .. ")")
     end)
 
     --TODO v5 deprecate this and use `wibox.object`.
@@ -372,23 +362,15 @@ local function new(args)
             end
         end,
         __newindex = function(self, k,v)
-            print(string.format("[WIBOX.__newindex] k='%s', v=%s", k, tostring(v)))
             local has_setter = rawget(self, "set_"..k)
-            print(string.format("[WIBOX.__newindex] has set_%s method: %s", k, tostring(has_setter ~= nil)))
             if has_setter then
-                print("[WIBOX.__newindex] Calling set_" .. k)
                 self["set_"..k](self, v)
             else
                 local is_force_forward = force_forward[k]
                 local drawin_value = w[k]
-                print(string.format("[WIBOX.__newindex] force_forward[%s]=%s, w[%s]=%s",
-                      k, tostring(is_force_forward), k, tostring(drawin_value)))
                 if is_force_forward or drawin_value ~= nil then
-                    print("[WIBOX.__newindex] Forwarding to drawin: w." .. k .. " = " .. tostring(v))
                     w[k] = v
-                    print("[WIBOX.__newindex] After forwarding, w." .. k .. " = " .. tostring(w[k]))
                 else
-                    print("[WIBOX.__newindex] Storing in wrapper: rawset(self, " .. k .. ", " .. tostring(v) .. ")")
                     rawset(self, k, v)
                 end
             end

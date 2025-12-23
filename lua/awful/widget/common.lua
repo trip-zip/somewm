@@ -127,9 +127,7 @@ end
 -- @tparam[opt={}] table args
 function common.list_update(w, buttons, label, data, objects, args)
     -- update the widgets, creating them if needed
-    print(string.format("[LIST_UPDATE] Called with %d objects", #objects))
     w:reset()
-    print("[LIST_UPDATE] Layout reset complete")
     for i, o in ipairs(objects) do
         local cache = data[o]
 
@@ -139,10 +137,8 @@ function common.list_update(w, buttons, label, data, objects, args)
         end
 
         if not cache then
-            print(string.format("[LIST_UPDATE] Creating new widget for object %d", i))
             cache = (args and args.widget_template) and
                 custom_template(args) or default_template()
-            print(string.format("[LIST_UPDATE] Widget created: cache.primary=%s", tostring(cache.primary)))
 
             cache.primary.buttons = {common.create_buttons(buttons, o)}
 
@@ -157,13 +153,11 @@ function common.list_update(w, buttons, label, data, objects, args)
             cache._buttons = buttons
             data[o] = cache
         elseif cache.update_callback then
-            print(string.format("[LIST_UPDATE] Updating existing widget for object %d", i))
             cache.update_callback(cache.primary, o, i, objects)
         end
 
         local text, bg, bg_image, icon, item_args = label(o, cache.tb)
         item_args = item_args or {}
-        print(string.format("[LIST_UPDATE] Label for object %d: text='%s'", i, tostring(text)))
 
         -- The text might be invalid, so use pcall.
         if cache.tbm and (text == nil or text == "") then
@@ -210,11 +204,8 @@ function common.list_update(w, buttons, label, data, objects, args)
             cache.ib.forced_width  = nil
         end
 
-        print(string.format("[LIST_UPDATE] Adding widget %d to layout", i))
         w:add(cache.primary)
-        print(string.format("[LIST_UPDATE] Widget %d added successfully", i))
    end
-    print(string.format("[LIST_UPDATE] Complete - added %d widgets to layout", #objects))
 end
 
 return common

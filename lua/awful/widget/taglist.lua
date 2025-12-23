@@ -684,19 +684,14 @@ function taglist.new(args, filter, buttons, style, update_function, base_widget)
         end
     end
     if instances == nil then
-        print("[TAGLIST_INIT] Initializing taglist signal handlers (first taglist created)")
         instances = setmetatable({}, { __mode = "k" })
         local function u(s)
-            print(string.format("[TAGLIST_UPDATE] Update triggered for screen=%s", tostring(s)))
             local i = instances[get_screen(s)]
             if i then
                 for _, tlist in pairs(i) do
-                    print("[TAGLIST_UPDATE] Calling _do_taglist_update on instance")
                     tlist._do_taglist_update()
                 end
             else
-                -- No screen? Update all taglists
-                print("[TAGLIST_UPDATE] No specific screen, updating all taglists")
                 for _, list in pairs(instances) do
                     for _, tlist in pairs(list) do
                         tlist._do_taglist_update()
@@ -706,13 +701,10 @@ function taglist.new(args, filter, buttons, style, update_function, base_widget)
         end
         local uc = function (c) return u(c.screen) end
         local ut = function (t)
-            print(string.format("[TAGLIST_SIGNAL] property::selected handler called, tag.screen=%s", tostring(t.screen)))
             return u(t.screen)
         end
         capi.client.connect_signal("property::active", uc)
-        print("[TAGLIST_INIT] Connecting to tag signals...")
         tag.attached_connect_signal(nil, "property::selected", ut)
-        print("[TAGLIST_INIT] Connected to property::selected")
         tag.attached_connect_signal(nil, "property::icon", ut)
         tag.attached_connect_signal(nil, "property::hide", ut)
         tag.attached_connect_signal(nil, "property::name", ut)

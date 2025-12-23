@@ -783,8 +783,6 @@ buttonpress(struct wl_listener *listener, void *data)
 				return;
 			}
 		} else if (c && (!client_is_unmanaged(c) || client_wants_focus(c))) {
-			focusclient(c, 1);
-
 			/* Calculate client-relative coordinates */
 			rel_x = (int)cursor->x - c->geometry.x;
 			rel_y = (int)cursor->y - c->geometry.y;
@@ -1538,6 +1536,10 @@ createnotify(struct wl_listener *listener, void *data)
 	lua_pushvalue(L, -1);
 	client_array_push(&globalconf.clients, luaA_object_ref(L, -1));
 
+	/* Add to stacking order (matches AwesomeWM client_manage line 2244)
+	 * This is required for client.get(s, true) to return newly managed clients */
+	client_array_push(&globalconf.stack, c);
+
 	/* Emit client::list signal (matches AwesomeWM line 2266) */
 	luaA_class_emit_signal(L, &client_class, "list", 0);
 
@@ -2046,22 +2048,26 @@ focusclient(Client *c, int lift)
 		} else if (old_c && old_c == exclusive_focus && client_wants_focus(old_c)) {
 			return;
 		} else if (old_c && !client_is_unmanaged(old_c)) {
-			/* Always emit property::active = false for border updates */
-			luaA_object_push(globalconf_L, old_c);
-			lua_pushboolean(globalconf_L, false);
-			luaA_object_emit_signal(globalconf_L, -2, "property::active", 1);
-			lua_pop(globalconf_L, 1);
-
 			/* Only do protocol-level deactivation if new client doesn't want focus.
 			 * Skipping this avoids issues with winecfg and similar clients. */
 			if (!c || !client_wants_focus(c)) {
-				client_set_border_color(old_c, get_bordercolor());
 				client_activate_surface(old, 0);
 				if (old_c->toplevel_handle)
 					wlr_foreign_toplevel_handle_v1_set_activated(old_c->toplevel_handle, false);
-				luaA_emit_signal_global("client::unfocus");
 			}
 		}
+	}
+
+	/* Unfocus old client from globalconf (AwesomeWM pattern) - this emits proper signals */
+	if (c && globalconf.focus.client && globalconf.focus.client != c &&
+	    !client_is_unmanaged(globalconf.focus.client)) {
+		client_set_border_color(globalconf.focus.client, get_bordercolor());
+		luaA_object_push(globalconf_L, globalconf.focus.client);
+		lua_pushboolean(globalconf_L, false);
+		luaA_object_emit_signal(globalconf_L, -2, "property::active", 1);
+		luaA_object_emit_signal(globalconf_L, -1, "unfocus", 0);
+		lua_pop(globalconf_L, 1);
+		luaA_emit_signal_global("client::unfocus");
 	}
 	printstatus();
 
@@ -3938,7 +3944,7 @@ setmon(Client *c, Monitor *m, uint32_t newtags)
 		setfullscreen(c, c->fullscreen); /* This will call arrange(c->mon) */
 		/* Note: setfloating() removed - Lua manages floating state via property system */
 	}
-	focusclient(focustop(selmon), 1);
+	/* Note: focusclient() removed - Lua handles focus via request::activate signals */
 }
 
 void
@@ -4380,8 +4386,10 @@ void
 tagmon(const Arg *arg)
 {
 	Client *sel = focustop(selmon);
-	if (sel)
+	if (sel) {
 		setmon(sel, dirtomon(arg->i), 0);
+		focusclient(focustop(selmon), 1);
+	}
 }
 
 void
@@ -4482,6 +4490,7 @@ unmapnotify(struct wl_listener *listener, void *data)
 		}
 	} else {
 		setmon(c, NULL, 0);
+		focusclient(focustop(selmon), 1);
 
 		/* Do NOT call client_unmanage() here - let destroynotify() handle it.
 		 * For Wayland: unmap → destroy happens quickly, destroynotify() will call client_unmanage().
@@ -5105,6 +5114,10 @@ createnotifyx11(struct wl_listener *listener, void *data)
 	/* Add to global clients array (matches AwesomeWM client_manage line 2202) */
 	lua_pushvalue(L, -1);
 	client_array_push(&globalconf.clients, luaA_object_ref(L, -1));
+
+	/* Add to stacking order (matches AwesomeWM client_manage line 2244)
+	 * This is required for client.get(s, true) to return newly managed clients */
+	client_array_push(&globalconf.stack, c);
 
 	/* Emit client::list signal (matches AwesomeWM line 2266) */
 	luaA_class_emit_signal(L, &client_class, "list", 0);

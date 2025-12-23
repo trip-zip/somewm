@@ -50,23 +50,18 @@ static void
 tag_client_emit_signal(tag_t *t, client_t *c, const char *signame)
 {
 	lua_State *L = globalconf_get_lua_State();
-	fprintf(stderr, "[TAG_CLIENT_EMIT] Emitting signal '%s' for client %p and tag %p\n",
-	        signame, (void*)c, (void*)t);
 	luaA_object_push(L, c);
 	luaA_object_push(L, t);
 	/* emit signal on client, with tag as argument */
-	fprintf(stderr, "[TAG_CLIENT_EMIT] Emitting '%s' on client (with tag as arg)\n", signame);
 	luaA_object_emit_signal(L, -2, signame, 1);
 	/* re-push tag */
 	luaA_object_push(L, t);
 	/* move tag before client */
 	lua_insert(L, -2);
 	/* emit signal on tag, with client as argument */
-	fprintf(stderr, "[TAG_CLIENT_EMIT] Emitting '%s' on tag (with client as arg)\n", signame);
 	luaA_object_emit_signal(L, -2, signame, 1);
 	/* Remove tag */
 	lua_pop(L, 1);
-	fprintf(stderr, "[TAG_CLIENT_EMIT] Done emitting signal '%s'\n", signame);
 }
 
 /** Tag a client with the tag on top of the stack.
@@ -221,12 +216,13 @@ luaA_tag_set_selected(lua_State *L, tag_t *tag)
 
 	if (tag->selected != selected) {
 		tag->selected = selected;
+		banning_need_update();
 		luaA_awm_object_emit_signal(L, -3, "property::selected", 0);
 
 		m = some_get_focused_monitor();
 		if (m) {
 			some_monitor_arrange(m);
-			some_focus_top_client(m);
+			/* Note: focus handled by Lua via property::selected signal → awful.permissions.check_focus_tag */
 		}
 	}
 	return 0;
