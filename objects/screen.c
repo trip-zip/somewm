@@ -760,18 +760,13 @@ luaA_screen_get_bounding_geometry(lua_State *L)
 		lua_getfield(L, 2, "honor_padding");
 		honor_padding = lua_toboolean(L, -1);
 		lua_pop(L, 1);
-
-		fprintf(stderr, "[GET_BOUNDING_GEO_C] honor_workarea=%d honor_padding=%d\n",
-			honor_workarea, honor_padding);
 	}
 
 	/* Use workarea if requested, otherwise full geometry */
 	geo = honor_workarea ? screen->workarea : screen->geometry;
 
-	fprintf(stderr, "[GET_BOUNDING_GEO_C] Returning: %dx%d+%d+%d\n",
-		geo.width, geo.height, geo.x, geo.y);
-
 	/* TODO: Apply honor_padding and margins if needed */
+	(void)honor_padding;
 
 	lua_newtable(L);
 	lua_pushinteger(L, geo.x);

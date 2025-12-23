@@ -1929,8 +1929,9 @@ client_hasproto(client_t *c, xcb_atom_t atom)
 void client_ban_unfocus(client_t *c)
 {
     /* Wait until the last moment to take away the focus from the window. */
-    if(globalconf.focus.client == c)
+    if(globalconf.focus.client == c) {
         client_unfocus(c);
+    }
 }
 
 /** Ban client and move it out of the viewport.
@@ -2111,9 +2112,6 @@ client_border_refresh(void)
         if(!c->scene || !c->border[0])
             continue;
 
-        fprintf(stderr, "[BORDER_REFRESH] Updating borders for client %p: width=%d\n",
-                (void*)c, c->border_width);
-
         /* Sync wlroots border width (bw) with Lua-facing border_width */
         c->bw = c->border_width;
 
@@ -2140,10 +2138,6 @@ client_border_refresh(void)
             /* Apply color to all 4 border rectangles */
             for(i = 0; i < 4; i++)
                 wlr_scene_rect_set_color(c->border[i], color_floats);
-
-            fprintf(stderr, "[BORDER_REFRESH] Applied color #%02x%02x%02x%02x to client %p\n",
-                    c->border_color.red, c->border_color.green,
-                    c->border_color.blue, c->border_color.alpha, (void*)c);
         }
     }
 }
@@ -2699,19 +2693,12 @@ client_resize_do(client_t *c, area_t geometry)
     area_t old_geometry;
     screen_t *new_screen = c->screen;
 
-    fprintf(stderr, "[CLIENT_RESIZE_DO] Called for client %p: geo=(%d,%d %dx%d)\n",
-            (void*)c, geometry.x, geometry.y, geometry.width, geometry.height);
-
     if(!new_screen || !screen_area_in_screen(new_screen, geometry))
         new_screen = screen_getbycoord(geometry.x, geometry.y);
 
     /* Also store geometry including border */
     old_geometry = c->geometry;
     c->geometry = geometry;
-
-    fprintf(stderr, "[CLIENT_RESIZE_DO] old_geo=(%d,%d %dx%d) new_geo=(%d,%d %dx%d)\n",
-            old_geometry.x, old_geometry.y, old_geometry.width, old_geometry.height,
-            geometry.x, geometry.y, geometry.width, geometry.height);
 
     luaA_object_push(L, c);
     if (!AREA_EQUAL(old_geometry, geometry))
