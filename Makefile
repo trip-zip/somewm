@@ -41,7 +41,8 @@ LUAOBJS = luaa.o root.o mouse.o spawn.o keygrabber.o mousegrabber.o selection.o 
           objects/drawin.o objects/signal.o objects/timer.o objects/key.o \
           objects/keybinding.o objects/awesome.o objects/button.o objects/wibox.o \
           objects/ipc.o objects/selection_getter.o objects/selection_acquire.o \
-          objects/selection_transfer.o objects/selection_watcher.o
+          objects/selection_transfer.o objects/selection_watcher.o \
+          objects/systray.o
 
 all: check-lgi somewm somewm-client
 
@@ -101,6 +102,7 @@ objects/awesome.o: objects/awesome.c objects/awesome.h objects/luaa.h somewm_api
 objects/button.o: objects/button.c objects/button.h common/luaclass.h common/luaobject.h objects/luaa.h objects/drawin.h somewm_api.h util.h
 objects/wibox.o: objects/wibox.c objects/wibox.h objects/luaa.h somewm_api.h somewm_types.h
 objects/ipc.o: objects/ipc.c objects/ipc.h objects/luaa.h
+objects/systray.o: objects/systray.c objects/systray.h common/luaclass.h common/luaobject.h objects/luaa.h globalconf.h util.h
 
 # Selection module (AwesomeWM clipboard API)
 selection.o: selection.c selection.h globalconf.h common/lualib.h

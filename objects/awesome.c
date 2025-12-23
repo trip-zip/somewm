@@ -7,13 +7,21 @@
 #include "luaa.h"
 #include "signal.h"
 #include "spawn.h"
+#include "systray.h"
+#include "drawin.h"
 #include "../somewm_api.h"
 #include "../draw.h"  /* Must be before globalconf.h to avoid type conflicts */
 #include "../globalconf.h"
+#include "../color.h"
 #include <stdio.h>
 #include <string.h>
 #include <xkbcommon/xkbcommon.h>
 #include <wayland-server-core.h>
+#include <wlr/types/wlr_scene.h>
+#include <wlr/types/wlr_buffer.h>
+#include <wlr/interfaces/wlr_buffer.h>
+#include <drm_fourcc.h>
+#include <cairo/cairo.h>
 
 /* External functions */
 extern void wlr_log_init(int verbosity, void *callback);
@@ -355,20 +363,341 @@ rebuild_keyboard_keymap(void)
 	some_rebuild_keyboard_keymap();
 }
 
-/** Systray stub - returns 0 entries and nil parent
- * TODO: Implement proper systray support for Wayland
- * In AwesomeWM this manages the X11 systray (system tray icons).
- * For now, return 0 entries so configs using systray don't crash.
+/** Helper to count visible systray entries (status != "Passive")
+ */
+static int
+systray_count_visible(void)
+{
+	systray_item_array_t *items = systray_get_items();
+	int count = 0;
+	int i;
+
+	if (!items)
+		return 0;
+
+	for (i = 0; i < items->len; i++) {
+		systray_item_t *item = items->tab[i];
+		/* Count if valid and not passive */
+		if (item && item->is_valid) {
+			if (!item->status || strcmp(item->status, "Passive") != 0)
+				count++;
+		}
+	}
+	return count;
+}
+
+/* ========================================================================
+ * Systray icon buffer wrapper for wlr_scene_buffer
+ * ======================================================================== */
+
+struct systray_icon_buffer {
+	struct wlr_buffer base;
+	void *data;
+	int width;
+	int height;
+	size_t stride;
+};
+
+static void systray_icon_buffer_destroy(struct wlr_buffer *wlr_buffer)
+{
+	struct systray_icon_buffer *buffer =
+		wl_container_of(wlr_buffer, buffer, base);
+	free(buffer->data);
+	free(buffer);
+}
+
+static bool systray_icon_buffer_begin_data_ptr_access(
+	struct wlr_buffer *wlr_buffer, uint32_t flags, void **data,
+	uint32_t *format, size_t *stride)
+{
+	struct systray_icon_buffer *buffer =
+		wl_container_of(wlr_buffer, buffer, base);
+	*data = buffer->data;
+	*format = DRM_FORMAT_ARGB8888;
+	*stride = buffer->stride;
+	return true;
+}
+
+static void systray_icon_buffer_end_data_ptr_access(struct wlr_buffer *wlr_buffer)
+{
+	/* Nothing to do */
+}
+
+static const struct wlr_buffer_impl systray_icon_buffer_impl = {
+	.destroy = systray_icon_buffer_destroy,
+	.begin_data_ptr_access = systray_icon_buffer_begin_data_ptr_access,
+	.end_data_ptr_access = systray_icon_buffer_end_data_ptr_access,
+};
+
+/**
+ * Create a wlr_buffer from a cairo surface.
+ * The buffer takes ownership of a copy of the surface data.
+ */
+static struct wlr_buffer *
+systray_buffer_from_cairo(cairo_surface_t *surface)
+{
+	struct systray_icon_buffer *buffer;
+	int width, height;
+	size_t stride, size;
+	unsigned char *src_data;
+
+	if (!surface || cairo_surface_status(surface) != CAIRO_STATUS_SUCCESS)
+		return NULL;
+
+	if (cairo_image_surface_get_format(surface) != CAIRO_FORMAT_ARGB32)
+		return NULL;
+
+	width = cairo_image_surface_get_width(surface);
+	height = cairo_image_surface_get_height(surface);
+	stride = (size_t)cairo_image_surface_get_stride(surface);
+	src_data = cairo_image_surface_get_data(surface);
+
+	if (width <= 0 || height <= 0 || !src_data)
+		return NULL;
+
+	buffer = calloc(1, sizeof(*buffer));
+	if (!buffer)
+		return NULL;
+
+	size = stride * (size_t)height;
+	buffer->data = malloc(size);
+	if (!buffer->data) {
+		free(buffer);
+		return NULL;
+	}
+
+	memcpy(buffer->data, src_data, size);
+	buffer->width = width;
+	buffer->height = height;
+	buffer->stride = stride;
+
+	wlr_buffer_init(&buffer->base, &systray_icon_buffer_impl, width, height);
+
+	return &buffer->base;
+}
+
+/** Render systray icons to scene graph
+ * Creates/updates scene buffer nodes for each visible systray item
+ */
+static void
+systray_render_icons(drawin_t *drawin)
+{
+	systray_item_array_t *items;
+	int i, pos_x, pos_y, idx;
+	int base_size, spacing, rows;
+	bool horizontal;
+
+	if (!drawin || !drawin->scene_tree)
+		return;
+
+	items = systray_get_items();
+	if (!items || items->len == 0)
+		return;
+
+	/* Create scene tree for icons if needed */
+	if (!globalconf.systray.scene_tree) {
+		globalconf.systray.scene_tree = wlr_scene_tree_create(drawin->scene_tree);
+		if (!globalconf.systray.scene_tree)
+			return;
+		/* Mark with drawin so xytonode correctly identifies it */
+		globalconf.systray.scene_tree->node.data = drawin;
+	}
+
+	/* Get layout parameters */
+	base_size = globalconf.systray.layout.base_size;
+	spacing = globalconf.systray.layout.spacing;
+	horizontal = globalconf.systray.layout.horizontal;
+	rows = globalconf.systray.layout.rows;
+
+	if (base_size <= 0)
+		base_size = 24;
+	if (rows <= 0)
+		rows = 1;
+
+	/* Position the systray container */
+	wlr_scene_node_set_position(&globalconf.systray.scene_tree->node,
+	                            globalconf.systray.layout.x,
+	                            globalconf.systray.layout.y);
+
+	/* Clear existing children - we'll recreate them
+	 * This is simple but not optimal; a proper implementation would reuse nodes */
+	{
+		struct wlr_scene_node *child, *tmp;
+		wl_list_for_each_safe(child, tmp, &globalconf.systray.scene_tree->children, link) {
+			wlr_scene_node_destroy(child);
+		}
+	}
+
+	/* Render each visible item */
+	idx = 0;
+	for (i = 0; i < items->len; i++) {
+		systray_item_t *item = items->tab[i];
+		int row, col;
+
+		if (!item || !item->is_valid)
+			continue;
+		if (item->status && strcmp(item->status, "Passive") == 0)
+			continue;
+
+		/* Calculate position in grid */
+		if (horizontal) {
+			col = idx / rows;
+			row = idx % rows;
+			pos_x = col * (base_size + spacing);
+			pos_y = row * (base_size + spacing);
+		} else {
+			row = idx / rows;
+			col = idx % rows;
+			pos_x = col * (base_size + spacing);
+			pos_y = row * (base_size + spacing);
+		}
+
+		/* Render the icon */
+		if (item->icon) {
+			/* Use actual icon cairo surface */
+			struct wlr_buffer *icon_buffer = systray_buffer_from_cairo(item->icon);
+			if (icon_buffer) {
+				struct wlr_scene_buffer *scene_buf;
+				scene_buf = wlr_scene_buffer_create(globalconf.systray.scene_tree,
+				                                    icon_buffer);
+				if (scene_buf) {
+					wlr_scene_node_set_position(&scene_buf->node, pos_x, pos_y);
+					/* Mark as belonging to drawin's drawable for xytonode() */
+					scene_buf->node.data = drawin->drawable;
+					/* Scale if icon size differs from base_size */
+					if (item->icon_width != base_size || item->icon_height != base_size) {
+						wlr_scene_buffer_set_dest_size(scene_buf, base_size, base_size);
+					}
+				}
+				wlr_buffer_drop(icon_buffer);
+			}
+		} else {
+			/* Fallback: placeholder colored rectangle */
+			float color[4] = {0.5f, 0.5f, 0.8f, 1.0f};
+			struct wlr_scene_rect *rect;
+			rect = wlr_scene_rect_create(globalconf.systray.scene_tree,
+			                             base_size, base_size, color);
+			if (rect) {
+				wlr_scene_node_set_position(&rect->node, pos_x, pos_y);
+				/* Mark as belonging to drawin's drawable for xytonode() */
+				rect->node.data = drawin->drawable;
+			}
+		}
+
+		idx++;
+	}
+}
+
+/** Systray kickout - remove systray from a drawin
+ */
+static void
+systray_kickout(drawin_t *drawin)
+{
+	if (globalconf.systray.parent != drawin)
+		return;
+
+	/* Destroy scene tree if it exists */
+	if (globalconf.systray.scene_tree) {
+		wlr_scene_node_destroy(&globalconf.systray.scene_tree->node);
+		globalconf.systray.scene_tree = NULL;
+	}
+
+	globalconf.systray.parent = NULL;
+}
+
+/** awesome.systray() - Manage the system tray
+ *
+ * This function has three modes:
+ * 1. Query mode (no args): Returns (count, parent_drawin)
+ * 2. Kickout mode (1 arg): Remove systray from the specified drawin
+ * 3. Render mode (9 args): Position and render systray icons
+ *
+ * Unlike AwesomeWM's X11 XEmbed approach, we use StatusNotifierItem (SNI)
+ * protocol via D-Bus. Icons are rendered as scene graph nodes.
  *
  * \param L Lua state
- * \return 2 values: number of entries (0), parent drawin (nil)
+ * \return 2 values: number of visible entries, parent drawin (or nil)
  */
 static int
 luaA_systray(lua_State *L)
 {
-	/* Stub: always return 0 entries and nil parent */
-	lua_pushinteger(L, 0);
-	lua_pushnil(L);
+	int nargs = lua_gettop(L);
+	drawin_t *drawin;
+	int x, y, base_size, spacing, rows;
+	bool horizontal, reverse;
+	const char *bg_color;
+	color_t bg;
+
+	/* Mode 1: Query - just return count and parent */
+	if (nargs == 0) {
+		lua_pushinteger(L, systray_count_visible());
+		if (globalconf.systray.parent)
+			luaA_object_push(L, globalconf.systray.parent);
+		else
+			lua_pushnil(L);
+		return 2;
+	}
+
+	/* Get the drawin argument (required for modes 2 and 3) */
+	drawin = luaA_todrawin(L, 1);
+	if (!drawin) {
+		/* Invalid drawin, just return count and nil */
+		lua_pushinteger(L, systray_count_visible());
+		lua_pushnil(L);
+		return 2;
+	}
+
+	/* Mode 2: Kickout - remove systray from this drawin */
+	if (nargs == 1) {
+		systray_kickout(drawin);
+		lua_pushinteger(L, systray_count_visible());
+		lua_pushnil(L);
+		return 2;
+	}
+
+	/* Mode 3: Render - position and display systray icons */
+	/* Args: drawin, x, y, base_size, is_rotated, bg_color, reverse, spacing, rows */
+
+	x = luaL_checkinteger(L, 2);
+	y = luaL_checkinteger(L, 3);
+	base_size = luaL_checkinteger(L, 4);
+	horizontal = lua_toboolean(L, 5);  /* is_rotated in AwesomeWM */
+	bg_color = luaL_optstring(L, 6, "#000000");
+	reverse = lua_toboolean(L, 7);
+	spacing = luaL_optinteger(L, 8, 0);
+	rows = luaL_optinteger(L, 9, 1);
+
+	/* Switch parent if needed */
+	if (globalconf.systray.parent != drawin) {
+		/* Kickout from old parent */
+		if (globalconf.systray.parent)
+			systray_kickout(globalconf.systray.parent);
+		globalconf.systray.parent = drawin;
+	}
+
+	/* Parse and store background color */
+	if (color_init_from_string(&bg, bg_color)) {
+		globalconf.systray.background_pixel =
+			((uint32_t)(bg.alpha * 255) << 24) |
+			((uint32_t)(bg.red * 255) << 16) |
+			((uint32_t)(bg.green * 255) << 8) |
+			((uint32_t)(bg.blue * 255));
+	}
+
+	/* Store layout parameters */
+	globalconf.systray.layout.x = x;
+	globalconf.systray.layout.y = y;
+	globalconf.systray.layout.base_size = base_size;
+	globalconf.systray.layout.horizontal = horizontal;
+	globalconf.systray.layout.reverse = reverse;
+	globalconf.systray.layout.spacing = spacing;
+	globalconf.systray.layout.rows = rows > 0 ? rows : 1;
+
+	/* Render systray icons to scene graph */
+	systray_render_icons(drawin);
+
+	lua_pushinteger(L, systray_count_visible());
+	luaA_object_push(L, drawin);
 	return 2;
 }
 

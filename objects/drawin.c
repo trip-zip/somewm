@@ -9,6 +9,7 @@
 #include "../somewm_api.h"
 #include "../stack.h"
 #include "../util.h"
+#include "../globalconf.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -536,6 +537,15 @@ drawin_wipe(drawin_t *w)
 {
 	if (!w)
 		return;
+
+	/* If this drawin was hosting the systray, clean it up */
+	if (globalconf.systray.parent == w) {
+		if (globalconf.systray.scene_tree) {
+			wlr_scene_node_destroy(&globalconf.systray.scene_tree->node);
+			globalconf.systray.scene_tree = NULL;
+		}
+		globalconf.systray.parent = NULL;
+	}
 
 	/* Note: drawable reference cleanup handled by class system */
 	w->drawable = NULL;

@@ -64,47 +64,34 @@ local function get_widget_context(self)
 end
 
 local function do_redraw(self)
-    print("[DO_REDRAW] Starting - drawable.valid=" .. tostring(self.drawable.valid))
     if not self.drawable.valid then
-        print("[DO_REDRAW] ABORT: drawable not valid")
         return
     end
     if self._forced_screen and not self._forced_screen.valid then
-        print("[DO_REDRAW] ABORT: forced_screen not valid")
         return
     end
 
-    print("[DO_REDRAW] About to load surface: " .. tostring(self.drawable.surface))
     local surf = surface.load_silently(self.drawable.surface, false)
     -- The surface can be nil if the drawable's parent was already finalized
     if not surf then
-        print("[DO_REDRAW] ABORT: could not load surface")
         return
     end
-    print("[DO_REDRAW] Surface loaded successfully")
     local success, cr_or_err = pcall(function() return cairo.Context(surf) end)
     if not success then
-        print("[DO_REDRAW] ERROR creating cairo context: " .. tostring(cr_or_err))
         return
     end
     local cr = cr_or_err
-    print("[DO_REDRAW] Cairo context created")
 
     local success2, geom_or_err = pcall(function() return self.drawable:geometry() end)
     if not success2 then
-        print("[DO_REDRAW] ERROR getting geometry: " .. tostring(geom_or_err))
         return
     end
     local geom = geom_or_err
     local x, y, width, height = geom.x, geom.y, geom.width, geom.height
-    print("[DO_REDRAW] Got geometry: " .. width .. "x" .. height .. "+" .. x .. "+" .. y)
     local context = get_widget_context(self)
-    print("[DO_REDRAW] Got widget context")
 
     -- Relayout
-    print("[DO_REDRAW] need_relayout=" .. tostring(self._need_relayout) .. " need_complete_repaint=" .. tostring(self._need_complete_repaint))
     if self._need_relayout or self._need_complete_repaint then
-        print("[DO_REDRAW] Starting relayout/repaint")
         self._need_relayout = false
         if self._widget_hierarchy and self._widget then
             local had_systray = systray_widget and self._widget_hierarchy:get_count(systray_widget) > 0
@@ -136,12 +123,9 @@ local function do_redraw(self)
     end
 
     -- Clip to the dirty area
-    print("[DO_REDRAW] Checking dirty_area - is_empty=" .. tostring(self._dirty_area:is_empty()) .. " num_rects=" .. tostring(self._dirty_area:num_rectangles()))
     if self._dirty_area:is_empty() then
-        print("[DO_REDRAW] ABORT: dirty_area is empty - nothing to draw")
         return
     end
-    print("[DO_REDRAW] Proceeding with drawing " .. self._dirty_area:num_rectangles() .. " rectangles")
     for i = 0, self._dirty_area:num_rectangles() - 1 do
         local rect = self._dirty_area:get_rectangle(i)
         cr:rectangle(rect.x, rect.y, rect.width, rect.height)
@@ -335,18 +319,13 @@ function drawable:_force_screen(s)
 end
 
 function drawable:_inform_visible(visible)
-    print("[DRAWABLE_INFORM_VISIBLE] Called with visible=" .. tostring(visible) .. ", current _visible=" .. tostring(self._visible))
     self._visible = visible
-    print("[DRAWABLE_INFORM_VISIBLE] Set _visible=" .. tostring(visible))
     if visible then
         visible_drawables[self] = true
-        print("[DRAWABLE_INFORM_VISIBLE] Added to visible_drawables, calling _do_complete_repaint()")
         -- The wallpaper or widgets might have changed
         self:_do_complete_repaint()
-        print("[DRAWABLE_INFORM_VISIBLE] _do_complete_repaint() complete")
     else
         visible_drawables[self] = nil
-        print("[DRAWABLE_INFORM_VISIBLE] Removed from visible_drawables")
     end
 end
 
@@ -435,23 +414,18 @@ function drawable.new(d, widget_context_skeleton, drawable_name)
     -- Only redraw a drawable once, even when we get told to do so multiple times.
     ret._redraw_pending = false
     ret._do_redraw = function()
-        print("[DRAWABLE_DO_REDRAW] Called")
         ret._redraw_pending = false
         do_redraw(ret)
-        print("[DRAWABLE_DO_REDRAW] Complete")
     end
 
     -- Connect our signal when we need a redraw
     ret.draw = function()
-        print("[DRAWABLE_DRAW] Called, redraw_pending=" .. tostring(ret._redraw_pending))
         if not ret._redraw_pending then
-            print("[DRAWABLE_DRAW] Scheduling redraw via timer.delayed_call")
             timer.delayed_call(ret._do_redraw)
             ret._redraw_pending = true
         end
     end
     ret._do_complete_repaint = function()
-        print("[DRAWABLE_DO_COMPLETE_REPAINT] Called - triggering full repaint")
         ret._need_complete_repaint = true
         ret:draw()
     end
@@ -516,21 +490,15 @@ function drawable.new(d, widget_context_skeleton, drawable_name)
         ret:draw()
     end
     ret._layout_callback = function(_, arg)
-        print("[DRAWABLE_LAYOUT_CALLBACK] Called, arg=" .. tostring(arg) .. ", expected=" .. tostring(ret._widget_hierarchy_callback_arg))
         if ret._widget_hierarchy_callback_arg ~= arg then
-            print("[DRAWABLE_LAYOUT_CALLBACK] Arg mismatch, ignoring")
             return
         end
-        print("[DRAWABLE_LAYOUT_CALLBACK] Setting need_relayout=true")
         ret._need_relayout = true
         -- When not visible, we will be redrawn when we become visible. In the
         -- mean-time, the layout does not matter much.
-        print("[DRAWABLE_LAYOUT_CALLBACK] Visible: " .. tostring(ret._visible))
         if ret._visible then
-            print("[DRAWABLE_LAYOUT_CALLBACK] Calling draw()")
             ret:draw()
         else
-            print("[DRAWABLE_LAYOUT_CALLBACK] Not visible, skipping draw()")
         end
     end
 

@@ -215,8 +215,6 @@ local function tile_group(gs, cls, wa, orientation, fact, group, useless_gap)
     geom[height] = math.max(1, math.floor(unused * fact[i] / total_fact))
     geom[x] = group.coord
     geom[y] = coord
-    io.stderr:write(string.format("[TILE_GROUP] Client %d: x=%d y=%d width=%d height=%d\n",
-        c, geom.x, geom.y, geom.width, geom.height))
     gs[cls[c]] = geom
     hints.width, hints.height = apply_size_hints(cls[c], geom.width, geom.height, useless_gap)
 
@@ -244,8 +242,6 @@ local function do_tile(param, orientation)
 
   local gs = param.geometries
   local cls = param.clients
-  io.stderr:write(string.format("[DO_TILE] Called with %d clients, workarea=%dx%d+%d+%d\n",
-      #cls, param.workarea.width, param.workarea.height, param.workarea.x, param.workarea.y))
   local useless_gap = param.useless_gap
   local nmaster = math.min(t.master_count, #cls)
   local nother = math.max(#cls - nmaster, 0)

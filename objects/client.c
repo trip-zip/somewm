@@ -2776,50 +2776,37 @@ client_resize_do(client_t *c, area_t geometry)
 bool
 client_resize(client_t *c, area_t geometry, bool honor_hints)
 {
-    fprintf(stderr, "[CLIENT_RESIZE] Called: new=%dx%d+%d+%d old=%dx%d+%d+%d honor_hints=%d\n",
-            geometry.width, geometry.height, geometry.x, geometry.y,
-            c->geometry.width, c->geometry.height, c->geometry.x, c->geometry.y, honor_hints);
-
     if (honor_hints) {
         /* We could get integer underflows in client_remove_titlebar_geometry()
          * without these checks here.
          */
         if(geometry.width < c->titlebar[CLIENT_TITLEBAR_LEFT].size + c->titlebar[CLIENT_TITLEBAR_RIGHT].size) {
-            fprintf(stderr, "[CLIENT_RESIZE] Early return: width < titlebar\n");
             return false;
         }
         if(geometry.height < c->titlebar[CLIENT_TITLEBAR_TOP].size + c->titlebar[CLIENT_TITLEBAR_BOTTOM].size) {
-            fprintf(stderr, "[CLIENT_RESIZE] Early return: height < titlebar\n");
             return false;
         }
         geometry = client_apply_size_hints(c, geometry);
-        fprintf(stderr, "[CLIENT_RESIZE] After size hints: %dx%d+%d+%d\n",
-                geometry.width, geometry.height, geometry.x, geometry.y);
     }
 
     if(geometry.width < c->titlebar[CLIENT_TITLEBAR_LEFT].size + c->titlebar[CLIENT_TITLEBAR_RIGHT].size) {
-        fprintf(stderr, "[CLIENT_RESIZE] Early return 2: width < titlebar\n");
         return false;
     }
     if(geometry.height < c->titlebar[CLIENT_TITLEBAR_TOP].size + c->titlebar[CLIENT_TITLEBAR_BOTTOM].size) {
-        fprintf(stderr, "[CLIENT_RESIZE] Early return 2: height < titlebar\n");
         return false;
     }
 
     if(geometry.width == 0 || geometry.height == 0) {
-        fprintf(stderr, "[CLIENT_RESIZE] Early return: zero size\n");
         return false;
     }
 
     if(!AREA_EQUAL(c->geometry, geometry))
     {
-        fprintf(stderr, "[CLIENT_RESIZE] Calling client_resize_do\n");
         client_resize_do(c, geometry);
 
         return true;
     }
 
-    fprintf(stderr, "[CLIENT_RESIZE] Early return: geometry unchanged\n");
     return false;
 }
 
@@ -4027,8 +4014,6 @@ luaA_client_geometry(lua_State *L)
         lua_getfield(L, 2, "height");
         height_from_table = lua_tonumber(L, -1);
         lua_pop(L, 1);
-        fprintf(stderr, "[LUAA_CLIENT_GEOMETRY] Direct table read: width=%f height=%f\n",
-                width_from_table, height_from_table);
 
         /* WAYLAND WORKAROUND: luaA_getopt_number_range is broken, use direct lua_getfield */
         lua_getfield(L, 2, "x");
@@ -4050,8 +4035,6 @@ luaA_client_geometry(lua_State *L)
             geometry.height = (int)ceil(height_from_table > 0 ? height_from_table : c->geometry.height);
         }
 
-        fprintf(stderr, "[LUAA_CLIENT_GEOMETRY] Final geometry before client_resize: %dx%d+%d+%d\n",
-                geometry.width, geometry.height, geometry.x, geometry.y);
         client_resize(c, geometry, c->size_hints_honor);
     }
 

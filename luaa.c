@@ -31,6 +31,7 @@
 #include "objects/selection_acquire.h"
 #include "objects/selection_transfer.h"
 #include "objects/selection_watcher.h"
+#include "objects/systray.h"
 #include "selection.h"
 #include "common/luaobject.h"
 #include "window.h"
@@ -641,6 +642,7 @@ luaA_init(void)
 	luaA_mouse_setup(globalconf_L);
 	luaA_wibox_setup(globalconf_L);
 	luaA_ipc_setup(globalconf_L);
+	systray_item_class_setup(globalconf_L);  /* SNI systray item class */
 
 	/* Register D-Bus library (AwesomeWM compatibility) */
 	luaA_registerlib(globalconf_L, "dbus", awesome_dbus_lib);

@@ -1823,7 +1823,6 @@ destroynotify(struct wl_listener *listener, void *data)
 	bool already_unmanaged;
 	int i;
 
-	fprintf(stderr, "[XWAYLAND] destroynotify: client=%p type=%d\n", (void*)c, c->client_type);
 
 	/* Safety: If Lua state destroyed during cleanup, skip client_unmanage()
 	 * which emits signals. This should never happen with correct cleanup
@@ -5016,16 +5015,13 @@ associatex11(struct wl_listener *listener, void *data)
 {
 	Client *c = wl_container_of(listener, c, associate);
 	struct wlr_surface *surface = client_surface(c);
-	fprintf(stderr, "[XWAYLAND] associatex11: client=%p surface=%p\n", (void*)c, (void*)surface);
 
 	if (!surface) {
-		fprintf(stderr, "[XWAYLAND] ERROR: associatex11 called with NULL surface!\n");
 		return;
 	}
 
 	LISTEN(&surface->events.map, &c->map, mapnotify);
 	LISTEN(&surface->events.unmap, &c->unmap, unmapnotify);
-	fprintf(stderr, "[XWAYLAND] associatex11: registered map/unmap listeners OK\n");
 }
 
 void
@@ -5062,7 +5058,6 @@ createnotifyx11(struct wl_listener *listener, void *data)
 	Client *c;
 	lua_State *L;
 
-	fprintf(stderr, "[XWAYLAND] createnotifyx11: xsurface=%p window_id=%u\n", (void*)xsurface, xsurface->window_id);
 	L = globalconf_get_lua_State();
 
 	/* Create Lua client object (matches AwesomeWM client_manage line 2138) */
@@ -5107,7 +5102,6 @@ void
 dissociatex11(struct wl_listener *listener, void *data)
 {
 	Client *c = wl_container_of(listener, c, dissociate);
-	fprintf(stderr, "[XWAYLAND] dissociatex11: client=%p\n", (void*)c);
 	wl_list_remove(&c->map.link);
 	wl_list_remove(&c->unmap.link);
 }

@@ -580,52 +580,35 @@ local function create_callback(w, t)
 end
 
 local function tasklist_update(s, self, buttons, filter, data, style, update_function, args)
-    print(string.format("[TASKLIST_UPDATE] Starting update for screen=%s", tostring(s)))
     local clients = {}
 
     local source = self.source or tasklist.source.all_clients or nil
     local list   = source and source(s, args) or capi.client.get()
-    print(string.format("[TASKLIST_UPDATE] Got %d clients from client.get()", #list))
 
     for idx, c in ipairs(list) do
         local success, result = pcall(function()
             local skip = c.skip_taskbar or c.hidden or c.type == "splash" or c.type == "dock" or c.type == "desktop"
             local passes_filter = filter(c, s)
-            print(string.format("[TASKLIST_UPDATE] Client[%d] %s: skip=%s, passes_filter=%s",
-                idx, tostring(c), tostring(skip), tostring(passes_filter)))
             if not skip and passes_filter then
                 table.insert(clients, c)
-                print(string.format("[TASKLIST_UPDATE]   -> ADDED to tasklist"))
             end
         end)
-        if not success then
-            print(string.format("[TASKLIST_UPDATE] ERROR processing client[%d]: %s", idx, tostring(result)))
-        end
     end
-
-    print(string.format("[TASKLIST_UPDATE] Filtered to %d clients for display", #clients))
 
     if self._private.last_count ~= #clients then
         local old = self._private.last_count
         self._private.last_count = #clients
         self:emit_signal("property::count", #clients, old)
-        print(string.format("[TASKLIST_UPDATE] Emitted property::count signal: %d (was %d)", #clients, old or 0))
     end
 
     local function label(c, tb) return tasklist_label(c, style, tb) end
 
-    print(string.format("[TASKLIST_UPDATE] Calling update_function with %d clients", #clients))
-    local success, err = pcall(function()
+    pcall(function()
         update_function(self._private.base_layout, buttons, label, data, clients, {
             widget_template = self._private.widget_template or default_template(self),
             create_callback = create_callback,
         })
     end)
-    if success then
-        print("[TASKLIST_UPDATE] Update complete successfully")
-    else
-        print(string.format("[TASKLIST_UPDATE] ERROR in update_function: %s", tostring(err)))
-    end
 end
 
 --- The current number of clients.
@@ -956,27 +939,19 @@ function tasklist.new(args, filter, buttons, style, update_function, base_widget
 
     -- For the tests
     function w._do_tasklist_update_now()
-        print("[TASKLIST] _do_tasklist_update_now() called")
         queued_update = false
         if w._private.screen.valid then
-            print(string.format("[TASKLIST] Screen %s is valid, calling tasklist_update", tostring(w._private.screen)))
             tasklist_update(
                 w._private.screen, w, w._private.buttons, w._private.filter, w._private.data, args.style, uf, args
             )
-        else
-            print("[TASKLIST] Screen is NOT valid, skipping update")
         end
     end
 
     function w._do_tasklist_update()
-        print("[TASKLIST] _do_tasklist_update() called, queued_update=" .. tostring(queued_update))
         -- Add a delayed callback for the first update.
         if not queued_update then
-            print("[TASKLIST] Scheduling delayed update via timer.delayed_call")
             timer.delayed_call(w._do_tasklist_update_now)
             queued_update = true
-        else
-            print("[TASKLIST] Update already queued, skipping")
         end
     end
     function w._unmanage(c)
@@ -985,31 +960,19 @@ function tasklist.new(args, filter, buttons, style, update_function, base_widget
     if instances == nil then
         instances = setmetatable({}, { __mode = "k" })
         local function us(s)
-            print(string.format("[TASKLIST_SIGNAL] us() called for screen=%s", tostring(s)))
             local i = instances[get_screen(s)]
             if i then
-                print(string.format("[TASKLIST_SIGNAL] Found %d tasklist instances for this screen", #i))
-                for idx, tlist in pairs(i) do
-                    print(string.format("[TASKLIST_SIGNAL] Updating tasklist instance %s", tostring(idx)))
+                for _, tlist in pairs(i) do
                     tlist._do_tasklist_update()
                 end
-            else
-                print("[TASKLIST_SIGNAL] No tasklist instances found for this screen")
             end
         end
         local function u()
-            print("[TASKLIST_SIGNAL] u() signal handler called (class-level 'tagged' signal)")
-            print(string.format("[TASKLIST_SIGNAL] Number of screens with tasklist instances: %d",
-                (function() local count = 0; for _ in pairs(instances) do count = count + 1 end; return count end)()))
             for s in pairs(instances) do
                 if s.valid then
-                    print(string.format("[TASKLIST_SIGNAL] Processing screen %s (valid)", tostring(s)))
                     us(s)
-                else
-                    print(string.format("[TASKLIST_SIGNAL] Skipping screen %s (NOT valid)", tostring(s)))
                 end
             end
-            print("[TASKLIST_SIGNAL] u() handler complete")
         end
 
         tag.attached_connect_signal(nil, "property::selected", u)
@@ -1094,46 +1057,21 @@ end
 -- @filterfunction awful.widget.tasklist.filter.currenttags
 function tasklist.filter.currenttags(c, screen)
     screen = get_screen(screen)
-    print(string.format("[TASKLIST_FILTER] currenttags: client=%s, screen=%s", tostring(c), tostring(screen)))
-
     -- Only print client on the same screen as this widget
-    local c_screen = get_screen(c.screen)
-    print(string.format("[TASKLIST_FILTER]   client.screen=%s, widget_screen=%s, match=%s",
-        tostring(c_screen), tostring(screen), tostring(c_screen == screen)))
-    if c_screen ~= screen then
-        print("[TASKLIST_FILTER]   -> REJECTED: wrong screen")
-        return false
-    end
-
+    if get_screen(c.screen) ~= screen then return false end
     -- Include sticky client too
-    print(string.format("[TASKLIST_FILTER]   client.sticky=%s", tostring(c.sticky)))
-    if c.sticky then
-        print("[TASKLIST_FILTER]   -> ACCEPTED: sticky client")
-        return true
-    end
-
+    if c.sticky then return true end
     local tags = screen.tags
-    print(string.format("[TASKLIST_FILTER]   screen has %d tags", #tags))
-    for tag_idx, t in ipairs(tags) do
-        print(string.format("[TASKLIST_FILTER]   Tag[%d]: %s, selected=%s", tag_idx, tostring(t), tostring(t.selected)))
+    for _, t in ipairs(tags) do
         if t.selected then
-            local success, ctags = pcall(function() return c:tags() end)
-            if not success then
-                print(string.format("[TASKLIST_FILTER]   ERROR calling c:tags(): %s", tostring(ctags)))
-                return false
-            end
-            print(string.format("[TASKLIST_FILTER]   Client has %d tags", ctags and #ctags or 0))
-            for ctag_idx, v in ipairs(ctags) do
-                print(string.format("[TASKLIST_FILTER]     ClientTag[%d]: %s, matches=%s",
-                    ctag_idx, tostring(v), tostring(v == t)))
+            local ctags = c:tags()
+            for _, v in ipairs(ctags) do
                 if v == t then
-                    print("[TASKLIST_FILTER]   -> ACCEPTED: tag match")
                     return true
                 end
             end
         end
     end
-    print("[TASKLIST_FILTER]   -> REJECTED: no matching selected tags")
     return false
 end
 
