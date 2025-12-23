@@ -245,6 +245,32 @@ typedef struct
      */
     struct wlr_scene_buffer *wallpaper_buffer_node;
 
+    /* ========== SYSTRAY SUPPORT ========== */
+
+    /** System tray state (StatusNotifierItem protocol)
+     * Unlike AwesomeWM's X11 XEmbed approach, we use D-Bus SNI protocol
+     * and render icons as scene graph nodes within the parent drawin.
+     */
+    struct {
+        /** Parent drawin where systray is rendered */
+        drawin_t *parent;
+        /** Scene tree containing icon buffer nodes (child of drawin's scene) */
+        struct wlr_scene_tree *scene_tree;
+        /** Background color (ARGB pixel value) */
+        uint32_t background_pixel;
+        /** Current layout parameters (cached from last render call) */
+        struct {
+            int x, y;           /* Position within parent drawin */
+            int base_size;      /* Icon size */
+            bool horizontal;    /* Layout direction */
+            bool reverse;       /* Reverse order */
+            int spacing;        /* Spacing between icons */
+            int rows;           /* Max rows in grid */
+        } layout;
+        /** Textures for rendered icons (lazily created, keyed by item pointer) */
+        void *icon_textures;  /* TODO: hash table of wlr_texture* */
+    } systray;
+
     /* ========== X11 COMPATIBILITY STUBS ========== */
     /* These are kept as stubs for XWayland compatibility
      * and to maintain API compatibility with AwesomeWM's C code.

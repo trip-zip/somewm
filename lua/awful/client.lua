@@ -218,17 +218,13 @@ end
 -- @treturn table A table with all visible clients.
 function client.visible(s, stacked)
     local cls = capi.client.get(s, stacked)
-    io.stderr:write(string.format("[CLIENT_VISIBLE] Got %d clients from capi.client.get()\n", #cls))
     local vcls = {}
     for _, c in pairs(cls) do
         local is_vis = c:isvisible()
-        io.stderr:write(string.format("[CLIENT_VISIBLE] Client %s: isvisible=%s\n",
-            tostring(c.name or "unknown"), tostring(is_vis)))
         if is_vis then
             table.insert(vcls, c)
         end
     end
-    io.stderr:write(string.format("[CLIENT_VISIBLE] Returning %d visible clients\n", #vcls))
     return vcls
 end
 
@@ -245,8 +241,6 @@ function client.tiled(s, stacked)
     -- Remove floating clients
     for _, c in pairs(clients) do
         local is_floating = client.object.get_floating(c)
-        io.stderr:write(string.format("[CLIENT_TILED] Client %s: floating=%s fullscreen=%s maximized=%s\n",
-            tostring(c.name or "unknown"), tostring(is_floating), tostring(c.fullscreen), tostring(c.maximized)))
         if not is_floating
             and not c.fullscreen
             and not c.maximized
@@ -255,7 +249,6 @@ function client.tiled(s, stacked)
             table.insert(tclients, c)
         end
     end
-    io.stderr:write(string.format("[CLIENT_TILED] Returning %d tiled clients (from %d visible)\n", #tclients, #clients))
     return tclients
 end
 

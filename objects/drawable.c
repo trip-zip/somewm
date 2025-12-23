@@ -586,17 +586,11 @@ luaA_drawable_refresh(lua_State *L)
 		return luaL_error(L, "expected drawable, got %s", lua_typename(L, lua_type(L, 1)));
 	}
 
-	fprintf(stderr, "[DRAWABLE_REFRESH] Called for drawable %p, has_surface=%d has_callback=%d\n",
-	        (void*)d, d->surface != NULL, d->refresh_callback != NULL);
-
 	d->refreshed = true;
 
 	/* Call refresh callback if set */
 	if (d->refresh_callback) {
-		fprintf(stderr, "[DRAWABLE_REFRESH] Calling refresh_callback\n");
 		d->refresh_callback(d->refresh_data);
-	} else {
-		fprintf(stderr, "[DRAWABLE_REFRESH] No refresh callback set!\n");
 	}
 
 	return 0;
@@ -620,8 +614,6 @@ static int
 luaA_drawable_tostring(lua_State *L, lua_object_t *obj)
 {
 	drawable_t *d = (drawable_t *)obj;
-	fprintf(stderr, "[DRAWABLE_TOSTRING] d=%p width=%d height=%d surface=%p\n",
-	        (void*)d, d->geometry.width, d->geometry.height, (void*)d->surface);
 	lua_pushfstring(L, "drawable: %p %dx%d", (void*)d, d->geometry.width, d->geometry.height);
 	return 1;
 }
@@ -631,7 +623,6 @@ static int
 luaA_drawable_get_surface_prop(lua_State *L, lua_object_t *obj)
 {
 	drawable_t *d = (drawable_t *)obj;
-	fprintf(stderr, "[DRAWABLE_PROP] Accessing .surface property\n");
 	if (d->surface) {
 		/* Return a new reference for Lua - increment Cairo refcount */
 		lua_pushlightuserdata(L, cairo_surface_reference(d->surface));
@@ -646,7 +637,6 @@ static int
 luaA_drawable_get_valid_prop(lua_State *L, lua_object_t *obj)
 {
 	drawable_t *d = (drawable_t *)obj;
-	fprintf(stderr, "[DRAWABLE_GET_VALID] d=%p valid=%d\n", (void*)d, d->valid);
 	lua_pushboolean(L, d->valid);
 	return 1;
 }
@@ -665,29 +655,24 @@ luaA_drawable_index(lua_State *L)
 	}
 	key = luaL_checkstring(L, 2);
 
-	fprintf(stderr, "[DRAWABLE__INDEX] Accessing key='%s' on drawable=%p\n", key, (void*)d);
 
 	/* Check for methods first */
 	lua_getmetatable(L, 1);
 	lua_getfield(L, -1, key);
 	if (!lua_isnil(L, -1)) {
-		fprintf(stderr, "[DRAWABLE__INDEX] Found method '%s'\n", key);
 		return 1;
 	}
 	lua_pop(L, 2);
 
 	/* Check for properties */
 	if (strcmp(key, "surface") == 0) {
-		fprintf(stderr, "[DRAWABLE__INDEX] Accessing .surface property\n");
 		return luaA_drawable_get_surface_prop(L, (lua_object_t *)d);
 	}
 	if (strcmp(key, "valid") == 0) {
-		fprintf(stderr, "[DRAWABLE__INDEX] Accessing .valid property\n");
 		return luaA_drawable_get_valid_prop(L, (lua_object_t *)d);
 	}
 
 	/* Not found */
-	fprintf(stderr, "[DRAWABLE__INDEX] Property '%s' not found\n", key);
 	return 0;
 }
 

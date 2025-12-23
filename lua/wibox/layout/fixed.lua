@@ -142,15 +142,12 @@ function fixed:add(...)
     -- No table.pack in Lua 5.1 :-(
     local args = { n=select('#', ...), ... }
     assert(args.n > 0, "need at least one widget to add")
-    print(string.format("[FIXED_LAYOUT] add() called with %d widgets", args.n))
     for i=1, args.n do
         local w = base.make_widget_from_value(args[i])
         base.check_widget(w)
         table.insert(self._private.widgets, w)
     end
-    print("[FIXED_LAYOUT] Emitting widget::layout_changed signal")
     self:emit_signal("widget::layout_changed")
-    print("[FIXED_LAYOUT] Signal emitted")
 end
 
 
