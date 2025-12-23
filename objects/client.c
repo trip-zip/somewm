@@ -4079,6 +4079,9 @@ luaA_client_apply_size_hints(lua_State *L)
 static int
 luaA_client_set_screen(lua_State *L, client_t *c)
 {
+    /* Allow nil - no-op for AwesomeWM compatibility (e.g., during unmanage) */
+    if (lua_isnil(L, -1))
+        return 0;
     screen_client_moveto(c, luaA_checkscreen(L, -1), true);
     return 0;
 }
