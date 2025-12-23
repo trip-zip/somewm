@@ -20,6 +20,7 @@ local gtable = require("gears.table")
 local gdebug = require("gears.debug")
 local gfs = require("gears.filesystem")
 local gcolor = require("gears.color")
+local gshape = require("gears.shape")
 local beautiful = require("beautiful")
 local setmetatable = setmetatable
 local math = math
@@ -62,6 +63,16 @@ local math = math
 -- - `urgent_color`: urgent indicator color
 -- - `urgent_outline_color`: urgent indicator outline
 -- - `urgent_style`: "dot", "ring", "glow", or "none"
+-- - `urgent_position`: "top_right", "top_left", "bottom_right", "bottom_left"
+-- - `urgent_size`: number, ratio if <= 1, pixels if > 1
+-- - `urgent_shape`: gears.shape function (default: gears.shape.circle)
+-- - `icon_change_triggers_urgent`: boolean, icon changes trigger urgent
+-- - `overlay_triggers_urgent`: boolean, overlay presence triggers urgent styling
+-- - `overlay_position`: "bottom_right", "bottom_left", "top_right", "top_left"
+-- - `overlay_size`: number, ratio if <= 1, pixels if > 1
+-- - `overlay_bg`: background color for overlay
+-- - `overlay_shape`: "circle", "rounded_rect", "rect"
+-- - `overlay_padding`: padding around overlay within background
 --
 -- @beautiful beautiful.systray_icon_style
 -- @tparam[opt=nil] function|table systray_icon_style
@@ -112,6 +123,59 @@ local math = math
 -- typically used to show status (like number of notifications).
 -- @beautiful beautiful.systray_show_overlay
 -- @tparam[opt=true] boolean systray_show_overlay
+
+--- Whether overlay presence triggers urgent styling.
+-- When true, icons with an overlay will be rendered with urgent styling
+-- even if their status is not "NeedsAttention".
+-- @beautiful beautiful.systray_overlay_triggers_urgent
+-- @tparam[opt=false] boolean systray_overlay_triggers_urgent
+
+--- The position of overlay icons on systray items.
+-- @beautiful beautiful.systray_overlay_position
+-- @tparam[opt="bottom_right"] string systray_overlay_position
+--   One of "bottom_right", "bottom_left", "top_right", "top_left"
+
+--- The size of overlay icons relative to the main icon.
+-- If value is <= 1, treated as a ratio (e.g., 0.33 = 33% of icon size).
+-- If value is > 1, treated as absolute pixels.
+-- @beautiful beautiful.systray_overlay_size
+-- @tparam[opt=0.33] number systray_overlay_size
+
+--- Background color for overlay icons.
+-- Draws a background shape behind the overlay icon for better visibility.
+-- @beautiful beautiful.systray_overlay_bg
+-- @tparam[opt=nil] string systray_overlay_bg
+
+--- Shape for overlay background.
+-- @beautiful beautiful.systray_overlay_shape
+-- @tparam[opt="circle"] string systray_overlay_shape One of "circle", "rounded_rect", "rect"
+
+--- Padding around overlay icon within its background.
+-- @beautiful beautiful.systray_overlay_padding
+-- @tparam[opt=2] number systray_overlay_padding
+
+--- Whether icon changes trigger urgent styling.
+-- When an app changes its icon (e.g., Slack adding a notification badge),
+-- this triggers urgent styling instead. Best used with icon_override to
+-- show a clean icon while still getting notification indicators.
+-- @beautiful beautiful.systray_icon_change_triggers_urgent
+-- @tparam[opt=false] boolean systray_icon_change_triggers_urgent
+
+--- Position of urgent indicators (dot style).
+-- @beautiful beautiful.systray_urgent_position
+-- @tparam[opt="top_right"] string systray_urgent_position
+--   One of "top_right", "top_left", "bottom_right", "bottom_left"
+
+--- Size of urgent indicator dot.
+-- If value is <= 1, treated as a ratio of icon size.
+-- If value is > 1, treated as absolute pixels.
+-- @beautiful beautiful.systray_urgent_size
+-- @tparam[opt=0.25] number systray_urgent_size
+
+--- Shape function for urgent indicators.
+-- Used with "dot" and "ring" styles. Receives (cr, width, height).
+-- @beautiful beautiful.systray_urgent_shape
+-- @tparam[opt=gears.shape.circle] function systray_urgent_shape
 
 -- For icon name lookup
 local icon_theme_module = nil
@@ -170,6 +234,104 @@ local function get_icon_style(item, key)
     end
 
     return style_table
+end
+
+--- Check if an item should be rendered with urgent styling.
+-- Returns true if status is "NeedsAttention", overlay_triggers_urgent is set
+-- and an overlay is present, or icon_change_triggers_urgent is set and the
+-- app tried to change its icon.
+-- @tparam systray_item item The systray item
+-- @treturn boolean Whether to show urgent styling
+local function is_item_urgent(item)
+    if not item then return false end
+
+    -- Check explicit status first
+    if item.status == "NeedsAttention" then
+        return true
+    end
+
+    -- Check if overlay presence should trigger urgent
+    if item.overlay_icon then
+        local overlay_triggers = get_icon_style(item, "overlay_triggers_urgent")
+        if overlay_triggers == nil then
+            overlay_triggers = beautiful.systray_overlay_triggers_urgent or false
+        end
+        if overlay_triggers then
+            return true
+        end
+    end
+
+    -- Check if icon change triggered urgent (when icon_override is set)
+    -- Note: flag is stored in systray module's item_data since C userdata
+    -- doesn't support arbitrary Lua fields
+    local systray_mod = get_systray()
+    local urgent_from_icon_change = systray_mod and systray_mod.get_item_data(item, "urgent_from_icon_change")
+
+    local icon_change_triggers = get_icon_style(item, "icon_change_triggers_urgent")
+    if icon_change_triggers == nil then
+        icon_change_triggers = beautiful.systray_icon_change_triggers_urgent or false
+    end
+
+    if urgent_from_icon_change and icon_change_triggers then
+        return true
+    end
+
+    return false
+end
+
+--- Calculate overlay position and size for an item.
+-- @tparam systray_item item The systray item
+-- @tparam number width Widget width
+-- @tparam number height Widget height
+-- @treturn number overlay_x X position
+-- @treturn number overlay_y Y position
+-- @treturn number overlay_size Size in pixels
+local function get_overlay_geometry(item, width, height)
+    -- Get overlay size
+    local size_config = get_icon_style(item, "overlay_size")
+    if size_config == nil then
+        size_config = beautiful.systray_overlay_size or 0.33
+    end
+
+    local overlay_size
+    if size_config <= 1 then
+        -- Ratio of icon size
+        overlay_size = math.floor(math.min(width, height) * size_config)
+    else
+        -- Absolute pixels
+        overlay_size = math.floor(size_config)
+    end
+
+    -- Ensure minimum size of 8 pixels for visibility
+    overlay_size = math.max(8, overlay_size)
+
+    -- Get overlay position
+    local position = get_icon_style(item, "overlay_position")
+    if position == nil then
+        position = beautiful.systray_overlay_position or "bottom_right"
+    end
+
+    local overlay_x, overlay_y
+
+    if position == "bottom_right" then
+        overlay_x = width - overlay_size
+        overlay_y = height - overlay_size
+    elseif position == "bottom_left" then
+        overlay_x = 0
+        overlay_y = height - overlay_size
+    elseif position == "top_right" then
+        overlay_x = width - overlay_size
+        overlay_y = 0
+    elseif position == "top_left" then
+        overlay_x = 0
+        overlay_y = 0
+    else
+        -- Default to bottom_right
+        overlay_x = width - overlay_size
+        overlay_y = height - overlay_size
+    end
+
+    return overlay_x, overlay_y, overlay_size
 end
 
 --- Look up an icon by freedesktop name.
@@ -288,8 +450,8 @@ function systray_icon:draw(context, cr, width, height)
         cr:translate(-width / 2, -height / 2)
     end
 
-    -- Draw urgent background if status is NeedsAttention (AwesomeWM-style)
-    if item.status == "NeedsAttention" then
+    -- Draw urgent background if urgent (status or overlay triggers)
+    if is_item_urgent(item) then
         local urgent_bg = get_icon_style(item, "urgent_bg") or beautiful.systray_urgent_bg
         if urgent_bg then
             cr:set_source(gcolor(urgent_bg))
@@ -373,16 +535,51 @@ function systray_icon:draw(context, cr, width, height)
         cr:restore()
     end
 
-    -- Draw overlay icon if present (small badge in bottom-right corner)
+    -- Draw overlay icon if present
     local show_overlay = beautiful.systray_show_overlay
     if show_overlay == nil then show_overlay = true end  -- default to true
 
     if show_overlay and item.overlay_icon then
-        -- Draw overlay at ~1/3 size in bottom-right corner
-        local overlay_size = math.floor(math.min(width, height) / 3)
-        local overlay_x = width - overlay_size
-        local overlay_y = height - overlay_size
+        -- Get overlay geometry (position and size)
+        local overlay_x, overlay_y, overlay_size = get_overlay_geometry(item, width, height)
 
+        -- Get overlay styling
+        local overlay_bg = get_icon_style(item, "overlay_bg") or beautiful.systray_overlay_bg
+        local overlay_shape = get_icon_style(item, "overlay_shape") or beautiful.systray_overlay_shape or "circle"
+        local overlay_padding = get_icon_style(item, "overlay_padding") or beautiful.systray_overlay_padding or 2
+
+        -- Draw overlay background if configured
+        if overlay_bg then
+            cr:save()
+            cr:set_source(gcolor(overlay_bg))
+
+            local bg_x = overlay_x - overlay_padding
+            local bg_y = overlay_y - overlay_padding
+            local bg_size = overlay_size + overlay_padding * 2
+
+            if overlay_shape == "circle" then
+                local radius = bg_size / 2
+                cr:arc(bg_x + radius, bg_y + radius, radius, 0, 2 * math.pi)
+                cr:fill()
+            elseif overlay_shape == "rounded_rect" then
+                local corner_radius = bg_size / 4
+                -- Draw rounded rectangle
+                cr:new_sub_path()
+                cr:arc(bg_x + bg_size - corner_radius, bg_y + corner_radius, corner_radius, -math.pi/2, 0)
+                cr:arc(bg_x + bg_size - corner_radius, bg_y + bg_size - corner_radius, corner_radius, 0, math.pi/2)
+                cr:arc(bg_x + corner_radius, bg_y + bg_size - corner_radius, corner_radius, math.pi/2, math.pi)
+                cr:arc(bg_x + corner_radius, bg_y + corner_radius, corner_radius, math.pi, 3*math.pi/2)
+                cr:close_path()
+                cr:fill()
+            else  -- "rect" or default
+                cr:rectangle(bg_x, bg_y, bg_size, bg_size)
+                cr:fill()
+            end
+
+            cr:restore()
+        end
+
+        -- Draw the overlay icon
         local ok = pcall(function()
             item:draw_overlay(cr._native or cr, overlay_x, overlay_y, overlay_size)
         end)
@@ -408,34 +605,92 @@ function systray_icon:draw(context, cr, width, height)
         end
     end
 
-    -- Draw urgent indicator when status is NeedsAttention
+    -- Draw urgent indicator when urgent (status or overlay triggers)
     local urgent_style = get_icon_style(item, "urgent_style") or beautiful.systray_urgent_style or "none"
-    if item.status == "NeedsAttention" and urgent_style ~= "none" then
+    if is_item_urgent(item) and urgent_style ~= "none" then
         local urgent_color = get_icon_style(item, "urgent_color") or beautiful.systray_urgent_color or "#ff3333"
         local outline_color = get_icon_style(item, "urgent_outline_color") or beautiful.systray_urgent_outline_color or "#ffffff"
 
         if urgent_style == "dot" then
-            local dot_radius = math.max(3, width / 8)
-            local dot_x = width - dot_radius - 1
-            local dot_y = dot_radius + 1
+            -- Get configurable size
+            local size_config = get_icon_style(item, "urgent_size")
+            if size_config == nil then
+                size_config = beautiful.systray_urgent_size or 0.25
+            end
+
+            local dot_size
+            if size_config <= 1 then
+                dot_size = math.floor(math.min(width, height) * size_config)
+            else
+                dot_size = math.floor(size_config)
+            end
+            dot_size = math.max(6, dot_size)
+
+            -- Get configurable position
+            local position = get_icon_style(item, "urgent_position")
+            if position == nil then
+                position = beautiful.systray_urgent_position or "top_right"
+            end
+
+            local dot_x, dot_y
+            local padding = 1
+            if position == "top_right" then
+                dot_x = width - dot_size - padding
+                dot_y = padding
+            elseif position == "top_left" then
+                dot_x = padding
+                dot_y = padding
+            elseif position == "bottom_right" then
+                dot_x = width - dot_size - padding
+                dot_y = height - dot_size - padding
+            elseif position == "bottom_left" then
+                dot_x = padding
+                dot_y = height - dot_size - padding
+            else
+                -- Default to top_right
+                dot_x = width - dot_size - padding
+                dot_y = padding
+            end
+
+            -- Get shape function (default to circle)
+            local shape = get_icon_style(item, "urgent_shape")
+            if shape == nil then
+                shape = beautiful.systray_urgent_shape or gshape.circle
+            end
 
             -- Draw outline for visibility
+            cr:save()
+            cr:translate(dot_x - 1, dot_y - 1)
             cr:set_source(gcolor(outline_color))
-            cr:arc(dot_x, dot_y, dot_radius + 1, 0, 2 * math.pi)
+            shape(cr, dot_size + 2, dot_size + 2)
             cr:fill()
+            cr:restore()
 
-            -- Draw urgent dot
+            -- Draw urgent indicator
+            cr:save()
+            cr:translate(dot_x, dot_y)
             cr:set_source(gcolor(urgent_color))
-            cr:arc(dot_x, dot_y, dot_radius, 0, 2 * math.pi)
+            shape(cr, dot_size, dot_size)
             cr:fill()
+            cr:restore()
 
         elseif urgent_style == "ring" then
-            -- Draw ring around the icon
+            -- Get shape function (default to circle)
+            local shape = get_icon_style(item, "urgent_shape")
+            if shape == nil then
+                shape = beautiful.systray_urgent_shape or gshape.circle
+            end
+
+            -- Draw ring around the icon using shape
             local ring_width = 2
+            local inset = ring_width
+            cr:save()
+            cr:translate(inset, inset)
             cr:set_source(gcolor(urgent_color))
             cr:set_line_width(ring_width)
-            cr:arc(width / 2, height / 2, math.min(width, height) / 2 - ring_width, 0, 2 * math.pi)
+            shape(cr, width - inset * 2, height - inset * 2)
             cr:stroke()
+            cr:restore()
 
         elseif urgent_style == "glow" then
             -- Draw glow effect (colored border)
@@ -596,15 +851,9 @@ local function handle_button(self, x, y, button, mods, geometry)
         local systray_mod = get_awful_systray()
         local menu_mod = get_awful_menu()
 
-        print("[SYSTRAY_ICON] Right-click on " .. tostring(item.title or item.id or "unknown"))
-        print("[SYSTRAY_ICON]   menu_path = " .. tostring(item.menu_path))
-        print("[SYSTRAY_ICON]   bus_name = " .. tostring(item.bus_name))
-
         if systray_mod and menu_mod and item.menu_path and item.menu_path ~= "" then
             -- Fetch and show DBusMenu
-            print("[SYSTRAY_ICON] Trying DBusMenu fetch...")
             systray_mod.fetch_menu(item, function(menu_items, _)
-                print("[SYSTRAY_ICON] DBusMenu callback, got " .. tostring(menu_items and #menu_items or 0) .. " items")
                 if menu_items and #menu_items > 0 then
                     -- Close any existing menu
                     if self._private.current_menu then
@@ -639,13 +888,11 @@ local function handle_button(self, x, y, button, mods, geometry)
                     self._private.current_menu = menu
                 else
                     -- Fallback to D-Bus ContextMenu method
-                    print("[SYSTRAY_ICON] No DBusMenu items, falling back to ContextMenu")
                     item:context_menu(screen_x + x, screen_y + y)
                 end
             end)
         else
             -- No DBusMenu available, use D-Bus ContextMenu method
-            print("[SYSTRAY_ICON] No DBusMenu available, calling ContextMenu")
             item:context_menu(screen_x + x, screen_y + y)
         end
     elseif button == 4 then
