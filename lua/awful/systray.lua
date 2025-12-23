@@ -500,6 +500,12 @@ local function register_item(service, path)
             end
         end
 
+        -- Set flag for icon_change_triggers_urgent feature
+        -- Apps like Slack bake notification badges into their icon, so users
+        -- can opt-in to treating icon presence as "might have notifications"
+        -- Note: stored in item_data since we can't set arbitrary fields on C userdata
+        item_data.urgent_from_icon_change = true
+
         -- Store in our tracking table
         systray._private.items[item_key] = item
 
@@ -511,7 +517,6 @@ local function register_item(service, path)
             nil,  -- appeared callback (don't care)
             GObject.Closure(function(conn, name)
                 -- Service vanished - unregister this item
-                print("[SYSTRAY] Service vanished: " .. name .. ", unregistering " .. item_key)
                 unregister_item(service, path)
             end)
         )
@@ -609,6 +614,13 @@ local function register_item(service, path)
                                             end
                                         end
                                     end)
+                                end
+                                -- Set flag for icon_change_triggers_urgent feature
+                                -- Apps like Slack change their icon instead of using proper
+                                -- SNI status/overlay, so this lets users detect that
+                                local data = systray._private.item_data[item]
+                                if data then
+                                    data.urgent_from_icon_change = true
                                 end
                                 -- Emit update for classic widget
                                 capi.awesome.emit_signal("systray::update")
@@ -755,15 +767,8 @@ unregister_item = function(service, path)
     path = path or "/StatusNotifierItem"
     local item_key = service .. path
 
-    print("[SYSTRAY] unregister_item looking for: " .. item_key)
-    print("[SYSTRAY] Current items:")
-    for k, v in pairs(systray._private.items) do
-        print("[SYSTRAY]   " .. k)
-    end
-
     local item = systray._private.items[item_key]
     if item then
-        print("[SYSTRAY] Found item, removing")
         systray._private.items[item_key] = nil
 
         -- Stop watching for name vanishing
@@ -886,7 +891,6 @@ local function subscribe_to_watcher_signals()
         function(conn, sender, path, iface, signal, params)
             protected_call(function()
                 local service = params:get_child_value(0):get_string()
-                print("[SYSTRAY] StatusNotifierItemUnregistered: " .. service)
                 unregister_item(service)
             end)
         end
@@ -988,6 +992,19 @@ function systray.get_icon_surface(item)
     return data and data.icon_surface
 end
 
+--- Get Lua-side data for an item.
+-- Used to access flags like urgent_from_icon_change that can't be stored
+-- on the C userdata object.
+-- @tparam systray_item item The systray item
+-- @tparam[opt] string key Specific key to retrieve, or nil for full table
+-- @treturn any The value for the key, or the full data table
+function systray.get_item_data(item, key)
+    local data = systray._private.item_data[item]
+    if not data then return nil end
+    if key then return data[key] end
+    return data
+end
+
 ---------------------------------------------------------------------------
 -- DBusMenu support
 ---------------------------------------------------------------------------
@@ -1083,7 +1100,6 @@ function systray.fetch_menu(item, callback)
     local bus_name = item.bus_name
     local menu_path = item.menu_path
 
-    print("[SYSTRAY] fetch_menu: bus_name=" .. tostring(bus_name) .. " menu_path=" .. tostring(menu_path))
 
     -- Call GetLayout to get the menu structure
     -- GetLayout(parentId: int, recursionDepth: int, propertyNames: as) -> (revision: uint, layout: (ia{sv}av))
@@ -1103,12 +1119,9 @@ function systray.fetch_menu(item, callback)
             end)
 
             if not ok or not ret then
-                print("[SYSTRAY] fetch_menu: DBus call failed, ok=" .. tostring(ok) .. " ret=" .. tostring(ret))
                 callback(nil)
                 return
             end
-
-            print("[SYSTRAY] fetch_menu: Got DBus result, parsing...")
 
             -- Parse the layout
             local ok2, menu_items = pcall(function()
@@ -1117,12 +1130,9 @@ function systray.fetch_menu(item, callback)
             end)
 
             if not ok2 or not menu_items then
-                print("[SYSTRAY] fetch_menu: Parse failed, ok2=" .. tostring(ok2) .. " menu_items=" .. tostring(menu_items))
                 callback(nil)
                 return
             end
-
-            print("[SYSTRAY] fetch_menu: Parsed " .. #menu_items .. " items")
 
             -- Replace callback placeholders with actual Event calls
             local function setup_callbacks(items)
