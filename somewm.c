@@ -2045,22 +2045,22 @@ focusclient(Client *c, int lift)
 			return;
 		} else if (old_c && old_c == exclusive_focus && client_wants_focus(old_c)) {
 			return;
-		/* Don't deactivate old client if the new one wants focus, as this causes issues with winecfg
-		 * and probably other clients */
-		} else if (old_c && !client_is_unmanaged(old_c) && (!c || !client_wants_focus(c))) {
-			client_set_border_color(old_c, get_bordercolor());
-
-			client_activate_surface(old, 0);
-			if (old_c->toplevel_handle)
-				wlr_foreign_toplevel_handle_v1_set_activated(old_c->toplevel_handle, false);
-
-			/* Emit property::active = false for border updates (AwesomeWM pattern) */
+		} else if (old_c && !client_is_unmanaged(old_c)) {
+			/* Always emit property::active = false for border updates */
 			luaA_object_push(globalconf_L, old_c);
 			lua_pushboolean(globalconf_L, false);
 			luaA_object_emit_signal(globalconf_L, -2, "property::active", 1);
 			lua_pop(globalconf_L, 1);
 
-			luaA_emit_signal_global("client::unfocus");
+			/* Only do protocol-level deactivation if new client doesn't want focus.
+			 * Skipping this avoids issues with winecfg and similar clients. */
+			if (!c || !client_wants_focus(c)) {
+				client_set_border_color(old_c, get_bordercolor());
+				client_activate_surface(old, 0);
+				if (old_c->toplevel_handle)
+					wlr_foreign_toplevel_handle_v1_set_activated(old_c->toplevel_handle, false);
+				luaA_emit_signal_global("client::unfocus");
+			}
 		}
 	}
 	printstatus();
