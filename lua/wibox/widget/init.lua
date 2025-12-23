@@ -17,6 +17,7 @@ local widget = {
     imagebox = require("wibox.widget.imagebox");
     background = require("wibox.widget.background");
     systray = require("wibox.widget.systray");
+    systray_icon = require("wibox.widget.systray_icon");
     textclock = require("wibox.widget.textclock");
     progressbar = require("wibox.widget.progressbar");
     graph = require("wibox.widget.graph");

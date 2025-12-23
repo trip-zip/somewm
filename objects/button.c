@@ -172,11 +172,9 @@ luaA_button_array_set(lua_State *L, int oidx, int idx, button_array_t *buttons)
 		count++;
 		/* Check if value is a button object or awful.button wrapper */
 		if (lua_istable(L, -1)) {
-			fprintf(stderr, "[BUTTON_ARRAY_SET] Item %d is a table, checking for _c_button or nested buttons\n", count);
 			/* Try to get _c_button field (awful.button wrapper) */
 			lua_getfield(L, -1, "_c_button");
 			if (luaA_toudata(L, -1, &button_class)) {
-				fprintf(stderr, "[BUTTON_ARRAY_SET] Found _c_button, adding to array\n");
 				/* ref_item pops _c_button, leaves table on stack */
 				button_array_append(buttons, luaA_object_ref_item(L, oidx, -1));
 				/* Pop the table */
@@ -189,7 +187,6 @@ luaA_button_array_set(lua_State *L, int oidx, int idx, button_array_t *buttons)
 				while (lua_next(L, -2)) {
 					if (luaA_toudata(L, -1, &button_class)) {
 						nested_count++;
-						fprintf(stderr, "[BUTTON_ARRAY_SET] Found nested capi.button #%d\n", nested_count);
 						/* luaA_object_ref_item removes the item from stack */
 						button_array_append(buttons, luaA_object_ref_item(L, oidx, -1));
 					} else {
@@ -197,7 +194,6 @@ luaA_button_array_set(lua_State *L, int oidx, int idx, button_array_t *buttons)
 					}
 				}
 				if (nested_count == 0) {
-					fprintf(stderr, "[BUTTON_ARRAY_SET] Table has no buttons inside\n");
 				}
 				/* Pop the table after iteration */
 				lua_pop(L, 1);
@@ -205,14 +201,10 @@ luaA_button_array_set(lua_State *L, int oidx, int idx, button_array_t *buttons)
 		}
 		else if (luaA_toudata(L, -1, &button_class)) {
 			/* Direct button userdata */
-			button_t *btn = luaA_toudata(L, -1, &button_class);
-			fprintf(stderr, "[BUTTON_ARRAY_SET] Item %d is direct capi.button: btn=%u mods=0x%x\n",
-			        count, btn->button, btn->modifiers);
 			/* luaA_object_ref_item removes the item from stack, so don't pop after */
 			button_array_append(buttons, luaA_object_ref_item(L, oidx, -1));
 		}
 		else {
-			fprintf(stderr, "[BUTTON_ARRAY_SET] Item %d is unknown type: %s\n", count, lua_typename(L, lua_type(L, -1)));
 			lua_pop(L, 1); /* Pop value - only for unknown types */
 		}
 	}
@@ -308,8 +300,6 @@ button_array_check(button_array_t *buttons, uint16_t modifiers, uint32_t button,
 			/* TODO: Call press/release callbacks via signals
 			 * For now just mark as handled */
 			handled = true;
-			fprintf(stderr, "[BUTTON_ARRAY] Match found for button %u with mods 0x%x\n",
-			        button, modifiers);
 		}
 	}
 
@@ -354,7 +344,6 @@ button_allocator(lua_State *L)
 
 	/* Create button using macro-generated button_new() */
 	button = button_new(L);
-	fprintf(stderr, "[BUTTON_NEW] Created button %p\n", (void*)button);
 
 	/* Initialize with defaults */
 	button->modifiers = 0;
@@ -511,15 +500,10 @@ drawin_emit_button_signals(lua_State *L, drawin_t *drawin, uint32_t button,
 	/* Mask modifiers to only the bits we care about (matches old button_matches() logic) */
 	masked_mods = mods & 0xFF;
 
-	fprintf(stderr, "[BUTTON_ARRAY] Checking %d buttons for button=%u (translated=%u) mods=0x%x (masked=0x%x)\n",
-	        drawin->buttons.len, button, translated_button, mods, masked_mods);
-
 	/* Iterate through button array */
 	for (i = 0; i < drawin->buttons.len; i++) {
 		btn = drawin->buttons.tab[i];
 
-		fprintf(stderr, "[BUTTON_ARRAY] Button %d: button=%u modifiers=0x%x (checking against button=%u mods=0x%x)\n",
-		        i, btn->button, btn->modifiers, translated_button, masked_mods);
 
 		/* Match button number (0 = any button) - use translated button code */
 		btn_matches = (btn->button == 0 || btn->button == translated_button);
@@ -529,8 +513,6 @@ drawin_emit_button_signals(lua_State *L, drawin_t *drawin, uint32_t button,
 		mods_match = (btn->modifiers == BUTTON_MODIFIER_ANY || btn->modifiers == masked_mods);
 
 		if (btn_matches && mods_match) {
-			fprintf(stderr, "[BUTTON_ARRAY] Button %d MATCHED (btn->button=%u btn->modifiers=0x%x)\n",
-			        i, btn->button, btn->modifiers);
 
 			/* Push button object */
 			luaA_object_push(L, btn);
@@ -545,7 +527,6 @@ drawin_emit_button_signals(lua_State *L, drawin_t *drawin, uint32_t button,
 		}
 	}
 
-	fprintf(stderr, "[BUTTON_ARRAY] Matched %d buttons\n", matched);
 	return matched;
 }
 
@@ -677,9 +658,6 @@ client_emit_button_signals(lua_State *L, int client_idx, client_t *c, uint32_t b
 	masked_mods = mods & 0xFF;
 
 	/* Iterate through button array */
-	fprintf(stderr, "[BUTTON_MATCH] Checking %d buttons for match (button=%u mods=0x%x signal=%s)\n",
-	        c->buttons.len, translated_button, masked_mods, signal_name);
-
 	for (i = 0; i < c->buttons.len; i++) {
 		btn = c->buttons.tab[i];
 
@@ -689,14 +667,7 @@ client_emit_button_signals(lua_State *L, int client_idx, client_t *c, uint32_t b
 		/* Match modifiers (BUTTON_MODIFIER_ANY = any modifiers, otherwise exact match) */
 		mods_match = (btn->modifiers == BUTTON_MODIFIER_ANY || btn->modifiers == masked_mods);
 
-		fprintf(stderr, "[BUTTON_MATCH] Button[%d]: btn->button=%u btn->mods=0x%x match=%s\n",
-		        i, btn->button, btn->modifiers,
-		        (btn_matches && mods_match) ? "YES" : "NO");
-
 		if (btn_matches && mods_match) {
-			fprintf(stderr, "[BUTTON_MATCH] MATCHED! Emitting '%s' signal on button object\n", signal_name);
-			fprintf(stderr, "[BUTTON_PUSH] Pushing button[%d] btn=%p button=%u mods=0x%x\n",
-			        i, (void*)btn, btn->button, btn->modifiers);
 
 			/* Push button object from client's uservalue table */
 			luaA_object_push_item(L, abs_client_idx, btn);
@@ -715,11 +686,9 @@ client_emit_button_signals(lua_State *L, int client_idx, client_t *c, uint32_t b
 			lua_pop(L, 1);
 
 			matched++;
-			fprintf(stderr, "[BUTTON_MATCH] Signal emitted successfully (matched count: %d)\n", matched);
 		}
 	}
 
-	fprintf(stderr, "[BUTTON_MATCH] Total matched: %d\n", matched);
 	return matched;
 }
 
@@ -756,36 +725,25 @@ luaA_client_button_check(void *client_ptr, int x, int y, uint32_t button,
 	signal_name = is_press ? "button::press" : "button::release";
 	translated_button = translate_button_code(button);
 
-	fprintf(stderr, "\n[CLIENT_BUTTON] ==========================================\n");
-	fprintf(stderr, "[CLIENT_BUTTON] Button %s on client: x=%d y=%d button=%u->%u mods=0x%x\n",
-	        is_press ? "PRESS" : "RELEASE", x, y, button, translated_button, mods);
-	fprintf(stderr, "[CLIENT_BUTTON] Client buttons array: len=%d\n", c->buttons.len);
-
 	/* Push client object to stack */
 	luaA_object_push(L, c);
 
 	/* Stage 1: Emit button::press/release on client with coordinates
 	 * Arguments: x, y, button, modifiers (matching AwesomeWM's pattern)
 	 */
-	fprintf(stderr, "[CLIENT_BUTTON] Stage 1: Emitting '%s' signal on client\n", signal_name);
 	lua_pushinteger(L, x);
 	lua_pushinteger(L, y);
 	lua_pushinteger(L, translated_button);
 	luaA_pushmodifiers(L, mods);
 	luaA_object_emit_signal(L, -5, signal_name, 4);
-	fprintf(stderr, "[CLIENT_BUTTON] Stage 1 complete\n");
 
 	/* Stage 2: Check button array and emit signals on matching button objects
 	 * Client is at -1 on stack after emit_signal consumed the 4 arguments
 	 */
-	fprintf(stderr, "[CLIENT_BUTTON] Stage 2: Checking button array for matches\n");
 	matched = client_emit_button_signals(L, -1, c, button, mods, is_press);
-	fprintf(stderr, "[CLIENT_BUTTON] Stage 2 complete: matched=%d\n", matched);
 
 	/* Pop client */
 	lua_pop(L, 1);
-
-	fprintf(stderr, "[CLIENT_BUTTON] ==========================================\n\n");
 
 	/* Return 1 if any button matched (event was handled) */
 	return (matched > 0) ? 1 : 0;
@@ -815,8 +773,6 @@ button_class_setup(lua_State *L)
 		{ NULL, NULL }
 	};
 
-	fprintf(stderr, "\n[BUTTON_CLASS_SETUP] ========================================\n");
-	fprintf(stderr, "[BUTTON_CLASS_SETUP] Setting up button class with luaA_class_setup()\n");
 
 	/* Setup button class using AwesomeWM's class infrastructure */
 	luaA_class_setup(L, &button_class, "button",
@@ -839,9 +795,4 @@ button_class_setup(lua_State *L)
 	                        (lua_class_propfunc_t) luaA_button_get_modifiers,
 	                        (lua_class_propfunc_t) luaA_button_set_modifiers);
 
-	fprintf(stderr, "[BUTTON_CLASS_SETUP] Class setup complete!\n");
-	fprintf(stderr, "[BUTTON_CLASS_SETUP] - Class table created with class methods\n");
-	fprintf(stderr, "[BUTTON_CLASS_SETUP] - Properties registered: button, modifiers\n");
-	fprintf(stderr, "[BUTTON_CLASS_SETUP] - Allocator: button_allocator()\n");
-	fprintf(stderr, "[BUTTON_CLASS_SETUP] ========================================\n\n");
 }

@@ -311,11 +311,6 @@ luaA_client_key_check_and_emit(client_t *c, uint32_t mods, uint32_t keycode, xkb
 {
 	xkb_keysym_t lower_base = xkb_keysym_to_lower(base_sym);
 	int i;
-	char sym_name[64];
-
-	xkb_keysym_get_name(base_sym, sym_name, sizeof(sym_name));
-	fprintf(stderr, "[CLIENT_KEY] Checking client keys: mods=0x%x keycode=%u sym=%s(%u) lower=%u, client has %d keys\n",
-	        mods, keycode, sym_name, base_sym, lower_base, c ? c->keys.len : -1);
 
 	if (!global_L || !c)
 		return 0;

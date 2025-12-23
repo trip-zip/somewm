@@ -1578,8 +1578,6 @@ static int
 luaA_screen_module_index(lua_State *L)
 {
 	/* L[1] is the screen table, L[2] is the key */
-	fprintf(stderr, "[SCREEN_MODULE_INDEX] Called with key type: %s\n",
-	        lua_typename(L, lua_type(L, 2)));
 
 	/* Numeric index: screen[1] */
 	if (lua_isnumber(L, 2)) {
@@ -1601,15 +1599,12 @@ luaA_screen_module_index(lua_State *L)
 	 */
 	if (lua_isuserdata(L, 2)) {
 		screen_t *s = luaA_checkscreen(L, 2);
-		fprintf(stderr, "[SCREEN_MODULE_INDEX] screen[userdata]: s=%p valid=%d\n",
-		        (void*)s, s ? s->valid : -1);
 		if (s && s->valid) {
 			/* Return the same screen object */
 			lua_pushvalue(L, 2);
 			return 1;
 		}
 		/* Invalid screen, return nil */
-		fprintf(stderr, "[SCREEN_MODULE_INDEX] Returning nil for invalid/null screen\n");
 		lua_pushnil(L);
 		return 1;
 	}
@@ -1624,15 +1619,11 @@ luaA_screen_module_index(lua_State *L)
 		} else if (strcmp(key, "primary") == 0) {
 			screen_t *primary;
 
-			fprintf(stderr, "[SCREEN_MODULE_INDEX] Accessing .primary property\n");
 			primary = luaA_screen_get_primary_screen(L);
-			fprintf(stderr, "[SCREEN_MODULE_INDEX] primary screen=%p\n", (void*)primary);
 			if (primary) {
 				luaA_object_push(L, primary);
-				fprintf(stderr, "[SCREEN_MODULE_INDEX] Pushed primary screen to stack\n");
 			} else {
 				lua_pushnil(L);
-				fprintf(stderr, "[SCREEN_MODULE_INDEX] No primary screen, pushed nil\n");
 			}
 			return 1;
 		}
@@ -1662,7 +1653,6 @@ luaA_screen_call(lua_State *L)
 	int index;
 	screen_t *prev;
 
-	fprintf(stderr, "[SCREEN_CALL] Called with %d arguments\n", lua_gettop(L));
 
 	/* For iteration: screen(state, control_var) where L[1]=self, L[2]=state, L[3]=control_var
 	 * For direct call: screen(index) where L[1]=self, L[2]=index */
@@ -1670,7 +1660,6 @@ luaA_screen_call(lua_State *L)
 	/* Check if this is direct indexing: screen(number) */
 	if (lua_gettop(L) >= 2 && lua_isnumber(L, 2) && !lua_isnil(L, 2)) {
 		index = luaL_checkinteger(L, 2);
-		fprintf(stderr, "[SCREEN_CALL] Direct indexing: screen(%d)\n", index);
 
 		if (index < 1 || index > (int)screen_count) {
 			lua_pushnil(L);
@@ -1685,17 +1674,14 @@ luaA_screen_call(lua_State *L)
 	if (lua_isnoneornil(L, 3)) {
 		/* First iteration - return first screen */
 		index = 0;
-		fprintf(stderr, "[SCREEN_ITERATE] First iteration, returning screen 1\n");
 	} else {
 		/* Get previous screen and return next one */
 		prev = luaA_toscreen(L, 3);
 		if (!prev) {
-			fprintf(stderr, "[SCREEN_ITERATE] Invalid previous screen\n");
 			lua_pushnil(L);
 			return 1;
 		}
 		index = prev->index;
-		fprintf(stderr, "[SCREEN_ITERATE] Previous screen index: %d\n", index);
 	}
 
 	/* Return next screen */
@@ -1703,29 +1689,20 @@ luaA_screen_call(lua_State *L)
 		screen_t *s;
 
 		/* Get screen pointer from registry to use with luaA_object_push */
-		fprintf(stderr, "[SCREEN_ITERATE] Getting screen at index %d from registry (ref=%d)\n",
-		        index, screen_refs[index]);
 		lua_rawgeti(L, LUA_REGISTRYINDEX, screen_refs[index]);
-		fprintf(stderr, "[SCREEN_ITERATE] Stack top type after rawgeti: %s\n", lua_typename(L, lua_type(L, -1)));
 		s = luaA_toscreen(L, -1);
-		fprintf(stderr, "[SCREEN_ITERATE] luaA_toscreen returned: %p\n", (void*)s);
 		lua_pop(L, 1);  /* Pop the userdata we just retrieved */
 
 		if (s) {
 			/* Use AwesomeWM's object push for proper metatable */
-			fprintf(stderr, "[SCREEN_ITERATE] Calling luaA_object_push for screen %p\n", (void*)s);
 			luaA_object_push(L, s);
-			fprintf(stderr, "[SCREEN_ITERATE] After push, stack top type: %s\n", lua_typename(L, lua_type(L, -1)));
-			fprintf(stderr, "[SCREEN_ITERATE] Returning screen %d via luaA_object_push\n", index + 1);
 		} else {
 			lua_pushnil(L);
-			fprintf(stderr, "[SCREEN_ITERATE] Screen %d pointer is NULL!\n", index + 1);
 		}
 		return 1;
 	}
 
 	/* No more screens */
-	fprintf(stderr, "[SCREEN_ITERATE] End of iteration\n");
 	lua_pushnil(L);
 	return 1;
 }
@@ -1794,9 +1771,8 @@ luaA_screen_index(lua_State *L)
 
 	/* Validate screen object (luaA_checkscreen will error if invalid) */
 	screen_t *s = luaA_checkscreen(L, 1);
-	fprintf(stderr, "[SCREEN_INDEX] screen=%p type_at_1=%s\n", (void*)s, lua_typename(L, lua_type(L, 1)));
+	(void)s;  /* Used for validation */
 	key = luaL_checkstring(L, 2);
-	fprintf(stderr, "[SCREEN_INDEX] key='%s' handler=%d STARTING LOOKUP\n", key, screen_class.index_miss_handler);
 
 	/* Check for properties */
 	if (strcmp(key, "geometry") == 0)
@@ -1820,34 +1796,26 @@ luaA_screen_index(lua_State *L)
 	/* Check for _private table (AwesomeWM compatibility) */
 	if (strcmp(key, "_private") == 0) {
 		luaA_getuservalue(L, 1);  /* Return the environment table itself */
-		fprintf(stderr, "[SCREEN_INDEX] Returning _private, type=%s\n", lua_typename(L, lua_type(L, -1)));
 		return 1;
 	}
 
 	/* Check for methods in metatable */
-	fprintf(stderr, "[SCREEN_INDEX] Checking metatable for '%s'\n", key);
 	lua_getmetatable(L, 1);  /* Get the actual metatable of the screen object */
 	if (!lua_isnil(L, -1)) {
 		lua_getfield(L, -1, key);
 		if (!lua_isnil(L, -1)) {
-			fprintf(stderr, "[SCREEN_INDEX] Found '%s' in metatable, type=%s\n", key, lua_typename(L, lua_type(L, -1)));
 			return 1;  /* Found in metatable */
 		}
 		lua_pop(L, 1);  /* Pop nil result */
 	}
-	fprintf(stderr, "[SCREEN_INDEX] '%s' NOT in metatable, checking handler\n", key);
 	lua_pop(L, 1);  /* Pop metatable (or nil if no metatable) */
 
 	/* Call index miss handler if registered (for dynamic properties) */
 	if (screen_class.index_miss_handler != LUA_REFNIL) {
-		fprintf(stderr, "[SCREEN_INDEX] Calling index_miss_handler for key '%s'\n", key);
 		lua_rawgeti(L, LUA_REGISTRYINDEX, screen_class.index_miss_handler);
-		fprintf(stderr, "[SCREEN_INDEX] Handler type: %s\n", lua_typename(L, lua_type(L, -1)));
 		lua_pushvalue(L, 1);  /* Push screen object */
 		lua_pushvalue(L, 2);  /* Push key */
-		fprintf(stderr, "[SCREEN_INDEX] About to call handler...\n");
 		lua_call(L, 2, 1);    /* Call handler(screen, key) */
-		fprintf(stderr, "[SCREEN_INDEX] Handler returned type: %s\n", lua_typename(L, lua_type(L, -1)));
 		return 1;
 	}
 

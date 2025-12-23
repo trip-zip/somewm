@@ -99,14 +99,10 @@ function timer:start()
         return
     end
     local timeout_ms = gmath.round(self.data.timeout * 1000)
-    io.stderr:write(string.format("[TIMER] Creating timer: timeout=%dms\n", timeout_ms))
     self.data.source_id = glib.timeout_add(glib.PRIORITY_DEFAULT, timeout_ms, function()
-        io.stderr:write(string.format("[TIMER] Timeout fired! source_id=%s\n", tostring(self.data.source_id)))
         protected_call(self.emit_signal, self, "timeout")
-        io.stderr:write("[TIMER] Signal emitted\n")
         return true
     end)
-    io.stderr:write(string.format("[TIMER] Timer created with source_id=%s\n", tostring(self.data.source_id)))
     self:emit_signal("start")
 end
 
@@ -299,7 +295,6 @@ end
 -- @staticfct gears.timer.delayed_call
 function timer.delayed_call(callback, ...)
     assert(type(callback) == "function", "callback must be a function, got: " .. type(callback))
-    io.stderr:write(string.format("[DELAYED_CALL] Queuing callback (total queued: %d)\n", #delayed_calls + 1))
     table.insert(delayed_calls, { callback, ... })
 end
 
