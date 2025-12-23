@@ -570,13 +570,11 @@ luaA_root_cursor(lua_State *L)
 	const char *cursor_name = luaL_checkstring(L, 1);
 
 	if(wlr_xcursor_manager_get_xcursor(cursor_mgr, cursor_name, 1.0) == NULL) {
-
 		luaA_warn(L, "invalid cursor %s", cursor_name);
 		return 0;
 	}
-	wlr_cursor_set_xcursor(cursor, cursor_mgr, cursor_name);
 
-	printf("setting cursor to %s\n", cursor_name);
+	wlr_cursor_set_xcursor(cursor, cursor_mgr, cursor_name);
 	return 0;
 }
 
