@@ -10,6 +10,25 @@ jobs:
   build-and-test:
     runs-on: ubuntu-24.04
 
+    strategy:
+      fail-fast: false
+      matrix:
+        lua:
+          - name: LuaJIT
+            pkg: luajit
+            dev_package: libluajit-5.1-dev
+            interpreter: luajit
+          - name: Lua 5.2
+            pkg: lua5.2
+            dev_package: liblua5.2-dev
+            interpreter: lua5.2
+          - name: Lua 5.3
+            pkg: lua5.3
+            dev_package: liblua5.3-dev
+            interpreter: lua5.3
+
+    name: Build & Test (${{ matrix.lua.name }})
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -43,8 +62,8 @@ jobs:
             hwdata \
             libdisplay-info-dev \
             libliftoff-dev \
-            luajit \
-            libluajit-5.1-dev \
+            ${{ matrix.lua.interpreter }} \
+            ${{ matrix.lua.dev_package }} \
             lua-busted \
             lua-lgi \
             libcairo2-dev \
@@ -115,14 +134,13 @@ jobs:
           echo "LD_LIBRARY_PATH=$HOME/deps-install/lib/x86_64-linux-gnu:$LD_LIBRARY_PATH" >> $GITHUB_ENV
 
       - name: Build somewm
-        run: make
+        run: make LUA_PKG=${{ matrix.lua.pkg }}
 
       - name: Run unit tests
         run: make test-unit || echo "::warning::Some unit tests failed (known issues with shell completion test)"
 
-      # Integration tests disabled for now - they require more setup in CI
-      # - name: Run integration tests
-      #   run: make test-integration
-      #   env:
-      #     WLR_BACKENDS: headless
-      #     WLR_RENDERER: pixman
+      - name: Run integration tests
+        run: make test-integration || echo "::warning::Some integration tests failed"
+        env:
+          WLR_BACKENDS: headless
+          WLR_RENDERER: pixman
