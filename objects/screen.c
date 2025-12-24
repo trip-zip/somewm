@@ -1359,8 +1359,9 @@ luaA_screen_fake_add(lua_State *L)
 	screen->name = NULL;
 	signal_array_init(&screen->signals);
 
-	/* Set metatable */
-	luaL_getmetatable(L, SCREEN_MT);
+	/* Set metatable using class-based lookup (not named metatable) */
+	lua_pushlightuserdata(L, &screen_class);
+	lua_rawget(L, LUA_REGISTRYINDEX);
 	lua_setmetatable(L, -2);
 
 	/* Initialize environment table */
