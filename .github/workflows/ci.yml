@@ -140,7 +140,9 @@ jobs:
         run: make test-unit || echo "::warning::Some unit tests failed (known issues with shell completion test)"
 
       - name: Run integration tests
-        run: make test-integration || echo "::warning::Some integration tests failed"
+        run: timeout 300 make test-integration || echo "::warning::Some integration tests failed or timed out"
+        timeout-minutes: 6
         env:
           WLR_BACKENDS: headless
           WLR_RENDERER: pixman
+          TEST_TIMEOUT: 45

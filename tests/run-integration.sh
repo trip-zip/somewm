@@ -156,15 +156,36 @@ run_test() {
         return 1
     fi
 
-    # Run the test
+    # Run the test with timeout on IPC call
     echo "=== Test starting at $(date) ===" >> "$LOG"
-    $SOMEWM_CLIENT eval "dofile('$test_path')" 2>&1 | tee -a "$LOG"
+    timeout $TEST_TIMEOUT $SOMEWM_CLIENT eval "dofile('$test_path')" 2>&1 | tee -a "$LOG"
+    local ipc_exit=$?
+
+    # If IPC timed out, kill compositor and fail
+    if [ $ipc_exit -eq 124 ]; then
+        echo "Error: IPC call timed out after $TEST_TIMEOUT seconds" >&2
+        kill -KILL $SOMEWM_PID 2>/dev/null || true
+        echo "FAIL: $test_name (IPC timeout)"
+        return 1
+    fi
 
     # Tail log in background while waiting for compositor to exit
     tail -f "$LOG" --pid=$SOMEWM_PID 2>/dev/null &
     local tail_pid=$!
 
-    # Wait for compositor to exit
+    # Wait for compositor to exit with timeout
+    local wait_count=0
+    while kill -0 $SOMEWM_PID 2>/dev/null && [ $wait_count -lt $TEST_TIMEOUT ]; do
+        sleep 1
+        wait_count=$((wait_count + 1))
+    done
+
+    # Force kill if still running
+    if kill -0 $SOMEWM_PID 2>/dev/null; then
+        echo "Warning: Compositor did not exit, force killing" >&2
+        kill -KILL $SOMEWM_PID 2>/dev/null || true
+    fi
+
     wait $SOMEWM_PID 2>/dev/null || true
     local compositor_exit=$?
 
