@@ -671,8 +671,62 @@ axisnotify(struct wl_listener *listener, void *data)
 		return; /* Don't process event further */
 	}
 
-	/* TODO: allow usage of scroll wheel for mousebindings, it can be implemented
-	 * by checking the event's orientation and the delta of the event */
+	/* Handle scroll wheel for mousebindings (AwesomeWM compatibility)
+	 * Convert axis events to X11-style button 4/5/6/7 press+release events.
+	 * In X11, each scroll tick generates a button press+release pair. */
+	if (!locked && event->delta != 0) {
+		lua_State *L = globalconf_get_lua_State();
+		struct wlr_keyboard *keyboard = wlr_seat_get_keyboard(seat);
+		uint32_t mods = keyboard ? wlr_keyboard_get_modifiers(keyboard) : 0;
+		Client *c = NULL;
+		drawin_t *drawin = NULL;
+		drawable_t *titlebar_drawable = NULL;
+		uint32_t button;
+		int rel_x, rel_y;
+
+		/* Determine button number based on axis orientation and direction:
+		 * Vertical: button 4 = scroll up (delta < 0), button 5 = scroll down (delta > 0)
+		 * Horizontal: button 6 = scroll left (delta < 0), button 7 = scroll right (delta > 0) */
+		if (event->orientation == WL_POINTER_AXIS_VERTICAL_SCROLL) {
+			button = (event->delta < 0) ? 4 : 5;
+		} else {
+			button = (event->delta < 0) ? 6 : 7;
+		}
+
+		/* Find what's under the cursor */
+		xytonode(cursor->x, cursor->y, NULL, &c, NULL, &drawin, &titlebar_drawable, NULL, NULL);
+
+		if (drawin) {
+			/* Scroll on drawin (wibox) */
+			rel_x = (int)cursor->x - drawin->x;
+			rel_y = (int)cursor->y - drawin->y;
+
+			/* Emit press then release (scroll is instantaneous) */
+			luaA_drawin_button_check(drawin, rel_x, rel_y, button, CLEANMASK(mods), true);
+			luaA_drawin_button_check(drawin, rel_x, rel_y, button, CLEANMASK(mods), false);
+		} else if (c && (!client_is_unmanaged(c) || client_wants_focus(c))) {
+			/* Scroll on client */
+			rel_x = (int)cursor->x - c->geometry.x;
+			rel_y = (int)cursor->y - c->geometry.y;
+
+			/* Emit on titlebar drawable if applicable */
+			if (titlebar_drawable) {
+				luaA_drawable_button_emit(c, titlebar_drawable, rel_x, rel_y, button,
+				                          CLEANMASK(mods), true);
+				luaA_drawable_button_emit(c, titlebar_drawable, rel_x, rel_y, button,
+				                          CLEANMASK(mods), false);
+			}
+
+			/* Emit on client (press + release) */
+			luaA_client_button_check(c, rel_x, rel_y, button, CLEANMASK(mods), true);
+			luaA_client_button_check(c, rel_x, rel_y, button, CLEANMASK(mods), false);
+		} else {
+			/* Scroll on root/empty space */
+			luaA_root_button_check(L, button, CLEANMASK(mods), cursor->x, cursor->y, true);
+			luaA_root_button_check(L, button, CLEANMASK(mods), cursor->x, cursor->y, false);
+		}
+	}
+
 	/* Notify the client with pointer focus of the axis event. */
 	wlr_seat_pointer_notify_axis(seat,
 			event->time_msec, event->orientation, event->delta,
