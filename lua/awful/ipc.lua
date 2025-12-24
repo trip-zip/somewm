@@ -11,6 +11,10 @@
 local gstring = require("gears.string")
 local gtable = require("gears.table")
 
+-- Lua 5.2+ compatibility
+local unpack = unpack or table.unpack
+local loadstring = loadstring or load
+
 local ipc = {}
 local commands = {}
 

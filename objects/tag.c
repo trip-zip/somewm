@@ -338,7 +338,7 @@ luaA_tag_get_mfact(lua_State *L, tag_t *tag)
 static int
 luaA_tag_set_mfact(lua_State *L, tag_t *tag)
 {
-	float new_mfact = (float)luaL_checknumber(L, -1);
+	float new_mfact = (float)lua_tonumber(L, -1);
 
 	/* Clamp to valid range (0.05 to 0.95) */
 	if (new_mfact < 0.05f) new_mfact = 0.05f;
