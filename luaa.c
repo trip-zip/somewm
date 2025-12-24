@@ -812,13 +812,14 @@ typedef struct {
 static const x11_pattern_t x11_patterns[] = {
 	/* === CRITICAL: Will fail or hang === */
 
-	/* X11 property APIs (not implemented on Wayland) */
+	/* X11 property APIs - safe no-op stubs that won't hang
+	 * Downgraded to WARNING since they just return nil, not block */
 	{"awesome.get_xproperty", "awesome.get_xproperty() [X11 only]",
-	 "Use persistent storage (gears.filesystem) or remove", SEVERITY_CRITICAL},
+	 "Use persistent storage (gears.filesystem) or remove", SEVERITY_WARNING},
 	{"awesome.set_xproperty", "awesome.set_xproperty() [X11 only]",
-	 "Use persistent storage (gears.filesystem) or remove", SEVERITY_CRITICAL},
+	 "Use persistent storage (gears.filesystem) or remove", SEVERITY_WARNING},
 	{"awesome.register_xproperty", "awesome.register_xproperty() [X11 only]",
-	 "Remove - X11 properties don't exist on Wayland", SEVERITY_CRITICAL},
+	 "Remove - X11 properties don't exist on Wayland", SEVERITY_WARNING},
 
 	/* Blocking X11 tool calls that will hang */
 	{"io.popen(\"xrandr", "io.popen with xrandr (blocks)",
