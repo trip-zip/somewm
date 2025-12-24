@@ -104,6 +104,9 @@ for _, type_name in ipairs { "button", "key" } do
         assert(value[1])
 
         table.insert(removed, value)
+
+        -- Trigger delayed sync to C layer (fix: upstream AwesomeWM is missing this)
+        delay()
     end
 
     capi.root["has_"..type_name] = function(item)
