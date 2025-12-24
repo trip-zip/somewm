@@ -368,6 +368,10 @@ client_set_size(Client *c, uint32_t width, uint32_t height)
 {
 #ifdef XWAYLAND
 	if (client_is_x11(c)) {
+		/* Skip configure if geometry unchanged (mirrors XDG check below) */
+		if (width == c->surface.xwayland->width
+				&& height == c->surface.xwayland->height)
+			return 0;
 		wlr_xwayland_surface_configure(c->surface.xwayland,
 				c->geometry.x + c->bw, c->geometry.y + c->bw, width, height);
 		return 0;
