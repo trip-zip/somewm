@@ -759,7 +759,7 @@ luaA_awesome_set_input_setting(lua_State *L)
 		free(globalconf.input.accel_profile);
 		globalconf.input.accel_profile = val ? strdup(val) : NULL;
 	} else if (strcmp(key, "accel_speed") == 0) {
-		globalconf.input.accel_speed = luaL_checknumber(L, 2);
+		globalconf.input.accel_speed = lua_tonumber(L, 2);
 	} else if (strcmp(key, "tap_button_map") == 0) {
 		const char *val = lua_isnil(L, 2) ? NULL : luaL_checkstring(L, 2);
 		free(globalconf.input.tap_button_map);

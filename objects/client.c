@@ -4255,7 +4255,7 @@ luaA_client_set_opacity(lua_State *L, client_t *c)
         c->opacity = -1;
         client_apply_opacity_to_scene(c, 1.0f);
     } else {
-        double opacity = luaL_checknumber(L, -1);
+        double opacity = lua_tonumber(L, -1);
         if (opacity < 0 || opacity > 1)
             return luaL_error(L, "opacity must be between 0 and 1");
         c->opacity = opacity;

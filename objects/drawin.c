@@ -909,7 +909,7 @@ static int
 luaA_drawin_set_border_width(lua_State *L, drawin_t *drawin)
 {
 	int old_width = drawin->border_width;
-	int new_width = luaL_checkinteger(L, -1);
+	int new_width = (int)lua_tonumber(L, -1);
 
 	if (new_width < 0)
 		new_width = 0;
@@ -993,22 +993,22 @@ luaA_drawin_struts(lua_State *L)
 
 		lua_getfield(L, 2, "left");
 		if (!lua_isnil(L, -1))
-			new_strut.left = luaL_checkinteger(L, -1);
+			new_strut.left = (int)lua_tonumber(L, -1);
 		lua_pop(L, 1);
 
 		lua_getfield(L, 2, "right");
 		if (!lua_isnil(L, -1))
-			new_strut.right = luaL_checkinteger(L, -1);
+			new_strut.right = (int)lua_tonumber(L, -1);
 		lua_pop(L, 1);
 
 		lua_getfield(L, 2, "top");
 		if (!lua_isnil(L, -1))
-			new_strut.top = luaL_checkinteger(L, -1);
+			new_strut.top = (int)lua_tonumber(L, -1);
 		lua_pop(L, 1);
 
 		lua_getfield(L, 2, "bottom");
 		if (!lua_isnil(L, -1))
-			new_strut.bottom = luaL_checkinteger(L, -1);
+			new_strut.bottom = (int)lua_tonumber(L, -1);
 		lua_pop(L, 1);
 
 		/* Update struts */
@@ -1446,22 +1446,22 @@ luaA_drawin_geometry_method(lua_State *L)
 
 		lua_getfield(L, 2, "x");
 		if (!lua_isnil(L, -1))
-			x = luaL_checkinteger(L, -1);
+			x = (int)lua_tonumber(L, -1);
 		lua_pop(L, 1);
 
 		lua_getfield(L, 2, "y");
 		if (!lua_isnil(L, -1))
-			y = luaL_checkinteger(L, -1);
+			y = (int)lua_tonumber(L, -1);
 		lua_pop(L, 1);
 
 		lua_getfield(L, 2, "width");
 		if (!lua_isnil(L, -1))
-			width = luaL_checkinteger(L, -1);
+			width = (int)lua_tonumber(L, -1);
 		lua_pop(L, 1);
 
 		lua_getfield(L, 2, "height");
 		if (!lua_isnil(L, -1))
-			height = luaL_checkinteger(L, -1);
+			height = (int)lua_tonumber(L, -1);
 		lua_pop(L, 1);
 
 		drawin_moveresize(L, 1, x, y, width, height);
@@ -1585,7 +1585,7 @@ luaA_drawin_set_cursor(lua_State *L, drawin_t *drawin)
 static int
 luaA_drawin_set_x(lua_State *L, drawin_t *drawin)
 {
-	int x = luaL_checkinteger(L, -1);
+	int x = (int)lua_tonumber(L, -1);
 	drawin_moveresize(L, -3, x, drawin->y, drawin->width, drawin->height);
 	return 0;
 }
@@ -1598,7 +1598,7 @@ luaA_drawin_set_x(lua_State *L, drawin_t *drawin)
 static int
 luaA_drawin_set_y(lua_State *L, drawin_t *drawin)
 {
-	int y = luaL_checkinteger(L, -1);
+	int y = (int)lua_tonumber(L, -1);
 	drawin_moveresize(L, -3, drawin->x, y, drawin->width, drawin->height);
 	return 0;
 }
@@ -1611,7 +1611,7 @@ luaA_drawin_set_y(lua_State *L, drawin_t *drawin)
 static int
 luaA_drawin_set_width(lua_State *L, drawin_t *drawin)
 {
-	int width = (int)ceil(luaL_checknumber(L, -1));
+	int width = (int)ceil(lua_tonumber(L, -1));
 	if (width < 1) width = 1;
 	drawin_moveresize(L, -3, drawin->x, drawin->y, width, drawin->height);
 	return 0;
@@ -1625,7 +1625,7 @@ luaA_drawin_set_width(lua_State *L, drawin_t *drawin)
 static int
 luaA_drawin_set_height(lua_State *L, drawin_t *drawin)
 {
-	int height = (int)ceil(luaL_checknumber(L, -1));
+	int height = (int)ceil(lua_tonumber(L, -1));
 	if (height < 1) height = 1;
 	drawin_moveresize(L, -3, drawin->x, drawin->y, drawin->width, height);
 	return 0;
@@ -1645,7 +1645,7 @@ luaA_drawin_set_opacity(lua_State *L, drawin_t *drawin)
 		opacity = -1;
 	else
 	{
-		opacity = luaL_checknumber(L, -1);
+		opacity = lua_tonumber(L, -1);
 		if(opacity < 0 || opacity > 1)
 			return 0;  /* Invalid value, ignore (matches AwesomeWM) */
 	}
@@ -1951,22 +1951,22 @@ luaA_drawin_constructor(lua_State *L)
 		/* Apply properties from args table at index 1 */
 		lua_getfield(L, 1, "x");
 		if (!lua_isnil(L, -1))
-			drawin->x = luaL_checkinteger(L, -1);
+			drawin->x = (int)lua_tonumber(L, -1);
 		lua_pop(L, 1);
 
 		lua_getfield(L, 1, "y");
 		if (!lua_isnil(L, -1))
-			drawin->y = luaL_checkinteger(L, -1);
+			drawin->y = (int)lua_tonumber(L, -1);
 		lua_pop(L, 1);
 
 		lua_getfield(L, 1, "width");
 		if (!lua_isnil(L, -1))
-			drawin->width = luaL_checkinteger(L, -1);
+			drawin->width = (int)lua_tonumber(L, -1);
 		lua_pop(L, 1);
 
 		lua_getfield(L, 1, "height");
 		if (!lua_isnil(L, -1))
-			drawin->height = luaL_checkinteger(L, -1);
+			drawin->height = (int)lua_tonumber(L, -1);
 		lua_pop(L, 1);
 
 		lua_getfield(L, 1, "visible");
@@ -1981,7 +1981,7 @@ luaA_drawin_constructor(lua_State *L)
 
 		lua_getfield(L, 1, "opacity");
 		if (!lua_isnil(L, -1))
-			drawin->opacity = luaL_checknumber(L, -1);
+			drawin->opacity = lua_tonumber(L, -1);
 		lua_pop(L, 1);
 
 		lua_getfield(L, 1, "cursor");

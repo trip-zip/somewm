@@ -638,8 +638,8 @@ luaA_systray_item_draw_icon(lua_State *L)
 		return 1;
 	}
 
-	width = luaL_checknumber(L, 3);
-	height = luaL_checknumber(L, 4);
+	width = lua_tonumber(L, 3);
+	height = lua_tonumber(L, 4);
 
 	/* Check if we have an icon */
 	if (!item->icon) {
@@ -702,9 +702,9 @@ luaA_systray_item_draw_overlay(lua_State *L)
 		return 1;
 	}
 
-	x = luaL_checknumber(L, 3);
-	y = luaL_checknumber(L, 4);
-	size = luaL_checknumber(L, 5);
+	x = lua_tonumber(L, 3);
+	y = lua_tonumber(L, 4);
+	size = lua_tonumber(L, 5);
 
 	/* Check if we have an overlay icon */
 	if (!item->overlay_icon) {
