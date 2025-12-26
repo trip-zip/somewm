@@ -310,6 +310,8 @@ static struct wlr_pointer_constraint_v1 *active_constraint;
 struct wlr_cursor *cursor;
 /* Non-static so mousegrabber.c can access it */
 struct wlr_xcursor_manager *cursor_mgr;
+/* Non-static so root.cursor() in root.c can change it */
+char* selected_root_cursor;
 
 static struct wlr_scene_rect *root_bg;
 static struct wlr_session_lock_manager_v1 *session_lock_mgr;
@@ -1012,6 +1014,8 @@ cleanup(void)
 		waitpid(child_pid, NULL, 0);
 	}
 	wlr_xcursor_manager_destroy(cursor_mgr);
+
+	free(selected_root_cursor);
 
 	destroykeyboardgroup(&kb_group->destroy, NULL);
 
@@ -3186,7 +3190,7 @@ motionnotify(uint32_t time, struct wlr_input_device *device, double dx, double d
 		if (hover_drawin && hover_drawin->cursor)
 			wlr_cursor_set_xcursor(cursor, cursor_mgr, hover_drawin->cursor);
 		else
-			wlr_cursor_set_xcursor(cursor, cursor_mgr, "default");
+			wlr_cursor_set_xcursor(cursor, cursor_mgr, selected_root_cursor ? selected_root_cursor : "default");
 	}
 
 	pointerfocus(c, surface, sx, sy, time);

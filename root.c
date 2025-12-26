@@ -34,6 +34,7 @@
 #include <wlr/types/wlr_xcursor_manager.h>
 #include <cairo.h>
 #include <drm_fourcc.h>
+#include <string.h>
 
 /* External references to somewm.c globals */
 extern struct wlr_output_layout *output_layout;
@@ -44,6 +45,7 @@ extern struct wlr_allocator *alloc;
 extern struct wl_list mons;
 extern struct wlr_cursor *cursor;
 extern struct wlr_xcursor_manager *cursor_mgr;
+extern char* selected_root_cursor;
 
 /* Property miss handlers (AwesomeWM compatibility) */
 static int miss_index_handler = LUA_REFNIL;
@@ -573,8 +575,11 @@ luaA_root_cursor(lua_State *L)
 		luaA_warn(L, "invalid cursor %s", cursor_name);
 		return 0;
 	}
-
-	wlr_cursor_set_xcursor(cursor, cursor_mgr, cursor_name);
+	free(selected_root_cursor);
+	selected_root_cursor = strdup(cursor_name);
+	if(some_get_focused_client() == NULL) {
+		wlr_cursor_set_xcursor(cursor, cursor_mgr, cursor_name);
+	}
 	return 0;
 }
 
