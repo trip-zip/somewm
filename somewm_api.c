@@ -413,14 +413,17 @@ some_set_seat_keyboard_focus(Client *c)
 	struct wlr_keyboard *kb;
 
 	if (!c) {
-		/* NULL client = clear focus (handled in client_focus_refresh) */
+		/* NULL client = clear keyboard focus */
+		wlr_seat_keyboard_notify_clear_focus(seat);
 		return;
 	}
 
 	/* Get the client's surface */
 	surface = some_client_get_surface(c);
 	if (!surface || !surface->mapped) {
-		/* Surface not ready - skip seat focus update */
+		/* Surface not ready - clear seat focus to prevent input going to old window.
+		 * When surface maps, mapnotify() will call focusclient() to set focus. */
+		wlr_seat_keyboard_notify_clear_focus(seat);
 		return;
 	}
 
