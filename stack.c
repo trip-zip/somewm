@@ -331,13 +331,30 @@ stack_refresh(void)
 	}
 
 	/* Stack drawins (wiboxes) - AwesomeWM stacks these after clients
-	 * Drawins with ontop=true go to LAYER_ONTOP, others to LAYER_NORMAL */
+	 * Layer is determined by: ontop property AND type property (AwesomeWM compat)
+	 * - type="desktop" → LyrBg (below everything, like wallpaper)
+	 * - type="dock" → LyrTop (above normal windows, like panels)
+	 * - ontop=true → LyrOverlay (above everything except fullscreen)
+	 * - otherwise → LyrTile (same as normal clients) */
 	foreach(drawin, globalconf.drawins) {
 		if (!(*drawin)->scene_tree)
 			continue;
 
-		layer = (*drawin)->ontop ? WINDOW_LAYER_ONTOP : WINDOW_LAYER_NORMAL;
-		scene_layer = get_scene_layer(layer);
+		/* Determine layer based on type and ontop (AwesomeWM compatibility) */
+		if ((*drawin)->type == WINDOW_TYPE_DESKTOP ||
+		    (*drawin)->type == WINDOW_TYPE_SPLASH) {
+			/* Desktop/splash type goes to background layer (below clients) */
+			scene_layer = LyrBg;
+		} else if ((*drawin)->ontop) {
+			/* ontop drawins go to overlay layer */
+			scene_layer = LyrOverlay;
+		} else if ((*drawin)->type == WINDOW_TYPE_DOCK) {
+			/* Dock type goes above normal windows */
+			scene_layer = LyrTop;
+		} else {
+			/* Normal drawins go to wibox layer (above clients but below ontop) */
+			scene_layer = LyrWibox;
+		}
 
 		/* Reparent to correct layer if needed */
 		if ((void *)(*drawin)->scene_tree->node.parent != (void *)layers[scene_layer]) {
