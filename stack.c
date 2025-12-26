@@ -199,6 +199,10 @@ client_get_layer(Client *c)
 		break;
 	}
 
+	/* Floating windows go above tiled windows */
+	if (some_client_get_floating(c))
+		return WINDOW_LAYER_FLOATING;
+
 	return WINDOW_LAYER_NORMAL;
 }
 
@@ -220,8 +224,9 @@ get_scene_layer(window_layer_t layer)
 	case WINDOW_LAYER_BELOW:
 		return LyrBottom;
 	case WINDOW_LAYER_NORMAL:
-		/* Return LyrTile for now; floating is handled elsewhere */
 		return LyrTile;
+	case WINDOW_LAYER_FLOATING:
+		return LyrFloat;
 	case WINDOW_LAYER_ABOVE:
 		return LyrTop;
 	case WINDOW_LAYER_FULLSCREEN:

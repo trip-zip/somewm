@@ -17,7 +17,8 @@ typedef enum {
 	WINDOW_LAYER_IGNORE,      /* Special: transient windows (follow parent) */
 	WINDOW_LAYER_DESKTOP,     /* Desktop windows (wallpaper) -> LyrBg */
 	WINDOW_LAYER_BELOW,       /* Below normal -> LyrBottom */
-	WINDOW_LAYER_NORMAL,      /* Normal windows -> LyrTile/LyrFloat */
+	WINDOW_LAYER_NORMAL,      /* Tiled windows -> LyrTile */
+	WINDOW_LAYER_FLOATING,    /* Floating windows -> LyrFloat */
 	WINDOW_LAYER_ABOVE,       /* Above normal (panels, docks) -> LyrTop */
 	WINDOW_LAYER_FULLSCREEN,  /* Fullscreen (only when focused) -> LyrFS */
 	WINDOW_LAYER_ONTOP,       /* Always on top -> LyrOverlay */

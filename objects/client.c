@@ -3151,6 +3151,17 @@ client_unmanage(client_t *c, client_unmanage_t reason)
     if(globalconf.focus.client == c)
         client_unfocus(c);
 
+    /* Clear mouse tracking if over this client.
+     * Must happen BEFORE signals are emitted to prevent dangling pointer access. */
+    if (globalconf.mouse_under.type == UNDER_CLIENT &&
+        globalconf.mouse_under.ptr.client == c) {
+        luaA_object_push(L, c);
+        luaA_object_emit_signal(L, -1, "mouse::leave", 0);
+        lua_pop(L, 1);
+        globalconf.mouse_under.type = UNDER_NONE;
+        globalconf.mouse_under.ptr.client = NULL;
+    }
+
     /* remove client from global list and everywhere else */
     foreach(elem, globalconf.clients)
         if(*elem == c)
