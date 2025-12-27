@@ -17,7 +17,7 @@
 **Arch Linux:**
 ```bash
 # Note: lua51-lgi is required for LuaJIT (the default Lua for somewm)
-sudo pacman -S wlroots luajit lua51-lgi cairo pango gdk-pixbuf2 \
+sudo pacman -S wlroots0.19 luajit lua51-lgi cairo pango gdk-pixbuf2 \
     wayland-protocols libinput libxkbcommon
 # Optional: XWayland support
 sudo pacman -S xorg-xwayland libxcb
