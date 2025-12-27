@@ -61,6 +61,12 @@ cairo_xlib = dependency('cairo-xlib')
 pangocairo = dependency('pangocairo')
 gdk_pixbuf = dependency('gdk-pixbuf-2.0')
 
+# Screen recording dependencies (libav)
+libavcodec = dependency('libavcodec')
+libavformat = dependency('libavformat')
+libswscale = dependency('libswscale')
+libavutil = dependency('libavutil')
+
 # Xwayland dependencies (optional)
 if xwayland_option.enabled() or xwayland_option.auto()
   xcb = dependency('xcb', required: xwayland_option)
@@ -241,6 +247,7 @@ somewm_sources = [
   'keygrabber.c',
   'mousegrabber.c',
   'selection.c',
+  'screenrecord.c',
   # Common
   'common/luaclass.c',
   'common/luaobject.c',
@@ -286,6 +293,10 @@ all_deps = [
   lua_dep,
   wlroots,
   m_dep,
+  libavcodec,
+  libavformat,
+  libswscale,
+  libavutil,
 ]
 
 if have_xwayland
