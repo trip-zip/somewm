@@ -22,6 +22,7 @@
 #include "objects/drawin.h"
 #include "objects/client.h"
 #include "somewm_types.h"
+#include "screenrecord.h"
 #include <xkbcommon/xkbcommon.h>
 #include <wlr/types/wlr_output_layout.h>
 #include <wlr/types/wlr_scene.h>
@@ -1108,6 +1109,13 @@ static const luaL_Reg root_methods[] = {
 	{ "size_mm", luaA_root_size_mm },
 	{ "tags", luaA_root_tags },
 	{ "content", luaA_root_get_content },
+	/* Screen recording API */
+	{ "screenrecord_start", luaA_screenrecord_start },
+	{ "screenrecord_stop", luaA_screenrecord_stop },
+	{ "screenrecord_cancel", luaA_screenrecord_cancel },
+	{ "screenrecord_is_recording", luaA_screenrecord_is_recording },
+	{ "screenrecord_elapsed", luaA_screenrecord_elapsed },
+	{ "screenrecord_capture_frame", luaA_screenrecord_capture_frame },
 	/* __index and __newindex MUST be in methods, not meta!
 	 * luaA_openlib sets the methods table as its own metatable.
 	 * So __index must be in methods for metamethod lookup to find it.

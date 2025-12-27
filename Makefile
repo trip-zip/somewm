@@ -26,7 +26,7 @@ LDFLAGS += -fsanitize=address,undefined
 endif
 
 # CFLAGS / LDFLAGS
-PKGS      = wayland-server xkbcommon libinput dbus-1 libdrm $(XLIBS)
+PKGS      = wayland-server xkbcommon libinput dbus-1 libdrm libavcodec libavformat libswscale libavutil $(XLIBS)
 SOMECPPFLAGS += $(LUA_CFLAGS) $(CAIRO_CFLAGS) $(GLIB_CFLAGS)
 SOMECFLAGS = `$(PKG_CONFIG) --cflags $(PKGS)` $(WLR_INCS) $(SOMECPPFLAGS) $(SOMEDEVCFLAGS) $(CFLAGS)
 LDLIBS    = `$(PKG_CONFIG) --libs $(PKGS)` $(WLR_LIBS) $(LUA_LIBS) $(CAIRO_LIBS) $(GLIB_LIBS) -lm $(LIBS)
@@ -55,8 +55,8 @@ check-lgi: lgi-check
 
 .PHONY: check-lgi
 
-somewm: somewm.o somewm_api.o util.o ipc.o color.o draw.o stack.o banning.o ewmh.o window.o event.o strut.o property.o dbus.o $(COMMONOBJS) $(LUAOBJS)
-	$(CC) somewm.o somewm_api.o util.o ipc.o color.o draw.o stack.o banning.o ewmh.o window.o event.o strut.o property.o dbus.o $(COMMONOBJS) $(LUAOBJS) $(SOMECFLAGS) $(LDFLAGS) $(LDLIBS) -o $@
+somewm: somewm.o somewm_api.o util.o ipc.o color.o draw.o stack.o banning.o ewmh.o window.o event.o strut.o property.o dbus.o screenrecord.o $(COMMONOBJS) $(LUAOBJS)
+	$(CC) somewm.o somewm_api.o util.o ipc.o color.o draw.o stack.o banning.o ewmh.o window.o event.o strut.o property.o dbus.o screenrecord.o $(COMMONOBJS) $(LUAOBJS) $(SOMECFLAGS) $(LDFLAGS) $(LDLIBS) -o $@
 somewm-client: somewm-client.o
 	$(CC) somewm-client.o $(LDFLAGS) -o $@
 
@@ -75,6 +75,7 @@ ipc.o: ipc.c ipc.h util.h
 color.o: color.c color.h util.h
 draw.o: draw.c draw.h util.h
 stack.o: stack.c stack.h somewm_types.h client.h util.h
+screenrecord.o: screenrecord.c screenrecord.h somewm_types.h util.h globalconf.h
 property.o: property.c property.h objects/client.h objects/luaa.h globalconf.h
 somewm-client.o: somewm-client.c
 dbus.o: dbus.c dbus.h objects/luaa.h common/signal.h x11_compat.h
