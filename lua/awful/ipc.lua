@@ -1889,6 +1889,209 @@ local function register_builtin_commands()
     awful_input[setting] = new_value
     return string.format("%s = %s", setting, tostring(new_value))
   end)
+
+  -- =================================================================
+  -- KEYBINDING COMMANDS
+  -- =================================================================
+
+  local awful_key = require("awful.key")
+  local awful_keyboard = require("awful.keyboard")
+
+  --- Helper to format modifiers table as string
+  local function format_modifiers(mods)
+    if not mods or #mods == 0 then return "" end
+    local sorted = {}
+    for _, m in ipairs(mods) do
+      table.insert(sorted, m)
+    end
+    table.sort(sorted)
+    return table.concat(sorted, "+")
+  end
+
+  --- Helper to parse modifier string like "Mod4+Shift" into table
+  local function parse_modifiers(mod_str)
+    if not mod_str or mod_str == "" then return {} end
+    local mods = {}
+    for mod in mod_str:gmatch("[^+,]+") do
+      mod = mod:match("^%s*(.-)%s*$")  -- trim whitespace
+      if mod ~= "" then
+        table.insert(mods, mod)
+      end
+    end
+    return mods
+  end
+
+  --- keybind.list [client] - List all keybindings
+  ipc.register("keybind.list", function(target)
+    local lines = {}
+
+    if target == "client" then
+      -- List default client keybindings
+      table.insert(lines, "Default client keybindings:")
+      local client_keys = awful_keyboard.client_keybindings or {}
+      if #client_keys == 0 then
+        table.insert(lines, "  (none)")
+      else
+        for _, k in ipairs(client_keys) do
+          local mods = format_modifiers(k.modifiers)
+          local key = k.key or "(any)"
+          local desc = k.description or ""
+          local group = k.group or ""
+          table.insert(lines, string.format("  %-20s  %-30s  (%s)",
+            mods ~= "" and (mods .. "+" .. key) or key,
+            desc,
+            group))
+        end
+      end
+    else
+      -- List global (root) keybindings
+      table.insert(lines, "Global keybindings:")
+      local root_keys = capi.root.keys() or {}
+      if #root_keys == 0 then
+        table.insert(lines, "  (none)")
+      else
+        for _, k in ipairs(root_keys) do
+          local mods = format_modifiers(k.modifiers)
+          local key = k.key or "(any)"
+          local desc = k.description or ""
+          local group = k.group or ""
+          table.insert(lines, string.format("  %-20s  %-30s  (%s)",
+            mods ~= "" and (mods .. "+" .. key) or key,
+            desc,
+            group))
+        end
+      end
+    end
+
+    return table.concat(lines, "\n")
+  end)
+
+  --- keybind.add <modifiers> <key> <command> [description] [group]
+  --- Add a global keybinding that spawns a command
+  ipc.register("keybind.add", function(mod_str, key, ...)
+    if not mod_str then
+      error("Usage: keybind add <modifiers> <key> <command> [description] [group]\nExample: keybind add Mod4+Shift t 'kitty' 'spawn terminal' 'launcher'")
+    end
+    if not key then
+      error("Missing key")
+    end
+
+    local args = {...}
+    if #args == 0 then
+      error("Missing command to execute")
+    end
+
+    -- Join remaining args as command (in case it has spaces)
+    local cmd = args[1]
+    local desc = args[2] or ("Run: " .. cmd)
+    local group = args[3] or "custom"
+
+    local mods = parse_modifiers(mod_str)
+
+    -- Create the keybinding
+    local new_key = awful_key({
+      modifiers = mods,
+      key = key,
+      description = desc,
+      group = group,
+      on_press = function()
+        awful_spawn(cmd)
+      end,
+    })
+
+    -- Add to global keybindings
+    awful_keyboard.append_global_keybinding(new_key)
+
+    local mod_display = #mods > 0 and (table.concat(mods, "+") .. "+") or ""
+    return string.format("Added keybinding: %s%s -> %s", mod_display, key, cmd)
+  end)
+
+  --- keybind.remove <modifiers> <key> - Remove a global keybinding
+  ipc.register("keybind.remove", function(mod_str, key)
+    if not mod_str then
+      error("Usage: keybind remove <modifiers> <key>")
+    end
+    if not key then
+      error("Missing key")
+    end
+
+    local mods = parse_modifiers(mod_str)
+    local root_keys = capi.root.keys() or {}
+
+    -- Find matching keybinding
+    local found = nil
+    for _, k in ipairs(root_keys) do
+      local k_mods = k.modifiers or {}
+      -- Check if modifiers match (order-independent)
+      local mods_match = #k_mods == #mods
+      if mods_match then
+        for _, m in ipairs(mods) do
+          local has_mod = false
+          for _, km in ipairs(k_mods) do
+            if km == m then has_mod = true; break end
+          end
+          if not has_mod then mods_match = false; break end
+        end
+      end
+      if mods_match and k.key == key then
+        found = k
+        break
+      end
+    end
+
+    if not found then
+      local mod_display = #mods > 0 and (table.concat(mods, "+") .. "+") or ""
+      error("Keybinding not found: " .. mod_display .. key)
+    end
+
+    awful_keyboard.remove_global_keybinding(found)
+
+    local mod_display = #mods > 0 and (table.concat(mods, "+") .. "+") or ""
+    return string.format("Removed keybinding: %s%s", mod_display, key)
+  end)
+
+  --- keybind.trigger <modifiers> <key> - Manually trigger a keybinding
+  ipc.register("keybind.trigger", function(mod_str, key)
+    if not mod_str then
+      error("Usage: keybind trigger <modifiers> <key>")
+    end
+    if not key then
+      error("Missing key")
+    end
+
+    local mods = parse_modifiers(mod_str)
+    local root_keys = capi.root.keys() or {}
+
+    -- Find matching keybinding
+    for _, k in ipairs(root_keys) do
+      local k_mods = k.modifiers or {}
+      local mods_match = #k_mods == #mods
+      if mods_match then
+        for _, m in ipairs(mods) do
+          local has_mod = false
+          for _, km in ipairs(k_mods) do
+            if km == m then has_mod = true; break end
+          end
+          if not has_mod then mods_match = false; break end
+        end
+      end
+      if mods_match and k.key == key then
+        -- Trigger the keybinding
+        if k.on_press then
+          k:on_press()
+        elseif k.trigger then
+          k:trigger()
+        else
+          error("Keybinding has no action")
+        end
+        local mod_display = #mods > 0 and (table.concat(mods, "+") .. "+") or ""
+        return string.format("Triggered: %s%s", mod_display, key)
+      end
+    end
+
+    local mod_display = #mods > 0 and (table.concat(mods, "+") .. "+") or ""
+    error("Keybinding not found: " .. mod_display .. key)
+  end)
 end
 
 -- Initialize built-in commands
