@@ -52,6 +52,11 @@ extern struct wlr_xcursor_manager *cursor_mgr;
 extern struct wlr_seat *seat;
 extern char* selected_root_cursor;
 
+/* External function to find surface at coordinates (from somewm.c) */
+extern void xytonode(double x, double y, struct wlr_surface **psurface,
+	Client **pc, LayerSurface **pl, drawin_t **pd, drawable_t **pdrawable,
+	double *nx, double *ny);
+
 /* Property miss handlers (AwesomeWM compatibility) */
 static int miss_index_handler = LUA_REFNIL;
 static int miss_newindex_handler = LUA_REFNIL;
@@ -587,20 +592,25 @@ luaA_root_fake_input(lua_State *L)
 		wlr_seat_keyboard_notify_key(seat, timestamp, keycode - 8, state);
 
 	} else if (strcmp(event_type, "button_press") == 0 || strcmp(event_type, "button_release") == 0) {
-		/* Button event
-		 * TODO: Button injection may not work reliably - the seat sends
-		 * the event to whatever surface has pointer focus, which may not
-		 * match what's visually under the cursor. May need to update
-		 * pointer focus first by calling the surface-at logic. */
+		/* Button event - update pointer focus to match cursor position first */
 		int button;
 		uint32_t button_code;
 		enum wl_pointer_button_state state;
+		struct wlr_surface *surface = NULL;
+		double sx, sy;
 
 		button = luaL_checkinteger(L, 2);
 		button_code = button_to_code(button);
 		state = (strcmp(event_type, "button_press") == 0)
 			? WL_POINTER_BUTTON_STATE_PRESSED
 			: WL_POINTER_BUTTON_STATE_RELEASED;
+
+		/* Find what surface is under the cursor and update pointer focus
+		 * This ensures the button event goes to the correct window */
+		xytonode(cursor->x, cursor->y, &surface, NULL, NULL, NULL, NULL, &sx, &sy);
+		if (surface) {
+			wlr_seat_pointer_notify_enter(seat, surface, sx, sy);
+		}
 
 		wlr_seat_pointer_notify_button(seat, timestamp, button_code, state);
 
