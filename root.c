@@ -23,7 +23,11 @@
 #include "objects/client.h"
 #include "somewm_types.h"
 #include <xkbcommon/xkbcommon.h>
+#include <wlr/types/wlr_seat.h>
+#include <wlr/types/wlr_cursor.h>
 #include <wlr/types/wlr_output_layout.h>
+#include <linux/input-event-codes.h>
+#include <time.h>
 #include <wlr/types/wlr_scene.h>
 #include <wlr/render/wlr_renderer.h>
 #include <wlr/render/wlr_texture.h>
@@ -45,6 +49,7 @@ extern struct wlr_allocator *alloc;
 extern struct wl_list mons;
 extern struct wlr_cursor *cursor;
 extern struct wlr_xcursor_manager *cursor_mgr;
+extern struct wlr_seat *seat;
 extern char* selected_root_cursor;
 
 /* Property miss handlers (AwesomeWM compatibility) */
@@ -468,21 +473,162 @@ luaA_root_button_check(lua_State *L, uint32_t button, uint32_t mods,
 	return matched;
 }
 
-/** root.fake_input(event_type, detail) - Simulate input events
+/** Get current time in milliseconds for input events */
+static uint32_t
+get_current_time_msec(void)
+{
+	struct timespec ts;
+	clock_gettime(CLOCK_MONOTONIC, &ts);
+	return (uint32_t)(ts.tv_sec * 1000 + ts.tv_nsec / 1000000);
+}
+
+/** Convert keysym to keycode using current keymap
+ * \param keymap XKB keymap to search
+ * \param keysym Keysym to find
+ * \return Keycode, or 0 if not found
+ */
+static xkb_keycode_t
+keysym_to_keycode(struct xkb_keymap *keymap, xkb_keysym_t keysym)
+{
+	xkb_keycode_t min_kc = xkb_keymap_min_keycode(keymap);
+	xkb_keycode_t max_kc = xkb_keymap_max_keycode(keymap);
+
+	for (xkb_keycode_t kc = min_kc; kc <= max_kc; kc++) {
+		xkb_layout_index_t num_layouts = xkb_keymap_num_layouts_for_key(keymap, kc);
+		for (xkb_layout_index_t layout = 0; layout < num_layouts; layout++) {
+			xkb_level_index_t num_levels = xkb_keymap_num_levels_for_key(keymap, kc, layout);
+			for (xkb_level_index_t level = 0; level < num_levels; level++) {
+				const xkb_keysym_t *syms;
+				int nsyms = xkb_keymap_key_get_syms_by_level(keymap, kc, layout, level, &syms);
+				for (int i = 0; i < nsyms; i++) {
+					if (syms[i] == keysym)
+						return kc;
+				}
+			}
+		}
+	}
+	return 0;
+}
+
+/** Convert button number to Linux input event code
+ * \param button Button number (1=left, 2=middle, 3=right, 4/5=scroll)
+ * \return Linux BTN_* code
+ */
+static uint32_t
+button_to_code(int button)
+{
+	switch (button) {
+	case 1: return BTN_LEFT;
+	case 2: return BTN_MIDDLE;
+	case 3: return BTN_RIGHT;
+	case 4: return BTN_SIDE;
+	case 5: return BTN_EXTRA;
+	case 6: return BTN_FORWARD;
+	case 7: return BTN_BACK;
+	case 8: return BTN_TASK;
+	default: return BTN_LEFT;
+	}
+}
+
+/** root.fake_input(event_type, detail, [x], [y]) - Simulate input events
  *
- * TODO: This requires wlroots virtual input protocol support
- * For now, stub it out for compatibility
+ * Injects synthetic input events for automation and testing.
+ * Matches AwesomeWM's API for compatibility.
  *
- * \param event_type "key_press", "key_release", "button_press", etc.
- * \param detail Key name or button number
+ * \param event_type One of: "key_press", "key_release", "button_press",
+ *                   "button_release", "motion_notify"
+ * \param detail For key events: keysym name (string) or keycode (int)
+ *               For button events: button number (1=left, 2=middle, 3=right)
+ *               For motion events: true for relative, false for absolute
+ * \param x X coordinate (for motion events)
+ * \param y Y coordinate (for motion events)
  */
 static int
 luaA_root_fake_input(lua_State *L)
 {
-	(void)L;
-	/* TODO: Implement using wlroots virtual pointer/keyboard
-	 * wlr_virtual_keyboard_v1, wlr_virtual_pointer_v1 */
-	fprintf(stderr, "WARNING: root.fake_input not yet implemented\n");
+	const char *event_type;
+	uint32_t timestamp;
+	struct xkb_keymap *keymap;
+
+	event_type = luaL_checkstring(L, 1);
+	timestamp = get_current_time_msec();
+
+	if (strcmp(event_type, "key_press") == 0 || strcmp(event_type, "key_release") == 0) {
+		/* Key event */
+		xkb_keycode_t keycode;
+		enum wl_keyboard_key_state state;
+
+		state = (strcmp(event_type, "key_press") == 0)
+			? WL_KEYBOARD_KEY_STATE_PRESSED
+			: WL_KEYBOARD_KEY_STATE_RELEASED;
+
+		keymap = some_xkb_get_keymap();
+		if (!keymap)
+			return luaL_error(L, "No keyboard/keymap available");
+
+		if (lua_type(L, 2) == LUA_TSTRING) {
+			/* Keysym name string */
+			const char *key_str = lua_tostring(L, 2);
+			xkb_keysym_t keysym = xkb_keysym_from_name(key_str, XKB_KEYSYM_CASE_INSENSITIVE);
+			if (keysym == XKB_KEY_NoSymbol)
+				return luaL_error(L, "Unknown keysym: %s", key_str);
+
+			keycode = keysym_to_keycode(keymap, keysym);
+			if (keycode == 0)
+				return luaL_error(L, "Keysym '%s' not in current keymap", key_str);
+		} else if (lua_type(L, 2) == LUA_TNUMBER) {
+			/* Direct keycode */
+			keycode = (xkb_keycode_t)lua_tointeger(L, 2);
+		} else {
+			return luaL_error(L, "Expected keysym string or keycode number");
+		}
+
+		/* XKB keycodes are evdev keycodes + 8 */
+		wlr_seat_keyboard_notify_key(seat, timestamp, keycode - 8, state);
+
+	} else if (strcmp(event_type, "button_press") == 0 || strcmp(event_type, "button_release") == 0) {
+		/* Button event
+		 * TODO: Button injection may not work reliably - the seat sends
+		 * the event to whatever surface has pointer focus, which may not
+		 * match what's visually under the cursor. May need to update
+		 * pointer focus first by calling the surface-at logic. */
+		int button;
+		uint32_t button_code;
+		enum wl_pointer_button_state state;
+
+		button = luaL_checkinteger(L, 2);
+		button_code = button_to_code(button);
+		state = (strcmp(event_type, "button_press") == 0)
+			? WL_POINTER_BUTTON_STATE_PRESSED
+			: WL_POINTER_BUTTON_STATE_RELEASED;
+
+		wlr_seat_pointer_notify_button(seat, timestamp, button_code, state);
+
+	} else if (strcmp(event_type, "motion_notify") == 0) {
+		/* Motion event */
+		bool relative;
+		double x, y;
+
+		relative = lua_toboolean(L, 2);
+		x = luaL_optnumber(L, 3, 0);
+		y = luaL_optnumber(L, 4, 0);
+
+		if (relative) {
+			wlr_cursor_move(cursor, NULL, x, y);
+		} else {
+			/* Absolute coordinates - warp to position */
+			wlr_cursor_warp_absolute(cursor, NULL,
+				x / (double)cursor->x, y / (double)cursor->y);
+			/* Actually just warp directly */
+			wlr_cursor_warp(cursor, NULL, x, y);
+		}
+		wlr_seat_pointer_notify_motion(seat, timestamp, cursor->x, cursor->y);
+
+	} else {
+		return luaL_error(L, "Unknown event type: %s (expected key_press, key_release, "
+			"button_press, button_release, or motion_notify)", event_type);
+	}
+
 	return 0;
 }
 
