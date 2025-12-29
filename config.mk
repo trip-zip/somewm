@@ -1,5 +1,6 @@
 _VERSION = 0.2-dev
 VERSION  = `git describe --tags --dirty 2>/dev/null || echo $(_VERSION)`
+COMMIT_DATE = `git log -1 --format=%cs 2>/dev/null || echo unknown`
 
 PKG_CONFIG = pkg-config
 

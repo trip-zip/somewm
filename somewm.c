@@ -5512,7 +5512,7 @@ print_version_info(const char **paths, int num_paths)
 	/* Print markdown-formatted version info */
 	printf("## somewm version info\n\n");
 
-	printf("**somewm:** %s\n", VERSION);
+	printf("**somewm:** %s (%s)\n", VERSION, COMMIT_DATE);
 	printf("**wlroots:** %s\n", WLROOTS_VERSION);
 	printf("**Lua:** %s (compiled: %s)\n", get_lua_runtime_version(L), LUA_RELEASE);
 	printf("**LGI:** %s\n", get_lgi_version(L));
