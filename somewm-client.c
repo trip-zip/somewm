@@ -105,6 +105,11 @@ print_usage(const char *progname)
 	fprintf(stderr, "    Pointer: tap_to_click, natural_scrolling, accel_speed, ...\n");
 	fprintf(stderr, "    Keyboard: xkb_layout, xkb_options, keyboard_repeat_rate, ...\n\n");
 
+	fprintf(stderr, "SESSION:\n");
+	fprintf(stderr, "  version                        Show compositor version\n");
+	fprintf(stderr, "  reload                         Reload configuration (validates first)\n");
+	fprintf(stderr, "  restart                        Full compositor restart\n\n");
+
 	fprintf(stderr, "ADVANCED:\n");
 	fprintf(stderr, "  eval <lua_code>                Execute arbitrary Lua code\n");
 	fprintf(stderr, "  hotkeys                        Show hotkeys popup\n");
