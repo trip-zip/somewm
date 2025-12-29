@@ -18,6 +18,86 @@ local loadstring = loadstring or load
 local ipc = {}
 local commands = {}
 
+-- Simple JSON encoder for IPC responses
+local function json_encode_value(val, indent, depth)
+  indent = indent or ""
+  depth = depth or 0
+  local t = type(val)
+
+  if t == "nil" then
+    return "null"
+  elseif t == "boolean" then
+    return val and "true" or "false"
+  elseif t == "number" then
+    if val ~= val then -- NaN
+      return "null"
+    elseif val == math.huge or val == -math.huge then
+      return "null"
+    else
+      return tostring(val)
+    end
+  elseif t == "string" then
+    -- Escape special characters
+    local escaped = val:gsub('\\', '\\\\')
+                       :gsub('"', '\\"')
+                       :gsub('\n', '\\n')
+                       :gsub('\r', '\\r')
+                       :gsub('\t', '\\t')
+    return '"' .. escaped .. '"'
+  elseif t == "table" then
+    -- Check if array (sequential integer keys starting at 1)
+    local is_array = true
+    local max_idx = 0
+    for k, _ in pairs(val) do
+      if type(k) ~= "number" or k < 1 or math.floor(k) ~= k then
+        is_array = false
+        break
+      end
+      if k > max_idx then max_idx = k end
+    end
+    -- Also verify no holes
+    if is_array and max_idx > 0 then
+      for i = 1, max_idx do
+        if val[i] == nil then
+          is_array = false
+          break
+        end
+      end
+    end
+
+    local parts = {}
+    if is_array and max_idx > 0 then
+      for i = 1, max_idx do
+        table.insert(parts, json_encode_value(val[i], indent, depth + 1))
+      end
+      return "[" .. table.concat(parts, ",") .. "]"
+    else
+      -- Object
+      for k, v in pairs(val) do
+        local key = type(k) == "string" and k or tostring(k)
+        table.insert(parts, json_encode_value(key, indent, depth + 1) .. ":" .. json_encode_value(v, indent, depth + 1))
+      end
+      if #parts == 0 then
+        return "{}"
+      end
+      return "{" .. table.concat(parts, ",") .. "}"
+    end
+  elseif t == "userdata" then
+    -- Format userdata as string ID
+    return json_encode_value(tostring(val):gsub(": ", ":"), indent, depth)
+  else
+    return '"' .. tostring(val) .. '"'
+  end
+end
+
+-- Encode a table to JSON string
+local function json_encode(val)
+  return json_encode_value(val)
+end
+
+-- Export for commands that want to return structured data
+ipc.json_encode = json_encode
+
 --- Register a command handler
 -- @param name Command name (e.g., "tag.view")
 -- @param handler Function to execute command. Receives variadic args from command line.
@@ -135,16 +215,29 @@ end
 -- @param client_fd File descriptor of connected client (for reference)
 -- @return Response string in protocol format ("OK\n\n" or "ERROR msg\n\n")
 function ipc.dispatch(command_string, client_fd)
+  -- Check for --json flag
+  local json_mode = false
+  if command_string:match("^%-%-json%s+") then
+    json_mode = true
+    command_string = command_string:gsub("^%-%-json%s+", "")
+  end
+
   -- Parse command
   local cmd_name, args = parse_command(command_string)
 
   if not cmd_name then
+    if json_mode then
+      return json_encode({status = "error", error = "Empty command"}) .. "\n\n"
+    end
     return "ERROR Empty command\n\n"
   end
 
   -- Find handler
   local handler = commands[cmd_name]
   if not handler then
+    if json_mode then
+      return json_encode({status = "error", error = "Unknown command: " .. cmd_name}) .. "\n\n"
+    end
     return string.format("ERROR Unknown command: %s\n\n", cmd_name)
   end
 
@@ -153,10 +246,25 @@ function ipc.dispatch(command_string, client_fd)
 
   if not success then
     -- Error occurred
+    if json_mode then
+      return json_encode({status = "error", error = tostring(result)}) .. "\n\n"
+    end
     return string.format("ERROR %s\n\n", tostring(result))
   end
 
   -- Success
+  if json_mode then
+    -- If result is a table, encode it directly; otherwise wrap in result field
+    local response
+    if type(result) == "table" then
+      result.status = "ok"
+      response = result
+    else
+      response = {status = "ok", result = result or ""}
+    end
+    return json_encode(response) .. "\n\n"
+  end
+
   if result and result ~= "" then
     return string.format("OK\n%s\n\n", tostring(result))
   else

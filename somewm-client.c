@@ -23,7 +23,9 @@
 static void
 print_usage(const char *progname)
 {
-	fprintf(stderr, "Usage: %s COMMAND [ARGS...]\n\n", progname);
+	fprintf(stderr, "Usage: %s [--json] COMMAND [ARGS...]\n\n", progname);
+	fprintf(stderr, "OPTIONS:\n");
+	fprintf(stderr, "  --json                         Output in JSON format\n\n");
 
 	fprintf(stderr, "BASIC COMMANDS:\n");
 	fprintf(stderr, "  ping                           Test connection\n");
@@ -34,7 +36,21 @@ print_usage(const char *progname)
 	fprintf(stderr, "  tag view <N>                   Switch to tag N\n");
 	fprintf(stderr, "  tag toggle <N>                 Toggle tag N visibility\n");
 	fprintf(stderr, "  tag current                    Get current tag(s)\n");
-	fprintf(stderr, "  tag list                       List all tags\n\n");
+	fprintf(stderr, "  tag list                       List all tags\n");
+	fprintf(stderr, "  tag add <name> [screen]        Create a new tag\n");
+	fprintf(stderr, "  tag delete <name|N>            Delete a tag\n");
+	fprintf(stderr, "  tag rename <old> <new>         Rename a tag\n");
+	fprintf(stderr, "  tag screen <name> [screen]     Get or move tag to screen\n");
+	fprintf(stderr, "  tag swap <tag1> <tag2>         Swap tag positions\n");
+	fprintf(stderr, "  tag layout <name> [layout]     Get or set tag layout\n");
+	fprintf(stderr, "  tag gap <name> [pixels]        Get or set tag gap\n");
+	fprintf(stderr, "  tag mwfact <name> [factor]     Get or set master width factor\n\n");
+
+	fprintf(stderr, "KEYBIND COMMANDS:\n");
+	fprintf(stderr, "  keybind list [client]          List all keybindings\n");
+	fprintf(stderr, "  keybind add <mods> <key> <cmd> Add global keybind\n");
+	fprintf(stderr, "  keybind remove <mods> <key>    Remove global keybind\n");
+	fprintf(stderr, "  keybind trigger <mods> <key>   Manually trigger keybind\n\n");
 
 	fprintf(stderr, "CLIENT MANAGEMENT:\n");
 	fprintf(stderr, "  client list                    List all clients\n");
@@ -146,15 +162,20 @@ connect_to_socket(void)
 }
 
 static int
-send_command(int sock, int argc, char *argv[])
+send_command(int sock, int argc, char *argv[], int json_mode, int start_arg)
 {
 	char command[BUFFER_SIZE];
 	int offset = 0;
 	int i;
 
+	/* Prepend --json if requested */
+	if (json_mode) {
+		offset = snprintf(command, BUFFER_SIZE, "--json ");
+	}
+
 	/* Build command string from argv */
-	for (i = 1; i < argc; i++) {
-		if (offset > 0 && offset < BUFFER_SIZE - 1) {
+	for (i = start_arg; i < argc; i++) {
+		if (offset > 0 && offset < BUFFER_SIZE - 1 && command[offset - 1] != ' ') {
 			command[offset++] = ' ';
 		}
 		offset += snprintf(command + offset, BUFFER_SIZE - offset - 1,
@@ -228,6 +249,8 @@ main(int argc, char *argv[])
 {
 	int sock;
 	int exit_code;
+	int json_mode = 0;
+	int start_arg = 1;
 
 	/* Check arguments */
 	if (argc < 2) {
@@ -241,6 +264,17 @@ main(int argc, char *argv[])
 		return 0;
 	}
 
+	/* Handle --json flag */
+	if (strcmp(argv[1], "--json") == 0) {
+		json_mode = 1;
+		start_arg = 2;
+		if (argc < 3) {
+			fprintf(stderr, "Error: --json requires a command\n");
+			print_usage(argv[0]);
+			return 1;
+		}
+	}
+
 	/* Connect to compositor */
 	sock = connect_to_socket();
 	if (sock < 0) {
@@ -248,7 +282,7 @@ main(int argc, char *argv[])
 	}
 
 	/* Send command */
-	if (send_command(sock, argc, argv) < 0) {
+	if (send_command(sock, argc, argv, json_mode, start_arg) < 0) {
 		close(sock);
 		return 1;
 	}
