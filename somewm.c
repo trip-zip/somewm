@@ -2775,6 +2775,10 @@ mapnotify(struct wl_listener *listener, void *data)
 		luaA_object_emit_signal(L, -1, "manage", 0);
 		lua_pop(L, 1);
 
+		/* Apply geometry BEFORE enabling scene node to send configure event.
+		 * Fixes Firefox tiling issue (#10). */
+		apply_geometry_to_wlroots(c);
+
 		/* Enable scene node for transient client */
 		if (client_on_selected_tags(c)) {
 			wlr_scene_node_set_enabled(&c->scene->node, true);
@@ -2858,6 +2862,11 @@ mapnotify(struct wl_listener *listener, void *data)
 
 		/* Pop client from Lua stack */
 		lua_pop(L, 1);
+
+		/* Apply geometry BEFORE enabling scene node to send configure event.
+		 * Without this, client may render a frame at wrong size before receiving
+		 * the tiled geometry configure event. Fixes Firefox tiling issue (#10). */
+		apply_geometry_to_wlroots(c);
 
 		/* Enable scene node for new client if on selected tags (Wayland-specific).
 		 * Unlike AwesomeWM, we don't call arrange() here - that's triggered by Lua signals.
