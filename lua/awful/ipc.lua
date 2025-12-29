@@ -18,6 +18,86 @@ local loadstring = loadstring or load
 local ipc = {}
 local commands = {}
 
+-- Simple JSON encoder for IPC responses
+local function json_encode_value(val, indent, depth)
+  indent = indent or ""
+  depth = depth or 0
+  local t = type(val)
+
+  if t == "nil" then
+    return "null"
+  elseif t == "boolean" then
+    return val and "true" or "false"
+  elseif t == "number" then
+    if val ~= val then -- NaN
+      return "null"
+    elseif val == math.huge or val == -math.huge then
+      return "null"
+    else
+      return tostring(val)
+    end
+  elseif t == "string" then
+    -- Escape special characters
+    local escaped = val:gsub('\\', '\\\\')
+                       :gsub('"', '\\"')
+                       :gsub('\n', '\\n')
+                       :gsub('\r', '\\r')
+                       :gsub('\t', '\\t')
+    return '"' .. escaped .. '"'
+  elseif t == "table" then
+    -- Check if array (sequential integer keys starting at 1)
+    local is_array = true
+    local max_idx = 0
+    for k, _ in pairs(val) do
+      if type(k) ~= "number" or k < 1 or math.floor(k) ~= k then
+        is_array = false
+        break
+      end
+      if k > max_idx then max_idx = k end
+    end
+    -- Also verify no holes
+    if is_array and max_idx > 0 then
+      for i = 1, max_idx do
+        if val[i] == nil then
+          is_array = false
+          break
+        end
+      end
+    end
+
+    local parts = {}
+    if is_array and max_idx > 0 then
+      for i = 1, max_idx do
+        table.insert(parts, json_encode_value(val[i], indent, depth + 1))
+      end
+      return "[" .. table.concat(parts, ",") .. "]"
+    else
+      -- Object
+      for k, v in pairs(val) do
+        local key = type(k) == "string" and k or tostring(k)
+        table.insert(parts, json_encode_value(key, indent, depth + 1) .. ":" .. json_encode_value(v, indent, depth + 1))
+      end
+      if #parts == 0 then
+        return "{}"
+      end
+      return "{" .. table.concat(parts, ",") .. "}"
+    end
+  elseif t == "userdata" then
+    -- Format userdata as string ID
+    return json_encode_value(tostring(val):gsub(": ", ":"), indent, depth)
+  else
+    return '"' .. tostring(val) .. '"'
+  end
+end
+
+-- Encode a table to JSON string
+local function json_encode(val)
+  return json_encode_value(val)
+end
+
+-- Export for commands that want to return structured data
+ipc.json_encode = json_encode
+
 --- Register a command handler
 -- @param name Command name (e.g., "tag.view")
 -- @param handler Function to execute command. Receives variadic args from command line.
@@ -135,16 +215,29 @@ end
 -- @param client_fd File descriptor of connected client (for reference)
 -- @return Response string in protocol format ("OK\n\n" or "ERROR msg\n\n")
 function ipc.dispatch(command_string, client_fd)
+  -- Check for --json flag
+  local json_mode = false
+  if command_string:match("^%-%-json%s+") then
+    json_mode = true
+    command_string = command_string:gsub("^%-%-json%s+", "")
+  end
+
   -- Parse command
   local cmd_name, args = parse_command(command_string)
 
   if not cmd_name then
+    if json_mode then
+      return json_encode({status = "error", error = "Empty command"}) .. "\n\n"
+    end
     return "ERROR Empty command\n\n"
   end
 
   -- Find handler
   local handler = commands[cmd_name]
   if not handler then
+    if json_mode then
+      return json_encode({status = "error", error = "Unknown command: " .. cmd_name}) .. "\n\n"
+    end
     return string.format("ERROR Unknown command: %s\n\n", cmd_name)
   end
 
@@ -153,10 +246,25 @@ function ipc.dispatch(command_string, client_fd)
 
   if not success then
     -- Error occurred
+    if json_mode then
+      return json_encode({status = "error", error = tostring(result)}) .. "\n\n"
+    end
     return string.format("ERROR %s\n\n", tostring(result))
   end
 
   -- Success
+  if json_mode then
+    -- If result is a table, encode it directly; otherwise wrap in result field
+    local response
+    if type(result) == "table" then
+      result.status = "ok"
+      response = result
+    else
+      response = {status = "ok", result = result or ""}
+    end
+    return json_encode(response) .. "\n\n"
+  end
+
   if result and result ~= "" then
     return string.format("OK\n%s\n\n", tostring(result))
   else
@@ -300,6 +408,277 @@ local function register_builtin_commands()
     end
 
     return table.concat(result, "\n")
+  end)
+
+  -- Helper: Find tag by name or index on a screen
+  local function find_tag(screen, identifier)
+    if not screen then return nil end
+    local tags = screen.tags or {}
+
+    -- Try as number first
+    local idx = tonumber(identifier)
+    if idx and idx >= 1 and idx <= #tags then
+      return tags[idx], idx
+    end
+
+    -- Try as name
+    for i, t in ipairs(tags) do
+      if t.name == identifier then
+        return t, i
+      end
+    end
+
+    return nil
+  end
+
+  --- tag.add <name> [screen] - Create a new tag
+  ipc.register("tag.add", function(name, screen_arg)
+    if not name then
+      error("Usage: tag add <name> [screen]")
+    end
+
+    local s
+    if screen_arg then
+      local screen_idx = tonumber(screen_arg)
+      if screen_idx then
+        s = capi.screen[screen_idx]
+      end
+    end
+    s = s or awful_screen.focused()
+
+    if not s then
+      error("No screen available")
+    end
+
+    -- Check if tag with this name already exists
+    for _, t in ipairs(s.tags) do
+      if t.name == name then
+        error("Tag '" .. name .. "' already exists on this screen")
+      end
+    end
+
+    local new_tag = awful_tag.add(name, {
+      screen = s,
+      layout = awful_layout.layouts[1] or awful_layout.suit.tile,
+    })
+
+    if not new_tag then
+      error("Failed to create tag")
+    end
+
+    return string.format("Created tag '%s' on screen %d", name, s.index)
+  end)
+
+  --- tag.delete <name|index> - Delete a tag
+  ipc.register("tag.delete", function(identifier)
+    if not identifier then
+      error("Usage: tag delete <name|index>")
+    end
+
+    local s = awful_screen.focused()
+    if not s then
+      error("No focused screen")
+    end
+
+    local tag, idx = find_tag(s, identifier)
+    if not tag then
+      error("Tag not found: " .. identifier)
+    end
+
+    -- Don't delete the last tag
+    if #s.tags <= 1 then
+      error("Cannot delete the last tag")
+    end
+
+    local name = tag.name
+    tag:delete()
+
+    return string.format("Deleted tag '%s' (was index %d)", name, idx)
+  end)
+
+  --- tag.rename <old> <new> - Rename a tag
+  ipc.register("tag.rename", function(old_name, new_name)
+    if not old_name then
+      error("Usage: tag rename <old> <new>")
+    end
+    if not new_name then
+      error("Missing new name")
+    end
+
+    local s = awful_screen.focused()
+    if not s then
+      error("No focused screen")
+    end
+
+    local tag = find_tag(s, old_name)
+    if not tag then
+      error("Tag not found: " .. old_name)
+    end
+
+    local old = tag.name
+    tag.name = new_name
+
+    return string.format("Renamed tag '%s' to '%s'", old, new_name)
+  end)
+
+  --- tag.screen <name> [screen] - Get or move tag to screen
+  ipc.register("tag.screen", function(identifier, screen_arg)
+    if not identifier then
+      error("Usage: tag screen <name|index> [screen]")
+    end
+
+    local s = awful_screen.focused()
+    if not s then
+      error("No focused screen")
+    end
+
+    local tag = find_tag(s, identifier)
+    if not tag then
+      error("Tag not found: " .. identifier)
+    end
+
+    if screen_arg then
+      -- Move to specified screen
+      local screen_idx = tonumber(screen_arg)
+      local target_screen = screen_idx and capi.screen[screen_idx]
+      if not target_screen then
+        error("Invalid screen: " .. screen_arg)
+      end
+      tag.screen = target_screen
+      return string.format("Moved tag '%s' to screen %d", tag.name, screen_idx)
+    else
+      -- Just report current screen
+      return string.format("Tag '%s' is on screen %d", tag.name, tag.screen.index)
+    end
+  end)
+
+  --- tag.swap <tag1> <tag2> - Swap two tags
+  ipc.register("tag.swap", function(tag1_id, tag2_id)
+    if not tag1_id then
+      error("Usage: tag swap <tag1> <tag2>")
+    end
+    if not tag2_id then
+      error("Missing second tag")
+    end
+
+    local s = awful_screen.focused()
+    if not s then
+      error("No focused screen")
+    end
+
+    local tag1, idx1 = find_tag(s, tag1_id)
+    local tag2, idx2 = find_tag(s, tag2_id)
+
+    if not tag1 then
+      error("Tag not found: " .. tag1_id)
+    end
+    if not tag2 then
+      error("Tag not found: " .. tag2_id)
+    end
+
+    tag1:swap(tag2)
+
+    return string.format("Swapped tag '%s' (was %d) with '%s' (was %d)",
+                        tag1.name, idx1, tag2.name, idx2)
+  end)
+
+  --- tag.layout <name|index> [layout] - Get or set tag layout
+  ipc.register("tag.layout", function(identifier, layout_name)
+    if not identifier then
+      error("Usage: tag layout <name|index> [layout]")
+    end
+
+    local s = awful_screen.focused()
+    if not s then
+      error("No focused screen")
+    end
+
+    local tag = find_tag(s, identifier)
+    if not tag then
+      error("Tag not found: " .. identifier)
+    end
+
+    if layout_name then
+      -- Set layout
+      local layouts = tag.layouts or awful_layout.layouts
+      for _, l in ipairs(layouts) do
+        if l.name == layout_name then
+          tag.layout = l
+          return string.format("Set tag '%s' layout to %s", tag.name, layout_name)
+        end
+      end
+      -- List available layouts in error
+      local available = {}
+      for _, l in ipairs(layouts) do
+        table.insert(available, l.name)
+      end
+      error("Unknown layout: " .. layout_name .. " (available: " .. table.concat(available, ", ") .. ")")
+    else
+      -- Get layout
+      local layout = tag.layout
+      local layout_name_str = layout and layout.name or "unknown"
+      return string.format("Tag '%s' layout: %s", tag.name, layout_name_str)
+    end
+  end)
+
+  --- tag.gap <name|index> [pixels] - Get or set tag gap
+  ipc.register("tag.gap", function(identifier, gap_str)
+    if not identifier then
+      error("Usage: tag gap <name|index> [pixels]")
+    end
+
+    local s = awful_screen.focused()
+    if not s then
+      error("No focused screen")
+    end
+
+    local tag = find_tag(s, identifier)
+    if not tag then
+      error("Tag not found: " .. identifier)
+    end
+
+    if gap_str then
+      local gap = tonumber(gap_str)
+      if not gap or gap < 0 then
+        error("Invalid gap value: " .. gap_str)
+      end
+      tag.gap = gap
+      -- Trigger layout refresh
+      awful_layout.arrange(tag.screen)
+      return string.format("Set tag '%s' gap to %d", tag.name, gap)
+    else
+      return string.format("Tag '%s' gap: %d", tag.name, tag.gap or 0)
+    end
+  end)
+
+  --- tag.mwfact <name|index> [factor] - Get or set master width factor
+  ipc.register("tag.mwfact", function(identifier, factor_str)
+    if not identifier then
+      error("Usage: tag mwfact <name|index> [factor]")
+    end
+
+    local s = awful_screen.focused()
+    if not s then
+      error("No focused screen")
+    end
+
+    local tag = find_tag(s, identifier)
+    if not tag then
+      error("Tag not found: " .. identifier)
+    end
+
+    if factor_str then
+      local factor = tonumber(factor_str)
+      if not factor or factor <= 0 or factor >= 1 then
+        error("Invalid factor: " .. factor_str .. " (must be between 0 and 1)")
+      end
+      tag.master_width_factor = factor
+      -- Trigger layout refresh
+      awful_layout.arrange(tag.screen)
+      return string.format("Set tag '%s' master_width_factor to %.2f", tag.name, factor)
+    else
+      return string.format("Tag '%s' master_width_factor: %.2f", tag.name, tag.master_width_factor or 0.5)
+    end
   end)
 
   -- =================================================================
@@ -1889,6 +2268,741 @@ local function register_builtin_commands()
     awful_input[setting] = new_value
     return string.format("%s = %s", setting, tostring(new_value))
   end)
+
+  -- =================================================================
+  -- KEYBINDING COMMANDS
+  -- =================================================================
+
+  local awful_key = require("awful.key")
+  local awful_keyboard = require("awful.keyboard")
+
+  --- Helper to format modifiers table as string
+  local function format_modifiers(mods)
+    if not mods or #mods == 0 then return "" end
+    local sorted = {}
+    for _, m in ipairs(mods) do
+      table.insert(sorted, m)
+    end
+    table.sort(sorted)
+    return table.concat(sorted, "+")
+  end
+
+  --- Helper to parse modifier string like "Mod4+Shift" into table
+  local function parse_modifiers(mod_str)
+    if not mod_str or mod_str == "" then return {} end
+    local mods = {}
+    for mod in mod_str:gmatch("[^+,]+") do
+      mod = mod:match("^%s*(.-)%s*$")  -- trim whitespace
+      if mod ~= "" then
+        table.insert(mods, mod)
+      end
+    end
+    return mods
+  end
+
+  --- keybind.list [client] - List all keybindings
+  ipc.register("keybind.list", function(target)
+    local lines = {}
+
+    if target == "client" then
+      -- List default client keybindings
+      table.insert(lines, "Default client keybindings:")
+      local client_keys = awful_keyboard.client_keybindings or {}
+      if #client_keys == 0 then
+        table.insert(lines, "  (none)")
+      else
+        for _, k in ipairs(client_keys) do
+          local mods = format_modifiers(k.modifiers)
+          local key = k.key or "(any)"
+          local desc = k.description or ""
+          local group = k.group or ""
+          table.insert(lines, string.format("  %-20s  %-30s  (%s)",
+            mods ~= "" and (mods .. "+" .. key) or key,
+            desc,
+            group))
+        end
+      end
+    else
+      -- List global (root) keybindings
+      table.insert(lines, "Global keybindings:")
+      local root_keys = capi.root.keys() or {}
+      if #root_keys == 0 then
+        table.insert(lines, "  (none)")
+      else
+        for _, k in ipairs(root_keys) do
+          local mods = format_modifiers(k.modifiers)
+          local key = k.key or "(any)"
+          local desc = k.description or ""
+          local group = k.group or ""
+          table.insert(lines, string.format("  %-20s  %-30s  (%s)",
+            mods ~= "" and (mods .. "+" .. key) or key,
+            desc,
+            group))
+        end
+      end
+    end
+
+    return table.concat(lines, "\n")
+  end)
+
+  --- keybind.add <modifiers> <key> <command> [description] [group]
+  --- Add a global keybinding that spawns a command
+  ipc.register("keybind.add", function(mod_str, key, ...)
+    if not mod_str then
+      error("Usage: keybind add <modifiers> <key> <command> [description] [group]\nExample: keybind add Mod4+Shift t 'kitty' 'spawn terminal' 'launcher'")
+    end
+    if not key then
+      error("Missing key")
+    end
+
+    local args = {...}
+    if #args == 0 then
+      error("Missing command to execute")
+    end
+
+    -- Join remaining args as command (in case it has spaces)
+    local cmd = args[1]
+    local desc = args[2] or ("Run: " .. cmd)
+    local group = args[3] or "custom"
+
+    local mods = parse_modifiers(mod_str)
+
+    -- Create the keybinding
+    local new_key = awful_key({
+      modifiers = mods,
+      key = key,
+      description = desc,
+      group = group,
+      on_press = function()
+        awful_spawn(cmd)
+      end,
+    })
+
+    -- Add to global keybindings
+    awful_keyboard.append_global_keybinding(new_key)
+
+    local mod_display = #mods > 0 and (table.concat(mods, "+") .. "+") or ""
+    return string.format("Added keybinding: %s%s -> %s", mod_display, key, cmd)
+  end)
+
+  --- keybind.remove <modifiers> <key> - Remove a global keybinding
+  ipc.register("keybind.remove", function(mod_str, key)
+    if not mod_str then
+      error("Usage: keybind remove <modifiers> <key>")
+    end
+    if not key then
+      error("Missing key")
+    end
+
+    local mods = parse_modifiers(mod_str)
+    local root_keys = capi.root.keys() or {}
+
+    -- Find matching keybinding
+    local found = nil
+    for _, k in ipairs(root_keys) do
+      local k_mods = k.modifiers or {}
+      -- Check if modifiers match (order-independent)
+      local mods_match = #k_mods == #mods
+      if mods_match then
+        for _, m in ipairs(mods) do
+          local has_mod = false
+          for _, km in ipairs(k_mods) do
+            if km == m then has_mod = true; break end
+          end
+          if not has_mod then mods_match = false; break end
+        end
+      end
+      if mods_match and k.key == key then
+        found = k
+        break
+      end
+    end
+
+    if not found then
+      local mod_display = #mods > 0 and (table.concat(mods, "+") .. "+") or ""
+      error("Keybinding not found: " .. mod_display .. key)
+    end
+
+    awful_keyboard.remove_global_keybinding(found)
+
+    local mod_display = #mods > 0 and (table.concat(mods, "+") .. "+") or ""
+    return string.format("Removed keybinding: %s%s", mod_display, key)
+  end)
+
+  --- keybind.trigger <modifiers> <key> - Manually trigger a keybinding
+  ipc.register("keybind.trigger", function(mod_str, key)
+    if not mod_str then
+      error("Usage: keybind trigger <modifiers> <key>")
+    end
+    if not key then
+      error("Missing key")
+    end
+
+    local mods = parse_modifiers(mod_str)
+    local root_keys = capi.root.keys() or {}
+
+    -- Find matching keybinding
+    for _, k in ipairs(root_keys) do
+      local k_mods = k.modifiers or {}
+      local mods_match = #k_mods == #mods
+      if mods_match then
+        for _, m in ipairs(mods) do
+          local has_mod = false
+          for _, km in ipairs(k_mods) do
+            if km == m then has_mod = true; break end
+          end
+          if not has_mod then mods_match = false; break end
+        end
+      end
+      if mods_match and k.key == key then
+        -- Trigger the keybinding
+        if k.on_press then
+          k:on_press()
+        elseif k.trigger then
+          k:trigger()
+        else
+          error("Keybinding has no action")
+        end
+        local mod_display = #mods > 0 and (table.concat(mods, "+") .. "+") or ""
+        return string.format("Triggered: %s%s", mod_display, key)
+      end
+    end
+
+    local mod_display = #mods > 0 and (table.concat(mods, "+") .. "+") or ""
+    error("Keybinding not found: " .. mod_display .. key)
+  end)
+
+  -- =================================================================
+  -- SESSION COMMANDS
+  -- =================================================================
+
+  --- version - Show compositor version information
+  ipc.register("version", function()
+    local lines = {}
+    table.insert(lines, "somewm " .. (capi.awesome.version or "unknown"))
+    if capi.awesome.release then
+      table.insert(lines, "Release: " .. capi.awesome.release)
+    end
+    if capi.awesome.conffile then
+      table.insert(lines, "Config: " .. capi.awesome.conffile)
+    end
+    -- Add API version info if available
+    if capi.awesome.api_version then
+      table.insert(lines, "API version: " .. capi.awesome.api_version)
+    end
+    return table.concat(lines, "\n")
+  end)
+
+  --- reload - Reload configuration (validates first)
+  ipc.register("reload", function()
+    local awful_util = require("awful.util")
+
+    -- Get config file path
+    local conffile = capi.awesome.conffile
+    if not conffile then
+      error("No configuration file found")
+    end
+
+    -- Validate config first if checkfile is available
+    if awful_util.checkfile then
+      local result = awful_util.checkfile(conffile)
+      if result then
+        error("Config validation failed: " .. result)
+      end
+    end
+
+    -- Restart (which reloads config)
+    if capi.awesome.restart then
+      capi.awesome.restart()
+      return "Reloading..."
+    else
+      error("Reload not supported")
+    end
+  end)
+
+  --- restart - Full compositor restart
+  ipc.register("restart", function()
+    if capi.awesome.restart then
+      capi.awesome.restart()
+      return "Restarting..."
+    else
+      error("Restart not supported")
+    end
+  end)
+
+  -- =================================================================
+  -- RULES COMMANDS
+  -- =================================================================
+
+  local ruled_client_ok, ruled_client = pcall(require, "ruled.client")
+
+  if ruled_client_ok then
+    --- rule.list - List all client rules
+    ipc.register("rule.list", function()
+      local rules = ruled_client.rules or {}
+      if #rules == 0 then
+        return "No rules defined"
+      end
+
+      local lines = {}
+      for i, rule in ipairs(rules) do
+        local id = rule.id or tostring(i)
+        local rule_match = rule.rule or {}
+        local rule_any = rule.rule_any or {}
+
+        -- Build match description
+        local match_parts = {}
+        if rule_match.class then
+          table.insert(match_parts, "class=" .. tostring(rule_match.class))
+        end
+        if rule_match.instance then
+          table.insert(match_parts, "instance=" .. tostring(rule_match.instance))
+        end
+        if rule_match.name then
+          table.insert(match_parts, "name=" .. tostring(rule_match.name))
+        end
+        if rule_match.role then
+          table.insert(match_parts, "role=" .. tostring(rule_match.role))
+        end
+        if rule_match.type then
+          table.insert(match_parts, "type=" .. tostring(rule_match.type))
+        end
+
+        -- Add rule_any matches
+        for k, v in pairs(rule_any) do
+          if type(v) == "table" then
+            table.insert(match_parts, k .. "={" .. table.concat(v, ",") .. "}")
+          else
+            table.insert(match_parts, k .. "=" .. tostring(v))
+          end
+        end
+
+        local match_str = #match_parts > 0 and table.concat(match_parts, ", ") or "(all)"
+
+        -- Build properties description
+        local props = rule.properties or {}
+        local prop_parts = {}
+        for k, v in pairs(props) do
+          if type(v) == "boolean" then
+            table.insert(prop_parts, k .. "=" .. (v and "true" or "false"))
+          elseif type(v) == "number" then
+            table.insert(prop_parts, k .. "=" .. tostring(v))
+          elseif type(v) == "string" then
+            table.insert(prop_parts, k .. "=\"" .. v .. "\"")
+          else
+            table.insert(prop_parts, k .. "=<" .. type(v) .. ">")
+          end
+        end
+        local props_str = #prop_parts > 0 and table.concat(prop_parts, ", ") or "(no props)"
+
+        table.insert(lines, string.format("[%s] match: %s", id, match_str))
+        table.insert(lines, string.format("     props: %s", props_str))
+      end
+
+      return table.concat(lines, "\n")
+    end)
+
+    --- rule.add <json> - Add a new rule from JSON
+    ipc.register("rule.add", function(...)
+      local args = {...}
+      if #args == 0 then
+        error("Usage: rule add <json>")
+      end
+
+      -- Join all args (JSON might have spaces)
+      local json_str = table.concat(args, " ")
+
+      -- Simple JSON parser (basic subset)
+      local function parse_json(str)
+        -- Try to use cjson if available
+        local cjson_ok, cjson = pcall(require, "cjson")
+        if cjson_ok then
+          return cjson.decode(str)
+        end
+
+        -- Fallback: use Lua's load to parse JSON-like Lua table
+        -- Replace JSON syntax with Lua syntax
+        str = str:gsub(':%s*"', ' = "')
+        str = str:gsub(':%s*(%d)', ' = %1')
+        str = str:gsub(':%s*true', ' = true')
+        str = str:gsub(':%s*false', ' = false')
+        str = str:gsub(':%s*null', ' = nil')
+        str = str:gsub(':%s*%[', ' = {')
+        str = str:gsub(':%s*{', ' = {')
+        str = str:gsub('%[', '{')
+        str = str:gsub('%]', '}')
+
+        local fn, err = load("return " .. str)
+        if not fn then
+          error("Invalid JSON: " .. (err or "parse error"))
+        end
+        return fn()
+      end
+
+      local ok, rule = pcall(parse_json, json_str)
+      if not ok then
+        error("Failed to parse rule: " .. tostring(rule))
+      end
+
+      -- Generate ID if not provided
+      if not rule.id then
+        rule.id = "ipc_rule_" .. os.time()
+      end
+
+      ruled_client.append_rule(rule)
+      return "Added rule: " .. rule.id
+    end)
+
+    --- rule.remove <id> - Remove a rule by ID
+    ipc.register("rule.remove", function(rule_id)
+      if not rule_id then
+        error("Usage: rule remove <id>")
+      end
+
+      local rules = ruled_client.rules or {}
+      local found = false
+
+      for i, rule in ipairs(rules) do
+        if (rule.id and rule.id == rule_id) or tostring(i) == rule_id then
+          table.remove(rules, i)
+          found = true
+          break
+        end
+      end
+
+      if not found then
+        error("Rule not found: " .. rule_id)
+      end
+
+      return "Removed rule: " .. rule_id
+    end)
+
+    --- rule.test <client_id> - Show which rules match a client
+    ipc.register("rule.test", function(client_id)
+      if not client_id then
+        error("Usage: rule test <client_id|focused>")
+      end
+
+      local c
+      if client_id == "focused" then
+        c = capi.client.focus
+      else
+        -- Find client by ID
+        for _, cl in ipairs(capi.client.get()) do
+          if format_id(cl) == client_id or tostring(cl) == client_id then
+            c = cl
+            break
+          end
+        end
+      end
+
+      if not c then
+        error("Client not found: " .. client_id)
+      end
+
+      local rules = ruled_client.rules or {}
+      local matching = {}
+
+      -- Test each rule against the client
+      for i, rule in ipairs(rules) do
+        local matches = true
+        local rule_match = rule.rule or {}
+
+        -- Check each match criterion
+        for k, v in pairs(rule_match) do
+          local client_val = c[k]
+          if type(v) == "string" then
+            if type(client_val) ~= "string" or not client_val:match(v) then
+              matches = false
+              break
+            end
+          elseif client_val ~= v then
+            matches = false
+            break
+          end
+        end
+
+        if matches then
+          local id = rule.id or tostring(i)
+          table.insert(matching, id)
+        end
+      end
+
+      if #matching == 0 then
+        return "No rules match this client"
+      end
+
+      return "Matching rules: " .. table.concat(matching, ", ")
+    end)
+  end
+
+  -- =================================================================
+  -- WIBAR COMMANDS
+  -- =================================================================
+
+  --- Helper to collect all wibars from screens
+  local function get_all_wibars()
+    local wibars = {}
+    for s in capi.screen do
+      if s.mywibox then
+        table.insert(wibars, {screen = s.index, wibar = s.mywibox})
+      end
+    end
+    return wibars
+  end
+
+  --- wibar.list - List all wibars
+  ipc.register("wibar.list", function()
+    local wibars = get_all_wibars()
+    if #wibars == 0 then
+      return "No wibars found"
+    end
+
+    local lines = {}
+    for _, wb in ipairs(wibars) do
+      local status = wb.wibar.visible and "visible" or "hidden"
+      local pos = wb.wibar.position or "top"
+      table.insert(lines, string.format("Screen %d: %s (%s)", wb.screen, status, pos))
+    end
+    return table.concat(lines, "\n")
+  end)
+
+  --- wibar.show <screen|all> - Show wibar(s)
+  ipc.register("wibar.show", function(target)
+    if not target then
+      error("Usage: wibar show <screen|all>")
+    end
+
+    if target == "all" then
+      local wibars = get_all_wibars()
+      local count = 0
+      for _, wb in ipairs(wibars) do
+        wb.wibar.visible = true
+        count = count + 1
+      end
+      return string.format("Showed %d wibar(s)", count)
+    else
+      local screen_idx = tonumber(target)
+      if not screen_idx then
+        error("Invalid screen: " .. target)
+      end
+      local s = capi.screen[screen_idx]
+      if not s then
+        error("Screen not found: " .. target)
+      end
+      if not s.mywibox then
+        error("No wibar on screen " .. target)
+      end
+      s.mywibox.visible = true
+      return "Showed wibar on screen " .. target
+    end
+  end)
+
+  --- wibar.hide <screen|all> - Hide wibar(s)
+  ipc.register("wibar.hide", function(target)
+    if not target then
+      error("Usage: wibar hide <screen|all>")
+    end
+
+    if target == "all" then
+      local wibars = get_all_wibars()
+      local count = 0
+      for _, wb in ipairs(wibars) do
+        wb.wibar.visible = false
+        count = count + 1
+      end
+      return string.format("Hid %d wibar(s)", count)
+    else
+      local screen_idx = tonumber(target)
+      if not screen_idx then
+        error("Invalid screen: " .. target)
+      end
+      local s = capi.screen[screen_idx]
+      if not s then
+        error("Screen not found: " .. target)
+      end
+      if not s.mywibox then
+        error("No wibar on screen " .. target)
+      end
+      s.mywibox.visible = false
+      return "Hid wibar on screen " .. target
+    end
+  end)
+
+  --- wibar.toggle <screen|all> - Toggle wibar(s)
+  ipc.register("wibar.toggle", function(target)
+    if not target then
+      error("Usage: wibar toggle <screen|all>")
+    end
+
+    if target == "all" then
+      local wibars = get_all_wibars()
+      local count = 0
+      for _, wb in ipairs(wibars) do
+        wb.wibar.visible = not wb.wibar.visible
+        count = count + 1
+      end
+      return string.format("Toggled %d wibar(s)", count)
+    else
+      local screen_idx = tonumber(target)
+      if not screen_idx then
+        error("Invalid screen: " .. target)
+      end
+      local s = capi.screen[screen_idx]
+      if not s then
+        error("Screen not found: " .. target)
+      end
+      if not s.mywibox then
+        error("No wibar on screen " .. target)
+      end
+      s.mywibox.visible = not s.mywibox.visible
+      local status = s.mywibox.visible and "shown" or "hidden"
+      return "Wibar on screen " .. target .. " is now " .. status
+    end
+  end)
+
+  -- =================================================================
+  -- MULTI-MONITOR COMMANDS
+  -- =================================================================
+
+  --- screen.focus <id|next|prev> - Focus a screen
+  ipc.register("screen.focus", function(target)
+    if not target then
+      error("Usage: screen focus <id|next|prev>")
+    end
+
+    local s
+    if target == "next" then
+      awful_screen.focus_relative(1)
+      s = awful_screen.focused()
+    elseif target == "prev" then
+      awful_screen.focus_relative(-1)
+      s = awful_screen.focused()
+    else
+      local screen_idx = tonumber(target)
+      if not screen_idx then
+        error("Invalid screen: " .. target)
+      end
+      s = capi.screen[screen_idx]
+      if not s then
+        error("Screen not found: " .. target)
+      end
+      awful_screen.focus(s)
+    end
+
+    return "Focused screen " .. s.index
+  end)
+
+  --- client.movetoscreen <screen> [client_id] - Move client to screen
+  ipc.register("client.movetoscreen", function(screen_arg, client_id)
+    if not screen_arg then
+      error("Usage: client movetoscreen <screen> [client_id]")
+    end
+
+    -- Get client
+    local c
+    if not client_id or client_id == "focused" then
+      c = capi.client.focus
+    else
+      for _, cl in ipairs(capi.client.get()) do
+        if format_id(cl) == client_id or tostring(cl) == client_id then
+          c = cl
+          break
+        end
+      end
+    end
+
+    if not c then
+      error("No client found")
+    end
+
+    -- Get target screen
+    local target_screen
+    if screen_arg == "next" then
+      local current_idx = c.screen.index
+      local next_idx = current_idx % capi.screen.count() + 1
+      target_screen = capi.screen[next_idx]
+    elseif screen_arg == "prev" then
+      local current_idx = c.screen.index
+      local prev_idx = (current_idx - 2) % capi.screen.count() + 1
+      target_screen = capi.screen[prev_idx]
+    else
+      local screen_idx = tonumber(screen_arg)
+      if screen_idx then
+        target_screen = capi.screen[screen_idx]
+      end
+    end
+
+    if not target_screen then
+      error("Invalid screen: " .. screen_arg)
+    end
+
+    c:move_to_screen(target_screen)
+    return string.format("Moved client to screen %d", target_screen.index)
+  end)
+
+  -- =================================================================
+  -- NOTIFICATION COMMANDS
+  -- =================================================================
+
+  local naughty_ok, naughty = pcall(require, "naughty")
+
+  if naughty_ok then
+    --- notify <message> [options...] - Send a notification
+    -- Options: --title <text>, --timeout <seconds>, --urgency <low|normal|critical>
+    ipc.register("notify", function(...)
+      local args = {...}
+      if #args == 0 then
+        error("Usage: notify <message> [--title T] [--timeout N] [--urgency U]")
+      end
+
+      -- Parse arguments
+      local message_parts = {}
+      local title = nil
+      local timeout = 5
+      local urgency = "normal"
+
+      local i = 1
+      while i <= #args do
+        local arg = args[i]
+        if arg == "--title" and args[i + 1] then
+          title = args[i + 1]
+          i = i + 2
+        elseif arg == "--timeout" and args[i + 1] then
+          timeout = tonumber(args[i + 1]) or 5
+          i = i + 2
+        elseif arg == "--urgency" and args[i + 1] then
+          urgency = args[i + 1]
+          i = i + 2
+        else
+          table.insert(message_parts, arg)
+          i = i + 1
+        end
+      end
+
+      local message = table.concat(message_parts, " ")
+      if message == "" then
+        error("Message cannot be empty")
+      end
+
+      -- Map urgency string to naughty preset
+      local preset = naughty.config.presets.normal
+      if urgency == "low" then
+        preset = naughty.config.presets.low
+      elseif urgency == "critical" then
+        preset = naughty.config.presets.critical
+      end
+
+      naughty.notify({
+        title = title,
+        text = message,
+        timeout = timeout,
+        preset = preset,
+      })
+
+      return "Notification sent"
+    end)
+  end
 end
 
 -- Initialize built-in commands
