@@ -551,19 +551,19 @@ luaA_screen_update_workarea(lua_State *L, screen_t *screen, struct wlr_box *work
 	}
 }
 
-/** Update screen workarea based on drawin struts
+/** Update screen workarea based on all drawin and client struts
  * \param L Lua state
  * \param drawin Drawin that changed (used to find which screen to update)
  *
  * This should be called when a drawin's visibility, geometry, or struts change.
- * This is a simplified implementation that just updates the drawin's screen.
- * TODO: Implement full multi-drawin strut aggregation.
+ * Aggregates struts from ALL visible drawins and clients on the screen.
  */
 void
 luaA_screen_update_workarea_for_drawin(lua_State *L, struct drawin_t *drawin)
 {
 	screen_t *screen;
 	struct wlr_box new_workarea;
+	uint16_t top = 0, bottom = 0, left = 0, right = 0;
 
 	if (!drawin)
 		return;
@@ -573,7 +573,6 @@ luaA_screen_update_workarea_for_drawin(lua_State *L, struct drawin_t *drawin)
 
 	/* If no screen assigned yet, try to find it by geometry */
 	if (!screen) {
-		/* For now, just use primary screen or first screen */
 		if (screen_count > 0) {
 			lua_rawgeti(L, LUA_REGISTRYINDEX, screen_refs[0]);
 			screen = (screen_t *)lua_touserdata(L, -1);
@@ -584,24 +583,96 @@ luaA_screen_update_workarea_for_drawin(lua_State *L, struct drawin_t *drawin)
 	if (!screen || !screen->valid)
 		return;
 
-	/* Simple implementation - just subtract drawin's struts from geometry
-	 * TODO: Aggregate struts from ALL visible drawins on this screen */
-
 	new_workarea = screen->geometry;
 
-	/* Apply this drawin's struts if visible */
-	if (drawin->visible) {
-		new_workarea.x += drawin->strut.left;
-		new_workarea.y += drawin->strut.top;
-		new_workarea.width -= (drawin->strut.left + drawin->strut.right);
-		new_workarea.height -= (drawin->strut.top + drawin->strut.bottom);
-
-		/* Ensure workarea doesn't go negative */
-		if (new_workarea.width < 1)
-			new_workarea.width = 1;
-		if (new_workarea.height < 1)
-			new_workarea.height = 1;
+	/* Aggregate struts from ALL visible clients on this screen
+	 * client_t uses geometry.x/y/width/height (area_t struct) */
+#define COMPUTE_CLIENT_STRUT(c) \
+	{ \
+		if((c)->strut.top_start_x || (c)->strut.top_end_x || (c)->strut.top) \
+		{ \
+			if((c)->strut.top) \
+				top = MAX(top, (c)->strut.top); \
+			else \
+				top = MAX(top, ((c)->geometry.y - new_workarea.y) + (c)->geometry.height); \
+		} \
+		if((c)->strut.bottom_start_x || (c)->strut.bottom_end_x || (c)->strut.bottom) \
+		{ \
+			if((c)->strut.bottom) \
+				bottom = MAX(bottom, (c)->strut.bottom); \
+			else \
+				bottom = MAX(bottom, (new_workarea.y + new_workarea.height) - (c)->geometry.y); \
+		} \
+		if((c)->strut.left_start_y || (c)->strut.left_end_y || (c)->strut.left) \
+		{ \
+			if((c)->strut.left) \
+				left = MAX(left, (c)->strut.left); \
+			else \
+				left = MAX(left, ((c)->geometry.x - new_workarea.x) + (c)->geometry.width); \
+		} \
+		if((c)->strut.right_start_y || (c)->strut.right_end_y || (c)->strut.right) \
+		{ \
+			if((c)->strut.right) \
+				right = MAX(right, (c)->strut.right); \
+			else \
+				right = MAX(right, (new_workarea.x + new_workarea.width) - (c)->geometry.x); \
+		} \
 	}
+
+	foreach(c, globalconf.clients)
+		if((*c)->screen == screen && client_isvisible(*c))
+			COMPUTE_CLIENT_STRUT(*c)
+
+#undef COMPUTE_CLIENT_STRUT
+
+	/* Aggregate struts from ALL visible drawins on this screen
+	 * drawin_t uses separate x/y/width/height fields */
+#define COMPUTE_DRAWIN_STRUT(d) \
+	{ \
+		if((d)->strut.top_start_x || (d)->strut.top_end_x || (d)->strut.top) \
+		{ \
+			if((d)->strut.top) \
+				top = MAX(top, (d)->strut.top); \
+			else \
+				top = MAX(top, ((d)->y - new_workarea.y) + (d)->height); \
+		} \
+		if((d)->strut.bottom_start_x || (d)->strut.bottom_end_x || (d)->strut.bottom) \
+		{ \
+			if((d)->strut.bottom) \
+				bottom = MAX(bottom, (d)->strut.bottom); \
+			else \
+				bottom = MAX(bottom, (new_workarea.y + new_workarea.height) - (d)->y); \
+		} \
+		if((d)->strut.left_start_y || (d)->strut.left_end_y || (d)->strut.left) \
+		{ \
+			if((d)->strut.left) \
+				left = MAX(left, (d)->strut.left); \
+			else \
+				left = MAX(left, ((d)->x - new_workarea.x) + (d)->width); \
+		} \
+		if((d)->strut.right_start_y || (d)->strut.right_end_y || (d)->strut.right) \
+		{ \
+			if((d)->strut.right) \
+				right = MAX(right, (d)->strut.right); \
+			else \
+				right = MAX(right, (new_workarea.x + new_workarea.width) - (d)->x); \
+		} \
+	}
+
+	foreach(d, globalconf.drawins)
+		if((*d)->visible)
+		{
+			screen_t *d_screen = screen_getbycoord((*d)->x, (*d)->y);
+			if (d_screen == screen)
+				COMPUTE_DRAWIN_STRUT(*d)
+		}
+
+#undef COMPUTE_DRAWIN_STRUT
+
+	new_workarea.x += left;
+	new_workarea.y += top;
+	new_workarea.width -= MIN(new_workarea.width, left + right);
+	new_workarea.height -= MIN(new_workarea.height, top + bottom);
 
 	/* Update the screen's workarea */
 	luaA_screen_update_workarea(L, screen, &new_workarea);
