@@ -36,7 +36,7 @@ sudo apt install xwayland libxcb1-dev libxcb-icccm4-dev
 ```bash
 sudo dnf install wlroots-devel luajit lua-lgi cairo-devel pango-devel \
     gdk-pixbuf2-devel wayland-protocols-devel libinput-devel \
-    libxkbcommon-devel
+    libxkbcommon-devel xcb-util-devel dbus-devel
 # Optional: XWayland support
 sudo dnf install xorg-x11-server-Xwayland libxcb-devel xcb-util-wm-devel
 ```
