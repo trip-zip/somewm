@@ -285,6 +285,15 @@ typedef struct {
 	screen_t *screen;
 } deferred_screen_add_t;
 
+/* Popup tracking structure for proper constraint handling */
+typedef struct {
+	struct wlr_xdg_popup *popup;
+	struct wlr_scene_tree *root;  /* The toplevel's scene tree for coordinate calculation */
+	struct wl_listener commit;
+	struct wl_listener reposition;
+	struct wl_listener destroy;
+} Popup;
+
 /* Pending activation tokens (matches AwesomeWM's sn_waits pattern) */
 static activation_token_t *pending_tokens = NULL;
 static size_t pending_tokens_len = 0;
@@ -1239,34 +1248,91 @@ commitnotify(struct wl_listener *listener, void *data)
 		client_apply_opacity_to_scene(c, (float)c->opacity);
 }
 
+/* Unconstrain popup using proper scene node coordinates (River pattern) */
 void
-commitpopup(struct wl_listener *listener, void *data)
+popup_unconstrain(Popup *p)
 {
-	struct wlr_surface *surface = data;
-	struct wlr_xdg_popup *popup = wlr_xdg_popup_try_from_wlr_surface(surface);
 	LayerSurface *l = NULL;
 	Client *c = NULL;
 	struct wlr_box box;
-	int type = -1;
+	int root_lx, root_ly;
+	int type;
 
-	if (!popup->base->initial_commit)
+	if (!p->root)
 		return;
 
-	type = toplevel_from_wlr_surface(popup->base->surface, &c, &l);
-	if (!popup->parent || type < 0)
+	type = toplevel_from_wlr_surface(p->popup->base->surface, &c, &l);
+	if (type < 0)
 		return;
-	popup->base->surface->data = wlr_scene_xdg_surface_create(
-			popup->parent->data, popup->base);
+
+	/* Get the output box */
+	if (type == LayerShell) {
+		if (!l || !l->mon)
+			return;
+		box = l->mon->m;
+	} else {
+		if (!c || !c->mon)
+			return;
+		box = c->mon->w;
+	}
+
+	/* Get global coordinates of the popup root scene tree */
+	if (!wlr_scene_node_coords(&p->root->node, &root_lx, &root_ly))
+		return;
+
+	/* Convert output box to popup-relative coordinates */
+	box.x -= root_lx;
+	box.y -= root_ly;
+
+	wlr_xdg_popup_unconstrain_from_box(p->popup, &box);
+}
+
+void
+repositionpopup(struct wl_listener *listener, void *data)
+{
+	Popup *p = wl_container_of(listener, p, reposition);
+	popup_unconstrain(p);
+}
+
+void
+destroypopup(struct wl_listener *listener, void *data)
+{
+	Popup *p = wl_container_of(listener, p, destroy);
+	wl_list_remove(&p->commit.link);
+	wl_list_remove(&p->reposition.link);
+	wl_list_remove(&p->destroy.link);
+	free(p);
+}
+
+void
+commitpopup(struct wl_listener *listener, void *data)
+{
+	Popup *p = wl_container_of(listener, p, commit);
+	LayerSurface *l = NULL;
+	Client *c = NULL;
+	int type;
+
+	if (!p->popup->base->initial_commit)
+		return;
+
+	type = toplevel_from_wlr_surface(p->popup->base->surface, &c, &l);
+	if (!p->popup->parent || type < 0)
+		return;
+
+	/* Create scene surface for popup */
+	p->popup->base->surface->data = wlr_scene_xdg_surface_create(
+			p->popup->parent->data, p->popup->base);
+
 	if ((l && !l->mon) || (c && !c->mon)) {
-		wlr_xdg_popup_destroy(popup);
+		wlr_xdg_popup_destroy(p->popup);
 		return;
 	}
-	box = type == LayerShell ? l->mon->m : c->mon->w;
-	box.x -= (type == LayerShell ? l->scene->node.x : c->geometry.x);
-	box.y -= (type == LayerShell ? l->scene->node.y : c->geometry.y);
-	wlr_xdg_popup_unconstrain_from_box(popup, &box);
-	wl_list_remove(&listener->link);
-	free(listener);
+
+	/* Set root scene tree for coordinate calculation */
+	p->root = (type == LayerShell) ? l->popups : c->scene_surface;
+
+	/* Apply initial constraint */
+	popup_unconstrain(p);
 }
 
 void
@@ -1747,7 +1813,14 @@ createpopup(struct wl_listener *listener, void *data)
 	/* This event is raised when a client (either xdg-shell or layer-shell)
 	 * creates a new popup. */
 	struct wlr_xdg_popup *popup = data;
-	LISTEN_STATIC(&popup->base->surface->events.commit, commitpopup);
+	Popup *p = ecalloc(1, sizeof(*p));
+
+	p->popup = popup;
+	p->root = NULL;  /* Set in commitpopup after finding toplevel */
+
+	LISTEN(&popup->base->surface->events.commit, &p->commit, commitpopup);
+	LISTEN(&popup->events.reposition, &p->reposition, repositionpopup);
+	LISTEN(&popup->events.destroy, &p->destroy, destroypopup);
 }
 
 void
