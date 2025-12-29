@@ -2778,6 +2778,7 @@ mapnotify(struct wl_listener *listener, void *data)
 		/* Apply geometry BEFORE enabling scene node to send configure event.
 		 * Fixes Firefox tiling issue (#10). */
 		apply_geometry_to_wlroots(c);
+		wl_display_flush_clients(dpy);
 
 		/* Enable scene node for transient client */
 		if (client_on_selected_tags(c)) {
@@ -2867,6 +2868,11 @@ mapnotify(struct wl_listener *listener, void *data)
 		 * Without this, client may render a frame at wrong size before receiving
 		 * the tiled geometry configure event. Fixes Firefox tiling issue (#10). */
 		apply_geometry_to_wlroots(c);
+
+		/* Flush configure event to client immediately so it receives the tiled
+		 * geometry before we make it visible. Without this, the configure is
+		 * queued but not sent until the next poll cycle. */
+		wl_display_flush_clients(dpy);
 
 		/* Enable scene node for new client if on selected tags (Wayland-specific).
 		 * Unlike AwesomeWM, we don't call arrange() here - that's triggered by Lua signals.
@@ -4572,6 +4578,13 @@ unmapnotify(struct wl_listener *listener, void *data)
 
 	wlr_scene_node_destroy(&c->scene->node);
 	c->scene = NULL;  /* Mark as cleaned up so destroynotify won't double-remove */
+
+	/* Clear titlebar scene buffer pointers - they were children of c->scene
+	 * and are now freed. Prevents use-after-free in refresh callbacks. */
+	for (client_titlebar_t bar = CLIENT_TITLEBAR_TOP; bar < CLIENT_TITLEBAR_COUNT; bar++) {
+		c->titlebar[bar].scene_buffer = NULL;
+	}
+
 	printstatus();
 	motionnotify(0, NULL, 0, 0, 0, 0);
 }
