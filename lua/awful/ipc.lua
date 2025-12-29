@@ -302,6 +302,277 @@ local function register_builtin_commands()
     return table.concat(result, "\n")
   end)
 
+  -- Helper: Find tag by name or index on a screen
+  local function find_tag(screen, identifier)
+    if not screen then return nil end
+    local tags = screen.tags or {}
+
+    -- Try as number first
+    local idx = tonumber(identifier)
+    if idx and idx >= 1 and idx <= #tags then
+      return tags[idx], idx
+    end
+
+    -- Try as name
+    for i, t in ipairs(tags) do
+      if t.name == identifier then
+        return t, i
+      end
+    end
+
+    return nil
+  end
+
+  --- tag.add <name> [screen] - Create a new tag
+  ipc.register("tag.add", function(name, screen_arg)
+    if not name then
+      error("Usage: tag add <name> [screen]")
+    end
+
+    local s
+    if screen_arg then
+      local screen_idx = tonumber(screen_arg)
+      if screen_idx then
+        s = capi.screen[screen_idx]
+      end
+    end
+    s = s or awful_screen.focused()
+
+    if not s then
+      error("No screen available")
+    end
+
+    -- Check if tag with this name already exists
+    for _, t in ipairs(s.tags) do
+      if t.name == name then
+        error("Tag '" .. name .. "' already exists on this screen")
+      end
+    end
+
+    local new_tag = awful_tag.add(name, {
+      screen = s,
+      layout = awful_layout.layouts[1] or awful_layout.suit.tile,
+    })
+
+    if not new_tag then
+      error("Failed to create tag")
+    end
+
+    return string.format("Created tag '%s' on screen %d", name, s.index)
+  end)
+
+  --- tag.delete <name|index> - Delete a tag
+  ipc.register("tag.delete", function(identifier)
+    if not identifier then
+      error("Usage: tag delete <name|index>")
+    end
+
+    local s = awful_screen.focused()
+    if not s then
+      error("No focused screen")
+    end
+
+    local tag, idx = find_tag(s, identifier)
+    if not tag then
+      error("Tag not found: " .. identifier)
+    end
+
+    -- Don't delete the last tag
+    if #s.tags <= 1 then
+      error("Cannot delete the last tag")
+    end
+
+    local name = tag.name
+    tag:delete()
+
+    return string.format("Deleted tag '%s' (was index %d)", name, idx)
+  end)
+
+  --- tag.rename <old> <new> - Rename a tag
+  ipc.register("tag.rename", function(old_name, new_name)
+    if not old_name then
+      error("Usage: tag rename <old> <new>")
+    end
+    if not new_name then
+      error("Missing new name")
+    end
+
+    local s = awful_screen.focused()
+    if not s then
+      error("No focused screen")
+    end
+
+    local tag = find_tag(s, old_name)
+    if not tag then
+      error("Tag not found: " .. old_name)
+    end
+
+    local old = tag.name
+    tag.name = new_name
+
+    return string.format("Renamed tag '%s' to '%s'", old, new_name)
+  end)
+
+  --- tag.screen <name> [screen] - Get or move tag to screen
+  ipc.register("tag.screen", function(identifier, screen_arg)
+    if not identifier then
+      error("Usage: tag screen <name|index> [screen]")
+    end
+
+    local s = awful_screen.focused()
+    if not s then
+      error("No focused screen")
+    end
+
+    local tag = find_tag(s, identifier)
+    if not tag then
+      error("Tag not found: " .. identifier)
+    end
+
+    if screen_arg then
+      -- Move to specified screen
+      local screen_idx = tonumber(screen_arg)
+      local target_screen = screen_idx and capi.screen[screen_idx]
+      if not target_screen then
+        error("Invalid screen: " .. screen_arg)
+      end
+      tag.screen = target_screen
+      return string.format("Moved tag '%s' to screen %d", tag.name, screen_idx)
+    else
+      -- Just report current screen
+      return string.format("Tag '%s' is on screen %d", tag.name, tag.screen.index)
+    end
+  end)
+
+  --- tag.swap <tag1> <tag2> - Swap two tags
+  ipc.register("tag.swap", function(tag1_id, tag2_id)
+    if not tag1_id then
+      error("Usage: tag swap <tag1> <tag2>")
+    end
+    if not tag2_id then
+      error("Missing second tag")
+    end
+
+    local s = awful_screen.focused()
+    if not s then
+      error("No focused screen")
+    end
+
+    local tag1, idx1 = find_tag(s, tag1_id)
+    local tag2, idx2 = find_tag(s, tag2_id)
+
+    if not tag1 then
+      error("Tag not found: " .. tag1_id)
+    end
+    if not tag2 then
+      error("Tag not found: " .. tag2_id)
+    end
+
+    tag1:swap(tag2)
+
+    return string.format("Swapped tag '%s' (was %d) with '%s' (was %d)",
+                        tag1.name, idx1, tag2.name, idx2)
+  end)
+
+  --- tag.layout <name|index> [layout] - Get or set tag layout
+  ipc.register("tag.layout", function(identifier, layout_name)
+    if not identifier then
+      error("Usage: tag layout <name|index> [layout]")
+    end
+
+    local s = awful_screen.focused()
+    if not s then
+      error("No focused screen")
+    end
+
+    local tag = find_tag(s, identifier)
+    if not tag then
+      error("Tag not found: " .. identifier)
+    end
+
+    if layout_name then
+      -- Set layout
+      local layouts = tag.layouts or awful_layout.layouts
+      for _, l in ipairs(layouts) do
+        if l.name == layout_name then
+          tag.layout = l
+          return string.format("Set tag '%s' layout to %s", tag.name, layout_name)
+        end
+      end
+      -- List available layouts in error
+      local available = {}
+      for _, l in ipairs(layouts) do
+        table.insert(available, l.name)
+      end
+      error("Unknown layout: " .. layout_name .. " (available: " .. table.concat(available, ", ") .. ")")
+    else
+      -- Get layout
+      local layout = tag.layout
+      local layout_name_str = layout and layout.name or "unknown"
+      return string.format("Tag '%s' layout: %s", tag.name, layout_name_str)
+    end
+  end)
+
+  --- tag.gap <name|index> [pixels] - Get or set tag gap
+  ipc.register("tag.gap", function(identifier, gap_str)
+    if not identifier then
+      error("Usage: tag gap <name|index> [pixels]")
+    end
+
+    local s = awful_screen.focused()
+    if not s then
+      error("No focused screen")
+    end
+
+    local tag = find_tag(s, identifier)
+    if not tag then
+      error("Tag not found: " .. identifier)
+    end
+
+    if gap_str then
+      local gap = tonumber(gap_str)
+      if not gap or gap < 0 then
+        error("Invalid gap value: " .. gap_str)
+      end
+      tag.gap = gap
+      -- Trigger layout refresh
+      awful_layout.arrange(tag.screen)
+      return string.format("Set tag '%s' gap to %d", tag.name, gap)
+    else
+      return string.format("Tag '%s' gap: %d", tag.name, tag.gap or 0)
+    end
+  end)
+
+  --- tag.mwfact <name|index> [factor] - Get or set master width factor
+  ipc.register("tag.mwfact", function(identifier, factor_str)
+    if not identifier then
+      error("Usage: tag mwfact <name|index> [factor]")
+    end
+
+    local s = awful_screen.focused()
+    if not s then
+      error("No focused screen")
+    end
+
+    local tag = find_tag(s, identifier)
+    if not tag then
+      error("Tag not found: " .. identifier)
+    end
+
+    if factor_str then
+      local factor = tonumber(factor_str)
+      if not factor or factor <= 0 or factor >= 1 then
+        error("Invalid factor: " .. factor_str .. " (must be between 0 and 1)")
+      end
+      tag.master_width_factor = factor
+      -- Trigger layout refresh
+      awful_layout.arrange(tag.screen)
+      return string.format("Set tag '%s' master_width_factor to %.2f", tag.name, factor)
+    else
+      return string.format("Tag '%s' master_width_factor: %.2f", tag.name, tag.master_width_factor or 0.5)
+    end
+  end)
+
   -- =================================================================
   -- LAYOUT COMMANDS
   -- =================================================================
