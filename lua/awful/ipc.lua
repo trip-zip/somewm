@@ -2471,6 +2471,64 @@ local function register_builtin_commands()
     local mod_display = #mods > 0 and (table.concat(mods, "+") .. "+") or ""
     error("Keybinding not found: " .. mod_display .. key)
   end)
+
+  -- =================================================================
+  -- SESSION COMMANDS
+  -- =================================================================
+
+  --- version - Show compositor version information
+  ipc.register("version", function()
+    local lines = {}
+    table.insert(lines, "somewm " .. (capi.awesome.version or "unknown"))
+    if capi.awesome.release then
+      table.insert(lines, "Release: " .. capi.awesome.release)
+    end
+    if capi.awesome.conffile then
+      table.insert(lines, "Config: " .. capi.awesome.conffile)
+    end
+    -- Add API version info if available
+    if capi.awesome.api_version then
+      table.insert(lines, "API version: " .. capi.awesome.api_version)
+    end
+    return table.concat(lines, "\n")
+  end)
+
+  --- reload - Reload configuration (validates first)
+  ipc.register("reload", function()
+    local awful_util = require("awful.util")
+
+    -- Get config file path
+    local conffile = capi.awesome.conffile
+    if not conffile then
+      error("No configuration file found")
+    end
+
+    -- Validate config first if checkfile is available
+    if awful_util.checkfile then
+      local result = awful_util.checkfile(conffile)
+      if result then
+        error("Config validation failed: " .. result)
+      end
+    end
+
+    -- Restart (which reloads config)
+    if capi.awesome.restart then
+      capi.awesome.restart()
+      return "Reloading..."
+    else
+      error("Reload not supported")
+    end
+  end)
+
+  --- restart - Full compositor restart
+  ipc.register("restart", function()
+    if capi.awesome.restart then
+      capi.awesome.restart()
+      return "Restarting..."
+    else
+      error("Restart not supported")
+    end
+  end)
 end
 
 -- Initialize built-in commands
