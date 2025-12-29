@@ -605,9 +605,15 @@ luaA_root_tags(lua_State *L)
 static int
 luaA_root_drawins(lua_State *L)
 {
-	/* TODO: Implement once we track all drawin objects globally
-	 * For now, return empty table as placeholder */
-	lua_newtable(L);
+	int i;
+
+	lua_createtable(L, globalconf.drawins.len, 0);
+
+	for (i = 0; i < globalconf.drawins.len; i++) {
+		luaA_object_push(L, globalconf.drawins.tab[i]);
+		lua_rawseti(L, -2, i + 1);
+	}
+
 	return 1;
 }
 
