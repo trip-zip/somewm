@@ -2735,6 +2735,211 @@ local function register_builtin_commands()
       return "Matching rules: " .. table.concat(matching, ", ")
     end)
   end
+
+  -- =================================================================
+  -- WIBAR COMMANDS
+  -- =================================================================
+
+  --- Helper to collect all wibars from screens
+  local function get_all_wibars()
+    local wibars = {}
+    for s in capi.screen do
+      if s.mywibox then
+        table.insert(wibars, {screen = s.index, wibar = s.mywibox})
+      end
+    end
+    return wibars
+  end
+
+  --- wibar.list - List all wibars
+  ipc.register("wibar.list", function()
+    local wibars = get_all_wibars()
+    if #wibars == 0 then
+      return "No wibars found"
+    end
+
+    local lines = {}
+    for _, wb in ipairs(wibars) do
+      local status = wb.wibar.visible and "visible" or "hidden"
+      local pos = wb.wibar.position or "top"
+      table.insert(lines, string.format("Screen %d: %s (%s)", wb.screen, status, pos))
+    end
+    return table.concat(lines, "\n")
+  end)
+
+  --- wibar.show <screen|all> - Show wibar(s)
+  ipc.register("wibar.show", function(target)
+    if not target then
+      error("Usage: wibar show <screen|all>")
+    end
+
+    if target == "all" then
+      local wibars = get_all_wibars()
+      local count = 0
+      for _, wb in ipairs(wibars) do
+        wb.wibar.visible = true
+        count = count + 1
+      end
+      return string.format("Showed %d wibar(s)", count)
+    else
+      local screen_idx = tonumber(target)
+      if not screen_idx then
+        error("Invalid screen: " .. target)
+      end
+      local s = capi.screen[screen_idx]
+      if not s then
+        error("Screen not found: " .. target)
+      end
+      if not s.mywibox then
+        error("No wibar on screen " .. target)
+      end
+      s.mywibox.visible = true
+      return "Showed wibar on screen " .. target
+    end
+  end)
+
+  --- wibar.hide <screen|all> - Hide wibar(s)
+  ipc.register("wibar.hide", function(target)
+    if not target then
+      error("Usage: wibar hide <screen|all>")
+    end
+
+    if target == "all" then
+      local wibars = get_all_wibars()
+      local count = 0
+      for _, wb in ipairs(wibars) do
+        wb.wibar.visible = false
+        count = count + 1
+      end
+      return string.format("Hid %d wibar(s)", count)
+    else
+      local screen_idx = tonumber(target)
+      if not screen_idx then
+        error("Invalid screen: " .. target)
+      end
+      local s = capi.screen[screen_idx]
+      if not s then
+        error("Screen not found: " .. target)
+      end
+      if not s.mywibox then
+        error("No wibar on screen " .. target)
+      end
+      s.mywibox.visible = false
+      return "Hid wibar on screen " .. target
+    end
+  end)
+
+  --- wibar.toggle <screen|all> - Toggle wibar(s)
+  ipc.register("wibar.toggle", function(target)
+    if not target then
+      error("Usage: wibar toggle <screen|all>")
+    end
+
+    if target == "all" then
+      local wibars = get_all_wibars()
+      local count = 0
+      for _, wb in ipairs(wibars) do
+        wb.wibar.visible = not wb.wibar.visible
+        count = count + 1
+      end
+      return string.format("Toggled %d wibar(s)", count)
+    else
+      local screen_idx = tonumber(target)
+      if not screen_idx then
+        error("Invalid screen: " .. target)
+      end
+      local s = capi.screen[screen_idx]
+      if not s then
+        error("Screen not found: " .. target)
+      end
+      if not s.mywibox then
+        error("No wibar on screen " .. target)
+      end
+      s.mywibox.visible = not s.mywibox.visible
+      local status = s.mywibox.visible and "shown" or "hidden"
+      return "Wibar on screen " .. target .. " is now " .. status
+    end
+  end)
+
+  -- =================================================================
+  -- MULTI-MONITOR COMMANDS
+  -- =================================================================
+
+  --- screen.focus <id|next|prev> - Focus a screen
+  ipc.register("screen.focus", function(target)
+    if not target then
+      error("Usage: screen focus <id|next|prev>")
+    end
+
+    local s
+    if target == "next" then
+      awful_screen.focus_relative(1)
+      s = awful_screen.focused()
+    elseif target == "prev" then
+      awful_screen.focus_relative(-1)
+      s = awful_screen.focused()
+    else
+      local screen_idx = tonumber(target)
+      if not screen_idx then
+        error("Invalid screen: " .. target)
+      end
+      s = capi.screen[screen_idx]
+      if not s then
+        error("Screen not found: " .. target)
+      end
+      awful_screen.focus(s)
+    end
+
+    return "Focused screen " .. s.index
+  end)
+
+  --- client.movetoscreen <screen> [client_id] - Move client to screen
+  ipc.register("client.movetoscreen", function(screen_arg, client_id)
+    if not screen_arg then
+      error("Usage: client movetoscreen <screen> [client_id]")
+    end
+
+    -- Get client
+    local c
+    if not client_id or client_id == "focused" then
+      c = capi.client.focus
+    else
+      for _, cl in ipairs(capi.client.get()) do
+        if format_id(cl) == client_id or tostring(cl) == client_id then
+          c = cl
+          break
+        end
+      end
+    end
+
+    if not c then
+      error("No client found")
+    end
+
+    -- Get target screen
+    local target_screen
+    if screen_arg == "next" then
+      local current_idx = c.screen.index
+      local next_idx = current_idx % capi.screen.count() + 1
+      target_screen = capi.screen[next_idx]
+    elseif screen_arg == "prev" then
+      local current_idx = c.screen.index
+      local prev_idx = (current_idx - 2) % capi.screen.count() + 1
+      target_screen = capi.screen[prev_idx]
+    else
+      local screen_idx = tonumber(screen_arg)
+      if screen_idx then
+        target_screen = capi.screen[screen_idx]
+      end
+    end
+
+    if not target_screen then
+      error("Invalid screen: " .. screen_arg)
+    end
+
+    c:move_to_screen(target_screen)
+    return string.format("Moved client to screen %d", target_screen.index)
+  end)
 end
 
 -- Initialize built-in commands
