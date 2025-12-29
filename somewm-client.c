@@ -116,6 +116,16 @@ print_usage(const char *progname)
 	fprintf(stderr, "  rule remove <id>               Remove rule by ID\n");
 	fprintf(stderr, "  rule test <client_id>          Show which rules match client\n\n");
 
+	fprintf(stderr, "WIBAR:\n");
+	fprintf(stderr, "  wibar list                     List all wibars\n");
+	fprintf(stderr, "  wibar show <screen|all>        Show wibar(s)\n");
+	fprintf(stderr, "  wibar hide <screen|all>        Hide wibar(s)\n");
+	fprintf(stderr, "  wibar toggle <screen|all>      Toggle wibar(s)\n\n");
+
+	fprintf(stderr, "MULTI-MONITOR:\n");
+	fprintf(stderr, "  screen focus <id|next|prev>    Focus a screen\n");
+	fprintf(stderr, "  client movetoscreen <scr> [ID] Move client to screen\n\n");
+
 	fprintf(stderr, "ADVANCED:\n");
 	fprintf(stderr, "  eval <lua_code>                Execute arbitrary Lua code\n");
 	fprintf(stderr, "  hotkeys                        Show hotkeys popup\n");
