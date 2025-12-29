@@ -2940,6 +2940,69 @@ local function register_builtin_commands()
     c:move_to_screen(target_screen)
     return string.format("Moved client to screen %d", target_screen.index)
   end)
+
+  -- =================================================================
+  -- NOTIFICATION COMMANDS
+  -- =================================================================
+
+  local naughty_ok, naughty = pcall(require, "naughty")
+
+  if naughty_ok then
+    --- notify <message> [options...] - Send a notification
+    -- Options: --title <text>, --timeout <seconds>, --urgency <low|normal|critical>
+    ipc.register("notify", function(...)
+      local args = {...}
+      if #args == 0 then
+        error("Usage: notify <message> [--title T] [--timeout N] [--urgency U]")
+      end
+
+      -- Parse arguments
+      local message_parts = {}
+      local title = nil
+      local timeout = 5
+      local urgency = "normal"
+
+      local i = 1
+      while i <= #args do
+        local arg = args[i]
+        if arg == "--title" and args[i + 1] then
+          title = args[i + 1]
+          i = i + 2
+        elseif arg == "--timeout" and args[i + 1] then
+          timeout = tonumber(args[i + 1]) or 5
+          i = i + 2
+        elseif arg == "--urgency" and args[i + 1] then
+          urgency = args[i + 1]
+          i = i + 2
+        else
+          table.insert(message_parts, arg)
+          i = i + 1
+        end
+      end
+
+      local message = table.concat(message_parts, " ")
+      if message == "" then
+        error("Message cannot be empty")
+      end
+
+      -- Map urgency string to naughty preset
+      local preset = naughty.config.presets.normal
+      if urgency == "low" then
+        preset = naughty.config.presets.low
+      elseif urgency == "critical" then
+        preset = naughty.config.presets.critical
+      end
+
+      naughty.notify({
+        title = title,
+        text = message,
+        timeout = timeout,
+        preset = preset,
+      })
+
+      return "Notification sent"
+    end)
+  end
 end
 
 -- Initialize built-in commands

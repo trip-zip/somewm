@@ -126,6 +126,10 @@ print_usage(const char *progname)
 	fprintf(stderr, "  screen focus <id|next|prev>    Focus a screen\n");
 	fprintf(stderr, "  client movetoscreen <scr> [ID] Move client to screen\n\n");
 
+	fprintf(stderr, "NOTIFICATIONS:\n");
+	fprintf(stderr, "  notify <msg> [--title T] [--timeout N] [--urgency U]\n");
+	fprintf(stderr, "                                 Send a notification\n\n");
+
 	fprintf(stderr, "ADVANCED:\n");
 	fprintf(stderr, "  eval <lua_code>                Execute arbitrary Lua code\n");
 	fprintf(stderr, "  hotkeys                        Show hotkeys popup\n");
