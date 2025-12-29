@@ -110,6 +110,12 @@ print_usage(const char *progname)
 	fprintf(stderr, "  reload                         Reload configuration (validates first)\n");
 	fprintf(stderr, "  restart                        Full compositor restart\n\n");
 
+	fprintf(stderr, "RULES:\n");
+	fprintf(stderr, "  rule list                      List all client rules\n");
+	fprintf(stderr, "  rule add <json>                Add rule from JSON\n");
+	fprintf(stderr, "  rule remove <id>               Remove rule by ID\n");
+	fprintf(stderr, "  rule test <client_id>          Show which rules match client\n\n");
+
 	fprintf(stderr, "ADVANCED:\n");
 	fprintf(stderr, "  eval <lua_code>                Execute arbitrary Lua code\n");
 	fprintf(stderr, "  hotkeys                        Show hotkeys popup\n");

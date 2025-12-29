@@ -2529,6 +2529,212 @@ local function register_builtin_commands()
       error("Restart not supported")
     end
   end)
+
+  -- =================================================================
+  -- RULES COMMANDS
+  -- =================================================================
+
+  local ruled_client_ok, ruled_client = pcall(require, "ruled.client")
+
+  if ruled_client_ok then
+    --- rule.list - List all client rules
+    ipc.register("rule.list", function()
+      local rules = ruled_client.rules or {}
+      if #rules == 0 then
+        return "No rules defined"
+      end
+
+      local lines = {}
+      for i, rule in ipairs(rules) do
+        local id = rule.id or tostring(i)
+        local rule_match = rule.rule or {}
+        local rule_any = rule.rule_any or {}
+
+        -- Build match description
+        local match_parts = {}
+        if rule_match.class then
+          table.insert(match_parts, "class=" .. tostring(rule_match.class))
+        end
+        if rule_match.instance then
+          table.insert(match_parts, "instance=" .. tostring(rule_match.instance))
+        end
+        if rule_match.name then
+          table.insert(match_parts, "name=" .. tostring(rule_match.name))
+        end
+        if rule_match.role then
+          table.insert(match_parts, "role=" .. tostring(rule_match.role))
+        end
+        if rule_match.type then
+          table.insert(match_parts, "type=" .. tostring(rule_match.type))
+        end
+
+        -- Add rule_any matches
+        for k, v in pairs(rule_any) do
+          if type(v) == "table" then
+            table.insert(match_parts, k .. "={" .. table.concat(v, ",") .. "}")
+          else
+            table.insert(match_parts, k .. "=" .. tostring(v))
+          end
+        end
+
+        local match_str = #match_parts > 0 and table.concat(match_parts, ", ") or "(all)"
+
+        -- Build properties description
+        local props = rule.properties or {}
+        local prop_parts = {}
+        for k, v in pairs(props) do
+          if type(v) == "boolean" then
+            table.insert(prop_parts, k .. "=" .. (v and "true" or "false"))
+          elseif type(v) == "number" then
+            table.insert(prop_parts, k .. "=" .. tostring(v))
+          elseif type(v) == "string" then
+            table.insert(prop_parts, k .. "=\"" .. v .. "\"")
+          else
+            table.insert(prop_parts, k .. "=<" .. type(v) .. ">")
+          end
+        end
+        local props_str = #prop_parts > 0 and table.concat(prop_parts, ", ") or "(no props)"
+
+        table.insert(lines, string.format("[%s] match: %s", id, match_str))
+        table.insert(lines, string.format("     props: %s", props_str))
+      end
+
+      return table.concat(lines, "\n")
+    end)
+
+    --- rule.add <json> - Add a new rule from JSON
+    ipc.register("rule.add", function(...)
+      local args = {...}
+      if #args == 0 then
+        error("Usage: rule add <json>")
+      end
+
+      -- Join all args (JSON might have spaces)
+      local json_str = table.concat(args, " ")
+
+      -- Simple JSON parser (basic subset)
+      local function parse_json(str)
+        -- Try to use cjson if available
+        local cjson_ok, cjson = pcall(require, "cjson")
+        if cjson_ok then
+          return cjson.decode(str)
+        end
+
+        -- Fallback: use Lua's load to parse JSON-like Lua table
+        -- Replace JSON syntax with Lua syntax
+        str = str:gsub(':%s*"', ' = "')
+        str = str:gsub(':%s*(%d)', ' = %1')
+        str = str:gsub(':%s*true', ' = true')
+        str = str:gsub(':%s*false', ' = false')
+        str = str:gsub(':%s*null', ' = nil')
+        str = str:gsub(':%s*%[', ' = {')
+        str = str:gsub(':%s*{', ' = {')
+        str = str:gsub('%[', '{')
+        str = str:gsub('%]', '}')
+
+        local fn, err = load("return " .. str)
+        if not fn then
+          error("Invalid JSON: " .. (err or "parse error"))
+        end
+        return fn()
+      end
+
+      local ok, rule = pcall(parse_json, json_str)
+      if not ok then
+        error("Failed to parse rule: " .. tostring(rule))
+      end
+
+      -- Generate ID if not provided
+      if not rule.id then
+        rule.id = "ipc_rule_" .. os.time()
+      end
+
+      ruled_client.append_rule(rule)
+      return "Added rule: " .. rule.id
+    end)
+
+    --- rule.remove <id> - Remove a rule by ID
+    ipc.register("rule.remove", function(rule_id)
+      if not rule_id then
+        error("Usage: rule remove <id>")
+      end
+
+      local rules = ruled_client.rules or {}
+      local found = false
+
+      for i, rule in ipairs(rules) do
+        if (rule.id and rule.id == rule_id) or tostring(i) == rule_id then
+          table.remove(rules, i)
+          found = true
+          break
+        end
+      end
+
+      if not found then
+        error("Rule not found: " .. rule_id)
+      end
+
+      return "Removed rule: " .. rule_id
+    end)
+
+    --- rule.test <client_id> - Show which rules match a client
+    ipc.register("rule.test", function(client_id)
+      if not client_id then
+        error("Usage: rule test <client_id|focused>")
+      end
+
+      local c
+      if client_id == "focused" then
+        c = capi.client.focus
+      else
+        -- Find client by ID
+        for _, cl in ipairs(capi.client.get()) do
+          if format_id(cl) == client_id or tostring(cl) == client_id then
+            c = cl
+            break
+          end
+        end
+      end
+
+      if not c then
+        error("Client not found: " .. client_id)
+      end
+
+      local rules = ruled_client.rules or {}
+      local matching = {}
+
+      -- Test each rule against the client
+      for i, rule in ipairs(rules) do
+        local matches = true
+        local rule_match = rule.rule or {}
+
+        -- Check each match criterion
+        for k, v in pairs(rule_match) do
+          local client_val = c[k]
+          if type(v) == "string" then
+            if type(client_val) ~= "string" or not client_val:match(v) then
+              matches = false
+              break
+            end
+          elseif client_val ~= v then
+            matches = false
+            break
+          end
+        end
+
+        if matches then
+          local id = rule.id or tostring(i)
+          table.insert(matching, id)
+        end
+      end
+
+      if #matching == 0 then
+        return "No rules match this client"
+      end
+
+      return "Matching rules: " .. table.concat(matching, ", ")
+    end)
+  end
 end
 
 -- Initialize built-in commands
