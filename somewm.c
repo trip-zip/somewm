@@ -5531,22 +5531,22 @@ main(int argc, char *argv[])
 		{"help",    no_argument,       0, 'h'},
 		{"version", no_argument,       0, 'v'},
 		{"debug",   no_argument,       0, 'd'},
-		{"config",  required_argument, 0, 'C'},
+		{"config",  required_argument, 0, 'c'},
 		{"search",  required_argument, 0, 'L'},
 		{"startup", required_argument, 0, 's'},
-		{"check",   required_argument, 0, 'c'},
+		{"check",   required_argument, 0, 'k'},
 		{0, 0, 0, 0}
 	};
 
-	while ((c = getopt_long(argc, argv, "C:s:L:hdvc:", long_options, NULL)) != -1) {
+	while ((c = getopt_long(argc, argv, "c:s:L:hdvk:", long_options, NULL)) != -1) {
 		switch (c) {
-		case 'C':
+		case 'c':
 			luaA_set_confpath(optarg);
 			break;
 		case 's':
 			startup_cmd = optarg;
 			break;
-		case 'c':
+		case 'k':
 			check_config = optarg;
 			break;
 		case 'L':
@@ -5594,11 +5594,11 @@ main(int argc, char *argv[])
 	return EXIT_SUCCESS;
 
 usage:
-	die("Usage: %s [-v] [-d] [-C config] [-L search_path] [-s startup_command] [-c config]\n"
+	die("Usage: %s [-v] [-d] [-c config] [-L search_path] [-s startup_command] [-k config]\n"
 	    "  -v, --version      Show version and diagnostic info\n"
 	    "  -d, --debug        Enable debug logging\n"
-	    "  -C, --config FILE  Use specified config file\n"
+	    "  -c, --config FILE  Use specified config file (AwesomeWM compatible)\n"
 	    "  -L, --search DIR   Add directory to Lua module search path\n"
 	    "  -s, --startup CMD  Run command after startup\n"
-	    "  -c, --check CONFIG Check config for Wayland compatibility issues", argv[0]);
+	    "  -k, --check CONFIG Check config for Wayland compatibility issues", argv[0]);
 }
