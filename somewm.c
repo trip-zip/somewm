@@ -993,11 +993,14 @@ cleanup(void)
 
 	a_dbus_cleanup();
 	ipc_cleanup();
-	stack_cleanup();
 	cleanuplisteners();
 
-	/* Destroy Wayland clients while Lua is still alive so signal handlers work */
+	/* Destroy Wayland clients while Lua is still alive so signal handlers work.
+	 * Note: Client destruction triggers unmapnotify which may access the stack,
+	 * so stack_cleanup() must come AFTER this. */
 	wl_display_destroy_clients(dpy);
+
+	stack_cleanup();
 
 	/* Close Lua after clients are destroyed (matches AwesomeWM pattern) */
 	luaA_cleanup();
