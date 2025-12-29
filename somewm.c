@@ -4578,6 +4578,13 @@ unmapnotify(struct wl_listener *listener, void *data)
 
 	wlr_scene_node_destroy(&c->scene->node);
 	c->scene = NULL;  /* Mark as cleaned up so destroynotify won't double-remove */
+
+	/* Clear titlebar scene buffer pointers - they were children of c->scene
+	 * and are now freed. Prevents use-after-free in refresh callbacks. */
+	for (client_titlebar_t bar = CLIENT_TITLEBAR_TOP; bar < CLIENT_TITLEBAR_COUNT; bar++) {
+		c->titlebar[bar].scene_buffer = NULL;
+	}
+
 	printstatus();
 	motionnotify(0, NULL, 0, 0, 0, 0);
 }
