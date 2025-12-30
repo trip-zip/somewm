@@ -2,28 +2,21 @@
  * stack.c - client stack management for somewm
  *
  * Manages Z-order (stacking) of windows using wlroots scene graph layers.
- * Ported from AwesomeWM's stack.c (lines 1-203), adapted for Wayland.
+ * Ported from AwesomeWM's stack.c, adapted for Wayland.
  *
  * Key differences from AwesomeWM:
  * - Uses wlroots scene graph layers instead of XCB stacking
- * - No EWMH updates
+ * - No EWMH updates (TODO)
  */
 
 #include "stack.h"
 #include "somewm_types.h"
 #include "objects/client.h"  /* For complete client_t definition */
 #include "objects/drawin.h"  /* For drawin stacking */
-#include "globalconf.h"      /* For globalconf.drawins */
+#include "globalconf.h"      /* For globalconf.stack and globalconf.drawins */
 #include "somewm_api.h"
-#include "util.h"
-#include <stdlib.h>
 #include <stdbool.h>
 #include <wlr/types/wlr_scene.h>
-
-/* Global client stack - ordered from bottom to top */
-static Client **stack = NULL;
-static size_t stack_len = 0;
-static size_t stack_capacity = 0;
 
 /* Flag to mark stack as needing refresh */
 static bool need_stack_refresh = false;
@@ -32,119 +25,42 @@ static bool need_stack_refresh = false;
 extern struct wlr_scene_tree *layers[NUM_LAYERS];
 
 /*
- * Stack array management
+ * Stack management - uses globalconf.stack (matches AwesomeWM)
  */
-
-void
-stack_init(void)
-{
-	stack_capacity = 32;  /* Initial capacity */
-	stack = ecalloc(stack_capacity, sizeof(Client *));
-	stack_len = 0;
-	need_stack_refresh = false;
-}
-
-void
-stack_cleanup(void)
-{
-	if (stack) {
-		free(stack);
-		stack = NULL;
-	}
-	stack_len = 0;
-	stack_capacity = 0;
-}
-
-/** Find client in stack
- * \param c Client to find
- * \return Index in stack, or -1 if not found
- */
-static int
-stack_find(Client *c)
-{
-	size_t i;
-
-	for (i = 0; i < stack_len; i++) {
-		if (stack[i] == c)
-			return (int)i;
-	}
-	return -1;
-}
-
-/** Remove client from stack without refresh
- * \param c Client to remove
- */
-static void
-stack_remove_internal(Client *c)
-{
-	int idx;
-	size_t i;
-
-	idx = stack_find(c);
-	if (idx < 0)
-		return;
-
-	/* Shift elements down */
-	for (i = (size_t)idx; i < stack_len - 1; i++) {
-		stack[i] = stack[i + 1];
-	}
-	stack_len--;
-}
 
 void
 stack_client_remove(Client *c)
 {
-	stack_remove_internal(c);
+	foreach(client, globalconf.stack)
+		if (*client == c)
+		{
+			client_array_remove(&globalconf.stack, client);
+			break;
+		}
 	/* TODO: ewmh_update_net_client_list_stacking(); */
 	stack_windows();
 }
 
+/** Push the client at the beginning of the client stack.
+ * \param c The client to push.
+ */
 void
 stack_client_push(Client *c)
 {
-	size_t i;
-
-	/* Remove if already in stack */
-	stack_remove_internal(c);
-
-	/* Grow array if needed */
-	if (stack_len >= stack_capacity) {
-		stack_capacity *= 2;
-		stack = realloc(stack, stack_capacity * sizeof(Client *));
-		if (!stack)
-			die("stack_client_push: realloc failed");
-	}
-
-	/* Shift all elements up to make room at beginning */
-	for (i = stack_len; i > 0; i--) {
-		stack[i] = stack[i - 1];
-	}
-
-	/* Add to beginning (bottom of stack) - matches AwesomeWM */
-	stack[0] = c;
-	stack_len++;
-
+	stack_client_remove(c);
+	client_array_push(&globalconf.stack, c);
 	/* TODO: ewmh_update_net_client_list_stacking(); */
 	stack_windows();
 }
 
+/** Push the client at the end of the client stack.
+ * \param c The client to push.
+ */
 void
 stack_client_append(Client *c)
 {
-	/* Remove if already in stack */
-	stack_remove_internal(c);
-
-	/* Grow array if needed */
-	if (stack_len >= stack_capacity) {
-		stack_capacity *= 2;
-		stack = realloc(stack, stack_capacity * sizeof(Client *));
-		if (!stack)
-			die("stack_client_append: realloc failed");
-	}
-
-	/* Add to end (top of stack) - matches AwesomeWM */
-	stack[stack_len++] = c;
-
+	stack_client_remove(c);
+	client_array_append(&globalconf.stack, c);
 	/* TODO: ewmh_update_net_client_list_stacking(); */
 	stack_windows();
 }
@@ -199,10 +115,6 @@ client_get_layer(Client *c)
 		break;
 	}
 
-	/* Floating windows go above tiled windows */
-	if (some_client_get_floating(c))
-		return WINDOW_LAYER_FLOATING;
-
 	return WINDOW_LAYER_NORMAL;
 }
 
@@ -225,8 +137,6 @@ get_scene_layer(window_layer_t layer)
 		return LyrBottom;
 	case WINDOW_LAYER_NORMAL:
 		return LyrTile;
-	case WINDOW_LAYER_FLOATING:
-		return LyrFloat;
 	case WINDOW_LAYER_ABOVE:
 		return LyrTop;
 	case WINDOW_LAYER_FULLSCREEN:
@@ -268,9 +178,6 @@ stack_client_relative(Client *c, Client *previous)
 static Client *
 stack_transients_above(Client *c, Client *previous)
 {
-	size_t i;
-	Client *transient;
-
 	if (!c)
 		return previous;
 
@@ -279,11 +186,10 @@ stack_transients_above(Client *c, Client *previous)
 	previous = c;
 
 	/* Then stack all transients above it */
-	for (i = 0; i < stack_len; i++) {
-		transient = stack[i];
-		if (transient->transient_for == c) {
+	foreach(node, globalconf.stack) {
+		if ((*node)->transient_for == c) {
 			/* Recursively stack this transient and its transients */
-			previous = stack_transients_above(transient, previous);
+			previous = stack_transients_above(*node, previous);
 		}
 	}
 
@@ -298,8 +204,6 @@ void
 stack_refresh(void)
 {
 	window_layer_t layer;
-	size_t i;
-	Client *c;
 	Client *prev_in_layer[WINDOW_LAYER_COUNT];
 	int scene_layer;
 
@@ -312,12 +216,11 @@ stack_refresh(void)
 	}
 
 	/* Process stack from bottom to top, organizing by layer */
-	for (i = 0; i < stack_len; i++) {
-		c = stack[i];
-		if (!c || !c->scene)
+	foreach(node, globalconf.stack) {
+		if (!(*node) || !(*node)->scene)
 			continue;
 
-		layer = client_get_layer(c);
+		layer = client_get_layer(*node);
 
 		/* Skip IGNORE layer (transients are handled with their parents) */
 		if (layer == WINDOW_LAYER_IGNORE)
@@ -327,12 +230,12 @@ stack_refresh(void)
 		scene_layer = get_scene_layer(layer);
 		/* Check if client is in wrong layer - skip the check if already correct
 		 * to avoid unnecessary reparenting */
-		if ((void *)c->scene->node.parent != (void *)layers[scene_layer]) {
-			wlr_scene_node_reparent(&c->scene->node, layers[scene_layer]);
+		if ((void *)(*node)->scene->node.parent != (void *)layers[scene_layer]) {
+			wlr_scene_node_reparent(&(*node)->scene->node, layers[scene_layer]);
 		}
 
 		/* Stack client and its transients */
-		prev_in_layer[layer] = stack_transients_above(c, prev_in_layer[layer]);
+		prev_in_layer[layer] = stack_transients_above(*node, prev_in_layer[layer]);
 	}
 
 	/* Stack drawins (wiboxes) - AwesomeWM stacks these after clients

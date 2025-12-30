@@ -236,6 +236,11 @@ drawin_apply_shape_mask(drawable_t *d, cairo_surface_t *shape)
 	if (!d || !d->surface || !shape)
 		return NULL;
 
+	/* Check if surfaces are still valid (not finished by GC) */
+	if (cairo_surface_status(d->surface) != CAIRO_STATUS_SUCCESS ||
+	    cairo_surface_status(shape) != CAIRO_STATUS_SUCCESS)
+		return NULL;
+
 	src = d->surface;
 	cairo_surface_flush(src);
 	cairo_surface_flush(shape);
@@ -255,6 +260,13 @@ drawin_apply_shape_mask(drawable_t *d, cairo_surface_t *shape)
 	src_data = cairo_image_surface_get_data(src);
 	dst_data = cairo_image_surface_get_data(dst);
 	shape_data = cairo_image_surface_get_data(shape);
+
+	/* Check for NULL data pointers (surface may have been finished by GC) */
+	if (!src_data || !dst_data || !shape_data) {
+		cairo_surface_destroy(dst);
+		return NULL;
+	}
+
 	src_stride = cairo_image_surface_get_stride(src);
 	dst_stride = cairo_image_surface_get_stride(dst);
 	shape_stride = cairo_image_surface_get_stride(shape);
@@ -311,6 +323,18 @@ drawin_refresh_drawable(drawin_t *drawin)
 	}
 
 	work_surface = d->surface;
+
+	/* Clear stale shape surfaces that were finished by Lua GC */
+	if (drawin->shape_clip &&
+	    cairo_surface_status(drawin->shape_clip) != CAIRO_STATUS_SUCCESS) {
+		cairo_surface_destroy(drawin->shape_clip);
+		drawin->shape_clip = NULL;
+	}
+	if (drawin->shape_bounding &&
+	    cairo_surface_status(drawin->shape_bounding) != CAIRO_STATUS_SUCCESS) {
+		cairo_surface_destroy(drawin->shape_bounding);
+		drawin->shape_bounding = NULL;
+	}
 
 	/* Apply shape_clip first (clips the drawable content area)
 	 * In AwesomeWM, shape_clip restricts what's visible within the content area */
@@ -1676,6 +1700,49 @@ luaA_drawin_get_shape_bounding(lua_State *L, drawin_t *drawin)
 	return 1;
 }
 
+/** Deep copy a cairo surface to avoid lifetime issues with Lua GC.
+ * When Lua GC calls cairo_surface_finish(), it frees the backing data
+ * even if we hold a reference. Making a copy ensures we own the data.
+ */
+static cairo_surface_t *
+drawin_copy_surface(cairo_surface_t *src)
+{
+	cairo_surface_t *dst;
+	cairo_t *cr;
+	int width, height;
+
+	if (!src)
+		return NULL;
+
+	/* Check if source is still valid */
+	if (cairo_surface_status(src) != CAIRO_STATUS_SUCCESS)
+		return NULL;
+
+	width = cairo_image_surface_get_width(src);
+	height = cairo_image_surface_get_height(src);
+
+	if (width <= 0 || height <= 0)
+		return NULL;
+
+	/* Create new surface with same format and dimensions */
+	dst = cairo_image_surface_create(
+		cairo_image_surface_get_format(src), width, height);
+
+	if (cairo_surface_status(dst) != CAIRO_STATUS_SUCCESS) {
+		cairo_surface_destroy(dst);
+		return NULL;
+	}
+
+	/* Copy the content */
+	cr = cairo_create(dst);
+	cairo_set_source_surface(cr, src, 0, 0);
+	cairo_set_operator(cr, CAIRO_OPERATOR_SOURCE);
+	cairo_paint(cr);
+	cairo_destroy(cr);
+
+	return dst;
+}
+
 /** Set the drawin's bounding shape (AwesomeWM signature).
  * \param L The Lua VM state.
  * \param drawin The drawin object.
@@ -1685,6 +1752,8 @@ static int
 luaA_drawin_set_shape_bounding(lua_State *L, drawin_t *drawin)
 {
 	cairo_surface_t *surf = NULL;
+	cairo_surface_t *copy = NULL;
+
 	if(!lua_isnil(L, -1))
 		surf = (cairo_surface_t *)lua_touserdata(L, -1);
 
@@ -1692,13 +1761,15 @@ luaA_drawin_set_shape_bounding(lua_State *L, drawin_t *drawin)
 	 * (Matches AwesomeWM's drawin_apply_moveresize() call) */
 	luaA_drawin_apply_geometry(drawin);
 
-	/* Reference new surface before releasing old */
+	/* Make a deep copy of the surface to avoid Lua GC freeing it.
+	 * cairo_surface_finish() frees backing data even with refs held. */
 	if (surf)
-		cairo_surface_reference(surf);
+		copy = drawin_copy_surface(surf);
+
 	if (drawin->shape_bounding)
 		cairo_surface_destroy(drawin->shape_bounding);
 
-	drawin->shape_bounding = surf;
+	drawin->shape_bounding = copy;
 
 	/* Trigger redraw to apply shape (Wayland equivalent of xwindow_set_shape) */
 	if (drawin->visible)
@@ -1728,6 +1799,8 @@ static int
 luaA_drawin_set_shape_clip(lua_State *L, drawin_t *drawin)
 {
 	cairo_surface_t *surf = NULL;
+	cairo_surface_t *copy = NULL;
+
 	if(!lua_isnil(L, -1))
 		surf = (cairo_surface_t *)lua_touserdata(L, -1);
 
@@ -1735,13 +1808,15 @@ luaA_drawin_set_shape_clip(lua_State *L, drawin_t *drawin)
 	 * (Matches AwesomeWM's drawin_apply_moveresize() call) */
 	luaA_drawin_apply_geometry(drawin);
 
-	/* Reference new surface before releasing old */
+	/* Make a deep copy of the surface to avoid Lua GC freeing it.
+	 * cairo_surface_finish() frees backing data even with refs held. */
 	if (surf)
-		cairo_surface_reference(surf);
+		copy = drawin_copy_surface(surf);
+
 	if (drawin->shape_clip)
 		cairo_surface_destroy(drawin->shape_clip);
 
-	drawin->shape_clip = surf;
+	drawin->shape_clip = copy;
 
 	/* Trigger redraw to apply shape (Wayland equivalent of xwindow_set_shape) */
 	if (drawin->visible)

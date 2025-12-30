@@ -3646,8 +3646,7 @@ luaA_client_raise(lua_State *L)
     /* Avoid sending the signal if nothing was done */
     if (c->transient_for == NULL &&
         globalconf.stack.len &&
-        globalconf.stack.tab[globalconf.stack.len-1] == c
-    )
+        globalconf.stack.tab[globalconf.stack.len-1] == c)
         return 0;
 
     client_raise(c);
