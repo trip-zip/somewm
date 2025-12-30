@@ -826,7 +826,6 @@ buttonpress(struct wl_listener *listener, void *data)
 		/* Change focus if the button was _pressed_ over a client */
 		xytonode(cursor->x, cursor->y, NULL, &c, NULL, &drawin, &titlebar_drawable, NULL, NULL);
 
-
 		/* Get keyboard modifiers */
 		keyboard = wlr_seat_get_keyboard(seat);
 		mods = keyboard ? wlr_keyboard_get_modifiers(keyboard) : 0;
@@ -995,12 +994,8 @@ cleanup(void)
 	ipc_cleanup();
 	cleanuplisteners();
 
-	/* Destroy Wayland clients while Lua is still alive so signal handlers work.
-	 * Note: Client destruction triggers unmapnotify which may access the stack,
-	 * so stack_cleanup() must come AFTER this. */
+	/* Destroy Wayland clients while Lua is still alive so signal handlers work. */
 	wl_display_destroy_clients(dpy);
-
-	stack_cleanup();
 
 	/* Close Lua after clients are destroyed (matches AwesomeWM pattern) */
 	luaA_cleanup();
@@ -1663,9 +1658,8 @@ createnotify(struct wl_listener *listener, void *data)
 	lua_pushvalue(L, -1);
 	client_array_push(&globalconf.clients, luaA_object_ref(L, -1));
 
-	/* Add to stacking order (matches AwesomeWM client_manage line 2244)
-	 * This is required for client.get(s, true) to return newly managed clients */
-	client_array_push(&globalconf.stack, c);
+	/* Add to stack (matches AwesomeWM client_manage) */
+	stack_client_push(c);
 
 	/* Emit client::list signal (matches AwesomeWM line 2266) */
 	luaA_class_emit_signal(L, &client_class, "list", 0);
@@ -4250,7 +4244,6 @@ setup(void)
 	 *
 	 * https://drewdevault.com/2018/07/29/Wayland-shells.html
 	 */
-	stack_init();
 
 	xdg_shell = wlr_xdg_shell_create(dpy, 6);
 	wl_signal_add(&xdg_shell->events.new_toplevel, &new_xdg_toplevel);
@@ -5271,9 +5264,8 @@ createnotifyx11(struct wl_listener *listener, void *data)
 	lua_pushvalue(L, -1);
 	client_array_push(&globalconf.clients, luaA_object_ref(L, -1));
 
-	/* Add to stacking order (matches AwesomeWM client_manage line 2244)
-	 * This is required for client.get(s, true) to return newly managed clients */
-	client_array_push(&globalconf.stack, c);
+	/* Add to stack (matches AwesomeWM client_manage) */
+	stack_client_push(c);
 
 	/* Emit client::list signal (matches AwesomeWM line 2266) */
 	luaA_class_emit_signal(L, &client_class, "list", 0);

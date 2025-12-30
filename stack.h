@@ -9,41 +9,33 @@
 
 #include "somewm_types.h"
 
-/* Stacking layers - maps to wlroots scene graph layers
+/* Stacking layers - matches AwesomeWM's stack.c
  * Order from bottom to top:
  * DESKTOP -> BELOW -> NORMAL -> ABOVE -> FULLSCREEN -> ONTOP
+ *
+ * Note: Floating is a LAYOUT concept, not a STACKING concept.
+ * Floating windows go to NORMAL layer. Use c.above/c.ontop for Z-order.
  */
 typedef enum {
 	WINDOW_LAYER_IGNORE,      /* Special: transient windows (follow parent) */
-	WINDOW_LAYER_DESKTOP,     /* Desktop windows (wallpaper) -> LyrBg */
-	WINDOW_LAYER_BELOW,       /* Below normal -> LyrBottom */
-	WINDOW_LAYER_NORMAL,      /* Tiled windows -> LyrTile */
-	WINDOW_LAYER_FLOATING,    /* Floating windows -> LyrFloat */
-	WINDOW_LAYER_ABOVE,       /* Above normal (panels, docks) -> LyrTop */
-	WINDOW_LAYER_FULLSCREEN,  /* Fullscreen (only when focused) -> LyrFS */
-	WINDOW_LAYER_ONTOP,       /* Always on top -> LyrOverlay */
+	WINDOW_LAYER_DESKTOP,     /* Desktop windows (wallpaper) */
+	WINDOW_LAYER_BELOW,       /* Below normal */
+	WINDOW_LAYER_NORMAL,      /* Normal windows (tiled and floating) */
+	WINDOW_LAYER_ABOVE,       /* Above normal */
+	WINDOW_LAYER_FULLSCREEN,  /* Fullscreen (only when focused) */
+	WINDOW_LAYER_ONTOP,       /* Always on top */
 	WINDOW_LAYER_COUNT        /* Not a real layer, just for counting */
 } window_layer_t;
 
-/* Stack management functions */
+/* Stack management functions - uses globalconf.stack (matches AwesomeWM) */
 
-/** Initialize the stacking system
- * Call once at compositor startup
- */
-void stack_init(void);
-
-/** Cleanup the stacking system
- * Call once at compositor shutdown
- */
-void stack_cleanup(void);
-
-/** Add client to the top of the stack
- * \param c Client to add
+/** Push the client at the beginning of the client stack.
+ * \param c The client to push.
  */
 void stack_client_push(Client *c);
 
-/** Add client to the bottom of the stack
- * \param c Client to add
+/** Push the client at the end of the client stack.
+ * \param c The client to push.
  */
 void stack_client_append(Client *c);
 
