@@ -2846,7 +2846,11 @@ mapnotify(struct wl_listener *listener, void *data)
 		lua_pop(L, 1);
 
 		/* Apply geometry BEFORE enabling scene node to send configure event.
-		 * Fixes Firefox tiling issue (#10). */
+		 * Fixes Firefox tiling issue (#10).
+		 * Reset c->resize to force re-send configure even if setmon()->resize()
+		 * already sent one (unflushed). This ensures the configure is flushed
+		 * before we enable the scene node. */
+		c->resize = 0;
 		apply_geometry_to_wlroots(c);
 		wl_display_flush_clients(dpy);
 
@@ -2936,7 +2940,11 @@ mapnotify(struct wl_listener *listener, void *data)
 
 		/* Apply geometry BEFORE enabling scene node to send configure event.
 		 * Without this, client may render a frame at wrong size before receiving
-		 * the tiled geometry configure event. Fixes Firefox tiling issue (#10). */
+		 * the tiled geometry configure event. Fixes Firefox tiling issue (#10).
+		 * Reset c->resize to force re-send configure even if setmon()->resize()
+		 * already sent one (unflushed). This ensures the configure is flushed
+		 * before we enable the scene node. */
+		c->resize = 0;
 		apply_geometry_to_wlroots(c);
 
 		/* Flush configure event to client immediately so it receives the tiled
