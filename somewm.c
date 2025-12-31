@@ -1798,10 +1798,15 @@ createpointer(struct wlr_pointer *pointer)
 void
 createpointerconstraint(struct wl_listener *listener, void *data)
 {
+	struct wlr_pointer_constraint_v1 *constraint = data;
 	PointerConstraint *pointer_constraint = ecalloc(1, sizeof(*pointer_constraint));
-	pointer_constraint->constraint = data;
+	pointer_constraint->constraint = constraint;
 	LISTEN(&pointer_constraint->constraint->events.destroy,
 			&pointer_constraint->destroy, destroypointerconstraint);
+
+	/* If this constraint's surface already has keyboard focus, activate it */
+	if (constraint->surface == seat->keyboard_state.focused_surface)
+		cursorconstrain(constraint);
 }
 
 void
@@ -1830,7 +1835,9 @@ cursorconstrain(struct wlr_pointer_constraint_v1 *constraint)
 		wlr_pointer_constraint_v1_send_deactivated(active_constraint);
 
 	active_constraint = constraint;
-	wlr_pointer_constraint_v1_send_activated(constraint);
+
+	if (active_constraint)
+		wlr_pointer_constraint_v1_send_activated(active_constraint);
 }
 
 void
@@ -2232,6 +2239,11 @@ focusclient(Client *c, int lift)
 			                                kb->num_keycodes,
 			                                &kb->modifiers);
 		}
+
+		/* Update pointer constraint for newly focused surface.
+		 * Games like Minecraft need the constraint to follow keyboard focus. */
+		cursorconstrain(wlr_pointer_constraints_v1_constraint_for_surface(
+			pointer_constraints, surface, seat));
 	}
 
 	/* Emit property::active = true for border updates (AwesomeWM pattern) */
@@ -3109,7 +3121,6 @@ motionnotify(uint32_t time, struct wlr_input_device *device, double dx, double d
 	Client *c = NULL, *w = NULL;
 	LayerSurface *l = NULL;
 	struct wlr_surface *surface = NULL;
-	struct wlr_pointer_constraint_v1 *constraint;
 
 	/* Find the client under the pointer and send the event along. */
 	xytonode(cursor->x, cursor->y, &surface, &c, NULL, NULL, NULL, &sx, &sy);
@@ -3129,8 +3140,9 @@ motionnotify(uint32_t time, struct wlr_input_device *device, double dx, double d
 				relative_pointer_mgr, seat, (uint64_t)time * 1000,
 				dx, dy, dx_unaccel, dy_unaccel);
 
-		wl_list_for_each(constraint, &pointer_constraints->constraints, link)
-			cursorconstrain(constraint);
+		/* Note: Constraint selection is done in focusclient(), not here.
+		 * dwl/somewm previously iterated all constraints here which caused
+		 * the "last constraint wins" bug breaking games like Minecraft. */
 
 		if (active_constraint) {
 			toplevel_from_wlr_surface(active_constraint->surface, &c, NULL);
