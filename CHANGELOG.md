@@ -6,7 +6,7 @@ All notable changes to somewm will be documented in this file.
 
 ### Breaking Changes
 
-- **Build system migrated to meson** (#117):
+- **Build system migrated to meson** (https://github.com/trip-zip/somewm/discussions/117):
   - Now requires `meson` and `ninja` to build
   - wlroots 0.19 is bundled and built automatically (system wlroots 0.19 used if available)
   - `config.mk` removed - use `meson configure build` to change options
