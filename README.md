@@ -73,6 +73,7 @@ The first build will automatically download and compile wlroots 0.19 as part of 
 ```bash
 make clean        # Remove build directory
 make reconfigure  # Wipe and reconfigure build
+make asan         # Build with AddressSanitizer for debugging
 meson configure build  # View/change build options
 ```
 

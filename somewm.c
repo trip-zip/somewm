@@ -4199,14 +4199,12 @@ setup(void)
 				wlr_linux_dmabuf_v1_create_with_renderer(dpy, 5, drw));
 	}
 
-#ifdef WLR_VERSION_0_19
 	{
 		int drm_fd;
 		if ((drm_fd = wlr_renderer_get_drm_fd(drw)) >= 0 && drw->features.timeline
 				&& backend->features.timeline)
 			wlr_linux_drm_syncobj_manager_v1_create(dpy, 1, drm_fd);
 	}
-#endif
 
 	/* Autocreates an allocator for us.
 	 * The allocator is the bridge between the renderer and the backend. It
@@ -4238,9 +4236,7 @@ setup(void)
 	activation = wlr_xdg_activation_v1_create(dpy);
 	wl_signal_add(&activation->events.request_activate, &request_activate);
 
-#ifdef WLR_VERSION_0_19
 	wlr_scene_set_gamma_control_manager_v1(scene, wlr_gamma_control_manager_v1_create(dpy));
-#endif
 
 	power_mgr = wlr_output_power_manager_v1_create(dpy);
 	wl_signal_add(&power_mgr->events.set_mode, &output_power_mgr_set_mode);
