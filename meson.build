@@ -33,6 +33,9 @@ endif
 
 cc = meson.get_compiler('c')
 
+# Math library (for round(), etc.)
+m_dep = cc.find_library('m', required: false)
+
 # ==============================================================================
 # Options
 # ==============================================================================
@@ -282,6 +285,7 @@ all_deps = [
   gdk_pixbuf,
   lua_dep,
   wlroots,
+  m_dep,
 ]
 
 if have_xwayland
