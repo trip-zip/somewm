@@ -7,17 +7,22 @@
 #   make clean           # Remove build directory
 #   make reconfigure     # Wipe and reconfigure build
 
-.PHONY: all install clean setup reconfigure test
+.PHONY: all install clean setup reconfigure test asan
 
 all:
 	@test -d build || meson setup build
 	ninja -C build
 
+# Build with AddressSanitizer + UndefinedBehaviorSanitizer for debugging
+asan:
+	@test -d build-asan || meson setup build-asan -Db_sanitize=address,undefined
+	ninja -C build-asan
+
 install:
 	meson install -C build
 
 clean:
-	rm -rf build
+	rm -rf build build-asan
 
 # Just setup (useful for IDE integration)
 setup:

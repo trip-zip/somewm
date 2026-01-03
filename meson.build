@@ -1,7 +1,7 @@
 project(
   'somewm',
   'c',
-  version: '0.2-dev',
+  version: '0.5.0',
   license: 'MIT',
   default_options: [
     'c_std=gnu11',
