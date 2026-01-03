@@ -132,6 +132,7 @@ jobs:
 
       - name: Set paths
         run: |
+          echo "PATH=$HOME/deps-install/bin:$PATH" >> $GITHUB_ENV
           echo "PKG_CONFIG_PATH=$HOME/deps-install/share/pkgconfig:$HOME/deps-install/lib/x86_64-linux-gnu/pkgconfig:$PKG_CONFIG_PATH" >> $GITHUB_ENV
           echo "LD_LIBRARY_PATH=$HOME/deps-install/lib/x86_64-linux-gnu:$LD_LIBRARY_PATH" >> $GITHUB_ENV
 
