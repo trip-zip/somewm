@@ -91,7 +91,8 @@ print_usage(const char *progname)
 	fprintf(stderr, "  screen list                    List all screens/monitors\n");
 	fprintf(stderr, "  screen focused                 Get focused screen info\n");
 	fprintf(stderr, "  screen count                   Get number of screens\n");
-	fprintf(stderr, "  screen clients <ID>            List clients on a screen\n\n");
+	fprintf(stderr, "  screen clients <ID>            List clients on a screen\n");
+	fprintf(stderr, "  screen scale [screen] [value]  Get or set screen scale\n\n");
 
 	fprintf(stderr, "SCREENSHOT COMMANDS:\n");
 	fprintf(stderr, "  screenshot save <path> [--transparent]\n");
