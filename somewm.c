@@ -5528,6 +5528,12 @@ get_lua_runtime_version(lua_State *L)
 static const char *
 get_lgi_version(lua_State *L)
 {
+#ifdef LGI_VERSION
+	/* Use compile-time detected version */
+	(void)L;
+	return LGI_VERSION;
+#else
+	/* Fallback to runtime detection */
 	static char version[64] = "unknown";
 
 	/* Try: require('lgi.version') */
@@ -5538,6 +5544,7 @@ get_lgi_version(lua_State *L)
 	}
 	lua_pop(L, 1);
 	return version;
+#endif
 }
 
 /* Add search paths to a Lua state's package.path and package.cpath */

@@ -9,4 +9,9 @@ config.h
 ideas/
 docker/
 run-asan.sh
-config.local.mk
+
+# Meson build
+build/
+builddir/
+subprojects/wlroots/
+subprojects/packagecache/

@@ -14,30 +14,37 @@
 
 ### 1. Install Dependencies
 
+somewm uses meson and bundles wlroots 0.19, so you don't need to install wlroots separately. This works on any distro regardless of which wlroots version they ship.
+
 **Arch Linux:**
 ```bash
-# Note: lua51-lgi is required for LuaJIT (the default Lua for somewm)
-sudo pacman -S wlroots0.19 luajit lua51-lgi cairo pango gdk-pixbuf2 \
-    wayland-protocols libinput libxkbcommon
-# Optional: XWayland support
-sudo pacman -S xorg-xwayland libxcb
+sudo pacman -S meson ninja luajit lua51-lgi cairo pango gdk-pixbuf2 \
+    wayland-protocols libinput libxkbcommon libdrm pixman dbus
+# For XWayland support (recommended)
+sudo pacman -S xorg-xwayland libxcb xcb-util-wm
 ```
 
-**Debian/Ubuntu (25.04+ or unstable):**
+**Debian/Ubuntu:**
 ```bash
-sudo apt install libwlroots-dev luajit lua-lgi libcairo2-dev \
-    libpango1.0-dev libgdk-pixbuf-2.0-dev \
-    wayland-protocols libinput-dev libxkbcommon-dev
-# Optional: XWayland support
-sudo apt install xwayland libxcb1-dev libxcb-icccm4-dev
+sudo apt install meson ninja-build luajit lua-lgi libcairo2-dev \
+    libpango1.0-dev libgdk-pixbuf-2.0-dev wayland-protocols \
+    libinput-dev libxkbcommon-dev libdrm-dev libpixman-1-dev \
+    libdbus-1-dev libseat-dev libudev-dev liblcms2-dev \
+    libdisplay-info-dev libliftoff-dev hwdata
+# For XWayland support (recommended)
+sudo apt install xwayland libxcb1-dev libxcb-icccm4-dev \
+    libxcb-composite0-dev libxcb-render0-dev libxcb-res0-dev \
+    libxcb-xfixes0-dev libxcb-xinput-dev libxcb-ewmh-dev
 ```
 
 **Fedora:**
 ```bash
-sudo dnf install wlroots-devel luajit lua-lgi cairo-devel pango-devel \
+sudo dnf install meson ninja-build luajit lua-lgi cairo-devel pango-devel \
     gdk-pixbuf2-devel wayland-protocols-devel libinput-devel \
-    libxkbcommon-devel xcb-util-devel dbus-devel
-# Optional: XWayland support
+    libxkbcommon-devel libdrm-devel pixman-devel dbus-devel \
+    libseat-devel systemd-devel lcms2-devel libdisplay-info-devel \
+    libliftoff-devel hwdata
+# For XWayland support (recommended)
 sudo dnf install xorg-x11-server-Xwayland libxcb-devel xcb-util-wm-devel
 ```
 
@@ -51,8 +58,6 @@ nix-build
 
 The included derivation sets up LGI and `GI_TYPELIB_PATH` automatically. For custom configurations or third-party Lua libraries, see the [NixOS section](#nixos) below.
 
-> **Note:** wlroots 0.18+ is required. Debian stable and Ubuntu 24.04 LTS ship older versions - you'll need to [build wlroots from source](https://gitlab.freedesktop.org/wlroots/wlroots) first.
-
 ### 2. Build and Install
 
 ```bash
@@ -62,16 +67,13 @@ make
 sudo make install
 ```
 
-The build will verify that LGI is correctly installed for your Lua version. If the check fails, you'll see instructions for which package to install.
+The first build will automatically download and compile wlroots 0.19 as part of the build process. Subsequent builds will be faster.
 
-For user-local installation (no root required):
+**Other make targets:**
 ```bash
-make install-local
-```
-
-To add somewm to your display manager's session list:
-```bash
-sudo make install-session
+make clean        # Remove build directory
+make reconfigure  # Wipe and reconfigure build
+meson configure build  # View/change build options
 ```
 
 ### 3. Run
@@ -156,12 +158,12 @@ Summary: 1 critical, 1 warning
 
 ### "No config found" error
 
-Make sure you ran `make install` (or `make install-local`). Running somewm directly from the build directory won't work because Lua libraries aren't in the expected paths.
+Make sure you ran `sudo make install`. Running somewm directly from the build directory won't work because Lua libraries aren't in the expected paths.
 
 After installation, somewm searches for configs in this order:
 1. `~/.config/somewm/rc.lua`
 2. `~/.config/awesome/rc.lua`
-3. `/etc/xdg/somewm/rc.lua` (system install) or `~/.local/etc/xdg/somewm/rc.lua` (local install)
+3. `/usr/local/etc/xdg/somewm/rc.lua` (system fallback)
 
 ### Config loads but crashes immediately
 
@@ -224,14 +226,11 @@ See the full list in the source code or open an issue if you encounter something
 ## Uninstallation
 
 ```bash
-# Remove system-wide installation
-sudo make uninstall
+# Remove installed files (uses meson)
+sudo ninja -C build uninstall
 
-# Remove user-local installation
-make uninstall-local
-
-# Remove session from display manager
-sudo make uninstall-session
+# Remove build directory
+make clean
 ```
 
 ## NixOS
