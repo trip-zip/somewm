@@ -17,9 +17,11 @@
 #include <cairo.h>
 #include <drm_fourcc.h>
 #include <wlr/types/wlr_scene.h>
+#include <wlr/types/wlr_output.h>
 #include <wlr/interfaces/wlr_buffer.h>
 #include <wlr/render/wlr_renderer.h>
 #include <wlr/render/wlr_texture.h>
+#include <math.h>
 
 /* AwesomeWM-compatible screen class */
 static lua_class_t screen_class;
@@ -470,6 +472,114 @@ push_wlr_box(lua_State *L, struct wlr_box *box)
 
 /* Note: wlr_box_equal() is provided by wlroots in wlr/util/box.h */
 
+/** Recalculate workarea for a screen including all drawin struts
+ * \param L Lua state
+ * \param screen Screen to recalculate workarea for
+ *
+ * This iterates through all visible drawins and clients on the screen,
+ * computes the aggregate struts, and updates the workarea accordingly.
+ * Called when screen geometry changes to ensure struts are respected.
+ */
+static void
+luaA_screen_recalculate_workarea(lua_State *L, screen_t *screen)
+{
+	struct wlr_box new_workarea;
+	uint16_t top = 0, bottom = 0, left = 0, right = 0;
+
+	if (!screen || !screen->valid)
+		return;
+
+	/* Start with full geometry */
+	new_workarea = screen->geometry;
+
+	/* Aggregate struts from ALL visible clients on this screen */
+#define COMPUTE_CLIENT_STRUT(c) \
+	{ \
+		if((c)->strut.top_start_x || (c)->strut.top_end_x || (c)->strut.top) \
+		{ \
+			if((c)->strut.top) \
+				top = MAX(top, (c)->strut.top); \
+			else \
+				top = MAX(top, ((c)->geometry.y - new_workarea.y) + (c)->geometry.height); \
+		} \
+		if((c)->strut.bottom_start_x || (c)->strut.bottom_end_x || (c)->strut.bottom) \
+		{ \
+			if((c)->strut.bottom) \
+				bottom = MAX(bottom, (c)->strut.bottom); \
+			else \
+				bottom = MAX(bottom, (new_workarea.y + new_workarea.height) - (c)->geometry.y); \
+		} \
+		if((c)->strut.left_start_y || (c)->strut.left_end_y || (c)->strut.left) \
+		{ \
+			if((c)->strut.left) \
+				left = MAX(left, (c)->strut.left); \
+			else \
+				left = MAX(left, ((c)->geometry.x - new_workarea.x) + (c)->geometry.width); \
+		} \
+		if((c)->strut.right_start_y || (c)->strut.right_end_y || (c)->strut.right) \
+		{ \
+			if((c)->strut.right) \
+				right = MAX(right, (c)->strut.right); \
+			else \
+				right = MAX(right, (new_workarea.x + new_workarea.width) - (c)->geometry.x); \
+		} \
+	}
+
+	foreach(c, globalconf.clients)
+		if((*c)->screen == screen && client_isvisible(*c))
+			COMPUTE_CLIENT_STRUT(*c)
+
+#undef COMPUTE_CLIENT_STRUT
+
+	/* Aggregate struts from ALL visible drawins on this screen */
+#define COMPUTE_DRAWIN_STRUT(d) \
+	{ \
+		if((d)->strut.top_start_x || (d)->strut.top_end_x || (d)->strut.top) \
+		{ \
+			if((d)->strut.top) \
+				top = MAX(top, (d)->strut.top); \
+			else \
+				top = MAX(top, ((d)->y - new_workarea.y) + (d)->height); \
+		} \
+		if((d)->strut.bottom_start_x || (d)->strut.bottom_end_x || (d)->strut.bottom) \
+		{ \
+			if((d)->strut.bottom) \
+				bottom = MAX(bottom, (d)->strut.bottom); \
+			else \
+				bottom = MAX(bottom, (new_workarea.y + new_workarea.height) - (d)->y); \
+		} \
+		if((d)->strut.left_start_y || (d)->strut.left_end_y || (d)->strut.left) \
+		{ \
+			if((d)->strut.left) \
+				left = MAX(left, (d)->strut.left); \
+			else \
+				left = MAX(left, ((d)->x - new_workarea.x) + (d)->width); \
+		} \
+		if((d)->strut.right_start_y || (d)->strut.right_end_y || (d)->strut.right) \
+		{ \
+			if((d)->strut.right) \
+				right = MAX(right, (d)->strut.right); \
+			else \
+				right = MAX(right, (new_workarea.x + new_workarea.width) - (d)->x); \
+		} \
+	}
+
+	foreach(d, globalconf.drawins)
+		if((*d)->visible && (*d)->screen == screen)
+			COMPUTE_DRAWIN_STRUT(*d)
+
+#undef COMPUTE_DRAWIN_STRUT
+
+	/* Apply struts to workarea */
+	new_workarea.x += left;
+	new_workarea.y += top;
+	new_workarea.width -= MIN(new_workarea.width, left + right);
+	new_workarea.height -= MIN(new_workarea.height, top + bottom);
+
+	/* Update the screen's workarea (will emit signal if changed) */
+	luaA_screen_update_workarea(L, screen, &new_workarea);
+}
+
 /** Update screen geometry from monitor and emit property::geometry if changed
  * \param L Lua state
  * \param screen Screen to update
@@ -502,8 +612,11 @@ luaA_screen_update_geometry(lua_State *L, screen_t *screen)
 		luaA_object_emit_signal(L, -2, "property::geometry", 1);
 		lua_pop(L, 1);  /* Pop screen object */
 
-		/* Also update workarea to match new geometry (will emit its own signal) */
-		luaA_screen_update_workarea(L, screen, &new_geom);
+		/* Recalculate workarea including drawin struts.
+		 * We pass NULL as drawin since we want to recalculate for ALL drawins
+		 * on this screen, not just one specific drawin. The function will
+		 * iterate through globalconf.drawins to find all visible ones. */
+		luaA_screen_recalculate_workarea(L, screen);
 	}
 }
 
@@ -1304,6 +1417,58 @@ static int luaA_screen_get_managed_prop(lua_State *L, screen_t *s) {
 	return luaA_screen_get_managed(L);
 }
 
+/** Get current output scale for this screen.
+ * \param L The Lua state.
+ * \param s The screen object.
+ * \return Number of values pushed on stack (1).
+ */
+static int luaA_screen_get_scale(lua_State *L, screen_t *s)
+{
+	if (s && s->monitor && s->monitor->wlr_output) {
+		lua_pushnumber(L, s->monitor->wlr_output->scale);
+	} else {
+		lua_pushnumber(L, 1.0);
+	}
+	return 1;
+}
+
+/** Set output scale for this screen.
+ * This uses wlr_output_state to apply fractional scaling.
+ * Apps that support wp_fractional_scale_v1 will render at native resolution.
+ *
+ * \param L The Lua state.
+ * \param s The screen object.
+ * \return Number of values pushed on stack (0).
+ */
+static int luaA_screen_set_scale(lua_State *L, screen_t *s)
+{
+	float scale = luaL_checknumber(L, -1);
+
+	/* Sanity check - wlroots accepts 0.1 to 10.0 range */
+	if (scale < 0.1 || scale > 10.0) {
+		luaL_error(L, "scale must be between 0.1 and 10.0, got %f", scale);
+		return 0;
+	}
+
+	if (!s || !s->monitor || !s->monitor->wlr_output) {
+		return 0;
+	}
+
+	struct wlr_output *output = s->monitor->wlr_output;
+	struct wlr_output_state state;
+
+	wlr_output_state_init(&state);
+	wlr_output_state_set_scale(&state, scale);
+
+	if (wlr_output_commit_state(output, &state)) {
+		/* Emit property::scale signal on success */
+		luaA_object_emit_signal(L, 1, "property::scale", 0);
+	}
+
+	wlr_output_state_finish(&state);
+	return 0;
+}
+
 /* ========================================================================
  * Screen Lua API - global functions
  * ======================================================================== */
@@ -1858,6 +2023,10 @@ luaA_screen_index(lua_State *L)
 		lua_pushboolean(L, screen->valid);
 		return 1;
 	}
+	if (strcmp(key, "scale") == 0) {
+		screen_t *screen = luaA_checkscreen(L, 1);
+		return luaA_screen_get_scale(L, screen);
+	}
 
 	/* Check for _private table (AwesomeWM compatibility) */
 	if (strcmp(key, "_private") == 0) {
@@ -1934,6 +2103,14 @@ luaA_screen_newindex(lua_State *L)
 			lua_pop(L, 1);  /* Pop screen object */
 		}
 
+		return 0;
+	}
+
+	/* Handle scale property */
+	if (strcmp(key, "scale") == 0) {
+		lua_pushvalue(L, 3);  /* Push value to top where setter expects it */
+		luaA_screen_set_scale(L, screen);
+		lua_pop(L, 1);
 		return 0;
 	}
 
@@ -2266,4 +2443,8 @@ screen_class_setup(lua_State *L)
 	                        NULL,
 	                        (lua_class_propfunc_t) luaA_screen_get_content,
 	                        NULL);
+	luaA_class_add_property(&screen_class, "scale",
+	                        (lua_class_propfunc_t) luaA_screen_set_scale,
+	                        (lua_class_propfunc_t) luaA_screen_get_scale,
+	                        (lua_class_propfunc_t) luaA_screen_set_scale);
 }

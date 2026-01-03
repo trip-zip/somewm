@@ -9,6 +9,8 @@
 
 #define _GNU_SOURCE
 #include "drawable.h"
+#include "drawin.h"
+#include "screen.h"
 #include "luaa.h"
 #include "../util.h"
 #include "../x11_compat.h"
@@ -17,6 +19,7 @@
 
 #include <stdlib.h>
 #include <string.h>
+#include <math.h>
 #include <lauxlib.h>
 #include <wlr/types/wlr_buffer.h>
 #include <wlr/interfaces/wlr_buffer.h>
@@ -39,6 +42,32 @@ LUA_OBJECT_FUNCS(drawable_class, drawable_t, drawable)
 #ifndef MFD_ALLOW_SEALING
 #define MFD_ALLOW_SEALING 0x0002U
 #endif
+
+/* ============================================================================
+ * HiDPI Support
+ * ============================================================================
+ *
+ * Get the output scale factor for a drawable based on its owner (drawin/client).
+ * Used to create Cairo surfaces at native resolution for sharp rendering.
+ */
+static float
+drawable_get_scale(drawable_t *d)
+{
+	if (!d)
+		return 1.0f;
+
+	/* Get scale from owner's screen */
+	if (d->owner_type == DRAWABLE_OWNER_DRAWIN && d->owner.drawin) {
+		drawin_t *drawin = d->owner.drawin;
+		if (drawin->screen && drawin->screen->monitor &&
+		    drawin->screen->monitor->wlr_output) {
+			return drawin->screen->monitor->wlr_output->scale;
+		}
+	}
+	/* TODO: Handle DRAWABLE_OWNER_CLIENT for titlebars */
+
+	return 1.0f;
+}
 
 /* ============================================================================
  * SHM Buffer Implementation
@@ -303,12 +332,14 @@ drawable_create_buffer(drawable_t *d)
 	/* Ensure Cairo surface is flushed */
 	cairo_surface_flush(d->surface);
 
-	/* Get Cairo surface data */
+	/* Get Cairo surface data and actual dimensions (may be scaled for HiDPI) */
 	cairo_data = cairo_image_surface_get_data(d->surface);
 	cairo_stride = cairo_image_surface_get_stride(d->surface);
+	int surface_width = cairo_image_surface_get_width(d->surface);
+	int surface_height = cairo_image_surface_get_height(d->surface);
 
-	/* Use the generic buffer creation function */
-	return drawable_create_buffer_from_data(d->geometry.width, d->geometry.height, cairo_data, cairo_stride);
+	/* Use actual surface dimensions (includes HiDPI scaling) */
+	return drawable_create_buffer_from_data(surface_width, surface_height, cairo_data, cairo_stride);
 }
 
 /* ============================================================================
@@ -456,9 +487,17 @@ drawable_set_geometry(lua_State *L, int didx, area_t geom)
 	/* Create new surface if dimensions are valid and size changed */
 	if (area_changed && geom.width > 0 && geom.height > 0 &&
 	    (old.width != geom.width || old.height != geom.height)) {
+		/* Get scale for HiDPI support */
+		float scale = drawable_get_scale(d);
+		int scaled_width = (int)ceilf(geom.width * scale);
+		int scaled_height = (int)ceilf(geom.height * scale);
+
 		d->surface = cairo_image_surface_create(CAIRO_FORMAT_ARGB32,
-		                                         geom.width, geom.height);
+		                                         scaled_width, scaled_height);
 		if (cairo_surface_status(d->surface) == CAIRO_STATUS_SUCCESS) {
+			/* Set device scale so Cairo draws in logical coordinates */
+			cairo_surface_set_device_scale(d->surface, scale, scale);
+
 			/* Clear surface to transparent black.
 			 * Cairo should initialize ARGB32 surfaces to transparent, but
 			 * we do this explicitly to ensure no garbage alpha values. */
@@ -522,12 +561,20 @@ luaA_drawable_set_geometry(lua_State *L, int didx, int x, int y, int width, int 
 
 		/* Create new surface if we have valid dimensions */
 		if (width > 0 && height > 0) {
-			/* Create Cairo image surface for CPU rendering */
-			d->surface = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, width, height);
+			/* Get scale for HiDPI support */
+			float scale = drawable_get_scale(d);
+			int scaled_width = (int)ceilf(width * scale);
+			int scaled_height = (int)ceilf(height * scale);
+
+			/* Create Cairo image surface at scaled resolution */
+			d->surface = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, scaled_width, scaled_height);
 			if (cairo_surface_status(d->surface) != CAIRO_STATUS_SUCCESS) {
 				cairo_surface_destroy(d->surface);
 				d->surface = NULL;
 			} else {
+				/* Set device scale so Cairo draws in logical coordinates */
+				cairo_surface_set_device_scale(d->surface, scale, scale);
+
 				/* Clear surface to transparent black.
 				 * Cairo should initialize ARGB32 surfaces to transparent, but
 				 * we do this explicitly to ensure no garbage alpha values. */
