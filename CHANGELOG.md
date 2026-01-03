@@ -6,6 +6,13 @@ All notable changes to somewm will be documented in this file.
 
 ### Breaking Changes
 
+- **Build system migrated to meson** (#117):
+  - Now requires `meson` and `ninja` to build
+  - wlroots 0.19 is bundled and built automatically (no need to install separately)
+  - `config.mk` removed - use `meson configure build` to change options
+  - Old make targets removed: `install-local`, `install-session`, `uninstall-local`, `uninstall-session`
+  - Build commands unchanged: `make` and `sudo make install` still work
+
 - **CLI flags changed for AwesomeWM compatibility** (#4):
   - `-c` now specifies config file (was `-C`)
   - `-k` now runs config check (was `-c`)
