@@ -212,6 +212,8 @@ add_project_arguments(
   '-Wno-unused-parameter',
   '-Wshadow',
   '-Wunused-macros',
+  '-Wstringop-truncation',
+  '-Wformat-truncation',
   # Note: -Wfloat-conversion omitted because dbus.c needs it disabled
   language: 'c',
 )
