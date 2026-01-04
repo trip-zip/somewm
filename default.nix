@@ -18,6 +18,7 @@ pkgs.stdenv.mkDerivation {
     meson
     ninja
     pkg-config
+    wayland-scanner
     gobject-introspection  # Required for lgi typelib discovery
     makeWrapper
   ];
@@ -35,8 +36,8 @@ pkgs.stdenv.mkDerivation {
     xorg.xcbutil
     libxkbcommon
     pango
+    harfbuzz
     wayland
-    wayland-scanner
     wayland-protocols
     wlroots_0_19
     xwayland
@@ -66,6 +67,7 @@ pkgs.stdenv.mkDerivation {
       --prefix GI_TYPELIB_PATH : "${pkgs.glib.out}/lib/girepository-1.0" \
       --prefix GI_TYPELIB_PATH : "${pkgs.gtk3}/lib/girepository-1.0" \
       --prefix GI_TYPELIB_PATH : "${pkgs.gobject-introspection}/lib/girepository-1.0" \
+      --prefix GI_TYPELIB_PATH : "$GI_TYPELIB_PATH" \
       --add-flags "--search ${luaEnv}/share/lua/5.1" \
       --add-flags "--search ${luaEnv}/lib/lua/5.1"
   '';
