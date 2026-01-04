@@ -91,7 +91,15 @@ ipc_init(struct wl_event_loop *event_loop)
 
 	/* Bind to path */
 	addr.sun_family = AF_UNIX;
-	strncpy(addr.sun_path, ipc_socket_path, sizeof(addr.sun_path) - 1);
+	size_t path_len = strlen(ipc_socket_path);
+	if (path_len >= sizeof(addr.sun_path)) {
+		fprintf(stderr, "IPC: Socket path too long (%zu >= %zu)\n",
+		        path_len, sizeof(addr.sun_path));
+		close(ipc_socket_fd);
+		ipc_socket_fd = -1;
+		return -1;
+	}
+	memcpy(addr.sun_path, ipc_socket_path, path_len + 1);
 
 	if (bind(ipc_socket_fd, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
 		fprintf(stderr, "IPC: Failed to bind socket to %s: %s\n",
