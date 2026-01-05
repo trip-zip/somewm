@@ -70,7 +70,7 @@ else
   have_xwayland = false
 endif
 
-# Lua detection - try LuaJIT first, then fall back through versions
+# Lua detection - LuaJIT preferred, then 5.4 > 5.3 > 5.2 > 5.1
 lua_dep = dependency('luajit', required: false)
 if not lua_dep.found()
   lua_dep = dependency('lua5.4', required: false)
