@@ -762,8 +762,8 @@ buttonpress(struct wl_listener *listener, void *data)
 		int idx = -1;
 		switch (event->button) {
 		case 0x110: idx = 0; break;  /* BTN_LEFT -> button 1 */
-		case 0x111: idx = 1; break;  /* BTN_RIGHT -> button 2 */
-		case 0x112: idx = 2; break;  /* BTN_MIDDLE -> button 3 */
+		case 0x112: idx = 1; break;  /* BTN_MIDDLE -> button 2 */
+		case 0x111: idx = 2; break;  /* BTN_RIGHT -> button 3 */
 		case 0x113: idx = 3; break;  /* BTN_SIDE -> button 4 */
 		case 0x114: idx = 4; break;  /* BTN_EXTRA -> button 5 */
 		}
