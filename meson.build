@@ -192,7 +192,7 @@ add_project_arguments(
   '-D_POSIX_C_SOURCE=200809L',
   '-DVERSION="' + version + '"',
   '-DCOMMIT_DATE="' + commit_date + '"',
-  '-DDATADIR="' + get_option('datadir') + '"',
+  '-DDATADIR="' + get_option('prefix') / get_option('datadir') + '"',
   '-DSYSCONFDIR="' + get_option('sysconfdir') + '"',
   '-DWLROOTS_VERSION="' + wlroots_version + '"',
   '-DLGI_VERSION="' + lgi_version + '"',
