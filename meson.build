@@ -106,19 +106,20 @@ if not lua_dep.found()
   lua_dep = dependency('lua', required: true)
 endif
 
-# LGI detection - verify lgi is installed for the detected Lua version
-lua_exe = find_program('luajit', 'lua5.4', 'lua5.3', 'lua5.2', 'lua5.1', 'lua', required: true)
-lgi_check_script = files('scripts/check-lgi.lua')
-
-lgi_result = run_command(lua_exe, lgi_check_script, check: false)
-if lgi_result.returncode() != 0
+# LGI detection - compile and run lgi-check.c to verify lgi is installed
+# This approach only requires the Lua library, not the interpreter executable
+lgi_check_result = cc.run(files('lgi-check.c'), dependencies: [lua_dep], name: 'LGI check')
+if lgi_check_result.returncode() != 0
   error('LGI (Lua GObject Introspection) not found for ' + lua_dep.name() + '.\n' +
+        lgi_check_result.stderr() + '\n' +
         'Install the matching lgi package:\n' +
         '  Arch Linux: sudo pacman -S lua-lgi (Lua 5.4) or lua51-lgi (LuaJIT)\n' +
         '  Debian/Ubuntu: sudo apt install lua-lgi\n' +
         '  Fedora: sudo dnf install lua-lgi')
 endif
-lgi_version = lgi_result.stdout().strip()
+# Parse lgi version from output (format: "Found lgi X.Y.Z")
+lgi_output = lgi_check_result.stdout().strip()
+lgi_version = lgi_output.split('Found lgi ')[-1].split('\n')[0]
 message('Found LGI version: ' + lgi_version)
 
 # wlroots 0.19 only - use system if available, otherwise build from subproject
@@ -197,7 +198,7 @@ add_project_arguments(
   '-D_POSIX_C_SOURCE=200809L',
   '-DVERSION="' + version + '"',
   '-DCOMMIT_DATE="' + commit_date + '"',
-  '-DDATADIR="' + get_option('datadir') + '"',
+  '-DDATADIR="' + get_option('prefix') / get_option('datadir') + '"',
   '-DSYSCONFDIR="' + get_option('sysconfdir') + '"',
   '-DWLROOTS_VERSION="' + wlroots_version + '"',
   '-DLGI_VERSION="' + lgi_version + '"',
@@ -217,6 +218,8 @@ add_project_arguments(
   '-Wno-unused-parameter',
   '-Wshadow',
   '-Wunused-macros',
+  '-Wstringop-truncation',
+  '-Wformat-truncation',
   # Note: -Wfloat-conversion omitted because dbus.c needs it disabled
   language: 'c',
 )
@@ -316,17 +319,6 @@ somewm_client = executable(
   'somewm-client',
   'somewm-client.c',
   install: true,
-)
-
-# ==============================================================================
-# LGI Check (build-time verification)
-# ==============================================================================
-
-lgi_check = executable(
-  'lgi-check',
-  'lgi-check.c',
-  dependencies: lua_dep,
-  build_by_default: false,
 )
 
 # ==============================================================================

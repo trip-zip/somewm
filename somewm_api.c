@@ -1270,8 +1270,8 @@ some_set_cursor_position(double x, double y, int silent)
 
 /*
  * Get mouse button states
- * Returns pressed state for buttons 1-5 (left, right, middle, side1, side2)
- * Button mapping: BTN_LEFT=1, BTN_RIGHT=2, BTN_MIDDLE=3, BTN_SIDE=4, BTN_EXTRA=5
+ * Returns pressed state for buttons 1-5 (left, middle, right, side1, side2)
+ * Button mapping: BTN_LEFT=1, BTN_MIDDLE=2, BTN_RIGHT=3, BTN_SIDE=4, BTN_EXTRA=5
  *
  * NOTE: We use globalconf.button_state which is tracked in buttonpress(),
  * NOT seat->pointer_state. This is critical for mousegrabber to work correctly.

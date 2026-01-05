@@ -1755,6 +1755,76 @@ local function register_builtin_commands()
     return tostring(capi.screen.count())
   end)
 
+  --- screen.scale [screen] [value] - Get or set screen scale
+  --- Examples:
+  ---   screen scale           - Get scale of focused screen
+  ---   screen scale 1         - Get scale of screen 1
+  ---   screen scale 1.5       - Set scale of focused screen to 1.5
+  ---   screen scale 1 1.5     - Set scale of screen 1 to 1.5
+  ipc.register("screen.scale", function(arg1, arg2)
+    local s, scale_value
+
+    -- Parse arguments
+    if arg1 and arg2 then
+      -- Both provided: arg1 is screen, arg2 is scale
+      local screen_idx = tonumber(arg1)
+      if not screen_idx then
+        error("Invalid screen index: " .. tostring(arg1))
+      end
+      s = capi.screen[screen_idx]
+      if not s then
+        error("Screen not found: " .. tostring(arg1))
+      end
+      scale_value = tonumber(arg2)
+      if not scale_value then
+        error("Invalid scale value: " .. tostring(arg2))
+      end
+    elseif arg1 then
+      -- One argument: could be screen index or scale value
+      local num = tonumber(arg1)
+      if not num then
+        error("Invalid argument: " .. tostring(arg1))
+      end
+      -- If it looks like a scale (has decimal or > 5), treat as scale for focused screen
+      -- Otherwise treat as screen index
+      if num > 5 or (arg1:find("%.") ~= nil) then
+        s = awful_screen.focused()
+        scale_value = num
+      else
+        -- Could be screen index or integer scale - check if screen exists
+        local potential_screen = capi.screen[math.floor(num)]
+        if potential_screen and num == math.floor(num) then
+          -- It's a valid screen index, just get its scale
+          s = potential_screen
+          scale_value = nil
+        else
+          -- Treat as scale value for focused screen
+          s = awful_screen.focused()
+          scale_value = num
+        end
+      end
+    else
+      -- No arguments: get scale of focused screen
+      s = awful_screen.focused()
+    end
+
+    if not s then
+      error("No screen available")
+    end
+
+    if scale_value then
+      -- Set scale
+      if scale_value < 0.1 or scale_value > 10.0 then
+        error("Scale must be between 0.1 and 10.0")
+      end
+      s.scale = scale_value
+      return string.format("Screen %d scale set to %.2f", s.index, s.scale)
+    else
+      -- Get scale
+      return string.format("%.2f", s.scale)
+    end
+  end)
+
   --- screen.clients <screen_id> - List clients on a specific screen
   ipc.register("screen.clients", function(screen_id)
     if not screen_id then

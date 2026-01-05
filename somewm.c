@@ -762,8 +762,8 @@ buttonpress(struct wl_listener *listener, void *data)
 		int idx = -1;
 		switch (event->button) {
 		case 0x110: idx = 0; break;  /* BTN_LEFT -> button 1 */
-		case 0x111: idx = 1; break;  /* BTN_RIGHT -> button 2 */
-		case 0x112: idx = 2; break;  /* BTN_MIDDLE -> button 3 */
+		case 0x112: idx = 1; break;  /* BTN_MIDDLE -> button 2 */
+		case 0x111: idx = 2; break;  /* BTN_RIGHT -> button 3 */
 		case 0x113: idx = 3; break;  /* BTN_SIDE -> button 4 */
 		case 0x114: idx = 4; break;  /* BTN_EXTRA -> button 5 */
 		}
@@ -1236,8 +1236,13 @@ commitnotify(struct wl_listener *listener, void *data)
 	resize(c, c->geometry, (some_client_get_floating(c) && !c->fullscreen));
 
 	/* mark a pending resize as completed */
-	if (c->resize && c->resize <= c->surface.xdg->current.configure_serial)
-		c->resize = 0;
+	if (c->resize) {
+		warn("commitnotify: resize=%u, commit_serial=%u, will_clear=%s",
+		     c->resize, c->surface.xdg->current.configure_serial,
+		     (c->resize <= c->surface.xdg->current.configure_serial) ? "yes" : "no");
+		if (c->resize <= c->surface.xdg->current.configure_serial)
+			c->resize = 0;
+	}
 
 	/* Re-apply opacity after wlroots' surface_reconfigure() resets it to 1.0.
 	 * Our listener fires after wlroots' because we registered it after
@@ -2922,6 +2927,8 @@ mapnotify(struct wl_listener *listener, void *data)
 		if (!target_mon)
 			target_mon = selmon;
 		setmon(c, target_mon, 0);
+		warn("mapnotify[1]: after setmon, geometry=%dx%d, resize=%u, titlebar_top=%d",
+		     c->geometry.width, c->geometry.height, c->resize, c->titlebar[CLIENT_TITLEBAR_TOP].size);
 
 		/* Push client to Lua stack for signal emission */
 		luaA_object_push(L, c);
@@ -2956,8 +2963,11 @@ mapnotify(struct wl_listener *listener, void *data)
 		 * Reset c->resize to force re-send configure even if setmon()->resize()
 		 * already sent one (unflushed). This ensures the configure is flushed
 		 * before we enable the scene node. */
+		warn("mapnotify[2]: before apply_geo, geometry=%dx%d, resize=%u, titlebar_top=%d",
+		     c->geometry.width, c->geometry.height, c->resize, c->titlebar[CLIENT_TITLEBAR_TOP].size);
 		c->resize = 0;
 		apply_geometry_to_wlroots(c);
+		warn("mapnotify[3]: after apply_geo, resize=%u", c->resize);
 
 		/* Flush configure event to client immediately so it receives the tiled
 		 * geometry before we make it visible. Without this, the configure is
@@ -3590,6 +3600,16 @@ apply_geometry_to_wlroots(Client *c)
 	 * CRITICAL: Only send configure if there's no pending resize waiting for client commit.
 	 * Without this check, we flood the client with configure events on every refresh cycle,
 	 * which crashes Firefox and other clients that can't handle rapid configure floods. */
+	/* Debug: only log when we WILL send a configure (not on every refresh) */
+	if (!c->resize) {
+		int content_w = c->geometry.width - 2 * c->bw - titlebar_left - c->titlebar[CLIENT_TITLEBAR_RIGHT].size;
+		int content_h = c->geometry.height - 2 * c->bw - titlebar_top - c->titlebar[CLIENT_TITLEBAR_BOTTOM].size;
+		int32_t current_w = c->surface.xdg->toplevel->current.width;
+		int32_t current_h = c->surface.xdg->toplevel->current.height;
+		if (content_w != current_w || content_h != current_h)
+			warn("apply_geo: SENDING configure, request=%dx%d, current=%dx%d",
+			     content_w, content_h, current_w, current_h);
+	}
 	if (!c->resize) {
 		c->resize = client_set_size(c,
 				c->geometry.width - 2 * c->bw - titlebar_left - c->titlebar[CLIENT_TITLEBAR_RIGHT].size,
@@ -4183,7 +4203,9 @@ setup(void)
 	 * The renderer is responsible for defining the various pixel formats it
 	 * supports for shared memory, this configures that for clients. */
 	if (!(drw = wlr_renderer_autocreate(backend)))
-		die("couldn't create renderer");
+		die("couldn't create renderer\n"
+			"Try setting WLR_RENDERER=gles2 or WLR_RENDERER=pixman\n"
+			"Run with WLR_DEBUG=1 for more details");
 	wl_signal_add(&drw->events.lost, &gpu_reset);
 
 	/* Create shm, drm and linux_dmabuf interfaces by ourselves.

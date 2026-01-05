@@ -46,6 +46,9 @@ typedef struct drawable_t {
 	/* Surface has been drawn to and is ready to display */
 	bool refreshed;
 
+	/* Scale factor the surface was created at (for HiDPI) */
+	float surface_scale;
+
 	/* Object validity flag - false when being garbage collected */
 	bool valid;
 
