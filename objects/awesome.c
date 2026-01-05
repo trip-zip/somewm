@@ -812,6 +812,26 @@ luaA_awesome_set_keyboard_setting(lua_State *L)
 	return 0;
 }
 
+/** Set the preferred size for client icons.
+ *
+ * The closest equal or bigger size is picked if present, otherwise the closest
+ * smaller size is picked. The default is 0 pixels, ie. the smallest icon.
+ *
+ * @tparam integer size The size of the icons in pixels.
+ * @staticfct set_preferred_icon_size
+ * @noreturn
+ */
+static int
+luaA_awesome_set_preferred_icon_size(lua_State *L)
+{
+	lua_Integer size = luaL_checkinteger(L, 1);
+	if (size < 0 || size > UINT32_MAX) {
+		return luaL_error(L, "icon size must be between 0 and %u", UINT32_MAX);
+	}
+	globalconf.preferred_icon_size = (uint32_t)size;
+	return 0;
+}
+
 /* awesome module methods */
 static const luaL_Reg awesome_methods[] = {
 	{ "quit", luaA_awesome_quit },
@@ -833,6 +853,7 @@ static const luaL_Reg awesome_methods[] = {
 	{ "sync", luaA_awesome_sync },
 	{ "_set_input_setting", luaA_awesome_set_input_setting },
 	{ "_set_keyboard_setting", luaA_awesome_set_keyboard_setting },
+	{ "set_preferred_icon_size", luaA_awesome_set_preferred_icon_size },
 	{ NULL, NULL }
 };
 
