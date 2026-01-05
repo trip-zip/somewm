@@ -4203,7 +4203,9 @@ setup(void)
 	 * The renderer is responsible for defining the various pixel formats it
 	 * supports for shared memory, this configures that for clients. */
 	if (!(drw = wlr_renderer_autocreate(backend)))
-		die("couldn't create renderer");
+		die("couldn't create renderer\n"
+			"Try setting WLR_RENDERER=gles2 or WLR_RENDERER=pixman\n"
+			"Run with WLR_DEBUG=1 for more details");
 	wl_signal_add(&drw->events.lost, &gpu_reset);
 
 	/* Create shm, drm and linux_dmabuf interfaces by ourselves.
