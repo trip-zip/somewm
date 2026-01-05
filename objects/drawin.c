@@ -13,6 +13,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <math.h>
 #include <wlr/types/wlr_scene.h>
 #include <wlr/types/wlr_output.h>
 #include <wlr/render/allocator.h>
@@ -271,18 +272,27 @@ drawin_apply_shape_mask(drawable_t *d, cairo_surface_t *shape)
 	dst_stride = cairo_image_surface_get_stride(dst);
 	shape_stride = cairo_image_surface_get_stride(shape);
 
-	/* Copy pixels, zeroing alpha where shape bit is 0 */
+	/* Copy pixels, zeroing alpha where shape bit is 0.
+	 * Note: The shape surface may be at logical scale while the source
+	 * surface is at physical (HiDPI) scale. We need to scale coordinates
+	 * when looking up shape bits. */
 	for (y = 0; y < height; y++) {
 		uint32_t *src_row = (uint32_t *)(src_data + y * src_stride);
 		uint32_t *dst_row = (uint32_t *)(dst_data + y * dst_stride);
 
+		/* Map physical y to logical shape y */
+		int shape_y = (shape_height > 0) ? (y * shape_height / height) : 0;
+
 		for (x = 0; x < width; x++) {
 			bool visible = true;
 
+			/* Map physical x to logical shape x */
+			int shape_x = (shape_width > 0) ? (x * shape_width / width) : 0;
+
 			/* Check if this pixel is within shape bounds */
-			if (x < shape_width && y < shape_height) {
-				int byte_offset = (y * shape_stride) + (x / 8);
-				int bit_offset = x % 8;
+			if (shape_x < shape_width && shape_y < shape_height) {
+				int byte_offset = (shape_y * shape_stride) + (shape_x / 8);
+				int bit_offset = shape_x % 8;
 				visible = (shape_data[byte_offset] >> bit_offset) & 1;
 			} else {
 				/* Outside shape = transparent */
@@ -1128,11 +1138,27 @@ drawin_moveresize(lua_State *L, int udx, int x, int y, int width, int height)
 
 			/* Create new surface if we have valid dimensions */
 			if (drawin->width > 0 && drawin->height > 0) {
-				d->surface = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, drawin->width, drawin->height);
+				/* Get scale for HiDPI support - use actual output scale.
+				 * Use floorf to match what Cairo will actually draw with device_scale. */
+				float scale = 1.0f;
+				if (drawin->screen && drawin->screen->monitor &&
+				    drawin->screen->monitor->wlr_output) {
+					scale = drawin->screen->monitor->wlr_output->scale;
+				}
+				int scaled_width = (int)floorf(drawin->width * scale);
+				int scaled_height = (int)floorf(drawin->height * scale);
+				if (scaled_width < 1) scaled_width = 1;
+				if (scaled_height < 1) scaled_height = 1;
+
+				d->surface = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, scaled_width, scaled_height);
 				if (cairo_surface_status(d->surface) != CAIRO_STATUS_SUCCESS) {
 					cairo_surface_destroy(d->surface);
 					d->surface = NULL;
 				} else {
+					/* Set device scale so Cairo draws in logical coordinates */
+					cairo_surface_set_device_scale(d->surface, scale, scale);
+					d->surface_scale = scale;
+
 					/* Emit property::surface signal on drawable
 					 * AwesomeWM pattern: push from drawin's uservalue table */
 					luaA_object_push_item(L, udx, drawin->drawable);
@@ -1227,9 +1253,27 @@ drawin_set_visible(lua_State *L, int udx, bool v)
 
 		/* Ensure drawable has surface before signal (AwesomeWM drawin.c:343-344)
 		 * This is critical: Lua's do_redraw() needs a surface to draw to.
-		 * Without this, the refresh callback never fires and popups don't show. */
-		if (drawin->drawable && !drawin->drawable->surface)
-			drawin_update_drawing(L, udx);
+		 * Without this, the refresh callback never fires and popups don't show.
+		 *
+		 * Also check if scale has changed since surface was created. This handles
+		 * on-demand popups (launcher, menubar, hotkeys_popup) that weren't visible
+		 * when scale changed - they need surface recreation when shown. */
+		if (drawin->drawable) {
+			drawable_t *d = drawin->drawable;
+			float current_scale = 1.0f;
+			if (drawin->screen && drawin->screen->monitor &&
+			    drawin->screen->monitor->wlr_output) {
+				current_scale = drawin->screen->monitor->wlr_output->scale;
+			}
+
+			/* Recreate surface if: no surface, scale unknown (0), or scale changed */
+			bool need_recreate = !d->surface ||
+			                     d->surface_scale == 0 ||
+			                     d->surface_scale != current_scale;
+			if (need_recreate) {
+				drawin_update_drawing(L, udx);
+			}
+		}
 	} else {
 		/* Unregister from object registry (AwesomeWM drawin.c:402) */
 		luaA_object_unref(L, drawin);

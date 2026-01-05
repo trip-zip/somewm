@@ -549,6 +549,57 @@ screen.connect_signal("property::geometry", draw_all)
 screen.connect_signal("added", draw_all)
 screen.connect_signal("removed", draw_all)
 
+-- When screen scale changes, force all visible drawables to recreate their
+-- surfaces at the new scale. This is done by re-setting their geometry,
+-- which triggers the C-side scale detection and surface recreation.
+screen.connect_signal("property::scale", function(s)
+    print("[drawable.lua] property::scale received for screen " .. tostring(s.index))
+
+    -- Method 1: Iterate visible_drawables
+    local count = 0
+    for d in pairs(visible_drawables) do
+        count = count + 1
+        local cd = d.drawable
+        if cd and cd.surface then
+            local geo = cd:geometry()
+            print("[drawable.lua] visible_drawable: " .. geo.width .. "x" .. geo.height)
+            if geo.width > 0 and geo.height > 0 then
+                cd:geometry(geo)
+            end
+        end
+    end
+    print("[drawable.lua] Processed " .. count .. " visible_drawables")
+
+    -- Method 2: Also check screen's mywibox (wibar) if it exists
+    if s.mywibox then
+        print("[drawable.lua] Found screen.mywibox")
+        local w = s.mywibox
+        if w._drawable and w._drawable.drawable then
+            local cd = w._drawable.drawable
+            local geo = cd:geometry()
+            print("[drawable.lua] mywibox drawable: " .. geo.width .. "x" .. geo.height)
+            if geo.width > 0 and geo.height > 0 then
+                cd:geometry(geo)
+            end
+        end
+    end
+
+    -- Method 3: Check all drawins via root.drawins()
+    local drawins = root.drawins and root.drawins()
+    if drawins then
+        print("[drawable.lua] Checking " .. #drawins .. " drawins from root.drawins()")
+        for _, d in ipairs(drawins) do
+            if d.drawable then
+                local geo = d.drawable:geometry()
+                print("[drawable.lua] root.drawin: " .. geo.width .. "x" .. geo.height)
+                if geo.width > 0 and geo.height > 0 then
+                    d.drawable:geometry(geo)
+                end
+            end
+        end
+    end
+end)
+
 return setmetatable(drawable, { __call = function(_, ...) return drawable.new(...) end })
 
 -- vim: filetype=lua:expandtab:shiftwidth=4:tabstop=8:softtabstop=4:textwidth=80

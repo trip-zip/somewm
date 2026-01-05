@@ -11,6 +11,7 @@
 #include "drawable.h"
 #include "drawin.h"
 #include "screen.h"
+#include "client.h"
 #include "luaa.h"
 #include "../util.h"
 #include "../x11_compat.h"
@@ -56,15 +57,26 @@ drawable_get_scale(drawable_t *d)
 	if (!d)
 		return 1.0f;
 
-	/* Get scale from owner's screen */
+	/* Get scale from owner's screen.
+	 * For fractional scales (e.g., 1.2x), we round up to the next integer.
+	 * This preserves Cairo's font hinting quality (which works best at integer
+	 * scales), and wlroots will downscale to the actual output scale when
+	 * displaying. This is the same approach used by GNOME, KDE, and Sway. */
+	screen_t *screen = NULL;
+
 	if (d->owner_type == DRAWABLE_OWNER_DRAWIN && d->owner.drawin) {
-		drawin_t *drawin = d->owner.drawin;
-		if (drawin->screen && drawin->screen->monitor &&
-		    drawin->screen->monitor->wlr_output) {
-			return drawin->screen->monitor->wlr_output->scale;
-		}
+		screen = d->owner.drawin->screen;
+	} else if (d->owner_type == DRAWABLE_OWNER_CLIENT && d->owner.client) {
+		screen = d->owner.client->screen;
 	}
-	/* TODO: Handle DRAWABLE_OWNER_CLIENT for titlebars */
+
+	if (screen && screen->monitor && screen->monitor->wlr_output) {
+		float output_scale = screen->monitor->wlr_output->scale;
+		/* Use actual output scale so buffer exactly matches physical output size.
+		 * This avoids scaling artifacts - buffer pixels map 1:1 to output pixels.
+		 * Font hinting may not be perfect at fractional scales, but display is correct. */
+		return output_scale;
+	}
 
 	return 1.0f;
 }
@@ -245,7 +257,6 @@ drawable_create_buffer_from_data(int width, int height, const void *cairo_data, 
 	void *data;
 
 	if (!cairo_data || width <= 0 || height <= 0) {
-		fprintf(stderr, "drawable_create_buffer_from_data: invalid parameters\n");
 		return NULL;
 	}
 
@@ -372,6 +383,7 @@ luaA_drawable_allocator(lua_State *L, drawable_refresh_callback callback, void *
 	d->valid = true;  /* Drawable is valid when created */
 	d->surface = NULL;
 	d->buffer = NULL;
+	d->surface_scale = 0.0f;  /* Will be set when surface is created */
 	d->geometry.width = 0;
 	d->geometry.height = 0;
 	d->geometry.x = 0;
@@ -458,7 +470,7 @@ luaA_todrawable(lua_State *L, int idx)
  * ============================================================================ */
 
 /** Set drawable geometry
- * When geometry changes, the surface needs to be recreated
+ * When geometry or scale changes, the surface needs to be recreated
  */
 /** Set drawable geometry (AwesomeWM pattern - area_t parameter) */
 void
@@ -467,12 +479,17 @@ drawable_set_geometry(lua_State *L, int didx, area_t geom)
 	drawable_t *d = luaA_checkudata(L, didx, &drawable_class);
 	area_t old = d->geometry;
 	bool area_changed;
+	float scale = drawable_get_scale(d);
+	bool scale_changed = (d->surface_scale != scale);
 
 	d->geometry = geom;
 	area_changed = !wlr_box_equal(&old, &geom);
 
-	/* Clean up old surface if size changed */
-	if (area_changed && (old.width != geom.width || old.height != geom.height)) {
+	bool size_changed = (old.width != geom.width || old.height != geom.height);
+	bool need_new_surface = size_changed || scale_changed;
+
+	/* Clean up old surface if size or scale changed */
+	if (need_new_surface) {
 		if (d->surface) {
 			cairo_surface_finish(d->surface);
 			cairo_surface_destroy(d->surface);
@@ -484,19 +501,23 @@ drawable_set_geometry(lua_State *L, int didx, area_t geom)
 		}
 	}
 
-	/* Create new surface if dimensions are valid and size changed */
-	if (area_changed && geom.width > 0 && geom.height > 0 &&
-	    (old.width != geom.width || old.height != geom.height)) {
-		/* Get scale for HiDPI support */
-		float scale = drawable_get_scale(d);
-		int scaled_width = (int)ceilf(geom.width * scale);
-		int scaled_height = (int)ceilf(geom.height * scale);
+	/* Create new surface if dimensions are valid and surface needs recreation */
+	if (need_new_surface && geom.width > 0 && geom.height > 0) {
+		/* Get scale for HiDPI support.
+		 * Use floorf to match what Cairo will actually draw with device_scale.
+		 * Using ceilf creates extra pixels that Cairo won't fully draw to,
+		 * causing antialiased edges with wrong alpha values. */
+		int scaled_width = (int)floorf(geom.width * scale);
+		int scaled_height = (int)floorf(geom.height * scale);
+		if (scaled_width < 1) scaled_width = 1;
+		if (scaled_height < 1) scaled_height = 1;
 
 		d->surface = cairo_image_surface_create(CAIRO_FORMAT_ARGB32,
 		                                         scaled_width, scaled_height);
 		if (cairo_surface_status(d->surface) == CAIRO_STATUS_SUCCESS) {
 			/* Set device scale so Cairo draws in logical coordinates */
 			cairo_surface_set_device_scale(d->surface, scale, scale);
+			d->surface_scale = scale;
 
 			/* Clear surface to transparent black.
 			 * Cairo should initialize ARGB32 surfaces to transparent, but
@@ -561,10 +582,13 @@ luaA_drawable_set_geometry(lua_State *L, int didx, int x, int y, int width, int 
 
 		/* Create new surface if we have valid dimensions */
 		if (width > 0 && height > 0) {
-			/* Get scale for HiDPI support */
+			/* Get scale for HiDPI support.
+			 * Use floorf to match what Cairo will actually draw with device_scale. */
 			float scale = drawable_get_scale(d);
-			int scaled_width = (int)ceilf(width * scale);
-			int scaled_height = (int)ceilf(height * scale);
+			int scaled_width = (int)floorf(width * scale);
+			int scaled_height = (int)floorf(height * scale);
+			if (scaled_width < 1) scaled_width = 1;
+			if (scaled_height < 1) scaled_height = 1;
 
 			/* Create Cairo image surface at scaled resolution */
 			d->surface = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, scaled_width, scaled_height);
@@ -574,6 +598,7 @@ luaA_drawable_set_geometry(lua_State *L, int didx, int x, int y, int width, int 
 			} else {
 				/* Set device scale so Cairo draws in logical coordinates */
 				cairo_surface_set_device_scale(d->surface, scale, scale);
+				d->surface_scale = scale;  /* Track scale for recreation on change */
 
 				/* Clear surface to transparent black.
 				 * Cairo should initialize ARGB32 surfaces to transparent, but
@@ -586,7 +611,7 @@ luaA_drawable_set_geometry(lua_State *L, int didx, int x, int y, int width, int 
 			}
 			d->refreshed = false;
 
-			/* CRITICAL FIX: Emit property::surface signal (matches AwesomeWM drawable.c:155)
+			/* Emit property::surface signal (matches AwesomeWM drawable.c:155)
 			 * This notifies wibox/drawable.lua:413 to trigger widget repaint */
 			luaA_object_emit_signal(L, didx, "property::surface", 0);
 
@@ -598,8 +623,9 @@ luaA_drawable_set_geometry(lua_State *L, int didx, int x, int y, int width, int 
 	/* In AwesomeWM this would emit property::geometry, property::x, etc. */
 }
 
-/** Get drawable geometry
- * Returns table with {x=, y=, width=, height=}
+/** Get or set drawable geometry
+ * With no args: Returns table with {x=, y=, width=, height=}
+ * With table arg: Sets geometry and recreates surface if scale changed
  */
 static int
 luaA_drawable_geometry(lua_State *L)
@@ -609,6 +635,31 @@ luaA_drawable_geometry(lua_State *L)
 		return luaL_error(L, "expected drawable, got %s", lua_typename(L, lua_type(L, 1)));
 	}
 
+	/* If a table argument is provided, this is a setter */
+	if (lua_gettop(L) >= 2 && lua_istable(L, 2)) {
+		area_t geom = d->geometry;
+
+		lua_getfield(L, 2, "x");
+		if (!lua_isnil(L, -1)) geom.x = lua_tointeger(L, -1);
+		lua_pop(L, 1);
+
+		lua_getfield(L, 2, "y");
+		if (!lua_isnil(L, -1)) geom.y = lua_tointeger(L, -1);
+		lua_pop(L, 1);
+
+		lua_getfield(L, 2, "width");
+		if (!lua_isnil(L, -1)) geom.width = lua_tointeger(L, -1);
+		lua_pop(L, 1);
+
+		lua_getfield(L, 2, "height");
+		if (!lua_isnil(L, -1)) geom.height = lua_tointeger(L, -1);
+		lua_pop(L, 1);
+
+		/* Call drawable_set_geometry which handles scale detection */
+		drawable_set_geometry(L, 1, geom);
+	}
+
+	/* Return current geometry */
 	lua_createtable(L, 0, 4);
 	lua_pushinteger(L, d->geometry.x);
 	lua_setfield(L, -2, "x");

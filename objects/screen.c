@@ -1463,6 +1463,45 @@ static int luaA_screen_set_scale(lua_State *L, screen_t *s)
 	if (wlr_output_commit_state(output, &state)) {
 		/* Emit property::scale signal on success */
 		luaA_object_emit_signal(L, 1, "property::scale", 0);
+
+		/* Force all drawins on this screen to recreate their drawable surfaces
+		 * at the new scale. This ensures wiboxes, popups, etc. render sharply. */
+		fprintf(stderr, "[screen] Scale changed, checking %d drawins\n", globalconf.drawins.len);
+		foreach(d, globalconf.drawins) {
+			drawin_t *drawin = *d;
+			fprintf(stderr, "[screen] Drawin %dx%d, screen=%p, target=%p, drawable=%p\n",
+			        drawin->width, drawin->height, (void*)drawin->screen, (void*)s, (void*)drawin->drawable);
+			if (drawin->screen == s && drawin->drawable) {
+				/* Re-set geometry to trigger surface recreation with new scale */
+				luaA_object_push(L, drawin->drawable);
+				drawable_set_geometry(L, -1, (area_t) {
+					.x = drawin->x,
+					.y = drawin->y,
+					.width = drawin->width,
+					.height = drawin->height
+				});
+				lua_pop(L, 1);
+				fprintf(stderr, "[screen] Recreated drawable for drawin at %dx%d\n",
+				        drawin->width, drawin->height);
+			}
+		}
+
+		/* Also refresh client titlebars on this screen */
+		for (int i = 0; i < globalconf.clients.len; i++) {
+			client_t *c = globalconf.clients.tab[i];
+			if (c->screen == s) {
+				for (int tb = 0; tb < 4; tb++) {
+					if (c->titlebar[tb].drawable) {
+						drawable_t *d = c->titlebar[tb].drawable;
+						if (d->geometry.width > 0 && d->geometry.height > 0) {
+							luaA_object_push(L, d);
+							drawable_set_geometry(L, -1, d->geometry);
+							lua_pop(L, 1);
+						}
+					}
+				}
+			}
+		}
 	}
 
 	wlr_output_state_finish(&state);
