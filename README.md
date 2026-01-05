@@ -77,6 +77,18 @@ make asan         # Build with AddressSanitizer for debugging
 meson configure build  # View/change build options
 ```
 
+**Lua version:**
+
+somewm auto-detects Lua in this order: **LuaJIT > Lua 5.4 > 5.3 > 5.2 > 5.1**
+
+To use a specific version, set `PKG_CONFIG_PATH` before configuring:
+```bash
+# Example: Force Lua 5.4 instead of LuaJIT
+PKG_CONFIG_PATH=/usr/lib/pkgconfig/lua5.4 meson setup build
+```
+
+Your `rc.lua` must be compatible with the detected Lua version.
+
 ### 3. Run
 
 From your display manager, select "somewm" as your session.
