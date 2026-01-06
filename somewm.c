@@ -79,6 +79,7 @@
 #include "common/util.h"
 #include "somewm_types.h"
 #include "somewm_api.h"
+#include "xkb.h"
 #include "stack.h"
 #include "wlr_compat.h"
 #include "globalconf.h"        /* Global configuration structure (AwesomeWM pattern) */
@@ -2666,7 +2667,7 @@ keypressmod(struct wl_listener *listener, void *data)
 
 	if (current_group != globalconf.xkb.last_group) {
 		globalconf.xkb.last_group = current_group;
-		some_xkb_schedule_group_changed();
+		xkb_schedule_group_changed();
 	}
 }
 
