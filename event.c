@@ -182,3 +182,34 @@ event_handle_mousegrabber(double x, double y, int button_states[5])
     lua_pop(L, 1);  /* Pop coords table */
     return true;
 }
+
+/** Record that the given drawable contains the pointer.
+ * Emits mouse::enter/leave signals on drawables for widget hover events.
+ */
+void
+event_drawable_under_mouse(lua_State *L, int ud)
+{
+	void *d;
+
+	/* luaA_object_ref pops, so push a copy first */
+	lua_pushvalue(L, ud);
+	d = luaA_object_ref(L, -1);
+
+	if (d == globalconf.drawable_under_mouse) {
+		luaA_object_unref(L, d);
+		return;
+	}
+
+	if (globalconf.drawable_under_mouse != NULL) {
+		luaA_object_push(L, globalconf.drawable_under_mouse);
+		luaA_object_emit_signal(L, -1, "mouse::leave", 0);
+		lua_pop(L, 1);
+		luaA_object_unref(L, globalconf.drawable_under_mouse);
+		globalconf.drawable_under_mouse = NULL;
+	}
+
+	if (d != NULL) {
+		globalconf.drawable_under_mouse = d;
+		luaA_object_emit_signal(L, ud, "mouse::enter", 0);
+	}
+}
