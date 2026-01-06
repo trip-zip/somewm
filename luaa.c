@@ -1,4 +1,5 @@
 #include "luaa.h"
+#include "draw.h"  /* Must be before globalconf.h to avoid type conflicts */
 #include "globalconf.h"
 
 /* Include LuaJIT header for luaJIT_setmode() if available.
@@ -21,7 +22,7 @@
 #include "objects/keybinding.h"
 #include "objects/keygrabber.h"
 #include "objects/mousegrabber.h"
-#include "objects/awesome.h"
+/* objects/awesome.h merged into this file */
 #include "objects/wibox.h"
 #include "objects/ipc.h"
 #include "objects/root.h"
@@ -50,6 +51,17 @@ static lua_State *luaA_create_fresh_state(void);
 #include <signal.h>
 #include <limits.h>
 #include <setjmp.h>
+
+/* Includes merged from objects/awesome.c */
+#include "somewm_api.h"
+#include "color.h"
+#include <xkbcommon/xkbcommon.h>
+#include <wayland-server-core.h>
+#include <wlr/types/wlr_scene.h>
+#include <wlr/types/wlr_buffer.h>
+#include <wlr/interfaces/wlr_buffer.h>
+#include <drm_fourcc.h>
+#include <cairo/cairo.h>
 
 /* Config loading timeout state (for graceful fallback on hanging configs) */
 static volatile sig_atomic_t config_timeout_fired = 0;
@@ -141,6 +153,869 @@ extern const struct luaL_Reg awesome_dbus_lib[];
 
 /* Forward declaration */
 static int luaA_dofunction_on_error(lua_State *L);
+
+/* ==========================================================================
+ * awesome module (merged from objects/awesome.c)
+ * ==========================================================================
+ * The "awesome" global provides compositor control functions.
+ * This matches AwesomeWM's luaa.c structure where the awesome module is
+ * defined alongside other Lua infrastructure.
+ */
+
+/* External functions */
+extern void wlr_log_init(int verbosity, void *callback);
+
+/* Forward declarations for awesome module */
+static int luaA_awesome_index(lua_State *L);
+
+/** awesome.xrdb_get_value(resource_class, resource_name) - Get xrdb value
+ * Delegates to Lua implementation for xrdb compatibility in Wayland.
+ * \param resource_class Resource class (usually empty string)
+ * \param resource_name Resource name (e.g., "background", "Xft.dpi")
+ * \return Resource value string or nil if not found
+ */
+static int
+luaA_awesome_xrdb_get_value(lua_State *L)
+{
+	const char *resource_class;
+	const char *resource_name;
+
+	resource_class = luaL_optstring(L, 1, "");
+	resource_name = luaL_checkstring(L, 2);
+
+	lua_getglobal(L, "require");
+	lua_pushstring(L, "gears.xresources");
+	lua_call(L, 1, 1);
+
+	lua_getfield(L, -1, "get_value");
+	lua_pushstring(L, resource_class);
+	lua_pushstring(L, resource_name);
+	lua_call(L, 2, 1);
+
+	return 1;
+}
+
+/** awesome.quit() - Quit the compositor */
+static int
+luaA_awesome_quit(lua_State *L)
+{
+	some_compositor_quit();
+	return 0;
+}
+
+/** awesome.new_client_placement - Get/set new client placement mode */
+static int
+luaA_awesome_new_client_placement(lua_State *L)
+{
+	if (lua_gettop(L) >= 1) {
+		int placement = 0;
+		if (lua_isnumber(L, 1)) {
+			placement = (int)lua_tonumber(L, 1);
+		} else if (lua_isstring(L, 1)) {
+			const char *str = lua_tostring(L, 1);
+			if (strcmp(str, "slave") == 0) {
+				placement = 1;
+			} else if (strcmp(str, "master") == 0) {
+				placement = 0;
+			}
+		}
+		some_set_new_client_placement(placement);
+		return 0;
+	}
+	lua_pushnumber(L, some_get_new_client_placement());
+	return 1;
+}
+
+/** awesome.get_cursor_position() - Get current cursor position */
+static int
+luaA_awesome_get_cursor_position(lua_State *L)
+{
+	double x, y;
+
+	some_get_cursor_position(&x, &y);
+
+	lua_newtable(L);
+	lua_pushnumber(L, x);
+	lua_setfield(L, -2, "x");
+	lua_pushnumber(L, y);
+	lua_setfield(L, -2, "y");
+	return 1;
+}
+
+/** awesome.get_cursor_monitor() - Get monitor under cursor */
+static int
+luaA_awesome_get_cursor_monitor(lua_State *L)
+{
+	Monitor *m = some_monitor_at_cursor();
+
+	if (m)
+		lua_pushlightuserdata(L, m);
+	else
+		lua_pushnil(L);
+	return 1;
+}
+
+/** awesome.connect_signal(name, callback) - Connect to a global signal */
+static int
+luaA_awesome_connect_signal(lua_State *L)
+{
+	const char *name = luaL_checkstring(L, 1);
+	const void *ref;
+	luaL_checktype(L, 2, LUA_TFUNCTION);
+
+	lua_pushvalue(L, 2);
+	ref = luaA_object_ref(L, -1);
+
+	luaA_signal_connect(name, ref);
+
+	return 0;
+}
+
+/** awesome.disconnect_signal(name, callback) - Disconnect from a global signal */
+static int
+luaA_awesome_disconnect_signal(lua_State *L)
+{
+	const char *name = luaL_checkstring(L, 1);
+	const void *ref;
+	luaL_checktype(L, 2, LUA_TFUNCTION);
+
+	ref = lua_topointer(L, 2);
+	if (luaA_signal_disconnect(name, ref))
+		luaA_object_unref(L, ref);
+
+	return 0;
+}
+
+/** awesome.emit_signal(name, ...) - Emit a global signal */
+static int
+luaA_awesome_emit_signal(lua_State *L)
+{
+	const char *name = luaL_checkstring(L, 1);
+	int nargs = lua_gettop(L) - 1;
+
+	luaA_signal_emit(L, name, nargs);
+
+	return 0;
+}
+
+/** awesome._get_key_name(keysym) - Get human-readable key name */
+static int
+luaA_awesome_get_key_name(lua_State *L)
+{
+	xkb_keysym_t keysym;
+	char keysym_name[64];
+	char utf8[8] = {0};
+
+	if (lua_isnumber(L, 1)) {
+		keysym = (xkb_keysym_t)lua_tonumber(L, 1);
+	} else if (lua_isstring(L, 1)) {
+		const char *key_str = lua_tostring(L, 1);
+		keysym = xkb_keysym_from_name(key_str, XKB_KEYSYM_CASE_INSENSITIVE);
+		if (keysym == XKB_KEY_NoSymbol) {
+			lua_pushnil(L);
+			lua_pushnil(L);
+			return 2;
+		}
+	} else {
+		lua_pushnil(L);
+		lua_pushnil(L);
+		return 2;
+	}
+
+	xkb_keysym_get_name(keysym, keysym_name, sizeof(keysym_name));
+	lua_pushstring(L, keysym_name);
+
+	if (xkb_keysym_to_utf8(keysym, utf8, sizeof(utf8)) > 0 && utf8[0]) {
+		lua_pushstring(L, utf8);
+	} else {
+		lua_pushnil(L);
+	}
+
+	return 2;
+}
+
+/** awesome.xkb_get_group_names() - Get keyboard layout symbols string */
+static int
+luaA_awesome_xkb_get_group_names(lua_State *L)
+{
+	const char *symbols = some_xkb_get_group_names();
+
+	if (symbols) {
+		lua_pushstring(L, symbols);
+	} else {
+		const char *layout = globalconf.keyboard.xkb_layout;
+		if (layout && *layout) {
+			lua_pushfstring(L, "pc+%s", layout);
+		} else {
+			lua_pushstring(L, "pc+us");
+		}
+	}
+	return 1;
+}
+
+/** awesome.xkb_get_layout_group() - Get current keyboard layout index */
+static int
+luaA_awesome_xkb_get_layout_group(lua_State *L)
+{
+	struct xkb_state *state = some_xkb_get_state();
+	xkb_layout_index_t group;
+
+	if (!state) {
+		lua_pushinteger(L, 0);
+		return 1;
+	}
+
+	group = xkb_state_serialize_layout(state, XKB_STATE_LAYOUT_EFFECTIVE);
+	lua_pushinteger(L, (int)group);
+	return 1;
+}
+
+/** awesome.xkb_set_layout_group(num) - Switch keyboard layout */
+static int
+luaA_awesome_xkb_set_layout_group(lua_State *L)
+{
+	xkb_layout_index_t group = (xkb_layout_index_t)luaL_checkinteger(L, 1);
+
+	if (!some_xkb_set_layout_group(group)) {
+		luaL_error(L, "Failed to set keyboard layout group %d", (int)group);
+	}
+
+	return 0;
+}
+
+/** awesome.register_xproperty() - Stub for AwesomeWM compatibility */
+static int
+luaA_awesome_register_xproperty(lua_State *L)
+{
+	luaL_checkstring(L, 1);
+	luaL_checkstring(L, 2);
+	return 0;
+}
+
+/** awesome.pixbuf_to_surface() - Convert GdkPixbuf to cairo surface */
+static int
+luaA_pixbuf_to_surface(lua_State *L)
+{
+	GdkPixbuf *pixbuf = (GdkPixbuf *) lua_touserdata(L, 1);
+	cairo_surface_t *surface;
+
+	if (!pixbuf) {
+		lua_pushnil(L);
+		lua_pushstring(L, "Invalid pixbuf (expected light userdata)");
+		return 2;
+	}
+
+	surface = draw_surface_from_pixbuf(pixbuf);
+	if (!surface) {
+		lua_pushnil(L);
+		lua_pushstring(L, "Failed to create cairo surface from pixbuf");
+		return 2;
+	}
+
+	lua_pushlightuserdata(L, surface);
+	return 1;
+}
+
+/** Rebuild keyboard keymap with current XKB settings */
+static void
+rebuild_keyboard_keymap(void)
+{
+	some_rebuild_keyboard_keymap();
+}
+
+/** Helper to count visible systray entries */
+static int
+systray_count_visible(void)
+{
+	systray_item_array_t *items = systray_get_items();
+	int count = 0;
+	int i;
+
+	if (!items)
+		return 0;
+
+	for (i = 0; i < items->len; i++) {
+		systray_item_t *item = items->tab[i];
+		if (item && item->is_valid) {
+			if (!item->status || strcmp(item->status, "Passive") != 0)
+				count++;
+		}
+	}
+	return count;
+}
+
+/* Systray icon buffer wrapper for wlr_scene_buffer */
+struct systray_icon_buffer {
+	struct wlr_buffer base;
+	void *data;
+	int width;
+	int height;
+	size_t stride;
+};
+
+static void systray_icon_buffer_destroy(struct wlr_buffer *wlr_buffer)
+{
+	struct systray_icon_buffer *buffer =
+		wl_container_of(wlr_buffer, buffer, base);
+	free(buffer->data);
+	free(buffer);
+}
+
+static bool systray_icon_buffer_begin_data_ptr_access(
+	struct wlr_buffer *wlr_buffer, uint32_t flags, void **data,
+	uint32_t *format, size_t *stride)
+{
+	struct systray_icon_buffer *buffer =
+		wl_container_of(wlr_buffer, buffer, base);
+	*data = buffer->data;
+	*format = DRM_FORMAT_ARGB8888;
+	*stride = buffer->stride;
+	return true;
+}
+
+static void systray_icon_buffer_end_data_ptr_access(struct wlr_buffer *wlr_buffer)
+{
+	/* Nothing to do */
+}
+
+static const struct wlr_buffer_impl systray_icon_buffer_impl = {
+	.destroy = systray_icon_buffer_destroy,
+	.begin_data_ptr_access = systray_icon_buffer_begin_data_ptr_access,
+	.end_data_ptr_access = systray_icon_buffer_end_data_ptr_access,
+};
+
+/** Create a wlr_buffer from a cairo surface */
+static struct wlr_buffer *
+systray_buffer_from_cairo(cairo_surface_t *surface)
+{
+	struct systray_icon_buffer *buffer;
+	int width, height;
+	size_t stride, size;
+	unsigned char *src_data;
+
+	if (!surface || cairo_surface_status(surface) != CAIRO_STATUS_SUCCESS)
+		return NULL;
+
+	if (cairo_image_surface_get_format(surface) != CAIRO_FORMAT_ARGB32)
+		return NULL;
+
+	width = cairo_image_surface_get_width(surface);
+	height = cairo_image_surface_get_height(surface);
+	stride = (size_t)cairo_image_surface_get_stride(surface);
+	src_data = cairo_image_surface_get_data(surface);
+
+	if (width <= 0 || height <= 0 || !src_data)
+		return NULL;
+
+	buffer = calloc(1, sizeof(*buffer));
+	if (!buffer)
+		return NULL;
+
+	size = stride * (size_t)height;
+	buffer->data = malloc(size);
+	if (!buffer->data) {
+		free(buffer);
+		return NULL;
+	}
+
+	memcpy(buffer->data, src_data, size);
+	buffer->width = width;
+	buffer->height = height;
+	buffer->stride = stride;
+
+	wlr_buffer_init(&buffer->base, &systray_icon_buffer_impl, width, height);
+
+	return &buffer->base;
+}
+
+/** Render systray icons to scene graph */
+static void
+systray_render_icons(drawin_t *drawin)
+{
+	systray_item_array_t *items;
+	int i, pos_x, pos_y, idx;
+	int base_size, spacing, rows;
+	bool horizontal;
+
+	if (!drawin || !drawin->scene_tree)
+		return;
+
+	items = systray_get_items();
+	if (!items || items->len == 0)
+		return;
+
+	if (!globalconf.systray.scene_tree) {
+		globalconf.systray.scene_tree = wlr_scene_tree_create(drawin->scene_tree);
+		if (!globalconf.systray.scene_tree)
+			return;
+		globalconf.systray.scene_tree->node.data = drawin;
+	}
+
+	base_size = globalconf.systray.layout.base_size;
+	spacing = globalconf.systray.layout.spacing;
+	horizontal = globalconf.systray.layout.horizontal;
+	rows = globalconf.systray.layout.rows;
+
+	if (base_size <= 0)
+		base_size = 24;
+	if (rows <= 0)
+		rows = 1;
+
+	wlr_scene_node_set_position(&globalconf.systray.scene_tree->node,
+	                            globalconf.systray.layout.x,
+	                            globalconf.systray.layout.y);
+
+	{
+		struct wlr_scene_node *child, *tmp;
+		wl_list_for_each_safe(child, tmp, &globalconf.systray.scene_tree->children, link) {
+			wlr_scene_node_destroy(child);
+		}
+	}
+
+	idx = 0;
+	for (i = 0; i < items->len; i++) {
+		systray_item_t *item = items->tab[i];
+		int row, col;
+
+		if (!item || !item->is_valid)
+			continue;
+		if (item->status && strcmp(item->status, "Passive") == 0)
+			continue;
+
+		if (horizontal) {
+			col = idx / rows;
+			row = idx % rows;
+			pos_x = col * (base_size + spacing);
+			pos_y = row * (base_size + spacing);
+		} else {
+			row = idx / rows;
+			col = idx % rows;
+			pos_x = col * (base_size + spacing);
+			pos_y = row * (base_size + spacing);
+		}
+
+		if (item->icon) {
+			struct wlr_buffer *icon_buffer = systray_buffer_from_cairo(item->icon);
+			if (icon_buffer) {
+				struct wlr_scene_buffer *scene_buf;
+				scene_buf = wlr_scene_buffer_create(globalconf.systray.scene_tree,
+				                                    icon_buffer);
+				if (scene_buf) {
+					wlr_scene_node_set_position(&scene_buf->node, pos_x, pos_y);
+					scene_buf->node.data = drawin->drawable;
+					if (item->icon_width != base_size || item->icon_height != base_size) {
+						wlr_scene_buffer_set_dest_size(scene_buf, base_size, base_size);
+					}
+				}
+				wlr_buffer_drop(icon_buffer);
+			}
+		} else {
+			float color[4] = {0.5f, 0.5f, 0.8f, 1.0f};
+			struct wlr_scene_rect *rect;
+			rect = wlr_scene_rect_create(globalconf.systray.scene_tree,
+			                             base_size, base_size, color);
+			if (rect) {
+				wlr_scene_node_set_position(&rect->node, pos_x, pos_y);
+				rect->node.data = drawin->drawable;
+			}
+		}
+
+		idx++;
+	}
+}
+
+/** Systray kickout - remove systray from a drawin */
+static void
+systray_kickout(drawin_t *drawin)
+{
+	if (globalconf.systray.parent != drawin)
+		return;
+
+	if (globalconf.systray.scene_tree) {
+		wlr_scene_node_destroy(&globalconf.systray.scene_tree->node);
+		globalconf.systray.scene_tree = NULL;
+	}
+
+	globalconf.systray.parent = NULL;
+}
+
+/** awesome.systray() - Manage the system tray */
+static int
+luaA_systray(lua_State *L)
+{
+	int nargs = lua_gettop(L);
+	drawin_t *drawin;
+	int x, y, base_size, spacing, rows;
+	bool horizontal, reverse;
+	const char *bg_color;
+	color_t bg;
+
+	if (nargs == 0) {
+		lua_pushinteger(L, systray_count_visible());
+		if (globalconf.systray.parent)
+			luaA_object_push(L, globalconf.systray.parent);
+		else
+			lua_pushnil(L);
+		return 2;
+	}
+
+	drawin = luaA_todrawin(L, 1);
+	if (!drawin) {
+		lua_pushinteger(L, systray_count_visible());
+		lua_pushnil(L);
+		return 2;
+	}
+
+	if (nargs == 1) {
+		systray_kickout(drawin);
+		lua_pushinteger(L, systray_count_visible());
+		lua_pushnil(L);
+		return 2;
+	}
+
+	x = luaL_checkinteger(L, 2);
+	y = luaL_checkinteger(L, 3);
+	base_size = luaL_checkinteger(L, 4);
+	horizontal = lua_toboolean(L, 5);
+	bg_color = luaL_optstring(L, 6, "#000000");
+	reverse = lua_toboolean(L, 7);
+	spacing = luaL_optinteger(L, 8, 0);
+	rows = luaL_optinteger(L, 9, 1);
+
+	if (globalconf.systray.parent != drawin) {
+		if (globalconf.systray.parent)
+			systray_kickout(globalconf.systray.parent);
+		globalconf.systray.parent = drawin;
+	}
+
+	if (color_init_from_string(&bg, bg_color)) {
+		globalconf.systray.background_pixel =
+			((uint32_t)(bg.alpha * 255) << 24) |
+			((uint32_t)(bg.red * 255) << 16) |
+			((uint32_t)(bg.green * 255) << 8) |
+			((uint32_t)(bg.blue * 255));
+	}
+
+	globalconf.systray.layout.x = x;
+	globalconf.systray.layout.y = y;
+	globalconf.systray.layout.base_size = base_size;
+	globalconf.systray.layout.horizontal = horizontal;
+	globalconf.systray.layout.reverse = reverse;
+	globalconf.systray.layout.spacing = spacing;
+	globalconf.systray.layout.rows = rows > 0 ? rows : 1;
+
+	systray_render_icons(drawin);
+
+	lua_pushinteger(L, systray_count_visible());
+	luaA_object_push(L, drawin);
+	return 2;
+}
+
+/** awesome.sync() - Synchronize with the compositor */
+static int
+luaA_awesome_sync(lua_State *L)
+{
+	struct wl_display *display = some_get_display();
+	if (display) {
+		wl_display_flush_clients(display);
+	}
+	return 0;
+}
+
+/** Set a libinput pointer/touchpad setting */
+static int
+luaA_awesome_set_input_setting(lua_State *L)
+{
+	const char *key = luaL_checkstring(L, 1);
+
+	if (strcmp(key, "tap_to_click") == 0) {
+		globalconf.input.tap_to_click = luaL_checkinteger(L, 2);
+	} else if (strcmp(key, "tap_and_drag") == 0) {
+		globalconf.input.tap_and_drag = luaL_checkinteger(L, 2);
+	} else if (strcmp(key, "drag_lock") == 0) {
+		globalconf.input.drag_lock = luaL_checkinteger(L, 2);
+	} else if (strcmp(key, "natural_scrolling") == 0) {
+		globalconf.input.natural_scrolling = luaL_checkinteger(L, 2);
+	} else if (strcmp(key, "disable_while_typing") == 0) {
+		globalconf.input.disable_while_typing = luaL_checkinteger(L, 2);
+	} else if (strcmp(key, "left_handed") == 0) {
+		globalconf.input.left_handed = luaL_checkinteger(L, 2);
+	} else if (strcmp(key, "middle_button_emulation") == 0) {
+		globalconf.input.middle_button_emulation = luaL_checkinteger(L, 2);
+	} else if (strcmp(key, "scroll_method") == 0) {
+		const char *val = lua_isnil(L, 2) ? NULL : luaL_checkstring(L, 2);
+		free(globalconf.input.scroll_method);
+		globalconf.input.scroll_method = val ? strdup(val) : NULL;
+	} else if (strcmp(key, "click_method") == 0) {
+		const char *val = lua_isnil(L, 2) ? NULL : luaL_checkstring(L, 2);
+		free(globalconf.input.click_method);
+		globalconf.input.click_method = val ? strdup(val) : NULL;
+	} else if (strcmp(key, "send_events_mode") == 0) {
+		const char *val = lua_isnil(L, 2) ? NULL : luaL_checkstring(L, 2);
+		free(globalconf.input.send_events_mode);
+		globalconf.input.send_events_mode = val ? strdup(val) : NULL;
+	} else if (strcmp(key, "accel_profile") == 0) {
+		const char *val = lua_isnil(L, 2) ? NULL : luaL_checkstring(L, 2);
+		free(globalconf.input.accel_profile);
+		globalconf.input.accel_profile = val ? strdup(val) : NULL;
+	} else if (strcmp(key, "accel_speed") == 0) {
+		globalconf.input.accel_speed = lua_tonumber(L, 2);
+	} else if (strcmp(key, "tap_button_map") == 0) {
+		const char *val = lua_isnil(L, 2) ? NULL : luaL_checkstring(L, 2);
+		free(globalconf.input.tap_button_map);
+		globalconf.input.tap_button_map = val ? strdup(val) : NULL;
+	} else {
+		return luaL_error(L, "Unknown input setting: %s", key);
+	}
+
+	apply_input_settings_to_all_devices();
+	return 0;
+}
+
+/** Set a keyboard setting */
+static int
+luaA_awesome_set_keyboard_setting(lua_State *L)
+{
+	const char *key = luaL_checkstring(L, 1);
+
+	if (strcmp(key, "keyboard_repeat_rate") == 0) {
+		globalconf.keyboard.repeat_rate = luaL_checkinteger(L, 2);
+	} else if (strcmp(key, "keyboard_repeat_delay") == 0) {
+		globalconf.keyboard.repeat_delay = luaL_checkinteger(L, 2);
+	} else if (strcmp(key, "xkb_layout") == 0) {
+		const char *val = lua_isnil(L, 2) ? "" : luaL_checkstring(L, 2);
+		free(globalconf.keyboard.xkb_layout);
+		globalconf.keyboard.xkb_layout = strdup(val);
+		rebuild_keyboard_keymap();
+	} else if (strcmp(key, "xkb_variant") == 0) {
+		const char *val = lua_isnil(L, 2) ? "" : luaL_checkstring(L, 2);
+		free(globalconf.keyboard.xkb_variant);
+		globalconf.keyboard.xkb_variant = strdup(val);
+		rebuild_keyboard_keymap();
+	} else if (strcmp(key, "xkb_options") == 0) {
+		const char *val = lua_isnil(L, 2) ? "" : luaL_checkstring(L, 2);
+		free(globalconf.keyboard.xkb_options);
+		globalconf.keyboard.xkb_options = strdup(val);
+		rebuild_keyboard_keymap();
+	} else {
+		return luaL_error(L, "Unknown keyboard setting: %s", key);
+	}
+
+	return 0;
+}
+
+/** Set the preferred size for client icons */
+static int
+luaA_awesome_set_preferred_icon_size(lua_State *L)
+{
+	lua_Integer size = luaL_checkinteger(L, 1);
+	if (size < 0 || size > UINT32_MAX) {
+		return luaL_error(L, "icon size must be between 0 and %u", UINT32_MAX);
+	}
+	globalconf.preferred_icon_size = (uint32_t)size;
+	return 0;
+}
+
+/* awesome module methods */
+static const luaL_Reg awesome_methods[] = {
+	{ "quit", luaA_awesome_quit },
+	{ "spawn", luaA_spawn },
+	{ "new_client_placement", luaA_awesome_new_client_placement },
+	{ "get_cursor_position", luaA_awesome_get_cursor_position },
+	{ "get_cursor_monitor", luaA_awesome_get_cursor_monitor },
+	{ "connect_signal", luaA_awesome_connect_signal },
+	{ "disconnect_signal", luaA_awesome_disconnect_signal },
+	{ "emit_signal", luaA_awesome_emit_signal },
+	{ "_get_key_name", luaA_awesome_get_key_name },
+	{ "xkb_get_group_names", luaA_awesome_xkb_get_group_names },
+	{ "xkb_get_layout_group", luaA_awesome_xkb_get_layout_group },
+	{ "xkb_set_layout_group", luaA_awesome_xkb_set_layout_group },
+	{ "xrdb_get_value", luaA_awesome_xrdb_get_value },
+	{ "register_xproperty", luaA_awesome_register_xproperty },
+	{ "pixbuf_to_surface", luaA_pixbuf_to_surface },
+	{ "systray", luaA_systray },
+	{ "sync", luaA_awesome_sync },
+	{ "_set_input_setting", luaA_awesome_set_input_setting },
+	{ "_set_keyboard_setting", luaA_awesome_set_keyboard_setting },
+	{ "set_preferred_icon_size", luaA_awesome_set_preferred_icon_size },
+	{ NULL, NULL }
+};
+
+/** awesome.__index handler for property access */
+static int
+luaA_awesome_index(lua_State *L)
+{
+	const char *key = luaL_checkstring(L, 2);
+
+	if (A_STREQ(key, "startup_errors")) {
+		if (globalconf.startup_errors.len == 0)
+			return 0;
+		lua_pushstring(L, globalconf.startup_errors.s);
+		return 1;
+	}
+
+	if (A_STREQ(key, "x11_fallback_info")) {
+		if (!globalconf.x11_fallback.config_path)
+			return 0;
+
+		lua_newtable(L);
+
+		lua_pushstring(L, globalconf.x11_fallback.config_path);
+		lua_setfield(L, -2, "config_path");
+
+		lua_pushinteger(L, globalconf.x11_fallback.line_number);
+		lua_setfield(L, -2, "line_number");
+
+		lua_pushstring(L, globalconf.x11_fallback.pattern_desc);
+		lua_setfield(L, -2, "pattern");
+
+		lua_pushstring(L, globalconf.x11_fallback.suggestion);
+		lua_setfield(L, -2, "suggestion");
+
+		if (globalconf.x11_fallback.line_content) {
+			lua_pushstring(L, globalconf.x11_fallback.line_content);
+			lua_setfield(L, -2, "line_content");
+		}
+
+		return 1;
+	}
+
+	if (A_STREQ(key, "log_level")) {
+		const char *level_str = "error";
+		switch (globalconf.log_level) {
+			case 0: level_str = "silent"; break;
+			case 1: level_str = "error"; break;
+			case 2: level_str = "info"; break;
+			case 3: level_str = "debug"; break;
+		}
+		lua_pushstring(L, level_str);
+		return 1;
+	}
+
+	if (A_STREQ(key, "bypass_surface_visibility")) {
+		lua_pushboolean(L, globalconf.appearance.bypass_surface_visibility);
+		return 1;
+	}
+
+	lua_rawget(L, 1);
+	return 1;
+}
+
+/** awesome.__newindex handler for property setting */
+static int
+luaA_awesome_newindex(lua_State *L)
+{
+	const char *key = luaL_checkstring(L, 2);
+
+	if (A_STREQ(key, "log_level")) {
+		const char *val = luaL_checkstring(L, 3);
+		int new_level = 1;
+
+		if (strcmp(val, "silent") == 0)      new_level = 0;
+		else if (strcmp(val, "error") == 0)  new_level = 1;
+		else if (strcmp(val, "info") == 0)   new_level = 2;
+		else if (strcmp(val, "debug") == 0)  new_level = 3;
+
+		globalconf.log_level = new_level;
+		wlr_log_init(new_level, NULL);
+
+		return 0;
+	}
+
+	if (A_STREQ(key, "bypass_surface_visibility")) {
+		globalconf.appearance.bypass_surface_visibility = lua_toboolean(L, 3);
+		return 0;
+	}
+
+	lua_rawset(L, 1);
+	return 0;
+}
+
+/** Setup the awesome Lua module */
+void
+luaA_awesome_setup(lua_State *L)
+{
+	luaA_openlib(L, "awesome", awesome_methods, NULL);
+
+	lua_getglobal(L, "awesome");
+	lua_newtable(L);
+	lua_pushcfunction(L, luaA_awesome_index);
+	lua_setfield(L, -2, "__index");
+	lua_pushcfunction(L, luaA_awesome_newindex);
+	lua_setfield(L, -2, "__newindex");
+	lua_setmetatable(L, -2);
+	lua_pop(L, 1);
+
+	lua_getglobal(L, "awesome");
+
+	lua_newtable(L);
+
+	lua_newtable(L);
+	lua_newtable(L);
+	lua_pushnumber(L, 0xffe1);
+	lua_setfield(L, -2, "keysym");
+	lua_rawseti(L, -2, 1);
+	lua_setfield(L, -2, "Shift");
+
+	lua_newtable(L);
+	lua_newtable(L);
+	lua_pushnumber(L, 0xffe3);
+	lua_setfield(L, -2, "keysym");
+	lua_rawseti(L, -2, 1);
+	lua_setfield(L, -2, "Control");
+
+	lua_newtable(L);
+	lua_newtable(L);
+	lua_pushnumber(L, 0xffe9);
+	lua_setfield(L, -2, "keysym");
+	lua_rawseti(L, -2, 1);
+	lua_setfield(L, -2, "Mod1");
+
+	lua_newtable(L);
+	lua_newtable(L);
+	lua_pushnumber(L, 0xffeb);
+	lua_setfield(L, -2, "keysym");
+	lua_rawseti(L, -2, 1);
+	lua_setfield(L, -2, "Mod4");
+
+	lua_newtable(L);
+	lua_newtable(L);
+	lua_pushnumber(L, 0xfe03);
+	lua_setfield(L, -2, "keysym");
+	lua_rawseti(L, -2, 1);
+	lua_setfield(L, -2, "Mod5");
+
+	lua_setfield(L, -2, "_modifiers");
+
+	lua_newtable(L);
+	lua_setfield(L, -2, "_active_modifiers");
+
+	lua_pushnumber(L, 5);
+	lua_setfield(L, -2, "api_level");
+
+	lua_pushboolean(L, 1);
+	lua_setfield(L, -2, "composite_manager_running");
+
+	lua_pushstring(L, DATADIR "/somewm/themes");
+	lua_setfield(L, -2, "themes_path");
+
+	lua_pushstring(L, "");
+	lua_setfield(L, -2, "conffile");
+
+	lua_pop(L, 1);
+}
+
+/** Set the conffile path in awesome.conffile */
+void
+luaA_awesome_set_conffile(lua_State *L, const char *conffile)
+{
+	lua_getglobal(L, "awesome");
+	lua_pushstring(L, conffile);
+	lua_setfield(L, -2, "conffile");
+	lua_pop(L, 1);
+}
+
+/* End of awesome module code */
 
 #ifdef XWAYLAND
 /** Initialize EWMH atoms (Extended Window Manager Hints).
