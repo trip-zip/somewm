@@ -2095,7 +2095,7 @@ client_focus_refresh(void)
  * This function iterates through all clients and applies any pending border changes
  * to the wlr_scene_rect nodes if border_need_update is true.
  */
-void
+static void
 client_border_refresh(void)
 {
     foreach(_c, globalconf.clients)
@@ -4248,24 +4248,6 @@ luaA_client_set_name(lua_State *L, client_t *c)
     return 0;
 }
 
-/** Get or set the client buttons.
- * \param L The Lua VM state.
- * \return The number of elements pushed on stack.
- */
-static int
-luaA_client_buttons(lua_State *L)
-{
-    client_t *c = luaA_checkudata(L, 1, &client_class);
-
-    if(lua_gettop(L) == 2)
-    {
-        luaA_button_array_set(L, 1, 2, &c->buttons);
-        luaA_object_emit_signal(L, 1, "property::buttons", 0);
-    }
-
-    return luaA_button_array_get(L, 1, &c->buttons);
-}
-
 static int
 luaA_client_get_icon_name(lua_State *L, client_t *c)
 {
@@ -5017,7 +4999,7 @@ client_class_setup(lua_State *L)
         LUA_OBJECT_META(client)
         LUA_CLASS_META
         { "_keys", luaA_client_keys },
-        { "_buttons", luaA_client_buttons },
+        /* _buttons inherited from window_class */
         /* _isfloating removed - no longer needed, Lua property system is authoritative */
         { "isvisible", luaA_client_isvisible },
         { "geometry", luaA_client_geometry },
