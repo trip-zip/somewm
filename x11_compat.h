@@ -674,8 +674,5 @@ static inline int luaA_pusharea(void *L_void, area_t area) {
     return 1;  /* Return the table */
 }
 
-/* drawable_allocator is actually luaA_drawable_allocator - defined in objects/drawable.h */
-#define drawable_allocator luaA_drawable_allocator
-
 #endif /* SOMEWM_X11_COMPAT_H */
 /* vim: filetype=c:expandtab:shiftwidth=4:tabstop=8:softtabstop=4:textwidth=80 */

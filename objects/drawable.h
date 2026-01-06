@@ -64,21 +64,13 @@ typedef struct drawable_t {
 /* Drawable class (AwesomeWM class system) */
 extern lua_class_t drawable_class;
 
-/* Drawable class setup and lifecycle */
-void luaA_drawable_setup(lua_State *L);
+/* Drawable class setup (AwesomeWM API) */
+drawable_t *drawable_allocator(lua_State *L, drawable_refresh_callback callback, void *data);
+void drawable_set_geometry(lua_State *L, int didx, area_t geom);
 void drawable_class_setup(lua_State *L);
 
-/* Drawable object creation (AwesomeWM pattern) */
-drawable_t *drawable_allocator(lua_State *L, drawable_refresh_callback callback, void *data);
-
-/* Legacy wrappers (for compatibility during transition) - will be removed */
-drawable_t *luaA_drawable_allocator(lua_State *L, drawable_refresh_callback callback, void *data);
-drawable_t *luaA_checkdrawable(lua_State *L, int idx);
-drawable_t *luaA_todrawable(lua_State *L, int idx);
-void luaA_drawable_set_geometry(lua_State *L, int didx, int x, int y, int width, int height);
-
-/* Drawable operations (AwesomeWM pattern) */
-void drawable_set_geometry(lua_State *L, int didx, area_t geom);
+/* somewm setup helper (called from luaa.c) */
+void luaA_drawable_setup(lua_State *L);
 
 /* Buffer creation from drawable's Cairo surface */
 struct wlr_buffer *drawable_create_buffer(drawable_t *d);

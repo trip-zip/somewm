@@ -33,6 +33,9 @@
 /* Drawable class (AwesomeWM class system) */
 lua_class_t drawable_class;
 
+/* Forward declarations for internal functions */
+static drawable_t *luaA_checkdrawable(lua_State *L, int idx);
+
 /* Generate LUA_OBJECT helper functions (drawable_new, drawable_ref, etc.) */
 LUA_OBJECT_FUNCS(drawable_class, drawable_t, drawable)
 
@@ -374,7 +377,7 @@ extern void signal_array_wipe(signal_array_t *arr);
  * This is the public API used by drawin
  */
 drawable_t *
-luaA_drawable_allocator(lua_State *L, drawable_refresh_callback callback, void *data)
+drawable_allocator(lua_State *L, drawable_refresh_callback callback, void *data)
 {
 	drawable_t *d = drawable_new(L);
 	d->refresh_callback = callback;
@@ -401,10 +404,10 @@ luaA_drawable_allocator(lua_State *L, drawable_refresh_callback callback, void *
 
 /** Wrapper allocator for class system (matches lua_class_allocator_t signature) */
 static lua_object_t *
-luaA_drawable_allocator_wrapper(lua_State *L)
+drawable_allocator_wrapper(lua_State *L)
 {
 	/* Call existing allocator with NULL callback/data (drawins set these later) */
-	drawable_t *d = luaA_drawable_allocator(L, NULL, NULL);
+	drawable_t *d = drawable_allocator(L, NULL, NULL);
 	return (lua_object_t *)d;
 }
 
@@ -439,30 +442,10 @@ luaA_drawable_gc(lua_State *L)
  * ============================================================================ */
 
 /** Check if value at index is a drawable */
-drawable_t *
+static drawable_t *
 luaA_checkdrawable(lua_State *L, int idx)
 {
 	return (drawable_t *)luaL_checkudata(L, idx, drawable_class.name);
-}
-
-/** Get drawable if present, else return NULL */
-drawable_t *
-luaA_todrawable(lua_State *L, int idx)
-{
-	if (!lua_isuserdata(L, idx))
-		return NULL;
-
-	if (!lua_getmetatable(L, idx))
-		return NULL;
-
-	luaL_getmetatable(L, drawable_class.name);
-	if (!lua_rawequal(L, -1, -2)) {
-		lua_pop(L, 2);
-		return NULL;
-	}
-	lua_pop(L, 2);
-
-	return (drawable_t *)lua_touserdata(L, idx);
 }
 
 /* ============================================================================
@@ -718,7 +701,7 @@ luaA_drawable_tostring(lua_State *L, lua_object_t *obj)
 
 /** Property getter: surface (class system signature) */
 static int
-luaA_drawable_get_surface_prop(lua_State *L, lua_object_t *obj)
+luaA_drawable_get_surface(lua_State *L, lua_object_t *obj)
 {
 	drawable_t *d = (drawable_t *)obj;
 	if (d->surface) {
@@ -764,7 +747,7 @@ luaA_drawable_index(lua_State *L)
 
 	/* Check for properties */
 	if (strcmp(key, "surface") == 0) {
-		return luaA_drawable_get_surface_prop(L, (lua_object_t *)d);
+		return luaA_drawable_get_surface(L, (lua_object_t *)d);
 	}
 	if (strcmp(key, "valid") == 0) {
 		return luaA_drawable_get_valid_prop(L, (lua_object_t *)d);
@@ -785,7 +768,7 @@ luaA_drawable_newindex(lua_State *L)
 
 /** Setup drawable class */
 void
-luaA_drawable_class_setup(lua_State *L)
+drawable_class_setup(lua_State *L)
 {
 	static const struct luaL_Reg drawable_methods[] = {
 		{ NULL, NULL }
@@ -803,7 +786,7 @@ luaA_drawable_class_setup(lua_State *L)
 
 	/* Initialize drawable class using AwesomeWM class system */
 	luaA_class_setup(L, &drawable_class, "drawable", NULL,
-	                 (lua_class_allocator_t) luaA_drawable_allocator_wrapper,
+	                 (lua_class_allocator_t) drawable_allocator_wrapper,
 	                 (lua_class_collector_t) drawable_wipe,
 	                 NULL,  /* no checker */
 	                 luaA_class_index_miss_property, luaA_class_newindex_miss_property,
@@ -814,7 +797,7 @@ luaA_drawable_class_setup(lua_State *L)
 
 	/* Register read-only properties via class system */
 	luaA_class_add_property(&drawable_class, "surface",
-	                        (lua_class_propfunc_t) luaA_drawable_get_surface_prop,
+	                        (lua_class_propfunc_t) luaA_drawable_get_surface,
 	                        NULL,  /* read-only, no setter */
 	                        NULL);
 
@@ -828,7 +811,7 @@ luaA_drawable_class_setup(lua_State *L)
 void
 luaA_drawable_setup(lua_State *L)
 {
-	luaA_drawable_class_setup(L);
+	drawable_class_setup(L);
 
 	/* Register constructor in capi.drawable */
 	lua_getglobal(L, "capi");
