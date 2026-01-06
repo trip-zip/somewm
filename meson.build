@@ -259,7 +259,7 @@ somewm_sources = [
   'objects/timer.c',
   'objects/key.c',
   'objects/keybinding.c',
-  'objects/awesome.c',
+  # objects/awesome.c merged into luaa.c
   'objects/button.c',
   'objects/wibox.c',
   'objects/ipc.c',

@@ -80,6 +80,10 @@ void luaA_init(void);
 void luaA_loadrc(void);
 void luaA_cleanup(void);
 
+/* awesome module (merged from objects/awesome.c) */
+void luaA_awesome_setup(lua_State *L);
+void luaA_awesome_set_conffile(lua_State *L, const char *conffile);
+
 /* Config scanner (somewm --check) */
 int luaA_check_config(const char *config_path, bool use_color);
 
