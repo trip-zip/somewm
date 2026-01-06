@@ -411,21 +411,27 @@ drawable_allocator_wrapper(lua_State *L)
 	return (lua_object_t *)d;
 }
 
-/** Cleanup drawable resources */
+/** Unset drawable surface (AwesomeWM API - cleanup surface and buffer) */
 static void
-drawable_wipe(drawable_t *d)
+drawable_unset_surface(drawable_t *d)
 {
 	if (d->surface) {
 		cairo_surface_finish(d->surface);
 		cairo_surface_destroy(d->surface);
 		d->surface = NULL;
 	}
-
-	/* Buffer cleanup */
 	if (d->buffer) {
 		wlr_buffer_drop(d->buffer);
 		d->buffer = NULL;
 	}
+	d->refreshed = false;
+}
+
+/** Cleanup drawable resources */
+static void
+drawable_wipe(drawable_t *d)
+{
+	drawable_unset_surface(d);
 }
 
 /** Garbage collection */
@@ -472,17 +478,8 @@ drawable_set_geometry(lua_State *L, int didx, area_t geom)
 	bool need_new_surface = size_changed || scale_changed;
 
 	/* Clean up old surface if size or scale changed */
-	if (need_new_surface) {
-		if (d->surface) {
-			cairo_surface_finish(d->surface);
-			cairo_surface_destroy(d->surface);
-			d->surface = NULL;
-		}
-		if (d->buffer) {
-			wlr_buffer_drop(d->buffer);
-			d->buffer = NULL;
-		}
-	}
+	if (need_new_surface)
+		drawable_unset_surface(d);
 
 	/* Create new surface if dimensions are valid and surface needs recreation */
 	if (need_new_surface && geom.width > 0 && geom.height > 0) {
@@ -550,18 +547,7 @@ luaA_drawable_set_geometry(lua_State *L, int didx, int x, int y, int width, int 
 	/* If size changed, recreate surface */
 	size_changed = (old_width != width || old_height != height);
 	if (size_changed) {
-		/* Clean up old surface */
-		if (d->surface) {
-			cairo_surface_finish(d->surface);
-			cairo_surface_destroy(d->surface);
-			d->surface = NULL;
-		}
-
-		/* Clean up old buffer */
-		if (d->buffer) {
-			wlr_buffer_drop(d->buffer);
-			d->buffer = NULL;
-		}
+		drawable_unset_surface(d);
 
 		/* Create new surface if we have valid dimensions */
 		if (width > 0 && height > 0) {
