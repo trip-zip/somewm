@@ -390,6 +390,7 @@ void client_focus(client_t *);
 bool client_focus_update(client_t *);
 void client_focus_refresh(void);
 void client_border_refresh(void);
+void client_refresh(void);
 void client_destroy_later(void);
 bool client_hasproto(client_t *, uint32_t);  /* Changed from xcb_atom_t */
 void client_ignore_enterleave_events(void);

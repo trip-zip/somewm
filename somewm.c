@@ -220,8 +220,7 @@ static void requeststartdrag(struct wl_listener *listener, void *data);
 static void requestmonstate(struct wl_listener *listener, void *data);
 void resize(Client *c, struct wlr_box geo, int interact);
 void apply_geometry_to_wlroots(Client *c);
-static void client_geometry_refresh(void);
-/* client_border_refresh() declared in objects/client.h */
+/* client_refresh() declared in objects/client.h - handles geometry, borders, focus */
 static void some_refresh(void);
 static void run(char *startup_cmd);
 static void setcursor(struct wl_listener *listener, void *data);
@@ -3501,39 +3500,6 @@ requestmonstate(struct wl_listener *listener, void *data)
 	updatemons(NULL, NULL);
 }
 
-/** Refresh all client geometries (AwesomeWM pattern).
- *
- * This implements AwesomeWM's client_geometry_refresh() for Wayland.
- * Loops through all clients and applies their c->geometry to the wlroots scene graph.
- *
- * This is THE CRITICAL function that makes tiling work:
- * - Lua layout code calculates positions via c:geometry({...})
- * - Those changes update c->geometry in the C struct
- * - But without this function, wlroots never sees the new positions
- * - This function applies queued geometry changes to the actual scene nodes
- *
- * Called from some_refresh() in the event loop (matching AwesomeWM's awesome_refresh).
- */
-static void
-client_geometry_refresh(void)
-{
-	Client *c;
-	int count = 0;
-
-	foreach(client, globalconf.clients) {
-		c = *client;
-		if (!c || !c->mon)
-			continue;
-
-		count++;
-		/* Apply c->geometry to wlroots scene graph */
-		apply_geometry_to_wlroots(c);
-	}
-
-	if (count > 0) {
-	}
-}
-
 /* Apply geometry to wlroots scene graph - Wayland-specific rendering layer.
  * This function ONLY updates wlroots; it does NOT modify c->geometry or emit signals.
  * Called by resize() for interactive resize and client_resize_do() for Lua-initiated resize.
@@ -3785,27 +3751,18 @@ some_refresh(void)
 	 * This ensures wibar geometry is applied before client layout calculations. */
 	drawin_refresh();
 
-	/* Step 3: Apply geometry changes to Wayland scene graph
-	 * Lua layout code calculates positions, but without this they never
-	 * get applied to wlroots scene nodes. */
-	client_geometry_refresh();
+	/* Step 3: Apply client changes (geometry, borders, focus)
+	 * This matches AwesomeWM's client_refresh() which handles all client updates. */
+	client_refresh();
 
-	/* Step 4: Apply pending border changes (AwesomeWM deferred pattern)
-	 * Border updates (width/color) are deferred until refresh cycle */
-	client_border_refresh();
-
-	/* Step 5: Update client visibility (banning) */
+	/* Step 4: Update client visibility (banning) */
 	banning_refresh();
 
-	/* Step 6: Update window stacking (Z-order)
+	/* Step 5: Update window stacking (Z-order)
 	 * This matches AwesomeWM's awesome_refresh() which calls stack_refresh() */
 	stack_refresh();
 
-	/* Step 7: Apply pending keyboard focus changes
-	 * This matches AwesomeWM's awesome_refresh() deferred focus pattern */
-	client_focus_refresh();
-
-	/* Step 8: Destroy windows queued for deferred destruction (XWayland only)
+	/* Step 6: Destroy windows queued for deferred destruction (XWayland only)
 	 * This matches AwesomeWM's deferred destruction pattern to avoid race conditions */
 	client_destroy_later();
 

@@ -2142,83 +2142,28 @@ client_border_refresh(void)
     }
 }
 
+/** Apply pending geometry changes to wlroots scene graph.
+ *
+ * This is the Wayland equivalent of AwesomeWM's X11 client_geometry_refresh().
+ * Lua layout code calculates positions via c:geometry({...}), which updates
+ * c->geometry in the C struct. This function applies those changes to the
+ * actual wlroots scene nodes.
+ *
+ * Called from client_refresh() during the refresh cycle.
+ */
 static void
 client_geometry_refresh(void)
 {
-    bool ignored_enterleave = false;
     foreach(_c, globalconf.clients)
     {
         client_t *c = *_c;
 
-        /* Compute the client window's and frame window's geometry */
-        area_t geometry = c->geometry;
-        area_t real_geometry = c->geometry;
-        if (!c->fullscreen)
-        {
-            if ((real_geometry.width < c->titlebar[CLIENT_TITLEBAR_LEFT].size
-                    + c->titlebar[CLIENT_TITLEBAR_RIGHT].size) ||
-                    (real_geometry.height < c->titlebar[CLIENT_TITLEBAR_TOP].size
-                    + c->titlebar[CLIENT_TITLEBAR_BOTTOM].size))
-                warn("Resizing a window to a negative size!? Have width %d-%d-%d=%d"
-                        " and height %d-%d-%d=%d", real_geometry.width,
-                        c->titlebar[CLIENT_TITLEBAR_LEFT].size,
-                        c->titlebar[CLIENT_TITLEBAR_RIGHT].size,
-                        real_geometry.width -
-                            c->titlebar[CLIENT_TITLEBAR_LEFT].size -
-                            c->titlebar[CLIENT_TITLEBAR_RIGHT].size,
-                        real_geometry.height,
-                        c->titlebar[CLIENT_TITLEBAR_TOP].size,
-                        c->titlebar[CLIENT_TITLEBAR_BOTTOM].size,
-                        real_geometry.height -
-                            c->titlebar[CLIENT_TITLEBAR_TOP].size -
-                            c->titlebar[CLIENT_TITLEBAR_BOTTOM].size);
-
-            real_geometry.x = c->titlebar[CLIENT_TITLEBAR_LEFT].size;
-            real_geometry.y = c->titlebar[CLIENT_TITLEBAR_TOP].size;
-            real_geometry.width -= c->titlebar[CLIENT_TITLEBAR_LEFT].size;
-            real_geometry.width -= c->titlebar[CLIENT_TITLEBAR_RIGHT].size;
-            real_geometry.height -= c->titlebar[CLIENT_TITLEBAR_TOP].size;
-            real_geometry.height -= c->titlebar[CLIENT_TITLEBAR_BOTTOM].size;
-
-            if (real_geometry.width == 0 || real_geometry.height == 0)
-                warn("Resizing a window to size zero!?");
-        } else {
-            real_geometry.x = 0;
-            real_geometry.y = 0;
-        }
-
-        /* Is there anything to do? */
-        if (AREA_EQUAL(geometry, c->x11_frame_geometry)
-                && AREA_EQUAL(real_geometry, c->x11_client_geometry)) {
-            if (c->got_configure_request) {
-                /* ICCCM 4.1.5 / 4.2.3, if nothing was changed, send an event saying so */
-                client_send_configure(c);
-                c->got_configure_request = false;
-            }
+        if (!c || !c->mon)
             continue;
-        }
 
-        if (!ignored_enterleave) {
-            client_ignore_enterleave_events();
-            ignored_enterleave = true;
-        }
-
-        xcb_configure_window(globalconf.connection, c->frame_window,
-                XCB_CONFIG_WINDOW_X | XCB_CONFIG_WINDOW_Y | XCB_CONFIG_WINDOW_WIDTH | XCB_CONFIG_WINDOW_HEIGHT,
-                (uint32_t[]) { geometry.x, geometry.y, geometry.width, geometry.height });
-        xcb_configure_window(globalconf.connection, c->window,
-                XCB_CONFIG_WINDOW_X | XCB_CONFIG_WINDOW_Y | XCB_CONFIG_WINDOW_WIDTH | XCB_CONFIG_WINDOW_HEIGHT,
-                (uint32_t[]) { real_geometry.x, real_geometry.y, real_geometry.width, real_geometry.height });
-
-        c->x11_frame_geometry = geometry;
-        c->x11_client_geometry = real_geometry;
-
-        /* ICCCM 4.2.3 says something else, but Java always needs this... */
-        client_send_configure(c);
-        c->got_configure_request = false;
+        /* Apply c->geometry to wlroots scene graph */
+        apply_geometry_to_wlroots(c);
     }
-    if (ignored_enterleave)
-        client_restore_enterleave_events();
 }
 
 void
