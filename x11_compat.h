@@ -272,12 +272,6 @@ static inline int luaA_class_newindex_miss_property(lua_State *L, lua_object_t *
 }
 #endif
 
-/* Forward declaration for luaA_window_get_type */
-typedef struct client_t client_t;
-
-/* Implemented in window.c - uses client_t* instead of window_t* for simplicity */
-int luaA_window_get_type(lua_State *L, client_t *w);
-
 /* X11 atoms (stubs for Wayland) */
 extern xcb_atom_t WM_TAKE_FOCUS;
 extern xcb_atom_t _NET_STARTUP_ID;
