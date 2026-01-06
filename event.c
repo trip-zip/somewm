@@ -148,14 +148,21 @@ bool
 event_handle_mousegrabber(double x, double y, int button_states[5])
 {
     lua_State *L;
+    uint16_t mask = 0;
 
     if (!mousegrabber_isrunning())
         return false;
 
     L = globalconf_get_lua_State();
 
+    /* Convert button_states array to X11-style mask */
+    for (int i = 0; i < 5; i++) {
+        if (button_states[i])
+            mask |= (1 << (8 + i));
+    }
+
     /* Push coords table to stack */
-    mousegrabber_handleevent(L, x, y, button_states);
+    mousegrabber_handleevent(L, (int)x, (int)y, mask);
 
     /* Get mousegrabber callback */
     lua_rawgeti(L, LUA_REGISTRYINDEX, globalconf.mousegrabber);
