@@ -1,4 +1,4 @@
-#include "objects/luaa.h"
+#include "luaa.h"
 #include "globalconf.h"
 
 /* Include LuaJIT header for luaJIT_setmode() if available.

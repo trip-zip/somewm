@@ -18,7 +18,7 @@
  */
 
 #include "common/lualib.h"
-#include "objects/luaa.h"
+#include "luaa.h"
 #include <string.h>
 
 lua_CFunction lualib_dofunction_on_error;

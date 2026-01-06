@@ -24,7 +24,7 @@
 #include "globalconf.h"
 #include "objects/client.h"
 #include "objects/tag.h"
-#include "objects/luaa.h"
+#include "luaa.h"
 #include "x11_compat.h"
 
 #ifdef XWAYLAND

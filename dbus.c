@@ -42,7 +42,7 @@
 #include <unistd.h>
 #include <fcntl.h>
 
-#include "objects/luaa.h"
+#include "luaa.h"
 #include "common/luaobject.h"
 #include "common/lualib.h"
 #include "x11_compat.h"

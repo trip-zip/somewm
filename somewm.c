@@ -84,7 +84,7 @@
 #include "globalconf.h"        /* Global configuration structure (AwesomeWM pattern) */
 #include "event.h"
 #include "banning.h"            /* Client visibility management (banning) */
-#include "objects/luaa.h"
+#include "luaa.h"
 #include "objects/spawn.h"  /* For spawn_child_exited */
 #include "common/lualib.h"  /* For luaA_dumpstack */
 #include "objects/signal.h"

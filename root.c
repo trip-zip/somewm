@@ -9,7 +9,7 @@
  */
 
 #include "objects/root.h"
-#include "objects/luaa.h"
+#include "luaa.h"
 #include "objects/signal.h"
 #include "common/luaobject.h"
 #include "common/lualib.h"

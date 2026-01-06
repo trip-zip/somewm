@@ -22,7 +22,7 @@
 
 #include "property.h"
 #include "objects/client.h"
-#include "objects/luaa.h"
+#include "luaa.h"
 #include "globalconf.h"
 
 #include <wayland-server-core.h>

@@ -20,7 +20,7 @@
  */
 
 #include "strut.h"
-#include "objects/luaa.h"
+#include "luaa.h"
 #include "common/lualib.h"
 #include <math.h>
 

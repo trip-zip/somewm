@@ -13,7 +13,7 @@
 #include "event.h"
 #include "objects/button.h"
 #include "objects/mousegrabber.h"
-#include "objects/luaa.h"
+#include "luaa.h"
 #include "common/luaobject.h"
 #include "common/util.h"
 #include <stdio.h>
