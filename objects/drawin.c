@@ -32,12 +32,13 @@ lua_class_t drawin_class;
 
 /* NOTE: LUA_OBJECT_FUNCS is now in drawin.h, not here */
 
-/* Global array of drawin objects - stores Lua registry references
- * NOTE: This will be REMOVED once we fully migrate to luaA_class_setup()
- * The class system handles object tracking internally. */
+/* DISABLED: Legacy drawin tracking - class system handles this now.
+ * Only used by disabled drawin_new_legacy() below. */
+#if 0
 static int *drawin_refs = NULL;
 static size_t drawin_count = 0;
 static size_t drawin_capacity = 0;
+#endif
 
 /* Forward declarations for signal array helpers (shared with screen.c) */
 extern void signal_array_init(signal_array_t *arr);
@@ -619,12 +620,11 @@ drawin_wipe(drawin_t *w)
 	}
 }
 
-/** Create a new drawin object (LEGACY - will be replaced by allocator)
- * \param L Lua state
- * \return Pointer to new drawin object
- */
-drawin_t *
-luaA_drawin_new(lua_State *L)
+/* DISABLED: Legacy drawin allocation - replaced by drawin_allocator via class system.
+ * Only used by disabled luaA_drawin_constructor below. */
+#if 0
+static drawin_t *
+drawin_new_legacy(lua_State *L)
 {
 	drawin_t *drawin;
 	int ref;
@@ -745,6 +745,7 @@ luaA_drawin_new(lua_State *L)
 
 	return drawin;
 }
+#endif /* Disabled drawin_new_legacy */
 
 /* NOTE: luaA_object_push, luaA_checkdrawin() and luaA_todrawin() are now
  * handled by the class system via luaA_object_push() and LUA_OBJECT_FUNCS
@@ -1503,7 +1504,7 @@ luaA_drawin_emit_signal_method(lua_State *L)
  * geom can be {x=, y=, width=, height=} table
  */
 static int
-luaA_drawin_geometry_method(lua_State *L)
+luaA_drawin_geometry(lua_State *L)
 {
 	drawin_t *drawin = luaA_checkdrawin(L, 1);
 
@@ -1912,14 +1913,35 @@ luaA_drawin_set_shape_input(lua_State *L, drawin_t *drawin)
 	return 0;
 }
 
-/** Drawin constructor for Lua (called when user does capi.drawin{...})
- * \param L The Lua VM state
- * \return Number of elements pushed on stack (always 1 - the drawin object)
+/** Get all drawins into a table.
+ * @treturn table A table with drawins.
+ * @staticfct get
  */
 static int
-luaA_drawin_call(lua_State *L)
+luaA_drawin_get(lua_State *L)
 {
-	return luaA_class_new(L, &drawin_class);
+	int i = 1;
+
+	lua_newtable(L);
+
+	foreach(d, globalconf.drawins) {
+		luaA_object_push(L, *d);
+		lua_rawseti(L, -2, i++);
+	}
+
+	return 1;
+}
+
+/** Create a new drawin.
+ * \param L The Lua VM state.
+ * \return The number of elements pushed on stack.
+ */
+static int
+luaA_drawin_new(lua_State *L)
+{
+	luaA_class_new(L, &drawin_class);
+
+	return 1;
 }
 
 /* Drawin class methods - added to the drawin CLASS table (not instances)
@@ -1927,7 +1949,8 @@ luaA_drawin_call(lua_State *L)
  * connect_signal, disconnect_signal, emit_signal, instances, set_fallback */
 static const luaL_Reg drawin_methods[] = {
 	LUA_CLASS_METHODS(drawin)
-	{ "__call", luaA_drawin_call },
+	{ "get", luaA_drawin_get },
+	{ "__call", luaA_drawin_new },
 	{ NULL, NULL }
 };
 
@@ -1942,7 +1965,7 @@ static const luaL_Reg drawin_meta[] = {
 	{ "__tostring", luaA_drawin_tostring },
 	{ "__gc", luaA_drawin_gc },
 	/* Instance methods (still valid with class system) */
-	{ "geometry", luaA_drawin_geometry_method },
+	{ "geometry", luaA_drawin_geometry },
 	{ "struts", luaA_drawin_struts },
 	{ "_buttons", luaA_drawin_buttons_method },
 	/* NOTE: LUA_OBJECT_META provides connect_signal/emit_signal/disconnect_signal
@@ -1955,7 +1978,7 @@ static const luaL_Reg drawin_meta[] = {
  * This replaces the old manual metatable setup with luaA_class_setup()
  */
 void
-luaA_drawin_class_setup(lua_State *L)
+drawin_class_setup(lua_State *L)
 {
 	/* Setup drawin class using AwesomeWM's class infrastructure
 	 * This creates:
@@ -2057,13 +2080,13 @@ luaA_drawin_constructor(lua_State *L)
 	drawin_t *drawin;
 
 	/* Create new drawin */
-	drawin = luaA_drawin_new(L);
+	drawin = drawin_new_legacy(L);
 	if (!drawin)
 		return 0;
 
 	/* If args table provided, set properties
-	 * Stack before luaA_drawin_new: [args_table]
-	 * Stack after luaA_drawin_new: [args_table, drawin]
+	 * Stack before drawin_new_legacy: [args_table]
+	 * Stack after drawin_new_legacy: [args_table, drawin]
 	 * So args is at index 1, drawin is at index 2
 	 */
 	if (lua_gettop(L) >= 2 && lua_istable(L, 1)) {
@@ -2127,7 +2150,7 @@ luaA_drawin_constructor(lua_State *L)
 		                         drawin->width, drawin->height);
 	}
 
-	/* Drawin object is already on stack from luaA_drawin_new() */
+	/* Drawin object is already on stack from drawin_new_legacy() */
 	return 1;
 }
 #endif /* Disabled luaA_drawin_constructor - using class system instead */
@@ -2145,7 +2168,7 @@ luaA_drawin_setup(lua_State *L)
 	 * - Makes it callable via __call metamethod (constructor)
 	 * - Sets up signal infrastructure
 	 */
-	luaA_drawin_class_setup(L);
+	drawin_class_setup(L);
 
 	/* Get or create capi table */
 	lua_getglobal(L, "capi");

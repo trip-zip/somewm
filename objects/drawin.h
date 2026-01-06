@@ -92,7 +92,7 @@ luaA_todrawin(lua_State *L, int idx)
 
 /* Drawin class setup and lifecycle */
 void luaA_drawin_setup(lua_State *L);
-void luaA_drawin_class_setup(lua_State *L);
+void drawin_class_setup(lua_State *L);
 
 /* Drawin geometry synchronization (external API - for wibox code etc) */
 void luaA_drawin_set_geometry(lua_State *L, drawin_t *drawin, int x, int y, int width, int height);
