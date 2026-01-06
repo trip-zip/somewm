@@ -28,9 +28,6 @@
 
 /** Parse a hexadecimal color string to its RGBA components
  *
- * Extracted from AwesomeWM's color.c (lines 40-68) with no modifications
- * needed - this function is pure string parsing with no X11 dependencies.
- *
  * \param colstr The color string (must start with #)
  * \param len The color string length
  * \param red Pointer to store red component (0-255)
@@ -40,8 +37,8 @@
  * \return true if parsing succeeded, false on error
  */
 static bool
-color_parse_hex(const char *colstr, ssize_t len,
-                uint8_t *red, uint8_t *green, uint8_t *blue, uint8_t *alpha)
+color_parse(const char *colstr, ssize_t len,
+            uint8_t *red, uint8_t *green, uint8_t *blue, uint8_t *alpha)
 {
     unsigned long colnum;
     char *p;
@@ -91,8 +88,8 @@ color_init_from_string(color_t *color, const char *colstr)
 
     len = strlen(colstr);
 
-    if (!color_parse_hex(colstr, len, &color->red, &color->green,
-                         &color->blue, &color->alpha)) {
+    if (!color_parse(colstr, len, &color->red, &color->green,
+                     &color->blue, &color->alpha)) {
         return false;
     }
 
