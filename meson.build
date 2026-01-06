@@ -231,7 +231,6 @@ somewm_sources = [
   'stack.c',
   'banning.c',
   'ewmh.c',
-  'window.c',
   'event.c',
   'strut.c',
   'property.c',
@@ -250,6 +249,7 @@ somewm_sources = [
   'common/buffer.c',
   'common/util.c',
   # Objects
+  'objects/window.c',
   'objects/tag.c',
   'objects/client.c',
   'objects/screen.c',

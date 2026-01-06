@@ -99,7 +99,7 @@
 #include "../banning.h"
 #include "../ewmh.h"
 #include "../x11_compat.h"  /* X11 stub functions for Wayland */
-#include "../window.h"  /* For window_set_border_width() */
+#include "objects/window.h"  /* For window_set_border_width() */
 #include "../somewm_api.h"
 /* #include "../somewm_types.h" - not needed, causes Client/client_t conflict */
 #include "../stack.h"

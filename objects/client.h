@@ -32,7 +32,7 @@
 #include "common/luaobject.h"
 #include "luaa.h"
 #include "color.h"
-#include "../window.h"
+#include "objects/window.h"
 
 /* Forward declarations */
 typedef struct screen_t screen_t;

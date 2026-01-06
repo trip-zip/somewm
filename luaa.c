@@ -34,7 +34,7 @@
 #include "objects/systray.h"
 #include "selection.h"
 #include "common/luaobject.h"
-#include "window.h"
+#include "objects/window.h"
 #include "dbus.h"
 
 /* Forward declaration for Lua state recreation (used by config timeout handler) */
