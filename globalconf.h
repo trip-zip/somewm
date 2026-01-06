@@ -347,16 +347,13 @@ extern awesome_t globalconf;
  *
  * @return The global Lua state
  *
- * NOTE: This function is already defined in objects/luaa.h and currently
- * returns globalconf_L. Once we fully migrate to globalconf structure,
- * update luaa.h to use globalconf.L instead.
+ * This matches AwesomeWM's pattern for getting the Lua state.
+ * Always use this instead of accessing globalconf.L directly.
  */
-#if 0
 static inline lua_State *globalconf_get_lua_State(void)
 {
     return globalconf.L;
 }
-#endif
 
 /** Initialize the global configuration structure.
  *

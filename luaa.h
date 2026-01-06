@@ -11,13 +11,7 @@
 
 extern lua_State *globalconf_L;
 
-/* AwesomeWM compatibility: globalconf_get_lua_State() accessor
- * This matches AwesomeWM's pattern for getting the Lua state.
- * Always use this instead of accessing globalconf_L directly.
- */
-static inline lua_State *globalconf_get_lua_State(void) {
-    return globalconf_L;
-}
+/* globalconf_get_lua_State() is now in globalconf.h (matches AwesomeWM) */
 
 /** Lua 5.1/5.2 compatibility for uservalue functions */
 static inline void
@@ -73,6 +67,28 @@ luaA_setfuncs(lua_State *L, const luaL_Reg *l)
 #else
     luaL_register(L, NULL, l);
 #endif
+}
+
+/* Forward declaration for luaA_registerfct */
+void luaA_checkfunction(lua_State *, int);
+
+/** Register a function in the Lua registry.
+ * \param L The Lua VM state.
+ * \param idx The function index on the stack.
+ * \param fct A int address: it will be filled with the int
+ * registered. If the address points to an already registered function, it will
+ * be unregistered.
+ * \return 0.
+ */
+static inline int
+luaA_registerfct(lua_State *L, int idx, int *fct)
+{
+    luaA_checkfunction(L, idx);
+    lua_pushvalue(L, idx);
+    if (*fct != LUA_REFNIL)
+        luaL_unref(L, LUA_REGISTRYINDEX, *fct);
+    *fct = luaL_ref(L, LUA_REGISTRYINDEX);
+    return 0;
 }
 
 /* Core initialization */

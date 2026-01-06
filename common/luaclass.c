@@ -563,24 +563,7 @@ luaA_class_new(lua_State *L, lua_class_t *lua_class)
     return 1;
 }
 
-/* somewm compatibility functions */
-
-/** Store a function reference in the registry.
- * \param L The Lua VM state.
- * \param idx The function index on the stack.
- * \param ref Pointer to store the reference.
- * \return 0.
- */
-int
-luaA_registerfct(lua_State *L, int idx, int *ref)
-{
-    luaA_checkfunction(L, idx);
-    lua_pushvalue(L, idx);
-    if (*ref != LUA_REFNIL)
-        luaL_unref(L, LUA_REGISTRYINDEX, *ref);
-    *ref = luaL_ref(L, LUA_REGISTRYINDEX);
-    return 0;
-}
+/* luaA_registerfct moved to luaa.h as static inline */
 
 /** Print a deprecation warning.
  * \param L The Lua VM state.
