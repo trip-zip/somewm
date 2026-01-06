@@ -5,7 +5,7 @@
 #include <stdbool.h>
 #include <cairo.h>
 #include "../somewm_types.h"
-#include "../window.h"  /* For WINDOW_OBJECT_HEADER */
+#include "objects/window.h"  /* For WINDOW_OBJECT_HEADER */
 #include "../color.h"
 #include "signal.h"
 #include "common/luaclass.h"  /* For lua_class_t */
