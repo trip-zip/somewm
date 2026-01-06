@@ -233,6 +233,7 @@ somewm_sources = [
   'ewmh.c',
   'event.c',
   'xkb.c',
+  'systray.c',
   'strut.c',
   'property.c',
   'dbus.c',
