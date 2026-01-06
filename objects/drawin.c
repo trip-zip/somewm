@@ -542,7 +542,7 @@ drawin_allocator(lua_State *L)
 
 	/* Create drawable object for rendering (AwesomeWM pattern)
 	 * Stack: [drawin] */
-	luaA_drawable_allocator(L, (drawable_refresh_callback)drawin_refresh_drawable, drawin);
+	drawable_allocator(L, (drawable_refresh_callback)drawin_refresh_drawable, drawin);
 	/* Stack: [drawin, drawable] */
 
 	/* Store drawable in drawin's uservalue table (AwesomeWM: drawin.c:430)
@@ -709,7 +709,7 @@ luaA_drawin_new(lua_State *L)
 
 	/* Create drawable object for rendering (AwesomeWM pattern)
 	 * Stack: [drawin] */
-	luaA_drawable_allocator(L, (drawable_refresh_callback)drawin_refresh_drawable, drawin);
+	drawable_allocator(L, (drawable_refresh_callback)drawin_refresh_drawable, drawin);
 	/* Stack: [drawin, drawable] */
 
 	/* Store drawable in drawin's uservalue table (AwesomeWM: drawin.c:430)
