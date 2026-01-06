@@ -7,7 +7,7 @@
 #   make clean           # Remove build directory
 #   make reconfigure     # Wipe and reconfigure build
 
-.PHONY: all install clean setup reconfigure test asan
+.PHONY: all install clean setup reconfigure asan
 
 all:
 	@test -d build || meson setup build
@@ -33,6 +33,22 @@ reconfigure:
 	rm -rf build
 	meson setup build
 
-# Run tests (placeholder - update when test framework is ready)
-test:
-	@echo "Tests not yet integrated with meson build"
+# === Testing Targets ===
+
+.PHONY: test test-unit test-integration test-compat test-all
+
+test: test-unit
+
+test-unit:
+	@echo "Running unit tests..."
+	@bash tests/run-unit.sh
+
+test-integration: all
+	@echo "Running integration tests..."
+	@SOMEWM=build/somewm SOMEWM_CLIENT=build/somewm-client bash tests/run-integration.sh
+
+test-compat: all
+	@echo "Running AwesomeWM compatibility tests..."
+	@SOMEWM=build/somewm SOMEWM_CLIENT=build/somewm-client bash tests/run-integration.sh tests/compatibility/test-*.lua
+
+test-all: test-unit test-integration test-compat

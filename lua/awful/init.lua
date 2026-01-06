@@ -41,6 +41,7 @@ local ret = {
     popup = require("awful.popup");
     spawn = require("awful.spawn");
     screenshot = require("awful.screenshot");
+    screenrecord = require("awful.screenrecord");
     statusnotifierwatcher = require("awful.statusnotifierwatcher");
     systray = require("awful.systray");
 }

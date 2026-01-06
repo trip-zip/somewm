@@ -78,7 +78,11 @@ jobs:
             bison \
             foot \
             xterm \
-            xwayland
+            xwayland \
+            libavcodec-dev \
+            libavformat-dev \
+            libswscale-dev \
+            libavutil-dev
 
       - name: Upgrade meson
         run: pip install --upgrade --break-system-packages meson
@@ -156,3 +160,5 @@ jobs:
           WLR_BACKENDS: headless
           WLR_RENDERER: pixman
           TEST_TIMEOUT: 45
+          SOMEWM: build/somewm
+          SOMEWM_CLIENT: build/somewm-client
