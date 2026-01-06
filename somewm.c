@@ -610,7 +610,7 @@ arrangelayers(Monitor *m)
 		if (L && globalconf.screens.tab) {
 			screen = luaA_screen_get_by_monitor(L, m);
 			if (screen) {
-				luaA_screen_update_workarea(L, screen, &usable_area);
+				screen_set_workarea(L, screen, &usable_area);
 			}
 		}
 
@@ -1058,7 +1058,7 @@ cleanupmon(struct wl_listener *listener, void *data)
 			screen_t *old_primary = luaA_screen_get_primary_screen(globalconf_L);
 			bool was_primary = (old_primary == screen);
 
-			luaA_screen_removed(globalconf_L, screen);
+			screen_removed(globalconf_L, screen);
 			luaA_screen_emit_viewports(globalconf_L);
 
 			/* If removed screen was primary, emit primary_changed on new primary */
@@ -1481,7 +1481,7 @@ screen_added_idle(void *data)
 		screen_t *old_primary = luaA_screen_get_primary_screen(globalconf_L);
 		screen_t *new_primary;
 
-		luaA_screen_added(globalconf_L, screen);
+		screen_added(globalconf_L, screen);
 		luaA_screen_emit_list(globalconf_L);
 		luaA_screen_emit_viewports(globalconf_L);
 
@@ -3784,7 +3784,7 @@ run(char *startup_cmd)
 
 	/* Emit screen::scanning signal before backend starts creating monitors */
 	if (globalconf_L) {
-		luaA_screen_emit_scanning(globalconf_L);
+		screen_emit_scanning();
 	}
 
 	/* Start the backend. This will enumerate outputs and inputs, become the DRM
@@ -3807,7 +3807,7 @@ run(char *startup_cmd)
 		luaA_loadrc();
 		/* Emit screen::scanned AFTER rc.lua loads (matches AwesomeWM).
 		 * This allows rc.lua handlers to be connected before scanned fires. */
-		luaA_screen_emit_scanned(globalconf_L);
+		screen_emit_scanned();
 
 		/* Emit client scanning signals - triggers awful.mouse to set up default mousebindings */
 		client_emit_scanning();

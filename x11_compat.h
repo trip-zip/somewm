@@ -227,12 +227,7 @@ static inline void spawn_start_notify(client_t *c, const char *startup_id) {
 /* Screen/monitor helper stubs */
 typedef struct screen_t screen_t;
 
-/* screen_client_moveto() now implemented in objects/screen.c */
-
-static inline void screen_update_workarea(screen_t *screen) {
-    (void)screen;
-    /* TODO: Recalculate workarea based on struts */
-}
+/* screen_client_moveto() and screen_update_workarea() now implemented in objects/screen.c */
 
 /* Client property functions */
 static inline void client_set_border_width_callback(void *ctx, uint16_t old_width, uint16_t new_width) {
