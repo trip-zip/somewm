@@ -25,30 +25,12 @@
 #define SOMEWM_LUACLASS_INCLUDED  /* Signal that lua_object_t typedef is available */
 
 #include "common/signal.h"
+#include "luaa.h"
 
 #include <lua.h>
 #include <lauxlib.h>
 
-/** Lua 5.1/5.2 compatibility for uservalue functions */
-static inline void
-luaA_getuservalue(lua_State *L, int idx)
-{
-#if LUA_VERSION_NUM >= 502
-    lua_getuservalue(L, idx);
-#else
-    lua_getfenv(L, idx);
-#endif
-}
-
-static inline void
-luaA_setuservalue(lua_State *L, int idx)
-{
-#if LUA_VERSION_NUM >= 502
-    lua_setuservalue(L, idx);
-#else
-    lua_setfenv(L, idx);
-#endif
-}
+/* luaA_getuservalue and luaA_setuservalue are now in luaa.h */
 
 typedef struct lua_class_property lua_class_property_t;
 

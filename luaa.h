@@ -18,6 +18,27 @@ static inline lua_State *globalconf_get_lua_State(void) {
     return globalconf_L;
 }
 
+/** Lua 5.1/5.2 compatibility for uservalue functions */
+static inline void
+luaA_getuservalue(lua_State *L, int idx)
+{
+#if LUA_VERSION_NUM >= 502
+    lua_getuservalue(L, idx);
+#else
+    lua_getfenv(L, idx);
+#endif
+}
+
+static inline void
+luaA_setuservalue(lua_State *L, int idx)
+{
+#if LUA_VERSION_NUM >= 502
+    lua_setuservalue(L, idx);
+#else
+    lua_setfenv(L, idx);
+#endif
+}
+
 /* Core initialization */
 void luaA_init(void);
 void luaA_loadrc(void);
