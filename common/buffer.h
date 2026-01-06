@@ -30,7 +30,7 @@
 #ifndef AWESOME_COMMON_BUFFER_H
 #define AWESOME_COMMON_BUFFER_H
 
-#include "../util.h"
+#include "common/util.h"
 #include <stdarg.h>
 #include <assert.h>
 

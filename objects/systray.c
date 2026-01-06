@@ -18,7 +18,7 @@
 #include "common/luaclass.h"
 #include "common/luaobject.h"
 #include "../globalconf.h"
-#include "../util.h"
+#include "common/util.h"
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>

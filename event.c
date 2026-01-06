@@ -15,7 +15,7 @@
 #include "objects/mousegrabber.h"
 #include "objects/luaa.h"
 #include "common/luaobject.h"
-#include "util.h"
+#include "common/util.h"
 #include <stdio.h>
 
 /* AwesomeWM compatibility: ANY modifier mask */

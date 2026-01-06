@@ -15,3 +15,4 @@ build/
 builddir/
 subprojects/wlroots/
 subprojects/packagecache/
+tools/api-parity/

@@ -15,7 +15,7 @@
 #include "drawin.h"
 #include "client.h"
 #include "../somewm_api.h"
-#include "../util.h"
+#include "common/util.h"
 #include <stdlib.h>
 #include <string.h>
 #include <strings.h>

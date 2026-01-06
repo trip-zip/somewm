@@ -23,7 +23,7 @@
  */
 
 #include "draw.h"
-#include "util.h"
+#include "common/util.h"
 
 #include <stdlib.h>
 #include <math.h>

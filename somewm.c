@@ -76,7 +76,7 @@
 #include <xcb/xcb_icccm.h>
 #endif
 
-#include "util.h"
+#include "common/util.h"
 #include "somewm_types.h"
 #include "somewm_api.h"
 #include "stack.h"

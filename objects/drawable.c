@@ -13,7 +13,7 @@
 #include "screen.h"
 #include "client.h"
 #include "luaa.h"
-#include "../util.h"
+#include "common/util.h"
 #include "../x11_compat.h"
 #include "common/luaclass.h"
 #include "common/luaobject.h"

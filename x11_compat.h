@@ -95,7 +95,7 @@ typedef struct {
 #define MAX_X11_COORDINATE 32767
 
 /* warn(), fatal(), check() macros are now in util.h */
-#include "util.h"
+#include "common/util.h"
 
 /* Area comparison macro */
 #define AREA_EQUAL(a, b) \

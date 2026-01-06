@@ -103,7 +103,7 @@
 #include "../somewm_api.h"
 /* #include "../somewm_types.h" - not needed, causes Client/client_t conflict */
 #include "../stack.h"
-#include "../util.h"
+#include "common/util.h"
 #include "../event.h"
 
 /* Forward declaration - applies client geometry to wlroots scene graph */

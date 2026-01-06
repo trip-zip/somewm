@@ -18,7 +18,7 @@
  */
 
 #include "color.h"
-#include "util.h"
+#include "common/util.h"
 
 #include <ctype.h>
 #include <stdlib.h>

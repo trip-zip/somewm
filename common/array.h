@@ -27,7 +27,7 @@
 #include <assert.h>
 #include <string.h>
 
-#include "../util.h"
+#include "common/util.h"
 
 /** Common array type */
 #define ARRAY_TYPE(type_t, pfx)                                             \
