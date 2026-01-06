@@ -19,6 +19,8 @@
  *
  */
 
+#include "globalconf.h"
+
 /** A deprecated low-level D-Bus API **DO NOT USE**.
  *
  * `lgi.GDBus` is always better. This module will eventually be removed.

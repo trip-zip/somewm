@@ -31,6 +31,7 @@
 #include "common/luaclass.h"
 #include "common/luaobject.h"
 #include "luaa.h"
+#include "globalconf.h"
 #include "color.h"
 #include "objects/window.h"
 

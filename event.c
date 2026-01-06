@@ -11,6 +11,7 @@
  */
 
 #include "event.h"
+#include "globalconf.h"
 #include "objects/button.h"
 #include "objects/mousegrabber.h"
 #include "luaa.h"

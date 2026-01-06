@@ -12,6 +12,7 @@
  */
 
 #include "objects/spawn.h"
+#include "globalconf.h"
 #include "luaa.h"
 #include "objects/signal.h"
 

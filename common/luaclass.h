@@ -110,8 +110,7 @@ int luaA_class_new(lua_State *, lua_class_t *);
 void * luaA_checkudata(lua_State *, int, lua_class_t *);
 void * luaA_toudata(lua_State *L, int ud, lua_class_t *);
 
-/* Compatibility with existing somewm code */
-int luaA_registerfct(lua_State *L, int fct_idx, int *ref);
+/* luaA_registerfct is now in luaa.h */
 
 static inline void luaA_class_set_tostring(lua_class_t *class, lua_class_propfunc_t callback)
 {
