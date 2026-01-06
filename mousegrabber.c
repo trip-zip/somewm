@@ -27,6 +27,7 @@
  */
 
 #include "objects/mousegrabber.h"
+#include "objects/mouse.h"
 #include "luaa.h"
 #include "common/lualib.h"
 #include "globalconf.h"
@@ -35,6 +36,8 @@
 #include <wlr/types/wlr_cursor.h>
 #include <wlr/types/wlr_xcursor_manager.h>
 #include <string.h>
+#include <stdbool.h>
+#include <unistd.h>
 
 /* External cursor manager from somewm.c */
 extern struct wlr_xcursor_manager *cursor_mgr;
@@ -42,6 +45,22 @@ extern struct wlr_xcursor_manager *cursor_mgr;
 /* Track mousegrabber state */
 static bool mousegrabber_active = false;
 static char *mousegrabber_cursor_name = NULL;
+
+/** Grab the mouse.
+ * \param cursor The cursor to use while grabbing (unused in Wayland).
+ * \return True if mouse was grabbed.
+ *
+ * Note: In Wayland, compositors inherently have pointer access, so this
+ * is a no-op that always succeeds. The X11 version uses xcb_grab_pointer.
+ */
+static bool
+mousegrabber_grab(uint32_t cursor)
+{
+    (void)cursor;
+    /* Wayland compositors don't need explicit pointer grabbing like X11.
+     * We just track state internally. Always return success. */
+    return true;
+}
 
 /** Check if mousegrabber is currently active.
  * \return true if mousegrabber is running, false otherwise
@@ -52,38 +71,16 @@ mousegrabber_isrunning(void)
     return mousegrabber_active && globalconf.mousegrabber != LUA_REFNIL;
 }
 
-/** Handle pointer motion events during grab.
- * Routes motion events to Lua callback when mousegrabber is active.
- * \param L The Lua VM state
- * \param x The mouse X coordinate
- * \param y The mouse Y coordinate
- * \param button_states Array of 5 button states (pressed/not pressed)
+/** Handle mouse motion events.
+ * \param L Lua stack to push the pointer motion.
+ * \param x The received mouse event x component.
+ * \param y The received mouse event y component.
+ * \param mask The received mouse event bit mask.
  */
 void
-mousegrabber_handleevent(lua_State *L, double x, double y, int *button_states)
+mousegrabber_handleevent(lua_State *L, int x, int y, uint16_t mask)
 {
-    int i;
-
-    /* Create coords table: {x=, y=, buttons={}} */
-    lua_newtable(L);
-
-    /* Set x coordinate */
-    lua_pushnumber(L, x);
-    lua_setfield(L, -2, "x");
-
-    /* Set y coordinate */
-    lua_pushnumber(L, y);
-    lua_setfield(L, -2, "y");
-
-    /* Create buttons sub-table */
-    lua_newtable(L);
-    for (i = 0; i < 5; i++) {
-        lua_pushboolean(L, button_states[i]);
-        lua_rawseti(L, -2, i + 1); /* Lua uses 1-based indexing */
-    }
-    lua_setfield(L, -2, "buttons");
-
-    /* The table is now on top of the stack, ready for the callback */
+    luaA_mouse_pushstatus(L, x, y, mask);
 }
 
 /** Stop grabbing the mouse pointer.
@@ -164,6 +161,12 @@ luaA_mousegrabber_run(lua_State *L)
     /* Register Lua callback */
     luaA_registerfct(L, 1, &globalconf.mousegrabber);
 
+    /* Attempt to grab (always succeeds in Wayland but matches AwesomeWM pattern) */
+    if (!mousegrabber_grab(0)) {
+        luaA_unregister(L, &globalconf.mousegrabber);
+        luaL_error(L, "unable to grab mouse pointer");
+    }
+
     /* Set cursor if specified */
     cursor = some_get_cursor();
     if (cursor && cursor_mgr && cursor_name) {
@@ -180,8 +183,6 @@ luaA_mousegrabber_run(lua_State *L)
     /* Mark mousegrabber as active */
     mousegrabber_active = true;
 
-    fprintf(stderr, "[MOUSEGRABBER_RUN] Started successfully, ref=%d\n", globalconf.mousegrabber);
-
     return 0;
 }
 
@@ -191,11 +192,21 @@ luaA_mousegrabber_run(lua_State *L)
  * @staticfct isrunning
  */
 static int
-luaA_mousegrabber_isrunning_lua(lua_State *L)
+luaA_mousegrabber_isrunning(lua_State *L)
 {
-    lua_pushboolean(L, mousegrabber_isrunning());
+    lua_pushboolean(L, globalconf.mousegrabber != LUA_REFNIL);
     return 1;
 }
+
+const struct luaL_Reg awesome_mousegrabber_lib[] =
+{
+    { "run", luaA_mousegrabber_run },
+    { "stop", luaA_mousegrabber_stop },
+    { "isrunning", luaA_mousegrabber_isrunning },
+    { "__index", luaA_default_index },
+    { "__newindex", luaA_default_newindex },
+    { NULL, NULL }
+};
 
 /** Initialize the mousegrabber Lua module
  * \param L The Lua VM state
@@ -203,15 +214,8 @@ luaA_mousegrabber_isrunning_lua(lua_State *L)
 void
 luaA_mousegrabber_setup(lua_State *L)
 {
-    static const struct luaL_Reg mousegrabber_methods[] = {
-        { "run", luaA_mousegrabber_run },
-        { "stop", luaA_mousegrabber_stop },
-        { "isrunning", luaA_mousegrabber_isrunning_lua },
-        { NULL, NULL }
-    };
-
     /* Register the methods on the table at the top of the stack */
-    luaA_setfuncs(L, mousegrabber_methods);
+    luaA_setfuncs(L, awesome_mousegrabber_lib);
 }
 
-/* vim: filetype=c:expandtab:shiftwidth=4:tabstop=8:softtabstop=4:textwidth=80 */
+// vim: filetype=c:expandtab:shiftwidth=4:tabstop=8:softtabstop=4:textwidth=80

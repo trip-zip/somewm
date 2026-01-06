@@ -647,12 +647,19 @@ axisnotify(struct wl_listener *listener, void *data)
 	if (mousegrabber_isrunning()) {
 		lua_State *L = globalconf_get_lua_State();
 		int button_states[5];
+		uint16_t mask = 0;
 
 		/* Get current button states */
 		some_get_button_states(button_states);
 
+		/* Convert button_states array to X11-style mask */
+		for (int i = 0; i < 5; i++) {
+			if (button_states[i])
+				mask |= (1 << (8 + i));
+		}
+
 		/* Push coords table to Lua stack */
-		mousegrabber_handleevent(L, cursor->x, cursor->y, button_states);
+		mousegrabber_handleevent(L, cursor->x, cursor->y, mask);
 
 		/* Get the callback from registry */
 		lua_rawgeti(L, LUA_REGISTRYINDEX, globalconf.mousegrabber);
@@ -777,12 +784,19 @@ buttonpress(struct wl_listener *listener, void *data)
 	if (mousegrabber_isrunning()) {
 		lua_State *L = globalconf_get_lua_State();
 		int button_states[5];
+		uint16_t mask = 0;
 
 		/* Get current button states */
 		some_get_button_states(button_states);
 
+		/* Convert button_states array to X11-style mask */
+		for (int i = 0; i < 5; i++) {
+			if (button_states[i])
+				mask |= (1 << (8 + i));
+		}
+
 		/* Push coords table to Lua stack */
-		mousegrabber_handleevent(L, cursor->x, cursor->y, button_states);
+		mousegrabber_handleevent(L, cursor->x, cursor->y, mask);
 
 		/* Get the callback from registry */
 		lua_rawgeti(L, LUA_REGISTRYINDEX, globalconf.mousegrabber);
@@ -3151,12 +3165,19 @@ motionnotify(uint32_t time, struct wlr_input_device *device, double dx, double d
 	if (mousegrabber_isrunning()) {
 		lua_State *L = globalconf_get_lua_State();
 		int button_states[5];
+		uint16_t mask = 0;
 
 		/* Get current button states */
 		some_get_button_states(button_states);
 
+		/* Convert button_states array to X11-style mask */
+		for (int i = 0; i < 5; i++) {
+			if (button_states[i])
+				mask |= (1 << (8 + i));
+		}
+
 		/* Push coords table to Lua stack */
-		mousegrabber_handleevent(L, cursor->x, cursor->y, button_states);
+		mousegrabber_handleevent(L, cursor->x, cursor->y, mask);
 
 		/* Get the callback from registry */
 		lua_rawgeti(L, LUA_REGISTRYINDEX, globalconf.mousegrabber);

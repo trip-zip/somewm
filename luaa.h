@@ -91,6 +91,17 @@ luaA_registerfct(lua_State *L, int idx, int *fct)
     return 0;
 }
 
+/** Unregister a reference to a Lua object.
+ * \param L The Lua VM state.
+ * \param ref A reference to an Lua object.
+ */
+static inline void
+luaA_unregister(lua_State *L, int *ref)
+{
+    luaL_unref(L, LUA_REGISTRYINDEX, *ref);
+    *ref = LUA_REFNIL;
+}
+
 /* Core initialization */
 void luaA_init(void);
 void luaA_loadrc(void);
