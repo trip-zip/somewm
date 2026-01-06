@@ -232,6 +232,7 @@ somewm_sources = [
   'banning.c',
   'ewmh.c',
   'event.c',
+  'xkb.c',
   'strut.c',
   'property.c',
   'dbus.c',

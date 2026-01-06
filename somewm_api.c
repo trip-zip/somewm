@@ -14,6 +14,7 @@
 #include <wlr/types/wlr_seat.h>
 
 #include "somewm_api.h"
+#include "xkb.h"
 #include "objects/signal.h"
 #include "objects/screen.h"
 #include "stack.h"
@@ -1393,47 +1394,6 @@ some_focus_top_client(Monitor *m)
  * update path. Workaround: use keybindings that call xkb_set_layout_group().
  */
 
-/* Deferred XKB signal emission (matches AwesomeWM's xkb_refresh pattern) */
-static gboolean
-xkb_refresh(gpointer unused)
-{
-	globalconf.xkb.update_pending = false;
-
-	if (globalconf.xkb.map_changed)
-		luaA_emit_signal_global("xkb::map_changed");
-
-	if (globalconf.xkb.group_changed)
-		luaA_emit_signal_global("xkb::group_changed");
-
-	globalconf.xkb.map_changed = false;
-	globalconf.xkb.group_changed = false;
-
-	return G_SOURCE_REMOVE;
-}
-
-static void
-xkb_schedule_refresh(void)
-{
-	if (globalconf.xkb.update_pending)
-		return;
-	globalconf.xkb.update_pending = true;
-	g_idle_add_full(G_PRIORITY_LOW, xkb_refresh, NULL, NULL);
-}
-
-void
-some_xkb_schedule_group_changed(void)
-{
-	globalconf.xkb.group_changed = true;
-	xkb_schedule_refresh();
-}
-
-void
-some_xkb_schedule_map_changed(void)
-{
-	globalconf.xkb.map_changed = true;
-	xkb_schedule_refresh();
-}
-
 /* Get the current xkb_state from the keyboard group */
 struct xkb_state *
 some_xkb_get_state(void)
@@ -1501,7 +1461,7 @@ some_xkb_set_layout_group(xkb_layout_index_t group)
 	/* Emit signal if layout actually changed */
 	if (old_group != group) {
 		globalconf.xkb.last_group = group;
-		some_xkb_schedule_group_changed();
+		xkb_schedule_group_changed();
 	}
 
 	return 1;
@@ -1579,7 +1539,7 @@ some_rebuild_keyboard_keymap(void)
 	if (keymap) {
 		wlr_keyboard_set_keymap(&kb_group->wlr_group->keyboard, keymap);
 		xkb_keymap_unref(keymap);
-		some_xkb_schedule_map_changed();
+		xkb_schedule_map_changed();
 	}
 
 	xkb_context_unref(context);
