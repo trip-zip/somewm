@@ -2,6 +2,7 @@
 #define LUAA_H
 
 #include <stdbool.h>
+#include <assert.h>
 #include <lua.h>
 #include <lualib.h>
 #include <lauxlib.h>
@@ -36,6 +37,41 @@ luaA_setuservalue(lua_State *L, int idx)
     lua_setuservalue(L, idx);
 #else
     lua_setfenv(L, idx);
+#endif
+}
+
+/** Lua 5.1/5.2 compatible registerlib (from AwesomeWM luaa.h)
+ * \param L The Lua VM state.
+ * \param libname The library name.
+ * \param l The table of functions.
+ */
+static inline void
+luaA_registerlib(lua_State *L, const char *libname, const luaL_Reg *l)
+{
+    assert(libname);
+#if LUA_VERSION_NUM >= 502
+    lua_newtable(L);
+    luaL_setfuncs(L, l, 0);
+    lua_pushvalue(L, -1);
+    lua_setglobal(L, libname);
+#else
+    luaL_register(L, libname, l);
+#endif
+}
+
+/** Lua 5.1/5.2 compatible setfuncs (from AwesomeWM luaa.h)
+ * \param L The Lua VM state.
+ * \param l The table of functions.
+ */
+static inline void
+luaA_setfuncs(lua_State *L, const luaL_Reg *l)
+{
+    if (l == NULL)
+        return;
+#if LUA_VERSION_NUM >= 502
+    luaL_setfuncs(L, l, 0);
+#else
+    luaL_register(L, NULL, l);
 #endif
 }
 

@@ -28,6 +28,7 @@
 #include <assert.h>
 
 #include "common/util.h"
+#include "luaa.h"  /* For luaA_registerlib, luaA_setfuncs */
 
 /** Lua function to call on dofunction() error */
 extern lua_CFunction lualib_dofunction_on_error;
@@ -125,42 +126,9 @@ int luaA_call_handler(lua_State *L, int handler)
     return lua_gettop(L);
 }
 
-/** Lua 5.1/5.2 compatible registerlib (from AwesomeWM luaa.h)
- * \param L The Lua VM state.
- * \param libname The library name.
- * \param l The table of functions.
- */
-static inline void
-luaA_registerlib(lua_State *L, const char *libname, const luaL_Reg *l)
-{
-    assert(libname);
-#if LUA_VERSION_NUM >= 502
-    lua_newtable(L);
-    luaL_setfuncs(L, l, 0);
-    lua_pushvalue(L, -1);
-    lua_setglobal(L, libname);
-#else
-    luaL_register(L, libname, l);
-#endif
-}
+/* luaA_registerlib and luaA_setfuncs are now in luaa.h */
 
-/** Lua 5.1/5.2 compatible setfuncs (from AwesomeWM luaa.h)
- * \param L The Lua VM state.
- * \param l The table of functions.
- */
-static inline void
-luaA_setfuncs(lua_State *L, const luaL_Reg *l)
-{
-    if (l == NULL)
-        return;
-#if LUA_VERSION_NUM >= 502
-    luaL_setfuncs(L, l, 0);
-#else
-    luaL_register(L, NULL, l);
-#endif
-}
-
-/* luaA_typerror is defined in objects/luaa.h */
+/* luaA_typerror is defined in luaa.h */
 
 /** Deprecation warning helper (implemented in common/luaclass.c)
  * \param L The Lua VM state.
