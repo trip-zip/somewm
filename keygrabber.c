@@ -1,82 +1,197 @@
 /*
- * keygrabber.c - Keygrabber object implementation
+ * keygrabber.c - key grabbing
  *
- * Copyright © 2024 somewm contributors
- * Based on AwesomeWM keygrabber patterns
  * Copyright © 2008-2009 Julien Danjou <julien@danjou.info>
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
  * the Free Software Foundation; either version 2 of the License, or
  * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License along
+ * with this program; if not, write to the Free Software Foundation, Inc.,
+ * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+ *
  */
-#include <lua.h>
-#include <lauxlib.h>
-#include <lualib.h>
-#include <stddef.h>
-#include <stdbool.h>
+
+/*
+ * @author Julien Danjou &lt;julien@danjou.info&gt;
+ * @copyright 2008-2009 Julien Danjou
+ * @module keygrabber
+ */
+
+#include <unistd.h>
+#include <xkbcommon/xkbcommon.h>
+
+#include "objects/keygrabber.h"
+#include "objects/key.h"
+#include "globalconf.h"
+#include "luaa.h"
 #include "common/lualib.h"
 #include "somewm_types.h"
-#include "objects/keygrabber.h"
 
-/* Global keygrabber state */
-static int keygrabber_callback = LUA_NOREF;  /* Reference to Lua callback function */
-static bool keygrabber_running = false;      /* Is keygrabber currently active? */
-static lua_State *globalL = NULL;            /* Global Lua state for callback execution */
+/** Grab the keyboard.
+ * \return True if keyboard was grabbed.
+ *
+ * Note: In Wayland, compositors inherently have keyboard access, so this
+ * is a no-op that always succeeds. The X11 version uses xcb_grab_keyboard.
+ */
+static bool
+keygrabber_grab(void)
+{
+    /* Wayland compositors don't need explicit keyboard grabbing like X11.
+     * We just track state internally. Always return success. */
+    return true;
+}
 
-/** Check if keygrabber is currently running
- * \return true if keygrabber is active, false otherwise
+/** Returns, whether the \0-terminated char in UTF8 is control char.
+ * Control characters are either characters without UTF8 representation like XF86MonBrightnessUp
+ * or backspace and the other characters in ASCII table before space
+ *
+ * \param buf input buffer
+ * \return True if the input buffer is control character.
+ */
+static bool
+is_control(char *buf)
+{
+    return (buf[0] >= 0 && buf[0] < 0x20) || buf[0] == 0x7f;
+}
+
+/** Handle keypress event.
+ * \param L Lua stack to push the key pressed.
+ * \param keycode The keycode of the pressed key.
+ * \param state The xkb_state for key conversion.
+ * \param is_press True for key press, false for key release.
+ * \return True if a key was successfully retrieved, false otherwise.
+ */
+bool
+keygrabber_handlekpress(lua_State *L, xkb_keycode_t keycode,
+                        struct xkb_state *state, bool is_press)
+{
+    char buf[64];
+    xkb_keysym_t keysym;
+
+    /* Get the keysym */
+    keysym = xkb_state_key_get_one_sym(state, keycode);
+
+    /* Get UTF-8 representation */
+    xkb_state_key_get_utf8(state, keycode, buf, sizeof(buf));
+
+    if (is_control(buf)) {
+        /* Use text names for control characters */
+        xkb_keysym_get_name(keysym, buf, sizeof(buf));
+    }
+
+    /* Push modifiers table */
+    luaA_pushmodifiers(L, xkb_state_serialize_mods(state, XKB_STATE_MODS_EFFECTIVE));
+
+    /* Push key name */
+    lua_pushstring(L, buf);
+
+    /* Push event type */
+    if (is_press)
+        lua_pushliteral(L, "press");
+    else
+        lua_pushliteral(L, "release");
+
+    return true;
+}
+
+/* Grab keyboard input and read pressed keys, calling a callback function at
+ * each keypress, until `keygrabber.stop` is called.
+ * The callback function receives three arguments:
+ *
+ * @param callback A callback function as described above.
+ * @deprecated keygrabber.run
+ */
+static int
+luaA_keygrabber_run(lua_State *L)
+{
+    if (globalconf.keygrabber != LUA_REFNIL)
+        luaL_error(L, "keygrabber already running");
+
+    luaA_registerfct(L, 1, &globalconf.keygrabber);
+
+    if (!keygrabber_grab()) {
+        luaA_unregister(L, &globalconf.keygrabber);
+        luaL_error(L, "unable to grab keyboard");
+    }
+
+    return 0;
+}
+
+/** Stop grabbing the keyboard.
+ * @deprecated keygrabber.stop
+ */
+int
+luaA_keygrabber_stop(lua_State *L)
+{
+    /* Wayland: no xcb_ungrab_keyboard needed */
+    luaA_unregister(L, &globalconf.keygrabber);
+    return 0;
+}
+
+/** Check if keygrabber is running.
+ * @deprecated keygrabber.isrunning
+ * @treturn bool A boolean value, true if keygrabber is running, false otherwise.
+ * @see keygrabber.is_running
+ */
+static int
+luaA_keygrabber_isrunning(lua_State *L)
+{
+    lua_pushboolean(L, globalconf.keygrabber != LUA_REFNIL);
+    return 1;
+}
+
+const struct luaL_Reg awesome_keygrabber_lib[] =
+{
+    { "run", luaA_keygrabber_run },
+    { "stop", luaA_keygrabber_stop },
+    { "isrunning", luaA_keygrabber_isrunning },
+    { "__index", luaA_default_index },
+    { "__newindex", luaA_default_newindex },
+    { NULL, NULL }
+};
+
+/* somewm-specific: Check if keygrabber is currently running
+ * Used by somewm.c event handling
  */
 bool
 some_keygrabber_is_running(void)
 {
-    return keygrabber_running;
+    return globalconf.keygrabber != LUA_REFNIL;
 }
 
-/** Handle a key event when keygrabber is running
- * \param modifiers The modifier mask (Shift, Control, Alt, etc.)
- * \param keysym The keysym value
- * \param keyname The string name of the key (e.g., "Escape", "a")
- * \return true if the event was handled, false otherwise
+/* somewm-specific: Handle a key event when keygrabber is running
+ * Used by somewm.c keyboard event handling
  */
 bool
 some_keygrabber_handle_key(uint32_t modifiers, uint32_t keysym, const char *keyname)
 {
     lua_State *L;
 
-    if (!keygrabber_running || keygrabber_callback == LUA_NOREF || !globalL)
+    (void)keysym;  /* Unused */
+
+    if (globalconf.keygrabber == LUA_REFNIL)
         return false;
 
-    L = globalL;
+    L = globalconf_get_lua_State();
 
     /* Get the callback function from registry */
-    lua_rawgeti(L, LUA_REGISTRYINDEX, keygrabber_callback);
+    lua_rawgeti(L, LUA_REGISTRYINDEX, globalconf.keygrabber);
 
     if (!lua_isfunction(L, -1)) {
         lua_pop(L, 1);
         return false;
     }
 
-    /* Create modifiers table */
-    lua_newtable(L);
-
-    /* AwesomeWM modifier names */
-    if (modifiers & WLR_MODIFIER_SHIFT) {
-        lua_pushboolean(L, 1);
-        lua_setfield(L, -2, "Shift");
-    }
-    if (modifiers & WLR_MODIFIER_CTRL) {
-        lua_pushboolean(L, 1);
-        lua_setfield(L, -2, "Control");
-    }
-    if (modifiers & WLR_MODIFIER_ALT) {
-        lua_pushboolean(L, 1);
-        lua_setfield(L, -2, "Mod1");
-    }
-    if (modifiers & WLR_MODIFIER_LOGO) {
-        lua_pushboolean(L, 1);
-        lua_setfield(L, -2, "Mod4");
-    }
+    /* Push modifiers table using AwesomeWM helper */
+    luaA_pushmodifiers(L, modifiers);
 
     /* Push key name */
     lua_pushstring(L, keyname);
@@ -95,82 +210,14 @@ some_keygrabber_handle_key(uint32_t modifiers, uint32_t keysym, const char *keyn
     return true;
 }
 
-/** Start the keygrabber with a callback function
- * Lua API: keygrabber.run(callback)
- * \param L The Lua VM state
- * \return Number of elements pushed on stack (0)
- */
-static int
-luaA_keygrabber_run(lua_State *L)
-{
-    /* Check that first argument is a function */
-    luaL_checktype(L, 1, LUA_TFUNCTION);
-
-    /* If we already have a callback, unreference it */
-    if (keygrabber_callback != LUA_NOREF) {
-        luaL_unref(L, LUA_REGISTRYINDEX, keygrabber_callback);
-    }
-
-    /* Store the callback function in the registry */
-    lua_pushvalue(L, 1);  /* Push the function */
-    keygrabber_callback = luaL_ref(L, LUA_REGISTRYINDEX);
-
-    /* Mark keygrabber as running */
-    keygrabber_running = true;
-
-    return 0;
-}
-
-/** Stop the keygrabber
- * Lua API: keygrabber.stop()
- * \param L The Lua VM state
- * \return Number of elements pushed on stack (0)
- */
-static int
-luaA_keygrabber_stop(lua_State *L)
-{
-    (void)L;  /* Unused parameter */
-
-    /* Unreference the callback if we have one */
-    if (keygrabber_callback != LUA_NOREF) {
-        luaL_unref(L, LUA_REGISTRYINDEX, keygrabber_callback);
-        keygrabber_callback = LUA_NOREF;
-    }
-
-    /* Mark keygrabber as stopped */
-    keygrabber_running = false;
-
-    return 0;
-}
-
-/** Check if keygrabber is currently running
- * Lua API: keygrabber.isrunning()
- * \param L The Lua VM state
- * \return Number of elements pushed on stack (1 - boolean)
- */
-static int
-luaA_keygrabber_isrunning(lua_State *L)
-{
-    lua_pushboolean(L, keygrabber_running);
-    return 1;
-}
-
 /** Initialize the keygrabber Lua module
  * \param L The Lua VM state
  */
 void
 luaA_keygrabber_setup(lua_State *L)
 {
-    static const struct luaL_Reg keygrabber_methods[] = {
-        { "run", luaA_keygrabber_run },
-        { "stop", luaA_keygrabber_stop },
-        { "isrunning", luaA_keygrabber_isrunning },
-        { NULL, NULL }
-    };
-
-    /* Store global Lua state for callback execution */
-    globalL = L;
-
-    /* Create the keygrabber module table */
-    luaA_setfuncs(L, keygrabber_methods);
+    /* Register the methods on the table at the top of the stack */
+    luaA_setfuncs(L, awesome_keygrabber_lib);
 }
+
+// vim: filetype=c:expandtab:shiftwidth=4:tabstop=8:softtabstop=4:textwidth=80
