@@ -225,7 +225,6 @@ add_project_arguments(
 somewm_sources = [
   'somewm.c',
   'somewm_api.c',
-  'util.c',
   'ipc.c',
   'color.c',
   'draw.c',

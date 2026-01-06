@@ -27,7 +27,7 @@
 #include <lauxlib.h>
 #include <assert.h>
 
-#include "util.h"
+#include "common/util.h"
 
 /** Lua function to call on dofunction() error */
 extern lua_CFunction lualib_dofunction_on_error;

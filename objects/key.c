@@ -18,7 +18,7 @@
 #include "screen.h"
 #include "signal.h"
 #include "luaa.h"
-#include "../util.h"
+#include "common/util.h"
 #include "../globalconf.h"
 #include <xkbcommon/xkbcommon.h>
 #include <stdio.h>

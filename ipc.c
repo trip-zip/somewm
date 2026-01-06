@@ -13,7 +13,7 @@
  */
 
 #include "ipc.h"
-#include "util.h"
+#include "common/util.h"
 #include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>

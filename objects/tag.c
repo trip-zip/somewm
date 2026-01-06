@@ -16,7 +16,7 @@
 #include "common/luaobject.h"
 #include "../somewm_api.h"
 #include "../globalconf.h"
-#include "../util.h"
+#include "common/util.h"
 #include "../somewm_types.h"
 #include "client.h"
 #include "screen.h"

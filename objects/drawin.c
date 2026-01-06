@@ -8,7 +8,7 @@
 #include "common/luaobject.h"
 #include "../somewm_api.h"
 #include "../stack.h"
-#include "../util.h"
+#include "common/util.h"
 #include "../globalconf.h"
 #include <stdio.h>
 #include <stdlib.h>

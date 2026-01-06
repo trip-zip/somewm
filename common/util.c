@@ -20,7 +20,7 @@
  *
  */
 
-#include "util.h"
+#include "common/util.h"
 
 #include <stdio.h>
 #include <stdarg.h>
@@ -30,6 +30,7 @@
 #include <fcntl.h>
 #include <errno.h>
 #include <time.h>
+#include <string.h>
 
 const char *
 a_current_time_str(void)
@@ -140,6 +141,63 @@ a_exec(const char *cmd)
 
     execlp(shell, shell, "-c", cmd, NULL);
     fatal("execlp() failed: %s", strerror(errno));
+}
+
+/** Print error and exit (dwl-compatible)
+ * If fmt ends with ':', appends perror output
+ */
+void
+die(const char *fmt, ...)
+{
+    va_list ap;
+
+    if (!fmt) {
+        fprintf(stderr, "fatal error\n");
+        exit(1);
+    }
+
+    va_start(ap, fmt);
+    vfprintf(stderr, fmt, ap);
+    va_end(ap);
+
+    if (fmt[0] && fmt[strlen(fmt)-1] == ':') {
+        fputc(' ', stderr);
+        perror(NULL);
+    } else {
+        fputc('\n', stderr);
+    }
+
+    exit(1);
+}
+
+/** Allocate memory with calloc, die on failure
+ */
+void *
+ecalloc(size_t nmemb, size_t size)
+{
+    void *p;
+
+    if (!(p = calloc(nmemb, size)))
+        die("calloc:");
+    return p;
+}
+
+/** Set file descriptor to non-blocking mode
+ */
+int
+fd_set_nonblock(int fd)
+{
+    int flags = fcntl(fd, F_GETFL);
+    if (flags < 0) {
+        perror("fcntl(F_GETFL):");
+        return -1;
+    }
+    if (fcntl(fd, F_SETFL, flags | O_NONBLOCK) < 0) {
+        perror("fcntl(F_SETFL):");
+        return -1;
+    }
+
+    return 0;
 }
 
 // vim: filetype=c:expandtab:shiftwidth=4:tabstop=8:softtabstop=4:textwidth=80

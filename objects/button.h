@@ -8,7 +8,7 @@
 #include "common/luaclass.h"
 #include "common/luaobject.h"
 #include "common/array.h"
-#include "util.h"
+#include "common/util.h"
 #include "../globalconf.h"
 
 /* Forward declarations */
