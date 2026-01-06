@@ -43,12 +43,12 @@ screen_t *luaA_screen_get_by_monitor(lua_State *L, Monitor *m);
 screen_t *luaA_screen_get_primary_screen(lua_State *L);
 
 /* Screen scanning and signals (called from somewm.c) */
-void luaA_screen_emit_scanning(lua_State *L);
-void luaA_screen_emit_scanned(lua_State *L);
+void screen_emit_scanning(void);
+void screen_emit_scanned(void);
 bool luaA_screen_scanned_done(void);
-void luaA_screen_added(lua_State *L, screen_t *screen);
+void screen_added(lua_State *L, screen_t *screen);
 void luaA_screen_emit_all_added(lua_State *L);
-void luaA_screen_removed(lua_State *L, screen_t *screen);
+void screen_removed(lua_State *L, screen_t *screen);
 void luaA_screen_emit_list(lua_State *L);
 void luaA_screen_emit_viewports(lua_State *L);
 void luaA_screen_emit_primary_changed(lua_State *L, screen_t *screen);
@@ -56,8 +56,8 @@ screen_t *luaA_screen_getbycoord(lua_State *L, int x, int y);
 
 /* Screen geometry and workarea updates */
 void luaA_screen_update_geometry(lua_State *L, screen_t *screen);
-void luaA_screen_update_workarea(lua_State *L, screen_t *screen, struct wlr_box *workarea);
-void luaA_screen_update_workarea_for_drawin(lua_State *L, struct drawin_t *drawin);
+void screen_update_workarea(screen_t *screen);
+void screen_set_workarea(lua_State *L, screen_t *screen, struct wlr_box *workarea);
 void luaA_monitor_apply_drawin_struts(lua_State *L, Monitor *m, struct wlr_box *area);
 
 /* Screen-client operations (AwesomeWM compatibility) */

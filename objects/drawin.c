@@ -55,7 +55,7 @@ static void signal_add_ref(signal_t *sig, int ref);
 #endif
 
 /* Forward declarations for workarea updates */
-extern void luaA_screen_update_workarea_for_drawin(lua_State *L, drawin_t *drawin);
+extern void screen_update_workarea(screen_t *screen);
 
 /* Forward declaration for drawable refresh callback */
 static void drawin_refresh_drawable(drawin_t *drawin);
@@ -1060,7 +1060,7 @@ luaA_drawin_struts(lua_State *L)
 
 			/* Update workarea if drawin is visible */
 			if (drawin->visible && drawin->screen) {
-				luaA_screen_update_workarea_for_drawin(L, drawin);
+				screen_update_workarea(drawin->screen);
 			}
 		}
 
@@ -1192,7 +1192,7 @@ drawin_moveresize(lua_State *L, int udx, int x, int y, int width, int height)
 	/* Update workarea if struts are set and drawin is visible */
 	if (drawin->visible && drawin->screen &&
 	    (drawin->strut.left || drawin->strut.right || drawin->strut.top || drawin->strut.bottom)) {
-		luaA_screen_update_workarea_for_drawin(L, drawin);
+		screen_update_workarea(drawin->screen);
 	}
 
 	/* Update scene graph node position if position changed */
@@ -1294,7 +1294,7 @@ drawin_set_visible(lua_State *L, int udx, bool v)
 	/* Update workarea if struts are set */
 	if (drawin->screen &&
 	    (drawin->strut.left || drawin->strut.right || drawin->strut.top || drawin->strut.bottom)) {
-		luaA_screen_update_workarea_for_drawin(L, drawin);
+		screen_update_workarea(drawin->screen);
 	}
 
 	/* Scene node visibility - differs from AwesomeWM's X11 approach:
@@ -1361,7 +1361,7 @@ luaA_drawin_set_strut(lua_State *L, drawin_t *drawin, strut_t strut)
 
 	/* Update workarea if drawin is visible */
 	if (drawin->visible && drawin->screen) {
-		luaA_screen_update_workarea_for_drawin(L, drawin);
+		screen_update_workarea(drawin->screen);
 	}
 }
 
