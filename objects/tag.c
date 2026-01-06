@@ -11,16 +11,18 @@
  */
 
 #include "tag.h"
+#include "screen.h"
+#include "banning.h"
+#include "client.h"
+#include "ewmh.h"
 #include "luaa.h"
 #include "common/luaclass.h"
 #include "common/luaobject.h"
+#include "common/lualib.h"
 #include "../somewm_api.h"
 #include "../globalconf.h"
 #include "common/util.h"
 #include "../somewm_types.h"
-#include "client.h"
-#include "screen.h"
-#include "../banning.h"
 #include <stdio.h>
 #include <stdint.h>
 
@@ -140,6 +142,32 @@ is_client_tagged(client_t *c, tag_t *t)
 	return false;
 }
 
+/** Get the index of the tag with focused client or first selected
+ * \return Its index
+ */
+int
+tags_get_current_or_first_selected_index(void)
+{
+	/* Consider "current desktop" a tag, that has focused window,
+	 * basically a tag user actively interacts with.
+	 * If no focused windows are present, fallback to first selected.
+	 */
+	if (globalconf.focus.client)
+	{
+		foreach(tag, globalconf.tags)
+		{
+			if ((*tag)->selected && is_client_tagged(globalconf.focus.client, *tag))
+				return tag_array_indexof(&globalconf.tags, tag);
+		}
+	}
+	foreach(tag, globalconf.tags)
+	{
+		if ((*tag)->selected)
+			return tag_array_indexof(&globalconf.tags, tag);
+	}
+	return 0;
+}
+
 void
 tag_unref_simplified(tag_t **tag)
 {
@@ -174,19 +202,46 @@ luaA_tag_get_name(lua_State *L, tag_t *tag)
 	return 1;
 }
 
-/** Set tag name property
- * \param L Lua state
- * \param tag Tag object
- * \return 0
+/** Set the tag name.
+ * \param L The Lua VM state.
+ * \param tag The tag to name.
+ * \return The number of elements pushed on stack.
  */
 static int
 luaA_tag_set_name(lua_State *L, tag_t *tag)
 {
-	const char *name = luaL_checkstring(L, -1);
+	const char *buf = luaL_checkstring(L, -1);
 	p_delete(&tag->name);
-	tag->name = a_strdup(name);
-	luaA_awm_object_emit_signal(L, -3, "property::name", 0);
+	tag->name = a_strdup(buf);
+	luaA_object_emit_signal(L, -3, "property::name", 0);
+#ifdef XWAYLAND
+	ewmh_update_net_desktop_names(NULL);
+#endif
 	return 0;
+}
+
+/** View or unview a tag.
+ * \param L The Lua VM state.
+ * \param udx The index of the tag on the stack.
+ * \param view Set selected or not.
+ */
+static void
+tag_view(lua_State *L, int udx, bool view)
+{
+	tag_t *tag = luaA_checkudata(L, udx, &tag_class);
+	if (tag->selected != view)
+	{
+		tag->selected = view;
+		banning_need_update();
+		foreach(screen, globalconf.screens)
+			screen_update_workarea(*screen);
+
+		luaA_object_emit_signal(L, udx, "property::selected", 0);
+
+		/* Arrange the monitor for the tag's screen */
+		if (tag->screen && tag->screen->monitor)
+			some_monitor_arrange(tag->screen->monitor);
+	}
 }
 
 /** Get tag selected property
@@ -209,22 +264,8 @@ luaA_tag_get_selected(lua_State *L, tag_t *tag)
 static int
 luaA_tag_set_selected(lua_State *L, tag_t *tag)
 {
-	bool selected;
-	Monitor *m;
-
-	selected = lua_toboolean(L, -1);
-
-	if (tag->selected != selected) {
-		tag->selected = selected;
-		banning_need_update();
-		luaA_awm_object_emit_signal(L, -3, "property::selected", 0);
-
-		m = some_get_focused_monitor();
-		if (m) {
-			some_monitor_arrange(m);
-			/* Note: focus handled by Lua via property::selected signal → awful.permissions.check_focus_tag */
-		}
-	}
+	(void)tag;
+	tag_view(L, -3, luaA_checkboolean(L, -1));
 	return 0;
 }
 
@@ -240,41 +281,48 @@ luaA_tag_get_activated(lua_State *L, tag_t *tag)
 	return 1;
 }
 
-/** Set tag activated property
- * \param L Lua state
- * \param tag Tag object
- * \return 0
+/** Set the tag activated status.
+ * \param L The Lua VM state.
+ * \param tag The tag to set the activated status for.
+ * \return The number of elements pushed on stack.
  */
 static int
 luaA_tag_set_activated(lua_State *L, tag_t *tag)
 {
-	bool activated = lua_toboolean(L, -1);
-	if (tag->activated != activated) {
-		tag->activated = activated;
+	bool activated = luaA_checkboolean(L, -1);
+	if (activated == tag->activated)
+		return 0;
 
-		/* When activated, add to global tags array (AwesomeWM pattern) */
-		if (activated) {
-			lua_pushvalue(L, -3);  /* Push tag */
-			tag_array_append(&globalconf.tags, luaA_object_ref_class(L, -1, &tag_class));
-			fprintf(stderr, "[TAG_ACTIVATED] Added tag to globalconf.tags (count=%d)\n", globalconf.tags.len);
-			fflush(stderr);
-		} else {
-			/* When deactivated, remove from global tags array */
-			for (int i = 0; i < globalconf.tags.len; i++) {
-				if (globalconf.tags.tab[i] == tag) {
-					tag_array_take(&globalconf.tags, i);
-					luaA_object_unref(L, tag);
-					fprintf(stderr, "[TAG_ACTIVATED] Removed tag from globalconf.tags (count=%d)\n", globalconf.tags.len);
-					fflush(stderr);
-					break;
-				}
-			}
-		}
-
-		luaA_awm_object_emit_signal(L, -3, "property::activated", 0);
-	} else {
-		fflush(stderr);
+	tag->activated = activated;
+	if (activated)
+	{
+		lua_pushvalue(L, -3);
+		tag_array_append(&globalconf.tags, luaA_object_ref_class(L, -1, &tag_class));
 	}
+	else
+	{
+		for (int i = 0; i < globalconf.tags.len; i++)
+			if (globalconf.tags.tab[i] == tag)
+			{
+				tag_array_take(&globalconf.tags, i);
+				break;
+			}
+
+		if (tag->selected)
+		{
+			tag->selected = false;
+			luaA_object_emit_signal(L, -3, "property::selected", 0);
+			banning_need_update();
+		}
+		luaA_object_unref(L, tag);
+	}
+#ifdef XWAYLAND
+	ewmh_update_net_numbers_of_desktop(NULL);
+	ewmh_update_net_desktop_names(NULL);
+#endif
+
+	luaA_object_emit_signal(L, -3, "property::activated", 0);
+
 	return 0;
 }
 
@@ -405,18 +453,63 @@ luaA_tag_new(lua_State *L)
 	return luaA_class_new(L, &tag_class);
 }
 
-/** Get list of clients on this tag
- * \param L Lua state
- * \return 1 (pushes client table)
+/** Get or set the clients attached to this tag.
+ *
+ * @tparam[opt=nil] table clients_table None or a table of clients to set as being tagged with
+ *  this tag.
+ * @treturn table A table with the clients attached to this tags.
+ * @method clients
  */
 static int
 luaA_tag_clients(lua_State *L)
 {
 	tag_t *tag = luaA_checkudata(L, 1, &tag_class);
-	lua_newtable(L);
+	client_array_t *clients = &tag->clients;
+	int i;
 
-	for (int i = 0; i < tag->clients.len; i++) {
-		luaA_object_push(L, tag->clients.tab[i]);
+	if (lua_gettop(L) == 2)
+	{
+		luaA_checktable(L, 2);
+		for (int j = 0; j < clients->len; j++)
+		{
+			client_t *c = clients->tab[j];
+
+			/* Only untag if we aren't going to add this tag again */
+			bool found = false;
+			lua_pushnil(L);
+			while (lua_next(L, 2))
+			{
+				client_t *tc = luaA_checkudata(L, -1, &client_class);
+				/* Pop the value from lua_next */
+				lua_pop(L, 1);
+				if (tc != c)
+					continue;
+
+				/* Pop the key from lua_next */
+				lua_pop(L, 1);
+				found = true;
+				break;
+			}
+			if (!found) {
+				untag_client(c, tag);
+				j--;
+			}
+		}
+		lua_pushnil(L);
+		while (lua_next(L, 2))
+		{
+			client_t *c = luaA_checkudata(L, -1, &client_class);
+			/* push tag on top of the stack */
+			lua_pushvalue(L, 1);
+			tag_client(L, c);
+			lua_pop(L, 1);
+		}
+	}
+
+	lua_createtable(L, clients->len, 0);
+	for (i = 0; i < clients->len; i++)
+	{
+		luaA_object_push(L, clients->tab[i]);
 		lua_rawseti(L, -2, i + 1);
 	}
 
