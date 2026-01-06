@@ -12,7 +12,7 @@
  */
 
 #include "objects/spawn.h"
-#include "objects/luaa.h"
+#include "luaa.h"
 #include "objects/signal.h"
 
 #include <stdbool.h>

@@ -27,7 +27,7 @@
  */
 
 #include "objects/mousegrabber.h"
-#include "objects/luaa.h"
+#include "luaa.h"
 #include "common/lualib.h"
 #include "globalconf.h"
 #include "somewm_api.h"

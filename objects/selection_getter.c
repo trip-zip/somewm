@@ -21,7 +21,7 @@
  */
 
 #include "objects/selection_getter.h"
-#include "objects/luaa.h"
+#include "luaa.h"
 #include "common/luaobject.h"
 #include "common/lualib.h"
 #include "globalconf.h"

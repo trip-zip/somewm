@@ -11,7 +11,7 @@
 #include "somewm_api.h"
 #include "somewm_types.h"
 #include "common/lualib.h"
-#include "objects/luaa.h"
+#include "luaa.h"
 #include "objects/mouse.h"
 #include "objects/client.h"
 #include "objects/screen.h"
