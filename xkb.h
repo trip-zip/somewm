@@ -23,10 +23,19 @@
 #ifndef SOMEWM_XKB_H
 #define SOMEWM_XKB_H
 
-/* Schedule deferred signal emission for layout group change */
-void xkb_schedule_group_changed(void);
+#include <xcb/xcb.h>
+#include <lua.h>
 
-/* Schedule deferred signal emission for keymap change */
+void event_handle_xkb_notify(xcb_generic_event_t* event);
+void xkb_init(void);
+void xkb_free(void);
+
+int luaA_xkb_set_layout_group(lua_State *L);
+int luaA_xkb_get_layout_group(lua_State *L);
+int luaA_xkb_get_group_names(lua_State *L);
+
+/* somewm Wayland-specific: Schedule deferred signal emission */
+void xkb_schedule_group_changed(void);
 void xkb_schedule_map_changed(void);
 
 #endif /* SOMEWM_XKB_H */
