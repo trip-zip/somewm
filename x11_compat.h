@@ -320,15 +320,7 @@ static inline double xwindow_get_opacity_from_cookie(xcb_get_property_cookie_t c
     return 1.0;  /* Default: fully opaque */
 }
 
-static inline bool systray_iskdedockapp(xcb_window_t w) {
-    (void)w;
-    return false;  /* No systray support yet */
-}
-
-static inline void systray_request_handle(xcb_window_t w) {
-    (void)w;
-    /* TODO: Handle systray embed request */
-}
+/* Systray stubs moved to systray.c */
 
 /* draw_find_visual moved to draw.c where it belongs (AwesomeWM parity) */
 

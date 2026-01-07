@@ -126,6 +126,8 @@ void apply_geometry_to_wlroots(client_t *c);
 #include <wlr/types/wlr_compositor.h>
 #include <drm_fourcc.h>
 
+#include "../systray.h"
+
 /* External references to somewm.c globals */
 extern struct wlr_renderer *drw;
 
