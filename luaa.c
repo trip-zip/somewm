@@ -168,7 +168,7 @@ static int luaA_dofunction_on_error(lua_State *L);
  * Wayland: Always has compositing built-in.
  * \return true (Wayland always composites)
  */
-static bool __attribute__((unused))
+static bool
 composite_manager_running(void)
 {
     /* X11-only: checks _NET_WM_CM_Sn selection.
@@ -176,14 +176,44 @@ composite_manager_running(void)
     return true;
 }
 
-/* get_modifier_name() - X11-only helper, not needed in Wayland stubs */
+/* X11 modifier map indices (for get_modifier_name compatibility) */
+#ifndef XCB_MAP_INDEX_SHIFT
+#define XCB_MAP_INDEX_SHIFT   0
+#define XCB_MAP_INDEX_LOCK    1
+#define XCB_MAP_INDEX_CONTROL 2
+#define XCB_MAP_INDEX_1       3  /* Mod1 / Alt */
+#define XCB_MAP_INDEX_2       4
+#define XCB_MAP_INDEX_3       5
+#define XCB_MAP_INDEX_4       6  /* Super */
+#define XCB_MAP_INDEX_5       7
+#endif
+
+/** Get modifier name from map index.
+ * \param map_index X11 modifier map index (0-7).
+ * \return Modifier name string or NULL.
+ */
+static const char *
+get_modifier_name(int map_index)
+{
+    switch (map_index) {
+        case XCB_MAP_INDEX_SHIFT:   return "Shift";
+        case XCB_MAP_INDEX_LOCK:    return "Lock";
+        case XCB_MAP_INDEX_CONTROL: return "Control";
+        case XCB_MAP_INDEX_1:       return "Mod1"; /* Alt */
+        case XCB_MAP_INDEX_2:       return "Mod2";
+        case XCB_MAP_INDEX_3:       return "Mod3";
+        case XCB_MAP_INDEX_4:       return "Mod4";
+        case XCB_MAP_INDEX_5:       return "Mod5";
+    }
+    return NULL;
+}
 
 /** Get modifier key mappings (X11-only stub).
  * X11: Uses xcb_get_modifier_mapping to get keycodes for each modifier.
  * Wayland: Modifiers are handled via xkbcommon.
  * \return Table mapping modifier names to key tables (empty in Wayland)
  */
-static int __attribute__((unused))
+static int
 luaA_get_modifiers(lua_State *L)
 {
     /* X11-only: uses xcb_get_modifier_mapping.
@@ -197,7 +227,7 @@ luaA_get_modifiers(lua_State *L)
  * Wayland: Use xkbcommon state instead.
  * \return Table of active modifier names (empty in Wayland stub)
  */
-static int __attribute__((unused))
+static int
 luaA_get_active_modifiers(lua_State *L)
 {
     /* X11-only: uses XCB to query active modifiers.
@@ -220,7 +250,7 @@ static int luaA_awesome_get_key_name(lua_State *L);
  * Note: somewm's luaA_add_search_paths() has a different signature and adds
  * all standard paths at once. This stub provides API symbol compatibility.
  */
-static void __attribute__((unused))
+static void
 add_to_search_path(lua_State *L, const char *path)
 {
     (void)L;
@@ -228,28 +258,28 @@ add_to_search_path(lua_State *L, const char *path)
 }
 
 /** AwesomeWM name: luaA_get_key_name (somewm: luaA_awesome_get_key_name) */
-static int __attribute__((unused))
+static int
 luaA_get_key_name(lua_State *L)
 {
     return luaA_awesome_get_key_name(L);
 }
 
 /** AwesomeWM name: luaA_quit (somewm: luaA_awesome_quit) */
-static int __attribute__((unused))
+static int
 luaA_quit(lua_State *L)
 {
     return luaA_awesome_quit(L);
 }
 
 /** AwesomeWM name: luaA_set_preferred_icon_size (somewm: luaA_awesome_set_preferred_icon_size) */
-static int __attribute__((unused))
+static int
 luaA_set_preferred_icon_size(lua_State *L)
 {
     return luaA_awesome_set_preferred_icon_size(L);
 }
 
 /** AwesomeWM name: luaA_sync (somewm: luaA_awesome_sync) */
-static int __attribute__((unused))
+static int
 luaA_sync(lua_State *L)
 {
     return luaA_awesome_sync(L);
@@ -429,7 +459,7 @@ luaA_restart(lua_State *L)
  * \param len Output: string length.
  * \return String representation.
  */
-__attribute__((unused)) static const char *
+static const char *
 luaA_tolstring(lua_State *L, int idx, size_t *len)
 {
 #if LUA_VERSION_NUM >= 502
@@ -468,7 +498,7 @@ luaA_tolstring(lua_State *L, int idx, size_t *len)
  * \param length Length of input.
  * \return UTF-32 codepoint, or 0 on error.
  */
-static uint32_t __attribute__((unused))
+static uint32_t
 one_utf8_to_utf32(const char *input, const size_t length)
 {
     gunichar c = g_utf8_get_char_validated(input, length);
@@ -485,7 +515,7 @@ one_utf8_to_utf32(const char *input, const size_t length)
  * Called during Lua initialization to populate the signal table.
  * \param L The Lua state.
  */
-static void __attribute__((unused))
+static void
 setup_awesome_signals(lua_State *L)
 {
     /* Signal setup is handled by luaA_signal_setup() in objects/signal.c */
@@ -502,7 +532,7 @@ typedef bool luaA_config_callback(const char *);
  * \param callback Validation callback (or NULL).
  * \return Path to config file, or NULL if not found.
  */
-__attribute__((unused)) static const char *
+const char *
 luaA_find_config(void *xdg, const char *confpatharg,
                  luaA_config_callback *callback)
 {
@@ -522,7 +552,7 @@ luaA_find_config(void *xdg, const char *confpatharg,
  * \param confpatharg User-specified config path (or NULL).
  * \return true on success.
  */
-static bool __attribute__((unused))
+bool
 luaA_parserc(void *xdg, const char *confpatharg)
 {
     (void)xdg;
@@ -531,6 +561,29 @@ luaA_parserc(void *xdg, const char *confpatharg)
     luaA_loadrc();
     return true;
 }
+
+/* ==========================================================================
+ * AwesomeWM API parity symbol table
+ * ==========================================================================
+ * These symbols exist for API parity with AwesomeWM. They're exported or
+ * referenced here to ensure they're available for the api-parity tool and
+ * for any code that expects AwesomeWM's exact symbol names.
+ */
+__attribute__((used)) static const void *awesomewm_api_parity_symbols[] = {
+    (void *)composite_manager_running,
+    (void *)get_modifier_name,
+    (void *)luaA_get_modifiers,
+    (void *)luaA_get_active_modifiers,
+    (void *)add_to_search_path,
+    (void *)luaA_get_key_name,
+    (void *)luaA_quit,
+    (void *)luaA_set_preferred_icon_size,
+    (void *)luaA_sync,
+    (void *)luaA_tolstring,
+    (void *)one_utf8_to_utf32,
+    (void *)setup_awesome_signals,
+    NULL
+};
 
 /* ==========================================================================
  * awesome module (merged from objects/awesome.c)
