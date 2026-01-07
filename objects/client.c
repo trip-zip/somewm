@@ -1942,9 +1942,8 @@ client_ban(client_t *c)
 {
     if(!c->isbanned)
     {
-        client_ignore_enterleave_events();
-        xcb_unmap_window(globalconf.connection, c->frame_window);
-        client_restore_enterleave_events();
+        /* Wayland: hide in scene graph (equivalent to xcb_unmap_window) */
+        wlr_scene_node_set_enabled(&c->scene->node, false);
 
         c->isbanned = true;
 
@@ -3059,9 +3058,8 @@ client_unban(client_t *c)
     lua_State *L = globalconf_get_lua_State();
     if(c->isbanned)
     {
-        client_ignore_enterleave_events();
-        xcb_map_window(globalconf.connection, c->frame_window);
-        client_restore_enterleave_events();
+        /* Wayland: show in scene graph (equivalent to xcb_map_window) */
+        wlr_scene_node_set_enabled(&c->scene->node, true);
 
         c->isbanned = false;
 
