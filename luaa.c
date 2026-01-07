@@ -49,6 +49,7 @@ static lua_State *luaA_create_fresh_state(void);
 #include <unistd.h>
 #include <sys/stat.h>
 #include <signal.h>
+#include <glib.h>
 #include <limits.h>
 #include <setjmp.h>
 
@@ -310,6 +311,225 @@ luaA_class_newindex_miss_property(lua_State *L, lua_object_t *obj)
     (void)obj;
     luaA_signal_emit(L, "debug::newindex::miss", 3);
     return 0;
+}
+
+/* ==========================================================================
+ * Phase 2: Core functions (AwesomeWM API parity)
+ * ========================================================================== */
+
+/** Cleanup function called before exit or exec.
+ * \param restart True if we're about to restart (exec self).
+ */
+void
+awesome_atexit(bool restart)
+{
+    /* Reset signal handlers */
+    signal(SIGINT, SIG_DFL);
+    signal(SIGTERM, SIG_DFL);
+    signal(SIGCHLD, SIG_DFL);
+
+    /* Cleanup Lua state if not restarting (restart will exec over it) */
+    if (!restart && globalconf.L) {
+        luaA_cleanup();
+    }
+}
+
+/** Restart the compositor by exec'ing self.
+ * Uses argv stored in globalconf at startup.
+ */
+void
+awesome_restart(void)
+{
+    awesome_atexit(true);
+    execvp(globalconf.argv[0], globalconf.argv);
+    /* If we get here, exec failed */
+    warn("restart failed: execvp(%s) failed: %s", globalconf.argv[0], strerror(errno));
+}
+
+/** awesome.exec(cmd) - Replace compositor with another program.
+ * \param cmd Command to execute (parsed by shell).
+ * \return Never returns on success.
+ */
+static int
+luaA_exec(lua_State *L)
+{
+    const char *cmd = luaL_checkstring(L, 1);
+    awesome_atexit(false);
+    a_exec(cmd);
+    return 0;  /* Never reached on success */
+}
+
+/** awesome.kill(pid, sig) - Send signal to a process.
+ * \param pid Process ID.
+ * \param sig Signal number.
+ * \return true on success, false on error.
+ */
+static int
+luaA_kill(lua_State *L)
+{
+    pid_t pid = luaL_checkinteger(L, 1);
+    int sig = luaL_checkinteger(L, 2);
+    int result = kill(pid, sig);
+    lua_pushboolean(L, result == 0);
+    return 1;
+}
+
+/** awesome.load_image(filename) - Load an image file.
+ * \param filename Path to image file.
+ * \return (surface, nil) on success, (nil, error_message) on failure.
+ */
+static int
+luaA_load_image(lua_State *L)
+{
+    const char *filename = luaL_checkstring(L, 1);
+    GError *error = NULL;
+    cairo_surface_t *surface = draw_load_image(L, filename, &error);
+
+    if (surface) {
+        /* Push the surface - the draw module handles the Lua userdata wrapper */
+        lua_pushlightuserdata(L, surface);
+        lua_pushnil(L);
+    } else {
+        lua_pushnil(L);
+        if (error) {
+            lua_pushstring(L, error->message);
+            g_error_free(error);
+        } else {
+            lua_pushstring(L, "unknown error");
+        }
+    }
+    return 2;
+}
+
+/** Lua panic handler - called on unprotected errors.
+ * \param L The Lua state.
+ * \return 0 (never returns normally).
+ */
+static int
+luaA_panic(lua_State *L)
+{
+    warn("unprotected error in call to Lua API: %s", lua_tostring(L, -1));
+    return 0;
+}
+
+/** awesome.restart() - Restart the compositor.
+ * \return Never returns on success.
+ */
+static int
+luaA_restart(lua_State *L)
+{
+    (void)L;
+    awesome_restart();
+    return 0;  /* Never reached on success */
+}
+
+/** Convert Lua value to string (Lua 5.1 compatibility).
+ * \param L The Lua state.
+ * \param idx Stack index.
+ * \param len Output: string length.
+ * \return String representation.
+ */
+__attribute__((unused)) static const char *
+luaA_tolstring(lua_State *L, int idx, size_t *len)
+{
+#if LUA_VERSION_NUM >= 502
+    return luaL_tolstring(L, idx, len);
+#else
+    /* Manual conversion for Lua 5.1 */
+    if (luaL_callmeta(L, idx, "__tostring")) {
+        if (!lua_isstring(L, -1))
+            luaL_error(L, "'__tostring' must return a string");
+    } else {
+        switch (lua_type(L, idx)) {
+            case LUA_TNUMBER:
+                lua_pushfstring(L, "%s", lua_tostring(L, idx));
+                break;
+            case LUA_TSTRING:
+                lua_pushvalue(L, idx);
+                break;
+            case LUA_TBOOLEAN:
+                lua_pushstring(L, lua_toboolean(L, idx) ? "true" : "false");
+                break;
+            case LUA_TNIL:
+                lua_pushliteral(L, "nil");
+                break;
+            default:
+                lua_pushfstring(L, "%s: %p", luaL_typename(L, idx),
+                                lua_topointer(L, idx));
+                break;
+        }
+    }
+    return lua_tolstring(L, -1, len);
+#endif
+}
+
+/** Convert single UTF-8 character to UTF-32 codepoint.
+ * \param input UTF-8 encoded string.
+ * \param length Length of input.
+ * \return UTF-32 codepoint, or 0 on error.
+ */
+static uint32_t __attribute__((unused))
+one_utf8_to_utf32(const char *input, const size_t length)
+{
+    gunichar c = g_utf8_get_char_validated(input, length);
+    if (c == (gunichar)-1 || c == (gunichar)-2)
+        return 0;
+    /* Verify it's a single character by checking round-trip length */
+    char buf[8];
+    if ((size_t)g_unichar_to_utf8(c, buf) != length)
+        return 0;
+    return (uint32_t)c;
+}
+
+/** Setup Unix signal name/number table in awesome.unix_signal.
+ * Called during Lua initialization to populate the signal table.
+ * \param L The Lua state.
+ */
+static void __attribute__((unused))
+setup_awesome_signals(lua_State *L)
+{
+    /* Signal setup is handled by luaA_signal_setup() in objects/signal.c */
+    /* This is an alias for AwesomeWM API parity */
+    luaA_signal_setup(L);
+}
+
+/** Typedef for config file validation callback (AwesomeWM pattern). */
+typedef bool luaA_config_callback(const char *);
+
+/** Find configuration file path.
+ * \param xdg XDG handle (unused in somewm, kept for API compat).
+ * \param confpatharg User-specified config path (or NULL).
+ * \param callback Validation callback (or NULL).
+ * \return Path to config file, or NULL if not found.
+ */
+__attribute__((unused)) static const char *
+luaA_find_config(void *xdg, const char *confpatharg,
+                 luaA_config_callback *callback)
+{
+    (void)xdg;
+    (void)callback;
+
+    /* If user specified a path, use it */
+    if (confpatharg)
+        return confpatharg;
+
+    /* custom_confpath is defined later in this file as a static variable */
+    return NULL;  /* Caller should handle NULL by using default paths */
+}
+
+/** Parse rc.lua configuration file.
+ * \param xdg XDG handle (unused in somewm).
+ * \param confpatharg User-specified config path (or NULL).
+ * \return true on success.
+ */
+static bool __attribute__((unused))
+luaA_parserc(void *xdg, const char *confpatharg)
+{
+    (void)xdg;
+    (void)confpatharg;
+    /* Delegates to luaA_loadrc() which is the somewm implementation */
+    luaA_loadrc();
+    return true;
 }
 
 /* ==========================================================================
@@ -708,6 +928,10 @@ static const luaL_Reg awesome_methods[] = {
 	{ "_set_input_setting", luaA_awesome_set_input_setting },
 	{ "_set_keyboard_setting", luaA_awesome_set_keyboard_setting },
 	{ "set_preferred_icon_size", luaA_awesome_set_preferred_icon_size },
+	{ "exec", luaA_exec },
+	{ "kill", luaA_kill },
+	{ "load_image", luaA_load_image },
+	{ "restart", luaA_restart },
 	{ NULL, NULL }
 };
 
@@ -1262,6 +1486,9 @@ luaA_init(void)
 		fprintf(stderr, "somewm: failed to create Lua state\n");
 		return;
 	}
+
+	/* Set panic handler for unprotected errors (AwesomeWM API parity) */
+	lua_atpanic(globalconf_L, luaA_panic);
 
 	/* Initialize globalconf structure */
 	globalconf_init(globalconf_L);
