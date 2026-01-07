@@ -213,16 +213,7 @@ static inline void sequence_pair_array_append(sequence_pair_array_t *arr, sequen
     /* Stub for Wayland - X11 enter/leave event tracking not needed */
 }
 
-/* Spawn module stubs */
-static inline void spawn_init(void) {
-    /* TODO: Initialize spawn tracking */
-}
-
-static inline void spawn_start_notify(client_t *c, const char *startup_id) {
-    (void)c;
-    (void)startup_id;
-    /* TODO: Implement startup notification */
-}
+/* Spawn module stubs moved to spawn.c for AwesomeWM API parity */
 
 /* Screen/monitor helper stubs */
 typedef struct screen_t screen_t;

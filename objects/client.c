@@ -106,6 +106,7 @@
 #include "../stack.h"
 #include "common/util.h"
 #include "../event.h"
+#include "objects/spawn.h"
 
 /* Forward declaration - applies client geometry to wlroots scene graph */
 void apply_geometry_to_wlroots(client_t *c);
