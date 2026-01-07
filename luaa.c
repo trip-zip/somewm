@@ -159,6 +159,160 @@ extern const struct luaL_Reg awesome_dbus_lib[];
 static int luaA_dofunction_on_error(lua_State *L);
 
 /* ==========================================================================
+ * X11 compatibility stubs (AwesomeWM API parity)
+ * ========================================================================== */
+
+/** Check if a composite manager is running (X11-only stub).
+ * X11: Checks _NET_WM_CM_Sn selection ownership.
+ * Wayland: Always has compositing built-in.
+ * \return true (Wayland always composites)
+ */
+static bool __attribute__((unused))
+composite_manager_running(void)
+{
+    /* X11-only: checks _NET_WM_CM_Sn selection.
+     * Wayland always has compositing. */
+    return true;
+}
+
+/* get_modifier_name() - X11-only helper, not needed in Wayland stubs */
+
+/** Get modifier key mappings (X11-only stub).
+ * X11: Uses xcb_get_modifier_mapping to get keycodes for each modifier.
+ * Wayland: Modifiers are handled via xkbcommon.
+ * \return Table mapping modifier names to key tables (empty in Wayland)
+ */
+static int __attribute__((unused))
+luaA_get_modifiers(lua_State *L)
+{
+    /* X11-only: uses xcb_get_modifier_mapping.
+     * Wayland uses xkbcommon for modifier handling. */
+    lua_newtable(L);
+    return 1;
+}
+
+/** Get currently active modifiers (X11-only stub).
+ * X11: Queries XCB for current modifier state.
+ * Wayland: Use xkbcommon state instead.
+ * \return Table of active modifier names (empty in Wayland stub)
+ */
+static int __attribute__((unused))
+luaA_get_active_modifiers(lua_State *L)
+{
+    /* X11-only: uses XCB to query active modifiers.
+     * Wayland gets modifier state from xkbcommon. */
+    lua_newtable(L);
+    return 1;
+}
+
+/* ==========================================================================
+ * AwesomeWM API aliases (renamed functions)
+ * ========================================================================== */
+
+/* Forward declarations for aliased functions */
+static int luaA_awesome_quit(lua_State *L);
+static int luaA_awesome_sync(lua_State *L);
+static int luaA_awesome_set_preferred_icon_size(lua_State *L);
+static int luaA_awesome_get_key_name(lua_State *L);
+
+/** AwesomeWM name: add_to_search_path (somewm: luaA_add_search_paths)
+ * Note: somewm's luaA_add_search_paths() has a different signature and adds
+ * all standard paths at once. This stub provides API symbol compatibility.
+ */
+static void __attribute__((unused))
+add_to_search_path(lua_State *L, const char *path)
+{
+    (void)L;
+    (void)path;
+}
+
+/** AwesomeWM name: luaA_get_key_name (somewm: luaA_awesome_get_key_name) */
+static int __attribute__((unused))
+luaA_get_key_name(lua_State *L)
+{
+    return luaA_awesome_get_key_name(L);
+}
+
+/** AwesomeWM name: luaA_quit (somewm: luaA_awesome_quit) */
+static int __attribute__((unused))
+luaA_quit(lua_State *L)
+{
+    return luaA_awesome_quit(L);
+}
+
+/** AwesomeWM name: luaA_set_preferred_icon_size (somewm: luaA_awesome_set_preferred_icon_size) */
+static int __attribute__((unused))
+luaA_set_preferred_icon_size(lua_State *L)
+{
+    return luaA_awesome_set_preferred_icon_size(L);
+}
+
+/** AwesomeWM name: luaA_sync (somewm: luaA_awesome_sync) */
+static int __attribute__((unused))
+luaA_sync(lua_State *L)
+{
+    return luaA_awesome_sync(L);
+}
+
+/* ==========================================================================
+ * Signal emitters (AwesomeWM API parity)
+ * ========================================================================== */
+
+/** Emit the "startup" signal.
+ * Called after rc.lua is loaded to signal that startup is complete.
+ */
+void
+luaA_emit_startup(void)
+{
+    lua_State *L = globalconf_get_lua_State();
+    if (L)
+        luaA_signal_emit(L, "startup", 0);
+}
+
+/** Emit the "refresh" signal.
+ * Called before each display refresh to allow Lua to update state.
+ */
+void
+luaA_emit_refresh(void)
+{
+    lua_State *L = globalconf_get_lua_State();
+    if (L)
+        luaA_signal_emit(L, "refresh", 0);
+}
+
+/* ==========================================================================
+ * Debug handlers (AwesomeWM API parity)
+ * ========================================================================== */
+
+/** Handle missing property access on a Lua object.
+ * Emits the "debug::index::miss" signal for debugging.
+ * \param L The Lua state.
+ * \param obj The object being accessed (may be NULL).
+ * \return 0 (no return values).
+ */
+int
+luaA_class_index_miss_property(lua_State *L, lua_object_t *obj)
+{
+    (void)obj;
+    luaA_signal_emit(L, "debug::index::miss", 2);
+    return 0;
+}
+
+/** Handle missing property assignment on a Lua object.
+ * Emits the "debug::newindex::miss" signal for debugging.
+ * \param L The Lua state.
+ * \param obj The object being modified (may be NULL).
+ * \return 0 (no return values).
+ */
+int
+luaA_class_newindex_miss_property(lua_State *L, lua_object_t *obj)
+{
+    (void)obj;
+    luaA_signal_emit(L, "debug::newindex::miss", 3);
+    return 0;
+}
+
+/* ==========================================================================
  * awesome module (merged from objects/awesome.c)
  * ==========================================================================
  * The "awesome" global provides compositor control functions.
