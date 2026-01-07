@@ -30,6 +30,7 @@
 #include <string.h>
 #include <stdlib.h>
 #include <unistd.h>
+#include <xcb/xcb.h>
 #include <wlr/types/wlr_seat.h>
 #include <wlr/types/wlr_data_device.h>
 #include <wlr/types/wlr_primary_selection.h>
@@ -80,6 +81,28 @@ struct selection_acquire_t
 
 static lua_class_t selection_acquire_class;
 LUA_OBJECT_FUNCS(selection_acquire_class, selection_acquire_t, selection_acquire)
+
+/** Handle X11 selection clear event.
+ * \param ev The event.
+ */
+void
+selection_handle_selectionclear(xcb_selection_clear_event_t *ev)
+{
+    /* X11-only: Handles SelectionClear events.
+     * Wayland uses wlr_data_source destroy signal instead. */
+    (void)ev;
+}
+
+/** Handle X11 selection request event.
+ * \param ev The event.
+ */
+void
+selection_handle_selectionrequest(xcb_selection_request_event_t *ev)
+{
+    /* X11-only: Handles SelectionRequest events.
+     * Wayland selection transfer is handled via wlr_data_source_impl. */
+    (void)ev;
+}
 
 /* Data source implementation */
 static void
