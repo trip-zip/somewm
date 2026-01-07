@@ -24,10 +24,15 @@
 #define SOMEWM_OBJECTS_SELECTION_TRANSFER_H
 
 #include <lua.h>
+#include <xcb/xcb.h>
 
-void selection_transfer_class_setup(lua_State *);
+void selection_transfer_class_setup(lua_State*);
+void selection_transfer_reject(xcb_window_t, xcb_atom_t, xcb_atom_t, xcb_timestamp_t);
+void selection_transfer_begin(lua_State*, int, xcb_window_t, xcb_atom_t,
+        xcb_atom_t, xcb_atom_t, xcb_timestamp_t);
+void selection_transfer_handle_propertynotify(xcb_property_notify_event_t*);
 
-/* Create a new transfer object (called internally by selection_acquire) */
+/* Wayland-specific: Create a new transfer object (called internally by selection_acquire) */
 void selection_transfer_create(lua_State *L, const char *mime_type, int fd);
 
 #endif
