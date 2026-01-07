@@ -5610,6 +5610,10 @@ main(int argc, char *argv[])
 	int show_version = 0;
 	int c;
 
+	/* Store argv for restart capability (AwesomeWM API parity) */
+	globalconf.argc = argc;
+	globalconf.argv = argv;
+
 	static struct option long_options[] = {
 		{"help",    no_argument,       0, 'h'},
 		{"version", no_argument,       0, 'v'},

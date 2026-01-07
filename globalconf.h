@@ -91,6 +91,10 @@ typedef struct
     /** Lua VM state */
     lua_State *L;
 
+    /** Command line arguments (for restart) */
+    int argc;
+    char **argv;
+
     /** All managed clients */
     client_array_t clients;
 
