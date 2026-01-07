@@ -369,5 +369,10 @@ void globalconf_init(lua_State *L);
  */
 void globalconf_wipe(void);
 
+/** Update wallpaper from root window (X11-only stub).
+ * Wayland wallpaper is set via root_set_wallpaper() or root_set_wallpaper_buffer().
+ */
+void root_update_wallpaper(void);
+
 #endif /* SOMEWM_GLOBALCONF_H */
 /* vim: filetype=c:expandtab:shiftwidth=4:tabstop=8:softtabstop=4:textwidth=80 */
