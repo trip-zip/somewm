@@ -27,6 +27,7 @@
 
 #include <string.h>
 #include <unistd.h>
+#include <xcb/xcb.h>
 
 typedef struct selection_transfer_t
 {
@@ -41,6 +42,60 @@ typedef struct selection_transfer_t
 
 static lua_class_t selection_transfer_class;
 LUA_OBJECT_FUNCS(selection_transfer_class, selection_transfer_t, selection_transfer)
+
+/** Reject a selection transfer request (X11-only).
+ * \param requestor The requesting window.
+ * \param selection The selection atom.
+ * \param target The target atom.
+ * \param time The timestamp.
+ */
+void
+selection_transfer_reject(xcb_window_t requestor, xcb_atom_t selection,
+                          xcb_atom_t target, xcb_timestamp_t time)
+{
+    /* X11-only: Sends SelectionNotify with property=None.
+     * Wayland transfer rejection is handled by closing fd. */
+    (void)requestor;
+    (void)selection;
+    (void)target;
+    (void)time;
+}
+
+/** Begin a selection transfer (X11-only).
+ * \param L The Lua VM state.
+ * \param ud The selection_acquire userdata index.
+ * \param requestor The requesting window.
+ * \param selection The selection atom.
+ * \param target The target atom.
+ * \param property The property to write to.
+ * \param time The timestamp.
+ */
+void
+selection_transfer_begin(lua_State *L, int ud, xcb_window_t requestor,
+                         xcb_atom_t selection, xcb_atom_t target,
+                         xcb_atom_t property, xcb_timestamp_t time)
+{
+    /* X11-only: Creates transfer object and emits request signal.
+     * Wayland transfer is initiated via wlr_data_source send callback. */
+    (void)L;
+    (void)ud;
+    (void)requestor;
+    (void)selection;
+    (void)target;
+    (void)property;
+    (void)time;
+}
+
+/** Handle X11 property notify for selection transfer.
+ * \param ev The property notify event.
+ */
+void
+selection_transfer_handle_propertynotify(xcb_property_notify_event_t *ev)
+{
+    /* X11-only: Handles incremental transfer via property changes.
+     * Wayland uses direct fd writes. */
+    (void)ev;
+}
 
 /** Send data to the requestor.
  * \param L The Lua VM state.
