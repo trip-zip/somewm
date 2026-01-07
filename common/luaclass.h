@@ -47,6 +47,10 @@ typedef struct
     LUA_OBJECT_HEADER
 } lua_object_t;
 
+/* AwesomeWM API parity - debug miss property handlers */
+int luaA_class_index_miss_property(lua_State *L, lua_object_t *obj);
+int luaA_class_newindex_miss_property(lua_State *L, lua_object_t *obj);
+
 typedef lua_object_t *(*lua_class_allocator_t)(lua_State *);
 typedef void (*lua_class_collector_t)(lua_object_t *);
 

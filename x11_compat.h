@@ -235,32 +235,10 @@ static inline void client_set_border_width_callback(void *ctx, uint16_t old_widt
 typedef struct lua_class_t lua_class_t;
 extern lua_class_t window_class;  /* Declare but don't define - will link error if actually used */
 
-/* Stub functions for missing property handlers */
-/* Note: These need the lua_object_t type, which is defined in common/luaclass.h.
- * We can't include that header here due to circular dependencies, so we
- * use inline function definitions that will work when this header is included
- * after common/luaclass.h (which happens in client.c). */
+/* Debug miss property handlers moved to luaa.c for AwesomeWM API parity */
 #ifndef SOMEWM_LUACLASS_INCLUDED
 /* Forward declare for when this is included before common/luaclass.h */
 struct lua_object_t;
-static inline int luaA_class_index_miss_property(lua_State *L, struct lua_object_t *obj) {
-    (void)L; (void)obj;
-    return 0;
-}
-static inline int luaA_class_newindex_miss_property(lua_State *L, struct lua_object_t *obj) {
-    (void)L; (void)obj;
-    return 0;
-}
-#else
-/* When included after common/luaclass.h, we have the real typedef */
-static inline int luaA_class_index_miss_property(lua_State *L, lua_object_t *obj) {
-    (void)L; (void)obj;
-    return 0;
-}
-static inline int luaA_class_newindex_miss_property(lua_State *L, lua_object_t *obj) {
-    (void)L; (void)obj;
-    return 0;
-}
 #endif
 
 /* X11 atoms (stubs for Wayland) */

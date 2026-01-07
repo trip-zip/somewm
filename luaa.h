@@ -306,4 +306,12 @@ extern xcb_atom_t _NET_WM_STRUT_PARTIAL;
 extern xcb_atom_t UTF8_STRING;
 #endif /* XWAYLAND */
 
+/* AwesomeWM API parity - debug miss property handlers
+ * Note: luaA_class_index_miss_property and luaA_class_newindex_miss_property
+ * are declared in common/luaclass.h (after lua_object_t is defined) */
+
+/* AwesomeWM API parity - signal emitters */
+void luaA_emit_startup(void);
+void luaA_emit_refresh(void);
+
 #endif /* LUAA_H */
