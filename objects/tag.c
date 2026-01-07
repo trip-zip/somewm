@@ -215,7 +215,7 @@ luaA_tag_set_name(lua_State *L, tag_t *tag)
 	tag->name = a_strdup(buf);
 	luaA_object_emit_signal(L, -3, "property::name", 0);
 #ifdef XWAYLAND
-	ewmh_update_net_desktop_names(NULL);
+	ewmh_update_net_desktop_names();
 #endif
 	return 0;
 }
@@ -317,8 +317,8 @@ luaA_tag_set_activated(lua_State *L, tag_t *tag)
 		luaA_object_unref(L, tag);
 	}
 #ifdef XWAYLAND
-	ewmh_update_net_numbers_of_desktop(NULL);
-	ewmh_update_net_desktop_names(NULL);
+	ewmh_update_net_numbers_of_desktop();
+	ewmh_update_net_desktop_names();
 #endif
 
 	luaA_object_emit_signal(L, -3, "property::activated", 0);

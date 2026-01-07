@@ -299,6 +299,9 @@ extern xcb_atom_t _NET_WM_WINDOW_TYPE_NORMAL;
 extern xcb_atom_t _NET_WM_ICON;
 extern xcb_atom_t _NET_WM_PID;
 
+/* Strut Atom */
+extern xcb_atom_t _NET_WM_STRUT_PARTIAL;
+
 /* UTF8_STRING atom for text properties */
 extern xcb_atom_t UTF8_STRING;
 #endif /* XWAYLAND */
