@@ -76,12 +76,12 @@ stack_windows(void)
  */
 
 /** Get the real layer of a client according to its attributes
- * Ported from AwesomeWM stack.c:client_layer_translator (lines 129-156)
+ * Matches AwesomeWM stack.c:client_layer_translator (lines 129-156)
  * \param c The client
  * \return The layer this client belongs in
  */
-window_layer_t
-client_get_layer(Client *c)
+static window_layer_t
+client_layer_translator(Client *c)
 {
 	Client *focused;
 
@@ -220,7 +220,7 @@ stack_refresh(void)
 		if (!(*node) || !(*node)->scene)
 			continue;
 
-		layer = client_get_layer(*node);
+		layer = client_layer_translator(*node);
 
 		/* Skip IGNORE layer (transients are handled with their parents) */
 		if (layer == WINDOW_LAYER_IGNORE)
