@@ -55,10 +55,4 @@ void stack_windows(void);
  */
 void stack_refresh(void);
 
-/** Get the layer a client should be in
- * \param c Client to check
- * \return Layer for this client
- */
-window_layer_t client_get_layer(Client *c);
-
 #endif /* STACK_H */
