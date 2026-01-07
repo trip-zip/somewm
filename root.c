@@ -60,6 +60,32 @@ extern void xytonode(double x, double y, struct wlr_surface **psurface,
 /* Property miss handlers (AwesomeWM compatibility) */
 static int miss_index_handler = LUA_REFNIL;
 static int miss_newindex_handler = LUA_REFNIL;
+static int miss_call_handler = LUA_REFNIL;
+
+/** Convert string to X11 keycode (X11-only stub).
+ * \param s The key name string.
+ * \return The keycode (always 0 in Wayland).
+ */
+static xcb_keycode_t __attribute__((unused))
+_string_to_key_code(const char *s)
+{
+    /* X11-only: Uses XStringToKeysym and xcb_key_symbols_get_keycode.
+     * Wayland uses xkb_keymap_key_by_name or keysym_to_keycode. */
+    (void)s;
+    return 0;
+}
+
+/** Update wallpaper from X11 root window (X11-only stub).
+ * X11: Reads _XROOTPMAP_ID property from root window.
+ * Wayland: Wallpaper is set via root_set_wallpaper_buffer.
+ */
+void
+root_update_wallpaper(void)
+{
+    /* X11-only: Reads _XROOTPMAP_ID pixmap property.
+     * Wayland wallpaper is set via root_set_wallpaper() or
+     * root_set_wallpaper_buffer(). */
+}
 
 #if 0 /* REMOVED: These functions don't exist in AwesomeWM - they caused infinite recursion
        * The Lua layer (awful/root.lua) creates _append_* and _remove_* wrappers itself.
@@ -926,6 +952,16 @@ luaA_root_set_newindex_miss_handler(lua_State *L)
 	return luaA_registerfct(L, 1, &miss_newindex_handler);
 }
 
+/** root.set_call_handler(function) - Set custom call handler
+ * AwesomeWM compatibility: allows Lua code to handle root() calls
+ * \param handler Function to call when root() is invoked as a function
+ */
+static int
+luaA_root_set_call_handler(lua_State *L)
+{
+	return luaA_registerfct(L, 1, &miss_call_handler);
+}
+
 /* ========== SCREENSHOT SUPPORT ========== */
 
 /** Callback data for scene buffer iteration during screenshot */
@@ -1278,6 +1314,7 @@ static const luaL_Reg root_methods[] = {
 	{ "__newindex", luaA_root_newindex },
 	{ "set_index_miss_handler", luaA_root_set_index_miss_handler },
 	{ "set_newindex_miss_handler", luaA_root_set_newindex_miss_handler },
+	{ "set_call_handler", luaA_root_set_call_handler },
 	{ NULL, NULL }
 };
 
