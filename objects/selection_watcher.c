@@ -28,6 +28,7 @@
 
 #include <string.h>
 #include <stdlib.h>
+#include <xcb/xcb.h>
 #include <wlr/types/wlr_seat.h>
 
 /* Access global compositor state from somewm.c */
@@ -57,6 +58,17 @@ typedef struct selection_watcher_t
 
 static lua_class_t selection_watcher_class;
 LUA_OBJECT_FUNCS(selection_watcher_class, selection_watcher_t, selection_watcher)
+
+/** Handle XFixes selection notify event (X11).
+ * \param ev The event.
+ */
+void
+event_handle_xfixes_selection_notify(xcb_generic_event_t *ev)
+{
+    /* X11-only: XFixes selection change notification.
+     * Wayland uses wlr_seat set_selection events instead. */
+    (void)ev;
+}
 
 /** Handle selection change event from seat.
  * \param listener The wl_listener
@@ -191,6 +203,7 @@ luaA_selection_watcher_set_active(lua_State *L, selection_watcher_t *watcher)
 
             watcher->active_ref = LUA_NOREF;
         }
+        luaA_object_emit_signal(L, -3, "property::active", 0);
     }
     return 0;
 }
