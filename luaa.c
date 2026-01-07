@@ -139,6 +139,9 @@ xcb_atom_t _NET_WM_WINDOW_TYPE_NORMAL = 0;
 xcb_atom_t _NET_WM_ICON = 0;
 xcb_atom_t _NET_WM_PID = 0;
 
+/* Strut Atom */
+xcb_atom_t _NET_WM_STRUT_PARTIAL = 0;
+
 /* UTF8_STRING atom for text properties */
 xcb_atom_t UTF8_STRING = 0;
 #endif /* XWAYLAND */
@@ -802,6 +805,9 @@ init_ewmh_atoms(xcb_connection_t *conn)
 	cookies[i++] = xcb_intern_atom(conn, 0, 12, "_NET_WM_ICON");
 	cookies[i++] = xcb_intern_atom(conn, 0, 11, "_NET_WM_PID");
 
+	/* Strut Atom */
+	cookies[i++] = xcb_intern_atom(conn, 0, 21, "_NET_WM_STRUT_PARTIAL");
+
 	/* UTF8_STRING for text properties */
 	cookies[i++] = xcb_intern_atom(conn, 0, 11, "UTF8_STRING");
 
@@ -905,6 +911,10 @@ init_ewmh_atoms(xcb_connection_t *conn)
 	if (reply) { _NET_WM_ICON = reply->atom; free(reply); }
 	reply = xcb_intern_atom_reply(conn, cookies[i++], NULL);
 	if (reply) { _NET_WM_PID = reply->atom; free(reply); }
+
+	/* Strut Atom */
+	reply = xcb_intern_atom_reply(conn, cookies[i++], NULL);
+	if (reply) { _NET_WM_STRUT_PARTIAL = reply->atom; free(reply); }
 
 	/* UTF8_STRING */
 	reply = xcb_intern_atom_reply(conn, cookies[i++], NULL);

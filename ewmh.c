@@ -1,8 +1,7 @@
 /*
- * ewmh.c - EWMH (Extended Window Manager Hints) support
+ * ewmh.c - EWMH support functions
  *
- * Complete implementation for somewm (Wayland compositor with XWayland)
- * Based exactly on AwesomeWM's ewmh.c:645-803
+ * Copyright © 2007-2009 Julien Danjou <julien@danjou.info>
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -32,6 +31,12 @@
 #include <xcb/xcb_atom.h>
 #include <string.h>
 #include <stdlib.h>
+
+#define _NET_WM_STATE_REMOVE 0
+#define _NET_WM_STATE_ADD 1
+#define _NET_WM_STATE_TOGGLE 2
+
+#define ALL_DESKTOPS 0xffffffff
 
 /* ========== INITIALIZATION (Lines 645-680 from AwesomeWM) ========== */
 
@@ -139,29 +144,24 @@ ewmh_init(xcb_connection_t *conn, int screen_nbr)
            globalconf.ewmh.supported_atoms_count);
 }
 
-/* ========== ACTIVE WINDOW TRACKING (Lines 242-260 from AwesomeWM) ========== */
-
-/** Update _NET_ACTIVE_WINDOW property with currently focused client.
- * This function matches AwesomeWM's ewmh_update_net_active_window() exactly.
- *
- * \param conn XCB connection to X server
- */
-void
-ewmh_update_net_active_window(xcb_connection_t *conn)
+static int
+ewmh_update_net_active_window(lua_State *L)
 {
     xcb_window_t win;
 
-    if (!conn || !globalconf.screen) return;
+    if (!globalconf.connection || !globalconf.screen)
+        return 0;
 
-    win = XCB_NONE;
-
-    /* Get focused client (only advertise X11 clients via EWMH) */
-    if (globalconf.focus.client && globalconf.focus.client->client_type == X11)
+    if(globalconf.focus.client && globalconf.focus.client->client_type == X11)
         win = globalconf.focus.client->window;
+    else
+        win = XCB_NONE;
 
-    xcb_change_property(conn, XCB_PROP_MODE_REPLACE,
-                        globalconf.screen->root,
-                        _NET_ACTIVE_WINDOW, XCB_ATOM_WINDOW, 32, 1, &win);
+    xcb_change_property(globalconf.connection, XCB_PROP_MODE_REPLACE,
+			globalconf.screen->root,
+			_NET_ACTIVE_WINDOW, XCB_ATOM_WINDOW, 32, 1, &win);
+
+    return 0;
 }
 
 /* ========== CLIENT HINTS CHECKING (Lines 377-487 from AwesomeWM) ========== */
@@ -287,201 +287,372 @@ ewmh_client_check_hints(client_t *c)
     free(reply);
 }
 
-/* ========== CLIENT HINTS UPDATE (Lines 262-323 from AwesomeWM) ========== */
-
-/** Sync client state changes TO _NET_WM_STATE property (somewm → X11).
- * This function matches AwesomeWM's ewmh_client_update_hints() exactly.
- *
- * \param L Lua state (for signal emission)
- * \param idx Stack index of client object
- * \param c The client to update
+/** Update client EWMH hints.
+ * \param L The Lua VM state.
  */
-void
-ewmh_client_update_hints(lua_State *L, int idx, client_t *c)
+static int
+ewmh_client_update_hints(lua_State *L)
 {
-    xcb_connection_t *conn;
+    client_t *c = luaA_checkudata(L, 1, &client_class);
     xcb_atom_t state[10];
-    int count;
+    int i = 0;
 
-    (void)L;    /* Not used in current implementation */
-    (void)idx;  /* Not used in current implementation */
+    if (!globalconf.connection || c->client_type != X11)
+        return 0;
 
-    if (!globalconf.connection || c->client_type != X11) return;
+    if(c->modal)
+        state[i++] = _NET_WM_STATE_MODAL;
+    if(c->fullscreen)
+        state[i++] = _NET_WM_STATE_FULLSCREEN;
+    if(c->maximized_vertical || c->maximized)
+        state[i++] = _NET_WM_STATE_MAXIMIZED_VERT;
+    if(c->maximized_horizontal || c->maximized)
+        state[i++] = _NET_WM_STATE_MAXIMIZED_HORZ;
+    if(c->sticky)
+        state[i++] = _NET_WM_STATE_STICKY;
+    if(c->skip_taskbar)
+        state[i++] = _NET_WM_STATE_SKIP_TASKBAR;
+    if(c->above)
+        state[i++] = _NET_WM_STATE_ABOVE;
+    if(c->below)
+        state[i++] = _NET_WM_STATE_BELOW;
+    if(c->minimized)
+        state[i++] = _NET_WM_STATE_HIDDEN;
+    if(c->urgent)
+        state[i++] = _NET_WM_STATE_DEMANDS_ATTENTION;
 
-    conn = globalconf.connection;
-    count = 0;
+    xcb_change_property(globalconf.connection, XCB_PROP_MODE_REPLACE,
+                        c->window, _NET_WM_STATE, XCB_ATOM_ATOM, 32, i, state);
 
-    /* Build atom list from client state (exact AwesomeWM order) */
-    if (c->modal)         state[count++] = _NET_WM_STATE_MODAL;
-    if (c->fullscreen)    state[count++] = _NET_WM_STATE_FULLSCREEN;
-    if (c->maximized_vertical)   state[count++] = _NET_WM_STATE_MAXIMIZED_VERT;
-    if (c->maximized_horizontal)   state[count++] = _NET_WM_STATE_MAXIMIZED_HORZ;
-    if (c->sticky)        state[count++] = _NET_WM_STATE_STICKY;
-    if (c->above)         state[count++] = _NET_WM_STATE_ABOVE;
-    if (c->below)         state[count++] = _NET_WM_STATE_BELOW;
-    if (c->minimized)     state[count++] = _NET_WM_STATE_HIDDEN;
-    if (c->urgent)        state[count++] = _NET_WM_STATE_DEMANDS_ATTENTION;
-    if (c->skip_taskbar)  state[count++] = _NET_WM_STATE_SKIP_TASKBAR;
-
-    /* Update _NET_WM_STATE property */
-    xcb_change_property(conn, XCB_PROP_MODE_REPLACE, c->window,
-                        _NET_WM_STATE, XCB_ATOM_ATOM, 32, count, state);
-}
-
-/* ========== CLIENT MESSAGE PROCESSING (Lines 489-576 from AwesomeWM) ========== */
-
-/** Handle X11 ClientMessage events (state change requests FROM clients).
- * This function matches AwesomeWM's ewmh_process_client_message() exactly.
- *
- * \param ev The X11 client message event
- * \return 1 if handled, 0 if not
- */
-int
-ewmh_process_client_message(xcb_client_message_event_t *ev)
-{
-    if (!globalconf.connection) return 0;
-
-    /* TODO: Implement client message processing
-     * This requires:
-     * 1. client_getbywin() to find client by X11 window ID
-     * 2. client_set_fullscreen(), client_set_maximized(), etc.
-     * 3. Proper handling of _NET_WM_STATE actions (add/remove/toggle)
-     *
-     * For now, return 0 (not handled)
-     */
-    (void)ev;
     return 0;
 }
 
-/* ========== CLIENT LIST MANAGEMENT (Lines 578-633 from AwesomeWM) ========== */
-
-/** Update _NET_CLIENT_LIST with all managed X11 windows.
- * This function matches AwesomeWM's ewmh_update_net_client_list() exactly.
- *
- * \param conn XCB connection to X server
- */
-void
-ewmh_update_net_client_list(xcb_connection_t *conn)
+static void
+ewmh_update_maximize(bool h, bool status, bool toggle)
 {
-    if (!conn || !globalconf.screen) return;
+    lua_State *L = globalconf_get_lua_State();
 
-    /* TODO: Implement client list update
-     * This requires iterating globalconf.clients array and filtering X11 clients
-     * For now, set empty list
-     */
-    xcb_change_property(conn, XCB_PROP_MODE_REPLACE,
-                        globalconf.screen->root,
-                        _NET_CLIENT_LIST, XCB_ATOM_WINDOW, 32, 0, NULL);
+    if (h)
+        lua_pushstring(L, "client_maximize_horizontal");
+    else
+        lua_pushstring(L, "client_maximize_vertical");
+
+    /* Create table argument with raise=true. */
+    lua_newtable(L);
+    lua_pushstring(L, "toggle");
+    lua_pushboolean(L, toggle);
+    lua_settable(L, -3);
+    lua_pushstring(L, "status");
+    lua_pushboolean(L, status);
+    lua_settable(L, -3);
+
+    luaA_object_emit_signal(L, -3, "request::geometry", 2);
 }
 
-/** Update _NET_CLIENT_LIST_STACKING with stacking order.
- * This function matches AwesomeWM's ewmh_update_net_client_list_stacking() exactly.
- *
- * \param conn XCB connection to X server
- */
-void
-ewmh_update_net_client_list_stacking(xcb_connection_t *conn)
+static void
+ewmh_process_state_atom(client_t *c, xcb_atom_t state, int set)
 {
-    if (!conn || !globalconf.screen) return;
+    lua_State *L = globalconf_get_lua_State();
+    luaA_object_push(L, c);
 
-    /* TODO: Implement stacking order update
-     * This requires traversing wlroots scene graph bottom→top
-     * For now, set empty list
-     */
-    xcb_change_property(conn, XCB_PROP_MODE_REPLACE,
-                        globalconf.screen->root,
-                        _NET_CLIENT_LIST_STACKING, XCB_ATOM_WINDOW, 32, 0, NULL);
+    if(state == _NET_WM_STATE_STICKY)
+    {
+        if(set == _NET_WM_STATE_REMOVE)
+            client_set_sticky(L, -1, false);
+        else if(set == _NET_WM_STATE_ADD)
+            client_set_sticky(L, -1, true);
+        else if(set == _NET_WM_STATE_TOGGLE)
+            client_set_sticky(L, -1, !c->sticky);
+    }
+    else if(state == _NET_WM_STATE_SKIP_TASKBAR)
+    {
+        if(set == _NET_WM_STATE_REMOVE)
+            client_set_skip_taskbar(L, -1, false);
+        else if(set == _NET_WM_STATE_ADD)
+            client_set_skip_taskbar(L, -1, true);
+        else if(set == _NET_WM_STATE_TOGGLE)
+            client_set_skip_taskbar(L, -1, !c->skip_taskbar);
+    }
+    else if(state == _NET_WM_STATE_FULLSCREEN)
+    {
+        if(set == _NET_WM_STATE_REMOVE)
+            client_set_fullscreen(L, -1, false);
+        else if(set == _NET_WM_STATE_ADD)
+            client_set_fullscreen(L, -1, true);
+        else if(set == _NET_WM_STATE_TOGGLE)
+            client_set_fullscreen(L, -1, !c->fullscreen);
+    }
+    else if(state == _NET_WM_STATE_MAXIMIZED_HORZ)
+    {
+        if(set == _NET_WM_STATE_REMOVE)
+            ewmh_update_maximize(true, false, false);
+        else if(set == _NET_WM_STATE_ADD)
+            ewmh_update_maximize(true, true, false);
+        else if(set == _NET_WM_STATE_TOGGLE)
+            ewmh_update_maximize(true, false, true);
+    }
+    else if(state == _NET_WM_STATE_MAXIMIZED_VERT)
+    {
+        if(set == _NET_WM_STATE_REMOVE)
+            ewmh_update_maximize(false, false, false);
+        else if(set == _NET_WM_STATE_ADD)
+            ewmh_update_maximize(false, true, false);
+        else if(set == _NET_WM_STATE_TOGGLE)
+            ewmh_update_maximize(false, false, true);
+    }
+    else if(state == _NET_WM_STATE_ABOVE)
+    {
+        if(set == _NET_WM_STATE_REMOVE)
+            client_set_above(L, -1, false);
+        else if(set == _NET_WM_STATE_ADD)
+            client_set_above(L, -1, true);
+        else if(set == _NET_WM_STATE_TOGGLE)
+            client_set_above(L, -1, !c->above);
+    }
+    else if(state == _NET_WM_STATE_BELOW)
+    {
+        if(set == _NET_WM_STATE_REMOVE)
+            client_set_below(L, -1, false);
+        else if(set == _NET_WM_STATE_ADD)
+            client_set_below(L, -1, true);
+        else if(set == _NET_WM_STATE_TOGGLE)
+            client_set_below(L, -1, !c->below);
+    }
+    else if(state == _NET_WM_STATE_MODAL)
+    {
+        if(set == _NET_WM_STATE_REMOVE)
+            client_set_modal(L, -1, false);
+        else if(set == _NET_WM_STATE_ADD)
+            client_set_modal(L, -1, true);
+        else if(set == _NET_WM_STATE_TOGGLE)
+            client_set_modal(L, -1, !c->modal);
+    }
+    else if(state == _NET_WM_STATE_HIDDEN)
+    {
+        if(set == _NET_WM_STATE_REMOVE)
+            client_set_minimized(L, -1, false);
+        else if(set == _NET_WM_STATE_ADD)
+            client_set_minimized(L, -1, true);
+        else if(set == _NET_WM_STATE_TOGGLE)
+            client_set_minimized(L, -1, !c->minimized);
+    }
+    else if(state == _NET_WM_STATE_DEMANDS_ATTENTION)
+    {
+        if(set == _NET_WM_STATE_REMOVE) {
+            lua_pushboolean(L, false);
+            luaA_object_emit_signal(L, -2, "request::urgent", 1);
+        }
+        else if(set == _NET_WM_STATE_ADD) {
+            lua_pushboolean(L, true);
+            luaA_object_emit_signal(L, -2, "request::urgent", 1);
+        }
+        else if(set == _NET_WM_STATE_TOGGLE) {
+            lua_pushboolean(L, !c->urgent);
+            luaA_object_emit_signal(L, -2, "request::urgent", 1);
+        }
+    }
+
+    lua_pop(L, 1);
 }
 
-/* ========== DESKTOP/TAG MANAGEMENT (Lines 145-223 from AwesomeWM) ========== */
+static void
+ewmh_process_desktop(client_t *c, uint32_t desktop)
+{
+    lua_State *L = globalconf_get_lua_State();
+    int idx = desktop;
+    if(desktop == ALL_DESKTOPS)
+    {
+        luaA_object_push(L, c);
+        lua_pushboolean(L, true);
+        luaA_object_emit_signal(L, -2, "request::tag", 1);
+        lua_pop(L, 1);
+    }
+    else if (idx >= 0 && idx < globalconf.tags.len)
+    {
+        luaA_object_push(L, c);
+        luaA_object_push(L, globalconf.tags.tab[idx]);
+        luaA_object_emit_signal(L, -2, "request::tag", 1);
+        lua_pop(L, 1);
+    }
+}
 
-/** Update _NET_NUMBER_OF_DESKTOPS with tag count.
- * This function matches AwesomeWM's ewmh_update_net_numbers_of_desktop() exactly.
- *
- * \param conn XCB connection to X server
+int
+ewmh_process_client_message(xcb_client_message_event_t *ev)
+{
+    client_t *c;
+
+    if (!globalconf.connection)
+        return 0;
+
+    if(ev->type == _NET_CURRENT_DESKTOP)
+    {
+        int idx = ev->data.data32[0];
+        if (idx >= 0 && idx < globalconf.tags.len)
+        {
+            lua_State *L = globalconf_get_lua_State();
+            luaA_object_push(L, globalconf.tags.tab[idx]);
+            lua_pushstring(L, "ewmh");
+            luaA_object_emit_signal(L, -2, "request::select", 1);
+            lua_pop(L, 1);
+        }
+    }
+    else if(ev->type == _NET_CLOSE_WINDOW)
+    {
+        if((c = client_getbywin(ev->window)))
+           client_kill(c);
+    }
+    else if(ev->type == _NET_WM_DESKTOP)
+    {
+        if((c = client_getbywin(ev->window)))
+        {
+            ewmh_process_desktop(c, ev->data.data32[0]);
+        }
+    }
+    else if(ev->type == _NET_WM_STATE)
+    {
+        if((c = client_getbywin(ev->window)))
+        {
+            ewmh_process_state_atom(c, (xcb_atom_t) ev->data.data32[1], ev->data.data32[0]);
+            if(ev->data.data32[2])
+                ewmh_process_state_atom(c, (xcb_atom_t) ev->data.data32[2],
+                                        ev->data.data32[0]);
+        }
+    }
+    else if(ev->type == _NET_ACTIVE_WINDOW)
+    {
+        if((c = client_getbywin(ev->window))) {
+            lua_State *L = globalconf_get_lua_State();
+            luaA_object_push(L, c);
+            lua_pushstring(L, "ewmh");
+
+            /* Create table argument with raise=true. */
+            lua_newtable(L);
+            lua_pushstring(L, "raise");
+            lua_pushboolean(L, true);
+            lua_settable(L, -3);
+
+            luaA_object_emit_signal(L, -3, "request::activate", 2);
+            lua_pop(L, 1);
+        }
+    }
+
+    return 0;
+}
+
+static int
+ewmh_update_net_client_list(lua_State *L)
+{
+    int n = 0;
+    xcb_window_t *wins;
+
+    if (!globalconf.connection || !globalconf.screen)
+        return 0;
+
+    /* Allocate on stack for X11 clients only */
+    wins = alloca(globalconf.clients.len * sizeof(xcb_window_t));
+
+    foreach(client, globalconf.clients)
+        if((*client)->client_type == X11)
+            wins[n++] = (*client)->window;
+
+    xcb_change_property(globalconf.connection, XCB_PROP_MODE_REPLACE,
+                        globalconf.screen->root,
+                        _NET_CLIENT_LIST, XCB_ATOM_WINDOW, 32, n, wins);
+
+    return 0;
+}
+
+/** Set the client list in stacking order, bottom to top.
  */
 void
-ewmh_update_net_numbers_of_desktop(xcb_connection_t *conn)
+ewmh_update_net_client_list_stacking(void)
+{
+    int n = 0;
+    xcb_window_t *wins;
+
+    if (!globalconf.connection || !globalconf.screen)
+        return;
+
+    /* Allocate on stack for X11 clients only */
+    wins = alloca(globalconf.stack.len * sizeof(xcb_window_t));
+
+    foreach(client, globalconf.stack)
+        if((*client)->client_type == X11)
+            wins[n++] = (*client)->window;
+
+    xcb_change_property(globalconf.connection, XCB_PROP_MODE_REPLACE,
+			globalconf.screen->root,
+			_NET_CLIENT_LIST_STACKING, XCB_ATOM_WINDOW, 32, n, wins);
+}
+
+void
+ewmh_update_net_numbers_of_desktop(void)
 {
     uint32_t count;
 
-    if (!conn || !globalconf.screen) return;
+    if (!globalconf.connection || !globalconf.screen)
+        return;
 
-    /* AwesomeWM desktops = somewm tags */
     count = globalconf.tags.len;
 
-    xcb_change_property(conn, XCB_PROP_MODE_REPLACE,
-                        globalconf.screen->root,
-                        _NET_NUMBER_OF_DESKTOPS, XCB_ATOM_CARDINAL, 32, 1, &count);
+    xcb_change_property(globalconf.connection, XCB_PROP_MODE_REPLACE,
+			globalconf.screen->root,
+			_NET_NUMBER_OF_DESKTOPS, XCB_ATOM_CARDINAL, 32, 1, &count);
 }
 
-/** Update _NET_CURRENT_DESKTOP with selected tag index.
- * This function matches AwesomeWM's ewmh_update_net_current_desktop() exactly.
- *
- * \param conn XCB connection to X server
- */
-void
-ewmh_update_net_current_desktop(xcb_connection_t *conn)
+int
+ewmh_update_net_current_desktop(lua_State *L)
 {
-    uint32_t desktop;
+    uint32_t idx = 0;
     int i;
-    tag_t *tag;
 
-    if (!conn || !globalconf.screen) return;
+    if (!globalconf.connection || !globalconf.screen)
+        return 0;
 
-    /* Find selected tag index */
-    desktop = 0;
+    /* Find first selected tag index */
     for (i = 0; i < globalconf.tags.len; i++) {
-        tag = globalconf.tags.tab[i];
-        if (tag->selected) {
-            desktop = i;
+        if (globalconf.tags.tab[i]->selected) {
+            idx = i;
             break;
         }
     }
 
-    xcb_change_property(conn, XCB_PROP_MODE_REPLACE,
+    xcb_change_property(globalconf.connection, XCB_PROP_MODE_REPLACE,
                         globalconf.screen->root,
-                        _NET_CURRENT_DESKTOP, XCB_ATOM_CARDINAL, 32, 1, &desktop);
+                        _NET_CURRENT_DESKTOP, XCB_ATOM_CARDINAL, 32, 1, &idx);
+    return 0;
 }
 
-/** Update _NET_DESKTOP_NAMES with tag names.
- * This function matches AwesomeWM's ewmh_update_net_desktop_names() exactly.
- *
- * \param conn XCB connection to X server
- */
 void
-ewmh_update_net_desktop_names(xcb_connection_t *conn)
+ewmh_update_net_desktop_names(void)
 {
     size_t total_len, len;
-    int i;
-    tag_t *tag;
     char *names, *p;
 
-    if (!conn || !globalconf.screen) return;
+    if (!globalconf.connection || !globalconf.screen)
+        return;
 
     /* Build NULL-separated UTF8 string list (EWMH spec) */
     total_len = 0;
-    for (i = 0; i < globalconf.tags.len; i++) {
-        tag = globalconf.tags.tab[i];
-        total_len += strlen(tag->name) + 1;  /* +1 for NULL separator */
-    }
+    foreach(tag, globalconf.tags)
+        total_len += strlen((*tag)->name) + 1;
 
-    if (total_len == 0) return;  /* No tags */
+    if (total_len == 0)
+        return;
 
     names = malloc(total_len);
     p = names;
-    for (i = 0; i < globalconf.tags.len; i++) {
-        tag = globalconf.tags.tab[i];
-        len = strlen(tag->name);
-        memcpy(p, tag->name, len);
+    foreach(tag, globalconf.tags)
+    {
+        len = strlen((*tag)->name);
+        memcpy(p, (*tag)->name, len);
         p += len;
         *p++ = '\0';
     }
 
-    xcb_change_property(conn, XCB_PROP_MODE_REPLACE,
-                        globalconf.screen->root,
-                        _NET_DESKTOP_NAMES, UTF8_STRING, 8, total_len, names);
-
+    xcb_change_property(globalconf.connection, XCB_PROP_MODE_REPLACE,
+			globalconf.screen->root,
+			_NET_DESKTOP_NAMES, UTF8_STRING, 8, total_len, names);
     free(names);
 }
 
@@ -511,70 +682,168 @@ ewmh_update_net_desktop_geometry(xcb_connection_t *conn, int phys_screen)
                         _NET_DESKTOP_GEOMETRY, XCB_ATOM_CARDINAL, 32, 2, geom);
 }
 
-/** Update _NET_WM_DESKTOP property on client window.
- * This function matches AwesomeWM's ewmh_client_update_desktop() exactly.
- *
- * \param c The client to update
+/** Update the client active desktop.
+ * This is "wrong" since it can be on several tags, but EWMH has a strict view
+ * of desktop system so just take the first tag.
+ * \param c The client.
  */
 void
 ewmh_client_update_desktop(client_t *c)
 {
-    uint32_t desktop;
+    int i;
 
-    if (!globalconf.connection || c->client_type != X11) return;
+    if (!globalconf.connection || c->client_type != X11)
+        return;
 
-    desktop = 0xFFFFFFFF;  /* All desktops (sticky) */
-
-    /* TODO: Implement tag → desktop index mapping
-     * somewm uses tag->clients arrays (not c->tags), so we need to:
-     * 1. Iterate through globalconf.tags
-     * 2. Check if client is in tag->clients array
-     * 3. Use first matching tag's index as desktop
-     * For now, always report 0xFFFFFFFF (all desktops)
-     */
-
-    xcb_change_property(globalconf.connection, XCB_PROP_MODE_REPLACE,
-                        c->window, _NET_WM_DESKTOP, XCB_ATOM_CARDINAL, 32, 1, &desktop);
+    if(c->sticky)
+    {
+        xcb_change_property(globalconf.connection, XCB_PROP_MODE_REPLACE,
+                            c->window, _NET_WM_DESKTOP, XCB_ATOM_CARDINAL, 32, 1,
+                            (uint32_t[]) { ALL_DESKTOPS });
+        return;
+    }
+    for(i = 0; i < globalconf.tags.len; i++)
+        if(is_client_tagged(c, globalconf.tags.tab[i]))
+        {
+            xcb_change_property(globalconf.connection, XCB_PROP_MODE_REPLACE,
+                                c->window, _NET_WM_DESKTOP, XCB_ATOM_CARDINAL, 32, 1, &i);
+            return;
+        }
+    /* It doesn't have any tags, remove the property */
+    xcb_delete_property(globalconf.connection, c->window, _NET_WM_DESKTOP);
 }
 
-/* ========== LUA SIGNAL INTEGRATION (Lines 682-803 from AwesomeWM) ========== */
-
-/** Initialize Lua signal connections for EWMH property updates.
- * This function matches AwesomeWM's ewmh_init_lua() pattern.
- *
- * Note: This requires Lua signal infrastructure to be fully implemented.
- * For now, this is a stub that will be implemented when signal system is ready.
+/** Update the client struts.
+ * \param window The window to update the struts for.
+ * \param strut The strut type to update the window with.
  */
+void
+ewmh_update_strut(xcb_window_t window, strut_t *strut)
+{
+    if (!globalconf.connection)
+        return;
+
+    if(window)
+    {
+        const uint32_t state[] =
+        {
+            strut->left,
+            strut->right,
+            strut->top,
+            strut->bottom,
+            strut->left_start_y,
+            strut->left_end_y,
+            strut->right_start_y,
+            strut->right_end_y,
+            strut->top_start_x,
+            strut->top_end_x,
+            strut->bottom_start_x,
+            strut->bottom_end_x
+        };
+
+        xcb_change_property(globalconf.connection, XCB_PROP_MODE_REPLACE,
+                            window, _NET_WM_STRUT_PARTIAL, XCB_ATOM_CARDINAL, 32, 12, state);
+    }
+}
+
+/** Update the window type.
+ * \param window The window to update.
+ * \param type The new type to set.
+ */
+void
+ewmh_update_window_type(xcb_window_t window, uint32_t type)
+{
+    if (!globalconf.connection)
+        return;
+
+    xcb_change_property(globalconf.connection, XCB_PROP_MODE_REPLACE,
+                        window, _NET_WM_WINDOW_TYPE, XCB_ATOM_ATOM, 32, 1, &type);
+}
+
+/** Process the WM strut of a client.
+ * \param c The client.
+ */
+void
+ewmh_process_client_strut(client_t *c)
+{
+    void *data;
+    xcb_get_property_reply_t *strut_r;
+
+    if (!globalconf.connection || c->client_type != X11)
+        return;
+
+    xcb_get_property_cookie_t strut_q = xcb_get_property_unchecked(globalconf.connection, false, c->window,
+                                                                   _NET_WM_STRUT_PARTIAL, XCB_ATOM_CARDINAL, 0, 12);
+    strut_r = xcb_get_property_reply(globalconf.connection, strut_q, NULL);
+
+    if(strut_r
+       && strut_r->value_len
+       && (data = xcb_get_property_value(strut_r)))
+    {
+        uint32_t *strut = data;
+
+        if(c->strut.left != strut[0]
+           || c->strut.right != strut[1]
+           || c->strut.top != strut[2]
+           || c->strut.bottom != strut[3]
+           || c->strut.left_start_y != strut[4]
+           || c->strut.left_end_y != strut[5]
+           || c->strut.right_start_y != strut[6]
+           || c->strut.right_end_y != strut[7]
+           || c->strut.top_start_x != strut[8]
+           || c->strut.top_end_x != strut[9]
+           || c->strut.bottom_start_x != strut[10]
+           || c->strut.bottom_end_x != strut[11])
+        {
+            c->strut.left = strut[0];
+            c->strut.right = strut[1];
+            c->strut.top = strut[2];
+            c->strut.bottom = strut[3];
+            c->strut.left_start_y = strut[4];
+            c->strut.left_end_y = strut[5];
+            c->strut.right_start_y = strut[6];
+            c->strut.right_end_y = strut[7];
+            c->strut.top_start_x = strut[8];
+            c->strut.top_end_x = strut[9];
+            c->strut.bottom_start_x = strut[10];
+            c->strut.bottom_end_x = strut[11];
+
+            lua_State *L = globalconf_get_lua_State();
+            luaA_object_push(L, c);
+            luaA_object_emit_signal(L, -1, "property::struts", 0);
+            lua_pop(L, 1);
+        }
+    }
+
+    free(strut_r);
+}
+
 void
 ewmh_init_lua(void)
 {
-    /* TODO: Connect Lua signals to EWMH property updates
-     *
-     * Tag signals → desktop updates:
-     *   - "property::selected" → ewmh_update_net_current_desktop()
-     *   - "property::name" → ewmh_update_net_desktop_names()
-     *
-     * Client signals → state updates:
-     *   - "property::fullscreen" → ewmh_client_update_hints()
-     *   - "property::maximized_*" → ewmh_client_update_hints()
-     *   - "property::sticky" → ewmh_client_update_desktop()
-     *   - "property::above" → ewmh_client_update_hints()
-     *   - "property::below" → ewmh_client_update_hints()
-     *   - "property::modal" → ewmh_client_update_hints()
-     *   - "property::urgent" → ewmh_client_update_hints()
-     *   - "property::skip_taskbar" → ewmh_client_update_hints()
-     *
-     * Focus signals → active window updates:
-     *   - "focus" → ewmh_update_net_active_window()
-     *   - "unfocus" → ewmh_update_net_active_window()
-     *
-     * Manage/unmanage signals → client list updates:
-     *   - "manage" → ewmh_update_net_client_list()
-     *   - "unmanage" → ewmh_update_net_client_list()
-     *
-     * This requires AwesomeWM's signal connection infrastructure.
-     */
-    printf("somewm: EWMH Lua signal integration (stub - to be implemented)\n");
+    lua_State *L = globalconf_get_lua_State();
+
+    luaA_class_connect_signal(L, &client_class, "focus", ewmh_update_net_active_window);
+    luaA_class_connect_signal(L, &client_class, "unfocus", ewmh_update_net_active_window);
+    luaA_class_connect_signal(L, &client_class, "request::manage", ewmh_update_net_client_list);
+    luaA_class_connect_signal(L, &client_class, "request::unmanage", ewmh_update_net_client_list);
+    luaA_class_connect_signal(L, &client_class, "property::modal" , ewmh_client_update_hints);
+    luaA_class_connect_signal(L, &client_class, "property::fullscreen" , ewmh_client_update_hints);
+    luaA_class_connect_signal(L, &client_class, "property::maximized_horizontal" , ewmh_client_update_hints);
+    luaA_class_connect_signal(L, &client_class, "property::maximized_vertical" , ewmh_client_update_hints);
+    luaA_class_connect_signal(L, &client_class, "property::maximized" , ewmh_client_update_hints);
+    luaA_class_connect_signal(L, &client_class, "property::sticky" , ewmh_client_update_hints);
+    luaA_class_connect_signal(L, &client_class, "property::skip_taskbar" , ewmh_client_update_hints);
+    luaA_class_connect_signal(L, &client_class, "property::above" , ewmh_client_update_hints);
+    luaA_class_connect_signal(L, &client_class, "property::below" , ewmh_client_update_hints);
+    luaA_class_connect_signal(L, &client_class, "property::minimized" , ewmh_client_update_hints);
+    luaA_class_connect_signal(L, &client_class, "property::urgent" , ewmh_client_update_hints);
+    /* NET_CURRENT_DESKTOP handling */
+    luaA_class_connect_signal(L, &client_class, "focus", ewmh_update_net_current_desktop);
+    luaA_class_connect_signal(L, &client_class, "unfocus", ewmh_update_net_current_desktop);
+    luaA_class_connect_signal(L, &client_class, "tagged", ewmh_update_net_current_desktop);
+    luaA_class_connect_signal(L, &client_class, "untagged", ewmh_update_net_current_desktop);
+    luaA_class_connect_signal(L, &tag_class, "property::selected", ewmh_update_net_current_desktop);
 }
 
 #else  /* !XWAYLAND */
@@ -586,19 +855,9 @@ void ewmh_init(void *conn, int screen_nbr)
     (void)conn; (void)screen_nbr;
 }
 
-void ewmh_update_net_active_window(void *conn)
-{
-    (void)conn;
-}
-
 void ewmh_client_check_hints(client_t *c)
 {
     (void)c;
-}
-
-void ewmh_client_update_hints(lua_State *L, int idx, client_t *c)
-{
-    (void)L; (void)idx; (void)c;
 }
 
 int ewmh_process_client_message(void *ev)
@@ -607,29 +866,19 @@ int ewmh_process_client_message(void *ev)
     return 0;
 }
 
-void ewmh_update_net_client_list(void *conn)
+void ewmh_update_net_client_list_stacking(void)
 {
-    (void)conn;
+    /* No-op */
 }
 
-void ewmh_update_net_client_list_stacking(void *conn)
+void ewmh_update_net_numbers_of_desktop(void)
 {
-    (void)conn;
+    /* No-op */
 }
 
-void ewmh_update_net_numbers_of_desktop(void *conn)
+void ewmh_update_net_desktop_names(void)
 {
-    (void)conn;
-}
-
-void ewmh_update_net_current_desktop(void *conn)
-{
-    (void)conn;
-}
-
-void ewmh_update_net_desktop_names(void *conn)
-{
-    (void)conn;
+    /* No-op */
 }
 
 void ewmh_update_net_desktop_geometry(void *conn, int phys_screen)
@@ -638,6 +887,21 @@ void ewmh_update_net_desktop_geometry(void *conn, int phys_screen)
 }
 
 void ewmh_client_update_desktop(client_t *c)
+{
+    (void)c;
+}
+
+void ewmh_update_strut(void *window, strut_t *strut)
+{
+    (void)window; (void)strut;
+}
+
+void ewmh_update_window_type(void *window, uint32_t type)
+{
+    (void)window; (void)type;
+}
+
+void ewmh_process_client_strut(client_t *c)
 {
     (void)c;
 }
