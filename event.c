@@ -29,7 +29,7 @@
  * \param data User data (unused)
  * \return true if match
  */
-bool
+static bool
 event_button_match(button_event_t *ev, button_t *b, void *data)
 {
     bool button_matches;
@@ -116,7 +116,7 @@ event_button_callback(button_event_t *ev, button_array_t *arr,
  * \param L Lua state
  * \param ev Button event
  */
-void
+static void __attribute__((unused))
 event_emit_button(lua_State *L, button_event_t *ev)
 {
     const char *name = ev->is_press ? "button::press" : "button::release";
@@ -144,7 +144,7 @@ event_emit_button(lua_State *L, button_event_t *ev)
  * \param button_states Array of 5 button states
  * \return true if event consumed by mousegrabber
  */
-bool
+static bool __attribute__((unused))
 event_handle_mousegrabber(double x, double y, int button_states[5])
 {
     lua_State *L;
