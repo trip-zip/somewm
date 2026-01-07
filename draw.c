@@ -240,3 +240,52 @@ draw_load_image(lua_State *L, const char *path, GError **error)
     g_object_unref(buf);
     return ret;
 }
+
+/* X11 visual functions - stubs for Wayland compatibility
+ * These exist in AwesomeWM for X11 visual/depth handling.
+ * In Wayland, visuals are handled differently by the compositor.
+ *
+ * Note: We use void* instead of xcb_screen_t* because somewm's globalconf.screen
+ * is not an xcb_screen_t* like in AwesomeWM. These stubs just return NULL anyway.
+ */
+
+#ifdef XWAYLAND
+#include <xcb/xcb.h>
+
+void *
+draw_find_visual(const void *s, uint32_t visual)
+{
+    (void)s;
+    (void)visual;
+    return NULL;
+}
+
+void *
+draw_default_visual(const void *s)
+{
+    (void)s;
+    return NULL;
+}
+
+void *
+draw_argb_visual(const void *s)
+{
+    (void)s;
+    return NULL;
+}
+
+uint8_t
+draw_visual_depth(const void *s, uint32_t vis)
+{
+    (void)s;
+    (void)vis;
+    return 32;  /* Default to 32-bit depth for ARGB */
+}
+
+void
+draw_test_cairo_xcb(void)
+{
+    /* No-op in Wayland - Cairo/XCB integration test not needed */
+}
+
+#endif /* XWAYLAND */

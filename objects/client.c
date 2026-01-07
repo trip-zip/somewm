@@ -98,6 +98,7 @@
 #include "../globalconf.h"
 #include "../banning.h"
 #include "../ewmh.h"
+#include "../draw.h"        /* For draw_find_visual() - must be before x11_compat.h */
 #include "../x11_compat.h"  /* X11 stub functions for Wayland */
 #include "objects/window.h"  /* For window_set_border_width() */
 #include "../somewm_api.h"

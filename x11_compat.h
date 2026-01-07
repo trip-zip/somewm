@@ -512,10 +512,7 @@ static inline void systray_request_handle(xcb_window_t w) {
     /* TODO: Handle systray embed request */
 }
 
-static inline void *draw_find_visual(void *screen, uint32_t visual_id) {
-    (void)screen; (void)visual_id;
-    return NULL;  /* TODO: Find visual by ID */
-}
+/* draw_find_visual moved to draw.c where it belongs (AwesomeWM parity) */
 
 /* screen_getbycoord - forward to luaA_screen_getbycoord
  * Implementation in screen.c to avoid header ordering issues */
@@ -600,13 +597,7 @@ static inline void cairo_surface_array_push(cairo_surface_array_t *arr, void *su
     /* TODO: Append surface to array */
 }
 
-#ifndef DRAW_H
-/* Stub for draw_dup_image_surface when draw.h is not included */
-static inline void *draw_dup_image_surface(void *surf) {
-    (void)surf;
-    return NULL;  /* TODO: Duplicate cairo surface */
-}
-#endif
+/* draw_dup_image_surface moved to draw.c where it belongs (AwesomeWM parity) */
 
 /* client_set_icons - real implementation in objects/client.c */
 

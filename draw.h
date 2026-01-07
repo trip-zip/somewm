@@ -1,18 +1,9 @@
 /*
  * draw.h - drawing utilities
  *
- * Adapted from AwesomeWM's draw.c for Wayland/somewm
+ * Adapted from AwesomeWM's draw.h for Wayland/somewm
  * Original copyright:
  *   Copyright © 2007-2009 Julien Danjou <julien@danjou.info>
- *
- * X11-specific code removed:
- *   - X11 visual querying functions (draw_find_visual, draw_argb_visual, draw_visual_depth)
- *   - Cairo-XCB integration and testing (draw_test_cairo_xcb)
- *
- * Portable Cairo/GdkPixbuf utilities extracted:
- *   - Surface creation from raw ARGB data
- *   - Image loading via GdkPixbuf
- *   - Surface duplication
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -27,6 +18,10 @@
 #include <cairo.h>
 #include <gdk-pixbuf/gdk-pixbuf.h>
 #include <lua.h>
+
+#ifdef XWAYLAND
+#include <xcb/xcb.h>
+#endif
 
 /** Create a Cairo surface from raw ARGB data
  *
@@ -72,5 +67,17 @@ cairo_surface_t *draw_dup_image_surface(cairo_surface_t *surface);
  * \return A new Cairo image surface, or NULL on error
  */
 cairo_surface_t *draw_load_image(lua_State *L, const char *path, GError **error);
+
+/* X11 visual functions - stubs for XWayland compatibility
+ * Note: We use void* instead of xcb_screen_t* because somewm's globalconf.screen
+ * is not an xcb_screen_t* like in AwesomeWM. These stubs just return NULL anyway.
+ */
+#ifdef XWAYLAND
+void *draw_find_visual(const void *s, uint32_t visual);
+void *draw_default_visual(const void *s);
+void *draw_argb_visual(const void *s);
+uint8_t draw_visual_depth(const void *s, uint32_t vis);
+void draw_test_cairo_xcb(void);
+#endif
 
 #endif /* DRAW_H */
