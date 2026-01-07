@@ -28,6 +28,54 @@
 #include <wayland-server-core.h>
 #include <wlr/types/wlr_xdg_shell.h>
 #include <string.h>
+#include <xcb/xcb.h>
+
+/* ========================================================================
+ * X11 Property API Stubs (for AwesomeWM compatibility)
+ * ======================================================================== */
+
+/* X11-only: Handle property notify event from XCB.
+ * Wayland clients emit toplevel events instead. */
+void
+property_handle_propertynotify(xcb_property_notify_event_t *ev)
+{
+    (void)ev;
+}
+
+/* Macro to generate property_get_* and property_update_* stubs */
+#define PROPERTY_STUB(name) \
+    xcb_get_property_cookie_t \
+    property_get_##name(client_t *c) \
+    { \
+        (void)c; \
+        xcb_get_property_cookie_t cookie = {0}; \
+        return cookie; \
+    } \
+    void \
+    property_update_##name(client_t *c, xcb_get_property_cookie_t cookie) \
+    { \
+        (void)c; \
+        (void)cookie; \
+    }
+
+/* X11 property stubs - Wayland gets these from wlr_xdg_toplevel or wlr_xwayland_surface */
+PROPERTY_STUB(wm_name)
+PROPERTY_STUB(net_wm_name)
+PROPERTY_STUB(wm_icon_name)
+PROPERTY_STUB(net_wm_icon_name)
+PROPERTY_STUB(wm_client_machine)
+PROPERTY_STUB(wm_window_role)
+PROPERTY_STUB(wm_transient_for)
+PROPERTY_STUB(wm_client_leader)
+PROPERTY_STUB(wm_normal_hints)
+PROPERTY_STUB(wm_hints)
+PROPERTY_STUB(wm_class)
+PROPERTY_STUB(wm_protocols)
+PROPERTY_STUB(net_wm_pid)
+PROPERTY_STUB(net_wm_icon)
+PROPERTY_STUB(motif_wm_hints)
+
+#undef PROPERTY_STUB
 
 /* ========================================================================
  * Wayland Property Handlers (Native Wayland clients)
