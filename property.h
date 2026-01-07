@@ -25,6 +25,35 @@
 
 #include "objects/client.h"
 #include <wayland-server-core.h>
+#include <xcb/xcb.h>
+
+/* ========================================================================
+ * X11 Property API (stubs for AwesomeWM compatibility)
+ * ======================================================================== */
+
+#define PROPERTY(funcname) \
+    xcb_get_property_cookie_t property_get_##funcname(client_t *c); \
+    void property_update_##funcname(client_t *c, xcb_get_property_cookie_t cookie)
+
+PROPERTY(wm_name);
+PROPERTY(net_wm_name);
+PROPERTY(wm_icon_name);
+PROPERTY(net_wm_icon_name);
+PROPERTY(wm_client_machine);
+PROPERTY(wm_window_role);
+PROPERTY(wm_transient_for);
+PROPERTY(wm_client_leader);
+PROPERTY(wm_normal_hints);
+PROPERTY(wm_hints);
+PROPERTY(wm_class);
+PROPERTY(wm_protocols);
+PROPERTY(net_wm_pid);
+PROPERTY(net_wm_icon);
+PROPERTY(motif_wm_hints);
+
+#undef PROPERTY
+
+void property_handle_propertynotify(xcb_property_notify_event_t *ev);
 
 /* ========================================================================
  * Wayland Property Listeners (Native Wayland clients)
