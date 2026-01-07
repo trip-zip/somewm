@@ -33,6 +33,80 @@
 #include <drm_fourcc.h>
 #include <cairo/cairo.h>
 
+/** Initialize the systray (X11-only).
+ * X11: Creates systray manager window, acquires _NET_SYSTEM_TRAY_Sn selection.
+ * Wayland: Systray uses StatusNotifierItem protocol instead.
+ */
+void
+systray_init(void)
+{
+    /* X11-only: xcb_create_window, xcb_set_selection_owner.
+     * Wayland systray is initialized in systray_class_setup. */
+}
+
+/** Cleanup the systray (X11-only).
+ * X11: Destroys systray window, releases selection.
+ * Wayland: Cleanup handled by D-Bus disconnect.
+ */
+void
+systray_cleanup(void)
+{
+    /* X11-only: xcb_destroy_window.
+     * Wayland cleanup happens in globalconf teardown. */
+}
+
+/** Handle a systray dock request (X11-only).
+ * \param win The X11 window requesting to dock.
+ * \return 0 on success.
+ */
+int
+systray_request_handle(xcb_window_t win)
+{
+    /* X11-only: Handles _NET_SYSTEM_TRAY_OPCODE ClientMessage.
+     * Wayland uses StatusNotifierItem RegisterStatusNotifierItem. */
+    (void)win;
+    return 0;
+}
+
+/** Check if a window is a KDE dock app (X11-only).
+ * \param win The X11 window to check.
+ * \return true if window has _KDE_NET_WM_SYSTEM_TRAY_WINDOW_FOR property.
+ */
+bool
+systray_iskdedockapp(xcb_window_t win)
+{
+    /* X11-only: Checks _KDE_NET_WM_SYSTEM_TRAY_WINDOW_FOR property.
+     * Not applicable to Wayland StatusNotifierItem. */
+    (void)win;
+    return false;
+}
+
+/** Process systray client messages (X11-only).
+ * \param ev The client message event.
+ * \return 0 on success.
+ */
+int
+systray_process_client_message(xcb_client_message_event_t *ev)
+{
+    /* X11-only: Handles _NET_SYSTEM_TRAY_OPCODE messages.
+     * Wayland uses D-Bus StatusNotifierItem interface. */
+    (void)ev;
+    return 0;
+}
+
+/** Process XEMBED client messages (X11-only).
+ * \param ev The client message event.
+ * \return 0 on success.
+ */
+int
+xembed_process_client_message(xcb_client_message_event_t *ev)
+{
+    /* X11-only: Handles _XEMBED messages for embedded systray icons.
+     * Wayland StatusNotifierItem doesn't use embedding. */
+    (void)ev;
+    return 0;
+}
+
 /** Helper to count visible systray entries */
 static int
 systray_count_visible(void)
