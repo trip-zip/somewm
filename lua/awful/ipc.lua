@@ -188,6 +188,13 @@ local function parse_command(command_string)
     ["quit"] = true,
     ["eval"] = true,
     ["input"] = true,
+    ["version"] = true,
+    ["reload"] = true,
+    ["restart"] = true,
+    ["hotkeys"] = true,
+    ["menubar"] = true,
+    ["launcher"] = true,
+    ["notify"] = true,
   }
 
   local cmd_name
@@ -1721,20 +1728,21 @@ local function register_builtin_commands()
       error("No focused screen")
     end
 
-    local name = capi.screen.name(s) or "Unknown"
-    local geom = capi.screen.geometry(s)
-    local tagmask = capi.screen.tags(s)
-    local layout_idx = capi.screen.get_layout(s)
-    local layout_symbol = capi.screen.get_layout_symbol(layout_idx)
+    local name = s.name or "Unknown"
+    local geom = s.geometry
 
-    -- Convert tagmask to list
+    -- Get active tags for this screen
     local activetags = {}
-    local tag_count = tag.count()
-    for j = 1, tag_count do
-      local bit = 2 ^ (j - 1)
-      if tagmask % (bit * 2) >= bit then
+    for j, t in ipairs(s.tags) do
+      if t.selected then
         table.insert(activetags, j)
       end
+    end
+
+    -- Get current layout name
+    local layout_name = "?"
+    if s.selected_tag and s.selected_tag.layout then
+      layout_name = s.selected_tag.layout.name or "?"
     end
 
     return string.format(
@@ -1746,7 +1754,7 @@ local function register_builtin_commands()
       geom.x,
       geom.y,
       table.concat(activetags, ","),
-      layout_symbol or "?"
+      layout_name
     )
   end)
 
@@ -1831,12 +1839,17 @@ local function register_builtin_commands()
       error("Missing screen ID")
     end
 
-    -- Find the screen
+    -- Find the screen (try numeric index first, then by format_id)
     local targetscreen = nil
-    for _, s in ipairs(capi.screen.get()) do
-      if format_id(s) == screen_id then
-        targetscreen = s
-        break
+    local num = tonumber(screen_id)
+    if num then
+      targetscreen = capi.screen[num]
+    else
+      for s in capi.screen do
+        if format_id(s) == screen_id then
+          targetscreen = s
+          break
+        end
       end
     end
 
@@ -2395,7 +2408,7 @@ local function register_builtin_commands()
     else
       -- List global (root) keybindings
       table.insert(lines, "Global keybindings:")
-      local root_keys = capi.root.keys() or {}
+      local root_keys = capi.root.keys or {}
       if #root_keys == 0 then
         table.insert(lines, "  (none)")
       else
@@ -2465,7 +2478,7 @@ local function register_builtin_commands()
     end
 
     local mods = parse_modifiers(mod_str)
-    local root_keys = capi.root.keys() or {}
+    local root_keys = capi.root.keys or {}
 
     -- Find matching keybinding
     local found = nil
@@ -2509,7 +2522,7 @@ local function register_builtin_commands()
     end
 
     local mods = parse_modifiers(mod_str)
-    local root_keys = capi.root.keys() or {}
+    local root_keys = capi.root.keys or {}
 
     -- Find matching keybinding
     for _, k in ipairs(root_keys) do
