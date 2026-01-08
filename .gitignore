@@ -15,4 +15,9 @@ build/
 builddir/
 subprojects/wlroots/
 subprojects/packagecache/
-tools/api-parity/
+
+# Development tooling & reports (local only)
+tools/
+reports/
+docs/
+.cache/
