@@ -1947,6 +1947,12 @@ client_ban(client_t *c)
 {
     if(!c->isbanned)
     {
+        /* Wayland deviation: scene is created at map time, but clients are added
+         * to globalconf.clients at create time (to match AwesomeWM signal timing).
+         * X11's frame_window exists immediately, but our scene may not yet. */
+        if(!c->scene)
+            return;
+
         /* Wayland: hide in scene graph (equivalent to xcb_unmap_window) */
         wlr_scene_node_set_enabled(&c->scene->node, false);
 
@@ -3063,6 +3069,10 @@ client_unban(client_t *c)
     lua_State *L = globalconf_get_lua_State();
     if(c->isbanned)
     {
+        /* Wayland deviation: see comment in client_ban() */
+        if(!c->scene)
+            return;
+
         /* Wayland: show in scene graph (equivalent to xcb_map_window) */
         wlr_scene_node_set_enabled(&c->scene->node, true);
 
