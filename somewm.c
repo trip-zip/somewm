@@ -5034,6 +5034,14 @@ drawin_accepts_input_at(drawin_t *d, double local_x, double local_y)
 	return (data[byte_offset] >> bit_offset) & 1;
 }
 
+/* WAYLAND-DEVIATION: pdrawable parameter for titlebar hit-testing
+ * AwesomeWM: Uses client_get_drawable_offset() to iterate titlebar geometries
+ * after receiving a frame_window event (objects/client.c:3501).
+ * somewm: The wlroots scene graph already knows which node is at (x,y), so we
+ * extract the drawable directly from node->data during the scene walk. This
+ * achieves the same result (titlebar clicks emit signals on the drawable) but
+ * uses scene graph spatial queries instead of post-hoc geometry iteration.
+ */
 void
 xytonode(double x, double y, struct wlr_surface **psurface,
 		Client **pc, LayerSurface **pl, drawin_t **pd, drawable_t **pdrawable, double *nx, double *ny)
@@ -5046,8 +5054,20 @@ xytonode(double x, double y, struct wlr_surface **psurface,
 	drawable_t *titlebar_drawable = NULL;
 	int layer;
 
+	/* Safety check: scene must be initialized */
+	if (!scene) {
+		if (psurface) *psurface = NULL;
+		if (pc) *pc = NULL;
+		if (pl) *pl = NULL;
+		if (pd) *pd = NULL;
+		if (pdrawable) *pdrawable = NULL;
+		return;
+	}
 
 	for (layer = NUM_LAYERS - 1; !surface && layer >= 0; layer--) {
+		/* Safety check: layer tree must exist */
+		if (!layers[layer])
+			continue;
 		if (!(node = wlr_scene_node_at(&layers[layer]->node, x, y, nx, ny)))
 			continue;
 
@@ -5087,7 +5107,7 @@ xytonode(double x, double y, struct wlr_surface **psurface,
 			}
 		}
 		/* Walk the tree to find a node that knows the client */
-		for (pnode = node; pnode && !c && !d; pnode = &pnode->parent->node) {
+		for (pnode = node; pnode && !c && !d; ) {
 			/* Check if this node has a drawin */
 			if (pnode->data && layer == LyrWibox) {
 				drawin_t *candidate = (drawin_t *)pnode->data;
@@ -5096,10 +5116,15 @@ xytonode(double x, double y, struct wlr_surface **psurface,
 					d = candidate;
 					break;
 				}
-				/* Input passes through, continue searching */
-				continue;
+				/* Input passes through, continue searching to parent (don't set c) */
+			} else {
+				/* Not a drawin - could be a client */
+				c = pnode->data;
 			}
-			c = pnode->data;
+			/* Safely traverse to parent - stop if we reach root */
+			if (!pnode->parent)
+				break;
+			pnode = &pnode->parent->node;
 		}
 		/* Check type at offset 0 - LayerSurface has 'type' as first field,
 		 * but Client has WINDOW_OBJECT_HEADER before client_type.
@@ -5111,6 +5136,21 @@ xytonode(double x, double y, struct wlr_surface **psurface,
 	}
 
 found:
+	/* Validate client pointer - ensure it's still in globalconf.clients
+	 * to avoid returning stale pointers from scene graph data fields */
+	if (c && pc) {
+		bool valid = false;
+		foreach(elem, globalconf.clients) {
+			if (*elem == c) {
+				valid = true;
+				break;
+			}
+		}
+		if (!valid) {
+			c = NULL;  /* Stale pointer - don't return it */
+		}
+	}
+
 	if (psurface) *psurface = surface;
 	if (pc) *pc = c;
 	if (pl) *pl = l;

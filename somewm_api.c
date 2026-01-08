@@ -49,7 +49,8 @@ extern Client *focustop(Monitor *m);
 extern Monitor *xytomon(double x, double y);
 extern void setmon(Client *c, Monitor *m, uint32_t newtags);
 extern void xytonode(double x, double y, struct wlr_surface **psurface,
-		Client **pc, LayerSurface **pl, drawin_t **pd, double *nx, double *ny);
+		Client **pc, LayerSurface **pl, drawin_t **pd, drawable_t **pdrawable,
+		double *nx, double *ny);
 extern Monitor *dirtomon(enum wlr_direction dir);
 extern void focusmon(const Arg *arg);
 extern void killclient(const Arg *arg);
@@ -1321,7 +1322,7 @@ some_drawin_under_cursor(void)
 		return NULL;
 
 	/* Use xytonode to find drawin at cursor position */
-	xytonode(cursor->x, cursor->y, NULL, NULL, NULL, &d, NULL, NULL);
+	xytonode(cursor->x, cursor->y, NULL, NULL, NULL, &d, NULL, NULL, NULL);
 
 	return d;
 }

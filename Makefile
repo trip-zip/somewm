@@ -7,10 +7,12 @@
 #   make clean           # Remove build directory
 #   make reconfigure     # Wipe and reconfigure build
 
+-include .local.mk
+
 .PHONY: all install clean setup reconfigure test asan
 
 all:
-	@test -d build || meson setup build
+	@test -d build || meson setup build $(MESON_OPTS)
 	ninja -C build
 
 # Build with AddressSanitizer + UndefinedBehaviorSanitizer for debugging

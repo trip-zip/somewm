@@ -21,3 +21,4 @@ tools/
 reports/
 docs/
 .cache/
+.local.mk
