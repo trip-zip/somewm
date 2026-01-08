@@ -4617,12 +4617,11 @@ unmapnotify(struct wl_listener *listener, void *data)
 			focusclient(focustop(selmon), 1);
 		}
 	} else {
-		setmon(c, NULL, 0);
-		focusclient(focustop(selmon), 1);
-
-		/* Do NOT call client_unmanage() here - let destroynotify() handle it.
-		 * For Wayland: unmap → destroy happens quickly, destroynotify() will call client_unmanage().
-		 * This avoids trying to run XCB operations on windows that are already being torn down. */
+		/* AwesomeWM pattern: call client_unmanage() from unmapnotify.
+		 * This emits request::unmanage while c->screen is still valid,
+		 * allowing Lua's check_focus_delayed to restore focus properly.
+		 * destroynotify() will see client already removed from array and skip. */
+		client_unmanage(c, CLIENT_UNMANAGE_UNMAP);
 	}
 
 	/* Remove commit listener before destroying scene - only registered for XDG clients.
