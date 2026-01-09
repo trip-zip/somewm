@@ -31,6 +31,7 @@ local asuit = require("awful.layout.suit")
 local beautiful = require("beautiful")
 local alayout = require("awful.layout")
 local atag = require("awful.tag")
+local ascreen = require("awful.screen")
 local gdebug = require("gears.debug")
 local wibox = require("wibox")
 local pcommon = require("awful.permissions._common")
@@ -829,6 +830,31 @@ if awesome.api_level > 4 then
         c:emit_signal("request::autoactivate", "mouse_enter", {raise=false})
     end)
 end
+
+--- Default handler for layer shell surface closure (somewm-specific).
+--
+-- When a layer-shell surface (like rofi, wofi, or other launchers) closes
+-- after having keyboard focus, this handler restores focus to the most
+-- recent client from focus history.
+--
+-- To replace this handler with your own, use:
+--
+--    awesome.disconnect_signal("layer_shell::closed", awful.permissions.handle_layer_shell_closed)
+--
+-- @signalhandler awful.permissions.handle_layer_shell_closed
+-- @sourcesignal awesome layer_shell::closed
+function permissions.handle_layer_shell_closed()
+    local s = ascreen.focused()
+    if not s then return end
+
+    local c = aclient.focus.history.get(s, 0, aclient.focus.filter)
+    if c then
+        c:emit_signal("request::autoactivate", "layer_shell_closed", {raise = false})
+    end
+end
+
+-- Connect default handler for layer-shell focus restoration (somewm-specific)
+awesome.connect_signal("layer_shell::closed", permissions.handle_layer_shell_closed)
 
 return permissions
 
