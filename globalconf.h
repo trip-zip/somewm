@@ -59,6 +59,13 @@ ARRAY_TYPE(tag_t *, tag)
 ARRAY_TYPE(screen_t *, screen)
 ARRAY_TYPE(drawin_t *, drawin)
 
+/* Layer surface array for layer shell surfaces */
+typedef struct layer_surface_t layer_surface_t;
+#ifndef LAYER_SURFACE_ARRAY_T_DEFINED
+#define LAYER_SURFACE_ARRAY_T_DEFINED
+ARRAY_TYPE(layer_surface_t *, layer_surface)
+#endif
+
 /* Key bindings array - replaces x11_compat.h stub */
 #ifndef KEY_ARRAY_T_DEFINED
 #define KEY_ARRAY_T_DEFINED
@@ -131,6 +138,9 @@ typedef struct
 
     /** Drawable windows (wibox/panels) */
     drawin_array_t drawins;
+
+    /** Layer shell surfaces (panels, launchers, lock screens) */
+    layer_surface_array_t layer_surfaces;
 
     /** Do we need to refresh client visibility? */
     bool need_lazy_banning;

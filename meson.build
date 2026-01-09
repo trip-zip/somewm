@@ -257,6 +257,7 @@ somewm_sources = [
   'objects/screen.c',
   'objects/drawable.c',
   'objects/drawin.c',
+  'objects/layer_surface.c',
   'objects/signal.c',
   'objects/timer.c',
   'objects/key.c',

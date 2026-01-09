@@ -98,6 +98,7 @@
 #include "objects/keygrabber.h"
 #include "objects/mousegrabber.h"
 #include "objects/client.h"  /* AwesomeWM client_t (now aliased as Client) */
+#include "objects/layer_surface.h"  /* Layer shell surface Lua class */
 #include "objects/root.h"    /* Root button bindings */
 #include "ewmh.h"            /* EWMH support for XWayland */
 #include "property.h"         /* Property system for Wayland and XWayland */
@@ -256,7 +257,7 @@ static pid_t child_pid = -1;
 
 static int locked;
 int running = 1;  /* Non-static so somewm_api.c can access it */
-static void *exclusive_focus;
+void *exclusive_focus;  /* Non-static for layer_surface keyboard focus API */
 struct wl_display *dpy;
 struct wl_event_loop *event_loop;
 static struct wlr_backend *backend;
@@ -621,16 +622,30 @@ arrangelayers(Monitor *m)
 	for (i = 3; i >= 0; i--)
 		arrangelayer(m, &m->layers[i], &usable_area, 0);
 
-	/* Find topmost keyboard interactive layer, if such a layer exists */
+	/* Find topmost keyboard interactive layer and emit request::keyboard signal
+	 * If the layer surface has a Lua object, let Lua decide whether to grant focus.
+	 * Otherwise, use legacy auto-grant behavior. */
 	for (i = 0; i < (int)LENGTH(layers_above_shell); i++) {
 		wl_list_for_each_reverse(l, &m->layers[layers_above_shell[i]], link) {
 			if (locked || !l->layer_surface->current.keyboard_interactive || !l->mapped)
 				continue;
-			/* Deactivate the focused client. */
-			focusclient(NULL, 0);
-			exclusive_focus = l;
-			client_notify_enter(l->layer_surface->surface, wlr_seat_get_keyboard(seat));
-			return;
+
+			if (l->lua_object && globalconf_L) {
+				/* Emit request::keyboard signal - Lua decides whether to grant focus */
+				const char *context = (l->layer_surface->current.keyboard_interactive ==
+					ZWLR_LAYER_SURFACE_V1_KEYBOARD_INTERACTIVITY_EXCLUSIVE)
+					? "exclusive" : "on_demand";
+				layer_surface_emit_request_keyboard(l->lua_object, context);
+				/* If Lua granted focus, we're done. Otherwise, continue searching. */
+				if (l->lua_object->has_keyboard_focus)
+					return;
+			} else {
+				/* Legacy behavior for surfaces without Lua objects */
+				focusclient(NULL, 0);
+				exclusive_focus = l;
+				client_notify_enter(l->layer_surface->surface, wlr_seat_get_keyboard(seat));
+				return;
+			}
 		}
 	}
 }
@@ -829,6 +844,7 @@ buttonpress(struct wl_listener *listener, void *data)
 	switch (event->state) {
 	case WL_POINTER_BUTTON_STATE_PRESSED: {
 		Monitor *mon;
+		LayerSurface *l = NULL;
 		drawin_t *drawin = NULL;
 		drawable_t *titlebar_drawable = NULL;
 		int rel_x, rel_y;
@@ -837,8 +853,8 @@ buttonpress(struct wl_listener *listener, void *data)
 		if (locked)
 			break;
 
-		/* Change focus if the button was _pressed_ over a client */
-		xytonode(cursor->x, cursor->y, NULL, &c, NULL, &drawin, &titlebar_drawable, NULL, NULL);
+		/* Change focus if the button was _pressed_ over a client or layer surface */
+		xytonode(cursor->x, cursor->y, NULL, &c, &l, &drawin, &titlebar_drawable, NULL, NULL);
 
 		/* Get keyboard modifiers */
 		keyboard = wlr_seat_get_keyboard(seat);
@@ -880,10 +896,20 @@ buttonpress(struct wl_listener *listener, void *data)
 			 * so button bindings act as transparent observers, not consumers. */
 			luaA_client_button_check(c, rel_x, rel_y, event->button,
 			                        CLEANMASK(mods), true);
+		} else if (l && l->lua_object) {
+			/* Layer surface was clicked - grant keyboard focus if it wants it */
+			uint32_t kb_mode = l->layer_surface->current.keyboard_interactive;
+			if (kb_mode == ZWLR_LAYER_SURFACE_V1_KEYBOARD_INTERACTIVITY_EXCLUSIVE ||
+			    kb_mode == ZWLR_LAYER_SURFACE_V1_KEYBOARD_INTERACTIVITY_ON_DEMAND) {
+				/* Emit signal for Lua to observe, then grant focus */
+				layer_surface_emit_request_keyboard(l->lua_object, "click");
+				l->lua_object->has_keyboard_focus = true;
+				layer_surface_grant_keyboard(l);
+			}
 		}
 
 		/* Check root button bindings (ONLY for empty space, not client clicks) */
-		if (!c) {
+		if (!c && !l) {
 			lua_State *L = globalconf_get_lua_State();
 
 			/* Check root button bindings */
@@ -1182,6 +1208,7 @@ commitlayersurfacenotify(struct wl_listener *listener, void *data)
 	struct wlr_layer_surface_v1 *layer_surface = l->layer_surface;
 	struct wlr_scene_tree *scene_layer = layers[layermap[layer_surface->current.layer]];
 	struct wlr_layer_surface_v1_state old_state;
+	int was_mapped;
 
 	if (l->layer_surface->initial_commit) {
 		client_set_scale(layer_surface->surface, l->mon->wlr_output->scale);
@@ -1197,7 +1224,17 @@ commitlayersurfacenotify(struct wl_listener *listener, void *data)
 
 	if (layer_surface->current.committed == 0 && l->mapped == layer_surface->surface->mapped)
 		return;
+
+	was_mapped = l->mapped;
 	l->mapped = layer_surface->surface->mapped;
+
+	/* If surface just mapped, create Lua object and emit request::manage */
+	if (!was_mapped && l->mapped && !l->lua_object && globalconf_L) {
+		lua_State *L = globalconf_get_lua_State();
+		layer_surface_t *ls = layer_surface_manage(L, l);
+		/* Note: luaA_object_ref inside layer_surface_manage already pops the object */
+		layer_surface_emit_manage(ls);
+	}
 
 	if (scene_layer != l->scene->node.parent) {
 		wlr_scene_node_reparent(&l->scene->node, scene_layer);
@@ -2322,7 +2359,20 @@ void
 foreign_toplevel_request_activate(struct wl_listener *listener, void *data)
 {
 	Client *c = wl_container_of(listener, c, foreign_request_activate);
-	focusclient(c, 1);
+
+	/* Emit request::activate signal to Lua with switch_to_tag hint.
+	 * This lets awful.permissions.activate handle tag switching when
+	 * activating a window on a different tag (e.g., via rofi -show window). */
+	lua_State *L = globalconf_get_lua_State();
+	luaA_object_push(L, c);
+	lua_pushstring(L, "foreign_toplevel");  /* context */
+	lua_newtable(L);  /* hints table */
+	lua_pushboolean(L, true);
+	lua_setfield(L, -2, "switch_to_tag");
+	lua_pushboolean(L, true);
+	lua_setfield(L, -2, "raise");
+	luaA_object_emit_signal(L, -3, "request::activate", 2);
+	lua_pop(L, 1);
 }
 
 void
@@ -4576,8 +4626,12 @@ unmaplayersurfacenotify(struct wl_listener *listener, void *data)
 		exclusive_focus = NULL;
 	if (l->layer_surface->output && (l->mon = l->layer_surface->output->data))
 		arrangelayers(l->mon);
-	if (l->layer_surface->surface == seat->keyboard_state.focused_surface)
-		luaA_emit_signal_global("layer_shell::closed");
+
+	/* Emit request::unmanage signal if we have a Lua object */
+	if (l->lua_object && globalconf_L) {
+		layer_surface_emit_unmanage(l->lua_object);
+	}
+
 	motionnotify(0, NULL, 0, 0, 0, 0);
 }
 
