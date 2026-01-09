@@ -994,6 +994,16 @@ luaA_awesome_index(lua_State *L)
 {
 	const char *key = luaL_checkstring(L, 2);
 
+	if (A_STREQ(key, "version")) {
+		lua_pushstring(L, VERSION);
+		return 1;
+	}
+
+	if (A_STREQ(key, "release")) {
+		lua_pushstring(L, "somewm");
+		return 1;
+	}
+
 	if (A_STREQ(key, "startup_errors")) {
 		if (globalconf.startup_errors.len == 0)
 			return 0;
