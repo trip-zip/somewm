@@ -14,6 +14,7 @@
 #include "objects/client.h"
 #include "objects/screen.h"
 #include "objects/drawin.h"
+#include "objects/layer_surface.h"
 #include "objects/drawable.h"
 #include "objects/signal.h"
 #include "objects/timer.h"
@@ -1667,6 +1668,7 @@ luaA_init(void)
 	screen_class_setup(globalconf_L);
 	luaA_drawable_setup(globalconf_L);
 	luaA_drawin_setup(globalconf_L);
+	layer_surface_class_setup(globalconf_L);  /* Layer shell surface class */
 	luaA_timer_setup(globalconf_L);
 	luaA_spawn_setup(globalconf_L);
 	luaA_keybinding_setup(globalconf_L);
@@ -3403,6 +3405,7 @@ luaA_create_fresh_state(void)
 	screen_class_setup(L);
 	luaA_drawable_setup(L);
 	luaA_drawin_setup(L);
+	layer_surface_class_setup(L);
 	luaA_timer_setup(L);
 	luaA_spawn_setup(L);
 	luaA_keybinding_setup(L);
@@ -3501,6 +3504,7 @@ globalconf_init(lua_State *L)
 	button_array_init(&globalconf.buttons);
 	screen_array_init(&globalconf.screens);
 	drawin_array_init(&globalconf.drawins);
+	layer_surface_array_init(&globalconf.layer_surfaces);
 
 	/* Initialize focus state */
 	globalconf.focus.client = NULL;

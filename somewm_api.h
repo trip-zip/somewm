@@ -211,4 +211,11 @@ void some_rebuild_keyboard_keymap(void);
  */
 void apply_input_settings_to_all_devices(void);
 
+/*
+ * Layer Surface Focus API
+ * Called from objects/layer_surface.c when Lua sets has_keyboard_focus property
+ */
+void layer_surface_grant_keyboard(LayerSurface *ls);
+void layer_surface_revoke_keyboard(LayerSurface *ls);
+
 #endif /* SOMEWM_API_H */

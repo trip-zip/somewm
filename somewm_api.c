@@ -23,6 +23,7 @@
 
 /* Declare seat extern before including client.h */
 extern struct wlr_seat *seat;
+extern void *exclusive_focus;  /* Layer surface with exclusive keyboard focus */
 
 /* External reference to globalconf (defined in somewm.c) */
 extern awesome_t globalconf;
@@ -1544,4 +1545,42 @@ some_rebuild_keyboard_keymap(void)
 	}
 
 	xkb_context_unref(context);
+}
+
+/*
+ * Layer Surface Focus API
+ */
+
+void
+layer_surface_grant_keyboard(LayerSurface *ls)
+{
+	if (!ls || !ls->layer_surface || !ls->mapped)
+		return;
+
+	/* Deactivate the focused client */
+	focusclient(NULL, 0);
+
+	/* Set as exclusive focus */
+	exclusive_focus = ls;
+
+	/* Send keyboard enter to the layer surface */
+	client_notify_enter(ls->layer_surface->surface, wlr_seat_get_keyboard(seat));
+}
+
+void
+layer_surface_revoke_keyboard(LayerSurface *ls)
+{
+	if (!ls)
+		return;
+
+	/* Only revoke if this surface currently has exclusive focus */
+	if (exclusive_focus == ls) {
+		exclusive_focus = NULL;
+
+		/* Explicitly clear keyboard focus from the layer surface */
+		wlr_seat_keyboard_notify_clear_focus(seat);
+
+		/* Refocus the top client on the selected monitor */
+		focusclient(focustop(selmon), 1);
+	}
 }
