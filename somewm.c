@@ -4571,7 +4571,7 @@ unmaplayersurfacenotify(struct wl_listener *listener, void *data)
 	if (l->layer_surface->output && (l->mon = l->layer_surface->output->data))
 		arrangelayers(l->mon);
 	if (l->layer_surface->surface == seat->keyboard_state.focused_surface)
-		focusclient(focustop(selmon), 1);
+		luaA_emit_signal_global("layer_shell::closed");
 	motionnotify(0, NULL, 0, 0, 0, 0);
 }
 
