@@ -27,7 +27,7 @@
 --   namespace, layer, keyboard_interactive, screen, pid, focusable
 --
 -- @author SomeWM
--- @copyright 2024 SomeWM
+-- @copyright 2026 SomeWM
 -- @ruleslib ruled.layer_surface
 ---------------------------------------------------------------------------
 

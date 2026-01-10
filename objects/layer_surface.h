@@ -7,8 +7,8 @@
  * Layer surfaces inherit from window_class to get opacity, strut, buttons.
  */
 
-#ifndef SOMEWM_LAYER_SURFACE_H
-#define SOMEWM_LAYER_SURFACE_H
+#ifndef SOMEWM_OBJECTS_LAYER_SURFACE_H
+#define SOMEWM_OBJECTS_LAYER_SURFACE_H
 
 #include <lua.h>
 #include <stdbool.h>
@@ -163,4 +163,4 @@ const char *layer_surface_layer_name(uint32_t layer);
  */
 const char *layer_surface_keyboard_mode_name(uint32_t mode);
 
-#endif /* SOMEWM_LAYER_SURFACE_H */
+#endif /* SOMEWM_OBJECTS_LAYER_SURFACE_H */

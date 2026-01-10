@@ -903,7 +903,14 @@ buttonpress(struct wl_listener *listener, void *data)
 			    kb_mode == ZWLR_LAYER_SURFACE_V1_KEYBOARD_INTERACTIVITY_ON_DEMAND) {
 				/* Emit signal for Lua to observe, then grant focus */
 				layer_surface_emit_request_keyboard(l->lua_object, "click");
-				l->lua_object->has_keyboard_focus = true;
+				/* Set focus state and emit property signal */
+				if (!l->lua_object->has_keyboard_focus) {
+					lua_State *Ls = globalconf_get_lua_State();
+					l->lua_object->has_keyboard_focus = true;
+					luaA_object_push(Ls, l->lua_object);
+					luaA_object_emit_signal(Ls, -1, "property::has_keyboard_focus", 0);
+					lua_pop(Ls, 1);
+				}
 				layer_surface_grant_keyboard(l);
 			}
 		}
@@ -1245,6 +1252,27 @@ commitlayersurfacenotify(struct wl_listener *listener, void *data)
 	}
 
 	arrangelayers(l->mon);
+
+	/* Emit property change signals for Lua (matches AwesomeWM pattern) */
+	if (l->lua_object && globalconf_L && layer_surface->current.committed) {
+		lua_State *L = globalconf_get_lua_State();
+		uint32_t committed = layer_surface->current.committed;
+
+		luaA_object_push(L, l->lua_object);
+
+		if (committed & (1 << 5))  /* WLR_LAYER_SURFACE_V1_STATE_LAYER */
+			luaA_object_emit_signal(L, -1, "property::layer", 0);
+		if (committed & (1 << 1))  /* WLR_LAYER_SURFACE_V1_STATE_ANCHOR */
+			luaA_object_emit_signal(L, -1, "property::anchor", 0);
+		if (committed & (1 << 2))  /* WLR_LAYER_SURFACE_V1_STATE_EXCLUSIVE_ZONE */
+			luaA_object_emit_signal(L, -1, "property::exclusive_zone", 0);
+		if (committed & (1 << 4))  /* WLR_LAYER_SURFACE_V1_STATE_KEYBOARD_INTERACTIVITY */
+			luaA_object_emit_signal(L, -1, "property::keyboard_interactive", 0);
+		if (committed & (1 << 3))  /* WLR_LAYER_SURFACE_V1_STATE_MARGIN */
+			luaA_object_emit_signal(L, -1, "property::margin", 0);
+
+		lua_pop(L, 1);
+	}
 }
 
 /* Handle initial XDG commit - sets scale, capabilities, size.
