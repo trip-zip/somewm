@@ -283,9 +283,7 @@ luaA_layer_surface_gc(lua_State *L)
 		/* Clean up signals */
 		signal_array_wipe(&ls->signals);
 
-		/* Wipe button array */
-		button_array_wipe(&ls->buttons);
-
+		/* layer_surface_wipe handles button_array_wipe */
 		layer_surface_wipe(ls);
 	}
 	return 0;
