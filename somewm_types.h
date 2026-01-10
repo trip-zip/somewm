@@ -129,8 +129,11 @@ typedef struct {
 	struct wl_listener destroy;
 } KeyboardGroup;
 
+/* Forward declaration for Lua layer_surface object */
+struct layer_surface_t;
+
 /* LayerSurface structure */
-typedef struct {
+typedef struct LayerSurface {
 	/* Must keep this field first */
 	unsigned int type; /* LayerShell */
 
@@ -145,6 +148,9 @@ typedef struct {
 	struct wl_listener destroy;
 	struct wl_listener unmap;
 	struct wl_listener surface_commit;
+
+	/* Lua object reference (NULL if not managed by Lua) */
+	struct layer_surface_t *lua_object;
 } LayerSurface;
 
 /* PointerConstraint structure */

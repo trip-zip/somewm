@@ -831,30 +831,67 @@ if awesome.api_level > 4 then
     end)
 end
 
---- Default handler for layer shell surface closure (somewm-specific).
+--- Default handler for layer surface keyboard focus requests (somewm-specific).
 --
--- When a layer-shell surface (like rofi, wofi, or other launchers) closes
--- after having keyboard focus, this handler restores focus to the most
--- recent client from focus history.
+-- When a layer-shell surface requests keyboard focus, this handler decides
+-- whether to grant it. By default:
+-- - Overlay and top layer surfaces with "exclusive" keyboard get focus
+-- - Other surfaces don't automatically get focus
 --
 -- To replace this handler with your own, use:
 --
---    awesome.disconnect_signal("layer_shell::closed", awful.permissions.handle_layer_shell_closed)
+--    layer_surface.disconnect_signal("request::keyboard", awful.permissions.layer_surface_keyboard)
 --
--- @signalhandler awful.permissions.handle_layer_shell_closed
--- @sourcesignal awesome layer_shell::closed
-function permissions.handle_layer_shell_closed()
-    local s = ascreen.focused()
-    if not s then return end
+-- @signalhandler awful.permissions.layer_surface_keyboard
+-- @tparam layer_surface l The layer surface requesting focus.
+-- @tparam string context Either "exclusive" or "on_demand".
+-- @tparam table hints Additional hints (currently unused).
+-- @sourcesignal layer_surface request::keyboard
+function permissions.layer_surface_keyboard(l, context, hints)
+    if not pcommon.check(l, "layer_surface", "keyboard", context) then return end
 
-    local c = aclient.focus.history.get(s, 0, aclient.focus.filter)
-    if c then
-        c:emit_signal("request::autoactivate", "layer_shell_closed", {raise = false})
+    -- Grant keyboard focus to overlay/top layers with exclusive keyboard
+    if context == "exclusive" and (l.layer == "overlay" or l.layer == "top") then
+        l.has_keyboard_focus = true
     end
 end
 
--- Connect default handler for layer-shell focus restoration (somewm-specific)
-awesome.connect_signal("layer_shell::closed", permissions.handle_layer_shell_closed)
+-- Connect default handler for layer surface keyboard focus (somewm-specific)
+if layer_surface then
+    layer_surface.connect_signal("request::keyboard", permissions.layer_surface_keyboard)
+end
+
+--- Default handler for layer surface unmanage (focus restoration).
+--
+-- When a layer surface with keyboard focus closes, this handler restores
+-- focus to the previously focused client using the focus history.
+--
+-- @signalhandler awful.permissions.layer_surface_unmanage
+-- @tparam layer_surface l The layer surface being unmanaged.
+-- @tparam string context The unmanage context (e.g., "destroyed").
+-- @tparam table hints Additional hints (currently unused).
+-- @sourcesignal layer_surface request::unmanage
+function permissions.layer_surface_unmanage(l, context, hints)
+    if not pcommon.check(l, "layer_surface", "unmanage", context) then return end
+
+    -- If this layer surface had keyboard focus, restore to previous client
+    if l.has_keyboard_focus then
+        local screen = l.screen
+        if screen and screen.valid then
+            -- Try to find a client to focus using focus history
+            local aclient = require("awful.client")
+            local c = aclient.focus.history.get(screen, 0, aclient.focus.filter)
+            if c and c.valid then
+                c:emit_signal("request::activate", "layer_surface_closed", {raise = false})
+            end
+        end
+    end
+end
+
+-- Connect default handler for layer surface unmanage (somewm-specific)
+if layer_surface then
+    layer_surface.connect_signal("request::unmanage", permissions.layer_surface_unmanage)
+end
 
 return permissions
 
