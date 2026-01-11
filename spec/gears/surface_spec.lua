@@ -2,7 +2,18 @@ local surface = require("gears.surface")
 local color = require("gears.color")
 local lgi = require("lgi")
 local cairo = lgi.cairo
-local gdk = lgi.Gdk
+
+-- GDK requires a display environment to initialize
+-- Skip these tests gracefully in headless environments
+local gdk_ok, gdk = pcall(function() return lgi.Gdk end)
+if not gdk_ok then
+    describe("gears.surface", function()
+        it("SKIPPED: GDK not available (no display)", function()
+            pending("GDK requires a display environment")
+        end)
+    end)
+    return
+end
 
 describe("gears.surface", function ()
     describe("crop_surface", function ()
