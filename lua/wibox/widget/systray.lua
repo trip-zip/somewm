@@ -98,7 +98,9 @@ end
 function systray:set_horizontal(horiz)
     horizontal = get_args(self, horiz)
     if instance then
-        instance:set_direction(horizontal and "horizontal" or "vertical")
+        -- Note: Changing direction after creation requires recreating the widget
+        -- The horizontal setting primarily affects widget creation
+        instance:emit_signal("widget::layout_changed")
         instance:emit_signal("property::horizontal", horiz)
     end
 end
