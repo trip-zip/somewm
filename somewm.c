@@ -3562,8 +3562,9 @@ apply_geometry_to_wlroots(Client *c)
 	 * CRITICAL: Only send configure if there's no pending resize waiting for client commit.
 	 * Without this check, we flood the client with configure events on every refresh cycle,
 	 * which crashes Firefox and other clients that can't handle rapid configure floods. */
-	/* Debug: only log when we WILL send a configure (not on every refresh) */
-	if (!c->resize) {
+	/* Debug: only log when we WILL send a configure (not on every refresh)
+	 * Note: Only for XDG clients - XWayland uses different surface union member */
+	if (!c->resize && c->client_type == XDGShell) {
 		int content_w = c->geometry.width - 2 * c->bw - titlebar_left - c->titlebar[CLIENT_TITLEBAR_RIGHT].size;
 		int content_h = c->geometry.height - 2 * c->bw - titlebar_top - c->titlebar[CLIENT_TITLEBAR_BOTTOM].size;
 		int32_t current_w = c->surface.xdg->toplevel->current.width;
