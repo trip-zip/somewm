@@ -2265,11 +2265,16 @@ focusclient(Client *c, int lift)
 			pointer_constraints, surface, seat));
 	}
 
-	/* Emit property::active = true for border updates (AwesomeWM pattern) */
+	/* Emit focus signals (AwesomeWM pattern)
+	 * CRITICAL: Must emit both property::active AND object-level "focus" signal.
+	 * The awful.client.focus.history module connects to "focus" signal to track
+	 * focus history. Without this, focus.history.list remains empty. */
 	if (!client_is_unmanaged(c)) {
 		luaA_object_push(globalconf_L, c);
 		lua_pushboolean(globalconf_L, true);
 		luaA_object_emit_signal(globalconf_L, -2, "property::active", 1);
+		/* Emit object-level "focus" signal - triggers focus history tracking */
+		luaA_object_emit_signal(globalconf_L, -1, "focus", 0);
 		lua_pop(globalconf_L, 1);
 	}
 
