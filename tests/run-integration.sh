@@ -2,7 +2,15 @@
 #
 # Integration test runner for somewm
 #
-# Runs somewm in headless mode and executes Lua test files via IPC
+# Runs somewm and executes Lua test files via IPC
+#
+# Modes:
+#   HEADLESS=1 (default): Run with headless backend (for CI)
+#   HEADLESS=0: Run with wayland backend (visual, for debugging)
+#
+# Output:
+#   VERBOSE=0 (default): Quiet, only show PASS/FAIL with timing
+#   VERBOSE=1: Show test names before running
 
 set -e
 
@@ -11,6 +19,7 @@ SOMEWM="${SOMEWM:-./somewm}"
 SOMEWM_CLIENT="${SOMEWM_CLIENT:-./somewm-client}"
 TEST_TIMEOUT=${TEST_TIMEOUT:-30}
 VERBOSE=${VERBOSE:-0}
+HEADLESS=${HEADLESS:-1}
 TEST_RC_LUA="${TEST_RC_LUA:-}"
 
 # Change to script's directory
@@ -25,10 +34,15 @@ fi
 # Setup Lua path to include tests directory
 export LUA_PATH="$ROOT_DIR/lua/?.lua;$ROOT_DIR/lua/?/init.lua;$ROOT_DIR/tests/?.lua;;"
 
-# Wayland backend setup for headless mode
-export WLR_BACKENDS=headless
+# Wayland backend setup based on HEADLESS mode
+if [ "$HEADLESS" = 1 ]; then
+    export WLR_BACKENDS=headless
+    export WLR_RENDERER=pixman
+else
+    export WLR_BACKENDS=wayland
+    # Use GPU renderer in visual mode
+fi
 export WLR_WL_OUTPUTS=1
-export WLR_RENDERER=pixman
 export NO_AT_BRIDGE=1
 export GDK_SCALE=1
 
@@ -60,9 +74,16 @@ mkdir -p "$TEST_CONFIG_DIR"
 cp "$TEST_RC_LUA" "$TEST_CONFIG_DIR/rc.lua"
 
 # Override XDG directories for test compositor to avoid conflicts
-export XDG_RUNTIME_DIR="$TEST_RUNTIME_DIR"
+# In visual mode, keep real XDG_RUNTIME_DIR so somewm can find parent compositor
+if [ "$HEADLESS" = 1 ]; then
+    export XDG_RUNTIME_DIR="$TEST_RUNTIME_DIR"
+    SOCKET="$XDG_RUNTIME_DIR/somewm-socket"
+else
+    # Visual mode: use unique socket to avoid conflict with running somewm
+    SOCKET="$XDG_RUNTIME_DIR/somewm-test-$$"
+    export SOMEWM_SOCKET="$SOCKET"
+fi
 export XDG_CONFIG_HOME="$TMP_DIR/config"
-SOCKET="$XDG_RUNTIME_DIR/somewm-socket"
 
 # Cleanup function
 cleanup() {
@@ -78,6 +99,9 @@ cleanup() {
         fi
         wait $SOMEWM_PID 2>/dev/null || true
     fi
+
+    # Clean up socket in visual mode (it's in real XDG_RUNTIME_DIR)
+    [ "$HEADLESS" != 1 ] && rm -f "$SOCKET" 2>/dev/null || true
 
     rm -rf "$TMP_DIR" || true
 
@@ -105,23 +129,16 @@ wait_for_socket() {
     return 0
 }
 
-# Start somewm in headless mode
+# Start somewm
 start_somewm() {
-    [ $VERBOSE -eq 1 ] && echo "Starting somewm in headless mode..."
-    [ $VERBOSE -eq 1 ] && echo "Using config: $TEST_CONFIG_DIR/rc.lua"
-
     # Start compositor (uses XDG_CONFIG_HOME for config)
     timeout $TEST_TIMEOUT "$SOMEWM" > "$LOG" 2>&1 &
     SOMEWM_PID=$!
-
-    [ $VERBOSE -eq 1 ] && echo "somewm started with PID $SOMEWM_PID"
 
     # Wait for socket
     if ! wait_for_socket; then
         return 1
     fi
-
-    [ $VERBOSE -eq 1 ] && echo "Socket ready at $SOCKET"
 
     # Test IPC connection
     if ! $SOMEWM_CLIENT eval "return 1" > /dev/null 2>&1; then
@@ -131,21 +148,24 @@ start_somewm() {
         return 1
     fi
 
-    [ $VERBOSE -eq 1 ] && echo "IPC connection verified"
-
     return 0
 }
 
 # Run a single test file
+# Returns: 0 on success, 1 on failure
+# Sets: TEST_DURATION (seconds with decimals)
 run_test() {
     local test_file="$1"
     local test_name=$(basename "$test_file")
+    local start_time end_time
 
-    echo "=== Running $test_name ==="
+    # Record start time
+    start_time=$(date +%s.%N)
 
     # Start compositor
     if ! start_somewm; then
-        echo "FAIL: $test_name (compositor failed to start)"
+        end_time=$(date +%s.%N)
+        TEST_DURATION=$(echo "$end_time - $start_time" | bc)
         return 1
     fi
 
@@ -153,54 +173,48 @@ run_test() {
     local test_path="$ROOT_DIR/$test_file"
     if [ ! -f "$test_path" ]; then
         echo "Error: Test file not found: $test_path" >&2
+        end_time=$(date +%s.%N)
+        TEST_DURATION=$(echo "$end_time - $start_time" | bc)
         return 1
     fi
 
-    # Run the test with timeout on IPC call
+    # Run the test with timeout on IPC call (capture output to log only)
     echo "=== Test starting at $(date) ===" >> "$LOG"
-    timeout $TEST_TIMEOUT $SOMEWM_CLIENT eval "dofile('$test_path')" 2>&1 | tee -a "$LOG"
+    timeout $TEST_TIMEOUT $SOMEWM_CLIENT eval "dofile('$test_path')" >> "$LOG" 2>&1
     local ipc_exit=$?
 
     # If IPC timed out, kill compositor and fail
     if [ $ipc_exit -eq 124 ]; then
-        echo "Error: IPC call timed out after $TEST_TIMEOUT seconds" >&2
         kill -KILL $SOMEWM_PID 2>/dev/null || true
-        echo "FAIL: $test_name (IPC timeout)"
+        end_time=$(date +%s.%N)
+        TEST_DURATION=$(echo "$end_time - $start_time" | bc)
         return 1
     fi
 
-    # Tail log in background while waiting for compositor to exit
-    tail -f "$LOG" --pid=$SOMEWM_PID 2>/dev/null &
-    local tail_pid=$!
-
     # Wait for compositor to exit with timeout
+    # (wait_count increments every 0.1s, so multiply timeout by 10)
     local wait_count=0
-    while kill -0 $SOMEWM_PID 2>/dev/null && [ $wait_count -lt $TEST_TIMEOUT ]; do
-        sleep 1
+    local max_wait=$((TEST_TIMEOUT * 10))
+    while kill -0 $SOMEWM_PID 2>/dev/null && [ $wait_count -lt $max_wait ]; do
+        sleep 0.1
         wait_count=$((wait_count + 1))
     done
 
     # Force kill if still running
     if kill -0 $SOMEWM_PID 2>/dev/null; then
-        echo "Warning: Compositor did not exit, force killing" >&2
         kill -KILL $SOMEWM_PID 2>/dev/null || true
     fi
 
     wait $SOMEWM_PID 2>/dev/null || true
-    local compositor_exit=$?
 
-    # Stop tail
-    kill $tail_pid 2>/dev/null || true
-    wait $tail_pid 2>/dev/null || true
+    # Record end time
+    end_time=$(date +%s.%N)
+    TEST_DURATION=$(echo "$end_time - $start_time" | bc)
 
     # Check for success
     if grep -q "Test finished successfully\." "$LOG"; then
-        echo "PASS: $test_name"
         return 0
     else
-        echo "FAIL: $test_name"
-        echo "Last 50 lines of log:"
-        tail -50 "$LOG"
         return 1
     fi
 }
@@ -208,7 +222,7 @@ run_test() {
 # Get test files
 if [ $# -eq 0 ]; then
     # Default to all test-*.lua files
-    tests=$(find tests -name "test-*.lua" -type f 2>/dev/null || echo "")
+    tests=$(find tests -name "test-*.lua" -type f 2>/dev/null | sort || echo "")
     if [ -z "$tests" ]; then
         echo "Error: No test files found in tests/" >&2
         exit 1
@@ -217,35 +231,53 @@ else
     tests="$@"
 fi
 
+# Track total time
+total_start=$(date +%s.%N)
+
 # Count tests
 test_count=0
 pass_count=0
 fail_count=0
+failed_tests=""
 
 # Run each test
 for test in $tests; do
     test_count=$((test_count + 1))
+    test_name=$(basename "$test")
 
     # Clear log for this test
     > "$LOG"
 
+    # Show test name in verbose mode
+    [ $VERBOSE -eq 1 ] && echo "=== RUN   $test_name"
+
     # Run test
     if run_test "$test"; then
         pass_count=$((pass_count + 1))
+        printf -- "--- PASS: %s (%.2fs)\n" "$test_name" "$TEST_DURATION"
     else
         fail_count=$((fail_count + 1))
+        failed_tests="$failed_tests $test_name"
+        printf -- "--- FAIL: %s (%.2fs)\n" "$test_name" "$TEST_DURATION"
+        # Show log on failure
+        echo "    Log output:"
+        tail -30 "$LOG" | sed 's/^/    /'
     fi
-
-    echo ""
 done
 
+# Calculate total time
+total_end=$(date +%s.%N)
+total_time=$(echo "$total_end - $total_start" | bc)
+
 # Print summary
-echo "================================"
-echo "Test Summary:"
-echo "  Total:  $test_count"
-echo "  Passed: $pass_count"
-echo "  Failed: $fail_count"
-echo "================================"
+echo ""
+if [ $fail_count -eq 0 ]; then
+    echo "PASS"
+else
+    echo "FAIL"
+    echo "Failed tests:$failed_tests"
+fi
+printf "ok\t%d tests\t%.2fs\n" "$test_count" "$total_time"
 
 if [ $fail_count -gt 0 ]; then
     exit 1
