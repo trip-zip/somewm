@@ -170,10 +170,15 @@ connect_to_socket(void)
 		return -1;
 	}
 
-	/* Build address */
+	/* Build address - check for override first */
 	addr.sun_family = AF_UNIX;
-	snprintf(addr.sun_path, sizeof(addr.sun_path),
-	         "%s/%s", runtime_dir, SOCKET_NAME);
+	const char *socket_override = getenv("SOMEWM_SOCKET");
+	if (socket_override && socket_override[0]) {
+		snprintf(addr.sun_path, sizeof(addr.sun_path), "%s", socket_override);
+	} else {
+		snprintf(addr.sun_path, sizeof(addr.sun_path),
+		         "%s/%s", runtime_dir, SOCKET_NAME);
+	}
 
 	/* Connect */
 	if (connect(sock, (struct sockaddr *)&addr, sizeof(addr)) < 0) {

@@ -75,9 +75,14 @@ ipc_init(struct wl_event_loop *event_loop)
 		return -1;
 	}
 
-	/* Build socket path */
-	snprintf(ipc_socket_path, sizeof(ipc_socket_path),
-	         "%s/%s", runtime_dir, IPC_SOCKET_NAME);
+	/* Build socket path - check for override first */
+	const char *socket_override = getenv("SOMEWM_SOCKET");
+	if (socket_override && socket_override[0]) {
+		snprintf(ipc_socket_path, sizeof(ipc_socket_path), "%s", socket_override);
+	} else {
+		snprintf(ipc_socket_path, sizeof(ipc_socket_path),
+		         "%s/%s", runtime_dir, IPC_SOCKET_NAME);
+	}
 
 	/* Create socket */
 	ipc_socket_fd = socket(AF_UNIX, SOCK_STREAM, 0);

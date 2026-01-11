@@ -9,7 +9,7 @@
 
 -include .local.mk
 
-.PHONY: all install clean setup reconfigure test test-unit test-integration test-asan test-one build-test
+.PHONY: all install clean setup reconfigure test test-unit test-integration test-asan test-one test-visual test-one-visual build-test
 
 # Default build: WITH ASAN for development
 all:
@@ -68,6 +68,26 @@ ifndef TEST
 endif
 	@VERBOSE=1 \
 	 TEST_TIMEOUT=10 \
+	 SOMEWM=./build-test/somewm \
+	 SOMEWM_CLIENT=./build-test/somewm-client \
+	 ./tests/run-integration.sh $(TEST)
+
+# Visual test mode - watch tests run in a window (like AwesomeWM's Xephyr)
+test-visual: build-test
+	@HEADLESS=0 \
+	 SOMEWM=./build-test/somewm \
+	 SOMEWM_CLIENT=./build-test/somewm-client \
+	 ./tests/run-integration.sh
+
+# Visual single test - for debugging
+test-one-visual: build-test
+ifndef TEST
+	@echo "Usage: make test-one-visual TEST=tests/test-my-feature.lua"
+	@exit 1
+endif
+	@HEADLESS=0 \
+	 VERBOSE=1 \
+	 TEST_TIMEOUT=60 \
 	 SOMEWM=./build-test/somewm \
 	 SOMEWM_CLIENT=./build-test/somewm-client \
 	 ./tests/run-integration.sh $(TEST)
