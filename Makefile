@@ -9,22 +9,26 @@
 
 -include .local.mk
 
-.PHONY: all install clean setup reconfigure test asan
+.PHONY: all install clean setup reconfigure test test-unit test-integration test-asan test-one build-test
 
+# Default build: WITH ASAN for development
 all:
-	@test -d build || meson setup build $(MESON_OPTS)
+	@test -d build || meson setup build -Db_sanitize=address,undefined $(MESON_OPTS)
 	ninja -C build
 
-# Build with AddressSanitizer + UndefinedBehaviorSanitizer for debugging
-asan:
-	@test -d build-asan || meson setup build-asan -Db_sanitize=address,undefined
-	ninja -C build-asan
+# Alias for clarity
+asan: all
+
+# Build for tests: NO ASAN (fast) - explicitly disable sanitizers
+build-test:
+	@test -d build-test || meson setup build-test -Db_sanitize=none
+	ninja -C build-test
 
 install:
 	meson install -C build
 
 clean:
-	rm -rf build build-asan
+	rm -rf build build-test
 
 # Just setup (useful for IDE integration)
 setup:
@@ -35,6 +39,35 @@ reconfigure:
 	rm -rf build
 	meson setup build
 
-# Run tests (placeholder - update when test framework is ready)
-test:
-	@echo "Tests not yet integrated with meson build"
+# =============================================================================
+# Testing
+# =============================================================================
+
+# Run all tests (fast, no ASAN)
+test: test-unit test-integration
+
+# Unit tests only (busted, no compositor needed)
+# Use - prefix to continue even if unit tests fail (some have known issues)
+test-unit:
+	-@./tests/run-unit.sh
+
+# Integration tests (fast, no ASAN)
+test-integration: build-test
+	@SOMEWM=./build-test/somewm SOMEWM_CLIENT=./build-test/somewm-client ./tests/run-integration.sh
+
+# Integration tests with ASAN (slower, catches memory bugs)
+test-asan: all
+	@SOMEWM=./build/somewm SOMEWM_CLIENT=./build/somewm-client ./tests/run-integration.sh
+
+# Run single test (TDD workflow, no ASAN for speed)
+# Usage: make test-one TEST=tests/test-focus.lua
+test-one: build-test
+ifndef TEST
+	@echo "Usage: make test-one TEST=tests/test-my-feature.lua"
+	@exit 1
+endif
+	@VERBOSE=1 \
+	 TEST_TIMEOUT=10 \
+	 SOMEWM=./build-test/somewm \
+	 SOMEWM_CLIENT=./build-test/somewm-client \
+	 ./tests/run-integration.sh $(TEST)

@@ -157,6 +157,300 @@ function utils.is_headless()
     return os.getenv("WLR_BACKENDS") == "headless"
 end
 
+---------------------------------------------------------------------------
+--- Debug helpers for focus history, signals, and stacking order
+-- @section debug_helpers
+---------------------------------------------------------------------------
+
+--- Debug: Print current focus history state.
+-- Prints the focus history list with client classes/names for debugging.
+-- @tparam[opt=false] boolean verbose Include additional client details
+function utils.debug_focus_history(verbose)
+    local aclient = require("awful.client")
+    local history = aclient.focus.history.list
+    local enabled, count = aclient.focus.history.is_enabled()
+
+    io.stderr:write(string.format(
+        "[DEBUG] Focus History: enabled=%s, disabled_count=%d, entries=%d\n",
+        tostring(enabled), count or -1, #history
+    ))
+
+    if #history == 0 then
+        io.stderr:write("[DEBUG]   (empty)\n")
+    else
+        for i, c in ipairs(history) do
+            if verbose then
+                io.stderr:write(string.format(
+                    "[DEBUG]   %d: class=%s name=%s valid=%s focused=%s\n",
+                    i, tostring(c.class), tostring(c.name),
+                    tostring(c.valid), tostring(c == client.focus)
+                ))
+            else
+                io.stderr:write(string.format(
+                    "[DEBUG]   %d: class=%s\n", i, tostring(c.class)
+                ))
+            end
+        end
+    end
+end
+
+--- Debug: Print all managed clients.
+-- @tparam[opt=false] boolean verbose Include geometry and state details
+function utils.debug_clients(verbose)
+    local clients = client.get()
+    io.stderr:write(string.format("[DEBUG] Managed clients: %d\n", #clients))
+
+    for i, c in ipairs(clients) do
+        if verbose then
+            local geo = c:geometry()
+            io.stderr:write(string.format(
+                "[DEBUG]   %d: class=%s name=%s valid=%s visible=%s minimized=%s geo=%dx%d+%d+%d\n",
+                i, tostring(c.class), tostring(c.name),
+                tostring(c.valid), tostring(c:isvisible()),
+                tostring(c.minimized),
+                geo.width, geo.height, geo.x, geo.y
+            ))
+        else
+            io.stderr:write(string.format(
+                "[DEBUG]   %d: class=%s focused=%s\n",
+                i, tostring(c.class), tostring(c == client.focus)
+            ))
+        end
+    end
+end
+
+--- Debug: Print current focused client.
+function utils.debug_focused()
+    local c = client.focus
+    if c then
+        io.stderr:write(string.format(
+            "[DEBUG] Focused: class=%s name=%s\n",
+            tostring(c.class), tostring(c.name)
+        ))
+    else
+        io.stderr:write("[DEBUG] Focused: nil\n")
+    end
+end
+
+--- Signal tracker for debugging signal flow from C to Lua.
+-- Creates a tracker object that counts signal emissions.
+-- @treturn table Signal tracker with connect/get_count/reset methods
+function utils.create_signal_tracker()
+    local tracker = {
+        counts = {},
+        log = {},
+    }
+
+    --- Connect to a signal and track its emissions.
+    -- @tparam string signal_name The signal name (e.g., "focus", "property::active")
+    -- @tparam[opt] object obj Object to connect on (default: client class)
+    function tracker:connect(signal_name, obj)
+        self.counts[signal_name] = 0
+        local target = obj or client
+
+        target.connect_signal(signal_name, function(c, ...)
+            self.counts[signal_name] = (self.counts[signal_name] or 0) + 1
+            table.insert(self.log, {
+                time = os.time(),
+                signal = signal_name,
+                client_class = c and c.class or nil,
+                args = {...}
+            })
+            io.stderr:write(string.format(
+                "[SIGNAL] %s fired (count=%d) client=%s\n",
+                signal_name, self.counts[signal_name],
+                c and c.class or "nil"
+            ))
+        end)
+    end
+
+    --- Connect to a global signal on awesome object.
+    -- @tparam string signal_name The signal name (e.g., "client::focus")
+    function tracker:connect_global(signal_name)
+        self.counts[signal_name] = 0
+
+        awesome.connect_signal(signal_name, function(...)
+            self.counts[signal_name] = (self.counts[signal_name] or 0) + 1
+            table.insert(self.log, {
+                time = os.time(),
+                signal = signal_name,
+                args = {...}
+            })
+            io.stderr:write(string.format(
+                "[SIGNAL] global %s fired (count=%d)\n",
+                signal_name, self.counts[signal_name]
+            ))
+        end)
+    end
+
+    --- Get the count for a specific signal.
+    -- @tparam string signal_name The signal to check
+    -- @treturn number The emission count
+    function tracker:get_count(signal_name)
+        return self.counts[signal_name] or 0
+    end
+
+    --- Reset all counts.
+    function tracker:reset()
+        for k in pairs(self.counts) do
+            self.counts[k] = 0
+        end
+        self.log = {}
+    end
+
+    --- Print summary of all tracked signals.
+    function tracker:print_summary()
+        io.stderr:write("[SIGNAL SUMMARY]\n")
+        for name, count in pairs(self.counts) do
+            io.stderr:write(string.format("  %s: %d\n", name, count))
+        end
+    end
+
+    return tracker
+end
+
+--- Wait for a condition with debug output.
+-- @tparam string description What we're waiting for
+-- @tparam function condition Function that returns true when done
+-- @tparam[opt=5] number max_seconds Maximum seconds to wait
+-- @treturn boolean True if condition met, false if timed out
+function utils.wait_for(description, condition, max_seconds)
+    max_seconds = max_seconds or 5
+    local start = os.time()
+
+    io.stderr:write(string.format("[WAIT] %s...\n", description))
+
+    while os.time() - start < max_seconds do
+        if condition() then
+            io.stderr:write(string.format("[WAIT] %s: OK\n", description))
+            return true
+        end
+        -- Note: This is a blocking wait, only use for quick checks
+    end
+
+    io.stderr:write(string.format("[WAIT] %s: TIMEOUT\n", description))
+    return false
+end
+
+--- Create a step that verifies focus history contains expected entries.
+-- @tparam table expected_classes List of classes in expected order (most recent first)
+-- @treturn function Step function for runner.run_steps()
+function utils.step_verify_focus_history(expected_classes)
+    return function()
+        local aclient = require("awful.client")
+        local history = aclient.focus.history.list
+
+        if #history < #expected_classes then
+            return nil -- Not enough entries yet, keep waiting
+        end
+
+        -- Verify order matches
+        for i, expected_class in ipairs(expected_classes) do
+            local c = history[i]
+            if not c or c.class ~= expected_class then
+                io.stderr:write(string.format(
+                    "[VERIFY] Focus history mismatch at %d: expected=%s got=%s\n",
+                    i, expected_class, c and c.class or "nil"
+                ))
+                return false
+            end
+        end
+
+        io.stderr:write("[VERIFY] Focus history matches expected order\n")
+        return true
+    end
+end
+
+--- Create a step that waits for focus to be on a specific client class.
+-- @tparam string class The class/app_id to wait for
+-- @treturn function Step function for runner.run_steps()
+function utils.step_wait_for_focus(class)
+    return function()
+        local c = client.focus
+        if c and c.class == class then
+            return true
+        end
+        return nil -- Keep waiting
+    end
+end
+
+--- Activate a client and verify focus.
+-- Helper to properly activate a client using request::activate signal.
+-- @tparam client c The client to activate
+-- @tparam[opt="test"] string context Activation context
+function utils.activate_client(c, context)
+    context = context or "test"
+    c:emit_signal("request::activate", context, { raise = true })
+end
+
+---------------------------------------------------------------------------
+--- TDD assertion helpers
+-- @section assertions
+---------------------------------------------------------------------------
+
+--- Assert that focus is on a specific client class (or nil).
+-- Throws an error with descriptive message if assertion fails.
+-- @tparam string|nil expected_class Expected class name, or nil for no focus
+function utils.assert_focus(expected_class)
+    local c = client.focus
+    if expected_class == nil then
+        if c ~= nil then
+            error(string.format(
+                "Expected no focus, got %s",
+                c.class or "unknown"
+            ), 2)
+        end
+    else
+        if c == nil then
+            error(string.format(
+                "Expected focus on '%s', got nil",
+                expected_class
+            ), 2)
+        elseif c.class ~= expected_class then
+            error(string.format(
+                "Expected focus on '%s', got '%s'",
+                expected_class, c.class or "unknown"
+            ), 2)
+        end
+    end
+end
+
+--- Assert that a signal was emitted exactly N times.
+-- @tparam table tracker Signal tracker created by create_signal_tracker()
+-- @tparam string signal_name The signal to check
+-- @tparam number expected Expected emission count
+function utils.assert_signal_count(tracker, signal_name, expected)
+    local actual = tracker:get_count(signal_name)
+    if actual ~= expected then
+        error(string.format(
+            "Signal '%s': expected %d emissions, got %d",
+            signal_name, expected, actual
+        ), 2)
+    end
+end
+
+--- Assert the current number of managed clients.
+-- @tparam number expected Expected client count
+function utils.assert_client_count(expected)
+    local actual = #client.get()
+    if actual ~= expected then
+        error(string.format(
+            "Expected %d clients, got %d",
+            expected, actual
+        ), 2)
+    end
+end
+
+--- Assert that a condition is true, with custom message.
+-- Like Lua's assert but with better error level for test output.
+-- @tparam boolean condition The condition to check
+-- @tparam string message Error message if condition is false
+function utils.assert_true(condition, message)
+    if not condition then
+        error(message or "Assertion failed", 2)
+    end
+end
+
 return utils
 
 -- vim: filetype=lua:expandtab:shiftwidth=4:tabstop=8:softtabstop=4:textwidth=80
