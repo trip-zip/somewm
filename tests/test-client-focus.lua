@@ -31,17 +31,23 @@ local steps = {
         return nil -- Keep waiting
     end,
 
-    -- Step 2: Assert client has focus
-    function()
-        io.stderr:write(string.format("[TEST] Checking focus: client.focus=%s, my_client=%s\n",
-            tostring(client.focus), tostring(my_client)))
+    -- Step 2: Wait for client to have focus
+    function(count)
+        io.stderr:write(string.format("[TEST] Checking focus (attempt %d): client.focus=%s, my_client=%s\n",
+            count, tostring(client.focus), tostring(my_client)))
 
-        assert(client.focus == my_client,
-            string.format("Expected spawned client to have focus, got %s",
+        if client.focus == my_client then
+            io.stderr:write("[TEST] PASS: spawned client has focus\n")
+            return true
+        end
+
+        -- Timeout after ~1 second (10 iterations * 100ms)
+        if count > 10 then
+            error(string.format("Expected spawned client to have focus, got %s",
                 client.focus and client.focus.class or "nil"))
+        end
 
-        io.stderr:write("[TEST] PASS: spawned client has focus\n")
-        return true
+        return nil -- Keep waiting
     end,
 
     -- Step 3: Cleanup

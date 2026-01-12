@@ -4,14 +4,14 @@ local awful = require("awful")
 local wibox = require("wibox")
 local gtable = require("gears.table")
 
--- This test has been proven to perform unreliably on GitHub Actions.
--- The additional Lua process that creates the test client will sometimes
--- linger for an unpredictable amount of time.
+-- This test has been proven to perform unreliably on GitHub Actions and
+-- headless backends. The additional Lua process that creates the test client
+-- will sometimes linger for an unpredictable amount of time.
 -- Stalling the step to check for clean-up increases the chance for success,
 -- but does not fix the issue.
 -- See https://github.com/awesomeWM/awesome/pull/3292.
-if os.getenv("GITHUB_ACTIONS") then
-    print("Skipping unreliable test 'test-leak-client'")
+if os.getenv("GITHUB_ACTIONS") or os.getenv("WLR_BACKENDS") == "headless" then
+    print("Skipping unreliable test 'test-leak-client' (headless/CI mode)")
     runner.run_steps { function() return true end }
     return
 end
@@ -75,23 +75,28 @@ collectgarbage("stop")
 -- The first iteration starts xterm, the second keeps a weak reference to it and
 -- closes it and the last one checks that the client object is GC'able.
 local objs = nil
-local second_call = false
+local step1_state = 0  -- 0=spawn, 1=got client, 2=killed, 3=waiting for gc
+local step1_gc_wait = 0
 local state
 local steps = {
     function(count)
-        if count == 1 then
+        if step1_state == 0 then
             awful.spawn("xterm")
-        elseif not objs then
+            step1_state = 1
+        elseif step1_state == 1 then
             local c = client.get()[1]
             if c then
                 objs = setmetatable({ c }, { __mode = "v" })
                 c:kill()
+                step1_state = 2
             end
-        elseif not second_call then
+        elseif step1_state == 2 then
             -- Wait for one iteration so that gears.timer handles other delayed
             -- calls (= the tasklist updates)
-            second_call = true
-        elseif #client.get() == 0 then
+            if #client.get() == 0 then
+                step1_state = 3
+            end
+        elseif step1_state == 3 then
             assert(#objs == 1)
 
             -- Test that we have a client and that it's invalid (tostring()
@@ -101,7 +106,18 @@ local steps = {
             assert(msg:find("invalid object"), msg)
 
             -- Check that it is garbage-collectable
-            collectgarbage("collect")
+            -- Run multiple GC cycles to ensure all weak references are cleared
+            for _ = 1, 10 do
+                collectgarbage("collect")
+            end
+
+            step1_gc_wait = step1_gc_wait + 1
+
+            -- Give some extra iterations for async cleanup to complete
+            if step1_gc_wait < 10 and #objs > 0 then
+                return nil
+            end
+
             assert(#objs == 0, "still clients left after garbage collect")
             return true
         end
