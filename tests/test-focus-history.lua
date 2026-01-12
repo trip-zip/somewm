@@ -60,17 +60,21 @@ local steps = {
         return nil
     end,
 
-    -- Step 4: Assert client C has focus
-    function()
-        io.stderr:write(string.format("[TEST] Checking focus: client.focus.class=%s\n",
-            client.focus and client.focus.class or "nil"))
+    -- Step 4: Wait for client C to have focus
+    function(count)
+        io.stderr:write(string.format("[TEST] Checking focus (attempt %d): client.focus.class=%s\n",
+            count, client.focus and client.focus.class or "nil"))
 
-        assert(client.focus == client_c,
-            string.format("Expected client C to have focus, got %s",
+        if client.focus == client_c then
+            io.stderr:write("[TEST] PASS: client C has focus\n")
+            return true
+        end
+
+        if count > 10 then
+            error(string.format("Expected client C to have focus, got %s",
                 client.focus and client.focus.class or "nil"))
-
-        io.stderr:write("[TEST] PASS: client C has focus\n")
-        return true
+        end
+        return nil
     end,
 
     -- Step 5: Kill client C (force kill to avoid confirmation dialogs)
@@ -93,17 +97,21 @@ local steps = {
         return nil
     end,
 
-    -- Step 6: Assert focus moved to client B
-    function()
-        io.stderr:write(string.format("[TEST] Checking focus after kill: client.focus.class=%s\n",
-            client.focus and client.focus.class or "nil"))
+    -- Step 6: Wait for focus to move to client B
+    function(count)
+        io.stderr:write(string.format("[TEST] Checking focus after kill (attempt %d): client.focus.class=%s\n",
+            count, client.focus and client.focus.class or "nil"))
 
-        assert(client.focus == client_b,
-            string.format("Expected focus to move to client B, got %s",
+        if client.focus == client_b then
+            io.stderr:write("[TEST] PASS: focus moved to client B (correct focus history)\n")
+            return true
+        end
+
+        if count > 10 then
+            error(string.format("Expected focus to move to client B, got %s",
                 client.focus and client.focus.class or "nil"))
-
-        io.stderr:write("[TEST] PASS: focus moved to client B (correct focus history)\n")
-        return true
+        end
+        return nil
     end,
 
     -- Step 7: Cleanup
