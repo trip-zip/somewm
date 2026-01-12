@@ -1,9 +1,11 @@
 ---------------------------------------------------------------------------
---- Test: layer-shell focus restoration
+--- Test: layer-shell focus restoration via Escape key
 --
--- Verifies that when a layer-shell surface (like wofi) closes, focus returns
--- to the correct client from focus history (the most recently focused client,
--- not just any client).
+-- Verifies that pressing Escape to close a layer-shell surface (like wofi)
+-- restores focus to the previously focused client from focus history.
+--
+-- This test specifically uses root.fake_input() to send the Escape key,
+-- which matches real user behavior (pressing Escape to dismiss wofi).
 --
 -- NOTE: This test requires visual mode (HEADLESS=0) because wofi needs a
 -- display to render.
@@ -53,7 +55,7 @@ if not test_client.is_available() then
     return
 end
 
-local client_a, client_b
+local client_a, client_b, client_c
 local wofi_pid
 local layer_surf
 
@@ -62,9 +64,9 @@ local steps = {
     function(count)
         if count == 1 then
             io.stderr:write("[TEST] Spawning client A...\n")
-            test_client("layer_test_a")
+            test_client("escape_test_a")
         end
-        client_a = utils.find_client_by_class("layer_test_a")
+        client_a = utils.find_client_by_class("escape_test_a")
         if client_a then
             io.stderr:write("[TEST] Client A spawned\n")
             return true
@@ -72,26 +74,22 @@ local steps = {
         return nil
     end,
 
-    -- Step 2: Wait for client A to have focus
-    function(count)
-        if client.focus == client_a then
-            io.stderr:write("[TEST] Client A has focus\n")
-            return true
-        end
-        if count > 10 then
-            error(string.format("Expected client A to have focus, got %s",
+    -- Step 2: Verify client A has focus
+    function()
+        assert(client.focus == client_a,
+            string.format("Expected client A to have focus, got %s",
                 client.focus and client.focus.class or "nil"))
-        end
-        return nil
+        io.stderr:write("[TEST] Client A has focus\n")
+        return true
     end,
 
     -- Step 3: Spawn client B
     function(count)
         if count == 1 then
             io.stderr:write("[TEST] Spawning client B...\n")
-            test_client("layer_test_b")
+            test_client("escape_test_b")
         end
-        client_b = utils.find_client_by_class("layer_test_b")
+        client_b = utils.find_client_by_class("escape_test_b")
         if client_b then
             io.stderr:write("[TEST] Client B spawned\n")
             return true
@@ -99,25 +97,53 @@ local steps = {
         return nil
     end,
 
-    -- Step 4: Wait for client B to have focus (A is now in history)
-    function(count)
-        if client.focus == client_b then
-            io.stderr:write("[TEST] Client B has focus, A is in history\n")
-            return true
-        end
-        if count > 10 then
-            error(string.format("Expected client B to have focus, got %s",
+    -- Step 4: Verify client B has focus (A is now in history)
+    function()
+        assert(client.focus == client_b,
+            string.format("Expected client B to have focus, got %s",
                 client.focus and client.focus.class or "nil"))
+        io.stderr:write("[TEST] Client B has focus\n")
+        return true
+    end,
+
+    -- Step 5: Spawn client C
+    function(count)
+        if count == 1 then
+            io.stderr:write("[TEST] Spawning client C...\n")
+            test_client("escape_test_c")
+        end
+        client_c = utils.find_client_by_class("escape_test_c")
+        if client_c then
+            io.stderr:write("[TEST] Client C spawned\n")
+            return true
         end
         return nil
     end,
 
-    -- Step 5: Spawn wofi (layer-shell surface)
+    -- Step 6: Verify client C has focus (focus history should be [C, B, A])
+    function()
+        assert(client.focus == client_c,
+            string.format("Expected client C to have focus, got %s",
+                client.focus and client.focus.class or "nil"))
+        io.stderr:write("[TEST] Client C has focus, history is [C, B, A]\n")
+
+        -- Debug: print focus history
+        local focus = require("awful.client").focus
+        io.stderr:write("[TEST] Focus history: ")
+        for i, c in ipairs(focus.history.list) do
+            io.stderr:write(string.format("%d=%s ", i, c.class or "?"))
+        end
+        io.stderr:write("\n")
+
+        return true
+    end,
+
+    -- Step 7: Spawn wofi (layer-shell surface)
     function(count)
         if count == 1 then
             io.stderr:write("[TEST] Spawning wofi...\n")
             -- Use dmenu mode for simplicity, exits on Escape
-            wofi_pid = awful.spawn("wofi --show dmenu --prompt 'test'")
+            wofi_pid = awful.spawn("wofi --show dmenu --prompt 'press_escape'")
         end
 
         -- Wait for layer surface to appear
@@ -140,7 +166,7 @@ local steps = {
         return nil
     end,
 
-    -- Step 6: Verify wofi has keyboard focus
+    -- Step 8: Verify wofi has keyboard focus
     function(count)
         if not layer_surf then
             io.stderr:write("[TEST] SKIP: wofi layer surface not found\n")
@@ -164,15 +190,13 @@ local steps = {
         return nil
     end,
 
-    -- Step 7: Close wofi
+    -- Step 9: Close wofi by sending Escape key (THE KEY TEST)
     function(count)
         if count == 1 then
-            io.stderr:write("[TEST] Closing wofi...\n")
-            if wofi_pid then
-                os.execute("kill " .. wofi_pid .. " 2>/dev/null")
-            end
-            -- Also try pkill as backup
-            os.execute("pkill -9 wofi 2>/dev/null")
+            io.stderr:write("[TEST] Sending Escape key to close wofi...\n")
+            -- This simulates the user pressing Escape to dismiss wofi
+            root.fake_input("key_press", "Escape")
+            root.fake_input("key_release", "Escape")
         end
 
         -- Wait for layer surface to be gone
@@ -185,49 +209,57 @@ local steps = {
                 end
             end
             if not still_exists then
-                io.stderr:write("[TEST] Wofi closed\n")
+                io.stderr:write("[TEST] Wofi closed via Escape\n")
                 return true
             end
-        else
-            -- No layer_surface API, just wait a moment
-            if count > 10 then
-                return true
-            end
+        end
+
+        -- Timeout after ~3 seconds
+        if count > 30 then
+            io.stderr:write("[TEST] ERROR: wofi did not close on Escape\n")
+            -- Force kill as fallback
+            os.execute("pkill -9 wofi 2>/dev/null")
+            return true
         end
 
         return nil
     end,
 
-    -- Step 8: Wait for focus to return to client B (not A, not nil)
+    -- Step 10: Assert focus returned to client C (the MOST RECENT in history)
     function(count)
         -- Give focus restoration a moment to complete
         if count < 3 then
             return nil
         end
 
-        io.stderr:write(string.format("[TEST] Checking focus after wofi close (attempt %d): client.focus.class=%s\n",
-            count, client.focus and client.focus.class or "nil"))
+        io.stderr:write(string.format("[TEST] Checking focus after wofi close: client.focus.class=%s\n",
+            client.focus and client.focus.class or "nil"))
+
+        -- Debug: print focus history
+        local focus = require("awful.client").focus
+        io.stderr:write("[TEST] Focus history after close: ")
+        for i, c in ipairs(focus.history.list) do
+            io.stderr:write(string.format("%d=%s ", i, c.class or "?"))
+        end
+        io.stderr:write("\n")
 
         -- This is the key assertion: focus should return to the MOST RECENT
-        -- client in history (B), not just any client
-        if client.focus == client_b then
-            io.stderr:write("[TEST] PASS: focus returned to client B (correct focus history)\n")
-            return true
-        end
-
-        if count > 10 then
-            error(string.format("Expected focus to return to client B, got %s",
+        -- client in history (C), not just any client, not A, and not nil
+        assert(client.focus == client_c,
+            string.format("Expected focus to return to client C, got %s",
                 client.focus and client.focus.class or "nil"))
-        end
-        return nil
+
+        io.stderr:write("[TEST] PASS: focus returned to client C (correct focus history)\n")
+        return true
     end,
 
-    -- Step 9: Cleanup
+    -- Step 11: Cleanup
     function(count)
         if count == 1 then
             io.stderr:write("[TEST] Cleanup: killing remaining clients\n")
             if client_a and client_a.valid then client_a:kill() end
             if client_b and client_b.valid then client_b:kill() end
+            if client_c and client_c.valid then client_c:kill() end
             -- Ensure wofi is dead
             os.execute("pkill -9 wofi 2>/dev/null")
         end

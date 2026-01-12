@@ -874,13 +874,20 @@ end
 function permissions.layer_surface_unmanage(l, context, hints)
     if not pcommon.check(l, "layer_surface", "unmanage", context) then return end
 
-    -- If this layer surface had keyboard focus, restore to previous client
-    if l.has_keyboard_focus then
-        local screen = l.screen
-        if screen and screen.valid then
+    -- Restore focus when a keyboard-interactive layer surface closes
+    -- Check both has_keyboard_focus AND keyboard_interactive as the flag may
+    -- be cleared before this handler runs in some edge cases
+    local had_focus = l.has_keyboard_focus
+    local was_keyboard_interactive = l.keyboard_interactive and l.keyboard_interactive ~= "none"
+
+    if had_focus or was_keyboard_interactive then
+        -- Use l.screen if valid, otherwise fall back to focused screen
+        -- NOTE: Use ascreen.focused() not screen.focused() - screen is capi.screen
+        local s = (l.screen and l.screen.valid) and l.screen or ascreen.focused()
+        if s and s.valid then
             -- Try to find a client to focus using focus history
             local aclient = require("awful.client")
-            local c = aclient.focus.history.get(screen, 0, aclient.focus.filter)
+            local c = aclient.focus.history.get(s, 0, aclient.focus.filter)
             if c and c.valid then
                 c:emit_signal("request::activate", "layer_surface_closed", {raise = false})
             end
