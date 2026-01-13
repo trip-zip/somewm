@@ -21,6 +21,7 @@
 #include <wlr/render/wlr_texture.h>
 #include <wlr/render/wlr_renderer.h>
 #include <wlr/types/wlr_buffer.h>
+#include <wlr/interfaces/wlr_buffer.h>
 #include <drm_fourcc.h>
 
 /* Access to global state from somewm.c */
@@ -60,6 +61,160 @@ extern void screen_update_workarea(screen_t *screen);
 
 /* Forward declaration for drawable refresh callback */
 static void drawin_refresh_drawable(drawin_t *drawin);
+
+/* ========================================================================
+ * Border Buffer Implementation (for shaped borders)
+ * ========================================================================
+ * Same pattern as shadow_buffer in shadow.c - wraps Cairo data for wlr_buffer.
+ */
+
+struct border_buffer {
+	struct wlr_buffer base;
+	void *data;
+	int width;
+	int height;
+	size_t stride;
+};
+
+static void border_buffer_destroy(struct wlr_buffer *wlr_buffer)
+{
+	struct border_buffer *buffer = wl_container_of(wlr_buffer, buffer, base);
+	free(buffer->data);
+	free(buffer);
+}
+
+static bool border_buffer_begin_data_ptr_access(
+	struct wlr_buffer *wlr_buffer, uint32_t flags, void **data,
+	uint32_t *format, size_t *stride)
+{
+	struct border_buffer *buffer = wl_container_of(wlr_buffer, buffer, base);
+	*data = buffer->data;
+	*format = DRM_FORMAT_ARGB8888;
+	*stride = buffer->stride;
+	return true;
+}
+
+static void border_buffer_end_data_ptr_access(struct wlr_buffer *wlr_buffer)
+{
+	/* Nothing to do */
+}
+
+static const struct wlr_buffer_impl border_buffer_impl = {
+	.destroy = border_buffer_destroy,
+	.begin_data_ptr_access = border_buffer_begin_data_ptr_access,
+	.end_data_ptr_access = border_buffer_end_data_ptr_access,
+};
+
+/**
+ * Create a wlr_buffer from a cairo surface.
+ * Caller must destroy the cairo surface separately.
+ */
+static struct wlr_buffer *
+border_buffer_from_cairo(cairo_surface_t *surface)
+{
+	struct border_buffer *buffer;
+	int width, height;
+	size_t stride, size;
+	unsigned char *src_data;
+
+	if (!surface || cairo_surface_status(surface) != CAIRO_STATUS_SUCCESS)
+		return NULL;
+
+	if (cairo_image_surface_get_format(surface) != CAIRO_FORMAT_ARGB32)
+		return NULL;
+
+	width = cairo_image_surface_get_width(surface);
+	height = cairo_image_surface_get_height(surface);
+	stride = (size_t)cairo_image_surface_get_stride(surface);
+	src_data = cairo_image_surface_get_data(surface);
+
+	if (width <= 0 || height <= 0 || !src_data)
+		return NULL;
+
+	buffer = calloc(1, sizeof(*buffer));
+	if (!buffer)
+		return NULL;
+
+	size = stride * (size_t)height;
+	buffer->data = malloc(size);
+	if (!buffer->data) {
+		free(buffer);
+		return NULL;
+	}
+
+	memcpy(buffer->data, src_data, size);
+	buffer->width = width;
+	buffer->height = height;
+	buffer->stride = stride;
+
+	wlr_buffer_init(&buffer->base, &border_buffer_impl, width, height);
+
+	return &buffer->base;
+}
+
+/**
+ * Render border as a Cairo surface.
+ * If shape_border is set (pre-rendered anti-aliased border from Lua), use it.
+ * Otherwise, render a simple rectangular border.
+ * Returns an ARGB32 surface that caller must destroy.
+ * Returns NULL if border_width is 0 or allocation fails.
+ */
+static cairo_surface_t *
+drawin_render_border(drawin_t *d)
+{
+	int bw = d->border_width;
+	if (bw <= 0)
+		return NULL;
+
+	/* If we have a pre-rendered anti-aliased border from Lua, use it.
+	 * This provides smooth edges via Cairo's vector stroke rendering. */
+	if (d->shape_border &&
+		cairo_surface_status(d->shape_border) == CAIRO_STATUS_SUCCESS) {
+		/* Return a copy since caller expects to destroy it */
+		int w = cairo_image_surface_get_width(d->shape_border);
+		int h = cairo_image_surface_get_height(d->shape_border);
+		cairo_surface_t *copy = cairo_image_surface_create(
+			CAIRO_FORMAT_ARGB32, w, h);
+		if (cairo_surface_status(copy) != CAIRO_STATUS_SUCCESS) {
+			cairo_surface_destroy(copy);
+			return NULL;
+		}
+		cairo_t *cr = cairo_create(copy);
+		cairo_set_source_surface(cr, d->shape_border, 0, 0);
+		cairo_paint(cr);
+		cairo_destroy(cr);
+		return copy;
+	}
+
+	/* Fallback: render simple rectangular border (no shape) */
+	int total_w = d->width + 2 * bw;
+	int total_h = d->height + 2 * bw;
+
+	cairo_surface_t *surface = cairo_image_surface_create(
+		CAIRO_FORMAT_ARGB32, total_w, total_h);
+	if (cairo_surface_status(surface) != CAIRO_STATUS_SUCCESS) {
+		cairo_surface_destroy(surface);
+		return NULL;
+	}
+
+	cairo_t *cr = cairo_create(surface);
+
+	/* Draw rectangular border ring using even-odd fill rule */
+	color_t *bc = &d->border_color_parsed;
+	cairo_set_source_rgba(cr,
+		bc->red / 255.0, bc->green / 255.0,
+		bc->blue / 255.0, bc->alpha / 255.0);
+
+	/* Outer rectangle */
+	cairo_rectangle(cr, 0, 0, total_w, total_h);
+	/* Inner cutout */
+	cairo_rectangle(cr, bw, bw, d->width, d->height);
+	cairo_set_fill_rule(cr, CAIRO_FILL_RULE_EVEN_ODD);
+	cairo_fill(cr);
+
+	cairo_destroy(cr);
+	return surface;
+}
 
 /** Ensure drawable has a surface with correct geometry.
  * Matches AwesomeWM's drawin_update_drawing (drawin.c:194-200).
@@ -557,7 +712,6 @@ static drawin_t *
 drawin_allocator(lua_State *L)
 {
 	drawin_t *drawin;
-	int i;  /* Used in border initialization loop */
 
 	/* Call macro-generated drawin_new() to create and initialize the object
 	 * This sets up the userdata, metatable, and basic class infrastructure */
@@ -596,6 +750,7 @@ drawin_allocator(lua_State *L)
 	drawin->shape_bounding = NULL;
 	drawin->shape_clip = NULL;
 	drawin->shape_input = NULL;
+	drawin->shape_border = NULL;
 
 	/* Initialize signal and button arrays */
 	signal_array_init(&drawin->signals);
@@ -613,18 +768,16 @@ drawin_allocator(lua_State *L)
 	/* Start disabled (not visible until visible=true) */
 	wlr_scene_node_set_enabled(&drawin->scene_tree->node, false);
 
-	/* Create border scene rects (mirrors client border pattern)
-	 * Border layout: [0]=top, [1]=bottom, [2]=left, [3]=right
-	 * Created as children of scene_tree so they move with the drawin */
-	{
-		float default_border_color[4] = {0.0f, 0.0f, 0.0f, 0.0f};  /* Transparent until set */
-		for (i = 0; i < 4; i++) {
-			drawin->border[i] = wlr_scene_rect_create(drawin->scene_tree, 0, 0, default_border_color);
-			drawin->border[i]->node.data = drawin;
-		}
-		drawin->border_need_update = true;
-		drawin->border_color_parsed.initialized = false;
+	/* Create border scene buffer (shaped border support)
+	 * Border is rendered as a single Cairo surface that respects shape_bounding */
+	drawin->border_buffer = wlr_scene_buffer_create(drawin->scene_tree, NULL);
+	if (drawin->border_buffer) {
+		drawin->border_buffer->node.data = drawin;
+		/* Position border at (-border_width, -border_width) relative to content */
+		wlr_scene_node_set_position(&drawin->border_buffer->node, 0, 0);
 	}
+	drawin->border_need_update = true;
+	drawin->border_color_parsed.initialized = false;
 
 	/* Create shadow (compositor-level, replaces picom shadows)
 	 * Shadow is created initially but disabled - enabled when visible=true */
@@ -706,6 +859,10 @@ drawin_wipe(drawin_t *w)
 		cairo_surface_destroy(w->shape_input);
 		w->shape_input = NULL;
 	}
+	if (w->shape_border) {
+		cairo_surface_destroy(w->shape_border);
+		w->shape_border = NULL;
+	}
 
 	/* Cleanup shadow cache reference.
 	 * Shadow scene nodes are children of scene_tree and will be destroyed with it.
@@ -724,9 +881,7 @@ drawin_wipe(drawin_t *w)
 		wlr_scene_node_destroy(&w->scene_tree->node);
 		w->scene_tree = NULL;
 		w->scene_buffer = NULL;  /* Child node destroyed with parent */
-		/* Border rects are also children, destroyed with parent */
-		for (int i = 0; i < 4; i++)
-			w->border[i] = NULL;
+		w->border_buffer = NULL; /* Child node destroyed with parent */
 	}
 }
 
@@ -788,17 +943,14 @@ drawin_new_legacy(lua_State *L)
 	/* Start disabled (not visible until visible=true) */
 	wlr_scene_node_set_enabled(&drawin->scene_tree->node, false);
 
-	/* Create border scene rects (mirrors client border pattern) */
-	{
-		float default_border_color[4] = {0.0f, 0.0f, 0.0f, 0.0f};
-		int i;
-		for (i = 0; i < 4; i++) {
-			drawin->border[i] = wlr_scene_rect_create(drawin->scene_tree, 0, 0, default_border_color);
-			drawin->border[i]->node.data = drawin;
-		}
-		drawin->border_need_update = true;
-		drawin->border_color_parsed.initialized = false;
+	/* Create border scene buffer (shaped border support) */
+	drawin->border_buffer = wlr_scene_buffer_create(drawin->scene_tree, NULL);
+	if (drawin->border_buffer) {
+		drawin->border_buffer->node.data = drawin;
+		wlr_scene_node_set_position(&drawin->border_buffer->node, 0, 0);
 	}
+	drawin->border_need_update = true;
+	drawin->border_color_parsed.initialized = false;
 
 	/* Set metatable */
 	luaL_getmetatable(L, DRAWIN_MT);
@@ -1351,8 +1503,9 @@ drawin_set_visible(lua_State *L, int udx, bool v)
 				break;
 			}
 		}
-		if (!already_in_array)
+		if (!already_in_array) {
 			drawin_array_append(&globalconf.drawins, drawin);
+		}
 
 		/* Register drawin in object registry so luaA_object_push() can find it
 		 * (AwesomeWM drawin.c:389-391) */
@@ -1494,53 +1647,63 @@ luaA_drawin_apply_geometry(drawin_t *drawin)
 }
 
 /** Refresh a single drawin's border visuals
- * Mirrors client_border_refresh() pattern from objects/client.c
- * Border layout: [0]=top, [1]=bottom, [2]=left, [3]=right
- * Borders are positioned OUTSIDE the content area (unlike client borders which are inside)
+ * Renders border as a Cairo surface with shape_bounding mask applied.
+ * Borders are positioned OUTSIDE the content area.
  */
 static void
 drawin_border_refresh_single(drawin_t *d)
 {
 	int bw;
-	float color_floats[4];
+	cairo_surface_t *border_surface;
+	struct wlr_buffer *wlr_buf;
 
 	/* Skip if no update needed */
-	if (!d->border_need_update)
+	if (!d->border_need_update) {
 		return;
+	}
 
 	d->border_need_update = false;
 
 	/* Skip if no scene tree (not yet created) */
-	if (!d->scene_tree || !d->border[0])
+	if (!d->scene_tree || !d->border_buffer)
 		return;
 
 	bw = d->border_width;
 
-	/* Update border rectangle sizes
-	 * Borders go OUTSIDE the content area for drawins/wiboxes
-	 * Top/bottom span full outer width, left/right span inner height */
-	wlr_scene_rect_set_size(d->border[0], d->width + 2 * bw, bw);   /* top */
-	wlr_scene_rect_set_size(d->border[1], d->width + 2 * bw, bw);   /* bottom */
-	wlr_scene_rect_set_size(d->border[2], bw, d->height);           /* left */
-	wlr_scene_rect_set_size(d->border[3], bw, d->height);           /* right */
-
-	/* Update border positions relative to scene_tree origin (content at 0,0)
-	 * Top: above content, left-aligned with outer edge
-	 * Bottom: below content, left-aligned with outer edge
-	 * Left: beside content on left
-	 * Right: beside content on right */
-	wlr_scene_node_set_position(&d->border[0]->node, -bw, -bw);      /* top */
-	wlr_scene_node_set_position(&d->border[1]->node, -bw, d->height); /* bottom */
-	wlr_scene_node_set_position(&d->border[2]->node, -bw, 0);        /* left */
-	wlr_scene_node_set_position(&d->border[3]->node, d->width, 0);   /* right */
-
-	/* Update border color if initialized */
-	if (d->border_color_parsed.initialized) {
-		color_to_floats(&d->border_color_parsed, color_floats);
-
-		for (int i = 0; i < 4; i++)
-			wlr_scene_rect_set_color(d->border[i], color_floats);
+	/* If no border width, hide the border buffer */
+	if (bw <= 0) {
+		wlr_scene_buffer_set_buffer(d->border_buffer, NULL);
+		return;
 	}
+
+	/* Render the border as a Cairo surface with shape mask applied */
+	border_surface = drawin_render_border(d);
+	if (!border_surface) {
+		wlr_scene_buffer_set_buffer(d->border_buffer, NULL);
+		return;
+	}
+
+	/* Convert Cairo surface to wlr_buffer */
+	wlr_buf = border_buffer_from_cairo(border_surface);
+	cairo_surface_destroy(border_surface);
+
+	if (!wlr_buf) {
+		wlr_scene_buffer_set_buffer(d->border_buffer, NULL);
+		return;
+	}
+
+	/* Update the scene buffer with new border content */
+	wlr_scene_buffer_set_buffer(d->border_buffer, wlr_buf);
+	wlr_buffer_drop(wlr_buf);  /* Scene buffer holds its own reference */
+
+	/* Set destination size (required for wlr_scene to know buffer dimensions) */
+	int total_w = d->width + 2 * bw;
+	int total_h = d->height + 2 * bw;
+	wlr_scene_buffer_set_dest_size(d->border_buffer, total_w, total_h);
+
+	/* Position border so it surrounds the content
+	 * Border surface origin is at top-left corner of border area */
+	wlr_scene_node_set_position(&d->border_buffer->node, -bw, -bw);
 
 	/* Update shadow geometry */
 	if (d->shadow.tree) {
@@ -1991,6 +2154,9 @@ luaA_drawin_set_shape_bounding(lua_State *L, drawin_t *drawin)
 	if (drawin->visible)
 		drawin_refresh_drawable(drawin);
 
+	/* Trigger border refresh to apply shape to border */
+	drawin->border_need_update = true;
+
 	luaA_object_emit_signal(L, -3, "property::shape_bounding", 0);
 	return 0;
 }
@@ -2085,6 +2251,47 @@ luaA_drawin_set_shape_input(lua_State *L, drawin_t *drawin)
 	 * A 0x0 surface means pass through ALL input (AwesomeWM convention). */
 
 	luaA_object_emit_signal(L, -3, "property::shape_input", 0);
+	return 0;
+}
+
+/** drawin.shape_border - Get pre-rendered border surface */
+static int
+luaA_drawin_get_shape_border(lua_State *L, drawin_t *drawin)
+{
+	if (!drawin->shape_border)
+		return 0;
+	lua_pushlightuserdata(L, drawin->shape_border);
+	return 1;
+}
+
+/** Set the drawin's pre-rendered border surface.
+ * This is an ARGB32 surface rendered in Lua with anti-aliased edges.
+ * \param L The Lua VM state.
+ * \param drawin The drawin object.
+ * \return The number of elements pushed on stack.
+ */
+static int
+luaA_drawin_set_shape_border(lua_State *L, drawin_t *drawin)
+{
+	cairo_surface_t *surf = NULL;
+	cairo_surface_t *copy = NULL;
+
+	if(!lua_isnil(L, -1))
+		surf = (cairo_surface_t *)lua_touserdata(L, -1);
+
+	/* Make a deep copy of the surface to avoid Lua GC freeing it. */
+	if (surf)
+		copy = drawin_copy_surface(surf);
+
+	if (drawin->shape_border)
+		cairo_surface_destroy(drawin->shape_border);
+
+	drawin->shape_border = copy;
+
+	/* Trigger border refresh to use the new pre-rendered surface */
+	drawin->border_need_update = true;
+
+	luaA_object_emit_signal(L, -3, "property::shape_border", 0);
 	return 0;
 }
 
@@ -2244,6 +2451,10 @@ drawin_class_setup(lua_State *L)
 	                        (lua_class_propfunc_t) luaA_drawin_set_shape_input,
 	                        (lua_class_propfunc_t) luaA_drawin_get_shape_input,
 	                        (lua_class_propfunc_t) luaA_drawin_set_shape_input);
+	luaA_class_add_property(&drawin_class, "shape_border",
+	                        (lua_class_propfunc_t) luaA_drawin_set_shape_border,
+	                        (lua_class_propfunc_t) luaA_drawin_get_shape_border,
+	                        (lua_class_propfunc_t) luaA_drawin_set_shape_border);
 }
 
 /** Constructor for drawin objects - capi.drawin(args)

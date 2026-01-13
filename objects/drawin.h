@@ -57,8 +57,8 @@ typedef struct drawin_t {
 	struct wlr_scene_tree *scene_tree;      /* Container node for positioning */
 	struct wlr_scene_buffer *scene_buffer;  /* The actual rendered surface */
 
-	/* Border rendering (Wayland-specific, mirrors client border pattern) */
-	struct wlr_scene_rect *border[4];       /* [0]=top, [1]=bottom, [2]=left, [3]=right */
+	/* Border rendering (Wayland-specific, shaped border support) */
+	struct wlr_scene_buffer *border_buffer; /* Single buffer for shaped border */
 	color_t border_color_parsed;            /* Cached parsed color for efficient refresh */
 
 	/* Shadow support (compositor-level, replaces picom shadows) */
@@ -71,6 +71,7 @@ typedef struct drawin_t {
 	cairo_surface_t *shape_bounding;        /* Visual bounding shape (rounded corners, etc.) */
 	cairo_surface_t *shape_clip;            /* Drawing clip region */
 	cairo_surface_t *shape_input;           /* Input hit-test region (click-through) */
+	cairo_surface_t *shape_border;          /* Pre-rendered anti-aliased border (ARGB32) */
 } drawin_t;
 
 /* Metatable name for drawin userdata */

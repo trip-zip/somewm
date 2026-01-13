@@ -20,6 +20,7 @@ local grect =  require("gears.geometry").rectangle
 local beautiful = require("beautiful")
 local base = require("wibox.widget.base")
 local cairo = require("lgi").cairo
+local color = require("gears.color")
 
 
 --- This provides widget box windows. Every wibox can also be used as if it were
@@ -36,6 +37,7 @@ local force_forward = {
     shape_bounding = true,
     shape_clip = true,
     shape_input = true,
+    shape_border = true,
 }
 
 --@DOC_wibox_COMMON@
@@ -116,21 +118,33 @@ function wibox:_apply_shape()
     if not shape then
         self.shape_bounding = nil
         self.shape_clip = nil
+        self.shape_border = nil
         -- Clear surface references so they can be GC'd
         self._shape_bounding_surface = nil
         self._shape_clip_surface = nil
+        self._shape_border_surface = nil
         return
     end
 
     local geo = self:geometry()
     local bw = self.border_width
+    local total_w = geo.width + 2*bw
+    local total_h = geo.height + 2*bw
+
+    -- Get screen scale for HiDPI support
+    local s = self:get_screen()
+    local scale = s and s.scale or 1
 
     -- First handle the bounding shape (things including the border)
-    local img = cairo.ImageSurface(cairo.Format.A1, geo.width + 2*bw, geo.height + 2*bw)
+    -- Scale surface dimensions for HiDPI, use cr:scale() so Cairo draws in logical coords
+    local scaled_total_w = math.ceil(total_w * scale)
+    local scaled_total_h = math.ceil(total_h * scale)
+    local img = cairo.ImageSurface(cairo.Format.A1, scaled_total_w, scaled_total_h)
     local cr = cairo.Context(img)
+    cr:scale(scale, scale)
 
-    -- We just draw the shape in its full size
-    shape(cr, geo.width + 2*bw, geo.height + 2*bw)
+    -- We just draw the shape in its full size (logical coordinates)
+    shape(cr, total_w, total_h)
     cr:set_operator(cairo.Operator.SOURCE)
     cr:fill()
     self.shape_bounding = img._native
@@ -141,14 +155,17 @@ function wibox:_apply_shape()
     self._shape_bounding_surface = img
 
     -- Now handle the clip shape (things excluding the border)
-    img = cairo.ImageSurface(cairo.Format.A1, geo.width, geo.height)
+    local scaled_w = math.ceil(geo.width * scale)
+    local scaled_h = math.ceil(geo.height * scale)
+    img = cairo.ImageSurface(cairo.Format.A1, scaled_w, scaled_h)
     cr = cairo.Context(img)
+    cr:scale(scale, scale)
 
     -- We give the shape the same arguments as for the bounding shape and draw
     -- it in its full size (the translate is to compensate for the smaller
     -- surface)
     cr:translate(-bw, -bw)
-    shape(cr, geo.width + 2*bw, geo.height + 2*bw)
+    shape(cr, total_w, total_h)
     cr:set_operator(cairo.Operator.SOURCE)
     cr:fill_preserve()
     -- Now we remove an area of width 'bw' again around the shape (We use 2*bw
@@ -159,6 +176,34 @@ function wibox:_apply_shape()
     self.shape_clip = img._native
     -- NOTE: Do NOT call img:finish() here! (see comment above for shape_bounding)
     self._shape_clip_surface = img
+
+    -- Handle the border shape (ARGB32 for anti-aliased rendering)
+    -- This creates a pre-rendered border surface with smooth edges.
+    -- Scale for HiDPI to get proper anti-aliasing at display resolution.
+    if bw > 0 then
+        local bc = self.border_color or "#ffffff"
+        img = cairo.ImageSurface(cairo.Format.ARGB32, scaled_total_w, scaled_total_h)
+        cr = cairo.Context(img)
+        cr:scale(scale, scale)
+
+        -- Fill the outer shape (anti-aliased outer edge)
+        shape(cr, total_w, total_h)
+        cr:set_source(color(bc))
+        cr:fill()
+
+        -- Cut out the inner area, but make it slightly SMALLER than the content
+        -- so the border extends ~1px under the content edges, covering any AA seams
+        cr:set_operator(cairo.Operator.CLEAR)
+        cr:translate(bw + 1, bw + 1)
+        shape(cr, geo.width - 2, geo.height - 2)
+        cr:fill()
+
+        self.shape_border = img._native
+        self._shape_border_surface = img
+    else
+        self.shape_border = nil
+        self._shape_border_surface = nil
+    end
 end
 
 function wibox:set_shape(shape)
@@ -351,6 +396,7 @@ local function new(args)
 
     ret:connect_signal("property::geometry", ret._apply_shape)
     ret:connect_signal("property::border_width", ret._apply_shape)
+    ret:connect_signal("property::border_color", ret._apply_shape)
 
     -- If a value is not found, look in the drawin
     setmetatable(ret, {
