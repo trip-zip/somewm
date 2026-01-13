@@ -10,6 +10,7 @@
 #include "signal.h"
 #include "common/luaclass.h"  /* For lua_class_t */
 #include "common/luaobject.h"  /* For LUA_OBJECT_FUNCS macro */
+#include "shadow.h"           /* For shadow_config_t, shadow_nodes_t */
 
 /* Forward declarations */
 struct screen_t;
@@ -59,6 +60,10 @@ typedef struct drawin_t {
 	/* Border rendering (Wayland-specific, mirrors client border pattern) */
 	struct wlr_scene_rect *border[4];       /* [0]=top, [1]=bottom, [2]=left, [3]=right */
 	color_t border_color_parsed;            /* Cached parsed color for efficient refresh */
+
+	/* Shadow support (compositor-level, replaces picom shadows) */
+	shadow_config_t *shadow_config;         /* Per-drawin override (NULL = use defaults) */
+	shadow_nodes_t shadow;                  /* Shadow scene nodes */
 
 	/* Shape properties (AwesomeWM compatibility)
 	 * These are cairo_surface_t* in A1 format (1-bit alpha mask).

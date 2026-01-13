@@ -34,6 +34,7 @@
 #include "globalconf.h"
 #include "color.h"
 #include "objects/window.h"
+#include "shadow.h"
 
 /* Forward declarations */
 typedef struct screen_t screen_t;
@@ -157,6 +158,10 @@ struct client_t
     struct wlr_scene_tree *scene_surface;
     /** Border rectangles */
     struct wlr_scene_rect *border[4];
+    /** Shadow configuration (NULL = use defaults) */
+    shadow_config_t *shadow_config;
+    /** Shadow scene nodes */
+    shadow_nodes_t shadow;
     /** Wayland listeners */
     struct wl_listener initial_commit; /* For initial XDG commit before scene surface exists */
     struct wl_listener commit;         /* For subsequent commits after scene surface exists */

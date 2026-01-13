@@ -102,6 +102,7 @@
 #include "objects/root.h"    /* Root button bindings */
 #include "ewmh.h"            /* EWMH support for XWayland */
 #include "property.h"         /* Property system for Wayland and XWayland */
+#include "shadow.h"          /* Compositor-level shadow support */
 #include "ipc.h"
 #include "dbus.h"
 
@@ -2890,6 +2891,16 @@ mapnotify(struct wl_listener *listener, void *data)
 		c->border[i]->node.data = c;
 	}
 
+	/* Create shadow (compositor-level, replaces picom shadows) */
+	{
+		const shadow_config_t *shadow_config = shadow_get_effective_config(
+			c->shadow_config, false);
+		if (shadow_config && shadow_config->enabled) {
+			shadow_create(c->scene, &c->shadow, shadow_config,
+				c->geometry.width, c->geometry.height);
+		}
+	}
+
 	/* Create foreign toplevel handle for external tools (rofi, taskbars, etc.) */
 	if (foreign_toplevel_mgr) {
 		c->toplevel_handle = wlr_foreign_toplevel_handle_v1_create(foreign_toplevel_mgr);
@@ -3667,6 +3678,14 @@ apply_geometry_to_wlroots(Client *c)
 	wlr_scene_node_set_position(&c->border[1]->node, 0, c->geometry.height - c->bw);
 	wlr_scene_node_set_position(&c->border[2]->node, 0, c->bw);
 	wlr_scene_node_set_position(&c->border[3]->node, c->geometry.width - c->bw, c->bw);
+
+	/* Update shadow geometry */
+	if (c->shadow.tree) {
+		const shadow_config_t *shadow_config = shadow_get_effective_config(
+			c->shadow_config, false);
+		shadow_update_geometry(&c->shadow, shadow_config,
+			c->geometry.width, c->geometry.height);
+	}
 
 	/* Update titlebar positions - they depend on current geometry */
 	client_update_titlebar_positions(c);
@@ -4466,6 +4485,19 @@ setup(void)
 	globalconf.appearance.fullscreen_bg[2] = 0.0f;
 	globalconf.appearance.fullscreen_bg[3] = 1.0f;
 	globalconf.appearance.bypass_surface_visibility = 0;  /* Idle inhibitors only when visible */
+
+	/* Shadow defaults (disabled by default, theme enables via beautiful.shadow_*) */
+	globalconf.shadow.client.enabled = false;
+	globalconf.shadow.client.radius = 12;
+	globalconf.shadow.client.offset_x = -15;
+	globalconf.shadow.client.offset_y = -15;
+	globalconf.shadow.client.opacity = 0.75f;
+	globalconf.shadow.client.color[0] = 0.0f;  /* Black */
+	globalconf.shadow.client.color[1] = 0.0f;
+	globalconf.shadow.client.color[2] = 0.0f;
+	globalconf.shadow.client.color[3] = 1.0f;
+	/* Drawin defaults (same as client initially) */
+	globalconf.shadow.drawin = globalconf.shadow.client;
 
 	/* Keyboard defaults (NULL = system defaults) */
 	globalconf.keyboard.xkb_layout = NULL;

@@ -30,6 +30,7 @@
 #include "common/array.h"
 #include "common/buffer.h"
 #include "x11_compat.h"
+#include "shadow.h"
 
 /* Forward declarations */
 typedef struct client_t client_t;
@@ -208,6 +209,9 @@ typedef struct
         float fullscreen_bg[4];       /* Fullscreen background RGBA */
         int bypass_surface_visibility; /* 0=idle inhibitors only when visible, 1=always */
     } appearance;
+
+    /** Shadow settings (compositor-level, replaces picom shadows) */
+    shadow_defaults_t shadow;
 
     /** Keyboard settings (XKB configuration) */
     struct {
