@@ -38,6 +38,7 @@
 #include "common/luaobject.h"
 #include "objects/window.h"
 #include "dbus.h"
+#include "shadow.h"
 
 /* Forward declaration for Lua state recreation (used by config timeout handler) */
 static lua_State *luaA_create_fresh_state(void);
@@ -3253,6 +3254,9 @@ luaA_loadrc(void)
 					lua_tostring(globalconf_L, -1));
 				lua_pop(globalconf_L, 1);
 			}
+
+			/* Load shadow defaults from beautiful theme */
+			shadow_load_beautiful_defaults(globalconf_L);
 
 			loaded = 1;
 			break;

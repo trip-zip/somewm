@@ -106,6 +106,7 @@
 #include "../stack.h"
 #include "common/util.h"
 #include "../event.h"
+#include "../shadow.h"
 #include "objects/spawn.h"
 #include "../property.h"
 
@@ -1607,6 +1608,19 @@ client_wipe(client_t *c)
      * Manually destroying them here causes double-free crashes. */
     for (int i = 0; i < CLIENT_TITLEBAR_COUNT; i++) {
         c->titlebar[i].scene_buffer = NULL;
+    }
+
+    /* Cleanup shadow cache reference.
+     * NOTE: Shadow scene nodes are children of c->scene and are automatically
+     * destroyed when the parent is destroyed. We only need to release our
+     * reference to the shared cache entry. */
+    if (c->shadow.cache) {
+        shadow_cache_put(c->shadow.cache);
+        c->shadow.cache = NULL;
+    }
+    if (c->shadow_config) {
+        free(c->shadow_config);
+        c->shadow_config = NULL;
     }
 
     p_delete(&c->machine);
@@ -4252,6 +4266,65 @@ luaA_client_set_opacity(lua_State *L, client_t *c)
     return 0;
 }
 
+/** Get client shadow configuration.
+ * \param L The Lua VM state.
+ * \param c The client.
+ * \return Number of elements pushed on stack.
+ */
+static int
+luaA_client_get_shadow(lua_State *L, client_t *c)
+{
+    if (c->shadow_config) {
+        shadow_config_to_lua(L, c->shadow_config);
+    } else {
+        /* Return true to indicate using defaults */
+        lua_pushboolean(L, c->shadow.tree != NULL);
+    }
+    return 1;
+}
+
+/** Set client shadow configuration.
+ * \param L The Lua VM state.
+ * \param c The client.
+ * \return Number of elements pushed on stack.
+ */
+static int
+luaA_client_set_shadow(lua_State *L, client_t *c)
+{
+    shadow_config_t new_config;
+
+    if (!shadow_config_from_lua(L, -1, &new_config)) {
+        return luaL_error(L, "%s", lua_tostring(L, -1));
+    }
+
+    /* Allocate or update config */
+    if (!c->shadow_config) {
+        c->shadow_config = malloc(sizeof(shadow_config_t));
+        if (!c->shadow_config)
+            return luaL_error(L, "out of memory");
+    }
+    *c->shadow_config = new_config;
+
+    /* Update shadow if client is mapped */
+    if (c->scene) {
+        if (new_config.enabled && !c->shadow.tree) {
+            /* Create shadow */
+            shadow_create(c->scene, &c->shadow, &new_config,
+                c->geometry.width, c->geometry.height);
+        } else if (!new_config.enabled && c->shadow.tree) {
+            /* Destroy shadow */
+            shadow_destroy(&c->shadow);
+        } else if (c->shadow.tree) {
+            /* Update existing shadow */
+            shadow_update_config(&c->shadow, &new_config,
+                c->geometry.width, c->geometry.height);
+        }
+    }
+
+    luaA_object_emit_signal(L, -3, "property::shadow", 0);
+    return 0;
+}
+
 static int
 luaA_client_set_skip_taskbar(lua_State *L, client_t *c)
 {
@@ -5163,6 +5236,10 @@ client_class_setup(lua_State *L)
                             (lua_class_propfunc_t) luaA_client_set_opacity,
                             (lua_class_propfunc_t) luaA_client_get_opacity,
                             (lua_class_propfunc_t) luaA_client_set_opacity);
+    luaA_class_add_property(&client_class, "shadow",
+                            (lua_class_propfunc_t) luaA_client_set_shadow,
+                            (lua_class_propfunc_t) luaA_client_get_shadow,
+                            (lua_class_propfunc_t) luaA_client_set_shadow);
     luaA_class_add_property(&client_class, "ontop",
                             (lua_class_propfunc_t) luaA_client_set_ontop,
                             (lua_class_propfunc_t) luaA_client_get_ontop,

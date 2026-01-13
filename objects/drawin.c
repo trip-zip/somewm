@@ -10,6 +10,7 @@
 #include "../stack.h"
 #include "common/util.h"
 #include "../globalconf.h"
+#include "../shadow.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -497,6 +498,8 @@ drawin_refresh_drawable(drawin_t *drawin)
 	 * we only show the drawin once content is ready, avoiding smearing. */
 	if (drawin->visible && drawin->scene_tree) {
 		wlr_scene_node_set_enabled(&drawin->scene_tree->node, true);
+		/* Show shadow too */
+		shadow_set_visible(&drawin->shadow, true);
 	}
 
 	/* Schedule a frame render on the output to ensure content is displayed
@@ -623,6 +626,19 @@ drawin_allocator(lua_State *L)
 		drawin->border_color_parsed.initialized = false;
 	}
 
+	/* Create shadow (compositor-level, replaces picom shadows)
+	 * Shadow is created initially but disabled - enabled when visible=true */
+	{
+		const shadow_config_t *shadow_config = shadow_get_effective_config(
+			drawin->shadow_config, true);
+		if (shadow_config && shadow_config->enabled) {
+			shadow_create(drawin->scene_tree, &drawin->shadow, shadow_config,
+				drawin->width, drawin->height);
+			/* Shadow starts hidden like the rest of the drawin */
+			shadow_set_visible(&drawin->shadow, false);
+		}
+	}
+
 	/* Create drawable object for rendering (AwesomeWM pattern)
 	 * Stack: [drawin] */
 	drawable_allocator(L, (drawable_refresh_callback)drawin_refresh_drawable, drawin);
@@ -689,6 +705,18 @@ drawin_wipe(drawin_t *w)
 	if (w->shape_input) {
 		cairo_surface_destroy(w->shape_input);
 		w->shape_input = NULL;
+	}
+
+	/* Cleanup shadow cache reference.
+	 * Shadow scene nodes are children of scene_tree and will be destroyed with it.
+	 * We only need to release our cache reference. */
+	if (w->shadow.cache) {
+		shadow_cache_put(w->shadow.cache);
+		w->shadow.cache = NULL;
+	}
+	if (w->shadow_config) {
+		free(w->shadow_config);
+		w->shadow_config = NULL;
 	}
 
 	/* Destroy scene graph nodes */
@@ -1513,6 +1541,14 @@ drawin_border_refresh_single(drawin_t *d)
 		for (int i = 0; i < 4; i++)
 			wlr_scene_rect_set_color(d->border[i], color_floats);
 	}
+
+	/* Update shadow geometry */
+	if (d->shadow.tree) {
+		const shadow_config_t *shadow_config = shadow_get_effective_config(
+			d->shadow_config, true);
+		shadow_update_geometry(&d->shadow, shadow_config,
+			d->width, d->height);
+	}
 }
 
 /** Refresh all visible drawins (AwesomeWM compatibility)
@@ -1810,6 +1846,59 @@ luaA_drawin_set_opacity(lua_State *L, drawin_t *drawin)
 				opacity >= 0 ? (float)opacity : 1.0f);
 		luaA_object_emit_signal(L, -3, "property::opacity", 0);
 	}
+	return 0;
+}
+
+/** drawin.shadow - Get shadow configuration */
+static int
+luaA_drawin_get_shadow(lua_State *L, drawin_t *drawin)
+{
+	if (drawin->shadow_config) {
+		shadow_config_to_lua(L, drawin->shadow_config);
+	} else {
+		/* Return true to indicate using defaults */
+		lua_pushboolean(L, drawin->shadow.tree != NULL);
+	}
+	return 1;
+}
+
+/** drawin.shadow - Set shadow configuration */
+static int
+luaA_drawin_set_shadow(lua_State *L, drawin_t *drawin)
+{
+	shadow_config_t new_config;
+
+	if (!shadow_config_from_lua(L, -1, &new_config)) {
+		return luaL_error(L, "%s", lua_tostring(L, -1));
+	}
+
+	/* Allocate or update config */
+	if (!drawin->shadow_config) {
+		drawin->shadow_config = malloc(sizeof(shadow_config_t));
+		if (!drawin->shadow_config)
+			return luaL_error(L, "out of memory");
+	}
+	*drawin->shadow_config = new_config;
+
+	/* Update shadow if scene tree exists */
+	if (drawin->scene_tree) {
+		if (new_config.enabled && !drawin->shadow.tree) {
+			/* Create shadow */
+			shadow_create(drawin->scene_tree, &drawin->shadow, &new_config,
+				drawin->width, drawin->height);
+			/* Match drawin visibility */
+			shadow_set_visible(&drawin->shadow, drawin->visible);
+		} else if (!new_config.enabled && drawin->shadow.tree) {
+			/* Destroy shadow */
+			shadow_destroy(&drawin->shadow);
+		} else if (drawin->shadow.tree) {
+			/* Update existing shadow */
+			shadow_update_config(&drawin->shadow, &new_config,
+				drawin->width, drawin->height);
+		}
+	}
+
+	luaA_object_emit_signal(L, -3, "property::shadow", 0);
 	return 0;
 }
 
@@ -2120,6 +2209,10 @@ drawin_class_setup(lua_State *L)
 	                        (lua_class_propfunc_t) luaA_drawin_set_opacity,
 	                        (lua_class_propfunc_t) luaA_drawin_get_opacity,
 	                        (lua_class_propfunc_t) luaA_drawin_set_opacity);
+	luaA_class_add_property(&drawin_class, "shadow",
+	                        (lua_class_propfunc_t) luaA_drawin_set_shadow,
+	                        (lua_class_propfunc_t) luaA_drawin_get_shadow,
+	                        (lua_class_propfunc_t) luaA_drawin_set_shadow);
 	/* NOTE: buttons is NOT registered as a property, only as a _buttons method.
 	 * The wibox wrapper handles the buttons accessor via _legacy_accessors */
 	luaA_class_add_property(&drawin_class, "border_width",
