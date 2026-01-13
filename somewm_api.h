@@ -103,6 +103,7 @@ Client *some_client_get_parent(Client *c);
 int some_client_has_children(Client *c);
 int some_client_is_visible(Client *c, Monitor *m);
 int some_client_is_focused(Client *c);
+int some_client_has_keyboard_focus(Client *c);  /* Check actual wlroots seat keyboard focus */
 int some_client_is_stopped(Client *c);
 int some_client_is_float_type(Client *c);
 int some_client_get_floating(Client *c);

@@ -414,6 +414,7 @@ some_set_seat_keyboard_focus(Client *c)
 {
 	struct wlr_surface *surface;
 	struct wlr_keyboard *kb;
+	int surface_ready;
 
 	if (!c) {
 		/* NULL client = clear keyboard focus */
@@ -423,7 +424,30 @@ some_set_seat_keyboard_focus(Client *c)
 
 	/* Get the client's surface */
 	surface = some_client_get_surface(c);
-	if (!surface || !surface->mapped) {
+	if (!surface) {
+		wlr_seat_keyboard_notify_clear_focus(seat);
+		return;
+	}
+
+	/* Check if surface is ready for keyboard input.
+	 * For native Wayland clients (XDGShell), check wlr_surface->mapped.
+	 * For XWayland clients, the wlr_surface->mapped flag is set separately from
+	 * the XWayland map event. When mapnotify() runs (triggered by XWayland map),
+	 * the surface is ready for keyboard input even if wlr_surface->mapped is false.
+	 * We check if c->scene exists as that indicates mapnotify() has processed
+	 * this client and created the scene graph for it. */
+#ifdef XWAYLAND
+	if (c->client_type == X11) {
+		/* XWayland: surface is ready if scene has been created */
+		surface_ready = (c->scene != NULL);
+	} else
+#endif
+	{
+		/* Native Wayland: use standard wlr_surface->mapped check */
+		surface_ready = surface->mapped;
+	}
+
+	if (!surface_ready) {
 		/* Surface not ready - clear seat focus to prevent input going to old window.
 		 * When surface maps, mapnotify() will call focusclient() to set focus. */
 		wlr_seat_keyboard_notify_clear_focus(seat);
@@ -467,6 +491,30 @@ some_client_from_surface(struct wlr_surface *surface)
 	}
 
 	return NULL;
+}
+
+/** Check if a client has actual keyboard focus (wlroots seat focus).
+ * This checks the real Wayland seat keyboard focus, not just Lua bookkeeping.
+ * Use this in tests to verify keyboard input will actually go to the client.
+ *
+ * \param c The client to check
+ * \return 1 if client has keyboard focus, 0 otherwise
+ */
+int
+some_client_has_keyboard_focus(Client *c)
+{
+	struct wlr_surface *focused_surface;
+	struct wlr_surface *client_surf;
+
+	if (!c || !seat)
+		return 0;
+
+	focused_surface = seat->keyboard_state.focused_surface;
+	if (!focused_surface)
+		return 0;
+
+	client_surf = some_client_get_surface(c);
+	return (focused_surface == client_surf);
 }
 
 struct wlr_cursor *
