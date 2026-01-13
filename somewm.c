@@ -2315,7 +2315,21 @@ focusclient(Client *c, int lift)
 	 * client_focus_refresh() runs. We must apply focus now. */
 	surface = client_surface(c);
 
-	if (surface && surface->mapped) {
+	/* Check if surface is ready for keyboard input.
+	 * For XWayland clients, wlr_surface->mapped may be false even when the XWayland
+	 * map event has fired. We use c->scene as the indicator that mapnotify() has
+	 * processed this client and it's ready for input. */
+	int surface_ready;
+#ifdef XWAYLAND
+	if (c->client_type == X11) {
+		surface_ready = (surface && c->scene != NULL);
+	} else
+#endif
+	{
+		surface_ready = (surface && surface->mapped);
+	}
+
+	if (surface_ready) {
 		kb = wlr_seat_get_keyboard(seat);
 		if (kb) {
 			wlr_seat_keyboard_notify_enter(seat, surface,
@@ -3050,6 +3064,27 @@ mapnotify(struct wl_listener *listener, void *data)
 		/* Emit legacy "manage" signal for backwards compatibility (matches AwesomeWM line 2281)
 		 * Note: AwesomeWM comment says "TODO v6: remove this" */
 		luaA_object_emit_signal(L, -1, "manage", 0);
+
+#ifdef XWAYLAND
+		/* For XWayland clients, emit request::activate to grant focus.
+		 * Native Wayland clients use XDG activation protocol which triggers
+		 * the urgent() handler. X11 clients don't have this mechanism, so
+		 * we emit the signal here when they first map.
+		 * This matches AwesomeWM behavior where new windows get focus. */
+		if (c->client_type == X11) {
+			/* Activate the XWayland surface BEFORE emitting request::activate.
+			 * This initializes the XWayland machinery so keyboard focus can be set.
+			 * Without this, the first XWayland client in a session won't get focus
+			 * because the XWayland subsystem isn't "primed" yet. */
+			wlr_xwayland_surface_activate(c->surface.xwayland, 1);
+
+			lua_pushstring(L, "xwayland_map");  /* context */
+			lua_newtable(L);  /* hints table */
+			lua_pushboolean(L, true);
+			lua_setfield(L, -2, "raise");
+			luaA_object_emit_signal(L, -3, "request::activate", 2);
+		}
+#endif
 
 		/* Pop client from Lua stack */
 		lua_pop(L, 1);
@@ -5292,8 +5327,24 @@ activatex11(struct wl_listener *listener, void *data)
 	Client *c = wl_container_of(listener, c, activate);
 
 	/* Only "managed" windows can be activated */
-	if (!client_is_unmanaged(c))
-		wlr_xwayland_surface_activate(c->surface.xwayland, 1);
+	if (client_is_unmanaged(c))
+		return;
+
+	/* Tell XWayland the surface is activated at the X11 level */
+	wlr_xwayland_surface_activate(c->surface.xwayland, 1);
+
+	/* Emit request::activate signal to Lua so it can grant keyboard focus.
+	 * This matches the pattern used by foreign_toplevel_request_activate()
+	 * and ensures XWayland clients go through the same focus permission
+	 * system as native Wayland clients. */
+	lua_State *L = globalconf_get_lua_State();
+	luaA_object_push(L, c);
+	lua_pushstring(L, "xwayland");  /* context */
+	lua_newtable(L);  /* hints table */
+	lua_pushboolean(L, true);
+	lua_setfield(L, -2, "raise");
+	luaA_object_emit_signal(L, -3, "request::activate", 2);
+	lua_pop(L, 1);
 }
 
 void

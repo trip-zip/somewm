@@ -3332,6 +3332,24 @@ luaA_client_isvisible(lua_State *L)
     return 1;
 }
 
+/** Check if a client has actual keyboard focus (wlroots seat focus).
+ *
+ * This checks the real Wayland seat keyboard focus, not just Lua bookkeeping
+ * (client.focus). Use this in tests to verify keyboard input will actually
+ * go to the client.
+ *
+ * @treturn boolean True if client has real keyboard focus, false otherwise.
+ * @method has_keyboard_focus
+ */
+static int
+luaA_client_has_keyboard_focus(lua_State *L)
+{
+    extern int some_client_has_keyboard_focus(client_t *c);
+    client_t *c = luaA_checkudata(L, 1, &client_class);
+    lua_pushboolean(L, some_client_has_keyboard_focus(c));
+    return 1;
+}
+
 /** Set client icons.
  * \param L The Lua VM state.
  * \param array Array of icons to set.
@@ -5015,6 +5033,7 @@ client_class_setup(lua_State *L)
         /* _buttons inherited from window_class */
         /* _isfloating removed - no longer needed, Lua property system is authoritative */
         { "isvisible", luaA_client_isvisible },
+        { "has_keyboard_focus", luaA_client_has_keyboard_focus },
         { "geometry", luaA_client_geometry },
         { "apply_size_hints", luaA_client_apply_size_hints },
         { "tags", luaA_client_tags },
