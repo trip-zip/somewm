@@ -303,8 +303,90 @@ drawin_apply_shape_mask(drawable_t *d, cairo_surface_t *shape)
 			if (visible) {
 				dst_row[x] = src_row[x];
 			} else {
-				/* Zero out alpha (ARGB32: alpha is high byte on little-endian) */
-				dst_row[x] = src_row[x] & 0x00FFFFFF;
+				/* Premultiplied alpha: fully transparent = all channels zero */
+				dst_row[x] = 0;
+			}
+		}
+	}
+
+	cairo_surface_mark_dirty(dst);
+	return dst;
+}
+
+/** Apply shape mask to a cairo surface (exported for screenshot support).
+ * Returns a new cairo_surface_t with alpha zeroed where shape bit is 0.
+ * Caller must destroy the returned surface.
+ * Returns NULL if no shape or allocation fails.
+ */
+cairo_surface_t *
+drawin_apply_shape_mask_for_screenshot(cairo_surface_t *src, cairo_surface_t *shape)
+{
+	cairo_surface_t *dst;
+	unsigned char *src_data, *dst_data, *shape_data;
+	int src_stride, dst_stride, shape_stride;
+	int width, height, shape_width, shape_height;
+	int x, y;
+
+	if (!src || !shape)
+		return NULL;
+
+	if (cairo_surface_status(src) != CAIRO_STATUS_SUCCESS ||
+	    cairo_surface_status(shape) != CAIRO_STATUS_SUCCESS)
+		return NULL;
+
+	cairo_surface_flush(src);
+	cairo_surface_flush(shape);
+
+	width = cairo_image_surface_get_width(src);
+	height = cairo_image_surface_get_height(src);
+	shape_width = cairo_image_surface_get_width(shape);
+	shape_height = cairo_image_surface_get_height(shape);
+
+	dst = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, width, height);
+	if (cairo_surface_status(dst) != CAIRO_STATUS_SUCCESS) {
+		cairo_surface_destroy(dst);
+		return NULL;
+	}
+
+	src_data = cairo_image_surface_get_data(src);
+	dst_data = cairo_image_surface_get_data(dst);
+	shape_data = cairo_image_surface_get_data(shape);
+
+	if (!src_data || !dst_data || !shape_data) {
+		cairo_surface_destroy(dst);
+		return NULL;
+	}
+
+	src_stride = cairo_image_surface_get_stride(src);
+	dst_stride = cairo_image_surface_get_stride(dst);
+	shape_stride = cairo_image_surface_get_stride(shape);
+
+	/* Copy pixels, zeroing all channels where shape bit is 0.
+	 * Note: Cairo uses premultiplied alpha, so when alpha=0, RGB must also be 0. */
+	for (y = 0; y < height; y++) {
+		uint32_t *src_row = (uint32_t *)(src_data + y * src_stride);
+		uint32_t *dst_row = (uint32_t *)(dst_data + y * dst_stride);
+
+		int shape_y = (shape_height > 0) ? (y * shape_height / height) : 0;
+
+		for (x = 0; x < width; x++) {
+			bool visible = true;
+
+			int shape_x = (shape_width > 0) ? (x * shape_width / width) : 0;
+
+			if (shape_x < shape_width && shape_y < shape_height) {
+				int byte_offset = (shape_y * shape_stride) + (shape_x / 8);
+				int bit_offset = shape_x % 8;
+				visible = (shape_data[byte_offset] >> bit_offset) & 1;
+			} else {
+				visible = false;
+			}
+
+			if (visible) {
+				dst_row[x] = src_row[x];
+			} else {
+				/* Premultiplied alpha: fully transparent = all zeros */
+				dst_row[x] = 0;
 			}
 		}
 	}
