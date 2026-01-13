@@ -1014,9 +1014,25 @@ composite_widgets_directly(cairo_t *cr, bool ontop_only)
 
 		if (drawin->drawable->surface &&
 		    cairo_surface_status(drawin->drawable->surface) == CAIRO_STATUS_SUCCESS) {
-			composite_cairo_surface(cr, drawin->drawable->surface,
+			cairo_surface_t *surface_to_composite = drawin->drawable->surface;
+			cairo_surface_t *masked_surface = NULL;
+
+			/* Apply shape_bounding mask if set (for rounded corners etc.) */
+			if (drawin->shape_bounding &&
+			    cairo_surface_status(drawin->shape_bounding) == CAIRO_STATUS_SUCCESS) {
+				masked_surface = drawin_apply_shape_mask_for_screenshot(
+					drawin->drawable->surface, drawin->shape_bounding);
+				if (masked_surface)
+					surface_to_composite = masked_surface;
+			}
+
+			composite_cairo_surface(cr, surface_to_composite,
 			                        drawin->x, drawin->y,
 			                        drawin->width, drawin->height);
+
+			/* Clean up temporary masked surface */
+			if (masked_surface)
+				cairo_surface_destroy(masked_surface);
 		}
 	}
 

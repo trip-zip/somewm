@@ -104,6 +104,13 @@ void luaA_drawin_apply_geometry(drawin_t *drawin);
 /* Drawin refresh cycle (called from main event loop) */
 void drawin_refresh(void);
 
+/* Apply shape mask to a drawable surface (for screenshot support).
+ * Returns a new surface with alpha zeroed where shape bit is 0.
+ * Caller must destroy the returned surface.
+ * Returns NULL if no shape or allocation fails. */
+cairo_surface_t *drawin_apply_shape_mask_for_screenshot(
+    cairo_surface_t *src, cairo_surface_t *shape);
+
 /* Object signal support
  * Note: luaA_object_emit_signal() is now declared in awm_luaobject.h
  * as it's a generic function for all object types (defined in awm_luaobject.c) */
