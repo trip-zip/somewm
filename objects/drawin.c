@@ -2062,6 +2062,8 @@ static int
 luaA_drawin_set_shape_input(lua_State *L, drawin_t *drawin)
 {
 	cairo_surface_t *surf = NULL;
+	cairo_surface_t *copy = NULL;
+
 	if(!lua_isnil(L, -1))
 		surf = (cairo_surface_t *)lua_touserdata(L, -1);
 
@@ -2069,13 +2071,15 @@ luaA_drawin_set_shape_input(lua_State *L, drawin_t *drawin)
 	 * (Matches AwesomeWM's drawin_apply_moveresize() call) */
 	luaA_drawin_apply_geometry(drawin);
 
-	/* Reference new surface before releasing old */
+	/* Make a deep copy of the surface to avoid Lua GC freeing it.
+	 * cairo_surface_finish() frees backing data even with refs held. */
 	if (surf)
-		cairo_surface_reference(surf);
+		copy = drawin_copy_surface(surf);
+
 	if (drawin->shape_input)
 		cairo_surface_destroy(drawin->shape_input);
 
-	drawin->shape_input = surf;
+	drawin->shape_input = copy;
 
 	/* Note: No redraw needed for input shape - it's checked at input time.
 	 * A 0x0 surface means pass through ALL input (AwesomeWM convention). */
