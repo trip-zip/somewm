@@ -555,6 +555,18 @@ crules._execute = function(_, c, props, callbacks)
         c._request_titlebars_called = true
     end
 
+    -- Handle deferred maximized geometry from EWMH client hints
+    if not c._border_geometry_rules_applied then
+        c._border_geometry_rules_applied = true
+        if c.maximized then
+            c:emit_signal("request::geometry", "maximized")
+        elseif c.maximized_horizontal then
+            c:emit_signal("request::geometry", "maximized_horizontal")
+        elseif c.maximized_vertical then
+            c:emit_signal("request::geometry", "maximized_vertical")
+        end
+    end
+
     -- Size hints will be re-applied when setting width/height unless it is
     -- disabled first
     if props.size_hints_honor ~= nil then
