@@ -194,19 +194,13 @@ function wibox:_apply_shape()
         cr:set_antialias(cairo.Antialias.BEST)
         cr:scale(scale, scale)
 
-        -- Fill the outer shape (anti-aliased outer edge)
+        -- Draw border: offset by bw so shape aligns with content after buffer positioning
+        cr:translate(bw, bw)
         shape(cr, total_w, total_h)
+        cr:clip_preserve()           -- Clip to shape bounds
         cr:set_source(color(bc))
-        cr:fill()
-
-        -- Cut out the inner area, but make it slightly SMALLER than the content
-        -- so the border extends ~1px under the content edges, covering any AA seams
-        -- Use DEST_OUT instead of CLEAR to preserve anti-aliased edges on the cutout
-        cr:set_operator(cairo.Operator.DEST_OUT)
-        cr:set_source_rgba(0, 0, 0, 1)  -- Opaque source for subtraction
-        cr:translate(bw + 1, bw + 1)
-        shape(cr, geo.width - 2, geo.height - 2)
-        cr:fill()
+        cr:set_line_width(2 * bw)    -- Stroke 2*bw wide, only inner half visible
+        cr:stroke()
 
         self.shape_border = img._native
         self._shape_border_surface = img
