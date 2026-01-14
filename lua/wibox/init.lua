@@ -137,13 +137,17 @@ function wibox:_apply_shape()
 
     -- First handle the bounding shape (things including the border)
     -- Scale surface dimensions for HiDPI, use cr:scale() so Cairo draws in logical coords
+    -- Use ARGB32 instead of A1 for anti-aliased edges on curved shapes
     local scaled_total_w = math.ceil(total_w * scale)
     local scaled_total_h = math.ceil(total_h * scale)
-    local img = cairo.ImageSurface(cairo.Format.A1, scaled_total_w, scaled_total_h)
+    local img = cairo.ImageSurface(cairo.Format.ARGB32, scaled_total_w, scaled_total_h)
     local cr = cairo.Context(img)
+    cr:set_antialias(cairo.Antialias.BEST)
     cr:scale(scale, scale)
 
     -- We just draw the shape in its full size (logical coordinates)
+    -- Use white with full alpha as the mask color (alpha channel is what matters)
+    cr:set_source_rgba(1, 1, 1, 1)
     shape(cr, total_w, total_h)
     cr:set_operator(cairo.Operator.SOURCE)
     cr:fill()
@@ -155,16 +159,19 @@ function wibox:_apply_shape()
     self._shape_bounding_surface = img
 
     -- Now handle the clip shape (things excluding the border)
+    -- Use ARGB32 instead of A1 for anti-aliased edges on curved shapes
     local scaled_w = math.ceil(geo.width * scale)
     local scaled_h = math.ceil(geo.height * scale)
-    img = cairo.ImageSurface(cairo.Format.A1, scaled_w, scaled_h)
+    img = cairo.ImageSurface(cairo.Format.ARGB32, scaled_w, scaled_h)
     cr = cairo.Context(img)
+    cr:set_antialias(cairo.Antialias.BEST)
     cr:scale(scale, scale)
 
     -- We give the shape the same arguments as for the bounding shape and draw
     -- it in its full size (the translate is to compensate for the smaller
     -- surface)
     cr:translate(-bw, -bw)
+    cr:set_source_rgba(1, 1, 1, 1)
     shape(cr, total_w, total_h)
     cr:set_operator(cairo.Operator.SOURCE)
     cr:fill_preserve()

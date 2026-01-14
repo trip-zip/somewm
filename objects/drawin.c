@@ -443,10 +443,11 @@ drawin_apply_shape_mask(drawable_t *d, cairo_surface_t *shape)
 	dst_stride = cairo_image_surface_get_stride(dst);
 	shape_stride = cairo_image_surface_get_stride(shape);
 
-	/* Copy pixels, zeroing alpha where shape bit is 0.
+	/* Copy pixels, applying shape alpha mask.
+	 * Shape surface is ARGB32 with anti-aliased edges.
 	 * Note: The shape surface may be at logical scale while the source
 	 * surface is at physical (HiDPI) scale. We need to scale coordinates
-	 * when looking up shape bits. */
+	 * when looking up shape alpha. */
 	for (y = 0; y < height; y++) {
 		uint32_t *src_row = (uint32_t *)(src_data + y * src_stride);
 		uint32_t *dst_row = (uint32_t *)(dst_data + y * dst_stride);
@@ -455,26 +456,40 @@ drawin_apply_shape_mask(drawable_t *d, cairo_surface_t *shape)
 		int shape_y = (shape_height > 0) ? (y * shape_height / height) : 0;
 
 		for (x = 0; x < width; x++) {
-			bool visible = true;
+			uint8_t shape_alpha = 0;
 
 			/* Map physical x to logical shape x */
 			int shape_x = (shape_width > 0) ? (x * shape_width / width) : 0;
 
 			/* Check if this pixel is within shape bounds */
 			if (shape_x < shape_width && shape_y < shape_height) {
-				int byte_offset = (shape_y * shape_stride) + (shape_x / 8);
-				int bit_offset = shape_x % 8;
-				visible = (shape_data[byte_offset] >> bit_offset) & 1;
-			} else {
-				/* Outside shape = transparent */
-				visible = false;
+				/* ARGB32 format: 4 bytes per pixel, alpha is byte 3 (on little-endian) */
+				int pixel_offset = (shape_y * shape_stride) + (shape_x * 4);
+				shape_alpha = shape_data[pixel_offset + 3];
 			}
+			/* Outside shape bounds = alpha 0 (transparent) */
 
-			if (visible) {
+			if (shape_alpha == 255) {
+				/* Fully opaque - copy directly */
 				dst_row[x] = src_row[x];
-			} else {
-				/* Premultiplied alpha: fully transparent = all channels zero */
+			} else if (shape_alpha == 0) {
+				/* Fully transparent */
 				dst_row[x] = 0;
+			} else {
+				/* Partial alpha - blend (premultiplied alpha) */
+				uint32_t pixel = src_row[x];
+				uint8_t b = (pixel >> 0) & 0xFF;
+				uint8_t g = (pixel >> 8) & 0xFF;
+				uint8_t r = (pixel >> 16) & 0xFF;
+				uint8_t a = (pixel >> 24) & 0xFF;
+
+				/* Multiply all channels by shape_alpha/255 */
+				b = (b * shape_alpha) / 255;
+				g = (g * shape_alpha) / 255;
+				r = (r * shape_alpha) / 255;
+				a = (a * shape_alpha) / 255;
+
+				dst_row[x] = (a << 24) | (r << 16) | (g << 8) | b;
 			}
 		}
 	}
@@ -484,7 +499,7 @@ drawin_apply_shape_mask(drawable_t *d, cairo_surface_t *shape)
 }
 
 /** Apply shape mask to a cairo surface (exported for screenshot support).
- * Returns a new cairo_surface_t with alpha zeroed where shape bit is 0.
+ * Returns a new cairo_surface_t with alpha applied from ARGB32 shape mask.
  * Caller must destroy the returned surface.
  * Returns NULL if no shape or allocation fails.
  */
@@ -531,7 +546,8 @@ drawin_apply_shape_mask_for_screenshot(cairo_surface_t *src, cairo_surface_t *sh
 	dst_stride = cairo_image_surface_get_stride(dst);
 	shape_stride = cairo_image_surface_get_stride(shape);
 
-	/* Copy pixels, zeroing all channels where shape bit is 0.
+	/* Copy pixels, applying shape alpha mask.
+	 * Shape surface is ARGB32 with anti-aliased edges.
 	 * Note: Cairo uses premultiplied alpha, so when alpha=0, RGB must also be 0. */
 	for (y = 0; y < height; y++) {
 		uint32_t *src_row = (uint32_t *)(src_data + y * src_stride);
@@ -540,23 +556,34 @@ drawin_apply_shape_mask_for_screenshot(cairo_surface_t *src, cairo_surface_t *sh
 		int shape_y = (shape_height > 0) ? (y * shape_height / height) : 0;
 
 		for (x = 0; x < width; x++) {
-			bool visible = true;
+			uint8_t shape_alpha = 0;
 
 			int shape_x = (shape_width > 0) ? (x * shape_width / width) : 0;
 
 			if (shape_x < shape_width && shape_y < shape_height) {
-				int byte_offset = (shape_y * shape_stride) + (shape_x / 8);
-				int bit_offset = shape_x % 8;
-				visible = (shape_data[byte_offset] >> bit_offset) & 1;
-			} else {
-				visible = false;
+				/* ARGB32 format: 4 bytes per pixel, alpha is byte 3 */
+				int pixel_offset = (shape_y * shape_stride) + (shape_x * 4);
+				shape_alpha = shape_data[pixel_offset + 3];
 			}
 
-			if (visible) {
+			if (shape_alpha == 255) {
 				dst_row[x] = src_row[x];
-			} else {
-				/* Premultiplied alpha: fully transparent = all zeros */
+			} else if (shape_alpha == 0) {
 				dst_row[x] = 0;
+			} else {
+				/* Partial alpha - blend (premultiplied alpha) */
+				uint32_t pixel = src_row[x];
+				uint8_t b = (pixel >> 0) & 0xFF;
+				uint8_t g = (pixel >> 8) & 0xFF;
+				uint8_t r = (pixel >> 16) & 0xFF;
+				uint8_t a = (pixel >> 24) & 0xFF;
+
+				b = (b * shape_alpha) / 255;
+				g = (g * shape_alpha) / 255;
+				r = (r * shape_alpha) / 255;
+				a = (a * shape_alpha) / 255;
+
+				dst_row[x] = (a << 24) | (r << 16) | (g << 8) | b;
 			}
 		}
 	}
