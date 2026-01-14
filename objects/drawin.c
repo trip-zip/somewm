@@ -22,6 +22,7 @@
 #include <wlr/render/wlr_renderer.h>
 #include <wlr/types/wlr_buffer.h>
 #include <wlr/interfaces/wlr_buffer.h>
+#include <wlr/render/pass.h>
 #include <drm_fourcc.h>
 
 /* Access to global state from somewm.c */
@@ -150,6 +151,19 @@ border_buffer_from_cairo(cairo_surface_t *surface)
 	wlr_buffer_init(&buffer->base, &border_buffer_impl, width, height);
 
 	return &buffer->base;
+}
+
+/**
+ * Border buffers never accept input - they are purely visual decoration.
+ * This callback ensures input events pass through to the content beneath.
+ */
+static bool border_point_accepts_input(struct wlr_scene_buffer *buffer,
+                                       double *sx, double *sy)
+{
+	(void)buffer;
+	(void)sx;
+	(void)sy;
+	return false;
 }
 
 /**
@@ -775,6 +789,13 @@ drawin_allocator(lua_State *L)
 		drawin->border_buffer->node.data = drawin;
 		/* Position border at (-border_width, -border_width) relative to content */
 		wlr_scene_node_set_position(&drawin->border_buffer->node, 0, 0);
+		/* Border renders below content (has 1px overlap for AA seam coverage) */
+		wlr_scene_node_lower_to_bottom(&drawin->border_buffer->node);
+		/* Border never accepts input - purely visual decoration */
+		drawin->border_buffer->point_accepts_input = border_point_accepts_input;
+		/* Use bilinear filtering for smooth rendering at fractional scales */
+		wlr_scene_buffer_set_filter_mode(drawin->border_buffer,
+			WLR_SCALE_FILTER_BILINEAR);
 	}
 	drawin->border_need_update = true;
 	drawin->border_color_parsed.initialized = false;
@@ -948,6 +969,13 @@ drawin_new_legacy(lua_State *L)
 	if (drawin->border_buffer) {
 		drawin->border_buffer->node.data = drawin;
 		wlr_scene_node_set_position(&drawin->border_buffer->node, 0, 0);
+		/* Border renders below content (has 1px overlap for AA seam coverage) */
+		wlr_scene_node_lower_to_bottom(&drawin->border_buffer->node);
+		/* Border never accepts input - purely visual decoration */
+		drawin->border_buffer->point_accepts_input = border_point_accepts_input;
+		/* Use bilinear filtering for smooth rendering at fractional scales */
+		wlr_scene_buffer_set_filter_mode(drawin->border_buffer,
+			WLR_SCALE_FILTER_BILINEAR);
 	}
 	drawin->border_need_update = true;
 	drawin->border_color_parsed.initialized = false;

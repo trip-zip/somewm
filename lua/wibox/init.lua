@@ -184,6 +184,7 @@ function wibox:_apply_shape()
         local bc = self.border_color or "#ffffff"
         img = cairo.ImageSurface(cairo.Format.ARGB32, scaled_total_w, scaled_total_h)
         cr = cairo.Context(img)
+        cr:set_antialias(cairo.Antialias.BEST)
         cr:scale(scale, scale)
 
         -- Fill the outer shape (anti-aliased outer edge)
@@ -193,7 +194,9 @@ function wibox:_apply_shape()
 
         -- Cut out the inner area, but make it slightly SMALLER than the content
         -- so the border extends ~1px under the content edges, covering any AA seams
-        cr:set_operator(cairo.Operator.CLEAR)
+        -- Use DEST_OUT instead of CLEAR to preserve anti-aliased edges on the cutout
+        cr:set_operator(cairo.Operator.DEST_OUT)
+        cr:set_source_rgba(0, 0, 0, 1)  -- Opaque source for subtraction
         cr:translate(bw + 1, bw + 1)
         shape(cr, geo.width - 2, geo.height - 2)
         cr:fill()
