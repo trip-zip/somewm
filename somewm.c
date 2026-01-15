@@ -255,6 +255,7 @@ void zoom(const Arg *arg);
 
 /* variables */
 static pid_t child_pid = -1;
+static uint32_t next_client_id = 1;
 
 static int locked;
 int running = 1;  /* Non-static so somewm_api.c can access it */
@@ -1711,6 +1712,9 @@ createnotify(struct wl_listener *listener, void *data)
 	/* Create Lua client object (matches AwesomeWM client_manage line 2138) */
 	c = client_new(L);
 	/* client_new() leaves the client on the Lua stack at index -1 */
+
+	/* Assign unique client ID (Sway-style incrementing counter) */
+	c->id = next_client_id++;
 
 	/* Initialize opacity to -1 (unset) so commitnotify doesn't apply 0% opacity.
 	 * -1 means "use default" (fully opaque). 0 would mean fully transparent. */
@@ -5432,6 +5436,9 @@ createnotifyx11(struct wl_listener *listener, void *data)
 	/* Create Lua client object (matches AwesomeWM client_manage line 2138) */
 	c = client_new(L);
 	/* client_new() leaves the client on the Lua stack at index -1 */
+
+	/* Assign unique client ID (Sway-style incrementing counter) */
+	c->id = next_client_id++;
 
 	/* Link to XWayland surface (adapts X11 window linkage to XWayland) */
 	xsurface->data = c;

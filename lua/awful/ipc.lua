@@ -107,8 +107,9 @@ function ipc.register(name, handler)
   commands[name] = handler
 end
 
---- Format userdata pointer as ID (remove space after colon)
--- Converts "userdata: 0x123" to "userdata:0x123" for easier CLI usage
+--- Format userdata pointer as ID for screens (remove space after colon)
+-- Converts "screen: 0x123" to "screen:0x123" for CLI usage.
+-- Note: Clients use numeric IDs (c.id) instead.
 local function format_id(userdata)
   return tostring(userdata):gsub(": ", ":")
 end
@@ -297,6 +298,22 @@ local function register_builtin_commands()
   local awful_tag = require("awful.tag")
   local awful_placement = require("awful.placement")
   local awful_spawn = require("awful.spawn")
+
+  --- Find a client by numeric ID
+  -- @param target The numeric ID to search for (e.g., "1", "42")
+  -- @return client_t or nil
+  local function find_client_by_id(target)
+    local num_id = tonumber(target)
+    if not num_id then
+      return nil
+    end
+    for _, c in ipairs(capi.client.get()) do
+      if c.id == num_id then
+        return c
+      end
+    end
+    return nil
+  end
 
   -- =================================================================
   -- BASIC COMMANDS
@@ -821,8 +838,8 @@ local function register_builtin_commands()
 
       -- Simple text format for now (JSON can be added later)
       local line = string.format(
-        'id=%s title="%s" class="%s" tags=%s floating=%s',
-        format_id(c),
+        'id=%d title="%s" class="%s" tags=%s floating=%s',
+        c.id,
         title,
         appid,
         table.concat(tag_list, ","),
@@ -847,12 +864,11 @@ local function register_builtin_commands()
       capi.client.kill(focusedclient)
       return "Killed focused client"
     else
-      -- Find by pointer address string
-      for _, c in ipairs(capi.client.get()) do
-        if format_id(c) == target then
-          capi.client.kill(c)
-          return string.format("Killed client %s", target)
-        end
+      -- Find by numeric ID or legacy pointer address
+      local c = find_client_by_id(target)
+      if c then
+        capi.client.kill(c)
+        return string.format("Killed client %s", target)
       end
       error("Client not found: " .. target)
     end
@@ -870,12 +886,11 @@ local function register_builtin_commands()
     elseif target == "prev" then
       error("focus next/prev not yet implemented")
     else
-      -- Find by pointer address string
-      for _, c in ipairs(capi.client.get()) do
-        if format_id(c) == target then
-          capi.client.focus = c
-          return string.format("Focused client %s", target)
-        end
+      -- Find by numeric ID or legacy pointer address
+      local c = find_client_by_id(target)
+      if c then
+        capi.client.focus = c
+        return string.format("Focused client %s", target)
       end
       error("Client not found: " .. target)
     end
@@ -894,12 +909,11 @@ local function register_builtin_commands()
       capi.client.kill(focusedclient)
       return "Closed focused client"
     else
-      -- Find by pointer address string
-      for _, c in ipairs(capi.client.get()) do
-        if format_id(c) == target then
-          capi.client.kill(c)
-          return string.format("Closed client %s", target)
-        end
+      -- Find by numeric ID or legacy pointer address
+      local c = find_client_by_id(target)
+      if c then
+        capi.client.kill(c)
+        return string.format("Closed client %s", target)
       end
       error("Client not found: " .. target)
     end
@@ -930,14 +944,7 @@ local function register_builtin_commands()
         error("No focused client")
       end
     else
-      -- Find by pointer address string (supports partial match on pointer address)
-      for _, c in ipairs(capi.client.get()) do
-        local full_id = format_id(c)
-        if full_id == client_id or full_id:find(client_id, 1, true) then
-          targetclient = c
-          break
-        end
-      end
+      targetclient = find_client_by_id(client_id)
       if not targetclient then
         error("Client not found: " .. client_id)
       end
@@ -985,14 +992,7 @@ local function register_builtin_commands()
         error("No focused client")
       end
     else
-      -- Find by pointer address string (supports partial match on pointer address)
-      for _, c in ipairs(capi.client.get()) do
-        local full_id = format_id(c)
-        if full_id == client_id or full_id:find(client_id, 1, true) then
-          targetclient = c
-          break
-        end
-      end
+      targetclient = find_client_by_id(client_id)
       if not targetclient then
         error("Client not found: " .. client_id)
       end
@@ -1024,12 +1024,7 @@ local function register_builtin_commands()
         error("No focused client")
       end
     else
-      for _, cl in ipairs(capi.client.get()) do
-        if format_id(cl) == target then
-          c = cl
-          break
-        end
-      end
+      c = find_client_by_id(target)
       if not c then
         error("Client not found: " .. target)
       end
@@ -1071,12 +1066,7 @@ local function register_builtin_commands()
         error("No focused client")
       end
     else
-      for _, cl in ipairs(capi.client.get()) do
-        if format_id(cl) == target then
-          c = cl
-          break
-        end
-      end
+      c = find_client_by_id(target)
       if not c then
         error("Client not found: " .. target)
       end
@@ -1109,12 +1099,7 @@ local function register_builtin_commands()
         error("No focused client")
       end
     else
-      for _, cl in ipairs(capi.client.get()) do
-        if format_id(cl) == target then
-          c = cl
-          break
-        end
-      end
+      c = find_client_by_id(target)
       if not c then
         error("Client not found: " .. target)
       end
@@ -1147,12 +1132,7 @@ local function register_builtin_commands()
         error("No focused client")
       end
     else
-      for _, cl in ipairs(capi.client.get()) do
-        if format_id(cl) == target then
-          c = cl
-          break
-        end
-      end
+      c = find_client_by_id(target)
       if not c then
         error("Client not found: " .. target)
       end
@@ -1198,12 +1178,7 @@ local function register_builtin_commands()
         error("No focused client")
       end
     else
-      for _, cl in ipairs(capi.client.get()) do
-        if format_id(cl) == target then
-          c = cl
-          break
-        end
-      end
+      c = find_client_by_id(target)
       if not c then
         error("Client not found: " .. target)
       end
@@ -1230,12 +1205,7 @@ local function register_builtin_commands()
         error("No focused client")
       end
     else
-      for _, cl in ipairs(capi.client.get()) do
-        if format_id(cl) == target then
-          c = cl
-          break
-        end
-      end
+      c = find_client_by_id(target)
       if not c then
         error("Client not found: " .. target)
       end
@@ -1272,12 +1242,7 @@ local function register_builtin_commands()
         error("No focused client")
       end
     else
-      for _, cl in ipairs(capi.client.get()) do
-        if format_id(cl) == target then
-          c = cl
-          break
-        end
-      end
+      c = find_client_by_id(target)
       if not c then
         error("Client not found: " .. target)
       end
@@ -1314,12 +1279,7 @@ local function register_builtin_commands()
         error("No focused client")
       end
     else
-      for _, cl in ipairs(capi.client.get()) do
-        if format_id(cl) == target then
-          c = cl
-          break
-        end
-      end
+      c = find_client_by_id(target)
       if not c then
         error("Client not found: " .. target)
       end
@@ -1356,12 +1316,7 @@ local function register_builtin_commands()
         error("No focused client")
       end
     else
-      for _, cl in ipairs(capi.client.get()) do
-        if format_id(cl) == target then
-          c = cl
-          break
-        end
-      end
+      c = find_client_by_id(target)
       if not c then
         error("Client not found: " .. target)
       end
@@ -1402,12 +1357,7 @@ local function register_builtin_commands()
         error("No focused client")
       end
     else
-      for _, cl in ipairs(capi.client.get()) do
-        if format_id(cl) == target then
-          c = cl
-          break
-        end
-      end
+      c = find_client_by_id(target)
       if not c then
         error("Client not found: " .. target)
       end
@@ -1429,12 +1379,7 @@ local function register_builtin_commands()
         error("No focused client")
       end
     else
-      for _, cl in ipairs(capi.client.get()) do
-        if format_id(cl) == target then
-          c = cl
-          break
-        end
-      end
+      c = find_client_by_id(target)
       if not c then
         error("Client not found: " .. target)
       end
@@ -1451,15 +1396,8 @@ local function register_builtin_commands()
     end
 
     -- Find both clients
-    local c1, c2
-    for _, c in ipairs(capi.client.get()) do
-      if format_id(c) == id1 then
-        c1 = c
-      end
-      if format_id(c) == id2 then
-        c2 = c
-      end
-    end
+    local c1 = find_client_by_id(id1)
+    local c2 = find_client_by_id(id2)
 
     if not c1 then
       error("Client not found: " .. id1)
@@ -1494,12 +1432,7 @@ local function register_builtin_commands()
         error("No focused client")
       end
     else
-      for _, cl in ipairs(capi.client.get()) do
-        if format_id(cl) == target then
-          c = cl
-          break
-        end
-      end
+      c = find_client_by_id(target)
       if not c then
         error("Client not found: " .. target)
       end
@@ -1522,12 +1455,7 @@ local function register_builtin_commands()
         error("No focused client")
       end
     else
-      for _, cl in ipairs(capi.client.get()) do
-        if format_id(cl) == target then
-          c = cl
-          break
-        end
-      end
+      c = find_client_by_id(target)
       if not c then
         error("Client not found: " .. target)
       end
@@ -1558,7 +1486,7 @@ local function register_builtin_commands()
     for _, c in ipairs(visible_clients) do
       local title = c.name or ""
       local appid = c.class or ""
-      table.insert(result, string.format('id=%s title="%s" class="%s"', format_id(c), title, appid))
+      table.insert(result, string.format('id=%d title="%s" class="%s"', c.id, title, appid))
     end
 
     return table.concat(result, "\n")
@@ -1580,7 +1508,7 @@ local function register_builtin_commands()
     for _, c in ipairs(tiled_clients) do
       local title = c.name or ""
       local appid = c.class or ""
-      table.insert(result, string.format('id=%s title="%s" class="%s"', format_id(c), title, appid))
+      table.insert(result, string.format('id=%d title="%s" class="%s"', c.id, title, appid))
     end
 
     return table.concat(result, "\n")
@@ -1602,8 +1530,8 @@ local function register_builtin_commands()
     local appid = master.class or ""
     local geom = master:geometry()
     return string.format(
-      'id=%s title="%s" class="%s" x=%d y=%d width=%d height=%d',
-      format_id(master),
+      'id=%d title="%s" class="%s" x=%d y=%d width=%d height=%d',
+      master.id,
       title,
       appid,
       geom.x,
@@ -1625,12 +1553,7 @@ local function register_builtin_commands()
         error("No focused client")
       end
     else
-      for _, cl in ipairs(capi.client.get()) do
-        if format_id(cl) == target then
-          c = cl
-          break
-        end
-      end
+      c = find_client_by_id(target)
       if not c then
         error("Client not found: " .. target)
       end
@@ -1654,7 +1577,7 @@ local function register_builtin_commands()
     end
 
     local result = {}
-    table.insert(result, string.format("ID: %s", format_id(c)))
+    table.insert(result, string.format("ID: %d", c.id))
     table.insert(result, string.format("Title: %s", title))
     table.insert(result, string.format("Class: %s", appid))
     table.insert(
@@ -1882,7 +1805,7 @@ local function register_builtin_commands()
 
         table.insert(
           screenclients,
-          string.format('id=%s title="%s" class="%s" floating=%s', format_id(c), title, appid, tostring(floating))
+          string.format('id=%d title="%s" class="%s" floating=%s', c.id, title, appid, tostring(floating))
         )
       end
     end
@@ -2052,12 +1975,7 @@ local function register_builtin_commands()
         error("No focused client")
       end
     else
-      for _, cl in ipairs(capi.client.get()) do
-        if format_id(cl) == target then
-          c = cl
-          break
-        end
-      end
+      c = find_client_by_id(target)
       if not c then
         error("Client not found: " .. target)
       end
@@ -2770,13 +2688,7 @@ local function register_builtin_commands()
       if client_id == "focused" then
         c = capi.client.focus
       else
-        -- Find client by ID
-        for _, cl in ipairs(capi.client.get()) do
-          if format_id(cl) == client_id or tostring(cl) == client_id then
-            c = cl
-            break
-          end
-        end
+        c = find_client_by_id(client_id)
       end
 
       if not c then
@@ -2987,12 +2899,7 @@ local function register_builtin_commands()
     if not client_id or client_id == "focused" then
       c = capi.client.focus
     else
-      for _, cl in ipairs(capi.client.get()) do
-        if format_id(cl) == client_id or tostring(cl) == client_id then
-          c = cl
-          break
-        end
-      end
+      c = find_client_by_id(client_id)
     end
 
     if not c then
