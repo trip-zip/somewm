@@ -196,11 +196,15 @@ function wibox:_apply_shape()
 
         -- Draw border: offset by bw so shape aligns with content after buffer positioning
         cr:translate(bw, bw)
-        shape(cr, total_w, total_h)
-        cr:clip_preserve()           -- Clip to shape bounds
+        shape(cr, geo.width, geo.height)
         cr:set_source(color(bc))
-        cr:set_line_width(2 * bw)    -- Stroke 2*bw wide, only inner half visible
+        cr:set_line_width(2 * bw)    -- Stroke 2*bw: half inside, half outside
         cr:stroke()
+
+        -- Clear the interior, leaving only the outer half of the stroke
+        cr:set_operator(cairo.Operator.CLEAR)
+        shape(cr, geo.width, geo.height)
+        cr:fill()
 
         self.shape_border = img._native
         self._shape_border_surface = img
