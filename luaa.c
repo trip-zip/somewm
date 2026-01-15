@@ -1580,25 +1580,30 @@ luaA_init(void)
 	cur_path = lua_tostring(globalconf_L, -1);
 	lua_pop(globalconf_L, 1);
 
-	/* Prepend lua paths: development paths first, then system-wide paths */
-	lua_pushfstring(globalconf_L,
-		"./lua/?.lua;./lua/?/init.lua;./lua/lib/?.lua;./lua/lib/?/init.lua;"
-		DATADIR "/somewm/lua/?.lua;" DATADIR "/somewm/lua/?/init.lua;"
-		DATADIR "/somewm/lua/lib/?.lua;" DATADIR "/somewm/lua/lib/?/init.lua;%s",
-		cur_path);
-	lua_setfield(globalconf_L, -2, "path");
+	/* Prepend lua paths: development paths first, then system-wide paths
+	 * AWESOME_LUA_LIB_PATH env var allows overriding for DESTDIR installs */
+	{
+		const char *lua_lib_path = getenv("AWESOME_LUA_LIB_PATH");
+		if (!lua_lib_path || lua_lib_path[0] == '\0')
+			lua_lib_path = DATADIR "/somewm/lua";
 
-	/* Also set up package.cpath for C modules like lgi */
-	lua_getfield(globalconf_L, -1, "cpath");
-	cur_path = lua_tostring(globalconf_L, -1);
-	lua_pop(globalconf_L, 1);
+		lua_pushfstring(globalconf_L,
+			"./lua/?.lua;./lua/?/init.lua;./lua/lib/?.lua;./lua/lib/?/init.lua;"
+			"%s/?.lua;%s/?/init.lua;%s/lib/?.lua;%s/lib/?/init.lua;%s",
+			lua_lib_path, lua_lib_path, lua_lib_path, lua_lib_path, cur_path);
+		lua_setfield(globalconf_L, -2, "path");
 
-	/* Prepend C module paths: development paths first, then system-wide paths */
-	lua_pushfstring(globalconf_L,
-		"./lua/?.so;./lua/lib/?.so;"
-		DATADIR "/somewm/lua/?.so;" DATADIR "/somewm/lua/lib/?.so;%s",
-		cur_path);
-	lua_setfield(globalconf_L, -2, "cpath");
+		/* Also set up package.cpath for C modules like lgi */
+		lua_getfield(globalconf_L, -1, "cpath");
+		cur_path = lua_tostring(globalconf_L, -1);
+		lua_pop(globalconf_L, 1);
+
+		/* Prepend C module paths: development paths first, then system-wide paths */
+		lua_pushfstring(globalconf_L,
+			"./lua/?.so;./lua/lib/?.so;%s/?.so;%s/lib/?.so;%s",
+			lua_lib_path, lua_lib_path, cur_path);
+		lua_setfield(globalconf_L, -2, "cpath");
+	}
 
 	/* Add extra search paths from -L/--search command line options */
 	if (num_extra_search_paths > 0) {
@@ -3358,19 +3363,25 @@ luaA_create_fresh_state(void)
 	/* Initialize the AwesomeWM object system */
 	luaA_object_setup(L);
 
-	/* Setup package.path */
-	lua_getglobal(L, "package");
-	lua_getfield(L, -1, "path");
-	cur_path = lua_tostring(L, -1);
-	lua_pop(L, 1);
+	/* Setup package.path
+	 * AWESOME_LUA_LIB_PATH env var allows overriding for DESTDIR installs */
+	{
+		const char *lua_lib_path = getenv("AWESOME_LUA_LIB_PATH");
+		if (!lua_lib_path || lua_lib_path[0] == '\0')
+			lua_lib_path = DATADIR "/somewm/lua";
 
-	lua_pushfstring(L,
-		"./lua/?.lua;./lua/?/init.lua;./lua/lib/?.lua;./lua/lib/?/init.lua;"
-		DATADIR "/somewm/lua/?.lua;" DATADIR "/somewm/lua/?/init.lua;"
-		DATADIR "/somewm/lua/lib/?.lua;" DATADIR "/somewm/lua/lib/?/init.lua;%s",
-		cur_path);
-	lua_setfield(L, -2, "path");
-	lua_pop(L, 1);
+		lua_getglobal(L, "package");
+		lua_getfield(L, -1, "path");
+		cur_path = lua_tostring(L, -1);
+		lua_pop(L, 1);
+
+		lua_pushfstring(L,
+			"./lua/?.lua;./lua/?/init.lua;./lua/lib/?.lua;./lua/lib/?/init.lua;"
+			"%s/?.lua;%s/?/init.lua;%s/lib/?.lua;%s/lib/?/init.lua;%s",
+			lua_lib_path, lua_lib_path, lua_lib_path, lua_lib_path, cur_path);
+		lua_setfield(L, -2, "path");
+		lua_pop(L, 1);
+	}
 
 	/* Add user library directory */
 	{

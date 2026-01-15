@@ -4266,6 +4266,11 @@ setup(void)
 
 	for (i = 0; i < (int)LENGTH(sig); i++)
 		sigaction(sig[i], &sa, NULL);
+
+	/* Set default log level BEFORE wlr_log_init() so error messages are visible.
+	 * Without this, backend creation failures would be silent (issue #150). */
+	if (globalconf.log_level == 0)
+		globalconf.log_level = 1;  /* WLR_ERROR */
 	wlr_log_init(globalconf.log_level, NULL);
 
 	/* The Wayland display is managed by libwayland. It handles accepting
@@ -4524,10 +4529,6 @@ setup(void)
 	globalconf.input.accel_profile = NULL;  /* String property - set via Lua */
 	globalconf.input.accel_speed = 0.0;
 	globalconf.input.tap_button_map = NULL;  /* String property - set via Lua */
-
-	/* Logging defaults (only set if not already set by -d flag) */
-	if (globalconf.log_level == 0)
-		globalconf.log_level = 1;  /* WLR_ERROR - can be changed via -d flag or awesome.log_level */
 
 	kb_group = createkeyboardgroup();
 	wl_list_init(&kb_group->destroy.link);
