@@ -139,7 +139,7 @@ ipc_init(struct wl_event_loop *event_loop)
 		return -1;
 	}
 
-	printf("IPC: Listening on %s\n", ipc_socket_path);
+	log_info("IPC listening on %s", ipc_socket_path);
 	return 0;
 }
 

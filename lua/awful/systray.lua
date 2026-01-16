@@ -859,7 +859,6 @@ local function register_as_host()
 
             if ok then
                 systray._private.host_registered = true
-                gdebug.print_warning("systray: Registered as StatusNotifierHost")
 
                 -- Fetch existing items
                 fetch_registered_items()
@@ -914,13 +913,11 @@ local function watch_for_watcher()
         Gio.BusNameWatcherFlags.NONE,
         GObject.Closure(function(conn, name, owner)
             -- Watcher appeared
-            gdebug.print_warning("systray: StatusNotifierWatcher appeared: " .. owner)
             subscribe_to_watcher_signals()
             register_as_host()
         end),
         GObject.Closure(function(conn, name)
             -- Watcher vanished
-            gdebug.print_warning("systray: StatusNotifierWatcher vanished")
             systray._private.host_registered = false
 
             -- Clear all items

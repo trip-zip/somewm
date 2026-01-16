@@ -11,6 +11,7 @@
 #include "somewm_types.h"  /* For Client typedef and Monitor */
 #include "objects/client.h" /* For complete client_t definition */
 #include "wlr_compat.h"  /* For wlroots version compatibility */
+#include "common/util.h"  /* For log_debug */
 
 /* Leave these functions first; they're used in the others */
 static inline int
@@ -317,23 +318,15 @@ client_notify_enter(struct wlr_surface *s, struct wlr_keyboard *kb)
 static inline void
 client_send_close(Client *c)
 {
-	fprintf(stderr, "\n[CLIENT_SEND_CLOSE] ==========================================\n");
-	fprintf(stderr, "[CLIENT_SEND_CLOSE] client_send_close() called\n");
-	fprintf(stderr, "[CLIENT_SEND_CLOSE] Client ptr: %p\n", (void*)c);
-	fprintf(stderr, "[CLIENT_SEND_CLOSE] Client type: %u\n", c->client_type);
 #ifdef XWAYLAND
 	if (client_is_x11(c)) {
-		fprintf(stderr, "[CLIENT_SEND_CLOSE] X11/XWayland client - calling wlr_xwayland_surface_close()\n");
+		log_debug("closing X11 client %p", (void*)c);
 		wlr_xwayland_surface_close(c->surface.xwayland);
-		fprintf(stderr, "[CLIENT_SEND_CLOSE] wlr_xwayland_surface_close() sent\n");
-		fprintf(stderr, "[CLIENT_SEND_CLOSE] ==========================================\n\n");
 		return;
 	}
 #endif
-	fprintf(stderr, "[CLIENT_SEND_CLOSE] Native Wayland client - calling wlr_xdg_toplevel_send_close()\n");
+	log_debug("closing Wayland client %p", (void*)c);
 	wlr_xdg_toplevel_send_close(c->surface.xdg->toplevel);
-	fprintf(stderr, "[CLIENT_SEND_CLOSE] wlr_xdg_toplevel_send_close() sent successfully!\n");
-	fprintf(stderr, "[CLIENT_SEND_CLOSE] ==========================================\n\n");
 }
 
 static inline void

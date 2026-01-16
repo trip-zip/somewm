@@ -391,19 +391,13 @@ local function setup_signals(self)
 end
 
 function drawable.new(d, widget_context_skeleton, drawable_name)
-    print("[DRAWABLE.NEW] Creating new wibox.drawable wrapper")
-    print("[DRAWABLE.NEW] d = " .. tostring(d))
-    print("[DRAWABLE.NEW] widget_context_skeleton = " .. tostring(widget_context_skeleton))
-    print("[DRAWABLE.NEW] drawable_name = " .. tostring(drawable_name))
     local ret = object()
     ret.drawable = d
     ret._widget_context_skeleton = widget_context_skeleton
     ret._need_complete_repaint = true
     ret._need_relayout = true
     ret._dirty_area = cairo.Region.create()
-    print("[DRAWABLE.NEW] About to call setup_signals")
     setup_signals(ret)
-    print("[DRAWABLE.NEW] setup_signals completed")
 
     for k, v in pairs(drawable) do
         if type(v) == "function" then
@@ -451,19 +445,14 @@ function drawable.new(d, widget_context_skeleton, drawable_name)
     ret._widgets_under_mouse = {}
 
     local function button_signal(name)
-        print("[DRAWABLE.LUA] Connecting button signal handler for '" .. name .. "'")
         d:connect_signal(name, function(_, x, y, button, modifiers)
-            print("[DRAWABLE.LUA] Received signal '" .. name .. "' at x=" .. tostring(x) .. " y=" .. tostring(y) .. " button=" .. tostring(button))
             local widgets = ret:find_widgets(x, y)
-            print("[DRAWABLE.LUA] Found " .. #widgets .. " widgets at click location")
             for _, v in pairs(widgets) do
                 -- Calculate x/y inside of the widget
                 local lx, ly = v.hierarchy:get_matrix_from_device():transform_point(x, y)
-                print("[DRAWABLE.LUA] Emitting '" .. name .. "' on widget: " .. tostring(v.widget))
                 v.widget:emit_signal(name, lx, ly, button, modifiers,v)
             end
         end)
-        print("[DRAWABLE.LUA] Connected handler for '" .. name .. "'")
     end
     button_signal("button::press")
     button_signal("button::release")
@@ -553,31 +542,23 @@ screen.connect_signal("removed", draw_all)
 -- surfaces at the new scale. This is done by re-setting their geometry,
 -- which triggers the C-side scale detection and surface recreation.
 screen.connect_signal("property::scale", function(s)
-    print("[drawable.lua] property::scale received for screen " .. tostring(s.index))
-
     -- Method 1: Iterate visible_drawables
-    local count = 0
     for d in pairs(visible_drawables) do
-        count = count + 1
         local cd = d.drawable
         if cd and cd.surface then
             local geo = cd:geometry()
-            print("[drawable.lua] visible_drawable: " .. geo.width .. "x" .. geo.height)
             if geo.width > 0 and geo.height > 0 then
                 cd:geometry(geo)
             end
         end
     end
-    print("[drawable.lua] Processed " .. count .. " visible_drawables")
 
     -- Method 2: Also check screen's mywibox (wibar) if it exists
     if s.mywibox then
-        print("[drawable.lua] Found screen.mywibox")
         local w = s.mywibox
         if w._drawable and w._drawable.drawable then
             local cd = w._drawable.drawable
             local geo = cd:geometry()
-            print("[drawable.lua] mywibox drawable: " .. geo.width .. "x" .. geo.height)
             if geo.width > 0 and geo.height > 0 then
                 cd:geometry(geo)
             end
@@ -587,11 +568,9 @@ screen.connect_signal("property::scale", function(s)
     -- Method 3: Check all drawins via root.drawins()
     local drawins = root.drawins and root.drawins()
     if drawins then
-        print("[drawable.lua] Checking " .. #drawins .. " drawins from root.drawins()")
         for _, d in ipairs(drawins) do
             if d.drawable then
                 local geo = d.drawable:geometry()
-                print("[drawable.lua] root.drawin: " .. geo.width .. "x" .. geo.height)
                 if geo.width > 0 and geo.height > 0 then
                     d.drawable:geometry(geo)
                 end
