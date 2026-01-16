@@ -2085,6 +2085,22 @@ destroynotify(struct wl_listener *listener, void *data)
 			wl_list_remove(&c->unmap.link);
 			wl_list_remove(&c->maximize.link);
 		}
+		/* Clean up foreign toplevel handle if not already done by unmapnotify */
+		if (c->toplevel_handle) {
+			wl_list_remove(&c->foreign_request_activate.link);
+			wl_list_remove(&c->foreign_request_close.link);
+			wl_list_remove(&c->foreign_request_fullscreen.link);
+			wl_list_remove(&c->foreign_request_maximize.link);
+			wl_list_remove(&c->foreign_request_minimize.link);
+			wlr_foreign_toplevel_handle_v1_destroy(c->toplevel_handle);
+			c->toplevel_handle = NULL;
+		}
+		/* Clean up decoration listeners if decoration exists */
+		if (c->decoration) {
+			wl_list_remove(&c->set_decoration_mode.link);
+			wl_list_remove(&c->destroy_decoration.link);
+			c->decoration = NULL;
+		}
 		return;  // Skip client_unmanage()
 	}
 
@@ -2141,6 +2157,24 @@ destroynotify(struct wl_listener *listener, void *data)
 		wl_list_remove(&c->map.link);
 		wl_list_remove(&c->unmap.link);
 		wl_list_remove(&c->maximize.link);
+	}
+
+	/* Clean up foreign toplevel handle if not already done by unmapnotify */
+	if (c->toplevel_handle) {
+		wl_list_remove(&c->foreign_request_activate.link);
+		wl_list_remove(&c->foreign_request_close.link);
+		wl_list_remove(&c->foreign_request_fullscreen.link);
+		wl_list_remove(&c->foreign_request_maximize.link);
+		wl_list_remove(&c->foreign_request_minimize.link);
+		wlr_foreign_toplevel_handle_v1_destroy(c->toplevel_handle);
+		c->toplevel_handle = NULL;
+	}
+
+	/* Clean up decoration listeners if decoration exists */
+	if (c->decoration) {
+		wl_list_remove(&c->set_decoration_mode.link);
+		wl_list_remove(&c->destroy_decoration.link);
+		c->decoration = NULL;
 	}
 
 	/* Note: Do NOT free(c) or metadata here - client_unmanage() called luaA_object_unref(),
