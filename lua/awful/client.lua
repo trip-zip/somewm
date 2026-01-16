@@ -1002,9 +1002,6 @@ local function update_implicitly_floating(c)
             or c.maximized_horizontal
             or c.maximized
             or client.object.is_fixed(c)
-    io.stderr:write(string.format("[UPDATE_IMPLICIT_FLOAT] Client %s: type=%s fullscreen=%s maximized=%s is_fixed=%s => implicitly_floating=%s\n",
-        tostring(c.name or "unknown"), tostring(c.type), tostring(c.fullscreen), tostring(c.maximized),
-        tostring(client.object.is_fixed(c)), tostring(new)))
     if cur ~= new then
         client.property.set(c, "_implicitly_floating", new)
         c:emit_signal("property::floating")

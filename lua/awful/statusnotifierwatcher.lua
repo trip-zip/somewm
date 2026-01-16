@@ -19,7 +19,6 @@ local GLib = lgi.GLib
 local GObject = lgi.GObject
 
 local protected_call = require("gears.protected_call")
-local gdebug = require("gears.debug")
 
 local watcher = {
     _private = {
@@ -90,13 +89,11 @@ local function watch_service(service, stype)
                     watcher._private.registered_items[name] = nil
                     watcher._private.item_watch_ids[name] = nil
                     emit_signal("StatusNotifierItemUnregistered", GLib.Variant("(s)", {name}))
-                    gdebug.print_warning("StatusNotifierWatcher: item unregistered (vanished): " .. name)
                 end
             elseif stype == "host" then
                 if watcher._private.registered_hosts[name] then
                     watcher._private.registered_hosts[name] = nil
                     watcher._private.host_watch_ids[name] = nil
-                    gdebug.print_warning("StatusNotifierWatcher: host unregistered (vanished): " .. name)
                 end
             end
         end)
@@ -137,7 +134,6 @@ local function register_item(sender, service)
 
     -- Emit signal
     emit_signal("StatusNotifierItemRegistered", GLib.Variant("(s)", {item_service}))
-    gdebug.print_warning("StatusNotifierWatcher: item registered: " .. item_service .. " (sender: " .. sender .. ")")
 end
 
 --- Register a StatusNotifierHost.
@@ -165,7 +161,6 @@ local function register_host(sender, service)
 
     -- Emit signal
     emit_signal("StatusNotifierHostRegistered", GLib.Variant("()"))
-    gdebug.print_warning("StatusNotifierWatcher: host registered: " .. host_service)
 end
 
 ---------------------------------------------------------------------------
@@ -360,12 +355,10 @@ end
 
 local function on_name_acquired(conn, name)
     watcher._private.bus_connection = conn
-    gdebug.print_warning("StatusNotifierWatcher: acquired bus name " .. name)
 end
 
 local function on_name_lost(conn, name)
     watcher._private.bus_connection = nil
-    gdebug.print_warning("StatusNotifierWatcher: lost bus name " .. name)
 end
 
 ---------------------------------------------------------------------------

@@ -595,9 +595,6 @@ __attribute__((used)) static const void *awesomewm_api_parity_symbols[] = {
  * defined alongside other Lua infrastructure.
  */
 
-/* External functions */
-extern void wlr_log_init(int verbosity, void *callback);
-
 /* Forward declarations for awesome module */
 static int luaA_awesome_index(lua_State *L);
 
@@ -1363,7 +1360,6 @@ init_ewmh_atoms(xcb_connection_t *conn)
 	reply = xcb_intern_atom_reply(conn, cookies[i++], NULL);
 	if (reply) { UTF8_STRING = reply->atom; free(reply); }
 
-	printf("somewm: Initialized %d EWMH atoms for XWayland support\n", i);
 }
 #endif /* XWAYLAND */
 
@@ -1569,7 +1565,7 @@ luaA_init(void)
 	/* Add AwesomeWM-compatible Lua extensions */
 	luaA_fixups(globalconf_L);
 
-	printf("somewm: Lua %s initialized successfully\n", LUA_VERSION);
+	log_info("Lua %s initialized", LUA_VERSION);
 
 	/* Initialize the AwesomeWM object system (must be done before any class setup) */
 	luaA_object_setup(globalconf_L);
@@ -1620,8 +1616,6 @@ luaA_init(void)
 			lua_pushfstring(globalconf_L, "%s/?.so;%s",
 				dir, cur_path);
 			lua_setfield(globalconf_L, -2, "cpath");
-
-			printf("somewm: added search path: %s\n", dir);
 		}
 	}
 
@@ -3244,7 +3238,8 @@ luaA_loadrc(void)
 			config_timeout_L = NULL;
 
 			lua_pop(globalconf_L, 1);  /* Pop error handler */
-			printf("somewm: loaded Lua config from %s\n", config_paths[i]);
+
+			log_info("loaded config from %s", config_paths[i]);
 
 			/* Automatically load IPC module for CLI support (somewm extension) */
 			lua_getglobal(globalconf_L, "require");

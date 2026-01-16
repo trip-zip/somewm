@@ -19,6 +19,7 @@
 #include <stdlib.h>
 #include <alloca.h>   /* For alloca */
 #include <sys/types.h> /* For ssize_t */
+#include <wlr/util/log.h>
 
 void die(const char *fmt, ...);
 void *ecalloc(size_t nmemb, size_t size);
@@ -186,6 +187,13 @@ void _warn(int, const char *, const char *, ...)
             _warn(__LINE__, __func__, \
                     "Checking assertion failed: " #condition); \
     } while (0)
+
+/* Level-aware logging macros (uses wlroots logging)
+ * Log level is controlled by wlr_log_init() which respects globalconf.log_level.
+ * Use -d for debug, --verbose for info, or set awesome.log_level in Lua. */
+#define log_error(fmt, ...)  wlr_log(WLR_ERROR, fmt, ##__VA_ARGS__)
+#define log_info(fmt, ...)   wlr_log(WLR_INFO, fmt, ##__VA_ARGS__)
+#define log_debug(fmt, ...)  wlr_log(WLR_DEBUG, fmt, ##__VA_ARGS__)
 
 const char *a_current_time_str(void);
 

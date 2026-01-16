@@ -589,7 +589,6 @@ some_get_allocator(void)
 void
 some_compositor_quit(void)
 {
-	fprintf(stderr, "[COMPOSITOR_QUIT] Quitting GLib main loop\n");
 	if (globalconf.loop) {
 		g_main_loop_quit(globalconf.loop);
 	}

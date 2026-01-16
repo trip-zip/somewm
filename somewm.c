@@ -1318,9 +1318,6 @@ commitnotify(struct wl_listener *listener, void *data)
 
 	/* mark a pending resize as completed */
 	if (c->resize) {
-		warn("commitnotify: resize=%u, commit_serial=%u, will_clear=%s",
-		     c->resize, c->surface.xdg->current.configure_serial,
-		     (c->resize <= c->surface.xdg->current.configure_serial) ? "yes" : "no");
 		if (c->resize <= c->surface.xdg->current.configure_serial)
 			c->resize = 0;
 	}
@@ -3087,8 +3084,6 @@ mapnotify(struct wl_listener *listener, void *data)
 		if (!target_mon)
 			target_mon = selmon;
 		setmon(c, target_mon, 0);
-		warn("mapnotify[1]: after setmon, geometry=%dx%d, resize=%u, titlebar_top=%d",
-		     c->geometry.width, c->geometry.height, c->resize, c->titlebar[CLIENT_TITLEBAR_TOP].size);
 
 		/* Push client to Lua stack for signal emission */
 		luaA_object_push(L, c);
@@ -3144,11 +3139,8 @@ mapnotify(struct wl_listener *listener, void *data)
 		 * Reset c->resize to force re-send configure even if setmon()->resize()
 		 * already sent one (unflushed). This ensures the configure is flushed
 		 * before we enable the scene node. */
-		warn("mapnotify[2]: before apply_geo, geometry=%dx%d, resize=%u, titlebar_top=%d",
-		     c->geometry.width, c->geometry.height, c->resize, c->titlebar[CLIENT_TITLEBAR_TOP].size);
 		c->resize = 0;
 		apply_geometry_to_wlroots(c);
-		warn("mapnotify[3]: after apply_geo, resize=%u", c->resize);
 
 		/* Flush configure event to client immediately so it receives the tiled
 		 * geometry before we make it visible. Without this, the configure is
@@ -3590,28 +3582,7 @@ pointerfocus(Client *c, struct wlr_surface *surface, double sx, double sy,
 void
 printstatus(void)
 {
-	Monitor *m = NULL;
-	Client *c;
-
-	/* Status output for external status bars */
-	wl_list_for_each(m, &mons, link) {
-		if ((c = focustop(m))) {
-			printf("%s title %s\n", m->wlr_output->name, client_get_title(c));
-			printf("%s appid %s\n", m->wlr_output->name, client_get_appid(c));
-			printf("%s fullscreen %d\n", m->wlr_output->name, c->fullscreen);
-			printf("%s floating %d\n", m->wlr_output->name, some_client_get_floating(c));
-		} else {
-			printf("%s title \n", m->wlr_output->name);
-			printf("%s appid \n", m->wlr_output->name);
-			printf("%s fullscreen \n", m->wlr_output->name);
-			printf("%s floating \n", m->wlr_output->name);
-		}
-
-		printf("%s selmon %u\n", m->wlr_output->name, m == selmon);
-		/* Note: Tag bitmask output removed - use AwesomeWM wibox widgets instead */
-		/* Layout is now managed in Lua */
-	}
-	fflush(stdout);
+	/* Status output removed - use Lua signals (client.connect_signal) instead */
 }
 
 void
@@ -3732,17 +3703,6 @@ apply_geometry_to_wlroots(Client *c)
 	 * CRITICAL: Only send configure if there's no pending resize waiting for client commit.
 	 * Without this check, we flood the client with configure events on every refresh cycle,
 	 * which crashes Firefox and other clients that can't handle rapid configure floods. */
-	/* Debug: only log when we WILL send a configure (not on every refresh)
-	 * Note: Only for XDG clients - XWayland uses different surface union member */
-	if (!c->resize && c->client_type == XDGShell) {
-		int content_w = c->geometry.width - 2 * c->bw - titlebar_left - c->titlebar[CLIENT_TITLEBAR_RIGHT].size;
-		int content_h = c->geometry.height - 2 * c->bw - titlebar_top - c->titlebar[CLIENT_TITLEBAR_BOTTOM].size;
-		int32_t current_w = c->surface.xdg->toplevel->current.width;
-		int32_t current_h = c->surface.xdg->toplevel->current.height;
-		if (content_w != current_w || content_h != current_h)
-			warn("apply_geo: SENDING configure, request=%dx%d, current=%dx%d",
-			     content_w, content_h, current_w, current_h);
-	}
 	if (!c->resize) {
 		c->resize = client_set_size(c,
 				c->geometry.width - 2 * c->bw - titlebar_left - c->titlebar[CLIENT_TITLEBAR_RIGHT].size,
@@ -4104,9 +4064,7 @@ run(char *startup_cmd)
 		lua_settop(globalconf_L, 0);
 	}
 
-	fprintf(stderr, "somewm: Starting GLib main loop (AwesomeWM architecture)\n");
 	g_main_loop_run(globalconf.loop);
-	fprintf(stderr, "somewm: GLib main loop exited\n");
 
 	/* Cleanup */
 	g_source_destroy(wayland_source);
@@ -5619,7 +5577,7 @@ xwaylandready(struct wl_listener *listener, void *data)
 	/* Connect Lua signals for automatic EWMH property updates */
 	ewmh_init_lua();
 
-	fprintf(stderr, "somewm: EWMH support initialized for XWayland\n");
+	log_info("EWMH support initialized for XWayland");
 }
 #endif
 
@@ -5868,6 +5826,7 @@ main(int argc, char *argv[])
 	static struct option long_options[] = {
 		{"help",    no_argument,       0, 'h'},
 		{"version", no_argument,       0, 'v'},
+		{"verbose", no_argument,       0, 256},  /* info-level logging */
 		{"debug",   no_argument,       0, 'd'},
 		{"config",  required_argument, 0, 'c'},
 		{"search",  required_argument, 0, 'L'},
@@ -5896,6 +5855,9 @@ main(int argc, char *argv[])
 			break;
 		case 'd':
 			globalconf.log_level = 3;  /* WLR_DEBUG */
+			break;
+		case 256:  /* --verbose */
+			globalconf.log_level = 2;  /* WLR_INFO */
 			break;
 		case 'v':
 			show_version = 1;
@@ -5932,9 +5894,10 @@ main(int argc, char *argv[])
 	return EXIT_SUCCESS;
 
 usage:
-	die("Usage: %s [-v] [-d] [-c config] [-L search_path] [-s startup_command] [-k config]\n"
+	die("Usage: %s [-v] [-d] [--verbose] [-c config] [-L search_path] [-s startup_command] [-k config]\n"
 	    "  -v, --version      Show version and diagnostic info\n"
-	    "  -d, --debug        Enable debug logging\n"
+	    "      --verbose      Enable info-level logging (more output)\n"
+	    "  -d, --debug        Enable debug logging (maximum output)\n"
 	    "  -c, --config FILE  Use specified config file (AwesomeWM compatible)\n"
 	    "  -L, --search DIR   Add directory to Lua module search path\n"
 	    "  -s, --startup CMD  Run command after startup\n"

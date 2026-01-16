@@ -57,7 +57,6 @@ parse_modifier(const char *mod)
 	if (strcasecmp(mod, "Mod5") == 0) return BUTTON_MODIFIER_MOD5;
 	if (strcasecmp(mod, "Any") == 0) return BUTTON_MODIFIER_ANY;
 
-	fprintf(stderr, "[PARSE_MODIFIER] WARNING: Unknown modifier '%s', returning 0\n", mod);
 	return 0;
 }
 

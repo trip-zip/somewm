@@ -2220,13 +2220,9 @@ client_destroy_later(void)
     /* Only destroy if we have an X11 connection (XWayland is enabled and connected) */
     if(!globalconf.connection)
     {
-        fprintf(stderr, "[DESTROY_LATER] Warning: X11 windows queued but no connection!\n");
         globalconf.destroy_later_windows.len = 0;
         return;
     }
-
-    fprintf(stderr, "[DESTROY_LATER] Destroying %d X11 windows\n",
-            globalconf.destroy_later_windows.len);
 
     foreach(window, globalconf.destroy_later_windows)
     {

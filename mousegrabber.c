@@ -30,6 +30,7 @@
 #include "objects/mouse.h"
 #include "luaa.h"
 #include "common/lualib.h"
+#include "common/util.h"
 #include "globalconf.h"
 #include "somewm_api.h"
 
@@ -142,11 +143,10 @@ luaA_mousegrabber_run(lua_State *L)
     struct wlr_cursor *cursor;
     const char *cursor_name = NULL;
 
-    fprintf(stderr, "[MOUSEGRABBER_RUN] Called!\n");
+    log_debug("mousegrabber_run called");
 
     /* Check if mousegrabber already running */
     if (globalconf.mousegrabber != LUA_REFNIL) {
-        fprintf(stderr, "[MOUSEGRABBER_RUN] Already running, error!\n");
         return luaL_error(L, "mousegrabber already running");
     }
 

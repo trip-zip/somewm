@@ -12,6 +12,7 @@
 #include "luaa.h"
 #include "../somewm_api.h"
 #include "../somewm_types.h"
+#include "../common/util.h"
 
 #include <cairo.h>
 #include <wayland-server-core.h>
@@ -167,8 +168,7 @@ luaA_wibox_create(lua_State *L)
 	cairo_set_operator(wb->cr, CAIRO_OPERATOR_SOURCE);
 	cairo_paint(wb->cr);
 
-	fprintf(stderr, "[WIBOX] Created wibox: %dx%d at %d,%d (visible=%d)\n",
-		wb->width, wb->height, wb->x, wb->y, wb->visible);
+	log_debug("wibox created: %dx%d at %d,%d", wb->width, wb->height, wb->x, wb->y);
 
 	/* Return as lightuserdata */
 	lua_pushlightuserdata(L, wb);
@@ -258,8 +258,6 @@ luaA_wibox_show(lua_State *L)
 	if (!texture) {
 		/* Fall back to colored rectangle if texture creation fails */
 		float color[4] = {0.8f, 0.2f, 0.2f, 0.9f}; /* Red to show error */
-		fprintf(stderr, "[WIBOX] Failed to create texture, using fallback rect\n");
-
 		wb->background = wlr_scene_rect_create(wb->tree, wb->width, wb->height, color);
 		if (!wb->background) {
 			wlr_scene_node_destroy(&wb->tree->node);
@@ -275,7 +273,6 @@ luaA_wibox_show(lua_State *L)
 		/* Create SHM buffer from Cairo data using shared implementation */
 		buffer = drawable_create_buffer_from_data(wb->width, wb->height, wb->data, wb->stride);
 		if (!buffer) {
-			fprintf(stderr, "[WIBOX] Failed to create SHM buffer\n");
 			goto fallback_rect;
 		}
 
@@ -283,19 +280,16 @@ luaA_wibox_show(lua_State *L)
 		wb->buffer = buffer;
 		wb->buffer_node = wlr_scene_buffer_create(wb->tree, buffer);
 		if (!wb->buffer_node) {
-			fprintf(stderr, "[WIBOX] Failed to create scene buffer\n");
 			wlr_buffer_drop(buffer);
 			wb->buffer = NULL;
 			goto fallback_rect;
 		}
 
-		fprintf(stderr, "[WIBOX] Created SHM buffer successfully!\n");
 		goto success;
 
 fallback_rect:
 		{
 			float color[4] = {0.0f, 0.0f, 0.0f, 0.8f}; /* Semi-transparent black background */
-			fprintf(stderr, "[WIBOX] Using fallback rect\n");
 			wb->background = wlr_scene_rect_create(wb->tree, wb->width, wb->height, color);
 			if (!wb->background) {
 				if (wb->texture) {
@@ -318,7 +312,7 @@ success:
 	wlr_scene_node_set_enabled(&wb->tree->node, true);
 	wb->visible = 1;
 
-	fprintf(stderr, "[WIBOX] Wibox shown at %d,%d\n", wb->x, wb->y);
+	log_debug("wibox shown at %d,%d", wb->x, wb->y);
 	return 0;
 }
 
@@ -340,7 +334,7 @@ luaA_wibox_hide(lua_State *L)
 	}
 
 	wb->visible = 0;
-	fprintf(stderr, "[WIBOX] Wibox hidden\n");
+	log_debug("wibox hidden");
 	return 0;
 }
 
@@ -388,7 +382,6 @@ luaA_wibox_update(lua_State *L)
 	/* Create SHM buffer from updated Cairo data using shared implementation */
 	buffer = drawable_create_buffer_from_data(wb->width, wb->height, wb->data, wb->stride);
 	if (!buffer) {
-		fprintf(stderr, "[WIBOX] Failed to create SHM buffer for update\n");
 		return luaL_error(L, "Failed to create SHM buffer");
 	}
 
@@ -429,7 +422,6 @@ luaA_wibox_move(lua_State *L)
 	/* If wibox is visible, update scene node position immediately */
 	if (wb->visible && wb->tree) {
 		wlr_scene_node_set_position(&wb->tree->node, wb->x, wb->y);
-		fprintf(stderr, "[WIBOX] Moved to %d,%d\n", wb->x, wb->y);
 	}
 
 	return 0;
@@ -479,7 +471,7 @@ luaA_wibox_destroy(lua_State *L)
 	/* Free the wibox itself */
 	free(wb);
 
-	fprintf(stderr, "[WIBOX] Wibox destroyed\n");
+	log_debug("wibox destroyed");
 	return 0;
 }
 
