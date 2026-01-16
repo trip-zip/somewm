@@ -17,6 +17,17 @@
 somewm uses meson and bundles wlroots 0.19, so you don't need to install wlroots separately. This works on any distro regardless of which wlroots version they ship.
 
 **Arch Linux:**
+
+*From the AUR (recommended):*
+```bash
+yay -S somewm-git
+# or with paru:
+paru -S somewm-git
+```
+
+This installs somewm and all dependencies automatically. Skip to [Run](#3-run) after installation.
+
+*Manual installation:*
 ```bash
 sudo pacman -S meson ninja luajit lua51-lgi cairo pango gdk-pixbuf2 \
     wayland-protocols libinput libxkbcommon libdrm pixman dbus
