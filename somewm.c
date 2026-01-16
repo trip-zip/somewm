@@ -1958,6 +1958,7 @@ destroydecoration(struct wl_listener *listener, void *data)
 
 	wl_list_remove(&c->destroy_decoration.link);
 	wl_list_remove(&c->set_decoration_mode.link);
+	c->decoration = NULL;
 }
 
 void
