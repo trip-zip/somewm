@@ -392,7 +392,7 @@ luaA_button_check(uint32_t mods, uint32_t button)
  * BTN_SIDE (0x113/275) -> 8
  * BTN_EXTRA (0x114/276) -> 9
  */
-static uint32_t
+uint32_t
 translate_button_code(uint32_t linux_button)
 {
 	switch (linux_button) {

@@ -96,6 +96,9 @@ void luaA_drawable_button_emit(void *client_ptr, void *drawable_ptr, int x, int 
 int luaA_client_button_check(void *client_ptr, int x, int y, uint32_t button,
                              uint32_t mods, bool is_press);
 
+/* Translate Linux input button code to X11-style button number */
+uint32_t translate_button_code(uint32_t linux_button);
+
 /* Button class setup (AwesomeWM class system) */
 void button_class_setup(lua_State *L);
 
