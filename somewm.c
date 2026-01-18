@@ -5257,6 +5257,10 @@ xytonode(double x, double y, struct wlr_surface **psurface,
 					}
 				}
 			}
+		} else {
+			/* Skip parent walk for non-buffer nodes (e.g., scene rects) -
+			 * these are background elements that shouldn't intercept input */
+			continue;
 		}
 		/* Walk the tree to find a node that knows the client */
 		for (pnode = node; pnode && !c && !d; ) {
