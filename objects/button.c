@@ -480,7 +480,7 @@ emit_drawable_button_signal(lua_State *L, drawin_t *drawin, int x, int y,
  * \return Number of matching buttons found
  */
 static int
-drawin_emit_button_signals(lua_State *L, drawin_t *drawin, uint32_t button,
+drawin_emit_button_signals(lua_State *L, int drawin_idx, drawin_t *drawin, uint32_t button,
                            uint32_t mods, bool is_press)
 {
 	const char *signal_name;
@@ -513,8 +513,8 @@ drawin_emit_button_signals(lua_State *L, drawin_t *drawin, uint32_t button,
 
 		if (btn_matches && mods_match) {
 
-			/* Push button object */
-			luaA_object_push(L, btn);
+			/* Push button object from drawin's uservalue table */
+			luaA_object_push_item(L, drawin_idx, btn);
 
 			/* Emit press/release signal on button object (no args) */
 			luaA_awm_object_emit_signal(L, -1, signal_name, 0);
@@ -563,8 +563,10 @@ luaA_drawin_button_check(void *drawin_ptr, int x, int y, uint32_t button,
 	/* Stage 1: Emit button::press/release on drawable */
 	emit_drawable_button_signal(L, drawin, x, y, button, mods, is_press);
 
-	/* Stage 2: Check button array and emit signals on matching button objects */
-	matched = drawin_emit_button_signals(L, drawin, button, mods, is_press);
+	/* Stage 2: Check button array and emit signals on matching button objects
+	 * Drawin is at -1 on stack, pass this index so buttons can be looked up
+	 * from drawin's uservalue table via luaA_object_push_item() */
+	matched = drawin_emit_button_signals(L, -1, drawin, button, mods, is_press);
 
 	/* Pop drawin */
 	lua_pop(L, 1);
