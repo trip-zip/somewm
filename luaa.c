@@ -1306,6 +1306,62 @@ some_notify_activity(void)
 /** Get global idle state */
 bool some_is_user_idle(void) { return user_is_idle; }
 
+/* ==========================================================================
+ * DPMS (Display Power Management) API
+ * ========================================================================== */
+
+/** awesome:dpms_off() - Turn off all displays
+ * Sets all monitors to DPMS off (sleep) state
+ */
+static int
+luaA_awesome_dpms_off(lua_State *L)
+{
+	struct wl_list *monitors = some_get_monitors();
+	Monitor *m;
+	struct wlr_output_state state;
+
+	wl_list_for_each(m, monitors, link) {
+		if (m->asleep)
+			continue;  /* Already off */
+
+		wlr_output_state_init(&state);
+		m->gamma_lut_changed = 1;  /* Reapply gamma when re-enabling */
+		wlr_output_state_set_enabled(&state, false);
+		wlr_output_commit_state(m->wlr_output, &state);
+		wlr_output_state_finish(&state);
+		m->asleep = 1;
+	}
+
+	luaA_emit_signal_global_with_stack(L, "dpms::off", 0);
+	return 0;
+}
+
+/** awesome:dpms_on() - Turn on all displays
+ * Wakes all monitors from DPMS off state
+ */
+static int
+luaA_awesome_dpms_on(lua_State *L)
+{
+	struct wl_list *monitors = some_get_monitors();
+	Monitor *m;
+	struct wlr_output_state state;
+
+	wl_list_for_each(m, monitors, link) {
+		if (!m->asleep)
+			continue;  /* Already on */
+
+		wlr_output_state_init(&state);
+		m->gamma_lut_changed = 1;  /* Reapply gamma LUT */
+		wlr_output_state_set_enabled(&state, true);
+		wlr_output_commit_state(m->wlr_output, &state);
+		wlr_output_state_finish(&state);
+		m->asleep = 0;
+	}
+
+	luaA_emit_signal_global_with_stack(L, "dpms::on", 0);
+	return 0;
+}
+
 /* Getter functions for somewm.c to query lock state */
 int some_is_lua_locked(void) { return lua_locked; }
 drawin_t *some_get_lua_lock_surface(void) { return lua_lock_surface; }
@@ -1346,6 +1402,9 @@ static const luaL_Reg awesome_methods[] = {
 	{ "set_idle_timeout", luaA_awesome_set_idle_timeout },
 	{ "clear_idle_timeout", luaA_awesome_clear_idle_timeout },
 	{ "clear_all_idle_timeouts", luaA_awesome_clear_all_idle_timeouts },
+	/* DPMS (display power management) API methods */
+	{ "dpms_off", luaA_awesome_dpms_off },
+	{ "dpms_on", luaA_awesome_dpms_on },
 	{ NULL, NULL }
 };
 
@@ -1454,6 +1513,19 @@ luaA_awesome_index(lua_State *L)
 		for (int i = 0; i < idle_timeout_count; i++) {
 			lua_pushinteger(L, idle_timeouts[i].seconds);
 			lua_setfield(L, -2, idle_timeouts[i].name);
+		}
+		return 1;
+	}
+
+	/* DPMS state property */
+	if (A_STREQ(key, "dpms_state")) {
+		/* Return table of {output_name = "on"/"off", ...} */
+		struct wl_list *monitors = some_get_monitors();
+		Monitor *m;
+		lua_newtable(L);
+		wl_list_for_each(m, monitors, link) {
+			lua_pushstring(L, m->asleep ? "off" : "on");
+			lua_setfield(L, -2, m->wlr_output->name);
 		}
 		return 1;
 	}
