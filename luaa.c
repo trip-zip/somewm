@@ -165,6 +165,7 @@ luaA_class_handlers_t mouse_handlers = {LUA_REFNIL, LUA_REFNIL};
 /* Lock state for Lua-controlled lockscreen */
 static int lua_locked = 0;           /* Is session locked via Lua API? */
 static int lua_authenticated = 0;    /* Has authenticate() succeeded since last lock? */
+static int auth_attempt_count = 0;   /* Failed auth attempts since last lock */
 static drawin_t *lua_lock_surface = NULL;  /* Registered lock surface (wibox) */
 static int lua_lock_surface_ref = LUA_NOREF;  /* Lua registry ref to prevent GC */
 
@@ -1083,6 +1084,7 @@ luaA_awesome_lock(lua_State *L)
 
 	lua_locked = 1;
 	lua_authenticated = 0;  /* Reset auth on new lock */
+	auth_attempt_count = 0; /* Reset attempt counter on new lock */
 
 	/* Activate lock in compositor (input routing, layer changes) */
 	some_activate_lua_lock();
@@ -1113,11 +1115,12 @@ luaA_awesome_unlock(lua_State *L)
 		return 1;
 	}
 
-	/* Deactivate lock in compositor */
-	some_deactivate_lua_lock();
-
+	/* Clear lock state BEFORE deactivating so focusclient() works */
 	lua_locked = 0;
 	lua_authenticated = 0;
+
+	/* Deactivate lock in compositor (restores focus) */
+	some_deactivate_lua_lock();
 
 	/* Emit lock::deactivate signal */
 	luaA_emit_signal_global("lock::deactivate");
@@ -1201,6 +1204,12 @@ luaA_awesome_authenticate(lua_State *L)
 
 	if (success) {
 		lua_authenticated = 1;
+		auth_attempt_count = 0;  /* Reset on success */
+	} else {
+		auth_attempt_count++;
+		/* Emit lock::auth_failed signal with attempt count */
+		lua_pushinteger(L, auth_attempt_count);
+		luaA_emit_signal_global_with_stack(L, "lock::auth_failed", 1);
 	}
 
 	lua_pushboolean(L, success);
