@@ -3373,10 +3373,11 @@ motionnotify(uint32_t time, struct wlr_input_device *device, double dx, double d
 		lua_State *L = globalconf_get_lua_State();
 		Client *current_client = NULL;
 		drawin_t *current_drawin = NULL;
+		drawable_t *titlebar_drawable = NULL;
 		bool client_valid = false;
 
 		/* Find what's under cursor */
-		xytonode(cursor->x, cursor->y, NULL, &current_client, NULL, &current_drawin, NULL, NULL, NULL);
+		xytonode(cursor->x, cursor->y, NULL, &current_client, NULL, &current_drawin, &titlebar_drawable, NULL, NULL);
 
 		/* Validate client pointer - xytonode can return stale pointers from scene graph
 		 * if a node's data field wasn't cleared when the client was destroyed */
@@ -3410,6 +3411,32 @@ motionnotify(uint32_t time, struct wlr_input_device *device, double dx, double d
 			lua_pushinteger(L, (int)(cursor->y - current_client->geometry.y));
 			luaA_object_emit_signal(L, -3, "mouse::move", 2);
 			lua_pop(L, 1);
+
+			/* Check if mouse is over a titlebar drawable - emit signals for widget hover */
+			if (titlebar_drawable) {
+				luaA_object_push(L, current_client);
+				luaA_object_push_item(L, -1, titlebar_drawable);
+				if (lua_isnil(L, -1)) {
+					lua_pop(L, 2);
+				} else {
+				event_drawable_under_mouse(L, -1);
+
+				/* Emit mouse::move on titlebar drawable with local coordinates */
+				int tb_x = (int)(cursor->x - current_client->geometry.x);
+				int tb_y = (int)(cursor->y - current_client->geometry.y);
+				client_get_drawable_offset(current_client, &tb_x, &tb_y);
+				lua_pushinteger(L, tb_x);
+				lua_pushinteger(L, tb_y);
+				luaA_object_emit_signal(L, -3, "mouse::move", 2);
+
+				lua_pop(L, 2);  /* pop drawable and client */
+				}
+			} else if (globalconf.drawable_under_mouse) {
+				/* Left titlebar area - emit leave on previous drawable */
+				lua_pushnil(L);
+				event_drawable_under_mouse(L, -1);
+				lua_pop(L, 1);
+			}
 
 		} else if (current_drawin) {
 			/* Mouse over drawin - emit signals on drawable for widget hover */
