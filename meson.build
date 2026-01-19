@@ -143,6 +143,16 @@ endif
 wlroots_version = '0.19'
 message('Using wlroots version: ' + wlroots_version)
 
+# PAM authentication (optional, for lock screen)
+pam_option = get_option('pam')
+pam_dep = dependency('pam', required: pam_option)
+have_pam = pam_dep.found()
+if have_pam
+  message('PAM authentication enabled')
+else
+  message('PAM authentication disabled (lock screen will require external auth)')
+endif
+
 # ==============================================================================
 # Wayland Protocol Generation
 # ==============================================================================
@@ -246,6 +256,10 @@ if have_3fg_drag
   add_project_arguments('-DHAVE_LIBINPUT_3FG_DRAG', language: 'c')
 endif
 
+if have_pam
+  add_project_arguments('-DHAVE_PAM', language: 'c')
+endif
+
 # Development flags
 add_project_arguments(
   '-Wno-unused-parameter',
@@ -285,6 +299,7 @@ somewm_sources = [
   'mousegrabber.c',
   'gesture.c',
   'selection.c',
+  'pam_auth.c',
   # Common
   'common/luaclass.c',
   'common/luaobject.c',
@@ -337,6 +352,10 @@ all_deps = [
 
 if have_xwayland
   all_deps += [xcb, xcb_icccm]
+endif
+
+if have_pam
+  all_deps += [pam_dep]
 endif
 
 somewm_exe = executable(
