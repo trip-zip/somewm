@@ -5158,6 +5158,10 @@ drawin_accepts_input_at(drawin_t *d, double local_x, double local_y)
 	if (!shape)
 		return true;
 
+	/* Verify surface is valid before accessing (fixes issue #197) */
+	if (cairo_surface_status(shape) != CAIRO_STATUS_SUCCESS)
+		return true;
+
 	/* Get shape dimensions */
 	width = cairo_image_surface_get_width(shape);
 	height = cairo_image_surface_get_height(shape);
