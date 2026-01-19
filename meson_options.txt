@@ -4,3 +4,10 @@ option(
   value: 'auto',
   description: 'Enable Xwayland support',
 )
+
+option(
+  'pam',
+  type: 'feature',
+  value: 'auto',
+  description: 'Enable PAM authentication for lock screen',
+)

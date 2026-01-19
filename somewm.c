@@ -201,6 +201,11 @@ static void keypressmod(struct wl_listener *listener, void *data);
 static int keyrepeat(void *data);
 void killclient(const Arg *arg);
 static void locksession(struct wl_listener *listener, void *data);
+/* Lua lock API - defined in luaa.c */
+int some_is_lua_locked(void);
+drawin_t *some_get_lua_lock_surface(void);
+/* Lua idle API - defined in luaa.c */
+void some_notify_activity(void);
 static void mapnotify(struct wl_listener *listener, void *data);
 static void maximizenotify(struct wl_listener *listener, void *data);
 void monocle(Monitor *m);
@@ -659,6 +664,7 @@ axisnotify(struct wl_listener *listener, void *data)
 	 * for example when you move the scroll wheel. */
 	struct wlr_pointer_axis_event *event = data;
 	wlr_idle_notifier_v1_notify_activity(idle_notifier, seat);
+	some_notify_activity();
 
 	/* If mousegrabber is active, route event to Lua callback */
 	if (mousegrabber_isrunning()) {
@@ -777,6 +783,7 @@ buttonpress(struct wl_listener *listener, void *data)
 	Client *c;
 
 	wlr_idle_notifier_v1_notify_activity(idle_notifier, seat);
+	some_notify_activity();
 
 	/* Update globalconf button state tracking FIRST, before any early returns.
 	 * This ensures mousegrabber callbacks receive accurate button states.
@@ -857,6 +864,10 @@ buttonpress(struct wl_listener *listener, void *data)
 
 		/* Change focus if the button was _pressed_ over a client or layer surface */
 		xytonode(cursor->x, cursor->y, NULL, &c, &l, &drawin, &titlebar_drawable, NULL, NULL);
+
+		/* For Lua lock, only allow interaction with the lock surface */
+		if (some_is_lua_locked() && drawin != some_get_lua_lock_surface())
+			return;
 
 		/* Get keyboard modifiers */
 		keyboard = wlr_seat_get_keyboard(seat);
@@ -951,7 +962,7 @@ buttonpress(struct wl_listener *listener, void *data)
 		cursor_mode = CurNormal;
 
 		/* Check if a drawin was released over */
-		if (!locked) {
+		if (!locked && !some_is_lua_locked()) {
 			xytonode(cursor->x, cursor->y, NULL, &c, NULL, &drawin, &titlebar_drawable, NULL, NULL);
 
 			/* Get keyboard modifiers */
@@ -2039,6 +2050,68 @@ destroylocksurface(struct wl_listener *listener, void *data)
 	}
 }
 
+/* ==========================================================================
+ * Lua Lock API Implementation
+ * ========================================================================== */
+
+/** Activate Lua-controlled lock mode
+ * - Enables locked_bg to block underlying content
+ * - Gives keyboard focus to lock surface
+ */
+void
+some_activate_lua_lock(void)
+{
+	drawin_t *lock_surface = some_get_lua_lock_surface();
+
+	/* Note: We don't enable locked_bg for Lua locks because the Lua-provided
+	 * lock surface (wibox) already covers the whole screen with its own background.
+	 * locked_bg is only used for external session-lock-v1 clients. */
+
+	/* Clear current keyboard focus */
+	wlr_seat_keyboard_notify_clear_focus(seat);
+
+	/* If we have a lock surface, give it keyboard focus */
+	if (lock_surface && lock_surface->scene_tree) {
+		/* Move lock surface to top layer (LyrBlock) */
+		wlr_scene_node_reparent(&lock_surface->scene_tree->node, layers[LyrBlock]);
+
+		/* Ensure lock surface is above locked_bg */
+		wlr_scene_node_raise_to_top(&lock_surface->scene_tree->node);
+
+		/* Focus the lock surface's drawable
+		 * Note: drawin doesn't have a wlr_surface, so we use seat keyboard clear
+		 * and let the Lua side handle input via key::press signals */
+	}
+}
+
+/** Deactivate Lua-controlled lock mode
+ * - Disables locked_bg
+ * - Restores normal focus
+ */
+void
+some_deactivate_lua_lock(void)
+{
+	drawin_t *lock_surface = some_get_lua_lock_surface();
+
+	/* Note: We didn't enable locked_bg for Lua locks, so nothing to disable */
+
+	/* Move lock surface back to normal layer (LyrWibox) */
+	if (lock_surface && lock_surface->scene_tree) {
+		wlr_scene_node_reparent(&lock_surface->scene_tree->node, layers[LyrWibox]);
+	}
+
+	/* Restore focus to top client */
+	focusclient(focustop(selmon), 0);
+	motionnotify(0, NULL, 0, 0, 0, 0);
+}
+
+/** Check if idle is inhibited by any client (for Lua API) */
+bool
+some_is_idle_inhibited(void)
+{
+	return !wl_list_empty(&idle_inhibit_mgr->inhibitors);
+}
+
 void
 destroynotify(struct wl_listener *listener, void *data)
 {
@@ -2248,7 +2321,7 @@ focusclient(Client *c, int lift)
 	struct wlr_surface *surface;
 	struct wlr_keyboard *kb;
 
-	if (locked)
+	if (locked || some_is_lua_locked())
 		return;
 
 	/* Raise client in stacking order if requested */
@@ -2749,8 +2822,11 @@ keypress(struct wl_listener *listener, void *data)
 	}
 
 	wlr_idle_notifier_v1_notify_activity(idle_notifier, seat);
+	some_notify_activity();
 
-	/* Check if keygrabber is active - if so, route event to Lua callback */
+	/* Check if keygrabber is active - if so, route event to Lua callback.
+	 * Note: Keygrabber is allowed when Lua-locked (for lock screen password input)
+	 * but NOT when externally locked (session-lock-v1 protocol handles that). */
 	if (!locked && event->state == WL_KEYBOARD_KEY_STATE_PRESSED && some_keygrabber_is_running()) {
 		/* Get the key name from the keysym */
 		char keyname[64];
@@ -2786,6 +2862,11 @@ keypress(struct wl_listener *listener, void *data)
 	}
 
 	if (handled)
+		return;
+
+	/* Don't pass keys to clients when Lua-locked (focus is cleared anyway,
+	 * but this is a safety check) */
+	if (some_is_lua_locked())
 		return;
 
 	wlr_seat_set_keyboard(seat, &group->wlr_group->keyboard);
@@ -3315,6 +3396,7 @@ motionnotify(uint32_t time, struct wlr_input_device *device, double dx, double d
 
 		wlr_cursor_move(cursor, device, dx, dy);
 		wlr_idle_notifier_v1_notify_activity(idle_notifier, seat);
+		some_notify_activity();
 	}
 
 	/* Update drag icon's position */
@@ -3564,6 +3646,12 @@ pointerfocus(Client *c, struct wlr_surface *surface, double sx, double sy,
 
 	/* If surface is NULL, clear pointer focus */
 	if (!surface) {
+		wlr_seat_pointer_notify_clear_focus(seat);
+		return;
+	}
+
+	/* Don't give pointer focus to clients when Lua-locked */
+	if (some_is_lua_locked()) {
 		wlr_seat_pointer_notify_clear_focus(seat);
 		return;
 	}
