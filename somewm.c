@@ -2054,6 +2054,9 @@ destroylocksurface(struct wl_listener *listener, void *data)
  * Lua Lock API Implementation
  * ========================================================================== */
 
+/* Stores the focused client before locking, for restoration on unlock */
+static Client *pre_lock_focused_client = NULL;
+
 /** Activate Lua-controlled lock mode
  * - Enables locked_bg to block underlying content
  * - Gives keyboard focus to lock surface
@@ -2066,6 +2069,9 @@ some_activate_lua_lock(void)
 	/* Note: We don't enable locked_bg for Lua locks because the Lua-provided
 	 * lock surface (wibox) already covers the whole screen with its own background.
 	 * locked_bg is only used for external session-lock-v1 clients. */
+
+	/* Save currently focused client for restoration on unlock */
+	pre_lock_focused_client = focustop(selmon);
 
 	/* Clear current keyboard focus */
 	wlr_seat_keyboard_notify_clear_focus(seat);
@@ -2100,8 +2106,13 @@ some_deactivate_lua_lock(void)
 		wlr_scene_node_reparent(&lock_surface->scene_tree->node, layers[LyrWibox]);
 	}
 
-	/* Restore focus to top client */
-	focusclient(focustop(selmon), 0);
+	/* Restore focus to pre-lock client if still valid, otherwise top client */
+	if (pre_lock_focused_client && pre_lock_focused_client->scene) {
+		focusclient(pre_lock_focused_client, 1);
+	} else {
+		focusclient(focustop(selmon), 1);
+	}
+	pre_lock_focused_client = NULL;
 	motionnotify(0, NULL, 0, 0, 0, 0);
 }
 
