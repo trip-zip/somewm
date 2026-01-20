@@ -370,6 +370,11 @@ install_data(
 )
 
 install_data(
+  'somewm.portal',
+  install_dir: get_option('datadir') / 'xdg-desktop-portal/portals'
+)
+
+install_data(
   'somewmrc.lua',
   rename: 'rc.lua',
   install_dir: get_option('sysconfdir') / 'xdg/somewm',

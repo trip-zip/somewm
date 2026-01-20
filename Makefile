@@ -31,6 +31,7 @@ uninstall:
 	rm -f /usr/local/bin/somewm /usr/local/bin/somewm-client
 	rm -f /usr/local/share/man/man1/somewm.1
 	rm -f /usr/local/share/wayland-sessions/somewm.desktop
+	rm -f /usr/local/share/xdg-desktop-portal/portals/somewm.portal
 	rm -rf /usr/local/share/somewm
 	rm -rf /usr/local/etc/xdg/somewm
 
