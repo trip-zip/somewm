@@ -235,16 +235,21 @@ typedef struct
         int tap_to_click;           /* -1=device default, 0=disabled, 1=enabled */
         int tap_and_drag;           /* -1=device default, 0=disabled, 1=enabled */
         int drag_lock;              /* -1=device default, 0=disabled, 1=enabled */
+        int tap_3fg_drag;           /* -1=device default, 0=disabled, 1=enabled */
         int natural_scrolling;      /* -1=device default, 0=disabled, 1=enabled */
         int disable_while_typing;   /* -1=device default, 0=disabled, 1=enabled */
+        int dwtp;                   /* -1=device default, 0=disabled, 1=enabled (disable while trackpoint) */
         int left_handed;            /* -1=device default, 0=disabled, 1=enabled */
         int middle_button_emulation;/* -1=device default, 0=disabled, 1=enabled */
         char *scroll_method;        /* String: "no_scroll", "two_finger", "edge", "button" */
+        int scroll_button;          /* Button for scroll-on-button mode, 0=default */
+        int scroll_button_lock;     /* -1=device default, 0=disabled, 1=enabled */
         char *click_method;         /* String: "none", "button_areas", "clickfinger" */
         char *send_events_mode;     /* String: "enabled", "disabled", "disabled_on_external_mouse" */
         char *accel_profile;        /* String: "flat", "adaptive" */
         double accel_speed;         /* -1.0 to 1.0 */
         char *tap_button_map;       /* String: "lrm", "lmr" */
+        char *clickfinger_button_map; /* String: "lrm", "lmr" */
     } input;
 
     /** Logging configuration */

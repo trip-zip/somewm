@@ -1778,6 +1778,15 @@ apply_input_settings_to_device(struct libinput_device *device)
 		}
 	}
 
+	/* Three-finger drag (libinput 1.27+) */
+#ifdef LIBINPUT_CONFIG_3FG_DRAG_ENABLED_3FG
+	if (libinput_device_config_3fg_drag_get_finger_count(device) >= 3
+			&& globalconf.input.tap_3fg_drag >= 0)
+		libinput_device_config_3fg_drag_set_enabled(device,
+			globalconf.input.tap_3fg_drag ? LIBINPUT_CONFIG_3FG_DRAG_ENABLED_3FG
+			                              : LIBINPUT_CONFIG_3FG_DRAG_DISABLED);
+#endif
+
 	if (libinput_device_config_scroll_has_natural_scroll(device)
 			&& globalconf.input.natural_scrolling >= 0)
 		libinput_device_config_scroll_set_natural_scroll_enabled(device,
@@ -1787,6 +1796,11 @@ apply_input_settings_to_device(struct libinput_device *device)
 			&& globalconf.input.disable_while_typing >= 0)
 		libinput_device_config_dwt_set_enabled(device,
 			globalconf.input.disable_while_typing);
+
+	/* Disable while trackpoint in use (ThinkPad feature) */
+	if (libinput_device_config_dwtp_is_available(device)
+			&& globalconf.input.dwtp >= 0)
+		libinput_device_config_dwtp_set_enabled(device, globalconf.input.dwtp);
 
 	if (libinput_device_config_left_handed_is_available(device)
 			&& globalconf.input.left_handed >= 0)
@@ -1813,6 +1827,16 @@ apply_input_settings_to_device(struct libinput_device *device)
 		libinput_device_config_scroll_set_method(device, method);
 	}
 
+	/* Scroll button for scroll-on-button-down mode */
+	if (globalconf.input.scroll_button > 0)
+		libinput_device_config_scroll_set_button(device, globalconf.input.scroll_button);
+
+	/* Scroll button lock (toggle vs hold) */
+	if (globalconf.input.scroll_button_lock >= 0)
+		libinput_device_config_scroll_set_button_lock(device,
+			globalconf.input.scroll_button_lock ? LIBINPUT_CONFIG_SCROLL_BUTTON_LOCK_ENABLED
+			                                    : LIBINPUT_CONFIG_SCROLL_BUTTON_LOCK_DISABLED);
+
 	/* Convert click_method string to enum */
 	if (libinput_device_config_click_get_methods(device) != LIBINPUT_CONFIG_CLICK_METHOD_NONE
 			&& globalconf.input.click_method) {
@@ -1825,6 +1849,16 @@ apply_input_settings_to_device(struct libinput_device *device)
 			method = LIBINPUT_CONFIG_CLICK_METHOD_CLICKFINGER;
 		libinput_device_config_click_set_method(device, method);
 	}
+
+	/* Clickfinger button map (like tap_button_map but for clickfinger mode) */
+#ifdef LIBINPUT_CONFIG_CLICKFINGER_MAP_LRM
+	if (globalconf.input.clickfinger_button_map) {
+		enum libinput_config_clickfinger_button_map map = LIBINPUT_CONFIG_CLICKFINGER_MAP_LRM;
+		if (strcmp(globalconf.input.clickfinger_button_map, "lmr") == 0)
+			map = LIBINPUT_CONFIG_CLICKFINGER_MAP_LMR;
+		libinput_device_config_click_set_clickfinger_button_map(device, map);
+	}
+#endif
 
 	/* Convert send_events_mode string to enum */
 	if (libinput_device_config_send_events_get_modes(device)

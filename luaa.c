@@ -876,10 +876,14 @@ luaA_awesome_set_input_setting(lua_State *L)
 		globalconf.input.tap_and_drag = luaL_checkinteger(L, 2);
 	} else if (strcmp(key, "drag_lock") == 0) {
 		globalconf.input.drag_lock = luaL_checkinteger(L, 2);
+	} else if (strcmp(key, "tap_3fg_drag") == 0) {
+		globalconf.input.tap_3fg_drag = luaL_checkinteger(L, 2);
 	} else if (strcmp(key, "natural_scrolling") == 0) {
 		globalconf.input.natural_scrolling = luaL_checkinteger(L, 2);
 	} else if (strcmp(key, "disable_while_typing") == 0) {
 		globalconf.input.disable_while_typing = luaL_checkinteger(L, 2);
+	} else if (strcmp(key, "dwtp") == 0) {
+		globalconf.input.dwtp = luaL_checkinteger(L, 2);
 	} else if (strcmp(key, "left_handed") == 0) {
 		globalconf.input.left_handed = luaL_checkinteger(L, 2);
 	} else if (strcmp(key, "middle_button_emulation") == 0) {
@@ -888,6 +892,10 @@ luaA_awesome_set_input_setting(lua_State *L)
 		const char *val = lua_isnil(L, 2) ? NULL : luaL_checkstring(L, 2);
 		free(globalconf.input.scroll_method);
 		globalconf.input.scroll_method = val ? strdup(val) : NULL;
+	} else if (strcmp(key, "scroll_button") == 0) {
+		globalconf.input.scroll_button = luaL_checkinteger(L, 2);
+	} else if (strcmp(key, "scroll_button_lock") == 0) {
+		globalconf.input.scroll_button_lock = luaL_checkinteger(L, 2);
 	} else if (strcmp(key, "click_method") == 0) {
 		const char *val = lua_isnil(L, 2) ? NULL : luaL_checkstring(L, 2);
 		free(globalconf.input.click_method);
@@ -906,6 +914,10 @@ luaA_awesome_set_input_setting(lua_State *L)
 		const char *val = lua_isnil(L, 2) ? NULL : luaL_checkstring(L, 2);
 		free(globalconf.input.tap_button_map);
 		globalconf.input.tap_button_map = val ? strdup(val) : NULL;
+	} else if (strcmp(key, "clickfinger_button_map") == 0) {
+		const char *val = lua_isnil(L, 2) ? NULL : luaL_checkstring(L, 2);
+		free(globalconf.input.clickfinger_button_map);
+		globalconf.input.clickfinger_button_map = val ? strdup(val) : NULL;
 	} else {
 		return luaL_error(L, "Unknown input setting: %s", key);
 	}
