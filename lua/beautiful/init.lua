@@ -230,7 +230,6 @@ end
 function beautiful.get_font_height(name)
     local font_data = load_font(name)
     local height = font_data and font_data.height or 0
-    print("[BEAUTIFUL] get_font_height(" .. tostring(name) .. ") = " .. height)
     return height
 end
 
@@ -264,10 +263,6 @@ end
 -- @treturn true|nil True if successful, nil in case of error.
 -- @staticfct beautiful.init
 function beautiful.init(config)
-    print("[BEAUTIFUL] beautiful.init() called with config type: " .. type(config))
-    if type(config) == "string" then
-        print("[BEAUTIFUL] Config path: " .. config)
-    end
     if config then
         local state, t_theme = nil, nil
         local homedir = os.getenv("HOME")
@@ -298,12 +293,8 @@ function beautiful.init(config)
             end
 
             if theme.font then
-                print("[BEAUTIFUL] Setting font: " .. theme.font)
                 set_font(theme.font)
-            else
-                print("[BEAUTIFUL] WARNING: theme.font is nil!")
             end
-            print("[BEAUTIFUL] Theme loaded successfully, font set")
             return true
         else
             rawset(beautiful, "theme_path", nil)

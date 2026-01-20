@@ -9,7 +9,7 @@
 
 -include .local.mk
 
-.PHONY: all install clean setup reconfigure test test-unit test-integration test-asan test-one test-visual test-one-visual build-test
+.PHONY: all install uninstall clean setup reconfigure test test-unit test-integration test-asan test-one test-visual test-one-visual build-test
 
 # Default build: WITH ASAN for development
 all:
@@ -26,6 +26,14 @@ build-test:
 
 install:
 	meson install -C build
+
+uninstall:
+	rm -f /usr/local/bin/somewm /usr/local/bin/somewm-client
+	rm -f /usr/local/share/man/man1/somewm.1
+	rm -f /usr/local/share/wayland-sessions/somewm.desktop
+	rm -f /usr/local/share/xdg-desktop-portal/portals/somewm.portal
+	rm -rf /usr/local/share/somewm
+	rm -rf /usr/local/etc/xdg/somewm
 
 clean:
 	rm -rf build build-test

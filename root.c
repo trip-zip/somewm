@@ -473,16 +473,20 @@ luaA_root_button_check(lua_State *L, uint32_t button, uint32_t mods,
 	button_array_t *buttons = (button_array_t *)&globalconf.buttons;
 	const char *signal_name = is_press ? "press" : "release";
 	int matched = 0;
+	uint32_t translated_button;
 
 	(void)x;
 	(void)y;
+
+	/* Translate Linux input code to X11-style button number */
+	translated_button = translate_button_code(button);
 
 	/* Iterate through root button array */
 	for (int i = 0; i < buttons->len; i++) {
 		button_t *btn = buttons->tab[i];
 
-		/* Match button number (0 = any button) */
-		bool button_matches = (btn->button == 0 || btn->button == button);
+		/* Match button number (0 = any button) - use translated code */
+		bool button_matches = (btn->button == 0 || btn->button == translated_button);
 
 		/* Match modifiers (0 = any modifiers) */
 		bool mods_match = (btn->modifiers == 0 || btn->modifiers == mods);

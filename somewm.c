@@ -255,6 +255,7 @@ void zoom(const Arg *arg);
 
 /* variables */
 static pid_t child_pid = -1;
+static uint32_t next_client_id = 1;
 
 static int locked;
 int running = 1;  /* Non-static so somewm_api.c can access it */
@@ -1317,9 +1318,6 @@ commitnotify(struct wl_listener *listener, void *data)
 
 	/* mark a pending resize as completed */
 	if (c->resize) {
-		warn("commitnotify: resize=%u, commit_serial=%u, will_clear=%s",
-		     c->resize, c->surface.xdg->current.configure_serial,
-		     (c->resize <= c->surface.xdg->current.configure_serial) ? "yes" : "no");
 		if (c->resize <= c->surface.xdg->current.configure_serial)
 			c->resize = 0;
 	}
@@ -1712,6 +1710,9 @@ createnotify(struct wl_listener *listener, void *data)
 	c = client_new(L);
 	/* client_new() leaves the client on the Lua stack at index -1 */
 
+	/* Assign unique client ID (Sway-style incrementing counter) */
+	c->id = next_client_id++;
+
 	/* Initialize opacity to -1 (unset) so commitnotify doesn't apply 0% opacity.
 	 * -1 means "use default" (fully opaque). 0 would mean fully transparent. */
 	c->opacity = -1;
@@ -1957,6 +1958,7 @@ destroydecoration(struct wl_listener *listener, void *data)
 
 	wl_list_remove(&c->destroy_decoration.link);
 	wl_list_remove(&c->set_decoration_mode.link);
+	c->decoration = NULL;
 }
 
 void
@@ -2081,6 +2083,22 @@ destroynotify(struct wl_listener *listener, void *data)
 			wl_list_remove(&c->unmap.link);
 			wl_list_remove(&c->maximize.link);
 		}
+		/* Clean up foreign toplevel handle if not already done by unmapnotify */
+		if (c->toplevel_handle) {
+			wl_list_remove(&c->foreign_request_activate.link);
+			wl_list_remove(&c->foreign_request_close.link);
+			wl_list_remove(&c->foreign_request_fullscreen.link);
+			wl_list_remove(&c->foreign_request_maximize.link);
+			wl_list_remove(&c->foreign_request_minimize.link);
+			wlr_foreign_toplevel_handle_v1_destroy(c->toplevel_handle);
+			c->toplevel_handle = NULL;
+		}
+		/* Clean up decoration listeners if decoration exists */
+		if (c->decoration) {
+			wl_list_remove(&c->set_decoration_mode.link);
+			wl_list_remove(&c->destroy_decoration.link);
+			c->decoration = NULL;
+		}
 		return;  // Skip client_unmanage()
 	}
 
@@ -2137,6 +2155,24 @@ destroynotify(struct wl_listener *listener, void *data)
 		wl_list_remove(&c->map.link);
 		wl_list_remove(&c->unmap.link);
 		wl_list_remove(&c->maximize.link);
+	}
+
+	/* Clean up foreign toplevel handle if not already done by unmapnotify */
+	if (c->toplevel_handle) {
+		wl_list_remove(&c->foreign_request_activate.link);
+		wl_list_remove(&c->foreign_request_close.link);
+		wl_list_remove(&c->foreign_request_fullscreen.link);
+		wl_list_remove(&c->foreign_request_maximize.link);
+		wl_list_remove(&c->foreign_request_minimize.link);
+		wlr_foreign_toplevel_handle_v1_destroy(c->toplevel_handle);
+		c->toplevel_handle = NULL;
+	}
+
+	/* Clean up decoration listeners if decoration exists */
+	if (c->decoration) {
+		wl_list_remove(&c->set_decoration_mode.link);
+		wl_list_remove(&c->destroy_decoration.link);
+		c->decoration = NULL;
 	}
 
 	/* Note: Do NOT free(c) or metadata here - client_unmanage() called luaA_object_unref(),
@@ -3049,8 +3085,6 @@ mapnotify(struct wl_listener *listener, void *data)
 		if (!target_mon)
 			target_mon = selmon;
 		setmon(c, target_mon, 0);
-		warn("mapnotify[1]: after setmon, geometry=%dx%d, resize=%u, titlebar_top=%d",
-		     c->geometry.width, c->geometry.height, c->resize, c->titlebar[CLIENT_TITLEBAR_TOP].size);
 
 		/* Push client to Lua stack for signal emission */
 		luaA_object_push(L, c);
@@ -3106,11 +3140,8 @@ mapnotify(struct wl_listener *listener, void *data)
 		 * Reset c->resize to force re-send configure even if setmon()->resize()
 		 * already sent one (unflushed). This ensures the configure is flushed
 		 * before we enable the scene node. */
-		warn("mapnotify[2]: before apply_geo, geometry=%dx%d, resize=%u, titlebar_top=%d",
-		     c->geometry.width, c->geometry.height, c->resize, c->titlebar[CLIENT_TITLEBAR_TOP].size);
 		c->resize = 0;
 		apply_geometry_to_wlroots(c);
-		warn("mapnotify[3]: after apply_geo, resize=%u", c->resize);
 
 		/* Flush configure event to client immediately so it receives the tiled
 		 * geometry before we make it visible. Without this, the configure is
@@ -3342,10 +3373,11 @@ motionnotify(uint32_t time, struct wlr_input_device *device, double dx, double d
 		lua_State *L = globalconf_get_lua_State();
 		Client *current_client = NULL;
 		drawin_t *current_drawin = NULL;
+		drawable_t *titlebar_drawable = NULL;
 		bool client_valid = false;
 
 		/* Find what's under cursor */
-		xytonode(cursor->x, cursor->y, NULL, &current_client, NULL, &current_drawin, NULL, NULL, NULL);
+		xytonode(cursor->x, cursor->y, NULL, &current_client, NULL, &current_drawin, &titlebar_drawable, NULL, NULL);
 
 		/* Validate client pointer - xytonode can return stale pointers from scene graph
 		 * if a node's data field wasn't cleared when the client was destroyed */
@@ -3379,6 +3411,32 @@ motionnotify(uint32_t time, struct wlr_input_device *device, double dx, double d
 			lua_pushinteger(L, (int)(cursor->y - current_client->geometry.y));
 			luaA_object_emit_signal(L, -3, "mouse::move", 2);
 			lua_pop(L, 1);
+
+			/* Check if mouse is over a titlebar drawable - emit signals for widget hover */
+			if (titlebar_drawable) {
+				luaA_object_push(L, current_client);
+				luaA_object_push_item(L, -1, titlebar_drawable);
+				if (lua_isnil(L, -1)) {
+					lua_pop(L, 2);
+				} else {
+				event_drawable_under_mouse(L, -1);
+
+				/* Emit mouse::move on titlebar drawable with local coordinates */
+				int tb_x = (int)(cursor->x - current_client->geometry.x);
+				int tb_y = (int)(cursor->y - current_client->geometry.y);
+				client_get_drawable_offset(current_client, &tb_x, &tb_y);
+				lua_pushinteger(L, tb_x);
+				lua_pushinteger(L, tb_y);
+				luaA_object_emit_signal(L, -3, "mouse::move", 2);
+
+				lua_pop(L, 2);  /* pop drawable and client */
+				}
+			} else if (globalconf.drawable_under_mouse) {
+				/* Left titlebar area - emit leave on previous drawable */
+				lua_pushnil(L);
+				event_drawable_under_mouse(L, -1);
+				lua_pop(L, 1);
+			}
 
 		} else if (current_drawin) {
 			/* Mouse over drawin - emit signals on drawable for widget hover */
@@ -3552,28 +3610,7 @@ pointerfocus(Client *c, struct wlr_surface *surface, double sx, double sy,
 void
 printstatus(void)
 {
-	Monitor *m = NULL;
-	Client *c;
-
-	/* Status output for external status bars */
-	wl_list_for_each(m, &mons, link) {
-		if ((c = focustop(m))) {
-			printf("%s title %s\n", m->wlr_output->name, client_get_title(c));
-			printf("%s appid %s\n", m->wlr_output->name, client_get_appid(c));
-			printf("%s fullscreen %d\n", m->wlr_output->name, c->fullscreen);
-			printf("%s floating %d\n", m->wlr_output->name, some_client_get_floating(c));
-		} else {
-			printf("%s title \n", m->wlr_output->name);
-			printf("%s appid \n", m->wlr_output->name);
-			printf("%s fullscreen \n", m->wlr_output->name);
-			printf("%s floating \n", m->wlr_output->name);
-		}
-
-		printf("%s selmon %u\n", m->wlr_output->name, m == selmon);
-		/* Note: Tag bitmask output removed - use AwesomeWM wibox widgets instead */
-		/* Layout is now managed in Lua */
-	}
-	fflush(stdout);
+	/* Status output removed - use Lua signals (client.connect_signal) instead */
 }
 
 void
@@ -3694,17 +3731,6 @@ apply_geometry_to_wlroots(Client *c)
 	 * CRITICAL: Only send configure if there's no pending resize waiting for client commit.
 	 * Without this check, we flood the client with configure events on every refresh cycle,
 	 * which crashes Firefox and other clients that can't handle rapid configure floods. */
-	/* Debug: only log when we WILL send a configure (not on every refresh)
-	 * Note: Only for XDG clients - XWayland uses different surface union member */
-	if (!c->resize && c->client_type == XDGShell) {
-		int content_w = c->geometry.width - 2 * c->bw - titlebar_left - c->titlebar[CLIENT_TITLEBAR_RIGHT].size;
-		int content_h = c->geometry.height - 2 * c->bw - titlebar_top - c->titlebar[CLIENT_TITLEBAR_BOTTOM].size;
-		int32_t current_w = c->surface.xdg->toplevel->current.width;
-		int32_t current_h = c->surface.xdg->toplevel->current.height;
-		if (content_w != current_w || content_h != current_h)
-			warn("apply_geo: SENDING configure, request=%dx%d, current=%dx%d",
-			     content_w, content_h, current_w, current_h);
-	}
 	if (!c->resize) {
 		c->resize = client_set_size(c,
 				c->geometry.width - 2 * c->bw - titlebar_left - c->titlebar[CLIENT_TITLEBAR_RIGHT].size,
@@ -4066,9 +4092,7 @@ run(char *startup_cmd)
 		lua_settop(globalconf_L, 0);
 	}
 
-	fprintf(stderr, "somewm: Starting GLib main loop (AwesomeWM architecture)\n");
 	g_main_loop_run(globalconf.loop);
-	fprintf(stderr, "somewm: GLib main loop exited\n");
 
 	/* Cleanup */
 	g_source_destroy(wayland_source);
@@ -5161,6 +5185,10 @@ drawin_accepts_input_at(drawin_t *d, double local_x, double local_y)
 	if (!shape)
 		return true;
 
+	/* Verify surface is valid before accessing (fixes issue #197) */
+	if (cairo_surface_status(shape) != CAIRO_STATUS_SUCCESS)
+		return true;
+
 	/* Get shape dimensions */
 	width = cairo_image_surface_get_width(shape);
 	height = cairo_image_surface_get_height(shape);
@@ -5260,6 +5288,10 @@ xytonode(double x, double y, struct wlr_surface **psurface,
 					}
 				}
 			}
+		} else {
+			/* Skip parent walk for non-buffer nodes (e.g., scene rects) -
+			 * these are background elements that shouldn't intercept input */
+			continue;
 		}
 		/* Walk the tree to find a node that knows the client */
 		for (pnode = node; pnode && !c && !d; ) {
@@ -5433,6 +5465,9 @@ createnotifyx11(struct wl_listener *listener, void *data)
 	c = client_new(L);
 	/* client_new() leaves the client on the Lua stack at index -1 */
 
+	/* Assign unique client ID (Sway-style incrementing counter) */
+	c->id = next_client_id++;
+
 	/* Link to XWayland surface (adapts X11 window linkage to XWayland) */
 	xsurface->data = c;
 	c->surface.xwayland = xsurface;
@@ -5578,7 +5613,7 @@ xwaylandready(struct wl_listener *listener, void *data)
 	/* Connect Lua signals for automatic EWMH property updates */
 	ewmh_init_lua();
 
-	fprintf(stderr, "somewm: EWMH support initialized for XWayland\n");
+	log_info("EWMH support initialized for XWayland");
 }
 #endif
 
@@ -5827,6 +5862,7 @@ main(int argc, char *argv[])
 	static struct option long_options[] = {
 		{"help",    no_argument,       0, 'h'},
 		{"version", no_argument,       0, 'v'},
+		{"verbose", no_argument,       0, 256},  /* info-level logging */
 		{"debug",   no_argument,       0, 'd'},
 		{"config",  required_argument, 0, 'c'},
 		{"search",  required_argument, 0, 'L'},
@@ -5855,6 +5891,9 @@ main(int argc, char *argv[])
 			break;
 		case 'd':
 			globalconf.log_level = 3;  /* WLR_DEBUG */
+			break;
+		case 256:  /* --verbose */
+			globalconf.log_level = 2;  /* WLR_INFO */
 			break;
 		case 'v':
 			show_version = 1;
@@ -5891,9 +5930,10 @@ main(int argc, char *argv[])
 	return EXIT_SUCCESS;
 
 usage:
-	die("Usage: %s [-v] [-d] [-c config] [-L search_path] [-s startup_command] [-k config]\n"
+	die("Usage: %s [-v] [-d] [--verbose] [-c config] [-L search_path] [-s startup_command] [-k config]\n"
 	    "  -v, --version      Show version and diagnostic info\n"
-	    "  -d, --debug        Enable debug logging\n"
+	    "      --verbose      Enable info-level logging (more output)\n"
+	    "  -d, --debug        Enable debug logging (maximum output)\n"
 	    "  -c, --config FILE  Use specified config file (AwesomeWM compatible)\n"
 	    "  -L, --search DIR   Add directory to Lua module search path\n"
 	    "  -s, --startup CMD  Run command after startup\n"

@@ -141,6 +141,8 @@ struct client_t
     WINDOW_OBJECT_HEADER
 
     /* === Wayland/wlroots specific fields (not in AwesomeWM) === */
+    /** Unique client ID (auto-incrementing, Sway-style) */
+    uint32_t id;
     /** X11 no-focus window (0 for native Wayland) - not in WINDOW_OBJECT_HEADER */
     uint32_t nofocus_window;
     /** Client type: XDGShell, LayerShell, or X11 */

@@ -2220,13 +2220,9 @@ client_destroy_later(void)
     /* Only destroy if we have an X11 connection (XWayland is enabled and connected) */
     if(!globalconf.connection)
     {
-        fprintf(stderr, "[DESTROY_LATER] Warning: X11 windows queued but no connection!\n");
         globalconf.destroy_later_windows.len = 0;
         return;
     }
-
-    fprintf(stderr, "[DESTROY_LATER] Destroying %d X11 windows\n",
-            globalconf.destroy_later_windows.len);
 
     foreach(window, globalconf.destroy_later_windows)
     {
@@ -4377,6 +4373,7 @@ LUA_OBJECT_EXPORT_PROPERTY(client, client_t, skip_taskbar, lua_pushboolean)
 LUA_OBJECT_EXPORT_PROPERTY(client, client_t, leader_window, lua_pushinteger)
 LUA_OBJECT_EXPORT_PROPERTY(client, client_t, group_window, lua_pushinteger)
 LUA_OBJECT_EXPORT_PROPERTY(client, client_t, window, lua_pushinteger)
+LUA_OBJECT_EXPORT_PROPERTY(client, client_t, id, lua_pushinteger)
 LUA_OBJECT_EXPORT_OPTIONAL_PROPERTY(client, client_t, pid, lua_pushinteger, 0)
 LUA_OBJECT_EXPORT_PROPERTY(client, client_t, hidden, lua_pushboolean)
 LUA_OBJECT_EXPORT_PROPERTY(client, client_t, minimized, lua_pushboolean)
@@ -5175,6 +5172,10 @@ client_class_setup(lua_State *L)
     luaA_class_add_property(&client_class, "window",
                             NULL,
                             (lua_class_propfunc_t) luaA_client_get_window,
+                            NULL);
+    luaA_class_add_property(&client_class, "id",
+                            NULL,
+                            (lua_class_propfunc_t) luaA_client_get_id,
                             NULL);
     luaA_class_add_property(&client_class, "machine",
                             NULL,

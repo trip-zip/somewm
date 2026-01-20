@@ -83,7 +83,10 @@ luaA_screen_new(lua_State *L, Monitor *m, int index)
 	/* Store reference in regular registry to prevent GC and allow retrieval */
 	lua_pushvalue(L, -1);
 	ref = luaL_ref(L, LUA_REGISTRYINDEX);
-	fprintf(stderr, "[SCREEN_NEW] Created screen=%p index=%d ref=%d\n", (void*)screen, index, ref);
+
+	log_debug("screen created: index=%d geometry=%dx%d+%d+%d",
+	          index, screen->geometry.width, screen->geometry.height,
+	          screen->geometry.x, screen->geometry.y);
 
 	/* Add reference to global screen array */
 	if (screen_count >= screen_capacity) {
@@ -334,8 +337,7 @@ screen_removed(lua_State *L, screen_t *screen)
 	if (!screen || !screen->valid)
 		return;
 
-	fprintf(stderr, "[SCREEN_REMOVED] Removing screen %p (index=%d)\n",
-	        (void*)screen, screen->index);
+	log_debug("screen removed: index=%d", screen->index);
 
 	/* Step 1: Emit instance-level "removed" signal FIRST
 	 * This allows Lua code to handle cleanup before screen is invalidated */
@@ -356,8 +358,6 @@ screen_removed(lua_State *L, screen_t *screen)
 			screen_t *new_screen = luaA_screen_getbycoord(L, cx, cy);
 
 			if (new_screen && new_screen != screen) {
-				fprintf(stderr, "[SCREEN_REMOVED] Moving client %p to screen %d\n",
-				        (void*)*c, new_screen->index);
 				screen_client_moveto(*c, new_screen, false);
 			}
 		}
@@ -399,9 +399,6 @@ screen_removed(lua_State *L, screen_t *screen)
 
 	/* Step 6: Emit class-level "list" signal to notify of screen array change */
 	luaA_class_emit_signal(L, &screen_class, "list", 0);
-
-	fprintf(stderr, "[SCREEN_REMOVED] Screen removal complete, %zu screens remaining\n",
-	        screen_count);
 }
 
 /** Get primary screen
@@ -707,12 +704,6 @@ luaA_monitor_apply_drawin_struts(lua_State *L, Monitor *m, struct wlr_box *area)
 		    screen->workarea.x > area->x ||
 		    (screen->workarea.width < area->width) ||
 		    (screen->workarea.height < area->height)) {
-
-			fprintf(stderr, "[APPLY_DRAWIN_STRUTS] Applying struts: %dx%d+%d+%d (was %dx%d+%d+%d)\n",
-			        screen->workarea.width, screen->workarea.height,
-			        screen->workarea.x, screen->workarea.y,
-			        area->width, area->height, area->x, area->y);
-
 			*area = screen->workarea;
 		}
 	}
@@ -763,9 +754,6 @@ luaA_screen_get_workarea(lua_State *L)
 		lua_newtable(L);
 		return 1;
 	}
-
-	fprintf(stderr, "[GET_WORKAREA] Returning workarea: %dx%d+%d+%d\n",
-		screen->workarea.width, screen->workarea.height, screen->workarea.x, screen->workarea.y);
 
 	/* Return cached workarea */
 	lua_newtable(L);
@@ -1457,9 +1445,6 @@ luaA_screen_fake_add(lua_State *L)
 	screen_t *screen;
 	int ref;
 
-	fprintf(stderr, "[SCREEN_FAKE_ADD] Creating virtual screen at (%d,%d) %dx%d\n",
-	        x, y, width, height);
-
 	/* Allocate screen userdata */
 	screen = (screen_t *)lua_newuserdata(L, sizeof(screen_t));
 	if (!screen) {
@@ -1521,8 +1506,6 @@ luaA_screen_fake_add(lua_State *L)
 		}
 	}
 
-	fprintf(stderr, "[SCREEN_FAKE_ADD] Virtual screen created at index %d\n", screen->index);
-
 	/* Return screen object (still on stack) */
 	return 1;
 }
@@ -1537,13 +1520,6 @@ luaA_screen_fake_remove(lua_State *L)
 
 	if (!screen || !screen->valid) {
 		return 0;
-	}
-
-	fprintf(stderr, "[SCREEN_FAKE_REMOVE] Removing virtual screen %p (index=%d)\n",
-	        (void*)screen, screen->index);
-
-	if (screen_count == 1) {
-		fprintf(stderr, "somewm: WARNING: Removing last screen through fake_remove()!\n");
 	}
 
 	/* Use shared removal logic (emits signals, moves clients, etc.) */
@@ -1568,10 +1544,6 @@ luaA_screen_fake_resize(lua_State *L)
 	if (!screen || !screen->valid) {
 		return 0;
 	}
-
-	fprintf(stderr, "[SCREEN_FAKE_RESIZE] Resizing screen %d from (%d,%d %dx%d) to (%d,%d %dx%d)\n",
-	        screen->index, screen->geometry.x, screen->geometry.y,
-	        screen->geometry.width, screen->geometry.height, x, y, width, height);
 
 	/* Save old geometry for signal */
 	old_geometry = screen->geometry;

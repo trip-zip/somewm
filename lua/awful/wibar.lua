@@ -555,11 +555,8 @@ end
 -- @usebeautiful beautiful.wibar_fg
 -- @usebeautiful beautiful.wibar_shape
 function awfulwibar.new(args)
-    print("[WIBAR.NEW] ========== awfulwibar.new() called ==========")
-    print("[WIBAR.NEW] args type: " .. type(args))
     args = args or {}
     local position = args.position or "top"
-    print("[WIBAR.NEW] position: " .. tostring(position))
     local has_to_stretch = true
     local screen = get_screen(args.screen or 1)
 
@@ -585,17 +582,8 @@ function awfulwibar.new(args)
             end
         end
     else
-        print("[WIBAR] Entered top/bottom branch")
-        print("[WIBAR] args.font = " .. tostring(args.font))
-        local font_height = beautiful.get_font_height(args.font)
-        print("[WIBAR] font_height from beautiful = " .. tostring(font_height))
-        local calculated_height = math.ceil(font_height * 1.5)
-        print("[WIBAR] Calculating height for top/bottom wibar:")
-        print("[WIBAR]   args.height = " .. tostring(args.height))
-        print("[WIBAR]   beautiful.wibar_height = " .. tostring(beautiful["wibar_height"]))
-        print("[WIBAR]   calculated from font = " .. tostring(calculated_height))
-        args.height = args.height or beautiful["wibar_height"] or calculated_height
-        print("[WIBAR]   FINAL args.height = " .. tostring(args.height))
+        args.height = args.height or beautiful["wibar_height"]
+            or math.ceil(beautiful.get_font_height(args.font) * 1.5)
         if args.width then
             has_to_stretch = false
             if args.screen then
@@ -619,12 +607,7 @@ function awfulwibar.new(args)
         end
     end
 
-    print("[WIBAR] About to create wibox with args:")
-    print("[WIBAR]   width = " .. tostring(args.width))
-    print("[WIBAR]   height = " .. tostring(args.height))
-    print("[WIBAR]   position = " .. tostring(position))
     local w = wibox(args)
-    print("[WIBAR] wibox created successfully")
 
     w._private.align = (args.align and align_map[args.align]) and args.align or "centered"
 
@@ -648,11 +631,8 @@ function awfulwibar.new(args)
     w._screen  = screen --HACK When a screen is removed, then getbycoords won't work
     w._stretch = args.stretch == nil and has_to_stretch or args.stretch
 
-    print("[WIBAR] args.visible = " .. tostring(args.visible))
     if args.visible == nil then
-        print("[WIBAR] Setting w.visible = true")
         w.visible = true
-        print("[WIBAR] After setting, w.visible = " .. tostring(w.visible))
     end
 
     gtable.crush(w, awfulwibar, true)

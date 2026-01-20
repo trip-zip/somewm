@@ -25,6 +25,7 @@
 #include "objects/tag.h"
 #include "luaa.h"
 #include "x11_compat.h"
+#include "common/util.h"
 
 #ifdef XWAYLAND
 #include <xcb/xcb.h>
@@ -140,8 +141,7 @@ ewmh_init(xcb_connection_t *conn, int screen_nbr)
                         globalconf.ewmh.supported_atoms_count,
                         globalconf.ewmh.supported_atoms);
 
-    printf("somewm: EWMH initialized (%zu atoms advertised)\n",
-           globalconf.ewmh.supported_atoms_count);
+    log_info("EWMH initialized (%zu atoms)", globalconf.ewmh.supported_atoms_count);
 }
 
 static int
