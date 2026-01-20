@@ -1285,7 +1285,7 @@ initialcommitnotify(struct wl_listener *listener, void *data)
 	Client *c = wl_container_of(listener, c, initial_commit);
 	Monitor *m;
 
-	if (!c->surface.xdg->initial_commit)
+	if (!c->surface.xdg || !c->surface.xdg->initial_commit)
 		return;
 
 	/* Get the monitor this client will be rendered on for initial scale setting.
