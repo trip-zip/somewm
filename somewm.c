@@ -2638,8 +2638,13 @@ get_border_width(void)
 	lua_State *L = globalconf_get_lua_State();
 	if (!L) return globalconf.appearance.border_width;
 
-	/* Try beautiful.border_width */
-	lua_getglobal(L, "beautiful");
+	/* Use require() to get beautiful module (it's typically local, not global) */
+	lua_getglobal(L, "require");
+	lua_pushstring(L, "beautiful");
+	if (lua_pcall(L, 1, 1, 0) != 0) {
+		lua_pop(L, 1);
+		return globalconf.appearance.border_width;
+	}
 	if (lua_istable(L, -1)) {
 		lua_getfield(L, -1, "border_width");
 		if (lua_isnumber(L, -1)) {

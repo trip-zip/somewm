@@ -946,8 +946,14 @@ shadow_config_to_lua(lua_State *L, const shadow_config_t *config)
 void
 shadow_load_beautiful_defaults(lua_State *L)
 {
-    /* Read beautiful.shadow_* properties and update globalconf.shadow */
-    lua_getglobal(L, "beautiful");
+    /* Use require() to get beautiful module (it's typically local, not global) */
+    lua_getglobal(L, "require");
+    lua_pushstring(L, "beautiful");
+    if (lua_pcall(L, 1, 1, 0) != 0) {
+        /* require() failed - beautiful module may not exist */
+        lua_pop(L, 1);
+        return;
+    }
     if (lua_isnil(L, -1)) {
         lua_pop(L, 1);
         return;
