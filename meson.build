@@ -193,6 +193,31 @@ foreach p : protocols
   )
 endforeach
 
+# Client protocol headers for test utilities
+wayland_client = dependency('wayland-client')
+
+layer_shell_client_header = custom_target(
+  'wlr-layer-shell-unstable-v1-client-protocol.h',
+  input: 'protocols/wlr-layer-shell-unstable-v1.xml',
+  output: 'wlr-layer-shell-unstable-v1-client-protocol.h',
+  command: [wayland_scanner, 'client-header', '@INPUT@', '@OUTPUT@'],
+)
+
+layer_shell_client_code = custom_target(
+  'wlr-layer-shell-unstable-v1-client-protocol.c',
+  input: 'protocols/wlr-layer-shell-unstable-v1.xml',
+  output: 'wlr-layer-shell-unstable-v1-client-protocol.c',
+  command: [wayland_scanner, 'private-code', '@INPUT@', '@OUTPUT@'],
+)
+
+# xdg-shell is needed by layer-shell for popup support
+xdg_shell_client_code = custom_target(
+  'xdg-shell-client-protocol.c',
+  input: wayland_protocols_dir / 'stable/xdg-shell/xdg-shell.xml',
+  output: 'xdg-shell-client-protocol.c',
+  command: [wayland_scanner, 'private-code', '@INPUT@', '@OUTPUT@'],
+)
+
 # ==============================================================================
 # Compiler Flags
 # ==============================================================================
@@ -330,6 +355,15 @@ somewm_client = executable(
   'somewm-client',
   'somewm-client.c',
   install: true,
+)
+
+# Test layer-shell client for deterministic integration tests
+test_layer_client = executable(
+  'test-layer-client',
+  ['tests/test-layer-client.c', layer_shell_client_code, xdg_shell_client_code],
+  layer_shell_client_header,
+  dependencies: [wayland_client],
+  install: false,
 )
 
 # ==============================================================================

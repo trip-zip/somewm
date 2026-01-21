@@ -38,21 +38,6 @@ dbus-run-session somewm
 
 See [First Launch](https://somewm.org/getting-started/first-launch) for configuration and migrating from AwesomeWM.
 
-## Status
-
-Most AwesomeWM functionality works. Your existing `rc.lua` should work with minimal changes.
-
-| Works | Coming Soon |
-|-------|-------------|
-| Tiling layouts | Systray (XEmbed) |
-| Widgets & wibar | `root.fake_input()` |
-| Client management | Scroll bindings on root |
-| Multi-monitor | |
-| XWayland | |
-| Notifications | |
-
-See [Current Limitations](https://somewm.org/troubleshooting#current-limitations) for the full list.
-
 ## Documentation
 
 Full documentation at **[somewm.org](https://somewm.org)**:

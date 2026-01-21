@@ -31,14 +31,29 @@
 #include "common/buffer.h"
 #include "x11_compat.h"
 #include "shadow.h"
+#include <wayland-server-core.h>
+#include <cairo.h>
 
 /* Forward declarations */
+struct wlr_scene_buffer;
 typedef struct client_t client_t;
 typedef struct tag_t tag_t;
 typedef struct screen_t screen_t;
 typedef struct drawin_t drawin_t;
 typedef struct drawable_t drawable_t;
 typedef struct keyb_t keyb_t;
+
+/** Wallpaper cache entry for instant switching (per-screen) */
+typedef struct wallpaper_cache_entry {
+    struct wl_list link;
+    char *path;                          /* Filepath (part of cache key) */
+    int screen_index;                    /* Screen index (part of cache key) */
+    struct wlr_scene_buffer *scene_node; /* Positioned at screen coords, hidden when not active */
+    cairo_surface_t *surface;            /* For getter compatibility */
+} wallpaper_cache_entry_t;
+
+/* With per-screen caching, need more entries (e.g., 2 screens × 9 tags = 18) */
+#define WALLPAPER_CACHE_MAX 32
 
 /* Forward declare button types */
 typedef struct button_t button_t;
@@ -235,16 +250,21 @@ typedef struct
         int tap_to_click;           /* -1=device default, 0=disabled, 1=enabled */
         int tap_and_drag;           /* -1=device default, 0=disabled, 1=enabled */
         int drag_lock;              /* -1=device default, 0=disabled, 1=enabled */
+        int tap_3fg_drag;           /* -1=device default, 0=disabled, 1=enabled */
         int natural_scrolling;      /* -1=device default, 0=disabled, 1=enabled */
         int disable_while_typing;   /* -1=device default, 0=disabled, 1=enabled */
+        int dwtp;                   /* -1=device default, 0=disabled, 1=enabled (disable while trackpoint) */
         int left_handed;            /* -1=device default, 0=disabled, 1=enabled */
         int middle_button_emulation;/* -1=device default, 0=disabled, 1=enabled */
         char *scroll_method;        /* String: "no_scroll", "two_finger", "edge", "button" */
+        int scroll_button;          /* Button for scroll-on-button mode, 0=default */
+        int scroll_button_lock;     /* -1=device default, 0=disabled, 1=enabled */
         char *click_method;         /* String: "none", "button_areas", "clickfinger" */
         char *send_events_mode;     /* String: "enabled", "disabled", "disabled_on_external_mouse" */
         char *accel_profile;        /* String: "flat", "adaptive" */
         double accel_speed;         /* -1.0 to 1.0 */
         char *tap_button_map;       /* String: "lrm", "lmr" */
+        char *clickfinger_button_map; /* String: "lrm", "lmr" */
     } input;
 
     /** Logging configuration */
@@ -262,6 +282,20 @@ typedef struct
      * Wayland-specific: wlr_scene_buffer in LyrBg layer for display
      */
     struct wlr_scene_buffer *wallpaper_buffer_node;
+
+    /* ========== WALLPAPER CACHE ========== */
+
+    /** Wallpaper cache for instant switching (toggle visibility vs destroy/recreate)
+     * Cache entries are keyed by (filepath + screen_index). When switching to a
+     * cached wallpaper, we just toggle scene node visibility for that screen.
+     */
+    struct wl_list wallpaper_cache;
+
+    /** Currently visible wallpaper cache entry per screen (indexed by screen_index)
+     * We support up to 16 screens, which should be plenty for any real setup.
+     */
+    #define WALLPAPER_MAX_SCREENS 16
+    struct wallpaper_cache_entry *current_wallpaper_per_screen[WALLPAPER_MAX_SCREENS];
 
     /* ========== SYSTRAY SUPPORT ========== */
 
@@ -391,6 +425,12 @@ void globalconf_wipe(void);
  * Wayland wallpaper is set via root_set_wallpaper() or root_set_wallpaper_buffer().
  */
 void root_update_wallpaper(void);
+
+/** Initialize wallpaper cache (call after scene graph is created) */
+void wallpaper_cache_init(void);
+
+/** Cleanup wallpaper cache (call before destroying scene) */
+void wallpaper_cache_cleanup(void);
 
 #endif /* SOMEWM_GLOBALCONF_H */
 /* vim: filetype=c:expandtab:shiftwidth=4:tabstop=8:softtabstop=4:textwidth=80 */

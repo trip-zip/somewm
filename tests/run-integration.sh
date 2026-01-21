@@ -5,8 +5,10 @@
 # Runs somewm and executes Lua test files via IPC
 #
 # Modes:
-#   HEADLESS=1 (default): Run with headless backend (for CI)
+#   HEADLESS=1 (default): Run with headless backend (reliable, for CI)
 #   HEADLESS=0: Run with wayland backend (visual, for debugging)
+#   PERSISTENT=0 (default): Start fresh compositor per test
+#   PERSISTENT=1: Keep compositor running, reset state between tests (10x faster)
 #
 # Output:
 #   VERBOSE=0 (default): Quiet, only show PASS/FAIL with timing
@@ -19,7 +21,8 @@ SOMEWM="${SOMEWM:-./somewm}"
 SOMEWM_CLIENT="${SOMEWM_CLIENT:-./somewm-client}"
 TEST_TIMEOUT=${TEST_TIMEOUT:-30}
 VERBOSE=${VERBOSE:-0}
-HEADLESS=${HEADLESS:-1}
+HEADLESS=${HEADLESS:-0}
+PERSISTENT=${PERSISTENT:-0}
 TEST_RC_LUA="${TEST_RC_LUA:-}"
 
 # Change to script's directory
@@ -219,6 +222,72 @@ run_test() {
     fi
 }
 
+# Run a single test in persistent mode (compositor already running)
+# Returns: 0 on success, 1 on failure
+# Sets: TEST_DURATION (seconds with decimals)
+run_test_persistent() {
+    local test_file="$1"
+    local test_name=$(basename "$test_file")
+    local start_time end_time
+
+    # Record start time
+    start_time=$(date +%s.%N)
+
+    # Reset state before test and enable persistent mode
+    if ! $SOMEWM_CLIENT eval "local runner = require('_runner'); runner.set_persistent(true); runner.reset_state(); require('_state').reset()" >> "$LOG" 2>&1; then
+        echo "Error: Failed to reset state before test" >&2
+        end_time=$(date +%s.%N)
+        TEST_DURATION=$(echo "$end_time - $start_time" | bc)
+        return 1
+    fi
+
+    # Wait briefly for state reset to complete
+    sleep 0.1
+
+    # Execute test via IPC
+    local test_path="$ROOT_DIR/$test_file"
+    if [ ! -f "$test_path" ]; then
+        echo "Error: Test file not found: $test_path" >&2
+        end_time=$(date +%s.%N)
+        TEST_DURATION=$(echo "$end_time - $start_time" | bc)
+        return 1
+    fi
+
+    # Clear log marker for this test
+    echo "=== Test $test_name starting at $(date) ===" >> "$LOG"
+
+    # Run the test (dofile returns immediately for async tests)
+    $SOMEWM_CLIENT eval "dofile('$test_path')" >> "$LOG" 2>&1
+
+    # Poll for test completion (check log for success/error message)
+    local wait_count=0
+    local max_wait=$((TEST_TIMEOUT * 10))  # 10 checks per second
+    while [ $wait_count -lt $max_wait ]; do
+        # Check for success
+        if grep -q "Test finished successfully\." "$LOG"; then
+            end_time=$(date +%s.%N)
+            TEST_DURATION=$(echo "$end_time - $start_time" | bc)
+            return 0
+        fi
+
+        # Check for explicit failure
+        if grep -q "^Error: " "$LOG"; then
+            end_time=$(date +%s.%N)
+            TEST_DURATION=$(echo "$end_time - $start_time" | bc)
+            return 1
+        fi
+
+        sleep 0.1
+        wait_count=$((wait_count + 1))
+    done
+
+    # Timeout
+    echo "=== Test timed out ===" >> "$LOG"
+    end_time=$(date +%s.%N)
+    TEST_DURATION=$(echo "$end_time - $start_time" | bc)
+    return 1
+}
+
 # Get test files
 if [ $# -eq 0 ]; then
     # Default to all test-*.lua files
@@ -240,30 +309,73 @@ pass_count=0
 fail_count=0
 failed_tests=""
 
-# Run each test
-for test in $tests; do
-    test_count=$((test_count + 1))
-    test_name=$(basename "$test")
+# Run tests based on mode
+if [ "$PERSISTENT" = 1 ]; then
+    # Persistent mode: start compositor once, reset state between tests
+    [ $VERBOSE -eq 1 ] && echo "=== Starting compositor in persistent mode..."
 
-    # Clear log for this test
-    > "$LOG"
-
-    # Show test name in verbose mode
-    [ $VERBOSE -eq 1 ] && echo "=== RUN   $test_name"
-
-    # Run test
-    if run_test "$test"; then
-        pass_count=$((pass_count + 1))
-        printf -- "--- PASS: %s (%.2fs)\n" "$test_name" "$TEST_DURATION"
-    else
-        fail_count=$((fail_count + 1))
-        failed_tests="$failed_tests $test_name"
-        printf -- "--- FAIL: %s (%.2fs)\n" "$test_name" "$TEST_DURATION"
-        # Show log on failure
-        echo "    Log output:"
-        tail -30 "$LOG" | sed 's/^/    /'
+    if ! start_somewm; then
+        echo "Error: Failed to start compositor for persistent mode" >&2
+        exit 1
     fi
-done
+
+    [ $VERBOSE -eq 1 ] && echo "=== Compositor started, running tests..."
+
+    for test in $tests; do
+        test_count=$((test_count + 1))
+        test_name=$(basename "$test")
+
+        # Show test name in verbose mode
+        [ $VERBOSE -eq 1 ] && echo "=== RUN   $test_name"
+
+        # Run test in persistent mode
+        if run_test_persistent "$test"; then
+            pass_count=$((pass_count + 1))
+            printf -- "--- PASS: %s (%.2fs)\n" "$test_name" "$TEST_DURATION"
+        else
+            fail_count=$((fail_count + 1))
+            failed_tests="$failed_tests $test_name"
+            printf -- "--- FAIL: %s (%.2fs)\n" "$test_name" "$TEST_DURATION"
+            # Show log on failure
+            echo "    Log output:"
+            tail -30 "$LOG" | sed 's/^/    /'
+        fi
+
+        # Clear the success marker from log for next test
+        > "$LOG"
+    done
+
+    # Cleanup: stop compositor
+    [ $VERBOSE -eq 1 ] && echo "=== Stopping compositor..."
+    kill -TERM $SOMEWM_PID 2>/dev/null || true
+    wait $SOMEWM_PID 2>/dev/null || true
+    SOMEWM_PID=""
+else
+    # Normal mode: fresh compositor per test
+    for test in $tests; do
+        test_count=$((test_count + 1))
+        test_name=$(basename "$test")
+
+        # Clear log for this test
+        > "$LOG"
+
+        # Show test name in verbose mode
+        [ $VERBOSE -eq 1 ] && echo "=== RUN   $test_name"
+
+        # Run test
+        if run_test "$test"; then
+            pass_count=$((pass_count + 1))
+            printf -- "--- PASS: %s (%.2fs)\n" "$test_name" "$TEST_DURATION"
+        else
+            fail_count=$((fail_count + 1))
+            failed_tests="$failed_tests $test_name"
+            printf -- "--- FAIL: %s (%.2fs)\n" "$test_name" "$TEST_DURATION"
+            # Show log on failure
+            echo "    Log output:"
+            tail -30 "$LOG" | sed 's/^/    /'
+        fi
+    done
+fi
 
 # Calculate total time
 total_end=$(date +%s.%N)

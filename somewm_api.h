@@ -205,6 +205,7 @@ struct xkb_keymap *some_xkb_get_keymap(void);
 int some_xkb_set_layout_group(xkb_layout_index_t group);
 const char *some_xkb_get_group_names(void);
 void some_rebuild_keyboard_keymap(void);
+void some_apply_keyboard_repeat_info(void);
 
 /*
  * Input Device Configuration API

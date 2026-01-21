@@ -911,10 +911,14 @@ luaA_awesome_set_input_setting(lua_State *L)
 		globalconf.input.tap_and_drag = luaL_checkinteger(L, 2);
 	} else if (strcmp(key, "drag_lock") == 0) {
 		globalconf.input.drag_lock = luaL_checkinteger(L, 2);
+	} else if (strcmp(key, "tap_3fg_drag") == 0) {
+		globalconf.input.tap_3fg_drag = luaL_checkinteger(L, 2);
 	} else if (strcmp(key, "natural_scrolling") == 0) {
 		globalconf.input.natural_scrolling = luaL_checkinteger(L, 2);
 	} else if (strcmp(key, "disable_while_typing") == 0) {
 		globalconf.input.disable_while_typing = luaL_checkinteger(L, 2);
+	} else if (strcmp(key, "dwtp") == 0) {
+		globalconf.input.dwtp = luaL_checkinteger(L, 2);
 	} else if (strcmp(key, "left_handed") == 0) {
 		globalconf.input.left_handed = luaL_checkinteger(L, 2);
 	} else if (strcmp(key, "middle_button_emulation") == 0) {
@@ -923,6 +927,10 @@ luaA_awesome_set_input_setting(lua_State *L)
 		const char *val = lua_isnil(L, 2) ? NULL : luaL_checkstring(L, 2);
 		free(globalconf.input.scroll_method);
 		globalconf.input.scroll_method = val ? strdup(val) : NULL;
+	} else if (strcmp(key, "scroll_button") == 0) {
+		globalconf.input.scroll_button = luaL_checkinteger(L, 2);
+	} else if (strcmp(key, "scroll_button_lock") == 0) {
+		globalconf.input.scroll_button_lock = luaL_checkinteger(L, 2);
 	} else if (strcmp(key, "click_method") == 0) {
 		const char *val = lua_isnil(L, 2) ? NULL : luaL_checkstring(L, 2);
 		free(globalconf.input.click_method);
@@ -941,6 +949,10 @@ luaA_awesome_set_input_setting(lua_State *L)
 		const char *val = lua_isnil(L, 2) ? NULL : luaL_checkstring(L, 2);
 		free(globalconf.input.tap_button_map);
 		globalconf.input.tap_button_map = val ? strdup(val) : NULL;
+	} else if (strcmp(key, "clickfinger_button_map") == 0) {
+		const char *val = lua_isnil(L, 2) ? NULL : luaL_checkstring(L, 2);
+		free(globalconf.input.clickfinger_button_map);
+		globalconf.input.clickfinger_button_map = val ? strdup(val) : NULL;
 	} else {
 		return luaL_error(L, "Unknown input setting: %s", key);
 	}
@@ -957,8 +969,10 @@ luaA_awesome_set_keyboard_setting(lua_State *L)
 
 	if (strcmp(key, "keyboard_repeat_rate") == 0) {
 		globalconf.keyboard.repeat_rate = luaL_checkinteger(L, 2);
+		some_apply_keyboard_repeat_info();
 	} else if (strcmp(key, "keyboard_repeat_delay") == 0) {
 		globalconf.keyboard.repeat_delay = luaL_checkinteger(L, 2);
+		some_apply_keyboard_repeat_info();
 	} else if (strcmp(key, "xkb_layout") == 0) {
 		const char *val = lua_isnil(L, 2) ? "" : luaL_checkstring(L, 2);
 		free(globalconf.keyboard.xkb_layout);
@@ -3541,6 +3555,63 @@ luaA_loadrc(void)
 	if (!globalconf_L) {
 		fprintf(stderr, "somewm: Lua not initialized, cannot load config\n");
 		return;
+	}
+
+	/* Install wallpaper caching hooks (per-screen aware).
+	 * 1. Track filepath in gears.surface.load_uncached_silently (for cache miss path)
+	 * 2. Track screen in gears.wallpaper.maximized (for per-screen caching)
+	 * 3. Short-circuit gears.wallpaper.maximized on cache hit (skip all Lua work) */
+	if (luaL_dostring(globalconf_L,
+		"local original_require = require\n"
+		"local surface_patched = false\n"
+		"local wallpaper_patched = false\n"
+		"require = function(name)\n"
+		"    local mod = original_require(name)\n"
+		"    -- Patch gears.surface to track filepath\n"
+		"    if name == 'gears.surface' and not surface_patched then\n"
+		"        surface_patched = true\n"
+		"        local orig_load = mod.load_uncached_silently\n"
+		"        mod.load_uncached_silently = function(surf, default)\n"
+		"            if type(surf) == 'string' then\n"
+		"                rawset(_G, '_somewm_last_wallpaper_path', surf)\n"
+		"            end\n"
+		"            return orig_load(surf, default)\n"
+		"        end\n"
+		"    end\n"
+		"    -- Patch gears.wallpaper.maximized for per-screen caching\n"
+		"    if name == 'gears.wallpaper' and not wallpaper_patched then\n"
+		"        wallpaper_patched = true\n"
+		"        -- Nested table: path -> screen_index -> geometry\n"
+		"        -- Allows same wallpaper on multiple screens without overwriting\n"
+		"        rawset(_G, '_somewm_wallpaper_screen_info', {})\n"
+		"        local orig_maximized = mod.maximized\n"
+		"        mod.maximized = function(surf, s, ignore_aspect, offset)\n"
+		"            -- Get screen for per-screen caching\n"
+		"            local scr = s and screen[s]\n"
+		"            local scr_index = scr and scr.index or nil\n"
+		"            -- Store geometry in nested table: [path][screen_index] = geometry\n"
+		"            if type(surf) == 'string' and scr_index and scr.geometry then\n"
+		"                local g = scr.geometry\n"
+		"                _somewm_wallpaper_screen_info[surf] = _somewm_wallpaper_screen_info[surf] or {}\n"
+		"                _somewm_wallpaper_screen_info[surf][scr_index] = {\n"
+		"                    x = g.x, y = g.y,\n"
+		"                    width = g.width, height = g.height\n"
+		"                }\n"
+		"            end\n"
+		"            -- If surf is a filepath, screen is valid, and cached, show directly\n"
+		"            if type(surf) == 'string' and scr_index and root.wallpaper_cache_show(surf, scr_index) then\n"
+		"                return\n"
+		"            end\n"
+		"            -- Cache miss: fall through to original implementation\n"
+		"            return orig_maximized(surf, s, ignore_aspect, offset)\n"
+		"        end\n"
+		"    end\n"
+		"    return mod\n"
+		"end\n"
+	) != 0) {
+		fprintf(stderr, "somewm: warning: failed to install wallpaper caching hooks: %s\n",
+			lua_tostring(globalconf_L, -1));
+		lua_pop(globalconf_L, 1);
 	}
 
 	/* If custom config path was specified via -c flag, use only that */
