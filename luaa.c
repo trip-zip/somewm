@@ -934,8 +934,10 @@ luaA_awesome_set_keyboard_setting(lua_State *L)
 
 	if (strcmp(key, "keyboard_repeat_rate") == 0) {
 		globalconf.keyboard.repeat_rate = luaL_checkinteger(L, 2);
+		some_apply_keyboard_repeat_info();
 	} else if (strcmp(key, "keyboard_repeat_delay") == 0) {
 		globalconf.keyboard.repeat_delay = luaL_checkinteger(L, 2);
+		some_apply_keyboard_repeat_info();
 	} else if (strcmp(key, "xkb_layout") == 0) {
 		const char *val = lua_isnil(L, 2) ? "" : luaL_checkstring(L, 2);
 		free(globalconf.keyboard.xkb_layout);
