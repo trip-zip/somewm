@@ -1594,6 +1594,17 @@ some_rebuild_keyboard_keymap(void)
 	xkb_context_unref(context);
 }
 
+/* Apply keyboard repeat info from current globalconf settings */
+void
+some_apply_keyboard_repeat_info(void)
+{
+	if (!kb_group || !kb_group->wlr_group)
+		return;
+
+	wlr_keyboard_set_repeat_info(&kb_group->wlr_group->keyboard,
+		globalconf.keyboard.repeat_rate, globalconf.keyboard.repeat_delay);
+}
+
 /*
  * Layer Surface Focus API
  */
