@@ -3909,13 +3909,14 @@ titlebar_resize(lua_State *L, int cidx, client_t *c, client_titlebar_t bar, int 
     c->titlebar[bar].size = size;
     client_resize_do(c, geometry);
 
-    /* Update scene buffer position (Wayland-specific) */
+    /* Update scene buffer visibility and position (Wayland-specific) */
     if (c->titlebar[bar].scene_buffer) {
-        area_t area;
-        /* Position relative to client geometry (titlebars occupy space inside geometry) */
-        area = titlebar_get_area(c, bar);
-        wlr_scene_node_set_position(&c->titlebar[bar].scene_buffer->node,
-                                      area.x, area.y);
+        wlr_scene_node_set_enabled(&c->titlebar[bar].scene_buffer->node, size > 0);
+        if (size > 0) {
+            area_t area = titlebar_get_area(c, bar);
+            wlr_scene_node_set_position(&c->titlebar[bar].scene_buffer->node,
+                                        area.x, area.y);
+        }
     }
 
     luaA_object_emit_signal(L, cidx, property_name, 0);
@@ -3931,9 +3932,13 @@ client_update_titlebar_positions(client_t *c)
 {
     for (client_titlebar_t bar = CLIENT_TITLEBAR_TOP; bar < CLIENT_TITLEBAR_COUNT; bar++) {
         if (c->titlebar[bar].scene_buffer) {
-            area_t area = titlebar_get_area(c, bar);
-            wlr_scene_node_set_position(&c->titlebar[bar].scene_buffer->node,
-                                        area.x, area.y);
+            bool visible = c->titlebar[bar].size > 0;
+            wlr_scene_node_set_enabled(&c->titlebar[bar].scene_buffer->node, visible);
+            if (visible) {
+                area_t area = titlebar_get_area(c, bar);
+                wlr_scene_node_set_position(&c->titlebar[bar].scene_buffer->node,
+                                            area.x, area.y);
+            }
         }
     }
 }
