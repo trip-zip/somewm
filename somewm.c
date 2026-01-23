@@ -2107,8 +2107,10 @@ some_activate_lua_lock(void)
 	 * lock surface (wibox) already covers the whole screen with its own background.
 	 * locked_bg is only used for external session-lock-v1 clients. */
 
-	/* Save currently focused client for restoration on unlock */
-	pre_lock_focused_client = focustop(selmon);
+	/* Save currently focused client for restoration on unlock.
+	 * Use globalconf.focus.client (the actually focused client) rather than
+	 * focustop() which only returns the topmost visible client on selected tags. */
+	pre_lock_focused_client = globalconf.focus.client;
 
 	/* Clear current keyboard focus */
 	wlr_seat_keyboard_notify_clear_focus(seat);
@@ -2890,8 +2892,9 @@ keypress(struct wl_listener *listener, void *data)
 	}
 
 	/* On _press_ if there is no active screen locker,
-	 * attempt to process a compositor keybinding. */
-	if (!locked && event->state == WL_KEYBOARD_KEY_STATE_PRESSED) {
+	 * attempt to process a compositor keybinding.
+	 * Block for both ext-session-lock-v1 (locked) and Lua lock (some_is_lua_locked). */
+	if (!locked && !some_is_lua_locked() && event->state == WL_KEYBOARD_KEY_STATE_PRESSED) {
 		for (i = 0; i < nsyms; i++)
 			handled = keybinding(mods, keycode, syms[i], base_sym) || handled;
 	}

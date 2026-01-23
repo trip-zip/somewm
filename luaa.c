@@ -1303,13 +1303,45 @@ luaA_awesome_clear_all_idle_timeouts(lua_State *L)
 	return 0;
 }
 
+/** Internal DPMS wake function (no signal emission).
+ * Wakes all monitors that are currently asleep.
+ * Returns true if any monitor was woken.
+ */
+static bool
+dpms_wake_all_monitors(void)
+{
+	struct wl_list *monitors = some_get_monitors();
+	Monitor *m;
+	struct wlr_output_state state;
+	bool any_woken = false;
+
+	wl_list_for_each(m, monitors, link) {
+		if (!m->asleep)
+			continue;
+
+		wlr_output_state_init(&state);
+		m->gamma_lut_changed = 1;
+		wlr_output_state_set_enabled(&state, true);
+		wlr_output_commit_state(m->wlr_output, &state);
+		wlr_output_state_finish(&state);
+		m->asleep = 0;
+		any_woken = true;
+	}
+	return any_woken;
+}
+
 /** Called from somewm.c when user activity is detected.
- * Resets all idle timers and emits idle::stop if user was idle.
+ * Wakes DPMS, resets all idle timers, and emits idle::stop if user was idle.
  */
 void
 some_notify_activity(void)
 {
 	lua_State *L = globalconf_get_lua_State();
+
+	/* Wake displays from DPMS if any are asleep */
+	if (dpms_wake_all_monitors()) {
+		luaA_emit_signal_global_with_stack(L, "dpms::on", 0);
+	}
 
 	/* Emit idle::stop signal if user was idle */
 	if (user_is_idle) {
