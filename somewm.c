@@ -2819,8 +2819,11 @@ keybinding(uint32_t mods, uint32_t keycode, xkb_keysym_t sym, xkb_keysym_t base_
 			wl_display_terminate(dpy);
 			return 1;
 		}
-		/* Ctrl-Alt-F1..F12: Switch to VT 1-12 */
+		/* Ctrl-Alt-F1..F12: Switch to VT 1-12
+		 * Block during lock to prevent bypassing lockscreen */
 		if (sym >= XKB_KEY_XF86Switch_VT_1 && sym <= XKB_KEY_XF86Switch_VT_12) {
+			if (locked || some_is_lua_locked())
+				return 1;
 			unsigned int vt = sym - XKB_KEY_XF86Switch_VT_1 + 1;
 			wlr_session_change_vt(session, vt);
 			return 1;
