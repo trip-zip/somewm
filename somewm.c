@@ -1085,6 +1085,10 @@ cleanup(void)
 	wlr_backend_destroy(backend);
 
 	wl_display_destroy(dpy);
+
+	/* Cleanup wallpaper cache before destroying scene (frees scene nodes) */
+	wallpaper_cache_cleanup();
+
 	/* Destroy after the wayland display (when the monitors are already destroyed)
 	   to avoid destroying them with an invalid scene output. */
 	wlr_scene_node_destroy(&scene->tree.node);
@@ -4341,6 +4345,9 @@ setup(void)
 		layers[i] = wlr_scene_tree_create(&scene->tree);
 	drag_icon = wlr_scene_tree_create(&scene->tree);
 	wlr_scene_node_place_below(&drag_icon->node, &layers[LyrBlock]->node);
+
+	/* Initialize wallpaper cache (must be after layers[] are created) */
+	wallpaper_cache_init();
 
 	/* Autocreates a renderer, either Pixman, GLES2 or Vulkan for us. The user
 	 * can also specify a renderer using the WLR_RENDERER env var.

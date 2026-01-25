@@ -32,6 +32,21 @@
 #include "x11_compat.h"
 #include "shadow.h"
 
+#define WALLPAPER_CACHE_MAX 16
+
+typedef struct wallpaper_fingerprint {
+    int width, height;
+    uint32_t crc;
+} wallpaper_fingerprint_t;
+
+typedef struct wallpaper_cache_entry {
+    struct wl_list link;
+    char *key;
+    wallpaper_fingerprint_t fp;
+    struct wlr_scene_buffer *scene_node;
+    cairo_surface_t *surface;
+} wallpaper_cache_entry_t;
+
 /* Forward declarations */
 typedef struct client_t client_t;
 typedef struct tag_t tag_t;
@@ -263,10 +278,9 @@ typedef struct
      */
     cairo_surface_t *wallpaper;
 
-    /** Wallpaper scene graph node
-     * Wayland-specific: wlr_scene_buffer in LyrBg layer for display
-     */
     struct wlr_scene_buffer *wallpaper_buffer_node;
+    struct wl_list wallpaper_cache;
+    wallpaper_cache_entry_t *current_wallpaper;
 
     /* ========== SYSTRAY SUPPORT ========== */
 
@@ -392,10 +406,9 @@ void globalconf_init(lua_State *L);
  */
 void globalconf_wipe(void);
 
-/** Update wallpaper from root window (X11-only stub).
- * Wayland wallpaper is set via root_set_wallpaper() or root_set_wallpaper_buffer().
- */
 void root_update_wallpaper(void);
+void wallpaper_cache_init(void);
+void wallpaper_cache_cleanup(void);
 
 #endif /* SOMEWM_GLOBALCONF_H */
 /* vim: filetype=c:expandtab:shiftwidth=4:tabstop=8:softtabstop=4:textwidth=80 */
