@@ -43,15 +43,17 @@ typedef struct drawin_t drawin_t;
 typedef struct drawable_t drawable_t;
 typedef struct keyb_t keyb_t;
 
-/** Wallpaper cache entry for instant switching */
+/** Wallpaper cache entry for instant switching (per-screen) */
 typedef struct wallpaper_cache_entry {
     struct wl_list link;
-    char *path;                          /* Filepath as cache key */
-    struct wlr_scene_buffer *scene_node; /* Hidden when not active */
+    char *path;                          /* Filepath (part of cache key) */
+    int screen_index;                    /* Screen index (part of cache key) */
+    struct wlr_scene_buffer *scene_node; /* Positioned at screen coords, hidden when not active */
     cairo_surface_t *surface;            /* For getter compatibility */
 } wallpaper_cache_entry_t;
 
-#define WALLPAPER_CACHE_MAX 16
+/* With per-screen caching, need more entries (e.g., 2 screens × 9 tags = 18) */
+#define WALLPAPER_CACHE_MAX 32
 
 /* Forward declare button types */
 typedef struct button_t button_t;
@@ -284,13 +286,16 @@ typedef struct
     /* ========== WALLPAPER CACHE ========== */
 
     /** Wallpaper cache for instant switching (toggle visibility vs destroy/recreate)
-     * Cache entries are keyed by filepath. When switching to a cached wallpaper,
-     * we just toggle scene node visibility instead of re-creating the buffer.
+     * Cache entries are keyed by (filepath + screen_index). When switching to a
+     * cached wallpaper, we just toggle scene node visibility for that screen.
      */
     struct wl_list wallpaper_cache;
 
-    /** Currently visible wallpaper cache entry (or NULL) */
-    struct wallpaper_cache_entry *current_wallpaper;
+    /** Currently visible wallpaper cache entry per screen (indexed by screen_index)
+     * We support up to 16 screens, which should be plenty for any real setup.
+     */
+    #define WALLPAPER_MAX_SCREENS 16
+    struct wallpaper_cache_entry *current_wallpaper_per_screen[WALLPAPER_MAX_SCREENS];
 
     /* ========== SYSTRAY SUPPORT ========== */
 
