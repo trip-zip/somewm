@@ -3071,6 +3071,47 @@ luaA_loadrc(void)
 		return;
 	}
 
+	/* Install wallpaper caching hooks.
+	 * 1. Track filepath in gears.surface.load_uncached_silently (for cache miss path)
+	 * 2. Short-circuit gears.wallpaper.maximized on cache hit (skip all Lua work) */
+	if (luaL_dostring(globalconf_L,
+		"local original_require = require\n"
+		"local surface_patched = false\n"
+		"local wallpaper_patched = false\n"
+		"require = function(name)\n"
+		"    local mod = original_require(name)\n"
+		"    -- Patch gears.surface to track filepath\n"
+		"    if name == 'gears.surface' and not surface_patched then\n"
+		"        surface_patched = true\n"
+		"        local orig_load = mod.load_uncached_silently\n"
+		"        mod.load_uncached_silently = function(surf, default)\n"
+		"            if type(surf) == 'string' then\n"
+		"                rawset(_G, '_somewm_last_wallpaper_path', surf)\n"
+		"            end\n"
+		"            return orig_load(surf, default)\n"
+		"        end\n"
+		"    end\n"
+		"    -- Patch gears.wallpaper.maximized to short-circuit on cache hit\n"
+		"    if name == 'gears.wallpaper' and not wallpaper_patched then\n"
+		"        wallpaper_patched = true\n"
+		"        local orig_maximized = mod.maximized\n"
+		"        mod.maximized = function(surf, s, ignore_aspect, offset)\n"
+		"            -- If surf is a filepath and it's cached, show directly\n"
+		"            if type(surf) == 'string' and root.wallpaper_cache_show(surf) then\n"
+		"                return\n"
+		"            end\n"
+		"            -- Cache miss: fall through to original implementation\n"
+		"            return orig_maximized(surf, s, ignore_aspect, offset)\n"
+		"        end\n"
+		"    end\n"
+		"    return mod\n"
+		"end\n"
+	) != 0) {
+		fprintf(stderr, "somewm: warning: failed to install wallpaper caching hooks: %s\n",
+			lua_tostring(globalconf_L, -1));
+		lua_pop(globalconf_L, 1);
+	}
+
 	/* If custom config path was specified via -c flag, use only that */
 	if (custom_confpath) {
 		config_paths[path_count++] = custom_confpath;
