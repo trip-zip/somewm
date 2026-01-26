@@ -3071,9 +3071,10 @@ luaA_loadrc(void)
 		return;
 	}
 
-	/* Install wallpaper caching hooks.
+	/* Install wallpaper caching hooks (per-screen aware).
 	 * 1. Track filepath in gears.surface.load_uncached_silently (for cache miss path)
-	 * 2. Short-circuit gears.wallpaper.maximized on cache hit (skip all Lua work) */
+	 * 2. Track screen in gears.wallpaper.maximized (for per-screen caching)
+	 * 3. Short-circuit gears.wallpaper.maximized on cache hit (skip all Lua work) */
 	if (luaL_dostring(globalconf_L,
 		"local original_require = require\n"
 		"local surface_patched = false\n"
@@ -3091,13 +3092,28 @@ luaA_loadrc(void)
 		"            return orig_load(surf, default)\n"
 		"        end\n"
 		"    end\n"
-		"    -- Patch gears.wallpaper.maximized to short-circuit on cache hit\n"
+		"    -- Patch gears.wallpaper.maximized for per-screen caching\n"
 		"    if name == 'gears.wallpaper' and not wallpaper_patched then\n"
 		"        wallpaper_patched = true\n"
+		"        -- Nested table: path -> screen_index -> geometry\n"
+		"        -- Allows same wallpaper on multiple screens without overwriting\n"
+		"        rawset(_G, '_somewm_wallpaper_screen_info', {})\n"
 		"        local orig_maximized = mod.maximized\n"
 		"        mod.maximized = function(surf, s, ignore_aspect, offset)\n"
-		"            -- If surf is a filepath and it's cached, show directly\n"
-		"            if type(surf) == 'string' and root.wallpaper_cache_show(surf) then\n"
+		"            -- Get screen for per-screen caching\n"
+		"            local scr = s and screen[s]\n"
+		"            local scr_index = scr and scr.index or nil\n"
+		"            -- Store geometry in nested table: [path][screen_index] = geometry\n"
+		"            if type(surf) == 'string' and scr_index and scr.geometry then\n"
+		"                local g = scr.geometry\n"
+		"                _somewm_wallpaper_screen_info[surf] = _somewm_wallpaper_screen_info[surf] or {}\n"
+		"                _somewm_wallpaper_screen_info[surf][scr_index] = {\n"
+		"                    x = g.x, y = g.y,\n"
+		"                    width = g.width, height = g.height\n"
+		"                }\n"
+		"            end\n"
+		"            -- If surf is a filepath, screen is valid, and cached, show directly\n"
+		"            if type(surf) == 'string' and scr_index and root.wallpaper_cache_show(surf, scr_index) then\n"
 		"                return\n"
 		"            end\n"
 		"            -- Cache miss: fall through to original implementation\n"
