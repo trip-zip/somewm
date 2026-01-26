@@ -31,14 +31,27 @@
 #include "common/buffer.h"
 #include "x11_compat.h"
 #include "shadow.h"
+#include <wayland-server-core.h>
+#include <cairo.h>
 
 /* Forward declarations */
+struct wlr_scene_buffer;
 typedef struct client_t client_t;
 typedef struct tag_t tag_t;
 typedef struct screen_t screen_t;
 typedef struct drawin_t drawin_t;
 typedef struct drawable_t drawable_t;
 typedef struct keyb_t keyb_t;
+
+/** Wallpaper cache entry for instant switching */
+typedef struct wallpaper_cache_entry {
+    struct wl_list link;
+    char *path;                          /* Filepath as cache key */
+    struct wlr_scene_buffer *scene_node; /* Hidden when not active */
+    cairo_surface_t *surface;            /* For getter compatibility */
+} wallpaper_cache_entry_t;
+
+#define WALLPAPER_CACHE_MAX 16
 
 /* Forward declare button types */
 typedef struct button_t button_t;
@@ -268,6 +281,17 @@ typedef struct
      */
     struct wlr_scene_buffer *wallpaper_buffer_node;
 
+    /* ========== WALLPAPER CACHE ========== */
+
+    /** Wallpaper cache for instant switching (toggle visibility vs destroy/recreate)
+     * Cache entries are keyed by filepath. When switching to a cached wallpaper,
+     * we just toggle scene node visibility instead of re-creating the buffer.
+     */
+    struct wl_list wallpaper_cache;
+
+    /** Currently visible wallpaper cache entry (or NULL) */
+    struct wallpaper_cache_entry *current_wallpaper;
+
     /* ========== SYSTRAY SUPPORT ========== */
 
     /** System tray state (StatusNotifierItem protocol)
@@ -396,6 +420,12 @@ void globalconf_wipe(void);
  * Wayland wallpaper is set via root_set_wallpaper() or root_set_wallpaper_buffer().
  */
 void root_update_wallpaper(void);
+
+/** Initialize wallpaper cache (call after scene graph is created) */
+void wallpaper_cache_init(void);
+
+/** Cleanup wallpaper cache (call before destroying scene) */
+void wallpaper_cache_cleanup(void);
 
 #endif /* SOMEWM_GLOBALCONF_H */
 /* vim: filetype=c:expandtab:shiftwidth=4:tabstop=8:softtabstop=4:textwidth=80 */

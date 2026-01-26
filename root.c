@@ -39,6 +39,7 @@
 #include <cairo.h>
 #include <drm_fourcc.h>
 #include <string.h>
+#include <gdk-pixbuf/gdk-pixbuf.h>
 
 /* External references to somewm.c globals */
 extern struct wlr_output_layout *output_layout;
@@ -805,60 +806,177 @@ luaA_root_drawins(lua_State *L)
 
 /* ========== WALLPAPER SUPPORT ========== */
 
-/** Set wallpaper buffer in scene graph
- * Helper function that updates the wallpaper scene buffer node.
- * This is the Wayland equivalent of AwesomeWM's root_set_wallpaper_pixmap().
+/* ========== WALLPAPER CACHE ==========
+ * Issue #214: Cache wallpaper scene nodes for instant tag switching.
  *
- * \param buffer The wlr_buffer containing wallpaper pixel data
+ * TODO(2.x): This is a candidate for refactoring into a dedicated module:
+ *   - compositor/texture_cache.c - generic GPU texture caching
+ *   - features/wallpaper.c - wallpaper-specific logic
+ * The wallpaper cache is conceptually a compositor-level texture cache that
+ * happens to be used for wallpapers. In 2.x it could cache any frequently-used
+ * textures (icons, wibox backgrounds, etc.) and live outside of root.c.
  */
-static void
-root_set_wallpaper_buffer(struct wlr_buffer *buffer)
+
+void wallpaper_cache_init(void)
 {
-	/* Clean up old wallpaper scene node */
-	if (globalconf.wallpaper_buffer_node) {
-		wlr_scene_node_destroy(&globalconf.wallpaper_buffer_node->node);
-		globalconf.wallpaper_buffer_node = NULL;
+	wl_list_init(&globalconf.wallpaper_cache);
+	globalconf.current_wallpaper = NULL;
+}
+
+void wallpaper_cache_cleanup(void)
+{
+	wallpaper_cache_entry_t *entry, *tmp;
+	wl_list_for_each_safe(entry, tmp, &globalconf.wallpaper_cache, link) {
+		wl_list_remove(&entry->link);
+		if (entry->scene_node)
+			wlr_scene_node_destroy(&entry->scene_node->node);
+		if (entry->surface)
+			cairo_surface_destroy(entry->surface);
+		free(entry->path);
+		free(entry);
+	}
+	globalconf.current_wallpaper = NULL;
+}
+
+static wallpaper_cache_entry_t *
+wallpaper_cache_lookup(const char *path)
+{
+	if (!path || !globalconf.wallpaper_cache.next)
+		return NULL;
+
+	wallpaper_cache_entry_t *entry;
+	wl_list_for_each(entry, &globalconf.wallpaper_cache, link) {
+		if (entry->path && strcmp(entry->path, path) == 0)
+			return entry;
+	}
+	return NULL;
+}
+
+static int wallpaper_cache_count(void)
+{
+	int count = 0;
+	wallpaper_cache_entry_t *entry;
+	wl_list_for_each(entry, &globalconf.wallpaper_cache, link) {
+		count++;
+	}
+	return count;
+}
+
+static void wallpaper_cache_evict_oldest(void)
+{
+	if (wallpaper_cache_count() < WALLPAPER_CACHE_MAX)
+		return;
+
+	/* Find oldest (last in list, since we insert at head) */
+	wallpaper_cache_entry_t *oldest = NULL;
+	wallpaper_cache_entry_t *entry;
+	wl_list_for_each(entry, &globalconf.wallpaper_cache, link) {
+		if (entry != globalconf.current_wallpaper)
+			oldest = entry;
 	}
 
-	/* Create scene buffer in LyrBg (layer 0 - wallpaper layer)
-	 * This is the Wayland equivalent of xcb_change_window_attributes() */
-	globalconf.wallpaper_buffer_node = wlr_scene_buffer_create(layers[0], buffer);
-	if (globalconf.wallpaper_buffer_node) {
-		wlr_scene_node_set_position(&globalconf.wallpaper_buffer_node->node, 0, 0);
+	if (oldest) {
+		wl_list_remove(&oldest->link);
+		if (oldest->scene_node)
+			wlr_scene_node_destroy(&oldest->scene_node->node);
+		if (oldest->surface)
+			cairo_surface_destroy(oldest->surface);
+		free(oldest->path);
+		free(oldest);
 	}
 }
 
-/** Set wallpaper from Cairo pattern
- * Mirrors AwesomeWM's root_set_wallpaper() function (root.c:91-156).
- * Converts Cairo pattern to wlroots scene buffer and displays as wallpaper.
- *
- * \param pattern Cairo pattern to use as wallpaper
- * \return true on success, false on error
+static bool
+wallpaper_cache_show(wallpaper_cache_entry_t *entry)
+{
+	if (!entry || !entry->scene_node)
+		return false;
+
+	/* Hide current wallpaper */
+	if (globalconf.current_wallpaper && globalconf.current_wallpaper != entry) {
+		wlr_scene_node_set_enabled(&globalconf.current_wallpaper->scene_node->node, false);
+	}
+	/* Also hide legacy wallpaper node if present */
+	if (globalconf.wallpaper_buffer_node &&
+	    (!globalconf.current_wallpaper ||
+	     globalconf.wallpaper_buffer_node != globalconf.current_wallpaper->scene_node)) {
+		wlr_scene_node_set_enabled(&globalconf.wallpaper_buffer_node->node, false);
+	}
+
+	/* Show requested wallpaper */
+	wlr_scene_node_set_enabled(&entry->scene_node->node, true);
+	globalconf.current_wallpaper = entry;
+
+	/* Update globalconf.wallpaper for getter compatibility */
+	cairo_surface_destroy(globalconf.wallpaper);
+	globalconf.wallpaper = cairo_surface_reference(entry->surface);
+
+	luaA_emit_signal_global("wallpaper_changed");
+	return true;
+}
+
+/** Get the wallpaper path from Lua global (set by monkey-patched gears.surface.load) */
+static const char *
+get_wallpaper_path_from_lua(lua_State *L)
+{
+	lua_getglobal(L, "_somewm_last_wallpaper_path");
+	const char *path = NULL;
+	if (lua_isstring(L, -1)) {
+		path = lua_tostring(L, -1);
+	}
+	lua_pop(L, 1);
+	return path;
+}
+
+/** Clear the wallpaper path Lua global after using it */
+static void
+clear_wallpaper_path_in_lua(lua_State *L)
+{
+	lua_pushnil(L);
+	lua_setglobal(L, "_somewm_last_wallpaper_path");
+}
+
+/* ========== WALLPAPER API ========== */
+
+/** Set wallpaper with caching by filepath
+ * Cache hit: toggle visibility (fast, ~0.05ms)
+ * Cache miss: create buffer+scene node, add to cache (~5ms)
  */
 static bool
-root_set_wallpaper(cairo_pattern_t *pattern)
+root_set_wallpaper_cached(lua_State *L, cairo_pattern_t *pattern)
 {
+	const char *path = get_wallpaper_path_from_lua(L);
+	bool cache_enabled = globalconf.wallpaper_cache.next != NULL;
+
+	/* Check cache first */
+	if (cache_enabled && path) {
+		wallpaper_cache_entry_t *entry = wallpaper_cache_lookup(path);
+		if (entry) {
+			bool ok = wallpaper_cache_show(entry);
+			clear_wallpaper_path_in_lua(L);
+			return ok;
+		}
+	}
+
+	/* Cache miss - need to create the wallpaper */
 	cairo_surface_t *surface = NULL;
 	cairo_t *cr = NULL;
 	struct wlr_buffer *buffer = NULL;
-	bool result = false;
+	struct wlr_scene_buffer *scene_node = NULL;
 	struct wlr_box layout_box;
-	int width, height;
+	bool result = false;
 
-	/* Get virtual screen dimensions (AwesomeWM uses screen->width_in_pixels) */
 	wlr_output_layout_get_box(output_layout, NULL, &layout_box);
-	width = layout_box.width;
-	height = layout_box.height;
+	int width = layout_box.width;
+	int height = layout_box.height;
 
 	if (width <= 0 || height <= 0)
 		goto cleanup;
 
-	/* Create Cairo surface (Wayland equivalent of xcb_create_pixmap) */
 	surface = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, width, height);
 	if (cairo_surface_status(surface) != CAIRO_STATUS_SUCCESS)
 		goto cleanup;
 
-	/* Paint pattern to surface - EXACT COPY from AwesomeWM root.c:122-126 */
 	cr = cairo_create(surface);
 	cairo_set_source(cr, pattern);
 	cairo_set_operator(cr, CAIRO_OPERATOR_SOURCE);
@@ -867,7 +985,6 @@ root_set_wallpaper(cairo_pattern_t *pattern)
 	cr = NULL;
 	cairo_surface_flush(surface);
 
-	/* Create wlr_buffer (reuse existing drawable infrastructure) */
 	buffer = drawable_create_buffer_from_data(
 		width, height,
 		cairo_image_surface_get_data(surface),
@@ -876,23 +993,47 @@ root_set_wallpaper(cairo_pattern_t *pattern)
 	if (!buffer)
 		goto cleanup;
 
-	/* Set as wallpaper via scene graph */
-	root_set_wallpaper_buffer(buffer);
+	scene_node = wlr_scene_buffer_create(layers[0], buffer);
+	if (!scene_node)
+		goto cleanup;
+	wlr_scene_node_set_position(&scene_node->node, 0, 0);
 
-	/* Update cached wallpaper - EXACT COPY from AwesomeWM root.c:147-148 */
+	/* Add to cache if enabled and we have a path */
+	if (cache_enabled && path) {
+		wlr_scene_node_set_enabled(&scene_node->node, false);
+		wallpaper_cache_evict_oldest();
+
+		wallpaper_cache_entry_t *entry = calloc(1, sizeof(*entry));
+		if (entry) {
+			entry->path = strdup(path);
+			entry->scene_node = scene_node;
+			entry->surface = surface;
+			wl_list_insert(&globalconf.wallpaper_cache, &entry->link);
+
+			wlr_buffer_drop(buffer);
+			result = wallpaper_cache_show(entry);
+			clear_wallpaper_path_in_lua(L);
+			return result;
+		}
+	}
+
+	/* Fallback: no caching (cache not ready or no path) */
+	if (globalconf.wallpaper_buffer_node)
+		wlr_scene_node_destroy(&globalconf.wallpaper_buffer_node->node);
+	globalconf.wallpaper_buffer_node = scene_node;
+
 	cairo_surface_destroy(globalconf.wallpaper);
 	globalconf.wallpaper = surface;
-	surface = NULL; /* Now owned by globalconf */
+	surface = NULL;
 
-	/* Emit signal - EXACT COPY from AwesomeWM root.c:149 */
 	luaA_emit_signal_global("wallpaper_changed");
-
 	result = true;
 
 cleanup:
 	if (cr) cairo_destroy(cr);
 	if (surface) cairo_surface_destroy(surface);
 	if (buffer) wlr_buffer_drop(buffer);
+	if (path) clear_wallpaper_path_in_lua(L);
 	return result;
 }
 
@@ -921,7 +1062,7 @@ luaA_root_wallpaper(lua_State *L)
 			return 0;
 
 		pattern = (cairo_pattern_t *)lua_touserdata(L, -1);
-		lua_pushboolean(L, root_set_wallpaper(pattern));
+		lua_pushboolean(L, root_set_wallpaper_cached(L, pattern));
 		/* Don't return the wallpaper, it's too easy to get memleaks */
 		return 1;
 	}
@@ -935,6 +1076,178 @@ luaA_root_wallpaper(lua_State *L)
 }
 
 /* ========== END WALLPAPER SUPPORT ========== */
+
+/** root.wallpaper_cache_has(path) - Check if wallpaper is cached
+ * \param path Wallpaper file path
+ * \return true if path is in cache
+ */
+static int
+luaA_root_wallpaper_cache_has(lua_State *L)
+{
+	const char *path = luaL_checkstring(L, 1);
+	bool has = wallpaper_cache_lookup(path) != NULL;
+	lua_pushboolean(L, has);
+	return 1;
+}
+
+/** root.wallpaper_cache_show(path) - Show cached wallpaper directly
+ * Skips all Lua/cairo work if wallpaper is cached.
+ * \param path Wallpaper file path
+ * \return true if cache hit and wallpaper shown, false otherwise
+ */
+static int
+luaA_root_wallpaper_cache_show(lua_State *L)
+{
+	const char *path = luaL_checkstring(L, 1);
+	wallpaper_cache_entry_t *entry = wallpaper_cache_lookup(path);
+
+	if (entry) {
+		bool ok = wallpaper_cache_show(entry);
+		lua_pushboolean(L, ok);
+		return 1;
+	}
+
+	lua_pushboolean(L, false);
+	return 1;
+}
+
+/** root.wallpaper_cache_clear() - Clear all cached wallpapers
+ * Frees GPU memory used by cached wallpaper textures.
+ */
+static int
+luaA_root_wallpaper_cache_clear(lua_State *L)
+{
+	(void)L;
+
+	if (!globalconf.wallpaper_cache.next)
+		return 0;
+
+	wallpaper_cache_entry_t *entry, *tmp;
+	wl_list_for_each_safe(entry, tmp, &globalconf.wallpaper_cache, link) {
+		wl_list_remove(&entry->link);
+		if (entry->scene_node)
+			wlr_scene_node_destroy(&entry->scene_node->node);
+		if (entry->surface)
+			cairo_surface_destroy(entry->surface);
+		free(entry->path);
+		free(entry);
+	}
+
+	globalconf.current_wallpaper = NULL;
+	return 0;
+}
+
+/** Preload a single wallpaper into cache (internal helper) */
+static bool
+wallpaper_cache_preload_path(const char *path)
+{
+	if (!path || !globalconf.wallpaper_cache.next)
+		return false;
+
+	/* Already cached? */
+	if (wallpaper_cache_lookup(path))
+		return true;
+
+	/* Load image via gdk-pixbuf */
+	GError *error = NULL;
+	GdkPixbuf *pixbuf = gdk_pixbuf_new_from_file(path, &error);
+	if (!pixbuf) {
+		if (error) g_error_free(error);
+		return false;
+	}
+
+	int width = gdk_pixbuf_get_width(pixbuf);
+	int height = gdk_pixbuf_get_height(pixbuf);
+	int rowstride = gdk_pixbuf_get_rowstride(pixbuf);
+	int n_channels = gdk_pixbuf_get_n_channels(pixbuf);
+	guchar *pixels = gdk_pixbuf_get_pixels(pixbuf);
+
+	cairo_surface_t *surface = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, width, height);
+	if (cairo_surface_status(surface) != CAIRO_STATUS_SUCCESS) {
+		g_object_unref(pixbuf);
+		return false;
+	}
+
+	/* Copy pixbuf (RGB/RGBA) to cairo surface (ARGB) */
+	unsigned char *dest = cairo_image_surface_get_data(surface);
+	int dest_stride = cairo_image_surface_get_stride(surface);
+	for (int y = 0; y < height; y++) {
+		guchar *src_row = pixels + y * rowstride;
+		uint32_t *dest_row = (uint32_t *)(dest + y * dest_stride);
+		for (int x = 0; x < width; x++) {
+			guchar r = src_row[x * n_channels + 0];
+			guchar g = src_row[x * n_channels + 1];
+			guchar b = src_row[x * n_channels + 2];
+			guchar a = (n_channels == 4) ? src_row[x * n_channels + 3] : 255;
+			dest_row[x] = (a << 24) | (r << 16) | (g << 8) | b;
+		}
+	}
+	cairo_surface_mark_dirty(surface);
+	g_object_unref(pixbuf);
+
+	/* Create wlr_buffer */
+	struct wlr_buffer *buffer = drawable_create_buffer_from_data(
+		width, height,
+		cairo_image_surface_get_data(surface),
+		cairo_image_surface_get_stride(surface)
+	);
+	if (!buffer) {
+		cairo_surface_destroy(surface);
+		return false;
+	}
+
+	/* Create scene node (hidden) */
+	struct wlr_scene_buffer *scene_node = wlr_scene_buffer_create(layers[0], buffer);
+	if (!scene_node) {
+		wlr_buffer_drop(buffer);
+		cairo_surface_destroy(surface);
+		return false;
+	}
+	wlr_scene_node_set_position(&scene_node->node, 0, 0);
+	wlr_scene_node_set_enabled(&scene_node->node, false);
+	wlr_buffer_drop(buffer);
+
+	/* Evict oldest if needed */
+	wallpaper_cache_evict_oldest();
+
+	/* Add to cache */
+	wallpaper_cache_entry_t *entry = calloc(1, sizeof(*entry));
+	if (!entry) {
+		wlr_scene_node_destroy(&scene_node->node);
+		cairo_surface_destroy(surface);
+		return false;
+	}
+	entry->path = strdup(path);
+	entry->scene_node = scene_node;
+	entry->surface = surface;
+	wl_list_insert(&globalconf.wallpaper_cache, &entry->link);
+
+	return true;
+}
+
+/** root.wallpaper_cache_preload(paths) - Preload wallpapers into cache
+ * \param paths Array of file paths to preload
+ * \return Number of successfully preloaded wallpapers
+ */
+static int
+luaA_root_wallpaper_cache_preload(lua_State *L)
+{
+	luaA_checktable(L, 1);
+
+	int count = 0;
+	lua_pushnil(L);
+	while (lua_next(L, 1) != 0) {
+		if (lua_isstring(L, -1)) {
+			const char *path = lua_tostring(L, -1);
+			if (wallpaper_cache_preload_path(path))
+				count++;
+		}
+		lua_pop(L, 1);
+	}
+
+	lua_pushinteger(L, count);
+	return 1;
+}
 
 /** root.set_index_miss_handler(function) - Set custom property getter
  * AwesomeWM compatibility: allows Lua code to handle missing properties
@@ -1319,6 +1632,12 @@ static const luaL_Reg root_methods[] = {
 	{ "_buttons", luaA_root_buttons },
 	{ "_keys", luaA_root_keys },
 	{ "_wallpaper", luaA_root_wallpaper },
+	/* somewm extensions for wallpaper caching (Issue #214)
+	 * TODO(2.x): Move to dedicated wallpaper.c or compositor/texture_cache.c */
+	{ "wallpaper_cache_has", luaA_root_wallpaper_cache_has },
+	{ "wallpaper_cache_show", luaA_root_wallpaper_cache_show },
+	{ "wallpaper_cache_clear", luaA_root_wallpaper_cache_clear },
+	{ "wallpaper_cache_preload", luaA_root_wallpaper_cache_preload },
 	{ "cursor", luaA_root_cursor },
 	{ "fake_input", luaA_root_fake_input },
 	{ "drawins", luaA_root_drawins },

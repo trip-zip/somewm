@@ -1046,6 +1046,9 @@ cleanup(void)
 	/* Destroy Wayland clients while Lua is still alive so signal handlers work. */
 	wl_display_destroy_clients(dpy);
 
+	/* Cleanup wallpaper cache before destroying scene */
+	wallpaper_cache_cleanup();
+
 	/* Close Lua after clients are destroyed (matches AwesomeWM pattern) */
 	luaA_cleanup();
 
@@ -4610,6 +4613,9 @@ setup(void)
 #endif
 
 	luaA_init();
+
+	/* Initialize wallpaper cache (must be AFTER luaA_init which zeroes globalconf) */
+	wallpaper_cache_init();
 
 	/* Initialize D-Bus for notifications (AwesomeWM compatibility) */
 	a_dbus_init();
