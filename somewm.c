@@ -1783,7 +1783,7 @@ apply_input_settings_to_device(struct libinput_device *device)
 
 	/* Three-finger drag (libinput 1.27+) */
 #ifdef LIBINPUT_CONFIG_3FG_DRAG_ENABLED_3FG
-	if (libinput_device_config_3fg_drag_get_finger_count(device) >= 3
+	if (libinput_device_config_3fg_drag_get_finger_count(device)
 			&& globalconf.input.tap_3fg_drag >= 0)
 		libinput_device_config_3fg_drag_set_enabled(device,
 			globalconf.input.tap_3fg_drag ? LIBINPUT_CONFIG_3FG_DRAG_ENABLED_3FG
