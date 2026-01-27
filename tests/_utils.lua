@@ -309,12 +309,18 @@ function utils.create_signal_tracker()
     return tracker
 end
 
---- Wait for a condition with debug output.
+--- DEPRECATED: Wait for a condition with debug output.
+-- WARNING: This function uses a blocking busy-wait loop that freezes the
+-- event loop. Use async.wait_for_condition() instead for non-blocking waits.
+--
+-- @deprecated Use async.wait_for_condition() from _async.lua instead
 -- @tparam string description What we're waiting for
 -- @tparam function condition Function that returns true when done
 -- @tparam[opt=5] number max_seconds Maximum seconds to wait
 -- @treturn boolean True if condition met, false if timed out
 function utils.wait_for(description, condition, max_seconds)
+    io.stderr:write("[DEPRECATED] utils.wait_for() blocks the event loop! Use async.wait_for_condition() instead.\n")
+
     max_seconds = max_seconds or 5
     local start = os.time()
 
@@ -325,7 +331,7 @@ function utils.wait_for(description, condition, max_seconds)
             io.stderr:write(string.format("[WAIT] %s: OK\n", description))
             return true
         end
-        -- Note: This is a blocking wait, only use for quick checks
+        -- WARNING: This busy-wait blocks the compositor event loop!
     end
 
     io.stderr:write(string.format("[WAIT] %s: TIMEOUT\n", description))

@@ -9,7 +9,7 @@
 
 -include .local.mk
 
-.PHONY: all install uninstall clean setup reconfigure test test-unit test-integration test-asan test-one test-visual test-one-visual build-test
+.PHONY: all install uninstall clean setup reconfigure test test-unit test-integration test-asan test-one test-visual test-one-visual test-ci test-fast build-test
 
 # Default build: WITH ASAN for development
 all:
@@ -59,13 +59,27 @@ test: test-unit test-integration
 test-unit:
 	-@./tests/run-unit.sh
 
-# Integration tests (fast, no ASAN)
+# Integration tests (visual mode by default, no ASAN)
 test-integration: build-test
 	@SOMEWM=./build-test/somewm SOMEWM_CLIENT=./build-test/somewm-client ./tests/run-integration.sh
 
 # Integration tests with ASAN (slower, catches memory bugs)
 test-asan: all
 	@SOMEWM=./build/somewm SOMEWM_CLIENT=./build/somewm-client ./tests/run-integration.sh
+
+# CI mode: headless (for automated testing environments)
+test-ci: build-test test-unit
+	@HEADLESS=1 \
+	 SOMEWM=./build-test/somewm \
+	 SOMEWM_CLIENT=./build-test/somewm-client \
+	 ./tests/run-integration.sh
+
+# Fast test suite using persistent compositor (10x faster)
+test-fast: build-test
+	@PERSISTENT=1 \
+	 SOMEWM=./build-test/somewm \
+	 SOMEWM_CLIENT=./build-test/somewm-client \
+	 ./tests/run-integration.sh
 
 # Run single test (TDD workflow, no ASAN for speed)
 # Usage: make test-one TEST=tests/test-focus.lua
