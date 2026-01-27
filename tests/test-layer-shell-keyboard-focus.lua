@@ -4,8 +4,7 @@
 -- Verifies that layer-shell surfaces properly receive and release keyboard
 -- focus, and that client focus is correctly managed during this process.
 --
--- NOTE: This test requires visual mode (HEADLESS=0) because wofi needs a
--- display to render.
+-- Uses test-layer-client for deterministic, instant layer surface creation.
 ---------------------------------------------------------------------------
 
 local runner = require("_runner")
@@ -13,33 +12,22 @@ local test_client = require("_client")
 local utils = require("_utils")
 local awful = require("awful")
 
--- Check if wofi is available
-local function is_wofi_available()
-    local handle = io.popen("which wofi 2>/dev/null")
-    if handle then
-        local result = handle:read("*a")
-        handle:close()
-        return result and result:match("wofi")
+-- Path to test-layer-client (built by meson)
+local TEST_LAYER_CLIENT = "./build-test/test-layer-client"
+
+-- Check if test-layer-client exists
+local function is_test_layer_client_available()
+    local f = io.open(TEST_LAYER_CLIENT, "r")
+    if f then
+        f:close()
+        return true
     end
     return false
 end
 
--- Check if we're in headless mode (wofi won't work)
-local function is_headless()
-    local backend = os.getenv("WLR_BACKENDS")
-    return backend == "headless"
-end
-
 -- Skip test if requirements not met
-if not is_wofi_available() then
-    io.stderr:write("SKIP: wofi not available\n")
-    io.stderr:write("Test finished successfully.\n")
-    awesome.quit()
-    return
-end
-
-if is_headless() then
-    io.stderr:write("SKIP: layer-shell tests require visual mode (HEADLESS=0)\n")
+if not is_test_layer_client_available() then
+    io.stderr:write("SKIP: test-layer-client not found (run meson compile first)\n")
     io.stderr:write("Test finished successfully.\n")
     awesome.quit()
     return
@@ -53,7 +41,7 @@ if not test_client.is_available() then
 end
 
 local my_client
-local wofi_pid
+local layer_pid
 local layer_surf
 
 local steps = {
@@ -71,98 +59,98 @@ local steps = {
         return nil
     end,
 
-    -- Step 2: Verify client has focus
-    function()
-        assert(client.focus == my_client,
-            string.format("Expected client to have focus, got %s",
+    -- Step 2: Verify client has focus (wait for focus to transfer)
+    function(count)
+        if client.focus == my_client then
+            io.stderr:write("[TEST] Client has focus\n")
+            return true
+        end
+        if count > 20 then
+            error(string.format("Expected client to have focus, got %s",
                 client.focus and client.focus.class or "nil"))
-        io.stderr:write("[TEST] Client has focus\n")
-        return true
+        end
+        return nil
     end,
 
-    -- Step 3: Spawn wofi (layer-shell surface with keyboard focus)
+    -- Step 3: Spawn test-layer-client (layer-shell surface with keyboard focus)
     function(count)
         if count == 1 then
-            io.stderr:write("[TEST] Spawning wofi...\n")
-            wofi_pid = awful.spawn("wofi --show dmenu --prompt 'test'")
+            io.stderr:write("[TEST] Spawning test-layer-client...\n")
+            layer_pid = awful.spawn(TEST_LAYER_CLIENT .. " --namespace test-layer --keyboard exclusive")
         end
 
         -- Wait for layer surface to appear
         if layer_surface then
             for _, ls in ipairs(layer_surface.get()) do
-                if ls.namespace and ls.namespace:match("wofi") then
+                if ls.namespace and ls.namespace:match("test%-layer") then
                     layer_surf = ls
-                    io.stderr:write("[TEST] Wofi layer surface appeared\n")
+                    io.stderr:write("[TEST] Layer surface appeared\n")
                     return true
                 end
             end
         end
 
-        -- Timeout
-        if count > 50 then
-            io.stderr:write("[TEST] ERROR: wofi did not appear\n")
+        -- Timeout (should be fast - test-layer-client starts instantly)
+        if count > 20 then
+            io.stderr:write("[TEST] ERROR: layer surface did not appear\n")
             return true
         end
 
         return nil
     end,
 
-    -- Step 4: Verify wofi has keyboard focus and client lost focus
+    -- Step 4: Verify layer surface has keyboard focus and client lost focus
     function(count)
         if not layer_surf then
-            io.stderr:write("[TEST] SKIP: wofi layer surface not found\n")
+            io.stderr:write("[TEST] SKIP: layer surface not found\n")
             return true
         end
 
         -- Give focus a moment to transfer
-        if count < 5 then
+        if count < 3 then
             return nil
         end
 
-        -- Check wofi has keyboard focus
+        -- Check layer surface has keyboard focus
         io.stderr:write(string.format("[TEST] layer_surf.has_keyboard_focus = %s\n",
             tostring(layer_surf.has_keyboard_focus)))
         io.stderr:write(string.format("[TEST] client.focus = %s\n",
             client.focus and client.focus.class or "nil"))
 
         assert(layer_surf.has_keyboard_focus == true,
-            "Expected wofi to have keyboard focus")
+            "Expected layer surface to have keyboard focus")
 
-        -- Client should have lost focus (client.focus should be nil or different)
+        -- Client should have lost focus (client.focus should be nil)
         -- Note: When a layer surface has exclusive focus, client.focus becomes nil
         assert(client.focus == nil,
             string.format("Expected client.focus to be nil when layer surface has focus, got %s",
                 client.focus and client.focus.class or "nil"))
 
-        io.stderr:write("[TEST] PASS: wofi has keyboard focus, client lost focus\n")
+        io.stderr:write("[TEST] PASS: layer surface has keyboard focus, client lost focus\n")
         return true
     end,
 
-    -- Step 5: Close wofi
+    -- Step 5: Close layer surface
     function(count)
         if count == 1 then
-            io.stderr:write("[TEST] Closing wofi...\n")
-            if wofi_pid then
-                os.execute("kill " .. wofi_pid .. " 2>/dev/null")
+            io.stderr:write("[TEST] Closing layer surface...\n")
+            if layer_pid then
+                -- Use SIGKILL to immediately terminate (SIGTERM requires event loop to wake)
+                os.execute("kill -9 " .. layer_pid .. " 2>/dev/null")
             end
-            os.execute("pkill -9 wofi 2>/dev/null")
         end
 
         -- Wait for layer surface to be gone
         if layer_surface then
             for _, ls in ipairs(layer_surface.get()) do
-                if ls.namespace and ls.namespace:match("wofi") then
+                if ls.namespace and ls.namespace:match("test%-layer") then
                     return nil  -- Still exists
                 end
             end
         end
 
-        if count > 5 then
-            io.stderr:write("[TEST] Wofi closed\n")
-            return true
-        end
-
-        return nil
+        io.stderr:write("[TEST] Layer surface closed\n")
+        return true
     end,
 
     -- Step 6: Verify client regained focus
@@ -172,14 +160,14 @@ local steps = {
             return nil
         end
 
-        io.stderr:write(string.format("[TEST] After wofi close: client.focus = %s\n",
+        io.stderr:write(string.format("[TEST] After layer close: client.focus = %s\n",
             client.focus and client.focus.class or "nil"))
 
         assert(client.focus == my_client,
-            string.format("Expected client to regain focus after wofi close, got %s",
+            string.format("Expected client to regain focus after layer close, got %s",
                 client.focus and client.focus.class or "nil"))
 
-        io.stderr:write("[TEST] PASS: client regained focus after wofi close\n")
+        io.stderr:write("[TEST] PASS: client regained focus after layer close\n")
         return true
     end,
 
@@ -188,7 +176,7 @@ local steps = {
         if count == 1 then
             io.stderr:write("[TEST] Cleanup: killing remaining clients\n")
             if my_client and my_client.valid then my_client:kill() end
-            os.execute("pkill -9 wofi 2>/dev/null")
+            os.execute("pkill -9 test-layer-client 2>/dev/null")
         end
 
         if #client.get() == 0 then
