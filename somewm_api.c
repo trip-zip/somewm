@@ -12,6 +12,9 @@
 #include <glib.h>
 #include <wlr/types/wlr_fractional_scale_v1.h>
 #include <wlr/types/wlr_seat.h>
+#include <wlr/types/wlr_cursor.h>
+#include <wlr/types/wlr_xcursor_manager.h>
+#include <wlr/xwayland.h>
 
 #include "somewm_api.h"
 #include "xkb.h"
@@ -37,6 +40,11 @@ extern awesome_t globalconf;
  */
 extern struct wl_list mons;
 extern struct wlr_cursor *cursor;
+extern struct wlr_xcursor_manager *cursor_mgr;
+extern char *selected_root_cursor;
+#ifdef XWAYLAND
+extern struct wlr_xwayland *xwayland;
+#endif
 extern Monitor *selmon;
 extern KeyboardGroup *kb_group;
 
@@ -521,6 +529,65 @@ struct wlr_cursor *
 some_get_cursor(void)
 {
 	return cursor;
+}
+
+/*
+ * Cursor Theme API
+ */
+
+const char *
+some_get_cursor_theme(void)
+{
+	return cursor_mgr->name ? cursor_mgr->name : "default";
+}
+
+uint32_t
+some_get_cursor_size(void)
+{
+	return cursor_mgr->size;
+}
+
+void
+some_update_cursor_theme(const char *theme_name, uint32_t size)
+{
+	Monitor *m;
+	char *theme_copy = NULL;
+
+	/* Copy theme name before destroying old manager (it may own the string) */
+	if (theme_name) {
+		theme_copy = strdup(theme_name);
+	}
+
+	/* Destroy old manager */
+	wlr_xcursor_manager_destroy(cursor_mgr);
+
+	/* Create new manager with specified theme/size */
+	cursor_mgr = wlr_xcursor_manager_create(theme_copy, size);
+
+	free(theme_copy);
+
+	/* Reload cursor theme for each monitor's scale */
+	wl_list_for_each(m, &mons, link) {
+		wlr_xcursor_manager_load(cursor_mgr, m->wlr_output->scale);
+	}
+
+	/* Update displayed cursor - fall back to "default" if current cursor doesn't exist in new theme */
+	const char *cursor_name = selected_root_cursor ? selected_root_cursor : "default";
+	if (wlr_xcursor_manager_get_xcursor(cursor_mgr, cursor_name, 1.0) == NULL) {
+		cursor_name = "default";
+	}
+	wlr_cursor_set_xcursor(cursor, cursor_mgr, cursor_name);
+
+#ifdef XWAYLAND
+	/* Sync XWayland cursor if running */
+	struct wlr_xcursor *xcursor = wlr_xcursor_manager_get_xcursor(cursor_mgr, "default", 1);
+	if (xcursor && xwayland) {
+		wlr_xwayland_set_cursor(xwayland,
+			xcursor->images[0]->buffer, xcursor->images[0]->width * 4,
+			xcursor->images[0]->width, xcursor->images[0]->height,
+			xcursor->images[0]->hotspot_x, xcursor->images[0]->hotspot_y);
+	}
+#endif
 }
 
 struct wl_list *

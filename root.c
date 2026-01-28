@@ -771,6 +771,46 @@ luaA_root_cursor(lua_State *L)
 	return 0;
 }
 
+/** root.cursor_theme([name]) - Get or set cursor theme
+ * Called with no arguments, returns the current cursor theme name.
+ * Called with a theme name, changes the cursor theme at runtime.
+ * \param name (optional) Name of cursor theme (e.g., "Adwaita", "macOS")
+ * \return Current theme name if called as getter
+ */
+static int
+luaA_root_cursor_theme(lua_State *L)
+{
+	if (lua_gettop(L) >= 1) {
+		const char *theme = luaL_checkstring(L, 1);
+		some_update_cursor_theme(theme, some_get_cursor_size());
+		return 0;
+	}
+	lua_pushstring(L, some_get_cursor_theme());
+	return 1;
+}
+
+/** root.cursor_size([size]) - Get or set cursor size
+ * Called with no arguments, returns the current cursor size.
+ * Called with a size, changes the cursor size at runtime.
+ * \param size (optional) Cursor size in pixels (e.g., 24, 32, 48)
+ * \return Current size if called as getter
+ */
+static int
+luaA_root_cursor_size(lua_State *L)
+{
+	if (lua_gettop(L) >= 1) {
+		int size = luaL_checkinteger(L, 1);
+		if (size > 0) {
+			some_update_cursor_theme(some_get_cursor_theme(), size);
+		} else {
+			luaA_warn(L, "cursor size must be positive");
+		}
+		return 0;
+	}
+	lua_pushinteger(L, some_get_cursor_size());
+	return 1;
+}
+
 /** root.tags() - Get all tags
  * AwesomeWM compatibility: returns array of all tag objects
  * \return Table containing all tags
@@ -1929,6 +1969,8 @@ static const luaL_Reg root_methods[] = {
 	{ "wallpaper_cache_clear", luaA_root_wallpaper_cache_clear },
 	{ "wallpaper_cache_preload", luaA_root_wallpaper_cache_preload },
 	{ "cursor", luaA_root_cursor },
+	{ "cursor_theme", luaA_root_cursor_theme },
+	{ "cursor_size", luaA_root_cursor_size },
 	{ "fake_input", luaA_root_fake_input },
 	{ "drawins", luaA_root_drawins },
 	{ "size", luaA_root_size },

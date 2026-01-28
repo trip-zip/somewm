@@ -381,7 +381,7 @@ static void sethints(struct wl_listener *listener, void *data);
 static void xwaylandready(struct wl_listener *listener, void *data);
 static struct wl_listener new_xwayland_surface = {.notify = createnotifyx11};
 static struct wl_listener xwayland_ready = {.notify = xwaylandready};
-static struct wlr_xwayland *xwayland;
+struct wlr_xwayland *xwayland;
 #endif
 
 /* Helper functions to expose layouts array to somewm_api.c */
@@ -4479,8 +4479,16 @@ setup(void)
 	 * Xcursor themes to source cursor images from and makes sure that cursor
 	 * images are available at all scale factors on the screen (necessary for
 	 * HiDPI support). Scaled cursors will be loaded with each output. */
-	cursor_mgr = wlr_xcursor_manager_create(NULL, 24);
-	setenv("XCURSOR_SIZE", "24", 1);
+	const char *cursor_theme = getenv("XCURSOR_THEME");
+	const char *cursor_size_str = getenv("XCURSOR_SIZE");
+	int cursor_size = 24;
+	if (cursor_size_str) {
+		int parsed = atoi(cursor_size_str);
+		if (parsed > 0) {
+			cursor_size = parsed;
+		}
+	}
+	cursor_mgr = wlr_xcursor_manager_create(cursor_theme, cursor_size);
 
 	/*
 	 * wlr_cursor *only* displays an image on screen. It does not move around
