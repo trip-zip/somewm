@@ -1782,12 +1782,16 @@ apply_input_settings_to_device(struct libinput_device *device)
 	}
 
 	/* Three-finger drag (libinput 1.27+) */
-#ifdef LIBINPUT_CONFIG_3FG_DRAG_ENABLED_3FG
-	if (libinput_device_config_3fg_drag_get_finger_count(device)
-			&& globalconf.input.tap_3fg_drag >= 0)
-		libinput_device_config_3fg_drag_set_enabled(device,
-			globalconf.input.tap_3fg_drag ? LIBINPUT_CONFIG_3FG_DRAG_ENABLED_3FG
-			                              : LIBINPUT_CONFIG_3FG_DRAG_DISABLED);
+#ifdef HAVE_LIBINPUT_3FG_DRAG
+	if (libinput_device_config_3fg_drag_get_finger_count(device)) {
+		if (globalconf.input.tap_3fg_drag >= 0)
+			libinput_device_config_3fg_drag_set_enabled(device,
+				globalconf.input.tap_3fg_drag ? LIBINPUT_CONFIG_3FG_DRAG_ENABLED_3FG
+				                              : LIBINPUT_CONFIG_3FG_DRAG_DISABLED);
+	} else if (globalconf.input.tap_3fg_drag > 0) {
+		wlr_log(WLR_INFO, "Device '%s' does not support three-finger drag",
+			libinput_device_get_name(device));
+	}
 #endif
 
 	if (libinput_device_config_scroll_has_natural_scroll(device)

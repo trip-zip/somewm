@@ -51,6 +51,9 @@ wayland_server = dependency('wayland-server')
 wayland_protocols = dependency('wayland-protocols')
 xkbcommon = dependency('xkbcommon')
 libinput = dependency('libinput')
+# Check for 3-finger drag support (libinput 1.27+)
+have_3fg_drag = cc.has_function('libinput_device_config_3fg_drag_get_finger_count',
+                                 dependencies: libinput)
 libdrm = dependency('libdrm')
 dbus = dependency('dbus-1')
 glib = dependency('glib-2.0')
@@ -230,6 +233,10 @@ add_project_arguments('-DWLR_VERSION_0_19', language: 'c')
 
 if have_xwayland
   add_project_arguments('-DXWAYLAND', language: 'c')
+endif
+
+if have_3fg_drag
+  add_project_arguments('-DHAVE_LIBINPUT_3FG_DRAG', language: 'c')
 endif
 
 # Development flags
