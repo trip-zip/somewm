@@ -173,6 +173,14 @@ struct wlr_seat *some_get_seat(void);
 int some_has_exclusive_focus(void);
 struct wlr_cursor *some_get_cursor(void);
 struct wl_list *some_get_keyboard_groups(void);
+
+/*
+ * Cursor Theme API
+ * Runtime cursor theme and size configuration
+ */
+const char *some_get_cursor_theme(void);
+uint32_t some_get_cursor_size(void);
+void some_update_cursor_theme(const char *theme_name, uint32_t size);
 void some_get_cursor_position(double *x, double *y);
 void some_set_cursor_position(double x, double y, int silent);
 void some_get_button_states(int states[5]);

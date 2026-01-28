@@ -22,6 +22,8 @@ All notable changes to somewm will be documented in this file.
 ### Added
 
 - ASAN/UBSAN build support via `make asan` for debugging memory issues
+- Runtime cursor theme and size changing via `root.cursor_theme()` and `root.cursor_size()` (#177)
+- Startup now respects `XCURSOR_THEME` and `XCURSOR_SIZE` environment variables (#177)
 
 ## [0.4.0] - 2025-12-28
 
@@ -29,7 +31,7 @@ All notable changes to somewm will be documented in this file.
 - Dynamic keybinding removal (#15)
 - Scroll wheel support in mousebinds (#16)
 - Complete button press/release signals on clients (#17)
-- Cursor theme changing via `root.cursor()` (#18)
+- Cursor shape changing via `root.cursor()` (#18)
 
 ### Notes
 - XKB layout switching moved to 0.5.0 (Wayland limitation with documented workaround)
