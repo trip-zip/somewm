@@ -46,8 +46,9 @@ local function show_placeholder(geo)
 
     placeholder_w:geometry(geo)
 
-    local img = cairo.ImageSurface(cairo.Format.A1, geo.width, geo.height)
+    local img = cairo.ImageSurface(cairo.Format.ARGB32, geo.width, geo.height)
     local cr = cairo.Context(img)
+    cr:set_antialias(cairo.Antialias.BEST)
 
     cr:set_operator(cairo.Operator.CLEAR)
     cr:set_source_rgba(0,0,0,1)
@@ -68,7 +69,7 @@ local function show_placeholder(geo)
     cr:stroke()
 
     placeholder_w.shape_bounding = img._native
-    img:finish()
+    placeholder_w._shape_bounding_surface = img  -- Keep reference to prevent GC
 
     placeholder_w.visible = true
 end
