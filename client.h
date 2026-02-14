@@ -107,16 +107,23 @@ client_activate_surface(struct wlr_surface *s, int activated)
 #ifdef XWAYLAND
 	struct wlr_xwayland_surface *xsurface;
 #endif
-	if (!s)
+	if (!s) {
+		wlr_log(WLR_DEBUG, "[FOCUS-ACTIVATE] surface=NULL, skipping");
 		return;
+	}
 #ifdef XWAYLAND
 	if ((xsurface = wlr_xwayland_surface_try_from_wlr_surface(s))) {
+		wlr_log(WLR_DEBUG, "[FOCUS-ACTIVATE] X11 surface=%p activated=%d title=%s",
+			(void*)s, activated, xsurface->title ? xsurface->title : "?");
 		wlr_xwayland_surface_activate(xsurface, activated);
 		return;
 	}
 #endif
-	if ((toplevel = wlr_xdg_toplevel_try_from_wlr_surface(s)))
+	if ((toplevel = wlr_xdg_toplevel_try_from_wlr_surface(s))) {
+		wlr_log(WLR_DEBUG, "[FOCUS-ACTIVATE] XDG surface=%p activated=%d title=%s",
+			(void*)s, activated, toplevel->title ? toplevel->title : "?");
 		wlr_xdg_toplevel_set_activated(toplevel, activated);
+	}
 }
 
 static inline uint32_t
@@ -321,11 +328,17 @@ client_is_unmanaged(Client *c)
 static inline void
 client_notify_enter(struct wlr_surface *s, struct wlr_keyboard *kb)
 {
+	wlr_log(WLR_DEBUG, "[FOCUS-ENTER] surface=%p kb=%p (keycodes=%zu) seat_focused_before=%p",
+		(void*)s, (void*)kb, kb ? kb->num_keycodes : (size_t)0,
+		(void*)seat->keyboard_state.focused_surface);
 	if (kb)
 		wlr_seat_keyboard_notify_enter(seat, s, kb->keycodes,
 				kb->num_keycodes, &kb->modifiers);
 	else
 		wlr_seat_keyboard_notify_enter(seat, s, NULL, 0, NULL);
+	wlr_log(WLR_DEBUG, "[FOCUS-ENTER] DONE seat_focused_after=%p match=%d",
+		(void*)seat->keyboard_state.focused_surface,
+		seat->keyboard_state.focused_surface == s);
 }
 
 static inline void
