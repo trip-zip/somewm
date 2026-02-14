@@ -386,7 +386,10 @@ static int
 luaA_exec(lua_State *L)
 {
     const char *cmd = luaL_checkstring(L, 1);
-    awesome_atexit(false);
+    /* Use restart=true to skip luaA_cleanup() - we're still inside a Lua
+     * call so destroying the Lua state here would be undefined behavior.
+     * The exec will replace the process image anyway. */
+    awesome_atexit(true);
     a_exec(cmd);
     return 0;  /* Never reached on success */
 }
