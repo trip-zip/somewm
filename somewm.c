@@ -351,6 +351,7 @@ static struct wl_listener cursor_motion = {.notify = motionrelative};
 static struct wl_listener cursor_motion_absolute = {.notify = motionabsolute};
 static struct wl_listener gpu_reset = {.notify = gpureset};
 static struct wl_listener layout_change = {.notify = updatemons};
+static int in_updatemons;
 static struct wl_listener new_idle_inhibitor = {.notify = createidleinhibitor};
 static struct wl_listener new_input_device = {.notify = inputdevice};
 static struct wl_listener new_virtual_keyboard = {.notify = virtualkeyboard};
@@ -2320,6 +2321,18 @@ dirtomon(enum wlr_direction dir)
 	return selmon;
 }
 
+/** Update pointer constraint for a surface.
+ * Called from somewm_api.c when Lua changes focus - games need pointer
+ * constraints to follow keyboard focus for mouse lock to work. */
+void
+some_update_pointer_constraint(struct wlr_surface *surface)
+{
+	if (!surface)
+		return;
+	cursorconstrain(wlr_pointer_constraints_v1_constraint_for_surface(
+		pointer_constraints, surface, seat));
+}
+
 void
 focusclient(Client *c, int lift)
 {
@@ -2330,8 +2343,15 @@ focusclient(Client *c, int lift)
 	struct wlr_surface *surface;
 	struct wlr_keyboard *kb;
 
-	if (locked)
+	wlr_log(WLR_DEBUG, "[FOCUS] focusclient(%s/%s type=%u, lift=%d) old_focused_surface=%p",
+		c ? client_get_title(c) : "NULL",
+		c ? client_get_appid(c) : "NULL",
+		c ? c->client_type : 99u, lift, (void*)old);
+
+	if (locked) {
+		wlr_log(WLR_DEBUG, "[FOCUS] BAIL: locked");
 		return;
+	}
 
 	/* Raise client in stacking order if requested */
 	if (c && lift) {
@@ -2341,8 +2361,10 @@ focusclient(Client *c, int lift)
 			wlr_scene_node_raise_to_top(&c->scene->node);
 	}
 
-	if (c && client_surface(c) == old)
+	if (c && client_surface(c) == old) {
+		wlr_log(WLR_DEBUG, "[FOCUS] BAIL: surface unchanged (already focused)");
 		return;
+	}
 
 	if ((old_client_type = toplevel_from_wlr_surface(old, &old_c, &old_l)) == XDGShell) {
 		struct wlr_xdg_popup *popup, *tmp;
@@ -2442,25 +2464,48 @@ focusclient(Client *c, int lift)
 #ifdef XWAYLAND
 	if (c->client_type == X11) {
 		surface_ready = (surface && c->scene != NULL);
+		wlr_log(WLR_DEBUG, "[FOCUS] X11 surface_ready: surface=%p scene=%p -> %d",
+			(void*)surface, (void*)c->scene, surface_ready);
 	} else
 #endif
 	{
 		surface_ready = (surface && surface->mapped);
+		wlr_log(WLR_DEBUG, "[FOCUS] Wayland surface_ready: surface=%p mapped=%d -> %d",
+			(void*)surface, surface ? surface->mapped : -1, surface_ready);
 	}
 
 	if (surface_ready) {
+#ifdef XWAYLAND
+		/* Sway pattern: inform XWayland of the active seat on every focus
+		 * change to an X11 client. Required for proper keyboard delivery. */
+		if (c->client_type == X11) {
+			wlr_log(WLR_DEBUG, "[FOCUS] calling wlr_xwayland_set_seat");
+			wlr_xwayland_set_seat(xwayland, seat);
+		}
+#endif
 		kb = wlr_seat_get_keyboard(seat);
+		wlr_log(WLR_DEBUG, "[FOCUS] keyboard_enter: surface=%p kb=%p seat_focused=%p",
+			(void*)surface, (void*)kb, (void*)seat->keyboard_state.focused_surface);
 		if (kb) {
 			wlr_seat_keyboard_notify_enter(seat, surface,
 			                                kb->keycodes,
 			                                kb->num_keycodes,
 			                                &kb->modifiers);
+		} else {
+			/* Send keyboard enter even without a keyboard device (Sway pattern).
+			 * This ensures the surface knows it has keyboard focus. */
+			wlr_seat_keyboard_notify_enter(seat, surface, NULL, 0, NULL);
 		}
+		wlr_log(WLR_DEBUG, "[FOCUS] keyboard_enter DONE: seat_focused=%p (expected %p) match=%d",
+			(void*)seat->keyboard_state.focused_surface, (void*)surface,
+			seat->keyboard_state.focused_surface == surface);
 
 		/* Update pointer constraint for newly focused surface.
 		 * Games like Minecraft need the constraint to follow keyboard focus. */
 		cursorconstrain(wlr_pointer_constraints_v1_constraint_for_surface(
 			pointer_constraints, surface, seat));
+	} else {
+		wlr_log(WLR_DEBUG, "[FOCUS] SKIP keyboard_enter: surface NOT ready");
 	}
 
 	/* Emit focus signals (AwesomeWM pattern)
@@ -3259,6 +3304,56 @@ mapnotify(struct wl_listener *listener, void *data)
 		}
 	}
 	printstatus();
+
+	/* Ensure keyboard focus is delivered now that the surface is mapped.
+	 * focusclient() may have been called earlier (from Lua rules) when the
+	 * surface wasn't ready yet, so keyboard enter was skipped. Re-send it
+	 * now. This fixes games and clients that appear focused but don't
+	 * receive keyboard input. */
+	wlr_log(WLR_DEBUG, "[MAPNOTIFY-FOCUS] client=%s/%s is_focused=%d has_surface=%d seat_focused=%p",
+		client_get_title(c), client_get_appid(c),
+		globalconf.focus.client == c,
+		client_surface(c) != NULL,
+		(void*)seat->keyboard_state.focused_surface);
+	if (globalconf.focus.client == c && client_surface(c)) {
+		/* Use same surface_ready logic as focusclient(): for XWayland
+		 * clients, surface->mapped may be false even after map event,
+		 * so check c->scene instead. */
+		int ready;
+#ifdef XWAYLAND
+		if (c->client_type == X11)
+			ready = (c->scene != NULL);
+		else
+#endif
+			ready = client_surface(c)->mapped;
+		wlr_log(WLR_DEBUG, "[MAPNOTIFY-FOCUS] ready=%d seat_focused_matches=%d",
+			ready, seat->keyboard_state.focused_surface == client_surface(c));
+		if (ready && seat->keyboard_state.focused_surface != client_surface(c)) {
+			wlr_log(WLR_DEBUG, "[MAPNOTIFY-FOCUS] RE-DELIVERING keyboard focus to %s", client_get_appid(c));
+#ifdef XWAYLAND
+			if (c->client_type == X11)
+				wlr_xwayland_set_seat(xwayland, seat);
+#endif
+			struct wlr_keyboard *kb = wlr_seat_get_keyboard(seat);
+			if (kb) {
+				wlr_seat_keyboard_notify_enter(seat, client_surface(c),
+					kb->keycodes, kb->num_keycodes, &kb->modifiers);
+			} else {
+				wlr_seat_keyboard_notify_enter(seat, client_surface(c),
+					NULL, 0, NULL);
+			}
+			wlr_log(WLR_DEBUG, "[MAPNOTIFY-FOCUS] after re-delivery: seat_focused=%p client_surface=%p match=%d",
+				(void*)seat->keyboard_state.focused_surface,
+				(void*)client_surface(c),
+				seat->keyboard_state.focused_surface == client_surface(c));
+		} else if (ready) {
+			wlr_log(WLR_DEBUG, "[MAPNOTIFY-FOCUS] already focused correctly, no re-delivery needed");
+		} else {
+			wlr_log(WLR_DEBUG, "[MAPNOTIFY-FOCUS] surface NOT ready, cannot re-deliver");
+		}
+	} else if (globalconf.focus.client != c) {
+		wlr_log(WLR_DEBUG, "[MAPNOTIFY-FOCUS] client is not the focused client, skipping");
+	}
 
 unset_fullscreen:
 	m = c->mon ? c->mon : xytomon(c->geometry.x, c->geometry.y);
@@ -4482,6 +4577,12 @@ setup(void)
 		sigaction(sig[i], &sa, NULL);
 	wlr_log_init(globalconf.log_level, NULL);
 
+	wlr_log(WLR_ERROR, "========================================");
+	wlr_log(WLR_ERROR, "[SOMEWM-DEBUG] Starting somewm DEBUG BUILD");
+	wlr_log(WLR_ERROR, "[SOMEWM-DEBUG] Binary: %s", globalconf.argv[0]);
+	wlr_log(WLR_ERROR, "[SOMEWM-DEBUG] Log level: %d (3=DEBUG)", globalconf.log_level);
+	wlr_log(WLR_ERROR, "========================================");
+
 	/* The Wayland display is managed by libwayland. It handles accepting
 	 * clients from the Unix socket, manging Wayland globals, and so on. */
 	dpy = wl_display_create();
@@ -5047,8 +5148,6 @@ updatemons(struct wl_listener *listener, void *data)
 		return;
 	in_updatemons = 1;
 
-	wlr_log(WLR_ERROR, "[HOTPLUG] updatemons enter mons=%d",
-		wl_list_length(&mons));
 	struct wlr_output_configuration_v1 *config
 			= wlr_output_configuration_v1_create();
 	Client *c;
@@ -5208,6 +5307,7 @@ updatemons(struct wl_listener *listener, void *data)
 
 	in_updatemons = 0;
 	wlr_output_manager_v1_set_configuration(output_mgr, config);
+	in_updatemons = 0;
 }
 
 void
