@@ -4710,9 +4710,19 @@ luaA_client_get_focusable(lua_State *L, client_t *c)
     /* A client can be focused if it doesnt have the "nofocus" hint...*/
     else if (!c->nofocus)
         ret = true;
-    else
-        /* ...or if it knows the WM_TAKE_FOCUS protocol */
-        ret = client_hasproto(c, WM_TAKE_FOCUS);
+    else {
+        /* ...or if it knows the WM_TAKE_FOCUS protocol (Globally Active model).
+         * For XWayland clients, use wlr_xwayland_surface_icccm_input_model()
+         * because the WM_TAKE_FOCUS xcb_atom_t stub is 0 and client_hasproto()
+         * compares against real non-zero atom values, so it always fails. */
+#ifdef XWAYLAND
+        if (c->client_type == X11)
+            ret = wlr_xwayland_surface_icccm_input_model(c->surface.xwayland)
+                  != WLR_ICCCM_INPUT_MODEL_NONE;
+        else
+#endif
+            ret = client_hasproto(c, WM_TAKE_FOCUS);
+    }
 
     lua_pushboolean(L, ret);
     return 1;
