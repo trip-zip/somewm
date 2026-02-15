@@ -3886,6 +3886,24 @@ resize(Client *c, struct wlr_box geo, int interact)
 	c->geometry = geo;
 	applybounds(c, bbox);
 
+	/* Apply aspect ratio constraint (Wayland equivalent of ICCCM aspect hints).
+	 * Works on full geometry (including borders/titlebars) to match
+	 * the ratio captured from Lua (geo.width / geo.height). */
+	if (c->aspect_ratio > 0 && !c->fullscreen && !c->maximized) {
+		int w = c->geometry.width;
+		int h = c->geometry.height;
+		if (w > 0 && h > 0) {
+			double current = (double)w / h;
+			/* Tolerance: ~1 pixel to prevent rounding oscillation */
+			double epsilon = 1.5 / (double)h;
+			if (current - c->aspect_ratio > epsilon) {
+				c->geometry.width = (int)(h * c->aspect_ratio + 0.5);
+			} else if (c->aspect_ratio - current > epsilon) {
+				c->geometry.height = (int)(w / c->aspect_ratio + 0.5);
+			}
+		}
+	}
+
 	/* Apply to wlroots rendering */
 	apply_geometry_to_wlroots(c);
 

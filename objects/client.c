@@ -2741,6 +2741,22 @@ client_resize(client_t *c, area_t geometry, bool honor_hints)
         geometry = client_apply_size_hints(c, geometry);
     }
 
+    /* Apply aspect ratio constraint (Wayland equivalent of ICCCM aspect hints).
+     * Works on full geometry to match the ratio captured from Lua. */
+    if (c->aspect_ratio > 0 && !c->fullscreen && !c->maximized) {
+        int w = geometry.width;
+        int h = geometry.height;
+        if (w > 0 && h > 0) {
+            double current = (double)w / h;
+            double epsilon = 1.5 / (double)h;
+            if (current - c->aspect_ratio > epsilon) {
+                geometry.width = (int)(h * c->aspect_ratio + 0.5);
+            } else if (c->aspect_ratio - current > epsilon) {
+                geometry.height = (int)(w / c->aspect_ratio + 0.5);
+            }
+        }
+    }
+
     if(geometry.width < c->titlebar[CLIENT_TITLEBAR_LEFT].size + c->titlebar[CLIENT_TITLEBAR_RIGHT].size) {
         return false;
     }
@@ -4267,6 +4283,28 @@ luaA_client_set_opacity(lua_State *L, client_t *c)
     return 0;
 }
 
+static int
+luaA_client_get_aspect_ratio(lua_State *L, client_t *c)
+{
+    lua_pushnumber(L, c->aspect_ratio);
+    return 1;
+}
+
+static int
+luaA_client_set_aspect_ratio(lua_State *L, client_t *c)
+{
+    if (lua_isnil(L, -1)) {
+        c->aspect_ratio = 0;
+    } else {
+        double ratio = lua_tonumber(L, -1);
+        if (ratio < 0)
+            return luaL_error(L, "aspect_ratio must be >= 0 (0 to disable)");
+        c->aspect_ratio = ratio;
+    }
+    luaA_object_emit_signal(L, -3, "property::aspect_ratio", 0);
+    return 0;
+}
+
 /** Get client shadow configuration.
  * \param L The Lua VM state.
  * \param c The client.
@@ -5242,6 +5280,10 @@ client_class_setup(lua_State *L)
                             (lua_class_propfunc_t) luaA_client_set_opacity,
                             (lua_class_propfunc_t) luaA_client_get_opacity,
                             (lua_class_propfunc_t) luaA_client_set_opacity);
+    luaA_class_add_property(&client_class, "aspect_ratio",
+                            (lua_class_propfunc_t) luaA_client_set_aspect_ratio,
+                            (lua_class_propfunc_t) luaA_client_get_aspect_ratio,
+                            (lua_class_propfunc_t) luaA_client_set_aspect_ratio);
     luaA_class_add_property(&client_class, "shadow",
                             (lua_class_propfunc_t) luaA_client_set_shadow,
                             (lua_class_propfunc_t) luaA_client_get_shadow,
