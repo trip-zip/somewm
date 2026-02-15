@@ -89,7 +89,8 @@ myawesomemenu = {
    { "hotkeys", function() hotkeys_popup.show_help(nil, awful.screen.focused()) end },
    { "manual", terminal .. " -e man awesome" },
    { "edit config", editor_cmd .. " " .. awesome.conffile },
-   { "restart", awesome.restart },
+   { "cold restart", awesome.cold_restart },
+   { "rebuild & restart", awesome.rebuild_restart },
    { "quit", function() awesome.quit() end },
 }
 
@@ -259,8 +260,8 @@ awful.keyboard.append_global_keybindings({
               {description="show help", group="awesome"}),
     awful.key({ modkey,           }, "w", function () mymainmenu:show() end,
               {description = "show main menu", group = "awesome"}),
-    awful.key({ modkey, "Control" }, "r", awesome.restart,
-              {description = "reload awesome", group = "awesome"}),
+    awful.key({ modkey, "Control" }, "r", awesome.cold_restart,
+              {description = "cold restart (kills all clients)", group = "awesome"}),
     awful.key({ modkey, "Shift"   }, "q", awesome.quit,
               {description = "quit awesome", group = "awesome"}),
     awful.key({ modkey }, "x",

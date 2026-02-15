@@ -354,6 +354,13 @@ test_layer_client = executable(
   install: false,
 )
 
+# Session launcher script (restart/rebuild loop)
+install_data(
+  'somewm-session',
+  install_dir: get_option('bindir'),
+  install_mode: 'rwxr-xr-x',
+)
+
 # ==============================================================================
 # Install Data
 # ==============================================================================

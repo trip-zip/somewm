@@ -2495,7 +2495,7 @@ local function register_builtin_commands()
     return table.concat(lines, "\n")
   end)
 
-  --- reload - Reload configuration (validates first)
+  --- reload - Reload configuration (cold restart, validates first)
   ipc.register("reload", function()
     local awful_util = require("awful.util")
 
@@ -2513,22 +2513,38 @@ local function register_builtin_commands()
       end
     end
 
-    -- Restart (which reloads config)
-    if capi.awesome.restart then
+    -- Cold restart (reloads config, kills all clients)
+    if capi.awesome.cold_restart then
+      capi.awesome.cold_restart()
+      return "Cold restarting..."
+    elseif capi.awesome.restart then
       capi.awesome.restart()
-      return "Reloading..."
+      return "Cold restarting..."
     else
       error("Reload not supported")
     end
   end)
 
-  --- restart - Full compositor restart
+  --- restart - Cold restart compositor (kills all clients)
   ipc.register("restart", function()
-    if capi.awesome.restart then
+    if capi.awesome.cold_restart then
+      capi.awesome.cold_restart()
+      return "Cold restarting..."
+    elseif capi.awesome.restart then
       capi.awesome.restart()
-      return "Restarting..."
+      return "Cold restarting..."
     else
       error("Restart not supported")
+    end
+  end)
+
+  --- rebuild - Rebuild and restart compositor
+  ipc.register("rebuild", function()
+    if capi.awesome.rebuild_restart then
+      capi.awesome.rebuild_restart()
+      return "Rebuilding and restarting..."
+    else
+      error("Rebuild restart not supported")
     end
   end)
 
