@@ -1,7 +1,7 @@
 # Fix: Titlebar geometry, surface clipping, and pointer focus
 
 **Issue:** (to be filed at trip-zip/somewm)
-**Fork branch:** https://github.com/raven2cz/somewm/tree/fix/mpv-video-playback
+**Fork branch:** https://github.com/raven2cz/somewm/tree/fix/titlebar-geometry-clipping-and-pointer-focus
 **Commits:**
 - [`f213c3e`](https://github.com/raven2cz/somewm/commit/f213c3e) fix: surface clip accounts for titlebars and border width
 - [`826c64b`](https://github.com/raven2cz/somewm/commit/826c64b) fix: titlebar-aware geometry bounds and fullscreen rendering
