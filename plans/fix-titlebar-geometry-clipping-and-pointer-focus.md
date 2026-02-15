@@ -1,6 +1,6 @@
 # Fix: Titlebar geometry, surface clipping, and pointer focus
 
-**Issue:** (to be filed at trip-zip/somewm)
+**Issue:** https://github.com/trip-zip/somewm/issues/230
 **Fork branch:** https://github.com/raven2cz/somewm/tree/fix/titlebar-geometry-clipping-and-pointer-focus
 **Commits:**
 - [`f213c3e`](https://github.com/raven2cz/somewm/commit/f213c3e) fix: surface clip accounts for titlebars and border width
