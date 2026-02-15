@@ -186,6 +186,10 @@ make test-one TEST=tests/test-xwayland-position-sync.lua
 - `bca0b8b` test: XWayland position sync integration test
 - `cef753a` docs: add XWayland popup positioning fix documentation
 
+## Upstream Issue
+
+- **[trip-zip/somewm#231](https://github.com/trip-zip/somewm/issues/231)** — XWayland clients receive no position updates — popup menus appear at stale coordinates
+
 ## References
 
 - [ICCCM 4.1.5](https://www.x.org/releases/X11R7.6/doc/xorg-docs/specs/ICCCM/icccm.html) —
