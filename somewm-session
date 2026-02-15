@@ -1,0 +1,63 @@
+#!/bin/bash
+# somewm session launcher with restart and rebuild support
+# Exit codes: 0=quit, 1=restart, 2=rebuild+restart
+#
+# Two modes:
+#   1) Dev mode:  SOMEWM_DIR=/path/to/somewm somewm-session
+#                 Uses build/somewm binary and ./lua modules
+#   2) Installed: somewm-session
+#                 Uses system-installed somewm from PATH
+
+SOMEWM_LOG="${HOME}/.local/log/somewm-debug.log"
+mkdir -p "$(dirname "$SOMEWM_LOG")"
+
+if [ -n "$SOMEWM_DIR" ]; then
+    # Dev mode: run from build directory
+    SOMEWM_BIN="${SOMEWM_DIR}/build/somewm"
+    SOMEWM_ARGS=(-d -L "${SOMEWM_DIR}/lua")
+
+    if [ ! -x "$SOMEWM_BIN" ]; then
+        echo "Binary not found: $SOMEWM_BIN"
+        echo "Run 'ninja -C ${SOMEWM_DIR}/build' first."
+        exit 1
+    fi
+else
+    # Installed mode: use system binary
+    SOMEWM_BIN="$(command -v somewm)"
+    SOMEWM_ARGS=(-d)
+
+    if [ -z "$SOMEWM_BIN" ]; then
+        echo "somewm not found in PATH."
+        echo "Install with 'sudo ninja -C build install' or set SOMEWM_DIR."
+        exit 1
+    fi
+fi
+
+while true; do
+    dbus-run-session "$SOMEWM_BIN" "${SOMEWM_ARGS[@]}" 2>&1 \
+        | tee "$SOMEWM_LOG"
+    exit_code=${PIPESTATUS[0]}
+
+    case $exit_code in
+        0)
+            echo "somewm exited normally."
+            break
+            ;;
+        2)
+            if [ -n "$SOMEWM_DIR" ]; then
+                echo "Rebuilding somewm..."
+                if ! ninja -C "${SOMEWM_DIR}/build"; then
+                    echo "Build failed! Restarting with old binary..."
+                fi
+            else
+                echo "Rebuild requested but SOMEWM_DIR not set, skipping build."
+            fi
+            echo "Restarting in 1s..."
+            sleep 1
+            ;;
+        *)
+            echo "somewm exited ($exit_code), restarting in 1s..."
+            sleep 1
+            ;;
+    esac
+done

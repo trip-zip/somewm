@@ -149,6 +149,8 @@ static const float *get_urgentcolor(void);
 
 static void checkidleinhibitor(struct wlr_surface *exclude);
 static void cleanup(void);
+void cold_restart(void);
+void rebuild_restart(void);
 static void cleanupmon(struct wl_listener *listener, void *data);
 static void cleanuplisteners(void);
 static void closemon(Monitor *m);
@@ -1098,6 +1100,20 @@ cleanup(void)
 	/* Destroy after the wayland display (when the monitors are already destroyed)
 	   to avoid destroying them with an invalid scene output. */
 	wlr_scene_node_destroy(&scene->tree.node);
+}
+
+void
+cold_restart(void)
+{
+	globalconf.exit_code = 1;
+	some_compositor_quit();
+}
+
+void
+rebuild_restart(void)
+{
+	globalconf.exit_code = 2;
+	some_compositor_quit();
 }
 
 void
@@ -6169,8 +6185,9 @@ main(int argc, char *argv[])
 
 	setup();
 	run(startup_cmd);
+	int exit_code = globalconf.exit_code;
 	cleanup();
-	return EXIT_SUCCESS;
+	return exit_code;
 
 usage:
 	die("Usage: %s [-v] [-d] [--verbose] [-c config] [-L search_path] [-s startup_command] [-k config]\n"

@@ -366,16 +366,17 @@ awesome_atexit(bool restart)
     }
 }
 
-/** Restart the compositor by exec'ing self.
- * Uses argv stored in globalconf at startup.
+/* Implemented in somewm.c where all static wlroots variables live */
+extern void cold_restart(void);
+extern void rebuild_restart(void);
+
+/** Request cold restart — sets exit_code=1 and quits main loop.
+ * Session script handles the actual restart.
  */
 void
 awesome_restart(void)
 {
-    awesome_atexit(true);
-    execvp(globalconf.argv[0], globalconf.argv);
-    /* If we get here, exec failed */
-    warn("restart failed: execvp(%s) failed: %s", globalconf.argv[0], strerror(errno));
+    cold_restart();
 }
 
 /** awesome.exec(cmd) - Replace compositor with another program.
@@ -447,7 +448,7 @@ luaA_panic(lua_State *L)
     return 0;
 }
 
-/** awesome.restart() - Restart the compositor.
+/** awesome.restart() - Cold restart the compositor (kills all clients).
  * \return Never returns on success.
  */
 static int
@@ -456,6 +457,29 @@ luaA_restart(lua_State *L)
     (void)L;
     awesome_restart();
     return 0;  /* Never reached on success */
+}
+
+/** awesome.cold_restart() - Cold restart the compositor (kills all clients).
+ * Explicit name for the same operation as awesome.restart().
+ * \return Never returns on success.
+ */
+static int
+luaA_cold_restart(lua_State *L)
+{
+    (void)L;
+    awesome_restart();
+    return 0;  /* Never reached on success */
+}
+
+/** awesome.rebuild_restart() - Rebuild and restart the compositor.
+ * Sets exit_code=2 so the session script rebuilds before restarting.
+ */
+static int
+luaA_rebuild_restart(lua_State *L)
+{
+    (void)L;
+    rebuild_restart();
+    return 0;
 }
 
 /** Convert Lua value to string (Lua 5.1 compatibility).
@@ -1001,6 +1025,8 @@ static const luaL_Reg awesome_methods[] = {
 	{ "kill", luaA_kill },
 	{ "load_image", luaA_load_image },
 	{ "restart", luaA_restart },
+	{ "cold_restart", luaA_cold_restart },
+	{ "rebuild_restart", luaA_rebuild_restart },
 	{ NULL, NULL }
 };
 
@@ -3563,8 +3589,18 @@ luaA_dofunction_from_file(lua_State *L, const char *path)
 void
 globalconf_init(lua_State *L)
 {
+	/* Save values set by main() before memset zeroes them */
+	int saved_argc = globalconf.argc;
+	char **saved_argv = globalconf.argv;
+	int saved_log_level = globalconf.log_level;
+
 	/* Zero out the entire structure */
 	memset(&globalconf, 0, sizeof(globalconf));
+
+	/* Restore pre-init values */
+	globalconf.argc = saved_argc;
+	globalconf.argv = saved_argv;
+	globalconf.log_level = saved_log_level;
 
 	/* Set the Lua state */
 	globalconf.L = L;
