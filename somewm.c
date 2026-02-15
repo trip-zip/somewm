@@ -3253,6 +3253,19 @@ unset_fullscreen:
 	}
 
 	luaA_emit_signal_global("client::map");
+
+	/* If cursor is within this new client's geometry, set pointer focus directly.
+	 * Don't use motionnotify(0,...) because xytonode may not find the surface yet
+	 * (buffer not committed) and would CLEAR pointer focus instead. */
+	if (client_surface(c) && client_surface(c)->mapped
+			&& cursor->x >= c->geometry.x && cursor->x < c->geometry.x + c->geometry.width
+			&& cursor->y >= c->geometry.y && cursor->y < c->geometry.y + c->geometry.height) {
+		double sx = cursor->x - c->geometry.x - c->bw;
+		double sy = cursor->y - c->geometry.y - c->bw;
+		wlr_log(WLR_DEBUG, "[POINTER-REEVAL] mapnotify: setting pointer focus on %s (cursor in geometry)",
+			client_get_appid(c));
+		pointerfocus(c, client_surface(c), sx, sy, 0);
+	}
 }
 
 void
@@ -3672,10 +3685,34 @@ pointerfocus(Client *c, struct wlr_surface *surface, double sx, double sy,
 {
 	struct timespec now;
 
-	/* If surface is NULL, clear pointer focus */
+	/* If surface is NULL but client exists, use client's main surface as fallback.
+	 * This happens when cursor is over titlebar/border (compositor-drawn, not a
+	 * wlr_surface). Without this fallback, pointer focus would be cleared and the
+	 * client wouldn't receive hover/scroll events. */
+	if (!surface && c && client_surface(c) && client_surface(c)->mapped) {
+		surface = client_surface(c);
+		sx = cursor->x - c->geometry.x - c->bw;
+		sy = cursor->y - c->geometry.y - c->bw;
+	}
 	if (!surface) {
 		wlr_seat_pointer_notify_clear_focus(seat);
 		return;
+	}
+
+	/* Workaround for wlroots pointer enter race condition:
+	 * wlr_seat_pointer_enter() caches focused_surface and returns early if
+	 * it matches. But if the initial enter was called before the client bound
+	 * wl_pointer (pointers list empty), the wl_pointer.enter event was never
+	 * sent even though focused_surface was set. Clear the stale state so
+	 * wlr_seat_pointer_enter() re-delivers the enter event. */
+	if (seat->pointer_state.focused_surface == surface) {
+		struct wlr_seat_client *sc = seat->pointer_state.focused_client;
+		if (!sc || wl_list_empty(&sc->pointers)) {
+			wlr_log(WLR_DEBUG, "[POINTER-REENTER] clearing stale pointer focus on %s "
+				"(client had no wl_pointer resources)",
+				c ? client_get_appid(c) : "?");
+			wlr_seat_pointer_notify_clear_focus(seat);
+		}
 	}
 
 	if (!time) {
@@ -3683,9 +3720,9 @@ pointerfocus(Client *c, struct wlr_surface *surface, double sx, double sy,
 		time = now.tv_sec * 1000 + now.tv_nsec / 1000000;
 	}
 
-	/* Let the client know that the mouse cursor has entered one
-	 * of its surfaces. wlroots makes this a no-op if surface is already focused.
-	 * Focus behavior is now handled in Lua via mouse::enter signal (AwesomeWM pattern). */
+	/* Deliver pointer enter + motion to the surface.
+	 * wlr_seat_pointer_enter is a no-op if surface is already focused AND
+	 * the client has pointer resources (normal case). */
 	wlr_seat_pointer_notify_enter(seat, surface, sx, sy);
 	wlr_seat_pointer_notify_motion(seat, time, sx, sy);
 }
