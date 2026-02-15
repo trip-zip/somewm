@@ -310,6 +310,8 @@ struct client_t
     /* xcb_visualtype_t *visualtype; */
     /** Do we honor the client's size hints? */
     bool size_hints_honor;
+    /** Aspect ratio constraint (width/height). 0 = disabled. */
+    double aspect_ratio;
     /** Machine the client is running on. */
     char *machine;
     /** Role of the client */
