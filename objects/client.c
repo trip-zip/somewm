@@ -2665,6 +2665,27 @@ client_resize_do(client_t *c, area_t geometry)
     old_geometry = c->geometry;
     c->geometry = geometry;
 
+    /* For XWayland clients, sync position to X11 immediately (not deferred to
+     * refresh cycle). X11 clients use their position for popup placement, so
+     * any lag causes menus to appear at stale positions (e.g. Steam dropdowns).
+     * The deferred xwm_schedule_flush() inside wlr_xwayland_surface_configure()
+     * delivers the update on the next event loop iteration. */
+#ifdef XWAYLAND
+    if (c->client_type == X11 && c->surface.xwayland
+            && (old_geometry.x != geometry.x || old_geometry.y != geometry.y)) {
+        int tl = c->fullscreen ? 0 : c->titlebar[CLIENT_TITLEBAR_LEFT].size;
+        int tt = c->fullscreen ? 0 : c->titlebar[CLIENT_TITLEBAR_TOP].size;
+        int16_t cx = geometry.x + c->bw + tl;
+        int16_t cy = geometry.y + c->bw + tt;
+        if (cx != c->surface.xwayland->x || cy != c->surface.xwayland->y) {
+            wlr_xwayland_surface_configure(c->surface.xwayland,
+                    cx, cy,
+                    c->surface.xwayland->width,
+                    c->surface.xwayland->height);
+        }
+    }
+#endif
+
     luaA_object_push(L, c);
     if (!AREA_EQUAL(old_geometry, geometry))
         luaA_object_emit_signal(L, -1, "property::geometry", 0);
