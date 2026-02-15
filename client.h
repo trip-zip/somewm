@@ -149,11 +149,24 @@ client_get_appid(Client *c)
 static inline void
 client_get_clip(Client *c, struct wlr_box *clip)
 {
+	/* Clip must match the content area: geometry minus borders AND titlebars.
+	 * The surface node is positioned at (bw + tl, bw + tt) in the parent,
+	 * so clip dimensions must be the content size to prevent the surface
+	 * from bleeding past the bottom/right borders. */
+	int tl = c->fullscreen ? 0 : c->titlebar[CLIENT_TITLEBAR_LEFT].size;
+	int tt = c->fullscreen ? 0 : c->titlebar[CLIENT_TITLEBAR_TOP].size;
+	int tr = c->fullscreen ? 0 : c->titlebar[CLIENT_TITLEBAR_RIGHT].size;
+	int tb = c->fullscreen ? 0 : c->titlebar[CLIENT_TITLEBAR_BOTTOM].size;
+	int cw = c->geometry.width - 2 * c->bw - tl - tr;
+	int ch = c->geometry.height - 2 * c->bw - tt - tb;
+	if (cw < 1) cw = 1;
+	if (ch < 1) ch = 1;
+
 	*clip = (struct wlr_box){
 		.x = 0,
 		.y = 0,
-		.width = c->geometry.width - c->bw,
-		.height = c->geometry.height - c->bw,
+		.width = cw,
+		.height = ch,
 	};
 
 #ifdef XWAYLAND
