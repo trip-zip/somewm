@@ -417,9 +417,15 @@ some_has_exclusive_focus(void)
 void
 applybounds(Client *c, struct wlr_box *bbox)
 {
-	/* set minimum possible */
-	c->geometry.width = MAX(1 + 2 * (int)c->bw, c->geometry.width);
-	c->geometry.height = MAX(1 + 2 * (int)c->bw, c->geometry.height);
+	/* Minimum geometry must fit borders AND titlebars with at least 1px content */
+	int min_w = 1 + 2 * (int)c->bw
+		+ c->titlebar[CLIENT_TITLEBAR_LEFT].size
+		+ c->titlebar[CLIENT_TITLEBAR_RIGHT].size;
+	int min_h = 1 + 2 * (int)c->bw
+		+ c->titlebar[CLIENT_TITLEBAR_TOP].size
+		+ c->titlebar[CLIENT_TITLEBAR_BOTTOM].size;
+	c->geometry.width = MAX(min_w, c->geometry.width);
+	c->geometry.height = MAX(min_h, c->geometry.height);
 
 	if (c->geometry.x >= bbox->x + bbox->width)
 		c->geometry.x = bbox->x + bbox->width - c->geometry.width;
@@ -1356,8 +1362,9 @@ commitnotify(struct wl_listener *listener, void *data)
 
 	/* mark a pending resize as completed */
 	if (c->resize) {
-		if (c->resize <= c->surface.xdg->current.configure_serial)
+		if (c->resize <= c->surface.xdg->current.configure_serial) {
 			c->resize = 0;
+		}
 	}
 
 	/* Re-apply opacity after wlroots' surface_reconfigure() resets it to 1.0.
@@ -3776,9 +3783,10 @@ apply_geometry_to_wlroots(Client *c)
 	if (!c->scene || !client_surface(c) || !client_surface(c)->mapped)
 		return;
 
-	/* Get titlebar sizes - they occupy space inside geometry */
-	titlebar_left = c->titlebar[CLIENT_TITLEBAR_LEFT].size;
-	titlebar_top = c->titlebar[CLIENT_TITLEBAR_TOP].size;
+	/* Get titlebar sizes - they occupy space inside geometry.
+	 * When fullscreen, ignore titlebar sizes - surface should cover entire geometry. */
+	titlebar_left = c->fullscreen ? 0 : c->titlebar[CLIENT_TITLEBAR_LEFT].size;
+	titlebar_top = c->fullscreen ? 0 : c->titlebar[CLIENT_TITLEBAR_TOP].size;
 
 	/* Update scene-graph position and borders */
 	wlr_scene_node_set_position(&c->scene->node, c->geometry.x, c->geometry.y);
@@ -3808,9 +3816,20 @@ apply_geometry_to_wlroots(Client *c)
 	 * Without this check, we flood the client with configure events on every refresh cycle,
 	 * which crashes Firefox and other clients that can't handle rapid configure floods. */
 	if (!c->resize) {
-		c->resize = client_set_size(c,
-				c->geometry.width - 2 * c->bw - titlebar_left - c->titlebar[CLIENT_TITLEBAR_RIGHT].size,
-				c->geometry.height - 2 * c->bw - titlebar_top - c->titlebar[CLIENT_TITLEBAR_BOTTOM].size);
+		if (c->fullscreen) {
+			/* Fullscreen: client gets full geometry minus borders only */
+			c->resize = client_set_size(c,
+					c->geometry.width - 2 * c->bw,
+					c->geometry.height - 2 * c->bw);
+		} else {
+			int sw = c->geometry.width - 2 * c->bw
+				- titlebar_left - c->titlebar[CLIENT_TITLEBAR_RIGHT].size;
+			int sh = c->geometry.height - 2 * c->bw
+				- titlebar_top - c->titlebar[CLIENT_TITLEBAR_BOTTOM].size;
+			if (sw < 1) sw = 1;
+			if (sh < 1) sh = 1;
+			c->resize = client_set_size(c, sw, sh);
+		}
 	}
 	client_get_clip(c, &clip);
 	wlr_scene_subsurface_tree_set_clip(&c->scene_surface->node, &clip);

@@ -3932,7 +3932,7 @@ client_update_titlebar_positions(client_t *c)
 {
     for (client_titlebar_t bar = CLIENT_TITLEBAR_TOP; bar < CLIENT_TITLEBAR_COUNT; bar++) {
         if (c->titlebar[bar].scene_buffer) {
-            bool visible = c->titlebar[bar].size > 0;
+            bool visible = c->titlebar[bar].size > 0 && !c->fullscreen;
             wlr_scene_node_set_enabled(&c->titlebar[bar].scene_buffer->node, visible);
             if (visible) {
                 area_t area = titlebar_get_area(c, bar);
