@@ -1608,9 +1608,9 @@ some_xkb_set_layout_group(xkb_layout_index_t group)
 			group);
 	}
 
-	/* Notify client of new modifiers via seat */
-	wlr_seat_set_keyboard(seat, kbd);
-	wlr_seat_keyboard_notify_modifiers(seat, &kbd->modifiers);
+	/* Client notification happens via keypressmod() — the wlroots cascade
+	 * above triggers the group keyboard's modifiers signal, which fires
+	 * keypressmod() → wlr_seat_keyboard_notify_modifiers(). */
 
 	/* Emit Lua signal if layout actually changed */
 	xkb_layout_index_t new_group = xkb_state_serialize_layout(
