@@ -1,0 +1,20 @@
+#!/bin/sh
+LOG="$HOME/.local/log/somewm-session.log"
+mkdir -p "$(dirname "$LOG")"
+
+echo "=== start-somewm DEBUG $(date) ===" > "$LOG"
+echo "UID=$(id -u) USER=$USER" >> "$LOG"
+echo "DBUS_SESSION_BUS_ADDRESS=${DBUS_SESSION_BUS_ADDRESS-<unset>}" >> "$LOG"
+echo "XDG_RUNTIME_DIR=${XDG_RUNTIME_DIR-<unset>}" >> "$LOG"
+echo "XDG_SESSION_TYPE=${XDG_SESSION_TYPE-<unset>}" >> "$LOG"
+echo "WAYLAND_DISPLAY=${WAYLAND_DISPLAY-<unset>}" >> "$LOG"
+echo "DISPLAY=${DISPLAY-<unset>}" >> "$LOG"
+env | sort >> "$LOG"
+echo "=== starting somewm -d (DEBUG BUILD) ===" >> "$LOG"
+
+export LIBVA_DRIVER_NAME=nvidia
+export __GLX_VENDOR_LIBRARY_NAME=nvidia
+export GBM_BACKEND=nvidia-drm
+export WLR_NO_HARDWARE_CURSORS=1
+
+exec somewm -d "$@" >> "$LOG" 2>&1
