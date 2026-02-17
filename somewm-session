@@ -8,6 +8,31 @@
 #   2) Installed: somewm-session
 #                 Uses system-installed somewm from PATH
 
+# Load environment.d configs (same files systemd reads for DM sessions)
+for _conf in "$HOME/.config/environment.d/"*.conf; do
+    [ -f "$_conf" ] || continue
+    set -a
+    . "$_conf"
+    set +a
+done
+unset _conf
+
+# Use the systemd user bus (where gnome-keyring and other services live).
+# dbus-broker provides this automatically via /run/user/$UID/bus.
+export DBUS_SESSION_BUS_ADDRESS="${DBUS_SESSION_BUS_ADDRESS:-unix:path=/run/user/$(id -u)/bus}"
+
+# Start gnome-keyring (secrets/pkcs11 only - SSH agent is handled by gcr-ssh-agent).
+# PAM auto-unlocks it at TTY login (pam_gnome_keyring.so).
+if command -v gnome-keyring-daemon >/dev/null 2>&1; then
+    eval $(gnome-keyring-daemon --start --components=pkcs11,secrets 2>/dev/null)
+fi
+
+# SSH agent via gcr-ssh-agent (gnome-keyring dropped SSH in v46+)
+export SSH_AUTH_SOCK="${SSH_AUTH_SOCK:-/run/user/$(id -u)/gcr/ssh}"
+
+# Import environment into systemd and dbus so child processes and portals see it
+systemctl --user import-environment DISPLAY WAYLAND_DISPLAY XDG_CURRENT_DESKTOP SSH_AUTH_SOCK 2>/dev/null
+
 SOMEWM_LOG="${HOME}/.local/log/somewm-debug.log"
 mkdir -p "$(dirname "$SOMEWM_LOG")"
 
@@ -34,7 +59,7 @@ else
 fi
 
 while true; do
-    dbus-run-session "$SOMEWM_BIN" "${SOMEWM_ARGS[@]}" 2>&1 \
+    "$SOMEWM_BIN" "${SOMEWM_ARGS[@]}" 2>&1 \
         | tee "$SOMEWM_LOG"
     exit_code=${PIPESTATUS[0]}
 
