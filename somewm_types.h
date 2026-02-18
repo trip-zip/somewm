@@ -111,6 +111,7 @@ struct Monitor {
 	/* mfact/nmaster are per-tag properties, not per-monitor (AwesomeWM-compatible) */
 	int gamma_lut_changed;
 	int asleep;
+	int needs_screen_added; /* Set in createmon, cleared by updatemons after geometry is ready */
 };
 
 /* KeyboardGroup structure */
