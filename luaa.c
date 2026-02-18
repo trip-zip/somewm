@@ -2745,6 +2745,20 @@ check_mode_scan_requires(const char *content, const char *config_dir,
 			continue;
 		}
 
+		/* Skip if line is a Lua comment (starts with -- after whitespace) */
+		{
+			const char *line_start = pos;
+			while (line_start > content && *(line_start - 1) != '\n')
+				line_start--;
+			const char *p = line_start;
+			while (p < pos && (*p == ' ' || *p == '\t'))
+				p++;
+			if (p[0] == '-' && p[1] == '-') {
+				pos += 7;
+				continue;
+			}
+		}
+
 		pos += 7;
 
 		while (*pos == ' ' || *pos == '\t' || *pos == '(')
