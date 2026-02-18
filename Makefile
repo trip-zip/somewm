@@ -9,7 +9,7 @@
 
 -include .local.mk
 
-.PHONY: all install uninstall clean setup reconfigure test test-unit test-integration test-asan test-one test-visual test-one-visual test-ci test-fast build-test
+.PHONY: all install uninstall clean setup reconfigure test test-unit test-check test-integration test-asan test-one test-visual test-one-visual test-ci test-fast build-test
 
 # Default build: WITH ASAN for development
 all:
@@ -52,12 +52,16 @@ reconfigure:
 # =============================================================================
 
 # Run all tests (fast, no ASAN)
-test: test-unit test-integration
+test: test-unit test-check test-integration
 
 # Unit tests only (busted, no compositor needed)
 # Use - prefix to continue even if unit tests fail (some have known issues)
 test-unit:
 	-@./tests/run-unit.sh
+
+# Check mode tests (no compositor needed, tests somewm --check)
+test-check: build-test
+	@./tests/test-check-mode.sh ./build-test/somewm
 
 # Integration tests (visual mode by default, no ASAN)
 test-integration: build-test
