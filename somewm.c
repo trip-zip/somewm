@@ -4990,8 +4990,15 @@ unmaplayersurfacenotify(struct wl_listener *listener, void *data)
 
 	l->mapped = 0;
 	wlr_scene_node_set_enabled(&l->scene->node, 0);
-	if (l == exclusive_focus)
+	if (l == exclusive_focus) {
 		exclusive_focus = NULL;
+		/* Restore keyboard focus to the top client.
+		 * Without this, keyboard focus is lost after an exclusive layer
+		 * surface (e.g. notification popup) unmaps — the seat keyboard
+		 * focused_surface is cleared by wlroots but nobody re-delivers
+		 * focus to the client that was focused before the layer surface. */
+		focusclient(focustop(selmon), 1);
+	}
 	if (l->layer_surface->output && (l->mon = l->layer_surface->output->data))
 		arrangelayers(l->mon);
 

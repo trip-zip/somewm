@@ -489,19 +489,20 @@ some_set_seat_keyboard_focus(Client *c)
 		return;
 	}
 
-	wlr_log(WLR_DEBUG, "[FOCUS-API] SENDING keyboard_enter: surface=%p old_focused=%p same=%d",
-		(void*)surface, (void*)seat->keyboard_state.focused_surface,
-		seat->keyboard_state.focused_surface == surface);
-
-	/* If re-delivering focus to the same surface (e.g. timer re-delivery for
-	 * games that weren't ready at first focus), we must clear seat focus first.
-	 * wlr_seat_keyboard_enter() skips re-entry to the same surface, so we
-	 * force a leave+enter cycle (KWin MR !60 pattern). */
+	/* If seat keyboard focus already matches the client's surface, we're done.
+	 * This makes redundant calls (e.g. from client_focus() when
+	 * globalconf.focus.client didn't change) cheap — no protocol traffic.
+	 * Game timer re-delivery still works because it does client.focus = nil
+	 * first, which clears seat->keyboard_state.focused_surface. */
 	if (seat->keyboard_state.focused_surface == surface) {
-		wlr_log(WLR_DEBUG, "[FOCUS-API] same surface: clearing seat focus first (KWin pattern)");
-		client_activate_surface(surface, 0);
-		wlr_seat_keyboard_notify_clear_focus(seat);
-	} else if (seat->keyboard_state.focused_surface) {
+		wlr_log(WLR_DEBUG, "[FOCUS-API] already correctly focused, skipping");
+		return;
+	}
+
+	wlr_log(WLR_DEBUG, "[FOCUS-API] SENDING keyboard_enter: surface=%p old_focused=%p",
+		(void*)surface, (void*)seat->keyboard_state.focused_surface);
+
+	if (seat->keyboard_state.focused_surface) {
 		/* Deactivate the previously focused surface.
 		 * This tells the old XWayland/XDG client it lost focus. */
 		client_activate_surface(seat->keyboard_state.focused_surface, 0);
