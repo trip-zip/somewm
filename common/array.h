@@ -86,11 +86,13 @@
         assert (pos <= arr->len && pos + len <= arr->len);                  \
         if (len != count) {                                                 \
             pfx##_array_grow(arr, arr->len + count - len);                  \
-            memmove(arr->tab + pos + count, arr->tab + pos + len,           \
-                    (arr->len - pos - len) * sizeof(*items));               \
+            if (arr->len - pos - len > 0)                                   \
+                memmove(arr->tab + pos + count, arr->tab + pos + len,       \
+                        (arr->len - pos - len) * sizeof(*items));           \
             arr->len += count - len;                                        \
         }                                                                   \
-        memcpy(arr->tab + pos, items, count * sizeof(*items));              \
+        if (items && count > 0)                                             \
+            memcpy(arr->tab + pos, items, count * sizeof(*items));              \
     }                                                                       \
     static inline type_t pfx##_array_take(pfx##_array_t *arr, int pos) {    \
         type_t res = arr->tab[pos];                                         \
@@ -141,6 +143,8 @@
     static inline type_t *                                                  \
     pfx##_array_lookup(pfx##_array_t *arr, type_t *e)                       \
     {                                                                       \
+        if (!arr->tab || arr->len == 0)                                     \
+            return NULL;                                                    \
         return bsearch(e, arr->tab, arr->len, sizeof(type_t), cmp);         \
     }
 
