@@ -3,6 +3,9 @@
 # Integration test runner for somewm
 #
 # Runs somewm and executes Lua test files via IPC
+
+# Force C locale for numeric formatting (bc/printf use dot, not comma)
+export LC_NUMERIC=C
 #
 # Modes:
 #   HEADLESS=1 (default): Run with headless backend (reliable, for CI)
