@@ -1772,6 +1772,68 @@ some_rebuild_keyboard_keymap(void)
 	xkb_context_unref(context);
 }
 
+/* Enable or disable NumLock by toggling the Mod2 locked modifier.
+ * This is the Sway pattern: after keymap creation, use
+ * wlr_keyboard_notify_modifiers() to set the locked modifier state. */
+void
+some_set_numlock(int enabled)
+{
+	struct wlr_keyboard *kbd;
+	xkb_mod_index_t mod2_idx;
+	xkb_mod_mask_t locked_mods;
+
+	if (!kb_group || !kb_group->wlr_group)
+		return;
+
+	kbd = &kb_group->wlr_group->keyboard;
+	if (!kbd->keymap || !kbd->xkb_state)
+		return;
+
+	mod2_idx = xkb_keymap_mod_get_index(kbd->keymap, XKB_MOD_NAME_NUM);
+	if (mod2_idx == XKB_MOD_INVALID)
+		return;
+
+	locked_mods = xkb_state_serialize_mods(kbd->xkb_state,
+		XKB_STATE_MODS_LOCKED);
+
+	if (enabled)
+		locked_mods |= (1u << mod2_idx);
+	else
+		locked_mods &= ~(1u << mod2_idx);
+
+	/* Apply to member keyboards (Sway pattern) */
+	struct kb_group_device *dev;
+	int member_count = 0;
+	wl_list_for_each(dev, &kb_group->wlr_group->devices, link) {
+		struct wlr_keyboard *member = dev->keyboard;
+		if (member->xkb_state) {
+			xkb_layout_index_t group = xkb_state_serialize_layout(
+				member->xkb_state, XKB_STATE_LAYOUT_EFFECTIVE);
+			wlr_keyboard_notify_modifiers(member,
+				xkb_state_serialize_mods(member->xkb_state,
+					XKB_STATE_MODS_DEPRESSED),
+				xkb_state_serialize_mods(member->xkb_state,
+					XKB_STATE_MODS_LATCHED),
+				locked_mods, group);
+			member_count++;
+		}
+	}
+
+	/* Fallback: update group keyboard directly if no members */
+	if (member_count == 0) {
+		xkb_layout_index_t group = xkb_state_serialize_layout(
+			kbd->xkb_state, XKB_STATE_LAYOUT_EFFECTIVE);
+		wlr_keyboard_notify_modifiers(kbd,
+			xkb_state_serialize_mods(kbd->xkb_state,
+				XKB_STATE_MODS_DEPRESSED),
+			xkb_state_serialize_mods(kbd->xkb_state,
+				XKB_STATE_MODS_LATCHED),
+			locked_mods, group);
+	}
+
+	wlr_log(WLR_INFO, "[KEYBOARD] NumLock %s", enabled ? "ON" : "OFF");
+}
+
 /* Apply keyboard repeat info from current globalconf settings */
 void
 some_apply_keyboard_repeat_info(void)

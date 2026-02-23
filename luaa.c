@@ -953,6 +953,8 @@ luaA_awesome_set_keyboard_setting(lua_State *L)
 		free(globalconf.keyboard.xkb_options);
 		globalconf.keyboard.xkb_options = strdup(val);
 		rebuild_keyboard_keymap();
+	} else if (strcmp(key, "numlock") == 0) {
+		some_set_numlock(lua_toboolean(L, 2));
 	} else {
 		return luaL_error(L, "Unknown keyboard setting: %s", key);
 	}

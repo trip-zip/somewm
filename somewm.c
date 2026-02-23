@@ -108,7 +108,11 @@
 
 /* macros */
 /* MAX and MIN are defined in x11_compat.h (included via globalconf.h) */
-#define CLEANMASK(mask)         (mask & ~WLR_MODIFIER_CAPS)
+/* Strip "lock" modifiers that should not affect bindings:
+ * CapsLock (bit 1) and NumLock/Mod2 (bit 4).
+ * Without this, scroll/button bindings defined with modifiers={} fail
+ * when NumLock is active because the modifier table includes "Mod2". */
+#define CLEANMASK(mask)         (mask & ~WLR_MODIFIER_CAPS & ~WLR_MODIFIER_MOD2)
 /* #define VISIBLEON(C, M)         ((M) && (C)->mon == (M) && ((C)->tags & (M)->tagset[(M)->seltags])) */
 /* VISIBLEON macro replaced with client_on_selected_tags() for AwesomeWM compatibility */
 #define LENGTH(X)               (sizeof X / sizeof X[0])
@@ -708,57 +712,88 @@ axisnotify(struct wl_listener *listener, void *data)
 
 	/* Handle scroll wheel for mousebindings (AwesomeWM compatibility)
 	 * Convert axis events to X11-style button 4/5/6/7 press+release events.
-	 * In X11, each scroll tick generates a button press+release pair. */
+	 * In X11, each scroll tick generates a button press+release pair.
+	 *
+	 * Wayland uses "value120" for discrete scroll: one standard wheel click
+	 * sends delta_discrete=±120. High-resolution mice send smaller steps
+	 * (e.g. ±15 or ±30). We accumulate until a full step (±120) is reached
+	 * to avoid multiple tag switches per physical wheel click. */
 	if (!locked && event->delta != 0) {
-		lua_State *L = globalconf_get_lua_State();
-		struct wlr_keyboard *keyboard = wlr_seat_get_keyboard(seat);
-		uint32_t mods = keyboard ? wlr_keyboard_get_modifiers(keyboard) : 0;
-		Client *c = NULL;
-		drawin_t *drawin = NULL;
-		drawable_t *titlebar_drawable = NULL;
-		uint32_t button;
-		int rel_x, rel_y;
+		/* NOTE: process-global accumulators shared across all pointer devices.
+		 * Multi-mouse interleaving is possible but negligible in practice. */
+		static int32_t scroll_acc_v = 0;
+		static int32_t scroll_acc_h = 0;
+		int32_t *acc;
+		int ticks = 0;
 
-		/* Determine button number based on axis orientation and direction:
-		 * Vertical: button 4 = scroll up (delta < 0), button 5 = scroll down (delta > 0)
-		 * Horizontal: button 6 = scroll left (delta < 0), button 7 = scroll right (delta > 0) */
-		if (event->orientation == WL_POINTER_AXIS_VERTICAL_SCROLL) {
-			button = (event->delta < 0) ? 4 : 5;
+		acc = (event->orientation == WL_POINTER_AXIS_VERTICAL_SCROLL)
+			? &scroll_acc_v : &scroll_acc_h;
+
+		if (event->delta_discrete != 0) {
+			/* Discrete scroll (wheel): accumulate value120 steps */
+			*acc += event->delta_discrete;
+			/* Count full steps (±120 each) */
+			while (*acc >= 120) { ticks++; *acc -= 120; }
+			while (*acc <= -120) { ticks++; *acc += 120; }
 		} else {
-			button = (event->delta < 0) ? 6 : 7;
+			/* Continuous scroll (touchpad/smooth): use delta directly,
+			 * one button event per axis event (no accumulation) */
+			ticks = 1;
 		}
 
-		/* Find what's under the cursor */
-		xytonode(cursor->x, cursor->y, NULL, &c, NULL, &drawin, &titlebar_drawable, NULL, NULL);
+		/* Reset accumulator on direction change to prevent stale state */
+		if ((event->delta > 0 && *acc < 0) || (event->delta < 0 && *acc > 0))
+			*acc = 0;
 
-		if (drawin) {
-			/* Scroll on drawin (wibox) */
-			rel_x = (int)cursor->x - drawin->x;
-			rel_y = (int)cursor->y - drawin->y;
+		for (int tick = 0; tick < ticks; tick++) {
+			lua_State *L = globalconf_get_lua_State();
+			struct wlr_keyboard *keyboard = wlr_seat_get_keyboard(seat);
+			uint32_t mods = keyboard ? wlr_keyboard_get_modifiers(keyboard) : 0;
+			Client *c = NULL;
+			drawin_t *drawin = NULL;
+			drawable_t *titlebar_drawable = NULL;
+			uint32_t button;
+			int rel_x, rel_y;
 
-			/* Emit press then release (scroll is instantaneous) */
-			luaA_drawin_button_check(drawin, rel_x, rel_y, button, CLEANMASK(mods), true);
-			luaA_drawin_button_check(drawin, rel_x, rel_y, button, CLEANMASK(mods), false);
-		} else if (c && (!client_is_unmanaged(c) || client_wants_focus(c))) {
-			/* Scroll on client */
-			rel_x = (int)cursor->x - c->geometry.x;
-			rel_y = (int)cursor->y - c->geometry.y;
-
-			/* Emit on titlebar drawable if applicable */
-			if (titlebar_drawable) {
-				luaA_drawable_button_emit(c, titlebar_drawable, rel_x, rel_y, button,
-				                          CLEANMASK(mods), true);
-				luaA_drawable_button_emit(c, titlebar_drawable, rel_x, rel_y, button,
-				                          CLEANMASK(mods), false);
+			/* Determine button number based on axis orientation and direction */
+			if (event->orientation == WL_POINTER_AXIS_VERTICAL_SCROLL) {
+				button = (event->delta < 0) ? 4 : 5;
+			} else {
+				button = (event->delta < 0) ? 6 : 7;
 			}
 
-			/* Emit on client (press + release) */
-			luaA_client_button_check(c, rel_x, rel_y, button, CLEANMASK(mods), true);
-			luaA_client_button_check(c, rel_x, rel_y, button, CLEANMASK(mods), false);
-		} else {
-			/* Scroll on root/empty space */
-			luaA_root_button_check(L, button, CLEANMASK(mods), cursor->x, cursor->y, true);
-			luaA_root_button_check(L, button, CLEANMASK(mods), cursor->x, cursor->y, false);
+			/* Find what's under the cursor */
+			xytonode(cursor->x, cursor->y, NULL, &c, NULL, &drawin, &titlebar_drawable, NULL, NULL);
+
+			if (drawin) {
+				/* Scroll on drawin (wibox) */
+				rel_x = (int)cursor->x - drawin->x;
+				rel_y = (int)cursor->y - drawin->y;
+
+				/* Emit press then release (scroll is instantaneous) */
+				luaA_drawin_button_check(drawin, rel_x, rel_y, button, CLEANMASK(mods), true);
+				luaA_drawin_button_check(drawin, rel_x, rel_y, button, CLEANMASK(mods), false);
+			} else if (c && (!client_is_unmanaged(c) || client_wants_focus(c))) {
+				/* Scroll on client */
+				rel_x = (int)cursor->x - c->geometry.x;
+				rel_y = (int)cursor->y - c->geometry.y;
+
+				/* Emit on titlebar drawable if applicable */
+				if (titlebar_drawable) {
+					luaA_drawable_button_emit(c, titlebar_drawable, rel_x, rel_y, button,
+					                          CLEANMASK(mods), true);
+					luaA_drawable_button_emit(c, titlebar_drawable, rel_x, rel_y, button,
+					                          CLEANMASK(mods), false);
+				}
+
+				/* Emit on client (press + release) */
+				luaA_client_button_check(c, rel_x, rel_y, button, CLEANMASK(mods), true);
+				luaA_client_button_check(c, rel_x, rel_y, button, CLEANMASK(mods), false);
+			} else {
+				/* Scroll on root/empty space */
+				luaA_root_button_check(L, button, CLEANMASK(mods), cursor->x, cursor->y, true);
+				luaA_root_button_check(L, button, CLEANMASK(mods), cursor->x, cursor->y, false);
+			}
 		}
 	}
 
