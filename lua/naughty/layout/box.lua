@@ -139,6 +139,9 @@ end
 -- screen is resized or the notification is moved, it causes side effects.
 -- Better listen to geometry changes and reflow.
 capi.screen.connect_signal("property::geometry", function(s)
+    if not by_position[s] then
+        return
+    end
     for pos, notifs in pairs(by_position[s]) do
         if #notifs > 0 then
             update_position(pos, notifs[1].preset)
