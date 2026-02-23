@@ -69,7 +69,8 @@ draw_surface_from_data(int width, int height, uint32_t *data)
         uint8_t r = (uint8_t)(((data[i] >> 16) & 0xff) * alpha);
         uint8_t g = (uint8_t)(((data[i] >>  8) & 0xff) * alpha);
         uint8_t b = (uint8_t)(((data[i] >>  0) & 0xff) * alpha);
-        buffer[i] = (a << 24) | (r << 16) | (g << 8) | b;
+        /* (uint32_t) casts: uint8_t promotes to int; a<<24 is UB when a>=128 (same fix as draw_surface_from_pixbuf) */
+        buffer[i] = ((uint32_t)a << 24) | ((uint32_t)r << 16) | ((uint32_t)g << 8) | b;
     }
 
     surface =

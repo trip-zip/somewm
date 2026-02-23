@@ -719,6 +719,8 @@ axisnotify(struct wl_listener *listener, void *data)
 	 * (e.g. ±15 or ±30). We accumulate until a full step (±120) is reached
 	 * to avoid multiple tag switches per physical wheel click. */
 	if (!locked && event->delta != 0) {
+		/* NOTE: process-global accumulators shared across all pointer devices.
+		 * Multi-mouse interleaving is possible but negligible in practice. */
 		static int32_t scroll_acc_v = 0;
 		static int32_t scroll_acc_h = 0;
 		int32_t *acc;
