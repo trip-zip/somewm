@@ -1477,6 +1477,12 @@ luaA_screen_fake_add(lua_State *L)
 	lua_pushvalue(L, -1);
 	ref = luaL_ref(L, LUA_REGISTRYINDEX);
 
+	/* Register in object registry so luaA_object_push() can find it.
+	 * Without this, screen_added() → luaA_object_push() → returns nil,
+	 * and the "_added" signal is never emitted (matching luaA_screen_new). */
+	lua_pushvalue(L, -1);
+	luaA_object_ref(L, -1);
+
 	/* Add to screen array */
 	if (screen_count >= screen_capacity) {
 		size_t new_cap = screen_capacity == 0 ? 4 : screen_capacity * 2;
@@ -1816,16 +1822,22 @@ luaA_screen_emit_signal(lua_State *L)
 	screen_t *screen = luaA_checkscreen(L, 1);
 	const char *name = luaL_checkstring(L, 2);
 	int nargs = lua_gettop(L) - 2;
+	int arg_start = 3;  /* absolute stack index of first extra arg */
+	int j;
 
 	if (screen) {
-		/* Emit on instance signals first */
+		/* Emit on instance signals with fresh copies of args.
+		 * signal_object_emit() pops its nargs from the stack, so we pass
+		 * copies rather than the originals (which we need below for class emit). */
+		for (j = 0; j < nargs; j++)
+			lua_pushvalue(L, arg_start + j);
 		signal_object_emit(L, &screen->signals, name, nargs);
 
-		/* Then forward to class signals (AwesomeWM pattern).
-		 * This allows class-level handlers connected via screen.connect_signal()
-		 * to receive signals emitted via s:emit_signal(). */
-		lua_pushvalue(L, 1);  /* Push screen object */
-		lua_insert(L, - nargs - 1);  /* Move it before args */
+		/* Forward to class signals (AwesomeWM pattern): push screen first,
+		 * then fresh copies of the extra args so handlers receive (s, ...). */
+		lua_pushvalue(L, 1);
+		for (j = 0; j < nargs; j++)
+			lua_pushvalue(L, arg_start + j);
 		luaA_class_emit_signal(L, &screen_class, name, nargs + 1);
 	}
 
