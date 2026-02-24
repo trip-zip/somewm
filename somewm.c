@@ -3939,6 +3939,14 @@ apply_geometry_to_wlroots(Client *c)
 	if (!c->scene || !client_surface(c) || !client_surface(c)->mapped)
 		return;
 
+	/* Guard against configuring uninitialized XDG surfaces.
+	 * During output hotplug, closemon() → setmon() → resize() can reach here
+	 * before the XDG surface has completed its initial configure handshake.
+	 * wlr_xdg_surface_schedule_configure() asserts surface->initialized.
+	 * Sway guards with mapped check; KWin uses multi-level isConfigured() checks. */
+	if (c->client_type == XDGShell && !c->surface.xdg->initialized)
+		return;
+
 	/* Get titlebar sizes - they occupy space inside geometry.
 	 * When fullscreen, ignore titlebar sizes - surface should cover entire geometry. */
 	titlebar_left = c->fullscreen ? 0 : c->titlebar[CLIENT_TITLEBAR_LEFT].size;
