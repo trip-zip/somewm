@@ -508,7 +508,7 @@ arrange(Monitor *m)
 		if (!c->mon || c->mon != m || !c->scene)
 			continue;
 
-		visible = client_on_selected_tags(c);
+		visible = client_isvisible(c);
 		wlr_scene_node_set_enabled(&c->scene->node, visible);
 		client_set_suspended(c, !visible);
 	}
