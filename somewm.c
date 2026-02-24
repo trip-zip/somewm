@@ -287,11 +287,6 @@ typedef struct {
 	uint32_t timeout_id;      /* GLib timeout source ID for cleanup */
 } activation_token_t;
 
-/* Deferred screen add for hotplug (matches AwesomeWM's screen_schedule_refresh pattern) */
-typedef struct {
-	screen_t *screen;
-} deferred_screen_add_t;
-
 /* Popup tracking structure for proper constraint handling */
 typedef struct {
 	struct wlr_xdg_popup *popup;
@@ -344,6 +339,7 @@ static struct wlr_box sgeom;
 struct wl_list mons;
 static struct wl_list tracked_pointers; /* For runtime libinput config */
 Monitor *selmon;
+static int in_updatemons;
 
 /* global event handlers */
 static struct wl_listener cursor_axis = {.notify = axisnotify};
@@ -1141,6 +1137,9 @@ cleanupmon(struct wl_listener *listener, void *data)
 	LayerSurface *l, *tmp;
 	size_t i;
 
+	wlr_log(WLR_ERROR, "[HOTPLUG] cleanupmon: %s remaining_mons=%d",
+		m->wlr_output->name, wl_list_length(&mons) - 1);
+
 	/* Find and remove screen BEFORE destroying monitor data (AwesomeWM pattern)
 	 * This emits instance-level "removed" signal and relocates clients.
 	 * Also emit viewports and primary_changed signals as needed. */
@@ -1177,8 +1176,15 @@ cleanupmon(struct wl_listener *listener, void *data)
 	if (m->lock_surface)
 		destroylocksurface(&m->destroy_lock_surface, NULL);
 	m->wlr_output->data = NULL;
-	wlr_output_layout_remove(output_layout, m->wlr_output);
+	/* Block updatemons() during output cleanup. wlr_output_layout_remove
+	 * emits layout::change which triggers updatemons(). If updatemons runs,
+	 * it does arrange/focus work that can indirectly add commit listeners
+	 * (e.g. presentation_time, gamma) to the output being destroyed, causing
+	 * wlr_output_finish() assertion failure. */
+	in_updatemons = 1;
 	wlr_scene_output_destroy(m->scene_output);
+	wlr_output_layout_remove(output_layout, m->wlr_output);
+	in_updatemons = 0;
 
 	closemon(m);
 	wlr_scene_node_destroy(&m->fullscreen_bg->node);
@@ -1230,16 +1236,20 @@ closemon(Monitor *m)
 	/* update selmon if needed and
 	 * move closed monitor's clients to the focused one */
 	Client *c;
-	int i = 0, nmons = wl_list_length(&mons);
-	if (!nmons) {
+	int nclients = 0;
+
+	if (wl_list_empty(&mons)) {
 		selmon = NULL;
 	} else if (m == selmon) {
-		do /* don't switch to disabled mons */
-			selmon = wl_container_of(mons.next, selmon, link);
-		while (!selmon->wlr_output->enabled && i++ < nmons);
-
-		if (!selmon->wlr_output->enabled)
-			selmon = NULL;
+		/* Find next enabled monitor (properly iterate the list) */
+		Monitor *iter;
+		selmon = NULL;
+		wl_list_for_each(iter, &mons, link) {
+			if (iter != m && iter->wlr_output->enabled) {
+				selmon = iter;
+				break;
+			}
+		}
 	}
 
 	foreach(client, globalconf.clients) {
@@ -1247,9 +1257,17 @@ closemon(Monitor *m)
 		if (some_client_get_floating(c) && c->geometry.x > m->m.width)
 			resize(c, (struct wlr_box){.x = c->geometry.x - m->w.width, .y = c->geometry.y,
 					.width = c->geometry.width, .height = c->geometry.height}, 0);
-		if (c->mon == m)
+		if (c->mon == m) {
+			nclients++;
 			setmon(c, selmon, 0);
+		}
 	}
+
+	wlr_log(WLR_ERROR, "[HOTPLUG] closemon: %s selmon=%s nclients=%d",
+		m->wlr_output->name,
+		selmon ? selmon->wlr_output->name : "NULL",
+		nclients);
+
 	focusclient(focustop(selmon), 1);
 	printstatus();
 }
@@ -1591,35 +1609,6 @@ createlocksurface(struct wl_listener *listener, void *data)
 		client_notify_enter(lock_surface->surface, wlr_seat_get_keyboard(seat));
 }
 
-/* Idle callback for deferred screen signal emission (AwesomeWM pattern).
- * This is called after the wlroots output event handler returns, when it's
- * safe to do complex Lua operations like creating wibars. */
-static void
-screen_added_idle(void *data)
-{
-	deferred_screen_add_t *d = data;
-	screen_t *screen = d->screen;
-
-	if (screen && screen->valid) {
-		screen_t *old_primary = luaA_screen_get_primary_screen(globalconf_L);
-		screen_t *new_primary;
-
-		screen_added(globalconf_L, screen);
-		luaA_screen_emit_list(globalconf_L);
-		luaA_screen_emit_viewports(globalconf_L);
-
-		new_primary = luaA_screen_get_primary_screen(globalconf_L);
-		if (new_primary == screen && old_primary != screen) {
-			luaA_screen_emit_primary_changed(globalconf_L, screen);
-		}
-
-		banning_refresh();
-		some_refresh();
-	}
-
-	free(d);
-}
-
 void
 createmon(struct wl_listener *listener, void *data)
 {
@@ -1632,6 +1621,9 @@ createmon(struct wl_listener *listener, void *data)
 
 	if (!wlr_output_init_render(wlr_output, alloc, drw))
 		return;
+
+	wlr_log(WLR_ERROR, "[HOTPLUG] createmon: %s enabled=%d mons=%d",
+		wlr_output->name, wlr_output->enabled, wl_list_length(&mons));
 
 	m = wlr_output->data = ecalloc(1, sizeof(*m));
 	m->wlr_output = wlr_output;
@@ -1687,14 +1679,11 @@ createmon(struct wl_listener *listener, void *data)
 	 * output (such as DPI, scale factor, manufacturer, etc).
 	 */
 	m->scene_output = wlr_scene_output_create(scene, wlr_output);
-	if (m->m.x == -1 && m->m.y == -1)
-		wlr_output_layout_add_auto(output_layout, wlr_output);
-	else
-		wlr_output_layout_add(output_layout, wlr_output, m->m.x, m->m.y);
 
-	/* Create screen object and emit signals.
-	 * During startup: signal emission is deferred to luaA_screen_emit_all_added()
-	 * During runtime (hotplug): emit _added immediately so wibar/tags are created */
+	/* Create screen object BEFORE adding to layout.
+	 * wlr_output_layout_add_auto() triggers updatemons() SYNCHRONOUSLY
+	 * via layout::change signal. needs_screen_added must be set before
+	 * that, so updatemons() can emit screen_added with correct geometry. */
 	if (globalconf_L) {
 		Monitor *tmp;
 		int screen_index;
@@ -1715,21 +1704,21 @@ createmon(struct wl_listener *listener, void *data)
 			lua_pop(globalconf_L, 1);
 
 			/* If startup is complete, this is a hotplugged monitor.
-			 * Defer signal emission to idle callback (AwesomeWM pattern).
-			 * We can't emit signals directly from wlroots output event callback
-			 * because complex Lua operations (wibar creation) may fail. */
+			 * Set flag so updatemons() emits screen_added AFTER geometry
+			 * is set but BEFORE orphaned clients are assigned.
+			 * This ensures Lua tags/wibar exist when clients arrive. */
 			if (luaA_screen_scanned_done()) {
-				deferred_screen_add_t *d = malloc(sizeof(*d));
-				if (d) {
-					d->screen = screen;
-					wl_event_loop_add_idle(
-						wl_display_get_event_loop(dpy),
-						screen_added_idle,
-						d);
-				}
+				m->needs_screen_added = 1;
 			}
 		}
 	}
+
+	/* Add to output layout — triggers updatemons() synchronously.
+	 * updatemons() will: set geometry → emit screen_added → assign orphans */
+	if (m->m.x == -1 && m->m.y == -1)
+		wlr_output_layout_add_auto(output_layout, wlr_output);
+	else
+		wlr_output_layout_add(output_layout, wlr_output, m->m.x, m->m.y);
 }
 
 void
@@ -3750,6 +3739,8 @@ powermgrsetmode(struct wl_listener *listener, void *data)
 	wlr_output_state_finish(&state);
 
 	m->asleep = !event->mode;
+	wlr_log(WLR_ERROR, "[HOTPLUG] powermgrsetmode: %s mode=%d asleep=%d",
+		m->wlr_output->name, event->mode, m->asleep);
 	updatemons(NULL, NULL);
 }
 
@@ -3762,6 +3753,13 @@ rendermon(struct wl_listener *listener, void *data)
 	Client *c;
 	struct timespec now;
 
+	/* Safety: scene_output may not exist yet if frame fires before createmon
+	 * finishes (possible on NVIDIA), or output may be disabled */
+	if (!m->scene_output)
+		return;
+	if (!m->wlr_output->enabled)
+		goto skip;
+
 	/* Render if no XDG clients have an outstanding resize and are visible on
 	 * this monitor. */
 	foreach(client, globalconf.clients) {
@@ -3770,10 +3768,11 @@ rendermon(struct wl_listener *listener, void *data)
 			goto skip;
 	}
 
-	wlr_scene_output_commit(m->scene_output, NULL);
+	if (!wlr_scene_output_commit(m->scene_output, NULL))
+		wlr_log(WLR_DEBUG, "[HOTPLUG] rendermon commit failed: %s",
+			m->wlr_output->name);
 
 skip:
-	/* Let clients know a frame has been rendered */
 	clock_gettime(CLOCK_MONOTONIC, &now);
 	wlr_scene_output_send_frame_done(m->scene_output, &now);
 }
@@ -3803,7 +3802,10 @@ void
 requestmonstate(struct wl_listener *listener, void *data)
 {
 	struct wlr_output_event_request_state *event = data;
-	wlr_output_commit_state(event->output, event->state);
+	wlr_log(WLR_ERROR, "[HOTPLUG] requestmonstate: %s", event->output->name);
+	if (!wlr_output_commit_state(event->output, event->state))
+		wlr_log(WLR_ERROR, "[HOTPLUG] requestmonstate commit FAILED: %s",
+			event->output->name);
 	updatemons(NULL, NULL);
 }
 
@@ -4345,6 +4347,11 @@ setmon(Client *c, Monitor *m, uint32_t newtags)
 
 	if (oldmon == m)
 		return;
+
+	wlr_log(WLR_ERROR, "[HOTPLUG] setmon: client=%s old=%s new=%s",
+		client_get_title(c) ? client_get_title(c) : "?",
+		oldmon ? oldmon->wlr_output->name : "NULL",
+		m ? m->wlr_output->name : "NULL");
 
 	L = globalconf_get_lua_State();
 	old_screen = c->screen;  /* Capture before update */
@@ -4995,6 +5002,16 @@ updatemons(struct wl_listener *listener, void *data)
 	 * positions, focus, and the stored configuration in wlroots'
 	 * output-manager implementation.
 	 */
+	/* Guard against re-entrancy: wlr_output_layout_remove/add_auto below
+	 * emit layout::change which would call us again, causing
+	 * use-after-free in wlroots output_layout_add().
+	 * Also used by cleanupmon() to prevent updatemons during output destruction. */
+	if (in_updatemons)
+		return;
+	in_updatemons = 1;
+
+	wlr_log(WLR_ERROR, "[HOTPLUG] updatemons enter mons=%d",
+		wl_list_length(&mons));
 	struct wlr_output_configuration_v1 *config
 			= wlr_output_configuration_v1_create();
 	Client *c;
@@ -5005,6 +5022,11 @@ updatemons(struct wl_listener *listener, void *data)
 	wl_list_for_each(m, &mons, link) {
 		if (m->wlr_output->enabled || m->asleep)
 			continue;
+		/* Only process monitors still in the output layout (skip already-processed) */
+		if (!wlr_output_layout_get(output_layout, m->wlr_output))
+			continue;
+		wlr_log(WLR_ERROR, "[HOTPLUG] updatemons disable: %s",
+			m->wlr_output->name);
 		config_head = wlr_output_configuration_head_v1_create(config, m->wlr_output);
 		config_head->state.enabled = 0;
 		/* Remove this output from the layout to avoid cursor enter inside it */
@@ -5070,8 +5092,41 @@ updatemons(struct wl_listener *listener, void *data)
 		config_head->state.x = m->m.x;
 		config_head->state.y = m->m.y;
 
+		wlr_log(WLR_ERROR, "[HOTPLUG] updatemons geom: %s %d,%d %dx%d",
+			m->wlr_output->name, m->m.x, m->m.y, m->m.width, m->m.height);
+
 		if (!selmon) {
 			selmon = m;
+		}
+	}
+
+	/* Emit screen_added for newly hotplugged monitors.
+	 * Done AFTER geometry loop (m->m is set), BEFORE orphaned clients
+	 * are assigned, so Lua tags and wibar exist when clients arrive.
+	 * Separate loop from geometry to avoid reentrancy issues —
+	 * screen_added triggers Lua callbacks that may cause layout changes.
+	 * in_updatemons=1 prevents recursive updatemons calls. */
+	wl_list_for_each(m, &mons, link) {
+		if (!m->needs_screen_added || !m->wlr_output->enabled)
+			continue;
+		m->needs_screen_added = 0;
+
+		screen_t *screen = luaA_screen_get_by_monitor(globalconf_L, m);
+		if (screen && screen->valid) {
+			wlr_log(WLR_ERROR, "[HOTPLUG] updatemons screen_added: %s",
+				m->wlr_output->name);
+
+			screen_t *old_primary = luaA_screen_get_primary_screen(globalconf_L);
+			screen_added(globalconf_L, screen);
+			luaA_screen_emit_list(globalconf_L);
+			luaA_screen_emit_viewports(globalconf_L);
+
+			screen_t *new_primary = luaA_screen_get_primary_screen(globalconf_L);
+			if (new_primary == screen && old_primary != screen)
+				luaA_screen_emit_primary_changed(globalconf_L, screen);
+
+			banning_refresh();
+			some_refresh();
 		}
 	}
 
@@ -5079,8 +5134,12 @@ updatemons(struct wl_listener *listener, void *data)
 		struct wlr_surface *surf;
 		foreach(client, globalconf.clients) {
 			c = *client;
-			if (!c->mon && (surf = client_surface(c)) && surf->mapped)
+			if (!c->mon && (surf = client_surface(c)) && surf->mapped) {
+				wlr_log(WLR_ERROR, "[HOTPLUG] updatemons orphan: %s → %s",
+					client_get_title(c) ? client_get_title(c) : "?",
+					selmon->wlr_output->name);
 				setmon(c, selmon, 0);
+			}
 		}
 		focusclient(focustop(selmon), 1);
 		if (selmon->lock_surface) {
@@ -5090,6 +5149,9 @@ updatemons(struct wl_listener *listener, void *data)
 		}
 	}
 
+	wlr_log(WLR_ERROR, "[HOTPLUG] updatemons exit selmon=%s",
+		selmon ? selmon->wlr_output->name : "NULL");
+
 	/* FIXME: figure out why the cursor image is at 0,0 after turning all
 	 * the monitors on.
 	 * Move the cursor image where it used to be. It does not generate a
@@ -5097,6 +5159,7 @@ updatemons(struct wl_listener *listener, void *data)
 	 * at the wrong position after all. */
 	wlr_cursor_move(cursor, NULL, 0, 0);
 
+	in_updatemons = 0;
 	wlr_output_manager_v1_set_configuration(output_mgr, config);
 }
 
