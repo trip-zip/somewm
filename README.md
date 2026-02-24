@@ -48,7 +48,7 @@ Full documentation at **[somewm.org](https://somewm.org)**:
 
 ## Contributing
 
-Contributions welcome! See [GitHub Issues](https://github.com/trip-zip/somewm/issues) for current work.
+Contributions welcome! Please read the [Contributing Guide](CONTRIBUTING.md) first.
 
 - Report bugs or request features via [Issues](https://github.com/trip-zip/somewm/issues)
 - Questions and discussion at [Discussions](https://github.com/trip-zip/somewm/discussions)
