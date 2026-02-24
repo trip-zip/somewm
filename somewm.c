@@ -5809,8 +5809,7 @@ get_distro_name(void)
 			/* Strip trailing newline and quote */
 			while (len > 0 && (start[len-1] == '\n' || start[len-1] == '"'))
 				start[--len] = '\0';
-			strncpy(distro, start, sizeof(distro) - 1);
-			distro[sizeof(distro) - 1] = '\0';
+			snprintf(distro, sizeof(distro), "%s", start);
 			break;
 		}
 	}
@@ -5843,15 +5842,13 @@ get_gpu_info(void)
 				size_t len = strlen(start);
 				if (len > 0 && start[len-1] == '\n')
 					start[len-1] = '\0';
-				strncpy(driver, start, sizeof(driver) - 1);
-				driver[sizeof(driver) - 1] = '\0';
+				snprintf(driver, sizeof(driver), "%s", start);
 			} else if (strncmp(line, "PCI_ID=", 7) == 0) {
 				char *start = line + 7;
 				size_t len = strlen(start);
 				if (len > 0 && start[len-1] == '\n')
 					start[len-1] = '\0';
-				strncpy(pci_id, start, sizeof(pci_id) - 1);
-				pci_id[sizeof(pci_id) - 1] = '\0';
+				snprintf(pci_id, sizeof(pci_id), "%s", start);
 			}
 		}
 		fclose(f);
