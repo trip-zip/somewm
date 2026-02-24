@@ -187,6 +187,7 @@ void some_get_button_states(int states[5]);
 Client *some_object_under_cursor(void);
 drawin_t *some_drawin_under_cursor(void);
 void some_warp_cursor_to_monitor(Monitor *m);
+void some_fake_motion(double dx, double dy);
 void some_client_start_move(void);
 void some_client_start_resize(void);
 void some_client_togglefloating(void);
