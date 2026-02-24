@@ -2064,13 +2064,13 @@ client_focus(client_t *c)
     /* Update Awesome's internal focus state (borders, signals, etc.) */
     if(client_focus_update(c)) {
         globalconf.focus.need_update = true;
-
-        /* Now update Wayland seat keyboard focus via compositor API.
-         * This is separated from the internal state update to allow
-         * geometry operations to call client_focus_update() directly
-         * without affecting seat focus. */
-        some_set_seat_keyboard_focus(c);
     }
+
+    /* Always sync Wayland seat keyboard focus — it can desync independently
+     * from Lua bookkeeping (e.g. layer surface steals keyboard, popup receives
+     * keyboard enter, XWayland surface recreation). some_set_seat_keyboard_focus()
+     * has its own early return when seat focus already matches (somewm_api.c). */
+    some_set_seat_keyboard_focus(c);
 }
 
 #if 0  /* Unused for Wayland - X11/XWayland only */

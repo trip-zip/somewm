@@ -167,6 +167,12 @@ local steps = {
             string.format("Expected client to regain focus after layer close, got %s",
                 client.focus and client.focus.class or "nil"))
 
+        -- Check ACTUAL Wayland seat keyboard focus, not just Lua bookkeeping.
+        -- This catches the bug from issue #237 where client.focus was correct
+        -- but seat->keyboard_state.focused_surface was not restored.
+        assert(my_client:has_keyboard_focus(),
+            "Client regained visual focus but NOT keyboard focus (seat desync)")
+
         io.stderr:write("[TEST] PASS: client regained focus after layer close\n")
         return true
     end,
