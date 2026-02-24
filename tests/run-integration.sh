@@ -41,14 +41,17 @@ fi
 export LUA_PATH="$ROOT_DIR/lua/?.lua;$ROOT_DIR/lua/?/init.lua;$ROOT_DIR/tests/?.lua;;"
 
 # Wayland backend setup based on HEADLESS mode
+# WLR_WL_OUTPUTS = wayland backend, WLR_HEADLESS_OUTPUTS = headless backend
+OUTPUTS=${WLR_WL_OUTPUTS:-1}
 if [ "$HEADLESS" = 1 ]; then
     export WLR_BACKENDS=headless
     export WLR_RENDERER=pixman
+    export WLR_HEADLESS_OUTPUTS=$OUTPUTS
 else
     export WLR_BACKENDS=wayland
     # Use GPU renderer in visual mode
+    export WLR_WL_OUTPUTS=$OUTPUTS
 fi
-export WLR_WL_OUTPUTS=1
 export NO_AT_BRIDGE=1
 export GDK_SCALE=1
 
