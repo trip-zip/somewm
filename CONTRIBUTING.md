@@ -29,7 +29,7 @@ make test-one TEST=tests/test-foo.lua  # Single test (handy for TDD)
 |------|-------|
 | AwesomeWM C reference | `~/tools/awesome/objects/`, `~/tools/awesome/luaclass.c` |
 | somewm C bindings | `objects/*.c` |
-| Wayland deviations | `ideas/DEVIATIONS.md` |
+| Wayland deviations | `DEVIATIONS.md` |
 | Integration test examples | `tests/` |
 
 ## Submitting a PR
