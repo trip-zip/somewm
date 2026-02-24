@@ -647,7 +647,8 @@ luaA_root_fake_input(lua_State *L)
 		wlr_seat_pointer_notify_button(seat, timestamp, button_code, state);
 
 	} else if (strcmp(event_type, "motion_notify") == 0) {
-		/* Motion event */
+		/* Motion event — route through full compositor motion path so
+		 * selmon tracking, pointer focus, and Lua signals all fire. */
 		bool relative;
 		double x, y;
 
@@ -656,15 +657,12 @@ luaA_root_fake_input(lua_State *L)
 		y = luaL_optnumber(L, 4, 0);
 
 		if (relative) {
-			wlr_cursor_move(cursor, NULL, x, y);
+			some_fake_motion(x, y);
 		} else {
-			/* Absolute coordinates - warp to position */
-			wlr_cursor_warp_absolute(cursor, NULL,
-				x / (double)cursor->x, y / (double)cursor->y);
-			/* Actually just warp directly */
+			/* Absolute coordinates - warp then restore pointer focus */
 			wlr_cursor_warp(cursor, NULL, x, y);
+			some_fake_motion(0, 0);
 		}
-		wlr_seat_pointer_notify_motion(seat, timestamp, cursor->x, cursor->y);
 
 	} else {
 		return luaL_error(L, "Unknown event type: %s (expected key_press, key_release, "

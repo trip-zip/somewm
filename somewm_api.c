@@ -65,6 +65,8 @@ struct kb_group_device {
 
 /* Functions from somewm.c that need to be made non-static */
 extern void focusclient(Client *c, int lift);
+extern void motionnotify(uint32_t time, struct wlr_input_device *device,
+		double dx, double dy, double dx_unaccel, double dy_unaccel);
 /* setfloating() removed - Lua manages floating state */
 extern void setfullscreen(Client *c, int fullscreen);
 extern void arrange(Monitor *m);
@@ -1398,6 +1400,20 @@ some_set_cursor_position(double x, double y, int silent)
 	}
 
 	wlr_cursor_warp(cursor, NULL, x, y);
+}
+
+/*
+ * Inject a fake relative pointer motion through the full compositor path.
+ * Unlike raw wlr_cursor_move(), this calls motionnotify() which handles
+ * selmon tracking, pointer focus, Lua signals, and constraint processing.
+ */
+void
+some_fake_motion(double dx, double dy)
+{
+	struct timespec ts;
+	clock_gettime(CLOCK_MONOTONIC, &ts);
+	uint32_t time = (uint32_t)(ts.tv_sec * 1000 + ts.tv_nsec / 1000000);
+	motionnotify(time, NULL, dx, dy, dx, dy);
 }
 
 /*
