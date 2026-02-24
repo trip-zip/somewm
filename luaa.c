@@ -974,6 +974,27 @@ luaA_awesome_set_preferred_icon_size(lua_State *L)
 	return 0;
 }
 
+/** awesome._test_add_output: Add a headless output for integration testing.
+ * Triggers the real createmon() → updatemons() code path.
+ * \param width Output width in pixels
+ * \param height Output height in pixels
+ * \return Output name string
+ */
+static int
+luaA_awesome_test_add_output(lua_State *L)
+{
+	unsigned int width = (unsigned int)luaL_checkinteger(L, 1);
+	unsigned int height = (unsigned int)luaL_checkinteger(L, 2);
+
+	const char *name = some_test_add_output(width, height);
+	if (!name)
+		return luaL_error(L, "Failed to add headless output "
+			"(requires headless or multi backend)");
+
+	lua_pushstring(L, name);
+	return 1;
+}
+
 /* awesome module methods */
 static const luaL_Reg awesome_methods[] = {
 	{ "quit", luaA_awesome_quit },
@@ -1000,6 +1021,7 @@ static const luaL_Reg awesome_methods[] = {
 	{ "kill", luaA_kill },
 	{ "load_image", luaA_load_image },
 	{ "restart", luaA_restart },
+	{ "_test_add_output", luaA_awesome_test_add_output },
 	{ NULL, NULL }
 };
 
