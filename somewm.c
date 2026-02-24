@@ -20,7 +20,9 @@
 #include <unistd.h>
 #include <wayland-server-core.h>
 #include <wlr/backend.h>
+#include <wlr/backend/headless.h>
 #include <wlr/backend/libinput.h>
+#include <wlr/backend/multi.h>
 #include <wlr/render/allocator.h>
 #include <wlr/render/wlr_renderer.h>
 #include <wlr/types/wlr_alpha_modifier_v1.h>
@@ -5076,7 +5078,17 @@ updatemons(struct wl_listener *listener, void *data)
 		{
 			screen_t *screen = luaA_screen_get_by_monitor(globalconf_L, m);
 			if (screen) {
-				luaA_screen_update_geometry(globalconf_L, screen);
+				if (m->needs_screen_added) {
+					/* New screen: cache geometry silently.
+					 * Don't emit property::geometry before _added —
+					 * Lua handlers (naughty) expect init_screen() to
+					 * have run first. screen_added() fires in the
+					 * add loop below and sets workarea = geometry. */
+					some_monitor_get_geometry(m, &screen->geometry);
+					screen->workarea = screen->geometry;
+				} else {
+					luaA_screen_update_geometry(globalconf_L, screen);
+				}
 			}
 		}
 		/* Don't move clients to the left output when plugging monitors */
@@ -6068,6 +6080,53 @@ print_version_info(const char **paths, int num_paths)
 
 	lua_close(L);
 	exit(EXIT_SUCCESS);
+}
+
+/* ========================================================================
+ * Test helpers — headless output hotplug simulation
+ * ======================================================================== */
+
+static struct wlr_backend *test_headless_backend;
+
+static void
+find_headless_cb(struct wlr_backend *b, void *data)
+{
+	if (wlr_backend_is_headless(b))
+		*(struct wlr_backend **)data = b;
+}
+
+const char *
+some_test_add_output(unsigned int width, unsigned int height)
+{
+	if (!test_headless_backend) {
+		if (wlr_backend_is_headless(backend)) {
+			test_headless_backend = backend;
+		} else if (wlr_backend_is_multi(backend)) {
+			/* Search for existing headless sub-backend */
+			wlr_multi_for_each_backend(backend, find_headless_cb,
+				&test_headless_backend);
+			if (!test_headless_backend) {
+				/* Create one and add it to the multi-backend */
+				test_headless_backend =
+					wlr_headless_backend_create(event_loop);
+				if (!test_headless_backend)
+					return NULL;
+				wlr_multi_backend_add(backend,
+					test_headless_backend);
+				if (!wlr_backend_start(test_headless_backend))
+					return NULL;
+			}
+		} else {
+			return NULL;
+		}
+	}
+
+	struct wlr_output *output =
+		wlr_headless_add_output(test_headless_backend, width, height);
+	if (!output)
+		return NULL;
+
+	return output->name;
 }
 
 int

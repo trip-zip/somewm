@@ -229,4 +229,9 @@ void apply_input_settings_to_all_devices(void);
 void layer_surface_grant_keyboard(LayerSurface *ls);
 void layer_surface_revoke_keyboard(LayerSurface *ls);
 
+/*
+ * Test helpers — headless output hotplug simulation
+ */
+const char *some_test_add_output(unsigned int width, unsigned int height);
+
 #endif /* SOMEWM_API_H */
