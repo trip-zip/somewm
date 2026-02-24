@@ -3400,6 +3400,15 @@ motionnotify(uint32_t time, struct wlr_input_device *device, double dx, double d
 
 		wlr_cursor_move(cursor, device, dx, dy);
 		wlr_idle_notifier_v1_notify_activity(idle_notifier, seat);
+
+		/* Update selected monitor when cursor crosses monitor boundaries.
+		 * Without this, layer-shell clients (rofi, etc.) that don't specify
+		 * an output get assigned to the stale selmon in createlayersurface(). */
+		{
+			Monitor *mon = xytomon(cursor->x, cursor->y);
+			if (mon && mon != selmon)
+				selmon = mon;
+		}
 	}
 
 	/* Update drag icon's position */
