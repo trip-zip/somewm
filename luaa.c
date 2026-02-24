@@ -2838,8 +2838,7 @@ check_mode_scan_requires(const char *content, const char *config_dir,
 			continue;
 
 		/* Save original module name for error reporting */
-		strncpy(module_path, module_name, sizeof(module_path) - 1);
-		module_path[sizeof(module_path) - 1] = '\0';
+		snprintf(module_path, sizeof(module_path), "%s", module_name);
 
 		/* Convert module.name to module/name */
 		for (char *p = module_name; *p; p++) {
