@@ -19,6 +19,10 @@ subprojects/packagecache/
 # Development tooling & reports (local only)
 tools/
 reports/
-docs/
+docs/*
+!docs/howtonix.md
 .cache/
 .local.mk
+
+# Nix build output
+result
