@@ -234,8 +234,8 @@ test_require_method_skipped() {
     local cfg
     # .require method calls should not be flagged as missing modules
     cfg=$(write_config "req_method.lua" 'local lgi = require("lgi")
-local Gtk = lgi.require("Gtk")
-return Gtk')
+local GLib = lgi.require("GLib")
+return GLib')
     run_check "$cfg"
     assert_not_contains "$name" "module not found" || return
     pass "$name"
@@ -360,6 +360,115 @@ test_nonexistent_file() {
     pass "$name"
 }
 
+# === Group 7: Inline Suppression ===
+
+test_inline_suppression() {
+    local name="inline_suppression"
+    local cfg
+    cfg=$(write_config "suppress.lua" 'local cmd = "xclip -selection clipboard" -- somewm:ignore
+local handle = io.popen("xrandr --query") -- somewm:ignore
+return cmd or handle')
+    run_check "$cfg"
+    assert_exit "$name" 0 || return
+    assert_not_contains "$name" "xclip" || return
+    assert_not_contains "$name" "xrandr" || return
+    pass "$name"
+}
+
+test_suppression_scoped() {
+    local name="suppression_scoped"
+    local cfg
+    cfg=$(write_config "suppress_scoped.lua" 'local cmd = "xclip -selection clipboard" -- somewm:ignore
+local handle = io.popen("xrandr --query")
+return cmd or handle')
+    run_check "$cfg"
+    assert_exit "$name" 2 || return
+    assert_not_contains "$name" "xclip" || return
+    assert_contains "$name" "xrandr" || return
+    pass "$name"
+}
+
+test_suppression_with_reason() {
+    local name="suppression_with_reason"
+    local cfg
+    cfg=$(write_config "suppress_reason.lua" 'local cmd = "xclip -selection" -- somewm:ignore guarded by runtime check
+return cmd')
+    run_check "$cfg"
+    assert_exit "$name" 0 || return
+    assert_not_contains "$name" "xclip" || return
+    pass "$name"
+}
+
+# === Group 8: Check Level ===
+
+test_check_level_critical_only() {
+    local name="check_level_critical"
+    local cfg
+    # Config with only warnings - should pass with --check-level=critical
+    cfg=$(write_config "level_warn.lua" 'local cmd = "xclip -selection clipboard"')
+    set +e
+    CHECK_STDOUT=$("$SOMEWM" --check "$cfg" --check-level=critical 2>"$TMP_DIR/_stderr")
+    CHECK_EXIT=$?
+    set -e
+    CHECK_STDERR=$(cat "$TMP_DIR/_stderr")
+    assert_exit "$name" 0 || return
+    # Report should still show the warning
+    assert_contains "$name" "xclip" || return
+    pass "$name"
+}
+
+test_check_level_critical_with_critical() {
+    local name="check_level_critical_with_crit"
+    local cfg
+    # Config with critical issue - should fail even with --check-level=critical
+    cfg=$(write_config "level_crit.lua" 'local handle = io.popen("xrandr --query")')
+    set +e
+    CHECK_STDOUT=$("$SOMEWM" --check "$cfg" --check-level=critical 2>"$TMP_DIR/_stderr")
+    CHECK_EXIT=$?
+    set -e
+    CHECK_STDERR=$(cat "$TMP_DIR/_stderr")
+    assert_exit "$name" 2 || return
+    pass "$name"
+}
+
+test_check_level_default() {
+    local name="check_level_default"
+    local cfg
+    # Default behavior unchanged - warnings still cause exit 1
+    cfg=$(write_config "level_default.lua" 'local cmd = "xclip -selection clipboard"')
+    run_check "$cfg"
+    assert_exit "$name" 1 || return
+    pass "$name"
+}
+
+# === Group 9: GTK/GDK Detection ===
+
+test_gtk_lgi_warning() {
+    local name="gtk_lgi_warning"
+    local cfg
+    cfg=$(write_config "gtk_warn.lua" 'local lgi = require("lgi")
+local Gtk = lgi.require("Gtk")
+return Gtk')
+    run_check "$cfg"
+    assert_exit "$name" 1 || return
+    assert_contains "$name" "WARNING" || return
+    assert_contains "$name" "GTK" || return
+    pass "$name"
+}
+
+test_gdk_lgi_critical() {
+    local name="gdk_lgi_critical"
+    local cfg
+    cfg=$(write_config "gdk_crit.lua" 'local lgi = require("lgi")
+local Gdk = lgi.require("Gdk")
+return Gdk')
+    run_check "$cfg"
+    assert_exit "$name" 2 || return
+    assert_contains "$name" "CRITICAL" || return
+    assert_contains "$name" "GDK" || return
+    pass "$name"
+}
+
 # === Run All Tests ===
 
 test_valid_config
@@ -384,6 +493,14 @@ test_report_header
 test_report_summary
 test_no_ansi_codes
 test_nonexistent_file
+test_inline_suppression
+test_suppression_scoped
+test_suppression_with_reason
+test_check_level_critical_only
+test_check_level_critical_with_critical
+test_check_level_default
+test_gtk_lgi_warning
+test_gdk_lgi_critical
 
 # === Summary ===
 

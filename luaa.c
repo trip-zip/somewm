@@ -1926,6 +1926,19 @@ static const x11_pattern_t x11_patterns[] = {
 	{"`xprop", "shell subcommand with xprop",
 	 "Use client.class or client.instance instead", SEVERITY_CRITICAL},
 
+	/* GTK/GDK loading via LGI - display init during config load.
+	 * GTK: somewm preloads empty lgi.override.Gtk to prevent deadlock,
+	 *       but display-dependent GTK features won't work.
+	 * GDK: no mitigation exists, will deadlock. */
+	{"lgi.require(\"Gtk", "lgi.require(\"Gtk\") - GTK loading (partially mitigated)",
+	 "somewm prevents the deadlock, but display-dependent GTK features won't work", SEVERITY_WARNING},
+	{"lgi.require('Gtk", "lgi.require('Gtk') - GTK loading (partially mitigated)",
+	 "somewm prevents the deadlock, but display-dependent GTK features won't work", SEVERITY_WARNING},
+	{"lgi.require(\"Gdk", "lgi.require(\"Gdk\") - GDK initialization deadlock",
+	 "GDK init connects to display server and will deadlock. Load lazily after startup", SEVERITY_CRITICAL},
+	{"lgi.require('Gdk", "lgi.require('Gdk') - GDK initialization deadlock",
+	 "GDK init connects to display server and will deadlock. Load lazily after startup", SEVERITY_CRITICAL},
+
 	/* === WARNING: Needs Wayland alternative === */
 
 	/* Screenshot tools (start of string or mid-command) */
@@ -2034,6 +2047,22 @@ static const x11_pattern_t x11_patterns[] = {
 
 	{NULL, NULL, NULL, 0}
 };
+
+/** Check if a line contains "somewm:ignore" suppression marker.
+ * Allows users to suppress pattern detection on specific lines, e.g.:
+ *   local cmd = "flameshot gui" -- somewm:ignore guarded by runtime check
+ */
+static bool
+line_has_suppression(const char *line_start, int line_len)
+{
+	if (line_len < 13)  /* strlen("somewm:ignore") */
+		return false;
+	int len = line_len < 200 ? line_len : 200;
+	char buf[201];
+	memcpy(buf, line_start, len);
+	buf[len] = '\0';
+	return strstr(buf, "somewm:ignore") != NULL;
+}
 
 /* Maximum recursion depth for require scanning */
 #define PRESCAN_MAX_DEPTH 8
@@ -2252,6 +2281,10 @@ luaA_prescan_file(const char *config_path, const char *config_dir, int depth)
 				if (p[0] == '-' && p[1] == '-')
 					continue;  /* Skip commented lines */
 			}
+
+			/* Skip lines with somewm:ignore suppression */
+			if (line_has_suppression(line_start, line_len))
+				continue;
 
 			fprintf(stderr, "\n");
 			fprintf(stderr, "somewm: *** X11 PATTERN DETECTED ***\n");
@@ -2946,6 +2979,10 @@ check_mode_scan_file(const char *config_path, const char *config_dir, int depth)
 					continue;
 			}
 
+			/* Skip lines with somewm:ignore suppression */
+			if (line_has_suppression(line_start, line_len))
+				continue;
+
 			memcpy(line_buf, line_start, line_len);
 			line_buf[line_len] = '\0';
 
@@ -2963,10 +3000,11 @@ check_mode_scan_file(const char *config_path, const char *config_dir, int depth)
 /** Public API: Run check mode on a config file
  * \param config_path Path to the main config file
  * \param use_color Whether to use ANSI colors in output
+ * \param min_severity Minimum severity for non-zero exit (0=info, 1=warning, 2=critical)
  * \return Exit code (0=ok, 1=warnings, 2=critical)
  */
 int
-luaA_check_config(const char *config_path, bool use_color)
+luaA_check_config(const char *config_path, bool use_color, int min_severity)
 {
 	char dir_buf[PATH_MAX];
 	const char *dir = NULL;
@@ -2995,13 +3033,23 @@ luaA_check_config(const char *config_path, bool use_color)
 	/* Print the report */
 	check_mode_print_report(config_path, use_color);
 
-	/* Capture result before cleanup */
-	if (check_counts[2] > 0)
-		result = 2;  /* Critical issues */
-	else if (check_counts[1] > 0)
-		result = 1;  /* Warnings only */
-	else
-		result = 0;  /* No issues */
+	/* Determine exit code based on min_severity filter.
+	 * The report always shows all issues; the filter only affects exit code.
+	 * min_severity: 0=info, 1=warning, 2=critical */
+	{
+		int highest = -1;
+		if (check_counts[SEVERITY_CRITICAL] > 0)
+			highest = SEVERITY_CRITICAL;
+		else if (check_counts[SEVERITY_WARNING] > 0)
+			highest = SEVERITY_WARNING;
+		else if (check_counts[SEVERITY_INFO] > 0)
+			highest = SEVERITY_INFO;
+
+		if (highest >= 0 && highest >= min_severity)
+			result = (highest == SEVERITY_CRITICAL) ? 2 : 1;
+		else
+			result = 0;
+	}
 
 	/* Cleanup */
 	check_mode_reset();
