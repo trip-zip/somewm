@@ -441,82 +441,50 @@ some_set_seat_keyboard_focus(Client *c)
 	struct wlr_keyboard *kb;
 	int surface_ready;
 
-	wlr_log(WLR_DEBUG, "[FOCUS-API] some_set_seat_keyboard_focus(%s/%s type=%u)",
-		c ? client_get_title(c) : "NULL",
-		c ? client_get_appid(c) : "NULL",
-		c ? c->client_type : 99u);
-
 	if (!c) {
-		/* NULL client = clear keyboard focus */
-		wlr_log(WLR_DEBUG, "[FOCUS-API] clearing focus (NULL client)");
 		wlr_seat_keyboard_notify_clear_focus(seat);
 		return;
 	}
 
-	/* Get the client's surface */
 	surface = some_client_get_surface(c);
 	if (!surface) {
-		wlr_log(WLR_DEBUG, "[FOCUS-API] clearing focus (NULL surface)");
 		wlr_seat_keyboard_notify_clear_focus(seat);
 		return;
 	}
 
 	/* Check if surface is ready for keyboard input.
-	 * For native Wayland clients (XDGShell), check wlr_surface->mapped.
-	 * For XWayland clients, the wlr_surface->mapped flag is set separately from
-	 * the XWayland map event. When mapnotify() runs (triggered by XWayland map),
-	 * the surface is ready for keyboard input even if wlr_surface->mapped is false.
-	 * We check if c->scene exists as that indicates mapnotify() has processed
-	 * this client and created the scene graph for it. */
+	 * For XWayland clients, wlr_surface->mapped may be false at map time;
+	 * use c->scene (set by mapnotify) as the readiness indicator instead. */
 #ifdef XWAYLAND
-	if (c->client_type == X11) {
-		/* XWayland: surface is ready if scene has been created */
+	if (c->client_type == X11)
 		surface_ready = (c->scene != NULL);
-		wlr_log(WLR_DEBUG, "[FOCUS-API] X11 surface_ready: scene=%p -> %d",
-			(void*)c->scene, surface_ready);
-	} else
+	else
 #endif
-	{
-		/* Native Wayland: use standard wlr_surface->mapped check */
 		surface_ready = surface->mapped;
-		wlr_log(WLR_DEBUG, "[FOCUS-API] Wayland surface_ready: mapped=%d -> %d",
-			surface->mapped, surface_ready);
-	}
 
 	if (!surface_ready) {
 		/* Surface not ready - clear seat focus to prevent input going to old window.
-		 * When surface maps, mapnotify() will call focusclient() to set focus. */
-		wlr_log(WLR_DEBUG, "[FOCUS-API] CLEAR: surface not ready");
+		 * When surface maps, mapnotify() will re-deliver keyboard focus. */
 		wlr_seat_keyboard_notify_clear_focus(seat);
 		return;
 	}
 
-	wlr_log(WLR_DEBUG, "[FOCUS-API] SENDING keyboard_enter: surface=%p old_focused=%p same=%d",
-		(void*)surface, (void*)seat->keyboard_state.focused_surface,
-		seat->keyboard_state.focused_surface == surface);
-
 	/* If re-delivering focus to the same surface (e.g. timer re-delivery for
-	 * games that weren't ready at first focus), we must clear seat focus first.
+	 * games that weren't ready at first focus), clear seat focus first.
 	 * wlr_seat_keyboard_enter() skips re-entry to the same surface, so we
 	 * force a leave+enter cycle (KWin MR !60 pattern). */
 	if (seat->keyboard_state.focused_surface == surface) {
-		wlr_log(WLR_DEBUG, "[FOCUS-API] same surface: clearing seat focus first (KWin pattern)");
 		client_activate_surface(surface, 0);
 		wlr_seat_keyboard_notify_clear_focus(seat);
 	} else if (seat->keyboard_state.focused_surface) {
-		/* Deactivate the previously focused surface.
-		 * This tells the old XWayland/XDG client it lost focus. */
+		/* Deactivate the previously focused surface. */
 		client_activate_surface(seat->keyboard_state.focused_surface, 0);
 	}
 
-	/* Activate the new client's surface.
-	 * CRITICAL: Without this, XWayland clients (games, Steam, etc.)
-	 * receive keyboard enter at the Wayland level but the X11 window
-	 * is never told it's the active window. The game then ignores
-	 * all keyboard input because X11 focus was never set. */
+	/* Activate the new surface. Without this, XWayland clients never
+	 * receive X11 FocusIn and ignore all keyboard input. */
 	client_activate_surface(surface, 1);
 
-	/* Update seat keyboard focus */
 #ifdef XWAYLAND
 	/* Sway pattern: inform XWayland of the active seat on every focus
 	 * change to an X11 client. Required for proper keyboard delivery. */
@@ -532,19 +500,12 @@ some_set_seat_keyboard_focus(Client *c)
 		                               kb->num_keycodes,
 		                               &kb->modifiers);
 	} else {
-		/* Send keyboard enter even without a keyboard device (Sway pattern).
-		 * Without this, XWayland clients and games never receive keyboard
-		 * focus when this path is taken via Lua client.focus = c */
+		/* Send keyboard enter even without a keyboard device (Sway pattern). */
 		wlr_seat_keyboard_notify_enter(seat, surface, NULL, 0, NULL);
 	}
-	/* Update pointer constraint - games need this for mouse lock.
-	 * Without this, pointer stays unconstrained and focus-follows-mouse
-	 * can steal focus away from games. */
-	some_update_pointer_constraint(surface);
 
-	wlr_log(WLR_DEBUG, "[FOCUS-API] DONE: seat_focused=%p match=%d",
-		(void*)seat->keyboard_state.focused_surface,
-		seat->keyboard_state.focused_surface == surface);
+	/* Update pointer constraint — games need this for mouse lock. */
+	some_update_pointer_constraint(surface);
 }
 
 /** Find the Client* that owns a given wlr_surface.
