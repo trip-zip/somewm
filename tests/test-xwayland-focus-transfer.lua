@@ -126,8 +126,10 @@ local steps = {
             return nil
         end
 
-        -- Verify Wayland client got focus
+        -- Verify Wayland client got focus (both Lua and seat level)
         if client.focus == wayland_client then
+            assert(wayland_client:has_keyboard_focus(),
+                "Wayland client has Lua focus but not REAL keyboard focus")
             io.stderr:write("[TEST] PASS: Wayland client received focus via activate\n")
             return true
         end
@@ -153,8 +155,10 @@ local steps = {
             return nil
         end
 
-        -- Verify X11 client got focus
+        -- Verify X11 client got focus (both Lua and seat level)
         if client.focus == x11_client_instance then
+            assert(x11_client_instance:has_keyboard_focus(),
+                "X11 client has Lua focus but not REAL keyboard focus (XWayland activation bug)")
             io.stderr:write("[TEST] PASS: X11 client received focus via activate\n")
             return true
         end
@@ -182,6 +186,8 @@ local steps = {
         end
 
         if client.focus == wayland_client then
+            assert(wayland_client:has_keyboard_focus(),
+                "Wayland client has Lua focus but not REAL keyboard focus after setter")
             io.stderr:write("[TEST] PASS: Focus transferred back to Wayland via setter\n")
             return true
         end
@@ -205,6 +211,8 @@ local steps = {
         end
 
         if client.focus == x11_client_instance then
+            assert(x11_client_instance:has_keyboard_focus(),
+                "X11 client has Lua focus but not REAL keyboard focus after setter (XWayland activation bug)")
             io.stderr:write("[TEST] PASS: Focus transferred to X11 via setter\n")
             return true
         end
