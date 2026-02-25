@@ -63,6 +63,20 @@ extern void screen_update_workarea(screen_t *screen);
 /* Forward declaration for drawable refresh callback */
 static void drawin_refresh_drawable(drawin_t *drawin);
 
+/** Get the effective scale for a drawin's drawable surface.
+ * Returns scale_override if set (>0), otherwise the output scale.
+ * Used by drawable_get_scale() and direct scale queries in drawin.c.
+ */
+static float
+drawin_get_effective_scale(drawin_t *d)
+{
+	if (d->scale_override > 0.0f)
+		return d->scale_override;
+	if (d->screen && d->screen->monitor && d->screen->monitor->wlr_output)
+		return d->screen->monitor->wlr_output->scale;
+	return 1.0f;
+}
+
 /* ========================================================================
  * Border Buffer Implementation (for shaped borders)
  * ========================================================================
@@ -1157,6 +1171,19 @@ luaA_drawin_get_cursor(lua_State *L, drawin_t *drawin)
 	return 1;
 }
 
+/** drawin.surface_scale - Get surface scale override (somewm extension).
+ * Returns the override value, or 0 (auto) if not set.
+ * \param L The Lua VM state.
+ * \param drawin The drawin object.
+ * \return The number of elements pushed on stack.
+ */
+static int
+luaA_drawin_get_surface_scale(lua_State *L, drawin_t *drawin)
+{
+	lua_pushnumber(L, drawin->scale_override);
+	return 1;
+}
+
 /** drawin.type - Get window type (AwesomeWM signature) */
 static int
 luaA_drawin_get_type(lua_State *L, drawin_t *drawin)
@@ -1456,13 +1483,9 @@ drawin_moveresize(lua_State *L, int udx, int x, int y, int width, int height)
 
 			/* Create new surface if we have valid dimensions */
 			if (drawin->width > 0 && drawin->height > 0) {
-				/* Get scale for HiDPI support - use actual output scale.
+				/* Get scale for HiDPI support.
 				 * Use floorf to match what Cairo will actually draw with device_scale. */
-				float scale = 1.0f;
-				if (drawin->screen && drawin->screen->monitor &&
-				    drawin->screen->monitor->wlr_output) {
-					scale = drawin->screen->monitor->wlr_output->scale;
-				}
+				float scale = drawin_get_effective_scale(drawin);
 				int scaled_width = (int)floorf(drawin->width * scale);
 				int scaled_height = (int)floorf(drawin->height * scale);
 				if (scaled_width < 1) scaled_width = 1;
@@ -1579,11 +1602,7 @@ drawin_set_visible(lua_State *L, int udx, bool v)
 		 * when scale changed - they need surface recreation when shown. */
 		if (drawin->drawable) {
 			drawable_t *d = drawin->drawable;
-			float current_scale = 1.0f;
-			if (drawin->screen && drawin->screen->monitor &&
-			    drawin->screen->monitor->wlr_output) {
-				current_scale = drawin->screen->monitor->wlr_output->scale;
-			}
+			float current_scale = drawin_get_effective_scale(drawin);
 
 			/* Recreate surface if: no surface, scale unknown (0), or scale changed */
 			bool need_recreate = !d->surface ||
@@ -1978,6 +1997,30 @@ luaA_drawin_set_cursor(lua_State *L, drawin_t *drawin)
 		p_delete(&drawin->cursor);
 		drawin->cursor = a_strdup(buf);
 		luaA_object_emit_signal(L, -3, "property::cursor", 0);
+	}
+	return 0;
+}
+
+/** Set the drawin surface_scale override (somewm extension).
+ * 0 = auto (use output scale), >0 = force this scale for drawable surface.
+ * Recreates the drawable surface at the new scale.
+ * \param L The Lua VM state.
+ * \param drawin The drawin object.
+ * \return The number of elements pushed on stack.
+ */
+static int
+luaA_drawin_set_surface_scale(lua_State *L, drawin_t *drawin)
+{
+	float scale = (float)lua_tonumber(L, -1);
+	if (scale < 0.0f)
+		scale = 0.0f;
+	if (scale != drawin->scale_override)
+	{
+		drawin->scale_override = scale;
+		/* Recreate the drawable surface at the new scale */
+		if (drawin->visible)
+			drawin_update_drawing(L, -3);
+		luaA_object_emit_signal(L, -3, "property::surface_scale", 0);
 	}
 	return 0;
 }
@@ -2479,6 +2522,11 @@ drawin_class_setup(lua_State *L)
 	                        (lua_class_propfunc_t) luaA_drawin_set_shadow,
 	                        (lua_class_propfunc_t) luaA_drawin_get_shadow,
 	                        (lua_class_propfunc_t) luaA_drawin_set_shadow);
+	/* somewm extension: surface scale override for HiDPI performance */
+	luaA_class_add_property(&drawin_class, "surface_scale",
+	                        (lua_class_propfunc_t) luaA_drawin_set_surface_scale,
+	                        (lua_class_propfunc_t) luaA_drawin_get_surface_scale,
+	                        (lua_class_propfunc_t) luaA_drawin_set_surface_scale);
 	/* NOTE: buttons is NOT registered as a property, only as a _buttons method.
 	 * The wibox wrapper handles the buttons accessor via _legacy_accessors */
 	luaA_class_add_property(&drawin_class, "border_width",
