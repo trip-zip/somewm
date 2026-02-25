@@ -2191,7 +2191,15 @@ destroynotify(struct wl_listener *listener, void *data)
 	}
 
 	if (already_unmanaged) {
-		/* Client already removed from array by unmapnotify, skip client_unmanage */
+		/* Client already removed from array by unmapnotify, skip client_unmanage.
+		 * For XWayland clients, client_unmanage(UNMAP) kept the Lua reference
+		 * alive to allow re-mapping.  Release it now. */
+#ifdef XWAYLAND
+		if (c->client_type == X11) {
+			lua_State *L = globalconf_get_lua_State();
+			luaA_object_unref(L, c);
+		}
+#endif
 	} else {
 		/* Edge case: client still in array (destroyed without unmap), need to unmanage */
 		client_unmanage(c, CLIENT_UNMANAGE_DESTROYED);
@@ -2503,6 +2511,9 @@ void
 fullscreennotify(struct wl_listener *listener, void *data)
 {
 	Client *c = wl_container_of(listener, c, request_fullscreen);
+	/* Guard against stale XWayland client after client_unmanage() */
+	if (c->client_type == X11 && c->window == XCB_NONE)
+		return;
 	setfullscreen(c, client_wants_fullscreen(c));
 }
 
@@ -2981,6 +2992,21 @@ mapnotify(struct wl_listener *listener, void *data)
 	}
 
 	client_get_geometry(c, &c->geometry);
+
+#ifdef XWAYLAND
+	/* Re-manage XWayland clients that were previously unmapped (e.g., Discord
+	 * close-to-tray then re-open).  client_unmanage(UNMAP) removed the client
+	 * from arrays and invalidated window, but kept the Lua reference alive.
+	 * Restore the client to a manageable state before proceeding. */
+	if (c->client_type == X11 && c->window == XCB_NONE) {
+		c->window = c->surface.xwayland->window_id;
+		c->bw = client_is_unmanaged(c) ? 0 : get_border_width();
+		client_array_push(&globalconf.clients, c);
+		stack_client_push(c);
+		luaA_class_emit_signal(globalconf_get_lua_State(),
+			&client_class, "list", 0);
+	}
+#endif
 
 	/* Handle unmanaged clients first so we can return prior create borders */
 	if (client_is_unmanaged(c)) {
@@ -5190,6 +5216,10 @@ updatetitle(struct wl_listener *listener, void *data)
 	Client *c = wl_container_of(listener, c, set_title);
 	lua_State *L;
 
+	/* Guard against stale XWayland client after client_unmanage() */
+	if (c->client_type == X11 && c->window == XCB_NONE)
+		return;
+
 	/* Use new property system for both Wayland and XWayland clients
 	 * Both call client_set_name() which emits property::name signal */
 	if (c->client_type == XDGShell) {
@@ -5641,6 +5671,13 @@ activatex11(struct wl_listener *listener, void *data)
 	if (client_is_unmanaged(c))
 		return;
 
+	/* Guard against stale client: after client_unmanage() invalidates the
+	 * client (window = XCB_NONE), this listener may still fire if the
+	 * XWayland surface hasn't been destroyed yet (e.g., Discord close-to-tray
+	 * then re-launch). Skip to prevent use-after-free and Lua panics. */
+	if (c->window == XCB_NONE)
+		return;
+
 	/* Tell XWayland the surface is activated at the X11 level */
 	wlr_xwayland_surface_activate(c->surface.xwayland, 1);
 
@@ -5677,6 +5714,8 @@ configurex11(struct wl_listener *listener, void *data)
 {
 	Client *c = wl_container_of(listener, c, configure);
 	struct wlr_xwayland_surface_configure_event *event = data;
+	if (c->window == XCB_NONE)
+		return;
 	if (!client_surface(c) || !client_surface(c)->mapped) {
 		wlr_xwayland_surface_configure(c->surface.xwayland,
 				event->x, event->y, event->width, event->height);
@@ -5769,6 +5808,9 @@ sethints(struct wl_listener *listener, void *data)
 	bool dominated;
 
 	if (!hints)
+		return;
+
+	if (c->window == XCB_NONE)
 		return;
 
 	/* Check if this client is currently focused (dominated by focus) */
