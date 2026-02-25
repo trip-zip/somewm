@@ -6075,6 +6075,7 @@ main(int argc, char *argv[])
 {
 	char *startup_cmd = NULL;
 	char *check_config = NULL;
+	int check_level = -1;  /* -1 = unset (default: warning) */
 	int show_version = 0;
 	int c;
 
@@ -6090,7 +6091,8 @@ main(int argc, char *argv[])
 		{"config",  required_argument, 0, 'c'},
 		{"search",  required_argument, 0, 'L'},
 		{"startup", required_argument, 0, 's'},
-		{"check",   required_argument, 0, 'k'},
+		{"check",       required_argument, 0, 'k'},
+		{"check-level", required_argument, 0, 257},
 		{0, 0, 0, 0}
 	};
 
@@ -6121,6 +6123,18 @@ main(int argc, char *argv[])
 		case 'v':
 			show_version = 1;
 			break;
+		case 257:  /* --check-level */
+			if (strcmp(optarg, "critical") == 0)
+				check_level = 2;
+			else if (strcmp(optarg, "warning") == 0)
+				check_level = 1;
+			else if (strcmp(optarg, "info") == 0)
+				check_level = 0;
+			else {
+				fprintf(stderr, "Error: --check-level must be 'critical', 'warning', or 'info'\n");
+				goto usage;
+			}
+			break;
 		default:
 			goto usage;
 		}
@@ -6135,7 +6149,8 @@ main(int argc, char *argv[])
 	/* Check mode: scan config for compatibility issues without starting compositor */
 	if (check_config) {
 		bool use_color = isatty(STDOUT_FILENO);
-		int result = luaA_check_config(check_config, use_color);
+		int level = (check_level >= 0) ? check_level : 1;  /* default: warning */
+		int result = luaA_check_config(check_config, use_color, level);
 		return result;
 	}
 
@@ -6160,5 +6175,6 @@ usage:
 	    "  -c, --config FILE  Use specified config file (AwesomeWM compatible)\n"
 	    "  -L, --search DIR   Add directory to Lua module search path\n"
 	    "  -s, --startup CMD  Run command after startup\n"
-	    "  -k, --check CONFIG Check config for Wayland compatibility issues", argv[0]);
+	    "  -k, --check CONFIG       Check config for Wayland compatibility issues\n"
+	    "      --check-level LEVEL   Minimum severity for non-zero exit: critical, warning (default), info", argv[0]);
 }
