@@ -3285,6 +3285,15 @@ client_unmanage(client_t *c, client_unmanage_t reason)
     /* set client as invalid (X11/XWayland compatibility) */
     c->window = XCB_NONE;
 
+#ifdef XWAYLAND
+    /* For XWayland UNMAP: keep the Lua reference alive so that re-mapping
+     * the same surface (e.g., Discord close-to-tray then re-open) can push
+     * the client object to Lua.  The reference will be released by
+     * destroynotify() when the XWayland surface is actually destroyed. */
+    if (c->client_type == X11 && reason == CLIENT_UNMANAGE_UNMAP)
+        return;
+#endif
+
     luaA_object_unref(L, c);
 }
 
