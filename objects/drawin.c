@@ -926,13 +926,16 @@ drawin_wipe(drawin_t *w)
 		w->shape_border = NULL;
 	}
 
-	/* Cleanup shadow cache reference.
-	 * Shadow scene nodes are children of scene_tree and will be destroyed with it.
-	 * We only need to release our cache reference. */
-	if (w->shadow.cache) {
-		shadow_cache_put(w->shadow.cache);
-		w->shadow.cache = NULL;
+	/* Shadow scene nodes are children of scene_tree and destroyed with it.
+	 * We own the texture buffers though and must free them. */
+	for (int i = 0; i < SHADOW_TEXTURE_COUNT; i++) {
+		if (w->shadow.textures[i]) {
+			wlr_buffer_drop(w->shadow.textures[i]);
+			w->shadow.textures[i] = NULL;
+		}
 	}
+	w->shadow.tree = NULL;
+	memset(w->shadow.slice, 0, sizeof(w->shadow.slice));
 	if (w->shadow_config) {
 		free(w->shadow_config);
 		w->shadow_config = NULL;
@@ -1779,12 +1782,19 @@ drawin_border_refresh_single(drawin_t *d)
 	 * Border surface origin is at top-left corner of border area */
 	wlr_scene_node_set_position(&d->border_buffer->node, -bw, -bw);
 
-	/* Update shadow geometry */
-	if (d->shadow.tree) {
+	/* Update shadow geometry (lazy creation if needed) */
+	{
 		const shadow_config_t *shadow_config = shadow_get_effective_config(
 			d->shadow_config, true);
-		shadow_update_geometry(&d->shadow, shadow_config,
-			d->width, d->height);
+		if (shadow_config && shadow_config->enabled) {
+			if (d->shadow.tree) {
+				shadow_update_geometry(&d->shadow, shadow_config,
+					d->width, d->height);
+			} else {
+				shadow_create(d->scene_tree, &d->shadow, shadow_config,
+					d->width, d->height);
+			}
+		}
 	}
 }
 
@@ -2143,20 +2153,10 @@ luaA_drawin_set_shadow(lua_State *L, drawin_t *drawin)
 
 	/* Update shadow if scene tree exists */
 	if (drawin->scene_tree) {
-		if (new_config.enabled && !drawin->shadow.tree) {
-			/* Create shadow */
-			shadow_create(drawin->scene_tree, &drawin->shadow, &new_config,
-				drawin->width, drawin->height);
-			/* Match drawin visibility */
-			shadow_set_visible(&drawin->shadow, drawin->visible);
-		} else if (!new_config.enabled && drawin->shadow.tree) {
-			/* Destroy shadow */
-			shadow_destroy(&drawin->shadow);
-		} else if (drawin->shadow.tree) {
-			/* Update existing shadow */
-			shadow_update_config(&drawin->shadow, &new_config,
-				drawin->width, drawin->height);
-		}
+		shadow_update_config(&drawin->shadow, drawin->scene_tree, &new_config,
+			drawin->width, drawin->height);
+		/* Match drawin visibility */
+		shadow_set_visible(&drawin->shadow, drawin->visible);
 	}
 
 	luaA_object_emit_signal(L, -3, "property::shadow", 0);

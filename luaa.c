@@ -998,6 +998,36 @@ luaA_awesome_test_add_output(lua_State *L)
 	return 1;
 }
 
+/** Reload shadow settings from beautiful theme.
+ * Call this after changing beautiful.shadow_* values to apply them.
+ * Regenerates shadow textures and updates all existing shadows.
+ */
+static int
+luaA_awesome_shadow_reload(lua_State *L)
+{
+	/* Reload config from beautiful */
+	shadow_load_beautiful_defaults(L);
+
+	/* Update all existing client shadows */
+	foreach(c, globalconf.clients) {
+		const shadow_config_t *config = shadow_get_effective_config(
+			(*c)->shadow_config, false);
+		shadow_update_config(&(*c)->shadow, (*c)->scene, config,
+			(*c)->geometry.width, (*c)->geometry.height);
+	}
+
+	/* Update all existing drawin shadows */
+	foreach(d, globalconf.drawins) {
+		drawin_t *drawin = *d;
+		const shadow_config_t *config = shadow_get_effective_config(
+			drawin->shadow_config, true);
+		shadow_update_config(&drawin->shadow, drawin->scene_tree, config,
+			drawin->width, drawin->height);
+	}
+
+	return 0;
+}
+
 /* awesome module methods */
 static const luaL_Reg awesome_methods[] = {
 	{ "quit", luaA_awesome_quit },
@@ -1024,6 +1054,7 @@ static const luaL_Reg awesome_methods[] = {
 	{ "kill", luaA_kill },
 	{ "load_image", luaA_load_image },
 	{ "restart", luaA_restart },
+	{ "shadow_reload", luaA_awesome_shadow_reload },
 	{ "_test_add_output", luaA_awesome_test_add_output },
 	{ NULL, NULL }
 };

@@ -1610,14 +1610,16 @@ client_wipe(client_t *c)
         c->titlebar[i].scene_buffer = NULL;
     }
 
-    /* Cleanup shadow cache reference.
-     * NOTE: Shadow scene nodes are children of c->scene and are automatically
-     * destroyed when the parent is destroyed. We only need to release our
-     * reference to the shared cache entry. */
-    if (c->shadow.cache) {
-        shadow_cache_put(c->shadow.cache);
-        c->shadow.cache = NULL;
+    /* Shadow scene nodes are children of c->scene and destroyed with it.
+     * We own the texture buffers though and must free them. */
+    for (int i = 0; i < SHADOW_TEXTURE_COUNT; i++) {
+        if (c->shadow.textures[i]) {
+            wlr_buffer_drop(c->shadow.textures[i]);
+            c->shadow.textures[i] = NULL;
+        }
     }
+    c->shadow.tree = NULL;
+    memset(c->shadow.slice, 0, sizeof(c->shadow.slice));
     if (c->shadow_config) {
         free(c->shadow_config);
         c->shadow_config = NULL;
@@ -4376,18 +4378,8 @@ luaA_client_set_shadow(lua_State *L, client_t *c)
 
     /* Update shadow if client is mapped */
     if (c->scene) {
-        if (new_config.enabled && !c->shadow.tree) {
-            /* Create shadow */
-            shadow_create(c->scene, &c->shadow, &new_config,
-                c->geometry.width, c->geometry.height);
-        } else if (!new_config.enabled && c->shadow.tree) {
-            /* Destroy shadow */
-            shadow_destroy(&c->shadow);
-        } else if (c->shadow.tree) {
-            /* Update existing shadow */
-            shadow_update_config(&c->shadow, &new_config,
-                c->geometry.width, c->geometry.height);
-        }
+        shadow_update_config(&c->shadow, c->scene, &new_config,
+            c->geometry.width, c->geometry.height);
     }
 
     luaA_object_emit_signal(L, -3, "property::shadow", 0);
