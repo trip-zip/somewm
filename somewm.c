@@ -4782,9 +4782,9 @@ setup(void)
 	/* Shadow defaults (disabled by default, theme enables via beautiful.shadow_*) */
 	globalconf.shadow.client.enabled = false;
 	globalconf.shadow.client.radius = 12;
-	globalconf.shadow.client.offset_x = 0;
-	globalconf.shadow.client.offset_y = 6;
-	globalconf.shadow.client.opacity = 0.5f;
+	globalconf.shadow.client.offset_x = -15;
+	globalconf.shadow.client.offset_y = -15;
+	globalconf.shadow.client.opacity = 0.75f;
 	globalconf.shadow.client.color[0] = 0.0f;  /* Black */
 	globalconf.shadow.client.color[1] = 0.0f;
 	globalconf.shadow.client.color[2] = 0.0f;

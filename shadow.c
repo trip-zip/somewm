@@ -33,9 +33,9 @@
 static const shadow_config_t shadow_defaults = {
     .enabled = false,
     .radius = 12,
-    .offset_x = 0,
-    .offset_y = 6,
-    .opacity = 0.5f,
+    .offset_x = -15,
+    .offset_y = -15,
+    .opacity = 0.75f,
     .color = { 0.0f, 0.0f, 0.0f, 1.0f },
     .clip_directional = true,
 };
@@ -589,13 +589,14 @@ shadow_destroy(shadow_nodes_t *shadow)
 /* ========== Lua Integration ========== */
 
 bool
-shadow_config_from_lua(lua_State *L, int idx, shadow_config_t *config)
+shadow_config_from_lua(lua_State *L, int idx, shadow_config_t *config,
+                       bool is_drawin)
 {
     if (!config)
         return false;
 
-    /* Default values */
-    *config = shadow_defaults;
+    /* Start from theme defaults (not hardcoded defaults) */
+    *config = *shadow_get_effective_config(NULL, is_drawin);
 
     if (lua_isboolean(L, idx)) {
         config->enabled = lua_toboolean(L, idx);
@@ -812,6 +813,21 @@ shadow_load_beautiful_defaults(lua_State *L)
     lua_getfield(L, -1, "shadow_drawin_opacity");
     if (lua_isnumber(L, -1))
         globalconf.shadow.drawin.opacity = (float)lua_tonumber(L, -1);
+    lua_pop(L, 1);
+
+    lua_getfield(L, -1, "shadow_drawin_color");
+    if (!lua_isnil(L, -1)) {
+        if (lua_isstring(L, -1)) {
+            const char *str = lua_tostring(L, -1);
+            color_t c;
+            if (color_init_from_string(&c, str)) {
+                globalconf.shadow.drawin.color[0] = c.red / 255.0f;
+                globalconf.shadow.drawin.color[1] = c.green / 255.0f;
+                globalconf.shadow.drawin.color[2] = c.blue / 255.0f;
+                globalconf.shadow.drawin.color[3] = c.alpha / 255.0f;
+            }
+        }
+    }
     lua_pop(L, 1);
 
     lua_pop(L, 1);  /* Pop beautiful table */

@@ -2127,8 +2127,12 @@ luaA_drawin_get_shadow(lua_State *L, drawin_t *drawin)
 	if (drawin->shadow_config) {
 		shadow_config_to_lua(L, drawin->shadow_config);
 	} else {
-		/* Return true to indicate using defaults */
-		lua_pushboolean(L, drawin->shadow.tree != NULL);
+		const shadow_config_t *eff = shadow_get_effective_config(NULL, true);
+		if (eff->enabled && drawin->shadow.tree) {
+			shadow_config_to_lua(L, eff);
+		} else {
+			lua_pushboolean(L, false);
+		}
 	}
 	return 1;
 }
@@ -2139,7 +2143,7 @@ luaA_drawin_set_shadow(lua_State *L, drawin_t *drawin)
 {
 	shadow_config_t new_config;
 
-	if (!shadow_config_from_lua(L, -1, &new_config)) {
+	if (!shadow_config_from_lua(L, -1, &new_config, true)) {
 		return luaL_error(L, "%s", lua_tostring(L, -1));
 	}
 

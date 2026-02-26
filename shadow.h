@@ -61,9 +61,9 @@ enum {
 typedef struct shadow_config_t {
     bool enabled;           /**< Shadow enabled for this object */
     int radius;             /**< Shadow spread radius in pixels (default: 12) */
-    int offset_x;           /**< Horizontal offset (default: 0) */
-    int offset_y;           /**< Vertical offset (default: 6) */
-    float opacity;          /**< Shadow opacity 0.0-1.0 (default: 0.5) */
+    int offset_x;           /**< Horizontal offset (default: -15) */
+    int offset_y;           /**< Vertical offset (default: -15) */
+    float opacity;          /**< Shadow opacity 0.0-1.0 (default: 0.75) */
     float color[4];         /**< Shadow color RGBA (default: black) */
     bool clip_directional;  /**< Only show shadow on offset side (default: true) */
 } shadow_config_t;
@@ -194,7 +194,8 @@ void shadow_destroy(shadow_nodes_t *shadow);
  * @param config Config structure to populate
  * @return true if valid, false if invalid (leaves error on stack)
  */
-bool shadow_config_from_lua(lua_State *L, int idx, shadow_config_t *config);
+bool shadow_config_from_lua(lua_State *L, int idx, shadow_config_t *config,
+                           bool is_drawin);
 
 /**
  * Push shadow configuration to Lua.
