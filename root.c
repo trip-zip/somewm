@@ -1753,7 +1753,8 @@ composite_scene_buffer_to_cairo(struct wlr_scene_buffer *scene_buffer,
 	struct screenshot_render_data *rdata = data;
 	struct wlr_buffer *buffer;
 	cairo_surface_t *buf_surface;
-	int buf_width, buf_height;
+	int dst_width, dst_height;
+	int src_width, src_height;
 	void *shm_data;
 	uint32_t shm_format;
 	size_t shm_stride;
@@ -1766,10 +1767,18 @@ composite_scene_buffer_to_cairo(struct wlr_scene_buffer *scene_buffer,
 		return;
 
 	buffer = scene_buffer->buffer;
-	buf_width = scene_buffer->dst_width;
-	buf_height = scene_buffer->dst_height;
+	src_width = buffer->width;
+	src_height = buffer->height;
+	dst_width = scene_buffer->dst_width;
+	dst_height = scene_buffer->dst_height;
 
-	if (buf_width <= 0 || buf_height <= 0)
+	/* Fall back to buffer dimensions if dst not set */
+	if (dst_width <= 0 || dst_height <= 0) {
+		dst_width = src_width;
+		dst_height = src_height;
+	}
+
+	if (src_width <= 0 || src_height <= 0)
 		return;
 
 	/* First try direct buffer access (works for SHM buffers - widgets) */
@@ -1781,14 +1790,24 @@ composite_scene_buffer_to_cairo(struct wlr_scene_buffer *scene_buffer,
 		if (shm_format == DRM_FORMAT_ARGB8888 || shm_format == DRM_FORMAT_XRGB8888) {
 			cairo_fmt = (shm_format == DRM_FORMAT_ARGB8888) ?
 			            CAIRO_FORMAT_ARGB32 : CAIRO_FORMAT_RGB24;
+			/* Use actual buffer dimensions, not dst dimensions */
 			buf_surface = cairo_image_surface_create_for_data(
-				shm_data, cairo_fmt, buf_width, buf_height, shm_stride);
+				shm_data, cairo_fmt, src_width, src_height, shm_stride);
 
 			if (cairo_surface_status(buf_surface) == CAIRO_STATUS_SUCCESS) {
-				/* Composite onto target surface */
 				cairo_save(rdata->cr);
-				cairo_set_source_surface(rdata->cr, buf_surface,
-					sx + rdata->offset_x, sy + rdata->offset_y);
+				/* Scale if buffer pixels differ from logical size */
+				if (src_width != dst_width || src_height != dst_height) {
+					cairo_translate(rdata->cr,
+						sx + rdata->offset_x, sy + rdata->offset_y);
+					cairo_scale(rdata->cr,
+						(double)dst_width / src_width,
+						(double)dst_height / src_height);
+					cairo_set_source_surface(rdata->cr, buf_surface, 0, 0);
+				} else {
+					cairo_set_source_surface(rdata->cr, buf_surface,
+						sx + rdata->offset_x, sy + rdata->offset_y);
+				}
 				cairo_paint(rdata->cr);
 				cairo_restore(rdata->cr);
 				cairo_surface_destroy(buf_surface);
@@ -1806,21 +1825,20 @@ composite_scene_buffer_to_cairo(struct wlr_scene_buffer *scene_buffer,
 		if (!texture)
 			return;
 
-		/* Allocate pixel buffer for reading */
-		stride = buf_width * 4;
-		pixels = malloc(stride * buf_height);
+		/* Read at full buffer resolution, not dst (logical) dimensions */
+		stride = src_width * 4;
+		pixels = malloc(stride * src_height);
 		if (!pixels) {
 			wlr_texture_destroy(texture);
 			return;
 		}
 		need_free = true;
 
-		/* Read pixels from texture */
 		if (!wlr_texture_read_pixels(texture, &(struct wlr_texture_read_pixels_options){
 			.data = pixels,
 			.format = DRM_FORMAT_ARGB8888,
 			.stride = stride,
-			.src_box = { .x = 0, .y = 0, .width = buf_width, .height = buf_height },
+			.src_box = { .x = 0, .y = 0, .width = src_width, .height = src_height },
 		})) {
 			free(pixels);
 			wlr_texture_destroy(texture);
@@ -1830,9 +1848,9 @@ composite_scene_buffer_to_cairo(struct wlr_scene_buffer *scene_buffer,
 		wlr_texture_destroy(texture);
 	}
 
-	/* Create Cairo surface from pixel data */
+	/* Create Cairo surface at full buffer resolution */
 	buf_surface = cairo_image_surface_create_for_data(
-		pixels, CAIRO_FORMAT_ARGB32, buf_width, buf_height, stride);
+		pixels, CAIRO_FORMAT_ARGB32, src_width, src_height, stride);
 
 	if (cairo_surface_status(buf_surface) != CAIRO_STATUS_SUCCESS) {
 		if (need_free)
@@ -1840,10 +1858,19 @@ composite_scene_buffer_to_cairo(struct wlr_scene_buffer *scene_buffer,
 		return;
 	}
 
-	/* Composite onto target surface */
+	/* Composite onto target, scaling from buffer resolution to logical size */
 	cairo_save(rdata->cr);
-	cairo_set_source_surface(rdata->cr, buf_surface,
-		sx + rdata->offset_x, sy + rdata->offset_y);
+	if (src_width != dst_width || src_height != dst_height) {
+		cairo_translate(rdata->cr,
+			sx + rdata->offset_x, sy + rdata->offset_y);
+		cairo_scale(rdata->cr,
+			(double)dst_width / src_width,
+			(double)dst_height / src_height);
+		cairo_set_source_surface(rdata->cr, buf_surface, 0, 0);
+	} else {
+		cairo_set_source_surface(rdata->cr, buf_surface,
+			sx + rdata->offset_x, sy + rdata->offset_y);
+	}
 	cairo_paint(rdata->cr);
 	cairo_restore(rdata->cr);
 
