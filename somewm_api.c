@@ -469,21 +469,10 @@ some_set_seat_keyboard_focus(Client *c)
 		return;
 	}
 
-	/* If re-delivering focus to the same surface (e.g. timer re-delivery for
-	 * games that weren't ready at first focus), clear seat focus first.
-	 * wlr_seat_keyboard_enter() skips re-entry to the same surface, so we
-	 * force a leave+enter cycle (KWin MR !60 pattern). */
-	if (seat->keyboard_state.focused_surface == surface) {
-		client_activate_surface(surface, 0);
-		wlr_seat_keyboard_notify_clear_focus(seat);
-	} else if (seat->keyboard_state.focused_surface) {
-		/* Deactivate the previously focused surface. */
-		client_activate_surface(seat->keyboard_state.focused_surface, 0);
-	}
-
-	/* Activate the new surface. Without this, XWayland clients never
-	 * receive X11 FocusIn and ignore all keyboard input. */
-	client_activate_surface(surface, 1);
+	/* Skip redundant updates — re-entering the same surface is a no-op in
+	 * wlroots anyway, and the clear→re-enter cycle disrupts popup grabs. */
+	if (seat->keyboard_state.focused_surface == surface)
+		return;
 
 #ifdef XWAYLAND
 	/* Sway pattern: inform XWayland of the active seat on every focus
@@ -500,12 +489,10 @@ some_set_seat_keyboard_focus(Client *c)
 		                               kb->num_keycodes,
 		                               &kb->modifiers);
 	} else {
-		/* Send keyboard enter even without a keyboard device (Sway pattern). */
+		/* Send keyboard enter even without a keyboard device (Sway pattern).
+		 * Needed for XWayland clients that may lack a keyboard device. */
 		wlr_seat_keyboard_notify_enter(seat, surface, NULL, 0, NULL);
 	}
-
-	/* Update pointer constraint — games need this for mouse lock. */
-	some_update_pointer_constraint(surface);
 }
 
 /** Find the Client* that owns a given wlr_surface.
