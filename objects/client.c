@@ -4348,8 +4348,12 @@ luaA_client_get_shadow(lua_State *L, client_t *c)
     if (c->shadow_config) {
         shadow_config_to_lua(L, c->shadow_config);
     } else {
-        /* Return true to indicate using defaults */
-        lua_pushboolean(L, c->shadow.tree != NULL);
+        const shadow_config_t *eff = shadow_get_effective_config(NULL, false);
+        if (eff->enabled && c->shadow.tree) {
+            shadow_config_to_lua(L, eff);
+        } else {
+            lua_pushboolean(L, false);
+        }
     }
     return 1;
 }
@@ -4364,7 +4368,7 @@ luaA_client_set_shadow(lua_State *L, client_t *c)
 {
     shadow_config_t new_config;
 
-    if (!shadow_config_from_lua(L, -1, &new_config)) {
+    if (!shadow_config_from_lua(L, -1, &new_config, false)) {
         return luaL_error(L, "%s", lua_tostring(L, -1));
     }
 
