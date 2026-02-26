@@ -2711,8 +2711,13 @@ get_border_width(void)
 	lua_State *L = globalconf_get_lua_State();
 	if (!L) return globalconf.appearance.border_width;
 
-	/* Try beautiful.border_width */
-	lua_getglobal(L, "beautiful");
+	/* Use require() to get beautiful module (it's typically local, not global) */
+	lua_getglobal(L, "require");
+	lua_pushstring(L, "beautiful");
+	if (lua_pcall(L, 1, 1, 0) != 0) {
+		lua_pop(L, 1);
+		return globalconf.appearance.border_width;
+	}
 	if (lua_istable(L, -1)) {
 		lua_getfield(L, -1, "border_width");
 		if (lua_isnumber(L, -1)) {
@@ -3930,12 +3935,19 @@ apply_geometry_to_wlroots(Client *c)
 	wlr_scene_node_set_position(&c->border[2]->node, 0, c->bw);
 	wlr_scene_node_set_position(&c->border[3]->node, c->geometry.width - c->bw, c->bw);
 
-	/* Update shadow geometry */
-	if (c->shadow.tree) {
+	/* Update shadow geometry (lazy creation if needed) */
+	{
 		const shadow_config_t *shadow_config = shadow_get_effective_config(
 			c->shadow_config, false);
-		shadow_update_geometry(&c->shadow, shadow_config,
-			c->geometry.width, c->geometry.height);
+		if (shadow_config && shadow_config->enabled) {
+			if (c->shadow.tree) {
+				shadow_update_geometry(&c->shadow, shadow_config,
+					c->geometry.width, c->geometry.height);
+			} else {
+				shadow_create(c->scene, &c->shadow, shadow_config,
+					c->geometry.width, c->geometry.height);
+			}
+		}
 	}
 
 	/* Update titlebar positions - they depend on current geometry */
@@ -4770,13 +4782,14 @@ setup(void)
 	/* Shadow defaults (disabled by default, theme enables via beautiful.shadow_*) */
 	globalconf.shadow.client.enabled = false;
 	globalconf.shadow.client.radius = 12;
-	globalconf.shadow.client.offset_x = -15;
-	globalconf.shadow.client.offset_y = -15;
-	globalconf.shadow.client.opacity = 0.75f;
+	globalconf.shadow.client.offset_x = 0;
+	globalconf.shadow.client.offset_y = 6;
+	globalconf.shadow.client.opacity = 0.5f;
 	globalconf.shadow.client.color[0] = 0.0f;  /* Black */
 	globalconf.shadow.client.color[1] = 0.0f;
 	globalconf.shadow.client.color[2] = 0.0f;
 	globalconf.shadow.client.color[3] = 1.0f;
+	globalconf.shadow.client.clip_directional = true;
 	/* Drawin defaults (same as client initially) */
 	globalconf.shadow.drawin = globalconf.shadow.client;
 
