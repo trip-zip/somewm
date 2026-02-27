@@ -161,8 +161,13 @@ stack_client_relative(Client *c, Client *previous)
 		return;
 
 	if (previous && previous->scene) {
-		/* Place this client above the previous one */
-		wlr_scene_node_place_above(&c->scene->node, &previous->scene->node);
+		/* Place this client above the previous one if both share parent */
+		if (c->scene->node.parent == previous->scene->node.parent) {
+			wlr_scene_node_place_above(&c->scene->node, &previous->scene->node);
+		} else {
+			/* Different layers - just raise to top of layer */
+			wlr_scene_node_raise_to_top(&c->scene->node);
+		}
 	} else {
 		/* No previous client, raise to top of layer */
 		wlr_scene_node_raise_to_top(&c->scene->node);
