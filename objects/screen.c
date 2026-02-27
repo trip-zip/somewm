@@ -1,4 +1,5 @@
 #include "screen.h"
+#include "output.h"
 #include "client.h"
 #include "drawin.h"
 #include "drawable.h"
@@ -77,6 +78,7 @@ luaA_screen_new(lua_State *L, Monitor *m, int index)
 	screen->valid = true;
 	screen->lifecycle = SCREEN_LIFECYCLE_C;
 	screen->name = NULL;
+	screen->virtual_output = NULL;
 	some_monitor_get_geometry(m, &screen->geometry);
 	screen->workarea = screen->geometry;
 
@@ -189,6 +191,27 @@ luaA_screen_get_by_monitor(lua_State *L, Monitor *m)
 		lua_pop(L, 1);
 
 		if (screen && screen->monitor == m)
+			return screen;
+	}
+
+	return NULL;
+}
+
+screen_t *
+luaA_screen_get_by_virtual_output(lua_State *L, struct output_t *o)
+{
+	size_t i;
+
+	if (!o)
+		return NULL;
+
+	for (i = 0; i < screen_count; i++) {
+		screen_t *screen;
+		lua_rawgeti(L, LUA_REGISTRYINDEX, screen_refs[i]);
+		screen = (screen_t *)lua_touserdata(L, -1);
+		lua_pop(L, 1);
+
+		if (screen && screen->virtual_output == o)
 			return screen;
 	}
 
@@ -1303,8 +1326,9 @@ static int luaA_screen_get_scale(lua_State *L, screen_t *s)
 }
 
 /** Set output scale for this screen.
- * This uses wlr_output_state to apply fractional scaling.
- * Apps that support wp_fractional_scale_v1 will render at native resolution.
+ * Delegates to output.scale — one source of truth.
+ * output.scale setter handles wlr_output commit and emits property::scale
+ * on both the output and this screen for backward compatibility.
  *
  * \param L The Lua state.
  * \param s The screen object.
@@ -1314,31 +1338,37 @@ static int luaA_screen_set_scale(lua_State *L, screen_t *s)
 {
 	float scale = luaL_checknumber(L, -1);
 
-	/* Sanity check - wlroots accepts 0.1 to 10.0 range */
 	if (scale < 0.1 || scale > 10.0) {
 		luaL_error(L, "scale must be between 0.1 and 10.0, got %f", scale);
 		return 0;
 	}
 
-	if (!s || !s->monitor || !s->monitor->wlr_output) {
+	if (!s || !s->monitor || !s->monitor->output)
 		return 0;
-	}
 
-	struct wlr_output *output = s->monitor->wlr_output;
-	struct wlr_output_state state;
-
-	wlr_output_state_init(&state);
-	wlr_output_state_set_scale(&state, scale);
-
-	if (wlr_output_commit_state(output, &state)) {
-		/* Emit property::scale signal on success.
-		 * The Lua signal handler in drawable.lua handles refreshing all
-		 * drawables on this screen at the new scale. */
-		luaA_object_emit_signal(L, 1, "property::scale", 0);
-	}
-
-	wlr_output_state_finish(&state);
+	/* Delegate to output — emits property::scale on both objects */
+	luaA_object_push(L, s->monitor->output);
+	luaA_output_apply_scale(L, s->monitor->output, -1, scale);
+	lua_pop(L, 1);
 	return 0;
+}
+
+/** Get the output object for this screen.
+ * For real screens backed by a physical monitor, returns the monitor's output.
+ * For fake screens (from screen.fake_add), returns the synthetic virtual output.
+ * \param L The Lua state.
+ * \param s The screen object.
+ * \return Number of values pushed on stack (1).
+ */
+static int luaA_screen_get_output(lua_State *L, screen_t *s)
+{
+	if (s && s->monitor && s->monitor->output)
+		luaA_object_push(L, s->monitor->output);
+	else if (s && s->virtual_output)
+		luaA_object_push(L, s->virtual_output);
+	else
+		lua_pushnil(L);
+	return 1;
 }
 
 /* ========================================================================
@@ -1462,6 +1492,7 @@ luaA_screen_fake_add(lua_State *L)
 	screen->geometry.height = height;
 	screen->workarea = screen->geometry;
 	screen->name = NULL;
+	screen->virtual_output = NULL;
 	signal_array_init(&screen->signals);
 
 	/* Set metatable using class-based lookup (not named metatable) */
@@ -1496,11 +1527,22 @@ luaA_screen_fake_add(lua_State *L)
 	}
 	screen_refs[screen_count++] = ref;
 
+	/* Create synthetic virtual output so screen.output is never nil */
+	screen->virtual_output = luaA_output_new_virtual(L, NULL);
+	if (screen->virtual_output)
+		lua_pop(L, 1);  /* Pop userdata (tracked in output.c) */
+
 	/* Emit "added" signal */
 	screen_added(L, screen);
 
 	/* Emit class-level "list" signal */
 	luaA_class_emit_signal(L, &screen_class, "list", 0);
+
+	/* Emit output "added" signal for the virtual output */
+	if (screen->virtual_output) {
+		luaA_object_push(L, screen->virtual_output);
+		luaA_class_emit_signal(L, &output_class, "added", 1);
+	}
 
 	/* Relocate clients that should now be on this new screen (AwesomeWM behavior) */
 	foreach(c, globalconf.clients) {
@@ -1526,6 +1568,14 @@ luaA_screen_fake_remove(lua_State *L)
 
 	if (!screen || !screen->valid) {
 		return 0;
+	}
+
+	/* Clean up virtual output if present */
+	if (screen->virtual_output) {
+		luaA_object_push(L, screen->virtual_output);
+		luaA_class_emit_signal(L, &output_class, "removed", 1);
+		luaA_output_invalidate(L, screen->virtual_output);
+		screen->virtual_output = NULL;
 	}
 
 	/* Use shared removal logic (emits signals, moves clients, etc.) */
@@ -1894,6 +1944,10 @@ luaA_screen_index(lua_State *L)
 	if (strcmp(key, "scale") == 0) {
 		screen_t *screen = luaA_checkscreen(L, 1);
 		return luaA_screen_get_scale(L, screen);
+	}
+	if (strcmp(key, "output") == 0) {
+		screen_t *screen = luaA_checkscreen(L, 1);
+		return luaA_screen_get_output(L, screen);
 	}
 
 	/* Check for _private table (AwesomeWM compatibility) */
@@ -2315,4 +2369,8 @@ screen_class_setup(lua_State *L)
 	                        (lua_class_propfunc_t) luaA_screen_set_scale,
 	                        (lua_class_propfunc_t) luaA_screen_get_scale,
 	                        (lua_class_propfunc_t) luaA_screen_set_scale);
+	luaA_class_add_property(&screen_class, "output",
+	                        NULL,
+	                        (lua_class_propfunc_t) luaA_screen_get_output,
+	                        NULL);
 }

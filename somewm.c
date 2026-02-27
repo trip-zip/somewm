@@ -96,6 +96,7 @@
 #include "objects/drawin.h"
 #include "objects/drawable.h"
 #include "objects/screen.h"
+#include "objects/output.h"
 #include "objects/tag.h"
 #include "objects/keygrabber.h"
 #include "objects/mousegrabber.h"
@@ -249,7 +250,7 @@ void togglefloating(const Arg *arg);
 static void unlocksession(struct wl_listener *listener, void *data);
 static void unmaplayersurfacenotify(struct wl_listener *listener, void *data);
 static void unmapnotify(struct wl_listener *listener, void *data);
-static void updatemons(struct wl_listener *listener, void *data);
+void updatemons(struct wl_listener *listener, void *data);
 static void updatetitle(struct wl_listener *listener, void *data);
 static void urgent(struct wl_listener *listener, void *data);
 static void virtualkeyboard(struct wl_listener *listener, void *data);
@@ -1163,7 +1164,22 @@ cleanupmon(struct wl_listener *listener, void *data)
 					luaA_screen_emit_primary_changed(globalconf_L, new_primary);
 				}
 			}
+
+			/* Emit property::screen on output (screen→nil) */
+			if (m->output) {
+				luaA_object_push(globalconf_L, m->output);
+				luaA_object_emit_signal(globalconf_L, -1, "property::screen", 0);
+				lua_pop(globalconf_L, 1);
+			}
 		}
+	}
+
+	/* Invalidate output Lua object before destroying monitor data */
+	if (globalconf_L && m->output) {
+		luaA_object_push(globalconf_L, m->output);
+		luaA_class_emit_signal(globalconf_L, &output_class, "removed", 1);
+		luaA_output_invalidate(globalconf_L, m->output);
+		m->output = NULL;
 	}
 
 	/* m->layers[i] are intentionally not unlinked */
@@ -1662,6 +1678,17 @@ createmon(struct wl_listener *listener, void *data)
 
 	wl_list_insert(&mons, &m->link);
 	printstatus();
+
+	/* Create output Lua object (persists from connect to disconnect).
+	 * Signal emission is deferred to updatemons() so that o.screen is
+	 * available in "added" handlers — eliminates a timing footgun. */
+	if (globalconf_L) {
+		m->output = luaA_output_new(globalconf_L, m);
+		if (m->output) {
+			lua_pop(globalconf_L, 1);  /* Pop userdata (tracked in output.c) */
+			m->needs_output_added = 1;
+		}
+	}
 
 	/* The xdg-protocol specifies:
 	 *
@@ -3898,10 +3925,44 @@ void
 requestmonstate(struct wl_listener *listener, void *data)
 {
 	struct wlr_output_event_request_state *event = data;
+	uint32_t committed = event->state->committed;
+
 	wlr_log(WLR_ERROR, "[HOTPLUG] requestmonstate: %s", event->output->name);
-	if (!wlr_output_commit_state(event->output, event->state))
+	if (!wlr_output_commit_state(event->output, event->state)) {
 		wlr_log(WLR_ERROR, "[HOTPLUG] requestmonstate commit FAILED: %s",
 			event->output->name);
+		updatemons(NULL, NULL);
+		return;
+	}
+
+	/* Emit property::* signals on the output object so Lua stays in sync
+	 * when external tools (wlr-randr, kanshi) change output state. */
+	if (globalconf_L) {
+		Monitor *m = event->output->data;
+		if (m && m->output) {
+			luaA_object_push(globalconf_L, m->output);
+			if (committed & WLR_OUTPUT_STATE_ENABLED)
+				luaA_object_emit_signal(globalconf_L, -1, "property::enabled", 0);
+			if (committed & WLR_OUTPUT_STATE_SCALE) {
+				luaA_object_emit_signal(globalconf_L, -1, "property::scale", 0);
+				/* Also emit on screen for backward compat */
+				screen_t *screen = luaA_screen_get_by_monitor(globalconf_L, m);
+				if (screen) {
+					luaA_object_push(globalconf_L, screen);
+					luaA_object_emit_signal(globalconf_L, -1, "property::scale", 0);
+					lua_pop(globalconf_L, 1);
+				}
+			}
+			if (committed & WLR_OUTPUT_STATE_TRANSFORM)
+				luaA_object_emit_signal(globalconf_L, -1, "property::transform", 0);
+			if (committed & WLR_OUTPUT_STATE_MODE)
+				luaA_object_emit_signal(globalconf_L, -1, "property::mode", 0);
+			if (committed & WLR_OUTPUT_STATE_ADAPTIVE_SYNC_ENABLED)
+				luaA_object_emit_signal(globalconf_L, -1, "property::adaptive_sync", 0);
+			lua_pop(globalconf_L, 1);
+		}
+	}
+
 	updatemons(NULL, NULL);
 }
 
@@ -5153,6 +5214,13 @@ updatemons(struct wl_listener *listener, void *data)
 							luaA_screen_emit_primary_changed(globalconf_L, new_primary);
 					}
 				}
+
+				/* Emit property::screen on output (screen→nil) */
+				if (m->output) {
+					luaA_object_push(globalconf_L, m->output);
+					luaA_object_emit_signal(globalconf_L, -1, "property::screen", 0);
+					lua_pop(globalconf_L, 1);
+				}
 			}
 
 			/* Remove this output from the layout to avoid cursor enter inside it */
@@ -5277,8 +5345,27 @@ updatemons(struct wl_listener *listener, void *data)
 			if (new_primary == screen && old_primary != screen)
 				luaA_screen_emit_primary_changed(globalconf_L, screen);
 
+			/* Emit property::screen on the output (nil→screen) */
+			if (m->output) {
+				luaA_object_push(globalconf_L, m->output);
+				luaA_object_emit_signal(globalconf_L, -1, "property::screen", 0);
+				lua_pop(globalconf_L, 1);
+			}
+
 			banning_refresh();
 			some_refresh();
+		}
+	}
+
+	/* Emit deferred output "added" signals. Done AFTER screen_added so that
+	 * o.screen is available in "added" handlers. */
+	wl_list_for_each(m, &mons, link) {
+		if (!m->needs_output_added)
+			continue;
+		m->needs_output_added = 0;
+		if (m->output && globalconf_L) {
+			luaA_object_push(globalconf_L, m->output);
+			luaA_class_emit_signal(globalconf_L, &output_class, "added", 1);
 		}
 	}
 

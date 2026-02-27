@@ -295,6 +295,7 @@ somewm_sources = [
   'objects/tag.c',
   'objects/client.c',
   'objects/screen.c',
+  'objects/output.c',
   'objects/drawable.c',
   'objects/drawin.c',
   'objects/layer_surface.c',
