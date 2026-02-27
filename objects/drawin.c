@@ -1880,22 +1880,22 @@ luaA_drawin_geometry(lua_State *L)
 
 		lua_getfield(L, 2, "x");
 		if (!lua_isnil(L, -1))
-			x = (int)lua_tonumber(L, -1);
+			x = (int)round(lua_tonumber(L, -1));
 		lua_pop(L, 1);
 
 		lua_getfield(L, 2, "y");
 		if (!lua_isnil(L, -1))
-			y = (int)lua_tonumber(L, -1);
+			y = (int)round(lua_tonumber(L, -1));
 		lua_pop(L, 1);
 
 		lua_getfield(L, 2, "width");
 		if (!lua_isnil(L, -1))
-			width = (int)lua_tonumber(L, -1);
+			width = (int)ceil(lua_tonumber(L, -1));
 		lua_pop(L, 1);
 
 		lua_getfield(L, 2, "height");
 		if (!lua_isnil(L, -1))
-			height = (int)lua_tonumber(L, -1);
+			height = (int)ceil(lua_tonumber(L, -1));
 		lua_pop(L, 1);
 
 		drawin_moveresize(L, 1, x, y, width, height);
@@ -2043,7 +2043,7 @@ luaA_drawin_set_surface_scale(lua_State *L, drawin_t *drawin)
 static int
 luaA_drawin_set_x(lua_State *L, drawin_t *drawin)
 {
-	int x = (int)lua_tonumber(L, -1);
+	int x = (int)round(lua_tonumber(L, -1));
 	drawin_moveresize(L, -3, x, drawin->y, drawin->width, drawin->height);
 	return 0;
 }
@@ -2056,7 +2056,7 @@ luaA_drawin_set_x(lua_State *L, drawin_t *drawin)
 static int
 luaA_drawin_set_y(lua_State *L, drawin_t *drawin)
 {
-	int y = (int)lua_tonumber(L, -1);
+	int y = (int)round(lua_tonumber(L, -1));
 	drawin_moveresize(L, -3, drawin->x, y, drawin->width, drawin->height);
 	return 0;
 }
