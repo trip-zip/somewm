@@ -1120,6 +1120,11 @@ luaA_awesome_index(lua_State *L)
 		return 1;
 	}
 
+	if (A_STREQ(key, "api_level")) {
+		lua_pushinteger(L, globalconf.api_level);
+		return 1;
+	}
+
 	if (A_STREQ(key, "bypass_surface_visibility")) {
 		lua_pushboolean(L, globalconf.appearance.bypass_surface_visibility);
 		return 1;
@@ -1222,9 +1227,6 @@ luaA_awesome_setup(lua_State *L)
 
 	lua_newtable(L);
 	lua_setfield(L, -2, "_active_modifiers");
-
-	lua_pushnumber(L, 5);
-	lua_setfield(L, -2, "api_level");
 
 	lua_pushboolean(L, 1);
 	lua_setfield(L, -2, "composite_manager_running");
