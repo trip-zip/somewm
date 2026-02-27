@@ -68,6 +68,8 @@ luaA_output_new(lua_State *L, Monitor *m)
 		if (!new_refs) {
 			fprintf(stderr, "somewm: failed to allocate output array\n");
 			luaL_unref(L, LUA_REGISTRYINDEX, ref);
+			luaA_object_unref(L, o);
+			lua_pop(L, 1);
 			return NULL;
 		}
 		output_refs = new_refs;
@@ -118,6 +120,8 @@ luaA_output_new_virtual(lua_State *L, const char *name)
 			luaL_unref(L, LUA_REGISTRYINDEX, ref);
 			free(o->vname);
 			o->vname = NULL;
+			luaA_object_unref(L, o);
+			lua_pop(L, 1);
 			return NULL;
 		}
 		output_refs = new_refs;
@@ -908,9 +912,13 @@ luaA_output_get_by_name(lua_State *L)
 		output_t *o;
 		lua_rawgeti(L, LUA_REGISTRYINDEX, output_refs[i]);
 		o = (output_t *)lua_touserdata(L, -1);
-		if (o && o->valid && o->monitor && o->monitor->wlr_output
-				&& strcmp(o->monitor->wlr_output->name, name) == 0)
-			return 1;  /* Found - userdata on stack */
+		if (o && o->valid) {
+			if (o->vname && strcmp(o->vname, name) == 0)
+				return 1;
+			if (o->monitor && o->monitor->wlr_output
+					&& strcmp(o->monitor->wlr_output->name, name) == 0)
+				return 1;
+		}
 		lua_pop(L, 1);
 	}
 

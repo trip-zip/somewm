@@ -70,16 +70,16 @@ local steps = {
 
     -- Step 4: Virtual output count
     function()
-        print("TEST: Step 4 - Output count unchanged")
-        -- Virtual outputs from fake screens should NOT increase
-        -- the output.count() since they are not real wlr_outputs
-        -- (they won't appear in the output iterator either)
+        print("TEST: Step 4 - Output count includes virtual output")
+        -- Virtual outputs from fake screens are included in
+        -- output.count() since they are valid Lua objects that
+        -- appear in the output iterator.
         local count = output.count()
         print("TEST:   output.count() = " .. count
             .. " (was " .. initial_output_count .. ")")
-        -- The count may or may not include virtual outputs depending
-        -- on implementation. Just verify it's a valid number.
-        assert(type(count) == "number", "count should be number")
+        assert(count == initial_output_count + 1,
+            "output.count() should include virtual output, expected "
+            .. (initial_output_count + 1) .. " got " .. count)
         return true
     end,
 
