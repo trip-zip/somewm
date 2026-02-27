@@ -469,23 +469,28 @@ some_set_seat_keyboard_focus(Client *c)
 		return;
 	}
 
-	/* If re-delivering focus to the same surface (e.g. timer re-delivery for
-	 * games that weren't ready at first focus), clear seat focus first.
-	 * wlr_seat_keyboard_enter() skips re-entry to the same surface, so we
-	 * force a leave+enter cycle (KWin MR !60 pattern). */
 	if (seat->keyboard_state.focused_surface == surface) {
-		client_activate_surface(surface, 0);
-		wlr_seat_keyboard_notify_clear_focus(seat);
-	} else if (seat->keyboard_state.focused_surface) {
-		/* Deactivate the previously focused surface. */
-		client_activate_surface(seat->keyboard_state.focused_surface, 0);
+#ifdef XWAYLAND
+		if (c->client_type == X11) {
+			/* KWin pattern: force focus re-delivery for X11 clients.
+			 * wlroots skips re-entry to the same surface, so we must
+			 * deactivate→clear→re-enter to deliver a new FocusIn event.
+			 * Safe because X11 clients don't use XDG popup grabs. */
+			client_activate_surface(surface, 0);
+			wlr_seat_keyboard_notify_clear_focus(seat);
+		} else
+#endif
+			/* XDG: early return — re-entering the same surface is a
+			 * no-op in wlroots, and the clear→re-enter cycle would
+			 * disrupt active popup grabs. */
+			return;
 	}
 
-	/* Activate the new surface. Without this, XWayland clients never
-	 * receive X11 FocusIn and ignore all keyboard input. */
-	client_activate_surface(surface, 1);
-
 #ifdef XWAYLAND
+	/* Deactivate old surface if switching away from an X11 client */
+	if (c->client_type == X11 && seat->keyboard_state.focused_surface)
+		client_activate_surface(seat->keyboard_state.focused_surface, 0);
+
 	/* Sway pattern: inform XWayland of the active seat on every focus
 	 * change to an X11 client. Required for proper keyboard delivery. */
 	if (c->client_type == X11) {
@@ -500,12 +505,16 @@ some_set_seat_keyboard_focus(Client *c)
 		                               kb->num_keycodes,
 		                               &kb->modifiers);
 	} else {
-		/* Send keyboard enter even without a keyboard device (Sway pattern). */
+		/* Send keyboard enter even without a keyboard device (Sway pattern).
+		 * Needed for XWayland clients that may lack a keyboard device. */
 		wlr_seat_keyboard_notify_enter(seat, surface, NULL, 0, NULL);
 	}
-
-	/* Update pointer constraint — games need this for mouse lock. */
-	some_update_pointer_constraint(surface);
+#ifdef XWAYLAND
+	/* Activate X11 surface after keyboard enter — sends FocusIn event.
+	 * Safe because X11 clients use X11 popup mechanisms, not XDG grabs. */
+	if (c->client_type == X11)
+		client_activate_surface(surface, 1);
+#endif
 }
 
 /** Find the Client* that owns a given wlr_surface.

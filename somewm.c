@@ -2711,8 +2711,13 @@ get_border_width(void)
 	lua_State *L = globalconf_get_lua_State();
 	if (!L) return globalconf.appearance.border_width;
 
-	/* Try beautiful.border_width */
-	lua_getglobal(L, "beautiful");
+	/* Use require() to get beautiful module (it's typically local, not global) */
+	lua_getglobal(L, "require");
+	lua_pushstring(L, "beautiful");
+	if (lua_pcall(L, 1, 1, 0) != 0) {
+		lua_pop(L, 1);
+		return globalconf.appearance.border_width;
+	}
 	if (lua_istable(L, -1)) {
 		lua_getfield(L, -1, "border_width");
 		if (lua_isnumber(L, -1)) {
@@ -3930,12 +3935,19 @@ apply_geometry_to_wlroots(Client *c)
 	wlr_scene_node_set_position(&c->border[2]->node, 0, c->bw);
 	wlr_scene_node_set_position(&c->border[3]->node, c->geometry.width - c->bw, c->bw);
 
-	/* Update shadow geometry */
-	if (c->shadow.tree) {
+	/* Update shadow geometry (lazy creation if needed) */
+	{
 		const shadow_config_t *shadow_config = shadow_get_effective_config(
 			c->shadow_config, false);
-		shadow_update_geometry(&c->shadow, shadow_config,
-			c->geometry.width, c->geometry.height);
+		if (shadow_config && shadow_config->enabled) {
+			if (c->shadow.tree) {
+				shadow_update_geometry(&c->shadow, shadow_config,
+					c->geometry.width, c->geometry.height);
+			} else {
+				shadow_create(c->scene, &c->shadow, shadow_config,
+					c->geometry.width, c->geometry.height);
+			}
+		}
 	}
 
 	/* Update titlebar positions - they depend on current geometry */
@@ -4777,6 +4789,7 @@ setup(void)
 	globalconf.shadow.client.color[1] = 0.0f;
 	globalconf.shadow.client.color[2] = 0.0f;
 	globalconf.shadow.client.color[3] = 1.0f;
+	globalconf.shadow.client.clip_directional = true;
 	/* Drawin defaults (same as client initially) */
 	globalconf.shadow.drawin = globalconf.shadow.client;
 
@@ -5108,21 +5121,45 @@ updatemons(struct wl_listener *listener, void *data)
 	struct wlr_output_configuration_head_v1 *config_head;
 	Monitor *m;
 
-	/* First remove from the layout the disabled monitors */
+	/* Add disabled monitors to the config. For those still in the layout
+	 * (transitioning to disabled), properly remove the screen and close.
+	 * Already-disabled monitors just get a config_head so output manager
+	 * clients (wlr-randr, wlopm, kanshi) can still see and re-enable
+	 * them. Fixes #269. */
 	wl_list_for_each(m, &mons, link) {
 		if (m->wlr_output->enabled || m->asleep)
 			continue;
-		/* Only process monitors still in the output layout (skip already-processed) */
-		if (!wlr_output_layout_get(output_layout, m->wlr_output))
-			continue;
-		wlr_log(WLR_ERROR, "[HOTPLUG] updatemons disable: %s",
-			m->wlr_output->name);
 		config_head = wlr_output_configuration_head_v1_create(config, m->wlr_output);
 		config_head->state.enabled = 0;
-		/* Remove this output from the layout to avoid cursor enter inside it */
-		wlr_output_layout_remove(output_layout, m->wlr_output);
-		closemon(m);
-		m->m = m->w = (struct wlr_box){0};
+		if (wlr_output_layout_get(output_layout, m->wlr_output)) {
+			wlr_log(WLR_ERROR, "[HOTPLUG] updatemons disable: %s",
+				m->wlr_output->name);
+
+			/* Properly remove the screen object so Lua tears down
+			 * tags/wibars. On re-enable, a fresh screen is created
+			 * and screen_added triggers request::desktop_decoration. */
+			if (globalconf_L) {
+				screen_t *screen = luaA_screen_get_by_monitor(globalconf_L, m);
+				if (screen) {
+					screen_t *old_primary = luaA_screen_get_primary_screen(globalconf_L);
+					bool was_primary = (old_primary == screen);
+
+					screen_removed(globalconf_L, screen);
+					luaA_screen_emit_viewports(globalconf_L);
+
+					if (was_primary) {
+						screen_t *new_primary = luaA_screen_get_primary_screen(globalconf_L);
+						if (new_primary && new_primary != screen)
+							luaA_screen_emit_primary_changed(globalconf_L, new_primary);
+					}
+				}
+			}
+
+			/* Remove this output from the layout to avoid cursor enter inside it */
+			wlr_output_layout_remove(output_layout, m->wlr_output);
+			closemon(m);
+			m->m = m->w = (struct wlr_box){0};
+		}
 	}
 	/* Insert outputs that need to */
 	wl_list_for_each(m, &mons, link) {
@@ -5165,6 +5202,21 @@ updatemons(struct wl_listener *listener, void *data)
 		/* Update screen object geometry and emit property:: signals if changed */
 		{
 			screen_t *screen = luaA_screen_get_by_monitor(globalconf_L, m);
+			if (!screen && globalconf_L) {
+				/* Re-enabled monitor has no screen (removed during disable).
+				 * Create a fresh one — treated like a hotplug. */
+				Monitor *tmp;
+				int screen_index = 1;
+				wl_list_for_each(tmp, &mons, link) {
+					if (tmp != m && luaA_screen_get_by_monitor(globalconf_L, tmp))
+						screen_index++;
+				}
+				screen = luaA_screen_new(globalconf_L, m, screen_index);
+				if (screen) {
+					lua_pop(globalconf_L, 1);
+					m->needs_screen_added = 1;
+				}
+			}
 			if (screen) {
 				if (m->needs_screen_added) {
 					/* New screen: cache geometry silently.
