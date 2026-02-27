@@ -203,7 +203,14 @@ layer_shell_client_code = custom_target(
   command: [wayland_scanner, 'private-code', '@INPUT@', '@OUTPUT@'],
 )
 
-# xdg-shell is needed by layer-shell for popup support
+# xdg-shell client protocol (header + code) for test clients
+xdg_shell_client_header = custom_target(
+  'xdg-shell-client-protocol.h',
+  input: wayland_protocols_dir / 'stable/xdg-shell/xdg-shell.xml',
+  output: 'xdg-shell-client-protocol.h',
+  command: [wayland_scanner, 'client-header', '@INPUT@', '@OUTPUT@'],
+)
+
 xdg_shell_client_code = custom_target(
   'xdg-shell-client-protocol.c',
   input: wayland_protocols_dir / 'stable/xdg-shell/xdg-shell.xml',
@@ -350,6 +357,15 @@ test_layer_client = executable(
   'test-layer-client',
   ['tests/test-layer-client.c', layer_shell_client_code, xdg_shell_client_code],
   layer_shell_client_header,
+  dependencies: [wayland_client],
+  install: false,
+)
+
+# Test XDG transient client for stacking regression tests (issue #276)
+test_transient_client = executable(
+  'test-transient-client',
+  ['tests/test-transient-client.c', xdg_shell_client_code],
+  xdg_shell_client_header,
   dependencies: [wayland_client],
   install: false,
 )
