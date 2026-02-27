@@ -1125,6 +1125,11 @@ luaA_awesome_index(lua_State *L)
 		return 1;
 	}
 
+	if (A_STREQ(key, "startup")) {
+		lua_pushboolean(L, globalconf.loop == NULL);
+		return 1;
+	}
+
 	lua_rawget(L, 1);
 	return 1;
 }
