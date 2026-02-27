@@ -161,13 +161,15 @@ stack_client_relative(Client *c, Client *previous)
 		return;
 
 	if (previous && previous->scene) {
-		/* Place this client above the previous one if both share parent */
-		if (c->scene->node.parent == previous->scene->node.parent) {
-			wlr_scene_node_place_above(&c->scene->node, &previous->scene->node);
-		} else {
-			/* Different layers - just raise to top of layer */
-			wlr_scene_node_raise_to_top(&c->scene->node);
+		/* Ensure both nodes share the same scene parent.
+		 * In X11, stacking is flat (xcb_configure_window works on any two windows).
+		 * In wlroots, wlr_scene_node_place_above requires shared parents.
+		 * Transients should visually stack with their parent regardless of
+		 * which layer they were initially placed in. */
+		if (c->scene->node.parent != previous->scene->node.parent) {
+			wlr_scene_node_reparent(&c->scene->node, previous->scene->node.parent);
 		}
+		wlr_scene_node_place_above(&c->scene->node, &previous->scene->node);
 	} else {
 		/* No previous client, raise to top of layer */
 		wlr_scene_node_raise_to_top(&c->scene->node);
