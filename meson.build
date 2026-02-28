@@ -283,6 +283,7 @@ somewm_sources = [
   'spawn.c',
   'keygrabber.c',
   'mousegrabber.c',
+  'gesture.c',
   'selection.c',
   # Common
   'common/luaclass.c',
