@@ -51,6 +51,7 @@
 #include <wlr/types/wlr_output_power_management_v1.h>
 #include <wlr/types/wlr_pointer.h>
 #include <wlr/types/wlr_pointer_constraints_v1.h>
+#include <wlr/types/wlr_pointer_gestures_v1.h>
 #include <wlr/types/wlr_presentation_time.h>
 #include <wlr/types/wlr_primary_selection.h>
 #include <wlr/types/wlr_primary_selection_v1.h>
@@ -177,6 +178,14 @@ static void createpointerconstraint(struct wl_listener *listener, void *data);
 static void createpopup(struct wl_listener *listener, void *data);
 static void cursorconstrain(struct wlr_pointer_constraint_v1 *constraint);
 static void cursorframe(struct wl_listener *listener, void *data);
+static void cursorswipebegin(struct wl_listener *listener, void *data);
+static void cursorswipeend(struct wl_listener *listener, void *data);
+static void cursorswipeupdate(struct wl_listener *listener, void *data);
+static void cursorpinchbegin(struct wl_listener *listener, void *data);
+static void cursorpinchend(struct wl_listener *listener, void *data);
+static void cursorpinchupdate(struct wl_listener *listener, void *data);
+static void cursorholdbegin(struct wl_listener *listener, void *data);
+static void cursorholdend(struct wl_listener *listener, void *data);
 static void cursorwarptohint(void);
 static void destroydecoration(struct wl_listener *listener, void *data);
 static void destroydragicon(struct wl_listener *listener, void *data);
@@ -320,6 +329,7 @@ static struct wlr_foreign_toplevel_manager_v1 *foreign_toplevel_mgr;
 
 static struct wlr_pointer_constraints_v1 *pointer_constraints;
 static struct wlr_relative_pointer_manager_v1 *relative_pointer_mgr;
+static struct wlr_pointer_gestures_v1 *pointer_gestures_mgr;
 static struct wlr_pointer_constraint_v1 *active_constraint;
 
 struct wlr_cursor *cursor;
@@ -351,6 +361,14 @@ static struct wl_listener cursor_button = {.notify = buttonpress};
 static struct wl_listener cursor_frame = {.notify = cursorframe};
 static struct wl_listener cursor_motion = {.notify = motionrelative};
 static struct wl_listener cursor_motion_absolute = {.notify = motionabsolute};
+static struct wl_listener cursor_swipe_begin = {.notify = cursorswipebegin};
+static struct wl_listener cursor_swipe_end = {.notify = cursorswipeend};
+static struct wl_listener cursor_swipe_update = {.notify = cursorswipeupdate};
+static struct wl_listener cursor_pinch_begin = {.notify = cursorpinchbegin};
+static struct wl_listener cursor_pinch_end = {.notify = cursorpinchend};
+static struct wl_listener cursor_pinch_update = {.notify = cursorpinchupdate};
+static struct wl_listener cursor_hold_begin = {.notify = cursorholdbegin};
+static struct wl_listener cursor_hold_end = {.notify = cursorholdend};
 static struct wl_listener gpu_reset = {.notify = gpureset};
 static struct wl_listener layout_change = {.notify = updatemons};
 static int in_updatemons;
@@ -1219,6 +1237,14 @@ cleanuplisteners(void)
 	wl_list_remove(&cursor_frame.link);
 	wl_list_remove(&cursor_motion.link);
 	wl_list_remove(&cursor_motion_absolute.link);
+	wl_list_remove(&cursor_swipe_begin.link);
+	wl_list_remove(&cursor_swipe_end.link);
+	wl_list_remove(&cursor_swipe_update.link);
+	wl_list_remove(&cursor_pinch_begin.link);
+	wl_list_remove(&cursor_pinch_end.link);
+	wl_list_remove(&cursor_pinch_update.link);
+	wl_list_remove(&cursor_hold_begin.link);
+	wl_list_remove(&cursor_hold_end.link);
 	wl_list_remove(&gpu_reset.link);
 	wl_list_remove(&new_idle_inhibitor.link);
 	wl_list_remove(&layout_change.link);
@@ -2038,6 +2064,79 @@ cursorframe(struct wl_listener *listener, void *data)
 	 * same time, in which case a frame event won't be sent in between. */
 	/* Notify the client with pointer focus of the frame event. */
 	wlr_seat_pointer_notify_frame(seat);
+}
+
+void
+cursorswipebegin(struct wl_listener *listener, void *data)
+{
+	struct wlr_pointer_swipe_begin_event *event = data;
+	wlr_idle_notifier_v1_notify_activity(idle_notifier, seat);
+	wlr_pointer_gestures_v1_send_swipe_begin(pointer_gestures_mgr, seat,
+			event->time_msec, event->fingers);
+}
+
+void
+cursorswipeupdate(struct wl_listener *listener, void *data)
+{
+	struct wlr_pointer_swipe_update_event *event = data;
+	wlr_idle_notifier_v1_notify_activity(idle_notifier, seat);
+	wlr_pointer_gestures_v1_send_swipe_update(pointer_gestures_mgr, seat,
+			event->time_msec, event->dx, event->dy);
+}
+
+void
+cursorswipeend(struct wl_listener *listener, void *data)
+{
+	struct wlr_pointer_swipe_end_event *event = data;
+	wlr_idle_notifier_v1_notify_activity(idle_notifier, seat);
+	wlr_pointer_gestures_v1_send_swipe_end(pointer_gestures_mgr, seat,
+			event->time_msec, event->cancelled);
+}
+
+void
+cursorpinchbegin(struct wl_listener *listener, void *data)
+{
+	struct wlr_pointer_pinch_begin_event *event = data;
+	wlr_idle_notifier_v1_notify_activity(idle_notifier, seat);
+	wlr_pointer_gestures_v1_send_pinch_begin(pointer_gestures_mgr, seat,
+			event->time_msec, event->fingers);
+}
+
+void
+cursorpinchupdate(struct wl_listener *listener, void *data)
+{
+	struct wlr_pointer_pinch_update_event *event = data;
+	wlr_idle_notifier_v1_notify_activity(idle_notifier, seat);
+	wlr_pointer_gestures_v1_send_pinch_update(pointer_gestures_mgr, seat,
+			event->time_msec, event->dx, event->dy, event->scale,
+			event->rotation);
+}
+
+void
+cursorpinchend(struct wl_listener *listener, void *data)
+{
+	struct wlr_pointer_pinch_end_event *event = data;
+	wlr_idle_notifier_v1_notify_activity(idle_notifier, seat);
+	wlr_pointer_gestures_v1_send_pinch_end(pointer_gestures_mgr, seat,
+			event->time_msec, event->cancelled);
+}
+
+void
+cursorholdbegin(struct wl_listener *listener, void *data)
+{
+	struct wlr_pointer_hold_begin_event *event = data;
+	wlr_idle_notifier_v1_notify_activity(idle_notifier, seat);
+	wlr_pointer_gestures_v1_send_hold_begin(pointer_gestures_mgr, seat,
+			event->time_msec, event->fingers);
+}
+
+void
+cursorholdend(struct wl_listener *listener, void *data)
+{
+	struct wlr_pointer_hold_end_event *event = data;
+	wlr_idle_notifier_v1_notify_activity(idle_notifier, seat);
+	wlr_pointer_gestures_v1_send_hold_end(pointer_gestures_mgr, seat,
+			event->time_msec, event->cancelled);
 }
 
 void
@@ -4741,6 +4840,7 @@ setup(void)
 	wl_signal_add(&pointer_constraints->events.new_constraint, &new_pointer_constraint);
 
 	relative_pointer_mgr = wlr_relative_pointer_manager_v1_create(dpy);
+	pointer_gestures_mgr = wlr_pointer_gestures_v1_create(dpy);
 
 	/* Foreign toplevel management - allows external tools like rofi to
 	 * list windows and request actions (activate, close, etc.) */
@@ -4783,6 +4883,14 @@ setup(void)
 	wl_signal_add(&cursor->events.button, &cursor_button);
 	wl_signal_add(&cursor->events.axis, &cursor_axis);
 	wl_signal_add(&cursor->events.frame, &cursor_frame);
+	wl_signal_add(&cursor->events.swipe_begin, &cursor_swipe_begin);
+	wl_signal_add(&cursor->events.swipe_update, &cursor_swipe_update);
+	wl_signal_add(&cursor->events.swipe_end, &cursor_swipe_end);
+	wl_signal_add(&cursor->events.pinch_begin, &cursor_pinch_begin);
+	wl_signal_add(&cursor->events.pinch_update, &cursor_pinch_update);
+	wl_signal_add(&cursor->events.pinch_end, &cursor_pinch_end);
+	wl_signal_add(&cursor->events.hold_begin, &cursor_hold_begin);
+	wl_signal_add(&cursor->events.hold_end, &cursor_hold_end);
 
 	cursor_shape_mgr = wlr_cursor_shape_manager_v1_create(dpy, 1);
 	wl_signal_add(&cursor_shape_mgr->events.request_set_shape, &request_set_cursor_shape);
