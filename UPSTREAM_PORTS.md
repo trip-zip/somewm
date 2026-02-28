@@ -8,6 +8,7 @@ Since SomeWM is not a direct git fork, we manually port relevant changes from up
 
 | AwesomeWM PR | Description | SomeWM PR | Date |
 |--------------|-------------|-----------|------|
+| [#4056](https://github.com/awesomeWM/awesome/pull/4056) | Optimize `array_append` to avoid splice overhead | #298 | 2026-02-28 |
 | [#4047](https://github.com/awesomeWM/awesome/pull/4047) | Fix ldoc spacing in `hotkeys_popup` widget | #281 | 2026-02-27 |
 | [#4039](https://github.com/awesomeWM/awesome/pull/4039) | Fix ldoc underscore escapes in `gears.filesystem` | #282 | 2026-02-27 |
 | [#4046](https://github.com/awesomeWM/awesome/pull/4046) | Use `glib.SOURCE_CONTINUE` in `gears.timer` | #280 | 2026-02-27 |
