@@ -236,14 +236,37 @@ somewm-client eval "return 1+1"       # Eval Lua
 somewm-client screenshot              # Take screenshot
 ```
 
-### `screen.scale` - Fractional Output Scaling
+### `output` - Physical Monitor Object
 
-Set output scale dynamically from Lua or CLI:
+The `output` object represents a physical monitor connector (HDMI-A-1, DP-2, eDP-1). Unlike `screen` objects (which are destroyed on disable and recreated on enable), output objects persist from plug to unplug.
 
 ```lua
--- Lua API
+-- Iterate outputs
+for o in output do
+    print(o.name, o.make, o.enabled)
+end
+
+-- Configure by hardware
+output.connect_signal("added", function(o)
+    if o.name:match("^eDP") then
+        o.scale = 1.5
+    end
+end)
+
+-- Access from a screen
+local o = screen.primary.output
+```
+
+AwesomeWM has no equivalent because X11 delegates monitor management to `xrandr`. See `objects/output.c`.
+
+### `screen.scale` - Fractional Output Scaling
+
+Set output scale dynamically from Lua or CLI. `screen.scale` delegates to `output.scale` as a single source of truth.
+
+```lua
+-- Lua API (both are equivalent)
 screen.primary.scale = 1.5
-print(screen.primary.scale)  -- 1.5
+screen.primary.output.scale = 1.5
 ```
 
 ```bash

@@ -13,6 +13,7 @@
 #include "objects/tag.h"
 #include "objects/client.h"
 #include "objects/screen.h"
+#include "objects/output.h"
 #include "objects/drawin.h"
 #include "objects/layer_surface.h"
 #include "objects/drawable.h"
@@ -1740,6 +1741,7 @@ luaA_init(void)
 	window_class_setup(globalconf_L);  /* Setup window base class first */
 	client_class_setup(globalconf_L);
 	screen_class_setup(globalconf_L);
+	output_class_setup(globalconf_L);
 	luaA_drawable_setup(globalconf_L);
 	luaA_drawin_setup(globalconf_L);
 	layer_surface_class_setup(globalconf_L);  /* Layer shell surface class */
@@ -3599,6 +3601,7 @@ luaA_create_fresh_state(void)
 	window_class_setup(L);
 	client_class_setup(L);
 	screen_class_setup(L);
+	output_class_setup(L);
 	luaA_drawable_setup(L);
 	luaA_drawin_setup(L);
 	layer_surface_class_setup(L);
