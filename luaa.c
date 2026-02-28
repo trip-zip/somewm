@@ -24,6 +24,7 @@
 #include "objects/keybinding.h"
 #include "objects/keygrabber.h"
 #include "objects/mousegrabber.h"
+#include "objects/gesture.h"
 /* objects/awesome.h merged into this file */
 #include "objects/wibox.h"
 #include "objects/ipc.h"
@@ -1777,6 +1778,11 @@ luaA_init(void)
 	lua_newtable(globalconf_L);  /* Create mousegrabber module table */
 	luaA_mousegrabber_setup(globalconf_L);
 	lua_setglobal(globalconf_L, "mousegrabber");  /* mousegrabber = module */
+
+	/* Setup gesture module (somewm-specific: touchpad gesture bridge) */
+	lua_newtable(globalconf_L);
+	luaA_gesture_setup(globalconf_L);
+	lua_setglobal(globalconf_L, "_gesture");
 
 	/* NOTE: The C-based key class is now set up by key_class_setup() above (line 88).
 	 * The old Lua-based implementation below has been disabled to let the C implementation work.
@@ -3636,6 +3642,11 @@ luaA_create_fresh_state(void)
 	lua_newtable(L);
 	luaA_mousegrabber_setup(L);
 	lua_setglobal(L, "mousegrabber");
+
+	/* Gesture */
+	lua_newtable(L);
+	luaA_gesture_setup(L);
+	lua_setglobal(L, "_gesture");
 
 	return L;
 }
