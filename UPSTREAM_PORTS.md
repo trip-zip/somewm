@@ -8,6 +8,7 @@ Since SomeWM is not a direct git fork, we manually port relevant changes from up
 
 | AwesomeWM PR | Description | SomeWM PR | Date |
 |--------------|-------------|-----------|------|
+| [#4046](https://github.com/awesomeWM/awesome/pull/4046) | Use `glib.SOURCE_CONTINUE` in `gears.timer` | #280 | 2026-02-27 |
 | [#4044](https://github.com/awesomeWM/awesome/pull/4044) | Fix nil reference in clienticon | #183 | 2026-01-14 |
 | [#4042](https://github.com/awesomeWM/awesome/pull/4042) | Customizable modifier sorting in hotkeys popup | #179 | 2026-01-14 |
 | [#4023](https://github.com/awesomeWM/awesome/pull/4023) | Fix maximized geometry with titlebars | #180 | 2026-01-14 |
