@@ -74,6 +74,17 @@ xrealloc(void **ptr, ssize_t newsize)
         }                                            \
     } while (0)
 
+#define p_growx(pp, goalnb, allocnb)                 \
+    do {                                             \
+        if ((goalnb) > *(allocnb)) {                 \
+            *(allocnb) = (goalnb);                   \
+            p_realloc((pp), *(allocnb));             \
+        }                                            \
+    } while (0)
+
+#define ssizeof(foo)            (ssize_t)sizeof(foo)
+#define countof(foo)            (ssizeof(foo) / ssizeof(foo[0]))
+
 /* Memory duplication macro */
 #define p_dup(p, count)         memdup((p), sizeof(*(p)) * (count))
 
