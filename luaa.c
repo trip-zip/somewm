@@ -1030,7 +1030,7 @@ luaA_awesome_shadow_reload(lua_State *L)
 }
 
 /* awesome module methods */
-static const luaL_Reg awesome_methods[] = {
+const luaL_Reg awesome_methods[] = {
 	{ "quit", luaA_awesome_quit },
 	{ "spawn", luaA_spawn },
 	{ "new_client_placement", luaA_awesome_new_client_placement },

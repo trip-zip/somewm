@@ -2431,7 +2431,7 @@ luaA_drawin_new(lua_State *L)
 /* Drawin class methods - added to the drawin CLASS table (not instances)
  * LUA_CLASS_METHODS adds: set_index_miss_handler, set_newindex_miss_handler,
  * connect_signal, disconnect_signal, emit_signal, instances, set_fallback */
-static const luaL_Reg drawin_methods[] = {
+const luaL_Reg drawin_methods[] = {
 	LUA_CLASS_METHODS(drawin)
 	{ "get", luaA_drawin_get },
 	{ "__call", luaA_drawin_new },
@@ -2442,7 +2442,7 @@ static const luaL_Reg drawin_methods[] = {
  * LUA_OBJECT_META adds instance signal methods: connect_signal, disconnect_signal, emit_signal
  * LUA_CLASS_META adds: __index, __newindex for property handling
  */
-static const luaL_Reg drawin_meta[] = {
+const luaL_Reg drawin_meta[] = {
 	LUA_OBJECT_META(drawin)
 	LUA_CLASS_META
 	/* Keep __tostring and __gc, but let class system handle __index/__newindex */

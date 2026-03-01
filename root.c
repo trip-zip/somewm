@@ -1982,7 +1982,7 @@ luaA_root_newindex(lua_State *L)
 	return luaA_default_newindex(L);
 }
 
-static const luaL_Reg root_methods[] = {
+const luaL_Reg root_methods[] = {
 	/* AwesomeWM-compatible exports (following Prime Directive) */
 	{ "_buttons", luaA_root_buttons },
 	{ "_keys", luaA_root_keys },
@@ -2015,7 +2015,7 @@ static const luaL_Reg root_methods[] = {
 };
 
 /* Empty meta table - matches AwesomeWM root.c:663-666 */
-static const luaL_Reg root_meta[] = {
+const luaL_Reg root_meta[] = {
 	{ NULL, NULL }
 };
 

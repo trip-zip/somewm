@@ -1027,7 +1027,7 @@ output_checker(output_t *o)
  * ======================================================================== */
 
 /* Instance metamethods */
-static const luaL_Reg output_meta[] = {
+const luaL_Reg output_meta[] = {
 	{ "__index", luaA_output_index },
 	{ "__newindex", luaA_output_newindex },
 	{ "__tostring", luaA_output_tostring },
@@ -1039,7 +1039,7 @@ static const luaL_Reg output_meta[] = {
 };
 
 /* Class methods (for the global output table) */
-static const luaL_Reg output_methods[] = {
+const luaL_Reg output_methods[] = {
 	LUA_CLASS_METHODS(output)
 	{ "count", luaA_output_count },
 	{ "get_by_name", luaA_output_get_by_name },
