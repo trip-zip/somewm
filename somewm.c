@@ -6386,7 +6386,7 @@ main(int argc, char *argv[])
 	globalconf.argc = argc;
 	globalconf.argv = argv;
 
-	static struct option long_options[] = {
+	const struct option long_options[] = {
 		{"help",    no_argument,       0, 'h'},
 		{"version", no_argument,       0, 'v'},
 		{"verbose", no_argument,       0, 256},  /* info-level logging */
