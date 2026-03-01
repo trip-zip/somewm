@@ -5165,7 +5165,7 @@ luaA_client_set_xproperty(lua_State *L)
 void
 client_class_setup(lua_State *L)
 {
-    static const struct luaL_Reg client_methods[] =
+    const struct luaL_Reg client_methods[] =
     {
         LUA_CLASS_METHODS(client)
         { "get", luaA_client_get },
@@ -5174,7 +5174,7 @@ client_class_setup(lua_State *L)
         { NULL, NULL }
     };
 
-    static const struct luaL_Reg client_meta[] =
+    const struct luaL_Reg client_meta[] =
     {
         LUA_OBJECT_META(client)
         LUA_CLASS_META
@@ -5208,182 +5208,54 @@ client_class_setup(lua_State *L)
                      luaA_class_index_miss_property, luaA_class_newindex_miss_property,
                      client_methods, client_meta);
     luaA_class_set_tostring(&client_class, (lua_class_propfunc_t) client_tostring);
-    luaA_class_add_property(&client_class, "name",
-                            (lua_class_propfunc_t) luaA_client_set_name,
-                            (lua_class_propfunc_t) luaA_client_get_name,
-                            (lua_class_propfunc_t) luaA_client_set_name);
-    luaA_class_add_property(&client_class, "transient_for",
-                            NULL,
-                            (lua_class_propfunc_t) luaA_client_get_transient_for,
-                            NULL);
-    luaA_class_add_property(&client_class, "skip_taskbar",
-                            (lua_class_propfunc_t) luaA_client_set_skip_taskbar,
-                            (lua_class_propfunc_t) luaA_client_get_skip_taskbar,
-                            (lua_class_propfunc_t) luaA_client_set_skip_taskbar);
-    luaA_class_add_property(&client_class, "content",
-                            NULL,
-                            (lua_class_propfunc_t) luaA_client_get_content,
-                            NULL);
-    luaA_class_add_property(&client_class, "type",
-                            NULL,
-                            (lua_class_propfunc_t) luaA_window_get_type,
-                            NULL);
-    luaA_class_add_property(&client_class, "class",
-                            NULL,
-                            (lua_class_propfunc_t) luaA_client_get_class,
-                            NULL);
-    luaA_class_add_property(&client_class, "instance",
-                            NULL,
-                            (lua_class_propfunc_t) luaA_client_get_instance,
-                            NULL);
-    luaA_class_add_property(&client_class, "role",
-                            NULL,
-                            (lua_class_propfunc_t) luaA_client_get_role,
-                            NULL);
-    luaA_class_add_property(&client_class, "pid",
-                            NULL,
-                            (lua_class_propfunc_t) luaA_client_get_pid,
-                            NULL);
-    luaA_class_add_property(&client_class, "leader_window",
-                            NULL,
-                            (lua_class_propfunc_t) luaA_client_get_leader_window,
-                            NULL);
-    luaA_class_add_property(&client_class, "window",
-                            NULL,
-                            (lua_class_propfunc_t) luaA_client_get_window,
-                            NULL);
-    luaA_class_add_property(&client_class, "id",
-                            NULL,
-                            (lua_class_propfunc_t) luaA_client_get_id,
-                            NULL);
-    luaA_class_add_property(&client_class, "machine",
-                            NULL,
-                            (lua_class_propfunc_t) luaA_client_get_machine,
-                            NULL);
-    luaA_class_add_property(&client_class, "icon_name",
-                            NULL,
-                            (lua_class_propfunc_t) luaA_client_get_icon_name,
-                            NULL);
-    luaA_class_add_property(&client_class, "screen",
-                            NULL,
-                            (lua_class_propfunc_t) luaA_client_get_screen,
-                            (lua_class_propfunc_t) luaA_client_set_screen);
-    luaA_class_add_property(&client_class, "hidden",
-                            (lua_class_propfunc_t) luaA_client_set_hidden,
-                            (lua_class_propfunc_t) luaA_client_get_hidden,
-                            (lua_class_propfunc_t) luaA_client_set_hidden);
-    luaA_class_add_property(&client_class, "minimized",
-                            (lua_class_propfunc_t) luaA_client_set_minimized,
-                            (lua_class_propfunc_t) luaA_client_get_minimized,
-                            (lua_class_propfunc_t) luaA_client_set_minimized);
-    luaA_class_add_property(&client_class, "fullscreen",
-                            (lua_class_propfunc_t) luaA_client_set_fullscreen,
-                            (lua_class_propfunc_t) luaA_client_get_fullscreen,
-                            (lua_class_propfunc_t) luaA_client_set_fullscreen);
-    luaA_class_add_property(&client_class, "modal",
-                            (lua_class_propfunc_t) luaA_client_set_modal,
-                            (lua_class_propfunc_t) luaA_client_get_modal,
-                            (lua_class_propfunc_t) luaA_client_set_modal);
-    luaA_class_add_property(&client_class, "motif_wm_hints",
-                            NULL,
-                            (lua_class_propfunc_t) luaA_client_get_motif_wm_hints,
-                            NULL);
-    luaA_class_add_property(&client_class, "group_window",
-                            NULL,
-                            (lua_class_propfunc_t) luaA_client_get_group_window,
-                            NULL);
-    luaA_class_add_property(&client_class, "maximized",
-                            (lua_class_propfunc_t) luaA_client_set_maximized,
-                            (lua_class_propfunc_t) luaA_client_get_maximized,
-                            (lua_class_propfunc_t) luaA_client_set_maximized);
-    luaA_class_add_property(&client_class, "maximized_horizontal",
-                            (lua_class_propfunc_t) luaA_client_set_maximized_horizontal,
-                            (lua_class_propfunc_t) luaA_client_get_maximized_horizontal,
-                            (lua_class_propfunc_t) luaA_client_set_maximized_horizontal);
-    luaA_class_add_property(&client_class, "maximized_vertical",
-                            (lua_class_propfunc_t) luaA_client_set_maximized_vertical,
-                            (lua_class_propfunc_t) luaA_client_get_maximized_vertical,
-                            (lua_class_propfunc_t) luaA_client_set_maximized_vertical);
-    luaA_class_add_property(&client_class, "icon",
-                            (lua_class_propfunc_t) luaA_client_set_icon,
-                            (lua_class_propfunc_t) luaA_client_get_icon,
-                            (lua_class_propfunc_t) luaA_client_set_icon);
-    luaA_class_add_property(&client_class, "icon_sizes",
-                            NULL,
-                            (lua_class_propfunc_t) luaA_client_get_icon_sizes,
-                            NULL);
-    luaA_class_add_property(&client_class, "opacity",
-                            (lua_class_propfunc_t) luaA_client_set_opacity,
-                            (lua_class_propfunc_t) luaA_client_get_opacity,
-                            (lua_class_propfunc_t) luaA_client_set_opacity);
-    luaA_class_add_property(&client_class, "aspect_ratio",
-                            (lua_class_propfunc_t) luaA_client_set_aspect_ratio,
-                            (lua_class_propfunc_t) luaA_client_get_aspect_ratio,
-                            (lua_class_propfunc_t) luaA_client_set_aspect_ratio);
-    luaA_class_add_property(&client_class, "shadow",
-                            (lua_class_propfunc_t) luaA_client_set_shadow,
-                            (lua_class_propfunc_t) luaA_client_get_shadow,
-                            (lua_class_propfunc_t) luaA_client_set_shadow);
-    luaA_class_add_property(&client_class, "ontop",
-                            (lua_class_propfunc_t) luaA_client_set_ontop,
-                            (lua_class_propfunc_t) luaA_client_get_ontop,
-                            (lua_class_propfunc_t) luaA_client_set_ontop);
-    luaA_class_add_property(&client_class, "above",
-                            (lua_class_propfunc_t) luaA_client_set_above,
-                            (lua_class_propfunc_t) luaA_client_get_above,
-                            (lua_class_propfunc_t) luaA_client_set_above);
-    luaA_class_add_property(&client_class, "below",
-                            (lua_class_propfunc_t) luaA_client_set_below,
-                            (lua_class_propfunc_t) luaA_client_get_below,
-                            (lua_class_propfunc_t) luaA_client_set_below);
-    luaA_class_add_property(&client_class, "sticky",
-                            (lua_class_propfunc_t) luaA_client_set_sticky,
-                            (lua_class_propfunc_t) luaA_client_get_sticky,
-                            (lua_class_propfunc_t) luaA_client_set_sticky);
-    luaA_class_add_property(&client_class, "size_hints_honor",
-                            (lua_class_propfunc_t) luaA_client_set_size_hints_honor,
-                            (lua_class_propfunc_t) luaA_client_get_size_hints_honor,
-                            (lua_class_propfunc_t) luaA_client_set_size_hints_honor);
-    luaA_class_add_property(&client_class, "urgent",
-                            (lua_class_propfunc_t) luaA_client_set_urgent,
-                            (lua_class_propfunc_t) luaA_client_get_urgent,
-                            (lua_class_propfunc_t) luaA_client_set_urgent);
-    luaA_class_add_property(&client_class, "size_hints",
-                            NULL,
-                            (lua_class_propfunc_t) luaA_client_get_size_hints,
-                            NULL);
-    luaA_class_add_property(&client_class, "focusable",
-                            (lua_class_propfunc_t) luaA_client_set_focusable,
-                            (lua_class_propfunc_t) luaA_client_get_focusable,
-                            (lua_class_propfunc_t) luaA_client_set_focusable);
-    luaA_class_add_property(&client_class, "shape_bounding",
-                            (lua_class_propfunc_t) luaA_client_set_shape_bounding,
-                            (lua_class_propfunc_t) luaA_client_get_shape_bounding,
-                            (lua_class_propfunc_t) luaA_client_set_shape_bounding);
-    luaA_class_add_property(&client_class, "shape_clip",
-                            (lua_class_propfunc_t) luaA_client_set_shape_clip,
-                            (lua_class_propfunc_t) luaA_client_get_shape_clip,
-                            (lua_class_propfunc_t) luaA_client_set_shape_clip);
-    luaA_class_add_property(&client_class, "shape_input",
-                            (lua_class_propfunc_t) luaA_client_set_shape_input,
-                            (lua_class_propfunc_t) luaA_client_get_shape_input,
-                            (lua_class_propfunc_t) luaA_client_set_shape_input);
-    luaA_class_add_property(&client_class, "startup_id",
-                            (lua_class_propfunc_t) luaA_client_set_startup_id,
-                            (lua_class_propfunc_t) luaA_client_get_startup_id,
-                            (lua_class_propfunc_t) luaA_client_set_startup_id);
-    luaA_class_add_property(&client_class, "client_shape_bounding",
-                            NULL,
-                            (lua_class_propfunc_t) luaA_client_get_client_shape_bounding,
-                            NULL);
-    luaA_class_add_property(&client_class, "client_shape_clip",
-                            NULL,
-                            (lua_class_propfunc_t) luaA_client_get_client_shape_clip,
-                            NULL);
-    luaA_class_add_property(&client_class, "first_tag",
-                            NULL,
-                            (lua_class_propfunc_t) luaA_client_get_first_tag,
-                            NULL);
+
+    lua_class_property_t properties[] = {
+        { "above", (lua_class_propfunc_t) luaA_client_set_above, (lua_class_propfunc_t) luaA_client_get_above, (lua_class_propfunc_t) luaA_client_set_above },
+        { "aspect_ratio", (lua_class_propfunc_t) luaA_client_set_aspect_ratio, (lua_class_propfunc_t) luaA_client_get_aspect_ratio, (lua_class_propfunc_t) luaA_client_set_aspect_ratio },
+        { "below", (lua_class_propfunc_t) luaA_client_set_below, (lua_class_propfunc_t) luaA_client_get_below, (lua_class_propfunc_t) luaA_client_set_below },
+        { "class", NULL, (lua_class_propfunc_t) luaA_client_get_class, NULL },
+        { "client_shape_bounding", NULL, (lua_class_propfunc_t) luaA_client_get_client_shape_bounding, NULL },
+        { "client_shape_clip", NULL, (lua_class_propfunc_t) luaA_client_get_client_shape_clip, NULL },
+        { "content", NULL, (lua_class_propfunc_t) luaA_client_get_content, NULL },
+        { "first_tag", NULL, (lua_class_propfunc_t) luaA_client_get_first_tag, NULL },
+        { "focusable", (lua_class_propfunc_t) luaA_client_set_focusable, (lua_class_propfunc_t) luaA_client_get_focusable, (lua_class_propfunc_t) luaA_client_set_focusable },
+        { "fullscreen", (lua_class_propfunc_t) luaA_client_set_fullscreen, (lua_class_propfunc_t) luaA_client_get_fullscreen, (lua_class_propfunc_t) luaA_client_set_fullscreen },
+        { "group_window", NULL, (lua_class_propfunc_t) luaA_client_get_group_window, NULL },
+        { "hidden", (lua_class_propfunc_t) luaA_client_set_hidden, (lua_class_propfunc_t) luaA_client_get_hidden, (lua_class_propfunc_t) luaA_client_set_hidden },
+        { "icon", (lua_class_propfunc_t) luaA_client_set_icon, (lua_class_propfunc_t) luaA_client_get_icon, (lua_class_propfunc_t) luaA_client_set_icon },
+        { "icon_name", NULL, (lua_class_propfunc_t) luaA_client_get_icon_name, NULL },
+        { "icon_sizes", NULL, (lua_class_propfunc_t) luaA_client_get_icon_sizes, NULL },
+        { "id", NULL, (lua_class_propfunc_t) luaA_client_get_id, NULL },
+        { "instance", NULL, (lua_class_propfunc_t) luaA_client_get_instance, NULL },
+        { "leader_window", NULL, (lua_class_propfunc_t) luaA_client_get_leader_window, NULL },
+        { "machine", NULL, (lua_class_propfunc_t) luaA_client_get_machine, NULL },
+        { "maximized", (lua_class_propfunc_t) luaA_client_set_maximized, (lua_class_propfunc_t) luaA_client_get_maximized, (lua_class_propfunc_t) luaA_client_set_maximized },
+        { "maximized_horizontal", (lua_class_propfunc_t) luaA_client_set_maximized_horizontal, (lua_class_propfunc_t) luaA_client_get_maximized_horizontal, (lua_class_propfunc_t) luaA_client_set_maximized_horizontal },
+        { "maximized_vertical", (lua_class_propfunc_t) luaA_client_set_maximized_vertical, (lua_class_propfunc_t) luaA_client_get_maximized_vertical, (lua_class_propfunc_t) luaA_client_set_maximized_vertical },
+        { "minimized", (lua_class_propfunc_t) luaA_client_set_minimized, (lua_class_propfunc_t) luaA_client_get_minimized, (lua_class_propfunc_t) luaA_client_set_minimized },
+        { "modal", (lua_class_propfunc_t) luaA_client_set_modal, (lua_class_propfunc_t) luaA_client_get_modal, (lua_class_propfunc_t) luaA_client_set_modal },
+        { "motif_wm_hints", NULL, (lua_class_propfunc_t) luaA_client_get_motif_wm_hints, NULL },
+        { "name", (lua_class_propfunc_t) luaA_client_set_name, (lua_class_propfunc_t) luaA_client_get_name, (lua_class_propfunc_t) luaA_client_set_name },
+        { "ontop", (lua_class_propfunc_t) luaA_client_set_ontop, (lua_class_propfunc_t) luaA_client_get_ontop, (lua_class_propfunc_t) luaA_client_set_ontop },
+        { "opacity", (lua_class_propfunc_t) luaA_client_set_opacity, (lua_class_propfunc_t) luaA_client_get_opacity, (lua_class_propfunc_t) luaA_client_set_opacity },
+        { "pid", NULL, (lua_class_propfunc_t) luaA_client_get_pid, NULL },
+        { "role", NULL, (lua_class_propfunc_t) luaA_client_get_role, NULL },
+        { "screen", NULL, (lua_class_propfunc_t) luaA_client_get_screen, (lua_class_propfunc_t) luaA_client_set_screen },
+        { "shadow", (lua_class_propfunc_t) luaA_client_set_shadow, (lua_class_propfunc_t) luaA_client_get_shadow, (lua_class_propfunc_t) luaA_client_set_shadow },
+        { "shape_bounding", (lua_class_propfunc_t) luaA_client_set_shape_bounding, (lua_class_propfunc_t) luaA_client_get_shape_bounding, (lua_class_propfunc_t) luaA_client_set_shape_bounding },
+        { "shape_clip", (lua_class_propfunc_t) luaA_client_set_shape_clip, (lua_class_propfunc_t) luaA_client_get_shape_clip, (lua_class_propfunc_t) luaA_client_set_shape_clip },
+        { "shape_input", (lua_class_propfunc_t) luaA_client_set_shape_input, (lua_class_propfunc_t) luaA_client_get_shape_input, (lua_class_propfunc_t) luaA_client_set_shape_input },
+        { "size_hints", NULL, (lua_class_propfunc_t) luaA_client_get_size_hints, NULL },
+        { "size_hints_honor", (lua_class_propfunc_t) luaA_client_set_size_hints_honor, (lua_class_propfunc_t) luaA_client_get_size_hints_honor, (lua_class_propfunc_t) luaA_client_set_size_hints_honor },
+        { "skip_taskbar", (lua_class_propfunc_t) luaA_client_set_skip_taskbar, (lua_class_propfunc_t) luaA_client_get_skip_taskbar, (lua_class_propfunc_t) luaA_client_set_skip_taskbar },
+        { "startup_id", (lua_class_propfunc_t) luaA_client_set_startup_id, (lua_class_propfunc_t) luaA_client_get_startup_id, (lua_class_propfunc_t) luaA_client_set_startup_id },
+        { "sticky", (lua_class_propfunc_t) luaA_client_set_sticky, (lua_class_propfunc_t) luaA_client_get_sticky, (lua_class_propfunc_t) luaA_client_set_sticky },
+        { "transient_for", NULL, (lua_class_propfunc_t) luaA_client_get_transient_for, NULL },
+        { "type", NULL, (lua_class_propfunc_t) luaA_window_get_type, NULL },
+        { "urgent", (lua_class_propfunc_t) luaA_client_set_urgent, (lua_class_propfunc_t) luaA_client_get_urgent, (lua_class_propfunc_t) luaA_client_set_urgent },
+        { "window", NULL, (lua_class_propfunc_t) luaA_client_get_window, NULL },
+    };
+    luaA_class_add_properties(&client_class, properties, countof(properties));
     /* _buttons is a method (in client_meta), not a property - matches AwesomeWM */
 }
 
