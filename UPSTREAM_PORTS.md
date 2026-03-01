@@ -8,6 +8,7 @@ Since SomeWM is not a direct git fork, we manually port relevant changes from up
 
 | AwesomeWM PR | Description | SomeWM PR | Date |
 |--------------|-------------|-----------|------|
+| [#4036](https://github.com/awesomeWM/awesome/pull/4036) | Add `client_shape_input` property | #304 | 2026-02-28 |
 | [#4049](https://github.com/awesomeWM/awesome/pull/4049) | Use `g_unix_fd_add` instead of GIOChannel | #303 | 2026-02-28 |
 | [#4054](https://github.com/awesomeWM/awesome/pull/4054) | Remove unnecessary `p_clear` | #302 | 2026-02-28 |
 | [#4051](https://github.com/awesomeWM/awesome/pull/4051) | Add `luaA_class_add_properties` batch API | #301 | 2026-02-28 |
