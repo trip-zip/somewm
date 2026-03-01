@@ -7,6 +7,7 @@
 #include <getopt.h>
 #include <stdbool.h>
 #include <glib.h>
+#include <glib-unix.h>
 #include <libinput.h>
 #include <linux/input-event-codes.h>
 #include <math.h>
@@ -2670,7 +2671,7 @@ handlesig(int signo)
  * We read from the pipe and reap all children with waitpid().
  */
 static gboolean
-reap_children(GIOChannel *channel, GIOCondition condition, gpointer user_data)
+reap_children(gint fd, GIOCondition condition, gpointer data)
 {
 	pid_t child;
 	int status;
@@ -4598,12 +4599,8 @@ setup(void)
 	/* Make read end non-blocking */
 	fcntl(sigchld_pipe[0], F_SETFL, O_NONBLOCK);
 
-	/* Setup GLib IO watch for SIGCHLD pipe */
-	{
-		GIOChannel *channel = g_io_channel_unix_new(sigchld_pipe[0]);
-		g_io_add_watch(channel, G_IO_IN, reap_children, NULL);
-		g_io_channel_unref(channel);
-	}
+	/* Setup GLib watch for SIGCHLD pipe */
+	g_unix_fd_add(sigchld_pipe[0], G_IO_IN, reap_children, NULL);
 
 	for (i = 0; i < (int)LENGTH(sig); i++)
 		sigaction(sig[i], &sa, NULL);
