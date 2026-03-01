@@ -4914,6 +4914,22 @@ luaA_client_get_client_shape_clip(lua_State *L, client_t *c)
     return 1;
 }
 
+/** Get the client's child window input shape.
+ * \param L The Lua VM state.
+ * \param client The client object.
+ * \return The number of elements pushed on stack.
+ */
+static int
+luaA_client_get_client_shape_input(lua_State *L, client_t *c)
+{
+    cairo_surface_t *surf = xwindow_get_shape(c->window, XCB_SHAPE_SK_INPUT);
+    if (!surf)
+        return 0;
+    /* lua has to make sure to free the ref or we have a leak */
+    lua_pushlightuserdata(L, surf);
+    return 1;
+}
+
 /** Get the client's frame window clip shape.
  * \param L The Lua VM state.
  * \param client The client object.
@@ -5216,6 +5232,7 @@ client_class_setup(lua_State *L)
         { "class", NULL, (lua_class_propfunc_t) luaA_client_get_class, NULL },
         { "client_shape_bounding", NULL, (lua_class_propfunc_t) luaA_client_get_client_shape_bounding, NULL },
         { "client_shape_clip", NULL, (lua_class_propfunc_t) luaA_client_get_client_shape_clip, NULL },
+        { "client_shape_input", NULL, (lua_class_propfunc_t) luaA_client_get_client_shape_input, NULL },
         { "content", NULL, (lua_class_propfunc_t) luaA_client_get_content, NULL },
         { "first_tag", NULL, (lua_class_propfunc_t) luaA_client_get_first_tag, NULL },
         { "focusable", (lua_class_propfunc_t) luaA_client_set_focusable, (lua_class_propfunc_t) luaA_client_get_focusable, (lua_class_propfunc_t) luaA_client_set_focusable },
