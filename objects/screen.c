@@ -152,7 +152,21 @@ luaA_screen_push(lua_State *L, screen_t *screen)
 screen_t *
 luaA_checkscreen(lua_State *L, int idx)
 {
-	/* Use AwesomeWM class system for type checking */
+	if (lua_isnumber(L, idx))
+	{
+		int screen = lua_tointeger(L, idx);
+		if (screen < 1 || screen > (int)screen_count)
+		{
+			luaA_warn(L, "invalid screen number: %d (of %d existing)",
+			          screen, (int)screen_count);
+			lua_pushnil(L);
+			return NULL;
+		}
+		lua_rawgeti(L, LUA_REGISTRYINDEX, screen_refs[screen - 1]);
+		screen_t *s = (screen_t *)lua_touserdata(L, -1);
+		lua_pop(L, 1);
+		return s;
+	}
 	return (screen_t *)luaA_checkudata(L, idx, &screen_class);
 }
 
