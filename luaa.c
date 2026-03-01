@@ -3689,9 +3689,6 @@ luaA_dofunction_from_file(lua_State *L, const char *path)
 void
 globalconf_init(lua_State *L)
 {
-	/* Zero out the entire structure */
-	memset(&globalconf, 0, sizeof(globalconf));
-
 	/* Set the Lua state */
 	globalconf.L = L;
 
