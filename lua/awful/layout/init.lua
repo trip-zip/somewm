@@ -259,7 +259,7 @@ function layout.arrange(screen)
 
             local useless_gap = p.useless_gap
 
-            p.geometries = {}
+            p.geometries = setmetatable({}, {__mode = "k"})
             layout.get(screen).arrange(p)
 
             for c, g in pairs(p.geometries) do
