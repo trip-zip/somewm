@@ -25,6 +25,7 @@
 #include "somewm_types.h"
 #include <xkbcommon/xkbcommon.h>
 #include <wlr/types/wlr_seat.h>
+#include <wlr/types/wlr_data_device.h>
 #include <wlr/types/wlr_cursor.h>
 #include <wlr/types/wlr_output_layout.h>
 #include <linux/input-event-codes.h>
@@ -668,6 +669,55 @@ luaA_root_fake_input(lua_State *L)
 		return luaL_error(L, "Unknown event type: %s (expected key_press, key_release, "
 			"button_press, button_release, or motion_notify)", event_type);
 	}
+
+	return 0;
+}
+
+/* Mock drag stored between fake_drag_start/fake_drag_end calls */
+static struct wlr_drag *test_drag = NULL;
+
+/** root.fake_drag_start() — simulate a drag starting.
+ *
+ * Creates a mock wlr_drag, sets seat->drag, and emits seat->events.start_drag
+ * to trigger the compositor's startdrag() handler.
+ */
+static int
+luaA_root_fake_drag_start(lua_State *L)
+{
+	if (test_drag)
+		return luaL_error(L, "root.fake_drag_start(): drag already active");
+
+	test_drag = ecalloc(1, sizeof(*test_drag));
+
+	wl_signal_init(&test_drag->events.destroy);
+	wl_signal_init(&test_drag->events.focus);
+	wl_signal_init(&test_drag->events.motion);
+	wl_signal_init(&test_drag->events.drop);
+
+	seat->drag = test_drag;
+	wl_signal_emit_mutable(&seat->events.start_drag, test_drag);
+
+	return 0;
+}
+
+/** root.fake_drag_end() — simulate a drag ending.
+ *
+ * Mimics wlroots' drag_destroy() sequence: clears seat->drag, emits
+ * drag->events.destroy. This triggers the compositor's destroydrag() handler.
+ */
+static int
+luaA_root_fake_drag_end(lua_State *L)
+{
+	if (!test_drag)
+		return luaL_error(L, "root.fake_drag_end(): no drag active");
+
+	struct wlr_drag *drag = test_drag;
+	test_drag = NULL;
+
+	seat->drag = NULL;
+	wl_signal_emit_mutable(&drag->events.destroy, drag);
+
+	free(drag);
 
 	return 0;
 }
@@ -1978,6 +2028,8 @@ const luaL_Reg root_methods[] = {
 	{ "cursor_theme", luaA_root_cursor_theme },
 	{ "cursor_size", luaA_root_cursor_size },
 	{ "fake_input", luaA_root_fake_input },
+	{ "fake_drag_start", luaA_root_fake_drag_start },
+	{ "fake_drag_end", luaA_root_fake_drag_end },
 	{ "drawins", luaA_root_drawins },
 	{ "size", luaA_root_size },
 	{ "size_mm", luaA_root_size_mm },
