@@ -981,111 +981,93 @@ wallpaper_cache_show(wallpaper_cache_entry_t *entry, int screen_index)
 	return true;
 }
 
-/** Get the wallpaper path from Lua global (set by monkey-patched gears.surface.load) */
-static const char *
-get_wallpaper_path_from_lua(lua_State *L)
-{
-	lua_getglobal(L, "_somewm_last_wallpaper_path");
-	const char *path = NULL;
-	if (lua_isstring(L, -1)) {
-		path = lua_tostring(L, -1);
-	}
-	lua_pop(L, 1);
-	return path;
-}
-
 /** Screen info from Lua table */
 typedef struct {
 	int index;   /* 0-based screen index */
 	int x, y;    /* Screen position */
 	int width, height;  /* Screen size */
 	bool valid;
+	const char *path;  /* Borrowed from Lua string, valid until table cleared */
 } wallpaper_screen_info_t;
 
 #define MAX_PENDING_SCREENS 8
 
-/** Get ALL screen infos for a path from Lua nested table
+/** Get ALL pending wallpaper screen infos across ALL paths from Lua nested table
  * Table structure: _somewm_wallpaper_screen_info[path][screen_index] = {x, y, width, height}
  * Returns count of valid screens found (up to MAX_PENDING_SCREENS)
  */
 static int
-get_all_wallpaper_screen_infos_from_lua(lua_State *L, const char *path,
-                                        wallpaper_screen_info_t *infos, int max_infos)
+get_all_pending_wallpaper_infos_from_lua(lua_State *L,
+                                         wallpaper_screen_info_t *infos, int max_infos)
 {
 	int count = 0;
 
-	if (!path || !infos || max_infos <= 0)
+	if (!infos || max_infos <= 0)
 		return 0;
 
-	/* Look up the nested table: _somewm_wallpaper_screen_info[path] */
 	lua_getglobal(L, "_somewm_wallpaper_screen_info");
 	if (!lua_istable(L, -1)) {
 		lua_pop(L, 1);
 		return 0;
 	}
 
-	lua_getfield(L, -1, path);
-	if (!lua_istable(L, -1)) {
-		lua_pop(L, 2);
-		return 0;
-	}
-
-	/* Iterate over all screen indices in the path's table */
-	lua_pushnil(L);  /* first key */
+	/* Iterate over all paths in the outer table */
+	lua_pushnil(L);  /* first key for outer table */
 	while (lua_next(L, -2) != 0 && count < max_infos) {
-		/* key is screen_index (Lua 1-based), value is geometry table */
-		if (lua_isnumber(L, -2) && lua_istable(L, -1)) {
-			int screen_index = (int)lua_tointeger(L, -2) - 1;  /* Convert to 0-based */
+		/* key is path string, value is screen table */
+		if (lua_isstring(L, -2) && lua_istable(L, -1)) {
+			const char *path = lua_tostring(L, -2);
 
-			wallpaper_screen_info_t *info = &infos[count];
-			info->index = screen_index;
-			info->valid = false;
+			/* Iterate over all screen indices for this path */
+			lua_pushnil(L);  /* first key for inner table */
+			while (lua_next(L, -2) != 0 && count < max_infos) {
+				/* key is screen_index (Lua 1-based), value is geometry table */
+				if (lua_isnumber(L, -2) && lua_istable(L, -1)) {
+					int screen_index = (int)lua_tointeger(L, -2) - 1;  /* Convert to 0-based */
 
-			lua_getfield(L, -1, "x");
-			info->x = lua_isnumber(L, -1) ? (int)lua_tointeger(L, -1) : 0;
-			lua_pop(L, 1);
+					wallpaper_screen_info_t *info = &infos[count];
+					info->index = screen_index;
+					info->path = path;
+					info->valid = false;
 
-			lua_getfield(L, -1, "y");
-			info->y = lua_isnumber(L, -1) ? (int)lua_tointeger(L, -1) : 0;
-			lua_pop(L, 1);
+					lua_getfield(L, -1, "x");
+					info->x = lua_isnumber(L, -1) ? (int)lua_tointeger(L, -1) : 0;
+					lua_pop(L, 1);
 
-			lua_getfield(L, -1, "width");
-			info->width = lua_isnumber(L, -1) ? (int)lua_tointeger(L, -1) : 0;
-			lua_pop(L, 1);
+					lua_getfield(L, -1, "y");
+					info->y = lua_isnumber(L, -1) ? (int)lua_tointeger(L, -1) : 0;
+					lua_pop(L, 1);
 
-			lua_getfield(L, -1, "height");
-			info->height = lua_isnumber(L, -1) ? (int)lua_tointeger(L, -1) : 0;
-			lua_pop(L, 1);
+					lua_getfield(L, -1, "width");
+					info->width = lua_isnumber(L, -1) ? (int)lua_tointeger(L, -1) : 0;
+					lua_pop(L, 1);
 
-			if (screen_index >= 0 && info->width > 0 && info->height > 0) {
-				info->valid = true;
-				count++;
+					lua_getfield(L, -1, "height");
+					info->height = lua_isnumber(L, -1) ? (int)lua_tointeger(L, -1) : 0;
+					lua_pop(L, 1);
+
+					if (screen_index >= 0 && info->width > 0 && info->height > 0) {
+						info->valid = true;
+						count++;
+					}
+				}
+				lua_pop(L, 1);  /* pop value, keep key for inner iteration */
 			}
 		}
-		lua_pop(L, 1);  /* pop value, keep key for next iteration */
+		lua_pop(L, 1);  /* pop value, keep key for outer iteration */
 	}
 
-	lua_pop(L, 2);  /* pop path table and screen_info table */
+	lua_pop(L, 1);  /* pop screen_info table */
 	return count;
 }
 
-/** Clear the wallpaper path and screen Lua globals after using them */
+/** Clear all wallpaper tracking Lua globals after processing them */
 static void
 clear_wallpaper_info_in_lua(lua_State *L)
 {
-	/* Get path first so we can clear its entry from the screen info table */
-	lua_getglobal(L, "_somewm_last_wallpaper_path");
-	if (lua_isstring(L, -1)) {
-		const char *path = lua_tostring(L, -1);
-		/* Clear the screen info table entry for this path */
-		lua_getglobal(L, "_somewm_wallpaper_screen_info");
-		if (lua_istable(L, -1)) {
-			lua_pushnil(L);
-			lua_setfield(L, -2, path);
-		}
-		lua_pop(L, 1);  /* pop table */
-	}
-	lua_pop(L, 1);  /* pop path */
+	/* Replace the entire screen info table with a fresh empty table */
+	lua_newtable(L);
+	lua_setglobal(L, "_somewm_wallpaper_screen_info");
 
 	/* Clear the path global */
 	lua_pushnil(L);
@@ -1176,16 +1158,15 @@ fail:
 static bool
 root_set_wallpaper_cached(lua_State *L, cairo_pattern_t *pattern)
 {
-	const char *path = get_wallpaper_path_from_lua(L);
 	bool cache_enabled = globalconf.wallpaper_cache.next != NULL;
 	bool result = false;
 
-	/* Get ALL pending screens for this path */
+	/* Get ALL pending screens across ALL paths */
 	wallpaper_screen_info_t screen_infos[MAX_PENDING_SCREENS];
 	int screen_count = 0;
 
-	if (cache_enabled && path) {
-		screen_count = get_all_wallpaper_screen_infos_from_lua(L, path,
+	if (cache_enabled) {
+		screen_count = get_all_pending_wallpaper_infos_from_lua(L,
 			screen_infos, MAX_PENDING_SCREENS);
 	}
 
@@ -1197,7 +1178,7 @@ root_set_wallpaper_cached(lua_State *L, cairo_pattern_t *pattern)
 				continue;
 
 			/* Check if already cached */
-			wallpaper_cache_entry_t *existing = wallpaper_cache_lookup(path, info->index);
+			wallpaper_cache_entry_t *existing = wallpaper_cache_lookup(info->path, info->index);
 			if (existing) {
 				wallpaper_cache_show(existing, info->index);
 				result = true;
@@ -1205,7 +1186,7 @@ root_set_wallpaper_cached(lua_State *L, cairo_pattern_t *pattern)
 			}
 
 			/* Create new cache entry */
-			if (create_wallpaper_cache_entry(path, pattern, info))
+			if (create_wallpaper_cache_entry(info->path, pattern, info))
 				result = true;
 		}
 
