@@ -181,6 +181,7 @@ static void cursorconstrain(struct wlr_pointer_constraint_v1 *constraint);
 static void cursorframe(struct wl_listener *listener, void *data);
 static void cursorwarptohint(void);
 static void destroydecoration(struct wl_listener *listener, void *data);
+static void destroydrag(struct wl_listener *listener, void *data);
 static void destroydragicon(struct wl_listener *listener, void *data);
 static void destroyidleinhibitor(struct wl_listener *listener, void *data);
 static void destroylayersurfacenotify(struct wl_listener *listener, void *data);
@@ -2190,11 +2191,28 @@ destroydecoration(struct wl_listener *listener, void *data)
 }
 
 void
+destroydrag(struct wl_listener *listener, void *data)
+{
+	Client *c = focustop(selmon);
+
+	/* seat->drag is already NULL at this point (wlroots clears it before
+	 * emitting destroy). Re-focus so border colors are properly updated.
+	 *
+	 * focusclient() skips border color updates when the same client is
+	 * already focused (early return at surface == old check), so explicitly
+	 * apply the focus color here for the common case where the focused
+	 * client didn't change during the drag. */
+	if (c && !client_is_unmanaged(c))
+		client_set_border_color(c, get_focuscolor());
+	focusclient(c, 0);
+	motionnotify(0, NULL, 0, 0, 0, 0);
+	wl_list_remove(&listener->link);
+	free(listener);
+}
+
+void
 destroydragicon(struct wl_listener *listener, void *data)
 {
-	/* Focus enter isn't sent during drag, so refocus the focused node. */
-	focusclient(focustop(selmon), 1);
-	motionnotify(0, NULL, 0, 0, 0, 0);
 	wl_list_remove(&listener->link);
 	free(listener);
 }
@@ -5066,6 +5084,12 @@ void
 startdrag(struct wl_listener *listener, void *data)
 {
 	struct wlr_drag *drag = data;
+
+	/* Listen for drag destroy to refocus after drag ends.
+	 * wlroots clears seat->drag BEFORE emitting this signal,
+	 * so focusclient() will properly update border colors. */
+	LISTEN_STATIC(&drag->events.destroy, destroydrag);
+
 	if (!drag->icon)
 		return;
 

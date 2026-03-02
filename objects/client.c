@@ -5178,6 +5178,54 @@ luaA_client_set_xproperty(lua_State *L)
     return 0;
 }
 
+/** client:_border_is_focus_color() -> boolean
+ *
+ * Returns true if the client's rendered border color matches the
+ * compositor's focus color. Reads directly from wlr_scene_rect.
+ */
+static int
+luaA_client_border_is_focus_color(lua_State *L)
+{
+    client_t *c = luaA_checkudata(L, 1, &client_class);
+    if (!c || !c->border[0]) {
+        lua_pushboolean(L, 0);
+        return 1;
+    }
+
+    const float *focus = globalconf.appearance.focuscolor;
+    const float *actual = c->border[0]->color;
+
+    int matches = (actual[0] == focus[0] && actual[1] == focus[1] &&
+                   actual[2] == focus[2] && actual[3] == focus[3]);
+
+    lua_pushboolean(L, matches);
+    return 1;
+}
+
+/** client:_border_is_normal_color() -> boolean
+ *
+ * Returns true if the client's rendered border color matches the
+ * compositor's normal (unfocused) border color.
+ */
+static int
+luaA_client_border_is_normal_color(lua_State *L)
+{
+    client_t *c = luaA_checkudata(L, 1, &client_class);
+    if (!c || !c->border[0]) {
+        lua_pushboolean(L, 0);
+        return 1;
+    }
+
+    const float *normal = globalconf.appearance.bordercolor;
+    const float *actual = c->border[0]->color;
+
+    int matches = (actual[0] == normal[0] && actual[1] == normal[1] &&
+                   actual[2] == normal[2] && actual[3] == normal[3]);
+
+    lua_pushboolean(L, matches);
+    return 1;
+}
+
 void
 client_class_setup(lua_State *L)
 {
@@ -5214,6 +5262,8 @@ client_class_setup(lua_State *L)
         { "get_icon", luaA_client_get_some_icon },
         { "get_xproperty", luaA_client_get_xproperty },
         { "set_xproperty", luaA_client_set_xproperty },
+        { "_border_is_focus_color", luaA_client_border_is_focus_color },
+        { "_border_is_normal_color", luaA_client_border_is_normal_color },
         { NULL, NULL }
     };
 
