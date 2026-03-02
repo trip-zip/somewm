@@ -148,6 +148,31 @@ screen.connect_signal("request::wallpaper", function(s)
 end)
 -- }}}
 
+-- {{{ Tag persistence across monitor hotplug
+-- Save tag metadata when a screen is removed, restore when it reconnects.
+-- Tags are keyed by connector name (e.g. "HDMI-A-1") so they survive hotplug.
+local _saved_tags = {}
+
+tag.connect_signal("request::screen", function(t, reason)
+    if reason ~= "removed" then return end
+    local s = t.screen
+    local output_name = s and s.output and s.output.name
+    if not output_name then return end
+    if not _saved_tags[output_name] then
+        _saved_tags[output_name] = {}
+    end
+    table.insert(_saved_tags[output_name], {
+        name = t.name,
+        selected = t.selected,
+        layout = t.layout,
+        master_width_factor = t.master_width_factor,
+        master_count = t.master_count,
+        gap = t.gap,
+        clients = t:clients(),
+    })
+end)
+-- }}}
+
 -- {{{ Wibar
 
 -- Keyboard map indicator and switcher
@@ -158,8 +183,31 @@ mytextclock = wibox.widget.textclock()
 
 -- @DOC_FOR_EACH_SCREEN@
 screen.connect_signal("request::desktop_decoration", function(s)
-    -- Each screen has its own tag table.
-    awful.tag({ "1", "2", "3", "4", "5", "6", "7", "8", "9" }, s, awful.layout.layouts[1])
+    -- Restore saved tags if this output was previously removed
+    local output_name = s.output and s.output.name
+    local restore = output_name and _saved_tags[output_name]
+    if restore then
+        _saved_tags[output_name] = nil
+        for _, td in ipairs(restore) do
+            local t = awful.tag.add(td.name, {
+                screen = s,
+                layout = td.layout,
+                master_width_factor = td.master_width_factor,
+                master_count = td.master_count,
+                gap = td.gap,
+                selected = td.selected,
+            })
+            for _, c in ipairs(td.clients) do
+                if c.valid then
+                    c:move_to_screen(s)
+                    c:tags({t})
+                end
+            end
+        end
+    else
+        -- Each screen has its own tag table.
+        awful.tag({ "1", "2", "3", "4", "5", "6", "7", "8", "9" }, s, awful.layout.layouts[1])
+    end
 
     -- Create a promptbox for each screen
     s.mypromptbox = awful.widget.prompt()
