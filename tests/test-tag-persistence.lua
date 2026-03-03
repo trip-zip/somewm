@@ -36,27 +36,8 @@ print("TEST: tag-persistence: screen.count()=" .. screen.count())
 local screen2_output_name = screen[2].output.name
 print("TEST: screen 2 output name: " .. screen2_output_name)
 
--- Tag persistence handlers (mirrors somewmrc.lua logic)
-local _saved_tags = {}
-
-tag.connect_signal("request::screen", function(t, reason)
-    if reason ~= "removed" then return end
-    local s = t.screen
-    local output_name = s and s.output and s.output.name
-    if not output_name then return end
-    if not _saved_tags[output_name] then
-        _saved_tags[output_name] = {}
-    end
-    table.insert(_saved_tags[output_name], {
-        name = t.name,
-        selected = t.selected,
-        layout = t.layout,
-        master_width_factor = t.master_width_factor,
-        master_count = t.master_count,
-        gap = t.gap,
-        clients = t:clients(),
-    })
-end)
+-- The save handler is awful.permissions.tag_screen (connected automatically).
+-- This test only needs the restore handler below.
 
 -- Restore handler: fires after test rc.lua's connect_for_each_screen handler
 -- which creates a default "test" tag via the "added" signal.
@@ -64,9 +45,9 @@ end)
 -- auto-created tags with restored ones.
 screen.connect_signal("request::desktop_decoration", function(s)
     local output_name = s.output and s.output.name
-    local restore = output_name and _saved_tags[output_name]
+    local restore = output_name and awful.permissions.saved_tags[output_name]
     if not restore then return end
-    _saved_tags[output_name] = nil
+    awful.permissions.saved_tags[output_name] = nil
     -- Delete auto-created tags from test rc.lua
     for _, t in ipairs(s.tags) do
         t:delete()
@@ -165,9 +146,9 @@ local steps = {
         print("TEST:   client migrated to screen " .. my_client.screen.index)
 
         -- Saved tags should exist for the disconnected output
-        assert(_saved_tags[screen2_output_name] ~= nil,
+        assert(awful.permissions.saved_tags[screen2_output_name] ~= nil,
             "Tags should be saved for output " .. screen2_output_name)
-        print("TEST:   saved " .. #_saved_tags[screen2_output_name]
+        print("TEST:   saved " .. #awful.permissions.saved_tags[screen2_output_name]
             .. " tags for " .. screen2_output_name)
         return true
     end,
@@ -219,7 +200,7 @@ local steps = {
             "Restored tags should include original 'test' tag")
 
         -- Saved tags should be consumed
-        assert(_saved_tags[screen2_output_name] == nil,
+        assert(awful.permissions.saved_tags[screen2_output_name] == nil,
             "Saved tags should be consumed after restore")
         return true
     end,

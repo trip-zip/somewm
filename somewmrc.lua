@@ -149,28 +149,10 @@ end)
 -- }}}
 
 -- {{{ Tag persistence across monitor hotplug
--- Save tag metadata when a screen is removed, restore when it reconnects.
--- Tags are keyed by connector name (e.g. "HDMI-A-1") so they survive hotplug.
-local _saved_tags = {}
-
-tag.connect_signal("request::screen", function(t, reason)
-    if reason ~= "removed" then return end
-    local s = t.screen
-    local output_name = s and s.output and s.output.name
-    if not output_name then return end
-    if not _saved_tags[output_name] then
-        _saved_tags[output_name] = {}
-    end
-    table.insert(_saved_tags[output_name], {
-        name = t.name,
-        selected = t.selected,
-        layout = t.layout,
-        master_width_factor = t.master_width_factor,
-        master_count = t.master_count,
-        gap = t.gap,
-        clients = t:clients(),
-    })
-end)
+-- The save handler lives in awful.permissions.tag_screen and stores tag
+-- metadata into awful.permissions.saved_tags keyed by connector name.
+-- To disable or replace it:
+--   tag.disconnect_signal("request::screen", awful.permissions.tag_screen)
 -- }}}
 
 -- {{{ Wibar
@@ -185,9 +167,9 @@ mytextclock = wibox.widget.textclock()
 screen.connect_signal("request::desktop_decoration", function(s)
     -- Restore saved tags if this output was previously removed
     local output_name = s.output and s.output.name
-    local restore = output_name and _saved_tags[output_name]
+    local restore = output_name and awful.permissions.saved_tags[output_name]
     if restore then
-        _saved_tags[output_name] = nil
+        awful.permissions.saved_tags[output_name] = nil
         for _, td in ipairs(restore) do
             local t = awful.tag.add(td.name, {
                 screen = s,
