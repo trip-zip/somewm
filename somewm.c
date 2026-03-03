@@ -6538,9 +6538,9 @@ main(int argc, char *argv[])
 	int show_version = 0;
 	int c;
 
-	/* Store argv for restart capability (AwesomeWM API parity) */
-	globalconf.argc = argc;
-	globalconf.argv = argv;
+	/* Store argv for restart capability (AwesomeWM pattern: static global
+	 * separate from globalconf, so memset wipe can't clobber it). */
+	luaA_set_argv(argv);
 
 	const struct option long_options[] = {
 		{"help",    no_argument,       0, 'h'},
@@ -6623,8 +6623,9 @@ main(int argc, char *argv[])
 
 	setup();
 	run(startup_cmd);
+	int exit_code = globalconf.exit_code;
 	cleanup();
-	return EXIT_SUCCESS;
+	return exit_code;
 
 usage:
 	die("Usage: %s [-v] [-d] [--verbose] [-c config] [-L search_path] [-s startup_command] [-k config]\n"

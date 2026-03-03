@@ -109,7 +109,8 @@ print_usage(const char *progname)
 	fprintf(stderr, "SESSION:\n");
 	fprintf(stderr, "  version                        Show compositor version\n");
 	fprintf(stderr, "  reload                         Reload configuration (validates first)\n");
-	fprintf(stderr, "  restart                        Full compositor restart\n\n");
+	fprintf(stderr, "  restart                        Cold restart (via somewm-session)\n");
+	fprintf(stderr, "  rebuild                        Rebuild and restart (via somewm-session)\n\n");
 
 	fprintf(stderr, "RULES:\n");
 	fprintf(stderr, "  rule list                      List all client rules\n");

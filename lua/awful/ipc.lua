@@ -2522,14 +2522,16 @@ local function register_builtin_commands()
     end
   end)
 
-  --- restart - Full compositor restart
+  --- restart - Cold restart via exit code (somewm-session restarts compositor)
   ipc.register("restart", function()
-    if capi.awesome.restart then
-      capi.awesome.restart()
-      return "Restarting..."
-    else
-      error("Restart not supported")
-    end
+    capi.awesome.quit(1)
+    return "Restarting..."
+  end)
+
+  --- rebuild - Rebuild and restart (somewm-session rebuilds then restarts)
+  ipc.register("rebuild", function()
+    capi.awesome.quit(2)
+    return "Rebuilding..."
   end)
 
   -- =================================================================

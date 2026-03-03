@@ -82,6 +82,17 @@ lua_State *globalconf_L = NULL;
 /* Global configuration structure instance */
 awesome_t globalconf;
 
+/** argv used to run somewm (stored separately from globalconf, matching
+ * AwesomeWM's static awesome_argv pattern so memset of globalconf can't
+ * clobber it). */
+static char **somewm_argv;
+
+void
+luaA_set_argv(char **argv)
+{
+    somewm_argv = argv;
+}
+
 /* X11 atom stubs */
 xcb_atom_t WM_TAKE_FOCUS = 0;
 xcb_atom_t _NET_STARTUP_ID = 0;
@@ -369,15 +380,15 @@ awesome_atexit(bool restart)
 }
 
 /** Restart the compositor by exec'ing self.
- * Uses argv stored in globalconf at startup.
+ * Uses static somewm_argv (safe from globalconf memset wipe).
  */
 void
 awesome_restart(void)
 {
     awesome_atexit(true);
-    execvp(globalconf.argv[0], globalconf.argv);
+    execvp(somewm_argv[0], somewm_argv);
     /* If we get here, exec failed */
-    warn("restart failed: execvp(%s) failed: %s", globalconf.argv[0], strerror(errno));
+    warn("restart failed: execvp(%s) failed: %s", somewm_argv[0], strerror(errno));
 }
 
 /** awesome.exec(cmd) - Replace compositor with another program.
@@ -630,10 +641,15 @@ luaA_awesome_xrdb_get_value(lua_State *L)
 	return 1;
 }
 
-/** awesome.quit() - Quit the compositor */
+/** awesome.quit([code]) - Quit the compositor with an optional exit code.
+ * \param L The Lua VM state.
+ * \lparam code Optional exit code (default 0). Use 1 for cold restart,
+ *              2 for rebuild+restart (handled by somewm-session wrapper).
+ */
 static int
 luaA_awesome_quit(lua_State *L)
 {
+	globalconf.exit_code = luaL_optinteger(L, 1, 0);
 	some_compositor_quit();
 	return 0;
 }
