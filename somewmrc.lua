@@ -170,6 +170,8 @@ screen.connect_signal("request::desktop_decoration", function(s)
     local restore = output_name and awful.permissions.saved_tags[output_name]
     if restore then
         awful.permissions.saved_tags[output_name] = nil
+        -- Pass 1: recreate tags and build per-client tag lists
+        local client_tags = {}
         for _, td in ipairs(restore) do
             local t = awful.tag.add(td.name, {
                 screen = s,
@@ -181,10 +183,17 @@ screen.connect_signal("request::desktop_decoration", function(s)
             })
             for _, c in ipairs(td.clients) do
                 if c.valid then
-                    c:move_to_screen(s)
-                    c:tags({t})
+                    if not client_tags[c] then
+                        client_tags[c] = {}
+                    end
+                    table.insert(client_tags[c], t)
                 end
             end
+        end
+        -- Pass 2: move clients and assign full tag lists
+        for c, tags in pairs(client_tags) do
+            c:move_to_screen(s)
+            c:tags(tags)
         end
     else
         -- Each screen has its own tag table.
