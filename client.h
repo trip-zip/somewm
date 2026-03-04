@@ -149,11 +149,24 @@ client_get_appid(Client *c)
 static inline void
 client_get_clip(Client *c, struct wlr_box *clip)
 {
+	/* Clip must match the content area: geometry minus borders AND titlebars.
+	 * The surface node is positioned at (bw + tl, bw + tt) in the parent,
+	 * so clip dimensions must be the content size to prevent the surface
+	 * from bleeding past the bottom/right borders. */
+	int tl = c->fullscreen ? 0 : c->titlebar[CLIENT_TITLEBAR_LEFT].size;
+	int tt = c->fullscreen ? 0 : c->titlebar[CLIENT_TITLEBAR_TOP].size;
+	int tr = c->fullscreen ? 0 : c->titlebar[CLIENT_TITLEBAR_RIGHT].size;
+	int tb = c->fullscreen ? 0 : c->titlebar[CLIENT_TITLEBAR_BOTTOM].size;
+	int cw = c->geometry.width - 2 * c->bw - tl - tr;
+	int ch = c->geometry.height - 2 * c->bw - tt - tb;
+	if (cw < 1) cw = 1;
+	if (ch < 1) ch = 1;
+
 	*clip = (struct wlr_box){
 		.x = 0,
 		.y = 0,
-		.width = c->geometry.width - c->bw,
-		.height = c->geometry.height - c->bw,
+		.width = cw,
+		.height = ch,
 	};
 
 #ifdef XWAYLAND
@@ -361,12 +374,21 @@ client_set_size(Client *c, uint32_t width, uint32_t height)
 {
 #ifdef XWAYLAND
 	if (client_is_x11(c)) {
-		/* Skip configure if geometry unchanged (mirrors XDG check below) */
+		/* X11 position = content origin (after border + titlebars).
+		 * Configure if size OR position changed. Position-only changes
+		 * must also be sent so X11 clients know where they are — without
+		 * this, popup menus (e.g. Steam) appear at the old position. */
+		int tl = c->fullscreen ? 0 : c->titlebar[CLIENT_TITLEBAR_LEFT].size;
+		int tt = c->fullscreen ? 0 : c->titlebar[CLIENT_TITLEBAR_TOP].size;
+		int16_t cx = c->geometry.x + c->bw + tl;
+		int16_t cy = c->geometry.y + c->bw + tt;
 		if (width == c->surface.xwayland->width
-				&& height == c->surface.xwayland->height)
+				&& height == c->surface.xwayland->height
+				&& cx == c->surface.xwayland->x
+				&& cy == c->surface.xwayland->y)
 			return 0;
 		wlr_xwayland_surface_configure(c->surface.xwayland,
-				c->geometry.x + c->bw, c->geometry.y + c->bw, width, height);
+				cx, cy, width, height);
 		return 0;
 	}
 #endif

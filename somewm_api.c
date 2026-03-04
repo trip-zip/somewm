@@ -12,6 +12,11 @@
 #include <glib.h>
 #include <wlr/types/wlr_fractional_scale_v1.h>
 #include <wlr/types/wlr_seat.h>
+#include <wlr/types/wlr_keyboard_group.h>
+#include <wlr/interfaces/wlr_keyboard.h>
+#include <wlr/types/wlr_cursor.h>
+#include <wlr/types/wlr_xcursor_manager.h>
+#include <wlr/xwayland.h>
 
 #include "somewm_api.h"
 #include "xkb.h"
@@ -37,11 +42,31 @@ extern awesome_t globalconf;
  */
 extern struct wl_list mons;
 extern struct wlr_cursor *cursor;
+extern struct wlr_xcursor_manager *cursor_mgr;
+extern char *selected_root_cursor;
+#ifdef XWAYLAND
+extern struct wlr_xwayland *xwayland;
+#endif
 extern Monitor *selmon;
 extern KeyboardGroup *kb_group;
 
+/* Mirror of wlroots' private keyboard_group_device struct (wlr_keyboard_group.c).
+ * Needed to iterate member keyboards when setting layout group.
+ * Must match the exact layout of the wlroots 0.19 struct. */
+struct kb_group_device {
+	struct wlr_keyboard *keyboard;
+	struct wl_listener key;
+	struct wl_listener modifiers;
+	struct wl_listener keymap;
+	struct wl_listener repeat_info;
+	struct wl_listener destroy;
+	struct wl_list link;
+};
+
 /* Functions from somewm.c that need to be made non-static */
 extern void focusclient(Client *c, int lift);
+extern void motionnotify(uint32_t time, struct wlr_input_device *device,
+		double dx, double dy, double dx_unaccel, double dy_unaccel);
 /* setfloating() removed - Lua manages floating state */
 extern void setfullscreen(Client *c, int fullscreen);
 extern void arrange(Monitor *m);
@@ -417,12 +442,10 @@ some_set_seat_keyboard_focus(Client *c)
 	int surface_ready;
 
 	if (!c) {
-		/* NULL client = clear keyboard focus */
 		wlr_seat_keyboard_notify_clear_focus(seat);
 		return;
 	}
 
-	/* Get the client's surface */
 	surface = some_client_get_surface(c);
 	if (!surface) {
 		wlr_seat_keyboard_notify_clear_focus(seat);
@@ -430,43 +453,68 @@ some_set_seat_keyboard_focus(Client *c)
 	}
 
 	/* Check if surface is ready for keyboard input.
-	 * For native Wayland clients (XDGShell), check wlr_surface->mapped.
-	 * For XWayland clients, the wlr_surface->mapped flag is set separately from
-	 * the XWayland map event. When mapnotify() runs (triggered by XWayland map),
-	 * the surface is ready for keyboard input even if wlr_surface->mapped is false.
-	 * We check if c->scene exists as that indicates mapnotify() has processed
-	 * this client and created the scene graph for it. */
+	 * For XWayland clients, wlr_surface->mapped may be false at map time;
+	 * use c->scene (set by mapnotify) as the readiness indicator instead. */
 #ifdef XWAYLAND
-	if (c->client_type == X11) {
-		/* XWayland: surface is ready if scene has been created */
+	if (c->client_type == X11)
 		surface_ready = (c->scene != NULL);
-	} else
+	else
 #endif
-	{
-		/* Native Wayland: use standard wlr_surface->mapped check */
 		surface_ready = surface->mapped;
-	}
 
 	if (!surface_ready) {
 		/* Surface not ready - clear seat focus to prevent input going to old window.
-		 * When surface maps, mapnotify() will call focusclient() to set focus. */
+		 * When surface maps, mapnotify() will re-deliver keyboard focus. */
 		wlr_seat_keyboard_notify_clear_focus(seat);
 		return;
 	}
 
-	/* Only update if seat focus actually changed (avoid redundant updates) */
 	if (seat->keyboard_state.focused_surface == surface) {
-		return;
+#ifdef XWAYLAND
+		if (c->client_type == X11) {
+			/* KWin pattern: force focus re-delivery for X11 clients.
+			 * wlroots skips re-entry to the same surface, so we must
+			 * deactivate→clear→re-enter to deliver a new FocusIn event.
+			 * Safe because X11 clients don't use XDG popup grabs. */
+			client_activate_surface(surface, 0);
+			wlr_seat_keyboard_notify_clear_focus(seat);
+		} else
+#endif
+			/* XDG: early return — re-entering the same surface is a
+			 * no-op in wlroots, and the clear→re-enter cycle would
+			 * disrupt active popup grabs. */
+			return;
 	}
 
-	/* Update seat keyboard focus */
+#ifdef XWAYLAND
+	/* Deactivate old surface if switching away from an X11 client */
+	if (c->client_type == X11 && seat->keyboard_state.focused_surface)
+		client_activate_surface(seat->keyboard_state.focused_surface, 0);
+
+	/* Sway pattern: inform XWayland of the active seat on every focus
+	 * change to an X11 client. Required for proper keyboard delivery. */
+	if (c->client_type == X11) {
+		extern struct wlr_xwayland *xwayland;
+		wlr_xwayland_set_seat(xwayland, seat);
+	}
+#endif
 	kb = wlr_seat_get_keyboard(seat);
 	if (kb) {
 		wlr_seat_keyboard_notify_enter(seat, surface,
 		                               kb->keycodes,
 		                               kb->num_keycodes,
 		                               &kb->modifiers);
+	} else {
+		/* Send keyboard enter even without a keyboard device (Sway pattern).
+		 * Needed for XWayland clients that may lack a keyboard device. */
+		wlr_seat_keyboard_notify_enter(seat, surface, NULL, 0, NULL);
 	}
+#ifdef XWAYLAND
+	/* Activate X11 surface after keyboard enter — sends FocusIn event.
+	 * Safe because X11 clients use X11 popup mechanisms, not XDG grabs. */
+	if (c->client_type == X11)
+		client_activate_surface(surface, 1);
+#endif
 }
 
 /** Find the Client* that owns a given wlr_surface.
@@ -521,6 +569,65 @@ struct wlr_cursor *
 some_get_cursor(void)
 {
 	return cursor;
+}
+
+/*
+ * Cursor Theme API
+ */
+
+const char *
+some_get_cursor_theme(void)
+{
+	return cursor_mgr->name ? cursor_mgr->name : "default";
+}
+
+uint32_t
+some_get_cursor_size(void)
+{
+	return cursor_mgr->size;
+}
+
+void
+some_update_cursor_theme(const char *theme_name, uint32_t size)
+{
+	Monitor *m;
+	char *theme_copy = NULL;
+
+	/* Copy theme name before destroying old manager (it may own the string) */
+	if (theme_name) {
+		theme_copy = strdup(theme_name);
+	}
+
+	/* Destroy old manager */
+	wlr_xcursor_manager_destroy(cursor_mgr);
+
+	/* Create new manager with specified theme/size */
+	cursor_mgr = wlr_xcursor_manager_create(theme_copy, size);
+
+	free(theme_copy);
+
+	/* Reload cursor theme for each monitor's scale */
+	wl_list_for_each(m, &mons, link) {
+		wlr_xcursor_manager_load(cursor_mgr, m->wlr_output->scale);
+	}
+
+	/* Update displayed cursor - fall back to "default" if current cursor doesn't exist in new theme */
+	const char *cursor_name = selected_root_cursor ? selected_root_cursor : "default";
+	if (wlr_xcursor_manager_get_xcursor(cursor_mgr, cursor_name, 1.0) == NULL) {
+		cursor_name = "default";
+	}
+	wlr_cursor_set_xcursor(cursor, cursor_mgr, cursor_name);
+
+#ifdef XWAYLAND
+	/* Sync XWayland cursor if running */
+	struct wlr_xcursor *xcursor = wlr_xcursor_manager_get_xcursor(cursor_mgr, "default", 1);
+	if (xcursor && xwayland) {
+		wlr_xwayland_set_cursor(xwayland,
+			xcursor->images[0]->buffer, xcursor->images[0]->width * 4,
+			xcursor->images[0]->width, xcursor->images[0]->height,
+			xcursor->images[0]->hotspot_x, xcursor->images[0]->hotspot_y);
+	}
+#endif
 }
 
 struct wl_list *
@@ -1319,6 +1426,20 @@ some_set_cursor_position(double x, double y, int silent)
 }
 
 /*
+ * Inject a fake relative pointer motion through the full compositor path.
+ * Unlike raw wlr_cursor_move(), this calls motionnotify() which handles
+ * selmon tracking, pointer focus, Lua signals, and constraint processing.
+ */
+void
+some_fake_motion(double dx, double dy)
+{
+	struct timespec ts;
+	clock_gettime(CLOCK_MONOTONIC, &ts);
+	uint32_t time = (uint32_t)(ts.tv_sec * 1000 + ts.tv_nsec / 1000000);
+	motionnotify(time, NULL, dx, dy, dx, dy);
+}
+
+/*
  * Get mouse button states
  * Returns pressed state for buttons 1-5 (left, middle, right, side1, side2)
  * Button mapping: BTN_LEFT=1, BTN_MIDDLE=2, BTN_RIGHT=3, BTN_SIDE=4, BTN_EXTRA=5
@@ -1461,91 +1582,177 @@ some_xkb_get_keymap(void)
 	return kb_group->wlr_group->keyboard.keymap;
 }
 
-/* Set the keyboard layout group
- * In Wayland, we update the xkb_state directly and notify clients.
- * Returns 1 on success, 0 on failure
+/* Set the keyboard layout group.
+ *
+ * Strategy: use wlr_keyboard_notify_modifiers() on member keyboards.
+ * This is the same path wlroots uses internally for grp:alt_shift_toggle.
+ * It properly updates the member's xkb_state, syncs modifiers, and
+ * propagates through handle_keyboard_modifiers() to the group keyboard,
+ * which then reaches somewm's keypressmod() and the client.
+ *
+ * Previous approach (manual xkb_state_update_mask + struct patching)
+ * failed because wlr_keyboard_notify_key() on the member would later
+ * call keyboard_modifier_update() which re-serialized from xkb_state,
+ * and the member's xkb_state could drift out of sync.
+ *
+ * Returns 1 on success, 0 on failure.
  */
 int
 some_xkb_set_layout_group(xkb_layout_index_t group)
 {
-	struct xkb_state *xkb_state;
-	struct xkb_keymap *keymap;
-	xkb_layout_index_t num_layouts;
-	xkb_mod_mask_t depressed, latched, locked;
-	xkb_layout_index_t old_group;
-
 	if (!kb_group || !kb_group->wlr_group)
 		return 0;
 
-	xkb_state = kb_group->wlr_group->keyboard.xkb_state;
-	keymap = kb_group->wlr_group->keyboard.keymap;
+	struct wlr_keyboard *kbd = &kb_group->wlr_group->keyboard;
 
-	if (!xkb_state || !keymap)
+	if (!kbd->xkb_state || !kbd->keymap)
 		return 0;
 
 	/* Validate group index */
-	num_layouts = xkb_keymap_num_layouts(keymap);
+	xkb_layout_index_t num_layouts = xkb_keymap_num_layouts(kbd->keymap);
 	if (group >= num_layouts)
 		return 0;
 
-	/* Get current modifier state (preserve it while changing layout) */
-	depressed = xkb_state_serialize_mods(xkb_state, XKB_STATE_MODS_DEPRESSED);
-	latched = xkb_state_serialize_mods(xkb_state, XKB_STATE_MODS_LATCHED);
-	locked = xkb_state_serialize_mods(xkb_state, XKB_STATE_MODS_LOCKED);
+	xkb_layout_index_t old_group = xkb_state_serialize_layout(
+		kbd->xkb_state, XKB_STATE_LAYOUT_EFFECTIVE);
 
-	/* Get current group for comparison */
-	old_group = xkb_state_serialize_layout(xkb_state, XKB_STATE_LAYOUT_EFFECTIVE);
+	if (old_group == group)
+		return 1; /* Already at requested group */
 
-	/* Update xkb_state with new layout group (locked layout) */
-	xkb_state_update_mask(xkb_state,
-		depressed, latched, locked,  /* preserve modifiers */
-		0,      /* depressed_layout */
-		0,      /* latched_layout */
-		group); /* locked_layout = new layout */
+	/* Sway pattern: call wlr_keyboard_notify_modifiers() on each member.
+	 * This updates the member's xkb_state via xkb_state_update_mask(),
+	 * syncs the modifiers struct, and emits the modifiers signal.
+	 * wlroots' handle_keyboard_modifiers() then propagates to the group
+	 * keyboard, which fires keypressmod() → client notification. */
+	int member_count = 0;
+	struct kb_group_device *dev;
+	wl_list_for_each(dev, &kb_group->wlr_group->devices, link) {
+		struct wlr_keyboard *member = dev->keyboard;
+		if (member->xkb_state) {
+			wlr_keyboard_notify_modifiers(member,
+				xkb_state_serialize_mods(member->xkb_state, XKB_STATE_MODS_DEPRESSED),
+				xkb_state_serialize_mods(member->xkb_state, XKB_STATE_MODS_LATCHED),
+				xkb_state_serialize_mods(member->xkb_state, XKB_STATE_MODS_LOCKED),
+				group);
+			member_count++;
+		}
+	}
 
-	/* Notify clients of modifier change (which includes layout) */
-	wlr_seat_keyboard_notify_modifiers(seat,
-		&kb_group->wlr_group->keyboard.modifiers);
+	/* Fallback: update group keyboard directly if no members */
+	if (member_count == 0) {
+		wlr_keyboard_notify_modifiers(kbd,
+			xkb_state_serialize_mods(kbd->xkb_state, XKB_STATE_MODS_DEPRESSED),
+			xkb_state_serialize_mods(kbd->xkb_state, XKB_STATE_MODS_LATCHED),
+			xkb_state_serialize_mods(kbd->xkb_state, XKB_STATE_MODS_LOCKED),
+			group);
+	}
 
-	/* Emit signal if layout actually changed */
-	if (old_group != group) {
-		globalconf.xkb.last_group = group;
+	/* Client notification happens via keypressmod() — the wlroots cascade
+	 * above triggers the group keyboard's modifiers signal, which fires
+	 * keypressmod() → wlr_seat_keyboard_notify_modifiers(). */
+
+	/* Emit Lua signal if layout actually changed */
+	xkb_layout_index_t new_group = xkb_state_serialize_layout(
+		kbd->xkb_state, XKB_STATE_LAYOUT_EFFECTIVE);
+	if (old_group != new_group) {
+		globalconf.xkb.last_group = new_group;
 		xkb_schedule_group_changed();
 	}
 
 	return 1;
 }
 
-/* Get the XKB group names/symbols string
- * Returns a static buffer with format like "pc+English (US)+Russian"
+/* Get the XKB group names/symbols string.
+ * Returns a static buffer with format like "pc+us+cz(qwerty):2+grp:alt_shift_toggle".
+ * Uses RMLVO short codes (e.g. "us", "cz") so the keyboardlayout widget
+ * can look them up in its xkeyboard_country_code table.
  */
 const char *
 some_xkb_get_group_names(void)
 {
 	static char symbols_buffer[512];
-	struct xkb_keymap *keymap;
-	xkb_layout_index_t num_layouts, i;
 	size_t offset = 0;
 
 	if (!kb_group || !kb_group->wlr_group)
 		return NULL;
 
-	keymap = kb_group->wlr_group->keyboard.keymap;
-	if (!keymap)
+	if (!kb_group->wlr_group->keyboard.keymap)
 		return NULL;
 
-	/* Build symbols string from keymap layout names */
-	num_layouts = xkb_keymap_num_layouts(keymap);
-
-	/* Start with "pc+" prefix (matches XKB convention) */
+	/* Start with "pc" prefix (matches XKB convention) */
 	offset = snprintf(symbols_buffer, sizeof(symbols_buffer), "pc");
 
-	for (i = 0; i < num_layouts && offset < sizeof(symbols_buffer) - 1; i++) {
-		const char *name = xkb_keymap_layout_get_name(keymap, i);
-		if (name) {
-			offset += snprintf(symbols_buffer + offset,
-			                   sizeof(symbols_buffer) - offset,
-			                   "+%s", name);
+	const char *layout_str = globalconf.keyboard.xkb_layout;
+	const char *variant_str = globalconf.keyboard.xkb_variant;
+
+	if (layout_str && *layout_str) {
+		/* Build from RMLVO components: short codes that the widget expects.
+		 * Layout string is comma-separated, e.g. "us,cz"
+		 * Variant string is comma-separated, e.g. ",qwerty" (empty = no variant) */
+		char layout_buf[256], variant_buf[256];
+		char *layouts[32], *variants[32];
+		int nlayouts = 0, nvariants = 0;
+		char *p, *comma;
+
+		snprintf(layout_buf, sizeof(layout_buf), "%s", layout_str);
+		snprintf(variant_buf, sizeof(variant_buf), "%s",
+		         variant_str ? variant_str : "");
+
+		/* Split layouts by comma */
+		p = layout_buf;
+		while (nlayouts < 32) {
+			layouts[nlayouts++] = p;
+			comma = strchr(p, ',');
+			if (!comma) break;
+			*comma = '\0';
+			p = comma + 1;
+		}
+
+		/* Split variants by comma (preserving empty fields) */
+		p = variant_buf;
+		while (nvariants < 32) {
+			variants[nvariants++] = p;
+			comma = strchr(p, ',');
+			if (!comma) break;
+			*comma = '\0';
+			p = comma + 1;
+		}
+
+		for (int i = 0; i < nlayouts && offset < sizeof(symbols_buffer) - 1; i++) {
+			const char *variant = (i < nvariants) ? variants[i] : "";
+			int has_variant = variant && *variant;
+			int group_idx = i + 1;
+
+			if (has_variant && i > 0)
+				offset += snprintf(symbols_buffer + offset,
+				                   sizeof(symbols_buffer) - offset,
+				                   "+%s(%s):%d", layouts[i], variant, group_idx);
+			else if (has_variant)
+				offset += snprintf(symbols_buffer + offset,
+				                   sizeof(symbols_buffer) - offset,
+				                   "+%s(%s)", layouts[i], variant);
+			else if (i > 0)
+				offset += snprintf(symbols_buffer + offset,
+				                   sizeof(symbols_buffer) - offset,
+				                   "+%s:%d", layouts[i], group_idx);
+			else
+				offset += snprintf(symbols_buffer + offset,
+				                   sizeof(symbols_buffer) - offset,
+				                   "+%s", layouts[i]);
+		}
+	} else {
+		/* No RMLVO layout configured - fall back to keymap layout names */
+		struct xkb_keymap *keymap = kb_group->wlr_group->keyboard.keymap;
+		xkb_layout_index_t num_layouts = xkb_keymap_num_layouts(keymap);
+
+		for (xkb_layout_index_t i = 0; i < num_layouts &&
+		     offset < sizeof(symbols_buffer) - 1; i++) {
+			const char *name = xkb_keymap_layout_get_name(keymap, i);
+			if (name) {
+				offset += snprintf(symbols_buffer + offset,
+				                   sizeof(symbols_buffer) - offset,
+				                   "+%s", name);
+			}
 		}
 	}
 
@@ -1587,11 +1794,94 @@ some_rebuild_keyboard_keymap(void)
 	                                   XKB_KEYMAP_COMPILE_NO_FLAGS);
 	if (keymap) {
 		wlr_keyboard_set_keymap(&kb_group->wlr_group->keyboard, keymap);
+
+		/* Sync keymap to member keyboards. Without this, members keep
+		 * their original single-layout keymap and can't switch groups. */
+		struct kb_group_device *dev;
+		wl_list_for_each(dev, &kb_group->wlr_group->devices, link) {
+			if (dev->keyboard->keymap != keymap) {
+				wlr_keyboard_set_keymap(dev->keyboard, keymap);
+			}
+		}
+
 		xkb_keymap_unref(keymap);
 		xkb_schedule_map_changed();
 	}
 
 	xkb_context_unref(context);
+}
+
+/* Enable or disable NumLock by toggling the Mod2 locked modifier.
+ * This is the Sway pattern: after keymap creation, use
+ * wlr_keyboard_notify_modifiers() to set the locked modifier state. */
+void
+some_set_numlock(int enabled)
+{
+	struct wlr_keyboard *kbd;
+	xkb_mod_index_t mod2_idx;
+	xkb_mod_mask_t locked_mods;
+
+	if (!kb_group || !kb_group->wlr_group)
+		return;
+
+	kbd = &kb_group->wlr_group->keyboard;
+	if (!kbd->keymap || !kbd->xkb_state)
+		return;
+
+	mod2_idx = xkb_keymap_mod_get_index(kbd->keymap, XKB_MOD_NAME_NUM);
+	if (mod2_idx == XKB_MOD_INVALID)
+		return;
+
+	locked_mods = xkb_state_serialize_mods(kbd->xkb_state,
+		XKB_STATE_MODS_LOCKED);
+
+	if (enabled)
+		locked_mods |= (1u << mod2_idx);
+	else
+		locked_mods &= ~(1u << mod2_idx);
+
+	/* Apply to member keyboards (Sway pattern) */
+	struct kb_group_device *dev;
+	int member_count = 0;
+	wl_list_for_each(dev, &kb_group->wlr_group->devices, link) {
+		struct wlr_keyboard *member = dev->keyboard;
+		if (member->xkb_state) {
+			xkb_layout_index_t group = xkb_state_serialize_layout(
+				member->xkb_state, XKB_STATE_LAYOUT_EFFECTIVE);
+			wlr_keyboard_notify_modifiers(member,
+				xkb_state_serialize_mods(member->xkb_state,
+					XKB_STATE_MODS_DEPRESSED),
+				xkb_state_serialize_mods(member->xkb_state,
+					XKB_STATE_MODS_LATCHED),
+				locked_mods, group);
+			member_count++;
+		}
+	}
+
+	/* Fallback: update group keyboard directly if no members */
+	if (member_count == 0) {
+		xkb_layout_index_t group = xkb_state_serialize_layout(
+			kbd->xkb_state, XKB_STATE_LAYOUT_EFFECTIVE);
+		wlr_keyboard_notify_modifiers(kbd,
+			xkb_state_serialize_mods(kbd->xkb_state,
+				XKB_STATE_MODS_DEPRESSED),
+			xkb_state_serialize_mods(kbd->xkb_state,
+				XKB_STATE_MODS_LATCHED),
+			locked_mods, group);
+	}
+
+	wlr_log(WLR_INFO, "[KEYBOARD] NumLock %s", enabled ? "ON" : "OFF");
+}
+
+/* Apply keyboard repeat info from current globalconf settings */
+void
+some_apply_keyboard_repeat_info(void)
+{
+	if (!kb_group || !kb_group->wlr_group)
+		return;
+
+	wlr_keyboard_set_repeat_info(&kb_group->wlr_group->keyboard,
+		globalconf.keyboard.repeat_rate, globalconf.keyboard.repeat_delay);
 }
 
 /*

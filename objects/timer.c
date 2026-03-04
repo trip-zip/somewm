@@ -162,13 +162,13 @@ luaA_timer_is_started(lua_State *L)
 }
 
 /* Timer methods */
-static const luaL_Reg timer_methods[] = {
+const luaL_Reg timer_methods[] = {
 	{ "new", luaA_timer_new },
 	{ NULL, NULL }
 };
 
 /* Timer metamethods */
-static const luaL_Reg timer_meta[] = {
+const luaL_Reg timer_meta[] = {
 	{ "start", luaA_timer_start },
 	{ "stop", luaA_timer_stop },
 	{ "is_started", luaA_timer_is_started },

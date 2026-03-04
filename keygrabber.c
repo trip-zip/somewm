@@ -57,9 +57,10 @@ keygrabber_grab(void)
  * \return True if the input buffer is control character.
  */
 static bool
-is_control(char *buf)
+is_control(const char *buf)
 {
-    return (buf[0] >= 0 && buf[0] < 0x20) || buf[0] == 0x7f;
+    unsigned char c = (unsigned char)buf[0];
+    return c < 0x20 || c == 0x7f;
 }
 
 /** Handle keypress event.

@@ -78,6 +78,9 @@
     static inline void pfx##_array_grow(pfx##_array_t *arr, int newlen) {   \
         p_grow(&arr->tab, newlen, &arr->size);                              \
     }                                                                       \
+    static inline void pfx##_array_growx(pfx##_array_t *arr, int newlen) {  \
+        p_growx(&arr->tab, newlen, &arr->size);                             \
+    }                                                                       \
     static inline void                                                      \
     pfx##_array_splice(pfx##_array_t *arr, int pos, int len,                \
                        type_t items[], int count)                           \
@@ -86,11 +89,13 @@
         assert (pos <= arr->len && pos + len <= arr->len);                  \
         if (len != count) {                                                 \
             pfx##_array_grow(arr, arr->len + count - len);                  \
-            memmove(arr->tab + pos + count, arr->tab + pos + len,           \
-                    (arr->len - pos - len) * sizeof(*items));               \
+            if (arr->len - pos - len > 0)                                   \
+                memmove(arr->tab + pos + count, arr->tab + pos + len,       \
+                        (arr->len - pos - len) * sizeof(*items));           \
             arr->len += count - len;                                        \
         }                                                                   \
-        memcpy(arr->tab + pos, items, count * sizeof(*items));              \
+        if (items && count > 0)                                             \
+            memcpy(arr->tab + pos, items, count * sizeof(*items));              \
     }                                                                       \
     static inline type_t pfx##_array_take(pfx##_array_t *arr, int pos) {    \
         type_t res = arr->tab[pos];                                         \
@@ -115,7 +120,9 @@
         pfx##_array_splice(arr, 0, 0, &e, 1);                               \
     }                                                                       \
     static inline void pfx##_array_append(pfx##_array_t *arr, type_t e) {   \
-        pfx##_array_splice(arr, arr->len, 0, &e, 1);                        \
+        pfx##_array_grow(arr, arr->len + 1);                                \
+        arr->tab[arr->len] = e;                                             \
+        arr->len++;                                                         \
     }                                                                       \
 
 /** Binary ordered array functions */
@@ -138,9 +145,19 @@
         }                                                                   \
         pfx##_array_splice(arr, r, 0, &e, 1);                               \
     }                                                                       \
+    static inline void                                                      \
+    pfx##_array_inserts(pfx##_array_t *arr, type_t items[], int count)      \
+    {                                                                       \
+        pfx##_array_growx(arr, arr->len + count);                           \
+        memcpy(arr->tab + arr->len, items, count * sizeof(*items));         \
+        arr->len += count;                                                  \
+        qsort(arr->tab, arr->len, sizeof(*items), cmp);                    \
+    }                                                                       \
     static inline type_t *                                                  \
     pfx##_array_lookup(pfx##_array_t *arr, type_t *e)                       \
     {                                                                       \
+        if (!arr->tab || arr->len == 0)                                     \
+            return NULL;                                                    \
         return bsearch(e, arr->tab, arr->len, sizeof(type_t), cmp);         \
     }
 

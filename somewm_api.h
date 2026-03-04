@@ -50,6 +50,7 @@ Client *some_client_get_transient_for(Client *c);
 
 /* Focus synchronization API - internal use */
 void some_set_seat_keyboard_focus(Client *c);
+void some_update_pointer_constraint(struct wlr_surface *surface);
 Client *some_client_from_surface(struct wlr_surface *surface);
 
 /* Window state properties */
@@ -173,12 +174,21 @@ struct wlr_seat *some_get_seat(void);
 int some_has_exclusive_focus(void);
 struct wlr_cursor *some_get_cursor(void);
 struct wl_list *some_get_keyboard_groups(void);
+
+/*
+ * Cursor Theme API
+ * Runtime cursor theme and size configuration
+ */
+const char *some_get_cursor_theme(void);
+uint32_t some_get_cursor_size(void);
+void some_update_cursor_theme(const char *theme_name, uint32_t size);
 void some_get_cursor_position(double *x, double *y);
 void some_set_cursor_position(double x, double y, int silent);
 void some_get_button_states(int states[5]);
 Client *some_object_under_cursor(void);
 drawin_t *some_drawin_under_cursor(void);
 void some_warp_cursor_to_monitor(Monitor *m);
+void some_fake_motion(double dx, double dy);
 void some_client_start_move(void);
 void some_client_start_resize(void);
 void some_client_togglefloating(void);
@@ -205,6 +215,8 @@ struct xkb_keymap *some_xkb_get_keymap(void);
 int some_xkb_set_layout_group(xkb_layout_index_t group);
 const char *some_xkb_get_group_names(void);
 void some_rebuild_keyboard_keymap(void);
+void some_apply_keyboard_repeat_info(void);
+void some_set_numlock(int enabled);
 
 /*
  * Input Device Configuration API
@@ -218,5 +230,10 @@ void apply_input_settings_to_all_devices(void);
  */
 void layer_surface_grant_keyboard(LayerSurface *ls);
 void layer_surface_revoke_keyboard(LayerSurface *ls);
+
+/*
+ * Test helpers — headless output hotplug simulation
+ */
+const char *some_test_add_output(unsigned int width, unsigned int height);
 
 #endif /* SOMEWM_API_H */

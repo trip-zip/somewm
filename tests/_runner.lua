@@ -5,7 +5,26 @@ local runner = {
     quit_awesome_on_error = os.getenv('TEST_PAUSE_ON_ERRORS') ~= '1',
 }
 
+-- Async module for coroutine-based tests (loaded lazily)
+local async = nil
+
 local verbose = os.getenv('VERBOSE') == '1'
+
+-- Persistent mode: don't quit compositor after test
+-- Set by shell script or test harness
+local persistent_mode = false
+
+--- Enable persistent mode (don't quit after test completion).
+-- Call this before running tests in persistent mode.
+function runner.set_persistent(enabled)
+    persistent_mode = enabled
+end
+
+--- Check if running in persistent mode.
+-- @treturn boolean True if persistent mode is enabled
+function runner.is_persistent()
+    return persistent_mode
+end
 
 -- Was the runner started already?
 local running = false
@@ -57,23 +76,45 @@ function runner.done(message)
         io.stderr:write(string.format(
             "NOTE: there were %d clients left after the test.\n", client_count))
 
-        -- Remove any clients.
-        for _,c in ipairs(client.get()) do
-            c:kill()
+        -- Remove any clients (unless in persistent mode where _state.reset handles this)
+        if not persistent_mode then
+            for _,c in ipairs(client.get()) do
+                c:kill()
+            end
         end
     end
 
     if not message then
         io.stderr:write("Test finished successfully.\n")
     end
+
+    -- In persistent mode, don't quit - just reset the running flag
+    if persistent_mode then
+        running = false
+        return
+    end
+
     awesome.quit()
 end
 
 --- This function is called to indicate that a test does not use the run_steps()
 -- facility, but instead runs something else directly.
 function runner.run_direct()
+    -- In persistent mode, reset running flag to allow multiple tests
+    if persistent_mode and running then
+        running = false
+    end
     assert(not running, "API abuse: Test was started twice")
     running = true
+end
+
+--- Reset runner state for a new test (used in persistent mode).
+-- This is called by state.reset() to prepare for the next test.
+function runner.reset_state()
+    running = false
+    if async then
+        async._set_coroutine(nil)
+    end
 end
 
 --- Start some step-wise tests. The given steps are called in order until all
@@ -151,6 +192,57 @@ function runner.run_steps(steps, options)
         end
     end) end)
     t:start()
+end
+
+--- Run a test using async/coroutine style.
+-- This provides a cleaner API than run_steps() for tests that need
+-- to wait for events. The test function runs as a coroutine and can
+-- use async.wait_for_* functions to yield until events occur.
+--
+-- @tparam function test_fn The test function to run
+-- @tparam[opt] table options Options table
+-- @tparam[opt=true] boolean options.kill_clients Kill all clients after test
+-- @usage
+--     runner.run_async(function()
+--         test_client("myapp")
+--         local c = async.wait_for_client("myapp", 5)
+--         assert(c, "Client did not appear")
+--         runner.done()
+--     end)
+function runner.run_async(test_fn, options)
+    options = gtable.crush({
+        kill_clients = true,
+    }, options or {})
+
+    runner.run_direct()
+
+    -- Load async module if not already loaded
+    if not async then
+        async = require("_async")
+    end
+
+    -- Wrap test function to handle completion
+    local wrapped = function()
+        local success, err = xpcall(test_fn, debug.traceback)
+        if not success then
+            runner.done("Test error: " .. tostring(err))
+        end
+        -- Note: test_fn should call runner.done() on success
+    end
+
+    -- Create coroutine for the test
+    local co = coroutine.create(wrapped)
+
+    -- Register with async module so wait_for_* functions can resume it
+    async._set_coroutine(co)
+
+    -- Start the coroutine (uses delayed_call to ensure event loop is running)
+    timer.delayed_call(function()
+        local ok, err = coroutine.resume(co)
+        if not ok then
+            runner.done("Failed to start test: " .. tostring(err))
+        end
+    end)
 end
 
 return runner

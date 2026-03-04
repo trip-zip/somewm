@@ -2190,6 +2190,7 @@ local function register_builtin_commands()
     tap_to_click = { type = "int", desc = "Enable tap-to-click (0=off, 1=on, -1=default)" },
     tap_and_drag = { type = "int", desc = "Enable tap-and-drag (0=off, 1=on, -1=default)" },
     drag_lock = { type = "int", desc = "Enable drag lock (0=off, 1=on, -1=default)" },
+    tap_3fg_drag = { type = "int", desc = "Enable three-finger drag (0=off, 1=on, -1=default)" },
     natural_scrolling = { type = "int", desc = "Enable natural scrolling (0=off, 1=on, -1=default)" },
     disable_while_typing = { type = "int", desc = "Disable touchpad while typing (0=off, 1=on, -1=default)" },
     left_handed = { type = "int", desc = "Left-handed mode (0=off, 1=on, -1=default)" },

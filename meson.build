@@ -51,6 +51,9 @@ wayland_server = dependency('wayland-server')
 wayland_protocols = dependency('wayland-protocols')
 xkbcommon = dependency('xkbcommon')
 libinput = dependency('libinput')
+# Check for 3-finger drag support (libinput 1.27+)
+have_3fg_drag = cc.has_function('libinput_device_config_3fg_drag_get_finger_count',
+                                 dependencies: libinput)
 libdrm = dependency('libdrm')
 dbus = dependency('dbus-1')
 glib = dependency('glib-2.0')
@@ -118,7 +121,7 @@ message('Found LGI version: ' + lgi_version)
 
 # wlroots 0.19 only - use system if available, otherwise build from subproject
 # We only support 0.19+ due to Xwayland bugs in earlier versions
-wlroots = dependency('wlroots-0.19', required: false)
+wlroots = dependency('wlroots-0.19', static: false, required: false)
 
 if not wlroots.found()
   message('System wlroots 0.19 not found, building from subproject...')
@@ -183,6 +186,38 @@ foreach p : protocols
   )
 endforeach
 
+# Client protocol headers for test utilities
+wayland_client = dependency('wayland-client')
+
+layer_shell_client_header = custom_target(
+  'wlr-layer-shell-unstable-v1-client-protocol.h',
+  input: 'protocols/wlr-layer-shell-unstable-v1.xml',
+  output: 'wlr-layer-shell-unstable-v1-client-protocol.h',
+  command: [wayland_scanner, 'client-header', '@INPUT@', '@OUTPUT@'],
+)
+
+layer_shell_client_code = custom_target(
+  'wlr-layer-shell-unstable-v1-client-protocol.c',
+  input: 'protocols/wlr-layer-shell-unstable-v1.xml',
+  output: 'wlr-layer-shell-unstable-v1-client-protocol.c',
+  command: [wayland_scanner, 'private-code', '@INPUT@', '@OUTPUT@'],
+)
+
+# xdg-shell client protocol (header + code) for test clients
+xdg_shell_client_header = custom_target(
+  'xdg-shell-client-protocol.h',
+  input: wayland_protocols_dir / 'stable/xdg-shell/xdg-shell.xml',
+  output: 'xdg-shell-client-protocol.h',
+  command: [wayland_scanner, 'client-header', '@INPUT@', '@OUTPUT@'],
+)
+
+xdg_shell_client_code = custom_target(
+  'xdg-shell-client-protocol.c',
+  input: wayland_protocols_dir / 'stable/xdg-shell/xdg-shell.xml',
+  output: 'xdg-shell-client-protocol.c',
+  command: [wayland_scanner, 'private-code', '@INPUT@', '@OUTPUT@'],
+)
+
 # ==============================================================================
 # Compiler Flags
 # ==============================================================================
@@ -205,6 +240,10 @@ add_project_arguments('-DWLR_VERSION_0_19', language: 'c')
 
 if have_xwayland
   add_project_arguments('-DXWAYLAND', language: 'c')
+endif
+
+if have_3fg_drag
+  add_project_arguments('-DHAVE_LIBINPUT_3FG_DRAG', language: 'c')
 endif
 
 # Development flags
@@ -244,6 +283,7 @@ somewm_sources = [
   'spawn.c',
   'keygrabber.c',
   'mousegrabber.c',
+  'gesture.c',
   'selection.c',
   # Common
   'common/luaclass.c',
@@ -256,6 +296,7 @@ somewm_sources = [
   'objects/tag.c',
   'objects/client.c',
   'objects/screen.c',
+  'objects/output.c',
   'objects/drawable.c',
   'objects/drawin.c',
   'objects/layer_surface.c',
@@ -311,6 +352,24 @@ somewm_client = executable(
   'somewm-client',
   'somewm-client.c',
   install: true,
+)
+
+# Test layer-shell client for deterministic integration tests
+test_layer_client = executable(
+  'test-layer-client',
+  ['tests/test-layer-client.c', layer_shell_client_code, xdg_shell_client_code],
+  layer_shell_client_header,
+  dependencies: [wayland_client],
+  install: false,
+)
+
+# Test XDG transient client for stacking regression tests (issue #276)
+test_transient_client = executable(
+  'test-transient-client',
+  ['tests/test-transient-client.c', xdg_shell_client_code],
+  xdg_shell_client_header,
+  dependencies: [wayland_client],
+  install: false,
 )
 
 # ==============================================================================

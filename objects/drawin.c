@@ -63,6 +63,20 @@ extern void screen_update_workarea(screen_t *screen);
 /* Forward declaration for drawable refresh callback */
 static void drawin_refresh_drawable(drawin_t *drawin);
 
+/** Get the effective scale for a drawin's drawable surface.
+ * Returns scale_override if set (>0), otherwise the output scale.
+ * Used by drawable_get_scale() and direct scale queries in drawin.c.
+ */
+static float
+drawin_get_effective_scale(drawin_t *d)
+{
+	if (d->scale_override > 0.0f)
+		return d->scale_override;
+	if (d->screen && d->screen->monitor && d->screen->monitor->wlr_output)
+		return d->screen->monitor->wlr_output->scale;
+	return 1.0f;
+}
+
 /* ========================================================================
  * Border Buffer Implementation (for shaped borders)
  * ========================================================================
@@ -912,13 +926,16 @@ drawin_wipe(drawin_t *w)
 		w->shape_border = NULL;
 	}
 
-	/* Cleanup shadow cache reference.
-	 * Shadow scene nodes are children of scene_tree and will be destroyed with it.
-	 * We only need to release our cache reference. */
-	if (w->shadow.cache) {
-		shadow_cache_put(w->shadow.cache);
-		w->shadow.cache = NULL;
+	/* Shadow scene nodes are children of scene_tree and destroyed with it.
+	 * We own the texture buffers though and must free them. */
+	for (int i = 0; i < SHADOW_TEXTURE_COUNT; i++) {
+		if (w->shadow.textures[i]) {
+			wlr_buffer_drop(w->shadow.textures[i]);
+			w->shadow.textures[i] = NULL;
+		}
 	}
+	w->shadow.tree = NULL;
+	memset(w->shadow.slice, 0, sizeof(w->shadow.slice));
 	if (w->shadow_config) {
 		free(w->shadow_config);
 		w->shadow_config = NULL;
@@ -1154,6 +1171,19 @@ static int
 luaA_drawin_get_cursor(lua_State *L, drawin_t *drawin)
 {
 	lua_pushstring(L, drawin->cursor);
+	return 1;
+}
+
+/** drawin.surface_scale - Get surface scale override (somewm extension).
+ * Returns the override value, or 0 (auto) if not set.
+ * \param L The Lua VM state.
+ * \param drawin The drawin object.
+ * \return The number of elements pushed on stack.
+ */
+static int
+luaA_drawin_get_surface_scale(lua_State *L, drawin_t *drawin)
+{
+	lua_pushnumber(L, drawin->scale_override);
 	return 1;
 }
 
@@ -1456,13 +1486,9 @@ drawin_moveresize(lua_State *L, int udx, int x, int y, int width, int height)
 
 			/* Create new surface if we have valid dimensions */
 			if (drawin->width > 0 && drawin->height > 0) {
-				/* Get scale for HiDPI support - use actual output scale.
+				/* Get scale for HiDPI support.
 				 * Use floorf to match what Cairo will actually draw with device_scale. */
-				float scale = 1.0f;
-				if (drawin->screen && drawin->screen->monitor &&
-				    drawin->screen->monitor->wlr_output) {
-					scale = drawin->screen->monitor->wlr_output->scale;
-				}
+				float scale = drawin_get_effective_scale(drawin);
 				int scaled_width = (int)floorf(drawin->width * scale);
 				int scaled_height = (int)floorf(drawin->height * scale);
 				if (scaled_width < 1) scaled_width = 1;
@@ -1579,11 +1605,7 @@ drawin_set_visible(lua_State *L, int udx, bool v)
 		 * when scale changed - they need surface recreation when shown. */
 		if (drawin->drawable) {
 			drawable_t *d = drawin->drawable;
-			float current_scale = 1.0f;
-			if (drawin->screen && drawin->screen->monitor &&
-			    drawin->screen->monitor->wlr_output) {
-				current_scale = drawin->screen->monitor->wlr_output->scale;
-			}
+			float current_scale = drawin_get_effective_scale(drawin);
 
 			/* Recreate surface if: no surface, scale unknown (0), or scale changed */
 			bool need_recreate = !d->surface ||
@@ -1760,12 +1782,19 @@ drawin_border_refresh_single(drawin_t *d)
 	 * Border surface origin is at top-left corner of border area */
 	wlr_scene_node_set_position(&d->border_buffer->node, -bw, -bw);
 
-	/* Update shadow geometry */
-	if (d->shadow.tree) {
+	/* Update shadow geometry (lazy creation if needed) */
+	{
 		const shadow_config_t *shadow_config = shadow_get_effective_config(
 			d->shadow_config, true);
-		shadow_update_geometry(&d->shadow, shadow_config,
-			d->width, d->height);
+		if (shadow_config && shadow_config->enabled) {
+			if (d->shadow.tree) {
+				shadow_update_geometry(&d->shadow, shadow_config,
+					d->width, d->height);
+			} else {
+				shadow_create(d->scene_tree, &d->shadow, shadow_config,
+					d->width, d->height);
+			}
+		}
 	}
 }
 
@@ -1851,22 +1880,22 @@ luaA_drawin_geometry(lua_State *L)
 
 		lua_getfield(L, 2, "x");
 		if (!lua_isnil(L, -1))
-			x = (int)lua_tonumber(L, -1);
+			x = (int)round(lua_tonumber(L, -1));
 		lua_pop(L, 1);
 
 		lua_getfield(L, 2, "y");
 		if (!lua_isnil(L, -1))
-			y = (int)lua_tonumber(L, -1);
+			y = (int)round(lua_tonumber(L, -1));
 		lua_pop(L, 1);
 
 		lua_getfield(L, 2, "width");
 		if (!lua_isnil(L, -1))
-			width = (int)lua_tonumber(L, -1);
+			width = (int)ceil(lua_tonumber(L, -1));
 		lua_pop(L, 1);
 
 		lua_getfield(L, 2, "height");
 		if (!lua_isnil(L, -1))
-			height = (int)lua_tonumber(L, -1);
+			height = (int)ceil(lua_tonumber(L, -1));
 		lua_pop(L, 1);
 
 		drawin_moveresize(L, 1, x, y, width, height);
@@ -1982,6 +2011,30 @@ luaA_drawin_set_cursor(lua_State *L, drawin_t *drawin)
 	return 0;
 }
 
+/** Set the drawin surface_scale override (somewm extension).
+ * 0 = auto (use output scale), >0 = force this scale for drawable surface.
+ * Recreates the drawable surface at the new scale.
+ * \param L The Lua VM state.
+ * \param drawin The drawin object.
+ * \return The number of elements pushed on stack.
+ */
+static int
+luaA_drawin_set_surface_scale(lua_State *L, drawin_t *drawin)
+{
+	float scale = (float)lua_tonumber(L, -1);
+	if (scale < 0.0f)
+		scale = 0.0f;
+	if (scale != drawin->scale_override)
+	{
+		drawin->scale_override = scale;
+		/* Recreate the drawable surface at the new scale */
+		if (drawin->visible)
+			drawin_update_drawing(L, -3);
+		luaA_object_emit_signal(L, -3, "property::surface_scale", 0);
+	}
+	return 0;
+}
+
 /** Set the drawin x (AwesomeWM signature).
  * \param L The Lua VM state.
  * \param drawin The drawin object.
@@ -1990,7 +2043,7 @@ luaA_drawin_set_cursor(lua_State *L, drawin_t *drawin)
 static int
 luaA_drawin_set_x(lua_State *L, drawin_t *drawin)
 {
-	int x = (int)lua_tonumber(L, -1);
+	int x = (int)round(lua_tonumber(L, -1));
 	drawin_moveresize(L, -3, x, drawin->y, drawin->width, drawin->height);
 	return 0;
 }
@@ -2003,7 +2056,7 @@ luaA_drawin_set_x(lua_State *L, drawin_t *drawin)
 static int
 luaA_drawin_set_y(lua_State *L, drawin_t *drawin)
 {
-	int y = (int)lua_tonumber(L, -1);
+	int y = (int)round(lua_tonumber(L, -1));
 	drawin_moveresize(L, -3, drawin->x, y, drawin->width, drawin->height);
 	return 0;
 }
@@ -2074,8 +2127,12 @@ luaA_drawin_get_shadow(lua_State *L, drawin_t *drawin)
 	if (drawin->shadow_config) {
 		shadow_config_to_lua(L, drawin->shadow_config);
 	} else {
-		/* Return true to indicate using defaults */
-		lua_pushboolean(L, drawin->shadow.tree != NULL);
+		const shadow_config_t *eff = shadow_get_effective_config(NULL, true);
+		if (eff->enabled && drawin->shadow.tree) {
+			shadow_config_to_lua(L, eff);
+		} else {
+			lua_pushboolean(L, false);
+		}
 	}
 	return 1;
 }
@@ -2086,7 +2143,7 @@ luaA_drawin_set_shadow(lua_State *L, drawin_t *drawin)
 {
 	shadow_config_t new_config;
 
-	if (!shadow_config_from_lua(L, -1, &new_config)) {
+	if (!shadow_config_from_lua(L, -1, &new_config, true)) {
 		return luaL_error(L, "%s", lua_tostring(L, -1));
 	}
 
@@ -2100,20 +2157,10 @@ luaA_drawin_set_shadow(lua_State *L, drawin_t *drawin)
 
 	/* Update shadow if scene tree exists */
 	if (drawin->scene_tree) {
-		if (new_config.enabled && !drawin->shadow.tree) {
-			/* Create shadow */
-			shadow_create(drawin->scene_tree, &drawin->shadow, &new_config,
-				drawin->width, drawin->height);
-			/* Match drawin visibility */
-			shadow_set_visible(&drawin->shadow, drawin->visible);
-		} else if (!new_config.enabled && drawin->shadow.tree) {
-			/* Destroy shadow */
-			shadow_destroy(&drawin->shadow);
-		} else if (drawin->shadow.tree) {
-			/* Update existing shadow */
-			shadow_update_config(&drawin->shadow, &new_config,
-				drawin->width, drawin->height);
-		}
+		shadow_update_config(&drawin->shadow, drawin->scene_tree, &new_config,
+			drawin->width, drawin->height);
+		/* Match drawin visibility */
+		shadow_set_visible(&drawin->shadow, drawin->visible);
 	}
 
 	luaA_object_emit_signal(L, -3, "property::shadow", 0);
@@ -2384,7 +2431,7 @@ luaA_drawin_new(lua_State *L)
 /* Drawin class methods - added to the drawin CLASS table (not instances)
  * LUA_CLASS_METHODS adds: set_index_miss_handler, set_newindex_miss_handler,
  * connect_signal, disconnect_signal, emit_signal, instances, set_fallback */
-static const luaL_Reg drawin_methods[] = {
+const luaL_Reg drawin_methods[] = {
 	LUA_CLASS_METHODS(drawin)
 	{ "get", luaA_drawin_get },
 	{ "__call", luaA_drawin_new },
@@ -2395,7 +2442,7 @@ static const luaL_Reg drawin_methods[] = {
  * LUA_OBJECT_META adds instance signal methods: connect_signal, disconnect_signal, emit_signal
  * LUA_CLASS_META adds: __index, __newindex for property handling
  */
-static const luaL_Reg drawin_meta[] = {
+const luaL_Reg drawin_meta[] = {
 	LUA_OBJECT_META(drawin)
 	LUA_CLASS_META
 	/* Keep __tostring and __gc, but let class system handle __index/__newindex */
@@ -2479,6 +2526,11 @@ drawin_class_setup(lua_State *L)
 	                        (lua_class_propfunc_t) luaA_drawin_set_shadow,
 	                        (lua_class_propfunc_t) luaA_drawin_get_shadow,
 	                        (lua_class_propfunc_t) luaA_drawin_set_shadow);
+	/* somewm extension: surface scale override for HiDPI performance */
+	luaA_class_add_property(&drawin_class, "surface_scale",
+	                        (lua_class_propfunc_t) luaA_drawin_set_surface_scale,
+	                        (lua_class_propfunc_t) luaA_drawin_get_surface_scale,
+	                        (lua_class_propfunc_t) luaA_drawin_set_surface_scale);
 	/* NOTE: buttons is NOT registered as a property, only as a _buttons method.
 	 * The wibox wrapper handles the buttons accessor via _legacy_accessors */
 	luaA_class_add_property(&drawin_class, "border_width",

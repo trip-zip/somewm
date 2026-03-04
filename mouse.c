@@ -169,12 +169,17 @@ luaA_mouse_coords(lua_State *L)
         x = round(luaA_getopt_number_range(L, 1, "x", mouse_x, MIN_X11_COORDINATE, MAX_X11_COORDINATE));
         y = round(luaA_getopt_number_range(L, 1, "y", mouse_y, MIN_X11_COORDINATE, MAX_X11_COORDINATE));
 
-        if (ignore_enter_notify)
-            client_ignore_enterleave_events();
+        if (ignore_enter_notify) {
+            /* X11/XWayland: use server grab to suppress events */
+            if (globalconf.connection)
+                client_ignore_enterleave_events();
+            /* Wayland: use flag to ignore next enter/leave */
+            globalconf.mouse_under.ignore_next_enter_leave = true;
+        }
 
         mouse_warp_pointer(x, y);
 
-        if (ignore_enter_notify)
+        if (ignore_enter_notify && globalconf.connection)
             client_restore_enterleave_events();
 
         lua_pop(L, 1);

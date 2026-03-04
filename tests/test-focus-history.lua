@@ -32,7 +32,20 @@ local steps = {
         return nil
     end,
 
-    -- Step 2: Spawn client B
+    -- Step 2: Wait for client A to have focus (establishes focus history)
+    function(count)
+        if client.focus == client_a then
+            io.stderr:write("[TEST] Client A has focus\n")
+            return true
+        end
+        if count > 10 then
+            error(string.format("Expected client A to have focus, got %s",
+                client.focus and client.focus.class or "nil"))
+        end
+        return nil
+    end,
+
+    -- Step 3: Spawn client B
     function(count)
         if count == 1 then
             io.stderr:write("[TEST] Spawning client B...\n")
@@ -46,7 +59,20 @@ local steps = {
         return nil
     end,
 
-    -- Step 3: Spawn client C
+    -- Step 4: Wait for client B to have focus (ensures B is in focus history before C)
+    function(count)
+        if client.focus == client_b then
+            io.stderr:write("[TEST] Client B has focus\n")
+            return true
+        end
+        if count > 10 then
+            error(string.format("Expected client B to have focus, got %s",
+                client.focus and client.focus.class or "nil"))
+        end
+        return nil
+    end,
+
+    -- Step 5: Spawn client C
     function(count)
         if count == 1 then
             io.stderr:write("[TEST] Spawning client C...\n")
@@ -60,7 +86,7 @@ local steps = {
         return nil
     end,
 
-    -- Step 4: Wait for client C to have focus
+    -- Step 6: Wait for client C to have focus
     function(count)
         io.stderr:write(string.format("[TEST] Checking focus (attempt %d): client.focus.class=%s\n",
             count, client.focus and client.focus.class or "nil"))
@@ -77,7 +103,7 @@ local steps = {
         return nil
     end,
 
-    -- Step 5: Kill client C (force kill to avoid confirmation dialogs)
+    -- Step 7: Kill client C (force kill to avoid confirmation dialogs)
     function(count)
         if count == 1 then
             io.stderr:write(string.format("[TEST] Force killing client C (pid=%s)...\n",
@@ -97,7 +123,7 @@ local steps = {
         return nil
     end,
 
-    -- Step 6: Wait for focus to move to client B
+    -- Step 8: Wait for focus to move to client B
     function(count)
         io.stderr:write(string.format("[TEST] Checking focus after kill (attempt %d): client.focus.class=%s\n",
             count, client.focus and client.focus.class or "nil"))
@@ -114,7 +140,7 @@ local steps = {
         return nil
     end,
 
-    -- Step 7: Cleanup
+    -- Step 9: Cleanup
     function(count)
         if count == 1 then
             io.stderr:write("[TEST] Cleanup: killing remaining clients\n")

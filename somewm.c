@@ -7,6 +7,7 @@
 #include <getopt.h>
 #include <stdbool.h>
 #include <glib.h>
+#include <glib-unix.h>
 #include <libinput.h>
 #include <linux/input-event-codes.h>
 #include <math.h>
@@ -20,7 +21,9 @@
 #include <unistd.h>
 #include <wayland-server-core.h>
 #include <wlr/backend.h>
+#include <wlr/backend/headless.h>
 #include <wlr/backend/libinput.h>
+#include <wlr/backend/multi.h>
 #include <wlr/render/allocator.h>
 #include <wlr/render/wlr_renderer.h>
 #include <wlr/types/wlr_alpha_modifier_v1.h>
@@ -47,6 +50,7 @@
 #include <wlr/types/wlr_output_management_v1.h>
 #include <wlr/types/wlr_output_power_management_v1.h>
 #include <wlr/types/wlr_pointer.h>
+#include <wlr/types/wlr_pointer_gestures_v1.h>
 #include <wlr/types/wlr_pointer_constraints_v1.h>
 #include <wlr/types/wlr_presentation_time.h>
 #include <wlr/types/wlr_primary_selection.h>
@@ -94,9 +98,11 @@
 #include "objects/drawin.h"
 #include "objects/drawable.h"
 #include "objects/screen.h"
+#include "objects/output.h"
 #include "objects/tag.h"
 #include "objects/keygrabber.h"
 #include "objects/mousegrabber.h"
+#include "objects/gesture.h"
 #include "objects/client.h"  /* AwesomeWM client_t (now aliased as Client) */
 #include "objects/layer_surface.h"  /* Layer shell surface Lua class */
 #include "objects/root.h"    /* Root button bindings */
@@ -108,7 +114,11 @@
 
 /* macros */
 /* MAX and MIN are defined in x11_compat.h (included via globalconf.h) */
-#define CLEANMASK(mask)         (mask & ~WLR_MODIFIER_CAPS)
+/* Strip "lock" modifiers that should not affect bindings:
+ * CapsLock (bit 1) and NumLock/Mod2 (bit 4).
+ * Without this, scroll/button bindings defined with modifiers={} fail
+ * when NumLock is active because the modifier table includes "Mod2". */
+#define CLEANMASK(mask)         (mask & ~WLR_MODIFIER_CAPS & ~WLR_MODIFIER_MOD2)
 /* #define VISIBLEON(C, M)         ((M) && (C)->mon == (M) && ((C)->tags & (M)->tagset[(M)->seltags])) */
 /* VISIBLEON macro replaced with client_on_selected_tags() for AwesomeWM compatibility */
 #define LENGTH(X)               (sizeof X / sizeof X[0])
@@ -171,6 +181,7 @@ static void cursorconstrain(struct wlr_pointer_constraint_v1 *constraint);
 static void cursorframe(struct wl_listener *listener, void *data);
 static void cursorwarptohint(void);
 static void destroydecoration(struct wl_listener *listener, void *data);
+static void destroydrag(struct wl_listener *listener, void *data);
 static void destroydragicon(struct wl_listener *listener, void *data);
 static void destroyidleinhibitor(struct wl_listener *listener, void *data);
 static void destroylayersurfacenotify(struct wl_listener *listener, void *data);
@@ -192,6 +203,14 @@ static void foreign_toplevel_request_close(struct wl_listener *listener, void *d
 static void foreign_toplevel_request_fullscreen(struct wl_listener *listener, void *data);
 static void foreign_toplevel_request_maximize(struct wl_listener *listener, void *data);
 static void foreign_toplevel_request_minimize(struct wl_listener *listener, void *data);
+static void gestureswipebegin(struct wl_listener *listener, void *data);
+static void gestureswipeupdate(struct wl_listener *listener, void *data);
+static void gestureswipeend(struct wl_listener *listener, void *data);
+static void gesturepinchbegin(struct wl_listener *listener, void *data);
+static void gesturepinchupdate(struct wl_listener *listener, void *data);
+static void gesturepinchend(struct wl_listener *listener, void *data);
+static void gestureholdbegin(struct wl_listener *listener, void *data);
+static void gestureholdend(struct wl_listener *listener, void *data);
 static void gpureset(struct wl_listener *listener, void *data);
 static void handlesig(int signo);
 static void inputdevice(struct wl_listener *listener, void *data);
@@ -205,7 +224,7 @@ static void mapnotify(struct wl_listener *listener, void *data);
 static void maximizenotify(struct wl_listener *listener, void *data);
 void monocle(Monitor *m);
 static void motionabsolute(struct wl_listener *listener, void *data);
-static void motionnotify(uint32_t time, struct wlr_input_device *device, double sx,
+void motionnotify(uint32_t time, struct wlr_input_device *device, double sx,
 		double sy, double sx_unaccel, double sy_unaccel);
 static void motionrelative(struct wl_listener *listener, void *data);
 /* moveresize() removed - move/resize now handled by Lua mousegrabber */
@@ -243,7 +262,7 @@ void togglefloating(const Arg *arg);
 static void unlocksession(struct wl_listener *listener, void *data);
 static void unmaplayersurfacenotify(struct wl_listener *listener, void *data);
 static void unmapnotify(struct wl_listener *listener, void *data);
-static void updatemons(struct wl_listener *listener, void *data);
+void updatemons(struct wl_listener *listener, void *data);
 static void updatetitle(struct wl_listener *listener, void *data);
 static void urgent(struct wl_listener *listener, void *data);
 static void virtualkeyboard(struct wl_listener *listener, void *data);
@@ -282,11 +301,6 @@ typedef struct {
 	char *app_id;             /* Application ID from spawn */
 	uint32_t timeout_id;      /* GLib timeout source ID for cleanup */
 } activation_token_t;
-
-/* Deferred screen add for hotplug (matches AwesomeWM's screen_schedule_refresh pattern) */
-typedef struct {
-	screen_t *screen;
-} deferred_screen_add_t;
 
 /* Popup tracking structure for proper constraint handling */
 typedef struct {
@@ -340,6 +354,7 @@ static struct wlr_box sgeom;
 struct wl_list mons;
 static struct wl_list tracked_pointers; /* For runtime libinput config */
 Monitor *selmon;
+static int in_updatemons;
 
 /* global event handlers */
 static struct wl_listener cursor_axis = {.notify = axisnotify};
@@ -349,6 +364,7 @@ static struct wl_listener cursor_motion = {.notify = motionrelative};
 static struct wl_listener cursor_motion_absolute = {.notify = motionabsolute};
 static struct wl_listener gpu_reset = {.notify = gpureset};
 static struct wl_listener layout_change = {.notify = updatemons};
+static int in_updatemons;
 static struct wl_listener new_idle_inhibitor = {.notify = createidleinhibitor};
 static struct wl_listener new_input_device = {.notify = inputdevice};
 static struct wl_listener new_virtual_keyboard = {.notify = virtualkeyboard};
@@ -371,6 +387,20 @@ static struct wl_listener request_start_drag = {.notify = requeststartdrag};
 static struct wl_listener start_drag = {.notify = startdrag};
 static struct wl_listener new_session_lock = {.notify = locksession};
 
+/* Pointer gesture listeners and state */
+static struct wlr_pointer_gestures_v1 *pointer_gestures;
+static bool gesture_swipe_consumed = false;
+static bool gesture_pinch_consumed = false;
+static bool gesture_hold_consumed = false;
+static struct wl_listener gesture_swipe_begin = {.notify = gestureswipebegin};
+static struct wl_listener gesture_swipe_update = {.notify = gestureswipeupdate};
+static struct wl_listener gesture_swipe_end = {.notify = gestureswipeend};
+static struct wl_listener gesture_pinch_begin = {.notify = gesturepinchbegin};
+static struct wl_listener gesture_pinch_update = {.notify = gesturepinchupdate};
+static struct wl_listener gesture_pinch_end = {.notify = gesturepinchend};
+static struct wl_listener gesture_hold_begin = {.notify = gestureholdbegin};
+static struct wl_listener gesture_hold_end = {.notify = gestureholdend};
+
 #ifdef XWAYLAND
 static void activatex11(struct wl_listener *listener, void *data);
 static void associatex11(struct wl_listener *listener, void *data);
@@ -381,7 +411,7 @@ static void sethints(struct wl_listener *listener, void *data);
 static void xwaylandready(struct wl_listener *listener, void *data);
 static struct wl_listener new_xwayland_surface = {.notify = createnotifyx11};
 static struct wl_listener xwayland_ready = {.notify = xwaylandready};
-static struct wlr_xwayland *xwayland;
+struct wlr_xwayland *xwayland;
 #endif
 
 /* Helper functions to expose layouts array to somewm_api.c */
@@ -413,9 +443,15 @@ some_has_exclusive_focus(void)
 void
 applybounds(Client *c, struct wlr_box *bbox)
 {
-	/* set minimum possible */
-	c->geometry.width = MAX(1 + 2 * (int)c->bw, c->geometry.width);
-	c->geometry.height = MAX(1 + 2 * (int)c->bw, c->geometry.height);
+	/* Minimum geometry must fit borders AND titlebars with at least 1px content */
+	int min_w = 1 + 2 * (int)c->bw
+		+ c->titlebar[CLIENT_TITLEBAR_LEFT].size
+		+ c->titlebar[CLIENT_TITLEBAR_RIGHT].size;
+	int min_h = 1 + 2 * (int)c->bw
+		+ c->titlebar[CLIENT_TITLEBAR_TOP].size
+		+ c->titlebar[CLIENT_TITLEBAR_BOTTOM].size;
+	c->geometry.width = MAX(min_w, c->geometry.width);
+	c->geometry.height = MAX(min_h, c->geometry.height);
 
 	if (c->geometry.x >= bbox->x + bbox->width)
 		c->geometry.x = bbox->x + bbox->width - c->geometry.width;
@@ -502,7 +538,7 @@ arrange(Monitor *m)
 		if (!c->mon || c->mon != m || !c->scene)
 			continue;
 
-		visible = client_on_selected_tags(c);
+		visible = client_isvisible(c);
 		wlr_scene_node_set_enabled(&c->scene->node, visible);
 		client_set_suspended(c, !visible);
 	}
@@ -653,6 +689,99 @@ arrangelayers(Monitor *m)
 }
 
 void
+gestureswipebegin(struct wl_listener *listener, void *data)
+{
+	struct wlr_pointer_swipe_begin_event *event = data;
+	wlr_idle_notifier_v1_notify_activity(idle_notifier, seat);
+	gesture_swipe_consumed = luaA_gesture_check_swipe_begin(
+		event->time_msec, event->fingers);
+	if (!gesture_swipe_consumed)
+		wlr_pointer_gestures_v1_send_swipe_begin(pointer_gestures,
+			seat, event->time_msec, event->fingers);
+}
+
+void
+gestureswipeupdate(struct wl_listener *listener, void *data)
+{
+	struct wlr_pointer_swipe_update_event *event = data;
+	luaA_gesture_check_swipe_update(
+		event->time_msec, event->fingers, event->dx, event->dy);
+	if (!gesture_swipe_consumed)
+		wlr_pointer_gestures_v1_send_swipe_update(pointer_gestures,
+			seat, event->time_msec, event->dx, event->dy);
+}
+
+void
+gestureswipeend(struct wl_listener *listener, void *data)
+{
+	struct wlr_pointer_swipe_end_event *event = data;
+	luaA_gesture_check_swipe_end(event->time_msec, event->cancelled);
+	if (!gesture_swipe_consumed)
+		wlr_pointer_gestures_v1_send_swipe_end(pointer_gestures,
+			seat, event->time_msec, event->cancelled);
+	gesture_swipe_consumed = false;
+}
+
+void
+gesturepinchbegin(struct wl_listener *listener, void *data)
+{
+	struct wlr_pointer_pinch_begin_event *event = data;
+	wlr_idle_notifier_v1_notify_activity(idle_notifier, seat);
+	gesture_pinch_consumed = luaA_gesture_check_pinch_begin(
+		event->time_msec, event->fingers);
+	if (!gesture_pinch_consumed)
+		wlr_pointer_gestures_v1_send_pinch_begin(pointer_gestures,
+			seat, event->time_msec, event->fingers);
+}
+
+void
+gesturepinchupdate(struct wl_listener *listener, void *data)
+{
+	struct wlr_pointer_pinch_update_event *event = data;
+	luaA_gesture_check_pinch_update(
+		event->time_msec, event->fingers,
+		event->dx, event->dy, event->scale, event->rotation);
+	if (!gesture_pinch_consumed)
+		wlr_pointer_gestures_v1_send_pinch_update(pointer_gestures,
+			seat, event->time_msec,
+			event->dx, event->dy, event->scale, event->rotation);
+}
+
+void
+gesturepinchend(struct wl_listener *listener, void *data)
+{
+	struct wlr_pointer_pinch_end_event *event = data;
+	luaA_gesture_check_pinch_end(event->time_msec, event->cancelled);
+	if (!gesture_pinch_consumed)
+		wlr_pointer_gestures_v1_send_pinch_end(pointer_gestures,
+			seat, event->time_msec, event->cancelled);
+	gesture_pinch_consumed = false;
+}
+
+void
+gestureholdbegin(struct wl_listener *listener, void *data)
+{
+	struct wlr_pointer_hold_begin_event *event = data;
+	wlr_idle_notifier_v1_notify_activity(idle_notifier, seat);
+	gesture_hold_consumed = luaA_gesture_check_hold_begin(
+		event->time_msec, event->fingers);
+	if (!gesture_hold_consumed)
+		wlr_pointer_gestures_v1_send_hold_begin(pointer_gestures,
+			seat, event->time_msec, event->fingers);
+}
+
+void
+gestureholdend(struct wl_listener *listener, void *data)
+{
+	struct wlr_pointer_hold_end_event *event = data;
+	luaA_gesture_check_hold_end(event->time_msec, event->cancelled);
+	if (!gesture_hold_consumed)
+		wlr_pointer_gestures_v1_send_hold_end(pointer_gestures,
+			seat, event->time_msec, event->cancelled);
+	gesture_hold_consumed = false;
+}
+
+void
 axisnotify(struct wl_listener *listener, void *data)
 {
 	/* This event is forwarded by the cursor when a pointer emits an axis event,
@@ -708,57 +837,88 @@ axisnotify(struct wl_listener *listener, void *data)
 
 	/* Handle scroll wheel for mousebindings (AwesomeWM compatibility)
 	 * Convert axis events to X11-style button 4/5/6/7 press+release events.
-	 * In X11, each scroll tick generates a button press+release pair. */
+	 * In X11, each scroll tick generates a button press+release pair.
+	 *
+	 * Wayland uses "value120" for discrete scroll: one standard wheel click
+	 * sends delta_discrete=±120. High-resolution mice send smaller steps
+	 * (e.g. ±15 or ±30). We accumulate until a full step (±120) is reached
+	 * to avoid multiple tag switches per physical wheel click. */
 	if (!locked && event->delta != 0) {
-		lua_State *L = globalconf_get_lua_State();
-		struct wlr_keyboard *keyboard = wlr_seat_get_keyboard(seat);
-		uint32_t mods = keyboard ? wlr_keyboard_get_modifiers(keyboard) : 0;
-		Client *c = NULL;
-		drawin_t *drawin = NULL;
-		drawable_t *titlebar_drawable = NULL;
-		uint32_t button;
-		int rel_x, rel_y;
+		/* NOTE: process-global accumulators shared across all pointer devices.
+		 * Multi-mouse interleaving is possible but negligible in practice. */
+		static int32_t scroll_acc_v = 0;
+		static int32_t scroll_acc_h = 0;
+		int32_t *acc;
+		int ticks = 0;
 
-		/* Determine button number based on axis orientation and direction:
-		 * Vertical: button 4 = scroll up (delta < 0), button 5 = scroll down (delta > 0)
-		 * Horizontal: button 6 = scroll left (delta < 0), button 7 = scroll right (delta > 0) */
-		if (event->orientation == WL_POINTER_AXIS_VERTICAL_SCROLL) {
-			button = (event->delta < 0) ? 4 : 5;
+		acc = (event->orientation == WL_POINTER_AXIS_VERTICAL_SCROLL)
+			? &scroll_acc_v : &scroll_acc_h;
+
+		if (event->delta_discrete != 0) {
+			/* Discrete scroll (wheel): accumulate value120 steps */
+			*acc += event->delta_discrete;
+			/* Count full steps (±120 each) */
+			while (*acc >= 120) { ticks++; *acc -= 120; }
+			while (*acc <= -120) { ticks++; *acc += 120; }
 		} else {
-			button = (event->delta < 0) ? 6 : 7;
+			/* Continuous scroll (touchpad/smooth): use delta directly,
+			 * one button event per axis event (no accumulation) */
+			ticks = 1;
 		}
 
-		/* Find what's under the cursor */
-		xytonode(cursor->x, cursor->y, NULL, &c, NULL, &drawin, &titlebar_drawable, NULL, NULL);
+		/* Reset accumulator on direction change to prevent stale state */
+		if ((event->delta > 0 && *acc < 0) || (event->delta < 0 && *acc > 0))
+			*acc = 0;
 
-		if (drawin) {
-			/* Scroll on drawin (wibox) */
-			rel_x = (int)cursor->x - drawin->x;
-			rel_y = (int)cursor->y - drawin->y;
+		for (int tick = 0; tick < ticks; tick++) {
+			lua_State *L = globalconf_get_lua_State();
+			struct wlr_keyboard *keyboard = wlr_seat_get_keyboard(seat);
+			uint32_t mods = keyboard ? wlr_keyboard_get_modifiers(keyboard) : 0;
+			Client *c = NULL;
+			drawin_t *drawin = NULL;
+			drawable_t *titlebar_drawable = NULL;
+			uint32_t button;
+			int rel_x, rel_y;
 
-			/* Emit press then release (scroll is instantaneous) */
-			luaA_drawin_button_check(drawin, rel_x, rel_y, button, CLEANMASK(mods), true);
-			luaA_drawin_button_check(drawin, rel_x, rel_y, button, CLEANMASK(mods), false);
-		} else if (c && (!client_is_unmanaged(c) || client_wants_focus(c))) {
-			/* Scroll on client */
-			rel_x = (int)cursor->x - c->geometry.x;
-			rel_y = (int)cursor->y - c->geometry.y;
-
-			/* Emit on titlebar drawable if applicable */
-			if (titlebar_drawable) {
-				luaA_drawable_button_emit(c, titlebar_drawable, rel_x, rel_y, button,
-				                          CLEANMASK(mods), true);
-				luaA_drawable_button_emit(c, titlebar_drawable, rel_x, rel_y, button,
-				                          CLEANMASK(mods), false);
+			/* Determine button number based on axis orientation and direction */
+			if (event->orientation == WL_POINTER_AXIS_VERTICAL_SCROLL) {
+				button = (event->delta < 0) ? 4 : 5;
+			} else {
+				button = (event->delta < 0) ? 6 : 7;
 			}
 
-			/* Emit on client (press + release) */
-			luaA_client_button_check(c, rel_x, rel_y, button, CLEANMASK(mods), true);
-			luaA_client_button_check(c, rel_x, rel_y, button, CLEANMASK(mods), false);
-		} else {
-			/* Scroll on root/empty space */
-			luaA_root_button_check(L, button, CLEANMASK(mods), cursor->x, cursor->y, true);
-			luaA_root_button_check(L, button, CLEANMASK(mods), cursor->x, cursor->y, false);
+			/* Find what's under the cursor */
+			xytonode(cursor->x, cursor->y, NULL, &c, NULL, &drawin, &titlebar_drawable, NULL, NULL);
+
+			if (drawin) {
+				/* Scroll on drawin (wibox) */
+				rel_x = (int)cursor->x - drawin->x;
+				rel_y = (int)cursor->y - drawin->y;
+
+				/* Emit press then release (scroll is instantaneous) */
+				luaA_drawin_button_check(drawin, rel_x, rel_y, button, CLEANMASK(mods), true);
+				luaA_drawin_button_check(drawin, rel_x, rel_y, button, CLEANMASK(mods), false);
+			} else if (c && (!client_is_unmanaged(c) || client_wants_focus(c))) {
+				/* Scroll on client */
+				rel_x = (int)cursor->x - c->geometry.x;
+				rel_y = (int)cursor->y - c->geometry.y;
+
+				/* Emit on titlebar drawable if applicable */
+				if (titlebar_drawable) {
+					luaA_drawable_button_emit(c, titlebar_drawable, rel_x, rel_y, button,
+					                          CLEANMASK(mods), true);
+					luaA_drawable_button_emit(c, titlebar_drawable, rel_x, rel_y, button,
+					                          CLEANMASK(mods), false);
+				}
+
+				/* Emit on client (press + release) */
+				luaA_client_button_check(c, rel_x, rel_y, button, CLEANMASK(mods), true);
+				luaA_client_button_check(c, rel_x, rel_y, button, CLEANMASK(mods), false);
+			} else {
+				/* Scroll on root/empty space */
+				luaA_root_button_check(L, button, CLEANMASK(mods), cursor->x, cursor->y, true);
+				luaA_root_button_check(L, button, CLEANMASK(mods), cursor->x, cursor->y, false);
+			}
 		}
 	}
 
@@ -1046,6 +1206,9 @@ cleanup(void)
 	/* Destroy Wayland clients while Lua is still alive so signal handlers work. */
 	wl_display_destroy_clients(dpy);
 
+	/* Cleanup wallpaper cache before destroying scene */
+	wallpaper_cache_cleanup();
+
 	/* Close Lua after clients are destroyed (matches AwesomeWM pattern) */
 	luaA_cleanup();
 
@@ -1097,6 +1260,9 @@ cleanupmon(struct wl_listener *listener, void *data)
 	LayerSurface *l, *tmp;
 	size_t i;
 
+	wlr_log(WLR_ERROR, "[HOTPLUG] cleanupmon: %s remaining_mons=%d",
+		m->wlr_output->name, wl_list_length(&mons) - 1);
+
 	/* Find and remove screen BEFORE destroying monitor data (AwesomeWM pattern)
 	 * This emits instance-level "removed" signal and relocates clients.
 	 * Also emit viewports and primary_changed signals as needed. */
@@ -1117,7 +1283,22 @@ cleanupmon(struct wl_listener *listener, void *data)
 					luaA_screen_emit_primary_changed(globalconf_L, new_primary);
 				}
 			}
+
+			/* Emit property::screen on output (screen→nil) */
+			if (m->output) {
+				luaA_object_push(globalconf_L, m->output);
+				luaA_object_emit_signal(globalconf_L, -1, "property::screen", 0);
+				lua_pop(globalconf_L, 1);
+			}
 		}
+	}
+
+	/* Invalidate output Lua object before destroying monitor data */
+	if (globalconf_L && m->output) {
+		luaA_object_push(globalconf_L, m->output);
+		luaA_class_emit_signal(globalconf_L, &output_class, "removed", 1);
+		luaA_output_invalidate(globalconf_L, m->output);
+		m->output = NULL;
 	}
 
 	/* m->layers[i] are intentionally not unlinked */
@@ -1133,8 +1314,15 @@ cleanupmon(struct wl_listener *listener, void *data)
 	if (m->lock_surface)
 		destroylocksurface(&m->destroy_lock_surface, NULL);
 	m->wlr_output->data = NULL;
-	wlr_output_layout_remove(output_layout, m->wlr_output);
+	/* Block updatemons() during output cleanup. wlr_output_layout_remove
+	 * emits layout::change which triggers updatemons(). If updatemons runs,
+	 * it does arrange/focus work that can indirectly add commit listeners
+	 * (e.g. presentation_time, gamma) to the output being destroyed, causing
+	 * wlr_output_finish() assertion failure. */
+	in_updatemons = 1;
 	wlr_scene_output_destroy(m->scene_output);
+	wlr_output_layout_remove(output_layout, m->wlr_output);
+	in_updatemons = 0;
 
 	closemon(m);
 	wlr_scene_node_destroy(&m->fullscreen_bg->node);
@@ -1149,6 +1337,14 @@ cleanuplisteners(void)
 	wl_list_remove(&cursor_frame.link);
 	wl_list_remove(&cursor_motion.link);
 	wl_list_remove(&cursor_motion_absolute.link);
+	wl_list_remove(&gesture_swipe_begin.link);
+	wl_list_remove(&gesture_swipe_update.link);
+	wl_list_remove(&gesture_swipe_end.link);
+	wl_list_remove(&gesture_pinch_begin.link);
+	wl_list_remove(&gesture_pinch_update.link);
+	wl_list_remove(&gesture_pinch_end.link);
+	wl_list_remove(&gesture_hold_begin.link);
+	wl_list_remove(&gesture_hold_end.link);
 	wl_list_remove(&gpu_reset.link);
 	wl_list_remove(&new_idle_inhibitor.link);
 	wl_list_remove(&layout_change.link);
@@ -1186,16 +1382,20 @@ closemon(Monitor *m)
 	/* update selmon if needed and
 	 * move closed monitor's clients to the focused one */
 	Client *c;
-	int i = 0, nmons = wl_list_length(&mons);
-	if (!nmons) {
+	int nclients = 0;
+
+	if (wl_list_empty(&mons)) {
 		selmon = NULL;
 	} else if (m == selmon) {
-		do /* don't switch to disabled mons */
-			selmon = wl_container_of(mons.next, selmon, link);
-		while (!selmon->wlr_output->enabled && i++ < nmons);
-
-		if (!selmon->wlr_output->enabled)
-			selmon = NULL;
+		/* Find next enabled monitor (properly iterate the list) */
+		Monitor *iter;
+		selmon = NULL;
+		wl_list_for_each(iter, &mons, link) {
+			if (iter != m && iter->wlr_output->enabled) {
+				selmon = iter;
+				break;
+			}
+		}
 	}
 
 	foreach(client, globalconf.clients) {
@@ -1203,9 +1403,17 @@ closemon(Monitor *m)
 		if (some_client_get_floating(c) && c->geometry.x > m->m.width)
 			resize(c, (struct wlr_box){.x = c->geometry.x - m->w.width, .y = c->geometry.y,
 					.width = c->geometry.width, .height = c->geometry.height}, 0);
-		if (c->mon == m)
+		if (c->mon == m) {
+			nclients++;
 			setmon(c, selmon, 0);
+		}
 	}
+
+	wlr_log(WLR_ERROR, "[HOTPLUG] closemon: %s selmon=%s nclients=%d",
+		m->wlr_output->name,
+		selmon ? selmon->wlr_output->name : "NULL",
+		nclients);
+
 	focusclient(focustop(selmon), 1);
 	printstatus();
 }
@@ -1285,7 +1493,7 @@ initialcommitnotify(struct wl_listener *listener, void *data)
 	Client *c = wl_container_of(listener, c, initial_commit);
 	Monitor *m;
 
-	if (!c->surface.xdg->initial_commit)
+	if (!c->surface.xdg || !c->surface.xdg->initial_commit)
 		return;
 
 	/* Get the monitor this client will be rendered on for initial scale setting.
@@ -1318,8 +1526,9 @@ commitnotify(struct wl_listener *listener, void *data)
 
 	/* mark a pending resize as completed */
 	if (c->resize) {
-		if (c->resize <= c->surface.xdg->current.configure_serial)
+		if (c->resize <= c->surface.xdg->current.configure_serial) {
 			c->resize = 0;
+		}
 	}
 
 	/* Re-apply opacity after wlroots' surface_reconfigure() resets it to 1.0.
@@ -1546,35 +1755,6 @@ createlocksurface(struct wl_listener *listener, void *data)
 		client_notify_enter(lock_surface->surface, wlr_seat_get_keyboard(seat));
 }
 
-/* Idle callback for deferred screen signal emission (AwesomeWM pattern).
- * This is called after the wlroots output event handler returns, when it's
- * safe to do complex Lua operations like creating wibars. */
-static void
-screen_added_idle(void *data)
-{
-	deferred_screen_add_t *d = data;
-	screen_t *screen = d->screen;
-
-	if (screen && screen->valid) {
-		screen_t *old_primary = luaA_screen_get_primary_screen(globalconf_L);
-		screen_t *new_primary;
-
-		screen_added(globalconf_L, screen);
-		luaA_screen_emit_list(globalconf_L);
-		luaA_screen_emit_viewports(globalconf_L);
-
-		new_primary = luaA_screen_get_primary_screen(globalconf_L);
-		if (new_primary == screen && old_primary != screen) {
-			luaA_screen_emit_primary_changed(globalconf_L, screen);
-		}
-
-		banning_refresh();
-		some_refresh();
-	}
-
-	free(d);
-}
-
 void
 createmon(struct wl_listener *listener, void *data)
 {
@@ -1587,6 +1767,9 @@ createmon(struct wl_listener *listener, void *data)
 
 	if (!wlr_output_init_render(wlr_output, alloc, drw))
 		return;
+
+	wlr_log(WLR_ERROR, "[HOTPLUG] createmon: %s enabled=%d mons=%d",
+		wlr_output->name, wlr_output->enabled, wl_list_length(&mons));
 
 	m = wlr_output->data = ecalloc(1, sizeof(*m));
 	m->wlr_output = wlr_output;
@@ -1623,6 +1806,17 @@ createmon(struct wl_listener *listener, void *data)
 	wl_list_insert(&mons, &m->link);
 	printstatus();
 
+	/* Create output Lua object (persists from connect to disconnect).
+	 * Signal emission is deferred to updatemons() so that o.screen is
+	 * available in "added" handlers — eliminates a timing footgun. */
+	if (globalconf_L) {
+		m->output = luaA_output_new(globalconf_L, m);
+		if (m->output) {
+			lua_pop(globalconf_L, 1);  /* Pop userdata (tracked in output.c) */
+			m->needs_output_added = 1;
+		}
+	}
+
 	/* The xdg-protocol specifies:
 	 *
 	 * If the fullscreened surface is not opaque, the compositor must make
@@ -1642,14 +1836,11 @@ createmon(struct wl_listener *listener, void *data)
 	 * output (such as DPI, scale factor, manufacturer, etc).
 	 */
 	m->scene_output = wlr_scene_output_create(scene, wlr_output);
-	if (m->m.x == -1 && m->m.y == -1)
-		wlr_output_layout_add_auto(output_layout, wlr_output);
-	else
-		wlr_output_layout_add(output_layout, wlr_output, m->m.x, m->m.y);
 
-	/* Create screen object and emit signals.
-	 * During startup: signal emission is deferred to luaA_screen_emit_all_added()
-	 * During runtime (hotplug): emit _added immediately so wibar/tags are created */
+	/* Create screen object BEFORE adding to layout.
+	 * wlr_output_layout_add_auto() triggers updatemons() SYNCHRONOUSLY
+	 * via layout::change signal. needs_screen_added must be set before
+	 * that, so updatemons() can emit screen_added with correct geometry. */
 	if (globalconf_L) {
 		Monitor *tmp;
 		int screen_index;
@@ -1670,21 +1861,21 @@ createmon(struct wl_listener *listener, void *data)
 			lua_pop(globalconf_L, 1);
 
 			/* If startup is complete, this is a hotplugged monitor.
-			 * Defer signal emission to idle callback (AwesomeWM pattern).
-			 * We can't emit signals directly from wlroots output event callback
-			 * because complex Lua operations (wibar creation) may fail. */
+			 * Set flag so updatemons() emits screen_added AFTER geometry
+			 * is set but BEFORE orphaned clients are assigned.
+			 * This ensures Lua tags/wibar exist when clients arrive. */
 			if (luaA_screen_scanned_done()) {
-				deferred_screen_add_t *d = malloc(sizeof(*d));
-				if (d) {
-					d->screen = screen;
-					wl_event_loop_add_idle(
-						wl_display_get_event_loop(dpy),
-						screen_added_idle,
-						d);
-				}
+				m->needs_screen_added = 1;
 			}
 		}
 	}
+
+	/* Add to output layout — triggers updatemons() synchronously.
+	 * updatemons() will: set geometry → emit screen_added → assign orphans */
+	if (m->m.x == -1 && m->m.y == -1)
+		wlr_output_layout_add_auto(output_layout, wlr_output);
+	else
+		wlr_output_layout_add(output_layout, wlr_output, m->m.x, m->m.y);
 }
 
 void
@@ -1778,6 +1969,19 @@ apply_input_settings_to_device(struct libinput_device *device)
 		}
 	}
 
+	/* Three-finger drag (libinput 1.27+) */
+#ifdef HAVE_LIBINPUT_3FG_DRAG
+	if (libinput_device_config_3fg_drag_get_finger_count(device)) {
+		if (globalconf.input.tap_3fg_drag >= 0)
+			libinput_device_config_3fg_drag_set_enabled(device,
+				globalconf.input.tap_3fg_drag ? LIBINPUT_CONFIG_3FG_DRAG_ENABLED_3FG
+				                              : LIBINPUT_CONFIG_3FG_DRAG_DISABLED);
+	} else if (globalconf.input.tap_3fg_drag > 0) {
+		wlr_log(WLR_INFO, "Device '%s' does not support three-finger drag",
+			libinput_device_get_name(device));
+	}
+#endif
+
 	if (libinput_device_config_scroll_has_natural_scroll(device)
 			&& globalconf.input.natural_scrolling >= 0)
 		libinput_device_config_scroll_set_natural_scroll_enabled(device,
@@ -1787,6 +1991,11 @@ apply_input_settings_to_device(struct libinput_device *device)
 			&& globalconf.input.disable_while_typing >= 0)
 		libinput_device_config_dwt_set_enabled(device,
 			globalconf.input.disable_while_typing);
+
+	/* Disable while trackpoint in use (ThinkPad feature) */
+	if (libinput_device_config_dwtp_is_available(device)
+			&& globalconf.input.dwtp >= 0)
+		libinput_device_config_dwtp_set_enabled(device, globalconf.input.dwtp);
 
 	if (libinput_device_config_left_handed_is_available(device)
 			&& globalconf.input.left_handed >= 0)
@@ -1813,6 +2022,16 @@ apply_input_settings_to_device(struct libinput_device *device)
 		libinput_device_config_scroll_set_method(device, method);
 	}
 
+	/* Scroll button for scroll-on-button-down mode */
+	if (globalconf.input.scroll_button > 0)
+		libinput_device_config_scroll_set_button(device, globalconf.input.scroll_button);
+
+	/* Scroll button lock (toggle vs hold) */
+	if (globalconf.input.scroll_button_lock >= 0)
+		libinput_device_config_scroll_set_button_lock(device,
+			globalconf.input.scroll_button_lock ? LIBINPUT_CONFIG_SCROLL_BUTTON_LOCK_ENABLED
+			                                    : LIBINPUT_CONFIG_SCROLL_BUTTON_LOCK_DISABLED);
+
 	/* Convert click_method string to enum */
 	if (libinput_device_config_click_get_methods(device) != LIBINPUT_CONFIG_CLICK_METHOD_NONE
 			&& globalconf.input.click_method) {
@@ -1825,6 +2044,16 @@ apply_input_settings_to_device(struct libinput_device *device)
 			method = LIBINPUT_CONFIG_CLICK_METHOD_CLICKFINGER;
 		libinput_device_config_click_set_method(device, method);
 	}
+
+	/* Clickfinger button map (like tap_button_map but for clickfinger mode) */
+#ifdef LIBINPUT_CONFIG_CLICKFINGER_MAP_LRM
+	if (globalconf.input.clickfinger_button_map) {
+		enum libinput_config_clickfinger_button_map map = LIBINPUT_CONFIG_CLICKFINGER_MAP_LRM;
+		if (strcmp(globalconf.input.clickfinger_button_map, "lmr") == 0)
+			map = LIBINPUT_CONFIG_CLICKFINGER_MAP_LMR;
+		libinput_device_config_click_set_clickfinger_button_map(device, map);
+	}
+#endif
 
 	/* Convert send_events_mode string to enum */
 	if (libinput_device_config_send_events_get_modes(device)
@@ -1962,11 +2191,28 @@ destroydecoration(struct wl_listener *listener, void *data)
 }
 
 void
+destroydrag(struct wl_listener *listener, void *data)
+{
+	Client *c = focustop(selmon);
+
+	/* seat->drag is already NULL at this point (wlroots clears it before
+	 * emitting destroy). Re-focus so border colors are properly updated.
+	 *
+	 * focusclient() skips border color updates when the same client is
+	 * already focused (early return at surface == old check), so explicitly
+	 * apply the focus color here for the common case where the focused
+	 * client didn't change during the drag. */
+	if (c && !client_is_unmanaged(c))
+		client_set_border_color(c, get_focuscolor());
+	focusclient(c, 0);
+	motionnotify(0, NULL, 0, 0, 0, 0);
+	wl_list_remove(&listener->link);
+	free(listener);
+}
+
+void
 destroydragicon(struct wl_listener *listener, void *data)
 {
-	/* Focus enter isn't sent during drag, so refocus the focused node. */
-	focusclient(focustop(selmon), 1);
-	motionnotify(0, NULL, 0, 0, 0, 0);
 	wl_list_remove(&listener->link);
 	free(listener);
 }
@@ -2117,7 +2363,15 @@ destroynotify(struct wl_listener *listener, void *data)
 	}
 
 	if (already_unmanaged) {
-		/* Client already removed from array by unmapnotify, skip client_unmanage */
+		/* Client already removed from array by unmapnotify, skip client_unmanage.
+		 * For XWayland clients, client_unmanage(UNMAP) kept the Lua reference
+		 * alive to allow re-mapping.  Release it now. */
+#ifdef XWAYLAND
+		if (c->client_type == X11) {
+			lua_State *L = globalconf_get_lua_State();
+			luaA_object_unref(L, c);
+		}
+#endif
 	} else {
 		/* Edge case: client still in array (destroyed without unmap), need to unmanage */
 		client_unmanage(c, CLIENT_UNMANAGE_DESTROYED);
@@ -2236,6 +2490,18 @@ dirtomon(enum wlr_direction dir)
 			selmon->wlr_output, selmon->m.x, selmon->m.y)))
 		return next->data;
 	return selmon;
+}
+
+/** Update pointer constraint for a surface.
+ * Called from somewm_api.c when Lua changes focus - games need pointer
+ * constraints to follow keyboard focus for mouse lock to work. */
+void
+some_update_pointer_constraint(struct wlr_surface *surface)
+{
+	if (!surface)
+		return;
+	cursorconstrain(wlr_pointer_constraints_v1_constraint_for_surface(
+		pointer_constraints, surface, seat));
 }
 
 void
@@ -2367,14 +2633,23 @@ focusclient(Client *c, int lift)
 	}
 
 	if (surface_ready) {
+#ifdef XWAYLAND
+		/* Sway pattern: inform XWayland of the active seat on every focus
+		 * change to an X11 client. Required for proper keyboard delivery. */
+		if (c->client_type == X11)
+			wlr_xwayland_set_seat(xwayland, seat);
+#endif
 		kb = wlr_seat_get_keyboard(seat);
 		if (kb) {
 			wlr_seat_keyboard_notify_enter(seat, surface,
 			                                kb->keycodes,
 			                                kb->num_keycodes,
 			                                &kb->modifiers);
+		} else {
+			/* Send keyboard enter even without a keyboard device (Sway pattern).
+			 * This ensures the surface knows it has keyboard focus. */
+			wlr_seat_keyboard_notify_enter(seat, surface, NULL, 0, NULL);
 		}
-
 		/* Update pointer constraint for newly focused surface.
 		 * Games like Minecraft need the constraint to follow keyboard focus. */
 		cursorconstrain(wlr_pointer_constraints_v1_constraint_for_surface(
@@ -2429,6 +2704,9 @@ void
 fullscreennotify(struct wl_listener *listener, void *data)
 {
 	Client *c = wl_container_of(listener, c, request_fullscreen);
+	/* Guard against stale XWayland client after client_unmanage() */
+	if (c->client_type == X11 && c->window == XCB_NONE)
+		return;
 	setfullscreen(c, client_wants_fullscreen(c));
 }
 
@@ -2536,7 +2814,7 @@ handlesig(int signo)
  * We read from the pipe and reap all children with waitpid().
  */
 static gboolean
-reap_children(GIOChannel *channel, GIOCondition condition, gpointer user_data)
+reap_children(gint fd, GIOCondition condition, gpointer data)
 {
 	pid_t child;
 	int status;
@@ -2604,8 +2882,13 @@ get_border_width(void)
 	lua_State *L = globalconf_get_lua_State();
 	if (!L) return globalconf.appearance.border_width;
 
-	/* Try beautiful.border_width */
-	lua_getglobal(L, "beautiful");
+	/* Use require() to get beautiful module (it's typically local, not global) */
+	lua_getglobal(L, "require");
+	lua_pushstring(L, "beautiful");
+	if (lua_pcall(L, 1, 1, 0) != 0) {
+		lua_pop(L, 1);
+		return globalconf.appearance.border_width;
+	}
 	if (lua_istable(L, -1)) {
 		lua_getfield(L, -1, "border_width");
 		if (lua_isnumber(L, -1)) {
@@ -2908,6 +3191,21 @@ mapnotify(struct wl_listener *listener, void *data)
 
 	client_get_geometry(c, &c->geometry);
 
+#ifdef XWAYLAND
+	/* Re-manage XWayland clients that were previously unmapped (e.g., Discord
+	 * close-to-tray then re-open).  client_unmanage(UNMAP) removed the client
+	 * from arrays and invalidated window, but kept the Lua reference alive.
+	 * Restore the client to a manageable state before proceeding. */
+	if (c->client_type == X11 && c->window == XCB_NONE) {
+		c->window = c->surface.xwayland->window_id;
+		c->bw = client_is_unmanaged(c) ? 0 : get_border_width();
+		client_array_push(&globalconf.clients, c);
+		stack_client_push(c);
+		luaA_class_emit_signal(globalconf_get_lua_State(),
+			&client_class, "list", 0);
+	}
+#endif
+
 	/* Handle unmanaged clients first so we can return prior create borders */
 	if (client_is_unmanaged(c)) {
 		/* Unmanaged clients always are floating */
@@ -3160,6 +3458,38 @@ mapnotify(struct wl_listener *listener, void *data)
 	}
 	printstatus();
 
+	/* Ensure keyboard focus is delivered now that the surface is mapped.
+	 * focusclient() may have been called earlier (from Lua rules) when the
+	 * surface wasn't ready yet, so keyboard enter was skipped. Re-send it
+	 * now. This fixes games and clients that appear focused but don't
+	 * receive keyboard input. */
+	if (globalconf.focus.client == c && client_surface(c)) {
+		/* Use same surface_ready logic as focusclient(): for XWayland
+		 * clients, surface->mapped may be false even after map event,
+		 * so check c->scene instead. */
+		int ready;
+#ifdef XWAYLAND
+		if (c->client_type == X11)
+			ready = (c->scene != NULL);
+		else
+#endif
+			ready = client_surface(c)->mapped;
+		if (ready && seat->keyboard_state.focused_surface != client_surface(c)) {
+#ifdef XWAYLAND
+			if (c->client_type == X11)
+				wlr_xwayland_set_seat(xwayland, seat);
+#endif
+			struct wlr_keyboard *kb = wlr_seat_get_keyboard(seat);
+			if (kb) {
+				wlr_seat_keyboard_notify_enter(seat, client_surface(c),
+					kb->keycodes, kb->num_keycodes, &kb->modifiers);
+			} else {
+				wlr_seat_keyboard_notify_enter(seat, client_surface(c),
+					NULL, 0, NULL);
+			}
+		}
+	}
+
 unset_fullscreen:
 	m = c->mon ? c->mon : xytomon(c->geometry.x, c->geometry.y);
 	foreach(client, globalconf.clients) {
@@ -3170,6 +3500,19 @@ unset_fullscreen:
 	}
 
 	luaA_emit_signal_global("client::map");
+
+	/* If cursor is within this new client's geometry, set pointer focus directly.
+	 * Don't use motionnotify(0,...) because xytonode may not find the surface yet
+	 * (buffer not committed) and would CLEAR pointer focus instead. */
+	if (client_surface(c) && client_surface(c)->mapped
+			&& cursor->x >= c->geometry.x && cursor->x < c->geometry.x + c->geometry.width
+			&& cursor->y >= c->geometry.y && cursor->y < c->geometry.y + c->geometry.height) {
+		double sx = cursor->x - c->geometry.x - c->bw;
+		double sy = cursor->y - c->geometry.y - c->bw;
+		wlr_log(WLR_DEBUG, "[POINTER-REEVAL] mapnotify: setting pointer focus on %s (cursor in geometry)",
+			client_get_appid(c));
+		pointerfocus(c, client_surface(c), sx, sy, 0);
+	}
 }
 
 void
@@ -3315,6 +3658,15 @@ motionnotify(uint32_t time, struct wlr_input_device *device, double dx, double d
 
 		wlr_cursor_move(cursor, device, dx, dy);
 		wlr_idle_notifier_v1_notify_activity(idle_notifier, seat);
+
+		/* Update selected monitor when cursor crosses monitor boundaries.
+		 * Without this, layer-shell clients (rofi, etc.) that don't specify
+		 * an output get assigned to the stale selmon in createlayersurface(). */
+		{
+			Monitor *mon = xytomon(cursor->x, cursor->y);
+			if (mon && mon != selmon)
+				selmon = mon;
+		}
 	}
 
 	/* Update drag icon's position */
@@ -3589,10 +3941,34 @@ pointerfocus(Client *c, struct wlr_surface *surface, double sx, double sy,
 {
 	struct timespec now;
 
-	/* If surface is NULL, clear pointer focus */
+	/* If surface is NULL but client exists, use client's main surface as fallback.
+	 * This happens when cursor is over titlebar/border (compositor-drawn, not a
+	 * wlr_surface). Without this fallback, pointer focus would be cleared and the
+	 * client wouldn't receive hover/scroll events. */
+	if (!surface && c && client_surface(c) && client_surface(c)->mapped) {
+		surface = client_surface(c);
+		sx = cursor->x - c->geometry.x - c->bw;
+		sy = cursor->y - c->geometry.y - c->bw;
+	}
 	if (!surface) {
 		wlr_seat_pointer_notify_clear_focus(seat);
 		return;
+	}
+
+	/* Workaround for wlroots pointer enter race condition:
+	 * wlr_seat_pointer_enter() caches focused_surface and returns early if
+	 * it matches. But if the initial enter was called before the client bound
+	 * wl_pointer (pointers list empty), the wl_pointer.enter event was never
+	 * sent even though focused_surface was set. Clear the stale state so
+	 * wlr_seat_pointer_enter() re-delivers the enter event. */
+	if (seat->pointer_state.focused_surface == surface) {
+		struct wlr_seat_client *sc = seat->pointer_state.focused_client;
+		if (!sc || wl_list_empty(&sc->pointers)) {
+			wlr_log(WLR_DEBUG, "[POINTER-REENTER] clearing stale pointer focus on %s "
+				"(client had no wl_pointer resources)",
+				c ? client_get_appid(c) : "?");
+			wlr_seat_pointer_notify_clear_focus(seat);
+		}
 	}
 
 	if (!time) {
@@ -3600,9 +3976,9 @@ pointerfocus(Client *c, struct wlr_surface *surface, double sx, double sy,
 		time = now.tv_sec * 1000 + now.tv_nsec / 1000000;
 	}
 
-	/* Let the client know that the mouse cursor has entered one
-	 * of its surfaces. wlroots makes this a no-op if surface is already focused.
-	 * Focus behavior is now handled in Lua via mouse::enter signal (AwesomeWM pattern). */
+	/* Deliver pointer enter + motion to the surface.
+	 * wlr_seat_pointer_enter is a no-op if surface is already focused AND
+	 * the client has pointer resources (normal case). */
 	wlr_seat_pointer_notify_enter(seat, surface, sx, sy);
 	wlr_seat_pointer_notify_motion(seat, time, sx, sy);
 }
@@ -3630,6 +4006,8 @@ powermgrsetmode(struct wl_listener *listener, void *data)
 	wlr_output_state_finish(&state);
 
 	m->asleep = !event->mode;
+	wlr_log(WLR_ERROR, "[HOTPLUG] powermgrsetmode: %s mode=%d asleep=%d",
+		m->wlr_output->name, event->mode, m->asleep);
 	updatemons(NULL, NULL);
 }
 
@@ -3642,6 +4020,13 @@ rendermon(struct wl_listener *listener, void *data)
 	Client *c;
 	struct timespec now;
 
+	/* Safety: scene_output may not exist yet if frame fires before createmon
+	 * finishes (possible on NVIDIA), or output may be disabled */
+	if (!m->scene_output)
+		return;
+	if (!m->wlr_output->enabled)
+		goto skip;
+
 	/* Render if no XDG clients have an outstanding resize and are visible on
 	 * this monitor. */
 	foreach(client, globalconf.clients) {
@@ -3650,10 +4035,11 @@ rendermon(struct wl_listener *listener, void *data)
 			goto skip;
 	}
 
-	wlr_scene_output_commit(m->scene_output, NULL);
+	if (!wlr_scene_output_commit(m->scene_output, NULL))
+		wlr_log(WLR_DEBUG, "[HOTPLUG] rendermon commit failed: %s",
+			m->wlr_output->name);
 
 skip:
-	/* Let clients know a frame has been rendered */
 	clock_gettime(CLOCK_MONOTONIC, &now);
 	wlr_scene_output_send_frame_done(m->scene_output, &now);
 }
@@ -3683,7 +4069,44 @@ void
 requestmonstate(struct wl_listener *listener, void *data)
 {
 	struct wlr_output_event_request_state *event = data;
-	wlr_output_commit_state(event->output, event->state);
+	uint32_t committed = event->state->committed;
+
+	wlr_log(WLR_ERROR, "[HOTPLUG] requestmonstate: %s", event->output->name);
+	if (!wlr_output_commit_state(event->output, event->state)) {
+		wlr_log(WLR_ERROR, "[HOTPLUG] requestmonstate commit FAILED: %s",
+			event->output->name);
+		updatemons(NULL, NULL);
+		return;
+	}
+
+	/* Emit property::* signals on the output object so Lua stays in sync
+	 * when external tools (wlr-randr, kanshi) change output state. */
+	if (globalconf_L) {
+		Monitor *m = event->output->data;
+		if (m && m->output) {
+			luaA_object_push(globalconf_L, m->output);
+			if (committed & WLR_OUTPUT_STATE_ENABLED)
+				luaA_object_emit_signal(globalconf_L, -1, "property::enabled", 0);
+			if (committed & WLR_OUTPUT_STATE_SCALE) {
+				luaA_object_emit_signal(globalconf_L, -1, "property::scale", 0);
+				/* Also emit on screen for backward compat */
+				screen_t *screen = luaA_screen_get_by_monitor(globalconf_L, m);
+				if (screen) {
+					luaA_object_push(globalconf_L, screen);
+					luaA_object_emit_signal(globalconf_L, -1, "property::scale", 0);
+					lua_pop(globalconf_L, 1);
+				}
+			}
+			if (committed & WLR_OUTPUT_STATE_TRANSFORM)
+				luaA_object_emit_signal(globalconf_L, -1, "property::transform", 0);
+			if (committed & WLR_OUTPUT_STATE_MODE)
+				luaA_object_emit_signal(globalconf_L, -1, "property::mode", 0);
+			if (committed & WLR_OUTPUT_STATE_ADAPTIVE_SYNC_ENABLED)
+				luaA_object_emit_signal(globalconf_L, -1, "property::adaptive_sync", 0);
+			lua_pop(globalconf_L, 1);
+		}
+	}
+
 	updatemons(NULL, NULL);
 }
 
@@ -3700,9 +4123,10 @@ apply_geometry_to_wlroots(Client *c)
 	if (!c->scene || !client_surface(c) || !client_surface(c)->mapped)
 		return;
 
-	/* Get titlebar sizes - they occupy space inside geometry */
-	titlebar_left = c->titlebar[CLIENT_TITLEBAR_LEFT].size;
-	titlebar_top = c->titlebar[CLIENT_TITLEBAR_TOP].size;
+	/* Get titlebar sizes - they occupy space inside geometry.
+	 * When fullscreen, ignore titlebar sizes - surface should cover entire geometry. */
+	titlebar_left = c->fullscreen ? 0 : c->titlebar[CLIENT_TITLEBAR_LEFT].size;
+	titlebar_top = c->fullscreen ? 0 : c->titlebar[CLIENT_TITLEBAR_TOP].size;
 
 	/* Update scene-graph position and borders */
 	wlr_scene_node_set_position(&c->scene->node, c->geometry.x, c->geometry.y);
@@ -3716,12 +4140,19 @@ apply_geometry_to_wlroots(Client *c)
 	wlr_scene_node_set_position(&c->border[2]->node, 0, c->bw);
 	wlr_scene_node_set_position(&c->border[3]->node, c->geometry.width - c->bw, c->bw);
 
-	/* Update shadow geometry */
-	if (c->shadow.tree) {
+	/* Update shadow geometry (lazy creation if needed) */
+	{
 		const shadow_config_t *shadow_config = shadow_get_effective_config(
 			c->shadow_config, false);
-		shadow_update_geometry(&c->shadow, shadow_config,
-			c->geometry.width, c->geometry.height);
+		if (shadow_config && shadow_config->enabled) {
+			if (c->shadow.tree) {
+				shadow_update_geometry(&c->shadow, shadow_config,
+					c->geometry.width, c->geometry.height);
+			} else {
+				shadow_create(c->scene, &c->shadow, shadow_config,
+					c->geometry.width, c->geometry.height);
+			}
+		}
 	}
 
 	/* Update titlebar positions - they depend on current geometry */
@@ -3732,9 +4163,20 @@ apply_geometry_to_wlroots(Client *c)
 	 * Without this check, we flood the client with configure events on every refresh cycle,
 	 * which crashes Firefox and other clients that can't handle rapid configure floods. */
 	if (!c->resize) {
-		c->resize = client_set_size(c,
-				c->geometry.width - 2 * c->bw - titlebar_left - c->titlebar[CLIENT_TITLEBAR_RIGHT].size,
-				c->geometry.height - 2 * c->bw - titlebar_top - c->titlebar[CLIENT_TITLEBAR_BOTTOM].size);
+		if (c->fullscreen) {
+			/* Fullscreen: client gets full geometry minus borders only */
+			c->resize = client_set_size(c,
+					c->geometry.width - 2 * c->bw,
+					c->geometry.height - 2 * c->bw);
+		} else {
+			int sw = c->geometry.width - 2 * c->bw
+				- titlebar_left - c->titlebar[CLIENT_TITLEBAR_RIGHT].size;
+			int sh = c->geometry.height - 2 * c->bw
+				- titlebar_top - c->titlebar[CLIENT_TITLEBAR_BOTTOM].size;
+			if (sw < 1) sw = 1;
+			if (sh < 1) sh = 1;
+			c->resize = client_set_size(c, sw, sh);
+		}
 	}
 	client_get_clip(c, &clip);
 	wlr_scene_subsurface_tree_set_clip(&c->scene_surface->node, &clip);
@@ -3753,6 +4195,24 @@ resize(Client *c, struct wlr_box geo, int interact)
 	client_set_bounds(c, geo.width, geo.height);
 	c->geometry = geo;
 	applybounds(c, bbox);
+
+	/* Apply aspect ratio constraint (Wayland equivalent of ICCCM aspect hints).
+	 * Works on full geometry (including borders/titlebars) to match
+	 * the ratio captured from Lua (geo.width / geo.height). */
+	if (c->aspect_ratio > 0 && !c->fullscreen && !c->maximized) {
+		int w = c->geometry.width;
+		int h = c->geometry.height;
+		if (w > 0 && h > 0) {
+			double current = (double)w / h;
+			/* Tolerance: ~1 pixel to prevent rounding oscillation */
+			double epsilon = 1.5 / (double)h;
+			if (current - c->aspect_ratio > epsilon) {
+				c->geometry.width = (int)(h * c->aspect_ratio + 0.5);
+			} else if (c->aspect_ratio - current > epsilon) {
+				c->geometry.height = (int)(w / c->aspect_ratio + 0.5);
+			}
+		}
+	}
 
 	/* Apply to wlroots rendering */
 	apply_geometry_to_wlroots(c);
@@ -4196,6 +4656,11 @@ setmon(Client *c, Monitor *m, uint32_t newtags)
 	if (oldmon == m)
 		return;
 
+	wlr_log(WLR_ERROR, "[HOTPLUG] setmon: client=%s old=%s new=%s",
+		client_get_title(c) ? client_get_title(c) : "?",
+		oldmon ? oldmon->wlr_output->name : "NULL",
+		m ? m->wlr_output->name : "NULL");
+
 	L = globalconf_get_lua_State();
 	old_screen = c->screen;  /* Capture before update */
 
@@ -4277,16 +4742,13 @@ setup(void)
 	/* Make read end non-blocking */
 	fcntl(sigchld_pipe[0], F_SETFL, O_NONBLOCK);
 
-	/* Setup GLib IO watch for SIGCHLD pipe */
-	{
-		GIOChannel *channel = g_io_channel_unix_new(sigchld_pipe[0]);
-		g_io_add_watch(channel, G_IO_IN, reap_children, NULL);
-		g_io_channel_unref(channel);
-	}
+	/* Setup GLib watch for SIGCHLD pipe */
+	g_unix_fd_add(sigchld_pipe[0], G_IO_IN, reap_children, NULL);
 
 	for (i = 0; i < (int)LENGTH(sig); i++)
 		sigaction(sig[i], &sa, NULL);
 	wlr_log_init(globalconf.log_level, NULL);
+
 
 	/* The Wayland display is managed by libwayland. It handles accepting
 	 * clients from the Unix socket, manging Wayland globals, and so on. */
@@ -4363,6 +4825,7 @@ setup(void)
 	wlr_fractional_scale_manager_v1_create(dpy, 1);
 	COMPAT_PRESENTATION_CREATE(dpy, backend);
 	wlr_alpha_modifier_v1_create(dpy);
+	pointer_gestures = wlr_pointer_gestures_v1_create(dpy);
 
 	/* Initializes the interface used to implement urgency hints */
 	activation = wlr_xdg_activation_v1_create(dpy);
@@ -4438,8 +4901,16 @@ setup(void)
 	 * Xcursor themes to source cursor images from and makes sure that cursor
 	 * images are available at all scale factors on the screen (necessary for
 	 * HiDPI support). Scaled cursors will be loaded with each output. */
-	cursor_mgr = wlr_xcursor_manager_create(NULL, 24);
-	setenv("XCURSOR_SIZE", "24", 1);
+	const char *cursor_theme = getenv("XCURSOR_THEME");
+	const char *cursor_size_str = getenv("XCURSOR_SIZE");
+	int cursor_size = 24;
+	if (cursor_size_str) {
+		int parsed = atoi(cursor_size_str);
+		if (parsed > 0) {
+			cursor_size = parsed;
+		}
+	}
+	cursor_mgr = wlr_xcursor_manager_create(cursor_theme, cursor_size);
 
 	/*
 	 * wlr_cursor *only* displays an image on screen. It does not move around
@@ -4456,6 +4927,15 @@ setup(void)
 	wl_signal_add(&cursor->events.button, &cursor_button);
 	wl_signal_add(&cursor->events.axis, &cursor_axis);
 	wl_signal_add(&cursor->events.frame, &cursor_frame);
+
+	wl_signal_add(&cursor->events.swipe_begin, &gesture_swipe_begin);
+	wl_signal_add(&cursor->events.swipe_update, &gesture_swipe_update);
+	wl_signal_add(&cursor->events.swipe_end, &gesture_swipe_end);
+	wl_signal_add(&cursor->events.pinch_begin, &gesture_pinch_begin);
+	wl_signal_add(&cursor->events.pinch_update, &gesture_pinch_update);
+	wl_signal_add(&cursor->events.pinch_end, &gesture_pinch_end);
+	wl_signal_add(&cursor->events.hold_begin, &gesture_hold_begin);
+	wl_signal_add(&cursor->events.hold_end, &gesture_hold_end);
 
 	cursor_shape_mgr = wlr_cursor_shape_manager_v1_create(dpy, 1);
 	wl_signal_add(&cursor_shape_mgr->events.request_set_shape, &request_set_cursor_shape);
@@ -4520,6 +5000,7 @@ setup(void)
 	globalconf.shadow.client.color[1] = 0.0f;
 	globalconf.shadow.client.color[2] = 0.0f;
 	globalconf.shadow.client.color[3] = 1.0f;
+	globalconf.shadow.client.clip_directional = true;
 	/* Drawin defaults (same as client initially) */
 	globalconf.shadow.drawin = globalconf.shadow.client;
 
@@ -4577,6 +5058,9 @@ setup(void)
 
 	luaA_init();
 
+	/* Initialize wallpaper cache (must be AFTER luaA_init which zeroes globalconf) */
+	wallpaper_cache_init();
+
 	/* Initialize D-Bus for notifications (AwesomeWM compatibility) */
 	a_dbus_init();
 
@@ -4600,6 +5084,12 @@ void
 startdrag(struct wl_listener *listener, void *data)
 {
 	struct wlr_drag *drag = data;
+
+	/* Listen for drag destroy to refocus after drag ends.
+	 * wlroots clears seat->drag BEFORE emitting this signal,
+	 * so focusclient() will properly update border colors. */
+	LISTEN_STATIC(&drag->events.destroy, destroydrag);
+
 	if (!drag->icon)
 		return;
 
@@ -4741,8 +5231,10 @@ unmaplayersurfacenotify(struct wl_listener *listener, void *data)
 
 	l->mapped = 0;
 	wlr_scene_node_set_enabled(&l->scene->node, 0);
-	if (l == exclusive_focus)
+	if (l == exclusive_focus) {
 		exclusive_focus = NULL;
+		focusclient(focustop(selmon), 1);
+	}
 	if (l->layer_surface->output && (l->mon = l->layer_surface->output->data))
 		arrangelayers(l->mon);
 
@@ -4832,22 +5324,66 @@ updatemons(struct wl_listener *listener, void *data)
 	 * positions, focus, and the stored configuration in wlroots'
 	 * output-manager implementation.
 	 */
+	/* Guard against re-entrancy: wlr_output_layout_remove/add_auto below
+	 * emit layout::change which would call us again, causing
+	 * use-after-free in wlroots output_layout_add().
+	 * Also used by cleanupmon() to prevent updatemons during output destruction. */
+	if (in_updatemons)
+		return;
+	in_updatemons = 1;
+
 	struct wlr_output_configuration_v1 *config
 			= wlr_output_configuration_v1_create();
 	Client *c;
 	struct wlr_output_configuration_head_v1 *config_head;
 	Monitor *m;
 
-	/* First remove from the layout the disabled monitors */
+	/* Add disabled monitors to the config. For those still in the layout
+	 * (transitioning to disabled), properly remove the screen and close.
+	 * Already-disabled monitors just get a config_head so output manager
+	 * clients (wlr-randr, wlopm, kanshi) can still see and re-enable
+	 * them. Fixes #269. */
 	wl_list_for_each(m, &mons, link) {
 		if (m->wlr_output->enabled || m->asleep)
 			continue;
 		config_head = wlr_output_configuration_head_v1_create(config, m->wlr_output);
 		config_head->state.enabled = 0;
-		/* Remove this output from the layout to avoid cursor enter inside it */
-		wlr_output_layout_remove(output_layout, m->wlr_output);
-		closemon(m);
-		m->m = m->w = (struct wlr_box){0};
+		if (wlr_output_layout_get(output_layout, m->wlr_output)) {
+			wlr_log(WLR_ERROR, "[HOTPLUG] updatemons disable: %s",
+				m->wlr_output->name);
+
+			/* Properly remove the screen object so Lua tears down
+			 * tags/wibars. On re-enable, a fresh screen is created
+			 * and screen_added triggers request::desktop_decoration. */
+			if (globalconf_L) {
+				screen_t *screen = luaA_screen_get_by_monitor(globalconf_L, m);
+				if (screen) {
+					screen_t *old_primary = luaA_screen_get_primary_screen(globalconf_L);
+					bool was_primary = (old_primary == screen);
+
+					screen_removed(globalconf_L, screen);
+					luaA_screen_emit_viewports(globalconf_L);
+
+					if (was_primary) {
+						screen_t *new_primary = luaA_screen_get_primary_screen(globalconf_L);
+						if (new_primary && new_primary != screen)
+							luaA_screen_emit_primary_changed(globalconf_L, new_primary);
+					}
+				}
+
+				/* Emit property::screen on output (screen→nil) */
+				if (m->output) {
+					luaA_object_push(globalconf_L, m->output);
+					luaA_object_emit_signal(globalconf_L, -1, "property::screen", 0);
+					lua_pop(globalconf_L, 1);
+				}
+			}
+
+			/* Remove this output from the layout to avoid cursor enter inside it */
+			wlr_output_layout_remove(output_layout, m->wlr_output);
+			closemon(m);
+			m->m = m->w = (struct wlr_box){0};
+		}
 	}
 	/* Insert outputs that need to */
 	wl_list_for_each(m, &mons, link) {
@@ -4890,8 +5426,33 @@ updatemons(struct wl_listener *listener, void *data)
 		/* Update screen object geometry and emit property:: signals if changed */
 		{
 			screen_t *screen = luaA_screen_get_by_monitor(globalconf_L, m);
+			if (!screen && globalconf_L) {
+				/* Re-enabled monitor has no screen (removed during disable).
+				 * Create a fresh one — treated like a hotplug. */
+				Monitor *tmp;
+				int screen_index = 1;
+				wl_list_for_each(tmp, &mons, link) {
+					if (tmp != m && luaA_screen_get_by_monitor(globalconf_L, tmp))
+						screen_index++;
+				}
+				screen = luaA_screen_new(globalconf_L, m, screen_index);
+				if (screen) {
+					lua_pop(globalconf_L, 1);
+					m->needs_screen_added = 1;
+				}
+			}
 			if (screen) {
-				luaA_screen_update_geometry(globalconf_L, screen);
+				if (m->needs_screen_added) {
+					/* New screen: cache geometry silently.
+					 * Don't emit property::geometry before _added —
+					 * Lua handlers (naughty) expect init_screen() to
+					 * have run first. screen_added() fires in the
+					 * add loop below and sets workarea = geometry. */
+					some_monitor_get_geometry(m, &screen->geometry);
+					screen->workarea = screen->geometry;
+				} else {
+					luaA_screen_update_geometry(globalconf_L, screen);
+				}
 			}
 		}
 		/* Don't move clients to the left output when plugging monitors */
@@ -4907,8 +5468,60 @@ updatemons(struct wl_listener *listener, void *data)
 		config_head->state.x = m->m.x;
 		config_head->state.y = m->m.y;
 
+		wlr_log(WLR_ERROR, "[HOTPLUG] updatemons geom: %s %d,%d %dx%d",
+			m->wlr_output->name, m->m.x, m->m.y, m->m.width, m->m.height);
+
 		if (!selmon) {
 			selmon = m;
+		}
+	}
+
+	/* Emit screen_added for newly hotplugged monitors.
+	 * Done AFTER geometry loop (m->m is set), BEFORE orphaned clients
+	 * are assigned, so Lua tags and wibar exist when clients arrive.
+	 * Separate loop from geometry to avoid reentrancy issues —
+	 * screen_added triggers Lua callbacks that may cause layout changes.
+	 * in_updatemons=1 prevents recursive updatemons calls. */
+	wl_list_for_each(m, &mons, link) {
+		if (!m->needs_screen_added || !m->wlr_output->enabled)
+			continue;
+		m->needs_screen_added = 0;
+
+		screen_t *screen = luaA_screen_get_by_monitor(globalconf_L, m);
+		if (screen && screen->valid) {
+			wlr_log(WLR_ERROR, "[HOTPLUG] updatemons screen_added: %s",
+				m->wlr_output->name);
+
+			screen_t *old_primary = luaA_screen_get_primary_screen(globalconf_L);
+			screen_added(globalconf_L, screen);
+			luaA_screen_emit_list(globalconf_L);
+			luaA_screen_emit_viewports(globalconf_L);
+
+			screen_t *new_primary = luaA_screen_get_primary_screen(globalconf_L);
+			if (new_primary == screen && old_primary != screen)
+				luaA_screen_emit_primary_changed(globalconf_L, screen);
+
+			/* Emit property::screen on the output (nil→screen) */
+			if (m->output) {
+				luaA_object_push(globalconf_L, m->output);
+				luaA_object_emit_signal(globalconf_L, -1, "property::screen", 0);
+				lua_pop(globalconf_L, 1);
+			}
+
+			banning_refresh();
+			some_refresh();
+		}
+	}
+
+	/* Emit deferred output "added" signals. Done AFTER screen_added so that
+	 * o.screen is available in "added" handlers. */
+	wl_list_for_each(m, &mons, link) {
+		if (!m->needs_output_added)
+			continue;
+		m->needs_output_added = 0;
+		if (m->output && globalconf_L) {
+			luaA_object_push(globalconf_L, m->output);
+			luaA_class_emit_signal(globalconf_L, &output_class, "added", 1);
 		}
 	}
 
@@ -4916,8 +5529,12 @@ updatemons(struct wl_listener *listener, void *data)
 		struct wlr_surface *surf;
 		foreach(client, globalconf.clients) {
 			c = *client;
-			if (!c->mon && (surf = client_surface(c)) && surf->mapped)
+			if (!c->mon && (surf = client_surface(c)) && surf->mapped) {
+				wlr_log(WLR_ERROR, "[HOTPLUG] updatemons orphan: %s → %s",
+					client_get_title(c) ? client_get_title(c) : "?",
+					selmon->wlr_output->name);
 				setmon(c, selmon, 0);
+			}
 		}
 		focusclient(focustop(selmon), 1);
 		if (selmon->lock_surface) {
@@ -4927,6 +5544,9 @@ updatemons(struct wl_listener *listener, void *data)
 		}
 	}
 
+	wlr_log(WLR_ERROR, "[HOTPLUG] updatemons exit selmon=%s",
+		selmon ? selmon->wlr_output->name : "NULL");
+
 	/* FIXME: figure out why the cursor image is at 0,0 after turning all
 	 * the monitors on.
 	 * Move the cursor image where it used to be. It does not generate a
@@ -4934,7 +5554,9 @@ updatemons(struct wl_listener *listener, void *data)
 	 * at the wrong position after all. */
 	wlr_cursor_move(cursor, NULL, 0, 0);
 
+	in_updatemons = 0;
 	wlr_output_manager_v1_set_configuration(output_mgr, config);
+	in_updatemons = 0;
 }
 
 void
@@ -4942,6 +5564,10 @@ updatetitle(struct wl_listener *listener, void *data)
 {
 	Client *c = wl_container_of(listener, c, set_title);
 	lua_State *L;
+
+	/* Guard against stale XWayland client after client_unmanage() */
+	if (c->client_type == X11 && c->window == XCB_NONE)
+		return;
 
 	/* Use new property system for both Wayland and XWayland clients
 	 * Both call client_set_name() which emits property::name signal */
@@ -5394,6 +6020,13 @@ activatex11(struct wl_listener *listener, void *data)
 	if (client_is_unmanaged(c))
 		return;
 
+	/* Guard against stale client: after client_unmanage() invalidates the
+	 * client (window = XCB_NONE), this listener may still fire if the
+	 * XWayland surface hasn't been destroyed yet (e.g., Discord close-to-tray
+	 * then re-launch). Skip to prevent use-after-free and Lua panics. */
+	if (c->window == XCB_NONE)
+		return;
+
 	/* Tell XWayland the surface is activated at the X11 level */
 	wlr_xwayland_surface_activate(c->surface.xwayland, 1);
 
@@ -5430,6 +6063,8 @@ configurex11(struct wl_listener *listener, void *data)
 {
 	Client *c = wl_container_of(listener, c, configure);
 	struct wlr_xwayland_surface_configure_event *event = data;
+	if (c->window == XCB_NONE)
+		return;
 	if (!client_surface(c) || !client_surface(c)->mapped) {
 		wlr_xwayland_surface_configure(c->surface.xwayland,
 				event->x, event->y, event->width, event->height);
@@ -5522,6 +6157,9 @@ sethints(struct wl_listener *listener, void *data)
 	bool dominated;
 
 	if (!hints)
+		return;
+
+	if (c->window == XCB_NONE)
 		return;
 
 	/* Check if this client is currently focused (dominated by focus) */
@@ -5648,8 +6286,7 @@ get_distro_name(void)
 			/* Strip trailing newline and quote */
 			while (len > 0 && (start[len-1] == '\n' || start[len-1] == '"'))
 				start[--len] = '\0';
-			strncpy(distro, start, sizeof(distro) - 1);
-			distro[sizeof(distro) - 1] = '\0';
+			snprintf(distro, sizeof(distro), "%s", start);
 			break;
 		}
 	}
@@ -5682,15 +6319,13 @@ get_gpu_info(void)
 				size_t len = strlen(start);
 				if (len > 0 && start[len-1] == '\n')
 					start[len-1] = '\0';
-				strncpy(driver, start, sizeof(driver) - 1);
-				driver[sizeof(driver) - 1] = '\0';
+				snprintf(driver, sizeof(driver), "%s", start);
 			} else if (strncmp(line, "PCI_ID=", 7) == 0) {
 				char *start = line + 7;
 				size_t len = strlen(start);
 				if (len > 0 && start[len-1] == '\n')
 					start[len-1] = '\0';
-				strncpy(pci_id, start, sizeof(pci_id) - 1);
-				pci_id[sizeof(pci_id) - 1] = '\0';
+				snprintf(pci_id, sizeof(pci_id), "%s", start);
 			}
 		}
 		fclose(f);
@@ -5847,11 +6482,59 @@ print_version_info(const char **paths, int num_paths)
 	exit(EXIT_SUCCESS);
 }
 
+/* ========================================================================
+ * Test helpers — headless output hotplug simulation
+ * ======================================================================== */
+
+static struct wlr_backend *test_headless_backend;
+
+static void
+find_headless_cb(struct wlr_backend *b, void *data)
+{
+	if (wlr_backend_is_headless(b))
+		*(struct wlr_backend **)data = b;
+}
+
+const char *
+some_test_add_output(unsigned int width, unsigned int height)
+{
+	if (!test_headless_backend) {
+		if (wlr_backend_is_headless(backend)) {
+			test_headless_backend = backend;
+		} else if (wlr_backend_is_multi(backend)) {
+			/* Search for existing headless sub-backend */
+			wlr_multi_for_each_backend(backend, find_headless_cb,
+				&test_headless_backend);
+			if (!test_headless_backend) {
+				/* Create one and add it to the multi-backend */
+				test_headless_backend =
+					wlr_headless_backend_create(event_loop);
+				if (!test_headless_backend)
+					return NULL;
+				wlr_multi_backend_add(backend,
+					test_headless_backend);
+				if (!wlr_backend_start(test_headless_backend))
+					return NULL;
+			}
+		} else {
+			return NULL;
+		}
+	}
+
+	struct wlr_output *output =
+		wlr_headless_add_output(test_headless_backend, width, height);
+	if (!output)
+		return NULL;
+
+	return output->name;
+}
+
 int
 main(int argc, char *argv[])
 {
 	char *startup_cmd = NULL;
 	char *check_config = NULL;
+	int check_level = -1;  /* -1 = unset (default: warning) */
 	int show_version = 0;
 	int c;
 
@@ -5859,7 +6542,7 @@ main(int argc, char *argv[])
 	globalconf.argc = argc;
 	globalconf.argv = argv;
 
-	static struct option long_options[] = {
+	const struct option long_options[] = {
 		{"help",    no_argument,       0, 'h'},
 		{"version", no_argument,       0, 'v'},
 		{"verbose", no_argument,       0, 256},  /* info-level logging */
@@ -5867,7 +6550,8 @@ main(int argc, char *argv[])
 		{"config",  required_argument, 0, 'c'},
 		{"search",  required_argument, 0, 'L'},
 		{"startup", required_argument, 0, 's'},
-		{"check",   required_argument, 0, 'k'},
+		{"check",       required_argument, 0, 'k'},
+		{"check-level", required_argument, 0, 257},
 		{0, 0, 0, 0}
 	};
 
@@ -5898,6 +6582,18 @@ main(int argc, char *argv[])
 		case 'v':
 			show_version = 1;
 			break;
+		case 257:  /* --check-level */
+			if (strcmp(optarg, "critical") == 0)
+				check_level = 2;
+			else if (strcmp(optarg, "warning") == 0)
+				check_level = 1;
+			else if (strcmp(optarg, "info") == 0)
+				check_level = 0;
+			else {
+				fprintf(stderr, "Error: --check-level must be 'critical', 'warning', or 'info'\n");
+				goto usage;
+			}
+			break;
 		default:
 			goto usage;
 		}
@@ -5912,7 +6608,8 @@ main(int argc, char *argv[])
 	/* Check mode: scan config for compatibility issues without starting compositor */
 	if (check_config) {
 		bool use_color = isatty(STDOUT_FILENO);
-		int result = luaA_check_config(check_config, use_color);
+		int level = (check_level >= 0) ? check_level : 1;  /* default: warning */
+		int result = luaA_check_config(check_config, use_color, level);
 		return result;
 	}
 
@@ -5937,5 +6634,6 @@ usage:
 	    "  -c, --config FILE  Use specified config file (AwesomeWM compatible)\n"
 	    "  -L, --search DIR   Add directory to Lua module search path\n"
 	    "  -s, --startup CMD  Run command after startup\n"
-	    "  -k, --check CONFIG Check config for Wayland compatibility issues", argv[0]);
+	    "  -k, --check CONFIG       Check config for Wayland compatibility issues\n"
+	    "      --check-level LEVEL   Minimum severity for non-zero exit: critical, warning (default), info", argv[0]);
 }

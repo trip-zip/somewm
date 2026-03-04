@@ -13,6 +13,7 @@
 #include "objects/tag.h"
 #include "objects/client.h"
 #include "objects/screen.h"
+#include "objects/output.h"
 #include "objects/drawin.h"
 #include "objects/layer_surface.h"
 #include "objects/drawable.h"
@@ -23,6 +24,7 @@
 #include "objects/keybinding.h"
 #include "objects/keygrabber.h"
 #include "objects/mousegrabber.h"
+#include "objects/gesture.h"
 /* objects/awesome.h merged into this file */
 #include "objects/wibox.h"
 #include "objects/ipc.h"
@@ -386,7 +388,10 @@ static int
 luaA_exec(lua_State *L)
 {
     const char *cmd = luaL_checkstring(L, 1);
-    awesome_atexit(false);
+    /* Use restart=true to skip luaA_cleanup() - we're still inside a Lua
+     * call so destroying the Lua state here would be undefined behavior.
+     * The exec will replace the process image anyway. */
+    awesome_atexit(true);
     a_exec(cmd);
     return 0;  /* Never reached on success */
 }
@@ -876,10 +881,14 @@ luaA_awesome_set_input_setting(lua_State *L)
 		globalconf.input.tap_and_drag = luaL_checkinteger(L, 2);
 	} else if (strcmp(key, "drag_lock") == 0) {
 		globalconf.input.drag_lock = luaL_checkinteger(L, 2);
+	} else if (strcmp(key, "tap_3fg_drag") == 0) {
+		globalconf.input.tap_3fg_drag = luaL_checkinteger(L, 2);
 	} else if (strcmp(key, "natural_scrolling") == 0) {
 		globalconf.input.natural_scrolling = luaL_checkinteger(L, 2);
 	} else if (strcmp(key, "disable_while_typing") == 0) {
 		globalconf.input.disable_while_typing = luaL_checkinteger(L, 2);
+	} else if (strcmp(key, "dwtp") == 0) {
+		globalconf.input.dwtp = luaL_checkinteger(L, 2);
 	} else if (strcmp(key, "left_handed") == 0) {
 		globalconf.input.left_handed = luaL_checkinteger(L, 2);
 	} else if (strcmp(key, "middle_button_emulation") == 0) {
@@ -888,6 +897,10 @@ luaA_awesome_set_input_setting(lua_State *L)
 		const char *val = lua_isnil(L, 2) ? NULL : luaL_checkstring(L, 2);
 		free(globalconf.input.scroll_method);
 		globalconf.input.scroll_method = val ? strdup(val) : NULL;
+	} else if (strcmp(key, "scroll_button") == 0) {
+		globalconf.input.scroll_button = luaL_checkinteger(L, 2);
+	} else if (strcmp(key, "scroll_button_lock") == 0) {
+		globalconf.input.scroll_button_lock = luaL_checkinteger(L, 2);
 	} else if (strcmp(key, "click_method") == 0) {
 		const char *val = lua_isnil(L, 2) ? NULL : luaL_checkstring(L, 2);
 		free(globalconf.input.click_method);
@@ -906,6 +919,10 @@ luaA_awesome_set_input_setting(lua_State *L)
 		const char *val = lua_isnil(L, 2) ? NULL : luaL_checkstring(L, 2);
 		free(globalconf.input.tap_button_map);
 		globalconf.input.tap_button_map = val ? strdup(val) : NULL;
+	} else if (strcmp(key, "clickfinger_button_map") == 0) {
+		const char *val = lua_isnil(L, 2) ? NULL : luaL_checkstring(L, 2);
+		free(globalconf.input.clickfinger_button_map);
+		globalconf.input.clickfinger_button_map = val ? strdup(val) : NULL;
 	} else {
 		return luaL_error(L, "Unknown input setting: %s", key);
 	}
@@ -922,8 +939,10 @@ luaA_awesome_set_keyboard_setting(lua_State *L)
 
 	if (strcmp(key, "keyboard_repeat_rate") == 0) {
 		globalconf.keyboard.repeat_rate = luaL_checkinteger(L, 2);
+		some_apply_keyboard_repeat_info();
 	} else if (strcmp(key, "keyboard_repeat_delay") == 0) {
 		globalconf.keyboard.repeat_delay = luaL_checkinteger(L, 2);
+		some_apply_keyboard_repeat_info();
 	} else if (strcmp(key, "xkb_layout") == 0) {
 		const char *val = lua_isnil(L, 2) ? "" : luaL_checkstring(L, 2);
 		free(globalconf.keyboard.xkb_layout);
@@ -939,6 +958,8 @@ luaA_awesome_set_keyboard_setting(lua_State *L)
 		free(globalconf.keyboard.xkb_options);
 		globalconf.keyboard.xkb_options = strdup(val);
 		rebuild_keyboard_keymap();
+	} else if (strcmp(key, "numlock") == 0) {
+		some_set_numlock(lua_toboolean(L, 2));
 	} else {
 		return luaL_error(L, "Unknown keyboard setting: %s", key);
 	}
@@ -958,8 +979,59 @@ luaA_awesome_set_preferred_icon_size(lua_State *L)
 	return 0;
 }
 
+/** awesome._test_add_output: Add a headless output for integration testing.
+ * Triggers the real createmon() → updatemons() code path.
+ * \param width Output width in pixels
+ * \param height Output height in pixels
+ * \return Output name string
+ */
+static int
+luaA_awesome_test_add_output(lua_State *L)
+{
+	unsigned int width = (unsigned int)luaL_checkinteger(L, 1);
+	unsigned int height = (unsigned int)luaL_checkinteger(L, 2);
+
+	const char *name = some_test_add_output(width, height);
+	if (!name)
+		return luaL_error(L, "Failed to add headless output "
+			"(requires headless or multi backend)");
+
+	lua_pushstring(L, name);
+	return 1;
+}
+
+/** Reload shadow settings from beautiful theme.
+ * Call this after changing beautiful.shadow_* values to apply them.
+ * Regenerates shadow textures and updates all existing shadows.
+ */
+static int
+luaA_awesome_shadow_reload(lua_State *L)
+{
+	/* Reload config from beautiful */
+	shadow_load_beautiful_defaults(L);
+
+	/* Update all existing client shadows */
+	foreach(c, globalconf.clients) {
+		const shadow_config_t *config = shadow_get_effective_config(
+			(*c)->shadow_config, false);
+		shadow_update_config(&(*c)->shadow, (*c)->scene, config,
+			(*c)->geometry.width, (*c)->geometry.height);
+	}
+
+	/* Update all existing drawin shadows */
+	foreach(d, globalconf.drawins) {
+		drawin_t *drawin = *d;
+		const shadow_config_t *config = shadow_get_effective_config(
+			drawin->shadow_config, true);
+		shadow_update_config(&drawin->shadow, drawin->scene_tree, config,
+			drawin->width, drawin->height);
+	}
+
+	return 0;
+}
+
 /* awesome module methods */
-static const luaL_Reg awesome_methods[] = {
+const luaL_Reg awesome_methods[] = {
 	{ "quit", luaA_awesome_quit },
 	{ "spawn", luaA_spawn },
 	{ "new_client_placement", luaA_awesome_new_client_placement },
@@ -984,6 +1056,8 @@ static const luaL_Reg awesome_methods[] = {
 	{ "kill", luaA_kill },
 	{ "load_image", luaA_load_image },
 	{ "restart", luaA_restart },
+	{ "shadow_reload", luaA_awesome_shadow_reload },
+	{ "_test_add_output", luaA_awesome_test_add_output },
 	{ NULL, NULL }
 };
 
@@ -1048,8 +1122,18 @@ luaA_awesome_index(lua_State *L)
 		return 1;
 	}
 
+	if (A_STREQ(key, "api_level")) {
+		lua_pushinteger(L, globalconf.api_level);
+		return 1;
+	}
+
 	if (A_STREQ(key, "bypass_surface_visibility")) {
 		lua_pushboolean(L, globalconf.appearance.bypass_surface_visibility);
+		return 1;
+	}
+
+	if (A_STREQ(key, "startup")) {
+		lua_pushboolean(L, globalconf.loop == NULL);
 		return 1;
 	}
 
@@ -1145,9 +1229,6 @@ luaA_awesome_setup(lua_State *L)
 
 	lua_newtable(L);
 	lua_setfield(L, -2, "_active_modifiers");
-
-	lua_pushnumber(L, 5);
-	lua_setfield(L, -2, "api_level");
 
 	lua_pushboolean(L, 1);
 	lua_setfield(L, -2, "composite_manager_running");
@@ -1661,6 +1742,7 @@ luaA_init(void)
 	window_class_setup(globalconf_L);  /* Setup window base class first */
 	client_class_setup(globalconf_L);
 	screen_class_setup(globalconf_L);
+	output_class_setup(globalconf_L);
 	luaA_drawable_setup(globalconf_L);
 	luaA_drawin_setup(globalconf_L);
 	layer_surface_class_setup(globalconf_L);  /* Layer shell surface class */
@@ -1696,6 +1778,11 @@ luaA_init(void)
 	lua_newtable(globalconf_L);  /* Create mousegrabber module table */
 	luaA_mousegrabber_setup(globalconf_L);
 	lua_setglobal(globalconf_L, "mousegrabber");  /* mousegrabber = module */
+
+	/* Setup gesture module (somewm-specific: touchpad gesture bridge) */
+	lua_newtable(globalconf_L);
+	luaA_gesture_setup(globalconf_L);
+	lua_setglobal(globalconf_L, "_gesture");
 
 	/* NOTE: The C-based key class is now set up by key_class_setup() above (line 88).
 	 * The old Lua-based implementation below has been disabled to let the C implementation work.
@@ -1910,6 +1997,19 @@ static const x11_pattern_t x11_patterns[] = {
 	{"`xprop", "shell subcommand with xprop",
 	 "Use client.class or client.instance instead", SEVERITY_CRITICAL},
 
+	/* GTK/GDK loading via LGI - display init during config load.
+	 * GTK: somewm preloads empty lgi.override.Gtk to prevent deadlock,
+	 *       but display-dependent GTK features won't work.
+	 * GDK: no mitigation exists, will deadlock. */
+	{"lgi.require(\"Gtk", "lgi.require(\"Gtk\") - GTK loading (partially mitigated)",
+	 "somewm prevents the deadlock, but display-dependent GTK features won't work", SEVERITY_WARNING},
+	{"lgi.require('Gtk", "lgi.require('Gtk') - GTK loading (partially mitigated)",
+	 "somewm prevents the deadlock, but display-dependent GTK features won't work", SEVERITY_WARNING},
+	{"lgi.require(\"Gdk", "lgi.require(\"Gdk\") - GDK initialization deadlock",
+	 "GDK init connects to display server and will deadlock. Load lazily after startup", SEVERITY_CRITICAL},
+	{"lgi.require('Gdk", "lgi.require('Gdk') - GDK initialization deadlock",
+	 "GDK init connects to display server and will deadlock. Load lazily after startup", SEVERITY_CRITICAL},
+
 	/* === WARNING: Needs Wayland alternative === */
 
 	/* Screenshot tools (start of string or mid-command) */
@@ -2018,6 +2118,22 @@ static const x11_pattern_t x11_patterns[] = {
 
 	{NULL, NULL, NULL, 0}
 };
+
+/** Check if a line contains "somewm:ignore" suppression marker.
+ * Allows users to suppress pattern detection on specific lines, e.g.:
+ *   local cmd = "flameshot gui" -- somewm:ignore guarded by runtime check
+ */
+static bool
+line_has_suppression(const char *line_start, int line_len)
+{
+	if (line_len < 13)  /* strlen("somewm:ignore") */
+		return false;
+	int len = line_len < 200 ? line_len : 200;
+	char buf[201];
+	memcpy(buf, line_start, len);
+	buf[len] = '\0';
+	return strstr(buf, "somewm:ignore") != NULL;
+}
 
 /* Maximum recursion depth for require scanning */
 #define PRESCAN_MAX_DEPTH 8
@@ -2236,6 +2352,10 @@ luaA_prescan_file(const char *config_path, const char *config_dir, int depth)
 				if (p[0] == '-' && p[1] == '-')
 					continue;  /* Skip commented lines */
 			}
+
+			/* Skip lines with somewm:ignore suppression */
+			if (line_has_suppression(line_start, line_len))
+				continue;
 
 			fprintf(stderr, "\n");
 			fprintf(stderr, "somewm: *** X11 PATTERN DETECTED ***\n");
@@ -2731,6 +2851,20 @@ check_mode_scan_requires(const char *content, const char *config_dir,
 			continue;
 		}
 
+		/* Skip if line is a Lua comment (starts with -- after whitespace) */
+		{
+			const char *line_start = pos;
+			while (line_start > content && *(line_start - 1) != '\n')
+				line_start--;
+			const char *p = line_start;
+			while (p < pos && (*p == ' ' || *p == '\t'))
+				p++;
+			if (p[0] == '-' && p[1] == '-') {
+				pos += 7;
+				continue;
+			}
+		}
+
 		pos += 7;
 
 		while (*pos == ' ' || *pos == '\t' || *pos == '(')
@@ -2808,8 +2942,7 @@ check_mode_scan_requires(const char *content, const char *config_dir,
 			continue;
 
 		/* Save original module name for error reporting */
-		strncpy(module_path, module_name, sizeof(module_path) - 1);
-		module_path[sizeof(module_path) - 1] = '\0';
+		snprintf(module_path, sizeof(module_path), "%s", module_name);
 
 		/* Convert module.name to module/name */
 		for (char *p = module_name; *p; p++) {
@@ -2917,6 +3050,10 @@ check_mode_scan_file(const char *config_path, const char *config_dir, int depth)
 					continue;
 			}
 
+			/* Skip lines with somewm:ignore suppression */
+			if (line_has_suppression(line_start, line_len))
+				continue;
+
 			memcpy(line_buf, line_start, line_len);
 			line_buf[line_len] = '\0';
 
@@ -2934,10 +3071,11 @@ check_mode_scan_file(const char *config_path, const char *config_dir, int depth)
 /** Public API: Run check mode on a config file
  * \param config_path Path to the main config file
  * \param use_color Whether to use ANSI colors in output
+ * \param min_severity Minimum severity for non-zero exit (0=info, 1=warning, 2=critical)
  * \return Exit code (0=ok, 1=warnings, 2=critical)
  */
 int
-luaA_check_config(const char *config_path, bool use_color)
+luaA_check_config(const char *config_path, bool use_color, int min_severity)
 {
 	char dir_buf[PATH_MAX];
 	const char *dir = NULL;
@@ -2966,13 +3104,23 @@ luaA_check_config(const char *config_path, bool use_color)
 	/* Print the report */
 	check_mode_print_report(config_path, use_color);
 
-	/* Capture result before cleanup */
-	if (check_counts[2] > 0)
-		result = 2;  /* Critical issues */
-	else if (check_counts[1] > 0)
-		result = 1;  /* Warnings only */
-	else
-		result = 0;  /* No issues */
+	/* Determine exit code based on min_severity filter.
+	 * The report always shows all issues; the filter only affects exit code.
+	 * min_severity: 0=info, 1=warning, 2=critical */
+	{
+		int highest = -1;
+		if (check_counts[SEVERITY_CRITICAL] > 0)
+			highest = SEVERITY_CRITICAL;
+		else if (check_counts[SEVERITY_WARNING] > 0)
+			highest = SEVERITY_WARNING;
+		else if (check_counts[SEVERITY_INFO] > 0)
+			highest = SEVERITY_INFO;
+
+		if (highest >= 0 && highest >= min_severity)
+			result = (highest == SEVERITY_CRITICAL) ? 2 : 1;
+		else
+			result = 0;
+	}
 
 	/* Cleanup */
 	check_mode_reset();
@@ -3055,6 +3203,63 @@ luaA_loadrc(void)
 	if (!globalconf_L) {
 		fprintf(stderr, "somewm: Lua not initialized, cannot load config\n");
 		return;
+	}
+
+	/* Install wallpaper caching hooks (per-screen aware).
+	 * 1. Track filepath in gears.surface.load_uncached_silently (for cache miss path)
+	 * 2. Track screen in gears.wallpaper.maximized (for per-screen caching)
+	 * 3. Short-circuit gears.wallpaper.maximized on cache hit (skip all Lua work) */
+	if (luaL_dostring(globalconf_L,
+		"local original_require = require\n"
+		"local surface_patched = false\n"
+		"local wallpaper_patched = false\n"
+		"require = function(name)\n"
+		"    local mod = original_require(name)\n"
+		"    -- Patch gears.surface to track filepath\n"
+		"    if name == 'gears.surface' and not surface_patched then\n"
+		"        surface_patched = true\n"
+		"        local orig_load = mod.load_uncached_silently\n"
+		"        mod.load_uncached_silently = function(surf, default)\n"
+		"            if type(surf) == 'string' then\n"
+		"                rawset(_G, '_somewm_last_wallpaper_path', surf)\n"
+		"            end\n"
+		"            return orig_load(surf, default)\n"
+		"        end\n"
+		"    end\n"
+		"    -- Patch gears.wallpaper.maximized for per-screen caching\n"
+		"    if name == 'gears.wallpaper' and not wallpaper_patched then\n"
+		"        wallpaper_patched = true\n"
+		"        -- Nested table: path -> screen_index -> geometry\n"
+		"        -- Allows same wallpaper on multiple screens without overwriting\n"
+		"        rawset(_G, '_somewm_wallpaper_screen_info', {})\n"
+		"        local orig_maximized = mod.maximized\n"
+		"        mod.maximized = function(surf, s, ignore_aspect, offset)\n"
+		"            -- Get screen for per-screen caching\n"
+		"            local scr = s and screen[s]\n"
+		"            local scr_index = scr and scr.index or nil\n"
+		"            -- Store geometry in nested table: [path][screen_index] = geometry\n"
+		"            if type(surf) == 'string' and scr_index and scr.geometry then\n"
+		"                local g = scr.geometry\n"
+		"                _somewm_wallpaper_screen_info[surf] = _somewm_wallpaper_screen_info[surf] or {}\n"
+		"                _somewm_wallpaper_screen_info[surf][scr_index] = {\n"
+		"                    x = g.x, y = g.y,\n"
+		"                    width = g.width, height = g.height\n"
+		"                }\n"
+		"            end\n"
+		"            -- If surf is a filepath, screen is valid, and cached, show directly\n"
+		"            if type(surf) == 'string' and scr_index and root.wallpaper_cache_show(surf, scr_index) then\n"
+		"                return\n"
+		"            end\n"
+		"            -- Cache miss: fall through to original implementation\n"
+		"            return orig_maximized(surf, s, ignore_aspect, offset)\n"
+		"        end\n"
+		"    end\n"
+		"    return mod\n"
+		"end\n"
+	) != 0) {
+		fprintf(stderr, "somewm: warning: failed to install wallpaper caching hooks: %s\n",
+			lua_tostring(globalconf_L, -1));
+		lua_pop(globalconf_L, 1);
 	}
 
 	/* If custom config path was specified via -c flag, use only that */
@@ -3402,6 +3607,7 @@ luaA_create_fresh_state(void)
 	window_class_setup(L);
 	client_class_setup(L);
 	screen_class_setup(L);
+	output_class_setup(L);
 	luaA_drawable_setup(L);
 	luaA_drawin_setup(L);
 	layer_surface_class_setup(L);
@@ -3436,6 +3642,11 @@ luaA_create_fresh_state(void)
 	lua_newtable(L);
 	luaA_mousegrabber_setup(L);
 	lua_setglobal(L, "mousegrabber");
+
+	/* Gesture */
+	lua_newtable(L);
+	luaA_gesture_setup(L);
+	lua_setglobal(L, "_gesture");
 
 	return L;
 }
@@ -3489,9 +3700,6 @@ luaA_dofunction_from_file(lua_State *L, const char *path)
 void
 globalconf_init(lua_State *L)
 {
-	/* Zero out the entire structure */
-	memset(&globalconf, 0, sizeof(globalconf));
-
 	/* Set the Lua state */
 	globalconf.L = L;
 
