@@ -6,6 +6,13 @@ on:
   pull_request:
     branches: [main]
 
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
+  cancel-in-progress: true
+
 jobs:
   build-and-test:
     runs-on: ubuntu-24.04
@@ -31,7 +38,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
       - name: Install dependencies
         run: |
@@ -85,7 +92,7 @@ jobs:
 
       - name: Cache deps
         id: cache-deps
-        uses: actions/cache@v4
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: ~/deps-install
           key: deps-wayland-pixman-wlroots-v1-${{ runner.os }}
@@ -140,7 +147,7 @@ jobs:
         run: make LUA_PKG=${{ matrix.lua.pkg }}
 
       - name: Run unit tests
-        run: make test-unit || echo "::warning::Some unit tests failed (known issues with shell completion test)"
+        run: make test-unit
 
       - name: Run integration tests (non-spawning only)
         run: |
@@ -149,8 +156,7 @@ jobs:
           timeout 300 bash tests/run-integration.sh \
             tests/test-wibox-float-properties.lua \
             tests/test-simple.lua \
-            tests/test-awful-widget-watch.lua \
-            || echo "::warning::Some integration tests failed or timed out"
+            tests/test-awful-widget-watch.lua
         timeout-minutes: 6
         env:
           WLR_BACKENDS: headless
