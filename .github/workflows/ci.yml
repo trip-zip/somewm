@@ -145,26 +145,29 @@ jobs:
           echo "LD_LIBRARY_PATH=$HOME/deps-install/lib/x86_64-linux-gnu:$LD_LIBRARY_PATH" >> $GITHUB_ENV
 
       - name: Build somewm
-        run: make LUA_PKG=${{ matrix.lua.pkg }}
+        run: make build-test LUA_PKG=${{ matrix.lua.pkg }}
 
       - name: Run unit tests
         run: make test-unit
 
       - name: Run integration tests (non-spawning only)
         run: |
-          # Skip tests that spawn external apps (xterm/foot/XWayland)
+          # Exclude tests that need external apps or client spawning
+          spawning=$(grep -rl 'require.*_client' tests/test-*.lua | xargs -I{} basename {})
           tests=$(find tests -name 'test-*.lua' -type f \
             ! -name 'test-xwayland-*' \
-            ! -name 'test-leak-client.lua' \
-            ! -name 'test-transient-stacking.lua' \
             ! -name 'test-layer-shell-*' \
             ! -name 'test-dbus-error.lua' \
+            ! -name 'test-leak-client.lua' \
+            ! -name 'test-transient-stacking.lua' \
+            ! -name 'test-output-fake-screen.lua' \
+            $(printf '! -name %s ' $spawning) \
             | sort)
           timeout 300 bash tests/run-integration.sh $tests
         timeout-minutes: 6
         env:
-          SOMEWM: ./build/somewm
-          SOMEWM_CLIENT: ./build/somewm-client
+          SOMEWM: ./build-test/somewm
+          SOMEWM_CLIENT: ./build-test/somewm-client
           HEADLESS: 1
           LIBSEAT_BACKEND: noop
           TEST_TIMEOUT: 45
