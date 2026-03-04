@@ -85,7 +85,8 @@ jobs:
             bison \
             foot \
             xterm \
-            xwayland
+            xwayland \
+            zsh
 
       - name: Upgrade meson
         run: pip install --upgrade --break-system-packages meson
@@ -95,7 +96,7 @@ jobs:
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: ~/deps-install
-          key: deps-wayland-pixman-wlroots-v1-${{ runner.os }}
+          key: deps-wayland-pixman-wlroots-v2-${{ runner.os }}
 
       - name: Build wayland, pixman, and wayland-protocols
         if: steps.cache-deps.outputs.cache-hit != 'true'
@@ -163,4 +164,5 @@ jobs:
           SOMEWM_CLIENT: ./build/somewm-client
           WLR_BACKENDS: headless
           WLR_RENDERER: pixman
+          LIBSEAT_BACKEND: noop
           TEST_TIMEOUT: 45
