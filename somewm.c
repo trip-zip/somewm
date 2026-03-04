@@ -2597,6 +2597,7 @@ focusclient(Client *c, int lift)
 		/* With no client, all we have left is to clear focus (deferred pattern) */
 		globalconf.focus.client = NULL;
 		globalconf.focus.need_update = true;
+		stack_windows();
 		return;
 	}
 
@@ -2606,6 +2607,11 @@ focusclient(Client *c, int lift)
 	/* Set pending focus change for AwesomeWM compatibility (Lua code may check this) */
 	globalconf.focus.client = c;
 	globalconf.focus.need_update = true;
+
+	/* Trigger stack refresh: client_layer_translator() depends on which
+	 * client has focus (e.g., fullscreen clients only get LyrFS when
+	 * focused or when the focused client is on a different screen). */
+	stack_windows();
 
 	/* Activate the new client */
 	client_activate_surface(client_surface(c), 1);

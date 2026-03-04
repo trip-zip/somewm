@@ -92,9 +92,12 @@ client_layer_translator(Client *c)
 	if (c->ontop)
 		return WINDOW_LAYER_ONTOP;
 
-	/* Fullscreen windows only get their own layer when they have focus */
+	/* Fullscreen windows only get their own layer when they have focus.
+	 * On Wayland, we also keep the fullscreen layer when the focused client
+	 * is on a different screen, since the scene graph uses separate layers
+	 * (unlike X11's flat stacking model where wibars are below all clients). */
 	focused = some_get_focused_client();
-	if (c->fullscreen && focused == c)
+	if (c->fullscreen && (focused == c || !focused || focused->screen != c->screen))
 		return WINDOW_LAYER_FULLSCREEN;
 
 	if (c->above)
