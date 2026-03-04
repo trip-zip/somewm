@@ -162,7 +162,6 @@ jobs:
         env:
           SOMEWM: ./build/somewm
           SOMEWM_CLIENT: ./build/somewm-client
-          WLR_BACKENDS: headless
-          WLR_RENDERER: pixman
+          HEADLESS: 1
           LIBSEAT_BACKEND: noop
           TEST_TIMEOUT: 45
