@@ -159,6 +159,8 @@ jobs:
             tests/test-awful-widget-watch.lua
         timeout-minutes: 6
         env:
+          SOMEWM: ./build/somewm
+          SOMEWM_CLIENT: ./build/somewm-client
           WLR_BACKENDS: headless
           WLR_RENDERER: pixman
           TEST_TIMEOUT: 45
