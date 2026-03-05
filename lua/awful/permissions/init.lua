@@ -22,6 +22,7 @@
 
 local client = client
 local screen = screen
+local tag = tag
 local ipairs = ipairs
 local timer = require("gears.timer")
 local gtable = require("gears.table")
@@ -904,6 +905,54 @@ end
 if layer_surface then
     layer_surface.connect_signal("request::unmanage", permissions.layer_surface_unmanage)
 end
+
+--- Saved tag metadata from disconnected screens, keyed by output connector name.
+--
+-- Used by `permissions.tag_screen` to save tag state when a screen is removed,
+-- and by `somewmrc.lua` `request::desktop_decoration` to restore tags when the
+-- screen reconnects.
+--
+-- @table[opt={}] awful.permissions.saved_tags
+permissions.saved_tags = {}
+
+--- Default handler for tag screen removal (somewm-specific).
+--
+-- When a screen is removed, this handler saves tag metadata (name, layout,
+-- selected state, clients, etc.) keyed by the screen's output connector name.
+-- The saved state is consumed by the `request::desktop_decoration` handler in
+-- `somewmrc.lua` when the screen reconnects.
+--
+-- To replace this handler with your own, use:
+--
+--    tag.disconnect_signal("request::screen", awful.permissions.tag_screen)
+--
+-- @signalhandler awful.permissions.tag_screen
+-- @tparam tag t The tag losing its screen.
+-- @tparam string context The reason (e.g. "removed").
+-- @sourcesignal tag request::screen
+function permissions.tag_screen(t, context)
+    if not pcommon.check(t, "tag", "screen", context) then return end
+
+    if context ~= "removed" then return end
+    local s = t.screen
+    local output_name = s and s.output and s.output.name
+    if not output_name then return end
+    if not permissions.saved_tags[output_name] then
+        permissions.saved_tags[output_name] = {}
+    end
+    table.insert(permissions.saved_tags[output_name], {
+        name = t.name,
+        selected = t.selected,
+        layout = t.layout,
+        master_width_factor = t.master_width_factor,
+        master_count = t.master_count,
+        gap = t.gap,
+        clients = t:clients(),
+    })
+end
+
+-- Connect default handler for tag screen removal (somewm-specific)
+tag.connect_signal("request::screen", permissions.tag_screen)
 
 return permissions
 

@@ -148,6 +148,13 @@ screen.connect_signal("request::wallpaper", function(s)
 end)
 -- }}}
 
+-- {{{ Tag persistence across monitor hotplug
+-- The save handler lives in awful.permissions.tag_screen and stores tag
+-- metadata into awful.permissions.saved_tags keyed by connector name.
+-- To disable or replace it:
+--   tag.disconnect_signal("request::screen", awful.permissions.tag_screen)
+-- }}}
+
 -- {{{ Wibar
 
 -- Keyboard map indicator and switcher
@@ -158,8 +165,40 @@ mytextclock = wibox.widget.textclock()
 
 -- @DOC_FOR_EACH_SCREEN@
 screen.connect_signal("request::desktop_decoration", function(s)
-    -- Each screen has its own tag table.
-    awful.tag({ "1", "2", "3", "4", "5", "6", "7", "8", "9" }, s, awful.layout.layouts[1])
+    -- Restore saved tags if this output was previously removed
+    local output_name = s.output and s.output.name
+    local restore = output_name and awful.permissions.saved_tags[output_name]
+    if restore then
+        awful.permissions.saved_tags[output_name] = nil
+        -- Pass 1: recreate tags and build per-client tag lists
+        local client_tags = {}
+        for _, td in ipairs(restore) do
+            local t = awful.tag.add(td.name, {
+                screen = s,
+                layout = td.layout,
+                master_width_factor = td.master_width_factor,
+                master_count = td.master_count,
+                gap = td.gap,
+                selected = td.selected,
+            })
+            for _, c in ipairs(td.clients) do
+                if c.valid then
+                    if not client_tags[c] then
+                        client_tags[c] = {}
+                    end
+                    table.insert(client_tags[c], t)
+                end
+            end
+        end
+        -- Pass 2: move clients and assign full tag lists
+        for c, tags in pairs(client_tags) do
+            c:move_to_screen(s)
+            c:tags(tags)
+        end
+    else
+        -- Each screen has its own tag table.
+        awful.tag({ "1", "2", "3", "4", "5", "6", "7", "8", "9" }, s, awful.layout.layouts[1])
+    end
 
     -- Create a promptbox for each screen
     s.mypromptbox = awful.widget.prompt()
