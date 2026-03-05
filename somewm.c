@@ -3678,6 +3678,25 @@ motionnotify(uint32_t time, struct wlr_input_device *device, double dx, double d
 	/* Update drag icon's position */
 	wlr_scene_node_set_position(&drag_icon->node, (int)round(cursor->x), (int)round(cursor->y));
 
+	/* During active drag over compositor surfaces (wibars), don't clear
+	 * drag focus — that would cancel the drag on drop. Instead, keep
+	 * sending motion events with coordinates projected onto the focused
+	 * surface so the source app knows the pointer is outside its window
+	 * (e.g., Firefox uses out-of-bounds coords to trigger tab detach). */
+	if (seat->drag && !surface) {
+		struct wlr_surface *focused = seat->drag->focus;
+		if (focused) {
+			Client *fc = NULL;
+			LayerSurface *fl = NULL;
+			if (toplevel_from_wlr_surface(focused, &fc, &fl) >= 0) {
+				double fx = cursor->x - (fl ? fl->scene->node.x : fc->geometry.x);
+				double fy = cursor->y - (fl ? fl->scene->node.y : fc->geometry.y);
+				wlr_seat_pointer_notify_motion(seat, time, fx, fy);
+			}
+		}
+		return;
+	}
+
 	/* If mousegrabber is active, route event to Lua callback (AwesomeWM behavior:
 	 * check mousegrabber BEFORE enter/leave signals to filter them during grabs) */
 	if (mousegrabber_isrunning()) {
