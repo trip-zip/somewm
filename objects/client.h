@@ -192,6 +192,10 @@ struct client_t
     struct wl_listener foreign_request_minimize;
     /** Pending resize serial for Wayland configure */
     uint32_t resize;
+    /** Set when we re-sent a configure because actual geometry didn't match
+     *  the acked configure. Prevents infinite loop with clients that
+     *  intentionally render smaller (e.g. terminals rounding to cell size). */
+    bool configure_resent;
     /** Previous geometry for restore */
     area_t prev;
     /** Size bounds */
