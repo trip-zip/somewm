@@ -1507,7 +1507,12 @@ initialcommitnotify(struct wl_listener *listener, void *data)
 			WLR_XDG_TOPLEVEL_WM_CAPABILITIES_FULLSCREEN);
 	if (c->decoration)
 		requestdecorationmode(&c->set_decoration_mode, c->decoration);
-	wlr_xdg_toplevel_set_size(c->surface.xdg->toplevel, 0, 0);
+	if (m && !client_is_unmanaged(c)) {
+		wlr_xdg_toplevel_set_size(c->surface.xdg->toplevel,
+			m->w.width - 2 * c->bw, m->w.height - 2 * c->bw);
+	} else {
+		wlr_xdg_toplevel_set_size(c->surface.xdg->toplevel, 0, 0);
+	}
 }
 
 /* Handle subsequent XDG commits - resizing and opacity.
@@ -3437,6 +3442,18 @@ mapnotify(struct wl_listener *listener, void *data)
 
 		/* Pop client from Lua stack */
 		lua_pop(L, 1);
+
+		/* Force-run deferred layout arrange before applying geometry.
+		 * awful.layout.arrange() (triggered by manage signals above) queues
+		 * itself via timer.delayed_call(). Without running it now, c->geometry
+		 * still holds the client's requested size (e.g. Firefox's saved 800x600)
+		 * instead of the tiled geometry. The "refresh" signal triggers
+		 * timer.run_delayed_calls_now() which executes the deferred arrange,
+		 * updating c->geometry to the correct tiled dimensions.
+		 * In X11/AwesomeWM this isn't needed because the WM sends ConfigureNotify
+		 * before mapping. In Wayland, the client commits first, so we must
+		 * ensure the tiled geometry is computed before we flush the configure. */
+		luaA_emit_refresh();
 
 		/* Apply geometry BEFORE enabling scene node to send configure event.
 		 * Without this, client may render a frame at wrong size before receiving
