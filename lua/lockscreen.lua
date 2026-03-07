@@ -226,17 +226,6 @@ local function rebuild_surfaces()
     end
 end
 
--- Update a wibox to match its screen's geometry
-local function update_geometry(s)
-    local wb = surfaces[s]
-    if wb then
-        wb.x = s.geometry.x
-        wb.y = s.geometry.y
-        wb.width = s.geometry.width
-        wb.height = s.geometry.height
-    end
-end
-
 --- Initialize the lockscreen module
 -- @tparam[opt] table opts Configuration options
 function lockscreen.init(opts)
@@ -301,11 +290,6 @@ function lockscreen.init(opts)
                 surfaces[s] = nil
             end
         end
-    end)
-
-    -- Handle screen geometry changes
-    screen.connect_signal("property::geometry", function(s)
-        update_geometry(s)
     end)
 
     -- Handle lock activation

@@ -54,9 +54,7 @@ end
 --- Teardown: authenticate if locked, unlock, clear surfaces.
 function lock_helper.teardown()
     if awesome.locked then
-        if not awesome.authenticated then
-            awesome.authenticate(lock_helper.TEST_PASSWORD)
-        end
+        awesome.authenticate(lock_helper.TEST_PASSWORD)
         awesome.unlock()
     end
     awesome.clear_lock_surface()

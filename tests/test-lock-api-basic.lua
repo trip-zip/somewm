@@ -62,28 +62,27 @@ runner.run_steps({
     -- Step 5: SEC-1 - unlock without authenticate fails
     function()
         assert(awesome.locked, "should still be locked")
-        assert(not awesome.authenticated, "should not be authenticated")
         local result = awesome.unlock()
         assert(result == false, "unlock without auth should return false")
         assert(awesome.locked, "should still be locked after failed unlock")
         return true
     end,
 
-    -- Step 6: SEC-2 - authenticate, unlock, re-lock, verify authenticated reset
+    -- Step 6: SEC-2 - authenticate, unlock, re-lock, verify auth state reset
     function()
         local authed = awesome.authenticate(lock.TEST_PASSWORD)
         assert(authed == true, "authenticate should succeed")
-        assert(awesome.authenticated, "authenticated should be true")
 
         local unlocked = awesome.unlock()
         assert(unlocked == true, "unlock should succeed after auth")
         assert(not awesome.locked, "should not be locked")
 
-        -- Re-lock and verify authenticated was reset
+        -- Re-lock and verify auth state was reset (unlock should fail)
         signals = {}
         awesome.lock()
         assert(awesome.locked, "should be locked again")
-        assert(not awesome.authenticated, "authenticated should be reset on new lock")
+        local result = awesome.unlock()
+        assert(result == false, "unlock should fail - auth state reset on new lock")
         return true
     end,
 

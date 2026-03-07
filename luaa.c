@@ -1750,22 +1750,12 @@ luaA_awesome_index(lua_State *L)
 		return 1;
 	}
 
-	if (A_STREQ(key, "authenticated")) {
-		lua_pushboolean(L, lua_authenticated);
-		return 1;
-	}
-
 	if (A_STREQ(key, "lock_surface")) {
 		if (lua_lock_surface) {
 			luaA_object_push(L, lua_lock_surface);
 		} else {
 			lua_pushnil(L);
 		}
-		return 1;
-	}
-
-	if (A_STREQ(key, "auth_attempt_count")) {
-		lua_pushinteger(L, auth_attempt_count);
 		return 1;
 	}
 
