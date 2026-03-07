@@ -220,12 +220,7 @@ static void keypressmod(struct wl_listener *listener, void *data);
 static int keyrepeat(void *data);
 void killclient(const Arg *arg);
 static void locksession(struct wl_listener *listener, void *data);
-/* Lua lock API - defined in luaa.c */
-int some_is_lua_locked(void);
-drawin_t *some_get_lua_lock_surface(void);
-drawin_t **some_get_lua_lock_covers(int *count);
-/* Lua idle API - defined in luaa.c */
-void some_notify_activity(void);
+/* Lock/idle API declarations in somewm_api.h */
 static void mapnotify(struct wl_listener *listener, void *data);
 static void maximizenotify(struct wl_listener *listener, void *data);
 void monocle(Monitor *m);
@@ -850,7 +845,7 @@ axisnotify(struct wl_listener *listener, void *data)
 	 * sends delta_discrete=±120. High-resolution mice send smaller steps
 	 * (e.g. ±15 or ±30). We accumulate until a full step (±120) is reached
 	 * to avoid multiple tag switches per physical wheel click. */
-	if (!locked && !some_is_lua_locked() && event->delta != 0) {
+	if (!session_is_locked() && event->delta != 0) {
 		/* NOTE: process-global accumulators shared across all pointer devices.
 		 * Multi-mouse interleaving is possible but negligible in practice. */
 		static int32_t scroll_acc_v = 0;
@@ -1123,7 +1118,7 @@ buttonpress(struct wl_listener *listener, void *data)
 		cursor_mode = CurNormal;
 
 		/* Check if a drawin was released over */
-		if (!locked && !some_is_lua_locked()) {
+		if (!session_is_locked()) {
 			xytonode(cursor->x, cursor->y, NULL, &c, NULL, &drawin, &titlebar_drawable, NULL, NULL);
 
 			/* Get keyboard modifiers */
@@ -2641,7 +2636,7 @@ focusclient(Client *c, int lift)
 	struct wlr_surface *surface;
 	struct wlr_keyboard *kb;
 
-	if (locked || some_is_lua_locked())
+	if (session_is_locked())
 		return;
 
 	/* Raise client in stacking order if requested */
@@ -3110,7 +3105,7 @@ keybinding(uint32_t mods, uint32_t keycode, xkb_keysym_t sym, xkb_keysym_t base_
 		/* Ctrl-Alt-Backspace: Terminate compositor
 		 * Block during lock to prevent bypassing lockscreen */
 		if (sym == XKB_KEY_Terminate_Server) {
-			if (locked || some_is_lua_locked())
+			if (session_is_locked())
 				return 1;
 			wl_display_terminate(dpy);
 			return 1;
@@ -3118,7 +3113,7 @@ keybinding(uint32_t mods, uint32_t keycode, xkb_keysym_t sym, xkb_keysym_t base_
 		/* Ctrl-Alt-F1..F12: Switch to VT 1-12
 		 * Block during lock to prevent bypassing lockscreen */
 		if (sym >= XKB_KEY_XF86Switch_VT_1 && sym <= XKB_KEY_XF86Switch_VT_12) {
-			if (locked || some_is_lua_locked())
+			if (session_is_locked())
 				return 1;
 			unsigned int vt = sym - XKB_KEY_XF86Switch_VT_1 + 1;
 			wlr_session_change_vt(session, vt);
@@ -3193,7 +3188,7 @@ keypress(struct wl_listener *listener, void *data)
 	/* On _press_ if there is no active screen locker,
 	 * attempt to process a compositor keybinding.
 	 * Block for both ext-session-lock-v1 (locked) and Lua lock (some_is_lua_locked). */
-	if (!locked && !some_is_lua_locked() && event->state == WL_KEYBOARD_KEY_STATE_PRESSED) {
+	if (!session_is_locked() && event->state == WL_KEYBOARD_KEY_STATE_PRESSED) {
 		for (i = 0; i < nsyms; i++)
 			handled = keybinding(mods, keycode, syms[i], base_sym) || handled;
 	}
@@ -3259,7 +3254,7 @@ keyrepeat(void *data)
 
 	/* Block key repeat during lock to prevent compositor keybindings
 	 * from firing behind the lockscreen */
-	if (locked || some_is_lua_locked()) {
+	if (session_is_locked()) {
 		group->nsyms = 0;
 		return 0;
 	}

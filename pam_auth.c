@@ -44,25 +44,28 @@ pam_conversation(int num_msg, const struct pam_message **msg,
 {
     (void)appdata_ptr;  /* unused */
 
+    int i;
+
     /* Allocate response array */
     *resp = calloc(num_msg, sizeof(struct pam_response));
     if (*resp == NULL)
         return PAM_BUF_ERR;
 
-    for (int i = 0; i < num_msg; i++) {
+    for (i = 0; i < num_msg; i++) {
         switch (msg[i]->msg_style) {
         case PAM_PROMPT_ECHO_OFF:
             /* Password prompt - respond with the stored password */
-            if (pam_password)
-                (*resp)[i].resp = strdup(pam_password);
-            else
-                (*resp)[i].resp = strdup("");
+            (*resp)[i].resp = strdup(pam_password ? pam_password : "");
+            if (!(*resp)[i].resp)
+                goto fail;
             (*resp)[i].resp_retcode = 0;
             break;
 
         case PAM_PROMPT_ECHO_ON:
             /* Username or other visible prompt - we don't handle these */
             (*resp)[i].resp = strdup("");
+            if (!(*resp)[i].resp)
+                goto fail;
             (*resp)[i].resp_retcode = 0;
             break;
 
@@ -74,14 +77,18 @@ pam_conversation(int num_msg, const struct pam_message **msg,
             break;
 
         default:
-            /* Unknown message type */
-            free(*resp);
-            *resp = NULL;
-            return PAM_CONV_ERR;
+            goto fail;
         }
     }
 
     return PAM_SUCCESS;
+
+fail:
+    for (int j = 0; j < i; j++)
+        free((*resp)[j].resp);
+    free(*resp);
+    *resp = NULL;
+    return PAM_BUF_ERR;
 }
 
 /**
@@ -125,16 +132,12 @@ pam_authenticate_user(const char *password)
 
     /* Get current username */
     pw = getpwuid(getuid());
-    if (pw == NULL || pw->pw_name == NULL)
-        username = getenv("USER");
-    else
-        username = pw->pw_name;
-
-    if (username == NULL) {
+    if (pw == NULL || pw->pw_name == NULL) {
         secure_clear(pw_copy, len);
         free(pw_copy);
         return 0;
     }
+    username = pw->pw_name;
 
     /* Store password copy for conversation function */
     pam_password = pw_copy;

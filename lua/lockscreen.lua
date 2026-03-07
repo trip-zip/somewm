@@ -49,6 +49,18 @@ local defaults = {
     lock_screen  = nil,  -- screen object or function()->screen; default: screen.primary
 }
 
+-- Count UTF-8 codepoints in a string (LuaJIT lacks the utf8 library)
+local function utf8_len(s)
+    local count = 0
+    for i = 1, #s do
+        local b = s:byte(i)
+        if b < 0x80 or b >= 0xC0 then
+            count = count + 1
+        end
+    end
+    return count
+end
+
 -- Check if Caps Lock modifier is active
 local function has_caps_lock(modifiers)
     for _, mod in ipairs(modifiers) do
@@ -326,22 +338,28 @@ function lockscreen.init(opts)
                         return false
                     end)
                 elseif key == "BackSpace" then
-                    -- Remove last UTF-8 codepoint (may be multi-byte)
-                    local len = utf8.len(password)
-                    if len and len > 0 then
-                        local offset = utf8.offset(password, -1)
-                        password = password:sub(1, offset - 1)
+                    if #password > 0 then
+                        -- Keygrabber delivers one character per event, so
+                        -- removing the last byte-sequence added is sufficient.
+                        -- Walk backwards past any UTF-8 continuation bytes.
+                        local i = #password
+                        while i > 1 and password:byte(i) >= 0x80
+                              and password:byte(i) < 0xC0 do
+                            i = i - 1
+                        end
+                        password = password:sub(1, i - 1)
                     end
                     if password_dots then
-                        password_dots.text = string.rep("\xE2\x97\x8F", utf8.len(password) or 0)
+                        password_dots.text = string.rep("\xE2\x97\x8F", utf8_len(password))
                     end
                 elseif key == "Escape" then
                     password = ""
                     if password_dots then password_dots.text = "" end
-                elseif utf8.len(key) == 1 then
+                elseif #key >= 1 and key:byte(1) >= 0x20 then
+                    if #password > 256 then return end
                     password = password .. key
                     if password_dots then
-                        password_dots.text = string.rep("\xE2\x97\x8F", utf8.len(password) or 0)
+                        password_dots.text = string.rep("\xE2\x97\x8F", utf8_len(password))
                     end
                 end
                 -- Show caps lock warning when typing (but not over error messages)

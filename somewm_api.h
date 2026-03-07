@@ -237,7 +237,35 @@ void layer_surface_revoke_keyboard(LayerSurface *ls);
 void some_notify_drawin_destroyed(drawin_t *w);
 
 /*
- * Test helpers — headless output hotplug simulation
+ * Lock / Idle / DPMS API
+ * Cross-module interface between luaa.c (Lua bindings) and somewm.c (compositor).
+ */
+
+/* Lock state - defined in luaa.c, called from somewm.c */
+int some_is_lua_locked(void);
+drawin_t *some_get_lua_lock_surface(void);
+drawin_t **some_get_lua_lock_covers(int *count);
+int some_is_ext_session_locked(void);
+
+/* Lock activation/deactivation - defined in somewm.c, called from luaa.c */
+void some_activate_lua_lock(void);
+void some_deactivate_lua_lock(void);
+void some_clear_pre_lock_client(client_t *c);
+
+/* Idle/activity - defined in luaa.c, called from somewm.c */
+void some_notify_activity(void);
+
+/* Idle inhibitor query - defined in somewm.c, called from luaa.c */
+bool some_is_idle_inhibited(void);
+
+/** Check if the session is locked by any mechanism (ext-session-lock or Lua lock).
+ * Use this instead of repeating `locked || some_is_lua_locked()` everywhere. */
+static inline bool session_is_locked(void) {
+	return some_is_ext_session_locked() || some_is_lua_locked();
+}
+
+/*
+ * Test helpers - headless output hotplug simulation
  */
 const char *some_test_add_output(unsigned int width, unsigned int height);
 

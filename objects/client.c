@@ -3160,7 +3160,6 @@ client_unmanage(client_t *c, client_unmanage_t reason)
 
     /* Clear pre-lock focused client if it references this client.
      * Prevents use-after-free when unlocking after the saved client is destroyed. */
-    extern void some_clear_pre_lock_client(client_t *c);
     some_clear_pre_lock_client(c);
 
     /* Clear mouse tracking if over this client.

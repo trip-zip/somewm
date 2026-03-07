@@ -14,8 +14,8 @@ end)
 awesome.connect_signal("lock::deactivate", function()
     table.insert(signals, { name = "lock::deactivate" })
 end)
-awesome.connect_signal("lock::auth_failed", function(attempt_count)
-    table.insert(signals, { name = "lock::auth_failed", attempt_count = attempt_count })
+awesome.connect_signal("lock::auth_failed", function()
+    table.insert(signals, { name = "lock::auth_failed" })
 end)
 
 runner.run_steps({
@@ -86,18 +86,17 @@ runner.run_steps({
         return true
     end,
 
-    -- Step 7: lock::auth_failed fires with incrementing attempt_count
+    -- Step 7: lock::auth_failed fires on failed authentication
     function()
         signals = {}
         awesome.authenticate("wrongpass1")
         assert(#signals == 1, "expected 1 auth_failed signal")
         assert(signals[1].name == "lock::auth_failed")
-        assert(signals[1].attempt_count == 1, "first failed attempt should be 1")
 
         signals = {}
         awesome.authenticate("wrongpass2")
         assert(#signals == 1, "expected 1 auth_failed signal")
-        assert(signals[1].attempt_count == 2, "second failed attempt should be 2")
+        assert(signals[1].name == "lock::auth_failed")
         return true
     end,
 

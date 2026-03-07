@@ -166,7 +166,6 @@ luaA_class_handlers_t mouse_handlers = {LUA_REFNIL, LUA_REFNIL};
 /* Lock state for Lua-controlled lockscreen */
 static int lua_locked = 0;           /* Is session locked via Lua API? */
 static int lua_authenticated = 0;    /* Has authenticate() succeeded since last lock? */
-static int auth_attempt_count = 0;   /* Failed auth attempts since last lock */
 static drawin_t *lua_lock_surface = NULL;  /* Registered lock surface (wibox) */
 static int lua_lock_surface_ref = LUA_NOREF;  /* Lua registry ref to prevent GC */
 
@@ -176,12 +175,7 @@ static drawin_t *lua_lock_covers[MAX_LOCK_COVERS];
 static int lua_lock_cover_refs[MAX_LOCK_COVERS];
 static int lua_lock_cover_count = 0;
 
-/* Forward declarations for somewm.c lock functions */
-void some_activate_lua_lock(void);
-void some_deactivate_lua_lock(void);
-int some_is_lua_locked(void);
-drawin_t *some_get_lua_lock_surface(void);
-int some_is_ext_session_locked(void);
+/* Lock/idle/DPMS API declarations in somewm_api.h */
 
 /* Idle timeout management */
 typedef struct {
@@ -196,9 +190,6 @@ typedef struct {
 static IdleTimeout idle_timeouts[MAX_IDLE_TIMEOUTS];
 static int idle_timeout_count = 0;
 static bool user_is_idle = false;    /* Global idle state */
-
-/* Forward declaration for event loop (from somewm.c) */
-extern struct wl_event_loop *event_loop;
 
 /* D-Bus library functions from dbus.c */
 extern const struct luaL_Reg awesome_dbus_lib[];
@@ -1110,7 +1101,6 @@ luaA_awesome_lock(lua_State *L)
 
 	lua_locked = 1;
 	lua_authenticated = 0;  /* Reset auth on new lock */
-	auth_attempt_count = 0; /* Reset attempt counter on new lock */
 
 	/* Activate lock in compositor (input routing, layer changes) */
 	some_activate_lua_lock();
@@ -1171,10 +1161,9 @@ resolve_drawin_arg(lua_State *L, int arg)
 	return d;
 }
 
-/** awesome.set_lock_surface(wibox) - Register the global lock surface
- * The wibox should span all screens
- * When locked, only this surface receives input
- * Accepts either a drawin directly or a wibox table (which has a .drawin field)
+/** awesome.set_lock_surface(wibox) - Register the interactive lock surface.
+ * When locked, only this surface (and registered covers) receive input.
+ * Accepts either a drawin directly or a wibox table (which has a .drawin field).
  */
 static int
 luaA_awesome_set_lock_surface(lua_State *L)
@@ -1305,12 +1294,8 @@ luaA_awesome_authenticate(lua_State *L)
 
 	if (success) {
 		lua_authenticated = 1;
-		auth_attempt_count = 0;  /* Reset on success */
 	} else {
-		auth_attempt_count++;
-		/* Emit lock::auth_failed signal with attempt count */
-		lua_pushinteger(L, auth_attempt_count);
-		luaA_emit_signal_global_with_stack(L, "lock::auth_failed", 1);
+		luaA_emit_signal_global_with_stack(L, "lock::auth_failed", 0);
 	}
 
 	lua_pushboolean(L, success);
@@ -1396,10 +1381,8 @@ luaA_awesome_set_idle_timeout(lua_State *L)
 	int seconds = luaL_checkinteger(L, 2);
 	luaL_checktype(L, 3, LUA_TFUNCTION);
 
-	if (seconds <= 0) {
-		luaL_error(L, "idle timeout seconds must be positive");
-		return 0;
-	}
+	if (seconds <= 0)
+		return luaL_error(L, "idle timeout seconds must be positive");
 
 	/* Check if timeout with this name already exists */
 	int existing = find_idle_timeout(name);
@@ -1408,10 +1391,8 @@ luaA_awesome_set_idle_timeout(lua_State *L)
 		remove_idle_timeout_at(existing);
 	}
 
-	if (idle_timeout_count >= MAX_IDLE_TIMEOUTS) {
-		luaL_error(L, "maximum number of idle timeouts (%d) reached", MAX_IDLE_TIMEOUTS);
-		return 0;
-	}
+	if (idle_timeout_count >= MAX_IDLE_TIMEOUTS)
+		return luaL_error(L, "maximum number of idle timeouts (%d) reached", MAX_IDLE_TIMEOUTS);
 
 	/* Store callback in registry */
 	lua_pushvalue(L, 3);
@@ -1425,7 +1406,7 @@ luaA_awesome_set_idle_timeout(lua_State *L)
 	timeout->fired = false;
 
 	/* Create and arm the timer */
-	timeout->timer = wl_event_loop_add_timer(event_loop, idle_timeout_callback, timeout);
+	timeout->timer = wl_event_loop_add_timer(some_get_event_loop(), idle_timeout_callback, timeout);
 	wl_event_source_timer_update(timeout->timer, seconds * 1000);
 
 	idle_timeout_count++;
@@ -1519,9 +1500,6 @@ some_notify_activity(void)
 			wl_event_source_timer_update(timeout->timer, timeout->seconds * 1000);
 	}
 }
-
-/** Get global idle state */
-bool some_is_user_idle(void) { return user_is_idle; }
 
 /* ==========================================================================
  * DPMS (Display Power Management) API
@@ -1776,8 +1754,6 @@ luaA_awesome_index(lua_State *L)
 	}
 
 	if (A_STREQ(key, "idle_inhibited")) {
-		/* Check if any idle inhibitors are active (function in somewm.c) */
-		extern bool some_is_idle_inhibited(void);
 		lua_pushboolean(L, some_is_idle_inhibited());
 		return 1;
 	}
@@ -3597,6 +3573,7 @@ check_mode_scan_requires(const char *content, const char *config_dir,
 		    strcmp(module_name, "posix") == 0 ||
 		    strncmp(module_name, "posix.", 6) == 0 ||
 		    strcmp(module_name, "cjson") == 0 ||
+		    strncmp(module_name, "cjson.", 6) == 0 ||
 		    strcmp(module_name, "dkjson") == 0 ||
 		    strcmp(module_name, "json") == 0 ||
 		    strcmp(module_name, "socket") == 0 ||
@@ -4326,6 +4303,11 @@ luaA_cleanup(void)
 		/* Clean up signal and keybinding systems first */
 		luaA_signal_cleanup();
 		luaA_keybinding_cleanup();
+
+		/* Clean up lock/idle state before closing Lua */
+		luaA_awesome_clear_all_idle_timeouts(globalconf_L);
+		luaA_awesome_clear_lock_surface(globalconf_L);
+		luaA_awesome_clear_lock_covers(globalconf_L);
 
 		/* Close Lua state - this triggers Lua GC which calls registered
 		 * collector functions (client_wipe, tag_wipe, screen_wipe, drawin_wipe)

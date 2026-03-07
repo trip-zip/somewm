@@ -61,15 +61,6 @@ function lock_helper.teardown()
     awesome.clear_lock_covers()
 end
 
---- Lock, authenticate, and return state.
--- @treturn boolean true if lock+auth succeeded
-function lock_helper.lock_and_auth()
-    local locked = awesome.lock()
-    if not locked then return false end
-    local authed = awesome.authenticate(lock_helper.TEST_PASSWORD)
-    return authed
-end
-
 return lock_helper
 
 -- vim: filetype=lua:expandtab:shiftwidth=4:tabstop=8:softtabstop=4:textwidth=80
