@@ -65,6 +65,7 @@ static lua_State *luaA_create_fresh_state(void);
 #include <xkbcommon/xkbcommon.h>
 #include <wayland-server-core.h>
 #include <wlr/types/wlr_scene.h>
+#include <wlr/backend/wayland.h>
 #include <wlr/types/wlr_buffer.h>
 #include <wlr/interfaces/wlr_buffer.h>
 #include <drm_fourcc.h>
@@ -169,11 +170,18 @@ static int auth_attempt_count = 0;   /* Failed auth attempts since last lock */
 static drawin_t *lua_lock_surface = NULL;  /* Registered lock surface (wibox) */
 static int lua_lock_surface_ref = LUA_NOREF;  /* Lua registry ref to prevent GC */
 
+/* Lock cover surfaces for multi-monitor support */
+#define MAX_LOCK_COVERS 16
+static drawin_t *lua_lock_covers[MAX_LOCK_COVERS];
+static int lua_lock_cover_refs[MAX_LOCK_COVERS];
+static int lua_lock_cover_count = 0;
+
 /* Forward declarations for somewm.c lock functions */
 void some_activate_lua_lock(void);
 void some_deactivate_lua_lock(void);
 int some_is_lua_locked(void);
 drawin_t *some_get_lua_lock_surface(void);
+int some_is_ext_session_locked(void);
 
 /* Idle timeout management */
 typedef struct {
@@ -1069,7 +1077,7 @@ luaA_awesome_shadow_reload(lua_State *L)
  * Lock API Methods
  * ========================================================================== */
 
-/** awesome:lock() - Lock the session
+/** awesome.lock() - Lock the session
  * Emits "lock::activate" signal with source="user"
  * Resets authenticated to false
  * Routes input exclusively to lock surface
@@ -1079,7 +1087,25 @@ luaA_awesome_lock(lua_State *L)
 {
 	if (lua_locked) {
 		/* Already locked, do nothing */
-		return 0;
+		lua_pushboolean(L, 1);
+		return 1;
+	}
+
+	/* EDGE-1: Refuse to lock without a registered lock surface.
+	 * Locking without a surface leaves the user with no way to authenticate
+	 * and no recovery path (VT switch is also blocked). */
+	if (!lua_lock_surface) {
+		fprintf(stderr, "somewm: lock() called without a registered lock surface, refusing to lock\n");
+		lua_pushboolean(L, 0);
+		return 1;
+	}
+
+	/* EDGE-3: Refuse to lock if ext-session-lock is active.
+	 * Two independent lock mechanisms competing causes undefined behavior. */
+	if (some_is_ext_session_locked()) {
+		fprintf(stderr, "somewm: lock() called while ext-session-lock is active, refusing\n");
+		lua_pushboolean(L, 0);
+		return 1;
 	}
 
 	lua_locked = 1;
@@ -1093,10 +1119,11 @@ luaA_awesome_lock(lua_State *L)
 	lua_pushstring(L, "user");
 	luaA_emit_signal_global_with_stack(L, "lock::activate", 1);
 
-	return 0;
+	lua_pushboolean(L, 1);
+	return 1;
 }
 
-/** awesome:unlock() - Unlock the session
+/** awesome.unlock() - Unlock the session
  * ONLY succeeds if authenticated=true (C-enforced security)
  * Returns: boolean (true if unlocked, false if auth required)
  */
@@ -1129,7 +1156,22 @@ luaA_awesome_unlock(lua_State *L)
 	return 1;
 }
 
-/** awesome:set_lock_surface(wibox) - Register the global lock surface
+/** Resolve a drawin from either a drawin directly or a wibox table with a
+ * .drawin field. Returns NULL if the argument is neither. */
+static drawin_t *
+resolve_drawin_arg(lua_State *L, int arg)
+{
+	drawin_t *d = luaA_todrawin(L, arg);
+	if (!d && lua_istable(L, arg)) {
+		lua_getfield(L, arg, "drawin");
+		if (!lua_isnil(L, -1))
+			d = luaA_todrawin(L, -1);
+		lua_pop(L, 1);
+	}
+	return d;
+}
+
+/** awesome.set_lock_surface(wibox) - Register the global lock surface
  * The wibox should span all screens
  * When locked, only this surface receives input
  * Accepts either a drawin directly or a wibox table (which has a .drawin field)
@@ -1137,22 +1179,8 @@ luaA_awesome_unlock(lua_State *L)
 static int
 luaA_awesome_set_lock_surface(lua_State *L)
 {
-	drawin_t *d = NULL;
-	/* Method call: awesome:set_lock_surface(surface)
-	 * arg 1 = self (awesome), arg 2 = surface */
-	int arg = 2;
-
-	/* Check if argument is a drawin directly */
-	d = luaA_todrawin(L, arg);
-
-	/* If not a drawin, check if it's a wibox table with a .drawin field */
-	if (!d && lua_istable(L, arg)) {
-		lua_getfield(L, arg, "drawin");
-		if (!lua_isnil(L, -1)) {
-			d = luaA_todrawin(L, -1);
-		}
-		lua_pop(L, 1);
-	}
+	int arg = 1;
+	drawin_t *d = resolve_drawin_arg(L, arg);
 
 	if (!d) {
 		return luaL_error(L, "expected drawin or wibox, got %s",
@@ -1173,7 +1201,7 @@ luaA_awesome_set_lock_surface(lua_State *L)
 	return 0;
 }
 
-/** awesome:clear_lock_surface() - Unregister the lock surface */
+/** awesome.clear_lock_surface() - Unregister the lock surface */
 static int
 luaA_awesome_clear_lock_surface(lua_State *L)
 {
@@ -1186,7 +1214,82 @@ luaA_awesome_clear_lock_surface(lua_State *L)
 	return 0;
 }
 
-/** awesome:authenticate(password) - Verify password via PAM
+/** Remove a lock cover at the given index and shift remaining entries down. */
+static void
+remove_lock_cover_at(lua_State *L, int idx)
+{
+	luaL_unref(L, LUA_REGISTRYINDEX, lua_lock_cover_refs[idx]);
+	for (int j = idx; j < lua_lock_cover_count - 1; j++) {
+		lua_lock_covers[j] = lua_lock_covers[j + 1];
+		lua_lock_cover_refs[j] = lua_lock_cover_refs[j + 1];
+	}
+	lua_lock_cover_count--;
+}
+
+/** awesome.add_lock_cover(wibox) - Register a cover surface for multi-monitor lock.
+ * Cover surfaces are promoted to LyrBlock on lock activation to hide desktop
+ * content on secondary monitors. */
+static int
+luaA_awesome_add_lock_cover(lua_State *L)
+{
+	int arg = 1;
+	drawin_t *d = resolve_drawin_arg(L, arg);
+
+	if (!d)
+		return luaL_error(L, "expected drawin or wibox, got %s",
+		                  luaL_typename(L, arg));
+
+	/* Check if already registered */
+	for (int i = 0; i < lua_lock_cover_count; i++) {
+		if (lua_lock_covers[i] == d)
+			return 0;
+	}
+
+	if (lua_lock_cover_count >= MAX_LOCK_COVERS)
+		return luaL_error(L, "too many lock covers (max %d)", MAX_LOCK_COVERS);
+
+	lua_pushvalue(L, arg);
+	lua_lock_cover_refs[lua_lock_cover_count] = luaL_ref(L, LUA_REGISTRYINDEX);
+	lua_lock_covers[lua_lock_cover_count] = d;
+	lua_lock_cover_count++;
+
+	return 0;
+}
+
+/** awesome.remove_lock_cover(wibox) - Unregister a cover surface */
+static int
+luaA_awesome_remove_lock_cover(lua_State *L)
+{
+	int arg = 1;
+	drawin_t *d = resolve_drawin_arg(L, arg);
+
+	if (!d)
+		return 0;
+
+	for (int i = 0; i < lua_lock_cover_count; i++) {
+		if (lua_lock_covers[i] == d) {
+			remove_lock_cover_at(L, i);
+			return 0;
+		}
+	}
+
+	return 0;
+}
+
+/** awesome.clear_lock_covers() - Unregister all cover surfaces */
+static int
+luaA_awesome_clear_lock_covers(lua_State *L)
+{
+	for (int i = 0; i < lua_lock_cover_count; i++) {
+		luaL_unref(L, LUA_REGISTRYINDEX, lua_lock_cover_refs[i]);
+		lua_lock_covers[i] = NULL;
+	}
+	lua_lock_cover_count = 0;
+
+	return 0;
+}
+
+/** awesome.authenticate(password) - Verify password via PAM
  * Returns true if password matches current user
  * On success, sets authenticated=true (allowing unlock())
  * On failure, authenticated remains false
@@ -1194,9 +1297,7 @@ luaA_awesome_clear_lock_surface(lua_State *L)
 static int
 luaA_awesome_authenticate(lua_State *L)
 {
-	/* Method call: awesome:authenticate(password)
-	 * arg 1 = self (awesome), arg 2 = password */
-	const char *password = luaL_checkstring(L, 2);
+	const char *password = luaL_checkstring(L, 1);
 
 	/* Authenticate via PAM (from pam_auth.c)
 	 * Note: pam_authenticate_user() clears the password from memory */
@@ -1283,7 +1384,7 @@ remove_idle_timeout_at(int idx)
 	idle_timeout_count--;
 }
 
-/** awesome:set_idle_timeout(name, seconds, callback)
+/** awesome.set_idle_timeout(name, seconds, callback)
  * Add or update a named idle timeout.
  * Multiple timeouts can be active simultaneously.
  * Callbacks fire in order when idle (shortest first).
@@ -1332,7 +1433,7 @@ luaA_awesome_set_idle_timeout(lua_State *L)
 	return 0;
 }
 
-/** awesome:clear_idle_timeout(name)
+/** awesome.clear_idle_timeout(name)
  * Remove a named idle timeout.
  */
 static int
@@ -1347,7 +1448,7 @@ luaA_awesome_clear_idle_timeout(lua_State *L)
 	return 0;
 }
 
-/** awesome:clear_all_idle_timeouts()
+/** awesome.clear_all_idle_timeouts()
  * Remove all idle timeouts.
  */
 static int
@@ -1377,12 +1478,15 @@ dpms_wake_all_monitors(void)
 		if (!m->asleep)
 			continue;
 
-		wlr_output_state_init(&state);
 		m->gamma_lut_changed = 1;
-		wlr_output_state_set_enabled(&state, true);
-		wlr_output_commit_state(m->wlr_output, &state);
-		wlr_output_state_finish(&state);
 		m->asleep = 0;
+
+		if (!wlr_output_is_wl(m->wlr_output)) {
+			wlr_output_state_init(&state);
+			wlr_output_state_set_enabled(&state, true);
+			wlr_output_commit_state(m->wlr_output, &state);
+			wlr_output_state_finish(&state);
+		}
 		any_woken = true;
 	}
 	return any_woken;
@@ -1423,7 +1527,7 @@ bool some_is_user_idle(void) { return user_is_idle; }
  * DPMS (Display Power Management) API
  * ========================================================================== */
 
-/** awesome:dpms_off() - Turn off all displays
+/** awesome.dpms_off() - Turn off all displays
  * Sets all monitors to DPMS off (sleep) state
  */
 static int
@@ -1432,52 +1536,90 @@ luaA_awesome_dpms_off(lua_State *L)
 	struct wl_list *monitors = some_get_monitors();
 	Monitor *m;
 	struct wlr_output_state state;
+	bool any_changed = false;
 
 	wl_list_for_each(m, monitors, link) {
 		if (m->asleep)
 			continue;  /* Already off */
 
-		wlr_output_state_init(&state);
 		m->gamma_lut_changed = 1;  /* Reapply gamma when re-enabling */
-		wlr_output_state_set_enabled(&state, false);
-		wlr_output_commit_state(m->wlr_output, &state);
-		wlr_output_state_finish(&state);
 		m->asleep = 1;
+
+		/* Actually disable the output for backends that support it.
+		 * Skip Wayland backend: wlr_output_commit_state blocks on
+		 * re-enable because it needs a protocol roundtrip. */
+		if (!wlr_output_is_wl(m->wlr_output)) {
+			wlr_output_state_init(&state);
+			wlr_output_state_set_enabled(&state, false);
+			wlr_output_commit_state(m->wlr_output, &state);
+			wlr_output_state_finish(&state);
+		}
+		any_changed = true;
 	}
 
-	luaA_emit_signal_global_with_stack(L, "dpms::off", 0);
+	if (any_changed)
+		luaA_emit_signal_global_with_stack(L, "dpms::off", 0);
 	return 0;
 }
 
-/** awesome:dpms_on() - Turn on all displays
+/** awesome.dpms_on() - Turn on all displays
  * Wakes all monitors from DPMS off state
  */
 static int
 luaA_awesome_dpms_on(lua_State *L)
 {
-	struct wl_list *monitors = some_get_monitors();
-	Monitor *m;
-	struct wlr_output_state state;
+	if (dpms_wake_all_monitors())
+		luaA_emit_signal_global_with_stack(L, "dpms::on", 0);
+	return 0;
+}
 
-	wl_list_for_each(m, monitors, link) {
-		if (!m->asleep)
-			continue;  /* Already on */
+/** Notify that a drawin is being destroyed.
+ * Clears any lock surface/cover pointers that reference this drawin.
+ * Called from drawin_wipe() to prevent dangling pointers (EDGE-2).
+ */
+void
+some_notify_drawin_destroyed(drawin_t *w)
+{
+	if (!w)
+		return;
 
-		wlr_output_state_init(&state);
-		m->gamma_lut_changed = 1;  /* Reapply gamma LUT */
-		wlr_output_state_set_enabled(&state, true);
-		wlr_output_commit_state(m->wlr_output, &state);
-		wlr_output_state_finish(&state);
-		m->asleep = 0;
+	lua_State *L = globalconf_get_lua_State();
+
+	/* Check if this was the lock surface */
+	if (w == lua_lock_surface) {
+		if (lua_lock_surface_ref != LUA_NOREF) {
+			luaL_unref(L, LUA_REGISTRYINDEX, lua_lock_surface_ref);
+			lua_lock_surface_ref = LUA_NOREF;
+		}
+		lua_lock_surface = NULL;
+
+		/* If locked with no lock surface, force-unlock to avoid
+		 * bricking the session (no UI, no VT switch, no recovery) */
+		if (lua_locked) {
+			fprintf(stderr, "somewm: CRITICAL: lock surface destroyed while locked, forcing unlock\n");
+			lua_locked = 0;
+			lua_authenticated = 0;
+			some_deactivate_lua_lock();
+			luaA_emit_signal_global("lock::deactivate");
+		}
 	}
 
-	luaA_emit_signal_global_with_stack(L, "dpms::on", 0);
-	return 0;
+	/* Check if this was a lock cover */
+	for (int i = 0; i < lua_lock_cover_count; i++) {
+		if (lua_lock_covers[i] == w) {
+			remove_lock_cover_at(L, i);
+			break;
+		}
+	}
 }
 
 /* Getter functions for somewm.c to query lock state */
 int some_is_lua_locked(void) { return lua_locked; }
 drawin_t *some_get_lua_lock_surface(void) { return lua_lock_surface; }
+drawin_t **some_get_lua_lock_covers(int *count) {
+	*count = lua_lock_cover_count;
+	return lua_lock_covers;
+}
 
 /* awesome module methods */
 const luaL_Reg awesome_methods[] = {
@@ -1512,6 +1654,9 @@ const luaL_Reg awesome_methods[] = {
 	{ "unlock", luaA_awesome_unlock },
 	{ "set_lock_surface", luaA_awesome_set_lock_surface },
 	{ "clear_lock_surface", luaA_awesome_clear_lock_surface },
+	{ "add_lock_cover", luaA_awesome_add_lock_cover },
+	{ "remove_lock_cover", luaA_awesome_remove_lock_cover },
+	{ "clear_lock_covers", luaA_awesome_clear_lock_covers },
 	{ "authenticate", luaA_awesome_authenticate },
 	/* Idle timeout API methods */
 	{ "set_idle_timeout", luaA_awesome_set_idle_timeout },
@@ -1616,6 +1761,21 @@ luaA_awesome_index(lua_State *L)
 		} else {
 			lua_pushnil(L);
 		}
+		return 1;
+	}
+
+	if (A_STREQ(key, "auth_attempt_count")) {
+		lua_pushinteger(L, auth_attempt_count);
+		return 1;
+	}
+
+	if (A_STREQ(key, "lock_mechanism")) {
+		if (lua_locked)
+			lua_pushstring(L, "lua");
+		else if (some_is_ext_session_locked())
+			lua_pushstring(L, "ext");
+		else
+			lua_pushnil(L);
 		return 1;
 	}
 

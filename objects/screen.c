@@ -544,6 +544,21 @@ luaA_screen_update_geometry(lua_State *L, screen_t *screen)
 		/* Update cached geometry */
 		screen->geometry = new_geom;
 
+		/* Wayland-specific: auto-resize visible drawins that filled the old
+		 * screen geometry. Handles scale/mode changes that shrink/grow the
+		 * logical screen size. AwesomeWM never needs this (no per-output scaling). */
+		foreach(item, globalconf.drawins) {
+			drawin_t *d = *item;
+			if (!d->visible || d->screen != screen)
+				continue;
+			if (d->x == old_geom.x && d->y == old_geom.y &&
+			    d->width == old_geom.width && d->height == old_geom.height) {
+				luaA_drawin_set_geometry(L, d,
+					new_geom.x, new_geom.y,
+					new_geom.width, new_geom.height);
+			}
+		}
+
 		/* Emit property::geometry signal with old geometry as argument */
 		luaA_screen_push(L, screen);
 		push_wlr_box(L, &old_geom);

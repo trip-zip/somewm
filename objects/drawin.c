@@ -895,6 +895,9 @@ drawin_wipe(drawin_t *w)
 		globalconf.systray.parent = NULL;
 	}
 
+	/* Clear any lock surface/cover pointers referencing this drawin (EDGE-2) */
+	some_notify_drawin_destroyed(w);
+
 	/* Note: drawable reference cleanup handled by class system */
 	w->drawable = NULL;
 
@@ -1613,6 +1616,22 @@ drawin_set_visible(lua_State *L, int udx, bool v)
 			                     d->surface_scale != current_scale;
 			if (need_recreate) {
 				drawin_update_drawing(L, udx);
+			}
+		}
+
+		/* Wayland-specific: if drawin was invisible during a screen geometry
+		 * change (e.g., scale change), its geometry may be stale. Auto-shrink
+		 * if it starts at screen origin and extends beyond screen bounds.
+		 * This handles lockscreen overlays created at init (scale=1.0) that
+		 * become visible after scale changes. */
+		if (drawin->screen) {
+			screen_t *s = drawin->screen;
+			if (drawin->x == s->geometry.x && drawin->y == s->geometry.y &&
+			    (drawin->width > s->geometry.width ||
+			     drawin->height > s->geometry.height)) {
+				drawin_moveresize(L, udx,
+					s->geometry.x, s->geometry.y,
+					s->geometry.width, s->geometry.height);
 			}
 		}
 	} else {

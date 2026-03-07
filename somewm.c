@@ -223,6 +223,7 @@ static void locksession(struct wl_listener *listener, void *data);
 /* Lua lock API - defined in luaa.c */
 int some_is_lua_locked(void);
 drawin_t *some_get_lua_lock_surface(void);
+drawin_t **some_get_lua_lock_covers(int *count);
 /* Lua idle API - defined in luaa.c */
 void some_notify_activity(void);
 static void mapnotify(struct wl_listener *listener, void *data);
@@ -849,7 +850,7 @@ axisnotify(struct wl_listener *listener, void *data)
 	 * sends delta_discrete=±120. High-resolution mice send smaller steps
 	 * (e.g. ±15 or ±30). We accumulate until a full step (±120) is reached
 	 * to avoid multiple tag switches per physical wheel click. */
-	if (!locked && event->delta != 0) {
+	if (!locked && !some_is_lua_locked() && event->delta != 0) {
 		/* NOTE: process-global accumulators shared across all pointer devices.
 		 * Multi-mouse interleaving is possible but negligible in practice. */
 		static int32_t scroll_acc_v = 0;
@@ -1212,6 +1213,19 @@ cleanup(void)
 
 	a_dbus_cleanup();
 	ipc_cleanup();
+
+#ifdef XWAYLAND
+	/* Remove XWayland listeners then destroy, matching the backend pattern.
+	 * wlroots 0.19 asserts listener lists are empty at destroy time.
+	 * Must happen before wl_display_destroy_clients(). */
+	wl_list_remove(&new_xwayland_surface.link);
+	wl_list_remove(&xwayland_ready.link);
+	if (xwayland) {
+		wlr_xwayland_destroy(xwayland);
+		xwayland = NULL;
+	}
+#endif
+
 	cleanuplisteners();
 
 	/* Destroy Wayland clients while Lua is still alive so signal handlers work. */
@@ -1231,13 +1245,6 @@ cleanup(void)
 	free(globalconf.x11_fallback.pattern_desc);
 	free(globalconf.x11_fallback.suggestion);
 	free(globalconf.x11_fallback.line_content);
-
-#ifdef XWAYLAND
-	if (xwayland) {
-		wlr_xwayland_destroy(xwayland);
-		xwayland = NULL;
-	}
-#endif
 
 	if (child_pid > 0) {
 		kill(-child_pid, SIGTERM);
@@ -1381,10 +1388,8 @@ cleanuplisteners(void)
 	wl_list_remove(&request_start_drag.link);
 	wl_list_remove(&start_drag.link);
 	wl_list_remove(&new_session_lock.link);
-#ifdef XWAYLAND
-	wl_list_remove(&new_xwayland_surface.link);
-	wl_list_remove(&xwayland_ready.link);
-#endif
+	/* NOTE: XWayland listeners are removed in cleanup() immediately before
+	 * wlr_xwayland_destroy(), matching the backend listener pattern. */
 }
 
 void
@@ -2309,55 +2314,70 @@ destroylocksurface(struct wl_listener *listener, void *data)
 static Client *pre_lock_focused_client = NULL;
 
 /** Activate Lua-controlled lock mode
- * - Enables locked_bg to block underlying content
+ * - Promotes lock surface and cover surfaces to LyrBlock
  * - Gives keyboard focus to lock surface
  */
 void
 some_activate_lua_lock(void)
 {
 	drawin_t *lock_surface = some_get_lua_lock_surface();
+	int cover_count;
+	drawin_t **covers = some_get_lua_lock_covers(&cover_count);
 
-	/* Note: We don't enable locked_bg for Lua locks because the Lua-provided
-	 * lock surface (wibox) already covers the whole screen with its own background.
-	 * locked_bg is only used for external session-lock-v1 clients. */
-
-	/* Save currently focused client for restoration on unlock.
-	 * Use globalconf.focus.client (the actually focused client) rather than
-	 * focustop() which only returns the topmost visible client on selected tags. */
+	/* Save currently focused client for restoration on unlock. */
 	pre_lock_focused_client = globalconf.focus.client;
 
 	/* Clear current keyboard focus */
 	wlr_seat_keyboard_notify_clear_focus(seat);
 
-	/* If we have a lock surface, give it keyboard focus */
+	/* Stop any active mousegrabber to prevent Lua callbacks executing
+	 * during lock (e.g., client resize/move operations) */
+	if (mousegrabber_isrunning()) {
+		lua_State *L = globalconf_get_lua_State();
+		luaA_mousegrabber_stop(L);
+	}
+
+	/* Promote all cover surfaces to LyrBlock so they hide desktop content
+	 * on secondary monitors */
+	for (int i = 0; i < cover_count; i++) {
+		if (covers[i] && covers[i]->scene_tree) {
+			wlr_scene_node_reparent(&covers[i]->scene_tree->node, layers[LyrBlock]);
+			wlr_scene_node_raise_to_top(&covers[i]->scene_tree->node);
+		}
+	}
+
+	/* Promote lock surface to LyrBlock and raise above covers */
 	if (lock_surface && lock_surface->scene_tree) {
-		/* Move lock surface to top layer (LyrBlock) */
 		wlr_scene_node_reparent(&lock_surface->scene_tree->node, layers[LyrBlock]);
-
-		/* Ensure lock surface is above locked_bg */
 		wlr_scene_node_raise_to_top(&lock_surface->scene_tree->node);
-
-		/* Focus the lock surface's drawable
-		 * Note: drawin doesn't have a wlr_surface, so we use seat keyboard clear
-		 * and let the Lua side handle input via key::press signals */
 	}
 }
 
 /** Deactivate Lua-controlled lock mode
- * - Disables locked_bg
+ * - Restores lock surface and covers to normal layers
  * - Restores normal focus
  */
 void
 some_deactivate_lua_lock(void)
 {
 	drawin_t *lock_surface = some_get_lua_lock_surface();
-
-	/* Note: We didn't enable locked_bg for Lua locks, so nothing to disable */
+	int cover_count;
+	drawin_t **covers = some_get_lua_lock_covers(&cover_count);
 
 	/* Move lock surface back to normal layer (LyrWibox) */
 	if (lock_surface && lock_surface->scene_tree) {
 		wlr_scene_node_reparent(&lock_surface->scene_tree->node, layers[LyrWibox]);
 	}
+
+	/* Move cover surfaces back to normal layers via stack_refresh() */
+	for (int i = 0; i < cover_count; i++) {
+		if (covers[i] && covers[i]->scene_tree) {
+			wlr_scene_node_reparent(&covers[i]->scene_tree->node, layers[LyrWibox]);
+		}
+	}
+
+	/* Let stack_refresh() sort everything back to proper layers */
+	stack_refresh();
 
 	/* Restore focus to pre-lock client if still valid, otherwise top client */
 	if (pre_lock_focused_client && pre_lock_focused_client->scene) {
@@ -2367,6 +2387,22 @@ some_deactivate_lua_lock(void)
 	}
 	pre_lock_focused_client = NULL;
 	motionnotify(0, NULL, 0, 0, 0, 0);
+}
+
+/** Clear pre_lock_focused_client if it matches the given client.
+ * Called from client_unmanage() to prevent use-after-free on unlock. */
+void
+some_clear_pre_lock_client(Client *c)
+{
+	if (c == pre_lock_focused_client)
+		pre_lock_focused_client = NULL;
+}
+
+/** Check if ext-session-lock-v1 is currently active */
+int
+some_is_ext_session_locked(void)
+{
+	return locked;
 }
 
 /** Check if idle is inhibited by any client (for Lua API) */
@@ -3071,8 +3107,11 @@ keybinding(uint32_t mods, uint32_t keycode, xkb_keysym_t sym, xkb_keysym_t base_
 	 * VT switching allows recovering from compositor hangs/crashes via Ctrl-Alt-F2.
 	 */
 	if (CLEANMASK(mods) == (WLR_MODIFIER_CTRL|WLR_MODIFIER_ALT)) {
-		/* Ctrl-Alt-Backspace: Terminate compositor */
+		/* Ctrl-Alt-Backspace: Terminate compositor
+		 * Block during lock to prevent bypassing lockscreen */
 		if (sym == XKB_KEY_Terminate_Server) {
+			if (locked || some_is_lua_locked())
+				return 1;
 			wl_display_terminate(dpy);
 			return 1;
 		}
@@ -3218,6 +3257,13 @@ keyrepeat(void *data)
 	if (!group->nsyms || group->wlr_group->keyboard.repeat_info.rate <= 0)
 		return 0;
 
+	/* Block key repeat during lock to prevent compositor keybindings
+	 * from firing behind the lockscreen */
+	if (locked || some_is_lua_locked()) {
+		group->nsyms = 0;
+		return 0;
+	}
+
 	wl_event_source_timer_update(group->key_repeat_source,
 			1000 / group->wlr_group->keyboard.repeat_info.rate);
 
@@ -3240,11 +3286,17 @@ locksession(struct wl_listener *listener, void *data)
 {
 	struct wlr_session_lock_v1 *session_lock = data;
 	SessionLock *lock;
-	wlr_scene_node_set_enabled(&locked_bg->node, 1);
 	if (cur_lock) {
 		wlr_session_lock_v1_destroy(session_lock);
 		return;
 	}
+	/* EDGE-3: Reject ext-session-lock when Lua lock is active */
+	if (some_is_lua_locked()) {
+		fprintf(stderr, "somewm: ext-session-lock rejected while Lua lock is active\n");
+		wlr_session_lock_v1_destroy(session_lock);
+		return;
+	}
+	wlr_scene_node_set_enabled(&locked_bg->node, 1);
 	lock = session_lock->data = ecalloc(1, sizeof(*lock));
 	focusclient(NULL, 0);
 

@@ -305,7 +305,7 @@ awful.keyboard.append_global_keybindings({
               {description = "reload awesome", group = "awesome"}),
     awful.key({ modkey, "Shift"   }, "q", awesome.quit,
               {description = "quit awesome", group = "awesome"}),
-    awful.key({ modkey,           }, "l", awesome.lock,
+    awful.key({ modkey,           }, "l", function() awesome.lock() end,
               {description = "lock screen", group = "awesome"}),
     awful.key({ modkey }, "x",
               function ()

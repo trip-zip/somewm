@@ -98,7 +98,7 @@ property_handle_toplevel_title(struct wl_listener *listener, void *data)
 
 	/* Get client from listener */
 	c = wl_container_of(listener, c, set_title);
-	if (!c || c->client_type != XDGShell)
+	if (!c || c->client_type != XDGShell || !c->surface.xdg)
 		return;
 
 	/* Get title from xdg_toplevel */
@@ -134,7 +134,7 @@ property_handle_toplevel_app_id(struct wl_listener *listener, void *data)
 	/* Get client from listener - note: we reuse set_title listener for app_id
 	 * In practice, app_id changes are rare after initial mapping */
 	c = wl_container_of(listener, c, set_title);
-	if (!c || c->client_type != XDGShell)
+	if (!c || c->client_type != XDGShell || !c->surface.xdg)
 		return;
 
 	/* Get app_id from xdg_toplevel */
@@ -168,7 +168,7 @@ property_update_wayland_properties(client_t *c)
 	lua_State *L;
 	pid_t pid;
 
-	if (!c || c->client_type != XDGShell)
+	if (!c || c->client_type != XDGShell || !c->surface.xdg)
 		return;
 
 	toplevel = c->surface.xdg->toplevel;
@@ -214,7 +214,7 @@ property_register_wayland_listeners(client_t *c)
 {
 	struct wlr_xdg_toplevel *toplevel;
 
-	if (!c || c->client_type != XDGShell)
+	if (!c || c->client_type != XDGShell || !c->surface.xdg)
 		return;
 
 	toplevel = c->surface.xdg->toplevel;

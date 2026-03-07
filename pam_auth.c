@@ -12,7 +12,19 @@
 
 #include "pam_auth.h"
 
-#ifdef HAVE_PAM
+#ifdef TEST_PAM
+
+#include <string.h>
+
+int
+pam_authenticate_user(const char *password)
+{
+    if (password && strcmp(password, "testpass123") == 0)
+        return 1;
+    return 0;
+}
+
+#elif defined(HAVE_PAM)
 #include <security/pam_appl.h>
 #include <string.h>
 #include <stdlib.h>
@@ -99,6 +111,18 @@ pam_authenticate_user(const char *password)
     struct passwd *pw;
     int ret;
 
+    if (!password)
+        return 0;
+
+    /* Copy password to a local buffer so we can securely clear it.
+     * The caller's pointer may reference Lua's interned string table,
+     * which must not be written to. */
+    size_t len = strlen(password);
+    char *pw_copy = malloc(len + 1);
+    if (!pw_copy)
+        return 0;
+    memcpy(pw_copy, password, len + 1);
+
     /* Get current username */
     pw = getpwuid(getuid());
     if (pw == NULL || pw->pw_name == NULL)
@@ -106,16 +130,21 @@ pam_authenticate_user(const char *password)
     else
         username = pw->pw_name;
 
-    if (username == NULL)
+    if (username == NULL) {
+        secure_clear(pw_copy, len);
+        free(pw_copy);
         return 0;
+    }
 
-    /* Store password for conversation function */
-    pam_password = password;
+    /* Store password copy for conversation function */
+    pam_password = pw_copy;
 
     /* Initialize PAM */
     ret = pam_start("login", username, &conv, &pamh);
     if (ret != PAM_SUCCESS) {
         pam_password = NULL;
+        secure_clear(pw_copy, len);
+        free(pw_copy);
         return 0;
     }
 
@@ -125,14 +154,8 @@ pam_authenticate_user(const char *password)
     /* Cleanup */
     pam_end(pamh, ret);
     pam_password = NULL;
-
-    /* Securely clear the password from caller's memory.
-     * Note: We cast away const because we know the caller's buffer
-     * should be cleared for security. */
-    if (password) {
-        size_t len = strlen(password);
-        secure_clear((char *)password, len);
-    }
+    secure_clear(pw_copy, len);
+    free(pw_copy);
 
     return ret == PAM_SUCCESS ? 1 : 0;
 }

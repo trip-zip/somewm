@@ -232,6 +232,11 @@ void layer_surface_grant_keyboard(LayerSurface *ls);
 void layer_surface_revoke_keyboard(LayerSurface *ls);
 
 /*
+ * Lock surface lifecycle
+ */
+void some_notify_drawin_destroyed(drawin_t *w);
+
+/*
  * Test helpers — headless output hotplug simulation
  */
 const char *some_test_add_output(unsigned int width, unsigned int height);

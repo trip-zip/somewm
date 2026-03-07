@@ -19,9 +19,9 @@ all:
 # Alias for clarity
 asan: all
 
-# Build for tests: NO ASAN (fast) - explicitly disable sanitizers
+# Build for tests: NO ASAN (fast) - explicitly disable sanitizers, enable test PAM stub
 build-test:
-	@test -d build-test || meson setup build-test -Db_sanitize=none
+	@test -d build-test || meson setup build-test -Db_sanitize=none -Dtest_pam=true
 	ninja -C build-test
 
 install:
