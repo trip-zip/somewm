@@ -2929,6 +2929,7 @@ check_mode_scan_requires(const char *content, const char *config_dir,
 		    strcmp(module_name, "posix") == 0 ||
 		    strncmp(module_name, "posix.", 6) == 0 ||
 		    strcmp(module_name, "cjson") == 0 ||
+		    strncmp(module_name, "cjson.", 6) == 0 ||
 		    strcmp(module_name, "dkjson") == 0 ||
 		    strcmp(module_name, "json") == 0 ||
 		    strcmp(module_name, "socket") == 0 ||
