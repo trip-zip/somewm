@@ -190,6 +190,7 @@ local function parse_command(command_string)
     ["eval"] = true,
     ["input"] = true,
     ["version"] = true,
+    ["lock"] = true,
     ["reload"] = true,
     ["restart"] = true,
     ["hotkeys"] = true,
@@ -2493,6 +2494,16 @@ local function register_builtin_commands()
       table.insert(lines, "API version: " .. capi.awesome.api_version)
     end
     return table.concat(lines, "\n")
+  end)
+
+  --- lock - Lock the session
+  ipc.register("lock", function()
+    local ok = capi.awesome.lock()
+    if ok then
+      return "Locked"
+    else
+      error("Lock failed (no lock surface registered or ext-session-lock active)")
+    end
   end)
 
   --- reload - Reload configuration (validates first)

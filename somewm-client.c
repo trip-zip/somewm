@@ -108,6 +108,7 @@ print_usage(const char *progname)
 
 	fprintf(stderr, "SESSION:\n");
 	fprintf(stderr, "  version                        Show compositor version\n");
+	fprintf(stderr, "  lock                           Lock the session\n");
 	fprintf(stderr, "  reload                         Reload configuration (validates first)\n");
 	fprintf(stderr, "  restart                        Full compositor restart\n\n");
 

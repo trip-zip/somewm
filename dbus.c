@@ -49,6 +49,7 @@
 #include "common/lualib.h"
 #include "x11_compat.h"
 #include "common/signal.h"
+#include "objects/signal.h"
 
 static DBusConnection *dbus_connection_session = NULL;
 static DBusConnection *dbus_connection_system = NULL;
@@ -367,6 +368,21 @@ a_dbus_process_request(DBusConnection *dbus_connection, DBusMessage *msg)
     lua_State *L = globalconf_get_lua_State();
     int old_top = lua_gettop(L);
 
+    /* Handle systemd-logind PrepareForSleep signal for lock-before-suspend */
+    if (dbus_message_is_signal(msg, "org.freedesktop.login1.Manager", "PrepareForSleep")) {
+        DBusMessageIter iter;
+        dbus_bool_t is_sleeping = FALSE;
+
+        if (dbus_message_iter_init(msg, &iter) &&
+            dbus_message_iter_get_arg_type(&iter) == DBUS_TYPE_BOOLEAN) {
+            dbus_message_iter_get_basic(&iter, &is_sleeping);
+
+            lua_pushboolean(L, is_sleeping);
+            luaA_emit_signal_global_with_stack(L, "logind::prepare_sleep", 1);
+        }
+        /* Continue processing as normal D-Bus signal too */
+    }
+
     lua_createtable(L, 0, 5);
 
     switch(dbus_message_get_type(msg))
@@ -656,6 +672,21 @@ a_dbus_init(void)
                                              a_dbus_process_requests_session, &session_source);
     dbus_connection_system = a_dbus_connect(DBUS_BUS_SYSTEM, "system",
                                             a_dbus_process_requests_system, &system_source);
+
+    /* Subscribe to systemd-logind PrepareForSleep signal for lock-before-suspend */
+    if (dbus_connection_system) {
+        DBusError err;
+        dbus_error_init(&err);
+        dbus_bus_add_match(dbus_connection_system,
+            "type='signal',"
+            "interface='org.freedesktop.login1.Manager',"
+            "member='PrepareForSleep'",
+            &err);
+        if (dbus_error_is_set(&err)) {
+            warn("Failed to add logind PrepareForSleep match: %s", err.message);
+            dbus_error_free(&err);
+        }
+    }
 }
 
 /** Cleanup the D-Bus session and system

@@ -41,6 +41,7 @@
 #include "objects/window.h"
 #include "dbus.h"
 #include "shadow.h"
+#include "pam_auth.h"
 
 /* Forward declaration for Lua state recreation (used by config timeout handler) */
 static lua_State *luaA_create_fresh_state(void);
@@ -64,6 +65,7 @@ static lua_State *luaA_create_fresh_state(void);
 #include <xkbcommon/xkbcommon.h>
 #include <wayland-server-core.h>
 #include <wlr/types/wlr_scene.h>
+#include <wlr/backend/wayland.h>
 #include <wlr/types/wlr_buffer.h>
 #include <wlr/interfaces/wlr_buffer.h>
 #include <drm_fourcc.h>
@@ -156,6 +158,38 @@ luaA_class_handlers_t client_handlers = {LUA_REFNIL, LUA_REFNIL};
 luaA_class_handlers_t tag_handlers = {LUA_REFNIL, LUA_REFNIL};
 luaA_class_handlers_t screen_handlers = {LUA_REFNIL, LUA_REFNIL};
 luaA_class_handlers_t mouse_handlers = {LUA_REFNIL, LUA_REFNIL};
+
+/* ==========================================================================
+ * Lua Lock/Idle API State
+ * ========================================================================== */
+
+/* Lock state for Lua-controlled lockscreen */
+static int lua_locked = 0;           /* Is session locked via Lua API? */
+static int lua_authenticated = 0;    /* Has authenticate() succeeded since last lock? */
+static drawin_t *lua_lock_surface = NULL;  /* Registered lock surface (wibox) */
+static int lua_lock_surface_ref = LUA_NOREF;  /* Lua registry ref to prevent GC */
+
+/* Lock cover surfaces for multi-monitor support */
+#define MAX_LOCK_COVERS 16
+static drawin_t *lua_lock_covers[MAX_LOCK_COVERS];
+static int lua_lock_cover_refs[MAX_LOCK_COVERS];
+static int lua_lock_cover_count = 0;
+
+/* Lock/idle/DPMS API declarations in somewm_api.h */
+
+/* Idle timeout management */
+typedef struct {
+    char *name;                      /* Timeout name (for lookup/removal) */
+    int seconds;                     /* Timeout duration in seconds */
+    int lua_callback_ref;            /* Lua registry reference to callback */
+    struct wl_event_source *timer;   /* Wayland event loop timer */
+    bool fired;                      /* Has this timeout fired since last activity? */
+} IdleTimeout;
+
+#define MAX_IDLE_TIMEOUTS 32
+static IdleTimeout idle_timeouts[MAX_IDLE_TIMEOUTS];
+static int idle_timeout_count = 0;
+static bool user_is_idle = false;    /* Global idle state */
 
 /* D-Bus library functions from dbus.c */
 extern const struct luaL_Reg awesome_dbus_lib[];
@@ -1030,6 +1064,541 @@ luaA_awesome_shadow_reload(lua_State *L)
 	return 0;
 }
 
+/* ==========================================================================
+ * Lock API Methods
+ * ========================================================================== */
+
+/** awesome.lock() - Lock the session
+ * Emits "lock::activate" signal with source="user"
+ * Resets authenticated to false
+ * Routes input exclusively to lock surface
+ */
+static int
+luaA_awesome_lock(lua_State *L)
+{
+	if (lua_locked) {
+		/* Already locked, do nothing */
+		lua_pushboolean(L, 1);
+		return 1;
+	}
+
+	/* EDGE-1: Refuse to lock without a registered lock surface.
+	 * Locking without a surface leaves the user with no way to authenticate
+	 * and no recovery path (VT switch is also blocked). */
+	if (!lua_lock_surface) {
+		fprintf(stderr, "somewm: lock() called without a registered lock surface, refusing to lock\n");
+		lua_pushboolean(L, 0);
+		return 1;
+	}
+
+	/* EDGE-3: Refuse to lock if ext-session-lock is active.
+	 * Two independent lock mechanisms competing causes undefined behavior. */
+	if (some_is_ext_session_locked()) {
+		fprintf(stderr, "somewm: lock() called while ext-session-lock is active, refusing\n");
+		lua_pushboolean(L, 0);
+		return 1;
+	}
+
+	lua_locked = 1;
+	lua_authenticated = 0;  /* Reset auth on new lock */
+
+	/* Activate lock in compositor (input routing, layer changes) */
+	some_activate_lua_lock();
+
+	/* Emit lock::activate signal with source="user" */
+	lua_pushstring(L, "user");
+	luaA_emit_signal_global_with_stack(L, "lock::activate", 1);
+
+	lua_pushboolean(L, 1);
+	return 1;
+}
+
+/** awesome.unlock() - Unlock the session
+ * ONLY succeeds if authenticated=true (C-enforced security)
+ * Returns: boolean (true if unlocked, false if auth required)
+ */
+static int
+luaA_awesome_unlock(lua_State *L)
+{
+	if (!lua_locked) {
+		/* Not locked, trivially "unlocked" */
+		lua_pushboolean(L, 1);
+		return 1;
+	}
+
+	if (!lua_authenticated) {
+		/* Auth required - refuse to unlock */
+		lua_pushboolean(L, 0);
+		return 1;
+	}
+
+	/* Clear lock state BEFORE deactivating so focusclient() works */
+	lua_locked = 0;
+	lua_authenticated = 0;
+
+	/* Deactivate lock in compositor (restores focus) */
+	some_deactivate_lua_lock();
+
+	/* Emit lock::deactivate signal */
+	luaA_emit_signal_global("lock::deactivate");
+
+	lua_pushboolean(L, 1);
+	return 1;
+}
+
+/** Resolve a drawin from either a drawin directly or a wibox table with a
+ * .drawin field. Returns NULL if the argument is neither. */
+static drawin_t *
+resolve_drawin_arg(lua_State *L, int arg)
+{
+	drawin_t *d = luaA_todrawin(L, arg);
+	if (!d && lua_istable(L, arg)) {
+		lua_getfield(L, arg, "drawin");
+		if (!lua_isnil(L, -1))
+			d = luaA_todrawin(L, -1);
+		lua_pop(L, 1);
+	}
+	return d;
+}
+
+/** awesome.set_lock_surface(wibox) - Register the interactive lock surface.
+ * When locked, only this surface (and registered covers) receive input.
+ * Accepts either a drawin directly or a wibox table (which has a .drawin field).
+ */
+static int
+luaA_awesome_set_lock_surface(lua_State *L)
+{
+	int arg = 1;
+	drawin_t *d = resolve_drawin_arg(L, arg);
+
+	if (!d) {
+		return luaL_error(L, "expected drawin or wibox, got %s",
+		                  luaL_typename(L, arg));
+	}
+
+	/* Clear old reference if any */
+	if (lua_lock_surface_ref != LUA_NOREF) {
+		luaL_unref(L, LUA_REGISTRYINDEX, lua_lock_surface_ref);
+		lua_lock_surface_ref = LUA_NOREF;
+	}
+
+	/* Store reference to prevent GC (store the original arg, wibox or drawin) */
+	lua_pushvalue(L, arg);
+	lua_lock_surface_ref = luaL_ref(L, LUA_REGISTRYINDEX);
+	lua_lock_surface = d;
+
+	return 0;
+}
+
+/** awesome.clear_lock_surface() - Unregister the lock surface */
+static int
+luaA_awesome_clear_lock_surface(lua_State *L)
+{
+	if (lua_lock_surface_ref != LUA_NOREF) {
+		luaL_unref(L, LUA_REGISTRYINDEX, lua_lock_surface_ref);
+		lua_lock_surface_ref = LUA_NOREF;
+	}
+	lua_lock_surface = NULL;
+
+	return 0;
+}
+
+/** Remove a lock cover at the given index and shift remaining entries down. */
+static void
+remove_lock_cover_at(lua_State *L, int idx)
+{
+	luaL_unref(L, LUA_REGISTRYINDEX, lua_lock_cover_refs[idx]);
+	for (int j = idx; j < lua_lock_cover_count - 1; j++) {
+		lua_lock_covers[j] = lua_lock_covers[j + 1];
+		lua_lock_cover_refs[j] = lua_lock_cover_refs[j + 1];
+	}
+	lua_lock_cover_count--;
+}
+
+/** awesome.add_lock_cover(wibox) - Register a cover surface for multi-monitor lock.
+ * Cover surfaces are promoted to LyrBlock on lock activation to hide desktop
+ * content on secondary monitors. */
+static int
+luaA_awesome_add_lock_cover(lua_State *L)
+{
+	int arg = 1;
+	drawin_t *d = resolve_drawin_arg(L, arg);
+
+	if (!d)
+		return luaL_error(L, "expected drawin or wibox, got %s",
+		                  luaL_typename(L, arg));
+
+	/* Check if already registered */
+	for (int i = 0; i < lua_lock_cover_count; i++) {
+		if (lua_lock_covers[i] == d)
+			return 0;
+	}
+
+	if (lua_lock_cover_count >= MAX_LOCK_COVERS)
+		return luaL_error(L, "too many lock covers (max %d)", MAX_LOCK_COVERS);
+
+	lua_pushvalue(L, arg);
+	lua_lock_cover_refs[lua_lock_cover_count] = luaL_ref(L, LUA_REGISTRYINDEX);
+	lua_lock_covers[lua_lock_cover_count] = d;
+	lua_lock_cover_count++;
+
+	return 0;
+}
+
+/** awesome.remove_lock_cover(wibox) - Unregister a cover surface */
+static int
+luaA_awesome_remove_lock_cover(lua_State *L)
+{
+	int arg = 1;
+	drawin_t *d = resolve_drawin_arg(L, arg);
+
+	if (!d)
+		return 0;
+
+	for (int i = 0; i < lua_lock_cover_count; i++) {
+		if (lua_lock_covers[i] == d) {
+			remove_lock_cover_at(L, i);
+			return 0;
+		}
+	}
+
+	return 0;
+}
+
+/** awesome.clear_lock_covers() - Unregister all cover surfaces */
+static int
+luaA_awesome_clear_lock_covers(lua_State *L)
+{
+	for (int i = 0; i < lua_lock_cover_count; i++) {
+		luaL_unref(L, LUA_REGISTRYINDEX, lua_lock_cover_refs[i]);
+		lua_lock_covers[i] = NULL;
+	}
+	lua_lock_cover_count = 0;
+
+	return 0;
+}
+
+/** awesome.authenticate(password) - Verify password via PAM
+ * Returns true if password matches current user
+ * On success, sets authenticated=true (allowing unlock())
+ * On failure, authenticated remains false
+ */
+static int
+luaA_awesome_authenticate(lua_State *L)
+{
+	const char *password = luaL_checkstring(L, 1);
+
+	/* Authenticate via PAM (from pam_auth.c)
+	 * Note: pam_authenticate_user() clears the password from memory */
+	int success = pam_authenticate_user(password);
+
+	if (success) {
+		lua_authenticated = 1;
+	} else {
+		luaA_emit_signal_global_with_stack(L, "lock::auth_failed", 0);
+	}
+
+	lua_pushboolean(L, success);
+	return 1;
+}
+
+/* ==========================================================================
+ * Idle Timeout API
+ * ========================================================================== */
+
+/** Timer callback when an idle timeout fires */
+static int
+idle_timeout_callback(void *data)
+{
+	IdleTimeout *timeout = data;
+	lua_State *L = globalconf_get_lua_State();
+
+	/* Mark as fired so it doesn't fire again until activity resets it */
+	timeout->fired = true;
+
+	/* Emit idle::start signal on first timeout (user became idle) */
+	if (!user_is_idle) {
+		user_is_idle = true;
+		luaA_emit_signal_global_with_stack(L, "idle::start", 0);
+	}
+
+	/* Call the Lua callback */
+	lua_rawgeti(L, LUA_REGISTRYINDEX, timeout->lua_callback_ref);
+	if (lua_pcall(L, 0, 0, 0) != 0) {
+		warn("idle timeout '%s' callback error: %s",
+		     timeout->name, lua_tostring(L, -1));
+		lua_pop(L, 1);
+	}
+
+	return 0;  /* Don't repeat (one-shot timer) */
+}
+
+/** Find an idle timeout by name, returns index or -1 if not found */
+static int
+find_idle_timeout(const char *name)
+{
+	for (int i = 0; i < idle_timeout_count; i++) {
+		if (idle_timeouts[i].name && strcmp(idle_timeouts[i].name, name) == 0)
+			return i;
+	}
+	return -1;
+}
+
+/** Remove an idle timeout at a given index */
+static void
+remove_idle_timeout_at(int idx)
+{
+	lua_State *L = globalconf_get_lua_State();
+
+	if (idx < 0 || idx >= idle_timeout_count)
+		return;
+
+	IdleTimeout *timeout = &idle_timeouts[idx];
+
+	/* Clean up resources */
+	if (timeout->timer)
+		wl_event_source_remove(timeout->timer);
+	if (timeout->lua_callback_ref != LUA_NOREF)
+		luaL_unref(L, LUA_REGISTRYINDEX, timeout->lua_callback_ref);
+	free(timeout->name);
+
+	/* Shift remaining timeouts down */
+	for (int i = idx; i < idle_timeout_count - 1; i++)
+		idle_timeouts[i] = idle_timeouts[i + 1];
+
+	idle_timeout_count--;
+}
+
+/** awesome.set_idle_timeout(name, seconds, callback)
+ * Add or update a named idle timeout.
+ * Multiple timeouts can be active simultaneously.
+ * Callbacks fire in order when idle (shortest first).
+ */
+static int
+luaA_awesome_set_idle_timeout(lua_State *L)
+{
+	const char *name = luaL_checkstring(L, 1);
+	int seconds = luaL_checkinteger(L, 2);
+	luaL_checktype(L, 3, LUA_TFUNCTION);
+
+	if (seconds <= 0)
+		return luaL_error(L, "idle timeout seconds must be positive");
+
+	/* Check if timeout with this name already exists */
+	int existing = find_idle_timeout(name);
+	if (existing >= 0) {
+		/* Remove existing timeout before adding new one */
+		remove_idle_timeout_at(existing);
+	}
+
+	if (idle_timeout_count >= MAX_IDLE_TIMEOUTS)
+		return luaL_error(L, "maximum number of idle timeouts (%d) reached", MAX_IDLE_TIMEOUTS);
+
+	/* Store callback in registry */
+	lua_pushvalue(L, 3);
+	int callback_ref = luaL_ref(L, LUA_REGISTRYINDEX);
+
+	/* Create the timeout entry */
+	IdleTimeout *timeout = &idle_timeouts[idle_timeout_count];
+	timeout->name = strdup(name);
+	timeout->seconds = seconds;
+	timeout->lua_callback_ref = callback_ref;
+	timeout->fired = false;
+
+	/* Create and arm the timer */
+	timeout->timer = wl_event_loop_add_timer(some_get_event_loop(), idle_timeout_callback, timeout);
+	wl_event_source_timer_update(timeout->timer, seconds * 1000);
+
+	idle_timeout_count++;
+
+	return 0;
+}
+
+/** awesome.clear_idle_timeout(name)
+ * Remove a named idle timeout.
+ */
+static int
+luaA_awesome_clear_idle_timeout(lua_State *L)
+{
+	const char *name = luaL_checkstring(L, 1);
+
+	int idx = find_idle_timeout(name);
+	if (idx >= 0)
+		remove_idle_timeout_at(idx);
+
+	return 0;
+}
+
+/** awesome.clear_all_idle_timeouts()
+ * Remove all idle timeouts.
+ */
+static int
+luaA_awesome_clear_all_idle_timeouts(lua_State *L)
+{
+	(void)L;
+
+	while (idle_timeout_count > 0)
+		remove_idle_timeout_at(idle_timeout_count - 1);
+
+	return 0;
+}
+
+/** Internal DPMS wake function (no signal emission).
+ * Wakes all monitors that are currently asleep.
+ * Returns true if any monitor was woken.
+ */
+static bool
+dpms_wake_all_monitors(void)
+{
+	struct wl_list *monitors = some_get_monitors();
+	Monitor *m;
+	struct wlr_output_state state;
+	bool any_woken = false;
+
+	wl_list_for_each(m, monitors, link) {
+		if (!m->asleep)
+			continue;
+
+		m->gamma_lut_changed = 1;
+		m->asleep = 0;
+
+		if (!wlr_output_is_wl(m->wlr_output)) {
+			wlr_output_state_init(&state);
+			wlr_output_state_set_enabled(&state, true);
+			wlr_output_commit_state(m->wlr_output, &state);
+			wlr_output_state_finish(&state);
+		}
+		any_woken = true;
+	}
+	return any_woken;
+}
+
+/** Called from somewm.c when user activity is detected.
+ * Wakes DPMS, resets all idle timers, and emits idle::stop if user was idle.
+ */
+void
+some_notify_activity(void)
+{
+	lua_State *L = globalconf_get_lua_State();
+
+	/* Wake displays from DPMS if any are asleep */
+	if (dpms_wake_all_monitors()) {
+		luaA_emit_signal_global_with_stack(L, "dpms::on", 0);
+	}
+
+	/* Emit idle::stop signal if user was idle */
+	if (user_is_idle) {
+		user_is_idle = false;
+		luaA_emit_signal_global_with_stack(L, "idle::stop", 0);
+	}
+
+	/* Reset all idle timers */
+	for (int i = 0; i < idle_timeout_count; i++) {
+		IdleTimeout *timeout = &idle_timeouts[i];
+		timeout->fired = false;
+		if (timeout->timer)
+			wl_event_source_timer_update(timeout->timer, timeout->seconds * 1000);
+	}
+}
+
+/* ==========================================================================
+ * DPMS (Display Power Management) API
+ * ========================================================================== */
+
+/** awesome.dpms_off() - Turn off all displays
+ * Sets all monitors to DPMS off (sleep) state
+ */
+static int
+luaA_awesome_dpms_off(lua_State *L)
+{
+	struct wl_list *monitors = some_get_monitors();
+	Monitor *m;
+	struct wlr_output_state state;
+	bool any_changed = false;
+
+	wl_list_for_each(m, monitors, link) {
+		if (m->asleep)
+			continue;  /* Already off */
+
+		m->gamma_lut_changed = 1;  /* Reapply gamma when re-enabling */
+		m->asleep = 1;
+
+		/* Actually disable the output for backends that support it.
+		 * Skip Wayland backend: wlr_output_commit_state blocks on
+		 * re-enable because it needs a protocol roundtrip. */
+		if (!wlr_output_is_wl(m->wlr_output)) {
+			wlr_output_state_init(&state);
+			wlr_output_state_set_enabled(&state, false);
+			wlr_output_commit_state(m->wlr_output, &state);
+			wlr_output_state_finish(&state);
+		}
+		any_changed = true;
+	}
+
+	if (any_changed)
+		luaA_emit_signal_global_with_stack(L, "dpms::off", 0);
+	return 0;
+}
+
+/** awesome.dpms_on() - Turn on all displays
+ * Wakes all monitors from DPMS off state
+ */
+static int
+luaA_awesome_dpms_on(lua_State *L)
+{
+	if (dpms_wake_all_monitors())
+		luaA_emit_signal_global_with_stack(L, "dpms::on", 0);
+	return 0;
+}
+
+/** Notify that a drawin is being destroyed.
+ * Clears any lock surface/cover pointers that reference this drawin.
+ * Called from drawin_wipe() to prevent dangling pointers (EDGE-2).
+ */
+void
+some_notify_drawin_destroyed(drawin_t *w)
+{
+	if (!w)
+		return;
+
+	lua_State *L = globalconf_get_lua_State();
+
+	/* Check if this was the lock surface */
+	if (w == lua_lock_surface) {
+		if (lua_lock_surface_ref != LUA_NOREF) {
+			luaL_unref(L, LUA_REGISTRYINDEX, lua_lock_surface_ref);
+			lua_lock_surface_ref = LUA_NOREF;
+		}
+		lua_lock_surface = NULL;
+
+		/* If locked with no lock surface, force-unlock to avoid
+		 * bricking the session (no UI, no VT switch, no recovery) */
+		if (lua_locked) {
+			fprintf(stderr, "somewm: CRITICAL: lock surface destroyed while locked, forcing unlock\n");
+			lua_locked = 0;
+			lua_authenticated = 0;
+			some_deactivate_lua_lock();
+			luaA_emit_signal_global("lock::deactivate");
+		}
+	}
+
+	/* Check if this was a lock cover */
+	for (int i = 0; i < lua_lock_cover_count; i++) {
+		if (lua_lock_covers[i] == w) {
+			remove_lock_cover_at(L, i);
+			break;
+		}
+	}
+}
+
+/* Getter functions for somewm.c to query lock state */
+int some_is_lua_locked(void) { return lua_locked; }
+drawin_t *some_get_lua_lock_surface(void) { return lua_lock_surface; }
+drawin_t **some_get_lua_lock_covers(int *count) {
+	*count = lua_lock_cover_count;
+	return lua_lock_covers;
+}
+
 /* awesome module methods */
 const luaL_Reg awesome_methods[] = {
 	{ "quit", luaA_awesome_quit },
@@ -1058,6 +1627,22 @@ const luaL_Reg awesome_methods[] = {
 	{ "restart", luaA_restart },
 	{ "shadow_reload", luaA_awesome_shadow_reload },
 	{ "_test_add_output", luaA_awesome_test_add_output },
+	/* Lock API methods */
+	{ "lock", luaA_awesome_lock },
+	{ "unlock", luaA_awesome_unlock },
+	{ "set_lock_surface", luaA_awesome_set_lock_surface },
+	{ "clear_lock_surface", luaA_awesome_clear_lock_surface },
+	{ "add_lock_cover", luaA_awesome_add_lock_cover },
+	{ "remove_lock_cover", luaA_awesome_remove_lock_cover },
+	{ "clear_lock_covers", luaA_awesome_clear_lock_covers },
+	{ "authenticate", luaA_awesome_authenticate },
+	/* Idle timeout API methods */
+	{ "set_idle_timeout", luaA_awesome_set_idle_timeout },
+	{ "clear_idle_timeout", luaA_awesome_clear_idle_timeout },
+	{ "clear_all_idle_timeouts", luaA_awesome_clear_all_idle_timeouts },
+	/* DPMS (display power management) API methods */
+	{ "dpms_off", luaA_awesome_dpms_off },
+	{ "dpms_on", luaA_awesome_dpms_on },
 	{ NULL, NULL }
 };
 
@@ -1134,6 +1719,65 @@ luaA_awesome_index(lua_State *L)
 
 	if (A_STREQ(key, "startup")) {
 		lua_pushboolean(L, globalconf.loop == NULL);
+		return 1;
+	}
+
+	/* Lock API properties */
+	if (A_STREQ(key, "locked")) {
+		lua_pushboolean(L, lua_locked);
+		return 1;
+	}
+
+	if (A_STREQ(key, "lock_surface")) {
+		if (lua_lock_surface) {
+			luaA_object_push(L, lua_lock_surface);
+		} else {
+			lua_pushnil(L);
+		}
+		return 1;
+	}
+
+	if (A_STREQ(key, "lock_mechanism")) {
+		if (lua_locked)
+			lua_pushstring(L, "lua");
+		else if (some_is_ext_session_locked())
+			lua_pushstring(L, "ext");
+		else
+			lua_pushnil(L);
+		return 1;
+	}
+
+	/* Idle API properties */
+	if (A_STREQ(key, "idle")) {
+		lua_pushboolean(L, user_is_idle);
+		return 1;
+	}
+
+	if (A_STREQ(key, "idle_inhibited")) {
+		lua_pushboolean(L, some_is_idle_inhibited());
+		return 1;
+	}
+
+	if (A_STREQ(key, "idle_timeouts")) {
+		/* Return table of {name = seconds, ...} */
+		lua_createtable(L, 0, idle_timeout_count);
+		for (int i = 0; i < idle_timeout_count; i++) {
+			lua_pushinteger(L, idle_timeouts[i].seconds);
+			lua_setfield(L, -2, idle_timeouts[i].name);
+		}
+		return 1;
+	}
+
+	/* DPMS state property */
+	if (A_STREQ(key, "dpms_state")) {
+		/* Return table of {output_name = "on"/"off", ...} */
+		struct wl_list *monitors = some_get_monitors();
+		Monitor *m;
+		lua_newtable(L);
+		wl_list_for_each(m, monitors, link) {
+			lua_pushstring(L, m->asleep ? "off" : "on");
+			lua_setfield(L, -2, m->wlr_output->name);
+		}
 		return 1;
 	}
 
@@ -3659,6 +4303,11 @@ luaA_cleanup(void)
 		/* Clean up signal and keybinding systems first */
 		luaA_signal_cleanup();
 		luaA_keybinding_cleanup();
+
+		/* Clean up lock/idle state before closing Lua */
+		luaA_awesome_clear_all_idle_timeouts(globalconf_L);
+		luaA_awesome_clear_lock_surface(globalconf_L);
+		luaA_awesome_clear_lock_covers(globalconf_L);
 
 		/* Close Lua state - this triggers Lua GC which calls registered
 		 * collector functions (client_wipe, tag_wipe, screen_wipe, drawin_wipe)

@@ -3158,6 +3158,10 @@ client_unmanage(client_t *c, client_unmanage_t reason)
     if(globalconf.focus.client == c)
         client_unfocus(c);
 
+    /* Clear pre-lock focused client if it references this client.
+     * Prevents use-after-free when unlocking after the saved client is destroyed. */
+    some_clear_pre_lock_client(c);
+
     /* Clear mouse tracking if over this client.
      * Must happen BEFORE signals are emitted to prevent dangling pointer access. */
     if (globalconf.mouse_under.type == UNDER_CLIENT &&

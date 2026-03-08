@@ -68,6 +68,9 @@ end
 -- Themes define colours, icons, font and wallpapers.
 beautiful.init(gears.filesystem.get_themes_dir() .. "default/theme.lua")
 
+-- Initialize lockscreen (must be after beautiful.init)
+require("lockscreen").init()
+
 -- @DOC_DEFAULT_APPLICATIONS@
 -- This is used later as the default terminal and editor to run.
 terminal = "xterm"
@@ -302,6 +305,10 @@ awful.keyboard.append_global_keybindings({
               {description = "reload awesome", group = "awesome"}),
     awful.key({ modkey, "Shift"   }, "q", awesome.quit,
               {description = "quit awesome", group = "awesome"}),
+    awful.key({ modkey,           }, "l",     function () awful.tag.incmwfact( 0.05)          end,
+              {description = "increase master width factor", group = "layout"}),
+    awful.key({ modkey, "Shift"   }, "Escape", function() awesome.lock() end,
+              {description = "lock screen", group = "awesome"}),
     awful.key({ modkey }, "x",
               function ()
                   awful.prompt.run {
@@ -375,8 +382,6 @@ awful.keyboard.append_global_keybindings({
               {description = "swap with previous client by index", group = "client"}),
     awful.key({ modkey,           }, "u", awful.client.urgent.jumpto,
               {description = "jump to urgent client", group = "client"}),
-    awful.key({ modkey,           }, "l",     function () awful.tag.incmwfact( 0.05)          end,
-              {description = "increase master width factor", group = "layout"}),
     awful.key({ modkey,           }, "h",     function () awful.tag.incmwfact(-0.05)          end,
               {description = "decrease master width factor", group = "layout"}),
     awful.key({ modkey, "Shift"   }, "h",     function () awful.tag.incnmaster( 1, nil, true) end,
