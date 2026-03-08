@@ -8,7 +8,7 @@
 -- Usage:
 --    require("lockscreen").init()
 --    -- Then bind awesome.lock to a key, e.g.:
---    awful.key({ modkey }, "l", awesome.lock)
+--    awful.key({ modkey, "Shift" }, "Escape", awesome.lock)
 --
 -- @module lockscreen
 ---------------------------------------------------------------------------
@@ -246,10 +246,18 @@ function lockscreen.init(opts)
 
     opts = opts or {}
 
-    -- Resolve config: opts > beautiful > defaults
+    -- Resolve config: opts > beautiful.lockscreen_* > beautiful core > defaults
+    local theme_fallbacks = {
+        bg_color     = "bg_normal",
+        fg_color     = "fg_normal",
+        input_bg     = "bg_focus",
+        border_color = "border_color_active",
+        error_color  = "bg_urgent",
+    }
     for k, default in pairs(defaults) do
         config[k] = (opts[k])
             or beautiful["lockscreen_" .. k]
+            or (theme_fallbacks[k] and beautiful[theme_fallbacks[k]])
             or default
     end
     -- Special case: font fallback to beautiful.font
