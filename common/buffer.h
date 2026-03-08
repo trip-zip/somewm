@@ -31,6 +31,7 @@
 #define AWESOME_COMMON_BUFFER_H
 
 #include "common/util.h"
+#include <alloca.h>
 #include <stdarg.h>
 #include <assert.h>
 
