@@ -3172,12 +3172,8 @@ keypress(struct wl_listener *listener, void *data)
 	 * Note: Keygrabber is allowed when Lua-locked (for lock screen password input)
 	 * but NOT when externally locked (session-lock-v1 protocol handles that). */
 	if (!locked && event->state == WL_KEYBOARD_KEY_STATE_PRESSED && some_keygrabber_is_running()) {
-		/* Get the key name from the keysym */
-		char keyname[64];
-		xkb_keysym_get_name(base_sym, keyname, sizeof(keyname));
-
 		/* Route to keygrabber callback */
-		if (some_keygrabber_handle_key(mods, base_sym, keyname)) {
+		if (some_keygrabber_handle_key(mods, keycode, group->wlr_group->keyboard.xkb_state)) {
 			/* Keygrabber handled the event, disable key repeat and return */
 			group->nsyms = 0;
 			wl_event_source_timer_update(group->key_repeat_source, 0);

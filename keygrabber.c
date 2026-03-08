@@ -172,11 +172,24 @@ some_keygrabber_is_running(void)
  * Used by somewm.c keyboard event handling
  */
 bool
-some_keygrabber_handle_key(uint32_t modifiers, uint32_t keysym, const char *keyname)
+some_keygrabber_handle_key(uint32_t modifiers, xkb_keycode_t keycode, struct xkb_state *state)
 {
     lua_State *L;
+    char keyname[64] = {0};
+    xkb_keysym_t keysym;
 
-    (void)keysym;  /* Unused */
+    if (!state)
+        return false;
+
+    keysym = xkb_state_key_get_one_sym(state, keycode);
+
+    /* Prefer translated UTF-8 text and fall back to keysym names for
+     * control/non-printable keys. */
+    if (xkb_state_key_get_utf8(state, keycode, keyname, sizeof(keyname)) <= 0
+        || is_control(keyname)) {
+        /* Use text names for control characters */
+        xkb_keysym_get_name(keysym, keyname, sizeof(keyname));
+    }
 
     if (globalconf.keygrabber == LUA_REFNIL)
         return false;

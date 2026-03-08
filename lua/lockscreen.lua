@@ -365,6 +365,10 @@ function lockscreen.init(opts)
                     if password_dots then password_dots.text = "" end
                 elseif #key >= 1 and key:byte(1) >= 0x20 then
                     if #password > 256 then return end
+                    -- Only append single-character keys (which may still have
+                    -- a multi-byte UTF-8 encoding), but do not add control
+                    -- keys like "Shift_R" to password.
+                    if utf8_len(key) > 1 then return end
                     password = password .. key
                     if password_dots then
                         password_dots.text = string.rep("\xE2\x97\x8F", utf8_len(password))
