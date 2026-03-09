@@ -63,6 +63,26 @@ is_control(const char *buf)
     return c < 0x20 || c == 0x7f;
 }
 
+/* Convert a key event to a human-readable string, preferring UTF-8 text when
+ * available and falling back to keysym names for control/non-printable keys.
+ */
+static void
+key_to_text(struct xkb_state* state, xkb_keycode_t keycode, char *buf,
+            size_t buflen)
+{
+    xkb_keysym_t keysym;
+    /* Get the keysym */
+    keysym = xkb_state_key_get_one_sym(state, keycode);
+
+    /* Prefer translated UTF-8 text and fall back to keysym names for
+     * control/non-printable keys. */
+    if (xkb_state_key_get_utf8(state, keycode, buf, buflen) <= 0 ||
+        is_control(buf)) {
+        /* Use text names for control characters */
+        xkb_keysym_get_name(keysym, buf, buflen);
+    }
+}
+
 /** Handle keypress event.
  * \param L Lua stack to push the key pressed.
  * \param keycode The keycode of the pressed key.
@@ -74,19 +94,10 @@ bool
 keygrabber_handlekpress(lua_State *L, xkb_keycode_t keycode,
                         struct xkb_state *state, bool is_press)
 {
-    char buf[64];
-    xkb_keysym_t keysym;
+    char buf[64] = {0};
 
-    /* Get the keysym */
-    keysym = xkb_state_key_get_one_sym(state, keycode);
-
-    /* Get UTF-8 representation */
-    xkb_state_key_get_utf8(state, keycode, buf, sizeof(buf));
-
-    if (is_control(buf)) {
-        /* Use text names for control characters */
-        xkb_keysym_get_name(keysym, buf, sizeof(buf));
-    }
+    /* Convert key event to human-readable string. */
+    key_to_text(state, keycode, buf, sizeof(buf));
 
     /* Push modifiers table */
     luaA_pushmodifiers(L, xkb_state_serialize_mods(state, XKB_STATE_MODS_EFFECTIVE));
@@ -176,20 +187,12 @@ some_keygrabber_handle_key(uint32_t modifiers, xkb_keycode_t keycode, struct xkb
 {
     lua_State *L;
     char keyname[64] = {0};
-    xkb_keysym_t keysym;
 
     if (!state)
         return false;
 
-    keysym = xkb_state_key_get_one_sym(state, keycode);
-
-    /* Prefer translated UTF-8 text and fall back to keysym names for
-     * control/non-printable keys. */
-    if (xkb_state_key_get_utf8(state, keycode, keyname, sizeof(keyname)) <= 0
-        || is_control(keyname)) {
-        /* Use text names for control characters */
-        xkb_keysym_get_name(keysym, keyname, sizeof(keyname));
-    }
+    /* Convert key event to human-readable string. */
+    key_to_text(state, keycode, keyname, sizeof(keyname));
 
     if (globalconf.keygrabber == LUA_REFNIL)
         return false;
