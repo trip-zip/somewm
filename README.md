@@ -1,6 +1,6 @@
 # somewm - AwesomeWM for Wayland
 
-**somewm** is AwesomeWM ported to Wayland, built on [wlroots](https://gitlab.freedesktop.org/wlroots/wlroots) 0.19. It implements AwesomeWM's full Lua API - your `rc.lua`, widgets, and themes carry over with no changes. somewm supports LuaJIT as well as Lua 5.4, 5.3, 5.2, and 5.1 (AwesomeWM only supports PUC Lua).
+**somewm** is AwesomeWM ported to Wayland, built on [wlroots](https://gitlab.freedesktop.org/wlroots/wlroots) 0.19. It implements AwesomeWM's full Lua API - your `rc.lua`, widgets, and themes carry over with no changes. somewm supports LuaJIT as well as Lua 5.4, 5.3, 5.2, and 5.1.
 
 <p align="center">
   <img src="screenshots/default.png" alt="Default configuration" width="45%">
@@ -12,9 +12,8 @@
 
 ## Highlights
 
-Wayland enables features that weren't possible on X11:
+What somewm brings to the table:
 
-- **LuaJIT and Lua 5.4 support** - AwesomeWM only supports PUC Lua; somewm also supports LuaJIT
 - **Built-in lockscreen** - PAM-based session locking with theme integration (`Mod4 + Shift + Escape`)
 - **`somewm-client`** - IPC CLI for controlling the compositor from scripts and the command line
 - **Fractional scaling** - Per-output `screen.scale` for HiDPI displays
