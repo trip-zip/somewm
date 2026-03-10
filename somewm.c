@@ -3422,6 +3422,19 @@ mapnotify(struct wl_listener *listener, void *data)
 	 * we set the same tags and monitor as its parent.
 	 * If there is no parent, apply rules */
 	if ((p = client_get_parent(c))) {
+
+		/* Fetch initial properties using new property system.
+		 * This calls client_set_*() which emits property::* signals on the client object.
+		 * Both Wayland and XWayland use proper signal emission now. */
+		if (c->client_type == XDGShell) {
+			property_register_wayland_listeners(c);
+		}
+#ifdef XWAYLAND
+		else {
+			property_update_xwayland_properties(c);
+		}
+#endif
+
 		/* Wayland transient windows should be treated as dialogs.
 		 * XDG shell doesn't have explicit window type hints like X11's _NET_WM_WINDOW_TYPE,
 		 * so we infer dialog type from the transient_for relationship.
