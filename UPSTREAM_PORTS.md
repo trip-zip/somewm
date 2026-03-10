@@ -8,6 +8,11 @@ Since SomeWM is not a direct git fork, we manually port relevant changes from up
 
 | AwesomeWM PR | Description | SomeWM PR | Date |
 |--------------|-------------|-----------|------|
+| [#4067](https://github.com/awesomeWM/awesome/pull/4067) | N/A (already applied) | N/A | 2026-03-10 |
+| [#4065](https://github.com/awesomeWM/awesome/pull/4065) | N/A (no equivalent code) | N/A | 2026-03-10 |
+| [#4061](https://github.com/awesomeWM/awesome/pull/4061) | Use VLAs instead of `p_alloca` | (this PR) | 2026-03-10 |
+| [#4059](https://github.com/awesomeWM/awesome/pull/4059) | Optimize `luaA_class_add_properties` signature | (this PR) | 2026-03-10 |
+| [#4052](https://github.com/awesomeWM/awesome/pull/4052) | Remove unnecessary array initialization | (this PR) | 2026-03-10 |
 | [#4036](https://github.com/awesomeWM/awesome/pull/4036) | Add `client_shape_input` property | #304 | 2026-02-28 |
 | [#4049](https://github.com/awesomeWM/awesome/pull/4049) | Use `g_unix_fd_add` instead of GIOChannel | #303 | 2026-02-28 |
 | [#4054](https://github.com/awesomeWM/awesome/pull/4054) | Remove unnecessary `p_clear` | #302 | 2026-02-28 |
