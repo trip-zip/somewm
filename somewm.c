@@ -3502,10 +3502,12 @@ mapnotify(struct wl_listener *listener, void *data)
 		}
 #endif
 
-		/* Initialize window type (matches AwesomeWM client_manage line 2173)
-		 * Default to NORMAL for all Wayland windows.
-		 * TODO: Detect dialogs/utility windows via XDG shell hints */
-		c->type = WINDOW_TYPE_NORMAL;
+		/* Initialize the window type after property fetch.
+		 * For native Wayland clients, infer dialog-like float types from the XDG
+		 * parent/size constraints so Lua can treat them as implicitly floating.
+		 * For XWayland clients, keep the type established by X11 properties. */
+		if (c->client_type == XDGShell)
+			c->type = client_is_float_type(c) ? WINDOW_TYPE_DIALOG : WINDOW_TYPE_NORMAL;
 
 		/* Determine target monitor (but don't set c->mon yet - setmon() needs to do that) */
 		target_mon = xytomon(c->geometry.x, c->geometry.y);
