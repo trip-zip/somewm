@@ -28,4 +28,20 @@ void ipc_cleanup(void);
  */
 const char *ipc_get_socket_path(void);
 
+/**
+ * Send response to IPC client
+ */
+void ipc_send_response(int client_fd, const char *response);
+
+/**
+ * Mark a client as a subscriber for event broadcasts
+ */
+void ipc_subscribe_client(int client_fd);
+
+/**
+ * Broadcast an event message to all subscribed clients
+ * Format: EVENT <type> <json>\n
+ */
+void ipc_broadcast(const char *message);
+
 #endif /* IPC_H */
