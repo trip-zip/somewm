@@ -1518,7 +1518,7 @@ initialcommitnotify(struct wl_listener *listener, void *data)
 			WLR_XDG_TOPLEVEL_WM_CAPABILITIES_FULLSCREEN);
 	if (c->decoration)
 		requestdecorationmode(&c->set_decoration_mode, c->decoration);
-	if (m && !client_is_unmanaged(c)) {
+	if (m && !client_is_unmanaged(c) && !client_is_float_type(c)) {
 		wlr_xdg_toplevel_set_size(c->surface.xdg->toplevel,
 			m->w.width - 2 * c->bw, m->w.height - 2 * c->bw);
 	} else {
