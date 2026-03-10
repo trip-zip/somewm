@@ -32,7 +32,7 @@ bool keygrabber_handlekpress(lua_State *, xkb_keycode_t, struct xkb_state *, boo
 
 /* somewm-specific */
 bool some_keygrabber_is_running(void);
-bool some_keygrabber_handle_key(uint32_t modifiers, uint32_t keysym, const char *keyname);
+bool some_keygrabber_handle_key(uint32_t modifiers, xkb_keycode_t keycode, struct xkb_state *state);
 void luaA_keygrabber_setup(lua_State *L);
 
 #endif
