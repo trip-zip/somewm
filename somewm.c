@@ -356,6 +356,7 @@ struct wl_list mons;
 static struct wl_list tracked_pointers; /* For runtime libinput config */
 Monitor *selmon;
 static int in_updatemons;
+static int updatemons_pending;
 
 /* global event handlers */
 static struct wl_listener cursor_axis = {.notify = axisnotify};
@@ -365,7 +366,6 @@ static struct wl_listener cursor_motion = {.notify = motionrelative};
 static struct wl_listener cursor_motion_absolute = {.notify = motionabsolute};
 static struct wl_listener gpu_reset = {.notify = gpureset};
 static struct wl_listener layout_change = {.notify = updatemons};
-static int in_updatemons;
 static struct wl_listener new_idle_inhibitor = {.notify = createidleinhibitor};
 static struct wl_listener new_input_device = {.notify = inputdevice};
 static struct wl_listener new_virtual_keyboard = {.notify = virtualkeyboard};
@@ -1340,6 +1340,11 @@ cleanupmon(struct wl_listener *listener, void *data)
 	closemon(m);
 	wlr_scene_node_destroy(&m->fullscreen_bg->node);
 	free(m);
+
+	if (updatemons_pending) {
+		updatemons_pending = 0;
+		updatemons(NULL, NULL);
+	}
 }
 
 void
@@ -5533,8 +5538,10 @@ updatemons(struct wl_listener *listener, void *data)
 	 * emit layout::change which would call us again, causing
 	 * use-after-free in wlroots output_layout_add().
 	 * Also used by cleanupmon() to prevent updatemons during output destruction. */
-	if (in_updatemons)
+	if (in_updatemons) {
+		updatemons_pending = 1;
 		return;
+	}
 	in_updatemons = 1;
 
 	struct wlr_output_configuration_v1 *config
@@ -5762,6 +5769,11 @@ updatemons(struct wl_listener *listener, void *data)
 	in_updatemons = 0;
 	wlr_output_manager_v1_set_configuration(output_mgr, config);
 	in_updatemons = 0;
+
+	if (updatemons_pending) {
+		updatemons_pending = 0;
+		updatemons(NULL, NULL);
+	}
 }
 
 void
