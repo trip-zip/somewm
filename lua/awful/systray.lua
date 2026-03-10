@@ -58,6 +58,61 @@ local function get_host_name()
 end
 
 ---------------------------------------------------------------------------
+-- Icon fingerprinting for badge detection
+---------------------------------------------------------------------------
+
+--- Compute a fingerprint from an icon name or raw pixmap data.
+-- Used to detect when an app's icon changes (e.g., badge added/removed).
+-- @tparam string|nil icon_name Icon name string, or nil
+-- @tparam string|nil raw_data Raw pixmap bytes, or nil
+-- @treturn string|nil Fingerprint string, or nil if no data
+function systray._compute_icon_fingerprint(icon_name, raw_data)
+    if icon_name and icon_name ~= "" then
+        return icon_name
+    end
+    if raw_data and #raw_data > 0 then
+        return raw_data:sub(1, 64)
+    end
+    return nil
+end
+
+--- Process an icon change against the baseline fingerprint.
+-- Pure function for testability. Mutates data table fields:
+-- urgent_from_icon_change, baseline_icon_fingerprint, update_baseline_on_next_icon.
+-- @tparam table data The item_data table
+-- @tparam string|nil fingerprint The new icon fingerprint
+-- @treturn boolean true if urgency state changed
+function systray._process_icon_change(data, fingerprint)
+    if not data then return false end
+
+    -- If we're updating the baseline (after user clicked the icon),
+    -- store this icon as the new baseline and don't change urgency
+    if data.update_baseline_on_next_icon then
+        data.update_baseline_on_next_icon = false
+        data.baseline_icon_fingerprint = fingerprint
+        return false
+    end
+
+    -- No baseline yet means this is the initial icon
+    if data.baseline_icon_fingerprint == nil then
+        data.baseline_icon_fingerprint = fingerprint
+        return false
+    end
+
+    -- Compare to baseline
+    local old_urgent = data.urgent_from_icon_change
+    if fingerprint == data.baseline_icon_fingerprint then
+        -- Icon returned to normal (badge removed)
+        data.urgent_from_icon_change = false
+    else
+        -- Icon differs from baseline (badge added)
+        data.urgent_from_icon_change = true
+    end
+
+    return data.urgent_from_icon_change ~= old_urgent
+end
+
+---------------------------------------------------------------------------
 -- Icon pixmap parsing (from D-Bus IconPixmap property)
 ---------------------------------------------------------------------------
 
@@ -457,6 +512,7 @@ local function register_item(service, path)
 
         -- Handle icon (prefer IconName, fallback to IconPixmap)
         local icon_name = get_string("IconName")
+        local initial_raw_data = nil
         if icon_name and icon_name ~= "" then
             item.icon_name = icon_name
         elseif props.IconPixmap then
@@ -487,6 +543,7 @@ local function register_item(service, path)
                     if raw_data and #raw_data >= best_w * best_h * 4 then
                         -- Use C function to set icon (handles byte order conversion)
                         item:set_icon_pixmap(best_w, best_h, raw_data)
+                        initial_raw_data = raw_data
                         -- Store icon surface for Lua-side widget drawing
                         local data = systray._private.item_data[item]
                         if data then
@@ -499,6 +556,10 @@ local function register_item(service, path)
                 gdebug.print_warning("systray: IconPixmap error: " .. tostring(err))
             end
         end
+
+        -- Set baseline icon fingerprint for badge detection (BEH-7)
+        item_data.baseline_icon_fingerprint = systray._compute_icon_fingerprint(
+            icon_name, initial_raw_data)
 
         -- Store in our tracking table
         systray._private.items[item_key] = item
@@ -524,12 +585,12 @@ local function register_item(service, path)
         -- Connect to request::* signals to handle D-Bus method calls
         item:connect_signal("request::activate", function(_, x, y)
             -- Clear urgent flag on activation (user acknowledged the notification)
-            -- Also set ignore_next_icon_change so when the app clears its badge
-            -- (which fires NewIcon), we don't immediately show the indicator again
+            -- The next icon change becomes the new baseline (the post-click
+            -- "clean" state) rather than being silently ignored
             local data = systray._private.item_data[item]
             if data then
                 data.urgent_from_icon_change = false
-                data.ignore_next_icon_change = true
+                data.update_baseline_on_next_icon = true
             end
             systray._private.bus:call(
                 service, path, SNI_ITEM_IFACE, "Activate",
@@ -583,6 +644,7 @@ local function register_item(service, path)
                         fetch_item_properties(service, path, function(p)
                             if p then
                                 local name = p.IconName and p.IconName:get_string()
+                                local pixmap_raw_data = nil
                                 if name and name ~= "" then
                                     item.icon_name = name
                                 elseif p.IconPixmap then
@@ -610,6 +672,7 @@ local function register_item(service, path)
                                             local raw_data = data_bytes:get_data()
                                             if raw_data and #raw_data >= best_w * best_h * 4 then
                                                 item:set_icon_pixmap(best_w, best_h, raw_data)
+                                                pixmap_raw_data = raw_data
                                                 local data = systray._private.item_data[item]
                                                 if data then
                                                     data.icon_surface = item.icon
@@ -618,18 +681,15 @@ local function register_item(service, path)
                                         end
                                     end)
                                 end
-                                -- Set flag for icon_change_triggers_urgent feature
+                                -- Baseline fingerprint comparison for badge detection
                                 -- Apps like Slack change their icon instead of using proper
-                                -- SNI status/overlay, so this lets users detect that
+                                -- SNI status/overlay, so we compare against the baseline
+                                -- icon to detect badge added vs badge removed
                                 local data = systray._private.item_data[item]
                                 if data then
-                                    if data.ignore_next_icon_change then
-                                        -- This icon change was likely the app clearing its badge
-                                        -- after user clicked, so don't set the urgent flag
-                                        data.ignore_next_icon_change = false
-                                    else
-                                        data.urgent_from_icon_change = true
-                                    end
+                                    local fp = systray._compute_icon_fingerprint(
+                                        name, pixmap_raw_data)
+                                    systray._process_icon_change(data, fp)
                                 end
                                 -- Emit update for classic widget
                                 capi.awesome.emit_signal("systray::update")
@@ -639,6 +699,13 @@ local function register_item(service, path)
                         if params and params:n_children() > 0 then
                             local status = params:get_child_value(0):get_string()
                             item.status = status
+                            -- Explicit status change supersedes icon-change heuristic
+                            if status == "Active" or status == "NeedsAttention" then
+                                local data = systray._private.item_data[item]
+                                if data then
+                                    data.urgent_from_icon_change = false
+                                end
+                            end
                             -- Status change may affect visibility, emit update
                             capi.awesome.emit_signal("systray::update")
                         end

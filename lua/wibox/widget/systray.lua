@@ -170,15 +170,20 @@ function systray:_sync_items()
     -- Lazy-load systray_icon to avoid circular dependency
     local systray_icon = require("wibox.widget.systray_icon")
 
-    local items = capi.systray_item and capi.systray_item.get_items() or {}
+    local all_items = capi.systray_item and capi.systray_item.get_items() or {}
+
+    -- BEH-8: Hide items with Passive status
+    local items = {}
+    local item_set = {}
+    for _, item in ipairs(all_items) do
+        if item.status ~= "Passive" then
+            table.insert(items, item)
+            item_set[item] = true
+        end
+    end
+
     local current_widgets = self._private.icon_widgets or {}
     local new_widgets = {}
-
-    -- Build set of current item IDs
-    local item_set = {}
-    for _, item in ipairs(items) do
-        item_set[item] = true
-    end
 
     -- Remove widgets for items that no longer exist
     for item, widget in pairs(current_widgets) do
