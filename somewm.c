@@ -1518,7 +1518,7 @@ initialcommitnotify(struct wl_listener *listener, void *data)
 			WLR_XDG_TOPLEVEL_WM_CAPABILITIES_FULLSCREEN);
 	if (c->decoration)
 		requestdecorationmode(&c->set_decoration_mode, c->decoration);
-	if (m && !client_is_unmanaged(c)) {
+	if (m && !client_is_unmanaged(c) && !client_is_float_type(c)) {
 		wlr_xdg_toplevel_set_size(c->surface.xdg->toplevel,
 			m->w.width - 2 * c->bw, m->w.height - 2 * c->bw);
 	} else {
@@ -3422,6 +3422,19 @@ mapnotify(struct wl_listener *listener, void *data)
 	 * we set the same tags and monitor as its parent.
 	 * If there is no parent, apply rules */
 	if ((p = client_get_parent(c))) {
+
+		/* Fetch initial properties using new property system.
+		 * This calls client_set_*() which emits property::* signals on the client object.
+		 * Both Wayland and XWayland use proper signal emission now. */
+		if (c->client_type == XDGShell) {
+			property_register_wayland_listeners(c);
+		}
+#ifdef XWAYLAND
+		else {
+			property_update_xwayland_properties(c);
+		}
+#endif
+
 		/* Wayland transient windows should be treated as dialogs.
 		 * XDG shell doesn't have explicit window type hints like X11's _NET_WM_WINDOW_TYPE,
 		 * so we infer dialog type from the transient_for relationship.
@@ -3502,10 +3515,12 @@ mapnotify(struct wl_listener *listener, void *data)
 		}
 #endif
 
-		/* Initialize window type (matches AwesomeWM client_manage line 2173)
-		 * Default to NORMAL for all Wayland windows.
-		 * TODO: Detect dialogs/utility windows via XDG shell hints */
-		c->type = WINDOW_TYPE_NORMAL;
+		/* Initialize the window type after property fetch.
+		 * For native Wayland clients, infer dialog-like float types from the XDG
+		 * parent/size constraints so Lua can treat them as implicitly floating.
+		 * For XWayland clients, keep the type established by X11 properties. */
+		if (c->client_type == XDGShell)
+			c->type = client_is_float_type(c) ? WINDOW_TYPE_DIALOG : WINDOW_TYPE_NORMAL;
 
 		/* Determine target monitor (but don't set c->mon yet - setmon() needs to do that) */
 		target_mon = xytomon(c->geometry.x, c->geometry.y);
