@@ -4225,7 +4225,7 @@ rendermon(struct wl_listener *listener, void *data)
 	 * this monitor. */
 	foreach(client, globalconf.clients) {
 		c = *client;
-		if (c->resize && !some_client_get_floating(c) && client_is_rendered_on_mon(c, m) && !client_is_stopped(c))
+		if (c->resize && !some_client_get_floating(c) && c->mon == m && !client_is_stopped(c))
 			goto skip;
 	}
 

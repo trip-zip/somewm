@@ -2820,6 +2820,13 @@ client_set_minimized(lua_State *L, int cidx, bool s)
         if(c->scene)
             wlr_scene_node_set_enabled(&c->scene->node, !s);
 
+        /* Wayland: Sync suspended state with minimized state.
+         * The C arrange() also sets this, but runs asynchronously via
+         * timer.delayed_call. Set it immediately so the client can start
+         * rendering at the new size before the deferred arrange fires. */
+        if(c->client_type == XDGShell)
+            wlr_xdg_toplevel_set_suspended(c->surface.xdg->toplevel, s);
+
         if(c->toplevel_handle)
             wlr_foreign_toplevel_handle_v1_set_minimized(c->toplevel_handle, s);
 
