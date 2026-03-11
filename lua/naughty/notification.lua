@@ -24,6 +24,7 @@ local cst      = require("naughty.constants")
 local naughty  = require("naughty.core")
 local gdebug   = require("gears.debug")
 local pcommon = require("awful.permissions._common")
+local beautiful = require("beautiful")
 
 local notification = {}
 
@@ -688,6 +689,7 @@ for _, prop in ipairs(properties) do
 
         return self._private[prop]
             or (preset and preset[prop])
+            or beautiful["notification_"..prop]
             or cst.config.defaults[prop]
     end
 
@@ -937,8 +939,10 @@ local function select_legacy_preset(n, args)
     end
 
     -- gather variables together
+    -- Note: defaults are NOT included here because the property getter
+    -- already falls back to cst.config.defaults. Including them would
+    -- prevent beautiful.notification_* from being checked.
     rawset(n, "preset", gtable.join(
-        cst.config.defaults or {},
         args.preset or cst.config.presets.normal or {},
         rawget(n, "preset") or {}
     ))
