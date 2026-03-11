@@ -1,10 +1,15 @@
 -- Test: Notification timeout bugs.
 --
--- Setting timeout=0 doesn't stop existing timer:
---   set_timeout() at notification.lua only stops the old timer inside
---   the `if timeout > 0` block. When timeout is 0 (meaning "never expire"),
---   the else branch never stops the old timer. So setting n.timeout = 0
---   after creation leaves the old timer running.
+-- 1. Setting timeout=0 doesn't stop existing timer:
+--    set_timeout() at notification.lua only stops the old timer inside
+--    the `if timeout > 0` block. When timeout is 0 (meaning "never expire"),
+--    the else branch never stops the old timer. So setting n.timeout = 0
+--    after creation leaves the old timer running.
+--
+-- 2. Default timeout never starts when no explicit timeout is given:
+--    The constructor guard `if n._private.timeout then` skips set_timeout()
+--    when timeout is nil (not provided). Without ruled.notification, this
+--    means notifications with no explicit timeout never expire.
 
 local naughty = require("naughty")
 local notification = require("naughty.notification")
@@ -20,6 +25,7 @@ naughty.connect_signal("request::display", function(n)
 end)
 
 local n_timeout_zero = nil
+local n_default = nil
 
 local steps = {}
 
@@ -71,10 +77,40 @@ table.insert(steps, function()
     return true
 end)
 
+-- Default timeout never starts when no explicit timeout given.
+table.insert(steps, function()
+    n_default = notification {
+        title = "default timeout test",
+        text  = "Should expire with default timeout",
+        -- No timeout specified - should get default from cst.config
+    }
+
+    assert(n_default, "notification was not created")
+
+    -- The default timeout from cst.config.defaults is 5 seconds.
+    -- set_timeout() should have been called with that value.
+    assert(n_default.timer ~= nil,
+        "no timer created for notification without explicit timeout - "..
+        "constructor guard `if n._private.timeout` skips set_timeout() "..
+        "when timeout is nil")
+
+    assert(n_default.timer.started,
+        "timer exists but is not started")
+
+    assert(n_default._private.timeout == 5,
+        string.format("expected default timeout=5, got %s",
+            tostring(n_default._private.timeout)))
+
+    return true
+end)
+
 -- Cleanup
 table.insert(steps, function()
     if n_timeout_zero and not n_timeout_zero._private.is_destroyed then
         n_timeout_zero:destroy()
+    end
+    if n_default and not n_default._private.is_destroyed then
+        n_default:destroy()
     end
     return true
 end)
