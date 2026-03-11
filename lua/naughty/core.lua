@@ -19,6 +19,7 @@ local screen  = require("awful.screen")
 local gtable  = require("gears.table")
 local gobject = require("gears.object")
 local gsurface = require("gears.surface")
+local menubar_utils = require("menubar.utils")
 
 local naughty = {}
 
@@ -862,9 +863,31 @@ end
 naughty.connect_signal("property::screen"  , update_index)
 naughty.connect_signal("property::position", update_index)
 
+--- Request handler to resolve app_icon XDG icon names.
+-- @signalhandler naughty.app_icon_handler
+function naughty.app_icon_handler(self, context, hints)
+    if context ~= "app_icon" then return end
+
+    -- Skip placeholder icons that would just add noise.
+    local dominated = {
+        ["image-missing"] = true,
+        ["dialog-information"] = true,
+        [""] = true,
+    }
+    if dominated[hints.app_icon] then return end
+
+    local path = menubar_utils.lookup_icon(hints.app_icon)
+        or menubar_utils.lookup_icon(hints.app_icon:lower())
+
+    if path then
+        self.icon = path
+    end
+end
+
 naughty.connect_signal("request::icon", naughty.client_icon_handler)
 naughty.connect_signal("request::icon", naughty.icon_path_handler  )
 naughty.connect_signal("request::icon", naughty.icon_clear_handler )
+naughty.connect_signal("request::icon", naughty.app_icon_handler   )
 
 --@DOC_signals_COMMON@
 
