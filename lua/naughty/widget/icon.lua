@@ -95,15 +95,12 @@ function icon:set_notification(notif)
     if old == notif then return end
 
     if old then
-        old:disconnect_signal("destroyed",
+        old:disconnect_signal("property::icon",
             self._private.icon_changed_callback)
     end
 
-    local icn = gsurface.load_silently(notif.icon)
-
-    if icn then
-        self:set_image(icn)
-    end
+    local raw = notif.icon
+    self:set_image(raw and gsurface.load_silently(raw) or nil)
 
     self._private.notification = setmetatable({notif}, {__mode="v"})
 
@@ -172,11 +169,8 @@ local function new(args)
 
         if not n then return end
 
-        local icn = gsurface.load_silently(n.icon)
-
-        if icn then
-            tb:set_image(icn)
-        end
+        local raw = n.icon
+        tb:set_image(raw and gsurface.load_silently(raw) or nil)
     end
 
     if args.notification then
