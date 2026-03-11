@@ -303,6 +303,7 @@ function box:set_notification(notif)
     init(self, notif)
 
     self._private.notification = setmetatable({notif}, {__mode="v"})
+    self._private.cached_position = notif:get_position()
 
     self:emit_signal("property::notification", notif)
 end
@@ -318,7 +319,7 @@ function box:get_position()
         return n:get_position()
     end
 
-    return "top_right"
+    return self._private.cached_position or "top_right"
 end
 
 --- Create a notification popup box.
