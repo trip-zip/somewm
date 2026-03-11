@@ -582,10 +582,7 @@ local function get_suspended(self)
 end
 
 function notification:set_timeout(timeout)
-    io.stderr:write(string.format("[NOTIF] set_timeout() called: id=%d, timeout_arg=%s, current_timeout=%s, has_timer=%s\n",
-        self.id or 0, tostring(timeout), tostring(self._private.timeout), tostring(self.timer ~= nil)))
     timeout = timeout or 0
-    io.stderr:write(string.format("[NOTIF] set_timeout() after default: timeout=%d\n", timeout))
 
     local die = function (reason)
         if reason == cst.notification_closed_reason.expired then
@@ -599,46 +596,36 @@ function notification:set_timeout(timeout)
         self:destroy(reason)
     end
 
-    if self.timer and self._private.timeout == timeout then
-        io.stderr:write(string.format("[NOTIF] set_timeout() EARLY RETURN: timer exists and timeout unchanged (id=%d)\n", self.id or 0))
-        return
+    if self.timer and self._private.timeout == timeout then return end
+
+    -- Prevent a memory leak and the accumulation of active timers
+    if self.timer and self.timer.started then
+        self.timer:stop()
     end
 
     -- 0 == never
     if timeout > 0 then
-        io.stderr:write(string.format("[NOTIF] set_timeout() creating death timer: id=%d, timeout=%d\n", self.id or 0, timeout))
         local timer_die = timer { timeout = timeout }
-        io.stderr:write(string.format("[NOTIF] Created death timer for notification id=%d, timeout=%ds\n", self.id or 0, timeout))
 
         timer_die:connect_signal("timeout", function()
-            io.stderr:write(string.format("[NOTIF] Death timer fired for notification id=%d\n", self.id or 0))
             pcall(die, cst.notification_closed_reason.expired)
-            io.stderr:write(string.format("[NOTIF] die() called, timer.started=%s\n", tostring(timer_die.started)))
 
             -- Prevent infinite timers events on errors.
             if timer_die.started then
                 timer_die:stop()
-                io.stderr:write("[NOTIF] Death timer stopped\n")
             end
         end)
 
         --FIXME there's still a dependency loop to fix before it works
         if not get_suspended(self) then
-            io.stderr:write(string.format("[NOTIF] Starting death timer for notification id=%d\n", self.id or 0))
             timer_die:start()
-        else
-            io.stderr:write(string.format("[NOTIF] Death timer SUSPENDED for notification id=%d\n", self.id or 0))
-        end
-
-        -- Prevent a memory leak and the accumulation of active timers
-        if self.timer and self.timer.started then
-            self.timer:stop()
         end
 
         self.timer = timer_die
     else
-        io.stderr:write(string.format("[NOTIF] set_timeout() NOT creating timer: id=%d, timeout=%d (timeout <= 0 means never expire)\n", self.id or 0, timeout))
+        self.timer = nil
     end
+
     self.die = die
     self._private.timeout = timeout
     self:emit_signal("property::timeout", timeout)
