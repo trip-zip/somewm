@@ -242,7 +242,7 @@ COVERAGE=1 make test-unit
 
 To port AwesomeWM tests:
 
-1. Copy test file from `~/tools/awesome/tests/` or `~/tools/awesome/spec/`
+1. Copy test file from AwesomeWM's [`tests/`](https://github.com/awesomeWM/awesome/tree/master/tests) or [`spec/`](https://github.com/awesomeWM/awesome/tree/master/spec)
 2. Update any X11-specific code to use Wayland equivalents
 3. Remove client spawning tests (not yet supported in headless mode)
 4. Run and fix any API differences

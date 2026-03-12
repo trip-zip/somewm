@@ -6,7 +6,7 @@
 
 These are copied directly from [AwesomeWM](https://github.com/awesomeWM/awesome/tree/master/lib) and must not diverge. If something crashes or misbehaves in Lua, the fix belongs in C — the bug is almost always a missing API, wrong signal timing, or incomplete object lifecycle in the compositor layer.
 
-When in doubt, check AwesomeWM's source at `~/tools/awesome/` for how things are supposed to work.
+When in doubt, check [AwesomeWM's source](https://github.com/awesomeWM/awesome) for how things are supposed to work.
 
 ## Building
 
@@ -27,7 +27,7 @@ make test-one TEST=tests/test-foo.lua  # Single test (handy for TDD)
 
 | What | Where |
 |------|-------|
-| AwesomeWM C reference | `~/tools/awesome/objects/`, `~/tools/awesome/luaclass.c` |
+| AwesomeWM C reference | [`objects/`](https://github.com/awesomeWM/awesome/tree/master/objects), [`luaclass.c`](https://github.com/awesomeWM/awesome/blob/master/luaclass.c) |
 | somewm C bindings | `objects/*.c` |
 | Wayland deviations | `DEVIATIONS.md` |
 | Integration test examples | `tests/` |
