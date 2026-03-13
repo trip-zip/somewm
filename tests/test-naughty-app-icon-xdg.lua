@@ -63,7 +63,8 @@ table.insert(steps, function()
 
     assert(n, "notification was not created")
     -- image-missing is in the dominated list, so the handler should skip it.
-    -- Icon may still be nil (expected) or resolved by other handlers.
+    assert(n.icon == nil,
+        "dominated icon 'image-missing' should not have been resolved")
 
     n:destroy()
     return true

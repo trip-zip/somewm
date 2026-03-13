@@ -646,8 +646,9 @@ naughty.connect_signal("request::screen", naughty.default_screen_handler)
 -- * images
 -- * dbus_clear
 --
--- For example, an implementation which uses the `app_icon` to perform an XDG
--- icon lookup will look like:
+-- The default handler, `naughty.app_icon_handler`, resolves `app_icon` names
+-- using `menubar.utils.lookup_icon`. To override or extend it, connect your own
+-- handler:
 --
 --    naughty.connect_signal("request::icon", function(n, context, hints)
 --        if context ~= "app_icon" then return end
@@ -672,6 +673,7 @@ naughty.connect_signal("request::screen", naughty.default_screen_handler)
 -- @tparam string hints.image The path or pixmap of the icon.
 -- @see naughty.icon_path_handler
 -- @see naughty.client_icon_handler
+-- @see naughty.app_icon_handler
 
 --- Emitted when the screen is not defined or being removed.
 -- @signal request::screen
@@ -871,7 +873,6 @@ function naughty.app_icon_handler(self, context, hints)
     -- Skip placeholder icons that would just add noise.
     local dominated = {
         ["image-missing"] = true,
-        ["dialog-information"] = true,
         [""] = true,
     }
     if dominated[hints.app_icon] then return end
@@ -880,7 +881,7 @@ function naughty.app_icon_handler(self, context, hints)
         or menubar_utils.lookup_icon(hints.app_icon:lower())
 
     if path then
-        self.icon = path
+        self._private.icon = path
     end
 end
 
