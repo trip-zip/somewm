@@ -1,10 +1,14 @@
 ---------------------------------------------------------------------------
 --- Carousel (scrolling) layout for somewm.
 --
--- Clients are arranged in columns on an infinite horizontal strip.
--- Each column has a configurable width fraction and can contain multiple
--- vertically stacked clients. The viewport auto-scrolls to keep the
--- focused column visible.
+-- Clients are arranged in columns on an infinite scrollable strip.
+-- Each column has a configurable size fraction and can contain multiple
+-- stacked clients. The viewport auto-scrolls to keep the focused column
+-- visible.
+--
+-- Two orientations are available:
+--   awful.layout.suit.carousel            -- horizontal (default)
+--   awful.layout.suit.carousel.vertical   -- vertical
 --
 -- This is a somewm-specific layout that uses `_set_geometry_silent()`
 -- to position offscreen clients without triggering signal cascades or
@@ -67,6 +71,7 @@ local function get_state(t)
             col_positions = nil,
             workarea = nil,
             gap = 0,
+            vertical = false,
             -- Animation state (C-side handle)
             anim_handle = nil,
         }
@@ -86,6 +91,38 @@ local function make_set(arr)
     end
     return s
 end
+
+---------------------------------------------------------------------------
+-- Axis abstraction helpers
+---------------------------------------------------------------------------
+
+--- Return the scroll-axis origin of the workarea.
+-- Horizontal: x, Vertical: y
+local function scroll_origin(wa, vertical)
+    return vertical and wa.y or wa.x
+end
+
+--- Return the scroll-axis extent of the workarea.
+-- Horizontal: width, Vertical: height
+local function scroll_extent(wa, vertical)
+    return vertical and wa.height or wa.width
+end
+
+--- Return the stack-axis origin of the workarea.
+-- Horizontal: y, Vertical: x
+local function stack_origin(wa, vertical)
+    return vertical and wa.x or wa.y
+end
+
+--- Return the stack-axis extent of the workarea.
+-- Horizontal: height, Vertical: width
+local function stack_extent(wa, vertical)
+    return vertical and wa.width or wa.height
+end
+
+---------------------------------------------------------------------------
+-- Column/client state
+---------------------------------------------------------------------------
 
 --- Rebuild the client_to_column index from columns.
 local function rebuild_index(state)
@@ -218,23 +255,31 @@ local function apply_geometry(state)
         t0 = perf.now()
     end
 
+    local vert = state.vertical
+    local scroll_o = scroll_origin(wa, vert)
+    local stack_o = stack_origin(wa, vert)
+    local stack_sz = stack_extent(wa, vert)
+
     for ci, col in ipairs(state.columns) do
         local cp = col_positions[ci]
         if not cp then break end
         local n = #col.clients
-        local col_h = wa.height - 2 * gap
-        local row_height = math.floor((col_h - (n - 1) * gap) / n)
+        local stack_total = stack_sz - 2 * gap
+        local row_size = math.floor((stack_total - (n - 1) * gap) / n)
 
         for ri, c in ipairs(col.clients) do
             local bw = c.border_width or 0
-            local w = math.max(1, cp.pixel_width - 2 * bw - 2 * gap)
-            local h = math.max(1, row_height - 2 * bw)
-            local y_offset = (ri - 1) * (row_height + gap)
+            local scroll_client_size = math.max(1, cp.pixel_width - 2 * bw - 2 * gap)
+            local stack_client_size = math.max(1, row_size - 2 * bw)
+            local stack_offset = (ri - 1) * (row_size + gap)
+            local scroll_pos = scroll_o + cp.canvas_x - state.scroll_offset + gap
+            local stack_pos = stack_o + gap + stack_offset
+
             c:_set_geometry_silent({
-                x      = wa.x + cp.canvas_x - state.scroll_offset + gap,
-                y      = wa.y + gap + y_offset,
-                width  = w,
-                height = h,
+                x      = vert and stack_pos or scroll_pos,
+                y      = vert and scroll_pos or stack_pos,
+                width  = vert and stack_client_size or scroll_client_size,
+                height = vert and scroll_client_size or stack_client_size,
             })
         end
     end
@@ -292,9 +337,10 @@ end
 -- Layout arrange
 ---------------------------------------------------------------------------
 
---- Carousel layout arrange function.
+--- Shared arrange implementation for both orientations.
 -- @tparam table p Layout parameters from awful.layout.
-function carousel.arrange(p)
+-- @tparam boolean vertical True for vertical orientation.
+function carousel._arrange_impl(p, vertical)
     local cls = p.clients
     if #cls == 0 then return end
 
@@ -312,12 +358,14 @@ function carousel.arrange(p)
 
     if #state.columns == 0 then return end
 
-    local col_positions = compute_column_positions(state.columns, wa.width, gap)
+    local viewport_size = scroll_extent(wa, vertical)
+    local col_positions = compute_column_positions(state.columns, viewport_size, gap)
 
     -- Cache for animation and gesture use
     state.col_positions = col_positions
     state.workarea = wa
     state.gap = gap
+    state.vertical = vertical
 
     -- Compute target scroll offset based on centering mode
     local focus_ci = focused_col_idx(state, focus)
@@ -325,24 +373,24 @@ function carousel.arrange(p)
 
     local fcp = col_positions[focus_ci]
     if carousel.center_mode == "always" then
-        state.target_offset = offset_to_center_column(fcp, wa.width)
+        state.target_offset = offset_to_center_column(fcp, viewport_size)
     elseif carousel.center_mode == "never" then
         -- Only scroll if focused column is completely offscreen
         local candidate = state.target_offset
-        local left_edge = fcp.canvas_x - candidate
-        local right_edge = left_edge + fcp.pixel_width
-        if right_edge <= 0 then
+        local near_edge = fcp.canvas_x - candidate
+        local far_edge = near_edge + fcp.pixel_width
+        if far_edge <= 0 then
             candidate = fcp.canvas_x
-        elseif left_edge >= wa.width then
-            candidate = fcp.canvas_x + fcp.pixel_width - wa.width
+        elseif near_edge >= viewport_size then
+            candidate = fcp.canvas_x + fcp.pixel_width - viewport_size
         end
         state.target_offset = candidate
     else -- "on-overflow" (default)
         local candidate = state.target_offset
-        local left_edge = fcp.canvas_x - candidate
-        local right_edge = left_edge + fcp.pixel_width
-        if left_edge < 0 or right_edge > wa.width then
-            candidate = offset_to_center_column(fcp, wa.width)
+        local near_edge = fcp.canvas_x - candidate
+        local far_edge = near_edge + fcp.pixel_width
+        if near_edge < 0 or far_edge > viewport_size then
+            candidate = offset_to_center_column(fcp, viewport_size)
         end
         state.target_offset = candidate
     end
@@ -352,9 +400,9 @@ function carousel.arrange(p)
     local should_clamp = carousel.center_mode ~= "always"
     if should_clamp then
         state.target_offset = clamp_offset(
-            state.target_offset, col_positions, wa.width)
+            state.target_offset, col_positions, viewport_size)
         state.scroll_offset = clamp_offset(
-            state.scroll_offset, col_positions, wa.width)
+            state.scroll_offset, col_positions, viewport_size)
     end
 
     -- Animate or snap to target
@@ -366,6 +414,12 @@ function carousel.arrange(p)
     end
 
     apply_geometry(state)
+end
+
+--- Carousel layout arrange function (horizontal).
+-- @tparam table p Layout parameters from awful.layout.
+function carousel.arrange(p)
+    carousel._arrange_impl(p, false)
 end
 
 function carousel.skip_gap(nclients, t) -- luacheck: no unused args
@@ -384,10 +438,11 @@ function carousel.scroll_by(t, n)
         honor_padding  = true,
         honor_workarea = true,
     }
-    state.target_offset = state.target_offset + n * wa.width
+    local viewport_size = scroll_extent(wa, state.vertical)
+    state.target_offset = state.target_offset + n * viewport_size
     if state.col_positions then
         state.target_offset = clamp_offset(
-            state.target_offset, state.col_positions, wa.width)
+            state.target_offset, state.col_positions, viewport_size)
     end
     if carousel.scroll_duration > 0 and state.workarea then
         start_animation(state)
@@ -400,10 +455,16 @@ end
 -- Context helper for public API functions
 ---------------------------------------------------------------------------
 
+--- Check if the given screen is using a carousel layout.
+local function is_carousel_layout(s)
+    local l = get_layout().get(s)
+    return l == carousel or l == carousel.vertical
+end
+
 local function get_carousel_context()
     local s = ascreen.focused()
     local t = s and s.selected_tag
-    if not t or get_layout().get(s) ~= carousel then return nil end
+    if not t or not is_carousel_layout(s) then return nil end
     return get_state(t), s
 end
 
@@ -579,27 +640,30 @@ end
 -- Gesture Scrolling
 ---------------------------------------------------------------------------
 
---- Create a gesture binding for 3-finger horizontal swipe viewport panning.
+--- Create a gesture binding for 3-finger swipe viewport panning.
 -- During the swipe, the viewport tracks finger movement 1:1 (direct control).
 -- On release, the viewport animates to snap the nearest column to a clean
 -- position and focuses that column's first client.
+-- @tparam[opt=false] boolean vertical Use vertical (dy) swipe axis.
 -- @treturn table The awful.gesture binding object (call :remove() to unbind).
-function carousel.make_gesture_binding()
+local function _make_gesture_binding(vertical)
     local gesture = require("awful.gesture")
 
     local swipe_start_offset = 0
     local swipe_tag = nil
+    local expected_layout = vertical and carousel.vertical or carousel
 
     return gesture {
         type = "swipe",
         fingers = 3,
-        description = "Carousel viewport pan",
+        description = vertical and "Carousel vertical viewport pan"
+            or "Carousel viewport pan",
         group = "carousel",
 
         on_trigger = function()
             local s = ascreen.focused()
             local t = s and s.selected_tag
-            if not t or get_layout().get(s) ~= carousel then return end
+            if not t or get_layout().get(s) ~= expected_layout then return end
 
             swipe_tag = t
             local ts = get_state(t)
@@ -612,10 +676,11 @@ function carousel.make_gesture_binding()
             local ts = get_state(swipe_tag)
             if not ts.col_positions or not ts.workarea then return end
 
-            -- Finger left (dx<0) scrolls viewport right, and vice versa
-            local new_offset = swipe_start_offset - gs.dx
+            local delta = vertical and gs.dy or gs.dx
+            local viewport_size = scroll_extent(ts.workarea, vertical)
+            local new_offset = swipe_start_offset - delta
             ts.scroll_offset = clamp_offset(
-                new_offset, ts.col_positions, ts.workarea.width)
+                new_offset, ts.col_positions, viewport_size)
             ts.target_offset = ts.scroll_offset
             apply_geometry(ts)
         end,
@@ -628,8 +693,10 @@ function carousel.make_gesture_binding()
                 return
             end
 
+            local viewport_size = scroll_extent(ts.workarea, vertical)
+
             -- Find column nearest viewport center
-            local vp_center = ts.scroll_offset + ts.workarea.width / 2
+            local vp_center = ts.scroll_offset + viewport_size / 2
             local best_ci = 1
             local best_dist = math.huge
             for i, cp in ipairs(ts.col_positions) do
@@ -643,9 +710,9 @@ function carousel.make_gesture_binding()
 
             -- Animate to center that column
             local fcp = ts.col_positions[best_ci]
-            ts.target_offset = offset_to_center_column(fcp, ts.workarea.width)
+            ts.target_offset = offset_to_center_column(fcp, viewport_size)
             ts.target_offset = clamp_offset(
-                ts.target_offset, ts.col_positions, ts.workarea.width)
+                ts.target_offset, ts.col_positions, viewport_size)
 
             if carousel.scroll_duration > 0 then
                 start_animation(ts)
@@ -666,6 +733,10 @@ function carousel.make_gesture_binding()
     }
 end
 
+function carousel.make_gesture_binding()
+    return _make_gesture_binding(false)
+end
+
 ---------------------------------------------------------------------------
 -- Auto-scroll viewport on focus change
 ---------------------------------------------------------------------------
@@ -677,7 +748,7 @@ capi.client.connect_signal("focus", function(c)
     local s = c.screen
     if not s then return end
     local t = s.selected_tag
-    if not t or get_layout().get(s) ~= carousel then return end
+    if not t or not is_carousel_layout(s) then return end
 
     local state = get_state(t)
     local ci = focused_col_idx(state, c)
@@ -686,6 +757,29 @@ capi.client.connect_signal("focus", function(c)
 
     get_layout().arrange(s)
 end)
+
+---------------------------------------------------------------------------
+-- Vertical sub-layout
+---------------------------------------------------------------------------
+
+--- Vertical carousel variant: clients scroll up/down instead of left/right.
+-- @table carousel.vertical
+carousel.vertical = {
+    name = "carousel.vertical",
+    skip_gap = carousel.skip_gap,
+}
+
+--- Vertical carousel arrange function.
+-- @tparam table p Layout parameters from awful.layout.
+function carousel.vertical.arrange(p)
+    carousel._arrange_impl(p, true)
+end
+
+--- Create a gesture binding for vertical carousel swipe panning.
+-- @treturn table The awful.gesture binding object.
+function carousel.vertical.make_gesture_binding()
+    return _make_gesture_binding(true)
+end
 
 return carousel
 
