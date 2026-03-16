@@ -2398,6 +2398,21 @@ some_deactivate_lua_lock(void)
 	motionnotify(0, NULL, 0, 0, 0, 0);
 }
 
+/** Promote a single cover to LyrBlock during an active lock.
+ * Re-raises the interactive lock surface above the new cover so it
+ * stays on top of all covers. */
+void
+some_promote_lock_cover(drawin_t *d)
+{
+	if (d && d->scene_tree) {
+		wlr_scene_node_reparent(&d->scene_tree->node, layers[LyrBlock]);
+		wlr_scene_node_raise_to_top(&d->scene_tree->node);
+		drawin_t *lock_surface = some_get_lua_lock_surface();
+		if (lock_surface && lock_surface->scene_tree)
+			wlr_scene_node_raise_to_top(&lock_surface->scene_tree->node);
+	}
+}
+
 /** Clear pre_lock_focused_client if it matches the given client.
  * Called from client_unmanage() to prevent use-after-free on unlock. */
 void
