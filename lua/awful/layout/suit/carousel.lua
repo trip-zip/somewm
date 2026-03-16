@@ -1,0 +1,692 @@
+---------------------------------------------------------------------------
+--- Carousel (scrolling) layout for somewm.
+--
+-- Clients are arranged in columns on an infinite horizontal strip.
+-- Each column has a configurable width fraction and can contain multiple
+-- vertically stacked clients. The viewport auto-scrolls to keep the
+-- focused column visible.
+--
+-- This is a somewm-specific layout that uses `_set_geometry_silent()`
+-- to position offscreen clients without triggering signal cascades or
+-- screen reassignment.
+--
+-- @module awful.layout.suit.carousel
+---------------------------------------------------------------------------
+
+local capi = { client = client, screen = screen, awesome = awesome }
+local math = math
+local ascreen = require("awful.screen")
+
+-- awful.layout is lazy-loaded: carousel is required during awful.layout init,
+-- so a top-level require would be circular. We cache after first use.
+local layout
+local function get_layout()
+    if not layout then layout = require("awful.layout") end
+    return layout
+end
+
+local carousel = {}
+
+--- The carousel layout layoutbox icon.
+-- @beautiful beautiful.layout_carousel
+-- @param surface
+-- @see gears.surface
+
+--- Default column width fraction for new columns.
+-- @beautiful beautiful.carousel_default_column_width
+-- @tparam[opt=1.0] number width_fraction
+
+carousel.name = "carousel"
+
+--- Default column width fraction (overridable via beautiful).
+carousel.default_column_width = 1.0
+
+--- Width presets for cycle_column_width().
+carousel.width_presets = { 1/3, 1/2, 2/3, 1.0 }
+
+--- Viewport centering modes:
+-- - "never": only scroll when focused column would be completely offscreen
+-- - "always": always center focused column
+-- - "on-overflow" (default): center if focused column would be partially offscreen
+carousel.center_mode = "on-overflow"
+
+--- Scroll animation duration in seconds (0 = instant snap).
+carousel.scroll_duration = 0.2
+
+-- Per-tag state, weak-keyed so it's collected when tags are removed.
+local tag_state = setmetatable({}, { __mode = "k" })
+
+local function get_state(t)
+    if not tag_state[t] then
+        tag_state[t] = {
+            scroll_offset = 0,
+            target_offset = 0,
+            columns = {},
+            client_to_column = setmetatable({}, { __mode = "k" }),
+            -- Cached layout geometry (set during arrange, used by animation)
+            col_positions = nil,
+            workarea = nil,
+            gap = 0,
+            -- Animation state (C-side handle)
+            anim_handle = nil,
+        }
+    end
+    return tag_state[t]
+end
+
+local function clamp(val, lo, hi)
+    return math.max(lo, math.min(hi, val))
+end
+
+--- Build a set from an array for O(1) lookups.
+local function make_set(arr)
+    local s = {}
+    for _, v in ipairs(arr) do
+        s[v] = true
+    end
+    return s
+end
+
+--- Rebuild the client_to_column index from columns.
+local function rebuild_index(state)
+    local idx = state.client_to_column
+    for k in pairs(idx) do
+        idx[k] = nil
+    end
+    for col_idx, col in ipairs(state.columns) do
+        for row_idx, c in ipairs(col.clients) do
+            idx[c] = { col_idx = col_idx, row_idx = row_idx }
+        end
+    end
+end
+
+--- Find which column the focused client is in. Returns col_idx or nil.
+local function focused_col_idx(state, focus)
+    if not focus then return nil end
+    local entry = state.client_to_column[focus]
+    if entry then return entry.col_idx end
+    return nil
+end
+
+--- Reconcile column state against the current tiled client list.
+-- p.clients is authoritative: remove dead clients, add new ones.
+local function reconcile(state, cls, default_width, focus)
+    local live = make_set(cls)
+
+    -- 1. Remove dead clients from columns, mark survivors as "placed"
+    for _, col in ipairs(state.columns) do
+        local j = 1
+        for i = 1, #col.clients do
+            if live[col.clients[i]] then
+                live[col.clients[i]] = "placed"
+                col.clients[j] = col.clients[i]
+                j = j + 1
+            end
+        end
+        for i = j, #col.clients do
+            col.clients[i] = nil
+        end
+    end
+
+    -- 2. Remove empty columns
+    local j = 1
+    for i = 1, #state.columns do
+        if #state.columns[i].clients > 0 then
+            state.columns[j] = state.columns[i]
+            j = j + 1
+        end
+    end
+    for i = j, #state.columns do
+        state.columns[i] = nil
+    end
+
+    -- 3. Add new clients as columns after focused
+    local insert_after = focused_col_idx(state, focus) or #state.columns
+    local added = 0
+
+    for _, c in ipairs(cls) do
+        if live[c] ~= "placed" then
+            added = added + 1
+            local new_col = {
+                clients = { c },
+                width_fraction = default_width,
+            }
+            table.insert(state.columns, insert_after + added, new_col)
+        end
+    end
+
+    -- 4. Rebuild index
+    rebuild_index(state)
+end
+
+---------------------------------------------------------------------------
+-- Geometry computation
+---------------------------------------------------------------------------
+
+--- Compute column pixel positions on the canvas.
+-- Returns array of {canvas_x, pixel_width} entries.
+local function compute_column_positions(columns, wa_width, gap)
+    local positions = {}
+    local x = 0
+    for i, col in ipairs(columns) do
+        local pw = math.floor(col.width_fraction * wa_width)
+        positions[i] = { canvas_x = x, pixel_width = pw }
+        x = x + pw + gap
+    end
+    return positions
+end
+
+--- Total pixel width of the strip (left edge of first column to right edge
+--- of last column, excluding trailing gap).
+local function strip_width(col_positions)
+    if #col_positions == 0 then return 0 end
+    local last = col_positions[#col_positions]
+    return last.canvas_x + last.pixel_width
+end
+
+--- Clamp scroll offset to strip boundaries.
+-- If the strip is narrower than the viewport, center it.
+local function clamp_offset(offset, col_positions, wa_width)
+    if #col_positions == 0 then return 0 end
+    local sw = strip_width(col_positions)
+    if sw <= wa_width then
+        return -(wa_width - sw) / 2
+    end
+    return clamp(offset, 0, sw - wa_width)
+end
+
+--- Compute scroll offset to center a column in the viewport.
+local function offset_to_center_column(col_pos, wa_width)
+    if not col_pos then return 0 end
+    local center = col_pos.canvas_x + col_pos.pixel_width / 2
+    return center - wa_width / 2
+end
+
+--- Apply geometry to all clients based on current scroll_offset.
+-- This is the "render" step, separated from target computation so
+-- the animation tick can call it independently. Reads all layout
+-- geometry from the cached state fields (col_positions, workarea, gap).
+local function apply_geometry(state)
+    local col_positions = state.col_positions
+    local wa = state.workarea
+    local gap = state.gap
+    if not col_positions or not wa then return end
+
+    local perf = carousel._perf
+    local t0
+    if perf and perf.enabled then
+        t0 = perf.now()
+    end
+
+    for ci, col in ipairs(state.columns) do
+        local cp = col_positions[ci]
+        if not cp then break end
+        local n = #col.clients
+        local col_h = wa.height - 2 * gap
+        local row_height = math.floor((col_h - (n - 1) * gap) / n)
+
+        for ri, c in ipairs(col.clients) do
+            local bw = c.border_width or 0
+            local w = math.max(1, cp.pixel_width - 2 * bw - 2 * gap)
+            local h = math.max(1, row_height - 2 * bw)
+            local y_offset = (ri - 1) * (row_height + gap)
+            c:_set_geometry_silent({
+                x      = wa.x + cp.canvas_x - state.scroll_offset + gap,
+                y      = wa.y + gap + y_offset,
+                width  = w,
+                height = h,
+            })
+        end
+    end
+
+    if perf and t0 then
+        local t1 = perf.now()
+        local frames = perf.frames
+        frames[#frames + 1] = { time = t1, duration_ms = (t1 - t0) * 1000 }
+    end
+end
+
+---------------------------------------------------------------------------
+-- Animation
+---------------------------------------------------------------------------
+
+--- Stop any running scroll animation for this tag state.
+local function stop_animation(state)
+    if state.anim_handle then
+        state.anim_handle:cancel()
+        state.anim_handle = nil
+    end
+end
+
+--- Start or retarget a scroll animation toward target_offset.
+-- Uses C-side frame-synced animation for jitter-free delivery.
+local function start_animation(state)
+    local duration = carousel.scroll_duration
+
+    -- Snap if animation disabled or distance negligible
+    if duration <= 0 or math.abs(state.scroll_offset - state.target_offset) < 0.5 then
+        stop_animation(state)
+        state.scroll_offset = state.target_offset
+        return
+    end
+
+    -- Cancel previous animation
+    stop_animation(state)
+
+    local start_val = state.scroll_offset
+    local target_val = state.target_offset
+
+    state.anim_handle = capi.awesome.start_animation(duration, "ease-out-cubic",
+        function(progress)
+            state.scroll_offset = start_val + (target_val - start_val) * progress
+            apply_geometry(state)
+        end,
+        function()
+            state.scroll_offset = target_val
+            apply_geometry(state)
+            state.anim_handle = nil
+        end)
+end
+
+---------------------------------------------------------------------------
+-- Layout arrange
+---------------------------------------------------------------------------
+
+--- Carousel layout arrange function.
+-- @tparam table p Layout parameters from awful.layout.
+function carousel.arrange(p)
+    local cls = p.clients
+    if #cls == 0 then return end
+
+    local wa = p.workarea
+    local gap = p.useless_gap
+    local scr = capi.screen[p.screen]
+    local t = scr and scr.selected_tag
+    if not t then return end
+
+    local state = get_state(t)
+    local focus = capi.client.focus
+
+    -- Reconcile columns against live client list
+    reconcile(state, cls, carousel.default_column_width, focus)
+
+    if #state.columns == 0 then return end
+
+    local col_positions = compute_column_positions(state.columns, wa.width, gap)
+
+    -- Cache for animation and gesture use
+    state.col_positions = col_positions
+    state.workarea = wa
+    state.gap = gap
+
+    -- Compute target scroll offset based on centering mode
+    local focus_ci = focused_col_idx(state, focus)
+    if not focus_ci then focus_ci = 1 end
+
+    local fcp = col_positions[focus_ci]
+    if carousel.center_mode == "always" then
+        state.target_offset = offset_to_center_column(fcp, wa.width)
+    elseif carousel.center_mode == "never" then
+        -- Only scroll if focused column is completely offscreen
+        local candidate = state.target_offset
+        local left_edge = fcp.canvas_x - candidate
+        local right_edge = left_edge + fcp.pixel_width
+        if right_edge <= 0 then
+            candidate = fcp.canvas_x
+        elseif left_edge >= wa.width then
+            candidate = fcp.canvas_x + fcp.pixel_width - wa.width
+        end
+        state.target_offset = candidate
+    else -- "on-overflow" (default)
+        local candidate = state.target_offset
+        local left_edge = fcp.canvas_x - candidate
+        local right_edge = left_edge + fcp.pixel_width
+        if left_edge < 0 or right_edge > wa.width then
+            candidate = offset_to_center_column(fcp, wa.width)
+        end
+        state.target_offset = candidate
+    end
+
+    -- Clamp to strip boundaries ("always" center mode is exempt so it
+    -- can show empty space at strip edges when centering edge columns)
+    local should_clamp = carousel.center_mode ~= "always"
+    if should_clamp then
+        state.target_offset = clamp_offset(
+            state.target_offset, col_positions, wa.width)
+        state.scroll_offset = clamp_offset(
+            state.scroll_offset, col_positions, wa.width)
+    end
+
+    -- Animate or snap to target
+    if carousel.scroll_duration > 0 then
+        start_animation(state)
+    else
+        stop_animation(state)
+        state.scroll_offset = state.target_offset
+    end
+
+    apply_geometry(state)
+end
+
+function carousel.skip_gap(nclients, t) -- luacheck: no unused args
+    return true
+end
+
+--- Scroll the viewport by `n` columns worth of width.
+-- Positive scrolls right, negative scrolls left.
+-- @tparam tag t The tag.
+-- @tparam number n Number of viewport-widths to scroll by.
+function carousel.scroll_by(t, n)
+    local state = get_state(t)
+    local scr = t.screen
+    if not scr then return end
+    local wa = scr:get_bounding_geometry {
+        honor_padding  = true,
+        honor_workarea = true,
+    }
+    state.target_offset = state.target_offset + n * wa.width
+    if state.col_positions then
+        state.target_offset = clamp_offset(
+            state.target_offset, state.col_positions, wa.width)
+    end
+    if carousel.scroll_duration > 0 and state.workarea then
+        start_animation(state)
+    else
+        state.scroll_offset = state.target_offset
+    end
+end
+
+---------------------------------------------------------------------------
+-- Context helper for public API functions
+---------------------------------------------------------------------------
+
+local function get_carousel_context()
+    local s = ascreen.focused()
+    local t = s and s.selected_tag
+    if not t or get_layout().get(s) ~= carousel then return nil end
+    return get_state(t), s
+end
+
+--- Run a callback with the focused column, then re-arrange.
+local function with_focused_column(fn)
+    local state, s = get_carousel_context()
+    if not state then return end
+
+    local focus = capi.client.focus
+    local ci = focused_col_idx(state, focus)
+    if not ci then return end
+
+    fn(state.columns[ci])
+    get_layout().arrange(s)
+end
+
+---------------------------------------------------------------------------
+-- Column Width Operations
+---------------------------------------------------------------------------
+
+--- Cycle the focused column's width through presets.
+function carousel.cycle_column_width()
+    with_focused_column(function(col)
+        local presets = carousel.width_presets
+        local eps = 0.01
+
+        local current_idx = nil
+        for i, p in ipairs(presets) do
+            if math.abs(col.width_fraction - p) < eps then
+                current_idx = i
+                break
+            end
+        end
+
+        local next_idx
+        if current_idx then
+            next_idx = (current_idx % #presets) + 1
+        else
+            next_idx = 1
+        end
+        col.width_fraction = presets[next_idx]
+    end)
+end
+
+--- Adjust the focused column's width by a delta fraction.
+-- @tparam number delta Fraction to add (e.g. 0.1 or -0.1).
+function carousel.adjust_column_width(delta)
+    with_focused_column(function(col)
+        col.width_fraction = clamp(col.width_fraction + delta, 0.1, 2.0)
+    end)
+end
+
+--- Set the focused column's width to an exact fraction.
+-- @tparam number fraction The width fraction to set.
+function carousel.set_column_width(fraction)
+    with_focused_column(function(col)
+        col.width_fraction = clamp(fraction, 0.1, 2.0)
+    end)
+end
+
+--- Maximize the focused column to full width.
+function carousel.maximize_column()
+    with_focused_column(function(col)
+        col.width_fraction = 1.0
+    end)
+end
+
+---------------------------------------------------------------------------
+-- Vertical Stacking (Consume/Expel)
+---------------------------------------------------------------------------
+
+--- Pull the focused window from an adjacent column into the focused column.
+-- The adjacent column's first window is moved into the current column,
+-- stacking vertically. If the adjacent column becomes empty, it is removed.
+-- @tparam number dir Direction: -1 for left, 1 for right.
+function carousel.consume_window(dir)
+    local state, s = get_carousel_context()
+    if not state then return end
+
+    local focus = capi.client.focus
+    if not focus then return end
+
+    local entry = state.client_to_column[focus]
+    if not entry then return end
+
+    local source_ci = entry.col_idx + dir
+    if source_ci < 1 or source_ci > #state.columns then return end
+
+    local source_col = state.columns[source_ci]
+    if #source_col.clients == 0 then return end
+
+    local consumed = table.remove(source_col.clients, 1)
+    local target_col = state.columns[entry.col_idx]
+    table.insert(target_col.clients, consumed)
+
+    if #source_col.clients == 0 then
+        table.remove(state.columns, source_ci)
+    end
+
+    rebuild_index(state)
+    get_layout().arrange(s)
+end
+
+--- Move the focused window out of its column into a new column.
+-- If the focused column has only one window, this is a no-op.
+-- The new column is inserted after the current column with the same width.
+function carousel.expel_window()
+    local state, s = get_carousel_context()
+    if not state then return end
+
+    local focus = capi.client.focus
+    if not focus then return end
+
+    local entry = state.client_to_column[focus]
+    if not entry then return end
+
+    local col = state.columns[entry.col_idx]
+    if #col.clients <= 1 then return end
+
+    table.remove(col.clients, entry.row_idx)
+
+    local new_col = {
+        clients = { focus },
+        width_fraction = col.width_fraction,
+    }
+    table.insert(state.columns, entry.col_idx + 1, new_col)
+
+    rebuild_index(state)
+    get_layout().arrange(s)
+end
+
+---------------------------------------------------------------------------
+-- Column Movement
+---------------------------------------------------------------------------
+
+--- Swap the focused column with its neighbor in strip order.
+-- @tparam number dir Direction: -1 for left, 1 for right.
+function carousel.move_column(dir)
+    local state, s = get_carousel_context()
+    if not state or #state.columns < 2 then return end
+
+    local focus = capi.client.focus
+    local ci = focused_col_idx(state, focus)
+    if not ci then return end
+
+    local target = ci + dir
+    if target < 1 or target > #state.columns then return end
+
+    state.columns[ci], state.columns[target] = state.columns[target], state.columns[ci]
+
+    rebuild_index(state)
+    get_layout().arrange(s)
+end
+
+---------------------------------------------------------------------------
+-- Centering Mode
+---------------------------------------------------------------------------
+
+--- Set the viewport centering mode.
+-- @tparam string mode One of "never", "always", "on-overflow".
+function carousel.set_center_mode(mode)
+    assert(mode == "never" or mode == "always" or mode == "on-overflow",
+        "Invalid center mode: " .. tostring(mode))
+    carousel.center_mode = mode
+
+    local state, s = get_carousel_context()
+    if state then
+        get_layout().arrange(s)
+    end
+end
+
+---------------------------------------------------------------------------
+-- Gesture Scrolling
+---------------------------------------------------------------------------
+
+--- Create a gesture binding for 3-finger horizontal swipe viewport panning.
+-- During the swipe, the viewport tracks finger movement 1:1 (direct control).
+-- On release, the viewport animates to snap the nearest column to a clean
+-- position and focuses that column's first client.
+-- @treturn table The awful.gesture binding object (call :remove() to unbind).
+function carousel.make_gesture_binding()
+    local gesture = require("awful.gesture")
+
+    local swipe_start_offset = 0
+    local swipe_tag = nil
+
+    return gesture {
+        type = "swipe",
+        fingers = 3,
+        description = "Carousel viewport pan",
+        group = "carousel",
+
+        on_trigger = function()
+            local s = ascreen.focused()
+            local t = s and s.selected_tag
+            if not t or get_layout().get(s) ~= carousel then return end
+
+            swipe_tag = t
+            local ts = get_state(t)
+            stop_animation(ts)
+            swipe_start_offset = ts.scroll_offset
+        end,
+
+        on_update = function(gs)
+            if not swipe_tag then return end
+            local ts = get_state(swipe_tag)
+            if not ts.col_positions or not ts.workarea then return end
+
+            -- Finger left (dx<0) scrolls viewport right, and vice versa
+            local new_offset = swipe_start_offset - gs.dx
+            ts.scroll_offset = clamp_offset(
+                new_offset, ts.col_positions, ts.workarea.width)
+            ts.target_offset = ts.scroll_offset
+            apply_geometry(ts)
+        end,
+
+        on_end = function()
+            if not swipe_tag then return end
+            local ts = get_state(swipe_tag)
+            if not ts.col_positions or not ts.workarea then
+                swipe_tag = nil
+                return
+            end
+
+            -- Find column nearest viewport center
+            local vp_center = ts.scroll_offset + ts.workarea.width / 2
+            local best_ci = 1
+            local best_dist = math.huge
+            for i, cp in ipairs(ts.col_positions) do
+                local col_center = cp.canvas_x + cp.pixel_width / 2
+                local dist = math.abs(col_center - vp_center)
+                if dist < best_dist then
+                    best_dist = dist
+                    best_ci = i
+                end
+            end
+
+            -- Animate to center that column
+            local fcp = ts.col_positions[best_ci]
+            ts.target_offset = offset_to_center_column(fcp, ts.workarea.width)
+            ts.target_offset = clamp_offset(
+                ts.target_offset, ts.col_positions, ts.workarea.width)
+
+            if carousel.scroll_duration > 0 then
+                start_animation(ts)
+            else
+                ts.scroll_offset = ts.target_offset
+                apply_geometry(ts)
+            end
+
+            -- Focus the nearest column's first client
+            local col = ts.columns[best_ci]
+            if col and col.clients[1] then
+                capi.client.focus = col.clients[1]
+                col.clients[1]:raise()
+            end
+
+            swipe_tag = nil
+        end,
+    }
+end
+
+---------------------------------------------------------------------------
+-- Auto-scroll viewport on focus change
+---------------------------------------------------------------------------
+
+-- Re-arrange when focus changes so the viewport scrolls to the newly
+-- focused column. Skip if the focused column has not changed (e.g. focus
+-- moved between rows in the same column, or refocused the same client).
+capi.client.connect_signal("focus", function(c)
+    local s = c.screen
+    if not s then return end
+    local t = s.selected_tag
+    if not t or get_layout().get(s) ~= carousel then return end
+
+    local state = get_state(t)
+    local ci = focused_col_idx(state, c)
+    if ci == state.last_focused_ci then return end
+    state.last_focused_ci = ci
+
+    get_layout().arrange(s)
+end)
+
+return carousel
+
+-- vim: filetype=lua:expandtab:shiftwidth=4:tabstop=8:softtabstop=4:textwidth=80

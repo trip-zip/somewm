@@ -31,6 +31,7 @@
 /* Forward declarations */
 typedef struct client_t client_t;
 typedef struct screen_t screen_t;
+struct wlr_scene_tree;
 
 /* Include array support */
 #include "common/array.h"
@@ -69,6 +70,10 @@ typedef struct tag_t
     float mfact;
     /** Number of master windows (0 = use monitor default) */
     int nmaster;
+    /** Layout container scene tree (NULL unless layout requests one).
+     * Carousel creates this to reparent tiled clients under a single node
+     * so scrolling is one wlr_scene_node_set_position() call. */
+    struct wlr_scene_tree *layout_container;
 } tag_t;
 
 /* Declare tag_array_t type - must come AFTER tag_t typedef */

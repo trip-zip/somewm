@@ -106,6 +106,7 @@
 #include "objects/client.h"  /* AwesomeWM client_t (now aliased as Client) */
 #include "objects/layer_surface.h"  /* Layer shell surface Lua class */
 #include "objects/root.h"    /* Root button bindings */
+#include "animation.h"       /* Frame-synced animation callbacks */
 #include "ewmh.h"            /* EWMH support for XWayland */
 #include "property.h"         /* Property system for Wayland and XWayland */
 #include "shadow.h"          /* Compositor-level shadow support */
@@ -1543,7 +1544,19 @@ commitnotify(struct wl_listener *listener, void *data)
 	if (c->surface.xdg->initial_commit)
 		return;
 
-	resize(c, c->geometry, (some_client_get_floating(c) && !c->fullscreen));
+	/* Only call resize() for floating or fullscreen clients.
+	 * Tiled clients have their geometry managed by the Lua layout engine,
+	 * which may intentionally position clients offscreen (e.g. carousel
+	 * layout). resize() calls applybounds() which would clamp offscreen
+	 * clients back to the monitor workarea. For tiled clients, just update
+	 * the surface clip for proper rendering. */
+	if (some_client_get_floating(c) || c->fullscreen) {
+		resize(c, c->geometry, (some_client_get_floating(c) && !c->fullscreen));
+	} else {
+		struct wlr_box clip;
+		client_get_clip(c, &clip);
+		wlr_scene_subsurface_tree_set_clip(&c->scene_surface->node, &clip);
+	}
 
 	/* mark a pending resize as completed */
 	if (c->resize) {
@@ -4601,6 +4614,11 @@ some_refresh(void)
 	/* Step 1: Emit refresh signal - triggers Lua layout calculations */
 	luaA_emit_signal_global("refresh");
 
+	/* Step 1.5: Tick frame-synced animations - tick callbacks that modify
+	 * client geometry will have their changes applied by client_refresh()
+	 * in the same cycle. */
+	animation_tick_all();
+
 	/* Step 2: Refresh drawins (wibox/panels) FIRST - matches AwesomeWM order
 	 * AwesomeWM calls drawin_refresh() BEFORE client_refresh() in awesome_refresh().
 	 * This ensures wibar geometry is applied before client layout calculations. */
@@ -5267,6 +5285,10 @@ setup(void)
 #endif
 
 	luaA_init();
+
+	/* Initialize animation subsystem (must be AFTER luaA_init for Lua state) */
+	animation_init(event_loop);
+	animation_setup(globalconf_get_lua_State());
 
 	/* Initialize wallpaper cache (must be AFTER luaA_init which zeroes globalconf) */
 	wallpaper_cache_init();

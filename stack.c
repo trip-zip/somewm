@@ -239,9 +239,16 @@ stack_refresh(void)
 		/* Move client to correct scene graph layer if needed */
 		scene_layer = get_scene_layer(layer);
 		/* Check if client is in wrong layer - skip the check if already correct
-		 * to avoid unnecessary reparenting */
-		if ((void *)(*node)->scene->node.parent != (void *)layers[scene_layer]) {
-			wlr_scene_node_reparent(&(*node)->scene->node, layers[scene_layer]);
+		 * to avoid unnecessary reparenting.
+		 * A client may be inside a layout container (a child of the correct
+		 * layer), so also accept parents whose own parent is the target layer. */
+		{
+			struct wlr_scene_tree *parent = (*node)->scene->node.parent;
+			bool in_correct_layer = (void *)parent == (void *)layers[scene_layer]
+				|| (parent && (void *)parent->node.parent == (void *)layers[scene_layer]);
+			if (!in_correct_layer) {
+				wlr_scene_node_reparent(&(*node)->scene->node, layers[scene_layer]);
+			}
 		}
 
 		/* Stack client and its transients */
