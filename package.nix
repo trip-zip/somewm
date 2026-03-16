@@ -18,6 +18,7 @@
   makeWrapper,
   meson,
   ninja,
+  pam,
   pango,
   pkg-config,
   wayland,
@@ -74,6 +75,7 @@ stdenv.mkDerivation {
       libxkbcommon
       luajit
       luaEnv
+      pam
       pango
       wayland
       wayland-protocols
