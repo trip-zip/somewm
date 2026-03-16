@@ -29,6 +29,12 @@ local function get_layout()
     return layout
 end
 
+local _beautiful
+local function get_beautiful()
+    if not _beautiful then _beautiful = require("beautiful") end
+    return _beautiful
+end
+
 local carousel = {}
 
 --- The carousel layout layoutbox icon.
@@ -354,7 +360,9 @@ function carousel._arrange_impl(p, vertical)
     local focus = capi.client.focus
 
     -- Reconcile columns against live client list
-    reconcile(state, cls, carousel.default_column_width, focus)
+    local default_width = get_beautiful().carousel_default_column_width
+        or carousel.default_column_width
+    reconcile(state, cls, default_width, focus)
 
     if #state.columns == 0 then return end
 
@@ -370,6 +378,7 @@ function carousel._arrange_impl(p, vertical)
     -- Compute target scroll offset based on centering mode
     local focus_ci = focused_col_idx(state, focus)
     if not focus_ci then focus_ci = 1 end
+    state.last_focused_ci = focus_ci
 
     local fcp = col_positions[focus_ci]
     if carousel.center_mode == "always" then
