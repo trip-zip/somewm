@@ -2337,6 +2337,12 @@ some_activate_lua_lock(void)
 		luaA_mousegrabber_stop(L);
 	}
 
+	/* Enable the compositor-level background rect in LyrBlock.
+	 * This provides an opaque safety net behind all lock surfaces so that
+	 * desktop content is never visible, even on screens that have no
+	 * Lua-created cover wibox (e.g. hotplugged monitors). */
+	wlr_scene_node_set_enabled(&locked_bg->node, 1);
+
 	/* Promote all cover surfaces to LyrBlock so they hide desktop content
 	 * on secondary monitors */
 	for (int i = 0; i < cover_count; i++) {
@@ -2363,6 +2369,9 @@ some_deactivate_lua_lock(void)
 	drawin_t *lock_surface = some_get_lua_lock_surface();
 	int cover_count;
 	drawin_t **covers = some_get_lua_lock_covers(&cover_count);
+
+	/* Disable compositor-level lock background */
+	wlr_scene_node_set_enabled(&locked_bg->node, 0);
 
 	/* Move lock surface back to normal layer (LyrWibox) */
 	if (lock_surface && lock_surface->scene_tree) {
