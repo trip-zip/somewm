@@ -290,6 +290,7 @@ function lockscreen.init(opts)
     screen.connect_signal("removed", function(s)
         local wb = surfaces[s]
         if wb then
+            wb.visible = false
             if s == interactive_screen then
                 -- Interactive screen removed during lock - migrate
                 awesome.clear_lock_surface()
