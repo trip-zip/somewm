@@ -1601,6 +1601,7 @@ drawin_t **some_get_lua_lock_covers(int *count) {
 	*count = lua_lock_cover_count;
 	return lua_lock_covers;
 }
+
 bool some_is_lock_drawin(drawin_t *d) {
 	if (!d) return false;
 	if (d == lua_lock_surface) return true;

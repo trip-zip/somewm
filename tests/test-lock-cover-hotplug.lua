@@ -22,6 +22,13 @@ local initial_screen_count = screen.count()
 local interactive_wb
 local cover_wbs = {}
 
+local function set_all_visible(visible)
+    interactive_wb.visible = visible
+    for _, wb in ipairs(cover_wbs) do
+        wb.visible = visible
+    end
+end
+
 runner.run_steps({
     -- Step 1: Set up interactive lock surface on screen[1]
     function()
@@ -64,10 +71,7 @@ runner.run_steps({
         awesome.authenticate(lock.TEST_PASSWORD)
         awesome.unlock()
         assert(not awesome.locked, "should be unlocked")
-        interactive_wb.visible = false
-        for _, wb in ipairs(cover_wbs) do
-            wb.visible = false
-        end
+        set_all_visible(false)
         -- Verify they are actually hidden (not ghost panes)
         assert(not interactive_wb.visible, "interactive should be hidden")
         for _, wb in ipairs(cover_wbs) do
@@ -80,17 +84,11 @@ runner.run_steps({
     function()
         awesome.lock()
         assert(awesome.locked, "re-lock should succeed")
-        interactive_wb.visible = true
-        for _, wb in ipairs(cover_wbs) do
-            wb.visible = true
-        end
+        set_all_visible(true)
         awesome.authenticate(lock.TEST_PASSWORD)
         awesome.unlock()
         assert(not awesome.locked, "re-unlock should succeed")
-        interactive_wb.visible = false
-        for _, wb in ipairs(cover_wbs) do
-            wb.visible = false
-        end
+        set_all_visible(false)
         return true
     end,
 

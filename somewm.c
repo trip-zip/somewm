@@ -2345,12 +2345,8 @@ some_activate_lua_lock(void)
 
 	/* Promote all cover surfaces to LyrBlock so they hide desktop content
 	 * on secondary monitors */
-	for (int i = 0; i < cover_count; i++) {
-		if (covers[i] && covers[i]->scene_tree) {
-			wlr_scene_node_reparent(&covers[i]->scene_tree->node, layers[LyrBlock]);
-			wlr_scene_node_raise_to_top(&covers[i]->scene_tree->node);
-		}
-	}
+	for (int i = 0; i < cover_count; i++)
+		some_promote_lock_cover(covers[i]);
 
 	/* Promote lock surface to LyrBlock and raise above covers */
 	if (lock_surface && lock_surface->scene_tree) {
