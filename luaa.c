@@ -1242,6 +1242,9 @@ luaA_awesome_add_lock_cover(lua_State *L)
 	lua_lock_covers[lua_lock_cover_count] = d;
 	lua_lock_cover_count++;
 
+	if (lua_locked)
+		some_promote_lock_cover(d);
+
 	return 0;
 }
 
@@ -1597,6 +1600,16 @@ drawin_t *some_get_lua_lock_surface(void) { return lua_lock_surface; }
 drawin_t **some_get_lua_lock_covers(int *count) {
 	*count = lua_lock_cover_count;
 	return lua_lock_covers;
+}
+
+bool some_is_lock_drawin(drawin_t *d) {
+	if (!d) return false;
+	if (d == lua_lock_surface) return true;
+	for (int i = 0; i < lua_lock_cover_count; i++) {
+		if (lua_lock_covers[i] == d)
+			return true;
+	}
+	return false;
 }
 
 /* awesome module methods */

@@ -245,11 +245,13 @@ void some_notify_drawin_destroyed(drawin_t *w);
 int some_is_lua_locked(void);
 drawin_t *some_get_lua_lock_surface(void);
 drawin_t **some_get_lua_lock_covers(int *count);
+bool some_is_lock_drawin(drawin_t *d);
 int some_is_ext_session_locked(void);
 
 /* Lock activation/deactivation - defined in somewm.c, called from luaa.c */
 void some_activate_lua_lock(void);
 void some_deactivate_lua_lock(void);
+void some_promote_lock_cover(drawin_t *d);
 void some_clear_pre_lock_client(client_t *c);
 
 /* Idle/activity - defined in luaa.c, called from somewm.c */
