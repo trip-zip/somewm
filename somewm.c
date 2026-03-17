@@ -5976,13 +5976,11 @@ void urgent(struct wl_listener *listener, void *data)
 	luaA_object_emit_signal(L, -2, "request::activate", 1);
 	lua_pop(L, 1);
 
-	/* Set urgent flag if not already focused (via proper API for signal emission) */
-	if (c != focustop(selmon)) {
-		luaA_object_push(L, c);
-		client_set_urgent(L, -1, true);
-		lua_pop(L, 1);
-		printstatus();
-	}
+	/* Emit request::urgent and let Lua decide (matches AwesomeWM) */
+	luaA_object_push(L, c);
+	lua_pushboolean(L, true);
+	luaA_object_emit_signal(L, -2, "request::urgent", 1);
+	lua_pop(L, 1);
 }
 
 void
@@ -6391,7 +6389,6 @@ sethints(struct wl_listener *listener, void *data)
 	Client *c = wl_container_of(listener, c, set_hints);
 	xcb_icccm_wm_hints_t *hints = c->surface.xwayland->hints;
 	lua_State *L;
-	bool dominated;
 
 	if (!hints)
 		return;
@@ -6399,21 +6396,13 @@ sethints(struct wl_listener *listener, void *data)
 	if (c->window == XCB_NONE)
 		return;
 
-	/* Check if this client is currently focused (dominated by focus) */
-	dominated = (c == focustop(selmon));
-
 	/* Get Lua state for signal emission */
 	L = globalconf_get_lua_State();
 	luaA_object_push(L, c);
 
-	/* Handle urgency (AwesomeWM pattern: use client_set_urgent for property::urgent signal)
-	 * Only process urgency if client is not focused */
-	if (!dominated) {
-		bool urgent = xcb_icccm_wm_hints_get_urgency(hints);
-		if (c->urgent != urgent) {
-			client_set_urgent(L, -1, urgent);
-		}
-	}
+	/* Emit request::urgent and let Lua decide (matches AwesomeWM property.c:203-204) */
+	lua_pushboolean(L, xcb_icccm_wm_hints_get_urgency(hints));
+	luaA_object_emit_signal(L, -2, "request::urgent", 1);
 
 	/* Handle input focus hint (XCB_ICCCM_WM_HINT_INPUT)
 	 * If input hint is set and false, client should not receive focus */
