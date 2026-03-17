@@ -2350,14 +2350,16 @@ some_activate_lua_lock(void)
 		luaA_mousegrabber_stop(L);
 	}
 
+	/* Enable the compositor-level background rect in LyrBlock.
+	 * This provides an opaque safety net behind all lock surfaces so that
+	 * desktop content is never visible, even on screens that have no
+	 * Lua-created cover wibox (e.g. hotplugged monitors). */
+	wlr_scene_node_set_enabled(&locked_bg->node, 1);
+
 	/* Promote all cover surfaces to LyrBlock so they hide desktop content
 	 * on secondary monitors */
-	for (int i = 0; i < cover_count; i++) {
-		if (covers[i] && covers[i]->scene_tree) {
-			wlr_scene_node_reparent(&covers[i]->scene_tree->node, layers[LyrBlock]);
-			wlr_scene_node_raise_to_top(&covers[i]->scene_tree->node);
-		}
-	}
+	for (int i = 0; i < cover_count; i++)
+		some_promote_lock_cover(covers[i]);
 
 	/* Promote lock surface to LyrBlock and raise above covers */
 	if (lock_surface && lock_surface->scene_tree) {
@@ -2376,6 +2378,9 @@ some_deactivate_lua_lock(void)
 	drawin_t *lock_surface = some_get_lua_lock_surface();
 	int cover_count;
 	drawin_t **covers = some_get_lua_lock_covers(&cover_count);
+
+	/* Disable compositor-level lock background */
+	wlr_scene_node_set_enabled(&locked_bg->node, 0);
 
 	/* Move lock surface back to normal layer (LyrWibox) */
 	if (lock_surface && lock_surface->scene_tree) {
@@ -2400,6 +2405,21 @@ some_deactivate_lua_lock(void)
 	}
 	pre_lock_focused_client = NULL;
 	motionnotify(0, NULL, 0, 0, 0, 0);
+}
+
+/** Promote a single cover to LyrBlock during an active lock.
+ * Re-raises the interactive lock surface above the new cover so it
+ * stays on top of all covers. */
+void
+some_promote_lock_cover(drawin_t *d)
+{
+	if (d && d->scene_tree) {
+		wlr_scene_node_reparent(&d->scene_tree->node, layers[LyrBlock]);
+		wlr_scene_node_raise_to_top(&d->scene_tree->node);
+		drawin_t *lock_surface = some_get_lua_lock_surface();
+		if (lock_surface && lock_surface->scene_tree)
+			wlr_scene_node_raise_to_top(&lock_surface->scene_tree->node);
+	}
 }
 
 /** Clear pre_lock_focused_client if it matches the given client.
@@ -5978,13 +5998,11 @@ void urgent(struct wl_listener *listener, void *data)
 	luaA_object_emit_signal(L, -2, "request::activate", 1);
 	lua_pop(L, 1);
 
-	/* Set urgent flag if not already focused (via proper API for signal emission) */
-	if (c != focustop(selmon)) {
-		luaA_object_push(L, c);
-		client_set_urgent(L, -1, true);
-		lua_pop(L, 1);
-		printstatus();
-	}
+	/* Emit request::urgent and let Lua decide (matches AwesomeWM) */
+	luaA_object_push(L, c);
+	lua_pushboolean(L, true);
+	luaA_object_emit_signal(L, -2, "request::urgent", 1);
+	lua_pop(L, 1);
 }
 
 void
@@ -6393,7 +6411,6 @@ sethints(struct wl_listener *listener, void *data)
 	Client *c = wl_container_of(listener, c, set_hints);
 	xcb_icccm_wm_hints_t *hints = c->surface.xwayland->hints;
 	lua_State *L;
-	bool dominated;
 
 	if (!hints)
 		return;
@@ -6401,21 +6418,13 @@ sethints(struct wl_listener *listener, void *data)
 	if (c->window == XCB_NONE)
 		return;
 
-	/* Check if this client is currently focused (dominated by focus) */
-	dominated = (c == focustop(selmon));
-
 	/* Get Lua state for signal emission */
 	L = globalconf_get_lua_State();
 	luaA_object_push(L, c);
 
-	/* Handle urgency (AwesomeWM pattern: use client_set_urgent for property::urgent signal)
-	 * Only process urgency if client is not focused */
-	if (!dominated) {
-		bool urgent = xcb_icccm_wm_hints_get_urgency(hints);
-		if (c->urgent != urgent) {
-			client_set_urgent(L, -1, urgent);
-		}
-	}
+	/* Emit request::urgent and let Lua decide (matches AwesomeWM property.c:203-204) */
+	lua_pushboolean(L, xcb_icccm_wm_hints_get_urgency(hints));
+	luaA_object_emit_signal(L, -2, "request::urgent", 1);
 
 	/* Handle input focus hint (XCB_ICCCM_WM_HINT_INPUT)
 	 * If input hint is set and false, client should not receive focus */

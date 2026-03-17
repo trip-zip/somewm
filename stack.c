@@ -265,6 +265,13 @@ stack_refresh(void)
 		if (!(*drawin)->scene_tree)
 			continue;
 
+		/* Lock drawins are managed by some_activate_lua_lock() /
+		 * some_promote_lock_cover() and must stay in LyrBlock while the
+		 * session is locked. Without this skip, the normal ontop/type
+		 * logic below would reparent them out of LyrBlock. */
+		if (session_is_locked() && some_is_lock_drawin(*drawin))
+			continue;
+
 		/* Determine layer based on type and ontop (AwesomeWM compatibility) */
 		if ((*drawin)->type == WINDOW_TYPE_DESKTOP ||
 		    (*drawin)->type == WINDOW_TYPE_SPLASH) {

@@ -218,12 +218,16 @@ local function create_interactive(s)
     return wb
 end
 
+local function set_visibility_all_surfaces(visible)
+    for _, wb in pairs(surfaces) do
+        wb.visible = visible
+    end
+end
+
 -- Rebuild all lock surfaces for current screen layout
 local function rebuild_surfaces()
     -- Clean up existing surfaces
-    for _, wb in pairs(surfaces) do
-        wb.visible = false
-    end
+    set_visibility_all_surfaces(false)
     awesome.clear_lock_covers()
     surfaces = {}
 
@@ -286,6 +290,7 @@ function lockscreen.init(opts)
     screen.connect_signal("removed", function(s)
         local wb = surfaces[s]
         if wb then
+            wb.visible = false
             if s == interactive_screen then
                 -- Interactive screen removed during lock - migrate
                 awesome.clear_lock_surface()
@@ -319,9 +324,7 @@ function lockscreen.init(opts)
         set_status("Enter password to unlock", false)
 
         -- Show all lock surfaces
-        for _, wb in pairs(surfaces) do
-            wb.visible = true
-        end
+        set_visibility_all_surfaces(true)
 
         grabber = awful.keygrabber({
             autostart = true,
@@ -394,9 +397,7 @@ function lockscreen.init(opts)
 
     -- Handle unlock
     awesome.connect_signal("lock::deactivate", function()
-        for _, wb in pairs(surfaces) do
-            wb.visible = false
-        end
+        set_visibility_all_surfaces(false)
         password = ""
         if password_dots then password_dots.text = "" end
         if grabber then
