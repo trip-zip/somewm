@@ -1,7 +1,6 @@
 #include "animation.h"
 #include "globalconf.h"
 #include "luaa.h"
-#include <math.h>
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
@@ -9,7 +8,6 @@
 /* Animation list and keep-alive timer */
 static struct wl_list animations;
 static struct wl_event_source *keepalive_timer;
-static struct wl_event_loop *anim_event_loop;
 
 /* Monotonic clock for elapsed time */
 static double
@@ -91,6 +89,18 @@ disarm_keepalive(void)
 {
 	if (keepalive_timer && wl_list_empty(&animations))
 		wl_event_source_timer_update(keepalive_timer, 0);
+}
+
+/* Nil out the handle userdata so the Lua handle becomes inert */
+static void
+animation_nil_handle(lua_State *L, animation_t *anim)
+{
+	if (anim->handle_ref != LUA_REFNIL) {
+		lua_rawgeti(L, LUA_REGISTRYINDEX, anim->handle_ref);
+		animation_t **ud = lua_touserdata(L, -1);
+		if (ud) *ud = NULL;
+		lua_pop(L, 1);
+	}
 }
 
 /* Free an animation and its Lua refs */
@@ -194,7 +204,6 @@ void
 animation_init(struct wl_event_loop *loop)
 {
 	wl_list_init(&animations);
-	anim_event_loop = loop;
 	keepalive_timer = wl_event_loop_add_timer(loop, keepalive_callback, NULL);
 	last_tick_time = clock_now();
 }
@@ -220,13 +229,7 @@ animation_tick_all(void)
 	animation_t *anim, *tmp;
 	wl_list_for_each_safe(anim, tmp, &animations, link) {
 		if (anim->cancelled) {
-			/* Nil out the handle pointer so cancel is idempotent */
-			if (anim->handle_ref != LUA_REFNIL) {
-				lua_rawgeti(L, LUA_REGISTRYINDEX, anim->handle_ref);
-				animation_t **ud = lua_touserdata(L, -1);
-				if (ud) *ud = NULL;
-				lua_pop(L, 1);
-			}
+			animation_nil_handle(L, anim);
 			animation_destroy(anim);
 			continue;
 		}
@@ -258,14 +261,7 @@ animation_tick_all(void)
 				}
 			}
 
-			/* Nil out the handle */
-			if (anim->handle_ref != LUA_REFNIL) {
-				lua_rawgeti(L, LUA_REGISTRYINDEX, anim->handle_ref);
-				animation_t **ud = lua_touserdata(L, -1);
-				if (ud) *ud = NULL;
-				lua_pop(L, 1);
-			}
-
+			animation_nil_handle(L, anim);
 			animation_destroy(anim);
 		}
 	}
