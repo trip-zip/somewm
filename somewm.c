@@ -4429,6 +4429,69 @@ apply_geometry_to_wlroots(Client *c)
 		}
 	}
 	client_get_clip(c, &clip);
+
+	/* Clip client content to its assigned monitor bounds so offscreen
+	 * clients (e.g. carousel scrolling layout) don't render on adjacent
+	 * monitors. For fully-inside clients this is just a bounds check.
+	 *
+	 * We toggle individual child scene nodes (surface, borders, shadow,
+	 * titlebars) rather than c->scene->node which the banning system
+	 * controls. */
+	if (c->mon) {
+		struct wlr_box mon = c->mon->m;
+		bool fully_inside =
+			c->geometry.x >= mon.x &&
+			c->geometry.y >= mon.y &&
+			c->geometry.x + c->geometry.width <= mon.x + mon.width &&
+			c->geometry.y + c->geometry.height <= mon.y + mon.height;
+
+		if (fully_inside) {
+			/* Common case: everything visible, no clipping needed.
+			 * Re-enable surface/borders/shadow that may have been hidden.
+			 * Titlebars are managed by client_update_titlebar_positions(). */
+			wlr_scene_node_set_enabled(&c->scene_surface->node, true);
+			for (int i = 0; i < 4; i++)
+				wlr_scene_node_set_enabled(&c->border[i]->node, true);
+			if (c->shadow.tree)
+				wlr_scene_node_set_enabled(&c->shadow.tree->node, true);
+		} else {
+			/* Client extends past monitor: clip surface, hide everything
+			 * else (wlr_scene_rect/buffer have no clip API). */
+			int cx = c->geometry.x + c->bw + titlebar_left;
+			int cy = c->geometry.y + c->bw + titlebar_top;
+			int vl = cx > mon.x ? cx : mon.x;
+			int vt = cy > mon.y ? cy : mon.y;
+			int vr = (cx + clip.width) < (mon.x + mon.width)
+				? (cx + clip.width) : (mon.x + mon.width);
+			int vb = (cy + clip.height) < (mon.y + mon.height)
+				? (cy + clip.height) : (mon.y + mon.height);
+
+			if (vr > vl && vb > vt) {
+				/* Partially visible: narrow the clip */
+				clip.x += vl - cx;
+				clip.y += vt - cy;
+				clip.width = vr - vl;
+				clip.height = vb - vt;
+				wlr_scene_node_set_enabled(&c->scene_surface->node, true);
+			} else {
+				/* Fully offscreen */
+				wlr_scene_node_set_enabled(&c->scene_surface->node, false);
+			}
+
+			/* Hide borders, shadow, and titlebars */
+			for (int i = 0; i < 4; i++)
+				wlr_scene_node_set_enabled(&c->border[i]->node, false);
+			if (c->shadow.tree)
+				wlr_scene_node_set_enabled(&c->shadow.tree->node, false);
+			for (client_titlebar_t bar = CLIENT_TITLEBAR_TOP;
+					bar < CLIENT_TITLEBAR_COUNT; bar++) {
+				if (c->titlebar[bar].scene_buffer)
+					wlr_scene_node_set_enabled(
+						&c->titlebar[bar].scene_buffer->node, false);
+			}
+		}
+	}
+
 	wlr_scene_subsurface_tree_set_clip(&c->scene_surface->node, &clip);
 }
 
