@@ -320,15 +320,11 @@ A niri-inspired scrollable tiling layout with no AwesomeWM equivalent. Clients a
 | API | Object | Purpose |
 |-----|--------|---------|
 | `client:_set_geometry_silent(geo)` | client | Set geometry without emitting signals or reassigning screens. Used by layouts that position clients offscreen (e.g. scrolling). |
-| `tag:_create_layout_container()` | tag | Create a wlr_scene_tree under the tile layer for batch-scrolling clients. |
-| `tag:_destroy_layout_container()` | tag | Reparent clients back to the tile layer and destroy the container. |
-| `tag:_set_layout_offset(x, y)` | tag | Move the layout container (the scroll primitive). |
 | `awesome.start_animation(duration, easing, tick_fn, done_fn)` | awesome | Frame-synced animation with easing. Returns a handle with `:cancel()` and `:is_active()`. |
 
 **C-side changes:**
 - `client_resize()` gains a `silent` parameter to skip signal emission and screen reassignment
 - `commitnotify` in `somewm.c` skips `resize()` for tiled clients so offscreen positioning is not clamped
-- `stack_refresh()` in `stack.c` accepts clients inside layout containers (one level of scene-tree nesting)
 - `animation.c` provides the C-side animation tick loop, integrated into `some_refresh()`
 
 ### Layer Surface Rules

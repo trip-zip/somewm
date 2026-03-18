@@ -220,13 +220,13 @@ end
 
 --- Compute column pixel positions on the canvas.
 -- Returns array of {canvas_x, pixel_width} entries.
-local function compute_column_positions(columns, wa_width, gap)
+local function compute_column_positions(columns, wa_width)
     local positions = {}
     local x = 0
     for i, col in ipairs(columns) do
         local pw = math.floor(col.width_fraction * wa_width)
         positions[i] = { canvas_x = x, pixel_width = pw }
-        x = x + pw + gap
+        x = x + pw
     end
     return positions
 end
@@ -385,7 +385,7 @@ function carousel._arrange_impl(p, vertical)
     local peek = get_beautiful().carousel_peek_width or carousel.peek_width
     if peek < 0 then peek = 0 end
     local effective_viewport = effective_viewport_size(viewport_size, peek)
-    local col_positions = compute_column_positions(state.columns, effective_viewport, gap)
+    local col_positions = compute_column_positions(state.columns, effective_viewport)
 
     -- Cache for animation and gesture use
     state.col_positions = col_positions

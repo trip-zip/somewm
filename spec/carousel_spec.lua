@@ -33,7 +33,7 @@ local T = carousel._test
 
 describe("compute_column_positions", function()
     it("returns empty table for no columns", function()
-        local pos = T.compute_column_positions({}, 1000, 0)
+        local pos = T.compute_column_positions({}, 1000)
         assert.are.equal(0, #pos)
     end)
 
@@ -42,7 +42,7 @@ describe("compute_column_positions", function()
             { width_fraction = 0.5 },
             { width_fraction = 0.5 },
         }
-        local pos = T.compute_column_positions(cols, 1000, 0)
+        local pos = T.compute_column_positions(cols, 1000)
         assert.are.equal(2, #pos)
         assert.are.equal(0, pos[1].canvas_x)
         assert.are.equal(500, pos[1].pixel_width)
@@ -50,21 +50,21 @@ describe("compute_column_positions", function()
         assert.are.equal(500, pos[2].pixel_width)
     end)
 
-    it("accounts for gap between columns", function()
+    it("does not add extra gap between columns", function()
         local cols = {
             { width_fraction = 1.0 },
             { width_fraction = 1.0 },
         }
-        local pos = T.compute_column_positions(cols, 800, 10)
+        local pos = T.compute_column_positions(cols, 800)
         assert.are.equal(0, pos[1].canvas_x)
         assert.are.equal(800, pos[1].pixel_width)
-        assert.are.equal(810, pos[2].canvas_x) -- 800 + 10 gap
+        assert.are.equal(800, pos[2].canvas_x) -- no extra gap in column advance
         assert.are.equal(800, pos[2].pixel_width)
     end)
 
     it("floors fractional pixel widths", function()
         local cols = { { width_fraction = 1/3 } }
-        local pos = T.compute_column_positions(cols, 1000, 0)
+        local pos = T.compute_column_positions(cols, 1000)
         assert.are.equal(333, pos[1].pixel_width) -- floor(333.33)
     end)
 end)
@@ -223,12 +223,12 @@ describe("peek_width effect on column positions", function()
             { width_fraction = 1.0 },
         }
         -- Without peek: column fills 1000px
-        local pos_full = T.compute_column_positions(cols, 1000, 0)
+        local pos_full = T.compute_column_positions(cols, 1000)
         assert.are.equal(1000, pos_full[1].pixel_width)
 
         -- With peek=50: effective_viewport = 1000 - 100 = 900
         local effective = 1000 - 2 * 50
-        local pos_peek = T.compute_column_positions(cols, effective, 0)
+        local pos_peek = T.compute_column_positions(cols, effective)
         assert.are.equal(900, pos_peek[1].pixel_width)
     end)
 
@@ -238,7 +238,7 @@ describe("peek_width effect on column positions", function()
             { width_fraction = 0.5 },
         }
         local effective = 1000 - 2 * 50 -- 900
-        local pos = T.compute_column_positions(cols, effective, 0)
+        local pos = T.compute_column_positions(cols, effective)
         assert.are.equal(450, pos[1].pixel_width)
         assert.are.equal(450, pos[2].pixel_width)
         assert.are.equal(450, pos[2].canvas_x)

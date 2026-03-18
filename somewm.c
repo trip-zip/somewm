@@ -1230,6 +1230,9 @@ cleanup(void)
 	/* Cleanup wallpaper cache before destroying scene */
 	wallpaper_cache_cleanup();
 
+	/* Free animations before Lua state (they hold registry refs) */
+	animation_cleanup();
+
 	/* Close Lua after clients are destroyed (matches AwesomeWM pattern) */
 	luaA_cleanup();
 

@@ -25,9 +25,6 @@
 #include "../somewm_types.h"
 #include <stdio.h>
 #include <stdint.h>
-#include <wlr/types/wlr_scene.h>
-
-extern struct wlr_scene_tree *layers[];
 
 /* AwesomeWM-compatible tag class */
 lua_class_t tag_class;
@@ -40,15 +37,6 @@ LUA_OBJECT_FUNCS(tag_class, tag_t, tag)
 static void
 tag_wipe(tag_t *tag)
 {
-	/* Destroy layout container if present (reparent children first) */
-	if (tag->layout_container) {
-		struct wlr_scene_node *child, *tmp;
-		wl_list_for_each_safe(child, tmp, &tag->layout_container->children, link) {
-			wlr_scene_node_reparent(child, layers[LyrTile]);
-		}
-		wlr_scene_node_destroy(&tag->layout_container->node);
-		tag->layout_container = NULL;
-	}
 	client_array_wipe(&tag->clients);
 	p_delete(&tag->name);
 }
@@ -529,77 +517,6 @@ luaA_tag_clients(lua_State *L)
 }
 
 /* ========================================================================
- * Layout container methods (private, underscore-prefixed)
- * ======================================================================== */
-
-/** tag:_create_layout_container()
- * Creates a wlr_scene_tree under LyrTile (if not already present) and
- * reparents the tag's tiled clients into it.  Idempotent: if the
- * container already exists, any new tiled clients are moved in. */
-static int
-luaA_tag_create_layout_container(lua_State *L)
-{
-	tag_t *tag = luaA_checkudata(L, 1, &tag_class);
-
-	if (!tag->layout_container) {
-		tag->layout_container = wlr_scene_tree_create(layers[LyrTile]);
-		if (!tag->layout_container)
-			return luaL_error(L, "failed to create layout container");
-	}
-
-	/* Reparent tag's tiled clients into the container */
-	for (int i = 0; i < tag->clients.len; i++) {
-		client_t *c = tag->clients.tab[i];
-		if (!c->scene)
-			continue;
-		/* Only reparent if currently in the tile layer (not already in container) */
-		if ((void *)c->scene->node.parent == (void *)layers[LyrTile]) {
-			wlr_scene_node_reparent(&c->scene->node, tag->layout_container);
-		}
-	}
-
-	return 0;
-}
-
-/** tag:_destroy_layout_container()
- * Reparents clients back to LyrTile and destroys the container. */
-static int
-luaA_tag_destroy_layout_container(lua_State *L)
-{
-	tag_t *tag = luaA_checkudata(L, 1, &tag_class);
-
-	if (!tag->layout_container)
-		return 0;
-
-	/* Reparent all children back to LyrTile */
-	struct wlr_scene_node *child, *tmp;
-	wl_list_for_each_safe(child, tmp, &tag->layout_container->children, link) {
-		wlr_scene_node_reparent(child, layers[LyrTile]);
-	}
-
-	wlr_scene_node_destroy(&tag->layout_container->node);
-	tag->layout_container = NULL;
-
-	return 0;
-}
-
-/** tag:_set_layout_offset(x, y)
- * Moves the layout container (the scroll primitive). */
-static int
-luaA_tag_set_layout_offset(lua_State *L)
-{
-	tag_t *tag = luaA_checkudata(L, 1, &tag_class);
-	int x = (int)luaL_checknumber(L, 2);
-	int y = (int)luaL_checknumber(L, 3);
-
-	if (!tag->layout_container)
-		return luaL_error(L, "no layout container (call _create_layout_container first)");
-
-	wlr_scene_node_set_position(&tag->layout_container->node, x, y);
-	return 0;
-}
-
-/* ========================================================================
  * Tag class setup
  * ======================================================================== */
 
@@ -616,9 +533,6 @@ tag_class_setup(lua_State *L)
 		LUA_OBJECT_META(tag)
 		LUA_CLASS_META
 		{ "clients", luaA_tag_clients },
-		{ "_create_layout_container", luaA_tag_create_layout_container },
-		{ "_destroy_layout_container", luaA_tag_destroy_layout_container },
-		{ "_set_layout_offset", luaA_tag_set_layout_offset },
 		{ NULL, NULL }
 	};
 
