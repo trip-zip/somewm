@@ -202,13 +202,14 @@ animation_init(struct wl_event_loop *loop)
 void
 animation_tick_all(void)
 {
+	double now = clock_now();
+	double dt = now - last_tick_time;
+	last_tick_time = now;
+
 	if (wl_list_empty(&animations))
 		return;
 
 	lua_State *L = globalconf_get_lua_State();
-	double now = clock_now();
-	double dt = now - last_tick_time;
-	last_tick_time = now;
 
 	/* Cap dt to avoid huge jumps (e.g. after suspend) */
 	if (dt > 0.1)
