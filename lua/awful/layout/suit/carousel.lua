@@ -255,6 +255,8 @@ local function apply_geometry(state)
     local gap = state.gap
     if not col_positions or not wa then return end
 
+    -- Debug hook: set carousel._perf = { enabled=true, now=os.clock, frames={} }
+    -- to collect per-frame timing data in perf.frames[].duration_ms.
     local perf = carousel._perf
     local t0
     if perf and perf.enabled then
@@ -789,6 +791,17 @@ end
 function carousel.vertical.make_gesture_binding()
     return _make_gesture_binding(true)
 end
+
+-- Expose internals for unit testing (not part of the public API).
+carousel._test = {
+    compute_column_positions = compute_column_positions,
+    strip_width = strip_width,
+    clamp_offset = clamp_offset,
+    offset_to_center_column = offset_to_center_column,
+    reconcile = reconcile,
+    get_state = get_state,
+    rebuild_index = rebuild_index,
+}
 
 return carousel
 
