@@ -195,7 +195,7 @@ local awful = require("awful")
 -- Pointer settings
 awful.input.tap_to_click = 1
 awful.input.natural_scrolling = 1
-awful.input.pointer_speed = 0.5
+awful.input.accel_speed = 0.5
 awful.input.scroll_button = 274  -- Middle mouse
 awful.input.left_handed = 0
 
