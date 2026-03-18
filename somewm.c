@@ -1548,14 +1548,18 @@ commitnotify(struct wl_listener *listener, void *data)
 	 * Tiled clients have their geometry managed by the Lua layout engine,
 	 * which may intentionally position clients offscreen (e.g. carousel
 	 * layout). resize() calls applybounds() which would clamp offscreen
-	 * clients back to the monitor workarea. For tiled clients, just update
-	 * the surface clip for proper rendering. */
+	 * clients back to the monitor workarea. For tiled clients, call
+	 * apply_geometry_to_wlroots() directly to update clip, borders, scene
+	 * position, and re-send the configure event without clamping. */
 	if (some_client_get_floating(c) || c->fullscreen) {
 		resize(c, c->geometry, (some_client_get_floating(c) && !c->fullscreen));
 	} else {
-		struct wlr_box clip;
-		client_get_clip(c, &clip);
-		wlr_scene_subsurface_tree_set_clip(&c->scene_surface->node, &clip);
+		/* Send toplevel bounds so wlroots schedules a configure that
+		 * carries the pending size. Without this, slow-to-resize clients
+		 * (e.g. Ghostty) may never get a re-configure after a screen
+		 * change because client_set_size() is gated by !c->resize. */
+		client_set_bounds(c, c->geometry.width, c->geometry.height);
+		apply_geometry_to_wlroots(c);
 	}
 
 	/* mark a pending resize as completed */
