@@ -215,6 +215,59 @@ describe("reconcile", function()
         T.reconcile(state, {}, 1.0, nil)
         assert.are.equal(0, #state.columns)
     end)
+end)
+
+describe("peek_width effect on column positions", function()
+    it("reduces column pixel widths with effective_viewport", function()
+        local cols = {
+            { width_fraction = 1.0 },
+        }
+        -- Without peek: column fills 1000px
+        local pos_full = T.compute_column_positions(cols, 1000, 0)
+        assert.are.equal(1000, pos_full[1].pixel_width)
+
+        -- With peek=50: effective_viewport = 1000 - 100 = 900
+        local effective = 1000 - 2 * 50
+        local pos_peek = T.compute_column_positions(cols, effective, 0)
+        assert.are.equal(900, pos_peek[1].pixel_width)
+    end)
+
+    it("half-width columns are proportional to effective_viewport", function()
+        local cols = {
+            { width_fraction = 0.5 },
+            { width_fraction = 0.5 },
+        }
+        local effective = 1000 - 2 * 50 -- 900
+        local pos = T.compute_column_positions(cols, effective, 0)
+        assert.are.equal(450, pos[1].pixel_width)
+        assert.are.equal(450, pos[2].pixel_width)
+        assert.are.equal(450, pos[2].canvas_x)
+    end)
+
+    it("clamp_offset centers strip within effective_viewport", function()
+        -- Single narrow column: strip < effective_viewport
+        local pos = { { canvas_x = 0, pixel_width = 400 } }
+        local effective = 900
+        -- strip=400, viewport=900, center: -(900-400)/2 = -250
+        assert.are.equal(-250, T.clamp_offset(0, pos, effective))
+    end)
+
+    it("clamp_offset bounds to strip with effective_viewport", function()
+        local pos = {
+            { canvas_x = 0, pixel_width = 900 },
+            { canvas_x = 910, pixel_width = 900 },
+        }
+        local effective = 900
+        -- strip = 910 + 900 = 1810, max_offset = 1810 - 900 = 910
+        assert.are.equal(0, T.clamp_offset(-100, pos, effective))
+        assert.are.equal(910, T.clamp_offset(9999, pos, effective))
+        assert.are.equal(500, T.clamp_offset(500, pos, effective))
+    end)
+end)
+
+describe("reconcile index", function()
+    local c1 = { id = 1 }
+    local c2 = { id = 2 }
 
     it("builds correct client_to_column index", function()
         local state = T.get_state({})

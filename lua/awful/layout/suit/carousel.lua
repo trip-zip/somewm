@@ -58,10 +58,16 @@ carousel.width_presets = { 1/3, 1/2, 2/3, 1.0 }
 -- - "never": only scroll when focused column would be completely offscreen
 -- - "always": always center focused column
 -- - "on-overflow" (default): center if focused column would be partially offscreen
+-- - "edge": scroll just enough to bring focused column into view, aligned to nearest edge
 carousel.center_mode = "on-overflow"
 
 --- Scroll animation duration in seconds (0 = instant snap).
 carousel.scroll_duration = 0.2
+
+--- Peek width in pixels for showing adjacent column edges.
+-- @beautiful beautiful.carousel_peek_width
+-- @tparam[opt=0] number peek_width
+carousel.peek_width = 0
 
 -- Per-tag state, weak-keyed so it's collected when tags are removed.
 local tag_state = setmetatable({}, { __mode = "k" })
@@ -78,6 +84,7 @@ local function get_state(t)
             workarea = nil,
             gap = 0,
             vertical = false,
+            peek = 0,
             -- Animation state (C-side handle)
             anim_handle = nil,
         }
@@ -87,6 +94,11 @@ end
 
 local function clamp(val, lo, hi)
     return math.max(lo, math.min(hi, val))
+end
+
+--- Compute effective viewport after subtracting peek zones.
+local function effective_viewport_size(viewport_size, peek)
+    return math.max(1, viewport_size - 2 * peek)
 end
 
 --- Build a set from an array for O(1) lookups.
@@ -264,6 +276,7 @@ local function apply_geometry(state)
     end
 
     local vert = state.vertical
+    local peek = state.peek or 0
     local scroll_o = scroll_origin(wa, vert)
     local stack_o = stack_origin(wa, vert)
     local stack_sz = stack_extent(wa, vert)
@@ -280,7 +293,7 @@ local function apply_geometry(state)
             local scroll_client_size = math.max(1, cp.pixel_width - 2 * bw - 2 * gap)
             local stack_client_size = math.max(1, row_size - 2 * bw)
             local stack_offset = (ri - 1) * (row_size + gap)
-            local scroll_pos = scroll_o + cp.canvas_x - state.scroll_offset + gap
+            local scroll_pos = scroll_o + peek + cp.canvas_x - state.scroll_offset + gap
             local stack_pos = stack_o + gap + stack_offset
 
             c:_set_geometry_silent({
@@ -369,13 +382,17 @@ function carousel._arrange_impl(p, vertical)
     if #state.columns == 0 then return end
 
     local viewport_size = scroll_extent(wa, vertical)
-    local col_positions = compute_column_positions(state.columns, viewport_size, gap)
+    local peek = get_beautiful().carousel_peek_width or carousel.peek_width
+    if peek < 0 then peek = 0 end
+    local effective_viewport = effective_viewport_size(viewport_size, peek)
+    local col_positions = compute_column_positions(state.columns, effective_viewport, gap)
 
     -- Cache for animation and gesture use
     state.col_positions = col_positions
     state.workarea = wa
     state.gap = gap
     state.vertical = vertical
+    state.peek = peek
 
     -- Compute target scroll offset based on centering mode
     local focus_ci = focused_col_idx(state, focus)
@@ -384,7 +401,7 @@ function carousel._arrange_impl(p, vertical)
 
     local fcp = col_positions[focus_ci]
     if carousel.center_mode == "always" then
-        state.target_offset = offset_to_center_column(fcp, viewport_size)
+        state.target_offset = offset_to_center_column(fcp, effective_viewport)
     elseif carousel.center_mode == "never" then
         -- Only scroll if focused column is completely offscreen
         local candidate = state.target_offset
@@ -392,16 +409,26 @@ function carousel._arrange_impl(p, vertical)
         local far_edge = near_edge + fcp.pixel_width
         if far_edge <= 0 then
             candidate = fcp.canvas_x
-        elseif near_edge >= viewport_size then
-            candidate = fcp.canvas_x + fcp.pixel_width - viewport_size
+        elseif near_edge >= effective_viewport then
+            candidate = fcp.canvas_x + fcp.pixel_width - effective_viewport
+        end
+        state.target_offset = candidate
+    elseif carousel.center_mode == "edge" then
+        local candidate = state.target_offset
+        local near_edge = fcp.canvas_x - candidate
+        local far_edge = near_edge + fcp.pixel_width
+        if near_edge < 0 then
+            candidate = fcp.canvas_x
+        elseif far_edge > effective_viewport then
+            candidate = fcp.canvas_x + fcp.pixel_width - effective_viewport
         end
         state.target_offset = candidate
     else -- "on-overflow" (default)
         local candidate = state.target_offset
         local near_edge = fcp.canvas_x - candidate
         local far_edge = near_edge + fcp.pixel_width
-        if near_edge < 0 or far_edge > viewport_size then
-            candidate = offset_to_center_column(fcp, viewport_size)
+        if near_edge < 0 or far_edge > effective_viewport then
+            candidate = offset_to_center_column(fcp, effective_viewport)
         end
         state.target_offset = candidate
     end
@@ -411,9 +438,9 @@ function carousel._arrange_impl(p, vertical)
     local should_clamp = carousel.center_mode ~= "always"
     if should_clamp then
         state.target_offset = clamp_offset(
-            state.target_offset, col_positions, viewport_size)
+            state.target_offset, col_positions, effective_viewport)
         state.scroll_offset = clamp_offset(
-            state.scroll_offset, col_positions, viewport_size)
+            state.scroll_offset, col_positions, effective_viewport)
     end
 
     -- Animate or snap to target
@@ -450,10 +477,12 @@ function carousel.scroll_by(t, n)
         honor_workarea = true,
     }
     local viewport_size = scroll_extent(wa, state.vertical)
-    state.target_offset = state.target_offset + n * viewport_size
+    local peek = state.peek or 0
+    local effective_viewport = effective_viewport_size(viewport_size, peek)
+    state.target_offset = state.target_offset + n * effective_viewport
     if state.col_positions then
         state.target_offset = clamp_offset(
-            state.target_offset, state.col_positions, viewport_size)
+            state.target_offset, state.col_positions, effective_viewport)
     end
     if carousel.scroll_duration > 0 and state.workarea then
         start_animation(state)
@@ -607,6 +636,38 @@ function carousel.expel_window()
     get_layout().arrange(s)
 end
 
+--- Move the focused client into the adjacent column.
+-- The client is removed from its current column and appended to the target
+-- column's stack. If the source column becomes empty, it is removed.
+-- This is the complement of consume_window (push vs pull).
+-- @tparam number dir Direction: -1 for left, 1 for right.
+function carousel.push_window(dir)
+    local state, s = get_carousel_context()
+    if not state then return end
+
+    local focus = capi.client.focus
+    if not focus then return end
+
+    local entry = state.client_to_column[focus]
+    if not entry then return end
+
+    local target_ci = entry.col_idx + dir
+    if target_ci < 1 or target_ci > #state.columns then return end
+
+    local source_col = state.columns[entry.col_idx]
+    local target_col = state.columns[target_ci]
+
+    table.remove(source_col.clients, entry.row_idx)
+    table.insert(target_col.clients, focus)
+
+    if #source_col.clients == 0 then
+        table.remove(state.columns, entry.col_idx)
+    end
+
+    rebuild_index(state)
+    get_layout().arrange(s)
+end
+
 ---------------------------------------------------------------------------
 -- Column Movement
 ---------------------------------------------------------------------------
@@ -631,13 +692,38 @@ function carousel.move_column(dir)
 end
 
 ---------------------------------------------------------------------------
+-- Column Edge Focus
+---------------------------------------------------------------------------
+
+--- Focus the first client in the column at a given index.
+-- @tparam number col_idx Column index (1-based).
+local function focus_column_at(col_idx)
+    local state = get_carousel_context()
+    if not state or col_idx < 1 or col_idx > #state.columns then return end
+    local c = state.columns[col_idx].clients[1]
+    if c then capi.client.focus = c; c:raise() end
+end
+
+--- Focus the first client in the first column.
+function carousel.focus_first_column()
+    focus_column_at(1)
+end
+
+--- Focus the first client in the last column.
+function carousel.focus_last_column()
+    local state = get_carousel_context()
+    if not state then return end
+    focus_column_at(#state.columns)
+end
+
+---------------------------------------------------------------------------
 -- Centering Mode
 ---------------------------------------------------------------------------
 
 --- Set the viewport centering mode.
--- @tparam string mode One of "never", "always", "on-overflow".
+-- @tparam string mode One of "never", "always", "on-overflow", "edge".
 function carousel.set_center_mode(mode)
-    assert(mode == "never" or mode == "always" or mode == "on-overflow",
+    assert(mode == "never" or mode == "always" or mode == "on-overflow" or mode == "edge",
         "Invalid center mode: " .. tostring(mode))
     carousel.center_mode = mode
 
@@ -689,9 +775,11 @@ local function _make_gesture_binding(vertical)
 
             local delta = vertical and gs.dy or gs.dx
             local viewport_size = scroll_extent(ts.workarea, vertical)
+            local peek = ts.peek or 0
+            local effective_viewport = effective_viewport_size(viewport_size, peek)
             local new_offset = swipe_start_offset - delta
             ts.scroll_offset = clamp_offset(
-                new_offset, ts.col_positions, viewport_size)
+                new_offset, ts.col_positions, effective_viewport)
             ts.target_offset = ts.scroll_offset
             apply_geometry(ts)
         end,
@@ -705,9 +793,11 @@ local function _make_gesture_binding(vertical)
             end
 
             local viewport_size = scroll_extent(ts.workarea, vertical)
+            local peek = ts.peek or 0
+            local effective_viewport = effective_viewport_size(viewport_size, peek)
 
             -- Find column nearest viewport center
-            local vp_center = ts.scroll_offset + viewport_size / 2
+            local vp_center = ts.scroll_offset + effective_viewport / 2
             local best_ci = 1
             local best_dist = math.huge
             for i, cp in ipairs(ts.col_positions) do
@@ -721,9 +811,9 @@ local function _make_gesture_binding(vertical)
 
             -- Animate to center that column
             local fcp = ts.col_positions[best_ci]
-            ts.target_offset = offset_to_center_column(fcp, viewport_size)
+            ts.target_offset = offset_to_center_column(fcp, effective_viewport)
             ts.target_offset = clamp_offset(
-                ts.target_offset, ts.col_positions, viewport_size)
+                ts.target_offset, ts.col_positions, effective_viewport)
 
             if carousel.scroll_duration > 0 then
                 start_animation(ts)

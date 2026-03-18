@@ -162,6 +162,147 @@ local steps = {
         assert(not ok, "set_center_mode should reject invalid modes")
         io.stderr:write("[TEST] PASS: invalid mode rejected\n")
 
+        -- Verify "edge" is accepted
+        local ok2 = pcall(function()
+            carousel.set_center_mode("edge")
+        end)
+        assert(ok2, "set_center_mode should accept 'edge'")
+        assert(carousel.center_mode == "edge", "center_mode should be 'edge'")
+        io.stderr:write("[TEST] PASS: edge mode accepted\n")
+
+        -- Reset to default
+        carousel.set_center_mode("on-overflow")
+        return true
+    end,
+
+    ---------------------------------------------------------------------------
+    -- "edge" centering mode: scroll just enough to bring column to nearest edge
+    ---------------------------------------------------------------------------
+
+    -- Resize columns to 0.5 for edge mode tests (3 columns at 0.5 = overflow)
+    function(count)
+        if count == 1 then
+            client.focus = c1
+            c1:raise()
+            carousel.set_column_width(0.5)
+            return nil
+        end
+        client.focus = c2
+        c2:raise()
+        carousel.set_column_width(0.5)
+        return true
+    end,
+
+    function(count)
+        if count == 1 then return nil end
+        client.focus = c3
+        c3:raise()
+        carousel.set_column_width(0.5)
+        return true
+    end,
+
+    -- Switch to edge mode, focus c1 first to establish viewport position
+    function(count)
+        if count == 1 then
+            carousel.set_center_mode("edge")
+            client.focus = c1
+            c1:raise()
+            awful.layout.arrange(screen.primary)
+            return nil
+        end
+        return true
+    end,
+
+    -- Focus c3 (offscreen right): should align right edge to viewport right
+    function(count)
+        if count == 1 then
+            client.focus = c3
+            c3:raise()
+            awful.layout.arrange(screen.primary)
+            return nil
+        end
+
+        local wa = screen.primary.workarea
+        local g3 = c3:geometry()
+        local bw = c3.border_width or 0
+        local right_edge = g3.x + g3.width + 2 * bw
+
+        io.stderr:write(string.format(
+            "[TEST] edge mode c3: x=%d, w=%d, right=%d, wa.right=%d\n",
+            g3.x, g3.width, right_edge, wa.x + wa.width))
+
+        -- c3's right edge should be near the right edge of the workarea
+        assert(right_edge <= wa.x + wa.width + 5,
+            string.format("c3 right edge %d should be <= workarea right %d",
+                right_edge, wa.x + wa.width))
+        assert(g3.x >= wa.x - 1,
+            string.format("c3 should be visible (x=%d >= wa.x=%d)", g3.x, wa.x))
+
+        io.stderr:write("[TEST] PASS: edge mode aligns rightward column to right edge\n")
+        return true
+    end,
+
+    -- Focus c1 (offscreen left): should align left edge to viewport left
+    function(count)
+        if count == 1 then
+            client.focus = c1
+            c1:raise()
+            awful.layout.arrange(screen.primary)
+            return nil
+        end
+
+        local wa = screen.primary.workarea
+        local g1 = c1:geometry()
+
+        io.stderr:write(string.format(
+            "[TEST] edge mode c1: x=%d, wa.x=%d\n", g1.x, wa.x))
+
+        -- c1's left edge should be near the left edge of the workarea
+        local gap = tag.gap or 0
+        assert(g1.x <= wa.x + gap + 5,
+            string.format("c1 x=%d should be near wa.x=%d (edge-aligned left)",
+                g1.x, wa.x))
+        assert(g1.x >= wa.x - 1,
+            string.format("c1 x=%d should be >= wa.x=%d", g1.x, wa.x))
+
+        io.stderr:write("[TEST] PASS: edge mode aligns leftward column to left edge\n")
+        return true
+    end,
+
+    -- Focus c2 which should be visible (viewport at left): should not scroll
+    function(count)
+        if count == 1 then
+            -- c1 is left-aligned, c2 is right next to it. At 0.5 width each,
+            -- c2's right edge is at 1.0 * viewport. Both c1 and c2 fit.
+            -- Record c1 position before focusing c2.
+            rawset(_G, "_edge_c1_x_before", c1:geometry().x)
+            client.focus = c2
+            c2:raise()
+            awful.layout.arrange(screen.primary)
+            return nil
+        end
+
+        local wa = screen.primary.workarea
+        local g2 = c2:geometry()
+
+        -- c2 should be visible
+        assert(g2.x >= wa.x - 1,
+            string.format("c2 x=%d should be visible", g2.x))
+        assert(g2.x + g2.width <= wa.x + wa.width + 5,
+            "c2 should be within viewport")
+
+        -- Viewport should not have moved (c1 position unchanged)
+        local c1_x_before = rawget(_G, "_edge_c1_x_before")
+        local c1_x_after = c1:geometry().x
+        io.stderr:write(string.format(
+            "[TEST] edge mode no-scroll: c1 before=%d, after=%d\n",
+            c1_x_before, c1_x_after))
+        assert(math.abs(c1_x_before - c1_x_after) <= 2,
+            "Viewport should not move when focusing already-visible column")
+
+        rawset(_G, "_edge_c1_x_before", nil)
+        io.stderr:write("[TEST] PASS: edge mode does not scroll for visible columns\n")
+
         -- Reset to default
         carousel.set_center_mode("on-overflow")
         return true
