@@ -106,6 +106,7 @@
 #include "objects/client.h"  /* AwesomeWM client_t (now aliased as Client) */
 #include "objects/layer_surface.h"  /* Layer shell surface Lua class */
 #include "objects/root.h"    /* Root button bindings */
+#include "animation.h"       /* Frame-synced animation callbacks */
 #include "ewmh.h"            /* EWMH support for XWayland */
 #include "property.h"         /* Property system for Wayland and XWayland */
 #include "shadow.h"          /* Compositor-level shadow support */
@@ -1229,6 +1230,9 @@ cleanup(void)
 	/* Cleanup wallpaper cache before destroying scene */
 	wallpaper_cache_cleanup();
 
+	/* Free animations before Lua state (they hold registry refs) */
+	animation_cleanup();
+
 	/* Close Lua after clients are destroyed (matches AwesomeWM pattern) */
 	luaA_cleanup();
 
@@ -1543,7 +1547,23 @@ commitnotify(struct wl_listener *listener, void *data)
 	if (c->surface.xdg->initial_commit)
 		return;
 
-	resize(c, c->geometry, (some_client_get_floating(c) && !c->fullscreen));
+	/* Only call resize() for floating or fullscreen clients.
+	 * Tiled clients have their geometry managed by the Lua layout engine,
+	 * which may intentionally position clients offscreen (e.g. carousel
+	 * layout). resize() calls applybounds() which would clamp offscreen
+	 * clients back to the monitor workarea. For tiled clients, call
+	 * apply_geometry_to_wlroots() directly to update clip, borders, scene
+	 * position, and re-send the configure event without clamping. */
+	if (some_client_get_floating(c) || c->fullscreen) {
+		resize(c, c->geometry, (some_client_get_floating(c) && !c->fullscreen));
+	} else {
+		/* Send toplevel bounds so wlroots schedules a configure that
+		 * carries the pending size. Without this, slow-to-resize clients
+		 * (e.g. Ghostty) may never get a re-configure after a screen
+		 * change because client_set_size() is gated by !c->resize. */
+		client_set_bounds(c, c->geometry.width, c->geometry.height);
+		apply_geometry_to_wlroots(c);
+	}
 
 	/* mark a pending resize as completed */
 	if (c->resize) {
@@ -4385,7 +4405,11 @@ apply_geometry_to_wlroots(Client *c)
 		}
 	}
 
-	/* Update titlebar positions - they depend on current geometry */
+	/* Update titlebar positions - they depend on current geometry.
+	 * Must run BEFORE the monitor clipping block below, which may disable
+	 * titlebar nodes for offscreen clients. When a client scrolls back
+	 * on-screen, this call re-enables them before the clipping block's
+	 * fully_inside path leaves them untouched. */
 	client_update_titlebar_positions(c);
 
 	/* Request size change from client (subtract borders AND titlebars from geometry)
@@ -4409,6 +4433,69 @@ apply_geometry_to_wlroots(Client *c)
 		}
 	}
 	client_get_clip(c, &clip);
+
+	/* Clip client content to its assigned monitor bounds so offscreen
+	 * clients (e.g. carousel scrolling layout) don't render on adjacent
+	 * monitors. For fully-inside clients this is just a bounds check.
+	 *
+	 * We toggle individual child scene nodes (surface, borders, shadow,
+	 * titlebars) rather than c->scene->node which the banning system
+	 * controls. */
+	if (c->mon) {
+		struct wlr_box mon = c->mon->m;
+		bool fully_inside =
+			c->geometry.x >= mon.x &&
+			c->geometry.y >= mon.y &&
+			c->geometry.x + c->geometry.width <= mon.x + mon.width &&
+			c->geometry.y + c->geometry.height <= mon.y + mon.height;
+
+		if (fully_inside) {
+			/* Common case: everything visible, no clipping needed.
+			 * Re-enable surface/borders/shadow that may have been hidden.
+			 * Titlebars are managed by client_update_titlebar_positions(). */
+			wlr_scene_node_set_enabled(&c->scene_surface->node, true);
+			for (int i = 0; i < 4; i++)
+				wlr_scene_node_set_enabled(&c->border[i]->node, true);
+			if (c->shadow.tree)
+				wlr_scene_node_set_enabled(&c->shadow.tree->node, true);
+		} else {
+			/* Client extends past monitor: clip surface, hide everything
+			 * else (wlr_scene_rect/buffer have no clip API). */
+			int cx = c->geometry.x + c->bw + titlebar_left;
+			int cy = c->geometry.y + c->bw + titlebar_top;
+			int vl = cx > mon.x ? cx : mon.x;
+			int vt = cy > mon.y ? cy : mon.y;
+			int vr = (cx + clip.width) < (mon.x + mon.width)
+				? (cx + clip.width) : (mon.x + mon.width);
+			int vb = (cy + clip.height) < (mon.y + mon.height)
+				? (cy + clip.height) : (mon.y + mon.height);
+
+			if (vr > vl && vb > vt) {
+				/* Partially visible: narrow the clip */
+				clip.x += vl - cx;
+				clip.y += vt - cy;
+				clip.width = vr - vl;
+				clip.height = vb - vt;
+				wlr_scene_node_set_enabled(&c->scene_surface->node, true);
+			} else {
+				/* Fully offscreen */
+				wlr_scene_node_set_enabled(&c->scene_surface->node, false);
+			}
+
+			/* Hide borders, shadow, and titlebars */
+			for (int i = 0; i < 4; i++)
+				wlr_scene_node_set_enabled(&c->border[i]->node, false);
+			if (c->shadow.tree)
+				wlr_scene_node_set_enabled(&c->shadow.tree->node, false);
+			for (client_titlebar_t bar = CLIENT_TITLEBAR_TOP;
+					bar < CLIENT_TITLEBAR_COUNT; bar++) {
+				if (c->titlebar[bar].scene_buffer)
+					wlr_scene_node_set_enabled(
+						&c->titlebar[bar].scene_buffer->node, false);
+			}
+		}
+	}
+
 	wlr_scene_subsurface_tree_set_clip(&c->scene_surface->node, &clip);
 }
 
@@ -4620,6 +4707,11 @@ some_refresh(void)
 
 	/* Step 1: Emit refresh signal - triggers Lua layout calculations */
 	luaA_emit_signal_global("refresh");
+
+	/* Step 1.5: Tick frame-synced animations - tick callbacks that modify
+	 * client geometry will have their changes applied by client_refresh()
+	 * in the same cycle. */
+	animation_tick_all();
 
 	/* Step 2: Refresh drawins (wibox/panels) FIRST - matches AwesomeWM order
 	 * AwesomeWM calls drawin_refresh() BEFORE client_refresh() in awesome_refresh().
@@ -5287,6 +5379,10 @@ setup(void)
 #endif
 
 	luaA_init();
+
+	/* Initialize animation subsystem (must be AFTER luaA_init for Lua state) */
+	animation_init(event_loop);
+	animation_setup(globalconf_get_lua_State());
 
 	/* Initialize wallpaper cache (must be AFTER luaA_init which zeroes globalconf) */
 	wallpaper_cache_init();

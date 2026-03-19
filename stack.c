@@ -238,8 +238,6 @@ stack_refresh(void)
 
 		/* Move client to correct scene graph layer if needed */
 		scene_layer = get_scene_layer(layer);
-		/* Check if client is in wrong layer - skip the check if already correct
-		 * to avoid unnecessary reparenting */
 		if ((void *)(*node)->scene->node.parent != (void *)layers[scene_layer]) {
 			wlr_scene_node_reparent(&(*node)->scene->node, layers[scene_layer]);
 		}

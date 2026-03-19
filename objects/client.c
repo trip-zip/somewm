@@ -1566,7 +1566,7 @@ typedef enum {
 
 static area_t titlebar_get_area(client_t *c, client_titlebar_t bar);
 static drawable_t *titlebar_get_drawable(lua_State *L, client_t *c, int cl_idx, client_titlebar_t bar);
-static void client_resize_do(client_t *c, area_t geometry);
+static void client_resize_do(client_t *c, area_t geometry, bool silent);
 static void client_set_maximized_common(lua_State *L, int cidx, bool s, const char* type, const int val);
 
 /** Collect a client.
@@ -2253,7 +2253,7 @@ border_width_callback(client_t *c, uint16_t old_width, uint16_t new_width)
                                       diff, diff, diff, diff,
                                       &geometry.x, &geometry.y);
         /* inform client about changes */
-        client_resize_do(c, geometry);
+        client_resize_do(c, geometry, false);
     }
 }
 
@@ -2654,13 +2654,13 @@ client_apply_size_hints(client_t *c, area_t geometry)
 }
 
 static void
-client_resize_do(client_t *c, area_t geometry)
+client_resize_do(client_t *c, area_t geometry, bool silent)
 {
     lua_State *L = globalconf_get_lua_State();
     area_t old_geometry;
     screen_t *new_screen = c->screen;
 
-    if(!new_screen || !screen_area_in_screen(new_screen, geometry))
+    if(!silent && (!new_screen || !screen_area_in_screen(new_screen, geometry)))
         new_screen = screen_getbycoord(geometry.x, geometry.y);
 
     /* Also store geometry including border */
@@ -2688,28 +2688,31 @@ client_resize_do(client_t *c, area_t geometry)
     }
 #endif
 
-    luaA_object_push(L, c);
-    if (!AREA_EQUAL(old_geometry, geometry))
-        luaA_object_emit_signal(L, -1, "property::geometry", 0);
-    if (old_geometry.x != geometry.x || old_geometry.y != geometry.y)
+    if(!silent)
     {
-        luaA_object_emit_signal(L, -1, "property::position", 0);
-        if (old_geometry.x != geometry.x)
-            luaA_object_emit_signal(L, -1, "property::x", 0);
-        if (old_geometry.y != geometry.y)
-            luaA_object_emit_signal(L, -1, "property::y", 0);
-    }
-    if (old_geometry.width != geometry.width || old_geometry.height != geometry.height)
-    {
-        luaA_object_emit_signal(L, -1, "property::size", 0);
-        if (old_geometry.width != geometry.width)
-            luaA_object_emit_signal(L, -1, "property::width", 0);
-        if (old_geometry.height != geometry.height)
-            luaA_object_emit_signal(L, -1, "property::height", 0);
-    }
-    lua_pop(L, 1);
+        luaA_object_push(L, c);
+        if (!AREA_EQUAL(old_geometry, geometry))
+            luaA_object_emit_signal(L, -1, "property::geometry", 0);
+        if (old_geometry.x != geometry.x || old_geometry.y != geometry.y)
+        {
+            luaA_object_emit_signal(L, -1, "property::position", 0);
+            if (old_geometry.x != geometry.x)
+                luaA_object_emit_signal(L, -1, "property::x", 0);
+            if (old_geometry.y != geometry.y)
+                luaA_object_emit_signal(L, -1, "property::y", 0);
+        }
+        if (old_geometry.width != geometry.width || old_geometry.height != geometry.height)
+        {
+            luaA_object_emit_signal(L, -1, "property::size", 0);
+            if (old_geometry.width != geometry.width)
+                luaA_object_emit_signal(L, -1, "property::width", 0);
+            if (old_geometry.height != geometry.height)
+                luaA_object_emit_signal(L, -1, "property::height", 0);
+        }
+        lua_pop(L, 1);
 
-    screen_client_moveto(c, new_screen, false);
+        screen_client_moveto(c, new_screen, false);
+    }
 
     /* Update all titlebars */
     for (client_titlebar_t bar = CLIENT_TITLEBAR_TOP; bar < CLIENT_TITLEBAR_COUNT; bar++) {
@@ -2746,10 +2749,11 @@ client_resize_do(client_t *c, area_t geometry)
  * \param c Client to resize.
  * \param geometry New window geometry.
  * \param honor_hints Use size hints.
+ * \param silent Skip signal emissions and screen reassignment.
  * \return true if an actual resize occurred.
  */
 bool
-client_resize(client_t *c, area_t geometry, bool honor_hints)
+client_resize(client_t *c, area_t geometry, bool honor_hints, bool silent)
 {
     if (honor_hints) {
         /* We could get integer underflows in client_remove_titlebar_geometry()
@@ -2793,7 +2797,7 @@ client_resize(client_t *c, area_t geometry, bool honor_hints)
 
     if(!AREA_EQUAL(c->geometry, geometry))
     {
-        client_resize_do(c, geometry);
+        client_resize_do(c, geometry, silent);
 
         return true;
     }
@@ -2940,7 +2944,7 @@ client_set_fullscreen(lua_State *L, int cidx, bool s)
         if(c->toplevel_handle)
             wlr_foreign_toplevel_handle_v1_set_fullscreen(c->toplevel_handle, s);
         /* Force a client resize, so that titlebars get shown/hidden */
-        client_resize_do(c, c->geometry);
+        client_resize_do(c, c->geometry, false);
         stack_windows();
     }
 }
@@ -3965,7 +3969,7 @@ titlebar_resize(lua_State *L, int cidx, client_t *c, client_titlebar_t bar, int 
     }
 
     c->titlebar[bar].size = size;
-    client_resize_do(c, geometry);
+    client_resize_do(c, geometry, false);
 
     /* Update scene buffer visibility and position (Wayland-specific) */
     if (c->titlebar[bar].scene_buffer) {
@@ -4041,6 +4045,44 @@ HANDLE_TITLEBAR(left, CLIENT_TITLEBAR_LEFT)
  * @see width
  * @see height
  */
+/** Parse a geometry table from Lua into an area_t, preserving current values
+ * for nil fields and respecting client_isfixed().
+ */
+static area_t
+luaA_client_geometry_from_table(lua_State *L, int table_idx, client_t *c)
+{
+    area_t geometry;
+    double width_from_table, height_from_table;
+
+    lua_getfield(L, table_idx, "width");
+    width_from_table = lua_tonumber(L, -1);
+    lua_pop(L, 1);
+    lua_getfield(L, table_idx, "height");
+    height_from_table = lua_tonumber(L, -1);
+    lua_pop(L, 1);
+
+    lua_getfield(L, table_idx, "x");
+    geometry.x = lua_isnil(L, -1) ? c->geometry.x : (int)round(lua_tonumber(L, -1));
+    lua_pop(L, 1);
+
+    lua_getfield(L, table_idx, "y");
+    geometry.y = lua_isnil(L, -1) ? c->geometry.y : (int)round(lua_tonumber(L, -1));
+    lua_pop(L, 1);
+
+    if(client_isfixed(c))
+    {
+        geometry.width = c->geometry.width;
+        geometry.height = c->geometry.height;
+    }
+    else
+    {
+        geometry.width = (int)ceil(width_from_table > 0 ? width_from_table : c->geometry.width);
+        geometry.height = (int)ceil(height_from_table > 0 ? height_from_table : c->geometry.height);
+    }
+
+    return geometry;
+}
+
 static int
 luaA_client_geometry(lua_State *L)
 {
@@ -4048,40 +4090,38 @@ luaA_client_geometry(lua_State *L)
 
     if(lua_gettop(L) == 2 && !lua_isnil(L, 2))
     {
-        area_t geometry;
-        double width_from_table, height_from_table;
-
         luaA_checktable(L, 2);
+        area_t geometry = luaA_client_geometry_from_table(L, 2, c);
+        client_resize(c, geometry, c->size_hints_honor, false);
+    }
 
-        /* DEBUG: Check what's in the table */
-        lua_getfield(L, 2, "width");
-        width_from_table = lua_tonumber(L, -1);
-        lua_pop(L, 1);
-        lua_getfield(L, 2, "height");
-        height_from_table = lua_tonumber(L, -1);
-        lua_pop(L, 1);
+    return luaA_pusharea(L, c->geometry);
+}
 
-        /* WAYLAND WORKAROUND: luaA_getopt_number_range is broken, use direct lua_getfield */
-        lua_getfield(L, 2, "x");
-        geometry.x = lua_isnil(L, -1) ? c->geometry.x : (int)round(lua_tonumber(L, -1));
-        lua_pop(L, 1);
+/** Set client geometry without emitting signals or reassigning screens.
+ *
+ * This is intended for layout engines that position clients offscreen
+ * (e.g. scrolling/carousel layouts) where signal cascades and screen
+ * reassignment would cause infinite loops.
+ *
+ * @tparam table geo A table with new coordinates.
+ * @tparam integer geo.x The horizontal position.
+ * @tparam integer geo.y The vertical position.
+ * @tparam integer geo.width The width.
+ * @tparam integer geo.height The height.
+ * @treturn table A table with the resulting client geometry.
+ * @method _set_geometry_silent
+ */
+static int
+luaA_client_set_geometry_silent(lua_State *L)
+{
+    client_t *c = luaA_checkudata(L, 1, &client_class);
 
-        lua_getfield(L, 2, "y");
-        geometry.y = lua_isnil(L, -1) ? c->geometry.y : (int)round(lua_tonumber(L, -1));
-        lua_pop(L, 1);
-
-        if(client_isfixed(c))
-        {
-            geometry.width = c->geometry.width;
-            geometry.height = c->geometry.height;
-        }
-        else
-        {
-            geometry.width = (int)ceil(width_from_table > 0 ? width_from_table : c->geometry.width);
-            geometry.height = (int)ceil(height_from_table > 0 ? height_from_table : c->geometry.height);
-        }
-
-        client_resize(c, geometry, c->size_hints_honor);
+    if(lua_gettop(L) == 2 && !lua_isnil(L, 2))
+    {
+        luaA_checktable(L, 2);
+        area_t geometry = luaA_client_geometry_from_table(L, 2, c);
+        client_resize(c, geometry, c->size_hints_honor, true);
     }
 
     return luaA_pusharea(L, c->geometry);
@@ -5258,6 +5298,7 @@ client_class_setup(lua_State *L)
         { "isvisible", luaA_client_isvisible },
         { "has_keyboard_focus", luaA_client_has_keyboard_focus },
         { "geometry", luaA_client_geometry },
+        { "_set_geometry_silent", luaA_client_set_geometry_silent },
         { "apply_size_hints", luaA_client_apply_size_hints },
         { "tags", luaA_client_tags },
         { "kill", luaA_client_kill },

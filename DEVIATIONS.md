@@ -178,6 +178,7 @@ These modifications to AwesomeWM's Lua libraries were necessary for Wayland comp
 | `ruled.layer_surface` | Rules for layer-shell surfaces (panels, launchers) |
 | `gears.xresources` | File-based Xresources parser |
 | `gears.bitwise` | Pure-Lua bitwise operations |
+| `awful.layout.suit.carousel` | Scrollable tiling layout (horizontal and vertical) |
 
 ---
 
@@ -307,6 +308,24 @@ Modern D-Bus tray protocol instead of X11 embed. Implementation:
 - `objects/systray.c` - C object and D-Bus watcher
 - `lua/awful/statusnotifierwatcher.lua` - Lua bindings
 - `wibox.widget.systray` - Widget (rewritten from AwesomeWM's X11 version)
+
+### Carousel Layout
+
+A niri-inspired scrollable tiling layout with no AwesomeWM equivalent. Clients are arranged in columns on an infinite horizontal (or vertical) strip, with the viewport auto-scrolling to keep the focused column visible.
+
+**Layout registration:** `lua/awful/layout/suit/init.lua` is modified to include `carousel = require("awful.layout.suit.carousel")`. This is the only change to a Sacred Lua file in this feature.
+
+**New Lua APIs (underscore-prefixed, internal use):**
+
+| API | Object | Purpose |
+|-----|--------|---------|
+| `client:_set_geometry_silent(geo)` | client | Set geometry without emitting signals or reassigning screens. Used by layouts that position clients offscreen (e.g. scrolling). |
+| `awesome.start_animation(duration, easing, tick_fn, done_fn)` | awesome | Frame-synced animation with easing. Returns a handle with `:cancel()` and `:is_active()`. |
+
+**C-side changes:**
+- `client_resize()` gains a `silent` parameter to skip signal emission and screen reassignment
+- `commitnotify` in `somewm.c` skips `resize()` for tiled clients so offscreen positioning is not clamped
+- `animation.c` provides the C-side animation tick loop, integrated into `some_refresh()`
 
 ### Layer Surface Rules
 

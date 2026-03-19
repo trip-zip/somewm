@@ -2274,7 +2274,7 @@ screen_client_moveto(client_t *c, screen_t *new_screen, bool doresize)
 	}
 
 	/* move / resize the client */
-	client_resize(c, new_geometry, false);
+	client_resize(c, new_geometry, false, false);
 
 	/* Force immediate scene node position update (bypass deferred refresh)
 	 * This ensures the window appears on the new screen immediately */

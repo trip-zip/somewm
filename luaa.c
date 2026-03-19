@@ -26,6 +26,7 @@
 #include "objects/mousegrabber.h"
 #include "objects/gesture.h"
 /* objects/awesome.h merged into this file */
+#include "animation.h"
 #include "objects/wibox.h"
 #include "objects/ipc.h"
 #include "objects/root.h"
@@ -1653,6 +1654,8 @@ const luaL_Reg awesome_methods[] = {
 	{ "set_idle_timeout", luaA_awesome_set_idle_timeout },
 	{ "clear_idle_timeout", luaA_awesome_clear_idle_timeout },
 	{ "clear_all_idle_timeouts", luaA_awesome_clear_all_idle_timeouts },
+	/* Animation API */
+	{ "start_animation", luaA_start_animation },
 	/* DPMS (display power management) API methods */
 	{ "dpms_off", luaA_awesome_dpms_off },
 	{ "dpms_on", luaA_awesome_dpms_on },
