@@ -4405,7 +4405,11 @@ apply_geometry_to_wlroots(Client *c)
 		}
 	}
 
-	/* Update titlebar positions - they depend on current geometry */
+	/* Update titlebar positions - they depend on current geometry.
+	 * Must run BEFORE the monitor clipping block below, which may disable
+	 * titlebar nodes for offscreen clients. When a client scrolls back
+	 * on-screen, this call re-enables them before the clipping block's
+	 * fully_inside path leaves them untouched. */
 	client_update_titlebar_positions(c);
 
 	/* Request size change from client (subtract borders AND titlebars from geometry)
