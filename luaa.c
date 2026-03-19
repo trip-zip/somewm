@@ -3866,14 +3866,16 @@ luaA_loadrc(void)
 		return;
 	}
 
-	/* Install wallpaper caching hooks (per-screen aware).
+	/* Install require() hooks for Wayland compatibility.
 	 * 1. Track filepath in gears.surface.load_uncached_silently (for cache miss path)
 	 * 2. Track screen in gears.wallpaper.maximized (for per-screen caching)
-	 * 3. Short-circuit gears.wallpaper.maximized on cache hit (skip all Lua work) */
+	 * 3. Short-circuit gears.wallpaper.maximized on cache hit (skip all Lua work)
+	 * 4. No-op awful.client.shape updates (X11 Shape Extension unavailable on Wayland) */
 	if (luaL_dostring(globalconf_L,
 		"local original_require = require\n"
 		"local surface_patched = false\n"
 		"local wallpaper_patched = false\n"
+		"local shape_patched = false\n"
 		"require = function(name)\n"
 		"    local mod = original_require(name)\n"
 		"    -- Patch gears.surface to track filepath\n"
@@ -3914,6 +3916,15 @@ luaA_loadrc(void)
 		"            -- Cache miss: fall through to original implementation\n"
 		"            return orig_maximized(surf, s, ignore_aspect, offset)\n"
 		"        end\n"
+		"    end\n"
+		"    -- No-op client shape updates (X11 Shape Extension not available on Wayland)\n"
+		"    -- See: ideas/Shapes.md, #157, #342\n"
+		"    if name == 'awful.client.shape' and not shape_patched then\n"
+		"        shape_patched = true\n"
+		"        mod.update.all = function() end\n"
+		"        mod.update.bounding = function() end\n"
+		"        mod.update.clip = function() end\n"
+		"        mod.update.input = function() end\n"
 		"    end\n"
 		"    return mod\n"
 		"end\n"
