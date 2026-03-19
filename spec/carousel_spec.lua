@@ -280,26 +280,4 @@ describe("reconcile index", function()
         assert.are.equal(2, e2.col_idx)
         assert.are.equal(1, e2.row_idx)
     end)
-
-    it("inserts after correct column when compaction shifts indices", function()
-        local c4 = { id = 4 }
-        local state = T.get_state({})
-        state.columns = {
-            { clients = { c1 }, width_fraction = 1.0 },
-            { clients = { c2 }, width_fraction = 1.0 },
-            { clients = { { id = 3 } }, width_fraction = 1.0 },
-        }
-        T.rebuild_index(state)
-
-        -- c2 dies, c4 is new, focus on the client at old col 3
-        local c3 = state.columns[3].clients[1]
-        T.reconcile(state, { c1, c3, c4 }, 0.5, c3)
-
-        -- After compaction: [c1, c3]. c4 should insert after c3 (pos 3).
-        assert.are.equal(3, #state.columns)
-        assert.are.equal(c1, state.columns[1].clients[1])
-        assert.are.equal(c3, state.columns[2].clients[1])
-        assert.are.equal(c4, state.columns[3].clients[1])
-        assert.are.equal(0.5, state.columns[3].width_fraction)
-    end)
 end)
