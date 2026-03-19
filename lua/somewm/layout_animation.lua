@@ -111,20 +111,29 @@ capi.screen.connect_signal("arrange", function(s)
     for _, c in ipairs(tiled) do
         local state = get_state(c)
         local new_geo = c:geometry()
+        local prev_target = state.settled_geo
+        state.settled_geo = new_geo
 
         -- When disabled or mouse is dragging: snap, no animation
         if not enabled or grabbing then
             stop_animation(state)
-            state.settled_geo = new_geo
             state.visual_geo = nil
             goto continue
         end
 
-        -- Current visual position: mid-animation or last settled
-        local old_geo = state.visual_geo or state.settled_geo
+        -- Target unchanged and animation already running: re-snap to
+        -- current visual position (counteracts the non-silent
+        -- c:geometry(target) that triggered this arrange) and skip.
+        if state.anim_handle and prev_target
+                and not geos_differ(prev_target, new_geo) then
+            if state.visual_geo then
+                c:_set_geometry_silent(state.visual_geo)
+            end
+            goto continue
+        end
 
-        -- Always track target
-        state.settled_geo = new_geo
+        -- Current visual position: mid-animation or last settled
+        local old_geo = state.visual_geo or prev_target
 
         -- First arrange for this client: no old position, skip animation
         if not old_geo then

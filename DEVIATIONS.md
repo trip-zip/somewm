@@ -200,6 +200,8 @@ These modifications to AwesomeWM's Lua libraries were necessary for Wayland comp
 | `gears.xresources` | File-based Xresources parser |
 | `gears.bitwise` | Pure-Lua bitwise operations |
 | `awful.layout.suit.carousel` | Scrollable tiling layout (horizontal and vertical) |
+| `somewm` | Lazy-loaded namespace for somewm-only Lua modules |
+| `somewm.layout_animation` | Animated tiling transitions (mwfact, layout switch, spawn/kill) |
 
 ---
 
@@ -347,6 +349,23 @@ A niri-inspired scrollable tiling layout with no AwesomeWM equivalent. Clients a
 - `client_resize()` gains a `silent` parameter to skip signal emission and screen reassignment
 - `commitnotify` in `somewm.c` skips `resize()` for tiled clients so offscreen positioning is not clamped
 - `animation.c` provides the C-side animation tick loop, integrated into `some_refresh()`
+
+### `somewm.*` - SomeWM-Only Lua Namespace
+
+Lazy-loaded namespace for somewm-specific Lua modules that have no AwesomeWM equivalent. Submodules live under `lua/somewm/` and are loaded on first access via `require("somewm")`.
+
+### `somewm.layout_animation` - Animated Layout Transitions
+
+Hooks into `screen::arrange` and smoothly animates tiled clients from their previous geometry to the new one. Covers all arrange triggers: mwfact changes, client spawn/kill, layout switches, column count changes.
+
+```lua
+local layout_anim = require("somewm.layout_animation")
+layout_anim.duration = 0.15          -- seconds
+layout_anim.easing   = "ease-out-cubic"
+layout_anim.enabled  = true           -- default
+```
+
+Animation is skipped when disabled, during mousegrabber (direct manipulation), when the geometry delta is negligible (< 2px), or on a client's first arrange.
 
 ### Layer Surface Rules
 
