@@ -1929,7 +1929,6 @@ luaA_screen_emit_signal(lua_State *L)
 static int
 luaA_screen_disconnect_signal(lua_State *L)
 {
-	luaA_checkscreen(L, 1);
 	return luaA_object_disconnect_signal_simple(L);
 }
 
