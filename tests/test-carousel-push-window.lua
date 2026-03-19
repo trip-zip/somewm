@@ -1,11 +1,12 @@
 ---------------------------------------------------------------------------
---- Test: carousel push_window (consume-or-expel)
+--- Test: carousel push_window
 --
 -- Verifies that:
--- 1. Solo window: push consumes into adjacent column (merge)
--- 2. Solo window: boundary pushes are no-ops
--- 3. Multi-window column: push expels into new column in given direction
--- 4. Expel reverses a consume
+-- 1. push_window() moves focused client into adjacent column
+-- 2. Source column is removed if it becomes empty
+-- 3. Pushed client stacks in target column
+-- 4. Boundary pushes are no-ops
+-- 5. Expel reverses a push
 ---------------------------------------------------------------------------
 
 local runner = require("_runner")
@@ -76,9 +77,7 @@ local steps = {
         return true
     end,
 
-    ---------------------------------------------------------------------------
-    -- Solo consume: focus c2 (middle), push right -> c2 joins c3's column
-    ---------------------------------------------------------------------------
+    -- Focus c2 (middle), push right -> c2 joins c3's column
     function(count)
         if count == 1 then
             client.focus = c2
@@ -108,156 +107,45 @@ local steps = {
             string.format("c2 and c3 should share x: %d vs %d", g2.x, g3.x))
 
         -- Should be 2 columns now (c1 alone, c2+c3 stacked)
+        -- c1 should still be independent
         local g1 = c1:geometry()
         assert(math.abs(g1.x - g2.x) > 10 or math.abs(g1.y - g2.y) > 10,
             "c1 should be in a different column than c2")
 
-        io.stderr:write("[TEST] PASS: solo push_window(1) consumed c2 into c3's column\n")
+        io.stderr:write("[TEST] PASS: push_window(1) moved c2 into c3's column\n")
         return true
     end,
 
-    ---------------------------------------------------------------------------
-    -- Multi-window expel: c2 is stacked with c3, push c2 right -> expels c2
-    -- State: [c1], [c3+c2]. Focus c2, push right -> [c1], [c3], [c2]
-    ---------------------------------------------------------------------------
+    -- Expel c2 back out (should restore 3 columns)
     function(count)
         if count == 1 then
             client.focus = c2
             c2:raise()
-            awful.layout.arrange(screen.primary)
-            return nil
-        end
-        return true
-    end,
-
-    function(count)
-        if count == 1 then
-            carousel.push_window(1)
+            carousel.expel_window()
             return nil
         end
 
+        local g1 = c1:geometry()
+        local g2 = c2:geometry()
+        local g3 = c3:geometry()
+
+        io.stderr:write(string.format(
+            "[TEST] After expel: c1 x=%d, c2 x=%d, c3 x=%d\n",
+            g1.x, g2.x, g3.x))
+
+        -- c2 should now be in its own column (different x from c3)
+        -- Allow for scrolling
         local wa = screen.primary.workarea
-
-        -- c2 should be in its own column (full height)
         assert(c2:geometry().height > wa.height * 0.7,
             "c2 should be full-height after expel (own column)")
 
-        -- c3 should also be in its own column (full height)
-        assert(c3:geometry().height > wa.height * 0.7,
-            "c3 should be full-height after expel")
-
-        -- c2 should be to the right of c3 (expel right)
-        assert(c2:geometry().x > c3:geometry().x,
-            string.format("c2 should be right of c3: c2.x=%d c3.x=%d",
-                c2:geometry().x, c3:geometry().x))
-
-        io.stderr:write("[TEST] PASS: multi-window push_window(1) expelled c2 into new column\n")
+        io.stderr:write("[TEST] PASS: expel reverses push\n")
         return true
     end,
 
-    ---------------------------------------------------------------------------
-    -- Consume c2 back into c1's column, then expel left
-    -- State: [c1], [c3], [c2]. Consume c2 into c3: [c1], [c3+c2].
-    -- Focus c2, push left -> expels c2 before c3: [c1], [c2], [c3]
-    ---------------------------------------------------------------------------
-    function(count)
-        if count == 1 then
-            client.focus = c2
-            c2:raise()
-            -- Solo c2: push left consumes into c3's column
-            carousel.push_window(-1)
-            return nil
-        end
-        -- Verify c2 and c3 are stacked
-        assert(math.abs(c2:geometry().x - c3:geometry().x) <= 2,
-            "c2 and c3 should share x after consume")
-        return true
-    end,
-
-    function(count)
-        if count == 1 then
-            client.focus = c2
-            c2:raise()
-            awful.layout.arrange(screen.primary)
-            return nil
-        end
-        return true
-    end,
-
-    function(count)
-        if count == 1 then
-            carousel.push_window(-1)
-            return nil
-        end
-
-        local wa = screen.primary.workarea
-
-        -- c2 should be in its own column (full height)
-        assert(c2:geometry().height > wa.height * 0.7,
-            "c2 should be full-height after expel left")
-
-        -- c2 should be to the left of c3 (expel left)
-        assert(c2:geometry().x < c3:geometry().x,
-            string.format("c2 should be left of c3: c2.x=%d c3.x=%d",
-                c2:geometry().x, c3:geometry().x))
-
-        io.stderr:write("[TEST] PASS: multi-window push_window(-1) expelled c2 left\n")
-        return true
-    end,
-
-    ---------------------------------------------------------------------------
-    -- Multi-window expel at boundary: consume c2 into c3 (rightmost),
-    -- then push c2 right (expels at right edge).
-    -- State: [c1], [c2], [c3]. Consume c2 into c3: [c1], [c3+c2].
-    -- Focus c2, push right -> expels at right: [c1], [c3], [c2]
-    ---------------------------------------------------------------------------
-    function(count)
-        if count == 1 then
-            client.focus = c2
-            c2:raise()
-            -- Solo c2: push right consumes into c3's column
-            carousel.push_window(1)
-            return nil
-        end
-        assert(math.abs(c2:geometry().x - c3:geometry().x) <= 2,
-            "c2 and c3 should share x after consume")
-        return true
-    end,
-
-    function(count)
-        if count == 1 then
-            client.focus = c2
-            c2:raise()
-            awful.layout.arrange(screen.primary)
-            return nil
-        end
-        return true
-    end,
-
-    function(count)
-        if count == 1 then
-            carousel.push_window(1)
-            return nil
-        end
-
-        local wa = screen.primary.workarea
-
-        -- c2 should be in its own column at the right edge
-        assert(c2:geometry().height > wa.height * 0.7,
-            "c2 should be full-height after boundary expel")
-
-        -- c2 should be rightmost
-        assert(c2:geometry().x >= c3:geometry().x,
-            string.format("c2 should be right of c3: c2.x=%d c3.x=%d",
-                c2:geometry().x, c3:geometry().x))
-
-        io.stderr:write("[TEST] PASS: multi-window boundary expel works at right edge\n")
-        return true
-    end,
-
-    ---------------------------------------------------------------------------
-    -- Solo boundary: restore to 3 columns, push leftmost left -> no-op
-    ---------------------------------------------------------------------------
+    -- Focus c1 (leftmost), push right -> c1 joins its right neighbor's column
+    -- Note: after push+expel above, column order is c1, c3, c2.
+    -- Pushing c1 right joins c1 with c3's column.
     function(count)
         if count == 1 then
             client.focus = c1
@@ -270,25 +158,73 @@ local steps = {
 
     function(count)
         if count == 1 then
-            g_before = c1:geometry()
+            carousel.push_window(1)
+            return nil
+        end
+
+        -- c1 should now be stacked with its right neighbor (c3)
+        local g1 = c1:geometry()
+        local g3 = c3:geometry()
+
+        io.stderr:write(string.format(
+            "[TEST] After push c1 right: c1 x=%d y=%d, c3 x=%d y=%d\n",
+            g1.x, g1.y, g3.x, g3.y))
+
+        assert(math.abs(g1.x - g3.x) <= 2,
+            string.format("c1 and c3 should share x after push: %d vs %d",
+                g1.x, g3.x))
+
+        io.stderr:write("[TEST] PASS: push from leftmost removes empty column\n")
+        return true
+    end,
+
+    -- Restore: expel c1 back out
+    function(count)
+        if count == 1 then
+            client.focus = c1
+            c1:raise()
+            carousel.expel_window()
+            return nil
+        end
+        return true
+    end,
+
+    -- Boundary: push left from leftmost column -> no-op
+    -- After push+expel ops, column order is [c3], [c1], [c2].
+    -- c3 is leftmost, so push c3 left should be no-op.
+    function(count)
+        if count == 1 then
+            client.focus = c3
+            c3:raise()
+            awful.layout.arrange(screen.primary)
+            return nil
+        end
+        return true
+    end,
+
+    function(count)
+        if count == 1 then
+            g_before = c3:geometry()
             carousel.push_window(-1)
             return nil
         end
 
-        local g_after = c1:geometry()
+        local g_after = c3:geometry()
 
         io.stderr:write(string.format(
             "[TEST] Boundary left: before x=%d, after x=%d\n",
             g_before.x, g_after.x))
 
+        -- Position should not change (no-op)
         assert(math.abs(g_before.x - g_after.x) <= 2,
             "Push left from leftmost should be no-op")
 
-        io.stderr:write("[TEST] PASS: solo push left boundary is no-op\n")
+        io.stderr:write("[TEST] PASS: push left boundary is no-op\n")
         return true
     end,
 
-    -- Solo boundary: push rightmost right -> no-op
+    -- Boundary: push right from rightmost column -> no-op
+    -- c2 is rightmost, so push c2 right should be no-op.
     function(count)
         if count == 1 then
             client.focus = c2
@@ -315,7 +251,7 @@ local steps = {
         assert(math.abs(g_before.x - g_after.x) <= 2,
             "Push right from rightmost should be no-op")
 
-        io.stderr:write("[TEST] PASS: solo push right boundary is no-op\n")
+        io.stderr:write("[TEST] PASS: push right boundary is no-op\n")
         return true
     end,
 
