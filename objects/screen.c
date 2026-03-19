@@ -1924,20 +1924,12 @@ luaA_screen_emit_signal(lua_State *L)
 }
 
 /** screen:disconnect_signal(name, callback) - Disconnect from a screen signal
- * TODO: Implement proper signal disconnection. For now, this is a no-op.
+ * Matches connect_signal which delegates to luaA_object_connect_signal_simple.
  */
 static int
 luaA_screen_disconnect_signal(lua_State *L)
 {
-	luaA_checkscreen(L, 1);
-	luaL_checkstring(L, 2);
-	luaL_checktype(L, 3, LUA_TFUNCTION);
-
-	/* TODO: Implement signal_array_disconnect or equivalent
-	 * For now, just accept the parameters without error to prevent crashes
-	 */
-
-	return 0;
+	return luaA_object_disconnect_signal_simple(L);
 }
 
 /** screen:__index - Property getter
