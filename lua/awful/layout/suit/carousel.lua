@@ -195,6 +195,9 @@ local function reconcile(state, cls, default_width, focus)
         state.columns[i] = nil
     end
 
+    -- Rebuild index after compaction so focused_col_idx is accurate
+    rebuild_index(state)
+
     -- 3. Add new clients as columns after focused
     local insert_after = focused_col_idx(state, focus) or #state.columns
     local added = 0

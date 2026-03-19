@@ -58,6 +58,27 @@ This document tracks all known differences between somewm and AwesomeWM. These e
 
 ---
 
+## No-Op APIs
+
+These APIs exist and can be called without error, but have no effect on Wayland.
+
+| API | Status | Reason |
+|-----|--------|--------|
+| `awful.client.shape.update.all` | No-op | X11 Shape Extension unavailable on Wayland |
+| `awful.client.shape.update.bounding` | No-op | X11 Shape Extension unavailable on Wayland |
+| `awful.client.shape.update.clip` | No-op | X11 Shape Extension unavailable on Wayland |
+| `awful.client.shape.update.input` | No-op | X11 Shape Extension unavailable on Wayland |
+
+### Client Shape (Rounded Corners)
+
+Location: `luaa.c` require() hook, patched at load time
+
+AwesomeWM uses the X11 Shape Extension (`xcb_shape_mask()`) to apply non-rectangular window shapes (e.g. rounded corners via `gears.shape.rounded_rect`). Wayland has no equivalent protocol-level feature. The `awful.client.shape.update.*` functions are replaced with no-ops via a require() hook so that user configs referencing `client.shape_bounding` or `client.shape_clip` load without error.
+
+See `ideas/Shapes.md` for technical rationale and potential future approaches (shader-based clipping, custom render pass).
+
+---
+
 ## Not Implemented (Stubs Only)
 
 These APIs exist as stubs for compatibility but don't function:

@@ -25,6 +25,7 @@ carousel.scroll_duration = 0
 
 local tag
 local c1, c2, c3
+local g_before
 
 local steps = {
     -- Setup
@@ -203,14 +204,12 @@ local steps = {
 
     function(count)
         if count == 1 then
-            local g_before = c3:geometry()
-            rawset(_G, "_push_test_before", g_before)
+            g_before = c3:geometry()
             carousel.push_window(-1)
             return nil
         end
 
         local g_after = c3:geometry()
-        local g_before = rawget(_G, "_push_test_before")
 
         io.stderr:write(string.format(
             "[TEST] Boundary left: before x=%d, after x=%d\n",
@@ -238,14 +237,12 @@ local steps = {
 
     function(count)
         if count == 1 then
-            local g_before = c2:geometry()
-            rawset(_G, "_push_test_before", g_before)
+            g_before = c2:geometry()
             carousel.push_window(1)
             return nil
         end
 
         local g_after = c2:geometry()
-        local g_before = rawget(_G, "_push_test_before")
 
         io.stderr:write(string.format(
             "[TEST] Boundary right: before x=%d, after x=%d\n",
@@ -254,7 +251,6 @@ local steps = {
         assert(math.abs(g_before.x - g_after.x) <= 2,
             "Push right from rightmost should be no-op")
 
-        rawset(_G, "_push_test_before", nil)
         io.stderr:write("[TEST] PASS: push right boundary is no-op\n")
         return true
     end,

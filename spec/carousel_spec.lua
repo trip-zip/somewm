@@ -215,6 +215,26 @@ describe("reconcile", function()
         T.reconcile(state, {}, 1.0, nil)
         assert.are.equal(0, #state.columns)
     end)
+
+    it("inserts after correct column when compaction shifts indices", function()
+        local c4 = { id = 4 }
+
+        local state = T.get_state({})
+        state.columns = {
+            { clients = { c1 }, width_fraction = 1.0 },
+            { clients = { c2 }, width_fraction = 1.0 },
+            { clients = { c3 }, width_fraction = 1.0 },
+        }
+        T.rebuild_index(state)
+
+        -- c1 dies, focus on c2 (was col 2, becomes col 1 after compaction)
+        -- c4 is new and should be inserted after c2
+        T.reconcile(state, { c2, c3, c4 }, 1.0, c2)
+        assert.are.equal(3, #state.columns)
+        assert.are.equal(c2, state.columns[1].clients[1])
+        assert.are.equal(c4, state.columns[2].clients[1])
+        assert.are.equal(c3, state.columns[3].clients[1])
+    end)
 end)
 
 describe("peek_width effect on column positions", function()
