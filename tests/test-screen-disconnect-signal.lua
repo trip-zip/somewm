@@ -8,8 +8,7 @@
 local runner = require("_runner")
 
 local steps = {
-    -- Step 1: Test connect + disconnect on screen using property::workarea
-    -- (a signal known to work in the screen signal system)
+    -- Step 1: Test connect + disconnect on screen using custom signals
     function()
         local s = screen.primary
         assert(s, "Primary screen must exist")
@@ -50,20 +49,15 @@ local steps = {
         -- Emit on instance
         s:emit_signal("test::inst_disconnect")
 
-        -- Instance signals are emitted properly
-        if inst_fire_count == 1 then
-            -- Disconnect
-            s:disconnect_signal("test::inst_disconnect", inst_callback)
-
-            -- Emit again
-            s:emit_signal("test::inst_disconnect")
-            assert(inst_fire_count == 1,
-                string.format("Instance signal should not fire after disconnect (fired %d)", inst_fire_count))
-            io.stderr:write("[TEST] PASS: instance-level disconnect_signal works\n")
-        else
-            io.stderr:write(string.format("[TEST] NOTE: Instance emit_signal fired %d times (may use class dispatch)\n",
-                inst_fire_count))
-        end
+        assert(inst_fire_count == 1,
+            string.format("Instance signal should fire once, fired %d times", inst_fire_count))
+        -- Disconnect
+        s:disconnect_signal("test::inst_disconnect", inst_callback)
+        -- Emit again
+        s:emit_signal("test::inst_disconnect")
+        assert(inst_fire_count == 1,
+            string.format("Instance signal should not fire after disconnect (fired %d)", inst_fire_count))
+        io.stderr:write("[TEST] PASS: instance-level disconnect_signal works\n")
 
         return true
     end,
