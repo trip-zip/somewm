@@ -1892,35 +1892,10 @@ luaA_screen_connect_signal(lua_State *L)
 	return luaA_object_connect_signal_simple(L);
 }
 
-/** screen:emit_signal(name, ...) - Emit a screen signal
- * Emits signal on instance, then forwards to class (AwesomeWM pattern).
- */
 static int
 luaA_screen_emit_signal(lua_State *L)
 {
-	screen_t *screen = luaA_checkscreen(L, 1);
-	const char *name = luaL_checkstring(L, 2);
-	int nargs = lua_gettop(L) - 2;
-	int arg_start = 3;  /* absolute stack index of first extra arg */
-	int j;
-
-	if (screen) {
-		/* Emit on instance signals with fresh copies of args.
-		 * signal_object_emit() pops its nargs from the stack, so we pass
-		 * copies rather than the originals (which we need below for class emit). */
-		for (j = 0; j < nargs; j++)
-			lua_pushvalue(L, arg_start + j);
-		signal_object_emit(L, &screen->signals, name, nargs);
-
-		/* Forward to class signals (AwesomeWM pattern): push screen first,
-		 * then fresh copies of the extra args so handlers receive (s, ...). */
-		lua_pushvalue(L, 1);
-		for (j = 0; j < nargs; j++)
-			lua_pushvalue(L, arg_start + j);
-		luaA_class_emit_signal(L, &screen_class, name, nargs + 1);
-	}
-
-	return 0;
+	return luaA_object_emit_signal_simple(L);
 }
 
 /** screen:disconnect_signal(name, callback) - Disconnect from a screen signal
