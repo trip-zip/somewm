@@ -56,6 +56,7 @@ static lua_State *luaA_create_fresh_state(void);
 #include <sys/stat.h>
 #include <signal.h>
 #include <glib.h>
+#include <gio/gio.h>
 #include <limits.h>
 #include <setjmp.h>
 
@@ -84,6 +85,17 @@ lua_State *globalconf_L = NULL;
 
 /* Global configuration structure instance */
 awesome_t globalconf;
+
+/* argv used to run somewm (stored separately from globalconf, matching
+ * AwesomeWM's static awesome_argv pattern so memset of globalconf can't
+ * clobber it). */
+static char **somewm_argv;
+
+void
+luaA_set_argv(char **argv)
+{
+    somewm_argv = argv;
+}
 
 /* X11 atom stubs */
 xcb_atom_t WM_TAKE_FOCUS = 0;
@@ -403,16 +415,29 @@ awesome_atexit(bool restart)
     }
 }
 
-/** Restart the compositor by exec'ing self.
- * Uses argv stored in globalconf at startup.
+/** Cold-restart the compositor by exec'ing self.
+ * Uses static somewm_argv (safe from globalconf memset wipe).
+ * Only used as fallback; normal restart path is hot-reload.
  */
 void
 awesome_restart(void)
 {
     awesome_atexit(true);
-    execvp(globalconf.argv[0], globalconf.argv);
+    execvp(somewm_argv[0], somewm_argv);
     /* If we get here, exec failed */
-    warn("restart failed: execvp(%s) failed: %s", globalconf.argv[0], strerror(errno));
+    warn("restart failed: execvp(%s) failed: %s", somewm_argv[0], strerror(errno));
+}
+
+/** GLib idle callback for deferred hot-reload.
+ * We can't tear down the Lua state while inside a Lua pcall,
+ * so we defer to the next idle iteration of the event loop.
+ */
+static gboolean
+hot_reload_idle_callback(gpointer data)
+{
+    (void)data;
+    luaA_hot_reload();
+    return G_SOURCE_REMOVE;  /* One-shot */
 }
 
 /** awesome.exec(cmd) - Replace compositor with another program.
@@ -484,15 +509,18 @@ luaA_panic(lua_State *L)
     return 0;
 }
 
-/** awesome.restart() - Restart the compositor.
- * \return Never returns on success.
+/** awesome.restart() - Hot-reload the Lua state.
+ * Defers the reload to the next idle iteration of the event loop
+ * so we're not tearing down Lua while inside a Lua pcall.
+ * Wayland clients survive; only the Lua VM is rebuilt.
  */
 static int
 luaA_restart(lua_State *L)
 {
     (void)L;
-    awesome_restart();
-    return 0;  /* Never reached on success */
+    /* Defer to next event loop iteration */
+    g_idle_add(hot_reload_idle_callback, NULL);
+    return 0;
 }
 
 /** Convert Lua value to string (Lua 5.1 compatibility).
@@ -665,10 +693,15 @@ luaA_awesome_xrdb_get_value(lua_State *L)
 	return 1;
 }
 
-/** awesome.quit() - Quit the compositor */
+/** awesome.quit([code]) - Quit the compositor with an optional exit code.
+ * \param L The Lua VM state.
+ * \lparam code Optional exit code (default 0). Use 1 for cold restart,
+ *              2 for rebuild+restart (handled by somewm-session wrapper).
+ */
 static int
 luaA_awesome_quit(lua_State *L)
 {
+	globalconf.exit_code = luaL_optinteger(L, 1, 0);
 	some_compositor_quit();
 	return 0;
 }
@@ -4321,6 +4354,557 @@ luaA_create_fresh_state(void)
 	lua_setglobal(L, "_gesture");
 
 	return L;
+}
+
+/* ============================================================================
+ * Hot-Reload: In-process Lua state rebuild
+ * ============================================================================
+ *
+ * Tears down the Lua VM, creates a fresh one, re-executes rc.lua, and
+ * re-announces existing clients - all while wlroots keeps running and
+ * Wayland clients survive.
+ *
+ * The key insight: client_t is Lua userdata with embedded wl_listener fields.
+ * If lua_close() frees the userdata, the listener links dangle and wlroots
+ * crashes. So we must:
+ * 1. Detach all listeners from wlroots signals (client_remove_all_listeners)
+ * 2. Copy client state to heap snapshots
+ * 3. NULL owned resources in old userdata so client_wipe is safe during GC
+ * 4. Close old Lua state
+ * 5. Create fresh Lua state, recreate objects, reattach listeners
+ */
+
+/* Snapshot structs for preserving state across Lua state rebuild */
+
+typedef struct {
+	/* Full copy of client_t fields we need to preserve */
+	client_t data;
+	/* Was client mapped (had scene tree)? */
+	bool was_mapped;
+	/* Screen index for remapping (0-based, -1 if none) */
+	int screen_index;
+	/* Was this the focused client? */
+	bool was_focused;
+	/* transient_for client ID (since pointer becomes invalid after lua_close) */
+	uint32_t transient_for_id;
+	bool has_transient_for;
+} client_snapshot_t;
+
+typedef struct {
+	Monitor *monitor;
+	int index;
+	struct wlr_box geometry;
+	struct wlr_box workarea;
+	char *name;
+	screen_lifecycle_t lifecycle;
+} screen_snapshot_t;
+
+typedef struct {
+	char *name;
+	bool selected;
+	bool activated;
+	float mfact;
+	int nmaster;
+	int screen_index;  /* -1 if no screen */
+	/* Client indices (into the client snapshot array) */
+	int *client_indices;
+	int num_clients;
+} tag_snapshot_t;
+
+/** Perform in-process hot-reload of the Lua state.
+ * Must be called from an idle callback, NOT from within a Lua pcall.
+ */
+void
+luaA_hot_reload(void)
+{
+	lua_State *L = globalconf_get_lua_State();
+	int i, j;
+
+	/* Snapshot arrays */
+	client_snapshot_t *client_snaps = NULL;
+	int num_clients = 0;
+	screen_snapshot_t *screen_snaps = NULL;
+	int num_screens = 0;
+	tag_snapshot_t *tag_snaps = NULL;
+	int num_tags = 0;
+
+	if (!L) {
+		fprintf(stderr, "somewm: hot-reload: no Lua state to reload\n");
+		return;
+	}
+
+	fprintf(stderr, "somewm: hot-reload: starting in-process Lua state rebuild\n");
+
+	/* Freeze GC immediately. Lgi closures store a lua_State* (coroutine)
+	 * in their FfiClosureBlock. If GC collects a coroutine, Lgi's
+	 * closure_invalidate sets block->L = NULL. Any subsequent GLib dispatch
+	 * of that closure SEGVs on lua_status(NULL). Freezing GC before ANY
+	 * teardown ensures no Lua objects are collected during or after reload. */
+	lua_gc(L, LUA_GCSTOP, 0);
+
+	/* ================================================================
+	 * Phase A: Teardown - clean up Lua-owned state
+	 * ================================================================
+	 * IMPORTANT: Do NOT call luaL_unref on the old state. The old state
+	 * is leaked (not lua_close'd), so unrefs just corrupt the registry's
+	 * free list. Lgi closures store callable/thread refs in the same
+	 * registry. If an unref'd slot overlaps with an Lgi ref, the Lgi
+	 * closure finds nil instead of its callable -> SEGV.
+	 */
+
+	/* Emit "exit" signal so Lua code can clean up */
+	luaA_signal_emit(L, "exit", 0);
+
+	/* Cancel in-flight animations */
+	animation_cleanup();
+
+	/* NOTE: We skip luaA_awesome_clear_all_idle_timeouts,
+	 * luaA_awesome_clear_lock_surface, luaA_awesome_clear_lock_covers,
+	 * and luaA_keybinding_cleanup here. These call luaL_unref which
+	 * corrupts the registry free list. Safe to skip since the old state
+	 * is leaked anyway. */
+
+	/* Wipe C-level signal/class arrays (no luaL_unref, just frees C memory).
+	 * Class signals must be wiped so the new state doesn't fire stale handlers.
+	 * Also resets the luaA_classes registry so class_setup doesn't duplicate. */
+	luaA_signal_cleanup();
+	luaA_class_cleanup_all();
+
+	/* ================================================================
+	 * Phase B1: Snapshot screens FIRST (needed for index lookups)
+	 * ================================================================
+	 * Screens are stored in screen.c's internal screen_refs array,
+	 * not in globalconf.screens. Use luaA_screen_get_all() to access them.
+	 */
+	{
+		screen_t *screen_ptrs[64];
+		num_screens = 64;
+		luaA_screen_get_all(L, screen_ptrs, &num_screens);
+
+		if (num_screens > 0) {
+			screen_snaps = calloc(num_screens, sizeof(screen_snapshot_t));
+			if (!screen_snaps) {
+				fprintf(stderr, "somewm: hot-reload: failed to allocate screen snapshots\n");
+				return;
+			}
+			/* Also temporarily populate globalconf.screens for index lookups */
+			for (i = 0; i < num_screens; i++) {
+				screen_array_push(&globalconf.screens, screen_ptrs[i]);
+			}
+		}
+
+		for (i = 0; i < num_screens; i++) {
+			screen_t *s = screen_ptrs[i];
+			screen_snaps[i].monitor = s->monitor;
+			screen_snaps[i].index = s->index;
+			screen_snaps[i].geometry = s->geometry;
+			screen_snaps[i].workarea = s->workarea;
+			screen_snaps[i].name = s->name;
+			screen_snaps[i].lifecycle = s->lifecycle;
+			/* NULL name in old userdata so screen_wipe doesn't free it */
+			s->name = NULL;
+		}
+	}
+
+	/* ================================================================
+	 * Phase B2: Snapshot and detach clients
+	 * ================================================================ */
+
+	num_clients = globalconf.clients.len;
+	if (num_clients > 0) {
+		client_snaps = calloc(num_clients, sizeof(client_snapshot_t));
+		if (!client_snaps) {
+			fprintf(stderr, "somewm: hot-reload: failed to allocate client snapshots\n");
+			free(screen_snaps);
+			return;
+		}
+	}
+
+	for (i = 0; i < num_clients; i++) {
+		client_t *c = globalconf.clients.tab[i];
+		client_snapshot_t *snap = &client_snaps[i];
+
+		/* Remove all wlroots listeners */
+		client_remove_all_listeners(c);
+
+		/* Copy entire client_t via memcpy */
+		memcpy(&snap->data, c, sizeof(client_t));
+		snap->was_mapped = (c->scene != NULL);
+		snap->was_focused = (globalconf.focus.client == c);
+
+		/* Find screen index */
+		snap->screen_index = -1;
+		if (c->screen) {
+			for (j = 0; j < num_screens; j++) {
+				if (globalconf.screens.tab[j] == c->screen) {
+					snap->screen_index = j;
+					break;
+				}
+			}
+		}
+
+		/* Save transient_for ID before we lose access to old pointers */
+		snap->has_transient_for = (c->transient_for != NULL);
+		snap->transient_for_id = c->transient_for ? c->transient_for->id : 0;
+
+		/* Update surface->data back-pointer to snapshot.
+		 * If a wlroots event fires between now and re-registration,
+		 * the handler (e.g. destroynotify) will find the snapshot copy. */
+		if (c->client_type == XDGShell) {
+			if (c->surface.xdg)
+				c->surface.xdg->data = &snap->data;
+		}
+#ifdef XWAYLAND
+		else {
+			if (c->surface.xwayland)
+				c->surface.xwayland->data = &snap->data;
+		}
+#endif
+		/* Also update scene tree data pointers */
+		if (c->scene)
+			c->scene->node.data = &snap->data;
+
+		/* NULL out owned resources in the OLD Lua userdata so that
+		 * client_wipe (called during lua_close GC) doesn't free them.
+		 * The snapshot's copy holds the real pointers. */
+		c->name = NULL;
+		c->alt_name = NULL;
+		c->class = NULL;
+		c->instance = NULL;
+		c->icon_name = NULL;
+		c->alt_icon_name = NULL;
+		c->machine = NULL;
+		c->startup_id = NULL;
+		c->role = NULL;
+		c->keys.tab = NULL; c->keys.len = c->keys.size = 0;
+		c->icons.tab = NULL; c->icons.len = c->icons.size = 0;
+		c->buttons.tab = NULL; c->buttons.len = c->buttons.size = 0;
+		c->protocols.atoms = NULL; c->protocols.atoms_len = 0;
+		/* Don't let GC touch shadow textures - snapshot owns them */
+		for (j = 0; j < SHADOW_TEXTURE_COUNT; j++)
+			c->shadow.textures[j] = NULL;
+		c->shadow_config = NULL;
+		/* Don't let GC destroy the scene tree */
+		c->scene = NULL;
+	}
+
+	/* ================================================================
+	 * Phase B3: Snapshot tags
+	 * ================================================================ */
+
+	num_tags = globalconf.tags.len;
+	if (num_tags > 0) {
+		tag_snaps = calloc(num_tags, sizeof(tag_snapshot_t));
+		if (!tag_snaps) {
+			fprintf(stderr, "somewm: hot-reload: failed to allocate tag snapshots\n");
+			free(client_snaps);
+			free(screen_snaps);
+			return;
+		}
+	}
+
+	for (i = 0; i < num_tags; i++) {
+		tag_t *t = globalconf.tags.tab[i];
+		tag_snaps[i].name = t->name;
+		tag_snaps[i].selected = t->selected;
+		tag_snaps[i].activated = t->activated;
+		tag_snaps[i].mfact = t->mfact;
+		tag_snaps[i].nmaster = t->nmaster;
+
+		/* Find screen index */
+		tag_snaps[i].screen_index = -1;
+		if (t->screen) {
+			for (j = 0; j < num_screens; j++) {
+				if (globalconf.screens.tab[j] == t->screen) {
+					tag_snaps[i].screen_index = j;
+					break;
+				}
+			}
+		}
+
+		/* Snapshot client associations as indices into client_snaps */
+		tag_snaps[i].num_clients = t->clients.len;
+		if (t->clients.len > 0) {
+			tag_snaps[i].client_indices = calloc(t->clients.len, sizeof(int));
+			for (j = 0; j < t->clients.len; j++) {
+				int ci;
+				tag_snaps[i].client_indices[j] = -1;
+				for (ci = 0; ci < num_clients; ci++) {
+					if (globalconf.clients.tab[ci] == t->clients.tab[j]) {
+						tag_snaps[i].client_indices[j] = ci;
+						break;
+					}
+				}
+			}
+		}
+
+		/* NULL name in old userdata so tag_wipe doesn't free it */
+		t->name = NULL;
+		/* Clear clients array so tag_wipe doesn't wipe it */
+		t->clients.tab = NULL;
+		t->clients.len = t->clients.size = 0;
+	}
+
+	/* ================================================================
+	 * Phase C: Close old Lua state
+	 * ================================================================ */
+
+	/* Clear arrays so GC doesn't try to access stale data.
+	 * We've already snapshotted everything and NULL'd owned resources. */
+	globalconf.clients.len = 0;
+	globalconf.stack.len = 0;
+	globalconf.tags.len = 0;
+	globalconf.screens.len = 0;
+	globalconf.focus.client = NULL;
+
+	/* Reset screen_refs before closing (entries become invalid) */
+	luaA_screen_refs_reset();
+
+	/* Close the GDBus session bus connection BEFORE abandoning the state.
+	 *
+	 * Lgi closures (systray, awful.remote, etc.) store D-Bus callbacks as
+	 * libffi closures with lua_State* pointers. When GLib dispatches these
+	 * callbacks, they call into the old Lua state. If a callback completes
+	 * (e.g., async bus:call reply), lgi_closure_destroy unrefs the shared
+	 * thread_ref from the FfiClosureBlock, corrupting the registry for
+	 * other closures that share the same block. The next dispatch finds
+	 * thread_ref -> nil -> lua_tothread returns NULL -> SEGV.
+	 *
+	 * Closing the bus prevents ALL old D-Bus callbacks from dispatching.
+	 * The new Lua state gets a fresh connection via Gio.bus_get_sync(). */
+	{
+		GDBusConnection *bus = g_bus_get_sync(G_BUS_TYPE_SESSION, NULL, NULL);
+		if (bus) {
+			g_dbus_connection_close_sync(bus, NULL, NULL);
+			g_object_unref(bus);
+		}
+	}
+
+	/* Leak the old Lua state. GC is frozen (Phase A), so no Lgi objects
+	 * are collected and no closure block->L pointers become NULL.
+	 * Non-D-Bus callbacks (e.g., spawn I/O) may still fire harmlessly
+	 * against the old state. ~1-2MB leak per reload. */
+	globalconf_L = NULL;
+	globalconf.L = NULL;
+
+	fprintf(stderr, "somewm: hot-reload: old Lua state closed, creating fresh state\n");
+
+	/* ================================================================
+	 * Phase D: Create fresh Lua state
+	 * ================================================================ */
+
+	L = luaA_create_fresh_state();
+	if (!L) {
+		fprintf(stderr, "somewm: hot-reload: FATAL: failed to create fresh Lua state\n");
+		/* Try to gracefully quit */
+		some_compositor_quit();
+		goto cleanup;
+	}
+
+	/* ================================================================
+	 * Phase E: Re-create client objects in new Lua state
+	 * ================================================================
+	 * We do NOT recreate screens or tags here. The normal startup flow
+	 * (screen scanning + rc.lua) creates them. We only recreate clients
+	 * because they own wlroots listeners that must be attached to valid
+	 * Lua userdata. After rc.lua creates tags, we reassign clients.
+	 */
+
+	{
+		client_t **new_clients = num_clients > 0
+			? calloc(num_clients, sizeof(client_t *)) : NULL;
+		int focused_idx = -1;
+
+		for (i = 0; i < num_clients; i++) {
+			client_snapshot_t *cs = &client_snaps[i];
+			client_t *c;
+			signal_array_t fresh_signals;
+
+			c = client_new(L);
+			fresh_signals = c->signals;
+			memcpy(c, &cs->data, sizeof(client_t));
+			c->signals = fresh_signals;
+
+			/* Clear all Lua userdata pointers from the old state.
+			 * These survive memcpy but reference dead Lua objects.
+			 * Layout/placement/rules code crashes on stale drawables. */
+			c->buttons.tab = NULL; c->buttons.len = c->buttons.size = 0;
+			c->keys.tab = NULL; c->keys.len = c->keys.size = 0;
+			c->toplevel_handle = NULL;
+			c->screen = NULL;
+			c->transient_for = NULL;
+			for (int tb = 0; tb < CLIENT_TITLEBAR_COUNT; tb++)
+				c->titlebar[tb].drawable = NULL;
+
+			/* Re-register wlroots listeners */
+			client_reregister_listeners(c);
+
+			/* Update surface->data to point to new userdata */
+			if (c->client_type == XDGShell) {
+				if (c->surface.xdg)
+					c->surface.xdg->data = c;
+			}
+#ifdef XWAYLAND
+			else {
+				if (c->surface.xwayland)
+					c->surface.xwayland->data = c;
+			}
+#endif
+			if (c->scene) {
+				c->scene->node.data = c;
+				if (c->scene_surface)
+					c->scene_surface->node.data = c;
+			}
+
+			/* Reference and push to arrays */
+			lua_pushvalue(L, -1);
+			client_array_push(&globalconf.clients, luaA_object_ref(L, -1));
+			stack_client_push(c);
+
+			new_clients[i] = c;
+			if (cs->was_focused)
+				focused_idx = i;
+
+			lua_pop(L, 1);
+		}
+
+		/* Remap transient_for pointers using saved client IDs */
+		for (i = 0; i < num_clients; i++) {
+			if (!client_snaps[i].has_transient_for || !new_clients[i])
+				continue;
+			for (j = 0; j < num_clients; j++) {
+				if (client_snaps[j].data.id == client_snaps[i].transient_for_id) {
+					new_clients[i]->transient_for = new_clients[j];
+					break;
+				}
+			}
+		}
+
+		/* Restore focus */
+		if (focused_idx >= 0 && focused_idx < num_clients)
+			globalconf.focus.client = new_clients[focused_idx];
+
+		free(new_clients);
+	}
+
+	/* ================================================================
+	 * Phase F: Reload config
+	 * ================================================================
+	 * Signal ordering relies on the ::connected pattern (luaclass.c):
+	 * when rc.lua connects a handler for request::desktop_decoration,
+	 * the C class system auto-emits ::connected, which triggers
+	 * awful.screen to call the handler for ALL existing screens.
+	 *
+	 * 1. Set awesome._restart = true
+	 * 2. Create screens from snapshots (must exist before rc.lua)
+	 * 3. luaA_loadrc() - ::connected fires handlers for existing screens
+	 * 4. screen_emit_scanned() - sets flag, DPI handler runs
+	 * 5. client_emit_scanning() - keybinding/mouse/rules setup
+	 * 6. Per-client: set screen, emit property + request::manage
+	 * 7. client_emit_scanned(), startup, some_refresh()
+	 *
+	 * No screen_emit_scanning() or luaA_screen_emit_all_added() needed.
+	 */
+
+	/* Set awesome._restart = true BEFORE loading rc.lua */
+	lua_getglobal(L, "awesome");
+	if (lua_istable(L, -1)) {
+		lua_pushboolean(L, 1);
+		lua_setfield(L, -2, "_restart");
+	}
+	lua_pop(L, 1);
+
+	/* Recreate screen objects from snapshots BEFORE screen scanning signals.
+	 * Screens must exist when rc.lua loads because awful.screen, awful.tag,
+	 * naughty etc. all need screens during initialization. */
+	for (i = 0; i < num_screens; i++) {
+		screen_snapshot_t *ss = &screen_snaps[i];
+		screen_t *screen = luaA_screen_new(L, ss->monitor, ss->index);
+		if (screen) {
+			screen->geometry = ss->geometry;
+			screen->workarea = ss->workarea;
+			screen->lifecycle = ss->lifecycle;
+			if (ss->name) {
+				screen->name = ss->name;
+				ss->name = NULL;  /* Transferred ownership */
+			}
+			screen_array_push(&globalconf.screens, screen);
+		}
+		lua_pop(L, 1);  /* luaA_screen_new leaves screen on stack */
+	}
+
+	/* Load and execute rc.lua.
+	 * Screens already exist (created above). When rc.lua registers handlers
+	 * for request::desktop_decoration etc., the ::connected pattern
+	 * (luaclass.c:308-332) auto-fires them for all existing screens.
+	 * This is the same mechanism initial startup uses - no scanning or
+	 * _added signals needed. */
+	luaA_loadrc();
+
+	/* Emit scanned so awful.screen knows screen discovery is done */
+	screen_emit_scanned();
+
+	/* Client scanning: triggers awful.mouse/keyboard/rules setup */
+	client_emit_scanning();
+
+	for (i = 0; i < num_clients; i++) {
+		client_t *c = globalconf.clients.tab[i];
+
+		if (!client_snaps[i].was_mapped)
+			continue;
+
+		/* Assign client to first screen if not already set */
+		if (!c->screen && globalconf.screens.len > 0) {
+			int si = client_snaps[i].screen_index;
+			if (si >= 0 && si < globalconf.screens.len)
+				c->screen = globalconf.screens.tab[si];
+			else
+				c->screen = globalconf.screens.tab[0];
+		}
+
+		luaA_object_push(L, c);
+
+		/* Emit property signals */
+		luaA_object_emit_signal(L, -1, "property::x", 0);
+		luaA_object_emit_signal(L, -1, "property::y", 0);
+		luaA_object_emit_signal(L, -1, "property::width", 0);
+		luaA_object_emit_signal(L, -1, "property::height", 0);
+		luaA_object_emit_signal(L, -1, "property::geometry", 0);
+		luaA_object_emit_signal(L, -1, "property::name", 0);
+		luaA_object_emit_signal(L, -1, "property::type", 0);
+		luaA_object_emit_signal(L, -1, "property::screen", 0);
+
+		/* Emit request::manage so awful.rules applies tags etc. */
+		lua_pushstring(L, "restart");
+		lua_newtable(L);
+		luaA_object_emit_signal(L, -3, "request::manage", 2);
+		luaA_object_emit_signal(L, -1, "manage", 0);
+
+		lua_pop(L, 1);
+	}
+
+	client_emit_scanned();
+
+	/* Emit startup signal */
+	luaA_signal_emit(L, "startup", 0);
+
+	/* Flush visual state */
+	some_refresh();
+
+	fprintf(stderr, "somewm: hot-reload: complete (%d clients, %d screens, %d tags restored)\n",
+		num_clients, num_screens, num_tags);
+
+cleanup:
+	/* Free snapshot arrays */
+	for (i = 0; i < num_tags; i++) {
+		free(tag_snaps[i].name);
+		free(tag_snaps[i].client_indices);
+	}
+	for (i = 0; i < num_screens; i++)
+		free(screen_snaps[i].name);
+	free(client_snaps);
+	free(screen_snaps);
+	free(tag_snaps);
 }
 
 void
