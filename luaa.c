@@ -4427,15 +4427,9 @@ typedef struct {
 } screen_snapshot_t;
 
 typedef struct {
+	/* Owns the name string (transferred from old tag_t to prevent
+	 * double-free during GC). Freed in cleanup. */
 	char *name;
-	bool selected;
-	bool activated;
-	float mfact;
-	int nmaster;
-	int screen_index;  /* -1 if no screen */
-	/* Client indices (into the client snapshot array) */
-	int *client_indices;
-	int num_clients;
 } tag_snapshot_t;
 
 /** Perform in-process hot-reload of the Lua state.
@@ -4632,42 +4626,13 @@ luaA_hot_reload(void)
 
 	for (i = 0; i < num_tags; i++) {
 		tag_t *t = globalconf.tags.tab[i];
+
+		/* Transfer name ownership to snapshot so tag_wipe doesn't free it.
+		 * Tags are recreated from rc.lua defaults, not restored from snapshots. */
 		tag_snaps[i].name = t->name;
-		tag_snaps[i].selected = t->selected;
-		tag_snaps[i].activated = t->activated;
-		tag_snaps[i].mfact = t->mfact;
-		tag_snaps[i].nmaster = t->nmaster;
-
-		/* Find screen index */
-		tag_snaps[i].screen_index = -1;
-		if (t->screen) {
-			for (j = 0; j < num_screens; j++) {
-				if (globalconf.screens.tab[j] == t->screen) {
-					tag_snaps[i].screen_index = j;
-					break;
-				}
-			}
-		}
-
-		/* Snapshot client associations as indices into client_snaps */
-		tag_snaps[i].num_clients = t->clients.len;
-		if (t->clients.len > 0) {
-			tag_snaps[i].client_indices = calloc(t->clients.len, sizeof(int));
-			for (j = 0; j < t->clients.len; j++) {
-				int ci;
-				tag_snaps[i].client_indices[j] = -1;
-				for (ci = 0; ci < num_clients; ci++) {
-					if (globalconf.clients.tab[ci] == t->clients.tab[j]) {
-						tag_snaps[i].client_indices[j] = ci;
-						break;
-					}
-				}
-			}
-		}
-
-		/* NULL name in old userdata so tag_wipe doesn't free it */
 		t->name = NULL;
-		/* Clear clients array so tag_wipe doesn't wipe it */
+
+		/* Clear clients array so tag_wipe doesn't iterate stale pointers */
 		t->clients.tab = NULL;
 		t->clients.len = t->clients.size = 0;
 	}
@@ -4918,15 +4883,13 @@ luaA_hot_reload(void)
 	/* Flush visual state */
 	some_refresh();
 
-	fprintf(stderr, "somewm: hot-reload: complete (%d clients, %d screens, %d tags restored)\n",
+	fprintf(stderr, "somewm: hot-reload: complete (%d clients, %d screens, %d tags reset)\n",
 		num_clients, num_screens, num_tags);
 
 cleanup:
 	/* Free snapshot arrays */
-	for (i = 0; i < num_tags; i++) {
+	for (i = 0; i < num_tags; i++)
 		free(tag_snaps[i].name);
-		free(tag_snaps[i].client_indices);
-	}
 	for (i = 0; i < num_screens; i++)
 		free(screen_snaps[i].name);
 	free(client_snaps);
