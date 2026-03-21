@@ -8,6 +8,7 @@ Since SomeWM is not a direct git fork, we manually port relevant changes from up
 
 | AwesomeWM PR | Description | SomeWM PR | Date |
 |--------------|-------------|-----------|------|
+| [#3309](https://github.com/awesomeWM/awesome/pull/3309) | Implement overflow layout | (this PR) | 2026-03-21 |
 | [#4067](https://github.com/awesomeWM/awesome/pull/4067) | N/A (already applied) | N/A | 2026-03-10 |
 | [#4065](https://github.com/awesomeWM/awesome/pull/4065) | N/A (no equivalent code) | N/A | 2026-03-10 |
 | [#4061](https://github.com/awesomeWM/awesome/pull/4061) | Use VLAs instead of `p_alloca` | (this PR) | 2026-03-10 |
