@@ -268,6 +268,13 @@ static inline bool session_is_locked(void) {
 }
 
 /*
+ * Hot-reload support - listener management for in-process Lua state rebuild
+ */
+void client_remove_all_listeners(client_t *c);
+void client_reregister_listeners(client_t *c);
+void some_refresh(void);
+
+/*
  * Test helpers - headless output hotplug simulation
  */
 const char *some_test_add_output(unsigned int width, unsigned int height);

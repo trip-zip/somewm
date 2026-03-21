@@ -625,7 +625,7 @@ local function register_item(service, path)
         end)
 
         -- Subscribe to property change signals from the item
-        systray._private.bus:signal_subscribe(
+        local item_sub_id = systray._private.bus:signal_subscribe(
             service,  -- sender
             SNI_ITEM_IFACE,  -- interface
             nil,  -- member (all signals)
@@ -819,6 +819,14 @@ local function register_item(service, path)
             end
         )
 
+        -- Track per-item subscription ID for cleanup during hot-reload
+        if item_sub_id then
+            local data = systray._private.item_data[item]
+            if data then
+                data.signal_sub_id = item_sub_id
+            end
+        end
+
         -- Emit the global signal so user code can create widgets
         capi.awesome.emit_signal("systray::added", item)
 
@@ -847,10 +855,17 @@ unregister_item = function(service, path)
     if item then
         systray._private.items[item_key] = nil
 
-        -- Stop watching for name vanishing
+        -- Stop watching for name vanishing and unsubscribe signals
         local data = systray._private.item_data[item]
-        if data and data.name_watch_id then
-            Gio.bus_unwatch_name(data.name_watch_id)
+        if data then
+            if data.name_watch_id then
+                Gio.bus_unwatch_name(data.name_watch_id)
+            end
+            if data.signal_sub_id and systray._private.bus then
+                pcall(function()
+                    systray._private.bus:signal_unsubscribe(data.signal_sub_id)
+                end)
+            end
         end
         systray._private.item_data[item] = nil  -- Clean up Lua-side data
 
@@ -939,8 +954,10 @@ end
 
 --- Subscribe to watcher signals for item registration/unregistration.
 local function subscribe_to_watcher_signals()
+    systray._private.signal_sub_ids = systray._private.signal_sub_ids or {}
+
     -- StatusNotifierItemRegistered(service: string)
-    systray._private.bus:signal_subscribe(
+    local sid1 = systray._private.bus:signal_subscribe(
         SNI_WATCHER_BUS,
         SNI_WATCHER_IFACE,
         "StatusNotifierItemRegistered",
@@ -954,9 +971,10 @@ local function subscribe_to_watcher_signals()
             end)
         end
     )
+    if sid1 then table.insert(systray._private.signal_sub_ids, sid1) end
 
     -- StatusNotifierItemUnregistered(service: string)
-    systray._private.bus:signal_subscribe(
+    local sid2 = systray._private.bus:signal_subscribe(
         SNI_WATCHER_BUS,
         SNI_WATCHER_IFACE,
         "StatusNotifierItemUnregistered",
@@ -970,11 +988,12 @@ local function subscribe_to_watcher_signals()
             end)
         end
     )
+    if sid2 then table.insert(systray._private.signal_sub_ids, sid2) end
 end
 
 --- Watch for the StatusNotifierWatcher to appear on the bus.
 local function watch_for_watcher()
-    Gio.bus_watch_name(
+    local wid = Gio.bus_watch_name(
         Gio.BusType.SESSION,
         SNI_WATCHER_BUS,
         Gio.BusNameWatcherFlags.NONE,
@@ -995,6 +1014,7 @@ local function watch_for_watcher()
             systray._private.item_data = {}  -- Clear Lua-side data too
         end)
     )
+    systray._private.watcher_watch_id = wid
 end
 
 ---------------------------------------------------------------------------
@@ -1243,6 +1263,49 @@ function systray.fetch_menu(item, callback)
             callback(menu_items, item)
         end
     )
+end
+
+--- Clean up all GDBus watches and signal subscriptions.
+-- Called by hot-reload before destroying the Lua state to prevent
+-- dangling libffi closures in GLib.
+function systray._cleanup()
+    if not systray._private.initialized then return end
+
+    -- Unwatch per-item name watches and signal subscriptions
+    if systray._private.item_data then
+        for item, data in pairs(systray._private.item_data) do
+            if data then
+                if data.name_watch_id then
+                    pcall(Gio.bus_unwatch_name, data.name_watch_id)
+                end
+                if data.signal_sub_id and systray._private.bus then
+                    pcall(function()
+                        systray._private.bus:signal_unsubscribe(data.signal_sub_id)
+                    end)
+                end
+            end
+        end
+    end
+
+    -- Unsubscribe signal subscriptions
+    if systray._private.signal_sub_ids and systray._private.bus then
+        for _, sid in ipairs(systray._private.signal_sub_ids) do
+            pcall(function() systray._private.bus:signal_unsubscribe(sid) end)
+        end
+    end
+
+    -- Unwatch the main watcher watch
+    if systray._private.watcher_watch_id then
+        pcall(Gio.bus_unwatch_name, systray._private.watcher_watch_id)
+    end
+
+    -- Clear state
+    systray._private.items = {}
+    systray._private.item_data = {}
+    systray._private.signal_sub_ids = {}
+    systray._private.watcher_watch_id = nil
+    systray._private.initialized = false
+    systray._private.bus = nil
 end
 
 -- Auto-initialize when the module is loaded

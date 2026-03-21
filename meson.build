@@ -57,6 +57,7 @@ have_3fg_drag = cc.has_function('libinput_device_config_3fg_drag_get_finger_coun
 libdrm = dependency('libdrm')
 dbus = dependency('dbus-1')
 glib = dependency('glib-2.0')
+gio = dependency('gio-2.0')
 
 # Cairo and Pango for widget rendering
 cairo = dependency('cairo')
@@ -346,6 +347,7 @@ all_deps = [
   libdrm,
   dbus,
   glib,
+  gio,
   cairo,
   cairo_xlib,
   pangocairo,
