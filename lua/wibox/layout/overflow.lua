@@ -101,7 +101,7 @@ function overflow:layout(context, orig_width, orig_height)
     -- First, determine widget sizes.
     -- Only when the content doesn't fit and needs scrolling should
     -- we reduce content size to make space for a scrollbar.
-    for _, widget in pairs(widgets) do
+    for _, widget in ipairs(widgets) do
         local w, h = base.fit_widget(self, context, widget, width, height)
 
         if is_y then
@@ -213,9 +213,12 @@ function overflow:layout(context, orig_width, orig_height)
             end
         end
 
-        local is_in_view = is_y
-                           and (scrolled_pos + content_h > 0)
-                           or (scrolled_pos + content_w > 0)
+        local is_in_view
+        if is_y then
+            is_in_view = scrolled_pos + content_h > 0
+        else
+            is_in_view = scrolled_pos + content_w > 0
+        end
 
         if is_in_view then
             -- Add the spacing widget, but not before the first widget
@@ -269,6 +272,10 @@ function overflow:set_step(step)
     self._private.step = step
     -- We don't need to emit enything here, since changing step only really
     -- takes effect the next time the user scrolls
+end
+
+function overflow:get_step()
+    return self._private.step
 end
 
 
@@ -352,6 +359,10 @@ function overflow:set_scrollbar_width(width)
 
     self:emit_signal("widget::layout_changed")
     self:emit_signal("property::scrollbar_width", width)
+end
+
+function overflow:get_scrollbar_width()
+    return self._private.scrollbar_width
 end
 
 
