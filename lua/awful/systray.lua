@@ -1273,7 +1273,7 @@ function systray._cleanup()
 
     -- Unwatch per-item name watches and signal subscriptions
     if systray._private.item_data then
-        for item, data in pairs(systray._private.item_data) do
+        for _, data in pairs(systray._private.item_data) do
             if data then
                 if data.name_watch_id then
                     pcall(Gio.bus_unwatch_name, data.name_watch_id)
@@ -1307,6 +1307,9 @@ function systray._cleanup()
     systray._private.initialized = false
     systray._private.bus = nil
 end
+
+-- Clean up GDBus subscriptions on exit (hot-reload or shutdown)
+capi.awesome.connect_signal("exit", systray._cleanup)
 
 -- Auto-initialize when the module is loaded
 -- (after a short delay to ensure awesome global is ready)
