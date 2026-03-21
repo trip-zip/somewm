@@ -298,6 +298,24 @@ luaA_class_setup(lua_State *L, lua_class_t *class,
     lua_class_array_append(&luaA_classes, class);
 }
 
+/** Wipe all class signal arrays and reset the class registry.
+ * Called during hot-reload before creating the fresh Lua state.
+ * Class signal arrays contain Lua registry refs from the old state;
+ * if not wiped, emitting signals in the new state calls stale refs.
+ */
+void
+luaA_class_cleanup_all(void)
+{
+    for (int i = 0; i < luaA_classes.len; i++) {
+        signal_array_wipe(&luaA_classes.tab[i]->signals);
+        signal_array_init(&luaA_classes.tab[i]->signals);
+        luaA_classes.tab[i]->instances = 0;
+        luaA_classes.tab[i]->index_miss_handler = LUA_REFNIL;
+        luaA_classes.tab[i]->newindex_miss_handler = LUA_REFNIL;
+    }
+    luaA_classes.len = 0;
+}
+
 void
 luaA_class_connect_signal(lua_State *L, lua_class_t *lua_class, const char *name, lua_CFunction fn)
 {

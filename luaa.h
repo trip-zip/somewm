@@ -106,6 +106,8 @@ luaA_unregister(lua_State *L, int *ref)
 void luaA_init(void);
 void luaA_loadrc(void);
 void luaA_cleanup(void);
+void luaA_set_argv(char **argv);
+void luaA_hot_reload(void);
 
 /* awesome module (merged from objects/awesome.c) */
 void luaA_awesome_setup(lua_State *L);
