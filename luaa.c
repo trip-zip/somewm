@@ -4498,6 +4498,7 @@ luaA_hot_reload(void)
 	 * not in globalconf.screens. Use luaA_screen_get_all() to access them.
 	 */
 	{
+		/* 64 is far beyond any real multi-monitor setup */
 		screen_t *screen_ptrs[64];
 		num_screens = 64;
 		luaA_screen_get_all(L, screen_ptrs, &num_screens);
