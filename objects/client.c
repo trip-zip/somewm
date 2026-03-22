@@ -2768,19 +2768,26 @@ client_resize(client_t *c, area_t geometry, bool honor_hints, bool silent)
         geometry = client_apply_size_hints(c, geometry);
     }
 
-    /* Apply aspect ratio constraint (Wayland equivalent of ICCCM aspect hints).
-     * Works on full geometry to match the ratio captured from Lua. */
+    /* Apply aspect ratio constraint on content area (excluding borders/titlebars).
+     * Lua sets aspect_ratio = content_width / content_height. */
     if (c->aspect_ratio > 0 && !c->fullscreen && !c->maximized) {
-        int w = geometry.width;
-        int h = geometry.height;
-        if (w > 0 && h > 0) {
-            double current = (double)w / h;
-            double epsilon = 1.5 / (double)h;
+        int bw2 = 2 * c->border_width;
+        int tb_h = c->titlebar[CLIENT_TITLEBAR_TOP].size
+            + c->titlebar[CLIENT_TITLEBAR_BOTTOM].size;
+        int tb_w = c->titlebar[CLIENT_TITLEBAR_LEFT].size
+            + c->titlebar[CLIENT_TITLEBAR_RIGHT].size;
+        int cw = geometry.width - bw2 - tb_w;
+        int ch = geometry.height - bw2 - tb_h;
+        if (cw > 0 && ch > 0) {
+            double current = (double)cw / ch;
+            double epsilon = 1.5 / (double)ch;
             if (current - c->aspect_ratio > epsilon) {
-                geometry.width = (int)(h * c->aspect_ratio + 0.5);
+                cw = (int)(ch * c->aspect_ratio + 0.5);
             } else if (c->aspect_ratio - current > epsilon) {
-                geometry.height = (int)(w / c->aspect_ratio + 0.5);
+                ch = (int)(cw / c->aspect_ratio + 0.5);
             }
+            geometry.width = cw + bw2 + tb_w;
+            geometry.height = ch + bw2 + tb_h;
         }
     }
 

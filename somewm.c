@@ -4198,6 +4198,17 @@ outputmgrtest(struct wl_listener *listener, void *data)
 	outputmgrapplyortest(config, 1);
 }
 
+static int pointer_enter_deferred_pending;
+
+static void
+deferred_pointer_enter(void *data)
+{
+	(void)data;
+	pointer_enter_deferred_pending = 0;
+	/* Re-evaluate pointer focus with current cursor position */
+	motionnotify(0, NULL, 0, 0, 0, 0);
+}
+
 void
 pointerfocus(Client *c, struct wlr_surface *surface, double sx, double sy,
 		uint32_t time)
@@ -4237,6 +4248,15 @@ pointerfocus(Client *c, struct wlr_surface *surface, double sx, double sy,
 				"(client had no wl_pointer resources)",
 				c ? client_get_appid(c) : "?");
 			wlr_seat_pointer_notify_clear_focus(seat);
+			/* Schedule deferred re-delivery — client may not have
+			 * bound wl_pointer yet. By the time the idle callback
+			 * fires, the client will have its pointer resources ready. */
+			if (!pointer_enter_deferred_pending) {
+				pointer_enter_deferred_pending = 1;
+				wl_event_loop_add_idle(
+					wl_display_get_event_loop(dpy),
+					deferred_pointer_enter, NULL);
+			}
 		}
 	}
 
@@ -4536,21 +4556,27 @@ resize(Client *c, struct wlr_box geo, int interact)
 	c->geometry = geo;
 	applybounds(c, bbox);
 
-	/* Apply aspect ratio constraint (Wayland equivalent of ICCCM aspect hints).
-	 * Works on full geometry (including borders/titlebars) to match
-	 * the ratio captured from Lua (geo.width / geo.height). */
+	/* Apply aspect ratio constraint on content area (excluding borders/titlebars).
+	 * Lua sets aspect_ratio = content_width / content_height, so we must
+	 * subtract decoration sizes before comparing, then add them back. */
 	if (c->aspect_ratio > 0 && !c->fullscreen && !c->maximized) {
-		int w = c->geometry.width;
-		int h = c->geometry.height;
-		if (w > 0 && h > 0) {
-			double current = (double)w / h;
-			/* Tolerance: ~1 pixel to prevent rounding oscillation */
-			double epsilon = 1.5 / (double)h;
+		int bw2 = 2 * c->bw;
+		int tb_h = c->titlebar[CLIENT_TITLEBAR_TOP].size
+			+ c->titlebar[CLIENT_TITLEBAR_BOTTOM].size;
+		int tb_w = c->titlebar[CLIENT_TITLEBAR_LEFT].size
+			+ c->titlebar[CLIENT_TITLEBAR_RIGHT].size;
+		int cw = c->geometry.width - bw2 - tb_w;
+		int ch = c->geometry.height - bw2 - tb_h;
+		if (cw > 0 && ch > 0) {
+			double current = (double)cw / ch;
+			double epsilon = 1.5 / (double)ch;
 			if (current - c->aspect_ratio > epsilon) {
-				c->geometry.width = (int)(h * c->aspect_ratio + 0.5);
+				cw = (int)(ch * c->aspect_ratio + 0.5);
 			} else if (c->aspect_ratio - current > epsilon) {
-				c->geometry.height = (int)(w / c->aspect_ratio + 0.5);
+				ch = (int)(cw / c->aspect_ratio + 0.5);
 			}
+			c->geometry.width = cw + bw2 + tb_w;
+			c->geometry.height = ch + bw2 + tb_h;
 		}
 	}
 

@@ -715,6 +715,25 @@ client.connect_signal("property::position", function(c)
     end
 end)
 
+-- mpv: update aspect ratio when video changes (playlist advancement).
+-- mpv resizes the window to match the new video's native dimensions,
+-- which emits property::size. We recapture the ratio so subsequent
+-- user resizes maintain the new video's proportions.
+-- This is safe during user resize too — the C-level aspect_ratio
+-- enforcement means width/height already matches the current ratio,
+-- so recalculating it is idempotent (same value within rounding).
+client.connect_signal("property::size", function(c)
+    if c.class == "mpv" and c.floating and not c.fullscreen
+            and not c.maximized and c.width > 0 and c.height > 0 then
+        local bw2 = 2 * (c.border_width or 0)
+        local cw = c.width - bw2
+        local ch = c.height - bw2
+        if cw > 0 and ch > 0 then
+            c.aspect_ratio = cw / ch
+        end
+    end
+end)
+
 -- }}}
 
 -- {{{ Rules
@@ -812,6 +831,29 @@ ruled.client.connect_signal("request::rules", function()
         callback   = function(c)
             c.width = 1980
             c.height = 1080
+            awful.placement.centered(c, nil)
+        end
+    }
+
+    -- mpv: floating with aspect ratio preservation
+    ruled.client.append_rule {
+        rule_any   = {
+            class = { "mpv" },
+        },
+        properties = {
+            floating  = true,
+            titlebars_enabled = true,
+        },
+        callback   = function(c)
+            -- Set initial aspect ratio from video content dimensions.
+            -- c.width/c.height is full geometry (incl. borders), so subtract
+            -- borders to get the content (surface) size matching the video.
+            local bw2 = 2 * (c.border_width or 0)
+            local cw = c.width - bw2
+            local ch = c.height - bw2
+            if cw > 0 and ch > 0 then
+                c.aspect_ratio = cw / ch
+            end
             awful.placement.centered(c, nil)
         end
     }

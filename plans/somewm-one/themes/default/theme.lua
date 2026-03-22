@@ -132,15 +132,14 @@ theme.layout_cornersw = themes_path.."default/layouts/cornersww.png"
 theme.layout_cornerse = themes_path.."default/layouts/cornersew.png"
 
 -- Shadow configuration (9-slice drop shadow)
--- clip=false → soft glow around all edges (like picom)
--- offset shifts the glow slightly right+down for depth
+-- clip="directional" → shadow only on offset side (right+down)
 theme.shadow_enabled    = true
 theme.shadow_radius     = 20
 theme.shadow_offset_x   = 3
 theme.shadow_offset_y   = 3
 theme.shadow_opacity    = 0.4
 theme.shadow_color      = "#000000"
-theme.shadow_clip       = false
+theme.shadow_clip       = "directional"
 
 -- Lockscreen theme
 theme.lockscreen_bg_color   = "#1a1a2e"
