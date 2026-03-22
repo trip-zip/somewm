@@ -30,12 +30,12 @@ Sway officially refuses to support proprietary NVIDIA drivers but the code still
 
 ## GitHub Repository & Workflow
 
-- **Upstream:** `trip-zip/somewm` (origin remote)
-- **Our fork:** `raven2cz/somewm` (fork remote)
+- **Upstream:** `trip-zip/somewm`
+- **Our fork:** `raven2cz/somewm`
 - **GitHub CLI:** `gh` is installed and authenticated as `raven2cz`
 - **Git remotes:**
-  - `origin` → `git@github.com:trip-zip/somewm.git` (upstream, read-only for us)
-  - `fork` → `git@github.com:raven2cz/somewm.git` (our fork, push here)
+  - `origin` → `git@github.com:raven2cz/somewm.git` (our fork, push here)
+  - `upstream` → `git@github.com:trip-zip/somewm.git` (upstream, read-only for us)
 
 ### Branch & Commit Workflow
 ```bash
@@ -300,9 +300,39 @@ Current rc.lua includes:
 - Timer-based focus re-delivery for game windows (60s, 2s interval)
 - `steam_app_*` client rule (no titlebar, focusable)
 
+## somewm-one (User Config Project)
+
+Our rc.lua + themes + plugins are versioned in `plans/somewm-one/`.
+This is the "release" copy — edit here, deploy to `~/.config/somewm`.
+
+```bash
+# Edit config
+vim plans/somewm-one/rc.lua
+
+# Deploy to active config (backs up rc.lua.bak first)
+plans/somewm-one/deploy.sh
+
+# Dry run (show what would be synced)
+plans/somewm-one/deploy.sh --dry-run
+
+# Reload after deploy (from running somewm session)
+somewm-client reload
+```
+
+Contents:
+- `rc.lua` — main config (837 lines, AwesomeWM format)
+- `themes/default/` — theme with icons, backgrounds, layout PNGs
+- `layout-machi/` — layout-machi plugin (tiling layout engine)
+- `deploy.sh` — rsync to `~/.config/somewm` (excludes itself)
+
+**Rule:** Always edit `plans/somewm-one/rc.lua`, never `~/.config/somewm/rc.lua` directly.
+After editing, run `deploy.sh` to sync.
+
 ## Plans Directory
 
 `plans/` contains development plans, issue tracking, and fix documentation.
+- `plans/upstream/` - Upstream sync records and fork status
+- `plans/somewm-one/` - User config project (rc.lua, themes, deploy script)
 - `plans/alfa-focus-dispatch.md` - Focus/keyboard delivery fix (4 bugs found)
 - `plans/fix-137-xwayland-keyboard-focus.md` - Upstream fix guide for #137 with code
 - `plans/stabilization-issues.md` - Documents fixed issues (updatemons UAF, output cleanup)
