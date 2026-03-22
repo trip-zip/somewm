@@ -1566,7 +1566,7 @@ typedef enum {
 
 static area_t titlebar_get_area(client_t *c, client_titlebar_t bar);
 static drawable_t *titlebar_get_drawable(lua_State *L, client_t *c, int cl_idx, client_titlebar_t bar);
-static void client_resize_do(client_t *c, area_t geometry);
+static void client_resize_do(client_t *c, area_t geometry, bool silent);
 static void client_set_maximized_common(lua_State *L, int cidx, bool s, const char* type, const int val);
 
 /** Collect a client.
@@ -1610,14 +1610,16 @@ client_wipe(client_t *c)
         c->titlebar[i].scene_buffer = NULL;
     }
 
-    /* Cleanup shadow cache reference.
-     * NOTE: Shadow scene nodes are children of c->scene and are automatically
-     * destroyed when the parent is destroyed. We only need to release our
-     * reference to the shared cache entry. */
-    if (c->shadow.cache) {
-        shadow_cache_put(c->shadow.cache);
-        c->shadow.cache = NULL;
+    /* Shadow scene nodes are children of c->scene and destroyed with it.
+     * We own the texture buffers though and must free them. */
+    for (int i = 0; i < SHADOW_TEXTURE_COUNT; i++) {
+        if (c->shadow.textures[i]) {
+            wlr_buffer_drop(c->shadow.textures[i]);
+            c->shadow.textures[i] = NULL;
+        }
     }
+    c->shadow.tree = NULL;
+    memset(c->shadow.slice, 0, sizeof(c->shadow.slice));
     if (c->shadow_config) {
         free(c->shadow_config);
         c->shadow_config = NULL;
@@ -2066,12 +2068,10 @@ client_focus(client_t *c)
         globalconf.focus.need_update = true;
     }
 
-    /* Always sync seat keyboard focus. client_focus_update() returns false
-     * when globalconf.focus.client hasn't changed, but the Wayland seat
-     * keyboard focus can desync independently (layer surfaces stealing
-     * keyboard, popups/subsurfaces receiving keyboard enter, XWayland
-     * surface recreation). some_set_seat_keyboard_focus() handles the
-     * already-focused case efficiently with an early return. */
+    /* Always sync Wayland seat keyboard focus — it can desync independently
+     * from Lua bookkeeping (e.g. layer surface steals keyboard, popup receives
+     * keyboard enter, XWayland surface recreation). some_set_seat_keyboard_focus()
+     * has its own early return when seat focus already matches (somewm_api.c). */
     some_set_seat_keyboard_focus(c);
 }
 
@@ -2253,7 +2253,7 @@ border_width_callback(client_t *c, uint16_t old_width, uint16_t new_width)
                                       diff, diff, diff, diff,
                                       &geometry.x, &geometry.y);
         /* inform client about changes */
-        client_resize_do(c, geometry);
+        client_resize_do(c, geometry, false);
     }
 }
 
@@ -2654,13 +2654,13 @@ client_apply_size_hints(client_t *c, area_t geometry)
 }
 
 static void
-client_resize_do(client_t *c, area_t geometry)
+client_resize_do(client_t *c, area_t geometry, bool silent)
 {
     lua_State *L = globalconf_get_lua_State();
     area_t old_geometry;
     screen_t *new_screen = c->screen;
 
-    if(!new_screen || !screen_area_in_screen(new_screen, geometry))
+    if(!silent && (!new_screen || !screen_area_in_screen(new_screen, geometry)))
         new_screen = screen_getbycoord(geometry.x, geometry.y);
 
     /* Also store geometry including border */
@@ -2688,28 +2688,31 @@ client_resize_do(client_t *c, area_t geometry)
     }
 #endif
 
-    luaA_object_push(L, c);
-    if (!AREA_EQUAL(old_geometry, geometry))
-        luaA_object_emit_signal(L, -1, "property::geometry", 0);
-    if (old_geometry.x != geometry.x || old_geometry.y != geometry.y)
+    if(!silent)
     {
-        luaA_object_emit_signal(L, -1, "property::position", 0);
-        if (old_geometry.x != geometry.x)
-            luaA_object_emit_signal(L, -1, "property::x", 0);
-        if (old_geometry.y != geometry.y)
-            luaA_object_emit_signal(L, -1, "property::y", 0);
-    }
-    if (old_geometry.width != geometry.width || old_geometry.height != geometry.height)
-    {
-        luaA_object_emit_signal(L, -1, "property::size", 0);
-        if (old_geometry.width != geometry.width)
-            luaA_object_emit_signal(L, -1, "property::width", 0);
-        if (old_geometry.height != geometry.height)
-            luaA_object_emit_signal(L, -1, "property::height", 0);
-    }
-    lua_pop(L, 1);
+        luaA_object_push(L, c);
+        if (!AREA_EQUAL(old_geometry, geometry))
+            luaA_object_emit_signal(L, -1, "property::geometry", 0);
+        if (old_geometry.x != geometry.x || old_geometry.y != geometry.y)
+        {
+            luaA_object_emit_signal(L, -1, "property::position", 0);
+            if (old_geometry.x != geometry.x)
+                luaA_object_emit_signal(L, -1, "property::x", 0);
+            if (old_geometry.y != geometry.y)
+                luaA_object_emit_signal(L, -1, "property::y", 0);
+        }
+        if (old_geometry.width != geometry.width || old_geometry.height != geometry.height)
+        {
+            luaA_object_emit_signal(L, -1, "property::size", 0);
+            if (old_geometry.width != geometry.width)
+                luaA_object_emit_signal(L, -1, "property::width", 0);
+            if (old_geometry.height != geometry.height)
+                luaA_object_emit_signal(L, -1, "property::height", 0);
+        }
+        lua_pop(L, 1);
 
-    screen_client_moveto(c, new_screen, false);
+        screen_client_moveto(c, new_screen, false);
+    }
 
     /* Update all titlebars */
     for (client_titlebar_t bar = CLIENT_TITLEBAR_TOP; bar < CLIENT_TITLEBAR_COUNT; bar++) {
@@ -2746,10 +2749,11 @@ client_resize_do(client_t *c, area_t geometry)
  * \param c Client to resize.
  * \param geometry New window geometry.
  * \param honor_hints Use size hints.
+ * \param silent Skip signal emissions and screen reassignment.
  * \return true if an actual resize occurred.
  */
 bool
-client_resize(client_t *c, area_t geometry, bool honor_hints)
+client_resize(client_t *c, area_t geometry, bool honor_hints, bool silent)
 {
     if (honor_hints) {
         /* We could get integer underflows in client_remove_titlebar_geometry()
@@ -2793,7 +2797,7 @@ client_resize(client_t *c, area_t geometry, bool honor_hints)
 
     if(!AREA_EQUAL(c->geometry, geometry))
     {
-        client_resize_do(c, geometry);
+        client_resize_do(c, geometry, silent);
 
         return true;
     }
@@ -2819,6 +2823,13 @@ client_set_minimized(lua_State *L, int cidx, bool s)
         /* Wayland: Hide/show the client's scene node */
         if(c->scene)
             wlr_scene_node_set_enabled(&c->scene->node, !s);
+
+        /* Wayland: Sync suspended state with minimized state.
+         * The C arrange() also sets this, but runs asynchronously via
+         * timer.delayed_call. Set it immediately so the client can start
+         * rendering at the new size before the deferred arrange fires. */
+        if(c->client_type == XDGShell)
+            wlr_xdg_toplevel_set_suspended(c->surface.xdg->toplevel, s);
 
         if(c->toplevel_handle)
             wlr_foreign_toplevel_handle_v1_set_minimized(c->toplevel_handle, s);
@@ -2933,7 +2944,7 @@ client_set_fullscreen(lua_State *L, int cidx, bool s)
         if(c->toplevel_handle)
             wlr_foreign_toplevel_handle_v1_set_fullscreen(c->toplevel_handle, s);
         /* Force a client resize, so that titlebars get shown/hidden */
-        client_resize_do(c, c->geometry);
+        client_resize_do(c, c->geometry, false);
         stack_windows();
     }
 }
@@ -3158,6 +3169,10 @@ client_unmanage(client_t *c, client_unmanage_t reason)
     if(globalconf.focus.client == c)
         client_unfocus(c);
 
+    /* Clear pre-lock focused client if it references this client.
+     * Prevents use-after-free when unlocking after the saved client is destroyed. */
+    some_clear_pre_lock_client(c);
+
     /* Clear mouse tracking if over this client.
      * Must happen BEFORE signals are emitted to prevent dangling pointer access. */
     if (globalconf.mouse_under.type == UNDER_CLIENT &&
@@ -3286,6 +3301,15 @@ client_unmanage(client_t *c, client_unmanage_t reason)
 
     /* set client as invalid (X11/XWayland compatibility) */
     c->window = XCB_NONE;
+
+#ifdef XWAYLAND
+    /* For XWayland UNMAP: keep the Lua reference alive so that re-mapping
+     * the same surface (e.g., Discord close-to-tray then re-open) can push
+     * the client object to Lua.  The reference will be released by
+     * destroynotify() when the XWayland surface is actually destroyed. */
+    if (c->client_type == X11 && reason == CLIENT_UNMANAGE_UNMAP)
+        return;
+#endif
 
     luaA_object_unref(L, c);
 }
@@ -3425,8 +3449,7 @@ client_set_icons(client_t *c, cairo_surface_array_t array)
 static void
 client_set_icon(client_t *c, cairo_surface_t *s)
 {
-    cairo_surface_array_t array;
-    cairo_surface_array_init(&array);
+    cairo_surface_array_t array = {};
     if (s && cairo_surface_status(s) == CAIRO_STATUS_SUCCESS)
         cairo_surface_array_push(&array, draw_dup_image_surface(s));
     client_set_icons(c, array);
@@ -3946,7 +3969,7 @@ titlebar_resize(lua_State *L, int cidx, client_t *c, client_titlebar_t bar, int 
     }
 
     c->titlebar[bar].size = size;
-    client_resize_do(c, geometry);
+    client_resize_do(c, geometry, false);
 
     /* Update scene buffer visibility and position (Wayland-specific) */
     if (c->titlebar[bar].scene_buffer) {
@@ -4022,6 +4045,44 @@ HANDLE_TITLEBAR(left, CLIENT_TITLEBAR_LEFT)
  * @see width
  * @see height
  */
+/** Parse a geometry table from Lua into an area_t, preserving current values
+ * for nil fields and respecting client_isfixed().
+ */
+static area_t
+luaA_client_geometry_from_table(lua_State *L, int table_idx, client_t *c)
+{
+    area_t geometry;
+    double width_from_table, height_from_table;
+
+    lua_getfield(L, table_idx, "width");
+    width_from_table = lua_tonumber(L, -1);
+    lua_pop(L, 1);
+    lua_getfield(L, table_idx, "height");
+    height_from_table = lua_tonumber(L, -1);
+    lua_pop(L, 1);
+
+    lua_getfield(L, table_idx, "x");
+    geometry.x = lua_isnil(L, -1) ? c->geometry.x : (int)round(lua_tonumber(L, -1));
+    lua_pop(L, 1);
+
+    lua_getfield(L, table_idx, "y");
+    geometry.y = lua_isnil(L, -1) ? c->geometry.y : (int)round(lua_tonumber(L, -1));
+    lua_pop(L, 1);
+
+    if(client_isfixed(c))
+    {
+        geometry.width = c->geometry.width;
+        geometry.height = c->geometry.height;
+    }
+    else
+    {
+        geometry.width = (int)ceil(width_from_table > 0 ? width_from_table : c->geometry.width);
+        geometry.height = (int)ceil(height_from_table > 0 ? height_from_table : c->geometry.height);
+    }
+
+    return geometry;
+}
+
 static int
 luaA_client_geometry(lua_State *L)
 {
@@ -4029,40 +4090,38 @@ luaA_client_geometry(lua_State *L)
 
     if(lua_gettop(L) == 2 && !lua_isnil(L, 2))
     {
-        area_t geometry;
-        double width_from_table, height_from_table;
-
         luaA_checktable(L, 2);
+        area_t geometry = luaA_client_geometry_from_table(L, 2, c);
+        client_resize(c, geometry, c->size_hints_honor, false);
+    }
 
-        /* DEBUG: Check what's in the table */
-        lua_getfield(L, 2, "width");
-        width_from_table = lua_tonumber(L, -1);
-        lua_pop(L, 1);
-        lua_getfield(L, 2, "height");
-        height_from_table = lua_tonumber(L, -1);
-        lua_pop(L, 1);
+    return luaA_pusharea(L, c->geometry);
+}
 
-        /* WAYLAND WORKAROUND: luaA_getopt_number_range is broken, use direct lua_getfield */
-        lua_getfield(L, 2, "x");
-        geometry.x = lua_isnil(L, -1) ? c->geometry.x : (int)round(lua_tonumber(L, -1));
-        lua_pop(L, 1);
+/** Set client geometry without emitting signals or reassigning screens.
+ *
+ * This is intended for layout engines that position clients offscreen
+ * (e.g. scrolling/carousel layouts) where signal cascades and screen
+ * reassignment would cause infinite loops.
+ *
+ * @tparam table geo A table with new coordinates.
+ * @tparam integer geo.x The horizontal position.
+ * @tparam integer geo.y The vertical position.
+ * @tparam integer geo.width The width.
+ * @tparam integer geo.height The height.
+ * @treturn table A table with the resulting client geometry.
+ * @method _set_geometry_silent
+ */
+static int
+luaA_client_set_geometry_silent(lua_State *L)
+{
+    client_t *c = luaA_checkudata(L, 1, &client_class);
 
-        lua_getfield(L, 2, "y");
-        geometry.y = lua_isnil(L, -1) ? c->geometry.y : (int)round(lua_tonumber(L, -1));
-        lua_pop(L, 1);
-
-        if(client_isfixed(c))
-        {
-            geometry.width = c->geometry.width;
-            geometry.height = c->geometry.height;
-        }
-        else
-        {
-            geometry.width = (int)ceil(width_from_table > 0 ? width_from_table : c->geometry.width);
-            geometry.height = (int)ceil(height_from_table > 0 ? height_from_table : c->geometry.height);
-        }
-
-        client_resize(c, geometry, c->size_hints_honor);
+    if(lua_gettop(L) == 2 && !lua_isnil(L, 2))
+    {
+        luaA_checktable(L, 2);
+        area_t geometry = luaA_client_geometry_from_table(L, 2, c);
+        client_resize(c, geometry, c->size_hints_honor, true);
     }
 
     return luaA_pusharea(L, c->geometry);
@@ -4339,8 +4398,12 @@ luaA_client_get_shadow(lua_State *L, client_t *c)
     if (c->shadow_config) {
         shadow_config_to_lua(L, c->shadow_config);
     } else {
-        /* Return true to indicate using defaults */
-        lua_pushboolean(L, c->shadow.tree != NULL);
+        const shadow_config_t *eff = shadow_get_effective_config(NULL, false);
+        if (eff->enabled && c->shadow.tree) {
+            shadow_config_to_lua(L, eff);
+        } else {
+            lua_pushboolean(L, false);
+        }
     }
     return 1;
 }
@@ -4355,7 +4418,7 @@ luaA_client_set_shadow(lua_State *L, client_t *c)
 {
     shadow_config_t new_config;
 
-    if (!shadow_config_from_lua(L, -1, &new_config)) {
+    if (!shadow_config_from_lua(L, -1, &new_config, false)) {
         return luaL_error(L, "%s", lua_tostring(L, -1));
     }
 
@@ -4369,18 +4432,8 @@ luaA_client_set_shadow(lua_State *L, client_t *c)
 
     /* Update shadow if client is mapped */
     if (c->scene) {
-        if (new_config.enabled && !c->shadow.tree) {
-            /* Create shadow */
-            shadow_create(c->scene, &c->shadow, &new_config,
-                c->geometry.width, c->geometry.height);
-        } else if (!new_config.enabled && c->shadow.tree) {
-            /* Destroy shadow */
-            shadow_destroy(&c->shadow);
-        } else if (c->shadow.tree) {
-            /* Update existing shadow */
-            shadow_update_config(&c->shadow, &new_config,
-                c->geometry.width, c->geometry.height);
-        }
+        shadow_update_config(&c->shadow, c->scene, &new_config,
+            c->geometry.width, c->geometry.height);
     }
 
     luaA_object_emit_signal(L, -3, "property::shadow", 0);
@@ -4911,6 +4964,22 @@ luaA_client_get_client_shape_clip(lua_State *L, client_t *c)
     return 1;
 }
 
+/** Get the client's child window input shape.
+ * \param L The Lua VM state.
+ * \param client The client object.
+ * \return The number of elements pushed on stack.
+ */
+static int
+luaA_client_get_client_shape_input(lua_State *L, client_t *c)
+{
+    cairo_surface_t *surf = xwindow_get_shape(c->window, XCB_SHAPE_SK_INPUT);
+    if (!surf)
+        return 0;
+    /* lua has to make sure to free the ref or we have a leak */
+    lua_pushlightuserdata(L, surf);
+    return 1;
+}
+
 /** Get the client's frame window clip shape.
  * \param L The Lua VM state.
  * \param client The client object.
@@ -5159,10 +5228,58 @@ luaA_client_set_xproperty(lua_State *L)
     return 0;
 }
 
+/** client:_border_is_focus_color() -> boolean
+ *
+ * Returns true if the client's rendered border color matches the
+ * compositor's focus color. Reads directly from wlr_scene_rect.
+ */
+static int
+luaA_client_border_is_focus_color(lua_State *L)
+{
+    client_t *c = luaA_checkudata(L, 1, &client_class);
+    if (!c || !c->border[0]) {
+        lua_pushboolean(L, 0);
+        return 1;
+    }
+
+    const float *focus = globalconf.appearance.focuscolor;
+    const float *actual = c->border[0]->color;
+
+    int matches = (actual[0] == focus[0] && actual[1] == focus[1] &&
+                   actual[2] == focus[2] && actual[3] == focus[3]);
+
+    lua_pushboolean(L, matches);
+    return 1;
+}
+
+/** client:_border_is_normal_color() -> boolean
+ *
+ * Returns true if the client's rendered border color matches the
+ * compositor's normal (unfocused) border color.
+ */
+static int
+luaA_client_border_is_normal_color(lua_State *L)
+{
+    client_t *c = luaA_checkudata(L, 1, &client_class);
+    if (!c || !c->border[0]) {
+        lua_pushboolean(L, 0);
+        return 1;
+    }
+
+    const float *normal = globalconf.appearance.bordercolor;
+    const float *actual = c->border[0]->color;
+
+    int matches = (actual[0] == normal[0] && actual[1] == normal[1] &&
+                   actual[2] == normal[2] && actual[3] == normal[3]);
+
+    lua_pushboolean(L, matches);
+    return 1;
+}
+
 void
 client_class_setup(lua_State *L)
 {
-    static const struct luaL_Reg client_methods[] =
+    const struct luaL_Reg client_methods[] =
     {
         LUA_CLASS_METHODS(client)
         { "get", luaA_client_get },
@@ -5171,7 +5288,7 @@ client_class_setup(lua_State *L)
         { NULL, NULL }
     };
 
-    static const struct luaL_Reg client_meta[] =
+    const struct luaL_Reg client_meta[] =
     {
         LUA_OBJECT_META(client)
         LUA_CLASS_META
@@ -5181,6 +5298,7 @@ client_class_setup(lua_State *L)
         { "isvisible", luaA_client_isvisible },
         { "has_keyboard_focus", luaA_client_has_keyboard_focus },
         { "geometry", luaA_client_geometry },
+        { "_set_geometry_silent", luaA_client_set_geometry_silent },
         { "apply_size_hints", luaA_client_apply_size_hints },
         { "tags", luaA_client_tags },
         { "kill", luaA_client_kill },
@@ -5195,6 +5313,8 @@ client_class_setup(lua_State *L)
         { "get_icon", luaA_client_get_some_icon },
         { "get_xproperty", luaA_client_get_xproperty },
         { "set_xproperty", luaA_client_set_xproperty },
+        { "_border_is_focus_color", luaA_client_border_is_focus_color },
+        { "_border_is_normal_color", luaA_client_border_is_normal_color },
         { NULL, NULL }
     };
 
@@ -5205,182 +5325,55 @@ client_class_setup(lua_State *L)
                      luaA_class_index_miss_property, luaA_class_newindex_miss_property,
                      client_methods, client_meta);
     luaA_class_set_tostring(&client_class, (lua_class_propfunc_t) client_tostring);
-    luaA_class_add_property(&client_class, "name",
-                            (lua_class_propfunc_t) luaA_client_set_name,
-                            (lua_class_propfunc_t) luaA_client_get_name,
-                            (lua_class_propfunc_t) luaA_client_set_name);
-    luaA_class_add_property(&client_class, "transient_for",
-                            NULL,
-                            (lua_class_propfunc_t) luaA_client_get_transient_for,
-                            NULL);
-    luaA_class_add_property(&client_class, "skip_taskbar",
-                            (lua_class_propfunc_t) luaA_client_set_skip_taskbar,
-                            (lua_class_propfunc_t) luaA_client_get_skip_taskbar,
-                            (lua_class_propfunc_t) luaA_client_set_skip_taskbar);
-    luaA_class_add_property(&client_class, "content",
-                            NULL,
-                            (lua_class_propfunc_t) luaA_client_get_content,
-                            NULL);
-    luaA_class_add_property(&client_class, "type",
-                            NULL,
-                            (lua_class_propfunc_t) luaA_window_get_type,
-                            NULL);
-    luaA_class_add_property(&client_class, "class",
-                            NULL,
-                            (lua_class_propfunc_t) luaA_client_get_class,
-                            NULL);
-    luaA_class_add_property(&client_class, "instance",
-                            NULL,
-                            (lua_class_propfunc_t) luaA_client_get_instance,
-                            NULL);
-    luaA_class_add_property(&client_class, "role",
-                            NULL,
-                            (lua_class_propfunc_t) luaA_client_get_role,
-                            NULL);
-    luaA_class_add_property(&client_class, "pid",
-                            NULL,
-                            (lua_class_propfunc_t) luaA_client_get_pid,
-                            NULL);
-    luaA_class_add_property(&client_class, "leader_window",
-                            NULL,
-                            (lua_class_propfunc_t) luaA_client_get_leader_window,
-                            NULL);
-    luaA_class_add_property(&client_class, "window",
-                            NULL,
-                            (lua_class_propfunc_t) luaA_client_get_window,
-                            NULL);
-    luaA_class_add_property(&client_class, "id",
-                            NULL,
-                            (lua_class_propfunc_t) luaA_client_get_id,
-                            NULL);
-    luaA_class_add_property(&client_class, "machine",
-                            NULL,
-                            (lua_class_propfunc_t) luaA_client_get_machine,
-                            NULL);
-    luaA_class_add_property(&client_class, "icon_name",
-                            NULL,
-                            (lua_class_propfunc_t) luaA_client_get_icon_name,
-                            NULL);
-    luaA_class_add_property(&client_class, "screen",
-                            NULL,
-                            (lua_class_propfunc_t) luaA_client_get_screen,
-                            (lua_class_propfunc_t) luaA_client_set_screen);
-    luaA_class_add_property(&client_class, "hidden",
-                            (lua_class_propfunc_t) luaA_client_set_hidden,
-                            (lua_class_propfunc_t) luaA_client_get_hidden,
-                            (lua_class_propfunc_t) luaA_client_set_hidden);
-    luaA_class_add_property(&client_class, "minimized",
-                            (lua_class_propfunc_t) luaA_client_set_minimized,
-                            (lua_class_propfunc_t) luaA_client_get_minimized,
-                            (lua_class_propfunc_t) luaA_client_set_minimized);
-    luaA_class_add_property(&client_class, "fullscreen",
-                            (lua_class_propfunc_t) luaA_client_set_fullscreen,
-                            (lua_class_propfunc_t) luaA_client_get_fullscreen,
-                            (lua_class_propfunc_t) luaA_client_set_fullscreen);
-    luaA_class_add_property(&client_class, "modal",
-                            (lua_class_propfunc_t) luaA_client_set_modal,
-                            (lua_class_propfunc_t) luaA_client_get_modal,
-                            (lua_class_propfunc_t) luaA_client_set_modal);
-    luaA_class_add_property(&client_class, "motif_wm_hints",
-                            NULL,
-                            (lua_class_propfunc_t) luaA_client_get_motif_wm_hints,
-                            NULL);
-    luaA_class_add_property(&client_class, "group_window",
-                            NULL,
-                            (lua_class_propfunc_t) luaA_client_get_group_window,
-                            NULL);
-    luaA_class_add_property(&client_class, "maximized",
-                            (lua_class_propfunc_t) luaA_client_set_maximized,
-                            (lua_class_propfunc_t) luaA_client_get_maximized,
-                            (lua_class_propfunc_t) luaA_client_set_maximized);
-    luaA_class_add_property(&client_class, "maximized_horizontal",
-                            (lua_class_propfunc_t) luaA_client_set_maximized_horizontal,
-                            (lua_class_propfunc_t) luaA_client_get_maximized_horizontal,
-                            (lua_class_propfunc_t) luaA_client_set_maximized_horizontal);
-    luaA_class_add_property(&client_class, "maximized_vertical",
-                            (lua_class_propfunc_t) luaA_client_set_maximized_vertical,
-                            (lua_class_propfunc_t) luaA_client_get_maximized_vertical,
-                            (lua_class_propfunc_t) luaA_client_set_maximized_vertical);
-    luaA_class_add_property(&client_class, "icon",
-                            (lua_class_propfunc_t) luaA_client_set_icon,
-                            (lua_class_propfunc_t) luaA_client_get_icon,
-                            (lua_class_propfunc_t) luaA_client_set_icon);
-    luaA_class_add_property(&client_class, "icon_sizes",
-                            NULL,
-                            (lua_class_propfunc_t) luaA_client_get_icon_sizes,
-                            NULL);
-    luaA_class_add_property(&client_class, "opacity",
-                            (lua_class_propfunc_t) luaA_client_set_opacity,
-                            (lua_class_propfunc_t) luaA_client_get_opacity,
-                            (lua_class_propfunc_t) luaA_client_set_opacity);
-    luaA_class_add_property(&client_class, "aspect_ratio",
-                            (lua_class_propfunc_t) luaA_client_set_aspect_ratio,
-                            (lua_class_propfunc_t) luaA_client_get_aspect_ratio,
-                            (lua_class_propfunc_t) luaA_client_set_aspect_ratio);
-    luaA_class_add_property(&client_class, "shadow",
-                            (lua_class_propfunc_t) luaA_client_set_shadow,
-                            (lua_class_propfunc_t) luaA_client_get_shadow,
-                            (lua_class_propfunc_t) luaA_client_set_shadow);
-    luaA_class_add_property(&client_class, "ontop",
-                            (lua_class_propfunc_t) luaA_client_set_ontop,
-                            (lua_class_propfunc_t) luaA_client_get_ontop,
-                            (lua_class_propfunc_t) luaA_client_set_ontop);
-    luaA_class_add_property(&client_class, "above",
-                            (lua_class_propfunc_t) luaA_client_set_above,
-                            (lua_class_propfunc_t) luaA_client_get_above,
-                            (lua_class_propfunc_t) luaA_client_set_above);
-    luaA_class_add_property(&client_class, "below",
-                            (lua_class_propfunc_t) luaA_client_set_below,
-                            (lua_class_propfunc_t) luaA_client_get_below,
-                            (lua_class_propfunc_t) luaA_client_set_below);
-    luaA_class_add_property(&client_class, "sticky",
-                            (lua_class_propfunc_t) luaA_client_set_sticky,
-                            (lua_class_propfunc_t) luaA_client_get_sticky,
-                            (lua_class_propfunc_t) luaA_client_set_sticky);
-    luaA_class_add_property(&client_class, "size_hints_honor",
-                            (lua_class_propfunc_t) luaA_client_set_size_hints_honor,
-                            (lua_class_propfunc_t) luaA_client_get_size_hints_honor,
-                            (lua_class_propfunc_t) luaA_client_set_size_hints_honor);
-    luaA_class_add_property(&client_class, "urgent",
-                            (lua_class_propfunc_t) luaA_client_set_urgent,
-                            (lua_class_propfunc_t) luaA_client_get_urgent,
-                            (lua_class_propfunc_t) luaA_client_set_urgent);
-    luaA_class_add_property(&client_class, "size_hints",
-                            NULL,
-                            (lua_class_propfunc_t) luaA_client_get_size_hints,
-                            NULL);
-    luaA_class_add_property(&client_class, "focusable",
-                            (lua_class_propfunc_t) luaA_client_set_focusable,
-                            (lua_class_propfunc_t) luaA_client_get_focusable,
-                            (lua_class_propfunc_t) luaA_client_set_focusable);
-    luaA_class_add_property(&client_class, "shape_bounding",
-                            (lua_class_propfunc_t) luaA_client_set_shape_bounding,
-                            (lua_class_propfunc_t) luaA_client_get_shape_bounding,
-                            (lua_class_propfunc_t) luaA_client_set_shape_bounding);
-    luaA_class_add_property(&client_class, "shape_clip",
-                            (lua_class_propfunc_t) luaA_client_set_shape_clip,
-                            (lua_class_propfunc_t) luaA_client_get_shape_clip,
-                            (lua_class_propfunc_t) luaA_client_set_shape_clip);
-    luaA_class_add_property(&client_class, "shape_input",
-                            (lua_class_propfunc_t) luaA_client_set_shape_input,
-                            (lua_class_propfunc_t) luaA_client_get_shape_input,
-                            (lua_class_propfunc_t) luaA_client_set_shape_input);
-    luaA_class_add_property(&client_class, "startup_id",
-                            (lua_class_propfunc_t) luaA_client_set_startup_id,
-                            (lua_class_propfunc_t) luaA_client_get_startup_id,
-                            (lua_class_propfunc_t) luaA_client_set_startup_id);
-    luaA_class_add_property(&client_class, "client_shape_bounding",
-                            NULL,
-                            (lua_class_propfunc_t) luaA_client_get_client_shape_bounding,
-                            NULL);
-    luaA_class_add_property(&client_class, "client_shape_clip",
-                            NULL,
-                            (lua_class_propfunc_t) luaA_client_get_client_shape_clip,
-                            NULL);
-    luaA_class_add_property(&client_class, "first_tag",
-                            NULL,
-                            (lua_class_propfunc_t) luaA_client_get_first_tag,
-                            NULL);
+
+    lua_class_property_t properties[] = {
+        { "above", (lua_class_propfunc_t) luaA_client_set_above, (lua_class_propfunc_t) luaA_client_get_above, (lua_class_propfunc_t) luaA_client_set_above },
+        { "aspect_ratio", (lua_class_propfunc_t) luaA_client_set_aspect_ratio, (lua_class_propfunc_t) luaA_client_get_aspect_ratio, (lua_class_propfunc_t) luaA_client_set_aspect_ratio },
+        { "below", (lua_class_propfunc_t) luaA_client_set_below, (lua_class_propfunc_t) luaA_client_get_below, (lua_class_propfunc_t) luaA_client_set_below },
+        { "class", NULL, (lua_class_propfunc_t) luaA_client_get_class, NULL },
+        { "client_shape_bounding", NULL, (lua_class_propfunc_t) luaA_client_get_client_shape_bounding, NULL },
+        { "client_shape_clip", NULL, (lua_class_propfunc_t) luaA_client_get_client_shape_clip, NULL },
+        { "client_shape_input", NULL, (lua_class_propfunc_t) luaA_client_get_client_shape_input, NULL },
+        { "content", NULL, (lua_class_propfunc_t) luaA_client_get_content, NULL },
+        { "first_tag", NULL, (lua_class_propfunc_t) luaA_client_get_first_tag, NULL },
+        { "focusable", (lua_class_propfunc_t) luaA_client_set_focusable, (lua_class_propfunc_t) luaA_client_get_focusable, (lua_class_propfunc_t) luaA_client_set_focusable },
+        { "fullscreen", (lua_class_propfunc_t) luaA_client_set_fullscreen, (lua_class_propfunc_t) luaA_client_get_fullscreen, (lua_class_propfunc_t) luaA_client_set_fullscreen },
+        { "group_window", NULL, (lua_class_propfunc_t) luaA_client_get_group_window, NULL },
+        { "hidden", (lua_class_propfunc_t) luaA_client_set_hidden, (lua_class_propfunc_t) luaA_client_get_hidden, (lua_class_propfunc_t) luaA_client_set_hidden },
+        { "icon", (lua_class_propfunc_t) luaA_client_set_icon, (lua_class_propfunc_t) luaA_client_get_icon, (lua_class_propfunc_t) luaA_client_set_icon },
+        { "icon_name", NULL, (lua_class_propfunc_t) luaA_client_get_icon_name, NULL },
+        { "icon_sizes", NULL, (lua_class_propfunc_t) luaA_client_get_icon_sizes, NULL },
+        { "id", NULL, (lua_class_propfunc_t) luaA_client_get_id, NULL },
+        { "instance", NULL, (lua_class_propfunc_t) luaA_client_get_instance, NULL },
+        { "leader_window", NULL, (lua_class_propfunc_t) luaA_client_get_leader_window, NULL },
+        { "machine", NULL, (lua_class_propfunc_t) luaA_client_get_machine, NULL },
+        { "maximized", (lua_class_propfunc_t) luaA_client_set_maximized, (lua_class_propfunc_t) luaA_client_get_maximized, (lua_class_propfunc_t) luaA_client_set_maximized },
+        { "maximized_horizontal", (lua_class_propfunc_t) luaA_client_set_maximized_horizontal, (lua_class_propfunc_t) luaA_client_get_maximized_horizontal, (lua_class_propfunc_t) luaA_client_set_maximized_horizontal },
+        { "maximized_vertical", (lua_class_propfunc_t) luaA_client_set_maximized_vertical, (lua_class_propfunc_t) luaA_client_get_maximized_vertical, (lua_class_propfunc_t) luaA_client_set_maximized_vertical },
+        { "minimized", (lua_class_propfunc_t) luaA_client_set_minimized, (lua_class_propfunc_t) luaA_client_get_minimized, (lua_class_propfunc_t) luaA_client_set_minimized },
+        { "modal", (lua_class_propfunc_t) luaA_client_set_modal, (lua_class_propfunc_t) luaA_client_get_modal, (lua_class_propfunc_t) luaA_client_set_modal },
+        { "motif_wm_hints", NULL, (lua_class_propfunc_t) luaA_client_get_motif_wm_hints, NULL },
+        { "name", (lua_class_propfunc_t) luaA_client_set_name, (lua_class_propfunc_t) luaA_client_get_name, (lua_class_propfunc_t) luaA_client_set_name },
+        { "ontop", (lua_class_propfunc_t) luaA_client_set_ontop, (lua_class_propfunc_t) luaA_client_get_ontop, (lua_class_propfunc_t) luaA_client_set_ontop },
+        { "opacity", (lua_class_propfunc_t) luaA_client_set_opacity, (lua_class_propfunc_t) luaA_client_get_opacity, (lua_class_propfunc_t) luaA_client_set_opacity },
+        { "pid", NULL, (lua_class_propfunc_t) luaA_client_get_pid, NULL },
+        { "role", NULL, (lua_class_propfunc_t) luaA_client_get_role, NULL },
+        { "screen", NULL, (lua_class_propfunc_t) luaA_client_get_screen, (lua_class_propfunc_t) luaA_client_set_screen },
+        { "shadow", (lua_class_propfunc_t) luaA_client_set_shadow, (lua_class_propfunc_t) luaA_client_get_shadow, (lua_class_propfunc_t) luaA_client_set_shadow },
+        { "shape_bounding", (lua_class_propfunc_t) luaA_client_set_shape_bounding, (lua_class_propfunc_t) luaA_client_get_shape_bounding, (lua_class_propfunc_t) luaA_client_set_shape_bounding },
+        { "shape_clip", (lua_class_propfunc_t) luaA_client_set_shape_clip, (lua_class_propfunc_t) luaA_client_get_shape_clip, (lua_class_propfunc_t) luaA_client_set_shape_clip },
+        { "shape_input", (lua_class_propfunc_t) luaA_client_set_shape_input, (lua_class_propfunc_t) luaA_client_get_shape_input, (lua_class_propfunc_t) luaA_client_set_shape_input },
+        { "size_hints", NULL, (lua_class_propfunc_t) luaA_client_get_size_hints, NULL },
+        { "size_hints_honor", (lua_class_propfunc_t) luaA_client_set_size_hints_honor, (lua_class_propfunc_t) luaA_client_get_size_hints_honor, (lua_class_propfunc_t) luaA_client_set_size_hints_honor },
+        { "skip_taskbar", (lua_class_propfunc_t) luaA_client_set_skip_taskbar, (lua_class_propfunc_t) luaA_client_get_skip_taskbar, (lua_class_propfunc_t) luaA_client_set_skip_taskbar },
+        { "startup_id", (lua_class_propfunc_t) luaA_client_set_startup_id, (lua_class_propfunc_t) luaA_client_get_startup_id, (lua_class_propfunc_t) luaA_client_set_startup_id },
+        { "sticky", (lua_class_propfunc_t) luaA_client_set_sticky, (lua_class_propfunc_t) luaA_client_get_sticky, (lua_class_propfunc_t) luaA_client_set_sticky },
+        { "transient_for", NULL, (lua_class_propfunc_t) luaA_client_get_transient_for, NULL },
+        { "type", NULL, (lua_class_propfunc_t) luaA_window_get_type, NULL },
+        { "urgent", (lua_class_propfunc_t) luaA_client_set_urgent, (lua_class_propfunc_t) luaA_client_get_urgent, (lua_class_propfunc_t) luaA_client_set_urgent },
+        { "window", NULL, (lua_class_propfunc_t) luaA_client_get_window, NULL },
+    };
+    luaA_class_add_properties(&client_class, properties, countof(properties));
     /* _buttons is a method (in client_meta), not a property - matches AwesomeWM */
 }
 

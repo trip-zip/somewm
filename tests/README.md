@@ -12,6 +12,16 @@ Unit tests test individual Lua modules in isolation using the busted framework. 
 **Framework**: busted
 **Runner**: `tests/run-unit.sh`
 
+### Check Mode Tests (`tests/test-check-mode.sh`)
+
+Check mode tests validate `somewm --check` behavior by creating temporary config fixtures and verifying output and exit codes. These tests don't start the compositor — they invoke the binary directly as a CLI tool.
+
+**Location**: `tests/test-check-mode.sh`
+**Framework**: Shell script with assert helpers
+**Runner**: `make test-check`
+
+Covers: X11 pattern detection, require scanning, comment filtering, syntax errors, report formatting, and exit codes.
+
 ### Integration Tests (`tests/`)
 
 Integration tests run somewm in headless mode and execute test scenarios via IPC. These tests verify that the compositor behaves correctly as a whole system.
@@ -39,6 +49,12 @@ Example output:
 Running unit tests...
 ●●●●●●●●●●●●
 12 successes / 0 failures / 0 errors / 0 pending : 0.001234 seconds
+```
+
+### Run Check Mode Tests Only
+
+```bash
+make test-check
 ```
 
 ### Run Integration Tests Only
@@ -226,7 +242,7 @@ COVERAGE=1 make test-unit
 
 To port AwesomeWM tests:
 
-1. Copy test file from `~/tools/awesome/tests/` or `~/tools/awesome/spec/`
+1. Copy test file from AwesomeWM's [`tests/`](https://github.com/awesomeWM/awesome/tree/master/tests) or [`spec/`](https://github.com/awesomeWM/awesome/tree/master/spec)
 2. Update any X11-specific code to use Wayland equivalents
 3. Remove client spawning tests (not yet supported in headless mode)
 4. Run and fix any API differences

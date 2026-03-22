@@ -6,6 +6,13 @@ on:
   pull_request:
     branches: [main]
 
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
+  cancel-in-progress: true
+
 jobs:
   build-and-test:
     runs-on: ubuntu-24.04
@@ -31,7 +38,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
       - name: Install dependencies
         run: |
@@ -78,17 +85,18 @@ jobs:
             bison \
             foot \
             xterm \
-            xwayland
+            xwayland \
+            zsh
 
       - name: Upgrade meson
         run: pip install --upgrade --break-system-packages meson
 
       - name: Cache deps
         id: cache-deps
-        uses: actions/cache@v4
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: ~/deps-install
-          key: deps-wayland-pixman-wlroots-v1-${{ runner.os }}
+          key: deps-wayland-pixman-wlroots-v2-${{ runner.os }}
 
       - name: Build wayland, pixman, and wayland-protocols
         if: steps.cache-deps.outputs.cache-hit != 'true'
@@ -137,22 +145,29 @@ jobs:
           echo "LD_LIBRARY_PATH=$HOME/deps-install/lib/x86_64-linux-gnu:$LD_LIBRARY_PATH" >> $GITHUB_ENV
 
       - name: Build somewm
-        run: make LUA_PKG=${{ matrix.lua.pkg }}
+        run: make build-test LUA_PKG=${{ matrix.lua.pkg }}
 
       - name: Run unit tests
-        run: make test-unit || echo "::warning::Some unit tests failed (known issues with shell completion test)"
+        run: make test-unit
 
       - name: Run integration tests (non-spawning only)
         run: |
-          # Only run tests that don't spawn external apps (xterm/foot)
-          # Full test suite requires XWayland + xterm which is complex in headless CI
-          timeout 300 bash tests/run-integration.sh \
-            tests/test-wibox-float-properties.lua \
-            tests/test-simple.lua \
-            tests/test-awful-widget-watch.lua \
-            || echo "::warning::Some integration tests failed or timed out"
+          # Exclude tests that need external apps or client spawning
+          spawning=$(grep -rl 'require.*_client' tests/test-*.lua | xargs -I{} basename {})
+          tests=$(find tests -name 'test-*.lua' -type f \
+            ! -name 'test-xwayland-*' \
+            ! -name 'test-layer-shell-*' \
+            ! -name 'test-dbus-error.lua' \
+            ! -name 'test-leak-client.lua' \
+            ! -name 'test-transient-stacking.lua' \
+            ! -name 'test-output-fake-screen.lua' \
+            $(printf '! -name %s ' $spawning) \
+            | sort)
+          timeout 300 bash tests/run-integration.sh $tests
         timeout-minutes: 6
         env:
-          WLR_BACKENDS: headless
-          WLR_RENDERER: pixman
+          SOMEWM: ./build-test/somewm
+          SOMEWM_CLIENT: ./build-test/somewm-client
+          HEADLESS: 1
+          LIBSEAT_BACKEND: noop
           TEST_TIMEOUT: 45

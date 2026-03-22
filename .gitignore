@@ -1,5 +1,5 @@
-somewm
-somewm-client
+/somewm
+/somewm-client
 lgi-check
 *.o
 *-protocol.c
@@ -19,6 +19,10 @@ subprojects/packagecache/
 # Development tooling & reports (local only)
 tools/
 reports/
-docs/
+docs/*
+!docs/howtonix.md
 .cache/
 .local.mk
+
+# Nix build output
+result

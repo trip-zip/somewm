@@ -398,7 +398,7 @@ luaA_keybind_check(uint32_t mods, xkb_keysym_t sym, xkb_keysym_t base_sym)
 }
 
 /* Keybinding module methods */
-static const luaL_Reg keybinding_methods[] = {
+const luaL_Reg keybinding_methods[] = {
 	{ "bind", luaA_keybind },
 	{ "get_all", luaA_key_get_all },
 	{ NULL, NULL }

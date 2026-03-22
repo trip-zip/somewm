@@ -190,12 +190,17 @@ local function parse_command(command_string)
     ["eval"] = true,
     ["input"] = true,
     ["version"] = true,
+    ["lock"] = true,
     ["reload"] = true,
     ["restart"] = true,
     ["hotkeys"] = true,
     ["menubar"] = true,
     ["launcher"] = true,
     ["notify"] = true,
+    ["dpms"] = true,
+    ["idle"] = true,
+    ["commands"] = true,
+    ["subscribe"] = true,
   }
 
   local cmd_name
@@ -222,6 +227,10 @@ end
 -- @param command_string Raw command string from socket
 -- @param client_fd File descriptor of connected client (for reference)
 -- @return Response string in protocol format ("OK\n\n" or "ERROR msg\n\n")
+-- Active subscribers: client_fd -> filter_set (table of event_type=true, or true for all)
+local subscribers = {}
+local subscriber_count = 0
+
 function ipc.dispatch(command_string, client_fd)
   -- Check for --json flag
   local json_mode = false
@@ -238,6 +247,34 @@ function ipc.dispatch(command_string, client_fd)
       return json_encode({status = "error", error = "Empty command"}) .. "\n\n"
     end
     return "ERROR Empty command\n\n"
+  end
+
+  -- Handle subscribe specially (needs client_fd)
+  if cmd_name == "subscribe" then
+    if _ipc_subscribe then
+      _ipc_subscribe(client_fd)
+    end
+    -- Store filter set for this subscriber
+    if not subscribers[client_fd] then
+      subscriber_count = subscriber_count + 1
+    end
+    if #args > 0 then
+      local filters = {}
+      for _, event_type in ipairs(args) do
+        if event_type == "all" then
+          filters = true
+          break
+        end
+        filters[event_type] = true
+      end
+      subscribers[client_fd] = filters
+    else
+      subscribers[client_fd] = true -- true means all events
+    end
+    if json_mode then
+      return json_encode({status = "ok", result = "Subscribed to events"}) .. "\n\n"
+    end
+    return "OK\nSubscribed to events\n\n"
   end
 
   -- Find handler
@@ -277,6 +314,24 @@ function ipc.dispatch(command_string, client_fd)
     return string.format("OK\n%s\n\n", tostring(result))
   else
     return "OK\n\n"
+  end
+end
+
+--- Broadcast an event to all subscribers
+-- @param event_type Event type string (e.g., "client_focus", "tag_switch")
+-- @param data Table of event data to JSON-encode
+function ipc.broadcast(event_type, data)
+  if subscriber_count <= 0 or not _ipc_broadcast then return end
+
+  local message = "EVENT " .. event_type .. " " .. json_encode(data or {}) .. "\n"
+  _ipc_broadcast(message)
+end
+
+--- Remove a subscriber (called when client disconnects or via cleanup)
+function ipc.remove_subscriber(client_fd)
+  if subscribers[client_fd] then
+    subscribers[client_fd] = nil
+    subscriber_count = subscriber_count - 1
   end
 end
 
@@ -851,42 +906,52 @@ local function register_builtin_commands()
     return table.concat(result, "\n")
   end)
 
-  --- client.kill <ID|focused> - Kill a client
-  ipc.register("client.kill", function(target)
-    target = target or "focused"
+  --- client.kill <ID|focused> [--force] - Kill a client
+  ipc.register("client.kill", function(target, flag)
+    local force = false
+    -- Handle: client kill --force  OR  client kill focused --force  OR  client kill 5 --force
+    if target == "--force" then
+      force = true
+      target = "focused"
+    elseif flag == "--force" then
+      force = true
+    end
 
-    if target == "focused" then
-      -- Use C API to get focused client directly
-      local focusedclient = capi.client.focus
-      if not focusedclient then
-        error("No focused client")
+    local c = resolve_client(target)
+
+    if force then
+      local pid = c.pid
+      if not pid or pid <= 0 then
+        error("Cannot force-kill: client has no PID")
       end
-      capi.client.kill(focusedclient)
-      return "Killed focused client"
+      capi.awesome.kill(pid, 9) -- SIGKILL
+      return string.format("Force-killed client (pid=%d)", pid)
     else
-      -- Find by numeric ID or legacy pointer address
-      local c = find_client_by_id(target)
-      if c then
-        capi.client.kill(c)
-        return string.format("Killed client %s", target)
-      end
-      error("Client not found: " .. target)
+      capi.client.kill(c)
+      return string.format("Killed client %s", target)
     end
   end)
 
-  --- client.focus <ID|next|prev> - Focus a client
+  --- client.focus <ID|next|prev|up|down|left|right> - Focus a client
   ipc.register("client.focus", function(target)
     if not target or target == "focused" then
-      error("Must specify target: ID, next, or prev")
+      error("Must specify target: ID, next, prev, up, down, left, or right")
     end
 
-    if target == "next" then
-      -- TODO: Implement focus next/prev
-      error("focus next/prev not yet implemented")
-    elseif target == "prev" then
-      error("focus next/prev not yet implemented")
+    local direction_labels = { next = "next", prev = "previous" }
+    if target == "next" or target == "prev" then
+      awful_client.focus.byidx(target == "next" and 1 or -1)
+      local c = capi.client.focus
+      local label = direction_labels[target]
+      return c and string.format("Focused %s client (id=%d)", label, c.id)
+                 or string.format("Focused %s client", label)
+    elseif target == "up" or target == "down" or target == "left" or target == "right" then
+      awful_client.focus.global_bydirection(target)
+      local c = capi.client.focus
+      return c and string.format("Focused client %s (id=%d)", target, c.id)
+                 or string.format("Focused client %s", target)
     else
-      -- Find by numeric ID or legacy pointer address
+      -- Find by numeric ID
       local c = find_client_by_id(target)
       if c then
         capi.client.focus = c
@@ -898,25 +963,9 @@ local function register_builtin_commands()
 
   --- client.close <ID|focused> - Close a client gracefully
   ipc.register("client.close", function(target)
-    target = target or "focused"
-
-    if target == "focused" then
-      -- Use C API to get focused client directly
-      local focusedclient = capi.client.focus
-      if not focusedclient then
-        error("No focused client")
-      end
-      capi.client.kill(focusedclient)
-      return "Closed focused client"
-    else
-      -- Find by numeric ID or legacy pointer address
-      local c = find_client_by_id(target)
-      if c then
-        capi.client.kill(c)
-        return string.format("Closed client %s", target)
-      end
-      error("Client not found: " .. target)
-    end
+    local c = resolve_client(target)
+    capi.client.kill(c)
+    return string.format("Closed client %s", target or "focused")
   end)
 
   --- client.toggletag <TAG> [CLIENT_ID] - Toggle tag on client (default: focused)
@@ -1193,152 +1242,73 @@ local function register_builtin_commands()
   -- CLIENT PROPERTY COMMANDS
   -- =================================================================
 
-  --- client.floating <ID|focused> [true|false] - Get or set floating state
-  ipc.register("client.floating", function(target, value)
+  -- Helper: resolve target to a client object
+  local function resolve_client(target)
     target = target or "focused"
-
-    -- Get target client
-    local c
     if target == "focused" then
-      c = capi.client.focus
-      if not c then
-        error("No focused client")
-      end
-    else
-      c = find_client_by_id(target)
-      if not c then
-        error("Client not found: " .. target)
-      end
+      local c = capi.client.focus
+      if not c then error("No focused client") end
+      return c
     end
+    local c = find_client_by_id(target)
+    if not c then error("Client not found: " .. target) end
+    return c
+  end
 
-    -- If no value provided, return current state
+  -- Helper: register a boolean client property command
+  local function register_bool_prop(name)
+    ipc.register("client." .. name, function(target, value)
+      local c = resolve_client(target)
+
+      if not value then
+        return tostring(c[name])
+      end
+
+      local new_val
+      if value == "true" or value == "1" then
+        new_val = true
+      elseif value == "false" or value == "0" then
+        new_val = false
+      else
+        error("Invalid value. Use 'true' or 'false'")
+      end
+
+      c[name] = new_val
+      return string.format("Set %s to %s", name, tostring(new_val))
+    end)
+  end
+
+  register_bool_prop("floating")
+  register_bool_prop("fullscreen")
+  register_bool_prop("sticky")
+  register_bool_prop("ontop")
+  register_bool_prop("minimized")
+  register_bool_prop("maximized")
+  register_bool_prop("maximized_horizontal")
+  register_bool_prop("maximized_vertical")
+  register_bool_prop("hidden")
+  register_bool_prop("modal")
+  register_bool_prop("focusable")
+  register_bool_prop("urgent")
+  register_bool_prop("above")
+  register_bool_prop("below")
+  register_bool_prop("skip_taskbar")
+
+  --- client.opacity <ID|focused> [value] - Get or set client opacity (0.0-1.0)
+  ipc.register("client.opacity", function(target, value)
+    local c = resolve_client(target)
+
     if not value then
-      return tostring(c.floating)
+      return tostring(c.opacity)
     end
 
-    -- Set floating state
-    local new_floating
-    if value == "true" or value == "1" then
-      new_floating = true
-    elseif value == "false" or value == "0" then
-      new_floating = false
-    else
-      error("Invalid value. Use 'true' or 'false'")
+    local new_val = tonumber(value)
+    if not new_val or new_val < 0 or new_val > 1 then
+      error("Invalid opacity. Must be between 0.0 and 1.0")
     end
 
-    c.floating = new_floating
-    return string.format("Set floating to %s", tostring(new_floating))
-  end)
-
-  --- client.fullscreen <ID|focused> [true|false] - Get or set fullscreen state
-  ipc.register("client.fullscreen", function(target, value)
-    target = target or "focused"
-
-    -- Get target client
-    local c
-    if target == "focused" then
-      c = capi.client.focus
-      if not c then
-        error("No focused client")
-      end
-    else
-      c = find_client_by_id(target)
-      if not c then
-        error("Client not found: " .. target)
-      end
-    end
-
-    -- If no value provided, return current state
-    if not value then
-      return tostring(c.fullscreen)
-    end
-
-    -- Set fullscreen state
-    local new_fullscreen
-    if value == "true" or value == "1" then
-      new_fullscreen = true
-    elseif value == "false" or value == "0" then
-      new_fullscreen = false
-    else
-      error("Invalid value. Use 'true' or 'false'")
-    end
-
-    c.fullscreen = new_fullscreen
-    return string.format("Set fullscreen to %s", tostring(new_fullscreen))
-  end)
-
-  --- client.sticky <ID|focused> [true|false] - Get or set sticky state (visible on all tags)
-  ipc.register("client.sticky", function(target, value)
-    target = target or "focused"
-
-    -- Get target client
-    local c
-    if target == "focused" then
-      c = capi.client.focus
-      if not c then
-        error("No focused client")
-      end
-    else
-      c = find_client_by_id(target)
-      if not c then
-        error("Client not found: " .. target)
-      end
-    end
-
-    -- If no value provided, return current state
-    if not value then
-      return tostring(c.sticky)
-    end
-
-    -- Set sticky state
-    local new_sticky
-    if value == "true" or value == "1" then
-      new_sticky = true
-    elseif value == "false" or value == "0" then
-      new_sticky = false
-    else
-      error("Invalid value. Use 'true' or 'false'")
-    end
-
-    c.sticky = new_sticky
-    return string.format("Set sticky to %s", tostring(new_sticky))
-  end)
-
-  --- client.ontop <ID|focused> [true|false] - Get or set ontop state
-  ipc.register("client.ontop", function(target, value)
-    target = target or "focused"
-
-    -- Get target client
-    local c
-    if target == "focused" then
-      c = capi.client.focus
-      if not c then
-        error("No focused client")
-      end
-    else
-      c = find_client_by_id(target)
-      if not c then
-        error("Client not found: " .. target)
-      end
-    end
-
-    -- If no value provided, return current state
-    if not value then
-      return tostring(c.ontop)
-    end
-
-    -- Set ontop state
-    local new_ontop
-    if value == "true" or value == "1" then
-      new_ontop = true
-    elseif value == "false" or value == "0" then
-      new_ontop = false
-    else
-      error("Invalid value. Use 'true' or 'false'")
-    end
-
-    c.ontop = new_ontop
-    return string.format("Set ontop to %s", tostring(new_ontop))
+    c.opacity = new_val
+    return string.format("Set opacity to %.2f", new_val)
   end)
 
   -- =================================================================
@@ -1560,14 +1530,7 @@ local function register_builtin_commands()
     end
 
     -- Gather comprehensive info
-    local title = c.name or ""
-    local appid = c.class or ""
     local geom = c:geometry()
-    local floating = c.floating
-    local fullscreen = c.fullscreen
-    local sticky = c.sticky
-    local ontop = c.ontop
-    local urgent = c.urgent
 
     -- Get tag indices for this client
     local tag_list = {}
@@ -1578,18 +1541,33 @@ local function register_builtin_commands()
 
     local result = {}
     table.insert(result, string.format("ID: %d", c.id))
-    table.insert(result, string.format("Title: %s", title))
-    table.insert(result, string.format("Class: %s", appid))
-    table.insert(
-      result,
-      string.format("Geometry: x=%d y=%d width=%d height=%d", geom.x, geom.y, geom.width, geom.height)
-    )
+    table.insert(result, string.format("Title: %s", c.name or ""))
+    table.insert(result, string.format("Class: %s", c.class or ""))
+    table.insert(result, string.format("Instance: %s", c.instance or ""))
+    table.insert(result, string.format("Role: %s", c.role or ""))
+    table.insert(result, string.format("Type: %s", c.type or ""))
+    table.insert(result, string.format("PID: %s", tostring(c.pid or "")))
+    table.insert(result, string.format("Machine: %s", c.machine or ""))
+    table.insert(result, string.format("Icon name: %s", c.icon_name or ""))
+    table.insert(result, string.format(
+      "Geometry: x=%d y=%d width=%d height=%d", geom.x, geom.y, geom.width, geom.height))
+    table.insert(result, string.format("Border width: %d", c.border_width or 0))
+    table.insert(result, string.format("Screen: %d", c.screen and c.screen.index or 0))
     table.insert(result, string.format("Tags: %s", table.concat(tag_list, ",")))
-    table.insert(result, string.format("Floating: %s", tostring(floating)))
-    table.insert(result, string.format("Fullscreen: %s", tostring(fullscreen)))
-    table.insert(result, string.format("Sticky: %s", tostring(sticky)))
-    table.insert(result, string.format("Ontop: %s", tostring(ontop)))
-    table.insert(result, string.format("Urgent: %s", tostring(urgent)))
+    table.insert(result, string.format("Floating: %s", tostring(c.floating)))
+    table.insert(result, string.format("Fullscreen: %s", tostring(c.fullscreen)))
+    table.insert(result, string.format("Maximized: %s", tostring(c.maximized)))
+    table.insert(result, string.format("Minimized: %s", tostring(c.minimized)))
+    table.insert(result, string.format("Hidden: %s", tostring(c.hidden)))
+    table.insert(result, string.format("Sticky: %s", tostring(c.sticky)))
+    table.insert(result, string.format("Ontop: %s", tostring(c.ontop)))
+    table.insert(result, string.format("Above: %s", tostring(c.above)))
+    table.insert(result, string.format("Below: %s", tostring(c.below)))
+    table.insert(result, string.format("Urgent: %s", tostring(c.urgent)))
+    table.insert(result, string.format("Modal: %s", tostring(c.modal)))
+    table.insert(result, string.format("Focusable: %s", tostring(c.focusable)))
+    table.insert(result, string.format("Skip taskbar: %s", tostring(c.skip_taskbar)))
+    table.insert(result, string.format("Opacity: %.2f", c.opacity or 1.0))
 
     return table.concat(result, "\n")
   end)
@@ -2495,6 +2473,16 @@ local function register_builtin_commands()
     return table.concat(lines, "\n")
   end)
 
+  --- lock - Lock the session
+  ipc.register("lock", function()
+    local ok = capi.awesome.lock()
+    if ok then
+      return "Locked"
+    else
+      error("Lock failed (no lock surface registered or ext-session-lock active)")
+    end
+  end)
+
   --- reload - Reload configuration (cold restart, validates first)
   ipc.register("reload", function()
     local awful_util = require("awful.util")
@@ -3010,6 +2998,352 @@ local function register_builtin_commands()
       return "Notification sent"
     end)
   end
+
+  -- =================================================================
+  -- MOUSE COMMANDS
+  -- =================================================================
+
+  --- mouse.coords [x y] - Get or set mouse cursor position
+  ipc.register("mouse.coords", function(x, y)
+    if not x then
+      -- Get current position
+      local coords = capi.mouse.coords()
+      return string.format("x=%d y=%d", coords.x, coords.y)
+    end
+
+    x = tonumber(x)
+    y = tonumber(y)
+    if not x or not y then
+      error("Invalid coordinates. Usage: mouse coords <x> <y>")
+    end
+
+    capi.mouse.coords({ x = x, y = y })
+    return string.format("Moved cursor to x=%d y=%d", x, y)
+  end)
+
+  --- mouse.screen - Get screen under mouse cursor
+  ipc.register("mouse.screen", function()
+    local coords = capi.mouse.coords()
+    -- Find which screen contains the cursor
+    for i = 1, capi.screen.count() do
+      local s = capi.screen[i]
+      local geom = s.geometry
+      if coords.x >= geom.x and coords.x < geom.x + geom.width
+         and coords.y >= geom.y and coords.y < geom.y + geom.height then
+        return string.format("Screen %d", s.index)
+      end
+    end
+    -- Fallback to focused screen
+    local s = awful_screen.focused()
+    return string.format("Screen %d", s and s.index or 0)
+  end)
+
+  -- =================================================================
+  -- PLACEMENT COMMANDS
+  -- =================================================================
+
+  --- client.placement <func> [ID|focused] - Apply placement function to client
+  ipc.register("client.placement", function(func_name, target)
+    if not func_name then
+      local available = {
+        "no_offscreen", "no_overlap", "under_mouse", "next_to_mouse",
+        "maximize", "stretch", "centered", "top_left", "top_right",
+        "bottom_left", "bottom_right",
+      }
+      error("Usage: client placement <func> [ID|focused]\nAvailable: " .. table.concat(available, ", "))
+    end
+
+    local c = resolve_client(target)
+
+    local func = awful_placement[func_name]
+    if not func then
+      error("Unknown placement function: " .. func_name)
+    end
+
+    func(c)
+    return string.format("Applied placement '%s'", func_name)
+  end)
+
+  -- =================================================================
+  -- OUTPUT/DISPLAY COMMANDS
+  -- =================================================================
+
+  --- output.list - List all outputs
+  ipc.register("output.list", function()
+    local outputs = capi.screen.outputs and capi.screen.outputs() or nil
+    if outputs then
+      if #outputs == 0 then return "No outputs" end
+      local lines = {}
+      for _, o in ipairs(outputs) do
+        table.insert(lines, string.format("name=%s enabled=%s", o.name or "?", tostring(o.enabled ~= false)))
+      end
+      return table.concat(lines, "\n")
+    end
+
+    -- Fallback: list screens as outputs
+    local lines = {}
+    for i = 1, capi.screen.count() do
+      local s = capi.screen[i]
+      local geom = s.geometry
+      local name = s.name or ("Screen " .. i)
+      table.insert(lines, string.format(
+        'name="%s" geometry=%dx%d+%d+%d scale=%.2f',
+        name, geom.width, geom.height, geom.x, geom.y, s.scale or 1.0))
+    end
+    if #lines == 0 then return "No outputs" end
+    return table.concat(lines, "\n")
+  end)
+
+  -- =================================================================
+  -- DPMS AND IDLE COMMANDS
+  -- =================================================================
+
+  --- dpms <on|off|status> - Control display power management
+  ipc.register("dpms", function(action)
+    if not action or action == "status" then
+      return "DPMS status: use 'dpms on' or 'dpms off' to control displays"
+    elseif action == "off" then
+      if capi.awesome.dpms_off then
+        capi.awesome.dpms_off()
+        return "Displays turned off"
+      else
+        error("DPMS not supported")
+      end
+    elseif action == "on" then
+      if capi.awesome.dpms_on then
+        capi.awesome.dpms_on()
+        return "Displays turned on"
+      else
+        error("DPMS not supported")
+      end
+    else
+      error("Usage: dpms <on|off|status>")
+    end
+  end)
+
+  --- idle <timeout|status|clear> - Manage idle timeouts
+  ipc.register("idle", function(action, ...)
+    local args = {...}
+
+    if not action or action == "status" then
+      if capi.awesome.idle_timeouts then
+        local timeouts = capi.awesome.idle_timeouts
+        if type(timeouts) == "table" then
+          if next(timeouts) == nil then
+            return "No active idle timeouts"
+          end
+          local lines = {}
+          for name, info in pairs(timeouts) do
+            if type(info) == "table" then
+              table.insert(lines, string.format("%s: %ds", name, info.timeout or 0))
+            else
+              table.insert(lines, string.format("%s: %s", name, tostring(info)))
+            end
+          end
+          return table.concat(lines, "\n")
+        end
+      end
+      return "No idle timeout info available"
+    elseif action == "timeout" then
+      local name = args[1]
+      local seconds = tonumber(args[2])
+      if not name or not seconds then
+        error("Usage: idle timeout <name> <seconds>")
+      end
+      if capi.awesome.set_idle_timeout then
+        capi.awesome.set_idle_timeout(name, seconds, function()
+          -- Default action: turn off displays
+          if capi.awesome.dpms_off then
+            capi.awesome.dpms_off()
+          end
+        end)
+        return string.format("Set idle timeout '%s' to %ds", name, seconds)
+      else
+        error("Idle timeout not supported")
+      end
+    elseif action == "clear" then
+      local name = args[1]
+      if name then
+        if capi.awesome.clear_idle_timeout then
+          capi.awesome.clear_idle_timeout(name)
+          return string.format("Cleared idle timeout '%s'", name)
+        end
+      else
+        if capi.awesome.clear_all_idle_timeouts then
+          capi.awesome.clear_all_idle_timeouts()
+          return "Cleared all idle timeouts"
+        end
+      end
+      error("Clear idle timeout not supported")
+    else
+      error("Usage: idle <timeout|status|clear>")
+    end
+  end)
+
+  -- =================================================================
+  -- THEME COMMANDS
+  -- =================================================================
+
+  --- theme.get [key] - Get theme values
+  ipc.register("theme.get", function(key)
+    local beautiful = require("beautiful")
+    local theme = beautiful.get()
+
+    if not theme then
+      error("No theme loaded")
+    end
+
+    if key then
+      local val = theme[key]
+      if val == nil then
+        error("Theme key not found: " .. key)
+      end
+      return tostring(val)
+    end
+
+    -- List all theme keys and values
+    local lines = {}
+    local keys = {}
+    for k in pairs(theme) do
+      table.insert(keys, k)
+    end
+    table.sort(keys)
+
+    for _, k in ipairs(keys) do
+      local v = theme[k]
+      local vtype = type(v)
+      if vtype == "string" or vtype == "number" or vtype == "boolean" then
+        table.insert(lines, string.format("%s = %s", k, tostring(v)))
+      else
+        table.insert(lines, string.format("%s = <%s>", k, vtype))
+      end
+    end
+
+    if #lines == 0 then return "Theme is empty" end
+    return table.concat(lines, "\n")
+  end)
+
+  --- theme.set <key> <value> - Set a theme value
+  ipc.register("theme.set", function(key, ...)
+    if not key then
+      error("Usage: theme set <key> <value>")
+    end
+
+    local args = {...}
+    if #args == 0 then
+      error("Missing value")
+    end
+
+    local value = table.concat(args, " ")
+    local beautiful = require("beautiful")
+    local theme = beautiful.get()
+
+    if not theme then
+      error("No theme loaded")
+    end
+
+    -- Try to convert to number if it looks like one
+    local num = tonumber(value)
+    if num then
+      value = num
+    elseif value == "true" then
+      value = true
+    elseif value == "false" then
+      value = false
+    end
+
+    theme[key] = value
+    beautiful[key] = value
+    return string.format("Set theme.%s = %s", key, tostring(value))
+  end)
+
+  -- =================================================================
+  -- TITLEBAR COMMANDS
+  -- =================================================================
+
+  local awful_titlebar = require("awful.titlebar")
+
+  -- Helper: resolve client and position for titlebar commands
+  -- Handles: titlebar show [ID] [position]  or  titlebar show [position]
+  local function resolve_titlebar_args(target, position)
+    target = target or "focused"
+    if target == "top" or target == "bottom" or target == "left" or target == "right" then
+      position = target
+      target = "focused"
+    end
+    return resolve_client(target), position
+  end
+
+  local titlebar_actions = {
+    { name = "show",   func = awful_titlebar.show,   past = "Showed" },
+    { name = "hide",   func = awful_titlebar.hide,   past = "Hid" },
+    { name = "toggle", func = awful_titlebar.toggle,  past = "Toggled" },
+  }
+  for _, action in ipairs(titlebar_actions) do
+    ipc.register("titlebar." .. action.name, function(target, position)
+      local c, pos = resolve_titlebar_args(target, position)
+      action.func(c, pos)
+      return string.format("%s titlebar%s", action.past, pos and (" (" .. pos .. ")") or "")
+    end)
+  end
+
+  -- =================================================================
+  -- WALLPAPER COMMANDS
+  -- =================================================================
+
+  --- wallpaper.set <path> [screen] - Set wallpaper from image file
+  ipc.register("wallpaper.set", function(path, screen_arg)
+    if not path then
+      error("Usage: wallpaper set <path> [screen]")
+    end
+
+    local s
+    if screen_arg then
+      local idx = tonumber(screen_arg)
+      if idx then s = capi.screen[idx] end
+    end
+    s = s or awful_screen.focused()
+
+    if not s then error("No screen available") end
+
+    local gears_wallpaper = require("gears.wallpaper")
+    gears_wallpaper.maximized(path, s, false)
+    return string.format("Set wallpaper to %s on screen %d", path, s.index)
+  end)
+
+  --- wallpaper.color <hex> [screen] - Set wallpaper to solid color
+  ipc.register("wallpaper.color", function(color, screen_arg)
+    if not color then
+      error("Usage: wallpaper color <hex> [screen]")
+    end
+
+    local s
+    if screen_arg then
+      local idx = tonumber(screen_arg)
+      if idx then s = capi.screen[idx] end
+    end
+    s = s or awful_screen.focused()
+
+    if not s then error("No screen available") end
+
+    local gears_wallpaper = require("gears.wallpaper")
+    gears_wallpaper.set(require("gears.color")(color))
+    return string.format("Set wallpaper color to %s", color)
+  end)
+
+  -- =================================================================
+  -- COMMANDS LIST (for shell completions)
+  -- =================================================================
+
+  --- commands - List all registered command names
+  ipc.register("commands", function()
+    local names = {}
+    for name in pairs(commands) do
+      table.insert(names, name)
+    end
+    table.sort(names)
+    return table.concat(names, "\n")
+  end)
 end
 
 -- Initialize built-in commands
@@ -3019,5 +3353,129 @@ register_builtin_commands()
 function _G._ipc_dispatch(command_string, client_fd)
   return ipc.dispatch(command_string, client_fd)
 end
+
+-- =================================================================
+-- EVENT SUBSCRIPTION SIGNAL HOOKS
+-- =================================================================
+-- Connect to AwesomeWM signals and broadcast events to subscribers.
+-- These run after ipc module is loaded, so all APIs are available.
+
+local function setup_event_hooks()
+  local capi = {
+    client = client,
+    screen = screen,
+    tag = tag,
+    awesome = awesome,
+  }
+
+  -- Client managed (new window appeared)
+  if capi.client and capi.client.connect_signal then
+    capi.client.connect_signal("manage", function(c)
+      ipc.broadcast("client_manage", {
+        id = c.id,
+        title = c.name or "",
+        class = c.class or "",
+        pid = c.pid,
+      })
+    end)
+
+    -- Client unmanaged (window closed)
+    capi.client.connect_signal("unmanage", function(c)
+      ipc.broadcast("client_unmanage", {
+        id = c.id,
+        title = c.name or "",
+        class = c.class or "",
+      })
+    end)
+
+    -- Client focused
+    capi.client.connect_signal("focus", function(c)
+      ipc.broadcast("client_focus", {
+        id = c.id,
+        title = c.name or "",
+        class = c.class or "",
+      })
+    end)
+
+    -- Client unfocused
+    capi.client.connect_signal("unfocus", function(c)
+      ipc.broadcast("client_unfocus", {
+        id = c.id,
+        title = c.name or "",
+        class = c.class or "",
+      })
+    end)
+
+    -- Client property changes
+    capi.client.connect_signal("property::name", function(c)
+      ipc.broadcast("client_title", {
+        id = c.id,
+        title = c.name or "",
+      })
+    end)
+
+    capi.client.connect_signal("property::urgent", function(c)
+      ipc.broadcast("client_urgent", {
+        id = c.id,
+        urgent = c.urgent,
+        title = c.name or "",
+        class = c.class or "",
+      })
+    end)
+
+    capi.client.connect_signal("property::fullscreen", function(c)
+      ipc.broadcast("client_fullscreen", {
+        id = c.id,
+        fullscreen = c.fullscreen,
+      })
+    end)
+
+    capi.client.connect_signal("property::floating", function(c)
+      ipc.broadcast("client_floating", {
+        id = c.id,
+        floating = c.floating,
+      })
+    end)
+
+    capi.client.connect_signal("property::minimized", function(c)
+      ipc.broadcast("client_minimized", {
+        id = c.id,
+        minimized = c.minimized,
+      })
+    end)
+  end
+
+  -- Tag signals
+  if capi.tag and capi.tag.connect_signal then
+    capi.tag.connect_signal("property::selected", function(t)
+      ipc.broadcast("tag_switch", {
+        index = t.index,
+        name = t.name or "",
+        selected = t.selected,
+        screen = t.screen and t.screen.index or 0,
+      })
+    end)
+  end
+
+  -- Screen signals
+  if capi.screen and capi.screen.connect_signal then
+    capi.screen.connect_signal("added", function(s)
+      ipc.broadcast("screen_add", {
+        index = s.index,
+        name = s.name or "",
+      })
+    end)
+
+    capi.screen.connect_signal("removed", function(s)
+      ipc.broadcast("screen_remove", {
+        index = s.index,
+        name = s.name or "",
+      })
+    end)
+  end
+end
+
+-- Set up hooks (safe to call even if signals aren't available yet)
+pcall(setup_event_hooks)
 
 return ipc

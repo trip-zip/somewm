@@ -197,7 +197,12 @@ local steps = {
         -- This is the key assertion: focus should return to the MOST RECENT
         -- client in history (B), not just any client
         if client.focus == client_b then
-            io.stderr:write("[TEST] PASS: focus returned to client B (correct focus history)\n")
+            -- Check ACTUAL Wayland seat keyboard focus, not just Lua bookkeeping.
+            -- This catches the bug from issue #237 where client.focus was correct
+            -- but seat->keyboard_state.focused_surface was not restored.
+            assert(client_b:has_keyboard_focus(),
+                "Client B regained visual focus but NOT keyboard focus (seat desync)")
+            io.stderr:write("[TEST] PASS: focus returned to client B (correct focus history + keyboard)\n")
             return true
         end
 

@@ -26,18 +26,6 @@
 
 #define CONNECTED_SUFFIX "::connected"
 
-struct lua_class_property
-{
-    /** Name of the property */
-    const char *name;
-    /** Callback function called when the property is found in object creation. */
-    lua_class_propfunc_t new;
-    /** Callback function called when the property is found in object __index. */
-    lua_class_propfunc_t index;
-    /** Callback function called when the property is found in object __newindex. */
-    lua_class_propfunc_t newindex;
-};
-
 DO_ARRAY(lua_class_t *, lua_class, DO_NOTHING)
 
 static lua_class_array_t luaA_classes;
@@ -167,6 +155,14 @@ luaA_class_add_property(lua_class_t *lua_class,
                                         .index = cb_index,
                                         .newindex = cb_newindex
                                     });
+}
+
+void
+luaA_class_add_properties(lua_class_t *lua_class,
+                          const lua_class_property_t properties[],
+                          int count)
+{
+    lua_class_property_array_inserts(&lua_class->properties, properties, count);
 }
 
 /** Newindex meta function for objects after they were GC'd.
@@ -313,13 +309,12 @@ void
 luaA_class_connect_signal_from_stack(lua_State *L, lua_class_t *lua_class,
                                      const char *name, int ud)
 {
-    char *buf;
     luaA_checkfunction(L, ud);
 
     /* Duplicate the function in the stack */
     lua_pushvalue(L, ud);
 
-    buf = p_alloca(char, a_strlen(name) + a_strlen(CONNECTED_SUFFIX) + 1);
+    char buf[a_strlen(name) + a_strlen(CONNECTED_SUFFIX) + 1];
 
     /* Create a new signal to notify there is a global connection. */
     sprintf(buf, "%s%s", name, CONNECTED_SUFFIX);

@@ -46,6 +46,11 @@ typedef struct drawin_t {
 	bool ontop;                    /* Should drawin be above other windows? */
 	char *cursor;                  /* Mouse cursor name (e.g., "left_ptr") */
 
+	/* Surface scale override (somewm extension, not in AwesomeWM).
+	 * 0.0 = auto (use output scale), >0.0 = force this scale for drawable surface.
+	 * Avoids HiDPI CPU upscaling for content like screenshot overlays. */
+	float scale_override;
+
 	/* Screen assignment */
 	struct screen_t *screen;       /* Which screen this drawin belongs to */
 

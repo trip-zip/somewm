@@ -24,6 +24,7 @@ local cst      = require("naughty.constants")
 local naughty  = require("naughty.core")
 local gdebug   = require("gears.debug")
 local pcommon = require("awful.permissions._common")
+local beautiful = require("beautiful")
 
 local notification = {}
 
@@ -582,10 +583,7 @@ local function get_suspended(self)
 end
 
 function notification:set_timeout(timeout)
-    io.stderr:write(string.format("[NOTIF] set_timeout() called: id=%d, timeout_arg=%s, current_timeout=%s, has_timer=%s\n",
-        self.id or 0, tostring(timeout), tostring(self._private.timeout), tostring(self.timer ~= nil)))
     timeout = timeout or 0
-    io.stderr:write(string.format("[NOTIF] set_timeout() after default: timeout=%d\n", timeout))
 
     local die = function (reason)
         if reason == cst.notification_closed_reason.expired then
@@ -599,46 +597,36 @@ function notification:set_timeout(timeout)
         self:destroy(reason)
     end
 
-    if self.timer and self._private.timeout == timeout then
-        io.stderr:write(string.format("[NOTIF] set_timeout() EARLY RETURN: timer exists and timeout unchanged (id=%d)\n", self.id or 0))
-        return
+    if self.timer and self._private.timeout == timeout then return end
+
+    -- Prevent a memory leak and the accumulation of active timers
+    if self.timer and self.timer.started then
+        self.timer:stop()
     end
 
     -- 0 == never
     if timeout > 0 then
-        io.stderr:write(string.format("[NOTIF] set_timeout() creating death timer: id=%d, timeout=%d\n", self.id or 0, timeout))
         local timer_die = timer { timeout = timeout }
-        io.stderr:write(string.format("[NOTIF] Created death timer for notification id=%d, timeout=%ds\n", self.id or 0, timeout))
 
         timer_die:connect_signal("timeout", function()
-            io.stderr:write(string.format("[NOTIF] Death timer fired for notification id=%d\n", self.id or 0))
             pcall(die, cst.notification_closed_reason.expired)
-            io.stderr:write(string.format("[NOTIF] die() called, timer.started=%s\n", tostring(timer_die.started)))
 
             -- Prevent infinite timers events on errors.
             if timer_die.started then
                 timer_die:stop()
-                io.stderr:write("[NOTIF] Death timer stopped\n")
             end
         end)
 
         --FIXME there's still a dependency loop to fix before it works
         if not get_suspended(self) then
-            io.stderr:write(string.format("[NOTIF] Starting death timer for notification id=%d\n", self.id or 0))
             timer_die:start()
-        else
-            io.stderr:write(string.format("[NOTIF] Death timer SUSPENDED for notification id=%d\n", self.id or 0))
-        end
-
-        -- Prevent a memory leak and the accumulation of active timers
-        if self.timer and self.timer.started then
-            self.timer:stop()
         end
 
         self.timer = timer_die
     else
-        io.stderr:write(string.format("[NOTIF] set_timeout() NOT creating timer: id=%d, timeout=%d (timeout <= 0 means never expire)\n", self.id or 0, timeout))
+        self.timer = nil
     end
+
     self.die = die
     self._private.timeout = timeout
     self:emit_signal("property::timeout", timeout)
@@ -701,6 +689,7 @@ for _, prop in ipairs(properties) do
 
         return self._private[prop]
             or (preset and preset[prop])
+            or beautiful["notification_"..prop]
             or cst.config.defaults[prop]
     end
 
@@ -950,8 +939,10 @@ local function select_legacy_preset(n, args)
     end
 
     -- gather variables together
+    -- Note: defaults are NOT included here because the property getter
+    -- already falls back to cst.config.defaults. Including them would
+    -- prevent beautiful.notification_* from being checked.
     rawset(n, "preset", gtable.join(
-        cst.config.defaults or {},
         args.preset or cst.config.presets.normal or {},
         rawget(n, "preset") or {}
     ))
@@ -1115,12 +1106,10 @@ local function create(args)
     end
 
     -- Because otherwise the setter logic would not be executed
-    if n._private.timeout then
-        n:set_timeout(n._private.timeout
-            or (n.preset and n.preset.timeout)
-            or cst.config.timeout
-        )
-    end
+    n:set_timeout(n._private.timeout
+        or (n.preset and n.preset.timeout)
+        or cst.config.defaults.timeout
+    )
 
     return n
 end

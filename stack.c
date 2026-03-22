@@ -92,9 +92,12 @@ client_layer_translator(Client *c)
 	if (c->ontop)
 		return WINDOW_LAYER_ONTOP;
 
-	/* Fullscreen windows only get their own layer when they have focus */
+	/* Fullscreen windows only get their own layer when they have focus.
+	 * On Wayland, we also keep the fullscreen layer when the focused client
+	 * is on a different screen, since the scene graph uses separate layers
+	 * (unlike X11's flat stacking model where wibars are below all clients). */
 	focused = some_get_focused_client();
-	if (c->fullscreen && focused == c)
+	if (c->fullscreen && (focused == c || !focused || focused->screen != c->screen))
 		return WINDOW_LAYER_FULLSCREEN;
 
 	if (c->above)
@@ -161,7 +164,14 @@ stack_client_relative(Client *c, Client *previous)
 		return;
 
 	if (previous && previous->scene) {
-		/* Place this client above the previous one */
+		/* Ensure both nodes share the same scene parent.
+		 * In X11, stacking is flat (xcb_configure_window works on any two windows).
+		 * In wlroots, wlr_scene_node_place_above requires shared parents.
+		 * Transients should visually stack with their parent regardless of
+		 * which layer they were initially placed in. */
+		if (c->scene->node.parent != previous->scene->node.parent) {
+			wlr_scene_node_reparent(&c->scene->node, previous->scene->node.parent);
+		}
 		wlr_scene_node_place_above(&c->scene->node, &previous->scene->node);
 	} else {
 		/* No previous client, raise to top of layer */
@@ -228,8 +238,6 @@ stack_refresh(void)
 
 		/* Move client to correct scene graph layer if needed */
 		scene_layer = get_scene_layer(layer);
-		/* Check if client is in wrong layer - skip the check if already correct
-		 * to avoid unnecessary reparenting */
 		if ((void *)(*node)->scene->node.parent != (void *)layers[scene_layer]) {
 			wlr_scene_node_reparent(&(*node)->scene->node, layers[scene_layer]);
 		}
@@ -246,6 +254,13 @@ stack_refresh(void)
 	 * - otherwise → LyrTile (same as normal clients) */
 	foreach(drawin, globalconf.drawins) {
 		if (!(*drawin)->scene_tree)
+			continue;
+
+		/* Lock drawins are managed by some_activate_lua_lock() /
+		 * some_promote_lock_cover() and must stay in LyrBlock while the
+		 * session is locked. Without this skip, the normal ontop/type
+		 * logic below would reparent them out of LyrBlock. */
+		if (session_is_locked() && some_is_lock_drawin(*drawin))
 			continue;
 
 		/* Determine layer based on type and ontop (AwesomeWM compatibility) */

@@ -543,13 +543,11 @@ static int
 ewmh_update_net_client_list(lua_State *L)
 {
     int n = 0;
-    xcb_window_t *wins;
 
     if (!globalconf.connection || !globalconf.screen)
         return 0;
 
-    /* Allocate on stack for X11 clients only */
-    wins = alloca(globalconf.clients.len * sizeof(xcb_window_t));
+    xcb_window_t wins[globalconf.clients.len];
 
     foreach(client, globalconf.clients)
         if((*client)->client_type == X11)
@@ -568,13 +566,11 @@ void
 ewmh_update_net_client_list_stacking(void)
 {
     int n = 0;
-    xcb_window_t *wins;
 
     if (!globalconf.connection || !globalconf.screen)
         return;
 
-    /* Allocate on stack for X11 clients only */
-    wins = alloca(globalconf.stack.len * sizeof(xcb_window_t));
+    xcb_window_t wins[globalconf.stack.len];
 
     foreach(client, globalconf.stack)
         if((*client)->client_type == X11)

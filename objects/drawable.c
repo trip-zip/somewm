@@ -60,11 +60,15 @@ drawable_get_scale(drawable_t *d)
 	if (!d)
 		return 1.0f;
 
-	/* Get scale from owner's screen.
-	 * For fractional scales (e.g., 1.2x), we round up to the next integer.
-	 * This preserves Cairo's font hinting quality (which works best at integer
-	 * scales), and wlroots will downscale to the actual output scale when
-	 * displaying. This is the same approach used by GNOME, KDE, and Sway. */
+	/* Check for drawin-level scale override (somewm extension).
+	 * Allows Lua to force a specific scale for performance-sensitive drawins
+	 * like screenshot overlays that don't benefit from HiDPI upscaling. */
+	if (d->owner_type == DRAWABLE_OWNER_DRAWIN && d->owner.drawin) {
+		if (d->owner.drawin->scale_override > 0.0f)
+			return d->owner.drawin->scale_override;
+	}
+
+	/* Default: use output scale for HiDPI rendering */
 	screen_t *screen = NULL;
 
 	if (d->owner_type == DRAWABLE_OWNER_DRAWIN && d->owner.drawin) {
@@ -74,11 +78,7 @@ drawable_get_scale(drawable_t *d)
 	}
 
 	if (screen && screen->monitor && screen->monitor->wlr_output) {
-		float output_scale = screen->monitor->wlr_output->scale;
-		/* Use actual output scale so buffer exactly matches physical output size.
-		 * This avoids scaling artifacts - buffer pixels map 1:1 to output pixels.
-		 * Font hinting may not be perfect at fractional scales, but display is correct. */
-		return output_scale;
+		return screen->monitor->wlr_output->scale;
 	}
 
 	return 1.0f;
@@ -298,13 +298,9 @@ drawable_create_buffer_from_data(int width, int height, const void *cairo_data, 
 		return NULL;
 	}
 
-	/* Zero buffer to ensure clean transparent state.
-	 * ftruncate + mmap doesn't guarantee zeroed memory, and uninitialized
-	 * values (especially in the alpha channel) cause rendering artifacts
-	 * like wallpaper bleeding through in horizontal streaks. */
-	memset(data, 0, size);
-
-	/* Copy Cairo pixel data into shared memory */
+	/* Copy Cairo pixel data into shared memory.
+	 * No memset needed: buffer->stride == width * 4, so every byte is
+	 * overwritten by the memcpy loop below (destination is fully covered). */
 	for (int y = 0; y < height; y++) {
 		memcpy((uint8_t *)data + y * buffer->stride,
 		       (const uint8_t *)cairo_data + y * cairo_stride,

@@ -16,6 +16,9 @@ typedef enum {
 	SCREEN_LIFECYCLE_C    = 0x1 << 1  /* Managed internally by C */
 } screen_lifecycle_t;
 
+/* Forward declaration for output object */
+struct output_t;
+
 /* Screen object structure - wraps Monitor with signal support */
 typedef struct screen_t {
 	LUA_OBJECT_HEADER              /* Must be first for lua_object_t casting */
@@ -26,6 +29,7 @@ typedef struct screen_t {
 	struct wlr_box geometry;       /* Cached screen geometry (x, y, width, height) */
 	struct wlr_box workarea;       /* Cached workarea (geometry minus struts) */
 	char *name;                    /* User-assigned screen name */
+	struct output_t *virtual_output; /* Virtual output for fake screens (NULL for real screens) */
 } screen_t;
 
 /* Metatable name for screen userdata */
@@ -40,6 +44,7 @@ void luaA_screen_push(lua_State *L, screen_t *screen);
 screen_t *luaA_checkscreen(lua_State *L, int idx);
 screen_t *luaA_toscreen(lua_State *L, int idx);
 screen_t *luaA_screen_get_by_monitor(lua_State *L, Monitor *m);
+screen_t *luaA_screen_get_by_virtual_output(lua_State *L, struct output_t *o);
 screen_t *luaA_screen_get_primary_screen(lua_State *L);
 
 /* Screen scanning and signals (called from somewm.c) */

@@ -17,7 +17,6 @@
 #include <string.h>
 #include <strings.h>  /* For strcasecmp */
 #include <stdlib.h>
-#include <alloca.h>   /* For alloca */
 #include <sys/types.h> /* For ssize_t */
 #include <wlr/util/log.h>
 
@@ -36,7 +35,6 @@ int fd_set_nonblock(int fd);
 #define p_alloc_nr(x)           (((x) + 16) * 3 / 2)
 #define p_new(type, count)      ((type *)ecalloc((count), sizeof(type)))
 #define p_clear(p, count)       ((void)memset((p), 0, sizeof(*(p)) * (count)))
-#define p_alloca(type, count)   ((type *)alloca(sizeof(type) * (count)))
 #define p_delete(mem_pp)        \
     do {                        \
         typeof(**(mem_pp)) **__ptr = (mem_pp); \
@@ -73,6 +71,17 @@ xrealloc(void **ptr, ssize_t newsize)
             p_realloc((pp), *(allocnb));             \
         }                                            \
     } while (0)
+
+#define p_growx(pp, goalnb, allocnb)                 \
+    do {                                             \
+        if ((goalnb) > *(allocnb)) {                 \
+            *(allocnb) = (goalnb);                   \
+            p_realloc((pp), *(allocnb));             \
+        }                                            \
+    } while (0)
+
+#define ssizeof(foo)            (ssize_t)sizeof(foo)
+#define countof(foo)            (ssizeof(foo) / ssizeof(foo[0]))
 
 /* Memory duplication macro */
 #define p_dup(p, count)         memdup((p), sizeof(*(p)) * (count))

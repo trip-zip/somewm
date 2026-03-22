@@ -98,7 +98,7 @@ property_handle_toplevel_title(struct wl_listener *listener, void *data)
 
 	/* Get client from listener */
 	c = wl_container_of(listener, c, set_title);
-	if (!c || c->client_type != XDGShell)
+	if (!c || c->client_type != XDGShell || !c->surface.xdg)
 		return;
 
 	/* Get title from xdg_toplevel */
@@ -134,7 +134,7 @@ property_handle_toplevel_app_id(struct wl_listener *listener, void *data)
 	/* Get client from listener - note: we reuse set_title listener for app_id
 	 * In practice, app_id changes are rare after initial mapping */
 	c = wl_container_of(listener, c, set_title);
-	if (!c || c->client_type != XDGShell)
+	if (!c || c->client_type != XDGShell || !c->surface.xdg)
 		return;
 
 	/* Get app_id from xdg_toplevel */
@@ -168,7 +168,7 @@ property_update_wayland_properties(client_t *c)
 	lua_State *L;
 	pid_t pid;
 
-	if (!c || c->client_type != XDGShell)
+	if (!c || c->client_type != XDGShell || !c->surface.xdg)
 		return;
 
 	toplevel = c->surface.xdg->toplevel;
@@ -214,7 +214,7 @@ property_register_wayland_listeners(client_t *c)
 {
 	struct wlr_xdg_toplevel *toplevel;
 
-	if (!c || c->client_type != XDGShell)
+	if (!c || c->client_type != XDGShell || !c->surface.xdg)
 		return;
 
 	toplevel = c->surface.xdg->toplevel;
@@ -331,6 +331,51 @@ property_update_xwayland_properties(client_t *c)
 		/* client_find_transient_for() will resolve this to client_t* */
 		client_find_transient_for(c);
 	}
+
+	/* _NET_WM_WINDOW_TYPE - use wlroots cached data (no XCB roundtrip).
+	 * Matches AwesomeWM's ewmh_client_check_hints() window type logic. */
+	if (wlr_xwayland_surface_has_window_type(xsurface,
+			WLR_XWAYLAND_NET_WM_WINDOW_TYPE_DESKTOP))
+		c->type = WINDOW_TYPE_DESKTOP;
+	else if (wlr_xwayland_surface_has_window_type(xsurface,
+			WLR_XWAYLAND_NET_WM_WINDOW_TYPE_DOCK))
+		c->type = WINDOW_TYPE_DOCK;
+	else if (wlr_xwayland_surface_has_window_type(xsurface,
+			WLR_XWAYLAND_NET_WM_WINDOW_TYPE_SPLASH))
+		c->type = WINDOW_TYPE_SPLASH;
+	else if (wlr_xwayland_surface_has_window_type(xsurface,
+			WLR_XWAYLAND_NET_WM_WINDOW_TYPE_DIALOG))
+		c->type = WINDOW_TYPE_DIALOG;
+	else if (wlr_xwayland_surface_has_window_type(xsurface,
+			WLR_XWAYLAND_NET_WM_WINDOW_TYPE_UTILITY))
+		c->type = WINDOW_TYPE_UTILITY;
+	else if (wlr_xwayland_surface_has_window_type(xsurface,
+			WLR_XWAYLAND_NET_WM_WINDOW_TYPE_TOOLBAR))
+		c->type = WINDOW_TYPE_TOOLBAR;
+	else if (wlr_xwayland_surface_has_window_type(xsurface,
+			WLR_XWAYLAND_NET_WM_WINDOW_TYPE_MENU))
+		c->type = WINDOW_TYPE_MENU;
+	else if (wlr_xwayland_surface_has_window_type(xsurface,
+			WLR_XWAYLAND_NET_WM_WINDOW_TYPE_DROPDOWN_MENU))
+		c->type = WINDOW_TYPE_DROPDOWN_MENU;
+	else if (wlr_xwayland_surface_has_window_type(xsurface,
+			WLR_XWAYLAND_NET_WM_WINDOW_TYPE_POPUP_MENU))
+		c->type = WINDOW_TYPE_POPUP_MENU;
+	else if (wlr_xwayland_surface_has_window_type(xsurface,
+			WLR_XWAYLAND_NET_WM_WINDOW_TYPE_TOOLTIP))
+		c->type = WINDOW_TYPE_TOOLTIP;
+	else if (wlr_xwayland_surface_has_window_type(xsurface,
+			WLR_XWAYLAND_NET_WM_WINDOW_TYPE_NOTIFICATION))
+		c->type = WINDOW_TYPE_NOTIFICATION;
+	else if (wlr_xwayland_surface_has_window_type(xsurface,
+			WLR_XWAYLAND_NET_WM_WINDOW_TYPE_COMBO))
+		c->type = WINDOW_TYPE_COMBO;
+	else if (wlr_xwayland_surface_has_window_type(xsurface,
+			WLR_XWAYLAND_NET_WM_WINDOW_TYPE_DND))
+		c->type = WINDOW_TYPE_DND;
+	else if (wlr_xwayland_surface_has_window_type(xsurface,
+			WLR_XWAYLAND_NET_WM_WINDOW_TYPE_NORMAL))
+		c->type = WINDOW_TYPE_NORMAL;
 
 	lua_pop(L, 1);
 }

@@ -7,14 +7,18 @@
  * Request:  COMMAND [ARGS...]\n
  * Response: STATUS [MESSAGE]\n[DATA...]\n\n
  *
+ * Event subscription: Clients that send "subscribe" stay connected and
+ * receive "EVENT <type> <json>\n" lines as compositor events occur.
+ *
  * Example:
- *   → tag view 2\n
- *   ← OK\n\n
+ *   -> tag view 2\n
+ *   <- OK\n\n
  */
 
 #include "ipc.h"
 #include "common/util.h"
 #include <errno.h>
+#include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -25,7 +29,8 @@
 
 #define IPC_SOCKET_NAME "somewm-socket"
 #define IPC_MAX_CLIENTS 10
-#define IPC_BUFFER_SIZE 4096
+#define IPC_BUFFER_INITIAL 4096
+#define IPC_BUFFER_MAX (1024 * 1024) /* 1 MB */
 
 /** Connected IPC client */
 struct ipc_client {
@@ -34,6 +39,7 @@ struct ipc_client {
 	char *buffer;
 	size_t buffer_size;
 	size_t buffer_used;
+	bool subscribed;
 	struct wl_list link;
 };
 
@@ -48,6 +54,7 @@ static int ipc_socket_fd = -1;
 static struct wl_event_source *ipc_event_source = NULL;
 static struct wl_event_loop *ipc_event_loop = NULL;
 static struct wl_list ipc_clients;
+static int ipc_subscriber_count = 0;
 static char ipc_socket_path[256];
 
 const char *
@@ -211,9 +218,10 @@ ipc_handle_connection(int fd, uint32_t mask, void *data)
 	/* Create client structure */
 	client = ecalloc(1, sizeof(*client));
 	client->fd = client_fd;
-	client->buffer_size = IPC_BUFFER_SIZE;
+	client->buffer_size = IPC_BUFFER_INITIAL;
 	client->buffer = ecalloc(1, client->buffer_size);
 	client->buffer_used = 0;
+	client->subscribed = false;
 
 	/* Add to event loop */
 	client->event_source = wl_event_loop_add_fd(
@@ -237,12 +245,42 @@ ipc_handle_connection(int fd, uint32_t mask, void *data)
 	return 0;
 }
 
+/** Grow client buffer if needed, up to IPC_BUFFER_MAX */
+static bool
+ipc_buffer_grow(struct ipc_client *client)
+{
+	if (client->buffer_size >= IPC_BUFFER_MAX)
+		return false;
+
+	size_t new_size = client->buffer_size * 2;
+	if (new_size > IPC_BUFFER_MAX)
+		new_size = IPC_BUFFER_MAX;
+
+	char *new_buf = realloc(client->buffer, new_size);
+	if (!new_buf)
+		return false;
+
+	client->buffer = new_buf;
+	client->buffer_size = new_size;
+	return true;
+}
+
 static int
 ipc_handle_client_data(int fd, uint32_t mask, void *data)
 {
 	struct ipc_client *client = data;
 	char *newline;
 	ssize_t n;
+
+	/* Grow buffer if nearly full */
+	if (client->buffer_used >= client->buffer_size - 1) {
+		if (!ipc_buffer_grow(client)) {
+			const char *msg = "ERROR Command too long\n\n";
+			(void)!write(client->fd, msg, strlen(msg));
+			ipc_client_destroy(client);
+			return 0;
+		}
+	}
 
 	/* Read data */
 	n = read(client->fd, client->buffer + client->buffer_used,
@@ -283,10 +321,12 @@ ipc_handle_client_data(int fd, uint32_t mask, void *data)
 
 	/* Check for buffer overflow */
 	if (client->buffer_used >= client->buffer_size - 1) {
-		const char *msg = "ERROR Command too long\n\n";
-		(void)!write(client->fd, msg, strlen(msg));
-		ipc_client_destroy(client);
-		return 0;
+		if (!ipc_buffer_grow(client)) {
+			const char *msg = "ERROR Command too long\n\n";
+			(void)!write(client->fd, msg, strlen(msg));
+			ipc_client_destroy(client);
+			return 0;
+		}
 	}
 
 	return 0;
@@ -295,6 +335,9 @@ ipc_handle_client_data(int fd, uint32_t mask, void *data)
 static void
 ipc_client_destroy(struct ipc_client *client)
 {
+	if (client->subscribed)
+		ipc_subscriber_count--;
+
 	if (client->event_source) {
 		wl_event_source_remove(client->event_source);
 	}
@@ -316,17 +359,66 @@ void
 ipc_send_response(int client_fd, const char *response)
 {
 	if (client_fd >= 0 && response) {
-		(void)!write(client_fd, response, strlen(response));
+		size_t len = strlen(response);
+		(void)!write(client_fd, response, len);
 		/* Ensure response ends with double newline */
-		if (!strstr(response + strlen(response) - 2, "\n\n")) {
+		if (len < 2 || response[len - 1] != '\n' || response[len - 2] != '\n') {
 			(void)!write(client_fd, "\n", 1);
 		}
 	}
 }
 
 /**
+ * Mark an IPC client as a subscriber (persistent connection for events).
+ * Called from Lua when a client sends "subscribe".
+ */
+void
+ipc_subscribe_client(int client_fd)
+{
+	struct ipc_client *client;
+	wl_list_for_each(client, &ipc_clients, link) {
+		if (client->fd == client_fd) {
+			if (!client->subscribed) {
+				client->subscribed = true;
+				ipc_subscriber_count++;
+			}
+			return;
+		}
+	}
+}
+
+/**
+ * Broadcast an event message to all subscribed IPC clients.
+ * Format: EVENT <type> <json>\n
+ * Called from Lua via _ipc_broadcast().
+ */
+void
+ipc_broadcast(const char *message)
+{
+	struct ipc_client *client, *tmp;
+	size_t len;
+
+	if (!message || ipc_subscriber_count <= 0)
+		return;
+
+	len = strlen(message);
+
+	wl_list_for_each_safe(client, tmp, &ipc_clients, link) {
+		if (!client->subscribed)
+			continue;
+
+		ssize_t written = write(client->fd, message, len);
+		if (written < 0) {
+			/* Client disconnected, clean up */
+			if (errno != EAGAIN && errno != EINTR) {
+				ipc_client_destroy(client);
+			}
+		}
+	}
+}
+
+/**
  * Process IPC command
- * This is where we bridge to Lua - for now, just echo back
  */
 static void
 ipc_process_command(struct ipc_client *client, const char *command)

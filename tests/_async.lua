@@ -17,6 +17,8 @@
 -- @module _async
 ---------------------------------------------------------------------------
 
+local unpack = unpack or table.unpack  -- Lua 5.1/LuaJIT compat
+
 local timer = require("gears.timer")
 
 local async = {}

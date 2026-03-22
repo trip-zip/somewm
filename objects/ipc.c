@@ -10,8 +10,10 @@
 #include <string.h>
 #include <unistd.h>
 
-/* Forward declaration of ipc_send_response from ../ipc.c */
+/* Functions from ../ipc.c */
 extern void ipc_send_response(int client_fd, const char *response);
+extern void ipc_subscribe_client(int client_fd);
+extern void ipc_broadcast(const char *message);
 
 /**
  * Dispatch IPC command to Lua
@@ -77,6 +79,30 @@ luaA_ipc_send_response(lua_State *L)
 }
 
 /**
+ * Lua: _ipc_subscribe(client_fd)
+ * Mark a client as subscribed for event broadcasts
+ */
+static int
+luaA_ipc_subscribe(lua_State *L)
+{
+	int client_fd = luaL_checkinteger(L, 1);
+	ipc_subscribe_client(client_fd);
+	return 0;
+}
+
+/**
+ * Lua: _ipc_broadcast(message)
+ * Broadcast a message to all subscribed clients
+ */
+static int
+luaA_ipc_broadcast(lua_State *L)
+{
+	const char *message = luaL_checkstring(L, 1);
+	ipc_broadcast(message);
+	return 0;
+}
+
+/**
  * Setup IPC Lua module
  * Registers functions that Lua can call
  */
@@ -86,6 +112,14 @@ luaA_ipc_setup(lua_State *L)
 	/* Register _ipc_send_response as global function (for advanced use) */
 	lua_pushcfunction(L, luaA_ipc_send_response);
 	lua_setglobal(L, "_ipc_send_response");
+
+	/* Register _ipc_subscribe for event subscription */
+	lua_pushcfunction(L, luaA_ipc_subscribe);
+	lua_setglobal(L, "_ipc_subscribe");
+
+	/* Register _ipc_broadcast for broadcasting events */
+	lua_pushcfunction(L, luaA_ipc_broadcast);
+	lua_setglobal(L, "_ipc_broadcast");
 
 	/* Note: _ipc_dispatch will be defined in Lua (lua/awful/ipc.lua) */
 }

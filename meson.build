@@ -121,7 +121,7 @@ message('Found LGI version: ' + lgi_version)
 
 # wlroots 0.19 only - use system if available, otherwise build from subproject
 # We only support 0.19+ due to Xwayland bugs in earlier versions
-wlroots = dependency('wlroots-0.19', required: false)
+wlroots = dependency('wlroots-0.19', static: false, required: false)
 
 if not wlroots.found()
   message('System wlroots 0.19 not found, building from subproject...')
@@ -142,6 +142,16 @@ endif
 
 wlroots_version = '0.19'
 message('Using wlroots version: ' + wlroots_version)
+
+# PAM authentication (optional, for lock screen)
+pam_option = get_option('pam')
+pam_dep = dependency('pam', required: pam_option)
+have_pam = pam_dep.found()
+if have_pam
+  message('PAM authentication enabled')
+else
+  message('PAM authentication disabled (lock screen will require external auth)')
+endif
 
 # ==============================================================================
 # Wayland Protocol Generation
@@ -203,7 +213,14 @@ layer_shell_client_code = custom_target(
   command: [wayland_scanner, 'private-code', '@INPUT@', '@OUTPUT@'],
 )
 
-# xdg-shell is needed by layer-shell for popup support
+# xdg-shell client protocol (header + code) for test clients
+xdg_shell_client_header = custom_target(
+  'xdg-shell-client-protocol.h',
+  input: wayland_protocols_dir / 'stable/xdg-shell/xdg-shell.xml',
+  output: 'xdg-shell-client-protocol.h',
+  command: [wayland_scanner, 'client-header', '@INPUT@', '@OUTPUT@'],
+)
+
 xdg_shell_client_code = custom_target(
   'xdg-shell-client-protocol.c',
   input: wayland_protocols_dir / 'stable/xdg-shell/xdg-shell.xml',
@@ -237,6 +254,14 @@ endif
 
 if have_3fg_drag
   add_project_arguments('-DHAVE_LIBINPUT_3FG_DRAG', language: 'c')
+endif
+
+if have_pam
+  add_project_arguments('-DHAVE_PAM', language: 'c')
+endif
+
+if get_option('test_pam')
+  add_project_arguments('-DTEST_PAM', language: 'c')
 endif
 
 # Development flags
@@ -276,7 +301,10 @@ somewm_sources = [
   'spawn.c',
   'keygrabber.c',
   'mousegrabber.c',
+  'gesture.c',
+  'animation.c',
   'selection.c',
+  'pam_auth.c',
   # Common
   'common/luaclass.c',
   'common/luaobject.c',
@@ -288,6 +316,7 @@ somewm_sources = [
   'objects/tag.c',
   'objects/client.c',
   'objects/screen.c',
+  'objects/output.c',
   'objects/drawable.c',
   'objects/drawin.c',
   'objects/layer_surface.c',
@@ -330,6 +359,10 @@ if have_xwayland
   all_deps += [xcb, xcb_icccm]
 endif
 
+if have_pam
+  all_deps += [pam_dep]
+endif
+
 somewm_exe = executable(
   'somewm',
   somewm_sources,
@@ -359,6 +392,15 @@ install_data(
   'somewm-session',
   install_dir: get_option('bindir'),
   install_mode: 'rwxr-xr-x',
+)
+
+# Test XDG transient client for stacking regression tests (issue #276)
+test_transient_client = executable(
+  'test-transient-client',
+  ['tests/test-transient-client.c', xdg_shell_client_code],
+  xdg_shell_client_header,
+  dependencies: [wayland_client],
+  install: false,
 )
 
 # ==============================================================================

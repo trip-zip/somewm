@@ -24,6 +24,7 @@ local ret = {
     widget = require("awful.widget");
     keygrabber = require("awful.keygrabber");
     input = require("awful.input");
+    gesture = require("awful.gesture");
     menu = require("awful.menu");
     mouse = require("awful.mouse");
     remote = require("awful.remote");

@@ -495,7 +495,7 @@ luaA_layer_surface_new(lua_State *L)
 }
 
 /* Class methods */
-static const luaL_Reg layer_surface_methods[] = {
+const luaL_Reg layer_surface_methods[] = {
 	LUA_CLASS_METHODS(layer_surface)
 	{ "get", luaA_layer_surface_get },
 	{ "__call", luaA_layer_surface_new },
@@ -503,7 +503,7 @@ static const luaL_Reg layer_surface_methods[] = {
 };
 
 /* Instance metatable methods */
-static const luaL_Reg layer_surface_meta[] = {
+const luaL_Reg layer_surface_meta[] = {
 	LUA_OBJECT_META(layer_surface)
 	LUA_CLASS_META
 	{ "__tostring", luaA_layer_surface_tostring },

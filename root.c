@@ -25,6 +25,7 @@
 #include "somewm_types.h"
 #include <xkbcommon/xkbcommon.h>
 #include <wlr/types/wlr_seat.h>
+#include <wlr/types/wlr_data_device.h>
 #include <wlr/types/wlr_cursor.h>
 #include <wlr/types/wlr_output_layout.h>
 #include <linux/input-event-codes.h>
@@ -647,7 +648,8 @@ luaA_root_fake_input(lua_State *L)
 		wlr_seat_pointer_notify_button(seat, timestamp, button_code, state);
 
 	} else if (strcmp(event_type, "motion_notify") == 0) {
-		/* Motion event */
+		/* Motion event — route through full compositor motion path so
+		 * selmon tracking, pointer focus, and Lua signals all fire. */
 		bool relative;
 		double x, y;
 
@@ -656,20 +658,66 @@ luaA_root_fake_input(lua_State *L)
 		y = luaL_optnumber(L, 4, 0);
 
 		if (relative) {
-			wlr_cursor_move(cursor, NULL, x, y);
+			some_fake_motion(x, y);
 		} else {
-			/* Absolute coordinates - warp to position */
-			wlr_cursor_warp_absolute(cursor, NULL,
-				x / (double)cursor->x, y / (double)cursor->y);
-			/* Actually just warp directly */
+			/* Absolute coordinates - warp then restore pointer focus */
 			wlr_cursor_warp(cursor, NULL, x, y);
+			some_fake_motion(0, 0);
 		}
-		wlr_seat_pointer_notify_motion(seat, timestamp, cursor->x, cursor->y);
 
 	} else {
 		return luaL_error(L, "Unknown event type: %s (expected key_press, key_release, "
 			"button_press, button_release, or motion_notify)", event_type);
 	}
+
+	return 0;
+}
+
+/* Mock drag stored between fake_drag_start/fake_drag_end calls */
+static struct wlr_drag *test_drag = NULL;
+
+/** root.fake_drag_start() — simulate a drag starting.
+ *
+ * Creates a mock wlr_drag, sets seat->drag, and emits seat->events.start_drag
+ * to trigger the compositor's startdrag() handler.
+ */
+static int
+luaA_root_fake_drag_start(lua_State *L)
+{
+	if (test_drag)
+		return luaL_error(L, "root.fake_drag_start(): drag already active");
+
+	test_drag = ecalloc(1, sizeof(*test_drag));
+
+	wl_signal_init(&test_drag->events.destroy);
+	wl_signal_init(&test_drag->events.focus);
+	wl_signal_init(&test_drag->events.motion);
+	wl_signal_init(&test_drag->events.drop);
+
+	seat->drag = test_drag;
+	wl_signal_emit_mutable(&seat->events.start_drag, test_drag);
+
+	return 0;
+}
+
+/** root.fake_drag_end() — simulate a drag ending.
+ *
+ * Mimics wlroots' drag_destroy() sequence: clears seat->drag, emits
+ * drag->events.destroy. This triggers the compositor's destroydrag() handler.
+ */
+static int
+luaA_root_fake_drag_end(lua_State *L)
+{
+	if (!test_drag)
+		return luaL_error(L, "root.fake_drag_end(): no drag active");
+
+	struct wlr_drag *drag = test_drag;
+	test_drag = NULL;
+
+	seat->drag = NULL;
+	wl_signal_emit_mutable(&drag->events.destroy, drag);
+
+	free(drag);
 
 	return 0;
 }
@@ -983,111 +1031,93 @@ wallpaper_cache_show(wallpaper_cache_entry_t *entry, int screen_index)
 	return true;
 }
 
-/** Get the wallpaper path from Lua global (set by monkey-patched gears.surface.load) */
-static const char *
-get_wallpaper_path_from_lua(lua_State *L)
-{
-	lua_getglobal(L, "_somewm_last_wallpaper_path");
-	const char *path = NULL;
-	if (lua_isstring(L, -1)) {
-		path = lua_tostring(L, -1);
-	}
-	lua_pop(L, 1);
-	return path;
-}
-
 /** Screen info from Lua table */
 typedef struct {
 	int index;   /* 0-based screen index */
 	int x, y;    /* Screen position */
 	int width, height;  /* Screen size */
 	bool valid;
+	const char *path;  /* Borrowed from Lua string, valid until table cleared */
 } wallpaper_screen_info_t;
 
 #define MAX_PENDING_SCREENS 8
 
-/** Get ALL screen infos for a path from Lua nested table
+/** Get ALL pending wallpaper screen infos across ALL paths from Lua nested table
  * Table structure: _somewm_wallpaper_screen_info[path][screen_index] = {x, y, width, height}
  * Returns count of valid screens found (up to MAX_PENDING_SCREENS)
  */
 static int
-get_all_wallpaper_screen_infos_from_lua(lua_State *L, const char *path,
-                                        wallpaper_screen_info_t *infos, int max_infos)
+get_all_pending_wallpaper_infos_from_lua(lua_State *L,
+                                         wallpaper_screen_info_t *infos, int max_infos)
 {
 	int count = 0;
 
-	if (!path || !infos || max_infos <= 0)
+	if (!infos || max_infos <= 0)
 		return 0;
 
-	/* Look up the nested table: _somewm_wallpaper_screen_info[path] */
 	lua_getglobal(L, "_somewm_wallpaper_screen_info");
 	if (!lua_istable(L, -1)) {
 		lua_pop(L, 1);
 		return 0;
 	}
 
-	lua_getfield(L, -1, path);
-	if (!lua_istable(L, -1)) {
-		lua_pop(L, 2);
-		return 0;
-	}
-
-	/* Iterate over all screen indices in the path's table */
-	lua_pushnil(L);  /* first key */
+	/* Iterate over all paths in the outer table */
+	lua_pushnil(L);  /* first key for outer table */
 	while (lua_next(L, -2) != 0 && count < max_infos) {
-		/* key is screen_index (Lua 1-based), value is geometry table */
-		if (lua_isnumber(L, -2) && lua_istable(L, -1)) {
-			int screen_index = (int)lua_tointeger(L, -2) - 1;  /* Convert to 0-based */
+		/* key is path string, value is screen table */
+		if (lua_isstring(L, -2) && lua_istable(L, -1)) {
+			const char *path = lua_tostring(L, -2);
 
-			wallpaper_screen_info_t *info = &infos[count];
-			info->index = screen_index;
-			info->valid = false;
+			/* Iterate over all screen indices for this path */
+			lua_pushnil(L);  /* first key for inner table */
+			while (lua_next(L, -2) != 0 && count < max_infos) {
+				/* key is screen_index (Lua 1-based), value is geometry table */
+				if (lua_isnumber(L, -2) && lua_istable(L, -1)) {
+					int screen_index = (int)lua_tointeger(L, -2) - 1;  /* Convert to 0-based */
 
-			lua_getfield(L, -1, "x");
-			info->x = lua_isnumber(L, -1) ? (int)lua_tointeger(L, -1) : 0;
-			lua_pop(L, 1);
+					wallpaper_screen_info_t *info = &infos[count];
+					info->index = screen_index;
+					info->path = path;
+					info->valid = false;
 
-			lua_getfield(L, -1, "y");
-			info->y = lua_isnumber(L, -1) ? (int)lua_tointeger(L, -1) : 0;
-			lua_pop(L, 1);
+					lua_getfield(L, -1, "x");
+					info->x = lua_isnumber(L, -1) ? (int)lua_tointeger(L, -1) : 0;
+					lua_pop(L, 1);
 
-			lua_getfield(L, -1, "width");
-			info->width = lua_isnumber(L, -1) ? (int)lua_tointeger(L, -1) : 0;
-			lua_pop(L, 1);
+					lua_getfield(L, -1, "y");
+					info->y = lua_isnumber(L, -1) ? (int)lua_tointeger(L, -1) : 0;
+					lua_pop(L, 1);
 
-			lua_getfield(L, -1, "height");
-			info->height = lua_isnumber(L, -1) ? (int)lua_tointeger(L, -1) : 0;
-			lua_pop(L, 1);
+					lua_getfield(L, -1, "width");
+					info->width = lua_isnumber(L, -1) ? (int)lua_tointeger(L, -1) : 0;
+					lua_pop(L, 1);
 
-			if (screen_index >= 0 && info->width > 0 && info->height > 0) {
-				info->valid = true;
-				count++;
+					lua_getfield(L, -1, "height");
+					info->height = lua_isnumber(L, -1) ? (int)lua_tointeger(L, -1) : 0;
+					lua_pop(L, 1);
+
+					if (screen_index >= 0 && info->width > 0 && info->height > 0) {
+						info->valid = true;
+						count++;
+					}
+				}
+				lua_pop(L, 1);  /* pop value, keep key for inner iteration */
 			}
 		}
-		lua_pop(L, 1);  /* pop value, keep key for next iteration */
+		lua_pop(L, 1);  /* pop value, keep key for outer iteration */
 	}
 
-	lua_pop(L, 2);  /* pop path table and screen_info table */
+	lua_pop(L, 1);  /* pop screen_info table */
 	return count;
 }
 
-/** Clear the wallpaper path and screen Lua globals after using them */
+/** Clear all wallpaper tracking Lua globals after processing them */
 static void
 clear_wallpaper_info_in_lua(lua_State *L)
 {
-	/* Get path first so we can clear its entry from the screen info table */
-	lua_getglobal(L, "_somewm_last_wallpaper_path");
-	if (lua_isstring(L, -1)) {
-		const char *path = lua_tostring(L, -1);
-		/* Clear the screen info table entry for this path */
-		lua_getglobal(L, "_somewm_wallpaper_screen_info");
-		if (lua_istable(L, -1)) {
-			lua_pushnil(L);
-			lua_setfield(L, -2, path);
-		}
-		lua_pop(L, 1);  /* pop table */
-	}
-	lua_pop(L, 1);  /* pop path */
+	/* Replace the entire screen info table with a fresh empty table */
+	lua_newtable(L);
+	lua_setglobal(L, "_somewm_wallpaper_screen_info");
 
 	/* Clear the path global */
 	lua_pushnil(L);
@@ -1178,16 +1208,15 @@ fail:
 static bool
 root_set_wallpaper_cached(lua_State *L, cairo_pattern_t *pattern)
 {
-	const char *path = get_wallpaper_path_from_lua(L);
 	bool cache_enabled = globalconf.wallpaper_cache.next != NULL;
 	bool result = false;
 
-	/* Get ALL pending screens for this path */
+	/* Get ALL pending screens across ALL paths */
 	wallpaper_screen_info_t screen_infos[MAX_PENDING_SCREENS];
 	int screen_count = 0;
 
-	if (cache_enabled && path) {
-		screen_count = get_all_wallpaper_screen_infos_from_lua(L, path,
+	if (cache_enabled) {
+		screen_count = get_all_pending_wallpaper_infos_from_lua(L,
 			screen_infos, MAX_PENDING_SCREENS);
 	}
 
@@ -1199,7 +1228,7 @@ root_set_wallpaper_cached(lua_State *L, cairo_pattern_t *pattern)
 				continue;
 
 			/* Check if already cached */
-			wallpaper_cache_entry_t *existing = wallpaper_cache_lookup(path, info->index);
+			wallpaper_cache_entry_t *existing = wallpaper_cache_lookup(info->path, info->index);
 			if (existing) {
 				wallpaper_cache_show(existing, info->index);
 				result = true;
@@ -1207,7 +1236,7 @@ root_set_wallpaper_cached(lua_State *L, cairo_pattern_t *pattern)
 			}
 
 			/* Create new cache entry */
-			if (create_wallpaper_cache_entry(path, pattern, info))
+			if (create_wallpaper_cache_entry(info->path, pattern, info))
 				result = true;
 		}
 
@@ -1755,7 +1784,8 @@ composite_scene_buffer_to_cairo(struct wlr_scene_buffer *scene_buffer,
 	struct screenshot_render_data *rdata = data;
 	struct wlr_buffer *buffer;
 	cairo_surface_t *buf_surface;
-	int buf_width, buf_height;
+	int dst_width, dst_height;
+	int src_width, src_height;
 	void *shm_data;
 	uint32_t shm_format;
 	size_t shm_stride;
@@ -1768,10 +1798,18 @@ composite_scene_buffer_to_cairo(struct wlr_scene_buffer *scene_buffer,
 		return;
 
 	buffer = scene_buffer->buffer;
-	buf_width = scene_buffer->dst_width;
-	buf_height = scene_buffer->dst_height;
+	src_width = buffer->width;
+	src_height = buffer->height;
+	dst_width = scene_buffer->dst_width;
+	dst_height = scene_buffer->dst_height;
 
-	if (buf_width <= 0 || buf_height <= 0)
+	/* Fall back to buffer dimensions if dst not set */
+	if (dst_width <= 0 || dst_height <= 0) {
+		dst_width = src_width;
+		dst_height = src_height;
+	}
+
+	if (src_width <= 0 || src_height <= 0)
 		return;
 
 	/* First try direct buffer access (works for SHM buffers - widgets) */
@@ -1783,14 +1821,24 @@ composite_scene_buffer_to_cairo(struct wlr_scene_buffer *scene_buffer,
 		if (shm_format == DRM_FORMAT_ARGB8888 || shm_format == DRM_FORMAT_XRGB8888) {
 			cairo_fmt = (shm_format == DRM_FORMAT_ARGB8888) ?
 			            CAIRO_FORMAT_ARGB32 : CAIRO_FORMAT_RGB24;
+			/* Use actual buffer dimensions, not dst dimensions */
 			buf_surface = cairo_image_surface_create_for_data(
-				shm_data, cairo_fmt, buf_width, buf_height, shm_stride);
+				shm_data, cairo_fmt, src_width, src_height, shm_stride);
 
 			if (cairo_surface_status(buf_surface) == CAIRO_STATUS_SUCCESS) {
-				/* Composite onto target surface */
 				cairo_save(rdata->cr);
-				cairo_set_source_surface(rdata->cr, buf_surface,
-					sx + rdata->offset_x, sy + rdata->offset_y);
+				/* Scale if buffer pixels differ from logical size */
+				if (src_width != dst_width || src_height != dst_height) {
+					cairo_translate(rdata->cr,
+						sx + rdata->offset_x, sy + rdata->offset_y);
+					cairo_scale(rdata->cr,
+						(double)dst_width / src_width,
+						(double)dst_height / src_height);
+					cairo_set_source_surface(rdata->cr, buf_surface, 0, 0);
+				} else {
+					cairo_set_source_surface(rdata->cr, buf_surface,
+						sx + rdata->offset_x, sy + rdata->offset_y);
+				}
 				cairo_paint(rdata->cr);
 				cairo_restore(rdata->cr);
 				cairo_surface_destroy(buf_surface);
@@ -1808,21 +1856,20 @@ composite_scene_buffer_to_cairo(struct wlr_scene_buffer *scene_buffer,
 		if (!texture)
 			return;
 
-		/* Allocate pixel buffer for reading */
-		stride = buf_width * 4;
-		pixels = malloc(stride * buf_height);
+		/* Read at full buffer resolution, not dst (logical) dimensions */
+		stride = src_width * 4;
+		pixels = malloc(stride * src_height);
 		if (!pixels) {
 			wlr_texture_destroy(texture);
 			return;
 		}
 		need_free = true;
 
-		/* Read pixels from texture */
 		if (!wlr_texture_read_pixels(texture, &(struct wlr_texture_read_pixels_options){
 			.data = pixels,
 			.format = DRM_FORMAT_ARGB8888,
 			.stride = stride,
-			.src_box = { .x = 0, .y = 0, .width = buf_width, .height = buf_height },
+			.src_box = { .x = 0, .y = 0, .width = src_width, .height = src_height },
 		})) {
 			free(pixels);
 			wlr_texture_destroy(texture);
@@ -1832,9 +1879,9 @@ composite_scene_buffer_to_cairo(struct wlr_scene_buffer *scene_buffer,
 		wlr_texture_destroy(texture);
 	}
 
-	/* Create Cairo surface from pixel data */
+	/* Create Cairo surface at full buffer resolution */
 	buf_surface = cairo_image_surface_create_for_data(
-		pixels, CAIRO_FORMAT_ARGB32, buf_width, buf_height, stride);
+		pixels, CAIRO_FORMAT_ARGB32, src_width, src_height, stride);
 
 	if (cairo_surface_status(buf_surface) != CAIRO_STATUS_SUCCESS) {
 		if (need_free)
@@ -1842,10 +1889,19 @@ composite_scene_buffer_to_cairo(struct wlr_scene_buffer *scene_buffer,
 		return;
 	}
 
-	/* Composite onto target surface */
+	/* Composite onto target, scaling from buffer resolution to logical size */
 	cairo_save(rdata->cr);
-	cairo_set_source_surface(rdata->cr, buf_surface,
-		sx + rdata->offset_x, sy + rdata->offset_y);
+	if (src_width != dst_width || src_height != dst_height) {
+		cairo_translate(rdata->cr,
+			sx + rdata->offset_x, sy + rdata->offset_y);
+		cairo_scale(rdata->cr,
+			(double)dst_width / src_width,
+			(double)dst_height / src_height);
+		cairo_set_source_surface(rdata->cr, buf_surface, 0, 0);
+	} else {
+		cairo_set_source_surface(rdata->cr, buf_surface,
+			sx + rdata->offset_x, sy + rdata->offset_y);
+	}
 	cairo_paint(rdata->cr);
 	cairo_restore(rdata->cr);
 
@@ -1957,7 +2013,7 @@ luaA_root_newindex(lua_State *L)
 	return luaA_default_newindex(L);
 }
 
-static const luaL_Reg root_methods[] = {
+const luaL_Reg root_methods[] = {
 	/* AwesomeWM-compatible exports (following Prime Directive) */
 	{ "_buttons", luaA_root_buttons },
 	{ "_keys", luaA_root_keys },
@@ -1972,6 +2028,8 @@ static const luaL_Reg root_methods[] = {
 	{ "cursor_theme", luaA_root_cursor_theme },
 	{ "cursor_size", luaA_root_cursor_size },
 	{ "fake_input", luaA_root_fake_input },
+	{ "fake_drag_start", luaA_root_fake_drag_start },
+	{ "fake_drag_end", luaA_root_fake_drag_end },
 	{ "drawins", luaA_root_drawins },
 	{ "size", luaA_root_size },
 	{ "size_mm", luaA_root_size_mm },
@@ -1990,7 +2048,7 @@ static const luaL_Reg root_methods[] = {
 };
 
 /* Empty meta table - matches AwesomeWM root.c:663-666 */
-static const luaL_Reg root_meta[] = {
+const luaL_Reg root_meta[] = {
 	{ NULL, NULL }
 };
 

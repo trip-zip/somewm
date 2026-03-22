@@ -477,7 +477,7 @@ luaA_wibox_destroy(lua_State *L)
 
 
 /* Wibox module methods */
-static const luaL_Reg wibox_methods[] = {
+const luaL_Reg wibox_methods[] = {
 	/* TODO: Implement proper wibox rendering API */
 	{ "create", luaA_wibox_create },
 	{ "get_surface", luaA_wibox_get_surface },

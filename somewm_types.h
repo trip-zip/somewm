@@ -64,6 +64,7 @@ typedef struct Monitor Monitor;
 typedef struct client_t client_t;  /* AwesomeWM client struct */
 typedef client_t Client;  /* AwesomeWM client_t is now the primary Client type */
 typedef struct Tag Tag;
+typedef struct output_t output_t;  /* Lua output object */
 
 /* Legacy Arg type - used by some Lua API wrapper functions
  * TODO: Remove this once somewm_api.c is refactored to not use Arg-based functions
@@ -112,6 +113,8 @@ struct Monitor {
 	int gamma_lut_changed;
 	int asleep;
 	int needs_screen_added; /* Set in createmon, cleared by updatemons after geometry is ready */
+	int needs_output_added; /* Set in createmon, cleared by updatemons after screen is ready */
+	output_t *output; /* Lua output object (persists across enable/disable) */
 };
 
 /* KeyboardGroup structure */
