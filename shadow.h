@@ -79,6 +79,8 @@ typedef struct shadow_nodes_t {
     struct wlr_scene_tree *tree;                        /**< Container for shadow slices */
     struct wlr_scene_buffer *slice[SHADOW_SLICE_COUNT]; /**< 9-slice scene buffers */
     struct wlr_buffer *textures[SHADOW_TEXTURE_COUNT];  /**< Owned gradient textures */
+    int last_width;                                     /**< Cached width to skip redundant updates */
+    int last_height;                                    /**< Cached height to skip redundant updates */
 } shadow_nodes_t;
 
 /**
