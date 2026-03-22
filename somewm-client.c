@@ -143,7 +143,8 @@ print_usage(const char *progname)
 	fprintf(stderr, "  version                        Show compositor version\n");
 	fprintf(stderr, "  lock                           Lock the session\n");
 	fprintf(stderr, "  reload                         Reload configuration\n");
-	fprintf(stderr, "  restart                        Full compositor restart\n\n");
+	fprintf(stderr, "  restart                        Cold restart (via somewm-session)\n");
+	fprintf(stderr, "  rebuild                        Rebuild and restart (via somewm-session)\n\n");
 
 	fprintf(stderr, "DISPLAY MANAGEMENT:\n");
 	fprintf(stderr, "  output list                    List all outputs\n");

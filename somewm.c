@@ -246,7 +246,7 @@ static void requestmonstate(struct wl_listener *listener, void *data);
 void resize(Client *c, struct wlr_box geo, int interact);
 void apply_geometry_to_wlroots(Client *c);
 /* client_refresh() declared in objects/client.h - handles geometry, borders, focus */
-static void some_refresh(void);
+void some_refresh(void);
 static void run(char *startup_cmd);
 static void setcursor(struct wl_listener *listener, void *data);
 static void setcursorshape(struct wl_listener *listener, void *data);
@@ -2473,6 +2473,130 @@ some_is_idle_inhibited(void)
 	return !wl_list_empty(&idle_inhibit_mgr->inhibitors);
 }
 
+/** Remove all wl_listeners from a client.
+ * Extracted from destroynotify's cleanup path. Handles XDG vs XWayland,
+ * mapped vs unmapped states, decoration, and foreign_toplevel listeners.
+ * Used by hot-reload to detach clients from wlroots signals before Lua GC.
+ */
+void
+client_remove_all_listeners(client_t *c)
+{
+	wl_list_remove(&c->destroy.link);
+	wl_list_remove(&c->set_title.link);
+	wl_list_remove(&c->request_fullscreen.link);
+#ifdef XWAYLAND
+	if (c->client_type != XDGShell) {
+		wl_list_remove(&c->activate.link);
+		wl_list_remove(&c->associate.link);
+		wl_list_remove(&c->configure.link);
+		wl_list_remove(&c->dissociate.link);
+		wl_list_remove(&c->set_hints.link);
+		/* If associate was called, map/unmap listeners need cleanup */
+		if (c->map.link.prev && c->map.link.next) {
+			wl_list_remove(&c->map.link);
+			wl_list_remove(&c->unmap.link);
+		}
+	} else
+#endif
+	{
+		wl_list_remove(&c->initial_commit.link);
+		/* commit.link is removed in unmapnotify for XDG clients.
+		 * Only remove here if unmapnotify didn't run (c->scene still set). */
+		if (c->scene) {
+			wl_list_remove(&c->commit.link);
+		}
+		wl_list_remove(&c->map.link);
+		wl_list_remove(&c->unmap.link);
+		wl_list_remove(&c->maximize.link);
+	}
+	/* Clean up foreign toplevel handle if not already done by unmapnotify */
+	if (c->toplevel_handle) {
+		wl_list_remove(&c->foreign_request_activate.link);
+		wl_list_remove(&c->foreign_request_close.link);
+		wl_list_remove(&c->foreign_request_fullscreen.link);
+		wl_list_remove(&c->foreign_request_maximize.link);
+		wl_list_remove(&c->foreign_request_minimize.link);
+		wlr_foreign_toplevel_handle_v1_destroy(c->toplevel_handle);
+		c->toplevel_handle = NULL;
+	}
+	/* Clean up decoration listeners if decoration exists */
+	if (c->decoration) {
+		wl_list_remove(&c->set_decoration_mode.link);
+		wl_list_remove(&c->destroy_decoration.link);
+		c->decoration = NULL;
+	}
+}
+
+/** Re-register all wl_listeners for a client after hot-reload.
+ * Called after Lua state is rebuilt. Registers the appropriate set of listeners
+ * based on client type (XDG vs XWayland) and mapped state (scene != NULL).
+ *
+ * For mapped clients: registers the "already mapped" listener set (commit, not
+ * initial_commit; plus foreign_toplevel and decoration listeners).
+ * For unmapped clients: registers the "pre-map" listener set matching
+ * createnotify/createnotifyx11.
+ */
+void
+client_reregister_listeners(client_t *c)
+{
+#ifdef XWAYLAND
+	if (c->client_type != XDGShell) {
+		struct wlr_xwayland_surface *xsurface = c->surface.xwayland;
+
+		/* Core X11 listeners (from createnotifyx11) */
+		LISTEN(&xsurface->events.associate, &c->associate, associatex11);
+		LISTEN(&xsurface->events.destroy, &c->destroy, destroynotify);
+		LISTEN(&xsurface->events.dissociate, &c->dissociate, dissociatex11);
+		LISTEN(&xsurface->events.request_activate, &c->activate, activatex11);
+		LISTEN(&xsurface->events.request_configure, &c->configure, configurex11);
+		LISTEN(&xsurface->events.request_fullscreen, &c->request_fullscreen, fullscreennotify);
+		LISTEN(&xsurface->events.set_hints, &c->set_hints, sethints);
+		LISTEN(&xsurface->events.set_title, &c->set_title, updatetitle);
+
+		/* If mapped (has surface association), register map/unmap */
+		if (c->scene && xsurface->surface) {
+			LISTEN(&xsurface->surface->events.map, &c->map, mapnotify);
+			LISTEN(&xsurface->surface->events.unmap, &c->unmap, unmapnotify);
+		}
+	} else
+#endif
+	{
+		struct wlr_xdg_toplevel *toplevel = c->surface.xdg->toplevel;
+
+		/* Core XDG listeners (from createnotify) */
+		LISTEN(&toplevel->events.destroy, &c->destroy, destroynotify);
+		LISTEN(&toplevel->events.request_fullscreen, &c->request_fullscreen, fullscreennotify);
+		LISTEN(&toplevel->events.request_maximize, &c->maximize, maximizenotify);
+		LISTEN(&toplevel->events.set_title, &c->set_title, updatetitle);
+
+		if (c->scene) {
+			/* Mapped: register commit (not initial_commit, since already mapped).
+			 * Initialize initial_commit.link so client_remove_all_listeners
+			 * can safely call wl_list_remove on it during consecutive reloads. */
+			LISTEN(&c->surface.xdg->surface->events.commit, &c->commit, commitnotify);
+			LISTEN(&c->surface.xdg->surface->events.map, &c->map, mapnotify);
+			LISTEN(&c->surface.xdg->surface->events.unmap, &c->unmap, unmapnotify);
+			wl_list_init(&c->initial_commit.link);
+		} else {
+			/* Unmapped: register initial_commit + map/unmap (from createnotify) */
+			LISTEN(&c->surface.xdg->surface->events.commit, &c->initial_commit, initialcommitnotify);
+			LISTEN(&c->surface.xdg->surface->events.map, &c->map, mapnotify);
+			LISTEN(&c->surface.xdg->surface->events.unmap, &c->unmap, unmapnotify);
+			wl_list_init(&c->commit.link);
+		}
+	}
+
+	/* Note: foreign_toplevel_handle was destroyed by client_remove_all_listeners().
+	 * A new handle is created during mapnotify's manage sequence in hot-reload
+	 * phase F, so we do NOT recreate it here. c->toplevel_handle is NULL. */
+
+	/* Re-register decoration listeners if decoration still exists */
+	if (c->decoration) {
+		LISTEN(&c->decoration->events.request_mode, &c->set_decoration_mode, requestdecorationmode);
+		LISTEN(&c->decoration->events.destroy, &c->destroy_decoration, destroydecoration);
+	}
+}
+
 void
 destroynotify(struct wl_listener *listener, void *data)
 {
@@ -2487,53 +2611,8 @@ destroynotify(struct wl_listener *listener, void *data)
 	 * order, but guards against race conditions. */
 	if (!globalconf_L) {
 		/* Minimal cleanup: remove listeners only */
-		wl_list_remove(&c->destroy.link);
-		wl_list_remove(&c->set_title.link);
-		wl_list_remove(&c->request_fullscreen.link);
-#ifdef XWAYLAND
-		if (c->client_type != XDGShell) {
-			wl_list_remove(&c->activate.link);
-			wl_list_remove(&c->associate.link);
-			wl_list_remove(&c->configure.link);
-			wl_list_remove(&c->dissociate.link);
-			wl_list_remove(&c->set_hints.link);
-			/* If associate was called, map/unmap listeners need cleanup */
-			if (c->map.link.prev && c->map.link.next) {
-				wl_list_remove(&c->map.link);
-				wl_list_remove(&c->unmap.link);
-			}
-			/* Note: commit listener is NOT registered for XWayland clients,
-			 * so no cleanup needed here. See mapnotify(). */
-		} else
-#endif
-		{
-			wl_list_remove(&c->initial_commit.link);
-			/* commit.link is removed in unmapnotify for XDG clients.
-			 * Only remove here if unmapnotify didn't run (c->scene still set). */
-			if (c->scene) {
-				wl_list_remove(&c->commit.link);
-			}
-			wl_list_remove(&c->map.link);
-			wl_list_remove(&c->unmap.link);
-			wl_list_remove(&c->maximize.link);
-		}
-		/* Clean up foreign toplevel handle if not already done by unmapnotify */
-		if (c->toplevel_handle) {
-			wl_list_remove(&c->foreign_request_activate.link);
-			wl_list_remove(&c->foreign_request_close.link);
-			wl_list_remove(&c->foreign_request_fullscreen.link);
-			wl_list_remove(&c->foreign_request_maximize.link);
-			wl_list_remove(&c->foreign_request_minimize.link);
-			wlr_foreign_toplevel_handle_v1_destroy(c->toplevel_handle);
-			c->toplevel_handle = NULL;
-		}
-		/* Clean up decoration listeners if decoration exists */
-		if (c->decoration) {
-			wl_list_remove(&c->set_decoration_mode.link);
-			wl_list_remove(&c->destroy_decoration.link);
-			c->decoration = NULL;
-		}
-		return;  // Skip client_unmanage()
+		client_remove_all_listeners(c);
+		return;  /* Skip client_unmanage() */
 	}
 
 	/* client_unmanage() will handle invalidation at the proper time (AFTER signals are emitted).
@@ -2566,56 +2645,7 @@ destroynotify(struct wl_listener *listener, void *data)
 	}
 
 	/* Clean up Wayland-specific listeners (not handled by client_unmanage) */
-	wl_list_remove(&c->destroy.link);
-	wl_list_remove(&c->set_title.link);
-	wl_list_remove(&c->request_fullscreen.link);
-#ifdef XWAYLAND
-	if (c->client_type != XDGShell) {
-		wl_list_remove(&c->activate.link);
-		wl_list_remove(&c->associate.link);
-		wl_list_remove(&c->configure.link);
-		wl_list_remove(&c->dissociate.link);
-		wl_list_remove(&c->set_hints.link);
-		/* If associate was called, map/unmap listeners were registered.
-		 * Check if they're still active (dissociate wasn't called) by checking
-		 * if the list link is part of a list (non-null prev/next). */
-		if (c->map.link.prev && c->map.link.next) {
-			wl_list_remove(&c->map.link);
-			wl_list_remove(&c->unmap.link);
-		}
-		/* Note: commit listener is NOT registered for XWayland clients,
-		 * so no cleanup needed here. See mapnotify(). */
-	} else
-#endif
-	{
-		wl_list_remove(&c->initial_commit.link);
-		/* commit.link is removed in unmapnotify for XDG clients.
-		 * Only remove here if unmapnotify didn't run (c->scene still set). */
-		if (c->scene) {
-			wl_list_remove(&c->commit.link);
-		}
-		wl_list_remove(&c->map.link);
-		wl_list_remove(&c->unmap.link);
-		wl_list_remove(&c->maximize.link);
-	}
-
-	/* Clean up foreign toplevel handle if not already done by unmapnotify */
-	if (c->toplevel_handle) {
-		wl_list_remove(&c->foreign_request_activate.link);
-		wl_list_remove(&c->foreign_request_close.link);
-		wl_list_remove(&c->foreign_request_fullscreen.link);
-		wl_list_remove(&c->foreign_request_maximize.link);
-		wl_list_remove(&c->foreign_request_minimize.link);
-		wlr_foreign_toplevel_handle_v1_destroy(c->toplevel_handle);
-		c->toplevel_handle = NULL;
-	}
-
-	/* Clean up decoration listeners if decoration exists */
-	if (c->decoration) {
-		wl_list_remove(&c->set_decoration_mode.link);
-		wl_list_remove(&c->destroy_decoration.link);
-		c->decoration = NULL;
-	}
+	client_remove_all_listeners(c);
 
 	/* Note: Do NOT free(c) or metadata here - client_unmanage() called luaA_object_unref(),
 	 * Lua GC will call client_wipe() to free metadata and eventually free(c).
@@ -4610,7 +4640,7 @@ static float main_loop_iteration_limit = 0.1f;
 static bool in_refresh = false;
 
 /* Forward declaration */
-static void some_refresh(void);
+void some_refresh(void);
 
 /* WaylandSource prepare callback - called before polling */
 static gboolean
@@ -4745,7 +4775,7 @@ some_glib_poll(GPollFD *ufds, guint nfsd, gint timeout)
  *
  * Without this, geometry changes calculated in Lua never reach Wayland!
  */
-static void
+void
 some_refresh(void)
 {
 	/* Prevent recursive refresh calls (matches AwesomeWM pattern) */
@@ -6919,9 +6949,9 @@ main(int argc, char *argv[])
 	int show_version = 0;
 	int c;
 
-	/* Store argv for restart capability (AwesomeWM API parity) */
-	globalconf.argc = argc;
-	globalconf.argv = argv;
+	/* Store argv for restart capability (AwesomeWM API parity).
+	 * Uses static storage in luaa.c so memset of globalconf can't clobber it. */
+	luaA_set_argv(argv);
 
 	const struct option long_options[] = {
 		{"help",    no_argument,       0, 'h'},

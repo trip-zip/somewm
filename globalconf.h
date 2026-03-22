@@ -114,10 +114,6 @@ typedef struct
     /** Lua VM state */
     lua_State *L;
 
-    /** Command line arguments (for restart) */
-    int argc;
-    char **argv;
-
     /** All managed clients */
     client_array_t clients;
 
@@ -269,6 +265,10 @@ typedef struct
 
     /** Logging configuration */
     int log_level;  /* wlroots log level: WLR_SILENT, WLR_ERROR, WLR_INFO, WLR_DEBUG */
+
+    /** Command-line arguments (preserved across hot-reload) */
+    int argc;
+    char **argv;
 
     /* ========== WALLPAPER SUPPORT ========== */
 

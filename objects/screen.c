@@ -51,6 +51,43 @@ static bool screens_scanned = false;
 extern void signal_array_init(signal_array_t *arr);
 extern void signal_array_wipe(signal_array_t *arr);
 
+/** Reset screen_refs array for hot-reload.
+ * Unrefs all screen objects from the old Lua registry and resets the array.
+ * Must be called BEFORE lua_close() so the unrefs happen against the live state.
+ */
+void
+luaA_screen_refs_reset(void)
+{
+	screen_count = 0;
+	/* Keep allocated capacity for reuse. screen_refs entries are Lua registry
+	 * refs from the old state - they become invalid after lua_close(). */
+	primary_screen = NULL;
+	screens_scanned = false;
+}
+
+/** Get all screen objects for hot-reload snapshot.
+ * \param L Lua state (for accessing registry)
+ * \param out_screens Output array (caller-allocated, at least *out_count entries)
+ * \param out_count In: size of out_screens array. Out: actual number of screens.
+ */
+void
+luaA_screen_get_all(lua_State *L, screen_t **out_screens, int *out_count)
+{
+	int max = *out_count;
+	int count = 0;
+	size_t i;
+
+	for (i = 0; i < screen_count && count < max; i++) {
+		lua_rawgeti(L, LUA_REGISTRYINDEX, screen_refs[i]);
+		screen_t *s = (screen_t *)lua_touserdata(L, -1);
+		lua_pop(L, 1);
+		if (s) {
+			out_screens[count++] = s;
+		}
+	}
+	*out_count = count;
+}
+
 /* ========================================================================
  * Screen object management
  * ======================================================================== */

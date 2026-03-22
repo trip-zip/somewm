@@ -2494,9 +2494,11 @@ local function register_builtin_commands()
     end
 
     -- Validate config first if checkfile is available
+    -- checkfile returns a string error message on failure, or a compiled
+    -- function on success. Only fail if we get a string back.
     if awful_util.checkfile then
       local result = awful_util.checkfile(conffile)
-      if result then
+      if type(result) == "string" then
         error("Config validation failed: " .. result)
       end
     end
@@ -2513,27 +2515,16 @@ local function register_builtin_commands()
     end
   end)
 
-  --- restart - Cold restart compositor (kills all clients)
+  --- restart - Cold restart via exit code (somewm-session restarts compositor)
   ipc.register("restart", function()
-    if capi.awesome.cold_restart then
-      capi.awesome.cold_restart()
-      return "Cold restarting..."
-    elseif capi.awesome.restart then
-      capi.awesome.restart()
-      return "Cold restarting..."
-    else
-      error("Restart not supported")
-    end
+    capi.awesome.quit(1)
+    return "Restarting..."
   end)
 
-  --- rebuild - Rebuild and restart compositor
+  --- rebuild - Rebuild and restart (somewm-session rebuilds then restarts)
   ipc.register("rebuild", function()
-    if capi.awesome.rebuild_restart then
-      capi.awesome.rebuild_restart()
-      return "Rebuilding and restarting..."
-    else
-      error("Rebuild restart not supported")
-    end
+    capi.awesome.quit(2)
+    return "Rebuilding..."
   end)
 
   -- =================================================================
