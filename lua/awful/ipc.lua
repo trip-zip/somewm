@@ -2503,13 +2503,11 @@ local function register_builtin_commands()
       end
     end
 
-    -- Cold restart (reloads config, kills all clients)
-    if capi.awesome.cold_restart then
-      capi.awesome.cold_restart()
-      return "Cold restarting..."
-    elseif capi.awesome.restart then
+    -- Hot-reload: tear down Lua VM and rebuild from rc.lua,
+    -- Wayland clients survive
+    if capi.awesome.restart then
       capi.awesome.restart()
-      return "Cold restarting..."
+      return "Hot-reloading..."
     else
       error("Reload not supported")
     end

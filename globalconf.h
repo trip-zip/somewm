@@ -270,6 +270,11 @@ typedef struct
     int argc;
     char **argv;
 
+    /** Highest GLib source ID after compositor setup (before Lua loads).
+     *  During hot-reload, all sources above this baseline are removed
+     *  to prevent stale Lgi FFI closures from firing with dead lua_State*. */
+    unsigned int glib_source_baseline;
+
     /* ========== WALLPAPER SUPPORT ========== */
 
     /** Cached wallpaper surface (AwesomeWM compatibility)
