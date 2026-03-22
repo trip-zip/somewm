@@ -4904,6 +4904,11 @@ run(char *startup_cmd)
 	}
 	g_source_attach(wayland_source, NULL);  /* Attach to default context */
 
+	/* Record highest GLib source ID before Lua loads. During hot-reload,
+	 * all sources above this baseline are removed to prevent stale Lgi
+	 * FFI closures from firing with dead lua_State* pointers. */
+	globalconf.glib_source_baseline = g_source_get_id(wayland_source);
+
 	/* Set custom poll function - THE critical integration point
 	 * This ensures some_refresh() is called before every poll() syscall,
 	 * matching AwesomeWM's a_glib_poll() pattern */
@@ -5979,6 +5984,20 @@ updatetitle(struct wl_listener *listener, void *data)
 	}
 }
 
+/* Cancel all pending activation token timeouts.
+ * Called before hot-reload GLib source sweep to prevent compositor-owned
+ * timeout sources from being destroyed by the ID-based scan. */
+void
+activation_tokens_cancel_all(void)
+{
+	for (size_t i = 0; i < pending_tokens_len; i++) {
+		g_source_remove(pending_tokens[i].timeout_id);
+		free(pending_tokens[i].token);
+		free(pending_tokens[i].app_id);
+	}
+	pending_tokens_len = 0;
+}
+
 static gboolean
 activation_token_timeout(gpointer user_data)
 {
@@ -6996,6 +7015,10 @@ main(int argc, char *argv[])
 	/* Pass search paths to Lua init */
 	if (num_search_paths > 0)
 		luaA_add_search_paths(search_paths, num_search_paths);
+
+	/* Store argc/argv in globalconf for hot-reload and debug logging */
+	globalconf.argc = argc;
+	globalconf.argv = argv;
 
 	setup();
 	run(startup_cmd);

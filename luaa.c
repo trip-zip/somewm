@@ -4653,18 +4653,14 @@ luaA_hot_reload(void)
 	/* Reset screen_refs before closing (entries become invalid) */
 	luaA_screen_refs_reset();
 
-	/* Close the GDBus session bus connection BEFORE abandoning the state.
-	 *
-	 * Lgi closures (systray, awful.remote, etc.) store D-Bus callbacks as
-	 * libffi closures with lua_State* pointers. When GLib dispatches these
-	 * callbacks, they call into the old Lua state. If a callback completes
-	 * (e.g., async bus:call reply), lgi_closure_destroy unrefs the shared
-	 * thread_ref from the FfiClosureBlock, corrupting the registry for
-	 * other closures that share the same block. The next dispatch finds
-	 * thread_ref -> nil -> lua_tothread returns NULL -> SEGV.
-	 *
-	 * Closing the bus prevents ALL old D-Bus callbacks from dispatching.
-	 * The new Lua state gets a fresh connection via Gio.bus_get_sync(). */
+	/* Cancel compositor-owned GLib sources that have IDs above baseline
+	 * (e.g., activation token timeouts). These are C callbacks, not Lua,
+	 * but their IDs fall in the scan range and must not be destroyed. */
+	extern void activation_tokens_cancel_all(void);
+	activation_tokens_cancel_all();
+
+	/* Close the GDBus session bus connection BEFORE the source scan.
+	 * This prevents GDBus internal sources from being created in the gap. */
 	{
 		GDBusConnection *bus = g_bus_get_sync(G_BUS_TYPE_SESSION, NULL, NULL);
 		if (bus) {
@@ -4673,14 +4669,43 @@ luaA_hot_reload(void)
 		}
 	}
 
-	/* Leak the old Lua state. GC is frozen (Phase A), so no Lgi objects
-	 * are collected and no closure block->L pointers become NULL.
-	 * Non-D-Bus callbacks (e.g., spawn I/O) may still fire harmlessly
-	 * against the old state. ~1-2MB leak per reload. */
+	/* Remove all GLib sources registered by Lua code (Lgi, awful.spawn,
+	 * dbus watchers, timers, etc.). These sources hold FFI closures with
+	 * lua_State* pointers to the old Lua VM. If GLib dispatches them after
+	 * reload, lua_status(NULL) -> SEGV.
+	 *
+	 * Probe first to get the exact upper bound — all Lua-registered sources
+	 * have IDs in [baseline+1, probe_id-1]. No guesswork needed. */
+	{
+		GMainContext *ctx = g_main_context_default();
+		guint baseline = globalconf.glib_source_baseline;
+		GSource *probe = g_idle_source_new();
+		guint upper = g_source_attach(probe, ctx);
+		g_source_destroy(probe);
+		g_source_unref(probe);
+
+		guint removed = 0;
+		for (guint id = baseline + 1; id < upper; id++) {
+			GSource *src = g_main_context_find_source_by_id(ctx, id);
+			if (src) {
+				g_source_destroy(src);
+				removed++;
+			}
+		}
+		globalconf.glib_source_baseline = upper;
+		fprintf(stderr, "somewm: hot-reload: removed %u stale GLib sources "
+			"(baseline=%u, new_baseline=%u)\n", removed, baseline, upper);
+	}
+
+	/* Leak the old Lua state. lua_close() is unsafe because client
+	 * snapshots, screens, and other C objects still reference Lua
+	 * userdata memory. GC is kept frozen so Lgi closures retain
+	 * their block->L pointers (non-NULL but stale). The GLib source
+	 * sweep above ensures no dispatcher can reach them. ~1-2MB leak. */
 	globalconf_L = NULL;
 	globalconf.L = NULL;
 
-	fprintf(stderr, "somewm: hot-reload: old Lua state closed, creating fresh state\n");
+	fprintf(stderr, "somewm: hot-reload: old Lua state leaked, creating fresh state\n");
 
 	/* ================================================================
 	 * Phase D: Create fresh Lua state
