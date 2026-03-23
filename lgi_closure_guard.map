@@ -1,0 +1,4 @@
+LIBFFI_CLOSURE_8.0 {
+    global:
+        ffi_prep_closure_loc;
+};
