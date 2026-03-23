@@ -59,6 +59,7 @@ static lua_State *luaA_create_fresh_state(void);
 #include <gio/gio.h>
 #include <limits.h>
 #include <setjmp.h>
+#include <dlfcn.h>
 
 /* Includes merged from objects/awesome.c */
 #include "systray.h"
@@ -4697,16 +4698,23 @@ luaA_hot_reload(void)
 			"(baseline=%u, new_baseline=%u)\n", removed, baseline, upper);
 	}
 
+	/* Bump Lgi closure generation — all old closures become no-ops.
+	 * lgi_closure_guard.so must be LD_PRELOADed for this to work. */
+	{
+		void (*bump)(void) = dlsym(RTLD_DEFAULT, "lgi_guard_bump_generation");
+		if (bump) {
+			bump();
+		} else {
+			fprintf(stderr, "somewm: hot-reload: WARNING: lgi_closure_guard.so "
+				"not preloaded, second reload may crash\n");
+		}
+	}
+
 	/* Leak the old Lua state. lua_close() is unsafe because client
 	 * snapshots, screens, and other C objects still reference Lua
 	 * userdata memory. GC is kept frozen so Lgi closures retain
 	 * their block->L pointers (non-NULL but stale). The GLib source
-	 * sweep above prevents most dispatches. ~1-2MB leak per reload.
-	 *
-	 * Known limitation: FFI closures from leaked states survive in
-	 * ffi_closure memory (outside Lua heap). Second consecutive reload
-	 * may crash if a surviving closure fires. This is a fundamental
-	 * Lgi/GLib limitation — see lgi-devs/lgi#133, lgi-devs/lgi#9. */
+	 * sweep above prevents most dispatches. ~1-2MB leak per reload. */
 	globalconf_L = NULL;
 	globalconf.L = NULL;
 
@@ -4916,6 +4924,14 @@ luaA_hot_reload(void)
 
 	fprintf(stderr, "somewm: hot-reload: complete (%d clients, %d screens, %d tags reset)\n",
 		num_clients, num_screens, num_tags);
+
+	/* Mark new Lgi closures as ready — allows guard to dispatch them.
+	 * Must be called AFTER rc.lua is fully loaded and Lgi is stable. */
+	{
+		void (*ready)(void) = dlsym(RTLD_DEFAULT, "lgi_guard_mark_ready");
+		if (ready)
+			ready();
+	}
 
 cleanup:
 	/* Free snapshot arrays */
