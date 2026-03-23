@@ -300,14 +300,12 @@ screen.connect_signal("request::desktop_decoration", function(s)
     -- =========================================================================
     -- Tag-based Wallpaper System (awful.wallpaper API + preload cache)
     -- =========================================================================
-    local wppath = gears.filesystem.get_configuration_dir() .. "themes/" .. themeName .. "/"
+    local wppath = gears.filesystem.get_configuration_dir()
+        .. "themes/" .. themeName .. "/wallpapers/"
 
-    -- Wallpaper mapping: tag index -> filename (default for unlisted tags)
-    local default_wallpaper = "jinx-2.jpg"
-    local tag_wallpapers = {
-        [2] = "jinx-vi.jpg",
-        [4] = "anime-1.jpg",
-    }
+    -- Wallpaper per tag: tag name (1-9) maps to wallpapers/N.jpg
+    -- Default fallback for tags without a matching wallpaper file
+    local default_wallpaper = "1.jpg"
 
     -- Track current wallpaper per screen to skip redundant updates
     s.current_wallpaper = nil
@@ -315,11 +313,16 @@ screen.connect_signal("request::desktop_decoration", function(s)
     -- Set wallpaper using awful.wallpaper (new API, HiDPI-aware)
     local function set_wallpaper(scr, wallpaper_file)
         if scr.current_wallpaper == wallpaper_file then return end
+        local path = wppath .. wallpaper_file
+        if not gears.filesystem.file_readable(path) then
+            path = wppath .. default_wallpaper
+            wallpaper_file = default_wallpaper
+        end
         awful.wallpaper {
             screen = scr,
             widget = {
                 {
-                    image     = wppath .. wallpaper_file,
+                    image     = path,
                     upscale   = true,
                     downscale = true,
                     widget    = wibox.widget.imagebox,
@@ -338,21 +341,21 @@ screen.connect_signal("request::desktop_decoration", function(s)
 
     -- Pre-cache all wallpapers for instant tag switching
     if root.wallpaper_cache_preload then
-        local paths, seen = {}, {}
-        for _, wp_file in pairs(tag_wallpapers) do
-            local wp = wppath .. wp_file
-            if not seen[wp] then table.insert(paths, wp); seen[wp] = true end
+        local paths = {}
+        for i = 1, 9 do
+            local wp = wppath .. i .. ".jpg"
+            if gears.filesystem.file_readable(wp) then
+                table.insert(paths, wp)
+            end
         end
-        local def_wp = wppath .. default_wallpaper
-        if not seen[def_wp] then table.insert(paths, def_wp) end
         if #paths > 0 then root.wallpaper_cache_preload(paths, s) end
     end
 
-    -- Switch wallpaper on tag selection
-    for i, tag in ipairs(s.tags) do
+    -- Switch wallpaper on tag selection: tag name -> wallpapers/name.jpg
+    for _, tag in ipairs(s.tags) do
         tag:connect_signal("property::selected", function(t)
             if t.selected then
-                set_wallpaper(t.screen, tag_wallpapers[i] or default_wallpaper)
+                set_wallpaper(t.screen, t.name .. ".jpg")
             end
         end)
     end

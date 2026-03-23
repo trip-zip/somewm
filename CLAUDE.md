@@ -370,6 +370,26 @@ When debugging NVIDIA issues, check:
 - Commit messages: `type: description` (fix:, feat:, test:, refactor:)
 - AwesomeWM patterns preserved where possible (signal system, object model)
 
+## External AI Code Review Tools
+
+For cross-model code review, these CLI tools are available:
+
+```bash
+# OpenAI Codex CLI (gpt-5.4 model)
+cat diff.patch | codex exec -m gpt-5.4 --full-auto "Review prompt here"
+
+# Google Gemini CLI (gemini-3.1-pro-preview model)
+cat diff.patch | gemini -m gemini-3.1-pro-preview -p "Review prompt here"
+
+# Claude Sonnet (via Agent tool with model=sonnet)
+# No CLI needed — use Agent tool directly
+```
+
+**IMPORTANT:** Do NOT guess CLI flags — these are the correct invocations:
+- `codex exec` (not `codex --quiet`), with `-m model --full-auto`
+- `gemini -m model -p "prompt"` (not `gemini-cli`, binary is `gemini`)
+- Pipe diff to stdin, review prompt as the command argument
+
 ## Completed Fixes (in our fork raven2cz/somewm)
 
 ### Branch: fix/xwayland-keyboard-focus
