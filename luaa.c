@@ -4674,7 +4674,12 @@ luaA_hot_reload(void)
 	 * snapshots, screens, and other C objects still reference Lua
 	 * userdata memory. GC is kept frozen so Lgi closures retain
 	 * their block->L pointers (non-NULL but stale). The GLib source
-	 * sweep above ensures no dispatcher can reach them. ~1-2MB leak. */
+	 * sweep above prevents most dispatches. ~1-2MB leak per reload.
+	 *
+	 * Known limitation: FFI closures from leaked states survive in
+	 * ffi_closure memory (outside Lua heap). Second consecutive reload
+	 * may crash if a surviving closure fires. This is a fundamental
+	 * Lgi/GLib limitation — see lgi-devs/lgi#133, lgi-devs/lgi#9. */
 	globalconf_L = NULL;
 	globalconf.L = NULL;
 
