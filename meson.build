@@ -374,6 +374,18 @@ somewm_exe = executable(
   install: true,
 )
 
+# Lgi closure guard for hot-reload safety (LD_PRELOAD)
+libffi = dependency('libffi')
+lgi_guard = shared_library(
+  'lgi_closure_guard',
+  'lgi_closure_guard.c',
+  dependencies: [glib, libffi, lua_dep],
+  override_options: ['b_sanitize=none'],
+  link_args: ['-Wl,--version-script,' + meson.current_source_dir() / 'lgi_closure_guard.map'],
+  install: true,
+  install_dir: get_option('libdir'),
+)
+
 somewm_client = executable(
   'somewm-client',
   'somewm-client.c',

@@ -58,6 +58,13 @@ else
     fi
 fi
 
+# Lgi closure guard for safe hot-reload (prevents SEGV from stale FFI closures)
+LGI_GUARD=/usr/local/lib/liblgi_closure_guard.so
+if [ -f "$LGI_GUARD" ]; then
+    export LD_PRELOAD="${LGI_GUARD}${LD_PRELOAD:+:$LD_PRELOAD}"
+    export ASAN_OPTIONS="${ASAN_OPTIONS:+$ASAN_OPTIONS:}verify_asan_link_order=0"
+fi
+
 while true; do
     "$SOMEWM_BIN" "${SOMEWM_ARGS[@]}" 2>&1 \
         | tee "$SOMEWM_LOG"
