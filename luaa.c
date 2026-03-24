@@ -4737,8 +4737,14 @@ luaA_hot_reload(void)
 			c->toplevel_handle = NULL;
 			c->screen = NULL;
 			c->transient_for = NULL;
-			for (int tb = 0; tb < CLIENT_TITLEBAR_COUNT; tb++)
+			for (int tb = 0; tb < CLIENT_TITLEBAR_COUNT; tb++) {
 				c->titlebar[tb].drawable = NULL;
+				c->titlebar[tb].size = 0;
+				if (c->titlebar[tb].scene_buffer) {
+					wlr_scene_node_destroy(&c->titlebar[tb].scene_buffer->node);
+					c->titlebar[tb].scene_buffer = NULL;
+				}
+			}
 
 			/* Re-register wlroots listeners */
 			client_reregister_listeners(c);
