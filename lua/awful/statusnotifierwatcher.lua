@@ -77,8 +77,8 @@ end
 -- @tparam string type Either "item" or "host"
 -- @treturn number The watch ID
 local function watch_service(service, stype)
-    local watch_id = Gio.bus_watch_name(
-        Gio.BusType.SESSION,
+    local watch_id = Gio.bus_watch_name_on_connection(
+        watcher._private.bus_connection,
         service,
         Gio.BusNameWatcherFlags.NONE,
         nil,  -- name_appeared_callback (we don't need it, already know it exists)
@@ -376,12 +376,35 @@ function watcher.init()
 
     watcher._private.initialized = true
 
-    -- Claim the bus name
-    Gio.bus_own_name(
-        Gio.BusType.SESSION,
+    -- Get session bus. After hot-reload, GLib's singleton cache may return
+    -- a closed connection. Bypass the cache with a fresh connection.
+    local ok, bus = pcall(function()
+        local b = Gio.bus_get_sync(Gio.BusType.SESSION)
+        if b:is_closed() then
+            local addr = Gio.dbus_address_get_for_bus_sync(Gio.BusType.SESSION)
+            b = Gio.DBusConnection.new_for_address_sync(
+                addr,
+                Gio.DBusConnectionFlags.AUTHENTICATION_CLIENT
+                    + Gio.DBusConnectionFlags.MESSAGE_BUS_CONNECTION,
+                nil, nil)
+        end
+        return b
+    end)
+
+    if not ok or not bus then
+        return false
+    end
+
+    watcher._private.bus_connection = bus
+
+    -- Register D-Bus object before claiming the name
+    on_bus_acquire(bus, WATCHER_BUS_NAME)
+
+    -- Claim the bus name (on_connection variant uses the fresh bus)
+    Gio.bus_own_name_on_connection(
+        bus,
         WATCHER_BUS_NAME,
         Gio.BusNameOwnerFlags.NONE,
-        GObject.Closure(on_bus_acquire),
         GObject.Closure(on_name_acquired),
         GObject.Closure(on_name_lost)
     )
