@@ -1047,6 +1047,25 @@ function systray.init()
     -- Start watching for the StatusNotifierWatcher
     watch_for_watcher()
 
+    -- Re-probe systray items saved from before hot-reload.
+    -- Apps may not re-register with the watcher after it restarts,
+    -- so we proactively fetch their properties from the snapshot.
+    if capi.awesome._restart and capi.awesome._systray_snapshot then
+        local snapshot = capi.awesome._systray_snapshot
+        capi.awesome._systray_snapshot = nil
+        -- Use PRIORITY_LOW so watcher and host init (PRIORITY_DEFAULT) first
+        GLib.idle_add(GLib.PRIORITY_LOW, function()
+            for _, entry in ipairs(snapshot) do
+                local obj_path = entry.object_path or "/StatusNotifierItem"
+                local key = entry.bus_name .. obj_path
+                if not systray._private.items[key] then
+                    register_item(entry.bus_name, obj_path)
+                end
+            end
+            return false
+        end)
+    end
+
     return true
 end
 

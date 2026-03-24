@@ -1212,7 +1212,11 @@ systray_item_class_setup(lua_State *L)
 	};
 
 	/* Initialize global items array */
-	if (!systray_initialized) {
+	if (systray_initialized) {
+		/* Hot-reload re-entry: old items are dangling userdata in the
+		 * leaked previous Lua state. Don't free them, just clear. */
+		systray_items.len = 0;
+	} else {
 		systray_item_array_init(&systray_items);
 		systray_initialized = true;
 	}
