@@ -4651,6 +4651,26 @@ luaA_hot_reload(void)
 	globalconf.screens.len = 0;
 	globalconf.focus.client = NULL;
 
+	/* Destroy old drawin scene trees so they don't persist as duplicates.
+	 * During normal shutdown, drawin_wipe() handles this via GC, but
+	 * hot-reload leaks the old state with GC frozen. */
+	foreach(d, globalconf.drawins) {
+		drawin_t *w = *d;
+		for (int si = 0; si < SHADOW_TEXTURE_COUNT; si++) {
+			if (w->shadow.textures[si]) {
+				wlr_buffer_drop(w->shadow.textures[si]);
+				w->shadow.textures[si] = NULL;
+			}
+		}
+		if (w->scene_tree) {
+			wlr_scene_node_destroy(&w->scene_tree->node);
+			w->scene_tree = NULL;
+			w->scene_buffer = NULL;
+			w->border_buffer = NULL;
+		}
+	}
+	globalconf.drawins.len = 0;
+
 	/* Reset screen_refs before closing (entries become invalid) */
 	luaA_screen_refs_reset();
 
