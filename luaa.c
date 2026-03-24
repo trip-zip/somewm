@@ -4334,6 +4334,7 @@ luaA_create_fresh_state(void)
 	luaA_mouse_setup(L);
 	luaA_wibox_setup(L);
 	luaA_ipc_setup(L);
+	systray_item_class_setup(L);
 
 	/* D-Bus */
 	luaA_registerlib(L, "dbus", awesome_dbus_lib);
@@ -4406,6 +4407,11 @@ typedef struct {
 	char *name;
 } tag_snapshot_t;
 
+typedef struct {
+	char *bus_name;
+	char *object_path;
+} systray_snapshot_t;
+
 /** Perform in-process hot-reload of the Lua state.
  * Must be called from an idle callback, NOT from within a Lua pcall.
  */
@@ -4422,6 +4428,8 @@ luaA_hot_reload(void)
 	int num_screens = 0;
 	tag_snapshot_t *tag_snaps = NULL;
 	int num_tags = 0;
+	systray_snapshot_t *systray_snaps = NULL;
+	int num_systray = 0;
 
 	if (!L) {
 		fprintf(stderr, "somewm: hot-reload: no Lua state to reload\n");
@@ -4446,6 +4454,30 @@ luaA_hot_reload(void)
 	 * registry. If an unref'd slot overlaps with an Lgi ref, the Lgi
 	 * closure finds nil instead of its callable -> SEGV.
 	 */
+
+	/* Snapshot systray item bus names for re-probing after reload.
+	 * Must happen before "exit" signal since systray._cleanup() clears
+	 * the Lua-side item tables. The C array is still intact here. */
+	{
+		systray_item_array_t *items = systray_get_items();
+		num_systray = items->len;
+		if (num_systray > 0) {
+			systray_snaps = calloc(num_systray, sizeof(systray_snapshot_t));
+			if (systray_snaps) {
+				for (i = 0; i < num_systray; i++) {
+					systray_item_t *item = items->tab[i];
+					if (item->bus_name)
+						systray_snaps[i].bus_name = strdup(item->bus_name);
+					if (item->object_path)
+						systray_snaps[i].object_path = strdup(item->object_path);
+				}
+				fprintf(stderr, "somewm: hot-reload: snapshotted %d systray items\n",
+					num_systray);
+			} else {
+				num_systray = 0;
+			}
+		}
+	}
 
 	/* Emit "exit" signal so Lua code can clean up */
 	luaA_signal_emit(L, "exit", 0);
@@ -4841,6 +4873,24 @@ luaA_hot_reload(void)
 	if (lua_istable(L, -1)) {
 		lua_pushboolean(L, 1);
 		lua_setfield(L, -2, "_restart");
+
+		/* Set awesome._systray_snapshot for Lua-side re-probing */
+		if (num_systray > 0 && systray_snaps) {
+			lua_newtable(L);
+			for (i = 0; i < num_systray; i++) {
+				if (systray_snaps[i].bus_name) {
+					lua_newtable(L);
+					lua_pushstring(L, systray_snaps[i].bus_name);
+					lua_setfield(L, -2, "bus_name");
+					lua_pushstring(L, systray_snaps[i].object_path
+						? systray_snaps[i].object_path
+						: "/StatusNotifierItem");
+					lua_setfield(L, -2, "object_path");
+					lua_rawseti(L, -2, i + 1);
+				}
+			}
+			lua_setfield(L, -2, "_systray_snapshot");
+		}
 	}
 	lua_pop(L, 1);
 
@@ -4938,9 +4988,14 @@ cleanup:
 		free(tag_snaps[i].name);
 	for (i = 0; i < num_screens; i++)
 		free(screen_snaps[i].name);
+	for (i = 0; i < num_systray; i++) {
+		free(systray_snaps[i].bus_name);
+		free(systray_snaps[i].object_path);
+	}
 	free(client_snaps);
 	free(screen_snaps);
 	free(tag_snaps);
+	free(systray_snaps);
 }
 
 void
