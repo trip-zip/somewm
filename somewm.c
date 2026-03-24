@@ -1,7 +1,8 @@
 /*
  * See LICENSE file for copyright and license details.
  */
-#define _DEFAULT_SOURCE
+#define _GNU_SOURCE
+#include <dlfcn.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <getopt.h>
@@ -6924,9 +6925,49 @@ some_test_add_output(unsigned int width, unsigned int height)
 	return output->name;
 }
 
+/** Ensure the Lgi closure guard is loaded for safe hot-reload.
+ * If the guard .so is installed but not yet preloaded, re-exec with
+ * LD_PRELOAD so users never have to set it manually. */
+static void
+ensure_lgi_guard(int argc, char *argv[])
+{
+	/* Already loaded? */
+	if (dlsym(RTLD_DEFAULT, "lgi_guard_bump_generation"))
+		return;
+
+	/* Find the installed guard library */
+	const char *guard_path = SOMEWM_LIBDIR "/liblgi_closure_guard.so";
+	if (access(guard_path, R_OK) != 0)
+		return;
+
+	/* Prepend to LD_PRELOAD and re-exec */
+	const char *existing = getenv("LD_PRELOAD");
+	char buf[PATH_MAX + 256];
+	if (existing && existing[0])
+		snprintf(buf, sizeof(buf), "%s:%s", guard_path, existing);
+	else
+		snprintf(buf, sizeof(buf), "%s", guard_path);
+	setenv("LD_PRELOAD", buf, 1);
+
+	/* Suppress ASAN link-order complaint when guard is built without it */
+	const char *asan_opts = getenv("ASAN_OPTIONS");
+	if (asan_opts) {
+		char asan_buf[4096];
+		snprintf(asan_buf, sizeof(asan_buf), "%s:verify_asan_link_order=0", asan_opts);
+		setenv("ASAN_OPTIONS", asan_buf, 1);
+	} else {
+		setenv("ASAN_OPTIONS", "verify_asan_link_order=0", 1);
+	}
+
+	execvp(argv[0], argv);
+	/* If exec fails, continue without the guard */
+}
+
 int
 main(int argc, char *argv[])
 {
+	ensure_lgi_guard(argc, argv);
+
 	char *startup_cmd = NULL;
 	char *check_config = NULL;
 	int check_level = -1;  /* -1 = unset (default: warning) */
