@@ -2943,8 +2943,6 @@ client_set_fullscreen(lua_State *L, int cidx, bool s)
         luaA_object_emit_signal(L, abs_cidx, "property::fullscreen", 0);
         if(c->toplevel_handle)
             wlr_foreign_toplevel_handle_v1_set_fullscreen(c->toplevel_handle, s);
-        /* Set the xdg-shell fullscreen property for the client */
-        some_client_set_fullscreen(c, s);
         /* Force a client resize, so that titlebars get shown/hidden */
         client_resize_do(c, c->geometry, false);
         stack_windows();

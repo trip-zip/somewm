@@ -4413,6 +4413,15 @@ apply_geometry_to_wlroots(Client *c)
 	 * Without this check, we flood the client with configure events on every refresh cycle,
 	 * which crashes Firefox and other clients that can't handle rapid configure floods. */
 	if (!c->resize) {
+		/* If fullscreen is changing, inform client of new state */
+#ifdef XWAYLAND
+		if (c->client_type == X11) {
+			if (c->fullscreen != c->surface.xwayland->fullscreen)
+				client_set_fullscreen_internal(c, c->fullscreen);
+		} else
+#endif
+		if (c->fullscreen != c->surface.xdg->toplevel->pending.fullscreen)
+			client_set_fullscreen_internal(c, c->fullscreen);
 		if (c->fullscreen) {
 			/* Fullscreen: client gets full geometry minus borders only */
 			c->resize = client_set_size(c,
@@ -4944,7 +4953,6 @@ setfullscreen(Client *c, int fullscreen)
 	}
 
 	c->bw = fullscreen ? 0 : get_border_width();
-	client_set_fullscreen_internal(c, fullscreen);
 	wlr_scene_node_reparent(&c->scene->node, layers[c->fullscreen ? LyrFS : LyrTile]);
 
 	if (fullscreen) {
