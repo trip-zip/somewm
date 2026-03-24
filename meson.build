@@ -396,6 +396,15 @@ test_transient_client = executable(
   install: false,
 )
 
+# Test XDG fullscreen client for fullscreen protocol tests
+test_fullscreen_client = executable(
+  'test-fullscreen-client',
+  ['tests/test-fullscreen-client.c', xdg_shell_client_code],
+  xdg_shell_client_header,
+  dependencies: [wayland_client],
+  install: false,
+)
+
 # ==============================================================================
 # Install Data
 # ==============================================================================
