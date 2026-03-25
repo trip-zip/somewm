@@ -5002,13 +5002,20 @@ setfullscreen(Client *c, int fullscreen)
 		 * client positions are set by the user and cannot be recalculated */
 		resize(c, c->prev, 0);
 	}
+	/* Emit per-client property::fullscreen so Lua handlers run
+	 * (update_implicitly_floating, arrange_prop_nf) before arrange */
+	lua_State *L = globalconf_get_lua_State();
+	if (L) {
+		luaA_object_push(L, c);
+		luaA_object_emit_signal(L, -1, "property::fullscreen", 0);
+		lua_pop(L, 1);
+	}
+
 	arrange(c->mon);
 	printstatus();
 
 	/* Refresh stacking order (fullscreen layer changes) */
 	stack_refresh();
-
-	luaA_emit_signal_global("client::property::fullscreen");
 }
 
 void
