@@ -18,3 +18,10 @@ option(
   value: false,
   description: 'Use test PAM stub that accepts a hardcoded password',
 )
+
+option(
+  'systemd',
+  type: 'feature',
+  value: 'auto',
+  description: 'Install systemd user service and session wrapper',
+)
