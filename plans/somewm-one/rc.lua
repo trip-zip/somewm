@@ -1161,27 +1161,14 @@ ruled.notification.connect_signal("request::rules", function()
     }
 end)
 
--- Resolve notification icon — fast: only check absolute paths + default fallback
-local function resolve_notification_icon(n)
-    local icon = n.icon or n.app_icon
-    if not icon or icon == "" then
-        n.icon = beautiful.notification_icon_default
-        return
-    end
-    -- Absolute path — use as-is if readable
-    if icon:sub(1, 1) == "/" then
-        if not gears.filesystem.file_readable(icon) then
-            n.icon = beautiful.notification_icon_default
-        end
-        return
-    end
-    -- Icon name (not path) — use default, naughty's built-in lookup handles the rest
-    n.icon = beautiful.notification_icon_default
-end
-
 naughty.connect_signal("request::display", function(n)
-    resolve_notification_icon(n)
-    n.icon_size = n.icon_size or dpi(128)
+    -- Pick icon for display without modifying n.icon (avoids signal loops)
+    local display_icon = n.icon
+    if not display_icon or display_icon == ""
+        or (type(display_icon) == "string" and display_icon:sub(1,1) ~= "/") then
+        display_icon = beautiful.notification_icon_default
+    end
+
     naughty.layout.box {
         notification = n,
         shape = function(cr, w, h)
@@ -1193,7 +1180,7 @@ naughty.connect_signal("request::display", function(n)
                     {
                         {
                             {
-                                image          = n.icon,
+                                image          = display_icon,
                                 resize         = true,
                                 upscale        = true,
                                 forced_width   = dpi(128),
