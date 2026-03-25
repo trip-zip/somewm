@@ -4444,6 +4444,17 @@ apply_geometry_to_wlroots(Client *c)
 	 * Without this check, we flood the client with configure events on every refresh cycle,
 	 * which crashes Firefox and other clients that can't handle rapid configure floods. */
 	if (!c->resize) {
+		/* Sync xdg-shell fullscreen state with c->fullscreen so the client
+		 * knows it is fullscreen. Done here (not in client_set_fullscreen)
+		 * so it batches into the same configure as the size change. */
+		if (c->client_type == XDGShell && c->surface.xdg && c->surface.xdg->toplevel
+				&& c->surface.xdg->toplevel->scheduled.fullscreen != c->fullscreen)
+			client_set_fullscreen_internal(c, c->fullscreen);
+#ifdef XWAYLAND
+		else if (c->client_type == X11 && c->surface.xwayland
+				&& c->surface.xwayland->fullscreen != c->fullscreen)
+			client_set_fullscreen_internal(c, c->fullscreen);
+#endif
 		if (c->fullscreen) {
 			/* Fullscreen: client gets full geometry minus borders only */
 			c->resize = client_set_size(c,

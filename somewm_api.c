@@ -269,7 +269,7 @@ some_client_swapstack(int direction)
 Client *
 some_get_focused_client(void)
 {
-	return focustop(selmon);
+	return globalconf.focus.client;
 }
 
 Client *
