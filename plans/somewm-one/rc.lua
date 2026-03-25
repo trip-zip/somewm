@@ -18,6 +18,8 @@ local naughty = require("naughty")
 local ruled = require("ruled")
 local menubar = require("menubar")
 local hotkeys_popup = require("awful.hotkeys_popup")
+local xresources = require("beautiful.xresources")
+local dpi = xresources.apply_dpi
 -- Enable hotkeys help widget for VIM and other apps
 -- when client with a matching name is opened:
 require("awful.hotkeys_popup.keys")
@@ -175,6 +177,70 @@ mykeyboardlayout = awful.widget.keyboardlayout()
 -- Create a textclock widget
 mytextclock = wibox.widget.textclock()
 
+-- ---------------------------------------------------------------------------
+-- Volume widget (PipeWire/WirePlumber native via wpctl)
+-- ---------------------------------------------------------------------------
+local volume_widget = wibox.widget {
+    {
+        id     = "icon",
+        text   = "\u{1F50A} ",
+        widget = wibox.widget.textbox,
+    },
+    {
+        id     = "text",
+        text   = "-%",
+        widget = wibox.widget.textbox,
+    },
+    layout = wibox.layout.fixed.horizontal,
+}
+
+local function volume_update()
+    awful.spawn.easy_async("wpctl get-volume @DEFAULT_AUDIO_SINK@", function(out)
+        local vol = out:match("Volume:%s+([%d%.]+)")
+        local muted = out:match("%[MUTED%]")
+        if vol then
+            local pct = math.floor(tonumber(vol) * 100 + 0.5)
+            local icon_w = volume_widget:get_children_by_id("icon")[1]
+            local text_w = volume_widget:get_children_by_id("text")[1]
+            if muted then
+                icon_w.text = "\u{1F507} "
+                text_w.markup = string.format('<span foreground="#888888">%d%%</span>', pct)
+            elseif pct > 60 then
+                icon_w.text = "\u{1F50A} "
+                text_w.text = pct .. "%"
+            elseif pct > 20 then
+                icon_w.text = "\u{1F509} "
+                text_w.text = pct .. "%"
+            else
+                icon_w.text = "\u{1F508} "
+                text_w.text = pct .. "%"
+            end
+        end
+    end)
+end
+
+-- Poll every 2 seconds
+gears.timer { timeout = 2, autostart = true, call_now = true, callback = volume_update }
+
+-- Scroll = volume up/down
+volume_widget:buttons(gears.table.join(
+    awful.button({}, 1, function()  -- left click → pavucontrol
+        awful.spawn("pavucontrol")
+    end),
+    awful.button({}, 2, function()  -- middle click → helvum
+        awful.spawn("helvum")
+    end),
+    awful.button({}, 3, function()  -- right click → mute toggle
+        awful.spawn.easy_async("wpctl set-mute @DEFAULT_AUDIO_SINK@ toggle", volume_update)
+    end),
+    awful.button({}, 4, function()  -- scroll up → volume +5%
+        awful.spawn.easy_async("wpctl set-volume @DEFAULT_AUDIO_SINK@ 5%+", volume_update)
+    end),
+    awful.button({}, 5, function()  -- scroll down → volume -5%
+        awful.spawn.easy_async("wpctl set-volume @DEFAULT_AUDIO_SINK@ 5%-", volume_update)
+    end)
+))
+
 -- @DOC_FOR_EACH_SCREEN@
 -- {{{ Tag persistence across monitor hotplug
 -- The save handler lives in awful.permissions.tag_screen and stores tag
@@ -290,6 +356,7 @@ screen.connect_signal("request::desktop_decoration", function(s)
             { -- Right widgets
                 layout = wibox.layout.fixed.horizontal,
                 mykeyboardlayout,
+                volume_widget,
                 wibox.widget.systray(),
                 mytextclock,
                 s.mylayoutbox,
@@ -951,35 +1018,158 @@ end)
 
 -- {{{ Notifications
 
-ruled.notification.connect_signal('request::rules', function()
-    -- Default: all notifications get 5s timeout
-    ruled.notification.append_rule {
-        rule       = { },
-        properties = {
-            screen           = awful.screen.preferred,
-            implicit_timeout = 5,
-        }
-    }
-    -- Critical notifications: no auto-dismiss, red styling
+naughty.config.defaults.ontop = true
+naughty.config.defaults.icon_size = dpi(360)
+naughty.config.defaults.timeout = 10
+naughty.config.defaults.hover_timeout = 300
+naughty.config.defaults.margin = dpi(16)
+naughty.config.defaults.border_width = 0
+naughty.config.defaults.position = "top_middle"
+naughty.config.defaults.shape = function(cr, w, h)
+    gears.shape.rounded_rect(cr, w, h, dpi(6))
+end
+
+naughty.config.padding = dpi(8)
+naughty.config.spacing = dpi(8)
+naughty.config.icon_dirs = {
+    "/usr/share/icons/Papirus-Dark/",
+    "/usr/share/icons/Tela/",
+    "/usr/share/icons/Adwaita/",
+    "/usr/share/icons/hicolor/",
+}
+naughty.config.icon_formats = { "svg", "png", "jpg", "gif" }
+
+ruled.notification.connect_signal("request::rules", function()
     ruled.notification.append_rule {
         rule       = { urgency = "critical" },
         properties = {
-            bg      = "#ff0000",
-            fg      = "#ffffff",
-            timeout = 0,
+            font             = beautiful.font,
+            bg               = beautiful.bg_urgent or "#cc2233",
+            fg               = "#ffffff",
+            margin           = dpi(16),
+            icon_size        = dpi(360),
+            position         = "top_middle",
+            implicit_timeout = 0,
         }
     }
-    -- Low urgency: shorter timeout
+    ruled.notification.append_rule {
+        rule       = { urgency = "normal" },
+        properties = {
+            font             = beautiful.font,
+            bg               = beautiful.notification_bg,
+            fg               = beautiful.notification_fg,
+            margin           = dpi(16),
+            position         = "top_middle",
+            implicit_timeout = 10,
+            icon_size        = dpi(360),
+            opacity          = 0.9,
+        }
+    }
     ruled.notification.append_rule {
         rule       = { urgency = "low" },
         properties = {
-            implicit_timeout = 3,
+            font             = beautiful.font,
+            bg               = beautiful.notification_bg,
+            fg               = beautiful.notification_fg,
+            margin           = dpi(16),
+            position         = "top_middle",
+            implicit_timeout = 8,
+            icon_size        = dpi(360),
+            opacity          = 0.9,
         }
     }
 end)
 
+-- Resolve notification icon: absolute path kept, icon name looked up, fallback to default
+local function resolve_notification_icon(n)
+    local icon = n.icon or n.app_icon
+    if not icon or icon == "" then
+        n.icon = beautiful.notification_icon_default
+        return
+    end
+    -- Absolute path — use as-is
+    if icon:sub(1, 1) == "/" then return end
+    -- Try quick lookup in common icon locations
+    local sizes = { "128x128", "96x96", "64x64", "48x48", "scalable" }
+    local themes = { "Papirus-Dark", "Adwaita", "hicolor", "AdwaitaLegacy" }
+    local cats = { "apps", "status", "legacy", "devices", "categories" }
+    for _, theme in ipairs(themes) do
+        for _, size in ipairs(sizes) do
+            for _, cat in ipairs(cats) do
+                for _, ext in ipairs({ "png", "svg" }) do
+                    local path = string.format("/usr/share/icons/%s/%s/%s/%s.%s",
+                        theme, size, cat, icon, ext)
+                    if gears.filesystem.file_readable(path) then
+                        n.icon = path
+                        return
+                    end
+                end
+            end
+        end
+    end
+    -- Nothing found — use default
+    n.icon = beautiful.notification_icon_default
+end
+
 naughty.connect_signal("request::display", function(n)
-    naughty.layout.box { notification = n }
+    resolve_notification_icon(n)
+    n.icon_size = n.icon_size or dpi(128)
+    naughty.layout.box {
+        notification = n,
+        shape = function(cr, w, h)
+            gears.shape.rounded_rect(cr, w, h, dpi(6))
+        end,
+        widget_template = {
+            {
+                {
+                    {
+                        {
+                            {
+                                image          = n.icon,
+                                resize         = true,
+                                upscale        = true,
+                                forced_width   = dpi(128),
+                                forced_height  = dpi(128),
+                                clip_shape     = function(cr, w, h)
+                                    gears.shape.rounded_rect(cr, w, h, dpi(4))
+                                end,
+                                widget         = wibox.widget.imagebox,
+                            },
+                            halign = "center",
+                            valign = "center",
+                            widget = wibox.container.place,
+                        },
+                        forced_width  = dpi(128),
+                        forced_height = dpi(128),
+                        widget        = wibox.container.constraint,
+                    },
+                    {
+                        {
+                            {
+                                align  = "left",
+                                font   = beautiful.font or "sans bold 14",
+                                widget = naughty.widget.title,
+                            },
+                            {
+                                align  = "left",
+                                widget = naughty.widget.message,
+                            },
+                            spacing = dpi(4),
+                            layout  = wibox.layout.fixed.vertical,
+                        },
+                        top    = dpi(8),
+                        widget = wibox.container.margin,
+                    },
+                    spacing = dpi(16),
+                    layout  = wibox.layout.fixed.horizontal,
+                },
+                margins = dpi(16),
+                widget  = wibox.container.margin,
+            },
+            id     = "background_role",
+            widget = naughty.container.background,
+        },
+    }
 end)
 
 -- }}}
@@ -992,6 +1182,7 @@ end)
 -- {{{ Autostart
 -- Use spawn.once to prevent duplicates on config reload
 awful.spawn.once("nm-applet")
+-- awful.spawn.once("pasystray")  -- replaced by native volume_widget
 -- awful.spawn.once("blueman-applet")
 -- awful.spawn.once("copyq")
 -- }}}

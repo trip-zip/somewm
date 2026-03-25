@@ -35,14 +35,26 @@ theme.border_color_marked = "#91231c"
 theme.wibar_bg            = "#222222e0" -- slight transparency
 theme.wibar_height        = dpi(24)
 
+-- Lockscreen
+theme.lockscreen_bg_color     = "#1a1a2eee"
+theme.lockscreen_fg_color     = "#e0e0e0"
+theme.lockscreen_input_bg     = "#2a2a4e"
+theme.lockscreen_border_color = "#4a4a6e"
+theme.lockscreen_error_color  = "#ff6b6b"
+theme.lockscreen_font         = "sans 14"
+theme.lockscreen_font_large   = "sans bold 48"
+
 -- Notifications
-theme.notification_font   = "sans 11"
-theme.notification_bg     = "#282828"
-theme.notification_fg     = "#ebdbb2"
-theme.notification_border_color = "#535d6c"
-theme.notification_border_width = dpi(1)
-theme.notification_margin = dpi(8)
-theme.notification_icon_size = dpi(48)
+theme.notification_font          = "sans 12"
+theme.notification_bg            = "#1a1a2eee"
+theme.notification_fg            = "#e0e0e0"
+theme.notification_border_color  = "#4a4a6e"
+theme.notification_border_width  = dpi(2)
+theme.notification_margin        = dpi(12)
+theme.notification_icon_size     = dpi(128)
+theme.notification_max_width     = dpi(520)
+theme.notification_spacing       = dpi(8)
+theme.notification_icon_default  = themes_path .. "default/icons/notification.png"
 
 -- There are other variable sets
 -- overriding the default one when
