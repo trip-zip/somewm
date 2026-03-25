@@ -6967,6 +6967,7 @@ int
 main(int argc, char *argv[])
 {
 	ensure_lgi_guard(argc, argv);
+	unsetenv("LD_PRELOAD");  /* Guard is loaded; don't leak to children */
 
 	char *startup_cmd = NULL;
 	char *check_config = NULL;
