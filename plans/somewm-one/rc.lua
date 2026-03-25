@@ -1164,10 +1164,16 @@ end)
 naughty.connect_signal("request::display", function(n)
     -- Pick icon for display without modifying n.icon (avoids signal loops)
     local display_icon = n.icon
-    if not display_icon or display_icon == ""
-        or (type(display_icon) == "string" and display_icon:sub(1,1) ~= "/") then
+    if type(display_icon) == "string" then
+        -- String: only accept absolute paths, otherwise use default
+        if display_icon == "" or display_icon:sub(1,1) ~= "/" then
+            display_icon = beautiful.notification_icon_default
+        end
+    elseif not display_icon then
+        -- Nil: use default
         display_icon = beautiful.notification_icon_default
     end
+    -- Otherwise (cairo surface, userdata) — keep as-is
 
     naughty.layout.box {
         notification = n,
