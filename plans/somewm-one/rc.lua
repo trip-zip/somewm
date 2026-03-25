@@ -26,14 +26,23 @@ require("awful.hotkeys_popup.keys")
 -- local treetileBindings = require("treetile.bindings")
 local machi = require("layout-machi")
 
--- {{{ Error handling
--- Check if awesome encountered an error during startup and fell back to
--- another config (This code will only ever execute for the fallback config)
--- @DOC_ERROR_HANDLING@
+-- {{{ Error handling + log aggregation
+local error_log_path = os.getenv("HOME") .. "/.local/log/somewm-errors.log"
+
+local function log_error(title, message)
+    local f = io.open(error_log_path, "a")
+    if f then
+        f:write(string.format("[%s] %s: %s\n", os.date("%Y-%m-%d %H:%M:%S"), title, message))
+        f:close()
+    end
+end
+
 naughty.connect_signal("request::display_error", function(message, startup)
+    local title = "Oops, an error happened" .. (startup and " during startup!" or "!")
+    log_error(title, message)
     naughty.notification {
         urgency = "critical",
-        title   = "Oops, an error happened"..(startup and " during startup!" or "!"),
+        title   = title,
         message = message
     }
 end)
@@ -174,8 +183,50 @@ end
 -- Keyboard map indicator and switcher
 mykeyboardlayout = awful.widget.keyboardlayout()
 
--- Create a textclock widget
-mytextclock = wibox.widget.textclock()
+-- Create a textclock widget — bright time, dimmer date
+local markup = require("gears.string").xml_escape and "" or nil -- just need lgi.markup below
+mytextclock = wibox.widget.textclock(
+    '<span foreground="#b0b0b0" font="Geist 10"> %a %d %b</span>' ..
+    '<span foreground="#e2b55a" font="Geist SemiBold 11"> %H:%M </span>', 60
+)
+
+-- Calendar popup on clock click
+local cal_popup = awful.widget.calendar_popup.month({
+    start_sunday = false,
+    long_weekdays = true,
+    style_month = {
+        bg_color     = "#181818f0",
+        border_color = "#e2b55a",
+        border_width = 1,
+        padding      = dpi(10),
+    },
+    style_header = {
+        fg_color     = "#e2b55a",
+        font         = "Geist SemiBold 12",
+    },
+    style_weekday = {
+        fg_color     = "#888888",
+        font         = "Geist 10",
+    },
+    style_normal = {
+        fg_color     = "#d4d4d4",
+        font         = "Geist 10",
+    },
+    style_focus = {
+        fg_color     = "#181818",
+        bg_color     = "#e2b55a",
+        font         = "Geist Bold 10",
+        shape        = gears.shape.circle,
+    },
+})
+-- Show calendar on click, on the screen where the mouse is
+mytextclock:connect_signal("button::press", function(_, _, _, button)
+    if button == 1 then
+        cal_popup.screen = awful.screen.focused()
+        cal_popup:call_calendar(0, "tr", awful.screen.focused())
+        cal_popup.visible = not cal_popup.visible
+    end
+end)
 
 -- ---------------------------------------------------------------------------
 -- Volume widget (PipeWire/WirePlumber native via wpctl)
@@ -289,13 +340,43 @@ screen.connect_signal("request::desktop_decoration", function(s)
     -- Create a promptbox for each screen
     s.mypromptbox = awful.widget.prompt()
 
-    -- Create an imagebox widget which will contain an icon indicating which layout we're using.
-    -- We need one layoutbox per screen.
+    -- Layout selector popup (click layoutbox to pick layout)
+    local layout_popup = awful.popup {
+        widget = awful.widget.layoutlist {
+            screen = s,
+            base_layout = wibox.layout.flex.vertical,
+            style = {
+                font            = "Geist 10",
+                bg_normal       = "#181818",
+                bg_selected     = "#e2b55a",
+                fg_normal       = "#d4d4d4",
+                fg_selected     = "#181818",
+            },
+        },
+        bg           = "#181818f0",
+        border_color = "#c49a3a",
+        border_width = 1,
+        placement    = function(d)
+            awful.placement.under_mouse(d)
+            awful.placement.no_offscreen(d)
+        end,
+        shape        = function(cr, w, h) gears.shape.rounded_rect(cr, w, h, dpi(4)) end,
+        maximum_width  = dpi(200),
+        maximum_height = dpi(500),
+        visible      = false,
+        ontop        = true,
+    }
+    -- Hide on mouse leave
+    layout_popup:connect_signal("mouse::leave", function() layout_popup.visible = false end)
+
+    -- Create layoutbox with popup on click
     s.mylayoutbox = awful.widget.layoutbox {
         screen  = s,
         buttons = {
-            awful.button({ }, 1, function () awful.layout.inc( 1) end),
-            awful.button({ }, 3, function () awful.layout.inc(-1) end),
+            awful.button({ }, 1, function ()
+                layout_popup.screen = awful.screen.focused()
+                layout_popup.visible = not layout_popup.visible
+            end),
             awful.button({ }, 4, function () awful.layout.inc(-1) end),
             awful.button({ }, 5, function () awful.layout.inc( 1) end),
         }
@@ -433,7 +514,7 @@ end)
 -- {{{ Mouse bindings
 -- @DOC_ROOT_BUTTONS@
 awful.mouse.append_global_mousebindings({
-    awful.button({ }, 3, function () mymainmenu:toggle() end),
+    -- right-click menu removed (clean desktop)
     awful.button({ }, 4, awful.tag.viewprev),
     awful.button({ }, 5, awful.tag.viewnext),
     awful.button({ modkey, altkey }, 4, function()
