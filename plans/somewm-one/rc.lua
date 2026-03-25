@@ -1161,34 +1161,21 @@ ruled.notification.connect_signal("request::rules", function()
     }
 end)
 
--- Resolve notification icon: absolute path kept, icon name looked up, fallback to default
+-- Resolve notification icon — fast: only check absolute paths + default fallback
 local function resolve_notification_icon(n)
     local icon = n.icon or n.app_icon
     if not icon or icon == "" then
         n.icon = beautiful.notification_icon_default
         return
     end
-    -- Absolute path — use as-is
-    if icon:sub(1, 1) == "/" then return end
-    -- Try quick lookup in common icon locations
-    local sizes = { "128x128", "96x96", "64x64", "48x48", "scalable" }
-    local themes = { "Papirus-Dark", "Adwaita", "hicolor", "AdwaitaLegacy" }
-    local cats = { "apps", "status", "legacy", "devices", "categories" }
-    for _, theme in ipairs(themes) do
-        for _, size in ipairs(sizes) do
-            for _, cat in ipairs(cats) do
-                for _, ext in ipairs({ "png", "svg" }) do
-                    local path = string.format("/usr/share/icons/%s/%s/%s/%s.%s",
-                        theme, size, cat, icon, ext)
-                    if gears.filesystem.file_readable(path) then
-                        n.icon = path
-                        return
-                    end
-                end
-            end
+    -- Absolute path — use as-is if readable
+    if icon:sub(1, 1) == "/" then
+        if not gears.filesystem.file_readable(icon) then
+            n.icon = beautiful.notification_icon_default
         end
+        return
     end
-    -- Nothing found — use default
+    -- Icon name (not path) — use default, naughty's built-in lookup handles the rest
     n.icon = beautiful.notification_icon_default
 end
 

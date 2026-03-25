@@ -6968,6 +6968,11 @@ main(int argc, char *argv[])
 	int show_version = 0;
 	int c;
 
+	/* Clear LD_PRELOAD so child processes (Firefox, terminals, etc.)
+	 * don't inherit lgi_closure_guard.so — it's only needed by somewm.
+	 * The .so is already mapped into our address space, unsetenv is safe. */
+	unsetenv("LD_PRELOAD");
+
 	/* Store argv for restart capability (AwesomeWM API parity).
 	 * Uses static storage in luaa.c so memset of globalconf can't clobber it. */
 	luaA_set_argv(argv);

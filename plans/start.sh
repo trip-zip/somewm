@@ -3,11 +3,10 @@
 mkdir -p ~/.local/log
 
 # Lgi closure guard for safe hot-reload
+# somewm clears LD_PRELOAD in main() so children don't inherit it
 LGI_GUARD=/usr/local/lib/liblgi_closure_guard.so
 if [ -f "$LGI_GUARD" ]; then
     export LD_PRELOAD="${LGI_GUARD}${LD_PRELOAD:+:$LD_PRELOAD}"
-    # Suppress ASAN link-order complaint (somewm links ASAN statically,
-    # guard .so is built without it — order is irrelevant)
     export ASAN_OPTIONS="${ASAN_OPTIONS:+$ASAN_OPTIONS:}verify_asan_link_order=0"
 fi
 
