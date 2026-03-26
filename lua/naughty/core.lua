@@ -14,7 +14,6 @@
 
 -- Package environment
 local capi = { screen = screen }
-local gdebug  = require("gears.debug")
 local screen  = require("awful.screen")
 local gtable  = require("gears.table")
 local gobject = require("gears.object")
@@ -57,7 +56,7 @@ local naughty = {}
 -- dependency.
 gtable.crush(naughty, require("naughty.constants"))
 
---- Notification presets for `naughty.notify`.
+--- Notification presets.
 -- This holds presets for different purposes.  A preset is a table of any
 -- parameters for `naughty.notification{}`, overriding the default values
 -- (`naughty.config.defaults`).
@@ -91,7 +90,7 @@ gtable.crush(naughty, require("naughty.constants"))
 -- @tfield[opt="#00000"] string warn.fg
 -- @tfield[opt=5] integer warn.timeout
 
---- Defaults for `naughty.notify`.
+--- Defaults for `naughty.notification`.
 --
 -- @table naughty.config.defaults
 -- @tfield[opt=5] integer timeout
@@ -277,25 +276,6 @@ local function update_index(n)
     table.insert(naughty.notifications[s][n.position], n)
 end
 
---- Notification state.
---
--- This function is deprecated, use `naughty.suspended`.
---
--- @deprecated naughty.is_suspended
-function naughty.is_suspended()
-    gdebug.deprecate("Use naughty.suspended", {deprecated_in=5})
-    return properties.suspended
-end
-
---- Suspend notifications.
---
--- This function is deprecated, use `naughty.suspended = true`.
---
--- @deprecated naughty.suspend
-function naughty.suspend()
-    gdebug.deprecate("Use naughty.suspended = true", {deprecated_in=5})
-    properties.suspended = true
-end
 
 local conns = gobject._setup_class_signals(
     naughty, {allow_chain_of_responsibility=true}
@@ -321,47 +301,6 @@ local function resume()
     naughty.notifications.suspended = { }
 end
 
---- Resume notifications.
---
--- This function is deprecated, use `naughty.suspended = false`.
---
--- @deprecated naughty.resume
-function naughty.resume()
-    gdebug.deprecate("Use naughty.suspended = false", {deprecated_in=5})
-    resume()
-end
-
---- Toggle notification state.
---
--- This function is deprecated, use `naughty.suspended = not naughty.suspended`.
---
--- @deprecated naughty.toggle
-function naughty.toggle()
-    gdebug.deprecate("Use naughty.suspended = not naughty.suspended", {deprecated_in=5})
-    if properties.suspended then
-        naughty.resume()
-    else
-        naughty.suspend()
-    end
-end
-
---- Destroy notification by notification object
---
--- This function is deprecated in favor of
--- `notification:destroy(reason, keep_visible)`.
---
--- @tparam naughty.notification notification Notification object to be destroyed
--- @tparam string reason One of the reasons from `notification_closed_reason`
--- @tparam[opt=false] boolean keep_visible If true, keep the notification visible
--- @return True if the popup was successfully destroyed, nil otherwise
--- @deprecated naughty.destroy
-function naughty.destroy(notification, reason, keep_visible)
-    gdebug.deprecate("Use notification:destroy(reason, keep_visible)", {deprecated_in=5})
-
-    if not notification then return end
-
-    return notification:destroy(reason, keep_visible)
-end
 
 --- Destroy all notifications on given screens.
 --
@@ -392,16 +331,6 @@ function naughty.destroy_all_notifications(screens, reason)
         end
     end
     return ret
-end
-
---- Get notification by ID
---
--- @tparam integer id ID of the notification
--- @treturn naughty.notification|nil notification object if it was found, nil otherwise
--- @deprecated naughty.getById
-function naughty.getById(id)
-    gdebug.deprecate("Use naughty.get_by_id", {deprecated_in=5})
-    return naughty.get_by_id(id)
 end
 
 --- Get notification by ID
@@ -440,42 +369,6 @@ function naughty._reset_display_handlers()
     conns["request::display"] = nil
 end
 
---- Set new notification timeout.
---
--- This function is deprecated, use `notification:reset_timeout(new_timeout)`.
---
--- @tparam notification notification Notification object, which timer is to be reset.
--- @tparam number new_timeout Time in seconds after which notification disappears.
--- @deprecated naughty.reset_timeout
-function naughty.reset_timeout(notification, new_timeout)
-    gdebug.deprecate("Use notification:reset_timeout(new_timeout)", {deprecated_in=5})
-
-    if not notification then return end
-
-    notification:reset_timeout(new_timeout)
-end
-
---- Replace title and text of an existing notification.
---
--- This function is deprecated, use `notification.message = new_text` and
--- `notification.title = new_title`
---
--- @tparam notification notification Notification object, which contents are to be replaced.
--- @tparam string new_title New title of notification. If not specified, old title remains unchanged.
--- @tparam string new_text New text of notification. If not specified, old text remains unchanged.
--- @return None.
--- @deprecated naughty.replace_text
-function naughty.replace_text(notification, new_title, new_text)
-    gdebug.deprecate(
-        "Use notification.text = new_text; notification.title = new_title",
-        {deprecated_in=5}
-    )
-
-    if not notification then return end
-
-    notification.title = new_title or notification.title
-    notification.text  = new_text  or notification.text
-end
 
 -- Remove the notification from the internal list(s)
 local function cleanup(self, reason)
@@ -796,35 +689,6 @@ end
 -- @tparam[opt] table args.actions A list of `naughty.action`s.
 -- @bool[opt=false] args.ignore_suspend If set to true this notification
 --   will be shown even if notifications are suspended via `naughty.suspend`.
--- @usage naughty.notify({ title = "Achtung!", message = "You're idling", timeout = 0 })
--- @treturn ?table The notification object, or nil in case a notification was
---   not displayed.
--- @deprecated naughty.notify
-
-local nnotif = nil
-
-function naughty.notify(args)
-    gdebug.deprecate(
-        "Use local notif = naughty.notification(args)",
-        {deprecated_in=5}
-    )
-
-    --TODO v6 remove this hack
-    nnotif = nnotif or require("naughty.notification")
-
-    -- The existing notification object, if any.
-    local n = args and args.replaces_id and
-        naughty.get_by_id(args.replaces_id) or nil
-
-    -- It was possible to update the notification content using `replaces_id`.
-    -- This is a concept that come from the dbus API and leaked into the public
-    -- API. It has all kind of issues and brokenness, but it being used.
-    if n then
-        return gtable.crush(n, args)
-    end
-
-    return nnotif(args)
-end
 
 --- Request handler to get the icon using the clients icons.
 -- @signalhandler naughty.client_icon_handler
