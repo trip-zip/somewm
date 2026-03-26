@@ -30,7 +30,7 @@ local function master_width_matches(mwfact, tolerance)
     tolerance = tolerance or 30
     local wa = screen.primary.workarea
     local expected_w = math.floor(wa.width * mwfact)
-    local master = awful.client.getmaster()
+    local master = awful.client.visible(screen.primary)[1]
     if not master then return false, 0 end
     local actual_w = master:geometry().width + master.border_width * 2
     return math.abs(actual_w - expected_w) < tolerance, actual_w
