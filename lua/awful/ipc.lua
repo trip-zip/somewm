@@ -2971,9 +2971,9 @@ local function register_builtin_commands()
         preset = naughty.config.presets.critical
       end
 
-      naughty.notify({
+      naughty.notification({
         title = title,
-        text = message,
+        message = message,
         timeout = timeout,
         preset = preset,
       })
