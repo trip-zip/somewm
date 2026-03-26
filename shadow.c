@@ -382,6 +382,15 @@ shadow_create(struct wlr_scene_tree *parent,
             shadow->tree, shadow->textures[5]);
     }
 
+    /* Set transforms once — top/left edges need 180° flip so opaque side
+     * touches the window. These never change, so no need to repeat on resize. */
+    if (shadow->slice[SHADOW_EDGE_TOP])
+        wlr_scene_buffer_set_transform(
+            shadow->slice[SHADOW_EDGE_TOP], WL_OUTPUT_TRANSFORM_180);
+    if (shadow->slice[SHADOW_EDGE_LEFT])
+        wlr_scene_buffer_set_transform(
+            shadow->slice[SHADOW_EDGE_LEFT], WL_OUTPUT_TRANSFORM_180);
+
     /* Fill strips for offset gaps (1x1 solid pixel stretched) */
     if (shadow->textures[6]) {
         if (config->offset_y != 0)
@@ -391,6 +400,53 @@ shadow_create(struct wlr_scene_tree *parent,
             shadow->slice[SHADOW_FILL_V] = wlr_scene_buffer_create(
                 shadow->tree, shadow->textures[6]);
     }
+
+    /* Set visibility once based on clip_directional — constant for this config.
+     * Disabled slices are skipped entirely by shadow_update_geometry(). */
+    if (config->clip_directional) {
+        int ox = config->offset_x;
+        int oy = config->offset_y;
+        bool show_top = (oy <= 0);
+        bool show_bottom = (oy >= 0);
+        bool show_left = (ox <= 0);
+        bool show_right = (ox >= 0);
+
+        if (shadow->slice[SHADOW_CORNER_TL])
+            wlr_scene_node_set_enabled(&shadow->slice[SHADOW_CORNER_TL]->node,
+                show_top && show_left);
+        if (shadow->slice[SHADOW_CORNER_TR])
+            wlr_scene_node_set_enabled(&shadow->slice[SHADOW_CORNER_TR]->node,
+                show_top && show_right);
+        if (shadow->slice[SHADOW_CORNER_BL])
+            wlr_scene_node_set_enabled(&shadow->slice[SHADOW_CORNER_BL]->node,
+                show_bottom && show_left);
+        if (shadow->slice[SHADOW_CORNER_BR])
+            wlr_scene_node_set_enabled(&shadow->slice[SHADOW_CORNER_BR]->node,
+                show_bottom && show_right);
+        if (shadow->slice[SHADOW_EDGE_TOP])
+            wlr_scene_node_set_enabled(&shadow->slice[SHADOW_EDGE_TOP]->node,
+                show_top);
+        if (shadow->slice[SHADOW_EDGE_BOTTOM])
+            wlr_scene_node_set_enabled(&shadow->slice[SHADOW_EDGE_BOTTOM]->node,
+                show_bottom);
+        if (shadow->slice[SHADOW_EDGE_LEFT])
+            wlr_scene_node_set_enabled(&shadow->slice[SHADOW_EDGE_LEFT]->node,
+                show_left);
+        if (shadow->slice[SHADOW_EDGE_RIGHT])
+            wlr_scene_node_set_enabled(&shadow->slice[SHADOW_EDGE_RIGHT]->node,
+                show_right);
+        if (shadow->slice[SHADOW_FILL_H])
+            wlr_scene_node_set_enabled(&shadow->slice[SHADOW_FILL_H]->node,
+                oy > 0 ? show_bottom : show_top);
+        if (shadow->slice[SHADOW_FILL_V])
+            wlr_scene_node_set_enabled(&shadow->slice[SHADOW_FILL_V]->node,
+                ox > 0 ? show_right : show_left);
+    }
+
+    /* Ensure initial geometry update always runs (cache starts at 0,0
+     * from memset, which could match a zero-sized client on first map) */
+    shadow->last_width = -1;
+    shadow->last_height = -1;
 
     /* Position and size all slices */
     shadow_update_geometry(shadow, config, width, height);
@@ -406,142 +462,100 @@ shadow_update_geometry(shadow_nodes_t *shadow,
     if (!shadow || !shadow->tree || !config)
         return;
 
+    /* Skip if geometry hasn't changed — avoids redundant damage.
+     * Config changes (offset, radius) go through shadow_update_config()
+     * which does destroy+create, resetting the cache via memset. */
+    if (shadow->last_width == width && shadow->last_height == height)
+        return;
+    shadow->last_width = width;
+    shadow->last_height = height;
+
     int r = config->radius;
     int ox = config->offset_x;
     int oy = config->offset_y;
 
-    /* Determine which slices to show based on offset direction */
+    /* Visibility is determined by clip_directional and offset direction.
+     * These are constant for the lifetime of the shadow, so only update
+     * slices that are actually visible — skip disabled ones entirely. */
     bool show_top = true, show_bottom = true;
     bool show_left = true, show_right = true;
 
     if (config->clip_directional) {
-        /* Only show shadow on the side toward the offset */
         show_top = (oy < 0);
         show_bottom = (oy > 0);
         show_left = (ox < 0);
         show_right = (ox > 0);
-
-        /* If no offset, show all sides */
-        if (ox == 0 && oy == 0) {
+        if (ox == 0 && oy == 0)
             show_top = show_bottom = show_left = show_right = true;
-        }
-        /* If only vertical offset, still show left/right sides */
-        if (ox == 0) {
+        if (ox == 0)
             show_left = show_right = true;
-        }
-        /* If only horizontal offset, still show top/bottom */
-        if (oy == 0) {
+        if (oy == 0)
             show_top = show_bottom = true;
-        }
     }
 
-    /* Position corners */
-    if (shadow->slice[SHADOW_CORNER_TL]) {
+    /* Position corners — only touch visible ones */
+    if (shadow->slice[SHADOW_CORNER_TL] && show_top && show_left)
         wlr_scene_node_set_position(
             &shadow->slice[SHADOW_CORNER_TL]->node, ox - r, oy - r);
-        wlr_scene_node_set_enabled(
-            &shadow->slice[SHADOW_CORNER_TL]->node, show_top && show_left);
-    }
-    if (shadow->slice[SHADOW_CORNER_TR]) {
+    if (shadow->slice[SHADOW_CORNER_TR] && show_top && show_right)
         wlr_scene_node_set_position(
             &shadow->slice[SHADOW_CORNER_TR]->node, ox + width, oy - r);
-        wlr_scene_node_set_enabled(
-            &shadow->slice[SHADOW_CORNER_TR]->node, show_top && show_right);
-    }
-    if (shadow->slice[SHADOW_CORNER_BL]) {
+    if (shadow->slice[SHADOW_CORNER_BL] && show_bottom && show_left)
         wlr_scene_node_set_position(
             &shadow->slice[SHADOW_CORNER_BL]->node, ox - r, oy + height);
-        wlr_scene_node_set_enabled(
-            &shadow->slice[SHADOW_CORNER_BL]->node, show_bottom && show_left);
-    }
-    if (shadow->slice[SHADOW_CORNER_BR]) {
+    if (shadow->slice[SHADOW_CORNER_BR] && show_bottom && show_right)
         wlr_scene_node_set_position(
             &shadow->slice[SHADOW_CORNER_BR]->node, ox + width, oy + height);
-        wlr_scene_node_set_enabled(
-            &shadow->slice[SHADOW_CORNER_BR]->node, show_bottom && show_right);
-    }
 
-    /* Edges - stretched to fill gaps between corners.
-     * Edge textures have gradient: position 0 = opaque, position max = transparent.
-     * Top/left edges need 180° flip so opaque side touches the window. */
-    if (shadow->slice[SHADOW_EDGE_TOP]) {
+    /* Edges — only reposition and resize visible ones */
+    if (shadow->slice[SHADOW_EDGE_TOP] && show_top) {
         wlr_scene_node_set_position(
             &shadow->slice[SHADOW_EDGE_TOP]->node, ox, oy - r);
         wlr_scene_buffer_set_dest_size(
             shadow->slice[SHADOW_EDGE_TOP], width, r);
-        wlr_scene_buffer_set_transform(
-            shadow->slice[SHADOW_EDGE_TOP], WL_OUTPUT_TRANSFORM_180);
-        wlr_scene_node_set_enabled(
-            &shadow->slice[SHADOW_EDGE_TOP]->node, show_top);
     }
-    if (shadow->slice[SHADOW_EDGE_BOTTOM]) {
+    if (shadow->slice[SHADOW_EDGE_BOTTOM] && show_bottom) {
         wlr_scene_node_set_position(
             &shadow->slice[SHADOW_EDGE_BOTTOM]->node, ox, oy + height);
         wlr_scene_buffer_set_dest_size(
             shadow->slice[SHADOW_EDGE_BOTTOM], width, r);
-        wlr_scene_node_set_enabled(
-            &shadow->slice[SHADOW_EDGE_BOTTOM]->node, show_bottom);
     }
-    if (shadow->slice[SHADOW_EDGE_LEFT]) {
+    if (shadow->slice[SHADOW_EDGE_LEFT] && show_left) {
         wlr_scene_node_set_position(
             &shadow->slice[SHADOW_EDGE_LEFT]->node, ox - r, oy);
         wlr_scene_buffer_set_dest_size(
             shadow->slice[SHADOW_EDGE_LEFT], r, height);
-        wlr_scene_buffer_set_transform(
-            shadow->slice[SHADOW_EDGE_LEFT], WL_OUTPUT_TRANSFORM_180);
-        wlr_scene_node_set_enabled(
-            &shadow->slice[SHADOW_EDGE_LEFT]->node, show_left);
     }
-    if (shadow->slice[SHADOW_EDGE_RIGHT]) {
+    if (shadow->slice[SHADOW_EDGE_RIGHT] && show_right) {
         wlr_scene_node_set_position(
             &shadow->slice[SHADOW_EDGE_RIGHT]->node, ox + width, oy);
         wlr_scene_buffer_set_dest_size(
             shadow->slice[SHADOW_EDGE_RIGHT], r, height);
-        wlr_scene_node_set_enabled(
-            &shadow->slice[SHADOW_EDGE_RIGHT]->node, show_right);
     }
 
-    /* Fill strips bridge the gap between the window edge and the offset
-     * shadow position.  Without these, a visible gap appears between the
-     * window and the shadow in the offset direction. */
+    /* Fill strips — only update visible ones */
     if (shadow->slice[SHADOW_FILL_H] && oy != 0) {
-        int abs_oy = oy > 0 ? oy : -oy;
-        if (oy > 0) {
-            /* Shadow drops down: fill from window bottom to shadow bottom edge */
+        bool fill_visible = oy > 0 ? show_bottom : show_top;
+        if (fill_visible) {
+            int abs_oy = oy > 0 ? oy : -oy;
+            int fy = oy > 0 ? height : oy;
             wlr_scene_node_set_position(
-                &shadow->slice[SHADOW_FILL_H]->node, ox, height);
-            wlr_scene_buffer_set_dest_size(
-                shadow->slice[SHADOW_FILL_H], width, abs_oy);
-        } else {
-            /* Shadow rises up: fill from shadow top edge to window top */
-            wlr_scene_node_set_position(
-                &shadow->slice[SHADOW_FILL_H]->node, ox, oy);
+                &shadow->slice[SHADOW_FILL_H]->node, ox, fy);
             wlr_scene_buffer_set_dest_size(
                 shadow->slice[SHADOW_FILL_H], width, abs_oy);
         }
-        wlr_scene_node_set_enabled(
-            &shadow->slice[SHADOW_FILL_H]->node,
-            oy > 0 ? show_bottom : show_top);
     }
 
     if (shadow->slice[SHADOW_FILL_V] && ox != 0) {
-        int abs_ox = ox > 0 ? ox : -ox;
-        if (ox > 0) {
-            /* Shadow goes right: fill from window right to shadow right edge */
+        bool fill_visible = ox > 0 ? show_right : show_left;
+        if (fill_visible) {
+            int abs_ox = ox > 0 ? ox : -ox;
+            int fx = ox > 0 ? width : ox;
             wlr_scene_node_set_position(
-                &shadow->slice[SHADOW_FILL_V]->node, width, oy);
-            wlr_scene_buffer_set_dest_size(
-                shadow->slice[SHADOW_FILL_V], abs_ox, height);
-        } else {
-            /* Shadow goes left: fill from shadow left edge to window left */
-            wlr_scene_node_set_position(
-                &shadow->slice[SHADOW_FILL_V]->node, ox, oy);
+                &shadow->slice[SHADOW_FILL_V]->node, fx, oy);
             wlr_scene_buffer_set_dest_size(
                 shadow->slice[SHADOW_FILL_V], abs_ox, height);
         }
-        wlr_scene_node_set_enabled(
-            &shadow->slice[SHADOW_FILL_V]->node,
-            ox > 0 ? show_right : show_left);
     }
 }
 
