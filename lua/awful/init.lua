@@ -16,7 +16,6 @@ local ret = {
     prompt = require("awful.prompt");
     screen = require("awful.screen");
     tag = require("awful.tag");
-    util = require("awful.util");
     widget = require("awful.widget");
     keygrabber = require("awful.keygrabber");
     input = require("awful.input");
