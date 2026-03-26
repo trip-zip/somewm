@@ -36,7 +36,24 @@ local gfs       = require("gears.filesystem")
 local timer     = require("gears.timer")
 local gmath     = require("gears.math")
 local cairo     = require("lgi").cairo
-local util      = require("awful.util")
+local function geticonpath(iconname, exts, dirs, size)
+    exts = exts or { 'png', 'gif' }
+    dirs = dirs or { '/usr/share/pixmaps/', '/usr/share/icons/hicolor/' }
+    local icontypes = { 'apps', 'actions',  'categories',  'emblems',
+        'mimetypes',  'status', 'devices', 'extras', 'places', 'stock' }
+    for _, d in pairs(dirs) do
+        for _, e in pairs(exts) do
+            local icon = d .. iconname .. '.' .. e
+            if gfs.file_readable(icon) then return icon end
+            if size then
+                for _, t in pairs(icontypes) do
+                    icon = string.format("%s%ux%u/%s/%s.%s", d, size, size, t, iconname, e)
+                    if gfs.file_readable(icon) then return icon end
+                end
+            end
+        end
+    end
+end
 
 local function get_screen(s)
     return s and capi.screen[s]
@@ -488,7 +505,7 @@ function naughty.default_notification_handler(notification, args)
         end
         -- try to guess icon if the provided one is non-existent/readable
         if type(icon) == "string" and not gfs.file_readable(icon) then
-            icon = util.geticonpath(icon, naughty.config.icon_formats, naughty.config.icon_dirs, icon_size) or icon
+            icon = geticonpath(icon, naughty.config.icon_formats, naughty.config.icon_dirs, icon_size) or icon
         end
 
         -- is the icon file readable?
