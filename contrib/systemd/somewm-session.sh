@@ -5,7 +5,7 @@
 # Display managers should use this as their Exec entry.
 
 # Clean up any stale Wayland sockets before starting
-rm -f "$XDG_RUNTIME_DIR"/wayland-* 2>/dev/null
+[ -n "$XDG_RUNTIME_DIR" ] && rm -f "$XDG_RUNTIME_DIR"/wayland-* 2>/dev/null
 
 # Source environment.d configs for TTY parity with display manager sessions
 for _conf in "$HOME/.config/environment.d/"*.conf; do
@@ -77,4 +77,4 @@ systemctl --user unset-environment \
     XDG_CURRENT_DESKTOP
 
 # Clean up Wayland sockets
-rm -f "$XDG_RUNTIME_DIR"/wayland-* 2>/dev/null
+[ -n "$XDG_RUNTIME_DIR" ] && rm -f "$XDG_RUNTIME_DIR"/wayland-* 2>/dev/null

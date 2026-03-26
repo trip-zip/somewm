@@ -412,11 +412,8 @@ test_fullscreen_client = executable(
 # Man page
 install_man('somewm.1')
 
-# Desktop file
-install_data(
-  'somewm.desktop',
-  install_dir: get_option('datadir') / 'wayland-sessions',
-)
+# Desktop file (Exec varies depending on systemd session wrapper)
+somewm_desktop_exec = 'somewm'
 
 # Lua libraries
 install_subdir(
@@ -480,10 +477,20 @@ if get_option('systemd').allowed()
       install_dir: get_option('bindir'),
       install_mode: 'rwxr-xr-x',
     )
+
+    somewm_desktop_exec = 'somewm-session'
   endif
 else
   have_systemd = false
 endif
+
+configure_file(
+  input: 'somewm.desktop.in',
+  output: 'somewm.desktop',
+  configuration: { 'exec': somewm_desktop_exec },
+  install: true,
+  install_dir: get_option('datadir') / 'wayland-sessions',
+)
 
 # ==============================================================================
 # Summary
