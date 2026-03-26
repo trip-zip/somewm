@@ -427,11 +427,8 @@ test_fullscreen_client = executable(
 # Man page
 install_man('somewm.1')
 
-# Desktop file
-install_data(
-  'somewm.desktop',
-  install_dir: get_option('datadir') / 'wayland-sessions',
-)
+# Desktop file (Exec varies depending on systemd session wrapper)
+somewm_desktop_exec = 'somewm'
 
 # Lua libraries
 install_subdir(
@@ -468,6 +465,48 @@ install_data(
   install_dir: get_option('sysconfdir') / 'xdg/somewm',
 )
 
+# Systemd session integration (optional)
+if get_option('systemd').allowed()
+  systemd_dep = dependency('systemd', required: get_option('systemd'))
+  have_systemd = systemd_dep.found()
+
+  if have_systemd
+    systemd_user_unit_dir = systemd_dep.get_variable('systemduserunitdir')
+
+    configure_file(
+      input: 'contrib/systemd/somewm.service.in',
+      output: 'somewm.service',
+      configuration: { 'bindir': get_option('prefix') / get_option('bindir') },
+      install: true,
+      install_dir: systemd_user_unit_dir,
+    )
+
+    install_data(
+      'contrib/systemd/somewm-shutdown.target',
+      install_dir: systemd_user_unit_dir,
+    )
+
+    install_data(
+      'contrib/systemd/somewm-session.sh',
+      rename: 'somewm-session',
+      install_dir: get_option('bindir'),
+      install_mode: 'rwxr-xr-x',
+    )
+
+    somewm_desktop_exec = 'somewm-session'
+  endif
+else
+  have_systemd = false
+endif
+
+configure_file(
+  input: 'somewm.desktop.in',
+  output: 'somewm.desktop',
+  configuration: { 'exec': somewm_desktop_exec },
+  install: true,
+  install_dir: get_option('datadir') / 'wayland-sessions',
+)
+
 # ==============================================================================
 # Summary
 # ==============================================================================
@@ -478,4 +517,5 @@ summary({
   'Lua': lua_dep.name() + ' ' + lua_dep.version(),
   'LGI': lgi_version,
   'Xwayland': have_xwayland,
+  'Systemd': have_systemd,
 }, section: 'Configuration')
