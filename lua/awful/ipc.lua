@@ -2485,22 +2485,16 @@ local function register_builtin_commands()
 
   --- reload - Reload configuration (validates first)
   ipc.register("reload", function()
-    local awful_util = require("awful.util")
-
     -- Get config file path
     local conffile = capi.awesome.conffile
     if not conffile then
       error("No configuration file found")
     end
 
-    -- Validate config first if checkfile is available
-    -- checkfile returns a string error message on failure, or a compiled
-    -- function on success. Only fail if we get a string back.
-    if awful_util.checkfile then
-      local result = awful_util.checkfile(conffile)
-      if type(result) == "string" then
-        error("Config validation failed: " .. result)
-      end
+    -- Validate config before reloading
+    local f, err = loadfile(conffile)
+    if not f then
+      error("Config validation failed: " .. err)
     end
 
     -- Hot-reload: tear down Lua VM and rebuild from rc.lua,
