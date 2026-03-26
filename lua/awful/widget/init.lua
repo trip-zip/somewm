@@ -14,10 +14,7 @@ return
     button = require("awful.widget.button");
     launcher = require("awful.widget.launcher");
     prompt = require("awful.widget.prompt");
-    progressbar = require("awful.widget.progressbar");
-    graph = require("awful.widget.graph");
     layoutbox = require("awful.widget.layoutbox");
-    textclock = require("awful.widget.textclock");
     keyboardlayout = require("awful.widget.keyboardlayout");
     watch = require("awful.widget.watch");
     only_on_screen = require("awful.widget.only_on_screen");
