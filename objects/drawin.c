@@ -1852,9 +1852,6 @@ luaA_drawin_set_shadow(lua_State *L, drawin_t *drawin)
 	return 0;
 }
 
-/* Forward declaration for refresh */
-static void drawin_refresh_drawable(drawin_t *drawin);
-
 /** drawin.shape_bounding - Get visual bounding shape (AwesomeWM signature) */
 static int
 luaA_drawin_get_shape_bounding(lua_State *L, drawin_t *drawin)
