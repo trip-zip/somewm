@@ -85,6 +85,8 @@ beautiful.init(gears.filesystem.get_configuration_dir() .. "themes/" .. themeNam
 -- Initialize lockscreen (must be after beautiful.init)
 pcall(function() require("lockscreen").init() end)
 
+-- Client animations loaded at end of rc.lua (after all signals are connected)
+
 -- @DOC_DEFAULT_APPLICATIONS@
 -- This is used later as the default terminal and editor to run.
 terminal = "ghostty"
@@ -824,9 +826,9 @@ client.connect_signal("request::default_keybindings", function()
                 { description = "Show/Hide Titlebars", group = "client" }),                
         awful.key({ modkey,           }, "n",
             function (c)
-                -- The client currently has the input focus, so it cannot be
-                -- minimized, since minimized clients can't have the focus.
-                c.minimized = true
+                -- Fade out then minimize
+                local anim = require("anim_client")
+                anim.fade_minimize(c)
             end ,
             {description = "minimize", group = "client"}),
         awful.key({ modkey,           }, "m",
@@ -1247,3 +1249,63 @@ awful.spawn.once("nm-applet")
 -- awful.spawn.once("blueman-applet")
 -- awful.spawn.once("copyq")
 -- }}}
+
+-- Enable client animations (must be last — after all other signal handlers)
+-- All values below are defaults — remove or change as needed.
+-- Disable all: enabled = false. Disable one: fade = { enabled = false }.
+-- Theme overrides (beautiful.anim_<type>_<param>) take priority over these.
+pcall(function()
+    require("anim_client").enable({
+        enabled = true,             -- global kill switch
+
+        maximize = {
+            enabled  = true,        -- animate maximize / restore
+            duration = 0.25,        -- seconds
+            easing   = "ease-out-cubic",
+        },
+        fullscreen = {
+            enabled  = true,        -- animate fullscreen / restore
+            duration = 0.25,
+            easing   = "ease-out-cubic",
+        },
+        fade = {
+            enabled      = true,    -- fadeIn on new window + restore from minimize
+            duration     = 0.4,
+            out_duration = nil,     -- fadeOut duration (nil = same as duration)
+            easing       = "ease-out-cubic",
+        },
+        minimize = {
+            enabled  = true,        -- fadeOut on minimize (Super+N)
+            duration = 0.4,
+            easing   = "ease-out-cubic",
+        },
+        layer = {
+            enabled  = true,        -- fadeIn for layer surfaces (rofi, launchers)
+            duration = 0.2,         -- shorter — popups should feel snappy
+            easing   = "ease-out-cubic",
+        },
+        dialog = {
+            enabled  = true,        -- fadeIn for dialog/transient windows
+            duration = 0.2,
+            easing   = "ease-out-cubic",
+        },
+        swap = {
+            enabled  = true,        -- tiling swap animation (Super+Shift+J/K)
+            duration = 0.25,        -- skipped in carousel/machi/max layouts
+            easing   = "ease-out-cubic",
+        },
+        float = {
+            enabled  = true,        -- float toggle animation (Ctrl+Super+Space)
+            duration = 0.3,         -- skipped in carousel/machi/max layouts
+            easing   = "ease-out-cubic",
+        },
+        layout = {
+            enabled  = true,        -- mwfact, spawn/kill reflow, layout switch
+            duration = 0.15,        -- short — background reflow should be quick
+            easing   = "ease-out-cubic",
+        },
+        -- NOTE: Do NOT require("somewm.layout_animation") — our anim_client
+        -- handles all layout transitions. Both modules write _set_geometry_silent()
+        -- on tiled clients and would conflict.
+    })
+end)
