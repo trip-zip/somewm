@@ -6915,6 +6915,53 @@ some_test_add_output(unsigned int width, unsigned int height)
 	return output->name;
 }
 
+/** Find liblgi_closure_guard.so by searching multiple paths.
+ * Returns a pointer to a static buffer containing the path, or NULL. */
+static const char *
+find_lgi_guard(void)
+{
+	static char found[PATH_MAX];
+	const char *name = "/liblgi_closure_guard.so";
+
+	/* 1. Compiled-in libdir (fast path) */
+	snprintf(found, sizeof(found), "%s%s", SOMEWM_LIBDIR, name);
+	if (access(found, R_OK) == 0)
+		return found;
+
+	/* 2. Relative to the running binary (handles any prefix) */
+	char self[PATH_MAX];
+	ssize_t len = readlink("/proc/self/exe", self, sizeof(self) - 1);
+	if (len > 0) {
+		self[len] = '\0';
+		/* Strip binary name to get bindir, then try ../lib and ../lib64 */
+		char *slash = strrchr(self, '/');
+		if (slash) {
+			*slash = '\0';
+			const char *suffixes[] = { "/../lib", "/../lib64" };
+			for (size_t i = 0; i < 2; i++) {
+				int n = snprintf(found, sizeof(found), "%s%s%s",
+					self, suffixes[i], name);
+				if (n > 0 && (size_t)n < sizeof(found)
+				    && access(found, R_OK) == 0)
+					return found;
+			}
+		}
+	}
+
+	/* 3. Common system paths */
+	const char *search[] = {
+		"/usr/local/lib64", "/usr/local/lib",
+		"/usr/lib64", "/usr/lib",
+	};
+	for (size_t i = 0; i < sizeof(search) / sizeof(search[0]); i++) {
+		snprintf(found, sizeof(found), "%s%s", search[i], name);
+		if (access(found, R_OK) == 0)
+			return found;
+	}
+
+	return NULL;
+}
+
 /** Ensure the Lgi closure guard is loaded for safe hot-reload.
  * If the guard .so is installed but not yet preloaded, re-exec with
  * LD_PRELOAD so users never have to set it manually. */
@@ -6925,10 +6972,12 @@ ensure_lgi_guard(int argc, char *argv[])
 	if (dlsym(RTLD_DEFAULT, "lgi_guard_bump_generation"))
 		return;
 
-	/* Find the installed guard library */
-	const char *guard_path = SOMEWM_LIBDIR "/liblgi_closure_guard.so";
-	if (access(guard_path, R_OK) != 0)
+	const char *guard_path = find_lgi_guard();
+	if (!guard_path) {
+		fprintf(stderr, "somewm: WARNING: liblgi_closure_guard.so not found, "
+			"hot-reload may crash\n");
 		return;
+	}
 
 	/* Prepend to LD_PRELOAD and re-exec */
 	const char *existing = getenv("LD_PRELOAD");
