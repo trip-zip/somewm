@@ -275,7 +275,6 @@ typedef struct
      *  to prevent stale Lgi FFI closures from firing with dead lua_State*. */
     unsigned int glib_source_baseline;
 
-
     /* ========== WALLPAPER SUPPORT ========== */
 
     /** Cached wallpaper surface (AwesomeWM compatibility)
