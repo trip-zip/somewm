@@ -169,14 +169,28 @@ end)
 -- Configure physical monitors by connector name / EDID
 -- Outputs persist across plug/unplug cycles unlike screens
 if output then
-    output.connect_signal("added", function(o)
+    -- Per-output configuration function (used for both startup and hotplug)
+    local function configure_output(o)
+        -- Dell G3223Q — force 4K@144Hz (EDID preferred mode is 60Hz)
+        if o.name == "DP-3" or (o.make and o.make:match("Dell") and o.model and o.model:match("G3223Q")) then
+            o.mode = { width = 3840, height = 2160, refresh = 143963 }
+        end
         -- Laptop panel (eDP) - fractional scaling
         if o.name:match("^eDP") then
             o.scale = 1.5
         end
-        -- Add per-monitor config here, e.g.:
-        -- if o.make == "Dell" and o.model == "U2723QE" then o.scale = 1.25 end
-    end)
+    end
+
+    -- Handle hotplug (new monitors connected after startup)
+    output.connect_signal("added", configure_output)
+
+    -- Apply to already-existing outputs (added before rc.lua loaded)
+    for i = 1, output.count() do
+        local o = output[i]
+        if o and o.valid then
+            configure_output(o)
+        end
+    end
 end
 -- }}}
 
