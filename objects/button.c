@@ -363,24 +363,6 @@ luaA_button_new(lua_State *L)
 }
 
 /* ========================================================================
- * Legacy button system stubs (for backward compatibility with somewm.c)
- * ======================================================================== */
-
-/** Check if a Lua button binding matches (LEGACY - currently disabled)
- * \param mods Current modifier mask
- * \param button Button code
- * \return 0 (not handled)
- */
-int
-luaA_button_check(uint32_t mods, uint32_t button)
-{
-	/* TODO: Implement if needed for global button bindings */
-	(void)mods;
-	(void)button;
-	return 0;
-}
-
-/* ========================================================================
  * Button event handling - AwesomeWM-compatible pattern
  * ======================================================================== */
 
