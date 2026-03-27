@@ -641,32 +641,10 @@ function notification:get_message()
     local message = self._private.message or p.message or ""
 
     if message == "" and p.text and p.text ~= "" then
-        gdebug.deprecate(
-            "Using the preset configuration to set the notification "..
-            "message is not supported. Please use `n.message = 'text'`.",
-            {deprecated_in=5}
-        )
-
         return p.text
     end
 
     return message
-end
-
-function notification:set_text(txt)
-    gdebug.deprecate(
-        "The `text` attribute is deprecated, use `message`",
-        {deprecated_in=5}
-    )
-    self:set_message(txt)
-end
-
-function notification:get_text()
-    gdebug.deprecate(
-        "The `text` attribute is deprecated, use `message`",
-        {deprecated_in=5}
-    )
-    return self:get_message()
 end
 
 local properties = {
@@ -879,50 +857,6 @@ function notification:get_screen()
     return self._private.weak_screen[1]
 end
 
---TODO v6: remove this
-local function convert_actions(actions)
-    gdebug.deprecate(
-        "The notification actions should now be of type `naughty.action`, "..
-        "not strings or callback functions",
-        {deprecated_in=5}
-    )
-
-    local naction = require("naughty.action")
-
-    local new_actions = {}
-
-    -- Does not attempt to handle when there is a mix of strings and objects
-    for idx, name in pairs(actions) do
-        local cb, old_idx = nil, idx
-
-        if type(name) == "function" then
-            cb = name
-        end
-
-        if type(idx) == "string" then
-            name, idx = idx, #actions+1
-        end
-
-        local a = naction {
-            position = idx,
-            name     = name,
-        }
-
-        if cb then
-            a:connect_signal("invoked", cb)
-        end
-
-        new_actions[old_idx] = a
-    end
-
-    -- Yes, it modifies `args`, this is legacy code, cloning the args
-    -- just for this isn't worth it.
-    for old_idx, a in pairs(new_actions) do
-        actions[a.position] = a
-        actions[ old_idx  ] = nil
-    end
-end
-
 -- The old API used monkey-patched variable presets.
 --
 -- Monkey-patched anything is always an issue and prevent module from safely
@@ -1028,11 +962,8 @@ local function create(args)
         enable_properties = true,
     }
 
+    -- Support legacy `text` attribute by mapping it to `message`.
     if args.text then
-        gdebug.deprecate(
-            "The `text` attribute is deprecated, use `message`",
-            {deprecated_in=5}
-        )
         args.message = args.text
     end
 
@@ -1050,7 +981,36 @@ local function create(args)
     end
 
     if is_old_action then
-        convert_actions(args.actions)
+        local naction = require("naughty.action")
+        local new_actions = {}
+
+        for idx, name in pairs(args.actions) do
+            local cb, old_idx = nil, idx
+
+            if type(name) == "function" then
+                cb = name
+            end
+
+            if type(idx) == "string" then
+                name, idx = idx, #args.actions+1
+            end
+
+            local a = naction {
+                position = idx,
+                name     = name,
+            }
+
+            if cb then
+                a:connect_signal("invoked", cb)
+            end
+
+            new_actions[old_idx] = a
+        end
+
+        for old_idx, a in pairs(new_actions) do
+            args.actions[a.position] = a
+            args.actions[ old_idx  ] = nil
+        end
     end
 
     for k, v in pairs(args) do

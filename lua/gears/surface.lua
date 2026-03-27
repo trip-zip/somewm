@@ -11,9 +11,8 @@ local type = type
 local capi = { awesome = awesome }
 local cairo = require("lgi").cairo
 local GdkPixbuf = require("lgi").GdkPixbuf
-local color, beautiful = nil, nil
+local color = nil
 local gdebug = require("gears.debug")
-local hierarchy = require("wibox.hierarchy")
 local ceil = math.ceil
 
 -- Keep this in sync with build-utils/lgi-check.c!
@@ -221,67 +220,6 @@ function surface.apply_shape_bounding(draw, shape, ...)
 
   draw.shape_bounding = img._native
   img:finish()
-end
-
-local function no_op() end
-
-local function run_in_hierarchy(self, cr, width, height)
-    local context = {dpi=96}
-    local h = hierarchy.new(context, self, width, height, no_op, no_op, {})
-    h:draw(context, cr)
-    return h
-end
-
---- Create an SVG file with this widget content.
--- This is dynamic, so the SVG will be updated along with the widget content.
--- because of this, the painting may happen hover multiple event loop cycles.
--- @deprecated widget_to_svg
--- @tparam widget widget A widget
--- @tparam string path The output file path
--- @tparam number width The surface width
--- @tparam number height The surface height
--- @return The cairo surface
--- @return The hierarchy.
--- @see wibox.widget.draw_to_svg_file
--- @see wibox.widget.draw_to_image_surface
-function surface.widget_to_svg(widget, path, width, height)
-    gdebug.deprecate("Use wibox.widget.draw_to_svg_file instead of "..
-        "gears.surface.widget_to_svg", {deprecated_in=5})
-    local img = cairo.SvgSurface.create(path, width, height)
-    local cr = cairo.Context(img)
-
-    -- Bad dependecy, but this is deprecated.
-    beautiful = beautiful or require("beautiful")
-    color = color or require("gears.color")
-    cr:set_source(color(beautiful.fg_normal))
-
-    return img, run_in_hierarchy(widget, cr, width, height)
-end
-
---- Create a cairo surface with this widget content.
--- This is dynamic, so the SVG will be updated along with the widget content.
--- because of this, the painting may happen hover multiple event loop cycles.
--- @deprecated widget_to_surface
--- @tparam widget widget A widget
--- @tparam number width The surface width
--- @tparam number height The surface height
--- @param[opt=cairo.Format.ARGB32] format The surface format
--- @return The cairo surface
--- @return The hierarchy.
--- @see wibox.widget.draw_to_svg_file
--- @see wibox.widget.draw_to_image_surface
-function surface.widget_to_surface(widget, width, height, format)
-    gdebug.deprecate("Use wibox.widget.draw_to_image_surface instead of "..
-        "gears.surface.render_to_surface", {deprecated_in=5})
-    local img = cairo.ImageSurface(format or cairo.Format.ARGB32, width, height)
-    local cr = cairo.Context(img)
-
-    -- Bad dependecy, but this is deprecated.
-    color = color or require("gears.color")
-    beautiful = beautiful or require("beautiful")
-    cr:set_source(color(beautiful.fg_normal))
-
-    return img, run_in_hierarchy(widget, cr, width, height)
 end
 
 --- Crop a surface on its edges.

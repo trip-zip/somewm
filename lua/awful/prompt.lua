@@ -483,20 +483,6 @@ function prompt.run(args, textbox, exe_callback, completion_callback,
     local highlighter = args.highlighter
     local hooks = {}
 
-    local deprecated = function(name)
-        gdebug.deprecate(string.format(
-            'awful.prompt.run: the argument %s is deprecated, please use args.%s instead',
-            name, name), {raw=true, deprecated_in=4})
-    end
-    if textbox             then deprecated('textbox') end
-    if exe_callback        then deprecated('exe_callback') end
-    if completion_callback then deprecated('completion_callback') end
-    if history_path        then deprecated('history_path') end
-    if history_max         then deprecated('history_max') end
-    if done_callback       then deprecated('done_callback') end
-    if changed_callback    then deprecated('changed_callback') end
-    if keypressed_callback then deprecated('keypressed_callback') end
-
     -- This function has already an absurd number of parameters, allow them
     -- to be set using the args to avoid a "nil, nil, nil, nil, foo" scenario
     keypressed_callback = keypressed_callback or args.keypressed_callback

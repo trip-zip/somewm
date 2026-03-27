@@ -707,10 +707,6 @@ function permissions.update_border(c, context)
                 c._border_color = beautiful.border_color_marked
                 return
             elseif beautiful.border_marked then
-                gdebug.deprecate(
-                    "Use `beautiful.border_color_marked` instead of `beautiful.border_marked`",
-                    {deprecated_in=5}
-                )
                 c._border_color = beautiful.border_marked
                 return
             end
@@ -728,16 +724,8 @@ function permissions.update_border(c, context)
 
         -- The old theme variable did not have "color" in its name.
         if (not tv) and beautiful.border_normal and (not c.active) then
-            gdebug.deprecate(
-                "Use `beautiful.border_color_normal` instead of `beautiful.border_normal`",
-                {deprecated_in=5}
-            )
             tv = beautiful.border_normal
         elseif (not tv) and beautiful.border_focus then
-            gdebug.deprecate(
-                "Use `beautiful.border_color_active` instead of `beautiful.border_focus`",
-                {deprecated_in=5}
-            )
             tv = beautiful.border_focus
         end
 
