@@ -13,16 +13,17 @@
  * Order from bottom to top:
  * DESKTOP -> BELOW -> NORMAL -> ABOVE -> FULLSCREEN -> ONTOP
  *
- * Note: Floating is a LAYOUT concept, not a STACKING concept.
- * Floating windows go to NORMAL layer. Use c.above/c.ontop for Z-order.
+ * Floating windows get their own layer (FLOATING) above tiled (NORMAL).
+ * Use c.above/c.ontop for higher Z-order.
  */
 typedef enum {
 	WINDOW_LAYER_IGNORE,      /* Special: transient windows (follow parent) */
 	WINDOW_LAYER_DESKTOP,     /* Desktop windows (wallpaper) */
 	WINDOW_LAYER_BELOW,       /* Below normal */
-	WINDOW_LAYER_NORMAL,      /* Normal windows (tiled and floating) */
+	WINDOW_LAYER_NORMAL,      /* Normal windows (tiled) */
+	WINDOW_LAYER_FLOATING,    /* Floating windows (above tiled, below wibar) */
 	WINDOW_LAYER_ABOVE,       /* Above normal */
-	WINDOW_LAYER_FULLSCREEN,  /* Fullscreen (only when focused) */
+	WINDOW_LAYER_FULLSCREEN,  /* Fullscreen — always in LyrFS on Wayland */
 	WINDOW_LAYER_ONTOP,       /* Always on top */
 	WINDOW_LAYER_COUNT        /* Not a real layer, just for counting */
 } window_layer_t;
