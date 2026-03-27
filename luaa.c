@@ -4700,7 +4700,7 @@ luaA_hot_reload(void)
 	 * lua_State* pointers to the old Lua VM. If GLib dispatches them after
 	 * reload, lua_status(NULL) -> SEGV.
 	 *
-	 * Probe first to get the exact upper bound — all Lua-registered sources
+	 * Probe first to get the exact upper bound - all Lua-registered sources
 	 * have IDs in [baseline+1, probe_id-1]. No guesswork needed. */
 	{
 		GMainContext *ctx = g_main_context_default();
@@ -4723,7 +4723,7 @@ luaA_hot_reload(void)
 			"(baseline=%u, new_baseline=%u)\n", removed, baseline, upper);
 	}
 
-	/* Bump Lgi closure generation — all old closures become no-ops.
+	/* Bump Lgi closure generation - all old closures become no-ops.
 	 * lgi_closure_guard.so must be LD_PRELOADed for this to work. */
 	{
 		void (*bump)(void) = dlsym(RTLD_DEFAULT, "lgi_guard_bump_generation");
@@ -4820,8 +4820,8 @@ luaA_hot_reload(void)
 
 			/* Reference and push to arrays */
 			lua_pushvalue(L, -1);
-			client_array_push(&globalconf.clients, luaA_object_ref(L, -1));
-			stack_client_push(c);
+			client_array_append(&globalconf.clients, luaA_object_ref(L, -1));
+			stack_client_append(c);
 
 			new_clients[i] = c;
 			if (cs->was_focused)
@@ -4927,6 +4927,18 @@ luaA_hot_reload(void)
 	/* Client scanning: triggers awful.mouse/keyboard/rules setup */
 	client_emit_scanning();
 
+	/* Save client array order before manage signals. Rule callbacks
+	 * (e.g. to_secondary_section) call client:swap() which reorders
+	 * globalconf.clients. We need the manage loop to run for tags and
+	 * properties, but must preserve the pre-reload tiling order. */
+	client_t **saved_order = NULL;
+	if (num_clients > 0) {
+		saved_order = malloc(num_clients * sizeof(client_t *));
+		if (saved_order)
+			memcpy(saved_order, globalconf.clients.tab,
+				num_clients * sizeof(client_t *));
+	}
+
 	for (i = 0; i < num_clients; i++) {
 		client_t *c = globalconf.clients.tab[i];
 
@@ -4963,6 +4975,15 @@ luaA_hot_reload(void)
 		lua_pop(L, 1);
 	}
 
+	/* Restore pre-reload client order. The manage loop may have
+	 * reordered via to_secondary_section()/swap(), but clients
+	 * should keep their original tiling positions across reload. */
+	if (saved_order && globalconf.clients.len == num_clients) {
+		memcpy(globalconf.clients.tab, saved_order,
+			num_clients * sizeof(client_t *));
+	}
+	free(saved_order);
+
 	client_emit_scanned();
 
 	/* Emit startup signal */
@@ -4974,7 +4995,7 @@ luaA_hot_reload(void)
 	fprintf(stderr, "somewm: hot-reload: complete (%d clients, %d screens, %d tags reset)\n",
 		num_clients, num_screens, num_tags);
 
-	/* Mark new Lgi closures as ready — allows guard to dispatch them.
+	/* Mark new Lgi closures as ready - allows guard to dispatch them.
 	 * Must be called AFTER rc.lua is fully loaded and Lgi is stable. */
 	{
 		void (*ready)(void) = dlsym(RTLD_DEFAULT, "lgi_guard_mark_ready");
