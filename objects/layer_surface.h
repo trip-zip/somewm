@@ -145,6 +145,13 @@ void layer_surface_unfocus(layer_surface_t *ls);
 int luaA_layer_surface_get(lua_State *L);
 
 /**
+ * Apply opacity to all scene buffers of a layer surface.
+ * @param ls The layer_surface_t object.
+ * @param opacity Opacity value (0.0 to 1.0).
+ */
+void layer_surface_apply_opacity_to_scene(layer_surface_t *ls, float opacity);
+
+/**
  * Refresh layer surfaces (called from main event loop if needed).
  */
 void layer_surface_refresh(void);

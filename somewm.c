@@ -1464,6 +1464,10 @@ commitlayersurfacenotify(struct wl_listener *listener, void *data)
 	struct wlr_layer_surface_v1_state old_state;
 	int was_mapped;
 
+	wlr_log(WLR_DEBUG, "[LS-COMMIT] ns=%s mapped=%d scene=%p lua_obj=%p",
+		layer_surface->namespace ? layer_surface->namespace : "?",
+		l->mapped, (void *)l->scene, (void *)l->lua_object);
+
 	if (l->layer_surface->initial_commit) {
 		client_set_scale(layer_surface->surface, l->mon->wlr_output->scale);
 
@@ -1499,6 +1503,13 @@ commitlayersurfacenotify(struct wl_listener *listener, void *data)
 	}
 
 	arrangelayers(l->mon);
+
+	/* Re-apply opacity after wlroots resets buffer opacity on commit */
+	if (l->lua_object) {
+		layer_surface_t *ls = l->lua_object;
+		if (ls->opacity >= 0)
+			layer_surface_apply_opacity_to_scene(ls, (float)ls->opacity);
+	}
 
 	/* Emit property change signals for Lua (matches AwesomeWM pattern) */
 	if (l->lua_object && globalconf_L && layer_surface->current.committed) {
@@ -1683,6 +1694,15 @@ commitpopup(struct wl_listener *listener, void *data)
 	/* Set root scene tree for coordinate calculation */
 	p->root = (type == LayerShell) ? l->popups : c->scene_surface;
 
+	/* Inherit parent's opacity on newly created popup */
+	if (l && l->lua_object) {
+		layer_surface_t *ls = l->lua_object;
+		if (ls->opacity >= 0)
+			layer_surface_apply_opacity_to_scene(ls, (float)ls->opacity);
+	} else if (c && c->opacity >= 0) {
+		client_apply_opacity_to_scene(c, (float)c->opacity);
+	}
+
 	/* Apply initial constraint */
 	popup_unconstrain(p);
 }
@@ -1782,10 +1802,6 @@ createlayersurface(struct wl_listener *listener, void *data)
 
 	l = layer_surface->data = ecalloc(1, sizeof(*l));
 	l->type = LayerShell;
-	LISTEN(&surface->events.commit, &l->surface_commit, commitlayersurfacenotify);
-	LISTEN(&surface->events.unmap, &l->unmap, unmaplayersurfacenotify);
-	LISTEN(&layer_surface->events.destroy, &l->destroy, destroylayersurfacenotify);
-
 	l->layer_surface = layer_surface;
 	l->mon = layer_surface->output->data;
 	l->scene_layer = wlr_scene_layer_surface_v1_create(scene_layer, layer_surface);
@@ -1793,6 +1809,14 @@ createlayersurface(struct wl_listener *listener, void *data)
 	l->popups = surface->data = wlr_scene_tree_create(layer_surface->current.layer
 			< ZWLR_LAYER_SHELL_V1_LAYER_TOP ? layers[LyrTop] : scene_layer);
 	l->scene->node.data = l->popups->node.data = l;
+
+	/* Register commit listener AFTER wlr_scene_layer_surface_v1_create()
+	 * so our handler fires after wlroots' internal scene handler.
+	 * This ensures our opacity re-apply runs after wlroots resets
+	 * buffer opacity to 1.0 during surface_reconfigure(). */
+	LISTEN(&surface->events.commit, &l->surface_commit, commitlayersurfacenotify);
+	LISTEN(&surface->events.unmap, &l->unmap, unmaplayersurfacenotify);
+	LISTEN(&layer_surface->events.destroy, &l->destroy, destroylayersurfacenotify);
 
 	wl_list_insert(&l->mon->layers[layer_surface->pending.layer],&l->link);
 	wlr_surface_send_enter(surface, layer_surface->output);
@@ -2294,11 +2318,25 @@ destroylayersurfacenotify(struct wl_listener *listener, void *data)
 {
 	LayerSurface *l = wl_container_of(listener, l, destroy);
 
+	wlr_log(WLR_ERROR, "[LS-DESTROY] ns=%s lua_obj=%p scene=%p popups=%p",
+		l->layer_surface && l->layer_surface->namespace ? l->layer_surface->namespace : "?",
+		(void *)l->lua_object, (void *)l->scene, (void *)l->popups);
+
+	/* Disconnect Lua object before freeing C struct to prevent UAF
+	 * from pending animation callbacks that hold a Lua ref */
+	if (l->lua_object) {
+		l->lua_object->ls = NULL;
+		l->lua_object = NULL;
+	}
+
 	wl_list_remove(&l->link);
 	wl_list_remove(&l->destroy.link);
 	wl_list_remove(&l->unmap.link);
 	wl_list_remove(&l->surface_commit.link);
-	wlr_scene_node_destroy(&l->scene->node);
+	/* l->scene (= scene_layer->tree) is owned and destroyed by
+	 * wlr_scene_layer_surface_v1 via its layer_surface_destroy listener,
+	 * which fires before ours (registered first). Only destroy popups
+	 * which we created ourselves. */
 	wlr_scene_node_destroy(&l->popups->node);
 	free(l);
 }
@@ -2929,7 +2967,24 @@ fullscreennotify(struct wl_listener *listener, void *data)
 	/* Guard against stale XWayland client after client_unmanage() */
 	if (c->client_type == X11 && c->window == XCB_NONE)
 		return;
-	setfullscreen(c, client_wants_fullscreen(c));
+
+	int wants = client_wants_fullscreen(c);
+	int changed = (c->fullscreen != wants);
+
+	/* Do compositor-level fullscreen first (geometry, layer, protocol) */
+	setfullscreen(c, wants);
+
+	/* Then emit Lua signal so animations see the final geometry.
+	 * setfullscreen updates c->fullscreen and resizes, so by now
+	 * normal_geo/max_geo are correct in the animation tracker. */
+	if (changed) {
+		lua_State *L = globalconf_get_lua_State();
+		if (L) {
+			luaA_object_push(L, c);
+			luaA_object_emit_signal(L, -1, "property::fullscreen", 0);
+			lua_pop(L, 1);
+		}
+	}
 }
 
 /* Foreign toplevel management handlers - allow external tools like rofi
@@ -4354,6 +4409,20 @@ rendermon(struct wl_listener *listener, void *data)
 			goto skip;
 	}
 
+	/* Re-apply layer surface opacity right before render to catch any
+	 * buffer nodes created by wlroots after our commit handler ran */
+	{
+		LayerSurface *l;
+		for (int i = 0; i < 4; i++) {
+			wl_list_for_each(l, &m->layers[i], link) {
+				if (l->lua_object && l->lua_object->opacity >= 0
+						&& l->lua_object->opacity < 1.0)
+					layer_surface_apply_opacity_to_scene(
+						l->lua_object, (float)l->lua_object->opacity);
+			}
+		}
+	}
+
 	if (!wlr_scene_output_commit(m->scene_output, NULL))
 		wlr_log(WLR_DEBUG, "[HOTPLUG] rendermon commit failed: %s",
 			m->wlr_output->name);
@@ -5643,6 +5712,10 @@ void
 unmaplayersurfacenotify(struct wl_listener *listener, void *data)
 {
 	LayerSurface *l = wl_container_of(listener, l, unmap);
+
+	wlr_log(WLR_ERROR, "[LS-UNMAP] ns=%s lua_obj=%p scene=%p",
+		l->layer_surface && l->layer_surface->namespace ? l->layer_surface->namespace : "?",
+		(void *)l->lua_object, (void *)l->scene);
 
 	l->mapped = 0;
 	wlr_scene_node_set_enabled(&l->scene->node, 0);

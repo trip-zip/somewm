@@ -172,6 +172,10 @@ theme.layout_cornerne = themes_path.."default/layouts/cornernew.png"
 theme.layout_cornersw = themes_path.."default/layouts/cornersww.png"
 theme.layout_cornerse = themes_path.."default/layouts/cornersew.png"
 
+-- Client animations
+-- Override any: beautiful.anim_<type>_<param> (e.g. anim_maximize_duration)
+-- Or disable all: beautiful.anim_enabled = false
+
 -- Shadow configuration (9-slice drop shadow)
 theme.shadow_enabled    = true
 theme.shadow_radius     = 20

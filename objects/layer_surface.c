@@ -6,6 +6,8 @@
  */
 
 #include <wlr/types/wlr_layer_shell_v1.h>
+#include <wlr/types/wlr_scene.h>
+#include <wlr/util/log.h>
 
 #include "globalconf.h"
 #include "layer_surface.h"
@@ -59,6 +61,75 @@ layer_surface_keyboard_mode_name(uint32_t mode)
 	default:
 		return "unknown";
 	}
+}
+
+/*
+ * Opacity support for layer surfaces
+ */
+
+/** Recursively apply opacity to all buffer nodes in a scene tree. */
+static void
+ls_apply_opacity_to_tree(struct wlr_scene_node *node, float opacity)
+{
+	if (node->type == WLR_SCENE_NODE_BUFFER) {
+		struct wlr_scene_buffer *buf = wlr_scene_buffer_from_node(node);
+		wlr_scene_buffer_set_opacity(buf, opacity);
+	} else if (node->type == WLR_SCENE_NODE_TREE) {
+		struct wlr_scene_tree *tree = wlr_scene_tree_from_node(node);
+		struct wlr_scene_node *child, *tmp;
+		wl_list_for_each_safe(child, tmp, &tree->children, link) {
+			ls_apply_opacity_to_tree(child, opacity);
+		}
+	}
+}
+
+void
+layer_surface_apply_opacity_to_scene(layer_surface_t *ls, float opacity)
+{
+	if (!ls || !ls->ls || !ls->ls->scene) {
+		wlr_log(WLR_ERROR, "[LS-OPACITY] SKIP: ls=%p ls->ls=%p scene=%p opacity=%.2f",
+			(void *)ls, ls ? (void *)ls->ls : NULL,
+			(ls && ls->ls) ? (void *)ls->ls->scene : NULL, opacity);
+		return;
+	}
+
+	wlr_log(WLR_DEBUG, "[LS-OPACITY] APPLY: scene=%p popups=%p opacity=%.2f",
+		(void *)ls->ls->scene, (void *)ls->ls->popups, opacity);
+
+	ls_apply_opacity_to_tree(&ls->ls->scene->node, opacity);
+
+	/* Also apply to popup tree */
+	if (ls->ls->popups)
+		ls_apply_opacity_to_tree(&ls->ls->popups->node, opacity);
+}
+
+static int
+luaA_layer_surface_get_opacity(lua_State *L, layer_surface_t *ls)
+{
+	if (ls->opacity >= 0)
+		lua_pushnumber(L, ls->opacity);
+	else
+		lua_pushnumber(L, 1.0);
+	return 1;
+}
+
+static int
+luaA_layer_surface_set_opacity(lua_State *L, layer_surface_t *ls)
+{
+	if (lua_isnil(L, -1)) {
+		ls->opacity = -1;
+		layer_surface_apply_opacity_to_scene(ls, 1.0f);
+	} else {
+		double opacity = luaL_checknumber(L, -1);
+		if (opacity < 0 || opacity > 1)
+			return luaL_error(L, "opacity must be between 0 and 1");
+		ls->opacity = opacity;
+		layer_surface_apply_opacity_to_scene(ls, (float)opacity);
+	}
+	luaA_object_push(L, ls);
+	luaA_object_emit_signal(L, -1, "property::opacity", 0);
+	lua_pop(L, 1);
+	return 0;
 }
 
 /*
@@ -572,6 +643,12 @@ layer_surface_class_setup(lua_State *L)
 	                        (lua_class_propfunc_t) luaA_layer_surface_set_has_keyboard_focus,
 	                        (lua_class_propfunc_t) luaA_layer_surface_get_has_keyboard_focus,
 	                        (lua_class_propfunc_t) luaA_layer_surface_set_has_keyboard_focus);
+
+	/* Opacity (read-write, applied to scene) */
+	luaA_class_add_property(&layer_surface_class, "opacity",
+	                        (lua_class_propfunc_t) luaA_layer_surface_set_opacity,
+	                        (lua_class_propfunc_t) luaA_layer_surface_get_opacity,
+	                        (lua_class_propfunc_t) luaA_layer_surface_set_opacity);
 
 	/* Register derived properties (read-only) */
 	luaA_class_add_property(&layer_surface_class, "focusable",

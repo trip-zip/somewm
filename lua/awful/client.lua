@@ -1028,6 +1028,12 @@ capi.client.connect_signal("property::fullscreen", update_implicitly_floating)
 capi.client.connect_signal("property::size_hints", update_implicitly_floating)
 capi.client.connect_signal("request::manage", update_implicitly_floating)
 
+-- Sync effective floating state (explicit OR implicit) to C for z-order stacking.
+-- This covers both set_floating() and update_implicitly_floating() paths.
+capi.client.connect_signal("property::floating", function(c)
+    c._c_floating = client.object.get_floating(c) == true
+end)
+
 --- Toggle the floating state of a client between 'auto' and 'true'.
 -- Use `c.floating = not c.floating`
 -- @deprecated awful.client.floating.toggle
