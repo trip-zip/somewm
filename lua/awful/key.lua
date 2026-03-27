@@ -243,11 +243,6 @@ key.ignore_modifiers = { "Lock", "Mod2" }
 -- @tparam string k The key
 -- @deprecated awful.key.execute
 function key.execute(mod, k)
-    gdebug.deprecate("Use `awful.keyboard.emulate_key_combination` or "..
-        "`my_key:trigger()` instead of `awful.key.execute()`",
-        {deprecated_in=5}
-    )
-
     require("awful.keyboard").emulate_key_combination(mod, k)
 end
 

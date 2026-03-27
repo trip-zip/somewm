@@ -262,8 +262,8 @@ local function create_month(props, date)
     end
     layout:set_homogeneous(true)
     layout:set_spacing(props.spacing)
-    layout:set_forced_num_rows(num_rows)
-    layout:set_forced_num_cols(num_columns)
+    layout:set_row_count(num_rows)
+    layout:set_column_count(num_columns)
 
     if props.border_width then
         layout:set_border_width(props.border_width)
@@ -346,8 +346,8 @@ local function create_year(props, date)
     in_layout:set_expand(true)
     in_layout:set_homogeneous(true)
     in_layout:set_spacing(2*props.spacing)
-    in_layout:set_forced_num_cols(4)
-    in_layout:set_forced_num_rows(3)
+    in_layout:set_column_count(4)
+    in_layout:set_row_count(3)
 
     local month_date
     local current_date = os.date("*t")

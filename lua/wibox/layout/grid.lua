@@ -32,7 +32,6 @@ local math = math
 local gtable = require("gears.table")
 local gmath = require("gears.math")
 local gcolor = require("gears.color")
-local gdebug = require("gears.debug")
 local base = require("wibox.widget.base")
 local cairo = require("lgi").cairo
 
@@ -856,36 +855,6 @@ function grid:set_orientation(val)
     end
 end
 
--- Set the minimum size for the columns.
-function grid:set_min_cols_size(val)
-    if self._private.min_cols_size ~= val and val >= 0 then
-        self._private.min_cols_size = val
-    end
-end
-
--- Set the minimum size for the rows.
-function grid:set_min_rows_size(val)
-    if self._private.min_rows_size ~= val and val >= 0 then
-        self._private.min_rows_size = val
-    end
-end
-
-function grid:set_forced_num_cols(val)
-    gdebug.deprecate(
-        "The `.column_count = "..tostring(val).."`.",
-        {deprecated_in=5}
-    )
-    self:set_column_count(val)
-end
-
-function grid:set_forced_num_rows(val)
-    gdebug.deprecate(
-        "The `row_count = "..tostring(val).."`.",
-        {deprecated_in=5}
-    )
-    self:set_row_count(val)
-end
-
 -- Force the number of columns of the layout.
 function grid:set_column_count(val)
     if self._private.forced_num_cols ~= val then
@@ -932,35 +901,11 @@ function grid:set_minimum_row_height(val)
     end
 end
 
-function grid:set_min_cols_size(val)
-    gdebug.deprecate(
-        "The `.minimum_column_width = "..tostring(val).."`.",
-        {deprecated_in=5}
-    )
-    self:set_minimum_column_width(val)
-end
-
-function grid:set_min_rows_size(val)
-    gdebug.deprecate(
-        "The `.minimum_column_width = "..tostring(val).."`.",
-        {deprecated_in=5}
-    )
-    self:set_minimum_row_height(val)
-end
-
 function grid:get_minimum_column_width()
     return self._private.min_cols_size
 end
 
 function grid:get_minimum_row_height()
-    return self._private.min_rows_size
-end
-
-function grid:get_min_cols_size()
-    return self._private.min_cols_size
-end
-
-function grid:get_min_rows_size()
     return self._private.min_rows_size
 end
 
@@ -1053,27 +998,6 @@ end
 -- getting the common property returns the directional property
 -- defined by the `orientation` property
 for _, prop in ipairs(dir_properties) do
-    for _,dir in ipairs{"horizontal", "vertical"} do
-        local dir_prop = dir .. "_" .. prop
-        grid["set_"..dir_prop] = function(self, value)
-            gdebug.deprecate(
-                "The `".. dir_prop .."` property is deprecated. Use `".. prop .."`",
-                {deprecated_in=5}
-            )
-            if self._private[dir_prop] ~= value then
-                self._private[dir_prop] = value
-                self:emit_signal("widget::layout_changed")
-            end
-        end
-        grid["get_"..dir_prop] = function(self)
-            gdebug.deprecate(
-                "The `".. dir_prop .."` property is deprecated. Use `".. prop .."`",
-                {deprecated_in=5}
-            )
-            return self._private[dir_prop]
-        end
-    end
-
     grid["set_"..prop] = function(self, value)
         if type(value) ~= "table" then
             if self._private["horizontal_"..prop] ~= value
@@ -1592,7 +1516,7 @@ end
 -- @constructorfct wibox.layout.grid.horizontal
 function grid.horizontal(forced_num_rows, widget, ...)
     local ret = new("horizontal")
-    ret:set_forced_num_rows(forced_num_rows)
+    ret:set_row_count(forced_num_rows)
 
     if widget then
         ret:add(widget, ...)
@@ -1610,7 +1534,7 @@ end
 -- @constructorfct wibox.layout.grid.vertical
 function grid.vertical(forced_num_cols, widget, ...)
     local ret = new("vertical")
-    ret:set_forced_num_cols(forced_num_cols)
+    ret:set_column_count(forced_num_cols)
 
     if widget then
         ret:add(widget, ...)

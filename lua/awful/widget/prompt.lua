@@ -150,9 +150,6 @@ function widgetprompt.new(args)
     promptbox.keyreleased_callback = args.keyreleased_callback or nil
 
     if args.hook and not args.hooks then
-        gdebug.deprecate("Use `args.hooks` instead of `args.hook`",
-            {deprecated_in=5})
-
         args.hooks = args.hook
     end
 

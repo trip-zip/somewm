@@ -55,7 +55,6 @@ end
 -- @treturn number The squared distance of the screen to the provided point.
 -- @see screen.get_square_distance
 function screen.getdistance_sq(s, x, y)
-    gdebug.deprecate("Use s:get_square_distance(x, y) instead of awful.screen.getdistance_sq", {deprecated_in=4})
     return screen.object.get_square_distance(s, x, y)
 end
 
@@ -247,7 +246,6 @@ end
 -- @treturn table A table with left, right, top and bottom number values.
 -- @see padding
 function screen.padding(s, padding)
-    gdebug.deprecate("Use _screen.padding = value instead of awful.screen.padding", {deprecated_in=4})
     if padding then
         screen.object.set_padding(s, padding)
     end

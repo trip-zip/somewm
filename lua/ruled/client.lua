@@ -425,8 +425,6 @@ function module.delayed_properties.switch_to_tags(c, value)
 end
 
 function module.delayed_properties.switchtotag(c, value)
-    gdebug.deprecate("Use switch_to_tags instead of switchtotag", {deprecated_in=5})
-
     module.delayed_properties.switch_to_tags(c, value)
 end
 
@@ -691,11 +689,6 @@ capi.client.connect_signal("scanning", request_rules)
 return setmetatable(module, {
     __newindex = function(_, k, v)
         if k == "rules" then
-            gdebug.deprecate(
-                "Use ruled.client.append_rules instead of setting awful.rules.rules directly",
-                {deprecated_in=5}
-            )
-
             -- Clearing the rule was supported, so it still has to be. This is
             -- a bad idea. There is no plan to make this API public.
             if not next(v) then
@@ -713,12 +706,6 @@ return setmetatable(module, {
     end,
     __index = function(_, k)
         if k == "rules" then
-            gdebug.deprecate(
-                "Accessing `ruled.rules` isn't recommended, to modify rules, "..
-                "use `ruled.client.remove_rule()` and add a new one.",
-                {deprecated_in=5}
-            )
-
             if not crules._matching_rules["awful.rules"] then
                 crules:add_matching_rules("awful.rules", {}, {}, {})
             end

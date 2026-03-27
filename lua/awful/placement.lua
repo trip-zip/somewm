@@ -894,11 +894,6 @@ function placement.no_offscreen(c, args)
 
     --compatibility with the old API
     if type(args) == "number" or type(args) == "screen" then
-        gdebug.deprecate(
-            "awful.placement.no_offscreen screen argument is deprecated"..
-            " use awful.placement.no_offscreen(c, {screen=...})",
-            {deprecated_in=5}
-        )
         args = { screen = args }
     end
 
@@ -1081,11 +1076,6 @@ end
 -- @staticfct awful.placement.next_to_mouse
 function placement.next_to_mouse(d, args)
     if type(args) == "number" then
-        gdebug.deprecate(
-            "awful.placement.next_to_mouse offset argument is deprecated"..
-            " use awful.placement.next_to_mouse(c, {offset={x=...}})",
-            {deprecated_in=4}
-        )
         args = nil
     end
 

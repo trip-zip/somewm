@@ -24,7 +24,6 @@ local math_max = math.max
 local math_min = math.min
 local table = table
 local color = require("gears.color")
-local gdebug = require("gears.debug")
 local gtable = require("gears.table")
 local base = require("wibox.widget.base")
 local beautiful = require("beautiful")
@@ -248,8 +247,8 @@ local graph = { mt = {} }
 -- @beautiful beautiful.graph_border_color
 -- @param color
 
-local properties = { "width", "height", "border_color", "stack",
-                     "stack_colors", "color", "background_color",
+local properties = { "border_color", "stack",
+                     "color", "background_color",
                      "max_value", "scale", "min_value", "step_shape",
                      "step_spacing", "step_width", "border_width",
                      "clamp_bars", "baseline_value",
@@ -813,87 +812,6 @@ function graph:set_capacity(capacity)
     return self
 end
 
---- Set the graph height.
---
--- This property is deprecated.  Use a `wibox.container.constraint` widget or
--- `forced_height`.
----
--- @deprecatedproperty height
--- @tparam number height The height to set.
--- @renamedin 5.0 forced_height
--- @propemits true false
-function graph:set_height(height)
-    gdebug.deprecate("Use a `wibox.container.constraint` widget or `forced_height`", {deprecated_in=5})
-    if awesome.api_level <= 5 then
-        if height >= 5 then
-            -- this sends "layout_changed" for us
-            self:set_forced_height(height)
-            -- signal, because we did it before
-            self:emit_signal("property::height", height)
-        end
-        return self
-    end
-end
-
-function graph:get_height()
-    gdebug.deprecate("Use `forced_height`", {deprecated_in=5})
-    return awesome.api_level <= 5 and self._private.forced_height or nil
-end
-
---- Set the graph width.
---
--- This property is deprecated.  Use a `wibox.container.constraint` widget or
--- `forced_width`.
----
--- @deprecatedproperty width
--- @tparam number width The width to set.
--- @renamedin 5.0 forced_width
--- @propemits true false
-function graph:set_width(width)
-    gdebug.deprecate("Use a `wibox.container.constraint` widget or `forced_width`", {deprecated_in=5})
-    if awesome.api_level <= 5 then
-        if width >= 5 then
-            -- this sends "layout_changed" for us
-            self:set_forced_width(width)
-            -- signal, because we did it before
-            self:emit_signal("property::width", width)
-        end
-        return self
-    end
-end
-
-function graph:get_width()
-    gdebug.deprecate("Use `forced_width`", {deprecated_in=5})
-    return awesome.api_level <= 5 and self._private.forced_width or nil
-end
-
---- Set the colors for data groups.
---
--- This property is deprecated. Use `group_colors` instead.
----
--- @deprecatedproperty stack_colors
--- @renamedin 5.0 group_colors
--- @tparam table colors A table with colors for data groups.
--- @see group_colors
-function graph:set_stack_colors(colors)
-    gdebug.deprecate("Use `group_colors`", {deprecated_in=5})
-    if awesome.api_level <= 5 then
-        if self._private.group_colors ~= colors then
-            -- this sends "redraw_needed" for us
-            self:set_group_colors(colors)
-            -- signal, because we did it before
-            self:emit_signal("property::stack_colors", colors)
-        end
-        return self
-    end
-end
-
-function graph:get_stack_colors()
-    gdebug.deprecate("Use `group_colors`", {deprecated_in=5})
-    return awesome.api_level <= 5 and self._private.group_colors or nil
-end
-
-
 --- Create a graph widget.
 --
 -- @tparam table args Standard widget() arguments.
@@ -903,25 +821,6 @@ function graph.new(args)
     args = args or {}
 
     local _graph = base.make_widget(nil, nil, {enable_properties = true})
-
-    if args.width or args.height then
-        gdebug.deprecate(
-            "`args.width` and `args.height` are deprecated. "..
-            "Use a `wibox.container.constraint` widget "..
-            "or `forced_width`/`forced_height`",
-            {deprecated_in=5, raw=true}
-        )
-    end
-
-    if awesome.api_level <= 5 then
-        local width = args.width or 100
-        local height = args.height or 20
-
-        if width < 5 or height < 5 then return end
-
-        _graph._private.forced_width = width
-        _graph._private.forced_height = height
-    end
 
     -- Set initial values for properties.
     gtable.crush(_graph._private, prop_defaults, true)

@@ -1684,28 +1684,6 @@ capi.client.connect_signal("request::unmanage", client.focus.history.delete)
 
 capi.client.connect_signal("request::unmanage", client.floating.delete)
 
--- Print a warning when the old `manage` signal is used.
-capi.client.connect_signal("manage::connected", function()
-    gdebug.deprecate(
-        "Use `request::manage` rather than `manage`",
-        {deprecated_in=5}
-    )
-end)
-capi.client.connect_signal("unmanage::connected", function()
-    gdebug.deprecate(
-        "Use `request::unmanage` rather than `unmanage`",
-        {deprecated_in=5}
-    )
-end)
-
-for _, sig in ipairs {"marked", "unmarked"} do
-    capi.client.connect_signal(sig.."::connected", function()
-        gdebug.deprecate(
-            "Use `property::marked` rather than `".. sig .. "`",
-            {deprecated_in=4}
-        )
-    end)
-end
 
 -- Connect to "focus" signal, and allow to disable tracking.
 do

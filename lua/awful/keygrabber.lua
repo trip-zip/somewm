@@ -65,9 +65,7 @@
 
 local ipairs = ipairs
 local table = table
-local gdebug = require('gears.debug')
 local akey = require("awful.key")
-local unpack = unpack or table.unpack -- luacheck: globals unpack (compatibility with Lua 5.1)
 local gtable = require("gears.table")
 local gobject = require("gears.object")
 local gtimer = require("gears.timer")
@@ -150,7 +148,25 @@ local function grabber(mod, key, event)
 end
 
 local function stop(self, stop_key, stop_mods)
-    keygrab.stop(self.grabber)
+    local g = self.grabber
+
+    if g then
+        for i, v in ipairs(grabbers) do
+            if v == g then
+                table.remove(grabbers, i)
+                break
+            end
+        end
+
+        if keygrab.current_instance and keygrab.current_instance.grabber == g then
+            keygrab.current_instance = nil
+        end
+
+        if #grabbers == 0 then
+            keygrabbing = false
+            capi.keygrabber.stop()
+        end
+    end
 
     local timer = self._private.timer
     if timer and timer.started then
@@ -272,7 +288,7 @@ end
 -- the stack).
 --
 -- @param[opt] g The key grabber that must be removed.
--- @deprecated awful.keygrabber.stop
+-- @staticfct awful.keygrabber.stop
 function keygrab.stop(g)
     -- If `run` is used directly and stop() is called with `g==nil`, get the
     -- first keygrabber.
@@ -510,70 +526,23 @@ end
 -- Also stops any `timeout`.
 --
 -- @method stop
--- @tparam string|nil stop_key Override the key passed to `stop_callback` **DEPRECATED**
--- @tparam tale|nil stop_mods Override the modifiers passed to `stop_callback` **DEPRECATED**
 -- @noreturn
 -- @emits stopped
 -- @emits property::current_instance
-function keygrabber:stop(stop_key, stop_mods)
-    if stop_key then
-        gdebug.deprecate(
-            "The `stop_key` is deprecated. Overriding callback parameters "..
-            "is an anti-pattern and might confuse third party modules.",
-            {deprecated_in=5}
-        )
-    end
-
-    if stop_mods then
-        gdebug.deprecate(
-            "The `stop_mods` is deprecated. Overriding callback parameters "..
-            "is an anti-pattern and might confuse third party modules.",
-            {deprecated_in=5}
-        )
-    end
-
-    stop(self, stop_key, stop_mods)
+function keygrabber:stop()
+    stop(self)
 end
 
 --- Add a keybinding to this keygrabber.
 --
 -- Those keybindings will automatically start the keygrabbing when hit.
 --
--- Please note that this method previously accepted a
--- `mods, keycode, callback, description` signature. This is deprecated. Store
--- those values in an `awful.key` prior to passing it to this function. The
--- previous method signature made it impossible to alter the description and/or
--- enable/disable the keybinding.
---
 -- @method add_keybinding
 -- @tparam awful.key key The key.
--- @tparam string description.group The keybinding group
 -- @noreturn
 -- @see remove_keybinding
 
-function keygrabber:add_keybinding(key, keycode, callback, description)
-    local mods = not key._is_awful_key and key or nil
-
-    if mods then
-        gdebug.deprecate(":add_keybinding now takes `awful.key` objects instead"
-            .. " of multiple parameters",
-            {deprecated_in=5}
-        )
-
-        key = akey {
-            modifiers   = mods,
-            key         = keycode,
-            description = description,
-            on_press    = callback
-        }
-    elseif keycode or callback or description then
-        gdebug.deprecate(
-            ":add_keybinding only accept a single parameter. All "..
-            "other were ignored.",
-            {deprecated_in=4}
-        )
-    end
-
+function keygrabber:add_keybinding(key)
     self._private.keybindings[key.key] = self._private.keybindings[key.key] or {}
     table.insert(self._private.keybindings[key.key], key)
 
@@ -604,31 +573,7 @@ function keygrabber:remove_keybinding(key)
 end
 
 function keygrabber:set_root_keybindings(keys)
-    local real_keys = {}
-
-    -- Handle the pre-object-oriented input structures.
-    for _, key in ipairs(keys) do
-        if key._is_awful_key then
-            table.insert(real_keys, key)
-        else
-            gdebug.deprecate(":set_root_keybindings now takes `awful.key` "
-                .. " objects instead of tables",
-                {deprecated_in=5}
-            )
-
-            local mods, keycode, press, release, data = unpack(key)
-
-            table.insert(real_keys, akey {
-                modifiers   = mods,
-                key         = keycode,
-                description = (data or {}).description,
-                on_press    = press,
-                on_release  = release,
-            })
-        end
-    end
-
-    add_root_keybindings(self, real_keys)
+    add_root_keybindings(self, keys)
 end
 
 -- Turn into a set.
@@ -638,19 +583,6 @@ function keygrabber:set_allowed_keys(keys)
     for _, v in ipairs(keys) do
         self._private.allowed_keys[v] = true
     end
-end
-
---TODO v5 remove this
-function keygrabber:set_release_event(event)
-    -- It has never been in a release, so it can be deprecated right away
-    gdebug.deprecate("release_event has been renamed to stop_event")
-
-    self.stop_event = event
-end
-
---TODO v5 remove this
-function keygrabber:get_release_event()
-    return self.stop_event
 end
 
 --- When the keygrabber starts.
@@ -765,38 +697,8 @@ function keygrab.run_with_keybindings(args)
 
     -- Build the hook map
     for _,v in ipairs(args.keybindings or {}) do
-        if v._is_awful_key then
-            ret._private.keybindings[v.key] = ret._private.keybindings[v.key] or {}
-            table.insert(ret._private.keybindings[v.key], v)
-        elseif #v >= 3 and #v <= 4 then
-            gdebug.deprecate("keybindings now contains `awful.key` objects"
-                .. "instead of multiple tables",
-                {deprecated_in=5}
-            )
-
-            local modifiers, key, callback = unpack(v)
-            if type(callback) == "function" then
-
-                local k = akey {
-                    modifiers = modifiers,
-                    key       = key,
-                    on_press  = callback,
-                }
-
-                ret._private.keybindings[key] = ret._private.keybindings[key] or {}
-                table.insert(ret._private.keybindings[key], k)
-            else
-                gdebug.print_warning(
-                    "The hook's 3rd parameter has to be a function. " ..
-                        gdebug.dump_return(v or {})
-                )
-            end
-        else
-            gdebug.print_warning(
-                "The keybindings should be awful.key objects" ..
-                        gdebug.dump_return(v or {})
-            )
-        end
+        ret._private.keybindings[v.key] = ret._private.keybindings[v.key] or {}
+        table.insert(ret._private.keybindings[v.key], v)
     end
 
     if args.export_keybindings then
@@ -832,44 +734,13 @@ end
 -- * a string with the pressed key
 -- * a string with either "press" or "release" to indicate the event type.
 --
--- Here is the content of the modifier table:
---
--- <table class='widget_list' border=1>
---  <tr style='font-weight: bold;'>
---   <th align='center'>Modifier name </th>
---   <th align='center'>Key name</th>
---   <th align='center'>Alternate key name</th>
---  </tr>
---  <tr><td> Mod4</td><td align='center'> Super_L </td><td align='center'> Super_R </td></tr>
---  <tr><td> Control </td><td align='center'> Control_L </td><td align='center'> Control_R </td></tr>
---  <tr><td> Shift </td><td align='center'> Shift_L </td><td align='center'> Shift_R </td></tr>
---  <tr><td> Mod1</td><td align='center'> Alt_L </td><td align='center'> Alt_R </td></tr>
--- </table>
---
 -- A callback can return `false` to pass the events to the next
 -- keygrabber in the stack.
 --
 -- @param g The key grabber callback that will get the key events until it
 --  will be deleted or a new grabber is added.
 -- @return the given callback `g`.
--- @usage
--- -- The following function can be bound to a key, and be used to resize a
--- -- client using the keyboard.
---
--- function resize(c)
---   local grabber
---   grabber = awful.keygrabber.run(function(mod, key, event)
---     if event == "release" then return end
---
---     if     key == 'Up'    then c:relative_move(0, 0, 0, 5)
---     elseif key == 'Down'  then c:relative_move(0, 0, 0, -5)
---     elseif key == 'Right' then c:relative_move(0, 0, 5, 0)
---     elseif key == 'Left'  then c:relative_move(0, 0, -5, 0)
---     else   awful.keygrabber.stop(grabber)
---     end
---   end)
--- end
--- @deprecated awful.keygrabber.run
+-- @staticfct awful.keygrabber.run
 function keygrab.run(g)
     -- Remove the grabber if it is in the stack.
     keygrab.stop(g)
