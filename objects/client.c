@@ -4271,6 +4271,19 @@ luaA_client_set_ontop(lua_State *L, client_t *c)
 }
 
 static int
+luaA_client_set_floating(lua_State *L, client_t *c)
+{
+    bool s = luaA_checkboolean(L, -1);
+    if(c->floating != s)
+    {
+        c->floating = s;
+        stack_windows();
+        luaA_object_emit_signal(L, -3, "property::_c_floating", 0);
+    }
+    return 0;
+}
+
+static int
 luaA_client_set_below(lua_State *L, client_t *c)
 {
     client_set_below(L, -3, luaA_checkboolean(L, -1));
@@ -4329,6 +4342,21 @@ client_apply_opacity_to_scene(client_t *c, float opacity)
      * so we need to recurse to find all buffer nodes. */
     if (c->scene_surface) {
         apply_opacity_to_tree(&c->scene_surface->node, opacity);
+    }
+
+    /* Apply to shadow tree (9-slice drop shadow) */
+    if (c->shadow.tree) {
+        apply_opacity_to_tree(&c->shadow.tree->node, opacity);
+    }
+
+    /* Apply to border rects (4 wlr_scene_rect nodes) */
+    for (i = 0; i < 4; i++) {
+        if (c->border[i]) {
+            float color[4];
+            memcpy(color, c->border[i]->color, sizeof(color));
+            color[3] = opacity;
+            wlr_scene_rect_set_color(c->border[i], color);
+        }
     }
 }
 
@@ -4506,6 +4534,7 @@ LUA_OBJECT_EXPORT_PROPERTY(client, client_t, minimized, lua_pushboolean)
 LUA_OBJECT_EXPORT_PROPERTY(client, client_t, fullscreen, lua_pushboolean)
 LUA_OBJECT_EXPORT_PROPERTY(client, client_t, modal, lua_pushboolean)
 LUA_OBJECT_EXPORT_PROPERTY(client, client_t, ontop, lua_pushboolean)
+LUA_OBJECT_EXPORT_PROPERTY(client, client_t, floating, lua_pushboolean)
 LUA_OBJECT_EXPORT_PROPERTY(client, client_t, urgent, lua_pushboolean)
 LUA_OBJECT_EXPORT_PROPERTY(client, client_t, above, lua_pushboolean)
 LUA_OBJECT_EXPORT_PROPERTY(client, client_t, below, lua_pushboolean)
@@ -5362,6 +5391,7 @@ client_class_setup(lua_State *L)
         { "motif_wm_hints", NULL, (lua_class_propfunc_t) luaA_client_get_motif_wm_hints, NULL },
         { "name", (lua_class_propfunc_t) luaA_client_set_name, (lua_class_propfunc_t) luaA_client_get_name, (lua_class_propfunc_t) luaA_client_set_name },
         { "ontop", (lua_class_propfunc_t) luaA_client_set_ontop, (lua_class_propfunc_t) luaA_client_get_ontop, (lua_class_propfunc_t) luaA_client_set_ontop },
+        { "_c_floating", (lua_class_propfunc_t) luaA_client_set_floating, (lua_class_propfunc_t) luaA_client_get_floating, (lua_class_propfunc_t) luaA_client_set_floating },
         { "opacity", (lua_class_propfunc_t) luaA_client_set_opacity, (lua_class_propfunc_t) luaA_client_get_opacity, (lua_class_propfunc_t) luaA_client_set_opacity },
         { "pid", NULL, (lua_class_propfunc_t) luaA_client_get_pid, NULL },
         { "role", NULL, (lua_class_propfunc_t) luaA_client_get_role, NULL },
