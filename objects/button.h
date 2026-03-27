@@ -57,9 +57,6 @@ int luaA_button_array_get(lua_State *L, int oidx, button_array_t *buttons);
 bool button_array_check(button_array_t *buttons, uint16_t modifiers, uint32_t button,
                         lua_State *L, int drawin_idx);
 
-/* Legacy button checking functions (for backward compatibility with somewm.c) */
-int luaA_button_check(uint32_t mods, uint32_t button);
-
 /* AwesomeWM-compatible button checking (two-stage signal emission)
  * \param drawin_ptr Drawin pointer
  * \param x Relative X coordinate (drawin-relative)
