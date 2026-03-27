@@ -892,9 +892,6 @@ function tasklist.new(args, filter, buttons, style, update_function, base_widget
     -- Detect the old function signature
     if argstype == "number" or argstype == "screen" or
       (argstype == "table" and args.index and args == capi.screen[args.index]) then
-        gdebug.deprecate("The `screen` parameter is deprecated, use `args.screen`.",
-            {deprecated_in=5})
-
         screen = get_screen(args)
         args = {}
     end
@@ -907,9 +904,6 @@ function tasklist.new(args, filter, buttons, style, update_function, base_widget
                         update_function = update_function,
                         layout          = base_widget
     } do
-        gdebug.deprecate("The `awful.widget.tasklist()` `"..k
-            .."` parameter is deprecated, use `args."..k.."`.",
-        {deprecated_in=5})
         args[k] = v
     end
 

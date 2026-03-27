@@ -414,14 +414,12 @@ end
 -- luacov: disable
 
 function utils.compute_textbox_width(textbox, s)
-    gdebug.deprecate("Use 'width, _ = textbox:get_preferred_size(s)' directly.", {deprecated_in=4})
     s = screen[s or mouse.screen]
     local w, _ = textbox:get_preferred_size(s)
     return w
 end
 
 function utils.compute_text_width(text, s, font)
-    gdebug.deprecate("Use 'width = textbox.get_markup_geometry(text, s, font)['width']'.", {deprecated_in=4})
     return w_textbox.get_markup_geometry(text, s, font)['width']
 end
 

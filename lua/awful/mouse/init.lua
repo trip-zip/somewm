@@ -88,8 +88,6 @@ mouse.wibox = {}
 -- @treturn client|nil The client object under the pointer, if one can be found.
 -- @see current_client
 function mouse.client_under_pointer()
-    gdebug.deprecate("Use mouse.current_client instead of awful.mouse.client_under_pointer()", {deprecated_in=4})
-
     return mouse.object.get_current_client()
 end
 

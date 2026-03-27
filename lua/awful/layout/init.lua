@@ -129,11 +129,6 @@ end
 -- @staticfct awful.layout.inc
 function layout.inc(i, s, layouts)
     if type(i) == "table" then
-        -- Older versions of this function had arguments (layouts, i, s), but
-        -- this was changed so that 'layouts' can be an optional parameter
-        gdebug.deprecate("Use awful.layout.inc(increment, screen, layouts) instead"..
-            " of awful.layout.inc(layouts, increment, screen)", {deprecated_in=5})
-
         layouts, i, s = i, s, layouts
     end
     s = get_screen(s or ascreen.focused())

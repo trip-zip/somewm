@@ -19,11 +19,6 @@ local module = {}
 -- @request client geometry mouse.move granted When `awful.mouse.client.move` is
 --  called.
 function module.move(c, snap, finished_cb) --luacheck: no unused args
-    if finished_cb then
-        gdebug.deprecate("The mouse.client.move `finished_cb` argument is no longer"..
-            " used, please use awful.mouse.resize.add_leave_callback(f, 'mouse.move')", {deprecated_in=4})
-    end
-
     c = c or capi.client.focus
 
     if not c
@@ -57,9 +52,6 @@ module.dragtotag = { }
 -- @deprecated awful.mouse.client.dragtotag.border
 -- @param c The client to move
 function module.dragtotag.border(c)
-    gdebug.deprecate("Use awful.mouse.snap.drag_to_tag_enabled = true instead "..
-        "of awful.mouse.client.dragtotag.border(c). It will now be enabled.", {deprecated_in=4})
-
     -- Enable drag to border
     require("awful.mouse.snap").drag_to_tag_enabled = true
 
@@ -76,11 +68,6 @@ end
 -- @treturn number x The horizontal position
 -- @treturn number y The vertical position
 function module.corner(c, corner)
-    gdebug.deprecate(
-        "Use awful.placement.closest_corner(mouse) or awful.placement[corner](mouse)"..
-        " instead of awful.mouse.client.corner", {deprecated_in=4}
-    )
-
     c = c or capi.client.focus
     if not c then return end
 

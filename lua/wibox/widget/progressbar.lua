@@ -38,7 +38,6 @@
 local setmetatable = setmetatable
 local ipairs = ipairs
 local math = math
-local gdebug =  require("gears.debug")
 local base = require("wibox.widget.base")
 local color = require("gears.color")
 local beautiful = require("beautiful")
@@ -139,14 +138,6 @@ local progressbar = { mt = {} }
 -- @propemits true false
 -- @propbeautiful
 -- @see gears.shape
-
---- Set the progressbar to draw vertically.
---
--- This doesn't do anything anymore, use a `wibox.container.rotate` widget.
---
--- @deprecated set_vertical
--- @tparam boolean vertical
--- @deprecatedin 4.0
 
 --- Force the inner part (the bar) to fit in the background shape.
 --
@@ -572,32 +563,6 @@ function progressbar:set_max_value(max_value)
     self:emit_signal("widget::redraw_needed")
 end
 
---- Set the progressbar height.
---
--- This method is deprecated.  Use a `wibox.container.constraint` widget or
--- `forced_height`.
---
--- @tparam number height The height to set.
--- @deprecated set_height
--- @renamedin 4.0
-function progressbar:set_height(height)
-    gdebug.deprecate("Use a `wibox.container.constraint` widget or `forced_height`", {deprecated_in=4})
-    self:set_forced_height(height)
-end
-
---- Set the progressbar width.
---
--- This method is deprecated.  Use a `wibox.container.constraint` widget or
--- `forced_width`.
---
--- @tparam number width The width to set.
--- @deprecated set_width
--- @renamedin 4.0
-function progressbar:set_width(width)
-    gdebug.deprecate("Use a `wibox.container.constraint` widget or `forced_width`", {deprecated_in=4})
-    self:set_forced_width(width)
-end
-
 -- Build properties function
 for _, prop in ipairs(properties) do
     if not progressbar["set_" .. prop] then
@@ -614,11 +579,6 @@ for _, prop in ipairs(properties) do
         end
     end
 end
-
-function progressbar:set_vertical(value) --luacheck: no unused_args
-    gdebug.deprecate("Use a `wibox.container.rotate` widget", {deprecated_in=4})
-end
-
 
 --- Create a progressbar widget.
 --

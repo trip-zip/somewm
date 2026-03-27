@@ -28,7 +28,6 @@ local ipairs = ipairs
 local error = error
 local wibox = require("wibox")
 local beautiful = require("beautiful")
-local gdebug = require("gears.debug")
 local placement = require("awful.placement")
 local gtable = require("gears.table")
 
@@ -301,12 +300,8 @@ function awfulwibar.get_position(wb)
     return wb._position or "top"
 end
 
-function awfulwibar.set_position(wb, position, screen)
+function awfulwibar.set_position(wb, position)
     if position == wb._position then return end
-
-    if screen then
-        gdebug.deprecate("Use `wb.screen = screen` instead of awful.wibar.set_position", {deprecated_in=4})
-    end
 
     -- Detach first to avoid any unneeded callbacks
     if wb.detach_callback then
@@ -424,16 +419,7 @@ function awfulwibar.get_align(self)
     return self._private.align
 end
 
-function awfulwibar.set_align(self, value, screen)
-    if value == "center" then
-        gdebug.deprecate("awful.wibar.align(wb, 'center' is deprecated, use 'centered'", {deprecated_in=4})
-        value = "centered"
-    end
-
-    if screen then
-        gdebug.deprecate("awful.wibar.align 'screen' argument is deprecated", {deprecated_in=4})
-    end
-
+function awfulwibar.set_align(self, value)
     assert(align_map[value])
 
     self._private.align = value
@@ -464,67 +450,6 @@ function awfulwibar.remove(self)
     self._screen = nil
 end
 
---- Attach a wibox to a screen.
---
--- This function has been moved to the `awful.placement` module. Calling this
--- no longer does anything.
---
--- @param wb The wibox to attach.
--- @param position The position of the wibox: top, bottom, left or right.
--- @param screen The screen to attach to
--- @see awful.placement
--- @deprecated awful.wibar.attach
-local function legacy_attach(wb, position, screen) --luacheck: no unused args
-    gdebug.deprecate("awful.wibar.attach is deprecated, use the 'attach' property"..
-        " of awful.placement. This method doesn't do anything anymore",
-        {deprecated_in=4}
-    )
-end
-
---- Align a wibox.
---
--- Supported alignment are:
---
--- * top_left
--- * top_right
--- * bottom_left
--- * bottom_right
--- * left
--- * right
--- * top
--- * bottom
--- * centered
--- * center_vertical
--- * center_horizontal
---
--- @param wb The wibox.
--- @param align The alignment
--- @param screen This argument is deprecated. It is not used. Use wb.screen
---  directly.
--- @deprecated awful.wibar.align
--- @see awful.placement.align
-local function legacy_align(wb, align, screen) --luacheck: no unused args
-    if align == "center" then
-        gdebug.deprecate("awful.wibar.align(wb, 'center' is deprecated, use 'centered'", {deprecated_in=4})
-        align = "centered"
-    end
-
-    if screen then
-        gdebug.deprecate("awful.wibar.align 'screen' argument is deprecated", {deprecated_in=4})
-    end
-
-    if placement[align] then
-        return placement[align](wb)
-    end
-end
-
---- Stretch a wibox so it takes all screen width or height.
---
--- **This function has been removed.**
---
--- @deprecated awful.wibox.stretch
--- @see awful.placement
--- @see awful.wibar.stretch
 
 --- Create a new wibox and attach it to a screen edge.
 -- You can add also position key with value top, bottom, left or right.
@@ -668,14 +593,6 @@ end)
 
 function awfulwibar.mt:__call(...)
     return awfulwibar.new(...)
-end
-
-function awfulwibar.mt:__index(_, k)
-    if k == "align" then
-        return legacy_align
-    elseif k == "attach" then
-        return legacy_attach
-    end
 end
 
 return setmetatable(awfulwibar, awfulwibar.mt)
