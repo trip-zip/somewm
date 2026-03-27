@@ -167,10 +167,10 @@ end)
 
 -- {{{ Output configuration (SomeWM-specific)
 -- Configure physical monitors by connector name / EDID
--- Outputs persist across plug/unplug cycles unlike screens
+-- The "added::connected" mechanism retroactively fires the handler for
+-- outputs that existed before rc.lua loaded (same pattern as screen class).
 if output then
-    -- Per-output configuration function (used for both startup and hotplug)
-    local function configure_output(o)
+    output.connect_signal("added", function(o)
         -- Dell G3223Q — force 4K@144Hz (EDID preferred mode is 60Hz)
         if o.name == "DP-3" or (o.make and o.make:match("Dell") and o.model and o.model:match("G3223Q")) then
             o.mode = { width = 3840, height = 2160, refresh = 143963 }
@@ -179,18 +179,7 @@ if output then
         if o.name:match("^eDP") then
             o.scale = 1.5
         end
-    end
-
-    -- Handle hotplug (new monitors connected after startup)
-    output.connect_signal("added", configure_output)
-
-    -- Apply to already-existing outputs (added before rc.lua loaded)
-    for i = 1, output.count() do
-        local o = output[i]
-        if o and o.valid then
-            configure_output(o)
-        end
-    end
+    end)
 end
 -- }}}
 
