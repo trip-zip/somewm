@@ -67,7 +67,7 @@ static lua_State *luaA_create_fresh_state(void);
 #include "color.h"
 #include <xkbcommon/xkbcommon.h>
 #include <wayland-server-core.h>
-#include <wlr/types/wlr_scene.h>
+#include "scenefx_compat.h"
 #include <wlr/backend/wayland.h>
 #include <wlr/types/wlr_buffer.h>
 #include <wlr/interfaces/wlr_buffer.h>

@@ -30,7 +30,7 @@
 #include <wlr/types/wlr_output_layout.h>
 #include <linux/input-event-codes.h>
 #include <time.h>
-#include <wlr/types/wlr_scene.h>
+#include "scenefx_compat.h"
 #include <wlr/render/wlr_renderer.h>
 #include <wlr/render/wlr_texture.h>
 #include <wlr/render/pass.h>

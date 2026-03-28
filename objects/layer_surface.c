@@ -6,7 +6,7 @@
  */
 
 #include <wlr/types/wlr_layer_shell_v1.h>
-#include <wlr/types/wlr_scene.h>
+#include "scenefx_compat.h"
 #include <wlr/util/log.h>
 
 #include "globalconf.h"

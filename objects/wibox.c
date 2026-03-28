@@ -21,7 +21,7 @@
 #include <wlr/types/wlr_compositor.h>
 #include <wlr/types/wlr_buffer.h>
 #include <wlr/interfaces/wlr_buffer.h>
-#include <wlr/types/wlr_scene.h>
+#include "scenefx_compat.h"
 #include <wlr/types/wlr_output.h>
 #include <wlr/backend.h>
 #include <wlr/render/wlr_renderer.h>

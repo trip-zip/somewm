@@ -15,7 +15,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
-#include <wlr/types/wlr_scene.h>
+#include "scenefx_compat.h"
 #include <wlr/types/wlr_output.h>
 #include <wlr/render/allocator.h>
 #include <wlr/render/wlr_texture.h>

@@ -17,7 +17,7 @@
 #include <limits.h>
 #include <cairo.h>
 #include <drm_fourcc.h>
-#include <wlr/types/wlr_scene.h>
+#include "scenefx_compat.h"
 #include <wlr/types/wlr_output.h>
 #include <wlr/interfaces/wlr_buffer.h>
 #include <wlr/render/wlr_renderer.h>

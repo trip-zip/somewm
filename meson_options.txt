@@ -18,3 +18,10 @@ option(
   value: false,
   description: 'Use test PAM stub that accepts a hardcoded password',
 )
+
+option(
+  'scenefx',
+  type: 'feature',
+  value: 'auto',
+  description: 'Enable scenefx visual effects (rounded corners, shadows, blur)',
+)

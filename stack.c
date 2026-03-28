@@ -16,7 +16,7 @@
 #include "globalconf.h"      /* For globalconf.stack and globalconf.drawins */
 #include "somewm_api.h"
 #include <stdbool.h>
-#include <wlr/types/wlr_scene.h>
+#include "scenefx_compat.h"
 
 /* Flag to mark stack as needing refresh */
 static bool need_stack_refresh = false;

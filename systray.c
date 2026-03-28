@@ -28,7 +28,7 @@
 #include "common/luaobject.h"
 
 #include <string.h>
-#include <wlr/types/wlr_scene.h>
+#include "scenefx_compat.h"
 #include <wlr/interfaces/wlr_buffer.h>
 #include <drm_fourcc.h>
 #include <cairo/cairo.h>
