@@ -288,6 +288,7 @@ add_project_arguments(
 somewm_sources = [
   'somewm.c',
   'somewm_api.c',
+  'xwayland.c',
   'ipc.c',
   'color.c',
   'draw.c',
