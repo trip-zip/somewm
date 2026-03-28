@@ -277,25 +277,25 @@ void zoom(const Arg *arg);
 
 /* variables */
 static pid_t child_pid = -1;
-static uint32_t next_client_id = 1;
+uint32_t next_client_id = 1;
 
-static int locked;
-int running = 1;  /* Non-static so somewm_api.c can access it */
-void *exclusive_focus;  /* Non-static for layer_surface keyboard focus API */
+int locked;
+int running = 1;
+void *exclusive_focus;
 struct wl_display *dpy;
 struct wl_event_loop *event_loop;
-static struct wlr_backend *backend;
+struct wlr_backend *backend;
 struct wlr_scene *scene;
 struct wlr_scene_tree *layers[NUM_LAYERS];
-static struct wlr_scene_tree *drag_icon;
+struct wlr_scene_tree *drag_icon;
 /* Map from ZWLR_LAYER_SHELL_* constants to Lyr* enum */
-static const int layermap[] = { LyrBg, LyrBottom, LyrTop, LyrOverlay };
+const int layermap[] = { LyrBg, LyrBottom, LyrTop, LyrOverlay };
 struct wlr_renderer *drw;
 struct wlr_allocator *alloc;
-static struct wlr_compositor *compositor;
-static struct wlr_session *session;
+struct wlr_compositor *compositor;
+struct wlr_session *session;
 
-static struct wlr_xdg_shell *xdg_shell;
+struct wlr_xdg_shell *xdg_shell;
 struct wlr_xdg_activation_v1 *activation;
 
 /* XDG Activation token tracking (Wayland startup notification) */
@@ -321,44 +321,42 @@ static size_t pending_tokens_cap = 0;
 
 /* Pipe for async SIGCHLD handling (AwesomeWM pattern) */
 static int sigchld_pipe[2] = {-1, -1};
-static struct wlr_xdg_decoration_manager_v1 *xdg_decoration_mgr;
-static struct wlr_idle_notifier_v1 *idle_notifier;
-static struct wlr_idle_inhibit_manager_v1 *idle_inhibit_mgr;
+struct wlr_xdg_decoration_manager_v1 *xdg_decoration_mgr;
+struct wlr_idle_notifier_v1 *idle_notifier;
+struct wlr_idle_inhibit_manager_v1 *idle_inhibit_mgr;
 struct wlr_layer_shell_v1 *layer_shell;
-static struct wlr_output_manager_v1 *output_mgr;
-static struct wlr_virtual_keyboard_manager_v1 *virtual_keyboard_mgr;
-static struct wlr_virtual_pointer_manager_v1 *virtual_pointer_mgr;
-static struct wlr_cursor_shape_manager_v1 *cursor_shape_mgr;
-static struct wlr_output_power_manager_v1 *power_mgr;
-static struct wlr_foreign_toplevel_manager_v1 *foreign_toplevel_mgr;
+struct wlr_output_manager_v1 *output_mgr;
+struct wlr_virtual_keyboard_manager_v1 *virtual_keyboard_mgr;
+struct wlr_virtual_pointer_manager_v1 *virtual_pointer_mgr;
+struct wlr_cursor_shape_manager_v1 *cursor_shape_mgr;
+struct wlr_output_power_manager_v1 *power_mgr;
+struct wlr_foreign_toplevel_manager_v1 *foreign_toplevel_mgr;
 
-static struct wlr_pointer_constraints_v1 *pointer_constraints;
-static struct wlr_relative_pointer_manager_v1 *relative_pointer_mgr;
-static struct wlr_pointer_constraint_v1 *active_constraint;
+struct wlr_pointer_constraints_v1 *pointer_constraints;
+struct wlr_relative_pointer_manager_v1 *relative_pointer_mgr;
+struct wlr_pointer_constraint_v1 *active_constraint;
 
 struct wlr_cursor *cursor;
-/* Non-static so mousegrabber.c can access it */
 struct wlr_xcursor_manager *cursor_mgr;
-/* Non-static so root.cursor() in root.c can change it */
 char* selected_root_cursor;
 
-static struct wlr_scene_rect *root_bg;
-static struct wlr_session_lock_manager_v1 *session_lock_mgr;
-static struct wlr_scene_rect *locked_bg;
-static struct wlr_session_lock_v1 *cur_lock;
+struct wlr_scene_rect *root_bg;
+struct wlr_session_lock_manager_v1 *session_lock_mgr;
+struct wlr_scene_rect *locked_bg;
+struct wlr_session_lock_v1 *cur_lock;
 
 struct wlr_seat *seat;
 KeyboardGroup *kb_group;
-static unsigned int cursor_mode;
+unsigned int cursor_mode;
 int new_client_placement = 0; /* 0 = master (default), 1 = slave */
 
 struct wlr_output_layout *output_layout;
-static struct wlr_box sgeom;
+struct wlr_box sgeom;
 struct wl_list mons;
-static struct wl_list tracked_pointers; /* For runtime libinput config */
+struct wl_list tracked_pointers; /* For runtime libinput config */
 Monitor *selmon;
-static int in_updatemons;
-static int updatemons_pending;
+int in_updatemons;
+int updatemons_pending;
 
 /* global event handlers */
 static struct wl_listener cursor_axis = {.notify = axisnotify};
@@ -391,10 +389,10 @@ static struct wl_listener start_drag = {.notify = startdrag};
 static struct wl_listener new_session_lock = {.notify = locksession};
 
 /* Pointer gesture listeners and state */
-static struct wlr_pointer_gestures_v1 *pointer_gestures;
-static bool gesture_swipe_consumed = false;
-static bool gesture_pinch_consumed = false;
-static bool gesture_hold_consumed = false;
+struct wlr_pointer_gestures_v1 *pointer_gestures;
+bool gesture_swipe_consumed = false;
+bool gesture_pinch_consumed = false;
+bool gesture_hold_consumed = false;
 static struct wl_listener gesture_swipe_begin = {.notify = gestureswipebegin};
 static struct wl_listener gesture_swipe_update = {.notify = gestureswipeupdate};
 static struct wl_listener gesture_swipe_end = {.notify = gestureswipeend};
