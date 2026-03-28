@@ -113,6 +113,7 @@
 #include "shadow.h"          /* Compositor-level shadow support */
 #include "ipc.h"
 #include "dbus.h"
+#include "xwayland.h"
 
 /* macros */
 /* MAX and MIN are defined in x11_compat.h (included via globalconf.h) */
@@ -154,7 +155,7 @@ static void axisnotify(struct wl_listener *listener, void *data);
 static void buttonpress(struct wl_listener *listener, void *data);
 
 /* Appearance helper functions */
-static unsigned int get_border_width(void);
+unsigned int get_border_width(void);
 static const float *get_focuscolor(void);
 static const float *get_bordercolor(void);
 static const float *get_urgentcolor(void);
@@ -189,7 +190,7 @@ static void destroyidleinhibitor(struct wl_listener *listener, void *data);
 static void destroylayersurfacenotify(struct wl_listener *listener, void *data);
 static void destroylock(SessionLock *lock, int unlocked);
 static void destroylocksurface(struct wl_listener *listener, void *data);
-static void destroynotify(struct wl_listener *listener, void *data);
+void destroynotify(struct wl_listener *listener, void *data);
 static void destroypointerconstraint(struct wl_listener *listener, void *data);
 static void destroysessionlock(struct wl_listener *listener, void *data);
 static void destroykeyboardgroup(struct wl_listener *listener, void *data);
@@ -199,7 +200,7 @@ static void apply_input_settings_to_device(struct libinput_device *device);
 void focusclient(Client *c, int lift);
 void focusmon(const Arg *arg);
 Client *focustop(Monitor *m);
-static void fullscreennotify(struct wl_listener *listener, void *data);
+void fullscreennotify(struct wl_listener *listener, void *data);
 static void foreign_toplevel_request_activate(struct wl_listener *listener, void *data);
 static void foreign_toplevel_request_close(struct wl_listener *listener, void *data);
 static void foreign_toplevel_request_fullscreen(struct wl_listener *listener, void *data);
@@ -223,7 +224,7 @@ static int keyrepeat(void *data);
 void killclient(const Arg *arg);
 static void locksession(struct wl_listener *listener, void *data);
 /* Lock/idle API declarations in somewm_api.h */
-static void mapnotify(struct wl_listener *listener, void *data);
+void mapnotify(struct wl_listener *listener, void *data);
 static void maximizenotify(struct wl_listener *listener, void *data);
 void monocle(Monitor *m);
 static void motionabsolute(struct wl_listener *listener, void *data);
@@ -264,9 +265,9 @@ void tile(Monitor *m);
 void togglefloating(const Arg *arg);
 static void unlocksession(struct wl_listener *listener, void *data);
 static void unmaplayersurfacenotify(struct wl_listener *listener, void *data);
-static void unmapnotify(struct wl_listener *listener, void *data);
+void unmapnotify(struct wl_listener *listener, void *data);
 void updatemons(struct wl_listener *listener, void *data);
-static void updatetitle(struct wl_listener *listener, void *data);
+void updatetitle(struct wl_listener *listener, void *data);
 static void urgent(struct wl_listener *listener, void *data);
 static void virtualkeyboard(struct wl_listener *listener, void *data);
 static void virtualpointer(struct wl_listener *listener, void *data);
@@ -403,15 +404,6 @@ static struct wl_listener gesture_hold_begin = {.notify = gestureholdbegin};
 static struct wl_listener gesture_hold_end = {.notify = gestureholdend};
 
 #ifdef XWAYLAND
-static void activatex11(struct wl_listener *listener, void *data);
-static void associatex11(struct wl_listener *listener, void *data);
-static void configurex11(struct wl_listener *listener, void *data);
-static void createnotifyx11(struct wl_listener *listener, void *data);
-static void dissociatex11(struct wl_listener *listener, void *data);
-static void sethints(struct wl_listener *listener, void *data);
-static void xwaylandready(struct wl_listener *listener, void *data);
-static struct wl_listener new_xwayland_surface = {.notify = createnotifyx11};
-static struct wl_listener xwayland_ready = {.notify = xwaylandready};
 struct wlr_xwayland *xwayland;
 #endif
 
@@ -1201,17 +1193,7 @@ cleanup(void)
 	a_dbus_cleanup();
 	ipc_cleanup();
 
-#ifdef XWAYLAND
-	/* Remove XWayland listeners then destroy, matching the backend pattern.
-	 * wlroots 0.19 asserts listener lists are empty at destroy time.
-	 * Must happen before wl_display_destroy_clients(). */
-	wl_list_remove(&new_xwayland_surface.link);
-	wl_list_remove(&xwayland_ready.link);
-	if (xwayland) {
-		wlr_xwayland_destroy(xwayland);
-		xwayland = NULL;
-	}
-#endif
+	xwayland_cleanup();
 
 	cleanuplisteners();
 
@@ -3070,7 +3052,7 @@ inputdevice(struct wl_listener *listener, void *data)
  * themes can customize appearance without recompiling C code. */
 
 /** Get border width from beautiful.border_width or globalconf default */
-static unsigned int
+unsigned int
 get_border_width(void)
 {
 	lua_State *L = globalconf_get_lua_State();
@@ -5408,14 +5390,7 @@ setup(void)
 	 * Initialise the XWayland X server.
 	 * It will be started when the first X client is started.
 	 */
-	if ((xwayland = wlr_xwayland_create(dpy, compositor, 1))) {
-		wl_signal_add(&xwayland->events.ready, &xwayland_ready);
-		wl_signal_add(&xwayland->events.new_surface, &new_xwayland_surface);
-
-		setenv("DISPLAY", xwayland->display_name, 1);
-	} else {
-		fprintf(stderr, "failed to setup XWayland X server, continuing without it\n");
-	}
+	xwayland_setup();
 #endif
 
 	luaA_init();
@@ -6394,242 +6369,6 @@ zoom(const Arg *arg)
 	focusclient(sel, 1);
 	arrange(selmon);
 }
-
-#ifdef XWAYLAND
-void
-activatex11(struct wl_listener *listener, void *data)
-{
-	Client *c = wl_container_of(listener, c, activate);
-
-	/* Only "managed" windows can be activated */
-	if (client_is_unmanaged(c))
-		return;
-
-	/* Guard against stale client: after client_unmanage() invalidates the
-	 * client (window = XCB_NONE), this listener may still fire if the
-	 * XWayland surface hasn't been destroyed yet (e.g., Discord close-to-tray
-	 * then re-launch). Skip to prevent use-after-free and Lua panics. */
-	if (c->window == XCB_NONE)
-		return;
-
-	/* Tell XWayland the surface is activated at the X11 level */
-	wlr_xwayland_surface_activate(c->surface.xwayland, 1);
-
-	/* Emit request::activate signal to Lua so it can grant keyboard focus.
-	 * This matches the pattern used by foreign_toplevel_request_activate()
-	 * and ensures XWayland clients go through the same focus permission
-	 * system as native Wayland clients. */
-	lua_State *L = globalconf_get_lua_State();
-	luaA_object_push(L, c);
-	lua_pushstring(L, "xwayland");  /* context */
-	lua_newtable(L);  /* hints table */
-	lua_pushboolean(L, true);
-	lua_setfield(L, -2, "raise");
-	luaA_object_emit_signal(L, -3, "request::activate", 2);
-	lua_pop(L, 1);
-}
-
-void
-associatex11(struct wl_listener *listener, void *data)
-{
-	Client *c = wl_container_of(listener, c, associate);
-	struct wlr_surface *surface = client_surface(c);
-
-	if (!surface) {
-		return;
-	}
-
-	LISTEN(&surface->events.map, &c->map, mapnotify);
-	LISTEN(&surface->events.unmap, &c->unmap, unmapnotify);
-}
-
-void
-configurex11(struct wl_listener *listener, void *data)
-{
-	Client *c = wl_container_of(listener, c, configure);
-	struct wlr_xwayland_surface_configure_event *event = data;
-	if (c->window == XCB_NONE)
-		return;
-	if (!client_surface(c) || !client_surface(c)->mapped) {
-		wlr_xwayland_surface_configure(c->surface.xwayland,
-				event->x, event->y, event->width, event->height);
-		return;
-	}
-	if (client_is_unmanaged(c)) {
-		wlr_scene_node_set_position(&c->scene->node, event->x, event->y);
-		wlr_xwayland_surface_configure(c->surface.xwayland,
-				event->x, event->y, event->width, event->height);
-		return;
-	}
-	if (some_client_get_floating(c)) {
-		resize(c, (struct wlr_box){.x = event->x - c->bw,
-				.y = event->y - c->bw, .width = event->width + c->bw * 2,
-				.height = event->height + c->bw * 2}, 0);
-	} else {
-		arrange(c->mon);
-	}
-}
-
-void
-createnotifyx11(struct wl_listener *listener, void *data)
-{
-	/* XWayland client creation - follows same pattern as createnotify()
-	 * but adapts for XWayland-specific protocols */
-	struct wlr_xwayland_surface *xsurface = data;
-	Client *c;
-	lua_State *L;
-
-	L = globalconf_get_lua_State();
-
-	/* Create Lua client object (matches AwesomeWM client_manage line 2138) */
-	c = client_new(L);
-	/* client_new() leaves the client on the Lua stack at index -1 */
-
-	/* Assign unique client ID (Sway-style incrementing counter) */
-	c->id = next_client_id++;
-
-	/* Link to XWayland surface (adapts X11 window linkage to XWayland) */
-	xsurface->data = c;
-	c->surface.xwayland = xsurface;
-	c->client_type = X11;
-	/* Set the window ID for EWMH/X11 property lookups */
-	c->window = xsurface->window_id;
-	c->bw = client_is_unmanaged(c) ? 0 : get_border_width();
-
-	/* NOTE: Do NOT call ewmh_client_check_hints() here!
-	 * At this point the XWayland surface exists but may not be fully initialized.
-	 * Making XCB property queries here can interfere with the XWayland protocol.
-	 * EWMH hints will be read in mapnotify() when the surface is ready. */
-
-	/* Register XWayland event listeners */
-	LISTEN(&xsurface->events.associate, &c->associate, associatex11);
-	LISTEN(&xsurface->events.destroy, &c->destroy, destroynotify);
-	LISTEN(&xsurface->events.dissociate, &c->dissociate, dissociatex11);
-	LISTEN(&xsurface->events.request_activate, &c->activate, activatex11);
-	LISTEN(&xsurface->events.request_configure, &c->configure, configurex11);
-	LISTEN(&xsurface->events.request_fullscreen, &c->request_fullscreen, fullscreennotify);
-	LISTEN(&xsurface->events.set_hints, &c->set_hints, sethints);
-	LISTEN(&xsurface->events.set_title, &c->set_title, updatetitle);
-
-	/* Add to global clients array (matches AwesomeWM client_manage line 2202) */
-	lua_pushvalue(L, -1);
-	client_array_push(&globalconf.clients, luaA_object_ref(L, -1));
-
-	/* Add to stack (matches AwesomeWM client_manage) */
-	stack_client_push(c);
-
-	/* Emit client::list signal (matches AwesomeWM line 2266) */
-	luaA_class_emit_signal(L, &client_class, "list", 0);
-
-	/* Pop the client from the Lua stack */
-	lua_pop(L, 1);
-}
-
-void
-dissociatex11(struct wl_listener *listener, void *data)
-{
-	Client *c = wl_container_of(listener, c, dissociate);
-	wl_list_remove(&c->map.link);
-	wl_list_remove(&c->unmap.link);
-}
-
-void
-sethints(struct wl_listener *listener, void *data)
-{
-	Client *c = wl_container_of(listener, c, set_hints);
-	xcb_icccm_wm_hints_t *hints = c->surface.xwayland->hints;
-	lua_State *L;
-
-	if (!hints)
-		return;
-
-	if (c->window == XCB_NONE)
-		return;
-
-	/* Get Lua state for signal emission */
-	L = globalconf_get_lua_State();
-	luaA_object_push(L, c);
-
-	/* Emit request::urgent and let Lua decide (matches AwesomeWM property.c:203-204) */
-	lua_pushboolean(L, xcb_icccm_wm_hints_get_urgency(hints));
-	luaA_object_emit_signal(L, -2, "request::urgent", 1);
-
-	/* Handle input focus hint (XCB_ICCCM_WM_HINT_INPUT)
-	 * If input hint is set and false, client should not receive focus */
-	if (hints->flags & XCB_ICCCM_WM_HINT_INPUT)
-		c->nofocus = !hints->input;
-
-	/* Handle window group (XCB_ICCCM_WM_HINT_WINDOW_GROUP) */
-	if (hints->flags & XCB_ICCCM_WM_HINT_WINDOW_GROUP)
-		client_set_group_window(L, -1, hints->window_group);
-
-	/* TODO: Handle icon pixmaps (only if no EWMH icon already set)
-	 * XCB_ICCCM_WM_HINT_ICON_PIXMAP and optionally XCB_ICCCM_WM_HINT_ICON_MASK
-	 * Requires client_set_icon_from_pixmaps() to be properly declared and tested.
-	 * Most modern apps use EWMH icons (_NET_WM_ICON) instead of WM_HINTS pixmaps. */
-
-	lua_pop(L, 1);
-	printstatus();
-}
-
-void
-xwaylandready(struct wl_listener *listener, void *data)
-{
-	struct wlr_xcursor *xcursor;
-	xcb_connection_t *conn;
-	const xcb_setup_t *setup;
-	xcb_screen_iterator_t iter;
-
-	/* assign the one and only seat */
-	wlr_xwayland_set_seat(xwayland, seat);
-
-	/* Set the default XWayland cursor to match the rest of somewm. */
-	if ((xcursor = wlr_xcursor_manager_get_xcursor(cursor_mgr, "default", 1)))
-		wlr_xwayland_set_cursor(xwayland,
-				xcursor->images[0]->buffer, xcursor->images[0]->width * 4,
-				xcursor->images[0]->width, xcursor->images[0]->height,
-				xcursor->images[0]->hotspot_x, xcursor->images[0]->hotspot_y);
-
-	/* Initialize XCB connection for EWMH support (AwesomeWM pattern) */
-	conn = xcb_connect(xwayland->display_name, NULL);
-	if (xcb_connection_has_error(conn)) {
-		fprintf(stderr, "somewm: Failed to connect to XWayland display %s\n",
-		        xwayland->display_name);
-		return;
-	}
-	globalconf.connection = conn;
-
-	/* Set up X11 screen structure for EWMH (AwesomeWM pattern) */
-	setup = xcb_get_setup(conn);
-	iter = xcb_setup_roots_iterator(setup);
-	if (!iter.rem) {
-		fprintf(stderr, "somewm: XWayland setup has no screens\n");
-		return;
-	}
-
-	/* Allocate and populate screen structure */
-	globalconf.screen = calloc(1, sizeof(*globalconf.screen));
-	if (!globalconf.screen) {
-		fprintf(stderr, "somewm: Failed to allocate screen structure\n");
-		return;
-	}
-	globalconf.screen->root = iter.data->root;
-	globalconf.screen->black_pixel = iter.data->black_pixel;
-	globalconf.screen->root_depth = iter.data->root_depth;
-	globalconf.screen->root_visual = iter.data->root_visual;
-
-	/* Initialize EWMH atoms (must be done before ewmh_init) */
-	init_ewmh_atoms(conn);
-
-	/* Initialize EWMH support on root window */
-	ewmh_init(conn, 0);
-
-	/* Connect Lua signals for automatic EWMH property updates */
-	ewmh_init_lua();
-
-	log_info("EWMH support initialized for XWayland");
-}
-#endif
 
 /* Search paths for Lua modules - set via -L/--search flag */
 #define MAX_SEARCH_PATHS 16
