@@ -158,8 +158,10 @@ struct client_t
     struct wlr_scene_tree *scene;
     /** Scene surface node */
     struct wlr_scene_tree *scene_surface;
-    /** Border rectangles */
+    /** Border rectangles (flat mode, used when corner_radius == 0) */
     struct wlr_scene_rect *border[4];
+    /** Single frame border rect (rounded mode, used when corner_radius > 0) */
+    struct wlr_scene_rect *border_frame;
     /** Corner radius in pixels (0 = sharp, requires scenefx at compile time) */
     int corner_radius;
     /** Backdrop blur enabled (requires scenefx at compile time) */
@@ -425,6 +427,7 @@ area_t client_get_undecorated_geometry(client_t *);
 void client_apply_opacity_to_scene(client_t *, float);
 void client_apply_corner_radius(client_t *);
 void client_apply_backdrop_blur(client_t *);
+void client_update_border_for_corners(client_t *);
 void client_update_titlebar_positions(client_t *);
 
 /* Forward declarations for inline functions

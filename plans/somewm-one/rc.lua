@@ -1370,9 +1370,9 @@ pcall(function()
         },
         scenefx = {
             enabled       = true,   -- set false to disable all scenefx effects
-            corner_radius = 10,     -- pixels, 0 = sharp corners
+            corner_radius = 14,     -- pixels, 0 = sharp corners
             blur_enabled  = true,   -- backdrop blur (visible when opacity < 1.0)
-            blur_opacity  = 0.88,   -- opacity for blur-enabled clients
+            blur_opacity  = 0.75,   -- opacity for blur-enabled clients (lower = more see-through)
             blur_classes  = {       -- classes that get blur + transparency
                 "Alacritty", "ghostty", "kitty", "foot",
                 "Rofi",

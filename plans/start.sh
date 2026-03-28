@@ -2,6 +2,12 @@
 # Start somewm with debug logging
 mkdir -p ~/.local/log
 
+# Ensure /usr/local/lib is on library path (scenefx, lgi guard)
+# ldconfig should handle this, but LD_LIBRARY_PATH is a safe fallback
+if [[ ":${LD_LIBRARY_PATH:-}:" != *":/usr/local/lib:"* ]]; then
+    export LD_LIBRARY_PATH="/usr/local/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+fi
+
 # Lgi closure guard for safe hot-reload
 # somewm clears LD_PRELOAD in main() so children don't inherit it
 LGI_GUARD=/usr/local/lib/liblgi_closure_guard.so

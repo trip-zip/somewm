@@ -11,6 +11,7 @@
 
 #ifdef HAVE_SCENEFX
 #include <scenefx/types/wlr_scene.h>
+#include <scenefx/render/fx_renderer/fx_renderer.h>
 #else
 #include <wlr/types/wlr_scene.h>
 #endif

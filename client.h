@@ -361,6 +361,10 @@ client_set_border_color(Client *c, const float color[static 4])
 	int i;
 	for (i = 0; i < 4; i++)
 		wlr_scene_rect_set_color(c->border[i], color);
+#ifdef HAVE_SCENEFX
+	if (c->border_frame)
+		wlr_scene_rect_set_color(c->border_frame, color);
+#endif
 }
 
 static inline void

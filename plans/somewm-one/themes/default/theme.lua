@@ -178,10 +178,10 @@ theme.layout_cornerse = themes_path.."default/layouts/cornersew.png"
 
 -- Shadow configuration (9-slice drop shadow)
 theme.shadow_enabled    = true
-theme.shadow_radius     = 20
-theme.shadow_offset_x   = 3
-theme.shadow_offset_y   = 3
-theme.shadow_opacity    = 0.4
+theme.shadow_radius     = 30
+theme.shadow_offset_x   = 5
+theme.shadow_offset_y   = 5
+theme.shadow_opacity    = 0.65
 theme.shadow_color      = "#000000"
 theme.shadow_clip       = "directional"
 

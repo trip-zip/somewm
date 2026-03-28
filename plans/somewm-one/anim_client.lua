@@ -123,7 +123,7 @@ local defaults = {
     },
     scenefx = {
         enabled       = true,
-        corner_radius = 10,         -- pixels, 0 = sharp corners
+        corner_radius = 14,         -- pixels, 0 = sharp corners
         blur_enabled  = true,       -- backdrop blur (visible when opacity < 1.0)
         -- TODO: blur_opacity is not yet supported — fadeIn animates to 1.0 and
         -- overrides the ruled.client opacity value. Needs full opacity lifecycle

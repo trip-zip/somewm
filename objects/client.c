@@ -2141,18 +2141,10 @@ client_border_refresh(void)
         /* Sync wlroots border width (bw) with Lua-facing border_width */
         c->bw = c->border_width;
 
-        /* Update border rectangle sizes based on new border width
-         * Border layout: [0]=top, [1]=bottom, [2]=left, [3]=right
-         * This matches the code in somewm.c:applybounds() */
-        wlr_scene_rect_set_size(c->border[0], c->geometry.width, c->border_width);
-        wlr_scene_rect_set_size(c->border[1], c->geometry.width, c->border_width);
-        wlr_scene_rect_set_size(c->border[2], c->border_width, c->geometry.height - 2 * c->border_width);
-        wlr_scene_rect_set_size(c->border[3], c->border_width, c->geometry.height - 2 * c->border_width);
-
-        /* Update border positions (bottom and right borders depend on geometry + border width) */
-        wlr_scene_node_set_position(&c->border[1]->node, 0, c->geometry.height - c->border_width);
-        wlr_scene_node_set_position(&c->border[2]->node, 0, c->border_width);
-        wlr_scene_node_set_position(&c->border[3]->node, c->geometry.width - c->border_width, c->border_width);
+        /* Update border geometry — handles both flat and rounded corners.
+         * When corner_radius > 0, extends top/bottom borders and clips them.
+         * When corner_radius == 0, uses standard flat layout. */
+        client_update_border_for_corners(c);
 
         /* Update border color if initialized (matches AwesomeWM window_border_refresh pattern) */
         if(c->border_color.initialized) {
@@ -2161,9 +2153,13 @@ client_border_refresh(void)
 
             color_to_floats(&c->border_color, color_floats);
 
-            /* Apply color to all 4 border rectangles */
+            /* Apply color to all border rectangles */
             for(i = 0; i < 4; i++)
                 wlr_scene_rect_set_color(c->border[i], color_floats);
+#ifdef HAVE_SCENEFX
+            if(c->border_frame)
+                wlr_scene_rect_set_color(c->border_frame, color_floats);
+#endif
         }
     }
 }
@@ -4358,6 +4354,16 @@ client_apply_opacity_to_scene(client_t *c, float opacity)
             wlr_scene_rect_set_color(c->border[i], color);
         }
     }
+
+#ifdef HAVE_SCENEFX
+    /* Apply to frame border rect (single rect for rounded corners) */
+    if (c->border_frame) {
+        float color[4];
+        memcpy(color, c->border_frame->color, sizeof(color));
+        color[3] = opacity;
+        wlr_scene_rect_set_color(c->border_frame, color);
+    }
+#endif
 }
 
 /** Get client opacity.
@@ -4433,22 +4439,114 @@ client_apply_corner_radius(client_t *c)
         apply_corner_radius_to_tree(&c->scene_surface->node, radius,
                                     CORNER_LOCATION_ALL);
 
-    /* Apply to border rectangles with per-side corner locations.
-     * border[0]=top, border[1]=bottom, border[2]=left, border[3]=right */
-    static const enum corner_location border_corners[4] = {
-        CORNER_LOCATION_TOP,    /* top border: TL + TR */
-        CORNER_LOCATION_BOTTOM, /* bottom border: BL + BR */
-        CORNER_LOCATION_LEFT,   /* left border: TL + BL */
-        CORNER_LOCATION_RIGHT,  /* right border: TR + BR */
-    };
-    for (int i = 0; i < 4; i++) {
-        if (c->border[i])
-            wlr_scene_rect_set_corner_radius(c->border[i], radius,
-                                             border_corners[i]);
-    }
+    /* Border corner radius + geometry + clipping is handled by
+     * client_update_border_for_corners() as a single source of truth.
+     * It sets cr+bw on top/bottom (extended) and 0 on left/right. */
+    client_update_border_for_corners(c);
 
     /* Update shadow corner radius to match window rounding */
     shadow_set_corner_radius(&c->shadow, radius);
+#else
+    (void)c;
+#endif
+}
+
+/**
+ * Adjust border rectangles to work with rounded corners.
+ *
+ * When corner_radius > 0, the standard thin border rects don't cover the
+ * rounded corner area, leaving visual artifacts. Following SwayFX's approach:
+ *
+ *   - Top/bottom borders are extended by corner_radius pixels in height,
+ *     and get rounded corners (radius = corner_radius + border_width) so
+ *     the border wraps smoothly around the window corners.
+ *
+ *   - Left/right borders are shortened by corner_radius at each end to
+ *     avoid overlapping the extended top/bottom borders.
+ *
+ *   - A clipped region on top/bottom prevents the border from painting
+ *     over the client content area.
+ *
+ * When corner_radius == 0, standard flat border geometry is restored.
+ */
+void
+client_update_border_for_corners(client_t *c)
+{
+#ifdef HAVE_SCENEFX
+    /* Null safety: border rects may not exist yet (unmapped client) */
+    if (!c->border[0])
+        return;
+
+    int cr = c->corner_radius;
+    int bw = c->bw;
+    int w = c->geometry.width;
+    int h = c->geometry.height;
+
+    if (bw <= 0) {
+        /* No border — hide everything */
+        for (int i = 0; i < 4; i++)
+            wlr_scene_node_set_enabled(&c->border[i]->node, false);
+        if (c->border_frame)
+            wlr_scene_node_set_enabled(&c->border_frame->node, false);
+        return;
+    }
+
+    if (cr > 0 && c->border_frame) {
+        /* Rounded mode: single frame rect with clipped_region punch-hole.
+         * The frame rect covers the full geometry. The clipped_region cuts
+         * out the content area, leaving only the border strip visible.
+         * The large hole (hundreds of px) ensures the SDF shader works
+         * correctly — unlike the 4-rect approach where thin clips caused
+         * SDF distortion artifacts. */
+
+        /* Hide individual border rects */
+        for (int i = 0; i < 4; i++)
+            wlr_scene_node_set_enabled(&c->border[i]->node, false);
+
+        /* Configure frame rect */
+        wlr_scene_node_set_enabled(&c->border_frame->node, true);
+        wlr_scene_node_set_position(&c->border_frame->node, 0, 0);
+        wlr_scene_rect_set_size(c->border_frame, w, h);
+        wlr_scene_rect_set_corner_radius(c->border_frame,
+            cr + bw, CORNER_LOCATION_ALL);
+
+        /* Punch out the content area — inner edge matches surface corner radius.
+         * Clamp to >= 1 to avoid negative dimensions on very small windows. */
+        int cw = w - 2 * bw;
+        int ch = h - 2 * bw;
+        if (cw < 1) cw = 1;
+        if (ch < 1) ch = 1;
+        wlr_scene_rect_set_clipped_region(c->border_frame,
+            (struct clipped_region) {
+                .corner_radius = cr,
+                .corners = CORNER_LOCATION_ALL,
+                .area = { bw, bw, cw, ch },
+            });
+    } else {
+        /* Flat mode: standard 4-rect border layout */
+        if (c->border_frame)
+            wlr_scene_node_set_enabled(&c->border_frame->node, false);
+
+        for (int i = 0; i < 4; i++)
+            wlr_scene_node_set_enabled(&c->border[i]->node, true);
+
+        if (bw > 0) {
+            wlr_scene_rect_set_size(c->border[0], w, bw);
+            wlr_scene_rect_set_size(c->border[1], w, bw);
+            wlr_scene_rect_set_size(c->border[2], bw, h - 2 * bw);
+            wlr_scene_rect_set_size(c->border[3], bw, h - 2 * bw);
+            wlr_scene_node_set_position(&c->border[0]->node, 0, 0);
+            wlr_scene_node_set_position(&c->border[1]->node, 0, h - bw);
+            wlr_scene_node_set_position(&c->border[2]->node, 0, bw);
+            wlr_scene_node_set_position(&c->border[3]->node, w - bw, bw);
+        }
+
+        /* Clear any corner radius from flat border rects */
+        for (int i = 0; i < 4; i++) {
+            wlr_scene_rect_set_corner_radius(c->border[i],
+                0, CORNER_LOCATION_NONE);
+        }
+    }
 #else
     (void)c;
 #endif
@@ -5414,7 +5512,8 @@ luaA_client_border_is_focus_color(lua_State *L)
     }
 
     const float *focus = globalconf.appearance.focuscolor;
-    const float *actual = c->border[0]->color;
+    const float *actual = (c->border_frame && c->border_frame->node.enabled)
+        ? c->border_frame->color : c->border[0]->color;
 
     int matches = (actual[0] == focus[0] && actual[1] == focus[1] &&
                    actual[2] == focus[2] && actual[3] == focus[3]);
@@ -5438,7 +5537,8 @@ luaA_client_border_is_normal_color(lua_State *L)
     }
 
     const float *normal = globalconf.appearance.bordercolor;
-    const float *actual = c->border[0]->color;
+    const float *actual = (c->border_frame && c->border_frame->node.enabled)
+        ? c->border_frame->color : c->border[0]->color;
 
     int matches = (actual[0] == normal[0] && actual[1] == normal[1] &&
                    actual[2] == normal[2] && actual[3] == normal[3]);

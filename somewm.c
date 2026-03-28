@@ -3058,7 +3058,11 @@ gpureset(struct wl_listener *listener, void *data)
 	struct wlr_renderer *old_drw = drw;
 	struct wlr_allocator *old_alloc = alloc;
 	struct Monitor *m;
+#ifdef HAVE_SCENEFX
+	if (!(drw = fx_renderer_create(backend)))
+#else
 	if (!(drw = wlr_renderer_autocreate(backend)))
+#endif
 		die("couldn't recreate renderer");
 
 	if (!(alloc = wlr_allocator_autocreate(backend, drw)))
@@ -3531,6 +3535,19 @@ mapnotify(struct wl_listener *listener, void *data)
 				c->urgent ? get_urgentcolor() : get_bordercolor());
 		c->border[i]->node.data = c;
 	}
+
+	/* Single frame rect for rounded corners (scenefx clipped_region approach).
+	 * When corner_radius > 0, this replaces border[0-3] with a single rect
+	 * that has a clipped_region punch-hole for the content area. */
+#ifdef HAVE_SCENEFX
+	c->border_frame = wlr_scene_rect_create(c->scene, 0, 0,
+			c->urgent ? get_urgentcolor() : get_bordercolor());
+	c->border_frame->node.data = c;
+	wlr_scene_node_set_enabled(&c->border_frame->node, false);
+	/* Frame stays above surface — clipped_region punch-hole ensures
+	 * it never overdraws content.  lower_to_bottom causes SDF mismatch
+	 * teeth between border inner edge and surface outer edge shaders. */
+#endif
 
 	/* Create shadow (compositor-level, replaces picom shadows) */
 	{
@@ -4534,13 +4551,10 @@ apply_geometry_to_wlroots(Client *c)
 	wlr_scene_node_set_position(&c->scene->node, c->geometry.x, c->geometry.y);
 	/* Offset scene_surface by titlebar sizes (titlebars occupy space in geometry) */
 	wlr_scene_node_set_position(&c->scene_surface->node, c->bw + titlebar_left, c->bw + titlebar_top);
-	wlr_scene_rect_set_size(c->border[0], c->geometry.width, c->bw);
-	wlr_scene_rect_set_size(c->border[1], c->geometry.width, c->bw);
-	wlr_scene_rect_set_size(c->border[2], c->bw, c->geometry.height - 2 * c->bw);
-	wlr_scene_rect_set_size(c->border[3], c->bw, c->geometry.height - 2 * c->bw);
-	wlr_scene_node_set_position(&c->border[1]->node, 0, c->geometry.height - c->bw);
-	wlr_scene_node_set_position(&c->border[2]->node, 0, c->bw);
-	wlr_scene_node_set_position(&c->border[3]->node, c->geometry.width - c->bw, c->bw);
+	/* Update border geometry. When corner_radius > 0, the helper extends
+	 * top/bottom borders and clips them for rounded corners. Otherwise
+	 * it falls back to standard flat layout. */
+	client_update_border_for_corners(c);
 
 	/* Update shadow geometry (lazy creation if needed) */
 	{
@@ -4602,13 +4616,17 @@ apply_geometry_to_wlroots(Client *c)
 			 * Re-enable surface/borders/shadow that may have been hidden.
 			 * Titlebars are managed by client_update_titlebar_positions(). */
 			wlr_scene_node_set_enabled(&c->scene_surface->node, true);
-			for (int i = 0; i < 4; i++)
-				wlr_scene_node_set_enabled(&c->border[i]->node, true);
+			/* Re-enable borders — client_update_border_for_corners
+			 * handles which mode (border[0-3] vs border_frame) is active */
+			client_update_border_for_corners(c);
 			if (c->shadow.tree)
 				wlr_scene_node_set_enabled(&c->shadow.tree->node, true);
 		} else {
-			/* Client extends past monitor: clip surface, hide everything
-			 * else (wlr_scene_rect/buffer have no clip API). */
+			/* Client extends past monitor: clip surface content.
+			 * wlr_scene_rect/buffer have no clip API, so borders and
+			 * decorations stay fully visible for partially-visible
+			 * clients (user dragging window to screen edge). Only hide
+			 * everything when fully offscreen (carousel layout). */
 			int cx = c->geometry.x + c->bw + titlebar_left;
 			int cy = c->geometry.y + c->bw + titlebar_top;
 			int vl = cx > mon.x ? cx : mon.x;
@@ -4619,27 +4637,32 @@ apply_geometry_to_wlroots(Client *c)
 				? (cy + clip.height) : (mon.y + mon.height);
 
 			if (vr > vl && vb > vt) {
-				/* Partially visible: narrow the clip */
+				/* Partially visible: clip surface, keep decorations */
 				clip.x += vl - cx;
 				clip.y += vt - cy;
 				clip.width = vr - vl;
 				clip.height = vb - vt;
 				wlr_scene_node_set_enabled(&c->scene_surface->node, true);
+				client_update_border_for_corners(c);
+				if (c->shadow.tree)
+					wlr_scene_node_set_enabled(&c->shadow.tree->node, true);
 			} else {
-				/* Fully offscreen */
+				/* Fully offscreen: hide everything */
 				wlr_scene_node_set_enabled(&c->scene_surface->node, false);
-			}
-
-			/* Hide borders, shadow, and titlebars */
-			for (int i = 0; i < 4; i++)
-				wlr_scene_node_set_enabled(&c->border[i]->node, false);
-			if (c->shadow.tree)
-				wlr_scene_node_set_enabled(&c->shadow.tree->node, false);
-			for (client_titlebar_t bar = CLIENT_TITLEBAR_TOP;
-					bar < CLIENT_TITLEBAR_COUNT; bar++) {
-				if (c->titlebar[bar].scene_buffer)
-					wlr_scene_node_set_enabled(
-						&c->titlebar[bar].scene_buffer->node, false);
+				for (int i = 0; i < 4; i++)
+					wlr_scene_node_set_enabled(&c->border[i]->node, false);
+#ifdef HAVE_SCENEFX
+				if (c->border_frame)
+					wlr_scene_node_set_enabled(&c->border_frame->node, false);
+#endif
+				if (c->shadow.tree)
+					wlr_scene_node_set_enabled(&c->shadow.tree->node, false);
+				for (client_titlebar_t bar = CLIENT_TITLEBAR_TOP;
+						bar < CLIENT_TITLEBAR_COUNT; bar++) {
+					if (c->titlebar[bar].scene_buffer)
+						wlr_scene_node_set_enabled(
+							&c->titlebar[bar].scene_buffer->node, false);
+				}
 			}
 		}
 	}
@@ -5269,14 +5292,20 @@ setup(void)
 		/* saturation */ 1.1f);
 #endif
 
-	/* Autocreates a renderer, either Pixman, GLES2 or Vulkan for us. The user
-	 * can also specify a renderer using the WLR_RENDERER env var.
-	 * The renderer is responsible for defining the various pixel formats it
-	 * supports for shared memory, this configures that for clients. */
+	/* Create the renderer. When scenefx is compiled in, use the FX renderer
+	 * (GLES2-based, adds corner radius / blur / shadow shaders).
+	 * Otherwise autocreate picks Pixman, GLES2 or Vulkan. */
+#ifdef HAVE_SCENEFX
+	if (!(drw = fx_renderer_create(backend)))
+		die("couldn't create scenefx renderer\n"
+			"SceneFX forces its own GLES2-based renderer.\n"
+			"If your GPU doesn't support EGL/GLES2, rebuild with -Dscenefx=disabled");
+#else
 	if (!(drw = wlr_renderer_autocreate(backend)))
 		die("couldn't create renderer\n"
 			"Try setting WLR_RENDERER=gles2 or WLR_RENDERER=pixman\n"
 			"Run with WLR_DEBUG=1 for more details");
+#endif
 	wl_signal_add(&drw->events.lost, &gpu_reset);
 
 	/* Create shm, drm and linux_dmabuf interfaces by ourselves.
@@ -5811,11 +5840,14 @@ unmapnotify(struct wl_listener *listener, void *data)
 	wlr_scene_node_destroy(&c->scene->node);
 	c->scene = NULL;  /* Mark as cleaned up so destroynotify won't double-remove */
 
-	/* Clear titlebar scene buffer pointers - they were children of c->scene
+	/* Clear scene child pointers - they were children of c->scene
 	 * and are now freed. Prevents use-after-free in refresh callbacks. */
 	for (client_titlebar_t bar = CLIENT_TITLEBAR_TOP; bar < CLIENT_TITLEBAR_COUNT; bar++) {
 		c->titlebar[bar].scene_buffer = NULL;
 	}
+	for (int i = 0; i < 4; i++)
+		c->border[i] = NULL;
+	c->border_frame = NULL;
 
 	printstatus();
 	motionnotify(0, NULL, 0, 0, 0, 0);
