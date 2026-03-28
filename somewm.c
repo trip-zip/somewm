@@ -1610,9 +1610,11 @@ commitnotify(struct wl_listener *listener, void *data)
 	if (c->opacity >= 0)
 		client_apply_opacity_to_scene(c, (float)c->opacity);
 
-	/* Re-apply corner radius (scenefx resets on new buffer) */
-	if (c->corner_radius > 0)
-		client_apply_corner_radius(c);
+	/* Re-apply scenefx effects unconditionally — new buffers from
+	 * surface_reconfigure() lose all scenefx state. Must apply even
+	 * when value is 0/false to clear effects on dynamic changes. */
+	client_apply_corner_radius(c);
+	client_apply_backdrop_blur(c);
 }
 
 /* Unconstrain popup using proper scene node coordinates (River pattern) */
@@ -5253,6 +5255,19 @@ setup(void)
 		layers[i] = wlr_scene_tree_create(&scene->tree);
 	drag_icon = wlr_scene_tree_create(&scene->tree);
 	wlr_scene_node_place_below(&drag_icon->node, &layers[LyrBlock]->node);
+
+#ifdef HAVE_SCENEFX
+	/* Set global blur parameters for scenefx backdrop blur.
+	 * Values match scenefx defaults (frosted-glass aesthetic).
+	 * Can be tuned later via Lua API or beautiful theme. */
+	wlr_scene_set_blur_data(scene,
+		/* num_passes */ 3,
+		/* radius */     5,
+		/* noise */      0.02f,
+		/* brightness */ 0.9f,
+		/* contrast */   0.9f,
+		/* saturation */ 1.1f);
+#endif
 
 	/* Autocreates a renderer, either Pixman, GLES2 or Vulkan for us. The user
 	 * can also specify a renderer using the WLR_RENDERER env var.

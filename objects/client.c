@@ -4473,6 +4473,68 @@ luaA_client_set_corner_radius(lua_State *L, client_t *c)
     return 0;
 }
 
+/* ========================================================================
+ * Backdrop blur (requires scenefx)
+ * ======================================================================== */
+
+#ifdef HAVE_SCENEFX
+static void
+apply_backdrop_blur_to_tree(struct wlr_scene_node *node, bool enabled)
+{
+    if (node->type == WLR_SCENE_NODE_BUFFER) {
+        struct wlr_scene_buffer *buf = wlr_scene_buffer_from_node(node);
+        wlr_scene_buffer_set_backdrop_blur(buf, enabled);
+        if (enabled) {
+            wlr_scene_buffer_set_backdrop_blur_optimized(buf, true);
+            wlr_scene_buffer_set_backdrop_blur_ignore_transparent(buf, true);
+        }
+    } else if (node->type == WLR_SCENE_NODE_TREE) {
+        struct wlr_scene_tree *tree = wlr_scene_tree_from_node(node);
+        struct wlr_scene_node *child;
+        wl_list_for_each(child, &tree->children, link) {
+            apply_backdrop_blur_to_tree(child, enabled);
+        }
+    }
+}
+#endif
+
+void
+client_apply_backdrop_blur(client_t *c)
+{
+#ifdef HAVE_SCENEFX
+    bool enabled = c->backdrop_blur;
+
+    /* Skip blur for fullscreen clients — nothing visible behind them
+     * (matches SwayFX behavior, avoids unnecessary GPU work). */
+    if (c->fullscreen)
+        enabled = false;
+
+    /* Walk client surface tree only — popups and borders are excluded.
+     * Popups live in a sibling tree, not under scene_surface (same
+     * limitation as corner_radius and other compositor-imposed effects). */
+    if (c->scene_surface)
+        apply_backdrop_blur_to_tree(&c->scene_surface->node, enabled);
+#else
+    (void)c;
+#endif
+}
+
+static int
+luaA_client_get_backdrop_blur(lua_State *L, client_t *c)
+{
+    lua_pushboolean(L, c->backdrop_blur);
+    return 1;
+}
+
+static int
+luaA_client_set_backdrop_blur(lua_State *L, client_t *c)
+{
+    c->backdrop_blur = luaA_checkboolean(L, -1);
+    client_apply_backdrop_blur(c);
+    luaA_object_emit_signal(L, -3, "property::backdrop_blur", 0);
+    return 0;
+}
+
 static int
 luaA_client_get_aspect_ratio(lua_State *L, client_t *c)
 {
@@ -5444,6 +5506,7 @@ client_class_setup(lua_State *L)
         { "client_shape_clip", NULL, (lua_class_propfunc_t) luaA_client_get_client_shape_clip, NULL },
         { "client_shape_input", NULL, (lua_class_propfunc_t) luaA_client_get_client_shape_input, NULL },
         { "content", NULL, (lua_class_propfunc_t) luaA_client_get_content, NULL },
+        { "backdrop_blur", (lua_class_propfunc_t) luaA_client_set_backdrop_blur, (lua_class_propfunc_t) luaA_client_get_backdrop_blur, (lua_class_propfunc_t) luaA_client_set_backdrop_blur },
         { "corner_radius", (lua_class_propfunc_t) luaA_client_set_corner_radius, (lua_class_propfunc_t) luaA_client_get_corner_radius, (lua_class_propfunc_t) luaA_client_set_corner_radius },
         { "first_tag", NULL, (lua_class_propfunc_t) luaA_client_get_first_tag, NULL },
         { "focusable", (lua_class_propfunc_t) luaA_client_set_focusable, (lua_class_propfunc_t) luaA_client_get_focusable, (lua_class_propfunc_t) luaA_client_set_focusable },
