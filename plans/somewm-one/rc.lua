@@ -604,6 +604,64 @@ awful.keyboard.append_global_keybindings({
     end, { description = "screenshot region to clipboard", group = "screenshot" }),
 })
 
+-- Screen recording (gpu-screen-recorder, NVENC)
+-- Uses DP-3 (Dell 4K@144Hz). Output: ~/Videos/rec-YYYYMMDD-HHMMSS.mkv
+-- Super+Alt+r = start/stop recording
+-- Super+Alt+p = pause/resume recording
+local rec_pid_file = "/tmp/gpu-screen-recorder.pid"
+
+local function rec_is_running()
+    local f = io.open(rec_pid_file, "r")
+    if not f then return false end
+    local pid = f:read("*l")
+    f:close()
+    -- check if process exists
+    local check = io.open("/proc/" .. pid .. "/status", "r")
+    if check then check:close(); return true end
+    os.remove(rec_pid_file)
+    return false
+end
+
+awful.keyboard.append_global_keybindings({
+    -- Start or stop screen recording
+    awful.key({ modkey, altkey }, "r", function()
+        if rec_is_running() then
+            -- Stop recording (SIGINT = graceful stop + save)
+            awful.spawn.with_shell("kill -INT $(cat " .. rec_pid_file .. ") && rm -f " .. rec_pid_file)
+            naughty.notify({ title = "Recording", text = "Stopped & saved", timeout = 3 })
+        else
+            local outfile = os.getenv("HOME") .. "/Videos/rec-" .. os.date("%Y%m%d-%H%M%S") .. ".mkv"
+            awful.spawn.with_shell(
+                "gpu-screen-recorder"
+                .. " -w DP-3"
+                .. " -f 144"
+                .. " -k hevc"
+                .. " -q very_high"
+                .. " -bm vbr"
+                .. " -ac opus"
+                .. " -a default_output"
+                .. " -fm cfr"
+                .. " -cursor yes"
+                .. " -cr full"
+                .. " -c mkv"
+                .. " -o " .. outfile
+                .. " & echo $! > " .. rec_pid_file
+            )
+            naughty.notify({ title = "Recording", text = "Started: " .. outfile, timeout = 3 })
+        end
+    end, { description = "start/stop screen recording", group = "recording" }),
+
+    -- Pause or resume screen recording
+    awful.key({ modkey, altkey }, "p", function()
+        if rec_is_running() then
+            awful.spawn.with_shell("kill -USR2 $(cat " .. rec_pid_file .. ")")
+            naughty.notify({ title = "Recording", text = "Pause/Resume toggled", timeout = 2 })
+        else
+            naughty.notify({ title = "Recording", text = "Not recording", timeout = 2 })
+        end
+    end, { description = "pause/resume recording", group = "recording" }),
+})
+
 -- Carousel layout keybindings (active only when carousel layout is selected)
 local carousel = awful.layout.suit.carousel
 awful.keyboard.append_global_keybindings({
@@ -1253,6 +1311,9 @@ awful.spawn.once("nm-applet")
 -- awful.spawn.once("copyq")
 -- }}}
 
+-- SceneFX visual effects are configured via anim_client.enable() below.
+-- See the scenefx = { ... } section in the enable() call.
+
 -- Enable client animations (must be last — after all other signal handlers)
 -- All values below are defaults — remove or change as needed.
 -- Disable all: enabled = false. Disable one: fade = { enabled = false }.
@@ -1306,6 +1367,19 @@ pcall(function()
             enabled  = true,        -- mwfact, spawn/kill reflow, layout switch
             duration = 0.15,        -- short — background reflow should be quick
             easing   = "ease-out-cubic",
+        },
+        scenefx = {
+            enabled       = true,   -- set false to disable all scenefx effects
+            corner_radius = 10,     -- pixels, 0 = sharp corners
+            blur_enabled  = true,   -- backdrop blur (visible when opacity < 1.0)
+            blur_opacity  = 0.88,   -- opacity for blur-enabled clients
+            blur_classes  = {       -- classes that get blur + transparency
+                "Alacritty", "ghostty", "kitty", "foot",
+                "Rofi",
+            },
+            no_corners    = {       -- classes with sharp corners (games, XWayland)
+                "steam_app_*", "Wine", "Xwayland",
+            },
         },
         -- NOTE: Do NOT require("somewm.layout_animation") — our anim_client
         -- handles all layout transitions. Both modules write _set_geometry_silent()

@@ -1,9 +1,13 @@
 ---------------------------------------------------------------------------
---- Client animation module for somewm.
+--- Client visual effects module for somewm.
 --
--- Animates maximize/fullscreen/restore geometry transitions,
--- fadeIn/fadeOut opacity transitions for clients and layer surfaces
--- (rofi, waybar, etc.), tiling swap and float toggle animations.
+-- Unified module for all client visual effects:
+--   - Geometry animations (maximize, fullscreen, swap, float, layout)
+--   - Opacity animations (fadeIn/fadeOut, minimize, layer surfaces)
+--   - SceneFX effects (rounded corners, backdrop blur, GPU shadows)
+--
+-- SceneFX effects are compile-time optional — values are stored even
+-- without scenefx, so this config is always safe to load.
 --
 -- Usage:
 --    require("anim_client").enable()           -- all defaults
@@ -13,6 +17,13 @@
 --        layer     = { duration = 0.2 },       -- layer surface fade
 --        swap      = { duration = 0.3 },       -- tiling swap (Super+Shift+J/K)
 --        float     = { duration = 0.3 },       -- float toggle (Ctrl+Super+Space)
+--        scenefx   = {                         -- scenefx visual effects
+--            corner_radius = 10,               -- 0 = sharp corners
+--            blur_enabled  = true,             -- backdrop blur
+--            blur_opacity  = 0.88,             -- opacity for blur clients
+--            blur_classes  = { "Alacritty", "ghostty" },
+--            no_corners    = { "steam_app_*" },
+--        },
 --    })
 --
 -- Configuration priority (most specific wins):
@@ -26,6 +37,7 @@
 local awful     = require("awful")
 local beautiful = require("beautiful")
 local gears     = require("gears")
+local ruled     = require("ruled")
 
 local anim_client = {}
 local cstate = setmetatable({}, { __mode = "k" })
@@ -108,6 +120,21 @@ local defaults = {
         enabled  = true,
         duration = 0.15,
         easing   = "ease-out-cubic",
+    },
+    scenefx = {
+        enabled       = true,
+        corner_radius = 10,         -- pixels, 0 = sharp corners
+        blur_enabled  = true,       -- backdrop blur (visible when opacity < 1.0)
+        -- TODO: blur_opacity is not yet supported — fadeIn animates to 1.0 and
+        -- overrides the ruled.client opacity value. Needs full opacity lifecycle
+        -- rework (fadeIn target, commitnotify re-apply, minimize/restore cycle).
+        blur_classes  = {           -- classes that get blur + transparency
+            "Alacritty", "ghostty", "kitty", "foot",
+            "Rofi",
+        },
+        no_corners    = {           -- classes with sharp corners (games, XWayland)
+            "steam_app_*", "Wine", "Xwayland",
+        },
     },
 }
 
@@ -402,6 +429,56 @@ function anim_client.enable(user_config)
         cancel(c)
         cstate[c] = nil
     end)
+
+    -- =====================================================================
+    -- SceneFX visual effects (rounded corners, backdrop blur)
+    -- No-op if compiled without scenefx — values are stored but ignored.
+    -- =====================================================================
+
+    local sfx = config.scenefx or {}
+    if sfx.enabled ~= false then
+        local cr = sfx.corner_radius or 0
+
+        -- Default corner radius for all clients
+        if cr > 0 then
+            ruled.client.append_rule {
+                id   = "scenefx_corners",
+                rule = {},
+                properties = { corner_radius = cr },
+            }
+        end
+
+        -- No corners for excluded classes (games, XWayland, etc.)
+        for _, class_pattern in ipairs(sfx.no_corners or {}) do
+            ruled.client.append_rule {
+                id         = "scenefx_no_corners_" .. class_pattern,
+                rule       = { class = class_pattern },
+                properties = { corner_radius = 0 },
+            }
+        end
+
+        -- Backdrop blur + transparency for specific classes
+        if sfx.blur_enabled then
+            for _, cls in ipairs(sfx.blur_classes or {}) do
+                ruled.client.append_rule {
+                    id         = "scenefx_blur_" .. cls,
+                    rule       = { class = cls },
+                    properties = {
+                        backdrop_blur = true,
+                    },
+                }
+            end
+        end
+
+        -- Disable corners for fullscreen clients (performance + visual)
+        client.connect_signal("property::fullscreen", function(c)
+            if c.fullscreen then
+                c.corner_radius = 0
+            else
+                c.corner_radius = cr
+            end
+        end)
+    end
 
     -- =====================================================================
     -- Layout geometry animations (swap, mwfact, spawn/kill, layout switch)
