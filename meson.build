@@ -147,17 +147,14 @@ message('Using wlroots version: ' + wlroots_version)
 # SceneFX (optional visual effects - rounded corners, shadows, blur)
 # Drop-in replacement for wlroots scene renderer, requires wlroots 0.19
 scenefx_option = get_option('scenefx')
-have_scenefx = false
-if not scenefx_option.disabled()
-  scenefx = dependency('scenefx-0.4', required: false)
-  if not scenefx.found()
-    scenefx_sub = subproject('scenefx', required: scenefx_option)
-    if scenefx_sub.found()
-      scenefx = scenefx_sub.get_variable('scenefx')
-    endif
+scenefx = dependency('scenefx-0.4', required: scenefx_option)
+if not scenefx.found()
+  scenefx_sub = subproject('scenefx', required: scenefx_option)
+  if scenefx_sub.found()
+    scenefx = scenefx_sub.get_variable('scenefx')
   endif
-  have_scenefx = scenefx.found()
 endif
+have_scenefx = scenefx.found()
 if have_scenefx
   message('SceneFX visual effects enabled')
 else

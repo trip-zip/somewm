@@ -340,6 +340,40 @@ shadow_create(struct wlr_scene_tree *parent,
     if (!config->enabled)
         return true;
 
+#ifdef HAVE_SCENEFX
+    /* SceneFX path: single GPU-rendered shadow node replaces 9-slice system.
+     * NOTE: clip_directional is not supported in this path — the GPU shadow
+     * is always symmetric. The 9-slice fallback handles clip_directional. */
+    shadow->tree = wlr_scene_tree_create(parent);
+    if (!shadow->tree)
+        return false;
+    wlr_scene_node_lower_to_bottom(&shadow->tree->node);
+
+    /* Shadow covers the window area expanded by radius on each side */
+    int shadow_w = width + 2 * config->radius;
+    int shadow_h = height + 2 * config->radius;
+    float color_with_opacity[4] = {
+        config->color[0], config->color[1], config->color[2],
+        config->color[3] * config->opacity
+    };
+    shadow->sfx_shadow = wlr_scene_shadow_create(shadow->tree,
+        shadow_w, shadow_h, 0, (float)config->radius, color_with_opacity);
+    if (!shadow->sfx_shadow) {
+        wlr_scene_node_destroy(&shadow->tree->node);
+        shadow->tree = NULL;
+        return false;
+    }
+
+    /* Position shadow offset from window origin */
+    wlr_scene_node_set_position(&shadow->sfx_shadow->node,
+        config->offset_x - config->radius,
+        config->offset_y - config->radius);
+
+    shadow->last_width = width;
+    shadow->last_height = height;
+    return true;
+#endif
+
     /* Render per-shadow gradient textures */
     if (!shadow_render_textures(shadow, config))
         return false;
@@ -470,6 +504,18 @@ shadow_update_geometry(shadow_nodes_t *shadow,
     shadow->last_width = width;
     shadow->last_height = height;
 
+#ifdef HAVE_SCENEFX
+    if (shadow->sfx_shadow) {
+        int shadow_w = width + 2 * config->radius;
+        int shadow_h = height + 2 * config->radius;
+        wlr_scene_shadow_set_size(shadow->sfx_shadow, shadow_w, shadow_h);
+        wlr_scene_node_set_position(&shadow->sfx_shadow->node,
+            config->offset_x - config->radius,
+            config->offset_y - config->radius);
+        return;
+    }
+#endif
+
     int r = config->radius;
     int ox = config->offset_x;
     int oy = config->offset_y;
@@ -577,6 +623,19 @@ shadow_update_config(shadow_nodes_t *shadow,
 }
 
 void
+shadow_set_corner_radius(shadow_nodes_t *shadow, int corner_radius)
+{
+#ifdef HAVE_SCENEFX
+    if (!shadow || !shadow->sfx_shadow)
+        return;
+    wlr_scene_shadow_set_corner_radius(shadow->sfx_shadow, corner_radius);
+#else
+    (void)shadow;
+    (void)corner_radius;
+#endif
+}
+
+void
 shadow_set_visible(shadow_nodes_t *shadow, bool visible)
 {
     if (!shadow || !shadow->tree)
@@ -596,6 +655,9 @@ shadow_destroy(shadow_nodes_t *shadow)
         shadow->tree = NULL;
     }
 
+#ifdef HAVE_SCENEFX
+    shadow->sfx_shadow = NULL; /* destroyed with tree */
+#endif
     memset(shadow->slice, 0, sizeof(shadow->slice));
     shadow_free_textures(shadow);
 }

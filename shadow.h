@@ -24,7 +24,7 @@
 #include <lua.h>
 #include <stdbool.h>
 #include <stdint.h>
-#include <wlr/types/wlr_scene.h>
+#include "scenefx_compat.h"
 #include <wlr/types/wlr_buffer.h>
 
 /**
@@ -81,6 +81,9 @@ typedef struct shadow_nodes_t {
     struct wlr_buffer *textures[SHADOW_TEXTURE_COUNT];  /**< Owned gradient textures */
     int last_width;                                     /**< Cached width to skip redundant updates */
     int last_height;                                    /**< Cached height to skip redundant updates */
+#ifdef HAVE_SCENEFX
+    struct wlr_scene_shadow *sfx_shadow;                /**< SceneFX GPU shadow (NULL = 9-slice) */
+#endif
 } shadow_nodes_t;
 
 /**
@@ -166,6 +169,16 @@ void shadow_update_config(shadow_nodes_t *shadow,
                          struct wlr_scene_tree *parent,
                          const shadow_config_t *config,
                          int width, int height);
+
+/**
+ * Set shadow corner radius to match window rounding.
+ *
+ * Only effective with SceneFX native shadows. No-op for 9-slice fallback.
+ *
+ * @param shadow Shadow nodes structure
+ * @param corner_radius Corner radius in pixels (0 = sharp)
+ */
+void shadow_set_corner_radius(shadow_nodes_t *shadow, int corner_radius);
 
 /**
  * Show or hide shadow.
