@@ -62,51 +62,49 @@ stdenv.mkDerivation {
     wayland-scanner
   ];
 
-  buildInputs =
-    [
-      cairo
-      dbus
-      gdk-pixbuf
-      glib
-      harfbuzz
-      libdrm
-      libinput
-      librsvg
-      libxkbcommon
-      luajit
-      luaEnv
-      pam
-      pango
-      wayland
-      wayland-protocols
-      wlroots_0_19
-      libxcb
-      libxcb-wm
-      libxcb-util
-      xwayland
-    ]
-    ++ lib.optional gtk3Support gtk3;
+  buildInputs = [
+    cairo
+    dbus
+    gdk-pixbuf
+    glib
+    harfbuzz
+    libdrm
+    libinput
+    librsvg
+    libxkbcommon
+    luajit
+    luaEnv
+    pam
+    pango
+    wayland
+    wayland-protocols
+    wlroots_0_19
+    libxcb
+    libxcb-wm
+    libxcb-util
+    xwayland
+  ]
+  ++ lib.optional gtk3Support gtk3;
 
   postFixup =
     let
-      giPackages =
-        [
-          gdk-pixbuf
-          glib.out
-          gobject-introspection
-          harfbuzz.out
-          librsvg.out
-          pango.out
-        ]
-        ++ lib.optional gtk3Support gtk3.out
-        ++ extraGIPackages;
+      giPackages = [
+        gdk-pixbuf
+        glib.out
+        gobject-introspection
+        harfbuzz.out
+        librsvg.out
+        pango.out
+      ]
+      ++ lib.optional gtk3Support gtk3.out
+      ++ extraGIPackages;
       giTypelibPath = lib.strings.concatMapStringsSep ":" (p: "${p}/lib/girepository-1.0") giPackages;
     in
     ''
       wrapProgram $out/bin/somewm \
         --prefix GI_TYPELIB_PATH : "${giTypelibPath}" \
-        --add-flags "--search ${luaEnv}/lib/lua/${luaEnv.luaversion}" \
-        --add-flags "--search ${luaEnv}/share/lua/${luaEnv.luaversion}"
+        --prefix LUA_PATH : "${luaEnv}/share/lua/${luaEnv.luaversion}/?.lua;${luaEnv}/share/lua/${luaEnv.luaversion}/?/init.lua" \
+        --prefix LUA_CPATH : "${luaEnv}/lib/lua/${luaEnv.luaversion}/?.so"
     '';
 
   meta = with lib; {
