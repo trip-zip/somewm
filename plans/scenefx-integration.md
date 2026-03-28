@@ -101,21 +101,35 @@ Replace `#include <wlr/types/wlr_scene.h>` → `#include "scenefx_compat.h"` in:
 - Fallback: existing 9-slice system unchanged
 - `shadow_update_config()` updates via scenefx setters instead of destroy+recreate
 
-## Phase 4: Opacity Improvement — Low complexity (~30 min + testing)
+## Phase 4: Opacity Improvement — RESOLVED (no code change)
 
-### Question: does scenefx preserve buffer opacity across surface reconfigure?
-- If YES: wrap opacity re-apply hacks in `#ifndef HAVE_SCENEFX`
-  - somewm.c:1607-1611 (commitnotify)
-  - somewm.c:1507-1511 (commitlayersurfacenotify)
-  - somewm.c:4412-4424 (rendermon per-frame hack)
-- If NO: keep existing workaround as-is
+### Answer: NO — scenefx does NOT fix buffer opacity reset
 
-## Phase 5: Background Blur (future, separate branch)
+The opacity reset happens in wlroots' `wlr_scene_xdg_surface_create()` path which
+destroys and recreates buffer nodes on surface reconfigure. SceneFX only extends
+the scene renderer — the XDG surface lifecycle is unchanged in wlroots.
 
-- `wlr_scene_blur_create()` behind transparent windows/panels
-- New Lua properties: `c.blur_strength`, `beautiful.blur_strength`
-- Only active when `opacity < 1.0`
-- Performance concern — needs `beautiful.blur_enabled` kill switch
+**Decision:** Keep all existing opacity re-apply workarounds as-is:
+- `somewm.c` commitnotify — re-apply opacity after surface commit ✓
+- `somewm.c` commitlayersurfacenotify — re-apply layer surface opacity ✓
+- `somewm.c` rendermon — per-frame layer surface opacity re-apply ✓
+
+The same pattern applies to `corner_radius` (already handled in commitnotify).
+
+## Phase 5: Background Blur
+
+### Implementation
+- Per-client `backdrop_blur` boolean property (Lua: `c.backdrop_blur = true`)
+- Global blur parameters via `wlr_scene_set_blur_data()` at startup
+- `client_apply_backdrop_blur()` walks scene tree, sets `backdrop_blur` on buffers
+- Re-applied in commitnotify alongside opacity and corner_radius
+- Guarded by `#ifdef HAVE_SCENEFX`, no-op without it
+
+### SceneFX Blur API
+- Global: `wlr_scene_set_blur_data(scene, num_passes, radius, noise, brightness, contrast, saturation)`
+- Per-buffer: `wlr_scene_buffer_set_backdrop_blur(buf, bool)`
+- Per-buffer: `wlr_scene_buffer_set_backdrop_blur_optimized(buf, bool)`
+- Per-buffer: `wlr_scene_buffer_set_backdrop_blur_ignore_transparent(buf, bool)`
 
 ## Risks
 
