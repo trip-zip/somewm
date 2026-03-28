@@ -118,7 +118,7 @@ void apply_geometry_to_wlroots(client_t *c);
 #include <string.h>
 #include <wayland-server-core.h>
 #include <wlr/types/wlr_foreign_toplevel_management_v1.h>
-#include <wlr/types/wlr_scene.h>
+#include "scenefx_compat.h"
 #include <wlr/types/wlr_xdg_shell.h>
 #include <wlr/render/wlr_renderer.h>
 #include <wlr/render/wlr_texture.h>
@@ -4400,6 +4400,79 @@ luaA_client_set_opacity(lua_State *L, client_t *c)
     return 0;
 }
 
+/* ========================================================================
+ * Corner radius (requires scenefx)
+ * ======================================================================== */
+
+#ifdef HAVE_SCENEFX
+static void
+apply_corner_radius_to_tree(struct wlr_scene_node *node, int radius,
+                            enum corner_location corners)
+{
+    if (node->type == WLR_SCENE_NODE_BUFFER) {
+        struct wlr_scene_buffer *buf = wlr_scene_buffer_from_node(node);
+        wlr_scene_buffer_set_corner_radius(buf, radius, corners);
+    } else if (node->type == WLR_SCENE_NODE_TREE) {
+        struct wlr_scene_tree *tree = wlr_scene_tree_from_node(node);
+        struct wlr_scene_node *child;
+        wl_list_for_each(child, &tree->children, link) {
+            apply_corner_radius_to_tree(child, radius, corners);
+        }
+    }
+}
+#endif
+
+void
+client_apply_corner_radius(client_t *c)
+{
+#ifdef HAVE_SCENEFX
+    int radius = c->corner_radius;
+
+    /* Apply to client surface buffers (all corners) */
+    if (c->scene_surface)
+        apply_corner_radius_to_tree(&c->scene_surface->node, radius,
+                                    CORNER_LOCATION_ALL);
+
+    /* Apply to border rectangles with per-side corner locations.
+     * border[0]=top, border[1]=bottom, border[2]=left, border[3]=right */
+    static const enum corner_location border_corners[4] = {
+        CORNER_LOCATION_TOP,    /* top border: TL + TR */
+        CORNER_LOCATION_BOTTOM, /* bottom border: BL + BR */
+        CORNER_LOCATION_LEFT,   /* left border: TL + BL */
+        CORNER_LOCATION_RIGHT,  /* right border: TR + BR */
+    };
+    for (int i = 0; i < 4; i++) {
+        if (c->border[i])
+            wlr_scene_rect_set_corner_radius(c->border[i], radius,
+                                             border_corners[i]);
+    }
+
+    /* Update shadow corner radius to match window rounding */
+    shadow_set_corner_radius(&c->shadow, radius);
+#else
+    (void)c;
+#endif
+}
+
+static int
+luaA_client_get_corner_radius(lua_State *L, client_t *c)
+{
+    lua_pushinteger(L, c->corner_radius);
+    return 1;
+}
+
+static int
+luaA_client_set_corner_radius(lua_State *L, client_t *c)
+{
+    int radius = luaL_checkinteger(L, -1);
+    if (radius < 0)
+        return luaL_error(L, "corner_radius must be >= 0");
+    c->corner_radius = radius;
+    client_apply_corner_radius(c);
+    luaA_object_emit_signal(L, -3, "property::corner_radius", 0);
+    return 0;
+}
+
 static int
 luaA_client_get_aspect_ratio(lua_State *L, client_t *c)
 {
@@ -5371,6 +5444,7 @@ client_class_setup(lua_State *L)
         { "client_shape_clip", NULL, (lua_class_propfunc_t) luaA_client_get_client_shape_clip, NULL },
         { "client_shape_input", NULL, (lua_class_propfunc_t) luaA_client_get_client_shape_input, NULL },
         { "content", NULL, (lua_class_propfunc_t) luaA_client_get_content, NULL },
+        { "corner_radius", (lua_class_propfunc_t) luaA_client_set_corner_radius, (lua_class_propfunc_t) luaA_client_get_corner_radius, (lua_class_propfunc_t) luaA_client_set_corner_radius },
         { "first_tag", NULL, (lua_class_propfunc_t) luaA_client_get_first_tag, NULL },
         { "focusable", (lua_class_propfunc_t) luaA_client_set_focusable, (lua_class_propfunc_t) luaA_client_get_focusable, (lua_class_propfunc_t) luaA_client_set_focusable },
         { "fullscreen", (lua_class_propfunc_t) luaA_client_set_fullscreen, (lua_class_propfunc_t) luaA_client_get_fullscreen, (lua_class_propfunc_t) luaA_client_set_fullscreen },

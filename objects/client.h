@@ -26,7 +26,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 #include <wayland-server-core.h>
-#include <wlr/types/wlr_scene.h>
+#include "scenefx_compat.h"
 #include <wlr/util/box.h>
 #include "common/luaclass.h"
 #include "common/luaobject.h"
@@ -160,6 +160,8 @@ struct client_t
     struct wlr_scene_tree *scene_surface;
     /** Border rectangles */
     struct wlr_scene_rect *border[4];
+    /** Corner radius in pixels (0 = sharp, requires scenefx at compile time) */
+    int corner_radius;
     /** Shadow configuration (NULL = use defaults) */
     shadow_config_t *shadow_config;
     /** Shadow scene nodes */
@@ -419,6 +421,7 @@ drawable_t *client_get_drawable(client_t *, int, int);
 drawable_t *client_get_drawable_offset(client_t *, int *, int *);
 area_t client_get_undecorated_geometry(client_t *);
 void client_apply_opacity_to_scene(client_t *, float);
+void client_apply_corner_radius(client_t *);
 void client_update_titlebar_positions(client_t *);
 
 /* Forward declarations for inline functions

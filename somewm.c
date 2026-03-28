@@ -56,7 +56,7 @@
 #include <wlr/types/wlr_primary_selection.h>
 #include <wlr/types/wlr_primary_selection_v1.h>
 #include <wlr/types/wlr_relative_pointer_v1.h>
-#include <wlr/types/wlr_scene.h>
+#include "scenefx_compat.h"
 #include <wlr/types/wlr_screencopy_v1.h>
 #include <wlr/types/wlr_seat.h>
 #include <wlr/types/wlr_server_decoration.h>
@@ -1609,6 +1609,10 @@ commitnotify(struct wl_listener *listener, void *data)
 	 * wlr_scene_xdg_surface_create() in mapnotify(). */
 	if (c->opacity >= 0)
 		client_apply_opacity_to_scene(c, (float)c->opacity);
+
+	/* Re-apply corner radius (scenefx resets on new buffer) */
+	if (c->corner_radius > 0)
+		client_apply_corner_radius(c);
 }
 
 /* Unconstrain popup using proper scene node coordinates (River pattern) */
