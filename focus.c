@@ -24,6 +24,7 @@
 #include "somewm.h"
 #include "somewm_api.h"
 #include "focus.h"
+#include "event_queue.h"
 #include "window.h"
 #include "input.h"
 #include "globalconf.h"
@@ -120,10 +121,10 @@ focusclient(Client *c, int lift)
 		client_set_border_color(globalconf.focus.client, get_bordercolor());
 		luaA_object_push(globalconf_L, globalconf.focus.client);
 		lua_pushboolean(globalconf_L, false);
-		luaA_object_emit_signal(globalconf_L, -2, "property::active", 1);
-		luaA_object_emit_signal(globalconf_L, -1, "unfocus", 0);
+		some_event_queue_signal(globalconf_L, -2, SIG_PROPERTY_ACTIVE, 1);
+		some_event_queue_property(globalconf_L, -1, SIG_UNFOCUS);
 		lua_pop(globalconf_L, 1);
-		luaA_emit_signal_global("client::unfocus");
+		some_event_queue_global(SIG_CLIENT_UNFOCUS);
 	}
 	printstatus();
 
@@ -203,13 +204,12 @@ focusclient(Client *c, int lift)
 	if (!client_is_unmanaged(c)) {
 		luaA_object_push(globalconf_L, c);
 		lua_pushboolean(globalconf_L, true);
-		luaA_object_emit_signal(globalconf_L, -2, "property::active", 1);
-		/* Emit object-level "focus" signal - triggers focus history tracking */
-		luaA_object_emit_signal(globalconf_L, -1, "focus", 0);
+		some_event_queue_signal(globalconf_L, -2, SIG_PROPERTY_ACTIVE, 1);
+		some_event_queue_property(globalconf_L, -1, SIG_FOCUS);
 		lua_pop(globalconf_L, 1);
 	}
 
-	luaA_emit_signal_global("client::focus");
+	some_event_queue_global(SIG_CLIENT_FOCUS);
 
 	/* Refresh stacking order (affects fullscreen layer) */
 	stack_refresh();
