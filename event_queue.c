@@ -28,6 +28,9 @@ static const char *signal_names[SIG_COUNT] = {
 	[SIG_UNFOCUS]            = "unfocus",
 	[SIG_CLIENT_FOCUS]       = "client::focus",
 	[SIG_CLIENT_UNFOCUS]     = "client::unfocus",
+	[SIG_MOUSE_ENTER]        = "mouse::enter",
+	[SIG_MOUSE_LEAVE]        = "mouse::leave",
+	[SIG_MOUSE_MOVE]         = "mouse::move",
 	[SIG_CLIENT_PROPERTY_GEOMETRY] = "client::property::geometry",
 };
 
@@ -117,6 +120,62 @@ some_event_queue_global(uint16_t signal_id)
 }
 
 void
+some_event_queue_move(lua_State *L, int obj_ud, int local_x, int local_y)
+{
+	/* Coalesce: scan backward for an existing SIG_MOUSE_MOVE on the same
+	 * object. If found, update its args instead of adding a new event.
+	 * We compare by checking if the object ref points to the same object. */
+
+	/* First, get a ref to the object for comparison */
+	lua_pushvalue(L, obj_ud);
+
+	/* Scan backward (most recent events first) for a match */
+	for (int i = queue_len - 1; i >= 0; i--) {
+		some_event_t *existing = &queue_buf[i];
+
+		/* Stop scanning if we hit a non-move event (preserve ordering
+		 * relative to enter/leave events) */
+		if (existing->signal_id != SIG_MOUSE_MOVE)
+			break;
+
+		/* Check if same object by comparing via registry */
+		lua_rawgeti(L, LUA_REGISTRYINDEX, existing->object_ref);
+		int same = lua_rawequal(L, -1, -2);
+		lua_pop(L, 1);
+
+		if (same) {
+			/* Update the args in place */
+			if (existing->args_ref != LUA_NOREF)
+				luaL_unref(L, LUA_REGISTRYINDEX, existing->args_ref);
+
+			lua_createtable(L, 2, 0);
+			lua_pushinteger(L, local_x);
+			lua_rawseti(L, -2, 1);
+			lua_pushinteger(L, local_y);
+			lua_rawseti(L, -2, 2);
+			existing->args_ref = luaL_ref(L, LUA_REGISTRYINDEX);
+
+			lua_pop(L, 1);  /* pop the comparison object */
+			return;
+		}
+	}
+
+	/* No existing event found - create new one */
+	some_event_t *e = queue_push();
+	e->event_type = EVENT_OBJECT;
+	e->signal_id = SIG_MOUSE_MOVE;
+	e->nargs = 2;
+	e->object_ref = luaL_ref(L, LUA_REGISTRYINDEX);  /* consumes the pushed object */
+
+	lua_createtable(L, 2, 0);
+	lua_pushinteger(L, local_x);
+	lua_rawseti(L, -2, 1);
+	lua_pushinteger(L, local_y);
+	lua_rawseti(L, -2, 2);
+	e->args_ref = luaL_ref(L, LUA_REGISTRYINDEX);
+}
+
+void
 some_event_queue_drain(lua_State *L)
 {
 	/* Process a snapshot of the queue length. Events added during drain
@@ -145,10 +204,11 @@ some_event_queue_drain(lua_State *L)
 		int nargs = 0;
 		if (e->args_ref != LUA_NOREF) {
 			lua_rawgeti(L, LUA_REGISTRYINDEX, e->args_ref);
-			/* Unpack table values onto stack */
+			/* Unpack table values onto stack. As each value is pushed,
+			 * the table shifts down by one position. */
 			nargs = e->nargs;
 			for (int j = 1; j <= nargs; j++)
-				lua_rawgeti(L, -(nargs - j + 2), j);
+				lua_rawgeti(L, -j, j);
 			/* Remove the args table (now below the unpacked values) */
 			lua_remove(L, -(nargs + 1));
 		}

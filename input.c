@@ -36,6 +36,7 @@
 #include "somewm.h"
 #include "somewm_api.h"
 #include "input.h"
+#include "event_queue.h"
 #include "monitor.h"
 #include "globalconf.h"
 #include "client.h"
@@ -693,7 +694,7 @@ mouse_emit_leave(lua_State *L)
 	if (globalconf.mouse_under.type == UNDER_CLIENT) {
 		client_t *c = globalconf.mouse_under.ptr.client;
 		luaA_object_push(L, c);
-		luaA_object_emit_signal(L, -1, "mouse::leave", 0);
+		some_event_queue_property(L, -1, SIG_MOUSE_LEAVE);
 		lua_pop(L, 1);
 	} else if (globalconf.mouse_under.type == UNDER_DRAWIN) {
 		drawin_t *d = globalconf.mouse_under.ptr.drawin;
@@ -701,7 +702,7 @@ mouse_emit_leave(lua_State *L)
 		if (lua_isnil(L, -1)) {
 			warn("mouse::leave on unregistered drawin %p", (void*)d);
 		}
-		luaA_object_emit_signal(L, -1, "mouse::leave", 0);
+		some_event_queue_property(L, -1, SIG_MOUSE_LEAVE);
 		lua_pop(L, 1);
 	}
 	globalconf.mouse_under.type = UNDER_NONE;
@@ -709,7 +710,7 @@ mouse_emit_leave(lua_State *L)
 	/* Also clear drawable tracking - emit leave on drawable if any */
 	if (globalconf.drawable_under_mouse != NULL) {
 		luaA_object_push(L, globalconf.drawable_under_mouse);
-		luaA_object_emit_signal(L, -1, "mouse::leave", 0);
+		some_event_queue_property(L, -1, SIG_MOUSE_LEAVE);
 		lua_pop(L, 1);
 		luaA_object_unref(L, globalconf.drawable_under_mouse);
 		globalconf.drawable_under_mouse = NULL;
@@ -721,7 +722,7 @@ void
 mouse_emit_client_enter(lua_State *L, client_t *c)
 {
 	luaA_object_push(L, c);
-	luaA_object_emit_signal(L, -1, "mouse::enter", 0);
+	some_event_queue_property(L, -1, SIG_MOUSE_ENTER);
 	lua_pop(L, 1);
 	globalconf.mouse_under.type = UNDER_CLIENT;
 	globalconf.mouse_under.ptr.client = c;
@@ -735,7 +736,7 @@ mouse_emit_drawin_enter(lua_State *L, drawin_t *d)
 	if (lua_isnil(L, -1)) {
 		warn("mouse::enter on unregistered drawin %p", (void*)d);
 	}
-	luaA_object_emit_signal(L, -1, "mouse::enter", 0);
+	some_event_queue_property(L, -1, SIG_MOUSE_ENTER);
 	lua_pop(L, 1);
 	globalconf.mouse_under.type = UNDER_DRAWIN;
 	globalconf.mouse_under.ptr.drawin = d;
@@ -917,14 +918,14 @@ motionnotify(uint32_t time, struct wlr_input_device *device, double dx, double d
 				mouse_emit_client_enter(L, current_client);
 			}
 
-			/* Always emit mouse::move on current client */
+			/* Always emit mouse::move on current client (coalesced per frame) */
 			luaA_object_push(L, current_client);
 			if (lua_isnil(L, -1)) {
 				warn("mouse::move on unregistered client %p", (void*)current_client);
 			}
-			lua_pushinteger(L, (int)(cursor->x - current_client->geometry.x));
-			lua_pushinteger(L, (int)(cursor->y - current_client->geometry.y));
-			luaA_object_emit_signal(L, -3, "mouse::move", 2);
+			some_event_queue_move(L, -1,
+				(int)(cursor->x - current_client->geometry.x),
+				(int)(cursor->y - current_client->geometry.y));
 			lua_pop(L, 1);
 
 			/* Check if mouse is over a titlebar drawable - emit signals for widget hover */
@@ -940,9 +941,7 @@ motionnotify(uint32_t time, struct wlr_input_device *device, double dx, double d
 				int tb_x = (int)(cursor->x - current_client->geometry.x);
 				int tb_y = (int)(cursor->y - current_client->geometry.y);
 				client_get_drawable_offset(current_client, &tb_x, &tb_y);
-				lua_pushinteger(L, tb_x);
-				lua_pushinteger(L, tb_y);
-				luaA_object_emit_signal(L, -3, "mouse::move", 2);
+				some_event_queue_move(L, -1, tb_x, tb_y);
 
 				lua_pop(L, 2);  /* pop drawable and client */
 				}
@@ -969,9 +968,9 @@ motionnotify(uint32_t time, struct wlr_input_device *device, double dx, double d
 				luaA_object_push_item(L, -1, current_drawin->drawable);
 				event_drawable_under_mouse(L, -1);
 
-				lua_pushinteger(L, (int)cursor->x - current_drawin->x);
-				lua_pushinteger(L, (int)cursor->y - current_drawin->y);
-				luaA_object_emit_signal(L, -3, "mouse::move", 2);
+				some_event_queue_move(L, -1,
+					(int)cursor->x - current_drawin->x,
+					(int)cursor->y - current_drawin->y);
 
 				lua_pop(L, 2);
 			}
