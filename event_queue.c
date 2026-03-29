@@ -28,6 +28,7 @@ static const char *signal_names[SIG_COUNT] = {
 	[SIG_UNFOCUS]            = "unfocus",
 	[SIG_CLIENT_FOCUS]       = "client::focus",
 	[SIG_CLIENT_UNFOCUS]     = "client::unfocus",
+	[SIG_CLIENT_PROPERTY_GEOMETRY] = "client::property::geometry",
 };
 
 /* Queue storage - simple dynamic array */

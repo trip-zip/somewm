@@ -82,10 +82,15 @@ local steps = {
     end,
 
     -- Step 4: Control test - normal geometry() should fire signals
+    -- Signals are deferred to the frame boundary, so we set geometry in one
+    -- step and check signal_count in the next (after drain).
     function()
         signal_count = 0
         my_client:geometry({x = 100, y = 100, width = 400, height = 300})
+        return true
+    end,
 
+    function()
         assert(signal_count > 0,
             string.format("Expected signals from normal geometry(), got %d", signal_count))
         io.stderr:write(string.format("[TEST] PASS: normal geometry() fired %d signals (control)\n",
