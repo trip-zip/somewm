@@ -101,6 +101,7 @@
 #include "../draw.h"        /* For draw_find_visual() - must be before x11_compat.h */
 #include "../x11_compat.h"  /* X11 stub functions for Wayland */
 #include "objects/window.h"  /* For window_set_border_width() */
+#include "../event_queue.h"
 #include "../somewm_api.h"
 /* #include "../somewm_types.h" - not needed, causes Client/client_t conflict */
 #include "../stack.h"
@@ -2413,12 +2414,12 @@ client_manage(xcb_window_t w, xcb_get_geometry_reply_t *wgeom, xcb_get_window_at
     c->geometry.width = wgeom->width;
     c->geometry.height = wgeom->height;
 
-    luaA_object_emit_signal(L, -1, "property::x", 0);
-    luaA_object_emit_signal(L, -1, "property::y", 0);
-    luaA_object_emit_signal(L, -1, "property::width", 0);
-    luaA_object_emit_signal(L, -1, "property::height", 0);
+    some_event_queue_property(L, -1, SIG_PROPERTY_X);
+    some_event_queue_property(L, -1, SIG_PROPERTY_Y);
+    some_event_queue_property(L, -1, SIG_PROPERTY_WIDTH);
+    some_event_queue_property(L, -1, SIG_PROPERTY_HEIGHT);
     luaA_object_emit_signal(L, -1, "property::window", 0);
-    luaA_object_emit_signal(L, -1, "property::geometry", 0);
+    some_event_queue_property(L, -1, SIG_PROPERTY_GEOMETRY);
 
     /* Set border width */
     window_set_border_width(L, -1, wgeom->border_width);
@@ -2692,22 +2693,22 @@ client_resize_do(client_t *c, area_t geometry, bool silent)
     {
         luaA_object_push(L, c);
         if (!AREA_EQUAL(old_geometry, geometry))
-            luaA_object_emit_signal(L, -1, "property::geometry", 0);
+            some_event_queue_property(L, -1, SIG_PROPERTY_GEOMETRY);
         if (old_geometry.x != geometry.x || old_geometry.y != geometry.y)
         {
-            luaA_object_emit_signal(L, -1, "property::position", 0);
+            some_event_queue_property(L, -1, SIG_PROPERTY_POSITION);
             if (old_geometry.x != geometry.x)
-                luaA_object_emit_signal(L, -1, "property::x", 0);
+                some_event_queue_property(L, -1, SIG_PROPERTY_X);
             if (old_geometry.y != geometry.y)
-                luaA_object_emit_signal(L, -1, "property::y", 0);
+                some_event_queue_property(L, -1, SIG_PROPERTY_Y);
         }
         if (old_geometry.width != geometry.width || old_geometry.height != geometry.height)
         {
-            luaA_object_emit_signal(L, -1, "property::size", 0);
+            some_event_queue_property(L, -1, SIG_PROPERTY_SIZE);
             if (old_geometry.width != geometry.width)
-                luaA_object_emit_signal(L, -1, "property::width", 0);
+                some_event_queue_property(L, -1, SIG_PROPERTY_WIDTH);
             if (old_geometry.height != geometry.height)
-                luaA_object_emit_signal(L, -1, "property::height", 0);
+                some_event_queue_property(L, -1, SIG_PROPERTY_HEIGHT);
         }
         lua_pop(L, 1);
 

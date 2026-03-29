@@ -31,6 +31,9 @@ enum {
 	SIG_CLIENT_FOCUS,      /* global */
 	SIG_CLIENT_UNFOCUS,    /* global */
 
+	/* Global geometry signal */
+	SIG_CLIENT_PROPERTY_GEOMETRY,  /* global */
+
 	/* Placeholder for future conversions */
 
 	SIG_COUNT

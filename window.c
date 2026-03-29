@@ -32,6 +32,7 @@
 #include "somewm.h"
 #include "somewm_api.h"
 #include "window.h"
+#include "event_queue.h"
 #include "monitor.h"
 #include "protocols.h"
 #include "input.h"
@@ -945,11 +946,11 @@ mapnotify(struct wl_listener *listener, void *data)
 		/* Emit property and manage signals for transient clients too.
 		 * This is needed for Lua rules and placement code to work. */
 		luaA_object_push(L, c);
-		luaA_object_emit_signal(L, -1, "property::x", 0);
-		luaA_object_emit_signal(L, -1, "property::y", 0);
-		luaA_object_emit_signal(L, -1, "property::width", 0);
-		luaA_object_emit_signal(L, -1, "property::height", 0);
-		luaA_object_emit_signal(L, -1, "property::geometry", 0);
+		some_event_queue_property(L, -1, SIG_PROPERTY_X);
+		some_event_queue_property(L, -1, SIG_PROPERTY_Y);
+		some_event_queue_property(L, -1, SIG_PROPERTY_WIDTH);
+		some_event_queue_property(L, -1, SIG_PROPERTY_HEIGHT);
+		some_event_queue_property(L, -1, SIG_PROPERTY_GEOMETRY);
 		luaA_object_emit_signal(L, -1, "property::type", 0);
 
 		lua_pushstring(L, "new");
@@ -1031,12 +1032,12 @@ mapnotify(struct wl_listener *listener, void *data)
 
 		/* Emit property signals (matches AwesomeWM client_manage lines 2215-2228)
 		 * These notify Lua code that initial client properties are set */
-		luaA_object_emit_signal(L, -1, "property::x", 0);
-		luaA_object_emit_signal(L, -1, "property::y", 0);
-		luaA_object_emit_signal(L, -1, "property::width", 0);
-		luaA_object_emit_signal(L, -1, "property::height", 0);
+		some_event_queue_property(L, -1, SIG_PROPERTY_X);
+		some_event_queue_property(L, -1, SIG_PROPERTY_Y);
+		some_event_queue_property(L, -1, SIG_PROPERTY_WIDTH);
+		some_event_queue_property(L, -1, SIG_PROPERTY_HEIGHT);
 		luaA_object_emit_signal(L, -1, "property::window", 0);
-		luaA_object_emit_signal(L, -1, "property::geometry", 0);
+		some_event_queue_property(L, -1, SIG_PROPERTY_GEOMETRY);
 		luaA_object_emit_signal(L, -1, "property::size_hints_honor", 0);
 		luaA_object_emit_signal(L, -1, "property::type", 0);
 
@@ -1378,7 +1379,7 @@ resize(Client *c, struct wlr_box geo, int interact)
 	apply_geometry_to_wlroots(c);
 
 	/* Emit signal for geometry change listeners */
-	luaA_emit_signal_global("client::property::geometry");
+	some_event_queue_global(SIG_CLIENT_PROPERTY_GEOMETRY);
 }
 
 void

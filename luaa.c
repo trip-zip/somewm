@@ -42,6 +42,7 @@
 #include "objects/window.h"
 #include "dbus.h"
 #include "shadow.h"
+#include "event_queue.h"
 #include "pam_auth.h"
 
 /* Forward declaration for Lua state recreation (used by config timeout handler) */
@@ -5395,12 +5396,12 @@ luaA_hot_reload(void)
 
 		luaA_object_push(L, c);
 
-		/* Emit property signals */
-		luaA_object_emit_signal(L, -1, "property::x", 0);
-		luaA_object_emit_signal(L, -1, "property::y", 0);
-		luaA_object_emit_signal(L, -1, "property::width", 0);
-		luaA_object_emit_signal(L, -1, "property::height", 0);
-		luaA_object_emit_signal(L, -1, "property::geometry", 0);
+		/* Emit property signals (queued for frame boundary) */
+		some_event_queue_property(L, -1, SIG_PROPERTY_X);
+		some_event_queue_property(L, -1, SIG_PROPERTY_Y);
+		some_event_queue_property(L, -1, SIG_PROPERTY_WIDTH);
+		some_event_queue_property(L, -1, SIG_PROPERTY_HEIGHT);
+		some_event_queue_property(L, -1, SIG_PROPERTY_GEOMETRY);
 		luaA_object_emit_signal(L, -1, "property::name", 0);
 		luaA_object_emit_signal(L, -1, "property::type", 0);
 		luaA_object_emit_signal(L, -1, "property::screen", 0);
