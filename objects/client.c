@@ -3919,6 +3919,23 @@ titlebar_get_drawable(lua_State *L, client_t *c, int cl_idx, client_titlebar_t b
             area = titlebar_get_area(c, bar);
             wlr_scene_node_set_position(&c->titlebar[bar].scene_buffer->node,
                                           area.x, area.y);
+
+#ifdef HAVE_SCENEFX
+            /* Apply corner radius immediately — can't wait for commitnotify
+             * because apps that don't send frequent commits (firefox, GTK)
+             * would show sharp titlebar corners until next surface commit. */
+            if (c->corner_radius > 0) {
+                static const enum corner_location bar_cr[CLIENT_TITLEBAR_COUNT] = {
+                    [CLIENT_TITLEBAR_TOP]    = CORNER_LOCATION_TOP,
+                    [CLIENT_TITLEBAR_BOTTOM] = CORNER_LOCATION_BOTTOM,
+                    [CLIENT_TITLEBAR_LEFT]   = CORNER_LOCATION_NONE,
+                    [CLIENT_TITLEBAR_RIGHT]  = CORNER_LOCATION_NONE,
+                };
+                wlr_scene_buffer_set_corner_radius(
+                    c->titlebar[bar].scene_buffer,
+                    c->corner_radius + 1, bar_cr[bar]);
+            }
+#endif
         }
     }
 
@@ -3988,6 +4005,10 @@ titlebar_resize(lua_State *L, int cidx, client_t *c, client_titlebar_t bar, int 
                                         area.x, area.y);
         }
     }
+
+    /* Re-apply corner radius — titlebar visibility changes which corners
+     * the surface vs titlebar need rounded (can't wait for commitnotify). */
+    client_apply_corner_radius(c);
 
     luaA_object_emit_signal(L, cidx, property_name, 0);
 }
@@ -4439,14 +4460,49 @@ client_apply_corner_radius(client_t *c)
 #ifdef HAVE_SCENEFX
     int radius = c->corner_radius;
 
-    /* Apply to client surface buffers (all corners) */
+    /* Determine which corners the surface content needs rounded.
+     * Titlebars cover the edges — if a titlebar is present on a side,
+     * the surface doesn't need rounding there (the titlebar handles it). */
+    int tt = c->titlebar[CLIENT_TITLEBAR_TOP].size;
+    int tb = c->titlebar[CLIENT_TITLEBAR_BOTTOM].size;
+    enum corner_location surface_corners = CORNER_LOCATION_ALL;
+    if (tt > 0)
+        surface_corners &= ~(CORNER_LOCATION_TOP_LEFT | CORNER_LOCATION_TOP_RIGHT);
+    if (tb > 0)
+        surface_corners &= ~(CORNER_LOCATION_BOTTOM_LEFT | CORNER_LOCATION_BOTTOM_RIGHT);
+
+    /* Apply to client surface buffers */
     if (c->scene_surface)
         apply_corner_radius_to_tree(&c->scene_surface->node, radius,
-                                    CORNER_LOCATION_ALL);
+                                    surface_corners);
+
+    /* Apply to titlebar scene buffers — each bar rounds its own edge.
+     * Use radius+1 to slightly overlap the border_frame's inner SDF edge,
+     * compensating for sub-pixel mismatch between buffer and rect shaders. */
+    if (radius > 0) {
+        int tb_radius = radius + 1;
+        static const enum corner_location bar_corners[CLIENT_TITLEBAR_COUNT] = {
+            [CLIENT_TITLEBAR_TOP]    = CORNER_LOCATION_TOP,
+            [CLIENT_TITLEBAR_BOTTOM] = CORNER_LOCATION_BOTTOM,
+            [CLIENT_TITLEBAR_LEFT]   = CORNER_LOCATION_NONE,
+            [CLIENT_TITLEBAR_RIGHT]  = CORNER_LOCATION_NONE,
+        };
+        for (int i = 0; i < CLIENT_TITLEBAR_COUNT; i++) {
+            if (c->titlebar[i].scene_buffer && c->titlebar[i].size > 0) {
+                wlr_scene_buffer_set_corner_radius(
+                    c->titlebar[i].scene_buffer, tb_radius, bar_corners[i]);
+            }
+        }
+    } else {
+        for (int i = 0; i < CLIENT_TITLEBAR_COUNT; i++) {
+            if (c->titlebar[i].scene_buffer)
+                wlr_scene_buffer_set_corner_radius(
+                    c->titlebar[i].scene_buffer, 0, CORNER_LOCATION_NONE);
+        }
+    }
 
     /* Border corner radius + geometry + clipping is handled by
-     * client_update_border_for_corners() as a single source of truth.
-     * It sets cr+bw on top/bottom (extended) and 0 on left/right. */
+     * client_update_border_for_corners() as a single source of truth. */
     client_update_border_for_corners(c);
 
     /* Update shadow corner radius to match window rounding */
@@ -4516,7 +4572,9 @@ client_update_border_for_corners(client_t *c)
             cr + bw, CORNER_LOCATION_ALL);
 
         /* Punch out the content area — inner edge matches surface corner radius.
-         * Clamp to >= 1 to avoid negative dimensions on very small windows. */
+         * Clamp to >= 1 to avoid negative dimensions on very small windows.
+         * Where titlebars exist, use sharp inner corners — the titlebar buffer
+         * provides its own rounding, and mixing two SDF paths causes pixel gaps. */
         int cw = w - 2 * bw;
         int ch = h - 2 * bw;
         if (cw < 1) cw = 1;
