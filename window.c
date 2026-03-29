@@ -65,7 +65,6 @@
 
 /* extern declarations for functions still in somewm.c */
 #include "focus.h"
-extern void some_refresh(void);
 extern void printstatus(void);
 extern void spawn(const Arg *arg);
 

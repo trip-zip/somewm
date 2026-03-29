@@ -45,11 +45,8 @@
 
 /* extern declarations for functions that stay in somewm.c */
 #include "focus.h"
-extern void setmon(Client *c, Monitor *m, uint32_t newtags);
-extern void resize(Client *c, struct wlr_box geo, int interact);
-extern void arrange(Monitor *m);
+#include "window.h"
 extern void printstatus(void);
-extern void some_refresh(void);
 
 /* forward declarations */
 void cleanupmon(struct wl_listener *listener, void *data);

@@ -49,13 +49,9 @@
 struct wlr_input_device;
 
 /* Extern declarations for functions in somewm.c */
-extern void arrange(Monitor *m);
+#include "window.h"
 #include "focus.h"
-extern void pointerfocus(Client *c, struct wlr_surface *surface,
-		double sx, double sy, uint32_t time);
-extern void setfullscreen(Client *c, int fullscreen);
-extern void motionnotify(uint32_t time, struct wlr_input_device *device,
-		double sx, double sy, double sx_unaccel, double sy_unaccel);
+#include "input.h"
 
 /* Forward declarations */
 void checkidleinhibitor(struct wlr_surface *exclude);

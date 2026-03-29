@@ -1,29 +1,27 @@
 /*
- * See LICENSE file for copyright and license details.
+ * somewm.c - Compositor initialization, event loop, and main entry point
  */
 #define _GNU_SOURCE
 #include <dlfcn.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <getopt.h>
+#include <limits.h>
 #include <stdbool.h>
-#include <glib.h>
-#include <glib-unix.h>
-#include <libinput.h>
-#include <linux/input-event-codes.h>
-#include <math.h>
 #include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include <sys/wait.h>
 #include <sys/time.h>
 #include <sys/utsname.h>
 #include <time.h>
 #include <unistd.h>
+#include <glib.h>
+#include <glib-unix.h>
 #include <wayland-server-core.h>
 #include <wlr/backend.h>
 #include <wlr/backend/headless.h>
-#include <wlr/backend/libinput.h>
 #include <wlr/backend/multi.h>
 #include <wlr/render/allocator.h>
 #include <wlr/render/wlr_renderer.h>
@@ -35,14 +33,11 @@
 #include <wlr/types/wlr_data_device.h>
 #include <wlr/types/wlr_drm.h>
 #include <wlr/types/wlr_export_dmabuf_v1.h>
-#include <wlr/types/wlr_foreign_toplevel_management_v1.h>
 #include <wlr/types/wlr_fractional_scale_v1.h>
 #include <wlr/types/wlr_gamma_control_v1.h>
+#include <wlr/types/wlr_foreign_toplevel_management_v1.h>
 #include <wlr/types/wlr_idle_inhibit_v1.h>
 #include <wlr/types/wlr_idle_notify_v1.h>
-#include <wlr/types/wlr_input_device.h>
-#include <wlr/types/wlr_keyboard.h>
-#include <wlr/types/wlr_keyboard_group.h>
 #include <wlr/types/wlr_layer_shell_v1.h>
 #include <wlr/types/wlr_linux_dmabuf_v1.h>
 #include <wlr/types/wlr_linux_drm_syncobj_v1.h>
@@ -50,69 +45,50 @@
 #include <wlr/types/wlr_output_layout.h>
 #include <wlr/types/wlr_output_management_v1.h>
 #include <wlr/types/wlr_output_power_management_v1.h>
-#include <wlr/types/wlr_pointer.h>
-#include <wlr/types/wlr_pointer_gestures_v1.h>
 #include <wlr/types/wlr_pointer_constraints_v1.h>
-#include <wlr/types/wlr_presentation_time.h>
-#include <wlr/types/wlr_primary_selection.h>
-#include <wlr/types/wlr_primary_selection_v1.h>
 #include <wlr/types/wlr_relative_pointer_v1.h>
+#include <wlr/types/wlr_pointer_gestures_v1.h>
+#include <wlr/types/wlr_presentation_time.h>
+#include <wlr/types/wlr_primary_selection_v1.h>
 #include <wlr/types/wlr_scene.h>
 #include <wlr/types/wlr_screencopy_v1.h>
 #include <wlr/types/wlr_seat.h>
-#include <wlr/types/wlr_server_decoration.h>
 #include <wlr/types/wlr_session_lock_v1.h>
+#include <wlr/types/wlr_virtual_keyboard_v1.h>
+#include <wlr/types/wlr_virtual_pointer_v1.h>
+#include <wlr/types/wlr_xdg_decoration_v1.h>
+#include <wlr/types/wlr_server_decoration.h>
 #include <wlr/types/wlr_single_pixel_buffer_v1.h>
 #include <wlr/types/wlr_subcompositor.h>
 #include <wlr/types/wlr_viewporter.h>
-#include <wlr/types/wlr_virtual_keyboard_v1.h>
-#include <wlr/types/wlr_virtual_pointer_v1.h>
 #include <wlr/types/wlr_xcursor_manager.h>
 #include <wlr/types/wlr_xdg_activation_v1.h>
-#include <wlr/types/wlr_xdg_decoration_v1.h>
 #include <wlr/types/wlr_xdg_output_v1.h>
 #include <wlr/types/wlr_xdg_shell.h>
 #include <wlr/util/log.h>
-#include <wlr/util/region.h>
-#include <xkbcommon/xkbcommon.h>
 #ifdef XWAYLAND
 #include <wlr/xwayland.h>
 #include <xcb/xcb.h>
-#include <xcb/xcb_icccm.h>
 #endif
 
-#include "common/util.h"
+#include "somewm.h"
 #include "somewm_types.h"
 #include "somewm_api.h"
-#include "xkb.h"
-#include "stack.h"
+#include "common/util.h"
+#include "common/lualib.h"
 #include "wlr_compat.h"
-#include "globalconf.h"        /* Global configuration structure (AwesomeWM pattern) */
-#include "event.h"
-#include "banning.h"            /* Client visibility management (banning) */
+#include "globalconf.h"
 #include "luaa.h"
-#include "objects/spawn.h"  /* For spawn_child_exited */
-#include "common/lualib.h"  /* For luaA_dumpstack */
-#include "objects/signal.h"
-#include "common/luaobject.h"  /* For luaA_object_emit_signal */
-#include "objects/button.h"
-#include "objects/drawin.h"
-#include "objects/drawable.h"
-#include "objects/screen.h"
-#include "objects/output.h"
-#include "objects/tag.h"
-#include "objects/keygrabber.h"
-#include "objects/mousegrabber.h"
-#include "objects/gesture.h"
-#include "objects/client.h"  /* AwesomeWM client_t (now aliased as Client) */
-#include "objects/layer_surface.h"  /* Layer shell surface Lua class */
-#include "objects/root.h"    /* Root button bindings */
-#include "animation.h"       /* Frame-synced animation callbacks */
-#include "ewmh.h"            /* EWMH support for XWayland */
-#include "property.h"         /* Property system for Wayland and XWayland */
-#include "shadow.h"          /* Compositor-level shadow support */
+#include "stack.h"
+#include "banning.h"
+#include "animation.h"
 #include "ipc.h"
 #include "dbus.h"
+#include "objects/spawn.h"
+#include "objects/screen.h"
+#include "objects/client.h"
+#include "objects/drawin.h"
+#include "objects/signal.h"
 #include "xwayland.h"
 #include "protocols.h"
 #include "monitor.h"
@@ -121,32 +97,17 @@
 #include "focus.h"
 
 /* macros */
-/* MAX and MIN are defined in x11_compat.h (included via globalconf.h) */
-/* Strip "lock" modifiers that should not affect bindings:
- * CapsLock (bit 1) and NumLock/Mod2 (bit 4).
- * Without this, scroll/button bindings defined with modifiers={} fail
- * when NumLock is active because the modifier table includes "Mod2". */
 #define LENGTH(X)               (sizeof X / sizeof X[0])
 #define TAGCOUNT (32)
 #define TAGMASK                 ((TAGCOUNT >= 32) ? ~0u : ((1u << TAGCOUNT) - 1))
 
-/* Type definitions moved to somewm_types.h */
-
-
 /* function declarations */
-
-/* Appearance helper functions */
-
 static void cleanup(void);
 static void cleanuplisteners(void);
 static void handlesig(int signo);
-/* Lock/idle API declarations in somewm_api.h */
-/* moveresize() removed - move/resize now handled by Lua mousegrabber */
 void printstatus(void);
-/* client_refresh() declared in objects/client.h - handles geometry, borders, focus */
 void some_refresh(void);
 static void run(char *startup_cmd);
-/* setfloating() removed - Lua manages floating state */
 static void setup(void);
 void spawn(const Arg *arg);
 
@@ -173,12 +134,6 @@ struct wlr_session *session;
 struct wlr_xdg_shell *xdg_shell;
 struct wlr_xdg_activation_v1 *activation;
 
-/* XDG Activation token tracking (Wayland startup notification) */
-
-
-/* Pending activation tokens (matches AwesomeWM's sn_waits pattern) */
-
-/* Pipe for async SIGCHLD handling (AwesomeWM pattern) */
 static int sigchld_pipe[2] = {-1, -1};
 struct wlr_xdg_decoration_manager_v1 *xdg_decoration_mgr;
 struct wlr_idle_notifier_v1 *idle_notifier;
