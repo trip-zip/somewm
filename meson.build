@@ -292,6 +292,7 @@ somewm_sources = [
   'protocols.c',
   'monitor.c',
   'input.c',
+  'window.c',
   'ipc.c',
   'color.c',
   'draw.c',
