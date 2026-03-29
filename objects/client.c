@@ -1916,8 +1916,8 @@ client_unfocus_internal(client_t *c)
     luaA_object_push(L, c);
 
     lua_pushboolean(L, false);
-    luaA_object_emit_signal(L, -2, "property::active", 1);
-    luaA_object_emit_signal(L, -1, "unfocus", 0);
+    some_event_queue_signal(L, -2, SIG_PROPERTY_ACTIVE, 1);
+    some_event_queue_property(L, -1, SIG_UNFOCUS);
     lua_pop(L, 1);
 }
 
@@ -2043,8 +2043,8 @@ client_focus_update(client_t *c)
 
     if(focused_new) {
         lua_pushboolean(L, true);
-        luaA_object_emit_signal(L, -2, "property::active", 1);
-        luaA_object_emit_signal(L, -1, "focus", 0);
+        some_event_queue_signal(L, -2, SIG_PROPERTY_ACTIVE, 1);
+        some_event_queue_property(L, -1, SIG_FOCUS);
     }
 
     lua_pop(L, 1);
