@@ -31,6 +31,11 @@ enum {
 	SIG_CLIENT_FOCUS,      /* global */
 	SIG_CLIENT_UNFOCUS,    /* global */
 
+	/* Mouse signals */
+	SIG_MOUSE_ENTER,
+	SIG_MOUSE_LEAVE,
+	SIG_MOUSE_MOVE,        /* 2 args: local x, y - coalesced per object */
+
 	/* Global geometry signal */
 	SIG_CLIENT_PROPERTY_GEOMETRY,  /* global */
 
@@ -65,6 +70,10 @@ void some_event_queue_signal(lua_State *L, int obj_ud,
 
 /* Queue a global signal (no object) */
 void some_event_queue_global(uint16_t signal_id);
+
+/* Queue a mouse::move with coalescing (updates existing if same object) */
+void some_event_queue_move(lua_State *L, int obj_ud,
+                           int local_x, int local_y);
 
 /* Drain: dispatch all queued events to Lua, then clear */
 void some_event_queue_drain(lua_State *L);

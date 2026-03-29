@@ -3182,7 +3182,7 @@ client_unmanage(client_t *c, client_unmanage_t reason)
     if (globalconf.mouse_under.type == UNDER_CLIENT &&
         globalconf.mouse_under.ptr.client == c) {
         luaA_object_push(L, c);
-        luaA_object_emit_signal(L, -1, "mouse::leave", 0);
+        some_event_queue_property(L, -1, SIG_MOUSE_LEAVE);
         lua_pop(L, 1);
         globalconf.mouse_under.type = UNDER_NONE;
         globalconf.mouse_under.ptr.client = NULL;
