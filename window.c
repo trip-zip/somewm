@@ -79,7 +79,7 @@ typedef struct {
 } Popup;
 
 /* forward declarations */
-void applybounds(Client *c, struct wlr_box *bbox);
+static void applybounds(Client *c, struct wlr_box *bbox);
 void arrange(Monitor *m);
 unsigned int get_border_width(void);
 const float *get_focuscolor(void);
@@ -98,7 +98,7 @@ void fullscreennotify(struct wl_listener *listener, void *data);
 void killclient(const Arg *arg);
 void mapnotify(struct wl_listener *listener, void *data);
 void maximizenotify(struct wl_listener *listener, void *data);
-void popup_unconstrain(Popup *p);
+static void popup_unconstrain(Popup *p);
 void repositionpopup(struct wl_listener *listener, void *data);
 void requestdecorationmode(struct wl_listener *listener, void *data);
 void resize(Client *c, struct wlr_box geo, int interact);
@@ -113,14 +113,14 @@ void togglefloating(const Arg *arg);
 void unmapnotify(struct wl_listener *listener, void *data);
 void updatetitle(struct wl_listener *listener, void *data);
 void zoom(const Arg *arg);
-void sync_tiling_reorder(Client *c);
+static void sync_tiling_reorder(Client *c);
 
 /* listener structs */
 struct wl_listener new_xdg_toplevel = {.notify = createnotify};
 struct wl_listener new_xdg_popup = {.notify = createpopup};
 struct wl_listener new_xdg_decoration = {.notify = createdecoration};
 
-void
+static void
 applybounds(Client *c, struct wlr_box *bbox)
 {
 	/* Minimum geometry must fit borders AND titlebars with at least 1px content */
@@ -144,7 +144,7 @@ applybounds(Client *c, struct wlr_box *bbox)
 }
 
 /* Synchronize tiling order change (zoom operation) */
-void
+static void
 sync_tiling_reorder(Client *c)
 {
 	/* Safety check: if arrays not initialized yet, skip sync */
@@ -322,7 +322,7 @@ commitnotify(struct wl_listener *listener, void *data)
 }
 
 /* Unconstrain popup using proper scene node coordinates (River pattern) */
-void
+static void
 popup_unconstrain(Popup *p)
 {
 	LayerSurface *l = NULL;
@@ -1805,6 +1805,8 @@ client_wipe(client_t *c)
     p_delete(&c->startup_id);
 }
 
+/* Intentionally synchronous: these fire once at startup during screen
+ * scanning, not during normal event handling. No re-entrance risk. */
 void
 client_emit_scanned(void)
 {
@@ -1819,6 +1821,8 @@ client_emit_scanning(void)
     luaA_class_emit_signal(L, &client_class, "scanning", 0);
 }
 
+/* Intentionally synchronous: class/instance rarely change and are not
+ * part of layout loops. */
 void
 client_set_class_instance(lua_State *L, int cidx, const char *class, const char *instance)
 {

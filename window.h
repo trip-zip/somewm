@@ -26,7 +26,6 @@ void fullscreennotify(struct wl_listener *listener, void *data);
 /* Geometry */
 void apply_geometry_to_wlroots(Client *c);
 void resize(Client *c, struct wlr_box geo, int interact);
-void applybounds(Client *c, struct wlr_box *bbox);
 
 /* Layout */
 void arrange(Monitor *m);
