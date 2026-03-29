@@ -372,6 +372,7 @@ bool client_resize(client_t *, area_t, bool, bool);
 void client_unmanage(client_t *, client_unmanage_t);
 void client_kill(client_t *);
 void client_set_sticky(lua_State *, int, bool);
+void client_set_hidden(lua_State *, int, bool);
 void client_set_above(lua_State *, int, bool);
 void client_set_below(lua_State *, int, bool);
 void client_set_modal(lua_State *, int, bool);
