@@ -4513,22 +4513,25 @@ client_apply_corner_radius(client_t *c)
 }
 
 /**
- * Adjust border rectangles to work with rounded corners.
+ * Update border geometry to handle both rounded and flat corners.
  *
- * When corner_radius > 0, the standard thin border rects don't cover the
- * rounded corner area, leaving visual artifacts. Following SwayFX's approach:
+ * Two modes, selected by corner_radius:
  *
- *   - Top/bottom borders are extended by corner_radius pixels in height,
- *     and get rounded corners (radius = corner_radius + border_width) so
- *     the border wraps smoothly around the window corners.
+ *   corner_radius > 0 (rounded mode):
+ *     Uses a single full-geometry border_frame rect with a clipped_region
+ *     punch-hole for the content area. The outer edge is rounded at
+ *     (corner_radius + border_width), the inner hole at corner_radius.
+ *     Individual border[0..3] rects are hidden.
  *
- *   - Left/right borders are shortened by corner_radius at each end to
- *     avoid overlapping the extended top/bottom borders.
+ *   corner_radius == 0 (flat mode):
+ *     Standard 4-rect border layout (top, bottom, left, right).
+ *     border_frame is hidden if it exists.
  *
- *   - A clipped region on top/bottom prevents the border from painting
- *     over the client content area.
+ *   border_width <= 0:
+ *     All borders hidden (maximize/fullscreen).
  *
- * When corner_radius == 0, standard flat border geometry is restored.
+ * Called from client_border_refresh() and client_apply_corner_radius().
+ * Requires HAVE_SCENEFX for rounded mode; flat mode is always available.
  */
 void
 client_update_border_for_corners(client_t *c)
