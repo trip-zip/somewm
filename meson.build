@@ -286,6 +286,7 @@ somewm_sources = [
   'somewm_api.c',
   'xwayland.c',
   'protocols.c',
+  'monitor.c',
   'ipc.c',
   'color.c',
   'draw.c',
