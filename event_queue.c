@@ -12,6 +12,7 @@
 
 #include "event_queue.h"
 #include "common/luaobject.h"
+#include "common/luaclass.h"
 #include "objects/signal.h"
 
 /* Signal name lookup table - maps SIG_* enum to string */
@@ -31,6 +32,10 @@ static const char *signal_names[SIG_COUNT] = {
 	[SIG_MOUSE_ENTER]        = "mouse::enter",
 	[SIG_MOUSE_LEAVE]        = "mouse::leave",
 	[SIG_MOUSE_MOVE]         = "mouse::move",
+	[SIG_MANAGE]             = "manage",
+	[SIG_UNMANAGE]           = "unmanage",
+	[SIG_LIST]               = "list",
+	[SIG_SWAPPED]            = "swapped",
 	[SIG_CLIENT_PROPERTY_GEOMETRY] = "client::property::geometry",
 };
 
@@ -70,6 +75,7 @@ some_event_queue_property(lua_State *L, int obj_ud, uint16_t signal_id)
 	e->signal_id = signal_id;
 	e->nargs = 0;
 	e->args_ref = LUA_NOREF;
+	e->class_ptr = NULL;
 
 	/* Capture object reference */
 	lua_pushvalue(L, obj_ud);
@@ -84,6 +90,7 @@ some_event_queue_signal(lua_State *L, int obj_ud, uint16_t signal_id,
 	e->event_type = EVENT_OBJECT;
 	e->signal_id = signal_id;
 	e->nargs = nargs;
+	e->class_ptr = NULL;
 
 	/* Capture object reference.
 	 * The caller passes obj_ud relative to the current stack which
@@ -117,6 +124,32 @@ some_event_queue_global(uint16_t signal_id)
 	e->object_ref = LUA_NOREF;
 	e->nargs = 0;
 	e->args_ref = LUA_NOREF;
+	e->class_ptr = NULL;
+}
+
+void
+some_event_queue_class(lua_State *L, void *class_ptr,
+                       uint16_t signal_id, int nargs)
+{
+	some_event_t *e = queue_push();
+	e->event_type = EVENT_CLASS;
+	e->signal_id = signal_id;
+	e->object_ref = LUA_NOREF;
+	e->class_ptr = class_ptr;
+
+	if (nargs > 0) {
+		e->nargs = nargs;
+		lua_createtable(L, nargs, 0);
+		for (int i = 0; i < nargs; i++) {
+			lua_pushvalue(L, -(nargs + 1) + i);
+			lua_rawseti(L, -2, i + 1);
+		}
+		e->args_ref = luaL_ref(L, LUA_REGISTRYINDEX);
+		lua_pop(L, nargs);
+	} else {
+		e->nargs = 0;
+		e->args_ref = LUA_NOREF;
+	}
 }
 
 void
@@ -165,6 +198,7 @@ some_event_queue_move(lua_State *L, int obj_ud, int local_x, int local_y)
 	e->event_type = EVENT_OBJECT;
 	e->signal_id = SIG_MOUSE_MOVE;
 	e->nargs = 2;
+	e->class_ptr = NULL;
 	e->object_ref = luaL_ref(L, LUA_REGISTRYINDEX);  /* consumes the pushed object */
 
 	lua_createtable(L, 2, 0);
@@ -192,6 +226,20 @@ some_event_queue_drain(lua_State *L)
 
 		if (e->event_type == EVENT_GLOBAL) {
 			luaA_emit_signal_global(name);
+			goto cleanup;
+		}
+
+		if (e->event_type == EVENT_CLASS) {
+			/* Class-level signal (e.g., client "list") */
+			int nargs = 0;
+			if (e->args_ref != LUA_NOREF) {
+				lua_rawgeti(L, LUA_REGISTRYINDEX, e->args_ref);
+				nargs = e->nargs;
+				for (int j = 1; j <= nargs; j++)
+					lua_rawgeti(L, -j, j);
+				lua_remove(L, -(nargs + 1));
+			}
+			luaA_class_emit_signal(L, e->class_ptr, name, nargs);
 			goto cleanup;
 		}
 

@@ -484,7 +484,7 @@ createnotify(struct wl_listener *listener, void *data)
 	stack_client_push(c);
 
 	/* Emit client::list signal (matches AwesomeWM line 2266) */
-	luaA_class_emit_signal(L, &client_class, "list", 0);
+	some_event_queue_class(L, &client_class, SIG_LIST, 0);
 
 	/* Keep client on Lua stack - it will be used by mapnotify() later
 	 * DO NOT emit manage signal here - AwesomeWM emits it at end of client_manage,
@@ -956,7 +956,7 @@ mapnotify(struct wl_listener *listener, void *data)
 		lua_pushstring(L, "new");
 		lua_newtable(L);
 		luaA_object_emit_signal(L, -3, "request::manage", 2);
-		luaA_object_emit_signal(L, -1, "manage", 0);
+		some_event_queue_property(L, -1, SIG_MANAGE);
 		lua_pop(L, 1);
 
 		/* Apply geometry BEFORE enabling scene node to send configure event.
@@ -1049,7 +1049,7 @@ mapnotify(struct wl_listener *listener, void *data)
 
 		/* Emit legacy "manage" signal for backwards compatibility (matches AwesomeWM line 2281)
 		 * Note: AwesomeWM comment says "TODO v6: remove this" */
-		luaA_object_emit_signal(L, -1, "manage", 0);
+		some_event_queue_property(L, -1, SIG_MANAGE);
 
 #ifdef XWAYLAND
 		/* For XWayland clients, emit request::activate to grant focus.
@@ -1546,19 +1546,19 @@ swapstack(const Arg *arg)
 		Client *c = globalconf.clients.tab[target_idx]; /* original sel */
 		Client *swap = globalconf.clients.tab[sel_idx]; /* original target */
 
-		luaA_class_emit_signal(L, &client_class, "list", 0);
+		some_event_queue_class(L, &client_class, SIG_LIST, 0);
 
 		/* First swapped signal on c (is_source=true) */
 		luaA_object_push(L, c);
 		luaA_object_push(L, swap);
 		lua_pushboolean(L, true);
-		luaA_object_emit_signal(L, -4, "swapped", 2);
+		some_event_queue_signal(L, -4, SIG_SWAPPED, 2);
 
 		/* Second swapped signal on swap (is_source=false) */
 		luaA_object_push(L, swap);
 		luaA_object_push(L, c);
 		lua_pushboolean(L, false);
-		luaA_object_emit_signal(L, -3, "swapped", 2);
+		some_event_queue_signal(L, -3, SIG_SWAPPED, 2);
 	}
 
 	arrange(selmon);

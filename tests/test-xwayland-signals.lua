@@ -151,13 +151,13 @@ local steps = {
         return true
     end,
 
-    -- Step 4: Verify manage signal was received
+    -- Step 4: Wait for deferred manage signal to drain
     function()
-        io.stderr:write(string.format(
-            "[TEST] Checking manage: received=%s\n",
-            tostring(signals_received.manage)
-        ))
+        if signals_received.manage then return true end
+    end,
 
+    -- Step 5: Verify manage signal was received
+    function()
         assert(signals_received.manage,
             "FAIL: manage signal was not fired for X11 client")
         assert(signal_clients.manage == my_x11_client,
@@ -221,13 +221,14 @@ local steps = {
         return true
     end,
 
-    -- Step 8: Verify unmanage signal was received
+    -- Step 8: Wait for deferred unmanage signal to drain
     function()
-        io.stderr:write(string.format(
-            "[TEST] Checking unmanage: received=%s\n",
-            tostring(signals_received.unmanage)
-        ))
+        if signals_received.unmanage then return true end
+        -- Allow drain cycle
+    end,
 
+    -- Step 9: Verify unmanage signal was received
+    function()
         assert(signals_received.unmanage,
             "FAIL: unmanage signal was not fired for X11 client")
 
