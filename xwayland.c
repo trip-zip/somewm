@@ -21,6 +21,7 @@
 
 #include "somewm.h"
 #include "somewm_api.h"
+#include "event_queue.h"
 #include "xwayland.h"
 #include "globalconf.h"
 #include "common/luaobject.h"
@@ -174,7 +175,7 @@ createnotifyx11(struct wl_listener *listener, void *data)
 	stack_client_push(c);
 
 	/* Emit client::list signal (matches AwesomeWM line 2266) */
-	luaA_class_emit_signal(L, &client_class, "list", 0);
+	some_event_queue_class(L, &client_class, SIG_LIST, 0);
 
 	/* Pop the client from the Lua stack */
 	lua_pop(L, 1);

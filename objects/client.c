@@ -2464,7 +2464,7 @@ client_manage(xcb_window_t w, xcb_get_geometry_reply_t *wgeom, xcb_get_window_at
 
     spawn_start_notify(c, startup_id);
 
-    luaA_class_emit_signal(L, &client_class, "list", 0);
+    some_event_queue_class(L, &client_class, SIG_LIST, 0);
 
     /* Add the context */
     if (globalconf.loop == NULL)
@@ -3225,7 +3225,7 @@ client_unmanage(client_t *c, client_unmanage_t reason)
     luaA_object_emit_signal(L, -1, "unmanage", 0);
     lua_pop(L, 1);
 
-    luaA_class_emit_signal(L, &client_class, "list", 0);
+    some_event_queue_class(L, &client_class, SIG_LIST, 0);
 
     if(strut_has_value(&c->strut))
         screen_update_workarea(c->screen);
@@ -3586,16 +3586,16 @@ luaA_client_swap(lua_State *L)
         *ref_c = swap;
         *ref_swap = c;
 
-        luaA_class_emit_signal(L, &client_class, "list", 0);
+        some_event_queue_class(L, &client_class, SIG_LIST, 0);
 
         luaA_object_push(L, swap);
         lua_pushboolean(L, true);
-        luaA_object_emit_signal(L, -4, "swapped", 2);
+        some_event_queue_signal(L, -4, SIG_SWAPPED, 2);
 
         luaA_object_push(L, swap);
         luaA_object_push(L, c);
         lua_pushboolean(L, false);
-        luaA_object_emit_signal(L, -3, "swapped", 2);
+        some_event_queue_signal(L, -3, SIG_SWAPPED, 2);
     }
 
     return 0;
