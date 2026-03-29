@@ -107,6 +107,8 @@ stdenv.mkDerivation {
         --prefix LUA_CPATH : "${luaEnv}/lib/lua/${luaEnv.luaversion}/?.so"
     '';
 
+  passthru.providedSessions = [ "somewm" ];
+
   meta = with lib; {
     description = "AwesomeWM ported to Wayland - 100% Lua API compatible";
     homepage = "https://github.com/trip-zip/somewm";
