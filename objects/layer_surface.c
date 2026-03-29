@@ -15,6 +15,7 @@
 #include "common/luaclass.h"
 #include "common/luaobject.h"
 #include "somewm_api.h"
+#include "../event_queue.h"
 
 /* Layer surface class (global) */
 lua_class_t layer_surface_class;
@@ -379,7 +380,7 @@ layer_surface_manage(lua_State *L, LayerSurface *c_ls)
 	layer_surface_array_push(&globalconf.layer_surfaces, ls);
 
 	/* Emit class list signal */
-	luaA_class_emit_signal(L, &layer_surface_class, "list", 0);
+	some_event_queue_class(L, &layer_surface_class, SIG_LIST, 0);
 
 	return ls;
 }
@@ -447,7 +448,7 @@ layer_surface_emit_unmanage(layer_surface_t *ls)
 	}
 
 	/* Emit class list signal */
-	luaA_class_emit_signal(L, &layer_surface_class, "list", 0);
+	some_event_queue_class(L, &layer_surface_class, SIG_LIST, 0);
 }
 
 /*
