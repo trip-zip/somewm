@@ -3353,7 +3353,7 @@ local function setup_event_hooks()
 
   -- Client managed (new window appeared)
   if capi.client and capi.client.connect_signal then
-    capi.client.connect_signal("manage", function(c)
+    capi.client.connect_signal("request::manage", function(c)
       ipc.broadcast("client_manage", {
         id = c.id,
         title = c.name or "",
@@ -3363,7 +3363,7 @@ local function setup_event_hooks()
     end)
 
     -- Client unmanaged (window closed)
-    capi.client.connect_signal("unmanage", function(c)
+    capi.client.connect_signal("request::unmanage", function(c)
       ipc.broadcast("client_unmanage", {
         id = c.id,
         title = c.name or "",

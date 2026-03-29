@@ -3222,7 +3222,6 @@ client_unmanage(client_t *c, client_unmanage_t reason)
     lua_newtable(L);
 
     luaA_object_emit_signal(L, -3, "request::unmanage", 2);
-    luaA_object_emit_signal(L, -1, "unmanage", 0);
     lua_pop(L, 1);
 
     some_event_queue_class(L, &client_class, SIG_LIST, 0);
