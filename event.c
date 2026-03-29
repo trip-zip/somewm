@@ -11,6 +11,7 @@
  */
 
 #include "event.h"
+#include "event_queue.h"
 #include "globalconf.h"
 #include "objects/button.h"
 #include "objects/mousegrabber.h"
@@ -209,7 +210,7 @@ event_drawable_under_mouse(lua_State *L, int ud)
 
 	if (globalconf.drawable_under_mouse != NULL) {
 		luaA_object_push(L, globalconf.drawable_under_mouse);
-		luaA_object_emit_signal(L, -1, "mouse::leave", 0);
+		some_event_queue_property(L, -1, SIG_MOUSE_LEAVE);
 		lua_pop(L, 1);
 		luaA_object_unref(L, globalconf.drawable_under_mouse);
 		globalconf.drawable_under_mouse = NULL;
@@ -217,6 +218,6 @@ event_drawable_under_mouse(lua_State *L, int ud)
 
 	if (d != NULL) {
 		globalconf.drawable_under_mouse = d;
-		luaA_object_emit_signal(L, ud, "mouse::enter", 0);
+		some_event_queue_property(L, ud, SIG_MOUSE_ENTER);
 	}
 }
