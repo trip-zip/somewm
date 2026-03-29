@@ -40,6 +40,17 @@ enum {
 	SIG_LIST,              /* class-level, 0 args */
 	SIG_SWAPPED,           /* 2 args: other object + is_source bool */
 
+	/* Request signals (fire-and-forget, C doesn't check response) */
+	SIG_REQUEST_ACTIVATE,  /* 1-2 args: context [, hints] */
+	SIG_REQUEST_URGENT,    /* 1 arg: bool */
+	SIG_REQUEST_GEOMETRY,  /* 1-2 args: context [, hints] */
+	SIG_REQUEST_TAG,       /* 1 arg: tag index or table */
+	SIG_REQUEST_SELECT,    /* 1 arg */
+	SIG_SYSTRAY_ACTIVATE,           /* 2 args */
+	SIG_SYSTRAY_SECONDARY_ACTIVATE, /* 2 args */
+	SIG_SYSTRAY_CONTEXT_MENU,       /* 2 args */
+	SIG_SYSTRAY_SCROLL,             /* 2 args */
+
 	/* Global geometry signal */
 	SIG_CLIENT_PROPERTY_GEOMETRY,  /* global */
 

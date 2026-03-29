@@ -72,7 +72,7 @@ activatex11(struct wl_listener *listener, void *data)
 	lua_newtable(L);  /* hints table */
 	lua_pushboolean(L, true);
 	lua_setfield(L, -2, "raise");
-	luaA_object_emit_signal(L, -3, "request::activate", 2);
+	some_event_queue_signal(L, -3, SIG_REQUEST_ACTIVATE, 2);
 	lua_pop(L, 1);
 }
 
@@ -199,7 +199,7 @@ sethints(struct wl_listener *listener, void *data)
 
 	/* Emit request::urgent and let Lua decide (matches AwesomeWM property.c:203-204) */
 	lua_pushboolean(L, xcb_icccm_wm_hints_get_urgency(hints));
-	luaA_object_emit_signal(L, -2, "request::urgent", 1);
+	some_event_queue_signal(L, -2, SIG_REQUEST_URGENT, 1);
 
 	/* Handle input focus hint (XCB_ICCCM_WM_HINT_INPUT)
 	 * If input hint is set and false, client should not receive focus */

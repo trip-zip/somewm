@@ -26,6 +26,7 @@
 
 #include "somewm.h"
 #include "somewm_api.h"
+#include "event_queue.h"
 #include "globalconf.h"
 #include "client.h"
 #include "common/luaobject.h"
@@ -551,7 +552,7 @@ foreign_toplevel_request_activate(struct wl_listener *listener, void *data)
 	lua_setfield(L, -2, "switch_to_tag");
 	lua_pushboolean(L, true);
 	lua_setfield(L, -2, "raise");
-	luaA_object_emit_signal(L, -3, "request::activate", 2);
+	some_event_queue_signal(L, -3, SIG_REQUEST_ACTIVATE, 2);
 	lua_pop(L, 1);
 }
 
@@ -754,12 +755,12 @@ void urgent(struct wl_listener *listener, void *data)
 	L = globalconf_get_lua_State();
 	luaA_object_push(L, c);
 	lua_pushstring(L, token_matched ? "startup" : "client");  /* context */
-	luaA_object_emit_signal(L, -2, "request::activate", 1);
+	some_event_queue_signal(L, -2, SIG_REQUEST_ACTIVATE, 1);
 	lua_pop(L, 1);
 
 	/* Emit request::urgent and let Lua decide (matches AwesomeWM) */
 	luaA_object_push(L, c);
 	lua_pushboolean(L, true);
-	luaA_object_emit_signal(L, -2, "request::urgent", 1);
+	some_event_queue_signal(L, -2, SIG_REQUEST_URGENT, 1);
 	lua_pop(L, 1);
 }
