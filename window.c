@@ -956,7 +956,6 @@ mapnotify(struct wl_listener *listener, void *data)
 		lua_pushstring(L, "new");
 		lua_newtable(L);
 		luaA_object_emit_signal(L, -3, "request::manage", 2);
-		some_event_queue_property(L, -1, SIG_MANAGE);
 		lua_pop(L, 1);
 
 		/* Apply geometry BEFORE enabling scene node to send configure event.
@@ -1046,10 +1045,6 @@ mapnotify(struct wl_listener *listener, void *data)
 		lua_pushstring(L, "new");  /* context */
 		lua_newtable(L);            /* hints table (empty for now) */
 		luaA_object_emit_signal(L, -3, "request::manage", 2);
-
-		/* Emit legacy "manage" signal for backwards compatibility (matches AwesomeWM line 2281)
-		 * Note: AwesomeWM comment says "TODO v6: remove this" */
-		some_event_queue_property(L, -1, SIG_MANAGE);
 
 #ifdef XWAYLAND
 		/* For XWayland clients, emit request::activate to grant focus.

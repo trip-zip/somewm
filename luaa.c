@@ -5410,7 +5410,6 @@ luaA_hot_reload(void)
 		lua_pushliteral(L, "restart");
 		lua_newtable(L);
 		luaA_object_emit_signal(L, -3, "request::manage", 2);
-		some_event_queue_property(L, -1, SIG_MANAGE);
 
 		lua_pop(L, 1);
 	}

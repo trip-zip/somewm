@@ -53,7 +53,7 @@ local helper_pid = nil
 local my_client = nil
 local manage_count = 0
 
-client.connect_signal("manage", function(c)
+client.connect_signal("request::manage", function(c)
     if current_test <= #test_cases then
         local tc = test_cases[current_test]
         if x11_client.is_xwayland(c) and c.class == tc.class then
