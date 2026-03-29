@@ -36,6 +36,12 @@ enum {
 	SIG_MOUSE_LEAVE,
 	SIG_MOUSE_MOVE,        /* 2 args: local x, y - coalesced per object */
 
+	/* Lifecycle signals */
+	SIG_MANAGE,            /* deprecated, 0 args */
+	SIG_UNMANAGE,          /* deprecated, 0 args */
+	SIG_LIST,              /* class-level, 0 args */
+	SIG_SWAPPED,           /* 2 args: other object + is_source bool */
+
 	/* Global geometry signal */
 	SIG_CLIENT_PROPERTY_GEOMETRY,  /* global */
 
@@ -58,6 +64,7 @@ typedef struct {
 	int object_ref;       /* luaL_ref to target object (LUA_NOREF for globals) */
 	int nargs;            /* Number of arguments captured */
 	int args_ref;         /* luaL_ref to args table (LUA_NOREF if 0 args) */
+	void *class_ptr;      /* lua_class_t* for EVENT_CLASS (NULL otherwise) */
 } some_event_t;
 
 /* Queue a 0-arg property signal on an object (fast path) */
@@ -70,6 +77,10 @@ void some_event_queue_signal(lua_State *L, int obj_ud,
 
 /* Queue a global signal (no object) */
 void some_event_queue_global(uint16_t signal_id);
+
+/* Queue a class-level signal (e.g., client "list") */
+void some_event_queue_class(lua_State *L, void *class_ptr,
+                            uint16_t signal_id, int nargs);
 
 /* Queue a mouse::move with coalescing (updates existing if same object) */
 void some_event_queue_move(lua_State *L, int obj_ud,
