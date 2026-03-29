@@ -82,8 +82,10 @@ some_event_queue_signal(lua_State *L, int obj_ud, uint16_t signal_id,
 	e->signal_id = signal_id;
 	e->nargs = nargs;
 
-	/* Capture object reference */
-	lua_pushvalue(L, obj_ud < 0 ? obj_ud - nargs : obj_ud);
+	/* Capture object reference.
+	 * The caller passes obj_ud relative to the current stack which
+	 * already includes the nargs arguments on top. */
+	lua_pushvalue(L, obj_ud);
 	e->object_ref = luaL_ref(L, LUA_REGISTRYINDEX);
 
 	/* Capture arguments into a table */
