@@ -86,6 +86,8 @@ stdenv.mkDerivation {
   ]
   ++ lib.optional gtk3Support gtk3;
 
+  mesonFlags = [ "-Dsystemd=disabled" ];
+
   postFixup =
     let
       giPackages = [
