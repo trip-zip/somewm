@@ -90,6 +90,7 @@
 #include "objects/drawin.h"
 #include "objects/signal.h"
 #include "objects/mousegrabber.h"
+#include "event_queue.h"
 #include "xwayland.h"
 #include "protocols.h"
 #include "monitor.h"
@@ -264,6 +265,7 @@ cleanup(void)
 
 	a_dbus_cleanup();
 	ipc_cleanup();
+	some_event_queue_wipe();
 
 	xwayland_cleanup();
 
@@ -724,6 +726,12 @@ some_refresh(void)
 	struct timespec bench_ts[BENCH_STAGE_COUNT + 1];
 	clock_gettime(CLOCK_MONOTONIC, &bench_ts[0]);
 #endif
+
+	/* Step 0: Drain queued events - dispatch batched signals to Lua.
+	 * Must happen before the refresh signal so Lua handlers see
+	 * up-to-date state when layout runs.
+	 * Included in the lua_refresh stage timing. */
+	some_event_queue_drain(globalconf_L);
 
 	/* Step 1: Emit refresh signal - triggers Lua layout calculations */
 	luaA_emit_signal_global("refresh");
@@ -1270,6 +1278,7 @@ setup(void)
 	xwayland_setup();
 
 	luaA_init();
+	some_event_queue_init();
 
 	/* Initialize animation subsystem (must be AFTER luaA_init for Lua state) */
 	animation_init(event_loop);
