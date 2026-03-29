@@ -287,6 +287,7 @@ somewm_sources = [
   'xwayland.c',
   'protocols.c',
   'monitor.c',
+  'input.c',
   'ipc.c',
   'color.c',
   'draw.c',
