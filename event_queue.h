@@ -37,8 +37,6 @@ enum {
 	SIG_MOUSE_MOVE,        /* 2 args: local x, y - coalesced per object */
 
 	/* Lifecycle signals */
-	SIG_MANAGE,            /* deprecated, 0 args */
-	SIG_UNMANAGE,          /* deprecated, 0 args */
 	SIG_LIST,              /* class-level, 0 args */
 	SIG_SWAPPED,           /* 2 args: other object + is_source bool */
 

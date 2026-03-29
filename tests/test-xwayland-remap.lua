@@ -46,7 +46,7 @@ local my_client = nil
 local manage_count = 0
 local unmanage_count = 0
 
-client.connect_signal("manage", function(c)
+client.connect_signal("request::manage", function(c)
     if x11_client.is_xwayland(c) and
        (c.class == CLASS or c.class == CLASS:lower()) then
         manage_count = manage_count + 1
@@ -58,7 +58,7 @@ client.connect_signal("manage", function(c)
     end
 end)
 
-client.connect_signal("unmanage", function(c)
+client.connect_signal("request::unmanage", function(c)
     if x11_client.is_xwayland(c) and
        (c.class == CLASS or c.class == CLASS:lower()) then
         unmanage_count = unmanage_count + 1
