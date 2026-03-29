@@ -63,8 +63,7 @@
 #define LISTEN_STATIC(E, H)     do { struct wl_listener *_l = ecalloc(1, sizeof(*_l)); _l->notify = (H); wl_signal_add((E), _l); } while (0)
 
 /* Extern declarations for functions staying in somewm.c */
-extern void focusclient(Client *c, int lift);
-extern Client *focustop(Monitor *m);
+#include "focus.h"
 extern void arrange(Monitor *m);
 extern void setfullscreen(Client *c, int fullscreen);
 extern const float *get_focuscolor(void);

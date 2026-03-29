@@ -64,8 +64,7 @@
 #define LISTEN(E, L, H)         wl_signal_add((E), ((L)->notify = (H), (L)))
 
 /* extern declarations for functions still in somewm.c */
-extern void focusclient(Client *c, int lift);
-extern Client *focustop(Monitor *m);
+#include "focus.h"
 extern void some_refresh(void);
 extern void printstatus(void);
 extern void spawn(const Arg *arg);

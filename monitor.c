@@ -44,8 +44,7 @@
 #define LENGTH(X)               (sizeof X / sizeof X[0])
 
 /* extern declarations for functions that stay in somewm.c */
-extern void focusclient(Client *c, int lift);
-extern Client *focustop(Monitor *m);
+#include "focus.h"
 extern void setmon(Client *c, Monitor *m, uint32_t newtags);
 extern void resize(Client *c, struct wlr_box geo, int interact);
 extern void arrange(Monitor *m);
