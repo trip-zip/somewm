@@ -67,7 +67,6 @@
 #include "focus.h"
 extern void cursor_to_client_coordinates(Client *client, double *sx, double *sy);
 extern void some_recompute_idle_inhibit(struct wlr_surface *exclude);
-extern void some_refresh(void);
 extern void printstatus(void);
 extern void spawn(const Arg *arg);
 
