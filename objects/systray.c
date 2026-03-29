@@ -18,6 +18,7 @@
 #include "common/luaclass.h"
 #include "common/luaobject.h"
 #include "../globalconf.h"
+#include "../event_queue.h"
 #include "common/util.h"
 #include <stdio.h>
 #include <string.h>
@@ -392,7 +393,7 @@ luaA_systray_item_activate(lua_State *L)
 	/* Emit signal that Lua D-Bus code will handle */
 	lua_pushinteger(L, x);
 	lua_pushinteger(L, y);
-	luaA_object_emit_signal(L, 1, "request::activate", 2);
+	some_event_queue_signal(L, 1, SIG_SYSTRAY_ACTIVATE, 2);
 
 	return 0;
 }
@@ -412,7 +413,7 @@ luaA_systray_item_secondary_activate(lua_State *L)
 
 	lua_pushinteger(L, x);
 	lua_pushinteger(L, y);
-	luaA_object_emit_signal(L, 1, "request::secondary_activate", 2);
+	some_event_queue_signal(L, 1, SIG_SYSTRAY_SECONDARY_ACTIVATE, 2);
 
 	return 0;
 }
@@ -432,7 +433,7 @@ luaA_systray_item_context_menu(lua_State *L)
 
 	lua_pushinteger(L, x);
 	lua_pushinteger(L, y);
-	luaA_object_emit_signal(L, 1, "request::context_menu", 2);
+	some_event_queue_signal(L, 1, SIG_SYSTRAY_CONTEXT_MENU, 2);
 
 	return 0;
 }
@@ -454,7 +455,7 @@ luaA_systray_item_scroll(lua_State *L)
 
 	lua_pushinteger(L, delta);
 	lua_pushstring(L, orientation);
-	luaA_object_emit_signal(L, 1, "request::scroll", 2);
+	some_event_queue_signal(L, 1, SIG_SYSTRAY_SCROLL, 2);
 
 	return 0;
 }

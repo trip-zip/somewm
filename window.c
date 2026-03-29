@@ -1058,7 +1058,7 @@ mapnotify(struct wl_listener *listener, void *data)
 			lua_newtable(L);  /* hints table */
 			lua_pushboolean(L, true);
 			lua_setfield(L, -2, "raise");
-			luaA_object_emit_signal(L, -3, "request::activate", 2);
+			some_event_queue_signal(L, -3, SIG_REQUEST_ACTIVATE, 2);
 		}
 #endif
 
