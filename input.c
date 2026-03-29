@@ -64,10 +64,7 @@
 
 /* Extern declarations for functions staying in somewm.c */
 #include "focus.h"
-extern void arrange(Monitor *m);
-extern void setfullscreen(Client *c, int fullscreen);
-extern const float *get_focuscolor(void);
-extern void client_set_border_color(Client *c, const float color[4]);
+#include "window.h"
 extern Client *drag_source_client;
 extern void cursor_to_client_coordinates(Client *client, double *sx, double *sy);
 
