@@ -2146,12 +2146,17 @@ client_border_refresh(void)
          * When corner_radius == 0, uses standard flat layout. */
         client_update_border_for_corners(c);
 
-        /* Update border color if initialized (matches AwesomeWM window_border_refresh pattern) */
+        /* Update border color if initialized (matches AwesomeWM window_border_refresh pattern).
+         * Preserve current opacity in color alpha — otherwise border_refresh
+         * clobbers the alpha that client_apply_opacity_to_scene() set during
+         * fade animations. */
         if(c->border_color.initialized) {
             float color_floats[4];
             int i;
 
             color_to_floats(&c->border_color, color_floats);
+            if(c->opacity >= 0)
+                color_floats[3] = (float)c->opacity;
 
             /* Apply color to all border rectangles */
             for(i = 0; i < 4; i++)

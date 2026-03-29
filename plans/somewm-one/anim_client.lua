@@ -299,23 +299,55 @@ local function fade(c, from_alpha, to_alpha, section, on_done)
     s.fading = true
     c.opacity = from_alpha
 
-    -- Hide border during fadeOut (wlr_scene_rect doesn't support opacity)
-    local saved_border
-    if fading_out and c.valid then
+    -- Hide decorations during fade (wlr_scene_rect/blur ignore opacity).
+    -- FadeIn: restore at 70% progress so they appear near the end.
+    -- FadeOut: hide immediately, they stay hidden until window is gone.
+    local saved_border, had_shadow, had_blur
+    if c.valid then
         saved_border = c.border_width
         c.border_width = 0
+        local sh = c.shadow
+        if sh and sh.enabled then
+            had_shadow = true
+            c.shadow = { enabled = false }
+        end
+        if c.backdrop_blur then
+            had_blur = true
+            c.backdrop_blur = false
+        end
+    end
+
+    local function restore_decorations()
+        if not c.valid then return end
+        if saved_border then
+            c.border_width = saved_border
+            saved_border = nil
+        end
+        if had_shadow then
+            c.shadow = { enabled = true }
+            had_shadow = false
+        end
+        if had_blur then
+            c.backdrop_blur = true
+            had_blur = false
+        end
     end
 
     s.fade_handle = awesome.start_animation(dur, ease,
         function(t)
             if not c.valid then cancel(c, "fade"); return end
             c.opacity = from_alpha + (to_alpha - from_alpha) * t
+            -- FadeIn: restore border + shadow near end of animation
+            if not fading_out and t >= 0.7 and saved_border then
+                restore_decorations()
+            end
         end,
         function()
             s.fading = false
             s.fade_handle = nil
             if c.valid then
                 c.opacity = to_alpha
+                restore_decorations()
             end
             if on_done then on_done() end
         end)

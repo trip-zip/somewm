@@ -1334,7 +1334,7 @@ pcall(function()
         },
         fade = {
             enabled      = true,    -- fadeIn on new window + restore from minimize
-            duration     = 0.4,
+            duration     = 0.5,
             out_duration = nil,     -- fadeOut duration (nil = same as duration)
             easing       = "ease-out-cubic",
         },
