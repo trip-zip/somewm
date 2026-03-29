@@ -34,6 +34,15 @@ static const char *signal_names[SIG_COUNT] = {
 	[SIG_MOUSE_MOVE]         = "mouse::move",
 	[SIG_LIST]               = "list",
 	[SIG_SWAPPED]            = "swapped",
+	[SIG_REQUEST_ACTIVATE]   = "request::activate",
+	[SIG_REQUEST_URGENT]     = "request::urgent",
+	[SIG_REQUEST_GEOMETRY]   = "request::geometry",
+	[SIG_REQUEST_TAG]        = "request::tag",
+	[SIG_REQUEST_SELECT]     = "request::select",
+	[SIG_SYSTRAY_ACTIVATE]            = "request::activate",
+	[SIG_SYSTRAY_SECONDARY_ACTIVATE]  = "request::secondary_activate",
+	[SIG_SYSTRAY_CONTEXT_MENU]        = "request::context_menu",
+	[SIG_SYSTRAY_SCROLL]              = "request::scroll",
 	[SIG_CLIENT_PROPERTY_GEOMETRY] = "client::property::geometry",
 };
 
