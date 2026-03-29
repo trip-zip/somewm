@@ -238,3 +238,340 @@ focustop(Monitor *m)
 	}
 	return NULL;
 }
+
+/* Client focus functions (moved from objects/client.c) */
+
+/** Unfocus a client (internal).
+ * \param c The client.
+ */
+void
+client_unfocus_internal(client_t *c)
+{
+    lua_State *L = globalconf_get_lua_State();
+    globalconf.focus.client = NULL;
+
+    luaA_object_push(L, c);
+
+    lua_pushboolean(L, false);
+    some_event_queue_signal(L, -2, SIG_PROPERTY_ACTIVE, 1);
+    some_event_queue_property(L, -1, SIG_UNFOCUS);
+    lua_pop(L, 1);
+}
+
+/** Unfocus a client.
+ * \param c The client.
+ */
+void
+client_unfocus(client_t *c)
+{
+    client_unfocus_internal(c);
+    globalconf.focus.need_update = true;
+}
+
+/** Prepare banning a client by running all needed lua events.
+ * \param c The client.
+ */
+void client_ban_unfocus(client_t *c)
+{
+    /* Wait until the last moment to take away the focus from the window. */
+    if(globalconf.focus.client == c) {
+        client_unfocus(c);
+    }
+}
+
+/** Ban client and move it out of the viewport.
+ * \param c The client.
+ */
+void
+client_ban(client_t *c)
+{
+    if(!c->isbanned)
+    {
+        /* Wayland deviation: scene is created at map time, but clients are added
+         * to globalconf.clients at create time (to match AwesomeWM signal timing).
+         * X11's frame_window exists immediately, but our scene may not yet. */
+        if(!c->scene)
+            return;
+
+        /* Wayland: hide in scene graph (equivalent to xcb_unmap_window) */
+        wlr_scene_node_set_enabled(&c->scene->node, false);
+
+        c->isbanned = true;
+
+        client_ban_unfocus(c);
+    }
+}
+
+/** This is part of The Bob Marley Algorithm: we ignore enter and leave window
+ * in certain cases, like map/unmap or move, so we don't get spurious events.
+ * The implementation works by noting the range of sequence numbers for which we
+ * should ignore events. We grab the server to make sure that only we could
+ * generate events in this range.
+ */
+void
+client_ignore_enterleave_events(void)
+{
+    check(globalconf.pending_enter_leave_begin.sequence == 0);
+    globalconf.pending_enter_leave_begin = xcb_grab_server(globalconf.connection);
+    /* If the connection is broken, we get a request with sequence number 0
+     * which would then trigger an assertion in
+     * client_restore_enterleave_events(). Handle this nicely.
+     */
+    if(xcb_connection_has_error(globalconf.connection))
+        fatal("X server connection broke (error %d)",
+                xcb_connection_has_error(globalconf.connection));
+    check(globalconf.pending_enter_leave_begin.sequence != 0);
+}
+
+void
+client_restore_enterleave_events(void)
+{
+    sequence_pair_t pair;
+
+    check(globalconf.pending_enter_leave_begin.sequence != 0);
+    pair.begin = globalconf.pending_enter_leave_begin.sequence;
+    pair.end = xcb_no_operation(globalconf.connection).sequence;
+    xutil_ungrab_server(globalconf.connection);
+    globalconf.pending_enter_leave_begin.sequence = 0;
+    sequence_pair_array_append(&globalconf.ignore_enter_leave_events, pair);
+}
+
+/** Record that a client got focus.
+ * \param c The client.
+ * \return true if the client focus changed, false otherwise.
+ */
+bool
+client_focus_update(client_t *c)
+{
+    lua_State *L = globalconf_get_lua_State();
+    bool focused_new;
+
+    if(globalconf.focus.client && globalconf.focus.client != c)
+    {
+        /* When we are called due to a FocusIn event (=old focused client
+         * already unfocused), we don't want to cause a SetInputFocus,
+         * because the client which has focus now could be using globally
+         * active input model (or 'no input').
+         */
+        client_unfocus_internal(globalconf.focus.client);
+    }
+
+    focused_new = globalconf.focus.client != c;
+    globalconf.focus.client = c;
+
+    /* According to EWMH, we have to remove the urgent state from a client.
+     * This should be done also for the current/focused client (FS#1310). */
+    luaA_object_push(L, c);
+    client_set_urgent(L, -1, false);
+
+    if(focused_new) {
+        lua_pushboolean(L, true);
+        some_event_queue_signal(L, -2, SIG_PROPERTY_ACTIVE, 1);
+        some_event_queue_property(L, -1, SIG_FOCUS);
+    }
+
+    lua_pop(L, 1);
+
+    return focused_new;
+}
+
+/** Give focus to client, or to first client if client is NULL.
+ * \param c The client.
+ */
+void
+client_focus(client_t *c)
+{
+    extern void some_set_seat_keyboard_focus(client_t *c);
+
+    /* We have to set focus on first client */
+    if(!c && globalconf.clients.len && !(c = globalconf.clients.tab[0]))
+        return;
+
+    /* Update Awesome's internal focus state (borders, signals, etc.) */
+    if(client_focus_update(c)) {
+        globalconf.focus.need_update = true;
+    }
+
+    /* Always sync Wayland seat keyboard focus — it can desync independently
+     * from Lua bookkeeping (e.g. layer surface steals keyboard, popup receives
+     * keyboard enter, XWayland surface recreation). some_set_seat_keyboard_focus()
+     * has its own early return when seat focus already matches (somewm_api.c). */
+    some_set_seat_keyboard_focus(c);
+}
+
+/** Apply pending keyboard focus changes (AwesomeWM deferred focus pattern).
+ * NOTE: Keyboard focus is now applied IMMEDIATELY in focusclient() for Wayland.
+ * This function only handles clearing focus when no client is focused.
+ * AwesomeWM defers focus, but Wayland surface pointers can become invalid,
+ * so we apply focus immediately while the surface is guaranteed valid.
+ */
+void
+client_focus_refresh(void)
+{
+    /* Early return if no focus change pending */
+    if(!globalconf.focus.need_update)
+        return;
+
+    /* Only action needed: clear keyboard focus if no client is focused
+     * BUT don't clear if a layer surface has exclusive focus (e.g., rofi) */
+    if(!globalconf.focus.client && !some_has_exclusive_focus())
+    {
+        wlr_seat_keyboard_notify_clear_focus(some_get_seat());
+    }
+
+    globalconf.focus.need_update = false;
+}
+
+/** Apply pending border updates (AwesomeWM deferred border pattern for Wayland).
+ * This function iterates through all clients and applies any pending border changes
+ * to the wlr_scene_rect nodes if border_need_update is true.
+ */
+void
+client_border_refresh(void)
+{
+    foreach(_c, globalconf.clients)
+    {
+        client_t *c = *_c;
+
+        /* Check if border needs update */
+        if(!c->border_need_update)
+            continue;
+
+        c->border_need_update = false;
+
+        /* Skip if client has no scene (not yet mapped) */
+        if(!c->scene || !c->border[0])
+            continue;
+
+        /* Sync wlroots border width (bw) with Lua-facing border_width */
+        c->bw = c->border_width;
+
+        /* Update border rectangle sizes based on new border width
+         * Border layout: [0]=top, [1]=bottom, [2]=left, [3]=right
+         * This matches the code in somewm.c:applybounds() */
+        wlr_scene_rect_set_size(c->border[0], c->geometry.width, c->border_width);
+        wlr_scene_rect_set_size(c->border[1], c->geometry.width, c->border_width);
+        wlr_scene_rect_set_size(c->border[2], c->border_width, c->geometry.height - 2 * c->border_width);
+        wlr_scene_rect_set_size(c->border[3], c->border_width, c->geometry.height - 2 * c->border_width);
+
+        /* Update border positions (bottom and right borders depend on geometry + border width) */
+        wlr_scene_node_set_position(&c->border[1]->node, 0, c->geometry.height - c->border_width);
+        wlr_scene_node_set_position(&c->border[2]->node, 0, c->border_width);
+        wlr_scene_node_set_position(&c->border[3]->node, c->geometry.width - c->border_width, c->border_width);
+
+        /* Update border color if initialized (matches AwesomeWM window_border_refresh pattern) */
+        if(c->border_color.initialized) {
+            float color_floats[4];
+            int i;
+
+            color_to_floats(&c->border_color, color_floats);
+
+            /* Apply color to all 4 border rectangles */
+            for(i = 0; i < 4; i++)
+                wlr_scene_rect_set_color(c->border[i], color_floats);
+        }
+    }
+}
+
+/** Apply pending geometry changes to wlroots scene graph.
+ *
+ * This is the Wayland equivalent of AwesomeWM's X11 client_geometry_refresh().
+ * Lua layout code calculates positions via c:geometry({...}), which updates
+ * c->geometry in the C struct. This function applies those changes to the
+ * actual wlroots scene nodes.
+ *
+ * Called from client_refresh() during the refresh cycle.
+ */
+void
+client_geometry_refresh(void)
+{
+    foreach(_c, globalconf.clients)
+    {
+        client_t *c = *_c;
+
+        if (!c || !c->mon)
+            continue;
+
+        /* Apply c->geometry to wlroots scene graph */
+        apply_geometry_to_wlroots(c);
+    }
+}
+
+void
+client_refresh(void)
+{
+    client_geometry_refresh();
+    client_border_refresh();
+    client_focus_refresh();
+}
+
+/** Destroy windows queued for deferred destruction (AwesomeWM pattern).
+ *
+ * This implements AwesomeWM's deferred window destruction to avoid race conditions
+ * during Lua callbacks. Windows (X11/XWayland only) are queued during client_unmanage()
+ * and destroyed here during the refresh cycle.
+ *
+ * For native Wayland clients, there are no X11 windows to destroy - cleanup happens
+ * via wlroots scene graph and listener cleanup in destroynotify().
+ */
+void
+client_destroy_later(void)
+{
+    bool ignored_enterleave = false;
+
+    /* Early return if nothing to destroy */
+    if(globalconf.destroy_later_windows.len == 0)
+        return;
+
+#ifdef XWAYLAND
+    /* Only destroy if we have an X11 connection (XWayland is enabled and connected) */
+    if(!globalconf.connection)
+    {
+        globalconf.destroy_later_windows.len = 0;
+        return;
+    }
+
+    foreach(window, globalconf.destroy_later_windows)
+    {
+        if (!ignored_enterleave) {
+            client_ignore_enterleave_events();
+            ignored_enterleave = true;
+        }
+        xcb_destroy_window(globalconf.connection, *window);
+    }
+    if (ignored_enterleave)
+        client_restore_enterleave_events();
+#endif
+
+    /* Everything's done, clear the list */
+    globalconf.destroy_later_windows.len = 0;
+}
+
+/** Unban a client and move it back into the viewport.
+ * \param c The client.
+ */
+void
+client_unban(client_t *c)
+{
+    lua_State *L = globalconf_get_lua_State();
+    if(c->isbanned)
+    {
+        /* Wayland deviation: see comment in client_ban() */
+        if(!c->scene)
+            return;
+
+        /* Wayland: show in scene graph (equivalent to xcb_map_window) */
+        wlr_scene_node_set_enabled(&c->scene->node, true);
+
+        c->isbanned = false;
+
+        /* An unbanned client shouldn't be minimized or hidden */
+        luaA_object_push(L, c);
+        client_set_minimized(L, -1, false);
+        client_set_hidden(L, -1, false);
+        lua_pop(L, 1);
+
+        if (globalconf.focus.client == c)
+            globalconf.focus.need_update = true;
+    }
+}
