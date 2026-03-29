@@ -50,9 +50,7 @@ struct wlr_input_device;
 
 /* Extern declarations for functions in somewm.c */
 extern void arrange(Monitor *m);
-extern void focusclient(Client *c, int lift);
-extern Client *focustop(Monitor *m);
-extern void focus_restore(Monitor *m);
+#include "focus.h"
 extern void pointerfocus(Client *c, struct wlr_surface *surface,
 		double sx, double sy, uint32_t time);
 extern void setfullscreen(Client *c, int fullscreen);
