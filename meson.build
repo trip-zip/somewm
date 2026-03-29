@@ -290,6 +290,7 @@ somewm_sources = [
   'input.c',
   'window.c',
   'focus.c',
+  'event_queue.c',
   'ipc.c',
   'color.c',
   'draw.c',

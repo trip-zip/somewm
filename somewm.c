@@ -89,6 +89,7 @@
 #include "objects/client.h"
 #include "objects/drawin.h"
 #include "objects/signal.h"
+#include "event_queue.h"
 #include "xwayland.h"
 #include "protocols.h"
 #include "monitor.h"
@@ -252,6 +253,7 @@ cleanup(void)
 
 	a_dbus_cleanup();
 	ipc_cleanup();
+	some_event_queue_wipe();
 
 	xwayland_cleanup();
 
@@ -586,6 +588,10 @@ some_refresh(void)
 		return;
 	in_refresh = true;
 
+	/* Step 0: Drain queued events - dispatch batched signals to Lua.
+	 * Must happen before the refresh signal so Lua handlers see
+	 * up-to-date state when layout runs. */
+	some_event_queue_drain(globalconf_L);
 
 	/* Step 1: Emit refresh signal - triggers Lua layout calculations */
 	luaA_emit_signal_global("refresh");
@@ -1106,6 +1112,7 @@ setup(void)
 #endif
 
 	luaA_init();
+	some_event_queue_init();
 
 	/* Initialize animation subsystem (must be AFTER luaA_init for Lua state) */
 	animation_init(event_loop);
