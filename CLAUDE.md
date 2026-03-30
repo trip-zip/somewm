@@ -92,19 +92,24 @@ ninja -C build    # Direct meson build (faster iteration)
 ### Quick iteration cycle (no reboot)
 ```bash
 # 1. Edit code
-# 2. Build
-ninja -C build
-# 3. Install + hot-swap running session via IPC
-sudo make install && somewm-client exec somewm
+# 2. Build + install with SceneFX (handles ldconfig for libscenefx)
+~/git/github/somewm/plans/install-scenefx.sh
+# 3. Hot-swap running session via IPC
+somewm-client exec somewm
 ```
 **WARNING:** `somewm-client exec somewm` replaces the running compositor process.
 If under Wayland, this may launch a nested instance instead. For DRM session
 changes, a full reboot is required.
 
+**IMPORTANT:** Always use `install-scenefx.sh` instead of `sudo make install`.
+The script builds with `-Dscenefx=enabled` into `build-fx/`, runs ldconfig for
+`libscenefx-0.4.so`, and installs to `/usr/local`. Plain `make install` uses the
+ASAN dev build without SceneFX.
+
 ### Full test cycle (reboot required for DRM changes)
 ```bash
-# Build + install + reboot (script at plans/install-and-reboot.sh)
-~/git/github/somewm/plans/install-and-reboot.sh
+# Build + install with SceneFX + reboot
+~/git/github/somewm/plans/install-scenefx.sh && sudo reboot
 
 # After reboot, launch from TTY (script at plans/start.sh)
 ~/git/github/somewm/plans/start.sh
@@ -336,7 +341,8 @@ After editing, run `deploy.sh` to sync.
 - `plans/alfa-focus-dispatch.md` - Focus/keyboard delivery fix (4 bugs found)
 - `plans/fix-137-xwayland-keyboard-focus.md` - Upstream fix guide for #137 with code
 - `plans/stabilization-issues.md` - Documents fixed issues (updatemons UAF, output cleanup)
-- `plans/install-and-reboot.sh` - Build + sudo install + reboot script
+- `plans/install-scenefx.sh` - Build + install with SceneFX + ldconfig (USE THIS, not `make install`)
+- `plans/install-and-reboot.sh` - Legacy build + sudo install + reboot script
 - `plans/start.sh` - Launch somewm with debug logging from TTY
 
 ## Reference Projects

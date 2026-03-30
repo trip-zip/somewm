@@ -1,6 +1,6 @@
 # Fork Status: raven2cz/somewm vs trip-zip/somewm
 
-Last sync with upstream: **2026-03-22** (see [sync-2026-03-22.md](sync-2026-03-22.md))
+Last sync with upstream: **2026-03-30** (8 commits: fullscreen fixes, systemd, shadow optimization)
 Last fork-status update: **2026-03-30**
 
 ## What's in main
@@ -16,7 +16,7 @@ Last fork-status update: **2026-03-30**
 | 5 | `[SOMEWM-DEBUG]` startup markers | `somewm.c` | — |
 | 6 | Client animation framework (9 types) | `lua/awful/anim_client.lua` + C changes | [#381](https://github.com/trip-zip/somewm/issues/381) |
 | 7 | SceneFX visual effects (optional) | 28 files, `scenefx_compat.h` | [#387](https://github.com/trip-zip/somewm/issues/387) |
-| 8 | Layoutlist hotplug crash fix | `lua/awful/widget/layoutlist.lua` | — |
+| 8 | Layoutlist hotplug crash fix | `lua/awful/widget/layoutlist.lua` | [#390](https://github.com/trip-zip/somewm/issues/390), [PR #391](https://github.com/trip-zip/somewm/pull/391) |
 | 9 | somewm-one config project | `plans/somewm-one/` | — |
 
 ### SceneFX integration (merged 2026-03-30)
@@ -58,6 +58,7 @@ Branch `feat/unified-animations` preserved for reference.
 |---|-------|-------|
 | [#387](https://github.com/trip-zip/somewm/issues/387) | SceneFX visual effects | Our issue, references feat/scenefx-integration branch |
 | [#381](https://github.com/trip-zip/somewm/issues/381) | Client animation system | Our issue, references feat/unified-animations branch |
+| [#390](https://github.com/trip-zip/somewm/issues/390) | Layoutlist assertion crash on hotplug | Our fix, [PR #391](https://github.com/trip-zip/somewm/pull/391) |
 | [#249](https://github.com/trip-zip/somewm/issues/249) | Tag state lost on hotplug | Upstream has #312 (tag persistence) |
 | [#232](https://github.com/trip-zip/somewm/issues/232) | awesome.restart() SIGSEGV | Our cold restart workaround active |
 | [#193](https://github.com/trip-zip/somewm/issues/193) | Naughty stuck notifications | Upstream fixed break bug (#274) |
