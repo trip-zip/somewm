@@ -102,7 +102,7 @@ module.source = {}
 -- @sourcefunction awful.widget.layoutlist.source.for_screen
 function module.source.for_screen(s)
     s = capi.screen[s or ascreen.focused() or 1]
-    assert(s)
+    if not s then return {} end
 
     local t = s.selected_tag or #s.tags > 0 and s.tags[1]
 
