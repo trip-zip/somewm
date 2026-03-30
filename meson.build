@@ -312,6 +312,7 @@ somewm_sources = [
   'mousegrabber.c',
   'gesture.c',
   'animation.c',
+  'clay_layout.c',
   'selection.c',
   'pam_auth.c',
   # Common
