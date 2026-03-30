@@ -862,6 +862,15 @@ capi.client.connect_signal("property::fullscreen", update_implicitly_floating)
 capi.client.connect_signal("property::size_hints", update_implicitly_floating)
 capi.client.connect_signal("request::manage", update_implicitly_floating)
 
+-- Toggle the floating state of a client.
+-- @tparam[opt=client.focus] client c The client.
+function client.floating.toggle(c)
+    c = c or capi.client.focus
+    if c then
+        c.floating = not client.object.get_floating(c)
+    end
+end
+
 -- Remove the floating information on a client.
 -- @tparam client c The client.
 function client.floating.delete(c)
