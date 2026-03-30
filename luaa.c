@@ -38,6 +38,7 @@
 #include "objects/selection_watcher.h"
 #include "objects/systray.h"
 #include "selection.h"
+#include "clay_layout.h"
 #include "common/luaobject.h"
 #include "objects/window.h"
 #include "dbus.h"
@@ -2458,6 +2459,7 @@ luaA_init(void)
 	luaA_mouse_setup(globalconf_L);
 	luaA_wibox_setup(globalconf_L);
 	luaA_ipc_setup(globalconf_L);
+	luaA_clay_setup(globalconf_L);
 	systray_item_class_setup(globalconf_L);  /* SNI systray item class */
 
 	/* Register D-Bus library (AwesomeWM compatibility) */
@@ -4335,6 +4337,7 @@ luaA_create_fresh_state(void)
 	luaA_mouse_setup(L);
 	luaA_wibox_setup(L);
 	luaA_ipc_setup(L);
+	luaA_clay_setup(L);
 	systray_item_class_setup(L);
 
 	/* D-Bus */
@@ -4497,6 +4500,7 @@ luaA_hot_reload(void)
 	 * Also resets the luaA_classes registry so class_setup doesn't duplicate. */
 	luaA_signal_cleanup();
 	luaA_class_cleanup_all();
+	clay_cleanup();
 
 	/* ================================================================
 	 * Phase B1: Snapshot screens FIRST (needed for index lookups)
@@ -5005,6 +5009,7 @@ luaA_cleanup(void)
 		/* Clean up signal and keybinding systems first */
 		luaA_signal_cleanup();
 		luaA_keybinding_cleanup();
+		clay_cleanup();
 
 		/* Clean up lock/idle state before closing Lua */
 		luaA_awesome_clear_all_idle_timeouts(globalconf_L);
