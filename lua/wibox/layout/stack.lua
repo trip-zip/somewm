@@ -20,6 +20,7 @@ local fixed = require("wibox.layout.fixed")
 local table = table
 local pairs = pairs
 local gtable  = require("gears.table")
+local clay_backend = require("wibox.layout._clay")
 
 local stack = {mt={}}
 
@@ -70,8 +71,8 @@ local stack = {mt={}}
 -- @interface layout
 
 function stack:layout(_, width, height)
-    local result = {}
     local spacing = self._private.spacing
+    local entries = {}
 
     width  = width  - math.abs(self._private.h_offset * #self._private.widgets) - 2*spacing
     height = height - math.abs(self._private.v_offset * #self._private.widgets) - 2*spacing
@@ -79,12 +80,14 @@ function stack:layout(_, width, height)
     local h_off, v_off = spacing, spacing
 
     for _, v in pairs(self._private.widgets) do
-        table.insert(result, base.place_widget_at(v, h_off, v_off, width, height))
+        entries[#entries + 1] = {
+            widget = v, x = h_off, y = v_off, width = width, height = height
+        }
         h_off, v_off = h_off + self._private.h_offset, v_off + self._private.v_offset
         if self._private.top_only then break end
     end
 
-    return result
+    return clay_backend.from_positions(entries)
 end
 
 function stack:fit(context, orig_width, orig_height)

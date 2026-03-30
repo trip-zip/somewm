@@ -13,6 +13,7 @@
 local gtable = require("gears.table")
 local base = require("wibox.widget.base")
 local unpack = unpack or table.unpack -- luacheck: globals unpack (compatibility with Lua 5.1)
+local clay_backend = require("wibox.layout._clay")
 
 local manual_layout = {}
 
@@ -74,7 +75,7 @@ local function geometry(self, new)
 end
 
 function manual_layout:layout(context, width, height)
-    local res = {}
+    local entries = {}
 
     for k, v in ipairs(self._private.widgets) do
         local pt = self._private.pos[k] or {x=0,y=0}
@@ -103,12 +104,16 @@ function manual_layout:layout(context, width, height)
         assert(pt.x)
         assert(pt.y)
 
-        table.insert(res, base.place_widget_at(
-            v, pt.x, pt.y, pt.width or w, pt.height or h
-        ))
+        entries[#entries + 1] = {
+            widget = v,
+            x = pt.x,
+            y = pt.y,
+            width = pt.width or w,
+            height = pt.height or h,
+        }
     end
 
-    return res
+    return clay_backend.from_positions(entries)
 end
 
 function manual_layout:add(...)
