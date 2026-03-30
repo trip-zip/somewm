@@ -1,103 +1,122 @@
 # Fork Status: raven2cz/somewm vs trip-zip/somewm
 
-Last sync: **2026-03-22** (see [sync-2026-03-22.md](sync-2026-03-22.md))
+Last sync with upstream: **2026-03-22** (see [sync-2026-03-22.md](sync-2026-03-22.md))
+Last fork-status update: **2026-03-30**
 
-## What We Have That Upstream Doesn't
+## What's in main
 
-### 1. NVIDIA Crash Guard — `xdg->initialized` check
-- **File:** `somewm.c`, `apply_geometry_to_wlroots()`
-- **Commit:** `5a28e42`
-- **Issue:** [#216](https://github.com/trip-zip/somewm/issues/216)
-- **Why:** During output hotplug, `closemon() -> setmon() -> resize()` can reach `wlr_xdg_toplevel_set_size()` before the XDG surface completes its initial configure handshake. On NVIDIA DRM, the timing window is wider. Upstream doesn't test multi-monitor NVIDIA.
-- **Test:** `tests/test-xdg-hotplug-crash.lua` (commit `ef91f47`)
+### Our unique features (not in upstream)
 
-### 2. Cold Restart / Session Management
-- **Files:** `somewm.c`, `luaa.c`, `somewm-session` script
-- **Commits:** `2d7e14d`, `bdc4fcb`
-- **Issue:** [#232](https://github.com/trip-zip/somewm/issues/232)
-- **Why:** `awesome.restart()` crashes with SIGSEGV upstream. Our workaround: exit with special codes (10=cold restart, 11=rebuild restart), `somewm-session` wrapper loop catches them.
-- **Functions:** `cold_restart()`, `rebuild_restart()`, `luaA_cold_restart`, `luaA_rebuild_restart`
+| # | Feature | Key files | Issue |
+|---|---------|-----------|-------|
+| 1 | NVIDIA crash guard — `xdg->initialized` check | `somewm.c` | [#216](https://github.com/trip-zip/somewm/issues/216) |
+| 2 | Cold restart / session management | `somewm.c`, `luaa.c`, `somewm-session` | [#232](https://github.com/trip-zip/somewm/issues/232) |
+| 3 | NumLock on startup (`awesome.set_numlock`) | `luaa.c` | [#238](https://github.com/trip-zip/somewm/issues/238) |
+| 4 | Pointer constraint in Lua focus path | `somewm_api.c` | — |
+| 5 | `[SOMEWM-DEBUG]` startup markers | `somewm.c` | — |
+| 6 | Client animation framework (9 types) | `lua/awful/anim_client.lua` + C changes | [#381](https://github.com/trip-zip/somewm/issues/381) |
+| 7 | SceneFX visual effects (optional) | 28 files, `scenefx_compat.h` | [#387](https://github.com/trip-zip/somewm/issues/387) |
+| 8 | Layoutlist hotplug crash fix | `lua/awful/widget/layoutlist.lua` | — |
+| 9 | somewm-one config project | `plans/somewm-one/` | — |
 
-### 3. NumLock on Startup
-- **File:** `luaa.c`
-- **Commit:** `eb33fa2`
-- **Issue:** [#238](https://github.com/trip-zip/somewm/issues/238)
-- **Why:** No upstream API to toggle NumLock at startup. We added `awesome.set_numlock(true)`.
+### SceneFX integration (merged 2026-03-30)
 
-### 4. Pointer Constraint in Lua Focus Path
-- **File:** `somewm_api.c`, end of `some_set_seat_keyboard_focus()`
-- **Why:** Games (Steam, XWayland) need pointer constraint update when focus changes via Lua `client.focus = c`. Without this, focus-follows-mouse steals pointer from games. Upstream's popup-safe focus path doesn't call `some_update_pointer_constraint()`.
+Optional compile-time extension (`-Dscenefx=auto`). See [scenefx-integration.md](../scenefx-integration.md).
+- Rounded corners (`c.corner_radius`)
+- GPU shadows (dual-path: scenefx native or 9-slice fallback)
+- Backdrop blur (`c.backdrop_blur`)
+- Rounded border frame (single rect + clipped_region)
+- Titlebar rounded corners
+- Fade animation + decoration interaction
 
-### 5. SOMEWM-DEBUG Startup Markers
-- **File:** `somewm.c`, after `wlr_backend_start()`
-- **Why:** `[SOMEWM-DEBUG]` markers at WLR_ERROR level always print, useful for confirming debug build launched correctly on NVIDIA.
+### Client animation framework (merged earlier)
 
-### 6. Fork Documentation
-- `plans/` directory — development plans, fix documentation, investigation notes
-- `CLAUDE.md` — project guide for Claude Code sessions
-- Session transcripts archive
+9 animation types via `anim_client.lua`. See upstream issue [#381](https://github.com/trip-zip/somewm/issues/381).
+Branch `feat/unified-animations` preserved for reference.
 
-## What Upstream Has That We Adopted
+## Our contributions accepted upstream
 
-See [sync-2026-03-22.md](sync-2026-03-22.md) for full list. Key additions:
+16 commits cherry-picked (11 exact, 5 modified). Maintainer picked directly from our fork.
 
-| Feature | PR |
-|---|---|
-| Carousel layout (niri-style) | #351 |
-| Animated tiling transitions | #362 |
-| Overflow wibox layout + scrollbar | #370 |
-| Expanded IPC client | #338 |
-| Lua lock/idle API + PAM | #201 |
-| Output object API | #290 |
-| Gesture module | #294 |
-| Tag persistence across hotplug | #312 |
-| 7 naughty notification fixes | #343-#347 |
-| Shadow system rewrite (9-slice) | #205 |
-| Screen disconnect_signal/emit_signal | #363, #365 |
-| `updatemons_pending` reentrancy | #323 |
-| Suspended state sync on unminimize | #332 |
-
-## Our Contributions Accepted Upstream
-
-16 commits cherry-picked (11 exact, 5 modified). **No PRs submitted** — maintainer picked directly from our fork branches.
-
-| Our Fix | Upstream Issue | Status |
-|---|---|---|
-| XWayland keyboard focus (Lua path) | #137, #135, #133 | Cherry-picked + improved (3 iterations) |
+| Our fix | Upstream issue | Status |
+|---------|---------------|--------|
+| XWayland keyboard focus (Lua path) | #137, #135, #133 | Cherry-picked + improved |
 | XWayland ICCCM focusable detection | #137 | Cherry-picked exact |
 | awesome.exec() use-after-free | — | Cherry-picked exact |
 | Titlebar geometry/clipping (4 commits) | #230 | Cherry-picked exact |
 | XWayland position sync for popups | #231 | Cherry-picked exact |
-| Minimized clients + tag switch | #217 | Cherry-picked exact + extended (#332) |
+| Minimized clients + tag switch | #217 | Cherry-picked exact |
 | Selmon mouse motion update | #245 | Cherry-picked exact |
 | XKB layout widget fix | #233 | Cherry-picked exact |
-| Multi-monitor hotplug (6 bugs) | #216 | Cherry-picked modified + extended (#323) |
+| Multi-monitor hotplug (6 bugs) | #216 | Cherry-picked modified |
 | Keyboard focus desync (sloppy) | #237 | Cherry-picked modified |
 | NumLock wibar scroll + UBSan | #239 | Cherry-picked modified |
 
-## Open Issues on Upstream
+## Open issues on upstream
 
 | # | Title | Notes |
-|---|---|---|
-| [#249](https://github.com/trip-zip/somewm/issues/249) | Tag state lost on hotplug | Upstream now has #312 (tag persistence) — may partially address |
+|---|-------|-------|
+| [#387](https://github.com/trip-zip/somewm/issues/387) | SceneFX visual effects | Our issue, references feat/scenefx-integration branch |
+| [#381](https://github.com/trip-zip/somewm/issues/381) | Client animation system | Our issue, references feat/unified-animations branch |
+| [#249](https://github.com/trip-zip/somewm/issues/249) | Tag state lost on hotplug | Upstream has #312 (tag persistence) |
 | [#232](https://github.com/trip-zip/somewm/issues/232) | awesome.restart() SIGSEGV | Our cold restart workaround active |
-| [#193](https://github.com/trip-zip/somewm/issues/193) | Naughty stuck notifications | Upstream fixed `break` bug (#274), monitoring |
+| [#193](https://github.com/trip-zip/somewm/issues/193) | Naughty stuck notifications | Upstream fixed break bug (#274) |
 
-## Fork Branches (on origin)
+## Branch status
 
-Active:
-- `main` — synced with upstream 2026-03-22
-- `sync/upstream-main` — merge branch (to be merged to main)
-- `fix/multi-monitor-hotplug` — preserved for reference
+### Active (not in main, intentionally preserved)
 
-Historical (cherry-picked upstream):
-- `fix/xwayland-keyboard-focus`
-- `fix/titlebar-geometry-clipping-and-pointer-focus`
-- `fix/steam-menu-popup-positioning`
-- `fix/selmon-not-updated-on-mouse-motion`
-- `fix/scroll-wibar-numlock`
-- `fix/minimized-clients-reappear-tag-switch`
-- `fix/keyboard-focus-desync`
-- `fix/xkb-keyboard-layout-switching`
-- `feat/cold-restart`
-- `feat/numlock-on-startup`
+| Branch | Purpose | Status |
+|--------|---------|--------|
+| `feat/scenefx-integration` | SceneFX visual effects PoC | **Merged to main 2026-03-30**. Branch preserved — referenced by upstream [#387](https://github.com/trip-zip/somewm/issues/387) |
+| `feat/unified-animations` | Client animation system | **Merged to main earlier**. Branch preserved — referenced by upstream [#381](https://github.com/trip-zip/somewm/issues/381) |
+| `backup/scenefx-integration` | Pre-squash backup (25 commits) | Safety backup, can be deleted after verification |
+
+### Stale (already in main, can be deleted)
+
+These branches were created before the upstream sync (2026-03-22) and their commits
+are already in main under different hashes (cherry-picked or merged separately):
+
+| Branch | Why stale |
+|--------|-----------|
+| `feat/cold-restart` | Commit `63ca2ed` = main's `bdc4fcb` |
+| `fix/floating-layout-initial-size` | Commits `bbd1f97`, `b7ca0aa` = main's `9012e25`, `a28205e` |
+| `fix/scroll-wibar-numlock` | Commit `3d063e0` = main's `8a664de` |
+| `feat/numlock-on-startup` | Commit `eb33fa2` in main |
+| `feat/output-added-connected` | Merged to main |
+| `fix/hot-reload-lgi-crash` | Merged to main |
+| `fix/keyboard-focus-desync` | Cherry-picked by upstream, in main via sync |
+| `fix/minimized-clients-reappear-tag-switch` | Cherry-picked by upstream |
+| `fix/multi-monitor-hotplug` | Cherry-picked by upstream |
+| `fix/selmon-not-updated-on-mouse-motion` | Cherry-picked by upstream |
+| `fix/shadow-resize-perf` | Merged to main |
+| `fix/steam-menu-popup-positioning` | Cherry-picked by upstream |
+| `fix/titlebar-geometry-clipping-and-pointer-focus` | Cherry-picked by upstream |
+| `fix/xkb-keyboard-layout-switching` | Cherry-picked by upstream |
+| `fix/xwayland-keyboard-focus` | Cherry-picked by upstream |
+| `experiment/scenefx-poc` | Superseded by feat/scenefx-integration |
+| `feature/native-screenrecord` | Merged to main |
+| `sync/upstream-main` | Merge branch, completed |
+| `fix/layoutlist-hotplug` | Merged to main |
+
+### Upstream branches (Jimmy's, not ours)
+
+| Branch | Commits | Notes |
+|--------|---------|-------|
+| `a11y_module` | 2 | WIP accessibility module |
+| `feat/lockscreen` | 7 | Lock screen implementation |
+| `feat/wallpaper_caching` | 1 | Wallpaper cache optimization |
+| `fix/firefox-tiling-regression` | 1 | Stack refactor regression |
+| `fix/shadow-beautiful-lookup` | 1 | Beautiful module require fix |
+| `fix/silent_exit` | 1 | Error visibility improvement |
+
+These are upstream WIP/fixes on our fork's remote. Do not merge — they belong in upstream PRs.
+
+## Maintenance checklist
+
+When syncing with upstream or merging branches:
+1. Update this file with new branch status
+2. Update "What's in main" section
+3. Move merged branches to "Stale" section
+4. Check if upstream adopted any of our commits
+5. Update open issues status
