@@ -31,6 +31,8 @@ local table = table
 local pairs = pairs
 local gmath = require("gears.math")
 local gtable = require("gears.table")
+local clay_backend = require("wibox.layout._clay")
+local clay_c = _somewm_clay
 
 local flex = {}
 
@@ -108,7 +110,35 @@ local flex = {}
 -- @propemits true false
 -- @interface layout
 
+-- Layout using Clay backend: equal space distribution.
+local function layout_clay(self, width, height)
+    local dir = self._private.dir == "y" and "column" or "row"
+    local is_y = self._private.dir == "y"
+    local spacing = math.abs(self._private.spacing or 0)
+    local max_size = self._private.max_widget_size
+
+    return clay_backend.compute(width, height, function()
+        clay_c.open_container({ direction = dir, gap = spacing })
+        for _, widget in pairs(self._private.widgets) do
+            if max_size then
+                clay_c.widget_element(widget, {
+                    grow = true,
+                    grow_max = max_size,
+                })
+            else
+                clay_c.widget_element(widget, { grow = true })
+            end
+        end
+        clay_c.close_container()
+    end)
+end
+
 function flex:layout(_, width, height)
+    -- Use Clay for the common case (no spacing_widget)
+    if not self._private.spacing_widget and clay_c then
+        return layout_clay(self, width, height)
+    end
+
     local result = {}
     local spacing = self._private.spacing
     local num = #self._private.widgets
