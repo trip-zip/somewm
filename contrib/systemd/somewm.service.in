@@ -1,0 +1,16 @@
+[Unit]
+Description=somewm - AwesomeWM-compatible Wayland compositor
+Documentation=https://github.com/trip-zip/somewm
+BindsTo=graphical-session.target
+Before=graphical-session.target
+Wants=graphical-session-pre.target
+After=graphical-session-pre.target
+Wants=xdg-desktop-autostart.target
+Before=xdg-desktop-autostart.target
+
+[Service]
+Slice=session.slice
+Type=simple
+ExecStart=@bindir@/somewm
+Restart=no
+TimeoutStopSec=10

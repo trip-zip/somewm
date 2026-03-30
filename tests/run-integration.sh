@@ -140,12 +140,20 @@ wait_for_socket() {
 
 # Start somewm
 start_somewm() {
+    # Remove stale socket from previous test. If the prior compositor crashed
+    # (core dump, SIGKILL), ipc_cleanup() never ran and the socket file
+    # persists. Without this, wait_for_socket() finds the stale file
+    # immediately and the IPC connection test fails.
+    rm -f "$SOCKET"
+
     # Start compositor (uses XDG_CONFIG_HOME for config)
     timeout $TEST_TIMEOUT "$SOMEWM" > "$LOG" 2>&1 &
     SOMEWM_PID=$!
 
     # Wait for socket
     if ! wait_for_socket; then
+        kill -KILL $SOMEWM_PID 2>/dev/null || true
+        wait $SOMEWM_PID 2>/dev/null || true
         return 1
     fi
 
@@ -154,6 +162,8 @@ start_somewm() {
         echo "Error: IPC connection test failed" >&2
         echo "Last 50 lines of log:" >&2
         tail -50 "$LOG" >&2
+        kill -KILL $SOMEWM_PID 2>/dev/null || true
+        wait $SOMEWM_PID 2>/dev/null || true
         return 1
     fi
 
@@ -195,6 +205,7 @@ run_test() {
     # If IPC timed out, kill compositor and fail
     if [ $ipc_exit -eq 124 ]; then
         kill -KILL $SOMEWM_PID 2>/dev/null || true
+        wait $SOMEWM_PID 2>/dev/null || true
         end_time=$(date +%s.%N)
         TEST_DURATION=$(echo "$end_time - $start_time" | bc)
         return 1

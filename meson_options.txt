@@ -25,3 +25,10 @@ option(
   value: 'auto',
   description: 'Enable scenefx visual effects (rounded corners, shadows, blur)',
 )
+
+option(
+  'systemd',
+  type: 'feature',
+  value: 'auto',
+  description: 'Install systemd user service and session wrapper',
+)

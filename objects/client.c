@@ -2939,6 +2939,9 @@ client_set_fullscreen(lua_State *L, int cidx, bool s)
         /* become fullscreen! */
         if(s)
         {
+            /* Save geometry for restore if client-side unfullscreen happens
+             * via protocol (fullscreennotify -> setfullscreen -> c->prev) */
+            c->prev = c->geometry;
             /* You can only be part of one of the special layers. */
             client_set_below(L, cidx, false);
             client_set_above(L, cidx, false);
@@ -4831,6 +4834,17 @@ LUA_OBJECT_EXPORT_OPTIONAL_PROPERTY(client, client_t, pid, lua_pushinteger, 0)
 LUA_OBJECT_EXPORT_PROPERTY(client, client_t, hidden, lua_pushboolean)
 LUA_OBJECT_EXPORT_PROPERTY(client, client_t, minimized, lua_pushboolean)
 LUA_OBJECT_EXPORT_PROPERTY(client, client_t, fullscreen, lua_pushboolean)
+
+static int
+luaA_client_get_xdg_fullscreen(lua_State *L, client_t *c)
+{
+    if (c->client_type == XDGShell && c->surface.xdg && c->surface.xdg->toplevel)
+        lua_pushboolean(L, c->surface.xdg->toplevel->scheduled.fullscreen);
+    else
+        lua_pushboolean(L, c->fullscreen);
+    return 1;
+}
+
 LUA_OBJECT_EXPORT_PROPERTY(client, client_t, modal, lua_pushboolean)
 LUA_OBJECT_EXPORT_PROPERTY(client, client_t, ontop, lua_pushboolean)
 LUA_OBJECT_EXPORT_PROPERTY(client, client_t, floating, lua_pushboolean)
@@ -5712,6 +5726,7 @@ client_class_setup(lua_State *L)
         { "type", NULL, (lua_class_propfunc_t) luaA_window_get_type, NULL },
         { "urgent", (lua_class_propfunc_t) luaA_client_set_urgent, (lua_class_propfunc_t) luaA_client_get_urgent, (lua_class_propfunc_t) luaA_client_set_urgent },
         { "window", NULL, (lua_class_propfunc_t) luaA_client_get_window, NULL },
+        { "xdg_fullscreen", NULL, (lua_class_propfunc_t) luaA_client_get_xdg_fullscreen, NULL },
     };
     luaA_class_add_properties(&client_class, properties, countof(properties));
     /* _buttons is a method (in client_meta), not a property - matches AwesomeWM */
