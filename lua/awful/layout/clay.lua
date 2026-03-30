@@ -3,7 +3,11 @@
 --
 -- Layouts are described as trees of rows, columns, and client elements.
 -- Clay (C library) computes all positions in a single pass. Results are
--- applied through the standard awful.layout geometry system.
+-- applied directly by C in the frame refresh cycle (Step 1.75).
+--
+-- Gap handling is native to Clay: root container padding creates edge
+-- margins, container childGap creates spacing between siblings. This
+-- produces consistent gaps everywhere (edge = between = gap).
 --
 -- @module awful.layout.clay
 ---------------------------------------------------------------------------
@@ -80,7 +84,7 @@ function clay.slice(list, from, to)
     return result
 end
 
--- Walk tree and call C bindings
+-- Walk tree and call C bindings, injecting gap into every container
 
 local function make_config(props, direction)
     local cfg = { direction = direction }
@@ -110,17 +114,21 @@ local function make_config(props, direction)
     return cfg
 end
 
-local function walk(node)
+local function walk_with_gap(node, gap)
     if not node then return end
 
     if node._type == "client" then
         local cfg = make_config(node.props, "row")
         clay_c.client_element(node.client, cfg)
     elseif node._type == "container" then
+        -- Inject gap into every container so spacing is consistent
+        if gap > 0 and not node.props.gap then
+            node.props.gap = gap
+        end
         local cfg = make_config(node.props, node.props.direction)
         clay_c.open_container(cfg)
         for _, child in ipairs(node.children) do
-            walk(child)
+            walk_with_gap(child, gap)
         end
         clay_c.close_container()
     end
@@ -139,29 +147,43 @@ function clay.layout(name, build_fn, opts)
 
     function suit.arrange(p)
         local wa = p.workarea
+        local gap = p.useless_gap
         local t = p.tag or capi.screen[p.screen].selected_tag
         if #p.clients == 0 then return end
 
         local tree = build_fn(p.clients, wa, t, p)
         if not tree then return end
 
-        -- Root element must fill the layout dimensions
-        if tree.props then
-            tree.props.grow = true
-        end
+        clay_c.begin_layout(p.screen, wa.width, wa.height, {
+            offset_x = wa.x,
+            offset_y = wa.y,
+        })
 
-        clay_c.begin_layout(p.screen, wa.width, wa.height)
-        walk(tree)
-        local results = clay_c.end_layout()
-
-        for _, r in ipairs(results) do
-            p.geometries[r.client] = {
-                x = math.floor(wa.x + r.x),
-                y = math.floor(wa.y + r.y),
-                width = math.floor(r.width),
-                height = math.floor(r.height),
-            }
+        -- Root container: padding creates edge margins, childGap between children
+        local root_dir = (tree.props and tree.props.direction) or "row"
+        clay_c.open_container({
+            direction = root_dir,
+            gap = gap,
+            padding = { gap, gap, gap, gap },
+            grow = true,
+        })
+        -- Walk tree contents (skip the root node itself since we opened it above)
+        if tree._type == "container" then
+            for _, child in ipairs(tree.children) do
+                walk_with_gap(child, gap)
+            end
+        elseif tree._type == "client" then
+            -- Single client returned directly
+            local cfg = make_config(tree.props, "row")
+            clay_c.client_element(tree.client, cfg)
         end
+        clay_c.close_container()
+
+        clay_c.end_layout()
+
+        -- Signal the framework to skip its gap/border/c:geometry() loop.
+        -- Geometry is applied by C in clay_apply_all() at Step 1.75.
+        p._clay_managed = true
     end
 
     return suit

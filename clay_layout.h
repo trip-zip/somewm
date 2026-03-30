@@ -9,4 +9,8 @@ void luaA_clay_setup(lua_State *L);
 /* Free all per-screen Clay contexts and arena memory (hot-reload) */
 void clay_cleanup(void);
 
+/* Apply pending layout results to client geometry.
+ * Called from some_refresh() at Step 1.75. */
+void clay_apply_all(void);
+
 #endif
