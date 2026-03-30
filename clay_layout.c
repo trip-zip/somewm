@@ -2,15 +2,18 @@
  *
  * Exposes Clay's flexbox layout computation to Lua via the _somewm_clay
  * global table. Each screen gets its own Clay_Context for independent
- * layout computation. Lua builds a layout tree per screen, Clay computes
- * positions, and results are returned as a table of client placements.
+ * layout computation.
+ *
+ * Phase 3A: Lua builds tree, Clay computes, results returned to Lua.
+ * Phase 3B: Results stored C-side, applied directly by clay_apply_all()
+ *           during the frame refresh cycle (Step 1.75).
  *
  * Lua API:
- *   _somewm_clay.begin_layout(screen, width, height)
+ *   _somewm_clay.begin_layout(screen, width, height, opts?)
  *   _somewm_clay.open_container(config)
  *   _somewm_clay.close_container()
  *   _somewm_clay.client_element(client, config)
- *   _somewm_clay.end_layout() -> {{client, x, y, width, height}, ...}
+ *   _somewm_clay.end_layout()
  */
 
 #define CLAY_IMPLEMENTATION
@@ -22,12 +25,28 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "objects/client.h"
+
+/* Layout result for a single element */
+typedef struct {
+	client_t *client;
+	int client_ref;     /* Lua registry ref (prevents GC) */
+	float x, y, w, h;
+} clay_result_t;
+
 /* Per-screen Clay state */
 typedef struct {
 	Clay_Context *ctx;
 	void *arena_memory;
-	int screen_ref; /* Lua registry ref to screen object */
+	int screen_ref;             /* Lua registry ref to screen object */
 	uint32_t element_id_counter;
+	/* Layout metadata from begin_layout opts */
+	float offset_x, offset_y;  /* Workarea origin */
+	/* Result storage for C-side apply */
+	clay_result_t *results;
+	int results_count;
+	int results_cap;
+	bool has_pending;
 } clay_screen_t;
 
 #define MAX_SCREENS 16
@@ -51,6 +70,17 @@ clay_error_handler(Clay_ErrorData error)
 {
 	fprintf(stderr, "[clay] error: %.*s\n", error.errorText.length,
 	        error.errorText.chars);
+}
+
+/* Ensure the results array has room for at least one more entry */
+static void
+clay_results_ensure_cap(clay_screen_t *cs)
+{
+	if (cs->results_count < cs->results_cap)
+		return;
+	int new_cap = cs->results_cap ? cs->results_cap * 2 : 16;
+	cs->results = realloc(cs->results, new_cap * sizeof(clay_result_t));
+	cs->results_cap = new_cap;
 }
 
 /* Find or create a per-screen Clay context.
@@ -209,7 +239,8 @@ clay_read_layout_config(lua_State *L, int idx)
 	return config;
 }
 
-/* _somewm_clay.begin_layout(screen, width, height) */
+/* _somewm_clay.begin_layout(screen, width, height, opts?)
+ * opts is an optional table: { offset_x, offset_y } */
 static int
 luaA_clay_begin_layout(lua_State *L)
 {
@@ -219,6 +250,30 @@ luaA_clay_begin_layout(lua_State *L)
 
 	clay_screen_t *cs = clay_get_screen(L, 1);
 	active_screen = cs;
+
+	/* Reset layout metadata */
+	cs->offset_x = 0;
+	cs->offset_y = 0;
+
+	/* Read optional opts table */
+	if (lua_istable(L, 4)) {
+		lua_getfield(L, 4, "offset_x");
+		if (lua_isnumber(L, -1))
+			cs->offset_x = (float)lua_tonumber(L, -1);
+		lua_pop(L, 1);
+
+		lua_getfield(L, 4, "offset_y");
+		if (lua_isnumber(L, -1))
+			cs->offset_y = (float)lua_tonumber(L, -1);
+		lua_pop(L, 1);
+	}
+
+	/* Release any leftover refs from a previous layout pass that
+	 * wasn't consumed (e.g., screen removed between layout and apply) */
+	for (int i = 0; i < cs->results_count; i++)
+		luaL_unref(L, LUA_REGISTRYINDEX, cs->results[i].client_ref);
+	cs->results_count = 0;
+	cs->has_pending = false;
 
 	Clay_SetCurrentContext(cs->ctx);
 	Clay_SetLayoutDimensions((Clay_Dimensions){ width, height });
@@ -260,7 +315,7 @@ luaA_clay_close_container(lua_State *L)
 }
 
 /* _somewm_clay.client_element(client_userdata, config_table)
- * Store the Lua registry index so we can push the client back in results.
+ * Store client_t pointer and Lua ref for C-side geometry application.
  * Uses CUSTOM render command type to identify client elements in output. */
 static int
 luaA_clay_client_element(lua_State *L)
@@ -268,22 +323,30 @@ luaA_clay_client_element(lua_State *L)
 	if (!active_screen)
 		return luaL_error(L, "clay: client_element called outside begin/end_layout");
 
-	/* Arg 1: client (any Lua value - we store a ref) */
-	luaL_checkany(L, 1);
+	/* Arg 1: client object - extract C pointer and store Lua ref */
+	client_t *c = luaA_checkudata(L, 1, &client_class);
 	lua_pushvalue(L, 1);
 	int ref = luaL_ref(L, LUA_REGISTRYINDEX);
+
+	/* Store client + ref for result collection in end_layout */
+	clay_results_ensure_cap(active_screen);
+	clay_result_t *r = &active_screen->results[active_screen->results_count++];
+	r->client = c;
+	r->client_ref = ref;
+	r->x = r->y = r->w = r->h = 0; /* filled by end_layout */
 
 	/* Arg 2: optional config table */
 	Clay_LayoutConfig layout = { 0 };
 	if (lua_istable(L, 2))
 		layout = clay_read_layout_config(L, 2);
 
+	/* Use results_count as the custom data key (1-based index into results) */
 	active_screen->element_id_counter++;
 	Clay__OpenElementWithId(
 		(Clay_ElementId){ .id = active_screen->element_id_counter });
 	Clay__ConfigureOpenElement((Clay_ElementDeclaration){
 		.layout = layout,
-		.custom = { .customData = (void *)(intptr_t)ref },
+		.custom = { .customData = (void *)(intptr_t)active_screen->results_count },
 	});
 	Clay__CloseElement();
 
@@ -291,7 +354,7 @@ luaA_clay_client_element(lua_State *L)
 }
 
 /* _somewm_clay.end_layout()
- * Compute layout and return results as {{client, x, y, width, height}, ...} */
+ * Compute layout, store results C-side for clay_apply_all(). */
 static int
 luaA_clay_end_layout(lua_State *L)
 {
@@ -300,9 +363,6 @@ luaA_clay_end_layout(lua_State *L)
 
 	Clay_RenderCommandArray commands = Clay_EndLayout();
 
-	lua_newtable(L);
-	int result_idx = 1;
-
 	for (int32_t i = 0; i < commands.length; i++) {
 		Clay_RenderCommand *cmd =
 			Clay_RenderCommandArray_Get(&commands, i);
@@ -310,31 +370,21 @@ luaA_clay_end_layout(lua_State *L)
 		if (cmd->commandType != CLAY_RENDER_COMMAND_TYPE_CUSTOM)
 			continue;
 
-		int ref = (int)(intptr_t)cmd->renderData.custom.customData;
-		if (ref == 0)
+		int idx = (int)(intptr_t)cmd->renderData.custom.customData;
+		if (idx <= 0 || idx > active_screen->results_count)
 			continue;
 
-		lua_newtable(L);
-
-		lua_rawgeti(L, LUA_REGISTRYINDEX, ref);
-		lua_setfield(L, -2, "client");
-
-		lua_pushnumber(L, cmd->boundingBox.x);
-		lua_setfield(L, -2, "x");
-		lua_pushnumber(L, cmd->boundingBox.y);
-		lua_setfield(L, -2, "y");
-		lua_pushnumber(L, cmd->boundingBox.width);
-		lua_setfield(L, -2, "width");
-		lua_pushnumber(L, cmd->boundingBox.height);
-		lua_setfield(L, -2, "height");
-
-		lua_rawseti(L, -2, result_idx++);
-
-		luaL_unref(L, LUA_REGISTRYINDEX, ref);
+		/* idx is 1-based, results array is 0-based */
+		clay_result_t *r = &active_screen->results[idx - 1];
+		r->x = cmd->boundingBox.x;
+		r->y = cmd->boundingBox.y;
+		r->w = cmd->boundingBox.width;
+		r->h = cmd->boundingBox.height;
 	}
 
+	active_screen->has_pending = true;
 	active_screen = NULL;
-	return 1;
+	return 0;
 }
 
 static const luaL_Reg clay_methods[] = {
@@ -354,19 +404,50 @@ luaA_clay_setup(lua_State *L)
 	lua_setglobal(L, "_somewm_clay");
 }
 
+/* Apply pending Clay layout results to client geometry.
+ * Called from some_refresh() at Step 1.75 (after Lua layout, before
+ * drawin_refresh/client_refresh). */
+void
+clay_apply_all(void)
+{
+	lua_State *L = globalconf_get_lua_State();
+
+	for (int i = 0; i < screen_count; i++) {
+		clay_screen_t *cs = &screens[i];
+		if (!cs->has_pending)
+			continue;
+
+		for (int j = 0; j < cs->results_count; j++) {
+			clay_result_t *r = &cs->results[j];
+
+			int bw2 = r->client->border_width * 2;
+			area_t geo = {
+				.x      = (int)(r->x + cs->offset_x),
+				.y      = (int)(r->y + cs->offset_y),
+				.width  = MAX(1, (int)r->w - bw2),
+				.height = MAX(1, (int)r->h - bw2),
+			};
+			client_resize_do(r->client, geo, true);
+
+			luaL_unref(L, LUA_REGISTRYINDEX, r->client_ref);
+		}
+		cs->results_count = 0;
+		cs->has_pending = false;
+	}
+}
+
 void
 clay_cleanup(void)
 {
+	lua_State *L = globalconf_get_lua_State();
 	for (int i = 0; i < screen_count; i++) {
-		/* Clay contexts are allocated within the arena memory block.
-		 * Freeing the arena memory is sufficient cleanup. */
+		/* Release any pending result refs */
+		for (int j = 0; j < screens[i].results_count; j++)
+			luaL_unref(L, LUA_REGISTRYINDEX,
+			           screens[i].results[j].client_ref);
+		free(screens[i].results);
 		free(screens[i].arena_memory);
-		screens[i].arena_memory = NULL;
-		screens[i].ctx = NULL;
-		/* Note: screen_ref is a Lua registry ref. If the Lua state is
-		 * being torn down (hot-reload), it will be collected. If not,
-		 * we should unref - but clay_cleanup is only called during
-		 * teardown, so this is safe. */
+		memset(&screens[i], 0, sizeof(clay_screen_t));
 	}
 	screen_count = 0;
 	active_screen = NULL;
