@@ -245,6 +245,17 @@ clay_read_layout_config(lua_State *L, int idx)
 	}
 	lua_pop(L, 1);
 
+	/* grow_max: cap GROW sizing at a maximum value */
+	lua_getfield(L, idx, "grow_max");
+	if (lua_isnumber(L, -1)) {
+		float max = (float)lua_tonumber(L, -1);
+		if (config.sizing.width.type == CLAY__SIZING_TYPE_GROW)
+			config.sizing.width.size.minMax.max = max;
+		if (config.sizing.height.type == CLAY__SIZING_TYPE_GROW)
+			config.sizing.height.size.minMax.max = max;
+	}
+	lua_pop(L, 1);
+
 	return config;
 }
 
