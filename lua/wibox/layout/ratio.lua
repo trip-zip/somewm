@@ -19,6 +19,8 @@ local floor = math.floor
 local gmath = require("gears.math")
 local gtable = require("gears.table")
 local unpack = unpack or table.unpack -- luacheck: globals unpack (compatibility with Lua 5.1)
+local clay_backend = require("wibox.layout._clay")
+local clay_c = _somewm_clay
 
 local ratio = {}
 
@@ -100,7 +102,32 @@ local function normalize(self)
     assert(new_sum > 0.99 and new_sum < 1.01)
 end
 
+-- Layout using Clay: each widget gets a percentage of space.
+local function layout_clay(self, width, height)
+    local dir = self._private.dir == "y" and "column" or "row"
+    local is_y = self._private.dir == "y"
+    local spacing = math.abs(self._private.spacing or 0)
+    local ratios = self._private.ratios
+
+    return clay_backend.compute(width, height, function()
+        clay_c.open_container({ direction = dir, gap = spacing })
+        for i, widget in ipairs(self._private.widgets) do
+            local pct = (ratios[i] or 0) * 100
+            clay_c.widget_element(widget, {
+                [is_y and "height_percent" or "width_percent"] = pct,
+            })
+        end
+        clay_c.close_container()
+    end)
+end
+
 function ratio:layout(context, width, height)
+    -- Use Clay for the common case (no spacing_widget, default strategy)
+    local strategy = self:get_inner_fill_strategy()
+    if not self._private.spacing_widget and strategy == "default" and clay_c then
+        return layout_clay(self, width, height)
+    end
+
     local preliminary_results = {}
     local pos,spacing = 0, self._private.spacing
     local strategy = self:get_inner_fill_strategy()
