@@ -35,6 +35,7 @@ enum clay_element_type {
 	CLAY_ELEM_CLIENT,
 	CLAY_ELEM_DRAWIN,
 	CLAY_ELEM_WORKAREA, /* Marker: computed bounds = workarea */
+	CLAY_ELEM_WIDGET,   /* Widget element: bounds returned to Lua, not applied by C */
 };
 
 /* Layout result for a single element */
@@ -69,6 +70,9 @@ typedef struct {
 static clay_screen_t screens[MAX_SCREENS];
 static int screen_count = 0;
 static clay_screen_t *active_screen = NULL;
+
+/* Dedicated context for widget layout passes (no screen association) */
+static clay_screen_t widget_ctx = { 0 };
 
 /* No-op text measurement - we don't use text elements for layout */
 static Clay_Dimensions
@@ -244,15 +248,33 @@ clay_read_layout_config(lua_State *L, int idx)
 	return config;
 }
 
-/* _somewm_clay.begin_layout(screen, width, height, opts?) */
+/* _somewm_clay.begin_layout(screen_or_nil, width, height, opts?)
+ * Pass nil as screen for widget layout passes (uses shared widget context). */
 static int
 luaA_clay_begin_layout(lua_State *L)
 {
-	luaL_checkany(L, 1);
 	float width = (float)luaL_checknumber(L, 2);
 	float height = (float)luaL_checknumber(L, 3);
 
-	clay_screen_t *cs = clay_get_screen(L, 1);
+	clay_screen_t *cs;
+	if (lua_isnil(L, 1) || lua_isnone(L, 1)) {
+		/* Widget layout pass: use shared context */
+		cs = &widget_ctx;
+		if (!cs->ctx) {
+			uint32_t mem_size = Clay_MinMemorySize();
+			cs->arena_memory = malloc(mem_size);
+			Clay_Arena arena = Clay_CreateArenaWithCapacityAndMemory(
+				mem_size, cs->arena_memory);
+			cs->ctx = Clay_Initialize(
+				arena,
+				(Clay_Dimensions){ 1920, 1080 },
+				(Clay_ErrorHandler){ clay_error_handler, NULL });
+			Clay_SetCurrentContext(cs->ctx);
+			Clay_SetMeasureTextFunction(clay_measure_text, NULL);
+		}
+	} else {
+		cs = clay_get_screen(L, 1);
+	}
 	active_screen = cs;
 
 	cs->offset_x = 0;
@@ -383,6 +405,42 @@ luaA_clay_drawin_element(lua_State *L)
 	return 0;
 }
 
+/* _somewm_clay.widget_element(widget, config)
+ * For widget layout passes. Stores a Lua widget ref. Bounds are returned
+ * to Lua via end_layout_to_lua(), not applied by clay_apply_all(). */
+static int
+luaA_clay_widget_element(lua_State *L)
+{
+	if (!active_screen)
+		return luaL_error(L, "clay: widget_element called outside begin/end_layout");
+
+	luaL_checkany(L, 1);
+	lua_pushvalue(L, 1);
+	int ref = luaL_ref(L, LUA_REGISTRYINDEX);
+
+	clay_results_ensure_cap(active_screen);
+	clay_result_t *r = &active_screen->results[active_screen->results_count++];
+	r->type = CLAY_ELEM_WIDGET;
+	r->client = NULL;
+	r->lua_ref = ref;
+	r->x = r->y = r->w = r->h = 0;
+
+	Clay_LayoutConfig layout = { 0 };
+	if (lua_istable(L, 2))
+		layout = clay_read_layout_config(L, 2);
+
+	active_screen->element_id_counter++;
+	Clay__OpenElementWithId(
+		(Clay_ElementId){ .id = active_screen->element_id_counter });
+	Clay__ConfigureOpenElement((Clay_ElementDeclaration){
+		.layout = layout,
+		.custom = { .customData = (void *)(intptr_t)active_screen->results_count },
+	});
+	Clay__CloseElement();
+
+	return 0;
+}
+
 /* _somewm_clay.workarea_element(config)
  * Marker element whose computed bounds represent the workarea.
  * No Lua ref needed - it's not a real object. */
@@ -475,6 +533,70 @@ luaA_clay_end_layout(lua_State *L)
 	return 0;
 }
 
+/* _somewm_clay.end_layout_to_lua()
+ * Like end_layout(), but returns ALL results as a Lua table instead of
+ * storing them C-side. Used by widget layout passes where the results
+ * need to be converted to placement objects in Lua. */
+static int
+luaA_clay_end_layout_to_lua(lua_State *L)
+{
+	if (!active_screen)
+		return luaL_error(L, "clay: end_layout_to_lua called without begin_layout");
+
+	Clay_RenderCommandArray commands = Clay_EndLayout();
+
+	/* Fill in computed positions from Clay render commands */
+	for (int32_t i = 0; i < commands.length; i++) {
+		Clay_RenderCommand *cmd =
+			Clay_RenderCommandArray_Get(&commands, i);
+
+		if (cmd->commandType != CLAY_RENDER_COMMAND_TYPE_CUSTOM)
+			continue;
+
+		int idx = (int)(intptr_t)cmd->renderData.custom.customData;
+		if (idx <= 0 || idx > active_screen->results_count)
+			continue;
+
+		clay_result_t *r = &active_screen->results[idx - 1];
+		r->x = cmd->boundingBox.x;
+		r->y = cmd->boundingBox.y;
+		r->w = cmd->boundingBox.width;
+		r->h = cmd->boundingBox.height;
+	}
+
+	/* Build Lua result table */
+	lua_newtable(L);
+	int result_idx = 1;
+
+	for (int j = 0; j < active_screen->results_count; j++) {
+		clay_result_t *r = &active_screen->results[j];
+
+		lua_newtable(L);
+
+		/* Push the widget from registry */
+		lua_rawgeti(L, LUA_REGISTRYINDEX, r->lua_ref);
+		lua_setfield(L, -2, "widget");
+
+		lua_pushnumber(L, r->x);
+		lua_setfield(L, -2, "x");
+		lua_pushnumber(L, r->y);
+		lua_setfield(L, -2, "y");
+		lua_pushnumber(L, r->w);
+		lua_setfield(L, -2, "width");
+		lua_pushnumber(L, r->h);
+		lua_setfield(L, -2, "height");
+
+		lua_rawseti(L, -2, result_idx++);
+
+		luaL_unref(L, LUA_REGISTRYINDEX, r->lua_ref);
+	}
+
+	active_screen->results_count = 0;
+	active_screen->has_pending = false;
+	active_screen = NULL;
+	return 1;
+}
+
 /* _somewm_clay.set_screen_workarea(screen, x, y, width, height)
  * Update a screen's workarea from Clay's computed bounds. */
 static int
@@ -497,8 +619,10 @@ static const luaL_Reg clay_methods[] = {
 	{ "close_container", luaA_clay_close_container },
 	{ "client_element", luaA_clay_client_element },
 	{ "drawin_element", luaA_clay_drawin_element },
+	{ "widget_element", luaA_clay_widget_element },
 	{ "workarea_element", luaA_clay_workarea_element },
 	{ "end_layout", luaA_clay_end_layout },
+	{ "end_layout_to_lua", luaA_clay_end_layout_to_lua },
 	{ "set_screen_workarea", luaA_clay_set_screen_workarea },
 	{ NULL, NULL }
 };
@@ -544,7 +668,7 @@ clay_apply_all(void)
 				luaA_drawin_set_geometry(L, r->drawin,
 				                         x, y, w, h);
 			}
-			/* CLAY_ELEM_WORKAREA: informational only, skip */
+			/* CLAY_ELEM_WORKAREA and CLAY_ELEM_WIDGET: not applied by C */
 
 			if (r->lua_ref != LUA_NOREF)
 				luaL_unref(L, LUA_REGISTRYINDEX, r->lua_ref);
@@ -567,6 +691,11 @@ clay_cleanup(void)
 	memset(screens, 0, sizeof(screens));
 	screen_count = 0;
 	active_screen = NULL;
+
+	/* Clean up widget context */
+	free(widget_ctx.results);
+	free(widget_ctx.arena_memory);
+	memset(&widget_ctx, 0, sizeof(widget_ctx));
 
 	/* Clear Clay's global context pointer so Clay_MinMemorySize() doesn't
 	 * dereference the freed arena on the next clay_get_screen() call. */

@@ -30,14 +30,56 @@ local base  = require("wibox.widget.base")
 local table = table
 local pairs = pairs
 local gtable = require("gears.table")
+local clay_backend = require("wibox.layout._clay")
+local clay_c = _somewm_clay
 
 local fixed = {}
+
+-- Layout using Clay backend.
+-- Handles the common case: sequential widgets with numeric spacing.
+-- Falls through to the legacy path for spacing_widget or edge cases.
+local function layout_clay(self, context, width, height)
+    local dir = self._private.dir == "y" and "column" or "row"
+    local is_y = self._private.dir == "y"
+    local spacing = self._private.spacing or 0
+    local widgets = self._private.widgets
+    local fill_space = self._private.fill_space
+    local widgets_nr = #widgets
+
+    return clay_backend.compute(width, height, function()
+        clay_c.open_container({
+            direction = dir,
+            gap = math.abs(spacing),
+        })
+        for index, widget in pairs(widgets) do
+            if widget._private and widget._private.visible == false then
+                -- Skip invisible widgets (Clay doesn't know about visibility)
+            elseif fill_space and index == widgets_nr then
+                -- Last widget fills remaining space
+                clay_c.widget_element(widget, { grow = true })
+            else
+                -- Widget gets its natural size
+                local w, h = base.fit_widget(self, context, widget, width, height)
+                if is_y then
+                    clay_c.widget_element(widget, { height_fixed = h })
+                else
+                    clay_c.widget_element(widget, { width_fixed = w })
+                end
+            end
+        end
+        clay_c.close_container()
+    end)
+end
 
 -- Layout a fixed layout. Each widget gets just the space it asks for.
 -- @param context The context in which we are drawn.
 -- @param width The available width.
 -- @param height The available height.
 function fixed:layout(context, width, height)
+    -- Use Clay for the common case (no spacing_widget)
+    if not self._private.spacing_widget and clay_c then
+        return layout_clay(self, context, width, height)
+    end
     local result = {}
     local spacing = self._private.spacing or 0
     local is_y = self._private.dir == "y"
