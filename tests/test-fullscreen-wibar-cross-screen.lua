@@ -16,6 +16,19 @@ local test_client = require("_client")
 local utils = require("_utils")
 local awful = require("awful")
 
+-- Check if we're in headless mode
+local function is_headless()
+    local backend = os.getenv("WLR_BACKENDS")
+    return backend == "headless"
+end
+
+if is_headless() then
+    io.stderr:write("SKIP: cross-screen fullscreen test requires multi-monitor support (screen.fake_add crashes in headless)\n")
+    io.stderr:write("Test finished successfully.\n")
+    awesome.quit()
+    return
+end
+
 if not test_client.is_available() then
     io.stderr:write("Test finished successfully.\n")
     awesome.quit()

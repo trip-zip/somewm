@@ -15,6 +15,19 @@ local awful = require("awful")
 local runner = require("tests._runner")
 local test_client = require("tests._client")
 
+-- Check if we're in headless mode
+local function is_headless()
+    local backend = os.getenv("WLR_BACKENDS")
+    return backend == "headless"
+end
+
+if is_headless() then
+    io.stderr:write("SKIP: floating layout geometry test requires real terminal (headless terminals ignore XDG size hints)\n")
+    io.stderr:write("Test finished successfully.\n")
+    awesome.quit()
+    return
+end
+
 -- Capture initial geometry of newly managed clients
 local managed_geos = {}
 client.connect_signal("request::manage", function(c)

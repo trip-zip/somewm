@@ -12,6 +12,19 @@ local wibox = require("wibox")
 local awful = require("awful")
 local lock = require("_lock_helper")
 
+-- Check if we're in headless mode
+local function is_headless()
+    local backend = os.getenv("WLR_BACKENDS")
+    return backend == "headless"
+end
+
+if is_headless() then
+    io.stderr:write("SKIP: session lock test requires ext-session-lock protocol (unavailable in headless)\n")
+    io.stderr:write("Test finished successfully.\n")
+    awesome.quit()
+    return
+end
+
 -- Skip if _test_add_output is not available
 if not awesome._test_add_output then
     io.stderr:write("SKIP: awesome._test_add_output not available\n")

@@ -14,6 +14,19 @@ local awful = require("awful")
 local lock = require("_lock_helper")
 local test_client = require("_client")
 
+-- Check if we're in headless mode
+local function is_headless()
+    local backend = os.getenv("WLR_BACKENDS")
+    return backend == "headless"
+end
+
+if is_headless() then
+    io.stderr:write("SKIP: session lock test requires ext-session-lock protocol (unavailable in headless)\n")
+    io.stderr:write("Test finished successfully.\n")
+    awesome.quit()
+    return
+end
+
 if not test_client.is_available() then
     io.stderr:write("SKIP: No terminal available for test clients\n")
     io.stderr:write("Test finished successfully.\n")

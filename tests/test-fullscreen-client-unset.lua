@@ -11,6 +11,7 @@
 ---------------------------------------------------------------------------
 
 local runner = require("_runner")
+local test_client = require("_client")
 local utils = require("_utils")
 local awful = require("awful")
 
@@ -130,28 +131,12 @@ local steps = {
     end,
 
     -- Cleanup
-    function(count)
-        if count == 1 then
-            io.stderr:write("[TEST] Cleanup\n")
-            if proc_pid then
-                awful.spawn("kill " .. proc_pid)
-            end
+    test_client.step_force_cleanup(function()
+        if proc_pid then
+            os.execute("kill -9 " .. proc_pid .. " 2>/dev/null")
         end
-
-        if #client.get() == 0 then
-            io.stderr:write("[TEST] Cleanup: done\n")
-            return true
-        end
-
-        if count >= 10 then
-            io.stderr:write("[TEST] Cleanup: force killing\n")
-            if proc_pid then
-                os.execute("kill -9 " .. proc_pid .. " 2>/dev/null")
-            end
-            os.execute("pkill -9 test-fullscreen-client 2>/dev/null")
-            return true
-        end
-    end,
+        os.execute("pkill -9 test-fullscreen-client 2>/dev/null")
+    end),
 }
 
 runner.run_steps(steps, { kill_clients = false })

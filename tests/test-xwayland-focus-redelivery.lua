@@ -124,24 +124,12 @@ local steps = {
     end,
 
     -- Cleanup
-    function(count)
-        if count == 1 then
-            io.stderr:write("[TEST] Cleanup\n")
-            if wayland_c and wayland_c.valid then wayland_c:kill() end
-            if x11_c and x11_c.valid then x11_c:kill() end
-            os.execute("pkill -9 xterm 2>/dev/null")
+    test_client.step_force_cleanup(function()
+        os.execute("pkill -9 xterm 2>/dev/null")
+        for _, pid in ipairs(x11_client.get_spawned_pids()) do
+            os.execute("kill -9 " .. pid .. " 2>/dev/null")
         end
-        if #client.get() == 0 then return true end
-        if count >= 10 then
-            for _, pid in ipairs(test_client.get_spawned_pids()) do
-                os.execute("kill -9 " .. pid .. " 2>/dev/null")
-            end
-            for _, pid in ipairs(x11_client.get_spawned_pids()) do
-                os.execute("kill -9 " .. pid .. " 2>/dev/null")
-            end
-            return true
-        end
-    end,
+    end),
 }
 
 runner.run_steps(steps, { kill_clients = false })

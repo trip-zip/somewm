@@ -13,6 +13,19 @@ local runner = require("_runner")
 local wibox = require("wibox")
 local lock = require("_lock_helper")
 
+-- Check if we're in headless mode
+local function is_headless()
+    local backend = os.getenv("WLR_BACKENDS")
+    return backend == "headless"
+end
+
+if is_headless() then
+    io.stderr:write("SKIP: session lock test requires ext-session-lock protocol (unavailable in headless)\n")
+    io.stderr:write("Test finished successfully.\n")
+    awesome.quit()
+    return
+end
+
 local deactivate_fired = false
 
 awesome.connect_signal("lock::deactivate", function()

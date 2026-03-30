@@ -139,7 +139,13 @@ function runner.run_steps(steps, options)
         steps[#steps + 1] = runner.step_kill_clients
     end
 
-    t:connect_signal("timeout", function() timer.delayed_call(function()
+    -- Track whether the runner is still active (for watchdog)
+    local runner_active = true
+    local runner_finished = false
+
+    local function run_step()
+        if runner_finished then return end
+
         local step_func = steps[step]
         step_count = step_count + 1
         local step_as_string = step..'/'..#steps..' (@'..step_count..')'
@@ -153,6 +159,7 @@ function runner.run_steps(steps, options)
         end, debug.traceback)
 
         if not success then
+            runner_finished = true
             runner.done('running function for step '
                         ..step_as_string..': '..tostring(result)..'!')
             t:stop()
@@ -167,6 +174,7 @@ function runner.run_steps(steps, options)
                 t:again()
             else
                 -- All steps finished, we are done.
+                runner_finished = true
                 runner.done()
             end
         else
@@ -176,6 +184,7 @@ function runner.run_steps(steps, options)
             step_as_string = step_as_string .. " ("..step_loc..")"
 
             if result == false then
+                runner_finished = true
                 runner.done("Step "..step_as_string.." failed (returned false).")
             else
                 -- No result yet, run this step again.
@@ -184,13 +193,36 @@ function runner.run_steps(steps, options)
                     t.timeout = 0.1
                     t:again()
                 else
+                    runner_finished = true
                     runner.done("timeout waiting for signal in step "
                                 ..step_as_string..".")
                     t:stop()
                 end
             end
         end
-    end) end)
+    end
+
+    t:connect_signal("timeout", function()
+        run_step()
+    end)
+
+    -- Watchdog: if the main timer stops firing (e.g., delayed_call gets lost
+    -- after unmapnotify), this backup timer reschedules it. Without this,
+    -- tests hang forever when a client is killed mid-step.
+    local watchdog = timer({timeout = 0.5})
+    watchdog:connect_signal("timeout", function()
+        if runner_finished then
+            watchdog:stop()
+            return
+        end
+        -- If the main timer is not running, kick it back to life
+        if not t.started then
+            t.timeout = 0
+            t:again()
+        end
+    end)
+    watchdog:start()
+
     t:start()
 end
 

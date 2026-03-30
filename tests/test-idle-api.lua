@@ -8,6 +8,19 @@
 
 local runner = require("_runner")
 
+-- Check if we're in headless mode
+local function is_headless()
+    local backend = os.getenv("WLR_BACKENDS")
+    return backend == "headless"
+end
+
+if is_headless() then
+    io.stderr:write("SKIP: idle API test requires real input devices (idle detection unavailable in headless)\n")
+    io.stderr:write("Test finished successfully.\n")
+    awesome.quit()
+    return
+end
+
 local idle_start_count = 0
 local idle_stop_count = 0
 local callback_fired = {}

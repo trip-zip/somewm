@@ -122,30 +122,12 @@ local steps = {
     end,
 
     -- Step 4: Cleanup
-    function(count)
-        if count == 1 then
-            io.stderr:write("[TEST] Cleanup: killing X11 client\n")
-            if my_x11_client and my_x11_client.valid then
-                my_x11_client:kill()
-            end
-            -- Also kill via pkill as backup
-            os.execute("pkill -9 xterm 2>/dev/null")
+    test_client.step_force_cleanup(function()
+        os.execute("pkill -9 xterm 2>/dev/null")
+        for _, pid in ipairs(x11_client.get_spawned_pids()) do
+            os.execute("kill -9 " .. pid .. " 2>/dev/null")
         end
-
-        if #client.get() == 0 then
-            io.stderr:write("[TEST] Cleanup: done\n")
-            return true
-        end
-
-        if count >= 10 then
-            io.stderr:write("[TEST] Cleanup: force killing\n")
-            local pids = x11_client.get_spawned_pids()
-            for _, pid in ipairs(pids) do
-                os.execute("kill -9 " .. pid .. " 2>/dev/null")
-            end
-            return true
-        end
-    end,
+    end),
 }
 
 runner.run_steps(steps, { kill_clients = false })

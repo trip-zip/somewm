@@ -141,27 +141,7 @@ local steps = {
     end,
 
     -- Step 9: Cleanup
-    function(count)
-        if count == 1 then
-            io.stderr:write("[TEST] Cleanup: killing remaining clients\n")
-            if client_a and client_a.valid then client_a:kill() end
-            if client_b and client_b.valid then client_b:kill() end
-        end
-
-        if #client.get() == 0 then
-            io.stderr:write("[TEST] Cleanup: done\n")
-            return true
-        end
-
-        if count >= 10 then
-            io.stderr:write("[TEST] Cleanup: force killing via SIGKILL\n")
-            local pids = test_client.get_spawned_pids()
-            for _, pid in ipairs(pids) do
-                os.execute("kill -9 " .. pid .. " 2>/dev/null")
-            end
-            return true
-        end
-    end,
+    test_client.step_force_cleanup(),
 }
 
 runner.run_steps(steps, { kill_clients = false })

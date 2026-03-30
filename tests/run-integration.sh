@@ -147,7 +147,8 @@ start_somewm() {
     rm -f "$SOCKET"
 
     # Start compositor (uses XDG_CONFIG_HOME for config)
-    timeout $TEST_TIMEOUT "$SOMEWM" > "$LOG" 2>&1 &
+    # -k 3: send SIGKILL 3s after SIGTERM to prevent memory-leaking zombie compositors
+    timeout -k 3 $TEST_TIMEOUT "$SOMEWM" > "$LOG" 2>&1 &
     SOMEWM_PID=$!
 
     # Wait for socket
@@ -202,28 +203,32 @@ run_test() {
     timeout $TEST_TIMEOUT $SOMEWM_CLIENT eval "dofile('$test_path')" >> "$LOG" 2>&1
     local ipc_exit=$?
 
-    # If IPC timed out, kill compositor and fail
+    # If IPC timed out, kill compositor and all children, then fail
     if [ $ipc_exit -eq 124 ]; then
         kill -KILL $SOMEWM_PID 2>/dev/null || true
+        pkill -9 -f "sleep infinity" 2>/dev/null || true
+        pkill -9 -f "kitty.*test\|kitty.*_[a-z]" 2>/dev/null || true
         wait $SOMEWM_PID 2>/dev/null || true
         end_time=$(date +%s.%N)
         TEST_DURATION=$(echo "$end_time - $start_time" | bc)
         return 1
     fi
 
-    # Wait for compositor to exit with timeout
-    # (wait_count increments every 0.1s, so multiply timeout by 10)
+    # Wait for compositor to exit (3s max — if it hasn't quit by now, it's stuck)
     local wait_count=0
-    local max_wait=$((TEST_TIMEOUT * 10))
+    local max_wait=30  # 30 * 0.1s = 3 seconds
     while kill -0 $SOMEWM_PID 2>/dev/null && [ $wait_count -lt $max_wait ]; do
         sleep 0.1
         wait_count=$((wait_count + 1))
     done
 
-    # Force kill if still running
+    # Force kill compositor and all its children (kitty, sleep infinity, etc.)
     if kill -0 $SOMEWM_PID 2>/dev/null; then
         kill -KILL $SOMEWM_PID 2>/dev/null || true
     fi
+    # Kill any orphaned test clients spawned by this compositor
+    pkill -9 -f "sleep infinity" 2>/dev/null || true
+    pkill -9 -f "kitty.*test\|kitty.*_[a-z]" 2>/dev/null || true
 
     wait $SOMEWM_PID 2>/dev/null || true
 
@@ -370,8 +375,8 @@ if [ "$PERSISTENT" = 1 ]; then
 else
     # Normal mode: fresh compositor per test
     for test in $tests; do
-        test_count=$((test_count + 1))
         test_name=$(basename "$test")
+        test_count=$((test_count + 1))
 
         # Clear log for this test
         > "$LOG"

@@ -206,32 +206,12 @@ local steps = {
     end,
 
     -- Cleanup
-    function(count)
-        if count == 1 then
-            io.stderr:write("[TEST] Cleanup\n")
-            if proc_pid_a then
-                awful.spawn("kill " .. proc_pid_a)
-            end
-            test_client.terminate()
+    test_client.step_force_cleanup(function()
+        if proc_pid_a then
+            os.execute("kill -9 " .. proc_pid_a .. " 2>/dev/null")
         end
-
-        if #client.get() == 0 then
-            io.stderr:write("[TEST] Cleanup: done\n")
-            return true
-        end
-
-        if count >= 10 then
-            io.stderr:write("[TEST] Cleanup: force killing\n")
-            if proc_pid_a then
-                os.execute("kill -9 " .. proc_pid_a .. " 2>/dev/null")
-            end
-            os.execute("pkill -9 test-fullscreen 2>/dev/null")
-            for _, c in ipairs(client.get()) do
-                c:kill()
-            end
-            return true
-        end
-    end,
+        os.execute("pkill -9 test-fullscreen 2>/dev/null")
+    end),
 }
 
 runner.run_steps(steps, { kill_clients = false })

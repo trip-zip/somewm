@@ -116,6 +116,28 @@ function module.get_spawned_pids()
     return gears.table.clone(spawned_pids)
 end
 
+--- Create a step function that force-kills all spawned clients and returns true.
+-- Use this as the final cleanup step in tests to avoid the gears.timer hang
+-- that occurs when c:kill() triggers async unmapnotify processing.
+-- @tparam[opt] function pre_cleanup Optional function to call before killing
+--   (e.g., to reset carousel settings)
+-- @treturn function A step function suitable for runner.run_steps()
+function module.step_force_cleanup(pre_cleanup)
+    return function()
+        if pre_cleanup then pre_cleanup() end
+        -- SIGKILL spawned processes immediately (don't rely on graceful close)
+        for _, pid in ipairs(spawned_pids) do
+            os.execute("kill -9 " .. pid .. " 2>/dev/null")
+        end
+        -- Also send compositor-level close to any remaining clients
+        for _, c in ipairs(client.get()) do
+            if c.valid then c:kill() end
+        end
+        spawned_pids = {}
+        return true
+    end
+end
+
 --- Check if a terminal is available for spawning.
 -- @treturn boolean True if a terminal was detected
 function module.is_available()

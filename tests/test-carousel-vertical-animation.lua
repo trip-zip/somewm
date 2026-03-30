@@ -129,23 +129,10 @@ local steps = {
     end,
 
     -- Cleanup
-    function(count)
-        if count == 1 then
-            carousel.scroll_duration = 0
-            carousel.set_center_mode("on-overflow")
-            for _, c in ipairs(client.get()) do
-                if c.valid then c:kill() end
-            end
-        end
-        if #client.get() == 0 then return true end
-        if count >= 10 then
-            local pids = test_client.get_spawned_pids()
-            for _, pid in ipairs(pids) do
-                os.execute("kill -9 " .. pid .. " 2>/dev/null")
-            end
-            return true
-        end
-    end,
+    test_client.step_force_cleanup(function()
+        carousel.scroll_duration = 0
+        carousel.set_center_mode("on-overflow")
+    end),
 }
 
 runner.run_steps(steps, { kill_clients = false })
