@@ -557,15 +557,18 @@ clay_apply_all(void)
 void
 clay_cleanup(void)
 {
-	lua_State *L = globalconf_get_lua_State();
+	/* Called during hot-reload teardown or shutdown. The old Lua state is
+	 * being abandoned (GC frozen, state leaked), so skip luaL_unref calls
+	 * which would corrupt the registry free list. Just free C allocations. */
 	for (int i = 0; i < screen_count; i++) {
-		for (int j = 0; j < screens[i].results_count; j++)
-			luaL_unref(L, LUA_REGISTRYINDEX,
-			           screens[i].results[j].lua_ref);
 		free(screens[i].results);
 		free(screens[i].arena_memory);
-		memset(&screens[i], 0, sizeof(clay_screen_t));
 	}
+	memset(screens, 0, sizeof(screens));
 	screen_count = 0;
 	active_screen = NULL;
+
+	/* Clear Clay's global context pointer so Clay_MinMemorySize() doesn't
+	 * dereference the freed arena on the next clay_get_screen() call. */
+	Clay_SetCurrentContext(NULL);
 }
