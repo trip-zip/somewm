@@ -250,6 +250,13 @@ function layout.arrange(screen)
 
         -- protected call to ensure that arrange_lock will be reset
         protected_call(function()
+            -- Compose screen: position wibars and compute workarea via Clay.
+            -- Must run before layout.parameters() so workarea is up-to-date.
+            local clay_ok, clay_mod = pcall(require, "awful.layout.clay")
+            if clay_ok and clay_mod.compose_screen then
+                clay_mod.compose_screen(screen)
+            end
+
             local p = layout.parameters(nil, screen)
 
             local useless_gap = p.useless_gap

@@ -4,15 +4,16 @@
  * global table. Each screen gets its own Clay_Context for independent
  * layout computation.
  *
- * Phase 3A: Lua builds tree, Clay computes, results returned to Lua.
- * Phase 3B: Results stored C-side, applied directly by clay_apply_all()
- *           during the frame refresh cycle (Step 1.75).
+ * Results are stored C-side and applied directly by clay_apply_all()
+ * during the frame refresh cycle (Step 1.75). Supports both client
+ * elements (tiled windows) and drawin elements (wibars/panels).
  *
  * Lua API:
  *   _somewm_clay.begin_layout(screen, width, height, opts?)
  *   _somewm_clay.open_container(config)
  *   _somewm_clay.close_container()
  *   _somewm_clay.client_element(client, config)
+ *   _somewm_clay.drawin_element(drawin, config)
  *   _somewm_clay.end_layout()
  */
 
@@ -26,11 +27,24 @@
 #include <string.h>
 
 #include "objects/client.h"
+#include "objects/drawin.h"
+#include "objects/screen.h"
+
+/* Element types in layout results */
+enum clay_element_type {
+	CLAY_ELEM_CLIENT,
+	CLAY_ELEM_DRAWIN,
+	CLAY_ELEM_WORKAREA, /* Marker: computed bounds = workarea */
+};
 
 /* Layout result for a single element */
 typedef struct {
-	client_t *client;
-	int client_ref;     /* Lua registry ref (prevents GC) */
+	enum clay_element_type type;
+	int lua_ref;        /* Lua registry ref (prevents GC) */
+	union {
+		client_t *client;
+		drawin_t *drawin;
+	};
 	float x, y, w, h;
 } clay_result_t;
 
@@ -41,7 +55,7 @@ typedef struct {
 	int screen_ref;             /* Lua registry ref to screen object */
 	uint32_t element_id_counter;
 	/* Layout metadata from begin_layout opts */
-	float offset_x, offset_y;  /* Workarea origin */
+	float offset_x, offset_y;
 	/* Result storage for C-side apply */
 	clay_result_t *results;
 	int results_count;
@@ -83,15 +97,12 @@ clay_results_ensure_cap(clay_screen_t *cs)
 	cs->results_cap = new_cap;
 }
 
-/* Find or create a per-screen Clay context.
- * The screen Lua object at stack index `idx` is used as the key. */
+/* Find or create a per-screen Clay context. */
 static clay_screen_t *
 clay_get_screen(lua_State *L, int idx)
 {
-	/* Push the screen value for comparison */
 	lua_pushvalue(L, idx);
 
-	/* Search existing screens */
 	for (int i = 0; i < screen_count; i++) {
 		lua_rawgeti(L, LUA_REGISTRYINDEX, screens[i].screen_ref);
 		if (lua_rawequal(L, -1, -2)) {
@@ -101,7 +112,6 @@ clay_get_screen(lua_State *L, int idx)
 		lua_pop(L, 1);
 	}
 
-	/* Create new screen context */
 	if (screen_count >= MAX_SCREENS) {
 		lua_pop(L, 1);
 		luaL_error(L, "clay: too many screens (max %d)", MAX_SCREENS);
@@ -111,10 +121,8 @@ clay_get_screen(lua_State *L, int idx)
 	clay_screen_t *cs = &screens[screen_count++];
 	memset(cs, 0, sizeof(*cs));
 
-	/* Store Lua screen reference */
-	cs->screen_ref = luaL_ref(L, LUA_REGISTRYINDEX); /* pops the value */
+	cs->screen_ref = luaL_ref(L, LUA_REGISTRYINDEX);
 
-	/* Initialize Clay context */
 	uint32_t mem_size = Clay_MinMemorySize();
 	cs->arena_memory = malloc(mem_size);
 	Clay_Arena arena =
@@ -139,7 +147,6 @@ clay_read_layout_config(lua_State *L, int idx)
 	if (!lua_istable(L, idx))
 		return config;
 
-	/* Direction: "row" or "column" */
 	lua_getfield(L, idx, "direction");
 	if (lua_isstring(L, -1)) {
 		const char *dir = lua_tostring(L, -1);
@@ -150,13 +157,11 @@ clay_read_layout_config(lua_State *L, int idx)
 	}
 	lua_pop(L, 1);
 
-	/* Gap between children */
 	lua_getfield(L, idx, "gap");
 	if (lua_isnumber(L, -1))
 		config.childGap = (uint16_t)lua_tonumber(L, -1);
 	lua_pop(L, 1);
 
-	/* Padding */
 	lua_getfield(L, idx, "padding");
 	if (lua_istable(L, -1)) {
 		lua_rawgeti(L, -1, 1);
@@ -175,7 +180,6 @@ clay_read_layout_config(lua_State *L, int idx)
 	}
 	lua_pop(L, 1);
 
-	/* Width sizing */
 	lua_getfield(L, idx, "width_percent");
 	if (lua_isnumber(L, -1)) {
 		config.sizing.width = (Clay_SizingAxis){
@@ -195,7 +199,6 @@ clay_read_layout_config(lua_State *L, int idx)
 	}
 	lua_pop(L, 1);
 
-	/* Height sizing */
 	lua_getfield(L, idx, "height_percent");
 	if (lua_isnumber(L, -1)) {
 		config.sizing.height = (Clay_SizingAxis){
@@ -215,9 +218,6 @@ clay_read_layout_config(lua_State *L, int idx)
 	}
 	lua_pop(L, 1);
 
-	/* Grow: default to GROW on any axis not explicitly sized.
-	 * Layout elements should fill available space since clients have no
-	 * intrinsic content size (FIT would collapse to 0). */
 	lua_getfield(L, idx, "grow");
 	{
 		int has_grow = lua_isnil(L, -1) || lua_toboolean(L, -1);
@@ -239,23 +239,20 @@ clay_read_layout_config(lua_State *L, int idx)
 	return config;
 }
 
-/* _somewm_clay.begin_layout(screen, width, height, opts?)
- * opts is an optional table: { offset_x, offset_y } */
+/* _somewm_clay.begin_layout(screen, width, height, opts?) */
 static int
 luaA_clay_begin_layout(lua_State *L)
 {
-	luaL_checkany(L, 1); /* screen object */
+	luaL_checkany(L, 1);
 	float width = (float)luaL_checknumber(L, 2);
 	float height = (float)luaL_checknumber(L, 3);
 
 	clay_screen_t *cs = clay_get_screen(L, 1);
 	active_screen = cs;
 
-	/* Reset layout metadata */
 	cs->offset_x = 0;
 	cs->offset_y = 0;
 
-	/* Read optional opts table */
 	if (lua_istable(L, 4)) {
 		lua_getfield(L, 4, "offset_x");
 		if (lua_isnumber(L, -1))
@@ -268,10 +265,9 @@ luaA_clay_begin_layout(lua_State *L)
 		lua_pop(L, 1);
 	}
 
-	/* Release any leftover refs from a previous layout pass that
-	 * wasn't consumed (e.g., screen removed between layout and apply) */
+	/* Release leftover refs from previous unconsumed layout */
 	for (int i = 0; i < cs->results_count; i++)
-		luaL_unref(L, LUA_REGISTRYINDEX, cs->results[i].client_ref);
+		luaL_unref(L, LUA_REGISTRYINDEX, cs->results[i].lua_ref);
 	cs->results_count = 0;
 	cs->has_pending = false;
 
@@ -314,33 +310,28 @@ luaA_clay_close_container(lua_State *L)
 	return 0;
 }
 
-/* _somewm_clay.client_element(client_userdata, config_table)
- * Store client_t pointer and Lua ref for C-side geometry application.
- * Uses CUSTOM render command type to identify client elements in output. */
+/* _somewm_clay.client_element(client, config) */
 static int
 luaA_clay_client_element(lua_State *L)
 {
 	if (!active_screen)
 		return luaL_error(L, "clay: client_element called outside begin/end_layout");
 
-	/* Arg 1: client object - extract C pointer and store Lua ref */
 	client_t *c = luaA_checkudata(L, 1, &client_class);
 	lua_pushvalue(L, 1);
 	int ref = luaL_ref(L, LUA_REGISTRYINDEX);
 
-	/* Store client + ref for result collection in end_layout */
 	clay_results_ensure_cap(active_screen);
 	clay_result_t *r = &active_screen->results[active_screen->results_count++];
+	r->type = CLAY_ELEM_CLIENT;
 	r->client = c;
-	r->client_ref = ref;
-	r->x = r->y = r->w = r->h = 0; /* filled by end_layout */
+	r->lua_ref = ref;
+	r->x = r->y = r->w = r->h = 0;
 
-	/* Arg 2: optional config table */
 	Clay_LayoutConfig layout = { 0 };
 	if (lua_istable(L, 2))
 		layout = clay_read_layout_config(L, 2);
 
-	/* Use results_count as the custom data key (1-based index into results) */
 	active_screen->element_id_counter++;
 	Clay__OpenElementWithId(
 		(Clay_ElementId){ .id = active_screen->element_id_counter });
@@ -353,8 +344,73 @@ luaA_clay_client_element(lua_State *L)
 	return 0;
 }
 
-/* _somewm_clay.end_layout()
- * Compute layout, store results C-side for clay_apply_all(). */
+/* _somewm_clay.drawin_element(drawin, config) */
+static int
+luaA_clay_drawin_element(lua_State *L)
+{
+	if (!active_screen)
+		return luaL_error(L, "clay: drawin_element called outside begin/end_layout");
+
+	drawin_t *d = luaA_checkudata(L, 1, &drawin_class);
+	lua_pushvalue(L, 1);
+	int ref = luaL_ref(L, LUA_REGISTRYINDEX);
+
+	clay_results_ensure_cap(active_screen);
+	clay_result_t *r = &active_screen->results[active_screen->results_count++];
+	r->type = CLAY_ELEM_DRAWIN;
+	r->drawin = d;
+	r->lua_ref = ref;
+	r->x = r->y = r->w = r->h = 0;
+
+	Clay_LayoutConfig layout = { 0 };
+	if (lua_istable(L, 2))
+		layout = clay_read_layout_config(L, 2);
+
+	active_screen->element_id_counter++;
+	Clay__OpenElementWithId(
+		(Clay_ElementId){ .id = active_screen->element_id_counter });
+	Clay__ConfigureOpenElement((Clay_ElementDeclaration){
+		.layout = layout,
+		.custom = { .customData = (void *)(intptr_t)active_screen->results_count },
+	});
+	Clay__CloseElement();
+
+	return 0;
+}
+
+/* _somewm_clay.workarea_element(config)
+ * Marker element whose computed bounds represent the workarea.
+ * No Lua ref needed - it's not a real object. */
+static int
+luaA_clay_workarea_element(lua_State *L)
+{
+	if (!active_screen)
+		return luaL_error(L, "clay: workarea_element called outside begin/end_layout");
+
+	clay_results_ensure_cap(active_screen);
+	clay_result_t *r = &active_screen->results[active_screen->results_count++];
+	r->type = CLAY_ELEM_WORKAREA;
+	r->client = NULL;
+	r->lua_ref = LUA_NOREF;
+	r->x = r->y = r->w = r->h = 0;
+
+	Clay_LayoutConfig layout = { 0 };
+	if (lua_istable(L, 1))
+		layout = clay_read_layout_config(L, 1);
+
+	active_screen->element_id_counter++;
+	Clay__OpenElementWithId(
+		(Clay_ElementId){ .id = active_screen->element_id_counter });
+	Clay__ConfigureOpenElement((Clay_ElementDeclaration){
+		.layout = layout,
+		.custom = { .customData = (void *)(intptr_t)active_screen->results_count },
+	});
+	Clay__CloseElement();
+
+	return 0;
+}
+
+/* _somewm_clay.end_layout() */
 static int
 luaA_clay_end_layout(lua_State *L)
 {
@@ -374,7 +430,6 @@ luaA_clay_end_layout(lua_State *L)
 		if (idx <= 0 || idx > active_screen->results_count)
 			continue;
 
-		/* idx is 1-based, results array is 0-based */
 		clay_result_t *r = &active_screen->results[idx - 1];
 		r->x = cmd->boundingBox.x;
 		r->y = cmd->boundingBox.y;
@@ -383,7 +438,44 @@ luaA_clay_end_layout(lua_State *L)
 	}
 
 	active_screen->has_pending = true;
+
+	/* If a workarea element was present, return its bounds as a table.
+	 * This lets compose_screen() read the workarea without waiting
+	 * for clay_apply_all(). */
+	for (int j = 0; j < active_screen->results_count; j++) {
+		clay_result_t *r = &active_screen->results[j];
+		if (r->type == CLAY_ELEM_WORKAREA) {
+			lua_newtable(L);
+			lua_pushnumber(L, r->x + active_screen->offset_x);
+			lua_setfield(L, -2, "x");
+			lua_pushnumber(L, r->y + active_screen->offset_y);
+			lua_setfield(L, -2, "y");
+			lua_pushnumber(L, r->w);
+			lua_setfield(L, -2, "width");
+			lua_pushnumber(L, r->h);
+			lua_setfield(L, -2, "height");
+			active_screen = NULL;
+			return 1;
+		}
+	}
+
 	active_screen = NULL;
+	return 0;
+}
+
+/* _somewm_clay.set_screen_workarea(screen, x, y, width, height)
+ * Update a screen's workarea from Clay's computed bounds. */
+static int
+luaA_clay_set_screen_workarea(lua_State *L)
+{
+	screen_t *s = luaA_checkscreen(L, 1);
+	struct wlr_box wa = {
+		.x      = (int)luaL_checknumber(L, 2),
+		.y      = (int)luaL_checknumber(L, 3),
+		.width  = (int)luaL_checknumber(L, 4),
+		.height = (int)luaL_checknumber(L, 5),
+	};
+	screen_set_workarea(L, s, &wa);
 	return 0;
 }
 
@@ -392,7 +484,10 @@ static const luaL_Reg clay_methods[] = {
 	{ "open_container", luaA_clay_open_container },
 	{ "close_container", luaA_clay_close_container },
 	{ "client_element", luaA_clay_client_element },
+	{ "drawin_element", luaA_clay_drawin_element },
+	{ "workarea_element", luaA_clay_workarea_element },
 	{ "end_layout", luaA_clay_end_layout },
+	{ "set_screen_workarea", luaA_clay_set_screen_workarea },
 	{ NULL, NULL }
 };
 
@@ -404,9 +499,8 @@ luaA_clay_setup(lua_State *L)
 	lua_setglobal(L, "_somewm_clay");
 }
 
-/* Apply pending Clay layout results to client geometry.
- * Called from some_refresh() at Step 1.75 (after Lua layout, before
- * drawin_refresh/client_refresh). */
+/* Apply pending Clay layout results to client/drawin geometry.
+ * Called from some_refresh() at Step 1.75. */
 void
 clay_apply_all(void)
 {
@@ -420,16 +514,28 @@ clay_apply_all(void)
 		for (int j = 0; j < cs->results_count; j++) {
 			clay_result_t *r = &cs->results[j];
 
-			int bw2 = r->client->border_width * 2;
-			area_t geo = {
-				.x      = (int)(r->x + cs->offset_x),
-				.y      = (int)(r->y + cs->offset_y),
-				.width  = MAX(1, (int)r->w - bw2),
-				.height = MAX(1, (int)r->h - bw2),
-			};
-			client_resize_do(r->client, geo, true);
+			int x = (int)(r->x + cs->offset_x);
+			int y = (int)(r->y + cs->offset_y);
+			int w = (int)r->w;
+			int h = (int)r->h;
 
-			luaL_unref(L, LUA_REGISTRYINDEX, r->client_ref);
+			if (r->type == CLAY_ELEM_CLIENT) {
+				int bw2 = r->client->border_width * 2;
+				area_t geo = {
+					.x = x,
+					.y = y,
+					.width  = MAX(1, w - bw2),
+					.height = MAX(1, h - bw2),
+				};
+				client_resize_do(r->client, geo, true);
+			} else if (r->type == CLAY_ELEM_DRAWIN) {
+				luaA_drawin_set_geometry(L, r->drawin,
+				                         x, y, w, h);
+			}
+			/* CLAY_ELEM_WORKAREA: informational only, skip */
+
+			if (r->lua_ref != LUA_NOREF)
+				luaL_unref(L, LUA_REGISTRYINDEX, r->lua_ref);
 		}
 		cs->results_count = 0;
 		cs->has_pending = false;
@@ -441,10 +547,9 @@ clay_cleanup(void)
 {
 	lua_State *L = globalconf_get_lua_State();
 	for (int i = 0; i < screen_count; i++) {
-		/* Release any pending result refs */
 		for (int j = 0; j < screens[i].results_count; j++)
 			luaL_unref(L, LUA_REGISTRYINDEX,
-			           screens[i].results[j].client_ref);
+			           screens[i].results[j].lua_ref);
 		free(screens[i].results);
 		free(screens[i].arena_memory);
 		memset(&screens[i], 0, sizeof(clay_screen_t));
