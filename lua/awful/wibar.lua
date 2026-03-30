@@ -281,11 +281,28 @@ local function clay_register(wb, position)
     end
 end
 
--- Attach the placement function.
--- Clay handles wibar positioning via compose_screen(), so we skip
--- the old placement attachment. Registration is sufficient.
+-- Attach the wibar: register for Clay and set initial geometry.
+-- Clay refines the position on the next compose_screen() cycle, but
+-- the wibar needs a rough placement immediately so it's visible
+-- during startup and hot-reload before the first arrange fires.
 local function attach(wb, position)
     clay_register(wb, position)
+
+    local s = wb.screen
+    if s then
+        local geo = s.geometry
+        if position == "top" then
+            wb:geometry({ x = geo.x, y = geo.y, width = geo.width, height = wb.height })
+        elseif position == "bottom" then
+            wb:geometry({ x = geo.x, y = geo.y + geo.height - wb.height,
+                          width = geo.width, height = wb.height })
+        elseif position == "left" then
+            wb:geometry({ x = geo.x, y = geo.y, width = wb.width, height = geo.height })
+        elseif position == "right" then
+            wb:geometry({ x = geo.x + geo.width - wb.width, y = geo.y,
+                          width = wb.width, height = geo.height })
+        end
+    end
 end
 
 -- Re-attach all wibars on a given wibar screen
