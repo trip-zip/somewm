@@ -1,13 +1,11 @@
 ---------------------------------------------------------------------------
 -- Declarative layout using the Clay flexbox engine.
 --
--- Layouts are described as trees of rows, columns, and client elements.
--- Clay (C library) computes all positions in a single pass. Results are
--- applied directly by C in the frame refresh cycle (Step 1.75).
---
--- Gap handling is native to Clay: root container padding creates edge
--- margins, container childGap creates spacing between siblings. This
--- produces consistent gaps everywhere (edge = between = gap).
+-- Two-level system:
+-- 1. Screen composition (compose_screen): positions wibars, computes workarea.
+--    Runs before every layout cycle. Replaces struts.
+-- 2. Client tiling (suit.arrange): positions clients within the workarea.
+--    Uses Clay for native presets, traditional suits also work.
 --
 -- @module awful.layout.clay
 ---------------------------------------------------------------------------
@@ -37,7 +35,6 @@ local function collect_children(args)
     local children = {}
     for k, v in pairs(args) do
         if type(k) == "number" then
-            -- Flatten nested arrays (tables without _type, e.g. from clay.clients)
             if type(v) == "table" and not v._type then
                 for _, child in ipairs(v) do
                     children[#children + 1] = child
@@ -121,7 +118,6 @@ local function walk_with_gap(node, gap)
         local cfg = make_config(node.props, "row")
         clay_c.client_element(node.client, cfg)
     elseif node._type == "container" then
-        -- Inject gap into every container so spacing is consistent
         if gap > 0 and not node.props.gap then
             node.props.gap = gap
         end
@@ -134,7 +130,114 @@ local function walk_with_gap(node, gap)
     end
 end
 
--- Create an awful.layout-compatible suit from a tree-building function
+-- Emit the client layout tree contents into the current Clay context
+local function emit_client_tree(tree, gap)
+    if tree._type == "container" then
+        for _, child in ipairs(tree.children) do
+            walk_with_gap(child, gap)
+        end
+    elseif tree._type == "client" then
+        local cfg = make_config(tree.props, "row")
+        clay_c.client_element(tree.client, cfg)
+    end
+end
+
+---------------------------------------------------------------------------
+-- Screen composition: positions wibars, computes workarea.
+-- Called before every layout cycle. Replaces struts entirely.
+---------------------------------------------------------------------------
+
+-- Collect registered wibars from the screen by position
+local function collect_wibars(s)
+    local drawins = s._clay_drawins
+    if not drawins then return nil end
+
+    local top, bottom, left, right = {}, {}, {}, {}
+    local has_any = false
+
+    for wb, info in pairs(drawins) do
+        has_any = true
+        local pos = info.position
+        if pos == "top" then
+            top[#top + 1] = { wb = wb, size = info.size }
+        elseif pos == "bottom" then
+            bottom[#bottom + 1] = { wb = wb, size = info.size }
+        elseif pos == "left" then
+            left[#left + 1] = { wb = wb, size = info.size }
+        elseif pos == "right" then
+            right[#right + 1] = { wb = wb, size = info.size }
+        end
+    end
+
+    if not has_any then return nil end
+    return { top = top, bottom = bottom, left = left, right = right }
+end
+
+--- Compose the screen: position wibars and compute workarea via Clay.
+-- This runs before layout.parameters() so that screen.workarea reflects
+-- Clay's computation. Replaces the strut-based workarea system.
+-- @tparam screen s The screen to compose.
+function clay.compose_screen(s)
+    local wibars = collect_wibars(s)
+    if not wibars then return end
+
+    local geo = s.geometry
+    local has_lr = #wibars.left > 0 or #wibars.right > 0
+
+    clay_c.begin_layout(s, geo.width, geo.height, {
+        offset_x = geo.x,
+        offset_y = geo.y,
+    })
+
+    -- Screen tree: column { top wibars, middle, bottom wibars }
+    clay_c.open_container({ direction = "column", grow = true })
+
+    -- Top wibars
+    for _, wb in ipairs(wibars.top) do
+        clay_c.drawin_element(wb.wb.drawin, { height_fixed = wb.size })
+    end
+
+    if has_lr then
+        -- Middle row: { left wibars, workarea, right wibars }
+        clay_c.open_container({ direction = "row", grow = true })
+
+        for _, wb in ipairs(wibars.left) do
+            clay_c.drawin_element(wb.wb.drawin, { width_fixed = wb.size })
+        end
+
+        -- Workarea marker: grows to fill remaining space
+        clay_c.workarea_element({ grow = true })
+
+        for _, wb in ipairs(wibars.right) do
+            clay_c.drawin_element(wb.wb.drawin, { width_fixed = wb.size })
+        end
+
+        clay_c.close_container() -- middle row
+    else
+        -- No left/right wibars: workarea directly in column
+        clay_c.workarea_element({ grow = true })
+    end
+
+    -- Bottom wibars
+    for _, wb in ipairs(wibars.bottom) do
+        clay_c.drawin_element(wb.wb.drawin, { height_fixed = wb.size })
+    end
+
+    clay_c.close_container() -- outer column
+
+    -- end_layout returns workarea bounds if a workarea_element was present
+    local workarea = clay_c.end_layout()
+
+    if workarea then
+        -- Update screen.workarea via C so layout.parameters() reads Clay's bounds
+        clay_c.set_screen_workarea(s,
+            workarea.x, workarea.y, workarea.width, workarea.height)
+    end
+end
+
+---------------------------------------------------------------------------
+-- Client tiling: positions clients within the workarea.
+---------------------------------------------------------------------------
 
 function clay.layout(name, build_fn, opts)
     opts = opts or {}
@@ -167,22 +270,10 @@ function clay.layout(name, build_fn, opts)
             padding = { gap, gap, gap, gap },
             grow = true,
         })
-        -- Walk tree contents (skip the root node itself since we opened it above)
-        if tree._type == "container" then
-            for _, child in ipairs(tree.children) do
-                walk_with_gap(child, gap)
-            end
-        elseif tree._type == "client" then
-            -- Single client returned directly
-            local cfg = make_config(tree.props, "row")
-            clay_c.client_element(tree.client, cfg)
-        end
+        emit_client_tree(tree, gap)
         clay_c.close_container()
 
         clay_c.end_layout()
-
-        -- Signal the framework to skip its gap/border/c:geometry() loop.
-        -- Geometry is applied by C in clay_apply_all() at Step 1.75.
         p._clay_managed = true
     end
 
@@ -259,7 +350,6 @@ local function fair_build(orientation)
             cols = math.ceil(n / rows)
         end
 
-        -- Column-first fill order (matches awful.layout.suit.fair)
         local outer = (orientation == "horizontal") and clay.row or clay.column
         local inner = (orientation == "horizontal") and clay.column or clay.row
 

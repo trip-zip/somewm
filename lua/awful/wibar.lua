@@ -261,13 +261,30 @@ local function gen_placement(position, align, stretch)
     return corner + (stretch and placement[maximize] or nil)
 end
 
+-- Register wibar for Clay screen-level composition.
+-- Clay layouts read screen._clay_drawins to build the full-screen tree.
+local function clay_register(wb, position)
+    local s = wb.screen
+    if not s then return end
+
+    s._clay_drawins = s._clay_drawins or {}
+
+    if wb.visible then
+        local is_horiz = (position == "top" or position == "bottom")
+        s._clay_drawins[wb] = {
+            position = position,
+            size = is_horiz and wb.height or wb.width,
+        }
+    else
+        s._clay_drawins[wb] = nil
+    end
+end
+
 -- Attach the placement function.
+-- Clay handles wibar positioning via compose_screen(), so we skip
+-- the old placement attachment. Registration is sufficient.
 local function attach(wb, position)
-    gen_placement(position, wb._private.align, wb._stretch)(wb, {
-        attach          = true,
-        update_workarea = wb._private.restrict_workarea,
-        margins         = get_margins(wb)
-    })
+    clay_register(wb, position)
 end
 
 -- Re-attach all wibars on a given wibar screen
@@ -571,7 +588,10 @@ function awfulwibar.new(args)
     -- Force all the wibars to be moved
     reattach(w)
 
-    w:connect_signal("property::visible", function() reattach(w) end)
+    w:connect_signal("property::visible", function()
+        reattach(w)
+        clay_register(w, w._position or "top")
+    end)
 
     assert(w.buttons)
 
