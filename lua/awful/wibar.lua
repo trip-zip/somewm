@@ -274,6 +274,7 @@ local function clay_register(wb, position)
         s._clay_drawins[wb] = {
             position = position,
             size = is_horiz and wb.height or wb.width,
+            clay_gaps = wb._private.clay_gaps or false,
         }
     else
         s._clay_drawins[wb] = nil
@@ -562,6 +563,7 @@ function awfulwibar.new(args)
     w._private.meta_margins = meta_margins(w)
 
     w._private.restrict_workarea = true
+    w._private.clay_gaps = args.clay_gaps or false
 
     -- `w` needs to be inserted in `wiboxes` before reattach or its own offset
     -- will not be taken into account by the "older" wibars when `reattach` is

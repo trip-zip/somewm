@@ -158,14 +158,15 @@ local function collect_wibars(s)
     for wb, info in pairs(drawins) do
         has_any = true
         local pos = info.position
+        local entry = { wb = wb, size = info.size, clay_gaps = info.clay_gaps }
         if pos == "top" then
-            top[#top + 1] = { wb = wb, size = info.size }
+            top[#top + 1] = entry
         elseif pos == "bottom" then
-            bottom[#bottom + 1] = { wb = wb, size = info.size }
+            bottom[#bottom + 1] = entry
         elseif pos == "left" then
-            left[#left + 1] = { wb = wb, size = info.size }
+            left[#left + 1] = entry
         elseif pos == "right" then
-            right[#right + 1] = { wb = wb, size = info.size }
+            right[#right + 1] = entry
         end
     end
 
@@ -179,57 +180,115 @@ end
 -- @tparam screen s The screen to compose.
 function clay.compose_screen(s)
     local wibars = collect_wibars(s)
-    if not wibars then return end
 
     local geo = s.geometry
-    local has_lr = #wibars.left > 0 or #wibars.right > 0
+
+    -- Get gap from the selected tag
+    local t = s.selected_tag
+    local gap = t and t.gap or 0
 
     clay_c.begin_layout(s, geo.width, geo.height, {
         offset_x = geo.x,
         offset_y = geo.y,
     })
 
-    -- Screen tree: column { top wibars, middle, bottom wibars }
+    -- Screen column: NO padding, NO gap. Just structural.
+    -- Each child (wibar, workarea) owns its own gaps independently.
     clay_c.open_container({ direction = "column", grow = true })
 
-    -- Top wibars
-    for _, wb in ipairs(wibars.top) do
-        clay_c.drawin_element(wb.wb.drawin, { height_fixed = wb.size })
-    end
+    if wibars then
+        local has_lr = #wibars.left > 0 or #wibars.right > 0
 
-    if has_lr then
-        -- Middle row: { left wibars, workarea, right wibars }
-        clay_c.open_container({ direction = "row", grow = true })
-
-        for _, wb in ipairs(wibars.left) do
-            clay_c.drawin_element(wb.wb.drawin, { width_fixed = wb.size })
+        -- Top wibars
+        for _, wb in ipairs(wibars.top) do
+            if wb.clay_gaps then
+                clay_c.open_container({
+                    padding = { gap, gap, gap, gap },
+                    width_percent = 100,
+                    grow = false,
+                })
+                clay_c.drawin_element(wb.wb.drawin, { height_fixed = wb.size })
+                clay_c.close_container()
+            else
+                clay_c.drawin_element(wb.wb.drawin, { height_fixed = wb.size })
+            end
         end
 
-        -- Workarea marker: grows to fill remaining space
-        clay_c.workarea_element({ grow = true })
+        if has_lr then
+            -- Middle row: left wibars, workarea, right wibars
+            clay_c.open_container({ direction = "row", grow = true })
 
-        for _, wb in ipairs(wibars.right) do
-            clay_c.drawin_element(wb.wb.drawin, { width_fixed = wb.size })
+            for _, wb in ipairs(wibars.left) do
+                if wb.clay_gaps then
+                    clay_c.open_container({
+                        padding = { gap, gap, gap, gap },
+                        height_percent = 100,
+                        grow = false,
+                    })
+                    clay_c.drawin_element(wb.wb.drawin, { width_fixed = wb.size })
+                    clay_c.close_container()
+                else
+                    clay_c.drawin_element(wb.wb.drawin, { width_fixed = wb.size })
+                end
+            end
+
+            -- Workarea: owns its own padding for client margins
+            clay_c.workarea_element({
+                padding = { gap, gap, gap, gap },
+                grow = true,
+            })
+
+            for _, wb in ipairs(wibars.right) do
+                if wb.clay_gaps then
+                    clay_c.open_container({
+                        padding = { gap, gap, gap, gap },
+                        height_percent = 100,
+                        grow = false,
+                    })
+                    clay_c.drawin_element(wb.wb.drawin, { width_fixed = wb.size })
+                    clay_c.close_container()
+                else
+                    clay_c.drawin_element(wb.wb.drawin, { width_fixed = wb.size })
+                end
+            end
+
+            clay_c.close_container() -- middle row
+        else
+            -- No left/right wibars: workarea directly in column
+            clay_c.workarea_element({
+                padding = { gap, gap, gap, gap },
+                grow = true,
+            })
         end
 
-        clay_c.close_container() -- middle row
+        -- Bottom wibars
+        for _, wb in ipairs(wibars.bottom) do
+            if wb.clay_gaps then
+                clay_c.open_container({
+                    padding = { gap, gap, gap, gap },
+                    width_percent = 100,
+                    grow = false,
+                })
+                clay_c.drawin_element(wb.wb.drawin, { height_fixed = wb.size })
+                clay_c.close_container()
+            else
+                clay_c.drawin_element(wb.wb.drawin, { height_fixed = wb.size })
+            end
+        end
     else
-        -- No left/right wibars: workarea directly in column
-        clay_c.workarea_element({ grow = true })
+        -- No wibars: workarea with its own padding
+        clay_c.workarea_element({
+            padding = { gap, gap, gap, gap },
+            grow = true,
+        })
     end
 
-    -- Bottom wibars
-    for _, wb in ipairs(wibars.bottom) do
-        clay_c.drawin_element(wb.wb.drawin, { height_fixed = wb.size })
-    end
+    clay_c.close_container() -- screen column
 
-    clay_c.close_container() -- outer column
-
-    -- end_layout returns workarea bounds if a workarea_element was present
+    -- end_layout returns workarea bounds (inner bounds of workarea element)
     local workarea = clay_c.end_layout()
 
     if workarea then
-        -- Update screen.workarea via C so layout.parameters() reads Clay's bounds
         clay_c.set_screen_workarea(s,
             workarea.x, workarea.y, workarea.width, workarea.height)
     end
@@ -262,12 +321,12 @@ function clay.layout(name, build_fn, opts)
             offset_y = wa.y,
         })
 
-        -- Root container: padding creates edge margins, childGap between children
+        -- Root container: childGap between clients. No padding needed here
+        -- because compose_screen() handles outer margins at the screen level.
         local root_dir = (tree.props and tree.props.direction) or "row"
         clay_c.open_container({
             direction = root_dir,
             gap = gap,
-            padding = { gap, gap, gap, gap },
             grow = true,
         })
         emit_client_tree(tree, gap)

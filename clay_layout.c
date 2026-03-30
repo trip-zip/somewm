@@ -46,6 +46,8 @@ typedef struct {
 		drawin_t *drawin;
 	};
 	float x, y, w, h;
+	/* For WORKAREA: padding to subtract from bounding box to get inner bounds */
+	uint16_t pad_top, pad_right, pad_bottom, pad_left;
 } clay_result_t;
 
 /* Per-screen Clay state */
@@ -176,7 +178,10 @@ clay_read_layout_config(lua_State *L, int idx)
 		lua_rawgeti(L, -1, 4);
 		uint16_t left = lua_isnumber(L, -1) ? (uint16_t)lua_tonumber(L, -1) : 0;
 		lua_pop(L, 1);
-		config.padding = (Clay_Padding){ top, right, bottom, left };
+		config.padding = (Clay_Padding){
+			.left = left, .right = right,
+			.top = top, .bottom = bottom,
+		};
 	}
 	lua_pop(L, 1);
 
@@ -398,6 +403,12 @@ luaA_clay_workarea_element(lua_State *L)
 	if (lua_istable(L, 1))
 		layout = clay_read_layout_config(L, 1);
 
+	/* Store padding so end_layout can return inner bounds as workarea */
+	r->pad_top = layout.padding.top;
+	r->pad_right = layout.padding.right;
+	r->pad_bottom = layout.padding.bottom;
+	r->pad_left = layout.padding.left;
+
 	active_screen->element_id_counter++;
 	Clay__OpenElementWithId(
 		(Clay_ElementId){ .id = active_screen->element_id_counter });
@@ -445,14 +456,15 @@ luaA_clay_end_layout(lua_State *L)
 	for (int j = 0; j < active_screen->results_count; j++) {
 		clay_result_t *r = &active_screen->results[j];
 		if (r->type == CLAY_ELEM_WORKAREA) {
+			/* Return inner bounds (bounding box minus padding) as workarea */
 			lua_newtable(L);
-			lua_pushnumber(L, r->x + active_screen->offset_x);
+			lua_pushnumber(L, r->x + r->pad_left + active_screen->offset_x);
 			lua_setfield(L, -2, "x");
-			lua_pushnumber(L, r->y + active_screen->offset_y);
+			lua_pushnumber(L, r->y + r->pad_top + active_screen->offset_y);
 			lua_setfield(L, -2, "y");
-			lua_pushnumber(L, r->w);
+			lua_pushnumber(L, r->w - r->pad_left - r->pad_right);
 			lua_setfield(L, -2, "width");
-			lua_pushnumber(L, r->h);
+			lua_pushnumber(L, r->h - r->pad_top - r->pad_bottom);
 			lua_setfield(L, -2, "height");
 			active_screen = NULL;
 			return 1;
