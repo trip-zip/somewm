@@ -16,7 +16,9 @@ local clay_c = _somewm_clay
 
 local clay = {}
 
--- Sizing helpers
+---------------------------------------------------------------------------
+-- Tree builder API
+---------------------------------------------------------------------------
 
 local percent_mt = {}
 
@@ -27,8 +29,6 @@ end
 local function is_percent(v)
     return type(v) == "table" and getmetatable(v) == percent_mt
 end
-
--- Tree builders
 
 local function collect_children(args)
     local props = {}
@@ -81,7 +81,9 @@ function clay.slice(list, from, to)
     return result
 end
 
--- Walk tree and call C bindings, injecting gap into every container
+---------------------------------------------------------------------------
+-- Internal helpers: walk tree and call C bindings
+---------------------------------------------------------------------------
 
 local function make_config(props, direction)
     local cfg = { direction = direction }
@@ -130,7 +132,6 @@ local function walk_with_gap(node, gap)
     end
 end
 
--- Emit the client layout tree contents into the current Clay context
 local function emit_client_tree(tree, gap)
     if tree._type == "container" then
         for _, child in ipairs(tree.children) do
@@ -147,7 +148,6 @@ end
 -- Called before every layout cycle. Replaces struts entirely.
 ---------------------------------------------------------------------------
 
--- Collect registered wibars from the screen by position
 local function collect_wibars(s)
     local drawins = s._clay_drawins
     if not drawins then return nil end
@@ -174,16 +174,10 @@ local function collect_wibars(s)
     return { top = top, bottom = bottom, left = left, right = right }
 end
 
---- Compose the screen: position wibars and compute workarea via Clay.
--- This runs before layout.parameters() so that screen.workarea reflects
--- Clay's computation. Replaces the strut-based workarea system.
--- @tparam screen s The screen to compose.
 function clay.compose_screen(s)
     local wibars = collect_wibars(s)
 
     local geo = s.geometry
-
-    -- Get gap from the selected tag
     local t = s.selected_tag
     local gap = t and t.gap or 0
 
@@ -192,14 +186,11 @@ function clay.compose_screen(s)
         offset_y = geo.y,
     })
 
-    -- Screen column: NO padding, NO gap. Just structural.
-    -- Each child (wibar, workarea) owns its own gaps independently.
     clay_c.open_container({ direction = "column", grow = true })
 
     if wibars then
         local has_lr = #wibars.left > 0 or #wibars.right > 0
 
-        -- Top wibars
         for _, wb in ipairs(wibars.top) do
             if wb.clay_gaps then
                 clay_c.open_container({
@@ -215,7 +206,6 @@ function clay.compose_screen(s)
         end
 
         if has_lr then
-            -- Middle row: left wibars, workarea, right wibars
             clay_c.open_container({ direction = "row", grow = true })
 
             for _, wb in ipairs(wibars.left) do
@@ -232,7 +222,6 @@ function clay.compose_screen(s)
                 end
             end
 
-            -- Workarea: owns its own padding for client margins
             clay_c.workarea_element({
                 padding = { gap, gap, gap, gap },
                 grow = true,
@@ -252,16 +241,14 @@ function clay.compose_screen(s)
                 end
             end
 
-            clay_c.close_container() -- middle row
+            clay_c.close_container()
         else
-            -- No left/right wibars: workarea directly in column
             clay_c.workarea_element({
                 padding = { gap, gap, gap, gap },
                 grow = true,
             })
         end
 
-        -- Bottom wibars
         for _, wb in ipairs(wibars.bottom) do
             if wb.clay_gaps then
                 clay_c.open_container({
@@ -276,16 +263,14 @@ function clay.compose_screen(s)
             end
         end
     else
-        -- No wibars: workarea with its own padding
         clay_c.workarea_element({
             padding = { gap, gap, gap, gap },
             grow = true,
         })
     end
 
-    clay_c.close_container() -- screen column
+    clay_c.close_container()
 
-    -- end_layout returns workarea bounds (inner bounds of workarea element)
     local workarea = clay_c.end_layout()
 
     if workarea then
@@ -295,7 +280,7 @@ function clay.compose_screen(s)
 end
 
 ---------------------------------------------------------------------------
--- Client tiling: positions clients within the workarea.
+-- Client tiling: layout factory
 ---------------------------------------------------------------------------
 
 function clay.layout(name, build_fn, opts)
@@ -321,8 +306,6 @@ function clay.layout(name, build_fn, opts)
             offset_y = wa.y,
         })
 
-        -- Root container: childGap between clients. No padding needed here
-        -- because compose_screen() handles outer margins at the screen level.
         local root_dir = (tree.props and tree.props.direction) or "row"
         clay_c.open_container({
             direction = root_dir,
@@ -339,223 +322,14 @@ function clay.layout(name, build_fn, opts)
     return suit
 end
 
--- Built-in tile preset
+---------------------------------------------------------------------------
+-- Load presets
+---------------------------------------------------------------------------
 
-local function tile_skip_gap(nclients, t)
-    return nclients == 1 and t.master_fill_policy == "expand"
-end
-
-local function tile_build(orientation)
-    return function(clients, wa, t)
-        local nmaster = math.min(t.master_count, #clients)
-        local mwfact = t.master_width_factor
-
-        if #clients == 1 then
-            return clay.client(clients[1])
-        end
-
-        local master = clay.slice(clients, 1, nmaster)
-        local slaves = clay.slice(clients, nmaster + 1)
-
-        if nmaster == 0 then
-            return clay.column { clay.clients(slaves) }
-        end
-        if #slaves == 0 then
-            return clay.column { clay.clients(master) }
-        end
-
-        local is_horiz = (orientation == "right" or orientation == "left")
-        local outer = is_horiz and clay.row or clay.column
-        local inner = is_horiz and clay.column or clay.row
-        local size_key = is_horiz and "width" or "height"
-
-        local master_pane = inner {
-            [size_key] = clay.percent(mwfact * 100),
-            clay.clients(master),
-        }
-        local slave_pane = inner {
-            clay.clients(slaves),
-        }
-
-        if orientation == "right" or orientation == "top" then
-            return outer { master_pane, slave_pane }
-        else
-            return outer { slave_pane, master_pane }
-        end
-    end
-end
-
-clay.tile = clay.layout("clay.tile", tile_build("right"),
-    { skip_gap = tile_skip_gap })
-clay.tile.left = clay.layout("clay.tileleft", tile_build("left"),
-    { skip_gap = tile_skip_gap })
-clay.tile.top = clay.layout("clay.tiletop", tile_build("top"),
-    { skip_gap = tile_skip_gap })
-clay.tile.bottom = clay.layout("clay.tilebottom", tile_build("bottom"),
-    { skip_gap = tile_skip_gap })
-
--- Built-in fair preset
-
-local function fair_build(orientation)
-    return function(clients, wa, t)
-        local n = #clients
-        if n == 1 then return clay.client(clients[1]) end
-
-        local rows, cols
-        if n == 2 then
-            rows, cols = 1, 2
-        else
-            rows = math.ceil(math.sqrt(n))
-            cols = math.ceil(n / rows)
-        end
-
-        local outer = (orientation == "horizontal") and clay.row or clay.column
-        local inner = (orientation == "horizontal") and clay.column or clay.row
-
-        local row_nodes = {}
-        for r = 0, rows - 1 do
-            local row_clients = {}
-            for c = 0, cols - 1 do
-                local idx = c * rows + r + 1
-                if idx <= n then
-                    row_clients[#row_clients + 1] = clay.client(clients[idx])
-                end
-            end
-            if #row_clients > 0 then
-                row_nodes[#row_nodes + 1] = inner(row_clients)
-            end
-        end
-        return outer(row_nodes)
-    end
-end
-
-clay.fair = clay.layout("clay.fair", fair_build("vertical"))
-clay.fair.horizontal = clay.layout("clay.fairh", fair_build("horizontal"))
-
--- Built-in max preset
-
-local function max_build(clients, wa, t)
-    -- Only the top client is visible (others are behind it in z-order).
-    -- Return just the first client filling the entire space.
-    return clay.client(clients[1])
-end
-
-clay.max = clay.layout("clay.max", max_build, {
-    skip_gap = function() return true end,
-    no_gap = true,
-})
-
--- Built-in corner presets (nw, ne, sw, se)
---
--- Master in one corner sized by mwfact in both dimensions.
--- Remaining clients alternate between a column along one edge
--- and a row along the perpendicular edge.
--- master_count % 2 determines which group (row or column) is "privileged"
--- (gets more clients and spans the full edge).
-
-local function corner_skip_gap(nclients, t)
-    return nclients == 1 and t.master_fill_policy == "expand"
-end
-
-local function corner_build(orientation)
-    return function(clients, wa, t)
-        if #clients == 1 then
-            return clay.client(clients[1])
-        end
-
-        local mwfact = t.master_width_factor
-        local row_privileged = (t.master_count % 2 == 0)
-
-        local master_node = clay.client(clients[1], {
-            width = clay.percent(mwfact * 100),
-            height = clay.percent(mwfact * 100),
-        })
-
-        -- Split remaining clients: even indices -> group A, odd -> group B
-        local group_a, group_b = {}, {}
-        for i = 2, #clients do
-            if i % 2 == 0 then
-                group_a[#group_a + 1] = clients[i]
-            else
-                group_b[#group_b + 1] = clients[i]
-            end
-        end
-
-        -- Privileged group gets more clients (ceil of remaining/2)
-        local col_clients, row_clients
-        if row_privileged then
-            row_clients = group_a  -- privileged: spans full width
-            col_clients = group_b  -- unprivileged: spans master height only
-        else
-            col_clients = group_a  -- privileged: spans full height
-            row_clients = group_b  -- unprivileged: spans master width only
-        end
-
-        -- Build the column of slaves (along vertical edge opposite master)
-        local col_node = #col_clients > 0 and
-            clay.column { clay.clients(col_clients) } or nil
-
-        -- Build the row of slaves (along horizontal edge opposite master)
-        local row_node = #row_clients > 0 and
-            clay.row { clay.clients(row_clients) } or nil
-
-        -- Assemble the tree based on orientation and privilege
-        -- The structure is always:
-        --   column {
-        --     top_row (master row or slave row)
-        --     bottom_row (slave row or master row)
-        --   }
-        -- where top_row = row { master_side, column_side }
-
-        local is_north = orientation:match("N")
-        local is_west = orientation:match("W")
-
-        -- Master row: master + column slaves (or just master)
-        local master_side
-        if col_node then
-            if row_privileged then
-                -- Column is unprivileged: only spans master height
-                col_node.props.height = clay.percent(mwfact * 100)
-            end
-            if is_west then
-                master_side = clay.row { master_node, col_node }
-            else
-                master_side = clay.row { col_node, master_node }
-            end
-        else
-            master_side = master_node
-        end
-
-        -- Slave row spans full width when privileged, master width when not
-        if row_node and not row_privileged then
-            row_node.props.width = clay.percent(mwfact * 100)
-        end
-
-        if is_north then
-            if row_node then
-                return clay.column { master_side, row_node }
-            else
-                return master_side
-            end
-        else
-            if row_node then
-                return clay.column { row_node, master_side }
-            else
-                return master_side
-            end
-        end
-    end
-end
-
-clay.corner = {}
-clay.corner.nw = clay.layout("clay.cornernw", corner_build("NW"),
-    { skip_gap = corner_skip_gap })
-clay.corner.ne = clay.layout("clay.cornerne", corner_build("NE"),
-    { skip_gap = corner_skip_gap })
-clay.corner.sw = clay.layout("clay.cornersw", corner_build("SW"),
-    { skip_gap = corner_skip_gap })
-clay.corner.se = clay.layout("clay.cornerse", corner_build("SE"),
-    { skip_gap = corner_skip_gap })
+require("awful.layout.clay.tile")(clay)
+require("awful.layout.clay.fair")(clay)
+require("awful.layout.clay.max")(clay)
+require("awful.layout.clay.corner")(clay)
 
 return clay
 
