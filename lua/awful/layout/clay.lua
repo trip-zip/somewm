@@ -250,7 +250,7 @@ function clay.layout(name, build_fn, opts)
 
     function suit.arrange(p)
         local wa = p.workarea
-        local gap = p.useless_gap
+        local gap = opts.no_gap and 0 or p.useless_gap
         local t = p.tag or capi.screen[p.screen].selected_tag
         if #p.clients == 0 then return end
 
@@ -372,6 +372,131 @@ end
 
 clay.fair = clay.layout("clay.fair", fair_build("vertical"))
 clay.fair.horizontal = clay.layout("clay.fairh", fair_build("horizontal"))
+
+-- Built-in max preset
+
+local function max_build(clients, wa, t)
+    -- Only the top client is visible (others are behind it in z-order).
+    -- Return just the first client filling the entire space.
+    return clay.client(clients[1])
+end
+
+clay.max = clay.layout("clay.max", max_build, {
+    skip_gap = function() return true end,
+    no_gap = true,
+})
+
+-- Built-in corner presets (nw, ne, sw, se)
+--
+-- Master in one corner sized by mwfact in both dimensions.
+-- Remaining clients alternate between a column along one edge
+-- and a row along the perpendicular edge.
+-- master_count % 2 determines which group (row or column) is "privileged"
+-- (gets more clients and spans the full edge).
+
+local function corner_skip_gap(nclients, t)
+    return nclients == 1 and t.master_fill_policy == "expand"
+end
+
+local function corner_build(orientation)
+    return function(clients, wa, t)
+        if #clients == 1 then
+            return clay.client(clients[1])
+        end
+
+        local mwfact = t.master_width_factor
+        local row_privileged = (t.master_count % 2 == 0)
+
+        local master_node = clay.client(clients[1], {
+            width = clay.percent(mwfact * 100),
+            height = clay.percent(mwfact * 100),
+        })
+
+        -- Split remaining clients: even indices -> group A, odd -> group B
+        local group_a, group_b = {}, {}
+        for i = 2, #clients do
+            if i % 2 == 0 then
+                group_a[#group_a + 1] = clients[i]
+            else
+                group_b[#group_b + 1] = clients[i]
+            end
+        end
+
+        -- Privileged group gets more clients (ceil of remaining/2)
+        local col_clients, row_clients
+        if row_privileged then
+            row_clients = group_a  -- privileged: spans full width
+            col_clients = group_b  -- unprivileged: spans master height only
+        else
+            col_clients = group_a  -- privileged: spans full height
+            row_clients = group_b  -- unprivileged: spans master width only
+        end
+
+        -- Build the column of slaves (along vertical edge opposite master)
+        local col_node = #col_clients > 0 and
+            clay.column { clay.clients(col_clients) } or nil
+
+        -- Build the row of slaves (along horizontal edge opposite master)
+        local row_node = #row_clients > 0 and
+            clay.row { clay.clients(row_clients) } or nil
+
+        -- Assemble the tree based on orientation and privilege
+        -- The structure is always:
+        --   column {
+        --     top_row (master row or slave row)
+        --     bottom_row (slave row or master row)
+        --   }
+        -- where top_row = row { master_side, column_side }
+
+        local is_north = orientation:match("N")
+        local is_west = orientation:match("W")
+
+        -- Master row: master + column slaves (or just master)
+        local master_side
+        if col_node then
+            if row_privileged then
+                -- Column is unprivileged: only spans master height
+                col_node.props.height = clay.percent(mwfact * 100)
+            end
+            if is_west then
+                master_side = clay.row { master_node, col_node }
+            else
+                master_side = clay.row { col_node, master_node }
+            end
+        else
+            master_side = master_node
+        end
+
+        -- Slave row spans full width when privileged, master width when not
+        if row_node and not row_privileged then
+            row_node.props.width = clay.percent(mwfact * 100)
+        end
+
+        if is_north then
+            if row_node then
+                return clay.column { master_side, row_node }
+            else
+                return master_side
+            end
+        else
+            if row_node then
+                return clay.column { row_node, master_side }
+            else
+                return master_side
+            end
+        end
+    end
+end
+
+clay.corner = {}
+clay.corner.nw = clay.layout("clay.cornernw", corner_build("NW"),
+    { skip_gap = corner_skip_gap })
+clay.corner.ne = clay.layout("clay.cornerne", corner_build("NE"),
+    { skip_gap = corner_skip_gap })
+clay.corner.sw = clay.layout("clay.cornersw", corner_build("SW"),
+    { skip_gap = corner_skip_gap })
+clay.corner.se = clay.layout("clay.cornerse", corner_build("SE"),
+    { skip_gap = corner_skip_gap })
 
 return clay
 
