@@ -37,6 +37,25 @@ function _clay.compute(width, height, tree_builder)
     return placements
 end
 
+--- Convert pre-computed positions to placement objects.
+-- For layouts where positions are already known (stack, manual) but we
+-- still want the output to go through the Clay pipeline format.
+-- @tparam table entries Array of {widget, x, y, width, height}
+-- @treturn table Array of placement objects
+function _clay.from_positions(entries)
+    local placements = {}
+    for _, e in ipairs(entries) do
+        placements[#placements + 1] = base.place_widget_at(
+            e.widget,
+            math.floor(e.x),
+            math.floor(e.y),
+            math.floor(e.width),
+            math.floor(e.height)
+        )
+    end
+    return placements
+end
+
 return _clay
 
 -- vim: filetype=lua:expandtab:shiftwidth=4:tabstop=8:softtabstop=4:textwidth=80
