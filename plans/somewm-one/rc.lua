@@ -462,6 +462,7 @@ screen.connect_signal("request::desktop_decoration", function(s)
 
     -- Track current wallpaper per screen to skip redundant updates
     s.current_wallpaper = nil
+    s._wppath = wppath  -- exposed for tag_slide animation
 
     -- Set wallpaper using awful.wallpaper (new API, HiDPI-aware)
     local function set_wallpaper(scr, wallpaper_file)
@@ -492,7 +493,7 @@ screen.connect_signal("request::desktop_decoration", function(s)
     -- Initial wallpaper
     set_wallpaper(s, default_wallpaper)
 
-    -- Pre-cache all wallpapers for instant tag switching
+    -- Pre-cache all wallpapers for tag_slide animation overlays
     if root.wallpaper_cache_preload then
         local paths = {}
         for i = 1, 9 do
@@ -1384,5 +1385,15 @@ pcall(function()
         -- NOTE: Do NOT require("somewm.layout_animation") — our anim_client
         -- handles all layout transitions. Both modules write _set_geometry_silent()
         -- on tiled clients and would conflict.
+    })
+end)
+
+-- Tag slide animation (KDE-style Desktop Slide on Super+Left/Right)
+-- Config priority: beautiful.tag_slide_<param> > these values > module defaults
+pcall(function()
+    require("somewm.tag_slide").enable({
+        duration  = 0.25,
+        easing    = "ease-out-cubic",
+        wallpaper = { enabled = true },
     })
 end)

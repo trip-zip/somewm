@@ -18,7 +18,6 @@ clock_now(void)
 	return ts.tv_sec + ts.tv_nsec / 1e9;
 }
 
-static double last_tick_time;
 
 /* Easing functions */
 static double
@@ -167,6 +166,7 @@ luaA_start_animation(lua_State *L)
 
 	anim->duration = duration;
 	anim->elapsed = 0;
+	anim->start_time = clock_now();
 	anim->easing = parse_easing(easing_str);
 	anim->cancelled = false;
 
@@ -205,26 +205,16 @@ animation_init(struct wl_event_loop *loop)
 {
 	wl_list_init(&animations);
 	keepalive_timer = wl_event_loop_add_timer(loop, keepalive_callback, NULL);
-	last_tick_time = clock_now();
 }
 
 void
 animation_tick_all(void)
 {
-	double now = clock_now();
-	double dt = now - last_tick_time;
-	last_tick_time = now;
-
 	if (wl_list_empty(&animations))
 		return;
 
+	double now = clock_now();
 	lua_State *L = globalconf_get_lua_State();
-
-	/* Cap dt to avoid huge jumps (e.g. after suspend) */
-	if (dt > 0.1)
-		dt = 0.1;
-	if (dt <= 0)
-		dt = 1.0 / 60.0;
 
 	animation_t *anim, *tmp;
 	wl_list_for_each_safe(anim, tmp, &animations, link) {
@@ -234,7 +224,8 @@ animation_tick_all(void)
 			continue;
 		}
 
-		anim->elapsed += dt;
+		/* Compute elapsed from absolute start time — avoids stale dt accumulation */
+		anim->elapsed = now - anim->start_time;
 		double progress = anim->elapsed / anim->duration;
 		bool finished = progress >= 1.0;
 		if (finished) progress = 1.0;
