@@ -192,6 +192,9 @@ static IdleTimeout idle_timeouts[MAX_IDLE_TIMEOUTS];
 static int idle_timeout_count = 0;
 static bool user_is_idle = false;    /* Global idle state */
 
+/* Flag whether idle timers have been inhibited. */
+static bool idle_timers_inhibited = false;
+
 /* D-Bus library functions from dbus.c */
 extern const struct luaL_Reg awesome_dbus_lib[];
 
@@ -1373,6 +1376,35 @@ remove_idle_timeout_at(int idx)
 	idle_timeout_count--;
 }
 
+static void
+reset_idle_timer(IdleTimeout *timeout) {
+	timeout->fired = false;
+	if (timeout->timer) {
+		/* Disable timer if idle timers are inhibited. */
+		int ms_delay = idle_timers_inhibited ? 0 : timeout->seconds * 1000;
+		wl_event_source_timer_update(timeout->timer, ms_delay);
+	}
+}
+
+/* Update all idle timers, i.e., update timer with 0 or timeout depending on
+ * inhibition. */
+static void
+reset_all_idle_timers()
+{
+	for (int i = 0; i < idle_timeout_count; i++) {
+		IdleTimeout *timeout = &idle_timeouts[i];
+		reset_idle_timer(timeout);
+	}
+}
+
+/* Set inhibit state for all idle timers and reset timers. */
+void
+some_idle_timers_set_inhibit(bool inhibit)
+{
+	idle_timers_inhibited = inhibit;
+	reset_all_idle_timers();
+}
+
 /** awesome.set_idle_timeout(name, seconds, callback)
  * Add or update a named idle timeout.
  * Multiple timeouts can be active simultaneously.
@@ -1407,11 +1439,10 @@ luaA_awesome_set_idle_timeout(lua_State *L)
 	timeout->name = strdup(name);
 	timeout->seconds = seconds;
 	timeout->lua_callback_ref = callback_ref;
-	timeout->fired = false;
 
 	/* Create and arm the timer */
 	timeout->timer = wl_event_loop_add_timer(some_get_event_loop(), idle_timeout_callback, timeout);
-	wl_event_source_timer_update(timeout->timer, seconds * 1000);
+	reset_idle_timer(timeout);
 
 	idle_timeout_count++;
 
@@ -1497,12 +1528,8 @@ some_notify_activity(void)
 	}
 
 	/* Reset all idle timers */
-	for (int i = 0; i < idle_timeout_count; i++) {
-		IdleTimeout *timeout = &idle_timeouts[i];
-		timeout->fired = false;
-		if (timeout->timer)
-			wl_event_source_timer_update(timeout->timer, timeout->seconds * 1000);
-	}
+	if (!idle_timers_inhibited)
+		reset_all_idle_timers();
 }
 
 /* ==========================================================================
