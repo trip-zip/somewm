@@ -8,6 +8,10 @@ Since SomeWM is not a direct git fork, we manually port relevant changes from up
 
 | AwesomeWM PR | Description | SomeWM PR | Date |
 |--------------|-------------|-----------|------|
+| [#4079](https://github.com/awesomeWM/awesome/pull/4079) | Add group support for append_client_keybindings | N/A | 2026-04-01 |
+| [#4066](https://github.com/awesomeWM/awesome/pull/4066) | Use lua_pushliteral instead of lua_pushstring | N/A | 2026-04-01 |
+| [#4060](https://github.com/awesomeWM/awesome/pull/4060) | Use luaA_class_add_properties batch API | N/A | 2026-04-01 |
+| [#4017](https://github.com/awesomeWM/awesome/pull/4017) | Add override_label_bgs option to hotkeys_popup | N/A | 2026-04-01 |
 | [#3309](https://github.com/awesomeWM/awesome/pull/3309) | Implement overflow layout | (this PR) | 2026-03-21 |
 | [#4067](https://github.com/awesomeWM/awesome/pull/4067) | N/A (already applied) | N/A | 2026-03-10 |
 | [#4065](https://github.com/awesomeWM/awesome/pull/4065) | N/A (no equivalent code) | N/A | 2026-03-10 |
@@ -34,3 +38,4 @@ Since SomeWM is not a direct git fork, we manually port relevant changes from up
 - Only Lua library changes and relevant bug fixes are ported (X11-specific changes are skipped)
 - Use commit message format: `sync: port AwesomeWM #XXXX - description`
 - Check [AwesomeWM's merged PRs](https://github.com/awesomeWM/awesome/pulls?q=is%3Apr+is%3Amerged+sort%3Aupdated-desc) for new upstream changes
+- AwesomeWM baseline for 1.4: `fa805ab46582` (2026-03-31)
