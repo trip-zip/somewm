@@ -159,7 +159,7 @@ static const float *get_focuscolor(void);
 static const float *get_bordercolor(void);
 static const float *get_urgentcolor(void);
 
-static void checkidleinhibitor(struct wlr_surface *exclude);
+static bool checkidleinhibitor(struct wlr_surface *exclude);
 static void cleanup(void);
 static void cleanupmon(struct wl_listener *listener, void *data);
 static void cleanuplisteners(void);
@@ -1182,22 +1182,13 @@ buttonpress(struct wl_listener *listener, void *data)
 			event->time_msec, event->button, event->state);
 }
 
-void
+bool
 checkidleinhibitor(struct wlr_surface *exclude)
 {
-	int inhibited = 0, unused_lx, unused_ly;
-	struct wlr_idle_inhibitor_v1 *inhibitor;
-	wl_list_for_each(inhibitor, &idle_inhibit_mgr->inhibitors, link) {
-		struct wlr_surface *surface = wlr_surface_get_root_surface(inhibitor->surface);
-		struct wlr_scene_tree *tree = surface->data;
-		if (exclude != surface && (globalconf.appearance.bypass_surface_visibility || (!tree
-				|| wlr_scene_node_coords(&tree->node, &unused_lx, &unused_ly)))) {
-			inhibited = 1;
-			break;
-		}
-	}
-
+	bool inhibited = some_is_idle_inhibited(exclude);
 	wlr_idle_notifier_v1_set_inhibited(idle_notifier, inhibited);
+
+	return inhibited;
 }
 
 void
@@ -1686,7 +1677,8 @@ createidleinhibitor(struct wl_listener *listener, void *data)
 	struct wlr_idle_inhibitor_v1 *idle_inhibitor = data;
 	LISTEN_STATIC(&idle_inhibitor->events.destroy, destroyidleinhibitor);
 
-	checkidleinhibitor(NULL);
+	bool inhibited = checkidleinhibitor(NULL);
+	some_idle_timers_set_inhibit(inhibited);
 }
 
 void
@@ -2264,7 +2256,9 @@ destroyidleinhibitor(struct wl_listener *listener, void *data)
 {
 	/* `data` is the wlr_surface of the idle inhibitor being destroyed,
 	 * at this point the idle inhibitor is still in the list of the manager */
-	checkidleinhibitor(wlr_surface_get_root_surface(data));
+	bool inhibited = checkidleinhibitor(wlr_surface_get_root_surface(data));
+	some_idle_timers_set_inhibit(inhibited);
+
 	wl_list_remove(&listener->link);
 	free(listener);
 }
@@ -2446,11 +2440,27 @@ some_is_ext_session_locked(void)
 	return locked;
 }
 
-/** Check if idle is inhibited by any client (for Lua API) */
+/** Check if idle is effectively inhibited (for Lua API and idle timers). */
 bool
-some_is_idle_inhibited(void)
+some_is_idle_inhibited(struct wlr_surface *exclude)
 {
-	return !wl_list_empty(&idle_inhibit_mgr->inhibitors);
+	int unused_lx, unused_ly;
+	struct wlr_idle_inhibitor_v1 *inhibitor;
+
+	if (!idle_inhibit_mgr)
+		return false;
+
+	wl_list_for_each(inhibitor, &idle_inhibit_mgr->inhibitors, link) {
+		struct wlr_surface *surface = wlr_surface_get_root_surface(inhibitor->surface);
+		struct wlr_scene_tree *tree = surface->data;
+
+		if (exclude != surface && (globalconf.appearance.bypass_surface_visibility || (!tree
+				|| wlr_scene_node_coords(&tree->node, &unused_lx, &unused_ly)))) {
+			return true;
+		}
+	}
+
+	return false;
 }
 
 /** Remove all wl_listeners from a client.
