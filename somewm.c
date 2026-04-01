@@ -6933,12 +6933,13 @@ find_lgi_guard(void)
 	ssize_t len = readlink("/proc/self/exe", self, sizeof(self) - 1);
 	if (len > 0) {
 		self[len] = '\0';
-		/* Strip binary name to get bindir, then try ../lib and ../lib64 */
+		/* Strip binary name to get bindir, then try ../lib, ../lib64,
+		 * and bindir itself (for running directly from build/) */
 		char *slash = strrchr(self, '/');
 		if (slash) {
 			*slash = '\0';
-			const char *suffixes[] = { "/../lib", "/../lib64" };
-			for (size_t i = 0; i < 2; i++) {
+			const char *suffixes[] = { "/../lib", "/../lib64", "" };
+			for (size_t i = 0; i < 3; i++) {
 				int n = snprintf(found, sizeof(found), "%s%s%s",
 					self, suffixes[i], name);
 				if (n > 0 && (size_t)n < sizeof(found)

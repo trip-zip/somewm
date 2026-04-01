@@ -142,6 +142,25 @@ parse_command(lua_State *L, int idx, GError **error)
 	return argv;
 }
 
+/** Invalidate all exit callbacks in the running children array.
+ * Called during hot-reload before the old Lua state is abandoned.
+ * We can't luaL_unref (old state is leaked), but setting callbacks
+ * to LUA_NOREF prevents spawn_child_exited from trying to call
+ * stale registry refs in the new state.
+ */
+void
+spawn_invalidate_callbacks(void)
+{
+	if (!running_children)
+		return;
+
+	for (guint i = 0; i < running_children->len; i++) {
+		running_child_t *child = &g_array_index(running_children,
+			running_child_t, i);
+		child->exit_callback = LUA_NOREF;
+	}
+}
+
 /** Called when a spawned process exits (AwesomeWM pattern).
  * This is called from somewm.c's reap_children() callback.
  * \param pid Process ID of the exited child
@@ -172,6 +191,10 @@ spawn_child_exited(pid_t pid, int status)
 			break;
 		}
 	}
+
+	/* Callback was invalidated by hot-reload - skip it */
+	if (exit_callback == LUA_NOREF || exit_callback == LUA_REFNIL)
+		return;
 
 	/* Decode exit status and call Lua callback */
 	if (WIFEXITED(status)) {
