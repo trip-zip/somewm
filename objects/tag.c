@@ -544,33 +544,15 @@ tag_class_setup(lua_State *L)
 	                 luaA_class_index_miss_property, luaA_class_newindex_miss_property,
 	                 tag_methods, tag_meta);
 
-	/* Register tag properties */
-	luaA_class_add_property(&tag_class, "name",
-	                        (lua_class_propfunc_t) luaA_tag_set_name,
-	                        (lua_class_propfunc_t) luaA_tag_get_name,
-	                        (lua_class_propfunc_t) luaA_tag_set_name);
-	luaA_class_add_property(&tag_class, "selected",
-	                        (lua_class_propfunc_t) luaA_tag_set_selected,
-	                        (lua_class_propfunc_t) luaA_tag_get_selected,
-	                        (lua_class_propfunc_t) luaA_tag_set_selected);
-	luaA_class_add_property(&tag_class, "activated",
-	                        (lua_class_propfunc_t) luaA_tag_set_activated,
-	                        (lua_class_propfunc_t) luaA_tag_get_activated,
-	                        (lua_class_propfunc_t) luaA_tag_set_activated);
-
-	/* Register AwesomeWM-compatible properties */
-	luaA_class_add_property(&tag_class, "screen",
-	                        (lua_class_propfunc_t) luaA_tag_set_screen,
-	                        (lua_class_propfunc_t) luaA_tag_get_screen,
-	                        (lua_class_propfunc_t) luaA_tag_set_screen);
-	luaA_class_add_property(&tag_class, "mfact",
-	                        (lua_class_propfunc_t) luaA_tag_set_mfact,
-	                        (lua_class_propfunc_t) luaA_tag_get_mfact,
-	                        (lua_class_propfunc_t) luaA_tag_set_mfact);
-	luaA_class_add_property(&tag_class, "nmaster",
-	                        (lua_class_propfunc_t) luaA_tag_set_nmaster,
-	                        (lua_class_propfunc_t) luaA_tag_get_nmaster,
-	                        (lua_class_propfunc_t) luaA_tag_set_nmaster);
+	const lua_class_property_t properties[] = {
+		{ "name", (lua_class_propfunc_t) luaA_tag_set_name, (lua_class_propfunc_t) luaA_tag_get_name, (lua_class_propfunc_t) luaA_tag_set_name },
+		{ "selected", (lua_class_propfunc_t) luaA_tag_set_selected, (lua_class_propfunc_t) luaA_tag_get_selected, (lua_class_propfunc_t) luaA_tag_set_selected },
+		{ "activated", (lua_class_propfunc_t) luaA_tag_set_activated, (lua_class_propfunc_t) luaA_tag_get_activated, (lua_class_propfunc_t) luaA_tag_set_activated },
+		{ "screen", (lua_class_propfunc_t) luaA_tag_set_screen, (lua_class_propfunc_t) luaA_tag_get_screen, (lua_class_propfunc_t) luaA_tag_set_screen },
+		{ "mfact", (lua_class_propfunc_t) luaA_tag_set_mfact, (lua_class_propfunc_t) luaA_tag_get_mfact, (lua_class_propfunc_t) luaA_tag_set_mfact },
+		{ "nmaster", (lua_class_propfunc_t) luaA_tag_set_nmaster, (lua_class_propfunc_t) luaA_tag_get_nmaster, (lua_class_propfunc_t) luaA_tag_set_nmaster },
+	};
+	luaA_class_add_properties(&tag_class, properties, countof(properties));
 }
 
 /* ========================================================================

@@ -525,59 +525,21 @@ layer_surface_class_setup(lua_State *L)
 	                 layer_surface_methods,
 	                 layer_surface_meta);
 
-	/* Register properties (read-only from protocol) */
-	luaA_class_add_property(&layer_surface_class, "namespace",
-	                        NULL,
-	                        (lua_class_propfunc_t) luaA_layer_surface_get_namespace,
-	                        NULL);
-	luaA_class_add_property(&layer_surface_class, "layer",
-	                        NULL,
-	                        (lua_class_propfunc_t) luaA_layer_surface_get_layer,
-	                        NULL);
-	luaA_class_add_property(&layer_surface_class, "keyboard_interactive",
-	                        NULL,
-	                        (lua_class_propfunc_t) luaA_layer_surface_get_keyboard_interactive,
-	                        NULL);
-	luaA_class_add_property(&layer_surface_class, "exclusive_zone",
-	                        NULL,
-	                        (lua_class_propfunc_t) luaA_layer_surface_get_exclusive_zone,
-	                        NULL);
-	luaA_class_add_property(&layer_surface_class, "anchor",
-	                        NULL,
-	                        (lua_class_propfunc_t) luaA_layer_surface_get_anchor,
-	                        NULL);
-	luaA_class_add_property(&layer_surface_class, "margin",
-	                        NULL,
-	                        (lua_class_propfunc_t) luaA_layer_surface_get_margin,
-	                        NULL);
-	luaA_class_add_property(&layer_surface_class, "geometry",
-	                        NULL,
-	                        (lua_class_propfunc_t) luaA_layer_surface_get_geometry,
-	                        NULL);
-	luaA_class_add_property(&layer_surface_class, "screen",
-	                        NULL,
-	                        (lua_class_propfunc_t) luaA_layer_surface_get_screen,
-	                        NULL);
-	luaA_class_add_property(&layer_surface_class, "mapped",
-	                        NULL,
-	                        (lua_class_propfunc_t) luaA_layer_surface_get_mapped,
-	                        NULL);
-	luaA_class_add_property(&layer_surface_class, "pid",
-	                        NULL,
-	                        (lua_class_propfunc_t) luaA_layer_surface_get_pid,
-	                        NULL);
-
-	/* Register compositor-controlled properties */
-	luaA_class_add_property(&layer_surface_class, "has_keyboard_focus",
-	                        (lua_class_propfunc_t) luaA_layer_surface_set_has_keyboard_focus,
-	                        (lua_class_propfunc_t) luaA_layer_surface_get_has_keyboard_focus,
-	                        (lua_class_propfunc_t) luaA_layer_surface_set_has_keyboard_focus);
-
-	/* Register derived properties (read-only) */
-	luaA_class_add_property(&layer_surface_class, "focusable",
-	                        NULL,
-	                        (lua_class_propfunc_t) luaA_layer_surface_get_focusable,
-	                        NULL);
+	const lua_class_property_t properties[] = {
+		{ "namespace", NULL, (lua_class_propfunc_t) luaA_layer_surface_get_namespace, NULL },
+		{ "layer", NULL, (lua_class_propfunc_t) luaA_layer_surface_get_layer, NULL },
+		{ "keyboard_interactive", NULL, (lua_class_propfunc_t) luaA_layer_surface_get_keyboard_interactive, NULL },
+		{ "exclusive_zone", NULL, (lua_class_propfunc_t) luaA_layer_surface_get_exclusive_zone, NULL },
+		{ "anchor", NULL, (lua_class_propfunc_t) luaA_layer_surface_get_anchor, NULL },
+		{ "margin", NULL, (lua_class_propfunc_t) luaA_layer_surface_get_margin, NULL },
+		{ "geometry", NULL, (lua_class_propfunc_t) luaA_layer_surface_get_geometry, NULL },
+		{ "screen", NULL, (lua_class_propfunc_t) luaA_layer_surface_get_screen, NULL },
+		{ "mapped", NULL, (lua_class_propfunc_t) luaA_layer_surface_get_mapped, NULL },
+		{ "pid", NULL, (lua_class_propfunc_t) luaA_layer_surface_get_pid, NULL },
+		{ "has_keyboard_focus", (lua_class_propfunc_t) luaA_layer_surface_set_has_keyboard_focus, (lua_class_propfunc_t) luaA_layer_surface_get_has_keyboard_focus, (lua_class_propfunc_t) luaA_layer_surface_set_has_keyboard_focus },
+		{ "focusable", NULL, (lua_class_propfunc_t) luaA_layer_surface_get_focusable, NULL },
+	};
+	luaA_class_add_properties(&layer_surface_class, properties, countof(properties));
 
 	/* Set up capi.layer_surface */
 	lua_getglobal(L, "capi");

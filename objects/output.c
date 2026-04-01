@@ -1059,73 +1059,24 @@ output_class_setup(lua_State *L)
 			 luaA_class_newindex_miss_property,
 			 output_methods, output_meta);
 
-	/* Register properties */
-	luaA_class_add_property(&output_class, "name",
-			NULL,
-			(lua_class_propfunc_t) luaA_output_get_name,
-			NULL);
-	luaA_class_add_property(&output_class, "description",
-			NULL,
-			(lua_class_propfunc_t) luaA_output_get_description,
-			NULL);
-	luaA_class_add_property(&output_class, "make",
-			NULL,
-			(lua_class_propfunc_t) luaA_output_get_make,
-			NULL);
-	luaA_class_add_property(&output_class, "model",
-			NULL,
-			(lua_class_propfunc_t) luaA_output_get_model,
-			NULL);
-	luaA_class_add_property(&output_class, "serial",
-			NULL,
-			(lua_class_propfunc_t) luaA_output_get_serial,
-			NULL);
-	luaA_class_add_property(&output_class, "physical_width",
-			NULL,
-			(lua_class_propfunc_t) luaA_output_get_physical_width,
-			NULL);
-	luaA_class_add_property(&output_class, "physical_height",
-			NULL,
-			(lua_class_propfunc_t) luaA_output_get_physical_height,
-			NULL);
-	luaA_class_add_property(&output_class, "modes",
-			NULL,
-			(lua_class_propfunc_t) luaA_output_get_modes,
-			NULL);
-	luaA_class_add_property(&output_class, "current_mode",
-			NULL,
-			(lua_class_propfunc_t) luaA_output_get_current_mode,
-			NULL);
-	luaA_class_add_property(&output_class, "screen",
-			NULL,
-			(lua_class_propfunc_t) luaA_output_get_screen,
-			NULL);
-	luaA_class_add_property(&output_class, "virtual",
-			NULL,
-			(lua_class_propfunc_t) luaA_output_get_virtual,
-			NULL);
-	luaA_class_add_property(&output_class, "enabled",
-			(lua_class_propfunc_t) luaA_output_set_enabled,
-			(lua_class_propfunc_t) luaA_output_get_enabled,
-			(lua_class_propfunc_t) luaA_output_set_enabled);
-	luaA_class_add_property(&output_class, "scale",
-			(lua_class_propfunc_t) luaA_output_set_scale,
-			(lua_class_propfunc_t) luaA_output_get_scale,
-			(lua_class_propfunc_t) luaA_output_set_scale);
-	luaA_class_add_property(&output_class, "transform",
-			(lua_class_propfunc_t) luaA_output_set_transform,
-			(lua_class_propfunc_t) luaA_output_get_transform,
-			(lua_class_propfunc_t) luaA_output_set_transform);
-	luaA_class_add_property(&output_class, "mode",
-			(lua_class_propfunc_t) luaA_output_set_mode,
-			(lua_class_propfunc_t) luaA_output_get_current_mode,
-			(lua_class_propfunc_t) luaA_output_set_mode);
-	luaA_class_add_property(&output_class, "position",
-			(lua_class_propfunc_t) luaA_output_set_position,
-			(lua_class_propfunc_t) luaA_output_get_position,
-			(lua_class_propfunc_t) luaA_output_set_position);
-	luaA_class_add_property(&output_class, "adaptive_sync",
-			(lua_class_propfunc_t) luaA_output_set_adaptive_sync,
-			(lua_class_propfunc_t) luaA_output_get_adaptive_sync,
-			(lua_class_propfunc_t) luaA_output_set_adaptive_sync);
+	const lua_class_property_t properties[] = {
+		{ "name", NULL, (lua_class_propfunc_t) luaA_output_get_name, NULL },
+		{ "description", NULL, (lua_class_propfunc_t) luaA_output_get_description, NULL },
+		{ "make", NULL, (lua_class_propfunc_t) luaA_output_get_make, NULL },
+		{ "model", NULL, (lua_class_propfunc_t) luaA_output_get_model, NULL },
+		{ "serial", NULL, (lua_class_propfunc_t) luaA_output_get_serial, NULL },
+		{ "physical_width", NULL, (lua_class_propfunc_t) luaA_output_get_physical_width, NULL },
+		{ "physical_height", NULL, (lua_class_propfunc_t) luaA_output_get_physical_height, NULL },
+		{ "modes", NULL, (lua_class_propfunc_t) luaA_output_get_modes, NULL },
+		{ "current_mode", NULL, (lua_class_propfunc_t) luaA_output_get_current_mode, NULL },
+		{ "screen", NULL, (lua_class_propfunc_t) luaA_output_get_screen, NULL },
+		{ "virtual", NULL, (lua_class_propfunc_t) luaA_output_get_virtual, NULL },
+		{ "enabled", (lua_class_propfunc_t) luaA_output_set_enabled, (lua_class_propfunc_t) luaA_output_get_enabled, (lua_class_propfunc_t) luaA_output_set_enabled },
+		{ "scale", (lua_class_propfunc_t) luaA_output_set_scale, (lua_class_propfunc_t) luaA_output_get_scale, (lua_class_propfunc_t) luaA_output_set_scale },
+		{ "transform", (lua_class_propfunc_t) luaA_output_set_transform, (lua_class_propfunc_t) luaA_output_get_transform, (lua_class_propfunc_t) luaA_output_set_transform },
+		{ "mode", (lua_class_propfunc_t) luaA_output_set_mode, (lua_class_propfunc_t) luaA_output_get_current_mode, (lua_class_propfunc_t) luaA_output_set_mode },
+		{ "position", (lua_class_propfunc_t) luaA_output_set_position, (lua_class_propfunc_t) luaA_output_get_position, (lua_class_propfunc_t) luaA_output_set_position },
+		{ "adaptive_sync", (lua_class_propfunc_t) luaA_output_set_adaptive_sync, (lua_class_propfunc_t) luaA_output_get_adaptive_sync, (lua_class_propfunc_t) luaA_output_set_adaptive_sync },
+	};
+	luaA_class_add_properties(&output_class, properties, countof(properties));
 }

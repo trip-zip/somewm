@@ -786,14 +786,9 @@ button_class_setup(lua_State *L)
 	                 button_methods,  /* Class-level methods */
 	                 button_meta);    /* Instance metatable methods */
 
-	/* Add properties */
-	luaA_class_add_property(&button_class, "button",
-	                        (lua_class_propfunc_t) luaA_button_set_button,
-	                        (lua_class_propfunc_t) luaA_button_get_button,
-	                        (lua_class_propfunc_t) luaA_button_set_button);
-	luaA_class_add_property(&button_class, "modifiers",
-	                        (lua_class_propfunc_t) luaA_button_set_modifiers,
-	                        (lua_class_propfunc_t) luaA_button_get_modifiers,
-	                        (lua_class_propfunc_t) luaA_button_set_modifiers);
-
+	const lua_class_property_t properties[] = {
+		{ "button", (lua_class_propfunc_t) luaA_button_set_button, (lua_class_propfunc_t) luaA_button_get_button, (lua_class_propfunc_t) luaA_button_set_button },
+		{ "modifiers", (lua_class_propfunc_t) luaA_button_set_modifiers, (lua_class_propfunc_t) luaA_button_get_modifiers, (lua_class_propfunc_t) luaA_button_set_modifiers },
+	};
+	luaA_class_add_properties(&button_class, properties, countof(properties));
 }

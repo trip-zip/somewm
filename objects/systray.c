@@ -1231,95 +1231,30 @@ systray_item_class_setup(lua_State *L)
 	                 luaA_class_newindex_miss_property,
 	                 systray_item_methods, systray_item_meta);
 
-	/* Register read-only properties */
-	luaA_class_add_property(&systray_item_class, "item_is_menu",
-	                        (lua_class_propfunc_t) luaA_systray_item_set_item_is_menu,
-	                        (lua_class_propfunc_t) luaA_systray_item_get_item_is_menu,
-	                        (lua_class_propfunc_t) luaA_systray_item_set_item_is_menu);
-	luaA_class_add_property(&systray_item_class, "is_valid",
-	                        NULL,
-	                        (lua_class_propfunc_t) luaA_systray_item_get_is_valid,
-	                        NULL);
-
-	/* Register read/write properties (D-Bus identification - set once by watcher) */
-	luaA_class_add_property(&systray_item_class, "id",
-	                        (lua_class_propfunc_t) luaA_systray_item_set_id,
-	                        (lua_class_propfunc_t) luaA_systray_item_get_id,
-	                        (lua_class_propfunc_t) luaA_systray_item_set_id);
-	luaA_class_add_property(&systray_item_class, "bus_name",
-	                        (lua_class_propfunc_t) luaA_systray_item_set_bus_name,
-	                        (lua_class_propfunc_t) luaA_systray_item_get_bus_name,
-	                        (lua_class_propfunc_t) luaA_systray_item_set_bus_name);
-	luaA_class_add_property(&systray_item_class, "object_path",
-	                        (lua_class_propfunc_t) luaA_systray_item_set_object_path,
-	                        (lua_class_propfunc_t) luaA_systray_item_get_object_path,
-	                        (lua_class_propfunc_t) luaA_systray_item_set_object_path);
-	luaA_class_add_property(&systray_item_class, "menu_path",
-	                        (lua_class_propfunc_t) luaA_systray_item_set_menu_path,
-	                        (lua_class_propfunc_t) luaA_systray_item_get_menu_path,
-	                        (lua_class_propfunc_t) luaA_systray_item_set_menu_path);
-	luaA_class_add_property(&systray_item_class, "icon_theme_path",
-	                        (lua_class_propfunc_t) luaA_systray_item_set_icon_theme_path,
-	                        (lua_class_propfunc_t) luaA_systray_item_get_icon_theme_path,
-	                        (lua_class_propfunc_t) luaA_systray_item_set_icon_theme_path);
-	luaA_class_add_property(&systray_item_class, "category",
-	                        (lua_class_propfunc_t) luaA_systray_item_set_category,
-	                        (lua_class_propfunc_t) luaA_systray_item_get_category,
-	                        (lua_class_propfunc_t) luaA_systray_item_set_category);
-
-	/* Register read/write properties (dynamic - updated by D-Bus signals) */
-	luaA_class_add_property(&systray_item_class, "title",
-	                        (lua_class_propfunc_t) luaA_systray_item_set_title,
-	                        (lua_class_propfunc_t) luaA_systray_item_get_title,
-	                        (lua_class_propfunc_t) luaA_systray_item_set_title);
-	luaA_class_add_property(&systray_item_class, "app_name",
-	                        (lua_class_propfunc_t) luaA_systray_item_set_app_name,
-	                        (lua_class_propfunc_t) luaA_systray_item_get_app_name,
-	                        (lua_class_propfunc_t) luaA_systray_item_set_app_name);
-	luaA_class_add_property(&systray_item_class, "status",
-	                        (lua_class_propfunc_t) luaA_systray_item_set_status,
-	                        (lua_class_propfunc_t) luaA_systray_item_get_status,
-	                        (lua_class_propfunc_t) luaA_systray_item_set_status);
-	luaA_class_add_property(&systray_item_class, "icon_name",
-	                        (lua_class_propfunc_t) luaA_systray_item_set_icon_name,
-	                        (lua_class_propfunc_t) luaA_systray_item_get_icon_name,
-	                        (lua_class_propfunc_t) luaA_systray_item_set_icon_name);
-	luaA_class_add_property(&systray_item_class, "attention_icon_name",
-	                        (lua_class_propfunc_t) luaA_systray_item_set_attention_icon_name,
-	                        (lua_class_propfunc_t) luaA_systray_item_get_attention_icon_name,
-	                        (lua_class_propfunc_t) luaA_systray_item_set_attention_icon_name);
-	luaA_class_add_property(&systray_item_class, "attention_icon",
-	                        NULL,
-	                        (lua_class_propfunc_t) luaA_systray_item_get_attention_icon,
-	                        NULL);
-	luaA_class_add_property(&systray_item_class, "overlay_icon_name",
-	                        (lua_class_propfunc_t) luaA_systray_item_set_overlay_icon_name,
-	                        (lua_class_propfunc_t) luaA_systray_item_get_overlay_icon_name,
-	                        (lua_class_propfunc_t) luaA_systray_item_set_overlay_icon_name);
-	luaA_class_add_property(&systray_item_class, "overlay_icon",
-	                        NULL,
-	                        (lua_class_propfunc_t) luaA_systray_item_get_overlay_icon,
-	                        NULL);
-	luaA_class_add_property(&systray_item_class, "icon",
-	                        NULL,
-	                        (lua_class_propfunc_t) luaA_systray_item_get_icon,
-	                        NULL);
-	luaA_class_add_property(&systray_item_class, "icon_width",
-	                        NULL,
-	                        (lua_class_propfunc_t) luaA_systray_item_get_icon_width,
-	                        NULL);
-	luaA_class_add_property(&systray_item_class, "icon_height",
-	                        NULL,
-	                        (lua_class_propfunc_t) luaA_systray_item_get_icon_height,
-	                        NULL);
-	luaA_class_add_property(&systray_item_class, "tooltip_title",
-	                        NULL,
-	                        (lua_class_propfunc_t) luaA_systray_item_get_tooltip_title,
-	                        NULL);
-	luaA_class_add_property(&systray_item_class, "tooltip_body",
-	                        NULL,
-	                        (lua_class_propfunc_t) luaA_systray_item_get_tooltip_body,
-	                        NULL);
+	const lua_class_property_t properties[] = {
+		{ "item_is_menu", (lua_class_propfunc_t) luaA_systray_item_set_item_is_menu, (lua_class_propfunc_t) luaA_systray_item_get_item_is_menu, (lua_class_propfunc_t) luaA_systray_item_set_item_is_menu },
+		{ "is_valid", NULL, (lua_class_propfunc_t) luaA_systray_item_get_is_valid, NULL },
+		{ "id", (lua_class_propfunc_t) luaA_systray_item_set_id, (lua_class_propfunc_t) luaA_systray_item_get_id, (lua_class_propfunc_t) luaA_systray_item_set_id },
+		{ "bus_name", (lua_class_propfunc_t) luaA_systray_item_set_bus_name, (lua_class_propfunc_t) luaA_systray_item_get_bus_name, (lua_class_propfunc_t) luaA_systray_item_set_bus_name },
+		{ "object_path", (lua_class_propfunc_t) luaA_systray_item_set_object_path, (lua_class_propfunc_t) luaA_systray_item_get_object_path, (lua_class_propfunc_t) luaA_systray_item_set_object_path },
+		{ "menu_path", (lua_class_propfunc_t) luaA_systray_item_set_menu_path, (lua_class_propfunc_t) luaA_systray_item_get_menu_path, (lua_class_propfunc_t) luaA_systray_item_set_menu_path },
+		{ "icon_theme_path", (lua_class_propfunc_t) luaA_systray_item_set_icon_theme_path, (lua_class_propfunc_t) luaA_systray_item_get_icon_theme_path, (lua_class_propfunc_t) luaA_systray_item_set_icon_theme_path },
+		{ "category", (lua_class_propfunc_t) luaA_systray_item_set_category, (lua_class_propfunc_t) luaA_systray_item_get_category, (lua_class_propfunc_t) luaA_systray_item_set_category },
+		{ "title", (lua_class_propfunc_t) luaA_systray_item_set_title, (lua_class_propfunc_t) luaA_systray_item_get_title, (lua_class_propfunc_t) luaA_systray_item_set_title },
+		{ "app_name", (lua_class_propfunc_t) luaA_systray_item_set_app_name, (lua_class_propfunc_t) luaA_systray_item_get_app_name, (lua_class_propfunc_t) luaA_systray_item_set_app_name },
+		{ "status", (lua_class_propfunc_t) luaA_systray_item_set_status, (lua_class_propfunc_t) luaA_systray_item_get_status, (lua_class_propfunc_t) luaA_systray_item_set_status },
+		{ "icon_name", (lua_class_propfunc_t) luaA_systray_item_set_icon_name, (lua_class_propfunc_t) luaA_systray_item_get_icon_name, (lua_class_propfunc_t) luaA_systray_item_set_icon_name },
+		{ "attention_icon_name", (lua_class_propfunc_t) luaA_systray_item_set_attention_icon_name, (lua_class_propfunc_t) luaA_systray_item_get_attention_icon_name, (lua_class_propfunc_t) luaA_systray_item_set_attention_icon_name },
+		{ "attention_icon", NULL, (lua_class_propfunc_t) luaA_systray_item_get_attention_icon, NULL },
+		{ "overlay_icon_name", (lua_class_propfunc_t) luaA_systray_item_set_overlay_icon_name, (lua_class_propfunc_t) luaA_systray_item_get_overlay_icon_name, (lua_class_propfunc_t) luaA_systray_item_set_overlay_icon_name },
+		{ "overlay_icon", NULL, (lua_class_propfunc_t) luaA_systray_item_get_overlay_icon, NULL },
+		{ "icon", NULL, (lua_class_propfunc_t) luaA_systray_item_get_icon, NULL },
+		{ "icon_width", NULL, (lua_class_propfunc_t) luaA_systray_item_get_icon_width, NULL },
+		{ "icon_height", NULL, (lua_class_propfunc_t) luaA_systray_item_get_icon_height, NULL },
+		{ "tooltip_title", NULL, (lua_class_propfunc_t) luaA_systray_item_get_tooltip_title, NULL },
+		{ "tooltip_body", NULL, (lua_class_propfunc_t) luaA_systray_item_get_tooltip_body, NULL },
+	};
+	luaA_class_add_properties(&systray_item_class, properties, countof(properties));
 }
 
 /* vim: filetype=c:expandtab:shiftwidth=4:tabstop=8:softtabstop=4:textwidth=80 */

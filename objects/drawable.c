@@ -777,16 +777,11 @@ drawable_class_setup(lua_State *L)
 	/* Register tostring callback with class system (matches client.c pattern) */
 	luaA_class_set_tostring(&drawable_class, (lua_class_propfunc_t) luaA_drawable_tostring);
 
-	/* Register read-only properties via class system */
-	luaA_class_add_property(&drawable_class, "surface",
-	                        (lua_class_propfunc_t) luaA_drawable_get_surface,
-	                        NULL,  /* read-only, no setter */
-	                        NULL);
-
-	luaA_class_add_property(&drawable_class, "valid",
-	                        (lua_class_propfunc_t) luaA_drawable_get_valid_prop,
-	                        NULL,  /* read-only, no setter */
-	                        NULL);
+	const lua_class_property_t properties[] = {
+		{ "surface", (lua_class_propfunc_t) luaA_drawable_get_surface, NULL, NULL },
+		{ "valid", (lua_class_propfunc_t) luaA_drawable_get_valid_prop, NULL, NULL },
+	};
+	luaA_class_add_properties(&drawable_class, properties, countof(properties));
 }
 
 /** Register drawable in capi table */

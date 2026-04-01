@@ -347,19 +347,12 @@ key_class_setup(lua_State *L)
 	                 luaA_class_index_miss_property, luaA_class_newindex_miss_property,
 	                 key_methods, key_meta);
 
-	luaA_class_add_property(&key_class, "key",
-	                        (lua_class_propfunc_t) luaA_key_set_key,
-	                        (lua_class_propfunc_t) luaA_key_get_key,
-	                        (lua_class_propfunc_t) luaA_key_set_key);
-	luaA_class_add_property(&key_class, "keysym",
-	                        NULL,
-	                        (lua_class_propfunc_t) luaA_key_get_keysym,
-	                        NULL);
-	luaA_class_add_property(&key_class, "modifiers",
-	                        (lua_class_propfunc_t) luaA_key_set_modifiers,
-	                        (lua_class_propfunc_t) luaA_key_get_modifiers,
-	                        (lua_class_propfunc_t) luaA_key_set_modifiers);
-
+	const lua_class_property_t properties[] = {
+		{ "key", (lua_class_propfunc_t) luaA_key_set_key, (lua_class_propfunc_t) luaA_key_get_key, (lua_class_propfunc_t) luaA_key_set_key },
+		{ "keysym", NULL, (lua_class_propfunc_t) luaA_key_get_keysym, NULL },
+		{ "modifiers", (lua_class_propfunc_t) luaA_key_set_modifiers, (lua_class_propfunc_t) luaA_key_get_modifiers, (lua_class_propfunc_t) luaA_key_set_modifiers },
+	};
+	luaA_class_add_properties(&key_class, properties, countof(properties));
 }
 
 /* vim: filetype=c:expandtab:shiftwidth=4:tabstop=8:softtabstop=4:textwidth=80

@@ -2500,87 +2500,28 @@ drawin_class_setup(lua_State *L)
 	                 drawin_methods,  /* Class-level methods */
 	                 drawin_meta);    /* Instance metatable methods */
 
-	/* Register drawin properties (AwesomeWM pattern with casts) */
-	luaA_class_add_property(&drawin_class, "drawable",
-	                        NULL,
-	                        (lua_class_propfunc_t) luaA_drawin_get_drawable,
-	                        NULL);
-	luaA_class_add_property(&drawin_class, "visible",
-	                        (lua_class_propfunc_t) luaA_drawin_set_visible,
-	                        (lua_class_propfunc_t) luaA_drawin_get_visible,
-	                        (lua_class_propfunc_t) luaA_drawin_set_visible);
-	luaA_class_add_property(&drawin_class, "ontop",
-	                        (lua_class_propfunc_t) luaA_drawin_set_ontop,
-	                        (lua_class_propfunc_t) luaA_drawin_get_ontop,
-	                        (lua_class_propfunc_t) luaA_drawin_set_ontop);
-	luaA_class_add_property(&drawin_class, "cursor",
-	                        (lua_class_propfunc_t) luaA_drawin_set_cursor,
-	                        (lua_class_propfunc_t) luaA_drawin_get_cursor,
-	                        (lua_class_propfunc_t) luaA_drawin_set_cursor);
-	luaA_class_add_property(&drawin_class, "x",
-	                        (lua_class_propfunc_t) luaA_drawin_set_x,
-	                        (lua_class_propfunc_t) luaA_drawin_get_x,
-	                        (lua_class_propfunc_t) luaA_drawin_set_x);
-	luaA_class_add_property(&drawin_class, "y",
-	                        (lua_class_propfunc_t) luaA_drawin_set_y,
-	                        (lua_class_propfunc_t) luaA_drawin_get_y,
-	                        (lua_class_propfunc_t) luaA_drawin_set_y);
-	luaA_class_add_property(&drawin_class, "width",
-	                        (lua_class_propfunc_t) luaA_drawin_set_width,
-	                        (lua_class_propfunc_t) luaA_drawin_get_width,
-	                        (lua_class_propfunc_t) luaA_drawin_set_width);
-	luaA_class_add_property(&drawin_class, "height",
-	                        (lua_class_propfunc_t) luaA_drawin_set_height,
-	                        (lua_class_propfunc_t) luaA_drawin_get_height,
-	                        (lua_class_propfunc_t) luaA_drawin_set_height);
-	luaA_class_add_property(&drawin_class, "type",
-	                        (lua_class_propfunc_t) luaA_drawin_set_type,
-	                        (lua_class_propfunc_t) luaA_drawin_get_type,
-	                        (lua_class_propfunc_t) luaA_drawin_set_type);
-	luaA_class_add_property(&drawin_class, "_opacity",
-	                        (lua_class_propfunc_t) luaA_drawin_set_opacity,
-	                        (lua_class_propfunc_t) luaA_drawin_get_opacity,
-	                        (lua_class_propfunc_t) luaA_drawin_set_opacity);
-	luaA_class_add_property(&drawin_class, "shadow",
-	                        (lua_class_propfunc_t) luaA_drawin_set_shadow,
-	                        (lua_class_propfunc_t) luaA_drawin_get_shadow,
-	                        (lua_class_propfunc_t) luaA_drawin_set_shadow);
-	/* somewm extension: surface scale override for HiDPI performance */
-	luaA_class_add_property(&drawin_class, "surface_scale",
-	                        (lua_class_propfunc_t) luaA_drawin_set_surface_scale,
-	                        (lua_class_propfunc_t) luaA_drawin_get_surface_scale,
-	                        (lua_class_propfunc_t) luaA_drawin_set_surface_scale);
-	/* NOTE: buttons is NOT registered as a property, only as a _buttons method.
-	 * The wibox wrapper handles the buttons accessor via _legacy_accessors */
-	luaA_class_add_property(&drawin_class, "border_width",
-	                        (lua_class_propfunc_t) luaA_drawin_set_border_width,
-	                        (lua_class_propfunc_t) luaA_drawin_get_border_width,
-	                        (lua_class_propfunc_t) luaA_drawin_set_border_width);
-	/* AwesomeWM pattern: _border_width alias used by placement.lua */
-	luaA_class_add_property(&drawin_class, "_border_width",
-	                        (lua_class_propfunc_t) luaA_drawin_set_border_width,
-	                        (lua_class_propfunc_t) luaA_drawin_get_border_width,
-	                        (lua_class_propfunc_t) luaA_drawin_set_border_width);
-	luaA_class_add_property(&drawin_class, "border_color",
-	                        (lua_class_propfunc_t) luaA_drawin_set_border_color,
-	                        (lua_class_propfunc_t) luaA_drawin_get_border_color,
-	                        (lua_class_propfunc_t) luaA_drawin_set_border_color);
-	luaA_class_add_property(&drawin_class, "shape_bounding",
-	                        (lua_class_propfunc_t) luaA_drawin_set_shape_bounding,
-	                        (lua_class_propfunc_t) luaA_drawin_get_shape_bounding,
-	                        (lua_class_propfunc_t) luaA_drawin_set_shape_bounding);
-	luaA_class_add_property(&drawin_class, "shape_clip",
-	                        (lua_class_propfunc_t) luaA_drawin_set_shape_clip,
-	                        (lua_class_propfunc_t) luaA_drawin_get_shape_clip,
-	                        (lua_class_propfunc_t) luaA_drawin_set_shape_clip);
-	luaA_class_add_property(&drawin_class, "shape_input",
-	                        (lua_class_propfunc_t) luaA_drawin_set_shape_input,
-	                        (lua_class_propfunc_t) luaA_drawin_get_shape_input,
-	                        (lua_class_propfunc_t) luaA_drawin_set_shape_input);
-	luaA_class_add_property(&drawin_class, "shape_border",
-	                        (lua_class_propfunc_t) luaA_drawin_set_shape_border,
-	                        (lua_class_propfunc_t) luaA_drawin_get_shape_border,
-	                        (lua_class_propfunc_t) luaA_drawin_set_shape_border);
+	const lua_class_property_t properties[] = {
+		{ "drawable", NULL, (lua_class_propfunc_t) luaA_drawin_get_drawable, NULL },
+		{ "visible", (lua_class_propfunc_t) luaA_drawin_set_visible, (lua_class_propfunc_t) luaA_drawin_get_visible, (lua_class_propfunc_t) luaA_drawin_set_visible },
+		{ "ontop", (lua_class_propfunc_t) luaA_drawin_set_ontop, (lua_class_propfunc_t) luaA_drawin_get_ontop, (lua_class_propfunc_t) luaA_drawin_set_ontop },
+		{ "cursor", (lua_class_propfunc_t) luaA_drawin_set_cursor, (lua_class_propfunc_t) luaA_drawin_get_cursor, (lua_class_propfunc_t) luaA_drawin_set_cursor },
+		{ "x", (lua_class_propfunc_t) luaA_drawin_set_x, (lua_class_propfunc_t) luaA_drawin_get_x, (lua_class_propfunc_t) luaA_drawin_set_x },
+		{ "y", (lua_class_propfunc_t) luaA_drawin_set_y, (lua_class_propfunc_t) luaA_drawin_get_y, (lua_class_propfunc_t) luaA_drawin_set_y },
+		{ "width", (lua_class_propfunc_t) luaA_drawin_set_width, (lua_class_propfunc_t) luaA_drawin_get_width, (lua_class_propfunc_t) luaA_drawin_set_width },
+		{ "height", (lua_class_propfunc_t) luaA_drawin_set_height, (lua_class_propfunc_t) luaA_drawin_get_height, (lua_class_propfunc_t) luaA_drawin_set_height },
+		{ "type", (lua_class_propfunc_t) luaA_drawin_set_type, (lua_class_propfunc_t) luaA_drawin_get_type, (lua_class_propfunc_t) luaA_drawin_set_type },
+		{ "_opacity", (lua_class_propfunc_t) luaA_drawin_set_opacity, (lua_class_propfunc_t) luaA_drawin_get_opacity, (lua_class_propfunc_t) luaA_drawin_set_opacity },
+		{ "shadow", (lua_class_propfunc_t) luaA_drawin_set_shadow, (lua_class_propfunc_t) luaA_drawin_get_shadow, (lua_class_propfunc_t) luaA_drawin_set_shadow },
+		{ "surface_scale", (lua_class_propfunc_t) luaA_drawin_set_surface_scale, (lua_class_propfunc_t) luaA_drawin_get_surface_scale, (lua_class_propfunc_t) luaA_drawin_set_surface_scale },
+		{ "border_width", (lua_class_propfunc_t) luaA_drawin_set_border_width, (lua_class_propfunc_t) luaA_drawin_get_border_width, (lua_class_propfunc_t) luaA_drawin_set_border_width },
+		{ "_border_width", (lua_class_propfunc_t) luaA_drawin_set_border_width, (lua_class_propfunc_t) luaA_drawin_get_border_width, (lua_class_propfunc_t) luaA_drawin_set_border_width },
+		{ "border_color", (lua_class_propfunc_t) luaA_drawin_set_border_color, (lua_class_propfunc_t) luaA_drawin_get_border_color, (lua_class_propfunc_t) luaA_drawin_set_border_color },
+		{ "shape_bounding", (lua_class_propfunc_t) luaA_drawin_set_shape_bounding, (lua_class_propfunc_t) luaA_drawin_get_shape_bounding, (lua_class_propfunc_t) luaA_drawin_set_shape_bounding },
+		{ "shape_clip", (lua_class_propfunc_t) luaA_drawin_set_shape_clip, (lua_class_propfunc_t) luaA_drawin_get_shape_clip, (lua_class_propfunc_t) luaA_drawin_set_shape_clip },
+		{ "shape_input", (lua_class_propfunc_t) luaA_drawin_set_shape_input, (lua_class_propfunc_t) luaA_drawin_get_shape_input, (lua_class_propfunc_t) luaA_drawin_set_shape_input },
+		{ "shape_border", (lua_class_propfunc_t) luaA_drawin_set_shape_border, (lua_class_propfunc_t) luaA_drawin_get_shape_border, (lua_class_propfunc_t) luaA_drawin_set_shape_border },
+	};
+	luaA_class_add_properties(&drawin_class, properties, countof(properties));
 }
 
 /** Constructor for drawin objects - capi.drawin(args)
