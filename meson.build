@@ -292,6 +292,7 @@ somewm_sources = [
   'focus.c',
   'event_queue.c',
   'ipc.c',
+  'check_config.c',
   'color.c',
   'draw.c',
   'stack.c',

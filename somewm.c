@@ -79,6 +79,7 @@
 #include "wlr_compat.h"
 #include "globalconf.h"
 #include "luaa.h"
+#include "check_config.h"
 #include "stack.h"
 #include "banning.h"
 #include "animation.h"
@@ -1542,7 +1543,7 @@ main(int argc, char *argv[])
 	if (check_config) {
 		bool use_color = isatty(STDOUT_FILENO);
 		int level = (check_level >= 0) ? check_level : 1;  /* default: warning */
-		int result = luaA_check_config(check_config, use_color, level);
+		int result = check_config_run(check_config, use_color, level);
 		return result;
 	}
 
