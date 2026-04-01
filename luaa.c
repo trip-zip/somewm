@@ -4333,6 +4333,32 @@ luaA_create_fresh_state(void)
 		}
 	}
 
+	/* Re-apply extra search paths from -L/--search command line options.
+	 * These are only applied in luaA_init() during initial startup, so
+	 * a fresh state after hot-reload would lose them. The static array
+	 * survives across reloads. */
+	if (num_extra_search_paths > 0) {
+		lua_getglobal(L, "package");
+		for (int i = 0; i < num_extra_search_paths; i++) {
+			const char *dir = extra_search_paths[i];
+
+			lua_getfield(L, -1, "path");
+			cur_path = lua_tostring(L, -1);
+			lua_pop(L, 1);
+			lua_pushfstring(L, "%s/?.lua;%s/?/init.lua;%s",
+				dir, dir, cur_path);
+			lua_setfield(L, -2, "path");
+
+			lua_getfield(L, -1, "cpath");
+			cur_path = lua_tostring(L, -1);
+			lua_pop(L, 1);
+			lua_pushfstring(L, "%s/?.so;%s",
+				dir, cur_path);
+			lua_setfield(L, -2, "cpath");
+		}
+		lua_pop(L, 1);  /* pop package table */
+	}
+
 	/* Re-register all Lua modules/classes */
 	luaA_signal_setup(L);
 	key_class_setup(L);
@@ -4674,6 +4700,12 @@ luaA_hot_reload(void)
 	/* ================================================================
 	 * Phase C: Close old Lua state
 	 * ================================================================ */
+
+	globalconf.hot_reload_in_progress = true;
+
+	/* Invalidate spawn exit callbacks so they don't try to call
+	 * stale registry refs in the new Lua state. */
+	spawn_invalidate_callbacks();
 
 	/* Clear arrays so GC doesn't try to access stale data.
 	 * We've already snapshotted everything and NULL'd owned resources. */
@@ -5018,6 +5050,8 @@ luaA_hot_reload(void)
 
 	/* Flush visual state */
 	some_refresh();
+
+	globalconf.hot_reload_in_progress = false;
 
 	fprintf(stderr, "somewm: hot-reload: complete (%d clients, %d screens, %d tags reset)\n",
 		num_clients, num_screens, num_tags);

@@ -275,6 +275,10 @@ typedef struct
      *  to prevent stale Lgi FFI closures from firing with dead lua_State*. */
     unsigned int glib_source_baseline;
 
+    /** True while hot-reload is tearing down/rebuilding the Lua state.
+     *  Used to suppress expected warnings (e.g. stale object decrefs). */
+    bool hot_reload_in_progress;
+
     /* ========== WALLPAPER SUPPORT ========== */
 
     /** Cached wallpaper surface (AwesomeWM compatibility)

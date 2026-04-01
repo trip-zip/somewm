@@ -29,6 +29,7 @@
 
 #include "common/luaobject.h"
 #include "common/lualib.h"
+#include "globalconf.h"
 
 /** Setup the object system at startup.
  * \param L The Lua VM state.
@@ -128,7 +129,8 @@ luaA_object_decref(lua_State *L, int tud, const void *pointer)
     /* Did we find the item in our table? (tointeger(nil)-1) is -1 */
     if (count < 0)
     {
-        fprintf(stderr, "somewm: BUG: Reference not found: %d %p\n", tud, pointer);
+        if (!globalconf.hot_reload_in_progress)
+            fprintf(stderr, "somewm: BUG: Reference not found: %d %p\n", tud, pointer);
 
         /* Pop reference count and metatable */
         lua_pop(L, 2);
