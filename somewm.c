@@ -158,7 +158,7 @@ static const float *get_focuscolor(void);
 static const float *get_bordercolor(void);
 static const float *get_urgentcolor(void);
 
-static void checkidleinhibitor(struct wlr_surface *exclude);
+static bool checkidleinhibitor(struct wlr_surface *exclude);
 static void cleanup(void);
 static void cleanupmon(struct wl_listener *listener, void *data);
 static void cleanuplisteners(void);
@@ -1181,11 +1181,13 @@ buttonpress(struct wl_listener *listener, void *data)
 			event->time_msec, event->button, event->state);
 }
 
-void
+bool
 checkidleinhibitor(struct wlr_surface *exclude)
 {
 	bool inhibited = some_is_idle_inhibited(exclude);
 	wlr_idle_notifier_v1_set_inhibited(idle_notifier, inhibited);
+
+	return inhibited;
 }
 
 void
@@ -1674,7 +1676,8 @@ createidleinhibitor(struct wl_listener *listener, void *data)
 	struct wlr_idle_inhibitor_v1 *idle_inhibitor = data;
 	LISTEN_STATIC(&idle_inhibitor->events.destroy, destroyidleinhibitor);
 
-	checkidleinhibitor(NULL);
+	bool inhibited = checkidleinhibitor(NULL);
+	some_idle_timers_set_inhibit(inhibited);
 }
 
 void
@@ -2252,7 +2255,9 @@ destroyidleinhibitor(struct wl_listener *listener, void *data)
 {
 	/* `data` is the wlr_surface of the idle inhibitor being destroyed,
 	 * at this point the idle inhibitor is still in the list of the manager */
-	checkidleinhibitor(wlr_surface_get_root_surface(data));
+	bool inhibited = checkidleinhibitor(wlr_surface_get_root_surface(data));
+	some_idle_timers_set_inhibit(inhibited);
+
 	wl_list_remove(&listener->link);
 	free(listener);
 }
