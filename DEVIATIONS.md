@@ -9,7 +9,7 @@ This document tracks all known differences between somewm and AwesomeWM. These e
 | Systray | X11 `_NET_SYSTEMTRAY` embed | StatusNotifierItem D-Bus (SNI) | X11 tray protocol doesn't exist on Wayland |
 | Titlebar borders | Outside frame (X server draws) | Inset by `border_width` | Scene graph positioning differs |
 | Window visibility | `xcb_map_window()` shows immediately | Content must exist before showing | Prevents smearing artifacts |
-| WM restart | `awesome.restart()` works | Not supported | Wayland compositor can't restart in place |
+| WM restart | `awesome.restart()` re-execs the process | In-process Lua hot-reload (clients survive) | Wayland compositor can't re-exec; tears down and rebuilds Lua VM instead |
 | GTK theme detection | Creates GTK widgets, queries `GtkStyleContext` | Parses `gtk-3.0/settings.ini` and `gtk-4.0/settings.ini` | Creating GTK windows inside a compositor is unsafe |
 | Xresources | Queries `xrdb` server | Parses `~/.Xresources` file directly | No `xrdb` server on Wayland |
 | Wibox shape surfaces | 1-bit (`cairo.Format.A1`) | Full ARGB32 with anti-aliasing | Enables anti-aliased rounded corners and HiDPI scaling |
@@ -28,6 +28,13 @@ This document tracks all known differences between somewm and AwesomeWM. These e
 - In Wayland, borders are scene rects at geometry edges
 - Titlebars must start INSIDE the border area, hence `border_width` inset
 - See `titlebar_get_area()` in `objects/client.c`
+
+**WM Restart**
+- AwesomeWM re-execs itself via `execvp()`, restarting the entire process
+- SomeWM performs in-process Lua hot-reload: tears down the Lua VM, rebuilds it from `rc.lua`, and reattaches existing clients
+- wlroots, the scene graph, and client surfaces are untouched during reload
+- The old Lua state is intentionally leaked (~1-2 MB) to avoid Lgi closure crashes
+- An LD_PRELOAD closure guard (`lgi_closure_guard.so`) blocks stale FFI closures from the leaked state
 
 **Window Visibility Timing**
 - X11: `xcb_map_window()` maps immediately, content shows when ready
