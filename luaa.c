@@ -1673,6 +1673,27 @@ bool some_is_lock_drawin(drawin_t *d) {
 	return false;
 }
 
+/* ==========================================================================
+ * Tag Slide Animation Helpers
+ * ========================================================================== */
+
+/** awesome._client_scene_set_enabled(c, bool)
+ * Toggle a client's scene node visibility without touching isbanned flag.
+ * Used by tag slide animation to temporarily show banned (old tag) clients.
+ */
+static int
+luaA_awesome_client_scene_set_enabled(lua_State *L)
+{
+	client_t *c = luaA_checkudata(L, 1, &client_class);
+	luaL_checktype(L, 2, LUA_TBOOLEAN);
+	bool enabled = lua_toboolean(L, 2);
+
+	if (c->scene)
+		wlr_scene_node_set_enabled(&c->scene->node, enabled);
+
+	return 0;
+}
+
 /* awesome module methods */
 const luaL_Reg awesome_methods[] = {
 	{ "quit", luaA_awesome_quit },
@@ -1718,6 +1739,8 @@ const luaL_Reg awesome_methods[] = {
 	{ "clear_all_idle_timeouts", luaA_awesome_clear_all_idle_timeouts },
 	/* Animation API */
 	{ "start_animation", luaA_start_animation },
+	/* Client scene visibility toggle (used by tag slide animation) */
+	{ "_client_scene_set_enabled", luaA_awesome_client_scene_set_enabled },
 	/* DPMS (display power management) API methods */
 	{ "dpms_off", luaA_awesome_dpms_off },
 	{ "dpms_on", luaA_awesome_dpms_on },
