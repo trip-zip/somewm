@@ -258,7 +258,7 @@ void some_clear_pre_lock_client(client_t *c);
 void some_notify_activity(void);
 
 /* Idle inhibitor query - defined in somewm.c, called from luaa.c */
-bool some_is_idle_inhibited(void);
+bool some_is_idle_inhibited(struct wlr_surface *exclude);
 
 /** Check if the session is locked by any mechanism (ext-session-lock or Lua lock).
  * Use this instead of repeating `locked || some_is_lua_locked()` everywhere. */
