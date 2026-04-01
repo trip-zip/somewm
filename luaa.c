@@ -1770,7 +1770,7 @@ luaA_awesome_index(lua_State *L)
 	}
 
 	if (A_STREQ(key, "idle_inhibited")) {
-		lua_pushboolean(L, some_is_idle_inhibited());
+		lua_pushboolean(L, some_is_idle_inhibited(NULL));
 		return 1;
 	}
 
