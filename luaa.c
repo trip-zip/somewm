@@ -496,7 +496,7 @@ luaA_load_image(lua_State *L)
             lua_pushstring(L, error->message);
             g_error_free(error);
         } else {
-            lua_pushstring(L, "unknown error");
+            lua_pushliteral(L, "unknown error");
         }
     }
     return 2;
@@ -686,7 +686,7 @@ luaA_awesome_xrdb_get_value(lua_State *L)
 	resource_name = luaL_checkstring(L, 2);
 
 	lua_getglobal(L, "require");
-	lua_pushstring(L, "gears.xresources");
+	lua_pushliteral(L, "gears.xresources");
 	lua_call(L, 1, 1);
 
 	lua_getfield(L, -1, "get_value");
@@ -854,7 +854,7 @@ luaA_awesome_xkb_get_group_names(lua_State *L)
 		if (layout && *layout) {
 			lua_pushfstring(L, "pc+%s", layout);
 		} else {
-			lua_pushstring(L, "pc+us");
+			lua_pushliteral(L, "pc+us");
 		}
 	}
 	return 1;
@@ -908,14 +908,14 @@ luaA_pixbuf_to_surface(lua_State *L)
 
 	if (!pixbuf) {
 		lua_pushnil(L);
-		lua_pushstring(L, "Invalid pixbuf (expected light userdata)");
+		lua_pushliteral(L, "Invalid pixbuf (expected light userdata)");
 		return 2;
 	}
 
 	surface = draw_surface_from_pixbuf(pixbuf);
 	if (!surface) {
 		lua_pushnil(L);
-		lua_pushstring(L, "Failed to create cairo surface from pixbuf");
+		lua_pushliteral(L, "Failed to create cairo surface from pixbuf");
 		return 2;
 	}
 
@@ -1144,7 +1144,7 @@ luaA_awesome_lock(lua_State *L)
 	some_activate_lua_lock();
 
 	/* Emit lock::activate signal with source="user" */
-	lua_pushstring(L, "user");
+	lua_pushliteral(L, "user");
 	luaA_emit_signal_global_with_stack(L, "lock::activate", 1);
 
 	lua_pushboolean(L, 1);
@@ -1735,7 +1735,7 @@ luaA_awesome_index(lua_State *L)
 	}
 
 	if (A_STREQ(key, "release")) {
-		lua_pushstring(L, "somewm");
+		lua_pushliteral(L, "somewm");
 		return 1;
 	}
 
@@ -1816,9 +1816,9 @@ luaA_awesome_index(lua_State *L)
 
 	if (A_STREQ(key, "lock_mechanism")) {
 		if (lua_locked)
-			lua_pushstring(L, "lua");
+			lua_pushliteral(L, "lua");
 		else if (some_is_ext_session_locked())
-			lua_pushstring(L, "ext");
+			lua_pushliteral(L, "ext");
 		else
 			lua_pushnil(L);
 		return 1;
@@ -1957,7 +1957,7 @@ luaA_awesome_setup(lua_State *L)
 	lua_pushstring(L, DATADIR "/somewm/themes");
 	lua_setfield(L, -2, "themes_path");
 
-	lua_pushstring(L, "");
+	lua_pushliteral(L, "");
 	lua_setfield(L, -2, "conffile");
 
 	lua_pop(L, 1);
@@ -5026,7 +5026,7 @@ luaA_hot_reload(void)
 		luaA_object_emit_signal(L, -1, "property::screen", 0);
 
 		/* Emit request::manage so awful.rules applies tags etc. */
-		lua_pushstring(L, "restart");
+		lua_pushliteral(L, "restart");
 		lua_newtable(L);
 		luaA_object_emit_signal(L, -3, "request::manage", 2);
 		luaA_object_emit_signal(L, -1, "manage", 0);

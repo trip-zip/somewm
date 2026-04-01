@@ -993,7 +993,7 @@ luaA_screen_get_name(lua_State *L)
 		const char *mon_name = some_get_monitor_name(screen->monitor);
 		lua_pushstring(L, mon_name ? mon_name : "");
 	} else {
-		lua_pushstring(L, "");
+		lua_pushliteral(L, "");
 	}
 
 	return 1;
@@ -1054,16 +1054,16 @@ luaA_screen_get_managed(lua_State *L)
 	/* Return lifecycle status */
 	switch (screen->lifecycle) {
 	case SCREEN_LIFECYCLE_C:
-		lua_pushstring(L, "C");
+		lua_pushliteral(L, "C");
 		break;
 	case SCREEN_LIFECYCLE_LUA:
-		lua_pushstring(L, "Lua");
+		lua_pushliteral(L, "Lua");
 		break;
 	case SCREEN_LIFECYCLE_USER:
-		lua_pushstring(L, "User");
+		lua_pushliteral(L, "User");
 		break;
 	default:
-		lua_pushstring(L, "C");
+		lua_pushliteral(L, "C");
 		break;
 	}
 
@@ -1480,7 +1480,7 @@ luaA_screen_viewports(lua_State *L)
 		lua_newtable(L);  /* Create viewport table */
 
 		/* Add geometry table */
-		lua_pushstring(L, "geometry");
+		lua_pushliteral(L, "geometry");
 		lua_newtable(L);
 		lua_pushinteger(L, m->m.x);
 		lua_setfield(L, -2, "x");
@@ -1493,7 +1493,7 @@ luaA_screen_viewports(lua_State *L)
 		lua_settable(L, -3);  /* Set geometry in viewport table */
 
 		/* Add outputs array */
-		lua_pushstring(L, "outputs");
+		lua_pushliteral(L, "outputs");
 		lua_newtable(L);  /* Create outputs array */
 
 		/* Create first output entry */
@@ -1511,7 +1511,7 @@ luaA_screen_viewports(lua_State *L)
 		lua_settable(L, -3);  /* Set outputs in viewport table */
 
 		/* Add viewport ID */
-		lua_pushstring(L, "id");
+		lua_pushliteral(L, "id");
 		lua_pushinteger(L, viewport_id);
 		lua_settable(L, -3);  /* Set id in viewport table */
 
@@ -2369,41 +2369,16 @@ screen_class_setup(lua_State *L)
 	                 luaA_class_index_miss_property, luaA_class_newindex_miss_property,
 	                 screen_methods, screen_meta);
 
-	/* Register screen properties (AwesomeWM pattern) */
-	luaA_class_add_property(&screen_class, "geometry",
-	                        NULL,
-	                        (lua_class_propfunc_t) luaA_screen_get_geometry_prop,
-	                        NULL);
-	luaA_class_add_property(&screen_class, "index",
-	                        NULL,
-	                        (lua_class_propfunc_t) luaA_screen_get_index_prop,
-	                        NULL);
-	luaA_class_add_property(&screen_class, "_outputs",
-	                        NULL,
-	                        (lua_class_propfunc_t) luaA_screen_get_outputs_prop,
-	                        NULL);
-	luaA_class_add_property(&screen_class, "_managed",
-	                        NULL,
-	                        (lua_class_propfunc_t) luaA_screen_get_managed_prop,
-	                        NULL);
-	luaA_class_add_property(&screen_class, "workarea",
-	                        NULL,
-	                        (lua_class_propfunc_t) luaA_screen_get_workarea_prop,
-	                        NULL);
-	luaA_class_add_property(&screen_class, "name",
-	                        (lua_class_propfunc_t) luaA_screen_set_name,
-	                        (lua_class_propfunc_t) luaA_screen_get_name_prop,
-	                        (lua_class_propfunc_t) luaA_screen_set_name);
-	luaA_class_add_property(&screen_class, "content",
-	                        NULL,
-	                        (lua_class_propfunc_t) luaA_screen_get_content,
-	                        NULL);
-	luaA_class_add_property(&screen_class, "scale",
-	                        (lua_class_propfunc_t) luaA_screen_set_scale,
-	                        (lua_class_propfunc_t) luaA_screen_get_scale,
-	                        (lua_class_propfunc_t) luaA_screen_set_scale);
-	luaA_class_add_property(&screen_class, "output",
-	                        NULL,
-	                        (lua_class_propfunc_t) luaA_screen_get_output,
-	                        NULL);
+	const lua_class_property_t properties[] = {
+		{ "geometry", NULL, (lua_class_propfunc_t) luaA_screen_get_geometry_prop, NULL },
+		{ "index", NULL, (lua_class_propfunc_t) luaA_screen_get_index_prop, NULL },
+		{ "_outputs", NULL, (lua_class_propfunc_t) luaA_screen_get_outputs_prop, NULL },
+		{ "_managed", NULL, (lua_class_propfunc_t) luaA_screen_get_managed_prop, NULL },
+		{ "workarea", NULL, (lua_class_propfunc_t) luaA_screen_get_workarea_prop, NULL },
+		{ "name", (lua_class_propfunc_t) luaA_screen_set_name, (lua_class_propfunc_t) luaA_screen_get_name_prop, (lua_class_propfunc_t) luaA_screen_set_name },
+		{ "content", NULL, (lua_class_propfunc_t) luaA_screen_get_content, NULL },
+		{ "scale", (lua_class_propfunc_t) luaA_screen_set_scale, (lua_class_propfunc_t) luaA_screen_get_scale, (lua_class_propfunc_t) luaA_screen_set_scale },
+		{ "output", NULL, (lua_class_propfunc_t) luaA_screen_get_output, NULL },
+	};
+	luaA_class_add_properties(&screen_class, properties, countof(properties));
 }

@@ -2467,9 +2467,9 @@ client_manage(xcb_window_t w, xcb_get_geometry_reply_t *wgeom, xcb_get_window_at
 
     /* Add the context */
     if (globalconf.loop == NULL)
-        lua_pushstring(L, "startup");
+        lua_pushliteral(L, "startup");
     else
-        lua_pushstring(L, "new");
+        lua_pushliteral(L, "new");
 
     /* Hints */
     lua_newtable(L);
@@ -2940,7 +2940,7 @@ client_set_fullscreen(lua_State *L, int cidx, bool s)
             client_set_ontop(L, cidx, false);
         }
         abs_cidx = luaA_absindex(L, cidx);
-        lua_pushstring(L, "fullscreen");
+        lua_pushliteral(L, "fullscreen");
         c->fullscreen = s;
         luaA_object_emit_signal(L, abs_cidx, "request::geometry", 1);
         luaA_object_emit_signal(L, abs_cidx, "property::fullscreen", 0);
@@ -3205,15 +3205,15 @@ client_unmanage(client_t *c, client_unmanage_t reason)
     {
             break;
         case CLIENT_UNMANAGE_USER:
-            lua_pushstring(L, "user");
+            lua_pushliteral(L, "user");
             break;
         case CLIENT_UNMANAGE_REPARENT:
-            lua_pushstring(L, "reparented");
+            lua_pushliteral(L, "reparented");
             break;
         case CLIENT_UNMANAGE_UNMAP:
         case CLIENT_UNMANAGE_FAILED:
         case CLIENT_UNMANAGE_DESTROYED:
-            lua_pushstring(L, "destroyed");
+            lua_pushliteral(L, "destroyed");
             break;
     }
 
@@ -5154,7 +5154,7 @@ client_tostring(lua_State *L, client_t *c)
 
     lua_pushlstring(L, name, MIN(len, limit));
     if (len > limit)
-        lua_pushstring(L, "...");
+        lua_pushliteral(L, "...");
     return len > limit ? 2 : 1;
 }
 
@@ -5340,7 +5340,7 @@ client_class_setup(lua_State *L)
                      client_methods, client_meta);
     luaA_class_set_tostring(&client_class, (lua_class_propfunc_t) client_tostring);
 
-    lua_class_property_t properties[] = {
+    const lua_class_property_t properties[] = {
         { "above", (lua_class_propfunc_t) luaA_client_set_above, (lua_class_propfunc_t) luaA_client_get_above, (lua_class_propfunc_t) luaA_client_set_above },
         { "aspect_ratio", (lua_class_propfunc_t) luaA_client_set_aspect_ratio, (lua_class_propfunc_t) luaA_client_get_aspect_ratio, (lua_class_propfunc_t) luaA_client_set_aspect_ratio },
         { "below", (lua_class_propfunc_t) luaA_client_set_below, (lua_class_propfunc_t) luaA_client_get_below, (lua_class_propfunc_t) luaA_client_set_below },
