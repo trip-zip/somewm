@@ -17,8 +17,10 @@ function M.create(screen, config)
 
 	broker.connect_signal("data::memory", function(data)
 		icon.markup = wh.icon_markup(data.icon, color)
+		local used_g = data.used / 1024
+		local total_g = data.total / 1024
 		text.markup = wh.text_markup(
-			string.format("%5d MB", data.used), color)
+			string.format("%4.1fG/%4.0fG", used_g, total_g), color)
 	end)
 
 	return widget
