@@ -7,28 +7,18 @@ local M = {}
 
 function M.create(screen, config)
 	local color = beautiful.widget_network_color or "#89b482"
-	local down_widget = wibox.widget {
-		wibox.widget.textbox(), wibox.widget.textbox(),
-		layout = wibox.layout.fixed.horizontal,
-		spacing = 2,
-	}
-	local up_widget = wibox.widget {
-		wibox.widget.textbox(), wibox.widget.textbox(),
-		layout = wibox.layout.fixed.horizontal,
-		spacing = 2,
-	}
-
-	local widget = wibox.widget {
-		down_widget, up_widget,
-		layout = wibox.layout.fixed.horizontal,
-		spacing = 4,
-	}
+	local widget = wibox.widget.textbox()
 
 	broker.connect_signal("data::network", function(data)
-		down_widget:get_children()[1].markup = wh.icon_markup(data.icon_down, color)
-		down_widget:get_children()[2].markup = wh.text_markup(data.rx_formatted, color)
-		up_widget:get_children()[1].markup = wh.icon_markup(data.icon_up, color)
-		up_widget:get_children()[2].markup = wh.text_markup(data.tx_formatted, color)
+		widget.markup = string.format(
+			'<span font="%s" foreground="%s">%s</span>' ..
+			'<span font="%s" foreground="%s"> %s </span>' ..
+			'<span font="%s" foreground="%s">%s</span>' ..
+			'<span font="%s" foreground="%s"> %s</span>',
+			wh.icon_font, color, data.icon_down,
+			wh.number_font, color, data.rx_formatted,
+			wh.icon_font, color, data.icon_up,
+			wh.number_font, color, data.tx_formatted)
 	end)
 
 	return widget

@@ -7,19 +7,10 @@ local M = {}
 
 function M.create(screen, config)
 	local color = beautiful.widget_disk_color or "#e2b55a"
-	local icon = wibox.widget.textbox()
-	local text = wibox.widget.textbox()
-
-	local widget = wibox.widget {
-		icon, text,
-		layout = wibox.layout.fixed.horizontal,
-		spacing = 2,
-	}
+	local widget, update = wh.create_icon_text(color)
 
 	broker.connect_signal("data::disk", function(data)
-		icon.markup = wh.icon_markup(data.icon, color)
-		text.markup = wh.text_markup(
-			string.format("%s/%s GB %2d%%", data.used, data.total, data.percent), color)
+		update(data.icon, string.format("%s/%s GB %2d%%", data.used, data.total, data.percent))
 	end)
 
 	return widget

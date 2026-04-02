@@ -8,18 +8,10 @@ local M = {}
 
 function M.create(screen, config)
 	local color = beautiful.widget_keyboard_color or "#7daea3"
-	local icon = wibox.widget.textbox()
-	local text = wibox.widget.textbox()
-
-	local widget = wibox.widget {
-		icon, text,
-		layout = wibox.layout.fixed.horizontal,
-		spacing = 2,
-	}
+	local widget, update = wh.create_icon_text(color)
 
 	broker.connect_signal("data::keyboard", function(data)
-		icon.markup = wh.icon_markup(data.icon, color)
-		text.markup = wh.text_markup(string.upper(data.layout), color)
+		update(data.icon, string.upper(data.layout))
 	end)
 
 	widget:buttons(awful.util.table.join(

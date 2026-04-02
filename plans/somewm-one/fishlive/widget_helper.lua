@@ -1,6 +1,12 @@
 ---------------------------------------------------------------------------
 --- Widget helper — fonts, separators, markup helpers.
 --
+-- Design rules:
+-- 1. Icon font: Symbols Nerd Font Mono (fixed width, no half-cut)
+-- 2. Number font: CommitMono Nerd Font Propo (monospace digits)
+-- 3. Icon and text in same textbox via markup (no layout spacing issues)
+-- 4. Fixed-width number formatting via string.format width specifiers
+--
 -- @module fishlive.widget_helper
 ---------------------------------------------------------------------------
 
@@ -9,11 +15,21 @@ local beautiful = require("beautiful")
 
 local M = {}
 
---- Nerd Font for icons (Mono variant = fixed width, no half-cut glyphs)
 M.icon_font = "Symbols Nerd Font Mono 12"
-
---- Monospace font for numbers (consistent width, no jitter)
 M.number_font = "CommitMono Nerd Font Propo 10"
+
+--- Create a widget with icon + text in a SINGLE textbox.
+-- This avoids all spacing issues between separate icon/text widgets.
+function M.create_icon_text(color)
+	local tb = wibox.widget.textbox()
+	return tb, function(icon, text)
+		tb.markup = string.format(
+			'<span font="%s" foreground="%s">%s</span>' ..
+			'<span font="%s" foreground="%s"> %s</span>',
+			M.icon_font, color, icon,
+			M.number_font, color, text)
+	end
+end
 
 --- Create a separator widget between components.
 function M.separator()
@@ -22,18 +38,6 @@ function M.separator()
 		beautiful.fg_minimize or "#555555")
 	sep.font = beautiful.font or "Geist 10"
 	return sep
-end
-
---- Format icon with Nerd Font Mono (no extra space — tight to text).
-function M.icon_markup(icon_char, color)
-	return string.format('<span font="%s" foreground="%s">%s</span>',
-		M.icon_font, color, icon_char)
-end
-
---- Format text with monospace font.
-function M.text_markup(text, color)
-	return string.format('<span font="%s" foreground="%s">%s</span>',
-		M.number_font, color, text)
 end
 
 return M

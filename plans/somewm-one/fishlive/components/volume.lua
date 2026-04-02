@@ -8,19 +8,10 @@ local M = {}
 
 function M.create(screen, config)
 	local color = beautiful.widget_volume_color or "#ea6962"
-	local icon = wibox.widget.textbox()
-	local text = wibox.widget.textbox()
-
-	local widget = wibox.widget {
-		icon, text,
-		layout = wibox.layout.fixed.horizontal,
-		spacing = 2,
-	}
+	local widget, update = wh.create_icon_text(color)
 
 	broker.connect_signal("data::volume", function(data)
-		icon.markup = wh.icon_markup(data.icon, color)
-		text.markup = wh.text_markup(
-			string.format("%3d%%", data.volume), color)
+		update(data.icon, string.format("%3d%%", data.volume))
 	end)
 
 	widget:buttons(awful.util.table.join(

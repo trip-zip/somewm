@@ -462,12 +462,10 @@ screen.connect_signal("request::desktop_decoration", function(s)
                 require("fishlive.widget_helper").separator(),
                 factory.create("volume", s),
                 require("fishlive.widget_helper").separator(),
-                wibox.widget {
-                    wibox.widget.systray(),
-                    left = 0, right = 0,
-                    widget = wibox.container.margin,
-                },
+                wibox.widget.systray(),
+                require("fishlive.widget_helper").separator(),
                 factory.create("clock", s),
+                require("fishlive.widget_helper").separator(),
                 factory.create("layoutbox", s),
             },
         }
