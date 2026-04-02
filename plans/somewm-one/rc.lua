@@ -434,6 +434,7 @@ screen.connect_signal("request::desktop_decoration", function(s)
     s.mywibox = awful.wibar {
         position = "top",
         screen   = s,
+        border_width = 0,
         -- @DOC_SETUP_WIDGETS@
         widget   = {
             layout = wibox.layout.align.horizontal,
@@ -461,6 +462,7 @@ screen.connect_signal("request::desktop_decoration", function(s)
                 factory.create("network", s),
                 require("fishlive.widget_helper").separator(),
                 factory.create("volume", s),
+                require("fishlive.widget_helper").separator(),
                 wibox.widget.systray(),
                 require("fishlive.widget_helper").separator(),
                 factory.create("clock", s),
