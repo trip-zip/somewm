@@ -2,32 +2,37 @@ local wibox = require("wibox")
 local awful = require("awful")
 local beautiful = require("beautiful")
 local broker = require("fishlive.broker")
+local wh = require("fishlive.widget_helper")
 
 local M = {}
 
 function M.create(screen, config)
-	local color = beautiful.widget_keyboard_color or "#74c7ec"
+	local color = beautiful.widget_keyboard_color or "#7daea3"
 	local icon = wibox.widget.textbox()
-	local text = wibox.widget.textbox()
+	local text = wh.fixed_text(25)
 
 	local widget = wibox.widget {
 		icon, text,
 		layout = wibox.layout.fixed.horizontal,
-		spacing = beautiful.widget_spacing or 4,
 	}
 
 	broker.connect_signal("data::keyboard", function(data)
-		icon.markup = string.format('<span color="%s">%s</span>', color, data.icon)
-		text.markup = string.format('<span color="%s">%s</span>',
-			color, string.upper(data.layout))
+		icon.markup = wh.icon_markup(data.icon, color)
+		text._textbox.markup = wh.text_markup(
+			string.upper(data.layout), color)
 	end)
 
 	-- Click: cycle to next layout
 	widget:buttons(awful.util.table.join(
 		awful.button({}, 1, function()
-			awesome.xkb_set_layout_group(
-				(awesome.xkb_get_layout_group() + 1) % #(broker.get_value("data::keyboard") or {layouts={"us"}}).layouts
-			)
+			local data = broker.get_value("data::keyboard")
+			if data and data.layouts then
+				local count = #data.layouts
+				if count > 0 then
+					awesome.xkb_set_layout_group(
+						(awesome.xkb_get_layout_group() + 1) % count)
+				end
+			end
 		end)
 	))
 

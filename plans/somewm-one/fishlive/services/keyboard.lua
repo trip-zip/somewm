@@ -10,8 +10,6 @@ local broker = require("fishlive.broker")
 
 local keyboard = {}
 local running = false
-
--- Layout names (populated from xkb config)
 local layout_names = {}
 
 local function get_current_layout()
@@ -32,21 +30,22 @@ function keyboard:start()
 	if running then return end
 	running = true
 
-	-- Detect available layouts from xkb rules
-	-- awesome.xkb_get_group_names() returns "rules+model+layout1+layout2+..."
+	-- Parse xkb group names: "pc+us+cz(qwerty):2+grp:alt_shift_toggle"
+	-- Extract layout codes (us, cz) from the + separated parts
 	local names = awesome.xkb_get_group_names()
 	if names then
 		layout_names = {}
-		-- Format: "evdev+pc105+us+cz+..." — layouts start at 4th field
-		local parts = {}
 		for part in names:gmatch("[^+]+") do
-			parts[#parts + 1] = part
-		end
-		-- Skip rules, model, variant prefixes — layouts are after model
-		-- Heuristic: take 2-letter codes
-		for i = 3, #parts do
-			if #parts[i] <= 3 then
-				layout_names[#layout_names + 1] = parts[i]
+			-- Skip: pc, evdev, pcXXX, grp:*, compose:*
+			if not part:match("^pc") and not part:match("^evdev")
+				and not part:match("^grp:") and not part:match("^compose:")
+				and not part:match("^ctrl:") and not part:match("^caps:")
+				and not part:match("^terminate:") then
+				-- Extract base layout name: "cz(qwerty):2" → "cz"
+				local layout = part:match("^(%a%a%a?)") -- 2-3 letter code
+				if layout then
+					layout_names[#layout_names + 1] = layout
+				end
 			end
 		end
 		if #layout_names == 0 then
@@ -55,7 +54,7 @@ function keyboard:start()
 	end
 
 	awesome.connect_signal("xkb::group_changed", update_and_emit)
-	update_and_emit()  -- Initial state
+	update_and_emit()
 end
 
 function keyboard:stop()
