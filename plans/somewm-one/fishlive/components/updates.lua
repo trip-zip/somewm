@@ -9,7 +9,7 @@ local M = {}
 function M.create(screen, config)
 	local color = beautiful.widget_updates_color or "#d8a657"
 	local icon = wibox.widget.textbox()
-	local text = wh.fixed_text(30)
+	local text = wibox.widget.textbox()
 
 	local widget = wibox.widget {
 		icon, text,
@@ -18,8 +18,7 @@ function M.create(screen, config)
 
 	broker.connect_signal("data::updates", function(data)
 		icon.markup = wh.icon_markup(data.icon, color)
-		text._textbox.markup = wh.text_markup(
-			string.format("%3d", data.total), color)
+		text.markup = wh.text_markup(tostring(data.total), color)
 	end)
 
 	widget:buttons(awful.util.table.join(

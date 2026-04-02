@@ -8,7 +8,7 @@ local M = {}
 function M.create(screen, config)
 	local color = beautiful.widget_gpu_color or "#98c379"
 	local icon = wibox.widget.textbox()
-	local text = wh.fixed_text(90)
+	local text = wibox.widget.textbox()
 
 	local widget = wibox.widget {
 		icon, text,
@@ -17,8 +17,8 @@ function M.create(screen, config)
 
 	broker.connect_signal("data::gpu", function(data)
 		icon.markup = wh.icon_markup(data.icon, color)
-		text._textbox.markup = wh.text_markup(
-			string.format("%3d%% %2d°C", data.usage, data.temp), color)
+		text.markup = wh.text_markup(
+			string.format("%d%% %d°C", data.usage, data.temp), color)
 	end)
 
 	return widget
