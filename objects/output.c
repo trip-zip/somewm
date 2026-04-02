@@ -3,6 +3,7 @@
 #include "signal.h"
 #include "luaa.h"
 #include "common/luaclass.h"
+#include "common/lualib.h"
 #include "common/luaobject.h"
 #include "../somewm_api.h"
 #include "common/util.h"
@@ -1060,18 +1061,13 @@ luaA_output_added_connected(lua_State *L)
 	/* The new handler function is at stack position 1 (passed by luaclass) */
 	size_t i;
 	for (i = 0; i < output_count; i++) {
-		lua_pushvalue(L, 1);  /* duplicate the handler */
 		lua_rawgeti(L, LUA_REGISTRYINDEX, output_refs[i]);
 		output_t *o = (output_t *)lua_touserdata(L, -1);
 		if (o && o->valid) {
-			/* Call handler(output_object) */
-			if (lua_pcall(L, 1, 0, 0) != 0) {
-				wlr_log(WLR_ERROR, "output added::connected handler error: %s",
-						lua_tostring(L, -1));
-				lua_pop(L, 1);
-			}
+			lua_pushvalue(L, 1);  /* duplicate handler on top for luaA_dofunction */
+			luaA_dofunction(L, 1, 0);
 		} else {
-			lua_pop(L, 2);  /* pop handler copy + invalid output */
+			lua_pop(L, 1);  /* pop invalid output */
 		}
 	}
 	return 0;
