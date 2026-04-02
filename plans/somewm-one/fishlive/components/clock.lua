@@ -23,8 +23,8 @@ function M.create(screen, config)
 	local icon_font = require("fishlive.widget_helper").icon_font
 	local clock = wibox.widget.textclock(
 		'<span font="' .. icon_font .. '" foreground="' .. time_color .. '">󰥔</span>' ..
-		'<span foreground="' .. date_color .. '" font="' .. date_font .. '"> %a %d %b</span>' ..
-		'<span foreground="' .. time_color .. '" font="' .. time_font .. '"> %H:%M</span>', 60
+		'<span foreground="' .. date_color .. '" font="' .. date_font .. '">%a %d %b </span>' ..
+		'<span foreground="' .. time_color .. '" font="' .. time_font .. '">%H:%M</span>', 60
 	)
 
 	-- Calendar popup matching original somewm-one style
