@@ -20,7 +20,7 @@ function M.create(screen, config)
 		local used_g = data.used / 1024
 		local total_g = data.total / 1024
 		text.markup = wh.text_markup(
-			string.format("%4.1fG/%4.0fG", used_g, total_g), color)
+			string.format("%4.1fG/%.0fG", used_g, total_g), color)
 	end)
 
 	return widget
