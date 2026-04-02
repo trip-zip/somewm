@@ -9,13 +9,14 @@ local broker = require("fishlive.broker")
 
 local prev_rx, prev_tx, prev_time = 0, 0, 0
 
+-- Fixed-width rate formatting: always 5 chars (e.g. " 512B", " 100K", " 1.5M")
 local function format_rate(bytes_per_sec)
 	if bytes_per_sec >= 1048576 then
-		return string.format("%.1fM", bytes_per_sec / 1048576)
+		return string.format("%4.1fM", bytes_per_sec / 1048576)
 	elseif bytes_per_sec >= 1024 then
-		return string.format("%.0fK", bytes_per_sec / 1024)
+		return string.format("%4.0fK", bytes_per_sec / 1024)
 	else
-		return string.format("%dB", bytes_per_sec)
+		return string.format("%4dB", bytes_per_sec)
 	end
 end
 

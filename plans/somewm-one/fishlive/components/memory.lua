@@ -18,7 +18,7 @@ function M.create(screen, config)
 	broker.connect_signal("data::memory", function(data)
 		icon.markup = wh.icon_markup(data.icon, color)
 		text.markup = wh.text_markup(
-			string.format("%d MB", data.used), color)
+			string.format("%5d MB", data.used), color)
 	end)
 
 	return widget

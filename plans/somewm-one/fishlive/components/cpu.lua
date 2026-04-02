@@ -19,10 +19,10 @@ function M.create(screen, config)
 		icon.markup = wh.icon_markup(data.icon, color)
 		if data.temp then
 			text.markup = wh.text_markup(
-				string.format("%d%% %d°C", data.usage, data.temp), color)
+				string.format("%3d%% %2d°C", data.usage, data.temp), color)
 		else
 			text.markup = wh.text_markup(
-				string.format("%d%%", data.usage), color)
+				string.format("%3d%%", data.usage), color)
 		end
 	end)
 

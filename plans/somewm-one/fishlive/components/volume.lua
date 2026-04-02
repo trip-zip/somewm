@@ -19,7 +19,7 @@ function M.create(screen, config)
 	broker.connect_signal("data::volume", function(data)
 		icon.markup = wh.icon_markup(data.icon, color)
 		text.markup = wh.text_markup(
-			string.format("%d%%", data.volume), color)
+			string.format("%3d%%", data.volume), color)
 	end)
 
 	widget:buttons(awful.util.table.join(

@@ -18,7 +18,7 @@ function M.create(screen, config)
 	broker.connect_signal("data::gpu", function(data)
 		icon.markup = wh.icon_markup(data.icon, color)
 		text.markup = wh.text_markup(
-			string.format("%d%% %d°C", data.usage, data.temp), color)
+			string.format("%3d%% %2d°C", data.usage, data.temp), color)
 	end)
 
 	return widget

@@ -18,7 +18,7 @@ function M.create(screen, config)
 	broker.connect_signal("data::disk", function(data)
 		icon.markup = wh.icon_markup(data.icon, color)
 		text.markup = wh.text_markup(
-			string.format("%s/%s %d%%", data.used, data.total, data.percent), color)
+			string.format("%s/%s %2d%%", data.used, data.total, data.percent), color)
 	end)
 
 	return widget
