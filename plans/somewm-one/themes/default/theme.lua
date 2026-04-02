@@ -184,7 +184,7 @@ theme.widget_network_color    = "#89b482"  -- sage green
 theme.widget_volume_color     = "#ea6962"  -- soft red
 theme.widget_updates_color    = "#d8a657"  -- golden
 theme.widget_keyboard_color   = "#7daea3"  -- muted teal
-theme.widget_clock_color      = fg_main    -- #d4d4d4
+theme.widget_clock_color      = accent     -- #e2b55a warm amber (time)
 theme.terminal                = "ghostty"
 
 -- Client animations
