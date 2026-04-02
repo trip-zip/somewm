@@ -120,6 +120,11 @@ client_activate_surface(struct wlr_surface *s, int activated)
 	}
 #endif
 	if ((toplevel = wlr_xdg_toplevel_try_from_wlr_surface(s))) {
+		if (!toplevel->base->initialized) {
+			wlr_log(WLR_DEBUG, "[FOCUS-ACTIVATE] XDG surface=%p NOT initialized, skipping",
+				(void*)s);
+			return;
+		}
 		wlr_log(WLR_DEBUG, "[FOCUS-ACTIVATE] XDG surface=%p activated=%d title=%s",
 			(void*)s, activated, toplevel->title ? toplevel->title : "?");
 		wlr_xdg_toplevel_set_activated(toplevel, activated);
@@ -428,6 +433,8 @@ client_set_size(Client *c, uint32_t width, uint32_t height)
 	} else {
 		c->configure_resent = false;
 	}
+	if (!c->surface.xdg->initialized)
+		return 0;
 	return wlr_xdg_toplevel_set_size(c->surface.xdg->toplevel, (int32_t)width, (int32_t)height);
 }
 
