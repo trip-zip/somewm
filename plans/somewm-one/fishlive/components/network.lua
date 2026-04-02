@@ -21,7 +21,7 @@ function M.create(screen, config)
 	broker.connect_signal("data::network", function(data)
 		icon_down.markup = wh.icon_markup(data.icon_down, color)
 		text_down.markup = wh.text_markup(data.rx_formatted, color)
-		icon_up.markup = " " .. wh.icon_markup(data.icon_up, color)
+		icon_up.markup = wh.icon_markup(data.icon_up, color)
 		text_up.markup = wh.text_markup(data.tx_formatted, color)
 	end)
 

@@ -18,7 +18,7 @@ function M.create(screen, config)
 
 	broker.connect_signal("data::updates", function(data)
 		icon.markup = wh.icon_markup(data.icon, color)
-		text.markup = wh.text_markup(string.format("%3d", data.total), color)
+		text.markup = wh.text_markup(tostring(data.total), color)
 	end)
 
 	widget:buttons(awful.util.table.join(

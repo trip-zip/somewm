@@ -43,8 +43,8 @@ local s = service.new {
 				local gb_total = tonumber(total) / 1073741824
 				mounts[mount] = {
 					fstype = fstype:lower(),
-					used = string.format("%.1fG", gb_used),
-					total = string.format("%.1fG", gb_total),
+					used = string.format("%.0f", gb_used),
+					total = string.format("%.0f", gb_total),
 					percent = tonumber(percent),
 				}
 			end
