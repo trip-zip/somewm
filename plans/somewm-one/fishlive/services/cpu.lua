@@ -40,8 +40,29 @@ local s = service.new {
 
 		local usage = math.floor((1 - diff_idle / diff_total) * 100 + 0.5)
 
+		-- CPU temperature from thermal zone
+		local temp = nil
+		for i = 0, 10 do
+			local tf = io.open("/sys/class/thermal/thermal_zone" .. i .. "/type")
+			if tf then
+				local ztype = tf:read("*l")
+				tf:close()
+				if ztype and (ztype:match("x86_pkg") or ztype:match("coretemp")
+						or ztype:match("k10temp") or ztype:match("cpu")) then
+					local vf = io.open("/sys/class/thermal/thermal_zone" .. i .. "/temp")
+					if vf then
+						local raw = tonumber(vf:read("*l"))
+						vf:close()
+						if raw then temp = math.floor(raw / 1000 + 0.5) end
+					end
+					break
+				end
+			end
+		end
+
 		return {
 			usage = usage,
+			temp = temp,
 			icon = "󰻠",
 		}
 	end,

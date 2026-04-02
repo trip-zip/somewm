@@ -17,7 +17,12 @@ function M.create(screen, config)
 
 	broker.connect_signal("data::cpu", function(data)
 		icon.markup = string.format('<span color="%s">%s</span>', color, data.icon)
-		text.markup = string.format('<span color="%s">%d%%</span>', color, data.usage)
+		if data.temp then
+			text.markup = string.format('<span color="%s">%d%% %d°C</span>',
+				color, data.usage, data.temp)
+		else
+			text.markup = string.format('<span color="%s">%d%%</span>', color, data.usage)
+		end
 	end)
 
 	return widget
