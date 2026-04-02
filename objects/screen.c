@@ -1566,8 +1566,13 @@ luaA_screen_fake_add(lua_State *L)
 	lua_rawget(L, LUA_REGISTRYINDEX);
 	lua_setmetatable(L, -2);
 
-	/* Initialize environment table */
+	/* Initialize environment table (must match LUA_OBJECT_FUNCS pattern:
+	 * env table + metatable for refcounting + "data" sub-table) */
 	lua_newtable(L);
+	lua_newtable(L);
+	lua_setmetatable(L, -2);
+	lua_newtable(L);
+	lua_setfield(L, -2, "data");
 	luaA_setuservalue(L, -2);
 
 	/* Store reference in registry */
