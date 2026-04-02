@@ -13,6 +13,7 @@ function M.create(screen, config)
 	local widget = wibox.widget {
 		icon, text,
 		layout = wibox.layout.fixed.horizontal,
+		spacing = 2,
 	}
 
 	broker.connect_signal("data::gpu", function(data)

@@ -30,9 +30,9 @@ function M.icon_markup(icon_char, color)
 		M.icon_font, color, icon_char)
 end
 
---- Format text with monospace font (single space before for icon gap).
+--- Format text with monospace font.
 function M.text_markup(text, color)
-	return string.format('<span font="%s" foreground="%s"> %s</span>',
+	return string.format('<span font="%s" foreground="%s">%s</span>',
 		M.number_font, color, text)
 end
 

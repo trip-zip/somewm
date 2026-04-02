@@ -48,10 +48,14 @@ theme.border_color_normal = bg_base
 theme.border_color_active = accent
 theme.border_color_marked = marked
 
--- Wibar — compact
+-- Wibar — compact, with subtle shadow
 theme.wibar_bg            = bg_base
 theme.wibar_fg            = fg_dim
 theme.wibar_height        = dpi(26)
+theme.bg_systray          = bg_base
+theme.systray_icon_spacing = dpi(4)
+
+-- TODO: Wibar shadow — requires drawin shadow_config Lua API (not yet exposed)
 
 -- Taglist
 theme.taglist_font        = "Geist SemiBold 11"
