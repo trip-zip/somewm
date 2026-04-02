@@ -1,5 +1,5 @@
 ---------------------------------------------------------------------------
---- CPU usage service — reads /proc/stat, computes usage percentage.
+--- CPU usage + temperature service — async reads via shell.
 --
 -- @module fishlive.services.cpu
 ---------------------------------------------------------------------------
@@ -12,16 +12,36 @@ local prev_idle, prev_total = 0, 0
 local s = service.new {
 	signal   = "data::cpu",
 	interval = 2,
-	poll_fn  = function()
-		local f = io.open("/proc/stat")
-		if not f then return nil end
-		local line = f:read("*l")
-		f:close()
+	command  = [[bash -c '
+		head -1 /proc/stat
+		echo "---"
+		for h in /sys/class/hwmon/hwmon*; do
+			name=$(cat "$h/name" 2>/dev/null)
+			case "$name" in k10temp|coretemp|cpu_thermal)
+				cat "$h/temp1_input" 2>/dev/null
+				break
+				;;
+			esac
+		done
+		if [ -z "$name" ]; then
+			for z in /sys/class/thermal/thermal_zone*; do
+				t=$(cat "$z/type" 2>/dev/null)
+				case "$t" in x86_pkg*|coretemp|k10temp|cpu*)
+					cat "$z/temp" 2>/dev/null
+					break
+					;;
+				esac
+			done
+		fi
+	']],
+	parser = function(stdout)
+		if not stdout or stdout == "" then return nil end
 
-		-- cpu  user nice system idle iowait irq softirq steal
+		local stat_line, rest = stdout:match("^(.-)\n---\n(.*)")
+		if not stat_line then return nil end
+
 		local user, nice, system, idle, iowait, irq, softirq, steal =
-			line:match("cpu%s+(%d+)%s+(%d+)%s+(%d+)%s+(%d+)%s+(%d+)%s+(%d+)%s+(%d+)%s+(%d+)")
-
+			stat_line:match("cpu%s+(%d+)%s+(%d+)%s+(%d+)%s+(%d+)%s+(%d+)%s+(%d+)%s+(%d+)%s+(%d+)")
 		if not user then return nil end
 
 		user, nice, system, idle = tonumber(user), tonumber(nice), tonumber(system), tonumber(idle)
@@ -40,24 +60,10 @@ local s = service.new {
 
 		local usage = math.floor((1 - diff_idle / diff_total) * 100 + 0.5)
 
-		-- CPU temperature from thermal zone
 		local temp = nil
-		for i = 0, 10 do
-			local tf = io.open("/sys/class/thermal/thermal_zone" .. i .. "/type")
-			if tf then
-				local ztype = tf:read("*l")
-				tf:close()
-				if ztype and (ztype:match("x86_pkg") or ztype:match("coretemp")
-						or ztype:match("k10temp") or ztype:match("cpu")) then
-					local vf = io.open("/sys/class/thermal/thermal_zone" .. i .. "/temp")
-					if vf then
-						local raw = tonumber(vf:read("*l"))
-						vf:close()
-						if raw then temp = math.floor(raw / 1000 + 0.5) end
-					end
-					break
-				end
-			end
+		local raw_temp = rest and rest:match("(%d+)")
+		if raw_temp then
+			temp = math.floor(tonumber(raw_temp) / 1000 + 0.5)
 		end
 
 		return {

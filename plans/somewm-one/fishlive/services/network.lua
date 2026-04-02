@@ -1,7 +1,5 @@
 ---------------------------------------------------------------------------
---- Network service — upload/download rates from /proc/net/dev.
---
--- Reads byte counters and computes rate by delta with previous sample.
+--- Network service — async read of /proc/net/dev, rate calculation.
 --
 -- @module fishlive.services.network
 ---------------------------------------------------------------------------
@@ -9,34 +7,7 @@
 local service = require("fishlive.service")
 local broker = require("fishlive.broker")
 
--- State for delta computation
-local last_rx, last_tx, last_ts = 0, 0, 0
-
--- Find the primary network interface (skip lo, docker, veth, br, virbr)
-local function find_interface()
-	local f = io.open("/proc/net/dev")
-	if not f then return nil end
-	local content = f:read("*a")
-	f:close()
-
-	for line in content:gmatch("[^\n]+") do
-		local iface = line:match("^%s*(%S+):")
-		if iface and iface ~= "lo"
-			and not iface:match("^docker")
-			and not iface:match("^veth")
-			and not iface:match("^br%-")
-			and not iface:match("^virbr") then
-			-- Check if it has traffic (rx_bytes > 0)
-			local rx = tonumber(line:match(":%s*(%d+)"))
-			if rx and rx > 0 then
-				return iface
-			end
-		end
-	end
-	return nil
-end
-
-local cached_iface = nil
+local prev_rx, prev_tx, prev_time = 0, 0, 0
 
 local function format_rate(bytes_per_sec)
 	if bytes_per_sec >= 1048576 then
@@ -51,56 +22,65 @@ end
 local s = service.new {
 	signal   = "data::network",
 	interval = 2,
-	poll_fn  = function()
-		if not cached_iface then
-			cached_iface = find_interface()
-		end
-		if not cached_iface then return nil end
+	command  = [[bash -c '
+		date +%s%N
+		cat /proc/net/dev
+	']],
+	parser = function(stdout)
+		if not stdout or stdout == "" then return nil end
 
-		local f = io.open("/proc/net/dev")
-		if not f then return nil end
-		local content = f:read("*a")
-		f:close()
+		-- First line is timestamp in nanoseconds
+		local ts_str, rest = stdout:match("^(%d+)\n(.*)")
+		if not ts_str then return nil end
+		local now = tonumber(ts_str) / 1000000000  -- convert to seconds
 
-		for line in content:gmatch("[^\n]+") do
-			if line:match("^%s*" .. cached_iface .. ":") then
-				-- Fields: iface: rx_bytes rx_packets ... tx_bytes tx_packets ...
+		-- Find primary interface (skip lo, docker, veth, br, virbr)
+		local iface, rx, tx
+		for line in rest:gmatch("[^\n]+") do
+			local name = line:match("^%s*(%S+):")
+			if name and name ~= "lo"
+				and not name:match("^docker")
+				and not name:match("^veth")
+				and not name:match("^br%-")
+				and not name:match("^virbr") then
 				local fields = {}
 				for num in line:match(":(.+)"):gmatch("%d+") do
 					fields[#fields + 1] = tonumber(num)
 				end
-				-- fields[1] = rx_bytes, fields[9] = tx_bytes
-				local rx, tx = fields[1], fields[9]
-				if not rx or not tx then return nil end
-
-				local now = os.clock()
-				local dt = now - last_ts
-
-				local rx_rate, tx_rate = 0, 0
-				if dt > 0 and last_ts > 0 then
-					rx_rate = (rx - last_rx) / dt
-					tx_rate = (tx - last_tx) / dt
+				-- fields[1]=rx_bytes, fields[9]=tx_bytes
+				if fields[1] and fields[1] > 0 and fields[9] then
+					iface = name
+					rx = fields[1]
+					tx = fields[9]
+					break
 				end
-
-				last_rx = rx
-				last_tx = tx
-				last_ts = now
-
-				return {
-					interface = cached_iface,
-					rx_rate = rx_rate,
-					tx_rate = tx_rate,
-					rx_formatted = format_rate(rx_rate),
-					tx_formatted = format_rate(tx_rate),
-					icon_down = "󰁅",
-					icon_up = "󰁝",
-				}
 			end
 		end
 
-		-- Interface disappeared (cable unplugged?) — retry detection
-		cached_iface = nil
-		return nil
+		if not iface then return nil end
+
+		local dt = now - prev_time
+		local rx_rate, tx_rate = 0, 0
+		if dt > 0 and prev_time > 0 then
+			rx_rate = (rx - prev_rx) / dt
+			tx_rate = (tx - prev_tx) / dt
+			if rx_rate < 0 then rx_rate = 0 end
+			if tx_rate < 0 then tx_rate = 0 end
+		end
+
+		prev_rx = rx
+		prev_tx = tx
+		prev_time = now
+
+		return {
+			interface = iface,
+			rx_rate = rx_rate,
+			tx_rate = tx_rate,
+			rx_formatted = format_rate(rx_rate),
+			tx_formatted = format_rate(tx_rate),
+			icon_down = "󰁅",
+			icon_up = "󰁝",
+		}
 	end,
 }
 
