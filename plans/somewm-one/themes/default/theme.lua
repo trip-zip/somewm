@@ -48,7 +48,7 @@ theme.border_color_normal = bg_base
 theme.border_color_active = accent
 theme.border_color_marked = marked
 
--- Wibar — compact, with subtle shadow
+-- Wibar — compact
 theme.wibar_bg            = bg_base
 theme.wibar_fg            = fg_dim
 theme.wibar_height        = dpi(26)

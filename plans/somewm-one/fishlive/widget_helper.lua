@@ -18,6 +18,14 @@ local M = {}
 M.icon_font = "Symbols Nerd Font Mono 12"
 M.number_font = "CommitMono Nerd Font Propo 10"
 
+--- Shadow params memo (for iterative tuning)
+-- CURRENT:  radius=30, opacity=0.65, offset_y=5
+-- TEST:     radius=40, opacity=0.85, offset_y=7
+M.shadow_memo = {
+	current = { radius = 30, opacity = 0.65, offset_x = 5, offset_y = 5 },
+	test    = { radius = 40, opacity = 0.85, offset_x = 5, offset_y = 7 },
+}
+
 --- Create a widget with icon + text in a SINGLE textbox.
 -- This avoids all spacing issues between separate icon/text widgets.
 function M.create_icon_text(color)
