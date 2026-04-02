@@ -26,6 +26,11 @@ require("awful.hotkeys_popup.keys")
 -- local treetileBindings = require("treetile.bindings")
 local machi = require("layout-machi")
 
+-- Fishlive component framework
+-- Services must be loaded BEFORE any factory.create() call
+require("fishlive.services")
+local factory = require("fishlive.factory")
+
 -- {{{ Error handling + log aggregation
 local error_log_path = os.getenv("HOME") .. "/.local/log/somewm-errors.log"
 
@@ -439,13 +444,20 @@ screen.connect_signal("request::desktop_decoration", function(s)
                 s.mypromptbox,
             },
             s.mytasklist, -- Middle widget
-            { -- Right widgets
+            { -- Right widgets (fishlive components)
                 layout = wibox.layout.fixed.horizontal,
-                mykeyboardlayout,
-                volume_widget,
+                spacing = beautiful.widget_spacing or dpi(6),
+                factory.create("keyboard", s),
+                factory.create("updates", s),
+                factory.create("network", s),
+                factory.create("cpu", s),
+                factory.create("gpu", s),
+                factory.create("memory", s),
+                factory.create("disk", s),
+                factory.create("volume", s),
                 wibox.widget.systray(),
-                mytextclock,
-                s.mylayoutbox,
+                factory.create("clock", s),
+                factory.create("layoutbox", s),
             },
         }
     }

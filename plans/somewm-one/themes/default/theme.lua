@@ -172,6 +172,21 @@ theme.layout_cornerne = themes_path.."default/layouts/cornernew.png"
 theme.layout_cornersw = themes_path.."default/layouts/cornersww.png"
 theme.layout_cornerse = themes_path.."default/layouts/cornersew.png"
 
+-- Widget component colors (fishlive wibar components)
+theme.theme_name              = "default"
+theme.widget_spacing          = dpi(6)
+theme.widget_font             = "Geist 10"
+theme.widget_cpu_color        = "#7daea3"  -- muted teal
+theme.widget_gpu_color        = green      -- #98c379
+theme.widget_memory_color     = "#d3869b"  -- muted mauve
+theme.widget_disk_color       = accent     -- #e2b55a warm amber
+theme.widget_network_color    = "#89b482"  -- sage green
+theme.widget_volume_color     = "#ea6962"  -- soft red
+theme.widget_updates_color    = "#d8a657"  -- golden
+theme.widget_keyboard_color   = "#7daea3"  -- muted teal
+theme.widget_clock_color      = fg_main    -- #d4d4d4
+theme.terminal                = "ghostty"
+
 -- Client animations
 -- Override any: beautiful.anim_<type>_<param> (e.g. anim_maximize_duration)
 -- Or disable all: beautiful.anim_enabled = false
