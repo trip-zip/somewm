@@ -266,6 +266,10 @@ if get_option('test_pam')
   add_project_arguments('-DTEST_PAM', language: 'c')
 endif
 
+if get_option('bench')
+  add_project_arguments('-DSOMEWM_BENCH', language: 'c')
+endif
+
 # Development flags
 add_project_arguments(
   '-Wno-unused-parameter',

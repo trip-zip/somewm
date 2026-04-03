@@ -1650,6 +1650,66 @@ bool some_is_lock_drawin(drawin_t *d) {
 	return false;
 }
 
+#ifdef SOMEWM_BENCH
+void bench_frame_stats_get(uint64_t *count, uint64_t *min_ns, uint64_t *max_ns,
+                           uint64_t *avg_ns, uint64_t *p99_ns);
+void bench_frame_stats_reset(void);
+void bench_queue_counters_reset(void);
+
+extern uint64_t bench_queue_push_count;
+extern uint64_t bench_queue_coalesce_count;
+extern uint64_t bench_queue_drain_count;
+extern uint64_t bench_queue_max_depth;
+extern uint64_t bench_queue_grow_count;
+
+static int luaA_awesome_bench_stats(lua_State *L) {
+    lua_newtable(L);
+    /* Signal counters */
+    lua_pushinteger(L, (lua_Integer)bench_signal_emit_count);
+    lua_setfield(L, -2, "signal_emit_count");
+    lua_pushinteger(L, (lua_Integer)bench_signal_handler_calls);
+    lua_setfield(L, -2, "signal_handler_calls");
+    lua_pushinteger(L, (lua_Integer)bench_signal_lookup_misses);
+    lua_setfield(L, -2, "signal_lookup_misses");
+    /* Queue counters */
+    lua_pushinteger(L, (lua_Integer)bench_queue_push_count);
+    lua_setfield(L, -2, "queue_push_count");
+    lua_pushinteger(L, (lua_Integer)bench_queue_coalesce_count);
+    lua_setfield(L, -2, "queue_coalesce_count");
+    lua_pushinteger(L, (lua_Integer)bench_queue_drain_count);
+    lua_setfield(L, -2, "queue_drain_count");
+    lua_pushinteger(L, (lua_Integer)bench_queue_max_depth);
+    lua_setfield(L, -2, "queue_max_depth");
+    lua_pushinteger(L, (lua_Integer)bench_queue_grow_count);
+    lua_setfield(L, -2, "queue_grow_count");
+    /* Frame timing */
+    uint64_t count, min_ns, max_ns, avg_ns, p99_ns;
+    bench_frame_stats_get(&count, &min_ns, &max_ns, &avg_ns, &p99_ns);
+    lua_pushinteger(L, (lua_Integer)count);
+    lua_setfield(L, -2, "refresh_count");
+    lua_pushnumber(L, (double)min_ns / 1000.0);
+    lua_setfield(L, -2, "refresh_min_us");
+    lua_pushnumber(L, (double)max_ns / 1000.0);
+    lua_setfield(L, -2, "refresh_max_us");
+    lua_pushnumber(L, (double)avg_ns / 1000.0);
+    lua_setfield(L, -2, "refresh_avg_us");
+    lua_pushnumber(L, (double)p99_ns / 1000.0);
+    lua_setfield(L, -2, "refresh_p99_us");
+    /* Lua memory */
+    lua_pushnumber(L, lua_gc(L, LUA_GCCOUNT, 0) + lua_gc(L, LUA_GCCOUNTB, 0) / 1024.0);
+    lua_setfield(L, -2, "lua_memory_kb");
+    return 1;
+}
+
+static int luaA_awesome_bench_reset(lua_State *L) {
+    (void)L;
+    bench_signal_counters_reset();
+    bench_queue_counters_reset();
+    bench_frame_stats_reset();
+    return 0;
+}
+#endif
+
 /* awesome module methods */
 const luaL_Reg awesome_methods[] = {
 	{ "quit", luaA_awesome_quit },
@@ -1696,6 +1756,10 @@ const luaL_Reg awesome_methods[] = {
 	/* DPMS (display power management) API methods */
 	{ "dpms_off", luaA_awesome_dpms_off },
 	{ "dpms_on", luaA_awesome_dpms_on },
+#ifdef SOMEWM_BENCH
+	{ "bench_stats", luaA_awesome_bench_stats },
+	{ "bench_reset", luaA_awesome_bench_reset },
+#endif
 	{ NULL, NULL }
 };
 

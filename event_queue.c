@@ -51,6 +51,14 @@ static const char *signal_names[SIG_COUNT] = {
 	[SIG_CLIENT_PROPERTY_GEOMETRY] = "client::property::geometry",
 };
 
+#ifdef SOMEWM_BENCH
+uint64_t bench_queue_push_count = 0;
+uint64_t bench_queue_coalesce_count = 0;
+uint64_t bench_queue_drain_count = 0;
+uint64_t bench_queue_max_depth = 0;
+uint64_t bench_queue_grow_count = 0;
+#endif
+
 /* Queue storage - simple dynamic array */
 #define QUEUE_INITIAL_CAP 64
 
@@ -61,6 +69,9 @@ static int queue_cap = 0;
 static void
 queue_grow(void)
 {
+#ifdef SOMEWM_BENCH
+	bench_queue_grow_count++;
+#endif
 	int new_cap = queue_cap == 0 ? QUEUE_INITIAL_CAP : queue_cap * 2;
 	some_event_t *new_buf = realloc(queue_buf, new_cap * sizeof(some_event_t));
 	if (!new_buf) {
@@ -75,6 +86,9 @@ queue_grow(void)
 static some_event_t *
 queue_push(void)
 {
+#ifdef SOMEWM_BENCH
+	bench_queue_push_count++;
+#endif
 	if (queue_len >= queue_cap)
 		queue_grow();
 	return &queue_buf[queue_len++];
@@ -190,6 +204,9 @@ some_event_queue_move(lua_State *L, int obj_ud, int local_x, int local_y)
 		lua_pop(L, 1);
 
 		if (same) {
+#ifdef SOMEWM_BENCH
+			bench_queue_coalesce_count++;
+#endif
 			/* Update the args in place */
 			if (existing->args_ref != LUA_NOREF)
 				luaL_unref(L, LUA_REGISTRYINDEX, existing->args_ref);
@@ -229,6 +246,12 @@ some_event_queue_drain(lua_State *L)
 	 * (by signal handlers) will be processed on the next drain cycle,
 	 * not in this one. This prevents infinite loops. */
 	int count = queue_len;
+
+#ifdef SOMEWM_BENCH
+	bench_queue_drain_count++;
+	if ((uint64_t)count > bench_queue_max_depth)
+		bench_queue_max_depth = count;
+#endif
 
 	for (int i = 0; i < count; i++) {
 		some_event_t *e = &queue_buf[i];
@@ -318,6 +341,16 @@ some_event_queue_init(void)
 	queue_len = 0;
 	queue_cap = 0;
 }
+
+#ifdef SOMEWM_BENCH
+void bench_queue_counters_reset(void) {
+    bench_queue_push_count = 0;
+    bench_queue_coalesce_count = 0;
+    bench_queue_drain_count = 0;
+    bench_queue_max_depth = 0;
+    bench_queue_grow_count = 0;
+}
+#endif
 
 void
 some_event_queue_wipe(void)

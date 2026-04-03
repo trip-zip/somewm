@@ -25,3 +25,10 @@ option(
   value: 'auto',
   description: 'Install systemd user service and session wrapper',
 )
+
+option(
+  'bench',
+  type: 'boolean',
+  value: false,
+  description: 'Enable benchmark instrumentation counters',
+)

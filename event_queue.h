@@ -105,4 +105,14 @@ bool some_event_queue_pending(void);
 void some_event_queue_init(void);
 void some_event_queue_wipe(void);
 
+#ifdef SOMEWM_BENCH
+#include <stdint.h>
+extern uint64_t bench_queue_push_count;
+extern uint64_t bench_queue_coalesce_count;
+extern uint64_t bench_queue_drain_count;
+extern uint64_t bench_queue_max_depth;
+extern uint64_t bench_queue_grow_count;
+void bench_queue_counters_reset(void);
+#endif
+
 #endif /* EVENT_QUEUE_H */

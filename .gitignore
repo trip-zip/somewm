@@ -10,8 +10,12 @@ ideas/
 docker/
 run-asan.sh
 
+# Benchmark results (point-in-time data, not source)
+tests/bench/results/
+
 # Meson build
 build/
+build-bench/
 builddir/
 subprojects/wlroots/
 subprojects/packagecache/
