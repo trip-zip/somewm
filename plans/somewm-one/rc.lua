@@ -435,6 +435,15 @@ screen.connect_signal("request::desktop_decoration", function(s)
         position = "top",
         screen   = s,
         border_width = 0,
+        shadow = {
+            enabled = true,
+            radius = 30,
+            offset_x = 0,
+            offset_y = 8,
+            opacity = 0.7,
+            color = "#000000",
+            clip_directional = true,
+        },
         -- @DOC_SETUP_WIDGETS@
         widget   = {
             layout = wibox.layout.align.horizontal,
