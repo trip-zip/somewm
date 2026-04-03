@@ -1548,6 +1548,10 @@ drawin_moveresize(lua_State *L, int udx, int x, int y, int width, int height)
 	/* Update scene buffer destination size if size changed */
 	if (drawin->scene_buffer && (old_width != drawin->width || old_height != drawin->height))
 		wlr_scene_buffer_set_dest_size(drawin->scene_buffer, drawin->width, drawin->height);
+
+	/* Size change requires border + shadow refresh */
+	if (old_width != drawin->width || old_height != drawin->height)
+		drawin->border_need_update = true;
 }
 
 /** Set drawin geometry (wrapper for external callers)
@@ -2181,6 +2185,9 @@ luaA_drawin_set_shadow(lua_State *L, drawin_t *drawin)
 		/* Match drawin visibility */
 		shadow_set_visible(&drawin->shadow, drawin->visible);
 	}
+
+	/* Ensure shadow gets refreshed with correct geometry on next cycle */
+	drawin->border_need_update = true;
 
 	luaA_object_emit_signal(L, -3, "property::shadow", 0);
 	return 0;
