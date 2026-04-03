@@ -73,6 +73,8 @@ typedef struct {
 void key_array_init(key_array_t *arr);
 void key_array_wipe(key_array_t *arr);
 void key_array_append(key_array_t *arr, keyb_t *elem);
+int key_array_find(key_array_t *arr, keyb_t *elem);
+keyb_t *key_array_take(key_array_t *arr, int pos);
 
 /** Set key array from Lua table (AwesomeWM pattern)
  * \param L Lua state
