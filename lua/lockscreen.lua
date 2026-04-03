@@ -46,7 +46,9 @@ local defaults = {
     font_large   = "sans bold 48",
     clock_format = "%H:%M",
     date_format  = "%A, %B %d",
-    lock_screen  = nil,  -- screen object or function()->screen; default: screen.primary
+    lock_screen  = false,  -- screen object or function()->screen; default: screen.primary
+    bg_image     = false,  -- path to background image (covers entire screen, dimmed by overlay)
+    bg_image_overlay = "#000000aa",  -- semi-transparent overlay on top of bg_image (67% opacity)
 }
 
 -- Count UTF-8 codepoints in a string (LuaJIT lacks the utf8 library)
@@ -132,7 +134,8 @@ local function build_interactive_layout()
         widget = wibox.container.constraint,
     })
 
-    return wibox.widget({
+    -- Content overlay with centered UI
+    local content = wibox.widget({
         {
             {
                 {
@@ -170,9 +173,31 @@ local function build_interactive_layout()
             valign = "center",
             widget = wibox.container.place,
         },
-        bg = config.bg_color,
+        bg = config.bg_image and config.bg_image_overlay or config.bg_color,
         widget = wibox.container.background,
     })
+
+    -- If bg_image is set, use imagebox as base layer with overlay on top
+    if config.bg_image then
+        local img = gears.surface.load_uncached_silently(config.bg_image)
+        if img then
+            return wibox.widget({
+                {
+                    image = img,
+                    resize = true,
+                    horizontal_fit_policy = "fit",
+                    vertical_fit_policy = "fit",
+                    upscale = true,
+                    downscale = true,
+                    widget = wibox.widget.imagebox,
+                },
+                content,
+                layout = wibox.layout.stack,
+            })
+        end
+    end
+
+    return content
 end
 
 -- Determine which screen should get the interactive lock UI
@@ -186,16 +211,43 @@ local function get_interactive_screen()
     return screen.primary
 end
 
+-- Build a cover layout for non-interactive screens
+local function build_cover_layout()
+    if config.bg_image then
+        local img = gears.surface.load_uncached_silently(config.bg_image)
+        if img then
+            return wibox.widget({
+                {
+                    image = img,
+                    resize = true,
+                    horizontal_fit_policy = "fit",
+                    vertical_fit_policy = "fit",
+                    upscale = true,
+                    downscale = true,
+                    widget = wibox.widget.imagebox,
+                },
+                {
+                    bg = config.bg_image_overlay,
+                    widget = wibox.container.background,
+                },
+                layout = wibox.layout.stack,
+            })
+        end
+    end
+    return nil
+end
+
 -- Create a cover wibox for a non-interactive screen
 local function create_cover(s)
     local wb = wibox({
         visible = false,
         ontop = true,
-        bg = config.bg_color,
+        bg = config.bg_image and "#00000000" or config.bg_color,
         x = s.geometry.x,
         y = s.geometry.y,
         width = s.geometry.width,
         height = s.geometry.height,
+        widget = build_cover_layout(),
     })
     awesome.add_lock_cover(wb)
     return wb
@@ -207,7 +259,7 @@ local function create_interactive(s)
     local wb = wibox({
         visible = false,
         ontop = true,
-        bg = config.bg_color,
+        bg = config.bg_image and "#00000000" or config.bg_color,
         x = s.geometry.x,
         y = s.geometry.y,
         width = s.geometry.width,
