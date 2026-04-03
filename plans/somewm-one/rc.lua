@@ -437,12 +437,11 @@ screen.connect_signal("request::desktop_decoration", function(s)
         border_width = 0,
         shadow = {
             enabled = true,
-            radius = 30,
+            radius = 20,
             offset_x = 0,
-            offset_y = 8,
-            opacity = 0.7,
+            offset_y = 6,
+            opacity = 0.55,
             color = "#000000",
-            clip_directional = true,
         },
         -- @DOC_SETUP_WIDGETS@
         widget   = {
