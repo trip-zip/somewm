@@ -3,11 +3,12 @@
 --
 -- Shows Poweroff, Reboot, Suspend, Refresh, Exit, Lock buttons with
 -- keyboard shortcuts. Themeable via beautiful.exit_screen_* properties.
+-- Uses rubato for smooth, interrupt-safe hover animations.
 --
 -- Usage:
 --   require("fishlive.exit_screen").init()
 --   -- Bind toggle:
---   awful.key({ modkey }, "Escape", function()
+--   awful.key({ modkey }, "q", function()
 --       awesome.emit_signal("exit_screen::toggle")
 --   end)
 --
@@ -19,6 +20,7 @@ local gears = require("gears")
 local wibox = require("wibox")
 local beautiful = require("beautiful")
 local dpi = require("beautiful.xresources").apply_dpi
+local rubato = require("fishlive.rubato")
 
 local M = {}
 
@@ -46,18 +48,18 @@ function M.resolve_config(opts)
 	c.icon_hover       = opts.icon_hover       or beautiful.exit_screen_icon_hover     or beautiful.fg_urgent or "#e06c75"
 	c.font             = opts.font             or beautiful.exit_screen_font           or "Geist 14"
 	c.icon_font        = opts.icon_font        or beautiful.exit_screen_icon_font      or "CommitMono Nerd Font 52"
-	c.icon_font_hover  = opts.icon_font_hover  or beautiful.exit_screen_icon_font_hover or "CommitMono Nerd Font 60"
 	c.title_font       = opts.title_font       or beautiful.exit_screen_title_font     or "Geist Bold 42"
 	c.bg_image         = opts.bg_image         or beautiful.exit_screen_bg_image       or false
 	c.bg_image_overlay = opts.bg_image_overlay or beautiful.exit_screen_bg_image_overlay or "#000000cc"
-	c.hover_bg         = opts.hover_bg         or beautiful.exit_screen_hover_bg       or false  -- auto-derived from icon_color
-	c.anim_steps       = opts.anim_steps       or 6
-	c.anim_interval    = opts.anim_interval    or 0.02  -- seconds per step
+	c.hover_bg         = opts.hover_bg         or beautiful.exit_screen_hover_bg       or false
+	-- Rubato animation settings
+	c.anim_duration    = opts.anim_duration    or 0.25  -- seconds
+	c.anim_intro       = opts.anim_intro       or 0.08
+	c.anim_outro       = opts.anim_outro       or 0.08
 	return c
 end
 
 --- Highlight the shortcut letter in a label string.
--- Exported for testing.
 -- @tparam string label Full label text (e.g. "Poweroff")
 -- @tparam string key Shortcut key (e.g. "P" or "f")
 -- @tparam string accent_color Color for the highlighted letter
@@ -92,7 +94,7 @@ function M.lerp_color(c1, c2, t)
 	return string.format("#%02x%02x%02x", r, g, b)
 end
 
--- Build a single action button with hover animation
+-- Build a single action button with rubato hover animation
 local function make_button(icon, label, shortcut_key, action)
 	local cfg = M._state.cfg
 	local hover_bg = cfg.hover_bg or (cfg.icon_color:sub(1, 7) .. "30")
@@ -137,64 +139,55 @@ local function make_button(icon, label, shortcut_key, action)
 		widget = wibox.container.background,
 	})
 
-	-- Animation state
-	local anim_timer = nil
-	local anim_step = 0
-	local anim_target = 0  -- 0 = normal, cfg.anim_steps = hovered
+	-- Rubato timed animation: 0 = idle, 1 = fully hovered
+	local hover_anim = rubato.timed({
+		pos = 0,
+		duration = cfg.anim_duration,
+		intro = cfg.anim_intro,
+		outro = cfg.anim_outro,
+		easing = rubato.easing.quadratic,
+		subscribed = function(t)
+			-- Clamp t to 0..1
+			t = math.max(0, math.min(1, t))
 
-	local function apply_anim(step)
-		local t = step / cfg.anim_steps
-		-- Icon zoom: reduce margins from dpi(8) → dpi(0)
-		local m = math.floor(dpi(8) * (1 - t) + 0.5)
-		icon_margin.left = m
-		icon_margin.right = m
-		icon_margin.top = m
-		icon_margin.bottom = m
-		-- Background fade
-		if t > 0 then
-			btn.bg = M.lerp_color("#00000000", hover_bg:sub(1, 7), t) .. string.format("%02x", math.floor(t * 0x30 + 0.5))
-			btn.border_color = M.lerp_color("#00000000", cfg.icon_color:sub(1, 7), t * 0.5) .. string.format("%02x", math.floor(t * 0.5 * 255 + 0.5))
-		else
-			btn.bg = "transparent"
-			btn.border_color = "transparent"
-		end
-		-- Icon color interpolation
-		local icon_color = M.lerp_color(cfg.icon_color:sub(1, 7), cfg.icon_hover:sub(1, 7), t)
-		icon_widget.markup = string.format('<span foreground="%s">%s</span>', icon_color, icon)
-		-- Label swap at halfway
-		if t > 0.5 then
-			label_widget.markup = label_markup_hover
-		else
-			label_widget.markup = label_markup_normal
-		end
-	end
+			-- Icon zoom: reduce margins from dpi(8) → dpi(0)
+			local m = math.floor(dpi(8) * (1 - t) + 0.5)
+			icon_margin.left = m
+			icon_margin.right = m
+			icon_margin.top = m
+			icon_margin.bottom = m
 
-	local function start_anim()
-		if anim_timer then return end
-		anim_timer = gears.timer.start_new(cfg.anim_interval, function()
-			if anim_step < anim_target then
-				anim_step = anim_step + 1
-			elseif anim_step > anim_target then
-				anim_step = anim_step - 1
+			-- Background + border fade
+			if t > 0.01 then
+				local alpha_bg = string.format("%02x", math.floor(t * 0x30 + 0.5))
+				local alpha_border = string.format("%02x", math.floor(t * 0.4 * 255 + 0.5))
+				btn.bg = hover_bg:sub(1, 7) .. alpha_bg
+				btn.border_color = cfg.icon_color:sub(1, 7) .. alpha_border
+			else
+				btn.bg = "transparent"
+				btn.border_color = "transparent"
 			end
-			apply_anim(anim_step)
-			if anim_step == anim_target then
-				anim_timer = nil
-				return false
+
+			-- Icon color interpolation
+			local icon_color = M.lerp_color(cfg.icon_color:sub(1, 7), cfg.icon_hover:sub(1, 7), t)
+			icon_widget.markup = string.format('<span foreground="%s">%s</span>', icon_color, icon)
+
+			-- Label swap at halfway
+			if t > 0.5 then
+				label_widget.markup = label_markup_hover
+			else
+				label_widget.markup = label_markup_normal
 			end
-			return true
-		end)
-	end
+		end,
+	})
 
 	btn:connect_signal("mouse::enter", function()
-		anim_target = cfg.anim_steps
-		start_anim()
+		hover_anim.target = 1
 		local w = _G.mouse.current_wibox
 		if w then w.cursor = "hand1" end
 	end)
 	btn:connect_signal("mouse::leave", function()
-		anim_target = 0
-		start_anim()
+		hover_anim.target = 0
 		local w = _G.mouse.current_wibox
 		if w then w.cursor = "left_ptr" end
 	end)

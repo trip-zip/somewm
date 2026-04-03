@@ -2,7 +2,18 @@
 --- Tests for fishlive.exit_screen
 ---------------------------------------------------------------------------
 
-package.path = "./plans/somewm-one/?.lua;" .. package.path
+package.path = "./plans/somewm-one/?.lua;./plans/somewm-one/?/init.lua;" .. package.path
+
+-- Stub lgi (rubato needs lgi.GLib for timers)
+package.preload["lgi"] = function()
+	return {
+		GLib = {
+			PRIORITY_DEFAULT = 0,
+			get_monotonic_time = function() return 0 end,
+			timeout_add = function(_, _, cb) return 1 end,
+		},
+	}
+end
 
 -- Stub beautiful
 package.preload["beautiful"] = function()
@@ -204,10 +215,18 @@ describe("exit_screen", function()
 			assert.are.equal(false, cfg.bg_image)
 		end)
 
-		it("sets animation parameters", function()
-			local cfg = es.resolve_config({ anim_steps = 10, anim_interval = 0.05 })
-			assert.are.equal(10, cfg.anim_steps)
-			assert.are.equal(0.05, cfg.anim_interval)
+		it("sets rubato animation parameters", function()
+			local cfg = es.resolve_config({ anim_duration = 0.4, anim_intro = 0.1, anim_outro = 0.15 })
+			assert.are.equal(0.4, cfg.anim_duration)
+			assert.are.equal(0.1, cfg.anim_intro)
+			assert.are.equal(0.15, cfg.anim_outro)
+		end)
+
+		it("has sensible animation defaults", function()
+			local cfg = es.resolve_config()
+			assert.are.equal(0.25, cfg.anim_duration)
+			assert.are.equal(0.08, cfg.anim_intro)
+			assert.are.equal(0.08, cfg.anim_outro)
 		end)
 
 		it("provides default font values", function()
