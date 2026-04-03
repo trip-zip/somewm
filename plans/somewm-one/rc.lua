@@ -90,6 +90,9 @@ beautiful.init(gears.filesystem.get_configuration_dir() .. "themes/" .. themeNam
 -- Initialize lockscreen (must be after beautiful.init)
 pcall(function() require("lockscreen").init() end)
 
+-- Initialize exit screen (power/session overlay)
+pcall(function() require("fishlive.exit_screen").init() end)
+
 -- Client animations loaded at end of rc.lua (after all signals are connected)
 
 -- @DOC_DEFAULT_APPLICATIONS@
@@ -579,6 +582,8 @@ awful.keyboard.append_global_keybindings({
               {description = "quit awesome", group = "awesome"}),
     awful.key({ modkey, "Shift"   }, "Escape", function() awesome.lock() end,
               {description = "lock screen", group = "awesome"}),
+    awful.key({ modkey,           }, "Escape", function() awesome.emit_signal("exit_screen::toggle") end,
+              {description = "exit screen", group = "awesome"}),
     awful.key({ modkey }, "x",
               function ()
                   awful.prompt.run {
