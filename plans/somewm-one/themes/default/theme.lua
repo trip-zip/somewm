@@ -92,6 +92,13 @@ theme.lockscreen_font         = "Geist 14"
 theme.lockscreen_font_large   = "Geist Bold 48"
 theme.lockscreen_bg_image     = themes_path .. "default/wallpapers/1.jpg"
 
+-- Exit screen
+theme.exit_screen_bg          = bg_base .. "dd"
+theme.exit_screen_fg          = fg_main
+theme.exit_screen_icon        = accent
+theme.exit_screen_icon_hover  = urgent
+theme.exit_screen_bg_image    = themes_path .. "default/wallpapers/1.jpg"
+
 -- Notifications
 theme.notification_font          = "CommitMono Nerd Font Propo 11"
 theme.notification_bg            = bg_base .. "ee"
