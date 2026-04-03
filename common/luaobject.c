@@ -31,6 +31,24 @@
 #include "common/lualib.h"
 #include "globalconf.h"
 
+#ifdef SOMEWM_BENCH
+#include <stdint.h>
+
+uint64_t bench_signal_emit_count = 0;
+uint64_t bench_signal_handler_calls = 0;
+uint64_t bench_signal_lookup_misses = 0;
+#endif
+
+#ifdef SOMEWM_BENCH
+void
+bench_signal_counters_reset(void)
+{
+    bench_signal_emit_count = 0;
+    bench_signal_handler_calls = 0;
+    bench_signal_lookup_misses = 0;
+}
+#endif
+
 /** Setup the object system at startup.
  * \param L The Lua VM state.
  */
@@ -238,6 +256,12 @@ signal_object_emit(lua_State *L, signal_array_t *arr, const char *name, int narg
 {
     signal_t *sigfound = signal_array_getbyname(arr, name);
 
+#ifdef SOMEWM_BENCH
+    bench_signal_emit_count++;
+    if(!sigfound)
+        bench_signal_lookup_misses++;
+#endif
+
     if(sigfound)
     {
         int nbfunc = sigfound->sigfuncs.len;
@@ -256,6 +280,9 @@ signal_object_emit(lua_State *L, signal_array_t *arr, const char *name, int narg
             lua_pushvalue(L, - nargs - nbfunc + i);
             /* remove this first function */
             lua_remove(L, - nargs - nbfunc - 1 + i);
+#ifdef SOMEWM_BENCH
+            bench_signal_handler_calls++;
+#endif
             luaA_dofunction(L, nargs, 0);
         }
     }
@@ -290,6 +317,13 @@ luaA_object_emit_signal(lua_State *L, int oud,
         return;
     }
     sigfound = signal_array_getbyname(&obj->signals, name);
+
+#ifdef SOMEWM_BENCH
+    bench_signal_emit_count++;
+    if(!sigfound)
+        bench_signal_lookup_misses++;
+#endif
+
     if(sigfound)
     {
         int nbfunc = sigfound->sigfuncs.len;
@@ -310,6 +344,9 @@ luaA_object_emit_signal(lua_State *L, int oud,
             lua_pushvalue(L, - nargs - nbfunc - 1 + i);
             /* remove this first function */
             lua_remove(L, - nargs - nbfunc - 2 + i);
+#ifdef SOMEWM_BENCH
+            bench_signal_handler_calls++;
+#endif
             luaA_dofunction(L, nargs + 1, 0);
         }
     }
