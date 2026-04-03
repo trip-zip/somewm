@@ -578,12 +578,10 @@ awful.keyboard.append_global_keybindings({
               {description = "show main menu", group = "awesome"}),
     awful.key({ modkey, "Control" }, "r", awesome.cold_restart,
               {description = "cold restart", group = "awesome"}),
-    awful.key({ modkey, "Shift"   }, "q", awesome.quit,
-              {description = "quit awesome", group = "awesome"}),
+    awful.key({ modkey, "Shift"   }, "q", function() awesome.emit_signal("exit_screen::toggle") end,
+              {description = "exit screen (power/session)", group = "awesome"}),
     awful.key({ modkey, "Shift"   }, "Escape", function() awesome.lock() end,
               {description = "lock screen", group = "awesome"}),
-    awful.key({ modkey,           }, "Escape", function() awesome.emit_signal("exit_screen::toggle") end,
-              {description = "exit screen", group = "awesome"}),
     awful.key({ modkey }, "x",
               function ()
                   awful.prompt.run {
