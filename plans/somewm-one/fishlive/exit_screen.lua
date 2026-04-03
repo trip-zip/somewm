@@ -45,8 +45,24 @@ local function resolve_config(opts)
 	return c
 end
 
+-- Highlight the shortcut letter in a label string.
+-- E.g. highlight_shortcut("Poweroff", "P", accent, fg) → "<span>P</span>oweroff"
+local function highlight_label(label, key, accent_color, fg_color)
+	local i = label:lower():find(key:lower(), 1, true)
+	if i then
+		local before = label:sub(1, i - 1)
+		local letter = label:sub(i, i)
+		local after = label:sub(i + 1)
+		return string.format(
+			'<span foreground="%s">%s</span><span foreground="%s"><b>%s</b></span><span foreground="%s">%s</span>',
+			fg_color, before, accent_color, letter, fg_color, after
+		)
+	end
+	return string.format('<span foreground="%s">%s</span>', fg_color, label)
+end
+
 -- Build a single action button
-local function make_button(icon, label, shortcut_hint, action)
+local function make_button(icon, label, shortcut_key, action)
 	local icon_widget = wibox.widget({
 		markup = string.format('<span foreground="%s">%s</span>', cfg.icon_color, icon),
 		font = cfg.icon_font,
@@ -54,21 +70,9 @@ local function make_button(icon, label, shortcut_hint, action)
 		widget = wibox.widget.textbox,
 	})
 
+	local label_markup = highlight_label(label, shortcut_key:upper(), cfg.icon_color, cfg.fg_color)
 	local label_widget = wibox.widget({
-		markup = string.format(
-			'<span foreground="%s">%s</span>',
-			cfg.fg_color, label
-		),
-		font = cfg.font,
-		halign = "center",
-		widget = wibox.widget.textbox,
-	})
-
-	local hint_widget = wibox.widget({
-		markup = string.format(
-			'<span foreground="%s" size="small">[%s]</span>',
-			cfg.icon_color, shortcut_hint
-		),
+		markup = label_markup,
 		font = cfg.font,
 		halign = "center",
 		widget = wibox.widget.textbox,
@@ -83,7 +87,6 @@ local function make_button(icon, label, shortcut_hint, action)
 					widget = wibox.container.background,
 				},
 				label_widget,
-				hint_widget,
 				spacing = dpi(4),
 				layout = wibox.layout.fixed.vertical,
 			},
@@ -91,7 +94,7 @@ local function make_button(icon, label, shortcut_hint, action)
 			widget = wibox.container.margin,
 		},
 		forced_width = dpi(150),
-		forced_height = dpi(180),
+		forced_height = dpi(170),
 		bg = "transparent",
 		shape = function(cr, w, h) gears.shape.rounded_rect(cr, w, h, dpi(12)) end,
 		widget = wibox.container.background,
