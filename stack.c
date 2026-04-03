@@ -6,10 +6,10 @@
  *
  * Key differences from AwesomeWM:
  * - Uses wlroots scene graph layers instead of XCB stacking
- * - No EWMH updates (TODO)
  */
 
 #include "stack.h"
+#include "ewmh.h"
 #include "somewm_types.h"
 #include "objects/client.h"  /* For complete client_t definition */
 #include "objects/drawin.h"  /* For drawin stacking */
@@ -37,7 +37,6 @@ stack_client_remove(Client *c)
 			client_array_remove(&globalconf.stack, client);
 			break;
 		}
-	/* TODO: ewmh_update_net_client_list_stacking(); */
 	stack_windows();
 }
 
@@ -49,7 +48,6 @@ stack_client_push(Client *c)
 {
 	stack_client_remove(c);
 	client_array_push(&globalconf.stack, c);
-	/* TODO: ewmh_update_net_client_list_stacking(); */
 	stack_windows();
 }
 
@@ -61,7 +59,6 @@ stack_client_append(Client *c)
 {
 	stack_client_remove(c);
 	client_array_append(&globalconf.stack, c);
-	/* TODO: ewmh_update_net_client_list_stacking(); */
 	stack_windows();
 }
 
@@ -288,7 +285,7 @@ stack_refresh(void)
 		wlr_scene_node_raise_to_top(&(*drawin)->scene_tree->node);
 	}
 
-	/* TODO: Call ewmh_update_net_client_list_stacking() */
+	ewmh_update_net_client_list_stacking();
 
 	need_stack_refresh = false;
 }
