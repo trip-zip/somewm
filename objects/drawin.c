@@ -1768,6 +1768,21 @@ drawin_border_refresh_single(drawin_t *d)
 	if (!d->scene_tree || !d->border_buffer)
 		return;
 
+	/* Update shadow geometry (independent of border width) */
+	{
+		const shadow_config_t *shadow_config = shadow_get_effective_config(
+			d->shadow_config, true);
+		if (shadow_config && shadow_config->enabled) {
+			if (d->shadow.tree) {
+				shadow_update_geometry(&d->shadow, shadow_config,
+					d->width, d->height);
+			} else {
+				shadow_create(d->scene_tree, &d->shadow, shadow_config,
+					d->width, d->height);
+			}
+		}
+	}
+
 	bw = d->border_width;
 
 	/* If no border width, hide the border buffer */
@@ -1804,21 +1819,6 @@ drawin_border_refresh_single(drawin_t *d)
 	/* Position border so it surrounds the content
 	 * Border surface origin is at top-left corner of border area */
 	wlr_scene_node_set_position(&d->border_buffer->node, -bw, -bw);
-
-	/* Update shadow geometry (lazy creation if needed) */
-	{
-		const shadow_config_t *shadow_config = shadow_get_effective_config(
-			d->shadow_config, true);
-		if (shadow_config && shadow_config->enabled) {
-			if (d->shadow.tree) {
-				shadow_update_geometry(&d->shadow, shadow_config,
-					d->width, d->height);
-			} else {
-				shadow_create(d->scene_tree, &d->shadow, shadow_config,
-					d->width, d->height);
-			}
-		}
-	}
 }
 
 /** Refresh all visible drawins (AwesomeWM compatibility)
