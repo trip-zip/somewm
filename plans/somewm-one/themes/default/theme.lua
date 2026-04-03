@@ -59,10 +59,10 @@ theme.systray_icon_spacing = dpi(4)
 
 -- Drawin/wibar shadow (uses client shadow as base, override here)
 theme.shadow_drawin_enabled   = true
-theme.shadow_drawin_radius    = 60
+theme.shadow_drawin_radius    = 30
 theme.shadow_drawin_offset_x  = 0
-theme.shadow_drawin_offset_y  = 15
-theme.shadow_drawin_opacity   = 1.0
+theme.shadow_drawin_offset_y  = 6
+theme.shadow_drawin_opacity   = 0.5
 
 -- Taglist
 theme.taglist_font        = "Geist SemiBold 11"
@@ -100,15 +100,15 @@ theme.exit_screen_icon_hover  = urgent
 theme.exit_screen_bg_image    = themes_path .. "default/wallpapers/1.jpg"
 
 -- Notifications
-theme.notification_font          = "CommitMono Nerd Font Propo 11"
+theme.notification_font          = "CommitMono Nerd Font Propo 14"
 theme.notification_bg            = bg_base .. "ee"
 theme.notification_fg            = fg_main
 theme.notification_border_color  = accent_dim
-theme.notification_border_width  = dpi(1)
-theme.notification_margin        = dpi(12)
-theme.notification_icon_size     = dpi(128)
-theme.notification_max_width     = dpi(520)
-theme.notification_spacing       = dpi(8)
+theme.notification_border_width  = dpi(0)
+theme.notification_margin        = dpi(16)
+theme.notification_icon_size     = dpi(170)
+theme.notification_max_width     = dpi(700)
+theme.notification_spacing       = dpi(10)
 theme.notification_icon_default  = themes_path .. "default/icons/notification.png"
 
 -- Hotkeys popup

@@ -297,6 +297,10 @@ for _, prop in ipairs { "border_width", "border_color", "opacity" } do
     wibox["set_"..prop] = function(self, value)
         self._private["_user_"..prop] = true
         self["_"..prop] = value
+        -- Propagate to underlying C drawin (Wayland compositing)
+        if self.drawin then
+            self.drawin["_"..prop] = value
+        end
     end
 end
 

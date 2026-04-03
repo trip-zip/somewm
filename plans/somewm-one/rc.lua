@@ -1274,8 +1274,10 @@ naughty.connect_signal("request::display", function(n)
     end
     -- Otherwise (cairo surface, userdata) — keep as-is
 
-    naughty.layout.box {
+    local popup = naughty.layout.box {
         notification = n,
+        border_width = 0,
+        maximum_width = dpi(700),
         shape = function(cr, w, h)
             gears.shape.rounded_rect(cr, w, h, dpi(6))
         end,
@@ -1283,53 +1285,50 @@ naughty.connect_signal("request::display", function(n)
             {
                 {
                     {
-                        {
-                            {
-                                image          = display_icon,
-                                resize         = true,
-                                upscale        = true,
-                                forced_width   = dpi(128),
-                                forced_height  = dpi(128),
-                                clip_shape     = function(cr, w, h)
-                                    gears.shape.rounded_rect(cr, w, h, dpi(4))
-                                end,
-                                widget         = wibox.widget.imagebox,
-                            },
-                            halign = "center",
-                            valign = "center",
-                            widget = wibox.container.place,
-                        },
-                        forced_width  = dpi(128),
-                        forced_height = dpi(128),
-                        widget        = wibox.container.constraint,
+                        image          = display_icon,
+                        resize         = true,
+                        upscale        = true,
+                        forced_width   = dpi(138),
+                        forced_height  = dpi(170),
+                        clip_shape     = function(cr, w, h)
+                            gears.shape.rounded_rect(cr, w, h, dpi(4))
+                        end,
+                        widget         = wibox.widget.imagebox,
                     },
                     {
                         {
                             {
                                 align  = "left",
-                                font   = beautiful.font or "sans bold 14",
-                                widget = naughty.widget.title,
+                                markup = n.title and ('<span font="Geist SemiBold 13" color="#e2b55a">' .. gears.string.xml_escape(n.title) .. '</span>') or "",
+                                widget = wibox.widget.textbox,
                             },
                             {
                                 align  = "left",
+                                font   = "CommitMono Nerd Font Propo 12",
                                 widget = naughty.widget.message,
                             },
-                            spacing = dpi(4),
+                            spacing = dpi(6),
                             layout  = wibox.layout.fixed.vertical,
                         },
                         top    = dpi(8),
                         widget = wibox.container.margin,
                     },
-                    spacing = dpi(16),
+                    spacing = dpi(12),
                     layout  = wibox.layout.fixed.horizontal,
                 },
-                margins = dpi(16),
+                margins = dpi(20),
                 widget  = wibox.container.margin,
             },
             id     = "background_role",
             widget = naughty.container.background,
         },
     }
+
+    -- FadeIn animation (uses compositor frame-synced animation engine)
+    local anim_ok, anim = pcall(require, "anim_client")
+    if anim_ok and anim.fade_notification then
+        anim.fade_notification(popup)
+    end
 end)
 
 -- }}}
@@ -1402,6 +1401,11 @@ pcall(function()
         layout = {
             enabled  = true,        -- mwfact, spawn/kill reflow, layout switch
             duration = 0.15,        -- short — background reflow should be quick
+            easing   = "ease-out-cubic",
+        },
+        notification = {
+            enabled  = true,        -- fadeIn for notification popups
+            duration = 0.5,
             easing   = "ease-out-cubic",
         },
         scenefx = {
