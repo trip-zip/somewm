@@ -90,6 +90,7 @@ theme.lockscreen_border_color = accent
 theme.lockscreen_error_color  = urgent
 theme.lockscreen_font         = "Geist 14"
 theme.lockscreen_font_large   = "Geist Bold 48"
+theme.lockscreen_bg_image     = themes_path .. "default/wallpapers/1.jpg"
 
 -- Notifications
 theme.notification_font          = "CommitMono Nerd Font Propo 11"
