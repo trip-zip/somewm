@@ -1143,6 +1143,21 @@ ruled.client.connect_signal("request::rules", function()
             img.finish()
         end
     }
+
+    -- Web widgets (WebKitGTK) — no blur/corners to avoid SceneFX crash
+    ruled.client.append_rule {
+        rule_any = {
+            name  = { "somewm%-widget.*" },
+        },
+        properties = {
+            floating       = true,
+            ontop          = true,
+            border_width   = 0,
+            corner_radius  = 0,
+            backdrop_blur  = false,
+            shadow         = { enabled = false },
+        },
+    }
 end)
 
 -- }}}
