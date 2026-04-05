@@ -19,6 +19,10 @@ Singleton {
         else _stopCava()
     }
 
+    onAvailableChanged: {
+        if (available && mediaTabActive) _startCava()
+    }
+
     // Check if cava is installed (one-time on startup)
     Process {
         id: checkProc

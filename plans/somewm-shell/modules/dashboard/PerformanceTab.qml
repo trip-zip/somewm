@@ -117,8 +117,6 @@ Item {
         color: Core.Theme.surfaceContainer
         radius: roundLg
         clip: true
-        layer.enabled: true
-        layer.smooth: true
 
         Component.onCompleted: {
             animatedUsage = usage
@@ -127,13 +125,13 @@ Item {
         onUsageChanged: animatedUsage = usage
         onTempProgressChanged: animatedTemp = tempProgress
 
-        // Usage fill background (Caelestia pattern)
-        Rectangle {
+        // Usage fill background (Caelestia pattern — left-only rounded corners)
+        Item {
             anchors.left: parent.left
             anchors.top: parent.top
             anchors.bottom: parent.bottom
             width: parent.width * heroCard.animatedUsage
-            color: Qt.rgba(heroCard.accentColor.r, heroCard.accentColor.g, heroCard.accentColor.b, 0.15)
+            clip: true
 
             Behavior on width {
                 NumberAnimation {
@@ -141,6 +139,15 @@ Item {
                     easing.type: Easing.BezierSpline
                     easing.bezierCurve: Core.Anims.curves.standard
                 }
+            }
+
+            Rectangle {
+                anchors.left: parent.left
+                anchors.top: parent.top
+                anchors.bottom: parent.bottom
+                width: parent.width + roundLg
+                radius: roundLg
+                color: Qt.rgba(heroCard.accentColor.r, heroCard.accentColor.g, heroCard.accentColor.b, 0.15)
             }
         }
 

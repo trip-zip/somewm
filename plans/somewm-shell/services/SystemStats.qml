@@ -13,14 +13,16 @@ Singleton {
     property real memTotalGB: 0.0
     property string uptime: ""
 
+    // ===== Always-on properties (dashboard Home tab uses these) =====
+    property int diskPercent: 0
+    property string diskUsedGB: "0"
+    property string diskTotalGB: "0"
+
     // ===== Lazy properties (only polled when Performance tab active) =====
     property int cpuTemp: 0
     property int gpuPercent: 0
     property int gpuTemp: 0
     property string gpuName: ""
-    property int diskPercent: 0
-    property string diskUsedGB: "0"
-    property string diskTotalGB: "0"
 
     // CRITICAL: Visibility gate — set by PerformanceTab when active
     property bool perfTabActive: false
@@ -129,10 +131,10 @@ Singleton {
         }
     }
 
-    // Disk usage (every 60s)
+    // Disk usage (every 60s — always-on, used by Home tab ResourceBars)
     Timer {
         interval: 60000
-        running: root.perfTabActive
+        running: true
         repeat: true
         triggeredOnStart: true
         onTriggered: diskProc.running = true
@@ -152,7 +154,6 @@ Singleton {
             root.cpuTemp = 0
             root.gpuPercent = 0
             root.gpuTemp = 0
-            root.diskPercent = 0
         }
     }
 

@@ -1,6 +1,7 @@
 import QtQuick
 import QtQuick.Layouts
 import QtQuick.Shapes
+import Quickshell.Widgets
 import "../../core" as Core
 import "../../services" as Services
 import "../../components" as Components
@@ -40,48 +41,54 @@ Item {
     implicitWidth: coverSize + visSize * 2 + details.implicitWidth + spacNorm + padLg * 2
     implicitHeight: Math.max(coverSize + visSize * 2, details.implicitHeight) + padLg * 2
 
-    // === Visualizer bars (Caelestia: Shape + ShapePath per bar) ===
-    Shape {
+    // === Visualizer bars (Canvas-based circular frequency display) ===
+    Canvas {
         id: visualiser
-        anchors.fill: cover
+        z: 1
+        anchors.fill: coverWrapper
         anchors.margins: -visSize
-        preferredRendererType: Shape.CurveRenderer
+        renderStrategy: Canvas.Threaded
 
-        Repeater {
-            model: Core.Constants.mediaBarCount
-            ShapePath {
-                required property int index
-                readonly property real barValue: {
-                    var vals = Services.CavaService.values
-                    return vals && index < vals.length ? Math.max(0.001, Math.min(1, vals[index])) : 0.001
-                }
-                readonly property real angle: index * 2 * Math.PI / Core.Constants.mediaBarCount
-                readonly property real magnitude: barValue * visSize
-                readonly property real cosA: Math.cos(angle)
-                readonly property real sinA: Math.sin(angle)
-                readonly property real cx: visualiser.width / 2
-                readonly property real cy: visualiser.height / 2
-                readonly property real innerR: coverSize / 2 + spacSm
+        property var cavaValues: Services.CavaService.values
+        onCavaValuesChanged: requestPaint()
 
-                fillColor: "transparent"
-                strokeColor: Core.Theme.accent
-                strokeWidth: Math.round(360 / Core.Constants.mediaBarCount - spacSm / 4)
-                capStyle: ShapePath.RoundCap
+        readonly property real cx: width / 2
+        readonly property real cy: height / 2
+        readonly property real innerR: coverSize / 2 + spacSm
+        readonly property int barCount: Core.Constants.mediaBarCount
+        readonly property real barWidth: Math.round(360 / barCount - spacSm / 4)
+        readonly property color barColor: Core.Theme.accent
 
-                startX: cx + (innerR + strokeWidth / 2) * cosA
-                startY: cy + (innerR + strokeWidth / 2) * sinA
+        onPaint: {
+            var ctx = getContext("2d")
+            ctx.clearRect(0, 0, width, height)
+            ctx.strokeStyle = barColor
+            ctx.lineWidth = barWidth
+            ctx.lineCap = "round"
 
-                PathLine {
-                    x: cx + (innerR + strokeWidth / 2 + magnitude) * cosA
-                    y: cy + (innerR + strokeWidth / 2 + magnitude) * sinA
-                }
+            var vals = cavaValues
+            if (!vals || vals.length === 0) return
+
+            for (var i = 0; i < barCount; i++) {
+                var v = i < vals.length ? Math.max(0.001, Math.min(1, vals[i])) : 0.001
+                var angle = i * 2 * Math.PI / barCount
+                var magnitude = v * visSize
+                var cosA = Math.cos(angle)
+                var sinA = Math.sin(angle)
+                var startR = innerR + barWidth / 2
+                var endR = startR + magnitude
+
+                ctx.beginPath()
+                ctx.moveTo(cx + startR * cosA, cy + startR * sinA)
+                ctx.lineTo(cx + endR * cosA, cy + endR * sinA)
+                ctx.stroke()
             }
         }
     }
 
-    // === Album art (circular clip via layer.enabled) ===
-    Rectangle {
-        id: cover
+    // === Album art (circular clip via ClippingRectangle) ===
+    ClippingRectangle {
+        id: coverWrapper
         anchors.verticalCenter: parent.verticalCenter
         anchors.left: parent.left
         anchors.leftMargin: padLg + visSize
@@ -89,9 +96,6 @@ Item {
         height: coverSize
         radius: coverSize / 2
         color: Core.Theme.surfaceContainerHigh
-        clip: true
-        layer.enabled: true
-        layer.smooth: true
 
         Text {
             anchors.centerIn: parent

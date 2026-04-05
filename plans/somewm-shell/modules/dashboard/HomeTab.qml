@@ -2,6 +2,7 @@ import QtQuick
 import QtQuick.Layouts
 import QtQuick.Shapes
 import Quickshell
+import Quickshell.Widgets
 import "../../core" as Core
 import "../../services" as Services
 import "../../components" as Components
@@ -80,19 +81,17 @@ GridLayout {
             padding: padLg
             spacing: spacNorm
 
-            // Avatar (clipped to rounded rect — layer.enabled clips children to radius)
-            Rectangle {
+            // Avatar (ClippingRectangle for proper rounded clipping)
+            ClippingRectangle {
                 width: infoCol.implicitHeight
                 height: infoCol.implicitHeight
                 radius: roundLg
                 color: Core.Theme.fade(Core.Theme.accent, 0.12)
-                clip: true
-                layer.enabled: true
-                layer.smooth: true
 
                 Image {
                     id: avatarImg
                     anchors.fill: parent
+                    anchors.margins: Math.round(2 * sp)
                     source: "file://" + Quickshell.env("HOME") + "/.face"
                     fillMode: Image.PreserveAspectCrop
                     asynchronous: true
@@ -362,9 +361,9 @@ GridLayout {
                 strokeWidth: progressThk
                 capStyle: ShapePath.RoundCap
                 PathAngleArc {
-                    centerX: cover.x + cover.width / 2
-                    centerY: cover.y + cover.height / 2
-                    radiusX: (cover.width + progressThk) / 2 + Math.round(7 * sp)
+                    centerX: coverWrapper.x + coverWrapper.width / 2
+                    centerY: coverWrapper.y + coverWrapper.height / 2
+                    radiusX: (coverWrapper.width + progressThk) / 2 + Math.round(7 * sp)
                     radiusY: radiusX
                     startAngle: -90 - progressSweep / 2
                     sweepAngle: progressSweep
@@ -377,9 +376,9 @@ GridLayout {
                 strokeWidth: progressThk
                 capStyle: ShapePath.RoundCap
                 PathAngleArc {
-                    centerX: cover.x + cover.width / 2
-                    centerY: cover.y + cover.height / 2
-                    radiusX: (cover.width + progressThk) / 2 + Math.round(7 * sp)
+                    centerX: coverWrapper.x + coverWrapper.width / 2
+                    centerY: coverWrapper.y + coverWrapper.height / 2
+                    radiusX: (coverWrapper.width + progressThk) / 2 + Math.round(7 * sp)
                     radiusY: radiusX
                     startAngle: -90 - progressSweep / 2
                     sweepAngle: progressSweep * playerProgress
@@ -387,9 +386,9 @@ GridLayout {
             }
         }
 
-        // Cover art (circular clip via layer.enabled)
-        Rectangle {
-            id: cover
+        // Cover art (circular — ClippingRectangle for proper radius clipping)
+        ClippingRectangle {
+            id: coverWrapper
             anchors.top: parent.top
             anchors.left: parent.left
             anchors.right: parent.right
@@ -397,9 +396,6 @@ GridLayout {
             height: width
             radius: width / 2
             color: Core.Theme.surfaceContainerHigh
-            clip: true
-            layer.enabled: true
-            layer.smooth: true
 
             Text {
                 anchors.centerIn: parent
@@ -409,7 +405,9 @@ GridLayout {
                 color: Core.Theme.fgMuted
                 visible: !Services.Media.artUrl
             }
+
             Image {
+                id: coverImg
                 anchors.fill: parent
                 source: Services.Media.artUrl || ""
                 asynchronous: true
@@ -420,7 +418,7 @@ GridLayout {
         // Title
         Text {
             id: mediaTitle
-            anchors.top: cover.bottom
+            anchors.top: coverWrapper.bottom
             anchors.horizontalCenter: parent.horizontalCenter
             anchors.topMargin: spacNorm
             width: mediaWidth - padLg * 2
