@@ -41,9 +41,9 @@ Singleton {
 
     // === Surface hierarchy (color layering for depth) ===
     // Matches wibar: bgBase (#181818) as the base panel background
-    readonly property color surfaceBase: Qt.rgba(bgBase.r, bgBase.g, bgBase.b, 0.92)
-    readonly property color surfaceContainer: Qt.rgba(bgSurface.r, bgSurface.g, bgSurface.b, 0.94)
-    readonly property color surfaceContainerHigh: Qt.rgba(bgOverlay.r, bgOverlay.g, bgOverlay.b, 0.96)
+    readonly property color surfaceBase: Qt.rgba(bgBase.r, bgBase.g, bgBase.b, 0.97)
+    readonly property color surfaceContainer: Qt.rgba(bgSurface.r, bgSurface.g, bgSurface.b, 0.97)
+    readonly property color surfaceContainerHigh: Qt.rgba(bgOverlay.r, bgOverlay.g, bgOverlay.b, 0.98)
     readonly property color surfaceContainerHighest: {
         var f = 1.15
         return Qt.rgba(

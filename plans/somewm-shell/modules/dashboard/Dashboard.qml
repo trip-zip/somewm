@@ -42,7 +42,7 @@ Variants {
         mask: Region { item: clickTarget }
 
         readonly property real sp: Core.Theme.dpiScale
-        readonly property real borderThickness: Math.round(6 * sp)
+        readonly property real borderThickness: Math.round(12 * sp)
         readonly property real borderRounding: Math.round(25 * sp)
         readonly property real padLg: Math.round(15 * sp)
         readonly property real padNorm: Math.round(10 * sp)
@@ -81,7 +81,7 @@ Variants {
             id: closeAnim
             // Phase 1: content collapses
             PropertyAction { target: panel; property: "contentVisible"; value: false }
-            PauseAnimation { duration: 550 }
+            PauseAnimation { duration: 750 }
             // Phase 2: strip hides
             PropertyAction { target: panel; property: "stripVisible"; value: false }
         }
@@ -149,7 +149,7 @@ Variants {
             }
         }
 
-        // ===== Visual layer: Border + Backgrounds with shadow =====
+        // ===== Visual layer: Strip + Background as one surface with shadow =====
         Item {
             anchors.fill: parent
             layer.enabled: true
@@ -159,7 +159,7 @@ Variants {
                 shadowColor: Qt.rgba(0, 0, 0, 0.55)
             }
 
-            // LAYER 1: Border strip — simple rectangle at bottom edge
+            // Border strip at bottom edge
             Rectangle {
                 id: borderStrip
                 anchors.left: parent.left
@@ -176,19 +176,9 @@ Variants {
                         easing.bezierCurve: Core.Anims.curves.expressiveSpatial
                     }
                 }
-
-                // Subtle gradient overlay — lighter at top for depth
-                Rectangle {
-                    anchors.left: parent.left
-                    anchors.right: parent.right
-                    anchors.top: parent.top
-                    height: Math.round(2 * panel.sp)
-                    color: Qt.rgba(1, 1, 1, 0.08)
-                    visible: parent.height > 1
-                }
             }
 
-            // LAYER 2: Panel background ShapePath
+            // Panel background ShapePath (sits above strip)
             Shape {
                 id: backgrounds
                 anchors.fill: parent
@@ -312,10 +302,10 @@ Variants {
 
                 currentIndex: panel.currentTab
                 tabs: [
-                    { icon: "\ue88a", label: "Dashboard" },
-                    { icon: "\ue030", label: "Media" },
-                    { icon: "\ue1b1", label: "Performance" },
-                    { icon: "\ue7f4", label: "Notifications" }
+                    { label: "Dashboard" },
+                    { label: "Media" },
+                    { label: "Performance" },
+                    { label: "Notifications" }
                 ]
                 onTabChanged: (idx) => { panel.currentTab = idx }
             }

@@ -65,33 +65,56 @@ Item {
         // Month navigation
         RowLayout {
             Layout.fillWidth: true
+            Layout.leftMargin: Core.Theme.spacing.sm
+            Layout.rightMargin: Core.Theme.spacing.sm
 
-            Components.MaterialIcon {
-                icon: "\ue5cb"  // chevron_left
-                size: Core.Theme.fontSize.lg
-                color: Core.Theme.fgDim
+            // Previous month button
+            Rectangle {
+                id: prevBtn
+                width: Math.round(28 * Core.Theme.dpiScale)
+                height: width
+                radius: width / 2
+                color: prevMa.containsMouse ? Core.Theme.surfaceContainerHigh : "transparent"
+                Text {
+                    anchors.centerIn: parent
+                    text: "\ue5cb"
+                    font.family: Core.Theme.fontIcon
+                    font.pixelSize: Core.Theme.fontSize.lg
+                    color: prevMa.containsMouse ? Core.Theme.accent : Core.Theme.fgDim
+                }
                 MouseArea {
-                    anchors.fill: parent
-                    cursorShape: Qt.PointingHandCursor
+                    id: prevMa; anchors.fill: parent
+                    hoverEnabled: true; cursorShape: Qt.PointingHandCursor
                     onClicked: root.prevMonth()
                 }
             }
 
-            Components.StyledText {
+            Text {
                 Layout.fillWidth: true
                 horizontalAlignment: Text.AlignHCenter
                 text: root.monthNames[root.displayMonth] + " " + root.displayYear
+                font.family: Core.Theme.fontUI
+                font.pixelSize: Core.Theme.fontSize.sm
                 font.weight: Font.DemiBold
                 color: Core.Theme.accent
             }
 
-            Components.MaterialIcon {
-                icon: "\ue5cc"  // chevron_right
-                size: Core.Theme.fontSize.lg
-                color: Core.Theme.fgDim
+            // Next month button
+            Rectangle {
+                width: Math.round(28 * Core.Theme.dpiScale)
+                height: width
+                radius: width / 2
+                color: nextMa.containsMouse ? Core.Theme.surfaceContainerHigh : "transparent"
+                Text {
+                    anchors.centerIn: parent
+                    text: "\ue5cc"
+                    font.family: Core.Theme.fontIcon
+                    font.pixelSize: Core.Theme.fontSize.lg
+                    color: nextMa.containsMouse ? Core.Theme.accent : Core.Theme.fgDim
+                }
                 MouseArea {
-                    anchors.fill: parent
-                    cursorShape: Qt.PointingHandCursor
+                    id: nextMa; anchors.fill: parent
+                    hoverEnabled: true; cursorShape: Qt.PointingHandCursor
                     onClicked: root.nextMonth()
                 }
             }

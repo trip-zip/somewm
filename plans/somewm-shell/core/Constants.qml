@@ -11,7 +11,7 @@ Singleton {
     readonly property int dashboardMarginBottom: 20    // bottom margin
     readonly property int dashboardMaxHeight: 600      // max height before capping (pre-scale)
     readonly property int dashboardTopCurveHeight: 32  // concave curve height (pre-scale)
-    readonly property int tabBarHeight: 56             // tab bar height (pre-scale)
+    readonly property int tabBarHeight: 36             // tab bar height (pre-scale, text-only)
     readonly property int tabIndicatorHeight: 3        // tab indicator thickness
 
     // Arc gauges (Performance tab)

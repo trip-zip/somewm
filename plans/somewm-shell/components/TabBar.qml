@@ -44,7 +44,7 @@ Item {
                 // Hover/press state layer
                 Rectangle {
                     anchors.centerIn: parent
-                    width: Math.max(tabIcon.implicitWidth, tabLabel.implicitWidth) + Core.Theme.spacing.lg * 2
+                    width: tabLabel.implicitWidth + Core.Theme.spacing.lg * 2
                     height: parent.height
                     radius: Core.Theme.radius.sm
                     color: tabDelegate.isActive ? Core.Theme.accent :
@@ -57,36 +57,17 @@ Item {
                     }
                 }
 
-                // Icon above label (Caelestia pattern)
-                ColumnLayout {
+                Text {
+                    id: tabLabel
                     anchors.centerIn: parent
-                    spacing: 0
+                    text: modelData.label || ""
+                    font.family: Core.Theme.fontUI
+                    font.pixelSize: Core.Theme.fontSize.sm
+                    font.weight: Font.DemiBold
+                    color: tabDelegate.isActive ? Core.Theme.accent : Core.Theme.fgDim
 
-                    Text {
-                        id: tabIcon
-                        Layout.alignment: Qt.AlignHCenter
-                        text: modelData.icon || ""
-                        font.family: Core.Theme.fontIcon
-                        font.pixelSize: Core.Theme.fontSize.lg
-                        color: tabDelegate.isActive ? Core.Theme.accent : Core.Theme.fgDim
-
-                        Behavior on color {
-                            ColorAnimation { duration: Core.Anims.duration.fast }
-                        }
-                    }
-
-                    Text {
-                        id: tabLabel
-                        Layout.alignment: Qt.AlignHCenter
-                        text: modelData.label || ""
-                        font.family: Core.Theme.fontUI
-                        font.pixelSize: Core.Theme.fontSize.xs
-                        font.weight: Font.Medium
-                        color: tabDelegate.isActive ? Core.Theme.accent : Core.Theme.fgDim
-
-                        Behavior on color {
-                            ColorAnimation { duration: Core.Anims.duration.fast }
-                        }
+                    Behavior on color {
+                        ColorAnimation { duration: Core.Anims.duration.fast }
                     }
                 }
 

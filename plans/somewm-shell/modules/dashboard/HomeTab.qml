@@ -35,7 +35,7 @@ GridLayout {
             Text {
                 id: weatherIcon
                 anchors.verticalCenter: parent.verticalCenter
-                text: "\ue2bd"  // wb_sunny
+                text: Services.Weather.conditionIcon || "\ue2bd"
                 font.family: Core.Theme.fontIcon
                 font.pixelSize: Math.round(56 * sp)
                 color: Core.Theme.accent
@@ -80,13 +80,13 @@ GridLayout {
             padding: padLg
             spacing: spacNorm
 
-            // Avatar (Caelestia: StyledClippingRect with CachingImage)
+            // Avatar (clipped to rounded rect via layer)
             Rectangle {
                 width: infoCol.implicitHeight
                 height: infoCol.implicitHeight
                 radius: roundLg
                 color: Core.Theme.fade(Core.Theme.accent, 0.12)
-                clip: true
+                layer.enabled: true
 
                 Image {
                     id: avatarImg
@@ -462,6 +462,7 @@ GridLayout {
 
         // Transport controls (Caelestia Control component)
         Row {
+            id: transportRow
             anchors.top: mediaArtist.visible ? mediaArtist.bottom : (mediaAlbum.visible ? mediaAlbum.bottom : mediaTitle.bottom)
             anchors.horizontalCenter: parent.horizontalCenter
             anchors.topMargin: Math.round(5 * sp)
@@ -470,6 +471,56 @@ GridLayout {
             MiniControl { icon: "\ue045"; canUse: Services.Media.canGoPrevious; onClicked: Services.Media.previous() }
             MiniControl { icon: Services.Media.isPlaying ? "\ue034" : "\ue037"; canUse: true; onClicked: Services.Media.playPause() }
             MiniControl { icon: "\ue044"; canUse: Services.Media.canGoNext; onClicked: Services.Media.next() }
+        }
+
+        // Compact volume control
+        Row {
+            anchors.top: transportRow.bottom
+            anchors.horizontalCenter: parent.horizontalCenter
+            anchors.topMargin: Math.round(3 * sp)
+            spacing: Math.round(5 * sp)
+            width: mediaWidth - padLg * 2
+
+            Text {
+                anchors.verticalCenter: parent.verticalCenter
+                text: Services.Audio.icon
+                font.family: Core.Theme.fontIcon
+                font.pixelSize: Math.round(14 * sp)
+                color: Services.Audio.muted ? Core.Theme.fgMuted : Core.Theme.fgDim
+                MouseArea {
+                    anchors.fill: parent; cursorShape: Qt.PointingHandCursor
+                    onClicked: Services.Audio.toggleMute()
+                }
+            }
+            Item {
+                width: parent.width - Math.round(14 * sp) - Math.round(5 * sp) * 2 - volPct.implicitWidth
+                height: Math.round(16 * sp)
+                anchors.verticalCenter: parent.verticalCenter
+                Rectangle {
+                    anchors.verticalCenter: parent.verticalCenter
+                    width: parent.width; height: Math.round(3 * sp)
+                    radius: 1000; color: Core.Theme.fade(Core.Theme.accent, 0.15)
+                    Rectangle {
+                        width: parent.width * Math.min(1.0, Services.Audio.volume)
+                        height: parent.height; radius: parent.radius
+                        color: Services.Audio.muted ? Core.Theme.fgMuted : Core.Theme.accent
+                        Behavior on width { NumberAnimation { duration: Core.Anims.duration.large } }
+                    }
+                }
+                MouseArea {
+                    anchors.fill: parent; cursorShape: Qt.PointingHandCursor
+                    onClicked: (mouse) => Services.Audio.setVolume(Math.max(0, Math.min(1, mouse.x / parent.width)))
+                    onPositionChanged: (mouse) => { if (pressed) Services.Audio.setVolume(Math.max(0, Math.min(1, mouse.x / parent.width))) }
+                }
+            }
+            Text {
+                id: volPct
+                anchors.verticalCenter: parent.verticalCenter
+                text: Services.Audio.volumePercent + "%"
+                font.family: Core.Theme.fontMono
+                font.pixelSize: Math.round(9 * sp)
+                color: Core.Theme.fgMuted
+            }
         }
     }
 

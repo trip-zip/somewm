@@ -254,6 +254,7 @@ Item {
                             dragging = false
                         }
                         onPositionChanged: (mouse) => {
+                            if (!pressed) return
                             var dx = mouse.x - startX
                             var dy = mouse.y - startY
                             // Only start horizontal drag if dx > dy threshold
@@ -402,36 +403,36 @@ Item {
                 }
             }
 
-            // Empty state
-            ColumnLayout {
-                visible: root.notifications.length === 0
-                Layout.fillWidth: true
-                Layout.topMargin: Math.round(40 * sp)
-                spacing: spacNorm
+        }
+    }
 
-                Text {
-                    Layout.alignment: Qt.AlignHCenter
-                    text: "\ue7f7"  // notifications_none
-                    font.family: Core.Theme.fontIcon
-                    font.pixelSize: Math.round(48 * sp)
-                    color: Core.Theme.fgMuted
-                }
-                Text {
-                    Layout.alignment: Qt.AlignHCenter
-                    text: "No notifications"
-                    font.family: Core.Theme.fontUI
-                    font.pixelSize: Math.round(13 * sp)
-                    color: Core.Theme.fgMuted
-                }
-                Text {
-                    Layout.alignment: Qt.AlignHCenter
-                    text: "Notifications will appear here"
-                    font.family: Core.Theme.fontUI
-                    font.pixelSize: Math.round(11 * sp)
-                    color: Core.Theme.fgMuted
-                    opacity: 0.6
-                }
-            }
+    // Empty state — centered in full tab area
+    ColumnLayout {
+        visible: root.notifications.length === 0
+        anchors.centerIn: parent
+        spacing: spacNorm
+
+        Text {
+            Layout.alignment: Qt.AlignHCenter
+            text: "\ue7f7"  // notifications_none
+            font.family: Core.Theme.fontIcon
+            font.pixelSize: Math.round(48 * sp)
+            color: Core.Theme.fgMuted
+        }
+        Text {
+            Layout.alignment: Qt.AlignHCenter
+            text: "No notifications"
+            font.family: Core.Theme.fontUI
+            font.pixelSize: Math.round(13 * sp)
+            color: Core.Theme.fgMuted
+        }
+        Text {
+            Layout.alignment: Qt.AlignHCenter
+            text: "Notifications will appear here"
+            font.family: Core.Theme.fontUI
+            font.pixelSize: Math.round(11 * sp)
+            color: Core.Theme.fgMuted
+            opacity: 0.6
         }
     }
 

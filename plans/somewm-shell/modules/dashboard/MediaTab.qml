@@ -45,6 +45,7 @@ Item {
         id: visualiser
         anchors.fill: cover
         anchors.margins: -visSize
+        preferredRendererType: Shape.CurveRenderer
 
         Repeater {
             model: Core.Constants.mediaBarCount
