@@ -2,7 +2,6 @@ import QtQuick
 import QtQuick.Layouts
 import QtQuick.Shapes
 import Quickshell
-import Quickshell.Widgets
 import "../../core" as Core
 import "../../services" as Services
 import "../../components" as Components
@@ -81,29 +80,36 @@ GridLayout {
             padding: padLg
             spacing: spacNorm
 
-            // Avatar (ClippingRectangle for proper rounded clipping)
-            ClippingRectangle {
+            // Avatar (Item layer wrapper for rounded clipping)
+            Item {
                 width: infoCol.implicitHeight
                 height: infoCol.implicitHeight
-                radius: roundLg
-                color: Core.Theme.fade(Core.Theme.accent, 0.12)
+                layer.enabled: true
+                layer.smooth: true
 
-                Image {
-                    id: avatarImg
+                Rectangle {
                     anchors.fill: parent
-                    anchors.margins: Math.round(2 * sp)
-                    source: "file://" + Quickshell.env("HOME") + "/.face"
-                    fillMode: Image.PreserveAspectCrop
-                    asynchronous: true
-                    visible: status === Image.Ready
-                }
-                Text {
-                    anchors.centerIn: parent
-                    text: "\ue7fd"  // person
-                    font.family: Core.Theme.fontIcon
-                    font.pixelSize: Math.floor(parent.height / 2)
-                    color: Core.Theme.fgDim
-                    visible: avatarImg.status !== Image.Ready
+                    radius: roundLg
+                    color: Core.Theme.fade(Core.Theme.accent, 0.12)
+                    clip: true
+
+                    Image {
+                        id: avatarImg
+                        anchors.fill: parent
+                        anchors.margins: Math.round(2 * sp)
+                        source: "file://" + Quickshell.env("HOME") + "/.face"
+                        fillMode: Image.PreserveAspectCrop
+                        asynchronous: true
+                        visible: status === Image.Ready
+                    }
+                    Text {
+                        anchors.centerIn: parent
+                        text: "\ue7fd"  // person
+                        font.family: Core.Theme.fontIcon
+                        font.pixelSize: Math.floor(parent.height / 2)
+                        color: Core.Theme.fgDim
+                        visible: avatarImg.status !== Image.Ready
+                    }
                 }
             }
 
@@ -386,32 +392,39 @@ GridLayout {
             }
         }
 
-        // Cover art (circular — ClippingRectangle for proper radius clipping)
-        ClippingRectangle {
+        // Cover art (circular — Item layer wrapper for clipping)
+        Item {
             id: coverWrapper
             anchors.top: parent.top
             anchors.left: parent.left
             anchors.right: parent.right
             anchors.margins: padLg + progressThk + Math.round(7 * sp)
             height: width
-            radius: width / 2
-            color: Core.Theme.surfaceContainerHigh
+            layer.enabled: true
+            layer.smooth: true
 
-            Text {
-                anchors.centerIn: parent
-                text: "\ue030"  // music_note / art_track
-                font.family: Core.Theme.fontIcon
-                font.pixelSize: Math.round(parent.width * 0.4)
-                color: Core.Theme.fgMuted
-                visible: !Services.Media.artUrl
-            }
-
-            Image {
-                id: coverImg
+            Rectangle {
                 anchors.fill: parent
-                source: Services.Media.artUrl || ""
-                asynchronous: true
-                fillMode: Image.PreserveAspectCrop
+                radius: width / 2
+                color: Core.Theme.surfaceContainerHigh
+                clip: true
+
+                Text {
+                    anchors.centerIn: parent
+                    text: "\ue030"  // music_note / art_track
+                    font.family: Core.Theme.fontIcon
+                    font.pixelSize: Math.round(parent.width * 0.4)
+                    color: Core.Theme.fgMuted
+                    visible: !Services.Media.artUrl
+                }
+
+                Image {
+                    id: coverImg
+                    anchors.fill: parent
+                    source: Services.Media.artUrl || ""
+                    asynchronous: true
+                    fillMode: Image.PreserveAspectCrop
+                }
             }
         }
 

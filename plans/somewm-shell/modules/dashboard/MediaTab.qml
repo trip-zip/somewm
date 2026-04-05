@@ -1,7 +1,6 @@
 import QtQuick
 import QtQuick.Layouts
 import QtQuick.Shapes
-import Quickshell.Widgets
 import "../../core" as Core
 import "../../services" as Services
 import "../../components" as Components
@@ -86,30 +85,37 @@ Item {
         }
     }
 
-    // === Album art (circular clip via ClippingRectangle) ===
-    ClippingRectangle {
+    // === Album art (circular clip — Item layer wrapper) ===
+    Item {
         id: coverWrapper
         anchors.verticalCenter: parent.verticalCenter
         anchors.left: parent.left
         anchors.leftMargin: padLg + visSize
         width: coverSize
         height: coverSize
-        radius: coverSize / 2
-        color: Core.Theme.surfaceContainerHigh
+        layer.enabled: true
+        layer.smooth: true
 
-        Text {
-            anchors.centerIn: parent
-            text: "\ue030"
-            font.family: Core.Theme.fontIcon
-            font.pixelSize: Math.round(parent.width * 0.4)
-            color: Core.Theme.fgMuted
-            visible: !Services.Media.artUrl
-        }
-        Image {
+        Rectangle {
             anchors.fill: parent
-            source: Services.Media.artUrl || ""
-            asynchronous: true
-            fillMode: Image.PreserveAspectCrop
+            radius: coverSize / 2
+            color: Core.Theme.surfaceContainerHigh
+            clip: true
+
+            Text {
+                anchors.centerIn: parent
+                text: "\ue030"
+                font.family: Core.Theme.fontIcon
+                font.pixelSize: Math.round(parent.width * 0.4)
+                color: Core.Theme.fgMuted
+                visible: !Services.Media.artUrl
+            }
+            Image {
+                anchors.fill: parent
+                source: Services.Media.artUrl || ""
+                asynchronous: true
+                fillMode: Image.PreserveAspectCrop
+            }
         }
     }
 
