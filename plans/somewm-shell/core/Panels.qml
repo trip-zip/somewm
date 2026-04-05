@@ -29,10 +29,13 @@ Singleton {
         osdTimer.restart()
     }
 
+    // Requested tab index for dashboard (set by media/notif shortcuts, consumed by Dashboard.qml)
+    property int requestedTab: -1
+
     // Track whether any overlay panel is open (for compositor scroll-guard)
     readonly property bool anyOverlayOpen: {
         var panels = openPanels
-        var exclusive = ["dashboard", "sidebar", "wallpapers", "collage", "media", "weather", "ai-chat"]
+        var exclusive = ["dashboard", "wallpapers", "collage", "weather", "ai-chat"]
         for (var i = 0; i < exclusive.length; i++) {
             if (panels[exclusive[i]] === true) return true
         }
@@ -54,9 +57,18 @@ Singleton {
     }
 
     function toggle(name) {
+        // Route media/sidebar/notifications to dashboard tabs
+        if (name === "media" || name === "performance" || name === "sidebar" || name === "notifications") {
+            var tab = name === "media" ? 1 : (name === "performance" ? 2 : (name === "notifications" ? 3 : 0))
+            root.requestedTab = tab
+            // If dashboard is already open, just switch tab (don't toggle off)
+            if (isOpen("dashboard")) return
+            return toggle("dashboard")
+        }
+
         var state = Object.assign({}, openPanels)
         // Mutual exclusion: close overlapping panels
-        var exclusive = ["dashboard", "sidebar", "wallpapers", "collage", "media", "weather", "ai-chat"]
+        var exclusive = ["dashboard", "wallpapers", "collage", "weather", "ai-chat"]
         if (!state[name] && exclusive.indexOf(name) >= 0) {
             exclusive.forEach(function(p) { state[p] = false })
         }

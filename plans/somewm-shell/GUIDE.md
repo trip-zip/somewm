@@ -3,7 +3,7 @@
 ## What is somewm-shell?
 
 A professional desktop shell for somewm built on **Quickshell (Qt6/QML)**.
-It provides overlay panels (dashboard, sidebar, media player, weather, wallpaper picker,
+It provides overlay panels (dashboard with tabbed interface, weather, wallpaper picker,
 collage viewer, OSD) as Wayland layer-shell surfaces. It is an **overlay complement**
 to the existing wibar and Lua widgets in somewm-one — it does not replace them.
 
@@ -29,9 +29,38 @@ somewm-shell (Quickshell / Qt6 QML)
 ├── Core layer ─── Theme.qml, Anims.qml, Config.qml, Panels.qml
 │   └── Theme.qml watches theme.json via FileView (inotify)
 │
-└── Modules ─── Dashboard, Sidebar, MediaPanel, Weather, etc.
+└── Modules ─── Dashboard (tabbed), Weather, Wallpapers, Collage, OSD
     └── Each module = PanelWindow + Variants (per-screen instances)
 ```
+
+### Dashboard Architecture (v2 — Caelestia-inspired)
+
+The dashboard is a **bottom-slide tabbed panel** that replaces the old
+separate dashboard, sidebar, and media panels. It uses MD3 BezierSpline
+animations and a concave top-edge curve.
+
+```
+Dashboard (bottom-slide, full-width - margins)
+├── ConcaveShape (top edge)
+├── TabBar (Home | Performance | Media | Notifications)
+└── StackLayout
+    ├── HomeTab ──── ClockWidget, CPU/Mem rings, Calendar, QuickSettings, QuickLaunch, ClientList
+    ├── PerformanceTab ── 4x ArcGauge (CPU, GPU, Memory, Storage) — LAZY polling
+    ├── MediaTab ──── FrequencyVisualizer (Cava) + album art + controls — LAZY Cava
+    └── NotificationsTab ── urgency colors, swipe-to-dismiss, expand/collapse
+```
+
+**CRITICAL: Lazy Polling** — All heavyweight data sources are gated by tab visibility:
+- `SystemStats.perfTabActive` — GPU/temp/disk only poll when Performance tab is visible
+- `CavaService.mediaTabActive` — Cava process only runs when Media tab is visible
+- Base CPU/Memory polling stays always-on (wibar integration needs it)
+
+### Panel routing
+
+Old keybindings (`toggle sidebar`, `toggle media`) are **routed** through
+`Panels.toggle()` to the appropriate dashboard tab:
+- `sidebar` / `notifications` → Dashboard tab 0 (Home) / tab 3 (Notifications)
+- `media` → Dashboard tab 2 (Media)
 
 ### Theme chain
 
@@ -43,6 +72,17 @@ theme.json (~/.config/somewm/themes/default/theme.json)
 Theme.qml (singleton, QML property bindings)
     ↓  bindings
 All UI elements auto-update
+```
+
+### Wallpaper chain
+
+```
+Shell picker (WallpaperPanel.qml)
+    ↓  somewm-client eval "require('fishlive.services.wallpaper').set_override(tag, path)"
+Lua wallpaper service (fishlive/services/wallpaper.lua)
+    ↓  per-tag override map, survives tag switches
+    ↓  (optional) theme-export.sh if "Apply Theme" toggle is on
+Theme.qml auto-reloads via FileView
 ```
 
 ### Data flow: how widgets get updated
@@ -76,18 +116,23 @@ plans/somewm-shell/
 ├── GUIDE.md                   # This file
 │
 ├── core/                      # Framework singletons
-│   ├── Theme.qml              # Colors, fonts, spacing, radii, helpers
-│   ├── Anims.qml              # Animation durations + easing curves
+│   ├── Theme.qml              # Colors, fonts, spacing, radii, helpers, dpiScale
+│   ├── Anims.qml              # Animation durations + easing + MD3 BezierSpline curves
 │   ├── Config.qml             # Module enable/disable, watches config.json
-│   ├── Panels.qml             # Panel visibility state + IPC handler
-│   ├── Constants.qml          # Dimensions, breakpoints, z-ordering
+│   ├── Panels.qml             # Panel visibility state + IPC handler + tab routing
+│   ├── Constants.qml          # Dashboard dimensions, arc gauge sizes, carousel params
 │   └── qmldir
 │
 ├── components/                # Reusable UI primitives
 │   ├── GlassCard.qml          # Base card (color layering for depth)
 │   ├── ClickableCard.qml      # Card + click + active state
 │   ├── SectionHeader.qml      # Accent dot + title
-│   ├── SlidePanel.qml         # Slide-in panel (sidebar, etc.)
+│   ├── SlidePanel.qml         # Slide-in panel
+│   ├── ArcGauge.qml           # 270° arc gauge (Shape + PathAngleArc)
+│   ├── ConcaveShape.qml       # Concave top-edge curve (Shape + PathArc CCW)
+│   ├── TabBar.qml             # MD3 tab bar with animated indicator
+│   ├── FrequencyVisualizer.qml # Radial audio frequency bars (Cava)
+│   ├── WallpaperCarousel.qml  # Isometric skew carousel (ilyamiro-inspired)
 │   ├── CircularProgress.qml   # Canvas-based progress ring
 │   ├── Graph.qml              # Canvas-based line graph
 │   ├── AnimatedBar.qml        # Horizontal progress bar
@@ -105,26 +150,40 @@ plans/somewm-shell/
 │   ├── Anim.qml               # NumberAnimation (respects Anims.scale)
 │   ├── CAnim.qml              # ColorAnimation (respects Anims.scale)
 │   └── qmldir                 # Component registration
-│
+��
 ├── services/                  # Data layer (singletons)
-│   ├── Compositor.qml         # Clients, tags, focus (push IPC)
+│   ├── Compositor.qml         # Clients, tags, focus (push IPC + tag-switch focus)
 │   ├── Audio.qml              # Volume via wpctl (timer poll)
 │   ├── Brightness.qml         # Brightness via brightnessctl
 │   ├── Media.qml              # MPRIS media player (D-Bus)
 │   ├── Network.qml            # WiFi/BT via nmcli
-│   ├── SystemStats.qml        # CPU/memory from /proc (timer poll)
+│   ├── SystemStats.qml        # CPU/mem (always-on) + GPU/temp/disk (lazy, perfTabActive)
 │   ├── Weather.qml            # wttr.in via XMLHttpRequest
-│   ├── Wallpapers.qml         # Wallpaper directory listing
-│   └── qmldir
+│   ├── Wallpapers.qml         # Wallpaper listing + set via Lua service + theme toggle
+│   ├── CavaService.qml        # Cava audio visualizer (lazy, mediaTabActive)
+���   └── qmldir
 │
 ├── modules/                   # Feature panels
-│   ├── ModuleLoader.qml       # Lazy loader (enabled via config.json)
-│   ├── dashboard/             # Dashboard (clock, stats, quick launch, media, clients)
-│   ├── sidebar/               # Sidebar (quick settings, calendar, notifications)
-│   ├── media/                 # Media player (album art, controls, progress, volume)
+│   ├��─ ModuleLoader.qml       # Lazy loader (enabled via config.json)
+│   ├── dashboard/             # Bottom-slide tabbed dashboard
+│   │   ├── Dashboard.qml      # Main panel (ConcaveShape + TabBar + StackLayout)
+│   │   ├── HomeTab.qml        # Clock, stats, calendar, settings, launch, clients
+│   │   ├── PerformanceTab.qml # 4x ArcGauge (CPU, GPU, Memory, Storage)
+│   │   ├── MediaTab.qml       # FrequencyVisualizer + album art + controls
+│   │   ├── NotificationsTab.qml # Urgency colors, swipe-dismiss, expand/collapse
+│   │   ├── ClockWidget.qml    # Digital clock
+│   │   ├── StatsGrid.qml      # Stat cards grid
+│   │   ├── QuickLaunch.qml    # App launcher grid
+│   │   ├── QuickSettings.qml  # WiFi/BT/DND toggles (moved from sidebar)
+│   │   ├── CalendarWidget.qml # Calendar (moved from sidebar)
+│   │   ├── ClientList.qml     # Open windows (click → focus + tag switch + close)
+│   │   ├── MediaMini.qml      # Compact media widget for HomeTab
+│   │   └── qmldir
+│   ├── sidebar/ (DEPRECATED)  # Kept for test references, not loaded by shell.qml
+│   ├── media/ (DEPRECATED)    # Subcomponents still referenced by some tests
 │   ├── osd/                   # On-screen display (volume/brightness)
 │   ├── weather/               # Weather panel
-│   ├── wallpapers/            # Wallpaper picker
+│   ├── wallpapers/            # Wallpaper picker (carousel + grid + preview)
 │   ├── collage/               # Image collage viewer
 │   └── qmldir
 │
@@ -132,13 +191,86 @@ plans/somewm-shell/
     └── test-all.sh            # Structural + syntax + import validation (no runtime)
 ```
 
+## New Components (v2)
+
+### ArcGauge — 270° arc progress
+
+```qml
+Components.ArcGauge {
+    value: Services.SystemStats.cpuPercent / 100
+    progressColor: Core.Theme.widgetCpu
+    trackColor: Qt.rgba(Core.Theme.widgetCpuR, Core.Theme.widgetCpuG, Core.Theme.widgetCpuB, 0.15)
+    lineWidth: Core.Constants.arcGaugeLineWidth
+
+    // Center content slot
+    Text { text: Services.SystemStats.cpuTemp + "°C"; anchors.centerIn: parent }
+}
+```
+
+Shape-based with `PathAngleArc` (not Canvas). 270° sweep, animated with
+600ms expressiveDefaultSpatial BezierSpline curve. Glow dot at progress endpoint.
+
+### ConcaveShape — concave top edge
+
+```qml
+Components.ConcaveShape {
+    curveHeight: Core.Constants.dashboardTopCurveHeight * Core.Theme.dpiScale
+    fillColor: Core.Theme.surfaceBase
+}
+```
+
+Creates inward curve using `PathArc` with `Counterclockwise` direction.
+Used as dashboard panel background top edge.
+
+### TabBar — MD3 animated tabs
+
+```qml
+Components.TabBar {
+    currentIndex: 0
+    tabs: [
+        { icon: "\ue88a", label: "Home" },
+        { icon: "\ue1b1", label: "Performance" },
+        { icon: "\ue030", label: "Media" },
+        { icon: "\ue7f4", label: "Notifications" }
+    ]
+    onTabChanged: (index) => stackLayout.currentIndex = index
+}
+```
+
+3px animated indicator pill, emphasized BezierSpline. Mouse wheel tab cycling.
+
+### FrequencyVisualizer — radial Cava bars
+
+```qml
+Components.FrequencyVisualizer {
+    values: Services.CavaService.values
+    barCount: Services.CavaService.barCount
+    color: Core.Theme.accent
+}
+```
+
+Repeater with radially positioned bars. 80ms animation for audio reactivity.
+Idle pulse animation when no audio data.
+
+### WallpaperCarousel — isometric skew
+
+```qml
+Components.WallpaperCarousel {
+    wallpapers: Services.Wallpapers.wallpapers
+    onWallpaperApplied: (path) => Services.Wallpapers.setWallpaper(path)
+}
+```
+
+ListView with `SnapToItem`, `Matrix4x4` skew transform on non-current items.
+Current: de-skewed, 1.4x scale. Others: skewed, opacity 0.5.
+
 ## Development Workflow
 
 ### Edit → Deploy → Restart
 
 ```bash
 # 1. Edit source files in plans/somewm-shell/
-vim plans/somewm-shell/modules/sidebar/QuickSettings.qml
+vim plans/somewm-shell/modules/dashboard/PerformanceTab.qml
 
 # 2. Deploy to Quickshell config directory
 plans/somewm-shell/deploy.sh
@@ -180,17 +312,70 @@ grep -i "error\|warn\|fail" /tmp/qs-shell.log
 
 ### Keybindings (defined in rc.lua)
 
-| Key | Panel |
-|-----|-------|
-| `Super+D` | Dashboard |
-| `Super+Z` | Sidebar |
-| `Super+Shift+M` | Media player |
-| `Super+Shift+E` | Weather |
-| `Super+Shift+W` | Wallpaper picker |
+| Key | Action |
+|-----|--------|
+| `Super+D` | Dashboard (Home tab) |
+| `Super+Z` | Dashboard → Notifications tab |
+| `Super+Shift+M` | Dashboard → Media tab |
+| `Super+Shift+E` | Weather panel |
+| `Super+Shift+W` | Wallpaper picker (carousel) |
 | `Super+Shift+O` | Collage viewer |
 | `Super+Shift+A` | AI chat |
 | `Super+C` | Close all panels |
 | `Escape` | Close current panel |
+
+## Animation System (Anims.qml)
+
+### Standard durations (scaled by `Config.animations.scale`)
+
+| Name | Base ms | Usage |
+|------|---------|-------|
+| `instant` | 80 | Micro-interactions |
+| `fast` | 150 | Button feedback |
+| `normal` | 250 | Default transitions |
+| `smooth` | 400 | Panel slide-in |
+| `slow` | 600 | Complex sequences |
+| `expressiveSpatial` | 500 | Dashboard enter, carousel |
+| `large` | 600 | Arc gauge animations |
+| `extraLarge` | 1000 | Wallpaper transitions |
+
+### Standard easing curves
+
+| Name | Curve | Usage |
+|------|-------|-------|
+| `standard` | OutCubic | General transitions |
+| `expressive` | OutBack | Panel enter (slight overshoot) |
+| `decel` | OutQuart | Fade-in, appear |
+| `accel` | InCubic | Panel exit, dismiss |
+| `bounce` | OutBack | Playful interactions |
+
+### MD3 BezierSpline curves (v2)
+
+| Name | Usage |
+|------|-------|
+| `standard` | General MD3 transitions |
+| `emphasized` | Panel enter, tab indicator |
+| `emphasizedDecel` | Entrance emphasis |
+| `emphasizedAccel` | Exit emphasis |
+| `expressiveSpatial` | Dashboard, carousel, arc gauge |
+| `expressiveFast` | Quick spatial moves |
+| `expressiveEffects` | Decorative effects |
+
+### Using animations
+
+```qml
+// Standard behavior
+Behavior on opacity { Components.Anim {} }
+
+// MD3 BezierSpline (for premium animations)
+NumberAnimation {
+    duration: Core.Anims.duration.expressiveSpatial
+    easing.type: Easing.BezierSpline
+    easing.bezierCurve: Core.Anims.curves.expressiveSpatial
+}
+
+// Both respect Anims.scale. Set scale=0 for reduced motion.
+```
 
 ## Theme System (Theme.qml)
 
@@ -222,32 +407,6 @@ All colors come from `theme.json` (exported from `theme.lua` via `theme-export.s
 | `widgetNetwork` | `#89b482` | Network/WiFi (sage) |
 | `widgetVolume` | `#ea6962` | Volume (red) |
 
-### Surface hierarchy (depth through color, not shadow)
-
-| Level | Property | Value | Usage |
-|-------|----------|-------|-------|
-| Base | `surfaceBase` | `#181818` @ 92% | Default card background (= wibar) |
-| Container | `surfaceContainer` | `#232323` @ 94% | Elevated cards |
-| High | `surfaceContainerHigh` | `#2e2e2e` @ 96% | Hover states |
-| Highest | `surfaceContainerHighest` | `#353535` @ 97% | Elevated + hover |
-
-### Derived accent colors
-
-| Property | Derivation | Usage |
-|----------|-----------|-------|
-| `accentLight` | `Qt.lighter(accent, 1.3)` | Hover highlights |
-| `accentFaint` | accent @ 15% alpha | Tinted backgrounds |
-| `accentBorder` | accent @ 25% alpha | Active card borders |
-| `glassAccent` | accent @ 8% alpha | Active card bg |
-| `glassAccentHover` | accent @ 14% alpha | Active card hover |
-
-### Helper functions
-
-```qml
-Theme.fade(color, alpha)              // Color with custom alpha
-Theme.tint(base, tintColor, amount)   // Blend two colors
-```
-
 ### DPI scaling
 
 Automatic based on primary screen resolution:
@@ -257,102 +416,40 @@ Automatic based on primary screen resolution:
 
 All sizes (`fontSize`, `spacing`, `radius`, `slider`) are multiplied by `dpiScale`.
 
-## Animation System (Anims.qml)
+## Wallpaper System
 
-### Durations (scaled by `Config.animations.scale`)
+### Lua service (`fishlive/services/wallpaper.lua`)
 
-| Name | Base ms | Usage |
-|------|---------|-------|
-| `instant` | 80 | Micro-interactions |
-| `fast` | 150 | Button feedback |
-| `normal` | 250 | Default transitions |
-| `smooth` | 400 | Panel slide-in |
-| `slow` | 600 | Complex sequences |
+Manages per-tag wallpaper state with override support. Replaces the old
+inline wallpaper code in rc.lua.
 
-### Easing curves
-
-| Name | Curve | Usage |
-|------|-------|-------|
-| `standard` | OutCubic | General transitions |
-| `expressive` | OutBack | Panel enter (slight overshoot) |
-| `decel` | OutQuart | Fade-in, appear |
-| `accel` | InCubic | Panel exit, dismiss |
-| `bounce` | OutBack | Playful interactions |
-
-### Using animations
-
-```qml
-// Number property
-Behavior on opacity { Components.Anim {} }
-
-// Color property
-Behavior on color { Components.CAnim {} }
-
-// Both respect Anims.scale. Set scale=0 for reduced motion.
+```lua
+-- API (callable via somewm-client eval):
+local wp = require('fishlive.services.wallpaper')
+wp.init(screen, wppath, "1.jpg")           -- called in screen setup
+wp.set_override("1", "/path/to/wall.jpg")  -- override tag 1 wallpaper
+wp.clear_override("1")                     -- revert to theme default
+wp.get_current()                           -- current wallpaper path
+wp.get_overrides_json()                    -- JSON override map
 ```
 
-## Component Reference
+### Shell integration (`Wallpapers.qml`)
 
-### GlassCard — base card surface
+- `setWallpaper(path)` — sets override for currently selected tag
+- `setWallpaperForTag(tag, path)` — sets for specific tag
+- `applyTheme` toggle — when ON, runs `theme-export.sh` after wallpaper change
+- `clearOverride(tag)` — reverts to theme default
 
-```qml
-Components.GlassCard {
-    elevated: false      // true = brighter surface (surfaceContainer)
-    accentTint: false    // true = tinted with accent/tintColor
-    tintColor: Theme.accent  // override for DND (urgent), WiFi (green), etc.
-    hovered: false       // drives hover color shift
-}
-```
+### Wallpaper picker (WallpaperPanel.qml)
 
-Depth is created through **color layering** (surfaceBase → surfaceContainer →
-surfaceContainerHigh), not through drop shadows. Borders are minimal (6% opacity
-idle, 14% hover).
+Two views:
+- **Carousel** (default) — isometric skew carousel (ilyamiro-inspired)
+- **Grid** — traditional thumbnail grid (toggle via view button)
 
-### ClickableCard — interactive card
-
-```qml
-Components.ClickableCard {
-    active: false         // true = accentTint activated
-    tintColor: Theme.urgent  // red tint when active
-    onClicked: (mouse) => { ... }
-}
-```
-
-### SectionHeader — accent header
-
-```qml
-Components.SectionHeader {
-    title: "Quick Settings"
-    accentColor: Theme.accent  // override per-section
-}
-```
-
-### CircularProgress — ring chart
-
-```qml
-Components.CircularProgress {
-    value: 0.75             // 0.0 - 1.0
-    lineWidth: 5 * Theme.dpiScale
-    progressColor: Theme.widgetCpu
-    trackColor: Theme.fade(Theme.widgetCpu, 0.15)
-
-    // Center content slot
-    Text { text: "75%"; anchors.centerIn: parent }
-}
-```
-
-### SlidePanel — slide-in panel
-
-```qml
-Components.SlidePanel {
-    edge: "right"        // "left" | "right"
-    panelWidth: 420 * Theme.dpiScale
-    shown: Panels.isOpen("sidebar")
-
-    // Children go in content slot
-    ColumnLayout { ... }
-}
-```
+Features:
+- "Apply Theme" toggle pill — controls whether theme colors update with wallpaper
+- Apply button + current wallpaper indicator
+- Preview overlay (right-click in grid view)
 
 ## How to Add a New Module
 
@@ -364,22 +461,13 @@ plans/somewm-shell/modules/mymodule/
 └── qmldir          # Module registration
 ```
 
-### 2. Write the qmldir
-
-```
-module mymodule
-MyModule 1.0 MyModule.qml
-```
-
-### 3. Write the panel (overlay example)
+### 2. Write the panel (overlay example)
 
 ```qml
 import QtQuick
-import QtQuick.Layouts
 import Quickshell
 import Quickshell.Wayland
 import "../../core" as Core
-import "../../services" as Services
 import "../../components" as Components
 
 Variants {
@@ -429,16 +517,13 @@ Variants {
             }
 
             Components.GlassCard {
-                elevated: true
                 anchors.centerIn: parent
-                width: 500 * Core.Theme.dpiScale
-                height: 400 * Core.Theme.dpiScale
+                width: Math.round(500 * Core.Theme.dpiScale)
+                height: Math.round(400 * Core.Theme.dpiScale)
 
-                // Your content here
                 ColumnLayout {
                     anchors.fill: parent
                     anchors.margins: Core.Theme.spacing.xl
-                    // ...
                 }
             }
         }
@@ -446,159 +531,29 @@ Variants {
 }
 ```
 
-### 4. Register in shell.qml
+### 3. Register in shell.qml + config + Panels exclusive list + rc.lua keybinding
 
-```qml
-import "modules/mymodule" as MyModuleNS
+See existing modules for reference.
 
-// Inside ShellRoot:
-Modules.ModuleLoader {
-    moduleName: "mymodule"
-    sourceComponent: Component { MyModuleNS.MyModule {} }
-}
-```
-
-### 5. Add to Panels.qml exclusive list
-
-In `Panels.qml`, add `"mymodule"` to the `exclusive` array (line ~36 and ~59)
-so opening your panel closes others.
-
-### 6. Add keybinding in rc.lua
-
-```lua
-awful.key({ modkey, "Shift" }, "x", function()
-    awful.spawn("qs ipc -c somewm call somewm-shell:panels toggle mymodule")
-end, { description = "toggle my module", group = "shell" })
-```
-
-### 7. Enable in config
-
-Add to `config.default.json`:
-```json
-"mymodule": { "enabled": true }
-```
-
-## How to Add a New Service
-
-### 1. Create the service singleton
-
-```qml
-// services/MyService.qml
-pragma Singleton
-import QtQuick
-import Quickshell
-
-Singleton {
-    id: root
-
-    // Public properties (UI binds to these)
-    property string myData: ""
-
-    // Timer polling (for data that can't use inotify/push)
-    Timer {
-        interval: 5000
-        running: true; repeat: true; triggeredOnStart: true
-        onTriggered: fetchProc.running = true
-    }
-
-    Process {
-        id: fetchProc
-        command: ["my-command", "--json"]
-        stdout: StdioCollector {
-            onStreamFinished: {
-                // Parse and update properties
-                root.myData = text.trim()
-            }
-        }
-    }
-}
-```
-
-### 2. Register in services/qmldir
-
-```
-singleton MyService 1.0 MyService.qml
-```
-
-### 3. Use from any module
-
-```qml
-import "../../services" as Services
-
-Text { text: Services.MyService.myData }
-```
-
-## How to Add a New Component
-
-### 1. Create the component file
-
-```qml
-// components/MyWidget.qml
-import QtQuick
-import "../core" as Core
-
-Item {
-    id: root
-    property string label: ""
-    // ...
-}
-```
-
-### 2. Register in components/qmldir
-
-```
-MyWidget 1.0 MyWidget.qml
-```
-
-### 3. Use from any module
-
-```qml
-import "../../components" as Components
-
-Components.MyWidget { label: "Hello" }
-```
-
-## Design Principles (Modern 2025 Approach)
+## Design Principles
 
 ### DO
 
 - **Color layering** for depth — `surfaceBase → surfaceContainer → surfaceContainerHigh`
+- **MD3 BezierSpline curves** for premium animations (dashboard, carousel, gauges)
+- **Lazy polling** — NEVER poll data when panel/tab is not visible
 - **Flat colors** — single accent color on interactive elements, neutral elsewhere
-- **Minimal borders** — 1px at 6% opacity, only for structure (not decoration)
-- **Restraint** — accent color on interactive elements only, neutral text/backgrounds
-- **Semi-bold typography** — `Font.DemiBold` for headers, `Font.Medium` for emphasis
-- **Smooth animations** — 250-400ms with eased curves, never linear
-- **Consistent spacing** — always use `Theme.spacing.*` tokens
+- **Minimal borders** — 1px at 6% opacity, only for structure
+- **dpiScale on all sizes** — `Math.round(N * Core.Theme.dpiScale)` for hardcoded px values
+- **Smooth animations** — 250-500ms with eased curves, never linear
 
 ### DO NOT
 
 - ~~Drop shadows~~ — use color layering instead
-- ~~Gradients on buttons/sliders~~ — flat color only
-- ~~Glow effects~~ — never
-- ~~Font.Thin/Light~~ — use Medium/DemiBold for hierarchy
-- ~~Canvas gradient separators~~ — use simple `Separator` component
-- ~~Heavy borders~~ — 0.06 opacity max for idle state
-- ~~Top-edge highlights~~ — no 2005 glass morphism
-
-### Color usage rules
-
-- **Interactive elements** (buttons, toggles, sliders): accent color
-- **Active states** (WiFi on, BT on): accent-tinted card background (8% alpha)
-- **Text**: `fgMain` for primary, `fgDim` for secondary, `fgMuted` for disabled
-- **Backgrounds**: surface hierarchy — never bright/saturated
-- **Widget-specific** (CPU, memory, volume): use `widget*` colors to match wibar
-
-## somewm-shell-ai (Optional)
-
-Separate sub-project at `plans/somewm-shell-ai/` — AI chat via local Ollama.
-Imported optionally into shell.qml:
-
-```qml
-import "../somewm-shell-ai/modules/chat" as AiChat
-AiChat.ChatPanel {}
-```
-
-Requires `ollama` running locally. Not loaded by default.
+- ~~Background polling~~ — gate with visibility flags (perfTabActive, mediaTabActive)
+- ~~Gradients on buttons~~ — flat color only
+- ~~Glow effects~~ — never (except subtle arc gauge endpoint dot)
+- ~~Hardcoded pixel sizes~~ — always multiply by dpiScale
 
 ## Quick Reference
 
@@ -606,7 +561,7 @@ Requires `ollama` running locally. Not loaded by default.
 # Deploy
 plans/somewm-shell/deploy.sh
 
-# Deploy + restart (from running somewm session)
+# Deploy + restart
 plans/somewm-shell/deploy.sh && kill $(pgrep -f 'qs -c somewm'); qs -c somewm -n -d &
 
 # Run tests
@@ -618,7 +573,7 @@ cat ~/.config/somewm/themes/default/theme.json
 # Export theme from Lua to JSON
 bash plans/theme-export.sh
 
-# IPC test (from another terminal)
+# IPC test
 qs ipc -c somewm call somewm-shell:panels toggle dashboard
 
 # Config location

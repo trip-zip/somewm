@@ -41,7 +41,10 @@ Item {
                         Layout.fillWidth: true
                         Layout.preferredHeight: 44
 
-                        onClicked: Services.Compositor.focusClient(modelData.wid)
+                        onClicked: {
+                            Services.Compositor.focusClient(modelData.wid)
+                            Core.Panels.close("dashboard")
+                        }
 
                         RowLayout {
                             anchors.fill: parent

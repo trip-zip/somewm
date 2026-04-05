@@ -46,7 +46,9 @@ Singleton {
         var wid = parseInt(windowId)
         if (isNaN(wid) || wid === 0) return
         _run("for _,c in ipairs(client.get()) do " +
-             "if c.window==" + wid + " then c:activate{raise=true} return end end")
+             "if c.window==" + wid + " then " +
+             "if c.first_tag then c.first_tag:view_only() end; " +
+             "c:activate{raise=true} return end end")
     }
 
     // Legacy: focus by class (first match)

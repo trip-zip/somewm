@@ -47,6 +47,36 @@ Singleton {
         root.ready = true
     }
 
+    // Set a nested config value and persist to file
+    // key: dot-separated path (e.g. "wallpapers.applyTheme")
+    // value: the value to set
+    function set(key, value) {
+        var parts = key.split(".")
+        var obj = Object.assign({}, _data)
+        var current = obj
+        for (var i = 0; i < parts.length - 1; i++) {
+            if (!current[parts[i]] || typeof current[parts[i]] !== "object") {
+                current[parts[i]] = {}
+            } else {
+                current[parts[i]] = Object.assign({}, current[parts[i]])
+            }
+            current = current[parts[i]]
+        }
+        current[parts[parts.length - 1]] = value
+        _data = obj
+        // Persist to file
+        _saveConfig()
+    }
+
+    function _saveConfig() {
+        saveProc.command = ["bash", "-c",
+            "cat > '" + configFile.path + "' << 'CONFIGEOF'\n" +
+            JSON.stringify(_data, null, 2) + "\nCONFIGEOF"]
+        saveProc.running = true
+    }
+
+    Process { id: saveProc }
+
     Component.onCompleted: {
         _loadConfig()
         Core.Anims.scale = animationScale

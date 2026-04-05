@@ -484,68 +484,13 @@ screen.connect_signal("request::desktop_decoration", function(s)
     }
 
     -- =========================================================================
-    -- Tag-based Wallpaper System (awful.wallpaper API + preload cache)
+    -- Tag-based Wallpaper System (via fishlive.services.wallpaper)
     -- =========================================================================
     local wppath = gears.filesystem.get_configuration_dir()
         .. "themes/" .. themeName .. "/wallpapers/"
 
-    -- Wallpaper per tag: tag name (1-9) maps to wallpapers/N.jpg
-    -- Default fallback for tags without a matching wallpaper file
-    local default_wallpaper = "1.jpg"
-
-    -- Track current wallpaper per screen to skip redundant updates
-    s.current_wallpaper = nil
-    s._wppath = wppath  -- exposed for tag_slide animation
-
-    -- Set wallpaper using awful.wallpaper (new API, HiDPI-aware)
-    local function set_wallpaper(scr, wallpaper_file)
-        if scr.current_wallpaper == wallpaper_file then return end
-        local path = wppath .. wallpaper_file
-        if not gears.filesystem.file_readable(path) then
-            path = wppath .. default_wallpaper
-            wallpaper_file = default_wallpaper
-        end
-        awful.wallpaper {
-            screen = scr,
-            widget = {
-                {
-                    image     = path,
-                    upscale   = true,
-                    downscale = true,
-                    widget    = wibox.widget.imagebox,
-                },
-                valign = "center",
-                halign = "center",
-                tiled  = false,
-                widget = wibox.container.tile,
-            }
-        }
-        scr.current_wallpaper = wallpaper_file
-    end
-
-    -- Initial wallpaper
-    set_wallpaper(s, default_wallpaper)
-
-    -- Pre-cache all wallpapers for tag_slide animation overlays
-    if root.wallpaper_cache_preload then
-        local paths = {}
-        for i = 1, 9 do
-            local wp = wppath .. i .. ".jpg"
-            if gears.filesystem.file_readable(wp) then
-                table.insert(paths, wp)
-            end
-        end
-        if #paths > 0 then root.wallpaper_cache_preload(paths, s) end
-    end
-
-    -- Switch wallpaper on tag selection: tag name -> wallpapers/name.jpg
-    for _, tag in ipairs(s.tags) do
-        tag:connect_signal("property::selected", function(t)
-            if t.selected then
-                set_wallpaper(t.screen, t.name .. ".jpg")
-            end
-        end)
-    end
+    local wp_service = require("fishlive.services.wallpaper")
+    wp_service.init(s, wppath, "1.jpg")
 end)
 
 -- }}}
@@ -610,11 +555,11 @@ awful.keyboard.append_global_keybindings({
         awful.spawn("qs ipc -c somewm call somewm-shell:panels toggle dashboard")
     end, { description = "toggle dashboard", group = "shell" }),
     awful.key({ modkey }, "z", function()
-        awful.spawn("qs ipc -c somewm call somewm-shell:panels toggle sidebar")
-    end, { description = "toggle sidebar", group = "shell" }),
+        awful.spawn("qs ipc -c somewm call somewm-shell:panels toggle notifications")
+    end, { description = "toggle notifications tab", group = "shell" }),
     awful.key({ modkey, "Shift" }, "m", function()
         awful.spawn("qs ipc -c somewm call somewm-shell:panels toggle media")
-    end, { description = "toggle media player", group = "shell" }),
+    end, { description = "toggle media tab", group = "shell" }),
     awful.key({ modkey, "Shift" }, "w", function()
         awful.spawn("qs ipc -c somewm call somewm-shell:panels toggle wallpapers")
     end, { description = "toggle wallpaper picker", group = "shell" }),

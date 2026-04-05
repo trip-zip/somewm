@@ -5,12 +5,44 @@ import Quickshell
 Singleton {
     id: root
 
-    // Panel dimensions
-    readonly property int sidebarWidth: 420
-    readonly property int dashboardMaxWidth: 700
-    readonly property int dashboardMaxHeight: 600
-    readonly property int mediaMaxWidth: 600
-    readonly property int mediaHeight: 280
+    // Dashboard — bottom-slide panel (compact Caelestia-style)
+    readonly property real dashboardScale: 1.0         // dashboard content scale
+    readonly property int dashboardMarginH: 40         // horizontal margin from screen edge (min)
+    readonly property int dashboardMarginBottom: 20    // bottom margin
+    readonly property int dashboardMaxHeight: 600      // max height before capping (pre-scale)
+    readonly property int dashboardTopCurveHeight: 32  // concave curve height (pre-scale)
+    readonly property int tabBarHeight: 56             // tab bar height (pre-scale)
+    readonly property int tabIndicatorHeight: 3        // tab indicator thickness
+
+    // Arc gauges (Performance tab)
+    readonly property int arcGaugeSize: 180            // ring gauge diameter (pre-scale)
+    readonly property int arcGaugeLineWidth: 10        // ring stroke width (pre-scale)
+
+    // Performance HeroCard
+    readonly property int heroCardHeight: 150          // HeroCard height (pre-scale)
+    readonly property int gaugeCardHeight: 200         // GaugeCard height (pre-scale)
+
+    // Dashboard Home tab
+    readonly property int dashWeatherWidth: 250        // weather card width
+    readonly property int dashDateTimeWidth: 80        // datetime column width
+    readonly property int dashMediaWidth: 200          // mini media card width
+    readonly property int dashInfoWidth: 200           // system info text width
+    readonly property int dashResourceBarThickness: 8  // vertical resource bar width
+
+    // Media tab (Caelestia-style)
+    readonly property int dashMediaCoverSize: 150      // album art circle diameter
+    readonly property int dashMediaVisualiserSize: 80  // radial bars extra radius
+    readonly property int dashMediaProgressSweep: 180  // arc progress sweep degrees
+    readonly property int dashMediaProgressThickness: 6 // arc progress stroke width
+    readonly property int mediaBarCount: 24            // frequency bars count
+
+    // Wallpaper carousel
+    readonly property int carouselItemWidth: 400       // normal item width (pre-scale)
+    readonly property int carouselItemHeight: 280      // item height (pre-scale)
+    readonly property real carouselSkew: -0.35         // isometric skew factor
+    readonly property real carouselFocusScale: 1.4     // focused item scale
+
+    // Legacy (keep for OSD, weather, collage — unchanged)
     readonly property int osdWidth: 280
     readonly property int osdHeight: 60
     readonly property int weatherWidth: 360
@@ -30,5 +62,7 @@ Singleton {
     readonly property int osdTimeout: 2000       // OSD auto-hide (ms)
     readonly property int debounceInterval: 50   // IPC debounce (ms)
     readonly property int statsInterval: 2000    // SystemStats refresh (ms)
+    readonly property int gpuInterval: 3000      // GPU polling (ms)
+    readonly property int diskInterval: 60000    // Disk polling (ms)
     readonly property int weatherCache: 3600000  // Weather cache (1h in ms)
 }

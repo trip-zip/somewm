@@ -7,3 +7,4 @@ singleton Brightness Brightness.qml
 singleton Weather Weather.qml
 singleton Wallpapers Wallpapers.qml
 singleton Network Network.qml
+singleton CavaService CavaService.qml

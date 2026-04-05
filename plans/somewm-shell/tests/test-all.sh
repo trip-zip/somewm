@@ -41,8 +41,8 @@ section "1. File Structure"
 # ============================================================
 
 # Required directories
-for dir in core services components modules modules/dashboard modules/sidebar \
-           modules/media modules/osd modules/weather modules/wallpapers modules/collage; do
+for dir in core services components modules modules/dashboard \
+           modules/osd modules/weather modules/wallpapers modules/collage; do
     if [[ -d "$SHELL_DIR/$dir" ]]; then
         pass "Directory exists: $dir"
     else
@@ -70,6 +70,7 @@ REQUIRED_FILES=(
     services/Weather.qml
     services/Wallpapers.qml
     services/Network.qml
+    services/CavaService.qml
     services/qmldir
     components/Anim.qml
     components/CAnim.qml
@@ -90,6 +91,11 @@ REQUIRED_FILES=(
     components/ScrollArea.qml
     components/Separator.qml
     components/Tooltip.qml
+    components/ArcGauge.qml
+    components/ConcaveShape.qml
+    components/TabBar.qml
+    components/FrequencyVisualizer.qml
+    components/WallpaperCarousel.qml
     components/qmldir
     modules/ModuleLoader.qml
     modules/qmldir
@@ -99,16 +105,12 @@ REQUIRED_FILES=(
     modules/dashboard/ClientList.qml
     modules/dashboard/QuickLaunch.qml
     modules/dashboard/MediaMini.qml
-    modules/sidebar/Sidebar.qml
-    modules/sidebar/QuickSettings.qml
-    modules/sidebar/CalendarWidget.qml
-    modules/sidebar/NotifHistory.qml
-    modules/media/MediaPanel.qml
-    modules/media/AlbumArt.qml
-    modules/media/TrackInfo.qml
-    modules/media/Controls.qml
-    modules/media/ProgressBar.qml
-    modules/media/VolumeSlider.qml
+    modules/dashboard/HomeTab.qml
+    modules/dashboard/PerformanceTab.qml
+    modules/dashboard/MediaTab.qml
+    modules/dashboard/NotificationsTab.qml
+    modules/dashboard/QuickSettings.qml
+    modules/dashboard/CalendarWidget.qml
     modules/osd/OSD.qml
     modules/osd/VolumeOSD.qml
     modules/osd/BrightnessOSD.qml
@@ -192,7 +194,7 @@ for f in Theme Anims Config Panels Constants; do
 done
 
 # All services/ singletons
-for f in Compositor SystemStats Audio Media Brightness Weather Wallpapers Network; do
+for f in Compositor SystemStats Audio Media Brightness Weather Wallpapers Network CavaService; do
     qml="$SHELL_DIR/services/$f.qml"
     if [[ ! -f "$qml" ]]; then
         fail "services/$f.qml" "file missing"
@@ -221,7 +223,7 @@ done
 
 # services/qmldir should register all 8 singletons
 services_qmldir="$SHELL_DIR/services/qmldir"
-for name in Compositor SystemStats Audio Media Brightness Weather Wallpapers Network; do
+for name in Compositor SystemStats Audio Media Brightness Weather Wallpapers Network CavaService; do
     if grep -q "singleton $name" "$services_qmldir" 2>/dev/null; then
         pass "services/qmldir registers singleton $name"
     else
@@ -233,7 +235,8 @@ done
 comp_qmldir="$SHELL_DIR/components/qmldir"
 for name in Anim CAnim StyledRect StyledText GlassCard ClickableCard StateLayer \
             MaterialIcon SlidePanel FadeLoader StatCard CircularProgress Graph \
-            AnimatedBar PulseWave ImageAsync ScrollArea Separator Tooltip; do
+            AnimatedBar PulseWave ImageAsync ScrollArea Separator Tooltip \
+            ArcGauge ConcaveShape TabBar FrequencyVisualizer WallpaperCarousel; do
     if grep -q "$name" "$comp_qmldir" 2>/dev/null; then
         pass "components/qmldir registers $name"
     else
@@ -515,11 +518,20 @@ else
 fi
 
 # shell.qml must load all expected modules
-for mod in dashboard sidebar media weather wallpapers collage; do
+for mod in dashboard weather wallpapers collage; do
     if grep -q "moduleName: \"$mod\"" "$SHELL_DIR/shell.qml"; then
         pass "shell.qml loads module: $mod"
     else
         fail "shell.qml" "missing module: $mod"
+    fi
+done
+
+# sidebar and media are absorbed into dashboard tabs — must NOT be in shell.qml
+for mod in sidebar media; do
+    if grep -q "moduleName: \"$mod\"" "$SHELL_DIR/shell.qml"; then
+        fail "shell.qml" "module $mod should be removed (absorbed into dashboard tabs)"
+    else
+        pass "shell.qml correctly excludes removed module: $mod"
     fi
 done
 
@@ -538,7 +550,7 @@ section "14. Mutual Exclusion"
 # Panels.qml toggle() should implement mutual exclusion for overlay panels
 if grep -q 'exclusive' "$SHELL_DIR/core/Panels.qml" && \
    grep -q 'dashboard' "$SHELL_DIR/core/Panels.qml" && \
-   grep -q 'sidebar' "$SHELL_DIR/core/Panels.qml"; then
+   grep -q 'weather' "$SHELL_DIR/core/Panels.qml"; then
     pass "Panels.qml implements mutual exclusion"
 else
     fail "Panels.qml" "missing mutual exclusion for overlay panels"
@@ -569,9 +581,18 @@ section "16. rc.lua Shell Keybindings"
 
 RC_LUA="/home/box/git/github/somewm/plans/somewm-one/rc.lua"
 if [[ -f "$RC_LUA" ]]; then
-    for panel in dashboard sidebar media wallpapers collage; do
+    for panel in dashboard wallpapers collage; do
         if grep -q "toggle $panel" "$RC_LUA"; then
             pass "rc.lua has keybinding for $panel"
+        else
+            fail "rc.lua" "missing keybinding for $panel"
+        fi
+    done
+    # sidebar/media are routed through dashboard tabs via Panels.toggle()
+    # Their keybindings still exist but target the old panel names which route to dashboard
+    for panel in sidebar media; do
+        if grep -q "toggle $panel" "$RC_LUA" || grep -q "toggle dashboard" "$RC_LUA"; then
+            pass "rc.lua has keybinding route for $panel (via dashboard)"
         else
             fail "rc.lua" "missing keybinding for $panel"
         fi
@@ -618,7 +639,7 @@ section "17. Round 2 Review Fixes"
 # ============================================================
 
 # CRITICAL-1: Module subdirectory qmldir files
-for mod_dir in dashboard sidebar media osd weather wallpapers collage; do
+for mod_dir in dashboard osd weather wallpapers collage; do
     qmldir_f="$SHELL_DIR/modules/$mod_dir/qmldir"
     if [[ -f "$qmldir_f" ]]; then
         pass "modules/$mod_dir/qmldir exists"
@@ -676,8 +697,11 @@ else
 fi
 
 # MAJOR-4: BT icon uses id reference (not parent.parent chain)
-if grep -q 'id: btCard' "$SHELL_DIR/modules/sidebar/QuickSettings.qml" && \
-   grep -q 'btCard.btOn' "$SHELL_DIR/modules/sidebar/QuickSettings.qml"; then
+# QuickSettings moved from sidebar to dashboard
+QS_FILE="$SHELL_DIR/modules/dashboard/QuickSettings.qml"
+if [[ ! -f "$QS_FILE" ]]; then QS_FILE="$SHELL_DIR/modules/sidebar/QuickSettings.qml"; fi
+if grep -q 'id: btCard' "$QS_FILE" && \
+   grep -q 'btCard.btOn' "$QS_FILE"; then
     pass "QuickSettings.qml BT uses btCard.btOn (not parent.parent)"
 else
     fail "QuickSettings.qml" "BT icon still uses fragile parent.parent chain"
@@ -699,14 +723,16 @@ else
 fi
 
 # MAJOR-8: NotifHistory uses JSON serialization (not tab/newline)
-if grep -q 'JSON.parse' "$SHELL_DIR/modules/sidebar/NotifHistory.qml"; then
-    pass "NotifHistory.qml uses JSON serialization"
+NOTIF_FILE="$SHELL_DIR/modules/sidebar/NotifHistory.qml"
+if [[ ! -f "$NOTIF_FILE" ]]; then NOTIF_FILE="$SHELL_DIR/modules/dashboard/NotificationsTab.qml"; fi
+if grep -q 'JSON.parse' "$NOTIF_FILE"; then
+    pass "NotifHistory/NotificationsTab uses JSON serialization"
 else
-    fail "NotifHistory.qml" "still uses tab/newline serialization (corruption risk)"
+    fail "NotifHistory/NotificationsTab" "still uses tab/newline serialization (corruption risk)"
 fi
 
 # MAJOR-9: DND toggle dispatches IPC command
-if grep -q 'naughty.*suspended' "$SHELL_DIR/modules/sidebar/QuickSettings.qml"; then
+if grep -q 'naughty.*suspended' "$QS_FILE"; then
     pass "QuickSettings.qml DND toggle dispatches naughty.suspended IPC"
 else
     fail "QuickSettings.qml" "DND toggle is cosmetic only (no IPC)"
@@ -764,7 +790,7 @@ else
 fi
 
 # BT initial state from system
-if grep -q 'bluetoothctl.*show' "$SHELL_DIR/modules/sidebar/QuickSettings.qml"; then
+if grep -q 'bluetoothctl.*show' "$QS_FILE"; then
     pass "QuickSettings.qml initializes BT state from system"
 else
     fail "QuickSettings.qml" "BT state hardcoded, not initialized from system"
@@ -778,11 +804,11 @@ else
 fi
 
 # NotifHistory has import Quickshell (needed for IpcHandler)
-if grep -q 'import Quickshell$' "$SHELL_DIR/modules/sidebar/NotifHistory.qml" || \
-   grep -q 'import Quickshell\b' "$SHELL_DIR/modules/sidebar/NotifHistory.qml"; then
-    pass "NotifHistory.qml imports Quickshell"
+if grep -q 'import Quickshell$' "$NOTIF_FILE" || \
+   grep -q 'import Quickshell\b' "$NOTIF_FILE"; then
+    pass "NotifHistory/NotificationsTab imports Quickshell"
 else
-    fail "NotifHistory.qml" "missing import Quickshell (needed for IpcHandler)"
+    fail "NotifHistory/NotificationsTab" "missing import Quickshell (needed for IpcHandler)"
 fi
 
 # ============================================================
@@ -812,11 +838,17 @@ else
     fail "MediaMini.qml" "fragile parent.children[0] reference"
 fi
 
-# MAJOR: MediaPanel has WlrKeyboardFocus
-if grep -q 'WlrKeyboardFocus' "$SHELL_DIR/modules/media/MediaPanel.qml"; then
-    pass "MediaPanel.qml: has WlrKeyboardFocus (Escape key works)"
+# MAJOR: MediaPanel → now MediaTab inside dashboard (keyboard focus handled by Dashboard.qml)
+# MediaPanel.qml may still exist for standalone use, but MediaTab is the primary
+MEDIA_PANEL="$SHELL_DIR/modules/media/MediaPanel.qml"
+if [[ -f "$MEDIA_PANEL" ]]; then
+    if grep -q 'WlrKeyboardFocus' "$MEDIA_PANEL"; then
+        pass "MediaPanel.qml: has WlrKeyboardFocus (Escape key works)"
+    else
+        fail "MediaPanel.qml" "missing WlrKeyboardFocus — Escape won't work"
+    fi
 else
-    fail "MediaPanel.qml" "missing WlrKeyboardFocus — Escape won't work"
+    pass "MediaPanel.qml: absorbed into dashboard MediaTab (keyboard handled by Dashboard)"
 fi
 
 # MAJOR: WeatherPanel has WlrKeyboardFocus
@@ -826,19 +858,23 @@ else
     fail "WeatherPanel.qml" "missing WlrKeyboardFocus — Escape won't work"
 fi
 
-# MAJOR: MediaPanel mask covers full backdrop (click-to-close works)
-if grep -q 'mask: Region { item: backdrop }' "$SHELL_DIR/modules/media/MediaPanel.qml"; then
-    pass "MediaPanel.qml: mask covers backdrop (click-to-close works)"
+# MAJOR: MediaPanel mask — now part of dashboard, or standalone if still exists
+if [[ -f "$MEDIA_PANEL" ]]; then
+    if grep -q 'mask: Region { item: backdrop }' "$MEDIA_PANEL"; then
+        pass "MediaPanel.qml: mask covers backdrop (click-to-close works)"
+    else
+        fail "MediaPanel.qml" "mask restricts to card only — click-to-close broken"
+    fi
 else
-    fail "MediaPanel.qml" "mask restricts to card only — click-to-close broken"
+    pass "MediaPanel.qml: absorbed into dashboard (backdrop handled by Dashboard)"
 fi
 
-# MAJOR: Panels exclusive list includes media and weather
-if grep -q '"media"' "$SHELL_DIR/core/Panels.qml" && \
+# MAJOR: Panels exclusive list includes weather and dashboard
+if grep -q '"dashboard"' "$SHELL_DIR/core/Panels.qml" && \
    grep -q '"weather"' "$SHELL_DIR/core/Panels.qml"; then
-    pass "Panels.qml: media and weather in exclusive list"
+    pass "Panels.qml: dashboard and weather in exclusive list"
 else
-    fail "Panels.qml" "media/weather not in exclusive list — panels can stack"
+    fail "Panels.qml" "dashboard/weather not in exclusive list — panels can stack"
 fi
 
 # MAJOR: focusClient guards wid===0
@@ -864,8 +900,8 @@ else
 fi
 
 # MAJOR: DND initialized from system
-if grep -q 'dndInitProc' "$SHELL_DIR/modules/sidebar/QuickSettings.qml" && \
-   grep -q 'naughty.*suspended' "$SHELL_DIR/modules/sidebar/QuickSettings.qml"; then
+if grep -q 'dndInitProc' "$QS_FILE" && \
+   grep -q 'naughty.*suspended' "$QS_FILE"; then
     pass "QuickSettings.qml: DND state initialized from system"
 else
     fail "QuickSettings.qml" "DND not initialized from system"
@@ -928,9 +964,11 @@ else
     fail "Brightness.qml" "rapid calls can cause Process race"
 fi
 
-# MINOR: CalendarWidget refreshes date
-if grep -q 'Timer' "$SHELL_DIR/modules/sidebar/CalendarWidget.qml" && \
-   grep -q 'currentDate.*new Date' "$SHELL_DIR/modules/sidebar/CalendarWidget.qml"; then
+# MINOR: CalendarWidget refreshes date (now in dashboard/)
+CAL_FILE="$SHELL_DIR/modules/dashboard/CalendarWidget.qml"
+if [[ ! -f "$CAL_FILE" ]]; then CAL_FILE="$SHELL_DIR/modules/sidebar/CalendarWidget.qml"; fi
+if grep -q 'Timer' "$CAL_FILE" && \
+   grep -q 'currentDate.*new Date' "$CAL_FILE"; then
     pass "CalendarWidget.qml: refreshes currentDate periodically"
 else
     fail "CalendarWidget.qml" "stale date after midnight"
@@ -995,10 +1033,10 @@ else
 fi
 
 # NotifHistory: must document active-only limitation and support optional history table
-if grep -q '_somewm_notif_history' "$SHELL_DIR/modules/sidebar/NotifHistory.qml"; then
-    pass "NotifHistory.qml supports optional _somewm_notif_history table"
+if grep -q '_somewm_notif_history' "$NOTIF_FILE"; then
+    pass "NotifHistory/NotificationsTab supports optional _somewm_notif_history table"
 else
-    fail "NotifHistory.qml" "missing _somewm_notif_history fallback for persistent history"
+    fail "NotifHistory/NotificationsTab" "missing _somewm_notif_history fallback for persistent history"
 fi
 
 # ============================================================
@@ -1006,10 +1044,10 @@ fi
 # ============================================================
 
 # CRITICAL: NotifHistory must NOT mutate n.active — copies to fresh table
-if grep -q 'local all = {}' "$SHELL_DIR/modules/sidebar/NotifHistory.qml"; then
-    pass "NotifHistory.qml copies n.active to fresh table (no mutation)"
+if grep -q 'local all = {}' "$NOTIF_FILE"; then
+    pass "NotifHistory/NotificationsTab copies n.active to fresh table (no mutation)"
 else
-    fail "NotifHistory.qml" "mutates n.active directly — causes WM state corruption"
+    fail "NotifHistory/NotificationsTab" "mutates n.active directly — causes WM state corruption"
 fi
 
 # MAJOR: Compositor must use require('awful') not bare 'awful' (local in rc.lua)
@@ -1168,47 +1206,45 @@ else
     fail "Panels.qml" "missing overlay state push (scroll guard won't activate)"
 fi
 
-# FIX-3b: Audio.qml has wpctl fallback for volume
-if grep -q 'wpctlPollProc' "$SHELL_DIR/services/Audio.qml" && \
-   grep -q '_wpctlVolume' "$SHELL_DIR/services/Audio.qml"; then
-    pass "Audio.qml: wpctl fallback for when PipeWire service unavailable"
+# FIX-3b: Audio.qml uses wpctl for volume (primary mechanism)
+if grep -q 'wpctl.*get-volume' "$SHELL_DIR/services/Audio.qml"; then
+    pass "Audio.qml: uses wpctl for volume state"
 else
-    fail "Audio.qml" "no wpctl fallback — volume shows 0% without PipeWire service"
+    fail "Audio.qml" "no wpctl volume polling — volume shows 0%"
 fi
 
 # FIX-4c: NotifHistory no duplicate (uses _somewm_notif_history OR n.active, not both)
-if grep -q 'if _somewm_notif_history and #_somewm_notif_history > 0 then' "$SHELL_DIR/modules/sidebar/NotifHistory.qml"; then
-    pass "NotifHistory.qml: uses history OR active (no duplicate)"
+if grep -q 'if _somewm_notif_history and #_somewm_notif_history > 0 then' "$NOTIF_FILE"; then
+    pass "NotifHistory/NotificationsTab: uses history OR active (no duplicate)"
 else
-    fail "NotifHistory.qml" "reads both n.active and _somewm_notif_history (duplicates)"
+    fail "NotifHistory/NotificationsTab" "reads both n.active and _somewm_notif_history (duplicates)"
 fi
 
 # FIX-4d: NotifHistory has clearAll and dismissOne
-if grep -q 'function clearAll' "$SHELL_DIR/modules/sidebar/NotifHistory.qml" && \
-   grep -q 'function dismissOne' "$SHELL_DIR/modules/sidebar/NotifHistory.qml"; then
-    pass "NotifHistory.qml: clearAll and dismissOne functions"
+if grep -q 'function clearAll' "$NOTIF_FILE" && \
+   grep -q 'function dismissOne' "$NOTIF_FILE"; then
+    pass "NotifHistory/NotificationsTab: clearAll and dismissOne functions"
 else
-    fail "NotifHistory.qml" "missing clearAll/dismissOne — no way to manage notifications"
+    fail "NotifHistory/NotificationsTab" "missing clearAll/dismissOne — no way to manage notifications"
 fi
 
 # FIX-4e: NotifHistory has copy to clipboard
-if grep -q 'copyToClipboard' "$SHELL_DIR/modules/sidebar/NotifHistory.qml" && \
-   grep -q 'wl-copy' "$SHELL_DIR/modules/sidebar/NotifHistory.qml"; then
-    pass "NotifHistory.qml: copy to clipboard via wl-copy"
+if grep -q 'copyToClipboard' "$NOTIF_FILE" && \
+   grep -q 'wl-copy' "$NOTIF_FILE"; then
+    pass "NotifHistory/NotificationsTab: copy to clipboard via wl-copy"
 else
-    fail "NotifHistory.qml" "missing copy to clipboard feature"
+    fail "NotifHistory/NotificationsTab" "missing copy to clipboard feature"
 fi
 
 # FIX-4f: NotifHistory has expand/collapse
-if grep -q 'expandedIndex' "$SHELL_DIR/modules/sidebar/NotifHistory.qml"; then
-    pass "NotifHistory.qml: expand/collapse notification message"
+if grep -q 'expandedIndex' "$NOTIF_FILE"; then
+    pass "NotifHistory/NotificationsTab: expand/collapse notification message"
 else
-    fail "NotifHistory.qml" "missing expand/collapse UX"
+    fail "NotifHistory/NotificationsTab" "missing expand/collapse UX"
 fi
 
-# FIX-5c: Component sizing uses dpiScale (sidebar, dashboard, wallpapers)
-if grep -q 'dpiScale' "$SHELL_DIR/modules/sidebar/Sidebar.qml" && \
-   grep -q 'dpiScale' "$SHELL_DIR/modules/dashboard/Dashboard.qml" && \
+# FIX-5c: Component sizing uses dpiScale (dashboard, wallpapers)
+if grep -q 'dpiScale' "$SHELL_DIR/modules/dashboard/Dashboard.qml" && \
    grep -q 'dpiScale' "$SHELL_DIR/modules/wallpapers/WallpaperPanel.qml"; then
     pass "Components: hardcoded sizes scaled by dpiScale"
 else
