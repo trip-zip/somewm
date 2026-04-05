@@ -144,7 +144,7 @@ Item {
         // Clear all button
         Rectangle {
             visible: root.notifications.length > 0
-            width: Math.round(32 * sp); height: width
+            width: Math.round(36 * sp); height: width
             radius: width / 2
             color: clearMa.containsMouse ? Qt.rgba(Core.Theme.urgent.r, Core.Theme.urgent.g, Core.Theme.urgent.b, 0.15) : "transparent"
 
@@ -152,7 +152,7 @@ Item {
                 anchors.centerIn: parent
                 text: "\ue872"  // delete_sweep
                 font.family: Core.Theme.fontIcon
-                font.pixelSize: Math.round(16 * sp)
+                font.pixelSize: Math.round(18 * sp)
                 color: clearMa.containsMouse ? Core.Theme.urgent : Core.Theme.fgMuted
             }
             MouseArea {
@@ -336,7 +336,7 @@ Item {
                                 }
                             }
 
-                            // Hover actions
+                            // Hover actions (no hoverEnabled on children — prevents flicker loop)
                             Row {
                                 visible: notifCard.isHovered && !notifMouse.dragging
                                 spacing: Math.round(4 * sp)
@@ -345,10 +345,10 @@ Item {
                                     text: "\ue14d"  // content_copy
                                     font.family: Core.Theme.fontIcon
                                     font.pixelSize: Math.round(14 * sp)
-                                    color: copyBtnMa.containsMouse ? Core.Theme.accent : Core.Theme.fgMuted
+                                    color: Core.Theme.fgDim
                                     MouseArea {
-                                        id: copyBtnMa; anchors.fill: parent
-                                        hoverEnabled: true; cursorShape: Qt.PointingHandCursor
+                                        anchors.fill: parent
+                                        cursorShape: Qt.PointingHandCursor
                                         onClicked: root.copyToClipboard(modelData.title, modelData.message)
                                     }
                                 }
@@ -356,10 +356,10 @@ Item {
                                     text: "\ue5cd"  // close
                                     font.family: Core.Theme.fontIcon
                                     font.pixelSize: Math.round(14 * sp)
-                                    color: dismissBtnMa.containsMouse ? Core.Theme.urgent : Core.Theme.fgMuted
+                                    color: Core.Theme.fgDim
                                     MouseArea {
-                                        id: dismissBtnMa; anchors.fill: parent
-                                        hoverEnabled: true; cursorShape: Qt.PointingHandCursor
+                                        anchors.fill: parent
+                                        cursorShape: Qt.PointingHandCursor
                                         onClicked: root.dismissOne(notifCard.index)
                                     }
                                 }
