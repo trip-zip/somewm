@@ -1,6 +1,7 @@
 import QtQuick
 import QtQuick.Layouts
 import QtQuick.Shapes
+import QtQuick.Effects
 import Quickshell
 import "../../core" as Core
 import "../../services" as Services
@@ -80,28 +81,16 @@ GridLayout {
             padding: padLg
             spacing: spacNorm
 
-            // Avatar (Item layer wrapper for rounded clipping)
+            // Avatar (MultiEffect mask for rounded clipping)
             Item {
                 width: infoCol.implicitHeight
                 height: infoCol.implicitHeight
-                layer.enabled: true
-                layer.smooth: true
 
+                // Background + placeholder (visible when no image)
                 Rectangle {
                     anchors.fill: parent
                     radius: roundLg
                     color: Core.Theme.fade(Core.Theme.accent, 0.12)
-                    clip: true
-
-                    Image {
-                        id: avatarImg
-                        anchors.fill: parent
-                        anchors.margins: Math.round(2 * sp)
-                        source: "file://" + Quickshell.env("HOME") + "/.face"
-                        fillMode: Image.PreserveAspectCrop
-                        asynchronous: true
-                        visible: status === Image.Ready
-                    }
                     Text {
                         anchors.centerIn: parent
                         text: "\ue7fd"  // person
@@ -110,6 +99,31 @@ GridLayout {
                         color: Core.Theme.fgDim
                         visible: avatarImg.status !== Image.Ready
                     }
+                }
+
+                Image {
+                    id: avatarImg
+                    anchors.fill: parent
+                    anchors.margins: Math.round(2 * sp)
+                    source: "file://" + Quickshell.env("HOME") + "/.face"
+                    fillMode: Image.PreserveAspectCrop
+                    asynchronous: true
+                    visible: false
+                    layer.enabled: true
+                }
+                Item {
+                    id: avatarMask
+                    anchors.fill: parent
+                    visible: false
+                    layer.enabled: true
+                    Rectangle { anchors.fill: parent; radius: roundLg }
+                }
+                MultiEffect {
+                    anchors.fill: parent
+                    source: avatarImg
+                    maskEnabled: true
+                    maskSource: avatarMask
+                    visible: avatarImg.status === Image.Ready
                 }
             }
 
@@ -392,7 +406,7 @@ GridLayout {
             }
         }
 
-        // Cover art (circular — Item layer wrapper for clipping)
+        // Cover art (circular — MultiEffect mask for clipping)
         Item {
             id: coverWrapper
             anchors.top: parent.top
@@ -400,31 +414,43 @@ GridLayout {
             anchors.right: parent.right
             anchors.margins: padLg + progressThk + Math.round(7 * sp)
             height: width
-            layer.enabled: true
-            layer.smooth: true
 
             Rectangle {
                 anchors.fill: parent
                 radius: width / 2
                 color: Core.Theme.surfaceContainerHigh
-                clip: true
-
                 Text {
                     anchors.centerIn: parent
-                    text: "\ue030"  // music_note / art_track
+                    text: "\ue030"
                     font.family: Core.Theme.fontIcon
                     font.pixelSize: Math.round(parent.width * 0.4)
                     color: Core.Theme.fgMuted
                     visible: !Services.Media.artUrl
                 }
+            }
 
-                Image {
-                    id: coverImg
-                    anchors.fill: parent
-                    source: Services.Media.artUrl || ""
-                    asynchronous: true
-                    fillMode: Image.PreserveAspectCrop
-                }
+            Image {
+                id: coverImg
+                anchors.fill: parent
+                source: Services.Media.artUrl || ""
+                asynchronous: true
+                fillMode: Image.PreserveAspectCrop
+                visible: false
+                layer.enabled: true
+            }
+            Item {
+                id: coverMask
+                anchors.fill: parent
+                visible: false
+                layer.enabled: true
+                Rectangle { anchors.fill: parent; radius: parent.width / 2 }
+            }
+            MultiEffect {
+                anchors.fill: parent
+                source: coverImg
+                maskEnabled: true
+                maskSource: coverMask
+                visible: coverImg.status === Image.Ready
             }
         }
 

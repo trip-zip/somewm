@@ -1,6 +1,7 @@
 import QtQuick
 import QtQuick.Layouts
 import QtQuick.Shapes
+import QtQuick.Effects
 import "../../core" as Core
 import "../../services" as Services
 import "../../components" as Components
@@ -85,7 +86,7 @@ Item {
         }
     }
 
-    // === Album art (circular clip — Item layer wrapper) ===
+    // === Album art (circular clip — MultiEffect mask) ===
     Item {
         id: coverWrapper
         anchors.verticalCenter: parent.verticalCenter
@@ -93,15 +94,11 @@ Item {
         anchors.leftMargin: padLg + visSize
         width: coverSize
         height: coverSize
-        layer.enabled: true
-        layer.smooth: true
 
         Rectangle {
             anchors.fill: parent
             radius: coverSize / 2
             color: Core.Theme.surfaceContainerHigh
-            clip: true
-
             Text {
                 anchors.centerIn: parent
                 text: "\ue030"
@@ -110,12 +107,30 @@ Item {
                 color: Core.Theme.fgMuted
                 visible: !Services.Media.artUrl
             }
-            Image {
-                anchors.fill: parent
-                source: Services.Media.artUrl || ""
-                asynchronous: true
-                fillMode: Image.PreserveAspectCrop
-            }
+        }
+
+        Image {
+            id: mediaArtImg
+            anchors.fill: parent
+            source: Services.Media.artUrl || ""
+            asynchronous: true
+            fillMode: Image.PreserveAspectCrop
+            visible: false
+            layer.enabled: true
+        }
+        Item {
+            id: mediaCoverMask
+            anchors.fill: parent
+            visible: false
+            layer.enabled: true
+            Rectangle { anchors.fill: parent; radius: coverSize / 2 }
+        }
+        MultiEffect {
+            anchors.fill: parent
+            source: mediaArtImg
+            maskEnabled: true
+            maskSource: mediaCoverMask
+            visible: mediaArtImg.status === Image.Ready
         }
     }
 
