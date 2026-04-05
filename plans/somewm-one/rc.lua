@@ -550,12 +550,16 @@ end)
 
 -- }}}
 
+-- somewm-shell overlay state (set via IPC from Quickshell Panels.qml)
+-- When true, desktop scroll-to-switch-tags is suppressed
+_somewm_shell_overlay = false
+
 -- {{{ Mouse bindings
 -- @DOC_ROOT_BUTTONS@
 awful.mouse.append_global_mousebindings({
     -- right-click menu removed (clean desktop)
-    awful.button({ }, 4, awful.tag.viewprev),
-    awful.button({ }, 5, awful.tag.viewnext),
+    awful.button({ }, 4, function() if not _somewm_shell_overlay then awful.tag.viewprev() end end),
+    awful.button({ }, 5, function() if not _somewm_shell_overlay then awful.tag.viewnext() end end),
     awful.button({ modkey, altkey }, 4, function()
         awful.spawn("wpctl set-volume @DEFAULT_AUDIO_SINK@ 5%+")
     end),
@@ -601,29 +605,89 @@ awful.keyboard.append_global_keybindings({
     awful.key({ modkey }, "p", function() menubar.show() end,
               {description = "show the menubar", group = "launcher"}),
 
+    -- somewm-shell: panel toggles
+    awful.key({ modkey }, "d", function()
+        awful.spawn("qs ipc -c somewm call somewm-shell:panels toggle dashboard")
+    end, { description = "toggle dashboard", group = "shell" }),
+    awful.key({ modkey }, "z", function()
+        awful.spawn("qs ipc -c somewm call somewm-shell:panels toggle sidebar")
+    end, { description = "toggle sidebar", group = "shell" }),
+    awful.key({ modkey, "Shift" }, "m", function()
+        awful.spawn("qs ipc -c somewm call somewm-shell:panels toggle media")
+    end, { description = "toggle media player", group = "shell" }),
+    awful.key({ modkey, "Shift" }, "w", function()
+        awful.spawn("qs ipc -c somewm call somewm-shell:panels toggle wallpapers")
+    end, { description = "toggle wallpaper picker", group = "shell" }),
+    awful.key({ modkey, "Shift" }, "o", function()
+        awful.spawn("qs ipc -c somewm call somewm-shell:panels toggle collage")
+    end, { description = "toggle collage viewer", group = "shell" }),
+    awful.key({ modkey }, "c", function()
+        awful.spawn("qs ipc -c somewm call somewm-shell:panels closeAll")
+    end, { description = "close all shell panels", group = "shell" }),
+    awful.key({ modkey, "Shift" }, "e", function()
+        awful.spawn("qs ipc -c somewm call somewm-shell:panels toggle weather")
+    end, { description = "toggle weather", group = "shell" }),
+    awful.key({ modkey, "Shift" }, "a", function()
+        awful.spawn("qs ipc -c somewm call somewm-shell:panels toggle ai-chat")
+    end, { description = "toggle AI chat", group = "shell" }),
+
     -- machi layout special keybindings
     awful.key({ modkey }, ".", function() machi.default_editor.start_interactive() end,
         { description = "machi: edit the current machi layout", group = "layout" }),
     awful.key({ modkey }, "/", function() machi.switcher.start(client.focus) end,
         { description = "machi: switch between windows", group = "layout" }), 
         
-    -- Volume control (PipeWire/wpctl)
+    -- Volume control (PipeWire/wpctl) + OSD overlay
     awful.key({ modkey, altkey }, "k", function()
             awful.spawn("wpctl set-volume @DEFAULT_AUDIO_SINK@ 5%+")
+            awful.spawn.easy_async("wpctl get-volume @DEFAULT_AUDIO_SINK@", function(out)
+                local vol = tonumber(out:match("Volume:%s+([%d%.]+)"))
+                if vol then awful.spawn("qs ipc -c somewm call somewm-shell:panels showOsd volume " .. math.floor(vol * 100)) end
+            end)
         end,
         { description = "volume up", group = "audio" }),
     awful.key({ modkey, altkey }, "j", function()
             awful.spawn("wpctl set-volume @DEFAULT_AUDIO_SINK@ 5%-")
+            awful.spawn.easy_async("wpctl get-volume @DEFAULT_AUDIO_SINK@", function(out)
+                local vol = tonumber(out:match("Volume:%s+([%d%.]+)"))
+                if vol then awful.spawn("qs ipc -c somewm call somewm-shell:panels showOsd volume " .. math.floor(vol * 100)) end
+            end)
         end,
         { description = "volume down", group = "audio" }),
     awful.key({ modkey, altkey }, "m", function()
             awful.spawn("wpctl set-mute @DEFAULT_AUDIO_SINK@ toggle")
+            awful.spawn.easy_async("wpctl get-volume @DEFAULT_AUDIO_SINK@", function(out)
+                local vol = tonumber(out:match("Volume:%s+([%d%.]+)"))
+                local muted = out:match("%[MUTED%]")
+                awful.spawn("qs ipc -c somewm call somewm-shell:panels showOsd volume " .. (muted and "0" or math.floor((vol or 0) * 100)))
+            end)
         end,
         { description = "toggle mute", group = "audio" }),
     awful.key({ modkey, altkey }, "0", function()
             awful.spawn("wpctl set-volume @DEFAULT_AUDIO_SINK@ 0%")
+            awful.spawn("qs ipc -c somewm call somewm-shell:panels showOsd volume 0")
         end,
         { description = "volume 0%", group = "audio" }),
+
+    -- Brightness control (brightnessctl) + OSD overlay
+    awful.key({ modkey, altkey }, "l", function()
+            awful.spawn.easy_async("brightnessctl set 5%+", function()
+                awful.spawn.easy_async("brightnessctl -m info", function(out)
+                    local pct = tonumber(out:match(",([%d]+)%%,"))
+                    if pct then awful.spawn("qs ipc -c somewm call somewm-shell:panels showOsd brightness " .. pct) end
+                end)
+            end)
+        end,
+        { description = "brightness up", group = "audio" }),
+    awful.key({ modkey, altkey }, "h", function()
+            awful.spawn.easy_async("brightnessctl set 5%-", function()
+                awful.spawn.easy_async("brightnessctl -m info", function(out)
+                    local pct = tonumber(out:match(",([%d]+)%%,"))
+                    if pct then awful.spawn("qs ipc -c somewm call somewm-shell:panels showOsd brightness " .. pct) end
+                end)
+            end)
+        end,
+        { description = "brightness down", group = "audio" }),
 
     -- Screenshots (grim + slurp)
     awful.key({ }, "Print", function()
@@ -940,12 +1004,7 @@ client.connect_signal("request::default_keybindings", function()
                 c:raise()
             end ,
             {description = "(un)maximize vertically", group = "client"}),
-        awful.key({ modkey, "Shift"   }, "m",
-            function (c)
-                c.maximized_horizontal = not c.maximized_horizontal
-                c:raise()
-            end ,
-            {description = "(un)maximize horizontally", group = "client"}),
+        -- Super+Shift+M freed for somewm-shell media panel toggle
     })
 end)
 
@@ -1275,7 +1334,23 @@ ruled.notification.connect_signal("request::rules", function()
     }
 end)
 
+-- Notification history for somewm-shell sidebar
+_somewm_notif_history = {}
+
 naughty.connect_signal("request::display", function(n)
+    -- Record notification in history table (for shell sidebar)
+    table.insert(_somewm_notif_history, {
+        title = n.title or "",
+        message = n.message or "",
+        app_name = n.app_name or "",
+    })
+    -- Keep last 50 entries
+    while #_somewm_notif_history > 50 do
+        table.remove(_somewm_notif_history, 1)
+    end
+    -- Push refresh to somewm-shell
+    awful.spawn.with_shell("qs ipc -c somewm call somewm-shell:notifications refresh")
+
     -- Pick icon for display without modifying n.icon (avoids signal loops)
     local display_icon = n.icon
     if type(display_icon) == "string" then
@@ -1359,6 +1434,49 @@ awful.spawn.once("nm-applet")
 -- awful.spawn.once("pasystray")  -- replaced by native volume_widget
 -- awful.spawn.once("blueman-applet")
 -- awful.spawn.once("copyq")
+
+-- somewm-shell: export theme then launch Quickshell
+awful.spawn.easy_async(os.getenv("HOME") .. "/git/github/somewm/plans/theme-export.sh", function()
+    awful.spawn.once("qs -c somewm -n -d")
+end)
+-- }}}
+
+-- {{{ somewm-shell: push IPC signals
+-- Push client/tag state to shell on every change (debounced on QML side)
+local function push_state()
+    awful.spawn.easy_async(
+        "qs ipc -c somewm call somewm-shell:compositor invalidate",
+        function() end  -- fire and forget
+    )
+end
+
+-- Client lifecycle
+client.connect_signal("manage", push_state)
+client.connect_signal("unmanage", push_state)
+client.connect_signal("focus", push_state)
+-- Client property changes
+client.connect_signal("property::name", push_state)
+client.connect_signal("property::urgent", push_state)
+client.connect_signal("property::minimized", push_state)
+client.connect_signal("tagged", push_state)
+client.connect_signal("untagged", push_state)
+-- Tag changes
+tag.connect_signal("property::selected", push_state)
+tag.connect_signal("property::activated", push_state)
+tag.connect_signal("property::name", push_state)
+
+-- Focused screen tracking (for multi-monitor panel targeting)
+-- NOTE: screen::focus is a global signal with NO arguments (somewm.c:1107)
+-- Must get focused screen via awful.screen.focused()
+awesome.connect_signal("screen::focus", function()
+    local s = awful.screen.focused()
+    if s then
+        awful.spawn.easy_async(
+            "qs ipc -c somewm call somewm-shell:compositor setScreen " .. (s.name or tostring(s.index)),
+            function() end
+        )
+    end
+end)
 -- }}}
 
 -- SceneFX visual effects are configured via anim_client.enable() below.

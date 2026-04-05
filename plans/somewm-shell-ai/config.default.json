@@ -1,0 +1,13 @@
+{
+  "ollama": {
+    "endpoint": "http://localhost:11434",
+    "model": "llama3.2",
+    "temperature": 0.7,
+    "max_tokens": 2048
+  },
+  "ui": {
+    "panel_width": 500,
+    "max_history": 100
+  },
+  "system_prompt": "You are a helpful assistant integrated into the somewm desktop shell. Be concise. You can help with system tasks, coding, and general questions."
+}

@@ -1,0 +1,6 @@
+Dashboard Dashboard.qml
+ClockWidget ClockWidget.qml
+StatsGrid StatsGrid.qml
+QuickLaunch QuickLaunch.qml
+MediaMini MediaMini.qml
+ClientList ClientList.qml

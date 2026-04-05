@@ -1,0 +1,14 @@
+{
+  "modules": {
+    "dashboard": { "enabled": true },
+    "sidebar": { "enabled": true },
+    "media": { "enabled": true },
+    "osd": { "enabled": true },
+    "weather": { "enabled": true },
+    "wallpapers": { "enabled": true },
+    "collage": { "enabled": true }
+  },
+  "animations": {
+    "scale": 1.0
+  }
+}

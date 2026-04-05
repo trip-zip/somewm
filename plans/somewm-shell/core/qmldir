@@ -1,0 +1,6 @@
+module core
+singleton Theme Theme.qml
+singleton Anims Anims.qml
+singleton Config Config.qml
+singleton Panels Panels.qml
+singleton Constants Constants.qml

@@ -1,0 +1,3 @@
+WeatherPanel WeatherPanel.qml
+CurrentWeather CurrentWeather.qml
+Forecast Forecast.qml
