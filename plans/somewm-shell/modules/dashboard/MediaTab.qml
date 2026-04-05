@@ -79,7 +79,7 @@ Item {
         }
     }
 
-    // === Album art (Caelestia: StyledClippingRect, circular) ===
+    // === Album art (circular clip via layer.enabled) ===
     Rectangle {
         id: cover
         anchors.verticalCenter: parent.verticalCenter
@@ -90,6 +90,8 @@ Item {
         radius: coverSize / 2
         color: Core.Theme.surfaceContainerHigh
         clip: true
+        layer.enabled: true
+        layer.smooth: true
 
         Text {
             anchors.centerIn: parent

@@ -80,13 +80,15 @@ GridLayout {
             padding: padLg
             spacing: spacNorm
 
-            // Avatar (clipped to rounded rect via layer)
+            // Avatar (clipped to rounded rect — layer.enabled clips children to radius)
             Rectangle {
                 width: infoCol.implicitHeight
                 height: infoCol.implicitHeight
                 radius: roundLg
                 color: Core.Theme.fade(Core.Theme.accent, 0.12)
+                clip: true
                 layer.enabled: true
+                layer.smooth: true
 
                 Image {
                     id: avatarImg
@@ -385,7 +387,7 @@ GridLayout {
             }
         }
 
-        // Cover art (Caelestia: StyledClippingRect, circular)
+        // Cover art (circular clip via layer.enabled)
         Rectangle {
             id: cover
             anchors.top: parent.top
@@ -396,6 +398,8 @@ GridLayout {
             radius: width / 2
             color: Core.Theme.surfaceContainerHigh
             clip: true
+            layer.enabled: true
+            layer.smooth: true
 
             Text {
                 anchors.centerIn: parent

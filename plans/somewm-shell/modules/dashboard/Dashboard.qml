@@ -128,7 +128,7 @@ Variants {
                 visible: panel.stripVisible
             }
 
-            // Dashboard wrapper click area
+            // Dashboard wrapper click area — consumes clicks so dismiss doesn't fire
             Rectangle {
                 visible: wrapper.height > 0
                 anchors.horizontalCenter: parent.horizontalCenter
@@ -137,6 +137,12 @@ Variants {
                 width: wrapper.width
                 height: wrapper.height
                 color: "transparent"
+
+                MouseArea {
+                    anchors.fill: parent
+                    onClicked: {} // consume click
+                    onWheel: (wheel) => { wheel.accepted = true }
+                }
             }
 
             // Dismiss area

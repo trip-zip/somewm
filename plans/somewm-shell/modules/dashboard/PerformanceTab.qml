@@ -117,6 +117,8 @@ Item {
         color: Core.Theme.surfaceContainer
         radius: roundLg
         clip: true
+        layer.enabled: true
+        layer.smooth: true
 
         Component.onCompleted: {
             animatedUsage = usage
