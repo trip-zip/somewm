@@ -8,11 +8,11 @@ import "../../core" as Core
 import "../../services" as Services
 import "../../components" as Components
 
-// Caelestia Drawers.qml pattern — single fullscreen overlay that contains:
-// 1. Border frame (inverted mask — thin strip at screen edges)
-// 2. Panel background (ShapePath connecting border to dashboard wrapper)
+// Caelestia Drawers.qml pattern — single fullscreen overlay:
+// 1. Border strip (rectangle at bottom screen edge)
+// 2. Panel background (ShapePath connecting strip to dashboard)
 // 3. Dashboard content (animated wrapper)
-// Mirrored: Caelestia dashboard is at top, ours is at bottom.
+// Sequenced: strip slides up → dashboard grows → dashboard collapses → strip slides down
 Variants {
     model: Quickshell.screens
 
@@ -26,9 +26,6 @@ Variants {
             (modelData.name === Services.Compositor.focusedScreenName ||
              String(modelData.index) === Services.Compositor.focusedScreenName)
 
-        // Visible when open or animating
-        visible: shouldShow || wrapper.height > 0.5
-
         color: "transparent"
         focusable: shouldShow
 
@@ -36,23 +33,58 @@ Variants {
         WlrLayershell.namespace: "somewm-shell:dashboard"
         WlrLayershell.keyboardFocus: shouldShow
             ? WlrKeyboardFocus.Exclusive : WlrKeyboardFocus.None
+        WlrLayershell.exclusionMode: ExclusionMode.Ignore
 
         anchors {
             top: true; bottom: true; left: true; right: true
         }
 
-        // Click-through except on border + dashboard area
-        mask: Region {
-            item: clickTarget
-        }
+        mask: Region { item: clickTarget }
 
         readonly property real sp: Core.Theme.dpiScale
         readonly property real borderThickness: Math.round(6 * sp)
         readonly property real borderRounding: Math.round(25 * sp)
         readonly property real padLg: Math.round(15 * sp)
         readonly property real padNorm: Math.round(10 * sp)
-
         readonly property color borderColor: Core.Theme.surfaceBase
+
+        // === Sequenced animation state ===
+        // Phase 1: strip slides up from bottom
+        // Phase 2: dashboard content grows from strip
+        // Close reverses: content collapses → strip slides down
+        property bool stripVisible: false
+        property bool contentVisible: false
+
+        // Visible while strip or content is shown, or animating
+        visible: shouldShow || stripVisible || contentVisible || stripAnim.running || contentAnim.running
+
+        onShouldShowChanged: {
+            if (shouldShow) {
+                closeAnim.stop()
+                openAnim.start()
+            } else {
+                openAnim.stop()
+                closeAnim.start()
+            }
+        }
+
+        SequentialAnimation {
+            id: openAnim
+            // Phase 1: strip appears
+            PropertyAction { target: panel; property: "stripVisible"; value: true }
+            PauseAnimation { duration: 350 }
+            // Phase 2: content grows
+            PropertyAction { target: panel; property: "contentVisible"; value: true }
+        }
+
+        SequentialAnimation {
+            id: closeAnim
+            // Phase 1: content collapses
+            PropertyAction { target: panel; property: "contentVisible"; value: false }
+            PauseAnimation { duration: 550 }
+            // Phase 2: strip hides
+            PropertyAction { target: panel; property: "stripVisible"; value: false }
+        }
 
         // Tab state
         property int currentTab: 0
@@ -93,9 +125,10 @@ Variants {
                 anchors.bottom: parent.bottom
                 height: panel.borderThickness
                 color: "transparent"
+                visible: panel.stripVisible
             }
 
-            // Dashboard wrapper click area (only when visible)
+            // Dashboard wrapper click area
             Rectangle {
                 visible: wrapper.height > 0
                 anchors.horizontalCenter: parent.horizontalCenter
@@ -106,7 +139,7 @@ Variants {
                 color: "transparent"
             }
 
-            // Dismiss area — rest of screen (when dashboard is open)
+            // Dismiss area
             MouseArea {
                 anchors.fill: parent
                 visible: panel.shouldShow
@@ -117,7 +150,6 @@ Variants {
         }
 
         // ===== Visual layer: Border + Backgrounds with shadow =====
-        // Caelestia Drawers.qml pattern: single layer with shadow effect
         Item {
             anchors.fill: parent
             layer.enabled: true
@@ -127,126 +159,114 @@ Variants {
                 shadowColor: Qt.rgba(0, 0, 0, 0.55)
             }
 
-            // LAYER 1: Border frame (Caelestia Border.qml)
-            // Full-screen rect with inverted mask = only thin border strip visible.
-            Item {
-                id: borderFrame
-                anchors.fill: parent
+            // LAYER 1: Border strip — simple rectangle at bottom edge
+            Rectangle {
+                id: borderStrip
+                anchors.left: parent.left
+                anchors.right: parent.right
+                anchors.bottom: parent.bottom
+                height: panel.stripVisible ? panel.borderThickness : 0
+                color: panel.borderColor
 
-                Rectangle {
-                    id: borderRect
-                    anchors.fill: parent
-                    color: panel.borderColor
-
-                    layer.enabled: true
-                    layer.effect: MultiEffect {
-                        maskSource: borderMask
-                        maskEnabled: true
-                        maskInverted: true
-                        maskThresholdMin: 0.5
-                        maskSpreadAtMin: 1
+                Behavior on height {
+                    NumberAnimation {
+                        id: stripAnim
+                        duration: 350
+                        easing.type: Easing.BezierSpline
+                        easing.bezierCurve: Core.Anims.curves.expressiveSpatial
                     }
                 }
 
-                Item {
-                    id: borderMask
-                    anchors.fill: parent
-                    layer.enabled: true
-                    visible: false
-
-                    // Mask: rounded rect inset by borderThickness at bottom.
-                    // Everything OUTSIDE = border strip visible.
-                    Rectangle {
-                        anchors.fill: parent
-                        anchors.bottomMargin: panel.borderThickness
-                        radius: panel.borderRounding
-                    }
+                // Subtle gradient overlay — lighter at top for depth
+                Rectangle {
+                    anchors.left: parent.left
+                    anchors.right: parent.right
+                    anchors.top: parent.top
+                    height: Math.round(2 * panel.sp)
+                    color: Qt.rgba(1, 1, 1, 0.08)
+                    visible: parent.height > 1
                 }
             }
 
-            // LAYER 2: Panel background (Caelestia Backgrounds.qml + Background.qml)
-            // ShapePath connecting border strip to dashboard wrapper.
-            // Mirrored from Caelestia (top→down becomes bottom→up).
+            // LAYER 2: Panel background ShapePath
             Shape {
                 id: backgrounds
                 anchors.fill: parent
                 anchors.bottomMargin: panel.borderThickness
                 preferredRendererType: Shape.CurveRenderer
 
-            ShapePath {
-                id: dashBg
+                ShapePath {
+                    id: dashBg
 
-                readonly property real rounding: panel.borderRounding
-                readonly property bool flatten: wrapper.height < rounding * 2
-                readonly property real roundingY: flatten ? wrapper.height / 2 : rounding
-                readonly property real ww: wrapper.width
-                readonly property real wh: wrapper.height
+                    readonly property real rounding: panel.borderRounding
+                    readonly property bool flatten: wrapper.height < rounding * 2
+                    readonly property real roundingY: flatten ? wrapper.height / 2 : rounding
+                    readonly property real ww: wrapper.width
+                    readonly property real wh: wrapper.height
 
-                strokeWidth: -1
-                fillColor: panel.borderColor
+                    strokeWidth: -1
+                    fillColor: panel.borderColor
 
-                // Start at bottom-right of content area, just RIGHT of wrapper
-                // (Caelestia starts top-left; we mirror to bottom-right)
-                startX: (backgrounds.width + ww) / 2 + rounding
-                startY: backgrounds.height
+                    // Start bottom-right, just right of wrapper
+                    startX: (backgrounds.width + ww) / 2 + rounding
+                    startY: backgrounds.height
 
-                // Arc: from border bottom edge UP-LEFT to wrapper bottom-right
-                PathArc {
-                    relativeX: -dashBg.rounding
-                    relativeY: -dashBg.roundingY
-                    radiusX: dashBg.rounding
-                    radiusY: Math.min(dashBg.rounding, dashBg.wh)
+                    // Arc: border → wrapper bottom-right
+                    PathArc {
+                        relativeX: -dashBg.rounding
+                        relativeY: -dashBg.roundingY
+                        radiusX: dashBg.rounding
+                        radiusY: Math.min(dashBg.rounding, dashBg.wh)
+                    }
+
+                    // Up right side
+                    PathLine {
+                        relativeX: 0
+                        relativeY: -(dashBg.wh - dashBg.roundingY * 2)
+                    }
+
+                    // Top-right corner (outward)
+                    PathArc {
+                        relativeX: -dashBg.rounding
+                        relativeY: -dashBg.roundingY
+                        radiusX: dashBg.rounding
+                        radiusY: Math.min(dashBg.rounding, dashBg.wh)
+                        direction: PathArc.Counterclockwise
+                    }
+
+                    // Across top (right to left)
+                    PathLine {
+                        relativeX: -(dashBg.ww - dashBg.rounding * 2)
+                        relativeY: 0
+                    }
+
+                    // Top-left corner (outward)
+                    PathArc {
+                        relativeX: -dashBg.rounding
+                        relativeY: dashBg.roundingY
+                        radiusX: dashBg.rounding
+                        radiusY: Math.min(dashBg.rounding, dashBg.wh)
+                        direction: PathArc.Counterclockwise
+                    }
+
+                    // Down left side
+                    PathLine {
+                        relativeX: 0
+                        relativeY: dashBg.wh - dashBg.roundingY * 2
+                    }
+
+                    // Arc: wrapper bottom-left → border
+                    PathArc {
+                        relativeX: -dashBg.rounding
+                        relativeY: dashBg.roundingY
+                        radiusX: dashBg.rounding
+                        radiusY: Math.min(dashBg.rounding, dashBg.wh)
+                    }
                 }
+            } // Shape
+        } // shadow Item
 
-                // Up the right side of wrapper
-                PathLine {
-                    relativeX: 0
-                    relativeY: -(dashBg.wh - dashBg.roundingY * 2)
-                }
-
-                // Arc: wrapper top-right corner (curves outward = Counterclockwise)
-                PathArc {
-                    relativeX: -dashBg.rounding
-                    relativeY: -dashBg.roundingY
-                    radiusX: dashBg.rounding
-                    radiusY: Math.min(dashBg.rounding, dashBg.wh)
-                    direction: PathArc.Counterclockwise
-                }
-
-                // Across the top of wrapper (right to left)
-                PathLine {
-                    relativeX: -(dashBg.ww - dashBg.rounding * 2)
-                    relativeY: 0
-                }
-
-                // Arc: wrapper top-left corner (curves outward = Counterclockwise)
-                PathArc {
-                    relativeX: -dashBg.rounding
-                    relativeY: dashBg.roundingY
-                    radiusX: dashBg.rounding
-                    radiusY: Math.min(dashBg.rounding, dashBg.wh)
-                    direction: PathArc.Counterclockwise
-                }
-
-                // Down the left side of wrapper
-                PathLine {
-                    relativeX: 0
-                    relativeY: dashBg.wh - dashBg.roundingY * 2
-                }
-
-                // Arc: from wrapper bottom-left back DOWN to border bottom edge
-                PathArc {
-                    relativeX: -dashBg.rounding
-                    relativeY: dashBg.roundingY
-                    radiusX: dashBg.rounding
-                    radiusY: Math.min(dashBg.rounding, dashBg.wh)
-                }
-            }
-        } // end backgrounds Shape
-        } // end shadow Item
-
-        // ===== LAYER 3: Dashboard wrapper (Caelestia Wrapper.qml) =====
-        // Content that grows from the bottom border upward.
+        // ===== LAYER 3: Dashboard wrapper =====
         Item {
             id: wrapper
 
@@ -255,7 +275,7 @@ Variants {
             anchors.bottomMargin: panel.borderThickness
 
             width: panel.tabContentWidth + panel.padLg * 2
-            height: panel.shouldShow
+            height: panel.contentVisible
                 ? (tabBar.implicitHeight + panel.padNorm + panel.tabContentHeight + panel.padLg * 2)
                 : 0
 
@@ -264,17 +284,17 @@ Variants {
 
             Behavior on width {
                 NumberAnimation {
-                    duration: Core.Anims.duration.large
+                    duration: 700
                     easing.type: Easing.BezierSpline
                     easing.bezierCurve: Core.Anims.curves.emphasized
                 }
             }
             Behavior on height {
                 NumberAnimation {
-                    id: heightAnim
-                    duration: Core.Anims.duration.expressiveSpatial
+                    id: contentAnim
+                    duration: 700
                     easing.type: Easing.BezierSpline
-                    easing.bezierCurve: panel.shouldShow
+                    easing.bezierCurve: panel.contentVisible
                         ? Core.Anims.curves.expressiveSpatial
                         : Core.Anims.curves.emphasized
                 }
@@ -339,7 +359,6 @@ Variants {
                 }
             }
 
-            // Escape to close
             Keys.onEscapePressed: Core.Panels.close("dashboard")
         } // wrapper
     } // PanelWindow
