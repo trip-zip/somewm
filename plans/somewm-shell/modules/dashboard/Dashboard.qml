@@ -36,10 +36,12 @@ Variants {
 
         mask: Region { item: backdrop }
 
-        readonly property real borderThickness: Math.round(4 * Core.Theme.dpiScale)
-        readonly property real borderRounding: Math.round(25 * Core.Theme.dpiScale)
-        readonly property real padLg: Math.round(15 * Core.Theme.dpiScale)
-        readonly property real padNorm: Math.round(10 * Core.Theme.dpiScale)
+        readonly property real sp: Core.Theme.dpiScale
+        readonly property real borderRounding: Math.round(25 * sp)
+        readonly property real padLg: Math.round(15 * sp)
+        readonly property real padNorm: Math.round(10 * sp)
+        // Must match BorderFrame.activeHeight
+        readonly property real stripHeight: Math.round(14 * sp)
 
         // Tab state — requestedTab overrides, otherwise remember last tab
         property int currentTab: 0
@@ -93,41 +95,22 @@ Variants {
             }
         }
 
-        // ===== BORDER STRIP (bottom edge — always visible when dashboard visible) =====
-        // Thin strip at the very bottom of the screen, same color as dashboard bg.
-        // Creates the visual base that the dashboard "grows from".
-        Rectangle {
-            id: borderStrip
-            anchors.left: parent.left
-            anchors.right: parent.right
-            anchors.bottom: parent.bottom
-            height: panel.borderThickness
-            color: Core.Theme.surfaceBase
-            opacity: panel.shouldShow || heightAnim.running ? 1.0 : 0.0
-
-            Behavior on opacity {
-                NumberAnimation {
-                    duration: Core.Anims.duration.fast
-                }
-            }
-        }
-
-        // ===== WRAPPER (Caelestia Wrapper.qml + Background.qml) =====
-        // The dashboard grows from the border strip at the bottom.
-        // Background shape connects the panel to the border strip using matching
-        // color and rounding, creating the "inflation" effect.
+        // ===== WRAPPER =====
+        // Dashboard content sits above the border strip.
+        // Background shape has rounded top corners + flat bottom that
+        // connects seamlessly to the always-visible border strip.
         Item {
             id: wrapper
 
             anchors.horizontalCenter: parent.horizontalCenter
             anchors.bottom: parent.bottom
-            // Sits on top of the border strip — no gap
-            anchors.bottomMargin: 0
+            // Sit above the border strip
+            anchors.bottomMargin: panel.stripHeight
 
             // Explicit width/height from content (no circular anchors)
             width: panel.tabContentWidth + panel.padLg * 2
             height: panel.shouldShow
-                ? (tabBar.implicitHeight + panel.padNorm + panel.tabContentHeight + panel.padLg * 2 + panel.borderThickness)
+                ? (tabBar.implicitHeight + panel.padNorm + panel.tabContentHeight + panel.padLg * 2)
                 : 0
 
             visible: height > 0
@@ -152,159 +135,20 @@ Variants {
                 }
             }
 
-            // ===== Background shape (Caelestia Background.qml pattern) =====
-            // Rounded rectangle that connects to the border strip at the bottom.
-            // Top corners are rounded, bottom extends to screen edge (into the border strip).
-            // This creates the "border wrapping around the panel" illusion.
-            Shape {
-                id: bgShape
+            // Background — rounded top, flat bottom (connects to border strip)
+            Rectangle {
                 anchors.fill: parent
-                layer.enabled: true
-                layer.samples: 4
+                radius: panel.borderRounding
+                color: Core.Theme.surfaceBase
 
-                ShapePath {
-                    id: bgPath
-                    fillColor: Core.Theme.surfaceBase
-                    strokeWidth: -1
-
-                    // Start at top-left, after the rounded corner
-                    startX: 0
-                    startY: panel.borderRounding
-
-                    // Top-left rounded corner
-                    PathArc {
-                        x: panel.borderRounding
-                        y: 0
-                        radiusX: panel.borderRounding
-                        radiusY: panel.borderRounding
-                    }
-
-                    // Top edge
-                    PathLine {
-                        x: bgShape.width - panel.borderRounding
-                        y: 0
-                    }
-
-                    // Top-right rounded corner
-                    PathArc {
-                        x: bgShape.width
-                        y: panel.borderRounding
-                        radiusX: panel.borderRounding
-                        radiusY: panel.borderRounding
-                    }
-
-                    // Right edge — goes to bottom
-                    PathLine {
-                        x: bgShape.width
-                        y: bgShape.height
-                    }
-
-                    // Bottom edge — flat (connects to border strip, no rounding)
-                    PathLine {
-                        x: 0
-                        y: bgShape.height
-                    }
-
-                    // Left edge — back to start
-                    PathLine {
-                        x: 0
-                        y: panel.borderRounding
-                    }
+                // Square off the bottom corners so they connect flush to the strip
+                Rectangle {
+                    anchors.left: parent.left
+                    anchors.right: parent.right
+                    anchors.bottom: parent.bottom
+                    height: panel.borderRounding
+                    color: Core.Theme.surfaceBase
                 }
-            }
-
-            // ===== Side border extensions =====
-            // Thin strips on left and right of the dashboard that extend down to
-            // the border strip, making the border visually wrap around the sides.
-            Rectangle {
-                id: leftBorder
-                anchors.left: parent.left
-                anchors.leftMargin: -panel.borderThickness
-                anchors.top: parent.top
-                anchors.topMargin: panel.borderRounding
-                anchors.bottom: parent.bottom
-                width: panel.borderThickness
-                color: Core.Theme.surfaceBase
-            }
-            Rectangle {
-                id: rightBorder
-                anchors.right: parent.right
-                anchors.rightMargin: -panel.borderThickness
-                anchors.top: parent.top
-                anchors.topMargin: panel.borderRounding
-                anchors.bottom: parent.bottom
-                width: panel.borderThickness
-                color: Core.Theme.surfaceBase
-            }
-
-            // ===== Top border curve =====
-            // Thin strip along the top that follows the rounded shape
-            Shape {
-                anchors.fill: parent
-                layer.enabled: true
-                layer.samples: 4
-
-                ShapePath {
-                    fillColor: "transparent"
-                    strokeColor: Core.Theme.surfaceBase
-                    strokeWidth: panel.borderThickness
-
-                    startX: -panel.borderThickness
-                    startY: panel.borderRounding + panel.borderThickness / 2
-
-                    // Left side going up
-                    PathLine {
-                        x: -panel.borderThickness
-                        y: panel.borderRounding
-                    }
-
-                    // Top-left arc
-                    PathArc {
-                        x: panel.borderRounding
-                        y: -panel.borderThickness / 2
-                        radiusX: panel.borderRounding + panel.borderThickness / 2
-                        radiusY: panel.borderRounding + panel.borderThickness / 2
-                    }
-
-                    // Top edge
-                    PathLine {
-                        x: bgShape.width - panel.borderRounding
-                        y: -panel.borderThickness / 2
-                    }
-
-                    // Top-right arc
-                    PathArc {
-                        x: bgShape.width + panel.borderThickness
-                        y: panel.borderRounding
-                        radiusX: panel.borderRounding + panel.borderThickness / 2
-                        radiusY: panel.borderRounding + panel.borderThickness / 2
-                    }
-
-                    // Right side going down
-                    PathLine {
-                        x: bgShape.width + panel.borderThickness
-                        y: panel.borderRounding + panel.borderThickness / 2
-                    }
-                }
-            }
-
-            // ===== Bottom border extensions (left and right of wrapper) =====
-            // These extend the border strip from the wrapper edges to the screen edges,
-            // so the full bottom edge appears as one continuous strip.
-            // wrapper.x = (panel.width - wrapper.width) / 2 (centered)
-            Rectangle {
-                anchors.bottom: parent.bottom
-                anchors.right: parent.left
-                width: (panel.width - wrapper.width) / 2 + panel.borderThickness
-                height: panel.borderThickness
-                color: Core.Theme.surfaceBase
-            }
-            Rectangle {
-                anchors.bottom: parent.bottom
-                anchors.left: parent.right
-                width: (panel.width - wrapper.width) / 2 + panel.borderThickness
-                height: panel.borderThickness
-                color: Core.Theme.surfaceBase
             }
 
             // Tab bar — positioned at top with padding

@@ -2,12 +2,16 @@ import QtQuick
 import Quickshell
 import "modules" as Modules
 import "modules/dashboard" as DashboardModule
+import "modules/border" as BorderModule
 import "modules/osd" as OsdModule
 import "modules/weather" as WeatherModule
 import "modules/wallpapers" as WallpapersModule
 import "modules/collage" as CollageModule
 
 ShellRoot {
+    // Border frame — always-visible strip at screen edge (Caelestia pattern)
+    BorderModule.BorderFrame {}
+
     // Dashboard — bottom-slide tabbed panel (absorbs sidebar + media)
     Modules.ModuleLoader {
         moduleName: "dashboard"
