@@ -145,6 +145,19 @@ Variants {
                 }
             }
 
+            // Control panel hover trigger — right end of strip
+            MouseArea {
+                anchors.right: parent.right
+                anchors.bottom: parent.bottom
+                width: Math.round(120 * panel.sp)
+                height: panel.borderThickness + Math.round(20 * panel.sp)
+                hoverEnabled: true
+                visible: panel.stripVisible && !Core.Panels.isOpen("controlpanel")
+                z: 2
+                onEntered: Core.Panels.toggle("controlpanel")
+                onClicked: Core.Panels.toggle("controlpanel")
+            }
+
             // Dismiss area
             MouseArea {
                 anchors.fill: parent

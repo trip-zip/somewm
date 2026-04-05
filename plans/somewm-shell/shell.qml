@@ -6,6 +6,7 @@ import "modules/osd" as OsdModule
 import "modules/weather" as WeatherModule
 import "modules/wallpapers" as WallpapersModule
 import "modules/collage" as CollageModule
+import "modules/controlpanel" as ControlPanelModule
 
 ShellRoot {
     // Dashboard — Caelestia-style overlay with border strip + panel
@@ -30,5 +31,11 @@ ShellRoot {
     Modules.ModuleLoader {
         moduleName: "collage"
         sourceComponent: Component { CollageModule.CollagePanel {} }
+    }
+
+    // Control panel — quick volume/mic/brightness popout
+    Modules.ModuleLoader {
+        moduleName: "controlpanel"
+        sourceComponent: Component { ControlPanelModule.ControlPanel {} }
     }
 }

@@ -36,11 +36,11 @@ Singleton {
     readonly property int dashMediaProgressThickness: 6 // arc progress stroke width
     readonly property int mediaBarCount: 24            // frequency bars count
 
-    // Wallpaper carousel
-    readonly property int carouselItemWidth: 400       // normal item width (pre-scale)
-    readonly property int carouselItemHeight: 280      // item height (pre-scale)
-    readonly property real carouselSkew: -0.35         // isometric skew factor
-    readonly property real carouselFocusScale: 1.4     // focused item scale
+    // Wallpaper picker (ilyamiro-faithful)
+    readonly property int wpItemWidth: 400
+    readonly property int wpItemHeight: 420
+    readonly property real wpSkewFactor: -0.35
+    readonly property int wpPickerHeight: 650
 
     // Legacy (keep for OSD, weather, collage — unchanged)
     readonly property int osdWidth: 280

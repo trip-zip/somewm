@@ -22,6 +22,14 @@ Singleton {
 
     property bool loading: false
 
+    // Thumbnail cache directory
+    readonly property string thumbDir: Quickshell.env("HOME") + "/.cache/somewm-shell/wallpaper_thumbs"
+    readonly property string thumbDirUrl: "file://" + thumbDir
+
+    // Color marker cache
+    readonly property string colorMarkerDir: Quickshell.env("HOME") + "/.cache/somewm-shell/wallpaper_colors"
+    property var colorMap: ({})
+
     // Apply theme toggle — persisted in config.json
     property bool applyTheme: {
         var cfg = Core.Config._data
@@ -55,10 +63,91 @@ Singleton {
                     var name = line.split("/").pop()
                     result.push({ path: line, name: name })
                 })
-                // Sort alphabetically by name
                 result.sort(function(a, b) { return a.name.localeCompare(b.name) })
                 root.wallpapers = result
                 root.loading = false
+                // Generate thumbnails for new wallpapers
+                root._generateThumbnails()
+            }
+        }
+    }
+
+    // Generate thumbnails (only for files without existing thumbs)
+    function _generateThumbnails() {
+        var thumbDirPath = root.thumbDir
+        thumbGenProc.command = ["bash", "-c",
+            "mkdir -p '" + thumbDirPath + "'\n" +
+            "CMD=magick; command -v magick &>/dev/null || CMD=convert\n" +
+            "for f in " + root.directories.map(function(d) {
+                return "'" + d + "'/*.{jpg,jpeg,png,webp}"
+            }).join(" ") + "; do\n" +
+            "  [ -f \"$f\" ] || continue\n" +
+            "  name=$(basename \"$f\")\n" +
+            "  thumb='" + thumbDirPath + "/$name'\n" +
+            "  [ -f \"$thumb\" ] && continue\n" +
+            "  $CMD \"$f\" -resize x420 -quality 70 \"$thumb\" 2>/dev/null &\n" +
+            "  # Limit parallel jobs\n" +
+            "  [ $(jobs -r | wc -l) -ge 4 ] && wait -n\n" +
+            "done\n" +
+            "wait"]
+        thumbGenProc.running = true
+    }
+
+    Process {
+        id: thumbGenProc
+        onRunningChanged: {
+            if (!running) root._extractColors()
+        }
+    }
+
+    // Extract dominant colors for each thumbnail
+    function _extractColors() {
+        var thumbDirPath = root.thumbDir
+        var colorDirPath = root.colorMarkerDir
+        colorExtractProc.command = ["bash", "-c",
+            "mkdir -p '" + colorDirPath + "'\n" +
+            "CMD=magick; command -v magick &>/dev/null || CMD=convert\n" +
+            "for f in '" + thumbDirPath + "'/*; do\n" +
+            "  [ -f \"$f\" ] || continue\n" +
+            "  name=$(basename \"$f\")\n" +
+            "  # Skip if marker already exists\n" +
+            "  ls '" + colorDirPath + "/'\"$name\"'_HEX_'* &>/dev/null && continue\n" +
+            "  hex=$($CMD \"$f\" -modulate 100,200 -resize '1x1^' -gravity center -extent 1x1 -depth 8 -format '%[hex:p{0,0}]' info:- 2>/dev/null | grep -oE '[0-9A-Fa-f]{6}' | head -n 1)\n" +
+            "  [ -n \"$hex\" ] && touch '" + colorDirPath + "/'\"$name\"'_HEX_'\"$hex\"\n" +
+            "done"]
+        colorExtractProc.running = true
+    }
+
+    Process {
+        id: colorExtractProc
+        onRunningChanged: {
+            if (!running) root._loadColorMarkers()
+        }
+    }
+
+    // Load color markers into colorMap
+    function _loadColorMarkers() {
+        colorLoadProc.command = ["bash", "-c",
+            "ls '" + root.colorMarkerDir + "/' 2>/dev/null | grep _HEX_ || true"]
+        colorLoadProc.running = true
+    }
+
+    Process {
+        id: colorLoadProc
+        stdout: StdioCollector {
+            onStreamFinished: {
+                var newMap = {}
+                var lines = text.trim().split("\n")
+                lines.forEach(function(line) {
+                    if (!line) return
+                    var idx = line.lastIndexOf("_HEX_")
+                    if (idx !== -1) {
+                        var fname = line.substring(0, idx)
+                        var hex = line.substring(idx + 5)
+                        newMap[fname] = "#" + hex
+                    }
+                })
+                root.colorMap = newMap
             }
         }
     }

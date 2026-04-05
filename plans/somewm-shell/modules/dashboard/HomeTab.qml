@@ -257,9 +257,9 @@ GridLayout {
             padding: padLg
             spacing: spacNorm
 
-            ResourceBar { icon: "\ue322"; value: Services.SystemStats.cpuPercent / 100.0; barColor: Core.Theme.widgetCpu }
-            ResourceBar { icon: "\ue1c4"; value: Services.SystemStats.memPercent / 100.0; barColor: Core.Theme.widgetMemory }
-            ResourceBar { icon: "\ue1db"; value: Services.SystemStats.diskPercent / 100.0; barColor: Core.Theme.widgetDisk }
+            ResourceBar { icon: "\ue640"; value: Services.SystemStats.cpuPercent / 100.0; barColor: Core.Theme.widgetCpu }    // developer_board (CPU)
+            ResourceBar { icon: "\ue322"; value: Services.SystemStats.memPercent / 100.0; barColor: Core.Theme.widgetMemory }  // memory (RAM)
+            ResourceBar { icon: "\ue1db"; value: Services.SystemStats.diskPercent / 100.0; barColor: Core.Theme.widgetDisk }   // storage (disk)
         }
     }
 
