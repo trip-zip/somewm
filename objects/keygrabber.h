@@ -32,8 +32,9 @@ bool keygrabber_handlekpress(lua_State *, xkb_keycode_t, struct xkb_state *, boo
 
 /* somewm-specific */
 bool some_keygrabber_is_running(void);
-bool some_keygrabber_handle_key(uint32_t modifiers, xkb_keycode_t keycode, struct xkb_state *state);
+bool some_keygrabber_handle_key(xkb_keycode_t keycode, struct xkb_state *state, bool is_press);
 void luaA_keygrabber_setup(lua_State *L);
+void luaA_keygrabber_test_setup(lua_State *L);
 
 #endif
 // vim: filetype=c:expandtab:shiftwidth=4:tabstop=8:softtabstop=4:textwidth=80

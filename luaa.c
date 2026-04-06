@@ -2558,6 +2558,11 @@ luaA_init(void)
 	luaA_gesture_setup(globalconf_L);
 	lua_setglobal(globalconf_L, "_gesture");
 
+	/* Setup keygrabber test helper (somewm-specific: inject for tests) */
+	lua_newtable(globalconf_L);
+	luaA_keygrabber_test_setup(globalconf_L);
+	lua_setglobal(globalconf_L, "_keygrabber");
+
 	/* NOTE: The C-based key class is now set up by key_class_setup() above (line 88).
 	 * The old Lua-based implementation below has been disabled to let the C implementation work.
 	 * The C key class provides full AwesomeWM compatibility with proper signal emission
@@ -4460,6 +4465,11 @@ luaA_create_fresh_state(void)
 	lua_newtable(L);
 	luaA_gesture_setup(L);
 	lua_setglobal(L, "_gesture");
+
+	/* Keygrabber test helper */
+	lua_newtable(L);
+	luaA_keygrabber_test_setup(L);
+	lua_setglobal(L, "_keygrabber");
 
 	return L;
 }
