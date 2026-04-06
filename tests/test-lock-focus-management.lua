@@ -45,11 +45,13 @@ runner.run_steps({
         return true
     end,
 
-    -- Verify focus restored to same client
+    -- Verify focus restored to same client (both Lua bookkeeping and keyboard)
     function(count)
         if count < 2 then return end
         assert(client.focus == focused_before_lock,
             "BEH-6: focus should be restored to pre-lock client")
+        assert(focused_before_lock:has_keyboard_focus(),
+            "BEH-6: pre-lock client should have Wayland keyboard focus after unlock")
         return true
     end,
 
@@ -64,6 +66,8 @@ runner.run_steps({
     function(count)
         if count < 2 then return end
         assert(client.focus ~= nil, "focus should exist after second lock/unlock cycle")
+        assert(client.focus:has_keyboard_focus(),
+            "focused client should have Wayland keyboard focus after second unlock")
         return true
     end,
 
