@@ -8,6 +8,7 @@ import "modules/wallpapers" as WallpapersModule
 import "modules/collage" as CollageModule
 import "modules/controlpanel" as ControlPanelModule
 import "modules/dock" as DockModule
+import "modules/hotedges" as HotEdgesModule
 
 ShellRoot {
     // Dashboard — Caelestia-style overlay with border strip + panel
@@ -45,4 +46,7 @@ ShellRoot {
         moduleName: "dock"
         sourceComponent: Component { DockModule.Dock {} }
     }
+
+    // Hot screen edges
+    HotEdgesModule.HotEdges {}
 }
