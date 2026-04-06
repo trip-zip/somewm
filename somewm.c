@@ -5864,6 +5864,12 @@ unmapnotify(struct wl_listener *listener, void *data)
 	if (globalconf.focus.client == c) {
 		globalconf.focus.client = NULL;
 		globalconf.focus.need_update = true;
+		/* Clear seat keyboard focus to prevent focusclient() from trying to
+		 * deactivate this surface during focus restoration. The XDG surface
+		 * is already uninitialized by the time unmapnotify fires, so any
+		 * wlr_xdg_toplevel_set_activated() call would assert. */
+		if (seat->keyboard_state.focused_surface == client_surface(c))
+			wlr_seat_keyboard_clear_focus(seat);
 	}
 
 	if (client_is_unmanaged(c)) {
