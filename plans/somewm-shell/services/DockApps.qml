@@ -4,6 +4,8 @@ import Quickshell
 import Quickshell.Io
 import Quickshell.Wayland
 
+// Dock application model — manages pinned favorites, running app tracking,
+// icon resolution, and window activation/cycling. Persists pin state to disk.
 Singleton {
     id: root
 

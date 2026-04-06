@@ -639,7 +639,7 @@ section "17. Round 2 Review Fixes"
 # ============================================================
 
 # CRITICAL-1: Module subdirectory qmldir files
-for mod_dir in dashboard osd weather wallpapers collage; do
+for mod_dir in dashboard osd weather wallpapers collage hotedges; do
     qmldir_f="$SHELL_DIR/modules/$mod_dir/qmldir"
     if [[ -f "$qmldir_f" ]]; then
         pass "modules/$mod_dir/qmldir exists"
@@ -1249,6 +1249,91 @@ if grep -q 'dpiScale' "$SHELL_DIR/modules/dashboard/Dashboard.qml" && \
     pass "Components: hardcoded sizes scaled by dpiScale"
 else
     fail "Components" "some hardcoded pixel sizes not scaled — layout breaks on 4K"
+fi
+
+# ============================================================
+section "30. Hot Screen Edges"
+# ============================================================
+
+# HotEdges module exists and is loaded
+if [[ -f "$SHELL_DIR/modules/hotedges/HotEdges.qml" ]]; then
+    pass "HotEdges.qml exists"
+else
+    fail "HotEdges" "modules/hotedges/HotEdges.qml missing"
+fi
+
+# shell.qml imports and instantiates HotEdges
+if grep -q 'import "modules/hotedges"' "$SHELL_DIR/shell.qml"; then
+    pass "shell.qml imports hotedges module"
+else
+    fail "shell.qml" "missing hotedges import"
+fi
+if grep -q 'HotEdgesModule.HotEdges' "$SHELL_DIR/shell.qml"; then
+    pass "shell.qml instantiates HotEdges"
+else
+    fail "shell.qml" "HotEdges not instantiated"
+fi
+
+# HotEdges uses focused screen filter (multi-monitor safety)
+if grep -q 'isActiveScreen' "$SHELL_DIR/modules/hotedges/HotEdges.qml"; then
+    pass "HotEdges: focused screen filter present"
+else
+    fail "HotEdges" "missing isActiveScreen — ghost zones on inactive screens"
+fi
+
+# HotEdges has all 3 zones with correct panel targets
+if grep -q 'toggle("dock")' "$SHELL_DIR/modules/hotedges/HotEdges.qml"; then
+    pass "HotEdges: left corner → dock"
+else
+    fail "HotEdges" "missing dock trigger"
+fi
+if grep -q 'toggle("dashboard")' "$SHELL_DIR/modules/hotedges/HotEdges.qml"; then
+    pass "HotEdges: center → dashboard"
+else
+    fail "HotEdges" "missing dashboard trigger"
+fi
+if grep -q 'toggle("controlpanel")' "$SHELL_DIR/modules/hotedges/HotEdges.qml"; then
+    pass "HotEdges: right corner → controlpanel"
+else
+    fail "HotEdges" "missing controlpanel trigger"
+fi
+
+# Each zone has mask: Region for proper Wayland input
+hotedge_masks=$(grep -c 'mask: Region' "$SHELL_DIR/modules/hotedges/HotEdges.qml" || true)
+if [[ "$hotedge_masks" -ge 3 ]]; then
+    pass "HotEdges: all 3 zones have mask: Region"
+else
+    fail "HotEdges" "expected 3 mask: Region entries, got $hotedge_masks"
+fi
+
+# Dead pixel workaround present
+if grep -q 'margins.bottom: -1' "$SHELL_DIR/modules/hotedges/HotEdges.qml"; then
+    pass "HotEdges: dead pixel workaround (margins.bottom: -1)"
+else
+    fail "HotEdges" "missing margins.bottom: -1 dead pixel workaround"
+fi
+
+# Timer intervals match documented values (250ms corners, 300ms center)
+if grep -q 'interval: 300' "$SHELL_DIR/modules/hotedges/HotEdges.qml"; then
+    pass "HotEdges: center timer interval 300ms"
+else
+    fail "HotEdges" "center timer should be 300ms"
+fi
+left_right_timers=$(grep -c 'interval: 250' "$SHELL_DIR/modules/hotedges/HotEdges.qml" || true)
+if [[ "$left_right_timers" -ge 2 ]]; then
+    pass "HotEdges: corner timers interval 250ms ($left_right_timers found)"
+else
+    fail "HotEdges" "expected 2 corner timers at 250ms, got $left_right_timers"
+fi
+
+# rc.lua lock screen keybind is Super+Shift+L (not Super+L)
+RC_LUA="$SHELL_DIR/../somewm-one/rc.lua"
+if [[ -f "$RC_LUA" ]]; then
+    if grep -qE '\{\s*modkey\s*,\s*"Shift"\s*\},\s*"l".*lock' "$RC_LUA"; then
+        pass "rc.lua: lock screen bound to Super+Shift+L"
+    else
+        fail "rc.lua" "lock screen should be Super+Shift+L (Super+L reserved for resize)"
+    fi
 fi
 
 # ============================================================

@@ -4,18 +4,25 @@ import Quickshell.Wayland
 import "../../core" as Core
 import "../../services" as Services
 
-// Hot screen edges — 3 zones at bottom screen edge (focused screen only).
-// Center declared FIRST (bottom of layer stack), corners AFTER (on top).
-//
-//   [  Left corner  |     Center      |  Right corner  ]
-//   [    → Dock     |   → Dashboard   | → ControlPanel ]
+/**
+ * HotEdges -- invisible hover zones along the bottom screen edge.
+ *
+ * Three zones are created on the focused screen only:
+ *
+ *   [ Left corner |    Center strip    | Right corner ]
+ *   [   -> Dock   |   -> Dashboard     | -> Control   ]
+ *
+ * The center zone is declared first so it sits at the bottom of the
+ * layer stack; the two corner zones overlay it and take priority.
+ * Each zone toggles its panel after a short hover delay.
+ */
 Scope {
     id: root
     readonly property real sp: Core.Theme.dpiScale
     readonly property real cornerW: Math.round(140 * sp)
     readonly property real zoneH: Math.round(6 * sp)
 
-    // ── Center strip → Dashboard (FIRST = bottom of layer stack) ──
+    // Center strip -> Dashboard (declared first = bottom of layer stack)
     Variants {
         model: Quickshell.screens
 
@@ -64,7 +71,7 @@ Scope {
         }
     }
 
-    // ── Left corner → Dock (AFTER center = on top) ──
+    // Left corner -> Dock
     Variants {
         model: Quickshell.screens
 
@@ -112,7 +119,7 @@ Scope {
         }
     }
 
-    // ── Right corner → Control Panel ──
+    // Right corner -> Control Panel
     Variants {
         model: Quickshell.screens
 

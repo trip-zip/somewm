@@ -30,7 +30,7 @@ somewm-shell (Quickshell / Qt6 QML)
 ├── Core layer ─── Theme.qml, Anims.qml, Config.qml, Panels.qml, Constants.qml
 │   └── Theme.qml watches theme.json via FileView (inotify)
 │
-└── Modules ─── Dashboard, Dock, ControlPanel, Weather, Wallpapers, Collage, OSD
+└── Modules ─── Dashboard, Dock, ControlPanel, HotEdges, Weather, Wallpapers, Collage, OSD
     └── Each module = PanelWindow + Variants (per-screen instances)
 ```
 
@@ -97,6 +97,31 @@ ControlPanel (bottom-right, border strip + ShapePath)
     ├── Mic input slider + mute toggle (Services.Audio)
     └── Brightness slider (Services.Brightness)
 ```
+
+### Hot Edges Architecture
+
+Hot screen edges provide hover-triggered panel activation at the bottom screen edge.
+Three invisible PanelWindows per screen, only active on the focused screen:
+
+```
+HotEdges (3 per-zone PanelWindows, focused screen only)
+├── Center strip (full-width minus corners) → Dashboard [bottom of layer stack]
+├── Left corner (140px) → Dock [on top of center]
+└── Right corner (140px) → Control Panel [on top of center]
+```
+
+**Key design decisions:**
+- **Per-zone PanelWindows** — each zone is a separate Wayland surface with its own
+  `mask: Region { item: mouseArea }`. Avoids pointer-steal issues between overlapping surfaces.
+- **Center declared FIRST** — in wlr-layer-shell, surfaces on the same layer stack by
+  creation order. Center is created first (bottom), corners after (on top) so corners
+  always win pointer events in overlap areas.
+- **Focused screen only** — `visible: isActiveScreen` prevents ghost zones on inactive
+  screens from stealing pointer events at shared screen edges (multi-monitor fix).
+- **Dead pixel workaround** — `margins.bottom: -1` extends surface 1px past screen edge
+  so cursor at absolute bottom pixel still triggers `wl_pointer.enter`.
+- **Timer-based activation** — 250ms (corners) / 300ms (center) delay prevents accidental
+  triggers when cursor passes through.
 
 ### Panel Architecture Pattern (Border Strip + ShapePath)
 
@@ -336,6 +361,9 @@ plans/somewm-shell/
 │   ├── controlpanel/          # Bottom-right quick controls
 │   │   ├── ControlPanel.qml   # Main panel (border strip + ShapePath + sliders)
 │   │   └── qmldir
+│   ├── hotedges/              # Hot screen edges (bottom-edge hover triggers)
+│   │   ├── HotEdges.qml      # Per-zone PanelWindows (left→dock, center→dashboard, right→controlpanel)
+│   │   └── qmldir
 │   ├── osd/                   # On-screen display (volume/brightness)
 │   ├── weather/               # Weather panel
 │   ├── wallpapers/            # Wallpaper picker (carousel + grid + preview)
@@ -568,7 +596,12 @@ grep "DOCK" /tmp/qs-shell.log
 **Exclusive** panels close each other (only one open at a time).
 **Non-exclusive** panels (dock, controlpanel) can coexist with exclusive panels.
 
-**Hover triggers** (when dashboard strip is visible):
+**Hot screen edges** (always active on focused screen):
+- Bottom-left corner → opens Dock (250ms hover delay)
+- Bottom-center strip → opens Dashboard (300ms hover delay)
+- Bottom-right corner → opens Control Panel (250ms hover delay)
+
+**Dashboard strip hover triggers** (when dashboard strip is visible):
 - Hover left edge of strip → opens Dock
 - Hover right edge of strip → opens Control Panel
 
