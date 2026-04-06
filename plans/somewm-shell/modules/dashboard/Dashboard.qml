@@ -368,6 +368,7 @@ Variants {
                 }
             }
 
+            focus: true
             Keys.onEscapePressed: Core.Panels.close("dashboard")
         } // wrapper
     } // PanelWindow
