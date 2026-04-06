@@ -48,6 +48,23 @@ void key_array_append(key_array_t *arr, keyb_t *elem) {
 	arr->tab[arr->len++] = elem;
 }
 
+int key_array_find(key_array_t *arr, keyb_t *elem) {
+	for (int i = 0; i < arr->len; i++)
+		if (arr->tab[i] == elem)
+			return i;
+	return -1;
+}
+
+keyb_t *key_array_take(key_array_t *arr, int pos) {
+	assert(pos >= 0 && pos < arr->len);
+	keyb_t *res = arr->tab[pos];
+	if (pos < arr->len - 1)
+		memmove(arr->tab + pos, arr->tab + pos + 1,
+		        (arr->len - pos - 1) * sizeof(keyb_t *));
+	arr->len--;
+	return res;
+}
+
 /** Set key array from Lua table (AwesomeWM pattern)
  * Ported from AwesomeWM objects/key.c:luaA_key_array_set
  * \param L Lua state

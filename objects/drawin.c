@@ -1548,6 +1548,10 @@ drawin_moveresize(lua_State *L, int udx, int x, int y, int width, int height)
 	/* Update scene buffer destination size if size changed */
 	if (drawin->scene_buffer && (old_width != drawin->width || old_height != drawin->height))
 		wlr_scene_buffer_set_dest_size(drawin->scene_buffer, drawin->width, drawin->height);
+
+	/* Size change requires border + shadow refresh */
+	if (old_width != drawin->width || old_height != drawin->height)
+		drawin->border_need_update = true;
 }
 
 /** Set drawin geometry (wrapper for external callers)
@@ -1764,6 +1768,21 @@ drawin_border_refresh_single(drawin_t *d)
 	if (!d->scene_tree || !d->border_buffer)
 		return;
 
+	/* Update shadow geometry (independent of border width) */
+	{
+		const shadow_config_t *shadow_config = shadow_get_effective_config(
+			d->shadow_config, true);
+		if (shadow_config && shadow_config->enabled) {
+			if (d->shadow.tree) {
+				shadow_update_geometry(&d->shadow, shadow_config,
+					d->width, d->height);
+			} else {
+				shadow_create(d->scene_tree, &d->shadow, shadow_config,
+					d->width, d->height);
+			}
+		}
+	}
+
 	bw = d->border_width;
 
 	/* If no border width, hide the border buffer */
@@ -1800,21 +1819,6 @@ drawin_border_refresh_single(drawin_t *d)
 	/* Position border so it surrounds the content
 	 * Border surface origin is at top-left corner of border area */
 	wlr_scene_node_set_position(&d->border_buffer->node, -bw, -bw);
-
-	/* Update shadow geometry (lazy creation if needed) */
-	{
-		const shadow_config_t *shadow_config = shadow_get_effective_config(
-			d->shadow_config, true);
-		if (shadow_config && shadow_config->enabled) {
-			if (d->shadow.tree) {
-				shadow_update_geometry(&d->shadow, shadow_config,
-					d->width, d->height);
-			} else {
-				shadow_create(d->scene_tree, &d->shadow, shadow_config,
-					d->width, d->height);
-			}
-		}
-	}
 }
 
 /** Refresh all visible drawins (AwesomeWM compatibility)
@@ -2181,6 +2185,9 @@ luaA_drawin_set_shadow(lua_State *L, drawin_t *drawin)
 		/* Match drawin visibility */
 		shadow_set_visible(&drawin->shadow, drawin->visible);
 	}
+
+	/* Ensure shadow gets refreshed with correct geometry on next cycle */
+	drawin->border_need_update = true;
 
 	luaA_object_emit_signal(L, -3, "property::shadow", 0);
 	return 0;

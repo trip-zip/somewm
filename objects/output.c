@@ -3,6 +3,7 @@
 #include "signal.h"
 #include "luaa.h"
 #include "common/luaclass.h"
+#include "common/lualib.h"
 #include "common/luaobject.h"
 #include "../somewm_api.h"
 #include "common/util.h"
@@ -1048,6 +1049,30 @@ const luaL_Reg output_methods[] = {
 	{ NULL, NULL }
 };
 
+/** Callback for "added::connected" — when Lua code connects a handler to the
+ * "added" signal, retroactively call it for all existing outputs.
+ * This matches the screen class pattern (see awful/screen.lua) and ensures
+ * that output configuration in rc.lua applies to monitors that were already
+ * present before rc.lua loaded.
+ */
+static int
+luaA_output_added_connected(lua_State *L)
+{
+	/* The new handler function is at stack position 1 (passed by luaclass) */
+	size_t i;
+	for (i = 0; i < output_count; i++) {
+		lua_rawgeti(L, LUA_REGISTRYINDEX, output_refs[i]);
+		output_t *o = (output_t *)lua_touserdata(L, -1);
+		if (o && o->valid) {
+			lua_pushvalue(L, 1);  /* duplicate handler on top for luaA_dofunction */
+			luaA_dofunction(L, 1, 0);
+		} else {
+			lua_pop(L, 1);  /* pop invalid output */
+		}
+	}
+	return 0;
+}
+
 void
 output_class_setup(lua_State *L)
 {
@@ -1058,6 +1083,11 @@ output_class_setup(lua_State *L)
 			 luaA_class_index_miss_property,
 			 luaA_class_newindex_miss_property,
 			 output_methods, output_meta);
+
+	/* Retroactive delivery: when Lua connects to "added", call the handler
+	 * for all outputs that already exist (added before rc.lua loaded). */
+	luaA_class_connect_signal(L, &output_class, "added::connected",
+				  luaA_output_added_connected);
 
 	const lua_class_property_t properties[] = {
 		{ "name", NULL, (lua_class_propfunc_t) luaA_output_get_name, NULL },

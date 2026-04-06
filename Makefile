@@ -9,7 +9,7 @@
 
 -include .local.mk
 
-.PHONY: all install uninstall clean setup reconfigure test test-unit test-check test-integration test-asan test-one test-visual test-one-visual test-ci test-fast build-test
+.PHONY: all install uninstall clean setup reconfigure test test-unit test-check test-integration test-asan test-one test-visual test-one-visual test-ci test-fast build-test build-bench bench-run bench-run-live bench-flamegraph bench-diff bench-heaptrack
 
 # Default build: WITH ASAN for development
 all:
@@ -112,3 +112,51 @@ endif
 	 SOMEWM=./build-test/somewm \
 	 SOMEWM_CLIENT=./build-test/somewm-client \
 	 ./tests/run-integration.sh $(TEST)
+
+# =============================================================================
+# Benchmarking
+# =============================================================================
+
+# Build with bench instrumentation (no ASAN, debugoptimized)
+build-bench:
+	@test -d build-bench || meson setup build-bench -Db_sanitize=none -Dbuildtype=debugoptimized -Dbench=true
+	ninja -C build-bench
+
+# Run benchmarks in headless mode
+bench-run: build-bench
+	@HEADLESS=1 \
+	 SOMEWM=./build-bench/somewm \
+	 SOMEWM_CLIENT=./build-bench/somewm-client \
+	 ./tests/bench/run-all.sh
+
+# Run benchmarks against the live compositor session
+bench-run-live:
+	@HEADLESS=0 \
+	 SOMEWM_CLIENT=./build-bench/somewm-client \
+	 ./tests/bench/run-all.sh
+
+# Record perf profile during benchmarks (30s default, override with PERF_DURATION=N)
+bench-flamegraph: build-bench
+	perf record -g --call-graph dwarf -p $$(pidof somewm) -o perf-bench.data -- sleep $${PERF_DURATION:-30}
+	perf script -i perf-bench.data | stackcollapse-perf.pl | flamegraph.pl > somewm-bench-flamegraph.svg
+	@echo "Flamegraph: somewm-bench-flamegraph.svg"
+
+# Generate differential flamegraph between two perf recordings
+# Usage: make bench-diff SYNC=perf-sync.data QUEUE=perf-queue.data
+bench-diff:
+ifndef SYNC
+	@echo "Usage: make bench-diff SYNC=perf-sync.data QUEUE=perf-queue.data"
+	@exit 1
+endif
+ifndef QUEUE
+	@echo "Usage: make bench-diff SYNC=perf-sync.data QUEUE=perf-queue.data"
+	@exit 1
+endif
+	perf script -i $(SYNC) | stackcollapse-perf.pl > /tmp/sync.folded
+	perf script -i $(QUEUE) | stackcollapse-perf.pl > /tmp/queue.folded
+	difffolded.pl /tmp/sync.folded /tmp/queue.folded | flamegraph.pl > somewm-bench-diff.svg
+	@echo "Differential flamegraph: somewm-bench-diff.svg"
+
+# Memory profiling with heaptrack
+bench-heaptrack: build-bench
+	heaptrack ./build-bench/somewm

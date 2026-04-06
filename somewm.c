@@ -1519,12 +1519,16 @@ initialcommitnotify(struct wl_listener *listener, void *data)
 			WLR_XDG_TOPLEVEL_WM_CAPABILITIES_FULLSCREEN);
 	if (c->decoration)
 		requestdecorationmode(&c->set_decoration_mode, c->decoration);
-	if (m && !client_is_unmanaged(c) && !client_is_float_type(c)) {
-		wlr_xdg_toplevel_set_size(c->surface.xdg->toplevel,
-			m->w.width - 2 * c->bw, m->w.height - 2 * c->bw);
-	} else {
-		wlr_xdg_toplevel_set_size(c->surface.xdg->toplevel, 0, 0);
+	/* Send bounds hint so clients know the available space, but let them
+	 * choose their own initial size with set_size(0, 0). Sending workarea
+	 * as set_size caused clients opened in floating layout to fill the
+	 * entire screen because floating.arrange() is a no-op. The bounds
+	 * hint is sufficient for Firefox's tiling geometry fix (#321). */
+	if (m && !client_is_unmanaged(c)) {
+		wlr_xdg_toplevel_set_bounds(c->surface.xdg->toplevel,
+			m->w.width, m->w.height);
 	}
+	wlr_xdg_toplevel_set_size(c->surface.xdg->toplevel, 0, 0);
 }
 
 /* Handle subsequent XDG commits - resizing and opacity.
@@ -3257,12 +3261,15 @@ keypress(struct wl_listener *listener, void *data)
 	/* Check if keygrabber is active - if so, route event to Lua callback.
 	 * Note: Keygrabber is allowed when Lua-locked (for lock screen password input)
 	 * but NOT when externally locked (session-lock-v1 protocol handles that). */
-	if (!locked && event->state == WL_KEYBOARD_KEY_STATE_PRESSED && some_keygrabber_is_running()) {
+	if (!locked && some_keygrabber_is_running()) {
+		bool is_press = event->state == WL_KEYBOARD_KEY_STATE_PRESSED;
 		/* Route to keygrabber callback */
-		if (some_keygrabber_handle_key(mods, keycode, group->wlr_group->keyboard.xkb_state)) {
-			/* Keygrabber handled the event, disable key repeat and return */
-			group->nsyms = 0;
-			wl_event_source_timer_update(group->key_repeat_source, 0);
+		if (some_keygrabber_handle_key(keycode, group->wlr_group->keyboard.xkb_state, is_press)) {
+			/* Only disable key repeat for press events */
+			if (is_press) {
+				group->nsyms = 0;
+				wl_event_source_timer_update(group->key_repeat_source, 0);
+			}
 			return;
 		}
 	}
@@ -4608,6 +4615,71 @@ static float main_loop_iteration_limit = 0.1f;
 /* Recursion guard for some_refresh() */
 static bool in_refresh = false;
 
+#ifdef SOMEWM_BENCH
+#include <stdint.h>
+
+#define BENCH_FRAME_HISTORY 1000
+
+static uint64_t bench_frame_times_ns[BENCH_FRAME_HISTORY];
+static int bench_frame_index = 0;
+static int bench_frame_count = 0;
+static uint64_t bench_refresh_count = 0;
+
+static uint64_t
+timespec_diff_ns(struct timespec *start, struct timespec *end)
+{
+    return (uint64_t)(end->tv_sec - start->tv_sec) * 1000000000ULL
+         + (uint64_t)(end->tv_nsec - start->tv_nsec);
+}
+
+void
+bench_frame_stats_get(uint64_t *count, uint64_t *min_ns, uint64_t *max_ns,
+                      uint64_t *avg_ns, uint64_t *p99_ns)
+{
+    *count = bench_refresh_count;
+    if (bench_frame_count == 0) {
+        *min_ns = *max_ns = *avg_ns = *p99_ns = 0;
+        return;
+    }
+
+    /* Copy and sort for percentile calculation */
+    int n = bench_frame_count < BENCH_FRAME_HISTORY
+          ? bench_frame_count : BENCH_FRAME_HISTORY;
+    uint64_t sorted[BENCH_FRAME_HISTORY];
+    memcpy(sorted, bench_frame_times_ns, n * sizeof(uint64_t));
+
+    /* Simple insertion sort - n is at most 1000 */
+    for (int i = 1; i < n; i++) {
+        uint64_t key = sorted[i];
+        int j = i - 1;
+        while (j >= 0 && sorted[j] > key) {
+            sorted[j + 1] = sorted[j];
+            j--;
+        }
+        sorted[j + 1] = key;
+    }
+
+    *min_ns = sorted[0];
+    *max_ns = sorted[n - 1];
+
+    uint64_t sum = 0;
+    for (int i = 0; i < n; i++)
+        sum += sorted[i];
+    *avg_ns = sum / n;
+
+    int p99_idx = (int)((n - 1) * 0.99);
+    *p99_ns = sorted[p99_idx];
+}
+
+void
+bench_frame_stats_reset(void)
+{
+    bench_frame_index = 0;
+    bench_frame_count = 0;
+    bench_refresh_count = 0;
+}
+#endif
+
 /* Forward declaration */
 void some_refresh(void);
 
@@ -4752,6 +4824,10 @@ some_refresh(void)
 		return;
 	in_refresh = true;
 
+#ifdef SOMEWM_BENCH
+	struct timespec bench_start, bench_end;
+	clock_gettime(CLOCK_MONOTONIC, &bench_start);
+#endif
 
 	/* Step 1: Emit refresh signal - triggers Lua layout calculations */
 	luaA_emit_signal_global("refresh");
@@ -4781,6 +4857,14 @@ some_refresh(void)
 	 * This matches AwesomeWM's deferred destruction pattern to avoid race conditions */
 	client_destroy_later();
 
+#ifdef SOMEWM_BENCH
+	clock_gettime(CLOCK_MONOTONIC, &bench_end);
+	uint64_t elapsed = timespec_diff_ns(&bench_start, &bench_end);
+	bench_frame_times_ns[bench_frame_index] = elapsed;
+	bench_frame_index = (bench_frame_index + 1) % BENCH_FRAME_HISTORY;
+	bench_frame_count++;
+	bench_refresh_count++;
+#endif
 
 	in_refresh = false;
 }

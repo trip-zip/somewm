@@ -90,23 +90,27 @@ for _, type_name in ipairs { "button", "key" } do
         end
     end
 
+    -- Save C-level _remove_key if available (for immediate removal)
+    local c_remove = capi.root["_remove_"..type_name]
+
     capi.root["_remove_"..type_name] = function(value)
-        if not capi.root._private[prop_name] then return end
-
-        local k = gtable.hasitem(capi.root._private[prop_name], value)
-
-        if k then
-            table.remove(capi.root._private[prop_name], k)
+        -- Update _private tracking
+        if capi.root._private[prop_name] then
+            local k = gtable.hasitem(capi.root._private[prop_name], value)
+            if k then
+                table.remove(capi.root._private[prop_name], k)
+            end
         end
 
-        -- Because of the legacy API, it is possible the capi.key/buttons will
-        -- be in the formatted table but not of the awful.key/button one.
-        assert(value[1])
-
-        table.insert(removed, value)
-
-        -- Trigger delayed sync to C layer (fix: upstream AwesomeWM is missing this)
-        delay()
+        if c_remove then
+            -- Immediate C-level removal
+            c_remove(value)
+        else
+            -- Fallback: deferred batch sync
+            assert(value[1])
+            table.insert(removed, value)
+            delay()
+        end
     end
 
     capi.root["has_"..type_name] = function(item)

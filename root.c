@@ -170,24 +170,51 @@ luaA_root_append_keys(lua_State *L)
 	return 0;
 }
 
+#endif /* End of first block of removed functions */
+
 /** root._remove_key(key) - Remove a global keybinding
  *
- * Note: Current keybinding.c doesn't support removal, so this is a no-op
- * TODO: Implement keybinding removal in keybinding.c
+ * Accepts a single C key object or an awful.key table containing multiple
+ * C key objects (one per modifier combination). Removes all matching entries
+ * from globalconf.keys.
  *
- * \param key Key object to remove
+ * \param key Key object or awful.key table to remove
  */
 static int
 luaA_root_remove_key(lua_State *L)
 {
-	/* TODO: Implement keybinding removal
-	 * For now, this is a no-op for compatibility */
-	(void)L;
-	fprintf(stderr, "WARNING: root._remove_key not yet implemented\n");
+	keyb_t *key;
+
+	/* Single C key object */
+	key = luaA_toudata(L, 1, &key_class);
+	if (key) {
+		int pos = key_array_find(&globalconf.keys, key);
+		if (pos >= 0) {
+			key_array_take(&globalconf.keys, pos);
+			luaA_object_unref(L, key);
+		}
+		return 0;
+	}
+
+	/* awful.key table: iterate numeric indices and remove each C key */
+	if (lua_istable(L, 1)) {
+		int len = (int)luaA_rawlen(L, 1);
+		for (int i = 1; i <= len; i++) {
+			lua_rawgeti(L, 1, i);
+			key = luaA_toudata(L, -1, &key_class);
+			if (key) {
+				int pos = key_array_find(&globalconf.keys, key);
+				if (pos >= 0) {
+					key_array_take(&globalconf.keys, pos);
+					luaA_object_unref(L, key);
+				}
+			}
+			lua_pop(L, 1);
+		}
+	}
+
 	return 0;
 }
-
-#endif /* End of first block of removed functions */
 
 /** root._keys([new_keys]) - Get or set global keybindings (INTERNAL)
  * This is the C implementation that actually stores key objects.
@@ -2017,6 +2044,7 @@ const luaL_Reg root_methods[] = {
 	/* AwesomeWM-compatible exports (following Prime Directive) */
 	{ "_buttons", luaA_root_buttons },
 	{ "_keys", luaA_root_keys },
+	{ "_remove_key", luaA_root_remove_key },
 	{ "_wallpaper", luaA_root_wallpaper },
 	/* somewm extensions for wallpaper caching (Issue #214)
 	 * TODO(2.x): Move to dedicated wallpaper.c or compositor/texture_cache.c */
