@@ -198,6 +198,7 @@ Monitor *dirtomon(enum wlr_direction dir);
 static void apply_input_settings_to_device(struct libinput_device *device);
 void focusclient(Client *c, int lift);
 void focusmon(const Arg *arg);
+void focus_restore(Monitor *m);
 Client *focustop(Monitor *m);
 static void fullscreennotify(struct wl_listener *listener, void *data);
 static void foreign_toplevel_request_activate(struct wl_listener *listener, void *data);
@@ -1426,7 +1427,7 @@ closemon(Monitor *m)
 		selmon ? selmon->wlr_output->name : "NULL",
 		nclients);
 
-	focusclient(focustop(selmon), 1);
+	focus_restore(selmon);
 	printstatus();
 }
 
@@ -2272,6 +2273,11 @@ destroylayersurfacenotify(struct wl_listener *listener, void *data)
 {
 	LayerSurface *l = wl_container_of(listener, l, destroy);
 
+	/* Defensive: clear exclusive_focus if the destroyed surface held it
+	 * (shouldn't happen per Wayland spec - unmap fires before destroy) */
+	if (l == exclusive_focus)
+		exclusive_focus = NULL;
+
 	wl_list_remove(&l->link);
 	wl_list_remove(&l->destroy.link);
 	wl_list_remove(&l->unmap.link);
@@ -2290,7 +2296,7 @@ destroylock(SessionLock *lock, int unlock)
 
 	wlr_scene_node_set_enabled(&locked_bg->node, 0);
 
-	focusclient(focustop(selmon), 0);
+	focus_restore(selmon);
 	motionnotify(0, NULL, 0, 0, 0, 0);
 
 destroy:
@@ -2319,7 +2325,7 @@ destroylocksurface(struct wl_listener *listener, void *data)
 		surface = wl_container_of(cur_lock->surfaces.next, surface, link);
 		client_notify_enter(surface->surface, wlr_seat_get_keyboard(seat));
 	} else if (!locked) {
-		focusclient(focustop(selmon), 1);
+		focus_restore(selmon);
 	} else {
 		wlr_seat_keyboard_clear_focus(seat);
 	}
@@ -2407,7 +2413,7 @@ some_deactivate_lua_lock(void)
 	if (pre_lock_focused_client && pre_lock_focused_client->scene) {
 		focusclient(pre_lock_focused_client, 1);
 	} else {
-		focusclient(focustop(selmon), 1);
+		focus_restore(selmon);
 	}
 	pre_lock_focused_client = NULL;
 	motionnotify(0, NULL, 0, 0, 0, 0);
@@ -2902,7 +2908,7 @@ focusmon(const Arg *arg)
 			selmon = dirtomon(arg->i);
 		while (!selmon->wlr_output->enabled && i++ < nmons);
 	}
-	focusclient(focustop(selmon), 1);
+	focus_restore(selmon);
 }
 
 /* We probably should change the name of this: it sounds like it
@@ -2916,6 +2922,36 @@ focustop(Monitor *m)
 			return *c;
 	}
 	return NULL;
+}
+
+/* Single entry point for restoring focus after something closed, unlocked,
+ * or disconnected. Emits request::focus_restore on the screen so Lua can
+ * pick the right client from focus history. Falls back to focustop() when
+ * Lua is unavailable or doesn't handle it. */
+void
+focus_restore(Monitor *m)
+{
+	if (session_is_locked())
+		return;
+
+	if (!m)
+		m = selmon;
+
+	if (globalconf_L) {
+		lua_State *L = globalconf_get_lua_State();
+		screen_t *screen = luaA_screen_get_by_monitor(L, m);
+		if (screen) {
+			luaA_object_push(L, screen);
+			luaA_object_emit_signal(L, -1, "request::focus_restore", 0);
+			lua_pop(L, 1);
+			/* If Lua set a focused client, we're done */
+			if (globalconf.focus.client)
+				return;
+		}
+	}
+
+	/* Fallback: focus topmost client on the monitor */
+	focusclient(focustop(m), 1);
 }
 
 void
@@ -5651,7 +5687,7 @@ tagmon(const Arg *arg)
 	Client *sel = focustop(selmon);
 	if (sel) {
 		setmon(sel, dirtomon(arg->i), 0);
-		focusclient(focustop(selmon), 1);
+		focus_restore(selmon);
 	}
 }
 
@@ -5701,10 +5737,9 @@ unmaplayersurfacenotify(struct wl_listener *listener, void *data)
 
 	l->mapped = 0;
 	wlr_scene_node_set_enabled(&l->scene->node, 0);
-	if (l == exclusive_focus) {
+	if (l == exclusive_focus)
 		exclusive_focus = NULL;
-		focusclient(focustop(selmon), 1);
-	}
+
 	if (l->layer_surface->output && (l->mon = l->layer_surface->output->data))
 		arrangelayers(l->mon);
 
@@ -5712,6 +5747,9 @@ unmaplayersurfacenotify(struct wl_listener *listener, void *data)
 	if (l->lua_object && globalconf_L) {
 		layer_surface_emit_unmanage(l->lua_object);
 	}
+
+	/* Restore focus via Lua history on the layer surface's monitor */
+	focus_restore(l->mon ? l->mon : selmon);
 
 	motionnotify(0, NULL, 0, 0, 0, 0);
 }
@@ -5755,7 +5793,7 @@ unmapnotify(struct wl_listener *listener, void *data)
 	if (client_is_unmanaged(c)) {
 		if (c == exclusive_focus) {
 			exclusive_focus = NULL;
-			focusclient(focustop(selmon), 1);
+			focus_restore(c->mon ? c->mon : selmon);
 		}
 	} else {
 		/* AwesomeWM pattern: call client_unmanage() from unmapnotify.
@@ -6008,7 +6046,7 @@ updatemons(struct wl_listener *listener, void *data)
 				setmon(c, selmon, 0);
 			}
 		}
-		focusclient(focustop(selmon), 1);
+		focus_restore(selmon);
 		if (selmon->lock_surface) {
 			client_notify_enter(selmon->lock_surface->surface,
 					wlr_seat_get_keyboard(seat));

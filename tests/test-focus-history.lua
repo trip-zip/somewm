@@ -129,7 +129,9 @@ local steps = {
             count, client.focus and client.focus.class or "nil"))
 
         if client.focus == client_b then
-            io.stderr:write("[TEST] PASS: focus moved to client B (correct focus history)\n")
+            assert(client_b:has_keyboard_focus(),
+                "Client B regained visual focus but NOT keyboard focus (seat desync)")
+            io.stderr:write("[TEST] PASS: focus moved to client B (correct focus history + keyboard)\n")
             return true
         end
 
