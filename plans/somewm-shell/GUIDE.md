@@ -3,9 +3,10 @@
 ## What is somewm-shell?
 
 A professional desktop shell for somewm built on **Quickshell (Qt6/QML)**.
-It provides overlay panels (dashboard with tabbed interface, weather, wallpaper picker,
-collage viewer, OSD) as Wayland layer-shell surfaces. It is an **overlay complement**
-to the existing wibar and Lua widgets in somewm-one — it does not replace them.
+It provides overlay panels (dashboard with tabbed interface, dock, control panel,
+weather, wallpaper picker, collage viewer, OSD) as Wayland layer-shell surfaces.
+It is an **overlay complement** to the existing wibar and Lua widgets in somewm-one
+— it does not replace them.
 
 No server, no HTTP, no WebSocket. Everything runs natively in the Quickshell process.
 
@@ -23,13 +24,13 @@ somewm (C compositor + Lua API)
 
 somewm-shell (Quickshell / Qt6 QML)
 │
-├── Services layer ─── data sources (IPC, D-Bus, procfs, HTTP)
+├── Services layer ─── data sources (IPC, D-Bus, procfs, HTTP, Wayland protocols)
 │   └── QML property changes propagate automatically to UI
 │
-├── Core layer ─── Theme.qml, Anims.qml, Config.qml, Panels.qml
+├── Core layer ─── Theme.qml, Anims.qml, Config.qml, Panels.qml, Constants.qml
 │   └── Theme.qml watches theme.json via FileView (inotify)
 │
-└── Modules ─── Dashboard (tabbed), Weather, Wallpapers, Collage, OSD
+└── Modules ─── Dashboard, Dock, ControlPanel, Weather, Wallpapers, Collage, OSD
     └── Each module = PanelWindow + Variants (per-screen instances)
 ```
 
@@ -55,14 +56,162 @@ Dashboard (bottom-slide, full-width - margins)
 - `CavaService.mediaTabActive` — Cava process only runs when Media tab is visible
 - Base CPU/Memory polling stays always-on (wibar integration needs it)
 
-### Panel routing
+### Dock Architecture
 
-Old keybindings (`toggle sidebar`, `toggle media`) are **routed** through
-`Panels.toggle()` to the appropriate dashboard tab:
-- `sidebar` / `notifications` → Dashboard tab 0 (Home) / tab 3 (Notifications)
-- `media` → Dashboard tab 2 (Media)
+The dock is a **bottom-left corner popout** showing pinned favorites and running
+applications with icons, activity dots, and multi-window preview cards.
 
-### Theme chain
+```
+Dock (bottom-left, border strip + ShapePath)
+├── Border strip (full-width, always first to animate)
+├── ShapePath background (grows LEFT, rounded top corners)
+├── App icons row (Repeater over DockApps.dockItems ListModel)
+│   ├── DockAppButton (icon + activity dots + hover zoom + glow)
+│   └── DockSeparator (between pinned and running sections)
+├── Preview popup (z:200, glass card with window info + optional screencopy)
+│   └── PreviewCard (icon + title + close + focus status + live thumbnail*)
+└── Tooltip overlay (app name, z:300)
+```
+
+*Live thumbnails via ScreencopyView require Hyprland protocol; on wlroots (somewm)
+it gracefully falls back to rich info cards with focus status.
+
+**Data source:** `DockApps` singleton uses `ToplevelManager` from `Quickshell.Wayland`
+— direct Wayland protocol, no Lua IPC, instant reactivity.
+
+**Pin persistence:** Pinned apps saved to `~/.config/quickshell/somewm/dock-pins.json`.
+Right-click any icon to toggle pin. Default pins: alacritty, firefox-developer-edition,
+thunar, code, spotify.
+
+### Control Panel Architecture
+
+The control panel is a **bottom-right corner popout** with quick-access sliders
+for volume, microphone input, and screen brightness.
+
+```
+ControlPanel (bottom-right, border strip + ShapePath)
+├── Border strip (full-width, same as dock/dashboard)
+├── ShapePath background (grows RIGHT, rounded top corners)
+└── Horizontal Row of ControlSlider components
+    ├── Volume slider + mute toggle (Services.Audio)
+    ├── Mic input slider + mute toggle (Services.Audio)
+    └── Brightness slider (Services.Brightness)
+```
+
+### Panel Architecture Pattern (Border Strip + ShapePath)
+
+Dashboard, Dock, and ControlPanel share the same visual pattern:
+
+1. **Border strip** — thin bar at screen bottom edge, animates first (350ms)
+2. **ShapePath background** — rounded shape grows from strip (700ms, sequenced after strip)
+3. **Content** — inside the shape, clips during animation
+
+**Sequenced animation flow:**
+```
+Open:  strip appears (350ms) → pause → content grows (700ms)
+Close: content shrinks (700ms) → pause → strip disappears (350ms)
+```
+
+This is implemented with `SequentialAnimation` + `PropertyAction` + `PauseAnimation`.
+
+### Hover Trigger System
+
+The dashboard's border strip contains hover triggers at its edges:
+- **Left edge** (120px) → opens Dock panel
+- **Right edge** (120px) → opens Control Panel
+
+Both triggers are `MouseArea` elements with `hoverEnabled: true`, only visible when
+the dashboard strip is shown and the target panel is not already open. When triggered,
+panels enter "hoverMode" and auto-close on mouse exit (400ms timer).
+
+### Wayland Input Mask & Hover Architecture
+
+**CRITICAL LESSON LEARNED** — Wayland compositors only deliver input events to
+areas defined by the panel's `mask: Region { item: clickTarget }`. This creates
+unique challenges for hover-driven UIs:
+
+**The flicker loop problem:** If a popup's visibility toggles the mask region,
+the compositor alternately starts/stops sending hover events → rapid ENTERED/EXITED
+cycling. This happens when popup visibility is bound to hover state.
+
+**Solution — Unified clickTarget architecture:**
+
+```qml
+PanelWindow {
+    mask: Region { item: clickTarget }
+
+    Item {
+        id: clickTarget
+        anchors.fill: parent
+
+        // ALL interactive elements MUST be children of clickTarget
+        Item { id: wrapper; /* dock icons */ }
+
+        // Preview popup INSIDE clickTarget at z:200
+        Item {
+            id: previewPopup
+            z: 200  // above wrapper for hover priority
+
+            // PERMISSIVE visibility: keep in mask while timer runs
+            visible: shouldBeVisible || closeTimer.running || hoverHandler.hovered
+
+            HoverHandler {
+                id: hoverHandler
+                // HoverHandler doesn't compete with child MouseAreas
+                onHoveredChanged: {
+                    if (hovered) closeTimer.stop()
+                    else closeTimer.restart()
+                }
+            }
+        }
+
+        // Dismiss area at z:-1 (behind everything)
+        MouseArea { z: -1; onClicked: close() }
+    }
+
+    // Visual layer BEHIND clickTarget (does not affect mask)
+    Item {
+        z: -1
+        layer.enabled: true
+        layer.effect: MultiEffect { shadowEnabled: true }
+        // ShapePath + border strip rendered here
+    }
+
+    Timer {
+        id: closeTimer
+        interval: 400
+        onTriggered: {
+            // Guard: only close if mouse is NOT on popup
+            if (!hoverHandler.hovered) previewAppId = ""
+        }
+    }
+}
+```
+
+**Key rules:**
+1. **Unified z-order** — wrapper and popup both inside `clickTarget` so hover
+   events flow correctly through the z-tree
+2. **Permissive visibility** — popup stays visible (in mask) during close timer,
+   preventing mask toggle → flicker loop
+3. **HoverHandler over MouseArea** — `HoverHandler` doesn't compete with child
+   `MouseArea` elements for hover events (critical for cards with close buttons)
+4. **Visual layer at z:-1** — ShapePath + shadows render behind `clickTarget`,
+   never intercepting events
+5. **Guarded close timer** — `onTriggered` re-checks hover state before closing
+
+### Panel Routing & Exclusivity
+
+`Panels.qml` manages panel state with these rules:
+
+- **Exclusive group:** `["dashboard", "wallpapers", "collage", "weather", "ai-chat"]`
+  — opening one closes all others in the group
+- **Non-exclusive:** `dock` and `controlpanel` can coexist with exclusive panels
+- **Tab routing:** Legacy panel names are routed to dashboard tabs:
+  - `"sidebar"` / `"notifications"` → Dashboard tab 0 / 3
+  - `"media"` / `"performance"` → Dashboard tab 2 / 1
+- **IPC target:** `somewm-shell:panels` — all functions callable from rc.lua
+
+### Theme Chain
 
 ```
 theme.lua (somewm-one)
@@ -74,7 +223,7 @@ Theme.qml (singleton, QML property bindings)
 All UI elements auto-update
 ```
 
-### Wallpaper chain
+### Wallpaper Chain
 
 ```
 Shell picker (WallpaperPanel.qml)
@@ -85,7 +234,7 @@ Lua wallpaper service (fishlive/services/wallpaper.lua)
 Theme.qml auto-reloads via FileView
 ```
 
-### Data flow: how widgets get updated
+### Data Flow: How Widgets Get Updated
 
 There are 4 patterns — **no polling loops needed for most data**:
 
@@ -95,6 +244,7 @@ There are 4 patterns — **no polling loops needed for most data**:
 | **Timer + Process** | procfs (inotify doesn't work) | SystemStats reads `/proc/stat` every 2s |
 | **FileView watchChanges** | Config/theme files | Theme.qml, Config.qml |
 | **Quickshell built-in D-Bus** | MPRIS, PipeWire | Media.qml (MprisController) |
+| **Wayland protocol** | Window management | DockApps uses ToplevelManager directly |
 
 **Push IPC detail:** When a Lua signal fires in rc.lua (e.g., a window opens),
 rc.lua immediately calls `awful.spawn("qs ipc call somewm-shell:compositor invalidate")`.
@@ -119,7 +269,7 @@ plans/somewm-shell/
 │   ├── Theme.qml              # Colors, fonts, spacing, radii, helpers, dpiScale
 │   ├── Anims.qml              # Animation durations + easing + MD3 BezierSpline curves
 │   ├── Config.qml             # Module enable/disable, watches config.json
-│   ├── Panels.qml             # Panel visibility state + IPC handler + tab routing
+│   ├── Panels.qml             # Panel visibility + IPC handler + tab routing + exclusivity
 │   ├── Constants.qml          # Dashboard dimensions, arc gauge sizes, carousel params
 │   └── qmldir
 │
@@ -150,7 +300,7 @@ plans/somewm-shell/
 │   ├── Anim.qml               # NumberAnimation (respects Anims.scale)
 │   ├── CAnim.qml              # ColorAnimation (respects Anims.scale)
 │   └── qmldir                 # Component registration
-��
+│
 ├── services/                  # Data layer (singletons)
 │   ├── Compositor.qml         # Clients, tags, focus (push IPC + tag-switch focus)
 │   ├── Audio.qml              # Volume via wpctl (timer poll)
@@ -161,10 +311,11 @@ plans/somewm-shell/
 │   ├── Weather.qml            # wttr.in via XMLHttpRequest
 │   ├── Wallpapers.qml         # Wallpaper listing + set via Lua service + theme toggle
 │   ├── CavaService.qml        # Cava audio visualizer (lazy, mediaTabActive)
-���   └── qmldir
+│   ├── DockApps.qml           # Dock apps: ToplevelManager, pin persist, icon resolve
+│   └── qmldir
 │
 ├── modules/                   # Feature panels
-│   ├��─ ModuleLoader.qml       # Lazy loader (enabled via config.json)
+│   ├── ModuleLoader.qml       # Lazy loader (enabled via config.json)
 │   ├── dashboard/             # Bottom-slide tabbed dashboard
 │   │   ├── Dashboard.qml      # Main panel (ConcaveShape + TabBar + StackLayout)
 │   │   ├── HomeTab.qml        # Clock, stats, calendar, settings, launch, clients
@@ -179,17 +330,81 @@ plans/somewm-shell/
 │   │   ├── ClientList.qml     # Open windows (click → focus + tag switch + close)
 │   │   ├── MediaMini.qml      # Compact media widget for HomeTab
 │   │   └── qmldir
-│   ├── sidebar/ (DEPRECATED)  # Kept for test references, not loaded by shell.qml
-│   ├── media/ (DEPRECATED)    # Subcomponents still referenced by some tests
+│   ├── dock/                  # Bottom-left app dock
+│   │   ├── Dock.qml           # Main panel (border strip + ShapePath + app row + preview)
+│   │   └── qmldir
+│   ├── controlpanel/          # Bottom-right quick controls
+│   │   ├── ControlPanel.qml   # Main panel (border strip + ShapePath + sliders)
+│   │   └── qmldir
 │   ├── osd/                   # On-screen display (volume/brightness)
 │   ├── weather/               # Weather panel
 │   ├── wallpapers/            # Wallpaper picker (carousel + grid + preview)
 │   ├── collage/               # Image collage viewer
+│   ├── sidebar/ (DEPRECATED)  # Kept for test references, not loaded by shell.qml
+│   ├── media/ (DEPRECATED)    # Subcomponents still referenced by some tests
 │   └── qmldir
 │
 └── tests/
     └── test-all.sh            # Structural + syntax + import validation (no runtime)
 ```
+
+## Services Reference
+
+### DockApps.qml — Dock Application Manager
+
+**Data source:** `ToplevelManager` from `Quickshell.Wayland` — direct Wayland
+foreign-toplevel-management protocol. No Lua IPC overhead.
+
+**Model:** `ListModel`-based `dockItems` with in-place updates. This prevents the
+Repeater from destroying/recreating all delegates on every change (critical for
+smooth hover interactions).
+
+Each item in the model:
+```
+{ appId, icon, isPinned, isRunning, isActive, isSeparator, toplevelCount }
+```
+
+**Icon resolution cascade** (6 steps):
+1. Hardcoded overrides (case fixes: alacritty→Alacritty, code→visual-studio-code, etc.)
+2. `DesktopEntries.byId(appId)` — exact desktop entry match
+3. `DesktopEntries.heuristicLookup(appId)` — fuzzy match
+4. `Quickshell.iconPath(appId)` — direct XDG icon theme lookup
+5. Normalize: strip reverse-domain prefix, lowercase, dots-to-hyphens
+6. `steam_app_NNN` → `steam_icon_NNN` regex
+7. Fallback: `"application-x-executable"` (for IconImage, NOT Material Symbol)
+
+**No icon cache** — cascade is cheap after `DesktopEntries` loads. Avoids stale
+entries. Hooks `DesktopEntries.onApplicationsChanged` to re-resolve on startup.
+
+**Pin persistence:** Reads/writes `~/.config/quickshell/somewm/dock-pins.json`
+via `Process` commands.
+
+**API:**
+```qml
+DockApps.dockItems          // ListModel for Repeater
+DockApps.itemCount          // Number of items
+DockApps.getToplevels(appId) // Get raw toplevel objects for an app
+DockApps.activateApp(appId)  // Activate/cycle windows (round-robin)
+DockApps.launchApp(appId)    // Launch via DesktopEntries or direct exec
+DockApps.togglePin(appId)    // Toggle pinned state
+DockApps.isPinned(appId)     // Check if pinned
+DockApps.resolveIcon(appId)  // Icon name for Quickshell.iconPath()
+```
+
+### Other Services
+
+| Service | Data Source | Polling | Key Properties |
+|---------|-----------|---------|----------------|
+| **Compositor** | IPC (`somewm-client eval`) | Push + debounce | `clients`, `tags`, `focusedScreenName` |
+| **SystemStats** | `/proc/stat`, `/proc/meminfo`, `nvidia-smi` | 2s always-on, GPU lazy | `cpuPercent`, `memPercent`, `gpuPercent`, `cpuTemp` |
+| **Audio** | `wpctl` | 2s poll | `volume`, `muted`, `inputVolume`, `inputMuted` |
+| **Brightness** | `brightnessctl` | on-change | `percent` |
+| **Media** | MPRIS D-Bus | reactive | `title`, `artist`, `artUrl`, `playing` |
+| **Network** | `nmcli` | 10s poll | `wifiName`, `wifiStrength`, `btConnected` |
+| **Weather** | `wttr.in` HTTP | 30min | `temp`, `condition`, `forecast` |
+| **Wallpapers** | filesystem scan | on-demand | `wallpapers`, `setWallpaper()` |
+| **CavaService** | Cava process stdout | lazy (mediaTabActive) | `values`, `barCount` |
+| **DockApps** | ToplevelManager (Wayland) | reactive | `dockItems`, `itemCount` |
 
 ## New Components (v2)
 
@@ -270,7 +485,7 @@ Current: de-skewed, 1.4x scale. Others: skewed, opacity 0.5.
 
 ```bash
 # 1. Edit source files in plans/somewm-shell/
-vim plans/somewm-shell/modules/dashboard/PerformanceTab.qml
+vim plans/somewm-shell/modules/dock/Dock.qml
 
 # 2. Deploy to Quickshell config directory
 plans/somewm-shell/deploy.sh
@@ -285,7 +500,29 @@ plans/somewm-shell/deploy.sh && kill $(pgrep -f 'qs -c somewm'); qs -c somewm -n
 **IMPORTANT:** Always edit in `plans/somewm-shell/`, never in `~/.config/quickshell/somewm/`.
 The deploy script rsyncs source → config. Direct edits in config are overwritten.
 
-### Run tests
+### QML Cache
+
+Quickshell caches compiled QML at `~/.cache/quickshell/qmlcache/`. After structural
+changes (new files, renamed components, changed imports), clear the cache:
+
+```bash
+rm -rf ~/.cache/quickshell/qmlcache/
+```
+
+Then restart QS. Without clearing, QS may use stale cached versions.
+
+### QS Respawn Behavior
+
+somewm's rc.lua launches QS with `awful.spawn.once("qs -c somewm -n -d")`. This means:
+- Killing QS with `kill`/`pkill` triggers respawn by somewm
+- For quick restarts: just `kill $(pgrep -f 'qs -c somewm')` — it auto-respawns
+- For a clean restart with cache clear:
+  ```bash
+  rm -rf ~/.cache/quickshell/qmlcache/ && kill $(pgrep -f 'qs -c somewm')
+  ```
+- `pkill -USR2 quickshell` can reload without full restart (simple changes only)
+
+### Run Tests
 
 ```bash
 # All tests (structural, syntax, imports — no running compositor needed)
@@ -299,7 +536,7 @@ Tests validate: file structure, required files exist, QML import consistency,
 singleton patterns, known bug fixes are still in place, rc.lua keybindings.
 They do NOT require Quickshell or somewm running.
 
-### View logs
+### View Logs
 
 ```bash
 # Quickshell stderr (QML errors, console.log output)
@@ -308,21 +545,32 @@ qs -c somewm -n -d 2>&1 | tee /tmp/qs-shell.log
 
 # Filter for errors
 grep -i "error\|warn\|fail" /tmp/qs-shell.log
+
+# Filter dock debug output
+grep "DOCK" /tmp/qs-shell.log
 ```
 
 ### Keybindings (defined in rc.lua)
 
-| Key | Action |
-|-----|--------|
-| `Super+D` | Dashboard (Home tab) |
-| `Super+Z` | Dashboard → Notifications tab |
-| `Super+Shift+M` | Dashboard → Media tab |
-| `Super+Shift+E` | Weather panel |
-| `Super+Shift+W` | Wallpaper picker (carousel) |
-| `Super+Shift+O` | Collage viewer |
-| `Super+Shift+A` | AI chat |
-| `Super+C` | Close all panels |
-| `Escape` | Close current panel |
+| Key | Action | Panel Type |
+|-----|--------|------------|
+| `Super+D` | Dashboard (Home tab) | Exclusive |
+| `Super+X` | Dock (app launcher/switcher) | Non-exclusive |
+| `Super+Z` | Control Panel (vol/mic/brightness) | Non-exclusive |
+| `Super+Shift+M` | Dashboard → Media tab | Exclusive |
+| `Super+Shift+E` | Weather panel | Exclusive |
+| `Super+Shift+W` | Wallpaper picker (carousel) | Exclusive |
+| `Super+Shift+O` | Collage viewer | Exclusive |
+| `Super+Shift+A` | AI chat | Exclusive |
+| `Super+C` | Close ALL panels | — |
+| `Escape` | Close current panel | — |
+
+**Exclusive** panels close each other (only one open at a time).
+**Non-exclusive** panels (dock, controlpanel) can coexist with exclusive panels.
+
+**Hover triggers** (when dashboard strip is visible):
+- Hover left edge of strip → opens Dock
+- Hover right edge of strip → opens Control Panel
 
 ## Animation System (Anims.qml)
 
@@ -395,6 +643,12 @@ All colors come from `theme.json` (exported from `theme.lua` via `theme-export.s
 | `accentDim` | `#c49a3a` | Darker accent variant |
 | `urgent` | `#e06c75` | Errors, DND active |
 | `green` | `#98c379` | Success states |
+| `glass1` | — | Glass card background |
+| `glassBorder` | — | Glass card border |
+| `glassAccentHover` | — | Accent hover highlight |
+| `surfaceContainer` | — | Card backgrounds |
+| `surfaceContainerHigh` | — | Hover state card backgrounds |
+| `accentBorder` | — | Active/hover borders |
 
 ### Widget colors (matching wibar exactly)
 
@@ -407,7 +661,7 @@ All colors come from `theme.json` (exported from `theme.lua` via `theme-export.s
 | `widgetNetwork` | `#89b482` | Network/WiFi (sage) |
 | `widgetVolume` | `#ea6962` | Volume (red) |
 
-### DPI scaling
+### DPI Scaling
 
 Automatic based on primary screen resolution:
 - FHD (1920px): `dpiScale = 1.0`
@@ -533,7 +787,13 @@ Variants {
 
 ### 3. Register in shell.qml + config + Panels exclusive list + rc.lua keybinding
 
-See existing modules for reference.
+See existing modules for reference. Remember:
+- Add `import "modules/mymodule" as MyModuleModule` in `shell.qml`
+- Add `ModuleLoader` entry in `shell.qml`
+- Add `qmldir` with `MyModule MyModule.qml`
+- Add to exclusive group in `Panels.qml` if it should close other panels
+- Add keybinding in `plans/somewm-one/rc.lua`
+- Run `deploy.sh` after all changes
 
 ## Design Principles
 
@@ -546,14 +806,53 @@ See existing modules for reference.
 - **Minimal borders** — 1px at 6% opacity, only for structure
 - **dpiScale on all sizes** — `Math.round(N * Core.Theme.dpiScale)` for hardcoded px values
 - **Smooth animations** — 250-500ms with eased curves, never linear
+- **Glass cards** for popups/overlays — `glass1` background + `glassBorder`
+- **Unified clickTarget** for Wayland mask — all interactive children in one tree
 
 ### DO NOT
 
-- ~~Drop shadows~~ — use color layering instead
+- ~~Drop shadows~~ — use color layering instead (exception: dock preview, control panel)
 - ~~Background polling~~ — gate with visibility flags (perfTabActive, mediaTabActive)
 - ~~Gradients on buttons~~ — flat color only
-- ~~Glow effects~~ — never (except subtle arc gauge endpoint dot)
+- ~~Glow effects~~ — never (except subtle arc gauge endpoint dot and dock hover glow)
 - ~~Hardcoded pixel sizes~~ — always multiply by dpiScale
+- ~~MouseArea for hover tracking on containers with interactive children~~ — use HoverHandler
+- ~~Visibility bound directly to hover state~~ — use permissive visibility pattern
+
+## Dock-Specific Implementation Notes
+
+### Inline Components
+
+The Dock uses QML `component` declarations for delegate types to keep everything
+in a single file (avoiding import complexity for tightly-coupled elements):
+
+- **`DockSeparator`** — thin vertical line between pinned and running sections
+- **`DockAppButton`** — icon + activity dots + hover zoom + glow + click handlers
+- **`PreviewCard`** — window info card with icon, title, close button, focus status,
+  optional ScreencopyView live thumbnail
+
+### DockAppButton Interactions
+
+| Action | Behavior |
+|--------|----------|
+| **Hover** | Scale 1.0→1.25 (OutBack spring), glass accent glow, tooltip |
+| **Press** | Scale→0.85 (80ms snap) |
+| **Left click (not running)** | Launch app, close dock |
+| **Left click (1 window)** | Activate window, close dock |
+| **Left click (multi)** | Open preview popup |
+| **Right click** | Toggle pin/unpin |
+| **Middle click** | Launch new instance |
+| **Hover (multi, 150ms)** | Auto-open preview popup |
+
+### Preview Popup Behavior
+
+- Opens on hover (150ms delay) or click for multi-window apps
+- Shows one PreviewCard per toplevel window
+- Glass background with shadow, scale+opacity entry animation
+- Cards have staggered entry animation (scale 0.85→1.0, OutBack)
+- Close timer: 400ms after mouse exits (guarded — re-checks hover)
+- Click card → activate window + close dock
+- Close button on each card → close that window
 
 ## Quick Reference
 
@@ -561,8 +860,11 @@ See existing modules for reference.
 # Deploy
 plans/somewm-shell/deploy.sh
 
-# Deploy + restart
-plans/somewm-shell/deploy.sh && kill $(pgrep -f 'qs -c somewm'); qs -c somewm -n -d &
+# Deploy + restart QS
+plans/somewm-shell/deploy.sh && kill $(pgrep -f 'qs -c somewm')
+
+# Deploy + clear cache + restart
+plans/somewm-shell/deploy.sh && rm -rf ~/.cache/quickshell/qmlcache/ && kill $(pgrep -f 'qs -c somewm')
 
 # Run tests
 bash plans/somewm-shell/tests/test-all.sh
@@ -578,4 +880,10 @@ qs ipc -c somewm call somewm-shell:panels toggle dashboard
 
 # Config location
 ~/.config/quickshell/somewm/config.json
+
+# QML cache (clear after structural changes)
+~/.cache/quickshell/qmlcache/
+
+# Dock pins
+~/.config/quickshell/somewm/dock-pins.json
 ```
