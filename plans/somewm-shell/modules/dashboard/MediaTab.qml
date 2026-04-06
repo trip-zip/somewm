@@ -99,20 +99,12 @@ Item {
             anchors.fill: parent
             radius: coverSize / 2
             color: Core.Theme.surfaceContainerHigh
-            Text {
-                anchors.centerIn: parent
-                text: "\ue030"
-                font.family: Core.Theme.fontIcon
-                font.pixelSize: Math.round(parent.width * 0.4)
-                color: Core.Theme.fgMuted
-                visible: !Services.Media.artUrl
-            }
         }
 
         Image {
             id: mediaArtImg
             anchors.fill: parent
-            source: Services.Media.artUrl || ""
+            source: Services.Media.artUrl || Qt.resolvedUrl("../../assets/icons/nocover.jpg")
             asynchronous: true
             fillMode: Image.PreserveAspectCrop
             visible: false

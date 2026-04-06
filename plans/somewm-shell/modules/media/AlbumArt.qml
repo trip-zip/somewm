@@ -12,11 +12,11 @@ Item {
         color: Core.Theme.glass2
         clip: true
 
-        // Album art image
+        // Album art image (falls back to nocover.jpg)
         Image {
             id: artImage
             anchors.fill: parent
-            source: Services.Media.artUrl
+            source: Services.Media.artUrl || Qt.resolvedUrl("../../assets/icons/nocover.jpg")
             fillMode: Image.PreserveAspectCrop
 
             // Fade in reactively based on load status (no timer needed)
@@ -27,15 +27,6 @@ Item {
                     easing.type: Core.Anims.ease.decel
                 }
             }
-        }
-
-        // Fallback: music icon when no art
-        Components.MaterialIcon {
-            anchors.centerIn: parent
-            icon: "\ue405"  // music_note
-            size: Math.round(64 * Core.Theme.dpiScale)
-            color: Core.Theme.fgMuted
-            visible: artImage.status !== Image.Ready
         }
 
         // Bottom gradient overlay

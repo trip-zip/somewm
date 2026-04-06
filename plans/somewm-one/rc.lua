@@ -555,8 +555,8 @@ awful.keyboard.append_global_keybindings({
         awful.spawn("qs ipc -c somewm call somewm-shell:panels toggle dashboard")
     end, { description = "toggle dashboard", group = "shell" }),
     awful.key({ modkey }, "z", function()
-        awful.spawn("qs ipc -c somewm call somewm-shell:panels toggle notifications")
-    end, { description = "toggle notifications tab", group = "shell" }),
+        awful.spawn("qs ipc -c somewm call somewm-shell:panels toggle controlpanel")
+    end, { description = "toggle control panel", group = "shell" }),
     awful.key({ modkey, "Shift" }, "m", function()
         awful.spawn("qs ipc -c somewm call somewm-shell:panels toggle media")
     end, { description = "toggle media tab", group = "shell" }),
