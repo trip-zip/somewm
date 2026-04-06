@@ -8,3 +8,4 @@ singleton Weather Weather.qml
 singleton Wallpapers Wallpapers.qml
 singleton Network Network.qml
 singleton CavaService CavaService.qml
+singleton DockApps DockApps.qml

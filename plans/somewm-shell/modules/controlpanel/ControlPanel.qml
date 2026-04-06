@@ -106,14 +106,13 @@ Variants {
                 visible: panel.stripVisible
             }
 
-            // Content wrapper hit area + hover tracking
+            // Content wrapper hit area + hover tracking (covers content + strip, no gap)
             Rectangle {
                 visible: wrapper.height > 0
                 anchors.right: parent.right
                 anchors.bottom: parent.bottom
-                anchors.bottomMargin: panel.borderThickness
                 width: wrapper.width + Math.round(20 * panel.sp)
-                height: wrapper.height + Math.round(20 * panel.sp)
+                height: wrapper.height + panel.borderThickness + Math.round(20 * panel.sp)
                 color: "transparent"
 
                 MouseArea {

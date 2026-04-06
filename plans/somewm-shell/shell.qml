@@ -7,6 +7,7 @@ import "modules/weather" as WeatherModule
 import "modules/wallpapers" as WallpapersModule
 import "modules/collage" as CollageModule
 import "modules/controlpanel" as ControlPanelModule
+import "modules/dock" as DockModule
 
 ShellRoot {
     // Dashboard — Caelestia-style overlay with border strip + panel
@@ -37,5 +38,11 @@ ShellRoot {
     Modules.ModuleLoader {
         moduleName: "controlpanel"
         sourceComponent: Component { ControlPanelModule.ControlPanel {} }
+    }
+
+    // Dock — running apps with icons, left-side popout
+    Modules.ModuleLoader {
+        moduleName: "dock"
+        sourceComponent: Component { DockModule.Dock {} }
     }
 }

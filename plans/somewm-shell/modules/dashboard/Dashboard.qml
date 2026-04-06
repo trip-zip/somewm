@@ -158,6 +158,19 @@ Variants {
                 onClicked: Core.Panels.toggle("controlpanel")
             }
 
+            // Dock hover trigger — left end of strip
+            MouseArea {
+                anchors.left: parent.left
+                anchors.bottom: parent.bottom
+                width: Math.round(120 * panel.sp)
+                height: panel.borderThickness + Math.round(20 * panel.sp)
+                hoverEnabled: true
+                visible: panel.stripVisible && !Core.Panels.isOpen("dock")
+                z: 2
+                onEntered: Core.Panels.toggle("dock")
+                onClicked: Core.Panels.toggle("dock")
+            }
+
             // Dismiss area
             MouseArea {
                 anchors.fill: parent

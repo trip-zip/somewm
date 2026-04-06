@@ -533,7 +533,7 @@ awful.keyboard.append_global_keybindings({
               {description = "lock screen", group = "awesome"}),
     awful.key({ modkey,           }, "l", function() awesome.lock() end,
               {description = "lock screen", group = "awesome"}),
-    awful.key({ modkey }, "x",
+    awful.key({ modkey, "Shift" }, "x",
               function ()
                   awful.prompt.run {
                     prompt       = "Run Lua code: ",
@@ -557,6 +557,9 @@ awful.keyboard.append_global_keybindings({
     awful.key({ modkey }, "z", function()
         awful.spawn("qs ipc -c somewm call somewm-shell:panels toggle controlpanel")
     end, { description = "toggle control panel", group = "shell" }),
+    awful.key({ modkey }, "x", function()
+        awful.spawn("qs ipc -c somewm call somewm-shell:panels toggle dock")
+    end, { description = "toggle dock", group = "shell" }),
     awful.key({ modkey, "Shift" }, "m", function()
         awful.spawn("qs ipc -c somewm call somewm-shell:panels toggle media")
     end, { description = "toggle media tab", group = "shell" }),
