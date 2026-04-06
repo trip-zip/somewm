@@ -1,0 +1,12 @@
+Dashboard Dashboard.qml
+HomeTab HomeTab.qml
+PerformanceTab PerformanceTab.qml
+MediaTab MediaTab.qml
+NotificationsTab NotificationsTab.qml
+ClockWidget ClockWidget.qml
+StatsGrid StatsGrid.qml
+QuickLaunch QuickLaunch.qml
+QuickSettings QuickSettings.qml
+CalendarWidget CalendarWidget.qml
+MediaMini MediaMini.qml
+ClientList ClientList.qml

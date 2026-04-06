@@ -368,7 +368,6 @@ shadow_create(struct wlr_scene_tree *parent,
     wlr_scene_node_set_position(&shadow->sfx_shadow->node,
         config->offset_x - config->radius,
         config->offset_y - config->radius);
-
     shadow->last_width = width;
     shadow->last_height = height;
     return true;

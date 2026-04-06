@@ -1,0 +1,26 @@
+module components
+Anim 1.0 Anim.qml
+CAnim 1.0 CAnim.qml
+StyledRect 1.0 StyledRect.qml
+StyledText 1.0 StyledText.qml
+GlassCard 1.0 GlassCard.qml
+ClickableCard 1.0 ClickableCard.qml
+StateLayer 1.0 StateLayer.qml
+MaterialIcon 1.0 MaterialIcon.qml
+SlidePanel 1.0 SlidePanel.qml
+FadeLoader 1.0 FadeLoader.qml
+StatCard 1.0 StatCard.qml
+CircularProgress 1.0 CircularProgress.qml
+Graph 1.0 Graph.qml
+AnimatedBar 1.0 AnimatedBar.qml
+PulseWave 1.0 PulseWave.qml
+ImageAsync 1.0 ImageAsync.qml
+ScrollArea 1.0 ScrollArea.qml
+Separator 1.0 Separator.qml
+Tooltip 1.0 Tooltip.qml
+SectionHeader 1.0 SectionHeader.qml
+ArcGauge 1.0 ArcGauge.qml
+ConcaveShape 1.0 ConcaveShape.qml
+TabBar 1.0 TabBar.qml
+FrequencyVisualizer 1.0 FrequencyVisualizer.qml
+WallpaperCarousel 1.0 WallpaperCarousel.qml

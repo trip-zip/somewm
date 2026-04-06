@@ -1,0 +1,2 @@
+module services
+singleton Ollama Ollama.qml

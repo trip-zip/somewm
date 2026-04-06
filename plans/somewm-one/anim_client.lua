@@ -121,6 +121,11 @@ local defaults = {
         duration = 0.15,
         easing   = "ease-out-cubic",
     },
+    notification = {
+        enabled  = true,
+        duration = 0.25,
+        easing   = "ease-out-cubic",
+    },
     scenefx = {
         enabled       = true,
         corner_radius = 14,         -- pixels, 0 = sharp corners
@@ -776,6 +781,62 @@ function anim_client.enable(user_config)
         cancel(ls, "fade")
         cstate[ls] = nil
     end)
+end
+
+--- Fade-in a notification popup (call from request::display handler).
+--
+-- Notification popups are wibox/drawins. Uses the compositor's frame-synced
+-- animation engine (awesome.start_animation) for smooth fade.
+--
+-- Usage in rc.lua:
+--   local popup = naughty.layout.box { notification = n, ... }
+--   anim_client.fade_notification(popup)
+--
+-- @param popup The naughty.layout.box popup (awful.popup / wibox)
+function anim_client.fade_notification(popup)
+    if not popup then return end
+    if not active or not is_enabled("notification") then return end
+
+    local dur = cfg("notification", "duration")
+    local ease = cfg("notification", "easing")
+    if dur <= 0 then return end
+
+    -- Go directly through the C drawin property (_opacity) to bypass
+    -- wibox widget redraws that reset the scene buffer opacity.
+    local d = popup.drawin
+    if not d then return end
+
+    -- Animate shadow opacity together with content for smooth appearance.
+    local orig_shadow = d.shadow
+    local had_shadow = orig_shadow and orig_shadow.enabled
+    local target_shadow_opacity = had_shadow and (orig_shadow.opacity or 1) or 0
+    if had_shadow then
+        d.shadow = { enabled = true, opacity = 0,
+            radius = orig_shadow.radius, offset_x = orig_shadow.offset_x,
+            offset_y = orig_shadow.offset_y, color = orig_shadow.color,
+            clip_directional = orig_shadow.clip_directional }
+    end
+    d._opacity = 0
+
+    awesome.start_animation(dur, ease,
+        function(t)
+            if popup.valid == false then return end
+            d._opacity = t
+            if had_shadow then
+                d.shadow = { enabled = true, opacity = t * target_shadow_opacity,
+                    radius = orig_shadow.radius, offset_x = orig_shadow.offset_x,
+                    offset_y = orig_shadow.offset_y, color = orig_shadow.color,
+                    clip_directional = orig_shadow.clip_directional }
+            end
+        end,
+        function()
+            if popup.valid ~= false then
+                d._opacity = 1
+                if had_shadow then
+                    d.shadow = orig_shadow
+                end
+            end
+        end)
 end
 
 return anim_client

@@ -9,6 +9,7 @@ typedef struct animation_t {
     struct wl_list link;     /* globalconf.animations list */
     double duration;         /* Total duration in seconds */
     double elapsed;          /* Elapsed time in seconds */
+    double start_time;       /* Monotonic time when animation was created */
     int easing;              /* Easing function enum */
     int tick_ref;            /* Lua registry ref for tick callback */
     int done_ref;            /* Lua registry ref for done callback */

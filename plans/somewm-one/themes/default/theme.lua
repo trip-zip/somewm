@@ -48,10 +48,21 @@ theme.border_color_normal = bg_base
 theme.border_color_active = accent
 theme.border_color_marked = marked
 
--- Wibar — compact
-theme.wibar_bg            = bg_base .. "f0"
+-- Wibar — compact, no border
+theme.wibar_bg            = bg_base
 theme.wibar_fg            = fg_dim
 theme.wibar_height        = dpi(26)
+theme.wibar_border_width  = 0
+theme.wibar_border_color  = bg_base
+theme.bg_systray          = bg_base
+theme.systray_icon_spacing = dpi(4)
+
+-- Drawin/wibar shadow (uses client shadow as base, override here)
+theme.shadow_drawin_enabled   = true
+theme.shadow_drawin_radius    = 30
+theme.shadow_drawin_offset_x  = 0
+theme.shadow_drawin_offset_y  = 6
+theme.shadow_drawin_opacity   = 0.5
 
 -- Taglist
 theme.taglist_font        = "Geist SemiBold 11"
@@ -79,17 +90,25 @@ theme.lockscreen_border_color = accent
 theme.lockscreen_error_color  = urgent
 theme.lockscreen_font         = "Geist 14"
 theme.lockscreen_font_large   = "Geist Bold 48"
+theme.lockscreen_bg_image     = themes_path .. "default/wallpapers/1.jpg"
+
+-- Exit screen
+theme.exit_screen_bg          = bg_base .. "dd"
+theme.exit_screen_fg          = fg_main
+theme.exit_screen_icon        = accent
+theme.exit_screen_icon_hover  = urgent
+theme.exit_screen_bg_image    = themes_path .. "default/wallpapers/1.jpg"
 
 -- Notifications
-theme.notification_font          = "CommitMono Nerd Font Propo 11"
+theme.notification_font          = "CommitMono Nerd Font Propo 14"
 theme.notification_bg            = bg_base .. "ee"
 theme.notification_fg            = fg_main
 theme.notification_border_color  = accent_dim
-theme.notification_border_width  = dpi(1)
-theme.notification_margin        = dpi(12)
-theme.notification_icon_size     = dpi(128)
-theme.notification_max_width     = dpi(520)
-theme.notification_spacing       = dpi(8)
+theme.notification_border_width  = dpi(0)
+theme.notification_margin        = dpi(16)
+theme.notification_icon_size     = dpi(170)
+theme.notification_max_width     = dpi(700)
+theme.notification_spacing       = dpi(10)
 theme.notification_icon_default  = themes_path .. "default/icons/notification.png"
 
 -- Hotkeys popup
@@ -171,6 +190,21 @@ theme.layout_cornernw = themes_path.."default/layouts/cornernww.png"
 theme.layout_cornerne = themes_path.."default/layouts/cornernew.png"
 theme.layout_cornersw = themes_path.."default/layouts/cornersww.png"
 theme.layout_cornerse = themes_path.."default/layouts/cornersew.png"
+
+-- Widget component colors (fishlive wibar components)
+theme.theme_name              = "default"
+theme.widget_spacing          = dpi(6)
+theme.widget_font             = "Geist 10"
+theme.widget_cpu_color        = "#7daea3"  -- muted teal
+theme.widget_gpu_color        = green      -- #98c379
+theme.widget_memory_color     = "#d3869b"  -- muted mauve
+theme.widget_disk_color       = accent     -- #e2b55a warm amber
+theme.widget_network_color    = "#89b482"  -- sage green
+theme.widget_volume_color     = "#ea6962"  -- soft red
+theme.widget_updates_color    = "#d8a657"  -- golden
+theme.widget_keyboard_color   = "#7daea3"  -- muted teal
+theme.widget_clock_color      = accent     -- #e2b55a warm amber (time)
+theme.terminal                = "ghostty"
 
 -- Client animations
 -- Override any: beautiful.anim_<type>_<param> (e.g. anim_maximize_duration)

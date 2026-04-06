@@ -55,6 +55,9 @@ typedef struct wallpaper_cache_entry {
 /* With per-screen caching, need more entries (e.g., 2 screens × 9 tags = 18) */
 #define WALLPAPER_CACHE_MAX 32
 
+/** Look up a cached wallpaper entry by path and screen index */
+wallpaper_cache_entry_t *wallpaper_cache_lookup(const char *path, int screen_index);
+
 /* Forward declare button types */
 typedef struct button_t button_t;
 

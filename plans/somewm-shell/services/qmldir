@@ -1,0 +1,11 @@
+module services
+singleton Compositor Compositor.qml
+singleton SystemStats SystemStats.qml
+singleton Audio Audio.qml
+singleton Media Media.qml
+singleton Brightness Brightness.qml
+singleton Weather Weather.qml
+singleton Wallpapers Wallpapers.qml
+singleton Network Network.qml
+singleton CavaService CavaService.qml
+singleton DockApps DockApps.qml

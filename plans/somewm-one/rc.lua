@@ -26,6 +26,11 @@ require("awful.hotkeys_popup.keys")
 -- local treetileBindings = require("treetile.bindings")
 local machi = require("layout-machi")
 
+-- Fishlive component framework
+-- Services must be loaded BEFORE any factory.create() call
+require("fishlive.services")
+local factory = require("fishlive.factory")
+
 -- {{{ Error handling + log aggregation
 local error_log_path = os.getenv("HOME") .. "/.local/log/somewm-errors.log"
 
@@ -84,6 +89,9 @@ beautiful.init(gears.filesystem.get_configuration_dir() .. "themes/" .. themeNam
 
 -- Initialize lockscreen (must be after beautiful.init)
 pcall(function() require("lockscreen").init() end)
+
+-- Initialize exit screen (power/session overlay)
+pcall(function() require("fishlive.exit_screen").init() end)
 
 -- Client animations loaded at end of rc.lua (after all signals are connected)
 
@@ -429,6 +437,15 @@ screen.connect_signal("request::desktop_decoration", function(s)
     s.mywibox = awful.wibar {
         position = "top",
         screen   = s,
+        border_width = 0,
+        shadow = {
+            enabled = true,
+            radius = 20,
+            offset_x = 0,
+            offset_y = 6,
+            opacity = 0.55,
+            color = "#000000",
+        },
         -- @DOC_SETUP_WIDGETS@
         widget   = {
             layout = wibox.layout.align.horizontal,
@@ -439,89 +456,55 @@ screen.connect_signal("request::desktop_decoration", function(s)
                 s.mypromptbox,
             },
             s.mytasklist, -- Middle widget
-            { -- Right widgets
+            { -- Right widgets (fishlive components with separators)
                 layout = wibox.layout.fixed.horizontal,
-                mykeyboardlayout,
-                volume_widget,
+                factory.create("keyboard", s),
+                require("fishlive.widget_helper").separator(),
+                factory.create("updates", s),
+                require("fishlive.widget_helper").separator(),
+                factory.create("cpu", s),
+                require("fishlive.widget_helper").separator(),
+                factory.create("gpu", s),
+                require("fishlive.widget_helper").separator(),
+                factory.create("memory", s),
+                require("fishlive.widget_helper").separator(),
+                factory.create("disk", s),
+                require("fishlive.widget_helper").separator(),
+                factory.create("network", s),
+                require("fishlive.widget_helper").separator(),
+                factory.create("volume", s),
+                require("fishlive.widget_helper").separator(),
                 wibox.widget.systray(),
-                mytextclock,
-                s.mylayoutbox,
+                require("fishlive.widget_helper").separator(),
+                factory.create("clock", s),
+                require("fishlive.widget_helper").separator(),
+                factory.create("layoutbox", s),
             },
         }
     }
 
     -- =========================================================================
-    -- Tag-based Wallpaper System (awful.wallpaper API + preload cache)
+    -- Tag-based Wallpaper System (via fishlive.services.wallpaper)
     -- =========================================================================
     local wppath = gears.filesystem.get_configuration_dir()
         .. "themes/" .. themeName .. "/wallpapers/"
 
-    -- Wallpaper per tag: tag name (1-9) maps to wallpapers/N.jpg
-    -- Default fallback for tags without a matching wallpaper file
-    local default_wallpaper = "1.jpg"
-
-    -- Track current wallpaper per screen to skip redundant updates
-    s.current_wallpaper = nil
-
-    -- Set wallpaper using awful.wallpaper (new API, HiDPI-aware)
-    local function set_wallpaper(scr, wallpaper_file)
-        if scr.current_wallpaper == wallpaper_file then return end
-        local path = wppath .. wallpaper_file
-        if not gears.filesystem.file_readable(path) then
-            path = wppath .. default_wallpaper
-            wallpaper_file = default_wallpaper
-        end
-        awful.wallpaper {
-            screen = scr,
-            widget = {
-                {
-                    image     = path,
-                    upscale   = true,
-                    downscale = true,
-                    widget    = wibox.widget.imagebox,
-                },
-                valign = "center",
-                halign = "center",
-                tiled  = false,
-                widget = wibox.container.tile,
-            }
-        }
-        scr.current_wallpaper = wallpaper_file
-    end
-
-    -- Initial wallpaper
-    set_wallpaper(s, default_wallpaper)
-
-    -- Pre-cache all wallpapers for instant tag switching
-    if root.wallpaper_cache_preload then
-        local paths = {}
-        for i = 1, 9 do
-            local wp = wppath .. i .. ".jpg"
-            if gears.filesystem.file_readable(wp) then
-                table.insert(paths, wp)
-            end
-        end
-        if #paths > 0 then root.wallpaper_cache_preload(paths, s) end
-    end
-
-    -- Switch wallpaper on tag selection: tag name -> wallpapers/name.jpg
-    for _, tag in ipairs(s.tags) do
-        tag:connect_signal("property::selected", function(t)
-            if t.selected then
-                set_wallpaper(t.screen, t.name .. ".jpg")
-            end
-        end)
-    end
+    local wp_service = require("fishlive.services.wallpaper")
+    wp_service.init(s, wppath, "1.jpg")
 end)
 
 -- }}}
+
+-- somewm-shell overlay state (set via IPC from Quickshell Panels.qml)
+-- When true, desktop scroll-to-switch-tags is suppressed
+_somewm_shell_overlay = false
 
 -- {{{ Mouse bindings
 -- @DOC_ROOT_BUTTONS@
 awful.mouse.append_global_mousebindings({
     -- right-click menu removed (clean desktop)
-    awful.button({ }, 4, awful.tag.viewprev),
-    awful.button({ }, 5, awful.tag.viewnext),
+    awful.button({ }, 4, function() if not _somewm_shell_overlay then awful.tag.viewprev() end end),
+    awful.button({ }, 5, function() if not _somewm_shell_overlay then awful.tag.viewnext() end end),
     awful.button({ modkey, altkey }, 4, function()
         awful.spawn("wpctl set-volume @DEFAULT_AUDIO_SINK@ 5%+")
     end),
@@ -542,13 +525,15 @@ awful.keyboard.append_global_keybindings({
               { description = "show rofi drun", group = "launcher" }),              
     awful.key({ modkey,           }, "w", function () mymainmenu:show() end,
               {description = "show main menu", group = "awesome"}),
-    awful.key({ modkey, "Control" }, "r", awesome.cold_restart,
-              {description = "cold restart", group = "awesome"}),
-    awful.key({ modkey, "Shift"   }, "q", awesome.quit,
-              {description = "quit awesome", group = "awesome"}),
+    awful.key({ modkey, "Shift"   }, "r", awesome.restart,
+              {description = "reload configuration", group = "awesome"}),
+    awful.key({ modkey,           }, "q", function() awesome.emit_signal("exit_screen::toggle") end,
+              {description = "exit screen (power/session)", group = "awesome"}),
     awful.key({ modkey, "Shift"   }, "Escape", function() awesome.lock() end,
               {description = "lock screen", group = "awesome"}),
-    awful.key({ modkey }, "x",
+    awful.key({ modkey, "Shift"   }, "l", function() awesome.lock() end,
+              {description = "lock screen", group = "awesome"}),
+    awful.key({ modkey, "Shift" }, "x",
               function ()
                   awful.prompt.run {
                     prompt       = "Run Lua code: ",
@@ -565,29 +550,92 @@ awful.keyboard.append_global_keybindings({
     awful.key({ modkey }, "p", function() menubar.show() end,
               {description = "show the menubar", group = "launcher"}),
 
+    -- somewm-shell: panel toggles
+    awful.key({ modkey }, "d", function()
+        awful.spawn("qs ipc -c somewm call somewm-shell:panels toggle dashboard")
+    end, { description = "toggle dashboard", group = "shell" }),
+    awful.key({ modkey }, "z", function()
+        awful.spawn("qs ipc -c somewm call somewm-shell:panels toggle controlpanel")
+    end, { description = "toggle control panel", group = "shell" }),
+    awful.key({ modkey }, "x", function()
+        awful.spawn("qs ipc -c somewm call somewm-shell:panels toggle dock")
+    end, { description = "toggle dock", group = "shell" }),
+    awful.key({ modkey, "Shift" }, "m", function()
+        awful.spawn("qs ipc -c somewm call somewm-shell:panels toggle media")
+    end, { description = "toggle media tab", group = "shell" }),
+    awful.key({ modkey, "Shift" }, "w", function()
+        awful.spawn("qs ipc -c somewm call somewm-shell:panels toggle wallpapers")
+    end, { description = "toggle wallpaper picker", group = "shell" }),
+    awful.key({ modkey, "Shift" }, "o", function()
+        awful.spawn("qs ipc -c somewm call somewm-shell:panels toggle collage")
+    end, { description = "toggle collage viewer", group = "shell" }),
+    awful.key({ modkey }, "c", function()
+        awful.spawn("qs ipc -c somewm call somewm-shell:panels closeAll")
+    end, { description = "close all shell panels", group = "shell" }),
+    awful.key({ modkey, "Shift" }, "e", function()
+        awful.spawn("qs ipc -c somewm call somewm-shell:panels toggle weather")
+    end, { description = "toggle weather", group = "shell" }),
+    awful.key({ modkey, "Shift" }, "a", function()
+        awful.spawn("qs ipc -c somewm call somewm-shell:panels toggle ai-chat")
+    end, { description = "toggle AI chat", group = "shell" }),
+
     -- machi layout special keybindings
     awful.key({ modkey }, ".", function() machi.default_editor.start_interactive() end,
         { description = "machi: edit the current machi layout", group = "layout" }),
     awful.key({ modkey }, "/", function() machi.switcher.start(client.focus) end,
         { description = "machi: switch between windows", group = "layout" }), 
         
-    -- Volume control (PipeWire/wpctl)
+    -- Volume control (PipeWire/wpctl) + OSD overlay
     awful.key({ modkey, altkey }, "k", function()
             awful.spawn("wpctl set-volume @DEFAULT_AUDIO_SINK@ 5%+")
+            awful.spawn.easy_async("wpctl get-volume @DEFAULT_AUDIO_SINK@", function(out)
+                local vol = tonumber(out:match("Volume:%s+([%d%.]+)"))
+                if vol then awful.spawn("qs ipc -c somewm call somewm-shell:panels showOsd volume " .. math.floor(vol * 100)) end
+            end)
         end,
         { description = "volume up", group = "audio" }),
     awful.key({ modkey, altkey }, "j", function()
             awful.spawn("wpctl set-volume @DEFAULT_AUDIO_SINK@ 5%-")
+            awful.spawn.easy_async("wpctl get-volume @DEFAULT_AUDIO_SINK@", function(out)
+                local vol = tonumber(out:match("Volume:%s+([%d%.]+)"))
+                if vol then awful.spawn("qs ipc -c somewm call somewm-shell:panels showOsd volume " .. math.floor(vol * 100)) end
+            end)
         end,
         { description = "volume down", group = "audio" }),
     awful.key({ modkey, altkey }, "m", function()
             awful.spawn("wpctl set-mute @DEFAULT_AUDIO_SINK@ toggle")
+            awful.spawn.easy_async("wpctl get-volume @DEFAULT_AUDIO_SINK@", function(out)
+                local vol = tonumber(out:match("Volume:%s+([%d%.]+)"))
+                local muted = out:match("%[MUTED%]")
+                awful.spawn("qs ipc -c somewm call somewm-shell:panels showOsd volume " .. (muted and "0" or math.floor((vol or 0) * 100)))
+            end)
         end,
         { description = "toggle mute", group = "audio" }),
     awful.key({ modkey, altkey }, "0", function()
             awful.spawn("wpctl set-volume @DEFAULT_AUDIO_SINK@ 0%")
+            awful.spawn("qs ipc -c somewm call somewm-shell:panels showOsd volume 0")
         end,
         { description = "volume 0%", group = "audio" }),
+
+    -- Brightness control (brightnessctl) + OSD overlay
+    awful.key({ modkey, altkey }, "l", function()
+            awful.spawn.easy_async("brightnessctl set 5%+", function()
+                awful.spawn.easy_async("brightnessctl -m info", function(out)
+                    local pct = tonumber(out:match(",([%d]+)%%,"))
+                    if pct then awful.spawn("qs ipc -c somewm call somewm-shell:panels showOsd brightness " .. pct) end
+                end)
+            end)
+        end,
+        { description = "brightness up", group = "audio" }),
+    awful.key({ modkey, altkey }, "h", function()
+            awful.spawn.easy_async("brightnessctl set 5%-", function()
+                awful.spawn.easy_async("brightnessctl -m info", function(out)
+                    local pct = tonumber(out:match(",([%d]+)%%,"))
+                    if pct then awful.spawn("qs ipc -c somewm call somewm-shell:panels showOsd brightness " .. pct) end
+                end)
+            end)
+        end,
+        { description = "brightness down", group = "audio" }),
 
     -- Screenshots (grim + slurp)
     awful.key({ }, "Print", function()
@@ -904,12 +952,7 @@ client.connect_signal("request::default_keybindings", function()
                 c:raise()
             end ,
             {description = "(un)maximize vertically", group = "client"}),
-        awful.key({ modkey, "Shift"   }, "m",
-            function (c)
-                c.maximized_horizontal = not c.maximized_horizontal
-                c:raise()
-            end ,
-            {description = "(un)maximize horizontally", group = "client"}),
+        -- Super+Shift+M freed for somewm-shell media panel toggle
     })
 end)
 
@@ -1107,6 +1150,21 @@ ruled.client.connect_signal("request::rules", function()
             img.finish()
         end
     }
+
+    -- Web widgets (WebKitGTK) — no blur/corners to avoid SceneFX crash
+    ruled.client.append_rule {
+        rule_any = {
+            name  = { "somewm%-widget.*" },
+        },
+        properties = {
+            floating       = true,
+            ontop          = true,
+            border_width   = 0,
+            corner_radius  = 0,
+            backdrop_blur  = false,
+            shadow         = { enabled = false },
+        },
+    }
 end)
 
 -- }}}
@@ -1224,7 +1282,23 @@ ruled.notification.connect_signal("request::rules", function()
     }
 end)
 
+-- Notification history for somewm-shell sidebar
+_somewm_notif_history = {}
+
 naughty.connect_signal("request::display", function(n)
+    -- Record notification in history table (for shell sidebar)
+    table.insert(_somewm_notif_history, {
+        title = n.title or "",
+        message = n.message or "",
+        app_name = n.app_name or "",
+    })
+    -- Keep last 50 entries
+    while #_somewm_notif_history > 50 do
+        table.remove(_somewm_notif_history, 1)
+    end
+    -- Push refresh to somewm-shell
+    awful.spawn.with_shell("qs ipc -c somewm call somewm-shell:notifications refresh")
+
     -- Pick icon for display without modifying n.icon (avoids signal loops)
     local display_icon = n.icon
     if type(display_icon) == "string" then
@@ -1238,8 +1312,10 @@ naughty.connect_signal("request::display", function(n)
     end
     -- Otherwise (cairo surface, userdata) — keep as-is
 
-    naughty.layout.box {
+    local popup = naughty.layout.box {
         notification = n,
+        border_width = 0,
+        maximum_width = dpi(700),
         shape = function(cr, w, h)
             gears.shape.rounded_rect(cr, w, h, dpi(6))
         end,
@@ -1247,53 +1323,50 @@ naughty.connect_signal("request::display", function(n)
             {
                 {
                     {
-                        {
-                            {
-                                image          = display_icon,
-                                resize         = true,
-                                upscale        = true,
-                                forced_width   = dpi(128),
-                                forced_height  = dpi(128),
-                                clip_shape     = function(cr, w, h)
-                                    gears.shape.rounded_rect(cr, w, h, dpi(4))
-                                end,
-                                widget         = wibox.widget.imagebox,
-                            },
-                            halign = "center",
-                            valign = "center",
-                            widget = wibox.container.place,
-                        },
-                        forced_width  = dpi(128),
-                        forced_height = dpi(128),
-                        widget        = wibox.container.constraint,
+                        image          = display_icon,
+                        resize         = true,
+                        upscale        = true,
+                        forced_width   = dpi(138),
+                        forced_height  = dpi(170),
+                        clip_shape     = function(cr, w, h)
+                            gears.shape.rounded_rect(cr, w, h, dpi(4))
+                        end,
+                        widget         = wibox.widget.imagebox,
                     },
                     {
                         {
                             {
                                 align  = "left",
-                                font   = beautiful.font or "sans bold 14",
-                                widget = naughty.widget.title,
+                                markup = n.title and ('<span font="Geist SemiBold 13" color="#e2b55a">' .. gears.string.xml_escape(n.title) .. '</span>') or "",
+                                widget = wibox.widget.textbox,
                             },
                             {
                                 align  = "left",
+                                font   = "CommitMono Nerd Font Propo 12",
                                 widget = naughty.widget.message,
                             },
-                            spacing = dpi(4),
+                            spacing = dpi(6),
                             layout  = wibox.layout.fixed.vertical,
                         },
                         top    = dpi(8),
                         widget = wibox.container.margin,
                     },
-                    spacing = dpi(16),
+                    spacing = dpi(12),
                     layout  = wibox.layout.fixed.horizontal,
                 },
-                margins = dpi(16),
+                margins = dpi(20),
                 widget  = wibox.container.margin,
             },
             id     = "background_role",
             widget = naughty.container.background,
         },
     }
+
+    -- FadeIn animation (uses compositor frame-synced animation engine)
+    local anim_ok, anim = pcall(require, "anim_client")
+    if anim_ok and anim.fade_notification then
+        anim.fade_notification(popup)
+    end
 end)
 
 -- }}}
@@ -1309,6 +1382,49 @@ awful.spawn.once("nm-applet")
 -- awful.spawn.once("pasystray")  -- replaced by native volume_widget
 -- awful.spawn.once("blueman-applet")
 -- awful.spawn.once("copyq")
+
+-- somewm-shell: export theme then launch Quickshell
+awful.spawn.easy_async(os.getenv("HOME") .. "/git/github/somewm/plans/theme-export.sh", function()
+    awful.spawn.once("qs -c somewm -n -d")
+end)
+-- }}}
+
+-- {{{ somewm-shell: push IPC signals
+-- Push client/tag state to shell on every change (debounced on QML side)
+local function push_state()
+    awful.spawn.easy_async(
+        "qs ipc -c somewm call somewm-shell:compositor invalidate",
+        function() end  -- fire and forget
+    )
+end
+
+-- Client lifecycle
+client.connect_signal("manage", push_state)
+client.connect_signal("unmanage", push_state)
+client.connect_signal("focus", push_state)
+-- Client property changes
+client.connect_signal("property::name", push_state)
+client.connect_signal("property::urgent", push_state)
+client.connect_signal("property::minimized", push_state)
+client.connect_signal("tagged", push_state)
+client.connect_signal("untagged", push_state)
+-- Tag changes
+tag.connect_signal("property::selected", push_state)
+tag.connect_signal("property::activated", push_state)
+tag.connect_signal("property::name", push_state)
+
+-- Focused screen tracking (for multi-monitor panel targeting)
+-- NOTE: screen::focus is a global signal with NO arguments (somewm.c:1107)
+-- Must get focused screen via awful.screen.focused()
+awesome.connect_signal("screen::focus", function()
+    local s = awful.screen.focused()
+    if s then
+        awful.spawn.easy_async(
+            "qs ipc -c somewm call somewm-shell:compositor setScreen " .. (s.name or tostring(s.index)),
+            function() end
+        )
+    end
+end)
 -- }}}
 
 -- SceneFX visual effects are configured via anim_client.enable() below.
@@ -1368,6 +1484,11 @@ pcall(function()
             duration = 0.15,        -- short — background reflow should be quick
             easing   = "ease-out-cubic",
         },
+        notification = {
+            enabled  = true,        -- fadeIn for notification popups
+            duration = 0.5,
+            easing   = "ease-out-cubic",
+        },
         scenefx = {
             enabled       = true,   -- set false to disable all scenefx effects
             corner_radius = 14,     -- pixels, 0 = sharp corners
@@ -1384,5 +1505,15 @@ pcall(function()
         -- NOTE: Do NOT require("somewm.layout_animation") — our anim_client
         -- handles all layout transitions. Both modules write _set_geometry_silent()
         -- on tiled clients and would conflict.
+    })
+end)
+
+-- Tag slide animation (KDE-style Desktop Slide on Super+Left/Right)
+-- Config priority: beautiful.tag_slide_<param> > these values > module defaults
+pcall(function()
+    require("somewm.tag_slide").enable({
+        duration  = 0.25,
+        easing    = "ease-out-cubic",
+        wallpaper = { enabled = true },
     })
 end)

@@ -1,0 +1,6 @@
+MediaPanel MediaPanel.qml
+AlbumArt AlbumArt.qml
+TrackInfo TrackInfo.qml
+Controls Controls.qml
+ProgressBar ProgressBar.qml
+VolumeSlider VolumeSlider.qml

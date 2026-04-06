@@ -473,6 +473,7 @@ function anim_client.enable(user_config)
     -- Phase 2: screen::arrange fires AFTER layout.arrange commits positions
     screen.connect_signal("arrange", function(s)
         if mousegrabber.isrunning() then return end
+        if anim_client._tag_slide_active then return end
         if not is_tiling_layout(s) then return end
 
         local tiled = s.tiled_clients

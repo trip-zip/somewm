@@ -1,0 +1,20 @@
+{
+  "bg_base": "#181818",
+  "bg_surface": "#232323",
+  "bg_overlay": "#2e2e2e",
+  "fg_main": "#d4d4d4",
+  "fg_dim": "#888888",
+  "fg_muted": "#555555",
+  "accent": "#e2b55a",
+  "accent_dim": "#c49a3a",
+  "urgent": "#e06c75",
+  "green": "#98c379",
+  "font_ui": "Geist",
+  "font_mono": "Geist Mono",
+  "widget_cpu": "#7daea3",
+  "widget_gpu": "#98c379",
+  "widget_memory": "#d3869b",
+  "widget_disk": "#e2b55a",
+  "widget_network": "#89b482",
+  "widget_volume": "#ea6962"
+}
