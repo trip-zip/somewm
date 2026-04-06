@@ -22,7 +22,8 @@ Singleton {
 
     function _savePins() {
         var escaped = JSON.stringify(root.pinnedApps).replace(/'/g, "'\\''")
-        pinWriter.command = ["sh", "-c", "echo '" + escaped + "' > " + root._pinFile]
+        var escapedPath = root._pinFile.replace(/'/g, "'\\''")
+        pinWriter.command = ["sh", "-c", "printf '%s\\n' '" + escaped + "' > '" + escapedPath + "'"]
         pinWriter.running = true
     }
 
@@ -72,6 +73,9 @@ Singleton {
     ListModel { id: dockModel }
     readonly property alias dockItems: dockModel
     readonly property int itemCount: dockModel.count
+
+    // Incremented on every model rebuild — lets external bindings react to toplevel changes
+    property int modelVersion: 0
 
     // Internal: tracks raw toplevel data for each appId
     property var _appMap: ({})
@@ -180,6 +184,7 @@ Singleton {
 
         // Store raw data (with toplevels) for lookup
         root._appMap = newAppMap
+        root.modelVersion++
     }
 
     // ── Toplevel access (since ListModel can't store object arrays) ──

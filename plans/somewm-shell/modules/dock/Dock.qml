@@ -41,7 +41,7 @@ Variants {
 
         readonly property real sp: Core.Theme.dpiScale
         readonly property real borderThickness: Math.round(12 * sp)
-        readonly property real borderRounding: Math.round(25 * sp)
+        readonly property real borderRounding: Math.round(16 * sp)
         readonly property real padLg: Math.round(15 * sp)
         readonly property real padNorm: Math.round(10 * sp)
         readonly property color borderColor: Core.Theme.surfaceBase
@@ -107,8 +107,11 @@ Variants {
 
         // Preview state — which app's windows to show (by appId)
         property string previewAppId: ""
-        property var previewToplevels: previewAppId.length > 0
-            ? Services.DockApps.getToplevels(previewAppId) : []
+        property var previewToplevels: {
+            void Services.DockApps.modelVersion
+            return previewAppId.length > 0
+                ? Services.DockApps.getToplevels(previewAppId) : []
+        }
         property real previewAnchorX: 0
 
         // Tooltip state — rendered at panel level (outside clipped wrapper)
@@ -284,7 +287,7 @@ Variants {
                     panel.previewAnchorX - width / 2,
                     panel.width - width - Math.round(20 * panel.sp)
                 ))
-                y: panel.height - panel.borderThickness - wrapper.height - height - Math.round(10 * panel.sp)
+                y: panel.height - panel.borderThickness - wrapper.height - height - Math.round(2 * panel.sp)
                 width: previewContent.width + Math.round(40 * panel.sp)
                 height: previewContent.height + Math.round(40 * panel.sp)
 
@@ -293,10 +296,8 @@ Variants {
                     id: previewPopupHover
                     onHoveredChanged: {
                         if (hovered) {
-                            console.log("[DOCK-PREVIEW-V3] hover ENTERED")
                             previewCloseTimer.stop()
                         } else {
-                            console.log("[DOCK-PREVIEW-V3] hover EXITED")
                             previewCloseTimer.restart()
                         }
                     }
@@ -455,7 +456,7 @@ Variants {
                         direction: PathArc.Clockwise
                     }
                     PathLine {
-                        relativeX: dockBg.ww - dockBg.rounding * 2
+                        relativeX: Math.max(0, dockBg.ww - dockBg.rounding * 2)
                         relativeY: 0
                     }
                     PathArc {
@@ -529,15 +530,13 @@ Variants {
                     var globalPos = btnRef.mapToItem(clickTarget, btnRef.width / 2, 0)
                     panel.previewAnchorX = globalPos.x
                     panel.previewAppId = targetAppId
-                    console.log("[DOCK-PREVIEW] opened for", targetAppId, "at x:", globalPos.x)
                 }
             }
         }
 
         onPreviewAppIdChanged: {
-            console.log("[DOCK-PREVIEW] previewAppId:", previewAppId,
-                "toplevels:", previewToplevels.length,
-                "shouldBeVisible:", previewPopup.shouldBeVisible)
+            // Force re-evaluation of preview state
+            void previewToplevels.length
         }
     } // PanelWindow
 
@@ -705,10 +704,6 @@ Variants {
             acceptedButtons: Qt.LeftButton | Qt.RightButton | Qt.MiddleButton
 
             onClicked: (mouse) => {
-                console.log("[DOCK-BTN] clicked:", btn.appId,
-                    "button:", mouse.button,
-                    "running:", btn.appIsRunning,
-                    "multi:", btn.hasMultiple)
                 if (mouse.button === Qt.RightButton) {
                     Services.DockApps.togglePin(btn.appId)
                     return
@@ -727,7 +722,6 @@ Variants {
                     panel.previewAnchorX = globalPos.x
                     // Store appId for preview — getToplevels will provide live data
                     panel.previewAppId = btn.appId
-                    console.log("[DOCK-BTN] preview for", btn.appId, "at x:", globalPos.x)
                 } else {
                     Services.DockApps.activateApp(btn.appId)
                     Core.Panels.close("dock")
@@ -735,10 +729,9 @@ Variants {
             }
 
             onEntered: {
-                console.log("[DOCK-BTN] hover:", btn.appId, "multi:", btn.hasMultiple)
                 previewCloseTimer.stop()
                 if (btn.hasMultiple) {
-                    // Switch preview to this app if different
+                    // Switch preview to this app if different — close old immediately
                     if (panel.previewAppId.length > 0 && panel.previewAppId !== btn.appId) {
                         panel.previewAppId = ""
                     }
@@ -746,12 +739,8 @@ Variants {
                     previewHoverTimer.btnRef = btn
                     previewHoverTimer.restart()
                 } else if (panel.previewAppId.length > 0) {
-                    // Non-multi icon while preview is open.
-                    // Only start the close timer if the mouse is NOT already in the
-                    // preview mask area — if previewAreaHovered is true, the user is
-                    // moving back from the preview toward the dock, not away from it.
-                    if (!panel.previewAreaHovered)
-                        previewCloseTimer.restart()
+                    // Different icon — close preview immediately, no timer delay
+                    panel.previewAppId = ""
                 }
             }
             onExited: {
@@ -893,7 +882,7 @@ Variants {
                     width: parent.width
                     height: Math.round(130 * card.sp)
                     clip: true
-                    visible: screencopy.hasContent
+                    visible: screencopy.paintedWidth > 0
 
                     ScreencopyView {
                         id: screencopy

@@ -935,12 +935,12 @@ else
     fail "ClientList.qml" "contentHeight uses height (always 0 in layouts)"
 fi
 
-# CRITICAL: WallpaperPanel Preview wired to WallpaperGrid
-if grep -q 'signal previewRequested' "$SHELL_DIR/modules/wallpapers/WallpaperGrid.qml" && \
-   grep -q 'onPreviewRequested' "$SHELL_DIR/modules/wallpapers/WallpaperPanel.qml"; then
-    pass "WallpaperPanel: Preview connected to WallpaperGrid signal"
+# WallpaperPanel: carousel-only design (WallpaperGrid is standalone, not used in panel)
+if grep -q 'ListView' "$SHELL_DIR/modules/wallpapers/WallpaperPanel.qml" && \
+   grep -q 'setWallpaper' "$SHELL_DIR/modules/wallpapers/WallpaperPanel.qml"; then
+    pass "WallpaperPanel: carousel with wallpaper apply"
 else
-    fail "WallpaperPanel" "Preview overlay disconnected (dead code)"
+    fail "WallpaperPanel" "missing carousel ListView or setWallpaper call"
 fi
 
 # MINOR: AlbumArt fade based on Image.status (not timer)
