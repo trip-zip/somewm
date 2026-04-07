@@ -289,6 +289,7 @@ static struct wlr_backend *backend;
 struct wlr_scene *scene;
 struct wlr_scene_tree *layers[NUM_LAYERS];
 static struct wlr_scene_tree *drag_icon;
+static Client *drag_source_client;
 /* Map from ZWLR_LAYER_SHELL_* constants to Lyr* enum */
 static const int layermap[] = { LyrBg, LyrBottom, LyrTop, LyrOverlay };
 struct wlr_renderer *drw;
@@ -2297,6 +2298,8 @@ destroydrag(struct wl_listener *listener, void *data)
 	motionnotify(0, NULL, 0, 0, 0, 0);
 	wl_list_remove(&listener->link);
 	free(listener);
+
+	drag_source_client = NULL;
 }
 
 void
@@ -3481,6 +3484,14 @@ locksession(struct wl_listener *listener, void *data)
 	wlr_session_lock_v1_send_locked(session_lock);
 }
 
+static void
+cursor_to_client_coordinates(Client *client, double *sx, double *sy) {
+	double bw = client->bw;
+	/* Compute coordinates (sx, sy) within the borderd geometry. */
+	*sx = cursor->x - (client->geometry.x + bw);
+	*sy = cursor->y - (client->geometry.y + bw);
+}
+
 void
 mapnotify(struct wl_listener *listener, void *data)
 {
@@ -3865,8 +3876,8 @@ unset_fullscreen:
 	if (client_surface(c) && client_surface(c)->mapped
 			&& cursor->x >= c->geometry.x && cursor->x < c->geometry.x + c->geometry.width
 			&& cursor->y >= c->geometry.y && cursor->y < c->geometry.y + c->geometry.height) {
-		double sx = cursor->x - c->geometry.x - c->bw;
-		double sy = cursor->y - c->geometry.y - c->bw;
+		double sx, sy;
+		cursor_to_client_coordinates(c, &sx, &sy);
 		wlr_log(WLR_DEBUG, "[POINTER-REEVAL] mapnotify: setting pointer focus on %s (cursor in geometry)",
 			client_get_appid(c));
 		pointerfocus(c, client_surface(c), sx, sy, 0);
@@ -3967,6 +3978,19 @@ mouse_emit_drawin_enter(lua_State *L, drawin_t *d)
 	globalconf.mouse_under.ptr.drawin = d;
 }
 
+static bool
+is_client_valid(Client* client)
+{
+	if (client == NULL)
+		return false;
+
+	foreach(elem, globalconf.clients)
+		if (*elem == client)
+			return true;
+
+	return false;
+}
+
 void
 motionnotify(uint32_t time, struct wlr_input_device *device, double dx, double dy,
 		double dx_unaccel, double dy_unaccel)
@@ -4031,21 +4055,24 @@ motionnotify(uint32_t time, struct wlr_input_device *device, double dx, double d
 	/* Update drag icon's position */
 	wlr_scene_node_set_position(&drag_icon->node, (int)round(cursor->x), (int)round(cursor->y));
 
+
+	/* If drag source became invalid, clear it. */
+	if (seat->drag && !is_client_valid(drag_source_client))
+		drag_source_client = NULL;
+
 	/* During active drag over compositor surfaces (wibars), don't clear
 	 * drag focus — that would cancel the drag on drop. Instead, keep
 	 * sending motion events with coordinates projected onto the focused
 	 * surface so the source app knows the pointer is outside its window
 	 * (e.g., Firefox uses out-of-bounds coords to trigger tab detach). */
-	if (seat->drag && !surface) {
-		struct wlr_surface *focused = seat->drag->focus;
-		if (focused) {
-			Client *fc = NULL;
-			LayerSurface *fl = NULL;
-			if (toplevel_from_wlr_surface(focused, &fc, &fl) >= 0) {
-				double fx = cursor->x - (fl ? fl->scene->node.x : fc->geometry.x);
-				double fy = cursor->y - (fl ? fl->scene->node.y : fc->geometry.y);
-				wlr_seat_pointer_notify_motion(seat, time, fx, fy);
-			}
+	if (seat->drag && drag_source_client && !surface) {
+		struct wlr_surface *source_surface = client_surface(drag_source_client);
+		if (source_surface) {
+			double fx, fy;
+			cursor_to_client_coordinates(drag_source_client, &fx, &fy);
+			if (seat->pointer_state.focused_surface != source_surface)
+				wlr_seat_pointer_notify_enter(seat, source_surface, fx, fy);
+			wlr_seat_pointer_notify_motion(seat, time, fx, fy);
 		}
 		return;
 	}
@@ -4104,24 +4131,14 @@ motionnotify(uint32_t time, struct wlr_input_device *device, double dx, double d
 		Client *current_client = NULL;
 		drawin_t *current_drawin = NULL;
 		drawable_t *titlebar_drawable = NULL;
-		bool client_valid = false;
 
 		/* Find what's under cursor */
 		xytonode(cursor->x, cursor->y, NULL, &current_client, NULL, &current_drawin, &titlebar_drawable, NULL, NULL);
 
 		/* Validate client pointer - xytonode can return stale pointers from scene graph
 		 * if a node's data field wasn't cleared when the client was destroyed */
-		if (current_client) {
-			foreach(elem, globalconf.clients) {
-				if (*elem == current_client) {
-					client_valid = true;
-					break;
-				}
-			}
-			if (!client_valid) {
+		if (current_client && !is_client_valid(current_client))
 				current_client = NULL;  /* Ignore stale/invalid client pointer */
-			}
-		}
 
 		if (current_client) {
 			/* Mouse is over a client */
@@ -4325,8 +4342,7 @@ pointerfocus(Client *c, struct wlr_surface *surface, double sx, double sy,
 	 * client wouldn't receive hover/scroll events. */
 	if (!surface && c && client_surface(c) && client_surface(c)->mapped) {
 		surface = client_surface(c);
-		sx = cursor->x - c->geometry.x - c->bw;
-		sy = cursor->y - c->geometry.y - c->bw;
+		cursor_to_client_coordinates(c, &sx, &sy);
 	}
 	if (!surface) {
 		wlr_seat_pointer_notify_clear_focus(seat);
@@ -4443,10 +4459,20 @@ requeststartdrag(struct wl_listener *listener, void *data)
 	struct wlr_seat_request_start_drag_event *event = data;
 
 	if (wlr_seat_validate_pointer_grab_serial(seat, event->origin,
-			event->serial))
+			event->serial)) {
 		wlr_seat_start_pointer_drag(seat, event->drag, event->serial);
-	else
+
+		/* Remember source client where drag started.  */
+		Client *c = NULL;
+		LayerSurface *l = NULL;
+		toplevel_from_wlr_surface(event->origin, &c, &l);
+
+		drag_source_client = c;
+	}
+	else {
+		drag_source_client = NULL;
 		wlr_data_source_destroy(event->drag->source);
+	}
 }
 
 void
@@ -6528,18 +6554,9 @@ xytonode(double x, double y, struct wlr_surface **psurface,
 found:
 	/* Validate client pointer - ensure it's still in globalconf.clients
 	 * to avoid returning stale pointers from scene graph data fields */
-	if (c && pc) {
-		bool valid = false;
-		foreach(elem, globalconf.clients) {
-			if (*elem == c) {
-				valid = true;
-				break;
-			}
-		}
-		if (!valid) {
+	if (c && pc)
+		if (!is_client_valid(c))
 			c = NULL;  /* Stale pointer - don't return it */
-		}
-	}
 
 	if (psurface) *psurface = surface;
 	if (pc) *pc = c;
