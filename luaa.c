@@ -987,6 +987,7 @@ luaA_awesome_set_input_setting(lua_State *L)
 		globalconf.input.accel_profile = val ? strdup(val) : NULL;
 	} else if (strcmp(key, "accel_speed") == 0) {
 		globalconf.input.accel_speed = lua_tonumber(L, 2);
+		globalconf.input.accel_speed_set = true;
 	} else if (strcmp(key, "tap_button_map") == 0) {
 		const char *val = lua_isnil(L, 2) ? NULL : luaL_checkstring(L, 2);
 		free(globalconf.input.tap_button_map);
@@ -997,6 +998,158 @@ luaA_awesome_set_input_setting(lua_State *L)
 		globalconf.input.clickfinger_button_map = val ? strdup(val) : NULL;
 	} else {
 		return luaL_error(L, "Unknown input setting: %s", key);
+	}
+
+	apply_input_settings_to_all_devices();
+	return 0;
+}
+
+/** Free all input rules and reset the count */
+static void
+input_rules_free(void)
+{
+	for (int i = 0; i < globalconf.input_rules_count; i++) {
+		InputRule *r = &globalconf.input_rules[i];
+		free(r->type);
+		free(r->name);
+		free(r->properties.scroll_method);
+		free(r->properties.click_method);
+		free(r->properties.clickfinger_button_map);
+		free(r->properties.send_events_mode);
+		free(r->properties.accel_profile);
+		free(r->properties.tap_button_map);
+	}
+	free(globalconf.input_rules);
+	globalconf.input_rules = NULL;
+	globalconf.input_rules_count = 0;
+}
+
+/** Initialize an InputSettings struct with "not set" sentinel values */
+static void
+input_settings_init_unset(InputSettings *s)
+{
+	s->tap_to_click = -2;
+	s->tap_and_drag = -2;
+	s->drag_lock = -2;
+	s->tap_3fg_drag = -2;
+	s->natural_scrolling = -2;
+	s->disable_while_typing = -2;
+	s->dwtp = -2;
+	s->left_handed = -2;
+	s->middle_button_emulation = -2;
+	s->scroll_method = NULL;
+	s->scroll_button = -2;
+	s->scroll_button_lock = -2;
+	s->click_method = NULL;
+	s->clickfinger_button_map = NULL;
+	s->send_events_mode = NULL;
+	s->accel_profile = NULL;
+	s->accel_speed = 0.0;
+	s->tap_button_map = NULL;
+	s->accel_speed_set = false;
+}
+
+/** Read an optional int field from a Lua table on the stack.
+ * Returns the value if present, or the default sentinel if absent. */
+static int
+input_rule_get_int(lua_State *L, int idx, const char *field, int sentinel)
+{
+	int result = sentinel;
+	lua_getfield(L, idx, field);
+	if (!lua_isnil(L, -1))
+		result = lua_tointeger(L, -1);
+	lua_pop(L, 1);
+	return result;
+}
+
+/** Read an optional string field from a Lua table, returning strdup'd copy or NULL. */
+static char *
+input_rule_get_string(lua_State *L, int idx, const char *field)
+{
+	char *result = NULL;
+	lua_getfield(L, idx, field);
+	if (lua_isstring(L, -1))
+		result = strdup(lua_tostring(L, -1));
+	lua_pop(L, 1);
+	return result;
+}
+
+/** Set input rules from Lua.
+ * Expects a table of { rule = { type=..., name=... }, properties = { ... } } entries.
+ * \param L Lua state. Stack: [1] = rules table (array).
+ */
+static int
+luaA_awesome_set_input_rules(lua_State *L)
+{
+	luaL_checktype(L, 1, LUA_TTABLE);
+
+	/* Free old rules */
+	input_rules_free();
+
+	int count = lua_objlen(L, 1);
+	if (count == 0) {
+		apply_input_settings_to_all_devices();
+		return 0;
+	}
+
+	globalconf.input_rules = calloc(count, sizeof(InputRule));
+	if (!globalconf.input_rules)
+		return luaL_error(L, "Failed to allocate input rules");
+	globalconf.input_rules_count = count;
+
+	for (int i = 1; i <= count; i++) {
+		InputRule *r = &globalconf.input_rules[i - 1];
+		input_settings_init_unset(&r->properties);
+
+		lua_rawgeti(L, 1, i);  /* rules[i] */
+		if (!lua_istable(L, -1)) {
+			lua_pop(L, 1);
+			continue;
+		}
+
+		/* Parse rule = { type = ..., name = ... } */
+		lua_getfield(L, -1, "rule");
+		if (lua_istable(L, -1)) {
+			r->type = input_rule_get_string(L, -1, "type");
+			r->name = input_rule_get_string(L, -1, "name");
+		}
+		lua_pop(L, 1);  /* pop rule */
+
+		/* Parse properties = { natural_scrolling = 1, ... } */
+		lua_getfield(L, -1, "properties");
+		if (lua_istable(L, -1)) {
+			int pidx = lua_gettop(L);
+			InputSettings *p = &r->properties;
+
+			p->tap_to_click = input_rule_get_int(L, pidx, "tap_to_click", -2);
+			p->tap_and_drag = input_rule_get_int(L, pidx, "tap_and_drag", -2);
+			p->drag_lock = input_rule_get_int(L, pidx, "drag_lock", -2);
+			p->tap_3fg_drag = input_rule_get_int(L, pidx, "tap_3fg_drag", -2);
+			p->natural_scrolling = input_rule_get_int(L, pidx, "natural_scrolling", -2);
+			p->disable_while_typing = input_rule_get_int(L, pidx, "disable_while_typing", -2);
+			p->dwtp = input_rule_get_int(L, pidx, "dwtp", -2);
+			p->left_handed = input_rule_get_int(L, pidx, "left_handed", -2);
+			p->middle_button_emulation = input_rule_get_int(L, pidx, "middle_button_emulation", -2);
+			p->scroll_button = input_rule_get_int(L, pidx, "scroll_button", -2);
+			p->scroll_button_lock = input_rule_get_int(L, pidx, "scroll_button_lock", -2);
+
+			p->scroll_method = input_rule_get_string(L, pidx, "scroll_method");
+			p->click_method = input_rule_get_string(L, pidx, "click_method");
+			p->clickfinger_button_map = input_rule_get_string(L, pidx, "clickfinger_button_map");
+			p->send_events_mode = input_rule_get_string(L, pidx, "send_events_mode");
+			p->accel_profile = input_rule_get_string(L, pidx, "accel_profile");
+			p->tap_button_map = input_rule_get_string(L, pidx, "tap_button_map");
+
+			lua_getfield(L, pidx, "accel_speed");
+			if (!lua_isnil(L, -1)) {
+				p->accel_speed = lua_tonumber(L, -1);
+				p->accel_speed_set = true;
+			}
+			lua_pop(L, 1);
+		}
+		lua_pop(L, 1);  /* pop properties */
+
+		lua_pop(L, 1);  /* pop rules[i] */
 	}
 
 	apply_input_settings_to_all_devices();
@@ -1743,6 +1896,7 @@ const luaL_Reg awesome_methods[] = {
 	{ "systray", luaA_systray },
 	{ "sync", luaA_awesome_sync },
 	{ "_set_input_setting", luaA_awesome_set_input_setting },
+	{ "_set_input_rules", luaA_awesome_set_input_rules },
 	{ "_set_keyboard_setting", luaA_awesome_set_keyboard_setting },
 	{ "set_preferred_icon_size", luaA_awesome_set_preferred_icon_size },
 	{ "exec", luaA_exec },
@@ -5258,6 +5412,9 @@ globalconf_wipe(void)
 	tag_array_wipe(&globalconf.tags);
 	screen_array_wipe(&globalconf.screens);
 	drawin_array_wipe(&globalconf.drawins);
+
+	/* Clean up input rules */
+	input_rules_free();
 
 	/* Clean up wallpaper resources */
 	if (globalconf.wallpaper) {

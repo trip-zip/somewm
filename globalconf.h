@@ -98,6 +98,38 @@ ARRAY_FUNCS(screen_t *, screen, DO_NOTHING)
 ARRAY_FUNCS(drawin_t *, drawin, DO_NOTHING)
 /* Note: button_array functions are defined in objects/button.c */
 
+/** Input settings shared by global defaults and per-device rules.
+ * Int fields: -1=device default, 0=disabled, 1=enabled.
+ * In InputRule, -2 means "not set by this rule" (use previous value). */
+typedef struct InputSettings {
+    int tap_to_click;
+    int tap_and_drag;
+    int drag_lock;
+    int tap_3fg_drag;
+    int natural_scrolling;
+    int disable_while_typing;
+    int dwtp;                       /* disable while trackpoint */
+    int left_handed;
+    int middle_button_emulation;
+    char *scroll_method;            /* "no_scroll", "two_finger", "edge", "button" */
+    int scroll_button;              /* button number, 0=default */
+    int scroll_button_lock;
+    char *click_method;             /* "none", "button_areas", "clickfinger" */
+    char *send_events_mode;         /* "enabled", "disabled", "disabled_on_external_mouse" */
+    char *accel_profile;            /* "flat", "adaptive" */
+    double accel_speed;             /* -1.0 to 1.0 */
+    char *tap_button_map;           /* "lrm", "lmr" */
+    char *clickfinger_button_map;   /* "lrm", "lmr" */
+    bool accel_speed_set;           /* true if accel_speed was explicitly set */
+} InputSettings;
+
+/** Per-device input rule (evaluated in order, last match wins per property) */
+typedef struct InputRule {
+    char *type;                     /* "touchpad" or "pointer", NULL=match any */
+    char *name;                     /* device name substring, NULL=match any */
+    InputSettings properties;
+} InputRule;
+
 /** Main configuration structure
  *
  * This is adapted from AwesomeWM's globalconf structure.
@@ -241,27 +273,12 @@ typedef struct
         xkb_layout_index_t last_group; /* Last known layout group for change detection */
     } xkb;
 
-    /** Input device settings (libinput configuration) */
-    struct {
-        int tap_to_click;           /* -1=device default, 0=disabled, 1=enabled */
-        int tap_and_drag;           /* -1=device default, 0=disabled, 1=enabled */
-        int drag_lock;              /* -1=device default, 0=disabled, 1=enabled */
-        int tap_3fg_drag;           /* -1=device default, 0=disabled, 1=enabled */
-        int natural_scrolling;      /* -1=device default, 0=disabled, 1=enabled */
-        int disable_while_typing;   /* -1=device default, 0=disabled, 1=enabled */
-        int dwtp;                   /* -1=device default, 0=disabled, 1=enabled (disable while trackpoint) */
-        int left_handed;            /* -1=device default, 0=disabled, 1=enabled */
-        int middle_button_emulation;/* -1=device default, 0=disabled, 1=enabled */
-        char *scroll_method;        /* String: "no_scroll", "two_finger", "edge", "button" */
-        int scroll_button;          /* Button for scroll-on-button mode, 0=default */
-        int scroll_button_lock;     /* -1=device default, 0=disabled, 1=enabled */
-        char *click_method;         /* String: "none", "button_areas", "clickfinger" */
-        char *send_events_mode;     /* String: "enabled", "disabled", "disabled_on_external_mouse" */
-        char *accel_profile;        /* String: "flat", "adaptive" */
-        double accel_speed;         /* -1.0 to 1.0 */
-        char *tap_button_map;       /* String: "lrm", "lmr" */
-        char *clickfinger_button_map; /* String: "lrm", "lmr" */
-    } input;
+    /** Input device settings (global defaults, see InputSettings typedef above) */
+    InputSettings input;
+
+    /** Per-device input rules (see InputRule typedef above) */
+    InputRule *input_rules;
+    int input_rules_count;
 
     /** Logging configuration */
     int log_level;  /* wlroots log level: WLR_SILENT, WLR_ERROR, WLR_INFO, WLR_DEBUG */

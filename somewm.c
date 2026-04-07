@@ -1986,23 +1986,81 @@ createnotify(struct wl_listener *listener, void *data)
 	lua_pop(L, 1);
 }
 
-/* Apply all input settings from globalconf to a single libinput device */
+/* Determine device type string for input rule matching */
+static const char *
+get_input_device_type(struct libinput_device *device)
+{
+	return libinput_device_config_tap_get_finger_count(device) > 0
+		? "touchpad" : "pointer";
+}
+
+/* Resolve effective input settings for a device by overlaying matching rules
+ * on top of the global defaults. String fields in the result are borrowed
+ * pointers (not owned), so the caller must not free them. */
+static void
+resolve_input_settings(struct libinput_device *device, struct InputSettings *out)
+{
+	/* Start with global defaults */
+	*out = globalconf.input;
+	/* String fields are borrowed from globalconf, not duplicated */
+
+	const char *dev_type = get_input_device_type(device);
+	const char *dev_name = libinput_device_get_name(device);
+
+	for (int i = 0; i < globalconf.input_rules_count; i++) {
+		struct InputRule *rule = &globalconf.input_rules[i];
+
+		/* Check type match */
+		if (rule->type && strcmp(rule->type, dev_type) != 0)
+			continue;
+		/* Check name match (substring) */
+		if (rule->name && (!dev_name || !strstr(dev_name, rule->name)))
+			continue;
+
+		/* Overlay properties from this rule (-2 = not set, skip) */
+		struct InputSettings *p = &rule->properties;
+		if (p->tap_to_click != -2) out->tap_to_click = p->tap_to_click;
+		if (p->tap_and_drag != -2) out->tap_and_drag = p->tap_and_drag;
+		if (p->drag_lock != -2) out->drag_lock = p->drag_lock;
+		if (p->tap_3fg_drag != -2) out->tap_3fg_drag = p->tap_3fg_drag;
+		if (p->natural_scrolling != -2) out->natural_scrolling = p->natural_scrolling;
+		if (p->disable_while_typing != -2) out->disable_while_typing = p->disable_while_typing;
+		if (p->dwtp != -2) out->dwtp = p->dwtp;
+		if (p->left_handed != -2) out->left_handed = p->left_handed;
+		if (p->middle_button_emulation != -2) out->middle_button_emulation = p->middle_button_emulation;
+		if (p->scroll_button != -2) out->scroll_button = p->scroll_button;
+		if (p->scroll_button_lock != -2) out->scroll_button_lock = p->scroll_button_lock;
+		if (p->scroll_method) out->scroll_method = p->scroll_method;
+		if (p->click_method) out->click_method = p->click_method;
+		if (p->clickfinger_button_map) out->clickfinger_button_map = p->clickfinger_button_map;
+		if (p->send_events_mode) out->send_events_mode = p->send_events_mode;
+		if (p->accel_profile) out->accel_profile = p->accel_profile;
+		if (p->tap_button_map) out->tap_button_map = p->tap_button_map;
+		if (p->accel_speed_set) {
+			out->accel_speed = p->accel_speed;
+			out->accel_speed_set = true;
+		}
+	}
+}
+
+/* Apply resolved input settings to a single libinput device */
 static void
 apply_input_settings_to_device(struct libinput_device *device)
 {
-	if (libinput_device_config_tap_get_finger_count(device)) {
-		/* Apply tap settings from globalconf (-1 = device default, don't set) */
-		if (globalconf.input.tap_to_click >= 0)
-			libinput_device_config_tap_set_enabled(device, globalconf.input.tap_to_click);
-		if (globalconf.input.tap_and_drag >= 0)
-			libinput_device_config_tap_set_drag_enabled(device, globalconf.input.tap_and_drag);
-		if (globalconf.input.drag_lock >= 0)
-			libinput_device_config_tap_set_drag_lock_enabled(device, globalconf.input.drag_lock);
+	struct InputSettings s;
+	resolve_input_settings(device, &s);
 
-		/* Convert tap_button_map string to enum */
-		if (globalconf.input.tap_button_map) {
+	if (libinput_device_config_tap_get_finger_count(device)) {
+		if (s.tap_to_click >= 0)
+			libinput_device_config_tap_set_enabled(device, s.tap_to_click);
+		if (s.tap_and_drag >= 0)
+			libinput_device_config_tap_set_drag_enabled(device, s.tap_and_drag);
+		if (s.drag_lock >= 0)
+			libinput_device_config_tap_set_drag_lock_enabled(device, s.drag_lock);
+
+		if (s.tap_button_map) {
 			enum libinput_config_tap_button_map map = LIBINPUT_CONFIG_TAP_MAP_LRM;
-			if (strcmp(globalconf.input.tap_button_map, "lmr") == 0)
+			if (strcmp(s.tap_button_map, "lmr") == 0)
 				map = LIBINPUT_CONFIG_TAP_MAP_LMR;
 			libinput_device_config_tap_set_button_map(device, map);
 		}
@@ -2011,109 +2069,101 @@ apply_input_settings_to_device(struct libinput_device *device)
 	/* Three-finger drag (libinput 1.27+) */
 #ifdef HAVE_LIBINPUT_3FG_DRAG
 	if (libinput_device_config_3fg_drag_get_finger_count(device)) {
-		if (globalconf.input.tap_3fg_drag >= 0)
+		if (s.tap_3fg_drag >= 0)
 			libinput_device_config_3fg_drag_set_enabled(device,
-				globalconf.input.tap_3fg_drag ? LIBINPUT_CONFIG_3FG_DRAG_ENABLED_3FG
-				                              : LIBINPUT_CONFIG_3FG_DRAG_DISABLED);
-	} else if (globalconf.input.tap_3fg_drag > 0) {
+				s.tap_3fg_drag ? LIBINPUT_CONFIG_3FG_DRAG_ENABLED_3FG
+				               : LIBINPUT_CONFIG_3FG_DRAG_DISABLED);
+	} else if (s.tap_3fg_drag > 0) {
 		wlr_log(WLR_INFO, "Device '%s' does not support three-finger drag",
 			libinput_device_get_name(device));
 	}
 #endif
 
 	if (libinput_device_config_scroll_has_natural_scroll(device)
-			&& globalconf.input.natural_scrolling >= 0)
+			&& s.natural_scrolling >= 0)
 		libinput_device_config_scroll_set_natural_scroll_enabled(device,
-			globalconf.input.natural_scrolling);
+			s.natural_scrolling);
 
 	if (libinput_device_config_dwt_is_available(device)
-			&& globalconf.input.disable_while_typing >= 0)
+			&& s.disable_while_typing >= 0)
 		libinput_device_config_dwt_set_enabled(device,
-			globalconf.input.disable_while_typing);
+			s.disable_while_typing);
 
-	/* Disable while trackpoint in use (ThinkPad feature) */
 	if (libinput_device_config_dwtp_is_available(device)
-			&& globalconf.input.dwtp >= 0)
-		libinput_device_config_dwtp_set_enabled(device, globalconf.input.dwtp);
+			&& s.dwtp >= 0)
+		libinput_device_config_dwtp_set_enabled(device, s.dwtp);
 
 	if (libinput_device_config_left_handed_is_available(device)
-			&& globalconf.input.left_handed >= 0)
-		libinput_device_config_left_handed_set(device,
-			globalconf.input.left_handed);
+			&& s.left_handed >= 0)
+		libinput_device_config_left_handed_set(device, s.left_handed);
 
 	if (libinput_device_config_middle_emulation_is_available(device)
-			&& globalconf.input.middle_button_emulation >= 0)
+			&& s.middle_button_emulation >= 0)
 		libinput_device_config_middle_emulation_set_enabled(device,
-			globalconf.input.middle_button_emulation);
+			s.middle_button_emulation);
 
-	/* Convert scroll_method string to enum */
 	if (libinput_device_config_scroll_get_methods(device) != LIBINPUT_CONFIG_SCROLL_NO_SCROLL
-			&& globalconf.input.scroll_method) {
+			&& s.scroll_method) {
 		enum libinput_config_scroll_method method = LIBINPUT_CONFIG_SCROLL_2FG;
-		if (strcmp(globalconf.input.scroll_method, "no_scroll") == 0)
+		if (strcmp(s.scroll_method, "no_scroll") == 0)
 			method = LIBINPUT_CONFIG_SCROLL_NO_SCROLL;
-		else if (strcmp(globalconf.input.scroll_method, "two_finger") == 0)
+		else if (strcmp(s.scroll_method, "two_finger") == 0)
 			method = LIBINPUT_CONFIG_SCROLL_2FG;
-		else if (strcmp(globalconf.input.scroll_method, "edge") == 0)
+		else if (strcmp(s.scroll_method, "edge") == 0)
 			method = LIBINPUT_CONFIG_SCROLL_EDGE;
-		else if (strcmp(globalconf.input.scroll_method, "button") == 0)
+		else if (strcmp(s.scroll_method, "button") == 0)
 			method = LIBINPUT_CONFIG_SCROLL_ON_BUTTON_DOWN;
 		libinput_device_config_scroll_set_method(device, method);
 	}
 
-	/* Scroll button for scroll-on-button-down mode */
-	if (globalconf.input.scroll_button > 0)
-		libinput_device_config_scroll_set_button(device, globalconf.input.scroll_button);
+	if (s.scroll_button > 0)
+		libinput_device_config_scroll_set_button(device, s.scroll_button);
 
-	/* Scroll button lock (toggle vs hold) */
-	if (globalconf.input.scroll_button_lock >= 0)
+	if (s.scroll_button_lock >= 0)
 		libinput_device_config_scroll_set_button_lock(device,
-			globalconf.input.scroll_button_lock ? LIBINPUT_CONFIG_SCROLL_BUTTON_LOCK_ENABLED
-			                                    : LIBINPUT_CONFIG_SCROLL_BUTTON_LOCK_DISABLED);
+			s.scroll_button_lock ? LIBINPUT_CONFIG_SCROLL_BUTTON_LOCK_ENABLED
+			                     : LIBINPUT_CONFIG_SCROLL_BUTTON_LOCK_DISABLED);
 
-	/* Convert click_method string to enum */
 	if (libinput_device_config_click_get_methods(device) != LIBINPUT_CONFIG_CLICK_METHOD_NONE
-			&& globalconf.input.click_method) {
+			&& s.click_method) {
 		enum libinput_config_click_method method = LIBINPUT_CONFIG_CLICK_METHOD_BUTTON_AREAS;
-		if (strcmp(globalconf.input.click_method, "none") == 0)
+		if (strcmp(s.click_method, "none") == 0)
 			method = LIBINPUT_CONFIG_CLICK_METHOD_NONE;
-		else if (strcmp(globalconf.input.click_method, "button_areas") == 0)
+		else if (strcmp(s.click_method, "button_areas") == 0)
 			method = LIBINPUT_CONFIG_CLICK_METHOD_BUTTON_AREAS;
-		else if (strcmp(globalconf.input.click_method, "clickfinger") == 0)
+		else if (strcmp(s.click_method, "clickfinger") == 0)
 			method = LIBINPUT_CONFIG_CLICK_METHOD_CLICKFINGER;
 		libinput_device_config_click_set_method(device, method);
 	}
 
-	/* Clickfinger button map (like tap_button_map but for clickfinger mode) */
 #ifdef LIBINPUT_CONFIG_CLICKFINGER_MAP_LRM
-	if (globalconf.input.clickfinger_button_map) {
+	if (s.clickfinger_button_map) {
 		enum libinput_config_clickfinger_button_map map = LIBINPUT_CONFIG_CLICKFINGER_MAP_LRM;
-		if (strcmp(globalconf.input.clickfinger_button_map, "lmr") == 0)
+		if (strcmp(s.clickfinger_button_map, "lmr") == 0)
 			map = LIBINPUT_CONFIG_CLICKFINGER_MAP_LMR;
 		libinput_device_config_click_set_clickfinger_button_map(device, map);
 	}
 #endif
 
-	/* Convert send_events_mode string to enum */
 	if (libinput_device_config_send_events_get_modes(device)
-			&& globalconf.input.send_events_mode) {
+			&& s.send_events_mode) {
 		uint32_t mode = LIBINPUT_CONFIG_SEND_EVENTS_ENABLED;
-		if (strcmp(globalconf.input.send_events_mode, "disabled") == 0)
+		if (strcmp(s.send_events_mode, "disabled") == 0)
 			mode = LIBINPUT_CONFIG_SEND_EVENTS_DISABLED;
-		else if (strcmp(globalconf.input.send_events_mode, "disabled_on_external_mouse") == 0)
+		else if (strcmp(s.send_events_mode, "disabled_on_external_mouse") == 0)
 			mode = LIBINPUT_CONFIG_SEND_EVENTS_DISABLED_ON_EXTERNAL_MOUSE;
 		libinput_device_config_send_events_set_mode(device, mode);
 	}
 
-	/* Convert accel_profile string to enum and apply accel_speed */
 	if (libinput_device_config_accel_is_available(device)) {
-		if (globalconf.input.accel_profile) {
+		if (s.accel_profile) {
 			enum libinput_config_accel_profile profile = LIBINPUT_CONFIG_ACCEL_PROFILE_ADAPTIVE;
-			if (strcmp(globalconf.input.accel_profile, "flat") == 0)
+			if (strcmp(s.accel_profile, "flat") == 0)
 				profile = LIBINPUT_CONFIG_ACCEL_PROFILE_FLAT;
 			libinput_device_config_accel_set_profile(device, profile);
 		}
-		libinput_device_config_accel_set_speed(device, globalconf.input.accel_speed);
+		if (s.accel_speed_set)
+			libinput_device_config_accel_set_speed(device, s.accel_speed);
 	}
 }
 

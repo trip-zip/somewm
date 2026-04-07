@@ -6,6 +6,7 @@
 -- Track calls to C API functions
 local input_settings_calls = {}
 local keyboard_settings_calls = {}
+local input_rules_calls = {}
 
 -- Mock awesome C API
 _G.awesome = setmetatable({
@@ -14,6 +15,9 @@ _G.awesome = setmetatable({
     end,
     _set_keyboard_setting = function(key, value)
         table.insert(keyboard_settings_calls, { key = key, value = value })
+    end,
+    _set_input_rules = function(rules)
+        table.insert(input_rules_calls, rules)
     end,
 }, {
     __index = _G.awesome or {}
@@ -26,6 +30,7 @@ describe("awful.input", function()
         -- Clear call tracking
         input_settings_calls = {}
         keyboard_settings_calls = {}
+        input_rules_calls = {}
     end)
 
     describe("pointer/touchpad settings", function()
@@ -276,6 +281,77 @@ describe("awful.input", function()
 
             input.accel_speed = 0.0
             assert.is.equal(0.0, input.accel_speed)
+        end)
+    end)
+
+    describe("input rules", function()
+        it("rules defaults to nil", function()
+            assert.is_nil(input.rules)
+        end)
+
+        it("rules can be set", function()
+            local rules = {
+                { rule = { type = "touchpad" },
+                  properties = { natural_scrolling = 1 } },
+            }
+            input.rules = rules
+            assert.is.same(rules, input.rules)
+        end)
+
+        it("setting rules calls _set_input_rules", function()
+            local rules = {
+                { rule = { type = "touchpad" },
+                  properties = { natural_scrolling = 1, tap_to_click = 1 } },
+                { rule = { type = "pointer" },
+                  properties = { natural_scrolling = 0, accel_profile = "flat" } },
+            }
+            input.rules = rules
+            assert.is.equal(1, #input_rules_calls)
+            assert.is.same(rules, input_rules_calls[1])
+        end)
+
+        it("rules can be cleared with nil", function()
+            input.rules = {
+                { rule = { type = "touchpad" },
+                  properties = { natural_scrolling = 1 } },
+            }
+            input.rules = nil
+            assert.is_nil(input.rules)
+            -- Should have called _set_input_rules with empty table
+            assert.is.equal(2, #input_rules_calls)
+            assert.is.same({}, input_rules_calls[2])
+        end)
+
+        it("rules with name matcher", function()
+            local rules = {
+                { rule = { name = "Logitech G502" },
+                  properties = { accel_speed = -0.5 } },
+            }
+            input.rules = rules
+            assert.is.equal(1, #input_rules_calls)
+        end)
+
+        it("rules with both type and name", function()
+            local rules = {
+                { rule = { type = "touchpad", name = "DLL0945" },
+                  properties = { natural_scrolling = 1 } },
+            }
+            input.rules = rules
+            assert.is.same(rules, input.rules)
+        end)
+
+        it("multiple rules are preserved in order", function()
+            local rules = {
+                { rule = { type = "touchpad" },
+                  properties = { natural_scrolling = 1 } },
+                { rule = { type = "pointer" },
+                  properties = { natural_scrolling = 0 } },
+                { rule = { name = "Special Mouse" },
+                  properties = { natural_scrolling = 1 } },
+            }
+            input.rules = rules
+            assert.is.equal(3, #input.rules)
+            assert.is.same(rules, input.rules)
         end)
     end)
 
