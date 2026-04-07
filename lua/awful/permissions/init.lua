@@ -867,10 +867,11 @@ if layer_surface then
     layer_surface.connect_signal("request::keyboard", permissions.layer_surface_keyboard)
 end
 
---- Default handler for layer surface unmanage (focus restoration).
+--- Default handler for layer surface unmanage.
 --
--- When a layer surface with keyboard focus closes, this handler restores
--- focus to the previously focused client using the focus history.
+-- Placeholder for user customization. Focus restoration after layer surface
+-- close is handled by the C-level focus_restore() which emits
+-- request::focus_restore on the screen.
 --
 -- @signalhandler awful.permissions.layer_surface_unmanage
 -- @tparam layer_surface l The layer surface being unmanaged.
@@ -879,32 +880,33 @@ end
 -- @sourcesignal layer_surface request::unmanage
 function permissions.layer_surface_unmanage(l, context, hints)
     if not pcommon.check(l, "layer_surface", "unmanage", context) then return end
-
-    -- Restore focus when a keyboard-interactive layer surface closes
-    -- Check both has_keyboard_focus AND keyboard_interactive as the flag may
-    -- be cleared before this handler runs in some edge cases
-    local had_focus = l.has_keyboard_focus
-    local was_keyboard_interactive = l.keyboard_interactive and l.keyboard_interactive ~= "none"
-
-    if had_focus or was_keyboard_interactive then
-        -- Use l.screen if valid, otherwise fall back to focused screen
-        -- NOTE: Use ascreen.focused() not screen.focused() - screen is capi.screen
-        local s = (l.screen and l.screen.valid) and l.screen or ascreen.focused()
-        if s and s.valid then
-            -- Try to find a client to focus using focus history
-            local aclient = require("awful.client")
-            local c = aclient.focus.history.get(s, 0, aclient.focus.filter)
-            if c and c.valid then
-                c:emit_signal("request::activate", "layer_surface_closed", {raise = false})
-            end
-        end
-    end
 end
 
 -- Connect default handler for layer surface unmanage (somewm-specific)
 if layer_surface then
     layer_surface.connect_signal("request::unmanage", permissions.layer_surface_unmanage)
 end
+
+--- Default handler for focus restoration (somewm-specific).
+--
+-- When something closes, unlocks, or disconnects, the C compositor emits
+-- `request::focus_restore` on the relevant screen. This handler picks the
+-- best client from focus history and activates it.
+--
+-- @signalhandler awful.permissions.focus_restore
+-- @tparam screen s The screen that needs focus restored.
+-- @sourcesignal screen request::focus_restore
+function permissions.focus_restore(s)
+    if not s or not s.valid then return end
+
+    -- Find the most recent focusable client on this screen
+    local c = aclient.focus.history.get(s, 0, aclient.focus.filter)
+    if c and c.valid then
+        c:emit_signal("request::activate", "focus_restore", {raise = false})
+    end
+end
+
+screen.connect_signal("request::focus_restore", permissions.focus_restore)
 
 --- Saved tag metadata from disconnected screens, keyed by output connector name.
 --

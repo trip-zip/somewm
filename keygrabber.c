@@ -34,6 +34,7 @@
 #include "luaa.h"
 #include "common/lualib.h"
 #include "somewm_types.h"
+#include "somewm_api.h"
 
 /** Grab the keyboard.
  * \return True if keyboard was grabbed.
@@ -179,25 +180,17 @@ some_keygrabber_is_running(void)
     return globalconf.keygrabber != LUA_REFNIL;
 }
 
-/* somewm-specific: Handle a key event when keygrabber is running
- * Used by somewm.c keyboard event handling
+/* somewm-specific: Handle a key event when keygrabber is running.
+ * Delegates to keygrabber_handlekpress() for argument pushing, then
+ * invokes the Lua callback via pcall.
  */
 bool
-some_keygrabber_handle_key(uint32_t modifiers, xkb_keycode_t keycode, struct xkb_state *state)
+some_keygrabber_handle_key(xkb_keycode_t keycode, struct xkb_state *state, bool is_press)
 {
-    lua_State *L;
-    char keyname[64] = {0};
-
-    if (!state)
+    if (!state || globalconf.keygrabber == LUA_REFNIL)
         return false;
 
-    /* Convert key event to human-readable string. */
-    key_to_text(state, keycode, keyname, sizeof(keyname));
-
-    if (globalconf.keygrabber == LUA_REFNIL)
-        return false;
-
-    L = globalconf_get_lua_State();
+    lua_State *L = globalconf_get_lua_State();
 
     /* Get the callback function from registry */
     lua_rawgeti(L, LUA_REGISTRYINDEX, globalconf.keygrabber);
@@ -207,14 +200,8 @@ some_keygrabber_handle_key(uint32_t modifiers, xkb_keycode_t keycode, struct xkb
         return false;
     }
 
-    /* Push modifiers table using AwesomeWM helper */
-    luaA_pushmodifiers(L, modifiers);
-
-    /* Push key name */
-    lua_pushstring(L, keyname);
-
-    /* Push event type (always "press" for now) */
-    lua_pushstring(L, "press");
+    /* Push modifiers, key name, event type */
+    keygrabber_handlekpress(L, keycode, state, is_press);
 
     /* Call the callback: callback(modifiers, key, event) */
     if (lua_pcall(L, 3, 0, 0) != 0) {
@@ -235,6 +222,70 @@ luaA_keygrabber_setup(lua_State *L)
 {
     /* Register the methods on the table at the top of the stack */
     luaA_setfuncs(L, awesome_keygrabber_lib);
+}
+
+/* ---- _keygrabber test helper module (somewm-specific) ---- */
+
+/** Inject a key event into the keygrabber for testing.
+ * Called from Lua: _keygrabber.inject(keyname, is_press)
+ * Returns: boolean (consumed by keygrabber)
+ *
+ * Unlike root.fake_input(), this routes through the keygrabber callback,
+ * following the same pattern as _gesture.inject().
+ */
+static int
+luaA_keygrabber_inject(lua_State *L)
+{
+    const char *key_str = luaL_checkstring(L, 1);
+    if (lua_gettop(L) < 2)
+        return luaL_error(L, "_keygrabber.inject requires 2 arguments: keyname, is_press");
+    bool is_press = lua_toboolean(L, 2);
+
+    struct xkb_keymap *keymap = some_xkb_get_keymap();
+    struct xkb_state *state = some_xkb_get_state();
+    if (!keymap || !state) {
+        lua_pushboolean(L, 0);
+        return 1;
+    }
+
+    /* Resolve keysym name to keycode */
+    xkb_keysym_t keysym = xkb_keysym_from_name(key_str, XKB_KEYSYM_CASE_INSENSITIVE);
+    if (keysym == XKB_KEY_NoSymbol)
+        return luaL_error(L, "Unknown keysym: %s", key_str);
+
+    xkb_keycode_t keycode = 0;
+    xkb_keycode_t min_kc = xkb_keymap_min_keycode(keymap);
+    xkb_keycode_t max_kc = xkb_keymap_max_keycode(keymap);
+    for (xkb_keycode_t kc = min_kc; kc <= max_kc; kc++) {
+        const xkb_keysym_t *syms;
+        int nsyms = xkb_keymap_key_get_syms_by_level(keymap, kc, 0, 0, &syms);
+        for (int i = 0; i < nsyms; i++) {
+            if (syms[i] == keysym) {
+                keycode = kc;
+                break;
+            }
+        }
+        if (keycode != 0)
+            break;
+    }
+    if (keycode == 0)
+        return luaL_error(L, "Keysym '%s' not in current keymap", key_str);
+
+    bool consumed = some_keygrabber_handle_key(keycode, state, is_press);
+    lua_pushboolean(L, consumed);
+    return 1;
+}
+
+static const struct luaL_Reg awesome_keygrabber_test_lib[] =
+{
+    { "inject", luaA_keygrabber_inject },
+    { NULL, NULL }
+};
+
+void
+luaA_keygrabber_test_setup(lua_State *L)
+{
+    luaA_setfuncs(L, awesome_keygrabber_test_lib);
 }
 
 // vim: filetype=c:expandtab:shiftwidth=4:tabstop=8:softtabstop=4:textwidth=80
