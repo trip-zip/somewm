@@ -95,9 +95,15 @@ local pointer_settings = {
     tap_button_map = true,
 }
 
+-- Per-device input rules (evaluated in order, last match wins per property)
+local rules = nil
+
 -- Set up metatable for property access
 setmetatable(module, {
     __index = function(_, key)
+        if key == "rules" then
+            return rules
+        end
         if state[key] ~= nil then
             return state[key]
         end
@@ -105,6 +111,12 @@ setmetatable(module, {
     end,
 
     __newindex = function(_, key, value)
+        if key == "rules" then
+            rules = value
+            capi.awesome._set_input_rules(value or {})
+            return
+        end
+
         -- Check if property exists using property_types table
         if property_types[key] == nil then
             error("awful.input: unknown property '" .. tostring(key) .. "'")
