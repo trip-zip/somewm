@@ -1086,7 +1086,7 @@ luaA_awesome_set_input_rules(lua_State *L)
 	/* Free old rules */
 	input_rules_free();
 
-	int count = lua_objlen(L, 1);
+	int count = luaA_rawlen(L, 1);
 	if (count == 0) {
 		apply_input_settings_to_all_devices();
 		return 0;
