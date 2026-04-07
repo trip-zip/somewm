@@ -133,19 +133,11 @@ Programmatic layout switching from Lua is not yet supported.
 |---------|--------|-------|
 | XKB toggle options | Layout set at startup only | `grp:alt_shift_toggle` etc. work at the XKB level but don't emit signals to Lua |
 | Button press/release signals | Partial | `client::button_press` not fully emitted |
-| Dynamic keybinding removal | Stub | `root._remove_key()` is no-op |
-| Keygrabber release events | Press only | Callbacks only receive `"press"`, never `"release"` |
 | Client `instance` property | Empty for Wayland | Wayland has no equivalent of `WM_CLASS` instance field |
 | Client `machine` property | Empty for Wayland | Wayland has no `WM_CLIENT_MACHINE` equivalent |
 | Client `icon_name` property | Empty for Wayland | No Wayland protocol provides this |
 | `spawn::change` signal | Never emitted | Startup-notification progress not tracked on Wayland |
 | `spawn::canceled` signal | Never emitted | Startup-notification cancellation not tracked |
-
-### Keygrabber Release Events
-
-`some_keygrabber_handle_key()` in `keygrabber.c` always passes `"press"` as the event type. Key release events are never forwarded to keygrabber callbacks.
-
-This affects keygrabber-based UIs that use release detection, such as Alt-Tab implementations where releasing Alt confirms the selection.
 
 ### Client Properties for Native Wayland
 
@@ -405,8 +397,7 @@ Some AwesomeWM tests won't work due to these deviations:
 Potential future compatibility improvements:
 
 1. **XKB layout functions** - Wire `xkb_set_layout_group()` / `xkb_get_layout_group()` / `xkb_get_group_names()` to wlroots XKB state
-2. **Keygrabber release events** - Forward key release to keygrabber callbacks
-3. **Property storage** - Compositor-side persistent state for clients
-4. **Session management** - Wayland-native session protocol support
-5. **EWMH frame extents** - Send `_NET_FRAME_EXTENTS` to XWayland clients
-6. **EWMH desktop geometry** - Report actual output geometry instead of hardcoded 1920x1080
+2. **Property storage** - Compositor-side persistent state for clients
+3. **Session management** - Wayland-native session protocol support
+4. **EWMH frame extents** - Send `_NET_FRAME_EXTENTS` to XWayland clients
+5. **EWMH desktop geometry** - Report actual output geometry instead of hardcoded 1920x1080
