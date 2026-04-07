@@ -382,45 +382,4 @@ property_update_xwayland_properties(client_t *c)
 
 #endif /* XWAYLAND */
 
-/* ========================================================================
- * Lua API for Custom Properties
- * ======================================================================== */
-
-/** Register a custom X property to watch (Lua API: awesome.register_xproperty)
- * \param L The Lua VM state
- * \return Number of elements pushed on stack
- */
-int
-luaA_register_xproperty(lua_State *L)
-{
-	/* TODO: Implement custom property registration
-	 * This is used by Lua configs to watch arbitrary X properties
-	 * Low priority for initial implementation */
-	return luaL_error(L, "awesome.register_xproperty not yet implemented");
-}
-
-/** Set an X property value (Lua API: awesome.set_xproperty)
- * \param L The Lua VM state
- * \return Number of elements pushed on stack
- */
-int
-luaA_set_xproperty(lua_State *L)
-{
-	/* TODO: Implement X property setter
-	 * Low priority for initial implementation */
-	return luaL_error(L, "awesome.set_xproperty not yet implemented");
-}
-
-/** Get an X property value (Lua API: awesome.get_xproperty)
- * \param L The Lua VM state
- * \return Number of elements pushed on stack
- */
-int
-luaA_get_xproperty(lua_State *L)
-{
-	/* TODO: Implement X property getter
-	 * Low priority for initial implementation */
-	return luaL_error(L, "awesome.get_xproperty not yet implemented");
-}
-
 // vim: filetype=c:expandtab:shiftwidth=4:tabstop=8:softtabstop=4:textwidth=80
