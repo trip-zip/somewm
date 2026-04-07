@@ -12,8 +12,8 @@
 -- Run with: HEADLESS=1 make test-one TEST=tests/test-floating-layout.lua
 
 local awful = require("awful")
-local runner = require("tests._runner")
-local test_client = require("tests._client")
+local runner = require("_runner")
+local test_client = require("_client")
 
 -- Capture initial geometry of newly managed clients
 local managed_geos = {}
