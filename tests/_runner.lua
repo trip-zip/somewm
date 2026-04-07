@@ -50,6 +50,15 @@ runner.step_kill_clients = function(step)
     if #client.get() == 0 then
         return true
     end
+    -- After 1 second of graceful waiting, force-kill spawned PIDs
+    if step == 10 then
+        local test_client_ok, test_client = pcall(require, "_client")
+        if test_client_ok and test_client.get_spawned_pids then
+            for _, pid in ipairs(test_client.get_spawned_pids()) do
+                os.execute("kill -9 " .. pid .. " 2>/dev/null")
+            end
+        end
+    end
 end
 
 --- Print a message if verbose mode is enabled.
