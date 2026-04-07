@@ -28,7 +28,10 @@ describe("awful.keygrabber release events", function()
    package.loaded["awful.keyboard"] = {
       append_global_keybinding = function() end,
    }
-   _G.awesome = gtable.join(_G.awesome, { connect_signal = function() end })
+   _G.awesome = gtable.join(_G.awesome, {
+      connect_signal = function() end,
+      _modifiers = {},
+   })
    _G.key = {
       set_index_miss_handler = function() end,
       set_newindex_miss_handler = function() end,
