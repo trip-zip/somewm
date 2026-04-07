@@ -208,6 +208,9 @@ static bool user_is_idle = false;    /* Global idle state */
 /* Flag whether idle timers have been inhibited. */
 static bool idle_timers_inhibited = false;
 
+/* Lua-level idle inhibition (set via awesome.idle_inhibit). */
+static bool lua_idle_inhibited = false;
+
 /* D-Bus library functions from dbus.c */
 extern const struct luaL_Reg awesome_dbus_lib[];
 
@@ -1592,6 +1595,13 @@ some_idle_timers_set_inhibit(bool inhibit)
 	reset_all_idle_timers();
 }
 
+/* Query Lua-level idle inhibition (for somewm.c idle notifier). */
+bool
+some_is_lua_idle_inhibited(void)
+{
+	return lua_idle_inhibited;
+}
+
 /** awesome.set_idle_timeout(name, seconds, callback)
  * Add or update a named idle timeout.
  * Multiple timeouts can be active simultaneously.
@@ -2037,8 +2047,13 @@ luaA_awesome_index(lua_State *L)
 		return 1;
 	}
 
+	if (A_STREQ(key, "idle_inhibit")) {
+		lua_pushboolean(L, lua_idle_inhibited);
+		return 1;
+	}
+
 	if (A_STREQ(key, "idle_inhibited")) {
-		lua_pushboolean(L, some_is_idle_inhibited(NULL));
+		lua_pushboolean(L, some_is_idle_inhibited(NULL) || lua_idle_inhibited);
 		return 1;
 	}
 
@@ -2092,6 +2107,12 @@ luaA_awesome_newindex(lua_State *L)
 
 	if (A_STREQ(key, "bypass_surface_visibility")) {
 		globalconf.appearance.bypass_surface_visibility = lua_toboolean(L, 3);
+		return 0;
+	}
+
+	if (A_STREQ(key, "idle_inhibit")) {
+		lua_idle_inhibited = lua_toboolean(L, 3);
+		some_recompute_idle_inhibit(NULL);
 		return 0;
 	}
 
@@ -5307,6 +5328,8 @@ luaA_cleanup(void)
 
 		/* Clean up lock/idle state before closing Lua */
 		luaA_awesome_clear_all_idle_timeouts(globalconf_L);
+		lua_idle_inhibited = false;
+		some_recompute_idle_inhibit(NULL);
 		luaA_awesome_clear_lock_surface(globalconf_L);
 		luaA_awesome_clear_lock_covers(globalconf_L);
 
