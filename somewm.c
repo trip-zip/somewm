@@ -3431,6 +3431,14 @@ locksession(struct wl_listener *listener, void *data)
 	wlr_session_lock_v1_send_locked(session_lock);
 }
 
+static void
+cursor_to_client_coordinates(Client *client, double *sx, double *sy) {
+	double bw = client->bw;
+	/* Compute coordinates (sx, sy) within the borderd geometry. */
+	*sx = cursor->x - (client->geometry.x + bw);
+	*sy = cursor->y - (client->geometry.y + bw);
+}
+
 void
 mapnotify(struct wl_listener *listener, void *data)
 {
@@ -3815,8 +3823,8 @@ unset_fullscreen:
 	if (client_surface(c) && client_surface(c)->mapped
 			&& cursor->x >= c->geometry.x && cursor->x < c->geometry.x + c->geometry.width
 			&& cursor->y >= c->geometry.y && cursor->y < c->geometry.y + c->geometry.height) {
-		double sx = cursor->x - c->geometry.x - c->bw;
-		double sy = cursor->y - c->geometry.y - c->bw;
+		double sx, sy;
+		cursor_to_client_coordinates(c, &sx, &sy);
 		wlr_log(WLR_DEBUG, "[POINTER-REEVAL] mapnotify: setting pointer focus on %s (cursor in geometry)",
 			client_get_appid(c));
 		pointerfocus(c, client_surface(c), sx, sy, 0);
@@ -4278,8 +4286,7 @@ pointerfocus(Client *c, struct wlr_surface *surface, double sx, double sy,
 	 * client wouldn't receive hover/scroll events. */
 	if (!surface && c && client_surface(c) && client_surface(c)->mapped) {
 		surface = client_surface(c);
-		sx = cursor->x - c->geometry.x - c->bw;
-		sy = cursor->y - c->geometry.y - c->bw;
+		cursor_to_client_coordinates(c, &sx, &sy);
 	}
 	if (!surface) {
 		wlr_seat_pointer_notify_clear_focus(seat);
