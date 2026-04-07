@@ -93,28 +93,6 @@ void property_update_xwayland_properties(client_t *c);
 #endif /* XWAYLAND */
 
 /* ========================================================================
- * Lua API for Custom Properties
- * ======================================================================== */
-
-/** Register a custom X property to watch (Lua API: awesome.register_xproperty)
- * \param L The Lua VM state
- * \return Number of elements pushed on stack
- */
-int luaA_register_xproperty(lua_State *L);
-
-/** Set an X property value (Lua API: awesome.set_xproperty)
- * \param L The Lua VM state
- * \return Number of elements pushed on stack
- */
-int luaA_set_xproperty(lua_State *L);
-
-/** Get an X property value (Lua API: awesome.get_xproperty)
- * \param L The Lua VM state
- * \return Number of elements pushed on stack
- */
-int luaA_get_xproperty(lua_State *L);
-
-/* ========================================================================
  * Custom Property Types (for Lua API)
  * ======================================================================== */
 
