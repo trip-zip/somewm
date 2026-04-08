@@ -260,8 +260,8 @@ void some_notify_activity(void);
 void some_recompute_idle_inhibit(struct wlr_surface *exclude);
 bool some_is_lua_idle_inhibited(void);
 
-/* Idle inhibitor query - defined in somewm.c, called from luaa.c */
-bool some_is_idle_inhibited(struct wlr_surface *exclude);
+/* Idle inhibitor query - defined in protocols.c */
+bool some_is_idle_inhibited(void);
 int some_idle_inhibitor_count(void);
 
 typedef struct lua_State lua_State;

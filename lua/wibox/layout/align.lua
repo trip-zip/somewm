@@ -32,131 +32,98 @@ local type = type
 local floor = math.floor
 local gtable = require("gears.table")
 local base = require("wibox.widget.base")
+local clay_backend = require("wibox.layout._clay")
+local clay_c = _somewm_clay
 
 local align = {}
 
--- Calculate the layout of an align layout.
+-- Calculate the layout of an align layout using Clay.
 -- @param context The context in which we are drawn.
 -- @param width The available width.
 -- @param height The available height.
 function align:layout(context, width, height)
-    local result = {}
+    if not clay_c then
+        return {}
+    end
 
-    -- Draw will have to deal with all three align modes and should work in a
-    -- way that makes sense if one or two of the widgets are missing (if they
-    -- are all missing, it won't draw anything.) It should also handle the case
-    -- where the fit something that isn't set to expand (for instance the
-    -- outside widgets when the expand mode is "inside" or any of the widgets
-    -- when the expand mode is "none" wants to take up more space than is
-    -- allowed.
-    local size_first = 0
-    -- start with all the space given by the parent, subtract as we go along
-    local size_remains = self._private.dir == "y" and height or width
-    -- This is only set & used if expand ~= "inside" and we have second width.
-    -- It contains the size allocated to the second widget.
-    local size_second
+    local dir = self._private.dir == "y" and "column" or "row"
+    local is_y = self._private.dir == "y"
+    local expand = self._private.expand
+    local first = self._private.first
+    local second = self._private.second
+    local third = self._private.third
 
-    -- we will prioritize the middle widget unless the expand mode is "inside"
-    --  if it is, we prioritize the first widget by not doing this block also,
-    --  if the second widget doesn't exist, we will prioritise the first one
-    --  instead
-    if self._private.expand ~= "inside" and self._private.second then
-        local w, h = base.fit_widget(self, context, self._private.second, width, height)
-        size_second = self._private.dir == "y" and h or w
-        -- if all the space is taken, skip the rest, and draw just the middle
-        -- widget
-        if size_second >= size_remains then
-            return { base.place_widget_at(self._private.second, 0, 0, width, height) }
-        else
-            -- the middle widget is sized first, the outside widgets are given
-            --  the remaining space if available we will draw later
-            size_remains = floor((size_remains - size_second) / 2)
-        end
+    if not first and not second and not third then
+        return {}
     end
-    if self._private.first then
-        local w, h, _ = width, height, nil
-        -- we use the fit function for the "inside" and "none" modes, but
-        --  ignore it for the "outside" mode, which will force it to expand
-        --  into the remaining space
-        if self._private.expand ~= "outside" then
-            if self._private.dir == "y" then
-                _, h = base.fit_widget(self, context, self._private.first, width, size_remains)
-                size_first = h
-                -- for "inside", the third widget will get a chance to use the
-                --  remaining space, then the middle widget. For "none" we give
-                --  the third widget the remaining space if there was no second
-                --  widget to take up any space (as the first if block is skipped
-                --  if this is the case)
-                if self._private.expand == "inside" or not self._private.second then
-                    size_remains = size_remains - h
-                end
-            else
-                w, _ = base.fit_widget(self, context, self._private.first, size_remains, height)
-                size_first = w
-                if self._private.expand == "inside" or not self._private.second then
-                    size_remains = size_remains - w
-                end
+
+    return clay_backend.compute(width, height, function()
+        clay_c.open_container({ direction = dir })
+
+        if expand == "inside" then
+            -- first=fit, second=grow, third=fit
+            if first then
+                local w, h = base.fit_widget(self, context, first, width, height)
+                clay_c.widget_element(first, {
+                    [is_y and "height_fixed" or "width_fixed"] = is_y and h or w,
+                })
             end
-        else
-            if self._private.dir == "y" then
-                h = size_remains
-            else
-                w = size_remains
+            if second then
+                clay_c.widget_element(second, { grow = true })
             end
-        end
-        table.insert(result, base.place_widget_at(self._private.first, 0, 0, w, h))
-    end
-    -- size_remains will be <= 0 if first used all the space
-    if self._private.third and size_remains > 0 then
-        local w, h, _ = width, height, nil
-        if self._private.expand ~= "outside" then
-            if self._private.dir == "y" then
-                _, h = base.fit_widget(self, context, self._private.third, width, size_remains)
-                -- give the middle widget the rest of the space for "inside" mode
-                if self._private.expand == "inside" then
-                    size_remains = size_remains - h
-                end
-            else
-                w, _ = base.fit_widget(self, context, self._private.third, size_remains, height)
-                if self._private.expand == "inside" then
-                    size_remains = size_remains - w
-                end
+            if third then
+                local w, h = base.fit_widget(self, context, third, width, height)
+                clay_c.widget_element(third, {
+                    [is_y and "height_fixed" or "width_fixed"] = is_y and h or w,
+                })
             end
-        else
-            if self._private.dir == "y" then
-                h = size_remains
-            else
-                w = size_remains
+
+        elseif expand == "outside" then
+            -- first=grow, second=fit, third=grow
+            if first then
+                clay_c.widget_element(first, { grow = true })
+            end
+            if second then
+                local w, h = base.fit_widget(self, context, second, width, height)
+                clay_c.widget_element(second, {
+                    [is_y and "height_fixed" or "width_fixed"] = is_y and h or w,
+                })
+            end
+            if third then
+                clay_c.widget_element(third, { grow = true })
+            end
+
+        else -- "none": all fit, second centered via spacers
+            if first then
+                local w, h = base.fit_widget(self, context, first, width, height)
+                clay_c.widget_element(first, {
+                    [is_y and "height_fixed" or "width_fixed"] = is_y and h or w,
+                })
+            end
+            if second then
+                -- Spacer to push second to center
+                clay_c.open_container({ grow = true })
+                clay_c.close_container()
+
+                local w, h = base.fit_widget(self, context, second, width, height)
+                clay_c.widget_element(second, {
+                    [is_y and "height_fixed" or "width_fixed"] = is_y and h or w,
+                })
+
+                -- Spacer to push third to end
+                clay_c.open_container({ grow = true })
+                clay_c.close_container()
+            end
+            if third then
+                local w, h = base.fit_widget(self, context, third, width, height)
+                clay_c.widget_element(third, {
+                    [is_y and "height_fixed" or "width_fixed"] = is_y and h or w,
+                })
             end
         end
-        local x, y = width - w, height - h
-        table.insert(result, base.place_widget_at(self._private.third, x, y, w, h))
-    end
-    -- here we either draw the second widget in the space set aside for it
-    -- in the beginning, or in the remaining space, if it is "inside"
-    if self._private.second and size_remains > 0 then
-        local x, y, w, h = 0, 0, width, height
-        if self._private.expand == "inside" then
-            if self._private.dir == "y" then
-                h = size_remains
-                x, y = 0, size_first
-            else
-                w = size_remains
-                x, y = size_first, 0
-            end
-        else
-            local _
-            if self._private.dir == "y" then
-                _, h = base.fit_widget(self, context, self._private.second, width, size_second)
-                y = floor( (height - h)/2 )
-            else
-                w, _ = base.fit_widget(self, context, self._private.second, size_second, height)
-                x = floor( (width -w)/2 )
-            end
-        end
-        table.insert(result, base.place_widget_at(self._private.second, x, y, w, h))
-    end
-    return result
+
+        clay_c.close_container()
+    end)
 end
 
 --- The widget in slot one.

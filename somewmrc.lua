@@ -18,6 +18,8 @@ local naughty = require("naughty")
 local ruled = require("ruled")
 local menubar = require("menubar")
 local hotkeys_popup = require("awful.hotkeys_popup")
+-- Clay layout engine
+local clay = require("awful.layout.clay")
 -- Enable hotkeys help widget for VIM and other apps
 -- when client with a matching name is opened:
 require("awful.hotkeys_popup.keys")
@@ -114,18 +116,18 @@ menubar.utils.terminal = terminal -- Set the terminal for applications that requ
 tag.connect_signal("request::default_layouts", function()
     awful.layout.append_default_layouts({
         awful.layout.suit.floating,
-        awful.layout.suit.tile,
-        awful.layout.suit.tile.left,
-        awful.layout.suit.tile.bottom,
-        awful.layout.suit.tile.top,
-        awful.layout.suit.fair,
-        awful.layout.suit.fair.horizontal,
+        clay.tile,
+        clay.tile.left,
+        clay.tile.bottom,
+        clay.tile.top,
+        clay.fair,
+        clay.fair.horizontal,
         awful.layout.suit.spiral,
         awful.layout.suit.spiral.dwindle,
-        awful.layout.suit.max,
+        clay.max,
         awful.layout.suit.max.fullscreen,
         awful.layout.suit.magnifier,
-        awful.layout.suit.corner.nw,
+        clay.corner.nw,
     })
 end)
 -- }}}
@@ -495,9 +497,9 @@ client.connect_signal("request::default_keybindings", function()
             {description = "toggle fullscreen", group = "client"}),
         awful.key({ modkey, "Shift"   }, "c",      function (c) c:kill()                         end,
                 {description = "close", group = "client"}),
-        awful.key({ modkey, "Control" }, "space",  awful.client.floating.toggle                     ,
+        awful.key({ modkey, "Control" }, "space",  function (c) c.floating = not c.floating end,
                 {description = "toggle floating", group = "client"}),
-        awful.key({ modkey, "Control" }, "Return", function (c) c:swap(awful.client.getmaster()) end,
+        awful.key({ modkey, "Control" }, "Return", function (c) c:swap(awful.client.visible(c.screen)[1]) end,
                 {description = "move to master", group = "client"}),
         awful.key({ modkey,           }, "o",      function (c) c:move_to_screen()               end,
                 {description = "move to screen", group = "client"}),

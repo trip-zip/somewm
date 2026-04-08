@@ -64,14 +64,13 @@ struct kb_group_device {
 };
 
 /* Functions from somewm.c that need to be made non-static */
-extern void focusclient(Client *c, int lift);
+#include "focus.h"
 extern void motionnotify(uint32_t time, struct wlr_input_device *device,
 		double dx, double dy, double dx_unaccel, double dy_unaccel);
 /* setfloating() removed - Lua manages floating state */
 extern void setfullscreen(Client *c, int fullscreen);
 extern void arrange(Monitor *m);
 extern void resize(Client *c, struct wlr_box geo, int interact);
-extern Client *focustop(Monitor *m);
 extern Monitor *xytomon(double x, double y);
 extern void setmon(Client *c, Monitor *m, uint32_t newtags);
 extern void xytonode(double x, double y, struct wlr_surface **psurface,
@@ -1918,6 +1917,6 @@ layer_surface_revoke_keyboard(LayerSurface *ls)
 		wlr_seat_keyboard_notify_clear_focus(seat);
 
 		/* Refocus the top client on the selected monitor */
-		focusclient(focustop(selmon), 1);
+		focus_restore(selmon);
 	}
 }

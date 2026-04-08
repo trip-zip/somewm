@@ -53,8 +53,9 @@ ARRAY_FUNCS(button_t *, button, DO_NOTHING)
 void luaA_button_array_set(lua_State *L, int oidx, int idx, button_array_t *buttons);
 int luaA_button_array_get(lua_State *L, int oidx, button_array_t *buttons);
 
-/* Legacy button checking functions (for backward compatibility with somewm.c) */
-int luaA_button_check(uint32_t mods, uint32_t button);
+/* Check if a button event matches any button in array */
+bool button_array_check(button_array_t *buttons, uint16_t modifiers, uint32_t button,
+                        lua_State *L, int drawin_idx);
 
 /* AwesomeWM-compatible button checking (two-stage signal emission)
  * \param drawin_ptr Drawin pointer

@@ -129,11 +129,6 @@ end
 -- @staticfct awful.layout.inc
 function layout.inc(i, s, layouts)
     if type(i) == "table" then
-        -- Older versions of this function had arguments (layouts, i, s), but
-        -- this was changed so that 'layouts' can be an optional parameter
-        gdebug.deprecate("Use awful.layout.inc(increment, screen, layouts) instead"..
-            " of awful.layout.inc(layouts, increment, screen)", {deprecated_in=5})
-
         layouts, i, s = i, s, layouts
     end
     s = get_screen(s or ascreen.focused())
@@ -255,6 +250,13 @@ function layout.arrange(screen)
 
         -- protected call to ensure that arrange_lock will be reset
         protected_call(function()
+            -- Compose screen: position wibars and compute workarea via Clay.
+            -- Must run before layout.parameters() so workarea is up-to-date.
+            local clay_ok, clay_mod = pcall(require, "awful.layout.clay")
+            if clay_ok and clay_mod.compose_screen then
+                clay_mod.compose_screen(screen)
+            end
+
             local p = layout.parameters(nil, screen)
 
             local useless_gap = p.useless_gap
@@ -262,12 +264,16 @@ function layout.arrange(screen)
             p.geometries = setmetatable({}, {__mode = "k"})
             layout.get(screen).arrange(p)
 
-            for c, g in pairs(p.geometries) do
-                g.width = math.max(1, g.width - c.border_width * 2 - useless_gap * 2)
-                g.height = math.max(1, g.height - c.border_width * 2 - useless_gap * 2)
-                g.x = g.x + useless_gap
-                g.y = g.y + useless_gap
-                c:geometry(g)
+            -- Clay layouts handle gaps natively and apply geometry
+            -- directly from C. Skip the per-client adjustment loop.
+            if not p._clay_managed then
+                for c, g in pairs(p.geometries) do
+                    g.width = math.max(1, g.width - c.border_width * 2 - useless_gap * 2)
+                    g.height = math.max(1, g.height - c.border_width * 2 - useless_gap * 2)
+                    g.x = g.x + useless_gap
+                    g.y = g.y + useless_gap
+                    c:geometry(g)
+                end
             end
         end)
         arrange_lock = false

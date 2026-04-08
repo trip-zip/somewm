@@ -61,11 +61,6 @@ function layoutbox.new(args)
 
     if type(args) == "number" or type(args) == "screen" or args.fake_remove then
         screen, args = args, {}
-
-        gdebug.deprecate(
-            "Use awful.widget.layoutbox{screen=s} instead of awful.widget.layoutbox(screen)",
-            {deprecated_in=5}
-        )
     end
 
     assert(type(args) == "table")

@@ -26,6 +26,7 @@
 #include "luaa.h"
 #include "x11_compat.h"
 #include "common/util.h"
+#include "event_queue.h"
 
 #ifdef XWAYLAND
 #include <xcb/xcb.h>
@@ -440,15 +441,15 @@ ewmh_process_state_atom(client_t *c, xcb_atom_t state, int set)
     {
         if(set == _NET_WM_STATE_REMOVE) {
             lua_pushboolean(L, false);
-            luaA_object_emit_signal(L, -2, "request::urgent", 1);
+            some_event_queue_signal(L, -2, SIG_REQUEST_URGENT, 1);
         }
         else if(set == _NET_WM_STATE_ADD) {
             lua_pushboolean(L, true);
-            luaA_object_emit_signal(L, -2, "request::urgent", 1);
+            some_event_queue_signal(L, -2, SIG_REQUEST_URGENT, 1);
         }
         else if(set == _NET_WM_STATE_TOGGLE) {
             lua_pushboolean(L, !c->urgent);
-            luaA_object_emit_signal(L, -2, "request::urgent", 1);
+            some_event_queue_signal(L, -2, SIG_REQUEST_URGENT, 1);
         }
     }
 
@@ -464,14 +465,14 @@ ewmh_process_desktop(client_t *c, uint32_t desktop)
     {
         luaA_object_push(L, c);
         lua_pushboolean(L, true);
-        luaA_object_emit_signal(L, -2, "request::tag", 1);
+        some_event_queue_signal(L, -2, SIG_REQUEST_TAG, 1);
         lua_pop(L, 1);
     }
     else if (idx >= 0 && idx < globalconf.tags.len)
     {
         luaA_object_push(L, c);
         luaA_object_push(L, globalconf.tags.tab[idx]);
-        luaA_object_emit_signal(L, -2, "request::tag", 1);
+        some_event_queue_signal(L, -2, SIG_REQUEST_TAG, 1);
         lua_pop(L, 1);
     }
 }
@@ -492,7 +493,7 @@ ewmh_process_client_message(xcb_client_message_event_t *ev)
             lua_State *L = globalconf_get_lua_State();
             luaA_object_push(L, globalconf.tags.tab[idx]);
             lua_pushstring(L, "ewmh");
-            luaA_object_emit_signal(L, -2, "request::select", 1);
+            some_event_queue_signal(L, -2, SIG_REQUEST_SELECT, 1);
             lua_pop(L, 1);
         }
     }
@@ -531,7 +532,7 @@ ewmh_process_client_message(xcb_client_message_event_t *ev)
             lua_pushboolean(L, true);
             lua_settable(L, -3);
 
-            luaA_object_emit_signal(L, -3, "request::activate", 2);
+            some_event_queue_signal(L, -3, SIG_REQUEST_ACTIVATE, 2);
             lua_pop(L, 1);
         }
     }

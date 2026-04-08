@@ -227,7 +227,6 @@ local lgi = require("lgi")
 local Gio = lgi.Gio
 local GioUnix = lgi.GioUnix
 local GLib = lgi.GLib
-local util   = require("awful.util")
 local gtable = require("gears.table")
 local gtimer = require("gears.timer")
 local aclient = require("awful.client")
@@ -235,6 +234,7 @@ local protected_call = require("gears.protected_call")
 
 local spawn = {}
 
+local shell = os.getenv("SHELL") or "/bin/sh"
 
 local end_of_file
 do
@@ -363,7 +363,7 @@ function spawn.spawn(cmd, sn_rules, callback)
 end
 
 --- Spawn a program using the shell.
--- This calls `cmd` with `$SHELL -c` (via `awful.util.shell`).
+-- This calls `cmd` with `$SHELL -c` (via `awful.shell`).
 -- @tparam string cmd The command.
 -- @treturn[1] integer The forked PID.
 -- @treturn[1] ?string The startup notification ID, if `sn` is not false, or
@@ -372,7 +372,7 @@ end
 -- @staticfct awful.spawn.with_shell
 function spawn.with_shell(cmd)
     if cmd and cmd ~= "" then
-        cmd = { util.shell, "-c", cmd }
+        cmd = { shell, "-c", cmd }
         return capi.awesome.spawn(cmd, false)
     end
 end
@@ -482,7 +482,7 @@ function spawn.easy_async(cmd, callback)
 end
 
 --- Call `spawn.easy_async` with a shell.
--- This calls `cmd` with `$SHELL -c` (via `awful.util.shell`).
+-- This calls `cmd` with `$SHELL -c` (via `awful.shell`).
 -- @tparam string cmd The command.
 -- @tparam table callback Function with the following arguments
 --   @tparam string callback.stdout Output on stdout.
@@ -495,7 +495,7 @@ end
 -- @see spawn.with_line_callback
 -- @staticfct awful.spawn.easy_async_with_shell
 function spawn.easy_async_with_shell(cmd, callback)
-    return spawn.easy_async({ util.shell, "-c", cmd or "" }, callback)
+    return spawn.easy_async({ shell, "-c", cmd or "" }, callback)
 end
 
 --- Read lines from a Gio input stream

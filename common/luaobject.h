@@ -213,7 +213,6 @@ int luaA_object_emit_signal_simple(lua_State *);
 extern uint64_t bench_signal_emit_count;
 extern uint64_t bench_signal_handler_calls;
 extern uint64_t bench_signal_lookup_misses;
-
 void bench_signal_counters_reset(void);
 #endif
 

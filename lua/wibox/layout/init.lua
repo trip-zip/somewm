@@ -11,12 +11,7 @@ return setmetatable({
     fixed = require("wibox.layout.fixed");
     align = require("wibox.layout.align");
     flex = require("wibox.layout.flex");
-    rotate = require("wibox.layout.rotate");
     manual = require("wibox.layout.manual");
-    margin = require("wibox.layout.margin");
-    mirror = require("wibox.layout.mirror");
-    constraint = require("wibox.layout.constraint");
-    scroll = require("wibox.layout.scroll");
     ratio = require("wibox.layout.ratio");
     stack = require("wibox.layout.stack");
     grid = require("wibox.layout.grid");

@@ -555,7 +555,6 @@ end
 -- @return menubar wibox.
 -- @deprecated get
 function menubar.get(scr)
-    gdebug.deprecate("Use menubar.show() instead", { deprecated_in = 5 })
     menubar.refresh(scr)
     -- Add to each category the name of its key in all_categories
     for k, v in pairs(menubar.menu_gen.all_categories) do

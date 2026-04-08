@@ -49,6 +49,19 @@ bench_signal_counters_reset(void)
 }
 #endif
 
+#ifdef SOMEWM_BENCH
+#include <stdint.h>
+uint64_t bench_signal_emit_count = 0;
+uint64_t bench_signal_handler_calls = 0;
+uint64_t bench_signal_lookup_misses = 0;
+
+void bench_signal_counters_reset(void) {
+    bench_signal_emit_count = 0;
+    bench_signal_handler_calls = 0;
+    bench_signal_lookup_misses = 0;
+}
+#endif
+
 /** Setup the object system at startup.
  * \param L The Lua VM state.
  */
@@ -317,13 +330,11 @@ luaA_object_emit_signal(lua_State *L, int oud,
         return;
     }
     sigfound = signal_array_getbyname(&obj->signals, name);
-
 #ifdef SOMEWM_BENCH
     bench_signal_emit_count++;
     if(!sigfound)
         bench_signal_lookup_misses++;
 #endif
-
     if(sigfound)
     {
         int nbfunc = sigfound->sigfuncs.len;

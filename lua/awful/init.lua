@@ -8,10 +8,6 @@
 
 require("awful._compat")
 
-local deprecated = {
-    ewmh = true
-}
-
 local ret = {
     client = require("awful.client");
     completion = require("awful.completion");
@@ -20,7 +16,6 @@ local ret = {
     prompt = require("awful.prompt");
     screen = require("awful.screen");
     tag = require("awful.tag");
-    util = require("awful.util");
     widget = require("awful.widget");
     keygrabber = require("awful.keygrabber");
     input = require("awful.input");
@@ -32,13 +27,11 @@ local ret = {
     keyboard = require("awful.keyboard");
     button = require("awful.button");
     wibar = require("awful.wibar");
-    wibox = require("awful.wibox");
     startup_notification = require("awful.startup_notification");
     tooltip = require("awful.tooltip");
     permissions = require("awful.permissions");
     titlebar = require("awful.titlebar");
     wallpaper = require("awful.wallpaper");
-    rules = require("awful.rules");
     popup = require("awful.popup");
     spawn = require("awful.spawn");
     screenshot = require("awful.screenshot");
@@ -46,14 +39,6 @@ local ret = {
     systray = require("awful.systray");
 }
 
--- Lazy load deprecated modules to reduce the numbers of loop dependencies.
-return setmetatable(ret,{
-    __index = function(_, key)
-        if deprecated[key] then
-            rawset(ret, key, require("awful."..key))
-        end
-        return rawget(ret, key)
-    end
-})
+return ret
 
 -- vim: filetype=lua:expandtab:shiftwidth=4:tabstop=8:softtabstop=4:textwidth=80

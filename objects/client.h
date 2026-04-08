@@ -372,6 +372,7 @@ bool client_resize(client_t *, area_t, bool, bool);
 void client_unmanage(client_t *, client_unmanage_t);
 void client_kill(client_t *);
 void client_set_sticky(lua_State *, int, bool);
+void client_set_hidden(lua_State *, int, bool);
 void client_set_above(lua_State *, int, bool);
 void client_set_below(lua_State *, int, bool);
 void client_set_modal(lua_State *, int, bool);
@@ -418,6 +419,15 @@ drawable_t *client_get_drawable_offset(client_t *, int *, int *);
 area_t client_get_undecorated_geometry(client_t *);
 void client_apply_opacity_to_scene(client_t *, float);
 void client_update_titlebar_positions(client_t *);
+area_t titlebar_get_area(client_t *, client_titlebar_t);
+drawable_t *titlebar_get_drawable(lua_State *, client_t *, int, client_titlebar_t);
+void border_width_callback(client_t *, uint16_t, uint16_t);
+void client_update_properties(lua_State *, int, client_t *);
+void client_wipe(client_t *);
+void client_resize_do(client_t *, area_t, bool);
+area_t client_apply_size_hints(client_t *, area_t);
+void client_remove_titlebar_geometry(client_t *, area_t *);
+void client_add_titlebar_geometry(client_t *, area_t *);
 
 /* Forward declarations for inline functions
  * Note: luaA_object_emit_signal() is declared in awm_luaobject.h (included above) */

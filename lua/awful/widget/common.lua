@@ -175,13 +175,6 @@ function common.list_update(w, buttons, label, data, objects, args)
             -- undocumented API
             if type(bg_image) ~= "function" then
                 cache.bgb:set_bgimage(bg_image)
-            else
-                gdebug.deprecate("If you read this, you used an undocumented API"..
-                    " which has been replaced by the new awful.widget.common "..
-                    "templating system, please migrate now. This feature is "..
-                    "already staged for removal", {
-                    deprecated_in = 4
-                })
             end
 
             cache.bgb.shape        = item_args.shape

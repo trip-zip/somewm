@@ -28,7 +28,6 @@ local ipairs = ipairs
 local error = error
 local wibox = require("wibox")
 local beautiful = require("beautiful")
-local gdebug = require("gears.debug")
 local placement = require("awful.placement")
 local gtable = require("gears.table")
 
@@ -262,13 +261,48 @@ local function gen_placement(position, align, stretch)
     return corner + (stretch and placement[maximize] or nil)
 end
 
--- Attach the placement function.
+-- Register wibar for Clay screen-level composition.
+-- Clay layouts read screen._clay_drawins to build the full-screen tree.
+local function clay_register(wb, position)
+    local s = wb.screen
+    if not s then return end
+
+    s._clay_drawins = s._clay_drawins or {}
+
+    if wb.visible then
+        local is_horiz = (position == "top" or position == "bottom")
+        s._clay_drawins[wb] = {
+            position = position,
+            size = is_horiz and wb.height or wb.width,
+            clay_gaps = wb._private.clay_gaps or false,
+        }
+    else
+        s._clay_drawins[wb] = nil
+    end
+end
+
+-- Attach the wibar: register for Clay and set initial geometry.
+-- Clay refines the position on the next compose_screen() cycle, but
+-- the wibar needs a rough placement immediately so it's visible
+-- during startup and hot-reload before the first arrange fires.
 local function attach(wb, position)
-    gen_placement(position, wb._private.align, wb._stretch)(wb, {
-        attach          = true,
-        update_workarea = wb._private.restrict_workarea,
-        margins         = get_margins(wb)
-    })
+    clay_register(wb, position)
+
+    local s = wb.screen
+    if s then
+        local geo = s.geometry
+        if position == "top" then
+            wb:geometry({ x = geo.x, y = geo.y, width = geo.width, height = wb.height })
+        elseif position == "bottom" then
+            wb:geometry({ x = geo.x, y = geo.y + geo.height - wb.height,
+                          width = geo.width, height = wb.height })
+        elseif position == "left" then
+            wb:geometry({ x = geo.x, y = geo.y, width = wb.width, height = geo.height })
+        elseif position == "right" then
+            wb:geometry({ x = geo.x + geo.width - wb.width, y = geo.y,
+                          width = wb.width, height = geo.height })
+        end
+    end
 end
 
 -- Re-attach all wibars on a given wibar screen
@@ -301,12 +335,8 @@ function awfulwibar.get_position(wb)
     return wb._position or "top"
 end
 
-function awfulwibar.set_position(wb, position, screen)
+function awfulwibar.set_position(wb, position)
     if position == wb._position then return end
-
-    if screen then
-        gdebug.deprecate("Use `wb.screen = screen` instead of awful.wibar.set_position", {deprecated_in=4})
-    end
 
     -- Detach first to avoid any unneeded callbacks
     if wb.detach_callback then
@@ -424,16 +454,7 @@ function awfulwibar.get_align(self)
     return self._private.align
 end
 
-function awfulwibar.set_align(self, value, screen)
-    if value == "center" then
-        gdebug.deprecate("awful.wibar.align(wb, 'center' is deprecated, use 'centered'", {deprecated_in=4})
-        value = "centered"
-    end
-
-    if screen then
-        gdebug.deprecate("awful.wibar.align 'screen' argument is deprecated", {deprecated_in=4})
-    end
-
+function awfulwibar.set_align(self, value)
     assert(align_map[value])
 
     self._private.align = value
@@ -464,67 +485,6 @@ function awfulwibar.remove(self)
     self._screen = nil
 end
 
---- Attach a wibox to a screen.
---
--- This function has been moved to the `awful.placement` module. Calling this
--- no longer does anything.
---
--- @param wb The wibox to attach.
--- @param position The position of the wibox: top, bottom, left or right.
--- @param screen The screen to attach to
--- @see awful.placement
--- @deprecated awful.wibar.attach
-local function legacy_attach(wb, position, screen) --luacheck: no unused args
-    gdebug.deprecate("awful.wibar.attach is deprecated, use the 'attach' property"..
-        " of awful.placement. This method doesn't do anything anymore",
-        {deprecated_in=4}
-    )
-end
-
---- Align a wibox.
---
--- Supported alignment are:
---
--- * top_left
--- * top_right
--- * bottom_left
--- * bottom_right
--- * left
--- * right
--- * top
--- * bottom
--- * centered
--- * center_vertical
--- * center_horizontal
---
--- @param wb The wibox.
--- @param align The alignment
--- @param screen This argument is deprecated. It is not used. Use wb.screen
---  directly.
--- @deprecated awful.wibar.align
--- @see awful.placement.align
-local function legacy_align(wb, align, screen) --luacheck: no unused args
-    if align == "center" then
-        gdebug.deprecate("awful.wibar.align(wb, 'center' is deprecated, use 'centered'", {deprecated_in=4})
-        align = "centered"
-    end
-
-    if screen then
-        gdebug.deprecate("awful.wibar.align 'screen' argument is deprecated", {deprecated_in=4})
-    end
-
-    if placement[align] then
-        return placement[align](wb)
-    end
-end
-
---- Stretch a wibox so it takes all screen width or height.
---
--- **This function has been removed.**
---
--- @deprecated awful.wibox.stretch
--- @see awful.placement
--- @see awful.wibar.stretch
 
 --- Create a new wibox and attach it to a screen edge.
 -- You can add also position key with value top, bottom, left or right.
@@ -621,6 +581,7 @@ function awfulwibar.new(args)
     w._private.meta_margins = meta_margins(w)
 
     w._private.restrict_workarea = true
+    w._private.clay_gaps = args.clay_gaps or false
 
     -- `w` needs to be inserted in `wiboxes` before reattach or its own offset
     -- will not be taken into account by the "older" wibars when `reattach` is
@@ -647,7 +608,10 @@ function awfulwibar.new(args)
     -- Force all the wibars to be moved
     reattach(w)
 
-    w:connect_signal("property::visible", function() reattach(w) end)
+    w:connect_signal("property::visible", function()
+        reattach(w)
+        clay_register(w, w._position or "top")
+    end)
 
     assert(w.buttons)
 
@@ -668,14 +632,6 @@ end)
 
 function awfulwibar.mt:__call(...)
     return awfulwibar.new(...)
-end
-
-function awfulwibar.mt:__index(_, k)
-    if k == "align" then
-        return legacy_align
-    elseif k == "attach" then
-        return legacy_attach
-    end
 end
 
 return setmetatable(awfulwibar, awfulwibar.mt)

@@ -2485,8 +2485,6 @@ local function register_builtin_commands()
 
   --- reload - Reload configuration (validates first)
   ipc.register("reload", function()
-    local awful_util = require("awful.util")
-
     -- Get config file path
     local conffile = capi.awesome.conffile
     if not conffile then
@@ -2977,9 +2975,9 @@ local function register_builtin_commands()
         preset = naughty.config.presets.critical
       end
 
-      naughty.notify({
+      naughty.notification({
         title = title,
-        text = message,
+        message = message,
         timeout = timeout,
         preset = preset,
       })
@@ -3359,7 +3357,7 @@ local function setup_event_hooks()
 
   -- Client managed (new window appeared)
   if capi.client and capi.client.connect_signal then
-    capi.client.connect_signal("manage", function(c)
+    capi.client.connect_signal("request::manage", function(c)
       ipc.broadcast("client_manage", {
         id = c.id,
         title = c.name or "",
@@ -3369,7 +3367,7 @@ local function setup_event_hooks()
     end)
 
     -- Client unmanaged (window closed)
-    capi.client.connect_signal("unmanage", function(c)
+    capi.client.connect_signal("request::unmanage", function(c)
       ipc.broadcast("client_unmanage", {
         id = c.id,
         title = c.name or "",

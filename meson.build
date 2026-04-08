@@ -288,7 +288,15 @@ add_project_arguments(
 somewm_sources = [
   'somewm.c',
   'somewm_api.c',
+  'xwayland.c',
+  'protocols.c',
+  'monitor.c',
+  'input.c',
+  'window.c',
+  'focus.c',
+  'event_queue.c',
   'ipc.c',
+  'check_config.c',
   'color.c',
   'draw.c',
   'stack.c',
@@ -309,6 +317,7 @@ somewm_sources = [
   'mousegrabber.c',
   'gesture.c',
   'animation.c',
+  'clay_layout.c',
   'selection.c',
   'pam_auth.c',
   # Common

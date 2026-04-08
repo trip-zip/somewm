@@ -8,7 +8,6 @@
 
 -- Grab environment we need
 local gdebug = require("gears.debug")
-local spawn = nil --TODO v5 deprecate
 local set_shape = require("awful.client.shape").update.all
 local object = require("gears.object")
 local grect = require("gears.geometry").rectangle
@@ -153,21 +152,6 @@ client.focus = require("awful.client.focus")
 -- @see awful.spawn
 
 --- Jump to the given client.
--- Takes care of focussing the screen, the right tag, etc.
---
--- @deprecated awful.client.jumpto
--- @see client.jump_to
--- @tparam client c The client to jump to
--- @tparam bool|function merge If true then merge tags (select the client's
---   first tag additionally) when the client is not visible.
---   If it is a function, it will be called with the client and its first
---   tag as arguments.
-function client.jumpto(c, merge)
-    gdebug.deprecate("Use c:jump_to(merge) instead of awful.client.jumpto", {deprecated_in=4})
-    client.object.jump_to(c, merge)
-end
-
---- Jump to the given client.
 --
 -- Takes care of focussing the screen, the right tag, etc.
 --
@@ -209,10 +193,7 @@ function client.object.jump_to(self, merge)
     self:emit_signal("request::activate", "client.jumpto", {raise=true})
 end
 
---- Get visible clients from a screen.
---
--- @deprecated awful.client.visible
--- @see screen.clients
+-- Get visible clients from a screen (internal).
 -- @tparam[opt] nil|integer|screen s The screen, or nil for all screens.
 -- @tparam[opt=false] boolean stacked Use stacking order? (top to bottom)
 -- @treturn table A table with all visible clients.
@@ -220,28 +201,22 @@ function client.visible(s, stacked)
     local cls = capi.client.get(s, stacked)
     local vcls = {}
     for _, c in pairs(cls) do
-        local is_vis = c:isvisible()
-        if is_vis then
+        if c:isvisible() then
             table.insert(vcls, c)
         end
     end
     return vcls
 end
 
---- Get visible and tiled clients
---
--- @deprecated awful.client.tiled
--- @see screen.tiled_clients
+-- Get visible and tiled clients (internal).
 -- @tparam nil|integer|screen s The screen, or nil for all screens.
 -- @tparam[opt=false] boolean stacked Use stacking order? (top to bottom)
 -- @treturn table A table with all visible and tiled clients.
 function client.tiled(s, stacked)
     local clients = client.visible(s, stacked)
     local tclients = {}
-    -- Remove floating clients
     for _, c in pairs(clients) do
-        local is_floating = client.object.get_floating(c)
-        if not is_floating
+        if not client.object.get_floating(c)
             and not c.fullscreen
             and not c.maximized
             and not c.maximized_vertical
@@ -271,7 +246,12 @@ function client.next(i, sel, stacked)
     sel = sel or capi.client.focus
     if sel then
         -- Get all visible clients
-        local cls = client.visible(sel.screen, stacked)
+        local cls = {}
+        for _, c in pairs(capi.client.get(sel.screen, stacked)) do
+            if c:isvisible() then
+                table.insert(cls, c)
+            end
+        end
         local fcls = {}
         -- Remove all non-normal clients
         for _, c in ipairs(cls) do
@@ -310,7 +290,12 @@ end
 function client.swap.bydirection(dir, c, stacked)
     local sel = c or capi.client.focus
     if sel then
-        local cltbl = client.visible(sel.screen, stacked)
+        local cltbl = {}
+        for _, cl in pairs(capi.client.get(sel.screen, stacked)) do
+            if cl:isvisible() then
+                table.insert(cltbl, cl)
+            end
+        end
         local geomtbl = {}
         for i,cl in ipairs(cltbl) do
             geomtbl[i] = cl:geometry()
@@ -411,7 +396,12 @@ end
 -- @see awful.client.swap.byidx
 function client.cycle(clockwise, s, stacked)
     s = s or screen.focused()
-    local cls = client.visible(s, stacked)
+    local cls = {}
+    for _, c in pairs(capi.client.get(s, stacked)) do
+        if c:isvisible() then
+            table.insert(cls, c)
+        end
+    end
     -- We can't rotate without at least 2 clients, buddy.
     if #cls >= 2 then
         local c = table.remove(cls, 1)
@@ -454,31 +444,6 @@ end
 -- @tparam awful.button button The button.
 -- @noreturn
 
---- Get the master window.
---
--- @deprecated awful.client.getmaster
--- @tparam[opt=awful.screen.focused()] screen s The screen.
--- @treturn client The master client.
-function client.getmaster(s)
-    s = s or screen.focused()
-    return client.visible(s)[1]
-end
-
---- Set the client as master: put it at the beginning of other windows.
---
--- @deprecated awful.client.setmaster
--- @tparam client c The window to set as master.
-function client.setmaster(c)
-    c:to_primary_section()
-end
-
---- Set the client as slave: put it at the end of other windows.
--- @deprecated awful.client.setslave
--- @tparam client c The window to set as slave.
-function client.setslave(c)
-    c:to_secondary_section()
-end
-
 --- Move the client to the most significant layout position.
 --
 -- This only affects tiled clients. It will shift all other
@@ -519,19 +484,6 @@ function client.object:to_secondary_section()
 end
 
 --- Move/resize a client relative to current coordinates.
--- @deprecated awful.client.moveresize
--- @tparam integer x The relative x coordinate.
--- @tparam integer y The relative y coordinate.
--- @tparam integer w The relative width.
--- @tparam integer h The relative height.
--- @tparam[opt=client.focus] client c The client, otherwise focused one is used.
--- @see client.relative_move
-function client.moveresize(x, y, w, h, c)
-    gdebug.deprecate("Use c:relative_move(x, y, w, h) instead of awful.client.moveresize", {deprecated_in=4})
-    client.object.relative_move(c or capi.client.focus, x, y, w, h)
-end
-
---- Move/resize a client relative to current coordinates.
 --
 -- @DOC_sequences_client_relative_move1_EXAMPLE@
 --
@@ -557,16 +509,6 @@ function client.object.relative_move(self, x, y, w, h)
 end
 
 --- Move a client to a tag.
--- @deprecated awful.client.movetotag
--- @tparam tag target The tag to move the client to.
--- @tparam[opt] client c The client to move, otherwise the focused one is used.
--- @see client.move_to_tag
-function client.movetotag(target, c)
-    gdebug.deprecate("Use c:move_to_tag(target) instead of awful.client.movetotag", {deprecated_in=4})
-    client.object.move_to_tag(c or capi.client.focus, target)
-end
-
---- Move a client to a tag.
 --
 -- @DOC_sequences_client_move_to_tag1_EXAMPLE@
 --
@@ -586,18 +528,6 @@ function client.object.move_to_tag(self, target)
         self.screen = s
         self:tags({ target })
     end
-end
-
---- Toggle a tag on a client.
---
--- @deprecated awful.client.toggletag
--- @tparam tag target The tag to toggle.
--- @tparam[opt=client.focus] client c The client to toggle, otherwise the focused one is used.
--- @see client.toggle_tag
--- @see tags
-function client.toggletag(target, c)
-    gdebug.deprecate("Use c:toggle_tag(target) instead of awful.client.toggletag", {deprecated_in=4})
-    client.object.toggle_tag(c or capi.client.focus, target)
 end
 
 --- Toggle a tag on a client.
@@ -628,17 +558,6 @@ function client.object.toggle_tag(self, target)
         end
         self:tags(tags)
     end
-end
-
---- Move a client to a screen. Default is next screen, cycling.
--- @deprecated awful.client.movetoscreen
--- @tparam[opt=client.focus] client c The client to move.
--- @tparam screen s The screen, default to current + 1.
--- @see screen
--- @see client.move_to_screen
-function client.movetoscreen(c, s)
-    gdebug.deprecate("Use c:move_to_screen(s) instead of awful.client.movetoscreen", {deprecated_in=4})
-    client.object.move_to_screen(c or capi.client.focus, s)
 end
 
 --- Move a client to a screen. Default is next screen, cycling.
@@ -760,67 +679,6 @@ function client.object.get_marked(self)
     return client.property.get(self, "marked")
 end
 
---- Mark a client, and then call 'marked' hook.
--- @deprecated awful.client.mark
--- @tparam client c The client to mark, the focused one if not specified.
-function client.mark(c)
-    gdebug.deprecate("Use c.marked = true instead of awful.client.mark", {deprecated_in=4})
-    client.object.set_marked(c or capi.client.focus, true)
-end
-
---- Unmark a client and then call 'unmarked' hook.
--- @deprecated awful.client.unmark
--- @tparam client c The client to unmark, or the focused one if not specified.
-function client.unmark(c)
-    gdebug.deprecate("Use c.marked = false instead of awful.client.unmark", {deprecated_in=4})
-    client.object.set_marked(c or capi.client.focus, false)
-end
-
---- Check if a client is marked.
--- @deprecated awful.client.ismarked
--- @tparam client c The client to check, or the focused one otherwise.
-function client.ismarked(c)
-    gdebug.deprecate("Use c.marked instead of awful.client.ismarked", {deprecated_in=4})
-    return client.object.get_marked(c or capi.client.focus)
-end
-
---- Toggle a client as marked.
--- @deprecated awful.client.togglemarked
--- @tparam client c The client to toggle mark.
-function client.togglemarked(c)
-    gdebug.deprecate("Use c.marked = not c.marked instead of awful.client.togglemarked", {deprecated_in=4})
-    c = c or capi.client.focus
-    if c then
-        c.marked = not c.marked
-    end
-end
-
---- Return the marked clients and empty the marked table.
--- @deprecated awful.client.getmarked
--- @treturn table A table with all marked clients.
-function client.getmarked()
-    local copy = gtable.clone(client.data.marked, false)
-
-    for _, v in pairs(copy) do
-        client.property.set(v, "marked", false)
-        v:emit_signal("unmarked")
-    end
-
-    client.data.marked = {}
-
-    return copy
-end
-
---- Set a client floating state, overriding auto-detection.
--- Floating client are not handled by tiling layouts.
--- @deprecated awful.client.floating.set
--- @tparam client c A client.
--- @tparam boolean s `true` is the client is to become floating or `false`.
-function client.floating.set(c, s)
-    gdebug.deprecate("Use c.floating = true instead of awful.client.floating.set", {deprecated_in=4})
-    client.object.set_floating(c, s)
-end
-
 -- Set a client floating state, overriding auto-detection.
 --
 -- Floating client are not handled by tiling layouts. They can be
@@ -870,18 +728,6 @@ capi.client.connect_signal("new", function(cl)
 end)
 
 capi.client.connect_signal("property::geometry", store_floating_geometry)
-
---- Return if a client has a fixed size or not.
--- This function is deprecated, use `c.is_fixed`
--- @tparam[opt=client.focus] client c The client.
--- @deprecated awful.client.isfixed
--- @see is_fixed
--- @see size_hints_honor
-function client.isfixed(c)
-    gdebug.deprecate("Use c.is_fixed instead of awful.client.isfixed", {deprecated_in=4})
-    c = c or capi.client.focus
-    return client.object.is_fixed(c)
-end
 
 --- Return if a client has a fixed size or not.
 --
@@ -938,18 +784,6 @@ end
 
 function client.object.is_immobilized_vertical(c)
     return c.fullscreen or c.maximized or c.maximized_vertical
-end
-
---- Get a client floating state.
--- @tparam client c A client.
--- @see floating
--- @deprecated awful.client.floating.get
--- @treturn boolean True or false. Note that some windows might be floating even if you
--- did not set them manually. For example, windows with a type different than
--- normal.
-function client.floating.get(c)
-    gdebug.deprecate("Use c.floating instead of awful.client.floating.get", {deprecated_in=4})
-    return client.object.get_floating(c)
 end
 
 --- The client floating state.
@@ -1028,15 +862,13 @@ capi.client.connect_signal("property::fullscreen", update_implicitly_floating)
 capi.client.connect_signal("property::size_hints", update_implicitly_floating)
 capi.client.connect_signal("request::manage", update_implicitly_floating)
 
---- Toggle the floating state of a client between 'auto' and 'true'.
--- Use `c.floating = not c.floating`
--- @deprecated awful.client.floating.toggle
--- @tparam client c A client.
--- @see floating
+-- Toggle the floating state of a client.
+-- @tparam[opt=client.focus] client c The client.
 function client.floating.toggle(c)
     c = c or capi.client.focus
-    -- If it has been set to floating
-    client.object.set_floating(c, not client.object.get_floating(c))
+    if c then
+        c.floating = not client.object.get_floating(c)
+    end
 end
 
 -- Remove the floating information on a client.
@@ -1193,8 +1025,18 @@ function client.idx(c)
     c = c or capi.client.focus
     if not c then return end
 
-    -- Only check the tiled clients, the others un irrelevant
-    local clients = client.tiled(c.screen)
+    -- Only check the tiled clients, the others are irrelevant
+    local clients = {}
+    for _, cl in pairs(capi.client.get(c.screen)) do
+        if cl:isvisible()
+            and not client.object.get_floating(cl)
+            and not cl.fullscreen
+            and not cl.maximized
+            and not cl.maximized_vertical
+            and not cl.maximized_horizontal then
+            table.insert(clients, cl)
+        end
+    end
     local idx = nil
     for k, cl in ipairs(clients) do
         if cl == c then
@@ -1343,16 +1185,6 @@ function client.incwfact(add, c)
     t:emit_signal("property::windowfact")
 end
 
---- Get a client's dockable state.
---
--- @tparam client c A client.
--- @treturn bool
--- @deprecated awful.client.dockable.get
-function client.dockable.get(c)
-    gdebug.deprecate("Use c.dockable instead of awful.client.dockable.get", {deprecated_in=4})
-    return client.object.get_dockable(c)
-end
-
 --- If the client is dockable.
 --
 -- A dockable client is an application confined to the edge of the screen. The
@@ -1381,18 +1213,6 @@ function client.object.get_dockable(c)
     return value
 end
 
---- Set a client's dockable state, overriding auto-detection.
---
--- With this enabled you can dock windows by moving them from the center
--- to the edge of the workarea.
---
--- @tparam client c A client.
--- @tparam boolean value True or false.
--- @deprecated awful.client.dockable.set
-function client.dockable.set(c, value)
-    gdebug.deprecate("Use c.dockable = value instead of awful.client.dockable.set", {deprecated_in=4})
-    client.property.set(c, "dockable", value)
-end
 
 --- If the client requests not to be decorated with a titlebar.
 --
@@ -1424,14 +1244,10 @@ capi.client.connect_signal("property::motif_wm_hints", function(c)
     c:emit_signal("property::requests_no_titlebar")
 end)
 
---- Get a client property.
---
--- This method is deprecated. It is now possible to use `c.value` directly.
---
+-- Get a client property (internal).
 -- @tparam client c The client.
 -- @tparam string prop The property name.
 -- @return The property value.
--- @deprecated awful.client.property.get
 function client.property.get(c, prop)
     if not c._private._persistent_properties_loaded then
         c._private._persistent_properties_loaded = true
@@ -1447,15 +1263,10 @@ function client.property.get(c, prop)
     end
 end
 
---- Set a client property.
---
--- This method is deprecated. It is now possible to use `c.value = value`
--- directly.
---
+-- Set a client property (internal).
 -- @tparam client c The client.
 -- @tparam string prop The property name.
 -- @param value The property value.
--- @deprecated awful.client.property.set
 function client.property.set(c, prop, value)
     if not c._private.awful_client_properties then
         c._private.awful_client_properties = {}
@@ -1515,59 +1326,6 @@ function client.iterate(filter, start, s)
     return gtable.iterate(clients, filter, start)
 end
 
---- Switch to a client matching the given condition if running, else spawn it.
--- If multiple clients match the given condition then the next one is
--- focused.
---
--- @tparam string cmd The command to execute
--- @tparam function matcher A function that returns true to indicate a matching client
--- @tparam bool|function merge If true then merge tags (select the client's
---   first tag additionally) when the client is not visible.
---   If it is a function, it will be called with the client as argument.
--- @see awful.spawn.once
--- @see awful.spawn.single_instance
--- @see awful.spawn.raise_or_spawn
---
--- @deprecated awful.client.run_or_raise
--- @usage -- run or raise urxvt (perhaps, with tabs) on modkey + semicolon
--- awful.key({ modkey, }, 'semicolon', function ()
---     local matcher = function (c)
---         return ruled.client.match(c, {class = 'URxvt'})
---     end
---     awful.client.run_or_raise('urxvt', matcher)
--- end);
-function client.run_or_raise(cmd, matcher, merge)
-    gdebug.deprecate("Use awful.spawn.single_instance instead of"..
-        "awful.client.run_or_raise", {deprecated_in=5})
-
-    spawn = spawn or require("awful.spawn")
-    local clients = capi.client.get()
-    local findex  = gtable.hasitem(clients, capi.client.focus) or 1
-    local start   = gmath.cycle(#clients, findex + 1)
-
-    local c = client.iterate(matcher, start)()
-    if c then
-        c:jump_to(merge)
-    else
-        -- client not found, spawn it
-        spawn(cmd)
-    end
-end
-
---- Get a matching transient_for client (if any).
--- @deprecated awful.client.get_transient_for_matching
--- @see client.get_transient_for_matching
--- @tparam client c The client.
--- @tparam function matcher A function that should return true, if
---   a matching parent client is found.
--- @treturn client|nil The matching parent client or nil.
-function client.get_transient_for_matching(c, matcher)
-    gdebug.deprecate("Use c:get_transient_for_matching(matcher) instead of"..
-        "awful.client.get_transient_for_matching", {deprecated_in=4})
-
-    return client.object.get_transient_for_matching(c, matcher)
-end
-
 --- Get a matching transient_for client (if any).
 -- @method get_transient_for_matching
 -- @tparam function matcher A function that should return true, if
@@ -1585,19 +1343,6 @@ function client.object.get_transient_for_matching(self, matcher)
         tc = tc.transient_for
     end
     return nil
-end
-
---- Is a client transient for another one?
---
--- @deprecated awful.client.is_transient_for
--- @see client.is_transient_for
--- @tparam client c The child client (having transient_for).
--- @tparam client c2 The parent client to check.
--- @treturn client|nil The parent client or nil.
-function client.is_transient_for(c, c2)
-    gdebug.deprecate("Use c:is_transient_for(c2) instead of"..
-        "awful.client.is_transient_for", {deprecated_in=4})
-    return client.object.is_transient_for(c, c2)
 end
 
 --- Is a client transient for another one?
@@ -1948,28 +1693,6 @@ capi.client.connect_signal("request::unmanage", client.focus.history.delete)
 
 capi.client.connect_signal("request::unmanage", client.floating.delete)
 
--- Print a warning when the old `manage` signal is used.
-capi.client.connect_signal("manage::connected", function()
-    gdebug.deprecate(
-        "Use `request::manage` rather than `manage`",
-        {deprecated_in=5}
-    )
-end)
-capi.client.connect_signal("unmanage::connected", function()
-    gdebug.deprecate(
-        "Use `request::unmanage` rather than `unmanage`",
-        {deprecated_in=5}
-    )
-end)
-
-for _, sig in ipairs {"marked", "unmarked"} do
-    capi.client.connect_signal(sig.."::connected", function()
-        gdebug.deprecate(
-            "Use `property::marked` rather than `".. sig .. "`",
-            {deprecated_in=4}
-        )
-    end)
-end
 
 -- Connect to "focus" signal, and allow to disable tracking.
 do

@@ -157,6 +157,7 @@ endif
 	difffolded.pl /tmp/sync.folded /tmp/queue.folded | flamegraph.pl > somewm-bench-diff.svg
 	@echo "Differential flamegraph: somewm-bench-diff.svg"
 
-# Memory profiling with heaptrack
+# Heap profiling with heaptrack
 bench-heaptrack: build-bench
-	heaptrack ./build-bench/somewm
+	heaptrack -p $$(pidof somewm) -o heaptrack-somewm
+	@echo "Analyze with: heaptrack_gui heaptrack-somewm.*.zst"
