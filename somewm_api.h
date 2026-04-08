@@ -262,6 +262,10 @@ bool some_is_lua_idle_inhibited(void);
 
 /* Idle inhibitor query - defined in somewm.c, called from luaa.c */
 bool some_is_idle_inhibited(struct wlr_surface *exclude);
+int some_idle_inhibitor_count(void);
+
+typedef struct lua_State lua_State;
+int some_push_idle_inhibitors(lua_State *L);
 
 /** Check if the session is locked by any mechanism (ext-session-lock or Lua lock).
  * Use this instead of repeating `locked || some_is_lua_locked()` everywhere. */

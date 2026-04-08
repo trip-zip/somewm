@@ -19,13 +19,40 @@ runner.run_steps({
         return true
     end,
 
-    -- Step 2: Set idle_inhibit = true, verify both properties
+    -- Step 2: Verify inhibitors and inhibitor_count with no protocol inhibitors
     function()
+        local inhibitors = awesome.inhibitors
+        assert(type(inhibitors) == "table",
+            "inhibitors should be a table")
+        assert(#inhibitors == 0,
+            "inhibitors should be empty with no protocol inhibitors")
+        assert(awesome.inhibitor_count == 0,
+            "inhibitor_count should be 0 with no protocol inhibitors")
+        return true
+    end,
+
+    -- Step 3: Set idle_inhibit = true, verify signal fires
+    function()
+        local signal_count = 0
+        local function on_inhibited()
+            signal_count = signal_count + 1
+        end
+        awesome.connect_signal("property::idle_inhibited", on_inhibited)
+
         awesome.idle_inhibit = true
         assert(awesome.idle_inhibit == true,
             "idle_inhibit should be true after setting")
         assert(awesome.idle_inhibited == true,
             "idle_inhibited should reflect Lua inhibition")
+        assert(signal_count == 1,
+            "property::idle_inhibited signal should fire once, got " .. signal_count)
+
+        -- Setting to same value should NOT fire signal again
+        awesome.idle_inhibit = true
+        assert(signal_count == 1,
+            "signal should not fire when state unchanged, got " .. signal_count)
+
+        awesome.disconnect_signal("property::idle_inhibited", on_inhibited)
         return true
     end,
 

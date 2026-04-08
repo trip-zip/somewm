@@ -325,6 +325,7 @@ static int sigchld_pipe[2] = {-1, -1};
 static struct wlr_xdg_decoration_manager_v1 *xdg_decoration_mgr;
 static struct wlr_idle_notifier_v1 *idle_notifier;
 static struct wlr_idle_inhibit_manager_v1 *idle_inhibit_mgr;
+static bool last_idle_inhibited = false;
 struct wlr_layer_shell_v1 *layer_shell;
 static struct wlr_output_manager_v1 *output_mgr;
 static struct wlr_virtual_keyboard_manager_v1 *virtual_keyboard_mgr;
@@ -1189,6 +1190,11 @@ some_recompute_idle_inhibit(struct wlr_surface *exclude)
 	bool inhibited = some_is_idle_inhibited(exclude) || some_is_lua_idle_inhibited();
 	wlr_idle_notifier_v1_set_inhibited(idle_notifier, inhibited);
 	some_idle_timers_set_inhibit(inhibited);
+
+	if (inhibited != last_idle_inhibited) {
+		last_idle_inhibited = inhibited;
+		luaA_emit_signal_global("property::idle_inhibited");
+	}
 }
 
 void
@@ -2520,6 +2526,58 @@ some_is_idle_inhibited(struct wlr_surface *exclude)
 	}
 
 	return false;
+}
+
+int
+some_idle_inhibitor_count(void)
+{
+	int count = 0;
+	struct wlr_idle_inhibitor_v1 *inhibitor;
+
+	if (!idle_inhibit_mgr)
+		return 0;
+
+	wl_list_for_each(inhibitor, &idle_inhibit_mgr->inhibitors, link) {
+		count++;
+	}
+	return count;
+}
+
+int
+some_push_idle_inhibitors(lua_State *L)
+{
+	int idx = 1;
+	int lx, ly;
+	struct wlr_idle_inhibitor_v1 *inhibitor;
+
+	if (!idle_inhibit_mgr) {
+		lua_newtable(L);
+		return 1;
+	}
+
+	lua_newtable(L);
+	wl_list_for_each(inhibitor, &idle_inhibit_mgr->inhibitors, link) {
+		struct wlr_surface *surface = wlr_surface_get_root_surface(inhibitor->surface);
+		struct wlr_scene_tree *tree = surface->data;
+		bool visible = globalconf.appearance.bypass_surface_visibility
+			|| (!tree || wlr_scene_node_coords(&tree->node, &lx, &ly));
+
+		Client *c = some_client_from_surface(surface);
+
+		lua_createtable(L, 0, 2);
+
+		if (c)
+			luaA_object_push(L, c);
+		else
+			lua_pushnil(L);
+		lua_setfield(L, -2, "client");
+
+		lua_pushboolean(L, visible);
+		lua_setfield(L, -2, "visible");
+
+		lua_rawseti(L, -2, idx++);
+	}
+	return 1;
 }
 
 /** Remove all wl_listeners from a client.

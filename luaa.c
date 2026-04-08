@@ -2057,11 +2057,24 @@ luaA_awesome_index(lua_State *L)
 		return 1;
 	}
 
+	if (A_STREQ(key, "inhibitors")) {
+		return some_push_idle_inhibitors(L);
+	}
+
+	if (A_STREQ(key, "inhibitor_count")) {
+		lua_pushinteger(L, some_idle_inhibitor_count());
+		return 1;
+	}
+
 	if (A_STREQ(key, "idle_timeouts")) {
-		/* Return table of {name = seconds, ...} */
+		/* Return table of {name = {seconds = N, fired = bool}, ...} */
 		lua_createtable(L, 0, idle_timeout_count);
 		for (int i = 0; i < idle_timeout_count; i++) {
+			lua_createtable(L, 0, 2);
 			lua_pushinteger(L, idle_timeouts[i].seconds);
+			lua_setfield(L, -2, "seconds");
+			lua_pushboolean(L, idle_timeouts[i].fired);
+			lua_setfield(L, -2, "fired");
 			lua_setfield(L, -2, idle_timeouts[i].name);
 		}
 		return 1;
