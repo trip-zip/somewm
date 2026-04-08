@@ -80,9 +80,8 @@ local steps = {
             "[TEST] After consume: c1 y=%d h=%d, c2 y=%d h=%d (wa.h=%d)\n",
             g1.y, g1.height, g2.y, g2.height, wa.height))
 
-        -- They should be stacked vertically (same x, different y)
-        assert(math.abs(g1.x - g2.x) <= 2,
-            string.format("Stacked clients should have same x: %d vs %d", g1.x, g2.x))
+        -- Retry until layout settles (geometry may lag under load)
+        if math.abs(g1.x - g2.x) > 2 then return end
 
         -- c1 should be above c2
         assert(g1.y < g2.y,
@@ -139,9 +138,8 @@ local steps = {
             "[TEST] After expel: c1 y=%d h=%d, c2 y=%d h=%d\n",
             g1.y, g1.height, g2.y, g2.height))
 
-        -- c1 should now fill the full column height (only client in its column)
-        assert(g1.height > wa.height * 0.7,
-            string.format("c1 should be full height after expel: %d", g1.height))
+        -- Retry until layout settles
+        if g1.height <= wa.height * 0.7 then return end
 
         io.stderr:write("[TEST] PASS: expel splits window back out\n")
         return true

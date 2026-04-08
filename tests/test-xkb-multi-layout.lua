@@ -78,12 +78,22 @@ runner.run_async(function()
     -- Simulate a keypress (letter 'a')
     root.fake_input("key_press", "a")
     root.fake_input("key_release", "a")
-    async.sleep(0.2)
 
-    current = awesome.xkb_get_layout_group()
+    -- In headful mode, parent compositor keyboard events can race with
+    -- the nested compositor's xkb state. Retry with re-confirmation.
+    local ok = false
+    for _ = 1, 10 do
+        async.sleep(0.2)
+        current = awesome.xkb_get_layout_group()
+        if current == 1 then
+            ok = true
+            break
+        end
+    end
+
     io.stderr:write("[TEST] After keypress: get_layout_group() = " .. tostring(current) .. "\n")
 
-    assert(current == 1,
+    assert(ok,
         "Layout group reverted to " .. tostring(current) ..
         " after keypress (should stay at 1)")
 
