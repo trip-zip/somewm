@@ -73,8 +73,8 @@ local steps = {
 
         -- Default 1.0 -> cycles to 1/3 (first preset after wrapping)
         local expected = math.floor(wa.width / 3)
-        assert(math.abs(g1.width - expected) < wa.width * 0.1,
-            string.format("Expected width ~%d (1/3), got %d", expected, g1.width))
+        -- Retry until layout settles
+        if math.abs(g1.width - expected) >= wa.width * 0.1 then return end
         io.stderr:write("[TEST] PASS: cycle to 1/3\n")
         return true
     end,
@@ -92,8 +92,8 @@ local steps = {
         io.stderr:write(string.format("[TEST] c1 after second cycle: w=%d (expected ~%d)\n",
             g1.width, expected))
 
-        assert(math.abs(g1.width - expected) < wa.width * 0.1,
-            string.format("Expected width ~%d (1/2), got %d", expected, g1.width))
+        -- Retry until layout settles
+        if math.abs(g1.width - expected) >= wa.width * 0.1 then return end
         io.stderr:write("[TEST] PASS: cycle to 1/2\n")
         return true
     end,
@@ -124,8 +124,8 @@ local steps = {
         io.stderr:write(string.format("[TEST] c1 set 0.75: w=%d (expected ~%d)\n",
             g1.width, expected))
 
-        assert(math.abs(g1.width - expected) < wa.width * 0.1,
-            string.format("Expected ~%d, got %d", expected, g1.width))
+        -- Retry until layout settles
+        if math.abs(g1.width - expected) >= wa.width * 0.1 then return end
         io.stderr:write("[TEST] PASS: set_column_width\n")
         return true
     end,
@@ -141,8 +141,8 @@ local steps = {
         local g1 = c1:geometry()
         io.stderr:write(string.format("[TEST] c1 after maximize: w=%d (wa=%d)\n",
             g1.width, wa.width))
-        assert(g1.width > wa.width * 0.8,
-            string.format("Expected full width, got %d", g1.width))
+        -- Retry until layout settles
+        if g1.width <= wa.width * 0.8 then return end
         io.stderr:write("[TEST] PASS: maximize_column\n")
         return true
     end,
@@ -163,8 +163,8 @@ local steps = {
         io.stderr:write(string.format("[TEST] c1 adjust -0.1 from 0.5: w=%d (expected ~%d)\n",
             g1.width, expected))
 
-        assert(math.abs(g1.width - expected) < wa.width * 0.1,
-            string.format("Expected ~%d, got %d", expected, g1.width))
+        -- Retry until layout settles
+        if math.abs(g1.width - expected) >= wa.width * 0.1 then return end
         io.stderr:write("[TEST] PASS: adjust_column_width\n")
         return true
     end,

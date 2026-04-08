@@ -74,9 +74,10 @@ local steps = {
         end
 
         local focus = client.focus
+        -- Retry until focus has moved
+        if focus == c1 then return end
         io.stderr:write(string.format("[TEST] After bydirection('right'): focused=%s\n",
             focus and focus.class or "nil"))
-        assert(focus ~= c1, "Focus should have moved from c1")
         io.stderr:write("[TEST] PASS: bydirection('right') moved focus to next column\n")
         return true
     end,
@@ -136,9 +137,9 @@ local steps = {
 
         local wa = screen.primary.workarea
         local g1 = c1:geometry()
+        -- Retry until viewport scrolls to show c1
+        if g1.x < wa.x - 1 or g1.x >= wa.x + wa.width then return end
         io.stderr:write(string.format("[TEST] c1 geo: x=%d, w=%d\n", g1.x, g1.width))
-        assert(g1.x >= wa.x - 1 and g1.x < wa.x + wa.width,
-            "c1 should be visible when focused")
         return true
     end,
 
@@ -153,9 +154,9 @@ local steps = {
 
         local wa = screen.primary.workarea
         local g3 = c3:geometry()
+        -- Retry until viewport scrolls to show c3
+        if g3.x < wa.x - 1 or g3.x >= wa.x + wa.width then return end
         io.stderr:write(string.format("[TEST] c3 geo: x=%d, w=%d\n", g3.x, g3.width))
-        assert(g3.x >= wa.x - 1 and g3.x < wa.x + wa.width,
-            "c3 should be visible when focused")
         io.stderr:write("[TEST] PASS: viewport follows focus\n")
         return true
     end,

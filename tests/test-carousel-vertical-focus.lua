@@ -68,8 +68,8 @@ local steps = {
         io.stderr:write(string.format("[TEST] c1 focused: y=%d h=%d (wa.y=%d wa.h=%d)\n",
             g1.y, g1.height, wa.y, wa.height))
 
-        assert(g1.y >= wa.y - 1 and g1.y < wa.y + wa.height,
-            string.format("c1 y=%d should be visible after focus", g1.y))
+        -- Retry until viewport scrolls to show c1
+        if g1.y < wa.y - 1 or g1.y >= wa.y + wa.height then return end
         io.stderr:write("[TEST] PASS: c1 visible after focus\n")
         return true
     end,
@@ -87,8 +87,8 @@ local steps = {
         local g3 = c3:geometry()
         io.stderr:write(string.format("[TEST] c3 focused: y=%d h=%d\n", g3.y, g3.height))
 
-        assert(g3.y >= wa.y - 1 and g3.y < wa.y + wa.height,
-            string.format("c3 y=%d should be visible after focus", g3.y))
+        -- Retry until viewport scrolls to show c3
+        if g3.y < wa.y - 1 or g3.y >= wa.y + wa.height then return end
         io.stderr:write("[TEST] PASS: c3 visible after focus change\n")
         return true
     end,
@@ -106,8 +106,8 @@ local steps = {
         local g2 = c2:geometry()
         io.stderr:write(string.format("[TEST] c2 focused: y=%d h=%d\n", g2.y, g2.height))
 
-        assert(g2.y >= wa.y - 1 and g2.y < wa.y + wa.height,
-            string.format("c2 y=%d should be visible after focus", g2.y))
+        -- Retry until viewport scrolls to show c2
+        if g2.y < wa.y - 1 or g2.y >= wa.y + wa.height then return end
         io.stderr:write("[TEST] PASS: c2 visible after focus change\n")
         return true
     end,

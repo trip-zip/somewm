@@ -20,22 +20,36 @@ awesome.connect_signal("idle::stop", function()
 end)
 
 runner.run_steps({
-    -- Step 1: Set 1s idle timeout, wait for it to fire
+    -- Step 1: Set 1s idle timeout, verify idle_timeouts format
     function()
         idle_start_count = 0
         callback_fired = {}
         awesome.set_idle_timeout("test1", 1, function()
             table.insert(callback_fired, "test1")
         end)
+
+        -- Verify new idle_timeouts format: {name = {seconds=N, fired=bool}}
+        local timeouts = awesome.idle_timeouts
+        assert(timeouts.test1, "idle_timeouts should contain 'test1'")
+        assert(type(timeouts.test1) == "table",
+            "idle_timeouts entry should be a table")
+        assert(timeouts.test1.seconds == 1,
+            "timeout seconds should be 1")
+        assert(timeouts.test1.fired == false,
+            "timeout should not be fired yet")
         return true
     end,
 
-    -- Step 2: Wait for callback + signal
+    -- Step 2: Wait for callback + signal, verify fired state
     function(count)
         if #callback_fired == 0 then return end
         assert(callback_fired[1] == "test1", "callback should have fired")
         assert(idle_start_count >= 1, "idle::start should have fired")
         assert(awesome.idle, "awesome.idle should be true")
+
+        local timeouts = awesome.idle_timeouts
+        assert(timeouts.test1.fired == true,
+            "timeout should be marked as fired")
         return true
     end,
 

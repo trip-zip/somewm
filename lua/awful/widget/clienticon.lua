@@ -9,6 +9,7 @@
 local base = require("wibox.widget.base")
 local surface = require("gears.surface")
 local gtable = require("gears.table")
+local aclient = require("awful.client")
 
 local clienticon = {}
 local instances = setmetatable({}, { __mode = "k" })
@@ -32,23 +33,41 @@ local function find_best_icon(sizes, width, height)
     return best, best_size
 end
 
+-- Load and cache a fallback surface from the desktop-entry icon path.
+local function get_fallback_surface(self, c)
+    if self._private.fallback_surface then
+        return self._private.fallback_surface
+    end
+    local path = aclient.get_icon_path(c)
+    if path then
+        local s = surface.load_silently(path)
+        if s and s.width > 0 and s.height > 0 then
+            self._private.fallback_surface = s
+            return s
+        end
+    end
+    return nil
+end
+
 function clienticon:draw(_, cr, width, height)
     local c = self._private.client
     if not c or not c.valid then
         return
     end
 
+    local s, sw, sh
     local index, size = find_best_icon(c.icon_sizes, width, height)
-    if not index then
-        return
+    if index then
+        s = surface(c:get_icon(index))
+        sw, sh = size[1], size[2]
+    else
+        s = get_fallback_surface(self, c)
+        if not s then return end
+        sw, sh = s.width, s.height
     end
 
-    local aspect_w = width / size[1]
-    local aspect_h = height / size[2]
-    local aspect = math.min(aspect_w, aspect_h)
+    local aspect = math.min(width / sw, height / sh)
     cr:scale(aspect, aspect)
-
-    local s = surface(c:get_icon(index))
     cr:set_source_surface(s, 0, 0)
     cr:paint()
 end
@@ -59,12 +78,15 @@ function clienticon:fit(_, width, height)
         return 0, 0
     end
 
+    local w, h
     local index, size = find_best_icon(c.icon_sizes, width, height)
-    if not index then
-        return 0, 0
+    if index then
+        w, h = size[1], size[2]
+    else
+        local s = get_fallback_surface(self, c)
+        if not s then return 0, 0 end
+        w, h = s.width, s.height
     end
-
-    local w, h = size[1], size[2]
 
     if w > width then
         h = h * width / w

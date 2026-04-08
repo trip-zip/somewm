@@ -224,6 +224,18 @@ run_test() {
 
     wait $SOMEWM_PID 2>/dev/null || true
 
+    # Kill orphaned test client processes (terminals running "sleep infinity")
+    # that may outlive the compositor. Without this, they can reconnect to
+    # the next test's compositor and inject unexpected clients.
+    pkill -9 -f "sleep infinity" 2>/dev/null || true
+    # Wait and verify all orphans are gone before starting next test.
+    local retries=0
+    while pgrep -f "sleep infinity" > /dev/null 2>&1 && [ $retries -lt 10 ]; do
+        sleep 0.1
+        pkill -9 -f "sleep infinity" 2>/dev/null || true
+        retries=$((retries + 1))
+    done
+
     # Record end time
     end_time=$(date +%s.%N)
     TEST_DURATION=$(echo "$end_time - $start_time" | bc)
