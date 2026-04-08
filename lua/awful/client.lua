@@ -1626,6 +1626,32 @@ function client.object.is_transient_for(self, c2)
     return nil
 end
 
+--- Resolve a client's icon file path from desktop entry / icon theme.
+--
+-- Looks up the client's `class` (app_id) in FDO icon theme directories.
+-- Results are cached on the client object. Returns a file path string
+-- suitable for passing to `imagebox:set_image()`.
+--
+-- @tparam client c The client.
+-- @treturn string|nil Icon file path, or nil if not found.
+-- @staticfct awful.client.get_icon_path
+function client.get_icon_path(c)
+    if c._icon_path ~= nil then return c._icon_path or nil end
+    local app_id = c.class
+    if not app_id then
+        c._icon_path = false
+        return nil
+    end
+    local lookup = require("menubar.utils").lookup_icon
+    local path = lookup(app_id)
+    -- Try lowercase (e.g., "Slack" -> "slack")
+    if not path then
+        path = lookup(app_id:lower())
+    end
+    c._icon_path = path or false
+    return path
+end
+
 object.properties._legacy_accessors(client, "buttons", "_buttons", true, function(new_btns)
     return new_btns[1] and (
         type(new_btns[1]) == "button" or new_btns[1]._is_capi_button
@@ -1903,6 +1929,20 @@ capi.client.connect_signal("request::manage", function (c)
 
     client.property.set(c, "_border_init", true)
     c:emit_signal("request::border", "added", {})
+
+    -- Populate c.icon from desktop-entry lookup if the C layer didn't provide one.
+    -- The C setter expects a lightuserdata (raw cairo_surface_t*), so we load
+    -- via GdkPixbuf and pass the native pointer, not the lgi wrapper.
+    if not c.icon then
+        local path = client.get_icon_path(c)
+        if path then
+            local GdkPixbuf = require("lgi").GdkPixbuf
+            local pixbuf = GdkPixbuf.Pixbuf.new_from_file(path)
+            if pixbuf then
+                c.icon = capi.awesome.pixbuf_to_surface(pixbuf._native, path)
+            end
+        end
+    end
 end)
 capi.client.connect_signal("request::unmanage", client.focus.history.delete)
 

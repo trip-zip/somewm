@@ -381,8 +381,14 @@ static inline void cairo_surface_array_init(cairo_surface_array_t *arr) {
 }
 
 static inline void cairo_surface_array_push(cairo_surface_array_t *arr, void *surf) {
-    (void)arr; (void)surf;
-    /* TODO: Append surface to array */
+    if (arr->len >= arr->size) {
+        int new_size = arr->size ? arr->size * 2 : 4;
+        void **new_tab = realloc(arr->tab, (size_t)new_size * sizeof(void *));
+        if (!new_tab) return;
+        arr->tab = new_tab;
+        arr->size = new_size;
+    }
+    arr->tab[arr->len++] = surf;
 }
 
 /* draw_dup_image_surface moved to draw.c where it belongs (AwesomeWM parity) */
@@ -396,6 +402,11 @@ static inline void *cairo_xcb_surface_create_for_bitmap(void *conn, void *screen
 
 static inline void cairo_surface_array_wipe(cairo_surface_array_t *arr) {
     if (arr->tab) {
+#ifdef XWAYLAND
+        for (int i = 0; i < arr->len; i++)
+            if (arr->tab[i])
+                cairo_surface_destroy((cairo_surface_t *)arr->tab[i]);
+#endif
         free(arr->tab);
         arr->tab = NULL;
     }

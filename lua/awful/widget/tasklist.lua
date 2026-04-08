@@ -94,6 +94,7 @@ local wfixed = require("wibox.layout.fixed")
 local wmargin = require("wibox.container.margin")
 local wtextbox = require("wibox.widget.textbox")
 local clienticon = require("awful.widget.clienticon")
+local aclient = require("awful.client")
 local wbackground = require("wibox.container.background")
 local gtable = require("gears.table")
 
@@ -571,7 +572,8 @@ local function tasklist_label(c, args, tb)
         icon_size          = icon_size,
     }
 
-    return text, bg, bg_image, not tasklist_disable_icon and c.icon or nil, other_args
+    local icon = not tasklist_disable_icon and (c.icon or aclient.get_icon_path(c)) or nil
+    return text, bg, bg_image, icon, other_args
 end
 
 -- Remove some callback boilerplate from the user provided templates.
