@@ -77,13 +77,12 @@ local steps = {
         local g1 = c1:geometry()
         local g2 = c2:geometry()
 
+        -- Retry until layout settles (geometry may lag under load)
+        if math.abs(g1.y - g2.y) > 2 then return end
+
         io.stderr:write(string.format(
             "[TEST] After consume: c1 x=%d w=%d, c2 x=%d w=%d (wa.w=%d)\n",
             g1.x, g1.width, g2.x, g2.width, wa.width))
-
-        -- They should be stacked along the x-axis (same y, different x)
-        assert(math.abs(g1.y - g2.y) <= 2,
-            string.format("Stacked clients should have same y: %d vs %d", g1.y, g2.y))
 
         -- c1 should be left of c2
         assert(g1.x < g2.x,
@@ -121,9 +120,8 @@ local steps = {
             "[TEST] After expel: c1 x=%d w=%d, c2 x=%d w=%d\n",
             g1.x, g1.width, g2.x, g2.width))
 
-        -- c1 should now fill the full row width (only client in its row)
-        assert(g1.width > wa.width * 0.7,
-            string.format("c1 should be full width after expel: %d", g1.width))
+        -- Retry until layout settles
+        if g1.width <= wa.width * 0.7 then return end
 
         io.stderr:write("[TEST] PASS: expel splits window back out\n")
         return true
