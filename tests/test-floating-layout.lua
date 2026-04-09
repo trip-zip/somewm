@@ -15,15 +15,9 @@ local awful = require("awful")
 local runner = require("_runner")
 local test_client = require("_client")
 
--- Capture initial geometry of newly managed clients
-local managed_geos = {}
-client.connect_signal("request::manage", function(c)
-    managed_geos[c] = { width = c.width, height = c.height }
-end)
-
 runner.run_steps({
     -- =================================================================
-    -- SCENARIO 1: Switch tiling → floating, windows must keep tiled size
+    -- SCENARIO 1: Switch tiling -> floating, windows must keep tiled size
     -- =================================================================
     function()
         -- Start in tiling layout, spawn 3 clients
@@ -38,9 +32,8 @@ runner.run_steps({
         if #client.get() < 3 then return end
 
         -- Record tiled geometries before switch
-        local wa = awful.screen.focused().workarea
         local pre_geos = {}
-        for i, c in ipairs(client.get()) do
+        for _, c in ipairs(client.get()) do
             local g = c:geometry()
             pre_geos[c] = { width = g.width, height = g.height }
         end
@@ -56,41 +49,48 @@ runner.run_steps({
                 "BUG: client '" .. (c.class or "?") ..
                 "' grew from " .. pre.width .. "x" .. pre.height ..
                 " to " .. g.width .. "x" .. g.height ..
-                " after tiling→floating switch")
+                " after tiling->floating switch")
         end
         return true
     end,
 
     -- =================================================================
-    -- SCENARIO 2: New window in floating layout — initial size check
+    -- SCENARIO 2: New window in floating layout must not be forced to
+    -- workarea size. We record geometry at manage time (before the
+    -- client can resize itself) and verify the compositor did not set
+    -- it to the full workarea.
     -- =================================================================
     function()
-        -- Still in floating layout — spawn a new client
-        _G._pre_spawn_count = #client.get()
+        -- Still in floating layout. Capture manage-time geometry via
+        -- a one-shot signal so we observe what the compositor chose,
+        -- not what the terminal later resized to.
+        _G._float_manage_geo = nil
+        _G._float_manage_conn = function(c)
+            _G._float_manage_geo = { width = c.width, height = c.height }
+            client.disconnect_signal("request::manage", _G._float_manage_conn)
+        end
+        client.connect_signal("request::manage", _G._float_manage_conn)
         test_client(nil, "float_new")
         return true
     end,
     function()
-        -- Wait for the new client
-        local cls = client.get()
-        if #cls <= _G._pre_spawn_count then return end
+        -- Wait for the manage signal to fire
+        if not _G._float_manage_geo then return end
 
         local wa = awful.screen.focused().workarea
-        local new_client = cls[#cls]
-        local g = new_client:geometry()
+        local g = _G._float_manage_geo
 
-        -- Retry until the client settles to its preferred size.
-        -- Under load, the initial geometry may briefly be workarea-sized
-        -- before the client commits its preferred dimensions.
-        if g.width >= wa.width - 10 and g.height >= wa.height - 10 then
-            return
-        end
-
+        -- The compositor must not have forced the client to fill
+        -- the workarea. Allow a small tolerance for borders.
+        assert(g.width < wa.width - 10 or g.height < wa.height - 10,
+            "BUG: new client in floating layout was forced to workarea size " ..
+            g.width .. "x" .. g.height ..
+            " (workarea " .. wa.width .. "x" .. wa.height .. ")")
         return true
     end,
 
     -- =================================================================
-    -- SCENARIO 3: Tile → float → tile → float cycle
+    -- SCENARIO 3: Tile -> float -> tile -> float cycle
     -- =================================================================
     function()
         awful.layout.set(awful.layout.suit.tile)
@@ -115,7 +115,7 @@ runner.run_steps({
                 "BUG: client '" .. (c.class or "?") ..
                 "' grew from " .. tg.width .. "x" .. tg.height ..
                 " to " .. g.width .. "x" .. g.height ..
-                " after tile→float→tile→float cycle")
+                " after tile->float->tile->float cycle")
         end
         return true
     end,
