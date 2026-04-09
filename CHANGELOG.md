@@ -2,6 +2,14 @@
 
 All notable changes to somewm will be documented in this file.
 
+## [2.0.0-dev] - Unreleased
+
+### Added
+
+### Fixed
+
+### Changed
+
 ## [1.4.0] - 2026-04-07
 
 First stable release. SomeWM 1.4 = AwesomeWM 4.4 on Wayland.
