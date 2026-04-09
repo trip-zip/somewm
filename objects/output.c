@@ -187,6 +187,22 @@ luaA_output_invalidate(lua_State *L, output_t *o)
 	luaA_object_unref(L, o);
 }
 
+void
+luaA_output_hot_reload(lua_State *L)
+{
+	Monitor *m;
+
+	/* Discard stale registry refs from the old Lua state */
+	output_count = 0;
+
+	/* Recreate output objects for all physical monitors */
+	wl_list_for_each(m, &mons, link) {
+		m->output = luaA_output_new(L, m);
+		if (m->output)
+			lua_pop(L, 1);
+	}
+}
+
 /* ========================================================================
  * Instance property getters (read-only)
  * ======================================================================== */

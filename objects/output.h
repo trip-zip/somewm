@@ -29,6 +29,7 @@ output_t *luaA_output_new(lua_State *L, Monitor *m);
 output_t *luaA_output_new_virtual(lua_State *L, const char *name);
 void luaA_output_push(lua_State *L, output_t *output);
 void luaA_output_invalidate(lua_State *L, output_t *output);
+void luaA_output_hot_reload(lua_State *L);
 
 /* Set output scale from C (used by screen.scale delegation).
  * Expects the output userdata at stack position `ud_idx` and scale value at top of stack. */
