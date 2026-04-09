@@ -5223,6 +5223,10 @@ luaA_hot_reload(void)
 		lua_pop(L, 1);  /* luaA_screen_new leaves screen on stack */
 	}
 
+	/* Outputs are independent of screens (disabled monitors still have
+	 * outputs). Must exist before rc.lua so added::connected works. */
+	luaA_output_hot_reload(L);
+
 	/* Load and execute rc.lua.
 	 * Screens already exist (created above). When rc.lua registers handlers
 	 * for request::desktop_decoration etc., the ::connected pattern
