@@ -58,9 +58,7 @@
 #include <wlr/types/wlr_virtual_pointer_v1.h>
 
 /* macros */
-#define CLEANMASK(mask) (mask & ~WLR_MODIFIER_CAPS)
-#define LISTEN(E, L, H)         wl_signal_add((E), ((L)->notify = (H), (L)))
-#define LISTEN_STATIC(E, H)     do { struct wl_listener *_l = ecalloc(1, sizeof(*_l)); _l->notify = (H); wl_signal_add((E), _l); } while (0)
+#define CLEANMASK(mask) (mask & ~WLR_MODIFIER_CAPS & ~WLR_MODIFIER_MOD2)
 
 #include "focus.h"
 #include "window.h"

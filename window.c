@@ -61,7 +61,6 @@
 #include "objects/spawn.h"
 
 /* macros */
-#define LISTEN(E, L, H)         wl_signal_add((E), ((L)->notify = (H), (L)))
 
 #include "focus.h"
 #include "somewm_internal.h"

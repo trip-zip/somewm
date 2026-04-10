@@ -40,8 +40,6 @@
 #include "animation.h"
 
 /* macros */
-#define LISTEN(E, L, H)         wl_signal_add((E), ((L)->notify = (H), (L)))
-#define LENGTH(X)               (sizeof X / sizeof X[0])
 
 #include "focus.h"
 #include "window.h"

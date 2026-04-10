@@ -26,29 +26,13 @@
 #include "banning.h"
 #include "globalconf.h"
 
-/* Declare seat extern before including client.h */
-extern struct wlr_seat *seat;
-extern void *exclusive_focus;  /* Layer surface with exclusive keyboard focus */
-
-/* External reference to globalconf (defined in somewm.c) */
-extern awesome_t globalconf;
-
-/* Include client.h for inline helper functions */
+#include "somewm.h"
 #include "client.h"
-
-/*
- * External references to somewm.c globals and functions
- * These must be made non-static in somewm.c
- */
-extern struct wl_list mons;
-extern struct wlr_cursor *cursor;
-extern struct wlr_xcursor_manager *cursor_mgr;
-extern char *selected_root_cursor;
-#ifdef XWAYLAND
-extern struct wlr_xwayland *xwayland;
-#endif
-extern Monitor *selmon;
-extern KeyboardGroup *kb_group;
+#include "focus.h"
+#include "input.h"
+#include "window.h"
+#include "monitor.h"
+#include "somewm_internal.h"
 
 /* Mirror of wlroots' private keyboard_group_device struct (wlr_keyboard_group.c).
  * Needed to iterate member keyboards when setting layout group.
@@ -63,47 +47,8 @@ struct kb_group_device {
 	struct wl_list link;
 };
 
-/* Functions from somewm.c that need to be made non-static */
-#include "focus.h"
-extern void motionnotify(uint32_t time, struct wlr_input_device *device,
-		double dx, double dy, double dx_unaccel, double dy_unaccel);
-/* setfloating() removed - Lua manages floating state */
-extern void setfullscreen(Client *c, int fullscreen);
-extern void arrange(Monitor *m);
-extern void resize(Client *c, struct wlr_box geo, int interact);
-extern Monitor *xytomon(double x, double y);
-extern void setmon(Client *c, Monitor *m, uint32_t newtags);
-extern void xytonode(double x, double y, struct wlr_surface **psurface,
-		Client **pc, LayerSurface **pl, drawin_t **pd, drawable_t **pdrawable,
-		double *nx, double *ny);
-extern Monitor *dirtomon(enum wlr_direction dir);
-extern void focusmon(const Arg *arg);
-extern void killclient(const Arg *arg);
-extern void spawn(const Arg *arg);
-extern void tile(Monitor *m);
-extern void monocle(Monitor *m);
-/* NOTE: moveresize() removed - move/resize now handled by Lua mousegrabber */
-extern void togglefloating(const Arg *arg);
-extern void setlayout(const Arg *arg);
-extern void printstatus(void);
-extern void zoom(const Arg *arg);
-extern void swapstack(const Arg *arg);
-extern void tagmon(const Arg *arg);
-
-/* Settings from somewm.c */
+/* Settings from somewm.c (not in any header yet) */
 extern int new_client_placement;
-
-/* Scene & compositor state from somewm.c */
-extern struct wlr_scene *scene;
-extern struct wlr_scene_tree *layers[];
-extern struct wlr_output_layout *output_layout;
-extern struct wl_display *dpy;
-extern struct wl_event_loop *event_loop;
-extern struct wlr_layer_shell_v1 *layer_shell;
-extern struct wlr_renderer *drw;
-extern struct wlr_allocator *alloc;
-
-/* Layouts now managed in Lua - no C layout functions needed */
 
 /* Tag system helper functions from somewm.c */
 extern int some_tagcount(void);
