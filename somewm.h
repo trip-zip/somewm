@@ -15,6 +15,12 @@
 #include <wayland-server-core.h>
 #include <wlr/util/box.h>
 
+/* Shared utility macros */
+#define LENGTH(X)               (sizeof X / sizeof X[0])
+#define LISTEN(E, L, H)         wl_signal_add((E), ((L)->notify = (H), (L)))
+#define LISTEN_STATIC(E, H)     do { struct wl_listener *_l = ecalloc(1, sizeof(*_l)); \
+                                _l->notify = (H); wl_signal_add((E), _l); } while (0)
+
 /* Forward declarations for wlroots types (pointers only, no full headers) */
 struct wlr_allocator;
 struct wlr_backend;
@@ -104,7 +110,6 @@ extern struct wl_list tracked_pointers;
 
 /* Scene elements */
 extern struct wlr_scene_tree *drag_icon;
-extern Client *drag_source_client;
 extern struct wlr_scene_rect *root_bg;
 extern struct wlr_scene_rect *locked_bg;
 

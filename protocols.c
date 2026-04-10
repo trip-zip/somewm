@@ -41,9 +41,6 @@
 #include "animation.h"
 #include "protocols.h"
 
-#define LENGTH(X)               (sizeof X / sizeof X[0])
-#define LISTEN(E, L, H) wl_signal_add((E), ((L)->notify = (H), (L)))
-#define LISTEN_STATIC(E, H) do { struct wl_listener *_l = ecalloc(1, sizeof(*_l)); _l->notify = (H); wl_signal_add((E), _l); } while (0)
 
 /* Forward declaration for wlr_input_device (used by motionnotify extern) */
 struct wlr_input_device;

@@ -98,7 +98,6 @@
 #include "focus.h"
 
 /* macros */
-#define LENGTH(X)               (sizeof X / sizeof X[0])
 #define TAGCOUNT (32)
 #define TAGMASK                 ((TAGCOUNT >= 32) ? ~0u : ((1u << TAGCOUNT) - 1))
 

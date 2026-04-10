@@ -30,7 +30,6 @@
 #include "common/util.h"
 
 /* Listener helpers */
-#define LISTEN(E, L, H) wl_signal_add((E), ((L)->notify = (H), (L)))
 
 #include "window.h"
 #include "somewm_internal.h"
