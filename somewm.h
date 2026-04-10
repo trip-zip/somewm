@@ -84,7 +84,6 @@ extern struct wlr_cursor *cursor;
 extern struct wlr_xcursor_manager *cursor_mgr;
 extern struct wlr_seat *seat;
 extern KeyboardGroup *kb_group;
-extern unsigned int cursor_mode;
 extern void *exclusive_focus;
 extern char *selected_root_cursor;
 
@@ -95,9 +94,6 @@ extern struct wlr_pointer_constraint_v1 *active_constraint;
 
 /* Pointer gestures */
 extern struct wlr_pointer_gestures_v1 *pointer_gestures;
-extern bool gesture_swipe_consumed;
-extern bool gesture_pinch_consumed;
-extern bool gesture_hold_consumed;
 
 /* Output/monitor state */
 extern struct wlr_output_layout *output_layout;
@@ -105,8 +101,6 @@ extern struct wl_list mons;
 extern Monitor *selmon;
 extern struct wlr_box sgeom;
 extern struct wl_list tracked_pointers;
-extern int in_updatemons;
-extern int updatemons_pending;
 
 /* Scene elements */
 extern struct wlr_scene_tree *drag_icon;

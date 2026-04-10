@@ -38,18 +38,6 @@
 
 #include "somewm_internal.h"
 
-/** Update pointer constraint for a surface.
- * Called from somewm_api.c when Lua changes focus - games need pointer
- * constraints to follow keyboard focus for mouse lock to work. */
-void
-some_update_pointer_constraint(struct wlr_surface *surface)
-{
-	if (!surface)
-		return;
-	cursorconstrain(wlr_pointer_constraints_v1_constraint_for_surface(
-		pointer_constraints, surface, seat));
-}
-
 void
 focusclient(Client *c, int lift)
 {

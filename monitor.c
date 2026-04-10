@@ -47,6 +47,10 @@
 #include "window.h"
 #include "somewm_internal.h"
 
+/* Module-private state */
+static int in_updatemons;
+static int updatemons_pending;
+
 /* forward declarations */
 void cleanupmon(struct wl_listener *listener, void *data);
 void closemon(Monitor *m);

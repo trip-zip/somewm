@@ -66,6 +66,12 @@
 #include "window.h"
 #include "somewm_internal.h"
 
+/* Module-private state */
+static unsigned int cursor_mode;
+static bool gesture_swipe_consumed = false;
+static bool gesture_pinch_consumed = false;
+static bool gesture_hold_consumed = false;
+
 /* Forward declarations */
 void axisnotify(struct wl_listener *listener, void *data);
 void buttonpress(struct wl_listener *listener, void *data);

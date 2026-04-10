@@ -164,7 +164,7 @@ struct wlr_session_lock_v1 *cur_lock;
 
 struct wlr_seat *seat;
 KeyboardGroup *kb_group;
-unsigned int cursor_mode;
+/* cursor_mode: owned by input.c */
 int new_client_placement = 0; /* 0 = master (default), 1 = slave */
 
 struct wlr_output_layout *output_layout;
@@ -172,8 +172,7 @@ struct wlr_box sgeom;
 struct wl_list mons;
 struct wl_list tracked_pointers; /* For runtime libinput config */
 Monitor *selmon;
-int in_updatemons;
-int updatemons_pending;
+/* in_updatemons, updatemons_pending: owned by monitor.c */
 
 /* global event handlers */
 static struct wl_listener new_idle_inhibitor = {.notify = createidleinhibitor};
@@ -181,11 +180,9 @@ static struct wl_listener new_layer_surface = {.notify = createlayersurface};
 static struct wl_listener request_activate = {.notify = urgent};
 static struct wl_listener new_session_lock = {.notify = locksession};
 
-/* Pointer gesture listeners and state */
+/* Pointer gesture manager */
 struct wlr_pointer_gestures_v1 *pointer_gestures;
-bool gesture_swipe_consumed = false;
-bool gesture_pinch_consumed = false;
-bool gesture_hold_consumed = false;
+/* gesture_*_consumed: owned by input.c */
 
 #ifdef XWAYLAND
 struct wlr_xwayland *xwayland;
