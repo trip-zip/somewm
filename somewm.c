@@ -536,9 +536,7 @@ reap_children(gint fd, GIOCondition condition, gpointer data)
 
 /* ========== KEYBINDING SYSTEM ========== */
 
-/* Forward declarations for AwesomeWM-compatible Lua keybinding system */
-extern int luaA_key_check_and_emit(uint32_t mods, uint32_t keycode, xkb_keysym_t sym, xkb_keysym_t base_sym);
-extern int luaA_client_key_check_and_emit(client_t *c, uint32_t mods, uint32_t keycode, xkb_keysym_t sym, xkb_keysym_t base_sym);
+#include "objects/keybinding.h"
 
 void
 cursor_to_client_coordinates(Client *client, double *sx, double *sy) {

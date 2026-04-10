@@ -43,10 +43,9 @@
 #define LISTEN(E, L, H)         wl_signal_add((E), ((L)->notify = (H), (L)))
 #define LENGTH(X)               (sizeof X / sizeof X[0])
 
-/* extern declarations for functions that stay in somewm.c */
 #include "focus.h"
 #include "window.h"
-extern void printstatus(void);
+#include "somewm_internal.h"
 
 /* forward declarations */
 void cleanupmon(struct wl_listener *listener, void *data);

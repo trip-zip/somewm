@@ -32,16 +32,8 @@
 /* Listener helpers */
 #define LISTEN(E, L, H) wl_signal_add((E), ((L)->notify = (H), (L)))
 
-/* Functions from somewm.c that we call into */
-extern void mapnotify(struct wl_listener *listener, void *data);
-extern void unmapnotify(struct wl_listener *listener, void *data);
-extern void destroynotify(struct wl_listener *listener, void *data);
-extern void fullscreennotify(struct wl_listener *listener, void *data);
-extern void updatetitle(struct wl_listener *listener, void *data);
-extern unsigned int get_border_width(void);
-extern void printstatus(void);
-extern void arrange(Monitor *m);
-extern void resize(Client *c, struct wlr_box geo, int interact);
+#include "window.h"
+#include "somewm_internal.h"
 
 /* Forward declarations */
 void dissociatex11(struct wl_listener *listener, void *data);
