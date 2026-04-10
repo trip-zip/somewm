@@ -289,13 +289,13 @@ function keyboardlayout.new(args)
     end
 
     self.next_layout = function()
-        self.set_layout((self._current + 1) % (#self._layout + 1))
+        self.set_layout((self._current + 1) % #self._layout)
     end
 
     self.set_layout = function(group_number)
-        if (0 > group_number) or (group_number > #self._layout) then
+        if (0 > group_number) or (group_number >= #self._layout) then
             error("Invalid group number: " .. group_number ..
-                    "expected number from 0 to " .. #self._layout)
+                    "expected number from 0 to " .. (#self._layout - 1))
             return;
         end
         awesome.xkb_set_layout_group(group_number);
