@@ -29,4 +29,8 @@ void cursor_to_client_coordinates(Client *client, double *sx, double *sy);
 /* Drag-and-drop source client (set in requeststartdrag, cleared in destroydrag) */
 extern Client *drag_source_client;
 
+/* Tag system queries */
+int some_tagcount(void);
+uint32_t some_tagmask(void);
+
 #endif /* SOMEWM_INTERNAL_H */

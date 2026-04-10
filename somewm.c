@@ -1306,13 +1306,9 @@ setup(void)
 	 * e.g when running in the x11 backend or the wayland backend and the
 	 * compositor has Xwayland support */
 	unsetenv("DISPLAY");
-#ifdef XWAYLAND
-	/*
-	 * Initialise the XWayland X server.
-	 * It will be started when the first X client is started.
-	 */
+	/* Initialise the XWayland X server (no-op if XWAYLAND is not enabled).
+	 * It will be started when the first X client is started. */
 	xwayland_setup();
-#endif
 
 	luaA_init();
 
