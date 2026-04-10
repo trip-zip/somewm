@@ -62,11 +62,9 @@
 #define LISTEN(E, L, H)         wl_signal_add((E), ((L)->notify = (H), (L)))
 #define LISTEN_STATIC(E, H)     do { struct wl_listener *_l = ecalloc(1, sizeof(*_l)); _l->notify = (H); wl_signal_add((E), _l); } while (0)
 
-/* Extern declarations for functions staying in somewm.c */
 #include "focus.h"
 #include "window.h"
-extern Client *drag_source_client;
-extern void cursor_to_client_coordinates(Client *client, double *sx, double *sy);
+#include "somewm_internal.h"
 
 /* Forward declarations */
 void axisnotify(struct wl_listener *listener, void *data);

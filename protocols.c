@@ -48,11 +48,10 @@
 /* Forward declaration for wlr_input_device (used by motionnotify extern) */
 struct wlr_input_device;
 
-/* Extern declarations for functions in somewm.c */
 #include "window.h"
 #include "focus.h"
 #include "input.h"
-extern void some_recompute_idle_inhibit(struct wlr_surface *exclude);
+#include "somewm_internal.h"
 
 /* Forward declarations */
 static void destroyidleinhibitor(struct wl_listener *listener, void *data);

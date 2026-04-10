@@ -63,12 +63,8 @@
 /* macros */
 #define LISTEN(E, L, H)         wl_signal_add((E), ((L)->notify = (H), (L)))
 
-/* extern declarations for functions still in somewm.c */
 #include "focus.h"
-extern void cursor_to_client_coordinates(Client *client, double *sx, double *sy);
-extern void some_recompute_idle_inhibit(struct wlr_surface *exclude);
-extern void printstatus(void);
-extern void spawn(const Arg *arg);
+#include "somewm_internal.h"
 
 /* Popup tracking structure for proper constraint handling */
 typedef struct {

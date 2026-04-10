@@ -36,8 +36,7 @@
 #include "objects/signal.h"
 #include "stack.h"
 
-extern void printstatus(void);
-extern screen_t *luaA_screen_get_by_monitor(lua_State *L, Monitor *m);
+#include "somewm_internal.h"
 
 /** Update pointer constraint for a surface.
  * Called from somewm_api.c when Lua changes focus - games need pointer
