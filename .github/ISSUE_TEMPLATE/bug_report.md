@@ -24,10 +24,10 @@ assignees: ''
 
 
 ## Version Info
-<!-- Run `somewm version` and paste the output below -->
+<!-- Run `somewm --version` and paste the output below -->
 
 ```
-<paste somewm version output here>
+<paste somewm --version output here>
 ```
 
 ## Configuration
