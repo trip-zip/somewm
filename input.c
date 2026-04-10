@@ -1054,7 +1054,6 @@ keybinding(uint32_t mods, uint32_t keycode, xkb_keysym_t sym, xkb_keysym_t base_
 {
 	client_t *focused;
 	struct wlr_surface *surface;
-	extern Client *some_client_from_surface(struct wlr_surface *surface);
 
 	/*
 	 * Here we handle compositor keybindings. This is when the compositor is

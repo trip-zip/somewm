@@ -47,19 +47,6 @@ struct kb_group_device {
 	struct wl_list link;
 };
 
-/* Settings from somewm.c (not in any header yet) */
-extern int new_client_placement;
-
-/* Tag system helper functions from somewm.c */
-extern int some_tagcount(void);
-extern uint32_t some_tagmask(void);
-
-/* Rules and MonitorRules helper functions from somewm.c */
-extern size_t some_rules_length(void);
-extern const Rule *some_get_rule_ptr(size_t index);
-extern size_t some_monrules_length(void);
-extern const MonitorRule *some_get_monrule_ptr(size_t index);
-
 /*
  * Client API Implementation
  */
@@ -1711,9 +1698,6 @@ some_xkb_get_group_names(void)
 
 	return symbols_buffer;
 }
-
-/* External references needed for keymap rebuild */
-extern struct wl_event_loop *some_get_event_loop(void);
 
 /* Rebuild the keyboard keymap from current globalconf settings */
 void
