@@ -9,7 +9,7 @@
 
 -include .local.mk
 
-.PHONY: all install uninstall clean setup reconfigure test test-unit test-check test-integration test-asan test-one test-visual test-one-visual test-ci test-fast build-test build-bench bench-run bench-run-live bench-json bench-baseline bench-compare bench-check bench-memory bench-flamegraph bench-diff bench-heaptrack
+.PHONY: all install uninstall clean setup reconfigure test test-unit test-check test-integration test-asan test-one test-visual test-one-visual test-ci test-fast build-test build-bench bench-run bench-run-live bench-json bench-baseline bench-compare bench-check bench-memory bench-flamegraph bench-diff bench-heaptrack profile profile-lua profile-save profile-diff
 
 # Default build: WITH ASAN for development
 all:
@@ -190,6 +190,42 @@ bench-memory: build-bench
 	@SOMEWM=./build-bench/somewm \
 	 SOMEWM_CLIENT=./build-bench/somewm-client \
 	 ./tests/bench/bench-memory-runner.sh
+
+# --- Profiling (live session) ---
+
+# Profile the running compositor for DURATION seconds (default: 30)
+# Usage: make profile
+#        make profile DURATION=60
+profile:
+	@SOMEWM_CLIENT=./build-bench/somewm-client \
+	 ./tests/bench/profile-session.sh $(DURATION)
+
+# Profile with Lua function breakdown via jit.p
+# Usage: make profile-lua
+#        make profile-lua DURATION=60
+profile-lua:
+	@SOMEWM_CLIENT=./build-bench/somewm-client \
+	 ./tests/bench/profile-session.sh --lua $(DURATION)
+
+# Save a profile as a named baseline for later comparison
+# Usage: make profile-save LABEL=before-refactor
+profile-save:
+ifndef LABEL
+	@echo "Usage: make profile-save LABEL=<name>" >&2
+	@exit 1
+endif
+	@SOMEWM_CLIENT=./build-bench/somewm-client \
+	 ./tests/bench/profile-session.sh --save $(LABEL) $(DURATION)
+
+# Compare current profile against a saved baseline
+# Usage: make profile-diff LABEL=before-refactor
+profile-diff:
+ifndef LABEL
+	@echo "Usage: make profile-diff LABEL=<name>" >&2
+	@exit 1
+endif
+	@SOMEWM_CLIENT=./build-bench/somewm-client \
+	 ./tests/bench/profile-session.sh --diff $(LABEL) $(DURATION)
 
 # Memory profiling with heaptrack
 bench-heaptrack: build-bench
