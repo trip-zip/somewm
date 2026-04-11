@@ -317,6 +317,7 @@ somewm_sources = [
   'animation.c',
   'selection.c',
   'pam_auth.c',
+  'bench.c',
   # Common
   'common/luaclass.c',
   'common/luaobject.c',

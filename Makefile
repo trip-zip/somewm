@@ -9,7 +9,7 @@
 
 -include .local.mk
 
-.PHONY: all install uninstall clean setup reconfigure test test-unit test-check test-integration test-asan test-one test-visual test-one-visual test-ci test-fast build-test build-bench bench-run bench-run-live bench-flamegraph bench-diff bench-heaptrack
+.PHONY: all install uninstall clean setup reconfigure test test-unit test-check test-integration test-asan test-one test-visual test-one-visual test-ci test-fast build-test build-bench bench-run bench-run-live bench-json bench-baseline bench-compare bench-check bench-memory bench-flamegraph bench-diff bench-heaptrack
 
 # Default build: WITH ASAN for development
 all:
@@ -156,6 +156,40 @@ endif
 	perf script -i $(QUEUE) | stackcollapse-perf.pl > /tmp/queue.folded
 	difffolded.pl /tmp/sync.folded /tmp/queue.folded | flamegraph.pl > somewm-bench-diff.svg
 	@echo "Differential flamegraph: somewm-bench-diff.svg"
+
+# Run benchmarks with JSON output capture (against live session)
+bench-json: build-bench
+	@JSON=1 \
+	 SOMEWM_CLIENT=./build-bench/somewm-client \
+	 ./tests/bench/run-all.sh
+
+# Save current results as baseline for this branch
+bench-baseline: bench-json
+	./tests/bench/bench-save-baseline.sh
+
+# Compare two result sets: make bench-compare A=results/dir-a B=results/dir-b
+bench-compare:
+	@lua5.1 tests/bench/bench-stats.lua $(A) $(B) 2>/dev/null \
+	 || luajit tests/bench/bench-stats.lua $(A) $(B) 2>/dev/null \
+	 || lua tests/bench/bench-stats.lua $(A) $(B)
+
+# Check for regressions against baseline
+bench-check: bench-json
+	@lua5.1 tests/bench/bench-stats.lua \
+	 tests/bench/results/baselines/$$(git branch --show-current) \
+	 $$(ls -td tests/bench/results/20* | head -1) 2>/dev/null \
+	 || luajit tests/bench/bench-stats.lua \
+	 tests/bench/results/baselines/$$(git branch --show-current) \
+	 $$(ls -td tests/bench/results/20* | head -1) 2>/dev/null \
+	 || lua tests/bench/bench-stats.lua \
+	 tests/bench/results/baselines/$$(git branch --show-current) \
+	 $$(ls -td tests/bench/results/20* | head -1)
+
+# Run memory trend analysis (uses its own headless compositor)
+bench-memory: build-bench
+	@SOMEWM=./build-bench/somewm \
+	 SOMEWM_CLIENT=./build-bench/somewm-client \
+	 ./tests/bench/bench-memory-runner.sh
 
 # Memory profiling with heaptrack
 bench-heaptrack: build-bench

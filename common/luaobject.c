@@ -30,24 +30,7 @@
 #include "common/luaobject.h"
 #include "common/lualib.h"
 #include "globalconf.h"
-
-#ifdef SOMEWM_BENCH
-#include <stdint.h>
-
-uint64_t bench_signal_emit_count = 0;
-uint64_t bench_signal_handler_calls = 0;
-uint64_t bench_signal_lookup_misses = 0;
-#endif
-
-#ifdef SOMEWM_BENCH
-void
-bench_signal_counters_reset(void)
-{
-    bench_signal_emit_count = 0;
-    bench_signal_handler_calls = 0;
-    bench_signal_lookup_misses = 0;
-}
-#endif
+#include "bench.h"
 
 /** Setup the object system at startup.
  * \param L The Lua VM state.

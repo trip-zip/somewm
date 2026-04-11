@@ -1839,16 +1839,31 @@ bool some_is_lock_drawin(drawin_t *d) {
 
 /* awesome module methods */
 #ifdef SOMEWM_BENCH
-void bench_frame_stats_get(uint64_t *count, uint64_t *min_ns, uint64_t *max_ns,
-                           uint64_t *avg_ns, uint64_t *p99_ns);
-void bench_frame_stats_reset(void);
+#include "bench.h"
+
+static void
+bench_push_stage_table(lua_State *L, bench_stage_t stage)
+{
+    uint64_t min_ns, max_ns, avg_ns, p99_ns;
+    bench_stage_stats_get(stage, &min_ns, &max_ns, &avg_ns, &p99_ns);
+
+    lua_newtable(L);
+    lua_pushnumber(L, (double)min_ns / 1000.0);
+    lua_setfield(L, -2, "min_us");
+    lua_pushnumber(L, (double)max_ns / 1000.0);
+    lua_setfield(L, -2, "max_us");
+    lua_pushnumber(L, (double)avg_ns / 1000.0);
+    lua_setfield(L, -2, "avg_us");
+    lua_pushnumber(L, (double)p99_ns / 1000.0);
+    lua_setfield(L, -2, "p99_us");
+}
 
 static int
 luaA_awesome_bench_stats(lua_State *L)
 {
     lua_newtable(L);
 
-    /* Signal counters */
+    /* Signal counters (backward-compatible top-level fields) */
     lua_pushinteger(L, (lua_Integer)bench_signal_emit_count);
     lua_setfield(L, -2, "signal_emit_count");
     lua_pushinteger(L, (lua_Integer)bench_signal_handler_calls);
@@ -1856,7 +1871,7 @@ luaA_awesome_bench_stats(lua_State *L)
     lua_pushinteger(L, (lua_Integer)bench_signal_lookup_misses);
     lua_setfield(L, -2, "signal_lookup_misses");
 
-    /* Frame timing */
+    /* Frame timing (backward-compatible top-level fields) */
     uint64_t count, min_ns, max_ns, avg_ns, p99_ns;
     bench_frame_stats_get(&count, &min_ns, &max_ns, &avg_ns, &p99_ns);
     lua_pushinteger(L, (lua_Integer)count);
@@ -1870,9 +1885,99 @@ luaA_awesome_bench_stats(lua_State *L)
     lua_pushnumber(L, (double)p99_ns / 1000.0);
     lua_setfield(L, -2, "refresh_p99_us");
 
-    /* Lua memory */
+    /* Lua memory (backward-compatible) */
     lua_pushnumber(L, lua_gc(L, LUA_GCCOUNT, 0) + lua_gc(L, LUA_GCCOUNTB, 0) / 1024.0);
     lua_setfield(L, -2, "lua_memory_kb");
+
+    /* Per-stage frame budget timing */
+    lua_newtable(L);
+    for (int i = 0; i < BENCH_STAGE_COUNT; i++) {
+        bench_push_stage_table(L, i);
+        lua_setfield(L, -2, bench_stage_names[i]);
+    }
+    lua_setfield(L, -2, "stages");
+
+    /* C/Lua boundary crossings per frame */
+    double cross_avg;
+    uint64_t cross_max;
+    bench_crossings_stats_get(&cross_avg, &cross_max);
+    lua_newtable(L);
+    lua_pushnumber(L, cross_avg);
+    lua_setfield(L, -2, "avg");
+    lua_pushinteger(L, (lua_Integer)cross_max);
+    lua_setfield(L, -2, "max");
+    lua_setfield(L, -2, "crossings_per_frame");
+
+    /* Input-to-display latency */
+    {
+        uint64_t il_count, il_avg, il_p99, il_max;
+        bench_input_latency_stats_get(&il_count, &il_avg, &il_p99, &il_max);
+        lua_newtable(L);
+        lua_pushinteger(L, (lua_Integer)il_count);
+        lua_setfield(L, -2, "count");
+        lua_pushnumber(L, (double)il_avg / 1000.0);
+        lua_setfield(L, -2, "avg_us");
+        lua_pushnumber(L, (double)il_p99 / 1000.0);
+        lua_setfield(L, -2, "p99_us");
+        lua_pushnumber(L, (double)il_max / 1000.0);
+        lua_setfield(L, -2, "max_us");
+        lua_setfield(L, -2, "input_latency");
+    }
+
+    /* Client manage latency */
+    {
+        uint64_t ml_count, ml_avg, ml_p99, ml_max;
+        bench_manage_latency_stats_get(&ml_count, &ml_avg, &ml_p99, &ml_max);
+        lua_newtable(L);
+        lua_pushinteger(L, (lua_Integer)ml_count);
+        lua_setfield(L, -2, "count");
+        lua_pushnumber(L, (double)ml_avg / 1000.0);
+        lua_setfield(L, -2, "avg_us");
+        lua_pushnumber(L, (double)ml_p99 / 1000.0);
+        lua_setfield(L, -2, "p99_us");
+        lua_pushnumber(L, (double)ml_max / 1000.0);
+        lua_setfield(L, -2, "max_us");
+        lua_setfield(L, -2, "manage_latency");
+    }
+
+    /* Render (compositing) phase timing */
+    {
+        uint64_t r_count, r_min, r_max, r_avg, r_p99;
+        bench_render_stats_get(&r_count, &r_min, &r_max, &r_avg, &r_p99);
+        lua_newtable(L);
+        lua_pushinteger(L, (lua_Integer)r_count);
+        lua_setfield(L, -2, "count");
+        lua_pushnumber(L, (double)r_min / 1000.0);
+        lua_setfield(L, -2, "min_us");
+        lua_pushnumber(L, (double)r_max / 1000.0);
+        lua_setfield(L, -2, "max_us");
+        lua_pushnumber(L, (double)r_avg / 1000.0);
+        lua_setfield(L, -2, "avg_us");
+        lua_pushnumber(L, (double)r_p99 / 1000.0);
+        lua_setfield(L, -2, "p99_us");
+        lua_setfield(L, -2, "render");
+    }
+
+    /* Memory counters */
+    extern struct wlr_scene *scene;
+    lua_newtable(L);
+    lua_pushnumber(L, lua_gc(L, LUA_GCCOUNT, 0) + lua_gc(L, LUA_GCCOUNTB, 0) / 1024.0);
+    lua_setfield(L, -2, "lua_kb");
+    lua_pushinteger(L, (lua_Integer)globalconf.clients.len);
+    lua_setfield(L, -2, "clients");
+    lua_pushinteger(L, (lua_Integer)globalconf.drawins.len);
+    lua_setfield(L, -2, "drawins");
+    if (scene) {
+        int trees = 0, rects = 0, buffers = 0;
+        bench_count_scene_nodes(&scene->tree.node, &trees, &rects, &buffers);
+        lua_pushinteger(L, trees);
+        lua_setfield(L, -2, "scene_trees");
+        lua_pushinteger(L, rects);
+        lua_setfield(L, -2, "scene_rects");
+        lua_pushinteger(L, buffers);
+        lua_setfield(L, -2, "scene_buffers");
+    }
+    lua_setfield(L, -2, "memory");
 
     return 1;
 }
@@ -1881,8 +1986,7 @@ static int
 luaA_awesome_bench_reset(lua_State *L)
 {
     (void)L;
-    bench_signal_counters_reset();
-    bench_frame_stats_reset();
+    bench_reset_all();
     return 0;
 }
 #endif
