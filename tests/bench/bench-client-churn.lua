@@ -1,32 +1,25 @@
 -- Benchmark: Client Churn (Signal-only)
 --
--- Tests the signal overhead of client property changes without actually
--- spawning/destroying clients (which is slow and I/O-bound). Instead,
--- this rapidly toggles client properties that each emit signals:
--- minimized, sticky, ontop, urgent, fullscreen, maximized.
+-- Tests property toggle signal overhead with full compositor pipeline
+-- per iteration. Each iteration: toggle 6 properties on all clients ->
+-- yield -> some_refresh() processes property signals, banning, stacking.
 --
 -- Run: somewm-client eval "dofile('tests/bench/bench-client-churn.lua')"
+-- Then poll: somewm-client eval "return _bench_results.client_churn or 'PENDING'"
 
-local N = 1000
-local has_bench = awesome.bench_stats ~= nil
-local out = {}
+local helpers = dofile("tests/bench/bench-helpers.lua")
 
-if has_bench then
-    awesome.bench_reset()
-end
+local N = 100
 
-collectgarbage("collect")
-collectgarbage("stop")
+_G._bench_results = _G._bench_results or {}
+_G._bench_results.client_churn = nil
 
 local clients = client.get()
 if #clients == 0 then
-    collectgarbage("restart")
     return "SKIP: no clients available"
 end
 
-local start = os.clock()
-
-for i = 1, N do
+helpers.timed_async("client-churn", function(i)
     for _, c in ipairs(clients) do
         c.minimized = true
         c.minimized = false
@@ -35,27 +28,11 @@ for i = 1, N do
         c.ontop = true
         c.ontop = false
     end
-end
+end, N, function(result)
+    _G._bench_results.client_churn = helpers.format_results("client-churn", {result}, {
+        clients = #clients,
+        property_toggles_per_iteration = #clients * 6,
+    })
+end)
 
-local elapsed = os.clock() - start
-
-collectgarbage("restart")
-
--- 6 property toggles per client per iteration
-local total_ops = N * #clients * 6
-
-out[#out+1] = "=== client-churn ==="
-out[#out+1] = string.format("clients: %d, iterations: %d, property toggles: %d", #clients, N, total_ops)
-out[#out+1] = string.format("elapsed: %.4f seconds", elapsed)
-out[#out+1] = string.format("ops/sec: %.0f", total_ops / elapsed)
-
-if has_bench then
-    local s = awesome.bench_stats()
-    out[#out+1] = string.format("signal_emit_count: %d", s.signal_emit_count)
-    out[#out+1] = string.format("signal_handler_calls: %d", s.signal_handler_calls)
-    out[#out+1] = string.format("signal_lookup_misses: %d", s.signal_lookup_misses)
-    out[#out+1] = string.format("refresh_count: %d", s.refresh_count)
-    out[#out+1] = string.format("lua_memory_kb: %.1f", s.lua_memory_kb)
-end
-
-return table.concat(out, "\n")
+return "ASYNC client-churn started (" .. N .. " iterations, " .. #clients .. " clients)"

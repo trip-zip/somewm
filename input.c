@@ -63,6 +63,7 @@
 #include "focus.h"
 #include "window.h"
 #include "somewm_internal.h"
+#include "bench.h"
 
 /* Module-private state */
 static unsigned int cursor_mode;
@@ -396,6 +397,9 @@ axisnotify(struct wl_listener *listener, void *data)
 void
 buttonpress(struct wl_listener *listener, void *data)
 {
+#ifdef SOMEWM_BENCH
+	bench_input_event_record();
+#endif
 	struct wlr_pointer_button_event *event = data;
 	struct wlr_keyboard *keyboard;
 	uint32_t mods;
@@ -741,6 +745,9 @@ void
 motionnotify(uint32_t time, struct wlr_input_device *device, double dx, double dy,
 		double dx_unaccel, double dy_unaccel)
 {
+#ifdef SOMEWM_BENCH
+	bench_input_event_record();
+#endif
 	double sx = 0, sy = 0, sx_confined, sy_confined;
 	Client *c = NULL, *w = NULL;
 	LayerSurface *l = NULL;
@@ -1111,6 +1118,9 @@ keybinding(uint32_t mods, uint32_t keycode, xkb_keysym_t sym, xkb_keysym_t base_
 void
 keypress(struct wl_listener *listener, void *data)
 {
+#ifdef SOMEWM_BENCH
+	bench_input_event_record();
+#endif
 	int i;
 	uint32_t keycode;
 	const xkb_keysym_t *syms;

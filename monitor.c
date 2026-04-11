@@ -44,6 +44,7 @@
 #include "focus.h"
 #include "window.h"
 #include "somewm_internal.h"
+#include "bench.h"
 
 /* Module-private state */
 static int in_updatemons;
@@ -492,9 +493,20 @@ rendermon(struct wl_listener *listener, void *data)
 			goto skip;
 	}
 
+#ifdef SOMEWM_BENCH
+	struct timespec bench_render_start, bench_render_end;
+	clock_gettime(CLOCK_MONOTONIC, &bench_render_start);
+#endif
 	if (!wlr_scene_output_commit(m->scene_output, NULL))
 		wlr_log(WLR_DEBUG, "[HOTPLUG] rendermon commit failed: %s",
 			m->wlr_output->name);
+#ifdef SOMEWM_BENCH
+	else {
+		clock_gettime(CLOCK_MONOTONIC, &bench_render_end);
+		bench_render_record(timespec_diff_ns(&bench_render_start, &bench_render_end));
+		bench_input_commit_flush();
+	}
+#endif
 
 skip:
 	clock_gettime(CLOCK_MONOTONIC, &now);

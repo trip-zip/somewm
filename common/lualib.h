@@ -28,6 +28,7 @@
 #include <assert.h>
 
 #include "common/util.h"
+#include "bench.h"
 #include "luaa.h"  /* For luaA_registerlib, luaA_setfuncs */
 
 /** Lua function to call on dofunction() error */
@@ -70,6 +71,9 @@ static inline bool
 luaA_dofunction(lua_State *L, int nargs, int nret)
 {
     int error_func_pos;
+#ifdef SOMEWM_BENCH
+    bench_clua_crossings_this_frame++;
+#endif
     /* Move function before arguments */
     lua_insert(L, - nargs - 1);
     /* Push error handling function */

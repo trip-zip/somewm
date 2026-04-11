@@ -1,29 +1,38 @@
 #!/usr/bin/env bash
 #
-# Benchmark runner for somewm signal dispatch profiling
+# Benchmark runner for somewm performance profiling.
+# Runs benchmarks against the currently running compositor session.
 #
-# Modes:
-#   HEADLESS=1: Run with headless backend (default for benchmarks)
-#   HEADLESS=0: Run against the current compositor session
+# Options:
+#   JSON=1:     Capture JSON output to results directory
+#   RUNS=N:     Number of iterations per benchmark (default: 5)
 #
 # Usage:
-#   tests/bench/run-all.sh                    # Headless mode
-#   HEADLESS=0 tests/bench/run-all.sh         # Against running session
+#   tests/bench/run-all.sh                    # Run all benchmarks
 #   tests/bench/run-all.sh bench-focus-cycle   # Single benchmark
+#   JSON=1 tests/bench/run-all.sh             # With JSON capture
 
 set -e
 
 export LC_NUMERIC=C
 
-SOMEWM="${SOMEWM:-./somewm}"
 SOMEWM_CLIENT="${SOMEWM_CLIENT:-./somewm-client}"
-HEADLESS=${HEADLESS:-1}
 RUNS=${RUNS:-5}
+JSON=${JSON:-0}
 
 cd "$(dirname "$0")/../.."
 ROOT_DIR="$PWD"
 
 BENCH_DIR="$ROOT_DIR/tests/bench"
+
+# Set up JSON results directory if requested
+if [ "$JSON" = 1 ]; then
+    GIT_COMMIT=$(git rev-parse --short HEAD 2>/dev/null || echo "unknown")
+    GIT_BRANCH=$(git branch --show-current 2>/dev/null || echo "unknown")
+    RUN_ID="$(date +%Y%m%d-%H%M%S)-${GIT_COMMIT}"
+    RESULTS_DIR="$BENCH_DIR/results/$RUN_ID"
+    mkdir -p "$RESULTS_DIR"
+fi
 
 # Determine which benchmarks to run
 if [ -n "$1" ]; then
@@ -31,6 +40,16 @@ if [ -n "$1" ]; then
 else
     BENCHMARKS=("$BENCH_DIR"/bench-*.lua)
 fi
+
+# Filter out helpers (not a benchmark)
+FILTERED=()
+for b in "${BENCHMARKS[@]}"; do
+    case "$(basename "$b")" in
+        bench-helpers.lua|bench-stats.lua|bench-memory-trend.lua) continue ;;
+    esac
+    FILTERED+=("$b")
+done
+BENCHMARKS=("${FILTERED[@]}")
 
 # Validate benchmarks exist
 for b in "${BENCHMARKS[@]}"; do
@@ -40,128 +59,93 @@ for b in "${BENCHMARKS[@]}"; do
     fi
 done
 
-run_against_session() {
-    # Run benchmarks against the currently running compositor
-    echo "=== Running against live session ==="
-    echo ""
+# Extract JSON block from benchmark output
+extract_json() {
+    sed -n '/^---JSON-START---$/,/^---JSON-END---$/{/^---JSON/d;p;}'
+}
 
-    for bench in "${BENCHMARKS[@]}"; do
-        name=$(basename "$bench" .lua)
-        echo "--- $name (${RUNS} runs) ---"
+# Run a single benchmark and optionally capture JSON
+run_bench() {
+    local bench="$1"
+    local name=$(basename "$bench" .lua)
+    echo "--- $name (${RUNS} runs) ---"
 
-        for run in $(seq 1 "$RUNS"); do
-            echo "[run $run/$RUNS]"
-            "$SOMEWM_CLIENT" eval "return dofile('$bench')"
-            echo ""
-        done
+    for run in $(seq 1 "$RUNS"); do
+        echo -n "[run $run/$RUNS] "
+        local output
+        output=$("$SOMEWM_CLIENT" eval "return dofile('$bench')" 2>/dev/null) || {
+            echo "FAILED"
+            continue
+        }
+
+        # Check if benchmark is async (returns "ASYNC ..." and stores result in global)
+        if echo "$output" | grep -q "^OK" && echo "$output" | grep -q "ASYNC"; then
+            # Derive the result key from the benchmark name (bench-tag-switch -> tag_switch)
+            local result_key
+            result_key=$(echo "$name" | sed 's/^bench-//; s/-/_/g')
+
+            # Poll for completion
+            local attempts=0
+            local max_attempts=600  # 60 seconds at 100ms intervals
+            while [ $attempts -lt $max_attempts ]; do
+                output=$("$SOMEWM_CLIENT" eval "return _bench_results.${result_key} or 'PENDING'" 2>/dev/null)
+                if ! echo "$output" | grep -q "PENDING"; then
+                    break
+                fi
+                sleep 0.1
+                attempts=$((attempts + 1))
+            done
+
+            if [ $attempts -ge $max_attempts ]; then
+                echo "TIMEOUT"
+                "$SOMEWM_CLIENT" eval "_bench_results.${result_key} = nil" 2>/dev/null || true
+                continue
+            fi
+
+            # Clean up global for next run
+            "$SOMEWM_CLIENT" eval "_bench_results.${result_key} = nil" 2>/dev/null || true
+        fi
+
+        # Strip IPC framing ("OK\n" prefix, "OK (no return value)" lines)
+        output=$(echo "$output" | sed '/^OK$/d; /^OK (no return value)$/d')
+
+        # Print human-readable part (everything before JSON sentinel)
+        echo "$output" | sed '/^---JSON-START---$/,$d'
+
+        # Capture JSON if requested
+        if [ "$JSON" = 1 ]; then
+            local json
+            json=$(echo "$output" | extract_json)
+            if [ -n "$json" ]; then
+                echo "$json" > "$RESULTS_DIR/${name}-run${run}.json"
+            fi
+        fi
+        echo ""
     done
 }
 
-run_headless() {
-    # Start a headless compositor, spawn test clients, run benchmarks
-    echo "=== Running in headless mode ==="
-    echo ""
+echo "=== Running against live session ==="
+echo ""
 
-    TMP_DIR=$(mktemp -d)
-    LOG="$TMP_DIR/somewm.log"
-    TEST_RUNTIME_DIR="$TMP_DIR/runtime"
-    mkdir -p "$TEST_RUNTIME_DIR"
-    chmod 700 "$TEST_RUNTIME_DIR"
+for bench in "${BENCHMARKS[@]}"; do
+    run_bench "$bench"
+done
 
-    # Create test config that spawns some windows
-    TEST_CONFIG_DIR="$TMP_DIR/config/somewm"
-    mkdir -p "$TEST_CONFIG_DIR"
-    cat > "$TEST_CONFIG_DIR/rc.lua" << 'RCEOF'
-local awful = require("awful")
-local gears = require("gears")
+# Print frame stats at end
+"$SOMEWM_CLIENT" eval "if awesome.bench_stats then local s = awesome.bench_stats(); print('=== frame timing ==='); print(string.format('refresh_count: %d', s.refresh_count)); print(string.format('refresh_avg_us: %.1f', s.refresh_avg_us)); print(string.format('refresh_p99_us: %.1f', s.refresh_p99_us)); print(string.format('refresh_max_us: %.1f', s.refresh_max_us)); if s.crossings_per_frame then print(string.format('crossings_per_frame_avg: %.1f', s.crossings_per_frame.avg)); print(string.format('crossings_per_frame_max: %d', s.crossings_per_frame.max)) end end" 2>/dev/null || true
 
--- Minimal config for benchmarking
-awful.rules.rules = {
-    { rule = { }, properties = { focus = true } },
+# Write manifest
+if [ "$JSON" = 1 ]; then
+    cat > "$RESULTS_DIR/manifest.json" << MANIFESTEOF
+{
+  "run_id": "$RUN_ID",
+  "git_commit": "$GIT_COMMIT",
+  "git_branch": "$GIT_BRANCH",
+  "timestamp": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+  "runs": $RUNS
 }
+MANIFESTEOF
 
-screen.connect_signal("request::desktop_decoration", function(s)
-    awful.tag({ "1", "2", "3", "4", "5", "6", "7", "8", "9" }, s, awful.layout.suit.tile)
-end)
-RCEOF
-
-    export WLR_BACKENDS=headless
-    export WLR_RENDERER=pixman
-    export WLR_WL_OUTPUTS=1
-    export NO_AT_BRIDGE=1
-    export XDG_RUNTIME_DIR="$TEST_RUNTIME_DIR"
-    export XDG_CONFIG_HOME="$TMP_DIR/config"
-    export LUA_PATH="$ROOT_DIR/lua/?.lua;$ROOT_DIR/lua/?/init.lua;;"
-
-    cleanup() {
-        if [ -n "$SOMEWM_PID" ] && kill -0 "$SOMEWM_PID" 2>/dev/null; then
-            kill "$SOMEWM_PID" 2>/dev/null
-            wait "$SOMEWM_PID" 2>/dev/null || true
-        fi
-        rm -rf "$TMP_DIR"
-    }
-    trap cleanup EXIT
-
-    # Start compositor
-    "$SOMEWM" > "$LOG" 2>&1 &
-    SOMEWM_PID=$!
-
-    # Wait for socket
-    SOCKET=""
-    for i in $(seq 1 30); do
-        SOCKET=$(ls "$TEST_RUNTIME_DIR"/wayland-* 2>/dev/null | head -1)
-        if [ -n "$SOCKET" ]; then
-            break
-        fi
-        sleep 0.1
-    done
-
-    if [ -z "$SOCKET" ]; then
-        echo "Error: compositor did not start" >&2
-        cat "$LOG" >&2
-        exit 1
-    fi
-
-    export WAYLAND_DISPLAY=$(basename "$SOCKET")
-
-    # Wait for IPC
-    for i in $(seq 1 20); do
-        if "$SOMEWM_CLIENT" eval "return 'ready'" 2>/dev/null | grep -q ready; then
-            break
-        fi
-        sleep 0.1
-    done
-
-    echo "Compositor ready (PID $SOMEWM_PID)"
     echo ""
-
-    # Run benchmarks
-    for bench in "${BENCHMARKS[@]}"; do
-        name=$(basename "$bench" .lua)
-        echo "--- $name (${RUNS} runs) ---"
-
-        for run in $(seq 1 "$RUNS"); do
-            echo "[run $run/$RUNS]"
-            "$SOMEWM_CLIENT" eval "return dofile('$bench')" || echo "FAILED"
-            echo ""
-        done
-    done
-
-    # Print frame stats at end
-    "$SOMEWM_CLIENT" eval "
-        if awesome.bench_stats then
-            local s = awesome.bench_stats()
-            print('=== frame timing ===')
-            print(string.format('refresh_count: %d', s.refresh_count))
-            print(string.format('refresh_avg_us: %.1f', s.refresh_avg_us))
-            print(string.format('refresh_p99_us: %.1f', s.refresh_p99_us))
-            print(string.format('refresh_max_us: %.1f', s.refresh_max_us))
-        end
-    " 2>/dev/null || true
-}
-
-if [ "$HEADLESS" = 1 ]; then
-    run_headless
-else
-    run_against_session
+    echo "JSON results: $RESULTS_DIR"
 fi

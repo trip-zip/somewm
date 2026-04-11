@@ -64,6 +64,7 @@
 
 #include "focus.h"
 #include "somewm_internal.h"
+#include "bench.h"
 
 /* Popup tracking structure for proper constraint handling */
 typedef struct {
@@ -284,6 +285,10 @@ commitnotify(struct wl_listener *listener, void *data)
 	/* Skip initial commit - handled by initialcommitnotify */
 	if (c->surface.xdg->initial_commit)
 		return;
+
+#ifdef SOMEWM_BENCH
+	bench_manage_end(c);
+#endif
 
 	/* Only call resize() for floating or fullscreen clients.
 	 * Tiled clients have their geometry managed by the Lua layout engine,
@@ -775,6 +780,9 @@ mapnotify(struct wl_listener *listener, void *data)
 	/* Called when the surface is mapped, or ready to display on-screen. */
 	Client *p = NULL;
 	Client *w, *c = wl_container_of(listener, c, map);
+#ifdef SOMEWM_BENCH
+	bench_manage_start(c);
+#endif
 	Monitor *m;
 	int i;
 	lua_State *L;

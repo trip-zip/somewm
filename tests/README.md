@@ -253,6 +253,109 @@ To port AwesomeWM tests:
 - Some AwesomeWM tests may need adaptation for Wayland
 - D-Bus features not fully tested in headless mode
 
+## Profiling
+
+### Profile your live session
+
+The simplest way to understand compositor performance: attach perf while you
+use the compositor normally.
+
+```bash
+# Profile for 30 seconds (default), use the compositor normally during this time
+tests/bench/profile-session.sh
+
+# Profile for 60 seconds
+tests/bench/profile-session.sh 60
+
+# Also capture Lua function-level profile alongside C flamegraph
+tests/bench/profile-session.sh --lua
+
+# Save as baseline for later comparison
+tests/bench/profile-session.sh --save pre-2.0
+
+# Compare against saved baseline (red = hotter, blue = cooler)
+tests/bench/profile-session.sh --diff pre-2.0
+```
+
+Open the SVG flamegraph in a browser for the interactive view (click to zoom,
+search with Ctrl+F).
+
+For readable function names, make sure the running compositor binary hasn't been
+rebuilt since it started (the script warns if this is the case). System library
+symbols (pixman, wlroots, cairo) are resolved via debuginfod.
+
+### Scripted profiling (repeatable)
+
+For repeatable before/after comparison, the scripted workload drives a fixed
+sequence of tag switches, focus changes, geometry updates, and property toggles:
+
+```bash
+tests/bench/profile-workload.sh --save main
+# ... make changes, rebuild, restart compositor ...
+tests/bench/profile-workload.sh --diff main
+```
+
+### Lua profiling
+
+LuaJIT's built-in profiler (jit.p) shows which Lua functions are hot. Start and
+stop it via IPC at any time:
+
+```bash
+# Start profiling (1ms sampling, includes C function callers)
+somewm-client eval "require('jit.p').start('Gli1', '/tmp/lua-profile.txt')"
+
+# ... use compositor normally ...
+
+# Stop and view results
+somewm-client eval "require('jit.p').stop()"
+cat /tmp/lua-profile.txt
+```
+
+The output shows stack frames with sample counts, directly compatible with
+FlameGraph tools: `flamegraph.pl < /tmp/lua-profile.txt > lua-flamegraph.svg`
+
+### Memory profiling
+
+```bash
+# Allocation tracking (start compositor under heaptrack)
+heaptrack ./build-bench/somewm
+
+# Or attach to running compositor
+heaptrack --pid $(pidof somewm)
+```
+
+### Bench-instrumented build
+
+Build with `make build-bench` to get per-stage frame timing, render phase timing,
+C/Lua boundary crossing counts, and input latency accessible via `awesome.bench_stats()`:
+
+```bash
+make build-bench
+./build-bench/somewm  # Run as your compositor
+
+# Query stats from another terminal
+somewm-client eval "
+  local s = awesome.bench_stats()
+  for k,v in pairs(s.stages) do
+    print(k, string.format('avg=%.1fus p99=%.1fus', v.avg_us, v.p99_us))
+  end
+  print(string.format('render: avg=%.1fus p99=%.1fus', s.render.avg_us, s.render.p99_us))
+  print('crossings/frame avg=' .. s.crossings_per_frame.avg)
+"
+```
+
+### Interpreting perf output
+
+The self-time view (`perf report --no-children`) shows where CPU is actually spent:
+
+```bash
+perf report --stdio --no-children --percent-limit 0.3 -g none
+```
+
+The children view (default) shows inclusive time, where percentages overlap because they
+include callees. A function at 50% doesn't mean it uses 50% of CPU -- it means 50% of
+samples had that function somewhere in the call stack.
+
 ## Future Work
 
 - Add client spawning support (native Wayland clients like `foot`)
