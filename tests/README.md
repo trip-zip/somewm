@@ -255,64 +255,79 @@ To port AwesomeWM tests:
 
 ## Profiling
 
-### Profile your live session
+### Setup
 
-The simplest way to understand compositor performance: attach perf while you
-use the compositor normally.
+Build the bench binary and install it as your compositor:
 
 ```bash
-# Profile for 30 seconds (default), use the compositor normally during this time
-tests/bench/profile-session.sh
-
-# Profile for 60 seconds
-tests/bench/profile-session.sh 60
-
-# Also capture Lua function-level profile alongside C flamegraph
-tests/bench/profile-session.sh --lua
-
-# Save as baseline for later comparison
-tests/bench/profile-session.sh --save pre-2.0
-
-# Compare against saved baseline (red = hotter, blue = cooler)
-tests/bench/profile-session.sh --diff pre-2.0
+make build-bench
+sudo cp build-bench/somewm /usr/local/bin/somewm
 ```
 
-Open the SVG flamegraph in a browser for the interactive view (click to zoom,
-search with Ctrl+F).
+Then restart your session. When you're done profiling, switch back to the dev
+build with `sudo make install`.
 
-For readable function names, make sure the running compositor binary hasn't been
-rebuilt since it started (the script warns if this is the case). System library
-symbols (pixman, wlroots, cairo) are resolved via debuginfod.
-
-### Scripted profiling (repeatable)
-
-For repeatable before/after comparison, the scripted workload drives a fixed
-sequence of tag switches, focus changes, geometry updates, and property toggles:
+### Quick profile
 
 ```bash
-tests/bench/profile-workload.sh --save main
-# ... make changes, rebuild, restart compositor ...
-tests/bench/profile-workload.sh --diff main
+make profile              # 30s C flamegraph
+make profile-lua          # 30s C flamegraph + Lua function breakdown
+make profile DURATION=60  # longer capture
+```
+
+Use the compositor normally during the capture. Open the resulting SVG in a
+browser (click to zoom, Ctrl+F to search).
+
+### Before/after comparison
+
+```bash
+# 1. Save a baseline
+make profile-save LABEL=before-change
+
+# 2. Make your changes, rebuild, restart
+make build-bench && sudo cp build-bench/somewm /usr/local/bin/somewm
+# ... restart session ...
+
+# 3. Capture again and generate differential flamegraph
+make profile-diff LABEL=before-change
+```
+
+The diff flamegraph shows red (more CPU) and blue (less CPU).
+
+### Repeatable scripted workload
+
+For controlled comparison without manual interaction, the scripted workload
+drives a fixed sequence of tag switches, focus changes, geometry updates, and
+property toggles:
+
+```bash
+tests/bench/profile-workload.sh --save before
+# ... make changes, rebuild, restart ...
+tests/bench/profile-workload.sh --diff before
 ```
 
 ### Lua profiling
 
-LuaJIT's built-in profiler (jit.p) shows which Lua functions are hot. Start and
-stop it via IPC at any time:
+`make profile-lua` captures both C and Lua profiles. You can also start/stop
+the Lua profiler manually via IPC:
 
 ```bash
-# Start profiling (1ms sampling, includes C function callers)
 somewm-client eval "require('jit.p').start('Gli1', '/tmp/lua-profile.txt')"
-
-# ... use compositor normally ...
-
-# Stop and view results
+# ... use compositor ...
 somewm-client eval "require('jit.p').stop()"
 cat /tmp/lua-profile.txt
 ```
 
-The output shows stack frames with sample counts, directly compatible with
-FlameGraph tools: `flamegraph.pl < /tmp/lua-profile.txt > lua-flamegraph.svg`
+The output shows stack frames with sample counts, compatible with FlameGraph
+tools: `flamegraph.pl < /tmp/lua-profile.txt > lua-flamegraph.svg`
+
+### Tips
+
+- The profiler warns if the running binary was rebuilt since startup (causes
+  unresolved C function names). Restart the compositor to fix.
+- System library symbols (pixman, wlroots, cairo) are resolved via debuginfod.
+- Profile the bench build, not the ASAN build. ASAN adds ~17% overhead that
+  distorts the profile.
 
 ### Memory profiling
 
