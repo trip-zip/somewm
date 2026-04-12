@@ -959,11 +959,11 @@ mapnotify(struct wl_listener *listener, void *data)
 		/* Emit property and manage signals for transient clients too.
 		 * This is needed for Lua rules and placement code to work. */
 		luaA_object_push(L, c);
-		some_event_queue_property(L, -1, SIG_PROPERTY_X);
-		some_event_queue_property(L, -1, SIG_PROPERTY_Y);
-		some_event_queue_property(L, -1, SIG_PROPERTY_WIDTH);
-		some_event_queue_property(L, -1, SIG_PROPERTY_HEIGHT);
-		some_event_queue_property(L, -1, SIG_PROPERTY_GEOMETRY);
+		some_event_queue_signal0(L, -1, SIG_PROPERTY_X);
+		some_event_queue_signal0(L, -1, SIG_PROPERTY_Y);
+		some_event_queue_signal0(L, -1, SIG_PROPERTY_WIDTH);
+		some_event_queue_signal0(L, -1, SIG_PROPERTY_HEIGHT);
+		some_event_queue_signal0(L, -1, SIG_PROPERTY_GEOMETRY);
 		luaA_object_emit_signal(L, -1, "property::type", 0);
 
 		lua_pushstring(L, "new");
@@ -1044,12 +1044,12 @@ mapnotify(struct wl_listener *listener, void *data)
 
 		/* Emit property signals (matches AwesomeWM client_manage lines 2215-2228)
 		 * These notify Lua code that initial client properties are set */
-		some_event_queue_property(L, -1, SIG_PROPERTY_X);
-		some_event_queue_property(L, -1, SIG_PROPERTY_Y);
-		some_event_queue_property(L, -1, SIG_PROPERTY_WIDTH);
-		some_event_queue_property(L, -1, SIG_PROPERTY_HEIGHT);
+		some_event_queue_signal0(L, -1, SIG_PROPERTY_X);
+		some_event_queue_signal0(L, -1, SIG_PROPERTY_Y);
+		some_event_queue_signal0(L, -1, SIG_PROPERTY_WIDTH);
+		some_event_queue_signal0(L, -1, SIG_PROPERTY_HEIGHT);
 		luaA_object_emit_signal(L, -1, "property::window", 0);
-		some_event_queue_property(L, -1, SIG_PROPERTY_GEOMETRY);
+		some_event_queue_signal0(L, -1, SIG_PROPERTY_GEOMETRY);
 		luaA_object_emit_signal(L, -1, "property::size_hints_honor", 0);
 		luaA_object_emit_signal(L, -1, "property::type", 0);
 
