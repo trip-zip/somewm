@@ -11,6 +11,7 @@
 #include <lauxlib.h>
 
 #include "event_queue.h"
+#include "globalconf.h"
 #include "common/luaobject.h"
 #include "common/luaclass.h"
 #include "objects/signal.h"
@@ -34,6 +35,10 @@ static const char *signal_names[SIG_COUNT] = {
 	[SIG_MOUSE_MOVE]         = "mouse::move",
 	[SIG_LIST]               = "list",
 	[SIG_SWAPPED]            = "swapped",
+	/* SIG_REQUEST_ACTIVATE and SIG_SYSTRAY_ACTIVATE both resolve to
+	 * "request::activate" - they fire on different object types (client
+	 * vs systray_item). Separate enum values allow type-specific
+	 * coalescing or filtering in the future. */
 	[SIG_REQUEST_ACTIVATE]   = "request::activate",
 	[SIG_REQUEST_URGENT]     = "request::urgent",
 	[SIG_REQUEST_GEOMETRY]   = "request::geometry",
@@ -59,8 +64,9 @@ queue_grow(void)
 	int new_cap = queue_cap == 0 ? QUEUE_INITIAL_CAP : queue_cap * 2;
 	some_event_t *new_buf = realloc(queue_buf, new_cap * sizeof(some_event_t));
 	if (!new_buf) {
-		fprintf(stderr, "[event_queue] allocation failed\n");
-		return;
+		fprintf(stderr, "[event_queue] fatal: allocation failed (%d events)\n",
+		        new_cap);
+		abort();
 	}
 	queue_buf = new_buf;
 	queue_cap = new_cap;
@@ -226,6 +232,10 @@ some_event_queue_drain(lua_State *L)
 
 	for (int i = 0; i < count; i++) {
 		some_event_t *e = &queue_buf[i];
+
+		if (e->signal_id >= SIG_COUNT)
+			goto cleanup;
+
 		const char *name = signal_names[e->signal_id];
 
 		if (!name)
@@ -242,6 +252,8 @@ some_event_queue_drain(lua_State *L)
 			if (e->args_ref != LUA_NOREF) {
 				lua_rawgeti(L, LUA_REGISTRYINDEX, e->args_ref);
 				nargs = e->nargs;
+				/* -j always points to the args table: after pushing
+				 * j-1 values, the table has shifted from -1 to -j. */
 				for (int j = 1; j <= nargs; j++)
 					lua_rawgeti(L, -j, j);
 				lua_remove(L, -(nargs + 1));
@@ -259,9 +271,9 @@ some_event_queue_drain(lua_State *L)
 		int nargs = 0;
 		if (e->args_ref != LUA_NOREF) {
 			lua_rawgeti(L, LUA_REGISTRYINDEX, e->args_ref);
-			/* Unpack table values onto stack. As each value is pushed,
-			 * the table shifts down by one position. */
 			nargs = e->nargs;
+			/* -j always points to the args table: after pushing
+			 * j-1 values, the table has shifted from -1 to -j. */
 			for (int j = 1; j <= nargs; j++)
 				lua_rawgeti(L, -j, j);
 			/* Remove the args table (now below the unpacked values) */
@@ -310,6 +322,16 @@ some_event_queue_init(void)
 void
 some_event_queue_wipe(void)
 {
+	/* Release any pending registry refs (events queued after last drain) */
+	lua_State *L = globalconf_get_lua_State();
+	if (L) {
+		for (int i = 0; i < queue_len; i++) {
+			if (queue_buf[i].object_ref != LUA_NOREF)
+				luaL_unref(L, LUA_REGISTRYINDEX, queue_buf[i].object_ref);
+			if (queue_buf[i].args_ref != LUA_NOREF)
+				luaL_unref(L, LUA_REGISTRYINDEX, queue_buf[i].args_ref);
+		}
+	}
 	free(queue_buf);
 	queue_buf = NULL;
 	queue_len = 0;
