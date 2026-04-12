@@ -210,7 +210,7 @@ event_drawable_under_mouse(lua_State *L, int ud)
 
 	if (globalconf.drawable_under_mouse != NULL) {
 		luaA_object_push(L, globalconf.drawable_under_mouse);
-		some_event_queue_property(L, -1, SIG_MOUSE_LEAVE);
+		some_event_queue_signal0(L, -1, SIG_MOUSE_LEAVE);
 		lua_pop(L, 1);
 		luaA_object_unref(L, globalconf.drawable_under_mouse);
 		globalconf.drawable_under_mouse = NULL;
@@ -218,6 +218,6 @@ event_drawable_under_mouse(lua_State *L, int ud)
 
 	if (d != NULL) {
 		globalconf.drawable_under_mouse = d;
-		some_event_queue_property(L, ud, SIG_MOUSE_ENTER);
+		some_event_queue_signal0(L, ud, SIG_MOUSE_ENTER);
 	}
 }

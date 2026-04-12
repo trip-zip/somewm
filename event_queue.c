@@ -80,7 +80,7 @@ queue_push(void)
 }
 
 void
-some_event_queue_property(lua_State *L, int obj_ud, uint16_t signal_id)
+some_event_queue_signal0(lua_State *L, int obj_ud, uint16_t signal_id)
 {
 	some_event_t *e = queue_push();
 	e->event_type = EVENT_OBJECT;
@@ -140,7 +140,7 @@ some_event_queue_global(uint16_t signal_id)
 }
 
 void
-some_event_queue_class(void *class_ptr, uint16_t signal_id)
+some_event_queue_class(struct lua_class_t *class_ptr, uint16_t signal_id)
 {
 	some_event_t *e = queue_push();
 	e->event_type = EVENT_CLASS;
@@ -314,10 +314,13 @@ some_event_queue_init(void)
 void
 some_event_queue_reset(void)
 {
-	/* Drop pending events without unref-ing. Used by hot-reload
+	/* Drop pending events without unref-ing. Used by hot-reload right
 	 * before the old Lua state is abandoned: the old registry goes
-	 * with the leaked state, and calling luaL_unref on the new
-	 * state would free slots that might be used by unrelated refs. */
+	 * with the leaked state, so unref-ing is wasted work. Letting
+	 * these events survive into the new state would be a correctness
+	 * bug: the old integer refs would index unrelated slots in the
+	 * new registry and a later drain would emit on random objects
+	 * (or unref unrelated slots). */
 	queue_len = 0;
 }
 

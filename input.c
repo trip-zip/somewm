@@ -694,7 +694,7 @@ mouse_emit_leave(lua_State *L)
 	if (globalconf.mouse_under.type == UNDER_CLIENT) {
 		client_t *c = globalconf.mouse_under.ptr.client;
 		luaA_object_push(L, c);
-		some_event_queue_property(L, -1, SIG_MOUSE_LEAVE);
+		some_event_queue_signal0(L, -1, SIG_MOUSE_LEAVE);
 		lua_pop(L, 1);
 	} else if (globalconf.mouse_under.type == UNDER_DRAWIN) {
 		drawin_t *d = globalconf.mouse_under.ptr.drawin;
@@ -702,7 +702,7 @@ mouse_emit_leave(lua_State *L)
 		if (lua_isnil(L, -1)) {
 			warn("mouse::leave on unregistered drawin %p", (void*)d);
 		}
-		some_event_queue_property(L, -1, SIG_MOUSE_LEAVE);
+		some_event_queue_signal0(L, -1, SIG_MOUSE_LEAVE);
 		lua_pop(L, 1);
 	}
 	globalconf.mouse_under.type = UNDER_NONE;
@@ -710,7 +710,7 @@ mouse_emit_leave(lua_State *L)
 	/* Also clear drawable tracking - emit leave on drawable if any */
 	if (globalconf.drawable_under_mouse != NULL) {
 		luaA_object_push(L, globalconf.drawable_under_mouse);
-		some_event_queue_property(L, -1, SIG_MOUSE_LEAVE);
+		some_event_queue_signal0(L, -1, SIG_MOUSE_LEAVE);
 		lua_pop(L, 1);
 		luaA_object_unref(L, globalconf.drawable_under_mouse);
 		globalconf.drawable_under_mouse = NULL;
@@ -722,7 +722,7 @@ void
 mouse_emit_client_enter(lua_State *L, client_t *c)
 {
 	luaA_object_push(L, c);
-	some_event_queue_property(L, -1, SIG_MOUSE_ENTER);
+	some_event_queue_signal0(L, -1, SIG_MOUSE_ENTER);
 	lua_pop(L, 1);
 	globalconf.mouse_under.type = UNDER_CLIENT;
 	globalconf.mouse_under.ptr.client = c;
@@ -736,7 +736,7 @@ mouse_emit_drawin_enter(lua_State *L, drawin_t *d)
 	if (lua_isnil(L, -1)) {
 		warn("mouse::enter on unregistered drawin %p", (void*)d);
 	}
-	some_event_queue_property(L, -1, SIG_MOUSE_ENTER);
+	some_event_queue_signal0(L, -1, SIG_MOUSE_ENTER);
 	lua_pop(L, 1);
 	globalconf.mouse_under.type = UNDER_DRAWIN;
 	globalconf.mouse_under.ptr.drawin = d;

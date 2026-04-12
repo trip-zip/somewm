@@ -12,6 +12,8 @@
 #include <stdint.h>
 #include <lua.h>
 
+struct lua_class_t;
+
 /* Signal name IDs - avoid string allocation per event.
  * Add new entries as signals are converted from synchronous to queued. */
 enum {
@@ -67,17 +69,19 @@ enum {
 
 /* A single queued event */
 typedef struct {
-	uint8_t event_type;   /* EVENT_OBJECT, EVENT_CLASS, EVENT_GLOBAL */
-	uint16_t signal_id;   /* SIG_* enum value */
-	int object_ref;       /* luaL_ref to target object (LUA_NOREF for globals) */
-	int nargs;            /* Number of arguments captured */
-	int args_ref;         /* luaL_ref to args table (LUA_NOREF if 0 args) */
-	void *class_ptr;      /* lua_class_t* for EVENT_CLASS (NULL otherwise) */
+	uint8_t event_type;         /* EVENT_OBJECT, EVENT_CLASS, EVENT_GLOBAL */
+	uint16_t signal_id;         /* SIG_* enum value */
+	int object_ref;             /* luaL_ref to target object (LUA_NOREF for globals) */
+	int nargs;                  /* Number of arguments captured */
+	int args_ref;               /* luaL_ref to args table (LUA_NOREF if 0 args) */
+	struct lua_class_t *class_ptr;/* Class for EVENT_CLASS (NULL otherwise) */
 } some_event_t;
 
-/* Queue a 0-arg property signal on an object (fast path) */
-void some_event_queue_property(lua_State *L, int obj_ud,
-                               uint16_t signal_id);
+/* Queue a 0-arg signal on an object (fast path). Used for property
+ * signals and other 0-arg object signals like focus, unfocus,
+ * mouse::enter, mouse::leave. */
+void some_event_queue_signal0(lua_State *L, int obj_ud,
+                              uint16_t signal_id);
 
 /* Queue a signal with arguments on an object */
 void some_event_queue_signal(lua_State *L, int obj_ud,
@@ -89,7 +93,7 @@ void some_event_queue_global(uint16_t signal_id);
 /* Queue a class-level signal (e.g., client "list").
  * Class signals never carry args in the current design; add an args
  * capture path to some_event_queue_class() before using one. */
-void some_event_queue_class(void *class_ptr, uint16_t signal_id);
+void some_event_queue_class(struct lua_class_t *class_ptr, uint16_t signal_id);
 
 /* Queue a mouse::move with coalescing (updates existing if same object) */
 void some_event_queue_move(lua_State *L, int obj_ud,
@@ -105,9 +109,12 @@ bool some_event_queue_pending(void);
 void some_event_queue_init(void);
 void some_event_queue_wipe(void);
 
-/* Discard pending events without unref-ing. For hot-reload, where the
- * current Lua state is being leaked along with its registry; calling
- * luaL_unref on the old state would corrupt the new state's free list. */
+/* Drop pending events without unref-ing. Their registry refs are
+ * integer slot indices in the old state's registry, which is about
+ * to be leaked with the rest of the state. Unref-ing now would be
+ * safe but wasted work; letting them survive into the new state
+ * would be a correctness bug: the same integers would point to
+ * unrelated slots in the new registry. */
 void some_event_queue_reset(void);
 
 #endif /* EVENT_QUEUE_H */

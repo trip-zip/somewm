@@ -1917,7 +1917,7 @@ client_unfocus_internal(client_t *c)
 
     lua_pushboolean(L, false);
     some_event_queue_signal(L, -2, SIG_PROPERTY_ACTIVE, 1);
-    some_event_queue_property(L, -1, SIG_UNFOCUS);
+    some_event_queue_signal0(L, -1, SIG_UNFOCUS);
     lua_pop(L, 1);
 }
 
@@ -2044,7 +2044,7 @@ client_focus_update(client_t *c)
     if(focused_new) {
         lua_pushboolean(L, true);
         some_event_queue_signal(L, -2, SIG_PROPERTY_ACTIVE, 1);
-        some_event_queue_property(L, -1, SIG_FOCUS);
+        some_event_queue_signal0(L, -1, SIG_FOCUS);
     }
 
     lua_pop(L, 1);
@@ -2414,12 +2414,12 @@ client_manage(xcb_window_t w, xcb_get_geometry_reply_t *wgeom, xcb_get_window_at
     c->geometry.width = wgeom->width;
     c->geometry.height = wgeom->height;
 
-    some_event_queue_property(L, -1, SIG_PROPERTY_X);
-    some_event_queue_property(L, -1, SIG_PROPERTY_Y);
-    some_event_queue_property(L, -1, SIG_PROPERTY_WIDTH);
-    some_event_queue_property(L, -1, SIG_PROPERTY_HEIGHT);
+    some_event_queue_signal0(L, -1, SIG_PROPERTY_X);
+    some_event_queue_signal0(L, -1, SIG_PROPERTY_Y);
+    some_event_queue_signal0(L, -1, SIG_PROPERTY_WIDTH);
+    some_event_queue_signal0(L, -1, SIG_PROPERTY_HEIGHT);
     luaA_object_emit_signal(L, -1, "property::window", 0);
-    some_event_queue_property(L, -1, SIG_PROPERTY_GEOMETRY);
+    some_event_queue_signal0(L, -1, SIG_PROPERTY_GEOMETRY);
 
     /* Set border width */
     window_set_border_width(L, -1, wgeom->border_width);
@@ -2690,22 +2690,22 @@ client_resize_do(client_t *c, area_t geometry, bool silent)
     {
         luaA_object_push(L, c);
         if (!AREA_EQUAL(old_geometry, geometry))
-            some_event_queue_property(L, -1, SIG_PROPERTY_GEOMETRY);
+            some_event_queue_signal0(L, -1, SIG_PROPERTY_GEOMETRY);
         if (old_geometry.x != geometry.x || old_geometry.y != geometry.y)
         {
-            some_event_queue_property(L, -1, SIG_PROPERTY_POSITION);
+            some_event_queue_signal0(L, -1, SIG_PROPERTY_POSITION);
             if (old_geometry.x != geometry.x)
-                some_event_queue_property(L, -1, SIG_PROPERTY_X);
+                some_event_queue_signal0(L, -1, SIG_PROPERTY_X);
             if (old_geometry.y != geometry.y)
-                some_event_queue_property(L, -1, SIG_PROPERTY_Y);
+                some_event_queue_signal0(L, -1, SIG_PROPERTY_Y);
         }
         if (old_geometry.width != geometry.width || old_geometry.height != geometry.height)
         {
-            some_event_queue_property(L, -1, SIG_PROPERTY_SIZE);
+            some_event_queue_signal0(L, -1, SIG_PROPERTY_SIZE);
             if (old_geometry.width != geometry.width)
-                some_event_queue_property(L, -1, SIG_PROPERTY_WIDTH);
+                some_event_queue_signal0(L, -1, SIG_PROPERTY_WIDTH);
             if (old_geometry.height != geometry.height)
-                some_event_queue_property(L, -1, SIG_PROPERTY_HEIGHT);
+                some_event_queue_signal0(L, -1, SIG_PROPERTY_HEIGHT);
         }
         lua_pop(L, 1);
 
@@ -3186,7 +3186,7 @@ client_unmanage(client_t *c, client_unmanage_t reason)
     if (globalconf.mouse_under.type == UNDER_CLIENT &&
         globalconf.mouse_under.ptr.client == c) {
         luaA_object_push(L, c);
-        some_event_queue_property(L, -1, SIG_MOUSE_LEAVE);
+        some_event_queue_signal0(L, -1, SIG_MOUSE_LEAVE);
         lua_pop(L, 1);
         globalconf.mouse_under.type = UNDER_NONE;
         globalconf.mouse_under.ptr.client = NULL;

@@ -22,7 +22,6 @@ local my_client
 local geo_count = 0
 local x_count = 0
 local geo_count_at_emit = nil
-local frame_one_count = 0
 
 local steps = {
     -- Step 1: Spawn a client
@@ -86,7 +85,6 @@ local steps = {
         io.stderr:write(string.format(
             "[TEST] PASS: deferred dispatch (in-step=0, after-drain=%d)\n",
             geo_count))
-        frame_one_count = geo_count
         return true
     end,
 

@@ -122,7 +122,7 @@ focusclient(Client *c, int lift)
 		luaA_object_push(globalconf_L, globalconf.focus.client);
 		lua_pushboolean(globalconf_L, false);
 		some_event_queue_signal(globalconf_L, -2, SIG_PROPERTY_ACTIVE, 1);
-		some_event_queue_property(globalconf_L, -1, SIG_UNFOCUS);
+		some_event_queue_signal0(globalconf_L, -1, SIG_UNFOCUS);
 		lua_pop(globalconf_L, 1);
 		some_event_queue_global(SIG_CLIENT_UNFOCUS);
 	}
@@ -205,7 +205,7 @@ focusclient(Client *c, int lift)
 		luaA_object_push(globalconf_L, c);
 		lua_pushboolean(globalconf_L, true);
 		some_event_queue_signal(globalconf_L, -2, SIG_PROPERTY_ACTIVE, 1);
-		some_event_queue_property(globalconf_L, -1, SIG_FOCUS);
+		some_event_queue_signal0(globalconf_L, -1, SIG_FOCUS);
 		lua_pop(globalconf_L, 1);
 	}
 
