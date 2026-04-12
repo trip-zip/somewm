@@ -347,7 +347,7 @@ ewmh_update_maximize(bool h, bool status, bool toggle)
     lua_pushboolean(L, status);
     lua_settable(L, -3);
 
-    luaA_object_emit_signal(L, -3, "request::geometry", 2);
+    some_event_queue_signal(L, -3, SIG_REQUEST_GEOMETRY, 2);
 }
 
 static void
