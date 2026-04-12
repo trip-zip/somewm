@@ -2464,7 +2464,7 @@ client_manage(xcb_window_t w, xcb_get_geometry_reply_t *wgeom, xcb_get_window_at
 
     spawn_start_notify(c, startup_id);
 
-    some_event_queue_class(L, &client_class, SIG_LIST, 0);
+    some_event_queue_class(&client_class, SIG_LIST);
 
     /* Add the context */
     if (globalconf.loop == NULL)
@@ -2940,7 +2940,11 @@ client_set_fullscreen(lua_State *L, int cidx, bool s)
         abs_cidx = luaA_absindex(L, cidx);
         lua_pushliteral(L, "fullscreen");
         c->fullscreen = s;
-        some_event_queue_signal(L, abs_cidx, SIG_REQUEST_GEOMETRY, 1);
+        /* Synchronous: the request::geometry handler updates c->geometry
+         * via c:geometry(...), and client_resize_do() below uses c->geometry
+         * immediately. Queueing would leave the immediate resize operating
+         * on pre-fullscreen bounds. */
+        luaA_object_emit_signal(L, abs_cidx, "request::geometry", 1);
         luaA_object_emit_signal(L, abs_cidx, "property::fullscreen", 0);
         if(c->toplevel_handle)
             wlr_foreign_toplevel_handle_v1_set_fullscreen(c->toplevel_handle, s);
@@ -2985,9 +2989,12 @@ client_set_maximized_common(lua_State *L, int cidx, bool s, const char* type, co
         c->maximized            = !!(next & CLIENT_MAXIMIZED_BOTH);
 
 
-        /* Request the changes to be applied */
+        /* Request the changes to be applied.
+         * Synchronous: the Lua handler applies the new geometry via
+         * c:geometry(...) and the property::maximized_* signals below
+         * are expected to see the post-request state. */
         lua_pushstring(L, type);
-        some_event_queue_signal(L, abs_cidx, SIG_REQUEST_GEOMETRY, 1);
+        luaA_object_emit_signal(L, abs_cidx, "request::geometry", 1);
 
         /* Notify changes in the relevant properties */
         if (h_before != c->maximized_horizontal)
@@ -3221,7 +3228,7 @@ client_unmanage(client_t *c, client_unmanage_t reason)
     luaA_object_emit_signal(L, -3, "request::unmanage", 2);
     lua_pop(L, 1);
 
-    some_event_queue_class(L, &client_class, SIG_LIST, 0);
+    some_event_queue_class(&client_class, SIG_LIST);
 
     if(strut_has_value(&c->strut))
         screen_update_workarea(c->screen);
@@ -3582,7 +3589,7 @@ luaA_client_swap(lua_State *L)
         *ref_c = swap;
         *ref_swap = c;
 
-        some_event_queue_class(L, &client_class, SIG_LIST, 0);
+        some_event_queue_class(&client_class, SIG_LIST);
 
         luaA_object_push(L, swap);
         lua_pushboolean(L, true);

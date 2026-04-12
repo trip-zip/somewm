@@ -43,7 +43,6 @@ enum {
 	/* Request signals (fire-and-forget, C doesn't check response) */
 	SIG_REQUEST_ACTIVATE,  /* 1-2 args: context [, hints] */
 	SIG_REQUEST_URGENT,    /* 1 arg: bool */
-	SIG_REQUEST_GEOMETRY,  /* 1-2 args: context [, hints] */
 	SIG_REQUEST_TAG,       /* 1 arg: tag index or table */
 	SIG_REQUEST_SELECT,    /* 1 arg */
 	SIG_SYSTRAY_ACTIVATE,           /* 2 args */
@@ -87,9 +86,10 @@ void some_event_queue_signal(lua_State *L, int obj_ud,
 /* Queue a global signal (no object) */
 void some_event_queue_global(uint16_t signal_id);
 
-/* Queue a class-level signal (e.g., client "list") */
-void some_event_queue_class(lua_State *L, void *class_ptr,
-                            uint16_t signal_id, int nargs);
+/* Queue a class-level signal (e.g., client "list").
+ * Class signals never carry args in the current design; add an args
+ * capture path to some_event_queue_class() before using one. */
+void some_event_queue_class(void *class_ptr, uint16_t signal_id);
 
 /* Queue a mouse::move with coalescing (updates existing if same object) */
 void some_event_queue_move(lua_State *L, int obj_ud,
@@ -104,5 +104,10 @@ bool some_event_queue_pending(void);
 /* Init/cleanup */
 void some_event_queue_init(void);
 void some_event_queue_wipe(void);
+
+/* Discard pending events without unref-ing. For hot-reload, where the
+ * current Lua state is being leaked along with its registry; calling
+ * luaL_unref on the old state would corrupt the new state's free list. */
+void some_event_queue_reset(void);
 
 #endif /* EVENT_QUEUE_H */

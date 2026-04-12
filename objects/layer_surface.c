@@ -380,7 +380,7 @@ layer_surface_manage(lua_State *L, LayerSurface *c_ls)
 	layer_surface_array_push(&globalconf.layer_surfaces, ls);
 
 	/* Emit class list signal */
-	some_event_queue_class(L, &layer_surface_class, SIG_LIST, 0);
+	some_event_queue_class(&layer_surface_class, SIG_LIST);
 
 	return ls;
 }
@@ -448,7 +448,7 @@ layer_surface_emit_unmanage(layer_surface_t *ls)
 	}
 
 	/* Emit class list signal */
-	some_event_queue_class(L, &layer_surface_class, SIG_LIST, 0);
+	some_event_queue_class(&layer_surface_class, SIG_LIST);
 }
 
 /*
