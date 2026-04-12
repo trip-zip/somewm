@@ -65,6 +65,49 @@ This document tracks all known differences between somewm and AwesomeWM. These e
 
 ---
 
+## Signal Dispatch (somewm 2.0)
+
+AwesomeWM dispatches signals synchronously: when C code calls `luaA_object_emit_signal()`, every connected Lua handler runs before the C function returns. somewm 2.0 changes this for most C-to-Lua emissions. They are queued in `event_queue.c` and drained at the start of `some_refresh()` (once per frame, before the `refresh` global signal and the layout / banning / stacking pass).
+
+Lua-to-Lua emissions (`c:emit_signal("foo")` from inside a Lua handler) remain synchronous. Only C-to-Lua emissions are queued.
+
+### What's queued vs synchronous
+
+Queued signals (delivered at the next frame boundary):
+
+- **Geometry**: `property::geometry`, `property::position`, `property::size`, `property::x`, `property::y`, `property::width`, `property::height`, `client::property::geometry`
+- **Focus**: `focus`, `unfocus`, `property::active`, `client::focus`, `client::unfocus`
+- **Mouse**: `mouse::enter`, `mouse::leave`, `mouse::move` (coalesced to one event per object per frame)
+- **Lifecycle**: `list`, `swapped`
+- **Request**: `request::activate`, `request::urgent`, `request::geometry`, `request::tag`, `request::select`, plus the systray equivalents (`request::secondary_activate`, `request::context_menu`, `request::scroll`)
+
+Kept synchronous:
+
+- `request::manage`, `request::unmanage` -- rules must run before the client is visible, and client properties must still be valid during the handler
+- `scanning`, `scanned` -- startup synchronization barriers
+- Scalar `property::*` signals (`property::name`, `property::type`, `property::window`, `property::screen`, `property::fullscreen`, `property::maximized*`, `property::size_hints_honor`) -- the new value is already in C state when the signal fires; queueing them adds latency with no batching benefit
+
+### Signals removed
+
+| Signal | Replacement |
+|--------|-------------|
+| `client.manage` | `client.request::manage` |
+| `client.unmanage` | `client.request::unmanage` |
+
+AwesomeWM marked these as `TODO v6: remove this` upstream. somewm 2.0 follows through. User configs that connect to `client.connect_signal("manage", ...)` or `"unmanage"` will silently stop running on somewm 2.0; replace those connections with the `request::*` variants. The handler signatures are identical.
+
+### Cross-API consistency window
+
+A few Lua modules connect to queued signals to maintain side-table state. The most prominent is `awful.client.focus.history`, which subscribes to the `focus` signal.
+
+Because `focus` is now queued, there is a narrow window during which that side state is stale: between the C call that triggers the focus change and the next `some_refresh()` drain. The window only matters for Lua callbacks that fire from a non-refresh source (timer, D-Bus, IPC) and read state mutated by a queued handler.
+
+Within a single drain everything fires in queue order, so handlers queued together see consistent state. The `refresh` global signal and layout / banning / stacking always run after the drain, so layouts always see fresh state.
+
+If a stale read shows up in practice, wrap it in `gears.timer.delayed_call(...)` to push the read past the next drain.
+
+---
+
 ## No-Op APIs
 
 These APIs exist and can be called without error, but have no effect on Wayland.

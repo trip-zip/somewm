@@ -265,7 +265,6 @@ cleanup(void)
 
 	a_dbus_cleanup();
 	ipc_cleanup();
-	some_event_queue_wipe();
 
 	xwayland_cleanup();
 
@@ -279,6 +278,12 @@ cleanup(void)
 
 	/* Free animations before Lua state (they hold registry refs) */
 	animation_cleanup();
+
+	/* Drain pending event queue refs before tearing down the Lua state.
+	 * client_unmanage() runs during wl_display_destroy_clients() and
+	 * queues mouse::leave / list events; wiping here releases their
+	 * registry refs and frees the buffer that was reallocated for them. */
+	some_event_queue_wipe();
 
 	/* Close Lua after clients are destroyed (matches AwesomeWM pattern) */
 	luaA_cleanup();

@@ -144,33 +144,33 @@ void
 some_event_queue_class(lua_State *L, void *class_ptr,
                        uint16_t signal_id, int nargs)
 {
+	(void)L;
+	(void)nargs;
+	/* Class signals currently never carry args (only SIG_LIST is queued).
+	 * Add an args-capture path here if a future class signal needs them. */
 	some_event_t *e = queue_push();
 	e->event_type = EVENT_CLASS;
 	e->signal_id = signal_id;
 	e->object_ref = LUA_NOREF;
 	e->class_ptr = class_ptr;
-
-	if (nargs > 0) {
-		e->nargs = nargs;
-		lua_createtable(L, nargs, 0);
-		for (int i = 0; i < nargs; i++) {
-			lua_pushvalue(L, -(nargs + 1) + i);
-			lua_rawseti(L, -2, i + 1);
-		}
-		e->args_ref = luaL_ref(L, LUA_REGISTRYINDEX);
-		lua_pop(L, nargs);
-	} else {
-		e->nargs = 0;
-		e->args_ref = LUA_NOREF;
-	}
+	e->nargs = 0;
+	e->args_ref = LUA_NOREF;
 }
 
 void
 some_event_queue_move(lua_State *L, int obj_ud, int local_x, int local_y)
 {
-	/* Coalesce: scan backward for an existing SIG_MOUSE_MOVE on the same
-	 * object. If found, update its args instead of adding a new event.
-	 * We compare by checking if the object ref points to the same object. */
+	/* Coalesce mouse::move events for the same object.
+	 *
+	 * Invariant: between enter/leave brackets on a given object, every
+	 * mouse::move on that object is folded into one event with the latest
+	 * coordinates. motionnotify() always emits leave + enter when the
+	 * hovered object changes, and the scan below stops at the first
+	 * non-move event, so coalescing never crosses an enter/leave boundary
+	 * and the chronological ordering of move/enter/leave is preserved.
+	 *
+	 * We compare object identity via lua_rawequal on the registry-cached
+	 * userdata (AwesomeWM caches one userdata per C object). */
 
 	/* First, get a ref to the object for comparison */
 	lua_pushvalue(L, obj_ud);
@@ -179,8 +179,9 @@ some_event_queue_move(lua_State *L, int obj_ud, int local_x, int local_y)
 	for (int i = queue_len - 1; i >= 0; i--) {
 		some_event_t *existing = &queue_buf[i];
 
-		/* Stop scanning if we hit a non-move event (preserve ordering
-		 * relative to enter/leave events) */
+		/* Stop scanning if we hit a non-move event. This preserves
+		 * the chronological ordering of any interleaved enter/leave
+		 * events relative to the moves. */
 		if (existing->signal_id != SIG_MOUSE_MOVE)
 			break;
 
@@ -247,18 +248,10 @@ some_event_queue_drain(lua_State *L)
 		}
 
 		if (e->event_type == EVENT_CLASS) {
-			/* Class-level signal (e.g., client "list") */
-			int nargs = 0;
-			if (e->args_ref != LUA_NOREF) {
-				lua_rawgeti(L, LUA_REGISTRYINDEX, e->args_ref);
-				nargs = e->nargs;
-				/* -j always points to the args table: after pushing
-				 * j-1 values, the table has shifted from -1 to -j. */
-				for (int j = 1; j <= nargs; j++)
-					lua_rawgeti(L, -j, j);
-				lua_remove(L, -(nargs + 1));
-			}
-			luaA_class_emit_signal(L, e->class_ptr, name, nargs);
+			/* Class-level signal (e.g., client "list").
+			 * some_event_queue_class() never captures args today, so
+			 * there is nothing to unpack here. */
+			luaA_class_emit_signal(L, e->class_ptr, name, 0);
 			goto cleanup;
 		}
 

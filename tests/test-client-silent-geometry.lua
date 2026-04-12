@@ -81,9 +81,11 @@ local steps = {
         return true
     end,
 
-    -- Step 4: Control test - normal geometry() should fire signals
-    -- Signals are deferred to the frame boundary, so we set geometry in one
-    -- step and check signal_count in the next (after drain).
+    -- Step 4: Control test - normal geometry() should fire signals.
+    -- property::geometry is queued in 2.0 and dispatched at the next
+    -- some_refresh() drain. _runner.run_steps re-arms its timer with
+    -- t:again() between steps, so the event loop runs at least one
+    -- some_refresh() before the assertion step below executes.
     function()
         signal_count = 0
         my_client:geometry({x = 100, y = 100, width = 400, height = 300})

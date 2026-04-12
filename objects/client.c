@@ -2478,9 +2478,6 @@ client_manage(xcb_window_t w, xcb_get_geometry_reply_t *wgeom, xcb_get_window_at
     /* client is still on top of the stack; emit signal */
     luaA_object_emit_signal(L, -3, "request::manage", 2);
 
-    /*TODO v6: remove this*/
-    luaA_object_emit_signal(L, -1, "manage", 0);
-
     error = xcb_request_check(globalconf.connection, reparent_cookie);
     if (error != NULL) {
         warn("Failed to manage window with name '%s', class '%s', instance '%s', because reparenting failed.",
@@ -2943,7 +2940,7 @@ client_set_fullscreen(lua_State *L, int cidx, bool s)
         abs_cidx = luaA_absindex(L, cidx);
         lua_pushliteral(L, "fullscreen");
         c->fullscreen = s;
-        luaA_object_emit_signal(L, abs_cidx, "request::geometry", 1);
+        some_event_queue_signal(L, abs_cidx, SIG_REQUEST_GEOMETRY, 1);
         luaA_object_emit_signal(L, abs_cidx, "property::fullscreen", 0);
         if(c->toplevel_handle)
             wlr_foreign_toplevel_handle_v1_set_fullscreen(c->toplevel_handle, s);
@@ -2990,7 +2987,7 @@ client_set_maximized_common(lua_State *L, int cidx, bool s, const char* type, co
 
         /* Request the changes to be applied */
         lua_pushstring(L, type);
-        luaA_object_emit_signal(L, abs_cidx, "request::geometry", 1);
+        some_event_queue_signal(L, abs_cidx, SIG_REQUEST_GEOMETRY, 1);
 
         /* Notify changes in the relevant properties */
         if (h_before != c->maximized_horizontal)
