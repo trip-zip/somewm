@@ -498,7 +498,7 @@ createnotify(struct wl_listener *listener, void *data)
 	stack_client_push(c);
 
 	/* Emit client::list signal (matches AwesomeWM line 2266) */
-	some_event_queue_class(L, &client_class, SIG_LIST, 0);
+	some_event_queue_class(&client_class, SIG_LIST);
 
 	/* Keep client on Lua stack - it will be used by mapnotify() later
 	 * DO NOT emit manage signal here - AwesomeWM emits it at end of client_manage,
@@ -1554,7 +1554,7 @@ swapstack(const Arg *arg)
 		Client *c = globalconf.clients.tab[target_idx]; /* original sel */
 		Client *swap = globalconf.clients.tab[sel_idx]; /* original target */
 
-		some_event_queue_class(L, &client_class, SIG_LIST, 0);
+		some_event_queue_class(&client_class, SIG_LIST);
 
 		/* First swapped signal on c (is_source=true) */
 		luaA_object_push(L, c);

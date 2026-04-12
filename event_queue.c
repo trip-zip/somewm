@@ -41,7 +41,6 @@ static const char *signal_names[SIG_COUNT] = {
 	 * coalescing or filtering in the future. */
 	[SIG_REQUEST_ACTIVATE]   = "request::activate",
 	[SIG_REQUEST_URGENT]     = "request::urgent",
-	[SIG_REQUEST_GEOMETRY]   = "request::geometry",
 	[SIG_REQUEST_TAG]        = "request::tag",
 	[SIG_REQUEST_SELECT]     = "request::select",
 	[SIG_SYSTRAY_ACTIVATE]            = "request::activate",
@@ -141,13 +140,8 @@ some_event_queue_global(uint16_t signal_id)
 }
 
 void
-some_event_queue_class(lua_State *L, void *class_ptr,
-                       uint16_t signal_id, int nargs)
+some_event_queue_class(void *class_ptr, uint16_t signal_id)
 {
-	(void)L;
-	(void)nargs;
-	/* Class signals currently never carry args (only SIG_LIST is queued).
-	 * Add an args-capture path here if a future class signal needs them. */
 	some_event_t *e = queue_push();
 	e->event_type = EVENT_CLASS;
 	e->signal_id = signal_id;
@@ -232,39 +226,44 @@ some_event_queue_drain(lua_State *L)
 	int count = queue_len;
 
 	for (int i = 0; i < count; i++) {
-		some_event_t *e = &queue_buf[i];
+		/* Copy the event by value. Dispatched Lua handlers can call
+		 * back into C and queue more events; if that triggers
+		 * queue_grow() -> realloc(), the queue_buf pointer moves and
+		 * any pointer into it (including &queue_buf[i]) is freed. The
+		 * local copy is independent of the buffer. */
+		some_event_t e = queue_buf[i];
 
-		if (e->signal_id >= SIG_COUNT)
+		if (e.signal_id >= SIG_COUNT)
 			goto cleanup;
 
-		const char *name = signal_names[e->signal_id];
+		const char *name = signal_names[e.signal_id];
 
 		if (!name)
 			goto cleanup;
 
-		if (e->event_type == EVENT_GLOBAL) {
+		if (e.event_type == EVENT_GLOBAL) {
 			luaA_emit_signal_global(name);
 			goto cleanup;
 		}
 
-		if (e->event_type == EVENT_CLASS) {
+		if (e.event_type == EVENT_CLASS) {
 			/* Class-level signal (e.g., client "list").
 			 * some_event_queue_class() never captures args today, so
 			 * there is nothing to unpack here. */
-			luaA_class_emit_signal(L, e->class_ptr, name, 0);
+			luaA_class_emit_signal(L, e.class_ptr, name, 0);
 			goto cleanup;
 		}
 
 		/* Push object from registry */
-		if (e->object_ref == LUA_NOREF)
+		if (e.object_ref == LUA_NOREF)
 			goto cleanup;
-		lua_rawgeti(L, LUA_REGISTRYINDEX, e->object_ref);
+		lua_rawgeti(L, LUA_REGISTRYINDEX, e.object_ref);
 
 		/* Unpack args from registry if present */
 		int nargs = 0;
-		if (e->args_ref != LUA_NOREF) {
-			lua_rawgeti(L, LUA_REGISTRYINDEX, e->args_ref);
-			nargs = e->nargs;
+		if (e.args_ref != LUA_NOREF) {
+			lua_rawgeti(L, LUA_REGISTRYINDEX, e.args_ref);
+			nargs = e.nargs;
 			/* -j always points to the args table: after pushing
 			 * j-1 values, the table has shifted from -1 to -j. */
 			for (int j = 1; j <= nargs; j++)
@@ -281,10 +280,10 @@ some_event_queue_drain(lua_State *L)
 
 	cleanup:
 		/* Release registry refs */
-		if (e->object_ref != LUA_NOREF)
-			luaL_unref(L, LUA_REGISTRYINDEX, e->object_ref);
-		if (e->args_ref != LUA_NOREF)
-			luaL_unref(L, LUA_REGISTRYINDEX, e->args_ref);
+		if (e.object_ref != LUA_NOREF)
+			luaL_unref(L, LUA_REGISTRYINDEX, e.object_ref);
+		if (e.args_ref != LUA_NOREF)
+			luaL_unref(L, LUA_REGISTRYINDEX, e.args_ref);
 	}
 
 	/* Remove processed events. If new events were added during drain,
@@ -310,6 +309,16 @@ some_event_queue_init(void)
 	queue_buf = NULL;
 	queue_len = 0;
 	queue_cap = 0;
+}
+
+void
+some_event_queue_reset(void)
+{
+	/* Drop pending events without unref-ing. Used by hot-reload
+	 * before the old Lua state is abandoned: the old registry goes
+	 * with the leaked state, and calling luaL_unref on the new
+	 * state would free slots that might be used by unrelated refs. */
+	queue_len = 0;
 }
 
 void

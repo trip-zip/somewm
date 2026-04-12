@@ -79,13 +79,14 @@ Queued signals (delivered at the next frame boundary):
 - **Focus**: `focus`, `unfocus`, `property::active`, `client::focus`, `client::unfocus`
 - **Mouse**: `mouse::enter`, `mouse::leave`, `mouse::move` (coalesced to one event per object per frame)
 - **Lifecycle**: `list`, `swapped`
-- **Request**: `request::activate`, `request::urgent`, `request::geometry`, `request::tag`, `request::select`, plus the systray equivalents (`request::secondary_activate`, `request::context_menu`, `request::scroll`)
+- **Request**: `request::activate`, `request::urgent`, `request::tag`, `request::select`, plus the systray equivalents (`request::secondary_activate`, `request::context_menu`, `request::scroll`)
 
 Kept synchronous:
 
-- `request::manage`, `request::unmanage` -- rules must run before the client is visible, and client properties must still be valid during the handler
-- `scanning`, `scanned` -- startup synchronization barriers
-- Scalar `property::*` signals (`property::name`, `property::type`, `property::window`, `property::screen`, `property::fullscreen`, `property::maximized*`, `property::size_hints_honor`) -- the new value is already in C state when the signal fires; queueing them adds latency with no batching benefit
+- `request::manage`, `request::unmanage`: rules must run before the client is visible, and client properties must still be valid during the handler
+- `request::geometry`: the Lua handler applies new geometry (fullscreen / maximize) via `c:geometry(...)`, and C code inspects `c->geometry` immediately after the emission (`client_set_fullscreen` calls `client_resize_do` on the next line). Queueing would leave that resize operating on stale bounds.
+- `scanning`, `scanned`: startup synchronization barriers
+- Scalar `property::*` signals (`property::name`, `property::type`, `property::window`, `property::screen`, `property::fullscreen`, `property::maximized*`, `property::size_hints_honor`): the new value is already in C state when the signal fires; queueing them adds latency with no batching benefit
 
 ### Signals removed
 

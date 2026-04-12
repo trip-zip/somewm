@@ -347,7 +347,10 @@ ewmh_update_maximize(bool h, bool status, bool toggle)
     lua_pushboolean(L, status);
     lua_settable(L, -3);
 
-    some_event_queue_signal(L, -3, SIG_REQUEST_GEOMETRY, 2);
+    /* Synchronous for consistency with client_set_fullscreen and
+     * client_set_maximized_common, where the Lua handler applies the
+     * new geometry that C then expects to observe immediately. */
+    luaA_object_emit_signal(L, -3, "request::geometry", 2);
 }
 
 static void

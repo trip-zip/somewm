@@ -5172,6 +5172,12 @@ luaA_hot_reload(void)
 	/* Remove stale GLib sources and bump Lgi closure generation. */
 	luaA_cleanup_stale_glib_sources("hot-reload");
 
+	/* Discard any events queued against the old state. We cannot
+	 * unref them: the old registry goes with the leaked state, and
+	 * luaL_unref on the new state would free unrelated slots. The
+	 * pending events' registry refs are leaked along with the state. */
+	some_event_queue_reset();
+
 	/* Leak the old Lua state. lua_close() is unsafe because client
 	 * snapshots, screens, and other C objects still reference Lua
 	 * userdata memory. GC is kept frozen so Lgi closures retain
