@@ -1,0 +1,47 @@
+name: Question
+description: Ask how to do something with somewm
+labels: [question]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        ## Check the AwesomeWM docs first
+
+        somewm uses the AwesomeWM Lua API, so the [AwesomeWM API docs](https://awesomewm.org/doc/api/) and the [AwesomeWM wiki](https://github.com/awesomeWM/awesome/wiki) are usually the fastest answer for "how do I configure X".
+
+        If you can't find the answer there, ask below.
+
+  - type: textarea
+    id: question
+    attributes:
+      label: Question
+      description: What would you like to know?
+    validations:
+      required: true
+
+  - type: dropdown
+    id: branch
+    attributes:
+      label: Which branch does this apply to?
+      options:
+        - release/1.4 (stable)
+        - main (2.0-dev)
+        - Doesn't matter / general question
+    validations:
+      required: false
+
+  - type: textarea
+    id: tried
+    attributes:
+      label: What have you tried or read?
+      description: Docs you've already checked, code you've tried, other compositors you've compared against.
+    validations:
+      required: false
+
+  - type: textarea
+    id: version
+    attributes:
+      label: somewm --version output (optional)
+      render: shell
+    validations:
+      required: false

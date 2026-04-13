@@ -1,0 +1,69 @@
+name: Upstream port request (1.4)
+description: AwesomeWM 4.4 (or upstream master) has a feature or fix that somewm 1.4 is missing or only partially ports
+labels: [enhancement, "1.4", upstream-sync]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        ## `release/1.4` mirrors AwesomeWM 4.4
+
+        Use this template to report either:
+
+        1. An AwesomeWM 4.4 feature or API that somewm 1.4 doesn't fully implement, or
+        2. A fix or feature merged into [AwesomeWM master](https://github.com/awesomeWM/awesome) that should be backported to somewm.
+
+        For new features that don't exist in AwesomeWM, use the **Feature request (2.0)** template instead.
+
+        Before filing, check [`UPSTREAM_PORTS.md`](https://github.com/trip-zip/somewm/blob/release/1.4/UPSTREAM_PORTS.md) to see if the port is already tracked.
+
+  - type: input
+    id: awesomewm_ref
+    attributes:
+      label: AwesomeWM reference
+      description: Link to the AwesomeWM docs, source file, PR, or commit that defines the behavior you want ported.
+      placeholder: https://github.com/awesomeWM/awesome/...
+    validations:
+      required: true
+
+  - type: textarea
+    id: what_awesomewm_does
+    attributes:
+      label: What does AwesomeWM do?
+      description: Describe the behavior in AwesomeWM. Include a minimal `rc.lua` snippet if helpful.
+    validations:
+      required: true
+
+  - type: textarea
+    id: what_somewm_does
+    attributes:
+      label: What does somewm do today?
+      description: Describe what happens in somewm 1.4 instead (silent no-op, error, wrong result, missing API, etc.).
+    validations:
+      required: true
+
+  - type: textarea
+    id: repro_rc_lua
+    attributes:
+      label: Minimal rc.lua showing the gap
+      render: lua
+    validations:
+      required: false
+
+  - type: textarea
+    id: version
+    attributes:
+      label: somewm --version output
+      description: Paste the output of `somewm --version` from your 1.4 build.
+      render: shell
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: preflight
+    attributes:
+      label: Preflight checklist
+      options:
+        - label: I have checked `UPSTREAM_PORTS.md` and this port is not already tracked.
+          required: true
+        - label: This is a parity gap against AwesomeWM 4.4 or an upstream fix, not a new feature.
+          required: true
