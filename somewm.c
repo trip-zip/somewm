@@ -5870,6 +5870,9 @@ unmaplayersurfacenotify(struct wl_listener *listener, void *data)
 	if (l == exclusive_focus)
 		exclusive_focus = NULL;
 
+	if (l->layer_surface && l->layer_surface->surface && l->layer_surface->output)
+		wlr_surface_send_leave(l->layer_surface->surface, l->layer_surface->output);
+
 	if (l->layer_surface->output && (l->mon = l->layer_surface->output->data))
 		arrangelayers(l->mon);
 
