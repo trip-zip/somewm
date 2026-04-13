@@ -266,12 +266,15 @@ initialcommitnotify(struct wl_listener *listener, void *data)
 			WLR_XDG_TOPLEVEL_WM_CAPABILITIES_FULLSCREEN);
 	if (c->decoration)
 		requestdecorationmode(&c->set_decoration_mode, c->decoration);
-	if (m && !client_is_unmanaged(c) && !client_is_float_type(c)) {
-		wlr_xdg_toplevel_set_size(c->surface.xdg->toplevel,
-			m->w.width - 2 * c->bw, m->w.height - 2 * c->bw);
-	} else {
-		wlr_xdg_toplevel_set_size(c->surface.xdg->toplevel, 0, 0);
+	/* Send the workarea as a bounds hint and let the client pick its own
+	 * initial size. Forcing set_size to the workarea here would make
+	 * clients opened under awful.layout.suit.floating fill the screen,
+	 * because floating.arrange() is a no-op and never resizes them. */
+	if (m && !client_is_unmanaged(c)) {
+		wlr_xdg_toplevel_set_bounds(c->surface.xdg->toplevel,
+			m->w.width, m->w.height);
 	}
+	wlr_xdg_toplevel_set_size(c->surface.xdg->toplevel, 0, 0);
 }
 
 /* Handle subsequent XDG commits - resizing and opacity.
