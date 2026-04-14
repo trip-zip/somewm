@@ -1,0 +1,114 @@
+name: Bug report
+description: Report a bug or unexpected behavior in somewm
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        ## Which branch is this bug on?
+
+        somewm has two active branches and we triage them very differently:
+
+        - **`release/1.4`** is the stable AwesomeWM 4.4 parity branch. Bugs here are regressions against AwesomeWM and take priority.
+        - **`main`** is 2.0-dev. It is actively being rewritten and breakage is expected.
+
+        Not sure which one you're on? Check [CONTRIBUTING.md#branches](https://github.com/trip-zip/somewm/blob/main/CONTRIBUTING.md#branches) or pick "Not sure" below and we'll help.
+
+  - type: dropdown
+    id: branch
+    attributes:
+      label: Branch
+      description: Which branch of somewm is this bug on?
+      options:
+        - release/1.4 (stable, AwesomeWM 4.4 parity)
+        - main (2.0-dev, unstable)
+        - Not sure, need help figuring it out
+    validations:
+      required: true
+
+  - type: textarea
+    id: version
+    attributes:
+      label: somewm --version output
+      description: Paste the full output of `somewm --version`. This tells us your exact build, wlroots version, distro, GPU, and session type.
+      render: shell
+      placeholder: |
+        ## somewm version info
+
+        **somewm:** ...
+        **wlroots:** ...
+        ...
+    validations:
+      required: true
+
+  - type: dropdown
+    id: install_source
+    attributes:
+      label: How did you install somewm?
+      options:
+        - Distro package (AUR, nixpkgs, etc.)
+        - Built from a tagged release
+        - Built from release/1.4
+        - Built from main
+        - Other
+    validations:
+      required: false
+
+  - type: textarea
+    id: description
+    attributes:
+      label: What happened?
+      description: A clear description of the bug.
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+      description: Exact steps that trigger the bug. Minimal repros get fixed first.
+      placeholder: |
+        1.
+        2.
+        3.
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+      description: What should have happened instead?
+    validations:
+      required: false
+
+  - type: textarea
+    id: rc_lua
+    attributes:
+      label: Relevant rc.lua
+      description: The parts of your rc.lua that trigger the bug. Leave blank if the bug reproduces with the fallback config.
+      render: lua
+    validations:
+      required: false
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs, crash output, or backtrace
+      description: |
+        Anything from stderr, journal, or `coredumpctl info somewm`. For crashes, a full backtrace is hugely helpful.
+      render: shell
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: preflight
+    attributes:
+      label: Preflight checklist
+      options:
+        - label: I have searched existing issues and this is not a duplicate.
+          required: true
+        - label: I have tested with a minimal `rc.lua` (or `rc_fallback.lua`) to confirm this is not a bug in my own config.
+          required: true
+        - label: I have read [CONTRIBUTING.md#branches](https://github.com/trip-zip/somewm/blob/main/CONTRIBUTING.md#branches) and selected the correct branch above.
+          required: true

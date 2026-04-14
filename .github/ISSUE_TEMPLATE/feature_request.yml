@@ -1,0 +1,65 @@
+name: Feature request (2.0)
+description: Suggest a new feature for somewm 2.0 (main branch)
+labels: [enhancement, "2.x"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        ## New features target `main` (2.0-dev) only
+
+        `release/1.4` is parity-locked to AwesomeWM 4.4 and accepts bug fixes and upstream ports only.
+
+        If you're asking for "AwesomeWM 4.4 does X but somewm 1.4 doesn't", please use the **Upstream port request (1.4)** template instead.
+
+        See [CONTRIBUTING.md#branches](https://github.com/trip-zip/somewm/blob/main/CONTRIBUTING.md#branches) for the branching model.
+
+  - type: textarea
+    id: description
+    attributes:
+      label: What feature would you like?
+      description: A clear description of the feature you want.
+    validations:
+      required: true
+
+  - type: textarea
+    id: use_case
+    attributes:
+      label: Use case
+      description: Why do you need this? What problem does it solve? Concrete scenarios help far more than abstract requirements.
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposed_api
+    attributes:
+      label: Proposed API or rc.lua shape
+      description: If you have a specific API, signal, property, or `rc.lua`-level usage in mind, sketch it here.
+      render: lua
+    validations:
+      required: false
+
+  - type: textarea
+    id: prior_art
+    attributes:
+      label: Prior art
+      description: Does AwesomeWM, Wayfire, niri, Hyprland, sway, or another compositor do this? Link to docs, source, or demos.
+    validations:
+      required: false
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Workarounds you've tried or other ways to achieve the same goal.
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: preflight
+    attributes:
+      label: Preflight checklist
+      options:
+        - label: I have searched existing issues and this feature is not already requested.
+          required: true
+        - label: This is a new feature, not a bug fix or an AwesomeWM 4.4 parity gap.
+          required: true
