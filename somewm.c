@@ -3491,6 +3491,17 @@ keyrepeat(void *data)
 		return 0;
 	}
 
+	/* If a keygrabber started after the initial press (e.g. a keybinding
+	 * handler opened a launcher and installed an awful.keygrabber), stop
+	 * repeating the compositor binding. The grabber now owns the keyboard
+	 * and re-firing the binding that started it causes flicker for
+	 * toggle-style keybindings that alternate state at the repeat rate.
+	 * Mirrors the guard in keypress() above. */
+	if (!locked && some_keygrabber_is_running()) {
+		group->nsyms = 0;
+		return 0;
+	}
+
 	wl_event_source_timer_update(group->key_repeat_source,
 			1000 / group->wlr_group->keyboard.repeat_info.rate);
 
