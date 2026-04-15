@@ -662,7 +662,7 @@ updatemons(struct wl_listener *listener, void *data)
 		wlr_scene_rect_set_size(m->fullscreen_bg, m->m.width, m->m.height);
 
 		if (m->lock_surface) {
-			struct wlr_scene_tree *scene_tree = m->lock_surface->surface->data;
+			struct wlr_scene_tree *scene_tree = client_surface_get_scene_tree(m->lock_surface->surface);
 			wlr_scene_node_set_position(&scene_tree->node, m->m.x, m->m.y);
 			wlr_session_lock_surface_v1_configure(m->lock_surface, m->m.width, m->m.height);
 		}
