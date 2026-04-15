@@ -276,6 +276,8 @@ client_is_rendered_on_mon(Client *c, Monitor *m)
 	 * Usually VISIBLEON suffices and is also faster. */
 	struct wlr_surface_output *s;
 	int unused_lx, unused_ly;
+	if (!c->scene)
+		return 0;
 	if (!wlr_scene_node_coords(&c->scene->node, &unused_lx, &unused_ly))
 		return 0;
 	wl_list_for_each(s, &client_surface(c)->current_outputs, link)
