@@ -6278,9 +6278,9 @@ activation_token_timeout(gpointer user_data)
 {
 	char *token;
 	size_t i;
-	
+
 	token = (char *)user_data;
-	
+
 	/* Find and remove the token */
 	for (i = 0; i < pending_tokens_len; i++) {
 		if (strcmp(pending_tokens[i].token, token) == 0) {
@@ -6289,7 +6289,7 @@ activation_token_timeout(gpointer user_data)
 				"id", token);
 			free(pending_tokens[i].token);
 			free(pending_tokens[i].app_id);
-			
+
 			/* Shift remaining tokens */
 			memmove(&pending_tokens[i], &pending_tokens[i + 1],
 				(pending_tokens_len - i - 1) * sizeof(activation_token_t));
@@ -6297,7 +6297,7 @@ activation_token_timeout(gpointer user_data)
 			break;
 		}
 	}
-	
+
 	free(token);
 	return G_SOURCE_REMOVE;  /* One-shot timer */
 }
@@ -6310,19 +6310,19 @@ char *activation_token_create(const char *app_id)
 	size_t new_cap;
 	activation_token_t *new_tokens;
 	activation_token_t *slot;
-	
+
 	if (!activation)
 		return NULL;
-	
+
 	token = wlr_xdg_activation_token_v1_create(activation);
 	if (!token)
 		return NULL;
-	
+
 	/* Commit the token to get the token string */
 	token_name = wlr_xdg_activation_token_v1_get_name(token);
 	if (!token_name)
 		return NULL;
-	
+
 	/* Grow array if needed */
 	if (pending_tokens_len >= pending_tokens_cap) {
 		new_cap = pending_tokens_cap == 0 ? 8 : pending_tokens_cap * 2;
@@ -6332,17 +6332,17 @@ char *activation_token_create(const char *app_id)
 		pending_tokens = new_tokens;
 		pending_tokens_cap = new_cap;
 	}
-	
+
 	/* Store token with metadata */
 	slot = &pending_tokens[pending_tokens_len++];
 	slot->token = strdup(token_name);
 	slot->app_id = app_id ? strdup(app_id) : NULL;
-	
+
 	/* Setup 20-second timeout (matches AwesomeWM) */
-	slot->timeout_id = g_timeout_add_seconds(20, activation_token_timeout, 
+	slot->timeout_id = g_timeout_add_seconds(20, activation_token_timeout,
 		strdup(token_name));
-	
-	
+
+
 	return slot->token;
 }
 
@@ -6350,19 +6350,19 @@ char *activation_token_create(const char *app_id)
 void activation_token_cleanup(const char *token)
 {
 	size_t i;
-	
+
 	if (!token)
 		return;
-	
+
 	for (i = 0; i < pending_tokens_len; i++) {
 		if (strcmp(pending_tokens[i].token, token) == 0) {
 			/* Cancel timeout */
 			g_source_remove(pending_tokens[i].timeout_id);
-			
-			
+
+
 			free(pending_tokens[i].token);
 			free(pending_tokens[i].app_id);
-			
+
 			/* Shift remaining tokens */
 			memmove(&pending_tokens[i], &pending_tokens[i + 1],
 				(pending_tokens_len - i - 1) * sizeof(activation_token_t));
@@ -6378,18 +6378,18 @@ void urgent(struct wl_listener *listener, void *data)
 	const char *token_name;
 	bool token_matched;
 	lua_State *L;
-	
+
 	event = data;
 	c = NULL;
 	token_matched = false;
-	
+
 	toplevel_from_wlr_surface(event->surface, &c, NULL);
 	if (!c)
 		return;
 
 	/* Extract token from activation event */
 	token_name = event->token ? wlr_xdg_activation_token_v1_get_name(event->token) : NULL;
-	
+
 	/* Validate token against pending tokens */
 	if (token_name) {
 		size_t i;
