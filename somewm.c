@@ -2507,6 +2507,31 @@ some_is_ext_session_locked(void)
 	return locked;
 }
 
+static struct wlr_scene_tree *
+surface_scene_tree_from_data(struct wlr_surface *surface)
+{
+	return surface ? surface->data : NULL;
+}
+
+static void
+surface_clear_scene_data(struct wlr_surface *surface, struct wlr_scene_tree *st)
+{
+	if (!surface || surface->data != st)
+		return;
+
+	surface->data = NULL;
+}
+
+static void
+client_scene_node_destroy(Client* c) {
+	if (client_has_surface(c)) {
+		struct wlr_surface *surface = client_surface(c);
+		surface_clear_scene_data(surface, c->scene);
+	}
+	wlr_scene_node_destroy(&c->scene->node);
+	c->scene = NULL;
+}
+
 /** Check if idle is effectively inhibited (for Lua API and idle timers). */
 bool
 some_is_idle_inhibited(struct wlr_surface *exclude)
@@ -2519,7 +2544,7 @@ some_is_idle_inhibited(struct wlr_surface *exclude)
 
 	wl_list_for_each(inhibitor, &idle_inhibit_mgr->inhibitors, link) {
 		struct wlr_surface *surface = wlr_surface_get_root_surface(inhibitor->surface);
-		struct wlr_scene_tree *tree = surface->data;
+		struct wlr_scene_tree *tree = surface_scene_tree_from_data(surface);
 
 		if (exclude != surface && (globalconf.appearance.bypass_surface_visibility || (!tree
 				|| wlr_scene_node_coords(&tree->node, &unused_lx, &unused_ly)))) {
@@ -2560,7 +2585,8 @@ some_push_idle_inhibitors(lua_State *L)
 	lua_newtable(L);
 	wl_list_for_each(inhibitor, &idle_inhibit_mgr->inhibitors, link) {
 		struct wlr_surface *surface = wlr_surface_get_root_surface(inhibitor->surface);
-		struct wlr_scene_tree *tree = surface->data;
+		struct wlr_scene_tree *tree = surface_scene_tree_from_data(surface);
+
 		bool visible = globalconf.appearance.bypass_surface_visibility
 			|| (!tree || wlr_scene_node_coords(&tree->node, &lx, &ly));
 
@@ -3581,9 +3607,8 @@ mapnotify(struct wl_listener *listener, void *data)
 	/* Handle scene surface creation failure (can happen with XWayland/Electron apps) */
 	if (!c->scene_surface) {
 		warn("Failed to create scene surface for client (type=%d)", c->client_type);
-		wlr_scene_node_destroy(&c->scene->node);
-		c->scene = NULL;
-		client_surface(c)->data = NULL;
+		client_scene_node_destroy(c);
+		assert(client_surface(c)->data == NULL);
 		return;
 	}
 
@@ -5913,7 +5938,7 @@ unmapnotify(struct wl_listener *listener, void *data)
 
 	/* Safety: If Lua destroyed during cleanup, skip Lua-dependent operations */
 	if (!globalconf_L) {
-		wlr_scene_node_destroy(&c->scene->node);
+		client_scene_node_destroy(c);
 		return;
 	}
 
@@ -5961,8 +5986,7 @@ unmapnotify(struct wl_listener *listener, void *data)
 		wl_list_remove(&c->commit.link);
 	}
 
-	wlr_scene_node_destroy(&c->scene->node);
-	c->scene = NULL;  /* Mark as cleaned up so destroynotify won't double-remove */
+	client_scene_node_destroy(c);
 
 	/* Clear titlebar scene buffer pointers - they were children of c->scene
 	 * and are now freed. Prevents use-after-free in refresh callbacks. */
@@ -6078,7 +6102,7 @@ updatemons(struct wl_listener *listener, void *data)
 		wlr_scene_rect_set_size(m->fullscreen_bg, m->m.width, m->m.height);
 
 		if (m->lock_surface) {
-			struct wlr_scene_tree *scene_tree = m->lock_surface->surface->data;
+			struct wlr_scene_tree *scene_tree = surface_scene_tree_from_data(m->lock_surface->surface);
 			wlr_scene_node_set_position(&scene_tree->node, m->m.x, m->m.y);
 			wlr_session_lock_surface_v1_configure(m->lock_surface, m->m.width, m->m.height);
 		}

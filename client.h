@@ -23,16 +23,24 @@ client_is_x11(Client *c)
 	return 0;
 }
 
+static inline bool
+client_has_surface(Client *c)
+{
+#ifdef XWAYLAND
+	if (client_is_x11(c))
+		return c->surface.xwayland != NULL;
+#endif
+	return c->surface.xdg != NULL;
+}
+
 static inline struct wlr_surface *
 client_surface(Client *c)
 {
+	assert(client_has_surface(c));
 #ifdef XWAYLAND
-	if (client_is_x11(c)) {
-		assert(c->surface.xwayland != NULL);
+	if (client_is_x11(c))
 		return c->surface.xwayland->surface;
-	}
 #endif
-	assert(c->surface.xdg != NULL);
 	return c->surface.xdg->surface;
 }
 
