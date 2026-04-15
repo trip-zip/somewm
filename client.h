@@ -269,24 +269,6 @@ client_is_float_type(Client *c)
 }
 
 static inline int
-client_is_rendered_on_mon(Client *c, Monitor *m)
-{
-	/* This is needed for when you don't want to check formal assignment,
-	 * but rather actual displaying of the pixels.
-	 * Usually VISIBLEON suffices and is also faster. */
-	struct wlr_surface_output *s;
-	int unused_lx, unused_ly;
-	if (!c->scene)
-		return 0;
-	if (!wlr_scene_node_coords(&c->scene->node, &unused_lx, &unused_ly))
-		return 0;
-	wl_list_for_each(s, &client_surface(c)->current_outputs, link)
-		if (s->output == m->wlr_output)
-			return 1;
-	return 0;
-}
-
-static inline int
 client_is_stopped(Client *c)
 {
 	int pid;
