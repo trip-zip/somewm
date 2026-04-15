@@ -229,9 +229,9 @@ static void
 spawn_child_setup(gpointer user_data)
 {
 	char *token;
-	
+
 	setsid();
-	
+
 	/* Set XDG_ACTIVATION_TOKEN for Wayland startup notification
 	 * (matches AwesomeWM's DESKTOP_STARTUP_ID pattern for X11) */
 	token = (char *)user_data;
