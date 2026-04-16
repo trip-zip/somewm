@@ -260,7 +260,9 @@ cleanup(void)
 {
 	/* Emit exit signal while Lua alive (matches AwesomeWM pattern) */
 	if (globalconf_L) {
-		luaA_emit_signal_global("exit");
+		lua_State *L = globalconf_get_lua_State();
+		lua_pushboolean(L, false);
+		luaA_signal_emit(L, "exit", 1);
 	}
 
 	a_dbus_cleanup();
