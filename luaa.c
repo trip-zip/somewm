@@ -4842,7 +4842,8 @@ luaA_hot_reload(void)
 	}
 
 	/* Emit "exit" signal so Lua code can clean up */
-	luaA_signal_emit(L, "exit", 0);
+	lua_pushboolean(L, true);
+	luaA_signal_emit(L, "exit", 1);
 
 	/* Cancel in-flight animations */
 	animation_cleanup();
