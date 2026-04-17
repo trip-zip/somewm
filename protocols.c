@@ -218,6 +218,16 @@ commitlayersurfacenotify(struct wl_listener *listener, void *data)
 
 	arrangelayers(l->mon);
 
+	/* When a layer surface maps, re-evaluate pointer focus so that
+	 * wl_pointer.enter is delivered if the cursor is already over it.
+	 * Without this, hover doesn't work until the user moves the mouse.
+	 * Similar to sway's cursor_rebase_all() in handle_map(), but uses
+	 * motionnotify(0,...) which re-runs xytonode() + pointerfocus()
+	 * without emitting Lua mouse signals (those are gated on time != 0).
+	 * Skip when exclusive_focus is active to avoid disrupting grabs. */
+	if (!was_mapped && l->mapped && !exclusive_focus)
+		motionnotify(0, NULL, 0, 0, 0, 0);
+
 	/* Emit property change signals for Lua (matches AwesomeWM pattern) */
 	if (l->lua_object && globalconf_L && layer_surface->current.committed) {
 		lua_State *L = globalconf_get_lua_State();
