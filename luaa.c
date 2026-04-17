@@ -5200,6 +5200,18 @@ luaA_hot_reload(void)
 		goto cleanup;
 	}
 
+	/* Any events queued between the pre-state-swap reset and now would
+	 * carry registry refs into the old (leaked) state. Draining them
+	 * against the new state would index unrelated slots. In practice
+	 * nothing should queue here (wlroots listeners and GLib sources were
+	 * dropped earlier), but if something does, drop the stale events
+	 * loudly instead of silently corrupting the new state. */
+	if (some_event_queue_pending()) {
+		warn("hot-reload: events queued during state swap; "
+		     "discarding stale refs");
+		some_event_queue_reset();
+	}
+
 	/* ================================================================
 	 * Phase E: Re-create client objects in new Lua state
 	 * ================================================================
