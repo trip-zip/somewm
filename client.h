@@ -23,16 +23,24 @@ client_is_x11(Client *c)
 	return 0;
 }
 
+static inline bool
+client_has_surface(Client *c)
+{
+#ifdef XWAYLAND
+	if (client_is_x11(c))
+		return c->surface.xwayland != NULL;
+#endif
+	return c->surface.xdg != NULL;
+}
+
 static inline struct wlr_surface *
 client_surface(Client *c)
 {
+	assert(client_has_surface(c));
 #ifdef XWAYLAND
-	if (client_is_x11(c)) {
-		assert(c->surface.xwayland != NULL);
+	if (client_is_x11(c))
 		return c->surface.xwayland->surface;
-	}
 #endif
-	assert(c->surface.xdg != NULL);
 	return c->surface.xdg->surface;
 }
 
@@ -266,22 +274,6 @@ client_is_float_type(Client *c)
 	return toplevel->parent || (state.min_width != 0 && state.min_height != 0
 		&& (state.min_width == state.max_width
 			|| state.min_height == state.max_height));
-}
-
-static inline int
-client_is_rendered_on_mon(Client *c, Monitor *m)
-{
-	/* This is needed for when you don't want to check formal assignment,
-	 * but rather actual displaying of the pixels.
-	 * Usually VISIBLEON suffices and is also faster. */
-	struct wlr_surface_output *s;
-	int unused_lx, unused_ly;
-	if (!wlr_scene_node_coords(&c->scene->node, &unused_lx, &unused_ly))
-		return 0;
-	wl_list_for_each(s, &client_surface(c)->current_outputs, link)
-		if (s->output == m->wlr_output)
-			return 1;
-	return 0;
 }
 
 static inline int

@@ -774,7 +774,17 @@ some_refresh(void)
 #endif
 
 	/* Step 4: Update client visibility (banning) */
+	bool banning_pending = globalconf.need_lazy_banning;
 	banning_refresh();
+
+	/* Step 4.5: Re-evaluate pointer focus after visibility changes.
+	 * When scene nodes are disabled (banned) wlroots sends wl_pointer.leave,
+	 * but re-enabling them does not automatically send wl_pointer.enter.
+	 * Without this, clients (notably Chromium) that were unbanned under a
+	 * stationary cursor never regain pointer focus and stop receiving all
+	 * input until the user moves the mouse. */
+	if (banning_pending)
+		motionnotify(0, NULL, 0, 0, 0, 0);
 
 #ifdef SOMEWM_BENCH
 	clock_gettime(CLOCK_MONOTONIC, &bench_ts[5]);

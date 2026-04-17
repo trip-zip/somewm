@@ -119,6 +119,17 @@ struct wl_listener new_xdg_popup = {.notify = createpopup};
 struct wl_listener new_xdg_decoration = {.notify = createdecoration};
 
 void
+client_scene_node_destroy(Client *c)
+{
+	if (client_has_surface(c)) {
+		struct wlr_surface *surface = client_surface(c);
+		client_surface_clear_scene_data(surface, c->scene);
+	}
+	wlr_scene_node_destroy(&c->scene->node);
+	c->scene = NULL;
+}
+
+void
 applybounds(Client *c, struct wlr_box *bbox)
 {
 	/* Minimum geometry must fit borders AND titlebars with at least 1px content */
@@ -803,9 +814,8 @@ mapnotify(struct wl_listener *listener, void *data)
 	/* Handle scene surface creation failure (can happen with XWayland/Electron apps) */
 	if (!c->scene_surface) {
 		warn("Failed to create scene surface for client (type=%d)", c->client_type);
-		wlr_scene_node_destroy(&c->scene->node);
-		c->scene = NULL;
-		client_surface(c)->data = NULL;
+		client_scene_node_destroy(c);
+		assert(client_surface(c)->data == NULL);
 		return;
 	}
 
@@ -1617,7 +1627,7 @@ unmapnotify(struct wl_listener *listener, void *data)
 
 	/* Safety: If Lua destroyed during cleanup, skip Lua-dependent operations */
 	if (!globalconf_L) {
-		wlr_scene_node_destroy(&c->scene->node);
+		client_scene_node_destroy(c);
 		return;
 	}
 
@@ -1665,8 +1675,7 @@ unmapnotify(struct wl_listener *listener, void *data)
 		wl_list_remove(&c->commit.link);
 	}
 
-	wlr_scene_node_destroy(&c->scene->node);
-	c->scene = NULL;  /* Mark as cleaned up so destroynotify won't double-remove */
+	client_scene_node_destroy(c);
 
 	/* Clear titlebar scene buffer pointers - they were children of c->scene
 	 * and are now freed. Prevents use-after-free in refresh callbacks. */
