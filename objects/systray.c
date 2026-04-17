@@ -393,7 +393,7 @@ luaA_systray_item_activate(lua_State *L)
 	/* Emit signal that Lua D-Bus code will handle */
 	lua_pushinteger(L, x);
 	lua_pushinteger(L, y);
-	some_event_queue_signal(L, 1, SIG_SYSTRAY_ACTIVATE, 2);
+	some_event_queue_signal(L, 1, SIG_REQUEST_ACTIVATE, 2);
 
 	return 0;
 }

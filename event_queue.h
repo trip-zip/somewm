@@ -43,11 +43,10 @@ enum {
 	SIG_SWAPPED,           /* 2 args: other object + is_source bool */
 
 	/* Request signals (fire-and-forget, C doesn't check response) */
-	SIG_REQUEST_ACTIVATE,  /* 1-2 args: context [, hints] */
+	SIG_REQUEST_ACTIVATE,  /* 1-2 args: context [, hints] - also used by systray items */
 	SIG_REQUEST_URGENT,    /* 1 arg: bool */
 	SIG_REQUEST_TAG,       /* 1 arg: tag index or table */
 	SIG_REQUEST_SELECT,    /* 1 arg */
-	SIG_SYSTRAY_ACTIVATE,           /* 2 args */
 	SIG_SYSTRAY_SECONDARY_ACTIVATE, /* 2 args */
 	SIG_SYSTRAY_CONTEXT_MENU,       /* 2 args */
 	SIG_SYSTRAY_SCROLL,             /* 2 args */
@@ -79,11 +78,27 @@ typedef struct {
 
 /* Queue a 0-arg signal on an object (fast path). Used for property
  * signals and other 0-arg object signals like focus, unfocus,
- * mouse::enter, mouse::leave. */
+ * mouse::enter, mouse::leave.
+ *
+ * Stack: reads the object at `obj_ud`; leaves the caller's stack
+ * unchanged. The caller is responsible for popping the object
+ * afterward if they no longer need it. */
 void some_event_queue_signal0(lua_State *L, int obj_ud,
                               uint16_t signal_id);
 
-/* Queue a signal with arguments on an object */
+/* Queue a signal with arguments on an object.
+ *
+ * Stack: expects the object at `obj_ud` and exactly `nargs` argument
+ * values on top of the stack. Consumes the nargs (pops them); leaves
+ * the object at `obj_ud` untouched. The caller is responsible for
+ * popping the object afterward.
+ *
+ * Example (1 arg):
+ *   luaA_object_push(L, c);                // [..., c]
+ *   lua_pushboolean(L, true);              // [..., c, true]
+ *   some_event_queue_signal(L, -2, SIG_PROPERTY_ACTIVE, 1);
+ *                                          // [..., c]  (arg popped, c remains)
+ *   lua_pop(L, 1);                         // [...]     (caller pops c) */
 void some_event_queue_signal(lua_State *L, int obj_ud,
                              uint16_t signal_id, int nargs);
 
@@ -95,7 +110,10 @@ void some_event_queue_global(uint16_t signal_id);
  * capture path to some_event_queue_class() before using one. */
 void some_event_queue_class(struct lua_class_t *class_ptr, uint16_t signal_id);
 
-/* Queue a mouse::move with coalescing (updates existing if same object) */
+/* Queue a mouse::move with coalescing (updates existing if same object).
+ *
+ * Stack: reads the object at `obj_ud`; leaves the caller's stack
+ * unchanged. The caller is responsible for popping the object. */
 void some_event_queue_move(lua_State *L, int obj_ud,
                            int local_x, int local_y);
 
