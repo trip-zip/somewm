@@ -329,6 +329,26 @@ luaA_class_connect_signal_from_stack(lua_State *L, lua_class_t *lua_class,
 {
     luaA_checkfunction(L, ud);
 
+    /* Deprecation shim: client.manage / client.unmanage signals were
+     * removed in somewm 2.0. A handler connected to either will never
+     * fire. Warn loudly so configs migrate to request::manage /
+     * request::unmanage instead of silently breaking. Warns once per
+     * signal per process. Remove in 3.x. */
+    if (lua_class && lua_class->name && A_STREQ(lua_class->name, "client")
+        && (A_STREQ(name, "manage") || A_STREQ(name, "unmanage"))) {
+        static bool warned_manage = false;
+        static bool warned_unmanage = false;
+        bool *flag = A_STREQ(name, "manage")
+                     ? &warned_manage : &warned_unmanage;
+        if (!*flag) {
+            *flag = true;
+            warn("client signal '%s' was removed in somewm 2.0; "
+                 "connect to 'request::%s' instead. Handlers "
+                 "attached to '%s' will NOT fire.",
+                 name, name, name);
+        }
+    }
+
     /* Duplicate the function in the stack */
     lua_pushvalue(L, ud);
 
