@@ -747,6 +747,23 @@ function widget.new(args)
             popup = mypopup,
         }
 
+        function widget_obj.stop_keygrabber(w_self)
+            if not w_self.keygrabber then
+                return
+            end
+
+            local keygrabber_instance = w_self.keygrabber
+            w_self.keygrabber = nil
+            awful.keygrabber.stop(keygrabber_instance)
+        end
+
+        -- Release keyboard grabs even if the popup is hidden externally.
+        mypopup:connect_signal("property::visible", function(w)
+            if not w.visible then
+                widget_obj:stop_keygrabber()
+            end
+        end)
+
         -- Set up the mouse buttons to hide the popup
         -- Any keybinding except what the keygrabber wants wil hide the popup
         -- too
@@ -770,9 +787,7 @@ function widget.new(args)
         end
         function widget_obj.hide(w_self)
             w_self.popup.visible = false
-            if w_self.keygrabber then
-                awful.keygrabber.stop(w_self.keygrabber)
-            end
+            w_self:stop_keygrabber()
         end
 
         return widget_obj
