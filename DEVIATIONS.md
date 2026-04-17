@@ -99,13 +99,36 @@ AwesomeWM marked these as `TODO v6: remove this` upstream. somewm 2.0 follows th
 
 ### Cross-API consistency window
 
-A few Lua modules connect to queued signals to maintain side-table state. The most prominent is `awful.client.focus.history`, which subscribes to the `focus` signal.
+Several Lua modules connect to queued signals to maintain side-table state. Because those signals are now queued, there is a narrow window during which that side state is stale: between the C call that triggers the change and the next `some_refresh()` drain. The window only matters for Lua callbacks that fire from a non-refresh source (timer, D-Bus, IPC, keybinding dispatch, another synchronous signal handler) and read state mutated by a queued handler.
 
-Because `focus` is now queued, there is a narrow window during which that side state is stale: between the C call that triggers the focus change and the next `some_refresh()` drain. The window only matters for Lua callbacks that fire from a non-refresh source (timer, D-Bus, IPC) and read state mutated by a queued handler.
+Within a single drain, queued handlers fire in emission order, so they see consistent state relative to each other. The `refresh` global signal and the layout / banning / stacking pass always run after the drain, so layouts always see fresh state.
 
-Within a single drain everything fires in queue order, so handlers queued together see consistent state. The `refresh` global signal and layout / banning / stacking always run after the drain, so layouts always see fresh state.
+Known APIs that read cross-window-affected state:
 
-If a stale read shows up in practice, wrap it in `gears.timer.delayed_call(...)` to push the read past the next drain.
+| Public API | Driven by | What's stale between C emission and drain |
+|---|---|---|
+| `awful.client.focus.history.get(screen, idx, filter)` | `focus` signal | Most-recent focused client |
+| `awful.client.focus.history.previous()` | `focus` signal | Target client for Alt+Tab-style cycling |
+| `awful.client.urgent.get()` / `urgent.jumpto()` | `property::urgent`, `focus` | Urgent-client stack |
+| `awful.tag.history.restore()` / `tag.history.previous` | `request::select` | Previous-tag list for "back" navigation |
+| `awful.layout.parameters()` | `property::geometry` and siblings | Layout's view of client geometry |
+
+If a stale read shows up in practice, wrap it in `gears.timer.delayed_call(...)` to push the read past the next drain:
+
+```lua
+-- Instead of reading history right after changing focus in a keybinding:
+awful.client.focus.byidx(1)
+local prev = awful.client.focus.history.get(screen, 1)  -- stale
+
+-- Defer the read past the next drain:
+awful.client.focus.byidx(1)
+gears.timer.delayed_call(function()
+    local prev = awful.client.focus.history.get(screen, 1)  -- fresh
+    -- ...
+end)
+```
+
+Widget-layer consumers (`naughty.list`, `awful.widget.tasklist`, `awful.widget.taglist`, `wibox.drawable` repaints, `awful.placement` tracking) already defer via `gears.timer.delayed_call()` in the existing code, so their visual state lines up with the drained signals.
 
 ---
 
