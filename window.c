@@ -117,17 +117,15 @@ struct wl_listener new_xdg_toplevel = {.notify = createnotify};
 struct wl_listener new_xdg_popup = {.notify = createpopup};
 struct wl_listener new_xdg_decoration = {.notify = createdecoration};
 
-extern inline struct wlr_scene_tree * client_surface_get_scene_tree(struct wlr_surface *surface);
-extern inline void client_surface_clear_scene_data(struct wlr_surface *surface, struct wlr_scene_tree *st);
-
 void
-client_scene_node_destroy(Client* c) {
-       if (client_has_surface(c)) {
-               struct wlr_surface *surface = client_surface(c);
-               client_surface_clear_scene_data(surface, c->scene);
-       }
-       wlr_scene_node_destroy(&c->scene->node);
-       c->scene = NULL;
+client_scene_node_destroy(Client *c)
+{
+	if (client_has_surface(c)) {
+		struct wlr_surface *surface = client_surface(c);
+		client_surface_clear_scene_data(surface, c->scene);
+	}
+	wlr_scene_node_destroy(&c->scene->node);
+	c->scene = NULL;
 }
 
 void

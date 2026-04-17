@@ -55,13 +55,13 @@ extern struct wl_listener new_xdg_toplevel;
 extern struct wl_listener new_xdg_popup;
 extern struct wl_listener new_xdg_decoration;
 
-inline struct wlr_scene_tree *
+static inline struct wlr_scene_tree *
 client_surface_get_scene_tree(struct wlr_surface *surface)
 {
 	return surface ? surface->data : NULL;
 }
 
-inline void
+static inline void
 client_surface_clear_scene_data(struct wlr_surface *surface, struct wlr_scene_tree *st)
 {
 	if (surface && surface->data == st)
