@@ -17,6 +17,9 @@
 #include "somewm_api.h"
 #include <stdbool.h>
 #include <wlr/types/wlr_scene.h>
+#ifdef XWAYLAND
+#include <wlr/xwayland.h>
+#endif
 
 /* Flag to mark stack as needing refresh */
 static bool need_stack_refresh = false;
@@ -226,6 +229,19 @@ stack_refresh(void)
 	foreach(node, globalconf.stack) {
 		if (!(*node) || !(*node)->scene)
 			continue;
+
+		/* Unmanaged (override_redirect) X11 clients have no stacking
+		 * attributes (ontop, floating, fullscreen, ...) and must not be
+		 * reparented out of the layer mapnotify() placed them into
+		 * (LyrOverlay). Running them through client_layer_translator()
+		 * returns WINDOW_LAYER_NORMAL (LyrTile) by default, which
+		 * drops Wine/Steam/Qt popups below their floating parents.
+		 * Inlined check (client.h has cross-file dependencies). */
+#ifdef XWAYLAND
+		if ((*node)->client_type == X11 &&
+		    (*node)->surface.xwayland->override_redirect)
+			continue;
+#endif
 
 		layer = client_layer_translator(*node);
 
