@@ -2053,7 +2053,7 @@ luaA_awesome_index(lua_State *L)
 	}
 
 	if (A_STREQ(key, "idle_inhibited")) {
-		lua_pushboolean(L, some_is_idle_inhibited(NULL) || lua_idle_inhibited);
+		lua_pushboolean(L, some_is_idle_inhibited() || lua_idle_inhibited);
 		return 1;
 	}
 
@@ -2125,7 +2125,7 @@ luaA_awesome_newindex(lua_State *L)
 
 	if (A_STREQ(key, "idle_inhibit")) {
 		lua_idle_inhibited = lua_toboolean(L, 3);
-		some_recompute_idle_inhibit(NULL);
+		some_recompute_idle_inhibit();
 		return 0;
 	}
 
@@ -5368,7 +5368,7 @@ luaA_cleanup(void)
 		/* Clean up lock/idle state before closing Lua */
 		luaA_awesome_clear_all_idle_timeouts(globalconf_L);
 		lua_idle_inhibited = false;
-		some_recompute_idle_inhibit(NULL);
+		some_recompute_idle_inhibit();
 		luaA_awesome_clear_lock_surface(globalconf_L);
 		luaA_awesome_clear_lock_covers(globalconf_L);
 
