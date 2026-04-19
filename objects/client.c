@@ -3012,6 +3012,14 @@ client_set_maximized_common(lua_State *L, int cidx, bool s, const char* type, co
             luaA_object_emit_signal(L, abs_cidx, "property::maximized", 0);
             if(c->toplevel_handle)
                 wlr_foreign_toplevel_handle_v1_set_maximized(c->toplevel_handle, c->maximized);
+            /* Inform the xdg-shell client of its new maximized state.
+             * Without this, CSD buttons in Gtk/Qt apps render stale state
+             * when maximize is toggled via Lua (c.maximized = true) or via
+             * the foreign-toplevel protocol (wibar tasklist click). The xdg
+             * protocol path calls this directly in the request handler to
+             * also cover redundant requests where next==current. */
+            if(c->client_type == XDGShell && c->surface.xdg && c->surface.xdg->initialized)
+                wlr_xdg_toplevel_set_maximized(c->surface.xdg->toplevel, c->maximized);
         }
 
         stack_windows();
