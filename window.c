@@ -248,7 +248,19 @@ initialcommitnotify(struct wl_listener *listener, void *data)
 	}
 
 	wlr_xdg_toplevel_set_wm_capabilities(c->surface.xdg->toplevel,
-			WLR_XDG_TOPLEVEL_WM_CAPABILITIES_FULLSCREEN);
+			WLR_XDG_TOPLEVEL_WM_CAPABILITIES_FULLSCREEN |
+			WLR_XDG_TOPLEVEL_WM_CAPABILITIES_MAXIMIZE |
+			WLR_XDG_TOPLEVEL_WM_CAPABILITIES_MINIMIZE);
+
+	/* Honor state requests that arrived before the initial commit so Gtk/Qt
+	 * clients start maximized when they ask for it (e.g. via
+	 * xdg_toplevel.set_maximized before the first ack_configure). We cannot
+	 * call wlr_xdg_toplevel_set_maximized() in maximizenotify() before the
+	 * surface is initialized, so we fold the pending request into the first
+	 * configure here. Minimize is handled via Lua state only — no xdg reply. */
+	if (c->surface.xdg->toplevel->requested.maximized)
+		wlr_xdg_toplevel_set_maximized(c->surface.xdg->toplevel, true);
+
 	if (c->decoration)
 		requestdecorationmode(&c->set_decoration_mode, c->decoration);
 	/* Send the workarea as a bounds hint and let the client pick its own
@@ -456,6 +468,7 @@ createnotify(struct wl_listener *listener, void *data)
 	LISTEN(&toplevel->events.destroy, &c->destroy, destroynotify);
 	LISTEN(&toplevel->events.request_fullscreen, &c->request_fullscreen, fullscreennotify);
 	LISTEN(&toplevel->events.request_maximize, &c->maximize, maximizenotify);
+	LISTEN(&toplevel->events.request_minimize, &c->minimize, minimizenotify);
 	LISTEN(&toplevel->events.set_title, &c->set_title, updatetitle);
 
 	/* Note: property_register_wayland_listeners() is called in mapnotify() after
@@ -540,6 +553,7 @@ client_remove_all_listeners(client_t *c)
 		wl_list_remove(&c->map.link);
 		wl_list_remove(&c->unmap.link);
 		wl_list_remove(&c->maximize.link);
+		wl_list_remove(&c->minimize.link);
 	}
 	/* Clean up foreign toplevel handle if not already done by unmapnotify */
 	if (c->toplevel_handle) {
@@ -599,6 +613,7 @@ client_reregister_listeners(client_t *c)
 		LISTEN(&toplevel->events.destroy, &c->destroy, destroynotify);
 		LISTEN(&toplevel->events.request_fullscreen, &c->request_fullscreen, fullscreennotify);
 		LISTEN(&toplevel->events.request_maximize, &c->maximize, maximizenotify);
+		LISTEN(&toplevel->events.request_minimize, &c->minimize, minimizenotify);
 		LISTEN(&toplevel->events.set_title, &c->set_title, updatetitle);
 
 		if (c->scene) {
@@ -1198,19 +1213,87 @@ unset_fullscreen:
 void
 maximizenotify(struct wl_listener *listener, void *data)
 {
-	/* This event is raised when a client would like to maximize itself,
-	 * typically because the user clicked on the maximize button on
-	 * client-side decorations. somewm doesn't support maximization, but
-	 * to conform to xdg-shell protocol we still must send a configure.
-	 * Since xdg-shell protocol v5 we should ignore request of unsupported
-	 * capabilities, just schedule a empty configure when the client uses <5
-	 * protocol version
-	 * wlr_xdg_surface_schedule_configure() is used to send an empty reply. */
+	/* Emitted when a client clicks its own CSD maximize button or calls
+	 * xdg_toplevel.{set,unset}_maximized. Routes through the same Lua API
+	 * as the foreign-toplevel protocol path in
+	 * protocols.c:foreign_toplevel_request_maximize, so both entry points
+	 * (CSD button and wibar tasklist) behave identically.
+	 *
+	 * xdg-shell requires a configure after every set_maximized /
+	 * unset_maximized, even when the state is unchanged or the request is
+	 * policy-ignored. We therefore always call wlr_xdg_toplevel_set_maximized()
+	 * (which folds the state into the next configure and schedules one if
+	 * needed) regardless of whether client_set_maximized_common() short-
+	 * circuits on current==next.
+	 *
+	 * Safety ordering: do the protocol reply first (cannot depend on Lua
+	 * availability without violating the protocol), then call into Lua. */
 	Client *c = wl_container_of(listener, c, maximize);
-	if (c->surface.xdg->initialized
-			&& wl_resource_get_version(c->surface.xdg->toplevel->resource)
-					< XDG_TOPLEVEL_WM_CAPABILITIES_SINCE_VERSION)
-		wlr_xdg_surface_schedule_configure(c->surface.xdg);
+	struct wlr_xdg_toplevel *toplevel;
+	bool wants;
+	lua_State *L;
+
+	if (!c->surface.xdg || !c->surface.xdg->toplevel)
+		return;
+	toplevel = c->surface.xdg->toplevel;
+	wants = toplevel->requested.maximized;
+
+	/* xdg-shell: set_maximized while fullscreen has no direct effect
+	 * (see xdg-shell.xml:1049). Keep our fullscreen/maximized mutual
+	 * exclusion and just ack the request with the current state. */
+	if (c->fullscreen) {
+		if (c->surface.xdg->initialized)
+			wlr_xdg_toplevel_set_maximized(toplevel, c->maximized);
+		return;
+	}
+
+	/* Protocol configure, independent of Lua — fires even for redundant
+	 * requests (current==next) that client_set_maximized_common skips. */
+	if (c->surface.xdg->initialized)
+		wlr_xdg_toplevel_set_maximized(toplevel, wants);
+
+	/* Update Awesome-side state (floating/tiled transition + Lua signals).
+	 * client_set_maximized_common also re-sends set_maximized on state
+	 * change, but that is idempotent with the call above. */
+	L = globalconf_get_lua_State();
+	if (!L)
+		return;
+	luaA_object_push(L, c);
+	client_set_maximized(L, -1, wants);
+	lua_pop(L, 1);
+}
+
+void
+minimizenotify(struct wl_listener *listener, void *data)
+{
+	/* Emitted when a client clicks its own CSD minimize button or calls
+	 * xdg_toplevel.set_minimized. Unlike maximize, xdg-shell has no
+	 * unset_minimized — the request is always "minimize me" (xdg-shell.xml:
+	 * 1132). Unminimize happens via Lua: wibar tasklist click
+	 * (rc.lua: c:activate { action="toggle_minimization" }) or the
+	 * Super+Ctrl+n keybind.
+	 *
+	 * The xdg protocol does not require a configure reply for minimize,
+	 * so unlike maximize we don't need to guarantee a wlroots call. We
+	 * just route the event through to Lua. */
+	Client *c = wl_container_of(listener, c, minimize);
+	lua_State *L;
+
+	if (!c->surface.xdg || !c->surface.xdg->toplevel)
+		return;
+	/* client_set_minimized calls wlr_xdg_toplevel_set_suspended which
+	 * needs an initialized surface. Pre-initial requests are vanishingly
+	 * rare for CSD button clicks (surface is already mapped), but guard
+	 * anyway — the banning flag isn't meaningful before map either. */
+	if (!c->surface.xdg->initialized)
+		return;
+
+	L = globalconf_get_lua_State();
+	if (!L)
+		return;
+	luaA_object_push(L, c);
+	client_set_minimized(L, -1, true);
+	lua_pop(L, 1);
 }
 
 void

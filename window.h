@@ -31,6 +31,7 @@ void unmapnotify(struct wl_listener *listener, void *data);
 void destroynotify(struct wl_listener *listener, void *data);
 void updatetitle(struct wl_listener *listener, void *data);
 void maximizenotify(struct wl_listener *listener, void *data);
+void minimizenotify(struct wl_listener *listener, void *data);
 void fullscreennotify(struct wl_listener *listener, void *data);
 
 /* Geometry */

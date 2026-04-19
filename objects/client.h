@@ -169,6 +169,7 @@ struct client_t
     struct wl_listener commit;         /* For subsequent commits after scene surface exists */
     struct wl_listener map;
     struct wl_listener maximize;
+    struct wl_listener minimize;
     struct wl_listener unmap;
     struct wl_listener destroy;
     struct wl_listener set_title;
