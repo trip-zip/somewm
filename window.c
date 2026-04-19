@@ -1215,22 +1215,28 @@ maximizenotify(struct wl_listener *listener, void *data)
 {
 	/* Emitted when a client clicks its own CSD maximize button or calls
 	 * xdg_toplevel.{set,unset}_maximized. Routes through the same Lua API
-	 * as the foreign-toplevel protocol path in
-	 * protocols.c:foreign_toplevel_request_maximize, so both entry points
-	 * (CSD button and wibar tasklist) behave identically.
+	 * as protocols.c:foreign_toplevel_request_maximize, so both entry
+	 * points (CSD button + wibar tasklist) behave identically.
 	 *
-	 * xdg-shell requires a configure after every set_maximized /
-	 * unset_maximized, even when the state is unchanged or the request is
-	 * policy-ignored. We therefore always call wlr_xdg_toplevel_set_maximized()
-	 * (which folds the state into the next configure and schedules one if
-	 * needed) regardless of whether client_set_maximized_common() short-
-	 * circuits on current==next.
+	 * Ordering matters: we MUST let Lua apply the maximized geometry
+	 * (awful arrangers resize c to the full screen rect) BEFORE we ack
+	 * the xdg maximize state. If we send set_maximized(true) first, the
+	 * next configure carries maximized=true at the OLD floating size;
+	 * Firefox/GTK computes its CSD hit regions against that stale size
+	 * and — especially after a suspend/resume cycle — can end up treating
+	 * the next pointer press as a resize drag. Letting Lua arrange first
+	 * means the only configure the client sees is
+	 * (maximized=true, full-screen size) in one coherent message.
 	 *
-	 * Safety ordering: do the protocol reply first (cannot depend on Lua
-	 * availability without violating the protocol), then call into Lua. */
+	 * Protocol compliance: xdg-shell requires a configure after every
+	 * set_maximized / unset_maximized, even for redundant or policy-
+	 * ignored requests. client_set_maximized_common() emits one via
+	 * wlr_xdg_toplevel_set_maximized when the state actually changes;
+	 * if Lua short-circuits (already in the requested state), we emit a
+	 * trailing redundant-ack below. */
 	Client *c = wl_container_of(listener, c, maximize);
 	struct wlr_xdg_toplevel *toplevel;
-	bool wants;
+	bool wants, before;
 	lua_State *L;
 
 	if (!c->surface.xdg || !c->surface.xdg->toplevel)
@@ -1247,20 +1253,24 @@ maximizenotify(struct wl_listener *listener, void *data)
 		return;
 	}
 
-	/* Protocol configure, independent of Lua — fires even for redundant
-	 * requests (current==next) that client_set_maximized_common skips. */
-	if (c->surface.xdg->initialized)
-		wlr_xdg_toplevel_set_maximized(toplevel, wants);
-
-	/* Update Awesome-side state (floating/tiled transition + Lua signals).
-	 * client_set_maximized_common also re-sends set_maximized on state
-	 * change, but that is idempotent with the call above. */
 	L = globalconf_get_lua_State();
-	if (!L)
+	if (!L) {
+		/* No Lua VM — still owe the client a configure. */
+		if (c->surface.xdg->initialized)
+			wlr_xdg_toplevel_set_maximized(toplevel, wants);
 		return;
+	}
+
+	before = c->maximized;
 	luaA_object_push(L, c);
 	client_set_maximized(L, -1, wants);
 	lua_pop(L, 1);
+
+	/* Redundant request ack: Lua short-circuited because we were already
+	 * in the requested state, so client_set_maximized_common didn't fire
+	 * its own set_maximized. xdg-shell still requires a configure. */
+	if (c->surface.xdg->initialized && before == c->maximized)
+		wlr_xdg_toplevel_set_maximized(toplevel, c->maximized);
 }
 
 void
