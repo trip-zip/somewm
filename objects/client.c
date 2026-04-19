@@ -2829,27 +2829,17 @@ client_set_minimized(lua_State *L, int cidx, bool s)
         if(c->scene)
             wlr_scene_node_set_enabled(&c->scene->node, !s);
 
-        /* Wayland: Sync suspended state with minimized state.
-         * The C arrange() also sets this, but runs asynchronously via
-         * timer.delayed_call. Set it immediately so the client can start
-         * rendering at the new size before the deferred arrange fires. */
-        if(c->client_type == XDGShell) {
-            wlr_xdg_toplevel_set_suspended(c->surface.xdg->toplevel, s);
-
-            /* On restore (s == false), force a fresh configure so the
-             * client resumes with the compositor's current maximized
-             * state + geometry. Without this, Firefox/GTK CSD can wake
-             * from suspended with stale hit regions and turn the next
-             * titlebar click into an xdg_toplevel.resize request — see
-             * log: after wibar unminimize the subsequent max-button
-             * click triggers mousegrabber_run + top_left_corner. */
-            if(!s && c->surface.xdg->initialized && c->scene
-                    && c->surface.xdg->surface
-                    && c->surface.xdg->surface->mapped) {
-                wlr_xdg_toplevel_set_maximized(c->surface.xdg->toplevel, c->maximized);
-                apply_geometry_to_wlroots(c);
-            }
-        }
+        /* NOTE: xdg-shell state (suspended, maximized, size) is NOT driven
+         * from here. The property::minimized signal below triggers
+         * awful.layout.arrange() → window.c arrange() which calls
+         * client_set_suspended(c, !client_isvisible(c)). wlroots batches
+         * the pending toplevel state (size, maximized, activated, suspended)
+         * into a single coherent configure, matching KWin's pattern
+         * (xdgshellwindow.cpp:873 doSetActive → scheduleConfigure). Earlier
+         * versions called set_suspended + set_maximized + apply_geometry
+         * here directly, which fired three separate events at different
+         * layers and left Firefox/Chrome CSD with stale hit regions after
+         * restore-from-minimize. */
 
         if(c->toplevel_handle)
             wlr_foreign_toplevel_handle_v1_set_minimized(c->toplevel_handle, s);
