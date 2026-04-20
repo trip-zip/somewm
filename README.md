@@ -58,6 +58,7 @@ Full documentation at **[somewm.org](https://somewm.org)**:
 
 - [Getting Started](https://somewm.org/docs/getting-started/installation) - Installation, first launch, migration
 - [Tutorials](https://somewm.org/docs/tutorials/basics) - Keybindings, widgets, themes
+- [Wayland Protocols](https://somewm.org/docs/reference/wayland-protocols) - Protocols somewm advertises to clients
 - [Troubleshooting](https://somewm.org/docs/troubleshooting) - Common issues and solutions
 
 ## Contributing
