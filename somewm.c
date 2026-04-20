@@ -598,7 +598,7 @@ fallback:
 		c && c->fullscreen);
 
 	motionnotify(0, NULL, 0, 0, 0, 0);
-	some_recompute_idle_inhibit(NULL);
+	some_recompute_idle_inhibit();
 }
 
 void
@@ -1185,14 +1185,15 @@ buttonpress(struct wl_listener *listener, void *data)
 }
 
 void
-some_recompute_idle_inhibit(struct wlr_surface *exclude)
+some_recompute_idle_inhibit()
 {
-	bool inhibited = some_is_idle_inhibited(exclude) || some_is_lua_idle_inhibited();
+	bool inhibited = some_is_idle_inhibited() || some_is_lua_idle_inhibited();
 	wlr_idle_notifier_v1_set_inhibited(idle_notifier, inhibited);
 	some_idle_timers_set_inhibit(inhibited);
 
 	if (inhibited != last_idle_inhibited) {
 		last_idle_inhibited = inhibited;
+		// Note that this will cause a call to some_is_idle_inhibited() in luaa.
 		luaA_emit_signal_global("property::idle_inhibited");
 	}
 }
@@ -1689,7 +1690,7 @@ createidleinhibitor(struct wl_listener *listener, void *data)
 	struct wlr_idle_inhibitor_v1 *idle_inhibitor = data;
 	LISTEN_STATIC(&idle_inhibitor->events.destroy, destroyidleinhibitor);
 
-	some_recompute_idle_inhibit(NULL);
+	some_recompute_idle_inhibit();
 }
 
 void
@@ -2329,9 +2330,7 @@ destroydragicon(struct wl_listener *listener, void *data)
 void
 destroyidleinhibitor(struct wl_listener *listener, void *data)
 {
-	/* `data` is the wlr_surface of the idle inhibitor being destroyed,
-	 * at this point the idle inhibitor is still in the list of the manager */
-	some_recompute_idle_inhibit(wlr_surface_get_root_surface(data));
+	some_recompute_idle_inhibit();
 
 	wl_list_remove(&listener->link);
 	free(listener);
@@ -2546,7 +2545,7 @@ client_scene_node_destroy(Client* c) {
 
 /** Check if idle is effectively inhibited (for Lua API and idle timers). */
 bool
-some_is_idle_inhibited(struct wlr_surface *exclude)
+some_is_idle_inhibited()
 {
 	int unused_lx, unused_ly;
 	struct wlr_idle_inhibitor_v1 *inhibitor;
@@ -2555,13 +2554,21 @@ some_is_idle_inhibited(struct wlr_surface *exclude)
 		return false;
 
 	wl_list_for_each(inhibitor, &idle_inhibit_mgr->inhibitors, link) {
+
+		// Attention: When some_is_idle_inhibited() is called during
+		// destroyidleinhibitor() signal handler then
+		// idle_inhibit_mgr->inhibitors still contains the respective
+		// inhibitor, however, the below scene tree is already teared down and
+		// wlr_scene_node_coords() cannot be called.
+		if (!inhibitor->surface->mapped)
+			continue;
+
 		struct wlr_surface *surface = wlr_surface_get_root_surface(inhibitor->surface);
 		struct wlr_scene_tree *tree = surface_scene_tree_from_data(surface);
 
-		if (exclude != surface && (globalconf.appearance.bypass_surface_visibility || (!tree
-				|| wlr_scene_node_coords(&tree->node, &unused_lx, &unused_ly)))) {
+		if (globalconf.appearance.bypass_surface_visibility || !tree ||
+				wlr_scene_node_coords(&tree->node, &unused_lx, &unused_ly))
 			return true;
-		}
 	}
 
 	return false;
