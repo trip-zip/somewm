@@ -1603,8 +1603,22 @@ resize(Client *c, struct wlr_box geo, int interact)
 void
 setfullscreen(Client *c, int fullscreen)
 {
+	int was_fullscreen = c->fullscreen;
+
 	c->fullscreen = fullscreen;
 	if (!c->mon || !client_surface(c)->mapped)
+		return;
+
+	/* Same-value non-fullscreen transition is a no-op. Without this early
+	 * return, the exit branch below runs resize(c, c->prev, 0), which for
+	 * a client that has never been fullscreen restores to a stale memento
+	 * (e.g. the 254x306 initial-configure rect GTK CSD clients ship with
+	 * before placement rules run) — the visible bug is Firefox/Chrome
+	 * snapping to a tiny corner after any idempotent unfullscreen notify.
+	 * The FS → FS path is intentionally allowed to fall through: setmon()
+	 * re-invokes setfullscreen(c, c->fullscreen) after a monitor move to
+	 * re-expand the client onto the new workarea. */
+	if (!fullscreen && !was_fullscreen)
 		return;
 
 	/* Fullscreen is mutually exclusive with maximized states */
@@ -1622,7 +1636,14 @@ setfullscreen(Client *c, int fullscreen)
 	wlr_scene_node_reparent(&c->scene->node, layers[c->fullscreen ? LyrFS : LyrTile]);
 
 	if (fullscreen) {
-		c->prev = c->geometry;
+		/* Only capture pre-fullscreen geometry on the non-FS → FS
+		 * transition. Redundant enter-FS calls (setmon() re-applies
+		 * setfullscreen(c, c->fullscreen) after a monitor move, and
+		 * xdg-shell fullscreennotify() can fire while already fullscreen)
+		 * would otherwise overwrite c->prev with the current fullscreen
+		 * rect — losing the original restore point. */
+		if (!was_fullscreen)
+			c->prev = c->geometry;
 		resize(c, c->mon->m, 0);
 	} else {
 		/* restore previous size instead of arrange for floating windows since
@@ -1664,7 +1685,14 @@ setmon(Client *c, Monitor *m, uint32_t newtags)
 	old_screen = c->screen;  /* Capture before update */
 
 	c->mon = m;
-	c->prev = c->geometry;
+	/* NOTE: do not write c->prev here. c->prev is a restore-memento owned
+	 * by setfullscreen() (and, for future maximize work, by the maximize
+	 * transition). Monitor assignment must not touch it — at map time
+	 * c->geometry still holds the initial-configure rect (e.g. GTK CSD
+	 * clients arrive with 254x306 before placement rules run), so writing
+	 * c->prev = c->geometry here poisons the memento with a stub rect and
+	 * the next same-value setfullscreen(c, 0) restores to it. Restore
+	 * points belong to their owning transition, not to setmon. */
 
 	/* Update c->screen to match c->mon for Lua property access */
 	c->screen = luaA_screen_get_by_monitor(L, m);
