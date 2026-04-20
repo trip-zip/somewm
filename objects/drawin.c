@@ -77,6 +77,21 @@ drawin_get_effective_scale(drawin_t *d)
 	return 1.0f;
 }
 
+/* Read one pixel from a CAIRO_FORMAT_A1 surface row. Cairo packs A1
+ * into native-endian 32-bit words; on little-endian the leftmost
+ * pixel is bit (x & 31) of word (x >> 5). Caller ensures bounds. */
+static inline int
+cairo_a1_get(const unsigned char *data, int stride, int x, int y)
+{
+	const uint32_t *row = (const uint32_t *)(data + y * stride);
+	uint32_t word = row[x >> 5];
+#if defined(__BYTE_ORDER__) && __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
+	return (word >> (31 - (x & 31))) & 1u;
+#else
+	return (word >> (x & 31)) & 1u;
+#endif
+}
+
 /* ========================================================================
  * Border Buffer Implementation (for shaped borders)
  * ========================================================================
@@ -406,9 +421,9 @@ drawin_emit_signal(lua_State *L, int obj_idx, const char *name, int nargs)
  * This updates the scene graph buffer with new Cairo-rendered content
  */
 /** Apply shape_bounding mask to a drawable surface.
- * Creates a copy of the surface with alpha zeroed where shape is 0.
- * Returns a new cairo_surface_t that the caller must destroy.
- * Returns NULL if no shape or allocation fails.
+ * Creates a copy of the surface with RGBA zeroed where the A1 shape
+ * bit is 0. Returns a new cairo_surface_t that the caller must
+ * destroy. Returns NULL if no shape or allocation fails.
  */
 static cairo_surface_t *
 drawin_apply_shape_mask(drawable_t *d, cairo_surface_t *shape)
@@ -427,6 +442,11 @@ drawin_apply_shape_mask(drawable_t *d, cairo_surface_t *shape)
 	    cairo_surface_status(shape) != CAIRO_STATUS_SUCCESS)
 		return NULL;
 
+	/* Shape surfaces must be A1, matching AwesomeWM. A format mismatch
+	 * would read past the buffer: A1 is ~32x smaller than ARGB32. */
+	if (cairo_image_surface_get_format(shape) != CAIRO_FORMAT_A1)
+		return NULL;
+
 	src = d->surface;
 	cairo_surface_flush(src);
 	cairo_surface_flush(shape);
@@ -436,7 +456,6 @@ drawin_apply_shape_mask(drawable_t *d, cairo_surface_t *shape)
 	shape_width = cairo_image_surface_get_width(shape);
 	shape_height = cairo_image_surface_get_height(shape);
 
-	/* Create a copy of the surface */
 	dst = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, width, height);
 	if (cairo_surface_status(dst) != CAIRO_STATUS_SUCCESS) {
 		cairo_surface_destroy(dst);
@@ -457,54 +476,22 @@ drawin_apply_shape_mask(drawable_t *d, cairo_surface_t *shape)
 	dst_stride = cairo_image_surface_get_stride(dst);
 	shape_stride = cairo_image_surface_get_stride(shape);
 
-	/* Copy pixels, applying shape alpha mask.
-	 * Shape surface is ARGB32 with anti-aliased edges.
-	 * Note: The shape surface may be at logical scale while the source
-	 * surface is at physical (HiDPI) scale. We need to scale coordinates
-	 * when looking up shape alpha. */
+	/* Shape may be at logical scale while the source is at physical
+	 * (HiDPI) scale; map coordinates. Pixels outside the shape are
+	 * treated as transparent. */
 	for (y = 0; y < height; y++) {
 		uint32_t *src_row = (uint32_t *)(src_data + y * src_stride);
 		uint32_t *dst_row = (uint32_t *)(dst_data + y * dst_stride);
 
-		/* Map physical y to logical shape y */
 		int shape_y = (shape_height > 0) ? (y * shape_height / height) : 0;
+		int row_in_bounds = (shape_y < shape_height);
 
 		for (x = 0; x < width; x++) {
-			uint8_t shape_alpha = 0;
-
-			/* Map physical x to logical shape x */
 			int shape_x = (shape_width > 0) ? (x * shape_width / width) : 0;
+			int inside = row_in_bounds && (shape_x < shape_width)
+				&& cairo_a1_get(shape_data, shape_stride, shape_x, shape_y);
 
-			/* Check if this pixel is within shape bounds */
-			if (shape_x < shape_width && shape_y < shape_height) {
-				/* ARGB32 format: 4 bytes per pixel, alpha is byte 3 (on little-endian) */
-				int pixel_offset = (shape_y * shape_stride) + (shape_x * 4);
-				shape_alpha = shape_data[pixel_offset + 3];
-			}
-			/* Outside shape bounds = alpha 0 (transparent) */
-
-			if (shape_alpha == 255) {
-				/* Fully opaque - copy directly */
-				dst_row[x] = src_row[x];
-			} else if (shape_alpha == 0) {
-				/* Fully transparent */
-				dst_row[x] = 0;
-			} else {
-				/* Partial alpha - blend (premultiplied alpha) */
-				uint32_t pixel = src_row[x];
-				uint8_t b = (pixel >> 0) & 0xFF;
-				uint8_t g = (pixel >> 8) & 0xFF;
-				uint8_t r = (pixel >> 16) & 0xFF;
-				uint8_t a = (pixel >> 24) & 0xFF;
-
-				/* Multiply all channels by shape_alpha/255 */
-				b = (b * shape_alpha) / 255;
-				g = (g * shape_alpha) / 255;
-				r = (r * shape_alpha) / 255;
-				a = (a * shape_alpha) / 255;
-
-				dst_row[x] = (a << 24) | (r << 16) | (g << 8) | b;
-			}
+			dst_row[x] = inside ? src_row[x] : 0u;
 		}
 	}
 
@@ -513,9 +500,9 @@ drawin_apply_shape_mask(drawable_t *d, cairo_surface_t *shape)
 }
 
 /** Apply shape mask to a cairo surface (exported for screenshot support).
- * Returns a new cairo_surface_t with alpha applied from ARGB32 shape mask.
- * Caller must destroy the returned surface.
- * Returns NULL if no shape or allocation fails.
+ * Returns a new cairo_surface_t with RGBA zeroed where the A1 shape
+ * bit is 0. Caller must destroy the returned surface. Returns NULL if
+ * no shape, the shape is not A1, or allocation fails.
  */
 cairo_surface_t *
 drawin_apply_shape_mask_for_screenshot(cairo_surface_t *src, cairo_surface_t *shape)
@@ -531,6 +518,9 @@ drawin_apply_shape_mask_for_screenshot(cairo_surface_t *src, cairo_surface_t *sh
 
 	if (cairo_surface_status(src) != CAIRO_STATUS_SUCCESS ||
 	    cairo_surface_status(shape) != CAIRO_STATUS_SUCCESS)
+		return NULL;
+
+	if (cairo_image_surface_get_format(shape) != CAIRO_FORMAT_A1)
 		return NULL;
 
 	cairo_surface_flush(src);
@@ -560,45 +550,19 @@ drawin_apply_shape_mask_for_screenshot(cairo_surface_t *src, cairo_surface_t *sh
 	dst_stride = cairo_image_surface_get_stride(dst);
 	shape_stride = cairo_image_surface_get_stride(shape);
 
-	/* Copy pixels, applying shape alpha mask.
-	 * Shape surface is ARGB32 with anti-aliased edges.
-	 * Note: Cairo uses premultiplied alpha, so when alpha=0, RGB must also be 0. */
 	for (y = 0; y < height; y++) {
 		uint32_t *src_row = (uint32_t *)(src_data + y * src_stride);
 		uint32_t *dst_row = (uint32_t *)(dst_data + y * dst_stride);
 
 		int shape_y = (shape_height > 0) ? (y * shape_height / height) : 0;
+		int row_in_bounds = (shape_y < shape_height);
 
 		for (x = 0; x < width; x++) {
-			uint8_t shape_alpha = 0;
-
 			int shape_x = (shape_width > 0) ? (x * shape_width / width) : 0;
+			int inside = row_in_bounds && (shape_x < shape_width)
+				&& cairo_a1_get(shape_data, shape_stride, shape_x, shape_y);
 
-			if (shape_x < shape_width && shape_y < shape_height) {
-				/* ARGB32 format: 4 bytes per pixel, alpha is byte 3 */
-				int pixel_offset = (shape_y * shape_stride) + (shape_x * 4);
-				shape_alpha = shape_data[pixel_offset + 3];
-			}
-
-			if (shape_alpha == 255) {
-				dst_row[x] = src_row[x];
-			} else if (shape_alpha == 0) {
-				dst_row[x] = 0;
-			} else {
-				/* Partial alpha - blend (premultiplied alpha) */
-				uint32_t pixel = src_row[x];
-				uint8_t b = (pixel >> 0) & 0xFF;
-				uint8_t g = (pixel >> 8) & 0xFF;
-				uint8_t r = (pixel >> 16) & 0xFF;
-				uint8_t a = (pixel >> 24) & 0xFF;
-
-				b = (b * shape_alpha) / 255;
-				g = (g * shape_alpha) / 255;
-				r = (r * shape_alpha) / 255;
-				a = (a * shape_alpha) / 255;
-
-				dst_row[x] = (a << 24) | (r << 16) | (g << 8) | b;
-			}
+			dst_row[x] = inside ? src_row[x] : 0u;
 		}
 	}
 
