@@ -135,14 +135,13 @@ function wibox:_apply_shape()
     local s = self:get_screen()
     local scale = s and s.scale or 1
 
-    -- First handle the bounding shape (things including the border)
-    -- Scale surface dimensions for HiDPI, use cr:scale() so Cairo draws in logical coords
-    -- Use ARGB32 instead of A1 for anti-aliased edges on curved shapes
+    -- First handle the bounding shape (things including the border).
+    -- Matches AwesomeWM: A1 1-bit mask. HiDPI scaling is applied via
+    -- cr:scale() so Cairo rasterises the mask in logical coordinates.
     local scaled_total_w = math.ceil(total_w * scale)
     local scaled_total_h = math.ceil(total_h * scale)
-    local img = cairo.ImageSurface(cairo.Format.ARGB32, scaled_total_w, scaled_total_h)
+    local img = cairo.ImageSurface(cairo.Format.A1, scaled_total_w, scaled_total_h)
     local cr = cairo.Context(img)
-    cr:set_antialias(cairo.Antialias.BEST)
     cr:scale(scale, scale)
 
     -- We just draw the shape in its full size (logical coordinates)
@@ -158,13 +157,12 @@ function wibox:_apply_shape()
     -- so the surface must stay alive. Store reference to prevent GC.
     self._shape_bounding_surface = img
 
-    -- Now handle the clip shape (things excluding the border)
-    -- Use ARGB32 instead of A1 for anti-aliased edges on curved shapes
+    -- Now handle the clip shape (things excluding the border). A1
+    -- matches AwesomeWM; HiDPI oversampling is via cr:scale().
     local scaled_w = math.ceil(geo.width * scale)
     local scaled_h = math.ceil(geo.height * scale)
-    img = cairo.ImageSurface(cairo.Format.ARGB32, scaled_w, scaled_h)
+    img = cairo.ImageSurface(cairo.Format.A1, scaled_w, scaled_h)
     cr = cairo.Context(img)
-    cr:set_antialias(cairo.Antialias.BEST)
     cr:scale(scale, scale)
 
     -- We give the shape the same arguments as for the bounding shape and draw
