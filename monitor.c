@@ -204,6 +204,18 @@ createmon(struct wl_listener *listener, void *data)
 	struct wlr_output_state state;
 	Monitor *m;
 
+	if (wlr_output->data) {
+		wlr_log(WLR_ERROR, "[HOTPLUG] createmon duplicate ignored: %s already has monitor data",
+			wlr_output->name);
+		return;
+	}
+
+	if (wlr_output_layout_get(output_layout, wlr_output)) {
+		wlr_log(WLR_ERROR, "[HOTPLUG] createmon duplicate ignored: %s already in layout",
+			wlr_output->name);
+		return;
+	}
+
 	if (!wlr_output_init_render(wlr_output, alloc, drw))
 		return;
 
