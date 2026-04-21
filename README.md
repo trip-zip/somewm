@@ -32,7 +32,7 @@ make
 sudo make install
 ```
 
-For Debian, Fedora, NixOS, and detailed instructions, see the [Installation Guide](https://somewm.org/docs/getting-started/installation).
+For Debian, Fedora, NixOS, and detailed instructions, see the [Installation Guide](https://somewm.org/getting-started/installation).
 
 ## Run
 
@@ -50,16 +50,16 @@ Validate your config before switching:
 somewm --check
 ```
 
-See [First Launch](https://somewm.org/docs/getting-started/first-launch) for configuration and migrating from AwesomeWM.
+See [First Launch](https://somewm.org/getting-started/first-launch) for configuration and migrating from AwesomeWM.
 
 ## Documentation
 
 Full documentation at **[somewm.org](https://somewm.org)**:
 
-- [Getting Started](https://somewm.org/docs/getting-started/installation) - Installation, first launch, migration
-- [Tutorials](https://somewm.org/docs/tutorials/basics) - Keybindings, widgets, themes
-- [Wayland Protocols](https://somewm.org/docs/reference/wayland-protocols) - Protocols somewm advertises to clients
-- [Troubleshooting](https://somewm.org/docs/troubleshooting) - Common issues and solutions
+- [Getting Started](https://somewm.org/getting-started/installation) - Installation, first launch, migration
+- [Tutorials](https://somewm.org/tutorials/basics) - Keybindings, widgets, themes
+- [Wayland Protocols](https://somewm.org/reference/wayland-protocols) - Protocols somewm advertises to clients
+- [Troubleshooting](https://somewm.org/troubleshooting) - Common issues and solutions
 
 ## Contributing
 
