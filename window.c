@@ -1205,6 +1205,46 @@ requestdecorationmode(struct wl_listener *listener, void *data)
 				WLR_XDG_TOPLEVEL_DECORATION_V1_MODE_SERVER_SIDE);
 }
 
+/* Query whether the client's current layout intentionally positions
+ * tiled clients outside the monitor's bounds and therefore relies on
+ * the surface being clipped to the monitor to keep offscreen tiles
+ * from leaking onto adjacent physical monitors. Currently only the
+ * carousel layout has this semantic; most layouts keep clients within
+ * their workarea, and floating/user-driven positioning must render
+ * across monitor boundaries (e.g. during a cross-monitor drag). */
+static bool
+client_layout_clips_offscreen(Client *c)
+{
+	lua_State *L = globalconf_get_lua_State();
+	bool result = false;
+
+	if (!L)
+		return false;
+
+	luaA_object_push(L, c);
+	if (!lua_isuserdata(L, -1)) {
+		lua_pop(L, 1);
+		return false;
+	}
+	lua_getfield(L, -1, "first_tag");
+	if (lua_isuserdata(L, -1)) {
+		lua_getfield(L, -1, "layout");
+		if (lua_istable(L, -1)) {
+			lua_getfield(L, -1, "name");
+			if (lua_isstring(L, -1)) {
+				const char *name = lua_tostring(L, -1);
+				result = strcmp(name, "carousel") == 0
+					|| strcmp(name, "carousel.vertical") == 0;
+			}
+			lua_pop(L, 1);
+		}
+		lua_pop(L, 1);
+	}
+	lua_pop(L, 2);
+
+	return result;
+}
+
 /* Apply geometry to wlroots scene graph - Wayland-specific rendering layer.
  * This function ONLY updates wlroots; it does NOT modify c->geometry or emit signals.
  * Called by resize() for interactive resize and client_resize_do() for Lua-initiated resize.
@@ -1286,6 +1326,18 @@ apply_geometry_to_wlroots(Client *c)
 	}
 	client_get_clip(c, &clip);
 
+	/* Clip the surface to its assigned monitor only for layouts that
+	 * intentionally position tiled clients offscreen (carousel). For
+	 * floating or unmanaged clients (user-authoritative geometry) and
+	 * for layouts that keep clients within their workarea, skip the
+	 * clamp so the scene graph can render the surface on whichever
+	 * outputs it overlaps, e.g. during a cross-monitor drag where
+	 * c->mon stays on the source monitor until the pointer crosses. */
+	bool clamp_to_mon = c->mon
+		&& !client_is_unmanaged(c)
+		&& !some_client_get_floating(c)
+		&& client_layout_clips_offscreen(c);
+
 	/* Clip client content to its assigned monitor bounds so offscreen
 	 * clients (e.g. carousel scrolling layout) don't render on adjacent
 	 * monitors. For fully-inside clients this is just a bounds check.
@@ -1293,7 +1345,7 @@ apply_geometry_to_wlroots(Client *c)
 	 * We toggle individual child scene nodes (surface, borders, shadow,
 	 * titlebars) rather than c->scene->node which the banning system
 	 * controls. */
-	if (c->mon) {
+	if (clamp_to_mon) {
 		struct wlr_box mon = c->mon->m;
 		bool fully_inside =
 			c->geometry.x >= mon.x &&
@@ -1351,6 +1403,18 @@ apply_geometry_to_wlroots(Client *c)
 				}
 			}
 		}
+	} else {
+		/* Not under a clip-offscreen layout: let the scene graph render
+		 * the surface on whichever outputs its geometry intersects.
+		 * Mirror the fully_inside branch so a transition out of a
+		 * clip-offscreen layout recovers nodes that were previously
+		 * disabled. Titlebars stay idempotently managed by
+		 * client_update_titlebar_positions() above. */
+		wlr_scene_node_set_enabled(&c->scene_surface->node, true);
+		for (int i = 0; i < 4; i++)
+			wlr_scene_node_set_enabled(&c->border[i]->node, true);
+		if (c->shadow.tree)
+			wlr_scene_node_set_enabled(&c->shadow.tree->node, true);
 	}
 
 	wlr_scene_subsurface_tree_set_clip(&c->scene_surface->node, &clip);
