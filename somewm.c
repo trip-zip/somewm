@@ -4737,8 +4737,10 @@ apply_geometry_to_wlroots(Client *c)
 			if (c->shadow.tree)
 				wlr_scene_node_set_enabled(&c->shadow.tree->node, true);
 		} else {
-			/* Client extends past monitor: clip surface, hide everything
-			 * else (wlr_scene_rect/buffer have no clip API). */
+			/* Client extends past monitor. Clip the surface to the
+			 * visible rectangle; decorations only hide when fully
+			 * offscreen (carousel scrolling) because wlr_scene_rect/
+			 * buffer have no clip API. */
 			int cx = c->geometry.x + c->bw + titlebar_left;
 			int cy = c->geometry.y + c->bw + titlebar_top;
 			int vl = cx > mon.x ? cx : mon.x;
@@ -4748,28 +4750,31 @@ apply_geometry_to_wlroots(Client *c)
 			int vb = (cy + clip.height) < (mon.y + mon.height)
 				? (cy + clip.height) : (mon.y + mon.height);
 
-			if (vr > vl && vb > vt) {
-				/* Partially visible: narrow the clip */
+			bool partially_visible = vr > vl && vb > vt;
+
+			if (partially_visible) {
 				clip.x += vl - cx;
 				clip.y += vt - cy;
 				clip.width = vr - vl;
 				clip.height = vb - vt;
-				wlr_scene_node_set_enabled(&c->scene_surface->node, true);
-			} else {
-				/* Fully offscreen */
-				wlr_scene_node_set_enabled(&c->scene_surface->node, false);
 			}
 
-			/* Hide borders, shadow, and titlebars */
+			wlr_scene_node_set_enabled(&c->scene_surface->node, partially_visible);
 			for (int i = 0; i < 4; i++)
-				wlr_scene_node_set_enabled(&c->border[i]->node, false);
+				wlr_scene_node_set_enabled(&c->border[i]->node, partially_visible);
 			if (c->shadow.tree)
-				wlr_scene_node_set_enabled(&c->shadow.tree->node, false);
-			for (client_titlebar_t bar = CLIENT_TITLEBAR_TOP;
-					bar < CLIENT_TITLEBAR_COUNT; bar++) {
-				if (c->titlebar[bar].scene_buffer)
-					wlr_scene_node_set_enabled(
-						&c->titlebar[bar].scene_buffer->node, false);
+				wlr_scene_node_set_enabled(&c->shadow.tree->node, partially_visible);
+
+			/* Titlebar buffers: client_update_titlebar_positions()
+			 * already enables them based on size/fullscreen. Only
+			 * forcibly disable when fully offscreen. */
+			if (!partially_visible) {
+				for (client_titlebar_t bar = CLIENT_TITLEBAR_TOP;
+						bar < CLIENT_TITLEBAR_COUNT; bar++) {
+					if (c->titlebar[bar].scene_buffer)
+						wlr_scene_node_set_enabled(
+							&c->titlebar[bar].scene_buffer->node, false);
+				}
 			}
 		}
 	}
