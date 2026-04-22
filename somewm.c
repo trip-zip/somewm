@@ -243,14 +243,15 @@ sync_client_remove_from_arrays(Client *c)
 }
 
 void
-some_recompute_idle_inhibit(struct wlr_surface *exclude)
+some_recompute_idle_inhibit(void)
 {
-	bool inhibited = some_is_idle_inhibited(exclude) || some_is_lua_idle_inhibited();
+	bool inhibited = some_is_idle_inhibited() || some_is_lua_idle_inhibited();
 	wlr_idle_notifier_v1_set_inhibited(idle_notifier, inhibited);
 	some_idle_timers_set_inhibit(inhibited);
 
 	if (inhibited != last_idle_inhibited) {
 		last_idle_inhibited = inhibited;
+		// Note that this will cause a call to some_is_idle_inhibited() in luaa.
 		luaA_emit_signal_global("property::idle_inhibited");
 	}
 }
