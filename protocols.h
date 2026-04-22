@@ -25,7 +25,7 @@ void destroylayersurfacenotify(struct wl_listener *listener, void *data);
 void unmaplayersurfacenotify(struct wl_listener *listener, void *data);
 
 /* Idle inhibit */
-bool some_is_idle_inhibited(struct wlr_surface *exclude);
+bool some_is_idle_inhibited(void);
 int some_idle_inhibitor_count(void);
 int some_push_idle_inhibitors(lua_State *L);
 void createidleinhibitor(struct wl_listener *listener, void *data);

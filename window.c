@@ -253,7 +253,7 @@ fallback:
 		c && c->fullscreen);
 
 	motionnotify(0, NULL, 0, 0, 0, 0);
-	some_recompute_idle_inhibit(NULL);
+	some_recompute_idle_inhibit();
 }
 
 /* Handle initial XDG commit - sets scale, capabilities, size.

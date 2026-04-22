@@ -21,7 +21,7 @@ void printstatus(void);
 void spawn(const Arg *arg);
 
 /* Idle inhibition coordinator (checks wlroots + Lua inhibitors, emits signals) */
-void some_recompute_idle_inhibit(struct wlr_surface *exclude);
+void some_recompute_idle_inhibit(void);
 
 /* Convert cursor position to client-relative coordinates */
 void cursor_to_client_coordinates(Client *client, double *sx, double *sy);
