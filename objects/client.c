@@ -131,6 +131,7 @@ void apply_geometry_to_wlroots(client_t *c);
 
 /* External references to somewm.c globals */
 extern struct wlr_renderer *drw;
+extern struct wlr_scene_tree *layers[NUM_LAYERS];
 
 /* X11-specific includes commented out - not needed for Wayland
 #include "common/atoms.h"
@@ -3679,6 +3680,39 @@ luaA_client_get_first_tag(lua_State *L, client_t *c)
     return 0;
 }
 
+/** Get the wlroots scene-graph layer the client currently lives in.
+ * Returns the layer name as a string, or nil if the client has no scene
+ * node or its parent is not one of the known top-level layers. Intended
+ * for integration tests that verify stacking behavior.
+ */
+static int
+luaA_client_get__scene_layer(lua_State *L, client_t *c)
+{
+    static const char *const layer_names[NUM_LAYERS] = {
+        [LyrBg]      = "background",
+        [LyrBottom]  = "bottom",
+        [LyrTile]    = "tile",
+        [LyrFloat]   = "float",
+        [LyrWibox]   = "wibox",
+        [LyrTop]     = "top",
+        [LyrFS]      = "fullscreen",
+        [LyrOverlay] = "overlay",
+        [LyrBlock]   = "block",
+    };
+
+    if (!c->scene || !c->scene->node.parent)
+        return 0;
+
+    for (int i = 0; i < NUM_LAYERS; i++) {
+        if ((void *)c->scene->node.parent == (void *)layers[i]) {
+            lua_pushstring(L, layer_names[i]);
+            return 1;
+        }
+    }
+
+    return 0;
+}
+
 /** Raise a client on top of others which are on the same layer.
  *
  * @method raise
@@ -5372,6 +5406,7 @@ client_class_setup(lua_State *L)
         { "opacity", (lua_class_propfunc_t) luaA_client_set_opacity, (lua_class_propfunc_t) luaA_client_get_opacity, (lua_class_propfunc_t) luaA_client_set_opacity },
         { "pid", NULL, (lua_class_propfunc_t) luaA_client_get_pid, NULL },
         { "role", NULL, (lua_class_propfunc_t) luaA_client_get_role, NULL },
+        { "_scene_layer", NULL, (lua_class_propfunc_t) luaA_client_get__scene_layer, NULL },
         { "screen", NULL, (lua_class_propfunc_t) luaA_client_get_screen, (lua_class_propfunc_t) luaA_client_set_screen },
         { "shadow", (lua_class_propfunc_t) luaA_client_set_shadow, (lua_class_propfunc_t) luaA_client_get_shadow, (lua_class_propfunc_t) luaA_client_set_shadow },
         { "shape_bounding", (lua_class_propfunc_t) luaA_client_set_shape_bounding, (lua_class_propfunc_t) luaA_client_get_shape_bounding, (lua_class_propfunc_t) luaA_client_set_shape_bounding },
