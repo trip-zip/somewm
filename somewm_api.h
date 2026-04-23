@@ -218,12 +218,6 @@ void some_apply_keyboard_repeat_info(void);
 void some_set_numlock(int enabled);
 
 /*
- * Input Device Configuration API
- * Re-apply libinput settings to all connected pointer devices
- */
-void apply_input_settings_to_all_devices(void);
-
-/*
  * Layer Surface Focus API
  * Called from objects/layer_surface.c when Lua sets has_keyboard_focus property
  */
@@ -256,15 +250,7 @@ void some_clear_pre_lock_client(client_t *c);
 /* Idle/activity - defined in somewm.c */
 void some_idle_timers_set_inhibit(bool inhibit);
 void some_notify_activity(void);
-void some_recompute_idle_inhibit(void);
 bool some_is_lua_idle_inhibited(void);
-
-/* Idle inhibitor query - defined in protocols.c, called from luaa.c */
-bool some_is_idle_inhibited(void);
-int some_idle_inhibitor_count(void);
-
-typedef struct lua_State lua_State;
-int some_push_idle_inhibitors(lua_State *L);
 
 /** Check if the session is locked by any mechanism (ext-session-lock or Lua lock).
  * Use this instead of repeating `locked || some_is_lua_locked()` everywhere. */
@@ -273,10 +259,8 @@ static inline bool session_is_locked(void) {
 }
 
 /*
- * Hot-reload support - listener management for in-process Lua state rebuild
+ * Hot-reload support
  */
-void client_remove_all_listeners(client_t *c);
-void client_reregister_listeners(client_t *c);
 void some_refresh(void);
 
 /*

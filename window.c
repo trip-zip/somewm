@@ -77,40 +77,14 @@ typedef struct {
 } Popup;
 
 /* forward declarations */
-void applybounds(Client *c, struct wlr_box *bbox);
-void arrange(Monitor *m);
-unsigned int get_border_width(void);
-const float *get_focuscolor(void);
-const float *get_bordercolor(void);
-const float *get_urgentcolor(void);
-void initialcommitnotify(struct wl_listener *listener, void *data);
-void commitnotify(struct wl_listener *listener, void *data);
 void commitpopup(struct wl_listener *listener, void *data);
 void createdecoration(struct wl_listener *listener, void *data);
-void createnotify(struct wl_listener *listener, void *data);
 void createpopup(struct wl_listener *listener, void *data);
 void destroydecoration(struct wl_listener *listener, void *data);
-void destroynotify(struct wl_listener *listener, void *data);
 void destroypopup(struct wl_listener *listener, void *data);
-void fullscreennotify(struct wl_listener *listener, void *data);
-void killclient(const Arg *arg);
-void mapnotify(struct wl_listener *listener, void *data);
-void maximizenotify(struct wl_listener *listener, void *data);
 void popup_unconstrain(Popup *p);
 void repositionpopup(struct wl_listener *listener, void *data);
 void requestdecorationmode(struct wl_listener *listener, void *data);
-void resize(Client *c, struct wlr_box geo, int interact);
-void apply_geometry_to_wlroots(Client *c);
-void client_remove_all_listeners(client_t *c);
-void client_reregister_listeners(client_t *c);
-void setfullscreen(Client *c, int fullscreen);
-void setmon(Client *c, Monitor *m, uint32_t newtags);
-void swapstack(const Arg *arg);
-void tagmon(const Arg *arg);
-void togglefloating(const Arg *arg);
-void unmapnotify(struct wl_listener *listener, void *data);
-void updatetitle(struct wl_listener *listener, void *data);
-void zoom(const Arg *arg);
 void sync_tiling_reorder(Client *c);
 
 /* listener structs */
