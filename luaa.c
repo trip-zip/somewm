@@ -65,6 +65,10 @@ static lua_State *luaA_create_fresh_state(void);
 /* Includes merged from objects/awesome.c */
 #include "systray.h"
 #include "somewm_api.h"
+#include "somewm_internal.h"
+#include "protocols.h"
+#include "input.h"
+#include "window.h"
 #include "color.h"
 #include <xkbcommon/xkbcommon.h>
 #include <wayland-server-core.h>
