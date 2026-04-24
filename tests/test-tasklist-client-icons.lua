@@ -1,8 +1,7 @@
 ---------------------------------------------------------------------------
---- Reproduction test for issue #428: Tasklist client icons not showing
----
---- Verifies that awful.client.get_icon_path() resolves an icon file path
---- for clients with a matching desktop entry / icon theme icon.
+--- Verifies that awful.client.resolve_icon populates c.icon when a
+--- matching desktop entry / theme icon exists, and leaves it nil when
+--- nothing resolves.
 ---------------------------------------------------------------------------
 
 local runner = require("_runner")
@@ -17,22 +16,20 @@ if not test_client.is_available() then
 end
 
 runner.run_async(function()
-    test_client("icon_test_428")
-    local c = async.wait_for_client("icon_test_428", 5)
+    test_client("icon_test_unknown")
+    local c = async.wait_for_client("icon_test_unknown", 5)
     assert(c, "Client did not appear")
 
-    -- The test client's class (icon_test_428) won't have a .desktop file,
-    -- so get_icon_path should return nil and cache the miss.
-    local path = aclient.get_icon_path(c)
-    io.stderr:write("[TEST] icon_test_428 icon path: " .. tostring(path) .. "\n")
-    assert(path == nil, "Unexpected icon path for test client")
-    assert(c._icon_path == false, "Expected cache miss to be stored as false")
+    -- The test client's class has no .desktop file and no matching theme
+    -- icon, so request::manage -> resolve_icon should leave c.icon nil.
+    io.stderr:write("[TEST] icon_test_unknown c.icon: " .. tostring(c.icon) .. "\n")
+    assert(c.icon == nil, "Unexpected icon for unknown-class test client")
 
-    -- Verify a second call hits the cache (returns nil, doesn't error)
-    local path2 = aclient.get_icon_path(c)
-    assert(path2 == nil, "Cached result should still be nil")
+    -- Calling resolve_icon again must be a no-op for a client that had no match.
+    aclient.resolve_icon(c)
+    assert(c.icon == nil, "resolve_icon unexpectedly produced an icon on second call")
 
-    -- Test that lookup_icon works for a known icon name (the terminal)
+    -- lookup_icon still works for a known icon name (the terminal).
     local term_info = test_client.get_terminal_info()
     if term_info then
         local term_name = term_info.executable:match("([^/]+)$")

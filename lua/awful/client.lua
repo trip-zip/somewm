@@ -1362,30 +1362,84 @@ function client.object.is_transient_for(self, c2)
     return nil
 end
 
---- Resolve a client's icon file path from desktop entry / icon theme.
+-- Lazily-built cache mapping `StartupWMClass` or `.desktop` filename stem
+-- to an icon path resolved via `menubar.utils.parse_desktop_file`.
+local desktop_cache
+
+local function build_desktop_cache()
+    local cache = {}
+    local mutils = require("menubar.utils")
+    local lgi = require("lgi")
+    local glib = lgi.GLib
+    local Gio = lgi.Gio
+
+    local dirs = { glib.build_filenamev({ glib.get_user_data_dir(), "applications" }) }
+    for _, d in ipairs(glib.get_system_data_dirs()) do
+        table.insert(dirs, glib.build_filenamev({ d, "applications" }))
+    end
+
+    for _, dir in ipairs(dirs) do
+        local gdir = Gio.File.new_for_path(dir)
+        if gdir:query_exists() then
+            local enum = gdir:enumerate_children(
+                "standard::name,standard::type",
+                Gio.FileQueryInfoFlags.NONE, nil)
+            if enum then
+                while true do
+                    local info = enum:next_file(nil)
+                    if not info then break end
+                    local name = info:get_name()
+                    if name and name:sub(-8) == ".desktop" then
+                        local path = glib.build_filenamev({ dir, name })
+                        local ok, entry = pcall(mutils.parse_desktop_file, path)
+                        if ok and entry and entry.icon_path then
+                            local stem = name:sub(1, -9)
+                            if cache[stem] == nil then cache[stem] = entry.icon_path end
+                            if entry.StartupWMClass and cache[entry.StartupWMClass] == nil then
+                                cache[entry.StartupWMClass] = entry.icon_path
+                            end
+                        end
+                    end
+                end
+                enum:close(nil)
+            end
+        end
+    end
+
+    return cache
+end
+
+--- Resolve and set `c.icon` from the icon theme or a matching `.desktop` file.
 --
--- Looks up the client's `class` (app_id) in FDO icon theme directories.
--- Results are cached on the client object. Returns a file path string
--- suitable for passing to `imagebox:set_image()`.
+-- Resolution order:
+--   1. No-op if `c.icon` is already set.
+--   2. `menubar.utils.lookup_icon(c.class)` (and `:lower()` fallback).
+--   3. Lookup of `c.class` (and `:lower()`) in a desktop-entry cache keyed by
+--      filename stem and `StartupWMClass`, with each entry's resolved
+--      `icon_path` as the value.
 --
 -- @tparam client c The client.
--- @treturn string|nil Icon file path, or nil if not found.
--- @staticfct awful.client.get_icon_path
-function client.get_icon_path(c)
-    if c._icon_path ~= nil then return c._icon_path or nil end
+-- @noreturn
+-- @staticfct awful.client.resolve_icon
+function client.resolve_icon(c)
+    if c.icon or not c.class then return end
+
+    local mutils = require("menubar.utils")
+    local GdkPixbuf = require("lgi").GdkPixbuf
     local app_id = c.class
-    if not app_id then
-        c._icon_path = false
-        return nil
-    end
-    local lookup = require("menubar.utils").lookup_icon
-    local path = lookup(app_id)
-    -- Try lowercase (e.g., "Slack" -> "slack")
+    local path = mutils.lookup_icon(app_id) or mutils.lookup_icon(app_id:lower())
+
     if not path then
-        path = lookup(app_id:lower())
+        desktop_cache = desktop_cache or build_desktop_cache()
+        path = desktop_cache[app_id] or desktop_cache[app_id:lower()]
     end
-    c._icon_path = path or false
-    return path
+
+    if not path then return end
+
+    local pixbuf = GdkPixbuf.Pixbuf.new_from_file(path)
+    if pixbuf then
+        c.icon = capi.awesome.pixbuf_to_surface(pixbuf._native, path)
+    end
 end
 
 object.properties._legacy_accessors(client, "buttons", "_buttons", true, function(new_btns)
@@ -1666,19 +1720,7 @@ capi.client.connect_signal("request::manage", function (c)
     client.property.set(c, "_border_init", true)
     c:emit_signal("request::border", "added", {})
 
-    -- Populate c.icon from desktop-entry lookup if the C layer didn't provide one.
-    -- The C setter expects a lightuserdata (raw cairo_surface_t*), so we load
-    -- via GdkPixbuf and pass the native pointer, not the lgi wrapper.
-    if not c.icon then
-        local path = client.get_icon_path(c)
-        if path then
-            local GdkPixbuf = require("lgi").GdkPixbuf
-            local pixbuf = GdkPixbuf.Pixbuf.new_from_file(path)
-            if pixbuf then
-                c.icon = capi.awesome.pixbuf_to_surface(pixbuf._native, path)
-            end
-        end
-    end
+    client.resolve_icon(c)
 end)
 capi.client.connect_signal("request::unmanage", client.focus.history.delete)
 
