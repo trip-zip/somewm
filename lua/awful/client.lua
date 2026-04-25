@@ -1626,11 +1626,60 @@ function client.object.is_transient_for(self, c2)
     return nil
 end
 
+-- Lazily-built cache mapping `StartupWMClass` or `.desktop` filename stem
+-- to an icon path resolved via `menubar.utils.parse_desktop_file`.
+local desktop_cache
+
+local function build_desktop_cache()
+    local cache = {}
+    local mutils = require("menubar.utils")
+    local lgi = require("lgi")
+    local glib = lgi.GLib
+    local Gio = lgi.Gio
+
+    local dirs = { glib.build_filenamev({ glib.get_user_data_dir(), "applications" }) }
+    for _, d in ipairs(glib.get_system_data_dirs()) do
+        table.insert(dirs, glib.build_filenamev({ d, "applications" }))
+    end
+
+    for _, dir in ipairs(dirs) do
+        local gdir = Gio.File.new_for_path(dir)
+        if gdir:query_exists() then
+            local enum = gdir:enumerate_children(
+                "standard::name,standard::type",
+                Gio.FileQueryInfoFlags.NONE, nil)
+            if enum then
+                while true do
+                    local info = enum:next_file(nil)
+                    if not info then break end
+                    local name = info:get_name()
+                    if name and name:sub(-8) == ".desktop" then
+                        local path = glib.build_filenamev({ dir, name })
+                        local ok, entry = pcall(mutils.parse_desktop_file, path)
+                        if ok and entry and entry.icon_path then
+                            local stem = name:sub(1, -9)
+                            if cache[stem] == nil then cache[stem] = entry.icon_path end
+                            if entry.StartupWMClass and cache[entry.StartupWMClass] == nil then
+                                cache[entry.StartupWMClass] = entry.icon_path
+                            end
+                        end
+                    end
+                end
+                enum:close(nil)
+            end
+        end
+    end
+
+    return cache
+end
+
 --- Resolve a client's icon file path from desktop entry / icon theme.
 --
--- Looks up the client's `class` (app_id) in FDO icon theme directories.
--- Results are cached on the client object. Returns a file path string
--- suitable for passing to `imagebox:set_image()`.
+-- Tries `menubar.utils.lookup_icon(c.class)` first (with a lowercase
+-- fallback), then falls back to a lazily-built `.desktop` index keyed by
+-- filename stem and `StartupWMClass`. Results are cached on the client
+-- object. Returns a file path string suitable for passing to
+-- `imagebox:set_image()`.
 --
 -- @tparam client c The client.
 -- @treturn string|nil Icon file path, or nil if not found.
@@ -1643,10 +1692,10 @@ function client.get_icon_path(c)
         return nil
     end
     local lookup = require("menubar.utils").lookup_icon
-    local path = lookup(app_id)
-    -- Try lowercase (e.g., "Slack" -> "slack")
+    local path = lookup(app_id) or lookup(app_id:lower())
     if not path then
-        path = lookup(app_id:lower())
+        desktop_cache = desktop_cache or build_desktop_cache()
+        path = desktop_cache[app_id] or desktop_cache[app_id:lower()]
     end
     c._icon_path = path or false
     return path
