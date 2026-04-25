@@ -2,7 +2,7 @@ project(
   'somewm',
   'c',
   version: '1.4.1',
-  license: 'MIT',
+  license: 'GPL-3.0-or-later',
   default_options: [
     'c_std=gnu11',
     'warning_level=2',
