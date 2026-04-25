@@ -1,0 +1,17 @@
+The color palettes used in somewm's themes are from the following projects,
+all distributed under the MIT license:
+
+Gruvbox
+  Author: Pavel Pertsev (morhetz)
+  License: MIT/X11
+  Source: https://github.com/morhetz/gruvbox
+
+Catppuccin (Mocha)
+  Author: Catppuccin Org
+  License: MIT
+  Source: https://github.com/catppuccin/catppuccin
+
+Nord
+  Authors: Arctic Ice Studio, Sven Greb
+  License: MIT
+  Source: https://github.com/nordtheme/nord
