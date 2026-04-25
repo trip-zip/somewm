@@ -29,7 +29,8 @@ See the [full docs](https://somewm.org) for details.
 
 **Arch Linux (AUR):**
 ```bash
-yay -S somewm-git
+yay -S somewm        # stable release
+yay -S somewm-git    # tracks main (2.x development)
 ```
 
 **From source:**
