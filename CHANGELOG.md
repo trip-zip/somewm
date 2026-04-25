@@ -2,6 +2,40 @@
 
 All notable changes to somewm will be documented in this file.
 
+## [1.4.1] - 2026-04-24
+
+Patch release. 19 commits since 1.4.0, all bug fixes and one additive
+signal change. No public API breaks; existing rc.lua configs run unchanged.
+
+### Fixed
+
+- Use-after-free of `wlr_scene_tree` via `wlr_surface->data`
+- SEGV on monitor unplug from missing surface cleanup (#442)
+- `createmon()` hardening for partial monitor init failures (#477)
+- Carousel: clients render across monitors when outside the carousel layout
+- Borders stay visible when a client is partially offscreen
+- Pointer enter delivered to newly mapped layer-shell surfaces
+- Pointer focus re-evaluated after the banning refresh
+- `LyrOverlay` placement preserved for override-redirect clients (XWayland stacking)
+- wibox: opacity and border properties propagate to the underlying C drawin
+- wibox: A1 surface format restored for shape masks
+- Idle-inhibit exclude mechanism honored again (#446)
+- Icon resolution falls back to `.desktop` entries when class isn't a theme icon
+- Keygrabber stops key repeat when starting mid-press
+- Keyboard layout `next_layout()` off-by-one in wrap-around
+- README links point at the 1.4 docs site
+
+### Changed
+
+- The `exit` signal now carries a `restart` boolean argument: `true` on
+  hot-reload, `false` on shutdown. Matches AwesomeWM behavior. Existing
+  handlers that ignore arguments are unaffected.
+
+### Notes
+
+- AwesomeWM baseline unchanged from 1.4.0.
+- See [`DEVIATIONS.md`](DEVIATIONS.md) for Wayland vs X11 differences.
+
 ## [1.4.0] - 2026-04-07
 
 First stable release. SomeWM 1.4 = AwesomeWM 4.4 on Wayland.
@@ -109,8 +143,9 @@ First stable release. SomeWM 1.4 = AwesomeWM 4.4 on Wayland.
 
 Initial public release with core AwesomeWM compatibility.
 
-[Unreleased]: https://github.com/trip-zip/somewm/compare/1.4.0...HEAD
-[1.4.0]: https://github.com/trip-zip/somewm/compare/0.5.0...1.4.0
+[Unreleased]: https://github.com/trip-zip/somewm/compare/v1.4.1...HEAD
+[1.4.1]: https://github.com/trip-zip/somewm/compare/v1.4.0...v1.4.1
+[1.4.0]: https://github.com/trip-zip/somewm/compare/0.5.0...v1.4.0
 [0.5.0]: https://github.com/trip-zip/somewm/compare/0.4.0...0.5.0
 [0.4.0]: https://github.com/trip-zip/somewm/compare/0.3.0...0.4.0
 [0.3.0]: https://github.com/trip-zip/somewm/releases/tag/0.3.0
