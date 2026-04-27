@@ -25,6 +25,7 @@
 #include "xwayland.h"
 #include "globalconf.h"
 #include "common/luaobject.h"
+#include "objects/signal.h"
 #include "client.h"
 #include "stack.h"
 #include "ewmh.h"
@@ -270,6 +271,14 @@ xwaylandready(struct wl_listener *listener, void *data)
 	ewmh_init_lua();
 
 	log_info("EWMH support initialized for XWayland");
+
+	/* Notify Lua that XWayland is fully usable: DISPLAY socket bound,
+	 * EWMH atoms initialized, Lua property handlers connected. Subscribers
+	 * (e.g. autostart of Qt5/GTK X11 apps that race the DISPLAY socket)
+	 * can act now. The flag lets luaA_hot_reload() re-emit for late
+	 * subscribers after rc.lua reload. */
+	globalconf.xwayland_ready_seen = true;
+	luaA_emit_signal_global("xwayland::ready");
 }
 
 void
