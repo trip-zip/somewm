@@ -319,7 +319,14 @@ function permissions.tag(c, t, hints) --luacheck: no unused
             c.screen = c.transient_for.screen
             if not c.sticky then
                 local tags = c.transient_for:tags()
-                c:tags(#tags > 0 and tags or c.transient_for.screen.selected_tags)
+                local fallback_screen = c.transient_for.screen or c.screen
+                if #tags > 0 then
+                    c:tags(tags)
+                elseif fallback_screen then
+                    c:tags(fallback_screen.selected_tags)
+                else
+                    c:to_selected_tags()
+                end
             end
         else
             c:to_selected_tags()
