@@ -5454,6 +5454,15 @@ luaA_hot_reload(void)
 	/* Flush visual state */
 	some_refresh();
 
+	/* Re-emit cached compositor readiness signals for the new Lua VM.
+	 * The original emission sites (run() in somewm.c, xwaylandready() in
+	 * xwayland.c) only run once per process; without this mirror, rc.lua
+	 * subscribers added on hot-reload would never see them and stall. */
+	if (globalconf.somewm_ready_seen)
+		luaA_emit_signal_global("somewm::ready");
+	if (globalconf.xwayland_ready_seen)
+		luaA_emit_signal_global("xwayland::ready");
+
 	globalconf.hot_reload_in_progress = false;
 
 	fprintf(stderr, "somewm: hot-reload: complete (%d clients, %d screens, %d tags reset)\n",
