@@ -567,6 +567,32 @@ luaA_root_size(lua_State *L)
 	return 2;
 }
 
+/** Get root window geometry including origin
+ * On X11 the root window is always at (0, 0) so AwesomeWM gets away with
+ * root.size() alone; on Wayland wlr_output_layout can place outputs at
+ * negative coordinates (e.g. a portrait monitor left of the primary), so
+ * callers that draw into a single root-sized surface must also know the
+ * layout origin. Returns a table {x, y, width, height}.
+ * Lua: root.geometry() -> { x = ..., y = ..., width = ..., height = ... }
+ */
+static int
+luaA_root_geometry(lua_State *L)
+{
+	struct wlr_box box;
+
+	wlr_output_layout_get_box(output_layout, NULL, &box);
+	lua_createtable(L, 0, 4);
+	lua_pushinteger(L, box.x);
+	lua_setfield(L, -2, "x");
+	lua_pushinteger(L, box.y);
+	lua_setfield(L, -2, "y");
+	lua_pushinteger(L, box.width);
+	lua_setfield(L, -2, "width");
+	lua_pushinteger(L, box.height);
+	lua_setfield(L, -2, "height");
+	return 1;
+}
+
 /** Get root window physical size in mm (stub for AwesomeWM compatibility)
  * Returns approximate physical dimensions based on monitor DPI
  * Lua: root.size_mm() -> width_mm, height_mm
@@ -953,10 +979,19 @@ clear_wallpaper_info_in_lua(lua_State *L)
 
 /** Create a cache entry for one screen
  * Returns true on success, false on failure
+ *
+ * layout_x/layout_y are the origin of the output_layout bounding box, which
+ * matches the upper-left of the cairo pattern supplied by awful.wallpaper's
+ * paint(). On X11 this is always (0, 0); on Wayland it can be negative when
+ * an output (e.g. a portrait monitor) sits left-of/above the primary. The
+ * pattern's pixel (u, v) therefore corresponds to layout (u + layout_x,
+ * v + layout_y), so extracting a screen at absolute layout (x, y) needs the
+ * translate offset shifted by (layout_x, layout_y).
  */
 static bool
 create_wallpaper_cache_entry(const char *path, cairo_pattern_t *pattern,
-                             wallpaper_screen_info_t *info)
+                             wallpaper_screen_info_t *info,
+                             int layout_x, int layout_y)
 {
 	cairo_surface_t *surface = NULL;
 	cairo_t *cr = NULL;
@@ -975,7 +1010,7 @@ create_wallpaper_cache_entry(const char *path, cairo_pattern_t *pattern,
 
 	/* Paint pattern to surface, offsetting to extract the screen region */
 	cr = cairo_create(surface);
-	cairo_translate(cr, -x, -y);
+	cairo_translate(cr, layout_x - x, layout_y - y);
 	cairo_set_source(cr, pattern);
 	cairo_set_operator(cr, CAIRO_OPERATOR_SOURCE);
 	cairo_paint(cr);
@@ -1045,6 +1080,12 @@ root_set_wallpaper_cached(lua_State *L, cairo_pattern_t *pattern)
 			screen_infos, MAX_PENDING_SCREENS);
 	}
 
+	/* Layout origin matches the cairo pattern's upper-left (see awful.wallpaper
+	 * paint() which allocates target at layout bbox size, pixel (0,0) = layout
+	 * (layout_box.x, layout_box.y)). */
+	struct wlr_box layout_box;
+	wlr_output_layout_get_box(output_layout, NULL, &layout_box);
+
 	/* Create cache entries for all pending screens */
 	if (screen_count > 0) {
 		for (int i = 0; i < screen_count; i++) {
@@ -1061,7 +1102,8 @@ root_set_wallpaper_cached(lua_State *L, cairo_pattern_t *pattern)
 			}
 
 			/* Create new cache entry */
-			if (create_wallpaper_cache_entry(info->path, pattern, info))
+			if (create_wallpaper_cache_entry(info->path, pattern, info,
+			                                 layout_box.x, layout_box.y))
 				result = true;
 		}
 
@@ -1071,10 +1113,12 @@ root_set_wallpaper_cached(lua_State *L, cairo_pattern_t *pattern)
 	}
 
 	/* Fallback: no caching (cache not ready, no path, or no screens) */
-	/* Use full layout geometry */
-	struct wlr_box layout_box;
-	wlr_output_layout_get_box(output_layout, NULL, &layout_box);
-	int x = 0, y = 0;
+	/* Use full layout geometry including its origin — awful.wallpaper paints
+	 * each screen at its layout (x, y), which can be negative when an output
+	 * sits left-of / above the primary (e.g. a portrait HP at x = -2160).
+	 * Using (0, 0) here clips that content off the cairo surface and places
+	 * the scene buffer node where it doesn't intersect the off-origin output. */
+	int x = layout_box.x, y = layout_box.y;
 	int width = layout_box.width;
 	int height = layout_box.height;
 
@@ -1094,7 +1138,8 @@ root_set_wallpaper_cached(lua_State *L, cairo_pattern_t *pattern)
 		goto cleanup;
 
 	cr = cairo_create(surface);
-	cairo_translate(cr, -x, -y);
+	/* Fallback surface and awful.wallpaper pattern are both bbox-sized with
+	 * matching pixel origin (layout upper-left); copy 1:1, no translate. */
 	cairo_set_source(cr, pattern);
 	cairo_set_operator(cr, CAIRO_OPERATOR_SOURCE);
 	cairo_paint(cr);
@@ -1859,6 +1904,7 @@ const luaL_Reg root_methods[] = {
 	{ "drawins", luaA_root_drawins },
 	{ "size", luaA_root_size },
 	{ "size_mm", luaA_root_size_mm },
+	{ "geometry", luaA_root_geometry },
 	{ "tags", luaA_root_tags },
 	{ "content", luaA_root_get_content },
 	/* __index and __newindex MUST be in methods, not meta!
