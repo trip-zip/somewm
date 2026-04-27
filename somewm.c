@@ -865,6 +865,14 @@ run(char *startup_cmd)
 		 * In AwesomeWM, xcb_flush() sends everything immediately after config
 		 * loads; in Wayland we need to explicitly refresh all drawables. */
 		some_refresh();
+
+		/* Compositor reached steady state: rc.lua loaded, screens scanned,
+		 * clients managed, drawables pushed to scene. Subscribers can now
+		 * safely spawn long-lived helpers, register tray hosts, etc.
+		 * The flag lets luaA_hot_reload() re-emit for late subscribers
+		 * after rc.lua reload (this branch only runs on cold boot). */
+		globalconf.somewm_ready_seen = true;
+		luaA_emit_signal_global("somewm::ready");
 	}
 
 	/* Now that the socket exists and the backend is started, run the startup command */
