@@ -296,6 +296,14 @@ typedef struct
      *  Used to suppress expected warnings (e.g. stale object decrefs). */
     bool hot_reload_in_progress;
 
+    /** Compositor readiness milestones, set by the C side once and re-emitted
+     * to Lua on hot-reload. Allows late subscribers (rc.lua, modules loaded
+     * after startup) to learn that "somewm::ready" or "xwayland::ready" has
+     * already fired in this process lifetime. */
+    bool somewm_ready_seen;
+    bool xwayland_ready_seen;
+
+
     /* ========== WALLPAPER SUPPORT ========== */
 
     /** Cached wallpaper surface (AwesomeWM compatibility)

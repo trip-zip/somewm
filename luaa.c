@@ -2125,6 +2125,19 @@ luaA_awesome_index(lua_State *L)
 		return 1;
 	}
 
+	/* Compositor readiness milestones (counterparts of "somewm::ready" and
+	 * "xwayland::ready" signals). True once the corresponding signal has
+	 * fired at least once; persists across hot-reload via globalconf. */
+	if (A_STREQ(key, "somewm_ready")) {
+		lua_pushboolean(L, globalconf.somewm_ready_seen);
+		return 1;
+	}
+
+	if (A_STREQ(key, "xwayland_ready")) {
+		lua_pushboolean(L, globalconf.xwayland_ready_seen);
+		return 1;
+	}
+
 	/* Lock API properties */
 	if (A_STREQ(key, "locked")) {
 		lua_pushboolean(L, lua_locked);
@@ -5453,6 +5466,15 @@ luaA_hot_reload(void)
 
 	/* Flush visual state */
 	some_refresh();
+
+	/* Re-emit cached compositor readiness signals for the new Lua VM.
+	 * The original emission sites (run() in somewm.c, xwaylandready() in
+	 * xwayland.c) only run once per process; without this mirror, rc.lua
+	 * subscribers added on hot-reload would never see them and stall. */
+	if (globalconf.somewm_ready_seen)
+		luaA_emit_signal_global("somewm::ready");
+	if (globalconf.xwayland_ready_seen)
+		luaA_emit_signal_global("xwayland::ready");
 
 	globalconf.hot_reload_in_progress = false;
 
