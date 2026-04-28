@@ -92,6 +92,7 @@
 #include "objects/drawable.h"
 #include "objects/button.h"
 #include "objects/key.h"
+#include "objects/mousegrabber.h"
 #include "luaa.h"
 #include "common/lualib.h"
 #include "signal.h"
@@ -1953,6 +1954,16 @@ void client_ban_unfocus(client_t *c)
 {
     /* Wait until the last moment to take away the focus from the window. */
     if(globalconf.focus.client == c) {
+        /* During a Lua mousegrabber-driven move, screen_client_moveto()
+         * updates c->mon/c->screen ahead of the tag retag. The banning
+         * pass then briefly sees the actively-dragged client as
+         * "invisible" (tags still on the source screen) and would
+         * clear focus mid-drag, stealing focus to another client on
+         * the source monitor. Skip the unfocus while the grab is
+         * active; the post-grab motionnotify(0) re-evaluates
+         * pointer/keyboard focus once tag/monitor state is consistent. */
+        if (mousegrabber_isrunning())
+            return;
         client_unfocus(c);
     }
 }
