@@ -870,6 +870,15 @@ motionnotify(uint32_t time, struct wlr_input_device *device, double dx, double d
 			if (!continue_grab) {
 				/* Callback returned false, stop grabbing */
 				luaA_mousegrabber_stop(L);
+				/* Re-evaluate pointer/keyboard focus now that the
+				 * grab is over and (for cross-monitor moves)
+				 * tag/monitor state is consistent. Without this
+				 * rebase the pointer-focused surface stays at
+				 * whatever it was when the grab started, so the
+				 * just-dropped client doesn't get button events
+				 * until the next pointer motion. Mirrors Sway's
+				 * seatop_default re-entry. */
+				motionnotify(0, NULL, 0, 0, 0, 0);
 			}
 		} else {
 			/* Error in callback */

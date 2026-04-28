@@ -310,10 +310,11 @@ void
 unmaplayersurfacenotify(struct wl_listener *listener, void *data)
 {
 	LayerSurface *l = wl_container_of(listener, l, unmap);
+	bool had_exclusive_focus = (l == exclusive_focus);
 
 	l->mapped = 0;
 	wlr_scene_node_set_enabled(&l->scene->node, 0);
-	if (l == exclusive_focus)
+	if (had_exclusive_focus)
 		exclusive_focus = NULL;
 
 	if (l->layer_surface && l->layer_surface->output) {
@@ -331,8 +332,18 @@ unmaplayersurfacenotify(struct wl_listener *listener, void *data)
 		layer_surface_emit_unmanage(l->lua_object);
 	}
 
-	/* Restore focus via Lua history on the layer surface's monitor */
-	focus_restore(l->mon ? l->mon : selmon);
+	/* Restore focus only if this layer surface actually held keyboard focus
+	 * (exclusive_focus). Layer surfaces without keyboard interactivity
+	 * (notifications, tooltips, transient popups) never owned focus, so
+	 * triggering Lua focus history on their unmap would steal focus from
+	 * the currently focused client.
+	 *
+	 * Also skip while a mousegrabber is active: the user is dragging a
+	 * client and focus_restore() would pick a candidate from focus
+	 * history, stealing focus from the dragged window. The drag operation
+	 * owns focus until it completes. */
+	if (had_exclusive_focus && !mousegrabber_isrunning())
+		focus_restore(l->mon ? l->mon : selmon);
 
 	motionnotify(0, NULL, 0, 0, 0, 0);
 }
