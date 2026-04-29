@@ -1467,10 +1467,22 @@ setfullscreen(Client *c, int fullscreen)
 		resize(c, c->prev, 0);
 	}
 	/* Emit per-client property::fullscreen so Lua handlers run
-	 * (update_implicitly_floating, arrange_prop_nf) before arrange */
+	 * (update_implicitly_floating, arrange_prop_nf) before arrange.
+	 *
+	 * Also emit per-client property::geometry after resize() so the
+	 * xdg-protocol fullscreen path fires the same Lua signal surface
+	 * as the Lua path. client_set_fullscreen() in objects/client.c
+	 * already emits property::geometry via client_resize_do, so
+	 * clients toggled through the Lua API notify geometry listeners
+	 * correctly. A client that requests fullscreen via xdg-shell
+	 * (request_fullscreen -> fullscreennotify -> setfullscreen) used
+	 * to change geometry silently from Lua's perspective, breaking
+	 * any handler that tracks geometry changes through this signal
+	 * (rules, placement reapplication, user animations, etc.). */
 	lua_State *L = globalconf_get_lua_State();
 	if (L) {
 		luaA_object_push(L, c);
+		luaA_object_emit_signal(L, -1, "property::geometry", 0);
 		luaA_object_emit_signal(L, -1, "property::fullscreen", 0);
 		lua_pop(L, 1);
 	}
