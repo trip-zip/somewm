@@ -26,137 +26,197 @@
 -- @supermodule wibox.widget.base
 ---------------------------------------------------------------------------
 
-local table = table
 local pairs = pairs
 local type = type
 local floor = math.floor
 local gtable = require("gears.table")
 local base = require("wibox.widget.base")
+local layout = require("somewm.layout")
 
 local align = {}
 
--- Calculate the layout of an align layout.
--- @param context The context in which we are drawn.
--- @param width The available width.
--- @param height The available height.
-function align:layout(context, width, height)
+-- Clay path for expand modes "inside" and "outside".
+--
+-- Inside mode: first/third take fit size, second grows. The empty grow
+-- spacer when `second` is missing keeps `third` anchored at the far
+-- edge (legacy semantics); the post-pass drops zero-sized placements to
+-- mirror the legacy `size_remains > 0` guard so that `second` is
+-- omitted on overflow.
+--
+-- Outside mode: second takes fit size centered, first/third grow on
+-- either side. Clay's grow distribution gives first and third equal
+-- shares of the remaining space, which matches the legacy semantic of
+-- "the widgets on either side fill the remaining space equally."
+local function layout_clay(self, context, width, height)
+    local is_y   = self._private.dir == "y"
+    local first  = self._private.first
+    local second = self._private.second
+    local third  = self._private.third
+    local mode   = self._private.expand
+
+    local first_fit, second_fit, third_fit = 0, 0, 0
+    if first then
+        local fw, fh = base.fit_widget(self, context, first, width, height)
+        first_fit = is_y and fh or fw
+    end
+    if second then
+        local sw, sh = base.fit_widget(self, context, second, width, height)
+        second_fit = is_y and sh or sw
+    end
+    if third then
+        local tw, th = base.fit_widget(self, context, third, width, height)
+        third_fit = is_y and th or tw
+    end
+
+    local function fixed_props(fit)
+        return is_y
+            and { width = width, height = fit,    grow = false }
+            or  { width = fit,   height = height, grow = false }
+    end
+
+    local children = {}
+    if mode == "outside" then
+        -- first and third grow; second takes its fit, centered.
+        if first then
+            children[#children + 1] = layout.widget(first, { grow = true })
+        end
+        if second then
+            children[#children + 1] = layout.widget(second, fixed_props(second_fit))
+        end
+        if third then
+            children[#children + 1] = layout.widget(third, { grow = true })
+        end
+    else
+        -- inside (default): first and third take fit; second grows.
+        if first then
+            children[#children + 1] = layout.widget(first, fixed_props(first_fit))
+        end
+        if second then
+            children[#children + 1] = layout.widget(second, { grow = true })
+        elseif first and third then
+            children[#children + 1] = layout.row { grow = true }
+        end
+        if third then
+            children[#children + 1] = layout.widget(third, fixed_props(third_fit))
+        end
+    end
+
+    local outer = is_y and layout.column or layout.row
+    local rects = layout.solve {
+        source = "wibox",
+        width = width, height = height,
+        root = outer(children),
+    }.placements
+
     local result = {}
-
-    -- Draw will have to deal with all three align modes and should work in a
-    -- way that makes sense if one or two of the widgets are missing (if they
-    -- are all missing, it won't draw anything.) It should also handle the case
-    -- where the fit something that isn't set to expand (for instance the
-    -- outside widgets when the expand mode is "inside" or any of the widgets
-    -- when the expand mode is "none" wants to take up more space than is
-    -- allowed.
-    local size_first = 0
-    -- start with all the space given by the parent, subtract as we go along
-    local size_remains = self._private.dir == "y" and height or width
-    -- This is only set & used if expand ~= "inside" and we have second width.
-    -- It contains the size allocated to the second widget.
-    local size_second
-
-    -- we will prioritize the middle widget unless the expand mode is "inside"
-    --  if it is, we prioritize the first widget by not doing this block also,
-    --  if the second widget doesn't exist, we will prioritise the first one
-    --  instead
-    if self._private.expand ~= "inside" and self._private.second then
-        local w, h = base.fit_widget(self, context, self._private.second, width, height)
-        size_second = self._private.dir == "y" and h or w
-        -- if all the space is taken, skip the rest, and draw just the middle
-        -- widget
-        if size_second >= size_remains then
-            return { base.place_widget_at(self._private.second, 0, 0, width, height) }
-        else
-            -- the middle widget is sized first, the outside widgets are given
-            --  the remaining space if available we will draw later
-            size_remains = floor((size_remains - size_second) / 2)
+    for _, r in ipairs(rects) do
+        if r.width > 0 and r.height > 0 then
+            result[#result + 1] = base.place_widget_at(
+                r.widget, r.x, r.y, r.width, r.height)
         end
-    end
-    if self._private.first then
-        local w, h, _ = width, height, nil
-        -- we use the fit function for the "inside" and "none" modes, but
-        --  ignore it for the "outside" mode, which will force it to expand
-        --  into the remaining space
-        if self._private.expand ~= "outside" then
-            if self._private.dir == "y" then
-                _, h = base.fit_widget(self, context, self._private.first, width, size_remains)
-                size_first = h
-                -- for "inside", the third widget will get a chance to use the
-                --  remaining space, then the middle widget. For "none" we give
-                --  the third widget the remaining space if there was no second
-                --  widget to take up any space (as the first if block is skipped
-                --  if this is the case)
-                if self._private.expand == "inside" or not self._private.second then
-                    size_remains = size_remains - h
-                end
-            else
-                w, _ = base.fit_widget(self, context, self._private.first, size_remains, height)
-                size_first = w
-                if self._private.expand == "inside" or not self._private.second then
-                    size_remains = size_remains - w
-                end
-            end
-        else
-            if self._private.dir == "y" then
-                h = size_remains
-            else
-                w = size_remains
-            end
-        end
-        table.insert(result, base.place_widget_at(self._private.first, 0, 0, w, h))
-    end
-    -- size_remains will be <= 0 if first used all the space
-    if self._private.third and size_remains > 0 then
-        local w, h, _ = width, height, nil
-        if self._private.expand ~= "outside" then
-            if self._private.dir == "y" then
-                _, h = base.fit_widget(self, context, self._private.third, width, size_remains)
-                -- give the middle widget the rest of the space for "inside" mode
-                if self._private.expand == "inside" then
-                    size_remains = size_remains - h
-                end
-            else
-                w, _ = base.fit_widget(self, context, self._private.third, size_remains, height)
-                if self._private.expand == "inside" then
-                    size_remains = size_remains - w
-                end
-            end
-        else
-            if self._private.dir == "y" then
-                h = size_remains
-            else
-                w = size_remains
-            end
-        end
-        local x, y = width - w, height - h
-        table.insert(result, base.place_widget_at(self._private.third, x, y, w, h))
-    end
-    -- here we either draw the second widget in the space set aside for it
-    -- in the beginning, or in the remaining space, if it is "inside"
-    if self._private.second and size_remains > 0 then
-        local x, y, w, h = 0, 0, width, height
-        if self._private.expand == "inside" then
-            if self._private.dir == "y" then
-                h = size_remains
-                x, y = 0, size_first
-            else
-                w = size_remains
-                x, y = size_first, 0
-            end
-        else
-            local _
-            if self._private.dir == "y" then
-                _, h = base.fit_widget(self, context, self._private.second, width, size_second)
-                y = floor( (height - h)/2 )
-            else
-                w, _ = base.fit_widget(self, context, self._private.second, size_second, height)
-                x = floor( (width -w)/2 )
-            end
-        end
-        table.insert(result, base.place_widget_at(self._private.second, x, y, w, h))
     end
     return result
+end
+
+-- Clay path for expand="none": each widget at its fit size, anchored
+-- independently (first top-left, third bottom-right, second centered).
+-- Mirrors the legacy math but emits via `layout.stack` with absolute
+-- positions. If second's main-axis fit consumes the layout entirely,
+-- only second is drawn at full size (legacy semantic).
+local function layout_clay_none(self, context, width, height)
+    local is_y   = self._private.dir == "y"
+    local first  = self._private.first
+    local second = self._private.second
+    local third  = self._private.third
+
+    local size_remains = is_y and height or width
+    local size_second  = nil
+
+    if second then
+        local fit_sw, fit_sh = base.fit_widget(self, context, second, width, height)
+        size_second = is_y and fit_sh or fit_sw
+
+        if size_second >= size_remains then
+            return base.place_rects(layout.solve {
+                source = "wibox", width = width, height = height,
+                root = layout.stack {
+                    layout.widget(second, {
+                        x = 0, y = 0, width = width, height = height,
+                    }),
+                },
+            }.placements)
+        end
+
+        size_remains = floor((size_remains - size_second) / 2)
+    end
+
+    local children = {}
+
+    if first then
+        local fw, fh
+        if is_y then
+            local _w
+            _w, fh = base.fit_widget(self, context, first, width, size_remains)
+            fw = width
+        else
+            local _h
+            fw, _h = base.fit_widget(self, context, first, size_remains, height)
+            fh = height
+        end
+        children[#children + 1] = layout.widget(first, {
+            x = 0, y = 0, width = fw, height = fh,
+        })
+    end
+
+    if third and size_remains > 0 then
+        local tw, th
+        if is_y then
+            local _w
+            _w, th = base.fit_widget(self, context, third, width, size_remains)
+            tw = width
+        else
+            local _h
+            tw, _h = base.fit_widget(self, context, third, size_remains, height)
+            th = height
+        end
+        children[#children + 1] = layout.widget(third, {
+            x = width - tw, y = height - th, width = tw, height = th,
+        })
+    end
+
+    if second and size_remains > 0 then
+        local sw, sh, x, y
+        if is_y then
+            local _w
+            _w, sh = base.fit_widget(self, context, second, width, size_second)
+            sw = width
+            x = 0
+            y = floor((height - sh) / 2)
+        else
+            local _h
+            sw, _h = base.fit_widget(self, context, second, size_second, height)
+            sh = height
+            y = 0
+            x = floor((width - sw) / 2)
+        end
+        children[#children + 1] = layout.widget(second, {
+            x = x, y = y, width = sw, height = sh,
+        })
+    end
+
+    if #children == 0 then return {} end
+
+    return base.place_rects(layout.solve {
+        source = "wibox", width = width, height = height,
+        root = layout.stack(children),
+    }.placements)
+end
+
+function align:layout(context, width, height)
+    if self._private.expand == "none" then
+        return layout_clay_none(self, context, width, height)
+    end
+    return layout_clay(self, context, width, height)
 end
 
 --- The widget in slot one.

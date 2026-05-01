@@ -694,6 +694,47 @@ function base.place_widget_at(widget, x, y, width, height)
     return base.place_widget_via_matrix(widget, matrix.create_translate(x, y), width, height)
 end
 
+--- Wrap an array of `{widget, x, y, width, height}` rects (returned by
+-- `somewm.layout.solve`) into placement objects suitable for returning from
+-- `:layout()`. The substrate is engine-agnostic and cannot import
+-- `wibox.widget.base`; the wrap lives here next to `place_widget_at`.
+-- @tparam table rects Array of `{widget, x, y, width, height}` tables.
+-- @treturn table Array of placement objects.
+-- @staticfct wibox.widget.base.place_rects
+function base.place_rects(rects)
+    local out = {}
+    for i, r in ipairs(rects) do
+        out[i] = base.place_widget_at(r.widget, r.x, r.y, r.width, r.height)
+    end
+    return out
+end
+
+--- Run a list of pre-positioned `{widget, x, y, width, height}` rects
+-- through Clay (as a `layout.stack` of absolutely-positioned children)
+-- and wrap the result as placement objects. Used by every wibox layout
+-- that computes child positions in Lua first: `wibox.layout.{stack,
+-- manual, grid}`, `wibox.layout.ratio` non-default strategies, and
+-- `wibox.container.border` 9-slice.
+-- @tparam table rects Array of `{widget, x, y, width, height}` tables.
+-- @tparam number width Available width passed into `:layout()`.
+-- @tparam number height Available height passed into `:layout()`.
+-- @treturn table Array of placement objects (empty when `rects` is empty).
+-- @staticfct wibox.widget.base.place_rects_via_stack
+function base.place_rects_via_stack(rects, width, height)
+    if #rects == 0 then return {} end
+    local layout = require("somewm.layout")
+    local children = {}
+    for i, r in ipairs(rects) do
+        children[i] = layout.widget(r.widget, {
+            x = r.x, y = r.y, width = r.width, height = r.height,
+        })
+    end
+    return base.place_rects(layout.solve {
+        source = "wibox", width = width, height = height,
+        root = layout.stack(children),
+    }.placements)
+end
+
 -- Check if `obj` can be called (either using the metacall or as a function)
 local function is_callable(obj)
     local t = type(obj)
