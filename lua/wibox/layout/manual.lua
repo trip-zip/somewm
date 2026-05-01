@@ -74,7 +74,7 @@ local function geometry(self, new)
 end
 
 function manual_layout:layout(context, width, height)
-    local res = {}
+    local rects = {}
 
     for k, v in ipairs(self._private.widgets) do
         local pt = self._private.pos[k] or {x=0,y=0}
@@ -103,12 +103,15 @@ function manual_layout:layout(context, width, height)
         assert(pt.x)
         assert(pt.y)
 
-        table.insert(res, base.place_widget_at(
-            v, pt.x, pt.y, pt.width or w, pt.height or h
-        ))
+        rects[#rects + 1] = {
+            widget = v,
+            x = pt.x, y = pt.y,
+            width  = pt.width  or w,
+            height = pt.height or h,
+        }
     end
 
-    return res
+    return base.place_rects_via_stack(rects, width, height)
 end
 
 function manual_layout:add(...)

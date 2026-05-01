@@ -16,6 +16,7 @@ local beautiful = require("beautiful")
 local cairo = require("lgi").cairo
 local gtable = require("gears.table")
 local gshape = require("gears.shape")
+local layout = require("somewm.layout")
 local setmetatable = setmetatable
 local type = type
 local unpack = unpack or table.unpack -- luacheck: globals unpack (compatibility with Lua 5.1)
@@ -346,14 +347,19 @@ end
 
 -- Layout this widget
 function background:layout(_, width, height)
-    if self._private.widget then
-        local bw = self._private.border_strategy == "inner" and
-            self._private.shape_border_width or 0
+    if not self._private.widget then return end
 
-        return { base.place_widget_at(
-            self._private.widget, bw, bw, width-2*bw, height-2*bw
-        ) }
-    end
+    local bw = self._private.border_strategy == "inner" and
+        self._private.shape_border_width or 0
+
+    return base.place_rects(layout.solve {
+        source = "wibox",
+        width = width, height = height,
+        root = layout.row {
+            padding = bw,
+            layout.widget(self._private.widget, { grow = true }),
+        },
+    }.placements)
 end
 
 -- Fit this widget into the given area
