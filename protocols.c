@@ -29,6 +29,7 @@
 #include "event_queue.h"
 #include "globalconf.h"
 #include "client.h"
+#include "clay_layout.h"
 #include "common/luaobject.h"
 #include "common/util.h"
 #include "objects/client.h"
@@ -97,7 +98,19 @@ arrangelayer(Monitor *m, struct wl_list *list, struct wlr_box *usable_area, int 
 		if (exclusive != (layer_surface->current.exclusive_zone > 0))
 			continue;
 
-		wlr_scene_layer_surface_v1_configure(l->scene_layer, &full_area, usable_area);
+		/* Per layer-shell v1 spec, exclusive_zone == -1 surfaces lay out in
+		 * the full monitor area (ignoring other exclusives and extending to
+		 * their anchored edges). All other surfaces (== 0 and > 0) lay out
+		 * in the *usable* area, which has been progressively reduced by
+		 * earlier exclusive zones. */
+		struct wlr_box layout_box =
+			(layer_surface->current.exclusive_zone == -1)
+				? full_area : *usable_area;
+
+		/* Phase 13: position via Clay instead of wlroots' helper. Sends
+		 * the configure event, positions l->scene->node, and subtracts
+		 * the exclusive zone from *usable_area. */
+		clay_apply_layer_surface(l, layout_box, usable_area);
 		wlr_scene_node_set_position(&l->popups->node, l->scene->node.x, l->scene->node.y);
 	}
 }
@@ -115,31 +128,37 @@ arrangelayers(Monitor *m)
 	if (!m->wlr_output->enabled)
 		return;
 
-	/* Arrange exclusive surfaces from top->bottom */
+	/* Arrange exclusive surfaces from top->bottom. wlr_scene_layer_surface_v1_configure
+	 * subtracts each surface's exclusive_zone from usable_area. */
 	for (i = 3; i >= 0; i--)
 		arrangelayer(m, &m->layers[i], &usable_area, 1);
 
-	/* Apply drawin struts (from Lua wibars) to the usable area
-	 * This must happen AFTER layer shell exclusive zones but BEFORE setting m->w */
-	some_monitor_apply_drawin_struts(m, &usable_area);
+	/* Compute exclusive-zone deltas relative to the full monitor box and store
+	 * them on the screen object so clay.compose_screen can apply them as
+	 * workarea-container padding alongside wibar drawins. */
+	{
+		int top    = usable_area.y - m->m.y;
+		int left   = usable_area.x - m->m.x;
+		int right  = (m->m.x + m->m.width)  - (usable_area.x + usable_area.width);
+		int bottom = (m->m.y + m->m.height) - (usable_area.y + usable_area.height);
 
-	if (!wlr_box_equal(&usable_area, &m->w)) {
-		lua_State *L;
-		screen_t *screen;
-
-		m->w = usable_area;
-
-		/* Update Lua screen.workarea property to match the new usable area
-		 * This emits property::workarea signal so layouts get the correct workarea */
-		L = globalconf_get_lua_State();
+		lua_State *L = globalconf_get_lua_State();
 		if (L && globalconf.screens.tab) {
-			screen = luaA_screen_get_by_monitor(L, m);
+			screen_t *screen = luaA_screen_get_by_monitor(L, m);
 			if (screen) {
-				screen_set_workarea(L, screen, &usable_area);
+				int prev[4] = {
+					screen->layer_exclusive[0],
+					screen->layer_exclusive[1],
+					screen->layer_exclusive[2],
+					screen->layer_exclusive[3],
+				};
+				screen_set_layer_exclusive(screen, top, right, bottom, left);
+				if (prev[0] != top || prev[1] != right ||
+				    prev[2] != bottom || prev[3] != left) {
+					arrange(m);
+				}
 			}
 		}
-
-		arrange(m);
 	}
 
 	/* Arrange non-exlusive surfaces from top->bottom */

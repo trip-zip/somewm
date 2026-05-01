@@ -30,6 +30,7 @@ typedef struct screen_t {
 	struct wlr_box workarea;       /* Cached workarea (geometry minus struts) */
 	char *name;                    /* User-assigned screen name */
 	struct output_t *virtual_output; /* Virtual output for fake screens (NULL for real screens) */
+	int layer_exclusive[4];        /* Layer-shell exclusive zones {top, right, bottom, left} */
 } screen_t;
 
 /* Metatable name for screen userdata */
@@ -61,9 +62,8 @@ screen_t *luaA_screen_getbycoord(lua_State *L, int x, int y);
 
 /* Screen geometry and workarea updates */
 void luaA_screen_update_geometry(lua_State *L, screen_t *screen);
-void screen_update_workarea(screen_t *screen);
 void screen_set_workarea(lua_State *L, screen_t *screen, struct wlr_box *workarea);
-void luaA_monitor_apply_drawin_struts(lua_State *L, Monitor *m, struct wlr_box *area);
+void screen_set_layer_exclusive(screen_t *screen, int top, int right, int bottom, int left);
 
 /* Screen-client operations (AwesomeWM compatibility) */
 struct client_t;

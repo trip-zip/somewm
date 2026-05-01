@@ -1449,21 +1449,6 @@ some_warp_cursor_to_monitor(Monitor *m)
 }
 
 /*
- * Apply drawin struts (from Lua wibars) to a usable area
- * This is called from arrangelayers() to preserve wibar struts
- */
-void
-some_monitor_apply_drawin_struts(Monitor *m, struct wlr_box *area)
-{
-	extern lua_State *globalconf_L;
-
-	if (!globalconf_L || !m || !area)
-		return;
-
-	luaA_monitor_apply_drawin_struts(globalconf_L, m, area);
-}
-
-/*
  * Focus a client
  */
 void
