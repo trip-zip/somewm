@@ -27,10 +27,9 @@
 
 local base = require("wibox.widget.base")
 local fixed = require("wibox.layout.fixed")
-local table = table
 local pairs = pairs
-local gmath = require("gears.math")
 local gtable = require("gears.table")
+local layout = require("somewm.layout")
 
 local flex = {}
 
@@ -108,57 +107,53 @@ local flex = {}
 -- @propemits true false
 -- @interface layout
 
-function flex:layout(_, width, height)
-    local result = {}
-    local spacing = self._private.spacing
-    local num = #self._private.widgets
-    local total_spacing = (spacing*(num-1))
+local function build_tree(self, width, height)
+    local is_y          = self._private.dir == "y"
+    local spacing       = math.abs(self._private.spacing or 0)
+    local max_size      = self._private.max_widget_size
     local spacing_widget = self._private.spacing_widget
-    local abspace = math.abs(spacing)
-    local spoffset = spacing < 0 and 0 or spacing
-    local is_y = self._private.dir == "y"
-    local is_x = not is_y
+    local widgets       = self._private.widgets
 
-    local space_per_item
-    if is_y then
-        space_per_item = height / num - total_spacing/num
-    else
-        space_per_item = width / num - total_spacing/num
-    end
+    local props = max_size
+        and { grow = true, grow_max = max_size }
+        or  { grow = true }
 
-    if self._private.max_widget_size then
-        space_per_item = math.min(space_per_item, self._private.max_widget_size)
-    end
+    local outer = is_y and layout.column or layout.row
 
-    local pos, pos_rounded = 0, 0
-    for k, v in pairs(self._private.widgets) do
-        local x, y, w, h
-
-        local next_pos = pos + space_per_item
-        local next_pos_rounded = gmath.round(next_pos)
-
-        if is_y then
-            x, y = 0, pos_rounded
-            w, h = width, next_pos_rounded - pos_rounded
-        else
-            x, y = pos_rounded, 0
-            w, h = next_pos_rounded - pos_rounded, height
+    -- spacing_widget: interleave a fixed-size spacer leaf between every
+    -- pair of children so the spacer renders inside the gap. Container
+    -- gap stays 0 because the spacer IS the gap. Without spacing_widget
+    -- the simpler `gap = spacing` path runs; Clay distributes the gap
+    -- with no extra leaves.
+    local children
+    if spacing_widget and spacing > 0 then
+        children = {}
+        local spacer_props = is_y and { height = spacing } or { width = spacing }
+        for i, w in ipairs(widgets) do
+            if i > 1 then
+                children[#children + 1] = layout.widget(spacing_widget, spacer_props)
+            end
+            children[#children + 1] = layout.widget(w, props)
         end
-
-        pos = next_pos + spacing
-        pos_rounded = next_pos_rounded + spacing
-
-        table.insert(result, base.place_widget_at(v, x, y, w, h))
-
-        if k > 1 and spacing ~= 0 and spacing_widget then
-            table.insert(result, base.place_widget_at(
-                spacing_widget, is_x and (x - spoffset) or x, is_y and (y - spoffset) or y,
-                is_x and abspace or w, is_y and abspace or h
-            ))
-        end
+        return base.place_rects(layout.solve {
+            source = "wibox",
+            width = width, height = height,
+            root = outer { children },
+        }.placements)
     end
 
-    return result
+    return base.place_rects(layout.solve {
+        source = "wibox",
+        width = width, height = height,
+        root = outer {
+            gap = spacing,
+            layout.widgets(widgets, props),
+        },
+    }.placements)
+end
+
+function flex:layout(_, width, height)
+    return build_tree(self, width, height)
 end
 
 -- Fit the flex layout into the given space.
