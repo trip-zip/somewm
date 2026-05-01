@@ -1,19 +1,25 @@
 ---------------------------------------------------------------------------
---- Suits for awful
--- @author Julien Danjou &lt;julien@danjou.info&gt;
--- @copyright 2008 Julien Danjou
--- @module awful.layout
+-- Public preset surface for awful.layout.
+--
+-- For Clay-native presets, suit.* is a literal table identity to clay.*:
+-- `awful.layout.suit.tile == awful.layout.clay.tile`. Existing rc.lua
+-- using `tag.layout = awful.layout.suit.tile` continues to work unchanged.
+--
+-- carousel is still served by its legacy suit/*.lua body because its
+-- viewport-relative model isn't flexbox-shaped (see DEVIATIONS).
+--
+-- @module awful.layout.suit
 ---------------------------------------------------------------------------
 
-return {
-  corner = require("awful.layout.suit.corner"),
-  max = require("awful.layout.suit.max"),
-  tile = require("awful.layout.suit.tile"),
-  fair = require("awful.layout.suit.fair"),
-  floating = require("awful.layout.suit.floating"),
-  magnifier = require("awful.layout.suit.magnifier"),
-  spiral = require("awful.layout.suit.spiral"),
-  carousel = require("awful.layout.suit.carousel"),
-}
+local clay = require("awful.layout.clay")
 
--- vim: filetype=lua:expandtab:shiftwidth=4:tabstop=8:softtabstop=4:textwidth=80
+return {
+    tile      = clay.tile,
+    fair      = clay.fair,
+    max       = clay.max,
+    corner    = clay.corner,
+    spiral    = clay.spiral,
+    floating  = clay.floating,
+    magnifier = clay.magnifier,
+    carousel  = require("awful.layout.suit.carousel"),
+}
