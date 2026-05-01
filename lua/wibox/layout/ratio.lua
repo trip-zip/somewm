@@ -19,6 +19,7 @@ local floor = math.floor
 local gmath = require("gears.math")
 local gtable = require("gears.table")
 local unpack = unpack or table.unpack -- luacheck: globals unpack (compatibility with Lua 5.1)
+local layout = require("somewm.layout")
 
 local ratio = {}
 
@@ -100,7 +101,40 @@ local function normalize(self)
     assert(new_sum > 0.99 and new_sum < 1.01)
 end
 
+local function layout_clay(self, width, height)
+    local is_y = self._private.dir == "y"
+    local spacing = math.abs(self._private.spacing or 0)
+    local ratios = self._private.ratios
+
+    local children = {}
+    for i, widget in ipairs(self._private.widgets) do
+        local pct = layout.percent((ratios[i] or 0) * 100)
+        children[#children + 1] = layout.widget(widget,
+            is_y and { height = pct } or { width = pct })
+    end
+
+    local outer = is_y and layout.column or layout.row
+    return base.place_rects(layout.solve {
+        source = "wibox",
+        width = width, height = height,
+        root = outer {
+            gap = spacing,
+            children,
+        },
+    }.placements)
+end
+
 function ratio:layout(context, width, height)
+    -- The fallback below handles spacing_widget and non-default
+    -- inner_fill_strategy modes (justify/center/spacing/left/right).
+    -- Default-strategy + no-spacing-widget routes through the Clay tree
+    -- builder; in busted the reference solver in somewm.layout handles
+    -- the solve so this path runs in both environments.
+    local strategy = self:get_inner_fill_strategy()
+    if not self._private.spacing_widget and strategy == "default" then
+        return layout_clay(self, width, height)
+    end
+
     local preliminary_results = {}
     local pos,spacing = 0, self._private.spacing
     local strategy = self:get_inner_fill_strategy()
@@ -158,7 +192,7 @@ function ratio:layout(context, width, height)
     end
 
     local active = #preliminary_results - void_count
-    local result, real_pos, space_front = {}, 0, strategy == "right" and
+    local rects, real_pos, space_front = {}, 0, strategy == "right" and
         to_redistribute or (
             strategy == "center" and math.floor(to_redistribute/2) or 0
         )
@@ -194,16 +228,19 @@ function ratio:layout(context, width, height)
         end
 
         if k > 1 and abspace > 0 and spacing_widget then
-            table.insert(result, base.place_widget_at(
-                spacing_widget, is_x and (x - spoffset) or x, is_y and (y - spoffset) or y,
-                is_x and abspace or w, is_y and abspace or h
-            ))
+            rects[#rects + 1] = {
+                widget = spacing_widget,
+                x = is_x and (x - spoffset) or x,
+                y = is_y and (y - spoffset) or y,
+                width  = is_x and abspace or w,
+                height = is_y and abspace or h,
+            }
         end
 
-        table.insert(result, base.place_widget_at(v, x, y, w, h))
+        rects[#rects + 1] = { widget = v, x = x, y = y, width = w, height = h }
     end
 
-    return result
+    return base.place_rects_via_stack(rects, width, height)
 end
 
 --- Increase the ratio of "widget".
