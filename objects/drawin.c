@@ -39,9 +39,6 @@ lua_class_t drawin_class;
 extern void signal_array_init(signal_array_t *arr);
 extern void signal_array_wipe(signal_array_t *arr);
 
-/* Forward declarations for workarea updates */
-extern void screen_update_workarea(screen_t *screen);
-
 /* Forward declaration for drawable refresh callback */
 static void drawin_refresh_drawable(drawin_t *drawin);
 
@@ -1120,11 +1117,6 @@ luaA_drawin_struts(lua_State *L)
 			lua_pushvalue(L, 1);  /* Push drawin */
 			luaA_awm_object_emit_signal(L, -1, "property::struts", 0);
 			lua_pop(L, 1);
-
-			/* Update workarea if drawin is visible */
-			if (drawin->visible && drawin->screen) {
-				screen_update_workarea(drawin->screen);
-			}
 		}
 
 		return 0;
@@ -1248,12 +1240,6 @@ drawin_moveresize(lua_State *L, int udx, int x, int y, int width, int height)
 	if (old_x != drawin->x || old_y != drawin->y)
 		drawin_assign_screen(L, drawin, udx);
 
-	/* Update workarea if struts are set and drawin is visible */
-	if (drawin->visible && drawin->screen &&
-	    (drawin->strut.left || drawin->strut.right || drawin->strut.top || drawin->strut.bottom)) {
-		screen_update_workarea(drawin->screen);
-	}
-
 	/* Update scene graph node position if position changed */
 	if (drawin->scene_tree && (old_x != drawin->x || old_y != drawin->y))
 		wlr_scene_node_set_position(&drawin->scene_tree->node, drawin->x, drawin->y);
@@ -1367,12 +1353,6 @@ drawin_set_visible(lua_State *L, int udx, bool v)
 	/* Emit signal using the passed stack index (matches AwesomeWM exactly) */
 	luaA_object_emit_signal(L, udx, "property::visible", 0);
 
-	/* Update workarea if struts are set */
-	if (drawin->screen &&
-	    (drawin->strut.left || drawin->strut.right || drawin->strut.top || drawin->strut.bottom)) {
-		screen_update_workarea(drawin->screen);
-	}
-
 	/* Scene node visibility - differs from AwesomeWM's X11 approach:
 	 * In X11, xcb_map_window() maps immediately and content shows when ready.
 	 * In Wayland, we MUST have content before showing, otherwise we get smearing.
@@ -1415,11 +1395,6 @@ luaA_drawin_set_strut(lua_State *L, drawin_t *drawin, strut_t strut)
 	luaA_object_push(L, drawin);
 	luaA_awm_object_emit_signal(L, -1, "property::struts", 0);
 	lua_pop(L, 1);
-
-	/* Update workarea if drawin is visible */
-	if (drawin->visible && drawin->screen) {
-		screen_update_workarea(drawin->screen);
-	}
 }
 
 /** Apply pending geometry changes

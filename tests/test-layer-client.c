@@ -37,6 +37,8 @@ static const char *g_namespace = "test-layer";
 static uint32_t g_keyboard_mode = 1; /* EXCLUSIVE */
 static const char *g_pointer_marker = NULL;
 static uint32_t g_anchor = 0;
+static int32_t g_exclusive_zone = 0;
+static bool g_set_exclusive_zone = false;
 
 /* Signal handler for clean shutdown */
 static void handle_signal(int sig) {
@@ -291,6 +293,7 @@ static void print_usage(const char *prog) {
     fprintf(stderr, "  --pointer-marker PATH Write \"entered\\n\" to PATH on wl_pointer.enter\n");
     fprintf(stderr, "  --anchor EDGES        Comma-separated anchor edges: top,bottom,left,right\n");
     fprintf(stderr, "                        (default: unanchored; compositor chooses position)\n");
+    fprintf(stderr, "  --exclusive-zone N    Set exclusive_zone to N (>0 reserves, 0 respects, -1 ignores)\n");
 }
 
 int main(int argc, char *argv[]) {
@@ -334,6 +337,9 @@ int main(int argc, char *argv[]) {
                 tok = strtok(NULL, ",");
             }
             free(buf);
+        } else if (strcmp(argv[i], "--exclusive-zone") == 0 && i + 1 < argc) {
+            g_exclusive_zone = (int32_t)atoi(argv[++i]);
+            g_set_exclusive_zone = true;
         } else if (strcmp(argv[i], "--help") == 0 || strcmp(argv[i], "-h") == 0) {
             print_usage(argv[0]);
             return 0;
@@ -375,6 +381,8 @@ int main(int argc, char *argv[]) {
     zwlr_layer_surface_v1_set_size(g_layer_surface, 100, 100);
     if (g_anchor)
         zwlr_layer_surface_v1_set_anchor(g_layer_surface, g_anchor);
+    if (g_set_exclusive_zone)
+        zwlr_layer_surface_v1_set_exclusive_zone(g_layer_surface, g_exclusive_zone);
     zwlr_layer_surface_v1_set_keyboard_interactivity(g_layer_surface, g_keyboard_mode);
     zwlr_layer_surface_v1_add_listener(g_layer_surface, &layer_surface_listener, NULL);
 

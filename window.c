@@ -48,6 +48,7 @@
 #include "objects/drawable.h"
 #include "objects/tag.h"
 #include "objects/layer_surface.h"
+#include "clay_layout.h"
 #include "objects/signal.h"
 #include "objects/button.h"
 #include "stack.h"
@@ -1241,40 +1242,26 @@ apply_geometry_to_wlroots(Client *c)
 	titlebar_left = c->fullscreen ? 0 : c->titlebar[CLIENT_TITLEBAR_LEFT].size;
 	titlebar_top = c->fullscreen ? 0 : c->titlebar[CLIENT_TITLEBAR_TOP].size;
 
-	/* Update scene-graph position and borders */
+	/* Position the outer client scene tree at the absolute geometry. Clay
+	 * only owns the inner geometry — borders, titlebar buffers, and the
+	 * scene_surface offset all live as children of c->scene. */
 	wlr_scene_node_set_position(&c->scene->node, c->geometry.x, c->geometry.y);
-	/* Offset scene_surface by titlebar sizes (titlebars occupy space in geometry) */
-	wlr_scene_node_set_position(&c->scene_surface->node, c->bw + titlebar_left, c->bw + titlebar_top);
-	wlr_scene_rect_set_size(c->border[0], c->geometry.width, c->bw);
-	wlr_scene_rect_set_size(c->border[1], c->geometry.width, c->bw);
-	wlr_scene_rect_set_size(c->border[2], c->bw, c->geometry.height - 2 * c->bw);
-	wlr_scene_rect_set_size(c->border[3], c->bw, c->geometry.height - 2 * c->bw);
-	wlr_scene_node_set_position(&c->border[1]->node, 0, c->geometry.height - c->bw);
-	wlr_scene_node_set_position(&c->border[2]->node, 0, c->bw);
-	wlr_scene_node_set_position(&c->border[3]->node, c->geometry.width - c->bw, c->bw);
 
-	/* Update shadow geometry (lazy creation if needed) */
-	{
-		const shadow_config_t *shadow_config = shadow_get_effective_config(
-			c->shadow_config, false);
-		if (shadow_config && shadow_config->enabled) {
-			if (c->shadow.tree) {
-				shadow_update_geometry(&c->shadow, shadow_config,
-					c->geometry.width, c->geometry.height);
-			} else {
-				shadow_create(c->scene, &c->shadow, shadow_config,
-					c->geometry.width, c->geometry.height);
-			}
-		}
-	}
+	/* Pass 3: Clay sub-pass computes positions for the 4 borders, 4 titlebars,
+	 * the scene_surface offset, and the shadow's 9-slice update. Returns the
+	 * surface element's inner size which becomes the configure size sent to
+	 * the client. */
+	int inner_w = 0, inner_h = 0;
+	clay_apply_client_decorations(c, &inner_w, &inner_h);
 
-	/* Update titlebar positions - they depend on current geometry */
-	client_update_titlebar_positions(c);
-
-	/* Request size change from client (subtract borders AND titlebars from geometry)
-	 * CRITICAL: Only send configure if there's no pending resize waiting for client commit.
-	 * Without this check, we flood the client with configure events on every refresh cycle,
-	 * which crashes Firefox and other clients that can't handle rapid configure floods. */
+	/* Request size change from client. Clay's surface element gives us the
+	 * exact inner size (geometry minus borders and titlebars, or minus
+	 * borders only when fullscreen — Clay receives the same fullscreen-zeroed
+	 * titlebar sizes the legacy math used).
+	 * CRITICAL: Only send configure if there's no pending resize waiting for
+	 * client commit. Without this check, we flood the client with configure
+	 * events on every refresh cycle, which crashes Firefox and other clients
+	 * that can't handle rapid configure floods. */
 	if (!c->resize) {
 		/* Sync xdg-shell fullscreen state with c->fullscreen so the client
 		 * knows it is fullscreen. Done here (not in client_set_fullscreen)
@@ -1287,20 +1274,7 @@ apply_geometry_to_wlroots(Client *c)
 				&& c->surface.xwayland->fullscreen != c->fullscreen)
 			client_set_fullscreen_internal(c, c->fullscreen);
 #endif
-		if (c->fullscreen) {
-			/* Fullscreen: client gets full geometry minus borders only */
-			c->resize = client_set_size(c,
-					c->geometry.width - 2 * c->bw,
-					c->geometry.height - 2 * c->bw);
-		} else {
-			int sw = c->geometry.width - 2 * c->bw
-				- titlebar_left - c->titlebar[CLIENT_TITLEBAR_RIGHT].size;
-			int sh = c->geometry.height - 2 * c->bw
-				- titlebar_top - c->titlebar[CLIENT_TITLEBAR_BOTTOM].size;
-			if (sw < 1) sw = 1;
-			if (sh < 1) sh = 1;
-			c->resize = client_set_size(c, sw, sh);
-		}
+		c->resize = client_set_size(c, inner_w, inner_h);
 	}
 	client_get_clip(c, &clip);
 
@@ -1334,7 +1308,7 @@ apply_geometry_to_wlroots(Client *c)
 		if (fully_inside) {
 			/* Common case: everything visible, no clipping needed.
 			 * Re-enable surface/borders/shadow that may have been hidden.
-			 * Titlebars are managed by client_update_titlebar_positions(). */
+			 * Titlebars are managed by clay_apply_client_decorations(). */
 			wlr_scene_node_set_enabled(&c->scene_surface->node, true);
 			for (int i = 0; i < 4; i++)
 				wlr_scene_node_set_enabled(&c->border[i]->node, true);
@@ -1369,7 +1343,7 @@ apply_geometry_to_wlroots(Client *c)
 			if (c->shadow.tree)
 				wlr_scene_node_set_enabled(&c->shadow.tree->node, partially_visible);
 
-			/* Titlebar buffers: client_update_titlebar_positions()
+			/* Titlebar buffers: clay_apply_client_decorations()
 			 * already enables them based on size/fullscreen. Only
 			 * forcibly disable when fully offscreen. */
 			if (!partially_visible) {
@@ -1387,7 +1361,7 @@ apply_geometry_to_wlroots(Client *c)
 		 * Mirror the fully_inside branch so a transition out of a
 		 * clip-offscreen layout recovers nodes that were previously
 		 * disabled. Titlebars stay idempotently managed by
-		 * client_update_titlebar_positions() above. */
+		 * clay_apply_client_decorations() above. */
 		wlr_scene_node_set_enabled(&c->scene_surface->node, true);
 		for (int i = 0; i < 4; i++)
 			wlr_scene_node_set_enabled(&c->border[i]->node, true);

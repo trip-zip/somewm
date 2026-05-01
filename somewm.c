@@ -82,6 +82,7 @@
 #include "stack.h"
 #include "banning.h"
 #include "animation.h"
+#include "clay_layout.h"
 #include "ipc.h"
 #include "dbus.h"
 #include "objects/spawn.h"
@@ -756,6 +757,11 @@ some_refresh(void)
 #ifdef SOMEWM_BENCH
 	clock_gettime(CLOCK_MONOTONIC, &bench_ts[2]);
 #endif
+
+	/* Step 1.75: Apply Clay layout results directly to client geometry.
+	 * Clay trees were built by Lua during Step 1 (refresh signal).
+	 * This applies computed positions without a Lua round-trip. */
+	clay_apply_all();
 
 	/* Step 2: Refresh drawins (wibox/panels) FIRST - matches AwesomeWM order
 	 * AwesomeWM calls drawin_refresh() BEFORE client_refresh() in awesome_refresh().
