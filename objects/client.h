@@ -337,6 +337,21 @@ struct client_t
     } titlebar[CLIENT_TITLEBAR_COUNT];
     /** Motif WM hints, with an additional MWM_HINTS_AWESOME_SET bit */
     motif_wm_hints_t motif_wm_hints;
+    /** Decoration sub-pass cache. clay_apply_client_decorations() resolves
+     * the same Clay tree on every surface commit; the inputs (geometry,
+     * border width, fullscreen, titlebar sizes) are invariant across
+     * the vast majority of those calls. The stamp comparison at the
+     * head of clay_apply_client_decorations() short-circuits the solve
+     * when nothing relevant has changed. Zero-init via calloc is
+     * sufficient (valid = false on first call). */
+    struct {
+        int      width, height;
+        int      bw;
+        bool     fullscreen;
+        uint16_t titlebar_size[CLIENT_TITLEBAR_COUNT];
+        int      inner_w, inner_h;
+        bool     valid;
+    } decor_cache;
 };
 
 /* Note: Client and client_t are both forward-declared in somewm_types.h

@@ -214,7 +214,9 @@ static inline void sequence_pair_array_append(sequence_pair_array_t *arr, sequen
 /* Screen/monitor helper stubs */
 typedef struct screen_t screen_t;
 
-/* screen_client_moveto() and screen_update_workarea() now implemented in objects/screen.c */
+/* screen_client_moveto() implemented in objects/screen.c.
+ * Workarea is now computed by clay.compose_screen (Lua side); the legacy
+ * screen_update_workarea() and luaA_monitor_apply_drawin_struts() are gone. */
 
 /* Client property functions */
 static inline void client_set_border_width_callback(void *ctx, uint16_t old_width, uint16_t new_width) {
