@@ -14,6 +14,7 @@ local base = require("wibox.widget.base")
 local gcolor = require("gears.color")
 local cairo = require("lgi").cairo
 local gtable = require("gears.table")
+local layout = require("somewm.layout")
 
 local margin = { mt = {} }
 
@@ -40,19 +41,16 @@ end
 
 -- Layout a margin layout
 function margin:layout(_, width, height)
-    if self._private.widget then
-        local x = self._private.left
-        local y = self._private.top
-        local w = self._private.right
-        local h = self._private.bottom
-
-        local resulting_width = width - x - w
-        local resulting_height = height - y - h
-
-        if resulting_width >= 0 and resulting_height >= 0 then
-            return { base.place_widget_at(self._private.widget, x, y, resulting_width, resulting_height) }
-        end
-    end
+    if not self._private.widget then return end
+    return base.place_rects(layout.solve {
+        source = "wibox",
+        width = width, height = height,
+        root = layout.row {
+            padding = { self._private.top, self._private.right,
+                        self._private.bottom, self._private.left },
+            layout.widget(self._private.widget, { grow = true }),
+        },
+    }.placements)
 end
 
 -- Fit a margin layout into the given space

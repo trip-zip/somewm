@@ -114,10 +114,15 @@ describe("wibox.layout.align", function()
                 end)
 
                 it("layout", function()
+                    -- Outside mode: first and third are flex children that
+                    -- grow around the fixed-size second. The reference
+                    -- solver distributes (100 - 15) / 2 = 42.5 with
+                    -- cumulative rounding, putting the .5 leftover on the
+                    -- first child and pushing third down by 1.
                     assert.widget_layout(layout, { 100, 100 }, {
-                        p(first,  0,  0, 100, 42),
+                        p(first,  0,  0, 100, 43),
+                        p(second, 0, 43, 100, 15),
                         p(third,  0, 58, 100, 42),
-                        p(second, 0, 42, 100, 15),
                     })
                 end)
             end)
@@ -129,9 +134,9 @@ describe("wibox.layout.align", function()
 
                 it("layout", function()
                     assert.widget_layout(layout, { 5, 100 }, {
-                        p(first,  0,  0, 5, 42),
+                        p(first,  0,  0, 5, 43),
+                        p(second, 0, 43, 5, 15),
                         p(third,  0, 58, 5, 42),
-                        p(second, 0, 42, 5, 15),
                     })
                 end)
             end)
@@ -143,9 +148,9 @@ describe("wibox.layout.align", function()
 
                 it("layout", function()
                     assert.widget_layout(layout, { 100, 20 }, {
-                        p(first,  0,  0, 100, 2),
-                        p(third,  0, 18, 100, 2),
-                        p(second, 0,  2, 100, 15),
+                        p(first,  0,  0, 100,  3),
+                        p(second, 0,  3, 100, 15),
+                        p(third,  0, 18, 100,  2),
                     })
                 end)
             end)
@@ -186,10 +191,15 @@ describe("wibox.layout.align", function()
                 end)
 
                 it("layout", function()
+                    -- Inside mode: first and third take their fit size,
+                    -- second grows to fill the middle. Tree-iteration
+                    -- order is first, second, third (flex flow), unlike
+                    -- the legacy pre-Clay implementation which appended
+                    -- second after first/third.
                     assert.widget_layout(layout, { 100, 100 }, {
                         p(first,  0,  0, 100, 10),
-                        p(third,  0, 90, 100, 10),
                         p(second, 0, 10, 100, 80),
+                        p(third,  0, 90, 100, 10),
                     })
                 end)
             end)
@@ -202,8 +212,8 @@ describe("wibox.layout.align", function()
                 it("layout", function()
                     assert.widget_layout(layout, { 5, 100 }, {
                         p(first,  0,  0, 5, 10),
-                        p(third,  0, 90, 5, 10),
                         p(second, 0, 10, 5, 80),
+                        p(third,  0, 90, 5, 10),
                     })
                 end)
             end)

@@ -12,10 +12,7 @@ return setmetatable({
     margin = require("wibox.container.margin");
     mirror = require("wibox.container.mirror");
     constraint = require("wibox.container.constraint");
-    scroll = require("wibox.container.scroll");
     background = require("wibox.container.background");
-    radialprogressbar = require("wibox.container.radialprogressbar");
-    arcchart = require("wibox.container.arcchart");
     place = require("wibox.container.place");
     tile = require("wibox.container.tile");
     border = require("wibox.container.border");

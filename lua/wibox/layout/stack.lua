@@ -70,21 +70,24 @@ local stack = {mt={}}
 -- @interface layout
 
 function stack:layout(_, width, height)
-    local result = {}
     local spacing = self._private.spacing
+    local n = #self._private.widgets
 
-    width  = width  - math.abs(self._private.h_offset * #self._private.widgets) - 2*spacing
-    height = height - math.abs(self._private.v_offset * #self._private.widgets) - 2*spacing
+    local child_w = width  - math.abs(self._private.h_offset * n) - 2*spacing
+    local child_h = height - math.abs(self._private.v_offset * n) - 2*spacing
 
     local h_off, v_off = spacing, spacing
+    local rects = {}
 
     for _, v in pairs(self._private.widgets) do
-        table.insert(result, base.place_widget_at(v, h_off, v_off, width, height))
+        rects[#rects + 1] = {
+            widget = v, x = h_off, y = v_off, width = child_w, height = child_h,
+        }
         h_off, v_off = h_off + self._private.h_offset, v_off + self._private.v_offset
         if self._private.top_only then break end
     end
 
-    return result
+    return base.place_rects_via_stack(rects, width, height)
 end
 
 function stack:fit(context, orig_width, orig_height)
