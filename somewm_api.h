@@ -132,7 +132,6 @@ void some_focus_client(Client *c, int lift);
 Client *some_focus_top_client(Monitor *m);
 const char *some_get_monitor_name(Monitor *m);
 Monitor *some_monitor_at_cursor(void);
-void some_monitor_apply_drawin_struts(Monitor *m, struct wlr_box *area);
 
 /*
  * Tag API
