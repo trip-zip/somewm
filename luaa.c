@@ -4212,7 +4212,7 @@ luaA_loadrc(void)
 	char xdg_config_path[512];
 	const char *xdg_config_home;
 	const char *home;
-	const char *config_paths[8];
+	const char *config_paths[8] = {NULL};
 	int path_count = 0;
 	volatile int loaded = 0;  /* volatile: may be modified across siglongjmp */
 	int load_result;
