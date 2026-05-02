@@ -130,6 +130,7 @@ if not wlroots.found()
   wlroots_options = [
     'examples=false',
     'default_library=static',
+    'werror=false',
   ]
   if have_xwayland
     wlroots_options += 'xwayland=enabled'
