@@ -150,8 +150,6 @@ luaA_button_array_set(lua_State *L, int oidx, int idx, button_array_t *buttons)
 {
 	int i;
 	int abs_idx;
-	int count = 0;
-	int nested_count;
 
 	luaL_checktype(L, idx, LUA_TTABLE);
 
@@ -168,7 +166,6 @@ luaA_button_array_set(lua_State *L, int oidx, int idx, button_array_t *buttons)
 	/* Iterate table and collect button objects */
 	lua_pushnil(L);
 	while (lua_next(L, abs_idx)) {
-		count++;
 		/* Check if value is a button object or awful.button wrapper */
 		if (lua_istable(L, -1)) {
 			/* Try to get _c_button field (awful.button wrapper) */
@@ -181,18 +178,14 @@ luaA_button_array_set(lua_State *L, int oidx, int idx, button_array_t *buttons)
 			} else {
 				lua_pop(L, 1); /* Pop nil _c_button */
 				/* Maybe it's an array of capi.button objects - iterate it */
-				nested_count = 0;
 				lua_pushnil(L);
 				while (lua_next(L, -2)) {
 					if (luaA_toudata(L, -1, &button_class)) {
-						nested_count++;
 						/* luaA_object_ref_item removes the item from stack */
 						button_array_append(buttons, luaA_object_ref_item(L, oidx, -1));
 					} else {
 						lua_pop(L, 1); /* Pop non-button value */
 					}
-				}
-				if (nested_count == 0) {
 				}
 				/* Pop the table after iteration */
 				lua_pop(L, 1);
