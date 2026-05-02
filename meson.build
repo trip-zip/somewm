@@ -7,6 +7,9 @@ project(
     'c_std=gnu11',
     'warning_level=2',
     'werror=true',
+    'wlroots:werror=false',
+    'libdisplay-info:werror=false',
+    'v4l-utils:werror=false',
   ],
 )
 
@@ -130,7 +133,6 @@ if not wlroots.found()
   wlroots_options = [
     'examples=false',
     'default_library=static',
-    'werror=false',
   ]
   if have_xwayland
     wlroots_options += 'xwayland=enabled'
