@@ -132,6 +132,96 @@ Widget-layer consumers (`naughty.list`, `awful.widget.tasklist`, `awful.widget.t
 
 ---
 
+## Layout Engine (somewm 2.0)
+
+somewm 2.0 introduces [Clay](https://github.com/nicbarker/clay) as the universal layout engine. Every positional decision in the compositor flows through Clay, replacing the bespoke geometry math scattered across AwesomeWM's Lua libraries.
+
+### What goes through Clay
+
+| Pass | Where | Owner |
+|---|---|---|
+| Screen composition (wibars + workarea) | `compose_screen` in `lua/awful/layout/clay/init.lua` | Lua |
+| Tiled-client layout (tile / fair / max / corner / spiral / spiral.dwindle / floating) | `awful.layout.clay.*` presets, all using `body_signature = "context"` descriptors. `floating` emits a stack of self-positioned clients (no-op solve for positioning + bw2 round-trip preservation). `max.fullscreen` drives its own `layout.solve` at `screen.geometry` bounds because the tag-suit adapter solves against the workarea. `magnifier` is a deliberate bespoke exception (two `layout.solve` passes for overlap; documented in `lua/awful/layout/clay/magnifier.lua`). | Lua |
+| Per-client decoration (4 borders + 4 titlebars + surface + shadow) | `clay_apply_client_decorations()` in `clay_layout.c` | C |
+| Widget hierarchy (wibox.layout.*) | All wibox layouts route through Clay. `flex` / `fixed` use flex distribution including `spacing_widget` (interleaved spacer leaves). `align` covers all three expand modes via Clay: `inside` / `outside` flex-grow; `none` is `layout.stack` with absolute child positions. `ratio` default uses flex distribution; non-default strategies (justify/center/spacing/left/right) and `spacing_widget` compute slot positions in Lua (void redistribution) then emit via `layout.stack` with absolute child positions. `stack` (z-order with offsets), `manual` (user-supplied points), and `grid` (cell math) all emit via `layout.stack`. | Lua via `somewm.layout.solve` |
+| Container layout (wibox.container.{margin, place, background, constraint, border}) | each container's `:layout` calls `somewm.layout.solve`; `border` is a 9-slice container that emits via `layout.stack` with absolute child positions for the corners, edges, fill, and inner widget. | Lua via `somewm.layout.solve` |
+| Layout-shaped placement (`placement.align` + 11 anchor aliases) | `awful.placement.align` calls `somewm.placement.solve` | Lua via `somewm.placement.solve` |
+| Notification stacking (`naughty.layout.box`) | First notification routes through `placement[position]` (Clay-backed alias); subsequent notifications chain `placement.next_to`, intentionally bespoke per the next-to row below. | Lua via `somewm.placement.solve` (first) + bespoke search (rest) |
+| Submenu placement (`awful.menu:set_coords`) | Direct screen-clamping math + next-to-style fallback (try right of parent, fall back to left). Both pieces are documented as bespoke below. | Bespoke (transitively-Clay where applicable) |
+| Menubar geometry (`menubar.show`) | Trivial assignment of `screen.workarea` x/y/width to the menubar wibox; not anchor-shaped. | Direct, transitively-Clay through workarea (computed by `compose_screen`) |
+| Layer-shell anchoring | `clay_apply_layer_surface()` in `clay_layout.c` | C |
+
+### What stays bespoke (and why)
+
+Clay handles **layout** (anchor a rect inside a parent rect with sizing / padding / alignment). Concerns that aren't layout — input, persistence, policy, orchestration — stay in their original modules. AwesomeWM bundled these together into `awful.placement`; somewm 2.0 keeps the public API but draws the line cleanly:
+
+| Concern | Module | Why |
+|---|---|---|
+| Cursor reads | `placement.under_mouse`, `placement.next_to_mouse`, `placement.resize_to_mouse` | Input concern; not tree-shaped |
+| Region search | `placement.no_overlap` | Rect subtraction over neighbors; not a tree |
+| Try-and-fit | `placement.next_to` | Search algorithm with short-circuit; Clay can't express |
+| Distance compare | `placement.closest_corner` | Snap math; delegates to `placement.align` for the anchor step |
+| Memento | `placement.restore`, `placement.store_geometry` | Persistence concern |
+| Boundary clamp | `placement.no_offscreen` | Trivial 8-line clamp; Clay roundtrip would add work |
+| Single-axis transform | `placement.stretch`, `placement.maximize`, `placement.scale` | Preserves one corner of `dgeo`, transforms the other; not anchor-shaped |
+| Scrollable / viewport-relative | `awful.layout.suit.carousel` | Unbounded strip with a viewport offset; positions depend on scroll state, not on a finite parent rect. Outside Clay's anchor-a-rect-inside-a-rect model. |
+| Absolute-position emission | `wibox.widget.systray` (multi-row case) | Computes a grid of icon positions (`col * (icon + spacing)`) and builds placements with `base.place_widget_at` directly. The other absolute-position layouts (`wibox.layout.{stack, manual, grid}`, `wibox.layout.ratio` non-default, `wibox.container.border`) now route through `layout.stack` with absolute child props; only systray's multi-row override still skips the substrate. |
+| Matrix transform | `wibox.container.{mirror, rotate}` | Cairo affine transforms applied at draw time; the contained widget fills the parent pre-transform (a trivial fill), then the matrix flips or rotates the result. Adding a Clay solve here would be a no-op round-trip; the wrapped widget's own `:layout()` already goes through Clay if it uses Clay-routed primitives. The wrapper is transparent to that. |
+
+### Public API: `somewm.layout` and `somewm.placement`
+
+Two engine-agnostic public modules expose Clay-backed layout to user code:
+
+- **`somewm.layout`** (`lua/somewm/layout/init.lua`): declarative composition API. `layout.row`, `layout.column`, `layout.stack`, `layout.widget`, `layout.client`, `layout.drawin`, `layout.measure`, `layout.percent`, `layout.solve`. Used by every Clay-backed layout / container under the hood. Solve returns raw rect tables `{widget, x, y, width, height}`; wibox callers wrap into placement objects via `wibox.widget.base.place_rects`. The substrate has no dependency on wibox.
+
+- **`somewm.placement`** (`lua/somewm/placement/init.lua`): single function `solve { parent, target_width, target_height, anchor }` returning `{ x, y, width, height }` in absolute coords. Used by `placement.align`'s fast path.
+
+Naming convention: public surfaces describe what they DO (`layout.row`, `placement.solve`), not what they're MADE OF. Engine-internal identifiers — `_somewm_clay`, `clay_layout.c`, `Clay_*` macros, `clay_apply_client_decorations`, `clay_apply_layer_surface` — keep their honest names because they live at the engine layer. If we ever swap engines, only the engine layer changes; user code is untouched.
+
+### Substrate principle
+
+`somewm.*` is the foundation namespace for somewm-only capabilities. Both `awful.*` and `wibox.*` may depend on `somewm.*`; `somewm.*` does not depend on either. AwesomeWM-mirror modules (`gears`, `wibox`, `awful`, `naughty`, `beautiful`, `ruled`, `menubar`) keep their existing names and shapes — Prime Directive holds; we don't relitigate AwesomeWM's choices on existing public surfaces.
+
+### Workarea: single source of truth
+
+`screen.workarea` is computed exclusively by `clay.compose_screen`. The legacy strut-based path (`screen_update_workarea` in `objects/screen.c`) is gone. `wb:struts(...)` is a no-op deprecation; wibar position contributes to workarea via Clay's column / padding tree. Layer-shell exclusive zones reach `compose_screen` via `screen->layer_exclusive`, populated by `arrangelayers()` after `clay_apply_layer_surface()` walks the layer-surface list.
+
+### Custom layouts: `arrange(p)` still supported
+
+Existing user layouts (`function arrange(p) ... end` populating `p.geometries[c] = {...}`) keep working through the fallback at `lua/awful/layout/init.lua` (`if not p._clay_managed`). Setting `p._clay_managed = true` opts a custom layout into the Clay path; otherwise the legacy arrange flow applies geometries imperatively.
+
+### Soft-aliased layout namespace
+
+`awful.layout.suit.tile == awful.layout.clay.tile` by literal table identity. `tag.layout = awful.layout.suit.tile` keeps working; identity comparisons in user keybindings stay true. The legacy `suit/{tile, max, corner, magnifier, fair, spiral}.lua` files have been deleted; their `mouse_resize_handler` and policy fields now live next to each layout in `clay/*.lua`. `suit/floating.lua` survives as a one-line shim returning `clay.floating` because `awful.placement`, `awful.tag`, and `awful.mouse` import it directly for table-identity comparisons; the shim preserves identity. `suit/init.lua` is a literal alias table and `suit/carousel.lua` keeps its own legacy body (carousel is genuinely separate, see "What stays bespoke" above).
+
+### No frame scheduler
+
+Layout solves are not tied to vblank. Coalescing happens at the event-loop tick level via `gears.timer.delayed_call`:
+
+- **Wibox.** `widget::layout_changed` invalidates a `gears.cache` keyed on `(context, w, h)` (`lua/wibox/widget/base.lua:613`). The drawable schedules `_do_redraw` via `gears.timer.delayed_call` (`lua/wibox/drawable.lua:418`), one-shot per tick. Multiple invalidations within a tick collapse to one `:layout` call.
+- **Tag arrange.** `awful.layout.arrange` debounces via its own `gears.timer.delayed_call`. Same one-shot semantics; bursts of geometry changes coalesce.
+
+The vblank-aligned scheduler proposed in earlier design notes (`mark_dirty + flush at output_frame`) was declined. Coalescing is already provided by `delayed_call`; the cache invalidation rule (`widget::layout_changed` clears the per-widget cache) provides determinism. The unique addition vblank alignment would have given is correctness for a "delayed_call resolves after the frame submit, producing a one-frame-stale display" scenario, which the load profile (idle ~0/sec, textclock ~1/min, animations on client geometry not widget layout) doesn't produce. If that scenario ever appears in practice, the scheduler is ~100 LOC away and would be built then as a targeted fix.
+
+The load-profile claim was instrumented and verified in 2026-04 (see `ideas/redraw-loop-data.md`): solve-counters keyed by source confirm idle is ~0.1 solves/sec total, drag-resize is ~625-1252 solves/sec, and every solve corresponds to a real input change. The `delayed_call` coalescer is doing what it was designed to do.
+
+### Decoration sub-pass cache
+
+`clay_apply_client_decorations()` runs from `commitnotify` on every surface commit per visible client, not just on geometry changes. The decoration tree's inputs (`c->geometry.{width,height}`, `c->bw`, `c->fullscreen`, `c->titlebar[*].size`) are invariant across the vast majority of those commits. A per-client stamp cache (`decor_cache_t` field on `client_t` defined in `objects/client.h`) stores the last input state plus the resulting `inner_w`/`inner_h`; the head of `clay_apply_client_decorations()` short-circuits the Clay solve when the stamp matches. The visibility loop and shadow update stay outside the cache because both are already idempotent. No external invalidation is needed: the comparison is the invalidation. Pre-cache idle was ~1057 decoration solves/sec; post-cache it is 0.
+
+### Why some Clay trees stay in C
+
+Two layout paths build their Clay tree from C, not via a Lua descriptor through `somewm.layout.solve`. Both are deliberate exceptions, not migration TODOs:
+
+| Path | C function | Reason to stay in C |
+|---|---|---|
+| Per-client decoration | `clay_apply_client_decorations()` (`clay_layout.c`) | Fires per pointer-move event during interactive resize, on top of the `SIG_PROPERTY_GEOMETRY` Lua roundtrip already paid in `client_resize_do()`. A Lua descriptor would be a *second* roundtrip per pointer event, with no stated customizability requirement to amortize the cost. |
+| Layer-shell anchoring | `clay_apply_layer_surface()` (`clay_layout.c`) | Battle-tested anchor / exclusive-zone math. A Lua port would expose a new layer-surface state surface (margin, desired_size, exclusive_zone modes) for a feature no current consumer asks for, plus a C↔Lua roundtrip per layer-surface commit. Net +LOC across two languages for partial substrate uniformity. |
+
+Both trees are portable to Lua descriptors if a consumer arises (theming hooks, plugin-driven decorations, layer-surface rules that depend on geometry). The substrate (`somewm.layout.solve` plus the engine wrappers in `_somewm_clay.*`) supports it; only the descriptor + glue need to be added.
+
+---
+
 ## No-Op APIs
 
 These APIs exist and can be called without error, but have no effect on Wayland.
@@ -401,6 +491,8 @@ Modern D-Bus tray protocol instead of X11 embed. Implementation:
 ### Carousel Layout
 
 A niri-inspired scrollable tiling layout with no AwesomeWM equivalent. Clients are arranged in columns on an infinite horizontal (or vertical) strip, with the viewport auto-scrolling to keep the focused column visible.
+
+Carousel does NOT route through Clay. Column positions are computed imperatively from the focused-column index plus a viewport offset, which is outside Clay's "anchor a rect inside a parent rect" model (see the bespoke list above). Clients off-viewport get assigned negative or out-of-bounds coordinates via `client:_set_geometry_silent`, which the rest of the compositor honors without re-clamping.
 
 **Layout registration:** `lua/awful/layout/suit/init.lua` is modified to include `carousel = require("awful.layout.suit.carousel")`. This is the only change to a Sacred Lua file in this feature.
 

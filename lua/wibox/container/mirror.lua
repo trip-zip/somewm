@@ -18,7 +18,13 @@ local gtable = require("gears.table")
 
 local mirror = { mt = {} }
 
--- Layout this layout
+-- Mirror is a pure Cairo-affine post-transform with no layout decision
+-- Clay would make differently: the contained widget fills the parent
+-- pre-transform, then the Cairo matrix flips it. Routing through Clay
+-- here would add a no-op solve (one growing child of a row, trivially
+-- known to fill parent) for no behavior change. The wrapped widget's
+-- own :layout() goes through Clay if it uses Clay-routed primitives;
+-- mirror is transparent to that. See DEVIATIONS.
 function mirror:layout(_, width, height)
     if not self._private.widget then return end
 

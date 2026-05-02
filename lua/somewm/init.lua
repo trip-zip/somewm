@@ -13,6 +13,7 @@
 
 local submodules = {
     layout_animation = "somewm.layout_animation",
+    layout = "somewm.layout",
 }
 
 return setmetatable({}, {

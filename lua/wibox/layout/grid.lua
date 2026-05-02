@@ -1262,7 +1262,7 @@ local function layout_common(self, context, width, height, h_homogeneous, v_homo
         end
         -- Place the widget if it fits in the area
         if x + w <= width and y + h <= height then
-            table.insert(result, base.place_widget_at(v.widget, x, y, w, h))
+            table.insert(result, { widget = v.widget, x = x, y = y, width = w, height = h })
             table.insert(areas, {
                 x      = x - hspacing,
                 y      = y - vspacing,
@@ -1281,7 +1281,7 @@ local function layout_common(self, context, width, height, h_homogeneous, v_homo
     areas.cols = cumul_width
     areas.rows = cumul_height
 
-    return result, areas
+    return base.place_rects_via_stack(result, width, height), areas
 end
 
 local function get_area_cache_hash(width, height)

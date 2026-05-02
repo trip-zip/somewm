@@ -11,15 +11,21 @@
 local setmetatable = setmetatable
 local base = require("wibox.widget.base")
 local gtable = require("gears.table")
+local layout = require("somewm.layout")
 local math = math
 
 local constraint = { mt = {} }
 
 -- Layout a constraint layout
 function constraint:layout(_, width, height)
-    if self._private.widget then
-        return { base.place_widget_at(self._private.widget, 0, 0, width, height) }
-    end
+    if not self._private.widget then return end
+    return base.place_rects(layout.solve {
+        source = "wibox",
+        width = width, height = height,
+        root = layout.row {
+            layout.widget(self._private.widget, { grow = true }),
+        },
+    }.placements)
 end
 
 -- Fit a constraint layout into the given space
