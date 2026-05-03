@@ -9,8 +9,18 @@
 
 #include "somewm_types.h"
 
+struct wl_display;
 struct wl_listener;
 struct wlr_box;
+
+/* Schedule wl_display_flush_clients() to run on the next event-loop idle.
+ * Use this whenever a flush is needed from inside a Wayland signal emit
+ * (e.g. surface->events.map handlers, or any code path that may execute
+ * during signal dispatch). A synchronous flush in that context can call
+ * wl_client_destroy() on a hung-up peer and tear down a resource whose
+ * signal is still being emitted, which trips a wlroots assertion. See
+ * trip-zip/somewm#530. */
+void schedule_flush_clients(struct wl_display *display);
 
 /* XDG shell / window lifecycle */
 void createnotify(struct wl_listener *listener, void *data);
