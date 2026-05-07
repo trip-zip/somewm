@@ -4636,19 +4636,20 @@ luaA_client_get_content(lua_State *L, client_t *c)
     struct wlr_surface *wlr_surf;
     struct wlr_texture *texture;
     struct wlr_buffer *client_buffer;
-    int width  = c->geometry.width;
-    int height = c->geometry.height;
+    int dst_width  = c->geometry.width;
+    int dst_height = c->geometry.height;
+    int src_width, src_height;
     void *shm_data;
     uint32_t shm_format;
     size_t shm_stride;
     void *pixels = NULL;
     size_t stride;
 
-    /* Just the client size without decorations */
-    width  -= c->titlebar[CLIENT_TITLEBAR_LEFT].size + c->titlebar[CLIENT_TITLEBAR_RIGHT].size;
-    height -= c->titlebar[CLIENT_TITLEBAR_TOP].size + c->titlebar[CLIENT_TITLEBAR_BOTTOM].size;
+    /* Logical client size without decorations - what we return to Lua. */
+    dst_width  -= c->titlebar[CLIENT_TITLEBAR_LEFT].size + c->titlebar[CLIENT_TITLEBAR_RIGHT].size;
+    dst_height -= c->titlebar[CLIENT_TITLEBAR_TOP].size + c->titlebar[CLIENT_TITLEBAR_BOTTOM].size;
 
-    if (width <= 0 || height <= 0)
+    if (dst_width <= 0 || dst_height <= 0)
         return 0;
 
     /* Get the client's wlr_surface based on client type */
@@ -4666,6 +4667,14 @@ luaA_client_get_content(lua_State *L, client_t *c)
 
     client_buffer = &wlr_surf->buffer->base;
 
+    /* The buffer is at physical pixel resolution; on HiDPI it differs from the
+     * logical dst dimensions and we must scale on composite (see root.c). */
+    src_width  = client_buffer->width;
+    src_height = client_buffer->height;
+
+    if (src_width <= 0 || src_height <= 0)
+        return 0;
+
     /* First try direct buffer access (works for SHM clients) */
     if (wlr_buffer_begin_data_ptr_access(client_buffer, WLR_BUFFER_DATA_PTR_ACCESS_READ,
                                          &shm_data, &shm_format, &shm_stride)) {
@@ -4674,13 +4683,18 @@ luaA_client_get_content(lua_State *L, client_t *c)
             cairo_format_t cairo_fmt = (shm_format == DRM_FORMAT_ARGB8888) ?
                                        CAIRO_FORMAT_ARGB32 : CAIRO_FORMAT_RGB24;
             cairo_surface_t *tmp = cairo_image_surface_create_for_data(
-                shm_data, cairo_fmt, width, height, shm_stride);
+                shm_data, cairo_fmt, src_width, src_height, shm_stride);
 
             if (cairo_surface_status(tmp) == CAIRO_STATUS_SUCCESS) {
-                /* Create a copy that outlives the buffer access */
-                surface = cairo_image_surface_create(cairo_fmt, width, height);
+                /* Destination at logical dimensions; outlives the SHM access. */
+                surface = cairo_image_surface_create(cairo_fmt, dst_width, dst_height);
                 if (cairo_surface_status(surface) == CAIRO_STATUS_SUCCESS) {
                     cairo_t *cr = cairo_create(surface);
+                    if (src_width != dst_width || src_height != dst_height) {
+                        cairo_scale(cr,
+                            (double)dst_width  / src_width,
+                            (double)dst_height / src_height);
+                    }
                     cairo_set_source_surface(cr, tmp, 0, 0);
                     cairo_paint(cr);
                     cairo_destroy(cr);
@@ -4702,20 +4716,19 @@ luaA_client_get_content(lua_State *L, client_t *c)
     if (!texture)
         return 0;
 
-    /* Allocate pixel buffer for reading */
-    stride = width * 4;
-    pixels = malloc(stride * height);
+    /* Read at full physical buffer resolution, not logical dimensions. */
+    stride = src_width * 4;
+    pixels = malloc(stride * src_height);
     if (!pixels) {
         wlr_texture_destroy(texture);
         return 0;
     }
 
-    /* Read pixels from texture */
     if (!wlr_texture_read_pixels(texture, &(struct wlr_texture_read_pixels_options){
         .data = pixels,
         .format = DRM_FORMAT_ARGB8888,
         .stride = stride,
-        .src_box = { .x = 0, .y = 0, .width = width, .height = height },
+        .src_box = { .x = 0, .y = 0, .width = src_width, .height = src_height },
     })) {
         free(pixels);
         wlr_texture_destroy(texture);
@@ -4724,23 +4737,33 @@ luaA_client_get_content(lua_State *L, client_t *c)
 
     wlr_texture_destroy(texture);
 
-    /* Create Cairo surface from pixel data */
-    surface = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, width, height);
-    if (cairo_surface_status(surface) != CAIRO_STATUS_SUCCESS) {
-        free(pixels);
-        return 0;
-    }
-
-    /* Copy pixel data to Cairo surface */
+    /* Wrap pixels at physical dims, then composite into a logical-sized surface. */
     {
-        unsigned char *dst = cairo_image_surface_get_data(surface);
-        int dst_stride = cairo_image_surface_get_stride(surface);
-        int y;
-        for (y = 0; y < height; y++) {
-            memcpy(dst + y * dst_stride,
-                   (unsigned char *)pixels + y * stride,
-                   width * 4);
+        cairo_surface_t *tmp = cairo_image_surface_create_for_data(
+            pixels, CAIRO_FORMAT_ARGB32, src_width, src_height, stride);
+        if (cairo_surface_status(tmp) != CAIRO_STATUS_SUCCESS) {
+            cairo_surface_destroy(tmp);
+            free(pixels);
+            return 0;
         }
+
+        surface = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, dst_width, dst_height);
+        if (cairo_surface_status(surface) != CAIRO_STATUS_SUCCESS) {
+            cairo_surface_destroy(tmp);
+            free(pixels);
+            return 0;
+        }
+
+        cairo_t *cr = cairo_create(surface);
+        if (src_width != dst_width || src_height != dst_height) {
+            cairo_scale(cr,
+                (double)dst_width  / src_width,
+                (double)dst_height / src_height);
+        }
+        cairo_set_source_surface(cr, tmp, 0, 0);
+        cairo_paint(cr);
+        cairo_destroy(cr);
+        cairo_surface_destroy(tmp);
         cairo_surface_mark_dirty(surface);
     }
 
