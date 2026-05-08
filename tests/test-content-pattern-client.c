@@ -1,17 +1,15 @@
 /**
- * test-content-pattern-client - XDG shell wl_shm client that renders a
- * 4-quadrant pattern at physical buffer dimensions.
+ * XDG shell wl_shm client that renders a 4-quadrant pattern at the
+ * compositor's preferred buffer scale.
  *
- * Used by test-client-content-pattern.lua as a regression test for issue #533
- * (HiDPI client.content cropping). The client listens for
- * wl_surface.preferred_buffer_scale events (wl_compositor v6+) and re-renders
- * the pattern at the new physical scale, calling wl_surface_set_buffer_scale()
- * before each commit.
+ * Listens for wl_surface.preferred_buffer_scale events (wl_compositor v6+)
+ * and re-renders the pattern at the new physical scale, calling
+ * wl_surface_set_buffer_scale() before each commit.
  *
  * After every successful commit the integer scale is written to
  *   /tmp/test-content-pattern-<pid>.scale
- * so the Lua driver can poll until the buffer is at the expected scale before
- * sampling pixels via c.content.
+ * so the test driver can poll until the buffer is at the expected scale
+ * before sampling pixels via c.content.
  *
  * Pattern (split by physical buffer dimensions):
  *   TL = red    (0xFFFF0000)   TR = green  (0xFF00FF00)
