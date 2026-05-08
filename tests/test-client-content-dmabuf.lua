@@ -91,6 +91,15 @@ runner.run_async(function()
         return
     end
 
+    -- Position the client at a non-zero scene coord. The first version of the
+    -- scene-tree-walk fix (#539) used wlr_scene_node_coords as an "origin" to
+    -- offset buffer positions; that math broke for any client not at (0, 0)
+    -- because wlr_scene_node_for_each_buffer reports positions relative to
+    -- the starting node, not scene-absolute. Tests that left the client at
+    -- the screen origin missed this. Float + move to expose it.
+    c.floating = true
+    c:geometry { x = 137, y = 91, width = c:geometry().width, height = c:geometry().height }
+
     -- Give one event-loop tick for the buffer to actually attach.
     async.sleep(0.1)
 

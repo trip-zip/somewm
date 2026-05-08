@@ -4637,7 +4637,6 @@ luaA_client_get_content(lua_State *L, client_t *c)
     cairo_t *cr;
     int dst_width  = c->geometry.width;
     int dst_height = c->geometry.height;
-    int origin_x, origin_y;
     struct screenshot_render_data rdata;
 
     /* Logical client size without decorations - what we return to Lua. */
@@ -4650,12 +4649,6 @@ luaA_client_get_content(lua_State *L, client_t *c)
     if (!c->scene_surface)
         return 0;
 
-    /* Anchor the walk at the client's surface root in scene coords so we can
-     * subtract it from each per-buffer (sx, sy) and end up at (0, 0) in the
-     * destination cairo surface. */
-    if (!wlr_scene_node_coords(&c->scene_surface->node, &origin_x, &origin_y))
-        return 0;
-
     surface = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, dst_width, dst_height);
     if (cairo_surface_status(surface) != CAIRO_STATUS_SUCCESS)
         return 0;
@@ -4665,13 +4658,17 @@ luaA_client_get_content(lua_State *L, client_t *c)
     /* Walk the client's scene subtree and composite each buffer. The shared
      * helper handles SHM (terminals) and the GPU/DMA-BUF readback (Firefox,
      * GPU-accelerated apps); reading via the scene buffer ensures wlroots'
-     * synchronization, which is what was missing in the previous
+     * synchronization, which was missing in the previous
      * direct-from-wlr_surface->buffer path that came back blank for DMA-BUF
-     * clients (issue #539). */
+     * clients (issue #539).
+     *
+     * wlr_scene_node_for_each_buffer reports (sx, sy) accumulated from the
+     * starting node down, NOT scene-absolute. So buffer positions are already
+     * relative to c->scene_surface's frame; no offset subtraction needed. */
     rdata.cr        = cr;
     rdata.renderer  = drw;
-    rdata.offset_x  = -origin_x;
-    rdata.offset_y  = -origin_y;
+    rdata.offset_x  = 0;
+    rdata.offset_y  = 0;
     wlr_scene_node_for_each_buffer(&c->scene_surface->node,
                                    composite_scene_buffer_to_cairo, &rdata);
 
