@@ -35,23 +35,26 @@ local steps = {
         return true
     end,
 
-    -- Spawn three clients
+    -- Spawn three clients. Wait for the newly-spawned client to be the
+    -- focused one before advancing: kitty's xdg_activation autofocus is
+    -- deferred, and if a later step sets focus explicitly before the
+    -- activation lands, the activation will stomp it (race).
     function(count)
         if count == 1 then test_client("vfocus_a") end
         c1 = utils.find_client_by_class("vfocus_a")
-        if c1 then return true end
+        if c1 and client.focus == c1 then return true end
     end,
 
     function(count)
         if count == 1 then test_client("vfocus_b") end
         c2 = utils.find_client_by_class("vfocus_b")
-        if c2 then return true end
+        if c2 and client.focus == c2 then return true end
     end,
 
     function(count)
         if count == 1 then test_client("vfocus_c") end
         c3 = utils.find_client_by_class("vfocus_c")
-        if c3 then return true end
+        if c3 and client.focus == c3 then return true end
     end,
 
     -- Focus c1 and verify it is visible
