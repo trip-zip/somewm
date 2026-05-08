@@ -738,6 +738,23 @@ awful.keyboard.append_global_keybindings({
         description = "screenshot region",
         group       = "screenshot",
     },
+    awful.key {
+        modifiers   = { modkey, "Control" },
+        key         = "p",
+        on_press    = function()
+            local s = awful.screenshot { interactive = true }
+            s:connect_signal("snipping::start", function(self)
+                if self._private.frame then
+                    self._private.imagebox.visible = false
+                    self._private.frame.bg = "#00000040"
+                    self._private.frame.surface_scale = 1.0
+                end
+            end)
+            s:refresh()
+        end,
+        description = "interactive screenshot (region/window)",
+        group       = "screenshot",
+    },
 })
 
 -- layout
@@ -1015,6 +1032,14 @@ ruled.client.connect_signal("request::rules", function()
             role     = { "pop-up" },
         },
         properties = { floating = true }
+    }
+
+    -- Route nested wlroots compositors (e.g. headful integration tests) to the
+    -- media tag so they don't steal focus from the active session.
+    ruled.client.append_rule {
+        id         = "wlroots-tests",
+        rule       = { class = "wlroots" },
+        properties = { tag = "media", switchtotag = false, focus = false },
     }
 
     -- Titlebars on normal clients and dialogs
