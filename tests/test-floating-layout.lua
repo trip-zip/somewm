@@ -20,11 +20,11 @@ runner.run_steps({
     -- SCENARIO 1: Switch tiling -> floating, windows must keep tiled size
     -- =================================================================
     function()
-        -- Start in tiling layout, spawn 3 clients
+        -- Start in tiling layout, spawn 3 clients with distinct classes
         awful.layout.set(awful.layout.suit.tile)
-        test_client(nil, "tile_a")
-        test_client(nil, "tile_b")
-        test_client(nil, "tile_c")
+        test_client("tile_a")
+        test_client("tile_b")
+        test_client("tile_c")
         return true
     end,
     function()
@@ -66,11 +66,16 @@ runner.run_steps({
         -- not what the terminal later resized to.
         _G._float_manage_geo = nil
         _G._float_manage_conn = function(c)
+            -- Filter by class: tile_a/b/c manage signals can fire late
+            -- (after this handler is connected) and would otherwise be
+            -- captured here, since signal dispatch is not synchronous
+            -- with client.get() membership.
+            if c.class ~= "float_new" then return end
             _G._float_manage_geo = { width = c.width, height = c.height }
             client.disconnect_signal("request::manage", _G._float_manage_conn)
         end
         client.connect_signal("request::manage", _G._float_manage_conn)
-        test_client(nil, "float_new")
+        test_client("float_new")
         return true
     end,
     function()
