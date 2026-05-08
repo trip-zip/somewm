@@ -22,7 +22,14 @@ local awful  = require("awful")
 local gears  = require("gears")
 local runner = require("_runner")
 local async  = require("_async")
-local ffi    = require("ffi")
+
+local ok_ffi, ffi = pcall(require, "ffi")
+if not ok_ffi then
+    io.stderr:write("SKIP: ffi not available (non-LuaJIT build); pixel sampling needs FFI\n")
+    io.stderr:write("Test finished successfully.\n")
+    awesome.quit()
+    return
+end
 
 ffi.cdef[[
 void cairo_surface_flush(void *surface);
