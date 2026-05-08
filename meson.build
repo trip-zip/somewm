@@ -427,6 +427,16 @@ test_fullscreen_client = executable(
   install: false,
 )
 
+# Test XDG client that renders a 4-quadrant pattern at the preferred buffer
+# scale, used by test-client-content-pattern.lua to verify HiDPI c.content.
+test_content_pattern_client = executable(
+  'test-content-pattern-client',
+  ['tests/test-content-pattern-client.c', xdg_shell_client_code],
+  xdg_shell_client_header,
+  dependencies: [wayland_client],
+  install: false,
+)
+
 # ==============================================================================
 # Install Data
 # ==============================================================================
