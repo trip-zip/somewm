@@ -110,6 +110,7 @@
 #include "../shadow.h"
 #include "objects/spawn.h"
 #include "../property.h"
+#include "../screenshot_compose.h"
 
 /* Forward declaration - applies client geometry to wlroots scene graph */
 void apply_geometry_to_wlroots(client_t *c);
@@ -4637,17 +4638,11 @@ static int
 luaA_client_get_content(lua_State *L, client_t *c)
 {
     cairo_surface_t *surface;
-    struct wlr_surface *wlr_surf;
-    struct wlr_texture *texture;
-    struct wlr_buffer *client_buffer;
+    cairo_t *cr;
     int dst_width  = c->geometry.width;
     int dst_height = c->geometry.height;
-    int src_width, src_height;
-    void *shm_data;
-    uint32_t shm_format;
-    size_t shm_stride;
-    void *pixels = NULL;
-    size_t stride;
+    int origin_x, origin_y;
+    struct screenshot_render_data rdata;
 
     /* Logical client size without decorations - what we return to Lua. */
     dst_width  -= c->titlebar[CLIENT_TITLEBAR_LEFT].size + c->titlebar[CLIENT_TITLEBAR_RIGHT].size;
@@ -4656,122 +4651,36 @@ luaA_client_get_content(lua_State *L, client_t *c)
     if (dst_width <= 0 || dst_height <= 0)
         return 0;
 
-    /* Get the client's wlr_surface based on client type */
-    if (c->client_type == XDGShell && c->surface.xdg)
-        wlr_surf = c->surface.xdg->surface;
-#ifdef XWAYLAND
-    else if (c->client_type == X11 && c->surface.xwayland)
-        wlr_surf = c->surface.xwayland->surface;
-#endif
-    else
+    if (!c->scene_surface)
         return 0;
 
-    if (!wlr_surf || !wlr_surf->buffer)
+    /* Anchor the walk at the client's surface root in scene coords so we can
+     * subtract it from each per-buffer (sx, sy) and end up at (0, 0) in the
+     * destination cairo surface. */
+    if (!wlr_scene_node_coords(&c->scene_surface->node, &origin_x, &origin_y))
         return 0;
 
-    client_buffer = &wlr_surf->buffer->base;
-
-    /* The buffer is at physical pixel resolution; on HiDPI it differs from the
-     * logical dst dimensions and we must scale on composite (see root.c). */
-    src_width  = client_buffer->width;
-    src_height = client_buffer->height;
-
-    if (src_width <= 0 || src_height <= 0)
+    surface = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, dst_width, dst_height);
+    if (cairo_surface_status(surface) != CAIRO_STATUS_SUCCESS)
         return 0;
 
-    /* First try direct buffer access (works for SHM clients) */
-    if (wlr_buffer_begin_data_ptr_access(client_buffer, WLR_BUFFER_DATA_PTR_ACCESS_READ,
-                                         &shm_data, &shm_format, &shm_stride)) {
-        /* Direct access succeeded - create Cairo surface from SHM data */
-        if (shm_format == DRM_FORMAT_ARGB8888 || shm_format == DRM_FORMAT_XRGB8888) {
-            cairo_format_t cairo_fmt = (shm_format == DRM_FORMAT_ARGB8888) ?
-                                       CAIRO_FORMAT_ARGB32 : CAIRO_FORMAT_RGB24;
-            cairo_surface_t *tmp = cairo_image_surface_create_for_data(
-                shm_data, cairo_fmt, src_width, src_height, shm_stride);
+    cr = cairo_create(surface);
 
-            if (cairo_surface_status(tmp) == CAIRO_STATUS_SUCCESS) {
-                /* Destination at logical dimensions; outlives the SHM access. */
-                surface = cairo_image_surface_create(cairo_fmt, dst_width, dst_height);
-                if (cairo_surface_status(surface) == CAIRO_STATUS_SUCCESS) {
-                    cairo_t *cr = cairo_create(surface);
-                    if (src_width != dst_width || src_height != dst_height) {
-                        cairo_scale(cr,
-                            (double)dst_width  / src_width,
-                            (double)dst_height / src_height);
-                    }
-                    cairo_set_source_surface(cr, tmp, 0, 0);
-                    cairo_paint(cr);
-                    cairo_destroy(cr);
-                    cairo_surface_destroy(tmp);
-                    wlr_buffer_end_data_ptr_access(client_buffer);
-                    cairo_surface_mark_dirty(surface);
-                    lua_pushlightuserdata(L, surface);
-                    return 1;
-                }
-                cairo_surface_destroy(surface);
-            }
-            cairo_surface_destroy(tmp);
-        }
-        wlr_buffer_end_data_ptr_access(client_buffer);
-    }
+    /* Walk the client's scene subtree and composite each buffer. The shared
+     * helper handles SHM (terminals) and the GPU/DMA-BUF readback (Firefox,
+     * GPU-accelerated apps); reading via the scene buffer ensures wlroots'
+     * synchronization, which is what was missing in the previous
+     * direct-from-wlr_surface->buffer path that came back blank for DMA-BUF
+     * clients (issue #539). */
+    rdata.cr        = cr;
+    rdata.renderer  = drw;
+    rdata.offset_x  = -origin_x;
+    rdata.offset_y  = -origin_y;
+    wlr_scene_node_for_each_buffer(&c->scene_surface->node,
+                                   composite_scene_buffer_to_cairo, &rdata);
 
-    /* Direct access failed - try GPU texture path */
-    texture = wlr_texture_from_buffer(drw, client_buffer);
-    if (!texture)
-        return 0;
-
-    /* Read at full physical buffer resolution, not logical dimensions. */
-    stride = src_width * 4;
-    pixels = malloc(stride * src_height);
-    if (!pixels) {
-        wlr_texture_destroy(texture);
-        return 0;
-    }
-
-    if (!wlr_texture_read_pixels(texture, &(struct wlr_texture_read_pixels_options){
-        .data = pixels,
-        .format = DRM_FORMAT_ARGB8888,
-        .stride = stride,
-        .src_box = { .x = 0, .y = 0, .width = src_width, .height = src_height },
-    })) {
-        free(pixels);
-        wlr_texture_destroy(texture);
-        return 0;
-    }
-
-    wlr_texture_destroy(texture);
-
-    /* Wrap pixels at physical dims, then composite into a logical-sized surface. */
-    {
-        cairo_surface_t *tmp = cairo_image_surface_create_for_data(
-            pixels, CAIRO_FORMAT_ARGB32, src_width, src_height, stride);
-        if (cairo_surface_status(tmp) != CAIRO_STATUS_SUCCESS) {
-            cairo_surface_destroy(tmp);
-            free(pixels);
-            return 0;
-        }
-
-        surface = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, dst_width, dst_height);
-        if (cairo_surface_status(surface) != CAIRO_STATUS_SUCCESS) {
-            cairo_surface_destroy(tmp);
-            free(pixels);
-            return 0;
-        }
-
-        cairo_t *cr = cairo_create(surface);
-        if (src_width != dst_width || src_height != dst_height) {
-            cairo_scale(cr,
-                (double)dst_width  / src_width,
-                (double)dst_height / src_height);
-        }
-        cairo_set_source_surface(cr, tmp, 0, 0);
-        cairo_paint(cr);
-        cairo_destroy(cr);
-        cairo_surface_destroy(tmp);
-        cairo_surface_mark_dirty(surface);
-    }
-
-    free(pixels);
+    cairo_destroy(cr);
+    cairo_surface_mark_dirty(surface);
 
     /* lua has to make sure to free the ref or we have a leak */
     lua_pushlightuserdata(L, surface);
