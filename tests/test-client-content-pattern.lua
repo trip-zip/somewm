@@ -1,31 +1,21 @@
 ---------------------------------------------------------------------------
---- Pixel-content regression test for issue #533.
+--- Pixel-content test for c.content at non-unit screen scale.
 ---
---- A custom Wayland test client (test-content-pattern-client.c) renders a
---- 4-quadrant pattern at the compositor's preferred buffer scale:
----     TL = red, TR = green, BL = blue, BR = yellow
---- Split is computed from the *physical* buffer dimensions, so each logical
---- quadrant of c.content should always show its expected color regardless of
---- screen scale.
+--- A wl_shm test client renders a 4-quadrant pattern (TL=red, TR=green,
+--- BL=blue, BR=yellow) at the compositor's preferred buffer scale. Split
+--- is computed from the physical buffer dimensions, so each logical
+--- quadrant of c.content should always show its expected color regardless
+--- of screen scale.
 ---
---- With the pre-fix bug, c.content at scale=2 reads only the top-left
---- physical quadrant of the buffer (all red) and stretches it across the
---- entire logical surface, so all four logical quadrants come back red.
+--- The Lua driver samples one pixel near the center of each logical
+--- quadrant via FFI to cairo and asserts the dominant color.
 ---
---- We sample one pixel near the center of each logical quadrant via FFI to
---- the cairo C API; the dominant color of each sample is asserted.
+--- Runs at scale=1 (guards the src==dst fast path) and scale=2 (HiDPI).
+--- Exercises the SHM fast path of luaA_client_get_content; the GPU texture
+--- path uses identical composite logic but exercising it requires a
+--- DMA-BUF client.
 ---
---- The test runs at scale=1 (non-HiDPI baseline) and scale=2 (HiDPI). At
---- scale=1 the buggy code also returns the right result; that run guards
---- against the src==dst fast path being broken.
----
---- Coverage caveat: this test exercises only the SHM fast path of
---- luaA_client_get_content (wlr_buffer_begin_data_ptr_access). The GPU
---- texture path needs a DMA-BUF client, which is out of scope here. The two
---- paths in the C fix are structurally identical, so SHM coverage gives high
---- confidence.
----
---- Run: make test-asan TEST=tests/test-client-content-pattern.lua
+--- Run: make test-one TEST=tests/test-client-content-pattern.lua
 ---------------------------------------------------------------------------
 
 local awful  = require("awful")
