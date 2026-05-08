@@ -111,6 +111,15 @@ local function run_at_scale(target_scale, pids)
     local c = async.wait_for_client(APP_ID, 5)
     assert(c, "Client never appeared at scale=" .. tostring(target_scale))
 
+    -- Move the client off the scene origin so c.content's scene-tree walk
+    -- exercises non-zero buffer positions. A regression here (commit
+    -- introducing #539's scene-walk) only manifested when the client was
+    -- somewhere other than (0, 0).
+    c.floating = true
+    local g = c:geometry()
+    c:geometry { x = 173, y = 109, width = g.width, height = g.height }
+    async.sleep(0.05)
+
     -- Wait for the buffer at the target scale to actually be committed.
     -- At scale=1 this is the first commit; at scale=2 the C client first
     -- commits at scale=1 (default) then re-renders after preferred_buffer_scale.
