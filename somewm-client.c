@@ -131,7 +131,8 @@ print_usage(const char *progname)
 	fprintf(stderr, "  screenshot save <path> [--transparent]\n");
 	fprintf(stderr, "                                 Save full desktop screenshot\n");
 	fprintf(stderr, "  screenshot client <path> [ID]  Save client window screenshot\n");
-	fprintf(stderr, "  screenshot screen <path> [ID]  Save single screen screenshot\n\n");
+	fprintf(stderr, "  screenshot screen <path> [ID]  Save single screen screenshot\n");
+	fprintf(stderr, "  screenshot interactive <path>  Drag-to-select region and save\n\n");
 
 	fprintf(stderr, "INPUT SETTINGS:\n");
 	fprintf(stderr, "  input                          Show all input settings\n");
@@ -442,7 +443,7 @@ print_completions(const char *shell)
 		printf("      COMPREPLY=( $(compgen -W \"list show hide toggle\" -- \"${cur}\") )\n");
 		printf("      ;;\n");
 		printf("    screenshot)\n");
-		printf("      COMPREPLY=( $(compgen -W \"save client screen\" -- \"${cur}\") )\n");
+		printf("      COMPREPLY=( $(compgen -W \"save client screen interactive\" -- \"${cur}\") )\n");
 		printf("      ;;\n");
 		printf("    mouse)\n");
 		printf("      COMPREPLY=( $(compgen -W \"coords screen\" -- \"${cur}\") )\n");
@@ -525,7 +526,7 @@ print_completions(const char *shell)
 		printf("        keybind) _values 'subcommand' list add remove trigger ;;\n");
 		printf("        rule) _values 'subcommand' list add remove test ;;\n");
 		printf("        wibar) _values 'subcommand' list show hide toggle ;;\n");
-		printf("        screenshot) _values 'subcommand' save client screen ;;\n");
+		printf("        screenshot) _values 'subcommand' save client screen interactive ;;\n");
 		printf("        mouse) _values 'subcommand' coords screen ;;\n");
 		printf("        titlebar) _values 'subcommand' show hide toggle ;;\n");
 		printf("        theme) _values 'subcommand' get set ;;\n");
@@ -590,7 +591,7 @@ print_completions(const char *shell)
 		printf("# Wibar subcommands\n");
 		printf("complete -c somewm-client -n '__fish_seen_subcommand_from wibar' -a 'list show hide toggle'\n");
 		printf("# Screenshot subcommands\n");
-		printf("complete -c somewm-client -n '__fish_seen_subcommand_from screenshot' -a 'save client screen'\n");
+		printf("complete -c somewm-client -n '__fish_seen_subcommand_from screenshot' -a 'save client screen interactive'\n");
 		printf("# Mouse subcommands\n");
 		printf("complete -c somewm-client -n '__fish_seen_subcommand_from mouse' -a 'coords screen'\n");
 		printf("# Titlebar subcommands\n");
