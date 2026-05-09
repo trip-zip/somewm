@@ -691,20 +691,24 @@ static void
 drawin_assign_screen(lua_State *L, drawin_t *drawin, int drawin_idx)
 {
 	Monitor *m;
-	screen_t *new_screen;
+	screen_t *new_screen = NULL;
 	screen_t *old_screen = drawin->screen;
 
-	/* Get monitor at drawin's position */
+	/* Prefer the wlroots layout: it covers physical outputs accurately. */
 	m = some_monitor_at((double)drawin->x, (double)drawin->y);
-	if (!m) {
-		/* No monitor at this position, try getting focused monitor */
-		m = some_get_focused_monitor();
-	}
-
 	if (m) {
 		new_screen = luaA_screen_get_by_monitor(L, m);
 	} else {
-		new_screen = NULL;
+		/* No physical monitor at this position. Fall back to the Lua
+		 * screen registry, which also includes fake screens added via
+		 * screen.fake_add(). screen_getbycoord() returns the screen
+		 * containing the point, or the nearest screen if none do. */
+		new_screen = screen_getbycoord(drawin->x, drawin->y);
+		if (!new_screen) {
+			m = some_get_focused_monitor();
+			if (m)
+				new_screen = luaA_screen_get_by_monitor(L, m);
+		}
 	}
 
 	/* If screen changed, update and emit signal */
