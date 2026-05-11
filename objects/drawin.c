@@ -1372,10 +1372,14 @@ luaA_drawin_struts(lua_State *L)
 			luaA_awm_object_emit_signal(L, -1, "property::struts", 0);
 			lua_pop(L, 1);
 
-			/* Update workarea if drawin is visible */
-			if (drawin->visible && drawin->screen) {
-				screen_update_workarea(drawin->screen);
-			}
+			/* We don't know the correct screen, update them all.
+			 * globalconf.screens is unpopulated here; the live list is
+			 * behind luaA_screen_get_all(). */
+			screen_t *all[16];
+			int n = countof(all);
+			luaA_screen_get_all(L, all, &n);
+			for (int i = 0; i < n; i++)
+				screen_update_workarea(all[i]);
 		}
 
 		return 0;
