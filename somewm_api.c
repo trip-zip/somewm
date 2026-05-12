@@ -1789,6 +1789,8 @@ some_rebuild_keyboard_keymap(void)
 	rules.layout = globalconf.keyboard.xkb_layout;
 	rules.variant = globalconf.keyboard.xkb_variant;
 	rules.options = globalconf.keyboard.xkb_options;
+	rules.model = globalconf.keyboard.xkb_model;
+	rules.rules = globalconf.keyboard.xkb_rules;
 
 	keymap = xkb_keymap_new_from_names(context, &rules,
 	                                   XKB_KEYMAP_COMPILE_NO_FLAGS);

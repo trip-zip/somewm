@@ -2260,6 +2260,8 @@ local function register_builtin_commands()
     xkb_layout = { type = "string", desc = "XKB keyboard layout (e.g., 'us', 'us,ru')" },
     xkb_variant = { type = "string", desc = "XKB layout variant (e.g., 'dvorak')" },
     xkb_options = { type = "string", desc = "XKB options (e.g., 'ctrl:nocaps')" },
+    xkb_model = { type = "string", desc = "XKB model (e.g., 'pc105')" },
+    xkb_rules = { type = "string", desc = "XKB rules (e.g., 'base')" },
   }
 
   --- input [setting] [value] - Get or set libinput/keyboard configuration
