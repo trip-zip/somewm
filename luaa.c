@@ -5402,13 +5402,17 @@ luaA_hot_reload(void)
 				num_clients * sizeof(client_t *));
 	}
 
+	/* Two passes are required: Phase E nulled c->screen for every
+	 * client. If a transient is iterated before its parent, the
+	 * transient's request::manage signal chain hits permissions.tag,
+	 * which dereferences c.transient_for.screen.* on a still-NULL
+	 * parent screen. Assign all screens first, then emit signals. */
 	for (i = 0; i < num_clients; i++) {
 		client_t *c = globalconf.clients.tab[i];
 
 		if (!client_snaps[i].was_mapped)
 			continue;
 
-		/* Assign client to first screen if not already set */
 		if (!c->screen && globalconf.screens.len > 0) {
 			int si = client_snaps[i].screen_index;
 			if (si >= 0 && si < globalconf.screens.len)
@@ -5416,6 +5420,13 @@ luaA_hot_reload(void)
 			else
 				c->screen = globalconf.screens.tab[0];
 		}
+	}
+
+	for (i = 0; i < num_clients; i++) {
+		client_t *c = globalconf.clients.tab[i];
+
+		if (!client_snaps[i].was_mapped)
+			continue;
 
 		luaA_object_push(L, c);
 
