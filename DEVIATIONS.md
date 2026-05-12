@@ -226,6 +226,8 @@ awful.input.left_handed = 0
 awful.input.xkb_layout = "us"
 awful.input.xkb_variant = ""
 awful.input.xkb_options = "ctrl:nocaps"
+awful.input.xkb_model = "pc105"
+awful.input.xkb_rules = "evdev"
 awful.input.repeat_rate = 25
 awful.input.repeat_delay = 600
 ```

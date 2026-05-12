@@ -1732,8 +1732,8 @@ createkeyboardgroup(void)
 	rules.layout = globalconf.keyboard.xkb_layout;
 	rules.variant = globalconf.keyboard.xkb_variant;
 	rules.options = globalconf.keyboard.xkb_options;
-	rules.rules = NULL;
-	rules.model = NULL;
+	rules.rules = globalconf.keyboard.xkb_rules;
+	rules.model = globalconf.keyboard.xkb_model;
 
 	if (!(keymap = xkb_keymap_new_from_names(context, &rules,
 				XKB_KEYMAP_COMPILE_NO_FLAGS)))
@@ -5842,6 +5842,8 @@ setup(void)
 	globalconf.keyboard.xkb_layout = NULL;
 	globalconf.keyboard.xkb_variant = NULL;
 	globalconf.keyboard.xkb_options = NULL;
+	globalconf.keyboard.xkb_model = NULL;
+	globalconf.keyboard.xkb_rules = NULL;
 	globalconf.keyboard.repeat_rate = 25;
 	globalconf.keyboard.repeat_delay = 600;
 
