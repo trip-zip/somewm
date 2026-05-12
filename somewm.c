@@ -1275,6 +1275,8 @@ setup(void)
 	globalconf.keyboard.xkb_layout = NULL;
 	globalconf.keyboard.xkb_variant = NULL;
 	globalconf.keyboard.xkb_options = NULL;
+	globalconf.keyboard.xkb_model = NULL;
+	globalconf.keyboard.xkb_rules = NULL;
 	globalconf.keyboard.repeat_rate = 25;
 	globalconf.keyboard.repeat_delay = 600;
 

@@ -261,6 +261,8 @@ typedef struct
         char *xkb_layout;     /* Keyboard layout(s), e.g., "us,ru" */
         char *xkb_variant;    /* Layout variants, e.g., "dvorak," */
         char *xkb_options;    /* XKB options, e.g., "ctrl:nocaps,grp:alt_shift_toggle" */
+        char *xkb_model;      /* XKB model, e.g. "pc105" */
+        char *xkb_rules;      /* XKB model, e.g. "base" */
         int repeat_rate;      /* Key repeat rate (repeats per second) */
         int repeat_delay;     /* Key repeat delay (milliseconds) */
     } keyboard;
