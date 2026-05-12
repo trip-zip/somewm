@@ -1191,6 +1191,16 @@ luaA_awesome_set_keyboard_setting(lua_State *L)
 		free(globalconf.keyboard.xkb_options);
 		globalconf.keyboard.xkb_options = strdup(val);
 		rebuild_keyboard_keymap();
+	} else if (strcmp(key, "xkb_model") == 0) {
+		const char *val = lua_isnil(L, 2) ? "" : luaL_checkstring(L, 2);
+		free(globalconf.keyboard.xkb_model);
+		globalconf.keyboard.xkb_model = strdup(val);
+		rebuild_keyboard_keymap();
+	} else if (strcmp(key, "xkb_rules") == 0) {
+		const char *val = lua_isnil(L, 2) ? "" : luaL_checkstring(L, 2);
+		free(globalconf.keyboard.xkb_rules);
+		globalconf.keyboard.xkb_rules = strdup(val);
+		rebuild_keyboard_keymap();
 	} else if (strcmp(key, "numlock") == 0) {
 		some_set_numlock(lua_toboolean(L, 2));
 	} else {
