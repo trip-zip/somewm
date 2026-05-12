@@ -1878,7 +1878,17 @@ createmon(struct wl_listener *listener, void *data)
 	LISTEN(&wlr_output->events.request_state, &m->request_state, requestmonstate);
 
 	wlr_output_state_set_enabled(&state, 1);
-	wlr_output_commit_state(wlr_output, &state);
+	if (!wlr_output_commit_state(wlr_output, &state)) {
+		wlr_log(WLR_ERROR, "[HOTPLUG] createmon: %s commit FAILED, aborting",
+			wlr_output->name);
+		wlr_output_state_finish(&state);
+		wl_list_remove(&m->frame.link);
+		wl_list_remove(&m->destroy.link);
+		wl_list_remove(&m->request_state.link);
+		wlr_output->data = NULL;
+		free(m);
+		return;
+	}
 	wlr_output_state_finish(&state);
 
 	wl_list_insert(&mons, &m->link);
@@ -4411,6 +4421,11 @@ outputmgrapplyortest(struct wlr_output_configuration_v1 *config, int test)
 		struct wlr_output *wlr_output = config_head->state.output;
 		Monitor *m = wlr_output->data;
 		struct wlr_output_state state;
+
+		/* Orphan output: createmon bailed (commit or render init failed).
+		 * Skip; there is no Monitor to reconfigure. */
+		if (!m)
+			continue;
 
 		/* Ensure displays previously disabled by wlr-output-power-management-v1
 		 * are properly handled*/
