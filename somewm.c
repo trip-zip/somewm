@@ -87,6 +87,7 @@
 #include "xkb.h"
 #include "stack.h"
 #include "wlr_compat.h"
+#include "nested_inhibitor.h"
 #include "globalconf.h"        /* Global configuration structure (AwesomeWM pattern) */
 #include "event.h"
 #include "banning.h"            /* Client visibility management (banning) */
@@ -1839,6 +1840,11 @@ createmon(struct wl_listener *listener, void *data)
 
 	if (!wlr_output_init_render(wlr_output, alloc, drw))
 		return;
+
+	/* If we're nested under another Wayland compositor with shortcut
+	 * inhibitor support, request inhibition on this output's outer
+	 * surface so the host stops eating Mod4 combos. */
+	nested_inhibitor_attach_output(wlr_output);
 
 	wlr_log(WLR_ERROR, "[HOTPLUG] createmon: %s enabled=%d mons=%d",
 		wlr_output->name, wlr_output->enabled, wl_list_length(&mons));
@@ -5569,6 +5575,11 @@ setup(void)
 	 * if an X11 server is running. */
 	if (!(backend = wlr_backend_autocreate(event_loop, &session)))
 		die("couldn't create backend");
+
+	/* When running nested under another Wayland compositor, ask the host
+	 * to forward keyboard shortcuts so the user's Mod4 combos hit this
+	 * compositor instead of the outer one. No-op for non-nested backends. */
+	nested_inhibitor_init(backend);
 
 	/* Initialize the scene graph used to lay out windows */
 	scene = wlr_scene_create();
