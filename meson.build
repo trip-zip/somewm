@@ -229,6 +229,21 @@ xdg_shell_client_code = custom_target(
   command: [wayland_scanner, 'private-code', '@INPUT@', '@OUTPUT@'],
 )
 
+# linux-dmabuf-v1 client protocol (header + code) for the DMA-BUF test client
+linux_dmabuf_client_header = custom_target(
+  'linux-dmabuf-v1-client-protocol.h',
+  input: wayland_protocols_dir / 'stable/linux-dmabuf/linux-dmabuf-v1.xml',
+  output: 'linux-dmabuf-v1-client-protocol.h',
+  command: [wayland_scanner, 'client-header', '@INPUT@', '@OUTPUT@'],
+)
+
+linux_dmabuf_client_code = custom_target(
+  'linux-dmabuf-v1-client-protocol.c',
+  input: wayland_protocols_dir / 'stable/linux-dmabuf/linux-dmabuf-v1.xml',
+  output: 'linux-dmabuf-v1-client-protocol.c',
+  command: [wayland_scanner, 'private-code', '@INPUT@', '@OUTPUT@'],
+)
+
 # ==============================================================================
 # Compiler Flags
 # ==============================================================================
@@ -431,6 +446,34 @@ test_fullscreen_client = executable(
   dependencies: [wayland_client],
   install: false,
 )
+
+# Test XDG client that renders a 4-quadrant pattern at the preferred buffer
+# scale, used by test-client-content-pattern.lua to verify HiDPI c.content.
+test_content_pattern_client = executable(
+  'test-content-pattern-client',
+  ['tests/test-content-pattern-client.c', xdg_shell_client_code],
+  xdg_shell_client_header,
+  dependencies: [wayland_client],
+  install: false,
+)
+
+# DMA-BUF test client (gbm + zwp_linux_dmabuf_v1) for the GPU readback path
+# in c.content. Used by test-client-content-dmabuf.lua. Only built when gbm
+# is available; the Lua test skips itself otherwise.
+gbm_dep = dependency('gbm', required: false)
+if gbm_dep.found()
+  test_dmabuf_pattern_client = executable(
+    'test-dmabuf-pattern-client',
+    [
+      'tests/test-dmabuf-pattern-client.c',
+      xdg_shell_client_code,
+      linux_dmabuf_client_code,
+    ],
+    [xdg_shell_client_header, linux_dmabuf_client_header],
+    dependencies: [wayland_client, gbm_dep],
+    install: false,
+  )
+endif
 
 # ==============================================================================
 # Install Data
