@@ -9,7 +9,7 @@
 
 -include .local.mk
 
-.PHONY: all install uninstall clean setup reconfigure test test-unit test-check test-integration test-asan test-one test-visual test-one-visual test-ci test-fast build-test build-bench bench-run bench-run-live bench-flamegraph bench-diff bench-heaptrack
+.PHONY: all install uninstall clean setup reconfigure test test-unit test-check test-integration test-orchestrator test-asan test-one test-visual test-one-visual test-ci test-fast build-test build-bench bench-run bench-run-live bench-flamegraph bench-diff bench-heaptrack
 
 # Default build: WITH ASAN for development
 all:
@@ -47,7 +47,7 @@ reconfigure:
 # =============================================================================
 
 # Run all tests (fast, no ASAN)
-test: test-unit test-check test-integration
+test: test-unit test-check test-orchestrator test-integration
 
 # Unit tests only (busted, no compositor needed)
 # Use - prefix to continue even if unit tests fail (some have known issues)
@@ -57,6 +57,10 @@ test-unit:
 # Check mode tests (no compositor needed, tests somewm --check)
 test-check: build-test
 	@./tests/test-check-mode.sh ./build-test/somewm
+
+# Test orchestrator (somewm-client test ...): spawns headless nested compositor
+test-orchestrator: build-test
+	@./tests/test-test-orchestrator.sh ./build-test/somewm ./build-test/somewm-client
 
 # Integration tests (visual mode by default, no ASAN)
 test-integration: build-test
