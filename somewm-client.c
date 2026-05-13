@@ -18,6 +18,8 @@
 #include <sys/un.h>
 #include <unistd.h>
 
+#include "test_orchestrator.h"
+
 #define BUFFER_SIZE 65536
 #define SOCKET_NAME "somewm-socket"
 
@@ -187,6 +189,16 @@ print_usage(const char *progname)
 	fprintf(stderr, "  menubar                        Show menubar launcher\n");
 	fprintf(stderr, "  launcher                       Alias for menubar\n\n");
 
+	fprintf(stderr, "TEST MODE (nested compositor, inspired by AWMTT):\n");
+	fprintf(stderr, "  test start  [opts]             Spawn a nested somewm for safe rc.lua testing\n");
+	fprintf(stderr, "  test stop   [--name N]         Stop a nested instance\n");
+	fprintf(stderr, "  test list   [--json]           List running nested instances\n");
+	fprintf(stderr, "  test run    [--name N] -- CMD  Spawn a process inside the nested instance\n");
+	fprintf(stderr, "  test eval   [--name N] LUA     Evaluate Lua inside the nested instance\n");
+	fprintf(stderr, "  test reload [--name N]         Reload config in the nested instance\n");
+	fprintf(stderr, "  test logs   [--name N] [-f]    View or follow the nested instance's log\n");
+	fprintf(stderr, "    See `%s test --help` for full options.\n\n", progname);
+
 	fprintf(stderr, "EVENT SUBSCRIPTION:\n");
 	fprintf(stderr, "  --subscribe [event_types...]   Subscribe to compositor events\n");
 	fprintf(stderr, "    Event types: client_manage, client_unmanage, client_focus,\n");
@@ -293,7 +305,7 @@ send_command(int sock, int argc, char *argv[], int json_mode, int start_arg)
 	return 0;
 }
 
-static int
+int
 read_response(int sock)
 {
 	char buffer[BUFFER_SIZE];
@@ -413,7 +425,7 @@ print_completions(const char *shell)
 		printf("  prev=\"${COMP_WORDS[COMP_CWORD-1]}\"\n");
 		printf("\n");
 		printf("  # Top-level commands\n");
-		printf("  local categories=\"client dpms eval exec hotkeys idle input keybind launcher layout lock menubar mouse notify output ping quit reload restart rule screen screenshot subscribe tag theme titlebar version wallpaper wibar\"\n");
+		printf("  local categories=\"client dpms eval exec hotkeys idle input keybind launcher layout lock menubar mouse notify output ping quit reload restart rule screen screenshot subscribe tag test theme titlebar version wallpaper wibar\"\n");
 		printf("\n");
 		printf("  if [[ ${COMP_CWORD} -eq 1 ]]; then\n");
 		printf("    COMPREPLY=( $(compgen -W \"${categories} --json --subscribe --help\" -- \"${cur}\") )\n");
@@ -469,6 +481,9 @@ print_completions(const char *shell)
 		printf("    idle)\n");
 		printf("      COMPREPLY=( $(compgen -W \"timeout status clear\" -- \"${cur}\") )\n");
 		printf("      ;;\n");
+		printf("    test)\n");
+		printf("      COMPREPLY=( $(compgen -W \"start stop list run eval reload logs\" -- \"${cur}\") )\n");
+		printf("      ;;\n");
 		printf("  esac\n");
 		printf("}\n");
 		printf("complete -F _somewm_client somewm-client\n");
@@ -500,6 +515,7 @@ print_completions(const char *shell)
 		printf("    'screen:Screen management'\n");
 		printf("    'screenshot:Screenshot capture'\n");
 		printf("    'tag:Tag management'\n");
+		printf("    'test:Nested test compositor (inspired by AWMTT)'\n");
 		printf("    'theme:Theme queries'\n");
 		printf("    'titlebar:Titlebar management'\n");
 		printf("    'version:Version info'\n");
@@ -534,6 +550,7 @@ print_completions(const char *shell)
 		printf("        output) _values 'subcommand' list ;;\n");
 		printf("        dpms) _values 'subcommand' on off status ;;\n");
 		printf("        idle) _values 'subcommand' timeout status clear ;;\n");
+		printf("        test) _values 'subcommand' start stop list run eval reload logs ;;\n");
 		printf("      esac\n");
 		printf("      ;;\n");
 		printf("  esac\n");
@@ -571,6 +588,7 @@ print_completions(const char *shell)
 		printf("complete -c somewm-client -n '__fish_use_subcommand' -a 'screen' -d 'Screen management'\n");
 		printf("complete -c somewm-client -n '__fish_use_subcommand' -a 'screenshot' -d 'Screenshot capture'\n");
 		printf("complete -c somewm-client -n '__fish_use_subcommand' -a 'tag' -d 'Tag management'\n");
+		printf("complete -c somewm-client -n '__fish_use_subcommand' -a 'test' -d 'Nested test compositor (inspired by AWMTT)'\n");
 		printf("complete -c somewm-client -n '__fish_use_subcommand' -a 'theme' -d 'Theme queries'\n");
 		printf("complete -c somewm-client -n '__fish_use_subcommand' -a 'titlebar' -d 'Titlebar management'\n");
 		printf("complete -c somewm-client -n '__fish_use_subcommand' -a 'version' -d 'Version info'\n");
@@ -606,6 +624,8 @@ print_completions(const char *shell)
 		printf("complete -c somewm-client -n '__fish_seen_subcommand_from dpms' -a 'on off status'\n");
 		printf("# Idle subcommands\n");
 		printf("complete -c somewm-client -n '__fish_seen_subcommand_from idle' -a 'timeout status clear'\n");
+		printf("# Test subcommands\n");
+		printf("complete -c somewm-client -n '__fish_seen_subcommand_from test' -a 'start stop list run eval reload logs'\n");
 	} else {
 		fprintf(stderr, "Unknown shell: %s (supported: bash, zsh, fish)\n", shell);
 	}
@@ -687,6 +707,15 @@ main(int argc, char *argv[])
 		exit_code = subscribe_mode(sock);
 		close(sock);
 		return exit_code;
+	}
+
+	/* `test` subcommand handles its own lifecycle (no IPC to a single
+	 * default compositor; it spawns nested instances and addresses them
+	 * by --name). Dispatch before connect_to_socket(). */
+	if (strcmp(argv[start_arg], "test") == 0) {
+		return test_orchestrator_run(argc - start_arg - 1,
+		                              argv + start_arg + 1,
+		                              json_mode);
 	}
 
 	/* Connect to compositor */
