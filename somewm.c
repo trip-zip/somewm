@@ -5408,6 +5408,8 @@ setfullscreen(Client *c, int fullscreen)
 	client_set_fullscreen_internal(c, fullscreen);
 	wlr_scene_node_reparent(&c->scene->node, layers[c->fullscreen ? LyrFS : LyrTile]);
 
+	struct wlr_box old_geometry = c->geometry;
+
 	if (fullscreen) {
 		c->prev = c->geometry;
 		resize(c, c->mon->m, 0);
@@ -5416,12 +5418,32 @@ setfullscreen(Client *c, int fullscreen)
 		 * client positions are set by the user and cannot be recalculated */
 		resize(c, c->prev, 0);
 	}
-	/* Emit per-client property::fullscreen so Lua handlers run
-	 * (update_implicitly_floating, arrange_prop_nf) before arrange */
+	/* Sync emit: property::fullscreen handlers (update_implicitly_floating,
+	 * arrange_prop_nf) must run before the arrange(c->mon) below.
+	 * Geometry signals mirror client_resize_do (objects/client.c) so the
+	 * xdg-shell request_fullscreen path is observable to property::geometry
+	 * subscribers, matching the Lua-side client_set_fullscreen path. */
 	lua_State *L = globalconf_get_lua_State();
 	if (L) {
 		luaA_object_push(L, c);
 		luaA_object_emit_signal(L, -1, "property::fullscreen", 0);
+		if (!AREA_EQUAL(old_geometry, c->geometry)) {
+			luaA_object_emit_signal(L, -1, "property::geometry", 0);
+			if (old_geometry.x != c->geometry.x || old_geometry.y != c->geometry.y) {
+				luaA_object_emit_signal(L, -1, "property::position", 0);
+				if (old_geometry.x != c->geometry.x)
+					luaA_object_emit_signal(L, -1, "property::x", 0);
+				if (old_geometry.y != c->geometry.y)
+					luaA_object_emit_signal(L, -1, "property::y", 0);
+			}
+			if (old_geometry.width != c->geometry.width || old_geometry.height != c->geometry.height) {
+				luaA_object_emit_signal(L, -1, "property::size", 0);
+				if (old_geometry.width != c->geometry.width)
+					luaA_object_emit_signal(L, -1, "property::width", 0);
+				if (old_geometry.height != c->geometry.height)
+					luaA_object_emit_signal(L, -1, "property::height", 0);
+			}
+		}
 		lua_pop(L, 1);
 	}
 
