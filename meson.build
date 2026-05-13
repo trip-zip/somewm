@@ -74,34 +74,21 @@ else
   have_xwayland = false
 endif
 
-# Lua detection - LuaJIT preferred, then 5.4 > 5.3 > 5.2 > 5.1
-lua_dep = dependency('luajit', required: false)
-if not lua_dep.found()
-  lua_dep = dependency('lua5.4', required: false)
-endif
-if not lua_dep.found()
-  lua_dep = dependency('lua-5.4', required: false)
-endif
-if not lua_dep.found()
-  lua_dep = dependency('lua5.3', required: false)
-endif
-if not lua_dep.found()
-  lua_dep = dependency('lua-5.3', required: false)
-endif
-if not lua_dep.found()
-  lua_dep = dependency('lua5.2', required: false)
-endif
-if not lua_dep.found()
-  lua_dep = dependency('lua-5.2', required: false)
-endif
-if not lua_dep.found()
-  lua_dep = dependency('lua5.1', required: false)
-endif
-if not lua_dep.found()
-  lua_dep = dependency('lua-5.1', required: false)
-endif
-if not lua_dep.found()
-  lua_dep = dependency('lua', required: true)
+# Lua detection - honor -Dlua_pkg=<name> if set, otherwise:
+# LuaJIT preferred, then 5.5 > 5.4 > 5.3 > 5.2 > 5.1
+lua_pkg_override = get_option('lua_pkg')
+if lua_pkg_override != ''
+  lua_dep = dependency(lua_pkg_override, required: true)
+else
+  lua_dep = dependency('luajit', required: false)
+  foreach pkg : ['lua5.5', 'lua-5.5', 'lua5.4', 'lua-5.4', 'lua5.3', 'lua-5.3', 'lua5.2', 'lua-5.2', 'lua5.1', 'lua-5.1']
+    if not lua_dep.found()
+      lua_dep = dependency(pkg, required: false)
+    endif
+  endforeach
+  if not lua_dep.found()
+    lua_dep = dependency('lua', required: true)
+  endif
 endif
 
 # LGI detection - compile and run lgi-check.c to verify lgi is installed

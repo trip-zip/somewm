@@ -144,8 +144,8 @@ extern luaA_class_handlers_t mouse_handlers;
 int luaA_registerfct(lua_State *L, int idx, int *ref);
 
 /* Lua version compatibility - matches AwesomeWM pattern */
-#if !(501 <= LUA_VERSION_NUM && LUA_VERSION_NUM < 505)
-#error "somewm only supports Lua versions 5.1-5.4 and LuaJIT"
+#if !(501 <= LUA_VERSION_NUM && LUA_VERSION_NUM < 506)
+#error "somewm only supports Lua versions 5.1-5.5 and LuaJIT"
 #endif
 
 /* Lua version compatibility helpers */
