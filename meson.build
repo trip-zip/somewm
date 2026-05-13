@@ -184,7 +184,7 @@ foreach p : protocols
   )
 endforeach
 
-# Client protocol headers for test utilities
+# Client protocol headers for the compositor (shortcut inhibitor) and test utilities
 wayland_client = dependency('wayland-client')
 
 layer_shell_client_header = custom_target(
@@ -228,6 +228,23 @@ linux_dmabuf_client_code = custom_target(
   'linux-dmabuf-v1-client-protocol.c',
   input: wayland_protocols_dir / 'stable/linux-dmabuf/linux-dmabuf-v1.xml',
   output: 'linux-dmabuf-v1-client-protocol.c',
+  command: [wayland_scanner, 'private-code', '@INPUT@', '@OUTPUT@'],
+)
+
+# keyboard-shortcuts-inhibit-v1 client protocol: somewm binds this as a client
+# of the outer Wayland compositor when running nested, so Mod4 combos pass
+# through to the test instance.
+keyboard_shortcuts_inhibit_client_header = custom_target(
+  'keyboard-shortcuts-inhibit-unstable-v1-client-protocol.h',
+  input: wayland_protocols_dir / 'unstable/keyboard-shortcuts-inhibit/keyboard-shortcuts-inhibit-unstable-v1.xml',
+  output: 'keyboard-shortcuts-inhibit-unstable-v1-client-protocol.h',
+  command: [wayland_scanner, 'client-header', '@INPUT@', '@OUTPUT@'],
+)
+
+keyboard_shortcuts_inhibit_client_code = custom_target(
+  'keyboard-shortcuts-inhibit-unstable-v1-client-protocol.c',
+  input: wayland_protocols_dir / 'unstable/keyboard-shortcuts-inhibit/keyboard-shortcuts-inhibit-unstable-v1.xml',
+  output: 'keyboard-shortcuts-inhibit-unstable-v1-client-protocol.c',
   command: [wayland_scanner, 'private-code', '@INPUT@', '@OUTPUT@'],
 )
 
@@ -321,6 +338,7 @@ somewm_sources = [
   'selection.c',
   'pam_auth.c',
   'bench.c',
+  'nested_inhibitor.c',
   # Common
   'common/luaclass.c',
   'common/luaobject.c',
@@ -357,6 +375,7 @@ somewm_sources = [
 
 all_deps = [
   wayland_server,
+  wayland_client,
   xkbcommon,
   libinput,
   libdrm,
@@ -384,6 +403,8 @@ somewm_exe = executable(
   'somewm',
   somewm_sources,
   protocol_headers,
+  keyboard_shortcuts_inhibit_client_header,
+  keyboard_shortcuts_inhibit_client_code,
   dependencies: all_deps,
   include_directories: include_directories('.'),
   install: true,
@@ -404,6 +425,7 @@ lgi_guard = shared_library(
 somewm_client = executable(
   'somewm-client',
   'somewm-client.c',
+  'test_orchestrator.c',
   install: true,
 )
 

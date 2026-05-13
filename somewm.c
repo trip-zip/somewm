@@ -77,6 +77,7 @@
 #include "common/util.h"
 #include "common/lualib.h"
 #include "wlr_compat.h"
+#include "nested_inhibitor.h"
 #include "globalconf.h"
 #include "luaa.h"
 #include "stack.h"
@@ -859,6 +860,19 @@ run(char *startup_cmd)
 		/* Emit startup signal to initialize Lua modules (matches AwesomeWM) */
 		luaA_emit_signal_global("startup");
 
+		/* In a test instance, remap Mod4 -> Mod1 if the host can't forward shortcuts. */
+		if (getenv("SOMEWM_TEST_NAME")) {
+			if (luaL_dostring(globalconf_L,
+				"local ok, m = pcall(require, 'awful.test_marker'); "
+				"if ok and m and m.apply then m.apply() end") != 0) {
+				const char *err = lua_tostring(globalconf_L, -1);
+				fprintf(stderr,
+					"[test_marker] failed to apply: %s\n",
+					err ? err : "(no error)");
+				lua_pop(globalconf_L, 1);
+			}
+		}
+
 		/* Ensure all drawables created during startup have their content
 		 * pushed to scene buffers. This fixes the timing issue where wiboxes
 		 * don't appear until an external event triggers some_refresh().
@@ -1011,6 +1025,9 @@ setup(void)
 	 * if an X11 server is running. */
 	if (!(backend = wlr_backend_autocreate(event_loop, &session)))
 		die("couldn't create backend");
+
+	/* Ask the host compositor to forward Mod4 combos when nested. */
+	nested_inhibitor_init(backend);
 
 	/* Initialize the scene graph used to lay out windows */
 	scene = wlr_scene_create();
