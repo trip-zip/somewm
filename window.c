@@ -1406,6 +1406,8 @@ resize(Client *c, struct wlr_box geo, int interact)
 	if (!c->mon || !client_surface(c)->mapped)
 		return;
 
+	struct wlr_box old_geometry = c->geometry;
+
 	bbox = interact ? &sgeom : &c->mon->w;
 
 	client_set_bounds(c, geo.width, geo.height);
@@ -1433,7 +1435,33 @@ resize(Client *c, struct wlr_box geo, int interact)
 	/* Apply to wlroots rendering */
 	apply_geometry_to_wlroots(c);
 
-	/* Emit signal for geometry change listeners */
+	/* Queue per-instance geometry signals so every C-side geometry change
+	 * reaches Lua subscribers the same way Lua-side client_resize_do does
+	 * (objects/client.c:2693-2713). Without this, paths like the xdg-shell
+	 * request_fullscreen handler mutate c->geometry silently from Lua's
+	 * perspective. AREA_EQUAL/per-field guards mirror the Lua block. */
+	lua_State *L = globalconf_get_lua_State();
+	if (L && !AREA_EQUAL(old_geometry, c->geometry)) {
+		luaA_object_push(L, c);
+		some_event_queue_signal0(L, -1, SIG_PROPERTY_GEOMETRY);
+		if (old_geometry.x != c->geometry.x || old_geometry.y != c->geometry.y) {
+			some_event_queue_signal0(L, -1, SIG_PROPERTY_POSITION);
+			if (old_geometry.x != c->geometry.x)
+				some_event_queue_signal0(L, -1, SIG_PROPERTY_X);
+			if (old_geometry.y != c->geometry.y)
+				some_event_queue_signal0(L, -1, SIG_PROPERTY_Y);
+		}
+		if (old_geometry.width != c->geometry.width || old_geometry.height != c->geometry.height) {
+			some_event_queue_signal0(L, -1, SIG_PROPERTY_SIZE);
+			if (old_geometry.width != c->geometry.width)
+				some_event_queue_signal0(L, -1, SIG_PROPERTY_WIDTH);
+			if (old_geometry.height != c->geometry.height)
+				some_event_queue_signal0(L, -1, SIG_PROPERTY_HEIGHT);
+		}
+		lua_pop(L, 1);
+	}
+
+	/* Class-level signal for class-wide observers (different name). */
 	some_event_queue_global(SIG_CLIENT_PROPERTY_GEOMETRY);
 }
 
