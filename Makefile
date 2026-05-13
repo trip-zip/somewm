@@ -13,7 +13,7 @@
 
 # Default build: WITH ASAN for development
 all:
-	@test -d build || meson setup build -Db_sanitize=address,undefined $(MESON_OPTS)
+	@test -d build || meson setup build -Db_sanitize=address,undefined $(if $(LUA_PKG),-Dlua_pkg=$(LUA_PKG),) $(MESON_OPTS)
 	ninja -C build
 
 # Alias for clarity
@@ -21,7 +21,7 @@ asan: all
 
 # Build for tests: NO ASAN (fast) - explicitly disable sanitizers, enable test PAM stub
 build-test:
-	@test -d build-test || meson setup build-test -Db_sanitize=none -Dtest_pam=true
+	@test -d build-test || meson setup build-test -Db_sanitize=none -Dtest_pam=true $(if $(LUA_PKG),-Dlua_pkg=$(LUA_PKG),)
 	ninja -C build-test
 
 install:
