@@ -81,6 +81,12 @@ int main(void)
         fprintf(stderr, "                sudo pacman -S lua51-lgi (for Lua 5.1)\n");
         fprintf(stderr, "  Debian/Ubuntu: sudo apt install lua-lgi\n");
         fprintf(stderr, "  Fedora:        sudo dnf install lua-lgi\n");
+#if LUA_VERSION_NUM >= 505
+        fprintf(stderr, "\n");
+        fprintf(stderr, "Note: Lua 5.5 support landed in lgi upstream (PR #359) but\n");
+        fprintf(stderr, "distros may not ship a matching package yet. Build lgi from\n");
+        fprintf(stderr, "source against Lua 5.5: https://github.com/lgi-devs/lgi\n");
+#endif
 #endif
         fprintf(stderr, "\n");
         fprintf(stderr, "To skip this check (not recommended), set %s=1\n", env);
