@@ -399,6 +399,7 @@ lgi_guard = shared_library(
 somewm_client = executable(
   'somewm-client',
   'somewm-client.c',
+  'test_orchestrator.c',
   install: true,
 )
 
