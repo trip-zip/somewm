@@ -479,6 +479,20 @@ exec_child(const struct start_opts *opts, const char *state_dir,
 	dup2(log_fd, STDERR_FILENO);
 	close(log_fd);
 
+	/* libwayland resolves a relative WAYLAND_DISPLAY against the
+	 * child's XDG_RUNTIME_DIR. We're about to sandbox that, so anchor
+	 * WAYLAND_DISPLAY to the parent's runtime dir as an absolute path
+	 * before the override. */
+	if (opts->host == HOST_WAYLAND) {
+		const char *wd = getenv("WAYLAND_DISPLAY");
+		const char *xdr = getenv("XDG_RUNTIME_DIR");
+		if (wd && *wd && wd[0] != '/' && xdr && *xdr) {
+			char abs_wd[PATH_MAX];
+			snprintf(abs_wd, sizeof(abs_wd), "%s/%s", xdr, wd);
+			setenv("WAYLAND_DISPLAY", abs_wd, 1);
+		}
+	}
+
 	setenv("XDG_RUNTIME_DIR", runtime_subdir, 1);
 	setenv("SOMEWM_SOCKET", sock_path, 1);
 	setenv("SOMEWM_TEST_NAME", opts->name, 1);
