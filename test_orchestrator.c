@@ -46,6 +46,39 @@ struct start_opts {
 	int force;
 };
 
+/* Names land in $XDG_RUNTIME_DIR/somewm-test/<name>/; allowing '/'
+ * or '..' lets a caller escape that directory or create nested dirs
+ * that test stop won't reach. */
+static int
+validate_name(const char *name)
+{
+	if (!name || !*name) {
+		fprintf(stderr, "Error: --name must not be empty\n");
+		return -1;
+	}
+	if (strlen(name) > 64) {
+		fprintf(stderr, "Error: --name must be 64 characters or fewer\n");
+		return -1;
+	}
+	if (name[0] == '.') {
+		fprintf(stderr, "Error: --name must not start with '.'\n");
+		return -1;
+	}
+	for (const char *p = name; *p; p++) {
+		int ok = (*p >= 'a' && *p <= 'z')
+		      || (*p >= 'A' && *p <= 'Z')
+		      || (*p >= '0' && *p <= '9')
+		      || *p == '-' || *p == '_' || *p == '.';
+		if (!ok) {
+			fprintf(stderr,
+			        "Error: --name '%s' contains invalid character '%c' "
+			        "(allowed: A-Za-z0-9 . _ -)\n", name, *p);
+			return -1;
+		}
+	}
+	return 0;
+}
+
 
 static int
 runtime_dir(char *out, size_t cap)
@@ -260,6 +293,33 @@ try_connect_socket(const char *sock_path)
 	return s;
 }
 
+/* somewm prints a C-level FATAL line when it can't load any rc.lua, then
+ * limps along with the IPC socket up but no working config. Catch that
+ * after the socket comes up so the user sees a real failure instead of
+ * a misleading status block. Returns 1 if a FATAL line was found and
+ * copies it to `out` (up to cap-1 bytes, NUL terminated). */
+static int
+log_has_fatal(const char *log_path, char *out, size_t cap)
+{
+	FILE *f = fopen(log_path, "r");
+	if (!f)
+		return 0;
+	char line[1024];
+	int found = 0;
+	while (fgets(line, sizeof(line), f)) {
+		if (strstr(line, "somewm: FATAL:") || strstr(line, "FATAL:")) {
+			size_t len = strlen(line);
+			if (len && line[len - 1] == '\n')
+				line[len - 1] = '\0';
+			snprintf(out, cap, "%s", line);
+			found = 1;
+			break;
+		}
+	}
+	fclose(f);
+	return found;
+}
+
 /* Wait until the nested compositor's IPC server answers ping (not just
  * until the socket is connectable - the compositor accepts connections
  * only once its event loop runs). */
@@ -378,6 +438,8 @@ parse_start_opts(int argc, char *argv[], struct start_opts *opts)
 				return -1;
 			}
 			opts->name = argv[++i];
+			if (validate_name(opts->name) < 0)
+				return -1;
 		} else if (!strcmp(a, "--config") || !strcmp(a, "-c")) {
 			if (i + 1 >= argc) {
 				fprintf(stderr, "Error: %s requires a value\n", a);
@@ -705,6 +767,16 @@ test_start(int argc, char *argv[])
 		return 5;
 	}
 
+	char fatal_line[1024];
+	if (log_has_fatal(log_path, fatal_line, sizeof(fatal_line))) {
+		fprintf(stderr, "Error: nested compositor reported %s\n", fatal_line);
+		fprintf(stderr, "       Inspect %s for the full log.\n", log_path);
+		kill_and_wait(pid, sock_path);
+		if (!getenv("SOMEWM_TEST_KEEP_FAILED"))
+			rmtree(state_dir);
+		return 5;
+	}
+
 	const char *wl_sock = detect_wl_socket_name(runtime_subdir);
 	char keybinds_status[64];
 	read_keybinds_status(state_dir, keybinds_status, sizeof(keybinds_status));
@@ -774,11 +846,9 @@ test_list(int json_mode)
 	}
 
 	int first = 1;
+	int rows = 0;
 	if (json_mode)
 		printf("[");
-	else
-		printf("%-16s %-7s %-10s %-12s %s\n",
-		       "NAME", "HOST", "PID", "DISPLAY", "CONFIG");
 
 	struct dirent *e;
 	while ((e = readdir(d))) {
@@ -794,16 +864,22 @@ test_list(int json_mode)
 			       s.pid[0] ? s.pid : "null",
 			       s.display, s.config, s.alive ? "true" : "false");
 		} else {
+			if (rows == 0)
+				printf("%-16s %-7s %-10s %-12s %s\n",
+				       "NAME", "HOST", "PID", "DISPLAY", "CONFIG");
 			printf("%-16s %-7s %-10s %-12s %s%s\n", s.name, s.host, s.pid,
 			       s.display[0] ? s.display : "-",
 			       s.config[0] ? s.config : "-",
 			       s.alive ? "" : "  (stale)");
 		}
 		first = 0;
+		rows++;
 	}
 	closedir(d);
 	if (json_mode)
 		printf("]\n");
+	else if (rows == 0)
+		printf("(no test instances)\n");
 	return 0;
 }
 
@@ -849,6 +925,8 @@ extract_name(int *argc, char **argv[])
 	}
 	*argc = n;
 	*argv = a;
+	if (validate_name(name) < 0)
+		return NULL;
 	return name;
 }
 
@@ -928,6 +1006,8 @@ test_logs(int argc, char *argv[])
 			follow = 1;
 		}
 	}
+	if (validate_name(name) < 0)
+		return 1;
 	char state_dir[PATH_MAX];
 	if (state_dir_for(name, state_dir, sizeof(state_dir)) < 0)
 		return 6;
@@ -960,6 +1040,8 @@ test_stop_cmd(int argc, char *argv[])
 			name = argv[++i];
 		}
 	}
+	if (validate_name(name) < 0)
+		return 1;
 	return test_stop_named(name);
 }
 
