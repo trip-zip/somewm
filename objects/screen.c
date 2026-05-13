@@ -736,13 +736,11 @@ screen_update_workarea(screen_t *screen)
 		} \
 	}
 
+	/* Use the explicit drawin->screen pointer (matches client filter above);
+	 * coord-based lookup races with staggered geometry updates at startup. */
 	foreach(drawin, globalconf.drawins)
-		if((*drawin)->visible)
-		{
-			screen_t *d_screen = screen_getbycoord((*drawin)->x, (*drawin)->y);
-			if (d_screen == screen)
-				COMPUTE_DRAWIN_STRUT(*drawin)
-		}
+		if((*drawin)->visible && (*drawin)->screen == screen)
+			COMPUTE_DRAWIN_STRUT(*drawin)
 
 #undef COMPUTE_DRAWIN_STRUT
 
