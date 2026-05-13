@@ -35,12 +35,14 @@ jobs:
             interpreter: lua5.3
           - name: Lua 5.4
             pkg: lua5.4
-            dev_package: liblua5.4-dev
-            interpreter: lua5.4
+            from_source: true
+            lua_version: 5.4.8
+            lua_minor: '5.4'
           - name: Lua 5.5
             pkg: lua5.5
             from_source: true
             lua_version: 5.5.0
+            lua_minor: '5.5'
 
     name: Build & Test (${{ matrix.lua.name }})
 
@@ -126,6 +128,8 @@ jobs:
           make install INSTALL_TOP=$HOME/lua-install
 
           # Generate pkg-config so meson resolves -Dlua_pkg=${{ matrix.lua.pkg }}.
+          # -Wl,-E is required so lgi-check.c (statically linked with liblua.a)
+          # exports its Lua symbols for lgi's dlopen'd .so to resolve.
           mkdir -p $HOME/lua-install/lib/pkgconfig
           cat > $HOME/lua-install/lib/pkgconfig/${{ matrix.lua.pkg }}.pc <<EOF
           prefix=$HOME/lua-install
@@ -135,19 +139,21 @@ jobs:
           Name: Lua
           Description: Lua ${{ matrix.lua.lua_version }}
           Version: ${{ matrix.lua.lua_version }}
-          Libs: -L\${libdir} -llua -lm -ldl
+          Libs: -L\${libdir} -llua -Wl,-E -lm -ldl
           Cflags: -I\${includedir}
           EOF
 
-          # Build and install lgi from upstream master (PR #359 merged 5.5 support).
-          # lgi's Makefile hard-sets LUA_VERSION=5.1 and requires LUA_CFLAGS
-          # to be set externally (it does not probe pkg-config for Lua).
-          # Pass both as make args, not env vars, so they override Makefile assigns.
+          # Build and install lgi from upstream master (lgi-devs/lgi#359
+          # merged Lua 5.5 support). lgi's Makefile hard-sets LUA_VERSION=5.1
+          # and requires LUA_CFLAGS externally (no pkg-config probe). Pass
+          # both as make args so they override the Makefile's assignments.
           cd ~
           git clone --depth 1 https://github.com/lgi-devs/lgi.git
           cd lgi
-          make LUA_VERSION=5.5 LUA_CFLAGS="-I$HOME/lua-install/include"
-          make install LUA_VERSION=5.5 PREFIX=$HOME/lua-install
+          make LUA_VERSION=${{ matrix.lua.lua_minor }} \
+            LUA_CFLAGS="-I$HOME/lua-install/include"
+          make install LUA_VERSION=${{ matrix.lua.lua_minor }} \
+            PREFIX=$HOME/lua-install
 
       - name: Cache deps
         id: cache-deps
@@ -202,8 +208,9 @@ jobs:
           PKG_CFG="$HOME/deps-install/share/pkgconfig:$HOME/deps-install/lib/x86_64-linux-gnu/pkgconfig"
           if [ "${{ matrix.lua.from_source }}" = "true" ]; then
             PKG_CFG="$HOME/lua-install/lib/pkgconfig:$PKG_CFG"
-            echo "LUA_PATH=$HOME/lua-install/share/lua/5.5/?.lua;$HOME/lua-install/share/lua/5.5/?/init.lua;;" >> $GITHUB_ENV
-            echo "LUA_CPATH=$HOME/lua-install/lib/lua/5.5/?.so;;" >> $GITHUB_ENV
+            LUA_MINOR="${{ matrix.lua.lua_minor }}"
+            echo "LUA_PATH=$HOME/lua-install/share/lua/$LUA_MINOR/?.lua;$HOME/lua-install/share/lua/$LUA_MINOR/?/init.lua;;" >> $GITHUB_ENV
+            echo "LUA_CPATH=$HOME/lua-install/lib/lua/$LUA_MINOR/?.so;;" >> $GITHUB_ENV
             echo "LD_LIBRARY_PATH=$HOME/lua-install/lib:$HOME/deps-install/lib/x86_64-linux-gnu:$LD_LIBRARY_PATH" >> $GITHUB_ENV
           else
             echo "LD_LIBRARY_PATH=$HOME/deps-install/lib/x86_64-linux-gnu:$LD_LIBRARY_PATH" >> $GITHUB_ENV
