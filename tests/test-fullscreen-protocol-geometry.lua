@@ -60,7 +60,6 @@ local function first_index(name)
 end
 
 local steps = {
-    -- Step 1: Spawn the test client
     function(count)
         if count == 1 then
             io.stderr:write("[TEST] Spawning test-fullscreen-client\n")
@@ -73,7 +72,6 @@ local steps = {
         end
     end,
 
-    -- Step 2: Attach signal recorders and let layout settle
     function(count)
         if count == 1 then
             c_test:connect_signal("property::fullscreen", record("property::fullscreen"))
@@ -87,7 +85,6 @@ local steps = {
         return true
     end,
 
-    -- Step 3: SIGUSR1 -> xdg-shell request_fullscreen -> setfullscreen
     function(count)
         if count == 1 then
             events = {}
@@ -119,7 +116,6 @@ local steps = {
         return true
     end,
 
-    -- Step 4: SIGUSR2 -> xdg-shell unset_fullscreen -> setfullscreen
     function(count)
         if count == 1 then
             events = {}
@@ -151,7 +147,6 @@ local steps = {
         return true
     end,
 
-    -- Cleanup
     function(count)
         if count == 1 then
             io.stderr:write("[TEST] Cleanup\n")
