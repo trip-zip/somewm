@@ -243,6 +243,36 @@ tell how to connect to the
 .Nm Xwayland
 server.
 .El
+.Pp
+When started by
+.Nm somewm-client test ,
+.Nm
+honors these additional variables:
+.Bl -tag -width SOMEWM_TEST_KEYBINDS_MODE
+.It Ev SOMEWM_TEST_NAME
+Name of the test instance. Loads the test-marker module after rc.lua
+to enable the optional modifier remap. Unset in normal sessions.
+.It Ev SOMEWM_TEST_STATE_DIR
+Per-instance state directory. The compositor writes
+.Pa keybinds_status
+here so the orchestrator can report whether the outer Wayland
+compositor accepted the shortcut inhibitor request.
+.It Ev SOMEWM_TEST_KEYBINDS_MODE
+One of
+.Em auto ,
+.Em inhibit ,
+.Em remap ,
+.Em none .
+Controls the test-marker module's fallback behavior.
+.It Ev SOMEWM_TEST_KEYBINDS_REMAP
+If set to
+.Em 1 ,
+forces the
+.Em Mod4
+->
+.Em Mod1
+remap in user-bound keys regardless of inhibitor state.
+.El
 .Sh EXAMPLES
 Start
 .Nm
@@ -251,8 +281,18 @@ with s6 in the background:
 .Sh SEE ALSO
 .Xr dwm 1 ,
 .Xr foot 1 ,
+.Xr somewm-client 1 ,
 .Xr wmenu 1 ,
 .Xr xkeyboard-config 7
+.Pp
+For testing
+.Pa rc.lua
+without touching your real session, see the
+.Sy test
+subcommand of
+.Xr somewm-client 1
+(inspired by AWMTT,
+.Lk https://github.com/serialoverflow/awmtt ).
 .Sh ACKNOWLEDGEMENTS
 .Nm
 is based on dwl, which was created by Devin J. Pohly and the dwl community.
