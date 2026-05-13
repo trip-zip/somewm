@@ -90,6 +90,7 @@
 #include "objects/drawin.h"
 #include "objects/signal.h"
 #include "objects/mousegrabber.h"
+#include "event_queue.h"
 #include "xwayland.h"
 #include "protocols.h"
 #include "monitor.h"
@@ -242,14 +243,15 @@ sync_client_remove_from_arrays(Client *c)
 }
 
 void
-some_recompute_idle_inhibit(struct wlr_surface *exclude)
+some_recompute_idle_inhibit(void)
 {
-	bool inhibited = some_is_idle_inhibited(exclude) || some_is_lua_idle_inhibited();
+	bool inhibited = some_is_idle_inhibited() || some_is_lua_idle_inhibited();
 	wlr_idle_notifier_v1_set_inhibited(idle_notifier, inhibited);
 	some_idle_timers_set_inhibit(inhibited);
 
 	if (inhibited != last_idle_inhibited) {
 		last_idle_inhibited = inhibited;
+		// Note that this will cause a call to some_is_idle_inhibited() in luaa.
 		luaA_emit_signal_global("property::idle_inhibited");
 	}
 }
@@ -279,6 +281,12 @@ cleanup(void)
 
 	/* Free animations before Lua state (they hold registry refs) */
 	animation_cleanup();
+
+	/* Drain pending event queue refs before tearing down the Lua state.
+	 * client_unmanage() runs during wl_display_destroy_clients() and
+	 * queues mouse::leave / list events; wiping here releases their
+	 * registry refs and frees the buffer that was reallocated for them. */
+	some_event_queue_wipe();
 
 	/* Close Lua after clients are destroyed (matches AwesomeWM pattern) */
 	luaA_cleanup();
@@ -726,6 +734,12 @@ some_refresh(void)
 	struct timespec bench_ts[BENCH_STAGE_COUNT + 1];
 	clock_gettime(CLOCK_MONOTONIC, &bench_ts[0]);
 #endif
+
+	/* Step 0: Drain queued events - dispatch batched signals to Lua.
+	 * Must happen before the refresh signal so Lua handlers see
+	 * up-to-date state when layout runs.
+	 * Included in the lua_refresh stage timing. */
+	some_event_queue_drain(globalconf_L);
 
 	/* Step 1: Emit refresh signal - triggers Lua layout calculations */
 	luaA_emit_signal_global("refresh");
@@ -1282,6 +1296,7 @@ setup(void)
 	xwayland_setup();
 
 	luaA_init();
+	some_event_queue_init();
 
 	/* Initialize animation subsystem (must be AFTER luaA_init for Lua state) */
 	animation_init(event_loop);

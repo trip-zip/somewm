@@ -22,6 +22,7 @@
 #include "objects/drawin.h"
 #include "objects/client.h"
 #include "objects/screen.h"
+#include "screenshot_compose.h"
 #include "somewm_types.h"
 #include <xkbcommon/xkbcommon.h>
 #include <wlr/types/wlr_seat.h>
@@ -1510,12 +1511,8 @@ luaA_root_set_call_handler(lua_State *L)
 
 /* ========== SCREENSHOT SUPPORT ========== */
 
-/** Callback data for scene buffer iteration during screenshot */
-struct screenshot_render_data {
-	cairo_t *cr;             /* Cairo context to draw on */
-	struct wlr_renderer *renderer;
-	int offset_x, offset_y;  /* Offset for this output in virtual screen */
-};
+/* struct screenshot_render_data is declared in screenshot_compose.h so it can
+ * be shared with objects/client.c. */
 
 /** Composite a Cairo surface onto the screenshot at the given position.
  * Used to directly composite widget content from drawable surfaces.
@@ -1646,8 +1643,10 @@ composite_widgets_directly(cairo_t *cr, bool ontop_only)
 /** Callback for wlr_scene_output_for_each_buffer
  * Reads pixels from each scene buffer and composites onto Cairo surface.
  * Handles both SHM buffers (widgets) and GPU buffers (clients).
+ *
+ * Shared with objects/client.c via screenshot_compose.h.
  */
-static void
+void
 composite_scene_buffer_to_cairo(struct wlr_scene_buffer *scene_buffer,
                                 int sx, int sy, void *data)
 {

@@ -9,10 +9,6 @@
 /* XDG Activation protocol for startup notification */
 extern struct wlr_xdg_activation_v1 *activation;
 
-/* Token management functions */
-char *activation_token_create(const char *app_id);
-void activation_token_cleanup(const char *token);
-
 void spawn_init(void);
 void spawn_start_notify(client_t*, const char*);
 int luaA_spawn(lua_State*);

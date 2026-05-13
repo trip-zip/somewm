@@ -26,10 +26,6 @@
 typedef struct wlr_box area_t;
 /* lua_object_t is typedef'd in common/luaclass.h - don't redeclare it here */
 
-/* Forward declarations for screen functions (defined in objects/screen.h and objects/luaa.h) */
-typedef struct screen_t screen_t;
-screen_t *luaA_screen_getbycoord(lua_State *L, int x, int y);
-
 /* Include real XCB headers if available (wlroots includes them) */
 #ifdef XWAYLAND
 #include <xcb/xcb.h>
@@ -301,10 +297,6 @@ static inline double xwindow_get_opacity_from_cookie(xcb_get_property_cookie_t c
 /* Systray stubs moved to systray.c */
 
 /* draw_find_visual moved to draw.c where it belongs (AwesomeWM parity) */
-
-/* screen_getbycoord - forward to luaA_screen_getbycoord
- * Implementation in screen.c to avoid header ordering issues */
-screen_t *screen_getbycoord(int x, int y);
 
 /* Shape extension stub - always use stub even with XWAYLAND */
 static inline void xcb_shape_select_input(void *conn, xcb_window_t w, uint8_t enable) {

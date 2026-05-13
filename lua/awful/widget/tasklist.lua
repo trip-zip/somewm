@@ -94,7 +94,6 @@ local wfixed = require("wibox.layout.fixed")
 local wmargin = require("wibox.container.margin")
 local wtextbox = require("wibox.widget.textbox")
 local clienticon = require("awful.widget.clienticon")
-local aclient = require("awful.client")
 local wbackground = require("wibox.container.background")
 local gtable = require("gears.table")
 
@@ -572,7 +571,7 @@ local function tasklist_label(c, args, tb)
         icon_size          = icon_size,
     }
 
-    local icon = not tasklist_disable_icon and (c.icon or aclient.get_icon_path(c)) or nil
+    local icon = not tasklist_disable_icon and c.icon
     return text, bg, bg_image, icon, other_args
 end
 

@@ -101,6 +101,7 @@
 #include "../draw.h"        /* For draw_find_visual() - must be before x11_compat.h */
 #include "../x11_compat.h"  /* X11 stub functions for Wayland */
 #include "objects/window.h"  /* For window_set_border_width() */
+#include "../event_queue.h"
 #include "../somewm_api.h"
 /* #include "../somewm_types.h" - not needed, causes Client/client_t conflict */
 #include "../stack.h"
@@ -109,6 +110,7 @@
 #include "../shadow.h"
 #include "objects/spawn.h"
 #include "../property.h"
+#include "../screenshot_compose.h"
 
 /* Forward declaration - applies client geometry to wlroots scene graph */
 void apply_geometry_to_wlroots(client_t *c);
@@ -131,6 +133,7 @@ void apply_geometry_to_wlroots(client_t *c);
 
 /* External references to somewm.c globals */
 extern struct wlr_renderer *drw;
+extern struct wlr_scene_tree *layers[NUM_LAYERS];
 
 /* X11-specific includes commented out - not needed for Wayland
 #include "common/atoms.h"
@@ -1915,8 +1918,8 @@ client_unfocus_internal(client_t *c)
     luaA_object_push(L, c);
 
     lua_pushboolean(L, false);
-    luaA_object_emit_signal(L, -2, "property::active", 1);
-    luaA_object_emit_signal(L, -1, "unfocus", 0);
+    some_event_queue_signal(L, -2, SIG_PROPERTY_ACTIVE, 1);
+    some_event_queue_signal0(L, -1, SIG_UNFOCUS);
     lua_pop(L, 1);
 }
 
@@ -2042,8 +2045,8 @@ client_focus_update(client_t *c)
 
     if(focused_new) {
         lua_pushboolean(L, true);
-        luaA_object_emit_signal(L, -2, "property::active", 1);
-        luaA_object_emit_signal(L, -1, "focus", 0);
+        some_event_queue_signal(L, -2, SIG_PROPERTY_ACTIVE, 1);
+        some_event_queue_signal0(L, -1, SIG_FOCUS);
     }
 
     lua_pop(L, 1);
@@ -2413,12 +2416,12 @@ client_manage(xcb_window_t w, xcb_get_geometry_reply_t *wgeom, xcb_get_window_at
     c->geometry.width = wgeom->width;
     c->geometry.height = wgeom->height;
 
-    luaA_object_emit_signal(L, -1, "property::x", 0);
-    luaA_object_emit_signal(L, -1, "property::y", 0);
-    luaA_object_emit_signal(L, -1, "property::width", 0);
-    luaA_object_emit_signal(L, -1, "property::height", 0);
+    some_event_queue_signal0(L, -1, SIG_PROPERTY_X);
+    some_event_queue_signal0(L, -1, SIG_PROPERTY_Y);
+    some_event_queue_signal0(L, -1, SIG_PROPERTY_WIDTH);
+    some_event_queue_signal0(L, -1, SIG_PROPERTY_HEIGHT);
     luaA_object_emit_signal(L, -1, "property::window", 0);
-    luaA_object_emit_signal(L, -1, "property::geometry", 0);
+    some_event_queue_signal0(L, -1, SIG_PROPERTY_GEOMETRY);
 
     /* Set border width */
     window_set_border_width(L, -1, wgeom->border_width);
@@ -2463,7 +2466,7 @@ client_manage(xcb_window_t w, xcb_get_geometry_reply_t *wgeom, xcb_get_window_at
 
     spawn_start_notify(c, startup_id);
 
-    luaA_class_emit_signal(L, &client_class, "list", 0);
+    some_event_queue_class(&client_class, SIG_LIST);
 
     /* Add the context */
     if (globalconf.loop == NULL)
@@ -2476,9 +2479,6 @@ client_manage(xcb_window_t w, xcb_get_geometry_reply_t *wgeom, xcb_get_window_at
 
     /* client is still on top of the stack; emit signal */
     luaA_object_emit_signal(L, -3, "request::manage", 2);
-
-    /*TODO v6: remove this*/
-    luaA_object_emit_signal(L, -1, "manage", 0);
 
     error = xcb_request_check(globalconf.connection, reparent_cookie);
     if (error != NULL) {
@@ -2692,22 +2692,22 @@ client_resize_do(client_t *c, area_t geometry, bool silent)
     {
         luaA_object_push(L, c);
         if (!AREA_EQUAL(old_geometry, geometry))
-            luaA_object_emit_signal(L, -1, "property::geometry", 0);
+            some_event_queue_signal0(L, -1, SIG_PROPERTY_GEOMETRY);
         if (old_geometry.x != geometry.x || old_geometry.y != geometry.y)
         {
-            luaA_object_emit_signal(L, -1, "property::position", 0);
+            some_event_queue_signal0(L, -1, SIG_PROPERTY_POSITION);
             if (old_geometry.x != geometry.x)
-                luaA_object_emit_signal(L, -1, "property::x", 0);
+                some_event_queue_signal0(L, -1, SIG_PROPERTY_X);
             if (old_geometry.y != geometry.y)
-                luaA_object_emit_signal(L, -1, "property::y", 0);
+                some_event_queue_signal0(L, -1, SIG_PROPERTY_Y);
         }
         if (old_geometry.width != geometry.width || old_geometry.height != geometry.height)
         {
-            luaA_object_emit_signal(L, -1, "property::size", 0);
+            some_event_queue_signal0(L, -1, SIG_PROPERTY_SIZE);
             if (old_geometry.width != geometry.width)
-                luaA_object_emit_signal(L, -1, "property::width", 0);
+                some_event_queue_signal0(L, -1, SIG_PROPERTY_WIDTH);
             if (old_geometry.height != geometry.height)
-                luaA_object_emit_signal(L, -1, "property::height", 0);
+                some_event_queue_signal0(L, -1, SIG_PROPERTY_HEIGHT);
         }
         lua_pop(L, 1);
 
@@ -2942,6 +2942,10 @@ client_set_fullscreen(lua_State *L, int cidx, bool s)
         abs_cidx = luaA_absindex(L, cidx);
         lua_pushliteral(L, "fullscreen");
         c->fullscreen = s;
+        /* Synchronous: the request::geometry handler updates c->geometry
+         * via c:geometry(...), and client_resize_do() below uses c->geometry
+         * immediately. Queueing would leave the immediate resize operating
+         * on pre-fullscreen bounds. */
         luaA_object_emit_signal(L, abs_cidx, "request::geometry", 1);
         luaA_object_emit_signal(L, abs_cidx, "property::fullscreen", 0);
         if(c->toplevel_handle)
@@ -2987,7 +2991,10 @@ client_set_maximized_common(lua_State *L, int cidx, bool s, const char* type, co
         c->maximized            = !!(next & CLIENT_MAXIMIZED_BOTH);
 
 
-        /* Request the changes to be applied */
+        /* Request the changes to be applied.
+         * Synchronous: the Lua handler applies the new geometry via
+         * c:geometry(...) and the property::maximized_* signals below
+         * are expected to see the post-request state. */
         lua_pushstring(L, type);
         luaA_object_emit_signal(L, abs_cidx, "request::geometry", 1);
 
@@ -3181,7 +3188,7 @@ client_unmanage(client_t *c, client_unmanage_t reason)
     if (globalconf.mouse_under.type == UNDER_CLIENT &&
         globalconf.mouse_under.ptr.client == c) {
         luaA_object_push(L, c);
-        luaA_object_emit_signal(L, -1, "mouse::leave", 0);
+        some_event_queue_signal0(L, -1, SIG_MOUSE_LEAVE);
         lua_pop(L, 1);
         globalconf.mouse_under.type = UNDER_NONE;
         globalconf.mouse_under.ptr.client = NULL;
@@ -3221,10 +3228,9 @@ client_unmanage(client_t *c, client_unmanage_t reason)
     lua_newtable(L);
 
     luaA_object_emit_signal(L, -3, "request::unmanage", 2);
-    luaA_object_emit_signal(L, -1, "unmanage", 0);
     lua_pop(L, 1);
 
-    luaA_class_emit_signal(L, &client_class, "list", 0);
+    some_event_queue_class(&client_class, SIG_LIST);
 
     if(strut_has_value(&c->strut))
         screen_update_workarea(c->screen);
@@ -3585,16 +3591,16 @@ luaA_client_swap(lua_State *L)
         *ref_c = swap;
         *ref_swap = c;
 
-        luaA_class_emit_signal(L, &client_class, "list", 0);
+        some_event_queue_class(&client_class, SIG_LIST);
 
         luaA_object_push(L, swap);
         lua_pushboolean(L, true);
-        luaA_object_emit_signal(L, -4, "swapped", 2);
+        some_event_queue_signal(L, -4, SIG_SWAPPED, 2);
 
         luaA_object_push(L, swap);
         luaA_object_push(L, c);
         lua_pushboolean(L, false);
-        luaA_object_emit_signal(L, -3, "swapped", 2);
+        some_event_queue_signal(L, -3, SIG_SWAPPED, 2);
     }
 
     return 0;
@@ -3675,6 +3681,39 @@ luaA_client_get_first_tag(lua_State *L, client_t *c)
             luaA_object_push(L, *tag);
             return 1;
         }
+
+    return 0;
+}
+
+/** Get the wlroots scene-graph layer the client currently lives in.
+ * Returns the layer name as a string, or nil if the client has no scene
+ * node or its parent is not one of the known top-level layers. Intended
+ * for integration tests that verify stacking behavior.
+ */
+static int
+luaA_client_get__scene_layer(lua_State *L, client_t *c)
+{
+    static const char *const layer_names[NUM_LAYERS] = {
+        [LyrBg]      = "background",
+        [LyrBottom]  = "bottom",
+        [LyrTile]    = "tile",
+        [LyrFloat]   = "float",
+        [LyrWibox]   = "wibox",
+        [LyrTop]     = "top",
+        [LyrFS]      = "fullscreen",
+        [LyrOverlay] = "overlay",
+        [LyrBlock]   = "block",
+    };
+
+    if (!c->scene || !c->scene->node.parent)
+        return 0;
+
+    for (int i = 0; i < NUM_LAYERS; i++) {
+        if ((void *)c->scene->node.parent == (void *)layers[i]) {
+            lua_pushstring(L, layer_names[i]);
+            return 1;
+        }
+    }
 
     return 0;
 }
@@ -4599,118 +4638,46 @@ static int
 luaA_client_get_content(lua_State *L, client_t *c)
 {
     cairo_surface_t *surface;
-    struct wlr_surface *wlr_surf;
-    struct wlr_texture *texture;
-    struct wlr_buffer *client_buffer;
-    int width  = c->geometry.width;
-    int height = c->geometry.height;
-    void *shm_data;
-    uint32_t shm_format;
-    size_t shm_stride;
-    void *pixels = NULL;
-    size_t stride;
+    cairo_t *cr;
+    int dst_width  = c->geometry.width;
+    int dst_height = c->geometry.height;
+    struct screenshot_render_data rdata;
 
-    /* Just the client size without decorations */
-    width  -= c->titlebar[CLIENT_TITLEBAR_LEFT].size + c->titlebar[CLIENT_TITLEBAR_RIGHT].size;
-    height -= c->titlebar[CLIENT_TITLEBAR_TOP].size + c->titlebar[CLIENT_TITLEBAR_BOTTOM].size;
+    /* Logical client size without decorations - what we return to Lua. */
+    dst_width  -= c->titlebar[CLIENT_TITLEBAR_LEFT].size + c->titlebar[CLIENT_TITLEBAR_RIGHT].size;
+    dst_height -= c->titlebar[CLIENT_TITLEBAR_TOP].size + c->titlebar[CLIENT_TITLEBAR_BOTTOM].size;
 
-    if (width <= 0 || height <= 0)
+    if (dst_width <= 0 || dst_height <= 0)
         return 0;
 
-    /* Get the client's wlr_surface based on client type */
-    if (c->client_type == XDGShell && c->surface.xdg)
-        wlr_surf = c->surface.xdg->surface;
-#ifdef XWAYLAND
-    else if (c->client_type == X11 && c->surface.xwayland)
-        wlr_surf = c->surface.xwayland->surface;
-#endif
-    else
+    if (!c->scene_surface)
         return 0;
 
-    if (!wlr_surf || !wlr_surf->buffer)
+    surface = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, dst_width, dst_height);
+    if (cairo_surface_status(surface) != CAIRO_STATUS_SUCCESS)
         return 0;
 
-    client_buffer = &wlr_surf->buffer->base;
+    cr = cairo_create(surface);
 
-    /* First try direct buffer access (works for SHM clients) */
-    if (wlr_buffer_begin_data_ptr_access(client_buffer, WLR_BUFFER_DATA_PTR_ACCESS_READ,
-                                         &shm_data, &shm_format, &shm_stride)) {
-        /* Direct access succeeded - create Cairo surface from SHM data */
-        if (shm_format == DRM_FORMAT_ARGB8888 || shm_format == DRM_FORMAT_XRGB8888) {
-            cairo_format_t cairo_fmt = (shm_format == DRM_FORMAT_ARGB8888) ?
-                                       CAIRO_FORMAT_ARGB32 : CAIRO_FORMAT_RGB24;
-            cairo_surface_t *tmp = cairo_image_surface_create_for_data(
-                shm_data, cairo_fmt, width, height, shm_stride);
+    /* Walk the client's scene subtree and composite each buffer. The shared
+     * helper handles SHM (terminals) and the GPU/DMA-BUF readback (Firefox,
+     * GPU-accelerated apps); reading via the scene buffer ensures wlroots'
+     * synchronization, which was missing in the previous
+     * direct-from-wlr_surface->buffer path that came back blank for DMA-BUF
+     * clients (issue #539).
+     *
+     * wlr_scene_node_for_each_buffer reports (sx, sy) accumulated from the
+     * starting node down, NOT scene-absolute. So buffer positions are already
+     * relative to c->scene_surface's frame; no offset subtraction needed. */
+    rdata.cr        = cr;
+    rdata.renderer  = drw;
+    rdata.offset_x  = 0;
+    rdata.offset_y  = 0;
+    wlr_scene_node_for_each_buffer(&c->scene_surface->node,
+                                   composite_scene_buffer_to_cairo, &rdata);
 
-            if (cairo_surface_status(tmp) == CAIRO_STATUS_SUCCESS) {
-                /* Create a copy that outlives the buffer access */
-                surface = cairo_image_surface_create(cairo_fmt, width, height);
-                if (cairo_surface_status(surface) == CAIRO_STATUS_SUCCESS) {
-                    cairo_t *cr = cairo_create(surface);
-                    cairo_set_source_surface(cr, tmp, 0, 0);
-                    cairo_paint(cr);
-                    cairo_destroy(cr);
-                    cairo_surface_destroy(tmp);
-                    wlr_buffer_end_data_ptr_access(client_buffer);
-                    cairo_surface_mark_dirty(surface);
-                    lua_pushlightuserdata(L, surface);
-                    return 1;
-                }
-                cairo_surface_destroy(surface);
-            }
-            cairo_surface_destroy(tmp);
-        }
-        wlr_buffer_end_data_ptr_access(client_buffer);
-    }
-
-    /* Direct access failed - try GPU texture path */
-    texture = wlr_texture_from_buffer(drw, client_buffer);
-    if (!texture)
-        return 0;
-
-    /* Allocate pixel buffer for reading */
-    stride = width * 4;
-    pixels = malloc(stride * height);
-    if (!pixels) {
-        wlr_texture_destroy(texture);
-        return 0;
-    }
-
-    /* Read pixels from texture */
-    if (!wlr_texture_read_pixels(texture, &(struct wlr_texture_read_pixels_options){
-        .data = pixels,
-        .format = DRM_FORMAT_ARGB8888,
-        .stride = stride,
-        .src_box = { .x = 0, .y = 0, .width = width, .height = height },
-    })) {
-        free(pixels);
-        wlr_texture_destroy(texture);
-        return 0;
-    }
-
-    wlr_texture_destroy(texture);
-
-    /* Create Cairo surface from pixel data */
-    surface = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, width, height);
-    if (cairo_surface_status(surface) != CAIRO_STATUS_SUCCESS) {
-        free(pixels);
-        return 0;
-    }
-
-    /* Copy pixel data to Cairo surface */
-    {
-        unsigned char *dst = cairo_image_surface_get_data(surface);
-        int dst_stride = cairo_image_surface_get_stride(surface);
-        int y;
-        for (y = 0; y < height; y++) {
-            memcpy(dst + y * dst_stride,
-                   (unsigned char *)pixels + y * stride,
-                   width * 4);
-        }
-        cairo_surface_mark_dirty(surface);
-    }
-
-    free(pixels);
+    cairo_destroy(cr);
+    cairo_surface_mark_dirty(surface);
 
     /* lua has to make sure to free the ref or we have a leak */
     lua_pushlightuserdata(L, surface);
@@ -5372,6 +5339,7 @@ client_class_setup(lua_State *L)
         { "opacity", (lua_class_propfunc_t) luaA_client_set_opacity, (lua_class_propfunc_t) luaA_client_get_opacity, (lua_class_propfunc_t) luaA_client_set_opacity },
         { "pid", NULL, (lua_class_propfunc_t) luaA_client_get_pid, NULL },
         { "role", NULL, (lua_class_propfunc_t) luaA_client_get_role, NULL },
+        { "_scene_layer", NULL, (lua_class_propfunc_t) luaA_client_get__scene_layer, NULL },
         { "screen", NULL, (lua_class_propfunc_t) luaA_client_get_screen, (lua_class_propfunc_t) luaA_client_set_screen },
         { "shadow", (lua_class_propfunc_t) luaA_client_set_shadow, (lua_class_propfunc_t) luaA_client_get_shadow, (lua_class_propfunc_t) luaA_client_set_shadow },
         { "shape_bounding", (lua_class_propfunc_t) luaA_client_set_shape_bounding, (lua_class_propfunc_t) luaA_client_get_shape_bounding, (lua_class_propfunc_t) luaA_client_set_shape_bounding },

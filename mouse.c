@@ -191,6 +191,27 @@ luaA_mouse_coords(lua_State *L)
     return luaA_mouse_pushstatus(L, mouse_x, mouse_y, mask);
 }
 
+/* Inject a relative motion event through the full compositor path
+ * (motionnotify), same as a real pointer device delta. Unlike coords()
+ * which only warps position via wlr_cursor_warp(), this generates
+ * mouse::enter / mouse::leave / mouse::move events and runs sloppy
+ * focus, constraints, etc.
+ *
+ * Useful for integration tests that need to exercise motion-driven
+ * behavior (coalescing, hover tracking) without a real input device.
+ * The underscore prefix signals that this is a low-level testing
+ * helper rather than a stable public API.
+ *
+ * Lua: mouse._fake_motion(dx, dy) */
+static int
+luaA_mouse_fake_motion(lua_State *L)
+{
+    double dx = luaL_checknumber(L, 1);
+    double dy = luaL_checknumber(L, 2);
+    some_fake_motion(dx, dy);
+    return 0;
+}
+
 /** Get the client or any object which is under the pointer.
  *
  * @treturn client|wibox|nil A client, wibox or nil.
@@ -303,6 +324,7 @@ const struct luaL_Reg awesome_mouse_methods[] =
     { "__index", luaA_mouse_index },
     { "__newindex", luaA_mouse_newindex },
     { "coords", luaA_mouse_coords },
+    { "_fake_motion", luaA_mouse_fake_motion },
     { "object_under_pointer", luaA_mouse_object_under_pointer },
     { "set_index_miss_handler", luaA_mouse_set_index_miss_handler},
     { "set_newindex_miss_handler", luaA_mouse_set_newindex_miss_handler},

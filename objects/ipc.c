@@ -54,7 +54,13 @@ ipc_dispatch_to_lua(int client_fd, const char *command)
 		return;
 	}
 
-	/* Get result from Lua (should be a string like "OK\n\n" or "ERROR msg\n\n") */
+	/* Get result from Lua. A nil return means the handler claimed the fd and
+	 * will call _ipc_send_response itself when its async work finishes (used
+	 * by interactive commands like screenshot.interactive). */
+	if (lua_isnil(L, -1)) {
+		lua_pop(L, 1);
+		return;
+	}
 	result = lua_tostring(L, -1);
 	if (result) {
 		ipc_send_response(client_fd, result);

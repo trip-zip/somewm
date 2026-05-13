@@ -736,13 +736,11 @@ screen_update_workarea(screen_t *screen)
 		} \
 	}
 
+	/* Use the explicit drawin->screen pointer (matches client filter above);
+	 * coord-based lookup races with staggered geometry updates at startup. */
 	foreach(drawin, globalconf.drawins)
-		if((*drawin)->visible)
-		{
-			screen_t *d_screen = screen_getbycoord((*drawin)->x, (*drawin)->y);
-			if (d_screen == screen)
-				COMPUTE_DRAWIN_STRUT(*drawin)
-		}
+		if((*drawin)->visible && (*drawin)->screen == screen)
+			COMPUTE_DRAWIN_STRUT(*drawin)
 
 #undef COMPUTE_DRAWIN_STRUT
 
@@ -1850,6 +1848,29 @@ luaA_screen_module_index(lua_State *L)
 	return 1;
 }
 
+/** __newindex metamethod for screen class table
+ */
+static int
+luaA_screen_module_newindex(lua_State *L)
+{
+	const char *key = luaL_checkstring(L, 2);
+
+	/* The .primary property is tracked separately */
+	if (strcmp(key, "primary") == 0) {
+		screen_t *new_primary_screen = luaA_checkscreen(L, 3);
+
+		if ((new_primary_screen) && (new_primary_screen != primary_screen)) {
+			primary_screen = new_primary_screen;
+			luaA_screen_emit_primary_changed(L, primary_screen);
+		}
+		return 0;
+	}
+
+	/* Fallback: Allow arbitrary properties. */
+	lua_rawset(L, 1);
+	return 0;
+}
+
 /** __call metamethod for screen class
  * This function serves as both:
  * 1. The iterator function for "for s in screen do" loops
@@ -2355,6 +2376,7 @@ const luaL_Reg screen_methods[] = {
 	{ "fake_add", luaA_screen_fake_add },
 	/* Module-level metamethods */
 	{ "__index", luaA_screen_module_index },
+	{ "__newindex", luaA_screen_module_newindex },
 	{ "__call", luaA_screen_call },
 	{ NULL, NULL }
 };
