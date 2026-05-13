@@ -125,15 +125,12 @@ jobs:
           make linux MYCFLAGS=-fPIC
           make install INSTALL_TOP=$HOME/lua-install
 
-          # Generate pkg-config so meson resolves -Dlua_pkg=${{ matrix.lua.pkg }}
-          # and lgi's makefile can read INSTALL_CMOD/INSTALL_LMOD variables.
+          # Generate pkg-config so meson resolves -Dlua_pkg=${{ matrix.lua.pkg }}.
           mkdir -p $HOME/lua-install/lib/pkgconfig
           cat > $HOME/lua-install/lib/pkgconfig/${{ matrix.lua.pkg }}.pc <<EOF
           prefix=$HOME/lua-install
           libdir=\${prefix}/lib
           includedir=\${prefix}/include
-          INSTALL_CMOD=\${prefix}/lib/lua/5.5
-          INSTALL_LMOD=\${prefix}/share/lua/5.5
 
           Name: Lua
           Description: Lua ${{ matrix.lua.lua_version }}
@@ -141,21 +138,16 @@ jobs:
           Libs: -L\${libdir} -llua -lm -ldl
           Cflags: -I\${includedir}
           EOF
-          # Some lgi probes look for the unsuffixed 'lua' name.
-          ln -sf ${{ matrix.lua.pkg }}.pc $HOME/lua-install/lib/pkgconfig/lua.pc
 
-          # Build and install lgi from upstream master (PR #359 merged 5.5 support)
+          # Build and install lgi from upstream master (PR #359 merged 5.5 support).
+          # lgi's Makefile hard-sets LUA_VERSION=5.1 and requires LUA_CFLAGS
+          # to be set externally (it does not probe pkg-config for Lua).
+          # Pass both as make args, not env vars, so they override Makefile assigns.
           cd ~
           git clone --depth 1 https://github.com/lgi-devs/lgi.git
           cd lgi
-          PKG_CONFIG_PATH=$HOME/lua-install/lib/pkgconfig:$PKG_CONFIG_PATH \
-            LUA_VERSION=5.5 \
-            make
-          PKG_CONFIG_PATH=$HOME/lua-install/lib/pkgconfig:$PKG_CONFIG_PATH \
-            LUA_VERSION=5.5 \
-            make install \
-              LUA_LIBDIR=$HOME/lua-install/lib/lua/5.5 \
-              LUA_SHAREDIR=$HOME/lua-install/share/lua/5.5
+          make LUA_VERSION=5.5 LUA_CFLAGS="-I$HOME/lua-install/include"
+          make install LUA_VERSION=5.5 PREFIX=$HOME/lua-install
 
       - name: Cache deps
         id: cache-deps
