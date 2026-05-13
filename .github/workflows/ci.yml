@@ -33,6 +33,14 @@ jobs:
             pkg: lua5.3
             dev_package: liblua5.3-dev
             interpreter: lua5.3
+          - name: Lua 5.4
+            pkg: lua5.4
+            dev_package: liblua5.4-dev
+            interpreter: lua5.4
+          - name: Lua 5.5
+            pkg: lua5.5
+            from_source: true
+            lua_version: 5.5.0
 
     name: Build & Test (${{ matrix.lua.name }})
 
@@ -43,6 +51,7 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt-get update
+          # Base packages all rows need
           sudo apt-get install -y \
             build-essential \
             ninja-build \
@@ -69,10 +78,7 @@ jobs:
             hwdata \
             libdisplay-info-dev \
             libliftoff-dev \
-            ${{ matrix.lua.interpreter }} \
-            ${{ matrix.lua.dev_package }} \
             lua-busted \
-            lua-lgi \
             libcairo2-dev \
             libpango1.0-dev \
             libgdk-pixbuf-2.0-dev \
@@ -88,8 +94,68 @@ jobs:
             xwayland \
             zsh
 
+      - name: Install Lua from apt
+        if: ${{ ! matrix.lua.from_source }}
+        run: |
+          sudo apt-get install -y \
+            ${{ matrix.lua.interpreter }} \
+            ${{ matrix.lua.dev_package }} \
+            lua-lgi
+
       - name: Upgrade meson
         run: pip install --upgrade --break-system-packages meson
+
+      - name: Cache from-source Lua + lgi
+        if: ${{ matrix.lua.from_source }}
+        id: cache-lua-fromsource
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: ~/lua-install
+          key: lua-${{ matrix.lua.pkg }}-${{ matrix.lua.lua_version }}-lgi-v1-${{ runner.os }}
+
+      - name: Build Lua and lgi from source
+        if: ${{ matrix.lua.from_source && steps.cache-lua-fromsource.outputs.cache-hit != 'true' }}
+        run: |
+          sudo apt-get install -y libreadline-dev libgirepository1.0-dev
+
+          # Build Lua from upstream tarball
+          cd ~
+          curl -sL https://www.lua.org/ftp/lua-${{ matrix.lua.lua_version }}.tar.gz | tar xz
+          cd lua-${{ matrix.lua.lua_version }}
+          make linux MYCFLAGS=-fPIC
+          make install INSTALL_TOP=$HOME/lua-install
+
+          # Generate pkg-config so meson resolves -Dlua_pkg=${{ matrix.lua.pkg }}
+          # and lgi's makefile can read INSTALL_CMOD/INSTALL_LMOD variables.
+          mkdir -p $HOME/lua-install/lib/pkgconfig
+          cat > $HOME/lua-install/lib/pkgconfig/${{ matrix.lua.pkg }}.pc <<EOF
+          prefix=$HOME/lua-install
+          libdir=\${prefix}/lib
+          includedir=\${prefix}/include
+          INSTALL_CMOD=\${prefix}/lib/lua/5.5
+          INSTALL_LMOD=\${prefix}/share/lua/5.5
+
+          Name: Lua
+          Description: Lua ${{ matrix.lua.lua_version }}
+          Version: ${{ matrix.lua.lua_version }}
+          Libs: -L\${libdir} -llua -lm -ldl
+          Cflags: -I\${includedir}
+          EOF
+          # Some lgi probes look for the unsuffixed 'lua' name.
+          ln -sf ${{ matrix.lua.pkg }}.pc $HOME/lua-install/lib/pkgconfig/lua.pc
+
+          # Build and install lgi from upstream master (PR #359 merged 5.5 support)
+          cd ~
+          git clone --depth 1 https://github.com/lgi-devs/lgi.git
+          cd lgi
+          PKG_CONFIG_PATH=$HOME/lua-install/lib/pkgconfig:$PKG_CONFIG_PATH \
+            LUA_VERSION=5.5 \
+            make
+          PKG_CONFIG_PATH=$HOME/lua-install/lib/pkgconfig:$PKG_CONFIG_PATH \
+            LUA_VERSION=5.5 \
+            make install \
+              LUA_LIBDIR=$HOME/lua-install/lib/lua/5.5 \
+              LUA_SHAREDIR=$HOME/lua-install/share/lua/5.5
 
       - name: Cache deps
         id: cache-deps
@@ -141,8 +207,16 @@ jobs:
       - name: Set paths
         run: |
           echo "PATH=$HOME/deps-install/bin:$PATH" >> $GITHUB_ENV
-          echo "PKG_CONFIG_PATH=$HOME/deps-install/share/pkgconfig:$HOME/deps-install/lib/x86_64-linux-gnu/pkgconfig:$PKG_CONFIG_PATH" >> $GITHUB_ENV
-          echo "LD_LIBRARY_PATH=$HOME/deps-install/lib/x86_64-linux-gnu:$LD_LIBRARY_PATH" >> $GITHUB_ENV
+          PKG_CFG="$HOME/deps-install/share/pkgconfig:$HOME/deps-install/lib/x86_64-linux-gnu/pkgconfig"
+          if [ "${{ matrix.lua.from_source }}" = "true" ]; then
+            PKG_CFG="$HOME/lua-install/lib/pkgconfig:$PKG_CFG"
+            echo "LUA_PATH=$HOME/lua-install/share/lua/5.5/?.lua;$HOME/lua-install/share/lua/5.5/?/init.lua;;" >> $GITHUB_ENV
+            echo "LUA_CPATH=$HOME/lua-install/lib/lua/5.5/?.so;;" >> $GITHUB_ENV
+            echo "LD_LIBRARY_PATH=$HOME/lua-install/lib:$HOME/deps-install/lib/x86_64-linux-gnu:$LD_LIBRARY_PATH" >> $GITHUB_ENV
+          else
+            echo "LD_LIBRARY_PATH=$HOME/deps-install/lib/x86_64-linux-gnu:$LD_LIBRARY_PATH" >> $GITHUB_ENV
+          fi
+          echo "PKG_CONFIG_PATH=$PKG_CFG:$PKG_CONFIG_PATH" >> $GITHUB_ENV
 
       - name: Build somewm
         run: make build-test LUA_PKG=${{ matrix.lua.pkg }}
