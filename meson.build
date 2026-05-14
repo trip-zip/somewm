@@ -74,34 +74,21 @@ else
   have_xwayland = false
 endif
 
-# Lua detection - LuaJIT preferred, then 5.4 > 5.3 > 5.2 > 5.1
-lua_dep = dependency('luajit', required: false)
-if not lua_dep.found()
-  lua_dep = dependency('lua5.4', required: false)
-endif
-if not lua_dep.found()
-  lua_dep = dependency('lua-5.4', required: false)
-endif
-if not lua_dep.found()
-  lua_dep = dependency('lua5.3', required: false)
-endif
-if not lua_dep.found()
-  lua_dep = dependency('lua-5.3', required: false)
-endif
-if not lua_dep.found()
-  lua_dep = dependency('lua5.2', required: false)
-endif
-if not lua_dep.found()
-  lua_dep = dependency('lua-5.2', required: false)
-endif
-if not lua_dep.found()
-  lua_dep = dependency('lua5.1', required: false)
-endif
-if not lua_dep.found()
-  lua_dep = dependency('lua-5.1', required: false)
-endif
-if not lua_dep.found()
-  lua_dep = dependency('lua', required: true)
+# Lua detection - honor -Dlua_pkg=<name> if set, otherwise:
+# LuaJIT preferred, then 5.5 > 5.4 > 5.3 > 5.2 > 5.1
+lua_pkg_override = get_option('lua_pkg')
+if lua_pkg_override != ''
+  lua_dep = dependency(lua_pkg_override, required: true)
+else
+  lua_dep = dependency('luajit', required: false)
+  foreach pkg : ['lua5.5', 'lua-5.5', 'lua5.4', 'lua-5.4', 'lua5.3', 'lua-5.3', 'lua5.2', 'lua-5.2', 'lua5.1', 'lua-5.1']
+    if not lua_dep.found()
+      lua_dep = dependency(pkg, required: false)
+    endif
+  endforeach
+  if not lua_dep.found()
+    lua_dep = dependency('lua', required: true)
+  endif
 endif
 
 # LGI detection - compile and run lgi-check.c to verify lgi is installed
@@ -197,7 +184,7 @@ foreach p : protocols
   )
 endforeach
 
-# Client protocol headers for test utilities
+# Client protocol headers for the compositor (shortcut inhibitor) and test utilities
 wayland_client = dependency('wayland-client')
 
 layer_shell_client_header = custom_target(
@@ -226,6 +213,38 @@ xdg_shell_client_code = custom_target(
   'xdg-shell-client-protocol.c',
   input: wayland_protocols_dir / 'stable/xdg-shell/xdg-shell.xml',
   output: 'xdg-shell-client-protocol.c',
+  command: [wayland_scanner, 'private-code', '@INPUT@', '@OUTPUT@'],
+)
+
+# linux-dmabuf-v1 client protocol (header + code) for the DMA-BUF test client
+linux_dmabuf_client_header = custom_target(
+  'linux-dmabuf-v1-client-protocol.h',
+  input: wayland_protocols_dir / 'stable/linux-dmabuf/linux-dmabuf-v1.xml',
+  output: 'linux-dmabuf-v1-client-protocol.h',
+  command: [wayland_scanner, 'client-header', '@INPUT@', '@OUTPUT@'],
+)
+
+linux_dmabuf_client_code = custom_target(
+  'linux-dmabuf-v1-client-protocol.c',
+  input: wayland_protocols_dir / 'stable/linux-dmabuf/linux-dmabuf-v1.xml',
+  output: 'linux-dmabuf-v1-client-protocol.c',
+  command: [wayland_scanner, 'private-code', '@INPUT@', '@OUTPUT@'],
+)
+
+# keyboard-shortcuts-inhibit-v1 client protocol: somewm binds this as a client
+# of the outer Wayland compositor when running nested, so Mod4 combos pass
+# through to the test instance.
+keyboard_shortcuts_inhibit_client_header = custom_target(
+  'keyboard-shortcuts-inhibit-unstable-v1-client-protocol.h',
+  input: wayland_protocols_dir / 'unstable/keyboard-shortcuts-inhibit/keyboard-shortcuts-inhibit-unstable-v1.xml',
+  output: 'keyboard-shortcuts-inhibit-unstable-v1-client-protocol.h',
+  command: [wayland_scanner, 'client-header', '@INPUT@', '@OUTPUT@'],
+)
+
+keyboard_shortcuts_inhibit_client_code = custom_target(
+  'keyboard-shortcuts-inhibit-unstable-v1-client-protocol.c',
+  input: wayland_protocols_dir / 'unstable/keyboard-shortcuts-inhibit/keyboard-shortcuts-inhibit-unstable-v1.xml',
+  output: 'keyboard-shortcuts-inhibit-unstable-v1-client-protocol.c',
   command: [wayland_scanner, 'private-code', '@INPUT@', '@OUTPUT@'],
 )
 
@@ -319,6 +338,7 @@ somewm_sources = [
   'selection.c',
   'pam_auth.c',
   'bench.c',
+  'nested_inhibitor.c',
   # Common
   'common/luaclass.c',
   'common/luaobject.c',
@@ -355,6 +375,7 @@ somewm_sources = [
 
 all_deps = [
   wayland_server,
+  wayland_client,
   xkbcommon,
   libinput,
   libdrm,
@@ -382,6 +403,8 @@ somewm_exe = executable(
   'somewm',
   somewm_sources,
   protocol_headers,
+  keyboard_shortcuts_inhibit_client_header,
+  keyboard_shortcuts_inhibit_client_code,
   dependencies: all_deps,
   include_directories: include_directories('.'),
   install: true,
@@ -402,6 +425,7 @@ lgi_guard = shared_library(
 somewm_client = executable(
   'somewm-client',
   'somewm-client.c',
+  'test_orchestrator.c',
   install: true,
 )
 
@@ -431,6 +455,34 @@ test_fullscreen_client = executable(
   dependencies: [wayland_client],
   install: false,
 )
+
+# Test XDG client that renders a 4-quadrant pattern at the preferred buffer
+# scale, used by test-client-content-pattern.lua to verify HiDPI c.content.
+test_content_pattern_client = executable(
+  'test-content-pattern-client',
+  ['tests/test-content-pattern-client.c', xdg_shell_client_code],
+  xdg_shell_client_header,
+  dependencies: [wayland_client],
+  install: false,
+)
+
+# DMA-BUF test client (gbm + zwp_linux_dmabuf_v1) for the GPU readback path
+# in c.content. Used by test-client-content-dmabuf.lua. Only built when gbm
+# is available; the Lua test skips itself otherwise.
+gbm_dep = dependency('gbm', required: false)
+if gbm_dep.found()
+  test_dmabuf_pattern_client = executable(
+    'test-dmabuf-pattern-client',
+    [
+      'tests/test-dmabuf-pattern-client.c',
+      xdg_shell_client_code,
+      linux_dmabuf_client_code,
+    ],
+    [xdg_shell_client_header, linux_dmabuf_client_header],
+    dependencies: [wayland_client, gbm_dep],
+    install: false,
+  )
+endif
 
 # ==============================================================================
 # Install Data

@@ -1191,6 +1191,16 @@ luaA_awesome_set_keyboard_setting(lua_State *L)
 		free(globalconf.keyboard.xkb_options);
 		globalconf.keyboard.xkb_options = strdup(val);
 		rebuild_keyboard_keymap();
+	} else if (strcmp(key, "xkb_model") == 0) {
+		const char *val = lua_isnil(L, 2) ? "" : luaL_checkstring(L, 2);
+		free(globalconf.keyboard.xkb_model);
+		globalconf.keyboard.xkb_model = strdup(val);
+		rebuild_keyboard_keymap();
+	} else if (strcmp(key, "xkb_rules") == 0) {
+		const char *val = lua_isnil(L, 2) ? "" : luaL_checkstring(L, 2);
+		free(globalconf.keyboard.xkb_rules);
+		globalconf.keyboard.xkb_rules = strdup(val);
+		rebuild_keyboard_keymap();
 	} else if (strcmp(key, "numlock") == 0) {
 		some_set_numlock(lua_toboolean(L, 2));
 	} else {
@@ -4334,7 +4344,7 @@ luaA_loadrc(void)
 	char xdg_config_path[512];
 	const char *xdg_config_home;
 	const char *home;
-	const char *config_paths[8];
+	const char *config_paths[8] = {NULL};
 	int path_count = 0;
 	volatile int loaded = 0;  /* volatile: may be modified across siglongjmp */
 	int load_result;
@@ -5415,13 +5425,17 @@ luaA_hot_reload(void)
 				num_clients * sizeof(client_t *));
 	}
 
+	/* Two passes are required: Phase E nulled c->screen for every
+	 * client. If a transient is iterated before its parent, the
+	 * transient's request::manage signal chain hits permissions.tag,
+	 * which dereferences c.transient_for.screen.* on a still-NULL
+	 * parent screen. Assign all screens first, then emit signals. */
 	for (i = 0; i < num_clients; i++) {
 		client_t *c = globalconf.clients.tab[i];
 
 		if (!client_snaps[i].was_mapped)
 			continue;
 
-		/* Assign client to first screen if not already set */
 		if (!c->screen && globalconf.screens.len > 0) {
 			int si = client_snaps[i].screen_index;
 			if (si >= 0 && si < globalconf.screens.len)
@@ -5429,6 +5443,13 @@ luaA_hot_reload(void)
 			else
 				c->screen = globalconf.screens.tab[0];
 		}
+	}
+
+	for (i = 0; i < num_clients; i++) {
+		client_t *c = globalconf.clients.tab[i];
+
+		if (!client_snaps[i].was_mapped)
+			continue;
 
 		luaA_object_push(L, c);
 

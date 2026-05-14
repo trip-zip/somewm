@@ -107,6 +107,26 @@ function ipc.register(name, handler)
   commands[name] = handler
 end
 
+--- Sentinel for handlers that produce a response asynchronously.
+-- When a handler returns this value, the dispatcher does not send a response;
+-- the handler must call _ipc_send_response(fd, response) itself once its work
+-- completes. Used by interactive commands like screenshot.interactive.
+ipc.DEFERRED = setmetatable({}, { __tostring = function() return "<deferred>" end })
+
+local _current_fd = nil
+local _current_json_mode = false
+
+--- Return the client fd of the request currently being handled.
+-- Only valid while a handler is executing.
+function ipc.current_fd()
+  return _current_fd
+end
+
+--- Return the json_mode flag of the request currently being handled.
+function ipc.current_json_mode()
+  return _current_json_mode
+end
+
 --- Format userdata pointer as ID for screens (remove space after colon)
 -- Converts "screen: 0x123" to "screen:0x123" for CLI usage.
 -- Note: Clients use numeric IDs (c.id) instead.
@@ -287,7 +307,11 @@ function ipc.dispatch(command_string, client_fd)
   end
 
   -- Execute with error handling
+  _current_fd = client_fd
+  _current_json_mode = json_mode
   local success, result = pcall(handler, unpack(args))
+  _current_fd = nil
+  _current_json_mode = false
 
   if not success then
     -- Error occurred
@@ -295,6 +319,12 @@ function ipc.dispatch(command_string, client_fd)
       return json_encode({status = "error", error = tostring(result)}) .. "\n\n"
     end
     return string.format("ERROR %s\n\n", tostring(result))
+  end
+
+  -- Handler claimed the fd for an async response. Returning nil tells C to
+  -- skip ipc_send_response; the handler will call _ipc_send_response itself.
+  if result == ipc.DEFERRED then
+    return nil
   end
 
   -- Success
@@ -2045,6 +2075,52 @@ local function register_builtin_commands()
     return string.format("Screen %d screenshot saved to %s", s.index, path)
   end)
 
+  --- screenshot.interactive <path> - Drag-to-select snip and save
+  -- Shows the snipping overlay; user drags a region with the left mouse
+  -- button to capture, or presses Escape / right-clicks to cancel. The IPC
+  -- response is held open until the user accepts or cancels.
+  ipc.register("screenshot.interactive", function(path)
+    if not path then
+      error("Missing file path. Usage: screenshot interactive <path>")
+    end
+
+    local fd = ipc.current_fd()
+    local json = ipc.current_json_mode()
+    local awful_screenshot = require("awful.screenshot")
+
+    local function reply(ok, msg)
+      local response
+      if json then
+        response = json_encode({
+          status = ok and "ok" or "error",
+          [ok and "result" or "error"] = msg,
+        }) .. "\n\n"
+      elseif ok then
+        response = "OK\n" .. msg .. "\n\n"
+      else
+        response = "ERROR " .. msg .. "\n\n"
+      end
+      if _ipc_send_response then
+        _ipc_send_response(fd, response)
+      end
+    end
+
+    local ss = awful_screenshot {
+      interactive = true,
+      file_path   = path,
+    }
+
+    ss:connect_signal("file::saved", function(_, saved_path)
+      reply(true, "Screenshot saved to " .. saved_path)
+    end)
+    ss:connect_signal("snipping::cancelled", function(_, reason)
+      reply(false, "Screenshot cancelled: " .. tostring(reason))
+    end)
+
+    ss:refresh()
+    return ipc.DEFERRED
+  end)
+
   -- =================================================================
   -- MOUSEGRABBER COMMANDS
   -- =================================================================
@@ -2184,6 +2260,8 @@ local function register_builtin_commands()
     xkb_layout = { type = "string", desc = "XKB keyboard layout (e.g., 'us', 'us,ru')" },
     xkb_variant = { type = "string", desc = "XKB layout variant (e.g., 'dvorak')" },
     xkb_options = { type = "string", desc = "XKB options (e.g., 'ctrl:nocaps')" },
+    xkb_model = { type = "string", desc = "XKB model (e.g., 'pc105')" },
+    xkb_rules = { type = "string", desc = "XKB rules (e.g., 'base')" },
   }
 
   --- input [setting] [value] - Get or set libinput/keyboard configuration

@@ -74,10 +74,16 @@ local function spawn_client(_, class, title, sn_rules, callback)
 
     local exe, class_flag, exec_flag = terminal_cmd[1], terminal_cmd[2], terminal_cmd[3]
 
+    -- Pin kitty initial size so cold-cache kitty doesn't size itself to the bounds hint.
+    local extra = (exe == "kitty")
+        and " -o initial_window_width=400 -o initial_window_height=300"
+        or ""
+
     -- Build command
     local cmd = string.format(
-        "%s %s %s sleep infinity",
+        "%s%s %s %s sleep infinity",
         exe,
+        extra,
         string.format(class_flag, class),
         exec_flag
     )

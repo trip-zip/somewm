@@ -207,6 +207,24 @@ describe("awful.input", function()
             assert.is.equal("dvorak", input.xkb_variant)
         end)
 
+        it("xkb_model default value", function()
+            assert.is.equal("", input.xkb_model)
+        end)
+
+        it("xkb_model can be set", function()
+            input.xkb_model = "pc105"
+            assert.is.equal("pc105", input.xkb_model)
+        end)
+
+        it("xkb_rules default value", function()
+            assert.is.equal("", input.xkb_rules)
+        end)
+
+        it("xkb_rules can be set", function()
+            input.xkb_rules = "base"
+            assert.is.equal("base", input.xkb_rules)
+        end)
+
         it("xkb_options default value", function()
             assert.is.equal("", input.xkb_options)
         end)
