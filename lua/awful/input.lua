@@ -44,6 +44,8 @@ local state = {
     xkb_layout = "",                -- keyboard layout (e.g., "us", "us,ru")
     xkb_variant = "",               -- layout variant (e.g., "dvorak")
     xkb_options = "",               -- XKB options (e.g., "ctrl:nocaps")
+    xkb_rules = "",
+    xkb_model = "",
 }
 
 -- Mapping from property names to their types for validation
@@ -71,6 +73,8 @@ local property_types = {
     xkb_layout = "string",
     xkb_variant = "string",
     xkb_options = "string",
+    xkb_model = "string",
+    xkb_rules = "string",
 }
 
 -- Properties that are pointer/input device settings (vs keyboard)
