@@ -2350,9 +2350,9 @@ local function register_builtin_commands()
     if not mod_str or mod_str == "" then return {} end
     local mods = {}
     for mod in mod_str:gmatch("[^+,]+") do
-      mod = mod:match("^%s*(.-)%s*$")  -- trim whitespace
-      if mod ~= "" then
-        table.insert(mods, mod)
+      local m = mod:match("^%s*(.-)%s*$")  -- trim whitespace
+      if m ~= "" then
+        table.insert(mods, m)
       end
     end
     return mods

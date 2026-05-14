@@ -42,15 +42,15 @@ local function do_fair(p, orientation)
     end
 
     for k, c in ipairs(cls) do
-      k = k - 1
+      local i = k - 1
       local g = {}
 
       local row, col
-      row = k % rows
-      col = math.floor(k / rows)
+      row = i % rows
+      col = math.floor(i / rows)
 
       local lrows, lcols
-      if k >= rows * cols - rows then
+      if i >= rows * cols - rows then
         lrows = #cls - (rows * cols - rows)
         lcols = cols
       else

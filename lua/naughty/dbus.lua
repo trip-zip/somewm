@@ -319,8 +319,8 @@ function notif_methods.Notify(sender, object_path, interface, method, parameters
             end
 
             for k, v in pairs(args) do
-                if k == "destroy" then k = "destroy_cb" end
-                notification[k] = v
+                local key = k == "destroy" and "destroy_cb" or k
+                notification[key] = v
             end
 
             -- Update the icon if necessary.

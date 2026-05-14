@@ -986,18 +986,19 @@ local function create(args)
 
         for idx, name in pairs(args.actions) do
             local cb, old_idx = nil, idx
+            local pos, label = idx, name
 
-            if type(name) == "function" then
-                cb = name
+            if type(label) == "function" then
+                cb = label
             end
 
-            if type(idx) == "string" then
-                name, idx = idx, #args.actions+1
+            if type(pos) == "string" then
+                label, pos = pos, #args.actions+1
             end
 
             local a = naction {
-                position = idx,
-                name     = name,
+                position = pos,
+                name     = label,
             }
 
             if cb then
