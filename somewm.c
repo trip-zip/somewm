@@ -1626,12 +1626,9 @@ find_lgi_guard(void)
 	static char found[PATH_MAX];
 	const char *name = "/liblgi_closure_guard.so";
 
-	/* 1. Compiled-in libdir (fast path) */
-	snprintf(found, sizeof(found), "%s%s", SOMEWM_LIBDIR, name);
-	if (access(found, R_OK) == 0)
-		return found;
-
-	/* 2. Relative to the running binary (handles any prefix) */
+	/* 1. Relative to the running binary (handles any prefix, and ensures a
+	 * binary run from a build dir picks up its own matching guard instead
+	 * of a stale one left in the install prefix). */
 	char self[PATH_MAX];
 	ssize_t len = readlink("/proc/self/exe", self, sizeof(self) - 1);
 	if (len > 0) {
@@ -1651,6 +1648,11 @@ find_lgi_guard(void)
 			}
 		}
 	}
+
+	/* 2. Compiled-in libdir */
+	snprintf(found, sizeof(found), "%s%s", SOMEWM_LIBDIR, name);
+	if (access(found, R_OK) == 0)
+		return found;
 
 	/* 3. Common system paths */
 	const char *search[] = {
