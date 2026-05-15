@@ -30,106 +30,163 @@ local base  = require("wibox.widget.base")
 local table = table
 local pairs = pairs
 local gtable = require("gears.table")
+local layout = require("somewm.layout")
 
 local fixed = {}
 
--- Layout a fixed layout. Each widget gets just the space it asks for.
--- @param context The context in which we are drawn.
--- @param width The available width.
--- @param height The available height.
-function fixed:layout(context, width, height)
-    local result = {}
+local function layout_clay(self, context, width, height)
+    local is_y           = self._private.dir == "y"
+    local spacing        = self._private.spacing or 0
+    local abspace        = math.abs(spacing)
+    local widgets        = self._private.widgets
+    local fill_space     = self._private.fill_space
+    local spacing_widget = self._private.spacing_widget
+    local size_key       = is_y and "height" or "width"
+    local main_size      = is_y and height or width
+
+    -- Build an explicit child list so spacers can be interleaved between
+    -- consecutive children. fill_space gives the last child grow=true so
+    -- it absorbs leftover space.
+    local children = {}
+    local visible  = {}
+    for _, widget in pairs(widgets) do
+        if not (widget._private and widget._private.visible == false) then
+            visible[#visible + 1] = widget
+        end
+    end
+
+    local interleave = spacing_widget and abspace > 0
+    local container_gap = interleave and 0 or abspace
+    local spacer_props
+    if interleave then
+        spacer_props = {}
+        spacer_props[size_key] = abspace
+    end
+
+    -- Track cumulative main-axis position so each fit_widget call sees
+    -- only the remaining space. fit_widget clamps the widget's reported
+    -- size to the available area, so widgets that overflow the container
+    -- get truncated as they're placed (matching wibox.layout.fixed's
+    -- documented overflow semantics). When interleaving spacers, add the
+    -- spacer only after confirming the upcoming widget gets non-zero
+    -- main-axis size; otherwise the spacer would sit past the container
+    -- boundary with a zero-sized widget after it.
+    local pos = 0
+    for i, widget in ipairs(visible) do
+        if fill_space and i == #visible then
+            if interleave and i > 1 then
+                children[#children + 1] = layout.widget(spacing_widget, spacer_props)
+                pos = pos + abspace
+            end
+            children[#children + 1] = layout.widget(widget, { grow = true })
+        else
+            local pre_spacer = interleave and i > 1
+            local pos_after_spacer = pre_spacer and (pos + abspace) or pos
+            local remaining = math.max(0, main_size - pos_after_spacer)
+            local fw = is_y and width or remaining
+            local fh = is_y and remaining or height
+            local w, h = base.fit_widget(self, context, widget, fw, fh)
+            local main = is_y and h or w
+            if pre_spacer and main > 0 then
+                children[#children + 1] = layout.widget(spacing_widget, spacer_props)
+                pos = pos + abspace
+            end
+            children[#children + 1] = layout.widget(widget,
+                is_y and { height = main } or { width = main })
+            pos = pos + main + (interleave and 0 or container_gap)
+        end
+    end
+
+    local outer = is_y and layout.column or layout.row
+    return base.place_rects(layout.solve {
+        source = "wibox",
+        width = width, height = height,
+        root = outer {
+            gap = container_gap,
+            children,
+        },
+    }.placements)
+end
+
+-- Build absolute-positioned rects when negative spacing combines with a
+-- spacing_widget: the spacer overlaps adjacent widgets, which linear
+-- flow can't express. Routes through `place_rects_via_stack` so the
+-- result still goes through Clay (just in stack mode).
+local function layout_via_absolute(self, context, width, height)
+    local rects = {}
     local spacing = self._private.spacing or 0
     local is_y = self._private.dir == "y"
     local is_x = not is_y
     local abspace = math.abs(spacing)
     local spoffset = spacing < 0 and 0 or spacing
-    local widgets_nr = #self._private.widgets
-    local spacing_widget
+    local widgets = self._private.widgets
+    local widgets_nr = #widgets
+    local fill_space = self._private.fill_space
+    local spacing_widget = spacing ~= 0 and self._private.spacing_widget or nil
     local x, y = 0, 0
 
-    spacing_widget = spacing ~= 0 and self._private.spacing_widget or nil
-
-    for index, widget in pairs(self._private.widgets) do
-        local w, h, local_spacing = width - x, height - y, spacing
-
-        -- Some widget might be zero sized either because this is their
-        -- minimum space or just because they are really empty. In this case,
-        -- they must still be added to the layout. Otherwise, if their size
-        -- change and this layout is resizable, they are lost "forever" until
-        -- a full relayout is called on this fixed layout object.
+    for index, widget in pairs(widgets) do
+        local w, h = width - x, height - y
         local zero = false
 
         if is_y then
-            if index ~= widgets_nr or not self._private.fill_space then
+            if index ~= widgets_nr or not fill_space then
                 h = select(2, base.fit_widget(self, context, widget, w, h))
                 zero = h == 0
             end
-
             if y - spacing >= height then
-                -- pop the spacing widget added in previous iteration if used
                 if spacing_widget then
-                    table.remove(result)
-
-                    -- Avoid adding zero-sized widgets at an out-of-bound
-                    -- position.
+                    table.remove(rects)
                     y = y - spacing
                 end
-
-                -- Never display "random" widgets as soon as a non-zero sized
-                -- one doesn't fit.
-                if not zero then
-                    break
-                end
+                if not zero then break end
             end
         else
-            if index ~= widgets_nr or not self._private.fill_space then
+            if index ~= widgets_nr or not fill_space then
                 w = select(1, base.fit_widget(self, context, widget, w, h))
                 zero = w == 0
             end
-
             if x - spacing >= width then
-                -- pop the spacing widget added in previous iteration if used
                 if spacing_widget then
-                    table.remove(result)
-
-                    -- Avoid adding zero-sized widgets at an out-of-bound
-                    -- position.
+                    table.remove(rects)
                     x = x - spacing
                 end
-
-                -- Never display "random" widgets as soon as a non-zero sized
-                -- one doesn't fit.
-                if not zero then
-                    break
-                end
+                if not zero then break end
             end
         end
 
-        if zero then
-            local_spacing = 0
-        end
+        local local_spacing = zero and 0 or spacing
 
-        -- Place widget, even if it has zero width/height. Otherwise
-        -- any layout change for zero-sized widget would become invisible.
-        table.insert(result, base.place_widget_at(widget, x, y, w, h))
+        rects[#rects + 1] = {
+            widget = widget, x = x, y = y, width = w, height = h,
+        }
 
         x = is_x and x + w + local_spacing or x
         y = is_y and y + h + local_spacing or y
 
-        -- Add the spacing widget (if needed)
         if index < widgets_nr and spacing_widget then
-            table.insert(result, base.place_widget_at(
-                spacing_widget,
-                is_x and (x - spoffset) or x,
-                is_y and (y - spoffset) or y,
-                is_x and abspace or w,
-                is_y and abspace or h
-            ))
+            rects[#rects + 1] = {
+                widget = spacing_widget,
+                x = is_x and (x - spoffset) or x,
+                y = is_y and (y - spoffset) or y,
+                width  = is_x and abspace or w,
+                height = is_y and abspace or h,
+            }
         end
     end
 
-    return result
+    return base.place_rects_via_stack(rects, width, height)
+end
+
+function fixed:layout(context, width, height)
+    -- Negative spacing combined with spacing_widget overlaps adjacent
+    -- widgets; linear-flow Clay can't express the overlap, so route via
+    -- absolute positioning. All other cases use linear flow.
+    if self._private.spacing and self._private.spacing < 0
+        and self._private.spacing_widget then
+        return layout_via_absolute(self, context, width, height)
+    end
+    return layout_clay(self, context, width, height)
 end
 
 --- Add some widgets to the given layout.

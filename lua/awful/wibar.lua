@@ -261,13 +261,38 @@ local function gen_placement(position, align, stretch)
     return corner + (stretch and placement[maximize] or nil)
 end
 
--- Attach the placement function.
+-- Register wibar for Clay screen-level composition. compose_screen runs
+-- synchronously so the wibar's position is set on the first frame
+-- without a startup flash; awful.layout.arrange is also scheduled so
+-- tiled clients pick up the new workarea on the next tick.
+local function clay_register(wb, position)
+    local s = wb.screen
+    if not s or not s.valid then return end
+
+    s._clay_drawins = s._clay_drawins or {}
+
+    if wb.visible then
+        local is_horiz = (position == "top" or position == "bottom")
+        s._clay_drawins[wb] = {
+            position = position,
+            size = is_horiz and wb.height or wb.width,
+            clay_gaps = wb._private.clay_gaps or false,
+        }
+    else
+        s._clay_drawins[wb] = nil
+    end
+
+    -- Position wibars synchronously via compose_screen, then schedule
+    -- a full arrange so tiled clients react to the workarea change.
+    local clay_ok, clay_mod = pcall(require, "awful.layout.clay")
+    if clay_ok and clay_mod.compose_screen then
+        clay_mod.compose_screen(s)
+    end
+    require("awful.layout").arrange(s)
+end
+
 local function attach(wb, position)
-    gen_placement(position, wb._private.align, wb._stretch)(wb, {
-        attach          = true,
-        update_workarea = wb._private.restrict_workarea,
-        margins         = get_margins(wb)
-    })
+    clay_register(wb, position)
 end
 
 -- Re-attach all wibars on a given wibar screen
@@ -546,6 +571,7 @@ function awfulwibar.new(args)
     w._private.meta_margins = meta_margins(w)
 
     w._private.restrict_workarea = true
+    w._private.clay_gaps = args.clay_gaps or false
 
     -- `w` needs to be inserted in `wiboxes` before reattach or its own offset
     -- will not be taken into account by the "older" wibars when `reattach` is
@@ -572,7 +598,10 @@ function awfulwibar.new(args)
     -- Force all the wibars to be moved
     reattach(w)
 
-    w:connect_signal("property::visible", function() reattach(w) end)
+    w:connect_signal("property::visible", function()
+        reattach(w)
+        clay_register(w, w._position or "top")
+    end)
 
     assert(w.buttons)
 

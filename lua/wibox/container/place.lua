@@ -11,6 +11,7 @@
 local setmetatable = setmetatable
 local base = require("wibox.widget.base")
 local gtable = require("gears.table")
+local layout = require("somewm.layout")
 
 local place = { mt = {} }
 
@@ -48,14 +49,21 @@ end
 
 -- Layout this layout
 function place:layout(context, width, height)
-
-    if not self._private.widget then
-        return
-    end
-
-    local x, y, w, h = self:_layout(context, width, height)
-
-    return { base.place_widget_at(self._private.widget, x, y, w, h) }
+    if not self._private.widget then return end
+    local w, h = base.fit_widget(self, context, self._private.widget, width, height)
+    if self._private.content_fill_horizontal then w = width  end
+    if self._private.content_fill_vertical   then h = height end
+    return base.place_rects(layout.solve {
+        source = "wibox",
+        width = width, height = height,
+        root = layout.row {
+            align = {
+                x = self._private.halign or "center",
+                y = self._private.valign or "center",
+            },
+            layout.widget(self._private.widget, { width = w, height = h }),
+        },
+    }.placements)
 end
 
 -- Fit this layout into the given area

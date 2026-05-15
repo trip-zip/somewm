@@ -97,6 +97,7 @@ local gmath = require("gears.math")
 local gtable = require("gears.table")
 local cairo = require( "lgi" ).cairo
 local unpack = unpack or table.unpack -- luacheck: globals unpack (compatibility with Lua 5.1)
+local some_placement = require("somewm.placement")
 
 local function get_screen(s)
     return s and capi.screen[s]
@@ -903,18 +904,24 @@ function placement.no_offscreen(c, args)
     local screen = get_screen(args.screen or c.screen or a_screen.getbycoord(geometry.x, geometry.y))
     local screen_geometry = screen.workarea
 
-    if geometry.x + geometry.width > screen_geometry.x + screen_geometry.width then
-        geometry.x = screen_geometry.x + screen_geometry.width - geometry.width
-    end
-    if geometry.x < screen_geometry.x then
-        geometry.x = screen_geometry.x
-    end
-
-    if geometry.y + geometry.height > screen_geometry.y + screen_geometry.height then
-        geometry.y = screen_geometry.y + screen_geometry.height - geometry.height
-    end
-    if geometry.y < screen_geometry.y then
-        geometry.y = screen_geometry.y
+    local layout = require("somewm.layout")
+    local result = layout.solve {
+        source   = "placement",
+        width    = screen_geometry.width,  height   = screen_geometry.height,
+        offset_x = screen_geometry.x,      offset_y = screen_geometry.y,
+        root = layout.stack {
+            layout.measure {
+                x = geometry.x - screen_geometry.x,
+                y = geometry.y - screen_geometry.y,
+                width  = geometry.width,
+                height = geometry.height,
+                clamp  = true,
+            },
+        },
+    }
+    if result and result.workarea then
+        geometry.x = result.workarea.x
+        geometry.y = result.workarea.y
     end
 
     remove_border(c, args, geometry)
@@ -983,59 +990,43 @@ function placement.no_overlap(c, args)
         end
         curlay = tags[1] and tags[1].layout
     end
-    local areas = { screen.workarea }
+
+    -- Build the obstacle list in workarea-relative coords. The substrate's
+    -- avoid pre-pass does the rect subtraction and best-fit search.
+    local wa = screen.workarea
+    local obstacles = {}
     for _, cl in pairs(cls) do
         if cl ~= c
            and cl.type ~= "desktop"
            and (cl.floating or curlay == floating)
            and not (cl.maximized or cl.fullscreen) then
-            areas = grect.area_remove(areas, area_common(cl))
+            local g = area_common(cl)
+            obstacles[#obstacles + 1] = {
+                x = g.x - wa.x, y = g.y - wa.y,
+                width = g.width, height = g.height,
+            }
         end
     end
 
-    -- Look for available space
-    local found = false
-    local new = { x = geometry.x, y = geometry.y, width = 0, height = 0 }
-    for _, r in ipairs(areas) do
-        if r.width >= geometry.width
-           and r.height >= geometry.height
-           and r.width * r.height > new.width * new.height then
-            found = true
-            new = r
-            -- Check if the client's current position is available
-            -- and prefer that one (why move it around pointlessly?)
-            if     geometry.x >= r.x
-               and geometry.y >= r.y
-               and geometry.x + geometry.width <= r.x + r.width
-               and geometry.y + geometry.height <= r.y + r.height then
-                new.x = geometry.x
-                new.y = geometry.y
-            end
-        end
-    end
+    local layout = require("somewm.layout")
+    local result = layout.solve {
+        source   = "placement",
+        width    = wa.width,  height   = wa.height,
+        offset_x = wa.x,      offset_y = wa.y,
+        root = layout.stack {
+            layout.measure {
+                x = geometry.x - wa.x,
+                y = geometry.y - wa.y,
+                width  = geometry.width,
+                height = geometry.height,
+                avoid  = obstacles,
+            },
+        },
+    }
 
-    -- We did not find an area with enough space for our size:
-    -- just take the biggest available one and go in.
-    -- This makes sure to have the whole screen's area in case it has been
-    -- removed.
-    if not found then
-        if #areas > 0 then
-            for _, r in ipairs(areas) do
-                if r.width * r.height > new.width * new.height then
-                    new = r
-                end
-            end
-        elseif grect.area_intersect_area(geometry, screen.workarea) then
-            new.x = geometry.x
-            new.y = geometry.y
-        else
-            new.x = screen.workarea.x
-            new.y = screen.workarea.y
-        end
-    end
-
-    -- Restore height and width
-    new.width = geometry.width
+    local new = result and result.workarea
+        or { x = wa.x, y = wa.y, width = geometry.width, height = geometry.height }
+    new.width  = geometry.width
     new.height = geometry.height
 
     remove_border(c, args, new)
@@ -1205,6 +1196,31 @@ function placement.align(d, args)
 
     local sgeo = get_parent_geometry(d, args)
     local dgeo = geometry_common(d, args)
+
+    -- Full-axis anchors go through somewm.placement.solve (Clay-backed).
+    -- Partial-axis (center_vertical / center_horizontal) and unknown
+    -- positions fall through: solve returns nil for them, and the legacy
+    -- align_map below preserves the original axis from dgeo.
+    local r = some_placement.solve {
+        parent        = sgeo,
+        target_width  = dgeo.width,
+        target_height = dgeo.height,
+        anchor        = args.position,
+    }
+    if r then
+        local ngeo = {
+            x      = math.ceil(r.x),
+            y      = math.ceil(r.y),
+            width  = math.ceil(dgeo.width),
+            height = math.ceil(dgeo.height),
+        }
+        remove_border(d, args, ngeo)
+        geometry_common(d, args, ngeo)
+
+        attach(d, placement[args.position], args)
+
+        return fix_new_geometry(ngeo, args, true)
+    end
 
     local pos  = align_map[args.position](
         sgeo.width ,
