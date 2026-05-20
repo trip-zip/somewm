@@ -11,13 +11,15 @@
 
 .PHONY: all install uninstall clean setup reconfigure test test-unit test-check test-integration test-orchestrator test-asan test-one test-visual test-one-visual test-ci test-fast build-test build-bench bench-run bench-run-live bench-json bench-baseline bench-compare bench-check bench-memory bench-flamegraph bench-diff bench-heaptrack profile profile-lua profile-save profile-diff
 
-# Default build: WITH ASAN for development
+# Default build: optimized release, no sanitizers
 all:
-	@test -d build || meson setup build -Db_sanitize=address,undefined $(if $(LUA_PKG),-Dlua_pkg=$(LUA_PKG),) $(MESON_OPTS)
+	@test -d build || meson setup build -Dbuildtype=release -Db_sanitize=none $(if $(LUA_PKG),-Dlua_pkg=$(LUA_PKG),) $(MESON_OPTS)
 	ninja -C build
 
-# Alias for clarity
-asan: all
+# AddressSanitizer + UBSan build (separate dir, for development)
+asan:
+	@test -d build-asan || meson setup build-asan -Db_sanitize=address,undefined $(if $(LUA_PKG),-Dlua_pkg=$(LUA_PKG),) $(MESON_OPTS)
+	ninja -C build-asan
 
 # Build for tests: NO ASAN (fast) - explicitly disable sanitizers, enable test PAM stub
 build-test:
@@ -31,7 +33,7 @@ uninstall:
 	ninja -C build uninstall
 
 clean:
-	rm -rf build build-test
+	rm -rf build build-test build-asan
 
 # Just setup (useful for IDE integration)
 setup:
@@ -67,8 +69,8 @@ test-integration: build-test
 	@SOMEWM=./build-test/somewm SOMEWM_CLIENT=./build-test/somewm-client ./tests/run-integration.sh
 
 # Integration tests with ASAN (slower, catches memory bugs)
-test-asan: all
-	@SOMEWM=./build/somewm SOMEWM_CLIENT=./build/somewm-client ./tests/run-integration.sh
+test-asan: asan
+	@SOMEWM=./build-asan/somewm SOMEWM_CLIENT=./build-asan/somewm-client ./tests/run-integration.sh
 
 # CI mode: headless (for automated testing environments)
 test-ci: build-test test-unit
