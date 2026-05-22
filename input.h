@@ -85,6 +85,15 @@ extern struct wl_listener gesture_pinch_update;
 extern struct wl_listener gesture_pinch_end;
 extern struct wl_listener gesture_hold_begin;
 extern struct wl_listener gesture_hold_end;
+extern struct wl_listener touch_down;
+extern struct wl_listener touch_motion;
+extern struct wl_listener touch_up;
+extern struct wl_listener touch_cancel;
+extern struct wl_listener touch_frame;
+extern struct wl_listener tablet_axis;
+extern struct wl_listener tablet_tip;
+extern struct wl_listener tablet_proximity;
+extern struct wl_listener tablet_button;
 
 /* Request listeners (registered in setup()) */
 extern struct wl_listener request_cursor;

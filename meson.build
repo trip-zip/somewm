@@ -154,6 +154,7 @@ protocols = [
   [wayland_protocols_dir / 'staging/cursor-shape/cursor-shape-v1.xml', 'enum-header'],
   [wayland_protocols_dir / 'unstable/pointer-constraints/pointer-constraints-unstable-v1.xml', 'enum-header'],
   [wayland_protocols_dir / 'stable/xdg-shell/xdg-shell.xml', 'server-header'],
+  [wayland_protocols_dir / 'stable/tablet/tablet-v2.xml', 'server-header'],
   # Local protocols
   ['protocols/wlr-layer-shell-unstable-v1.xml', 'enum-header'],
   ['protocols/wlr-output-power-management-unstable-v1.xml', 'server-header'],
