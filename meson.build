@@ -95,12 +95,9 @@ endif
 # This approach only requires the Lua library, not the interpreter executable
 lgi_check_result = cc.run(files('lgi-check.c'), dependencies: [lua_dep], name: 'LGI check')
 if lgi_check_result.returncode() != 0
-  error('LGI (Lua GObject Introspection) not found for ' + lua_dep.name() + '.\n' +
-        lgi_check_result.stderr() + '\n' +
-        'Install the matching lgi package:\n' +
-        '  Arch Linux: sudo pacman -S lua-lgi (Lua 5.4) or lua51-lgi (LuaJIT)\n' +
-        '  Debian/Ubuntu: sudo apt install lua-lgi\n' +
-        '  Fedora: sudo dnf install lua-lgi')
+  # lgi-check.c already prints category-specific guidance (missing vs installed
+  # but unusable); surface it as-is rather than re-asserting "not found".
+  error('lgi check failed:\n\n' + lgi_check_result.stderr())
 endif
 # Parse lgi version from output (format: "Found lgi X.Y.Z")
 lgi_output = lgi_check_result.stdout().strip()
