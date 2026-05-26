@@ -44,11 +44,13 @@ return function(clay)
     clay.spiral = clay.layout {
         name           = "clay.spiral",
         body_signature = "context",
+        merged_capable = true,
         body           = spiral_build(true),
     }
     clay.spiral.dwindle = clay.layout {
         name           = "clay.dwindle",
         body_signature = "context",
+        merged_capable = true,
         body           = spiral_build(false),
     }
 end

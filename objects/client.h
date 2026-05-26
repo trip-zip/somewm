@@ -135,6 +135,12 @@ typedef struct {
 } motif_wm_hints_t;
 
 /** client_t type - AwesomeWM client structure adapted for Wayland */
+/* One client-frame sub-rect, frame-relative (relative to c->scene at
+ * c->geometry.x/y). The frame is border + body(titlebars + surface). Shared
+ * between the per-client fallback frame solve and the merged screen solve's
+ * frame scratch (see merged_frame below). */
+struct frame_box { int x, y, w, h; };
+
 typedef struct client_t client_t;
 struct client_t
 {
@@ -337,11 +343,11 @@ struct client_t
     } titlebar[CLIENT_TITLEBAR_COUNT];
     /** Motif WM hints, with an additional MWM_HINTS_AWESOME_SET bit */
     motif_wm_hints_t motif_wm_hints;
-    /** Decoration sub-pass cache. clay_apply_client_decorations() resolves
+    /** Frame fallback-solve cache. clay_apply_client_frame() resolves
      * the same Clay tree on every surface commit; the inputs (geometry,
      * border width, fullscreen, titlebar sizes) are invariant across
      * the vast majority of those calls. The stamp comparison at the
-     * head of clay_apply_client_decorations() short-circuits the solve
+     * head of clay_apply_client_frame() short-circuits the solve
      * when nothing relevant has changed. Zero-init via calloc is
      * sufficient (valid = false on first call). */
     struct {
@@ -351,7 +357,22 @@ struct client_t
         uint16_t titlebar_size[CLIENT_TITLEBAR_COUNT];
         int      inner_w, inner_h;
         bool     valid;
-    } decor_cache;
+    } frame_cache;
+    /** Frame boxes computed by the merged screen solve (clay_layout.c),
+     * consumed by apply_geometry_to_wlroots() in place of the per-client
+     * frame solve when the key below still matches the live client state.
+     * box[] is indexed by CFRAME_* role (1..5); box[0] is unused. The key
+     * mirrors frame_cache: a mismatch means the merged scratch is stale and the
+     * caller falls back to clay_apply_client_frame(). Zero-init via calloc
+     * (valid = false on first call). */
+    struct {
+        bool     valid;
+        int      geo_w, geo_h;
+        int      bw;
+        bool     fullscreen;
+        uint16_t titlebar_size[CLIENT_TITLEBAR_COUNT];
+        struct frame_box box[6];
+    } merged_frame;
 };
 
 /* Note: Client and client_t are both forward-declared in somewm_types.h

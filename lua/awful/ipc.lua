@@ -896,6 +896,225 @@ local function register_builtin_commands()
     end
   end)
 
+  --- clay.debug - Toggle the Clay debug view (hierarchy inspector + hover
+  --- highlight). Optional arg: "on" | "off" | "toggle" (default toggle).
+  ipc.register("clay.debug", function(arg)
+    local clay = require("awful.layout.clay")
+    if arg == "on" then
+      clay.set_debug(true)
+    elseif arg == "off" then
+      clay.set_debug(false)
+    else
+      clay.toggle_debug()
+    end
+    local c = _somewm_clay
+    if c and c.is_debug_enabled then
+      return c.is_debug_enabled() and "Clay debug: on" or "Clay debug: off"
+    end
+    return "Clay debug: updated"
+  end)
+
+  --- clay.tree [screen] - Print the screen's Clay descriptor tree (the merged
+  --- screen solve). Shows every node (client, frame, titlebar, widget, drawin,
+  --- container) with its identity, sizing, and solved box, so you can verify
+  --- which things are nodes in the one tree and where they landed. Defaults to
+  --- the focused screen; pass a screen index to target another. Use --json for
+  --- a structured tree.
+  do
+    -- Format a sizing value: number -> "Npx", percent sentinel -> "N%".
+    local function size_str(v)
+      if type(v) == "number" then return string.format("%gpx", v) end
+      if type(v) == "table" and v._percent then
+        return string.format("%g%%", v._percent)
+      end
+      return tostring(v)
+    end
+
+    -- Format a padding value (number, {v,h}, or {t,r,b,l}).
+    local function pad_str(p)
+      if type(p) == "number" then return string.format("%g", p) end
+      if type(p) == "table" then return "{" .. table.concat(p, ",") .. "}" end
+      return tostring(p)
+    end
+
+    -- Map a frame role number back to its name (border_top, surface, ...),
+    -- reversing the _somewm_clay.frame table. Built once on first use.
+    local frame_role_name
+    local function role_label(role)
+      if not frame_role_name then
+        frame_role_name = {}
+        local f = _somewm_clay and _somewm_clay.frame
+        if f then for k, v in pairs(f) do frame_role_name[v] = k end end
+      end
+      return frame_role_name[role] or tostring(role)
+    end
+
+    local function widget_label(w)
+      if not w then return "widget" end
+      local ok, name = pcall(function() return w.widget_name end)
+      if ok and type(name) == "string" and #name > 0 then
+        -- widget_name often carries a leading chunk marker like "@.."; strip it
+        -- to the readable module name (wibox.layout.align, awful.widget.taglist).
+        name = name:gsub("^@", ""):gsub("^[%./]+", "")
+        if #name > 0 then return name end
+      end
+      return "widget"
+    end
+
+    -- Human identity for a node: client.<class>, wibar.<position>, the widget
+    -- type, the frame role, or the container shape (row/column/stack).
+    local function node_identity(node)
+      local t = node._type
+      local p = node.props or {}
+      if t == "client" or t == "floating_client" then
+        local c = node.client
+        local cls = c and (c.class or c.instance or c.name)
+        if type(cls) == "string" and #cls > 0 then return "client." .. cls end
+        return "client"
+      elseif t == "drawin" then
+        return p.id or "drawin"
+      elseif t == "widget" then
+        return widget_label(node.widget)
+      elseif t == "frame_box" then
+        return "frame." .. role_label(p.role)
+      elseif t == "titlebar" then
+        return "titlebar." .. role_label(p.role)
+      elseif t == "workarea" then
+        return p.id or "workarea"
+      elseif t == "container" then
+        if p.widget then return widget_label(p.widget) end
+        return p.id
+          or (p._stack and "stack"
+              or (p.direction == "column" and "column" or "row"))
+      end
+      return t
+    end
+
+    -- Solved box for a node, read from live geometry: {x,y,width,height} or
+    -- nil. Clients/drawins from the object; widgets from the screen's solved
+    -- placement map. Frame-box coordinates live in C and are deferred.
+    local function node_box(node, s)
+      local g, absolute
+      local t = node._type
+      if t == "client" or t == "floating_client" then
+        local c = node.client
+        if c and c.valid then
+          local ok, geo = pcall(function() return c:geometry() end)
+          if ok then g, absolute = geo, true end
+        end
+      elseif t == "drawin" then
+        local d = node.drawin
+        if d then
+          local ok = pcall(function() return d.width end)
+          if ok then
+            g, absolute = { x = d.x, y = d.y, width = d.width, height = d.height }, true
+          end
+        end
+      elseif t == "widget" then
+        local bx = s._clay_widget_boxes
+        g = bx and bx[node.widget]
+      elseif t == "container" and node.props and node.props.widget then
+        local bx = s._clay_widget_boxes
+        g = bx and bx[node.props.widget]
+      end
+      if g and g.width then
+        -- Clients/drawins come from live (absolute) geometry; rebase into Clay's
+        -- 0-based solve space (applied = Clay box + screen offset) so every row
+        -- shares one coordinate space, matching the Clay debug inspector. Widget
+        -- and frame boxes are already 0-based.
+        local ox, oy = 0, 0
+        if absolute then
+          local sg = s.geometry
+          ox, oy = sg.x or 0, sg.y or 0
+        end
+        return {
+          x      = math.floor((g.x or 0) - ox),
+          y      = math.floor((g.y or 0) - oy),
+          width  = math.floor(g.width or 0),
+          height = math.floor(g.height or 0),
+        }
+      end
+      return nil
+    end
+
+    local function box_str(b)
+      return string.format("[%d,%d %dx%d]", b.x, b.y, b.width, b.height)
+    end
+
+    local function node_sizing(node)
+      local p = node.props or {}
+      local parts = {}
+      if p.grow == true then parts[#parts + 1] = "grow" end
+      if p.grow_max then parts[#parts + 1] = "grow_max=" .. tostring(p.grow_max) end
+      if p.width ~= nil then parts[#parts + 1] = "w=" .. size_str(p.width) end
+      if p.height ~= nil then parts[#parts + 1] = "h=" .. size_str(p.height) end
+      if p.padding ~= nil then parts[#parts + 1] = "pad=" .. pad_str(p.padding) end
+      if p.gap then parts[#parts + 1] = "gap=" .. tostring(p.gap) end
+      if p.border then parts[#parts + 1] = "border=" .. tostring(p.border.width) end
+      return table.concat(parts, " ")
+    end
+
+    -- Walk the tree into indented text lines.
+    local function walk(node, depth, s, lines)
+      local line = string.rep("  ", depth) .. node._type .. " " .. node_identity(node)
+      local sizing = node_sizing(node)
+      if sizing ~= "" then line = line .. "  {" .. sizing .. "}" end
+      local box = node_box(node, s)
+      if box then line = line .. "  " .. box_str(box) end
+      lines[#lines + 1] = line
+      if node.children then
+        for _, ch in ipairs(node.children) do walk(ch, depth + 1, s, lines) end
+      end
+    end
+
+    -- Walk the tree into a nested table for --json.
+    local function to_table(node, s)
+      local n = { type = node._type, id = node_identity(node) }
+      local p = node.props or {}
+      if p.grow == true then n.grow = true end
+      if p.width ~= nil then n.width = size_str(p.width) end
+      if p.height ~= nil then n.height = size_str(p.height) end
+      if p.padding ~= nil then n.padding = pad_str(p.padding) end
+      if p.gap then n.gap = p.gap end
+      if p.border then n.border = p.border.width end
+      n.box = node_box(node, s)
+      if node.children and #node.children > 0 then
+        n.children = {}
+        for _, ch in ipairs(node.children) do
+          n.children[#n.children + 1] = to_table(ch, s)
+        end
+      end
+      return n
+    end
+
+    ipc.register("clay.tree", function(arg)
+      local s
+      if arg then
+        local idx = tonumber(arg)
+        if not idx then error("Invalid screen index: " .. tostring(arg)) end
+        s = capi.screen[idx]
+        if not s then error("Screen not found: " .. tostring(arg)) end
+      else
+        s = awful_screen.focused()
+      end
+      if not s then error("No focused screen") end
+
+      local root = s._clay_last_tree
+      if not root then
+        error("No Clay tree captured for screen " .. tostring(s.index)
+              .. " yet; trigger a layout arrange first")
+      end
+
+      if ipc.current_json_mode() then
+        return { screen = s.index, tree = to_table(root, s) }
+      end
+
+      local lines = {}
+      walk(root, 0, s, lines)
+      return table.concat(lines, "\n")
+    end)
+  end
+
   -- =================================================================
   -- CLIENT COMMANDS
   -- =================================================================

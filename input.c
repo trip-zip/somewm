@@ -64,6 +64,7 @@
 #include "focus.h"
 #include "window.h"
 #include "somewm_internal.h"
+#include "clay_layout.h"
 #include "bench.h"
 
 /* Module-private state */
@@ -427,6 +428,10 @@ buttonpress(struct wl_listener *listener, void *data)
 				(event->state == WL_POINTER_BUTTON_STATE_PRESSED);
 		}
 	}
+
+	/* Re-solve the Clay debug view so its pointer state (and the panel's
+	 * close/select interactions) sees this press. No-ops unless debug is on. */
+	clay_debug_mark_dirty();
 
 	/* If mousegrabber is active, route event to Lua callback */
 	if (mousegrabber_isrunning()) {
@@ -795,6 +800,11 @@ motionnotify(uint32_t time, struct wlr_input_device *device, double dx, double d
 		wlr_cursor_move(cursor, device, dx, dy);
 		wlr_idle_notifier_v1_notify_activity(idle_notifier, seat);
 		some_notify_activity();
+
+		/* Track the pointer for the Clay debug-view hover highlight.
+		 * No-ops unless debug is on; the re-solve is coalesced in
+		 * some_refresh via clay_debug_tick. */
+		clay_debug_mark_dirty();
 
 		/* Update selected monitor when cursor crosses monitor boundaries.
 		 * Without this, layer-shell clients (rofi, etc.) that don't specify

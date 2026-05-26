@@ -238,6 +238,10 @@ function layout.arrange(screen)
         return
     end
     delayed_arrange[screen] = true
+    -- Signal to wibox/drawable that a fresh merged solve is coming, so a wibar
+    -- redraw scheduled ahead of this arrange waits for the new widget boxes
+    -- instead of re-solving the wibox forest. Cleared when the solve completes.
+    screen._clay_arrange_pending = true
 
     timer.delayed_call(function()
         if not screen.valid then
@@ -245,16 +249,25 @@ function layout.arrange(screen)
             delayed_arrange[screen] = nil
             return
         end
-        if arrange_lock then return end
+        if arrange_lock then
+            -- This arrange is dropped; clear the pending flag so a wibar redraw
+            -- doesn't keep waiting for boxes this cycle won't produce.
+            screen._clay_arrange_pending = nil
+            return
+        end
         arrange_lock = true
 
         -- protected call to ensure that arrange_lock will be reset
         protected_call(function()
             -- Compose screen: position wibars and compute workarea via Clay.
             -- Must run before layout.parameters() so workarea is up-to-date.
+            -- A merge-capable layout (tile) lays out its clients inside this
+            -- one solve and returns true, so the separate arrange pass below
+            -- is skipped.
             local clay_ok, clay_mod = pcall(require, "awful.layout.clay")
+            local merged = false
             if clay_ok and clay_mod.compose_screen then
-                clay_mod.compose_screen(screen)
+                merged = clay_mod.compose_screen(screen)
             end
 
             local p = layout.parameters(nil, screen)
@@ -262,7 +275,11 @@ function layout.arrange(screen)
             local useless_gap = p.useless_gap
 
             p.geometries = setmetatable({}, {__mode = "k"})
-            layout.get(screen).arrange(p)
+            if merged then
+                p._clay_managed = true
+            else
+                layout.get(screen).arrange(p)
+            end
 
             -- Clay layouts handle gaps natively and apply geometry
             -- directly from C. Skip the per-client adjustment loop.
@@ -278,6 +295,7 @@ function layout.arrange(screen)
         end)
         arrange_lock = false
         delayed_arrange[screen] = nil
+        screen._clay_arrange_pending = nil
 
         screen:emit_signal("arrange")
     end)

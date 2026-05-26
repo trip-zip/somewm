@@ -189,6 +189,78 @@ function fixed:layout(context, width, height)
     return layout_clay(self, context, width, height)
 end
 
+-- Build a somewm.layout subtree for the merged screen solve, mirroring
+-- layout_clay. A spacing_widget is interleaved as the SAME widget object
+-- between every pair of children; the merged solve emits it as several boxes
+-- under one identity, which the retained-render boxmap (keyed by widget) cannot
+-- tell apart. Return nil so the layout degrades to a single leaf and the
+-- per-container :layout positions the spacers. (Also covers the old
+-- negative-spacing overlap, which linear flow can't express either.)
+function fixed:layout_node(context, width, height)
+    -- Subclasses (stack, flex, ratio, ...) inherit this method via gtable.crush
+    -- but override :layout with different semantics (overlap, equal flex, ratio).
+    -- They would otherwise be mis-laid-out as a fixed pack; degrade them to a
+    -- leaf so the forest's own :layout positions them. A genuine fixed instance
+    -- has self.layout == fixed.layout (the method crushed onto it).
+    if self.layout ~= fixed.layout then return nil end
+    if self._private.spacing_widget and self._private.spacing
+        and self._private.spacing ~= 0 then
+        return nil
+    end
+
+    local is_y           = self._private.dir == "y"
+    local spacing        = self._private.spacing or 0
+    local abspace        = math.abs(spacing)
+    local fill_space     = self._private.fill_space
+    local spacing_widget = self._private.spacing_widget
+    local main_size      = is_y and height or width
+    local outer          = is_y and layout.column or layout.row
+
+    local visible = {}
+    for _, widget in pairs(self._private.widgets) do
+        if not (widget._private and widget._private.visible == false) then
+            visible[#visible + 1] = widget
+        end
+    end
+
+    local interleave    = spacing_widget and abspace > 0
+    local container_gap = interleave and 0 or abspace
+
+    local children = {}
+    local pos = 0
+    for i, widget in ipairs(visible) do
+        if fill_space and i == #visible then
+            if interleave and i > 1 then
+                children[#children + 1] = layout.widget(spacing_widget,
+                    is_y and { height = abspace } or { width = abspace })
+                pos = pos + abspace
+            end
+            local node = base.widget_to_node(self, context, widget,
+                width, height, { grow = true })
+            if node then children[#children + 1] = node end
+        else
+            local pre_spacer = interleave and i > 1
+            local pos_after_spacer = pre_spacer and (pos + abspace) or pos
+            local remaining = math.max(0, main_size - pos_after_spacer)
+            local fw = is_y and width or remaining
+            local fh = is_y and remaining or height
+            local w, h = base.fit_widget(self, context, widget, fw, fh)
+            local main = is_y and h or w
+            if pre_spacer and main > 0 then
+                children[#children + 1] = layout.widget(spacing_widget,
+                    is_y and { height = abspace } or { width = abspace })
+                pos = pos + abspace
+            end
+            local node = base.widget_to_node(self, context, widget, fw, fh,
+                is_y and { height = main } or { width = main })
+            if node then children[#children + 1] = node end
+            pos = pos + main + container_gap
+        end
+    end
+
+    return outer { widget = self, gap = container_gap, children }
+end
+
 --- Add some widgets to the given layout.
 --
 -- @method add
