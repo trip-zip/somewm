@@ -32,10 +32,14 @@
 
 #include "clay_layout.h"
 #include "somewm_types.h"
+#include "somewm.h"            /* scene, layers[], cursor externs */
+#include "globalconf.h"        /* globalconf.button_state */
 #include "objects/client.h"
 #include "objects/drawin.h"
+#include "objects/drawable.h"  /* drawable_create_buffer_from_data, cairo */
 #include "objects/screen.h"
 #include "shadow.h"
+#include "color.h"            /* color_init_from_string for the border config */
 
 /* Element types in layout results */
 enum clay_element_type {
@@ -66,17 +70,46 @@ typedef struct {
 	uint32_t element_id_counter;
 	/* Layout metadata from begin_layout opts */
 	float offset_x, offset_y;
+	float dim_w, dim_h;         /* solve dimensions (debug overlay size) */
 	/* Result storage for C-side apply */
 	clay_result_t *results;
 	int results_count;
 	int results_cap;
 	bool has_pending;
+	/* Debug-view render target: a per-screen scene buffer the Clay debug
+	 * commands are drawn into. The cairo surface is cached and reused across
+	 * frames (the buffer helper copies the pixels), recreated on size change. */
+	struct wlr_scene_buffer *debug_overlay;
+	cairo_surface_t *debug_surface;
+	int debug_w, debug_h;
+	/* Per-solve debug flags (set in begin_layout, read in end_layout).
+	 * debug_compose_solve: this solve is the screen-composition solve (merged/
+	 * compose_screen), the only source that drives the debug overlay -- so
+	 * placement / magnifier solves sharing this context never touch it.
+	 * debug_only_solve: a pointer-motion overlay refresh; skip has_pending so
+	 * clay_apply_all does not defer-apply its (unchanged) geometry. */
+	bool debug_compose_solve;
+	bool debug_only_solve;
+	/* debug_render: this solve is the one the debug view renders (debug on +
+	 * composition source). When set, elements get readable string ids drawn
+	 * from name_pool, a per-solve scratch buffer reset each begin_layout and
+	 * valid until the next one (covers EndLayout's debug pass). Off otherwise,
+	 * so normal solves pay no string-hashing cost. */
+	bool debug_render;
+	char *name_pool;
+	int name_pool_len;
 } clay_screen_t;
 
 #define MAX_SCREENS 16
 static clay_screen_t screens[MAX_SCREENS];
 static int screen_count = 0;
 static clay_screen_t *active_screen = NULL;
+
+/* Set by client_open() to the current framed client's 1-based result index
+ * while its frame subtree (border leaves + titlebar nodes + surface,
+ * built in Lua) is being emitted, so frame_box() / titlebar children route their
+ * boxes into that client's merged_frame. Zero outside a client_open/close pair. */
+static int g_frame_client_idx = 0;
 
 /* Dedicated context for widget layout passes (no screen association) */
 static clay_screen_t widget_ctx = { 0 };
@@ -91,48 +124,125 @@ static clay_screen_t widget_ctx = { 0 };
 typedef struct {
 	uint64_t compose_screen;
 	uint64_t preset;
+	uint64_t merged;
 	uint64_t wibox;
 	uint64_t magnifier;
 	uint64_t placement;
-	uint64_t decoration;
+	uint64_t decoration;  /* per-client fallback frame solve (kept name = proof metric) */
 	uint64_t layer_surface;
 	uint64_t unknown;
 	uint64_t total;
 } clay_solve_counters_t;
 static clay_solve_counters_t solve_counters = { 0 };
 
-/* Dedicated context for per-client decoration sub-pass.
+/* Clay debug-view state. clay_debug_enabled drives Clay's per-context
+ * debugModeEnabled (set on the per-screen contexts in begin_layout), the
+ * pointer feed, and the overlay renderer. Clay can self-disable from inside
+ * Clay_EndLayout (the panel's close button), so end_layout reads the flag back
+ * and syncs. clay_debug_dirty marks a pending pointer-driven overlay re-solve;
+ * clay_debug_reflow_pending marks a pending full arrange after a self-disable
+ * (so windows reflow back to full width). The resolver is a Lua callback that
+ * rebuilds + re-solves a screen (Clay can't rebuild its tree alone). */
+static bool clay_debug_enabled = false;
+static bool clay_debug_dirty = false;
+static bool clay_debug_reflow_pending = false;
+static int  clay_debug_resolver_ref = LUA_NOREF;
+static struct wlr_scene_tree *clay_debug_tree = NULL;
+static cairo_t *clay_debug_scratch_cr = NULL;
+static cairo_surface_t *clay_debug_scratch_surface = NULL;
+
+/* Dedicated context for per-client frame sub-pass.
  * One Clay arena reused across every client; results are applied
- * synchronously inside clay_apply_client_decorations() so no result
+ * synchronously inside clay_apply_client_frame() so no result
  * storage is needed. Sized once on first use; geometry is rewritten
  * via Clay_SetLayoutDimensions() per call. */
-static Clay_Context *decor_ctx = NULL;
-static void *decor_arena_memory = NULL;
+static Clay_Context *frame_ctx = NULL;
+static void *frame_arena_memory = NULL;
 
-/* Tags carried in customData on the leaf elements of the decoration tree.
+/* Tags carried in customData on the leaf elements of the frame tree.
  * Walked after Clay_EndLayout() to dispatch positions to the correct
- * scene-graph node. Must be non-zero so customData != NULL is meaningful. */
+ * scene-graph node. Must be non-zero so customData != NULL is meaningful.
+ * Borders carry no element: their scene rects are positioned by arithmetic
+ * in frame_apply_boxes(), not solved as boxes. */
 enum {
-	CDECOR_BORDER_TOP = 1,
-	CDECOR_BORDER_BOTTOM,
-	CDECOR_BORDER_LEFT,
-	CDECOR_BORDER_RIGHT,
-	CDECOR_TITLEBAR_TOP,
-	CDECOR_TITLEBAR_RIGHT,
-	CDECOR_TITLEBAR_BOTTOM,
-	CDECOR_TITLEBAR_LEFT,
-	CDECOR_SURFACE,
+	CFRAME_TITLEBAR_TOP = 1,
+	CFRAME_TITLEBAR_RIGHT,
+	CFRAME_TITLEBAR_BOTTOM,
+	CFRAME_TITLEBAR_LEFT,
+	CFRAME_SURFACE,
 };
 
-/* No-op text measurement - we don't use text elements for layout */
+/* In the merged screen solve, frame leaves are emitted as children of
+ * their client's node. Their customData packs the owning client's 1-based
+ * result index in the low bits and the CFRAME_* role in the high bits, so
+ * end_layout() can route each box to the right client's merged_frame scratch.
+ * The isolated per-client frame solve passes idx == 0, so customData is
+ * just the role (1..5) and its render-command walk reads it directly. */
+#define CLAY_FRAME_ROLE_SHIFT 24
+#define CLAY_FRAME_IDX_MASK   (((uint32_t)1 << CLAY_FRAME_ROLE_SHIFT) - 1)
+
+static inline intptr_t
+frame_cd(int idx, int role)
+{
+	return (intptr_t)((uint32_t)idx | ((uint32_t)role << CLAY_FRAME_ROLE_SHIFT));
+}
+
+/* Defined below with the frame sub-pass; forward-declared so
+ * client_element can emit a client's frame children inline. */
+static void emit_frame_tree(uint32_t *idc, int idx, float fbw,
+                                 float ftt, float ftr, float ftb, float ftl);
+
+/* Shared cairo font setup for the debug view: monospace at the command's pixel
+ * size. Used by BOTH clay_measure_text and clay_render_debug_overlay so the
+ * panel's measured text widths match the drawn glyphs (no layout drift). */
+static void
+clay_debug_set_font(cairo_t *cr, uint16_t font_size)
+{
+	cairo_select_font_face(cr, "monospace",
+	                       CAIRO_FONT_SLANT_NORMAL, CAIRO_FONT_WEIGHT_NORMAL);
+	cairo_set_font_size(cr, font_size > 0 ? (double)font_size : 16.0);
+}
+
+/* Copy a (non-NUL-terminated) Clay string slice into a bounded C string.
+ * Debug-view strings are short labels/numbers, so 512 is ample; both the
+ * measurer and the renderer truncate identically, so widths stay consistent. */
+static void
+clay_slice_to_cstr(Clay_StringSlice s, char *buf, size_t cap)
+{
+	int n = s.length;
+	if (n < 0 || !s.chars) n = 0;
+	if (n > (int)cap - 1) n = (int)cap - 1;
+	if (n > 0) memcpy(buf, s.chars, n);
+	buf[n] = '\0';
+}
+
+/* Text measurement for Clay. Only ever invoked for the debug view's TEXT
+ * elements (somewm's normal solves emit no TEXT), so it is safe to install on
+ * every context. Measures the same monospace font the renderer draws with. */
 static Clay_Dimensions
 clay_measure_text(Clay_StringSlice text, Clay_TextElementConfig *config,
                   void *userData)
 {
-	(void)text;
-	(void)config;
 	(void)userData;
-	return (Clay_Dimensions){ 0, 0 };
+
+	if (!clay_debug_scratch_cr) {
+		clay_debug_scratch_surface =
+			cairo_image_surface_create(CAIRO_FORMAT_ARGB32, 1, 1);
+		clay_debug_scratch_cr = cairo_create(clay_debug_scratch_surface);
+	}
+
+	clay_debug_set_font(clay_debug_scratch_cr, config ? config->fontSize : 16);
+
+	cairo_font_extents_t fe;
+	cairo_font_extents(clay_debug_scratch_cr, &fe);
+	if (text.length <= 0)
+		return (Clay_Dimensions){ 0, (float)fe.height };
+
+	char buf[512];
+	clay_slice_to_cstr(text, buf, sizeof(buf));
+	cairo_text_extents_t te;
+	cairo_text_extents(clay_debug_scratch_cr, buf, &te);
+	return (Clay_Dimensions){ (float)te.x_advance, (float)fe.height };
 }
 
 static void
@@ -159,7 +269,13 @@ clay_get_screen(lua_State *L, int idx)
 {
 	lua_pushvalue(L, idx);
 
+	int free_slot = -1;
 	for (int i = 0; i < screen_count; i++) {
+		if (!screens[i].ctx) {        /* slot freed by clay_screen_removed */
+			if (free_slot < 0)
+				free_slot = i;
+			continue;
+		}
 		lua_rawgeti(L, LUA_REGISTRYINDEX, screens[i].screen_ref);
 		if (lua_rawequal(L, -1, -2)) {
 			lua_pop(L, 2);
@@ -168,13 +284,17 @@ clay_get_screen(lua_State *L, int idx)
 		lua_pop(L, 1);
 	}
 
-	if (screen_count >= MAX_SCREENS) {
-		lua_pop(L, 1);
-		luaL_error(L, "clay: too many screens (max %d)", MAX_SCREENS);
-		return NULL;
+	clay_screen_t *cs;
+	if (free_slot >= 0) {
+		cs = &screens[free_slot];     /* reuse a removed screen's slot */
+	} else {
+		if (screen_count >= MAX_SCREENS) {
+			lua_pop(L, 1);
+			luaL_error(L, "clay: too many screens (max %d)", MAX_SCREENS);
+			return NULL;
+		}
+		cs = &screens[screen_count++];
 	}
-
-	clay_screen_t *cs = &screens[screen_count++];
 	memset(cs, 0, sizeof(*cs));
 
 	cs->screen_ref = luaL_ref(L, LUA_REGISTRYINDEX);
@@ -192,6 +312,41 @@ clay_get_screen(lua_State *L, int idx)
 	Clay_SetMeasureTextFunction(clay_measure_text, NULL);
 
 	return cs;
+}
+
+/* Release a removed screen's Clay context so its slot can be reused and its
+ * resources (arena, results, debug overlay/surface, screen registry ref) don't
+ * leak. Called from screen_removed() on output unplug / fake-screen removal.
+ * clay_get_screen reuses any slot left with ctx == NULL. */
+void
+clay_screen_removed(lua_State *L, screen_t *s)
+{
+	for (int i = 0; i < screen_count; i++) {
+		clay_screen_t *cs = &screens[i];
+		if (!cs->ctx)
+			continue;
+		lua_rawgeti(L, LUA_REGISTRYINDEX, cs->screen_ref);
+		screen_t *cand = lua_touserdata(L, -1);
+		lua_pop(L, 1);
+		if (cand != s)
+			continue;
+
+		for (int j = 0; j < cs->results_count; j++)
+			if (cs->results[j].lua_ref != LUA_NOREF)
+				luaL_unref(L, LUA_REGISTRYINDEX, cs->results[j].lua_ref);
+		if (cs->debug_overlay)
+			wlr_scene_node_destroy(&cs->debug_overlay->node);
+		if (cs->debug_surface)
+			cairo_surface_destroy(cs->debug_surface);
+		free(cs->results);
+		free(cs->arena_memory);
+		free(cs->name_pool);
+		luaL_unref(L, LUA_REGISTRYINDEX, cs->screen_ref);
+		if (active_screen == cs)
+			active_screen = NULL;
+		memset(cs, 0, sizeof(*cs)); /* ctx == NULL marks the slot reusable */
+		return;
+	}
 }
 
 /* Read sizing config from a Lua table at stack index `idx` */
@@ -335,16 +490,22 @@ clay_read_layout_config(lua_State *L, int idx)
 
 /* Read floating-element configuration from a Lua table.
  *
- * When a child of a `layout.stack` container is emitted, the substrate
- * sets `attach_to_parent = true` along with optional `x_offset` /
- * `y_offset`. Clay then attaches this element to its layout parent at
- * the given offset, outside the parent's flow. Used by `clay.max`
- * (overlap), `wibox.layout.{stack, manual, grid}` (absolute coords),
- * and `clay.floating` (per-client screen coords).
+ * Two attachment modes, both placing the element outside the parent's flow:
+ *   - `attach_to_parent = true`: Clay attaches this element to its layout
+ *     parent at `x_offset` / `y_offset`. Used by `layout.stack` children:
+ *     `clay.max` (overlap), `wibox.layout.{stack, manual, grid}` (absolute
+ *     coords), `clay.floating` (per-client coords), and the magnifier overlay.
+ *   - `attach_to_root = true`: Clay attaches this element to the layout root
+ *     at `x_offset` / `y_offset` (absolute positioning). Used by
+ *     `layout.floating_client` to reflect a floating/fullscreen client at
+ *     absolute screen coords inside `compose_screen`'s one solve, and by the
+ *     `clay.max.fullscreen` graft (a root-attached container spanning the
+ *     full screen rather than the wibar-inset workarea node).
  *
- * When `attach_to_parent` is unset, returns a zeroed struct: Clay
- * treats this as `CLAY_ATTACH_TO_NONE`, i.e. the element participates
- * in normal flow.
+ * `z_index` orders floating roots for render only; the single-buffer apply
+ * reads geometry back by customData index, so it never affects which client
+ * gets which box. When neither flag is set, returns a zeroed struct: Clay
+ * treats this as `CLAY_ATTACH_TO_NONE`, i.e. normal flow participation.
  */
 static Clay_FloatingElementConfig
 clay_read_floating_config(lua_State *L, int idx)
@@ -354,13 +515,17 @@ clay_read_floating_config(lua_State *L, int idx)
 		return fc;
 
 	lua_getfield(L, idx, "attach_to_parent");
-	bool floating = lua_toboolean(L, -1);
+	bool to_parent = lua_toboolean(L, -1);
 	lua_pop(L, 1);
 
-	if (!floating)
+	lua_getfield(L, idx, "attach_to_root");
+	bool to_root = lua_toboolean(L, -1);
+	lua_pop(L, 1);
+
+	if (!to_parent && !to_root)
 		return fc;
 
-	fc.attachTo = CLAY_ATTACH_TO_PARENT;
+	fc.attachTo = to_root ? CLAY_ATTACH_TO_ROOT : CLAY_ATTACH_TO_PARENT;
 	fc.attachPoints = (Clay_FloatingAttachPoints){
 		.element = CLAY_ATTACH_POINT_LEFT_TOP,
 		.parent  = CLAY_ATTACH_POINT_LEFT_TOP,
@@ -376,7 +541,214 @@ clay_read_floating_config(lua_State *L, int idx)
 		fc.offset.y = (float)lua_tonumber(L, -1);
 	lua_pop(L, 1);
 
+	lua_getfield(L, idx, "z_index");
+	if (lua_isnumber(L, -1))
+		fc.zIndex = (int16_t)lua_tonumber(L, -1);
+	lua_pop(L, 1);
+
 	return fc;
+}
+
+/* Read a client border from a Lua table at `idx`: cfg.border = { width, color }.
+ * width drives CLAY_BORDER_OUTSIDE() (a uniform perimeter border, no
+ * betweenChildren); color is a "#RRGGBB[AA]" string (color_t channels are 0-255,
+ * which is what Clay_Color wants). Returns a zeroed config (no border) when the
+ * field is absent or width is 0; Clay emits a BORDER render command only for a
+ * width > 0. The drawn border is the four scene rects positioned by arithmetic in
+ * frame_apply_boxes(); this config is the declared value for `clay tree` and the
+ * debug inspector, and the live rect color is set C-side on focus. */
+static Clay_BorderElementConfig
+clay_read_border_config(lua_State *L, int idx)
+{
+	Clay_BorderElementConfig bc = { 0 };
+	if (!lua_istable(L, idx))
+		return bc;
+
+	lua_getfield(L, idx, "border");
+	if (lua_istable(L, -1)) {
+		lua_getfield(L, -1, "width");
+		uint16_t w = lua_isnumber(L, -1) ? (uint16_t)lua_tonumber(L, -1) : 0;
+		lua_pop(L, 1);
+		bc.width = (Clay_BorderWidth)CLAY_BORDER_OUTSIDE(w);
+
+		lua_getfield(L, -1, "color");
+		if (lua_isstring(L, -1)) {
+			color_t col;
+			if (color_init_from_string(&col, lua_tostring(L, -1)))
+				bc.color = (Clay_Color){
+					(float)col.red, (float)col.green,
+					(float)col.blue, (float)col.alpha,
+				};
+		}
+		lua_pop(L, 1);
+	}
+	lua_pop(L, 1);
+	return bc;
+}
+
+/* Lazily create the dedicated scene tree that parents every per-screen debug
+ * overlay. Placed above LyrBlock so the debug view sits on top of everything,
+ * including the session lock (correct for a developer tool). */
+static void
+clay_debug_ensure_tree(void)
+{
+	if (clay_debug_tree || !scene)
+		return;
+	clay_debug_tree = wlr_scene_tree_create(&scene->tree);
+	if (clay_debug_tree)
+		wlr_scene_node_place_above(&clay_debug_tree->node,
+		                           &layers[LyrBlock]->node);
+}
+
+static void
+clay_debug_hide_overlay(clay_screen_t *cs)
+{
+	if (cs->debug_overlay)
+		wlr_scene_node_set_enabled(&cs->debug_overlay->node, false);
+}
+
+static inline void
+clay_set_cairo_color(cairo_t *cr, Clay_Color c)
+{
+	cairo_set_source_rgba(cr, c.r / 255.0, c.g / 255.0, c.b / 255.0,
+	                      c.a / 255.0);
+}
+
+/* Minimal Clay render-command renderer: walk the command array (already
+ * z-sorted, so naive order is correct) and draw the RECTANGLE / BORDER / TEXT /
+ * SCISSOR commands of Clay's debug view into a per-screen cairo surface, then
+ * push it to a scene buffer at the screen origin. The CUSTOM commands (the
+ * actual clients/wibars/widgets) are handled by the normal layout path; here
+ * they are skipped. */
+static void
+clay_render_debug_overlay(clay_screen_t *cs, Clay_RenderCommandArray cmds,
+                          int w, int h)
+{
+	if (w < 1) w = 1;
+	if (h < 1) h = 1;
+
+	if (cs->debug_surface && (cs->debug_w != w || cs->debug_h != h)) {
+		cairo_surface_destroy(cs->debug_surface);
+		cs->debug_surface = NULL;
+	}
+	if (!cs->debug_surface) {
+		cairo_surface_t *surf =
+			cairo_image_surface_create(CAIRO_FORMAT_ARGB32, w, h);
+		/* On failure (e.g. a bogus huge dimension), bail without caching the
+		 * size, so a later valid solve at the same size retries the create. */
+		if (cairo_surface_status(surf) != CAIRO_STATUS_SUCCESS) {
+			cairo_surface_destroy(surf);
+			return;
+		}
+		cs->debug_surface = surf;
+		cs->debug_w = w;
+		cs->debug_h = h;
+	}
+
+	cairo_t *cr = cairo_create(cs->debug_surface);
+
+	/* Clear to fully transparent (premultiplied: rgb must be 0 when a is 0). */
+	cairo_set_operator(cr, CAIRO_OPERATOR_SOURCE);
+	cairo_set_source_rgba(cr, 0, 0, 0, 0);
+	cairo_paint(cr);
+	cairo_set_operator(cr, CAIRO_OPERATOR_OVER);
+
+	int scissor_depth = 0;
+	for (int32_t i = 0; i < cmds.length; i++) {
+		Clay_RenderCommand *cmd = Clay_RenderCommandArray_Get(&cmds, i);
+		Clay_BoundingBox b = cmd->boundingBox;
+
+		switch (cmd->commandType) {
+		case CLAY_RENDER_COMMAND_TYPE_RECTANGLE:
+			clay_set_cairo_color(cr,
+				cmd->renderData.rectangle.backgroundColor);
+			cairo_rectangle(cr, b.x, b.y, b.width, b.height);
+			cairo_fill(cr);
+			break;
+
+		case CLAY_RENDER_COMMAND_TYPE_BORDER: {
+			Clay_BorderRenderData bd = cmd->renderData.border;
+			clay_set_cairo_color(cr, bd.color);
+			if (bd.width.left)
+				cairo_rectangle(cr, b.x, b.y,
+				                bd.width.left, b.height);
+			if (bd.width.right)
+				cairo_rectangle(cr,
+				                b.x + b.width - bd.width.right, b.y,
+				                bd.width.right, b.height);
+			if (bd.width.top)
+				cairo_rectangle(cr, b.x, b.y,
+				                b.width, bd.width.top);
+			if (bd.width.bottom)
+				cairo_rectangle(cr, b.x,
+				                b.y + b.height - bd.width.bottom,
+				                b.width, bd.width.bottom);
+			cairo_fill(cr);
+			break;
+		}
+
+		case CLAY_RENDER_COMMAND_TYPE_TEXT: {
+			Clay_TextRenderData td = cmd->renderData.text;
+			char buf[512];
+			clay_slice_to_cstr(td.stringContents, buf, sizeof(buf));
+			clay_debug_set_font(cr, td.fontSize);
+			cairo_font_extents_t fe;
+			cairo_font_extents(cr, &fe);
+			clay_set_cairo_color(cr, td.textColor);
+			/* boundingBox is top-left; cairo draws from the baseline. */
+			cairo_move_to(cr, b.x, b.y + fe.ascent);
+			cairo_show_text(cr, buf);
+			break;
+		}
+
+		case CLAY_RENDER_COMMAND_TYPE_SCISSOR_START:
+			cairo_save(cr);
+			cairo_rectangle(cr, b.x, b.y, b.width, b.height);
+			cairo_clip(cr);
+			scissor_depth++;
+			break;
+
+		case CLAY_RENDER_COMMAND_TYPE_SCISSOR_END:
+			if (scissor_depth > 0) {
+				cairo_restore(cr);
+				scissor_depth--;
+			}
+			break;
+
+		default:
+			break;
+		}
+	}
+	/* Balance any scissor START left open by a malformed array. */
+	while (scissor_depth-- > 0)
+		cairo_restore(cr);
+
+	cairo_destroy(cr);
+	cairo_surface_flush(cs->debug_surface);
+
+	struct wlr_buffer *buffer = drawable_create_buffer_from_data(
+		w, h,
+		cairo_image_surface_get_data(cs->debug_surface),
+		cairo_image_surface_get_stride(cs->debug_surface));
+	if (!buffer)
+		return;
+
+	clay_debug_ensure_tree();
+	if (!clay_debug_tree) {
+		wlr_buffer_drop(buffer);
+		return;
+	}
+	if (!cs->debug_overlay)
+		cs->debug_overlay = wlr_scene_buffer_create(clay_debug_tree, buffer);
+	else
+		wlr_scene_buffer_set_buffer(cs->debug_overlay, buffer);
+
+	if (cs->debug_overlay) {
+		wlr_scene_node_set_position(&cs->debug_overlay->node,
+		                            (int)cs->offset_x, (int)cs->offset_y);
+		wlr_scene_node_set_enabled(&cs->debug_overlay->node, true);
+	}
+	wlr_buffer_drop(buffer);
 }
 
 /* _somewm_clay.begin_layout(screen_or_nil, width, height, opts?)
@@ -410,6 +782,7 @@ luaA_clay_begin_layout(lua_State *L)
 
 	cs->offset_x = 0;
 	cs->offset_y = 0;
+	cs->debug_only_solve = false;
 
 	const char *source = NULL;
 	if (lua_istable(L, 4)) {
@@ -427,6 +800,10 @@ luaA_clay_begin_layout(lua_State *L)
 		if (lua_isstring(L, -1))
 			source = lua_tostring(L, -1);
 		lua_pop(L, 1);
+
+		lua_getfield(L, 4, "debug_only");
+		cs->debug_only_solve = lua_toboolean(L, -1);
+		lua_pop(L, 1);
 	}
 
 	if (!source) {
@@ -435,6 +812,8 @@ luaA_clay_begin_layout(lua_State *L)
 		solve_counters.compose_screen++;
 	} else if (strcmp(source, "preset") == 0) {
 		solve_counters.preset++;
+	} else if (strcmp(source, "merged") == 0) {
+		solve_counters.merged++;
 	} else if (strcmp(source, "wibox") == 0) {
 		solve_counters.wibox++;
 	} else if (strcmp(source, "magnifier") == 0) {
@@ -451,13 +830,120 @@ luaA_clay_begin_layout(lua_State *L)
 		luaL_unref(L, LUA_REGISTRYINDEX, cs->results[i].lua_ref);
 	cs->results_count = 0;
 	cs->has_pending = false;
+	cs->dim_w = width;
+	cs->dim_h = height;
 
 	Clay_SetCurrentContext(cs->ctx);
+
+	/* Debug view: scoped to the screen-COMPOSITION solve only. Other solves
+	 * that share a screen context (placement positioning, magnifier) must NOT
+	 * enable debug -- it would shrink their root by Clay__debugViewWidth and
+	 * mis-position the result. debugModeEnabled persists on the context, so set
+	 * it false explicitly for those, not just "skip". The widget pass uses
+	 * widget_ctx and is left untouched (never enabled). When on, the pointer
+	 * feed (screen-local coords, left button) drives the hover highlight, read
+	 * from the previous frame's retained layout. */
+	bool is_compose = source && (strcmp(source, "merged") == 0
+	                             || strcmp(source, "compose_screen") == 0);
+	cs->debug_compose_solve = (cs != &widget_ctx) && is_compose;
+	cs->debug_render = false;
+	if (cs != &widget_ctx) {
+		bool debug_this = clay_debug_enabled && is_compose;
+		cs->debug_render = debug_this;
+		if (debug_this)
+			cs->name_pool_len = 0;  /* reset the per-solve name scratch */
+		Clay_SetDebugModeEnabled(debug_this);
+		if (debug_this)
+			Clay_SetPointerState(
+				(Clay_Vector2){ (float)(cursor->x - cs->offset_x),
+				                (float)(cursor->y - cs->offset_y) },
+				globalconf.button_state.buttons[0]);
+	}
+
 	Clay_SetLayoutDimensions((Clay_Dimensions){ width, height });
 	Clay_BeginLayout();
 	cs->element_id_counter = 0;
+	/* Reset the framed-client context: a Lua error between client_open and
+	 * client_close (swallowed by the arrange pcall) would otherwise leak a stale
+	 * index into this solve and misroute frame_box boxes. */
+	g_frame_client_idx = 0;
 
 	return 0;
+}
+
+/* Per-solve name scratch capacity. Names are short; this holds ~2000 of them.
+ * Only allocated once a screen first renders the debug view. */
+#define CLAY_NAME_POOL_CAP (32 * 1024)
+
+/* Append a name to the per-solve name pool, returning a Clay_String into it (or
+ * a zero string on overflow / no name). The pool is stable until the next
+ * begin_layout reset, which is after this solve's EndLayout debug pass, so the
+ * Clay_String Clay stores for the element id stays valid that whole time. */
+static Clay_String
+clay_name_pool_add(clay_screen_t *cs, const char *name, int len)
+{
+	if (!name || len <= 0)
+		return (Clay_String){ 0 };
+	if (!cs->name_pool) {
+		cs->name_pool = malloc(CLAY_NAME_POOL_CAP);
+		if (!cs->name_pool)
+			return (Clay_String){ 0 };
+	}
+	if (cs->name_pool_len + len > CLAY_NAME_POOL_CAP)
+		return (Clay_String){ 0 };
+	char *dst = cs->name_pool + cs->name_pool_len;
+	memcpy(dst, name, len);
+	cs->name_pool_len += len;
+	return (Clay_String){ .isStaticallyAllocated = false,
+	                      .length = len, .chars = dst };
+}
+
+/* Bump the element counter and return its Clay id. When the debug view renders
+ * this solve and a name is supplied, the id carries a readable stringId (the
+ * counter as a uniquifying offset so equal names don't collide), which the
+ * inspector displays; otherwise a plain numeric id (no string hashing). */
+static Clay_ElementId
+clay_element_id(clay_screen_t *cs, const char *name, int name_len)
+{
+	uint32_t n = ++cs->element_id_counter;
+	if (cs->debug_render && name) {
+		Clay_String s = clay_name_pool_add(cs, name, name_len);
+		if (s.length > 0)
+			return Clay__HashStringWithOffset(s, n, 0);
+	}
+	return (Clay_ElementId){ .id = n };
+}
+
+/* Open a Clay element, taking its id from config.id. Every binding's config
+ * table is either arg 2 (leaf bindings: client/drawin/widget, where arg 1 is
+ * the object) or arg 1 (open_container / workarea, where arg 1 is the config),
+ * so look at arg 2 then arg 1. The names themselves are assigned Lua-side in
+ * emit() (client.<class>, wibar.<pos>, workarea, row/column/stack, ...). Reads
+ * cfg.id only when the debug view renders this solve, so normal solves are
+ * untouched. The id string is copied into the name pool while still on the
+ * stack, so it outlives this call. */
+static void
+clay_open_element(lua_State *L)
+{
+	const char *name = NULL;
+	int len = 0, pushed = 0;
+	if (active_screen->debug_render) {
+		int cfg_idx = lua_istable(L, 2) ? 2 : (lua_istable(L, 1) ? 1 : 0);
+		if (cfg_idx) {
+			lua_getfield(L, cfg_idx, "id");
+			if (lua_isstring(L, -1)) {
+				size_t l;
+				name = lua_tolstring(L, -1, &l);
+				len = (int)l;
+				pushed = 1;  /* keep on stack until the name is copied */
+			} else {
+				lua_pop(L, 1);
+			}
+		}
+	}
+	Clay__OpenElementWithId(clay_element_id(active_screen, name, len));
+	if (pushed)
+		lua_pop(L, 1);
 }
 
 /* _somewm_clay.open_container(config_table) */
@@ -469,13 +955,17 @@ luaA_clay_open_container(lua_State *L)
 
 	Clay_LayoutConfig layout = clay_read_layout_config(L, 1);
 	Clay_FloatingElementConfig floating = clay_read_floating_config(L, 1);
+	/* .border only feeds the Clay debug overlay; the on-screen border is the
+	 * arithmetic scene rects (frame_apply_boxes), colored on focus. Skip the
+	 * per-solve color parse unless this is the solve the debug view renders. */
+	Clay_BorderElementConfig border = active_screen->debug_render
+		? clay_read_border_config(L, 1) : (Clay_BorderElementConfig){ 0 };
 
-	active_screen->element_id_counter++;
-	Clay__OpenElementWithId(
-		(Clay_ElementId){ .id = active_screen->element_id_counter });
+	clay_open_element(L);
 	Clay__ConfigureOpenElement((Clay_ElementDeclaration){
 		.layout = layout,
 		.floating = floating,
+		.border = border,
 	});
 
 	return 0;
@@ -494,12 +984,12 @@ luaA_clay_close_container(lua_State *L)
 }
 
 /* _somewm_clay.client_element(client, config) */
+/* Create a CLAY_ELEM_CLIENT result for the client at Lua stack index 1, ref it
+ * to prevent GC, and return its 1-based result index (== the customData clients
+ * carry). Shared by client_element (leaf) and client_open (framed). */
 static int
-luaA_clay_client_element(lua_State *L)
+clay_push_client_result(lua_State *L, client_t **out_c)
 {
-	if (!active_screen)
-		return luaL_error(L, "clay: client_element called outside begin/end_layout");
-
 	client_t *c = luaA_checkudata(L, 1, &client_class);
 	lua_pushvalue(L, 1);
 	int ref = luaL_ref(L, LUA_REGISTRYINDEX);
@@ -511,6 +1001,21 @@ luaA_clay_client_element(lua_State *L)
 	r->lua_ref = ref;
 	r->x = r->y = r->w = r->h = 0;
 
+	if (out_c) *out_c = c;
+	return active_screen->results_count; /* 1-based; == customData */
+}
+
+/* _somewm_clay.client_element(client, config) - a client leaf (no frame
+ * children). Used for unframed clients (e.g. floating reflections, magnifier
+ * overlay); framed tiled clients use client_open/close instead. */
+static int
+luaA_clay_client_element(lua_State *L)
+{
+	if (!active_screen)
+		return luaL_error(L, "clay: client_element called outside begin/end_layout");
+
+	int idx = clay_push_client_result(L, NULL);
+
 	Clay_LayoutConfig layout = { 0 };
 	Clay_FloatingElementConfig floating = { 0 };
 	if (lua_istable(L, 2)) {
@@ -518,17 +1023,199 @@ luaA_clay_client_element(lua_State *L)
 		floating = clay_read_floating_config(L, 2);
 	}
 
-	active_screen->element_id_counter++;
-	Clay__OpenElementWithId(
-		(Clay_ElementId){ .id = active_screen->element_id_counter });
+	clay_open_element(L);
 	Clay__ConfigureOpenElement((Clay_ElementDeclaration){
 		.layout = layout,
 		.floating = floating,
-		.custom = { .customData = (void *)(intptr_t)active_screen->results_count },
+		.custom = { .customData = (void *)(intptr_t)idx },
 	});
 	Clay__CloseElement();
 
 	return 0;
+}
+
+/* _somewm_clay.client_open(client, config) / client_close()
+ * Like client_element, but stays open so the client's frame subtree
+ * (border leaves + titlebar nodes + surface, built in Lua) can be emitted as
+ * children. Sets g_frame_client_idx so those children route their solved boxes
+ * into this client's merged_frame (see frame_box, end_layout). The padding
+ * insets the children to cell - 2*border_width, matching the frame box
+ * clay_apply_all produces, anchored top-left. */
+static int
+luaA_clay_client_open(lua_State *L)
+{
+	if (!active_screen)
+		return luaL_error(L, "clay: client_open called outside begin/end_layout");
+
+	client_t *c = NULL;
+	int idx = clay_push_client_result(L, &c);
+
+	/* Clear this client's frame boxes so a role whose leaf is culled this
+	 * solve (e.g. an off-screen edge in a future scrolling merge-capable layout)
+	 * leaves a zeroed box, not a stale one. Mirrors the fallback's box[6]={0}. */
+	memset(c->merged_frame.box, 0, sizeof(c->merged_frame.box));
+
+	Clay_LayoutConfig layout = { 0 };
+	Clay_FloatingElementConfig floating = { 0 };
+	if (lua_istable(L, 2)) {
+		layout = clay_read_layout_config(L, 2);
+		floating = clay_read_floating_config(L, 2);
+	}
+	uint16_t pad = (uint16_t)(2 * c->border_width);
+	layout.padding.right  = (uint16_t)(layout.padding.right + pad);
+	layout.padding.bottom = (uint16_t)(layout.padding.bottom + pad);
+
+	clay_open_element(L);
+	Clay__ConfigureOpenElement((Clay_ElementDeclaration){
+		.layout = layout,
+		.floating = floating,
+		.custom = { .customData = (void *)(intptr_t)idx },
+	});
+	g_frame_client_idx = idx;
+	return 0;
+}
+
+static int
+luaA_clay_client_close(lua_State *L)
+{
+	(void)L;
+	if (!active_screen)
+		return luaL_error(L, "clay: client_close called outside begin/end_layout");
+	Clay__CloseElement();
+	g_frame_client_idx = 0;
+	return 0;
+}
+
+/* _somewm_clay.frame_box(role, config) - a border or surface leaf emitted inside
+ * a client_open container. Its solved box is routed (end_layout, re-based to the
+ * client frame origin) into the current framed client's merged_frame[role],
+ * which apply_geometry_to_wlroots consumes to position the border rects and the
+ * surface. role is a CFRAME_* value (exposed to Lua as _somewm_clay.frame). */
+static int
+luaA_clay_frame_box(lua_State *L)
+{
+	if (!active_screen)
+		return luaL_error(L, "clay: frame_box called outside begin/end_layout");
+	int role = (int)luaL_checkinteger(L, 1);
+
+	Clay_LayoutConfig layout = { 0 };
+	if (lua_istable(L, 2))
+		layout = clay_read_layout_config(L, 2);
+
+	Clay__OpenElementWithId((Clay_ElementId){ .id = ++active_screen->element_id_counter });
+	Clay__ConfigureOpenElement((Clay_ElementDeclaration){
+		.layout = layout,
+		.custom = { .customData = (void *)frame_cd(g_frame_client_idx, role) },
+	});
+	Clay__CloseElement();
+	return 0;
+}
+
+/* _somewm_clay.titlebar_open(role, config) - like frame_box, but stays OPEN so
+ * widget children can be emitted inside the titlebar before titlebar_close().
+ * The titlebar's own box still routes (end_layout pass 2, re-based to the client
+ * frame origin) into merged_frame[role] for client-relative scene_buffer
+ * positioning, exactly like a box-only titlebar; the widget children inside are
+ * plain CLAY_ELEM_WIDGET nodes whose boxes return to Lua. The widget root grows
+ * to fill this element, so its box == the titlebar box and child placements
+ * re-base to titlebar-local paint coords. */
+static int
+luaA_clay_titlebar_open(lua_State *L)
+{
+	if (!active_screen)
+		return luaL_error(L, "clay: titlebar_open called outside begin/end_layout");
+	int role = (int)luaL_checkinteger(L, 1);
+
+	Clay_LayoutConfig layout = { 0 };
+	if (lua_istable(L, 2))
+		layout = clay_read_layout_config(L, 2);
+
+	Clay__OpenElementWithId((Clay_ElementId){ .id = ++active_screen->element_id_counter });
+	Clay__ConfigureOpenElement((Clay_ElementDeclaration){
+		.layout = layout,
+		.custom = { .customData = (void *)frame_cd(g_frame_client_idx, role) },
+	});
+	return 0;
+}
+
+/* _somewm_clay.titlebar_close() - close a titlebar_open() container. */
+static int
+luaA_clay_titlebar_close(lua_State *L)
+{
+	(void)L;
+	if (!active_screen)
+		return luaL_error(L, "clay: titlebar_close called outside begin/end_layout");
+	Clay__CloseElement();
+	return 0;
+}
+
+/* _somewm_clay.client_frame_sizes(client) -> bw, top, right, bottom, left
+ * Side-effect-free read of the client's border width and the four titlebar sizes
+ * (zeroed when fullscreen), so Lua can build the frame subtree without
+ * the titlebar_* getters, which would lazily create titlebar drawables. */
+static int
+luaA_clay_client_frame_sizes(lua_State *L)
+{
+	client_t *c = luaA_checkudata(L, 1, &client_class);
+	bool fs = c->fullscreen;
+	lua_pushinteger(L, (lua_Integer)c->border_width);
+	lua_pushinteger(L, fs ? 0 : (lua_Integer)c->titlebar[CLIENT_TITLEBAR_TOP].size);
+	lua_pushinteger(L, fs ? 0 : (lua_Integer)c->titlebar[CLIENT_TITLEBAR_RIGHT].size);
+	lua_pushinteger(L, fs ? 0 : (lua_Integer)c->titlebar[CLIENT_TITLEBAR_BOTTOM].size);
+	lua_pushinteger(L, fs ? 0 : (lua_Integer)c->titlebar[CLIENT_TITLEBAR_LEFT].size);
+	return 5;
+}
+
+/* _somewm_clay.client_frame_geometry(client) -> introspection of the APPLIED
+ * frame scene geometry (frame-relative), regardless of which path (merged
+ * consume or per-client fallback) positioned it. For tests: a broken frame
+ * solve shows zero-size borders and a (0,0) surface offset. Returns
+ *   { border = {[1..4] = {x,y,w,h}},      -- TOP, BOTTOM, LEFT, RIGHT
+ *     surface = {x,y},
+ *     titlebar = {[1..4] = {x,y,enabled,size}} }  -- TOP, RIGHT, BOTTOM, LEFT
+ * mirroring c->border[] and the CFRAME titlebar order. */
+static int
+luaA_clay_client_frame_geometry(lua_State *L)
+{
+	client_t *c = luaA_checkudata(L, 1, &client_class);
+	lua_newtable(L);
+
+	lua_newtable(L);
+	for (int i = 0; i < 4; i++) {
+		lua_newtable(L);
+		if (c->border[i]) {
+			lua_pushinteger(L, c->border[i]->node.x); lua_setfield(L, -2, "x");
+			lua_pushinteger(L, c->border[i]->node.y); lua_setfield(L, -2, "y");
+			lua_pushinteger(L, c->border[i]->width);  lua_setfield(L, -2, "w");
+			lua_pushinteger(L, c->border[i]->height); lua_setfield(L, -2, "h");
+		}
+		lua_rawseti(L, -2, i + 1);
+	}
+	lua_setfield(L, -2, "border");
+
+	lua_newtable(L);
+	if (c->scene_surface) {
+		lua_pushinteger(L, c->scene_surface->node.x); lua_setfield(L, -2, "x");
+		lua_pushinteger(L, c->scene_surface->node.y); lua_setfield(L, -2, "y");
+	}
+	lua_setfield(L, -2, "surface");
+
+	lua_newtable(L);
+	for (client_titlebar_t bar = CLIENT_TITLEBAR_TOP;
+	     bar < CLIENT_TITLEBAR_COUNT; bar++) {
+		lua_newtable(L);
+		struct wlr_scene_buffer *sb = c->titlebar[bar].scene_buffer;
+		if (sb) {
+			lua_pushinteger(L, sb->node.x);       lua_setfield(L, -2, "x");
+			lua_pushinteger(L, sb->node.y);       lua_setfield(L, -2, "y");
+			lua_pushboolean(L, sb->node.enabled); lua_setfield(L, -2, "enabled");
+		}
+		lua_pushinteger(L, c->titlebar[bar].size); lua_setfield(L, -2, "size");
+		lua_rawseti(L, -2, bar + 1);
+	}
+	lua_setfield(L, -2, "titlebar");
+
+	return 1;
 }
 
 /* _somewm_clay.drawin_element(drawin, config) */
@@ -556,9 +1243,7 @@ luaA_clay_drawin_element(lua_State *L)
 		floating = clay_read_floating_config(L, 2);
 	}
 
-	active_screen->element_id_counter++;
-	Clay__OpenElementWithId(
-		(Clay_ElementId){ .id = active_screen->element_id_counter });
+	clay_open_element(L);
 	Clay__ConfigureOpenElement((Clay_ElementDeclaration){
 		.layout = layout,
 		.floating = floating,
@@ -566,6 +1251,56 @@ luaA_clay_drawin_element(lua_State *L)
 	});
 	Clay__CloseElement();
 
+	return 0;
+}
+
+/* _somewm_clay.drawin_open(drawin, config)
+ * Like drawin_element, but leaves the element open so a widget subtree can be
+ * emitted as its children before drawin_close(). The drawin still applies its
+ * own geometry (CLAY_ELEM_DRAWIN) exactly as the leaf form does. */
+static int
+luaA_clay_drawin_open(lua_State *L)
+{
+	if (!active_screen)
+		return luaL_error(L, "clay: drawin_open called outside begin/end_layout");
+
+	drawin_t *d = luaA_checkudata(L, 1, &drawin_class);
+	lua_pushvalue(L, 1);
+	int ref = luaL_ref(L, LUA_REGISTRYINDEX);
+
+	clay_results_ensure_cap(active_screen);
+	clay_result_t *r = &active_screen->results[active_screen->results_count++];
+	r->type = CLAY_ELEM_DRAWIN;
+	r->drawin = d;
+	r->lua_ref = ref;
+	r->x = r->y = r->w = r->h = 0;
+
+	Clay_LayoutConfig layout = { 0 };
+	Clay_FloatingElementConfig floating = { 0 };
+	if (lua_istable(L, 2)) {
+		layout = clay_read_layout_config(L, 2);
+		floating = clay_read_floating_config(L, 2);
+	}
+
+	clay_open_element(L);
+	Clay__ConfigureOpenElement((Clay_ElementDeclaration){
+		.layout = layout,
+		.floating = floating,
+		.custom = { .customData = (void *)(intptr_t)active_screen->results_count },
+	});
+
+	return 0;
+}
+
+/* _somewm_clay.drawin_close() - close a drawin_open() container. */
+static int
+luaA_clay_drawin_close(lua_State *L)
+{
+	(void)L;
+	if (!active_screen)
+		return luaL_error(L, "clay: drawin_close called outside begin/end_layout");
+
+	Clay__CloseElement();
 	return 0;
 }
 
@@ -596,9 +1331,7 @@ luaA_clay_widget_element(lua_State *L)
 		floating = clay_read_floating_config(L, 2);
 	}
 
-	active_screen->element_id_counter++;
-	Clay__OpenElementWithId(
-		(Clay_ElementId){ .id = active_screen->element_id_counter });
+	clay_open_element(L);
 	Clay__ConfigureOpenElement((Clay_ElementDeclaration){
 		.layout = layout,
 		.floating = floating,
@@ -606,6 +1339,58 @@ luaA_clay_widget_element(lua_State *L)
 	});
 	Clay__CloseElement();
 
+	return 0;
+}
+
+/* _somewm_clay.widget_open(widget, config)
+ * Like widget_element, but leaves the element open so child widget nodes can be
+ * emitted before widget_close(). Lets a container widget (margin/fixed/align/
+ * background) be a CLAY_ELEM_WIDGET whose box is returned to Lua, so the widget
+ * hierarchy can be rebuilt from the screen solve without the per-container
+ * "wibox" solve forest. */
+static int
+luaA_clay_widget_open(lua_State *L)
+{
+	if (!active_screen)
+		return luaL_error(L, "clay: widget_open called outside begin/end_layout");
+
+	luaL_checkany(L, 1);
+	lua_pushvalue(L, 1);
+	int ref = luaL_ref(L, LUA_REGISTRYINDEX);
+
+	clay_results_ensure_cap(active_screen);
+	clay_result_t *r = &active_screen->results[active_screen->results_count++];
+	r->type = CLAY_ELEM_WIDGET;
+	r->client = NULL;
+	r->lua_ref = ref;
+	r->x = r->y = r->w = r->h = 0;
+
+	Clay_LayoutConfig layout = { 0 };
+	Clay_FloatingElementConfig floating = { 0 };
+	if (lua_istable(L, 2)) {
+		layout = clay_read_layout_config(L, 2);
+		floating = clay_read_floating_config(L, 2);
+	}
+
+	clay_open_element(L);
+	Clay__ConfigureOpenElement((Clay_ElementDeclaration){
+		.layout = layout,
+		.floating = floating,
+		.custom = { .customData = (void *)(intptr_t)active_screen->results_count },
+	});
+
+	return 0;
+}
+
+/* _somewm_clay.widget_close() - close a widget_open() container. */
+static int
+luaA_clay_widget_close(lua_State *L)
+{
+	(void)L;
+	if (!active_screen)
+		return luaL_error(L, "clay: widget_close called outside begin/end_layout");
+
+	Clay__CloseElement();
 	return 0;
 }
 
@@ -638,9 +1423,7 @@ luaA_clay_workarea_element(lua_State *L)
 	r->pad_bottom = layout.padding.bottom;
 	r->pad_left = layout.padding.left;
 
-	active_screen->element_id_counter++;
-	Clay__OpenElementWithId(
-		(Clay_ElementId){ .id = active_screen->element_id_counter });
+	clay_open_element(L);
 	Clay__ConfigureOpenElement((Clay_ElementDeclaration){
 		.layout = layout,
 		.floating = floating,
@@ -651,6 +1434,58 @@ luaA_clay_workarea_element(lua_State *L)
 	return 0;
 }
 
+/* _somewm_clay.workarea_open(config)
+ * Like workarea_element, but leaves the element open so a client subtree can
+ * be emitted as its children before workarea_close(). The bounding box still
+ * reports back as the workarea (minus padding), so screen.workarea is written
+ * exactly as the leaf form does. */
+static int
+luaA_clay_workarea_open(lua_State *L)
+{
+	if (!active_screen)
+		return luaL_error(L, "clay: workarea_open called outside begin/end_layout");
+
+	clay_results_ensure_cap(active_screen);
+	clay_result_t *r = &active_screen->results[active_screen->results_count++];
+	r->type = CLAY_ELEM_WORKAREA;
+	r->client = NULL;
+	r->lua_ref = LUA_NOREF;
+	r->x = r->y = r->w = r->h = 0;
+
+	Clay_LayoutConfig layout = { 0 };
+	Clay_FloatingElementConfig floating = { 0 };
+	if (lua_istable(L, 1)) {
+		layout = clay_read_layout_config(L, 1);
+		floating = clay_read_floating_config(L, 1);
+	}
+
+	r->pad_top = layout.padding.top;
+	r->pad_right = layout.padding.right;
+	r->pad_bottom = layout.padding.bottom;
+	r->pad_left = layout.padding.left;
+
+	clay_open_element(L);
+	Clay__ConfigureOpenElement((Clay_ElementDeclaration){
+		.layout = layout,
+		.floating = floating,
+		.custom = { .customData = (void *)(intptr_t)active_screen->results_count },
+	});
+
+	return 0;
+}
+
+/* _somewm_clay.workarea_close() - close a workarea_open() container. */
+static int
+luaA_clay_workarea_close(lua_State *L)
+{
+	(void)L;
+	if (!active_screen)
+		return luaL_error(L, "clay: workarea_close called outside begin/end_layout");
+
+	Clay__CloseElement();
+	return 0;
+}
+
 /* _somewm_clay.end_layout() */
 static int
 luaA_clay_end_layout(lua_State *L)
@@ -658,6 +1493,7 @@ luaA_clay_end_layout(lua_State *L)
 	if (!active_screen)
 		return luaL_error(L, "clay: end_layout called without begin_layout");
 
+	clay_screen_t *cs = active_screen;
 	Clay_RenderCommandArray commands = Clay_EndLayout();
 
 	for (int32_t i = 0; i < commands.length; i++) {
@@ -667,7 +1503,11 @@ luaA_clay_end_layout(lua_State *L)
 		if (cmd->commandType != CLAY_RENDER_COMMAND_TYPE_CUSTOM)
 			continue;
 
-		int idx = (int)(intptr_t)cmd->renderData.custom.customData;
+		uint32_t cd = (uint32_t)(intptr_t)cmd->renderData.custom.customData;
+		if (cd >> CLAY_FRAME_ROLE_SHIFT)
+			continue; /* frame leaf: handled in the pass below */
+
+		int idx = (int)cd;
 		if (idx <= 0 || idx > active_screen->results_count)
 			continue;
 
@@ -678,31 +1518,132 @@ luaA_clay_end_layout(lua_State *L)
 		r->h = cmd->boundingBox.height;
 	}
 
-	active_screen->has_pending = true;
+	/* Second pass: frame leaves emitted under framed client nodes
+	 * (emit_frame_tree). customData packs role (high bits) | client result
+	 * index (low bits). Re-base each box to the client's frame origin (its node
+	 * box, populated by the pass above) and store into the client's merged_frame
+	 * scratch, which apply_geometry_to_wlroots consumes in place of the per-client
+	 * solve. Both boxes are solve-local here, so the subtraction is offset-
+	 * independent. The surface leaf (one per client) stamps the validity key. */
+	for (int32_t i = 0; i < commands.length; i++) {
+		Clay_RenderCommand *cmd =
+			Clay_RenderCommandArray_Get(&commands, i);
+		if (cmd->commandType != CLAY_RENDER_COMMAND_TYPE_CUSTOM)
+			continue;
+		uint32_t cd = (uint32_t)(intptr_t)cmd->renderData.custom.customData;
+		int role = (int)(cd >> CLAY_FRAME_ROLE_SHIFT);
+		if (role < CFRAME_TITLEBAR_TOP || role > CFRAME_SURFACE)
+			continue;
+		int idx = (int)(cd & CLAY_FRAME_IDX_MASK);
+		if (idx <= 0 || idx > active_screen->results_count)
+			continue;
+		clay_result_t *r = &active_screen->results[idx - 1];
+		if (r->type != CLAY_ELEM_CLIENT || !r->client)
+			continue;
+		client_t *c = r->client;
+		struct frame_box *bx = &c->merged_frame.box[role];
+		bx->x = (int)cmd->boundingBox.x - (int)r->x;
+		bx->y = (int)cmd->boundingBox.y - (int)r->y;
+		bx->w = (int)cmd->boundingBox.width;
+		bx->h = (int)cmd->boundingBox.height;
 
-	/* If a workarea element was present, return its bounds as a table.
-	 * This lets compose_screen() read the workarea without waiting
-	 * for clay_apply_all(). */
-	for (int j = 0; j < active_screen->results_count; j++) {
-		clay_result_t *r = &active_screen->results[j];
-		if (r->type == CLAY_ELEM_WORKAREA) {
-			/* Return inner bounds (bounding box minus padding) as workarea */
-			lua_newtable(L);
-			lua_pushnumber(L, r->x + r->pad_left + active_screen->offset_x);
-			lua_setfield(L, -2, "x");
-			lua_pushnumber(L, r->y + r->pad_top + active_screen->offset_y);
-			lua_setfield(L, -2, "y");
-			lua_pushnumber(L, r->w - r->pad_left - r->pad_right);
-			lua_setfield(L, -2, "width");
-			lua_pushnumber(L, r->h - r->pad_top - r->pad_bottom);
-			lua_setfield(L, -2, "height");
-			active_screen = NULL;
-			return 1;
+		if (role == CFRAME_SURFACE) {
+			int bw2 = (int)c->border_width * 2;
+			c->merged_frame.geo_w      = MAX(1, (int)r->w - bw2);
+			c->merged_frame.geo_h      = MAX(1, (int)r->h - bw2);
+			/* Key on border_width to match the box geometry above (client_open
+			 * padding + client_frame_sizes both use border_width), not c->bw. */
+			c->merged_frame.bw         = (int)c->border_width;
+			c->merged_frame.fullscreen = c->fullscreen;
+			for (client_titlebar_t bar = CLIENT_TITLEBAR_TOP;
+			     bar < CLIENT_TITLEBAR_COUNT; bar++)
+				c->merged_frame.titlebar_size[bar] = c->titlebar[bar].size;
+			c->merged_frame.valid = true;
 		}
 	}
 
+	/* Debug view: draw Clay's injected RECTANGLE/BORDER/TEXT/SCISSOR commands
+	 * (the inspector panel + hover highlight) into the per-screen overlay. Only
+	 * the screen-composition solve drives it (debug_compose_solve), so a
+	 * placement / magnifier solve sharing this context neither renders nor
+	 * triggers the self-disable path below. Clay can self-disable from inside
+	 * Clay_EndLayout (the panel close button), so read the flag back: when it
+	 * flips off under us, sync our flag, hide the overlay, and request a full
+	 * arrange so windows reflow to full width. */
+	if (cs->debug_compose_solve) {
+		if (Clay_IsDebugModeEnabled()) {
+			clay_render_debug_overlay(cs, commands,
+			                          (int)cs->dim_w, (int)cs->dim_h);
+		} else if (clay_debug_enabled) {
+			clay_debug_enabled = false;
+			clay_debug_dirty = false;
+			clay_debug_reflow_pending = true;
+			clay_debug_hide_overlay(cs);
+		} else {
+			clay_debug_hide_overlay(cs);
+		}
+	}
+
+	/* A debug-only overlay refresh (pointer motion) must not arm the deferred
+	 * apply: geometry is unchanged from the last real arrange, so leaving
+	 * has_pending set would re-run client_resize on the next clay_apply_all.
+	 * Results stay stored and are released by the next begin_layout. */
+	if (!cs->debug_only_solve)
+		active_screen->has_pending = true;
+
+	/* Return value 1: the workarea bounds as a table (or nil). A workarea
+	 * element lets compose_screen() read screen.workarea without waiting for
+	 * clay_apply_all(). */
+	clay_result_t *wa = NULL;
+	for (int j = 0; j < active_screen->results_count; j++) {
+		if (active_screen->results[j].type == CLAY_ELEM_WORKAREA) {
+			wa = &active_screen->results[j];
+			break;
+		}
+	}
+	if (wa) {
+		/* Inner bounds (bounding box minus padding). */
+		lua_newtable(L);
+		lua_pushnumber(L, wa->x + wa->pad_left + active_screen->offset_x);
+		lua_setfield(L, -2, "x");
+		lua_pushnumber(L, wa->y + wa->pad_top + active_screen->offset_y);
+		lua_setfield(L, -2, "y");
+		lua_pushnumber(L, wa->w - wa->pad_left - wa->pad_right);
+		lua_setfield(L, -2, "width");
+		lua_pushnumber(L, wa->h - wa->pad_top - wa->pad_bottom);
+		lua_setfield(L, -2, "height");
+	} else {
+		lua_pushnil(L);
+	}
+
+	/* Return value 2: widget boxes as a list of { widget, x, y, width, height }
+	 * in solve-local coords. Lets a screen solve (compose_screen) feed wibar
+	 * widget boxes back into the widget hierarchy for paint instead of the
+	 * per-container "wibox" solve forest recomputing them. Read the widget
+	 * objects (not the registry ref) into the list; clay_apply_all() unrefs
+	 * the registry slots afterward, the objects stay alive via this table. */
+	lua_newtable(L);
+	int widget_idx = 1;
+	for (int j = 0; j < active_screen->results_count; j++) {
+		clay_result_t *r = &active_screen->results[j];
+		if (r->type != CLAY_ELEM_WIDGET || r->lua_ref == LUA_NOREF)
+			continue;
+		lua_newtable(L);
+		lua_rawgeti(L, LUA_REGISTRYINDEX, r->lua_ref);
+		lua_setfield(L, -2, "widget");
+		lua_pushnumber(L, r->x);
+		lua_setfield(L, -2, "x");
+		lua_pushnumber(L, r->y);
+		lua_setfield(L, -2, "y");
+		lua_pushnumber(L, r->w);
+		lua_setfield(L, -2, "width");
+		lua_pushnumber(L, r->h);
+		lua_setfield(L, -2, "height");
+		lua_rawseti(L, -2, widget_idx++);
+	}
+
 	active_screen = NULL;
-	return 0;
+	return 2;
 }
 
 /* _somewm_clay.end_layout_to_lua()
@@ -851,6 +1792,7 @@ luaA_clay_get_solve_counts(lua_State *L)
 } while (0)
 	PUSH(compose_screen);
 	PUSH(preset);
+	PUSH(merged);
 	PUSH(wibox);
 	PUSH(magnifier);
 	PUSH(placement);
@@ -871,14 +1813,137 @@ luaA_clay_reset_solve_counts(lua_State *L)
 	return 0;
 }
 
+/* _somewm_clay.set_debug_enabled(bool) - turn the Clay debug view on/off. The
+ * per-context Clay_SetDebugModeEnabled happens in begin_layout; this sets the
+ * flag the per-screen solves read. The Lua caller (awful.layout.clay.set_debug)
+ * triggers a normal arrange afterward so windows reflow and the panel appears
+ * or hides. */
+static int
+luaA_clay_set_debug_enabled(lua_State *L)
+{
+	clay_debug_enabled = lua_toboolean(L, 1);
+	clay_debug_dirty = true;
+	return 0;
+}
+
+/* _somewm_clay.is_debug_enabled() -> bool */
+static int
+luaA_clay_is_debug_enabled(lua_State *L)
+{
+	lua_pushboolean(L, clay_debug_enabled);
+	return 1;
+}
+
+/* _somewm_clay.set_debug_resolver(fn) - store the Lua callback clay_debug_tick
+ * invokes to rebuild + re-solve screens. fn(reflow): reflow=true arranges all
+ * screens (after a self-disable, to reflow back to full width); reflow=false
+ * refreshes the debug overlay (no_apply). Clay can't rebuild its element tree
+ * alone, so the re-solve must round-trip through Lua. */
+static int
+luaA_clay_set_debug_resolver(lua_State *L)
+{
+	luaL_checktype(L, 1, LUA_TFUNCTION);
+	if (clay_debug_resolver_ref != LUA_NOREF)
+		luaL_unref(L, LUA_REGISTRYINDEX, clay_debug_resolver_ref);
+	lua_pushvalue(L, 1);
+	clay_debug_resolver_ref = luaL_ref(L, LUA_REGISTRYINDEX);
+	return 0;
+}
+
+/* Flag a pending debug-overlay re-solve. Called from the pointer/button input
+ * path; no-ops unless debug is on, so it's cheap on that hot path. */
+void
+clay_debug_mark_dirty(void)
+{
+	if (clay_debug_enabled)
+		clay_debug_dirty = true;
+}
+
+/* Helper: call the Lua resolver with a single boolean (reflow) argument. */
+static void
+clay_debug_call_resolver(lua_State *L, bool reflow)
+{
+	lua_rawgeti(L, LUA_REGISTRYINDEX, clay_debug_resolver_ref);
+	lua_pushboolean(L, reflow);
+	if (lua_pcall(L, 1, 0, 0) != LUA_OK) {
+		fprintf(stderr, "[clay] debug resolver error: %s\n",
+		        lua_tostring(L, -1));
+		lua_pop(L, 1);
+	}
+}
+
+/* Drive debug re-solves once per event-loop iteration (coalesces high-frequency
+ * pointer motion). Called from some_refresh() after clay_apply_all(). The
+ * resolver rebuilds the Clay tree so end_layout re-renders the overlay; the
+ * overlay refresh runs no_apply, so this never moves clients. */
+void
+clay_debug_tick(void)
+{
+	if (clay_debug_resolver_ref == LUA_NOREF)
+		return;
+
+	lua_State *L = globalconf_get_lua_State();
+
+	/* A self-disable (panel close button) requests a full arrange so windows
+	 * reflow back to full width. If debug was re-enabled before this tick (rapid
+	 * close-then-toggle), the reflow is stale -- the re-enable's own arrange
+	 * handles the layout -- so clear it without arranging. */
+	if (clay_debug_reflow_pending) {
+		clay_debug_reflow_pending = false;
+		if (!clay_debug_enabled)
+			clay_debug_call_resolver(L, true);
+	}
+
+	if (!clay_debug_enabled || !clay_debug_dirty)
+		return;
+	clay_debug_dirty = false;
+	clay_debug_call_resolver(L, false);
+}
+
+/* Composite each screen's debug overlay onto a screenshot cairo context. The
+ * overlay is a standalone scene buffer (not a client surface or a registered
+ * drawin), so root.content()'s scene-buffer and widget passes don't capture it;
+ * this draws the cached cairo surface directly. Called last, so the inspector
+ * lands on top exactly as it does on screen. No-op when debug is off (no
+ * enabled overlay). */
+void
+clay_debug_composite_screenshot(cairo_t *cr)
+{
+	for (int i = 0; i < screen_count; i++) {
+		clay_screen_t *cs = &screens[i];
+		if (!cs->debug_surface || !cs->debug_overlay
+		    || !cs->debug_overlay->node.enabled)
+			continue;
+		cairo_save(cr);
+		cairo_set_operator(cr, CAIRO_OPERATOR_OVER);
+		cairo_set_source_surface(cr, cs->debug_surface,
+		                         (double)cs->offset_x, (double)cs->offset_y);
+		cairo_paint(cr);
+		cairo_restore(cr);
+	}
+}
+
 static const luaL_Reg clay_methods[] = {
 	{ "begin_layout", luaA_clay_begin_layout },
 	{ "open_container", luaA_clay_open_container },
 	{ "close_container", luaA_clay_close_container },
 	{ "client_element", luaA_clay_client_element },
+	{ "client_open", luaA_clay_client_open },
+	{ "client_close", luaA_clay_client_close },
+	{ "frame_box", luaA_clay_frame_box },
+	{ "titlebar_open", luaA_clay_titlebar_open },
+	{ "titlebar_close", luaA_clay_titlebar_close },
+	{ "client_frame_sizes", luaA_clay_client_frame_sizes },
+	{ "client_frame_geometry", luaA_clay_client_frame_geometry },
 	{ "drawin_element", luaA_clay_drawin_element },
+	{ "drawin_open", luaA_clay_drawin_open },
+	{ "drawin_close", luaA_clay_drawin_close },
 	{ "widget_element", luaA_clay_widget_element },
+	{ "widget_open", luaA_clay_widget_open },
+	{ "widget_close", luaA_clay_widget_close },
 	{ "workarea_element", luaA_clay_workarea_element },
+	{ "workarea_open", luaA_clay_workarea_open },
+	{ "workarea_close", luaA_clay_workarea_close },
 	{ "end_layout", luaA_clay_end_layout },
 	{ "end_layout_to_lua", luaA_clay_end_layout_to_lua },
 	{ "set_screen_workarea", luaA_clay_set_screen_workarea },
@@ -886,6 +1951,9 @@ static const luaL_Reg clay_methods[] = {
 	{ "apply_all", luaA_clay_apply_all },
 	{ "get_solve_counts", luaA_clay_get_solve_counts },
 	{ "reset_solve_counts", luaA_clay_reset_solve_counts },
+	{ "set_debug_enabled", luaA_clay_set_debug_enabled },
+	{ "is_debug_enabled", luaA_clay_is_debug_enabled },
+	{ "set_debug_resolver", luaA_clay_set_debug_resolver },
 	{ NULL, NULL }
 };
 
@@ -894,6 +1962,20 @@ luaA_clay_setup(lua_State *L)
 {
 	lua_newtable(L);
 	luaL_setfuncs(L, clay_methods, 0);
+
+	/* Frame roles for frame_box(role, ...), mirroring the CFRAME_* enum so
+	 * Lua never hardcodes the integers. */
+	lua_newtable(L);
+#define FRAME_CONST(name, val) do { lua_pushinteger(L, (val)); \
+	lua_setfield(L, -2, name); } while (0)
+	FRAME_CONST("titlebar_top",    CFRAME_TITLEBAR_TOP);
+	FRAME_CONST("titlebar_right",  CFRAME_TITLEBAR_RIGHT);
+	FRAME_CONST("titlebar_bottom", CFRAME_TITLEBAR_BOTTOM);
+	FRAME_CONST("titlebar_left",   CFRAME_TITLEBAR_LEFT);
+	FRAME_CONST("surface",         CFRAME_SURFACE);
+#undef FRAME_CONST
+	lua_setfield(L, -2, "frame");
+
 	lua_setglobal(L, "_somewm_clay");
 }
 
@@ -949,20 +2031,47 @@ clay_cleanup(void)
 	for (int i = 0; i < screen_count; i++) {
 		free(screens[i].results);
 		free(screens[i].arena_memory);
+		free(screens[i].name_pool);
+		if (screens[i].debug_overlay)
+			wlr_scene_node_destroy(&screens[i].debug_overlay->node);
+		if (screens[i].debug_surface)
+			cairo_surface_destroy(screens[i].debug_surface);
 	}
 	memset(screens, 0, sizeof(screens));
 	screen_count = 0;
 	active_screen = NULL;
 
+	/* Debug-view teardown. The dedicated overlay tree is C-side (survives
+	 * a Lua hot-reload otherwise), so drop it for a clean slate; debug starts
+	 * off after a reload. Do NOT luaL_unref the resolver: the Lua state is
+	 * being abandoned, so just drop the ref like the rest of this function. */
+	if (clay_debug_tree) {
+		wlr_scene_node_destroy(&clay_debug_tree->node);
+		clay_debug_tree = NULL;
+	}
+	if (clay_debug_scratch_cr) {
+		cairo_destroy(clay_debug_scratch_cr);
+		clay_debug_scratch_cr = NULL;
+	}
+	if (clay_debug_scratch_surface) {
+		cairo_surface_destroy(clay_debug_scratch_surface);
+		clay_debug_scratch_surface = NULL;
+	}
+	clay_debug_enabled = false;
+	clay_debug_dirty = false;
+	clay_debug_reflow_pending = false;
+	clay_debug_resolver_ref = LUA_NOREF;
+
 	/* Clean up widget context */
 	free(widget_ctx.results);
 	free(widget_ctx.arena_memory);
+	free(widget_ctx.name_pool);
 	memset(&widget_ctx, 0, sizeof(widget_ctx));
 
-	/* Clean up decoration context */
-	free(decor_arena_memory);
-	decor_arena_memory = NULL;
-	decor_ctx = NULL;
+	/* Clean up frame context */
+	free(frame_arena_memory);
+	frame_arena_memory = NULL;
+	frame_ctx = NULL;
 
 	/* Clear Clay's global context pointer so Clay_MinMemorySize() doesn't
 	 * dereference the freed arena on the next clay_get_screen() call. */
@@ -970,13 +2079,13 @@ clay_cleanup(void)
 }
 
 static inline Clay_SizingAxis
-decor_grow(void)
+frame_grow(void)
 {
 	return (Clay_SizingAxis){ .type = CLAY__SIZING_TYPE_GROW };
 }
 
 static inline Clay_SizingAxis
-decor_fixed(float v)
+frame_fixed(float v)
 {
 	return (Clay_SizingAxis){
 		.type = CLAY__SIZING_TYPE_FIXED,
@@ -985,24 +2094,25 @@ decor_fixed(float v)
 }
 
 static inline void
-decor_open_container(uint32_t id, Clay_LayoutDirection dir)
+frame_open_container(uint32_t id, Clay_LayoutDirection dir, uint16_t pad)
 {
 	Clay__OpenElementWithId((Clay_ElementId){ .id = id });
 	Clay__ConfigureOpenElement((Clay_ElementDeclaration){
 		.layout = {
 			.layoutDirection = dir,
-			.sizing = { .width = decor_grow(), .height = decor_grow() },
+			.sizing = { .width = frame_grow(), .height = frame_grow() },
+			.padding = { pad, pad, pad, pad },
 		},
 	});
 }
 
 static inline void
-decor_leaf(intptr_t tag, Clay_SizingAxis w, Clay_SizingAxis h)
+frame_leaf(uint32_t id, intptr_t cd, Clay_SizingAxis w, Clay_SizingAxis h)
 {
-	Clay__OpenElementWithId((Clay_ElementId){ .id = (uint32_t)tag });
+	Clay__OpenElementWithId((Clay_ElementId){ .id = id });
 	Clay__ConfigureOpenElement((Clay_ElementDeclaration){
 		.layout = { .sizing = { .width = w, .height = h } },
-		.custom = { .customData = (void *)tag },
+		.custom = { .customData = (void *)cd },
 	});
 	Clay__CloseElement();
 }
@@ -1010,7 +2120,7 @@ decor_leaf(intptr_t tag, Clay_SizingAxis w, Clay_SizingAxis h)
 /* Visibility was pre-set for all four titlebars; only writes position when
  * the titlebar is visible. */
 static inline void
-decor_apply_titlebar_pos(client_t *c, client_titlebar_t bar, int x, int y, bool fs)
+frame_apply_titlebar_pos(client_t *c, client_titlebar_t bar, int x, int y, bool fs)
 {
 	if (c->titlebar[bar].scene_buffer
 	    && c->titlebar[bar].size > 0 && !fs) {
@@ -1019,8 +2129,111 @@ decor_apply_titlebar_pos(client_t *c, client_titlebar_t bar, int x, int y, bool 
 	}
 }
 
+/* Emit the frame sub-tree: body column (padded by the border width) {
+ * titlebar_top; surface row { tb_left, surface, tb_right }; titlebar_bottom }.
+ * The border is not an element: the column's padding insets its children by
+ * `fbw`, exactly as the four border leaves used to, and the border rects are
+ * positioned by arithmetic in frame_apply_boxes(). `idx` is the owning client's
+ * result index in the merged solve (0 for the isolated frame_ctx solve). Element
+ * ids and leaf customData are derived from idx so many clients' frame trees stay
+ * unique within one solve. */
+static void
+emit_frame_tree(uint32_t *idc, int idx, float fbw,
+                     float ftt, float ftr, float ftb, float ftl)
+{
+	/* Element ids come from *idc (the merged solve passes its per-solve
+	 * element_id_counter so frame ids never collide with client/widget/
+	 * container ids; the isolated frame_ctx solve passes a local counter).
+	 * Leaf customData carries idx|role for end_layout routing, decoupled from
+	 * the id. */
+#define FCONT(dir, pad)   frame_open_container(++(*idc), (dir), (pad))
+#define FLEAF(role, w, h) frame_leaf(++(*idc), frame_cd(idx, (role)), (w), (h))
+	FCONT(CLAY_TOP_TO_BOTTOM, (uint16_t)fbw);           /* body column (border pad) */
+		FLEAF(CFRAME_TITLEBAR_TOP, frame_grow(), frame_fixed(ftt));
+		FCONT(CLAY_LEFT_TO_RIGHT, 0);                   /* surface row */
+			FLEAF(CFRAME_TITLEBAR_LEFT,  frame_fixed(ftl), frame_grow());
+			FLEAF(CFRAME_SURFACE,        frame_grow(),     frame_grow());
+			FLEAF(CFRAME_TITLEBAR_RIGHT, frame_fixed(ftr), frame_grow());
+		Clay__CloseElement();                           /* surface row */
+		FLEAF(CFRAME_TITLEBAR_BOTTOM, frame_grow(), frame_fixed(ftb));
+	Clay__CloseElement();                               /* body column */
+#undef FLEAF
+#undef FCONT
+}
+
+/* Pre-set titlebar scene-buffer visibility from size + fullscreen. Runs on
+ * every frame apply (the solve path and the merged-consume path), outside
+ * any cache, so a late scene_buffer init still gets enabled when geometry is
+ * unchanged. */
+static inline void
+frame_preset_titlebars(client_t *c, bool fs)
+{
+	for (client_titlebar_t bar = CLIENT_TITLEBAR_TOP;
+	     bar < CLIENT_TITLEBAR_COUNT; bar++) {
+		if (c->titlebar[bar].scene_buffer) {
+			bool visible = c->titlebar[bar].size > 0 && !fs;
+			wlr_scene_node_set_enabled(
+				&c->titlebar[bar].scene_buffer->node, visible);
+		}
+	}
+}
+
+/* Apply frame boxes (frame-relative, indexed by CFRAME_* role) to the client's
+ * scene nodes: the 4 titlebar buffers, the surface offset, and the shadow. The 4
+ * border rects are positioned by arithmetic from c->geometry + `bw` (the outer
+ * ring of c->geometry, the same formula border_width_callback uses), which equals
+ * the boxes the border leaves used to solve. Returns the surface inner size
+ * (clamped >= 1). Shared by the per-client solve and the merged-solve consume path
+ * so both write the scene identically (any drift would flood configures, see
+ * window.c). `bw` is c->border_width on the consume path, c->bw on the fallback
+ * (zero on fullscreen). */
+static void
+frame_apply_boxes(client_t *c, const struct frame_box *box, bool fs, int bw,
+                  int *out_inner_w, int *out_inner_h)
+{
+	/* Border ring on c->geometry's perimeter. border[0..3] = TOP, BOTTOM, LEFT,
+	 * RIGHT; top/bottom are full-width bw-tall bars, left/right fill between them. */
+	int gw = MAX(0, c->geometry.width), gh = MAX(0, c->geometry.height);
+	int side_h = MAX(0, gh - 2 * bw);
+	wlr_scene_rect_set_size(c->border[0], gw, bw);
+	wlr_scene_node_set_position(&c->border[0]->node, 0, 0);
+	wlr_scene_rect_set_size(c->border[1], gw, bw);
+	wlr_scene_node_set_position(&c->border[1]->node, 0, MAX(0, gh - bw));
+	wlr_scene_rect_set_size(c->border[2], bw, side_h);
+	wlr_scene_node_set_position(&c->border[2]->node, 0, bw);
+	wlr_scene_rect_set_size(c->border[3], bw, side_h);
+	wlr_scene_node_set_position(&c->border[3]->node, MAX(0, gw - bw), bw);
+	frame_apply_titlebar_pos(c, CLIENT_TITLEBAR_TOP,
+		box[CFRAME_TITLEBAR_TOP].x, box[CFRAME_TITLEBAR_TOP].y, fs);
+	frame_apply_titlebar_pos(c, CLIENT_TITLEBAR_RIGHT,
+		box[CFRAME_TITLEBAR_RIGHT].x, box[CFRAME_TITLEBAR_RIGHT].y, fs);
+	frame_apply_titlebar_pos(c, CLIENT_TITLEBAR_BOTTOM,
+		box[CFRAME_TITLEBAR_BOTTOM].x, box[CFRAME_TITLEBAR_BOTTOM].y, fs);
+	frame_apply_titlebar_pos(c, CLIENT_TITLEBAR_LEFT,
+		box[CFRAME_TITLEBAR_LEFT].x, box[CFRAME_TITLEBAR_LEFT].y, fs);
+
+	wlr_scene_node_set_position(&c->scene_surface->node,
+		box[CFRAME_SURFACE].x, box[CFRAME_SURFACE].y);
+	int iw = box[CFRAME_SURFACE].w < 1 ? 1 : box[CFRAME_SURFACE].w;
+	int ih = box[CFRAME_SURFACE].h < 1 ? 1 : box[CFRAME_SURFACE].h;
+	if (out_inner_w) *out_inner_w = iw;
+	if (out_inner_h) *out_inner_h = ih;
+
+	/* Shadow: 9-slice with signed offsets, stays in shadow.c. */
+	const shadow_config_t *shadow_config = shadow_get_effective_config(
+		c->shadow_config, false);
+	if (shadow_config && shadow_config->enabled) {
+		if (c->shadow.tree)
+			shadow_update_geometry(&c->shadow, shadow_config,
+				c->geometry.width, c->geometry.height);
+		else
+			shadow_create(c->scene, &c->shadow, shadow_config,
+				c->geometry.width, c->geometry.height);
+	}
+}
+
 void
-clay_apply_client_decorations(client_t *c, int *out_inner_w, int *out_inner_h)
+clay_apply_client_frame(client_t *c, int *out_inner_w, int *out_inner_h)
 {
 	int geo_w = c->geometry.width;
 	int geo_h = c->geometry.height;
@@ -1038,159 +2251,112 @@ clay_apply_client_decorations(client_t *c, int *out_inner_w, int *out_inner_h)
 	float ftb = fs ? 0.0f : (float)ts[2];
 	float ftl = fs ? 0.0f : (float)ts[3];
 
-	/* Pre-set titlebar visibility based on size + fullscreen so 0-sized
-	 * titlebars (which Clay may cull from render commands) still get
-	 * hidden. Mirrors the legacy client_update_titlebar_positions() invariant.
-	 * Runs every call (outside the cache) so a late scene_buffer init
-	 * gets enabled even when geometry hasn't changed. */
-	for (client_titlebar_t bar = CLIENT_TITLEBAR_TOP;
-	     bar < CLIENT_TITLEBAR_COUNT; bar++) {
-		if (c->titlebar[bar].scene_buffer) {
-			bool visible = c->titlebar[bar].size > 0 && !fs;
-			wlr_scene_node_set_enabled(
-				&c->titlebar[bar].scene_buffer->node, visible);
-		}
-	}
+	frame_preset_titlebars(c, fs);
 
-	/* Decoration cache: skip the Clay solve and the scene-graph
-	 * mutations when nothing the tree depends on has changed. The
-	 * scene-graph positions from the last solve are still valid (no
-	 * other path touches the border/titlebar/surface child positions
-	 * inside c->scene). Border RECT sizes are also still correct. */
-	if (c->decor_cache.valid
-	    && c->decor_cache.width      == geo_w
-	    && c->decor_cache.height     == geo_h
-	    && c->decor_cache.bw         == bw_i
-	    && c->decor_cache.fullscreen == fs
-	    && memcmp(c->decor_cache.titlebar_size, ts, sizeof(ts)) == 0) {
-		if (out_inner_w) *out_inner_w = c->decor_cache.inner_w;
-		if (out_inner_h) *out_inner_h = c->decor_cache.inner_h;
+	/* Frame cache: skip the Clay solve and the scene-graph mutations when
+	 * nothing the tree depends on has changed. The scene positions from the
+	 * last solve are still valid (no other path touches the border/titlebar/
+	 * surface child positions inside c->scene). */
+	if (c->frame_cache.valid
+	    && c->frame_cache.width      == geo_w
+	    && c->frame_cache.height     == geo_h
+	    && c->frame_cache.bw         == bw_i
+	    && c->frame_cache.fullscreen == fs
+	    && memcmp(c->frame_cache.titlebar_size, ts, sizeof(ts)) == 0) {
+		if (out_inner_w) *out_inner_w = c->frame_cache.inner_w;
+		if (out_inner_h) *out_inner_h = c->frame_cache.inner_h;
 		return;
 	}
 
-	if (!decor_ctx) {
+	if (!frame_ctx) {
 		uint32_t mem_size = Clay_MinMemorySize();
-		decor_arena_memory = malloc(mem_size);
+		frame_arena_memory = malloc(mem_size);
 		Clay_Arena arena = Clay_CreateArenaWithCapacityAndMemory(
-			mem_size, decor_arena_memory);
-		decor_ctx = Clay_Initialize(
+			mem_size, frame_arena_memory);
+		frame_ctx = Clay_Initialize(
 			arena,
 			(Clay_Dimensions){ (float)geo_w, (float)geo_h },
 			(Clay_ErrorHandler){ clay_error_handler, NULL });
-		Clay_SetCurrentContext(decor_ctx);
+		Clay_SetCurrentContext(frame_ctx);
 		Clay_SetMeasureTextFunction(clay_measure_text, NULL);
 	}
 
-	Clay_SetCurrentContext(decor_ctx);
+	Clay_SetCurrentContext(frame_ctx);
 	Clay_SetLayoutDimensions((Clay_Dimensions){ (float)geo_w, (float)geo_h });
 	Clay_BeginLayout();
+	/* Per-client fallback frame solve; counted as "decoration" -- the stable
+	 * get_solve_counts() proof key for clients not in the merged tree. */
 	solve_counters.decoration++;
 	solve_counters.total++;
 
-	uint32_t cid = 100; /* container ids; leaves use 1..9 (CDECOR_*) */
-
-	decor_open_container(++cid, CLAY_TOP_TO_BOTTOM);                /* outer column */
-		decor_leaf(CDECOR_BORDER_TOP, decor_grow(), decor_fixed(fbw));
-		decor_open_container(++cid, CLAY_LEFT_TO_RIGHT);            /* middle row */
-			decor_leaf(CDECOR_BORDER_LEFT, decor_fixed(fbw), decor_grow());
-			decor_open_container(++cid, CLAY_TOP_TO_BOTTOM);        /* inner column */
-				decor_leaf(CDECOR_TITLEBAR_TOP, decor_grow(), decor_fixed(ftt));
-				decor_open_container(++cid, CLAY_LEFT_TO_RIGHT);    /* surface row */
-					decor_leaf(CDECOR_TITLEBAR_LEFT,  decor_fixed(ftl), decor_grow());
-					decor_leaf(CDECOR_SURFACE,        decor_grow(),     decor_grow());
-					decor_leaf(CDECOR_TITLEBAR_RIGHT, decor_fixed(ftr), decor_grow());
-				Clay__CloseElement();                               /* surface row */
-				decor_leaf(CDECOR_TITLEBAR_BOTTOM, decor_grow(), decor_fixed(ftb));
-			Clay__CloseElement();                                   /* inner column */
-			decor_leaf(CDECOR_BORDER_RIGHT, decor_fixed(fbw), decor_grow());
-		Clay__CloseElement();                                       /* middle row */
-		decor_leaf(CDECOR_BORDER_BOTTOM, decor_grow(), decor_fixed(fbw));
-	Clay__CloseElement();                                           /* outer column */
+	uint32_t didc = 0; /* local id counter for the isolated frame_ctx solve */
+	emit_frame_tree(&didc, 0, fbw, ftt, ftr, ftb, ftl);
 
 	Clay_RenderCommandArray commands = Clay_EndLayout();
 
-	int inner_w = 0;
-	int inner_h = 0;
-
+	/* Collect frame boxes by role. emit_frame_tree packs the role into
+	 * the customData high bits (frame_cd, idx == 0 on this isolated solve), so
+	 * decode it the same way end_layout does. */
+	struct frame_box box[6] = { 0 };
 	for (int32_t i = 0; i < commands.length; i++) {
 		Clay_RenderCommand *cmd = Clay_RenderCommandArray_Get(&commands, i);
 		if (cmd->commandType != CLAY_RENDER_COMMAND_TYPE_CUSTOM)
 			continue;
-
-		intptr_t tag = (intptr_t)cmd->renderData.custom.customData;
-		int x = (int)cmd->boundingBox.x;
-		int y = (int)cmd->boundingBox.y;
-		int w = (int)cmd->boundingBox.width;
-		int h = (int)cmd->boundingBox.height;
-
-		switch (tag) {
-		case CDECOR_BORDER_TOP:
-			wlr_scene_rect_set_size(c->border[0], w, h);
-			wlr_scene_node_set_position(&c->border[0]->node, x, y);
-			break;
-		case CDECOR_BORDER_BOTTOM:
-			wlr_scene_rect_set_size(c->border[1], w, h);
-			wlr_scene_node_set_position(&c->border[1]->node, x, y);
-			break;
-		case CDECOR_BORDER_LEFT:
-			wlr_scene_rect_set_size(c->border[2], w, h);
-			wlr_scene_node_set_position(&c->border[2]->node, x, y);
-			break;
-		case CDECOR_BORDER_RIGHT:
-			wlr_scene_rect_set_size(c->border[3], w, h);
-			wlr_scene_node_set_position(&c->border[3]->node, x, y);
-			break;
-		case CDECOR_TITLEBAR_TOP:
-			decor_apply_titlebar_pos(c, CLIENT_TITLEBAR_TOP, x, y, fs);
-			break;
-		case CDECOR_TITLEBAR_RIGHT:
-			decor_apply_titlebar_pos(c, CLIENT_TITLEBAR_RIGHT, x, y, fs);
-			break;
-		case CDECOR_TITLEBAR_BOTTOM:
-			decor_apply_titlebar_pos(c, CLIENT_TITLEBAR_BOTTOM, x, y, fs);
-			break;
-		case CDECOR_TITLEBAR_LEFT:
-			decor_apply_titlebar_pos(c, CLIENT_TITLEBAR_LEFT, x, y, fs);
-			break;
-		case CDECOR_SURFACE:
-			wlr_scene_node_set_position(&c->scene_surface->node, x, y);
-			inner_w = w;
-			inner_h = h;
-			break;
-		}
+		uint32_t cd = (uint32_t)(intptr_t)cmd->renderData.custom.customData;
+		int role = (int)(cd >> CLAY_FRAME_ROLE_SHIFT);
+		if (role < CFRAME_TITLEBAR_TOP || role > CFRAME_SURFACE)
+			continue;
+		box[role] = (struct frame_box){
+			(int)cmd->boundingBox.x, (int)cmd->boundingBox.y,
+			(int)cmd->boundingBox.width, (int)cmd->boundingBox.height,
+		};
 	}
 
-	int final_inner_w = inner_w < 1 ? 1 : inner_w;
-	int final_inner_h = inner_h < 1 ? 1 : inner_h;
+	int final_inner_w = 0, final_inner_h = 0;
+	frame_apply_boxes(c, box, fs, bw_i, &final_inner_w, &final_inner_h);
 	if (out_inner_w) *out_inner_w = final_inner_w;
 	if (out_inner_h) *out_inner_h = final_inner_h;
 
-	/* Stamp the cache so the next call with the same inputs short-
-	 * circuits at the head of the function. */
-	c->decor_cache.width      = geo_w;
-	c->decor_cache.height     = geo_h;
-	c->decor_cache.bw         = bw_i;
-	c->decor_cache.fullscreen = fs;
-	memcpy(c->decor_cache.titlebar_size, ts, sizeof(ts));
-	c->decor_cache.inner_w    = final_inner_w;
-	c->decor_cache.inner_h    = final_inner_h;
-	c->decor_cache.valid      = true;
+	/* Stamp the cache so the next call with the same inputs short-circuits. */
+	c->frame_cache.width      = geo_w;
+	c->frame_cache.height     = geo_h;
+	c->frame_cache.bw         = bw_i;
+	c->frame_cache.fullscreen = fs;
+	memcpy(c->frame_cache.titlebar_size, ts, sizeof(ts));
+	c->frame_cache.inner_w    = final_inner_w;
+	c->frame_cache.inner_h    = final_inner_h;
+	c->frame_cache.valid      = true;
+}
 
-	/* Shadow positioning. The 9-slice tree has signed offsets, directional
-	 * clipping, and fill strips that don't fit Clay's flexbox model, so the
-	 * specialized math stays in shadow.c. The call lives here so one C entry
-	 * point owns the full per-client decoration sub-pass. */
-	const shadow_config_t *shadow_config = shadow_get_effective_config(
-		c->shadow_config, false);
-	if (shadow_config && shadow_config->enabled) {
-		if (c->shadow.tree) {
-			shadow_update_geometry(&c->shadow, shadow_config,
-				geo_w, geo_h);
-		} else {
-			shadow_create(c->scene, &c->shadow, shadow_config,
-				geo_w, geo_h);
-		}
+/* Apply frame boxes computed by the merged screen solve (stored in
+ * c->merged_frame by end_layout) instead of running the per-client frame
+ * solve. Returns false when the scratch is missing or stale for the live client
+ * state, so the caller falls back to clay_apply_client_frame(). Like that
+ * function it pre-sets titlebar visibility on every call (outside the key check)
+ * so a late scene_buffer init still gets enabled. */
+bool
+clay_consume_merged_frame(client_t *c, int *out_inner_w, int *out_inner_h)
+{
+	bool fs = c->fullscreen;
+
+	if (!c->merged_frame.valid
+	    || c->merged_frame.geo_w      != c->geometry.width
+	    || c->merged_frame.geo_h      != c->geometry.height
+	    || c->merged_frame.bw         != (int)c->border_width
+	    || c->merged_frame.fullscreen != fs)
+		return false;
+	for (client_titlebar_t bar = CLIENT_TITLEBAR_TOP;
+	     bar < CLIENT_TITLEBAR_COUNT; bar++) {
+		if (c->merged_frame.titlebar_size[bar] != c->titlebar[bar].size)
+			return false;
 	}
+
+	/* Preset runs only on the consuming path; the fallback presets itself.
+	 * Either way it runs once per call (the late-scene_buffer-init invariant). */
+	frame_preset_titlebars(c, fs);
+	frame_apply_boxes(c, c->merged_frame.box, fs, (int)c->border_width,
+	                  out_inner_w, out_inner_h);
+	return true;
 }
 
 /* Layer-shell sub-pass context. One Clay arena reused for every layer
@@ -1292,7 +2458,7 @@ clay_apply_layer_surface(LayerSurface *l, struct wlr_box layout_box,
 	Clay__OpenElementWithId((Clay_ElementId){ .id = 1 });
 	Clay__ConfigureOpenElement((Clay_ElementDeclaration){
 		.layout = {
-			.sizing = { .width = decor_grow(), .height = decor_grow() },
+			.sizing = { .width = frame_grow(), .height = frame_grow() },
 			.padding = (Clay_Padding){
 				.left = (uint16_t)pad_l, .right = (uint16_t)pad_r,
 				.top = (uint16_t)pad_t, .bottom = (uint16_t)pad_b,
@@ -1304,8 +2470,8 @@ clay_apply_layer_surface(LayerSurface *l, struct wlr_box layout_box,
 		Clay__ConfigureOpenElement((Clay_ElementDeclaration){
 			.layout = {
 				.sizing = {
-					.width  = decor_fixed((float)target_w),
-					.height = decor_fixed((float)target_h),
+					.width  = frame_fixed((float)target_w),
+					.height = frame_fixed((float)target_h),
 				},
 			},
 			.custom = { .customData = (void *)(intptr_t)1 },
