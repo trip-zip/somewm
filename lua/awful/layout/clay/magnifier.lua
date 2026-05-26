@@ -3,19 +3,18 @@
 -- `sqrt(master_width_factor)` of the workarea; remaining clients tile
 -- behind it as a full-area column.
 --
--- Two `layout.solve` passes per arrange because the focused client
--- visually overlays the others: Clay's flexbox model can't express a
--- single tree where a child's bounds extend beyond a sibling's. Pass 1
--- writes geometries for the background column, pass 2 writes the
--- centered focused client. Each client receives exactly one geometry
--- assignment so the two passes don't conflict.
+-- One `layout.solve` per arrange: the non-focused clients tile in a column
+-- that fills the workarea, and the focused client overlays them as a
+-- centered floating-to-root node (Clay CLAY_ATTACH_TO_ROOT). Each client
+-- receives exactly one geometry assignment. This used to take two passes
+-- because Clay's flexbox cannot put a centered child over a larger sibling
+-- in flow; the floating-to-root primitive (Step 4) expresses the overlap in
+-- a single tree.
 --
--- This preset deliberately bypasses the Clay descriptor shape used by
--- tile/fair/max/corner/spiral. The descriptor pipeline (subtree +
--- tag_suit_from_descriptor) produces ONE tree per arrange; magnifier
--- needs TWO. Until Clay (or a successor engine) gains an overlap
--- primitive, the bespoke arrange function stays. This is not a TODO,
--- it is a documented exception to "Clay everywhere" (see DEVIATIONS).
+-- magnifier stays a bespoke arrange rather than a compose_screen merge
+-- because it positions clients by focus, not by the tiled-client set:
+-- need_focus_update re-arranges on focus change, and mouse_resize_handler
+-- drives master_width_factor from a center-anchored drag.
 ---------------------------------------------------------------------------
 
 local ipairs = ipairs
@@ -89,44 +88,39 @@ return function(clay)
             if c == focus then fidx = k; break end
         end
 
-        -- Pass 1: tile non-focused clients to fill the workarea. Order
+        -- Background: tile non-focused clients to fill the workarea. Order
         -- matches the legacy code (clients after focus first, then before)
         -- so the visible stacking order on tag refocus is preserved.
-        if #cls > 1 then
-            local children = {}
-            for k = fidx + 1, #cls do
-                children[#children + 1] = layout.client(cls[k], { grow = true })
-            end
-            for k = 1, fidx - 1 do
-                children[#children + 1] = layout.client(cls[k], { grow = true })
-            end
-
-            layout.solve {
-                screen   = p.screen,
-                source   = "magnifier",
-                width    = wa.width, height = wa.height,
-                offset_x = wa.x,     offset_y = wa.y,
-                root     = layout.column { gap = gap, children },
-            }
+        local children = {}
+        for k = fidx + 1, #cls do
+            children[#children + 1] = layout.client(cls[k], { grow = true })
+        end
+        for k = 1, fidx - 1 do
+            children[#children + 1] = layout.client(cls[k], { grow = true })
         end
 
-        -- Pass 2: focused client centered. With a single client, Clay
-        -- assigns it the full workarea (size_pct = 100); with more, the
-        -- focused client shrinks to sqrt(mwfact) and overlays the others.
-        local size_pct = (#cls > 1) and (math.sqrt(mwfact) * 100) or 100
+        -- Overlay: the focused client centered over the background. With a
+        -- single client it fills the workarea (sq = 1); with more it shrinks
+        -- to sqrt(mwfact). A floating-to-root node, so it overlaps the larger
+        -- background in one solve. The frame box is sqrt(mwfact)*wa; the apply
+        -- pass subtracts the border to get the surface size.
+        local sq = (#cls > 1) and math.sqrt(mwfact) or 1
+        local fw = wa.width  * sq
+        local fh = wa.height * sq
+        children[#children + 1] = layout.floating_client(focus, {
+            x      = (wa.width  - fw) / 2,
+            y      = (wa.height - fh) / 2,
+            width  = fw,
+            height = fh,
+            z      = 1,
+        })
+
         layout.solve {
             screen   = p.screen,
             source   = "magnifier",
             width    = wa.width, height = wa.height,
             offset_x = wa.x,     offset_y = wa.y,
-            root     = layout.row {
-                grow  = true,
-                align = { x = "center", y = "center" },
-                layout.client(focus, {
-                    width  = layout.percent(size_pct),
-                    height = layout.percent(size_pct),
-                }),
-            },
+            root     = layout.column { gap = gap, children },
         }
 
         p._clay_managed = true

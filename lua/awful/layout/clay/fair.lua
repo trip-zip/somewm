@@ -47,11 +47,13 @@ return function(clay)
     clay.fair = clay.layout {
         name           = "clay.fair",
         body_signature = "context",
+        merged_capable = true,
         body           = fair_build("vertical"),
     }
     clay.fair.horizontal = clay.layout {
         name           = "clay.fairh",
         body_signature = "context",
+        merged_capable = true,
         body           = fair_build("horizontal"),
     }
 end

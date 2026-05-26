@@ -11,6 +11,7 @@
 #include "../globalconf.h"
 #include "common/util.h"
 #include "../x11_compat.h"
+#include "../clay_layout.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -444,6 +445,10 @@ screen_removed(lua_State *L, screen_t *screen)
 	/* Step 4: Mark screen as invalid */
 	screen->valid = false;
 	screen->monitor = NULL;
+
+	/* Release this screen's Clay context (arena, results, debug overlay) and
+	 * free its slot for reuse, so output unplug doesn't leak. */
+	clay_screen_removed(L, screen);
 
 	/* Step 5: Remove from screen array and re-index remaining screens */
 	for (i = 0; i < screen_count; i++) {

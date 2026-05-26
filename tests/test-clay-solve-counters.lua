@@ -35,7 +35,7 @@ local steps = {
         _somewm_clay.reset_solve_counts()
         local c = counts()
         for _, k in ipairs({
-            "compose_screen", "preset", "wibox", "magnifier",
+            "compose_screen", "preset", "merged", "wibox", "magnifier",
             "placement", "decoration", "layer_surface", "unknown", "total",
         }) do
             assert(c[k] == 0,
@@ -67,18 +67,20 @@ local steps = {
         end
         local c = counts()
         io.stderr:write(string.format(
-            "[TEST] after arrange: compose=%d preset=%d wibox=%d total=%d\n",
-            c.compose_screen, c.preset, c.wibox, c.total))
-        -- compose_screen runs once per arrange; preset (the tile body)
-        -- runs once per arrange. wibox can fire from any drawable that
-        -- needs a relayout in this tick (taglist, tasklist, etc.).
-        assert(c.compose_screen >= 1,
-            "compose_screen should have fired at least once")
-        assert(c.preset >= 1,
-            "preset (tile body) should have fired at least once")
-        assert(c.total >= c.compose_screen + c.preset,
-            "total should sum at least compose_screen + preset")
-        io.stderr:write("[TEST] PASS: arrange bumps compose_screen + preset\n")
+            "[TEST] after arrange: compose=%d preset=%d merged=%d wibox=%d total=%d\n",
+            c.compose_screen, c.preset, c.merged, c.wibox, c.total))
+        -- tile is merge-capable: compose_screen lays out the wibars,
+        -- workarea, and clients in one solve tagged "merged", so the
+        -- separate compose_screen + preset solves no longer fire for it.
+        -- wibox can fire from any drawable that needs a relayout in this
+        -- tick (taglist, tasklist, etc.).
+        assert(c.merged >= 1,
+            "merged (tile in one screen solve) should have fired at least once")
+        assert(c.preset == 0,
+            "preset should not fire for a merge-capable tile layout")
+        assert(c.total >= c.merged,
+            "total should be at least the merged count")
+        io.stderr:write("[TEST] PASS: arrange does one merged solve for tile\n")
         return true
     end,
 

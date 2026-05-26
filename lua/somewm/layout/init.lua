@@ -437,6 +437,44 @@ function layout.clients(list, props)
     return result
 end
 
+--- Frame leaf for a framed client's body: a border edge or the surface.
+-- `role` is a value from `_somewm_clay.frame` (border_*, titlebar_*, surface).
+-- `props` carry the leaf's sizing (fixed width/height for edges, `grow` for the
+-- fill axis). The solved box routes into the owning client's `merged_frame[role]`
+-- (see `client_open`/`frame_box` in clay_layout.c).
+function layout.frame_box(role, props)
+    props = props or {}
+    props.role = role
+    return { _type = "frame_box", props = props }
+end
+
+--- Titlebar node: a frame box (like `frame_box`) that also hosts a widget
+-- subtree. `role` is a `_somewm_clay.frame.titlebar_*` value; `props` carry the
+-- fixed-axis size + `grow` (identical to the box-only `frame_box` it replaces);
+-- `widget_node` is the titlebar's widget root (from `widget_to_node`). The node's
+-- own box routes into `merged_frame[role]` for client-relative scene_buffer
+-- positioning, while `widget_node` grows to fill it and its children come back via
+-- the widget path, so titlebar content is solved in the one merged tree.
+function layout.titlebar(role, props, widget_node)
+    props = props or {}
+    props.role = role
+    return { _type = "titlebar", props = props, children = { widget_node } }
+end
+
+--- Floating-to-root client leaf. Places a client at absolute screen-solve
+-- coordinates with a stacking z-index, outside the parent's flow (Clay
+-- CLAY_ATTACH_TO_ROOT). `width`/`height` are the frame box; the apply pass
+-- subtracts the client's `2*border_width` to get the surface size (the
+-- client-leaf contract). To REFLECT a client at its current geometry, pass
+-- `c:geometry()` size + `2*border_width` so the apply round-trips as a no-op
+-- (compose_screen reflecting floating / fullscreen clients); to POSITION it,
+-- pass the desired frame size (the magnifier overlay).
+-- @tparam client c
+-- @tparam table opts `{ x, y, width, height, z }` in screen-solve coordinates.
+function layout.floating_client(c, opts)
+    return { _type = "floating_client", client = c, props = opts or {} }
+end
+
 --- Drawin leaf (used by compose_screen for wibars).
 function layout.drawin(d, props)
     return { _type = "drawin", drawin = d, props = props or {} }
@@ -453,7 +491,15 @@ function layout.drawins(list, axis, gap)
     for _, entry in ipairs(list) do
         local size_props = {}
         size_props[axis] = entry.size
+        if entry.id then size_props.id = entry.id end  -- "wibar.<pos>"
         local node = layout.drawin(entry.wb.drawin, size_props)
+
+        -- A caller (compose_screen) may attach a pre-built widget subtree so
+        -- the drawin emits as a container holding its widgets as nodes. Graft
+        -- onto the drawin node itself, inside any clay_gaps wrapper below.
+        if entry.children then
+            node.children = entry.children
+        end
 
         if entry.clay_gaps and gap and gap > 0 then
             local wrap = { padding = gap, node }
@@ -478,8 +524,19 @@ end
 -- rect is the anchored target rect for absolute-coord placement). The
 -- two callers share one primitive because both want "place a rect inside
 -- a parent and tell me where it landed."
-function layout.measure(props)
-    return { _type = "workarea", props = props or {} }
+--
+-- When children are passed (positionally or via `children`), the measured
+-- rect becomes their parent: `compose_screen` grafts the tiled-client
+-- subtree here so the workarea node both reports `screen.workarea` and
+-- holds the clients laid out inside it, in one solve.
+function layout.measure(args)
+    local props, children, slot = collect_children(args or {})
+    return {
+        _type    = "workarea",
+        props    = props,
+        children = children,
+        _slot    = slot,
+    }
 end
 
 ---------------------------------------------------------------------------
@@ -535,6 +592,19 @@ local function make_config(props)
         cfg.align_y = props.align.y
     end
 
+    -- Client border: a Clay native `.border` (width + color) for the debug
+    -- overlay / `clay tree`. The on-screen border is the four scene rects
+    -- (positioned by arithmetic, colored C-side on focus), not this config.
+    if type(props.border) == "table" then
+        cfg.border = { width = props.border.width, color = props.border.color }
+    end
+
+    -- Debug-view element name (shown in the Clay inspector). Ignored by the
+    -- engine unless the debug view is rendering this solve.
+    if props.id then
+        cfg.id = props.id
+    end
+
     return cfg
 end
 
@@ -566,6 +636,32 @@ local function attach_to_stack(cfg, props)
     end
 end
 
+-- Attach a config to the layout root as a floating element at absolute
+-- screen-solve coords with an optional stacking z-index (Clay
+-- CLAY_ATTACH_TO_ROOT). Unlike attach_to_stack, the element is positioned
+-- relative to the whole-screen solve origin, not its hierarchical parent, so
+-- it ignores the wibar / workarea insets. Fixed width/height come from
+-- make_config; floating_client and the fullscreen graft always carry explicit
+-- sizing, which Clay needs for a floating root.
+local function attach_to_root(cfg, props)
+    cfg.attach_to_root = true
+    if props then
+        cfg.x_offset = props.x or 0
+        cfg.y_offset = props.y or 0
+        if props.z then cfg.z_index = props.z end
+    end
+end
+
+-- Debug-view name for a client leaf: "client.<class>" (instance/name fallback).
+-- Inspector-only; the engine ignores the id unless the debug view is rendering.
+local function client_node_id(c)
+    local cls = c and (c.class or c.instance or c.name)
+    if type(cls) == "string" and #cls > 0 then
+        return "client." .. cls
+    end
+    return "client"
+end
+
 local function emit(node, parent_is_stack)
     local t = node._type
     local cfg = make_config(node.props or {})
@@ -574,20 +670,86 @@ local function emit(node, parent_is_stack)
     end
 
     if t == "container" then
-        clay_c.open_container(cfg)
+        if node.props and node.props._attach_root then
+            attach_to_root(cfg, node.props)
+        end
+        -- Auto-name structural containers for the debug inspector (explicit
+        -- ids and widget-tagged containers, which carry their own id, win).
+        if not cfg.id then
+            cfg.id = (node.props and node.props._stack) and "stack"
+                or (cfg.direction == "column" and "column" or "row")
+        end
+        -- A container tagged with a widget (the :layout_node output of a
+        -- wibox container) emits as a CLAY_ELEM_WIDGET container, so its box
+        -- comes back to Lua and the widget hierarchy can be rebuilt from the
+        -- screen solve. Untagged containers stay plain structural elements.
+        local tag_widget = node.props and node.props.widget
+        if tag_widget then
+            clay_c.widget_open(tag_widget, cfg)
+        else
+            clay_c.open_container(cfg)
+        end
         local is_stack = node.props and node.props._stack == true
         for _, child in ipairs(node.children) do
             emit(child, is_stack)
         end
-        clay_c.close_container()
+        if tag_widget then
+            clay_c.widget_close()
+        else
+            clay_c.close_container()
+        end
     elseif t == "widget" then
         clay_c.widget_element(node.widget, cfg)
     elseif t == "client" then
+        if not cfg.id then cfg.id = client_node_id(node.client) end
+        if node.children and node.children[1] then
+            -- Framed client: the node holds its border + body(titlebars +
+            -- surface) subtree as children (built in compose_screen). It stays
+            -- open so the children emit inside it and route their boxes into the
+            -- client's merged_frame (frame_box / titlebar nodes).
+            clay_c.client_open(node.client, cfg)
+            for _, child in ipairs(node.children) do
+                emit(child, false)
+            end
+            clay_c.client_close()
+        else
+            clay_c.client_element(node.client, cfg)
+        end
+    elseif t == "frame_box" then
+        clay_c.frame_box(node.props.role, cfg)
+    elseif t == "titlebar" then
+        -- A titlebar box that stays open so its widget root (and the root's
+        -- children) emit inside it; the box still routes to merged_frame[role].
+        clay_c.titlebar_open(node.props.role, cfg)
+        for _, child in ipairs(node.children) do
+            emit(child, false)
+        end
+        clay_c.titlebar_close()
+    elseif t == "floating_client" then
+        attach_to_root(cfg, node.props)
+        if not cfg.id then cfg.id = client_node_id(node.client) end
         clay_c.client_element(node.client, cfg)
     elseif t == "drawin" then
-        clay_c.drawin_element(node.drawin, cfg)
+        if node.children and node.children[1] then
+            clay_c.drawin_open(node.drawin, cfg)
+            for _, child in ipairs(node.children) do
+                emit(child, false)
+            end
+            clay_c.drawin_close()
+        else
+            clay_c.drawin_element(node.drawin, cfg)
+        end
     elseif t == "workarea" then
-        clay_c.workarea_element(cfg)
+        if not cfg.id then cfg.id = "workarea" end
+        if node.children and node.children[1] then
+            clay_c.workarea_open(cfg)
+            for _, child in ipairs(node.children) do
+                emit(child, false)
+            end
+            clay_c.workarea_close()
+        else
+            clay_c.workarea_element(cfg)
+        end
     else
         error("somewm.layout: unknown node type '" .. tostring(t) .. "'")
     end
@@ -601,7 +763,7 @@ end
 --
 -- A descriptor is the static, surface-agnostic description of a layout.
 -- It carries no behavior of its own; surface adapters (tag arrange,
--- wibox :layout, decoration apply, layer-shell apply) consume descriptors
+-- wibox :layout, frame apply, layer-shell apply) consume descriptors
 -- by calling `layout.solve(descriptor, context)` or its equivalent.
 --
 -- The descriptor holds a `body` function or a static `tree`. Bindings
@@ -623,6 +785,9 @@ end
 -- @tparam[opt] function|boolean spec.skip_gap Per-layout policy hook.
 -- @tparam[opt=false] boolean spec.no_gap When true, the layout disowns the
 --   tag's `useless_gap` (e.g., a fullscreen layout).
+-- @tparam[opt=false] boolean spec.merged_capable When true, the layout's
+--   client tree can be grafted into `compose_screen`'s single screen solve
+--   instead of running as a separate arrange pass (see `awful.layout.clay`).
 -- @treturn table A descriptor table tagged with `_type = "layout_descriptor"`.
 function layout.descriptor(spec)
     return {
@@ -634,6 +799,7 @@ function layout.descriptor(spec)
         skip_gap       = spec.skip_gap,
         no_gap         = spec.no_gap,
         bounds_source  = spec.bounds_source,
+        merged_capable = spec.merged_capable,
     }
 end
 
@@ -832,7 +998,10 @@ local function solve_via_reference(spec, root)
     local function solve_node(node, bx, by, bw, bh)
         local props = node.props or {}
 
-        if node._type ~= "container" then
+        -- A titlebar lays out like a container (its widget root grows to fill the
+        -- titlebar box); the titlebar node itself commits no placement, mirroring
+        -- the box-only frame_box it replaces.
+        if node._type ~= "container" and node._type ~= "titlebar" then
             commit_leaf(node, bx, by, bw, bh)
             return
         end
@@ -982,6 +1151,13 @@ function layout.solve(spec)
     apply_top_level_avoid(root, spec.width, spec.height)
     apply_top_level_clamp(root, spec.width, spec.height)
 
+    -- Retain the resolved descriptor tree on the screen so the `clay.tree` IPC
+    -- command can print it on demand. Overwritten each solve, so it always
+    -- reflects the latest layout; it only references already-live objects.
+    if spec.screen then
+        spec.screen._clay_last_tree = root
+    end
+
     -- Busted fallback: pure-Lua reference solver. Implements the same
     -- contract as the C engine for the cases wibox layouts and tag
     -- presets produce. Production always has clay_c; this path runs
@@ -992,11 +1168,12 @@ function layout.solve(spec)
 
     local screen = spec.screen
     local opts = nil
-    if spec.offset_x or spec.offset_y or spec.source then
+    if spec.offset_x or spec.offset_y or spec.source or spec.debug_only then
         opts = {
-            offset_x = spec.offset_x or 0,
-            offset_y = spec.offset_y or 0,
-            source   = spec.source,
+            offset_x   = spec.offset_x or 0,
+            offset_y   = spec.offset_y or 0,
+            source     = spec.source,
+            debug_only = spec.debug_only,
         }
     end
 
@@ -1012,7 +1189,21 @@ function layout.solve(spec)
     local result = { placements = {}, workarea = nil }
 
     if screen then
-        result.workarea = clay_c.end_layout()
+        result.workarea, result.widgets = clay_c.end_layout()
+        -- Retain per-widget solved boxes for the clay.tree inspector, keyed by
+        -- widget (weak keys so dead widgets don't pin). Overwritten each solve.
+        local boxes = setmetatable({}, { __mode = "k" })
+        if result.widgets then
+            for _, r in ipairs(result.widgets) do
+                boxes[r.widget] = {
+                    x      = math.floor(r.x),
+                    y      = math.floor(r.y),
+                    width  = math.floor(r.width),
+                    height = math.floor(r.height),
+                }
+            end
+        end
+        screen._clay_widget_boxes = boxes
         if not spec.no_apply then
             clay_c.apply_all()
         end
