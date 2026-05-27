@@ -116,7 +116,7 @@ return function(clay)
         })
 
         layout.solve {
-            screen   = p.screen,
+            screen   = get_screen(p.screen),
             source   = "magnifier",
             width    = wa.width, height = wa.height,
             offset_x = wa.x,     offset_y = wa.y,

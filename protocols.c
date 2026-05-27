@@ -142,8 +142,12 @@ arrangelayers(Monitor *m)
 		int right  = (m->m.x + m->m.width)  - (usable_area.x + usable_area.width);
 		int bottom = (m->m.y + m->m.height) - (usable_area.y + usable_area.height);
 
+		/* Persist onto the screen so compose_screen insets the workarea.
+		 * Look the screen up directly via screen_refs (luaA_screen_get_by_monitor);
+		 * do not gate on globalconf.screens.tab, which somewm only populates
+		 * transiently and is null at layer-commit time. */
 		lua_State *L = globalconf_get_lua_State();
-		if (L && globalconf.screens.tab) {
+		if (L) {
 			screen_t *screen = luaA_screen_get_by_monitor(L, m);
 			if (screen) {
 				int prev[4] = {
