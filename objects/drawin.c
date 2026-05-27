@@ -1259,8 +1259,17 @@ drawin_moveresize(lua_State *L, int udx, int x, int y, int width, int height)
 void
 luaA_drawin_set_geometry(lua_State *L, drawin_t *drawin, int x, int y, int width, int height)
 {
-	/* Push drawin to stack, then call drawin_moveresize with stack index */
+	/* Push drawin to stack, then call drawin_moveresize with stack index.
+	 * An unrealized drawin (e.g. a wibar hidden mid-reattach, still tracked in
+	 * the merged solve but no longer in the object registry) pushes nil; skip it
+	 * rather than passing nil to drawin_moveresize, which errors and -- from
+	 * clay_apply_all -- escalates to luaA_panic. It gets its geometry from the
+	 * next solve once it is realized again. */
 	luaA_object_push(L, drawin);
+	if (lua_isnil(L, -1)) {
+		lua_pop(L, 1);
+		return;
+	}
 	drawin_moveresize(L, -1, x, y, width, height);
 	lua_pop(L, 1);
 }
