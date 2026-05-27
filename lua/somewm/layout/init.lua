@@ -480,35 +480,51 @@ function layout.drawin(d, props)
     return { _type = "drawin", drawin = d, props = props or {} }
 end
 
---- Convenience: turn a list of `{wb, size, clay_gaps}` entries into
--- drawin leaves sized along `axis` ("width" or "height"). When an entry
--- has `clay_gaps = true` and `gap > 0`, the drawin is wrapped in a
--- container that pads by `gap` and fills the perpendicular axis.
+--- Convenience: turn a list of wibar entries into drawin leaves. `axis`
+-- ("width" or "height") is the thickness axis (across the edge); the
+-- perpendicular axis is the length (along the edge). A stretched entry (the
+-- default) leaves the length axis unset so the drawin fills the edge. A
+-- non-stretched entry fixes the length to `entry.length` and aligns the bar
+-- along the edge per `entry.align` (the wibar align string, mapped to the
+-- engine's align_x/align_y by first letter). When `clay_gaps` is set and
+-- `gap > 0`, the drawin is also wrapped to pad by `gap`.
 function layout.drawins(list, axis, gap)
     local result = {}
     if not list then return result end
 
+    local lenaxis = (axis == "height") and "width" or "height"
+
     for _, entry in ipairs(list) do
         local size_props = {}
         size_props[axis] = entry.size
+        -- stretch is stored falsy (nil or false) for a non-stretched bar.
+        local fixed_len = (not entry.stretch) and entry.length or nil
+        if fixed_len then size_props[lenaxis] = fixed_len end
         if entry.id then size_props.id = entry.id end  -- "wibar.<pos>"
         local node = layout.drawin(entry.wb.drawin, size_props)
 
         -- A caller (compose_screen) may attach a pre-built widget subtree so
         -- the drawin emits as a container holding its widgets as nodes. Graft
-        -- onto the drawin node itself, inside any clay_gaps wrapper below.
+        -- onto the drawin node itself, inside any wrapper below.
         if entry.children then
             node.children = entry.children
         end
 
-        if entry.clay_gaps and gap and gap > 0 then
-            local wrap = { padding = gap, node }
-            if axis == "height" then
-                wrap.width = layout.percent(100)
-            else
-                wrap.height = layout.percent(100)
+        -- Wrap in a full-length track when the drawin needs padding (clay_gaps)
+        -- or alignment (a non-stretched bar positioned left/center/right along
+        -- the edge). The wrapper spans the length axis; a stretched drawin fills
+        -- it, a fixed-length one is aligned within it.
+        local pad = (entry.clay_gaps and gap and gap > 0) and gap or nil
+        if pad or fixed_len then
+            local wrap = { node, grow = false }
+            wrap[lenaxis] = layout.percent(100)
+            if pad then wrap.padding = pad end
+            if fixed_len then
+                -- Horizontal bar: position along x (the row's main axis).
+                -- Vertical bar: position along y (the row's cross axis).
+                wrap.align = (axis == "height")
+                    and { x = entry.align } or { y = entry.align }
             end
-            wrap.grow = false
             node = layout.row(wrap)
         end
 
@@ -965,6 +981,18 @@ local function apply_top_level_avoid(root, parent_w, parent_h)
                 -- top-left so the client overlaps as little as possible.
                 cp.x = fallback.x
                 cp.y = fallback.y
+            else
+                -- No free area at all (obstacles cover the entire parent).
+                -- Match main's no_overlap fallback: snap a fully offscreen
+                -- request back to the parent origin; leave an already
+                -- intersecting request alone so a covered client doesn't move
+                -- pointlessly.
+                local parent  = { x = 0,  y = 0,  width = parent_w, height = parent_h }
+                local request = { x = px, y = py, width = cw,       height = ch }
+                if not rect.area_intersect_area(request, parent) then
+                    cp.x = 0
+                    cp.y = 0
+                end
             end
         end
     end

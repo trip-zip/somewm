@@ -28,7 +28,6 @@ local ipairs = ipairs
 local error = error
 local wibox = require("wibox")
 local beautiful = require("beautiful")
-local placement = require("awful.placement")
 local gtable = require("gears.table")
 
 local function get_screen(s)
@@ -239,28 +238,6 @@ local function get_margins(w)
     return margins
 end
 
--- Create the placement function
-local function gen_placement(position, align, stretch)
-    local maximize = (position == "right" or position == "left") and
-        "maximize_vertically" or "maximize_horizontally"
-
-    local corner = nil
-
-    if align ~= "centered" then
-        if position == "right" or position == "left" then
-            corner = placement[align .. "_" .. position]
-                or placement[align_map[align] .. "_" .. position]
-        else
-            corner = placement[position .. "_" .. align]
-                or placement[position .. "_" .. align_map[align]]
-        end
-    end
-
-    corner = corner or placement[position]
-
-    return corner + (stretch and placement[maximize] or nil)
-end
-
 -- Register wibar for Clay screen-level composition. compose_screen runs
 -- synchronously so the wibar's position is set on the first frame
 -- without a startup flash; awful.layout.arrange is also scheduled so
@@ -275,7 +252,14 @@ local function clay_register(wb, position)
         local is_horiz = (position == "top" or position == "bottom")
         s._clay_drawins[wb] = {
             position = position,
+            -- size is the bar's thickness (across the edge); length is how far
+            -- it runs along the edge. A non-stretched bar keeps its length and
+            -- is positioned along the edge by align; a stretched one (default)
+            -- ignores both and fills the edge.
             size = is_horiz and wb.height or wb.width,
+            length = is_horiz and wb.width or wb.height,
+            stretch = wb._stretch,
+            align = wb._private.align,
             clay_gaps = wb._private.clay_gaps or false,
         }
     else

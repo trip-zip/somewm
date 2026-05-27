@@ -57,8 +57,9 @@ local function collect_wibars(s)
 
     for wb, info in pairs(drawins) do
         has_any = true
-        local entry = { wb = wb, size = info.size, clay_gaps = info.clay_gaps,
-            id = "wibar." .. info.position }
+        local entry = { wb = wb, size = info.size, length = info.length,
+            stretch = info.stretch, align = info.align,
+            clay_gaps = info.clay_gaps, id = "wibar." .. info.position }
         local sub = wibar_widget_subtree(wb)
         if sub then entry.children = { sub } end
         if info.position == "top" then
@@ -161,7 +162,8 @@ local function descriptor_to_root(descriptor, p)
     local wa = (descriptor.bounds_source == "geometry")
         and p.geometry or p.workarea
     local gap = descriptor.no_gap and 0 or p.useless_gap
-    local t = p.tag or capi.screen[p.screen].selected_tag
+    local s = capi.screen[p.screen]
+    local t = p.tag or s.selected_tag
     if #p.clients == 0 then return nil end
 
     local tree
@@ -171,7 +173,7 @@ local function descriptor_to_root(descriptor, p)
             props     = t,
             children  = p.clients,
             leaf_kind = "client",
-            screen    = p.screen,
+            screen    = s,
             params    = p,
         })
     elseif type(descriptor.body) == "function" then
@@ -399,7 +401,15 @@ function clay.compose_screen(s)
     local workarea_children, fullscreen_graft, merged = nil, nil, false
     local framed_root = nil
     local suit = awful_layout().get(s)
-    if suit and suit.descriptor and suit.descriptor.merged_capable then
+    -- A merge-capable layout owns the whole screen solve (wibars + workarea +
+    -- clients); a non-merge-capable one solves only the wibars + workarea here
+    -- and leaves the clients to its own bespoke arrange. Either way the screen
+    -- solve's wibar/workarea geometry is committed immediately (no_apply below):
+    -- deferring it would let the bespoke arrange's begin_layout wipe the pending
+    -- wibar results before they commit, leaving the bar invisible on cold start.
+    local merge_capable = (suit and suit.descriptor
+                           and suit.descriptor.merged_capable) or false
+    if merge_capable then
         local p = awful_layout().parameters(nil, s)
         local root = descriptor_to_root(suit.descriptor, p)
         if root then
@@ -479,7 +489,7 @@ function clay.compose_screen(s)
         source = merged and "merged" or "compose_screen",
         width = geo.width, height = geo.height,
         offset_x = geo.x, offset_y = geo.y,
-        no_apply = (not merged) or debug_resolve,
+        no_apply = debug_resolve,
         -- debug_only also tells C to skip has_pending, so the deferred
         -- clay_apply_all does not re-apply this pass's (unchanged) geometry.
         debug_only = debug_resolve,
@@ -531,8 +541,7 @@ function clay.compose_screen(s)
     -- relayout re-runs this solve via the wibar's layout_changed -> arrange
     -- hook), not on whether clients merged this cycle: the wibar widget boxes
     -- are solved here either way, even with no tiled clients.
-    s._clay_merge_capable     = (suit and suit.descriptor
-                                 and suit.descriptor.merged_capable) or false
+    s._clay_merge_capable     = merge_capable
 
     return merged
 end
