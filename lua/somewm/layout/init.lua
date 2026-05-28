@@ -987,9 +987,8 @@ local function apply_top_level_avoid(root, parent_w, parent_h)
                 -- request back to the parent origin; leave an already
                 -- intersecting request alone so a covered client doesn't move
                 -- pointlessly.
-                local parent  = { x = 0,  y = 0,  width = parent_w, height = parent_h }
-                local request = { x = px, y = py, width = cw,       height = ch }
-                if not rect.area_intersect_area(request, parent) then
+                if px + cw <= 0 or py + ch <= 0
+                    or px >= parent_w or py >= parent_h then
                     cp.x = 0
                     cp.y = 0
                 end
