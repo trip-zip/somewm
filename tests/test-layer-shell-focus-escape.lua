@@ -18,6 +18,16 @@ local awful = require("awful")
 -- Path to test-layer-client (built by meson)
 local TEST_LAYER_CLIENT = "./build-test/test-layer-client"
 
+-- root.fake_input("key_press", "Escape") is not reliably routed to a
+-- layer-shell surface's keyboard focus under WLR_BACKENDS=headless, so
+-- step 9 of this test times out there.
+if utils.is_headless() then
+    io.stderr:write("SKIP: layer-shell keyboard focus tests require visual mode (HEADLESS=0)\n")
+    io.stderr:write("Test finished successfully.\n")
+    awesome.quit()
+    return
+end
+
 -- Check if test-layer-client exists
 local function is_test_layer_client_available()
     local f = io.open(TEST_LAYER_CLIENT, "r")

@@ -141,7 +141,7 @@ somewm 2.0 introduces [Clay](https://github.com/nicbarker/clay) as the universal
 | Pass | Where | Owner |
 |---|---|---|
 | Screen composition (wibars + workarea) | `compose_screen` in `lua/awful/layout/clay/init.lua` | Lua |
-| Tiled-client layout (tile / fair / max / corner / spiral / spiral.dwindle / floating) | `awful.layout.clay.*` presets, all using `body_signature = "context"` descriptors. `floating` emits a stack of self-positioned clients (no-op solve for positioning + bw2 round-trip preservation). `max.fullscreen` drives its own `layout.solve` at `screen.geometry` bounds because the tag-suit adapter solves against the workarea. `magnifier` is a deliberate bespoke exception (two `layout.solve` passes for overlap; documented in `lua/awful/layout/clay/magnifier.lua`). | Lua |
+| Tiled-client layout (tile / fair / max / corner / spiral / spiral.dwindle / floating) | `awful.layout.clay.*` presets, all using `body_signature = "context"` descriptors. `floating` emits a stack of self-positioned clients (no-op solve for positioning + bw2 round-trip preservation). `max.fullscreen` drives its own `layout.solve` at `screen.geometry` bounds because the tag-suit adapter solves against the workarea. `magnifier` is a deliberate bespoke exception (one `layout.solve` pass; the non-focused clients tile in a column that fills the workarea and the focused client overlays them via a floating-to-root node; documented in `lua/awful/layout/clay/magnifier.lua`). | Lua |
 | Per-client frame (4 borders + 4 titlebars + surface + shadow) | `clay_apply_client_frame()` in `clay_layout.c` | C |
 | Widget hierarchy (wibox.layout.*) | All wibox layouts route through Clay. `flex` / `fixed` use flex distribution including `spacing_widget` (interleaved spacer leaves). `align` covers all three expand modes via Clay: `inside` / `outside` flex-grow; `none` is `layout.stack` with absolute child positions. `ratio` default uses flex distribution; non-default strategies (justify/center/spacing/left/right) and `spacing_widget` compute slot positions in Lua (void redistribution) then emit via `layout.stack` with absolute child positions. `stack` (z-order with offsets), `manual` (user-supplied points), and `grid` (cell math) all emit via `layout.stack`. | Lua via `somewm.layout.solve` |
 | Container layout (wibox.container.{margin, place, background, constraint, border}) | each container's `:layout` calls `somewm.layout.solve`; `border` is a 9-slice container that emits via `layout.stack` with absolute child positions for the corners, edges, fill, and inner widget. | Lua via `somewm.layout.solve` |
@@ -184,7 +184,7 @@ Naming convention: public surfaces describe what they DO (`layout.row`, `placeme
 
 ### Workarea: single source of truth
 
-`screen.workarea` is computed exclusively by `clay.compose_screen`. The legacy strut-based path (`screen_update_workarea` in `objects/screen.c`) is gone. `wb:struts(...)` is a no-op deprecation; wibar position contributes to workarea via Clay's column / padding tree. Layer-shell exclusive zones reach `compose_screen` via `screen->layer_exclusive`, populated by `arrangelayers()` after `clay_apply_layer_surface()` walks the layer-surface list.
+`screen.workarea` is computed exclusively by `clay.compose_screen`. The legacy strut-based path (`screen_update_workarea` in `objects/screen.c`) is gone. `wb:struts(...)`, `client:struts(...)`, and `drawin:struts(...)` are all no-op deprecations on this path: each method still accepts and returns a strut table (so existing code does not error) but the stored values never reach the workarea computation. For reserved screen space, attach an external panel via the layer-shell protocol (`zwlr_layer_surface_v1`; exclusive zone + anchor handled by `clay_apply_layer_surface()` and reaching `compose_screen` through `screen->layer_exclusive`, populated by `arrangelayers()` after the layer-surface list walk) or place your own bar via `awful.wibar`, whose position contributes to the workarea via Clay's column / padding tree.
 
 ### Custom layouts: `arrange(p)` still supported
 
@@ -219,6 +219,10 @@ Two layout paths build their Clay tree from C, not via a Lua descriptor through 
 | Layer-shell anchoring | `clay_apply_layer_surface()` (`clay_layout.c`) | Battle-tested anchor / exclusive-zone math. A Lua port would expose a new layer-surface state surface (margin, desired_size, exclusive_zone modes) for a feature no current consumer asks for, plus a C↔Lua roundtrip per layer-surface commit. Net +LOC across two languages for partial substrate uniformity. |
 
 Both trees are portable to Lua descriptors if a consumer arises (theming hooks, plugin-driven decorations, layer-surface rules that depend on geometry). The substrate (`somewm.layout.solve` plus the engine wrappers in `_somewm_clay.*`) supports it; only the descriptor + glue need to be added.
+
+### Flex distribution rounding
+
+`wibox.layout.flex` and `wibox.layout.ratio` (default strategy) hand equal-share distribution to Clay's grow. Clay returns float widths and positions; the Lua boundary floors each rect independently in `layout.solve` (`lua/somewm/layout/init.lua:1243`). AwesomeWM's `flex` accumulates the share as a float and rounds at each child boundary, so widths sum exactly to the parent extent. When the parent extent does not divide evenly by the child count, the Clay path can leave a one or two pixel slit (between two children, at the trailing edge, or both); when it divides evenly the output is identical. On typical wibar heights the slit is too thin to read. Unit tests pass either way because busted runs the pure-Lua reference solver in `somewm.layout` (`lua/somewm/layout/init.lua:1118`), which uses AwesomeWM-style cumulative rounding.
 
 ---
 

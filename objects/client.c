@@ -1766,6 +1766,26 @@ client_set_class_instance(lua_State *L, int cidx, const char *class, const char 
     luaA_object_emit_signal(L, cidx, "property::instance", 0);
 }
 
+/** Return true if c is still in globalconf.clients.
+ *
+ * The scene graph and various caches can hold raw client_t pointers across
+ * a client_unmanage. Call this before any access that assumes c is still
+ * live (reading c->border_width, calling client_resize, etc.).
+ *
+ * \param c The client pointer to check (may be NULL).
+ * \return true iff c is non-NULL and present in globalconf.clients.
+ */
+bool
+client_is_managed(client_t *c)
+{
+    if (!c)
+        return false;
+    foreach(elem, globalconf.clients)
+        if (*elem == c)
+            return true;
+    return false;
+}
+
 /** Returns true if a client is tagged with one of the active tags.
  * \param c The client to check.
  * \return true if the client is visible, false otherwise.
