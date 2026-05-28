@@ -2683,10 +2683,19 @@ static int num_extra_search_paths = 0;
 
 /* Custom config file path - set via -c/--config flag */
 static const char *custom_confpath = NULL;
+/* Set when user passed -c NONE / --config NONE: skip user config search and
+ * load only the bundled default somewmrc.lua (akin to `nvim -u NONE`). */
+static bool force_default_config = false;
 
 void
 luaA_set_confpath(const char *path)
 {
+	if (path && strcmp(path, "NONE") == 0) {
+		force_default_config = true;
+		custom_confpath = NULL;
+		return;
+	}
+	force_default_config = false;
 	custom_confpath = path;
 }
 
@@ -4414,6 +4423,12 @@ luaA_loadrc(void)
 	/* If custom config path was specified via -c flag, use only that */
 	if (custom_confpath) {
 		config_paths[path_count++] = custom_confpath;
+		config_paths[path_count] = NULL;
+	} else if (force_default_config) {
+		/* -c NONE: skip user config entirely, load only the bundled default.
+		 * Mirrors `nvim -u NONE` for quick "is it my config?" debugging. */
+		config_paths[path_count++] = DATADIR "/somewm/somewmrc.lua";
+		config_paths[path_count++] = "./somewmrc.lua";  /* dev fallback */
 		config_paths[path_count] = NULL;
 	} else {
 		/* Build config search path following AwesomeWM pattern:
