@@ -1826,6 +1826,7 @@ usage:
 	    "      --verbose      Enable info-level logging (more output)\n"
 	    "  -d, --debug        Enable debug logging (maximum output)\n"
 	    "  -c, --config FILE  Use specified config file (AwesomeWM compatible)\n"
+	    "                     Pass NONE to skip user config and load the bundled default\n"
 	    "  -L, --search DIR   Add directory to Lua module search path\n"
 	    "  -s, --startup CMD  Run command after startup\n"
 	    "  -k, --check CONFIG       Check config for Wayland compatibility issues\n"
