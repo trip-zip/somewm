@@ -11,7 +11,8 @@ index b382a97e..f1aa61d1 100644
     local is_flags = GObject.Type.is_a(gtype, GObject.Type.FLAGS)
     local enum_component = component.create(
        gtype, is_flags and enum.bitflags_mt or enum.enum_mt, name)
-    local type_class = GObject.TypeClass.ref(gtype)
+-   local type_class = GObject.TypeClass.get(gtype)
++   local type_class = GObject.TypeClass.ref(gtype)
     local enum_class = core.record.cast(
        type_class, is_flags and GObject.FlagsClass or GObject.EnumClass)
 -   for i = 0, enum_class.n_values - 1 do
