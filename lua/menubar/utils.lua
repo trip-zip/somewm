@@ -115,7 +115,8 @@ do
 end
 
 local all_icon_sizes = {
-    'scalable',
+    -- 'scalable', -- There is no Pixbuf loader for SVG shipped with someWM
+    '256x256',
     '128x128',
     '96x96',
     '72x72',

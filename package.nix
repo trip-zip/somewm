@@ -39,7 +39,13 @@ let
     ps:
     with ps;
     [
-      lgi
+      # nixpkgs lgi does not yet carry the fix for GLib 2.88's enum-class
+      # introspection change (lgi-devs/lgi#352), so loading any namespace with
+      # enums crashes ("lgi.record expected, got table"). Patch it here until
+      # the fix is released / lands in nixpkgs. No-op on GLib < 2.87.
+      (lgi.overrideAttrs (old: {
+        patches = (old.patches or [ ]) ++ [ ./lgi-glib-2.88-enum.patch ];
+      }))
       ldbus
     ]
     ++ (extraLuaPackages ps)

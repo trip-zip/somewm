@@ -222,7 +222,13 @@ info_read_field(const char *state_dir, const char *key, char *out, size_t cap)
 			size_t len = strlen(line);
 			if (len && line[len - 1] == '\n')
 				line[len - 1] = '\0';
-			snprintf(out, cap, "%s", line + klen + 1);
+			/* value is intentionally truncated to fit `out` */
+			const char *val = line + klen + 1;
+			size_t n = strlen(val);
+			if (n >= cap)
+				n = cap - 1;
+			memcpy(out, val, n);
+			out[n] = '\0';
 			found = 0;
 			break;
 		}
@@ -285,7 +291,11 @@ try_connect_socket(const char *sock_path)
 		return -1;
 	struct sockaddr_un addr = {0};
 	addr.sun_family = AF_UNIX;
-	snprintf(addr.sun_path, sizeof(addr.sun_path), "%s", sock_path);
+	if ((size_t)snprintf(addr.sun_path, sizeof(addr.sun_path), "%s",
+	                     sock_path) >= sizeof(addr.sun_path)) {
+		close(s);
+		return -1;
+	}
 	if (connect(s, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
 		close(s);
 		return -1;
@@ -509,7 +519,7 @@ test_stop_named(const char *name)
 		return 6;
 	}
 	pid_t pid = read_pidfile(state_dir);
-	char sock_path[PATH_MAX];
+	char sock_path[PATH_MAX + 16];
 	socket_path_for(state_dir, sock_path, sizeof(sock_path));
 	if (pid > 0 && pid_alive(pid)) {
 		if (kill_and_wait(pid, sock_path) < 0) {
@@ -816,7 +826,7 @@ load_instance_summary(const char *name, struct instance_summary *out)
 	if (info_read_field(state_dir, "config_path", out->config,
 	                    sizeof(out->config)) < 0)
 		out->config[0] = '\0';
-	char sock_path[PATH_MAX];
+	char sock_path[PATH_MAX + 16];
 	socket_path_for(state_dir, sock_path, sizeof(sock_path));
 	int s = try_connect_socket(sock_path);
 	out->alive = (s >= 0);
