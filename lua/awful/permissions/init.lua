@@ -316,10 +316,23 @@ function permissions.tag(c, t, hints) --luacheck: no unused
 
     if not t then
         if c.transient_for and not (hints and hints.reason == "screen") then
+            -- transient_for.screen can be nil while the parent is still being
+            -- managed (notably during hot-reload re-management). Capture the
+            -- fallback BEFORE c.screen is reassigned (the assignment would
+            -- otherwise clobber the client's own screen), then guard every
+            -- index. Indexing transient_for.screen unconditionally crashes
+            -- the request::tag handler.
+            local fallback_screen = c.transient_for.screen or c.screen
             c.screen = c.transient_for.screen
             if not c.sticky then
                 local tags = c.transient_for:tags()
-                c:tags(#tags > 0 and tags or c.transient_for.screen.selected_tags)
+                if #tags > 0 then
+                    c:tags(tags)
+                elseif fallback_screen then
+                    c:tags(fallback_screen.selected_tags)
+                else
+                    c:to_selected_tags()
+                end
             end
         else
             c:to_selected_tags()

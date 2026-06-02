@@ -58,4 +58,60 @@ describe("awful.permissions.client_geometry_requests", function()
     end)
 end)
 
+describe("awful.permissions.tag", function()
+    package.loaded["awful.client"] = {}
+    package.loaded["awful.layout"] = {}
+    package.loaded["awful.screen"] = {}
+    package.loaded["awful.tag"] = {}
+    package.loaded["gears.timer"] = {}
+    _G.client = {
+        connect_signal = function() end,
+        get = function() return {} end,
+    }
+    _G.screen = { connect_signal = function() end }
+    _G.tag = { connect_signal = function() end }
+    _G.awesome = {
+        api_level      = 4,
+        connect_signal = function() end,
+    }
+    _G.drawin = {
+        set_index_miss_handler    = function() end,
+        set_newindex_miss_handler = function() end,
+    }
+
+    local permissions = require("awful.permissions")
+
+    -- Regression for issue #575: a transient client requests a tag while
+    -- its parent (transient_for) has no screen assigned yet and no tags.
+    -- The handler must not dereference the parent's nil screen.
+    it("falls back instead of crashing when transient_for.screen is nil", function()
+        local parent = { screen = nil, sticky = false }
+        function parent:tags() return {} end
+
+        local fellback = false
+        local c = { screen = nil, sticky = false, transient_for = parent }
+        function c:tags() return {} end
+        function c:to_selected_tags() fellback = true end
+
+        assert.has_no.errors(function()
+            permissions.tag(c, nil, {})
+        end)
+        assert.is_true(fellback)
+    end)
+
+    it("inherits the parent's tags when the parent has them", function()
+        local parent_tags = { {}, {} }
+        local parent = { screen = nil, sticky = false }
+        function parent:tags() return parent_tags end
+
+        local applied
+        local c = { screen = nil, sticky = false, transient_for = parent }
+        function c:tags(t) if t then applied = t end return {} end
+        function c:to_selected_tags() end
+
+        permissions.tag(c, nil, {})
+        assert.are.equal(parent_tags, applied)
+    end)
+end)
+
 -- vim: filetype=lua:expandtab:shiftwidth=4:tabstop=8:softtabstop=4:textwidth=80
