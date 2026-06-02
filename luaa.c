@@ -42,6 +42,7 @@
 #include "objects/window.h"
 #include "dbus.h"
 #include "shadow.h"
+#include "event_queue.h"
 #include "pam_auth.h"
 
 /* Forward declaration for Lua state recreation (used by config timeout handler) */
@@ -64,6 +65,10 @@ static lua_State *luaA_create_fresh_state(void);
 /* Includes merged from objects/awesome.c */
 #include "systray.h"
 #include "somewm_api.h"
+#include "somewm_internal.h"
+#include "protocols.h"
+#include "input.h"
+#include "window.h"
 #include "color.h"
 #include <xkbcommon/xkbcommon.h>
 #include <wayland-server-core.h>
@@ -1186,6 +1191,16 @@ luaA_awesome_set_keyboard_setting(lua_State *L)
 		free(globalconf.keyboard.xkb_options);
 		globalconf.keyboard.xkb_options = strdup(val);
 		rebuild_keyboard_keymap();
+	} else if (strcmp(key, "xkb_model") == 0) {
+		const char *val = lua_isnil(L, 2) ? "" : luaL_checkstring(L, 2);
+		free(globalconf.keyboard.xkb_model);
+		globalconf.keyboard.xkb_model = strdup(val);
+		rebuild_keyboard_keymap();
+	} else if (strcmp(key, "xkb_rules") == 0) {
+		const char *val = lua_isnil(L, 2) ? "" : luaL_checkstring(L, 2);
+		free(globalconf.keyboard.xkb_rules);
+		globalconf.keyboard.xkb_rules = strdup(val);
+		rebuild_keyboard_keymap();
 	} else if (strcmp(key, "numlock") == 0) {
 		some_set_numlock(lua_toboolean(L, 2));
 	} else {
@@ -2157,7 +2172,7 @@ luaA_awesome_index(lua_State *L)
 	}
 
 	if (A_STREQ(key, "idle_inhibited")) {
-		lua_pushboolean(L, some_is_idle_inhibited(NULL) || lua_idle_inhibited);
+		lua_pushboolean(L, some_is_idle_inhibited() || lua_idle_inhibited);
 		return 1;
 	}
 
@@ -2229,7 +2244,7 @@ luaA_awesome_newindex(lua_State *L)
 
 	if (A_STREQ(key, "idle_inhibit")) {
 		lua_idle_inhibited = lua_toboolean(L, 3);
-		some_recompute_idle_inhibit(NULL);
+		some_recompute_idle_inhibit();
 		return 0;
 	}
 
@@ -2668,10 +2683,19 @@ static int num_extra_search_paths = 0;
 
 /* Custom config file path - set via -c/--config flag */
 static const char *custom_confpath = NULL;
+/* Set when user passed -c NONE / --config NONE: skip user config search and
+ * load only the bundled default somewmrc.lua (akin to `nvim -u NONE`). */
+static bool force_default_config = false;
 
 void
 luaA_set_confpath(const char *path)
 {
+	if (path && strcmp(path, "NONE") == 0) {
+		force_default_config = true;
+		custom_confpath = NULL;
+		return;
+	}
+	force_default_config = false;
 	custom_confpath = path;
 }
 
@@ -4316,7 +4340,7 @@ luaA_loadrc(void)
 	char xdg_config_path[512];
 	const char *xdg_config_home;
 	const char *home;
-	const char *config_paths[8];
+	const char *config_paths[8] = {NULL};
 	int path_count = 0;
 	volatile int loaded = 0;  /* volatile: may be modified across siglongjmp */
 	int load_result;
@@ -4399,6 +4423,12 @@ luaA_loadrc(void)
 	/* If custom config path was specified via -c flag, use only that */
 	if (custom_confpath) {
 		config_paths[path_count++] = custom_confpath;
+		config_paths[path_count] = NULL;
+	} else if (force_default_config) {
+		/* -c NONE: skip user config entirely, load only the bundled default.
+		 * Mirrors `nvim -u NONE` for quick "is it my config?" debugging. */
+		config_paths[path_count++] = DATADIR "/somewm/somewmrc.lua";
+		config_paths[path_count++] = "./somewmrc.lua";  /* dev fallback */
 		config_paths[path_count] = NULL;
 	} else {
 		/* Build config search path following AwesomeWM pattern:
@@ -5171,6 +5201,12 @@ luaA_hot_reload(void)
 	/* Remove stale GLib sources and bump Lgi closure generation. */
 	luaA_cleanup_stale_glib_sources("hot-reload");
 
+	/* Discard any events queued against the old state. We cannot
+	 * unref them: the old registry goes with the leaked state, and
+	 * luaL_unref on the new state would free unrelated slots. The
+	 * pending events' registry refs are leaked along with the state. */
+	some_event_queue_reset();
+
 	/* Leak the old Lua state. lua_close() is unsafe because client
 	 * snapshots, screens, and other C objects still reference Lua
 	 * userdata memory. GC is kept frozen so Lgi closures retain
@@ -5191,6 +5227,18 @@ luaA_hot_reload(void)
 		/* Try to gracefully quit */
 		some_compositor_quit();
 		goto cleanup;
+	}
+
+	/* Any events queued between the pre-state-swap reset and now would
+	 * carry registry refs into the old (leaked) state. Draining them
+	 * against the new state would index unrelated slots. In practice
+	 * nothing should queue here (wlroots listeners and GLib sources were
+	 * dropped earlier), but if something does, drop the stale events
+	 * loudly instead of silently corrupting the new state. */
+	if (some_event_queue_pending()) {
+		warn("hot-reload: events queued during state swap; "
+		     "discarding stale refs");
+		some_event_queue_reset();
 	}
 
 	/* ================================================================
@@ -5379,13 +5427,17 @@ luaA_hot_reload(void)
 				num_clients * sizeof(client_t *));
 	}
 
+	/* Two passes are required: Phase E nulled c->screen for every
+	 * client. If a transient is iterated before its parent, the
+	 * transient's request::manage signal chain hits permissions.tag,
+	 * which dereferences c.transient_for.screen.* on a still-NULL
+	 * parent screen. Assign all screens first, then emit signals. */
 	for (i = 0; i < num_clients; i++) {
 		client_t *c = globalconf.clients.tab[i];
 
 		if (!client_snaps[i].was_mapped)
 			continue;
 
-		/* Assign client to first screen if not already set */
 		if (!c->screen && globalconf.screens.len > 0) {
 			int si = client_snaps[i].screen_index;
 			if (si >= 0 && si < globalconf.screens.len)
@@ -5393,15 +5445,22 @@ luaA_hot_reload(void)
 			else
 				c->screen = globalconf.screens.tab[0];
 		}
+	}
+
+	for (i = 0; i < num_clients; i++) {
+		client_t *c = globalconf.clients.tab[i];
+
+		if (!client_snaps[i].was_mapped)
+			continue;
 
 		luaA_object_push(L, c);
 
-		/* Emit property signals */
-		luaA_object_emit_signal(L, -1, "property::x", 0);
-		luaA_object_emit_signal(L, -1, "property::y", 0);
-		luaA_object_emit_signal(L, -1, "property::width", 0);
-		luaA_object_emit_signal(L, -1, "property::height", 0);
-		luaA_object_emit_signal(L, -1, "property::geometry", 0);
+		/* Emit property signals (queued for frame boundary) */
+		some_event_queue_signal0(L, -1, SIG_PROPERTY_X);
+		some_event_queue_signal0(L, -1, SIG_PROPERTY_Y);
+		some_event_queue_signal0(L, -1, SIG_PROPERTY_WIDTH);
+		some_event_queue_signal0(L, -1, SIG_PROPERTY_HEIGHT);
+		some_event_queue_signal0(L, -1, SIG_PROPERTY_GEOMETRY);
 		luaA_object_emit_signal(L, -1, "property::name", 0);
 		luaA_object_emit_signal(L, -1, "property::type", 0);
 		luaA_object_emit_signal(L, -1, "property::screen", 0);
@@ -5410,7 +5469,6 @@ luaA_hot_reload(void)
 		lua_pushliteral(L, "restart");
 		lua_newtable(L);
 		luaA_object_emit_signal(L, -3, "request::manage", 2);
-		luaA_object_emit_signal(L, -1, "manage", 0);
 
 		lua_pop(L, 1);
 	}
@@ -5472,7 +5530,7 @@ luaA_cleanup(void)
 		/* Clean up lock/idle state before closing Lua */
 		luaA_awesome_clear_all_idle_timeouts(globalconf_L);
 		lua_idle_inhibited = false;
-		some_recompute_idle_inhibit(NULL);
+		some_recompute_idle_inhibit();
 		luaA_awesome_clear_lock_surface(globalconf_L);
 		luaA_awesome_clear_lock_covers(globalconf_L);
 

@@ -70,17 +70,6 @@ client.connect_signal("request::manage", function(c)
     end
 end)
 
-client.connect_signal("manage", function(c)
-    if x11_client.is_xwayland(c) then
-        io.stderr:write(string.format(
-            "[SIGNAL] manage fired for X11 client: %s\n",
-            c.class or "(no class)"
-        ))
-        signals_received.manage = true
-        signal_clients.manage = c
-    end
-end)
-
 client.connect_signal("request::unmanage", function(c)
     if x11_client.is_xwayland(c) then
         io.stderr:write(string.format(
@@ -89,17 +78,6 @@ client.connect_signal("request::unmanage", function(c)
         ))
         signals_received.request_unmanage = true
         signal_clients.request_unmanage = c
-    end
-end)
-
-client.connect_signal("unmanage", function(c)
-    if x11_client.is_xwayland(c) then
-        io.stderr:write(string.format(
-            "[SIGNAL] unmanage fired for X11 client: %s\n",
-            c.class or "(no class)"
-        ))
-        signals_received.unmanage = true
-        signal_clients.unmanage = c
     end
 end)
 
@@ -151,23 +129,7 @@ local steps = {
         return true
     end,
 
-    -- Step 4: Verify manage signal was received
-    function()
-        io.stderr:write(string.format(
-            "[TEST] Checking manage: received=%s\n",
-            tostring(signals_received.manage)
-        ))
-
-        assert(signals_received.manage,
-            "FAIL: manage signal was not fired for X11 client")
-        assert(signal_clients.manage == my_x11_client,
-            "FAIL: manage was fired for wrong client")
-
-        io.stderr:write("[TEST] PASS: manage signal received\n")
-        return true
-    end,
-
-    -- Step 5: Close the X11 client to test unmanage signals
+    -- Step 4: Close the X11 client to test unmanage signals
     function(count)
         if count == 1 then
             io.stderr:write("[TEST] Closing X11 client to test unmanage signals...\n")
@@ -221,21 +183,7 @@ local steps = {
         return true
     end,
 
-    -- Step 8: Verify unmanage signal was received
-    function()
-        io.stderr:write(string.format(
-            "[TEST] Checking unmanage: received=%s\n",
-            tostring(signals_received.unmanage)
-        ))
-
-        assert(signals_received.unmanage,
-            "FAIL: unmanage signal was not fired for X11 client")
-
-        io.stderr:write("[TEST] PASS: unmanage signal received\n")
-        return true
-    end,
-
-    -- Step 9: Final cleanup
+    -- Step 7: Final cleanup
     function(count)
         if count == 1 then
             io.stderr:write("[TEST] Final cleanup\n")

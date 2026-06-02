@@ -32,3 +32,10 @@ option(
   value: false,
   description: 'Enable benchmark instrumentation counters',
 )
+
+option(
+  'lua_pkg',
+  type: 'string',
+  value: '',
+  description: 'Force a specific Lua pkg-config name (e.g. lua5.5, luajit). Empty = autodetect (LuaJIT > 5.5 > 5.4 > ... > 5.1).',
+)

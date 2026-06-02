@@ -32,6 +32,7 @@
 #include "somewm.h"
 #include "somewm_api.h"
 #include "window.h"
+#include "event_queue.h"
 #include "monitor.h"
 #include "protocols.h"
 #include "input.h"
@@ -76,40 +77,14 @@ typedef struct {
 } Popup;
 
 /* forward declarations */
-void applybounds(Client *c, struct wlr_box *bbox);
-void arrange(Monitor *m);
-unsigned int get_border_width(void);
-const float *get_focuscolor(void);
-const float *get_bordercolor(void);
-const float *get_urgentcolor(void);
-void initialcommitnotify(struct wl_listener *listener, void *data);
-void commitnotify(struct wl_listener *listener, void *data);
 void commitpopup(struct wl_listener *listener, void *data);
 void createdecoration(struct wl_listener *listener, void *data);
-void createnotify(struct wl_listener *listener, void *data);
 void createpopup(struct wl_listener *listener, void *data);
 void destroydecoration(struct wl_listener *listener, void *data);
-void destroynotify(struct wl_listener *listener, void *data);
 void destroypopup(struct wl_listener *listener, void *data);
-void fullscreennotify(struct wl_listener *listener, void *data);
-void killclient(const Arg *arg);
-void mapnotify(struct wl_listener *listener, void *data);
-void maximizenotify(struct wl_listener *listener, void *data);
 void popup_unconstrain(Popup *p);
 void repositionpopup(struct wl_listener *listener, void *data);
 void requestdecorationmode(struct wl_listener *listener, void *data);
-void resize(Client *c, struct wlr_box geo, int interact);
-void apply_geometry_to_wlroots(Client *c);
-void client_remove_all_listeners(client_t *c);
-void client_reregister_listeners(client_t *c);
-void setfullscreen(Client *c, int fullscreen);
-void setmon(Client *c, Monitor *m, uint32_t newtags);
-void swapstack(const Arg *arg);
-void tagmon(const Arg *arg);
-void togglefloating(const Arg *arg);
-void unmapnotify(struct wl_listener *listener, void *data);
-void updatetitle(struct wl_listener *listener, void *data);
-void zoom(const Arg *arg);
 void sync_tiling_reorder(Client *c);
 
 /* listener structs */
@@ -252,7 +227,7 @@ fallback:
 		c && c->fullscreen);
 
 	motionnotify(0, NULL, 0, 0, 0, 0);
-	some_recompute_idle_inhibit(NULL);
+	some_recompute_idle_inhibit();
 }
 
 /* Handle initial XDG commit - sets scale, capabilities, size.
@@ -497,7 +472,7 @@ createnotify(struct wl_listener *listener, void *data)
 	stack_client_push(c);
 
 	/* Emit client::list signal (matches AwesomeWM line 2266) */
-	luaA_class_emit_signal(L, &client_class, "list", 0);
+	some_event_queue_class(&client_class, SIG_LIST);
 
 	/* Keep client on Lua stack - it will be used by mapnotify() later
 	 * DO NOT emit manage signal here - AwesomeWM emits it at end of client_manage,
@@ -848,8 +823,12 @@ mapnotify(struct wl_listener *listener, void *data)
 
 	/* Handle unmanaged clients first so we can return prior create borders */
 	if (client_is_unmanaged(c)) {
-		/* Unmanaged clients always are floating */
-		wlr_scene_node_reparent(&c->scene->node, layers[LyrFloat]);
+		/* Unmanaged (override_redirect) X11 surfaces bypass the window
+		 * manager and must display above all managed windows. Place
+		 * them in LyrOverlay to match X11 semantics; LyrBlock (session
+		 * lock) still covers them. stack_refresh() skips unmanaged
+		 * clients so this placement is preserved. */
+		wlr_scene_node_reparent(&c->scene->node, layers[LyrOverlay]);
 		wlr_scene_node_set_position(&c->scene->node, c->geometry.x, c->geometry.y);
 		client_set_size(c, c->geometry.width, c->geometry.height);
 		if (client_wants_focus(c)) {
@@ -958,17 +937,16 @@ mapnotify(struct wl_listener *listener, void *data)
 		/* Emit property and manage signals for transient clients too.
 		 * This is needed for Lua rules and placement code to work. */
 		luaA_object_push(L, c);
-		luaA_object_emit_signal(L, -1, "property::x", 0);
-		luaA_object_emit_signal(L, -1, "property::y", 0);
-		luaA_object_emit_signal(L, -1, "property::width", 0);
-		luaA_object_emit_signal(L, -1, "property::height", 0);
-		luaA_object_emit_signal(L, -1, "property::geometry", 0);
+		some_event_queue_signal0(L, -1, SIG_PROPERTY_X);
+		some_event_queue_signal0(L, -1, SIG_PROPERTY_Y);
+		some_event_queue_signal0(L, -1, SIG_PROPERTY_WIDTH);
+		some_event_queue_signal0(L, -1, SIG_PROPERTY_HEIGHT);
+		some_event_queue_signal0(L, -1, SIG_PROPERTY_GEOMETRY);
 		luaA_object_emit_signal(L, -1, "property::type", 0);
 
 		lua_pushstring(L, "new");
 		lua_newtable(L);
 		luaA_object_emit_signal(L, -3, "request::manage", 2);
-		luaA_object_emit_signal(L, -1, "manage", 0);
 		lua_pop(L, 1);
 
 		/* Apply geometry BEFORE enabling scene node to send configure event.
@@ -1044,12 +1022,12 @@ mapnotify(struct wl_listener *listener, void *data)
 
 		/* Emit property signals (matches AwesomeWM client_manage lines 2215-2228)
 		 * These notify Lua code that initial client properties are set */
-		luaA_object_emit_signal(L, -1, "property::x", 0);
-		luaA_object_emit_signal(L, -1, "property::y", 0);
-		luaA_object_emit_signal(L, -1, "property::width", 0);
-		luaA_object_emit_signal(L, -1, "property::height", 0);
+		some_event_queue_signal0(L, -1, SIG_PROPERTY_X);
+		some_event_queue_signal0(L, -1, SIG_PROPERTY_Y);
+		some_event_queue_signal0(L, -1, SIG_PROPERTY_WIDTH);
+		some_event_queue_signal0(L, -1, SIG_PROPERTY_HEIGHT);
 		luaA_object_emit_signal(L, -1, "property::window", 0);
-		luaA_object_emit_signal(L, -1, "property::geometry", 0);
+		some_event_queue_signal0(L, -1, SIG_PROPERTY_GEOMETRY);
 		luaA_object_emit_signal(L, -1, "property::size_hints_honor", 0);
 		luaA_object_emit_signal(L, -1, "property::type", 0);
 
@@ -1058,10 +1036,6 @@ mapnotify(struct wl_listener *listener, void *data)
 		lua_pushstring(L, "new");  /* context */
 		lua_newtable(L);            /* hints table (empty for now) */
 		luaA_object_emit_signal(L, -3, "request::manage", 2);
-
-		/* Emit legacy "manage" signal for backwards compatibility (matches AwesomeWM line 2281)
-		 * Note: AwesomeWM comment says "TODO v6: remove this" */
-		luaA_object_emit_signal(L, -1, "manage", 0);
 
 #ifdef XWAYLAND
 		/* For XWayland clients, emit request::activate to grant focus.
@@ -1080,7 +1054,7 @@ mapnotify(struct wl_listener *listener, void *data)
 			lua_newtable(L);  /* hints table */
 			lua_pushboolean(L, true);
 			lua_setfield(L, -2, "raise");
-			luaA_object_emit_signal(L, -3, "request::activate", 2);
+			some_event_queue_signal(L, -3, SIG_REQUEST_ACTIVATE, 2);
 		}
 #endif
 
@@ -1209,6 +1183,46 @@ requestdecorationmode(struct wl_listener *listener, void *data)
 				WLR_XDG_TOPLEVEL_DECORATION_V1_MODE_SERVER_SIDE);
 }
 
+/* Query whether the client's current layout intentionally positions
+ * tiled clients outside the monitor's bounds and therefore relies on
+ * the surface being clipped to the monitor to keep offscreen tiles
+ * from leaking onto adjacent physical monitors. Currently only the
+ * carousel layout has this semantic; most layouts keep clients within
+ * their workarea, and floating/user-driven positioning must render
+ * across monitor boundaries (e.g. during a cross-monitor drag). */
+static bool
+client_layout_clips_offscreen(Client *c)
+{
+	lua_State *L = globalconf_get_lua_State();
+	bool result = false;
+
+	if (!L)
+		return false;
+
+	luaA_object_push(L, c);
+	if (!lua_isuserdata(L, -1)) {
+		lua_pop(L, 1);
+		return false;
+	}
+	lua_getfield(L, -1, "first_tag");
+	if (lua_isuserdata(L, -1)) {
+		lua_getfield(L, -1, "layout");
+		if (lua_istable(L, -1)) {
+			lua_getfield(L, -1, "name");
+			if (lua_isstring(L, -1)) {
+				const char *name = lua_tostring(L, -1);
+				result = strcmp(name, "carousel") == 0
+					|| strcmp(name, "carousel.vertical") == 0;
+			}
+			lua_pop(L, 1);
+		}
+		lua_pop(L, 1);
+	}
+	lua_pop(L, 2);
+
+	return result;
+}
+
 /* Apply geometry to wlroots scene graph - Wayland-specific rendering layer.
  * This function ONLY updates wlroots; it does NOT modify c->geometry or emit signals.
  * Called by resize() for interactive resize and client_resize_do() for Lua-initiated resize.
@@ -1290,6 +1304,18 @@ apply_geometry_to_wlroots(Client *c)
 	}
 	client_get_clip(c, &clip);
 
+	/* Clip the surface to its assigned monitor only for layouts that
+	 * intentionally position tiled clients offscreen (carousel). For
+	 * floating or unmanaged clients (user-authoritative geometry) and
+	 * for layouts that keep clients within their workarea, skip the
+	 * clamp so the scene graph can render the surface on whichever
+	 * outputs it overlaps, e.g. during a cross-monitor drag where
+	 * c->mon stays on the source monitor until the pointer crosses. */
+	bool clamp_to_mon = c->mon
+		&& !client_is_unmanaged(c)
+		&& !some_client_get_floating(c)
+		&& client_layout_clips_offscreen(c);
+
 	/* Clip client content to its assigned monitor bounds so offscreen
 	 * clients (e.g. carousel scrolling layout) don't render on adjacent
 	 * monitors. For fully-inside clients this is just a bounds check.
@@ -1297,7 +1323,7 @@ apply_geometry_to_wlroots(Client *c)
 	 * We toggle individual child scene nodes (surface, borders, shadow,
 	 * titlebars) rather than c->scene->node which the banning system
 	 * controls. */
-	if (c->mon) {
+	if (clamp_to_mon) {
 		struct wlr_box mon = c->mon->m;
 		bool fully_inside =
 			c->geometry.x >= mon.x &&
@@ -1315,8 +1341,10 @@ apply_geometry_to_wlroots(Client *c)
 			if (c->shadow.tree)
 				wlr_scene_node_set_enabled(&c->shadow.tree->node, true);
 		} else {
-			/* Client extends past monitor: clip surface, hide everything
-			 * else (wlr_scene_rect/buffer have no clip API). */
+			/* Client extends past monitor. Clip the surface to the
+			 * visible rectangle; decorations only hide when fully
+			 * offscreen (carousel scrolling) because wlr_scene_rect/
+			 * buffer have no clip API. */
 			int cx = c->geometry.x + c->bw + titlebar_left;
 			int cy = c->geometry.y + c->bw + titlebar_top;
 			int vl = cx > mon.x ? cx : mon.x;
@@ -1326,30 +1354,45 @@ apply_geometry_to_wlroots(Client *c)
 			int vb = (cy + clip.height) < (mon.y + mon.height)
 				? (cy + clip.height) : (mon.y + mon.height);
 
-			if (vr > vl && vb > vt) {
-				/* Partially visible: narrow the clip */
+			bool partially_visible = vr > vl && vb > vt;
+
+			if (partially_visible) {
 				clip.x += vl - cx;
 				clip.y += vt - cy;
 				clip.width = vr - vl;
 				clip.height = vb - vt;
-				wlr_scene_node_set_enabled(&c->scene_surface->node, true);
-			} else {
-				/* Fully offscreen */
-				wlr_scene_node_set_enabled(&c->scene_surface->node, false);
 			}
 
-			/* Hide borders, shadow, and titlebars */
+			wlr_scene_node_set_enabled(&c->scene_surface->node, partially_visible);
 			for (int i = 0; i < 4; i++)
-				wlr_scene_node_set_enabled(&c->border[i]->node, false);
+				wlr_scene_node_set_enabled(&c->border[i]->node, partially_visible);
 			if (c->shadow.tree)
-				wlr_scene_node_set_enabled(&c->shadow.tree->node, false);
-			for (client_titlebar_t bar = CLIENT_TITLEBAR_TOP;
-					bar < CLIENT_TITLEBAR_COUNT; bar++) {
-				if (c->titlebar[bar].scene_buffer)
-					wlr_scene_node_set_enabled(
-						&c->titlebar[bar].scene_buffer->node, false);
+				wlr_scene_node_set_enabled(&c->shadow.tree->node, partially_visible);
+
+			/* Titlebar buffers: client_update_titlebar_positions()
+			 * already enables them based on size/fullscreen. Only
+			 * forcibly disable when fully offscreen. */
+			if (!partially_visible) {
+				for (client_titlebar_t bar = CLIENT_TITLEBAR_TOP;
+						bar < CLIENT_TITLEBAR_COUNT; bar++) {
+					if (c->titlebar[bar].scene_buffer)
+						wlr_scene_node_set_enabled(
+							&c->titlebar[bar].scene_buffer->node, false);
+				}
 			}
 		}
+	} else {
+		/* Not under a clip-offscreen layout: let the scene graph render
+		 * the surface on whichever outputs its geometry intersects.
+		 * Mirror the fully_inside branch so a transition out of a
+		 * clip-offscreen layout recovers nodes that were previously
+		 * disabled. Titlebars stay idempotently managed by
+		 * client_update_titlebar_positions() above. */
+		wlr_scene_node_set_enabled(&c->scene_surface->node, true);
+		for (int i = 0; i < 4; i++)
+			wlr_scene_node_set_enabled(&c->border[i]->node, true);
+		if (c->shadow.tree)
+			wlr_scene_node_set_enabled(&c->shadow.tree->node, true);
 	}
 
 	wlr_scene_subsurface_tree_set_clip(&c->scene_surface->node, &clip);
@@ -1362,6 +1405,8 @@ resize(Client *c, struct wlr_box geo, int interact)
 
 	if (!c->mon || !client_surface(c)->mapped)
 		return;
+
+	struct wlr_box old_geometry = c->geometry;
 
 	bbox = interact ? &sgeom : &c->mon->w;
 
@@ -1390,8 +1435,34 @@ resize(Client *c, struct wlr_box geo, int interact)
 	/* Apply to wlroots rendering */
 	apply_geometry_to_wlroots(c);
 
-	/* Emit signal for geometry change listeners */
-	luaA_emit_signal_global("client::property::geometry");
+	/* Queue per-instance geometry signals so every C-side geometry change
+	 * reaches Lua subscribers the same way Lua-side client_resize_do does
+	 * (objects/client.c:2693-2713). Without this, paths like the xdg-shell
+	 * request_fullscreen handler mutate c->geometry silently from Lua's
+	 * perspective. AREA_EQUAL/per-field guards mirror the Lua block. */
+	lua_State *L = globalconf_get_lua_State();
+	if (L && !AREA_EQUAL(old_geometry, c->geometry)) {
+		luaA_object_push(L, c);
+		some_event_queue_signal0(L, -1, SIG_PROPERTY_GEOMETRY);
+		if (old_geometry.x != c->geometry.x || old_geometry.y != c->geometry.y) {
+			some_event_queue_signal0(L, -1, SIG_PROPERTY_POSITION);
+			if (old_geometry.x != c->geometry.x)
+				some_event_queue_signal0(L, -1, SIG_PROPERTY_X);
+			if (old_geometry.y != c->geometry.y)
+				some_event_queue_signal0(L, -1, SIG_PROPERTY_Y);
+		}
+		if (old_geometry.width != c->geometry.width || old_geometry.height != c->geometry.height) {
+			some_event_queue_signal0(L, -1, SIG_PROPERTY_SIZE);
+			if (old_geometry.width != c->geometry.width)
+				some_event_queue_signal0(L, -1, SIG_PROPERTY_WIDTH);
+			if (old_geometry.height != c->geometry.height)
+				some_event_queue_signal0(L, -1, SIG_PROPERTY_HEIGHT);
+		}
+		lua_pop(L, 1);
+	}
+
+	/* Class-level signal for class-wide observers (different name). */
+	some_event_queue_global(SIG_CLIENT_PROPERTY_GEOMETRY);
 }
 
 void
@@ -1558,19 +1629,19 @@ swapstack(const Arg *arg)
 		Client *c = globalconf.clients.tab[target_idx]; /* original sel */
 		Client *swap = globalconf.clients.tab[sel_idx]; /* original target */
 
-		luaA_class_emit_signal(L, &client_class, "list", 0);
+		some_event_queue_class(&client_class, SIG_LIST);
 
 		/* First swapped signal on c (is_source=true) */
 		luaA_object_push(L, c);
 		luaA_object_push(L, swap);
 		lua_pushboolean(L, true);
-		luaA_object_emit_signal(L, -4, "swapped", 2);
+		some_event_queue_signal(L, -4, SIG_SWAPPED, 2);
 
 		/* Second swapped signal on swap (is_source=false) */
 		luaA_object_push(L, swap);
 		luaA_object_push(L, c);
 		lua_pushboolean(L, false);
-		luaA_object_emit_signal(L, -3, "swapped", 2);
+		some_event_queue_signal(L, -3, SIG_SWAPPED, 2);
 	}
 
 	arrange(selmon);

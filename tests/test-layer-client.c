@@ -24,6 +24,7 @@ static struct wl_compositor *g_compositor;
 static struct wl_shm *g_shm;
 static struct wl_seat *g_seat;
 static struct wl_keyboard *g_keyboard;
+static struct wl_pointer *g_pointer;
 static struct zwlr_layer_shell_v1 *g_layer_shell;
 static struct wl_surface *g_surface;
 static struct zwlr_layer_surface_v1 *g_layer_surface;
@@ -34,6 +35,8 @@ static uint32_t g_width = 100, g_height = 100;
 /* Config from args */
 static const char *g_namespace = "test-layer";
 static uint32_t g_keyboard_mode = 1; /* EXCLUSIVE */
+static const char *g_pointer_marker = NULL;
+static uint32_t g_anchor = 0;
 
 /* Signal handler for clean shutdown */
 static void handle_signal(int sig) {
@@ -159,6 +162,73 @@ static const struct wl_keyboard_listener keyboard_listener = {
     .repeat_info = keyboard_repeat_info,
 };
 
+/* Pointer callbacks */
+static void pointer_enter(void *data, struct wl_pointer *ptr,
+        uint32_t serial, struct wl_surface *surf,
+        wl_fixed_t sx, wl_fixed_t sy) {
+    (void)data; (void)ptr; (void)serial; (void)surf; (void)sx; (void)sy;
+    fprintf(stderr, "[test-layer-client] pointer enter\n");
+    if (g_pointer_marker) {
+        FILE *f = fopen(g_pointer_marker, "w");
+        if (f) {
+            fputs("entered\n", f);
+            fclose(f);
+        }
+    }
+}
+
+static void pointer_leave(void *data, struct wl_pointer *ptr,
+        uint32_t serial, struct wl_surface *surf) {
+    (void)data; (void)ptr; (void)serial; (void)surf;
+    fprintf(stderr, "[test-layer-client] pointer leave\n");
+}
+
+static void pointer_motion(void *data, struct wl_pointer *ptr,
+        uint32_t time, wl_fixed_t sx, wl_fixed_t sy) {
+    (void)data; (void)ptr; (void)time; (void)sx; (void)sy;
+}
+
+static void pointer_button(void *data, struct wl_pointer *ptr,
+        uint32_t serial, uint32_t time, uint32_t button, uint32_t state) {
+    (void)data; (void)ptr; (void)serial; (void)time; (void)button; (void)state;
+}
+
+static void pointer_axis(void *data, struct wl_pointer *ptr,
+        uint32_t time, uint32_t axis, wl_fixed_t value) {
+    (void)data; (void)ptr; (void)time; (void)axis; (void)value;
+}
+
+static void pointer_frame(void *data, struct wl_pointer *ptr) {
+    (void)data; (void)ptr;
+}
+
+static void pointer_axis_source(void *data, struct wl_pointer *ptr,
+        uint32_t axis_source) {
+    (void)data; (void)ptr; (void)axis_source;
+}
+
+static void pointer_axis_stop(void *data, struct wl_pointer *ptr,
+        uint32_t time, uint32_t axis) {
+    (void)data; (void)ptr; (void)time; (void)axis;
+}
+
+static void pointer_axis_discrete(void *data, struct wl_pointer *ptr,
+        uint32_t axis, int32_t discrete) {
+    (void)data; (void)ptr; (void)axis; (void)discrete;
+}
+
+static const struct wl_pointer_listener pointer_listener = {
+    .enter = pointer_enter,
+    .leave = pointer_leave,
+    .motion = pointer_motion,
+    .button = pointer_button,
+    .axis = pointer_axis,
+    .frame = pointer_frame,
+    .axis_source = pointer_axis_source,
+    .axis_stop = pointer_axis_stop,
+    .axis_discrete = pointer_axis_discrete,
+};
+
 /* Seat callbacks */
 static void seat_capabilities(void *data, struct wl_seat *st,
         uint32_t caps) {
@@ -166,6 +236,10 @@ static void seat_capabilities(void *data, struct wl_seat *st,
     if ((caps & WL_SEAT_CAPABILITY_KEYBOARD) && !g_keyboard) {
         g_keyboard = wl_seat_get_keyboard(st);
         wl_keyboard_add_listener(g_keyboard, &keyboard_listener, NULL);
+    }
+    if ((caps & WL_SEAT_CAPABILITY_POINTER) && !g_pointer) {
+        g_pointer = wl_seat_get_pointer(st);
+        wl_pointer_add_listener(g_pointer, &pointer_listener, NULL);
     }
 }
 
@@ -214,6 +288,9 @@ static void print_usage(const char *prog) {
     fprintf(stderr, "  --namespace NAME      Layer surface namespace (default: test-layer)\n");
     fprintf(stderr, "  --keyboard MODE       Keyboard interactivity: exclusive|on_demand|none\n");
     fprintf(stderr, "                        (default: exclusive)\n");
+    fprintf(stderr, "  --pointer-marker PATH Write \"entered\\n\" to PATH on wl_pointer.enter\n");
+    fprintf(stderr, "  --anchor EDGES        Comma-separated anchor edges: top,bottom,left,right\n");
+    fprintf(stderr, "                        (default: unanchored; compositor chooses position)\n");
 }
 
 int main(int argc, char *argv[]) {
@@ -234,6 +311,29 @@ int main(int argc, char *argv[]) {
                 print_usage(argv[0]);
                 return 1;
             }
+        } else if (strcmp(argv[i], "--pointer-marker") == 0 && i + 1 < argc) {
+            g_pointer_marker = argv[++i];
+        } else if (strcmp(argv[i], "--anchor") == 0 && i + 1 < argc) {
+            const char *edges = argv[++i];
+            char *buf = strdup(edges);
+            char *tok = strtok(buf, ",");
+            while (tok) {
+                if (strcmp(tok, "top") == 0)
+                    g_anchor |= ZWLR_LAYER_SURFACE_V1_ANCHOR_TOP;
+                else if (strcmp(tok, "bottom") == 0)
+                    g_anchor |= ZWLR_LAYER_SURFACE_V1_ANCHOR_BOTTOM;
+                else if (strcmp(tok, "left") == 0)
+                    g_anchor |= ZWLR_LAYER_SURFACE_V1_ANCHOR_LEFT;
+                else if (strcmp(tok, "right") == 0)
+                    g_anchor |= ZWLR_LAYER_SURFACE_V1_ANCHOR_RIGHT;
+                else {
+                    fprintf(stderr, "Unknown anchor edge: %s\n", tok);
+                    free(buf);
+                    return 1;
+                }
+                tok = strtok(NULL, ",");
+            }
+            free(buf);
         } else if (strcmp(argv[i], "--help") == 0 || strcmp(argv[i], "-h") == 0) {
             print_usage(argv[0]);
             return 0;
@@ -273,6 +373,8 @@ int main(int argc, char *argv[]) {
         ZWLR_LAYER_SHELL_V1_LAYER_TOP, g_namespace);
 
     zwlr_layer_surface_v1_set_size(g_layer_surface, 100, 100);
+    if (g_anchor)
+        zwlr_layer_surface_v1_set_anchor(g_layer_surface, g_anchor);
     zwlr_layer_surface_v1_set_keyboard_interactivity(g_layer_surface, g_keyboard_mode);
     zwlr_layer_surface_v1_add_listener(g_layer_surface, &layer_surface_listener, NULL);
 
@@ -294,6 +396,7 @@ int main(int argc, char *argv[]) {
     if (g_layer_surface) zwlr_layer_surface_v1_destroy(g_layer_surface);
     if (g_surface) wl_surface_destroy(g_surface);
     if (g_keyboard) wl_keyboard_destroy(g_keyboard);
+    if (g_pointer) wl_pointer_destroy(g_pointer);
     if (g_seat) wl_seat_destroy(g_seat);
     if (g_shm) wl_shm_destroy(g_shm);
     if (g_compositor) wl_compositor_destroy(g_compositor);

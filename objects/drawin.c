@@ -1121,10 +1121,14 @@ luaA_drawin_struts(lua_State *L)
 			luaA_awm_object_emit_signal(L, -1, "property::struts", 0);
 			lua_pop(L, 1);
 
-			/* Update workarea if drawin is visible */
-			if (drawin->visible && drawin->screen) {
-				screen_update_workarea(drawin->screen);
-			}
+			/* We don't know the correct screen, update them all.
+			 * globalconf.screens is unpopulated here; the live list is
+			 * behind luaA_screen_get_all(). */
+			screen_t *all[16];
+			int n = countof(all);
+			luaA_screen_get_all(L, all, &n);
+			for (int i = 0; i < n; i++)
+				screen_update_workarea(all[i]);
 		}
 
 		return 0;
@@ -2179,6 +2183,7 @@ drawin_class_setup(lua_State *L)
 		{ "border_width", (lua_class_propfunc_t) luaA_drawin_set_border_width, (lua_class_propfunc_t) luaA_drawin_get_border_width, (lua_class_propfunc_t) luaA_drawin_set_border_width },
 		{ "_border_width", (lua_class_propfunc_t) luaA_drawin_set_border_width, (lua_class_propfunc_t) luaA_drawin_get_border_width, (lua_class_propfunc_t) luaA_drawin_set_border_width },
 		{ "border_color", (lua_class_propfunc_t) luaA_drawin_set_border_color, (lua_class_propfunc_t) luaA_drawin_get_border_color, (lua_class_propfunc_t) luaA_drawin_set_border_color },
+		{ "_border_color", (lua_class_propfunc_t) luaA_drawin_set_border_color, (lua_class_propfunc_t) luaA_drawin_get_border_color, (lua_class_propfunc_t) luaA_drawin_set_border_color },
 		{ "shape_bounding", (lua_class_propfunc_t) luaA_drawin_set_shape_bounding, (lua_class_propfunc_t) luaA_drawin_get_shape_bounding, (lua_class_propfunc_t) luaA_drawin_set_shape_bounding },
 		{ "shape_clip", (lua_class_propfunc_t) luaA_drawin_set_shape_clip, (lua_class_propfunc_t) luaA_drawin_get_shape_clip, (lua_class_propfunc_t) luaA_drawin_set_shape_clip },
 		{ "shape_input", (lua_class_propfunc_t) luaA_drawin_set_shape_input, (lua_class_propfunc_t) luaA_drawin_get_shape_input, (lua_class_propfunc_t) luaA_drawin_set_shape_input },

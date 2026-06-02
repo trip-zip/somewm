@@ -26,6 +26,7 @@
 
 #include "somewm.h"
 #include "somewm_api.h"
+#include "event_queue.h"
 #include "globalconf.h"
 #include "client.h"
 #include "common/luaobject.h"
@@ -218,6 +219,16 @@ commitlayersurfacenotify(struct wl_listener *listener, void *data)
 
 	arrangelayers(l->mon);
 
+	/* When a layer surface maps, re-evaluate pointer focus so that
+	 * wl_pointer.enter is delivered if the cursor is already over it.
+	 * Without this, hover doesn't work until the user moves the mouse.
+	 * Similar to sway's cursor_rebase_all() in handle_map(), but uses
+	 * motionnotify(0,...) which re-runs xytonode() + pointerfocus()
+	 * without emitting Lua mouse signals (those are gated on time != 0).
+	 * Skip when exclusive_focus is active to avoid disrupting grabs. */
+	if (!was_mapped && l->mapped && !exclusive_focus)
+		motionnotify(0, NULL, 0, 0, 0, 0);
+
 	/* Emit property change signals for Lua (matches AwesomeWM pattern) */
 	if (l->lua_object && globalconf_L && layer_surface->current.committed) {
 		lua_State *L = globalconf_get_lua_State();
@@ -256,13 +267,17 @@ createlayersurface(struct wl_listener *listener, void *data)
 
 	l = layer_surface->data = ecalloc(1, sizeof(*l));
 	l->type = LayerShell;
-	LISTEN(&surface->events.commit, &l->surface_commit, commitlayersurfacenotify);
 	LISTEN(&surface->events.unmap, &l->unmap, unmaplayersurfacenotify);
 	LISTEN(&layer_surface->events.destroy, &l->destroy, destroylayersurfacenotify);
 
 	l->layer_surface = layer_surface;
 	l->mon = layer_surface->output->data;
 	l->scene_layer = wlr_scene_layer_surface_v1_create(scene_layer, layer_surface);
+	/* Register commit listener AFTER wlr_scene_layer_surface_v1_create() so our
+	 * listener fires AFTER wlroots' internal scene commit handler. This lets
+	 * the scene graph reflect the new buffer before the commit handler calls
+	 * motionnotify(0, ...) to re-evaluate pointer focus on map. */
+	LISTEN(&surface->events.commit, &l->surface_commit, commitlayersurfacenotify);
 	l->scene = l->scene_layer->tree;
 	l->popups = surface->data = wlr_scene_tree_create(layer_surface->current.layer
 			< ZWLR_LAYER_SHELL_V1_LAYER_TOP ? layers[LyrTop] : scene_layer);
@@ -328,7 +343,7 @@ unmaplayersurfacenotify(struct wl_listener *listener, void *data)
 
 /** Check if idle is effectively inhibited (for Lua API and idle timers). */
 bool
-some_is_idle_inhibited(struct wlr_surface *exclude)
+some_is_idle_inhibited(void)
 {
 	int unused_lx, unused_ly;
 	struct wlr_idle_inhibitor_v1 *inhibitor;
@@ -337,11 +352,19 @@ some_is_idle_inhibited(struct wlr_surface *exclude)
 		return false;
 
 	wl_list_for_each(inhibitor, &idle_inhibit_mgr->inhibitors, link) {
+		// Attention: When some_is_idle_inhibited() is called during
+		// destroyidleinhibitor() signal handler then
+		// idle_inhibit_mgr->inhibitors still contains the respective
+		// inhibitor, however, the below scene tree is already torn down and
+		// wlr_scene_node_coords() cannot be called.
+		if (!inhibitor->surface->mapped)
+			continue;
+
 		struct wlr_surface *surface = wlr_surface_get_root_surface(inhibitor->surface);
 		struct wlr_scene_tree *tree = surface->data;
 
-		if (exclude != surface && (globalconf.appearance.bypass_surface_visibility || (!tree
-				|| wlr_scene_node_coords(&tree->node, &unused_lx, &unused_ly)))) {
+		if (globalconf.appearance.bypass_surface_visibility || (!tree
+				|| wlr_scene_node_coords(&tree->node, &unused_lx, &unused_ly))) {
 			return true;
 		}
 	}
@@ -407,15 +430,14 @@ createidleinhibitor(struct wl_listener *listener, void *data)
 	struct wlr_idle_inhibitor_v1 *idle_inhibitor = data;
 	LISTEN_STATIC(&idle_inhibitor->events.destroy, destroyidleinhibitor);
 
-	some_recompute_idle_inhibit(NULL);
+	some_recompute_idle_inhibit();
 }
 
 static void
 destroyidleinhibitor(struct wl_listener *listener, void *data)
 {
-	/* `data` is the wlr_surface of the idle inhibitor being destroyed,
-	 * at this point the idle inhibitor is still in the list of the manager */
-	some_recompute_idle_inhibit(wlr_surface_get_root_surface(data));
+	some_recompute_idle_inhibit();
+
 	wl_list_remove(&listener->link);
 	free(listener);
 }
@@ -551,7 +573,7 @@ foreign_toplevel_request_activate(struct wl_listener *listener, void *data)
 	lua_setfield(L, -2, "switch_to_tag");
 	lua_pushboolean(L, true);
 	lua_setfield(L, -2, "raise");
-	luaA_object_emit_signal(L, -3, "request::activate", 2);
+	some_event_queue_signal(L, -3, SIG_REQUEST_ACTIVATE, 2);
 	lua_pop(L, 1);
 }
 
@@ -754,12 +776,12 @@ void urgent(struct wl_listener *listener, void *data)
 	L = globalconf_get_lua_State();
 	luaA_object_push(L, c);
 	lua_pushstring(L, token_matched ? "startup" : "client");  /* context */
-	luaA_object_emit_signal(L, -2, "request::activate", 1);
+	some_event_queue_signal(L, -2, SIG_REQUEST_ACTIVATE, 1);
 	lua_pop(L, 1);
 
 	/* Emit request::urgent and let Lua decide (matches AwesomeWM) */
 	luaA_object_push(L, c);
 	lua_pushboolean(L, true);
-	luaA_object_emit_signal(L, -2, "request::urgent", 1);
+	some_event_queue_signal(L, -2, SIG_REQUEST_URGENT, 1);
 	lua_pop(L, 1);
 }
