@@ -3629,9 +3629,15 @@ locksession(struct wl_listener *listener, void *data)
 static void
 cursor_to_client_coordinates(Client *client, double *sx, double *sy) {
 	double bw = client->bw;
-	/* Compute coordinates (sx, sy) within the borderd geometry. */
-	*sx = cursor->x - (client->geometry.x + bw);
-	*sy = cursor->y - (client->geometry.y + bw);
+	/* The content surface is offset inside the frame by border + titlebars, so
+	 * content-local coordinates must subtract the titlebars too, not just the
+	 * border. Without this the values stay positive over a titlebar and leak onto
+	 * the client's top content rows; with it they go negative there (= pointer not
+	 * in content). Fullscreen has no titlebars. */
+	int tl = client->fullscreen ? 0 : client->titlebar[CLIENT_TITLEBAR_LEFT].size;
+	int tt = client->fullscreen ? 0 : client->titlebar[CLIENT_TITLEBAR_TOP].size;
+	*sx = cursor->x - (client->geometry.x + bw + tl);
+	*sy = cursor->y - (client->geometry.y + bw + tt);
 }
 
 void
@@ -4015,17 +4021,27 @@ unset_fullscreen:
 
 	luaA_emit_signal_global("client::map");
 
-	/* If cursor is within this new client's geometry, set pointer focus directly.
+	/* If the cursor is over this new client's CONTENT, set pointer focus directly.
 	 * Don't use motionnotify(0,...) because xytonode may not find the surface yet
-	 * (buffer not committed) and would CLEAR pointer focus instead. */
-	if (client_surface(c) && client_surface(c)->mapped
-			&& cursor->x >= c->geometry.x && cursor->x < c->geometry.x + c->geometry.width
-			&& cursor->y >= c->geometry.y && cursor->y < c->geometry.y + c->geometry.height) {
-		double sx, sy;
-		cursor_to_client_coordinates(c, &sx, &sy);
-		wlr_log(WLR_DEBUG, "[POINTER-REEVAL] mapnotify: setting pointer focus on %s (cursor in geometry)",
-			client_get_appid(c));
-		pointerfocus(c, client_surface(c), sx, sy, 0);
+	 * (buffer not committed) and would CLEAR pointer focus instead.
+	 * Gate on the content rect (geometry inset by border + titlebars), not the
+	 * full geometry: granting focus while the cursor is over the titlebar would
+	 * deliver a bogus coordinate to the client (issue: titlebar event
+	 * propagation). */
+	if (client_surface(c) && client_surface(c)->mapped) {
+		int tl = c->fullscreen ? 0 : c->titlebar[CLIENT_TITLEBAR_LEFT].size;
+		int tt = c->fullscreen ? 0 : c->titlebar[CLIENT_TITLEBAR_TOP].size;
+		int tr = c->fullscreen ? 0 : c->titlebar[CLIENT_TITLEBAR_RIGHT].size;
+		int tb = c->fullscreen ? 0 : c->titlebar[CLIENT_TITLEBAR_BOTTOM].size;
+		int x0 = c->geometry.x + (int)c->bw + tl;
+		int y0 = c->geometry.y + (int)c->bw + tt;
+		int x1 = c->geometry.x + c->geometry.width  - (int)c->bw - tr;
+		int y1 = c->geometry.y + c->geometry.height - (int)c->bw - tb;
+		if (cursor->x >= x0 && cursor->x < x1 && cursor->y >= y0 && cursor->y < y1) {
+			double sx, sy;
+			cursor_to_client_coordinates(c, &sx, &sy);
+			pointerfocus(c, client_surface(c), sx, sy, 0);
+		}
 	}
 }
 
@@ -4486,14 +4502,12 @@ pointerfocus(Client *c, struct wlr_surface *surface, double sx, double sy,
 {
 	struct timespec now;
 
-	/* If surface is NULL but client exists, use client's main surface as fallback.
-	 * This happens when cursor is over titlebar/border (compositor-drawn, not a
-	 * wlr_surface). Without this fallback, pointer focus would be cleared and the
-	 * client wouldn't receive hover/scroll events. */
-	if (!surface && c && client_surface(c) && client_surface(c)->mapped) {
-		surface = client_surface(c);
-		cursor_to_client_coordinates(c, &sx, &sy);
-	}
+	/* A NULL surface means the cursor is over compositor-drawn chrome
+	 * (titlebar/border), not the client. Clear pointer focus so the client gets
+	 * wl_pointer.leave. Do NOT fall back to the client's main surface here: the
+	 * cursor is above the content, so translating it yields an in-bounds top-row
+	 * coordinate that leaks hover/clicks onto the client (issue: titlebar event
+	 * propagation). */
 	if (!surface) {
 		wlr_seat_pointer_notify_clear_focus(seat);
 		return;
