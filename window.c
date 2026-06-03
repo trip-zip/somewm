@@ -1142,17 +1142,27 @@ unset_fullscreen:
 
 	luaA_emit_signal_global("client::map");
 
-	/* If cursor is within this new client's geometry, set pointer focus directly.
+	/* If the cursor is over this new client's CONTENT, set pointer focus directly.
 	 * Don't use motionnotify(0,...) because xytonode may not find the surface yet
-	 * (buffer not committed) and would CLEAR pointer focus instead. */
-	if (client_surface(c) && client_surface(c)->mapped
-			&& cursor->x >= c->geometry.x && cursor->x < c->geometry.x + c->geometry.width
-			&& cursor->y >= c->geometry.y && cursor->y < c->geometry.y + c->geometry.height) {
-		double sx, sy;
-		cursor_to_client_coordinates(c, &sx, &sy);
-		wlr_log(WLR_DEBUG, "[POINTER-REEVAL] mapnotify: setting pointer focus on %s (cursor in geometry)",
-			client_get_appid(c));
-		pointerfocus(c, client_surface(c), sx, sy, 0);
+	 * (buffer not committed) and would CLEAR pointer focus instead.
+	 * Gate on the content rect (geometry inset by border + titlebars), not the
+	 * full geometry: granting focus while the cursor is over the titlebar would
+	 * deliver a bogus coordinate to the client (issue: titlebar event
+	 * propagation). Mirrors the surface inset in apply_geometry_to_wlroots(). */
+	if (client_surface(c) && client_surface(c)->mapped) {
+		int tl = c->fullscreen ? 0 : c->titlebar[CLIENT_TITLEBAR_LEFT].size;
+		int tt = c->fullscreen ? 0 : c->titlebar[CLIENT_TITLEBAR_TOP].size;
+		int tr = c->fullscreen ? 0 : c->titlebar[CLIENT_TITLEBAR_RIGHT].size;
+		int tb = c->fullscreen ? 0 : c->titlebar[CLIENT_TITLEBAR_BOTTOM].size;
+		int x0 = c->geometry.x + (int)c->bw + tl;
+		int y0 = c->geometry.y + (int)c->bw + tt;
+		int x1 = c->geometry.x + c->geometry.width  - (int)c->bw - tr;
+		int y1 = c->geometry.y + c->geometry.height - (int)c->bw - tb;
+		if (cursor->x >= x0 && cursor->x < x1 && cursor->y >= y0 && cursor->y < y1) {
+			double sx, sy;
+			cursor_to_client_coordinates(c, &sx, &sy);
+			pointerfocus(c, client_surface(c), sx, sy, 0);
+		}
 	}
 }
 
