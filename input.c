@@ -1008,14 +1008,12 @@ pointerfocus(Client *c, struct wlr_surface *surface, double sx, double sy,
 {
 	struct timespec now;
 
-	/* If surface is NULL but client exists, use client's main surface as fallback.
-	 * This happens when cursor is over titlebar/border (compositor-drawn, not a
-	 * wlr_surface). Without this fallback, pointer focus would be cleared and the
-	 * client wouldn't receive hover/scroll events. */
-	if (!surface && c && client_surface(c) && client_surface(c)->mapped) {
-		surface = client_surface(c);
-		cursor_to_client_coordinates(c, &sx, &sy);
-	}
+	/* A NULL surface means the cursor is over compositor-drawn chrome
+	 * (titlebar/border), not the client. Clear pointer focus so the client gets
+	 * wl_pointer.leave. Do NOT fall back to the client's main surface here: the
+	 * cursor is above the content, so translating it yields an in-bounds top-row
+	 * coordinate that leaks hover/clicks onto the client (issue: titlebar event
+	 * propagation). */
 	if (!surface) {
 		wlr_seat_pointer_notify_clear_focus(seat);
 		return;

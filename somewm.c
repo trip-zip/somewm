@@ -548,9 +548,16 @@ reap_children(gint fd, GIOCondition condition, gpointer data)
 void
 cursor_to_client_coordinates(Client *client, double *sx, double *sy) {
 	double bw = client->bw;
-	/* Compute coordinates (sx, sy) within the borderd geometry. */
-	*sx = cursor->x - (client->geometry.x + bw);
-	*sy = cursor->y - (client->geometry.y + bw);
+	/* The content surface is positioned inside the frame at (bw + titlebar_left,
+	 * bw + titlebar_top) (see apply_geometry_to_wlroots), so content-local
+	 * coordinates must subtract the titlebars too, not just the border. Without
+	 * this the values stay positive over a titlebar and leak onto the client's
+	 * top content rows; with it they go negative there (= pointer not in content).
+	 * Fullscreen has no titlebars. */
+	int tl = client->fullscreen ? 0 : client->titlebar[CLIENT_TITLEBAR_LEFT].size;
+	int tt = client->fullscreen ? 0 : client->titlebar[CLIENT_TITLEBAR_TOP].size;
+	*sx = cursor->x - (client->geometry.x + bw + tl);
+	*sy = cursor->y - (client->geometry.y + bw + tt);
 }
 
 

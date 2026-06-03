@@ -463,6 +463,17 @@ test_content_pattern_client = executable(
   install: false,
 )
 
+# Test XDG toplevel client that logs decoded wl_pointer events to a marker file.
+# Used by test-titlebar-pointer-leak.lua to assert no pointer events leak to the
+# client while the cursor is over its titlebar.
+test_pointer_logger = executable(
+  'test-pointer-logger',
+  ['tests/test-pointer-logger.c', xdg_shell_client_code],
+  xdg_shell_client_header,
+  dependencies: [wayland_client],
+  install: false,
+)
+
 # DMA-BUF test client (gbm + zwp_linux_dmabuf_v1) for the GPU readback path
 # in c.content. Used by test-client-content-dmabuf.lua. Only built when gbm
 # is available; the Lua test skips itself otherwise.
