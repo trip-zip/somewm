@@ -430,22 +430,26 @@ local function setup_background(self, ctx)
     return self._private.background_widget
 end
 
-local function children_rect(self, borders, width, height, wdg_w, wdg_h)
+local function children_layout(self, borders, width, height, wdg_w, wdg_h)
     assert(wdg_w > 0 and wdg_h > 0)
 
-    if not self._private.widget then return nil end
+    -- This need to be after the other because it has to be on top.
+    if self._private.widget then
+        local p = self._private.paddings or {}
+        if not self._private.honor_borders then
+            wdg_w, wdg_h = width - (p.right or 0) - (p.left or 0), height - (p.top or 0) - (p.bottom or 0)
+            wdg_w, wdg_h = math.max(0, wdg_w), math.max(0, wdg_h)
 
-    local p = self._private.paddings or {}
-    local x, y, w, h
-    if not self._private.honor_borders then
-        w, h = width - (p.right or 0) - (p.left or 0), height - (p.top or 0) - (p.bottom or 0)
-        x, y = (p.left or 0), (p.top or 0)
-    else
-        w, h = wdg_w - (p.right or 0) - (p.left or 0), wdg_h - (p.top or 0) - (p.bottom or 0)
-        x, y = borders.left[1] + (p.left or 0), borders.top[2] + (p.top or 0)
+            return base.place_widget_at(self._private.widget, 0 + (p.left or 0), 0 + (p.top or 0), wdg_w, wdg_h)
+        else
+            wdg_w, wdg_h = wdg_w - (p.right or 0) - (p.left or 0), wdg_h - (p.top or 0) - (p.bottom or 0)
+            wdg_w, wdg_h = math.max(0, wdg_w), math.max(0, wdg_h)
+
+            return base.place_widget_at(
+                self._private.widget, borders.left[1] + (p.left or 0), borders.top[2] + (p.top or 0), wdg_w, wdg_h
+            )
+        end
     end
-    w, h = math.max(0, w), math.max(0, h)
-    return { widget = self._private.widget, x = x, y = y, width = w, height = h }
 end
 
 -- Delayed initialization of the border_images.
@@ -529,15 +533,14 @@ function module:fit(ctx, width, height)
 end
 
 function module:layout(ctx, width, height)
-    local rects = {}
+    local positioned = {}
     local borders, widgets = compute_borders(self, ctx, width, height)
 
     local wdg_w = width  - borders.left[1] - borders.right[1]
     local wdg_h = height - borders.top[2]  - borders.bottom[2]
 
     if self._private.ontop == false and self._private.widget then
-        local r = children_rect(self, borders, width, height, wdg_w, wdg_h)
-        if r then rects[#rects + 1] = r end
+        table.insert(positioned, children_layout(self, borders, width, height, wdg_w, wdg_h))
     end
 
     if self._private.slice then
@@ -547,29 +550,28 @@ function module:layout(ctx, width, height)
         -- Use `ipairs` rather than `pairs` on the widget to keep the order stable.
         for _, position in ipairs(components) do
             local geo = borders[position]
+            --TODO use unpack
             if geo and widgets[position] and not (position == "fill" and not self._private.fill) then
-                rects[#rects + 1] = {
-                    widget = widgets[position],
-                    x = geo[3], y = geo[4], width = geo[1], height = geo[2],
-                }
+                local place = base.place_widget_at(widgets[position], geo[3], geo[4], geo[1], geo[2])
+                table.insert(positioned, place)
             end
         end
     else
         local bg = setup_background(self, ctx)
 
         if bg then
-            rects[#rects + 1] = {
-                widget = bg, x = 0, y = 0, width = width, height = height,
-            }
+            table.insert(
+                positioned,
+                base.place_widget_at(bg, 0, 0, width, height)
+            )
         end
     end
 
     if self._private.ontop ~= false and self._private.widget then
-        local r = children_rect(self, borders, width, height, wdg_w, wdg_h)
-        if r then rects[#rects + 1] = r end
+        table.insert(positioned, children_layout(self, borders, width, height, wdg_w, wdg_h))
     end
 
-    return base.place_rects_via_stack(rects, width, height)
+    return positioned
 end
 
 --- The widget to display inside of the border.
