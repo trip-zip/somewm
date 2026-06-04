@@ -1979,6 +1979,21 @@ luaA_clay_setup(lua_State *L)
 	lua_setglobal(L, "_somewm_clay");
 }
 
+/* True if c is still in globalconf.clients. The apply walk runs after
+ * end_layout but in the same frame; any Lua handler (a refresh signal
+ * listener, an animation tick callback) that calls client_unmanage in
+ * between removes c from globalconf.clients before the request::unmanage
+ * signal, so stale entries are skipped here cleanly. Mirrors the pattern
+ * used to validate scene-graph client pointers in input.c. */
+static bool
+clay_client_is_managed(client_t *c)
+{
+	foreach(elem, globalconf.clients)
+		if (*elem == c)
+			return true;
+	return false;
+}
+
 /* Apply pending Clay layout results to client/drawin geometry.
  * Called from some_refresh() at Step 1.75. */
 void
@@ -2000,7 +2015,7 @@ clay_apply_all(void)
 			int h = (int)r->h;
 
 			if (r->type == CLAY_ELEM_CLIENT) {
-				if (client_is_managed(r->client)) {
+				if (clay_client_is_managed(r->client)) {
 					int bw2 = r->client->border_width * 2;
 					area_t geo = {
 						.x = x,
