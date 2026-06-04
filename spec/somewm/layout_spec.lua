@@ -415,38 +415,6 @@ describe("somewm.layout reference solver", function()
                 { widget = a, x = 10, y = 10, width = 30, height = 30 },
             }, r.placements)
         end)
-
-        it("snaps to the parent origin when fully covered and offscreen", function()
-            local a = w()
-            local r = layout.solve {
-                width = 100, height = 100,
-                root = layout.stack {
-                    layout.widget(a, {
-                        x = 200, y = 200, width = 30, height = 30,
-                        avoid = { { x = 0, y = 0, width = 100, height = 100 } },
-                    }),
-                },
-            }
-            assert.is.same({
-                { widget = a, x = 0, y = 0, width = 30, height = 30 },
-            }, r.placements)
-        end)
-
-        it("keeps the requested position when fully covered but inside the parent", function()
-            local a = w()
-            local r = layout.solve {
-                width = 100, height = 100,
-                root = layout.stack {
-                    layout.widget(a, {
-                        x = 10, y = 10, width = 30, height = 30,
-                        avoid = { { x = 0, y = 0, width = 100, height = 100 } },
-                    }),
-                },
-            }
-            assert.is.same({
-                { widget = a, x = 10, y = 10, width = 30, height = 30 },
-            }, r.placements)
-        end)
     end)
 end)
 

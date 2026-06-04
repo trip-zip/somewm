@@ -178,10 +178,12 @@ arrange(Monitor *m)
 		client_set_suspended(c, !visible);
 	}
 
-	/* Find screen_t for this Monitor. This is also the "screens ready" guard:
-	 * before screens exist the lookup returns NULL and we skip the Lua arrange
-	 * (scene-node visibility above has already run). Do not gate on
-	 * globalconf.screens.tab, which somewm only populates transiently. */
+	/* Safety check: if not initialized yet, skip Lua arrange but scene nodes are already updated */
+	if (!globalconf.screens.tab) {
+		return;
+	}
+
+	/* Find screen_t for this Monitor */
 	screen = luaA_screen_get_by_monitor(L, m);
 	if (!screen || !screen->valid) {
 		return;
