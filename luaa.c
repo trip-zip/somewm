@@ -2103,6 +2103,19 @@ luaA_awesome_index(lua_State *L)
 		return 1;
 	}
 
+	/* Compositor readiness milestones (counterparts of "somewm::ready" and
+	 * "xwayland::ready" signals). True once the corresponding signal has
+	 * fired at least once; persists across hot-reload via globalconf. */
+	if (A_STREQ(key, "somewm_ready")) {
+		lua_pushboolean(L, globalconf.somewm_ready_seen);
+		return 1;
+	}
+
+	if (A_STREQ(key, "xwayland_ready")) {
+		lua_pushboolean(L, globalconf.xwayland_ready_seen);
+		return 1;
+	}
+
 	lua_rawget(L, 1);
 	return 1;
 }
