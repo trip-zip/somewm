@@ -394,7 +394,6 @@ extern lua_class_t client_class;
 
 LUA_OBJECT_FUNCS(client_class, client_t, client)
 
-bool client_is_managed(client_t *);
 bool client_on_selected_tags(client_t *);
 bool clients_share_tags(client_t *, client_t *);
 client_t * client_getbywin(xcb_window_t);

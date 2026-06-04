@@ -821,8 +821,13 @@ motionnotify(uint32_t time, struct wlr_input_device *device, double dx, double d
 
 
 	/* If drag source became invalid, clear it. */
-	if (seat->drag && !client_is_managed(drag_source_client))
-		drag_source_client = NULL;
+	if (seat->drag && drag_source_client) {
+		bool valid = false;
+		foreach(elem, globalconf.clients)
+			if (*elem == drag_source_client) { valid = true; break; }
+		if (!valid)
+			drag_source_client = NULL;
+	}
 
 	/* During active drag over compositor surfaces (wibars), don't clear
 	 * drag focus - that would cancel the drag on drop. Instead, keep
@@ -895,14 +900,24 @@ motionnotify(uint32_t time, struct wlr_input_device *device, double dx, double d
 		Client *current_client = NULL;
 		drawin_t *current_drawin = NULL;
 		drawable_t *titlebar_drawable = NULL;
+		bool client_valid = false;
 
 		/* Find what's under cursor */
 		xytonode(cursor->x, cursor->y, NULL, &current_client, NULL, &current_drawin, &titlebar_drawable, NULL, NULL);
 
 		/* Validate client pointer - xytonode can return stale pointers from scene graph
 		 * if a node's data field wasn't cleared when the client was destroyed */
-		if (!client_is_managed(current_client))
-			current_client = NULL;  /* Ignore stale/invalid client pointer */
+		if (current_client) {
+			foreach(elem, globalconf.clients) {
+				if (*elem == current_client) {
+					client_valid = true;
+					break;
+				}
+			}
+			if (!client_valid) {
+				current_client = NULL;  /* Ignore stale/invalid client pointer */
+			}
+		}
 
 		if (current_client) {
 			/* Mouse is over a client */
@@ -1838,8 +1853,18 @@ xytonode(double x, double y, struct wlr_surface **psurface,
 found:
 	/* Validate client pointer - ensure it's still in globalconf.clients
 	 * to avoid returning stale pointers from scene graph data fields */
-	if (pc && !client_is_managed(c))
-		c = NULL;  /* Stale pointer - don't return it */
+	if (c && pc) {
+		bool valid = false;
+		foreach(elem, globalconf.clients) {
+			if (*elem == c) {
+				valid = true;
+				break;
+			}
+		}
+		if (!valid) {
+			c = NULL;  /* Stale pointer - don't return it */
+		}
+	}
 
 	if (psurface) *psurface = surface;
 	if (pc) *pc = c;
