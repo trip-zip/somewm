@@ -548,9 +548,16 @@ reap_children(gint fd, GIOCondition condition, gpointer data)
 void
 cursor_to_client_coordinates(Client *client, double *sx, double *sy) {
 	double bw = client->bw;
-	/* Compute coordinates (sx, sy) within the borderd geometry. */
-	*sx = cursor->x - (client->geometry.x + bw);
-	*sy = cursor->y - (client->geometry.y + bw);
+	/* The content surface is positioned inside the frame at (bw + titlebar_left,
+	 * bw + titlebar_top) (see apply_geometry_to_wlroots), so content-local
+	 * coordinates must subtract the titlebars too, not just the border. Without
+	 * this the values stay positive over a titlebar and leak onto the client's
+	 * top content rows; with it they go negative there (= pointer not in content).
+	 * Fullscreen has no titlebars. */
+	int tl = client->fullscreen ? 0 : client->titlebar[CLIENT_TITLEBAR_LEFT].size;
+	int tt = client->fullscreen ? 0 : client->titlebar[CLIENT_TITLEBAR_TOP].size;
+	*sx = cursor->x - (client->geometry.x + bw + tl);
+	*sy = cursor->y - (client->geometry.y + bw + tt);
 }
 
 
@@ -879,6 +886,14 @@ run(char *startup_cmd)
 		 * In AwesomeWM, xcb_flush() sends everything immediately after config
 		 * loads; in Wayland we need to explicitly refresh all drawables. */
 		some_refresh();
+
+		/* Compositor reached steady state: rc.lua loaded, screens scanned,
+		 * clients managed, drawables pushed to scene. Subscribers can now
+		 * safely spawn long-lived helpers, register tray hosts, etc.
+		 * The flag lets luaA_hot_reload() re-emit for late subscribers
+		 * after rc.lua reload (this branch only runs on cold boot). */
+		globalconf.somewm_ready_seen = true;
+		luaA_emit_signal_global("somewm::ready");
 	}
 
 	/* Now that the socket exists and the backend is started, run the startup command */
