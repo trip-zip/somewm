@@ -66,13 +66,6 @@ function place:layout(context, width, height)
     }.placements)
 end
 
--- No :layout_node: place centers a child at its FIT size, but the fit depends on
--- the final allocated width, which isn't known when the merged subtree is built
--- (fitting "CLK" against an early/probe width truncates it). place has no
--- inherited layout_node, so it degrades to a leaf and the forest's :layout
--- positions it at apply time with the right width. A build-time-correct place
--- node is follow-up work (the deferred stack/place/grid builders).
-
 -- Fit this layout into the given area
 function place:fit(context, width, height)
     if not self._private.widget then

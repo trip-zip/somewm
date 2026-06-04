@@ -171,7 +171,6 @@ return function(clay)
         return clay.layout {
             name           = NAMES[orientation],
             body_signature = "context",
-            merged_capable = true,
             skip_gap       = tile_skip_gap,
             body           = function(ctx)
                 local clients = ctx.children

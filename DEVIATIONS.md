@@ -142,7 +142,7 @@ somewm 2.0 introduces [Clay](https://github.com/nicbarker/clay) as the universal
 |---|---|---|
 | Screen composition (wibars + workarea) | `compose_screen` in `lua/awful/layout/clay/init.lua` | Lua |
 | Tiled-client layout (tile / fair / max / corner / spiral / spiral.dwindle / floating) | `awful.layout.clay.*` presets, all using `body_signature = "context"` descriptors. `floating` emits a stack of self-positioned clients (no-op solve for positioning + bw2 round-trip preservation). `max.fullscreen` drives its own `layout.solve` at `screen.geometry` bounds because the tag-suit adapter solves against the workarea. `magnifier` is a deliberate bespoke exception (two `layout.solve` passes for overlap; documented in `lua/awful/layout/clay/magnifier.lua`). | Lua |
-| Per-client frame (4 borders + 4 titlebars + surface + shadow) | `clay_apply_client_frame()` in `clay_layout.c` | C |
+| Per-client decoration (4 borders + 4 titlebars + surface + shadow) | `clay_apply_client_decorations()` in `clay_layout.c` | C |
 | Widget hierarchy (wibox.layout.*) | All wibox layouts route through Clay. `flex` / `fixed` use flex distribution including `spacing_widget` (interleaved spacer leaves). `align` covers all three expand modes via Clay: `inside` / `outside` flex-grow; `none` is `layout.stack` with absolute child positions. `ratio` default uses flex distribution; non-default strategies (justify/center/spacing/left/right) and `spacing_widget` compute slot positions in Lua (void redistribution) then emit via `layout.stack` with absolute child positions. `stack` (z-order with offsets), `manual` (user-supplied points), and `grid` (cell math) all emit via `layout.stack`. | Lua via `somewm.layout.solve` |
 | Container layout (wibox.container.{margin, place, background, constraint, border}) | each container's `:layout` calls `somewm.layout.solve`; `border` is a 9-slice container that emits via `layout.stack` with absolute child positions for the corners, edges, fill, and inner widget. | Lua via `somewm.layout.solve` |
 | Layout-shaped placement (`placement.align` + 11 anchor aliases) | `awful.placement.align` calls `somewm.placement.solve` | Lua via `somewm.placement.solve` |
@@ -176,7 +176,7 @@ Two engine-agnostic public modules expose Clay-backed layout to user code:
 
 - **`somewm.placement`** (`lua/somewm/placement/init.lua`): single function `solve { parent, target_width, target_height, anchor }` returning `{ x, y, width, height }` in absolute coords. Used by `placement.align`'s fast path.
 
-Naming convention: public surfaces describe what they DO (`layout.row`, `placement.solve`), not what they're MADE OF. Engine-internal identifiers — `_somewm_clay`, `clay_layout.c`, `Clay_*` macros, `clay_apply_client_frame`, `clay_apply_layer_surface` — keep their honest names because they live at the engine layer. If we ever swap engines, only the engine layer changes; user code is untouched.
+Naming convention: public surfaces describe what they DO (`layout.row`, `placement.solve`), not what they're MADE OF. Engine-internal identifiers — `_somewm_clay`, `clay_layout.c`, `Clay_*` macros, `clay_apply_client_decorations`, `clay_apply_layer_surface` — keep their honest names because they live at the engine layer. If we ever swap engines, only the engine layer changes; user code is untouched.
 
 ### Substrate principle
 
@@ -205,9 +205,9 @@ The vblank-aligned scheduler proposed in earlier design notes (`mark_dirty + flu
 
 The load-profile claim was instrumented and verified in 2026-04 (see `ideas/redraw-loop-data.md`): solve-counters keyed by source confirm idle is ~0.1 solves/sec total, drag-resize is ~625-1252 solves/sec, and every solve corresponds to a real input change. The `delayed_call` coalescer is doing what it was designed to do.
 
-### Frame solve cache
+### Decoration sub-pass cache
 
-`clay_apply_client_frame()` runs from `commitnotify` on every surface commit per visible client, not just on geometry changes. The frame tree's inputs (`c->geometry.{width,height}`, `c->bw`, `c->fullscreen`, `c->titlebar[*].size`) are invariant across the vast majority of those commits. A per-client stamp cache (`frame_cache` field on `client_t` defined in `objects/client.h`) stores the last input state plus the resulting `inner_w`/`inner_h`; the head of `clay_apply_client_frame()` short-circuits the Clay solve when the stamp matches. The visibility loop and shadow update stay outside the cache because both are already idempotent. No external invalidation is needed: the comparison is the invalidation. Pre-cache idle was ~1057 frame solves/sec; post-cache it is 0.
+`clay_apply_client_decorations()` runs from `commitnotify` on every surface commit per visible client, not just on geometry changes. The decoration tree's inputs (`c->geometry.{width,height}`, `c->bw`, `c->fullscreen`, `c->titlebar[*].size`) are invariant across the vast majority of those commits. A per-client stamp cache (`decor_cache_t` field on `client_t` defined in `objects/client.h`) stores the last input state plus the resulting `inner_w`/`inner_h`; the head of `clay_apply_client_decorations()` short-circuits the Clay solve when the stamp matches. The visibility loop and shadow update stay outside the cache because both are already idempotent. No external invalidation is needed: the comparison is the invalidation. Pre-cache idle was ~1057 decoration solves/sec; post-cache it is 0.
 
 ### Why some Clay trees stay in C
 
@@ -215,7 +215,7 @@ Two layout paths build their Clay tree from C, not via a Lua descriptor through 
 
 | Path | C function | Reason to stay in C |
 |---|---|---|
-| Per-client frame | `clay_apply_client_frame()` (`clay_layout.c`) | Fires per pointer-move event during interactive resize, on top of the `SIG_PROPERTY_GEOMETRY` Lua roundtrip already paid in `client_resize_do()`. A Lua descriptor would be a *second* roundtrip per pointer event, with no stated customizability requirement to amortize the cost. |
+| Per-client decoration | `clay_apply_client_decorations()` (`clay_layout.c`) | Fires per pointer-move event during interactive resize, on top of the `SIG_PROPERTY_GEOMETRY` Lua roundtrip already paid in `client_resize_do()`. A Lua descriptor would be a *second* roundtrip per pointer event, with no stated customizability requirement to amortize the cost. |
 | Layer-shell anchoring | `clay_apply_layer_surface()` (`clay_layout.c`) | Battle-tested anchor / exclusive-zone math. A Lua port would expose a new layer-surface state surface (margin, desired_size, exclusive_zone modes) for a feature no current consumer asks for, plus a C↔Lua roundtrip per layer-surface commit. Net +LOC across two languages for partial substrate uniformity. |
 
 Both trees are portable to Lua descriptors if a consumer arises (theming hooks, plugin-driven decorations, layer-surface rules that depend on geometry). The substrate (`somewm.layout.solve` plus the engine wrappers in `_somewm_clay.*`) supports it; only the descriptor + glue need to be added.

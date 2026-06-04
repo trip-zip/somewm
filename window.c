@@ -1262,8 +1262,7 @@ apply_geometry_to_wlroots(Client *c)
 	 * surface element's inner size which becomes the configure size sent to
 	 * the client. */
 	int inner_w = 0, inner_h = 0;
-	if (!clay_consume_merged_frame(c, &inner_w, &inner_h))
-		clay_apply_client_frame(c, &inner_w, &inner_h);
+	clay_apply_client_decorations(c, &inner_w, &inner_h);
 
 	/* Request size change from client. Clay's surface element gives us the
 	 * exact inner size (geometry minus borders and titlebars, or minus
@@ -1319,7 +1318,7 @@ apply_geometry_to_wlroots(Client *c)
 		if (fully_inside) {
 			/* Common case: everything visible, no clipping needed.
 			 * Re-enable surface/borders/shadow that may have been hidden.
-			 * Titlebars are managed by clay_apply_client_frame(). */
+			 * Titlebars are managed by clay_apply_client_decorations(). */
 			wlr_scene_node_set_enabled(&c->scene_surface->node, true);
 			for (int i = 0; i < 4; i++)
 				wlr_scene_node_set_enabled(&c->border[i]->node, true);
@@ -1354,7 +1353,7 @@ apply_geometry_to_wlroots(Client *c)
 			if (c->shadow.tree)
 				wlr_scene_node_set_enabled(&c->shadow.tree->node, partially_visible);
 
-			/* Titlebar buffers: clay_apply_client_frame()
+			/* Titlebar buffers: clay_apply_client_decorations()
 			 * already enables them based on size/fullscreen. Only
 			 * forcibly disable when fully offscreen. */
 			if (!partially_visible) {
@@ -1372,7 +1371,7 @@ apply_geometry_to_wlroots(Client *c)
 		 * Mirror the fully_inside branch so a transition out of a
 		 * clip-offscreen layout recovers nodes that were previously
 		 * disabled. Titlebars stay idempotently managed by
-		 * clay_apply_client_frame() above. */
+		 * clay_apply_client_decorations() above. */
 		wlr_scene_node_set_enabled(&c->scene_surface->node, true);
 		for (int i = 0; i < 4; i++)
 			wlr_scene_node_set_enabled(&c->border[i]->node, true);

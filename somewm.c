@@ -771,10 +771,6 @@ some_refresh(void)
 	 * This applies computed positions without a Lua round-trip. */
 	clay_apply_all();
 
-	/* Step 1.8: Drive the Clay debug view. Coalesces pointer motion into at
-	 * most one debug re-solve per loop iteration (no-op unless debug is on). */
-	clay_debug_tick();
-
 	/* Step 2: Refresh drawins (wibox/panels) FIRST - matches AwesomeWM order
 	 * AwesomeWM calls drawin_refresh() BEFORE client_refresh() in awesome_refresh().
 	 * This ensures wibar geometry is applied before client layout calculations. */

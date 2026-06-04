@@ -4017,8 +4017,8 @@ titlebar_resize(lua_State *L, int cidx, client_t *c, client_titlebar_t bar, int 
     luaA_object_emit_signal(L, cidx, property_name, 0);
 }
 
-/** Titlebar positions are now computed by the Clay frame solve
- * (clay_apply_client_frame). This function is retained as a no-op
+/** Titlebar positions are now computed by the Clay decoration sub-pass
+ * (clay_apply_client_decorations). This function is retained as a no-op
  * for any external callers; Lua-level callers should observe positions
  * via the per-frame layout cycle. */
 void

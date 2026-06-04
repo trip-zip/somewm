@@ -411,19 +411,27 @@ screen.connect_signal("request::desktop_decoration", function(s)
         position  = "top",
         screen    = s,
         widget    = {
-            layout = wibox.layout.align.horizontal,
-            { -- Left
-                layout = wibox.layout.fixed.horizontal,
-                mylauncher,
-                s.mytaglist,
-                s.mypromptbox,
+            layout = wibox.layout.stack,
+            {
+                layout = wibox.layout.align.horizontal,
+                {
+                    layout = wibox.layout.fixed.horizontal,
+                    mylauncher,
+                    s.mytaglist,
+                    s.mypromptbox,
+                    s.mytasklist,
+                },
+                { widget = wibox.container.background },
+                {
+                    layout = wibox.layout.fixed.horizontal,
+                    wibox.widget.systray(),
+                    s.mylayoutbox,
+                },
             },
-            s.mytasklist, -- Middle (grows to fill)
-            { -- Right
-                layout = wibox.layout.fixed.horizontal,
-                wibox.widget.systray(),
+            {
                 mytextclock,
-                s.mylayoutbox,
+                halign = "center",
+                widget = wibox.container.place,
             },
         }
     }

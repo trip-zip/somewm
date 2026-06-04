@@ -84,7 +84,7 @@ local function hierarchy_new(redraw_callback, layout_callback, callback_arg)
 end
 
 local hierarchy_update
-function hierarchy_update(self, context, widget, width, height, region, matrix_to_parent, matrix_to_device, placements)
+function hierarchy_update(self, context, widget, width, height, region, matrix_to_parent, matrix_to_device)
     if (not self._need_update) and self._widget == widget and
             self._context == context and
             self._size.width == width and self._size.height == height and
@@ -128,13 +128,9 @@ function hierarchy_update(self, context, widget, width, height, region, matrix_t
         widget:weak_connect_signal("widget::emit_recursive", self._emit_recursive)
     end
 
-    -- Update children. `placements` (from the merged screen solve, keyed by
-    -- widget) supplies a container's child placements without a per-container
-    -- "wibox" solve; widgets it doesn't cover (leaves, degraded containers,
-    -- non-merged screens) fall back to base.layout_widget.
+    -- Update children
     local old_children = self._children
-    local layout_result = (placements and placements[widget])
-        or base.layout_widget(no_parent, context, widget, width, height)
+    local layout_result = base.layout_widget(no_parent, context, widget, width, height)
     self._children = {}
     for _, w in ipairs(layout_result or {}) do
         local r = table.remove(old_children, 1)
@@ -142,7 +138,7 @@ function hierarchy_update(self, context, widget, width, height, region, matrix_t
             r = hierarchy_new(self._redraw_callback, self._layout_callback, self._callback_arg)
             r._parent = self
         end
-        hierarchy_update(r, context, w._widget, w._width, w._height, region, w._matrix, w._matrix * matrix_to_device, placements)
+        hierarchy_update(r, context, w._widget, w._width, w._height, region, w._matrix, w._matrix * matrix_to_device)
         table.insert(self._children, r)
     end
 
@@ -228,16 +224,12 @@ end
 -- @param width The available width for this hierarchy.
 -- @param height The available height for this hierarchy.
 -- @param[opt] region A region to use for accumulating changed parts
--- @param[opt] placements Per-widget placement lists from the merged screen
---   solve (keyed by widget). Covered container widgets take their child
---   placements from here instead of a per-container layout solve; everything
---   else falls back to `base.layout_widget`.
 -- @return A cairo region describing the changed parts (either the `region`
 --   argument or a new, internally created region).
 -- @method update
-function hierarchy:update(context, widget, width, height, region, placements)
+function hierarchy:update(context, widget, width, height, region)
     region = region or cairo.Region.create()
-    hierarchy_update(self, context, widget, width, height, region, self._matrix, self._matrix_to_device, placements)
+    hierarchy_update(self, context, widget, width, height, region, self._matrix, self._matrix_to_device)
     return region
 end
 

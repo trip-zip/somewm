@@ -17,10 +17,8 @@
 
 local base  = require("wibox.widget.base" )
 local fixed = require("wibox.layout.fixed")
-local layout = require("somewm.layout")
 local table = table
 local pairs = pairs
-local ipairs = ipairs
 local gtable  = require("gears.table")
 
 local stack = {mt={}}
@@ -102,28 +100,6 @@ function stack:fit(context, orig_width, orig_height)
     end
 
     return math.min(max_w, orig_width), math.min(max_h, orig_height)
-end
-
--- Build a somewm.layout subtree for the merged screen solve, mirroring :layout.
--- The default stack overlays its children at full size, which is exactly a
--- somewm.layout.stack (overlap mode). Spacing, per-child offsets, and top_only
--- need positioning / show-hide the overlap can't express, so degrade to a leaf
--- and let the forest's :layout handle them. (This is its OWN layout_node, so the
--- fixed:layout_node guard that degrades fixed subclasses no longer applies.)
-function stack:layout_node(context, width, height)
-    if self._private.top_only
-        or (self._private.spacing or 0) ~= 0
-        or (self._private.h_offset or 0) ~= 0
-        or (self._private.v_offset or 0) ~= 0 then
-        return nil
-    end
-    local children = {}
-    for _, w in ipairs(self._private.widgets) do
-        local node = base.widget_to_node(self, context, w, width, height)
-        if node then children[#children + 1] = node end
-    end
-    if #children == 0 then return nil end
-    return layout.stack { widget = self, children = children }
 end
 
 --- If only the first stack widget is drawn.

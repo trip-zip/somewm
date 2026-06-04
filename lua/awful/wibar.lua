@@ -282,22 +282,6 @@ local function clay_register(wb, position)
         s._clay_drawins[wb] = nil
     end
 
-    -- Connect (once) the wibar's widget relayout to a screen arrange, so a
-    -- widget that changes size re-solves the merged screen tree. Gated on a
-    -- merge-capable layout so non-merged screens keep their current behavior.
-    if not wb._private._clay_arrange_hooked and wb._drawable then
-        wb._private._clay_arrange_hooked = true
-        wb._drawable:connect_signal("layout_changed", function()
-            local cs = wb.screen
-            if not (cs and cs.valid) then return end
-            local al = require("awful.layout")
-            local l = al.get(cs)
-            if l and l.descriptor and l.descriptor.merged_capable then
-                al.arrange(cs)
-            end
-        end)
-    end
-
     -- Position wibars synchronously via compose_screen, then schedule
     -- a full arrange so tiled clients react to the workarea change.
     local clay_ok, clay_mod = pcall(require, "awful.layout.clay")
