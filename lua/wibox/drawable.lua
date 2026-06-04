@@ -92,33 +92,12 @@ local function do_redraw(self)
 
     -- Relayout
     if self._need_relayout or self._need_complete_repaint then
-        local s = context.screen
-        -- On a merge-capable screen, a wibar's widget boxes come from the merged
-        -- screen solve (s._clay_widget_placements, keyed by widget). If that
-        -- solve is still pending -- this redraw was scheduled just ahead of the
-        -- arrange a widget relayout triggers -- wait one tick for the fresh
-        -- boxes instead of re-running the per-container "wibox" forest now. Wait
-        -- at most once so a stuck flag can't livelock the redraw; the reschedule
-        -- lands later in the same refresh, so it costs no extra frame.
-        if s and s._clay_merge_capable and s._clay_arrange_pending
-                and not self._clay_waited
-                and s._clay_widget_placements
-                and s._clay_widget_placements[self._widget] then
-            self._clay_waited = true
-            self:draw()
-            return
-        end
-        self._clay_waited = false
-
-        local placements = (s and s._clay_merge_capable)
-            and s._clay_widget_placements or nil
-
         self._need_relayout = false
         if self._widget_hierarchy and self._widget then
             local had_systray = systray_widget and self._widget_hierarchy:get_count(systray_widget) > 0
 
             self._widget_hierarchy:update(context,
-                self._widget, width, height, self._dirty_area, placements)
+                self._widget, width, height, self._dirty_area)
 
             local has_systray = systray_widget and self._widget_hierarchy:get_count(systray_widget) > 0
             if had_systray and not has_systray then
@@ -272,13 +251,6 @@ end
 
 function drawable:get_widget()
     return rawget(self, "_widget")
-end
-
--- Return the stable, cached widget context (screen, dpi, drawable, ...).
--- compose_screen reuses it when building the wibar's widget subtree for the
--- merged solve so those fit lookups share this drawable's fit cache.
-function drawable:get_widget_context()
-    return get_widget_context(self)
 end
 
 --- Set the background of the drawable
@@ -515,10 +487,7 @@ function drawable.new(d, widget_context_skeleton, drawable_name)
         -- mean-time, the layout does not matter much.
         if ret._visible then
             ret:draw()
-            -- Announce the relayout so a merged wibar can re-solve the screen
-            -- tree. Only wibars subscribe; gated on visibility so hidden or
-            -- removed bars (which aren't in the merged solve) don't arrange.
-            ret:emit_signal("layout_changed")
+        else
         end
     end
 

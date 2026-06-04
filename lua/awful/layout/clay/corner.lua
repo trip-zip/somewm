@@ -95,28 +95,24 @@ return function(clay)
     clay.corner.nw = clay.layout {
         name           = "clay.cornernw",
         body_signature = "context",
-        merged_capable = true,
         skip_gap       = corner_skip_gap,
         body           = corner_build("NW"),
     }
     clay.corner.ne = clay.layout {
         name           = "clay.cornerne",
         body_signature = "context",
-        merged_capable = true,
         skip_gap       = corner_skip_gap,
         body           = corner_build("NE"),
     }
     clay.corner.sw = clay.layout {
         name           = "clay.cornersw",
         body_signature = "context",
-        merged_capable = true,
         skip_gap       = corner_skip_gap,
         body           = corner_build("SW"),
     }
     clay.corner.se = clay.layout {
         name           = "clay.cornerse",
         body_signature = "context",
-        merged_capable = true,
         skip_gap       = corner_skip_gap,
         body           = corner_build("SE"),
     }

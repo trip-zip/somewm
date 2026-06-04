@@ -1,7 +1,7 @@
 ---------------------------------------------------------------------------
 --- Test: Phase 5 client decoration Clay sub-pass.
 ---
---- Verifies that clay_apply_client_frame() produces the same content
+--- Verifies that clay_apply_client_decorations() produces the same content
 --- geometry as the legacy hand-rolled math: a client with 4 titlebars at
 --- distinct sizes survives map -> resize -> fullscreen toggle without
 --- crashing, and the geometry stays consistent end-to-end.
@@ -53,7 +53,6 @@ runner.run_async(function()
     async.sleep(0.2)
 
     c.floating = true
-    c.border_width = 4 -- a real border so the thickness assertions below bite
     async.sleep(0.05)
 
     local bw = c.border_width or 0
@@ -71,26 +70,6 @@ runner.run_async(function()
         string.format("[TEST 1] content_w must be >= 1, got %d", content_w))
     assert(content_h >= 1,
         string.format("[TEST 1] content_h must be >= 1, got %d", content_h))
-
-    -- Decoration scene geometry must reflect the solved boxes. Regression guard
-    -- for the per-client fallback path (floating clients take it), which once
-    -- decoded the leaf role wrong and produced zero-size borders + a (0,0)
-    -- surface offset, configuring the client to 1x1.
-    local dg = _somewm_clay.client_frame_geometry(c)
-    assert(dg.surface.x == bw + TB.left, string.format(
-        "[TEST 1] surface x = %d, expected bw+left = %d", dg.surface.x, bw + TB.left))
-    assert(dg.surface.y == bw + TB.top, string.format(
-        "[TEST 1] surface y = %d, expected bw+top = %d", dg.surface.y, bw + TB.top))
-    if bw > 0 then
-        -- border[1..4] = TOP, BOTTOM, LEFT, RIGHT; top/bottom are bw-tall bars,
-        -- left/right are bw-wide bars (the bug sized them all 0).
-        assert(dg.border[1].h == bw and dg.border[2].h == bw, string.format(
-            "[TEST 1] top/bottom border height must be bw=%d, got %d/%d",
-            bw, dg.border[1].h, dg.border[2].h))
-        assert(dg.border[3].w == bw and dg.border[4].w == bw, string.format(
-            "[TEST 1] left/right border width must be bw=%d, got %d/%d",
-            bw, dg.border[3].w, dg.border[4].w))
-    end
 
     io.stderr:write(string.format(
         "[TEST 1] PASS - geo %dx%d, bw=%d, tb=(t%d r%d b%d l%d), content %dx%d\n",

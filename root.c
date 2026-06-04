@@ -24,7 +24,6 @@
 #include "objects/screen.h"
 #include "screenshot_compose.h"
 #include "somewm_types.h"
-#include "clay_layout.h"
 #include <xkbcommon/xkbcommon.h>
 #include <wlr/types/wlr_seat.h>
 #include <wlr/types/wlr_data_device.h>
@@ -1804,10 +1803,6 @@ luaA_root_get_content(lua_State *L)
 	 * This ensures correct layering where ontop popups appear above titlebars. */
 	composite_widgets_directly(cr, false);  /* Normal widgets */
 	composite_widgets_directly(cr, true);   /* Ontop widgets */
-
-	/* Clay debug overlay sits above everything on screen; composite it last so
-	 * the inspector is captured in screenshots too. No-op when debug is off. */
-	clay_debug_composite_screenshot(cr);
 
 	cairo_destroy(cr);
 

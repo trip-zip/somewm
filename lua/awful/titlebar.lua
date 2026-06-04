@@ -829,21 +829,6 @@ function titlebar.show(c, position)
     new(c, args)
 end
 
---- Return the client's existing titlebar drawable at `position`, or nil.
--- Side-effect-free: reads only the cache and never creates a titlebar (the
--- `c.titlebar_*` getters lazily create the drawable and fire `request::titlebars`,
--- so they must not be called during a layout solve). Used by the merged Clay
--- screen solve to fold an already-created titlebar's widget content into the tree.
--- @tparam client c The client.
--- @tparam[opt="top"] string position One of `"left"`, `"right"`, `"top"`, `"bottom"`.
--- @treturn[opt] wibox.drawable The existing titlebar drawable, or nil.
--- @staticfct awful.titlebar.get_existing
-function titlebar.get_existing(c, position)
-    local bars = all_titlebars[c]
-    local data = bars and bars[position or "top"]
-    return data and data.drawable or nil
-end
-
 --- Hide the client's titlebar.
 -- @tparam client c The client whose titlebar is modified
 -- @tparam[opt="top"] string position The position of the titlebar. Must be one of `"left"`,

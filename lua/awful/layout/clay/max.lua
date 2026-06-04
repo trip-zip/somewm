@@ -18,21 +18,16 @@ return function(clay)
     clay.max = clay.layout {
         name           = "clay.max",
         body_signature = "context",
-        merged_capable = true,
         skip_gap       = function() return true end,
         no_gap         = true,
         body           = build_stack,
     }
 
     -- Fullscreen variant: same body, but solves against screen.geometry
-    -- (including wibar regions) instead of the workarea. merged_capable: the
-    -- "geometry" bounds_source makes compose_screen graft the subtree as a
-    -- root-attached container spanning the full screen, rather than the
-    -- wibar-inset workarea node.
+    -- (including wibar regions) instead of the workarea.
     clay.max.fullscreen = clay.layout {
         name           = "clay.fullscreen",
         body_signature = "context",
-        merged_capable = true,
         skip_gap       = function() return true end,
         no_gap         = true,
         bounds_source  = "geometry",

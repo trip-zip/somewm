@@ -2,7 +2,7 @@
 -- the solve is a no-op for positioning (each client's current rect goes
 -- in, the same rect comes out), but the apply pass runs through the
 -- unified pipeline. Width/height carry +bw2 to compensate for the
--- frame solve's bw2 subtraction so c:geometry() round-trips
+-- decoration sub-pass's bw2 subtraction so c:geometry() round-trips
 -- exactly.
 
 local ipairs = ipairs

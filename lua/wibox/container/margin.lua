@@ -53,18 +53,6 @@ function margin:layout(_, width, height)
     }.placements)
 end
 
--- Build a somewm.layout subtree for the merged screen solve, mirroring :layout.
-function margin:layout_node(context, width, height)
-    local w = self._private.widget
-    if not w then return nil end
-    local pt, pr = self._private.top, self._private.right
-    local pb, pl = self._private.bottom, self._private.left
-    local child = base.widget_to_node(self, context, w,
-        width - pl - pr, height - pt - pb, { grow = true })
-    if not child then return nil end
-    return layout.row { widget = self, padding = { pt, pr, pb, pl }, child }
-end
-
 -- Fit a margin layout into the given space
 function margin:fit(context, width, height)
     local extra_w = self._private.left + self._private.right

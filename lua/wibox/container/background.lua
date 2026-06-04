@@ -362,19 +362,6 @@ function background:layout(_, width, height)
     }.placements)
 end
 
--- Build a somewm.layout subtree for the merged screen solve, mirroring :layout.
-function background:layout_node(context, width, height)
-    if not self._private.widget then return nil end
-
-    local bw = self._private.border_strategy == "inner" and
-        self._private.shape_border_width or 0
-
-    local child = base.widget_to_node(self, context, self._private.widget,
-        width - 2*bw, height - 2*bw, { grow = true })
-    if not child then return nil end
-    return layout.row { widget = self, padding = bw, child }
-end
-
 -- Fit this widget into the given area
 function background:fit(context, width, height)
     if not self._private.widget then
