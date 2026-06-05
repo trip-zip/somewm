@@ -206,6 +206,10 @@ struct wlr_layer_shell_v1 *some_get_layer_shell(void);
 struct wlr_renderer *some_get_renderer(void);
 struct wlr_allocator *some_get_allocator(void);
 
+/* Defer wl_display_flush_clients() to an idle source (see somewm.c). Safe to
+ * call from inside a wlroots signal emit; coalesces within a dispatch cycle. */
+void schedule_flush_clients(struct wl_display *display);
+
 /*
  * XKB Keyboard Layout API
  * AwesomeWM-compatible keyboard layout switching and querying

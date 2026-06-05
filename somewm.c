@@ -3640,6 +3640,33 @@ cursor_to_client_coordinates(Client *client, double *sx, double *sy) {
 	*sy = cursor->y - (client->geometry.y + bw + tt);
 }
 
+static struct wl_event_source *pending_flush_source;
+
+static void
+flush_clients_idle(void *data)
+{
+	struct wl_display *display = data;
+	pending_flush_source = NULL;
+	wl_display_flush_clients(display);
+}
+
+/* Defer the flush out of the signal-emit stack. Flushing synchronously from
+ * mapnotify can re-enter wl_client_destroy() for a hung-up peer and tear down
+ * the surface whose events.map signal is still being emitted (issue #530).
+ * Repeated calls in one dispatch cycle coalesce into a single idle source.
+ * Delivery timing is preserved by some_glib_poll(), which flushes every client
+ * before each g_poll, so the configure still ships before the client composites
+ * a frame at the old geometry; the idle is a backstop that fires at the end of
+ * the next wl_event_loop_dispatch. */
+void
+schedule_flush_clients(struct wl_display *display)
+{
+	if (pending_flush_source != NULL)
+		return;
+	struct wl_event_loop *loop = wl_display_get_event_loop(display);
+	pending_flush_source = wl_event_loop_add_idle(loop, flush_clients_idle, display);
+}
+
 void
 mapnotify(struct wl_listener *listener, void *data)
 {
@@ -3827,11 +3854,11 @@ mapnotify(struct wl_listener *listener, void *data)
 		/* Apply geometry BEFORE enabling scene node to send configure event.
 		 * Fixes Firefox tiling issue (#10).
 		 * Reset c->resize to force re-send configure even if setmon()->resize()
-		 * already sent one (unflushed). This ensures the configure is flushed
-		 * before we enable the scene node. */
+		 * already sent one (unflushed). The flush is deferred (see
+		 * schedule_flush_clients). */
 		c->resize = 0;
 		apply_geometry_to_wlroots(c);
-		wl_display_flush_clients(dpy);
+		schedule_flush_clients(dpy);
 
 		/* Enable scene node for transient client */
 		if (client_on_selected_tags(c)) {
@@ -3961,10 +3988,10 @@ mapnotify(struct wl_listener *listener, void *data)
 		c->resize = 0;
 		apply_geometry_to_wlroots(c);
 
-		/* Flush configure event to client immediately so it receives the tiled
-		 * geometry before we make it visible. Without this, the configure is
-		 * queued but not sent until the next poll cycle. */
-		wl_display_flush_clients(dpy);
+		/* Flush configure event to client so it receives the tiled geometry
+		 * before we make it visible. The flush is deferred (see
+		 * schedule_flush_clients). */
+		schedule_flush_clients(dpy);
 
 		/* Enable scene node for new client if on selected tags (Wayland-specific).
 		 * Unlike AwesomeWM, we don't call arrange() here - that's triggered by Lua signals.
