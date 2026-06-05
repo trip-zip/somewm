@@ -451,6 +451,16 @@ test_fullscreen_client = executable(
   install: false,
 )
 
+# Test client that disconnects right after the mapping commit. Reproducer for
+# the wl_display_flush_clients re-entrance crash inside mapnotify.
+test_disconnect_mid_map_client = executable(
+  'test-disconnect-mid-map-client',
+  ['tests/test-disconnect-mid-map-client.c', xdg_shell_client_code],
+  xdg_shell_client_header,
+  dependencies: [wayland_client],
+  install: false,
+)
+
 # Test XDG client that renders a 4-quadrant pattern at the preferred buffer
 # scale, used by test-client-content-pattern.lua to verify HiDPI c.content.
 test_content_pattern_client = executable(
