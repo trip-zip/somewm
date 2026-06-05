@@ -933,13 +933,17 @@ rebuild_keyboard_keymap(void)
 	some_rebuild_keyboard_keymap();
 }
 
-/** awesome.sync() - Synchronize with the compositor */
+/** awesome.sync() - Flush pending events to clients.
+ * Deferred to an idle source (see schedule_flush_clients) so it is safe to call
+ * from inside a signal handler. Best-effort: some_glib_poll() flushes every
+ * client before each g_poll, so pending data leaves the compositor before it
+ * next blocks, not synchronously on return. */
 static int
 luaA_awesome_sync(lua_State *L)
 {
 	struct wl_display *display = some_get_display();
 	if (display) {
-		wl_display_flush_clients(display);
+		schedule_flush_clients(display);
 	}
 	return 0;
 }
