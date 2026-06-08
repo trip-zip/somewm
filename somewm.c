@@ -4610,6 +4610,7 @@ rendermon(struct wl_listener *listener, void *data)
 	Monitor *m = wl_container_of(listener, m, frame);
 	Client *c;
 	struct timespec now;
+	bool presented = false;
 
 	/* Safety: scene_output may not exist yet if frame fires before createmon
 	 * finishes (possible on NVIDIA), or output may be disabled */
@@ -4626,9 +4627,15 @@ rendermon(struct wl_listener *listener, void *data)
 			goto skip;
 	}
 
+	/* needs_frame is true only when there is something to present;
+	 * wlr_scene_output_commit() returns true without presenting otherwise, so
+	 * sample it first to count only real presents. */
+	presented = wlr_scene_output_needs_frame(m->scene_output);
 	if (!wlr_scene_output_commit(m->scene_output, NULL))
 		wlr_log(WLR_DEBUG, "[HOTPLUG] rendermon commit failed: %s",
 			m->wlr_output->name);
+	else if (presented)
+		globalconf.frame_commit_count++;
 
 skip:
 	clock_gettime(CLOCK_MONOTONIC, &now);
@@ -5158,6 +5165,17 @@ some_glib_poll(GPollFD *ufds, guint nfsd, gint timeout)
 	/* Flush pending Wayland client data before polling
 	 * Clients won't receive data until we flush */
 	wl_display_flush_clients(dpy);
+
+	/* Drain wlroots idle sources before sleeping. wlr_output_schedule_frame()
+	 * (called by drawin_refresh_drawable() when a wibox redraws) queues the frame
+	 * as a wl_event_loop idle, and idles only run inside wl_event_loop_dispatch().
+	 * That otherwise happens solely when the loop fd is readable from input or
+	 * client traffic (via wayland_source_dispatch), so a timer-driven redraw (e.g.
+	 * textclock / awful.widget.watch) updates the scene buffer but is never
+	 * committed on an idle session and the widget freezes until the next input.
+	 * dispatch_idle runs exactly the queued idles (not fd sources, which stay with
+	 * the GSource), presenting those frames every iteration. */
+	wl_event_loop_dispatch_idle(some_get_event_loop());
 
 	/* Check iteration performance (matches AwesomeWM) */
 	gettimeofday(&now, NULL);

@@ -305,6 +305,12 @@ typedef struct
     bool somewm_ready_seen;
     bool xwayland_ready_seen;
 
+    /** Count of presented output frames (incremented in rendermon only when a
+     *  commit actually had damage to present). Lets tests observe that a redraw
+     *  reached the screen; exposed to Lua as awesome._test_frame_count. Not
+     *  preserved across hot-reload (globalconf is zeroed by globalconf_wipe). */
+    unsigned long frame_commit_count;
+
     /* ========== WALLPAPER SUPPORT ========== */
 
     /** Cached wallpaper surface (AwesomeWM compatibility)
