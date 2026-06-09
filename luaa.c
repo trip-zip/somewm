@@ -2136,6 +2136,13 @@ luaA_awesome_index(lua_State *L)
 		return 1;
 	}
 
+	/* Monotonic count of presented output frames. Test hook for observing that a
+	 * redraw actually reached the screen (see tests/test-widget-idle-repaint.lua). */
+	if (A_STREQ(key, "_test_frame_count")) {
+		lua_pushinteger(L, (lua_Integer)globalconf.frame_commit_count);
+		return 1;
+	}
+
 	if (A_STREQ(key, "bypass_surface_visibility")) {
 		lua_pushboolean(L, globalconf.appearance.bypass_surface_visibility);
 		return 1;
