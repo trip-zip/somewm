@@ -508,6 +508,7 @@ rendermon(struct wl_listener *listener, void *data)
 	Monitor *m = wl_container_of(listener, m, frame);
 	Client *c;
 	struct timespec now;
+	bool presented = false;
 
 	/* Safety: scene_output may not exist yet if frame fires before createmon
 	 * finishes (possible on NVIDIA), or output may be disabled */
@@ -528,16 +529,22 @@ rendermon(struct wl_listener *listener, void *data)
 	struct timespec bench_render_start, bench_render_end;
 	clock_gettime(CLOCK_MONOTONIC, &bench_render_start);
 #endif
-	if (!wlr_scene_output_commit(m->scene_output, NULL))
+	/* needs_frame is true only when there is something to present;
+	 * wlr_scene_output_commit() returns true without presenting otherwise, so
+	 * sample it first to count only real presents. */
+	presented = wlr_scene_output_needs_frame(m->scene_output);
+	if (!wlr_scene_output_commit(m->scene_output, NULL)) {
 		wlr_log(WLR_DEBUG, "[HOTPLUG] rendermon commit failed: %s",
 			m->wlr_output->name);
+	} else {
+		if (presented)
+			globalconf.frame_commit_count++;
 #ifdef SOMEWM_BENCH
-	else {
 		clock_gettime(CLOCK_MONOTONIC, &bench_render_end);
 		bench_render_record(timespec_diff_ns(&bench_render_start, &bench_render_end));
 		bench_input_commit_flush();
-	}
 #endif
+	}
 
 skip:
 	clock_gettime(CLOCK_MONOTONIC, &now);
