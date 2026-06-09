@@ -493,6 +493,15 @@ if gbm_dep.found()
   )
 endif
 
+# Test client that disconnects right after the mapping commit. Reproducer for
+# the wl_display_flush_clients re-entrance crash inside mapnotify.
+test_disconnect_mid_map_client = executable(
+  'test-disconnect-mid-map-client',
+  ['tests/test-disconnect-mid-map-client.c', xdg_shell_client_code],
+  xdg_shell_client_header,
+  dependencies: [wayland_client],
+  install: false,
+)
 # ==============================================================================
 # Install Data
 # ==============================================================================

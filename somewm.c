@@ -702,6 +702,17 @@ some_glib_poll(GPollFD *ufds, guint nfsd, gint timeout)
 	 * Clients won't receive data until we flush */
 	wl_display_flush_clients(dpy);
 
+	/* Drain wlroots idle sources before sleeping. wlr_output_schedule_frame()
+	 * (called by drawin_refresh_drawable() when a wibox redraws) queues the frame
+	 * as a wl_event_loop idle, and idles only run inside wl_event_loop_dispatch().
+	 * That otherwise happens solely when the loop fd is readable from input or
+	 * client traffic (via wayland_source_dispatch), so a timer-driven redraw (e.g.
+	 * textclock / awful.widget.watch) updates the scene buffer but is never
+	 * committed on an idle session and the widget freezes until the next input.
+	 * dispatch_idle runs exactly the queued idles (not fd sources, which stay with
+	 * the GSource), presenting those frames every iteration. */
+	wl_event_loop_dispatch_idle(wl_display_get_event_loop(dpy));
+
 	/* Check iteration performance (matches AwesomeWM) */
 	gettimeofday(&now, NULL);
 	timersub(&now, &last_wakeup, &length_time);

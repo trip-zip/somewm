@@ -762,6 +762,43 @@ killclient(const Arg *arg)
 		client_send_close(sel);
 }
 
+/* Re-entrance guard for wl_display_flush_clients() from inside a Wayland
+ * signal emit such as surface->events.map. flush_clients can notice that a
+ * peer client has hung up and synchronously call wl_client_destroy(), which
+ * tears down every wl_resource the client owns, including the surface
+ * whose map signal is currently being emitted. wlroots then aborts on
+ *   assert(wl_list_empty(&surface->events.map.listener_list))
+ * in surface_handle_resource_destroy. Defer the flush via
+ * wl_event_loop_add_idle() so it runs after the signal emit unwinds.
+ * See trip-zip/somewm#530.
+ *
+ * Coalesce repeated requests from the same dispatch cycle into a single
+ * idle callback (matches the wlroots `surface->configure_idle` /
+ * `output->idle_frame` pattern). A burst of mapnotify() calls (e.g. a
+ * session restore opening many clients at once) would otherwise queue
+ * one redundant flush per call. */
+static struct wl_event_source *pending_flush_source;
+
+static void
+flush_clients_idle(void *data)
+{
+	struct wl_display *display = data;
+	pending_flush_source = NULL;
+	wl_display_flush_clients(display);
+}
+
+void
+schedule_flush_clients(struct wl_display *display)
+{
+	struct wl_event_loop *loop;
+
+	if (pending_flush_source != NULL)
+		return;
+
+	loop = wl_display_get_event_loop(display);
+	pending_flush_source = wl_event_loop_add_idle(loop, flush_clients_idle, display);
+}
+
 void
 mapnotify(struct wl_listener *listener, void *data)
 {
@@ -951,11 +988,13 @@ mapnotify(struct wl_listener *listener, void *data)
 		/* Apply geometry BEFORE enabling scene node to send configure event.
 		 * Fixes Firefox tiling issue (#10).
 		 * Reset c->resize to force re-send configure even if setmon()->resize()
-		 * already sent one (unflushed). This ensures the configure is flushed
-		 * before we enable the scene node. */
+		 * already sent one (unflushed). The configure goes out at the next
+		 * idle, before the next poll cycle blocks. See schedule_flush_clients
+		 * above and trip-zip/somewm#530 for why this can't run synchronously
+		 * here. */
 		c->resize = 0;
 		apply_geometry_to_wlroots(c);
-		wl_display_flush_clients(dpy);
+		schedule_flush_clients(dpy);
 
 		/* Enable scene node for transient client */
 		if (client_on_selected_tags(c)) {
@@ -1072,19 +1111,21 @@ mapnotify(struct wl_listener *listener, void *data)
 		 * ensure the tiled geometry is computed before we flush the configure. */
 		luaA_emit_refresh();
 
-		/* Apply geometry BEFORE enabling scene node to send configure event.
-		 * Without this, client may render a frame at wrong size before receiving
-		 * the tiled geometry configure event. Fixes Firefox tiling issue (#10).
-		 * Reset c->resize to force re-send configure even if setmon()->resize()
-		 * already sent one (unflushed). This ensures the configure is flushed
-		 * before we enable the scene node. */
+		/* Apply tiled geometry so the configure event is encoded into the
+		 * outgoing protocol buffer before the client renders its first frame.
+		 * Without this, the client may render at its requested (wrong) size.
+		 * Fixes Firefox tiling issue (#10). Reset c->resize to force re-send
+		 * configure even if setmon()->resize() already queued one. */
 		c->resize = 0;
 		apply_geometry_to_wlroots(c);
 
-		/* Flush configure event to client immediately so it receives the tiled
-		 * geometry before we make it visible. Without this, the configure is
-		 * queued but not sent until the next poll cycle. */
-		wl_display_flush_clients(dpy);
+		/* Schedule a flush so the encoded configure leaves the kernel buffer
+		 * at the next event-loop idle, before the loop blocks in poll(). The
+		 * flush cannot run synchronously here because we are still inside the
+		 * surface->events.map signal emit. See schedule_flush_clients above
+		 * and trip-zip/somewm#530. The configure still hits the wire before
+		 * the client could possibly composite a frame at the old geometry. */
+		schedule_flush_clients(dpy);
 
 		/* Enable scene node for new client if on selected tags (Wayland-specific).
 		 * Unlike AwesomeWM, we don't call arrange() here - that's triggered by Lua signals.

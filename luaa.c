@@ -939,13 +939,24 @@ rebuild_keyboard_keymap(void)
 	some_rebuild_keyboard_keymap();
 }
 
-/** awesome.sync() - Synchronize with the compositor */
+/** awesome.sync() - Schedule a flush of pending compositor → client data.
+ *
+ * Note: previously this called wl_display_flush_clients() synchronously.
+ * Lua callers can invoke awesome.sync() from inside a signal emit (e.g. a
+ * `request::manage` rule that wants the configure flushed before it does
+ * something else), and a synchronous flush in that context can call
+ * wl_client_destroy() on a hung-up peer mid-emit and abort wlroots. See
+ * trip-zip/somewm#530. The flush now runs at the next event-loop idle, so
+ * it is best-effort: bytes are guaranteed to leave the compositor before
+ * the next poll blocks, but not before the call returns to Lua. Lua code
+ * that depended on the synchronous semantics needs to defer follow-up
+ * work to a `gears.timer.delayed_call` or similar. */
 static int
 luaA_awesome_sync(lua_State *L)
 {
 	struct wl_display *display = some_get_display();
 	if (display) {
-		wl_display_flush_clients(display);
+		schedule_flush_clients(display);
 	}
 	return 0;
 }
@@ -2123,6 +2134,13 @@ luaA_awesome_index(lua_State *L)
 
 	if (A_STREQ(key, "api_level")) {
 		lua_pushinteger(L, globalconf.api_level);
+		return 1;
+	}
+
+	/* Monotonic count of presented output frames. Test hook for observing that a
+	 * redraw actually reached the screen (see tests/test-widget-idle-repaint.lua). */
+	if (A_STREQ(key, "_test_frame_count")) {
+		lua_pushinteger(L, (lua_Integer)globalconf.frame_commit_count);
 		return 1;
 	}
 
