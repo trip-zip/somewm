@@ -1004,6 +1004,10 @@ luaA_awesome_set_input_setting(lua_State *L)
 		const char *val = lua_isnil(L, 2) ? NULL : luaL_checkstring(L, 2);
 		free(globalconf.input.clickfinger_button_map);
 		globalconf.input.clickfinger_button_map = val ? strdup(val) : NULL;
+	} else if (strcmp(key, "output") == 0) {
+		const char *val = lua_isnil(L, 2) ? NULL : luaL_checkstring(L, 2);
+		free(globalconf.input.output);
+		globalconf.input.output = val ? strdup(val) : NULL;
 	} else {
 		return luaL_error(L, "Unknown input setting: %s", key);
 	}
@@ -1026,6 +1030,7 @@ input_rules_free(void)
 		free(r->properties.send_events_mode);
 		free(r->properties.accel_profile);
 		free(r->properties.tap_button_map);
+		free(r->properties.output);
 	}
 	free(globalconf.input_rules);
 	globalconf.input_rules = NULL;
@@ -1055,6 +1060,7 @@ input_settings_init_unset(InputSettings *s)
 	s->accel_speed = 0.0;
 	s->tap_button_map = NULL;
 	s->accel_speed_set = false;
+	s->output = NULL;
 }
 
 /** Read an optional int field from a Lua table on the stack.
@@ -1147,6 +1153,7 @@ luaA_awesome_set_input_rules(lua_State *L)
 			p->send_events_mode = input_rule_get_string(L, pidx, "send_events_mode");
 			p->accel_profile = input_rule_get_string(L, pidx, "accel_profile");
 			p->tap_button_map = input_rule_get_string(L, pidx, "tap_button_map");
+			p->output = input_rule_get_string(L, pidx, "output");
 
 			lua_getfield(L, pidx, "accel_speed");
 			if (!lua_isnil(L, -1)) {

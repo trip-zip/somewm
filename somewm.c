@@ -1318,6 +1318,7 @@ setup(void)
 	globalconf.input.accel_profile = NULL;  /* String property - set via Lua */
 	globalconf.input.accel_speed = 0.0;
 	globalconf.input.tap_button_map = NULL;  /* String property - set via Lua */
+	globalconf.input.output = NULL;  /* String property - set via Lua */
 
 	/* Logging defaults (only set if not already set by -d flag) */
 	if (globalconf.log_level == 0)

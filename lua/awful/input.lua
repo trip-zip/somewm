@@ -37,6 +37,7 @@ local state = {
     accel_profile = nil,            -- "flat", "adaptive"
     accel_speed = 0.0,              -- -1.0 to 1.0
     tap_button_map = nil,           -- "lrm", "lmr"
+    output = nil,           -- "lrm", "lmr"
 
     -- Keyboard settings
     keyboard_repeat_rate = 25,      -- repeats per second
@@ -67,6 +68,7 @@ local property_types = {
     send_events_mode = "string",
     accel_profile = "string",
     accel_speed = "number",
+    output = "string",
     tap_button_map = "string",
     keyboard_repeat_rate = "int",
     keyboard_repeat_delay = "int",
@@ -97,6 +99,7 @@ local pointer_settings = {
     accel_profile = true,
     accel_speed = true,
     tap_button_map = true,
+    output = true,
 }
 
 -- Per-device input rules (evaluated in order, last match wins per property)
