@@ -559,9 +559,16 @@ reap_children(gint fd, GIOCondition condition, gpointer data)
 void
 cursor_to_client_coordinates(Client *client, double *sx, double *sy) {
 	double bw = client->bw;
-	/* Compute coordinates (sx, sy) within the borderd geometry. */
-	*sx = cursor->x - (client->geometry.x + bw);
-	*sy = cursor->y - (client->geometry.y + bw);
+	/* The content surface is positioned inside the frame at (bw + titlebar_left,
+	 * bw + titlebar_top) (see apply_geometry_to_wlroots), so content-local
+	 * coordinates must subtract the titlebars too, not just the border. Without
+	 * this the values stay positive over a titlebar and leak onto the client's
+	 * top content rows; with it they go negative there (= pointer not in content).
+	 * Fullscreen has no titlebars. */
+	int tl = client->fullscreen ? 0 : client->titlebar[CLIENT_TITLEBAR_LEFT].size;
+	int tt = client->fullscreen ? 0 : client->titlebar[CLIENT_TITLEBAR_TOP].size;
+	*sx = cursor->x - (client->geometry.x + bw + tl);
+	*sy = cursor->y - (client->geometry.y + bw + tt);
 }
 
 
@@ -704,6 +711,17 @@ some_glib_poll(GPollFD *ufds, guint nfsd, gint timeout)
 	/* Flush pending Wayland client data before polling
 	 * Clients won't receive data until we flush */
 	wl_display_flush_clients(dpy);
+
+	/* Drain wlroots idle sources before sleeping. wlr_output_schedule_frame()
+	 * (called by drawin_refresh_drawable() when a wibox redraws) queues the frame
+	 * as a wl_event_loop idle, and idles only run inside wl_event_loop_dispatch().
+	 * That otherwise happens solely when the loop fd is readable from input or
+	 * client traffic (via wayland_source_dispatch), so a timer-driven redraw (e.g.
+	 * textclock / awful.widget.watch) updates the scene buffer but is never
+	 * committed on an idle session and the widget freezes until the next input.
+	 * dispatch_idle runs exactly the queued idles (not fd sources, which stay with
+	 * the GSource), presenting those frames every iteration. */
+	wl_event_loop_dispatch_idle(wl_display_get_event_loop(dpy));
 
 	/* Check iteration performance (matches AwesomeWM) */
 	gettimeofday(&now, NULL);
@@ -890,6 +908,14 @@ run(char *startup_cmd)
 		 * In AwesomeWM, xcb_flush() sends everything immediately after config
 		 * loads; in Wayland we need to explicitly refresh all drawables. */
 		some_refresh();
+
+		/* Compositor reached steady state: rc.lua loaded, screens scanned,
+		 * clients managed, drawables pushed to scene. Subscribers can now
+		 * safely spawn long-lived helpers, register tray hosts, etc.
+		 * The flag lets luaA_hot_reload() re-emit for late subscribers
+		 * after rc.lua reload (this branch only runs on cold boot). */
+		globalconf.somewm_ready_seen = true;
+		luaA_emit_signal_global("somewm::ready");
 	}
 
 	/* Now that the socket exists and the backend is started, run the startup command */
@@ -1841,6 +1867,7 @@ usage:
 	    "      --verbose      Enable info-level logging (more output)\n"
 	    "  -d, --debug        Enable debug logging (maximum output)\n"
 	    "  -c, --config FILE  Use specified config file (AwesomeWM compatible)\n"
+	    "                     Pass NONE to skip user config and load the bundled default\n"
 	    "  -L, --search DIR   Add directory to Lua module search path\n"
 	    "  -s, --startup CMD  Run command after startup\n"
 	    "  -k, --check CONFIG       Check config for Wayland compatibility issues\n"

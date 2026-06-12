@@ -38,11 +38,7 @@ let
   luaEnv = luajit.withPackages (
     ps:
     with ps;
-    [
-      lgi
-      ldbus
-    ]
-    ++ (extraLuaPackages ps)
+    [lgi ldbus] ++ (extraLuaPackages ps)
   );
 in
 stdenv.mkDerivation {

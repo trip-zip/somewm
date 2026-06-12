@@ -938,13 +938,24 @@ rebuild_keyboard_keymap(void)
 	some_rebuild_keyboard_keymap();
 }
 
-/** awesome.sync() - Synchronize with the compositor */
+/** awesome.sync() - Schedule a flush of pending compositor → client data.
+ *
+ * Note: previously this called wl_display_flush_clients() synchronously.
+ * Lua callers can invoke awesome.sync() from inside a signal emit (e.g. a
+ * `request::manage` rule that wants the configure flushed before it does
+ * something else), and a synchronous flush in that context can call
+ * wl_client_destroy() on a hung-up peer mid-emit and abort wlroots. See
+ * trip-zip/somewm#530. The flush now runs at the next event-loop idle, so
+ * it is best-effort: bytes are guaranteed to leave the compositor before
+ * the next poll blocks, but not before the call returns to Lua. Lua code
+ * that depended on the synchronous semantics needs to defer follow-up
+ * work to a `gears.timer.delayed_call` or similar. */
 static int
 luaA_awesome_sync(lua_State *L)
 {
 	struct wl_display *display = some_get_display();
 	if (display) {
-		wl_display_flush_clients(display);
+		schedule_flush_clients(display);
 	}
 	return 0;
 }
@@ -2132,6 +2143,13 @@ luaA_awesome_index(lua_State *L)
 		return 1;
 	}
 
+	/* Monotonic count of presented output frames. Test hook for observing that a
+	 * redraw actually reached the screen (see tests/test-widget-idle-repaint.lua). */
+	if (A_STREQ(key, "_test_frame_count")) {
+		lua_pushinteger(L, (lua_Integer)globalconf.frame_commit_count);
+		return 1;
+	}
+
 	if (A_STREQ(key, "bypass_surface_visibility")) {
 		lua_pushboolean(L, globalconf.appearance.bypass_surface_visibility);
 		return 1;
@@ -2139,6 +2157,19 @@ luaA_awesome_index(lua_State *L)
 
 	if (A_STREQ(key, "startup")) {
 		lua_pushboolean(L, globalconf.loop == NULL);
+		return 1;
+	}
+
+	/* Compositor readiness milestones (counterparts of "somewm::ready" and
+	 * "xwayland::ready" signals). True once the corresponding signal has
+	 * fired at least once; persists across hot-reload via globalconf. */
+	if (A_STREQ(key, "somewm_ready")) {
+		lua_pushboolean(L, globalconf.somewm_ready_seen);
+		return 1;
+	}
+
+	if (A_STREQ(key, "xwayland_ready")) {
+		lua_pushboolean(L, globalconf.xwayland_ready_seen);
 		return 1;
 	}
 
@@ -2690,10 +2721,19 @@ static int num_extra_search_paths = 0;
 
 /* Custom config file path - set via -c/--config flag */
 static const char *custom_confpath = NULL;
+/* Set when user passed -c NONE / --config NONE: skip user config search and
+ * load only the bundled default somewmrc.lua (akin to `nvim -u NONE`). */
+static bool force_default_config = false;
 
 void
 luaA_set_confpath(const char *path)
 {
+	if (path && strcmp(path, "NONE") == 0) {
+		force_default_config = true;
+		custom_confpath = NULL;
+		return;
+	}
+	force_default_config = false;
 	custom_confpath = path;
 }
 
@@ -4422,6 +4462,12 @@ luaA_loadrc(void)
 	if (custom_confpath) {
 		config_paths[path_count++] = custom_confpath;
 		config_paths[path_count] = NULL;
+	} else if (force_default_config) {
+		/* -c NONE: skip user config entirely, load only the bundled default.
+		 * Mirrors `nvim -u NONE` for quick "is it my config?" debugging. */
+		config_paths[path_count++] = DATADIR "/somewm/somewmrc.lua";
+		config_paths[path_count++] = "./somewmrc.lua";  /* dev fallback */
+		config_paths[path_count] = NULL;
 	} else {
 		/* Build config search path following AwesomeWM pattern:
 		 * 1. $XDG_CONFIG_HOME/somewm/rc.lua or ~/.config/somewm/rc.lua
@@ -5481,6 +5527,15 @@ luaA_hot_reload(void)
 
 	/* Flush visual state */
 	some_refresh();
+
+	/* Re-emit cached compositor readiness signals for the new Lua VM.
+	 * The original emission sites (run() in somewm.c, xwaylandready() in
+	 * xwayland.c) only run once per process; without this mirror, rc.lua
+	 * subscribers added on hot-reload would never see them and stall. */
+	if (globalconf.somewm_ready_seen)
+		luaA_emit_signal_global("somewm::ready");
+	if (globalconf.xwayland_ready_seen)
+		luaA_emit_signal_global("xwayland::ready");
 
 	globalconf.hot_reload_in_progress = false;
 
