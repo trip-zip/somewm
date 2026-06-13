@@ -37,7 +37,7 @@ local state = {
     accel_profile = nil,            -- "flat", "adaptive"
     accel_speed = 0.0,              -- -1.0 to 1.0
     tap_button_map = nil,           -- "lrm", "lmr"
-    output = nil,           -- "lrm", "lmr"
+    output = nil,           -- "VGA-1"
 
     -- Keyboard settings
     keyboard_repeat_rate = 25,      -- repeats per second
