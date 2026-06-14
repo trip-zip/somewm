@@ -1350,6 +1350,10 @@ setup(void)
 	 * It will be started when the first X client is started. */
 	xwayland_setup();
 
+	/* Latch the tree == scene assertion mode before the Clay/Lua layout layer
+	 * comes up. Read once from SOMEWM_TREE_ASSERT; default WARN. */
+	clay_tree_assert_init();
+
 	luaA_init();
 	some_event_queue_init();
 

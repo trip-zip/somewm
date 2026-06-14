@@ -51,6 +51,9 @@ fi
 export WLR_WL_OUTPUTS=1
 export NO_AT_BRIDGE=1
 export GDK_SCALE=1
+# Tree==scene assertion mode for the suite. Default warn (report, never crash);
+# a converted suite can set SOMEWM_TREE_ASSERT=abort to make a divergence fatal.
+export SOMEWM_TREE_ASSERT="${SOMEWM_TREE_ASSERT:-warn}"
 
 # Check binaries exist
 if [ ! -x "$SOMEWM" ]; then

@@ -168,6 +168,21 @@ Clay handles **layout** (anchor a rect inside a parent rect with sizing / paddin
 | Absolute-position emission | `wibox.widget.systray` (multi-row case) | Computes a grid of icon positions (`col * (icon + spacing)`) and builds placements with `base.place_widget_at` directly. The other absolute-position layouts (`wibox.layout.{stack, manual, grid}`, `wibox.layout.ratio` non-default, `wibox.container.border`) now route through `layout.stack` with absolute child props; only systray's multi-row override still skips the substrate. |
 | Matrix transform | `wibox.container.{mirror, rotate}` | Cairo affine transforms applied at draw time; the contained widget fills the parent pre-transform (a trivial fill), then the matrix flips or rotates the result. Adding a Clay solve here would be a no-op round-trip; the wrapped widget's own `:layout()` already goes through Clay if it uses Clay-routed primitives. The wrapper is transparent to that. |
 
+### tree == scene assertion and its allow-list
+
+`clay_apply_all()` checks that the box Clay solved for each client and drawin matches the geometry it actually applied, so the wlroots scene stays a 1:1 reflection of the solve. `SOMEWM_TREE_ASSERT` picks the mode: `warn` (default; report and continue), `abort` (crash on a mismatch, for converted test suites), or `off`. The live session always runs `warn` because `abort` would crash the desktop on any unconverted divergence.
+
+Some divergences are expected and must not be treated as regressions. A Lua allow-list (`tree_assert_allowlist` in `lua/awful/layout/init.lua`, exposed as `_somewm_clay.assert_allowed`) names them by layout; the C assert consults it only after a mismatch is detected, so the common matching case stays per-frame-free. An allow-listed node is counted as expected; anything else still aborts under `abort`.
+
+Only Clay-managed (merge-capable) layouts reach the assert: they apply the boxes Clay solved, so a divergence means the conversion is not yet exact. Layouts that position clients with their own arrange (`carousel`, custom `function arrange(p)` layouts) take the legacy path in `awful.layout.arrange` (`c:geometry()` directly), never flow through `clay_apply_all`, and so never reach the assert. The allow-list is therefore a **forward hook**: a name bites only once that layout is made Clay-managed but is still being tuned. `carousel` is seeded as the documented conversion target; it is currently inert.
+
+Divergences that DO reach the assert today are per-client, not per-layout, so the layout-name list does not yet cover them (the abort suites avoid creating such clients):
+
+- Aspect-ratio clients: `client_resize()` applies the aspect constraint regardless of `honor_hints`, rewriting geometry away from the solve.
+- Clients solved thinner than `2*border_width + 1`: apply clamps the inner size to at least 1px, which `geometry + 2*border_width` cannot invert.
+
+Closing this gap (a per-client predicate keyed on the divergence cause) is a follow-up; for now those cases are documented and the abort suites steer clear of them.
+
 ### Public API: `somewm.layout` and `somewm.placement`
 
 Two engine-agnostic public modules expose Clay-backed layout to user code:

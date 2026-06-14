@@ -25,6 +25,11 @@ void clay_screen_removed(lua_State *L, screen_t *s);
  * Called from some_refresh() at Step 1.75. */
 void clay_apply_all(void);
 
+/* Tree == scene assertion mode, read once from SOMEWM_TREE_ASSERT at startup
+ * (OFF / WARN / ABORT, case-insensitive; default WARN). Gate-phase scaffolding:
+ * set here but not yet consulted by any check. */
+void clay_tree_assert_init(void);
+
 /* Clay debug view (hierarchy inspector + hover highlight).
  * clay_debug_mark_dirty(): flag a pending overlay re-solve (called from the
  * pointer/button input path; no-ops unless debug is on).

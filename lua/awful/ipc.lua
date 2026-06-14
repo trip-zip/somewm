@@ -375,6 +375,7 @@ local function register_builtin_commands()
     mouse = mouse,
     awesome = awesome,
     root = root,
+    drawin = drawin,
   }
 
   -- Awful library imports
@@ -919,7 +920,8 @@ local function register_builtin_commands()
   --- container) with its identity, sizing, and solved box, so you can verify
   --- which things are nodes in the one tree and where they landed. Defaults to
   --- the focused screen; pass a screen index to target another. Use --json for
-  --- a structured tree.
+  --- a structured tree. Pass assert=true to instead report live scene objects
+  --- (clients, drawins) that the screen paints but no tree node declared.
   do
     -- Format a sizing value: number -> "Npx", percent sentinel -> "N%".
     local function size_str(v)
@@ -1087,13 +1089,88 @@ local function register_builtin_commands()
       return n
     end
 
+    -- Collect every client/drawin object that appears as a node in the tree,
+    -- keyed by the object itself, so live scene objects can be diffed against it.
+    local function collect_scene_nodes(node, seen)
+      local t = node._type
+      if (t == "client" or t == "floating_client") and node.client then
+        seen.clients[node.client] = true
+      elseif t == "drawin" and node.drawin then
+        seen.drawins[node.drawin] = true
+      end
+      if node.children then
+        for _, ch in ipairs(node.children) do collect_scene_nodes(ch, seen) end
+      end
+    end
+
+    -- The Lua complement to the C tree==scene assertion: the C side checks every
+    -- tree node landed where Clay solved it; this checks the inverse, that every
+    -- live scene object on the screen actually came from a tree node. Anything
+    -- the screen paints but the tree never declared is reported as absent (the
+    -- remaining layout carve-outs surface here).
+    local function clay_tree_assert(s, root)
+      local seen = { clients = {}, drawins = {} }
+      collect_scene_nodes(root, seen)
+
+      local absent = {}
+      for _, c in ipairs(capi.client.get(s)) do
+        if c:isvisible() and not seen.clients[c] then
+          local n = { _type = "client", client = c, props = {} }
+          absent[#absent + 1] = { type = "client", id = node_identity(n), box = node_box(n, s) }
+        end
+      end
+      for _, d in ipairs(capi.drawin.get()) do
+        -- Raw drawins have no `screen` property (only the wibox wrapper does),
+        -- so resolve the screen from the drawin's position instead.
+        if d.visible and awful_screen.getbycoord(d.x, d.y) == s.index
+            and not seen.drawins[d] then
+          local n = { _type = "drawin", drawin = d, props = {} }
+          absent[#absent + 1] = { type = "drawin", id = node_identity(n), box = node_box(n, s) }
+        end
+      end
+
+      local checked = 0
+      for _ in pairs(seen.clients) do checked = checked + 1 end
+      for _ in pairs(seen.drawins) do checked = checked + 1 end
+
+      if ipc.current_json_mode() then
+        return { screen = s.index, assert = true, checked = checked, absent = absent }
+      end
+
+      local lines = {}
+      if #absent == 0 then
+        lines[1] = string.format("clay tree==scene (screen %d): %d tree nodes, "
+          .. "all live scene objects present", s.index, checked)
+      else
+        lines[1] = string.format("clay tree==scene (screen %d): %d tree nodes, "
+          .. "%d scene object(s) absent from tree", s.index, checked, #absent)
+        for _, a in ipairs(absent) do
+          local where = a.box and (" " .. box_str(a.box)) or ""
+          lines[#lines + 1] = string.format("  absent  %s %s%s", a.type, a.id, where)
+        end
+      end
+      return table.concat(lines, "\n")
+    end
+
     ipc.register("clay.tree", function(arg)
-      local s
+      local assert_mode, idx
       if arg then
-        local idx = tonumber(arg)
-        if not idx then error("Invalid screen index: " .. tostring(arg)) end
+        for tok in tostring(arg):gmatch("%S+") do
+          local key, val = tok:match("^(%a+)=(%w+)$")
+          if tok == "assert" or key == "assert" then
+            assert_mode = (val ~= "false")
+          elseif tonumber(tok) then
+            idx = tonumber(tok)
+          else
+            error("Invalid clay.tree argument: " .. tok)
+          end
+        end
+      end
+
+      local s
+      if idx then
         s = capi.screen[idx]
-        if not s then error("Screen not found: " .. tostring(arg)) end
+        if not s then error("Screen not found: " .. tostring(idx)) end
       else
         s = awful_screen.focused()
       end
@@ -1103,6 +1180,10 @@ local function register_builtin_commands()
       if not root then
         error("No Clay tree captured for screen " .. tostring(s.index)
               .. " yet; trigger a layout arrange first")
+      end
+
+      if assert_mode then
+        return clay_tree_assert(s, root)
       end
 
       if ipc.current_json_mode() then

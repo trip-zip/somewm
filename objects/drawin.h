@@ -105,8 +105,9 @@ luaA_todrawin(lua_State *L, int idx)
 void luaA_drawin_setup(lua_State *L);
 void drawin_class_setup(lua_State *L);
 
-/* Drawin geometry synchronization (external API - for wibox code etc) */
-void luaA_drawin_set_geometry(lua_State *L, drawin_t *drawin, int x, int y, int width, int height);
+/* Drawin geometry synchronization (external API - for wibox code etc).
+ * Returns true if applied, false if the drawin was unrealized and skipped. */
+bool luaA_drawin_set_geometry(lua_State *L, drawin_t *drawin, int x, int y, int width, int height);
 void luaA_drawin_set_strut(lua_State *L, drawin_t *drawin, strut_t strut);
 
 /* Drawin geometry synchronization */

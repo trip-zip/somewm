@@ -359,6 +359,35 @@ function layout.getname(_layout)
     return _layout.name
 end
 
+-- Tree==scene allow-list, keyed by layout name. The C assert consults it on a
+-- mismatch and treats a listed layout's nodes as expected instead of
+-- warning/aborting. This is a forward hook: it only bites once a layout is
+-- Clay-managed (its clients flow through clay_apply_all) but its conversion is
+-- not yet pixel-exact. Legacy layouts that position clients with their own
+-- arrange (carousel, custom `function arrange(p)` layouts) never reach the
+-- assert, so they do not need listing. Seeded with carousel as the documented
+-- conversion target; drive it to empty as each entry is made exact.
+local tree_assert_allowlist = {
+    carousel = true,
+}
+
+if _somewm_clay then
+    -- Consulted by the C tree==scene assert on the slow path only (after a
+    -- mismatch is detected, before it warns/aborts). Returning true marks the
+    -- divergence as expected, so a real regression in a non-listed layout still
+    -- aborts under SOMEWM_TREE_ASSERT=abort.
+    function _somewm_clay.assert_allowed(what, obj)
+        -- Require an explicit screen: layout.get(nil) would fall back to the
+        -- mouse screen's layout and answer for the wrong screen. A screenless
+        -- divergent client is not allow-listed (it warns/aborts), the safe default.
+        if what == "client" and obj and obj.screen then
+            local name = layout.getname(layout.get(obj.screen))
+            return name ~= nil and tree_assert_allowlist[name] == true
+        end
+        return false
+    end
+end
+
 local function arrange_prop_nf(obj)
     if not client.object.get_floating(obj) then
         layout.arrange(obj.screen)

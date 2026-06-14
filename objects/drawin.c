@@ -1255,8 +1255,10 @@ drawin_moveresize(lua_State *L, int udx, int x, int y, int width, int height)
 
 /** Set drawin geometry (wrapper for external callers)
  * This is called when the object IS in the registry (not during construction).
+ * Returns true if the geometry was applied, false if the drawin was unrealized
+ * and skipped (so callers can avoid asserting on stale geometry).
  */
-void
+bool
 luaA_drawin_set_geometry(lua_State *L, drawin_t *drawin, int x, int y, int width, int height)
 {
 	/* Push drawin to stack, then call drawin_moveresize with stack index.
@@ -1268,10 +1270,11 @@ luaA_drawin_set_geometry(lua_State *L, drawin_t *drawin, int x, int y, int width
 	luaA_object_push(L, drawin);
 	if (lua_isnil(L, -1)) {
 		lua_pop(L, 1);
-		return;
+		return false;
 	}
 	drawin_moveresize(L, -1, x, y, width, height);
 	lua_pop(L, 1);
+	return true;
 }
 
 /** Set drawin visibility (AwesomeWM pattern - takes stack index)

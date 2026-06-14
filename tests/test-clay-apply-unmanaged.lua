@@ -16,8 +16,14 @@
 --- the use-after-free if a future code path widens the deferred-apply
 --- window enough for the race to land.
 ---
+--- It also guards the tree == scene assertion: clay_apply_all only asserts a
+--- node after its apply took effect, so an entry whose client was unmanaged
+--- (the skip path here) is never checked. Under SOMEWM_TREE_ASSERT=abort the
+--- rapid spawn/kill cycles must not abort on a stale-client skip.
+---
 --- Run: make test-one TEST=tests/test-clay-apply-unmanaged.lua
 ---      make test-asan TEST=tests/test-clay-apply-unmanaged.lua
+---      SOMEWM_TREE_ASSERT=abort make test-one TEST=tests/test-clay-apply-unmanaged.lua
 ---------------------------------------------------------------------------
 
 local runner = require("_runner")

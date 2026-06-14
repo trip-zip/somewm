@@ -151,6 +151,31 @@ static struct wlr_scene_tree *clay_debug_tree = NULL;
 static cairo_t *clay_debug_scratch_cr = NULL;
 static cairo_surface_t *clay_debug_scratch_surface = NULL;
 
+/* Tree == scene assertion mode. Once the Gate phase wires it up, clay_apply_all()
+ * (Gate 3) and the clay.tree IPC walker (Gate 4) consult this to decide whether a
+ * mismatch between the solved Clay box and the assigned scene geometry is silent
+ * (OFF), logged (WARN), or fatal (ABORT). Read once at startup from
+ * SOMEWM_TREE_ASSERT; default WARN. Not consulted yet. */
+typedef enum {
+	CLAY_TREE_ASSERT_OFF,
+	CLAY_TREE_ASSERT_WARN,
+	CLAY_TREE_ASSERT_ABORT,
+} clay_tree_assert_mode_t;
+
+static clay_tree_assert_mode_t clay_tree_assert_mode = CLAY_TREE_ASSERT_WARN;
+
+void
+clay_tree_assert_init(void)
+{
+	const char *v = getenv("SOMEWM_TREE_ASSERT");
+	if (!a_strcasecmp(v, "off"))
+		clay_tree_assert_mode = CLAY_TREE_ASSERT_OFF;
+	else if (!a_strcasecmp(v, "abort"))
+		clay_tree_assert_mode = CLAY_TREE_ASSERT_ABORT;
+	else
+		clay_tree_assert_mode = CLAY_TREE_ASSERT_WARN;
+}
+
 /* Dedicated context for per-client frame sub-pass.
  * One Clay arena reused across every client; results are applied
  * synchronously inside clay_apply_client_frame() so no result
@@ -1979,6 +2004,96 @@ luaA_clay_setup(lua_State *L)
 	lua_setglobal(L, "_somewm_clay");
 }
 
+/* Slow path only: a detected tree != scene mismatch is "expected" when the Lua
+ * allow-list (_somewm_clay.assert_allowed(what, obj)) tolerates this node, e.g. a
+ * layout not yet reflected in the Clay tree. A missing predicate or a Lua error
+ * means "not allowed", so a real regression is never silently swallowed. r is
+ * always a CLIENT or DRAWIN here (the assert skips the ref-less types), so its
+ * lua_ref is the live object to hand the predicate. */
+static bool
+clay_assert_node_allowed(lua_State *L, clay_result_t *r)
+{
+	if (!L || r->lua_ref == LUA_NOREF)
+		return false;
+	lua_getglobal(L, "_somewm_clay");
+	if (!lua_istable(L, -1)) {
+		lua_pop(L, 1);
+		return false;
+	}
+	lua_getfield(L, -1, "assert_allowed");
+	if (!lua_isfunction(L, -1)) {
+		lua_pop(L, 2);
+		return false;
+	}
+	lua_pushstring(L, r->type == CLAY_ELEM_CLIENT ? "client" : "drawin");
+	lua_rawgeti(L, LUA_REGISTRYINDEX, r->lua_ref);
+	bool allowed = false;
+	if (lua_pcall(L, 2, 1, 0) == 0)
+		allowed = lua_toboolean(L, -1);
+	lua_pop(L, 2);  /* call result (or error message) + _somewm_clay */
+	return allowed;
+}
+
+/* Tree == scene assertion: check that the box Clay solved for a result matches the
+ * geometry clay_apply_all() assigned it, keeping the scene a 1:1 reflection of the
+ * solve. Apply insets a client by its border (the assigned width/height are the
+ * solved box minus 2*border_width), so the scene box is reconstructed as
+ * geometry + 2*border_width; drawins are applied 1:1. WIDGET/WORKAREA results carry
+ * no scene geometry and are skipped. The caller runs this only after a client/drawin
+ * apply that actually took effect, so it does not re-check managed-ness. A mismatch
+ * over 1px (absorbs apply's float->int truncation) is reported unless the Lua
+ * allow-list expects it; it then warns, or aborts in ABORT mode; OFF short-circuits. */
+static void
+clay_assert_node(lua_State *L, clay_screen_t *cs, clay_result_t *r)
+{
+	if (clay_tree_assert_mode == CLAY_TREE_ASSERT_OFF)
+		return;
+
+	int ax, ay, aw, ah;
+	const char *what, *id = "";
+
+	if (r->type == CLAY_ELEM_CLIENT) {
+		if (!r->client)
+			return;
+		int bw2 = r->client->border_width * 2;
+		ax = r->client->geometry.x;
+		ay = r->client->geometry.y;
+		aw = r->client->geometry.width + bw2;
+		ah = r->client->geometry.height + bw2;
+		what = "client";
+		id = NONULL(r->client->name);
+	} else if (r->type == CLAY_ELEM_DRAWIN) {
+		if (!r->drawin)
+			return;
+		ax = r->drawin->x;
+		ay = r->drawin->y;
+		aw = r->drawin->width;
+		ah = r->drawin->height;
+		what = "drawin";
+	} else {
+		/* WIDGET / WORKAREA / any future type: no scene geometry to check. */
+		return;
+	}
+
+	int sx = (int)(r->x + cs->offset_x);
+	int sy = (int)(r->y + cs->offset_y);
+	int sw = (int)r->w;
+	int sh = (int)r->h;
+
+	if (abs(sx - ax) <= 1 && abs(sy - ay) <= 1 &&
+	    abs(sw - aw) <= 1 && abs(sh - ah) <= 1)
+		return;
+
+	if (clay_assert_node_allowed(L, r))
+		return;
+
+	warn("clay tree!=scene: %s '%s' solved %dx%d+%d+%d != scene %dx%d+%d+%d",
+	     what, id, sw, sh, sx, sy, aw, ah, ax, ay);
+
+	if (clay_tree_assert_mode == CLAY_TREE_ASSERT_ABORT)
+		abort();
+}
+
 /* Apply pending Clay layout results to client/drawin geometry.
  * Called from some_refresh() at Step 1.75. */
 void
@@ -2008,13 +2123,17 @@ clay_apply_all(void)
 						.width  = MAX(1, w - bw2),
 						.height = MAX(1, h - bw2),
 					};
-					client_resize(r->client, geo, false, true);
+					/* Assert tree == scene only when the resize was
+					 * actually applied; a declined resize leaves stale
+					 * geometry that is not a solve mismatch. */
+					if (client_resize(r->client, geo, false, true))
+						clay_assert_node(L, cs, r);
 				}
 				/* else: stale (client unmanaged between end_layout
 				 * and here); skip apply, fall through to unref. */
 			} else if (r->type == CLAY_ELEM_DRAWIN) {
-				luaA_drawin_set_geometry(L, r->drawin,
-				                         x, y, w, h);
+				if (luaA_drawin_set_geometry(L, r->drawin, x, y, w, h))
+					clay_assert_node(L, cs, r);
 			}
 			/* CLAY_ELEM_WORKAREA and CLAY_ELEM_WIDGET: not applied by C */
 
