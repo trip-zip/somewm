@@ -457,6 +457,23 @@ function utils.assert_true(condition, message)
     end
 end
 
+--- True when client `c` fills screen `s`'s workarea as the sole tiled client
+--- (geometry equals the workarea minus its border, within `tolerance` px).
+-- @tparam screen s The screen.
+-- @tparam client c The client.
+-- @tparam[opt=2] number tolerance Pixel slack for rounding/border.
+-- @treturn boolean
+function utils.is_tiled_to_workarea(s, c, tolerance)
+    tolerance = tolerance or 2
+    local wa, bw, g = s.workarea, c.border_width, c:geometry()
+    return math.abs(g.width  - (wa.width  - 2 * bw)) <= tolerance
+       and math.abs(g.height - (wa.height - 2 * bw)) <= tolerance
+end
+
+--- A non-merge-capable layout whose arrange() throws, for drain error-handling
+--- tests. Stateless and shared; assign it as a tag.layout.
+utils.boom_layout = { name = "boom", arrange = function() error("boom in arrange") end }
+
 return utils
 
 -- vim: filetype=lua:expandtab:shiftwidth=4:tabstop=8:softtabstop=4:textwidth=80

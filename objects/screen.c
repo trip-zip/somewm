@@ -114,6 +114,7 @@ luaA_screen_new(lua_State *L, Monitor *m, int index)
 	screen->monitor = m;
 	screen->index = index;
 	screen->valid = true;
+	screen->layout_stale = false;
 	screen->lifecycle = SCREEN_LIFECYCLE_C;
 	screen->name = NULL;
 	screen->virtual_output = NULL;
@@ -287,6 +288,7 @@ screen_added(lua_State *L, screen_t *screen)
 {
 	screen->workarea = screen->geometry;
 	screen->valid = true;
+	screen->layout_stale = false;
 	luaA_object_push(L, screen);
 	luaA_object_emit_signal(L, -1, "_added", 0);
 	lua_pop(L, 1);
@@ -444,6 +446,7 @@ screen_removed(lua_State *L, screen_t *screen)
 
 	/* Step 4: Mark screen as invalid */
 	screen->valid = false;
+	screen->layout_stale = false;
 	screen->monitor = NULL;
 
 	/* Release this screen's Clay context (arena, results, debug overlay) and
@@ -1396,6 +1399,7 @@ luaA_screen_fake_add(lua_State *L)
 	screen->monitor = NULL;  /* Virtual screen has no physical monitor */
 	screen->index = (int)(screen_count + 1);
 	screen->valid = true;
+	screen->layout_stale = false;
 	screen->lifecycle = SCREEN_LIFECYCLE_USER;
 	screen->geometry.x = x;
 	screen->geometry.y = y;

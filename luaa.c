@@ -5522,6 +5522,18 @@ luaA_hot_reload(void)
 	/* Emit startup signal */
 	luaA_signal_emit(L, "startup", 0);
 
+	/* Mark every screen stale so the some_refresh() drain below re-solves wibars,
+	 * tags and client tiling for the freshly reloaded Lua state, whose arrange
+	 * handlers have not necessarily fired yet. */
+	{
+		screen_t *screen_ptrs[64];
+		int n = 64;
+		luaA_screen_get_all(L, screen_ptrs, &n);
+		for (int k = 0; k < n; k++)
+			if (screen_ptrs[k])
+				screen_ptrs[k]->layout_stale = true;
+	}
+
 	/* Flush visual state */
 	some_refresh();
 

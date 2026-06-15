@@ -734,8 +734,21 @@ updatemons(struct wl_listener *listener, void *data)
 					 * add loop below and sets workarea = geometry. */
 					some_monitor_get_geometry(m, &screen->geometry);
 					screen->workarea = screen->geometry;
+					/* A brand-new screen needs its first solve. */
+					screen->layout_stale = true;
 				} else {
+					struct wlr_box old_geo = screen->geometry;
 					luaA_screen_update_geometry(globalconf_L, screen);
+					/* Mark stale only when THIS screen's geometry actually
+					 * changed (output scale/transform/mode/position), not on
+					 * every updatemons triggered by an unrelated output. */
+					bool geo_changed =
+						old_geo.x != screen->geometry.x ||
+						old_geo.y != screen->geometry.y ||
+						old_geo.width != screen->geometry.width ||
+						old_geo.height != screen->geometry.height;
+					if (geo_changed)
+						screen->layout_stale = true;
 				}
 			}
 		}

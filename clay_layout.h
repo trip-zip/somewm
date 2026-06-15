@@ -25,6 +25,12 @@ void clay_screen_removed(lua_State *L, screen_t *s);
  * Called from some_refresh() at Step 1.75. */
 void clay_apply_all(void);
 
+/* Recompute every screen marked layout_stale (awful.layout.arrange marks; the
+ * drain recomputes once per refresh via _somewm_clay.recompute_screen). Called
+ * from some_refresh() before clay_apply_all(), and from the cold-start manage and
+ * hot-reload paths so a freshly mapped/reloaded screen solves before its flush. */
+void clay_drain_stale_screens(void);
+
 /* Tree == scene assertion mode, read once from SOMEWM_TREE_ASSERT at startup
  * (OFF / WARN / ABORT, case-insensitive; default WARN). Gate-phase scaffolding:
  * set here but not yet consulted by any check. */

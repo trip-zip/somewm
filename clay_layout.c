@@ -1805,6 +1805,26 @@ luaA_clay_apply_all(lua_State *L)
 	return 0;
 }
 
+/* _somewm_clay.mark_stale(screen) - flag the screen's layout for the next drain.
+ * Set by awful.layout.arrange; clay_drain_stale_screens() recomputes it. */
+static int
+luaA_clay_mark_stale(lua_State *L)
+{
+	screen_t *s = luaA_checkscreen(L, 1);
+	if (s)
+		s->layout_stale = true;
+	return 0;
+}
+
+/* _somewm_clay.is_stale(screen) - true if the screen is marked for a drain. */
+static int
+luaA_clay_is_stale(lua_State *L)
+{
+	screen_t *s = luaA_checkscreen(L, 1);
+	lua_pushboolean(L, s && s->layout_stale);
+	return 1;
+}
+
 /* _somewm_clay.get_solve_counts() - return per-source solve counters
  * since startup (or since the last reset_solve_counts() call). */
 static int
@@ -1974,6 +1994,8 @@ static const luaL_Reg clay_methods[] = {
 	{ "set_screen_workarea", luaA_clay_set_screen_workarea },
 	{ "layer_exclusive", luaA_clay_layer_exclusive },
 	{ "apply_all", luaA_clay_apply_all },
+	{ "mark_stale", luaA_clay_mark_stale },
+	{ "is_stale", luaA_clay_is_stale },
 	{ "get_solve_counts", luaA_clay_get_solve_counts },
 	{ "reset_solve_counts", luaA_clay_reset_solve_counts },
 	{ "set_debug_enabled", luaA_clay_set_debug_enabled },
@@ -2142,6 +2164,72 @@ clay_apply_all(void)
 		}
 		cs->results_count = 0;
 		cs->has_pending = false;
+	}
+}
+
+/* Recompute one screen's layout via Lua (awful.layout._recompute_screen, exposed
+ * as _somewm_clay.recompute_screen). Mirrors clay_assert_node_allowed's lookup; a
+ * missing function or a Lua error is swallowed (warned) so one screen's failure
+ * cannot abort the drain or block the other screens. */
+static void
+clay_call_recompute_screen(lua_State *L, screen_t *s)
+{
+	if (!L || !s)
+		return;
+	lua_getglobal(L, "_somewm_clay");
+	if (!lua_istable(L, -1)) {
+		lua_pop(L, 1);
+		return;
+	}
+	lua_getfield(L, -1, "recompute_screen");
+	if (!lua_isfunction(L, -1)) {
+		lua_pop(L, 2);
+		return;
+	}
+	luaA_screen_push(L, s);
+	if (lua_pcall(L, 1, 0, 0) != 0) {
+		const char *err = lua_tostring(L, -1);
+		warn("clay drain: recompute_screen failed: %s", err ? err : "?");
+		lua_pop(L, 1);  /* error message */
+	}
+	lua_pop(L, 1);  /* _somewm_clay */
+}
+
+/* Drain every screen marked layout_stale: recompute its layout once, this refresh.
+ *
+ * Re-entrancy contract (decided 2026-06-13): a mark set DURING the drain is left
+ * for the NEXT refresh, not chased to a fixpoint. Clearing each flag before its
+ * recompute already yields next-tick semantics for a self-re-mark, so this single
+ * pass is the least-code path and is inherently bounded: no re-scan, no iteration
+ * cap, no runaway re-solve. The one-frame (~16ms) latency for a mid-drain mark is
+ * invisible and matches the deferred-refresh model this replaces.
+ *
+ * Iterates the authoritative screen list (luaA_screen_get_all), not Clay's lazy
+ * per-screen array, so a never-solved cold-start screen is still drained. A
+ * recompute can remove its own screen (e.g. an output unplug from a Lua handler);
+ * screen userdata survives until GC, so the top-of-loop s->valid check safely skips
+ * any screen invalidated by an earlier iteration, and _recompute_screen re-checks
+ * screen.valid before its post-solve emit so a screen removed during its own
+ * recompute is not touched. */
+void
+clay_drain_stale_screens(void)
+{
+	lua_State *L = globalconf_get_lua_State();
+	if (!L)
+		return;
+
+	screen_t *list[MAX_SCREENS];
+	int count = MAX_SCREENS;
+	luaA_screen_get_all(L, list, &count);
+
+	for (int i = 0; i < count; i++) {
+		screen_t *s = list[i];
+		if (!s || !s->valid || !s->layout_stale)
+			continue;
+		/* Clear before recompute so a self-re-mark during the recompute re-arms
+		 * the flag for the next refresh instead of looping here. */
+		s->layout_stale = false;
+		clay_call_recompute_screen(L, s);
 	}
 }
 

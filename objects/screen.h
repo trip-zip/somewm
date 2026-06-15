@@ -31,6 +31,7 @@ typedef struct screen_t {
 	char *name;                    /* User-assigned screen name */
 	struct output_t *virtual_output; /* Virtual output for fake screens (NULL for real screens) */
 	int layer_exclusive[4];        /* Layer-shell exclusive zones {top, right, bottom, left} */
+	bool layout_stale;             /* Set by any layout-affecting change; drained once per refresh */
 } screen_t;
 
 /* Metatable name for screen userdata */

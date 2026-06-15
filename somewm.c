@@ -777,6 +777,14 @@ some_refresh(void)
 	clock_gettime(CLOCK_MONOTONIC, &bench_ts[2]);
 #endif
 
+	/* Step 1.7: Recompute screens marked layout_stale this iteration (by
+	 * awful.layout.arrange). Each stale screen's solve runs and applies its
+	 * geometry here, so a marked screen re-solves within one refresh; a mark set
+	 * during the drain itself is handled on the next refresh. Runs before
+	 * clay_apply_all() so drained screens are already applied (their pending
+	 * results cleared) and clay_apply_all() only flushes anything still pending. */
+	clay_drain_stale_screens();
+
 	/* Step 1.75: Apply Clay layout results directly to client geometry.
 	 * Clay trees were built by Lua during Step 1 (refresh signal).
 	 * This applies computed positions without a Lua round-trip. */

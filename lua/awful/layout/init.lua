@@ -43,7 +43,6 @@ local capi = {
 local tag = require("awful.tag")
 local client = require("awful.client")
 local ascreen = require("awful.screen")
-local timer = require("gears.timer")
 local gmath = require("gears.math")
 local gtable = require("gears.table")
 local gdebug = require("gears.debug")
@@ -101,12 +100,6 @@ layout.suit = require("awful.layout.suit")
 function layout.get_tag_layout_index(t)
     return gtable.hasitem(layout.layouts, t.layout)
 end
-
--- This is a special lock used by the arrange function.
--- This avoids recurring call by emitted signals.
-local arrange_lock = false
--- Delay one arrange call per screen.
-local delayed_arrange = {}
 
 --- Get the current layout.
 -- @tparam screen screen The screen.
@@ -228,77 +221,91 @@ function layout.parameters(t, screen)
     return p
 end
 
+--- Recompute and apply a single screen's layout now.
+--
+-- Composes the screen (wibars, workarea and, for a merge-capable layout, its
+-- tiled clients) via Clay, then runs the per-layout arrange for any non-merged
+-- layout and applies client geometry. Clay applies geometry synchronously during
+-- the solve, so the `screen::arrange` signal below fires with the new boxes
+-- already observable (a handler reading `c:geometry()` sees the solved box).
+--
+-- Called by the per-screen drain in some_refresh (`clay_drain_stale_screens`),
+-- which clears the C `layout_stale` flag before invoking this. The body is a
+-- protected call; the `_clay_arrange_pending` clear and the `arrange` emit run
+-- outside it, so a layout error can neither wedge the wibar-redraw gate nor skip
+-- the signal.
+-- @tparam screen screen The screen to recompute.
+-- @noreturn
+function layout._recompute_screen(screen)
+    protected_call(function()
+        -- Compose screen: position wibars and compute workarea via Clay.
+        -- Must run before layout.parameters() so workarea is up-to-date.
+        -- A merge-capable layout (tile) lays out its clients inside this
+        -- one solve and returns true, so the separate arrange pass below
+        -- is skipped.
+        local clay_ok, clay_mod = pcall(require, "awful.layout.clay")
+        local merged = false
+        if clay_ok and clay_mod.compose_screen then
+            merged = clay_mod.compose_screen(screen)
+        end
+
+        local p = layout.parameters(nil, screen)
+
+        local useless_gap = p.useless_gap
+
+        p.geometries = setmetatable({}, {__mode = "k"})
+        if merged then
+            p._clay_managed = true
+        else
+            layout.get(screen).arrange(p)
+        end
+
+        -- Clay layouts handle gaps natively and apply geometry
+        -- directly from C. Skip the per-client adjustment loop.
+        if not p._clay_managed then
+            for c, g in pairs(p.geometries) do
+                g.width = math.max(1, g.width - c.border_width * 2 - useless_gap * 2)
+                g.height = math.max(1, g.height - c.border_width * 2 - useless_gap * 2)
+                g.x = g.x + useless_gap
+                g.y = g.y + useless_gap
+                c:geometry(g)
+            end
+        end
+    end)
+
+    -- The recompute can remove its own screen (an output unplug handled from a
+    -- signal fired during compose/arrange). Don't touch a removed screen: the C
+    -- drain already cleared its layout_stale flag, and emitting "arrange" on it
+    -- would hand its now-gone tiled_clients to the animation observer.
+    if not screen.valid then return end
+
+    screen._clay_arrange_pending = nil
+    screen:emit_signal("arrange")
+end
+
 --- Arrange a screen using its current layout.
+--
+-- Marks the screen's layout stale; the drain in some_refresh
+-- (`clay_drain_stale_screens`) recomputes every stale screen once per refresh
+-- via `layout._recompute_screen`. Coalescing is implicit: repeated marks before
+-- the next drain collapse into a single recompute.
 -- @tparam screen screen The screen to arrange.
 -- @noreturn
 -- @staticfct awful.layout.arrange
 function layout.arrange(screen)
     screen = get_screen(screen)
-    if not screen or delayed_arrange[screen] then
-        return
+    if not screen then return end
+
+    -- Mark stale for the C drain. _somewm_clay is absent in the busted unit
+    -- environment (no compositor), where there is nothing to drain.
+    if _somewm_clay then
+        _somewm_clay.mark_stale(screen)
     end
-    delayed_arrange[screen] = true
-    -- Signal to wibox/drawable that a fresh merged solve is coming, so a wibar
-    -- redraw scheduled ahead of this arrange waits for the new widget boxes
-    -- instead of re-solving the wibox forest. Cleared when the solve completes.
+
+    -- Tell wibox/drawable a fresh merged solve is coming, so a wibar redraw
+    -- scheduled ahead of this drain waits for the new widget boxes instead of
+    -- re-solving the wibox forest. Cleared in _recompute_screen.
     screen._clay_arrange_pending = true
-
-    timer.delayed_call(function()
-        if not screen.valid then
-            -- Screen was removed
-            delayed_arrange[screen] = nil
-            return
-        end
-        if arrange_lock then
-            -- This arrange is dropped; clear the pending flag so a wibar redraw
-            -- doesn't keep waiting for boxes this cycle won't produce.
-            screen._clay_arrange_pending = nil
-            return
-        end
-        arrange_lock = true
-
-        -- protected call to ensure that arrange_lock will be reset
-        protected_call(function()
-            -- Compose screen: position wibars and compute workarea via Clay.
-            -- Must run before layout.parameters() so workarea is up-to-date.
-            -- A merge-capable layout (tile) lays out its clients inside this
-            -- one solve and returns true, so the separate arrange pass below
-            -- is skipped.
-            local clay_ok, clay_mod = pcall(require, "awful.layout.clay")
-            local merged = false
-            if clay_ok and clay_mod.compose_screen then
-                merged = clay_mod.compose_screen(screen)
-            end
-
-            local p = layout.parameters(nil, screen)
-
-            local useless_gap = p.useless_gap
-
-            p.geometries = setmetatable({}, {__mode = "k"})
-            if merged then
-                p._clay_managed = true
-            else
-                layout.get(screen).arrange(p)
-            end
-
-            -- Clay layouts handle gaps natively and apply geometry
-            -- directly from C. Skip the per-client adjustment loop.
-            if not p._clay_managed then
-                for c, g in pairs(p.geometries) do
-                    g.width = math.max(1, g.width - c.border_width * 2 - useless_gap * 2)
-                    g.height = math.max(1, g.height - c.border_width * 2 - useless_gap * 2)
-                    g.x = g.x + useless_gap
-                    g.y = g.y + useless_gap
-                    c:geometry(g)
-                end
-            end
-        end)
-        arrange_lock = false
-        delayed_arrange[screen] = nil
-        screen._clay_arrange_pending = nil
-
-        screen:emit_signal("arrange")
-    end)
 end
 
 --- Append a layout to the list of default tag layouts.
@@ -372,6 +379,10 @@ local tree_assert_allowlist = {
 }
 
 if _somewm_clay then
+    -- Hand the C drain (clay_drain_stale_screens, run from some_refresh) the
+    -- per-screen recompute entry so it can recompute each stale screen.
+    _somewm_clay.recompute_screen = layout._recompute_screen
+
     -- Consulted by the C tree==scene assert on the slow path only (after a
     -- mismatch is detected, before it warns/aborts). Returning true marks the
     -- divergence as expected, so a real regression in a non-listed layout still

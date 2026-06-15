@@ -1099,17 +1099,19 @@ mapnotify(struct wl_listener *listener, void *data)
 		/* Pop client from Lua stack */
 		lua_pop(L, 1);
 
-		/* Force-run deferred layout arrange before applying geometry.
-		 * awful.layout.arrange() (triggered by manage signals above) queues
-		 * itself via timer.delayed_call(). Without running it now, c->geometry
-		 * still holds the client's requested size (e.g. Firefox's saved 800x600)
-		 * instead of the tiled geometry. The "refresh" signal triggers
-		 * timer.run_delayed_calls_now() which executes the deferred arrange,
-		 * updating c->geometry to the correct tiled dimensions.
+		/* Recompute the layout before applying geometry. awful.layout.arrange()
+		 * (triggered by the manage signals above) only marks the client's screen
+		 * stale; its solve normally runs in the next some_refresh() drain. Without
+		 * draining here, c->geometry still holds the client's requested size (e.g.
+		 * Firefox's saved 800x600) instead of the tiled geometry when we flush the
+		 * configure below. luaA_emit_refresh() first runs the "refresh" signal
+		 * (wibox compose, any deferred calls) so further marks land, then the drain
+		 * solves every stale screen synchronously.
 		 * In X11/AwesomeWM this isn't needed because the WM sends ConfigureNotify
 		 * before mapping. In Wayland, the client commits first, so we must
 		 * ensure the tiled geometry is computed before we flush the configure. */
 		luaA_emit_refresh();
+		clay_drain_stale_screens();
 
 		/* Apply tiled geometry so the configure event is encoded into the
 		 * outgoing protocol buffer before the client renders its first frame.
