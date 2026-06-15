@@ -102,6 +102,30 @@ local steps = {
         return true
     end,
 
+    -- Move the floater again, this time WITHOUT calling arrange: property::geometry
+    -- is wired to the unconditional arrange, so the move must auto-re-solve. This
+    -- step fails on the pre-Wiring floating-skip (merged stays 0).
+    function(count)
+        if count == 1 then
+            c_float:geometry {
+                x = screen.primary.geometry.x + 550,
+                y = screen.primary.geometry.y + 320,
+            }
+            _somewm_clay.reset_solve_counts()
+            return nil
+        end
+        if counts().merged < 1 and count < 12 then return nil end
+        assert(counts().merged >= 1,
+            "moving a floating client must auto re-solve via property::geometry")
+        local g = c_float:geometry()
+        assert(math.abs(g.x - (screen.primary.geometry.x + 550)) <= 4
+            and math.abs(g.y - (screen.primary.geometry.y + 320)) <= 4,
+            string.format("floater must stay where moved, got %d+%d", g.x, g.y))
+        io.stderr:write(
+            "[TEST] PASS: moving a floater auto-re-solves (no explicit arrange)\n")
+        return true
+    end,
+
     -- Fullscreen the tiled client; the reflection must cover screen.geometry
     -- (incl. the wibar band above the workarea), not the workarea.
     function(count)

@@ -298,6 +298,9 @@ local function titlebar_node(c, position, role, size, sizing)
         end)
         -- Re-solve the screen tree when the titlebar's widgets change size, so its
         -- content reflows through the merged solve (gated on a merge-capable layout).
+        -- This (titlebar widget relayout) and the wibar's layout_changed hook in
+        -- awful.wibar are the complete set of widget -> arrange edges: a widget that
+        -- only repaints never reaches here.
         d:connect_signal("layout_changed", function()
             local sc = c.screen
             if not (sc and sc.valid) then return end

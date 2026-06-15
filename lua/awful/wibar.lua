@@ -269,6 +269,9 @@ local function clay_register(wb, position)
     -- Connect (once) the wibar's widget relayout to a screen arrange, so a
     -- widget that changes size re-solves the merged screen tree. Gated on a
     -- merge-capable layout so non-merged screens keep their current behavior.
+    -- This (wibar widget relayout) and the titlebar's layout_changed hook in
+    -- awful.layout.clay are the complete set of widget -> arrange edges: a widget
+    -- that only repaints never reaches here.
     if not wb._private._clay_arrange_hooked and wb._drawable then
         wb._private._clay_arrange_hooked = true
         wb._drawable:connect_signal("layout_changed", function()

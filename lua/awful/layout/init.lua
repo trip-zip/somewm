@@ -417,7 +417,12 @@ capi.client.connect_signal("property::maximized_vertical", arrange_prop_nf)
 capi.client.connect_signal("property::border_width", arrange_prop_nf)
 capi.client.connect_signal("property::hidden", arrange_prop_nf)
 capi.client.connect_signal("property::floating", arrange_prop)
-capi.client.connect_signal("property::geometry", arrange_prop_nf)
+-- Any geometry change re-solves the screen so the Clay tree tracks the new box
+-- (covers drag, IPC move/resize, relative_move, corner-drag). Unconditional, not
+-- the floating-skip: a floating move must re-solve too. arrange is mark-only and
+-- the per-frame drain coalesces a drag into one re-solve; the merged solve reflects
+-- the floater at its current box (a silent no-op resize), so it tracks, not fights.
+capi.client.connect_signal("property::geometry", arrange_prop)
 capi.client.connect_signal("property::screen", function(c, old_screen)
     if old_screen then
         layout.arrange(old_screen)
@@ -499,6 +504,15 @@ capi.screen.connect_signal("property::geometry", function(s, old_geom)
         })
     end
 end)
+
+-- Any screen geometry change re-solves the screen. A move shifts clients above
+-- (each marks the screen), but a pure resize shifts nothing, so this dedicated
+-- connection is the only thing that re-solves a resize. The workarea is rewritten
+-- only by the drain's compose_screen, which runs once the screen is marked stale.
+-- Standalone (not buried in the move handler) so the resize re-solve can't be lost
+-- to a refactor above; mark-only, so it coalesces with the per-client and
+-- property::workarea marks.
+capi.screen.connect_signal("property::geometry", layout.arrange)
 
 local init_layouts
 init_layouts = function()

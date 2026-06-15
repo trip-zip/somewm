@@ -488,7 +488,12 @@ function drawable.new(d, widget_context_skeleton, drawable_name)
     d:connect_signal("mouse::move", function(_, x, y) handle_motion(ret, x, y) end)
     d:connect_signal("mouse::leave", function() handle_leave(ret) end)
 
-    -- Set up our callbacks for repaints
+    -- Set up our callbacks for repaints.
+    -- Paint-only path: a widget::redraw_needed (e.g. a color change) unions the
+    -- dirty area and repaints. It never sets _need_relayout and never emits
+    -- layout_changed, so a repaint cannot trigger a layout re-solve. The relayout
+    -- path is _layout_callback below (widget::layout_changed), the only bridge to
+    -- arrange.
     ret._redraw_callback = function(hierar, arg)
         -- Avoid crashes when a drawable was partly finalized and dirty_area is broken.
         if not ret._visible then
