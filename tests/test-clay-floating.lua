@@ -150,6 +150,29 @@ local steps = {
         return true
     end,
 
+    -- Maximize a client; collect_floating's maximized branch must reflect it
+    -- covering the workarea (inside the wibar band), not the full geometry.
+    function(count)
+        if count == 1 then
+            c_tiled.fullscreen = false
+            c_float.maximized = true
+            _somewm_clay.reset_solve_counts()
+            awful.layout.arrange(screen.primary)
+            return nil
+        end
+        if not c_float.maximized then return nil end
+        if counts().merged < 1 and count < 10 then return nil end
+        local wa = screen.primary.workarea
+        local bw = c_float.border_width or 0
+        utils.assert_geometry(c_float:geometry(),
+            { x = wa.x, y = wa.y, width = wa.width, height = wa.height },
+            2 * bw + 2)
+        c_float.maximized = false
+        io.stderr:write(
+            "[TEST] PASS: maximized client is reflected covering the workarea\n")
+        return true
+    end,
+
     -- Multi-output: compose_screen runs per screen, so a second output gets its
     -- own workarea offset by that output's origin (not the primary's). The
     -- floating / fullscreen reflection is screen-agnostic (it uses s.geometry)

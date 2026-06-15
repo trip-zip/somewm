@@ -475,6 +475,35 @@ function layout.floating_client(c, opts)
     return { _type = "floating_client", client = c, props = opts or {} }
 end
 
+--- Root-attached container: places `child_or_args` at absolute screen-solve
+--- coordinates outside the parent flow (Clay CLAY_ATTACH_TO_ROOT), the public
+--- builder over the internal `_attach_root` prop. Two forms:
+---   layout.attach_to_root(node, { x, y, width, height, z })  -- wrap one subtree
+---   layout.attach_to_root{ node, x = .., y = .., width = .., height = .. }  -- row args
+--- The single-node form forces `grow = false` (a root float sits at its given
+--- box, it does not flex). Used by compose_screen's fullscreen graft and the
+--- Merge phase's reflect-as-leaves step.
+-- @tparam table|node child_or_args A node to wrap, or a row-style args table.
+-- @tparam[opt] table opts `{ x, y, width, height, z }` for the single-node form.
+function layout.attach_to_root(child_or_args, opts)
+    local args
+    if type(child_or_args) == "table" and child_or_args._type then
+        opts = opts or {}
+        args = {
+            child_or_args,
+            x = opts.x or 0, y = opts.y or 0,
+            width = opts.width, height = opts.height,
+            z = opts.z, grow = false,
+        }
+    else
+        -- Row-style args: shallow-copy so we never mutate the caller's table.
+        args = {}
+        for k, v in pairs(child_or_args or {}) do args[k] = v end
+    end
+    args._attach_root = true
+    return layout.row(args)
+end
+
 --- Drawin leaf (used by compose_screen for wibars).
 function layout.drawin(d, props)
     return { _type = "drawin", drawin = d, props = props or {} }
@@ -652,14 +681,14 @@ local function attach_to_stack(cfg, props)
     end
 end
 
--- Attach a config to the layout root as a floating element at absolute
--- screen-solve coords with an optional stacking z-index (Clay
--- CLAY_ATTACH_TO_ROOT). Unlike attach_to_stack, the element is positioned
--- relative to the whole-screen solve origin, not its hierarchical parent, so
--- it ignores the wibar / workarea insets. Fixed width/height come from
--- make_config; floating_client and the fullscreen graft always carry explicit
--- sizing, which Clay needs for a floating root.
-local function attach_to_root(cfg, props)
+-- Apply Clay's root-attach floating fields to a config: position it at absolute
+-- screen-solve coords with an optional stacking z-index (CLAY_ATTACH_TO_ROOT).
+-- Unlike attach_to_stack, the element is positioned relative to the whole-screen
+-- solve origin, not its hierarchical parent, so it ignores the wibar / workarea
+-- insets. Fixed width/height come from make_config; callers that root-attach
+-- (the floating_client leaf, the public layout.attach_to_root builder) always
+-- carry explicit sizing, which Clay needs for a floating root.
+local function apply_root_attach(cfg, props)
     cfg.attach_to_root = true
     if props then
         cfg.x_offset = props.x or 0
@@ -687,7 +716,7 @@ local function emit(node, parent_is_stack)
 
     if t == "container" then
         if node.props and node.props._attach_root then
-            attach_to_root(cfg, node.props)
+            apply_root_attach(cfg, node.props)
         end
         -- Auto-name structural containers for the debug inspector (explicit
         -- ids and widget-tagged containers, which carry their own id, win).
@@ -742,7 +771,7 @@ local function emit(node, parent_is_stack)
         end
         clay_c.titlebar_close()
     elseif t == "floating_client" then
-        attach_to_root(cfg, node.props)
+        apply_root_attach(cfg, node.props)
         if not cfg.id then cfg.id = client_node_id(node.client) end
         clay_c.client_element(node.client, cfg)
     elseif t == "drawin" then

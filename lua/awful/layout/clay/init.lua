@@ -424,13 +424,10 @@ function clay.compose_screen(s)
                 -- workarea. Graft as a root-attached container spanning
                 -- screen.geometry, so the same subtree the standalone preset
                 -- solved against p.geometry solves here against the same box.
-                fullscreen_graft = layout.row {
-                    _attach_root = true,
+                fullscreen_graft = layout.attach_to_root(root, {
                     x = 0, y = 0,
                     width = geo.width, height = geo.height,
-                    grow = false,
-                    root,
-                }
+                })
             else
                 -- Place the clients in the same box the standalone tile solve
                 -- used: the workarea node's inner box (screen.workarea, after
