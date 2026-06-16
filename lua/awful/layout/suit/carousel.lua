@@ -361,11 +361,21 @@ local function start_animation(state)
         return
     end
 
+    -- Already easing toward this exact target: let it finish. A redundant
+    -- re-arrange (e.g. a wibar / titlebar widget relayout, which now re-arranges
+    -- the screen under any layout) must not cancel and restart an in-flight
+    -- scroll -- that would jolt it back to full speed and stutter.
+    if state.anim_handle
+        and math.abs(state.anim_target - state.target_offset) < 0.5 then
+        return
+    end
+
     -- Cancel previous animation
     stop_animation(state)
 
     local start_val = state.scroll_offset
     local target_val = state.target_offset
+    state.anim_target = target_val
 
     state.anim_handle = capi.awesome.start_animation(duration, "ease-out-cubic",
         function(progress)

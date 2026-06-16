@@ -93,14 +93,14 @@ local function do_redraw(self)
     -- Relayout
     if self._need_relayout or self._need_complete_repaint then
         local s = context.screen
-        -- On a merge-capable screen, a wibar's widget boxes come from the merged
-        -- screen solve (s._clay_widget_placements, keyed by widget). If that
-        -- solve is still pending -- this redraw was scheduled just ahead of the
-        -- arrange a widget relayout triggers -- wait one tick for the fresh
-        -- boxes instead of re-running the per-container "wibox" forest now. Wait
-        -- at most once so a stuck flag can't livelock the redraw; the reschedule
-        -- lands later in the same refresh, so it costs no extra frame.
-        if s and s._clay_merge_capable and s._clay_arrange_pending
+        -- A wibar's widget boxes come from the screen solve
+        -- (s._clay_widget_placements, keyed by widget). If that solve is still
+        -- pending -- this redraw was scheduled just ahead of the arrange a widget
+        -- relayout triggers -- wait one tick for the fresh boxes instead of
+        -- re-running the per-container "wibox" forest now. Wait at most once so a
+        -- stuck flag can't livelock the redraw; the reschedule lands later in the
+        -- same refresh, so it costs no extra frame.
+        if s and s._clay_arrange_pending
                 and not self._clay_waited
                 and s._clay_widget_placements
                 and s._clay_widget_placements[self._widget] then
@@ -110,8 +110,7 @@ local function do_redraw(self)
         end
         self._clay_waited = false
 
-        local placements = (s and s._clay_merge_capable)
-            and s._clay_widget_placements or nil
+        local placements = s and s._clay_widget_placements or nil
 
         self._need_relayout = false
         if self._widget_hierarchy and self._widget then

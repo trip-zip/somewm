@@ -326,18 +326,14 @@ local function titlebar_node(c, position, role, size, sizing)
             d._forced_screen = c.screen
         end)
         -- Re-solve the screen tree when the titlebar's widgets change size, so its
-        -- content reflows through the merged solve (gated on a merge-capable layout).
-        -- This (titlebar widget relayout) and the wibar's layout_changed hook in
-        -- awful.wibar are the complete set of widget -> arrange edges: a widget that
-        -- only repaints never reaches here.
+        -- content reflows through the screen solve under any layout. This (titlebar
+        -- widget relayout) and the wibar's layout_changed hook in awful.wibar are
+        -- the complete set of widget -> arrange edges: a widget that only repaints
+        -- never reaches here.
         d:connect_signal("layout_changed", function()
             local sc = c.screen
             if not (sc and sc.valid) then return end
-            local al = awful_layout()
-            local l = al.get(sc)
-            if l and l.descriptor then
-                al.arrange(sc)
-            end
+            awful_layout().arrange(sc)
         end)
     end
 
@@ -415,17 +411,9 @@ end
 --   * "workarea" -- the 0..1 client subtree parented under the measure node;
 --   * "root" -- z-ordered root-attached subtrees (fullscreen graft / floats /
 --     reflected).
--- A provider may also set the provider-written ctx fields (framed_root, merged)
--- as a side effect; the solve/placement tail reads them.
+-- A provider may also set the provider-written ctx fields (framed_root, merged,
+-- laid) as a side effect; the solve/placement tail reads them.
 ---------------------------------------------------------------------------
-
--- Ordered list of providers drained by compose_screen into edge-slot buckets.
--- Only provider_wibars is drained here: provider_clients and provider_floats
--- (below) emit the workarea / root slots the drain loop does not handle yet, so
--- compose_screen still calls them directly. All three join this list at the
--- compose_screen restructure, where the drain learns every slot. Order is
--- load-bearing once they join (clients before floats: floats reads ctx.merged).
-local node_providers = { provider_wibars }
 
 -- Build the per-solve ctx: the read-only screen/layout values every provider
 -- and the assembly share, plus the provider-written fields they fill in. The
@@ -450,6 +438,7 @@ local function build_ctx(s, p)
         -- provider-written:
         framed_root   = nil,
         merged        = false,
+        laid          = false,
     }
 end
 
@@ -465,9 +454,9 @@ end
 -- p.geometries, so it is skipped: the overlay repaints from the last real arrange).
 -- Every descriptor lays its clients in this one solve: having a descriptor IS being
 -- merge-capable; merge_capable stays a public descriptor field but no longer gates.
--- Sets ctx.framed_root (for the titlebar placement pass) and ctx.merged for
--- the solve + placement tail. Emits at most one entry, none when no clients
--- were placed.
+-- Sets ctx.framed_root (for the titlebar placement pass), ctx.merged (the
+-- float gate), and ctx.laid (this solve placed the clients) for the solve +
+-- placement tail. Emits at most one entry, none when no clients were placed.
 local function provider_clients(s, ctx)
     local p = ctx.p
     if ctx.merge_capable then
@@ -476,6 +465,7 @@ local function provider_clients(s, ctx)
         frame_clients(root)
         ctx.framed_root = root
         ctx.merged = true
+        ctx.laid = true
         if ctx.suit.descriptor.bounds_source == "geometry" then
             return { { slot = "root", node = layout.attach_to_root(root, {
                 x = 0, y = 0,
@@ -501,6 +491,7 @@ local function provider_clients(s, ctx)
     if not ctx.debug_resolve and p.geometries then
         local reflected = reflect_geometries(p, ctx.geo, p.useless_gap or 0)
         if reflected then
+            ctx.laid = true
             return { { slot = "root", node = reflected } }
         end
     end
@@ -520,6 +511,12 @@ local function provider_floats(s, ctx)
     return { { slot = "root", node = floats } }
 end
 
+-- Ordered list of providers drained by compose_screen. Order is load-bearing:
+-- provider_clients before provider_floats (floats reads ctx.merged, which
+-- provider_clients sets) and, in the root z-stack, the clients' graft / reflected
+-- before the floats.
+local node_providers = { provider_wibars, provider_clients, provider_floats }
+
 --- Build the screen-level layout tree, solve it, and write screen.workarea.
 -- Called once per layout cycle from `awful.layout._recompute_screen`. Returns
 -- true when this solve laid out the clients itself, either a merge-capable
@@ -536,17 +533,26 @@ function clay.compose_screen(s, p)
     p = p or awful_layout().parameters(nil, s)
     local ctx = build_ctx(s, p)
 
-    -- Drain the providers (wibars only, so far) into edge-slot buckets. The
-    -- bucket table is exactly the { top, bottom, left, right } shape the
-    -- assembly below consumes; nil when nothing emitted an entry, preserving
-    -- the old "no drawins" short-circuit.
+    -- Drain every provider into slot buckets in one pass: edge wibars
+    -- (top/bottom/left/right), the single workarea child, and the z-ordered root
+    -- list. Provider order is load-bearing for the root z-stack (the clients'
+    -- graft / reflected, then the floats). has_wibar tracks edge slots ONLY, so a
+    -- clients- or floats-only solve still nils out `wibars`, preserving the old
+    -- "no drawins" short-circuit.
     local wibars = { top = {}, bottom = {}, left = {}, right = {} }
     local has_wibar = false
+    local workarea_children, root_nodes = nil, {}
     for _, provider in ipairs(node_providers) do
         for _, entry in ipairs(provider(s, ctx)) do
             local side = wibars[entry.slot]
-            if side then side[#side + 1] = entry end
-            has_wibar = true
+            if side then
+                side[#side + 1] = entry
+                has_wibar = true
+            elseif entry.slot == "workarea" then
+                workarea_children = entry.node
+            elseif entry.slot == "root" then
+                root_nodes[#root_nodes + 1] = entry.node
+            end
         end
     end
     if not has_wibar then wibars = nil end
@@ -566,38 +572,15 @@ function clay.compose_screen(s, p)
     local lz_top, lz_right, lz_bottom, lz_left =
         ctx.lz_top, ctx.lz_right, ctx.lz_bottom, ctx.lz_left
 
-    -- Resolve the clients. provider_clients emits the merge-capable descriptor's
-    -- framed tree (the workarea child, or a fullscreen root graft) or a
-    -- descriptor-less layout's reflected boxes; provider_floats reflects the
-    -- floating / fullscreen / maximized clients over a merged tile. Both run
-    -- here directly and set their ctx fields; they join node_providers at the
-    -- compose_screen restructure (the drain there learns the workarea / root
-    -- slots). provider_floats is gated on ctx.merged, so provider_clients runs
-    -- first. Regroup their one-or-zero entries back into the assembly locals: a
-    -- root entry is the graft when the clients merged, else the reflection.
-    local workarea_children, fullscreen_graft, reflected, floats = nil, nil, nil, nil
-    for _, e in ipairs(provider_clients(s, ctx)) do
-        if e.slot == "workarea" then
-            workarea_children = e.node
-        elseif ctx.merged then
-            fullscreen_graft = e.node
-        else
-            reflected = e.node
-        end
-    end
-    for _, e in ipairs(provider_floats(s, ctx)) do
-        floats = e.node
-    end
-    local merged       = ctx.merged
-    local framed_root  = ctx.framed_root
-    local merge_capable = ctx.merge_capable
-    -- This solve laid out the clients when a descriptor merged OR a
-    -- descriptor-less layout reflected; the caller then skips imperative apply.
-    local laid = merged or (reflected ~= nil)
+    local framed_root = ctx.framed_root
+    -- This solve laid out the clients (a merged descriptor or a descriptor-less
+    -- reflection, both set by provider_clients via ctx.laid); the caller then
+    -- skips the imperative per-client apply.
+    local laid = ctx.laid
 
     -- The workarea node reports screen.workarea (its inner box, after the gap
     -- padding). On the merged tile path it also parents the client subtree; the
-    -- fullscreen graft attaches to the root below instead.
+    -- fullscreen graft and the floats / reflected attach to the root below.
     local measure = workarea_children
         and layout.measure { padding = gap, grow = true, workarea_children }
         or  layout.measure { padding = gap, grow = true }
@@ -623,9 +606,9 @@ function clay.compose_screen(s, p)
         middle,
         layout.drawins(wibars and wibars.bottom or nil, "height", gap),
     }
-    if fullscreen_graft then col[#col + 1] = fullscreen_graft end
-    if floats then col[#col + 1] = floats end
-    if reflected then col[#col + 1] = reflected end
+    -- Root-attached subtrees in provider z-order: the descriptor graft or the
+    -- descriptor-less reflection, then the floats over a merged tile.
+    for _, node in ipairs(root_nodes) do col[#col + 1] = node end
 
     local result = layout.solve {
         screen = s,
@@ -680,11 +663,6 @@ function clay.compose_screen(s, p)
         collect_titlebar_placements(framed_root, boxmap, placements)
     end
     s._clay_widget_placements = placements
-    -- Gate the retained path on the layout being merge-capable (so a widget
-    -- relayout re-runs this solve via the wibar's layout_changed -> arrange
-    -- hook), not on whether clients merged this cycle: the wibar widget boxes
-    -- are solved here either way, even with no tiled clients.
-    s._clay_merge_capable     = merge_capable
 
     return laid
 end
