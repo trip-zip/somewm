@@ -131,18 +131,18 @@ end
 
 -- Reflect a descriptor-less layout's arrange output as root-attached leaves so
 -- the one merged solve positions its clients through the single C apply path.
--- p.geometries holds the OUTER box per client (the same convention the legacy
--- apply loop consumed); this emits the leaf box that, after C subtracts
--- 2*border, lands the exact surface the old loop produced:
+-- `geometries` is the OUTER box per client (the arrange's p.geometries, the same
+-- convention the legacy apply loop consumed); this emits the leaf box that, after
+-- C subtracts 2*border, lands the exact surface the old loop produced:
 --   leaf = (g.x - origin + gap, g.y - origin + gap, g.w - 2*gap, g.h - 2*gap).
--- Read from p.geometries, never c:geometry(): the arrange output is the intent,
--- whereas live geometry is stale until C applies from the tree. This is the
--- sibling of collect_floating (which reflects NON-tiled clients at their LIVE
+-- Read from the arrange snapshot, never c:geometry(): the arrange output is the
+-- intent, whereas live geometry is stale until C applies from the tree. This is
+-- the sibling of collect_floating (which reflects NON-tiled clients at their LIVE
 -- geometry for the descriptor path); here we reflect the arrange OUTPUT for
 -- every client the descriptor-less layout positioned. Returns nil when empty.
-local function reflect_geometries(p, geo, gap)
+local function reflect_geometries(geometries, geo, gap)
     local out, z = {}, 0
-    for c, g in pairs(p.geometries) do
+    for c, g in pairs(geometries) do
         -- Skip clients with no on-screen intersection. Clay culls a fully
         -- off-screen element (it emits no render command), leaving a zeroed
         -- result that clay_apply_all would then apply as a 1x1 box at the screen
@@ -488,10 +488,25 @@ local function provider_clients(s, ctx)
         } } }
     end
 
-    if not ctx.debug_resolve and p.geometries then
-        local reflected = reflect_geometries(p, ctx.geo, p.useless_gap or 0)
+    -- Descriptor-less layout: reflect its arrange snapshot (p.geometries) as root
+    -- leaves, and cache the snapshot on the screen. A debug re-solve carries no
+    -- fresh p.geometries and must NOT re-run the arrange (that would restart
+    -- carousel animations), so it re-emits the cached snapshot instead -- without
+    -- this the inspector blinks the reflected clients out on every pointer move.
+    -- The cache is refreshed (or cleared) on every real arrange, so it tracks the
+    -- current geometry; debug solves are no_apply, so this only feeds the
+    -- tree/overlay and never moves a client.
+    local geoms
+    if ctx.debug_resolve then
+        geoms = s._clay_reflect_geoms
+    else
+        geoms = p.geometries
+        s._clay_reflect_geoms = geoms
+    end
+    if geoms then
+        local reflected = reflect_geometries(geoms, ctx.geo, p.useless_gap or 0)
         if reflected then
-            ctx.laid = true
+            if not ctx.debug_resolve then ctx.laid = true end
             return { { slot = "root", node = reflected } }
         end
     end

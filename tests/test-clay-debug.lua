@@ -89,6 +89,40 @@ local steps = {
         return true
     end,
 
+    -- Under a descriptor-less layout (magnifier), a debug re-solve must KEEP the
+    -- reflected clients in the tree -- re-emitted from the cached arrange snapshot
+    -- rather than re-running the arrange. Without the cache the pointer-motion
+    -- re-solve blinks the clients out of the inspector (the tree the overlay and
+    -- `clay tree` read), even though the windows never move.
+    function(count)
+        local s = screen.primary
+        if count == 1 then
+            s.tags[1].layout = clay.magnifier
+            awful.layout.arrange(s)
+            return nil  -- let the magnifier arrange reflect + cache the snapshot
+        end
+        if not s._clay_reflect_geoms then
+            if count >= 15 then error("magnifier arrange never cached a reflection snapshot") end
+            return nil
+        end
+        clay.debug_resolve(s)  -- the pointer-motion re-solve
+        local function count_clients(node)
+            if type(node) ~= "table" then return 0 end
+            local n = (node._type == "floating_client" or node._type == "client") and 1 or 0
+            if node.children then
+                for _, ch in ipairs(node.children) do n = n + count_clients(ch) end
+            end
+            return n
+        end
+        local nclients = count_clients(s._clay_last_tree)
+        assert(nclients >= 1,
+            "a debug re-solve under magnifier must keep the reflected client in the tree, found "
+            .. nclients)
+        io.stderr:write("[TEST] PASS: debug re-solve under magnifier kept "
+            .. nclients .. " client(s) in the tree\n")
+        return true
+    end,
+
     -- Add an output while debug is on (renders an overlay on it), then remove
     -- it: clay_screen_removed must free that screen's overlay + context cleanly
     -- (ASAN catches a leak/UAF) and the screen count must return to normal.
