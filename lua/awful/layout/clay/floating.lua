@@ -101,6 +101,13 @@ return function(clay)
         name           = "clay.floating",
         body_signature = "context",
         no_gap         = true,
+        merged_capable = true,
+        -- Graft root-attached at screen.geometry (like max.fullscreen) rather
+        -- than inside the workarea node. Floating clients are positioned at their
+        -- own absolute geometry, so they must reflect against the screen origin;
+        -- routing them through the workarea node would add its padding +
+        -- useless_gap on every arrange, drifting every client down/right.
+        bounds_source  = "geometry",
         body           = function(ctx)
             local children = {}
             for i, c in ipairs(ctx.children) do

@@ -138,6 +138,44 @@ local function collect_floating(s, geo)
     return out
 end
 
+-- Reflect a descriptor-less layout's arrange output as root-attached leaves so
+-- the one merged solve positions its clients through the single C apply path.
+-- p.geometries holds the OUTER box per client (the same convention the legacy
+-- apply loop consumed); this emits the leaf box that, after C subtracts
+-- 2*border, lands the exact surface the old loop produced:
+--   leaf = (g.x - origin + gap, g.y - origin + gap, g.w - 2*gap, g.h - 2*gap).
+-- Read from p.geometries, never c:geometry(): the arrange output is the intent,
+-- whereas live geometry is stale until C applies from the tree. This is the
+-- sibling of collect_floating (which reflects NON-tiled clients at their LIVE
+-- geometry for the descriptor path); here we reflect the arrange OUTPUT for
+-- every client the descriptor-less layout positioned. Returns nil when empty.
+local function reflect_geometries(p, geo, gap)
+    local out, z = {}, 0
+    for c, g in pairs(p.geometries) do
+        -- Skip clients with no on-screen intersection. Clay culls a fully
+        -- off-screen element (it emits no render command), leaving a zeroed
+        -- result that clay_apply_all would then apply as a 1x1 box at the screen
+        -- origin, clobbering the geometry the layout already applied (e.g.
+        -- carousel's scrolled-out columns). Such clients stay applied by the
+        -- layout itself, off-tree (the descriptor-less allow-list tolerates the
+        -- missing node).
+        if c.valid
+            and g.x + g.width > geo.x and g.x < geo.x + geo.width
+            and g.y + g.height > geo.y and g.y < geo.y + geo.height then
+            z = z + 1
+            out[#out + 1] = layout.floating_client(c, {
+                x      = g.x - geo.x + gap,
+                y      = g.y - geo.y + gap,
+                width  = g.width  - 2 * gap,
+                height = g.height - 2 * gap,
+                z      = z,
+            })
+        end
+    end
+    if #out == 0 then return nil end
+    return out
+end
+
 -- Walk a tree, setting `gap` on every container that doesn't already have one
 -- set. Mirrors the legacy walk_with_gap semantic so nested containers
 -- (tile/fair/spiral) inherit the tag's useless_gap as childGap.
@@ -306,7 +344,7 @@ local function titlebar_node(c, position, role, size, sizing)
             if not (sc and sc.valid) then return end
             local al = awful_layout()
             local l = al.get(sc)
-            if l and l.descriptor and l.descriptor.merged_capable then
+            if l and l.descriptor then
                 al.arrange(sc)
             end
         end)
@@ -376,14 +414,23 @@ local function frame_clients(node)
 end
 
 --- Build the screen-level layout tree, solve it, and write screen.workarea.
--- Called before every layout cycle from `awful.layout.arrange`. Returns true
--- when it laid out the tiled clients itself (merge-capable layout), so the
--- caller skips the separate per-layout arrange pass.
-function clay.compose_screen(s)
+-- Called once per layout cycle from `awful.layout._recompute_screen`. Returns
+-- true when this solve laid out the clients itself, either a merge-capable
+-- descriptor (tile/fair/...) or a descriptor-less layout whose arrange output
+-- (p.geometries) is reflected as root-attached leaves; the caller then skips
+-- the imperative per-client apply.
+-- @tparam[opt] table p The arranged params (carrying p.geometries) from the
+--   drain. When omitted (the wibar registration and debug-overlay callers) only
+--   the wibars + workarea are solved and clients are left untouched.
+function clay.compose_screen(s, p)
     local wibars = collect_wibars(s)
     local geo = s.geometry
     local t = s.selected_tag
     local gap = (t and t.gap) or 0
+    -- The drain passes the arranged params so a descriptor-less layout's
+    -- p.geometries can be reflected into this one solve. The wibar / debug
+    -- callers pass none and only need the wibar + workarea solve.
+    p = p or awful_layout().parameters(nil, s)
 
     -- A debug-overlay re-solve (clay.debug_resolve, driven by pointer motion)
     -- only needs end_layout to redraw the Clay debug view; geometry was already
@@ -410,10 +457,11 @@ function clay.compose_screen(s)
     -- solve's wibar/workarea geometry is committed immediately (no_apply below):
     -- deferring it would let the bespoke arrange's begin_layout wipe the pending
     -- wibar results before they commit, leaving the bar invisible on cold start.
-    local merge_capable = (suit and suit.descriptor
-                           and suit.descriptor.merged_capable) or false
+    -- Every descriptor lays its clients in this one solve: having a descriptor
+    -- IS being merge-capable. merged_capable stays a public descriptor field but
+    -- no longer gates. Descriptor-less layouts route through `reflected` below.
+    local merge_capable = (suit and suit.descriptor) and true or false
     if merge_capable then
-        local p = awful_layout().parameters(nil, s)
         local root = descriptor_to_root(suit.descriptor, p)
         if root then
             frame_clients(root)
@@ -448,6 +496,21 @@ function clay.compose_screen(s)
         end
     end
 
+    -- A descriptor-less layout (magnifier / carousel / a user's arrange) ran its
+    -- arrange before this call and filled p.geometries; reflect those boxes as
+    -- root-attached leaves so this one solve owns its clients too. No
+    -- collect_floating on this path: the arrange positioned every client it
+    -- manages, so reflecting p.geometries covers them (running both would
+    -- double-reflect). debug_resolve carries no fresh p.geometries, so it is
+    -- skipped (the overlay repaints from the last real arrange).
+    local reflected = nil
+    if not merge_capable and not debug_resolve and p.geometries then
+        reflected = reflect_geometries(p, geo, p.useless_gap or 0)
+    end
+    -- This solve laid out the clients when a descriptor merged OR a
+    -- descriptor-less layout reflected; the caller then skips imperative apply.
+    local laid = merged or (reflected ~= nil)
+
     -- The workarea node reports screen.workarea (its inner box, after the gap
     -- padding). On the merged tile path it also parents the client subtree; the
     -- fullscreen graft attaches to the root below instead.
@@ -468,9 +531,11 @@ function clay.compose_screen(s)
         middle = measure
     end
 
-    -- On the merged path, reflect the screen's floating / fullscreen / maximized
-    -- clients as root-attached nodes so the one solve represents every client.
-    -- They are removed from flow, so the wibar / workarea layout is unaffected.
+    -- On the merged (descriptor) path, reflect the screen's floating /
+    -- fullscreen / maximized clients as root-attached nodes so the one solve
+    -- represents every client. They are removed from flow, so the wibar /
+    -- workarea layout is unaffected. (The descriptor-less path uses `reflected`
+    -- instead, which already covers all of that layout's clients.)
     local floats = merged and collect_floating(s, geo) or nil
 
     local col = {
@@ -483,10 +548,11 @@ function clay.compose_screen(s)
     }
     if fullscreen_graft then col[#col + 1] = fullscreen_graft end
     if floats then col[#col + 1] = floats end
+    if reflected then col[#col + 1] = reflected end
 
     local result = layout.solve {
         screen = s,
-        source = merged and "merged" or "compose_screen",
+        source = laid and "merged" or "compose_screen",
         width = geo.width, height = geo.height,
         offset_x = geo.x, offset_y = geo.y,
         no_apply = debug_resolve,
@@ -497,7 +563,7 @@ function clay.compose_screen(s)
     }
 
     if debug_resolve then
-        return merged
+        return laid
     end
 
     if result.workarea then
@@ -543,7 +609,7 @@ function clay.compose_screen(s)
     -- are solved here either way, even with no tiled clients.
     s._clay_merge_capable     = merge_capable
 
-    return merged
+    return laid
 end
 
 ---------------------------------------------------------------------------
@@ -557,12 +623,10 @@ end
 -- The descriptor is exposed at `suit.descriptor` so `compose_screen` can
 -- resolve it into the merged screen solve (`descriptor_to_root`).
 --
--- `arrange` is the fallback path, reached only when `compose_screen` did
--- NOT merge this layout: either a merge-capable layout with no clients to
--- place, or `clay.floating` (which positions its clients itself). Both are
--- no-ops here; it just claims the cycle so the imperative apply loop in
--- `awful.layout.arrange` does not touch the clients. A merged layout never
--- reaches this (compose_screen returns true and the caller skips it).
+-- A descriptor's clients are laid out by compose_screen (descriptor_to_root),
+-- never by this arrange: the per-screen drain runs arrange only for
+-- descriptor-less layouts. suit.arrange is kept as a no-op so a descriptor
+-- layout still exposes the conventional arrange method.
 local function tag_suit_from_descriptor(descriptor)
     local suit = {
         name        = descriptor.name,
@@ -570,9 +634,7 @@ local function tag_suit_from_descriptor(descriptor)
         descriptor  = descriptor,
     }
 
-    function suit.arrange(p)
-        p._clay_managed = true
-    end
+    function suit.arrange() end
 
     return suit
 end

@@ -279,7 +279,7 @@ local function clay_register(wb, position)
             if not (cs and cs.valid) then return end
             local al = require("awful.layout")
             local l = al.get(cs)
-            if l and l.descriptor and l.descriptor.merged_capable then
+            if l and l.descriptor then
                 al.arrange(cs)
             end
         end)

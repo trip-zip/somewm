@@ -1,14 +1,14 @@
 ---------------------------------------------------------------------------
---- Test: the flexbox-expressible built-in layouts join the merged screen
---- solve, while arbitrary custom user layouts keep working via the
---- non-merged escape hatch.
+--- Test: every built-in layout joins the merged screen solve, and an arbitrary
+--- custom user layout reflects its arrange output into the same solve.
 ---
---- fair/spiral/corner/max are merge_capable (Step 3): compose_screen grafts
---- their client subtree and solves the whole screen once (source "merged"),
---- so the standalone "preset" solve no longer fires for them. max.fullscreen
---- joins them in Step 4 via the floating-to-root graft, covering
---- screen.geometry rather than the workarea. Arbitrary custom user layouts
---- (Prime Directive) stay on the non-merged path.
+--- fair/spiral/corner/max are descriptors: compose_screen grafts their client
+--- subtree and solves the whole screen once (source "merged"), so the standalone
+--- "preset" solve no longer fires. max.fullscreen joins them via the
+--- root-attached graft, covering screen.geometry rather than the workarea. An
+--- arbitrary custom user layout (Prime Directive) writes p.geometries, which
+--- compose_screen reflects as root-attached leaves, so it drives a merged solve
+--- too and its clients are applied in C from the tree.
 ---
 --- arrange() runs through a delayed_call, so each measurement resets the
 --- counters, triggers an arrange, and polls until the solve lands.
@@ -116,10 +116,10 @@ add_steps(merged_layout_steps("clay.spiral.dwindle",  clay.spiral.dwindle))
 add_steps(merged_layout_steps("clay.corner.nw",       clay.corner.nw))
 add_steps(merged_layout_steps("clay.max",             clay.max))
 
--- Prime Directive: an arbitrary user layout function still tiles, via the
--- non-merged path (no descriptor -> compose_screen returns merged=false ->
--- arrange writes p.geometries -> the apply loop in awful.layout positions
--- it). Every client gets the left third of the workarea.
+-- Prime Directive: an arbitrary user layout function still tiles. It writes
+-- p.geometries, which compose_screen reflects into the merged screen solve as
+-- root-attached leaves (so it drives a "merged" solve too), and C applies them
+-- from the tree. Every client gets the left third of the workarea.
 local custom = {
     name = "custom_step3",
     arrange = function(p)
@@ -145,29 +145,28 @@ add_steps({
             return nil
         end
         local c = counts()
-        -- Wait for the non-merged arrange to actually run (compose_screen
-        -- always solves the workarea even when it does not merge) so the
-        -- merged==0 assertion below is meaningful, not vacuously true.
-        if c.compose_screen < 1 and count < 8 then return nil end
+        -- Wait for the reflecting arrange to land: the custom layout's boxes are
+        -- reflected into the screen solve, which is tagged "merged".
+        if c.merged < 1 and count < 8 then return nil end
         local first = tag:clients()[1]
         if not first then return nil end
         local g  = first:geometry()
         local wa = screen.primary.workarea
         local bw = first.border_width or 0
-        -- The non-merged apply loop subtracts 2*bw (gap is 0) from the rect.
+        -- The reflection subtracts 2*bw (gap is 0) from the rect the layout wrote.
         local want_w = math.floor(wa.width / 3) - 2 * bw
         if math.abs(g.width - want_w) > 4 and count < 8 then return nil end
         io.stderr:write(string.format(
             "[TEST] custom: merged=%d compose=%d x=%d width=%d (want x~%d w~%d)\n",
             c.merged, c.compose_screen, g.x, g.width, wa.x, want_w))
-        assert(c.merged == 0,
-            "custom layout must NOT use the merged path")
+        assert(c.merged >= 1,
+            "custom layout should reflect into the merged screen solve")
         assert(math.abs(g.width - want_w) <= 4,
             "custom layout geometry should be applied (width ~ workarea/3)")
         assert(math.abs(g.x - wa.x) <= 2 + bw,
             "custom layout x should match the rect it wrote")
         io.stderr:write(
-            "[TEST] PASS: custom user layout still tiles (escape hatch)\n")
+            "[TEST] PASS: custom user layout reflects into the merged solve\n")
         return true
     end,
 })

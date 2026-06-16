@@ -3,18 +3,14 @@
 -- `sqrt(master_width_factor)` of the workarea; remaining clients tile
 -- behind it as a full-area column.
 --
--- One `layout.solve` per arrange: the non-focused clients tile in a column
--- that fills the workarea, and the focused client overlays them as a
--- centered floating-to-root node (Clay CLAY_ATTACH_TO_ROOT). Each client
--- receives exactly one geometry assignment. This used to take two passes
--- because Clay's flexbox cannot put a centered child over a larger sibling
--- in flow; the floating-to-root primitive (Step 4) expresses the overlap in
--- a single tree.
---
--- magnifier stays a bespoke arrange rather than a compose_screen merge
+-- magnifier stays a bespoke arrange(p) rather than a merge-capable descriptor
 -- because it positions clients by focus, not by the tiled-client set:
 -- need_focus_update re-arranges on focus change, and mouse_resize_handler
--- drives master_width_factor from a center-anchored drag.
+-- drives master_width_factor from a center-anchored drag. It writes the OUTER
+-- box per client to p.geometries; compose_screen reflects those as
+-- root-attached leaves in the one screen solve, so magnifier's clients flow
+-- through the single C apply path and the assertion sees them. It is a
+-- documented bespoke leaf, allow-listed as a descriptor-less layout.
 ---------------------------------------------------------------------------
 
 local ipairs = ipairs
@@ -25,7 +21,6 @@ local capi   = {
     mouse        = mouse,
     mousegrabber = mousegrabber,
 }
-local layout = require("somewm.layout")
 
 -- Interactive resize for magnifier: dragging away from the workarea
 -- center shrinks the focused (magnified) client; dragging toward the
@@ -83,47 +78,55 @@ return function(clay)
 
         local wa = p.workarea
 
-        local fidx
+        -- Background: the non-focused clients, ordered as the legacy layout did
+        -- (after focus first, then before) so the stacking order on tag refocus
+        -- is preserved. They tile as an equal vertical column filling wa.
+        local bg, fidx = {}, nil
         for k, c in ipairs(cls) do
             if c == focus then fidx = k; break end
         end
+        -- The focused client may not be in the tiled set (client.tiled excludes
+        -- fullscreen / maximized clients, which keep floating == false and so
+        -- pass the guard above): fall back to magnifying the first tiled client
+        -- rather than indexing with a nil fidx.
+        if not fidx then focus, fidx = cls[1], 1 end
+        for k = fidx + 1, #cls do bg[#bg + 1] = cls[k] end
+        for k = 1, fidx - 1 do bg[#bg + 1] = cls[k] end
 
-        -- Background: tile non-focused clients to fill the workarea. Order
-        -- matches the legacy code (clients after focus first, then before)
-        -- so the visible stacking order on tag refocus is preserved.
-        local children = {}
-        for k = fidx + 1, #cls do
-            children[#children + 1] = layout.client(cls[k], { grow = true })
-        end
-        for k = 1, fidx - 1 do
-            children[#children + 1] = layout.client(cls[k], { grow = true })
+        local n = #bg
+        if n > 0 then
+            local slot = math.floor((wa.height - (n - 1) * gap) / n)
+            for i, c in ipairs(bg) do
+                -- OUTER box = the slot grown by gap (the legacy convention: the
+                -- slot already includes the border region). reflect_geometries
+                -- subtracts the gap and C subtracts the border, so the client
+                -- surface is the slot minus its border. No border term here,
+                -- unlike carousel, which starts from an applied surface and adds
+                -- the border back so the round-trip preserves it.
+                p.geometries[c] = {
+                    x      = wa.x - gap,
+                    y      = wa.y + (i - 1) * (slot + gap) - gap,
+                    width  = wa.width + 2 * gap,
+                    height = slot + 2 * gap,
+                }
+            end
         end
 
         -- Overlay: the focused client centered over the background. With a
-        -- single client it fills the workarea (sq = 1); with more it shrinks
-        -- to sqrt(mwfact). A floating-to-root node, so it overlaps the larger
-        -- background in one solve. The frame box is sqrt(mwfact)*wa; the apply
-        -- pass subtracts the border to get the surface size.
+        -- single client it fills the workarea (sq = 1); with more it shrinks to
+        -- sqrt(mwfact). It overlaps the background, so it must stack above (the
+        -- focus path raises it). Same OUTER-box convention as the background.
         local sq = (#cls > 1) and math.sqrt(mwfact) or 1
-        local fw = wa.width  * sq
-        local fh = wa.height * sq
-        children[#children + 1] = layout.floating_client(focus, {
-            x      = (wa.width  - fw) / 2,
-            y      = (wa.height - fh) / 2,
-            width  = fw,
-            height = fh,
-            z      = 1,
-        })
-
-        layout.solve {
-            screen   = get_screen(p.screen),
-            source   = "magnifier",
-            width    = wa.width, height = wa.height,
-            offset_x = wa.x,     offset_y = wa.y,
-            root     = layout.column { gap = gap, children },
+        local fw = math.floor(wa.width  * sq)
+        local fh = math.floor(wa.height * sq)
+        local ox = math.floor((wa.width  - fw) / 2)
+        local oy = math.floor((wa.height - fh) / 2)
+        p.geometries[focus] = {
+            x      = wa.x + ox - gap,
+            y      = wa.y + oy - gap,
+            width  = fw + 2 * gap,
+            height = fh + 2 * gap,
         }
-
-        p._clay_managed = true
     end
 
     clay.magnifier = {

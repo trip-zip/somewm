@@ -238,38 +238,25 @@ end
 -- @noreturn
 function layout._recompute_screen(screen)
     protected_call(function()
-        -- Compose screen: position wibars and compute workarea via Clay.
-        -- Must run before layout.parameters() so workarea is up-to-date.
-        -- A merge-capable layout (tile) lays out its clients inside this
-        -- one solve and returns true, so the separate arrange pass below
-        -- is skipped.
         local clay_ok, clay_mod = pcall(require, "awful.layout.clay")
-        local merged = false
-        if clay_ok and clay_mod.compose_screen then
-            merged = clay_mod.compose_screen(screen)
-        end
 
         local p = layout.parameters(nil, screen)
-
-        local useless_gap = p.useless_gap
-
         p.geometries = setmetatable({}, {__mode = "k"})
-        if merged then
-            p._clay_managed = true
-        else
-            layout.get(screen).arrange(p)
+
+        -- A merge-capable descriptor (tile/fair/...) lays its clients inside
+        -- compose_screen's one solve. A descriptor-less layout (magnifier,
+        -- carousel, a user's arrange) runs its arrange first to fill
+        -- p.geometries, which compose_screen reflects into that same solve. Both
+        -- apply only in C, from the tree (clay_apply_all): there is no imperative
+        -- per-client apply in Lua.
+        local suit = layout.get(screen)
+        local descriptorless = not (suit and suit.descriptor)
+        if descriptorless then
+            suit.arrange(p)
         end
 
-        -- Clay layouts handle gaps natively and apply geometry
-        -- directly from C. Skip the per-client adjustment loop.
-        if not p._clay_managed then
-            for c, g in pairs(p.geometries) do
-                g.width = math.max(1, g.width - c.border_width * 2 - useless_gap * 2)
-                g.height = math.max(1, g.height - c.border_width * 2 - useless_gap * 2)
-                g.x = g.x + useless_gap
-                g.y = g.y + useless_gap
-                c:geometry(g)
-            end
+        if clay_ok and clay_mod.compose_screen then
+            clay_mod.compose_screen(screen, p)
         end
     end)
 
@@ -366,34 +353,33 @@ function layout.getname(_layout)
     return _layout.name
 end
 
--- Tree==scene allow-list, keyed by layout name. The C assert consults it on a
--- mismatch and treats a listed layout's nodes as expected instead of
--- warning/aborting. This is a forward hook: it only bites once a layout is
--- Clay-managed (its clients flow through clay_apply_all) but its conversion is
--- not yet pixel-exact. Legacy layouts that position clients with their own
--- arrange (carousel, custom `function arrange(p)` layouts) never reach the
--- assert, so they do not need listing. Seeded with carousel as the documented
--- conversion target; drive it to empty as each entry is made exact.
-local tree_assert_allowlist = {
-    carousel = true,
-}
-
 if _somewm_clay then
     -- Hand the C drain (clay_drain_stale_screens, run from some_refresh) the
     -- per-screen recompute entry so it can recompute each stale screen.
     _somewm_clay.recompute_screen = layout._recompute_screen
 
-    -- Consulted by the C tree==scene assert on the slow path only (after a
-    -- mismatch is detected, before it warns/aborts). Returning true marks the
-    -- divergence as expected, so a real regression in a non-listed layout still
-    -- aborts under SOMEWM_TREE_ASSERT=abort.
+    -- Tree==scene allow-list, by category. The C assert consults this only after
+    -- a mismatch, treating the client as expected instead of warning/aborting.
+    --
+    -- Descriptor layouts (tile/fair/spiral/corner/max/floating) lay their
+    -- clients in the merged solve and must match the scene exactly: a divergence
+    -- is a real conversion bug and aborts under SOMEWM_TREE_ASSERT=abort.
+    --
+    -- Descriptor-less layouts (magnifier, carousel, a user's `function
+    -- arrange(p)`) are reflected from their arrange output as root-attached
+    -- leaves. A well-behaved reflection matches by construction, but their boxes
+    -- come from bespoke or user code that may impose its own constraints
+    -- (aspect-ratio, thin clamps) or animate off the arrange-time snapshot
+    -- (carousel), so a divergence on a descriptor-less screen is an expected,
+    -- documented leaf, not a violation. This is the single documented-leaf
+    -- category; it replaces the old per-layout-name forward hook.
     function _somewm_clay.assert_allowed(what, obj)
         -- Require an explicit screen: layout.get(nil) would fall back to the
         -- mouse screen's layout and answer for the wrong screen. A screenless
-        -- divergent client is not allow-listed (it warns/aborts), the safe default.
+        -- divergent client is not allowed (it warns/aborts), the safe default.
         if what == "client" and obj and obj.screen then
-            local name = layout.getname(layout.get(obj.screen))
-            return name ~= nil and tree_assert_allowlist[name] == true
+            local suit = layout.get(obj.screen)
+            return not (suit and suit.descriptor)
         end
         return false
     end

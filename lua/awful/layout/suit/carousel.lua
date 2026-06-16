@@ -264,7 +264,13 @@ end
 -- This is the "render" step, separated from target computation so
 -- the animation tick can call it independently. Reads all layout
 -- geometry from the cached state fields (col_positions, workarea, gap).
-local function apply_geometry(state)
+-- @tparam[opt] table geometries When the arrange pass passes p.geometries,
+--   each client's OUTER box is mirrored into it so compose_screen reflects the
+--   carousel as root-attached leaves in the one screen solve. The animation
+--   tick passes none: it re-applies via _set_geometry_silent each frame off
+--   this arrange-time snapshot (carousel is allow-listed for the mid-scroll
+--   divergence between the snapshot and the animating scene).
+local function apply_geometry(state, geometries)
     local col_positions = state.col_positions
     local wa = state.workarea
     local gap = state.gap
@@ -299,12 +305,28 @@ local function apply_geometry(state)
             local scroll_pos = scroll_o + peek + cp.canvas_x - state.scroll_offset + gap
             local stack_pos = stack_o + gap + stack_offset
 
-            c:_set_geometry_silent({
-                x      = vert and stack_pos or scroll_pos,
-                y      = vert and scroll_pos or stack_pos,
-                width  = vert and stack_client_size or scroll_client_size,
-                height = vert and scroll_client_size or stack_client_size,
-            })
+            local gx = vert and stack_pos or scroll_pos
+            local gy = vert and scroll_pos or stack_pos
+            local gw = vert and stack_client_size or scroll_client_size
+            local gh = vert and scroll_client_size or stack_client_size
+
+            c:_set_geometry_silent({ x = gx, y = gy, width = gw, height = gh })
+
+            -- Mirror the surface into p.geometries as the OUTER box so the
+            -- reflection (which subtracts gap + border) reproduces it exactly.
+            -- Only at rest: while a scroll animates, clay_apply_all would apply
+            -- this arrange-time snapshot over the positions the animation is
+            -- moving frame-by-frame, so skip the write and let the clients ride
+            -- _set_geometry_silent (orphan until the scroll settles; carousel is
+            -- allow-listed). state.anim_handle is set iff a scroll is animating.
+            if geometries and not state.anim_handle then
+                geometries[c] = {
+                    x      = gx - gap,
+                    y      = gy - gap,
+                    width  = gw + 2 * gap + 2 * bw,
+                    height = gh + 2 * gap + 2 * bw,
+                }
+            end
         end
     end
 
@@ -454,7 +476,10 @@ function carousel._arrange_impl(p, vertical)
         state.scroll_offset = state.target_offset
     end
 
-    apply_geometry(state)
+    -- Pass p.geometries so an at-rest arrange reflects this snapshot into the one
+    -- screen solve; apply_geometry skips the write while a scroll is animating
+    -- (the snapshot would be stale against the frame-by-frame animation).
+    apply_geometry(state, p.geometries)
 end
 
 --- Carousel layout arrange function (horizontal).
