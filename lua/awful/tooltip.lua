@@ -133,8 +133,80 @@ local function apply_mouse_mode(self)
     })
 end
 
+-- The Clay z-index for tooltip floating roots (debug-view ordering only; the
+-- real scene stacking comes from the ontop drawin).
+local TOOLTIP_Z = 100
+
+-- Turn the tooltip `gaps` (a number or a per-side table) into a direction-aware
+-- offset that pushes the tooltip off the chosen side of its anchor. The side
+-- facing the anchor is the one whose gap applies.
+local function gap_offset(gaps, position)
+    local function side(name)
+        if type(gaps) == "number" then return gaps end
+        if type(gaps) == "table"  then return gaps[name] or 0 end
+        return 0
+    end
+    if position == "bottom" then return { x = 0, y =  side("top")    } end
+    if position == "top"    then return { x = 0, y = -side("bottom") } end
+    if position == "right"  then return { x =  side("left"),  y = 0 } end
+    if position == "left"   then return { x = -side("right"), y = 0 } end
+    return { x = 0, y = 0 }
+end
+
+-- Total gap reserved per axis (left + right, top + bottom) so the fit/flip
+-- selection accounts for the gap and a tooltip whose anchor + gap would overflow
+-- the workarea flips to a side that fits (the offset is applied after the side is
+-- chosen, so the selection must reserve the space up front).
+local function gap_extent(gaps)
+    local function side(name)
+        if type(gaps) == "number" then return gaps end
+        if type(gaps) == "table"  then return gaps[name] or 0 end
+        return 0
+    end
+    return side("left") + side("right"), side("top") + side("bottom")
+end
+
+-- The Clay widget-anchor path for outside mode: when the tooltip's anchor is a
+-- widget that took part in a screen solve, attach the tooltip wibox to that
+-- widget's Clay element via the shared helper. The fit/flip selection stays in
+-- Lua; Clay does the offset math. Returns true when placed, false to fall back
+-- to a_placement.next_to.
+local function tooltip_position_clay(self, w)
+    local widget = self._private.widget_anchor
+    if not widget then return false end
+
+    local clay = require("awful.layout.clay")
+    local gaps = self._private.gaps
+    local gw, gh = gap_extent(gaps)
+    local s, pos_name = clay.attach_surface(w, widget, {
+        width = w.width, height = w.height,
+        preferred_positions = self.preferred_positions,
+        preferred_anchors   = self.preferred_alignments,
+        fit_inset   = { w = gw, h = gh },
+        offset_for  = function(pos) return gap_offset(gaps, pos) end,
+        on_reselect = function(pos) self.current_position = pos end,
+        z = TOOLTIP_Z,
+        prev_screen = self._private.clay_screen,
+    })
+    if not s then return false end
+
+    self._private.clay_screen = s
+    self.current_position = pos_name
+    return true
+end
+
 local function apply_outside_mode(self)
     local w = self:get_wibox()
+
+    -- Anchor to the widget's Clay element when possible; else the legacy search.
+    if tooltip_position_clay(self, w) then return true end
+
+    -- Clay declined (non-widget anchor); drop a prior Clay registration so the
+    -- screen solve stops re-emitting the tooltip onto the old anchor.
+    if self._private.clay_screen then
+        require("awful.layout.clay").unregister_popup(self._private.clay_screen, w)
+        self._private.clay_screen = nil
+    end
 
     local _, position = a_placement.next_to(w, {
         geometry            = self._private.widget_geometry,
@@ -145,6 +217,7 @@ local function apply_outside_mode(self)
     })
 
     self.current_position = position
+    return false
 end
 
 -- Place the tooltip under the mouse.
@@ -162,7 +235,10 @@ local function set_geometry(self)
     local mode = self.mode
 
     if mode == "outside" and self._private.widget_geometry then
-        apply_outside_mode(self)
+        -- The Clay path placed the tooltip in the screen solve (its fit already
+        -- honored the workarea) and re-applies it every solve, so no_offscreen
+        -- would be reverted on the next solve: skip it on that path.
+        if apply_outside_mode(self) then return end
     else
         apply_mouse_mode(self)
     end
@@ -200,6 +276,11 @@ local function hide(self)
         end
     end
     self.wibox.visible = false
+    -- Drop the tooltip from its screen solve so provider_popups stops emitting it.
+    if self._private.clay_screen then
+        require("awful.layout.clay").unregister_popup(self._private.clay_screen, self.wibox)
+        self._private.clay_screen = nil
+    end
     self._private.visible = false
     self:emit_signal("property::visible")
 end
@@ -691,6 +772,9 @@ function tooltip.new(args)
 
             -- Cache the geometry in case it is needed later
             self._private.widget_geometry = get_parent_geometry(other, geo)
+            -- A widget anchor (not a client / wibox) can attach via Clay.
+            self._private.widget_anchor =
+                (not (other.drawable or other.pid)) and other or nil
 
             if not delay_timeout.started then
                 delay_timeout:start()
@@ -711,6 +795,9 @@ function tooltip.new(args)
 
             -- Cache the geometry in case it is needed later
             self._private.widget_geometry = get_parent_geometry(other, geo)
+            -- A widget anchor (not a client / wibox) can attach via Clay.
+            self._private.widget_anchor =
+                (not (other.drawable or other.pid)) and other or nil
 
             show(self)
         end

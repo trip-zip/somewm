@@ -526,11 +526,204 @@ local function provider_floats(s, ctx)
     return { { slot = "root", node = floats } }
 end
 
+-- Did the anchor box move since the last selection (so the side must re-flip)?
+local function box_moved(a, b)
+    return a.x ~= b.x or a.y ~= b.y or a.width ~= b.width or a.height ~= b.height
+end
+
+-- Run the fit/flip selection for a surface against an anchor box on screen s.
+-- `spec` carries width/height (plus an optional fit_inset { w, h } to reserve gap
+-- space so a surface whose anchor + gap overflows the workarea flips),
+-- preferred_positions/preferred_anchors, and offset_for(position) -> { x, y }.
+-- Returns position, anchor, attach points, offset, or nil if nothing fits.
+local _placement
+local function select_side(s, box, spec)
+    _placement = _placement or require("awful.placement")
+    local g = s.geometry
+    local arect = { x = box.x + g.x, y = box.y + g.y,
+                    width = box.width, height = box.height }
+    local inset = spec.fit_inset
+    local fit_size = {
+        width  = spec.width  + (inset and inset.w or 0),
+        height = spec.height + (inset and inset.h or 0),
+    }
+    local pos, anchor, ap = _placement.next_to_attach(arect, fit_size, {
+        preferred_positions = spec.preferred_positions,
+        preferred_anchors   = spec.preferred_anchors,
+        bounding_rect       = s.workarea,
+    })
+    if not pos then return nil end
+    return pos, anchor, ap, spec.offset_for(pos)
+end
+
+-- Provider: one root-slot entry per registered transient surface (popup /
+-- tooltip), each a Clay floating drawin attached to its anchor widget's element.
+-- Skips a surface whose anchor left the last solve (otherwise Clay reparents the
+-- float to the root and yanks it to the screen corner) or whose drawin is gone,
+-- and re-runs the fit/flip when the anchor moved since the selection. Returns {}
+-- when the screen has no popups.
+local function provider_popups(s)
+    local popups = s._clay_popups
+    if not popups then return {} end
+
+    local boxes = s._clay_widget_boxes
+    local entries = {}
+    for d, info in pairs(popups) do
+        local drawin = d.drawin
+        local box = boxes and info.anchor_widget and boxes[info.anchor_widget]
+        if drawin and box then
+            if info.anchor_box and box_moved(info.anchor_box, box) then
+                local pos, anchor, ap, offset = select_side(s, box, info)
+                if pos then
+                    info.attach_points, info.offset, info.anchor_box = ap, offset, box
+                    if info.on_reselect then info.on_reselect(pos, anchor) end
+                end
+            end
+            entries[#entries + 1] = { slot = "root", node = {
+                _type  = "popup",
+                drawin = drawin,
+                props  = {
+                    attach_to_element_id = info.anchor_ref,
+                    attach_points        = info.attach_points,
+                    x      = info.offset and info.offset.x or 0,
+                    y      = info.offset and info.offset.y or 0,
+                    z      = info.z,
+                    width  = info.width,
+                    height = info.height,
+                },
+            } }
+        end
+    end
+    return entries
+end
+
 -- Ordered list of providers drained by compose_screen. Order is load-bearing:
 -- provider_clients before provider_floats (floats reads ctx.merged, which
 -- provider_clients sets) and, in the root z-stack, the clients' graft / reflected
--- before the floats.
-local node_providers = { provider_wibars, provider_clients, provider_floats }
+-- before the floats. provider_popups is last so each popup's anchor element (a
+-- wibar widget) is already in the solve when Clay resolves the float.
+local node_providers = { provider_wibars, provider_clients, provider_floats,
+                         provider_popups }
+
+--- Find the screen whose last solve recorded a widget's box, and that box.
+--
+-- A popup / tooltip anchored to a solved widget (e.g. a wibar widget) attaches
+-- to its Clay element; a widget that took part in no screen solve returns nil so
+-- the caller falls back to placement.next_to.
+-- @tparam widget widget The candidate anchor widget.
+-- @treturn[opt] screen The screen whose solve holds the widget.
+-- @treturn[opt] table The widget's box { x, y, width, height } (solve-local).
+function clay.anchor_screen(widget)
+    for s in capi.screen do
+        local boxes = s._clay_widget_boxes
+        local box = boxes and boxes[widget]
+        if box then return s, box end
+    end
+end
+
+-- Refcount a widget as a live popup anchor. Only while the count is > 0 does
+-- widget_to_node emit the widget's clay_ref, so a widget used once as an anchor
+-- stops paying the per-solve emission once its popup is gone.
+local function anchor_ref(widget)
+    local p = widget._private
+    p._clay_anchor_refs = (p._clay_anchor_refs or 0) + 1
+end
+
+local function anchor_unref(widget)
+    local p = widget._private
+    local n = (p._clay_anchor_refs or 0) - 1
+    p._clay_anchor_refs = n > 0 and n or nil
+end
+
+--- Register a transient surface (popup / tooltip drawin) to be emitted into the
+-- screen solve as a Clay floating element anchored to its anchor widget. Usually
+-- called through `clay.attach_surface`, which fills `info`.
+-- @tparam screen s The screen the anchor lives on.
+-- @tparam drawin drawin The popup / tooltip wibox.
+-- @tparam table info anchor_ref, anchor_widget, attach_points, offset, width,
+--   height, z (+ the re-selection inputs attach_surface stores).
+function clay.register_popup(s, drawin, info)
+    local popups = s._clay_popups
+    if not popups then
+        popups = setmetatable({}, { __mode = "k" })
+        s._clay_popups = popups
+    end
+    -- Release the previous anchor's ref (a re-place to the same or a new anchor)
+    -- before taking the new one, so the refcount tracks the live anchor.
+    local prev = popups[drawin]
+    if prev and prev.anchor_widget then anchor_unref(prev.anchor_widget) end
+    if info.anchor_widget then anchor_ref(info.anchor_widget) end
+    popups[drawin] = info
+    clay_c.mark_stale(s)
+end
+
+--- Drop a transient surface from the screen solve (e.g. when it hides).
+-- @tparam screen s The screen.
+-- @tparam drawin drawin The popup / tooltip wibox.
+function clay.unregister_popup(s, drawin)
+    local popups = s._clay_popups
+    local info = popups and popups[drawin]
+    if info then
+        if info.anchor_widget then anchor_unref(info.anchor_widget) end
+        popups[drawin] = nil
+        clay_c.mark_stale(s)
+    end
+end
+
+--- Attach a transient surface (popup / tooltip wibox) to a widget's Clay element.
+--
+-- Resolves the anchor screen + box, runs the fit/flip selection (reserving
+-- `opts.fit_inset` so a surface whose anchor + gap would overflow the workarea
+-- flips), drops a stale registration from a previous screen, registers the
+-- surface, maps it, and synchronously solves so it is placed before returning.
+-- Both `awful.popup` and `awful.tooltip` route their widget-anchor path here.
+-- @tparam drawin drawin The surface wibox.
+-- @tparam widget widget The anchor widget.
+-- @tparam table opts width, height, preferred_positions, preferred_anchors,
+--   fit_inset { w, h } (optional), offset_for(position) -> { x, y },
+--   on_reselect(position, anchor) (optional), z, prev_screen (optional).
+-- @treturn[opt] screen The screen the surface was placed on (nil if the widget
+--   took part in no solve, so the caller falls back to placement.next_to).
+-- @treturn string The chosen position.
+-- @treturn string The chosen anchor.
+function clay.attach_surface(drawin, widget, opts)
+    local s, box = clay.anchor_screen(widget)
+    if not s then return nil end
+
+    local pos, anchor, ap, offset = select_side(s, box, opts)
+    if not pos then return nil end
+
+    -- Re-anchoring onto a different screen: drop the stale registration on the
+    -- old screen so it stops emitting a ghost (and yanking it to the corner).
+    if opts.prev_screen and opts.prev_screen ~= s then
+        clay.unregister_popup(opts.prev_screen, drawin)
+    end
+
+    wbase = wbase or require("wibox.widget.base")
+    clay.register_popup(s, drawin, {
+        anchor_ref          = wbase.widget_anchor_id(widget),
+        anchor_widget       = widget,
+        attach_points       = ap,
+        offset              = offset,
+        width               = opts.width,
+        height              = opts.height,
+        z                   = opts.z,
+        fit_inset           = opts.fit_inset,
+        preferred_positions = opts.preferred_positions,
+        preferred_anchors   = opts.preferred_anchors,
+        offset_for          = opts.offset_for,
+        on_reselect         = opts.on_reselect,
+        anchor_box          = box,
+    })
+
+    -- Map before the solve: clay_apply_all skips geometry for a drawin not yet in
+    -- the object registry (registered there on visible = true), so an unmapped
+    -- surface would not pick up its solved box. Centralized here so the popup and
+    -- tooltip paths share one place.
+    drawin.visible = true
+    clay.compose_screen(s)
+    return s, pos, anchor
+end
 
 --- Build the screen-level layout tree, solve it, and write screen.workarea.
 -- Called once per layout cycle from `awful.layout._recompute_screen`. Returns
@@ -625,6 +818,11 @@ function clay.compose_screen(s, p)
     -- descriptor-less reflection, then the floats over a merged tile.
     for _, node in ipairs(root_nodes) do col[#col + 1] = node end
 
+    -- When a popup is registered, its anchor widgets emit a stable clay_ref the
+    -- popup attaches to, so this solve must read clay_ref off elements. Popup-free
+    -- screens leave it nil so C skips the per-element getfield.
+    local has_popups = s._clay_popups ~= nil and next(s._clay_popups) ~= nil
+
     local result = layout.solve {
         screen = s,
         source = laid and "merged" or "compose_screen",
@@ -634,6 +832,7 @@ function clay.compose_screen(s, p)
         -- debug_only also tells C to skip has_pending, so the deferred
         -- clay_apply_all does not re-apply this pass's (unchanged) geometry.
         debug_only = debug_resolve,
+        read_anchor_refs = has_popups,
         root = layout.column(col),
     }
 

@@ -33,6 +33,66 @@ local module = {}
 
 local main_widget = {}
 
+-- The Clay z-index for popup floating roots. It orders them in Clay's debug view
+-- only (the apply reads geometry back by index, and the real scene stacking comes
+-- from the ontop drawin), so any value above the wibars / clients is fine.
+local POPUP_Z = 100
+
+-- Emit the position / anchor property signals (shared by the Clay and legacy
+-- placement paths so the public contract is identical).
+local function update_position_props(self, pos_name, anchor_name)
+    if pos_name ~= self._private.current_position then
+        local old = self._private.current_position
+        self._private.current_position = pos_name
+        self:emit_signal("property::current_position", pos_name, old)
+    end
+
+    if anchor_name ~= self._private.current_anchor then
+        local old = self._private.current_anchor
+        self._private.current_anchor = anchor_name
+        self:emit_signal("property::current_anchor", anchor_name, old)
+    end
+end
+
+-- The Clay widget-anchor path: when the parent is a find_widgets-style table
+-- whose widget took part in a screen solve, attach the popup to that widget's
+-- Clay element and let one synchronous solve place it. The fit / flip selection
+-- stays in Lua (placement.next_to_attach); Clay does the offset math. Returns
+-- true when it placed the popup, false to fall back to placement.next_to.
+local function set_position_clay(self)
+    -- Anchor from the active move_next_to call (a find_widgets-style table with a
+    -- widget), or, on a content-resize re-place (widget_geo nil), the one
+    -- remembered from the last placement. A non-widget anchor (client / geometry /
+    -- mouse) leaves `widget` nil and falls through to placement.next_to.
+    local geo = self._private.widget_geo
+    local widget
+    if geo then
+        if type(geo) == "table" then widget = geo.widget end
+    else
+        widget = self._private.clay_anchor_widget
+    end
+    if not widget then return false end
+
+    local clay = require("awful.layout.clay")
+    local offset = self._private.offset or { x = 0, y = 0 }
+    local s, pos_name, anchor_name = clay.attach_surface(self, widget, {
+        width = self.width, height = self.height,
+        preferred_positions = self._private.preferred_directions,
+        preferred_anchors   = self._private.preferred_anchors,
+        offset_for  = function() return offset end,
+        on_reselect = function(pos, anc) update_position_props(self, pos, anc) end,
+        z = POPUP_Z,
+        prev_screen = self._private.clay_screen,
+    })
+    if not s then return false end
+
+    self._private.clay_screen = s
+    self._private.clay_anchor_widget = widget
+    self._private._clay_place_stale = false
+    update_position_props(self, pos_name, anchor_name)
+    return true
+end
+
 -- Get the optimal direction for the wibox
 -- This (try to) avoid going offscreen
 local function set_position(self)
@@ -58,6 +118,21 @@ local function set_position(self)
 
     local geo = self._private.widget_geo
 
+    -- Initial placement (widget_geo set during move_next_to) or a producer
+    -- (content resize) flagged the placement stale: (re)anchor via Clay.
+    if (geo or self._private._clay_place_stale) and set_position_clay(self) then
+        return
+    end
+
+    -- The Clay path declined (non-widget anchor, or the anchor left the solve).
+    -- If this popup was Clay-anchored, drop that registration so the screen solve
+    -- stops re-emitting it back onto the old anchor.
+    if self._private.clay_screen then
+        require("awful.layout.clay").unregister_popup(self._private.clay_screen, self)
+        self._private.clay_screen = nil
+        self._private.clay_anchor_widget = nil
+    end
+
     if not geo then return end
 
     local _, pos_name, anchor_name = placement.next_to(self, {
@@ -67,17 +142,7 @@ local function set_position(self)
         offset              = self._private.offset or { x = 0, y = 0},
     })
 
-    if pos_name ~= self._private.current_position then
-        local old = self._private.current_position
-        self._private.current_position = pos_name
-        self:emit_signal("property::current_position", pos_name, old)
-    end
-
-    if anchor_name ~= self._private.current_anchor then
-        local old = self._private.current_anchor
-        self._private.current_anchor = anchor_name
-        self:emit_signal("property::current_anchor", anchor_name, old)
-    end
+    update_position_props(self, pos_name, anchor_name)
 end
 
 -- Set the wibox size taking into consideration the limits
@@ -97,7 +162,14 @@ local function apply_size(self, width, height, set_pos)
 
     self._private.next_width, self._private.next_height = width, height
 
-    if set_pos or width ~= prev_geo.width or height ~= prev_geo.height then
+    local size_changed = width ~= prev_geo.width or height ~= prev_geo.height
+    if set_pos or size_changed then
+        -- A registered Clay-anchored popup whose size changed must re-run its
+        -- placement: the float's fixed size (and the chosen side) may no longer
+        -- fit. Gated on a real size change so steady-state set_pos calls don't loop.
+        if size_changed and self._private.clay_anchor_widget then
+            self._private._clay_place_stale = true
+        end
         set_position(self)
     end
 end
@@ -496,6 +568,17 @@ local function create_popup(_, args)
     function w._private.hide_fct()
         w.visible = false
     end
+
+    -- Drop the popup from its screen solve when it hides, so provider_popups
+    -- stops emitting it (and the anchor widget can be released).
+    w:connect_signal("property::visible", function()
+        if not w.visible and w._private.clay_screen then
+            require("awful.layout.clay").unregister_popup(w._private.clay_screen, w)
+            w._private.clay_screen = nil
+            w._private.clay_anchor_widget = nil
+            w._private._clay_place_stale = false
+        end
+    end)
 
     -- Restore
     args.widget = original_widget

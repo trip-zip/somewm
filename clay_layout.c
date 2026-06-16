@@ -96,6 +96,11 @@ typedef struct {
 	 * valid until the next one (covers EndLayout's debug pass). Off otherwise,
 	 * so normal solves pay no string-hashing cost. */
 	bool debug_render;
+	/* read_anchor_refs: this solve has registered popups, so a widget element may
+	 * carry a stable clay_ref a popup attaches to by id. Only then does
+	 * clay_open_element read cfg.clay_ref, so popup-free solves pay no per-element
+	 * getfield (the common case). */
+	bool read_anchor_refs;
 	char *name_pool;
 	int name_pool_len;
 } clay_screen_t;
@@ -532,6 +537,26 @@ clay_read_layout_config(lua_State *L, int idx)
  * gets which box. When neither flag is set, returns a zeroed struct: Clay
  * treats this as `CLAY_ATTACH_TO_NONE`, i.e. normal flow participation.
  */
+/* Map a Lua attach-point name to Clay's 9-value enum. Names mirror
+ * CLAY_ATTACH_POINT_<vertical>_<horizontal>, vertical {left,center,right} x
+ * horizontal {top,center,bottom}. Absent / unknown -> LEFT_TOP (Clay's default
+ * and the value the binding hardcoded before popups needed real attach points). */
+static Clay_FloatingAttachPointType
+clay_attach_point_from_name(const char *s)
+{
+	if (!s)                          return CLAY_ATTACH_POINT_LEFT_TOP;
+	if (!strcmp(s, "left_top"))      return CLAY_ATTACH_POINT_LEFT_TOP;
+	if (!strcmp(s, "left_center"))   return CLAY_ATTACH_POINT_LEFT_CENTER;
+	if (!strcmp(s, "left_bottom"))   return CLAY_ATTACH_POINT_LEFT_BOTTOM;
+	if (!strcmp(s, "center_top"))    return CLAY_ATTACH_POINT_CENTER_TOP;
+	if (!strcmp(s, "center_center")) return CLAY_ATTACH_POINT_CENTER_CENTER;
+	if (!strcmp(s, "center_bottom")) return CLAY_ATTACH_POINT_CENTER_BOTTOM;
+	if (!strcmp(s, "right_top"))     return CLAY_ATTACH_POINT_RIGHT_TOP;
+	if (!strcmp(s, "right_center"))  return CLAY_ATTACH_POINT_RIGHT_CENTER;
+	if (!strcmp(s, "right_bottom"))  return CLAY_ATTACH_POINT_RIGHT_BOTTOM;
+	return CLAY_ATTACH_POINT_LEFT_TOP;
+}
+
 static Clay_FloatingElementConfig
 clay_read_floating_config(lua_State *L, int idx)
 {
@@ -539,22 +564,53 @@ clay_read_floating_config(lua_State *L, int idx)
 	if (!lua_istable(L, idx))
 		return fc;
 
-	lua_getfield(L, idx, "attach_to_parent");
-	bool to_parent = lua_toboolean(L, -1);
-	lua_pop(L, 1);
+	/* Attach mode: an explicit element id wins, then root, then parent. The
+	 * element-id form is how a popup/tooltip floats off its anchor widget; the
+	 * parentId is the counter-independent hash of the anchor's clay_ref string,
+	 * so it matches the id clay_element_id assigns that anchor (see clay.h
+	 * CLAY_ATTACH_TO_ELEMENT_WITH_ID / .parentId). */
+	lua_getfield(L, idx, "attach_to_element_id");
+	const char *anchor = lua_isstring(L, -1) ? lua_tostring(L, -1) : NULL;
 
 	lua_getfield(L, idx, "attach_to_root");
 	bool to_root = lua_toboolean(L, -1);
 	lua_pop(L, 1);
 
-	if (!to_parent && !to_root)
-		return fc;
+	lua_getfield(L, idx, "attach_to_parent");
+	bool to_parent = lua_toboolean(L, -1);
+	lua_pop(L, 1);
 
-	fc.attachTo = to_root ? CLAY_ATTACH_TO_ROOT : CLAY_ATTACH_TO_PARENT;
+	if (anchor) {
+		fc.attachTo = CLAY_ATTACH_TO_ELEMENT_WITH_ID;
+		fc.parentId = Clay__HashString(
+			(Clay_String){ .length = (int32_t)strlen(anchor), .chars = anchor },
+			0).id;
+		lua_pop(L, 1); /* attach_to_element_id (kept on stack until hashed) */
+	} else {
+		lua_pop(L, 1); /* attach_to_element_id (not a string) */
+		if (!to_parent && !to_root)
+			return fc;
+		fc.attachTo = to_root ? CLAY_ATTACH_TO_ROOT : CLAY_ATTACH_TO_PARENT;
+	}
+
+	/* attachPoints default to LEFT_TOP/LEFT_TOP (what the in-flow root/parent
+	 * callers relied on); popups pass an explicit {element, parent} pair. */
 	fc.attachPoints = (Clay_FloatingAttachPoints){
 		.element = CLAY_ATTACH_POINT_LEFT_TOP,
 		.parent  = CLAY_ATTACH_POINT_LEFT_TOP,
 	};
+	lua_getfield(L, idx, "attach_points");
+	if (lua_istable(L, -1)) {
+		lua_getfield(L, -1, "element");
+		fc.attachPoints.element = clay_attach_point_from_name(
+			lua_isstring(L, -1) ? lua_tostring(L, -1) : NULL);
+		lua_pop(L, 1);
+		lua_getfield(L, -1, "parent");
+		fc.attachPoints.parent = clay_attach_point_from_name(
+			lua_isstring(L, -1) ? lua_tostring(L, -1) : NULL);
+		lua_pop(L, 1);
+	}
+	lua_pop(L, 1);
 
 	lua_getfield(L, idx, "x_offset");
 	if (lua_isnumber(L, -1))
@@ -808,6 +864,7 @@ luaA_clay_begin_layout(lua_State *L)
 	cs->offset_x = 0;
 	cs->offset_y = 0;
 	cs->debug_only_solve = false;
+	cs->read_anchor_refs = false;
 
 	const char *source = NULL;
 	if (lua_istable(L, 4)) {
@@ -828,6 +885,10 @@ luaA_clay_begin_layout(lua_State *L)
 
 		lua_getfield(L, 4, "debug_only");
 		cs->debug_only_solve = lua_toboolean(L, -1);
+		lua_pop(L, 1);
+
+		lua_getfield(L, 4, "read_anchor_refs");
+		cs->read_anchor_refs = lua_toboolean(L, -1);
 		lua_pop(L, 1);
 	}
 
@@ -923,14 +984,30 @@ clay_name_pool_add(clay_screen_t *cs, const char *name, int len)
 	                      .length = len, .chars = dst };
 }
 
-/* Bump the element counter and return its Clay id. When the debug view renders
- * this solve and a name is supplied, the id carries a readable stringId (the
- * counter as a uniquifying offset so equal names don't collide), which the
- * inspector displays; otherwise a plain numeric id (no string hashing). */
+/* Bump the element counter and return its Clay id. With `stable` set the id is
+ * the counter-independent hash of `name` (clay_ref), so a floating popup whose
+ * parentId is the hash of the same string resolves to this element across
+ * solves; the counter still bumps so every other element's numeric id stays
+ * dense. Otherwise: when the debug view renders this solve and a name is
+ * supplied, the id carries a readable stringId (the counter as a uniquifying
+ * offset so equal names don't collide), which the inspector displays; else a
+ * plain numeric id (no string hashing). */
 static Clay_ElementId
-clay_element_id(clay_screen_t *cs, const char *name, int name_len)
+clay_element_id(clay_screen_t *cs, const char *name, int name_len, bool stable)
 {
 	uint32_t n = ++cs->element_id_counter;
+	if (stable && name && name_len > 0) {
+		Clay_ElementId id = Clay__HashString(
+			(Clay_String){ .length = (int32_t)name_len, .chars = name }, 0);
+		if (cs->debug_render) {
+			Clay_String s = clay_name_pool_add(cs, name, name_len);
+			if (s.length > 0)
+				id.stringId = s;
+		} else {
+			id.stringId = (Clay_String){ 0 };
+		}
+		return id;
+	}
 	if (cs->debug_render && name) {
 		Clay_String s = clay_name_pool_add(cs, name, name_len);
 		if (s.length > 0)
@@ -944,29 +1021,52 @@ clay_element_id(clay_screen_t *cs, const char *name, int name_len)
  * the object) or arg 1 (open_container / workarea, where arg 1 is the config),
  * so look at arg 2 then arg 1. The names themselves are assigned Lua-side in
  * emit() (client.<class>, wibar.<pos>, workarea, row/column/stack, ...). Reads
- * cfg.id only when the debug view renders this solve, so normal solves are
- * untouched. The id string is copied into the name pool while still on the
- * stack, so it outlives this call. */
+ * cfg.clay_ref only when this solve has registered popups (read_anchor_refs) and
+ * cfg.id only when the debug view renders this solve, so a normal popup-free,
+ * non-debug solve does no per-element getfield at all. The name string is copied
+ * into the name pool while still on the stack, so it outlives this call. */
 static void
 clay_open_element(lua_State *L)
 {
 	const char *name = NULL;
 	int len = 0, pushed = 0;
-	if (active_screen->debug_render) {
+	bool stable = false;
+	bool want_ref = active_screen->read_anchor_refs; /* popups present this solve */
+	bool want_id  = active_screen->debug_render;     /* debug view renders this solve */
+
+	if (want_ref || want_id) {
 		int cfg_idx = lua_istable(L, 2) ? 2 : (lua_istable(L, 1) ? 1 : 0);
 		if (cfg_idx) {
-			lua_getfield(L, cfg_idx, "id");
-			if (lua_isstring(L, -1)) {
-				size_t l;
-				name = lua_tolstring(L, -1, &l);
-				len = (int)l;
-				pushed = 1;  /* keep on stack until the name is copied */
-			} else {
-				lua_pop(L, 1);
+			/* Stable anchor id (clay_ref): a popup attaches to this element by
+			 * id. Wins over the debug-only `id`. */
+			if (want_ref) {
+				lua_getfield(L, cfg_idx, "clay_ref");
+				if (lua_isstring(L, -1)) {
+					size_t l;
+					name = lua_tolstring(L, -1, &l);
+					len = (int)l;
+					stable = true;
+					pushed = 1;  /* keep on stack until the name is copied */
+				} else {
+					lua_pop(L, 1);
+				}
+			}
+			/* Debug-only readable name (`id`): only when no clay_ref. */
+			if (!stable && want_id) {
+				lua_getfield(L, cfg_idx, "id");
+				if (lua_isstring(L, -1)) {
+					size_t l;
+					name = lua_tolstring(L, -1, &l);
+					len = (int)l;
+					pushed = 1;
+				} else {
+					lua_pop(L, 1);
+				}
 			}
 		}
 	}
-	Clay__OpenElementWithId(clay_element_id(active_screen, name, len));
+
+	Clay__OpenElementWithId(clay_element_id(active_screen, name, len, stable));
 	if (pushed)
 		lua_pop(L, 1);
 }

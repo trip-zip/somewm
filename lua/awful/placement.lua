@@ -282,6 +282,35 @@ local outer_positions = {
     bottom_middle = function(r, w, _) return {x=r.x-w/2+r.width/2, y=r.y                }, "middle" end,
 }
 
+-- Map a (position, anchor) pair to the Clay floating attachPoints that reproduce
+-- `outer_positions`. `parent` is the attach point on the anchor element, `element`
+-- the attach point on the popup; lining them up places the popup on the `position`
+-- side of the anchor, aligned by `anchor`. Verified equal to `outer_positions` for
+-- a raw (no-drawable) anchor rect; reproduced by Clay's attach math in
+-- `awful.placement.next_to_attach`.
+local position_to_attach = {
+    bottom = {
+        front  = { parent = "left_bottom"  , element = "left_top"      },
+        back   = { parent = "right_bottom" , element = "right_top"     },
+        middle = { parent = "center_bottom", element = "center_top"    },
+    },
+    top = {
+        front  = { parent = "left_top"     , element = "left_bottom"   },
+        back   = { parent = "right_top"    , element = "right_bottom"  },
+        middle = { parent = "center_top"   , element = "center_bottom" },
+    },
+    left = {
+        front  = { parent = "left_top"     , element = "right_top"     },
+        back   = { parent = "left_bottom"  , element = "right_bottom"  },
+        middle = { parent = "left_center"  , element = "right_center"  },
+    },
+    right = {
+        front  = { parent = "right_top"    , element = "left_top"      },
+        back   = { parent = "right_bottom" , element = "left_bottom"   },
+        middle = { parent = "right_center" , element = "left_center"   },
+    },
+}
+
 -- Map the opposite side for a string
 local opposites = {
     top    = "bottom",
@@ -1455,6 +1484,109 @@ function placement.scale(d, args)
     return fix_new_geometry(ngeo, args, true)
 end
 
+-- The fit/flip selection shared by `next_to` and the Clay widget-anchor popup
+-- path. Given the four regions around an anchor (from `get_relative_regions` or
+-- `regions_from_rect`), a target size, and `args.preferred_positions` /
+-- `args.preferred_anchors`, try each position in preference order and each anchor
+-- until one fits the bounding (`fit_in_bounding`). Returns the winning position,
+-- anchor, and the geometry it would occupy. Clay's float attach has no fit/flip,
+-- so this selection stays in Lua.
+local function next_to_select(regions, size, args)
+    local original_pos     = args.preferred_positions
+    local original_anchors = args.preferred_anchors
+
+    if type(original_pos) == "string" then
+        original_pos = {original_pos}
+    end
+
+    if type(original_anchors) == "string" then
+        original_anchors = {original_anchors}
+    end
+
+    local preferred_positions = {}
+    local preferred_anchors = #(original_anchors or {}) > 0 and
+        original_anchors or {"front", "back", "middle"}
+
+    for k, v in ipairs(original_pos or {}) do
+        preferred_positions[v] = k
+    end
+
+    -- Order the regions with the preferred_positions, then the defaults
+    local sorted_regions, default_positions = {}, {"left", "right", "bottom", "top"}
+
+    for _, pos in ipairs(original_pos or {}) do
+        for idx, def in ipairs(default_positions) do
+            if def == pos then
+                table.remove(default_positions, idx)
+                break
+            end
+        end
+
+        table.insert(sorted_regions, {name = pos, region = regions[pos]})
+    end
+
+    for _, pos in ipairs(default_positions) do
+        table.insert(sorted_regions, {name = pos, region = regions[pos]})
+    end
+
+    -- Check each possible slot around the drawable (8 total), see what fits
+    -- and order them by preferred_positions
+    local does_fit, pref_idx, pref_name = {}, 99, nil
+    for _, pos in ipairs(sorted_regions) do
+        local geo, dir, fit
+
+        -- Try each anchor until one that fits is found
+        for _, anchor in ipairs(preferred_anchors) do
+            geo, dir = outer_positions[pos.name.."_"..anchor](pos.region, size.width, size.height)
+
+            geo.width, geo.height = size.width, size.height
+
+            fit = fit_in_bounding(pos.region, geo, args)
+
+            if fit then break end
+        end
+
+        does_fit[pos.name] = fit and {geo, dir} or nil
+
+        -- preferred_positions is optional
+        local better_pos_idx = preferred_positions[pos.name]
+            and preferred_positions[pos.name] < pref_idx or false
+
+        if fit and (better_pos_idx or not pref_name) then
+            pref_idx  = preferred_positions[pos.name]
+            pref_name = pos.name
+        end
+
+        -- No need to continue
+        if fit then break end
+    end
+
+    if not pref_name then return end
+
+    assert(does_fit[pref_name])
+
+    local ngeo, dir = unpack(does_fit[pref_name])
+
+    return pref_name, dir, ngeo
+end
+
+placement.next_to_select = next_to_select
+
+-- Build the four `next_to`-style regions around a raw, absolute anchor rect,
+-- skipping `get_relative_regions`' mouse / drawable resolution. For a rect with
+-- no drawable the regions equal the rect edges, so `next_to_select` +
+-- `outer_positions` reproduce exactly what Clay's attachPoints compute against
+-- the same box. Used by the Clay widget-anchor popup path so the selection
+-- matches the element-box attach.
+local function regions_from_rect(r)
+    return {
+        left   = {x = r.x          , y = r.y           , width = r.width, height = r.height},
+        right  = {x = r.x + r.width, y = r.y           , width = r.width, height = r.height},
+        top    = {x = r.x          , y = r.y           , width = r.width, height = r.height},
+        bottom = {x = r.x          , y = r.y + r.height, width = r.width, height = r.height},
+    }
+end
+
 --- Move a drawable to a relative position next to another one.
 --
 -- This placement function offers two additional settings to align the drawable
@@ -1503,27 +1635,9 @@ function placement.next_to(d, args)
     d    = d or capi.client.focus
 
     local osize = type(d.geometry) == "function"  and d:geometry() or d.geometry
-    local original_pos, original_anchors = args.preferred_positions, args.preferred_anchors
-
-    if type(original_pos) == "string" then
-        original_pos = {original_pos}
-    end
-
-    if type(original_anchors) == "string" then
-        original_anchors = {original_anchors}
-    end
-
-    local preferred_positions = {}
-    local preferred_anchors = #(original_anchors or {}) > 0 and
-        original_anchors or {"front", "back", "middle"}
-
-    for k, v in ipairs(original_pos or {}) do
-        preferred_positions[v] = k
-    end
 
     local dgeo = geometry_common(d, args)
-    local pref_idx, pref_name = 99, nil
-    local mode,wgeo = args.mode
+    local mode, wgeo = args.mode
 
     if args.geometry then
         mode = "geometry"
@@ -1545,61 +1659,10 @@ function placement.next_to(d, args)
 
     local regions = get_relative_regions(wgeo, mode, is_absolute)
 
-    -- Order the regions with the preferred_positions, then the defaults
-    local sorted_regions, default_positions = {}, {"left", "right", "bottom", "top"}
-
-    for _, pos in ipairs(original_pos or {}) do
-        for idx, def in ipairs(default_positions) do
-            if def == pos then
-                table.remove(default_positions, idx)
-                break
-            end
-        end
-
-        table.insert(sorted_regions, {name = pos, region = regions[pos]})
-    end
-
-    for _, pos in ipairs(default_positions) do
-        table.insert(sorted_regions, {name = pos, region = regions[pos]})
-    end
-
-    -- Check each possible slot around the drawable (8 total), see what fits
-    -- and order them by preferred_positions
-    local does_fit = {}
-    for _, pos in ipairs(sorted_regions) do
-        local geo, dir, fit
-
-        -- Try each anchor until one that fits is found
-        for _, anchor in ipairs(preferred_anchors) do
-            geo, dir = outer_positions[pos.name.."_"..anchor](pos.region, dgeo.width, dgeo.height)
-
-            geo.width, geo.height = dgeo.width, dgeo.height
-
-            fit = fit_in_bounding(pos.region, geo, args)
-
-            if fit then break end
-        end
-
-        does_fit[pos.name] = fit and {geo, dir} or nil
-
-        -- preferred_positions is optional
-        local better_pos_idx = preferred_positions[pos.name]
-            and preferred_positions[pos.name] < pref_idx or false
-
-        if fit and (better_pos_idx or not pref_name) then
-            pref_idx  = preferred_positions[pos.name]
-            pref_name = pos.name
-        end
-
-        -- No need to continue
-        if fit then break end
-    end
+    -- The fit/flip selection (shared with the Clay widget-anchor popup path).
+    local pref_name, dir, ngeo = next_to_select(regions, dgeo, args)
 
     if not pref_name then return end
-
-    assert(does_fit[pref_name])
-
-    local ngeo, dir = unpack(does_fit[pref_name])
 
     -- The requested placement isn't possible due to the lack of space, better
     -- do nothing an try random things
@@ -1619,6 +1682,31 @@ function placement.next_to(d, args)
     assert((not osize.height) or ret.height == d.height)
 
     return ret, pref_name, dir
+end
+
+--- Pick the Clay floating attachPoints to place a drawable next to an anchor.
+--
+-- The attachPoint counterpart of `next_to` for the Clay widget-anchor popup
+-- path. It runs the same fit/flip selection over `anchor_rect`, then returns the
+-- Clay attachPoints (`parent` / `element`) that reproduce the chosen side rather
+-- than an absolute geometry: Clay computes the final position from the
+-- attachPoints, while this only picks which pair to use (the fit/flip policy Clay
+-- has no API for). `anchor_rect` must be a raw absolute rect (the widget's solved
+-- box) so the selection matches the element-box attach.
+-- @tparam table anchor_rect Absolute anchor rect { x, y, width, height }.
+-- @tparam table size Target size { width, height }.
+-- @tparam table args `preferred_positions`, `preferred_anchors`, and the bounding
+--   (`bounding_rect` / `honor_workarea` / `parent`) forwarded to the selector.
+-- @treturn string|nil The chosen position ("left", "right", "top" or "bottom").
+-- @treturn string The chosen anchor ("front", "middle" or "back").
+-- @treturn table The attachPoints { parent = <name>, element = <name> }.
+-- @staticfct awful.placement.next_to_attach
+function placement.next_to_attach(anchor_rect, size, args)
+    local position, anchor = next_to_select(regions_from_rect(anchor_rect), size, args)
+
+    if not position then return end
+
+    return position, anchor, position_to_attach[position][anchor]
 end
 
 --- Restore the geometry.

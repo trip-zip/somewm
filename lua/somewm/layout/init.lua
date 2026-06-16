@@ -650,6 +650,25 @@ local function make_config(props)
         cfg.id = props.id
     end
 
+    -- Stable, referenceable Clay element id (counter-independent hash). Unlike
+    -- `id` (debug inspector only), a popup can target this element across solves
+    -- via attach_to_element_id.
+    if props.clay_ref then
+        cfg.clay_ref = props.clay_ref
+    end
+
+    -- Floating popup anchored to a named element by attach points (Clay's
+    -- ELEMENT_WITH_ID form). The attach_points names map to Clay's enum C-side.
+    if props.attach_to_element_id then
+        cfg.attach_to_element_id = props.attach_to_element_id
+    end
+    if type(props.attach_points) == "table" then
+        cfg.attach_points = {
+            element = props.attach_points.element,
+            parent  = props.attach_points.parent,
+        }
+    end
+
     return cfg
 end
 
@@ -688,13 +707,17 @@ end
 -- insets. Fixed width/height come from make_config; callers that root-attach
 -- (the floating_client leaf, the public layout.attach_to_root builder) always
 -- carry explicit sizing, which Clay needs for a floating root.
+-- The x / y offset + z-index floating fields, shared by every attach mode.
+local function apply_float_offsets(cfg, props)
+    if not props then return end
+    cfg.x_offset = props.x or 0
+    cfg.y_offset = props.y or 0
+    if props.z then cfg.z_index = props.z end
+end
+
 local function apply_root_attach(cfg, props)
     cfg.attach_to_root = true
-    if props then
-        cfg.x_offset = props.x or 0
-        cfg.y_offset = props.y or 0
-        if props.z then cfg.z_index = props.z end
-    end
+    apply_float_offsets(cfg, props)
 end
 
 -- Debug-view name for a client leaf: "client.<class>" (instance/name fallback).
@@ -774,6 +797,15 @@ local function emit(node, parent_is_stack)
         apply_root_attach(cfg, node.props)
         if not cfg.id then cfg.id = client_node_id(node.client) end
         clay_c.client_element(node.client, cfg)
+    elseif t == "popup" then
+        -- A transient surface (popup / tooltip) floating off its anchor widget's
+        -- element. attach_to_element_id + attach_points come from make_config
+        -- (node.props); add the float offsets. Emitted as a drawin leaf so
+        -- clay_apply_all applies its outer geometry and the tree==scene assert
+        -- covers it; the wibox lays out its own widget internally.
+        apply_float_offsets(cfg, node.props)
+        if not cfg.id then cfg.id = "popup" end
+        clay_c.drawin_element(node.drawin, cfg)
     elseif t == "drawin" then
         if node.children and node.children[1] then
             clay_c.drawin_open(node.drawin, cfg)
@@ -1224,12 +1256,14 @@ function layout.solve(spec)
 
     local screen = spec.screen
     local opts = nil
-    if spec.offset_x or spec.offset_y or spec.source or spec.debug_only then
+    if spec.offset_x or spec.offset_y or spec.source or spec.debug_only
+        or spec.read_anchor_refs then
         opts = {
-            offset_x   = spec.offset_x or 0,
-            offset_y   = spec.offset_y or 0,
-            source     = spec.source,
-            debug_only = spec.debug_only,
+            offset_x         = spec.offset_x or 0,
+            offset_y         = spec.offset_y or 0,
+            source           = spec.source,
+            debug_only       = spec.debug_only,
+            read_anchor_refs = spec.read_anchor_refs,
         }
     end
 

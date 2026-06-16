@@ -782,6 +782,16 @@ function base.widget_to_node(parent, context, widget, width, height, props)
         end
     end
 
+    -- A widget actively used as a popup/tooltip anchor carries a stable Clay id so
+    -- the popup's attach_to_element_id resolves to its box across solves. Gated on
+    -- a live anchor refcount (bumped by clay.register/unregister_popup) so a widget
+    -- anchored once stops emitting clay_ref after its popup is gone. Absent for the
+    -- vast majority of widgets.
+    local wp = widget._private
+    if wp._clay_anchor_refs and wp._clay_anchor_refs > 0 then
+        node.props.clay_ref = wp._clay_anchor_id
+    end
+
     -- Debug-view name (inspector-only): "widget.fixed", "widget.margin", etc.
     -- widget_name is an abbreviated module path ("@..wibox.layout.fixed"), so
     -- take the trailing identifier as the readable leaf.
@@ -794,6 +804,28 @@ function base.widget_to_node(parent, context, widget, width, height, props)
     end
 
     return node
+end
+
+--- Lazily assign a stable, process-unique Clay id to a widget the first time it
+-- is used as a popup/tooltip anchor.
+--
+-- The id is stored on the widget itself (its table identity is stable across
+-- solves), so it lives exactly as long as the widget. A popup's
+-- `attach_to_element_id` is this same string; both sides hash to one Clay
+-- element id (`Clay__HashString`), so the float resolves to this widget's box
+-- every solve.
+-- @tparam widget widget The anchor widget.
+-- @treturn string The stable anchor id (e.g. "wanchor#3").
+-- @staticfct wibox.widget.base.widget_anchor_id
+local _anchor_id_counter = 0
+function base.widget_anchor_id(widget)
+    local id = widget._private._clay_anchor_id
+    if not id then
+        _anchor_id_counter = _anchor_id_counter + 1
+        id = "wanchor#" .. _anchor_id_counter
+        widget._private._clay_anchor_id = id
+    end
+    return id
 end
 
 -- Check if `obj` can be called (either using the metacall or as a function)
