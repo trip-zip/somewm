@@ -48,33 +48,24 @@ local function wibar_widget_subtree(wb)
         ctx, top, geo.width, geo.height, { grow = true })
 end
 
-local function collect_wibars(s)
+-- Provider: one entry per registered wibar, slotted by its screen edge. The
+-- consumer batches each edge through layout.drawins. Returns an empty list when
+-- the screen has no wibars. (ctx is unused: a wibar needs only the screen.)
+local function provider_wibars(s)
     local drawins = s._clay_drawins
-    if not drawins then return nil end
+    if not drawins then return {} end
 
-    local top, bottom, left, right = {}, {}, {}, {}
-    local has_any = false
-
+    local entries = {}
     for wb, info in pairs(drawins) do
-        has_any = true
-        local entry = { wb = wb, size = info.size, length = info.length,
+        local entry = { slot = info.position,
+            wb = wb, size = info.size, length = info.length,
             stretch = info.stretch, align = info.align,
             clay_gaps = info.clay_gaps, id = "wibar." .. info.position }
         local sub = wibar_widget_subtree(wb)
         if sub then entry.children = { sub } end
-        if info.position == "top" then
-            top[#top + 1] = entry
-        elseif info.position == "bottom" then
-            bottom[#bottom + 1] = entry
-        elseif info.position == "left" then
-            left[#left + 1] = entry
-        elseif info.position == "right" then
-            right[#right + 1] = entry
-        end
+        entries[#entries + 1] = entry
     end
-
-    if not has_any then return nil end
-    return { top = top, bottom = bottom, left = left, right = right }
+    return entries
 end
 
 -- Lazy handle to awful.layout (the parent module). compose_screen reuses its
@@ -413,6 +404,55 @@ local function frame_clients(node)
     end
 end
 
+---------------------------------------------------------------------------
+-- Provider model
+--
+-- compose_screen builds one per-solve `ctx`, then drains an ordered list of
+-- providers into slot buckets and assembles the screen tree from them. A
+-- provider is `provider(s, ctx) -> entries`; every entry declares a `slot`:
+--   * edge slots "top" / "bottom" / "left" / "right" -- wibar entries, batched
+--     per edge through `layout.drawins(side, axis, ctx.gap)`;
+--   * "workarea" -- the 0..1 client subtree parented under the measure node;
+--   * "root" -- z-ordered root-attached subtrees (fullscreen graft / floats /
+--     reflected).
+-- A provider may also set the provider-written ctx fields (framed_root, merged,
+-- reflected) as a side effect; the solve/placement tail reads them.
+---------------------------------------------------------------------------
+
+-- Ordered list of providers, drained by compose_screen. Order is load-bearing
+-- once filled (clients before floats: floats reads ctx.merged). Clients and
+-- floats are still produced inline below; they join the drain at the
+-- compose_screen restructure.
+local node_providers = { provider_wibars }
+
+-- Build the per-solve ctx: the read-only screen/layout values every provider
+-- and the assembly share, plus the provider-written fields they fill in. The
+-- single source for a value read once per solve (the resolved suit, the layer
+-- zones, the tag gap), so a provider and the assembly never recompute or
+-- disagree. Note `gap` (the tag gap, used for the measure padding and the wibar
+-- drawins) is NOT `p.useless_gap` (the per-client inset); they are distinct.
+local function build_ctx(s, p)
+    local t = s.selected_tag
+    local lz_top, lz_right, lz_bottom, lz_left = clay_c.layer_exclusive(s)
+    local suit = awful_layout().get(s)
+    return {
+        s             = s,
+        p             = p,
+        geo           = s.geometry,
+        gap           = (t and t.gap) or 0,
+        suit          = suit,
+        merge_capable = (suit and suit.descriptor) and true or false,
+        debug_resolve = s._clay_debug_resolve,
+        lz_top        = lz_top,    lz_right = lz_right,
+        lz_bottom     = lz_bottom, lz_left  = lz_left,
+        -- provider-written:
+        framed_root   = nil,
+        merged        = false,
+        reflected     = nil,
+        laid          = false,
+    }
+end
+
 --- Build the screen-level layout tree, solve it, and write screen.workarea.
 -- Called once per layout cycle from `awful.layout._recompute_screen`. Returns
 -- true when this solve laid out the clients itself, either a merge-capable
@@ -423,25 +463,41 @@ end
 --   drain. When omitted (the wibar registration and debug-overlay callers) only
 --   the wibars + workarea are solved and clients are left untouched.
 function clay.compose_screen(s, p)
-    local wibars = collect_wibars(s)
-    local geo = s.geometry
-    local t = s.selected_tag
-    local gap = (t and t.gap) or 0
     -- The drain passes the arranged params so a descriptor-less layout's
     -- p.geometries can be reflected into this one solve. The wibar / debug
     -- callers pass none and only need the wibar + workarea solve.
     p = p or awful_layout().parameters(nil, s)
+    local ctx = build_ctx(s, p)
+
+    -- Drain the providers (wibars only, so far) into edge-slot buckets. The
+    -- bucket table is exactly the { top, bottom, left, right } shape the
+    -- assembly below consumes; nil when nothing emitted an entry, preserving
+    -- the old "no drawins" short-circuit.
+    local wibars = { top = {}, bottom = {}, left = {}, right = {} }
+    local has_wibar = false
+    for _, provider in ipairs(node_providers) do
+        for _, entry in ipairs(provider(s, ctx)) do
+            local side = wibars[entry.slot]
+            if side then side[#side + 1] = entry end
+            has_wibar = true
+        end
+    end
+    if not has_wibar then wibars = nil end
+
+    local geo = ctx.geo
+    local gap = ctx.gap
 
     -- A debug-overlay re-solve (clay.debug_resolve, driven by pointer motion)
     -- only needs end_layout to redraw the Clay debug view; geometry was already
     -- applied by the last real arrange. Suppress the apply, the workarea write,
     -- and the widget-placement rebuild so this pass never moves clients or
     -- clobbers the real arrange's state.
-    local debug_resolve = s._clay_debug_resolve
+    local debug_resolve = ctx.debug_resolve
 
     -- Layer-shell exclusive zones reserve screen edges before any wibar.
     -- arrangelayers() in protocols.c populates these on layer-surface commit.
-    local lz_top, lz_right, lz_bottom, lz_left = clay_c.layer_exclusive(s)
+    local lz_top, lz_right, lz_bottom, lz_left =
+        ctx.lz_top, ctx.lz_right, ctx.lz_bottom, ctx.lz_left
 
     -- When the selected tag runs a merge-capable layout (tile), resolve its
     -- client subtree and lay it out inside the workarea node, so wibars,
@@ -450,7 +506,7 @@ function clay.compose_screen(s, p)
     -- reports screen.workarea.
     local workarea_children, fullscreen_graft, merged = nil, nil, false
     local framed_root = nil
-    local suit = awful_layout().get(s)
+    local suit = ctx.suit
     -- A merge-capable layout owns the whole screen solve (wibars + workarea +
     -- clients); a non-merge-capable one solves only the wibars + workarea here
     -- and leaves the clients to its own bespoke arrange. Either way the screen
@@ -460,7 +516,7 @@ function clay.compose_screen(s, p)
     -- Every descriptor lays its clients in this one solve: having a descriptor
     -- IS being merge-capable. merged_capable stays a public descriptor field but
     -- no longer gates. Descriptor-less layouts route through `reflected` below.
-    local merge_capable = (suit and suit.descriptor) and true or false
+    local merge_capable = ctx.merge_capable
     if merge_capable then
         local root = descriptor_to_root(suit.descriptor, p)
         if root then
