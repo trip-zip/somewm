@@ -1288,6 +1288,16 @@ local function get_area_cache_hash(width, height)
    return width*1.5+height*15
 end
 
+-- grid is a 2D layout whose cells can span multiple rows/columns, which a flat
+-- somewm.layout subtree cannot express, so it resolves as a single opaque leaf in
+-- the screen solve; base.layout_widget solves the cell interior (via :layout)
+-- when the leaf is drawn. Empty props keep it identical to the degrade-to-leaf
+-- fallback: the parent's box (grow / width / height, merged by widget_to_node)
+-- drives it.
+function grid:layout_node()
+    return require("somewm.layout").widget(self, {})
+end
+
 -- Layout a grid layout.
 -- @param context The context in which we are drawn.
 -- @param width The available width.

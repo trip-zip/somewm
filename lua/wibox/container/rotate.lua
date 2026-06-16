@@ -51,6 +51,15 @@ function rotate:layout(_, width, height)
     return { base.place_widget_via_matrix(self._private.widget, m, transform(self, width, height)) }
 end
 
+-- rotate applies a 90/180/270 matrix transform to its child (see :layout), which
+-- a box-only somewm.layout subtree cannot express, so it resolves as a single
+-- opaque leaf in the screen solve; base.layout_widget solves the rotated interior
+-- when the leaf is drawn. Empty props keep it identical to the degrade-to-leaf
+-- fallback (the parent's box drives it).
+function rotate:layout_node()
+    return require("somewm.layout").widget(self, {})
+end
+
 -- Fit this layout into the given area
 function rotate:fit(context, width, height)
     if not self._private.widget then

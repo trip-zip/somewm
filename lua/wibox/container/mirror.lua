@@ -45,6 +45,15 @@ function mirror:layout(_, width, height)
     return { base.place_widget_via_matrix(self._private.widget, m, width, height) }
 end
 
+-- mirror reflects its child via a matrix transform (see :layout), which a
+-- box-only somewm.layout subtree cannot express, so it resolves as a single
+-- opaque leaf in the screen solve; base.layout_widget solves the mirrored
+-- interior when the leaf is drawn. Empty props keep it identical to the
+-- degrade-to-leaf fallback.
+function mirror:layout_node()
+    return require("somewm.layout").widget(self, {})
+end
+
 -- Fit this layout into the given area.
 function mirror:fit(context, ...)
     if not self._private.widget then

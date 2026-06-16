@@ -737,11 +737,17 @@ end
 
 --- Build a `somewm.layout` node tree for `widget` without solving it.
 --
--- Containers that implement `:layout_node(context, width, height)` expand into
--- a subtree; anything else (leaf widgets, unsupported containers) becomes a
--- single leaf node. `props` (grow / width / height) supplied by the parent is
--- merged onto the result so the parent controls the child's box, exactly as the
--- parent's `:layout` does today. Returns nil for an invisible widget.
+-- Two-tier contract. A container that CAN express its interior as a box subtree
+-- implements `:layout_node(context, width, height)` and expands into that subtree
+-- (margin, align, fixed, ...). Everything else becomes a single leaf node: a leaf
+-- widget, an unsupported container, or a container whose interior is NOT a box
+-- layout and so cannot be a subtree (grid's 2D cell spanning, rotate / mirror's
+-- matrix transform) -- those implement `:layout_node` to return an explicit leaf.
+-- A leaf's interior is solved separately by `base.layout_widget` (the per-widget
+-- solver) when it is drawn; that is also why custom container widgets keep working
+-- unchanged. `props` (grow / width / height) supplied by the parent is merged onto
+-- the result so the parent controls the child's box, exactly as the parent's
+-- `:layout` does today. Returns nil for an invisible widget.
 --
 -- Used by `awful.layout.clay.compose_screen` to graft a wibar's widgets into
 -- the merged screen solve as real nodes. The substrate is engine-agnostic and
