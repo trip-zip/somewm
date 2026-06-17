@@ -222,6 +222,30 @@ describe("wibox.layout.overflow", function()
         end)
     end)
 
+    describe("with scrolling", function()
+        local first, second, third
+
+        before_each(function()
+            first  = utils.widget_stub(10, 20)
+            second = utils.widget_stub(10, 20)
+            third  = utils.widget_stub(10, 20)
+            layout:add(first, second, third)
+            layout:set_scrollbar_enabled(false)
+            -- Set the factor directly: set_scroll_factor() needs a prior
+            -- :layout to have populated used_in_dir.
+            layout._private.scroll_factor = 0.5
+        end)
+
+        it("offsets visible content by the scroll factor", function()
+            -- content 60 > avail 40, interval 20, scroll 0.5 -> -10 offset
+            assert.widget_layout(layout, { 100, 40 }, {
+                p(first,  0, -10, 100, 20),
+                p(second, 0,  10, 100, 20),
+                p(third,  0,  30, 100, 20),
+            })
+        end)
+    end)
+
     it("fill_space defaults to true", function()
         local w = utils.widget_stub(10, 10)
         layout:add(w)

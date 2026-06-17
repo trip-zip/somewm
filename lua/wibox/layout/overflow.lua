@@ -10,6 +10,7 @@
 ---------------------------------------------------------------------------
 
 local base = require('wibox.widget.base')
+local layout = require('somewm.layout')
 local fixed = require('wibox.layout.fixed')
 local separator = require('wibox.widget.separator')
 local gtable = require('gears.table')
@@ -79,7 +80,10 @@ end
 -- Layout children, scrollbar and spacing widgets.
 -- Only those widgets that are currently visible will be placed.
 function overflow:layout(context, orig_width, orig_height)
-    local result = {}
+    -- Positions are computed in Lua (the scroll offset is the input), then
+    -- emitted as a stack of absolutely-placed children so the solve owns the
+    -- geometry like every other layout. Clipping stays in before_draw_children.
+    local children = {}
     local is_y = self._private.dir == "y"
     local widgets = self._private.widgets
     local avail_in_dir = is_y and orig_height or orig_width
@@ -163,13 +167,10 @@ function overflow:layout(context, orig_width, orig_height)
             height = height - bar_h
         end
 
-        table.insert(result, base.place_widget_at(
-            scrollbar_widget,
-            math.floor(bar_x),
-            math.floor(bar_y),
-            math.floor(bar_w),
-            math.floor(bar_h)
-        ))
+        children[#children + 1] = layout.widget(scrollbar_widget, {
+            x = math.floor(bar_x), y = math.floor(bar_y),
+            width = math.floor(bar_w), height = math.floor(bar_h),
+        })
     end
 
     local pos, spacing = 0, self._private.spacing
@@ -223,34 +224,31 @@ function overflow:layout(context, orig_width, orig_height)
         if is_in_view then
             -- Add the spacing widget, but not before the first widget
             if i > 1 and spacing_widget then
-                table.insert(result, base.place_widget_at(
-                    spacing_widget,
-                    -- The way how spacing is added for regular widgets
-                    -- and the `spacing_widget` is disconnected:
-                    -- The offset for regular widgets is added to `pos` one
-                    -- iteration _before_ the one where the widget is actually
-                    -- placed.
-                    -- Because of that, the placement for the spacing widget
-                    -- needs to substract that offset to be placed right after
-                    -- the previous regular widget.
-                    math.floor(is_y and content_x or (content_x - spacing)),
-                    math.floor(is_y and (content_y - spacing) or content_y),
-                    math.floor(is_y and content_w or spacing),
-                    math.floor(is_y and spacing or content_h)
-                ))
+                -- The offset for regular widgets is added to `pos` one
+                -- iteration before the widget is actually placed, so the
+                -- spacing widget subtracts that offset to sit right after the
+                -- previous regular widget.
+                children[#children + 1] = layout.widget(spacing_widget, {
+                    x = math.floor(is_y and content_x or (content_x - spacing)),
+                    y = math.floor(is_y and (content_y - spacing) or content_y),
+                    width = math.floor(is_y and content_w or spacing),
+                    height = math.floor(is_y and spacing or content_h),
+                })
             end
 
-            table.insert(result, base.place_widget_at(
-                w,
-                math.floor(content_x),
-                math.floor(content_y),
-                math.floor(content_w),
-                math.floor(content_h)
-            ))
+            children[#children + 1] = layout.widget(w, {
+                x = math.floor(content_x), y = math.floor(content_y),
+                width = math.floor(content_w), height = math.floor(content_h),
+            })
         end
     end
 
-    return result
+    return base.place_rects(layout.solve {
+        source = "wibox",
+        width  = orig_width,
+        height = orig_height,
+        root   = layout.stack { children },
+    }.placements)
 end
 
 function overflow:before_draw_children(_, cr, width, height)

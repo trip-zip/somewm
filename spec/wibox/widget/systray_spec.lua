@@ -291,6 +291,26 @@ describe("wibox.widget.systray (SNI)", function()
                 assert.is_not_equal(y1, y2)
             end
         end)
+
+        it("offsets single-row icons by padding", function()
+            beautiful_mock.systray_paddings = 10
+
+            -- Reset to pick up new beautiful value
+            package.loaded["wibox.widget.systray"] = nil
+            systray = require("wibox.widget.systray")
+            widget = systray()
+
+            mock_items = { "item1", "item2" }
+            widget:_sync_items()
+
+            -- padding 10, icon 24, spacing 0 -> x = 10, 34; y = 10
+            local result = widget:layout(context, 100, 100)
+            assert.is_equal(2, #result)
+            assert.is_equal(10, result[1]._matrix.x0)
+            assert.is_equal(10, result[1]._matrix.y0)
+            assert.is_equal(34, result[2]._matrix.x0)
+            assert.is_equal(10, result[2]._matrix.y0)
+        end)
     end)
 
     describe("background color", function()

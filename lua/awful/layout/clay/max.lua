@@ -4,20 +4,19 @@
 
 local layout = require("somewm.layout")
 
-local function build_stack()
+local function build_stack(p)
     -- The stack only contributes floating children to its parent's
     -- sizing pass and can't grow on its own at the root. The row
     -- inherits grow=true from the adapter; the stack fills the row
     -- via flex-fill default sizing.
     return layout.row {
-        layout.stack { children = layout.all() },
+        layout.stack { layout.clients(p.clients) },
     }
 end
 
 return function(clay)
     clay.max = clay.layout {
         name           = "clay.max",
-        body_signature = "context",
         merged_capable = true,
         skip_gap       = function() return true end,
         no_gap         = true,
@@ -31,7 +30,6 @@ return function(clay)
     -- wibar-inset workarea node.
     clay.max.fullscreen = clay.layout {
         name           = "clay.fullscreen",
-        body_signature = "context",
         merged_capable = true,
         skip_gap       = function() return true end,
         no_gap         = true,

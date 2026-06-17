@@ -17,6 +17,7 @@ local beautiful = require("beautiful")
 local gtable = require("gears.table")
 local gcolor = require("gears.color")
 local base = require("wibox.widget.base")
+local layout = require("somewm.layout")
 local capi = {
     awesome = awesome,
     screen = screen,
@@ -31,6 +32,47 @@ local horizontal = true
 local base_size = nil
 local reverse = false
 local display_on_screen = "primary"
+
+-- Build the systray's icon grid as a somewm.layout tree: a padded
+-- row-of-columns when horizontal (icons fill each column top-to-bottom, then
+-- columns left-to-right), a column-of-rows when vertical. Every icon is a
+-- fixed icon_size cell, gaps are icon_spacing, the outer container insets by
+-- padding. :layout solves this tree and :fit reports the same bounding box.
+local function systray_grid(children, padding, icon_size, icon_spacing, max_rows, horiz)
+    local n = #children
+    local rows = math.min(n, max_rows)
+    if rows < 1 then rows = 1 end
+    local cols = math.ceil(n / rows)
+
+    local lines = {}
+    if horiz then
+        for c = 0, cols - 1 do
+            local cell = {}
+            for r = 0, rows - 1 do
+                local idx = c * rows + r + 1
+                if idx <= n then
+                    cell[#cell + 1] = layout.widget(children[idx],
+                        { width = icon_size, height = icon_size })
+                end
+            end
+            lines[#lines + 1] = layout.column { width = icon_size, gap = icon_spacing, cell }
+        end
+        return layout.row { padding = padding, gap = icon_spacing, lines }
+    end
+
+    for r = 0, rows - 1 do
+        local cell = {}
+        for c = 0, cols - 1 do
+            local idx = r * cols + c + 1
+            if idx <= n then
+                cell[#cell + 1] = layout.widget(children[idx],
+                    { width = icon_size, height = icon_size })
+            end
+        end
+        lines[#lines + 1] = layout.row { height = icon_size, gap = icon_spacing, cell }
+    end
+    return layout.column { padding = padding, gap = icon_spacing, lines }
+end
 
 --- The systray background color.
 --
@@ -268,102 +310,53 @@ local function new(revers)
         end
     end
 
-    -- Override layout for systray_max_rows grid arrangement + padding
-    local orig_layout = ret.layout
-    function ret:layout(context, width, height)
-        local padding = beautiful.systray_paddings or 0
-        local max_rows = math.floor(tonumber(beautiful.systray_max_rows) or 1)
-
-        if max_rows <= 1 then
-            -- Use original fixed layout behavior, but offset by padding
-            local orig_result = orig_layout(self, context, width - padding * 2, height - padding * 2)
-            if padding > 0 and orig_result then
-                -- Offset all widgets by padding
-                local result = {}
-                for _, item in ipairs(orig_result) do
-                    local widget, x, y, w, h = item[1], item[2], item[3], item[4], item[5]
-                    table.insert(result, base.place_widget_at(widget, x + padding, y + padding, w, h))
-                end
-                return result
-            end
-            return orig_result
-        end
-
-        -- Grid layout for multiple rows
+    -- Lay icons out as a padded grid through somewm.layout. One descriptor
+    -- feeds both :layout and :fit, so size and placement agree by
+    -- construction (and there's no positional-tuple misread of placements).
+    function ret:layout(_context, width, height)
         local children = self:get_children()
-        local num_entries = #children
-        if num_entries == 0 then return {} end
+        if #children == 0 then return {} end
 
+        local padding      = beautiful.systray_paddings or 0
+        local max_rows     = math.floor(tonumber(beautiful.systray_max_rows) or 1)
         local icon_spacing = beautiful.systray_icon_spacing or 0
-        local icon_size = base_size or 24
+        local icon_size    = base_size or 24
 
-        -- Calculate rows/cols
-        local rows = math.min(num_entries, max_rows)
-        local cols = math.ceil(num_entries / rows)
-
-        local result = {}
-        for i, widget in ipairs(children) do
-            local idx = i - 1
-            local row, col
-            if horizontal then
-                -- Fill columns first (top to bottom, then left to right)
-                col = math.floor(idx / rows)
-                row = idx % rows
-            else
-                -- Fill rows first (left to right, then top to bottom)
-                row = math.floor(idx / cols)
-                col = idx % cols
-            end
-
-            local x = padding + col * (icon_size + icon_spacing)
-            local y = padding + row * (icon_size + icon_spacing)
-
-            table.insert(result, base.place_widget_at(widget, x, y, icon_size, icon_size))
-        end
-        return result
+        local tree = systray_grid(children, padding, icon_size, icon_spacing,
+            max_rows, horizontal)
+        return base.place_rects(layout.solve {
+            source = "wibox",
+            width  = width,
+            height = height,
+            root   = tree,
+        }.placements)
     end
 
-    -- Override fit for systray_max_rows grid sizing + padding + minimum size
-    local orig_fit = ret.fit
-    function ret:fit(context, width, height)
-        local padding = beautiful.systray_paddings or 0
-        local max_rows = math.floor(tonumber(beautiful.systray_max_rows) or 1)
-        local icon_size = base_size or 24
-
-        -- Minimum size: at least show padding + one icon slot (for empty systray visibility)
-        local min_size = padding * 2 + icon_size
-
-        if max_rows <= 1 then
-            -- Use original fixed layout behavior + padding
-            local w, h = orig_fit(self, context, width, height)
-            -- Add padding and ensure minimum size
-            w = math.max(w + padding * 2, min_size)
-            h = math.max(h + padding * 2, icon_size + padding * 2)
-            return w, h
-        end
-
-        -- Grid fit for multiple rows
-        local children = self:get_children()
-        local num_entries = #children
-
+    -- Report the same bounding box the grid tree solves to. Empty: reserve
+    -- one padded icon slot so the tray stays visible.
+    function ret:fit(_context, _width, _height)
+        local children     = self:get_children()
+        local n            = #children
+        local padding      = beautiful.systray_paddings or 0
+        local max_rows     = math.floor(tonumber(beautiful.systray_max_rows) or 1)
         local icon_spacing = beautiful.systray_icon_spacing or 0
+        local icon_size    = base_size or 24
+        local min_size     = padding * 2 + icon_size
 
-        -- If empty, return minimum size
-        if num_entries == 0 then
-            return min_size, icon_size + padding * 2
+        if n == 0 then
+            return min_size, min_size
         end
 
-        -- Calculate rows/cols
-        local rows = math.min(num_entries, max_rows)
-        local cols = math.ceil(num_entries / rows)
+        local rows = math.min(n, max_rows)
+        if rows < 1 then rows = 1 end
+        local cols = math.ceil(n / rows)
 
-        local total_width = cols * icon_size + (cols - 1) * icon_spacing + padding * 2
-        local total_height = rows * icon_size + (rows - 1) * icon_spacing + padding * 2
-
+        local along  = cols * icon_size + (cols - 1) * icon_spacing + padding * 2
+        local across = rows * icon_size + (rows - 1) * icon_spacing + padding * 2
         if horizontal then
-            return total_width, total_height
+            return along, across
         else
-            return total_height, total_width
+            return across, along
         end
     end
 

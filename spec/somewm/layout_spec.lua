@@ -120,8 +120,8 @@ describe("somewm.layout reference solver", function()
         local r = layout.solve {
             width = 100, height = 100,
             root = layout.row {
-                layout.widget(a, { width = layout.percent(40) }),
-                layout.widget(b, { width = layout.percent(60) }),
+                layout.widget(a, { width = layout.percent(0.4) }),
+                layout.widget(b, { width = layout.percent(0.6) }),
             },
         }
         assert.is.same({

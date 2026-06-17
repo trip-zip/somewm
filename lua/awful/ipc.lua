@@ -927,7 +927,7 @@ local function register_builtin_commands()
     local function size_str(v)
       if type(v) == "number" then return string.format("%gpx", v) end
       if type(v) == "table" and v._percent then
-        return string.format("%g%%", v._percent)
+        return string.format("%g%%", v._percent * 100)
       end
       return tostring(v)
     end

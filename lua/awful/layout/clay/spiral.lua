@@ -21,7 +21,7 @@ return function(clay)
         local cross     = is_row and layout.column or layout.row
 
         local current = cross {
-            [size_key] = layout.percent(fact * 100),
+            [size_key] = layout.percent(fact),
             layout.client(clients[idx]),
         }
         local rest = build(clients, idx + 1, depth + 1, mwfact, is_spiral)
@@ -34,22 +34,20 @@ return function(clay)
     end
 
     local function spiral_build(is_spiral)
-        return function(ctx)
-            local clients = ctx.children
+        return function(p)
+            local clients = p.clients
             if #clients == 0 then return nil end
-            return build(clients, 1, 0, ctx.props.master_width_factor, is_spiral)
+            return build(clients, 1, 0, p.master_width_factor, is_spiral)
         end
     end
 
     clay.spiral = clay.layout {
         name           = "clay.spiral",
-        body_signature = "context",
         merged_capable = true,
         body           = spiral_build(true),
     }
     clay.spiral.dwindle = clay.layout {
         name           = "clay.dwindle",
-        body_signature = "context",
         merged_capable = true,
         body           = spiral_build(false),
     }

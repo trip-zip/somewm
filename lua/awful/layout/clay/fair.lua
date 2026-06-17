@@ -9,8 +9,8 @@ local layout = require("somewm.layout")
 
 return function(clay)
     local function fair_build(orientation)
-        return function(ctx)
-            local clients = ctx.children
+        return function(p)
+            local clients = p.clients
             local n       = #clients
             if n == 1 then
                 return layout.row { layout.client(clients[1]) }
@@ -46,13 +46,11 @@ return function(clay)
 
     clay.fair = clay.layout {
         name           = "clay.fair",
-        body_signature = "context",
         merged_capable = true,
         body           = fair_build("vertical"),
     }
     clay.fair.horizontal = clay.layout {
         name           = "clay.fairh",
-        body_signature = "context",
         merged_capable = true,
         body           = fair_build("horizontal"),
     }

@@ -43,10 +43,18 @@ local layout = {}
 local percent_mt = {}
 
 --- Wrap a number as a percentage sizing value.
--- Use as `width = layout.percent(60)` to mean "60% of the parent".
--- @tparam number value Percentage in 0-100.
+-- Use as `width = layout.percent(0.6)` to mean "60% of the parent".
+-- Clay-native fraction in 0..1 (1 == 100%); Clay rejects values above 1.
+-- @tparam number value Fraction of the parent in 0-1.
 -- @treturn table Sentinel consumed by the solver.
 function layout.percent(value)
+    -- Catch the 0..100 footgun at the call site: Clay rejects a percent
+    -- above 1, and the error would otherwise surface deep in the C apply
+    -- pass with no Lua context. Only literal numbers are checked; a binding
+    -- (a table) is resolved later, against context.props.
+    if type(value) == "number" and (value < 0 or value > 1) then
+        error("layout.percent expects a 0..1 fraction, got " .. tostring(value), 2)
+    end
     return setmetatable({ _percent = value }, percent_mt)
 end
 
@@ -55,15 +63,14 @@ local function is_percent(v)
 end
 
 ---------------------------------------------------------------------------
--- Bindings: lazy values resolved at solve time against context.props
+-- Bindings: lazy values resolved at solve time
 ---------------------------------------------------------------------------
 --
--- A binding is a deferred read from the runtime context. Inside a layout
--- descriptor you write `width = layout.props.master_factor * 100` to mean
--- "look up `master_factor` on the context's prop bag at solve time and
--- multiply by 100." The binding builds a small expression tree as you
--- compose it; `subtree` walks the layout tree at solve time and replaces
--- each binding with its resolved value.
+-- A binding is a deferred read resolved when the tree is solved, not when it
+-- is composed. The one public binding is `layout.mouse.x` / `layout.mouse.y`
+-- (the cursor position); arithmetic on a binding (e.g. `layout.mouse.x - 10`)
+-- builds a small expression tree, and `subtree` walks the layout tree at
+-- solve time and replaces each binding with its resolved value.
 
 local binding_mt = {}
 binding_mt.__index = binding_mt
@@ -109,18 +116,6 @@ end
 binding_mt.__eq = binop(function(a, b) return a == b end)
 binding_mt.__lt = binop(function(a, b) return a < b end)
 binding_mt.__le = binop(function(a, b) return a <= b end)
-
---- Magic table: `layout.props.NAME` is a binding that resolves to
--- `context.props.NAME` at solve time. Chain with arithmetic metamethods
--- to build expressions: `layout.props.master_factor * 100`.
-local props_mt = {}
-function props_mt:__index(key)
-    return make_binding(function(ctx)
-        return ctx and ctx.props and ctx.props[key]
-    end)
-end
-
-layout.props = setmetatable({}, props_mt)
 
 --- Magic table: `layout.mouse.x` and `layout.mouse.y` are bindings that
 -- resolve to the current mouse position at solve time via the
@@ -169,113 +164,6 @@ local function resolve_bindings(node, ctx)
     return node
 end
 
----------------------------------------------------------------------------
--- Slot specs: declare children at descriptor time, expand at solve time
----------------------------------------------------------------------------
---
--- A slot is a placeholder inside a container that says "fill in children
--- from `context.children` here". Authors write
---    children = layout.first_n(layout.props.master_count)
--- instead of iterating context.children imperatively in a body function.
---
--- Slot args may be bindings; the expand pass resolves them against
--- context.props before slicing context.children.
-
-local slot_mt = {}
-slot_mt.__index = slot_mt
-
-local function is_slot(v)
-    return type(v) == "table" and rawget(v, "_is_slot") == true
-end
-
-local function make_slot(kind, fn)
-    return setmetatable(
-        { _is_slot = true, _kind = kind, _fn = fn }, slot_mt)
-end
-
-function slot_mt:expand(ctx)
-    return self._fn(ctx)
-end
-
-local function children_of(ctx)
-    return (ctx and ctx.children) or {}
-end
-
---- Slot: every child from `context.children`.
-function layout.all()
-    return make_slot("all", function(ctx)
-        local src = children_of(ctx)
-        local out = {}
-        for i = 1, #src do out[i] = src[i] end
-        return out
-    end)
-end
-
---- Slot: the first `n` children. Clamped to available; n<=0 -> empty.
--- @tparam number|binding n
-function layout.first_n(n)
-    return make_slot("first_n", function(ctx)
-        local count = eval_value(n, ctx) or 0
-        if count < 0 then count = 0 end
-        local src = children_of(ctx)
-        if count > #src then count = #src end
-        local out = {}
-        for i = 1, count do out[i] = src[i] end
-        return out
-    end)
-end
-
---- Slot: every child after the first `n`. Clamped to available.
--- @tparam number|binding n
-function layout.rest_after(n)
-    return make_slot("rest_after", function(ctx)
-        local skip = eval_value(n, ctx) or 0
-        if skip < 0 then skip = 0 end
-        local src  = children_of(ctx)
-        local out  = {}
-        for i = skip + 1, #src do
-            out[#out + 1] = src[i]
-        end
-        return out
-    end)
-end
-
--- Wrap a raw item from context.children as a leaf based on context.leaf_kind.
--- Pre-wrapped layout nodes (with `_type`) pass through unchanged.
-local function leaf_for(item, leaf_kind)
-    if type(item) == "table" and rawget(item, "_type") then
-        return item
-    end
-    if leaf_kind == "widget" then
-        return layout.widget(item)
-    elseif leaf_kind == "client" then
-        return layout.client(item)
-    elseif leaf_kind == "drawin" then
-        return layout.drawin(item)
-    end
-    error("somewm.layout: cannot expand slot without context.leaf_kind "
-          .. "(got " .. tostring(leaf_kind) .. ")")
-end
-
--- Walk the tree expanding `_slot` markers into leaves drawn from
--- context.children. Mutates in place. Recurses into all containers so
--- nested slots all get expanded in one pass.
-local function expand_slots(node, ctx)
-    if node._type ~= "container" then return node end
-    if node._slot then
-        local items = node._slot:expand(ctx)
-        for _, item in ipairs(items) do
-            node.children[#node.children + 1] =
-                leaf_for(item, ctx and ctx.leaf_kind)
-        end
-        node._slot = nil
-    end
-    for _, child in ipairs(node.children) do
-        expand_slots(child, ctx)
-    end
-    return node
-end
-
 -- Empty containers with explicit sizing (grow / grow_max / width / height)
 -- are kept: they're intentional spacers (e.g., `layout.row { grow = true }`
 -- in `wibox.layout.align` to anchor the third slot at the far edge).
@@ -313,12 +201,11 @@ end
 -- Internal: fold positional + named keys from a builder's args table.
 -- Nested arrays (no _type) are flattened, so helpers like layout.widgets
 -- can return a list that gets transparently spread into the parent. The
--- `children` named key is special: a slot spec lands on `node._slot` for
--- expansion at solve time; an array extends the positional children.
+-- `children` named key takes an array and extends the positional children.
 ---------------------------------------------------------------------------
 
 local function collect_children(args)
-    local props, children, slot = {}, {}, nil
+    local props, children = {}, {}
     for k, v in pairs(args) do
         if type(k) == "number" then
             if type(v) == "table" and not v._type then
@@ -329,21 +216,19 @@ local function collect_children(args)
                 children[#children + 1] = v
             end
         elseif k == "children" then
-            if is_slot(v) then
-                slot = v
-            elseif type(v) == "table" then
+            if type(v) == "table" then
                 for _, child in ipairs(v) do
                     children[#children + 1] = child
                 end
             else
-                error("somewm.layout: `children` must be a slot or array, "
-                      .. "got " .. type(v))
+                error("somewm.layout: `children` must be an array, got "
+                      .. type(v))
             end
         else
             props[k] = v
         end
     end
-    return props, children, slot
+    return props, children
 end
 
 ---------------------------------------------------------------------------
@@ -351,32 +236,27 @@ end
 ---------------------------------------------------------------------------
 
 --- Horizontal container (left-to-right flow).
--- Children may be passed positionally; named keys become props. Pass
--- `children = layout.first_n(N)` (or any slot spec) to fill the
--- container from `context.children` at solve time; positional children
--- come first, then slot-expanded leaves are appended.
+-- Children may be passed positionally; named keys become props.
 -- @tparam table args Mixed positional children + named props (gap, padding,
 --   width, height, grow, etc.).
 function layout.row(args)
-    local props, children, slot = collect_children(args)
+    local props, children = collect_children(args)
     props.direction = "row"
     return {
         _type    = "container",
         props    = props,
         children = children,
-        _slot    = slot,
     }
 end
 
 --- Vertical container (top-to-bottom flow).
 function layout.column(args)
-    local props, children, slot = collect_children(args)
+    local props, children = collect_children(args)
     props.direction = "column"
     return {
         _type    = "container",
         props    = props,
         children = children,
-        _slot    = slot,
     }
 end
 
@@ -390,7 +270,7 @@ end
 -- children are floating-attached. Nested stacks attach floating to
 -- their immediate stack parent.
 function layout.stack(args)
-    local props, children, slot = collect_children(args)
+    local props, children = collect_children(args)
     -- Direction is irrelevant for stack (no flow), but Clay's layout
     -- config still wants one set; `row` is the harmless default.
     props.direction = "row"
@@ -399,7 +279,6 @@ function layout.stack(args)
         _type    = "container",
         props    = props,
         children = children,
-        _slot    = slot,
     }
 end
 
@@ -546,7 +425,7 @@ function layout.drawins(list, axis, gap)
         local pad = (entry.clay_gaps and gap and gap > 0) and gap or nil
         if pad or fixed_len then
             local wrap = { node, grow = false }
-            wrap[lenaxis] = layout.percent(100)
+            wrap[lenaxis] = layout.percent(1)
             if pad then wrap.padding = pad end
             if fixed_len then
                 -- Horizontal bar: position along x (the row's main axis).
@@ -575,12 +454,11 @@ end
 -- subtree here so the workarea node both reports `screen.workarea` and
 -- holds the clients laid out inside it, in one solve.
 function layout.measure(args)
-    local props, children, slot = collect_children(args or {})
+    local props, children = collect_children(args or {})
     return {
         _type    = "workarea",
         props    = props,
         children = children,
-        _slot    = slot,
     }
 end
 
@@ -691,12 +569,12 @@ local function attach_to_stack(cfg, props)
     -- Default to fill-parent when no explicit sizing was set. Floating
     -- elements with neither percent nor fixed sizing don't pick up the
     -- attached parent's dimensions on their own; setting 100% does.
-    -- (The C side divides by 100, so 100 here means 100% of parent.)
+    -- (Percent is a Clay-native 0..1 fraction, so 1 means 100% of parent.)
     if not cfg.width_fixed and not cfg.width_percent then
-        cfg.width_percent = 100
+        cfg.width_percent = 1
     end
     if not cfg.height_fixed and not cfg.height_percent then
-        cfg.height_percent = 100
+        cfg.height_percent = 1
     end
 end
 
@@ -843,20 +721,14 @@ end
 -- wibox :layout, frame apply, layer-shell apply) consume descriptors
 -- by calling `layout.solve(descriptor, context)` or its equivalent.
 --
--- The descriptor holds a `body` function or a static `tree`. Bindings
--- (`layout.props.X`) and slot specs (`children = layout.first_n(...)`)
--- live inside the tree and are resolved by `subtree` against the
--- supplied context.
+-- The descriptor holds a `body` function (called with the params `p`) or a
+-- static `tree`.
 --
 -- @tparam table spec
 -- @tparam string spec.name Human-readable identifier (e.g., "clay.tile").
--- @tparam[opt] function spec.body Tree-builder. Called from `subtree` with
---   the runtime context when `body_signature == "context"`. Surface
---   adapters that still drive their builders with a legacy multi-arg
---   call shape skip `subtree` and call `body` themselves.
--- @tparam[opt] string spec.body_signature `"context"` to opt into the
---   `subtree`-driven pipeline (binding + slot resolution). When unset,
---   the surface adapter is responsible for invoking `body` directly.
+-- @tparam[opt] function spec.body Tree-builder `function(p) -> tree`, called
+--   by the layout adapter with the runtime params (p.clients, p.workarea,
+--   p.master_count, ...).
 -- @tparam[opt] table spec.tree Static container tree (used when `body` is
 --   nil and the structure does not depend on runtime context).
 -- @tparam[opt] function|boolean spec.skip_gap Per-layout policy hook.
@@ -871,7 +743,6 @@ function layout.descriptor(spec)
         _type          = "layout_descriptor",
         name           = spec.name,
         body           = spec.body,
-        body_signature = spec.body_signature,
         tree           = spec.tree or spec[1],
         skip_gap       = spec.skip_gap,
         no_gap         = spec.no_gap,
@@ -881,63 +752,33 @@ function layout.descriptor(spec)
 end
 
 ---------------------------------------------------------------------------
--- Public: descriptor-to-tree resolver
+-- Public: tree normalizer
 ---------------------------------------------------------------------------
 
---- Resolve a layout descriptor against a runtime context, returning a
--- Clay-ready container tree.
+--- Normalize a pre-built container tree for solving.
 --
--- The descriptor is the static description of a layout (the structure of
--- containers, slots, and bindings). The context is the runtime bag the
--- surface provides for this solve (props for bindings, children for slot
--- expansion). The resolver bridges the two: descriptor + context -> tree.
+-- The tree is already a container (from `layout.row` / `layout.column`).
+-- With a context, late-bound values (`layout.mouse`) are resolved in place
+-- and containers that collapsed to nothing are dropped; without a context it
+-- is a pure validator pass-through.
 --
--- The pipeline:
---   1. If descriptor.body is a function, call it with context to get a
---      tree. Otherwise the tree is the descriptor's positional `[1]` or
---      `tree` field, or the descriptor itself if it's a container.
---   2. Walk the tree resolving `layout.props.X` bindings against
---      context.props (mutates in place).
---   3. Walk the tree expanding `children = layout.first_n(...)` and
---      similar slot specs against context.children. New leaves are
---      built via `leaf_for(item, context.leaf_kind)`.
---   4. Drop containers whose children all collapsed to nothing (root
---      is preserved even if empty).
---
--- @tparam table descriptor Container node, or a table with `body` (function)
---   or `[1]` (container) describing the tree.
--- @tparam[opt] table context Runtime bag with `bounds`, `props`, `children`,
---   `leaf_kind`, `screen`. When omitted the function is a pure validator
---   pass-through.
--- @treturn table A Clay-ready container node.
-function layout.subtree(descriptor, context)
-    local tree = descriptor
-    if type(descriptor) == "table" and descriptor._type ~= "container" then
-        if type(descriptor.body) == "function" then
-            tree = descriptor.body(context)
-        elseif type(descriptor[1]) == "table" and descriptor[1]._type == "container" then
-            tree = descriptor[1]
-        elseif type(descriptor.tree) == "table" then
-            tree = descriptor.tree
-        end
-    end
-
-    if not tree or type(tree) ~= "table" or tree._type ~= "container" then
-        error("somewm.layout.subtree: descriptor must be a container "
+-- @tparam table root A container node.
+-- @tparam[opt] table context Runtime bag with `bounds`, `screen`.
+-- @treturn table The same container node, normalized.
+function layout.subtree(root, context)
+    if type(root) ~= "table" or root._type ~= "container" then
+        error("somewm.layout.subtree: root must be a container "
               .. "(use layout.row or layout.column)")
     end
 
-    -- Resolve bindings, expand slots, and drop containers that collapsed
-    -- to nothing. Order matters only insofar as slot args (which may be
-    -- bindings) are resolved by `expand_slots` itself, so the bindings
-    -- pass and the slot pass are independent.
+    -- Resolve late-bound values (layout.mouse) and drop containers that
+    -- collapsed to nothing.
     if context then
-        resolve_bindings(tree, context)
-        expand_slots(tree, context)
-        drop_empty_containers(tree, true)
+        resolve_bindings(root, context)
+        drop_empty_containers(root, true)
     end
 
-    return tree
+    return root
 end
 
 ---------------------------------------------------------------------------
@@ -951,7 +792,7 @@ end
 
 local function resolve_size_value(value, parent_size)
     if type(value) == "number" then return value end
-    if is_percent(value) then return value._percent * parent_size / 100 end
+    if is_percent(value) then return value._percent * parent_size end
     return nil
 end
 

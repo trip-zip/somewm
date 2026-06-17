@@ -182,8 +182,8 @@ local function propagate_gap(node, gap)
 end
 
 -- Resolve a layout descriptor into the root container `layout.solve` expects:
--- run the body, expand its bindings/slots against the tiled clients, force
--- grow, and propagate the gap. Returns the root and the bounds it resolved
+-- run the body against the params, force grow, and propagate the gap.
+-- Returns the root and the bounds it resolved
 -- against (p.workarea or p.geometry), or nil when there are no clients to
 -- place. Shared by the standalone arrange (suit.arrange) and the merged
 -- compose_screen path so both produce the identical client tree.
@@ -195,18 +195,21 @@ local function descriptor_to_root(descriptor, p)
     local t = p.tag or s.selected_tag
     if #p.clients == 0 then return nil end
 
+    -- Enrich the per-recompute params with the tag-derived fields a
+    -- descriptor body reads (the `p` contract: p.clients, p.workarea,
+    -- p.geometry, p.master_count, ...). Additive and confined to the
+    -- descriptor pipeline: the public awful.layout.parameters shape stays
+    -- frozen; a body reads p.master_width_factor instead of reaching for the
+    -- tag itself.
+    p.tag                 = t
+    p.gap                 = gap
+    p.master_count        = t.master_count
+    p.master_width_factor = t.master_width_factor
+    p.master_fill_policy  = t.master_fill_policy
+
     local tree
-    if descriptor.body_signature == "context" then
-        tree = layout.subtree(descriptor, {
-            bounds    = wa,
-            props     = t,
-            children  = p.clients,
-            leaf_kind = "client",
-            screen    = s,
-            params    = p,
-        })
-    elseif type(descriptor.body) == "function" then
-        tree = descriptor.body(p.clients, wa, t, p)
+    if type(descriptor.body) == "function" then
+        tree = descriptor.body(p)
     elseif descriptor.tree then
         tree = descriptor.tree
     end

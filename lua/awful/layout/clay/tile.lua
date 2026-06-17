@@ -1,16 +1,13 @@
 ---------------------------------------------------------------------------
 -- The four `tile.*` orientations as Clay-native declarative descriptors.
 --
--- Body signature is `function(ctx) -> tree`; the tree uses
--- `layout.props.master_width_factor` for sizing and
--- `children = layout.first_n(layout.props.master_count)` for child
--- distribution, so binding and slot resolution happen inside
--- `layout.subtree` (driven by the suit adapter).
+-- Body signature is `function(p) -> tree`; the tree reads
+-- `p.master_width_factor` for sizing and slices `p.clients` into the
+-- master and slave panes.
 --
--- The body still picks the structural variant imperatively (single
--- client, master-only, slave-only, two-pane) because the choice between
--- "row of one column" and "row of two columns" is not naturally
--- expressible as a slot or binding.
+-- The body picks the structural variant imperatively (single client,
+-- master-only, slave-only, two-pane) because the choice between "row of
+-- one column" and "row of two columns" is structural, not data.
 --
 -- mouse_resize_handler is the tile-family interactive resize logic:
 -- the user grabs an edge, the cursor warps to the master/slave split,
@@ -21,6 +18,7 @@
 
 local math   = math
 local ipairs = ipairs
+local unpack = unpack or table.unpack -- luacheck: globals unpack (compatibility with Lua 5.1)
 local capi = {
     mouse        = mouse,
     mousegrabber = mousegrabber,
@@ -170,12 +168,14 @@ return function(clay)
 
         return clay.layout {
             name           = NAMES[orientation],
-            body_signature = "context",
             merged_capable = true,
             skip_gap       = tile_skip_gap,
-            body           = function(ctx)
-                local clients = ctx.children
-                local nmaster = math.min(ctx.props.master_count, #clients)
+            body           = function(p)
+                local clients = p.clients
+                -- Floor so a fractional master_count truncates (matching the
+                -- old slot code's for-loop) rather than reaching unpack with a
+                -- non-integer count, which errors on Lua 5.3.
+                local nmaster = math.min(math.floor(p.master_count), #clients)
 
                 if #clients == 1 then
                     return outer { layout.client(clients[1]) }
@@ -184,17 +184,18 @@ return function(clay)
                 -- Master-only or master-saturates-all: collapse to a
                 -- single inner pane carrying every client.
                 if nmaster == 0 or nmaster >= #clients then
-                    return inner { children = layout.all() }
+                    return inner { layout.clients(clients) }
                 end
 
+                local masters = { unpack(clients, 1, nmaster) }
+                local slaves  = { unpack(clients, nmaster + 1) }
                 local master_pane = inner {
-                    [size_key] = layout.percent(
-                        layout.props.master_width_factor * 100),
-                    children   = layout.first_n(layout.props.master_count),
+                    [size_key] = layout.percent(p.master_width_factor),
+                    layout.clients(masters),
                 }
                 local slave_pane = inner {
-                    grow     = true,
-                    children = layout.rest_after(layout.props.master_count),
+                    grow = true,
+                    layout.clients(slaves),
                 }
 
                 if master_first then

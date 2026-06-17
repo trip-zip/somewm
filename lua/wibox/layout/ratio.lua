@@ -108,7 +108,7 @@ local function layout_clay(self, width, height)
 
     local children = {}
     for i, widget in ipairs(self._private.widgets) do
-        local pct = layout.percent((ratios[i] or 0) * 100)
+        local pct = layout.percent(ratios[i] or 0)
         children[#children + 1] = layout.widget(widget,
             is_y and { height = pct } or { width = pct })
     end

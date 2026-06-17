@@ -6,8 +6,7 @@
 --- index parity, and master_count parity (`row_privileged`) flips which
 --- group gets the corner-aligned share.
 ---
---- This test verifies the migration to body_signature = "context"
---- preserves behavior:
+--- This test verifies clay.corner's geometry:
 ---   1. No client overlaps another in any orientation.
 ---   2. Orientation flip (NW vs SE) actually shifts the master client's
 ---      anchor (different x AND y).

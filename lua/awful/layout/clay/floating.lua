@@ -99,7 +99,6 @@ end
 return function(clay)
     clay.floating = clay.layout {
         name           = "clay.floating",
-        body_signature = "context",
         no_gap         = true,
         merged_capable = true,
         -- Graft root-attached at screen.geometry (like max.fullscreen) rather
@@ -108,14 +107,14 @@ return function(clay)
         -- routing them through the workarea node would add its padding +
         -- useless_gap on every arrange, drifting every client down/right.
         bounds_source  = "geometry",
-        body           = function(ctx)
+        body           = function(p)
             local children = {}
-            for i, c in ipairs(ctx.children) do
+            for i, c in ipairs(p.clients) do
                 local g = c:geometry()
                 local bw2 = (c.border_width or 0) * 2
                 children[i] = layout.client(c, {
-                    x      = g.x - ctx.bounds.x,
-                    y      = g.y - ctx.bounds.y,
+                    x      = g.x - p.geometry.x,
+                    y      = g.y - p.geometry.y,
                     width  = g.width  + bw2,
                     height = g.height + bw2,
                 })

@@ -3,8 +3,8 @@
 -- a row + column wrapping the master. Whether the row or column gets
 -- the "privileged" (corner-aligned) slot flips on master_count parity,
 -- so the body picks the structural variant imperatively. mwfact and the
--- parity gate read through ctx.props as bindings; child distribution is
--- index-based on ctx.children rather than slot specs.
+-- parity gate read from p (p.master_width_factor / p.master_count); child
+-- distribution is index-based on p.clients.
 
 local layout = require("somewm.layout")
 
@@ -14,18 +14,18 @@ return function(clay)
     end
 
     local function corner_build(orientation)
-        return function(ctx)
-            local clients = ctx.children
+        return function(p)
+            local clients = p.clients
             if #clients == 1 then
                 return layout.row { layout.client(clients[1]) }
             end
 
-            local mwfact         = ctx.props.master_width_factor
-            local row_privileged = (ctx.props.master_count % 2 == 0)
+            local mwfact         = p.master_width_factor
+            local row_privileged = (p.master_count % 2 == 0)
 
             local master_node = layout.client(clients[1], {
-                width  = layout.percent(mwfact * 100),
-                height = layout.percent(mwfact * 100),
+                width  = layout.percent(mwfact),
+                height = layout.percent(mwfact),
             })
 
             local group_a, group_b = {}, {}
@@ -57,7 +57,7 @@ return function(clay)
             local master_side
             if col_node then
                 if row_privileged then
-                    col_node.props.height = layout.percent(mwfact * 100)
+                    col_node.props.height = layout.percent(mwfact)
                 end
                 if is_west then
                     master_side = layout.row { master_node, col_node }
@@ -69,7 +69,7 @@ return function(clay)
             end
 
             if row_node and not row_privileged then
-                row_node.props.width = layout.percent(mwfact * 100)
+                row_node.props.width = layout.percent(mwfact)
             end
 
             if is_north then
@@ -94,28 +94,24 @@ return function(clay)
     }
     clay.corner.nw = clay.layout {
         name           = "clay.cornernw",
-        body_signature = "context",
         merged_capable = true,
         skip_gap       = corner_skip_gap,
         body           = corner_build("NW"),
     }
     clay.corner.ne = clay.layout {
         name           = "clay.cornerne",
-        body_signature = "context",
         merged_capable = true,
         skip_gap       = corner_skip_gap,
         body           = corner_build("NE"),
     }
     clay.corner.sw = clay.layout {
         name           = "clay.cornersw",
-        body_signature = "context",
         merged_capable = true,
         skip_gap       = corner_skip_gap,
         body           = corner_build("SW"),
     }
     clay.corner.se = clay.layout {
         name           = "clay.cornerse",
-        body_signature = "context",
         merged_capable = true,
         skip_gap       = corner_skip_gap,
         body           = corner_build("SE"),

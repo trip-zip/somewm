@@ -427,7 +427,7 @@ clay_read_layout_config(lua_State *L, int idx)
 	lua_getfield(L, idx, "width_percent");
 	if (lua_isnumber(L, -1)) {
 		config.sizing.width = (Clay_SizingAxis){
-			.size = { .percent = (float)lua_tonumber(L, -1) / 100.0f },
+			.size = { .percent = (float)lua_tonumber(L, -1) },
 			.type = CLAY__SIZING_TYPE_PERCENT
 		};
 	}
@@ -446,7 +446,7 @@ clay_read_layout_config(lua_State *L, int idx)
 	lua_getfield(L, idx, "height_percent");
 	if (lua_isnumber(L, -1)) {
 		config.sizing.height = (Clay_SizingAxis){
-			.size = { .percent = (float)lua_tonumber(L, -1) / 100.0f },
+			.size = { .percent = (float)lua_tonumber(L, -1) },
 			.type = CLAY__SIZING_TYPE_PERCENT
 		};
 	}
