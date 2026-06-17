@@ -533,7 +533,7 @@ end
 
 -- Run the fit/flip selection for a surface against an anchor box on screen s.
 -- `spec` carries width/height (plus an optional fit_inset { w, h } to reserve gap
--- space so a surface whose anchor + gap overflows the workarea flips),
+-- space so a surface whose anchor + gap overflows the screen flips),
 -- preferred_positions/preferred_anchors, and offset_for(position) -> { x, y }.
 -- Returns position, anchor, attach points, offset, or nil if nothing fits.
 local _placement
@@ -550,7 +550,9 @@ local function select_side(s, box, spec)
     local pos, anchor, ap = _placement.next_to_attach(arect, fit_size, {
         preferred_positions = spec.preferred_positions,
         preferred_anchors   = spec.preferred_anchors,
-        bounding_rect       = s.workarea,
+        -- The full screen (g = s.geometry), not the workarea: a widget anchor may
+        -- sit in a wibar strip (outside the workarea); its popup places flush there.
+        bounding_rect       = g,
     })
     if not pos then return nil end
     return pos, anchor, ap, spec.offset_for(pos)
@@ -673,7 +675,7 @@ end
 --- Attach a transient surface (popup / tooltip wibox) to a widget's Clay element.
 --
 -- Resolves the anchor screen + box, runs the fit/flip selection (reserving
--- `opts.fit_inset` so a surface whose anchor + gap would overflow the workarea
+-- `opts.fit_inset` so a surface whose anchor + gap would overflow the screen
 -- flips), drops a stale registration from a previous screen, registers the
 -- surface, maps it, and synchronously solves so it is placed before returning.
 -- Both `awful.popup` and `awful.tooltip` route their widget-anchor path here.

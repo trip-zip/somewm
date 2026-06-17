@@ -155,7 +155,7 @@ end
 
 -- Total gap reserved per axis (left + right, top + bottom) so the fit/flip
 -- selection accounts for the gap and a tooltip whose anchor + gap would overflow
--- the workarea flips to a side that fits (the offset is applied after the side is
+-- the screen flips to a side that fits (the offset is applied after the side is
 -- chosen, so the selection must reserve the space up front).
 local function gap_extent(gaps)
     local function side(name)
@@ -236,7 +236,7 @@ local function set_geometry(self)
 
     if mode == "outside" and self._private.widget_geometry then
         -- The Clay path placed the tooltip in the screen solve (its fit already
-        -- honored the workarea) and re-applies it every solve, so no_offscreen
+        -- honored the screen geometry) and re-applies it every solve, so no_offscreen
         -- would be reverted on the next solve: skip it on that path.
         if apply_outside_mode(self) then return end
     else
