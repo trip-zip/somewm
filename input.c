@@ -1095,7 +1095,9 @@ keybinding(uint32_t mods, uint32_t keycode, xkb_keysym_t sym, xkb_keysym_t base_
 		if (sym == XKB_KEY_Terminate_Server) {
 			if (session_is_locked())
 				return 1;
-			wl_display_terminate(dpy);
+			/* Quits the GLib main loop; wl_display_terminate() alone is a
+			 * no-op here since g_main_loop_run() is the primary loop. */
+			some_compositor_quit();
 			return 1;
 		}
 		/* Ctrl-Alt-F1..F12: Switch to VT 1-12
