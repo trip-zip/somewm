@@ -500,9 +500,19 @@ handlesig(int signo)
 			int res = write(sigchld_pipe[1], " ", 1);
 			(void) res;  /* Ignore write errors in signal handler */
 		}
-	} else if (signo == SIGINT || signo == SIGTERM) {
-		wl_display_terminate(dpy);
 	}
+}
+
+/** GLib unix-signal callback for SIGINT/SIGTERM. Runs in main-loop context, so
+ * it can stop g_main_loop_run() cleanly. Routes through some_compositor_quit()
+ * so every termination path (signals, Ctrl-Alt-Backspace, awesome.quit) shares
+ * one implementation. Mirrors AwesomeWM's exit_on_signal. */
+static gboolean
+quit_on_signal(gpointer data)
+{
+	(void) data;
+	some_compositor_quit();
+	return G_SOURCE_CONTINUE;
 }
 
 /** GLib callback for SIGCHLD pipe (AwesomeWM pattern).
@@ -1020,7 +1030,7 @@ run(char *startup_cmd)
 void
 setup(void)
 {
-	int i, sig[] = {SIGCHLD, SIGINT, SIGTERM, SIGPIPE};
+	int i, sig[] = {SIGCHLD, SIGPIPE};
 	struct sigaction sa = {.sa_flags = SA_RESTART, .sa_handler = handlesig};
 	sigemptyset(&sa.sa_mask);
 
@@ -1034,6 +1044,13 @@ setup(void)
 
 	/* Setup GLib watch for SIGCHLD pipe */
 	g_unix_fd_add(sigchld_pipe[0], G_IO_IN, reap_children, NULL);
+
+	/* SIGINT/SIGTERM quit via GLib's unix-signal source: the callback runs in
+	 * main-loop context and stops g_main_loop_run() cleanly (AwesomeWM's
+	 * exit_on_signal pattern). A bare sigaction handler could only call
+	 * wl_display_terminate(), a no-op here since the GLib loop is primary. */
+	g_unix_signal_add(SIGINT, quit_on_signal, NULL);
+	g_unix_signal_add(SIGTERM, quit_on_signal, NULL);
 
 	for (i = 0; i < (int)LENGTH(sig); i++)
 		sigaction(sig[i], &sa, NULL);

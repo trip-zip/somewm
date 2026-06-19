@@ -627,10 +627,13 @@ some_get_allocator(void)
 void
 some_compositor_quit(void)
 {
+	/* The primary loop is g_main_loop_run(), not wl_display_run(), so quitting
+	 * the GLib loop is what actually stops somewm. wl_display_terminate() would
+	 * be a no-op here (nothing calls wl_display_run); Wayland teardown happens
+	 * in cleanup() after the loop returns. */
 	if (globalconf.loop) {
 		g_main_loop_quit(globalconf.loop);
 	}
-	wl_display_terminate(dpy);
 }
 
 /*
