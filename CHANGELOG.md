@@ -2,6 +2,46 @@
 
 All notable changes to somewm will be documented in this file.
 
+## [1.4.2] - 2026-06-22
+
+Patch release. 43 commits since 1.4.1: mostly bug fixes, plus a few additive
+features. No public API breaks; existing rc.lua configs run unchanged.
+
+### Added
+
+- `somewm::ready` and `xwayland::ready` signals, also exposed as `awesome.*`
+  properties and re-emitted on hot-reload
+- `-c NONE` to start without loading any user config
+- XKB keyboard model and rules selection
+- `screenshot` interactive (snipping) subcommand in the somewm-client CLI
+
+### Fixed
+
+- Compositor terminates cleanly on SIGTERM/SIGINT and Ctrl-Alt-Backspace
+- Timer-driven widget redraws now present on an otherwise idle session (clocks update)
+- Client buffer flush deferred out of the map signal emit (disconnect-mid-map crash)
+- Titlebar hover no longer leaks pointer events to the client beneath it
+- Aerosnap placeholder deferred by dwell, removing cross-monitor flicker
+- `request::tag` nil-guard restored for `transient_for.screen`
+- `createmon()` bails cleanly when an output commit fails (partial hotplug)
+- Per-client geometry signals emitted on the xdg fullscreen path
+- Hot-reload assigns all client screens before emitting restore signals
+- Drawin struts aggregated per explicit screen pointer (multi-monitor)
+- `c.content` captured via scene-tree walk and scaled to logical size on HiDPI
+- Screenshot snipping overlay rendered at logical resolution
+
+### Changed
+
+- Default build is optimized release with no sanitizers (packaging-relevant)
+- Build supports Lua 5.5; added a `lua_pkg` override
+- Cleaned `-Werror` failures under GCC 15/16; stopped propagating `-Werror`
+  into the wlroots, v4l-utils, and libdisplay-info subprojects
+
+### Notes
+
+- AwesomeWM baseline unchanged from 1.4.0.
+- See [`DEVIATIONS.md`](DEVIATIONS.md) for Wayland vs X11 differences.
+
 ## [1.4.1] - 2026-04-24
 
 Patch release. 19 commits since 1.4.0, all bug fixes and one additive
@@ -143,7 +183,8 @@ First stable release. SomeWM 1.4 = AwesomeWM 4.4 on Wayland.
 
 Initial public release with core AwesomeWM compatibility.
 
-[Unreleased]: https://github.com/trip-zip/somewm/compare/v1.4.1...HEAD
+[Unreleased]: https://github.com/trip-zip/somewm/compare/v1.4.2...HEAD
+[1.4.2]: https://github.com/trip-zip/somewm/compare/v1.4.1...v1.4.2
 [1.4.1]: https://github.com/trip-zip/somewm/compare/v1.4.0...v1.4.1
 [1.4.0]: https://github.com/trip-zip/somewm/compare/0.5.0...v1.4.0
 [0.5.0]: https://github.com/trip-zip/somewm/compare/0.4.0...0.5.0
