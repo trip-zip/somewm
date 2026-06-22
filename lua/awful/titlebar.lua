@@ -1089,7 +1089,9 @@ end
 -- @usebeautiful beautiful.titlebar_floating_button_focus_inactive_hover
 -- @usebeautiful beautiful.titlebar_floating_button_focus_inactive_press
 function titlebar.widget.floatingbutton(c)
-    local widget = titlebar.widget.button(c, "floating", aclient.object.get_floating, aclient.floating.toggle)
+    local widget = titlebar.widget.button(c, "floating", aclient.object.get_floating, function(cl, state)
+        cl.floating = not state
+    end)
     update_on_signal(c, "property::floating", widget)
     return widget
 end
