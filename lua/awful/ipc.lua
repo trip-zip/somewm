@@ -400,6 +400,22 @@ local function register_builtin_commands()
     return nil
   end
 
+  -- Helper: resolve target to a client object (numeric ID or "focused").
+  -- Defined here, before the command registrations, so every handler closure
+  -- captures it (the client.kill/client.close handlers are created above the
+  -- old definition site and were binding a nil global).
+  local function resolve_client(target)
+    target = target or "focused"
+    if target == "focused" then
+      local c = capi.client.focus
+      if not c then error("No focused client") end
+      return c
+    end
+    local c = find_client_by_id(target)
+    if not c then error("Client not found: " .. target) end
+    return c
+  end
+
   -- =================================================================
   -- BASIC COMMANDS
   -- =================================================================
@@ -1271,19 +1287,6 @@ local function register_builtin_commands()
   -- =================================================================
   -- CLIENT PROPERTY COMMANDS
   -- =================================================================
-
-  -- Helper: resolve target to a client object
-  local function resolve_client(target)
-    target = target or "focused"
-    if target == "focused" then
-      local c = capi.client.focus
-      if not c then error("No focused client") end
-      return c
-    end
-    local c = find_client_by_id(target)
-    if not c then error("Client not found: " .. target) end
-    return c
-  end
 
   -- Helper: register a boolean client property command
   local function register_bool_prop(name)
