@@ -28,6 +28,9 @@
 #include <wlr/types/wlr_relative_pointer_v1.h>
 #include <wlr/types/wlr_scene.h>
 #include <wlr/types/wlr_seat.h>
+#include <wlr/types/wlr_tablet_v2.h>
+#include <wlr/types/wlr_tablet_tool.h>
+#include <wlr/types/wlr_touch.h>
 #include <wlr/types/wlr_xcursor_manager.h>
 #include <wlr/util/log.h>
 #include <wlr/util/region.h>
@@ -91,7 +94,7 @@ void gesturepinchend(struct wl_listener *listener, void *data);
 void gestureholdbegin(struct wl_listener *listener, void *data);
 void gestureholdend(struct wl_listener *listener, void *data);
 void destroypointerconstraint(struct wl_listener *listener, void *data);
-static void destroytrackedpointer(struct wl_listener *listener, void *data);
+static void destroytrackeddevice(struct wl_listener *listener, void *data);
 void motionnotify(uint32_t time, struct wlr_input_device *device, double dx, double dy,
 		double dx_unaccel, double dy_unaccel);
 void pointerfocus(Client *c, struct wlr_surface *surface, double sx, double sy,
@@ -99,10 +102,9 @@ void pointerfocus(Client *c, struct wlr_surface *surface, double sx, double sy,
 int keybinding(uint32_t mods, uint32_t keycode, xkb_keysym_t sym, xkb_keysym_t base_sym);
 void createkeyboard(struct wlr_keyboard *keyboard);
 KeyboardGroup *createkeyboardgroup(void);
-void createpointer(struct wlr_pointer *pointer);
+void createtrackeddevice(struct wlr_input_device *base_device);
 void cursorconstrain(struct wlr_pointer_constraint_v1 *constraint);
 void cursorwarptohint(void);
-void apply_input_settings_to_device(struct libinput_device *device);
 void mouse_emit_leave(lua_State *L);
 void mouse_emit_client_enter(lua_State *L, client_t *c);
 void mouse_emit_drawin_enter(lua_State *L, drawin_t *d);
@@ -116,18 +118,30 @@ void setpsel(struct wl_listener *listener, void *data);
 void setsel(struct wl_listener *listener, void *data);
 void requeststartdrag(struct wl_listener *listener, void *data);
 void startdrag(struct wl_listener *listener, void *data);
+void touchdown(struct wl_listener *listener, void *data);
+void touchmotion(struct wl_listener *listener, void *data);
+void touchup(struct wl_listener *listener, void *data);
+void touchcancel(struct wl_listener *listener, void *data);
+void touchframe(struct wl_listener *listener, void *data);
+void tabletaxis(struct wl_listener *listener, void *data);
+void tablettip(struct wl_listener *listener, void *data);
+void tabletproximity(struct wl_listener *listener, void *data);
+void tabletbutton(struct wl_listener *listener, void *data);
 void destroydrag(struct wl_listener *listener, void *data);
 void destroydragicon(struct wl_listener *listener, void *data);
 void xytonode(double x, double y, struct wlr_surface **psurface,
 		Client **pc, LayerSurface **pl, drawin_t **pd, drawable_t **pdrawable,
 		double *nx, double *ny);
 
-/* Tracked pointer device for runtime libinput configuration */
+/* Tracked Input Device for runtime libinput configuration */
 typedef struct {
 	struct libinput_device *libinput_dev;
+	struct wlr_input_device *base_device;
 	struct wl_listener destroy;
 	struct wl_list link;
-} TrackedPointer;
+} TrackedInputDevice;
+
+void apply_input_settings_to_device(TrackedInputDevice *td);
 
 /* Listener structs */
 struct wl_listener cursor_axis = {.notify = axisnotify};
@@ -153,6 +167,15 @@ struct wl_listener request_set_sel = {.notify = setsel};
 struct wl_listener request_set_cursor_shape = {.notify = setcursorshape};
 struct wl_listener request_start_drag = {.notify = requeststartdrag};
 struct wl_listener start_drag = {.notify = startdrag};
+struct wl_listener touch_down = {.notify = touchdown};
+struct wl_listener touch_motion = {.notify = touchmotion};
+struct wl_listener touch_up = {.notify = touchup};
+struct wl_listener touch_cancel = {.notify = touchcancel};
+struct wl_listener touch_frame = {.notify = touchframe};
+struct wl_listener tablet_axis = {.notify = tabletaxis};
+struct wl_listener tablet_tip = {.notify = tablettip};
+struct wl_listener tablet_proximity = {.notify = tabletproximity};
+struct wl_listener tablet_button = {.notify = tabletbutton};
 
 void
 gestureswipebegin(struct wl_listener *listener, void *data)
@@ -684,6 +707,188 @@ motionabsolute(struct wl_listener *listener, void *data)
 	dx = lx - cursor->x;
 	dy = ly - cursor->y;
 	motionnotify(event->time_msec, &event->pointer->base, dx, dy, dx, dy);
+}
+
+struct event_context {
+	struct wlr_surface *surface;
+	Client *client;
+	double lx, ly; // layout
+	double sx, sy; // surface
+};
+
+static struct event_context
+get_event_context(struct wlr_input_device *device, double x, double y)
+{
+	struct event_context ctx = {0};
+
+	wlr_cursor_absolute_to_layout_coords(cursor, device, x, y, &ctx.lx, &ctx.ly);
+
+	xytonode(ctx.lx, ctx.ly, &ctx.surface, &ctx.client, NULL, NULL, NULL, &ctx.sx, &ctx.sy);
+
+	return ctx;
+}
+
+void
+touchdown(struct wl_listener *listener, void *data)
+{
+	struct wlr_touch_down_event *event = data;
+
+	struct event_context ctx = get_event_context(&event->touch->base, event->x, event->y);
+
+	if (ctx.surface) {
+		wlr_seat_touch_notify_down(seat, ctx.surface, event->time_msec,
+									event->touch_id, ctx.sx, ctx.sy);
+	}
+}
+
+void
+touchmotion(struct wl_listener *listener, void *data)
+{
+	struct wlr_touch_motion_event *event = data;
+
+	struct event_context ctx = get_event_context(&event->touch->base, event->x, event->y);
+
+	if (ctx.surface) {
+		wlr_seat_touch_notify_motion(seat, event->time_msec, event->touch_id, ctx.sx, ctx.sy);
+	}
+}
+
+void
+touchup(struct wl_listener *listener, void *data)
+{
+	struct wlr_touch_up_event *event = data;
+
+	wlr_seat_touch_notify_up(seat, event->time_msec, event->touch_id);
+}
+
+void
+touchcancel(struct wl_listener *listener, void *data)
+{
+	struct wlr_touch_cancel_event *event = data;
+
+	struct wlr_touch_point *point;
+	wl_list_for_each(point, &seat->touch_state.touch_points, link) {
+		if (point->touch_id == event->touch_id) {
+			if (point->focus_client)
+				wlr_seat_touch_notify_cancel(seat, point->focus_client);
+			break;
+		}
+	}
+}
+
+void
+touchframe(struct wl_listener *listener, void *data)
+{
+	wlr_seat_touch_notify_frame(seat);
+}
+
+
+bool
+tablet_ensure_ready(struct wlr_tablet *tablet, struct wlr_tablet_tool *tool)
+{
+
+	if (!tablet_mgr) return false;
+
+	if (!tablet->data) {
+		tablet->data = wlr_tablet_create(tablet_mgr, seat, &tablet->base);
+	}
+
+	if (!tool->data) {
+		tool->data = wlr_tablet_tool_create(tablet_mgr, seat, tool);
+	}
+
+	return true;
+}
+
+void
+tabletaxis(struct wl_listener *listener, void *data)
+{
+	struct wlr_tablet_tool_axis_event *event = data;
+
+	if (!tablet_ensure_ready(event->tablet, event->tool)) return;
+
+	struct wlr_tablet_v2_tablet_tool *v2_tool = event->tool->data;
+
+	if (event->updated_axes & (WLR_TABLET_TOOL_AXIS_X | WLR_TABLET_TOOL_AXIS_Y)) {
+		struct event_context ctx = get_event_context(&event->tablet->base, event->x, event->y);
+
+		if (ctx.surface) {
+			wlr_tablet_v2_tablet_tool_notify_motion(v2_tool, ctx.sx, ctx.sy);
+		}
+	}
+
+	if (event->updated_axes & WLR_TABLET_TOOL_AXIS_PRESSURE) {
+		wlr_tablet_v2_tablet_tool_notify_pressure(v2_tool, event->pressure);
+	}
+	if (event->updated_axes & (WLR_TABLET_TOOL_AXIS_TILT_X | WLR_TABLET_TOOL_AXIS_TILT_Y)) {
+		wlr_tablet_v2_tablet_tool_notify_tilt(v2_tool, event->tilt_x, event->tilt_y);
+	}
+	if (event->updated_axes & WLR_TABLET_TOOL_AXIS_DISTANCE) {
+		wlr_tablet_v2_tablet_tool_notify_distance(v2_tool, event->distance);
+	}
+}
+
+void
+tabletproximity(struct wl_listener *listener, void *data)
+{
+	struct wlr_tablet_tool_proximity_event *event = data;
+
+	if (!tablet_ensure_ready(event->tablet, event->tool)) return;
+
+	struct event_context ctx = get_event_context(&event->tablet->base, event->x, event->y);
+
+	if (event->state == WLR_TABLET_TOOL_PROXIMITY_IN) {
+		if (ctx.surface) {
+			wlr_tablet_v2_tablet_tool_notify_proximity_in(event->tool->data, event->tablet->data, ctx.surface);
+		}
+	} else {
+		wlr_tablet_v2_tablet_tool_notify_proximity_out(event->tool->data);
+	}
+}
+
+void
+tablettip(struct wl_listener *listener, void *data)
+{
+	struct wlr_tablet_tool_tip_event *event = data;
+
+	if (!tablet_ensure_ready(event->tablet, event->tool)) return;
+
+	struct event_context ctx = get_event_context(&event->tablet->base, event->x, event->y);
+
+	switch (event->state) {
+		case WLR_TABLET_TOOL_TIP_DOWN:
+			if (ctx.surface && !wlr_surface_accepts_tablet_v2(ctx.surface, event->tablet->data)) {
+				wlr_seat_pointer_notify_button(seat, event->time_msec, BTN_LEFT, WL_POINTER_BUTTON_STATE_PRESSED);
+			} else {
+				wlr_tablet_v2_tablet_tool_notify_down(event->tool->data);
+			}
+			break;
+		case WLR_TABLET_TOOL_TIP_UP:
+			if (ctx.surface && !wlr_surface_accepts_tablet_v2(ctx.surface, event->tablet->data)) {
+				wlr_seat_pointer_notify_button(seat, event->time_msec, BTN_LEFT, WL_POINTER_BUTTON_STATE_RELEASED);
+			} else {
+				wlr_tablet_v2_tablet_tool_notify_up(event->tool->data);
+			}
+			break;
+		default:
+			// just in case
+			break;
+	}
+}
+
+void
+tabletbutton(struct wl_listener *listener, void *data)
+{
+	struct wlr_tablet_tool_button_event *event = data;
+
+	if (!tablet_ensure_ready(event->tablet, event->tool)) return;
+
+	// this is nonsense. might be an issue in wlroots?
+	// event->state is of the wrong enum type..
+	wlr_tablet_v2_tablet_tool_notify_button(event->tool->data, event->button,
+											event->state == WLR_BUTTON_PRESSED
+												? ZWP_TABLET_PAD_V2_BUTTON_STATE_PRESSED
+												: ZWP_TABLET_PAD_V2_BUTTON_STATE_RELEASED);
 }
 
 /* Helper function to emit mouse::leave on the object that previously had the mouse.
@@ -1341,7 +1546,9 @@ inputdevice(struct wl_listener *listener, void *data)
 		createkeyboard(wlr_keyboard_from_input_device(device));
 		break;
 	case WLR_INPUT_DEVICE_POINTER:
-		createpointer(wlr_pointer_from_input_device(device));
+	case WLR_INPUT_DEVICE_TOUCH:
+	case WLR_INPUT_DEVICE_TABLET:
+		createtrackeddevice(device);
 		break;
 	default:
 		/* TODO handle other input device types */
@@ -1355,6 +1562,15 @@ inputdevice(struct wl_listener *listener, void *data)
 	caps = WL_SEAT_CAPABILITY_POINTER;
 	if (!wl_list_empty(&kb_group->wlr_group->devices))
 		caps |= WL_SEAT_CAPABILITY_KEYBOARD;
+
+	TrackedInputDevice *td;
+	wl_list_for_each(td, &tracked_input_devices, link) {
+		if (td->base_device->type == WLR_INPUT_DEVICE_TOUCH) {
+			caps |= WL_SEAT_CAPABILITY_TOUCH;
+			break;
+		}
+	}
+
 	wlr_seat_set_capabilities(seat, caps);
 }
 
@@ -1481,13 +1697,16 @@ resolve_input_settings(struct libinput_device *device, struct InputSettings *out
 			out->accel_speed = p->accel_speed;
 			out->accel_speed_set = true;
 		}
+		if (p->output) out->output = p->output;
 	}
 }
 
 /* Apply resolved input settings to a single libinput device */
 void
-apply_input_settings_to_device(struct libinput_device *device)
+apply_input_settings_to_device(TrackedInputDevice *td)
 {
+	struct libinput_device *device = td->libinput_dev;
+
 	struct InputSettings s;
 	resolve_input_settings(device, &s);
 
@@ -1606,47 +1825,61 @@ apply_input_settings_to_device(struct libinput_device *device)
 		if (s.accel_speed_set)
 			libinput_device_config_accel_set_speed(device, s.accel_speed);
 	}
+
+	// associate (touch) device with output
+	struct wlr_output *wlr_output = NULL;
+	if (s.output) {
+		struct Monitor *m;
+	    wl_list_for_each(m, &mons, link) {
+	        if (m->wlr_output && strcmp(m->wlr_output->name, s.output) == 0) {
+				wlr_output = m->wlr_output;
+				break;
+	        }
+	    }
+	}
+	wlr_cursor_map_input_to_output(cursor, td->base_device, wlr_output);
 }
 
 /* Apply input settings to all tracked pointer devices */
 void
 apply_input_settings_to_all_devices(void)
 {
-	TrackedPointer *tp;
-	wl_list_for_each(tp, &tracked_pointers, link) {
-		apply_input_settings_to_device(tp->libinput_dev);
+	TrackedInputDevice *td;
+	wl_list_for_each(td, &tracked_input_devices, link) {
+		apply_input_settings_to_device(td);
 	}
 }
 
 void
-createpointer(struct wlr_pointer *pointer)
+createtrackeddevice(struct wlr_input_device *base_device)
 {
+	wlr_cursor_attach_input_device(cursor, base_device);
+
 	struct libinput_device *device;
-	TrackedPointer *tp;
+	TrackedInputDevice *td;
 
-	if (wlr_input_device_is_libinput(&pointer->base)
-			&& (device = wlr_libinput_get_device_handle(&pointer->base))) {
-
-		/* Apply settings from globalconf */
-		apply_input_settings_to_device(device);
+	if (wlr_input_device_is_libinput(base_device)
+			&& (device = wlr_libinput_get_device_handle(base_device))) {
 
 		/* Track this device for runtime reconfiguration */
-		tp = ecalloc(1, sizeof(*tp));
-		tp->libinput_dev = device;
-		wl_list_insert(&tracked_pointers, &tp->link);
-		LISTEN(&pointer->base.events.destroy, &tp->destroy, destroytrackedpointer);
-	}
+		td = ecalloc(1, sizeof(*td));
+		td->libinput_dev = device;
+		td->base_device = base_device;
+		wl_list_insert(&tracked_input_devices, &td->link);
+		LISTEN(&base_device->events.destroy, &td->destroy, destroytrackeddevice);
 
-	wlr_cursor_attach_input_device(cursor, &pointer->base);
+		/* Apply settings from globalconf */
+		apply_input_settings_to_device(td);
+	}
 }
 
 static void
-destroytrackedpointer(struct wl_listener *listener, void *data)
+destroytrackeddevice(struct wl_listener *listener, void *data)
 {
-	TrackedPointer *tp = wl_container_of(listener, tp, destroy);
-	wl_list_remove(&tp->destroy.link);
-	wl_list_remove(&tp->link);
-	free(tp);
+	TrackedInputDevice *td = wl_container_of(listener, td, destroy);
+	wl_list_remove(&td->destroy.link);
+	wl_list_remove(&td->link);
+	free(td);
 }
 
 void

@@ -54,6 +54,7 @@
 #include <wlr/types/wlr_screencopy_v1.h>
 #include <wlr/types/wlr_seat.h>
 #include <wlr/types/wlr_session_lock_v1.h>
+#include <wlr/types/wlr_tablet_v2.h>
 #include <wlr/types/wlr_virtual_keyboard_v1.h>
 #include <wlr/types/wlr_virtual_pointer_v1.h>
 #include <wlr/types/wlr_xdg_decoration_v1.h>
@@ -156,6 +157,7 @@ struct wlr_pointer_constraint_v1 *active_constraint;
 
 struct wlr_cursor *cursor;
 struct wlr_xcursor_manager *cursor_mgr;
+struct wlr_tablet_manager_v2 *tablet_mgr;
 char* selected_root_cursor;
 
 struct wlr_scene_rect *root_bg;
@@ -171,7 +173,7 @@ int new_client_placement = 0; /* 0 = master (default), 1 = slave */
 struct wlr_output_layout *output_layout;
 struct wlr_box sgeom;
 struct wl_list mons;
-struct wl_list tracked_pointers; /* For runtime libinput config */
+struct wl_list tracked_input_devices; /* For runtime libinput config */
 Monitor *selmon;
 /* in_updatemons, updatemons_pending: owned by monitor.c */
 
@@ -342,6 +344,15 @@ cleanuplisteners(void)
 	wl_list_remove(&gesture_pinch_end.link);
 	wl_list_remove(&gesture_hold_begin.link);
 	wl_list_remove(&gesture_hold_end.link);
+	wl_list_remove(&touch_down.link);
+	wl_list_remove(&touch_motion.link);
+	wl_list_remove(&touch_up.link);
+	wl_list_remove(&touch_cancel.link);
+	wl_list_remove(&touch_frame.link);
+	wl_list_remove(&tablet_axis.link);
+	wl_list_remove(&tablet_proximity.link);
+	wl_list_remove(&tablet_tip.link);
+	wl_list_remove(&tablet_button.link);
 	wl_list_remove(&gpu_reset.link);
 	wl_list_remove(&new_idle_inhibitor.link);
 	wl_list_remove(&layout_change.link);
@@ -1156,7 +1167,7 @@ setup(void)
 	/* Configure a listener to be notified when new outputs are available on the
 	 * backend. */
 	wl_list_init(&mons);
-	wl_list_init(&tracked_pointers);
+	wl_list_init(&tracked_input_devices);
 	wl_signal_add(&backend->events.new_output, &new_output);
 
 	/* Set up our client lists, the xdg-shell and the layer-shell. The xdg-shell is a
@@ -1222,6 +1233,8 @@ setup(void)
 	}
 	cursor_mgr = wlr_xcursor_manager_create(cursor_theme, cursor_size);
 
+	tablet_mgr = wlr_tablet_v2_create(dpy);
+
 	/*
 	 * wlr_cursor *only* displays an image on screen. It does not move around
 	 * when the pointer moves. However, we can attach input devices to it, and
@@ -1246,6 +1259,17 @@ setup(void)
 	wl_signal_add(&cursor->events.pinch_end, &gesture_pinch_end);
 	wl_signal_add(&cursor->events.hold_begin, &gesture_hold_begin);
 	wl_signal_add(&cursor->events.hold_end, &gesture_hold_end);
+
+	wl_signal_add(&cursor->events.touch_down, &touch_down);
+	wl_signal_add(&cursor->events.touch_motion, &touch_motion);
+	wl_signal_add(&cursor->events.touch_up, &touch_up);
+	wl_signal_add(&cursor->events.touch_cancel, &touch_cancel);
+	wl_signal_add(&cursor->events.touch_frame, &touch_frame);
+
+	wl_signal_add(&cursor->events.tablet_tool_axis, &tablet_axis);
+	wl_signal_add(&cursor->events.tablet_tool_proximity, &tablet_proximity);
+	wl_signal_add(&cursor->events.tablet_tool_tip, &tablet_tip);
+	wl_signal_add(&cursor->events.tablet_tool_button, &tablet_button);
 
 	cursor_shape_mgr = wlr_cursor_shape_manager_v1_create(dpy, 1);
 	wl_signal_add(&cursor_shape_mgr->events.request_set_shape, &request_set_cursor_shape);
@@ -1337,6 +1361,7 @@ setup(void)
 	globalconf.input.accel_profile = NULL;  /* String property - set via Lua */
 	globalconf.input.accel_speed = 0.0;
 	globalconf.input.tap_button_map = NULL;  /* String property - set via Lua */
+	globalconf.input.output = NULL;  /* String property - set via Lua */
 
 	/* Logging defaults (only set if not already set by -d flag) */
 	if (globalconf.log_level == 0)

@@ -46,6 +46,7 @@ struct wlr_seat;
 struct wlr_session;
 struct wlr_session_lock_manager_v1;
 struct wlr_session_lock_v1;
+struct wlr_tablet_manager_v2;
 struct wlr_virtual_keyboard_manager_v1;
 struct wlr_virtual_pointer_manager_v1;
 struct wlr_xcursor_manager;
@@ -88,6 +89,7 @@ extern struct wlr_cursor_shape_manager_v1 *cursor_shape_mgr;
 /* Input state */
 extern struct wlr_cursor *cursor;
 extern struct wlr_xcursor_manager *cursor_mgr;
+extern struct wlr_tablet_manager_v2 *tablet_mgr;
 extern struct wlr_seat *seat;
 extern KeyboardGroup *kb_group;
 extern void *exclusive_focus;
@@ -106,7 +108,7 @@ extern struct wlr_output_layout *output_layout;
 extern struct wl_list mons;
 extern Monitor *selmon;
 extern struct wlr_box sgeom;
-extern struct wl_list tracked_pointers;
+extern struct wl_list tracked_input_devices;
 
 /* Scene elements */
 extern struct wlr_scene_tree *drag_icon;

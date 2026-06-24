@@ -121,6 +121,7 @@ typedef struct InputSettings {
     char *tap_button_map;           /* "lrm", "lmr" */
     char *clickfinger_button_map;   /* "lrm", "lmr" */
     bool accel_speed_set;           /* true if accel_speed was explicitly set */
+    char *output;                   /* string name of associated output */
 } InputSettings;
 
 /** Per-device input rule (evaluated in order, last match wins per property) */
