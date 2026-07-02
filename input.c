@@ -28,6 +28,7 @@
 #include <wlr/types/wlr_relative_pointer_v1.h>
 #include <wlr/types/wlr_scene.h>
 #include <wlr/types/wlr_seat.h>
+#include <wlr/types/wlr_switch.h>
 #include <wlr/types/wlr_xcursor_manager.h>
 #include <wlr/util/log.h>
 #include <wlr/util/region.h>
@@ -82,6 +83,7 @@ void inputdevice(struct wl_listener *listener, void *data);
 void virtualkeyboard(struct wl_listener *listener, void *data);
 void virtualpointer(struct wl_listener *listener, void *data);
 void createpointerconstraint(struct wl_listener *listener, void *data);
+static void createswitch(struct wlr_switch *sw);
 void gestureswipebegin(struct wl_listener *listener, void *data);
 void gestureswipeupdate(struct wl_listener *listener, void *data);
 void gestureswipeend(struct wl_listener *listener, void *data);
@@ -92,6 +94,8 @@ void gestureholdbegin(struct wl_listener *listener, void *data);
 void gestureholdend(struct wl_listener *listener, void *data);
 void destroypointerconstraint(struct wl_listener *listener, void *data);
 static void destroytrackedpointer(struct wl_listener *listener, void *data);
+static void destroyswitchtracker(struct wl_listener *listener, void *data);
+static void switchevent(struct wl_listener *listener, void *data);
 void motionnotify(uint32_t time, struct wlr_input_device *device, double dx, double dy,
 		double dx_unaccel, double dy_unaccel);
 void pointerfocus(Client *c, struct wlr_surface *surface, double sx, double sy,
@@ -129,6 +133,12 @@ typedef struct {
 	struct wl_list link;
 } TrackedPointer;
 
+typedef struct {
+	struct wlr_switch *switch_dev;
+	struct wl_listener toggle;
+	struct wl_listener destroy;
+} TrackedSwitch;
+
 /* Listener structs */
 struct wl_listener cursor_axis = {.notify = axisnotify};
 struct wl_listener cursor_button = {.notify = buttonpress};
@@ -153,6 +163,32 @@ struct wl_listener request_set_sel = {.notify = setsel};
 struct wl_listener request_set_cursor_shape = {.notify = setcursorshape};
 struct wl_listener request_start_drag = {.notify = requeststartdrag};
 struct wl_listener start_drag = {.notify = startdrag};
+
+static void
+switchevent(struct wl_listener *listener, void *data)
+{
+	TrackedSwitch *ts = wl_container_of(listener, ts, toggle);
+	struct wlr_switch_toggle_event *event = data;
+
+	char* type;
+	switch (event->switch_type) {
+	case WLR_SWITCH_TYPE_LID:
+		type = "lid";
+		break;
+	case WLR_SWITCH_TYPE_TABLET_MODE:
+		type = "tablet_mode";
+		break;
+	default:
+		type = "unknown";
+		break;
+	}
+
+	luaA_emit_signal_global_with_table("switch::toggle", 6,
+		"device_name", ts->switch_dev && ts->switch_dev->base.name
+			? ts->switch_dev->base.name : "",
+		"type", type,
+		"state", event->switch_state == WLR_SWITCH_STATE_ON ? "on" : "off");
+}
 
 void
 gestureswipebegin(struct wl_listener *listener, void *data)
@@ -1343,6 +1379,9 @@ inputdevice(struct wl_listener *listener, void *data)
 	case WLR_INPUT_DEVICE_POINTER:
 		createpointer(wlr_pointer_from_input_device(device));
 		break;
+	case WLR_INPUT_DEVICE_SWITCH:
+		createswitch(wlr_switch_from_input_device(device));
+		break;
 	default:
 		/* TODO handle other input device types */
 		break;
@@ -1641,12 +1680,31 @@ createpointer(struct wlr_pointer *pointer)
 }
 
 static void
+createswitch(struct wlr_switch *sw)
+{
+	TrackedSwitch *ts = ecalloc(1, sizeof(*ts));
+
+	ts->switch_dev = sw;
+	LISTEN(&sw->events.toggle, &ts->toggle, switchevent);
+	LISTEN(&sw->base.events.destroy, &ts->destroy, destroyswitchtracker);
+}
+
+static void
 destroytrackedpointer(struct wl_listener *listener, void *data)
 {
 	TrackedPointer *tp = wl_container_of(listener, tp, destroy);
 	wl_list_remove(&tp->destroy.link);
 	wl_list_remove(&tp->link);
 	free(tp);
+}
+
+static void
+destroyswitchtracker(struct wl_listener *listener, void *data)
+{
+	TrackedSwitch *ts = wl_container_of(listener, ts, destroy);
+	wl_list_remove(&ts->toggle.link);
+	wl_list_remove(&ts->destroy.link);
+	free(ts);
 }
 
 void
