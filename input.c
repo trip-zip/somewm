@@ -178,6 +178,9 @@ switchevent(struct wl_listener *listener, void *data)
 	case WLR_SWITCH_TYPE_TABLET_MODE:
 		type = "tablet_mode";
 		break;
+	case WLR_SWITCH_TYPE_KEYPAD_SLIDE:
+		type = "keypad_slide";
+		break;
 	default:
 		type = "unknown";
 		break;
