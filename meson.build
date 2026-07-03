@@ -106,7 +106,7 @@ message('Found LGI version: ' + lgi_version)
 
 # wlroots 0.19 only - use system if available, otherwise build from subproject
 # We only support 0.19+ due to Xwayland bugs in earlier versions
-wlroots = dependency('wlroots-0.19', static: false, required: false)
+wlroots = dependency('wlroots-0.19', version : '>=0.19.3', static: false, required: false)
 
 if not wlroots.found()
   message('System wlroots 0.19 not found, building from subproject...')
