@@ -1,6 +1,6 @@
 [wrap-git]
 url = https://gitlab.freedesktop.org/wlroots/wlroots.git
-revision = 0.19.2
+revision = 0.19.3
 depth = 1
 
 [provide]
