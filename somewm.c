@@ -217,7 +217,7 @@ static void gestureholdend(struct wl_listener *listener, void *data);
 static void gpureset(struct wl_listener *listener, void *data);
 static void handlesig(int signo);
 static void inputdevice(struct wl_listener *listener, void *data);
-static int keybinding(uint32_t mods, uint32_t keycode, xkb_keysym_t sym, xkb_keysym_t base_sym);
+static int keybinding(uint32_t mods, uint32_t keycode, xkb_keysym_t sym, xkb_keysym_t base_sym, bool is_keypress);
 static void keypress(struct wl_listener *listener, void *data);
 static void keypressmod(struct wl_listener *listener, void *data);
 static int keyrepeat(void *data);
@@ -3373,11 +3373,11 @@ get_urgentcolor(void)
 /* ========== KEYBINDING SYSTEM ========== */
 
 /* Forward declarations for AwesomeWM-compatible Lua keybinding system */
-extern int luaA_key_check_and_emit(uint32_t mods, uint32_t keycode, xkb_keysym_t sym, xkb_keysym_t base_sym);
-extern int luaA_client_key_check_and_emit(client_t *c, uint32_t mods, uint32_t keycode, xkb_keysym_t sym, xkb_keysym_t base_sym);
+extern int luaA_key_check_and_emit(uint32_t mods, uint32_t keycode, xkb_keysym_t sym, xkb_keysym_t base_sym, bool is_keypress);
+extern int luaA_client_key_check_and_emit(client_t *c, uint32_t mods, uint32_t keycode, xkb_keysym_t sym, xkb_keysym_t base_sym, bool is_keypress);
 
 int
-keybinding(uint32_t mods, uint32_t keycode, xkb_keysym_t sym, xkb_keysym_t base_sym)
+keybinding(uint32_t mods, uint32_t keycode, xkb_keysym_t sym, xkb_keysym_t base_sym, bool is_keypress)
 {
 	client_t *focused;
 	struct wlr_surface *surface;
@@ -3401,12 +3401,12 @@ keybinding(uint32_t mods, uint32_t keycode, xkb_keysym_t sym, xkb_keysym_t base_
 	focused = surface ? some_client_from_surface(surface) : NULL;
 
 	/* Check client-specific Lua key objects first (AwesomeWM pattern)
-	 * Client keybindings pass the client as argument to the "press" signal */
-	if (focused && luaA_client_key_check_and_emit(focused, CLEANMASK(mods), keycode, sym, base_sym))
+	 * Client keybindings pass the client as argument to the "press" or "release" signal */
+	if (focused && luaA_client_key_check_and_emit(focused, CLEANMASK(mods), keycode, sym, base_sym, is_keypress))
 		return 1;
 
 	/* Check global Lua key objects (AwesomeWM pattern) */
-	if (luaA_key_check_and_emit(CLEANMASK(mods), keycode, sym, base_sym))
+	if (luaA_key_check_and_emit(CLEANMASK(mods), keycode, sym, base_sym, is_keypress))
 		return 1;
 
 	/* Hardcoded VT switching (compositor-level, non-configurable)
@@ -3501,9 +3501,13 @@ keypress(struct wl_listener *listener, void *data)
 	/* On _press_ if there is no active screen locker,
 	 * attempt to process a compositor keybinding.
 	 * Block for both ext-session-lock-v1 (locked) and Lua lock (some_is_lua_locked). */
-	if (!session_is_locked() && event->state == WL_KEYBOARD_KEY_STATE_PRESSED) {
-		for (i = 0; i < nsyms; i++)
-			handled = keybinding(mods, keycode, syms[i], base_sym) || handled;
+	if (!session_is_locked()) {
+		bool is_keypress = event->state == WL_KEYBOARD_KEY_STATE_PRESSED;
+		for (i = 0; i < nsyms; i++) {
+			bool binding_handled = keybinding(mods, keycode, syms[i], base_sym, is_keypress);
+			if (is_keypress)
+				handled = binding_handled || handled;
+		}
 	}
 
 	if (handled && group->wlr_group->keyboard.repeat_info.delay > 0) {
@@ -3587,7 +3591,9 @@ keyrepeat(void *data)
 			1000 / group->wlr_group->keyboard.repeat_info.rate);
 
 	for (i = 0; i < group->nsyms; i++)
-		keybinding(group->mods, group->keycode, group->keysyms[i], group->base_sym);
+		/* Hardcode is_keypress = true for the keybinding() call since
+		 * keyrepeat only matters for key down condition */
+		keybinding(group->mods, group->keycode, group->keysyms[i], group->base_sym, true);
 
 	return 0;
 }
