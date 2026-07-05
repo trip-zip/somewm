@@ -36,7 +36,7 @@ void pointerfocus(Client *c, struct wlr_surface *surface,
 
 /* Keyboard */
 int keybinding(uint32_t mods, uint32_t keycode, xkb_keysym_t sym,
-		xkb_keysym_t base_sym);
+		xkb_keysym_t base_sym, bool is_keypress);
 void keypress(struct wl_listener *listener, void *data);
 void keypressmod(struct wl_listener *listener, void *data);
 int keyrepeat(void *data);
