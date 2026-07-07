@@ -7580,6 +7580,12 @@ ensure_lgi_guard(int argc, char *argv[])
 int
 main(int argc, char *argv[])
 {
+	/* Line-buffer stdout so rc.lua print() output appears promptly even when
+	 * stdout is redirected to a file or pipe (e.g. `somewm-client test`, tee,
+	 * journald). Without this glibc block-buffers a non-TTY stdout and the
+	 * output is never flushed while the compositor runs. stderr is unbuffered. */
+	setvbuf(stdout, NULL, _IOLBF, 0);
+
 	ensure_lgi_guard(argc, argv);
 	unsetenv("LD_PRELOAD");  /* Guard is loaded; don't leak to children */
 
