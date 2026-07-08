@@ -19,6 +19,7 @@
 #include <wlr/xwayland.h>
 
 #include "somewm_api.h"
+#include "wlr/xcursor.h"
 #include "xkb.h"
 #include "objects/signal.h"
 #include "objects/screen.h"
@@ -554,8 +555,7 @@ some_update_cursor_theme(const char *theme_name, uint32_t size)
 	struct wlr_xcursor *xcursor = wlr_xcursor_manager_get_xcursor(cursor_mgr, "default", 1);
 	if (xcursor && xwayland) {
 		wlr_xwayland_set_cursor(xwayland,
-			xcursor->images[0]->buffer, xcursor->images[0]->width * 4,
-			xcursor->images[0]->width, xcursor->images[0]->height,
+			wlr_xcursor_image_get_buffer(xcursor->images[0]),
 			xcursor->images[0]->hotspot_x, xcursor->images[0]->hotspot_y);
 	}
 #endif
