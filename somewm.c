@@ -5145,11 +5145,63 @@ create_wayland_source(struct wl_event_loop *loop)
 	return source;
 }
 
-/* Custom poll function - THE KEY INTEGRATION POINT
+/* RefreshSource - runs the refresh cycle in GLib's prepare phase.
  *
- * This is called by GLib before every poll() syscall and is where we
- * implement AwesomeWM's refresh cycle pattern. By doing refresh here,
- * we ensure all deferred changes are applied before sleeping.
+ * some_refresh() executes Lua (the "refresh" signal, gears.timer delayed
+ * calls, coroutines resumed from them), which can arm new GLib timeout
+ * sources. GLib computes the poll timeout during the prepare phase, and a
+ * same-thread g_source_attach() does not wake an already-computed poll, so
+ * a timer armed any later in the iteration is invisible to it: on an idle
+ * session the loop sleeps indefinitely while the timer is due, until an
+ * unrelated fd event happens to wake it. Running the refresh here, at a
+ * higher priority than the default-priority timeout sources, means sources
+ * it arms are inserted into buckets this same prepare pass visits
+ * afterwards, so they are included in this iteration's poll timeout. */
+static gboolean
+refresh_source_prepare(GSource *source, gint *timeout)
+{
+	lua_State *L = globalconf_get_lua_State();
+
+	some_refresh();
+
+	/* Check Lua stack integrity (matches AwesomeWM) */
+	if (L && lua_gettop(L) != 0) {
+		fprintf(stderr, "WARNING: Something left %d items on Lua stack, this is a bug!\n",
+		        lua_gettop(L));
+		luaA_dumpstack(L);
+		lua_settop(L, 0);
+	}
+
+	/* Never ready: this source only does work in prepare */
+	*timeout = -1;
+	return FALSE;
+}
+
+static gboolean
+refresh_source_check(GSource *source)
+{
+	return FALSE;
+}
+
+static gboolean
+refresh_source_dispatch(GSource *source, GSourceFunc callback, gpointer user_data)
+{
+	return G_SOURCE_CONTINUE;
+}
+
+static GSourceFuncs refresh_source_funcs = {
+	refresh_source_prepare,
+	refresh_source_check,
+	refresh_source_dispatch,
+	NULL,  /* finalize */
+	NULL,  /* closure_callback */
+	NULL   /* closure_marshal */
+};
+
+/* Custom poll function - called by GLib before every poll() syscall.
+ * The refresh cycle itself runs in refresh_source_prepare() so that timers
+ * it arms count toward this iteration's poll timeout; what remains here is
+ * the work that must happen after every prepare and right before sleeping.
  *
  * Matches AwesomeWM's awesome.c:a_glib_poll()
  */
@@ -5160,19 +5212,6 @@ some_glib_poll(GPollFD *ufds, guint nfsd, gint timeout)
 	struct timeval now, length_time;
 	float length;
 	int saved_errno;
-	lua_State *L = globalconf_get_lua_State();
-
-	/* CRITICAL: Do all deferred work before sleeping
-	 * This applies layout calculations from Lua to Wayland scene graph */
-	some_refresh();
-
-	/* Check Lua stack integrity (matches AwesomeWM) */
-	if (L && lua_gettop(L) != 0) {
-		fprintf(stderr, "WARNING: Something left %d items on Lua stack, this is a bug!\n",
-		        lua_gettop(L));
-		luaA_dumpstack(L);
-		lua_settop(L, 0);
-	}
 
 	/* Flush pending Wayland client data before polling
 	 * Clients won't receive data until we flush */
@@ -5408,13 +5447,21 @@ run(char *startup_cmd)
 	 *
 	 * This is the SAME architecture as AwesomeWM:
 	 * - GLib main loop is primary (g_main_loop_run)
-	 * - Custom poll function (some_glib_poll) calls refresh before polling
+	 * - Refresh cycle runs in the prepare phase (refresh_source_prepare)
 	 * - Backend events (Wayland) integrated via GSource
 	 * - D-Bus, timers, and other GLib sources work automatically
 	 */
 
 	/* Get Wayland event loop */
 	loop = wl_display_get_event_loop(dpy);
+
+	/* Run the refresh cycle in the prepare phase (see refresh_source_prepare).
+	 * G_PRIORITY_HIGH so it is prepared before the default-priority timeout
+	 * sources the refresh Lua may arm. Attached before wayland_source so its
+	 * id stays below glib_source_baseline and survives hot-reload cleanup. */
+	GSource *refresh_source = g_source_new(&refresh_source_funcs, sizeof(GSource));
+	g_source_set_priority(refresh_source, G_PRIORITY_HIGH);
+	g_source_attach(refresh_source, NULL);
 
 	/* Create and attach Wayland GSource to GLib main context */
 	wayland_source = create_wayland_source(loop);
@@ -5449,6 +5496,7 @@ run(char *startup_cmd)
 	g_main_loop_run(globalconf.loop);
 
 	/* Cleanup */
+	g_source_destroy(refresh_source);
 	g_source_destroy(wayland_source);
 	g_main_loop_unref(globalconf.loop);
 	globalconf.loop = NULL;
