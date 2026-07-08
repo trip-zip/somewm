@@ -3294,7 +3294,6 @@ inputdevice(struct wl_listener *listener, void *data)
 	/* This event is raised by the backend when a new input device becomes
 	 * available. */
 	struct wlr_input_device *device = data;
-	uint32_t caps;
 
 	switch (device->type) {
 	case WLR_INPUT_DEVICE_KEYBOARD:
@@ -3308,14 +3307,7 @@ inputdevice(struct wl_listener *listener, void *data)
 		break;
 	}
 
-	/* We need to let the wlr_seat know what our capabilities are, which is
-	 * communiciated to the client. In somewm we always have a cursor, even if
-	 * there are no pointer devices, so we always include that capability. */
-	/* TODO do we actually require a cursor? */
-	caps = WL_SEAT_CAPABILITY_POINTER;
-	if (!wl_list_empty(&kb_group->wlr_group->devices))
-		caps |= WL_SEAT_CAPABILITY_KEYBOARD;
-	wlr_seat_set_capabilities(seat, caps);
+	/* Seat capabilities are constant; advertised once in setup(). */
 }
 
 /* ========== APPEARANCE HELPER FUNCTIONS ========== */
@@ -6017,6 +6009,13 @@ setup(void)
 
 	kb_group = createkeyboardgroup();
 	wl_list_init(&kb_group->destroy.link);
+
+	/* The cursor and the group keyboard exist regardless of physical devices,
+	 * so advertise both capabilities once here. Waiting for a device event
+	 * leaves them at zero on headless backends and clients can bind neither
+	 * wl_pointer nor wl_keyboard. */
+	wlr_seat_set_capabilities(seat,
+		WL_SEAT_CAPABILITY_POINTER | WL_SEAT_CAPABILITY_KEYBOARD);
 
 	output_mgr = wlr_output_manager_v1_create(dpy);
 	wl_signal_add(&output_mgr->events.apply, &output_mgr_apply);
