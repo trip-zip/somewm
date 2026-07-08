@@ -104,12 +104,11 @@ lgi_output = lgi_check_result.stdout().strip()
 lgi_version = lgi_output.split('Found lgi ')[-1].split('\n')[0]
 message('Found LGI version: ' + lgi_version)
 
-# wlroots 0.19 only - use system if available, otherwise build from subproject
-# We only support 0.19+ due to Xwayland bugs in earlier versions
-wlroots = dependency('wlroots-0.19', version : '>=0.19.3', static: false, required: false)
+# wlroots 0.20 only - use system if available, otherwise build from subproject
+wlroots = dependency('wlroots-0.20', version : '>=0.20.0', static: false, required: false)
 
 if not wlroots.found()
-  message('System wlroots 0.19 not found, building from subproject...')
+  message('System wlroots 0.20 not found, building from subproject...')
 
   wlroots_options = [
     'examples=false',
@@ -125,7 +124,7 @@ if not wlroots.found()
   wlroots = wlroots_proj.get_variable('wlroots')
 endif
 
-wlroots_version = '0.19'
+wlroots_version = '0.20'
 message('Using wlroots version: ' + wlroots_version)
 
 # PAM authentication (optional, for lock screen)
@@ -263,8 +262,8 @@ add_project_arguments(
   language: 'c',
 )
 
-# Always 0.19 - we only support this version
-add_project_arguments('-DWLR_VERSION_0_19', language: 'c')
+# Always 0.20 - we only support this version
+add_project_arguments('-DWLR_VERSION_0_20', language: 'c')
 
 if have_xwayland
   add_project_arguments('-DXWAYLAND', language: 'c')
