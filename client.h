@@ -7,6 +7,7 @@
  */
 
 /* Need complete client_t definition for inline functions */
+#include <xdg-shell-protocol.h>
 #include <assert.h>
 #include "somewm_types.h"  /* For Client typedef and Monitor */
 #include "objects/client.h" /* For complete client_t definition */
