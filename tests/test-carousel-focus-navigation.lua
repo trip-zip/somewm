@@ -39,32 +39,23 @@ local steps = {
     function(count)
         if count == 1 then test_client("nav_a") end
         c1 = utils.find_client_by_class("nav_a")
-        if c1 then return true end
+        if c1 and client.focus == c1 then return true end
     end,
 
     function(count)
         if count == 1 then test_client("nav_b") end
         c2 = utils.find_client_by_class("nav_b")
-        if c2 then return true end
+        if c2 and client.focus == c2 then return true end
     end,
 
     function(count)
         if count == 1 then test_client("nav_c") end
         c3 = utils.find_client_by_class("nav_c")
-        if c3 then return true end
+        if c3 and client.focus == c3 then return true end
     end,
 
-    -- Step 5: Focus c1, let layout settle
-    function(count)
-        if count == 1 then
-            client.focus = c1
-            c1:raise()
-            awful.layout.arrange(screen.primary)
-            return nil
-        end
-        assert(client.focus == c1, "c1 should be focused")
-        return true
-    end,
+    -- Step 5: Focus c1, wait for focus to settle before navigating
+    utils.step_focus(function() return c1 end),
 
     -- Step 6: bydirection("right") moves focus from c1 to the next column
     function(count)

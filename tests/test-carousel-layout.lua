@@ -106,15 +106,9 @@ local steps = {
     end,
 
     -- Step 6: Focus c1 (should be a different client) and verify scroll
-    function(count)
-        if count == 1 then
-            -- Focus a specific client
-            client.focus = c1
-            c1:raise()
-            awful.layout.arrange(screen.primary)
-            return nil
-        end
-
+    utils.step_focus(function() return c1 end),
+    utils.step_settle_geometry(function() return c1 end),
+    function()
         local wa = screen.primary.workarea
         local g1 = c1:geometry()
         io.stderr:write(string.format("[TEST] After focus c1: x=%d, width=%d\n", g1.x, g1.width))

@@ -38,29 +38,31 @@ local steps = {
     function(count)
         if count == 1 then test_client("stack_a") end
         c1 = utils.find_client_by_class("stack_a")
-        if c1 then return true end
+        if c1 and client.focus == c1 then return true end
     end,
 
     function(count)
         if count == 1 then test_client("stack_b") end
         c2 = utils.find_client_by_class("stack_b")
-        if c2 then return true end
+        if c2 and client.focus == c2 then return true end
     end,
 
     function(count)
         if count == 1 then test_client("stack_c") end
         c3 = utils.find_client_by_class("stack_c")
-        if c3 then return true end
+        if c3 and client.focus == c3 then return true end
     end,
 
-    -- Let layout settle with focus on c1
+    -- Let layout settle with focus on c1. Wait until focus actually lands on
+    -- c1; a late focus-on-manage from a still-mapping client would otherwise
+    -- leave the following consume operating on the wrong column.
     function(count)
-        if count == 1 then
+        if client.focus ~= c1 then
             client.focus = c1
             c1:raise()
-            awful.layout.arrange(screen.primary)
             return nil
         end
+        awful.layout.arrange(screen.primary)
         return true
     end,
 
