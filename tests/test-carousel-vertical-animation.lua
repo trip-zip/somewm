@@ -39,19 +39,19 @@ local steps = {
     function(count)
         if count == 1 then test_client("vanim_a") end
         c1 = utils.find_client_by_class("vanim_a")
-        if c1 then return true end
+        if c1 and client.focus == c1 then return true end
     end,
 
     function(count)
         if count == 1 then test_client("vanim_b") end
         c2 = utils.find_client_by_class("vanim_b")
-        if c2 then return true end
+        if c2 and client.focus == c2 then return true end
     end,
 
     function(count)
         if count == 1 then test_client("vanim_c") end
         c3 = utils.find_client_by_class("vanim_c")
-        if c3 then return true end
+        if c3 and client.focus == c3 then return true end
     end,
 
     -- Test instant snap (duration=0): focus c1, verify it settles into view.

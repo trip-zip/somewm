@@ -39,18 +39,14 @@ local steps = {
     function(count)
         if count == 1 then test_client("bound_a") end
         c1 = utils.find_client_by_class("bound_a")
-        if c1 then return true end
+        if c1 and client.focus == c1 then return true end
     end,
 
     -- Set to 1/3 width and verify centering (strip narrower than viewport)
-    function(count)
-        if count == 1 then
-            client.focus = c1
-            c1:raise()
-            carousel.set_column_width(1/3)
-            return nil
-        end
-
+    function() carousel.set_column_width(1/3) return true end,
+    utils.step_focus(function() return c1 end),
+    utils.step_settle_geometry(function() return c1 end),
+    function()
         local wa = screen.primary.workarea
         local g1 = c1:geometry()
         local col_center = g1.x + g1.width / 2
@@ -73,13 +69,13 @@ local steps = {
     function(count)
         if count == 1 then test_client("bound_b") end
         c2 = utils.find_client_by_class("bound_b")
-        if c2 then return true end
+        if c2 and client.focus == c2 then return true end
     end,
 
     function(count)
         if count == 1 then test_client("bound_c") end
         c3 = utils.find_client_by_class("bound_c")
-        if c3 then return true end
+        if c3 and client.focus == c3 then return true end
     end,
 
     -- Set all to full width for boundary clamping tests
@@ -106,14 +102,9 @@ local steps = {
 
     -- Focus c1 (leftmost), verify left boundary clamp.
     -- In on-overflow mode, centering c1 wants negative offset, clamped to 0.
-    function(count)
-        if count == 1 then
-            client.focus = c1
-            c1:raise()
-            awful.layout.arrange(screen.primary)
-            return nil
-        end
-
+    utils.step_focus(function() return c1 end),
+    utils.step_settle_geometry(function() return c1 end),
+    function()
         local wa = screen.primary.workarea
         local g1 = c1:geometry()
 
@@ -129,14 +120,9 @@ local steps = {
     end,
 
     -- Focus c3 (rightmost), verify right boundary clamp
-    function(count)
-        if count == 1 then
-            client.focus = c3
-            c3:raise()
-            awful.layout.arrange(screen.primary)
-            return nil
-        end
-
+    utils.step_focus(function() return c3 end),
+    utils.step_settle_geometry(function() return c3 end),
+    function()
         local wa = screen.primary.workarea
         local g3 = c3:geometry()
 

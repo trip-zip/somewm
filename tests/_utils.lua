@@ -380,6 +380,46 @@ function utils.step_wait_for_focus(class)
     end
 end
 
+--- Create a step that focuses a client and waits until focus actually
+-- lands on it, then arranges. autofocus from a still-mapping client can
+-- override client.focus right after it is set, which would leave a layout
+-- centered on the wrong client; re-assert each poll until focus sticks.
+-- @tparam function get_client Returns the target client (evaluated each poll)
+-- @treturn function Step function for runner.run_steps()
+function utils.step_focus(get_client)
+    return function()
+        local c = get_client()
+        if not c or not c.valid then return nil end
+        if client.focus ~= c then
+            client.focus = c
+            c:raise()
+            return nil
+        end
+        awful.layout.arrange(c.screen or awful.screen.focused())
+        return true
+    end
+end
+
+--- Create a step that arranges and waits until a client's geometry stops
+-- changing (identical across two consecutive polls). Use before asserting
+-- on geometry that results from a deferred arrange, so the assertion does
+-- not run against a half-applied layout.
+-- @tparam function get_client Returns the target client (evaluated each poll)
+-- @treturn function Step function for runner.run_steps()
+function utils.step_settle_geometry(get_client)
+    local last
+    return function()
+        local c = get_client()
+        if not c or not c.valid then return nil end
+        awful.layout.arrange(c.screen or awful.screen.focused())
+        local g = c:geometry()
+        local key = string.format("%d,%d,%d,%d", g.x, g.y, g.width, g.height)
+        if last == key then return true end
+        last = key
+        return nil
+    end
+end
+
 --- Activate a client and verify focus.
 -- Helper to properly activate a client using request::activate signal.
 -- @tparam client c The client to activate

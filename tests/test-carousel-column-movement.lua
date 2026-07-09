@@ -37,19 +37,19 @@ local steps = {
     function(count)
         if count == 1 then test_client("move_a") end
         c1 = utils.find_client_by_class("move_a")
-        if c1 then return true end
+        if c1 and client.focus == c1 then return true end
     end,
 
     function(count)
         if count == 1 then test_client("move_b") end
         c2 = utils.find_client_by_class("move_b")
-        if c2 then return true end
+        if c2 and client.focus == c2 then return true end
     end,
 
     function(count)
         if count == 1 then test_client("move_c") end
         c3 = utils.find_client_by_class("move_c")
-        if c3 then return true end
+        if c3 and client.focus == c3 then return true end
     end,
 
     -- Let layout settle, focus c1
@@ -88,15 +88,7 @@ local steps = {
     end,
 
     -- Wait and then focus c2 (middle column) for the move test
-    function(count)
-        if count == 1 then
-            client.focus = c2
-            c2:raise()
-            awful.layout.arrange(screen.primary)
-            return nil
-        end
-        return true
-    end,
+    utils.step_focus(function() return c2 end),
 
     -- Record positions before move
     function(count)
