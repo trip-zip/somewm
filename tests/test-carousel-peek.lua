@@ -44,19 +44,16 @@ local steps = {
     function(count)
         if count == 1 then test_client("peek_a") end
         c1 = utils.find_client_by_class("peek_a")
-        if c1 then return true end
+        if c1 and client.focus == c1 then return true end
     end,
 
-    -- Set peek_width = 50, verify inset
-    function(count)
-        if count == 1 then
-            carousel.peek_width = 50
-            client.focus = c1
-            c1:raise()
-            awful.layout.arrange(screen.primary)
-            return nil
-        end
+    -- Set peek_width = 50, then settle focus and the deferred arrange
+    function() carousel.peek_width = 50 return true end,
+    utils.step_focus(function() return c1 end),
+    utils.step_settle_geometry(function() return c1 end),
 
+    -- Verify inset
+    function()
         local wa = screen.primary.workarea
         local g = c1:geometry()
         local bw = c1.border_width or 0
@@ -88,14 +85,12 @@ local steps = {
         return true
     end,
 
-    -- Set peek_width = 0, verify full-width
-    function(count)
-        if count == 1 then
-            carousel.peek_width = 0
-            awful.layout.arrange(screen.primary)
-            return nil
-        end
+    -- Set peek_width = 0, then settle the deferred arrange
+    function() carousel.peek_width = 0 return true end,
+    utils.step_settle_geometry(function() return c1 end),
 
+    -- Verify full-width
+    function()
         local wa = screen.primary.workarea
         local g = c1:geometry()
         local bw = c1.border_width or 0
@@ -130,31 +125,27 @@ local steps = {
     function(count)
         if count == 1 then test_client("peek_b") end
         c1 = utils.find_client_by_class("peek_b")
-        if c1 then return true end
+        if c1 and client.focus == c1 then return true end
     end,
 
     function(count)
         if count == 1 then test_client("peek_c") end
         c2 = utils.find_client_by_class("peek_c")
-        if c2 then return true end
+        if c2 and client.focus == c2 then return true end
     end,
 
     function(count)
         if count == 1 then test_client("peek_d") end
         c3 = utils.find_client_by_class("peek_d")
-        if c3 then return true end
+        if c3 and client.focus == c3 then return true end
     end,
 
     -- Set peek=50, focus middle column (c2), check adjacent column edges
-    function(count)
-        if count == 1 then
-            carousel.peek_width = 50
-            client.focus = c2
-            c2:raise()
-            awful.layout.arrange(screen.primary)
-            return nil
-        end
+    function() carousel.peek_width = 50 return true end,
+    utils.step_focus(function() return c2 end),
+    utils.step_settle_geometry(function() return c2 end),
 
+    function()
         local wa = screen.primary.workarea
         local g1 = c1:geometry()
         local g2 = c2:geometry()

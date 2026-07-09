@@ -57,15 +57,7 @@ local steps = {
     end,
 
     -- Let layout settle with focus on c1
-    function(count)
-        if count == 1 then
-            client.focus = c1
-            c1:raise()
-            awful.layout.arrange(screen.primary)
-            return nil
-        end
-        return true
-    end,
+    utils.step_focus(function() return c1 end),
 
     -- Consume c2 (next row) into c1's row
     function(count)
