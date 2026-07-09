@@ -37,30 +37,25 @@ local steps = {
     function(count)
         if count == 1 then test_client("anim_a") end
         c1 = utils.find_client_by_class("anim_a")
-        if c1 then return true end
+        if c1 and client.focus == c1 then return true end
     end,
 
     function(count)
         if count == 1 then test_client("anim_b") end
         c2 = utils.find_client_by_class("anim_b")
-        if c2 then return true end
+        if c2 and client.focus == c2 then return true end
     end,
 
     function(count)
         if count == 1 then test_client("anim_c") end
         c3 = utils.find_client_by_class("anim_c")
-        if c3 then return true end
+        if c3 and client.focus == c3 then return true end
     end,
 
     -- Test instant snap (duration=0): focus c1, verify immediately positioned
-    function(count)
-        if count == 1 then
-            client.focus = c1
-            c1:raise()
-            awful.layout.arrange(screen.primary)
-            return nil
-        end
-
+    utils.step_focus(function() return c1 end),
+    utils.step_settle_geometry(function() return c1 end),
+    function()
         local wa = screen.primary.workarea
         local g1 = c1:geometry()
         io.stderr:write(string.format(

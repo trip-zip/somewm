@@ -40,19 +40,19 @@ local steps = {
     function(count)
         if count == 1 then test_client("push_a") end
         c1 = utils.find_client_by_class("push_a")
-        if c1 then return true end
+        if c1 and client.focus == c1 then return true end
     end,
 
     function(count)
         if count == 1 then test_client("push_b") end
         c2 = utils.find_client_by_class("push_b")
-        if c2 then return true end
+        if c2 and client.focus == c2 then return true end
     end,
 
     function(count)
         if count == 1 then test_client("push_c") end
         c3 = utils.find_client_by_class("push_c")
-        if c3 then return true end
+        if c3 and client.focus == c3 then return true end
     end,
 
     -- Let layout settle, set all to 1/3 width
@@ -78,15 +78,7 @@ local steps = {
     end,
 
     -- Focus c2 (middle), push right -> c2 joins c3's column
-    function(count)
-        if count == 1 then
-            client.focus = c2
-            c2:raise()
-            awful.layout.arrange(screen.primary)
-            return nil
-        end
-        return true
-    end,
+    utils.step_focus(function() return c2 end),
 
     function(count)
         if count == 1 then
@@ -146,15 +138,7 @@ local steps = {
     -- Focus c1 (leftmost), push right -> c1 joins its right neighbor's column
     -- Note: after push+expel above, column order is c1, c3, c2.
     -- Pushing c1 right joins c1 with c3's column.
-    function(count)
-        if count == 1 then
-            client.focus = c1
-            c1:raise()
-            awful.layout.arrange(screen.primary)
-            return nil
-        end
-        return true
-    end,
+    utils.step_focus(function() return c1 end),
 
     function(count)
         if count == 1 then
@@ -192,15 +176,7 @@ local steps = {
     -- Boundary: push left from leftmost column -> no-op
     -- After push+expel ops, column order is [c3], [c1], [c2].
     -- c3 is leftmost, so push c3 left should be no-op.
-    function(count)
-        if count == 1 then
-            client.focus = c3
-            c3:raise()
-            awful.layout.arrange(screen.primary)
-            return nil
-        end
-        return true
-    end,
+    utils.step_focus(function() return c3 end),
 
     function(count)
         if count == 1 then
@@ -225,15 +201,7 @@ local steps = {
 
     -- Boundary: push right from rightmost column -> no-op
     -- c2 is rightmost, so push c2 right should be no-op.
-    function(count)
-        if count == 1 then
-            client.focus = c2
-            c2:raise()
-            awful.layout.arrange(screen.primary)
-            return nil
-        end
-        return true
-    end,
+    utils.step_focus(function() return c2 end),
 
     function(count)
         if count == 1 then

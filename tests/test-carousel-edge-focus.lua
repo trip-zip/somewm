@@ -37,31 +37,25 @@ local steps = {
     function(count)
         if count == 1 then test_client("efocus_a") end
         c1 = utils.find_client_by_class("efocus_a")
-        if c1 then return true end
+        if c1 and client.focus == c1 then return true end
     end,
 
     function(count)
         if count == 1 then test_client("efocus_b") end
         c2 = utils.find_client_by_class("efocus_b")
-        if c2 then return true end
+        if c2 and client.focus == c2 then return true end
     end,
 
     function(count)
         if count == 1 then test_client("efocus_c") end
         c3 = utils.find_client_by_class("efocus_c")
-        if c3 then return true end
+        -- Wait for c3's focus-on-map to land before proceeding, so a delayed
+        -- steal cannot fire after a later step has set focus elsewhere.
+        if c3 and client.focus == c3 then return true end
     end,
 
     -- Focus middle column
-    function(count)
-        if count == 1 then
-            client.focus = c2
-            c2:raise()
-            awful.layout.arrange(screen.primary)
-            return nil
-        end
-        return true
-    end,
+    utils.step_focus(function() return c2 end),
 
     -- focus_first_column: should focus c1
     function(count)
@@ -70,9 +64,8 @@ local steps = {
             return nil
         end
 
-        assert(client.focus == c1,
-            string.format("Expected focus on c1 (%s), got %s",
-                c1.class, client.focus and client.focus.class or "nil"))
+        -- focus_first_column changes focus asynchronously; wait for it to land.
+        if client.focus ~= c1 then return nil end
 
         local wa = screen.primary.workarea
         local g1 = c1:geometry()
@@ -94,9 +87,8 @@ local steps = {
             return nil
         end
 
-        assert(client.focus == c3,
-            string.format("Expected focus on c3 (%s), got %s",
-                c3.class, client.focus and client.focus.class or "nil"))
+        -- focus_last_column changes focus asynchronously; wait for it to land.
+        if client.focus ~= c3 then return nil end
 
         local wa = screen.primary.workarea
         local g3 = c3:geometry()
@@ -119,8 +111,8 @@ local steps = {
             return nil
         end
 
-        assert(client.focus == c1,
-            "focus_first_column should return to c1 after focus_last_column")
+        -- Wait for the round-trip focus change to land back on c1.
+        if client.focus ~= c1 then return nil end
 
         local wa = screen.primary.workarea
         local g1 = c1:geometry()

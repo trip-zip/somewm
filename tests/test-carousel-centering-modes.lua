@@ -40,19 +40,19 @@ local steps = {
     function(count)
         if count == 1 then test_client("center_a") end
         c1 = utils.find_client_by_class("center_a")
-        if c1 then return true end
+        if c1 and client.focus == c1 then return true end
     end,
 
     function(count)
         if count == 1 then test_client("center_b") end
         c2 = utils.find_client_by_class("center_b")
-        if c2 then return true end
+        if c2 and client.focus == c2 then return true end
     end,
 
     function(count)
         if count == 1 then test_client("center_c") end
         c3 = utils.find_client_by_class("center_c")
-        if c3 then return true end
+        if c3 and client.focus == c3 then return true end
     end,
 
     -- Set all columns to 1/3 width so they fit side by side
@@ -78,14 +78,9 @@ local steps = {
     end,
 
     -- Test "always" mode: focused column should be centered
-    function(count)
-        if count == 1 then
-            client.focus = c1
-            c1:raise()
-            awful.layout.arrange(screen.primary)
-            return nil
-        end
-
+    utils.step_focus(function() return c1 end),
+    utils.step_settle_geometry(function() return c1 end),
+    function()
         local wa = screen.primary.workarea
         local g1 = c1:geometry()
         local col_center = g1.x + g1.width / 2
@@ -105,16 +100,11 @@ local steps = {
     end,
 
     -- Switch to "never" mode
-    function(count)
-        if count == 1 then
-            carousel.set_center_mode("never")
-            -- Focus c1 which should be visible
-            client.focus = c1
-            c1:raise()
-            awful.layout.arrange(screen.primary)
-            return nil
-        end
-
+    function() carousel.set_center_mode("never") return true end,
+    -- Focus c1 which should be visible
+    utils.step_focus(function() return c1 end),
+    utils.step_settle_geometry(function() return c1 end),
+    function()
         local wa = screen.primary.workarea
         local g1 = c1:geometry()
 
@@ -131,15 +121,10 @@ local steps = {
     end,
 
     -- Switch to "on-overflow" mode and verify
-    function(count)
-        if count == 1 then
-            carousel.set_center_mode("on-overflow")
-            client.focus = c2
-            c2:raise()
-            awful.layout.arrange(screen.primary)
-            return nil
-        end
-
+    function() carousel.set_center_mode("on-overflow") return true end,
+    utils.step_focus(function() return c2 end),
+    utils.step_settle_geometry(function() return c2 end),
+    function()
         local wa = screen.primary.workarea
         local g2 = c2:geometry()
 
@@ -214,14 +199,9 @@ local steps = {
     end,
 
     -- Focus c3 (offscreen right): should align right edge to viewport right
-    function(count)
-        if count == 1 then
-            client.focus = c3
-            c3:raise()
-            awful.layout.arrange(screen.primary)
-            return nil
-        end
-
+    utils.step_focus(function() return c3 end),
+    utils.step_settle_geometry(function() return c3 end),
+    function()
         local wa = screen.primary.workarea
         local g3 = c3:geometry()
         local bw = c3.border_width or 0
@@ -243,14 +223,9 @@ local steps = {
     end,
 
     -- Focus c1 (offscreen left): should align left edge to viewport left
-    function(count)
-        if count == 1 then
-            client.focus = c1
-            c1:raise()
-            awful.layout.arrange(screen.primary)
-            return nil
-        end
-
+    utils.step_focus(function() return c1 end),
+    utils.step_settle_geometry(function() return c1 end),
+    function()
         local wa = screen.primary.workarea
         local g1 = c1:geometry()
 
