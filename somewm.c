@@ -1393,6 +1393,13 @@ setup(void)
 	kb_group = createkeyboardgroup();
 	wl_list_init(&kb_group->destroy.link);
 
+	/* The cursor and the group keyboard exist regardless of physical devices,
+	 * so advertise both capabilities once here. Waiting for a device event
+	 * leaves them at zero on headless backends and clients can bind neither
+	 * wl_pointer nor wl_keyboard. */
+	wlr_seat_set_capabilities(seat,
+		WL_SEAT_CAPABILITY_POINTER | WL_SEAT_CAPABILITY_KEYBOARD);
+
 	output_mgr = wlr_output_manager_v1_create(dpy);
 	wl_signal_add(&output_mgr->events.apply, &output_mgr_apply);
 	wl_signal_add(&output_mgr->events.test, &output_mgr_test);
