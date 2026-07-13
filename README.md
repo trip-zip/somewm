@@ -1,6 +1,6 @@
 # somewm - AwesomeWM for Wayland
 
-**somewm** is AwesomeWM ported to Wayland, built on [wlroots](https://gitlab.freedesktop.org/wlroots/wlroots) 0.19. It implements AwesomeWM's full Lua API - your `rc.lua`, widgets, and themes carry over with no changes. somewm supports LuaJIT as well as Lua 5.4, 5.3, 5.2, and 5.1.
+**somewm** is AwesomeWM ported to Wayland, built on [wlroots](https://gitlab.freedesktop.org/wlroots/wlroots) 0.20. It implements AwesomeWM's full Lua API - your `rc.lua`, widgets, and themes carry over with no changes. somewm supports LuaJIT as well as Lua 5.4, 5.3, 5.2, and 5.1.
 
 <p align="center">
   <img src="screenshots/default.png" alt="Default configuration" width="45%">
