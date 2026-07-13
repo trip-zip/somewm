@@ -255,14 +255,12 @@ client_is_float_type(Client *c)
 		if (surface->modal)
 			return 1;
 
-#ifdef WLR_VERSION_0_19
 		if (COMPAT_XWAYLAND_HAS_WINDOW_TYPE(surface, WLR_XWAYLAND_NET_WM_WINDOW_TYPE_DIALOG)
 				|| COMPAT_XWAYLAND_HAS_WINDOW_TYPE(surface, WLR_XWAYLAND_NET_WM_WINDOW_TYPE_SPLASH)
 				|| COMPAT_XWAYLAND_HAS_WINDOW_TYPE(surface, WLR_XWAYLAND_NET_WM_WINDOW_TYPE_TOOLBAR)
 				|| COMPAT_XWAYLAND_HAS_WINDOW_TYPE(surface, WLR_XWAYLAND_NET_WM_WINDOW_TYPE_UTILITY)) {
 			return 1;
 		}
-#endif
 
 		return size_hints && size_hints->min_width > 0 && size_hints->min_height > 0
 			&& (size_hints->max_width == size_hints->min_width
