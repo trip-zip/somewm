@@ -312,7 +312,7 @@ cleanup(void)
 	destroykeyboardgroup(&kb_group->destroy, NULL);
 
 	/* Remove backend listeners immediately before destroying backend.
-	 * wlroots 0.19 asserts that all listeners are removed at destruction time. */
+	 * wlroots asserts that all listeners are removed at destruction time. */
 	wl_list_remove(&new_output.link);
 	wl_list_remove(&new_input_device.link);
 
@@ -346,7 +346,7 @@ cleanuplisteners(void)
 	wl_list_remove(&new_idle_inhibitor.link);
 	wl_list_remove(&layout_change.link);
 	/* NOTE: new_input_device and new_output are removed in cleanup()
-	 * immediately before wlr_backend_destroy() to satisfy wlroots 0.19
+	 * immediately before wlr_backend_destroy() to satisfy wlroots
 	 * assertions that require all backend listeners to be present until
 	 * backend destruction. */
 	wl_list_remove(&new_virtual_keyboard.link);

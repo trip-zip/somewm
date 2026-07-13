@@ -37,7 +37,7 @@
 
 /* Mirror of wlroots' private keyboard_group_device struct (wlr_keyboard_group.c).
  * Needed to iterate member keyboards when setting layout group.
- * Must match the exact layout of the wlroots 0.19 struct. */
+ * Must match the exact layout of the wlroots 0.20 struct. */
 struct kb_group_device {
 	struct wlr_keyboard *keyboard;
 	struct wl_listener key;

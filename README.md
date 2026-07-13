@@ -4,7 +4,7 @@ A Lua framework for building your Wayland desktop. Layouts, widgets, keybindings
 
 SomeWM has a complete widget system, a signal-driven object model, and a compositor runtime, all wired together so every piece can talk to every other piece. Write a widget that reacts to window focus changes. Build a layout that adapts to screen geometry. Script your entire workflow from `rc.lua` or from the command line.
 
-Built on [wlroots](https://gitlab.freedesktop.org/wlroots/wlroots) 0.19. Compatible with [AwesomeWM's](https://github.com/awesomeWM/awesome) Lua API - existing configs, widgets, and themes carry over.
+Built on [wlroots](https://gitlab.freedesktop.org/wlroots/wlroots) 0.20. Compatible with [AwesomeWM's](https://github.com/awesomeWM/awesome) Lua API - existing configs, widgets, and themes carry over.
 
 > **This branch (`main`) is 2.0-dev.** If you want 100% AwesomeWM parity, use the [`release/1.4`](https://github.com/trip-zip/somewm/tree/release/1.4) branch or install `somewm` from the [AUR](https://aur.archlinux.org/packages/somewm).
 

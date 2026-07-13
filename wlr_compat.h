@@ -1,10 +1,9 @@
 /*
  * wlr_compat.h - wlroots version abstraction layer
  *
- * Provides macros to abstract wlroots API details. When wlroots 0.20
- * inevitably breaks APIs, only this file needs updating.
+ * Provides macros to abstract wlroots API details.
  *
- * Currently targets wlroots 0.19.
+ * Currently targets wlroots 0.20.
  */
 
 #ifndef WLR_COMPAT_H
