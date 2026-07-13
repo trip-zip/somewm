@@ -20,6 +20,7 @@
 local capi = { client = client, screen = screen, awesome = awesome }
 local math = math
 local ascreen = require("awful.screen")
+local prior_ci
 
 -- awful.layout is lazy-loaded: carousel is required during awful.layout init,
 -- so a top-level require would be circular. We cache after first use.
@@ -404,8 +405,9 @@ function carousel._arrange_impl(p, vertical)
 
     -- Compute target scroll offset based on centering mode
     local focus_ci = focused_col_idx(state, focus)
-    if not focus_ci then focus_ci = 1 end
+    if not focus_ci then focus_ci = prior_ci - 1 end
     state.last_focused_ci = focus_ci
+    prior_ci = focus_ci
 
     local center_mode = get_beautiful().carousel_center_mode or carousel.center_mode
 
