@@ -36,7 +36,6 @@
 #include <wlr/render/wlr_texture.h>
 #include <wlr/render/pass.h>
 #include <wlr/types/wlr_buffer.h>
-#include <wlr/interfaces/wlr_buffer.h>
 #include <wlr/render/allocator.h>
 #include <wlr/types/wlr_xcursor_manager.h>
 #include <cairo.h>
