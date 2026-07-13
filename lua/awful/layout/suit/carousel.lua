@@ -294,13 +294,13 @@ local function apply_geometry(state)
         if not cp then break end
         local n = #col.clients
         local stack_total = stack_sz - 2 * gap
-        local row_size = math.floor((stack_total - (n - 1) * gap) / n)
+        local row_size = math.floor((stack_total - (n - 1) * (gap * 2)) / n)
 
         for ri, c in ipairs(col.clients) do
             local bw = c.border_width or 0
             local scroll_client_size = math.max(1, cp.pixel_width - 2 * bw - 2 * gap)
             local stack_client_size = math.max(1, row_size - 2 * bw)
-            local stack_offset = (ri - 1) * (row_size + gap)
+            local stack_offset = (ri - 1) * (row_size + (gap * 2))
             local scroll_pos = scroll_o + peek + cp.canvas_x - state.scroll_offset + gap
             local stack_pos = stack_o + gap + stack_offset
 
