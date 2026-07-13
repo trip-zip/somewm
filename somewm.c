@@ -6268,20 +6268,24 @@ unmapnotify(struct wl_listener *listener, void *data)
 		c->toplevel_handle = NULL;
 	}
 
-	/* CRITICAL: If this is the focused client, clear focus immediately
-	 * to prevent client_focus_refresh() from accessing dangling surface pointers */
-	if (globalconf.focus.client == c) {
-		globalconf.focus.client = NULL;
-		globalconf.focus.need_update = true;
-		/* Clear seat keyboard focus to prevent focusclient() from trying to
-		 * deactivate this surface during focus restoration. The XDG surface
-		 * is already uninitialized by the time unmapnotify fires, so any
-		 * wlr_xdg_toplevel_set_activated() call would assert. */
-		if (seat->keyboard_state.focused_surface == client_surface(c))
-			wlr_seat_keyboard_clear_focus(seat);
-	}
+	/* Clear seat keyboard focus to prevent focusclient() from trying to
+	 * deactivate this surface during focus restoration. The XDG surface
+	 * is already uninitialized by the time unmapnotify fires, so any
+	 * wlr_xdg_toplevel_set_activated() call would assert. */
+	if (globalconf.focus.client == c
+			&& seat->keyboard_state.focused_surface == client_surface(c))
+		wlr_seat_keyboard_clear_focus(seat);
 
 	if (client_is_unmanaged(c)) {
+		/* Unmanaged clients never reach client_unmanage(), so clear the
+		 * focus pointer here: the scene is destroyed below and a later
+		 * focusclient() would touch its freed borders. focusclient() skips
+		 * unmanaged clients, so they never got a "focus" signal and there
+		 * is no "unfocus" to emit. */
+		if (globalconf.focus.client == c) {
+			globalconf.focus.client = NULL;
+			globalconf.focus.need_update = true;
+		}
 		if (c == exclusive_focus) {
 			exclusive_focus = NULL;
 			focus_restore(c->mon ? c->mon : selmon);
@@ -6290,6 +6294,8 @@ unmapnotify(struct wl_listener *listener, void *data)
 		/* AwesomeWM pattern: call client_unmanage() from unmapnotify.
 		 * This emits request::unmanage while c->screen is still valid,
 		 * allowing Lua's check_focus_delayed to restore focus properly.
+		 * It also calls client_unfocus() while the client is still focused,
+		 * which is what emits "unfocus" + property::active=false.
 		 * destroynotify() will see client already removed from array and skip. */
 		client_unmanage(c, CLIENT_UNMANAGE_UNMAP);
 	}
