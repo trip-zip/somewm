@@ -42,12 +42,16 @@ runner.run_async(function()
     test_client("unfocus_close")
     local c = async.wait_for_client("unfocus_close", 5)
     assert(c, "Client did not appear")
+
+    -- Focus explicitly: the test config has no rules, and new clients are only
+    -- focused by rules.
+    client.focus = c
     assert(async.wait_for_focus("unfocus_close", 2), "Client should have focus")
 
-    -- kitty ignores the close request while its child (sleep infinity) runs,
-    -- so kill the process to get a real surface destroy.
+    -- kitty ignores both the close request and SIGTERM while its child
+    -- (sleep infinity) runs, so SIGKILL it to get a real surface destroy.
     assert(c.pid, "Client has no pid")
-    os.execute("kill " .. c.pid)
+    os.execute("kill -9 " .. c.pid)
     async.wait_for_condition(function() return #events >= 3 end, 10)
 
     assert(unfocused, "unfocus was not emitted when the focused client closed")
