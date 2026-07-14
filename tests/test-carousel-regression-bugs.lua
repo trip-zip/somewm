@@ -43,39 +43,31 @@ local steps = {
     function(count)
         if count == 1 then test_client("regbug_a") end
         c1 = utils.find_client_by_class("regbug_a")
-        if c1 then return true end
+        if c1 and client.focus == c1 then return true end
     end,
 
     function(count)
         if count == 1 then test_client("regbug_b") end
         c2 = utils.find_client_by_class("regbug_b")
-        if c2 then return true end
+        if c2 and client.focus == c2 then return true end
     end,
 
     function(count)
         if count == 1 then test_client("regbug_c") end
         c3 = utils.find_client_by_class("regbug_c")
-        if c3 then return true end
+        -- Wait for c3's focus-on-map to land before proceeding, so a delayed
+        -- steal cannot fire after a later step has set focus elsewhere.
+        if c3 and client.focus == c3 then return true end
     end,
 
     -- Focus c2 (middle column), consume c1 to the left (column destroyed)
-    function(count)
-        if count == 1 then
-            client.focus = c2
-            c2:raise()
-            awful.layout.arrange(screen.primary)
-            return nil
-        end
-        return true
-    end,
+    utils.step_focus(function() return c2 end),
 
-    function(count)
-        if count == 1 then
-            -- Consume the left neighbor (c1) into c2's column
-            carousel.consume_window(-1)
-            return nil
-        end
+    -- Consume the left neighbor (c1) into c2's column
+    function() carousel.consume_window(-1) return true end,
+    utils.step_settle_geometry(function() return c2 end),
 
+    function()
         -- c1 is now stacked in c2's column. c1's old column is destroyed.
         -- c2 should still be visible (viewport followed the focused column).
         local wa = screen.primary.workarea
@@ -96,18 +88,18 @@ local steps = {
     end,
 
     -- Expel c1 back out (column created). c2 should still be visible.
-    function(count)
-        if count == 1 then
-            client.focus = c1
-            c1:raise()
-            carousel.expel_window()
-            -- Re-focus c2
-            client.focus = c2
-            c2:raise()
-            awful.layout.arrange(screen.primary)
-            return nil
-        end
+    function()
+        client.focus = c1
+        c1:raise()
+        carousel.expel_window()
+        -- Re-focus c2
+        client.focus = c2
+        c2:raise()
+        return true
+    end,
+    utils.step_settle_geometry(function() return c2 end),
 
+    function()
         local wa = screen.primary.workarea
         local g2 = c2:geometry()
         io.stderr:write(string.format(

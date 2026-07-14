@@ -40,25 +40,17 @@ local steps = {
     function(count)
         if count == 1 then test_client("width_a") end
         c1 = utils.find_client_by_class("width_a")
-        if c1 then return true end
+        if c1 and client.focus == c1 then return true end
     end,
 
     function(count)
         if count == 1 then test_client("width_b") end
         c2 = utils.find_client_by_class("width_b")
-        if c2 then return true end
+        if c2 and client.focus == c2 then return true end
     end,
 
-    -- Step 4: Focus c1 and let layout settle
-    function(count)
-        if count == 1 then
-            client.focus = c1
-            c1:raise()
-            awful.layout.arrange(screen.primary)
-            return nil
-        end
-        return true
-    end,
+    -- Step 4: Focus c1 and wait for focus to settle
+    utils.step_focus(function() return c1 end),
 
     -- Step 5: Cycle column width (deferred arrange)
     function(count)

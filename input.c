@@ -100,7 +100,7 @@ void motionnotify(uint32_t time, struct wlr_input_device *device, double dx, dou
 		double dx_unaccel, double dy_unaccel);
 void pointerfocus(Client *c, struct wlr_surface *surface, double sx, double sy,
 		uint32_t time);
-int keybinding(uint32_t mods, uint32_t keycode, xkb_keysym_t sym, xkb_keysym_t base_sym);
+int keybinding(uint32_t mods, uint32_t keycode, xkb_keysym_t sym, xkb_keysym_t base_sym, bool is_keypress);
 void createkeyboard(struct wlr_keyboard *keyboard);
 KeyboardGroup *createkeyboardgroup(void);
 void createpointer(struct wlr_pointer *pointer);
@@ -1093,7 +1093,7 @@ pointerfocus(Client *c, struct wlr_surface *surface, double sx, double sy,
 }
 
 int
-keybinding(uint32_t mods, uint32_t keycode, xkb_keysym_t sym, xkb_keysym_t base_sym)
+keybinding(uint32_t mods, uint32_t keycode, xkb_keysym_t sym, xkb_keysym_t base_sym, bool is_keypress)
 {
 	client_t *focused;
 	struct wlr_surface *surface;
@@ -1116,12 +1116,12 @@ keybinding(uint32_t mods, uint32_t keycode, xkb_keysym_t sym, xkb_keysym_t base_
 	focused = surface ? some_client_from_surface(surface) : NULL;
 
 	/* Check client-specific Lua key objects first (AwesomeWM pattern)
-	 * Client keybindings pass the client as argument to the "press" signal */
-	if (focused && luaA_client_key_check_and_emit(focused, CLEANMASK(mods), keycode, sym, base_sym))
+	 * Client keybindings pass the client as argument to the "press" or "release" signal */
+	if (focused && luaA_client_key_check_and_emit(focused, CLEANMASK(mods), keycode, sym, base_sym, is_keypress))
 		return 1;
 
 	/* Check global Lua key objects (AwesomeWM pattern) */
-	if (luaA_key_check_and_emit(CLEANMASK(mods), keycode, sym, base_sym))
+	if (luaA_key_check_and_emit(CLEANMASK(mods), keycode, sym, base_sym, is_keypress))
 		return 1;
 
 	/* Hardcoded VT switching (compositor-level, non-configurable)
@@ -1219,9 +1219,13 @@ keypress(struct wl_listener *listener, void *data)
 	/* On _press_ if there is no active screen locker,
 	 * attempt to process a compositor keybinding.
 	 * Block for both ext-session-lock-v1 (locked) and Lua lock (some_is_lua_locked). */
-	if (!session_is_locked() && event->state == WL_KEYBOARD_KEY_STATE_PRESSED) {
-		for (i = 0; i < nsyms; i++)
-			handled = keybinding(mods, keycode, syms[i], base_sym) || handled;
+	if (!session_is_locked()) {
+		bool is_keypress = event->state == WL_KEYBOARD_KEY_STATE_PRESSED;
+		for (i = 0; i < nsyms; i++) {
+			bool binding_handled = keybinding(mods, keycode, syms[i], base_sym, is_keypress);
+			if (is_keypress)
+				handled = binding_handled || handled;
+		}
 	}
 
 	if (handled && group->wlr_group->keyboard.repeat_info.delay > 0) {
@@ -1305,7 +1309,9 @@ keyrepeat(void *data)
 			1000 / group->wlr_group->keyboard.repeat_info.rate);
 
 	for (i = 0; i < group->nsyms; i++)
-		keybinding(group->mods, group->keycode, group->keysyms[i], group->base_sym);
+		/* Hardcode is_keypress = true for the keybinding() call since
+		 * keyrepeat only matters for key down condition */
+		keybinding(group->mods, group->keycode, group->keysyms[i], group->base_sym, true);
 
 	return 0;
 }
@@ -1373,7 +1379,6 @@ inputdevice(struct wl_listener *listener, void *data)
 	/* This event is raised by the backend when a new input device becomes
 	 * available. */
 	struct wlr_input_device *device = data;
-	uint32_t caps;
 
 	switch (device->type) {
 	case WLR_INPUT_DEVICE_KEYBOARD:
@@ -1390,14 +1395,7 @@ inputdevice(struct wl_listener *listener, void *data)
 		break;
 	}
 
-	/* We need to let the wlr_seat know what our capabilities are, which is
-	 * communiciated to the client. In somewm we always have a cursor, even if
-	 * there are no pointer devices, so we always include that capability. */
-	/* TODO do we actually require a cursor? */
-	caps = WL_SEAT_CAPABILITY_POINTER;
-	if (!wl_list_empty(&kb_group->wlr_group->devices))
-		caps |= WL_SEAT_CAPABILITY_KEYBOARD;
-	wlr_seat_set_capabilities(seat, caps);
+	/* Seat capabilities are constant; advertised once in setup(). */
 }
 
 void

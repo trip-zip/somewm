@@ -43,19 +43,19 @@ local steps = {
     function(count)
         if count == 1 then test_client("gest_a") end
         c1 = utils.find_client_by_class("gest_a")
-        if c1 then return true end
+        if c1 and client.focus == c1 then return true end
     end,
 
     function(count)
         if count == 1 then test_client("gest_b") end
         c2 = utils.find_client_by_class("gest_b")
-        if c2 then return true end
+        if c2 and client.focus == c2 then return true end
     end,
 
     function(count)
         if count == 1 then test_client("gest_c") end
         c3 = utils.find_client_by_class("gest_c")
-        if c3 then return true end
+        if c3 and client.focus == c3 then return true end
     end,
 
     -- Set all to 1/2 width so strip overflows
