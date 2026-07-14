@@ -28,6 +28,7 @@
   xwayland,
   gtk3Support ? true,
   gtk3 ? null,
+  wrapGAppsHook3,
   extraGIPackages ? [ ],
   extraLuaPackages ? (_: [ ]),
 }:
@@ -56,6 +57,7 @@ stdenv.mkDerivation {
     ninja
     pkg-config
     wayland-scanner
+    wrapGAppsHook3
   ];
 
   buildInputs = [
