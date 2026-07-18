@@ -2758,7 +2758,7 @@ client_resize_do(client_t *c, area_t geometry, bool silent)
 }
 
 /** Resize client window.
- * The sizes given as parameters are with borders!
+ * The sizes given as parameters are *without* borders!
  * \param c Client to resize.
  * \param geometry New window geometry.
  * \param honor_hints Use size hints.
