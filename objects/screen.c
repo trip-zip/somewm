@@ -869,6 +869,8 @@ luaA_screen_get_bounding_geometry(lua_State *L)
 	screen_t *screen;
 	struct wlr_box geo;
 	int honor_workarea, honor_padding;
+	/* 0 = left, 1 = right, 2 = top, 3 = bottom */
+	int margins[4] = { 0, 0, 0, 0 };
 
 	screen = luaA_checkscreen(L, 1);
 
@@ -889,12 +891,44 @@ luaA_screen_get_bounding_geometry(lua_State *L)
 		lua_getfield(L, 2, "honor_padding");
 		honor_padding = lua_toboolean(L, -1);
 		lua_pop(L, 1);
+
+		lua_getfield(L, 2, "margins");
+		if (lua_istable(L, -1)) {
+			lua_getfield(L, -1, "left");
+			margins[0] = lua_tointeger(L, -1);
+			lua_pop(L, 1);
+
+			lua_getfield(L, -1, "right");
+			margins[1] = lua_tointeger(L, -1);
+			lua_pop(L, 1);
+
+			lua_getfield(L, -1, "top");
+			margins[2] = lua_tointeger(L, -1);
+			lua_pop(L, 1);
+
+			lua_getfield(L, -1, "bottom");
+			margins[3] = lua_tointeger(L, -1);
+			lua_pop(L, 1);
+		} else if (lua_isnumber(L, -1)) {
+			margins[0] = lua_tointeger(L, -1);
+			margins[1] = lua_tointeger(L, -1);
+			margins[2] = lua_tointeger(L, -1);
+			margins[3] = lua_tointeger(L, -1);
+			lua_pop(L, 1);
+		}
+		lua_pop(L, 1);
 	}
 
 	/* Use workarea if requested, otherwise full geometry */
 	geo = honor_workarea ? screen->workarea : screen->geometry;
 
-	/* TODO: Apply honor_padding and margins if needed */
+	/* Apply margins */
+	geo.x += margins[0];
+	geo.y += margins[3];
+	geo.width -= (margins[0] + margins[1]);
+	geo.height -= (margins[2] + margins[3]);
+
+	/* TODO: Apply honor_padding */
 	(void)honor_padding;
 
 	lua_newtable(L);
