@@ -24,7 +24,7 @@
   wayland,
   wayland-protocols,
   wayland-scanner,
-  wlroots_0_19,
+  wlroots_0_20,
   xwayland,
   gtk3Support ? true,
   gtk3 ? null,
@@ -74,7 +74,7 @@ stdenv.mkDerivation {
     pango
     wayland
     wayland-protocols
-    wlroots_0_19
+    wlroots_0_20
     libxcb
     libxcb-wm
     libxcb-util
