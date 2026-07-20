@@ -75,6 +75,7 @@ carousel.peek_width = 0
 
 --- Dynamic peek mode. Enabled, columns at the edges of the strip will not have empty
 -- space caused by peeking, but will instead be aligned with the edge of the workarea.
+-- Dynamic peek only functions on "never" and "edge" viewport centering modes.
 -- @beautiful beautiful.carousel_dynamic_peek
 -- @tparam boolean True enabled dynamic peeking
 carousel.dynamic_peek = false
@@ -433,11 +434,11 @@ function carousel._arrange_impl(p, vertical)
         local near_edge = fcp.canvas_x - candidate
         local far_edge = near_edge + fcp.pixel_width
         if far_edge <= 0 then
-            candidate = fcp.canvas_x
+            candidate = fcp.canvas_x + dp
         elseif near_edge >= effective_viewport then
-            candidate = fcp.canvas_x + fcp.pixel_width - effective_viewport
+            candidate = fcp.canvas_x + fcp.pixel_width - effective_viewport + dp
         end
-        state.target_offset = candidate + dp
+        state.target_offset = candidate
     elseif center_mode == "edge" then
         local candidate = state.target_offset
         local near_edge = fcp.canvas_x - candidate
@@ -455,7 +456,7 @@ function carousel._arrange_impl(p, vertical)
         if near_edge < 0 or far_edge > effective_viewport then
             candidate = offset_to_center_column(fcp, effective_viewport)
         end
-        state.target_offset = candidate + dp
+        state.target_offset = candidate
     end
 
     -- Clamp to strip boundaries ("always" center mode is exempt so it
@@ -558,15 +559,14 @@ function carousel.get()
 
     local focus_ci, focus_ri = focused_col_idx(state, focus)
 
+    local peek = state.peek
     local viewport_size = scroll_extent(state.workarea, state.vertical)
-    local peek = get_beautiful().carousel_peek_width or carousel.peek_width
-    if peek < 0 then peek = 0 end
-    if peek > 0 then peek = peek + state.gap end
     local effective_viewport = effective_viewport_size(viewport_size, peek)
     local col_positions = compute_column_positions(state.columns, effective_viewport)
     local scroll = state.scroll_offset < 0 and 0 or state.scroll_offset
     -- Offset reported viewport position when using dynamic peek
-    if state.dynamic_peek then
+    local center_mode = get_beautiful().carousel_center_mode or carousel.center_mode
+    if state.dynamic_peek and center_mode == "never" or center_mode == "edge" then
         scroll = state.scroll_offset >= peek and state.scroll_offset - peek or scroll
     end
 
