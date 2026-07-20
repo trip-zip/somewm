@@ -532,6 +532,40 @@ local function with_focused_column(fn)
     get_layout().arrange(s)
 end
 
+--- Return a table containing the strip width, viewport dimensions and position,
+-- column information and focused client position.
+function carousel.get()
+    local scr = ascreen.focused()
+    local t = scr and scr.selected_tag
+    if not t then return end
+
+    local state = get_state(t)
+    local focus = capi.client.focus
+
+    local focus_ci, focus_ri = focused_col_idx(state, focus)
+
+    local viewport_size = scroll_extent(state.workarea, state.vertical)
+    local peek = get_beautiful().carousel_peek_width or carousel.peek_width
+    if peek < 0 then peek = 0 end
+    if peek > 0 then peek = peek + state.gap end
+    local effective_viewport = effective_viewport_size(viewport_size, peek)
+    local col_positions = compute_column_positions(state.columns, effective_viewport)
+    local scroll = state.scroll_offset < 0 and 0 or state.scroll_offset
+
+    local info = {
+    	width = strip_width(col_positions),
+    	viewport = {
+    	    width = state.vertical and scr.geometry.width or viewport_size,
+    	    height = state.vertical and viewport_size or scr.geometry.height
+    	},
+    	position = scroll,
+    	columns = state.columns,
+    	focus = {focus_ci, focus_ri}
+    }
+
+    return info
+end
+
 ---------------------------------------------------------------------------
 -- Column Width Operations
 ---------------------------------------------------------------------------
