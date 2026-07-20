@@ -565,6 +565,10 @@ function carousel.get()
     local effective_viewport = effective_viewport_size(viewport_size, peek)
     local col_positions = compute_column_positions(state.columns, effective_viewport)
     local scroll = state.scroll_offset < 0 and 0 or state.scroll_offset
+    -- Offset reported viewport position when using dynamic peek
+    if state.dynamic_peek then
+        scroll = state.scroll_offset >= peek and state.scroll_offset - peek or scroll
+    end
 
     local info = {
     	width = strip_width(col_positions),
