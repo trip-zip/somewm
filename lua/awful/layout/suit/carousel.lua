@@ -73,6 +73,12 @@ carousel.scroll_duration = 0
 -- @tparam[opt=0] number peek_width
 carousel.peek_width = 0
 
+--- Dynamic peek mode. Enabled, columns at the edges of the strip will not have empty
+-- space caused by peeking, but will instead be aligned with the edge of the workarea.
+-- @beautiful beautiful.carousel_dynamic_peek
+-- @tparam boolean True enabled dynamic peeking
+carousel.dynamic_peek = false
+
 -- Per-tag state, weak-keyed so it's collected when tags are removed.
 local tag_state = setmetatable({}, { __mode = "k" })
 
@@ -390,6 +396,7 @@ function carousel._arrange_impl(p, vertical)
 
     local viewport_size = scroll_extent(wa, vertical)
     local peek = get_beautiful().carousel_peek_width or carousel.peek_width
+    local dynamic_peek = get_beautiful().carousel_dynamic_peek or carousel.dynamic_peek
     if peek < 0 then peek = 0 end
     if peek > 0 then peek = peek + gap end
     local effective_viewport = effective_viewport_size(viewport_size, peek)
@@ -401,6 +408,7 @@ function carousel._arrange_impl(p, vertical)
     state.gap = gap
     state.vertical = vertical
     state.peek = peek
+    state.dynamic_peek = dynamic_peek
 
     -- Compute target scroll offset based on centering mode
     local focus_ci = focused_col_idx(state, focus)
@@ -411,6 +419,11 @@ function carousel._arrange_impl(p, vertical)
     local center_mode = get_beautiful().carousel_center_mode or carousel.center_mode
 
     local fcp = col_positions[focus_ci]
+    local dp = 0
+    -- Only peek on inner strip columns when dynamic_peek is set to true
+    if dynamic_peek then
+        dp = focus_ci == 1 and peek or focus_ci == #col_positions and -peek
+    end
     if center_mode == "always" then
         state.target_offset = offset_to_center_column(fcp, effective_viewport)
     elseif center_mode == "never" then
@@ -423,7 +436,7 @@ function carousel._arrange_impl(p, vertical)
         elseif near_edge >= effective_viewport then
             candidate = fcp.canvas_x + fcp.pixel_width - effective_viewport
         end
-        state.target_offset = candidate
+        state.target_offset = candidate + dp
     elseif center_mode == "edge" then
         local candidate = state.target_offset
         local near_edge = fcp.canvas_x - candidate
@@ -433,7 +446,7 @@ function carousel._arrange_impl(p, vertical)
         elseif far_edge > effective_viewport then
             candidate = fcp.canvas_x + fcp.pixel_width - effective_viewport
         end
-        state.target_offset = candidate
+        state.target_offset = candidate + dp
     else -- "on-overflow" (default)
         local candidate = state.target_offset
         local near_edge = fcp.canvas_x - candidate
@@ -441,7 +454,7 @@ function carousel._arrange_impl(p, vertical)
         if near_edge < 0 or far_edge > effective_viewport then
             candidate = offset_to_center_column(fcp, effective_viewport)
         end
-        state.target_offset = candidate
+        state.target_offset = candidate + dp
     end
 
     -- Clamp to strip boundaries ("always" center mode is exempt so it
@@ -741,7 +754,8 @@ function carousel.push_window(dir)
             end
             target_idx = current_idx + ch
             if target_idx < 1 or target_idx > #source_col.clients then return end
-            table.insert(source_col.clients, target_idx, table.remove(source_col.clients, current_idx))
+            table.insert(source_col.clients, target_idx,
+                table.remove(source_col.clients, current_idx))
         end
     else return end
     rebuild_index(state)
