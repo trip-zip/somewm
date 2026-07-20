@@ -670,7 +670,8 @@ function carousel.push_window(dir)
     if dir == "left" or dir == "up" then ch = -1 end
     if dir == "right" or dir == "down" then ch = 1 end
 
-    if dir == "left" or dir == "right" then
+    if not state.vertical and (dir == "left" or dir == "right") or
+            state.vertical and (dir == "up" or dir == "down") then
         if #source_col.clients == 1 then
             -- Solo: consume into adjacent column
             local target_ci = entry.col_idx + ch
@@ -697,7 +698,8 @@ function carousel.push_window(dir)
             }
             table.insert(state.columns, insert_ci, new_col)
         end
-    elseif dir == "up" or dir == "down" then
+    elseif not state.vertical and (dir == "up" or dir == "down") or
+            state.vertical and (dir == "left" or dir == "right") then
         if #source_col.clients > 1 then
             local current_idx
             for _, c in ipairs(source_col.clients) do
