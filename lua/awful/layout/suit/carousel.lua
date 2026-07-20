@@ -422,7 +422,7 @@ function carousel._arrange_impl(p, vertical)
     local dp = 0
     -- Only peek on inner strip columns when dynamic_peek is set to true
     if dynamic_peek then
-        dp = focus_ci == 1 and peek or focus_ci == #col_positions and -peek
+        dp = focus_ci == 1 and peek or focus_ci == #col_positions and -peek or 0
     end
     if center_mode == "always" then
         state.target_offset = offset_to_center_column(fcp, effective_viewport)
