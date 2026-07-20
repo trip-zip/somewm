@@ -406,6 +406,7 @@ function carousel._arrange_impl(p, vertical)
     -- Compute target scroll offset based on centering mode
     local focus_ci = focused_col_idx(state, focus)
     if not focus_ci then focus_ci = prior_ci - 1 end
+    if focus_ci == 0 then focus_ci = 1 end
     state.last_focused_ci = focus_ci
     prior_ci = focus_ci
 
