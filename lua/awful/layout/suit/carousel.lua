@@ -95,6 +95,7 @@ local function get_state(t)
             gap = 0,
             vertical = false,
             peek = 0,
+            dynamic_peek = false,
             -- Animation state (C-side handle)
             anim_handle = nil,
         }
