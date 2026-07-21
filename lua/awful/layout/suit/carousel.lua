@@ -705,6 +705,55 @@ function carousel.expel_window()
     get_layout().arrange(s)
 end
 
+--- Move the focused client using consume-or-expel semantics.
+-- Solo window: consume into the adjacent column (merge with neighbor).
+-- Boundary pushes on solo windows are no-ops.
+-- Multi-window column: expel the focused window into a new column in
+-- the given direction.
+-- @tparam number dir Direction: -1 for left, 1 for right.
+function carousel.push_window(dir)
+    local state, s = get_carousel_context()
+    if not state then return end
+
+    local focus = capi.client.focus
+    if not focus then return end
+
+    local entry = state.client_to_column[focus]
+    if not entry then return end
+
+    local source_col = state.columns[entry.col_idx]
+
+    if #source_col.clients == 1 then
+        -- Solo: consume into adjacent column
+        local target_ci = entry.col_idx + dir
+        if target_ci < 1 or target_ci > #state.columns then return end
+
+        local target_col = state.columns[target_ci]
+        table.remove(source_col.clients, 1)
+        table.insert(target_col.clients, focus)
+        table.remove(state.columns, entry.col_idx)
+    else
+        -- Multi: expel into new column in given direction
+        table.remove(source_col.clients, entry.row_idx)
+
+        local insert_ci
+        if dir < 0 then
+            insert_ci = entry.col_idx  -- before current
+        else
+            insert_ci = entry.col_idx + 1  -- after current
+        end
+
+        local new_col = {
+            clients = { focus },
+            width_fraction = source_col.width_fraction,
+        }
+        table.insert(state.columns, insert_ci, new_col)
+    end
+
+    rebuild_index(state)
+    get_layout().arrange(s)
+end
+
 --- Move the focused client using global directions.
 -- Solo window: consume into the column in the given direction (merge with
 -- neighbor). Boundary pushes on solo windows are no-ops.
@@ -712,7 +761,7 @@ end
 -- the given direction, or shift the focused client's position in the column
 -- in the given direction.
 -- @tparam string dir Direction: "left", "up", "right", "down".
-function carousel.push_window(dir)
+function carousel.push_window_bydirection(dir)
     local state, s = get_carousel_context()
     if not state then return end
 
