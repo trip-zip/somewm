@@ -175,6 +175,14 @@ local function focused_col_idx(state, focus)
     return nil
 end
 
+--- Find which row within a column the focused client is in. Returns row_idx or nil.
+local function focused_row_idx(state, focus)
+    if not focus then return nil end
+    local entry = state.client_to_column[focus]
+    if entry then return entry.row_idx end
+    return nil
+end
+
 --- Reconcile column state against the current tiled client list.
 -- p.clients is authoritative: remove dead clients, add new ones.
 local function reconcile(state, cls, default_width, focus)
@@ -559,24 +567,35 @@ function carousel.get()
     local state = get_state(t)
     local focus = capi.client.focus
 
-    local focus_ci, focus_ri = focused_col_idx(state, focus)
+    local focus_ci = focused_col_idx(state, focus)
+    local focus_ri = focused_row_idx(state, focus)
 
-    local peek = state.peek
-    local gap = state.gap
-    local dp = state.dynamic_peek
-    local so = state.scroll_offset
-    local viewport_size = scroll_extent(state.workarea, state.vertical)
-    local effective_viewport = effective_viewport_size(viewport_size, peek)
-    local col_positions = compute_column_positions(state.columns, effective_viewport)
-    local scroll = so < 0 and 0 or so
-    -- Offset reported viewport position when using dynamic peek
-    local center_mode = get_beautiful().carousel_center_mode or carousel.center_mode
-    if dp >= 0 and (center_mode == "never" or center_mode == "edge") then
-        scroll = so >= dp and so - peek + gap or scroll
+    local peek = state.peek or
+        get_beautiful().carousel_peek_width or carousel.peek_width
+    local dp = state.dynamic_peek or
+        get_beautiful().carousel_dynamic_peek_width or carousel.dynamic_peek_width
+    local gap = state.gap or get_beautiful().useless_gap
+
+    if state.workarea then
+        local so = state.scroll_offset or 0
+        local viewport_size = scroll_extent(state.workarea, state.vertical)
+        local effective_viewport = effective_viewport_size(viewport_size, peek)
+        local col_positions = compute_column_positions(state.columns, effective_viewport)
+        local sw = strip_width(col_positions)
+        local scroll = so < 0 and 0 or so
+        -- Offset reported viewport position when using dynamic peek
+        local center_mode = get_beautiful().carousel_center_mode or carousel.center_mode
+        if dp >= 0 and (center_mode == "never" or center_mode == "edge") then
+            scroll = so >= dp and so - peek + gap or scroll
+        end
+    else
+        local sw = 0
+        local viewport_size = state.vertical and scr.geometry.height or scr.geometry.width
+        local scroll = 0
     end
 
     local info = {
-    	width = strip_width(col_positions),
+    	width = sw,
     	viewport = {
     	    width = state.vertical and scr.geometry.width or viewport_size,
     	    height = state.vertical and viewport_size or scr.geometry.height,
@@ -587,7 +606,7 @@ function carousel.get()
     	focus = {focus_ci, focus_ri}
     }
 
-    return info
+    return state.last_focused_ci
 end
 
 ---------------------------------------------------------------------------
