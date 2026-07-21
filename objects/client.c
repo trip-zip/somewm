@@ -3818,8 +3818,6 @@ titlebar_get_area(client_t *c, client_titlebar_t bar)
      * so titlebars must start INSIDE the border area. */
     result.x = bw;
     result.y = bw;
-    result.width -= 2 * bw;
-    result.height -= 2 * bw;
 
     // Let's try some ascii art (with borders):
     // +---------------------------+  <- border
@@ -3836,13 +3834,13 @@ titlebar_get_area(client_t *c, client_titlebar_t bar)
 
     switch (bar) {
     case CLIENT_TITLEBAR_BOTTOM:
-        result.y = c->geometry.height - bw - c->titlebar[bar].size;
+        result.y = c->geometry.height + bw - c->titlebar[bar].size;
         /* Fall through */
     case CLIENT_TITLEBAR_TOP:
         result.height = c->titlebar[bar].size;
         break;
     case CLIENT_TITLEBAR_RIGHT:
-        result.x = c->geometry.width - bw - c->titlebar[bar].size;
+        result.x = c->geometry.width + bw - c->titlebar[bar].size;
         /* Fall through */
     case CLIENT_TITLEBAR_LEFT:
         result.y = bw + c->titlebar[CLIENT_TITLEBAR_TOP].size;
