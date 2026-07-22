@@ -472,9 +472,11 @@ function carousel._arrange_impl(p, vertical)
     -- Clamp to strip boundaries ("always" center mode is exempt so it
     -- can show empty space at strip edges when centering edge columns)
     local should_clamp = center_mode ~= "always"
+    local sw = strip_width(col_positions)
     if should_clamp then
-        state.target_offset = clamp_offset(
-            state.target_offset, col_positions, effective_viewport)
+        state.target_offset = clamp_offset(state.target_offset, col_positions,
+            focus_ci == #state.columns and sw > viewport_size and
+                effective_viewport + peek - gap or effective_viewport)
         state.scroll_offset = clamp_offset(
             state.scroll_offset, col_positions, effective_viewport)
     end
