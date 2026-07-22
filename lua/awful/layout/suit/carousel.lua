@@ -576,22 +576,22 @@ function carousel.get()
         get_beautiful().carousel_dynamic_peek_width or carousel.dynamic_peek_width
     local gap = state.gap or get_beautiful().useless_gap
 
+    local sw = 0
+    local viewport_size = state.vertical and scr.geometry.height or scr.geometry.width
+    local scroll = 0
+
     if state.workarea then
         local so = state.scroll_offset or 0
-        local viewport_size = scroll_extent(state.workarea, state.vertical)
+        viewport_size = scroll_extent(state.workarea, state.vertical)
         local effective_viewport = effective_viewport_size(viewport_size, peek)
         local col_positions = compute_column_positions(state.columns, effective_viewport)
-        local sw = strip_width(col_positions)
-        local scroll = so < 0 and 0 or so
+        sw = strip_width(col_positions)
+        scroll = so < 0 and 0 or so
         -- Offset reported viewport position when using dynamic peek
         local center_mode = get_beautiful().carousel_center_mode or carousel.center_mode
         if dp >= 0 and (center_mode == "never" or center_mode == "edge") then
             scroll = so >= dp and so - peek + gap or scroll
         end
-    else
-        local sw = 0
-        local viewport_size = state.vertical and scr.geometry.height or scr.geometry.width
-        local scroll = 0
     end
 
     local info = {
