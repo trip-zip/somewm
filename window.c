@@ -914,10 +914,6 @@ mapnotify(struct wl_listener *listener, void *data)
 		}
 	}
 
-	/* Initialize client geometry with room for border */
-	c->geometry.width += 2 * c->bw;
-	c->geometry.height += 2 * c->bw;
-
 	/* Client was already added to arrays in createnotify() (matches AwesomeWM pattern)
 	 * No need to add again here - doing so would create duplicates */
 
