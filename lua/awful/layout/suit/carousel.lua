@@ -227,7 +227,7 @@ local function reconcile(state, cls, default_width, focus)
             added = added + 1
             local new_col = {
                 clients = { c },
-                width_fraction = default_width,
+                width_fraction = c.carousel_column_width or default_width,
             }
             table.insert(state.columns, insert_after + added, new_col)
         end
