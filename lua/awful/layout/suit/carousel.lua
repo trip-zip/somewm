@@ -606,7 +606,7 @@ function carousel.get()
     	focus = {focus_ci, focus_ri}
     }
 
-    return state.last_focused_ci
+    return info
 end
 
 ---------------------------------------------------------------------------
