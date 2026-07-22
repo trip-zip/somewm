@@ -54,6 +54,10 @@ carousel.default_column_width = 1.0
 --- Width presets for cycle_column_width().
 carousel.width_presets = { 1/3, 1/2, 2/3, 1.0 }
 
+--- Viewport centering mode.
+-- @beautiful beautiful.carousel_center_mode
+-- @tparam[opt="on-overflow"] string center_mode
+
 --- Viewport centering modes:
 -- - "never": only scroll when focused column would be completely offscreen
 -- - "always": always center focused column
@@ -62,12 +66,19 @@ carousel.width_presets = { 1/3, 1/2, 2/3, 1.0 }
 carousel.center_mode = "on-overflow"
 
 --- Scroll animation duration in seconds (0 = instant snap).
-carousel.scroll_duration = 0.2
+carousel.scroll_duration = 0
 
 --- Peek width in pixels for showing adjacent column edges.
 -- @beautiful beautiful.carousel_peek_width
 -- @tparam[opt=0] number peek_width
 carousel.peek_width = 0
+
+--- Dynamic peek width in pixels. Columns at the edges of the strip will have this applied
+-- as their peek width. Negative values are ignored and cause edge columns to use
+-- peek_width instead.
+-- @beautiful beautiful.carousel_dynamic_peek
+-- @tparam[opt=-1] number dynamic_peek_width
+carousel.dynamic_peek_width = -1
 
 -- Per-tag state, weak-keyed so it's collected when tags are removed.
 local tag_state = setmetatable({}, { __mode = "k" })
@@ -85,6 +96,7 @@ local function get_state(t)
             gap = 0,
             vertical = false,
             peek = 0,
+            dynamic_peek = false,
             -- Animation state (C-side handle)
             anim_handle = nil,
         }
@@ -163,6 +175,14 @@ local function focused_col_idx(state, focus)
     return nil
 end
 
+--- Find which row within a column the focused client is in. Returns row_idx or nil.
+local function focused_row_idx(state, focus)
+    if not focus then return nil end
+    local entry = state.client_to_column[focus]
+    if entry then return entry.row_idx end
+    return nil
+end
+
 --- Reconcile column state against the current tiled client list.
 -- p.clients is authoritative: remove dead clients, add new ones.
 local function reconcile(state, cls, default_width, focus)
@@ -207,7 +227,7 @@ local function reconcile(state, cls, default_width, focus)
             added = added + 1
             local new_col = {
                 clients = { c },
-                width_fraction = default_width,
+                width_fraction = c.carousel_column_width or default_width,
             }
             table.insert(state.columns, insert_after + added, new_col)
         end
@@ -289,13 +309,13 @@ local function apply_geometry(state)
         if not cp then break end
         local n = #col.clients
         local stack_total = stack_sz - 2 * gap
-        local row_size = math.floor((stack_total - (n - 1) * gap) / n)
+        local row_size = math.floor((stack_total - (n - 1) * (gap * 2)) / n)
 
         for ri, c in ipairs(col.clients) do
             local bw = c.border_width or 0
             local scroll_client_size = math.max(1, cp.pixel_width - 2 * bw - 2 * gap)
             local stack_client_size = math.max(1, row_size - 2 * bw)
-            local stack_offset = (ri - 1) * (row_size + gap)
+            local stack_offset = (ri - 1) * (row_size + (gap * 2))
             local scroll_pos = scroll_o + peek + cp.canvas_x - state.scroll_offset + gap
             local stack_pos = stack_o + gap + stack_offset
 
@@ -386,7 +406,9 @@ function carousel._arrange_impl(p, vertical)
 
     local viewport_size = scroll_extent(wa, vertical)
     local peek = get_beautiful().carousel_peek_width or carousel.peek_width
+    local dp = get_beautiful().carousel_dynamic_peek_width or carousel.dynamic_peek_width
     if peek < 0 then peek = 0 end
+    if peek > 0 then peek = peek + gap end
     local effective_viewport = effective_viewport_size(viewport_size, peek)
     local col_positions = compute_column_positions(state.columns, effective_viewport)
 
@@ -396,27 +418,38 @@ function carousel._arrange_impl(p, vertical)
     state.gap = gap
     state.vertical = vertical
     state.peek = peek
+    state.dynamic_peek = dp
 
     -- Compute target scroll offset based on centering mode
     local focus_ci = focused_col_idx(state, focus)
-    if not focus_ci then focus_ci = 1 end
+    focus_ci = focus_ci or math.min((state.last_focused_ci or 1) - 1, #state.columns)
+    if focus_ci == 0 then focus_ci = nil end
     state.last_focused_ci = focus_ci
 
+    local center_mode = get_beautiful().carousel_center_mode or carousel.center_mode
+
     local fcp = col_positions[focus_ci]
-    if carousel.center_mode == "always" then
+    -- Apply dynamic peek to edge columns when dynamic_peek is 0 or higher
+    if dp >= 0 then
+        dp = peek - dp - gap
+        dp = focus_ci == 1 and dp or focus_ci == #col_positions and -dp or 0
+    else
+        dp = 0
+    end
+    if center_mode == "always" then
         state.target_offset = offset_to_center_column(fcp, effective_viewport)
-    elseif carousel.center_mode == "never" then
+    elseif center_mode == "never" then
         -- Only scroll if focused column is completely offscreen
         local candidate = state.target_offset
         local near_edge = fcp.canvas_x - candidate
         local far_edge = near_edge + fcp.pixel_width
         if far_edge <= 0 then
-            candidate = fcp.canvas_x
+            candidate = fcp.canvas_x + dp
         elseif near_edge >= effective_viewport then
-            candidate = fcp.canvas_x + fcp.pixel_width - effective_viewport
+            candidate = fcp.canvas_x + fcp.pixel_width - effective_viewport + dp
         end
         state.target_offset = candidate
-    elseif carousel.center_mode == "edge" then
+    elseif center_mode == "edge" then
         local candidate = state.target_offset
         local near_edge = fcp.canvas_x - candidate
         local far_edge = near_edge + fcp.pixel_width
@@ -425,7 +458,7 @@ function carousel._arrange_impl(p, vertical)
         elseif far_edge > effective_viewport then
             candidate = fcp.canvas_x + fcp.pixel_width - effective_viewport
         end
-        state.target_offset = candidate
+        state.target_offset = candidate + dp
     else -- "on-overflow" (default)
         local candidate = state.target_offset
         local near_edge = fcp.canvas_x - candidate
@@ -438,10 +471,17 @@ function carousel._arrange_impl(p, vertical)
 
     -- Clamp to strip boundaries ("always" center mode is exempt so it
     -- can show empty space at strip edges when centering edge columns)
-    local should_clamp = carousel.center_mode ~= "always"
+    local should_clamp = center_mode ~= "always"
     if should_clamp then
+        local sw = strip_width(col_positions)
+        local clamp_vp = effective_viewport
+        if (center_mode == "never" or center_mode == "edge") and
+            focus_ci == #state.columns and sw > viewport_size and
+                state.dynamic_peek >= 0 then
+            clamp_vp = effective_viewport - dp
+        end
         state.target_offset = clamp_offset(
-            state.target_offset, col_positions, effective_viewport)
+            state.target_offset, col_positions, clamp_vp)
         state.scroll_offset = clamp_offset(
             state.scroll_offset, col_positions, effective_viewport)
     end
@@ -522,6 +562,58 @@ local function with_focused_column(fn)
 
     fn(state.columns[ci])
     get_layout().arrange(s)
+end
+
+--- Return a table containing the strip width, viewport dimensions and position,
+-- column information and focused client position.
+function carousel.get()
+    local scr = ascreen.focused()
+    local t = scr and scr.selected_tag
+    if not t then return end
+
+    local state = get_state(t)
+    local focus = capi.client.focus
+
+    local focus_ci = focused_col_idx(state, focus)
+    local focus_ri = focused_row_idx(state, focus)
+
+    local peek = state.peek or
+        get_beautiful().carousel_peek_width or carousel.peek_width
+    local dp = state.dynamic_peek or
+        get_beautiful().carousel_dynamic_peek_width or carousel.dynamic_peek_width
+    local gap = state.gap or get_beautiful().useless_gap
+
+    local sw = 0
+    local viewport_size = state.vertical and scr.geometry.height or scr.geometry.width
+    local scroll = 0
+
+    if state.workarea then
+        local so = state.scroll_offset or 0
+        viewport_size = scroll_extent(state.workarea, state.vertical)
+        local effective_viewport = effective_viewport_size(viewport_size, peek)
+        local col_positions = compute_column_positions(state.columns, effective_viewport)
+        sw = strip_width(col_positions)
+        scroll = so < 0 and 0 or so
+        -- Offset reported viewport position when using dynamic peek
+        local center_mode = get_beautiful().carousel_center_mode or carousel.center_mode
+        if dp >= 0 and (center_mode == "never" or center_mode == "edge") then
+            scroll = so >= dp and so - peek + gap or scroll
+        end
+    end
+
+    local info = {
+    	width = sw,
+    	viewport = {
+    	    width = state.vertical and scr.geometry.width or viewport_size,
+    	    height = state.vertical and viewport_size or scr.geometry.height,
+    	    margin = dp >= 0 and dp or peek
+    	},
+    	position = scroll,
+    	columns = state.columns,
+    	focus = {focus_ci, focus_ri}
+    }
+
+    return info
 end
 
 ---------------------------------------------------------------------------
@@ -639,10 +731,11 @@ function carousel.expel_window()
     get_layout().arrange(s)
 end
 
---- Move the focused client into the adjacent column.
--- The client is removed from its current column and appended to the target
--- column's stack. If the source column becomes empty, it is removed.
--- This is the complement of consume_window (push vs pull).
+--- Move the focused client using consume-or-expel semantics.
+-- Solo window: consume into the adjacent column (merge with neighbor).
+-- Boundary pushes on solo windows are no-ops.
+-- Multi-window column: expel the focused window into a new column in
+-- the given direction.
 -- @tparam number dir Direction: -1 for left, 1 for right.
 function carousel.push_window(dir)
     local state, s = get_carousel_context()
@@ -654,19 +747,103 @@ function carousel.push_window(dir)
     local entry = state.client_to_column[focus]
     if not entry then return end
 
-    local target_ci = entry.col_idx + dir
-    if target_ci < 1 or target_ci > #state.columns then return end
-
     local source_col = state.columns[entry.col_idx]
-    local target_col = state.columns[target_ci]
 
-    table.remove(source_col.clients, entry.row_idx)
-    table.insert(target_col.clients, focus)
+    if #source_col.clients == 1 then
+        -- Solo: consume into adjacent column
+        local target_ci = entry.col_idx + dir
+        if target_ci < 1 or target_ci > #state.columns then return end
 
-    if #source_col.clients == 0 then
+        local target_col = state.columns[target_ci]
+        table.remove(source_col.clients, 1)
+        table.insert(target_col.clients, focus)
         table.remove(state.columns, entry.col_idx)
+    else
+        -- Multi: expel into new column in given direction
+        table.remove(source_col.clients, entry.row_idx)
+
+        local insert_ci
+        if dir < 0 then
+            insert_ci = entry.col_idx  -- before current
+        else
+            insert_ci = entry.col_idx + 1  -- after current
+        end
+
+        local new_col = {
+            clients = { focus },
+            width_fraction = source_col.width_fraction,
+        }
+        table.insert(state.columns, insert_ci, new_col)
     end
 
+    rebuild_index(state)
+    get_layout().arrange(s)
+end
+
+--- Move the focused client using global directions.
+-- Solo window: consume into the column in the given direction (merge with
+-- neighbor). Boundary pushes on solo windows are no-ops.
+-- Multi-window column: expel the focused window into a new column in
+-- the given direction, or shift the focused client's position in the column
+-- in the given direction.
+-- @tparam string dir Direction: "left", "up", "right", "down".
+function carousel.push_window_bydirection(dir)
+    local state, s = get_carousel_context()
+    if not state then return end
+
+    local focus = capi.client.focus
+    if not focus then return end
+
+    local entry = state.client_to_column[focus]
+    if not entry then return end
+
+    local source_col = state.columns[entry.col_idx]
+
+    local ch
+    if dir == "left" or dir == "up" then ch = -1 end
+    if dir == "right" or dir == "down" then ch = 1 end
+
+    if not state.vertical and (dir == "left" or dir == "right") or
+            state.vertical and (dir == "up" or dir == "down") then
+        if #source_col.clients == 1 then
+            -- Solo: consume into adjacent column
+            local target_ci = entry.col_idx + ch
+            if target_ci < 1 or target_ci > #state.columns then return end
+
+            local target_col = state.columns[target_ci]
+            table.remove(source_col.clients, 1)
+            table.insert(target_col.clients, focus)
+            table.remove(state.columns, entry.col_idx)
+        else
+            -- Multi: expel into new column in given direction
+            table.remove(source_col.clients, entry.row_idx)
+
+            local insert_ci
+            if ch < 0 then
+                insert_ci = entry.col_idx  -- before current
+            else
+                insert_ci = entry.col_idx + 1  -- after current
+            end
+
+            local new_col = {
+                clients = { focus },
+                width_fraction = source_col.width_fraction,
+            }
+            table.insert(state.columns, insert_ci, new_col)
+        end
+    elseif not state.vertical and (dir == "up" or dir == "down") or
+            state.vertical and (dir == "left" or dir == "right") then
+        if #source_col.clients > 1 then
+            local current_idx
+            for _, c in ipairs(source_col.clients) do
+                if c == client.focus then current_idx = _ end
+            end
+            target_idx = current_idx + ch
+            if target_idx < 1 or target_idx > #source_col.clients then return end
+            table.insert(source_col.clients, target_idx,
+                table.remove(source_col.clients, current_idx))
+        end
+    else return end
     rebuild_index(state)
     get_layout().arrange(s)
 end
@@ -723,7 +900,8 @@ end
 -- Centering Mode
 ---------------------------------------------------------------------------
 
---- Set the viewport centering mode.
+--- Set the module-level viewport centering mode.
+-- Note: `beautiful.carousel_center_mode` takes precedence over this value.
 -- @tparam string mode One of "never", "always", "on-overflow", "edge".
 function carousel.set_center_mode(mode)
     assert(mode == "never" or mode == "always" or mode == "on-overflow" or mode == "edge",
