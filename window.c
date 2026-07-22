@@ -914,10 +914,6 @@ mapnotify(struct wl_listener *listener, void *data)
 		}
 	}
 
-	/* Initialize client geometry with room for border */
-	c->geometry.width += 2 * c->bw;
-	c->geometry.height += 2 * c->bw;
-
 	/* Client was already added to arrays in createnotify() (matches AwesomeWM pattern)
 	 * No need to add again here - doing so would create duplicates */
 
@@ -1296,13 +1292,13 @@ apply_geometry_to_wlroots(Client *c)
 	wlr_scene_node_set_position(&c->scene->node, c->geometry.x, c->geometry.y);
 	/* Offset scene_surface by titlebar sizes (titlebars occupy space in geometry) */
 	wlr_scene_node_set_position(&c->scene_surface->node, c->bw + titlebar_left, c->bw + titlebar_top);
-	wlr_scene_rect_set_size(c->border[0], c->geometry.width, c->bw);
-	wlr_scene_rect_set_size(c->border[1], c->geometry.width, c->bw);
-	wlr_scene_rect_set_size(c->border[2], c->bw, c->geometry.height - 2 * c->bw);
-	wlr_scene_rect_set_size(c->border[3], c->bw, c->geometry.height - 2 * c->bw);
-	wlr_scene_node_set_position(&c->border[1]->node, 0, c->geometry.height - c->bw);
+	wlr_scene_rect_set_size(c->border[0], c->geometry.width + 2 * c->bw, c->bw);
+	wlr_scene_rect_set_size(c->border[1], c->geometry.width + 2 * c->bw, c->bw);
+	wlr_scene_rect_set_size(c->border[2], c->bw, c->geometry.height);
+	wlr_scene_rect_set_size(c->border[3], c->bw, c->geometry.height);
+	wlr_scene_node_set_position(&c->border[1]->node, 0, c->geometry.height + c->bw);
 	wlr_scene_node_set_position(&c->border[2]->node, 0, c->bw);
-	wlr_scene_node_set_position(&c->border[3]->node, c->geometry.width - c->bw, c->bw);
+	wlr_scene_node_set_position(&c->border[3]->node, c->geometry.width + c->bw, c->bw);
 
 	/* Update shadow geometry (lazy creation if needed) */
 	{
@@ -1311,10 +1307,10 @@ apply_geometry_to_wlroots(Client *c)
 		if (shadow_config && shadow_config->enabled) {
 			if (c->shadow.tree) {
 				shadow_update_geometry(&c->shadow, shadow_config,
-					c->geometry.width, c->geometry.height);
+					c->geometry.width + c->bw, c->geometry.height + c->bw);
 			} else {
 				shadow_create(c->scene, &c->shadow, shadow_config,
-					c->geometry.width, c->geometry.height);
+					c->geometry.width + c->bw, c->geometry.height + c->bw);
 			}
 		}
 	}
@@ -1340,13 +1336,11 @@ apply_geometry_to_wlroots(Client *c)
 #endif
 		if (c->fullscreen) {
 			/* Fullscreen: client gets full geometry minus borders only */
-			c->resize = client_set_size(c,
-					c->geometry.width - 2 * c->bw,
-					c->geometry.height - 2 * c->bw);
+			c->resize = client_set_size(c, c->geometry.width, c->geometry.height);
 		} else {
-			int sw = c->geometry.width - 2 * c->bw
+			int sw = c->geometry.width
 				- titlebar_left - c->titlebar[CLIENT_TITLEBAR_RIGHT].size;
-			int sh = c->geometry.height - 2 * c->bw
+			int sh = c->geometry.height
 				- titlebar_top - c->titlebar[CLIENT_TITLEBAR_BOTTOM].size;
 			if (sw < 1) sw = 1;
 			if (sh < 1) sh = 1;

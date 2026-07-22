@@ -168,8 +168,8 @@ client_get_clip(Client *c, struct wlr_box *clip)
 	int tt = c->fullscreen ? 0 : c->titlebar[CLIENT_TITLEBAR_TOP].size;
 	int tr = c->fullscreen ? 0 : c->titlebar[CLIENT_TITLEBAR_RIGHT].size;
 	int tb = c->fullscreen ? 0 : c->titlebar[CLIENT_TITLEBAR_BOTTOM].size;
-	int cw = c->geometry.width - 2 * c->bw - tl - tr;
-	int ch = c->geometry.height - 2 * c->bw - tt - tb;
+	int cw = c->geometry.width - tl - tr;
+	int ch = c->geometry.height - tt - tb;
 	if (cw < 1) cw = 1;
 	if (ch < 1) ch = 1;
 
