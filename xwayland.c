@@ -111,8 +111,8 @@ configurex11(struct wl_listener *listener, void *data)
 	}
 	if (some_client_get_floating(c)) {
 		resize(c, (struct wlr_box){.x = event->x - c->bw,
-				.y = event->y - c->bw, .width = event->width + c->bw * 2,
-				.height = event->height + c->bw * 2}, 0);
+				.y = event->y - c->bw, .width = event->width,
+				.height = event->height}, 0);
 	} else {
 		arrange(c->mon);
 	}

@@ -25,8 +25,9 @@ This document tracks all known differences between somewm and AwesomeWM. These e
 
 **Titlebar Border Positioning**
 - In X11, borders are drawn OUTSIDE the window frame by the X server
-- In Wayland, borders are scene rects at geometry edges
-- Titlebars must start INSIDE the border area, hence `border_width` inset
+- In Wayland, somewm draws borders as scene rects around the geometry: the scene tree origin is the outer border corner and the client footprint is `geometry` plus `border_width` on each side
+- `c->geometry` excludes the border, matching AwesomeWM
+- Titlebars are inside the geometry and must start INSIDE the border area, hence `border_width` inset
 - See `titlebar_get_area()` in `objects/client.c`
 
 **WM Restart**
