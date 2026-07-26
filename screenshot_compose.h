@@ -14,6 +14,10 @@
 #include <wlr/render/wlr_renderer.h>
 #include <wlr/types/wlr_scene.h>
 
+/* wlr_scene_node_for_each_buffer() reports (sx, sy) accumulated from the
+ * starting node down INCLUDING the starting node's own position. Callers
+ * that start from a non-root node must pass offset_x/y = -node->x/-node->y
+ * to get subtree-relative coordinates. */
 struct screenshot_render_data {
 	cairo_t *cr;
 	struct wlr_renderer *renderer;
