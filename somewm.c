@@ -449,12 +449,11 @@ some_has_exclusive_focus(void)
 void
 applybounds(Client *c, struct wlr_box *bbox)
 {
-	/* Minimum geometry must fit borders AND titlebars with at least 1px content */
-	int min_w = 1 + 2 * (int)c->bw
-		+ c->titlebar[CLIENT_TITLEBAR_LEFT].size
+	/* Minimum geometry must fit titlebars with at least 1px content;
+	 * borders sit outside the geometry */
+	int min_w = 1 + c->titlebar[CLIENT_TITLEBAR_LEFT].size
 		+ c->titlebar[CLIENT_TITLEBAR_RIGHT].size;
-	int min_h = 1 + 2 * (int)c->bw
-		+ c->titlebar[CLIENT_TITLEBAR_TOP].size
+	int min_h = 1 + c->titlebar[CLIENT_TITLEBAR_TOP].size
 		+ c->titlebar[CLIENT_TITLEBAR_BOTTOM].size;
 	c->geometry.width = MAX(min_w, c->geometry.width);
 	c->geometry.height = MAX(min_h, c->geometry.height);
@@ -3749,15 +3748,8 @@ mapnotify(struct wl_listener *listener, void *data)
 		c->border[i]->node.data = c;
 	}
 
-	/* Create shadow (compositor-level, replaces picom shadows) */
-	{
-		const shadow_config_t *shadow_config = shadow_get_effective_config(
-			c->shadow_config, false);
-		if (shadow_config && shadow_config->enabled) {
-			shadow_create(c->scene, &c->shadow, shadow_config,
-				c->geometry.width, c->geometry.height);
-		}
-	}
+	/* Shadow is lazily created by apply_geometry_to_wlroots() on the first
+	 * refresh cycle after the map */
 
 	/* Create foreign toplevel handle for external tools (rofi, taskbars, etc.) */
 	if (foreign_toplevel_mgr) {
@@ -4062,8 +4054,8 @@ unset_fullscreen:
 		int tb = c->fullscreen ? 0 : c->titlebar[CLIENT_TITLEBAR_BOTTOM].size;
 		int x0 = c->geometry.x + (int)c->bw + tl;
 		int y0 = c->geometry.y + (int)c->bw + tt;
-		int x1 = c->geometry.x + c->geometry.width  - (int)c->bw - tr;
-		int y1 = c->geometry.y + c->geometry.height - (int)c->bw - tb;
+		int x1 = c->geometry.x + (int)c->bw + c->geometry.width  - tr;
+		int y1 = c->geometry.y + (int)c->bw + c->geometry.height - tb;
 		if (cursor->x >= x0 && cursor->x < x1 && cursor->y >= y0 && cursor->y < y1) {
 			double sx, sy;
 			cursor_to_client_coordinates(c, &sx, &sy);
@@ -4767,6 +4759,7 @@ apply_geometry_to_wlroots(Client *c)
 {
 	struct wlr_box clip;
 	int titlebar_left, titlebar_top;
+	int frame_w, frame_h;
 
 	if (!c->scene || !client_surface(c) || !client_surface(c)->mapped)
 		return;
@@ -4776,17 +4769,21 @@ apply_geometry_to_wlroots(Client *c)
 	titlebar_left = c->fullscreen ? 0 : c->titlebar[CLIENT_TITLEBAR_LEFT].size;
 	titlebar_top = c->fullscreen ? 0 : c->titlebar[CLIENT_TITLEBAR_TOP].size;
 
+	/* The frame footprint is the geometry plus the border drawn outside it */
+	frame_w = c->geometry.width + 2 * c->bw;
+	frame_h = c->geometry.height + 2 * c->bw;
+
 	/* Update scene-graph position and borders */
 	wlr_scene_node_set_position(&c->scene->node, c->geometry.x, c->geometry.y);
 	/* Offset scene_surface by titlebar sizes (titlebars occupy space in geometry) */
 	wlr_scene_node_set_position(&c->scene_surface->node, c->bw + titlebar_left, c->bw + titlebar_top);
-	wlr_scene_rect_set_size(c->border[0], c->geometry.width + 2 * c->bw, c->bw);
-	wlr_scene_rect_set_size(c->border[1], c->geometry.width + 2 * c->bw, c->bw);
+	wlr_scene_rect_set_size(c->border[0], frame_w, c->bw);
+	wlr_scene_rect_set_size(c->border[1], frame_w, c->bw);
 	wlr_scene_rect_set_size(c->border[2], c->bw, c->geometry.height);
 	wlr_scene_rect_set_size(c->border[3], c->bw, c->geometry.height);
-	wlr_scene_node_set_position(&c->border[1]->node, 0, c->geometry.height + c->bw);
+	wlr_scene_node_set_position(&c->border[1]->node, 0, frame_h - c->bw);
 	wlr_scene_node_set_position(&c->border[2]->node, 0, c->bw);
-	wlr_scene_node_set_position(&c->border[3]->node, c->geometry.width + c->bw, c->bw);
+	wlr_scene_node_set_position(&c->border[3]->node, frame_w - c->bw, c->bw);
 
 	/* Update shadow geometry (lazy creation if needed) */
 	{
@@ -4795,10 +4792,10 @@ apply_geometry_to_wlroots(Client *c)
 		if (shadow_config && shadow_config->enabled) {
 			if (c->shadow.tree) {
 				shadow_update_geometry(&c->shadow, shadow_config,
-					c->geometry.width + c->bw, c->geometry.height + c->bw);
+					frame_w, frame_h);
 			} else {
 				shadow_create(c->scene, &c->shadow, shadow_config,
-					c->geometry.width + c->bw, c->geometry.height + c->bw);
+					frame_w, frame_h);
 			}
 		}
 	}
@@ -4823,7 +4820,7 @@ apply_geometry_to_wlroots(Client *c)
 			client_set_fullscreen_internal(c, c->fullscreen);
 #endif
 		if (c->fullscreen) {
-			/* Fullscreen: client gets full geometry minus borders only */
+			/* Fullscreen: no titlebars (and bw is 0), client gets the full geometry */
 			c->resize = client_set_size(c, c->geometry.width, c->geometry.height);
 		} else {
 			int sw = c->geometry.width
@@ -4946,7 +4943,7 @@ resize(Client *c, struct wlr_box geo, int interact)
 	applybounds(c, bbox);
 
 	/* Apply aspect ratio constraint (Wayland equivalent of ICCCM aspect hints).
-	 * Works on full geometry (including borders/titlebars) to match
+	 * Works on full geometry (including titlebars) to match
 	 * the ratio captured from Lua (geo.width / geo.height). */
 	if (c->aspect_ratio > 0 && !c->fullscreen && !c->maximized) {
 		int w = c->geometry.width;
@@ -7086,8 +7083,8 @@ configurex11(struct wl_listener *listener, void *data)
 	}
 	if (some_client_get_floating(c)) {
 		resize(c, (struct wlr_box){.x = event->x - c->bw,
-				.y = event->y - c->bw, .width = event->width + c->bw * 2,
-				.height = event->height + c->bw * 2}, 0);
+				.y = event->y - c->bw, .width = event->width,
+				.height = event->height}, 0);
 	} else {
 		arrange(c->mon);
 	}
