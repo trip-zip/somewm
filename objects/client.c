@@ -2154,21 +2154,12 @@ client_border_refresh(void)
         if(!c->scene || !c->border[0])
             continue;
 
-        /* Sync wlroots border width (bw) with Lua-facing border_width */
-        c->bw = c->border_width;
-
-        /* Update border rectangle sizes based on new border width
-         * Border layout: [0]=top, [1]=bottom, [2]=left, [3]=right
-         * This matches the code in somewm.c:applybounds() */
-        wlr_scene_rect_set_size(c->border[0], c->geometry.width, c->border_width);
-        wlr_scene_rect_set_size(c->border[1], c->geometry.width, c->border_width);
-        wlr_scene_rect_set_size(c->border[2], c->border_width, c->geometry.height - 2 * c->border_width);
-        wlr_scene_rect_set_size(c->border[3], c->border_width, c->geometry.height - 2 * c->border_width);
-
-        /* Update border positions (bottom and right borders depend on geometry + border width) */
-        wlr_scene_node_set_position(&c->border[1]->node, 0, c->geometry.height - c->border_width);
-        wlr_scene_node_set_position(&c->border[2]->node, 0, c->border_width);
-        wlr_scene_node_set_position(&c->border[3]->node, c->geometry.width - c->border_width, c->border_width);
+        /* Sync wlroots border width (bw) with Lua-facing border_width;
+         * client_geometry_refresh() runs right after this and applies the
+         * new width to the border rects, surface offset and shadow.
+         * Fullscreen keeps bw at 0 (matches setfullscreen()), so a
+         * border_color change while fullscreen doesn't re-grow the frame. */
+        c->bw = c->fullscreen ? 0 : c->border_width;
 
         /* Update border color if initialized (matches AwesomeWM window_border_refresh pattern) */
         if(c->border_color.initialized) {
@@ -2211,8 +2202,9 @@ client_geometry_refresh(void)
 void
 client_refresh(void)
 {
-    client_geometry_refresh();
+    /* Border refresh first: it syncs c->bw, which the geometry pass reads */
     client_border_refresh();
+    client_geometry_refresh();
     client_focus_refresh();
 }
 
@@ -3814,8 +3806,9 @@ titlebar_get_area(client_t *c, client_titlebar_t bar)
 
     /* Wayland deviation: titlebars must be inset by border_width.
      * In X11, borders are drawn OUTSIDE the frame by the X server.
-     * In Wayland, we draw borders as scene rects at geometry edges,
-     * so titlebars must start INSIDE the border area. */
+     * In Wayland, we draw borders as scene rects outside the geometry,
+     * with the scene tree origin at the outer border corner, so
+     * titlebars (inside the geometry) start at a border_width inset. */
     result.x = bw;
     result.y = bw;
 
@@ -3834,13 +3827,13 @@ titlebar_get_area(client_t *c, client_titlebar_t bar)
 
     switch (bar) {
     case CLIENT_TITLEBAR_BOTTOM:
-        result.y = c->geometry.height + bw - c->titlebar[bar].size;
+        result.y = bw + c->geometry.height - c->titlebar[bar].size;
         /* Fall through */
     case CLIENT_TITLEBAR_TOP:
         result.height = c->titlebar[bar].size;
         break;
     case CLIENT_TITLEBAR_RIGHT:
-        result.x = c->geometry.width + bw - c->titlebar[bar].size;
+        result.x = bw + c->geometry.width - c->titlebar[bar].size;
         /* Fall through */
     case CLIENT_TITLEBAR_LEFT:
         result.y = bw + c->titlebar[CLIENT_TITLEBAR_TOP].size;
@@ -4489,7 +4482,7 @@ luaA_client_set_shadow(lua_State *L, client_t *c)
     /* Update shadow if client is mapped */
     if (c->scene) {
         shadow_update_config(&c->shadow, c->scene, &new_config,
-            c->geometry.width, c->geometry.height);
+            c->geometry.width + 2 * c->bw, c->geometry.height + 2 * c->bw);
     }
 
     luaA_object_emit_signal(L, -3, "property::shadow", 0);
@@ -4681,12 +4674,13 @@ luaA_client_get_content(lua_State *L, client_t *c)
      * clients (issue #539).
      *
      * wlr_scene_node_for_each_buffer reports (sx, sy) accumulated from the
-     * starting node down, NOT scene-absolute. So buffer positions are already
-     * relative to c->scene_surface's frame; no offset subtraction needed. */
+     * starting node down INCLUDING the starting node's own position, which
+     * for c->scene_surface is the (bw + titlebar) inset within c->scene.
+     * Subtract it so buffers land at the content origin of the capture. */
     rdata.cr        = cr;
     rdata.renderer  = drw;
-    rdata.offset_x  = 0;
-    rdata.offset_y  = 0;
+    rdata.offset_x  = -c->scene_surface->node.x;
+    rdata.offset_y  = -c->scene_surface->node.y;
     wlr_scene_node_for_each_buffer(&c->scene_surface->node,
                                    composite_scene_buffer_to_cairo, &rdata);
 

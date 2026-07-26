@@ -1268,7 +1268,8 @@ luaA_awesome_shadow_reload(lua_State *L)
 		const shadow_config_t *config = shadow_get_effective_config(
 			(*c)->shadow_config, false);
 		shadow_update_config(&(*c)->shadow, (*c)->scene, config,
-			(*c)->geometry.width, (*c)->geometry.height);
+			(*c)->geometry.width + 2 * (*c)->bw,
+			(*c)->geometry.height + 2 * (*c)->bw);
 	}
 
 	/* Update all existing drawin shadows */
