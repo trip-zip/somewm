@@ -23,69 +23,69 @@ local math = math
 local fair = {}
 
 local function do_fair(p, orientation)
-  local wa = p.workarea
-  local cls = p.clients
+    local wa = p.workarea
+    local cls = p.clients
 
-  -- Swap workarea dimensions, if our orientation is "east"
-  if orientation == "east" then
-    wa.width, wa.height = wa.height, wa.width
-    wa.x, wa.y = wa.y, wa.x
-  end
-
-  if #cls > 0 then
-    local rows, cols
-    if #cls == 2 then
-      rows, cols = 1, 2
-    else
-      rows = math.ceil(math.sqrt(#cls))
-      cols = math.ceil(#cls / rows)
+    -- Swap workarea dimensions, if our orientation is "east"
+    if orientation == 'east' then
+        wa.width, wa.height = wa.height, wa.width
+        wa.x, wa.y = wa.y, wa.x
     end
 
-    for k, c in ipairs(cls) do
-      k = k - 1
-      local g = {}
+    if #cls > 0 then
+        local rows, cols
+        if #cls == 2 then
+            rows, cols = 1, 2
+        else
+            rows = math.ceil(math.sqrt(#cls))
+            cols = math.ceil(#cls / rows)
+        end
 
-      local row, col
-      row = k % rows
-      col = math.floor(k / rows)
+        for i, c in ipairs(cls) do
+            local k = i - 1
+            local g = {}
 
-      local lrows, lcols
-      if k >= rows * cols - rows then
-        lrows = #cls - (rows * cols - rows)
-        lcols = cols
-      else
-        lrows = rows
-        lcols = cols
-      end
+            local row, col
+            row = k % rows
+            col = math.floor(k / rows)
 
-      if row == lrows - 1 then
-        g.height = wa.height - math.ceil(wa.height / lrows) * row
-        g.y = wa.height - g.height
-      else
-        g.height = math.ceil(wa.height / lrows)
-        g.y = g.height * row
-      end
+            local lrows, lcols
+            if k >= rows * cols - rows then
+                lrows = #cls - (rows * cols - rows)
+                lcols = cols
+            else
+                lrows = rows
+                lcols = cols
+            end
 
-      if col == lcols - 1 then
-        g.width = wa.width - math.ceil(wa.width / lcols) * col
-        g.x = wa.width - g.width
-      else
-        g.width = math.ceil(wa.width / lcols)
-        g.x = g.width * col
-      end
+            if row == lrows - 1 then
+                g.height = wa.height - math.ceil(wa.height / lrows) * row
+                g.y = wa.height - g.height
+            else
+                g.height = math.ceil(wa.height / lrows)
+                g.y = g.height * row
+            end
 
-      g.y = g.y + wa.y
-      g.x = g.x + wa.x
+            if col == lcols - 1 then
+                g.width = wa.width - math.ceil(wa.width / lcols) * col
+                g.x = wa.width - g.width
+            else
+                g.width = math.ceil(wa.width / lcols)
+                g.x = g.width * col
+            end
 
-      -- Swap window dimensions, if our orientation is "east"
-      if orientation == "east" then
-        g.width, g.height = g.height, g.width
-        g.x, g.y = g.y, g.x
-      end
+            g.y = g.y + wa.y
+            g.x = g.x + wa.x
 
-      p.geometries[c] = g
+            -- Swap window dimensions, if our orientation is "east"
+            if orientation == 'east' then
+                g.width, g.height = g.height, g.width
+                g.x, g.y = g.y, g.x
+            end
+
+            p.geometries[c] = g
+        end
     end
-  end
 end
 
 -- Horizontal fair layout.
@@ -94,14 +94,14 @@ fair.horizontal = {}
 fair.horizontal.name = "fairh"
 
 function fair.horizontal.arrange(p)
-  return do_fair(p, "east")
+    return do_fair(p, "east")
 end
 
 -- Vertical fair layout.
 -- @param screen The screen to arrange.
 fair.name = "fairv"
 function fair.arrange(p)
-  return do_fair(p, "south")
+    return do_fair(p, "south")
 end
 
 --- The fair layout.

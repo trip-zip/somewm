@@ -6,6 +6,7 @@
 -- @submodule awful.hotkeys_popup
 ---------------------------------------------------------------------------
 
+
 local keys = {
   vim = require("awful.hotkeys_popup.keys.vim"),
   firefox = require("awful.hotkeys_popup.keys.firefox"),

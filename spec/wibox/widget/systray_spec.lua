@@ -4,7 +4,6 @@
 -- Tests for wibox.widget.systray (SNI-based implementation)
 ---------------------------------------------------------------------------
 
-local unpack = unpack or table.unpack -- luacheck: globals unpack (compatibility with Lua 5.1)
 
 -- Mock items for systray_item.get_items()
 local mock_items = {}
@@ -231,7 +230,7 @@ describe("wibox.widget.systray (SNI)", function()
             mock_items = { "item1", "item2", "item3" }
             widget:_sync_items()
 
-            local w, h = widget:fit(context, 1000, 100)
+            local w = widget:fit(context, 1000, 100)
             -- 3 icons * 24px each = 72px minimum (no spacing)
             assert.is_true(w >= 72)
         end)
@@ -247,7 +246,7 @@ describe("wibox.widget.systray (SNI)", function()
             mock_items = { "item1", "item2", "item3" }
             widget:_sync_items()
 
-            local w, h = widget:fit(context, 1000, 100)
+            local w = widget:fit(context, 1000, 100)
             -- 3 icons * 24px + 2 gaps * 10px = 72 + 20 = 92px minimum
             assert.is_true(w >= 92)
         end)

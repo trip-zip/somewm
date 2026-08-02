@@ -52,13 +52,6 @@ local display_on_screen = "primary"
 -- @beautiful beautiful.systray_paddings
 -- @tparam[opt=0] integer systray_paddings The padding around the systray
 
-local function should_display_on(s)
-    if display_on_screen == "primary" then
-        return s == capi.screen.primary
-    end
-    return s == display_on_screen
-end
-
 -- Check if the function was called like :foo() or .foo() and do the right thing
 local function get_args(self, ...)
     if self == instance then
@@ -142,7 +135,7 @@ end
 --- Private API. Called when systray is removed from a drawable.
 -- @method _kickout
 -- @hidden
-function systray:_kickout(context)
+function systray:_kickout(_context)
     -- For SNI-based systray, we don't need to do anything special
     -- as each icon is a separate widget
 end

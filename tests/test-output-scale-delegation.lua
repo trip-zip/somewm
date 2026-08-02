@@ -7,6 +7,8 @@
 --   5. Scale range validation
 ---------------------------------------------------------------------------
 
+-- luacheck: globals output
+
 local runner = require("_runner")
 
 print("TEST: Starting output-scale-delegation test")

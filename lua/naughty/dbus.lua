@@ -39,7 +39,7 @@ local dbus = { config = {} }
 local bus_connection
 
 -- DBUS Notification constants
--- https://specifications.freedesktop.org/notification-spec/notification-spec-latest.html#urgency-levels
+-- https://specifications.freedesktop.org/notification-spec/latest/urgency-levels.html
 local urgency = {
     low      = "\0",
     normal   = "\1",
@@ -319,8 +319,9 @@ function notif_methods.Notify(sender, object_path, interface, method, parameters
             end
 
             for k, v in pairs(args) do
-                if k == "destroy" then k = "destroy_cb" end
-                notification[k] = v
+                notification[
+                    (k == "destroy") and "destroy_cb" or k
+                ] = v
             end
 
             -- Update the icon if necessary.

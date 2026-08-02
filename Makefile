@@ -9,7 +9,7 @@
 
 -include .local.mk
 
-.PHONY: all install uninstall clean setup reconfigure test test-unit test-check test-signal test-integration test-orchestrator test-asan test-one test-visual test-one-visual test-ci test-fast build-test build-bench bench-run bench-run-live bench-flamegraph bench-diff bench-heaptrack
+.PHONY: all install uninstall clean setup reconfigure check-qa test test-unit test-check test-signal test-integration test-orchestrator test-asan test-one test-visual test-one-visual test-ci test-fast build-test build-bench bench-run bench-run-live bench-flamegraph bench-diff bench-heaptrack
 
 # Default build: optimized release, no sanitizers
 all:
@@ -50,6 +50,10 @@ reconfigure:
 
 # Run all tests (fast, no ASAN)
 test: test-unit test-check test-signal test-orchestrator test-integration
+
+# Lint the Lua tree with luacheck (mirrors AwesomeWM's make check-qa)
+check-qa:
+	luacheck --quiet lua spec tests themes somewmrc.lua
 
 # Unit tests only (busted, no compositor needed)
 # Use - prefix to continue even if unit tests fail (some have known issues)

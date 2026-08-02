@@ -132,7 +132,6 @@ function async.wait_for_condition(condition, timeout_secs, poll_interval)
     end
 
     local completed = false
-    local start_time = os.time()
     local poll_count = 0
     local max_polls = math.ceil(timeout_secs / poll_interval)
 
@@ -142,8 +141,7 @@ function async.wait_for_condition(condition, timeout_secs, poll_interval)
     end
 
     -- Poll timer
-    local t
-    t = timer.start_new(poll_interval, function()
+    timer.start_new(poll_interval, function()
         if completed then return false end
 
         poll_count = poll_count + 1

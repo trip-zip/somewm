@@ -17,12 +17,9 @@ local lgi = require("lgi")
 local Gio = lgi.Gio
 local GLib = lgi.GLib
 local GObject = lgi.GObject
-local cairo = lgi.cairo
 
 local protected_call = require("gears.protected_call")
-local gtable = require("gears.table")
 local gdebug = require("gears.debug")
-local gfs = require("gears.filesystem")
 
 local capi = {
     awesome = awesome,
@@ -110,95 +107,6 @@ function systray._process_icon_change(data, fingerprint)
     end
 
     return data.urgent_from_icon_change ~= old_urgent
-end
-
----------------------------------------------------------------------------
--- Icon pixmap parsing (from D-Bus IconPixmap property)
----------------------------------------------------------------------------
-
---- Convert SNI IconPixmap data to cairo surface.
--- IconPixmap is an array of (width, height, pixel_data) where pixel_data
--- is ARGB32 in network byte order (big-endian).
--- @tparam table pixmaps Array of {width, height, data} tuples
--- @tparam number target_size Preferred icon size
--- @treturn cairo.ImageSurface|nil The icon surface, or nil on error
-local function parse_icon_pixmap(pixmaps, target_size)
-    if not pixmaps or #pixmaps == 0 then
-        return nil
-    end
-
-    -- Find best matching size (prefer exact or next larger)
-    local best = pixmaps[1]
-    local best_diff = math.abs(best[1] - target_size)
-
-    for i = 2, #pixmaps do
-        local p = pixmaps[i]
-        local diff = math.abs(p[1] - target_size)
-        if diff < best_diff or (diff == best_diff and p[1] > best[1]) then
-            best = p
-            best_diff = diff
-        end
-    end
-
-    local width, height = best[1], best[2]
-    local data = best[3]
-
-    if width <= 0 or height <= 0 or not data then
-        return nil
-    end
-
-    -- Get raw bytes from GVariant data
-    local raw_data
-    if type(data) == "string" then
-        raw_data = data
-    elseif data.data then
-        -- GVariant byte array
-        raw_data = tostring(data.data)
-    else
-        return nil
-    end
-
-    local expected_size = width * height * 4
-    if #raw_data < expected_size then
-        gdebug.print_warning("systray: IconPixmap data too short: " ..
-            #raw_data .. " < " .. expected_size)
-        return nil
-    end
-
-    -- Create cairo surface
-    local stride = cairo.Format.stride_for_width(cairo.Format.ARGB32, width)
-    local surface = cairo.ImageSurface.create(cairo.Format.ARGB32, width, height)
-
-    if surface.status ~= "SUCCESS" then
-        return nil
-    end
-
-    -- Get surface data buffer
-    local surf_data = surface:get_data()
-
-    -- Convert from network byte order ARGB to native ARGB
-    -- Network order: A R G B (bytes 0,1,2,3)
-    -- Native little-endian: B G R A (bytes 0,1,2,3)
-    for y = 0, height - 1 do
-        for x = 0, width - 1 do
-            local src_idx = (y * width + x) * 4 + 1  -- Lua 1-indexed
-            local dst_idx = y * stride + x * 4
-
-            local a = string.byte(raw_data, src_idx)
-            local r = string.byte(raw_data, src_idx + 1)
-            local g = string.byte(raw_data, src_idx + 2)
-            local b = string.byte(raw_data, src_idx + 3)
-
-            -- Native ARGB32 on little-endian is BGRA in memory
-            surf_data[dst_idx] = b
-            surf_data[dst_idx + 1] = g
-            surf_data[dst_idx + 2] = r
-            surf_data[dst_idx + 3] = a
-        end
-    end
-
-    surface:mark_dirty()
-    return surface
 end
 
 ---------------------------------------------------------------------------
@@ -407,9 +315,9 @@ local function register_item(service, path)
 
         -- Handle IconThemePath (custom icon theme search path)
         if props.IconThemePath then
-            local path = get_string("IconThemePath")
-            if path and path ~= "" then
-                item.icon_theme_path = path
+            local theme_path = get_string("IconThemePath")
+            if theme_path and theme_path ~= "" then
+                item.icon_theme_path = theme_path
             end
         end
 
@@ -570,7 +478,7 @@ local function register_item(service, path)
             service,
             Gio.BusNameWatcherFlags.NONE,
             nil,  -- appeared callback (don't care)
-            GObject.Closure(function(conn, name)
+            GObject.Closure(function(_conn, _name)
                 -- Service vanished - unregister this item
                 unregister_item(service, path)
             end)
@@ -587,10 +495,10 @@ local function register_item(service, path)
             -- Clear urgent flag on activation (user acknowledged the notification)
             -- The next icon change becomes the new baseline (the post-click
             -- "clean" state) rather than being silently ignored
-            local data = systray._private.item_data[item]
-            if data then
-                data.urgent_from_icon_change = false
-                data.update_baseline_on_next_icon = true
+            local idata = systray._private.item_data[item]
+            if idata then
+                idata.urgent_from_icon_change = false
+                idata.update_baseline_on_next_icon = true
             end
             systray._private.bus:call(
                 service, path, SNI_ITEM_IFACE, "Activate",
@@ -632,7 +540,7 @@ local function register_item(service, path)
             path,  -- object path
             nil,  -- arg0
             Gio.DBusSignalFlags.NONE,
-            function(conn, sender, obj_path, iface, signal_name, params)
+            function(_conn, _sender, _obj_path, _iface, signal_name, params)
                 protected_call(function()
                     if signal_name == "NewTitle" then
                         fetch_item_properties(service, path, function(p)
@@ -673,9 +581,9 @@ local function register_item(service, path)
                                             if raw_data and #raw_data >= best_w * best_h * 4 then
                                                 item:set_icon_pixmap(best_w, best_h, raw_data)
                                                 pixmap_raw_data = raw_data
-                                                local data = systray._private.item_data[item]
-                                                if data then
-                                                    data.icon_surface = item.icon
+                                                local idata = systray._private.item_data[item]
+                                                if idata then
+                                                    idata.icon_surface = item.icon
                                                 end
                                             end
                                         end
@@ -685,11 +593,11 @@ local function register_item(service, path)
                                 -- Apps like Slack change their icon instead of using proper
                                 -- SNI status/overlay, so we compare against the baseline
                                 -- icon to detect badge added vs badge removed
-                                local data = systray._private.item_data[item]
-                                if data then
+                                local idata = systray._private.item_data[item]
+                                if idata then
                                     local fp = systray._compute_icon_fingerprint(
                                         name, pixmap_raw_data)
-                                    systray._process_icon_change(data, fp)
+                                    systray._process_icon_change(idata, fp)
                                 end
                                 -- Emit update for classic widget
                                 capi.awesome.emit_signal("systray::update")
@@ -701,21 +609,21 @@ local function register_item(service, path)
                             item.status = status
                             -- Explicit status change supersedes icon-change heuristic
                             if status == "Active" or status == "NeedsAttention" then
-                                local data = systray._private.item_data[item]
-                                if data then
-                                    data.urgent_from_icon_change = false
+                                local idata = systray._private.item_data[item]
+                                if idata then
+                                    idata.urgent_from_icon_change = false
                                 end
                             end
                             -- Status change may affect visibility, emit update
                             capi.awesome.emit_signal("systray::update")
                         end
                     elseif signal_name == "NewToolTip" then
-                        -- Refetch ToolTip property
-                        pcall(function()
-                            local p = proxy:Get("org.kde.StatusNotifierItem", "ToolTip")
-                            if p then
-                                if p[3] then item.tooltip_title = p[3] end
-                                if p[4] then item.tooltip_body = p[4] end
+                        -- Refetch ToolTip property: (sa(iiay)ss), [3] = title, [4] = body
+                        fetch_item_properties(service, path, function(p)
+                            local tt = p and p.ToolTip
+                            if tt then
+                                if tt[3] then item.tooltip_title = tt[3] end
+                                if tt[4] then item.tooltip_body = tt[4] end
                             end
                         end)
                     elseif signal_name == "NewAttentionIcon" then
@@ -821,9 +729,9 @@ local function register_item(service, path)
 
         -- Track per-item subscription ID for cleanup during hot-reload
         if item_sub_id then
-            local data = systray._private.item_data[item]
-            if data then
-                data.signal_sub_id = item_sub_id
+            local idata = systray._private.item_data[item]
+            if idata then
+                idata.signal_sub_id = item_sub_id
             end
         end
 
@@ -964,7 +872,7 @@ local function subscribe_to_watcher_signals()
         SNI_WATCHER_PATH,
         nil,
         Gio.DBusSignalFlags.NONE,
-        function(conn, sender, path, iface, signal, params)
+        function(_conn, _sender, _path, _iface, _signal, params)
             protected_call(function()
                 local service = params:get_child_value(0):get_string()
                 register_item(service)
@@ -981,7 +889,7 @@ local function subscribe_to_watcher_signals()
         SNI_WATCHER_PATH,
         nil,
         Gio.DBusSignalFlags.NONE,
-        function(conn, sender, path, iface, signal, params)
+        function(_conn, _sender, _path, _iface, _signal, params)
             protected_call(function()
                 local service = params:get_child_value(0):get_string()
                 unregister_item(service)
@@ -997,17 +905,17 @@ local function watch_for_watcher()
         systray._private.bus,
         SNI_WATCHER_BUS,
         Gio.BusNameWatcherFlags.NONE,
-        GObject.Closure(function(conn, name, owner)
+        GObject.Closure(function(_conn, _name, _owner)
             -- Watcher appeared
             subscribe_to_watcher_signals()
             register_as_host()
         end),
-        GObject.Closure(function(conn, name)
+        GObject.Closure(function(_conn, _name)
             -- Watcher vanished
             systray._private.host_registered = false
 
             -- Clear all items
-            for key, item in pairs(systray._private.items) do
+            for _, item in pairs(systray._private.items) do
                 capi.awesome.emit_signal("systray::removed", item)
             end
             systray._private.items = {}
@@ -1144,18 +1052,7 @@ local function parse_dbusmenu_layout(layout, cache)
     local items = {}
 
     -- layout is (ia{sv}av) = (id, properties, children)
-    local id = layout:get_child_value(0):get_int32()
-    local props_variant = layout:get_child_value(1)
     local children_variant = layout:get_child_value(2)
-
-    -- Parse properties
-    local props = {}
-    for i = 0, props_variant:n_children() - 1 do
-        local entry = props_variant:get_child_value(i)
-        local key = entry:get_child_value(0):get_string()
-        local value = entry:get_child_value(1):get_variant()
-        props[key] = value
-    end
 
     -- Parse children
     for i = 0, children_variant:n_children() - 1 do

@@ -17,7 +17,6 @@ local cairo = lgi.cairo
 local base = require("wibox.widget.base")
 local surface = require("gears.surface")
 local gtable = require("gears.table")
-local gdebug = require("gears.debug")
 local gfs = require("gears.filesystem")
 local gcolor = require("gears.color")
 local gshape = require("gears.shape")
@@ -421,7 +420,7 @@ end
 --- Draw the systray icon.
 -- @method draw
 -- @hidden
-function systray_icon:draw(context, cr, width, height)
+function systray_icon:draw(_context, cr, width, height)
     if width == 0 or height == 0 then return end
 
     local item = self._private.item
@@ -609,7 +608,8 @@ function systray_icon:draw(context, cr, width, height)
     local urgent_style = get_icon_style(item, "urgent_style") or beautiful.systray_urgent_style or "none"
     if is_item_urgent(item) and urgent_style ~= "none" then
         local urgent_color = get_icon_style(item, "urgent_color") or beautiful.systray_urgent_color or "#ff3333"
-        local outline_color = get_icon_style(item, "urgent_outline_color") or beautiful.systray_urgent_outline_color or "#ffffff"
+        local outline_color = get_icon_style(item, "urgent_outline_color")
+            or beautiful.systray_urgent_outline_color or "#ffffff"
 
         if urgent_style == "dot" then
             -- Get configurable size
@@ -708,7 +708,7 @@ end
 --- Fit the widget to available space.
 -- @method fit
 -- @hidden
-function systray_icon:fit(context, width, height)
+function systray_icon:fit(_context, width, height)
     local item = self._private.item
     local size = self._private.forced_size or 24
 
@@ -823,7 +823,7 @@ end
 --- Handle mouse button press events.
 -- @method _handle_button
 -- @hidden
-local function handle_button(self, x, y, button, mods, geometry)
+local function handle_button(self, x, y, button, _mods, geometry)
     local item = self._private.item
     if not item then return end
 

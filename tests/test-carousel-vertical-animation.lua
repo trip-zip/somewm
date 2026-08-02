@@ -57,7 +57,7 @@ local steps = {
     -- Test instant snap (duration=0): focus c1, verify it settles into view.
     -- Re-assert focus each poll so a late focus-on-manage can't leave the
     -- carousel centered on another client, then snap and check position.
-    function(count)
+    function(_count)
         if client.focus ~= c1 then
             client.focus = c1
             c1:raise()

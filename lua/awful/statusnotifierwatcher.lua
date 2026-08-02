@@ -82,7 +82,7 @@ local function watch_service(service, stype)
         service,
         Gio.BusNameWatcherFlags.NONE,
         nil,  -- name_appeared_callback (we don't need it, already know it exists)
-        GObject.Closure(function(conn, name)
+        GObject.Closure(function(_conn, name)
             -- Service vanished
             if stype == "item" then
                 if watcher._private.registered_items[name] then
@@ -169,13 +169,13 @@ end
 
 local watcher_methods = {}
 
-function watcher_methods.RegisterStatusNotifierItem(sender, object_path, interface, method, parameters, invocation)
+function watcher_methods.RegisterStatusNotifierItem(sender, _object_path, _interface, _method, parameters, invocation)
     local service = parameters.value[1]
     register_item(sender, service)
     invocation:return_value(GLib.Variant("()"))
 end
 
-function watcher_methods.RegisterStatusNotifierHost(sender, object_path, interface, method, parameters, invocation)
+function watcher_methods.RegisterStatusNotifierHost(sender, _object_path, _interface, _method, parameters, invocation)
     local service = parameters.value[1]
     register_host(sender, service)
     invocation:return_value(GLib.Variant("()"))
@@ -221,7 +221,7 @@ end
 -- D-Bus method dispatcher
 ---------------------------------------------------------------------------
 
-local function method_call(conn, sender, object_path, interface, method, parameters, invocation)
+local function method_call(_conn, sender, object_path, interface, method, parameters, invocation)
     -- Handle org.freedesktop.DBus.Properties interface
     if interface == "org.freedesktop.DBus.Properties" then
         if method == "Get" then
@@ -277,7 +277,7 @@ end
 -- D-Bus service setup
 ---------------------------------------------------------------------------
 
-local function on_bus_acquire(conn, name)
+local function on_bus_acquire(conn, _name)
     -- Helper to create D-Bus argument info
     local function arg(argname, signature)
         return Gio.DBusArgInfo{ name = argname, signature = signature }
@@ -334,7 +334,7 @@ local function on_bus_acquire(conn, name)
     }
 
     -- Property getter callback
-    local function get_property(conn, sender, object_path, interface, property_name)
+    local function get_property(_conn, _sender, _object_path, _interface, property_name)
         if property_name == "RegisteredStatusNotifierItems" then
             return GLib.Variant("as", get_registered_items_array())
         elseif property_name == "IsStatusNotifierHostRegistered" then
@@ -353,11 +353,11 @@ local function on_bus_acquire(conn, name)
     )
 end
 
-local function on_name_acquired(conn, name)
+local function on_name_acquired(conn, _name)
     watcher._private.bus_connection = conn
 end
 
-local function on_name_lost(conn, name)
+local function on_name_lost(_conn, _name)
     watcher._private.bus_connection = nil
 end
 

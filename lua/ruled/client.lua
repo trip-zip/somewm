@@ -535,7 +535,6 @@ end
 --  rules.
 
 crules._execute = function(_, c, props, callbacks)
-
     -- Set the default buttons and keys
     local btns = amouse._get_client_mousebindings()
     local keys = akeyboard._get_client_keybindings()

@@ -64,29 +64,14 @@ local function get_widget_context(self)
 end
 
 local function do_redraw(self)
-    if not self.drawable.valid then
-        return
-    end
-    if self._forced_screen and not self._forced_screen.valid then
-        return
-    end
+    if not self.drawable.valid then return end
+    if self._forced_screen and not self._forced_screen.valid then return end
 
     local surf = surface.load_silently(self.drawable.surface, false)
     -- The surface can be nil if the drawable's parent was already finalized
-    if not surf then
-        return
-    end
-    local success, cr_or_err = pcall(function() return cairo.Context(surf) end)
-    if not success then
-        return
-    end
-    local cr = cr_or_err
-
-    local success2, geom_or_err = pcall(function() return self.drawable:geometry() end)
-    if not success2 then
-        return
-    end
-    local geom = geom_or_err
+    if not surf then return end
+    local cr = cairo.Context(surf)
+    local geom = self.drawable:geometry();
     local x, y, width, height = geom.x, geom.y, geom.width, geom.height
     local context = get_widget_context(self)
 
@@ -487,7 +472,6 @@ function drawable.new(d, widget_context_skeleton, drawable_name)
         -- mean-time, the layout does not matter much.
         if ret._visible then
             ret:draw()
-        else
         end
     end
 
@@ -538,43 +522,29 @@ screen.connect_signal("property::geometry", draw_all)
 screen.connect_signal("added", draw_all)
 screen.connect_signal("removed", draw_all)
 
--- When screen scale changes, force all visible drawables to recreate their
--- surfaces at the new scale. This is done by re-setting their geometry,
--- which triggers the C-side scale detection and surface recreation.
-screen.connect_signal("property::scale", function(s)
-    -- Method 1: Iterate visible_drawables
+-- When screen scale changes, force all drawables to recreate their
+-- surfaces at the new scale. Re-setting the geometry triggers the C-side
+-- scale detection and surface recreation.
+local function rescale(cd)
+    local geo = cd:geometry()
+    if geo.width > 0 and geo.height > 0 then
+        cd:geometry(geo)
+    end
+end
+
+screen.connect_signal("property::scale", function(_)
+    local seen = {}
+    -- Visible drawables cover titlebars; root.drawins() covers hidden drawins.
     for d in pairs(visible_drawables) do
         local cd = d.drawable
         if cd and cd.surface then
-            local geo = cd:geometry()
-            if geo.width > 0 and geo.height > 0 then
-                cd:geometry(geo)
-            end
+            seen[cd] = true
+            rescale(cd)
         end
     end
-
-    -- Method 2: Also check screen's mywibox (wibar) if it exists
-    if s.mywibox then
-        local w = s.mywibox
-        if w._drawable and w._drawable.drawable then
-            local cd = w._drawable.drawable
-            local geo = cd:geometry()
-            if geo.width > 0 and geo.height > 0 then
-                cd:geometry(geo)
-            end
-        end
-    end
-
-    -- Method 3: Check all drawins via root.drawins()
-    local drawins = root.drawins and root.drawins()
-    if drawins then
-        for _, d in ipairs(drawins) do
-            if d.drawable then
-                local geo = d.drawable:geometry()
-                if geo.width > 0 and geo.height > 0 then
-                    d.drawable:geometry(geo)
-                end
-            end
+    for _, d in ipairs(capi.root.drawins()) do
+        if d.drawable and not seen[d.drawable] then
+            rescale(d.drawable)
         end
     end
 end)

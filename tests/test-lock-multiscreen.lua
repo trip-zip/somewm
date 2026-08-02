@@ -9,7 +9,6 @@
 
 local runner = require("_runner")
 local wibox = require("wibox")
-local awful = require("awful")
 local lock = require("_lock_helper")
 
 -- Skip if _test_add_output is not available

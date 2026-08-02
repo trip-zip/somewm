@@ -2,7 +2,6 @@
 -- snipping mousegrabber, and replies via _ipc_send_response when the user
 -- accepts or cancels.
 
-local awful   = require("awful")
 local ipc     = require("awful.ipc")
 local runner  = require("_runner")
 
