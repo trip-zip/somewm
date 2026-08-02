@@ -599,7 +599,7 @@ function notification:set_timeout(timeout)
 
     if self.timer and self._private.timeout == timeout then return end
 
-    -- Prevent a memory leak and the accumulation of active timers
+    -- Stop old timer unconditionally before branching
     if self.timer and self.timer.started then
         self.timer:stop()
     end
@@ -626,7 +626,6 @@ function notification:set_timeout(timeout)
     else
         self.timer = nil
     end
-
     self.die = die
     self._private.timeout = timeout
     self:emit_signal("property::timeout", timeout)
@@ -892,7 +891,8 @@ local function convert_actions(actions)
     local new_actions = {}
 
     -- Does not attempt to handle when there is a mix of strings and objects
-    for idx, name in pairs(actions) do
+    for action_idx, action_name in pairs(actions) do
+        local idx, name = action_idx, action_name
         local cb, old_idx = nil, idx
 
         if type(name) == "function" then
@@ -963,7 +963,7 @@ end
 --- Create a notification.
 --
 -- @tparam[opt={}] table args The argument table containing any of the arguments below.
--- @tparam[opt=""] string args.text Text of the notification.
+-- @tparam[opt=""] string args.message Text of the notification.
 -- @tparam[opt] string args.title Title of the notification.
 -- @tparam[opt=5] integer args.timeout Time in seconds after which popup expires.
 --   Set 0 for no timeout.

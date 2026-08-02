@@ -4,10 +4,20 @@ This file tracks which AwesomeWM PRs have been ported to SomeWM.
 
 Since SomeWM is not a direct git fork, we manually port relevant changes from upstream AwesomeWM. This file helps track what's been ported and what remains.
 
+## Pending
+
+| AwesomeWM PR | Description | Notes |
+|--------------|-------------|-------|
+| [#4077](https://github.com/awesomeWM/awesome/pull/4077) | Decouple fullscreen stacking layer from focus | C-side (stack.c). Needs adaptation: somewm keeps the fullscreen layer when the focused client is on another screen, so the top-of-stack check must be per-screen. somewm also forces stack_windows() on focus change (somewm.c), which may already mask the upstream bug. |
+
 ## Ported PRs
 
 | AwesomeWM PR | Description | SomeWM PR | Date |
 |--------------|-------------|-----------|------|
+| [#4100](https://github.com/awesomeWM/awesome/pull/4100) | Revert #4036 (client_shape_input) | (this PR) | 2026-08-02 |
+| [#3998](https://github.com/awesomeWM/awesome/pull/3998) | Add make_widget_from_value() in fixed:insert() | (this PR) | 2026-08-02 |
+| [#4095](https://github.com/awesomeWM/awesome/pull/4095), [#3971](https://github.com/awesomeWM/awesome/pull/3971), 05b8695d | Doc fixes and Lua 5.5 cleanups, via file sync | (this PR) | 2026-08-02 |
+| [#4081](https://github.com/awesomeWM/awesome/pull/4081) | Default timeout without ruled.notification (verified already present) | N/A | 2026-08-02 |
 | [#4079](https://github.com/awesomeWM/awesome/pull/4079) | Add group support for append_client_keybindings | N/A | 2026-04-01 |
 | [#4066](https://github.com/awesomeWM/awesome/pull/4066) | Use lua_pushliteral instead of lua_pushstring | N/A | 2026-04-01 |
 | [#4060](https://github.com/awesomeWM/awesome/pull/4060) | Use luaA_class_add_properties batch API | N/A | 2026-04-01 |

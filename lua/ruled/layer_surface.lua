@@ -33,7 +33,6 @@
 
 local capi = { layer_surface = layer_surface }
 local gmatcher = require("gears.matcher")
-local gtable = require("gears.table")
 local protected_call = require("gears.protected_call")
 
 local module = {}

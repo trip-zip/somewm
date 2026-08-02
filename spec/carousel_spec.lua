@@ -6,12 +6,9 @@
 ---------------------------------------------------------------------------
 
 -- Minimal mocks so carousel module loads without the compositor.
-local signals = {}
 local mock_client = {
     focus = nil,
-    connect_signal = function(_, name, fn)
-        signals[name] = fn
-    end,
+    connect_signal = function() end,
 }
 local mock_screen = {}
 local mock_awesome = {}

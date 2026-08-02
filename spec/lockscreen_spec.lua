@@ -19,7 +19,7 @@ local function make_fake_wibox(args)
         bg = args.bg or "#000000",
         widget = args.widget,
         drawin = { valid = true },
-    }, { __index = function(_, k) return nil end })
+    }, { __index = function() return nil end })
 end
 
 -- Helper to make a callable widget constructor
@@ -27,7 +27,7 @@ local function make_widget_constructor()
     return setmetatable({}, {
         __call = function(_, args)
             return setmetatable(args or {}, {
-                __index = function(self, k)
+                __index = function(_self, k)
                     if k == "markup" then return "" end
                     if k == "text" then return "" end
                     return nil
@@ -56,7 +56,7 @@ describe("lockscreen module", function()
             primary = screen_primary,
             connect_signal = function() end,
         }, {
-            __call = function(self, state, control)
+            __call = function(_self, _state, control)
                 if control == nil then
                     return all_screens[1]
                 end

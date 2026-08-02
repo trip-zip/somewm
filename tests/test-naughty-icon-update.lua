@@ -7,7 +7,6 @@
 local naughty = require("naughty")
 local notification = require("naughty.notification")
 local icon_widget = require("naughty.widget.icon")
-local gsurface = require("gears.surface")
 local cairo = require("lgi").cairo
 local runner = require("_runner")
 

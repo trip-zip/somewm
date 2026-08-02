@@ -81,7 +81,7 @@ local step1_state = 0  -- 0=spawn, 1=got client, 2=killed, 3=waiting for gc
 local step1_gc_wait = 0
 local state
 local steps = {
-    function(count)
+    function(_count)
         if step1_state == 0 then
             awful.spawn("xterm")
             step1_state = 1

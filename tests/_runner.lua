@@ -218,11 +218,7 @@ end
 --         assert(c, "Client did not appear")
 --         runner.done()
 --     end)
-function runner.run_async(test_fn, options)
-    options = gtable.crush({
-        kill_clients = true,
-    }, options or {})
-
+function runner.run_async(test_fn, _options)
     runner.run_direct()
 
     -- Load async module if not already loaded

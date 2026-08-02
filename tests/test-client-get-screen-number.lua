@@ -68,7 +68,7 @@ local steps = {
 
     -- Step 4: invalid screen number should not crash
     function()
-        local ok, err = pcall(function()
+        local ok = pcall(function()
             client.get(999)
         end)
         -- Should not crash; may return empty table or warn

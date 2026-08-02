@@ -220,8 +220,7 @@ function client.visible(s, stacked)
     local cls = capi.client.get(s, stacked)
     local vcls = {}
     for _, c in pairs(cls) do
-        local is_vis = c:isvisible()
-        if is_vis then
+        if c:isvisible() then
             table.insert(vcls, c)
         end
     end
@@ -240,8 +239,7 @@ function client.tiled(s, stacked)
     local tclients = {}
     -- Remove floating clients
     for _, c in pairs(clients) do
-        local is_floating = client.object.get_floating(c)
-        if not is_floating
+        if not client.object.get_floating(c)
             and not c.fullscreen
             and not c.maximized
             and not c.maximized_vertical

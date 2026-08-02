@@ -131,7 +131,6 @@ local steps = {
             expanded_geo_b.x, expanded_geo_b.y))
 
         -- B should have expanded (it's now the only tiled client)
-        local wa = awful.screen.focused().workarea
         -- In tile layout with master_width_factor=0.5 and 1 client,
         -- the single client gets the full workarea width minus gaps/borders
         assert(expanded_geo_b.width > initial_geo_b.width,

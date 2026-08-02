@@ -10,12 +10,8 @@
 
 pcall(require, "luarocks.loader")
 
-local gears = require("gears")
 local awful = require("awful")
 require("awful.autofocus")
-
--- Default modkey
-modkey = "Mod4"
 
 -- Table of layouts
 awful.layout.layouts = {

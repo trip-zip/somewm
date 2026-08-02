@@ -6,7 +6,6 @@
 ---------------------------------------------------------------------------
 
 local runner = require("_runner")
-local awful = require("awful")
 local lock = require("_lock_helper")
 local test_client = require("_client")
 

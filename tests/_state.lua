@@ -12,7 +12,6 @@
 ---------------------------------------------------------------------------
 
 local awful = require("awful")
-local gears = require("gears")
 local timer = require("gears.timer")
 
 local state = {}

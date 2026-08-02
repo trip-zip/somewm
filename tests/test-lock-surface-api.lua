@@ -32,18 +32,18 @@ runner.run_steps({
 
     -- Step 2: BEH-12 - rejects invalid types
     function()
-        local ok, err
+        local ok
 
-        ok, err = pcall(function() awesome.set_lock_surface("bad") end)
+        ok = pcall(function() awesome.set_lock_surface("bad") end)
         assert(not ok, "should reject string")
 
-        ok, err = pcall(function() awesome.set_lock_surface(42) end)
+        ok = pcall(function() awesome.set_lock_surface(42) end)
         assert(not ok, "should reject number")
 
-        ok, err = pcall(function() awesome.set_lock_surface(nil) end)
+        ok = pcall(function() awesome.set_lock_surface(nil) end)
         assert(not ok, "should reject nil")
 
-        ok, err = pcall(function() awesome.set_lock_surface({}) end)
+        ok = pcall(function() awesome.set_lock_surface({}) end)
         assert(not ok, "should reject table without drawin")
 
         return true

@@ -59,11 +59,11 @@ runner.run_async(function()
     ------------------------------------------------------------------
     -- Test C: set_layout rejects out-of-range group numbers
     ------------------------------------------------------------------
-    ok, err = pcall(instance.set_layout, #instance._layout)
+    ok = pcall(instance.set_layout, #instance._layout)
     assert(not ok, "set_layout(#_layout) should error but succeeded")
     io.stderr:write("[TEST] PASS: set_layout rejects group=" .. #instance._layout .. "\n")
 
-    ok, err = pcall(instance.set_layout, -1)
+    ok = pcall(instance.set_layout, -1)
     assert(not ok, "set_layout(-1) should error but succeeded")
     io.stderr:write("[TEST] PASS: set_layout rejects group=-1\n")
 

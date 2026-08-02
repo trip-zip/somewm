@@ -26,7 +26,7 @@ end
 
 local start = os.clock()
 
-for i = 1, N do
+for _ = 1, N do
     for _, c in ipairs(clients) do
         c.minimized = true
         c.minimized = false

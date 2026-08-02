@@ -229,8 +229,7 @@ end
 -- @staticfct beautiful.get_font_height
 function beautiful.get_font_height(name)
     local font_data = load_font(name)
-    local height = font_data and font_data.height or 0
-    return height
+    return font_data and font_data.height or 0
 end
 
 --- Function that initializes the theme settings. Should be run at the
@@ -292,9 +291,7 @@ function beautiful.init(config)
                 end
             end
 
-            if theme.font then
-                set_font(theme.font)
-            end
+            if theme.font then set_font(theme.font) end
             return true
         else
             rawset(beautiful, "theme_path", nil)

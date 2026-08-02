@@ -5,6 +5,8 @@
 --- awesome.idle_inhibited, and suppression of idle timeouts.
 ---------------------------------------------------------------------------
 
+-- luacheck: globals awesome.idle_inhibit
+
 local runner = require("_runner")
 
 local callback_fired = {}

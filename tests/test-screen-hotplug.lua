@@ -16,7 +16,6 @@
 local runner = require("_runner")
 local test_client = require("_client")
 local utils = require("_utils")
-local awful = require("awful")
 
 -- This test requires 2 outputs
 if screen.count() < 2 then

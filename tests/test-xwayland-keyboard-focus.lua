@@ -12,9 +12,7 @@
 ---------------------------------------------------------------------------
 
 local runner = require("_runner")
-local test_client = require("_client")
 local x11_client = require("_x11_client")
-local utils = require("_utils")
 
 -- Check if we're in headless mode (XWayland won't work properly)
 local function is_headless()

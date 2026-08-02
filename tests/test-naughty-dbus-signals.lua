@@ -50,8 +50,6 @@ if not dbus or not os.getenv("DBUS_SESSION_BUS_ADDRESS") then
 end
 
 local naughty = require("naughty")
-local notification = require("naughty.notification")
-local cst = require("naughty.constants")
 
 -- Register a display handler
 naughty.connect_signal("request::display", function(n)

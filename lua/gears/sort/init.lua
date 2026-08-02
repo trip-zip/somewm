@@ -5,5 +5,5 @@
 ---------------------------------------------------------------------------
 
 return {
-  topological = require("gears.sort.topological"),
+    topological = require("gears.sort.topological")
 }

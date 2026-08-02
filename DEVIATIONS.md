@@ -75,7 +75,6 @@ These APIs exist and can be called without error, but have no effect on Wayland.
 | `awful.client.shape.update.all` | No-op | X11 Shape Extension unavailable on Wayland |
 | `awful.client.shape.update.bounding` | No-op | X11 Shape Extension unavailable on Wayland |
 | `awful.client.shape.update.clip` | No-op | X11 Shape Extension unavailable on Wayland |
-| `awful.client.shape.update.input` | No-op | X11 Shape Extension unavailable on Wayland |
 
 ### Client Shape (Rounded Corners)
 
@@ -179,13 +178,25 @@ These modifications to AwesomeWM's Lua libraries were necessary for Wayland comp
 |------|--------|--------|
 | `wibox/widget/systray.lua` | Complete rewrite | SNI D-Bus protocol replaces X11 XEmbed |
 | `beautiful/gtk.lua` | Complete rewrite | File parsing replaces live GTK widget queries |
-| `wibox/init.lua` | ARGB32 shapes, HiDPI scaling, surface lifetime, `shape_border` | Wayland scene graph and compositing model |
+| `beautiful/init.lua` | `get_font_height()` returns 0 for unloadable fonts | Avoids hard errors from themes naming missing fonts |
+| `wibox/init.lua` | ARGB32 shapes, HiDPI scaling, surface lifetime, `shape_border`; `border_width` reads 0 (not nil) when unset and border/opacity setters mirror into the drawin | Wayland scene graph and compositing model; C-side scene math needs concrete values |
 | `wibox/drawable.lua` | HiDPI scale-change handler | Recreates surfaces when `screen.scale` changes |
-| `awful/client.lua` | `c.type or "normal"` fallback | Native Wayland clients may not set window type |
-| `awful/permissions/init.lua` | Layer surface keyboard focus handlers | Wayland layer-shell has no X11 equivalent |
-| `awful/mouse/snap.lua` | ARGB32 shapes, surface lifetime | Same Wayland surface patterns as `wibox/init.lua` |
+| `wibox/hierarchy.lua` | `clip_child_extends` widget flag skips child-extent union | Needed by `wibox.layout.overflow` clipping |
+| `awful/client.lua` | `c.type or "normal"` fallback; `awful.client.get_icon_path()` and desktop-entry icon lookup that sets `c.icon` at manage time | Native Wayland clients may not set window type and have no icon protocol (no `_NET_WM_ICON` equivalent) |
+| `awful/widget/clienticon.lua` | Falls back to the desktop-entry icon path when the client provides no icon | Same missing Wayland icon protocol |
+| `awful/widget/tasklist.lua` | Icon slot falls back to `awful.client.get_icon_path(c)`; templates can receive a file path string where upstream always passes a surface | Same missing Wayland icon protocol |
+| `awful/widget/keyboardlayout.lua` | `next_layout`/`set_layout` wrap-around off-by-one fixed | Upstream cycles to an out-of-range group index |
+| `awful/widget/layoutlist.lua` | `source.for_screen` returns `{}` for a nil screen instead of asserting | Screens can be absent mid hot-reload |
+| `awful/permissions/init.lua` | Layer surface keyboard focus handlers; `request::tag` guards a nil `transient_for.screen`; hosts the focus restore and tag persistence handlers (see SomeWM-Only Features) | Wayland layer-shell, output hotplug and hot-reload have no X11 equivalent |
+| `awful/mouse/snap.lua` | ARGB32 shapes, surface lifetime; edge snap dwell gating (see SomeWM-Only Features) | Same Wayland surface patterns as `wibox/init.lua` |
+| `awful/root.lua` | `_remove_*` calls the C-side removal hook immediately when present | somewm's C layer exposes `_remove_` hooks; also flushes removals upstream leaves queued |
+| `awful/screenshot.lua` | Snipping overlay wibox sets `surface_scale = 1.0` | HiDPI overlay repaint was ~1 FPS at physical resolution |
 | `gears/filesystem.lua` | `somewm/` paths | Rebranded config/cache directories |
-| `naughty/dbus.lua` | `awesome.version or "somewm-dev"` fallback | Version string safety |
+| `naughty/core.lua` | Default `request::icon` handler `naughty.app_icon_handler` resolves `app_icon` names via `menubar.utils.lookup_icon` | Upstream ships no default handler; naughty now requires menubar at load |
+| `naughty/dbus.lua` | `awesome.version or "somewm-dev"` fallback; no `ActionInvoked("default")` on user dismiss | Version string safety; dismissing a notification should not open the app (reverts upstream 5daae2bb) |
+| `naughty/notification.lua` | Property getter falls back to `beautiful.notification_*` between preset and defaults; presets no longer merge in `config.defaults`, so `n.preset.<field>` can be nil | Upstream ignores `beautiful.notification_*`; merged defaults shadowed the beautiful lookup |
+| `naughty/widget/icon.lua` | Clears the image when a notification's icon is unset; disconnects the signal it actually connects | Upstream leaves a stale image and leaks the signal connection |
+| `naughty/layout/box.lua` | Caches the notification position at attach time for use after the weak ref is GC'd | Upstream falls back to a hardcoded `"top_right"` |
 
 ### New Lua Modules (no AwesomeWM equivalent)
 
@@ -200,6 +211,11 @@ These modifications to AwesomeWM's Lua libraries were necessary for Wayland comp
 | `gears.xresources` | File-based Xresources parser |
 | `gears.bitwise` | Pure-Lua bitwise operations |
 | `awful.layout.suit.carousel` | Scrollable tiling layout (horizontal and vertical) |
+| `awful.gesture` | Touchpad gesture bindings (swipe/pinch/hold) |
+| `awful.test_marker` | Test-only keybind remapping, active only under `SOMEWM_TEST_NAME` |
+| `lockscreen` | Built-in lock screen (used by `somewmrc.lua`) |
+| `debug.focus_tracker` | Debug overlay showing focus/tag/cursor state |
+| `wibox.layout.overflow` | Scrollable widget layout, port of AwesomeWM PR #3309 (uses the `clip_child_extends` hook in `wibox/hierarchy.lua`) |
 | `somewm` | Lazy-loaded namespace for somewm-only Lua modules |
 | `somewm.layout_animation` | Animated tiling transitions (mwfact, layout switch, spawn/kill) |
 
@@ -319,6 +335,18 @@ local surface = screen.primary.content
 | `client.id` | Unique compositor-assigned client ID |
 | `client.aspect_ratio` | Client aspect ratio hint |
 | `client.shadow` | Per-client shadow toggle |
+
+Wiboxes and drawins have a matching `shadow` property; wibars also read the `beautiful.wibar_shadow` theme variable.
+
+### Edge Snap Dwell
+
+`awful.mouse.snap.snap_dwell_ms` (default 150) delays the edge-snap placeholder until the cursor has dwelled in the same edge zone for that many milliseconds, preventing accidental snaps during fast drags. Set to 0 for AwesomeWM's immediate behavior.
+
+### Focus Restore and Tag Persistence
+
+When a lock screen, layer surface, or output change releases focus, the compositor emits the somewm-only `request::focus_restore` screen signal. `awful.permissions.focus_restore` handles it by activating the best client from focus history.
+
+When a screen is removed, `awful.permissions.tag_screen` saves its tag state (name, selection, layout, master settings, clients) into `awful.permissions.saved_tags`, keyed by output name. `somewmrc.lua` restores the saved state when the output reconnects.
 
 ### Cursor Theming
 

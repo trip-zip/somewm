@@ -72,7 +72,6 @@ local function spawn_x11_client(_, class, title)
 
     local exe = x11_app_cmd[1]
     local class_flag = x11_app_cmd[2]
-    local exec_flag = x11_app_cmd[3]
 
     -- Build command based on what app we're using
     local cmd

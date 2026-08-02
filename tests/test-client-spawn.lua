@@ -16,7 +16,6 @@
 local runner = require("_runner")
 local test_client = require("_client")
 local utils = require("_utils")
-local awful = require("awful")
 
 -- Skip test if no terminal available
 if not test_client.is_available() then
