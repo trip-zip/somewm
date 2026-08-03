@@ -115,7 +115,7 @@ do
 end
 
 local all_icon_sizes = {
-    -- 'scalable', -- There is no Pixbuf loader for SVG shipped with someWM
+    'scalable',
     '256x256',
     '128x128',
     '96x96',
@@ -131,6 +131,16 @@ local all_icon_sizes = {
 
 --- List of supported icon exts.
 local supported_icon_file_exts = { png = 1, xpm = 2, svg = 3 }
+
+-- Not every install ships a gdk-pixbuf SVG loader, and picking an icon we
+-- cannot load leaves the caller with nothing.
+do
+    local has_svg = false
+    for _, format in ipairs(lgi.GdkPixbuf.Pixbuf.get_formats()) do
+        if format:get_name() == "svg" then has_svg = true break end
+    end
+    if not has_svg then supported_icon_file_exts.svg = nil end
+end
 
 local icon_lookup_path = nil
 
