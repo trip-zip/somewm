@@ -15,12 +15,14 @@
 #include <wlr/types/wlr_fractional_scale_v1.h>
 #include <wlr/types/wlr_scene.h>
 #include <wlr/types/wlr_xcursor_manager.h>
+#include <wlr/xcursor.h>
 #include <wlr/xwayland.h>
 #include <xcb/xcb.h>
 #include <xcb/xcb_icccm.h>
 
 #include "somewm.h"
 #include "somewm_api.h"
+#include "wlr_compat.h"
 #include "event_queue.h"
 #include "xwayland.h"
 #include "globalconf.h"
@@ -228,9 +230,7 @@ xwaylandready(struct wl_listener *listener, void *data)
 
 	/* Set the default XWayland cursor to match the rest of somewm. */
 	if ((xcursor = wlr_xcursor_manager_get_xcursor(cursor_mgr, "default", 1)))
-		wlr_xwayland_set_cursor(xwayland,
-				wlr_xcursor_image_get_buffer(xcursor->images[0]),
-				xcursor->images[0]->hotspot_x, xcursor->images[0]->hotspot_y);
+		COMPAT_XWAYLAND_SET_CURSOR(xwayland, xcursor->images[0]);
 
 	/* Initialize XCB connection for EWMH support (AwesomeWM pattern) */
 	conn = xcb_connect(xwayland->display_name, NULL);

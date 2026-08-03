@@ -4,7 +4,7 @@ A Lua framework for building your Wayland desktop. Layouts, widgets, keybindings
 
 SomeWM has a complete widget system, a signal-driven object model, and a compositor runtime, all wired together so every piece can talk to every other piece. Write a widget that reacts to window focus changes. Build a layout that adapts to screen geometry. Script your entire workflow from `rc.lua` or from the command line.
 
-Built on [wlroots](https://gitlab.freedesktop.org/wlroots/wlroots) 0.20. Compatible with [AwesomeWM's](https://github.com/awesomeWM/awesome) Lua API - existing configs, widgets, and themes carry over.
+Built on [wlroots](https://gitlab.freedesktop.org/wlroots/wlroots) 0.19 or 0.20. Compatible with [AwesomeWM's](https://github.com/awesomeWM/awesome) Lua API - existing configs, widgets, and themes carry over.
 
 > **This branch (`main`) is 2.0-dev.** If you want 100% AwesomeWM parity, use the [`release/1.4`](https://github.com/trip-zip/somewm/tree/release/1.4) branch or install `somewm` from the [AUR](https://aur.archlinux.org/packages/somewm).
 
@@ -33,6 +33,18 @@ sudo make install
 ```
 
 For Debian, Fedora, NixOS, and detailed instructions, see the [Installation Guide](https://somewm.org/docs/next/getting-started/installation).
+
+**wlroots version.** The build uses wlroots 0.20 if you already have it installed. If
+not, it picks 0.20 when your wayland-server, libdrm, xkbcommon, wayland-protocols and
+pixman are new enough to build it, and 0.19 otherwise. Older stable distributions
+(Debian 13, Ubuntu 24.04) fall into the 0.19 case. `meson setup` prints which version it
+chose, and when it falls back to 0.19 it names the dependencies that came up short.
+
+Override the choice with `meson setup build -Dwlroots_version=0.19` (or `0.20`). If
+wlroots is not installed, the matching version is built from `subprojects/`.
+
+The 0.19 path exists for these older distributions and will be dropped once they ship
+wlroots 0.20 or the dependency versions it needs.
 
 ## Run
 
