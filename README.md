@@ -1,6 +1,6 @@
 # somewm - AwesomeWM for Wayland
 
-**somewm** is AwesomeWM ported to Wayland, built on [wlroots](https://gitlab.freedesktop.org/wlroots/wlroots) 0.20. It implements AwesomeWM's full Lua API - your `rc.lua`, widgets, and themes carry over with no changes. somewm supports LuaJIT as well as Lua 5.4, 5.3, 5.2, and 5.1.
+**somewm** is AwesomeWM ported to Wayland, built on [wlroots](https://gitlab.freedesktop.org/wlroots/wlroots) 0.19 or 0.20. It implements AwesomeWM's full Lua API - your `rc.lua`, widgets, and themes carry over with no changes. somewm supports LuaJIT as well as Lua 5.4, 5.3, 5.2, and 5.1.
 
 <p align="center">
   <img src="screenshots/default.png" alt="Default configuration" width="45%">
@@ -42,6 +42,18 @@ sudo make install
 ```
 
 For Debian, Fedora, NixOS, and detailed instructions, see the [Installation Guide](https://somewm.org/docs/getting-started/installation).
+
+**wlroots version.** The build uses wlroots 0.20 if you already have it installed. If
+not, it picks 0.20 when your wayland-server, libdrm, xkbcommon, wayland-protocols and
+pixman are new enough to build it, and 0.19 otherwise. Older stable distributions
+(Debian 13, Ubuntu 24.04) fall into the 0.19 case. `meson setup` prints which version it
+chose, and when it falls back to 0.19 it names the dependencies that came up short.
+
+Override the choice with `meson setup build -Dwlroots_version=0.19` (or `0.20`). If
+wlroots is not installed, the matching version is built from `subprojects/`.
+
+The 0.19 path exists for these older distributions and will be dropped once they ship
+wlroots 0.20 or the dependency versions it needs.
 
 ## Run
 

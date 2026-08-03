@@ -3,12 +3,15 @@
  *
  * Provides macros to abstract wlroots API details.
  *
- * Currently targets wlroots 0.20.
+ * Targets wlroots 0.19 and 0.20. Branch on WLR_VERSION_NUM from <wlr/version.h>, which
+ * describes the headers actually being compiled against; a define from meson could
+ * disagree with the include path.
  */
 
 #ifndef WLR_COMPAT_H
 #define WLR_COMPAT_H
 
+#include <wlr/version.h>
 #include <wlr/types/wlr_output.h>
 #include <wlr/types/wlr_output_layout.h>
 #include <wlr/util/edges.h>
@@ -33,6 +36,17 @@
 /* XWayland: window type helper */
 #define COMPAT_XWAYLAND_HAS_WINDOW_TYPE(surface, type) \
     wlr_xwayland_surface_has_window_type((surface), (type))
+
+/* XWayland: 0.20 passes the cursor image as a wlr_buffer, 0.19 as raw pixels */
+#if WLR_VERSION_NUM >= ((0 << 16) | (20 << 8))
+#define COMPAT_XWAYLAND_SET_CURSOR(xw, image) \
+    wlr_xwayland_set_cursor((xw), wlr_xcursor_image_get_buffer(image), \
+        (image)->hotspot_x, (image)->hotspot_y)
+#else
+#define COMPAT_XWAYLAND_SET_CURSOR(xw, image) \
+    wlr_xwayland_set_cursor((xw), (image)->buffer, (image)->width * 4, \
+        (image)->width, (image)->height, (image)->hotspot_x, (image)->hotspot_y)
+#endif
 
 /* XDG surface geometry */
 #define COMPAT_XDG_SURFACE_GEOMETRY(surface) ((surface)->geometry)
