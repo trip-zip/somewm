@@ -18,6 +18,8 @@ build/
 build-bench/
 builddir/
 subprojects/wlroots/
+subprojects/wlroots-0.19/
+subprojects/wlroots-0.20/
 subprojects/packagecache/
 
 # Development tooling & reports (local only)
