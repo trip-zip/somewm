@@ -52,9 +52,8 @@ reconfigure:
 test: test-unit test-check test-signal test-orchestrator test-integration
 
 # Unit tests only (busted, no compositor needed)
-# Use - prefix to continue even if unit tests fail (some have known issues)
 test-unit:
-	-@./tests/run-unit.sh
+	@./tests/run-unit.sh
 
 # Check mode tests (no compositor needed, tests somewm --check)
 test-check: build-test
