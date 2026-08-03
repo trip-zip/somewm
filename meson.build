@@ -7,7 +7,20 @@ project(
     'c_std=gnu11',
     'warning_level=2',
     'werror=true',
-    'wlroots:werror=false',
+    # Vendored code is not ours to keep warning-clean, and wlroots 0.19.3 is old enough
+    # that newer compilers flag it. Subproject-scoped overrides are the only form that
+    # cascades to nested subprojects; subproject() default_options does not. Entries for
+    # subprojects that never get configured are ignored, so this lists everything wlroots
+    # can pull in: its own wraps, plus libdisplay-info's transitive v4l-utils.
+    'wlroots-0.19:werror=false',
+    'wlroots-0.20:werror=false',
+    'wayland:werror=false',
+    'wayland-protocols:werror=false',
+    'libdrm:werror=false',
+    'libxkbcommon:werror=false',
+    'pixman:werror=false',
+    'seatd:werror=false',
+    'libliftoff:werror=false',
     'libdisplay-info:werror=false',
     'v4l-utils:werror=false',
   ],
@@ -58,6 +71,10 @@ libinput = dependency('libinput')
 have_3fg_drag = cc.has_function('libinput_device_config_3fg_drag_get_finger_count',
                                  dependencies: libinput)
 libdrm = dependency('libdrm')
+# Not linked directly; wlroots pulls it in. Probed only so the wlroots version choice
+# below can read its version, so not required: with no pixman-1.pc at all, wlroots
+# resolves pixman through its own wrap and the floor below stops applying.
+pixman = dependency('pixman-1', required: false)
 dbus = dependency('dbus-1')
 glib = dependency('glib-2.0')
 gio = dependency('gio-2.0')
@@ -110,11 +127,61 @@ lgi_output = lgi_check_result.stdout().strip()
 lgi_version = lgi_output.split('Found lgi ')[-1].split('\n')[0]
 message('Found LGI version: ' + lgi_version)
 
-# wlroots 0.20 only - use system if available, otherwise build from subproject
-wlroots = dependency('wlroots-0.20', version : '>=0.20.0', static: false, required: false)
+# wlroots 0.19 or 0.20. wlroots 0.20 raises floors that stable distros do not meet yet
+# (Debian 13 ships wayland-server 1.23.1, libdrm 2.4.124, xkbcommon 1.7.0, pixman 0.44),
+# so fall back to 0.19 there rather than failing to configure.
+#
+# Mirrors what wlroots 0.20 asks of its own dependencies: meson.build for wayland-server,
+# libdrm and xkbcommon, protocol/meson.build for wayland-protocols, render/pixman for
+# pixman. All of these have a wrap fallback upstream except render/pixman's stricter
+# >=0.46.0, which has none and so hard-fails; the rest merely make wlroots source-build a
+# core system library, which is worth avoiding too. Hence all of them are listed.
+wlroots_020_floors = {
+  # name: [minimum, installed]
+  'wayland-server': ['>=1.24.0', wayland_server.version()],
+  'libdrm': ['>=2.4.129', libdrm.version()],
+  'xkbcommon': ['>=1.8.0', xkbcommon.version()],
+  'wayland-protocols': ['>=1.47', wayland_protocols.version()],
+}
+if pixman.found()
+  wlroots_020_floors += {'pixman-1': ['>=0.46.0', pixman.version()]}
+endif
+
+wlroots_020_unmet = []
+foreach name, floor : wlroots_020_floors
+  if not floor[1].version_compare(floor[0])
+    wlroots_020_unmet += name + ' ' + floor[1] + ' (need ' + floor[0] + ')'
+  endif
+endforeach
+
+# An installed wlroots 0.20 met those floors when it was built, so it outranks the probe:
+# a distro that backports 0.20 onto older deps should still get 0.20.
+wlroots_020 = dependency('wlroots-0.20', version: '>=0.20.0', static: false,
+                         required: false, allow_fallback: false)
+
+wlroots_version = get_option('wlroots_version')
+if wlroots_version == 'auto'
+  if wlroots_020.found() or wlroots_020_unmet.length() == 0
+    wlroots_version = '0.20'
+  else
+    wlroots_version = '0.19'
+    message('Selecting wlroots 0.19, too old for 0.20: ' + ', '.join(wlroots_020_unmet))
+  endif
+elif wlroots_version == '0.20' and not wlroots_020.found() and wlroots_020_unmet.length() != 0
+  error('wlroots 0.20 requires newer dependencies than this system has: '
+    + ', '.join(wlroots_020_unmet)
+    + '. Use -Dwlroots_version=0.19 or upgrade them.')
+endif
+
+if wlroots_version == '0.20'
+  wlroots = wlroots_020
+else
+  wlroots = dependency('wlroots-0.19', version: '>=0.19.3', static: false,
+                       required: false, allow_fallback: false)
+endif
 
 if not wlroots.found()
-  message('System wlroots 0.20 not found, building from subproject...')
+  message('System wlroots ' + wlroots_version + ' not found, building from subproject...')
 
   wlroots_options = [
     'examples=false',
@@ -126,11 +193,13 @@ if not wlroots.found()
     wlroots_options += 'xwayland=disabled'
   endif
 
-  wlroots_proj = subproject('wlroots', default_options: wlroots_options)
+  # One wrap per version: subprojects/wlroots-<version>.wrap, checked out into a
+  # matching directory. Adding a version is a new wrap plus a meson_options.txt choice.
+  wlroots_proj = subproject('wlroots-' + wlroots_version, default_options: wlroots_options)
   wlroots = wlroots_proj.get_variable('wlroots')
 endif
 
-wlroots_version = '0.20'
+# The Debian CI job greps this line to prove `auto` picks 0.19 there; keep the wording.
 message('Using wlroots version: ' + wlroots_version)
 
 # PAM authentication (optional, for lock screen)
@@ -267,9 +336,6 @@ add_project_arguments(
   '-DWITH_DBUS',
   language: 'c',
 )
-
-# Always 0.20 - we only support this version
-add_project_arguments('-DWLR_VERSION_0_20', language: 'c')
 
 if have_xwayland
   add_project_arguments('-DXWAYLAND', language: 'c')
