@@ -66,7 +66,7 @@ Rules that bite:
 A test that pins an unfixed defect declares it at the top:
 
 ```bash
-# xfail: naughty never re-owns org.freedesktop.Notifications after a reload
+# xfail: every reload leaks the old Lua state and its lgi closures
 ```
 
 The runner reads that line statically, before running the test, so the
@@ -88,13 +88,17 @@ it cannot depend on `lib.sh` having been sourced yet.
 
 | symptom | pinned by |
 |---|---|
-| Notifications permanently dead after any restart (issue 444). The reload closes the shared GDBus session bus; GLib's singleton cache hands the closed object to every later `bus_get_sync`, so naughty never re-owns its name. | `notify-after-restart`, `bus-open-after-restart`, `dbus-name-census-after-restart` |
 | The four old hot-reload tests never executed the reload. | retired: this whole suite, `restart-executes` in particular |
 | Per-reload resource accumulation: the old state is leaked with GC stopped, and the lgi closure population roughly doubles per reload. | `double-restart` (census half) |
-| statusnotifierwatcher leaks its name ownership, object registration and watches every reload. | `dbus-name-census-after-restart` |
 
 Fixed defects keep their tests, now as plain regression tests:
 
+- Notifications permanently dead after any restart (issue 444), because
+  the reload closed the shared GDBus session connection:
+  `notify-after-restart` for the symptom, `bus-open-after-restart` for the
+  connection itself. Deleting the close needed the `"exit"` release contract
+  first, or the rebuilt state collides with the abandoned one on a connection
+  that now stays open.
 - Remote eval dead after the first reload, because the signal handler table
   kept old-state registry refs: `remote-eval-after-restart`.
 - lgi callbacks dropped after a config timeout: `timers-after-config-timeout`.
@@ -115,6 +119,12 @@ Fixed defects keep their tests, now as plain regression tests:
   list, which had drifted: `search-paths-after-restart`. Both now run
   `luaA_register_state`. The test pins the half that was outside-visible: only
   the boot copy prepended somewm's `package.cpath`.
+- statusnotifierwatcher never released its name ownership, object
+  registration or name watches: `statusnotifierwatcher-after-restart`.
+  Ownership cannot show this, since every state owns the name on the one
+  process-wide connection; a missing release kills the service instead. The test
+  seeds a phase-unique marker into the live state's item list and reads it back
+  over the bus, so the reply says which state answered.
 - IPC event subscriptions going silent after a reload:
   `ipc-subscribe-across-restart`. Fixed by asking C whether anyone is
   subscribed rather than keeping a second count in Lua.
@@ -130,6 +140,19 @@ Fixed defects keep their tests, now as plain regression tests:
   its registry ints, and naughty's startup-error fallback then fake_adds a
   phantom screen.
 - The timeout sweep destroying the libdbus watches: `dbus-after-config-timeout`.
+- Layer surfaces orphaned from Lua after a reload:
+  `layer-surface-after-restart`. The wlroots listeners belong to the C
+  LayerSurface, which the reload never frees, so only the Lua half went stale
+  and the fix rebuilds it from the surviving structs.
+- Selection watcher and acquire listeners left linked into the seat:
+  `selection-after-restart`. Its watcher assertion counts dispatch lines in the
+  log rather than a Lua-side counter, because a dispatch to the *live* watcher
+  also logs `Trying to emit signal ... on non-object`: no selection object is
+  ever entered into the object registry, so `luaA_object_push` cannot find one
+  and `selection_changed`, `release` and `request` never reach Lua at all. That
+  is a separate, pre-existing defect, not a reload defect, and it is why the
+  expected count is 2 rather than 0. Fix it and this test needs rewriting onto a
+  Lua-side counter in `configs/rc-selection.lua`.
 - The startup-error display dying before a usable screen existed:
   `startup-error-after-config-timeout`, the one config-timeout test that loads
   the real `somewmrc.lua`, since the handler under test lives there.
@@ -145,6 +168,5 @@ Defects with no test here are covered manually or by a later stage:
   instead.
 - Keybinding array shadowing and growth is traced. `_key.bind` has no
   Lua callers today, so the array only fills for a config that uses it.
-- Layer surfaces, selection listeners and the half-torn error paths are
-  traced but not cheaply reproducible from outside
-  the process.
+- Half-torn states on reload error paths are traced but not cheaply
+  reproducible from outside the process.

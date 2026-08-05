@@ -122,6 +122,22 @@ handle_set_primary_selection(struct wl_listener *listener, void *data)
     lua_pop(L, 1);
 }
 
+/** Unlink both listeners from whichever seat signal holds them.
+ * Safe on a watcher that was never active: the links are initialised empty.
+ */
+static void
+selection_watcher_disconnect(selection_watcher_t *watcher)
+{
+    if (!wl_list_empty(&watcher->set_selection.link)) {
+        wl_list_remove(&watcher->set_selection.link);
+        wl_list_init(&watcher->set_selection.link);
+    }
+    if (!wl_list_empty(&watcher->set_primary_selection.link)) {
+        wl_list_remove(&watcher->set_primary_selection.link);
+        wl_list_init(&watcher->set_primary_selection.link);
+    }
+}
+
 /** Create a new selection watcher object.
  * \param L The Lua VM state.
  * \return The number of elements pushed on the stack.
@@ -186,14 +202,7 @@ luaA_selection_watcher_set_active(lua_State *L, selection_watcher_t *watcher)
             /* And pop the tracking table again */
             lua_pop(L, 1);
         } else {
-            /* Stop watching - disconnect listener */
-            if (watcher->selection_type == SELECTION_CLIPBOARD) {
-                wl_list_remove(&watcher->set_selection.link);
-                wl_list_init(&watcher->set_selection.link);
-            } else {
-                wl_list_remove(&watcher->set_primary_selection.link);
-                wl_list_init(&watcher->set_primary_selection.link);
-            }
+            selection_watcher_disconnect(watcher);
 
             /* Unreference the selection object */
             lua_pushliteral(L, REGISTRY_WATCHER_TABLE_INDEX);
@@ -243,11 +252,7 @@ luaA_selection_watcher_gc(lua_State *L)
 {
     selection_watcher_t *watcher = luaL_checkudata(L, 1, "selection_watcher");
 
-    /* Remove listener if still connected */
-    if (!wl_list_empty(&watcher->set_selection.link))
-        wl_list_remove(&watcher->set_selection.link);
-    if (!wl_list_empty(&watcher->set_primary_selection.link))
-        wl_list_remove(&watcher->set_primary_selection.link);
+    selection_watcher_disconnect(watcher);
 
     /* Free the selection name */
     if (watcher->selection_name) {
@@ -256,6 +261,33 @@ luaA_selection_watcher_gc(lua_State *L)
     }
 
     return 0;
+}
+
+/** Detach every active watcher at hot-reload.
+ *
+ * The listeners are embedded in the userdata, so leaving them linked into the
+ * seat means every later clipboard change dispatches into an object belonging to
+ * a state that is gone: a nil push today, a use-after-free once the reload closes
+ * the old state. The tracking table is the only list of them, and it is still
+ * readable here because this runs before the state is swapped.
+ */
+void
+selection_watcher_hot_reload(lua_State *L)
+{
+    lua_pushliteral(L, REGISTRY_WATCHER_TABLE_INDEX);
+    lua_rawget(L, LUA_REGISTRYINDEX);
+
+    lua_pushnil(L);
+    while (lua_next(L, -2) != 0) {
+        selection_watcher_t *watcher = luaA_toudata(L, -1, &selection_watcher_class);
+        if (watcher) {
+            selection_watcher_disconnect(watcher);
+            /* Dropped, not unref'd: the refs belong to the old state. */
+            watcher->active_ref = LUA_NOREF;
+        }
+        lua_pop(L, 1);
+    }
+    lua_pop(L, 1);
 }
 
 void

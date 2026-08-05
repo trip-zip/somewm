@@ -31,8 +31,11 @@ check_eval hr-double "screens, clients and tags unchanged after two reloads" "$S
 check "pid unchanged after two reloads" "$(sw_pid hr-double)" "$before_pid"
 check_log_count hr-double "two completed reloads in the log" "hot-reload: complete" 2
 
-# The sweep count per reload, printed every run: the exit teardown contract
-# holding is exactly this number going to zero.
+# The sweep count per reload, printed every run. Note that releasing D-Bus state
+# raises this number rather than lowering it: a release is a D-Bus round trip,
+# and the short-lived sources it allocates are still in the sweep's id range when
+# the sweep runs a moment later. So it is a diagnostic, never evidence that a
+# teardown contract holds.
 sw_report_sweep hr-double
 
 # Closure census. Note the counters are process-cumulative atomics that never

@@ -188,6 +188,37 @@ static const struct wlr_primary_selection_source_impl lua_primary_source_impl = 
     .destroy = lua_primary_source_destroy,
 };
 
+/** Unlink the destroy listener from the source's signal.
+ * Safe on an acquire that never owned a source: the link is initialised empty.
+ */
+static void
+selection_acquire_disconnect(selection_acquire_t *acquire)
+{
+    if (!wl_list_empty(&acquire->destroy.link)) {
+        wl_list_remove(&acquire->destroy.link);
+        wl_list_init(&acquire->destroy.link);
+    }
+}
+
+/** Drop the seat's reference to this acquire's source, if it still holds one.
+ * wlroots destroys the source, which is what frees it.
+ */
+static void
+selection_acquire_clear_seat(selection_acquire_t *acquire)
+{
+    if (!seat)
+        return;
+
+    if (acquire->selection_type == SELECTION_CLIPBOARD) {
+        if (acquire->source && seat->selection_source == &acquire->source->base)
+            wlr_seat_set_selection(seat, NULL, wl_display_get_serial(dpy));
+    } else {
+        if (acquire->primary_source
+                && seat->primary_selection_source == &acquire->primary_source->base)
+            wlr_seat_set_primary_selection(seat, NULL, wl_display_get_serial(dpy));
+    }
+}
+
 /** Handle source destroy (we lost ownership). */
 static void
 handle_source_destroy(struct wl_listener *listener, void *data)
@@ -207,9 +238,7 @@ handle_source_destroy(struct wl_listener *listener, void *data)
     luaA_object_emit_signal(L, -1, "release", 0);
     lua_pop(L, 1);
 
-    /* Remove listener */
-    wl_list_remove(&acquire->destroy.link);
-    wl_list_init(&acquire->destroy.link);
+    selection_acquire_disconnect(acquire);
 
     /* Unreference the object */
     if (acquire->ref != LUA_NOREF) {
@@ -233,16 +262,8 @@ luaA_selection_acquire_release(lua_State *L)
     if (!acquire->active)
         return 0;
 
-    /* Clear the selection - this will trigger our destroy listener */
-    if (acquire->selection_type == SELECTION_CLIPBOARD) {
-        if (seat->selection_source == &acquire->source->base) {
-            wlr_seat_set_selection(seat, NULL, wl_display_get_serial(dpy));
-        }
-    } else {
-        if (seat->primary_selection_source == &acquire->primary_source->base) {
-            wlr_seat_set_primary_selection(seat, NULL, wl_display_get_serial(dpy));
-        }
-    }
+    /* Clearing the selection triggers our destroy listener */
+    selection_acquire_clear_seat(acquire);
 
     return 0;
 }
@@ -419,15 +440,45 @@ luaA_selection_acquire_gc(lua_State *L)
 {
     selection_acquire_t *acquire = luaL_checkudata(L, 1, "selection_acquire");
 
-    /* Remove listener if connected */
-    if (!wl_list_empty(&acquire->destroy.link)) {
-        wl_list_remove(&acquire->destroy.link);
-        wl_list_init(&acquire->destroy.link);
-    }
+    selection_acquire_disconnect(acquire);
 
     /* Note: sources are freed by wlr_data_source_destroy when selection changes */
 
     return 0;
+}
+
+/** Release every acquire at hot-reload.
+ *
+ * The destroy listener is embedded in the userdata and the seat keeps the source
+ * alive, so after a reload the next clipboard change dispatches
+ * handle_source_destroy on an object from the destroyed state, which also
+ * luaL_unrefs an old-state ref against the new state's tracking table. Clearing
+ * the seat matters as much as unlinking: a source left in place would keep
+ * serving pastes out of dead userdata.
+ */
+void
+selection_acquire_hot_reload(lua_State *L)
+{
+    lua_pushliteral(L, REGISTRY_ACQUIRE_TABLE_INDEX);
+    lua_rawget(L, LUA_REGISTRYINDEX);
+
+    lua_pushnil(L);
+    while (lua_next(L, -2) != 0) {
+        selection_acquire_t *acquire = luaA_toudata(L, -1, &selection_acquire_class);
+        if (acquire) {
+            /* Unlink first, so clearing the seat cannot re-enter
+             * handle_source_destroy on a half-torn object. */
+            selection_acquire_disconnect(acquire);
+            selection_acquire_clear_seat(acquire);
+            acquire->active = false;
+            acquire->source = NULL;
+            acquire->primary_source = NULL;
+            /* Dropped, not unref'd: the ref belongs to the old state. */
+            acquire->ref = LUA_NOREF;
+        }
+        lua_pop(L, 1);
+    }
+    lua_pop(L, 1);
 }
 
 void
