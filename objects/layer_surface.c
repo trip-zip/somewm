@@ -16,6 +16,10 @@
 #include "common/luaobject.h"
 #include "somewm_api.h"
 
+/* Global monitor list from somewm.c; each Monitor owns the per-layer lists the
+ * rebuild walks. */
+extern struct wl_list mons;
+
 /* Layer surface class (global) */
 lua_class_t layer_surface_class;
 
@@ -330,21 +334,29 @@ layer_surface_allocator(lua_State *L)
 	return ls;
 }
 
+/* Break the link between the Lua object and the C LayerSurface, in both
+ * directions. Whichever side goes away first, neither is left pointing at the
+ * other. */
+static void
+layer_surface_unlink(layer_surface_t *ls)
+{
+	if (ls->ls) {
+		ls->ls->lua_object = NULL;
+		ls->ls = NULL;
+	}
+}
+
 static void
 layer_surface_wipe(layer_surface_t *ls)
 {
 	if (!ls)
 		return;
 
-	/* Clear the back-reference from LayerSurface to Lua object */
-	if (ls->ls) {
-		ls->ls->lua_object = NULL;
-	}
+	layer_surface_unlink(ls);
 
 	/* Clean up button array */
 	button_array_wipe(&ls->buttons);
 
-	ls->ls = NULL;
 	ls->screen = NULL;
 }
 
@@ -362,17 +374,9 @@ layer_surface_manage(lua_State *L, LayerSurface *c_ls)
 	ls->ls = c_ls;
 	c_ls->lua_object = ls;
 
-	/* Set screen from monitor */
-	if (c_ls->mon) {
-		/* Find screen_t for this monitor */
-		for (int i = 0; i < globalconf.screens.len; i++) {
-			screen_t *s = globalconf.screens.tab[i];
-			if (s && s->monitor && s->monitor->wlr_output == c_ls->mon->wlr_output) {
-				ls->screen = s;
-				break;
-			}
-		}
-	}
+	/* Set screen from monitor. Screens live in screen.c's screen_refs, not in
+	 * globalconf.screens, which is only ever populated inside a hot reload. */
+	ls->screen = luaA_screen_get_by_monitor(L, c_ls->mon);
 
 	/* Add to global array */
 	luaA_object_ref(L, -1);  /* Create reference to keep object alive */
@@ -389,13 +393,13 @@ layer_surface_manage(lua_State *L, LayerSurface *c_ls)
  */
 
 void
-layer_surface_emit_manage(layer_surface_t *ls)
+layer_surface_emit_manage(layer_surface_t *ls, const char *context)
 {
 	lua_State *L = globalconf_get_lua_State();
 	luaA_object_push(L, ls);
 
 	/* Push context and hints */
-	lua_pushliteral(L, "new");
+	lua_pushstring(L, context);
 	lua_newtable(L);
 
 	luaA_object_emit_signal(L, -3, "request::manage", 2);
@@ -432,10 +436,7 @@ layer_surface_emit_unmanage(layer_surface_t *ls)
 
 	/* Clear the back-reference BEFORE the C struct is freed.
 	 * This prevents use-after-free in layer_surface_wipe when GC runs later. */
-	if (ls->ls) {
-		ls->ls->lua_object = NULL;
-		ls->ls = NULL;
-	}
+	layer_surface_unlink(ls);
 
 	/* Remove from global array */
 	for (int i = 0; i < globalconf.layer_surfaces.len; i++) {
@@ -448,6 +449,49 @@ layer_surface_emit_unmanage(layer_surface_t *ls)
 
 	/* Emit class list signal */
 	luaA_class_emit_signal(L, &layer_surface_class, "list", 0);
+}
+
+/*
+ * Hot-reload
+ *
+ * The wlroots wiring is not in this userdata. createlayersurface() heap-allocates
+ * the C LayerSurface and owns its three listeners, and the reload never frees it,
+ * so there is nothing to detach and nothing worth snapshotting. Only the Lua half
+ * goes stale: the array below and every LayerSurface.lua_object point at userdata
+ * from a state that no longer exists, and protocols.c pushes those pointers into
+ * the new state on the next commit, unmap or arrange. Drop them, then rebuild from
+ * the surviving C structs, the way luaA_output_hot_reload() does for outputs.
+ */
+
+void
+layer_surface_hot_reload_detach(void)
+{
+	for (int i = 0; i < globalconf.layer_surfaces.len; i++)
+		layer_surface_unlink(globalconf.layer_surfaces.tab[i]);
+	/* Refs are dropped, not unref'd: the close that follows frees the
+	 * registry they live in, and unreffing them after the swap would free
+	 * live slots in the new one. */
+	globalconf.layer_surfaces.len = 0;
+}
+
+void
+layer_surface_hot_reload(lua_State *L)
+{
+	Monitor *m;
+
+	wl_list_for_each(m, &mons, link) {
+		for (size_t i = 0; i < sizeof(m->layers) / sizeof(m->layers[0]); i++) {
+			LayerSurface *l;
+			/* Reverse, because both the layer list and the array
+			 * that layer_surface.get() reads are newest-first. */
+			wl_list_for_each_reverse(l, &m->layers[i], link) {
+				if (!l->mapped || l->lua_object)
+					continue;
+				layer_surface_emit_manage(layer_surface_manage(L, l),
+				                          "restart");
+			}
+		}
+	}
 }
 
 /*

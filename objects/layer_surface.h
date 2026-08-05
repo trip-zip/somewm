@@ -106,8 +106,22 @@ layer_surface_t *layer_surface_manage(lua_State *L, LayerSurface *ls);
 /**
  * Emit request::manage signal for a newly mapped layer surface.
  * @param ls The layer_surface_t object.
+ * @param context "new" for a fresh surface, "restart" when re-created by a reload.
  */
-void layer_surface_emit_manage(layer_surface_t *ls);
+void layer_surface_emit_manage(layer_surface_t *ls, const char *context);
+
+/**
+ * Drop the Lua half of every layer surface at hot-reload.
+ * The C LayerSurface structs and their listeners are untouched.
+ */
+void layer_surface_hot_reload_detach(void);
+
+/**
+ * Re-create layer surface objects in a fresh Lua state.
+ * Call after the new state exists and rc.lua has run.
+ * @param L The Lua state.
+ */
+void layer_surface_hot_reload(lua_State *L);
 
 /**
  * Emit request::keyboard signal when a layer surface requests keyboard focus.

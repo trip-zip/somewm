@@ -1472,7 +1472,7 @@ commitlayersurfacenotify(struct wl_listener *listener, void *data)
 		lua_State *L = globalconf_get_lua_State();
 		layer_surface_t *ls = layer_surface_manage(L, l);
 		/* Note: luaA_object_ref inside layer_surface_manage already pops the object */
-		layer_surface_emit_manage(ls);
+		layer_surface_emit_manage(ls, "new");
 	}
 
 	if (scene_layer != l->scene->node.parent) {

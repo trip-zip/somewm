@@ -46,7 +46,6 @@ read_globals = {
     "systray_item",
     "_gesture",
     "_keygrabber",
-    "_timer",
     "_ipc_broadcast",
     "_ipc_has_subscribers",
     "_ipc_send_response",

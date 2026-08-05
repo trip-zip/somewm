@@ -198,6 +198,12 @@ These modifications to AwesomeWM's Lua libraries were necessary for Wayland comp
 | `naughty/widget/icon.lua` | Clears the image when a notification's icon is unset; disconnects the signal it actually connects | Upstream leaves a stale image and leaks the signal connection |
 | `naughty/layout/box.lua` | Caches the notification position at attach time for use after the weak ref is GC'd | Upstream falls back to a hardcoded `"top_right"` |
 
+### Removed globals
+
+| Global | Replacement | Reason |
+|--------|-------------|--------|
+| `_timer` | `gears.timer` | An undocumented C wrapper around `wl_event_loop_add_timer` with no callers in the tree. Its timers were never removed on a hot-reload, so each one outlived the Lua state that owned it. `gears.timer` is GLib-based and unaffected. |
+
 ### New Lua Modules (no AwesomeWM equivalent)
 
 | Module | Purpose |
