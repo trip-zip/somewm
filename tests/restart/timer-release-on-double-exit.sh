@@ -14,7 +14,7 @@
 
 . "$(dirname "$0")/lib.sh"
 
-sw_start hr-tx || finish
+sw_start hr-tx --config "$ROOT_DIR/tests/rc.lua" || finish
 
 check_eval hr-tx "timer armed" "$TIMER_ARM" armed
 
