@@ -1,6 +1,7 @@
 #ifndef IPC_H
 #define IPC_H
 
+#include <stdbool.h>
 #include <wayland-server-core.h>
 
 /**
@@ -37,6 +38,11 @@ void ipc_send_response(int client_fd, const char *response);
  * Mark a client as a subscriber for event broadcasts
  */
 void ipc_subscribe_client(int client_fd);
+
+/**
+ * Is any connected client subscribed?
+ */
+bool ipc_has_subscribers(void);
 
 /**
  * Broadcast an event message to all subscribed clients

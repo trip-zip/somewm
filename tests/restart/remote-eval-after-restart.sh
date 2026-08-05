@@ -12,8 +12,6 @@
 # case returns empty output with exit 0, so an exit-status test would pass while
 # remote eval is completely dead.
 
-# xfail: dbus_signals keeps old-state registry refs, so remote eval dispatches into nil after the first reload
-
 . "$(dirname "$0")/lib.sh"
 
 skip_unless_bus
@@ -49,5 +47,7 @@ log_has hr-remote "already existing" && \
     info "log: re-registration of the Remote signal was refused"
 log_has hr-remote "attempt to call a nil value" && \
     info "log: dispatch found nil at the stale registry slot"
+
+sw_check_log_clean hr-remote
 
 finish

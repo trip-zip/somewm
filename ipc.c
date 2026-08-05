@@ -388,6 +388,17 @@ ipc_subscribe_client(int client_fd)
 }
 
 /**
+ * Is any connected client subscribed?
+ * C owns the subscription state, so this survives a hot-reload along with the
+ * fd and the socket. Lua asks before doing the work of encoding an event.
+ */
+bool
+ipc_has_subscribers(void)
+{
+	return ipc_subscriber_count > 0;
+}
+
+/**
  * Broadcast an event message to all subscribed IPC clients.
  * Format: EVENT <type> <json>\n
  * Called from Lua via _ipc_broadcast().

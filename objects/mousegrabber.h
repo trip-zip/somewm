@@ -32,6 +32,7 @@ void mousegrabber_handleevent(lua_State *, int, int, uint16_t);
 /* somewm-specific */
 bool mousegrabber_isrunning(void);
 void luaA_mousegrabber_setup(lua_State *L);
+void mousegrabber_hot_reload(void);
 
 #endif
 // vim: filetype=c:expandtab:shiftwidth=4:tabstop=8:softtabstop=4:textwidth=80

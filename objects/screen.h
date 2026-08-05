@@ -81,6 +81,7 @@ void signal_array_wipe(signal_array_t *arr);
 
 /* Hot-reload support */
 void luaA_screen_refs_reset(void);
+void luaA_screen_hot_reload(lua_State *L);
 void luaA_screen_get_all(lua_State *L, screen_t **out_screens, int *out_count);
 
 #endif /* SCREEN_H */

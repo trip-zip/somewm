@@ -27,6 +27,7 @@
 #include "objects/gesture.h"
 /* objects/awesome.h merged into this file */
 #include "animation.h"
+#include "ewmh.h"
 #include "objects/wibox.h"
 #include "objects/ipc.h"
 #include "objects/root.h"
@@ -1501,6 +1502,45 @@ luaA_awesome_clear_lock_covers(lua_State *L)
 	return 0;
 }
 
+/** Force-unlock and drop the lock refs at hot-reload.
+ * The refs belong to the old Lua state, which is leaked rather than closed,
+ * so they are dropped without unref.
+ *
+ * Staying locked is unrecoverable. The lock surface's scene tree is destroyed
+ * later in the reload, so there is no lock UI left to authenticate through,
+ * and while the session reports locked the compositor skips keybindings, VT
+ * switch and terminate. Same reasoning as the force-unlock in
+ * some_notify_drawin_destroyed(), and the same order: clear the flag first,
+ * because focusclient() and focus_restore() early-return while locked.
+ *
+ * Must run before the client snapshot: the deactivate path restores focus to
+ * pre_lock_focused_client, which needs a live c->scene, and clears it.
+ *
+ * The config-timeout path calls this too. There it is belt and braces: that
+ * path closes the state, and the drawin GC notify already force-unlocks when
+ * the lock surface is finalized. But that unlock depends on GC ordering, and
+ * it leaves lua_authenticated and the cover ref array alone. selmon is still
+ * NULL that early, which focus_restore() handles.
+ */
+static void
+lock_hot_reload(void)
+{
+	if (lua_locked) {
+		fprintf(stderr, "somewm: hot-reload: session was locked, forcing unlock\n");
+		lua_locked = 0;
+		some_deactivate_lua_lock();
+	}
+
+	lua_authenticated = 0;
+	lua_lock_surface = NULL;
+	lua_lock_surface_ref = LUA_NOREF;
+	for (int i = 0; i < lua_lock_cover_count; i++) {
+		lua_lock_covers[i] = NULL;
+		lua_lock_cover_refs[i] = LUA_NOREF;
+	}
+	lua_lock_cover_count = 0;
+}
+
 /** awesome.authenticate(password) - Verify password via PAM
  * Returns true if password matches current user
  * On success, sets authenticated=true (allowing unlock())
@@ -1590,6 +1630,24 @@ remove_idle_timeout_at(int idx)
 		idle_timeouts[i] = idle_timeouts[i + 1];
 
 	idle_timeout_count--;
+}
+
+/** Drop every idle timeout at hot-reload.
+ * The callback refs belong to the old Lua state, which is leaked rather than
+ * closed, so they are dropped without unref. The wl timers must go with them:
+ * a surviving timer fires idle_timeout_callback, which rawgeti's an old-state
+ * ref against the new registry.
+ */
+static void
+idle_timeouts_hot_reload(void)
+{
+	for (int i = 0; i < idle_timeout_count; i++) {
+		if (idle_timeouts[i].timer)
+			wl_event_source_remove(idle_timeouts[i].timer);
+		free(idle_timeouts[i].name);
+	}
+	idle_timeout_count = 0;
+	user_is_idle = false;
 }
 
 static void
@@ -2738,102 +2796,86 @@ luaA_add_search_paths(const char **paths, int count)
 	}
 }
 
-void
-luaA_init(void)
+/** Register everything a Lua state needs: the standard library, somewm's
+ * search paths, and every somewm module and class.
+ *
+ * Boot (luaA_init) and the post-reload rebuild (luaA_create_fresh_state) both
+ * run this, so there is one list instead of two that drift apart. Anything a
+ * state needs belongs here; luaA_init keeps only the once-per-process work.
+ */
+static void
+luaA_register_state(lua_State *L)
 {
 	const char *cur_path;
 
-	/* Initialize Lua state */
-	globalconf_L = luaL_newstate();
-	if (!globalconf_L) {
-		fprintf(stderr, "somewm: failed to create Lua state\n");
-		return;
-	}
-
-	/* Set panic handler for unprotected errors (AwesomeWM API parity) */
-	lua_atpanic(globalconf_L, luaA_panic);
-
-	/* Initialize globalconf structure */
-	globalconf_init(globalconf_L);
-
-	/* Keep globalconf_L in sync with globalconf.L for legacy code */
-	globalconf_L = globalconf.L;
+	/* Panic handler for unprotected errors (AwesomeWM API parity) */
+	lua_atpanic(L, luaA_panic);
 
 	/* Set error handling function */
 	lualib_dofunction_on_error = luaA_dofunction_on_error;
 
-	luaL_openlibs(globalconf_L);
+	luaL_openlibs(L);
 
 	/* Add AwesomeWM-compatible Lua extensions */
-	luaA_fixups(globalconf_L);
+	luaA_fixups(L);
 
-	log_info("Lua %s initialized", LUA_VERSION);
-
-	/* Initialize the AwesomeWM object system (must be done before any class setup) */
-	luaA_object_setup(globalconf_L);
+	/* Initialize the AwesomeWM object system (must precede any class setup) */
+	luaA_object_setup(L);
 
 	/* Add lua/ directory to package.path for require() support */
-	lua_getglobal(globalconf_L, "package");
-	lua_getfield(globalconf_L, -1, "path");
-	cur_path = lua_tostring(globalconf_L, -1);
-	lua_pop(globalconf_L, 1);
+	lua_getglobal(L, "package");
+	lua_getfield(L, -1, "path");
+	cur_path = lua_tostring(L, -1);
+	lua_pop(L, 1);
 
 	/* Prepend lua paths: development paths first, then system-wide paths */
-	lua_pushfstring(globalconf_L,
+	lua_pushfstring(L,
 		"./lua/?.lua;./lua/?/init.lua;./lua/lib/?.lua;./lua/lib/?/init.lua;"
 		DATADIR "/somewm/lua/?.lua;" DATADIR "/somewm/lua/?/init.lua;"
 		DATADIR "/somewm/lua/lib/?.lua;" DATADIR "/somewm/lua/lib/?/init.lua;%s",
 		cur_path);
-	lua_setfield(globalconf_L, -2, "path");
+	lua_setfield(L, -2, "path");
 
 	/* Also set up package.cpath for C modules like lgi */
-	lua_getfield(globalconf_L, -1, "cpath");
-	cur_path = lua_tostring(globalconf_L, -1);
-	lua_pop(globalconf_L, 1);
+	lua_getfield(L, -1, "cpath");
+	cur_path = lua_tostring(L, -1);
+	lua_pop(L, 1);
 
 	/* Prepend C module paths: development paths first, then system-wide paths */
-	lua_pushfstring(globalconf_L,
+	lua_pushfstring(L,
 		"./lua/?.so;./lua/lib/?.so;"
 		DATADIR "/somewm/lua/?.so;" DATADIR "/somewm/lua/lib/?.so;%s",
 		cur_path);
-	lua_setfield(globalconf_L, -2, "cpath");
+	lua_setfield(L, -2, "cpath");
 
-	/* Add extra search paths from -L/--search command line options */
-	if (num_extra_search_paths > 0) {
-		for (int i = 0; i < num_extra_search_paths; i++) {
-			const char *dir = extra_search_paths[i];
+	/* Add extra search paths from -L/--search. The static array survives
+	 * across reloads, so a rebuilt state gets them too. */
+	for (int i = 0; i < num_extra_search_paths; i++) {
+		const char *dir = extra_search_paths[i];
 
-			/* Add to package.path */
-			lua_getfield(globalconf_L, -1, "path");
-			cur_path = lua_tostring(globalconf_L, -1);
-			lua_pop(globalconf_L, 1);
-			lua_pushfstring(globalconf_L, "%s/?.lua;%s/?/init.lua;%s",
-				dir, dir, cur_path);
-			lua_setfield(globalconf_L, -2, "path");
+		lua_getfield(L, -1, "path");
+		cur_path = lua_tostring(L, -1);
+		lua_pop(L, 1);
+		lua_pushfstring(L, "%s/?.lua;%s/?/init.lua;%s", dir, dir, cur_path);
+		lua_setfield(L, -2, "path");
 
-			/* Add to package.cpath */
-			lua_getfield(globalconf_L, -1, "cpath");
-			cur_path = lua_tostring(globalconf_L, -1);
-			lua_pop(globalconf_L, 1);
-			lua_pushfstring(globalconf_L, "%s/?.so;%s",
-				dir, cur_path);
-			lua_setfield(globalconf_L, -2, "cpath");
-		}
+		lua_getfield(L, -1, "cpath");
+		cur_path = lua_tostring(L, -1);
+		lua_pop(L, 1);
+		lua_pushfstring(L, "%s/?.so;%s", dir, cur_path);
+		lua_setfield(L, -2, "cpath");
 	}
 
-	lua_pop(globalconf_L, 1);  /* pop package table */
+	lua_pop(L, 1);  /* pop package table */
 
-	/* Add user library directory (~/.local/share/somewm) to package.path
+	/* Add user library directory (~/.local/share/somewm) to package.path.
 	 * This allows users to install custom Lua libraries that are available
 	 * to all their configs (AwesomeWM compatibility) */
 	{
-		const char *xdg_data_home;
-		const char *home;
+		const char *xdg_data_home = getenv("XDG_DATA_HOME");
+		const char *home = getenv("HOME");
 		const char *old_path;
 		char user_data_dir[512];
-
-		xdg_data_home = getenv("XDG_DATA_HOME");
-		home = getenv("HOME");
 
 		if (xdg_data_home && xdg_data_home[0] != '\0') {
 			snprintf(user_data_dir, sizeof(user_data_dir), "%s/somewm", xdg_data_home);
@@ -2844,125 +2886,101 @@ luaA_init(void)
 		}
 
 		if (user_data_dir[0] != '\0') {
-			lua_getglobal(globalconf_L, "package");
-			lua_getfield(globalconf_L, -1, "path");
-			old_path = lua_tostring(globalconf_L, -1);
-			lua_pop(globalconf_L, 1);
+			lua_getglobal(L, "package");
+			lua_getfield(L, -1, "path");
+			old_path = lua_tostring(L, -1);
+			lua_pop(L, 1);
 
-			lua_pushfstring(globalconf_L, "%s/?.lua;%s/?/init.lua;%s",
+			lua_pushfstring(L, "%s/?.lua;%s/?/init.lua;%s",
 				user_data_dir, user_data_dir, old_path);
-			lua_setfield(globalconf_L, -2, "path");
-			lua_pop(globalconf_L, 1);  /* pop package table */
+			lua_setfield(L, -2, "path");
+			lua_pop(L, 1);  /* pop package table */
 		}
 	}
 
 	/* Register somewm Lua modules */
-	luaA_signal_setup(globalconf_L);
-	key_class_setup(globalconf_L);  /* AwesomeWM key object class */
-	tag_class_setup(globalconf_L);
-	window_class_setup(globalconf_L);  /* Setup window base class first */
-	client_class_setup(globalconf_L);
-	screen_class_setup(globalconf_L);
-	output_class_setup(globalconf_L);
-	luaA_drawable_setup(globalconf_L);
-	luaA_drawin_setup(globalconf_L);
-	layer_surface_class_setup(globalconf_L);  /* Layer shell surface class */
-	luaA_timer_setup(globalconf_L);
-	luaA_spawn_setup(globalconf_L);
-	luaA_keybinding_setup(globalconf_L);
-	luaA_awesome_setup(globalconf_L);
-	luaA_root_setup(globalconf_L);
-	button_class_setup(globalconf_L); /* Setup button class (AwesomeWM class system) */
+	luaA_signal_setup(L);
+	key_class_setup(L);  /* AwesomeWM key object class */
+	tag_class_setup(L);
+	window_class_setup(L);  /* Setup window base class first */
+	client_class_setup(L);
+	screen_class_setup(L);
+	output_class_setup(L);
+	luaA_drawable_setup(L);
+	luaA_drawin_setup(L);
+	layer_surface_class_setup(L);  /* Layer shell surface class */
+	luaA_timer_setup(L);
+	luaA_spawn_setup(L);
+	luaA_keybinding_setup(L);
+	luaA_awesome_setup(L);
+	luaA_root_setup(L);
+	button_class_setup(L); /* Setup button class (AwesomeWM class system) */
+	animation_setup(L);  /* Metatable for awesome.start_animation handles */
 
 	/* Setup selection classes (must be before selection_setup) */
-	selection_getter_class_setup(globalconf_L);
-	selection_acquire_class_setup(globalconf_L);
-	selection_transfer_class_setup(globalconf_L);
-	selection_watcher_class_setup(globalconf_L);
-	selection_setup(globalconf_L); /* Creates "selection" global from class globals */
+	selection_getter_class_setup(L);
+	selection_acquire_class_setup(L);
+	selection_transfer_class_setup(L);
+	selection_watcher_class_setup(L);
+	selection_setup(L); /* Creates "selection" global from class globals */
 
-	luaA_mouse_setup(globalconf_L);
-	luaA_wibox_setup(globalconf_L);
-	luaA_ipc_setup(globalconf_L);
-	systray_item_class_setup(globalconf_L);  /* SNI systray item class */
+	luaA_mouse_setup(L);
+	luaA_wibox_setup(L);
+	luaA_ipc_setup(L);
+	systray_item_class_setup(L);  /* SNI systray item class */
 
 	/* Register D-Bus library (AwesomeWM compatibility) */
-	luaA_registerlib(globalconf_L, "dbus", awesome_dbus_lib);
-	lua_pop(globalconf_L, 1);  /* luaA_registerlib leaves table on stack */
+	luaA_registerlib(L, "dbus", awesome_dbus_lib);
+	lua_pop(L, 1);  /* luaA_registerlib leaves table on stack */
 
 	/* Setup keygrabber module (AwesomeWM pattern: global variable) */
-	lua_newtable(globalconf_L);  /* Create keygrabber module table */
-	luaA_keygrabber_setup(globalconf_L);
-	lua_setglobal(globalconf_L, "keygrabber");  /* keygrabber = module */
+	lua_newtable(L);  /* Create keygrabber module table */
+	luaA_keygrabber_setup(L);
+	lua_setglobal(L, "keygrabber");  /* keygrabber = module */
 
 	/* Setup mousegrabber module (AwesomeWM pattern: global variable) */
-	lua_newtable(globalconf_L);  /* Create mousegrabber module table */
-	luaA_mousegrabber_setup(globalconf_L);
-	lua_setglobal(globalconf_L, "mousegrabber");  /* mousegrabber = module */
+	lua_newtable(L);  /* Create mousegrabber module table */
+	luaA_mousegrabber_setup(L);
+	lua_setglobal(L, "mousegrabber");  /* mousegrabber = module */
 
 	/* Setup gesture module (somewm-specific: touchpad gesture bridge) */
-	lua_newtable(globalconf_L);
-	luaA_gesture_setup(globalconf_L);
-	lua_setglobal(globalconf_L, "_gesture");
+	lua_newtable(L);
+	luaA_gesture_setup(L);
+	lua_setglobal(L, "_gesture");
 
 	/* Setup keygrabber test helper (somewm-specific: inject for tests) */
-	lua_newtable(globalconf_L);
-	luaA_keygrabber_test_setup(globalconf_L);
-	lua_setglobal(globalconf_L, "_keygrabber");
+	lua_newtable(L);
+	luaA_keygrabber_test_setup(L);
+	lua_setglobal(L, "_keygrabber");
 
-	/* NOTE: The C-based key class is now set up by key_class_setup() above (line 88).
-	 * The old Lua-based implementation below has been disabled to let the C implementation work.
-	 * The C key class provides full AwesomeWM compatibility with proper signal emission
-	 * and integration with the C keybinding system.
-	 */
+	/* EWMH connects its class signals from xwaylandready(), once per process,
+	 * and luaA_class_cleanup_all() wipes them before every rebuild. The flag
+	 * avoids double-connecting when a reload precedes XWayland's first client,
+	 * since xwaylandready() connects them itself and does not check. */
+	if (globalconf.xwayland_ready_seen)
+		ewmh_init_lua();
+}
 
-	/* DISABLED: Old Lua-based key implementation (replaced by C key class)
-	if (luaL_dostring(globalconf_L,
-		"key = {\n"
-		"  _index_miss_handler = nil,\n"
-		"  _newindex_miss_handler = nil\n"
-		"}\n"
-		"function key.set_index_miss_handler(handler)\n"
-		"  key._index_miss_handler = handler\n"
-		"end\n"
-		"function key.set_newindex_miss_handler(handler)\n"
-		"  key._newindex_miss_handler = handler\n"
-		"end\n"
-		"setmetatable(key, {\n"
-		"  __call = function(self, args)\n"
-		"    local obj = {\n"
-		"      modifiers = args.modifiers or {},\n"
-		"      key = args.key,\n"
-		"      _private = {},\n"
-		"      _signals = {}\n"
-		"    }\n"
-		"    function obj:connect_signal(name, func)\n"
-		"      if not self._signals[name] then\n"
-		"        self._signals[name] = {}\n"
-		"      end\n"
-		"      table.insert(self._signals[name], func)\n"
-		"    end\n"
-		"    function obj:emit_signal(name, ...)\n"
-		"      if self._signals[name] then\n"
-		"        for _, func in ipairs(self._signals[name]) do\n"
-		"          func(self, ...)\n"
-		"        end\n"
-		"      end\n"
-		"    end\n"
-		"    return obj\n"
-		"  end\n"
-		"})\n"
-	) != 0) {
-		fprintf(stderr, "somewm: failed to create key class: %s\n",
-			lua_tostring(globalconf_L, -1));
-		lua_pop(globalconf_L, 1);
+void
+luaA_init(void)
+{
+	/* Initialize Lua state */
+	globalconf_L = luaL_newstate();
+	if (!globalconf_L) {
+		fprintf(stderr, "somewm: failed to create Lua state\n");
+		return;
 	}
-	*/ /* END DISABLED */
 
-	/* AwesomeWM compatibility: The client, tag, screen classes are already registered
-	 * as globals by their respective *_class_setup() functions via luaA_class_setup.
-	 * No aliasing needed - they use the correct names already.
-	 */
+	/* Initialize globalconf structure. Boot only: the arrays it clears hold
+	 * clients, tags and screens that have to survive a reload. */
+	globalconf_init(globalconf_L);
+
+	/* Keep globalconf_L in sync with globalconf.L for legacy code */
+	globalconf_L = globalconf.L;
+
+	luaA_register_state(globalconf_L);
+
+	log_info("Lua %s initialized", LUA_VERSION);
 }
 
 /** Accumulate a startup error message (AwesomeWM pattern)
@@ -4314,6 +4332,29 @@ luaA_enhance_lua_compat_error(const char *err, char *buf, size_t bufsize)
 	return false;
 }
 
+/** Record the top of the GLib source id space. Sources at or below it are
+ * C-owned and must survive luaA_cleanup_stale_glib_sources(). */
+void
+luaA_record_glib_source_baseline(void)
+{
+	GSource *probe = g_idle_source_new();
+	guint id = g_source_attach(probe, g_main_context_default());
+	g_source_destroy(probe);
+	g_source_unref(probe);
+	globalconf.glib_source_baseline = id;
+}
+
+/** Let the Lgi closure guard dispatch closures of the current generation.
+ * Every generation bump must be followed by one of these once the new Lua
+ * state is stable, or the guard silently drops every lgi callback. */
+static void
+luaA_lgi_guard_mark_ready(void)
+{
+	void (*ready)(void) = dlsym(RTLD_DEFAULT, "lgi_guard_mark_ready");
+	if (ready)
+		ready();
+}
+
 /** Remove all GLib sources registered by Lua code and bump the Lgi closure
  * guard generation. This prevents stale FFI closures from dispatching against
  * a dead Lua state (either closed after config timeout or leaked after
@@ -4374,6 +4415,7 @@ luaA_loadrc(void)
 	const char *config_paths[8] = {NULL};
 	int path_count = 0;
 	volatile int loaded = 0;  /* volatile: may be modified across siglongjmp */
+	volatile int timed_out = 0;
 	int load_result;
 	int i;
 	struct sigaction sa, old_sa;
@@ -4597,6 +4639,7 @@ luaA_loadrc(void)
 			alarm(0);
 			sigaction(SIGALRM, &old_sa, NULL);
 			config_timeout_L = NULL;
+			timed_out = 1;
 
 			fprintf(stderr, "somewm: config %s FORCEFULLY ABORTED after timeout\n",
 			        config_paths[i]);
@@ -4611,6 +4654,19 @@ luaA_loadrc(void)
 			 * could itself block if D-Bus was what caused the timeout). */
 			luaA_cleanup_stale_glib_sources("config-timeout");
 			luaA_signal_cleanup();
+			/* Class signal arrays hold refs into the state we are about
+			 * to close. luaA_class_setup resets the miss handlers when it
+			 * re-runs, but nothing resets these, so the retried config
+			 * would dispatch old-state handlers on any class signal. */
+			luaA_class_cleanup_all();
+			a_dbus_hot_reload();
+			idle_timeouts_hot_reload();
+			luaA_gesture_hot_reload();
+			luaA_root_hot_reload();
+			luaA_mouse_hot_reload();
+			keygrabber_hot_reload();
+			mousegrabber_hot_reload();
+			lock_hot_reload();
 			luaA_keybinding_cleanup();
 			lua_close(globalconf_L);
 			globalconf_L = NULL;
@@ -4623,6 +4679,13 @@ luaA_loadrc(void)
 				fprintf(stderr, "somewm: FATAL: failed to reinitialize Lua after timeout\n");
 				break;
 			}
+
+			/* lua_close() freed every screen and output userdata while
+			 * their C-side ref arrays and the Monitor structs lived on.
+			 * Rebuild them, or the retried config starts with no screens
+			 * at all. */
+			luaA_screen_hot_reload(globalconf_L);
+			luaA_output_hot_reload(globalconf_L);
 
 			/* Record the error for notification */
 			luaA_startup_error("Config loading timed out (exceeded 10 seconds)");
@@ -4712,6 +4775,13 @@ luaA_loadrc(void)
 		}
 	}
 
+	/* The timeout sweep bumped the guard generation, so every closure the
+	 * config that did load created is stuck on a generation the guard refuses
+	 * to dispatch. The only other caller marks the generation ready at the end
+	 * of a hot reload, which may never happen. */
+	if (loaded && timed_out)
+		luaA_lgi_guard_mark_ready();
+
 	if (!loaded) {
 		fprintf(stderr, "somewm: FATAL: no working Lua config found!\n");
 		fprintf(stderr, "somewm: tried:\n");
@@ -4736,7 +4806,6 @@ static lua_State *
 luaA_create_fresh_state(void)
 {
 	lua_State *L;
-	const char *cur_path;
 
 	/* Create fresh Lua state */
 	L = luaL_newstate();
@@ -4749,138 +4818,7 @@ luaA_create_fresh_state(void)
 	globalconf_L = L;
 	globalconf.L = L;
 
-	/* Set error handling function */
-	lualib_dofunction_on_error = luaA_dofunction_on_error;
-
-	luaL_openlibs(L);
-
-	/* Add AwesomeWM-compatible Lua extensions */
-	luaA_fixups(L);
-
-	/* Initialize the AwesomeWM object system */
-	luaA_object_setup(L);
-
-	/* Setup package.path */
-	lua_getglobal(L, "package");
-	lua_getfield(L, -1, "path");
-	cur_path = lua_tostring(L, -1);
-	lua_pop(L, 1);
-
-	lua_pushfstring(L,
-		"./lua/?.lua;./lua/?/init.lua;./lua/lib/?.lua;./lua/lib/?/init.lua;"
-		DATADIR "/somewm/lua/?.lua;" DATADIR "/somewm/lua/?/init.lua;"
-		DATADIR "/somewm/lua/lib/?.lua;" DATADIR "/somewm/lua/lib/?/init.lua;%s",
-		cur_path);
-	lua_setfield(L, -2, "path");
-	lua_pop(L, 1);
-
-	/* Add user library directory */
-	{
-		const char *xdg_data_home = getenv("XDG_DATA_HOME");
-		const char *home = getenv("HOME");
-		const char *old_path;
-		char user_data_dir[512];
-
-		if (xdg_data_home && xdg_data_home[0] != '\0') {
-			snprintf(user_data_dir, sizeof(user_data_dir), "%s/somewm", xdg_data_home);
-		} else if (home && home[0] != '\0') {
-			snprintf(user_data_dir, sizeof(user_data_dir), "%s/.local/share/somewm", home);
-		} else {
-			user_data_dir[0] = '\0';
-		}
-
-		if (user_data_dir[0] != '\0') {
-			lua_getglobal(L, "package");
-			lua_getfield(L, -1, "path");
-			old_path = lua_tostring(L, -1);
-			lua_pop(L, 1);
-
-			lua_pushfstring(L, "%s/?.lua;%s/?/init.lua;%s",
-				user_data_dir, user_data_dir, old_path);
-			lua_setfield(L, -2, "path");
-			lua_pop(L, 1);
-		}
-	}
-
-	/* Re-apply extra search paths from -L/--search command line options.
-	 * These are only applied in luaA_init() during initial startup, so
-	 * a fresh state after hot-reload would lose them. The static array
-	 * survives across reloads. */
-	if (num_extra_search_paths > 0) {
-		lua_getglobal(L, "package");
-		for (int i = 0; i < num_extra_search_paths; i++) {
-			const char *dir = extra_search_paths[i];
-
-			lua_getfield(L, -1, "path");
-			cur_path = lua_tostring(L, -1);
-			lua_pop(L, 1);
-			lua_pushfstring(L, "%s/?.lua;%s/?/init.lua;%s",
-				dir, dir, cur_path);
-			lua_setfield(L, -2, "path");
-
-			lua_getfield(L, -1, "cpath");
-			cur_path = lua_tostring(L, -1);
-			lua_pop(L, 1);
-			lua_pushfstring(L, "%s/?.so;%s",
-				dir, cur_path);
-			lua_setfield(L, -2, "cpath");
-		}
-		lua_pop(L, 1);  /* pop package table */
-	}
-
-	/* Re-register all Lua modules/classes */
-	luaA_signal_setup(L);
-	key_class_setup(L);
-	tag_class_setup(L);
-	window_class_setup(L);
-	client_class_setup(L);
-	screen_class_setup(L);
-	output_class_setup(L);
-	luaA_drawable_setup(L);
-	luaA_drawin_setup(L);
-	layer_surface_class_setup(L);
-	luaA_timer_setup(L);
-	luaA_spawn_setup(L);
-	luaA_keybinding_setup(L);
-	luaA_awesome_setup(L);
-	luaA_root_setup(L);
-	button_class_setup(L);
-
-	/* Selection classes */
-	selection_getter_class_setup(L);
-	selection_acquire_class_setup(L);
-	selection_transfer_class_setup(L);
-	selection_watcher_class_setup(L);
-	selection_setup(L);
-
-	luaA_mouse_setup(L);
-	luaA_wibox_setup(L);
-	luaA_ipc_setup(L);
-	systray_item_class_setup(L);
-
-	/* D-Bus */
-	luaA_registerlib(L, "dbus", awesome_dbus_lib);
-	lua_pop(L, 1);  /* luaA_registerlib leaves table on stack */
-
-	/* Keygrabber */
-	lua_newtable(L);
-	luaA_keygrabber_setup(L);
-	lua_setglobal(L, "keygrabber");
-
-	/* Mousegrabber */
-	lua_newtable(L);
-	luaA_mousegrabber_setup(L);
-	lua_setglobal(L, "mousegrabber");
-
-	/* Gesture */
-	lua_newtable(L);
-	luaA_gesture_setup(L);
-	lua_setglobal(L, "_gesture");
-
-	/* Keygrabber test helper */
-	lua_newtable(L);
-	luaA_keygrabber_test_setup(L);
-	lua_setglobal(L, "_keygrabber");
+	luaA_register_state(L);
 
 	return L;
 }
@@ -5013,11 +4951,22 @@ luaA_hot_reload(void)
 	/* Cancel in-flight animations */
 	animation_cleanup();
 
-	/* NOTE: We skip luaA_awesome_clear_all_idle_timeouts,
-	 * luaA_awesome_clear_lock_surface, luaA_awesome_clear_lock_covers,
-	 * and luaA_keybinding_cleanup here. These call luaL_unref which
-	 * corrupts the registry free list. Safe to skip since the old state
-	 * is leaked anyway. */
+	/* Drop every C-held ref into the old state. These are dropped, not
+	 * unref'd: the old state is leaked rather than closed, so luaL_unref
+	 * would corrupt its registry free list, and unreffing after the swap
+	 * would free live slots in the new one. */
+	a_dbus_hot_reload();
+	luaA_keybinding_hot_reload();
+	idle_timeouts_hot_reload();
+	luaA_gesture_hot_reload();
+	luaA_root_hot_reload();
+	luaA_mouse_hot_reload();
+	keygrabber_hot_reload();
+	mousegrabber_hot_reload();
+
+	/* After the grabbers: the deactivate path ends in motionnotify(), which
+	 * would otherwise dispatch a mousegrabber callback mid-teardown. */
+	lock_hot_reload();
 
 	/* Wipe C-level signal/class arrays (no luaL_unref, just frees C memory).
 	 * Class signals must be wiped so the new state doesn't fire stale handlers.
@@ -5190,6 +5139,15 @@ luaA_hot_reload(void)
 	globalconf.screens.len = 0;
 	globalconf.focus.client = NULL;
 
+	/* Pointers into the object population the lines above just dropped.
+	 * drawable_under_mouse was luaA_object_ref'd, so it is dropped without
+	 * unref like every other old-state ref; event.c would otherwise push
+	 * and unref it against the new state on the next pointer motion. */
+	globalconf.drawable_under_mouse = NULL;
+	globalconf.mouse_under.type = UNDER_NONE;
+	globalconf.mouse_under.ptr.client = NULL;
+	globalconf.primary_screen = NULL;
+
 	/* Destroy old drawin scene trees so they don't persist as duplicates.
 	 * During normal shutdown, drawin_wipe() handles this via GC, but
 	 * hot-reload leaks the old state with GC frozen. */
@@ -5209,6 +5167,13 @@ luaA_hot_reload(void)
 		}
 	}
 	globalconf.drawins.len = 0;
+
+	/* The systray scene tree is a child of the parent drawin's tree, so the
+	 * loop above already destroyed it. Both pointers dangle; NULL them, or
+	 * the reloaded config's first awesome.systray() call kicks the systray
+	 * out of the old parent and destroys the freed scene node again. */
+	globalconf.systray.parent = NULL;
+	globalconf.systray.scene_tree = NULL;
 
 	/* Reset screen_refs before closing (entries become invalid) */
 	luaA_screen_refs_reset();
@@ -5537,11 +5502,7 @@ luaA_hot_reload(void)
 
 	/* Mark new Lgi closures as ready - allows guard to dispatch them.
 	 * Must be called AFTER rc.lua is fully loaded and Lgi is stable. */
-	{
-		void (*ready)(void) = dlsym(RTLD_DEFAULT, "lgi_guard_mark_ready");
-		if (ready)
-			ready();
-	}
+	luaA_lgi_guard_mark_ready();
 
 cleanup:
 	/* Free snapshot arrays */

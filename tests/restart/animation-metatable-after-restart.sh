@@ -7,10 +7,6 @@
 # luaA_start_animation does luaL_getmetatable (nil) followed by lua_setmetatable
 # and every handle comes back with no methods. Calling handle:cancel() then
 # errors.
-#
-# One line, and it is the entire acceptance test for the per-state metatable registration.
-
-# xfail: animation_setup runs only at boot, so post-reload animation handles have no metatable
 
 . "$(dirname "$0")/lib.sh"
 
@@ -26,5 +22,7 @@ sw_reload hr-anim || finish
 
 check_eval hr-anim "handles still have a metatable after the reload" "$HANDLE" true
 check_eval hr-anim "handle:cancel() still works after the reload" "$CANCEL" true
+
+sw_check_log_clean hr-anim
 
 finish

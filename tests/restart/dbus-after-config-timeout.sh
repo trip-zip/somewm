@@ -2,21 +2,18 @@
 #
 # After a config timeout, incoming D-Bus must still be dispatched.
 #
-# The timeout path runs the stale-source sweep before the baseline has been
-# recorded: luaA_loadrc() runs at somewm.c:918 and the baseline is recorded at
-# somewm.c:1036. With baseline=0 the sweep destroys everything, including the
-# libdbus watch GSources attached in setup() (dbus.c:652). The connection stays
-# up and the name stays owned, so the failure is invisible from the bus
-# directory; it only shows as replies that never arrive. That also kills the
-# PrepareForSleep hook.
+# The timeout path runs the stale-source sweep from inside luaA_loadrc(), so the
+# baseline has to be recorded before the first config runs. With baseline=0 the
+# sweep destroys everything, including the libdbus watch GSources attached in
+# setup() (dbus.c:652). The connection stays up and the name stays owned, so the
+# failure is invisible from the bus directory; it only shows as replies that
+# never arrive. That also kills the PrepareForSleep hook.
 #
 # Ownership is checked first and is expected to pass: if the name were missing,
 # the fallback config never ran and the reply assertion would mean nothing.
 #
 # Every bus call is wrapped in a timeout by sw_bus. Without it this test would
 # hang rather than fail, the same invisibility that kept the old suite green.
-
-# xfail: the config-timeout sweep runs with baseline=0 and destroys the libdbus watch sources
 
 . "$(dirname "$0")/lib.sh"
 
@@ -38,5 +35,7 @@ else
 fi
 
 sw_report_sweep hr-d4
+
+sw_check_log_clean hr-d4
 
 finish

@@ -13,8 +13,6 @@
 # The second half re-subscribes on a fresh connection. If that works while the
 # first fails, the defect is the wiped Lua registry and not a dead socket.
 
-# xfail: the Lua subscriber registry is wiped by the reload, so broadcasts stop with the fd still open
-
 . "$(dirname "$0")/lib.sh"
 
 sw_start hr-sub --config "$ROOT_DIR/tests/rc.lua" || finish
@@ -26,7 +24,14 @@ SUBOUT2=$(sw_sandbox)/events2.txt
 # tag_switch (lua/awful/ipc.lua:3513).
 TOGGLE='local t = screen.primary.tags[1]; t.selected = false; t.selected = true; return "toggled"'
 
-count_events() { grep -c 'tag_switch' "$1" 2>/dev/null || echo 0; }
+# Same shape as log_count in lib.sh: grep -c prints 0 and exits 1 on no match,
+# so `|| echo 0` would print a second 0 and the comparison below would blow up
+# on "0 0".
+count_events() {
+    local n
+    n=$(grep -cF -- 'tag_switch' "$1" 2>/dev/null) || true
+    echo "${n:-0}"
+}
 
 wait_events() {
     local file="$1" want="$2" deadline=$((SECONDS + 5))

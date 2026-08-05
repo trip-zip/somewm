@@ -105,6 +105,7 @@ luaA_unregister(lua_State *L, int *ref)
 /* Core initialization */
 void luaA_init(void);
 void luaA_loadrc(void);
+void luaA_record_glib_source_baseline(void);
 void luaA_cleanup(void);
 void luaA_set_argv(char **argv);
 void luaA_hot_reload(void);

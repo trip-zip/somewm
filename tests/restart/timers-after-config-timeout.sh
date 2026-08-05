@@ -3,19 +3,16 @@
 # After a config timeout, lgi callbacks must still run.
 #
 # The timeout path sweeps GLib sources, which bumps the lgi closure guard's
-# generation, but it never calls lgi_guard_mark_ready (the only caller is at the
-# end of a successful hot reload, luaa.c:5538). The guard compares generations
-# with == and silently returns zeroed memory for anything that does not match,
-# so every lgi closure created afterwards is dropped. Nothing is logged and no
-# error surfaces anywhere.
+# generation. The guard compares generations with == and silently returns zeroed
+# memory for anything that does not match, so unless the generation is marked
+# ready once the fallback config has loaded, every lgi closure created
+# afterwards is dropped. Nothing is logged and no error surfaces anywhere.
 #
 # Two probes with different consumers, because the failure is not specific to
 # timers: a gears.timer tick and an awful.spawn.easy_async completion.
 #
 # timers-after-restart is the control: the same probes down the reload path,
 # which does mark the generation ready.
-
-# xfail: the config-timeout path bumps the closure guard generation but never marks it ready
 
 . "$(dirname "$0")/lib.sh"
 
@@ -41,5 +38,7 @@ if log_has hr-t3 "lgi_guard: bumped to generation"; then
         info "guard generation was bumped but never marked ready"
     fi
 fi
+
+sw_check_log_clean hr-t3
 
 finish
