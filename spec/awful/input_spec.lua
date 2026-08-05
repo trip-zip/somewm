@@ -371,6 +371,27 @@ describe("awful.input", function()
             assert.is.equal(3, #input.rules)
             assert.is.same(rules, input.rules)
         end)
+
+        it("rules accept tablet properties", function()
+            local rules = {
+                { rule = { type = "tablet" },
+                  properties = {
+                      map_to_output = "*",
+                                            tool_mode = "absolute",
+                      map_from_region = "0x0 100x100",
+                  } },
+                                { rule = { type = "tablet-tool-pen", name = "Wacom Intuos S Pen" },
+                  properties = {
+                                            tool_mode = "relative",
+                      map_to_output = "DP-1",
+                      map_from_region = { x1 = 1, y1 = 2, x2 = 3, y2 = 4 },
+                  } },
+            }
+
+            input.rules = rules
+            assert.is.same(rules, input.rules)
+            assert.is.equal(1, #input_rules_calls)
+        end)
     end)
 
     describe("realistic usage scenarios", function()
