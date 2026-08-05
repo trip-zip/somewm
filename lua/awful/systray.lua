@@ -1030,21 +1030,7 @@ function systray.init()
         return true
     end
 
-    -- Get session bus. After hot-reload, GLib's singleton cache may return
-    -- a closed connection (g_bus_get_sync doesn't check is_closed before
-    -- returning the cached object). Bypass the cache with a fresh connection.
-    local ok, bus = pcall(function()
-        local b = Gio.bus_get_sync(Gio.BusType.SESSION)
-        if b:is_closed() then
-            local addr = Gio.dbus_address_get_for_bus_sync(Gio.BusType.SESSION)
-            b = Gio.DBusConnection.new_for_address_sync(
-                addr,
-                Gio.DBusConnectionFlags.AUTHENTICATION_CLIENT
-                    + Gio.DBusConnectionFlags.MESSAGE_BUS_CONNECTION,
-                nil, nil)
-        end
-        return b
-    end)
+    local ok, bus = pcall(Gio.bus_get_sync, Gio.BusType.SESSION)
 
     if not ok or not bus then
         gdebug.print_warning("systray: Failed to connect to session bus: " ..

@@ -254,6 +254,12 @@ These modifications to AwesomeWM's Lua libraries were necessary for Wayland comp
 | `gears/filesystem.lua` | `somewm/` paths | Rebranded config/cache directories |
 | `naughty/dbus.lua` | `awesome.version or "somewm-dev"` fallback | Version string safety |
 
+### Removed globals
+
+| Global | Replacement | Reason |
+|--------|-------------|--------|
+| `_timer` | `gears.timer` | An undocumented C wrapper around `wl_event_loop_add_timer` with no callers in the tree. Its timers were never removed on a hot-reload, so each one outlived the Lua state that owned it. `gears.timer` is GLib-based and unaffected. |
+
 ### New Lua Modules (no AwesomeWM equivalent)
 
 | Module | Purpose |

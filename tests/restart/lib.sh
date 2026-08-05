@@ -7,7 +7,7 @@
 #
 # Usage from a test file:
 #
-#   # xfail: reason                 # optional, see "Expected failures" below
+#   # xfail: reason                # optional, see "Expected failures" below
 #   . "$(dirname "$0")/lib.sh"
 #   sw_start hr01 --config "$ROOT_DIR/tests/rc.lua"
 #   check_eval hr01 "desc" 'return 1+1' 2
@@ -179,6 +179,18 @@ sw_wait_true() {
     return 1
 }
 
+# Poll until a probe returns "true", then score it once. Returns non-zero on
+# timeout so a caller can `|| finish` when the rest of the test depends on it.
+check_wait_true() {
+    local name="$1" desc="$2" lua="$3" secs="${4:-10}"
+    if sw_wait_true "$name" "$lua" "$secs"; then
+        pass "$desc"
+    else
+        fail "$desc" "still false after ${secs}s"
+        return 1
+    fi
+}
+
 check_eval() {
     local name="$1" desc="$2" lua="$3" expected="$4"
     if sw_eval "$name" "$lua"; then
@@ -271,9 +283,10 @@ log_count() {
     echo "${n:-0}"
 }
 
-# Report what each stale-source sweep removed. Printed rather than asserted:
-# the count falling to zero is how a later stage shows its teardown contract
-# holds, so the number is worth having in every run's output.
+# Report what each stale-source sweep removed. Printed rather than asserted, and
+# never evidence that a teardown contract holds: releasing D-Bus state raises the
+# count, because a release is a round trip whose short-lived sources are still in
+# the sweep's id range when the sweep runs a moment later.
 sw_report_sweep() {
     grep -oE '(config-timeout: )?removed [0-9]+ stale GLib sources \(baseline=[0-9]+, new_baseline=[0-9]+\)' \
         "$(sw_log "$1")" 2>/dev/null | while read -r line; do info "sweep: $line"; done
@@ -419,18 +432,28 @@ sw_bus_call() {
     sw_bus --dest "$dest" --object-path "$path" --method "$method" "$@"
 }
 
+# Resolve a bus name to the unique name (":1.7") of the connection owning it,
+# in OWNER_NAME. Kept separate from the pid because sw_bus_owner_pid needs it,
+# and because the two answer different questions: an instance keeps its pid
+# across a reload, and today every state shares one connection.
+OWNER_NAME=""
+
+sw_bus_owner_name() {
+    OWNER_NAME=""
+    sw_bus_call org.freedesktop.DBus /org/freedesktop/DBus \
+        org.freedesktop.DBus.GetNameOwner "$1" || return 1
+    OWNER_NAME=$(echo "$BUS_OUT" | sed -nE "s/^\('([^']+)',\)$/\1/p")
+    [ -n "$OWNER_NAME" ]
+}
+
 # Resolve a bus name to the owning process id. dbus-run-session still honours
 # /usr/share/dbus-1/services, so a real notification daemon can be activated on
 # the "private" bus; without this check the issue-444 regression test would be
 # permanently and silently green.
 sw_bus_owner_pid() {
-    local owner
+    sw_bus_owner_name "$1" || return 1
     sw_bus_call org.freedesktop.DBus /org/freedesktop/DBus \
-        org.freedesktop.DBus.GetNameOwner "$1" || return 1
-    owner=$(echo "$BUS_OUT" | sed -nE "s/^\('([^']+)',\)$/\1/p")
-    [ -n "$owner" ] || return 1
-    sw_bus_call org.freedesktop.DBus /org/freedesktop/DBus \
-        org.freedesktop.DBus.GetConnectionUnixProcessID "$owner" || return 1
+        org.freedesktop.DBus.GetConnectionUnixProcessID "$OWNER_NAME" || return 1
     echo "$BUS_OUT" | sed -nE 's/^\(uint32 ([0-9]+),\)$/\1/p'
 }
 
@@ -539,7 +562,7 @@ skip_unless_cmd() {
 
 # Expected failures are declared by a comment near the top of a test file:
 #
-#   # xfail: naughty never re-owns its bus name after a reload
+#   # xfail: every reload leaks the old Lua state and its lgi closures
 #
 # run-restart.sh reads it statically, before running anything, so the
 # classification survives a test that dies early. It is a comment rather than a

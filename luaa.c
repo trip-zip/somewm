@@ -18,7 +18,6 @@
 #include "objects/layer_surface.h"
 #include "objects/drawable.h"
 #include "objects/signal.h"
-#include "objects/timer.h"
 #include "objects/spawn.h"
 #include "objects/key.h"
 #include "objects/keybinding.h"
@@ -58,7 +57,6 @@ static lua_State *luaA_create_fresh_state(void);
 #include <sys/stat.h>
 #include <signal.h>
 #include <glib.h>
-#include <gio/gio.h>
 #include <limits.h>
 #include <setjmp.h>
 #include <dlfcn.h>
@@ -2909,7 +2907,6 @@ luaA_register_state(lua_State *L)
 	luaA_drawable_setup(L);
 	luaA_drawin_setup(L);
 	layer_surface_class_setup(L);  /* Layer shell surface class */
-	luaA_timer_setup(L);
 	luaA_spawn_setup(L);
 	luaA_keybinding_setup(L);
 	luaA_awesome_setup(L);
@@ -4649,9 +4646,7 @@ luaA_loadrc(void)
 			 *
 			 * Clean up GLib sources FIRST - they hold FFI closures
 			 * with lua_State* pointers. Without this, g_main_loop_run()
-			 * dispatches stale closures against freed memory -> SEGV.
-			 * Skip GDBus close here (it calls g_bus_get_sync which
-			 * could itself block if D-Bus was what caused the timeout). */
+			 * dispatches stale closures against freed memory -> SEGV. */
 			luaA_cleanup_stale_glib_sources("config-timeout");
 			luaA_signal_cleanup();
 			/* Class signal arrays hold refs into the state we are about
@@ -4666,7 +4661,14 @@ luaA_loadrc(void)
 			luaA_mouse_hot_reload();
 			keygrabber_hot_reload();
 			mousegrabber_hot_reload();
+			selection_getter_hot_reload(globalconf_L);
+			selection_watcher_hot_reload(globalconf_L);
+			selection_acquire_hot_reload(globalconf_L);
 			lock_hot_reload();
+			/* Detach only. This path does not re-announce clients
+			 * either, and the close below would otherwise leave every
+			 * LayerSurface.lua_object pointing into freed memory. */
+			layer_surface_hot_reload_detach();
 			luaA_keybinding_cleanup();
 			lua_close(globalconf_L);
 			globalconf_L = NULL;
@@ -4944,7 +4946,13 @@ luaA_hot_reload(void)
 		}
 	}
 
-	/* Emit "exit" signal so Lua code can clean up */
+	/* Emit "exit" so Lua code can clean up. This is the teardown contract a
+	 * module owning GDBus state has to meet: release your bus names, object
+	 * registrations, name watches and signal subscriptions here, and never
+	 * close the shared session connection. GLib caches that connection in a
+	 * GWeakRef cleared only on finalize, so closing it takes D-Bus away from
+	 * the whole process. See lua/naughty/dbus.lua, lua/awful/systray.lua and
+	 * lua/awful/statusnotifierwatcher.lua for the three implementations. */
 	lua_pushboolean(L, true);
 	luaA_signal_emit(L, "exit", 1);
 
@@ -4963,6 +4971,9 @@ luaA_hot_reload(void)
 	luaA_mouse_hot_reload();
 	keygrabber_hot_reload();
 	mousegrabber_hot_reload();
+	selection_getter_hot_reload(L);
+	selection_watcher_hot_reload(L);
+	selection_acquire_hot_reload(L);
 
 	/* After the grabbers: the deactivate path ends in motionnotify(), which
 	 * would otherwise dispatch a mousegrabber callback mid-teardown. */
@@ -5168,6 +5179,11 @@ luaA_hot_reload(void)
 	}
 	globalconf.drawins.len = 0;
 
+	/* Layer surfaces last: detaching earlier would make arrangelayers() take
+	 * the no-Lua-object branch mid-teardown, which force-grants keyboard
+	 * focus to whichever surface asked for it. */
+	layer_surface_hot_reload_detach();
+
 	/* The systray scene tree is a child of the parent drawin's tree, so the
 	 * loop above already destroyed it. Both pointers dangle; NULL them, or
 	 * the reloaded config's first awesome.systray() call kicks the systray
@@ -5183,16 +5199,6 @@ luaA_hot_reload(void)
 	 * but their IDs fall in the scan range and must not be destroyed. */
 	extern void activation_tokens_cancel_all(void);
 	activation_tokens_cancel_all();
-
-	/* Close the GDBus session bus connection BEFORE the source scan.
-	 * This prevents GDBus internal sources from being created in the gap. */
-	{
-		GDBusConnection *bus = g_bus_get_sync(G_BUS_TYPE_SESSION, NULL, NULL);
-		if (bus) {
-			g_dbus_connection_close_sync(bus, NULL, NULL);
-			g_object_unref(bus);
-		}
-	}
 
 	/* Remove stale GLib sources and bump Lgi closure generation. */
 	luaA_cleanup_stale_glib_sources("hot-reload");
@@ -5477,6 +5483,11 @@ luaA_hot_reload(void)
 			num_clients * sizeof(client_t *));
 	}
 	free(saved_order);
+
+	/* Re-create layer surface objects from the C structs the reload left
+	 * alone. After rc.lua, so a request::manage handler exists, and after the
+	 * client loop, so screens are assigned. */
+	layer_surface_hot_reload(L);
 
 	client_emit_scanned();
 

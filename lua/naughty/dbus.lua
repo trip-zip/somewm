@@ -38,6 +38,14 @@ local dbus = { config = {} }
 -- This is either nil or a Gio.DBusConnection for emitting signals
 local bus_connection
 
+-- What has to be handed back on "exit" so a hot-reload does not leave the name
+-- owned and the object exported by a Lua state that no longer exists. The
+-- registering connection is kept separately because `on_name_lost` clears
+-- `bus_connection`, which the signal emitters use as their guard.
+local owner_id
+local object_reg_id
+local object_conn
+
 -- DBUS Notification constants
 -- https://specifications.freedesktop.org/notification-spec/notification-spec-latest.html#urgency-levels
 local urgency = {
@@ -426,11 +434,21 @@ local function on_bus_acquire(conn, _)
             }
         }
     }
-    conn:register_object("/org/freedesktop/Notifications", interface_info,
-        GObject.Closure(method_call))
+    -- Zero means the export failed, and unregistering it is a GLib critical.
+    local id = conn:register_object("/org/freedesktop/Notifications",
+        interface_info, GObject.Closure(method_call))
+    if id ~= 0 then
+        object_conn, object_reg_id = conn, id
+    end
 end
 
 local bus_proxy, pid_for_unique_name = nil, {}
+
+-- The fetch is in flight for as long as the bus takes to answer, and a reload
+-- landing in that window would otherwise leave the completion below to run
+-- against a state that is gone. Cancelling on "exit" makes it complete inside
+-- the drain the reload runs after "exit", while the state is still there.
+local bus_proxy_cancellable = Gio.Cancellable()
 
 Gio.DBusProxy.new_for_bus(
     Gio.BusType.SESSION,
@@ -439,7 +457,7 @@ Gio.DBusProxy.new_for_bus(
     "org.freedesktop.DBus",
     "/org/freedesktop/DBus",
     "org.freedesktop.DBus",
-    nil,
+    bus_proxy_cancellable,
     function(proxy)
         bus_proxy =  proxy
     end,
@@ -533,9 +551,35 @@ local function on_name_lost(_, _)
     bus_connection = nil
 end
 
-Gio.bus_own_name(Gio.BusType.SESSION, "org.freedesktop.Notifications",
+owner_id = Gio.bus_own_name(Gio.BusType.SESSION, "org.freedesktop.Notifications",
     Gio.BusNameOwnerFlags.NONE, GObject.Closure(on_bus_acquire),
     GObject.Closure(on_name_acquired), GObject.Closure(on_name_lost))
+
+--- Release every D-Bus resource this module owns.
+-- Called on "exit", which a hot-reload emits before it rebuilds the Lua state.
+-- Each release is wrapped because "exit" must not throw.
+--
+-- The connection itself is only dropped, never closed. Closing the shared
+-- session bus is what poisons GLib's singleton cache for the rest of the
+-- process, and dropping the last reference is what lets the cache hand out a
+-- fresh one.
+function dbus._cleanup()
+    if owner_id then
+        pcall(Gio.bus_unown_name, owner_id)
+    end
+    if object_conn and object_reg_id then
+        pcall(function() object_conn:unregister_object(object_reg_id) end)
+    end
+    if bus_proxy_cancellable then
+        pcall(function() bus_proxy_cancellable:cancel() end)
+    end
+    owner_id, object_reg_id, object_conn = nil, nil, nil
+    bus_connection = nil
+    bus_proxy = nil
+    pid_for_unique_name = {}
+end
+
+capi.awesome.connect_signal("exit", dbus._cleanup)
 
 -- For testing
 dbus._notif_methods = notif_methods
