@@ -61,6 +61,7 @@
 #include <wlr/types/wlr_server_decoration.h>
 #include <wlr/types/wlr_single_pixel_buffer_v1.h>
 #include <wlr/types/wlr_subcompositor.h>
+#include <wlr/types/wlr_tablet_v2.h>
 #include <wlr/types/wlr_viewporter.h>
 #include <wlr/types/wlr_xcursor_manager.h>
 #include <wlr/types/wlr_xdg_activation_v1.h>
@@ -173,6 +174,10 @@ struct wlr_output_layout *output_layout;
 struct wlr_box sgeom;
 struct wl_list mons;
 struct wl_list tracked_pointers; /* For runtime libinput config */
+struct wl_list tracked_tablets;
+struct wl_list tracked_tablet_pads;
+struct wl_list tracked_tablet_tools;
+struct wlr_tablet_manager_v2 *tablet_v2_mgr;
 Monitor *selmon;
 /* in_updatemons, updatemons_pending: owned by monitor.c */
 
@@ -1233,6 +1238,9 @@ setup(void)
 	 * backend. */
 	wl_list_init(&mons);
 	wl_list_init(&tracked_pointers);
+	wl_list_init(&tracked_tablets);
+	wl_list_init(&tracked_tablet_pads);
+	wl_list_init(&tracked_tablet_tools);
 	wl_signal_add(&backend->events.new_output, &new_output);
 
 	/* Set up our client lists, the xdg-shell and the layer-shell. The xdg-shell is a
@@ -1346,6 +1354,7 @@ setup(void)
 	wl_signal_add(&seat->events.request_set_primary_selection, &request_set_psel);
 	wl_signal_add(&seat->events.request_start_drag, &request_start_drag);
 	wl_signal_add(&seat->events.start_drag, &start_drag);
+	tablet_v2_mgr = wlr_tablet_v2_create(dpy);
 
 	/* Initialize runtime configuration with C defaults (before Lua loads).
 	 * These defaults provide sane fallbacks if rc.lua doesn't set values.
@@ -1414,6 +1423,20 @@ setup(void)
 	globalconf.input.accel_speed = 0.0;
 	globalconf.input.tap_button_map = NULL;  /* String property - set via Lua */
 	globalconf.input.clickfinger_button_map = NULL;  /* String property - set via Lua */
+
+	globalconf.input.tool_mode = NULL;  /* Rule-only tablet tool property */
+	globalconf.input.map_to_output_list = NULL;  /* Rule-only tablet property */
+	globalconf.input.map_to_output_count = 0;
+	globalconf.input.map_from_region_set = false;
+	globalconf.input.map_from_region_x1 = 0.0;
+	globalconf.input.map_from_region_y1 = 0.0;
+	globalconf.input.map_from_region_x2 = 0.0;
+	globalconf.input.map_from_region_y2 = 0.0;
+	globalconf.input.map_to_region_set = false;
+	globalconf.input.map_to_region_x1 = 0.0;
+	globalconf.input.map_to_region_y1 = 0.0;
+	globalconf.input.map_to_region_x2 = 0.0;
+	globalconf.input.map_to_region_y2 = 0.0;
 
 	/* Logging defaults (only set if not already set by -d flag) */
 	if (globalconf.log_level == 0)

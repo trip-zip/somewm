@@ -107,6 +107,10 @@ extern struct wl_list mons;
 extern Monitor *selmon;
 extern struct wlr_box sgeom;
 extern struct wl_list tracked_pointers;
+extern struct wl_list tracked_tablets;
+extern struct wl_list tracked_tablet_pads;
+extern struct wl_list tracked_tablet_tools;
+extern struct wlr_tablet_manager_v2 *tablet_v2_mgr;
 
 /* Scene elements */
 extern struct wlr_scene_tree *drag_icon;
