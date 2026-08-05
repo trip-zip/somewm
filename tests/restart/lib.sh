@@ -7,7 +7,7 @@
 #
 # Usage from a test file:
 #
-#   # xfail: reason                # optional, see "Expected failures" below
+#   # xfail: reason                    # optional, see "Expected failures" below
 #   . "$(dirname "$0")/lib.sh"
 #   sw_start hr01 --config "$ROOT_DIR/tests/rc.lua"
 #   check_eval hr01 "desc" 'return 1+1' 2
@@ -18,6 +18,10 @@
 set -u
 
 # --- environment ------------------------------------------------------------
+
+# bc and printf must keep a decimal dot whoever runs this. run-restart.sh
+# exports it too; a test run on its own gets it from here.
+export LC_NUMERIC=C
 
 ROOT_DIR=${ROOT_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)}
 RESTART_DIR="$ROOT_DIR/tests/restart"
@@ -283,13 +287,24 @@ log_count() {
     echo "${n:-0}"
 }
 
-# Report what each stale-source sweep removed. Printed rather than asserted, and
-# never evidence that a teardown contract holds: releasing D-Bus state raises the
-# count, because a release is a round trip whose short-lived sources are still in
-# the sweep's id range when the sweep runs a moment later.
+# Report what each stale-source sweep removed. Printed, not asserted: a sweep
+# that removes anything already warns, and sw_check_log_clean fails on that.
 sw_report_sweep() {
     grep -oE '(config-timeout: )?removed [0-9]+ stale GLib sources \(baseline=[0-9]+, new_baseline=[0-9]+\)' \
         "$(sw_log "$1")" 2>/dev/null | while read -r line; do info "sweep: $line"; done
+}
+
+# One field of the closure guard's census, from the last generation bump.
+# Echoes nothing when the guard is not preloaded, which is the caller's cue to
+# skip rather than to assert a zero it never measured.
+#
+#   wrapped: closures created since the process started, across every state
+#   blocked: dispatches refused because their generation is not the ready one
+#   live:    closures created and not yet freed
+sw_census_field() {
+    local name="$1" field="$2"
+    grep -oE "lgi_guard: bumped to generation .*\<$field [0-9]+" "$(sw_log "$name")" 2>/dev/null \
+        | tail -1 | grep -oE '[0-9]+$'
 }
 
 check_log() {
@@ -309,6 +324,13 @@ check_log_count() {
 
 # Blanket gate run after every phase. More than one bug here first announced itself in
 # the log while the suite stayed green.
+#
+# The last two lines are the teardown contract: a module that arms a GLib source
+# or a GDBus registration and does not release it on "exit" leaves a callback
+# pointing into the state the reload closed. Gated here rather than per-test so
+# every reload in the suite enforces it, and gated on the compositor's warning
+# rather than on a count, so the config-timeout path (which cannot emit "exit",
+# and so does not warn) stays green for free.
 sw_check_log_clean() {
     local name="$1" what="${2:-log}" line
     # A missing log means the instance never ran. Passing here would be a false
@@ -317,13 +339,14 @@ sw_check_log_clean() {
         fail "$what exists" "no log at $(sw_log "$name")"
         return 1
     fi
-    for line in "FATAL:" "error in error handling"; do
+    for line in "FATAL:" "error in error handling" \
+                "outlived the state" "lgi_guard: WARNING"; do
         if log_has "$name" "$line"; then
             fail "$what has no '$line'" "$(grep -F -- "$line" "$(sw_log "$name")" | head -3)"
             return 1
         fi
     done
-    pass "$what is clean (no FATAL, no error-in-error-handling)"
+    pass "$what is clean (no FATAL, no error-in-error-handling, no leaked callbacks)"
 }
 
 # --- lifecycle --------------------------------------------------------------
@@ -458,8 +481,17 @@ sw_bus_owner_pid() {
 }
 
 check_bus_owner() {
-    local name="$1" busname="$2" desc="$3"
-    check "$desc" "$(sw_bus_owner_pid "$busname" || true)" "$(sw_pid "$name")"
+    local name="$1" busname="$2" desc="$3" owner want
+    owner=$(sw_bus_owner_pid "$busname" || true)
+    want=$(sw_pid "$name")
+    # Both sides can come back empty, one because the name has no owner and the
+    # other because the instance is gone, and "" = "" would score that as a
+    # match. Neither side may be empty for this to mean anything.
+    if [ -z "$owner" ] || [ -z "$want" ]; then
+        fail "$desc" "no comparison possible: owner='$owner' instance pid='$want'"
+        return 1
+    fi
+    check "$desc" "$owner" "$want"
 }
 
 # Preflight for the tests that talk to the bus from outside the compositor.

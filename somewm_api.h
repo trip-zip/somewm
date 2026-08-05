@@ -244,6 +244,7 @@ int some_is_ext_session_locked(void);
 /* Lock activation/deactivation - defined in somewm.c, called from luaa.c */
 void some_activate_lua_lock(void);
 void some_deactivate_lua_lock(void);
+void some_deactivate_lua_lock_no_focus(void);
 void some_promote_lock_cover(drawin_t *d);
 void some_clear_pre_lock_client(client_t *c);
 

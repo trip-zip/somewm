@@ -1,17 +1,14 @@
 #!/usr/bin/env bash
 #
-# Two reloads in a row, and the closure census that documents the per-reload leak.
+# Two reloads in a row, and the closure census that pins the per-reload leak.
 #
 # Surviving twice matters on its own: the second reload runs against a state
 # that was itself rebuilt, and the source sweep ratchets its baseline each time,
 # so anything created between reloads is in range of the next sweep.
 #
-# The census half pins the leak itself. Each reload leaks the old Lua state with GC
-# stopped, along with every lgi closure wrapper ever created, so the wrapped
-# count roughly doubles per reload and nothing is ever freed. It is expected to
-# fail until the reload either closes the old state or documents a fallback.
-
-# xfail: every reload leaks the old Lua state and its lgi closures; the wrapped count only grows
+# The census half pins the leak itself. Every reload used to leak the old state with
+# GC stopped and every lgi closure with it, so the population grew by a full set
+# per reload. Now the state is closed, and the live count has to hold steady.
 
 . "$(dirname "$0")/lib.sh"
 
@@ -25,42 +22,44 @@ info "phase-1 screens,clients,tags = $before"
 
 before_pid=$(sw_pid hr-double)
 
+# Three, so the cumulative creation count is comfortably clear of one state's
+# worth of closures by the time the census below reads it.
 sw_reload hr-double || finish
 sw_reload hr-double || finish
-check_eval hr-double "screens, clients and tags unchanged after two reloads" "$STATE" "$before"
-check "pid unchanged after two reloads" "$(sw_pid hr-double)" "$before_pid"
-check_log_count hr-double "two completed reloads in the log" "hot-reload: complete" 2
+sw_reload hr-double || finish
+check_eval hr-double "screens, clients and tags unchanged after three reloads" "$STATE" "$before"
+check "pid unchanged after three reloads" "$(sw_pid hr-double)" "$before_pid"
+check_log_count hr-double "three completed reloads in the log" "hot-reload: complete" 3
 
-# The sweep count per reload, printed every run. Note that releasing D-Bus state
-# raises this number rather than lowering it: a release is a D-Bus round trip,
-# and the short-lived sources it allocates are still in the sweep's id range when
-# the sweep runs a moment later. So it is a diagnostic, never evidence that a
-# teardown contract holds.
+# The sweep is a backstop now, and should have found nothing to remove on any of
+# the three reloads. Asserted by sw_check_log_clean at the end.
 sw_report_sweep hr-double
 
-# Closure census. Note the counters are process-cumulative atomics that never
-# reset, and `blocked` on reload N's line is reload N-1's count, so with two
-# reloads only the first reload's blocked figure is observable.
-if log_has hr-double "lgi_guard: bumped to generation"; then
-    wrapped=$(grep -oE 'lgi_guard: bumped to generation [0-9]+ \(wrapped [0-9]+/[0-9]+, blocked [0-9]+\)' \
-        "$(sw_log hr-double)" | sed -E 's/.*wrapped ([0-9]+)\/.*/\1/')
-    info "wrapped closure counts per reload: $(echo "$wrapped" | tr '\n' ' ')"
-    w1=$(echo "$wrapped" | sed -n 1p)
-    w2=$(echo "$wrapped" | sed -n 2p)
-    if [ -n "$w1" ] && [ -n "$w2" ]; then
-        if [ "$w2" -le "$w1" ]; then
-            pass "lgi closure population does not grow across reloads ($w1 -> $w2)"
-        else
-            fail "lgi closure population does not grow across reloads" \
-                 "$w1 -> $w2; every closure ever wrapped is still alive"
-        fi
+# Closure census, from the last generation bump. `wrapped` counts every closure
+# ever created, across every state; `live` counts the ones not yet freed. A
+# state that is abandoned frees none of its own, so live tracks wrapped and both
+# grow by a set per reload. A state that is closed leaves at most the current
+# state's set alive while wrapped keeps counting, so live falls well below it.
+#
+# Deliberately not a comparison of live counts between reloads: a state whose
+# asynchronous D-Bus setup had not finished when the reload landed has three
+# fewer closures than one that had, which is a few runs in ten and says nothing
+# about leaking.
+wrapped=$(sw_census_field hr-double wrapped)
+live=$(sw_census_field hr-double live)
+if [ -n "$wrapped" ] && [ -n "$live" ]; then
+    info "closures at the last reload: wrapped $wrapped, live $live"
+    if [ $((live * 2)) -lt "$wrapped" ]; then
+        pass "closed states released their lgi closures ($live live of $wrapped created)"
     else
-        fail "two closure-guard generation bumps recorded" "got: $wrapped"
+        fail "closed states released their lgi closures" \
+             "$live of $wrapped closures still alive; a state's set outlived it"
     fi
 else
     # Informational, not a skip: the reload assertions above have already run,
     # and discarding them because the LD_PRELOAD guard is absent would throw
-    # away a good result for an unrelated reason.
+    # away a good result for an unrelated reason. sw_check_log_clean below is
+    # the half that does not need the guard.
     info "closure guard not preloaded, cannot census closures"
 fi
 

@@ -10,13 +10,14 @@
 /* Lua registry ref for the gesture handler function */
 static int gesture_handler_ref = LUA_REFNIL;
 
-/** Drop the gesture handler at hot-reload.
- * The ref belongs to the old Lua state, which is leaked rather than closed,
- * so it is dropped without unref. awful.gesture re-registers on load.
+/** Release the gesture handler at hot-reload.
+ * Unref'd against the state being closed, never against the one that replaces
+ * it. awful.gesture re-registers on load.
  */
 void
-luaA_gesture_hot_reload(void)
+luaA_gesture_hot_reload(lua_State *L)
 {
+    luaL_unref(L, LUA_REGISTRYINDEX, gesture_handler_ref);
     gesture_handler_ref = LUA_REFNIL;
 }
 

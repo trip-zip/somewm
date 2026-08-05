@@ -29,7 +29,11 @@ void animation_init(struct wl_event_loop *loop);
 /** Tick all active animations. Called from some_refresh(). */
 void animation_tick_all(void);
 
-/** Clean up all animations (call at shutdown) */
+/** Cancel every animation and release its refs against the state being torn
+ * down. Keeps the keepalive timer, which outlives any one Lua state. */
+void animation_hot_reload(lua_State *L);
+
+/** Cancel every animation and remove the keepalive timer (call at shutdown) */
 void animation_cleanup(void);
 
 /** Register awesome.start_animation in Lua */

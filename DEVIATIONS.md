@@ -34,8 +34,8 @@ This document tracks all known differences between somewm and AwesomeWM. These e
 - AwesomeWM re-execs itself via `execvp()`, restarting the entire process
 - SomeWM performs in-process Lua hot-reload: tears down the Lua VM, rebuilds it from `rc.lua`, and reattaches existing clients
 - wlroots, the scene graph, and client surfaces are untouched during reload
-- The old Lua state is intentionally leaked (~1-2 MB) to avoid Lgi closure crashes
-- An LD_PRELOAD closure guard (`lgi_closure_guard.so`) blocks stale FFI closures from the leaked state
+- The old Lua state is closed, so a module must release what it registered with GLib or GDBus when `"exit"` is emitted, or its callback outlives the state it points into
+- A source sweep in C and an LD_PRELOAD closure guard (`lgi_closure_guard.so`) back that contract up and report when it is broken. The sweep destroys any GLib source the closed state still owned, so it never dispatches; the guard cannot do the same, since libffi reads a closure's `cif` (which lives in the closed state) before the guard is entered
 
 **Window Visibility Timing**
 - X11: `xcb_map_window()` maps immediately, content shows when ready

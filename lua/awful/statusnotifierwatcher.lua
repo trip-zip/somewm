@@ -33,6 +33,7 @@ local watcher = {
         owner_id = nil,          -- from bus_own_name_on_connection
         object_reg_id = nil,     -- from register_object
         object_conn = nil,       -- the connection object_reg_id belongs to
+        idle_id = nil,           -- the bootstrap idle, until it fires
     }
 }
 
@@ -88,18 +89,25 @@ local function watch_service(service, stype)
         Gio.BusNameWatcherFlags.NONE,
         nil,  -- name_appeared_callback (we don't need it, already know it exists)
         GObject.Closure(function(conn, name)
-            -- Service vanished
+            -- Service vanished. Hand the watch back first, and outside the
+            -- registered check: dropping the id without unwatching leaves a
+            -- watch _cleanup can no longer reach, and the tables the check
+            -- reads are keyed by the registered service, which is not always
+            -- the name being watched.
+            local ids = stype == "item" and watcher._private.item_watch_ids
+                                         or watcher._private.host_watch_ids
+            if ids[name] then
+                pcall(Gio.bus_unwatch_name, ids[name])
+                ids[name] = nil
+            end
+
             if stype == "item" then
                 if watcher._private.registered_items[name] then
                     watcher._private.registered_items[name] = nil
-                    watcher._private.item_watch_ids[name] = nil
                     emit_signal("StatusNotifierItemUnregistered", GLib.Variant("(s)", {name}))
                 end
             elseif stype == "host" then
-                if watcher._private.registered_hosts[name] then
-                    watcher._private.registered_hosts[name] = nil
-                    watcher._private.host_watch_ids[name] = nil
-                end
+                watcher._private.registered_hosts[name] = nil
             end
         end)
     )
@@ -419,6 +427,14 @@ end
 -- the whole process without a working one.
 function watcher._cleanup()
     local p = watcher._private
+
+    -- Before the initialized check: the idle that runs init() is exactly the
+    -- one still pending when the module has not initialized yet.
+    if p.idle_id then
+        pcall(GLib.source_remove, p.idle_id)
+        p.idle_id = nil
+    end
+
     if not p.initialized then return end
 
     if p.owner_id then
@@ -462,9 +478,13 @@ end
 -- Release the D-Bus state on exit (hot-reload or shutdown)
 capi.awesome.connect_signal("exit", watcher._cleanup)
 
--- Auto-initialize when the module is loaded
-local glib = require("lgi").GLib
-glib.idle_add(glib.PRIORITY_DEFAULT, function()
+-- Auto-initialize when the module is loaded.
+--
+-- The id is kept until it fires so _cleanup can drop it. This idle is armed
+-- while the config loads, which puts it below the reload's source-sweep
+-- baseline, where nothing else would ever find it.
+watcher._private.idle_id = GLib.idle_add(GLib.PRIORITY_DEFAULT, function()
+    watcher._private.idle_id = nil
     watcher.init()
     return false  -- Don't repeat
 end)

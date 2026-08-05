@@ -84,13 +84,13 @@ mousegrabber_handleevent(lua_State *L, int x, int y, uint16_t mask)
     luaA_mouse_pushstatus(L, x, y, mask);
 }
 
-/** Drop an active grab at hot-reload.
+/** Release an active grab at hot-reload.
  * Same shape as keygrabber_hot_reload, plus the two statics that would
  * otherwise keep reporting a running grab: the cursor name is C-owned and
  * the active flag gates mousegrabber_isrunning.
  */
 void
-mousegrabber_hot_reload(void)
+mousegrabber_hot_reload(lua_State *L)
 {
     struct wlr_cursor *cursor = some_get_cursor();
 
@@ -99,6 +99,7 @@ mousegrabber_hot_reload(void)
 
     free(mousegrabber_cursor_name);
     mousegrabber_cursor_name = NULL;
+    luaL_unref(L, LUA_REGISTRYINDEX, globalconf.mousegrabber);
     globalconf.mousegrabber = LUA_REFNIL;
     mousegrabber_active = false;
 }

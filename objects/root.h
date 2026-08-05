@@ -6,7 +6,7 @@
 #include <stdint.h>
 
 void luaA_root_setup(lua_State *L);
-void luaA_root_hot_reload(void);
+void luaA_root_hot_reload(lua_State *L);
 
 /* Root button checking for global button bindings */
 int luaA_root_button_check(lua_State *L, uint32_t button, uint32_t mods,

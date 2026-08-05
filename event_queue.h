@@ -127,12 +127,11 @@ bool some_event_queue_pending(void);
 void some_event_queue_init(void);
 void some_event_queue_wipe(void);
 
-/* Drop pending events without unref-ing. Their registry refs are
- * integer slot indices in the old state's registry, which is about
- * to be leaked with the rest of the state. Unref-ing now would be
- * safe but wasted work; letting them survive into the new state
- * would be a correctness bug: the same integers would point to
- * unrelated slots in the new registry. */
-void some_event_queue_reset(void);
+/* Drop pending events, releasing their refs against L, the state that owns
+ * them. Pass NULL after a state swap, where there is nothing left to unref
+ * against. Letting the events survive into the new state would be a
+ * correctness bug: their registry refs are integer slot indices, and the same
+ * integers point at unrelated slots in the new registry. */
+void some_event_queue_reset(lua_State *L);
 
 #endif /* EVENT_QUEUE_H */

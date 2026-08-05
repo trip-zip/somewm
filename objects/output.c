@@ -188,12 +188,25 @@ luaA_output_invalidate(lua_State *L, output_t *o)
 }
 
 void
-luaA_output_hot_reload(lua_State *L)
+luaA_output_hot_reload_detach(void)
 {
 	Monitor *m;
 
 	/* Discard stale registry refs from the old Lua state */
 	output_count = 0;
+
+	/* Monitor.output is a raw pointer into that state's userdata. It is
+	 * only rebuilt once the fresh state exists, and closing the old state
+	 * frees what it points at, so every monitor.c reader in between would
+	 * be reading freed memory. */
+	wl_list_for_each(m, &mons, link)
+		m->output = NULL;
+}
+
+void
+luaA_output_hot_reload(lua_State *L)
+{
+	Monitor *m;
 
 	/* Recreate output objects for all physical monitors */
 	wl_list_for_each(m, &mons, link) {
