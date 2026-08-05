@@ -698,6 +698,19 @@ a_dbus_cleanup(void)
     a_dbus_cleanup_bus(dbus_connection_system, &system_source);
 }
 
+/** Drop the signal handler table at hot-reload.
+ * The handlers are refs into the old Lua state, which is leaked rather than
+ * closed, so they must be dropped without unref. Re-init matters as much as
+ * the wipe: signal_array_wipe frees tab without clearing len, and the next
+ * signal_array_insert would binary-search a NULL tab.
+ */
+void
+a_dbus_hot_reload(void)
+{
+    signal_array_wipe(&dbus_signals);
+    signal_array_init(&dbus_signals);
+}
+
 /** Retrieve the D-Bus bus by its name.
  * \param name The name of the bus.
  * \return The corresponding D-Bus connection.
@@ -930,6 +943,12 @@ a_dbus_init(void)
 /** Empty stub if dbus is not enabled */
 void
 a_dbus_cleanup(void)
+{
+}
+
+/** Empty stub if dbus is not enabled */
+void
+a_dbus_hot_reload(void)
 {
 }
 

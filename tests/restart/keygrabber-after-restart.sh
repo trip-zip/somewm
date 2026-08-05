@@ -10,8 +10,6 @@
 #
 # The loudest and most user-visible member of the stale-ref cluster.
 
-# xfail: globalconf.keygrabber keeps a stale ref, so a grab held across a reload can never be released
-
 . "$(dirname "$0")/lib.sh"
 
 sw_start hr-kg --config "$ROOT_DIR/tests/rc.lua" || finish
@@ -28,5 +26,7 @@ sw_reload hr-kg || finish
 check_eval hr-kg "a new grab can be started after the reload" \
     'local ok, err = pcall(keygrabber.run, function() end); return tostring(ok) .. "|" .. tostring(err)' \
     'true|nil'
+
+sw_check_log_clean hr-kg
 
 finish

@@ -5338,6 +5338,12 @@ run(char *startup_cmd)
 	 * rc.lua connects its handlers. */
 	if (globalconf_L) {
 		luaA_screen_emit_all_added(globalconf_L);
+		/* A config that hangs is aborted from inside luaA_loadrc(), which
+		 * sweeps every source above the baseline. Record it here or the sweep
+		 * runs with baseline 0 and destroys the libdbus watch sources attached
+		 * in setup(), leaving incoming D-Bus undispatched for good. The
+		 * baseline is recorded again below, once the Wayland source exists. */
+		luaA_record_glib_source_baseline();
 		luaA_loadrc();
 		/* Emit screen::scanned AFTER rc.lua loads (matches AwesomeWM).
 		 * This allows rc.lua handlers to be connected before scanned fires. */
@@ -6035,9 +6041,9 @@ setup(void)
 
 	luaA_init();
 
-	/* Initialize animation subsystem (must be AFTER luaA_init for Lua state) */
+	/* Initialize animation subsystem. The handle metatable is registered per
+	 * state by luaA_register_state, so only the event-loop side is set up here. */
 	animation_init(event_loop);
-	animation_setup(globalconf_get_lua_State());
 
 	/* Initialize wallpaper cache (must be AFTER luaA_init which zeroes globalconf) */
 	wallpaper_cache_init();

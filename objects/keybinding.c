@@ -413,15 +413,44 @@ luaA_keybinding_setup(lua_State *L)
 	luaA_openlib(L, "_key", keybinding_methods, NULL);
 }
 
-/** Cleanup keybindings on exit
+/** Drop the keybinding array at hot-reload.
+ *
+ * Same job as luaA_keybinding_cleanup, minus the unref: the refs belong to the
+ * old Lua state, which is leaked rather than closed, so unreffing them would
+ * corrupt its registry free list. Dropping the array is what stops it growing
+ * by a full duplicate set per reload, and what stops a stale entry shadowing
+ * its replacement in the first-match dispatch above. rc.lua re-registers on
+ * load.
  */
 void
-luaA_keybinding_cleanup(void)
+luaA_keybinding_hot_reload(void)
 {
 	for (size_t i = 0; i < lua_keybindings_count; i++) {
-		if (global_L && lua_keybindings[i].lua_func_ref != LUA_NOREF) {
-			luaL_unref(global_L, LUA_REGISTRYINDEX, lua_keybindings[i].lua_func_ref);
-		}
+		free(lua_keybindings[i].description);
+		free(lua_keybindings[i].group);
+	}
+	free(lua_keybindings);
+	lua_keybindings = NULL;
+	lua_keybindings_count = 0;
+	lua_keybindings_capacity = 0;
+}
+
+/** Release the keybinding array against the state that owns its func refs.
+ *
+ * Run at every state swap as well as at exit. Dropping the array is what stops
+ * it growing by a full duplicate set per reload, and what stops a stale entry
+ * shadowing its replacement in the first-match dispatch above.
+ *
+ * \param L The state the refs belong to, passed in rather than read from the
+ * file-static global_L: the caller is the one that knows which state it is
+ * tearing down.
+ */
+void
+luaA_keybinding_cleanup(lua_State *L)
+{
+	for (size_t i = 0; i < lua_keybindings_count; i++) {
+		if (L && lua_keybindings[i].lua_func_ref != LUA_NOREF)
+			luaL_unref(L, LUA_REGISTRYINDEX, lua_keybindings[i].lua_func_ref);
 		free(lua_keybindings[i].description);
 		free(lua_keybindings[i].group);
 	}

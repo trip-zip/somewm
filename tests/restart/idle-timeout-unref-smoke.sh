@@ -12,8 +12,6 @@
 # smoke test is crude on purpose: clear the timeouts, then check that ordinary
 # machinery still works, exercised rather than merely traced.
 
-# xfail: idle_timeouts[] unrefs old-state refs against the new registry, freeing unrelated live slots
-
 . "$(dirname "$0")/lib.sh"
 
 sw_start hr-idle --config "$ROOT_DIR/tests/rc.lua" || finish
