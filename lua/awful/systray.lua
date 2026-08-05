@@ -39,6 +39,7 @@ local systray = {
         items = {},  -- item_key -> item object
         item_data = {},  -- item -> {item_key, icon_surface} (Lua-side data)
         host_registered = false,
+        idle_id = nil,  -- a GLib idle armed but not yet fired
     }
 }
 
@@ -47,6 +48,17 @@ local SNI_WATCHER_BUS = "org.kde.StatusNotifierWatcher"
 local SNI_WATCHER_PATH = "/StatusNotifierWatcher"
 local SNI_WATCHER_IFACE = "org.kde.StatusNotifierWatcher"
 local SNI_ITEM_IFACE = "org.kde.StatusNotifierItem"
+
+-- Arm a GLib idle and remember it until it fires, so _cleanup can drop one that
+-- has not: its lgi closure would otherwise outlive the state that armed it.
+-- Never two at once, since the only idle init() arms is armed from inside the
+-- bootstrap one.
+local function tracked_idle(priority, fn)
+    systray._private.idle_id = GLib.idle_add(priority, function()
+        systray._private.idle_id = nil
+        return fn()
+    end)
+end
 
 -- Our host name (unique per process)
 local function get_host_name()
@@ -959,7 +971,7 @@ function systray.init()
         local snapshot = capi.awesome._systray_snapshot
         capi.awesome._systray_snapshot = nil
         -- Use PRIORITY_LOW so watcher and host init (PRIORITY_DEFAULT) first
-        GLib.idle_add(GLib.PRIORITY_LOW, function()
+        tracked_idle(GLib.PRIORITY_LOW, function()
             for _, entry in ipairs(snapshot) do
                 local obj_path = entry.object_path or "/StatusNotifierItem"
                 local key = entry.bus_name .. obj_path
@@ -1182,6 +1194,13 @@ end
 -- Called by hot-reload before destroying the Lua state to prevent
 -- dangling libffi closures in GLib.
 function systray._cleanup()
+    -- Before the initialized check: the idle that runs init() is exactly the
+    -- one still pending when the module has not initialized yet.
+    if systray._private.idle_id then
+        pcall(GLib.source_remove, systray._private.idle_id)
+        systray._private.idle_id = nil
+    end
+
     if not systray._private.initialized then return end
 
     -- Unwatch per-item name watches and signal subscriptions
@@ -1226,8 +1245,7 @@ capi.awesome.connect_signal("exit", systray._cleanup)
 
 -- Auto-initialize when the module is loaded
 -- (after a short delay to ensure awesome global is ready)
-local glib = require("lgi").GLib
-glib.idle_add(glib.PRIORITY_DEFAULT, function()
+tracked_idle(GLib.PRIORITY_DEFAULT, function()
     systray.init()
     return false  -- Don't repeat
 end)

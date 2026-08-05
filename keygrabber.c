@@ -138,15 +138,15 @@ luaA_keygrabber_run(lua_State *L)
     return 0;
 }
 
-/** Drop an active grab at hot-reload.
- * The callback ref belongs to the old Lua state, which is leaked rather than
- * closed, so it is dropped without unref. Leaving it set makes the guard in
+/** Release an active grab at hot-reload.
+ * Unref'd against the state being closed. Leaving it set makes the guard in
  * luaA_keygrabber_run refuse every later grab for the life of the process,
  * and the stop path would unref an old-state ref against the new registry.
  */
 void
-keygrabber_hot_reload(void)
+keygrabber_hot_reload(lua_State *L)
 {
+    luaL_unref(L, LUA_REGISTRYINDEX, globalconf.keygrabber);
     globalconf.keygrabber = LUA_REFNIL;
 }
 

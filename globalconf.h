@@ -289,9 +289,9 @@ typedef struct
     int argc;
     char **argv;
 
-    /** Highest GLib source ID after compositor setup (before Lua loads).
-     *  During hot-reload, all sources above this baseline are removed
-     *  to prevent stale Lgi FFI closures from firing with dead lua_State*. */
+    /** Highest GLib source ID before the first config loads. A reload removes
+     *  every source above it, bar the few C-owned ones attached later and
+     *  exempted by luaA_glib_source_protect(). */
     unsigned int glib_source_baseline;
 
     /** True while hot-reload is tearing down/rebuilding the Lua state.

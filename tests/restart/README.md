@@ -63,7 +63,7 @@ Rules that bite:
 
 ## Expected failures
 
-A test that pins an unfixed defect declares it at the top:
+A test that pins a known-but-unfixed bug declares it at the top:
 
 ```bash
 # xfail: every reload leaks the old Lua state and its lgi closures
@@ -77,96 +77,160 @@ it cannot depend on `lib.sh` having been sourced yet.
 - An xfail that **passes** is **XPASS**, and the suite goes **red**. The change
   that fixes the bug must delete the flag in that same change. There is no
   opt-out.
-- An xfail that never asserted anything, or that failed for a reason other than
-  a failed assertion, is an **ERROR**, not an XFAIL. A test that breaks because
-  the compositor never started must not masquerade as a pinned defect. The
-  runner decides this from the tally `finish` writes, so a test killed part-way
-  through leaves no tally and is an error rather than being scored on whatever
-  it had printed.
+- An xfail that failed for a reason other than a failed assertion is an
+  **ERROR**, not an XFAIL. A test that breaks because the compositor never
+  started must not masquerade as a pinned bug. The runner decides this from
+  the tally `finish` writes, so a test killed part-way through leaves no tally
+  and is an error rather than being scored on whatever it had printed. An xfail
+  whose very first assertion fails is still an XFAIL: what it needs is a failed
+  assertion, not a passing one as well.
 
-## What each expected failure pins
+The same rule runs in the other direction for every test, xfail or not: exiting
+0 is not a pass unless the tally shows at least one passing assertion. A test
+that returns early, or whose last command merely happens to succeed, is an
+**ERROR**.
 
-| symptom | pinned by |
-|---|---|
-| The four old hot-reload tests never executed the reload. | retired: this whole suite, `restart-executes` in particular |
-| Per-reload resource accumulation: the old state is leaked with GC stopped, and the lgi closure population roughly doubles per reload. | `double-restart` (census half) |
+There are currently no expected failures; every test in the suite is expected
+to pass.
 
-Fixed defects keep their tests, now as plain regression tests:
+One assertion is contract-wide rather than test-specific, and every test gets
+it: `sw_check_log_clean` fails on the warnings a surviving GLib source or a
+surviving lgi closure prints. A module that registers either and does not
+release it on `"exit"` reddens whichever reload test runs next.
 
-- Notifications permanently dead after any restart (issue 444), because
-  the reload closed the shared GDBus session connection:
-  `notify-after-restart` for the symptom, `bus-open-after-restart` for the
-  connection itself. Deleting the close needed the `"exit"` release contract
-  first, or the rebuilt state collides with the abandoned one on a connection
-  that now stays open.
-- Remote eval dead after the first reload, because the signal handler table
-  kept old-state registry refs: `remote-eval-after-restart`.
-- lgi callbacks dropped after a config timeout: `timers-after-config-timeout`.
-- `luaL_unref` of old-state refs against the new state freeing arbitrary
-  live registry slots: `idle-timeout-unref-smoke`.
-- Keygrabber permanently unusable after reloading during a grab:
-  `keygrabber-after-restart`.
-- Stale pointer cluster in globalconf:
-  `globalconf-pointers-after-restart`. Added with the fix, so it never pinned
-  the bug as an expected failure. Two members of the cluster do have a cheap
-  probe after all: `awesome.locked` reports `lua_locked`, and `root._keys` is
-  the C entry point that `root.keys` hides.
-- Animation handles losing their metatable, because
-  `animation_setup()` ran only at boot: `animation-metatable-after-restart`.
-  Fixed by calling it from `luaA_create_fresh_state`, which covers the
-  config-timeout path too.
-- Boot and reload kept two hand-maintained copies of the registration
-  list, which had drifted: `search-paths-after-restart`. Both now run
-  `luaA_register_state`. The test pins the half that was outside-visible: only
+## What each test pins
+
+- `restart-executes`: the reload actually runs and completes. The predecessor
+  tests were green while never executing a reload, so this one asserts on a
+  wiped-global witness that only a real state rebuild can produce.
+- `state-closed-after-restart`: the old Lua state is closed, not abandoned. It
+  plants a userdata whose `__gc` writes a marker. GC is stopped on the old
+  state for the whole reload and the userdata is reachable from `_G`, so
+  nothing but `lua_close()` can run that finalizer.
+- `double-restart`: lgi closures do not accumulate across reloads. An
+  abandoned state frees none of its own, so the guard's live count tracks its
+  cumulative wrapped count, and a closed one leaves a single state's set
+  alive. Do not compare live counts between two reloads instead; a state whose
+  asynchronous D-Bus setup had not finished when the reload landed has three
+  fewer closures than one that had.
+- `notify-after-restart`: notifications keep working after a reload. They used
+  to die permanently because the reload closed the shared GDBus session
+  connection; `bus-open-after-restart` pins the connection itself. Deleting
+  the close needed the `"exit"` release contract first, or the rebuilt state
+  collides with the abandoned one on a connection that now stays open.
+- `remote-eval-after-restart`: remote eval over D-Bus answers after a reload.
+  It used to die on the first reload because the signal handler table kept
+  registry refs from the old state.
+- `keygrabber-after-restart`: reloading during an active grab does not leave
+  the keygrabber permanently stuck "already running".
+- `globalconf-pointers-after-restart`: stale pointers held in globalconf are
+  reset. Two members of the cluster have a cheap probe: `awesome.locked`
+  reports the lock flag, and `root._keys` is the C entry point that
+  `root.keys` hides.
+- `idle-timeout-unref-smoke`: releasing an idle timeout after a reload does
+  not free unrelated slots in the new state's registry.
+- `animation-metatable-after-restart`: animation handles keep their methods
+  after a reload; the handle metatable is registered per state, which covers
+  the config-timeout path too.
+- `animation-ticks-after-restart`: an animation still advances on an
+  otherwise idle loop after a reload; the keepalive timer belongs to the
+  wl_event_loop and is disarmed at reload, not removed. The test has to leave
+  the instance alone while the animation runs: it arms the animation in one
+  eval, sleeps in the shell, and reads the result in a second. Any poll loop
+  drives a refresh per eval and rescues the animation it is watching.
+  `animation-metatable-after-restart` stays green through this failure mode,
+  since a handle keeps its methods whether or not it ticks.
+- `search-paths-after-restart`: a rebuilt state resolves modules from the same
+  search paths as boot. Boot and reload used to keep two hand-maintained
+  copies of the registration list, which had drifted; both now run
+  `luaA_register_state`. The test pins the half that is outside-visible: only
   the boot copy prepended somewm's `package.cpath`.
-- statusnotifierwatcher never released its name ownership, object
-  registration or name watches: `statusnotifierwatcher-after-restart`.
-  Ownership cannot show this, since every state owns the name on the one
-  process-wide connection; a missing release kills the service instead. The test
-  seeds a phase-unique marker into the live state's item list and reads it back
-  over the bus, so the reply says which state answered.
-- IPC event subscriptions going silent after a reload:
-  `ipc-subscribe-across-restart`. Fixed by asking C whether anyone is
-  subscribed rather than keeping a second count in Lua.
-- Class signal handlers surviving a config timeout:
-  `class-signals-after-config-timeout`. Class signal arrays live on the C-side
-  `lua_class_t`, so they outlive the `lua_close()` the abort performs, and the
-  next emit dispatches refs into a closed state. The reload path already called
-  `luaA_class_cleanup_all()`; the timeout path did not.
-- Screens and outputs not rebuilt after a config timeout:
-  `screens-after-config-timeout`. Found while chasing the `naughty`
-  traceback that the startup-error test's log still carried. The timeout path
-  closes the state, so every screen userdata is freed while `screen_refs` keeps
-  its registry ints, and naughty's startup-error fallback then fake_adds a
-  phantom screen.
-- The timeout sweep destroying the libdbus watches: `dbus-after-config-timeout`.
-- Layer surfaces orphaned from Lua after a reload:
-  `layer-surface-after-restart`. The wlroots listeners belong to the C
-  LayerSurface, which the reload never frees, so only the Lua half went stale
-  and the fix rebuilds it from the surviving structs.
-- Selection watcher and acquire listeners left linked into the seat:
-  `selection-after-restart`. Its watcher assertion counts dispatch lines in the
-  log rather than a Lua-side counter, because a dispatch to the *live* watcher
-  also logs `Trying to emit signal ... on non-object`: no selection object is
-  ever entered into the object registry, so `luaA_object_push` cannot find one
-  and `selection_changed`, `release` and `request` never reach Lua at all. That
-  is a separate, pre-existing defect, not a reload defect, and it is why the
-  expected count is 2 rather than 0. Fix it and this test needs rewriting onto a
-  Lua-side counter in `configs/rc-selection.lua`.
-- The startup-error display dying before a usable screen existed:
-  `startup-error-after-config-timeout`, the one config-timeout test that loads
-  the real `somewmrc.lua`, since the handler under test lives there.
+- `statusnotifierwatcher-after-restart`: the tray watcher service still
+  answers from the live state after a reload. Ownership cannot show this,
+  since every state owns the name on the one process-wide connection; a
+  missing release kills the service instead. The test seeds a phase-unique
+  marker into the live state's item list and reads it back over the bus, so
+  the reply says which state answered.
+- `ipc-subscribe-across-restart`: a subscribed `somewm-client` keeps receiving
+  events after a reload. C owns the fd and the subscribed flag; the fix asks C
+  whether anyone is subscribed rather than keeping a second count in Lua.
+- `layer-surface-after-restart`: layer surfaces are re-created in the rebuilt
+  state. The wlroots listeners belong to the C LayerSurface, which the reload
+  never frees, so only the Lua half went stale and the fix rebuilds it from
+  the surviving structs.
+- `selection-after-restart`: clipboard watcher and acquire listeners are
+  detached at reload instead of dispatching into the dead state. Its watcher
+  assertion counts dispatch lines in the log rather than a Lua-side counter,
+  because a dispatch to the *live* watcher also logs `Trying to emit signal
+  ... on non-object`: no selection object is ever entered into the object
+  registry, so `luaA_object_push` cannot find one and `selection_changed`,
+  `release` and `request` never reach Lua at all. That is a separate,
+  pre-existing bug, not a reload bug, and it is why the expected count is 2
+  rather than 0. Fix it and this test needs rewriting onto a Lua-side counter
+  in `configs/rc-selection.lua`.
+- `boot-timer-after-restart`: a timer armed while the first config loads is
+  released instead of outliving the state the reload closes. The source sweep
+  never saw those sources, since its baseline was recorded from the Wayland
+  source, which `run()` attaches after the config has loaded. Fixed in both
+  halves: a release contract in `gears.timer`, and a baseline the sweep can
+  act on. Reverting either segfaults the instance in libffi, so a failure
+  here can look like a dead instance rather than a failed assertion.
+- `timers-after-restart`: `gears.timer` still fires after a reload, which is
+  the control for `timers-after-config-timeout`: the same probe down the path
+  that does mark the closure generation ready.
+- `timer-release-on-double-exit`: `"exit"` reaching one state twice, which
+  happens whenever a reload emits it and then quits. The release in
+  `gears.timer` left each timer in its registry with the source id already
+  nil, so the second pass called `glib.source_remove(nil)` and threw out of an
+  exit handler. The test emits the signal directly rather than faulting an
+  allocation, which is the same entry point both emitters use.
+- `client-during-hung-reload`: a reloaded config that hangs aborts through
+  the same `lua_close()` the config-timeout path has always used, with
+  clients already restored into the state it closes. The test swaps the
+  config under a running instance, since no startup can reach that state: at
+  startup there are no clients yet.
+- `tags-after-restart`, `client-survives-restart`, `client-order-after-restart`,
+  `transient-screen-restart`: clients, tags, stacking order and transient
+  relationships survive a reload.
 
-Defects with no test here are covered manually or by a later stage:
+Config-timeout tests (a config that hangs longer than the limit is aborted and
+the fallback loads):
 
-- EWMH class-signal reconnection is fixed but untestable from
+- `timers-after-config-timeout`: timers and spawn callbacks work after a
+  config timeout instead of being silently dropped forever.
+- `dbus-after-config-timeout`: the abort's source cleanup no longer destroys
+  the libdbus watches, so D-Bus dispatch survives.
+- `screens-after-config-timeout`: the retried config gets real screens. The
+  abort closes the state, so every screen userdata is freed while the C-side
+  ref arrays live on; without the rebuild, naughty's startup-error fallback
+  fake_adds a phantom screen.
+- `class-signals-after-config-timeout`: class signal handlers connected by the
+  aborted config do not dispatch into the closed state. Class signal arrays
+  live on the C-side `lua_class_t`, so they outlive the `lua_close()` the
+  abort performs; the reload path already cleared them, the timeout path did
+  not.
+- `startup-error-after-config-timeout`: the "config timed out" error is
+  actually displayed. This is the one config-timeout test that loads the real
+  `somewmrc.lua`, since the handler under test lives there.
+- `require-hooks-after-config-timeout`: the Wayland require() hooks (wallpaper
+  cache, no-op client shapes) are present in a config retried after a
+  timeout. They were installed once at the top of `luaA_loadrc()`, above its
+  config loop, while the timeout rebuilds the state inside that loop. They now
+  come from `luaA_register_state()`, which every state runs.
+
+## Covered manually, not by this suite
+
+- EWMH class-signal reconnection after a reload is fixed but untestable from
   outside. The properties a probe can read (`_NET_CLIENT_LIST`,
   `_NET_ACTIVE_WINDOW`) are maintained by wlroots' own xwm and stay correct
   with every somewm handler dead, and the ones somewm writes itself never
   reach the server because nothing calls `xcb_flush()`. Either kind of test
   passes with or without the fix. Verified by instrumenting `ewmh_init_lua`
   instead.
-- Keybinding array shadowing and growth is traced. `_key.bind` has no
-  Lua callers today, so the array only fills for a config that uses it.
-- Half-torn states on reload error paths are traced but not cheaply
-  reproducible from outside the process.
+- The deprecated keybinding array (`_key.bind`) has no Lua callers today, so
+  its per-reload growth only affects a config that uses it.
+- The reload's allocation-failure paths have no test: reaching them from
+  outside the process means faulting the allocator. Verified by making the
+  tag snapshot allocation fail, which quits with the in-progress flag cleared
+  and the guard generation marked, instead of returning into a half-torn
+  state.

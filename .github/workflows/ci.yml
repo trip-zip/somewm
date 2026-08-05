@@ -233,6 +233,11 @@ jobs:
         env:
           LIBSEAT_BACKEND: noop
           REQUIRE_ALL: 1
+          # The suite runs in ~150s and its slowest test takes ~13s, so 60s per
+          # test is generous. The default 180 is not: a handful of hung tests
+          # would spend the 900s budget above, and an outer kill reports no
+          # verdict at all, where a per-test timeout names the test that hung.
+          RESTART_TEST_TIMEOUT: 60
 
       - name: Upload restart test logs
         if: failure()

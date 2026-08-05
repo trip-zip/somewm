@@ -149,7 +149,7 @@ parse_command(lua_State *L, int idx, GError **error)
  * stale registry refs in the new state.
  */
 void
-spawn_invalidate_callbacks(void)
+spawn_invalidate_callbacks(lua_State *L)
 {
 	if (!running_children)
 		return;
@@ -157,6 +157,7 @@ spawn_invalidate_callbacks(void)
 	for (guint i = 0; i < running_children->len; i++) {
 		running_child_t *child = &g_array_index(running_children,
 			running_child_t, i);
+		luaL_unref(L, LUA_REGISTRYINDEX, child->exit_callback);
 		child->exit_callback = LUA_NOREF;
 	}
 }

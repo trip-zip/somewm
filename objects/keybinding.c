@@ -413,28 +413,6 @@ luaA_keybinding_setup(lua_State *L)
 	luaA_openlib(L, "_key", keybinding_methods, NULL);
 }
 
-/** Drop the keybinding array at hot-reload.
- *
- * Same job as luaA_keybinding_cleanup, minus the unref: the refs belong to the
- * old Lua state, which is leaked rather than closed, so unreffing them would
- * corrupt its registry free list. Dropping the array is what stops it growing
- * by a full duplicate set per reload, and what stops a stale entry shadowing
- * its replacement in the first-match dispatch above. rc.lua re-registers on
- * load.
- */
-void
-luaA_keybinding_hot_reload(void)
-{
-	for (size_t i = 0; i < lua_keybindings_count; i++) {
-		free(lua_keybindings[i].description);
-		free(lua_keybindings[i].group);
-	}
-	free(lua_keybindings);
-	lua_keybindings = NULL;
-	lua_keybindings_count = 0;
-	lua_keybindings_capacity = 0;
-}
-
 /** Release the keybinding array against the state that owns its func refs.
  *
  * Run at every state swap as well as at exit. Dropping the array is what stops

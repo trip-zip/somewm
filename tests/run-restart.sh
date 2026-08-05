@@ -128,9 +128,14 @@ for t in $tests; do
     fi
 
     # Classify the raw outcome once, then apply the xfail transform to it.
+    #
+    # A green exit status is not a pass on its own. A test that returns early,
+    # or whose last command happens to succeed, exits 0 having asserted
+    # nothing, and scoring that as PASS is how a suite goes quietly hollow.
     verdict=""; detail=""; green=1
     case $rc in
-        0)   outcome=PASS ;;
+        0)   if [ "$asserted" = 1 ]; then outcome=PASS
+             else outcome=ERROR; detail="exited 0 without asserting anything"; fi ;;
         77)  outcome=SKIP ;;
         1)   if [ "$assert_failed" = 1 ]; then outcome=FAIL
              else outcome=ERROR; detail="exited 1 without a failed assertion"; fi ;;
@@ -152,15 +157,12 @@ for t in $tests; do
         case $outcome in
             PASS) verdict=XPASS; detail="$declared appears fixed"
                   xpass_n=$((xpass_n + 1)); green=0 ;;
-            # An expected failure has to fail for its own reason: it must have
-            # got far enough to assert something, and an assertion must be what
-            # failed. Anything else is a broken test, not a pinned defect.
-            FAIL) if [ "$asserted" = 1 ]; then
-                      verdict=XFAIL; detail="$declared"; xfail_n=$((xfail_n + 1))
-                  else
-                      verdict=ERROR; error_n=$((error_n + 1)); green=0
-                      detail="xfail $declared failed before asserting anything"
-                  fi ;;
+            # An expected failure has to fail for its own reason: an assertion
+            # must be what failed, which FAIL already means. Anything else
+            # lands in the ERROR arm below as a broken test, not a pinned
+            # defect. A first-assertion failure is a legitimate xfail, so this
+            # must not also demand a passing assertion.
+            FAIL) verdict=XFAIL; detail="$declared"; xfail_n=$((xfail_n + 1)) ;;
             ERROR) verdict=ERROR; error_n=$((error_n + 1)); green=0
                    detail="xfail $declared: ${detail:-broken}" ;;
         esac
@@ -181,7 +183,7 @@ for t in $tests; do
             echo "    --- $log ---"
             tail -60 "$log" | sed 's/^/    /'
             echo "    --- hot-reload markers ---"
-            grep -E 'hot-reload:|lgi_guard:|stale GLib sources|FORCEFULLY ABORTED|FATAL:' \
+            grep -E 'hot-reload:|lgi_guard:|stale GLib sources|outlived the state|FORCEFULLY ABORTED|FATAL:' \
                 "$log" | sed 's/^/    /' || echo "    (none)"
         done
         if [ "$verdict" = XPASS ]; then
