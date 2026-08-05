@@ -89,26 +89,62 @@ it cannot depend on `lib.sh` having been sourced yet.
 | symptom | pinned by |
 |---|---|
 | Notifications permanently dead after any restart (issue 444). The reload closes the shared GDBus session bus; GLib's singleton cache hands the closed object to every later `bus_get_sync`, so naughty never re-owns its name. | `notify-after-restart`, `bus-open-after-restart`, `dbus-name-census-after-restart` |
-| `awesome-client` / remote eval dead after the first reload. The signal handler table keeps old-state registry refs, so re-registration is refused and dispatch pushes nil. | `remote-eval-after-restart` |
-| After a config timeout, every lgi callback is silently dropped forever. The timeout path bumps the closure-guard generation but never marks it ready. | `timers-after-config-timeout` |
-| The config-timeout source sweep runs with `baseline=0` and destroys the libdbus watch sources, so incoming D-Bus is never dispatched again. | `dbus-after-config-timeout` |
 | The four old hot-reload tests never executed the reload. | retired: this whole suite, `restart-executes` in particular |
-| `luaL_unref` of old-state refs against the new state frees arbitrary live registry slots. | `idle-timeout-unref-smoke` |
-| Keygrabber permanently unusable after reloading during a grab. | `keygrabber-after-restart` |
-| Animation handles lose their metatable after a reload; `animation_setup()` is only called at boot. | `animation-metatable-after-restart` |
 | Per-reload resource accumulation: the old state is leaked with GC stopped, and the lgi closure population roughly doubles per reload. | `double-restart` (census half) |
 | statusnotifierwatcher leaks its name ownership, object registration and watches every reload. | `dbus-name-census-after-restart` |
-| IPC event subscriptions go permanently silent after a reload. C keeps `client->subscribed` on the fd, but the subscriber registry is Lua module state destroyed with the state, and `ipc.broadcast` early-returns. The fd stays open and neither side reports an error. | `ipc-subscribe-across-restart` |
 
-Known reload bugs with no test here are covered manually for now:
+Fixed defects keep their tests, now as plain regression tests:
 
-- EWMH updates stopping after a reload needs an XWayland client watching
-  `_NET_*`.
-- The stale pointer cluster in globalconf has no cheap outside-visible probe.
-  `root.keys` is reassigned to a table by `lua/awful/root.lua`, so it does not
-  report the C-side state, and the rest of the cluster (`primary_screen`,
-  `drawable_under_mouse`, `mouse_under`, `pre_lock_focused_client`) needs pointer
-  motion or a session lock. Verify it by hand when its reset lands.
-- The rest (keybinding duplication, layer surfaces, selection listeners, the
-  startup-error display, half-torn error paths) are traced but not cheaply
-  reproducible from outside the process.
+- Remote eval dead after the first reload, because the signal handler table
+  kept old-state registry refs: `remote-eval-after-restart`.
+- lgi callbacks dropped after a config timeout: `timers-after-config-timeout`.
+- `luaL_unref` of old-state refs against the new state freeing arbitrary
+  live registry slots: `idle-timeout-unref-smoke`.
+- Keygrabber permanently unusable after reloading during a grab:
+  `keygrabber-after-restart`.
+- Stale pointer cluster in globalconf:
+  `globalconf-pointers-after-restart`. Added with the fix, so it never pinned
+  the bug as an expected failure. Two members of the cluster do have a cheap
+  probe after all: `awesome.locked` reports `lua_locked`, and `root._keys` is
+  the C entry point that `root.keys` hides.
+- Animation handles losing their metatable, because
+  `animation_setup()` ran only at boot: `animation-metatable-after-restart`.
+  Fixed by calling it from `luaA_create_fresh_state`, which covers the
+  config-timeout path too.
+- Boot and reload kept two hand-maintained copies of the registration
+  list, which had drifted: `search-paths-after-restart`. Both now run
+  `luaA_register_state`. The test pins the half that was outside-visible: only
+  the boot copy prepended somewm's `package.cpath`.
+- IPC event subscriptions going silent after a reload:
+  `ipc-subscribe-across-restart`. Fixed by asking C whether anyone is
+  subscribed rather than keeping a second count in Lua.
+- Class signal handlers surviving a config timeout:
+  `class-signals-after-config-timeout`. Class signal arrays live on the C-side
+  `lua_class_t`, so they outlive the `lua_close()` the abort performs, and the
+  next emit dispatches refs into a closed state. The reload path already called
+  `luaA_class_cleanup_all()`; the timeout path did not.
+- Screens and outputs not rebuilt after a config timeout:
+  `screens-after-config-timeout`. Found while chasing the `naughty`
+  traceback that the startup-error test's log still carried. The timeout path
+  closes the state, so every screen userdata is freed while `screen_refs` keeps
+  its registry ints, and naughty's startup-error fallback then fake_adds a
+  phantom screen.
+- The timeout sweep destroying the libdbus watches: `dbus-after-config-timeout`.
+- The startup-error display dying before a usable screen existed:
+  `startup-error-after-config-timeout`, the one config-timeout test that loads
+  the real `somewmrc.lua`, since the handler under test lives there.
+
+Defects with no test here are covered manually or by a later stage:
+
+- EWMH class-signal reconnection is fixed but untestable from
+  outside. The properties a probe can read (`_NET_CLIENT_LIST`,
+  `_NET_ACTIVE_WINDOW`) are maintained by wlroots' own xwm and stay correct
+  with every somewm handler dead, and the ones somewm writes itself never
+  reach the server because nothing calls `xcb_flush()`. Either kind of test
+  passes with or without the fix. Verified by instrumenting `ewmh_init_lua`
+  instead.
+- Keybinding array shadowing and growth is traced. `_key.bind` has no
+  Lua callers today, so the array only fills for a config that uses it.
+- Layer surfaces, selection listeners and the half-torn error paths are
+  traced but not cheaply reproducible from outside
+  the process.

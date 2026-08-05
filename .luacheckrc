@@ -48,6 +48,7 @@ read_globals = {
     "_keygrabber",
     "_timer",
     "_ipc_broadcast",
+    "_ipc_has_subscribers",
     "_ipc_send_response",
     "_ipc_subscribe",
 }

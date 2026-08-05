@@ -478,10 +478,10 @@ SW_TIMEOUT_HOME=""
 SW_TIMEOUT_CONFIG=""
 
 sw_timeout_sandbox() {
-    local box
+    local box hang_dir="${1:-hang}"
     box=$(sw_sandbox)
     mkdir -p "$box/cwd" "$box/home" "$box/config/somewm"
-    cp "$RESTART_DIR/configs/hang/somewm/rc.lua" "$box/config/somewm/rc.lua"
+    cp "$RESTART_DIR/configs/$hang_dir/somewm/rc.lua" "$box/config/somewm/rc.lua"
     cp "$RESTART_DIR/configs/fallback/somewmrc.lua" "$box/cwd/somewmrc.lua"
     ln -s "$ROOT_DIR/lua" "$box/cwd/lua"
     SW_TIMEOUT_CWD="$box/cwd"
@@ -492,13 +492,21 @@ sw_timeout_sandbox() {
 # Start an instance whose config hangs, and wait out the abort. Asserts the
 # startup gate: the hang really was aborted, and the fallback we control really
 # is what loaded.
+#
+# The second argument is the config the fallback loads. It defaults to the
+# minimal tests/rc.lua, which keeps a failure attributable to the timeout path
+# rather than to whatever else a full config does; pass the real somewmrc.lua to
+# exercise its error-display wiring.
+#
+# The third selects which configs/<dir> supplies the hanging rc.lua, for tests
+# that need the dead config to have done something before it hung.
 sw_start_hung_config() {
-    local name="$1"
-    sw_timeout_sandbox
+    local name="$1" fallback_rc="${2:-$ROOT_DIR/tests/rc.lua}" hang_dir="${3:-hang}"
+    sw_timeout_sandbox "$hang_dir"
     sw_start_env "$name" "$SW_TIMEOUT_CWD" \
         HOME="$SW_TIMEOUT_HOME" \
         XDG_CONFIG_HOME="$SW_TIMEOUT_CONFIG" \
-        SOMEWM_TEST_FALLBACK_RC="$ROOT_DIR/tests/rc.lua" \
+        SOMEWM_TEST_FALLBACK_RC="$fallback_rc" \
         || return 1
 
     if log_has "$name" "FORCEFULLY ABORTED after timeout"; then

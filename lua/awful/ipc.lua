@@ -244,10 +244,6 @@ end
 -- @param command_string Raw command string from socket
 -- @param client_fd File descriptor of connected client (for reference)
 -- @return Response string in protocol format ("OK\n\n" or "ERROR msg\n\n")
--- Active subscribers: client_fd -> filter_set (table of event_type=true, or true for all)
-local subscribers = {}
-local subscriber_count = 0
-
 function ipc.dispatch(command_string, client_fd)
   -- Check for --json flag
   local json_mode = false
@@ -266,27 +262,12 @@ function ipc.dispatch(command_string, client_fd)
     return "ERROR Empty command\n\n"
   end
 
-  -- Handle subscribe specially (needs client_fd)
+  -- Handle subscribe specially (needs client_fd). Event-type arguments are
+  -- accepted and ignored: subscription is a per-fd flag in C, and every
+  -- subscriber gets every event. Filtering them is the client's job.
   if cmd_name == "subscribe" then
     if _ipc_subscribe then
       _ipc_subscribe(client_fd)
-    end
-    -- Store filter set for this subscriber
-    if not subscribers[client_fd] then
-      subscriber_count = subscriber_count + 1
-    end
-    if #args > 0 then
-      local filters = {}
-      for _, event_type in ipairs(args) do
-        if event_type == "all" then
-          filters = true
-          break
-        end
-        filters[event_type] = true
-      end
-      subscribers[client_fd] = filters
-    else
-      subscribers[client_fd] = true -- true means all events
     end
     if json_mode then
       return json_encode({status = "ok", result = "Subscribed to events"}) .. "\n\n"
@@ -348,18 +329,11 @@ end
 -- @param event_type Event type string (e.g., "client_focus", "tag_switch")
 -- @param data Table of event data to JSON-encode
 function ipc.broadcast(event_type, data)
-  if subscriber_count <= 0 or not _ipc_broadcast then return end
+  if not _ipc_broadcast or not _ipc_has_subscribers then return end
+  if not _ipc_has_subscribers() then return end
 
   local message = "EVENT " .. event_type .. " " .. json_encode(data or {}) .. "\n"
   _ipc_broadcast(message)
-end
-
---- Remove a subscriber (called when client disconnects or via cleanup)
-function ipc.remove_subscriber(client_fd)
-  if subscribers[client_fd] then
-    subscribers[client_fd] = nil
-    subscriber_count = subscriber_count - 1
-  end
 end
 
 --- Register all built-in commands

@@ -1665,6 +1665,27 @@ luaA_root_set_call_handler(lua_State *L)
 	return luaA_registerfct(L, 1, &miss_call_handler);
 }
 
+/** Drop the miss handlers and the global bindings at hot-reload.
+ * They are refs into the old Lua state, which is leaked rather than closed,
+ * so they are dropped without unref. Leaving them set is worse than a stale
+ * read: luaA_registerfct unrefs the old value when awful._compat re-registers,
+ * which would free a live slot in the new registry, and the reset loops in
+ * luaA_root_keys/luaA_root_buttons would luaA_object_unref old-state objects
+ * the moment the reloaded config assigns its bindings.
+ */
+void
+luaA_root_hot_reload(void)
+{
+	miss_index_handler = LUA_REFNIL;
+	miss_newindex_handler = LUA_REFNIL;
+	miss_call_handler = LUA_REFNIL;
+
+	key_array_wipe(&globalconf.keys);
+	key_array_init(&globalconf.keys);
+	button_array_wipe(&globalconf.buttons);
+	button_array_init(&globalconf.buttons);
+}
+
 /* ========== SCREENSHOT SUPPORT ========== */
 
 /* struct screenshot_render_data is declared in screenshot_compose.h so it can

@@ -14,6 +14,7 @@
 extern void ipc_send_response(int client_fd, const char *response);
 extern void ipc_subscribe_client(int client_fd);
 extern void ipc_broadcast(const char *message);
+extern bool ipc_has_subscribers(void);
 
 /**
  * Dispatch IPC command to Lua
@@ -109,6 +110,18 @@ luaA_ipc_broadcast(lua_State *L)
 }
 
 /**
+ * Lua: _ipc_has_subscribers()
+ * Whether any connected client is subscribed. Lua used to keep its own count,
+ * which died with the state on hot-reload while the fd stayed subscribed in C.
+ */
+static int
+luaA_ipc_has_subscribers(lua_State *L)
+{
+	lua_pushboolean(L, ipc_has_subscribers());
+	return 1;
+}
+
+/**
  * Setup IPC Lua module
  * Registers functions that Lua can call
  */
@@ -126,6 +139,10 @@ luaA_ipc_setup(lua_State *L)
 	/* Register _ipc_broadcast for broadcasting events */
 	lua_pushcfunction(L, luaA_ipc_broadcast);
 	lua_setglobal(L, "_ipc_broadcast");
+
+	/* Register _ipc_has_subscribers so Lua can skip encoding an event */
+	lua_pushcfunction(L, luaA_ipc_has_subscribers);
+	lua_setglobal(L, "_ipc_has_subscribers");
 
 	/* Note: _ipc_dispatch will be defined in Lua (lua/awful/ipc.lua) */
 }
