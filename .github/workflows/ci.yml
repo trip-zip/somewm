@@ -90,6 +90,8 @@ jobs:
             libxkbcommon-dev \
             libinput-dev \
             libdbus-1-dev \
+            dbus \
+            libglib2.0-bin \
             libdrm-dev \
             libgbm-dev \
             libpixman-1-dev \
@@ -224,6 +226,21 @@ jobs:
           HEADLESS: 1
           LIBSEAT_BACKEND: noop
           TEST_TIMEOUT: 45
+
+      - name: Run restart / hot-reload tests
+        run: timeout 900 make test-restart
+        timeout-minutes: 16
+        env:
+          LIBSEAT_BACKEND: noop
+          REQUIRE_ALL: 1
+
+      - name: Upload restart test logs
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: restart-logs-${{ matrix.lua.name }}
+          path: build-test/restart-artifacts/
+          if-no-files-found: ignore
 
   # Debian stable ships wayland-server 1.23.1, libdrm 2.4.124 and xkbcommon 1.7.0,
   # all below wlroots 0.20's floors. Build there to keep the wlroots 0.19 path working.

@@ -30,6 +30,20 @@ Integration tests run somewm in headless mode and execute test scenarios via IPC
 **Framework**: Custom step-wise runner (`tests/_runner.lua`)
 **Runner**: `tests/run-integration.sh`
 
+### Restart Tests (`tests/restart/`)
+
+Restart tests assert on both sides of a real `awesome.restart()`. An integration
+test cannot: it lives inside the Lua state the reload destroys. These drive a
+sandboxed instance from outside through `somewm-client test` and read the results
+back over IPC.
+
+**Location**: `tests/restart/*.sh`
+**Framework**: Shell, with `tests/restart/lib.sh` helpers
+**Runner**: `tests/run-restart.sh`
+
+See `tests/restart/README.md`, including how expected failures work: much of
+this suite currently pins hot-reload behavior that is not fixed yet.
+
 ## Running Tests
 
 ### Run All Tests
@@ -190,6 +204,13 @@ Integration tests run in an isolated environment:
 - `tests/rc.lua` - Minimal test configuration
 - `tests/test-*.lua` - Integration test files
 - `tests/run-integration.sh` - Integration test runner script
+
+### Restart Test Files
+
+- `tests/restart/lib.sh` - Harness helpers sourced by every restart test
+- `tests/restart/configs/` - Config fixtures, layered on `tests/rc.lua`
+- `tests/restart/*.sh` - Restart test files
+- `tests/run-restart.sh` - Restart test runner script
 
 ## Troubleshooting
 

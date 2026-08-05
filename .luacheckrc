@@ -10,6 +10,12 @@ files["spec"].std = "+busted"
 -- The default config may set global variables
 files["somewmrc.lua"].allow_defined_top = true
 
+-- The restart fixtures set globals on purpose: they are what the harness reads
+-- back over IPC to see what a rebuilt state kept. Nothing in the file itself
+-- reads them, hence 131 as well.
+files["tests/restart/configs/*"].allow_defined_top = true
+files["tests/restart/configs/*"].ignore = {"131"}
+
 -- This file itself
 files[".luacheckrc"].ignore = {"111", "112", "131"}
 
