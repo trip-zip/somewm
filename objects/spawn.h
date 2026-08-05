@@ -17,7 +17,7 @@ void spawn_init(void);
 void spawn_start_notify(client_t*, const char*);
 int luaA_spawn(lua_State*);
 void spawn_child_exited(pid_t, int);
-void spawn_invalidate_callbacks(void);
+void spawn_invalidate_callbacks(lua_State *L);
 
 /* Setup function (legacy - no longer used) */
 void luaA_spawn_setup(lua_State *L);

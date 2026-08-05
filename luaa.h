@@ -9,6 +9,11 @@
 #include <stdarg.h>
 #include <stdio.h>
 
+/* Same typedef glib's gtypes.h uses. Declared rather than included: two
+ * prototypes below need the name, and every consumer of this header would
+ * otherwise parse all of glib for it. */
+typedef struct _GSource GSource;
+
 extern lua_State *globalconf_L;
 
 /* globalconf_get_lua_State() is now in globalconf.h (matches AwesomeWM) */
@@ -106,6 +111,7 @@ luaA_unregister(lua_State *L, int *ref)
 void luaA_init(void);
 void luaA_loadrc(void);
 void luaA_record_glib_source_baseline(void);
+void luaA_glib_source_protect(GSource *source);
 void luaA_cleanup(void);
 void luaA_set_argv(char **argv);
 void luaA_hot_reload(void);

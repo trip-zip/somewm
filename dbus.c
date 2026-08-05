@@ -698,15 +698,19 @@ a_dbus_cleanup(void)
     a_dbus_cleanup_bus(dbus_connection_system, &system_source);
 }
 
-/** Drop the signal handler table at hot-reload.
- * The handlers are refs into the old Lua state, which is leaked rather than
- * closed, so they must be dropped without unref. Re-init matters as much as
- * the wipe: signal_array_wipe frees tab without clearing len, and the next
+/** Release the signal handler table at hot-reload.
+ * The handlers are object refs in the state being closed, so they are unref'd
+ * there and nowhere else. Re-init matters as much as the wipe:
+ * signal_array_wipe frees tab without clearing len, and the next
  * signal_array_insert would binary-search a NULL tab.
  */
 void
-a_dbus_hot_reload(void)
+a_dbus_hot_reload(lua_State *L)
 {
+    foreach(sig, dbus_signals)
+        foreach(func, sig->sigfuncs)
+            luaA_object_unref(L, (void *) *func);
+
     signal_array_wipe(&dbus_signals);
     signal_array_init(&dbus_signals);
 }
@@ -948,8 +952,9 @@ a_dbus_cleanup(void)
 
 /** Empty stub if dbus is not enabled */
 void
-a_dbus_hot_reload(void)
+a_dbus_hot_reload(lua_State *L)
 {
+    (void) L;
 }
 
 #endif

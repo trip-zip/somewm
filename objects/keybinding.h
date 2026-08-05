@@ -19,7 +19,6 @@ int luaA_client_key_check_and_emit(client_t *c, uint32_t mods, uint32_t keycode,
 /* OLD DEPRECATED system: direct callback storage */
 int luaA_keybind_check(uint32_t mods, xkb_keysym_t sym, xkb_keysym_t base_sym);
 
-void luaA_keybinding_hot_reload(void);
 void luaA_keybinding_cleanup(lua_State *L);
 
 #endif /* KEYBINDING_H */

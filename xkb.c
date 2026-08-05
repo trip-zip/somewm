@@ -120,10 +120,13 @@ xkb_reload_keymap(void)
 }
 
 /* Deferred XKB signal emission (matches AwesomeWM's xkb_refresh pattern) */
+static guint xkb_refresh_source_id;
+
 static gboolean
 xkb_refresh(gpointer unused)
 {
     (void)unused;
+    xkb_refresh_source_id = 0;
     globalconf.xkb.update_pending = false;
 
     if (globalconf.xkb.map_changed)
@@ -144,7 +147,29 @@ xkb_schedule_refresh(void)
     if (globalconf.xkb.update_pending)
         return;
     globalconf.xkb.update_pending = true;
-    g_idle_add_full(G_PRIORITY_LOW, xkb_refresh, NULL, NULL);
+    xkb_refresh_source_id = g_idle_add_full(G_PRIORITY_LOW, xkb_refresh, NULL, NULL);
+}
+
+/** Drop a pending refresh at a Lua state swap.
+ *
+ * The idle is attached at runtime, so it sits above the GLib source baseline
+ * the reload sweep works from, and it is not one of the two sources that can be
+ * protected from it. Left to the sweep, the idle dies with update_pending still
+ * set and every later xkb_schedule_refresh() early-returns for the rest of the
+ * process: no xkb::map_changed, no xkb::group_changed, ever again. The pending
+ * signals are dropped with it, which is right - they belong to the state being
+ * torn down.
+ */
+void
+xkb_reset_pending(void)
+{
+    if (xkb_refresh_source_id) {
+        g_source_remove(xkb_refresh_source_id);
+        xkb_refresh_source_id = 0;
+    }
+    globalconf.xkb.update_pending = false;
+    globalconf.xkb.map_changed = false;
+    globalconf.xkb.group_changed = false;
 }
 
 /** The xkb notify event handler.

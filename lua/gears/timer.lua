@@ -89,6 +89,21 @@ local gmath = require("gears.math")
 
 local timer = { mt = {} }
 
+-- Every started timer, so "exit" can release the GLib sources they hold. A
+-- timeout outlives the Lua state a hot-reload closes, and dispatching one after
+-- that reads freed memory (see luaA_cleanup_stale_glib_sources in luaa.c).
+--
+-- Weak keys, because a started timer is already rooted by the closure lgi holds
+-- for GLib. The registry only observes; it must not be the thing keeping a
+-- timer alive.
+local running = setmetatable({}, { __mode = "k" })
+
+-- Set once "exit" has been emitted, so nothing arms a source the release has
+-- already been through. The reload turns the main loop over after "exit" to let
+-- D-Bus releases land, and a callback reached in that window can still start a
+-- timer.
+local exiting = false
+
 --- Start the timer.
 -- @method start
 -- @noreturn
@@ -98,11 +113,15 @@ function timer:start()
         gdebug.print_error(traceback("timer already started"))
         return
     end
+    if exiting then
+        return
+    end
     local timeout_ms = gmath.round(self.data.timeout * 1000)
     self.data.source_id = glib.timeout_add(glib.PRIORITY_DEFAULT, timeout_ms, function()
         protected_call(self.emit_signal, self, "timeout")
         return glib.SOURCE_CONTINUE
     end)
+    running[self] = true
     self:emit_signal("start")
 end
 
@@ -119,6 +138,7 @@ function timer:stop()
     end
     glib.source_remove(self.data.source_id)
     self.data.source_id = nil
+    running[self] = nil
     self:emit_signal("stop")
 end
 
@@ -288,10 +308,36 @@ end
 -- @staticfct gears.timer.delayed_call
 function timer.delayed_call(callback, ...)
     assert(type(callback) == "function", "callback must be a function, got: " .. type(callback))
+    if exiting then
+        return
+    end
     table.insert(delayed_calls, { callback, ... })
 end
 
+--- Release every GLib source this module holds.
+--
+-- Connected to "exit", which a hot-reload emits before it closes the state.
+-- Sources are removed directly rather than through `:stop()`: the "stop" signal
+-- means the user stopped a timer, and running arbitrary handlers in a state
+-- that is being torn down is the thing "exit" exists to avoid. `started` still
+-- reads correctly afterwards, since it derives from `data.source_id`.
+--
+-- Runs more than once on the same state when a reload emits "exit" and then
+-- fails: the quit that follows emits it again from cleanup(). Each timer is
+-- dropped from `running` as it is released, so the second pass finds nothing
+-- rather than calling `source_remove(nil)` and throwing out of an exit handler.
+local function release_sources()
+    exiting = true
+    for t in pairs(running) do
+        glib.source_remove(t.data.source_id)
+        t.data.source_id = nil
+        running[t] = nil
+    end
+    delayed_calls = {}
+end
+
 capi.awesome.connect_signal("refresh", timer.run_delayed_calls_now)
+capi.awesome.connect_signal("exit", release_sources)
 
 function timer.mt.__call(_, ...)
     return timer.new(...)

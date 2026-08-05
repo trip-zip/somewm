@@ -34,8 +34,8 @@ This document tracks all known differences between somewm and AwesomeWM. These e
 - AwesomeWM re-execs itself via `execvp()`, restarting the entire process
 - SomeWM performs in-process Lua hot-reload: tears down the Lua VM, rebuilds it from `rc.lua`, and reattaches existing clients
 - wlroots, the scene graph, and client surfaces are untouched during reload
-- The old Lua state is intentionally leaked (~1-2 MB) to avoid Lgi closure crashes
-- An LD_PRELOAD closure guard (`lgi_closure_guard.so`) blocks stale FFI closures from the leaked state
+- The old Lua state is closed, so a module must release what it registered with GLib or GDBus when `"exit"` is emitted, or its callback outlives the state it points into
+- A source sweep in C and an LD_PRELOAD closure guard (`lgi_closure_guard.so`) back that contract up and report when it is broken. The sweep destroys any GLib source the closed state still owned, so it never dispatches; the guard cannot do the same, since libffi reads a closure's `cif` (which lives in the closed state) before the guard is entered
 
 **Window Visibility Timing**
 - X11: `xcb_map_window()` maps immediately, content shows when ready
@@ -192,8 +192,9 @@ These modifications to AwesomeWM's Lua libraries were necessary for Wayland comp
 | `awful/root.lua` | `_remove_*` calls the C-side removal hook immediately when present | somewm's C layer exposes `_remove_` hooks; also flushes removals upstream leaves queued |
 | `awful/screenshot.lua` | Snipping overlay wibox sets `surface_scale = 1.0` | HiDPI overlay repaint was ~1 FPS at physical resolution |
 | `gears/filesystem.lua` | `somewm/` paths | Rebranded config/cache directories |
+| `gears/timer.lua` | Records started timers in a weak-keyed table and removes their GLib sources when `awesome` emits `"exit"`; nothing new can be armed after that | A restart rebuilds the Lua state inside the running process, so a timer still armed would fire into a state that no longer exists. AwesomeWM re-execs instead and has nothing to release |
 | `naughty/core.lua` | Default `request::icon` handler `naughty.app_icon_handler` resolves `app_icon` names via `menubar.utils.lookup_icon` | Upstream ships no default handler; naughty now requires menubar at load |
-| `naughty/dbus.lua` | `awesome.version or "somewm-dev"` fallback; no `ActionInvoked("default")` on user dismiss | Version string safety; dismissing a notification should not open the app (reverts upstream 5daae2bb) |
+| `naughty/dbus.lua` | `awesome.version or "somewm-dev"` fallback; no `ActionInvoked("default")` on user dismiss; keeps the bus-name and object-registration ids so `"exit"` can hand them back | Version string safety; dismissing a notification should not open the app (reverts upstream 5daae2bb); without the release, `org.freedesktop.Notifications` stays owned by the state a restart replaced and notifications stop arriving |
 | `naughty/notification.lua` | Property getter falls back to `beautiful.notification_*` between preset and defaults; presets no longer merge in `config.defaults`, so `n.preset.<field>` can be nil | Upstream ignores `beautiful.notification_*`; merged defaults shadowed the beautiful lookup |
 | `naughty/widget/icon.lua` | Clears the image when a notification's icon is unset; disconnects the signal it actually connects | Upstream leaves a stale image and leaks the signal connection |
 | `naughty/layout/box.lua` | Caches the notification position at attach time for use after the weak ref is GC'd | Upstream falls back to a hardcoded `"top_right"` |

@@ -255,8 +255,13 @@ int some_is_ext_session_locked(void);
 /* Lock activation/deactivation - defined in somewm.c, called from luaa.c */
 void some_activate_lua_lock(void);
 void some_deactivate_lua_lock(void);
+void some_deactivate_lua_lock_no_focus(void);
 void some_promote_lock_cover(drawin_t *d);
 void some_clear_pre_lock_client(client_t *c);
+
+/* Pending activation tokens - defined in somewm.c, called from luaa.c so the
+ * state teardown can drop their timeouts before the GLib source sweep runs. */
+void activation_tokens_cancel_all(void);
 
 /* Idle/activity - defined in luaa.c, called from somewm.c */
 void some_idle_timers_set_inhibit(bool inhibit);
