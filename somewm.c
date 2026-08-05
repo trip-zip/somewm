@@ -65,6 +65,9 @@
 #include <wlr/types/wlr_session_lock_v1.h>
 #include <wlr/types/wlr_single_pixel_buffer_v1.h>
 #include <wlr/types/wlr_subcompositor.h>
+#include <wlr/types/wlr_tablet_pad.h>
+#include <wlr/types/wlr_tablet_tool.h>
+#include <wlr/types/wlr_tablet_v2.h>
 #include <wlr/types/wlr_viewporter.h>
 #include <wlr/types/wlr_virtual_keyboard_v1.h>
 #include <wlr/types/wlr_virtual_pointer_v1.h>
@@ -147,6 +150,48 @@ typedef struct {
 	struct wl_list link;
 } TrackedPointer;
 
+/* Tracked tablet device for tool-event listeners and debug logging */
+typedef struct {
+	struct wlr_tablet *tablet;
+	struct wlr_tablet_v2_tablet *tablet_v2;
+	struct wl_listener axis;
+	struct wl_listener proximity;
+	struct wl_listener tip;
+	struct wl_listener button;
+	struct wl_listener destroy;
+	struct wl_list link;
+} TrackedTablet;
+
+/* Tracked tablet pad for debug logging in MVP phase */
+typedef struct {
+	struct wlr_tablet_pad *pad;
+	struct wlr_tablet_v2_tablet_pad *pad_v2;
+	struct wlr_tablet *attached_tablet;
+	struct wlr_surface *current_surface;
+	struct wl_listener button;
+	struct wl_listener ring;
+	struct wl_listener strip;
+	struct wl_listener attach_tablet;
+	struct wl_listener surface_destroy;
+	struct wl_listener destroy;
+	struct wl_list link;
+} TrackedTabletPad;
+
+typedef struct {
+	struct wlr_tablet_tool *tool;
+	struct wlr_tablet_v2_tablet_tool *tool_v2;
+	struct wlr_tablet *tablet;
+	/* Last known normalized (0..1) position and tilt, tracked per-tool so
+	 * a single-axis wlr_tablet_tool_axis_event (see tabletnotifyaxis())
+	 * can still resolve a full x/y or tilt_x/tilt_y pair. */
+	double last_x, last_y;
+	bool has_x, has_y;
+	double last_tilt_x, last_tilt_y;
+	bool has_tilt_x, has_tilt_y;
+	struct wl_listener destroy;
+	struct wl_list link;
+} TrackedTabletTool;
+
 /* function declarations */
 static void applybounds(Client *c, struct wlr_box *bbox);
 void arrange(Monitor *m);
@@ -179,6 +224,8 @@ static void createlocksurface(struct wl_listener *listener, void *data);
 static void createmon(struct wl_listener *listener, void *data);
 static void createnotify(struct wl_listener *listener, void *data);
 static void createpointer(struct wlr_pointer *pointer);
+static void createtablet(struct wlr_tablet *tablet);
+static void createtabletpad(struct wlr_tablet_pad *pad);
 static void createpointerconstraint(struct wl_listener *listener, void *data);
 static void createpopup(struct wl_listener *listener, void *data);
 void cursorconstrain(struct wlr_pointer_constraint_v1 *constraint);
@@ -196,6 +243,9 @@ static void destroypointerconstraint(struct wl_listener *listener, void *data);
 static void destroysessionlock(struct wl_listener *listener, void *data);
 static void destroykeyboardgroup(struct wl_listener *listener, void *data);
 static void destroytrackedpointer(struct wl_listener *listener, void *data);
+static void destroytrackedtablet(struct wl_listener *listener, void *data);
+static void destroytrackedtabletpad(struct wl_listener *listener, void *data);
+static void destroytrackedtablettool(struct wl_listener *listener, void *data);
 Monitor *dirtomon(enum wlr_direction dir);
 static void apply_input_settings_to_device(struct libinput_device *device);
 void focusclient(Client *c, int lift);
@@ -219,6 +269,15 @@ static void gestureholdend(struct wl_listener *listener, void *data);
 static void gpureset(struct wl_listener *listener, void *data);
 static void handlesig(int signo);
 static void inputdevice(struct wl_listener *listener, void *data);
+static void tabletnotifyaxis(struct wl_listener *listener, void *data);
+static void tabletnotifyproximity(struct wl_listener *listener, void *data);
+static void tabletnotifytip(struct wl_listener *listener, void *data);
+static void tabletnotifybutton(struct wl_listener *listener, void *data);
+static void tabletpadnotifybutton(struct wl_listener *listener, void *data);
+static void tabletpadnotifyring(struct wl_listener *listener, void *data);
+static void tabletpadnotifystrip(struct wl_listener *listener, void *data);
+static void tabletpadnotifyattach(struct wl_listener *listener, void *data);
+static void tabletpadnotifysurfacedestroy(struct wl_listener *listener, void *data);
 static int keybinding(uint32_t mods, uint32_t keycode, xkb_keysym_t sym, xkb_keysym_t base_sym);
 static void keypress(struct wl_listener *listener, void *data);
 static void keypressmod(struct wl_listener *listener, void *data);
@@ -341,6 +400,8 @@ struct wlr_pointer_constraints_v1 *pointer_constraints;
 static struct wlr_relative_pointer_manager_v1 *relative_pointer_mgr;
 static struct wlr_pointer_constraint_v1 *active_constraint;
 
+static struct wlr_tablet_manager_v2 *tablet_v2_mgr;
+
 struct wlr_cursor *cursor;
 /* Non-static so mousegrabber.c can access it */
 struct wlr_xcursor_manager *cursor_mgr;
@@ -361,6 +422,9 @@ struct wlr_output_layout *output_layout;
 static struct wlr_box sgeom;
 struct wl_list mons;
 static struct wl_list tracked_pointers; /* For runtime libinput config */
+static struct wl_list tracked_tablets;
+static struct wl_list tracked_tablet_pads;
+static struct wl_list tracked_tablet_tools;
 Monitor *selmon;
 static int in_updatemons;
 static int updatemons_pending;
@@ -1971,24 +2035,75 @@ get_input_device_type(struct libinput_device *device)
 		? "touchpad" : "pointer";
 }
 
-/* Resolve effective input settings for a device by overlaying matching rules
- * on top of the global defaults. String fields in the result are borrowed
- * pointers (not owned), so the caller must not free them. */
+static const char *
+tablet_tool_type_to_rule_type(enum wlr_tablet_tool_type type)
+{
+	switch (type) {
+	case WLR_TABLET_TOOL_TYPE_PEN:
+		return "tablet-tool-pen";
+	case WLR_TABLET_TOOL_TYPE_ERASER:
+		return "tablet-tool-eraser";
+	case WLR_TABLET_TOOL_TYPE_BRUSH:
+		return "tablet-tool-brush";
+	case WLR_TABLET_TOOL_TYPE_PENCIL:
+		return "tablet-tool-pencil";
+	case WLR_TABLET_TOOL_TYPE_AIRBRUSH:
+		return "tablet-tool-airbrush";
+	case WLR_TABLET_TOOL_TYPE_MOUSE:
+		return "tablet-tool-mouse";
+	case WLR_TABLET_TOOL_TYPE_LENS:
+		return "tablet-tool-lens";
+	case WLR_TABLET_TOOL_TYPE_TOTEM:
+		return "tablet-tool-totem";
+	default:
+		return NULL;
+	}
+}
+
+/* A rule's `type` can match on either of two independent axes: the device
+ * class (`primary`, e.g. "tablet") or, for tablets, which tool triggered
+ * the current event (`secondary`, e.g. "tablet-tool-pen"). Plain pointer/
+ * touchpad devices only have a `primary` axis (see resolve_input_settings());
+ * tablets pass both, since `primary` is always the constant "tablet" while
+ * `secondary` varies per event (see resolve_tablet_settings()) - so
+ * `{type="tablet"}` matches any tool on any tablet, `{type="tablet-tool-pen"}`
+ * matches a pen on any tablet, and both can be combined with `name` (always
+ * the tablet's own name, never the tool's) to narrow to one device. */
+static bool
+input_rule_type_matches(const char *rule_type, const char *primary, const char *secondary)
+{
+	if (!rule_type)
+		return true;
+
+	if (primary && strcmp(rule_type, primary) == 0)
+		return true;
+
+	if (secondary && strcmp(rule_type, secondary) == 0)
+		return true;
+
+	/* tablet-tool is a wildcard for any concrete tablet-tool-* type. */
+	if (secondary && strcmp(rule_type, "tablet-tool") == 0
+			&& strncmp(secondary, "tablet-tool-", strlen("tablet-tool-")) == 0)
+		return true;
+
+	return false;
+}
+
+/* Resolve effective input settings by overlaying matching rules on top of
+ * global defaults. String fields in the result are borrowed pointers
+ * (not owned), so the caller must not free them. */
 static void
-resolve_input_settings(struct libinput_device *device, struct InputSettings *out)
+resolve_input_settings_for_types(const char *type_primary,
+		const char *type_secondary, const char *dev_name,
+		struct InputSettings *out)
 {
 	/* Start with global defaults */
 	*out = globalconf.input;
-	/* String fields are borrowed from globalconf, not duplicated */
-
-	const char *dev_type = get_input_device_type(device);
-	const char *dev_name = libinput_device_get_name(device);
 
 	for (int i = 0; i < globalconf.input_rules_count; i++) {
 		struct InputRule *rule = &globalconf.input_rules[i];
 
-		/* Check type match */
-		if (rule->type && strcmp(rule->type, dev_type) != 0)
+		if (!input_rule_type_matches(rule->type, type_primary, type_secondary))
 			continue;
 		/* Check name match (substring) */
 		if (rule->name && (!dev_name || !strstr(dev_name, rule->name)))
@@ -2017,7 +2132,115 @@ resolve_input_settings(struct libinput_device *device, struct InputSettings *out
 			out->accel_speed = p->accel_speed;
 			out->accel_speed_set = true;
 		}
+		if (p->tool_mode) out->tool_mode = p->tool_mode;
+		if (p->map_to_output_count) {
+			out->map_to_output_list = p->map_to_output_list;
+			out->map_to_output_count = p->map_to_output_count;
+		}
+		if (p->map_from_region_set) {
+			out->map_from_region_set = true;
+			out->map_from_region_x1 = p->map_from_region_x1;
+			out->map_from_region_y1 = p->map_from_region_y1;
+			out->map_from_region_x2 = p->map_from_region_x2;
+			out->map_from_region_y2 = p->map_from_region_y2;
+		}
+		if (p->map_to_region_set) {
+			out->map_to_region_set = true;
+			out->map_to_region_x1 = p->map_to_region_x1;
+			out->map_to_region_y1 = p->map_to_region_y1;
+			out->map_to_region_x2 = p->map_to_region_x2;
+			out->map_to_region_y2 = p->map_to_region_y2;
+		}
 	}
+}
+/* Normalize tablet coordinates and map them into layout coordinates.
+ * Returns true if an explicit output mapping was successfully applied. */
+static bool
+tablet_map_coords(const struct InputSettings *s, double in_x, double in_y,
+		double *out_lx, double *out_ly)
+{
+	struct wlr_box box = {0};
+	Monitor *target = NULL;
+	double tx = in_x;
+	double ty = in_y;
+
+	/* First restrict input region to map_from_region setting and
+	 * remap-and-bound it to the unit square.*/
+	if (s->map_from_region_set) {
+		double w = s->map_from_region_x2 - s->map_from_region_x1;
+		double h = s->map_from_region_y2 - s->map_from_region_y1;
+
+		if (fabs(w) < 1e-9 || fabs(h) < 1e-9) {
+			wlr_log(WLR_ERROR,
+				"[tablet-map] invalid map_from_region: (%f,%f)-(%f,%f), falling back to raw coords",
+				s->map_from_region_x1, s->map_from_region_y1,
+				s->map_from_region_x2, s->map_from_region_y2);
+		} else {
+			tx = (in_x - s->map_from_region_x1) / w;
+			ty = (in_y - s->map_from_region_y1) / h;
+			tx = fmax(0.0, fmin(1.0, tx));
+			ty = fmax(0.0, fmin(1.0, ty));
+		}
+	}
+
+	/* An explicit target region takes precedence over map_to_output
+	 * (mirrors sway's mutually-exclusive output/region mapping). */
+	if (s->map_to_region_set) {
+		double w = s->map_to_region_x2 - s->map_to_region_x1;
+		double h = s->map_to_region_y2 - s->map_to_region_y1;
+
+		if (fabs(w) < 1e-9 || fabs(h) < 1e-9) {
+			wlr_log(WLR_ERROR,
+				"[tablet-map] invalid map_to_region: (%f,%f)-(%f,%f), falling back to map_to_output",
+				s->map_to_region_x1, s->map_to_region_y1,
+				s->map_to_region_x2, s->map_to_region_y2);
+		} else {
+			*out_lx = s->map_to_region_x1 + tx * w;
+			*out_ly = s->map_to_region_y1 + ty * h;
+			return true;
+		}
+	}
+
+	/* Map to a provided output monitor by identifying matching candidates
+	 * provided in map_to_output setting. */
+	for (int i = 0; i < s->map_to_output_count; i++) {
+		const char *candidate = s->map_to_output_list[i];
+
+		/* Map to entire layout, so stop mapping matching here. */
+		if (strcmp(candidate, "*") == 0)
+			break;
+
+		target = some_monitor_by_name(candidate);
+		if (target)
+			break;
+
+		wlr_log(WLR_INFO,
+			"[tablet-map] output '%s' not found, trying next candidate",
+			candidate);
+	}
+
+	/* Target output found. Map coordinates to it. */
+	if (target) {
+		*out_lx = target->m.x + tx * target->m.width;
+		*out_ly = target->m.y + ty * target->m.height;
+		return true;
+	}
+
+	wlr_output_layout_get_box(output_layout, NULL, &box);
+	*out_lx = box.x + tx * box.width;
+	*out_ly = box.y + ty * box.height;
+	return false;
+}
+
+/* Resolve effective input settings for a device by overlaying matching rules
+ * on top of the global defaults. String fields in the result are borrowed
+ * pointers (not owned), so the caller must not free them. */
+static void
+resolve_input_settings(struct libinput_device *device, struct InputSettings *out)
+{
+	const char *dev_type = get_input_device_type(device);
+	const char *dev_name = libinput_device_get_name(device);
+	resolve_input_settings_for_types(dev_type, NULL, dev_name, out);
 }
 
 /* Apply resolved input settings to a single libinput device */
@@ -2151,6 +2374,650 @@ apply_input_settings_to_all_devices(void)
 	TrackedPointer *tp;
 	wl_list_for_each(tp, &tracked_pointers, link) {
 		apply_input_settings_to_device(tp->libinput_dev);
+	}
+}
+
+/* primary is the constant "tablet" (see input_rule_type_matches()); only
+ * secondary (the active tool's type) varies per call. */
+static void
+resolve_tablet_settings(struct wlr_tablet *tablet, struct wlr_tablet_tool *tool,
+		struct InputSettings *out)
+{
+	const char *tool_type = tool ? tablet_tool_type_to_rule_type(tool->type) : NULL;
+	const char *dev_name = tablet && tablet->base.name ? tablet->base.name : NULL;
+
+	resolve_input_settings_for_types("tablet", tool_type, dev_name, out);
+
+	/* Puck-style tools have no fixed position on the tablet surface, so
+	 * absolute placement makes no sense for them; sway hardcodes this too
+	 * (sway-input(5): "Mouse and lens tools ignore this setting and are
+	 * always treated as relative") and doesn't let tool_mode rules override
+	 * it, so match that here. */
+	if (tool && (tool->type == WLR_TABLET_TOOL_TYPE_MOUSE
+			|| tool->type == WLR_TABLET_TOOL_TYPE_LENS))
+		out->tool_mode = "relative";
+}
+
+static TrackedTablet *
+find_tracked_tablet(struct wlr_tablet *tablet)
+{
+	TrackedTablet *tt;
+
+	wl_list_for_each(tt, &tracked_tablets, link) {
+		if (tt->tablet == tablet)
+			return tt;
+	}
+
+	return NULL;
+}
+
+static TrackedTablet *
+find_tracked_tablet_by_device(struct wlr_input_device *device)
+{
+	TrackedTablet *tt;
+
+	if (!device || device->type != WLR_INPUT_DEVICE_TABLET)
+		return NULL;
+
+	wl_list_for_each(tt, &tracked_tablets, link) {
+		if (&tt->tablet->base == device)
+			return tt;
+	}
+
+	return NULL;
+}
+
+/* Tracks a tool regardless of tablet-v2 support: axis position caching
+ * (tabletnotifyaxis()) needs this even when tablet_v2_mgr is unavailable. */
+static TrackedTabletTool *
+find_or_create_tracked_tablet_tool(struct wlr_tablet *tablet, struct wlr_tablet_tool *tool)
+{
+	TrackedTabletTool *ttt;
+
+	if (!tool)
+		return NULL;
+
+	wl_list_for_each(ttt, &tracked_tablet_tools, link) {
+		if (ttt->tool == tool) {
+			if (tablet)
+				ttt->tablet = tablet;
+			return ttt;
+		}
+	}
+
+	ttt = ecalloc(1, sizeof(*ttt));
+	ttt->tool = tool;
+	ttt->tablet = tablet;
+	wl_list_insert(&tracked_tablet_tools, &ttt->link);
+	LISTEN(&tool->events.destroy, &ttt->destroy, destroytrackedtablettool);
+
+	return ttt;
+}
+
+static struct wlr_tablet_v2_tablet_tool *
+get_or_create_tablet_v2_tool(struct wlr_tablet *tablet, struct wlr_tablet_tool *tool)
+{
+	TrackedTabletTool *ttt;
+
+	if (!tablet_v2_mgr)
+		return NULL;
+
+	ttt = find_or_create_tracked_tablet_tool(tablet, tool);
+	if (!ttt)
+		return NULL;
+
+	if (!ttt->tool_v2)
+		ttt->tool_v2 = wlr_tablet_tool_create(tablet_v2_mgr, seat, tool);
+
+	return ttt->tool_v2;
+}
+
+static TrackedTablet *
+find_tracked_tablet_by_tool(struct wlr_tablet_tool *tool)
+{
+	TrackedTabletTool *ttt;
+
+	if (!tool)
+		return NULL;
+
+	wl_list_for_each(ttt, &tracked_tablet_tools, link) {
+		if (ttt->tool == tool)
+			return find_tracked_tablet(ttt->tablet);
+	}
+
+	return NULL;
+}
+
+static TrackedTablet *
+find_tracked_tablet_by_attach_payload(void *payload)
+{
+	TrackedTablet *tt;
+	TrackedTablet *by_tool;
+
+	if (!payload)
+		return NULL;
+
+	/* libinput backends usually provide a wlr_tablet_tool payload. */
+	by_tool = find_tracked_tablet_by_tool((struct wlr_tablet_tool *)payload);
+	if (by_tool)
+		return by_tool;
+
+	/* Wayland backend can provide a wlr_input_device payload for the tablet. */
+	wl_list_for_each(tt, &tracked_tablets, link) {
+		if (&tt->tablet->base == payload)
+			return tt;
+	}
+
+	return NULL;
+}
+
+/* True if pad and tablet are libinput devices from the same physical
+ * hardware (e.g. the pad and pen halves of a single Wacom tablet), per
+ * libinput's device-group grouping. This is the authoritative way to pair
+ * a pad with its tablet; unlike the attach_tablet event, it doesn't depend
+ * on a backend actually emitting that signal. */
+static bool
+tablet_pad_shares_libinput_group(struct wlr_tablet_pad *pad, struct wlr_tablet *tablet)
+{
+	struct libinput_device *pad_dev, *tablet_dev;
+
+	if (!pad || !tablet
+			|| !wlr_input_device_is_libinput(&pad->base)
+			|| !wlr_input_device_is_libinput(&tablet->base))
+		return false;
+
+	pad_dev = wlr_libinput_get_device_handle(&pad->base);
+	tablet_dev = wlr_libinput_get_device_handle(&tablet->base);
+	if (!pad_dev || !tablet_dev)
+		return false;
+
+	return libinput_device_get_device_group(pad_dev)
+		== libinput_device_get_device_group(tablet_dev);
+}
+
+static void
+tabletpad_clear_focus(TrackedTabletPad *tp)
+{
+	if (!tp->current_surface)
+		return;
+
+	wlr_tablet_v2_tablet_pad_notify_leave(tp->pad_v2, tp->current_surface);
+	wl_list_remove(&tp->surface_destroy.link);
+	wl_list_init(&tp->surface_destroy.link);
+	tp->current_surface = NULL;
+}
+
+static void
+tabletpad_attach_tablet(TrackedTabletPad *tp, struct wlr_tablet *tablet)
+{
+	if (tp->attached_tablet == tablet)
+		return;
+
+	tabletpad_clear_focus(tp);
+	tp->attached_tablet = tablet;
+
+	wlr_log(WLR_INFO,
+		"[tablet-pad] attach device=%s mapped_tablet=%s",
+		tp->pad && tp->pad->base.name ? tp->pad->base.name : "(unknown)",
+		tablet && tablet->base.name ? tablet->base.name : "(unmapped)");
+}
+
+static void
+tabletpad_set_focus_for_cursor(TrackedTabletPad *tp)
+{
+	TrackedTablet *tt;
+	struct wlr_surface *surface = NULL;
+	double sx = 0.0, sy = 0.0;
+
+	if (!tp->pad_v2 || !tp->attached_tablet)
+		return;
+
+	tt = find_tracked_tablet(tp->attached_tablet);
+	if (!tt || !tt->tablet_v2)
+		return;
+
+	xytonode(cursor->x, cursor->y, &surface, NULL, NULL, NULL, NULL, &sx, &sy);
+	if (surface == tp->current_surface)
+		return;
+
+	tabletpad_clear_focus(tp);
+
+	if (!surface || !wlr_surface_accepts_tablet_v2(surface, tt->tablet_v2))
+		return;
+
+	wlr_tablet_v2_tablet_pad_notify_enter(tp->pad_v2, tt->tablet_v2, surface);
+	tp->current_surface = surface;
+	tp->surface_destroy.notify = tabletpadnotifysurfacedestroy;
+	wl_signal_add(&surface->events.destroy, &tp->surface_destroy);
+}
+
+static void
+tabletpadnotifysurfacedestroy(struct wl_listener *listener, void *data)
+{
+	TrackedTabletPad *tp = wl_container_of(listener, tp, surface_destroy);
+
+	(void)data;
+	tabletpad_clear_focus(tp);
+}
+
+static void
+tablet_notify_proximity_in_for_cursor(struct wlr_tablet *tablet,
+		struct wlr_tablet_tool *tool)
+{
+	TrackedTablet *tt;
+	struct wlr_tablet_v2_tablet_tool *tool_v2;
+	struct wlr_surface *surface = NULL;
+	double sx = 0.0, sy = 0.0;
+
+	if (!tablet_v2_mgr)
+		return;
+
+	tt = find_tracked_tablet(tablet);
+	if (!tt || !tt->tablet_v2)
+		return;
+
+	tool_v2 = get_or_create_tablet_v2_tool(tablet, tool);
+	if (!tool_v2)
+		return;
+
+	xytonode(cursor->x, cursor->y, &surface, NULL, NULL, NULL, NULL, &sx, &sy);
+	if (!surface)
+		return;
+
+	if (!wlr_surface_accepts_tablet_v2(surface, tt->tablet_v2))
+		return;
+
+	wlr_tablet_v2_tablet_tool_notify_proximity_in(tool_v2, tt->tablet_v2, surface);
+}
+
+static void
+tablet_apply_absolute_motion(struct wlr_tablet *tablet,
+		struct wlr_tablet_tool *tool, uint32_t time_msec,
+		double x, double y)
+{
+	struct InputSettings s;
+	double lx, ly, dx, dy;
+
+	resolve_tablet_settings(tablet, tool, &s);
+	tablet_map_coords(&s, x, y, &lx, &ly);
+	dx = lx - cursor->x;
+	dy = ly - cursor->y;
+
+	motionnotify(time_msec, &tablet->base, dx, dy, dx, dy);
+}
+
+static void
+tablet_apply_relative_motion(struct wlr_tablet *tablet,
+		struct wlr_tablet_tool *tool, uint32_t time_msec,
+		double dx, double dy)
+{
+	motionnotify(time_msec, &tablet->base, dx, dy, dx, dy);
+}
+
+static void
+tablet_apply_motion(struct wlr_tablet *tablet, struct wlr_tablet_tool *tool,
+		uint32_t time_msec, double x, double y, double dx, double dy)
+{
+	struct InputSettings s;
+	resolve_tablet_settings(tablet, tool, &s);
+	const char *tool_mode = s.tool_mode ? s.tool_mode : "absolute";
+
+	if (strcmp(tool_mode, "relative") == 0) {
+		tablet_apply_relative_motion(tablet, tool, time_msec, dx, dy);
+	} else {
+		if (strcmp(tool_mode, "absolute") != 0) {
+			wlr_log(WLR_INFO,
+					"[tablet] unknown tool_mode '%s', falling back to absolute",
+					tool_mode);
+		}
+
+		tablet_apply_absolute_motion(tablet, tool, time_msec, x, y);
+	}
+}
+
+static void
+tablet_apply_motion_absoluteonly(struct wlr_tablet *tablet,
+		struct wlr_tablet_tool *tool, uint32_t time_msec, double x, double y)
+{
+	struct InputSettings s;
+	resolve_tablet_settings(tablet, tool, &s);
+	const char *tool_mode = s.tool_mode ? s.tool_mode : "absolute";
+
+	if (strcmp(tool_mode, "relative") == 0) {
+		/* Nothing to do. */
+		return;
+	}
+
+	if (strcmp(tool_mode, "absolute") != 0) {
+		wlr_log(WLR_INFO,
+				"[tablet] unknown tool_mode '%s', falling back to absolute",
+				tool_mode);
+	}
+
+	tablet_apply_absolute_motion(tablet, tool, time_msec, x, y);
+}
+
+static void
+tabletnotifyaxis(struct wl_listener *listener, void *data)
+{
+	TrackedTablet *tt = wl_container_of(listener, tt, axis);
+	struct wlr_tablet_tool_axis_event *event = data;
+	struct wlr_tablet_v2_tablet_tool *tool_v2 = NULL;
+	TrackedTabletTool *ttt;
+	struct wlr_surface *surface = NULL;
+	double sx = 0.0, sy = 0.0;
+	double x, y, tilt_x, tilt_y;
+	bool updated_x, updated_y, has_xy;
+	bool updated_tilt_x, updated_tilt_y, has_tilt;
+
+	updated_x = event->updated_axes & WLR_TABLET_TOOL_AXIS_X;
+	updated_y = event->updated_axes & WLR_TABLET_TOOL_AXIS_Y;
+	updated_tilt_x = event->updated_axes & WLR_TABLET_TOOL_AXIS_TILT_X;
+	updated_tilt_y = event->updated_axes & WLR_TABLET_TOOL_AXIS_TILT_Y;
+
+	/* wlroots backends (e.g. libinput) only fill in x/y for the axes that
+	 * actually changed - a tool dragged along a single axis near the
+	 * tablet's edge is a normal, frequent event, not a malformed one, and
+	 * the other field is left at 0 rather than the tool's real position.
+	 * Track each tool's last known position so a single-axis update still
+	 * moves the cursor instead of being dropped, or worse, snapping to
+	 * (0, y)/(x, 0) if we trusted the unset field. */
+	ttt = find_or_create_tracked_tablet_tool(tt->tablet, event->tool);
+
+	x = (updated_x || !ttt) ? event->x : ttt->last_x;
+	y = (updated_y || !ttt) ? event->y : ttt->last_y;
+	has_xy = (updated_x || (ttt && ttt->has_x)) && (updated_y || (ttt && ttt->has_y));
+
+	/* Same reasoning applies to tilt: WLR_TABLET_TOOL_AXIS_TILT_X and
+	 * _TILT_Y are independent bits, so a report that only changed one of
+	 * them must not be treated as "no tilt update" nor have the other
+	 * axis read back as 0. */
+	tilt_x = (updated_tilt_x || !ttt) ? event->tilt_x : ttt->last_tilt_x;
+	tilt_y = (updated_tilt_y || !ttt) ? event->tilt_y : ttt->last_tilt_y;
+	has_tilt = (updated_tilt_x || (ttt && ttt->has_tilt_x))
+		&& (updated_tilt_y || (ttt && ttt->has_tilt_y));
+
+	if (ttt) {
+		if (updated_x) {
+			ttt->last_x = event->x;
+			ttt->has_x = true;
+		}
+		if (updated_y) {
+			ttt->last_y = event->y;
+			ttt->has_y = true;
+		}
+		if (updated_tilt_x) {
+			ttt->last_tilt_x = event->tilt_x;
+			ttt->has_tilt_x = true;
+		}
+		if (updated_tilt_y) {
+			ttt->last_tilt_y = event->tilt_y;
+			ttt->has_tilt_y = true;
+		}
+	}
+
+	if (has_xy) {
+		tablet_apply_motion(tt->tablet, event->tool, event->time_msec, x, y, event->dx, event->dy);
+	}
+
+	tool_v2 = get_or_create_tablet_v2_tool(tt->tablet, event->tool);
+	if (tool_v2) {
+		if (has_xy) {
+			tablet_notify_proximity_in_for_cursor(tt->tablet, event->tool);
+			xytonode(cursor->x, cursor->y, &surface, NULL, NULL, NULL, NULL, &sx, &sy);
+			if (surface && tt->tablet_v2
+					&& wlr_surface_accepts_tablet_v2(surface, tt->tablet_v2))
+				wlr_tablet_v2_tablet_tool_notify_motion(tool_v2, sx, sy);
+		}
+
+		if (event->updated_axes & WLR_TABLET_TOOL_AXIS_PRESSURE)
+			wlr_tablet_v2_tablet_tool_notify_pressure(tool_v2, event->pressure);
+		if (event->updated_axes & WLR_TABLET_TOOL_AXIS_DISTANCE)
+			wlr_tablet_v2_tablet_tool_notify_distance(tool_v2, event->distance);
+		if (has_tilt)
+			wlr_tablet_v2_tablet_tool_notify_tilt(tool_v2, tilt_x, tilt_y);
+		if (event->updated_axes & WLR_TABLET_TOOL_AXIS_ROTATION)
+			wlr_tablet_v2_tablet_tool_notify_rotation(tool_v2, event->rotation);
+		if (event->updated_axes & WLR_TABLET_TOOL_AXIS_SLIDER)
+			wlr_tablet_v2_tablet_tool_notify_slider(tool_v2, event->slider);
+		if (event->updated_axes & WLR_TABLET_TOOL_AXIS_WHEEL)
+			wlr_tablet_v2_tablet_tool_notify_wheel(tool_v2, event->wheel_delta, 0);
+	}
+	wlr_seat_pointer_notify_frame(seat);
+}
+
+static void
+tabletnotifyproximity(struct wl_listener *listener, void *data)
+{
+	TrackedTablet *tt = wl_container_of(listener, tt, proximity);
+	struct wlr_tablet_tool_proximity_event *event = data;
+	struct wlr_tablet_v2_tablet_tool *tool_v2;
+
+	tool_v2 = get_or_create_tablet_v2_tool(tt->tablet, event->tool);
+	if (!tool_v2)
+		return;
+
+	if (event->state == WLR_TABLET_TOOL_PROXIMITY_IN) {
+		tablet_apply_motion_absoluteonly(tt->tablet, event->tool, event->time_msec, event->x, event->y);
+		tablet_notify_proximity_in_for_cursor(tt->tablet, event->tool);
+	} else {
+		wlr_tablet_v2_tablet_tool_notify_proximity_out(tool_v2);
+		/* Refresh wl_pointer focus/cursor immediately after stylus leave. */
+		motionnotify(0, NULL, 0, 0, 0, 0);
+	}
+}
+
+static void
+tabletnotifytip(struct wl_listener *listener, void *data)
+{
+	TrackedTablet *tt = wl_container_of(listener, tt, tip);
+	struct wlr_tablet_tool_tip_event *event = data;
+	struct wlr_pointer_button_event button_event = {0};
+	struct wlr_tablet_v2_tablet_tool *tool_v2;
+
+	tablet_apply_motion_absoluteonly(tt->tablet, event->tool, event->time_msec, event->x, event->y);
+
+	button_event.time_msec = event->time_msec;
+	button_event.button = BTN_LEFT;
+	button_event.state = event->state == WLR_TABLET_TOOL_TIP_DOWN
+		? WL_POINTER_BUTTON_STATE_PRESSED
+		: WL_POINTER_BUTTON_STATE_RELEASED;
+
+	tool_v2 = get_or_create_tablet_v2_tool(tt->tablet, event->tool);
+	if (tool_v2) {
+		tablet_notify_proximity_in_for_cursor(tt->tablet, event->tool);
+		if (button_event.state == WL_POINTER_BUTTON_STATE_PRESSED)
+			wlr_tablet_v2_tablet_tool_notify_down(tool_v2);
+		else
+			wlr_tablet_v2_tablet_tool_notify_up(tool_v2);
+	}
+
+	/* Routed through buttonpress() rather than calling
+	 * wlr_seat_pointer_notify_button() directly: buttonpress() is where
+	 * Lua button-binding dispatch (click-to-focus/raise) happens. A tip
+	 * on an unfocused window must focus/raise it the same way a mouse
+	 * click would - a raw notify_button() call sends the client the click
+	 * but skips that dispatch entirely. The tablet tool already drives a
+	 * real, hovering cursor (tablet_apply_motion() always calls
+	 * motionnotify()), so tip down/up map directly onto press/release. */
+	buttonpress(NULL, &button_event);
+	wlr_seat_pointer_notify_frame(seat);
+	wlr_idle_notifier_v1_notify_activity(idle_notifier, seat);
+	some_notify_activity();
+}
+
+static void
+tabletnotifybutton(struct wl_listener *listener, void *data)
+{
+	TrackedTablet *tt = wl_container_of(listener, tt, button);
+	struct wlr_tablet_tool_button_event *event = data;
+	struct wlr_tablet_v2_tablet_tool *tool_v2;
+	enum zwp_tablet_pad_v2_button_state state;
+
+	tool_v2 = get_or_create_tablet_v2_tool(tt->tablet, event->tool);
+	if (!tool_v2)
+		return;
+
+	tablet_notify_proximity_in_for_cursor(tt->tablet, event->tool);
+	state = event->state == WLR_BUTTON_PRESSED
+		? ZWP_TABLET_PAD_V2_BUTTON_STATE_PRESSED
+		: ZWP_TABLET_PAD_V2_BUTTON_STATE_RELEASED;
+	wlr_tablet_v2_tablet_tool_notify_button(tool_v2, event->button, state);
+}
+
+static void
+tabletpadnotifybutton(struct wl_listener *listener, void *data)
+{
+	TrackedTabletPad *tp = wl_container_of(listener, tp, button);
+	struct wlr_tablet_pad_button_event *event = data;
+	enum zwp_tablet_pad_v2_button_state state;
+
+	if (!tp->pad_v2)
+		return;
+
+	tabletpad_set_focus_for_cursor(tp);
+	if (!tp->current_surface)
+		return;
+
+	state = event->state == WLR_BUTTON_PRESSED
+		? ZWP_TABLET_PAD_V2_BUTTON_STATE_PRESSED
+		: ZWP_TABLET_PAD_V2_BUTTON_STATE_RELEASED;
+	wlr_tablet_v2_tablet_pad_notify_mode(tp->pad_v2, event->group,
+		event->mode, event->time_msec);
+	wlr_tablet_v2_tablet_pad_notify_button(tp->pad_v2, event->button,
+		event->time_msec, state);
+}
+
+static void
+tabletpadnotifyring(struct wl_listener *listener, void *data)
+{
+	TrackedTabletPad *tp = wl_container_of(listener, tp, ring);
+	struct wlr_tablet_pad_ring_event *event = data;
+	bool finger;
+
+	if (!tp->pad_v2)
+		return;
+
+	tabletpad_set_focus_for_cursor(tp);
+	if (!tp->current_surface)
+		return;
+
+	finger = event->source == WLR_TABLET_PAD_RING_SOURCE_FINGER;
+	wlr_tablet_v2_tablet_pad_notify_ring(tp->pad_v2, event->ring,
+		event->position, finger, event->time_msec);
+}
+
+static void
+tabletpadnotifystrip(struct wl_listener *listener, void *data)
+{
+	TrackedTabletPad *tp = wl_container_of(listener, tp, strip);
+	struct wlr_tablet_pad_strip_event *event = data;
+	bool finger;
+
+	if (!tp->pad_v2)
+		return;
+
+	tabletpad_set_focus_for_cursor(tp);
+	if (!tp->current_surface)
+		return;
+
+	finger = event->source == WLR_TABLET_PAD_STRIP_SOURCE_FINGER;
+	wlr_tablet_v2_tablet_pad_notify_strip(tp->pad_v2, event->strip,
+		event->position, finger, event->time_msec);
+}
+
+static void
+tabletpadnotifyattach(struct wl_listener *listener, void *data)
+{
+	TrackedTabletPad *tp = wl_container_of(listener, tp, attach_tablet);
+	TrackedTablet *tt;
+
+	tt = find_tracked_tablet_by_attach_payload(data);
+	if (tt)
+		tabletpad_attach_tablet(tp, tt->tablet);
+	else
+		tabletpad_attach_tablet(tp, NULL);
+}
+
+static void
+createtablet(struct wlr_tablet *tablet)
+{
+	TrackedTablet *tt = ecalloc(1, sizeof(*tt));
+
+	tt->tablet = tablet;
+	tt->tablet_v2 = tablet_v2_mgr
+		? wlr_tablet_create(tablet_v2_mgr, seat, &tablet->base)
+		: NULL;
+	wl_list_insert(&tracked_tablets, &tt->link);
+
+	LISTEN(&tablet->events.axis, &tt->axis, tabletnotifyaxis);
+	LISTEN(&tablet->events.proximity, &tt->proximity, tabletnotifyproximity);
+	LISTEN(&tablet->events.tip, &tt->tip, tabletnotifytip);
+	LISTEN(&tablet->events.button, &tt->button, tabletnotifybutton);
+	LISTEN(&tablet->base.events.destroy, &tt->destroy, destroytrackedtablet);
+
+	wlr_cursor_attach_input_device(cursor, &tablet->base);
+
+	wlr_log(WLR_INFO,
+		"[tablet] new device name=%s size_mm=%.1fx%.1f vid=0x%04x pid=0x%04x",
+		tablet->base.name ? tablet->base.name : "(unknown)",
+		tablet->width_mm,
+		tablet->height_mm,
+		tablet->usb_vendor_id,
+		tablet->usb_product_id);
+
+	if (!tt->tablet_v2)
+		wlr_log(WLR_INFO, "[tablet] tablet-v2 registration unavailable for device=%s",
+			tablet->base.name ? tablet->base.name : "(unknown)");
+
+	/* Pair with any already-known pad from the same physical hardware. */
+	{
+		TrackedTabletPad *tp;
+		wl_list_for_each(tp, &tracked_tablet_pads, link) {
+			if (tablet_pad_shares_libinput_group(tp->pad, tablet))
+				tabletpad_attach_tablet(tp, tablet);
+		}
+	}
+}
+
+static void
+createtabletpad(struct wlr_tablet_pad *pad)
+{
+	TrackedTabletPad *tp = ecalloc(1, sizeof(*tp));
+
+	tp->pad = pad;
+	tp->pad_v2 = tablet_v2_mgr
+		? wlr_tablet_pad_create(tablet_v2_mgr, seat, &pad->base)
+		: NULL;
+	wl_list_insert(&tracked_tablet_pads, &tp->link);
+	wl_list_init(&tp->surface_destroy.link);
+
+	LISTEN(&pad->events.button, &tp->button, tabletpadnotifybutton);
+	LISTEN(&pad->events.ring, &tp->ring, tabletpadnotifyring);
+	LISTEN(&pad->events.strip, &tp->strip, tabletpadnotifystrip);
+	LISTEN(&pad->events.attach_tablet, &tp->attach_tablet, tabletpadnotifyattach);
+	LISTEN(&pad->base.events.destroy, &tp->destroy, destroytrackedtabletpad);
+
+	wlr_log(WLR_INFO,
+		"[tablet-pad] new device name=%s buttons=%zu rings=%zu strips=%zu",
+		pad->base.name ? pad->base.name : "(unknown)",
+		pad->button_count,
+		pad->ring_count,
+		pad->strip_count);
+
+	if (!tp->pad_v2)
+		wlr_log(WLR_INFO, "[tablet-pad] tablet-v2 registration unavailable for device=%s",
+			pad->base.name ? pad->base.name : "(unknown)");
+
+	/* Pair with any already-known tablet from the same physical hardware. */
+	{
+		TrackedTablet *tt;
+		wl_list_for_each(tt, &tracked_tablets, link) {
+			if (tablet_pad_shares_libinput_group(pad, tt->tablet)) {
+				tabletpad_attach_tablet(tp, tt->tablet);
+				break;
+			}
+		}
 	}
 }
 
@@ -2824,6 +3691,63 @@ destroytrackedpointer(struct wl_listener *listener, void *data)
 	free(tp);
 }
 
+static void
+destroytrackedtablet(struct wl_listener *listener, void *data)
+{
+	TrackedTablet *tt = wl_container_of(listener, tt, destroy);
+	TrackedTabletPad *tp;
+	TrackedTabletTool *ttt;
+
+	/* Other trackers keep raw struct wlr_tablet* back-references
+	 * (attached_tablet / tool->tablet) that wlroots has no signal for;
+	 * clear them here so they don't dangle once tt->tablet is freed. */
+	wl_list_for_each(tp, &tracked_tablet_pads, link) {
+		if (tp->attached_tablet == tt->tablet) {
+			tabletpad_clear_focus(tp);
+			tp->attached_tablet = NULL;
+		}
+	}
+
+	wl_list_for_each(ttt, &tracked_tablet_tools, link) {
+		if (ttt->tablet == tt->tablet)
+			ttt->tablet = NULL;
+	}
+
+	wl_list_remove(&tt->axis.link);
+	wl_list_remove(&tt->proximity.link);
+	wl_list_remove(&tt->tip.link);
+	wl_list_remove(&tt->button.link);
+	wl_list_remove(&tt->destroy.link);
+	wl_list_remove(&tt->link);
+	free(tt);
+}
+
+static void
+destroytrackedtabletpad(struct wl_listener *listener, void *data)
+{
+	TrackedTabletPad *tp = wl_container_of(listener, tp, destroy);
+
+	wl_list_remove(&tp->button.link);
+	wl_list_remove(&tp->ring.link);
+	wl_list_remove(&tp->strip.link);
+	wl_list_remove(&tp->attach_tablet.link);
+	wl_list_remove(&tp->surface_destroy.link);
+	wl_list_remove(&tp->destroy.link);
+	wl_list_remove(&tp->link);
+	free(tp);
+}
+
+static void
+destroytrackedtablettool(struct wl_listener *listener, void *data)
+{
+	TrackedTabletTool *ttt = wl_container_of(listener, ttt, destroy);
+
+	(void)data;
+	wl_list_remove(&ttt->destroy.link);
+	wl_list_remove(&ttt->link);
+	free(ttt);
+}
+
 void
 destroysessionlock(struct wl_listener *listener, void *data)
 {
@@ -3266,6 +4190,12 @@ inputdevice(struct wl_listener *listener, void *data)
 		break;
 	case WLR_INPUT_DEVICE_POINTER:
 		createpointer(wlr_pointer_from_input_device(device));
+		break;
+	case WLR_INPUT_DEVICE_TABLET:
+		createtablet(wlr_tablet_from_input_device(device));
+		break;
+	case WLR_INPUT_DEVICE_TABLET_PAD:
+		createtabletpad(wlr_tablet_pad_from_input_device(device));
 		break;
 	default:
 		wlr_log(WLR_INFO,
@@ -4352,6 +5282,24 @@ motionnotify(uint32_t time, struct wlr_input_device *device, double dx, double d
 			wlr_cursor_set_xcursor(cursor, cursor_mgr, hover_drawin->cursor);
 		else
 			wlr_cursor_set_xcursor(cursor, cursor_mgr, selected_root_cursor ? selected_root_cursor : "default");
+	}
+
+	/* Tablet-capable clients should receive stylus motion via tablet-v2 only.
+	 * Suppress wl_pointer motion emulation to avoid duplicate events in apps
+	 * like Krita's tablet tester. */
+	if (time && !seat->drag && device && device->type == WLR_INPUT_DEVICE_TABLET) {
+		TrackedTablet *tt = find_tracked_tablet_by_device(device);
+		struct wlr_surface *tablet_surface = NULL;
+		double tablet_sx = 0.0, tablet_sy = 0.0;
+
+		xytonode(cursor->x, cursor->y, &tablet_surface, NULL, NULL, NULL, NULL,
+				&tablet_sx, &tablet_sy);
+
+		if (tt && tt->tablet_v2 && tablet_surface
+				&& wlr_surface_accepts_tablet_v2(tablet_surface, tt->tablet_v2)) {
+			wlr_seat_pointer_notify_clear_focus(seat);
+			return;
+		}
 	}
 
 	pointerfocus(c, surface, sx, sy, time);
@@ -5770,6 +6718,9 @@ setup(void)
 	 * backend. */
 	wl_list_init(&mons);
 	wl_list_init(&tracked_pointers);
+	wl_list_init(&tracked_tablets);
+	wl_list_init(&tracked_tablet_pads);
+	wl_list_init(&tracked_tablet_tools);
 	wl_signal_add(&backend->events.new_output, &new_output);
 
 	/* Set up our client lists, the xdg-shell and the layer-shell. The xdg-shell is a
@@ -5883,6 +6834,7 @@ setup(void)
 	wl_signal_add(&seat->events.request_set_primary_selection, &request_set_psel);
 	wl_signal_add(&seat->events.request_start_drag, &request_start_drag);
 	wl_signal_add(&seat->events.start_drag, &start_drag);
+	tablet_v2_mgr = wlr_tablet_v2_create(dpy);
 
 	/* Initialize runtime configuration with C defaults (before Lua loads).
 	 * These defaults provide sane fallbacks if rc.lua doesn't set values.
@@ -5951,6 +6903,20 @@ setup(void)
 	globalconf.input.accel_speed = 0.0;
 	globalconf.input.tap_button_map = NULL;  /* String property - set via Lua */
 	globalconf.input.clickfinger_button_map = NULL;  /* String property - set via Lua */
+
+	globalconf.input.tool_mode = NULL;  /* Rule-only tablet tool property */
+	globalconf.input.map_to_output_list = NULL;  /* Rule-only tablet property */
+	globalconf.input.map_to_output_count = 0;
+	globalconf.input.map_from_region_set = false;
+	globalconf.input.map_from_region_x1 = 0.0;
+	globalconf.input.map_from_region_y1 = 0.0;
+	globalconf.input.map_from_region_x2 = 0.0;
+	globalconf.input.map_from_region_y2 = 0.0;
+	globalconf.input.map_to_region_set = false;
+	globalconf.input.map_to_region_x1 = 0.0;
+	globalconf.input.map_to_region_y1 = 0.0;
+	globalconf.input.map_to_region_x2 = 0.0;
+	globalconf.input.map_to_region_y2 = 0.0;
 
 	/* Logging defaults (only set if not already set by -d flag) */
 	if (globalconf.log_level == 0)

@@ -1033,6 +1033,10 @@ input_rules_free(void)
 		free(r->properties.send_events_mode);
 		free(r->properties.accel_profile);
 		free(r->properties.tap_button_map);
+		free(r->properties.tool_mode);
+		for (int j = 0; j < r->properties.map_to_output_count; j++)
+			free(r->properties.map_to_output_list[j]);
+		free(r->properties.map_to_output_list);
 	}
 	free(globalconf.input_rules);
 	globalconf.input_rules = NULL;
@@ -1062,6 +1066,19 @@ input_settings_init_unset(InputSettings *s)
 	s->accel_speed = 0.0;
 	s->tap_button_map = NULL;
 	s->accel_speed_set = false;
+	s->tool_mode = NULL;
+	s->map_to_output_list = NULL;
+	s->map_to_output_count = 0;
+	s->map_from_region_set = false;
+	s->map_from_region_x1 = 0.0;
+	s->map_from_region_y1 = 0.0;
+	s->map_from_region_x2 = 0.0;
+	s->map_from_region_y2 = 0.0;
+	s->map_to_region_set = false;
+	s->map_to_region_x1 = 0.0;
+	s->map_to_region_y1 = 0.0;
+	s->map_to_region_x2 = 0.0;
+	s->map_to_region_y2 = 0.0;
 }
 
 /** Read an optional int field from a Lua table on the stack.
@@ -1087,6 +1104,168 @@ input_rule_get_string(lua_State *L, int idx, const char *field)
 		result = strdup(lua_tostring(L, -1));
 	lua_pop(L, 1);
 	return result;
+}
+
+/** Read and validate optional tool mode from a Lua table.
+ * Returns strdup'd value or NULL if field is absent. */
+static char *
+input_rule_get_tool_mode(lua_State *L, int idx, const char *field)
+{
+	char *result = NULL;
+	const char *val;
+
+	lua_getfield(L, idx, field);
+	if (!lua_isnil(L, -1)) {
+		val = luaL_checkstring(L, -1);
+		if (strcmp(val, "absolute") != 0 && strcmp(val, "relative") != 0) {
+			lua_pop(L, 1);
+			luaL_error(L,
+				"awful.input.rules: invalid properties.%s '%s' (expected 'absolute' or 'relative')",
+				field, val);
+			return NULL;
+		}
+		result = strdup(val);
+	}
+	lua_pop(L, 1);
+	return result;
+}
+
+/** Read and parse an optional two-corner region field from a Lua table.
+ * Used for both map_from_region (tablet-space, normalized/mm) and
+ * map_to_region (output-layout pixels) - the field itself carries no
+ * semantics here, just two corner points. Accepts either:
+ * - string: "X1xY1 X2xY2"
+ * - table: { x1 = <number>, y1 = <number>, x2 = <number>, y2 = <number> }
+ */
+static void
+input_rule_get_region(lua_State *L, int idx, const char *field,
+		bool *set, double *x1, double *y1, double *x2, double *y2)
+{
+	*set = false;
+
+	lua_getfield(L, idx, field);
+	if (lua_isnil(L, -1)) {
+		lua_pop(L, 1);
+		return;
+	}
+
+	if (lua_isstring(L, -1)) {
+		const char *raw = lua_tostring(L, -1);
+		double sx1, sy1, sx2, sy2;
+		int parsed = sscanf(raw, "%lfx%lf %lfx%lf", &sx1, &sy1, &sx2, &sy2);
+		if (parsed != 4) {
+			lua_pop(L, 1);
+			luaL_error(L,
+				"awful.input.rules: invalid properties.%s '%s' (expected 'X1xY1 X2xY2')",
+				field, raw);
+			return;
+		}
+		*x1 = sx1;
+		*y1 = sy1;
+		*x2 = sx2;
+		*y2 = sy2;
+		*set = true;
+		lua_pop(L, 1);
+		return;
+	}
+
+	if (lua_istable(L, -1)) {
+		double sx1, sy1, sx2, sy2;
+
+		lua_getfield(L, -1, "x1");
+		sx1 = luaL_checknumber(L, -1);
+		lua_pop(L, 1);
+
+		lua_getfield(L, -1, "y1");
+		sy1 = luaL_checknumber(L, -1);
+		lua_pop(L, 1);
+
+		lua_getfield(L, -1, "x2");
+		sx2 = luaL_checknumber(L, -1);
+		lua_pop(L, 1);
+
+		lua_getfield(L, -1, "y2");
+		sy2 = luaL_checknumber(L, -1);
+		lua_pop(L, 1);
+
+		*x1 = sx1;
+		*y1 = sy1;
+		*x2 = sx2;
+		*y2 = sy2;
+		*set = true;
+		lua_pop(L, 1);
+		return;
+	}
+
+	lua_pop(L, 1);
+	luaL_error(L,
+		"awful.input.rules: invalid properties.%s type (expected string or table)",
+		field);
+}
+
+/** Read the optional map_to_output field from a Lua table.
+ * Accepts either a single string or an ordered array of strings, tried in
+ * order with the first connected candidate winning. Returns a newly
+ * allocated array of strdup'd strings via *out_list (NULL if the field is
+ * absent), with element count via *out_count. */
+static void
+input_rule_get_map_to_output(lua_State *L, int idx, const char *field,
+		char ***out_list, int *out_count)
+{
+	*out_list = NULL;
+	*out_count = 0;
+
+	lua_getfield(L, idx, field);
+	if (lua_isnil(L, -1)) {
+		lua_pop(L, 1);
+		return;
+	}
+
+	if (lua_isstring(L, -1)) {
+		char **list = calloc(1, sizeof(char *));
+		list[0] = strdup(lua_tostring(L, -1));
+		*out_list = list;
+		*out_count = 1;
+		lua_pop(L, 1);
+		return;
+	}
+
+	if (lua_istable(L, -1)) {
+		int n = luaA_rawlen(L, -1);
+		char **list;
+
+		if (n == 0) {
+			lua_pop(L, 1);
+			return;
+		}
+
+		list = calloc(n, sizeof(char *));
+		for (int i = 0; i < n; i++) {
+			lua_rawgeti(L, -1, i + 1);
+			if (!lua_isstring(L, -1)) {
+				lua_pop(L, 2);
+				for (int j = 0; j < i; j++)
+					free(list[j]);
+				free(list);
+				luaL_error(L,
+					"awful.input.rules: invalid properties.%s[%d] (expected string)",
+					field, i + 1);
+				return;
+			}
+			list[i] = strdup(lua_tostring(L, -1));
+			lua_pop(L, 1);
+		}
+
+		*out_list = list;
+		*out_count = n;
+		lua_pop(L, 1);
+		return;
+	}
+
+	lua_pop(L, 1);
+	luaL_error(L,
+		"awful.input.rules: invalid properties.%s type (expected string or array of strings)",
+		field);
 }
 
 /** Set input rules from Lua.
@@ -1154,6 +1333,21 @@ luaA_awesome_set_input_rules(lua_State *L)
 			p->send_events_mode = input_rule_get_string(L, pidx, "send_events_mode");
 			p->accel_profile = input_rule_get_string(L, pidx, "accel_profile");
 			p->tap_button_map = input_rule_get_string(L, pidx, "tap_button_map");
+			p->tool_mode = input_rule_get_tool_mode(L, pidx, "tool_mode");
+			input_rule_get_map_to_output(L, pidx, "map_to_output",
+				&p->map_to_output_list, &p->map_to_output_count);
+			input_rule_get_region(L, pidx, "map_from_region",
+				&p->map_from_region_set,
+				&p->map_from_region_x1,
+				&p->map_from_region_y1,
+				&p->map_from_region_x2,
+				&p->map_from_region_y2);
+			input_rule_get_region(L, pidx, "map_to_region",
+				&p->map_to_region_set,
+				&p->map_to_region_x1,
+				&p->map_to_region_y1,
+				&p->map_to_region_x2,
+				&p->map_to_region_y2);
 
 			lua_getfield(L, pidx, "accel_speed");
 			if (!lua_isnil(L, -1)) {
