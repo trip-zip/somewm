@@ -1262,7 +1262,10 @@ inputdevice(struct wl_listener *listener, void *data)
 		createswitch(wlr_switch_from_input_device(device));
 		break;
 	default:
-		/* TODO handle other input device types */
+		wlr_log(WLR_INFO,
+			"[input] ignoring unsupported device type=%d name=%s",
+			device->type,
+			device->name ? device->name : "(unknown)");
 		break;
 	}
 
