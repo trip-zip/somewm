@@ -126,6 +126,7 @@ Monitor *some_get_focused_monitor(void);
 struct wl_list *some_get_monitors(void);
 Monitor *some_monitor_at(double lx, double ly);
 Monitor *some_monitor_from_direction(Monitor *from, enum wlr_direction dir);
+Monitor *some_monitor_by_name(const char *name);
 void some_focus_monitor(Monitor *m);
 void some_focus_monitor_direction(enum wlr_direction dir);
 void some_move_client_to_monitor_direction(enum wlr_direction dir);
