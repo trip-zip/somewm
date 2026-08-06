@@ -351,17 +351,6 @@ luaA_sync(lua_State *L)
  * Signal emitters (AwesomeWM API parity)
  * ========================================================================== */
 
-/** Emit the "startup" signal.
- * Called after rc.lua is loaded to signal that startup is complete.
- */
-void
-luaA_emit_startup(void)
-{
-    lua_State *L = globalconf_get_lua_State();
-    if (L)
-        luaA_signal_emit(L, "startup", 0);
-}
-
 /** Emit the "refresh" signal.
  * Called before each display refresh to allow Lua to update state.
  */
@@ -1539,10 +1528,10 @@ idle_timeout_callback(void *data)
 	/* Mark as fired so it doesn't fire again until activity resets it */
 	timeout->fired = true;
 
-	/* Emit idle::start signal on first timeout (user became idle) */
+	/* Queue idle::start signal on first timeout (user became idle) */
 	if (!user_is_idle) {
 		user_is_idle = true;
-		luaA_emit_signal_global_with_stack(L, "idle::start", 0);
+		some_event_queue_global(SIG_IDLE_START);
 	}
 
 	/* Call the Lua callback */
@@ -1737,17 +1726,15 @@ dpms_wake_all_monitors(void)
 void
 some_notify_activity(void)
 {
-	lua_State *L = globalconf_get_lua_State();
-
 	/* Wake displays from DPMS if any are asleep */
 	if (dpms_wake_all_monitors()) {
-		luaA_emit_signal_global_with_stack(L, "dpms::on", 0);
+		some_event_queue_global(SIG_DPMS_ON);
 	}
 
-	/* Emit idle::stop signal if user was idle */
+	/* Queue idle::stop signal if user was idle */
 	if (user_is_idle) {
 		user_is_idle = false;
-		luaA_emit_signal_global_with_stack(L, "idle::stop", 0);
+		some_event_queue_global(SIG_IDLE_STOP);
 	}
 
 	/* Reset all idle timers */

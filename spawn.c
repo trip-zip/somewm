@@ -44,21 +44,6 @@ spawn_init(void)
      * Wayland startup notification is handled via wlr_xdg_activation_v1. */
 }
 
-/** Tell the spawn module that an app has been started.
- * \param c The client that just started.
- * \param startup_id The startup id of the started application.
- *
- * X11-only: Matches client to pending startup sequence.
- * Wayland uses XDG Activation token matching instead.
- */
-void
-spawn_start_notify(client_t *c, const char *startup_id)
-{
-    /* X11-only: Matches client class/instance to pending sn sequences.
-     * Wayland activation token matching is done in somewm.c. */
-    (void)c;
-    (void)startup_id;
-}
 
 /* Helper: Find child by PID */
 static running_child_t *

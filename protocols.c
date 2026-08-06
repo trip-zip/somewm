@@ -229,7 +229,7 @@ commitlayersurfacenotify(struct wl_listener *listener, void *data)
 	if (!was_mapped && l->mapped && !exclusive_focus)
 		motionnotify(0, NULL, 0, 0, 0, 0);
 
-	/* Emit property change signals for Lua (matches AwesomeWM pattern) */
+	/* Queue property change signals for Lua (matches AwesomeWM pattern) */
 	if (l->lua_object && globalconf_L && layer_surface->current.committed) {
 		lua_State *L = globalconf_get_lua_State();
 		uint32_t committed = layer_surface->current.committed;
@@ -237,15 +237,15 @@ commitlayersurfacenotify(struct wl_listener *listener, void *data)
 		luaA_object_push(L, l->lua_object);
 
 		if (committed & (1 << 5))  /* WLR_LAYER_SURFACE_V1_STATE_LAYER */
-			luaA_object_emit_signal(L, -1, "property::layer", 0);
+			some_event_queue_signal0(L, -1, SIG_PROPERTY_LAYER);
 		if (committed & (1 << 1))  /* WLR_LAYER_SURFACE_V1_STATE_ANCHOR */
-			luaA_object_emit_signal(L, -1, "property::anchor", 0);
+			some_event_queue_signal0(L, -1, SIG_PROPERTY_ANCHOR);
 		if (committed & (1 << 2))  /* WLR_LAYER_SURFACE_V1_STATE_EXCLUSIVE_ZONE */
-			luaA_object_emit_signal(L, -1, "property::exclusive_zone", 0);
+			some_event_queue_signal0(L, -1, SIG_PROPERTY_EXCLUSIVE_ZONE);
 		if (committed & (1 << 4))  /* WLR_LAYER_SURFACE_V1_STATE_KEYBOARD_INTERACTIVITY */
-			luaA_object_emit_signal(L, -1, "property::keyboard_interactive", 0);
+			some_event_queue_signal0(L, -1, SIG_PROPERTY_KEYBOARD_INTERACTIVE);
 		if (committed & (1 << 3))  /* WLR_LAYER_SURFACE_V1_STATE_MARGIN */
-			luaA_object_emit_signal(L, -1, "property::margin", 0);
+			some_event_queue_signal0(L, -1, SIG_PROPERTY_MARGIN);
 
 		lua_pop(L, 1);
 	}
@@ -643,8 +643,8 @@ activation_token_timeout(gpointer user_data)
 	/* Find and remove the token */
 	for (i = 0; i < pending_tokens_len; i++) {
 		if (strcmp(pending_tokens[i].token, token) == 0) {
-			/* Emit spawn::timeout signal (matches AwesomeWM spawn.c:115) */
-			luaA_emit_signal_global_with_table("spawn::timeout", 2,
+			/* Queue spawn::timeout signal (matches AwesomeWM spawn.c:115) */
+			some_event_queue_global_with_table(SIG_SPAWN_TIMEOUT, 2,
 				"id", token);
 			free(pending_tokens[i].token);
 			free(pending_tokens[i].app_id);
@@ -764,8 +764,8 @@ void urgent(struct wl_listener *listener, void *data)
 				/* Clean up matched token */
 				activation_token_cleanup(token_name);
 
-				/* Emit spawn::completed signal (matches AwesomeWM spawn.c:167) */
-				luaA_emit_signal_global_with_table("spawn::completed", 2,
+				/* Queue spawn::completed signal (matches AwesomeWM spawn.c:167) */
+				some_event_queue_global_with_table(SIG_SPAWN_COMPLETED, 2,
 					"id", token_name);
 				break;
 			}

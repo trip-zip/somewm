@@ -982,37 +982,6 @@ systray_item_set_icon_from_pixmap(systray_item_t *item,
 }
 
 /**
- * Set icon from icon name (theme lookup done in Lua)
- */
-void
-systray_item_set_icon_from_name(systray_item_t *item,
-                                const char *icon_name,
-                                int size)
-{
-	lua_State *L;
-
-	if (!item)
-		return;
-
-	p_delete(&item->icon_name);
-	if (icon_name)
-		item->icon_name = a_strdup(icon_name);
-
-	/* Store requested size */
-	item->icon_width = size;
-	item->icon_height = size;
-
-	/* Emit signal - Lua code will do theme lookup and set surface */
-	L = globalconf_get_lua_State();
-	if (L) {
-		luaA_object_push(L, item);
-		luaA_object_emit_signal(L, -1, "property::icon_name", 0);
-		luaA_object_emit_signal(L, -1, "property::icon", 0);
-		lua_pop(L, 1);
-	}
-}
-
-/**
  * Set overlay icon from ARGB32 pixmap data (from D-Bus OverlayIconPixmap)
  * Data is in network byte order (big-endian ARGB)
  */

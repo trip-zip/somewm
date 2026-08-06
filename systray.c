@@ -55,32 +55,6 @@ systray_cleanup(void)
      * Wayland cleanup happens in globalconf teardown. */
 }
 
-/** Handle a systray dock request (X11-only).
- * \param win The X11 window requesting to dock.
- * \return 0 on success.
- */
-int
-systray_request_handle(xcb_window_t win)
-{
-    /* X11-only: Handles _NET_SYSTEM_TRAY_OPCODE ClientMessage.
-     * Wayland uses StatusNotifierItem RegisterStatusNotifierItem. */
-    (void)win;
-    return 0;
-}
-
-/** Check if a window is a KDE dock app (X11-only).
- * \param win The X11 window to check.
- * \return true if window has _KDE_NET_WM_SYSTEM_TRAY_WINDOW_FOR property.
- */
-bool
-systray_iskdedockapp(xcb_window_t win)
-{
-    /* X11-only: Checks _KDE_NET_WM_SYSTEM_TRAY_WINDOW_FOR property.
-     * Not applicable to Wayland StatusNotifierItem. */
-    (void)win;
-    return false;
-}
-
 /** Process systray client messages (X11-only).
  * \param ev The client message event.
  * \return 0 on success.

@@ -5,6 +5,7 @@
  * dispatches them to Lua at the frame boundary (in some_refresh()).
  * This ensures the call stack never interleaves C and Lua.
  */
+#include <stdarg.h>
 #include <stdio.h>
 #include <string.h>
 #include <lua.h>
@@ -43,6 +44,33 @@ static const char *signal_names[SIG_COUNT] = {
 	[SIG_SYSTRAY_CONTEXT_MENU]        = "request::context_menu",
 	[SIG_SYSTRAY_SCROLL]              = "request::scroll",
 	[SIG_CLIENT_PROPERTY_GEOMETRY] = "client::property::geometry",
+	[SIG_PROPERTY_ENABLED]       = "property::enabled",
+	[SIG_PROPERTY_SCALE]         = "property::scale",
+	[SIG_PROPERTY_TRANSFORM]     = "property::transform",
+	[SIG_PROPERTY_MODE]          = "property::mode",
+	[SIG_PROPERTY_ADAPTIVE_SYNC] = "property::adaptive_sync",
+	[SIG_PROPERTY_SCREEN]        = "property::screen",
+	[SIG_PROPERTY_WORKAREA]      = "property::workarea",
+	[SIG_PROPERTY_VIEWPORTS]     = "property::_viewports",
+	[SIG_PRIMARY_CHANGED]        = "primary_changed",
+	[SIG_OUTPUT_ADDED]           = "added",
+	[SIG_PROPERTY_LAYER]         = "property::layer",
+	[SIG_PROPERTY_ANCHOR]        = "property::anchor",
+	[SIG_PROPERTY_EXCLUSIVE_ZONE] = "property::exclusive_zone",
+	[SIG_PROPERTY_KEYBOARD_INTERACTIVE] = "property::keyboard_interactive",
+	[SIG_PROPERTY_MARGIN]        = "property::margin",
+	[SIG_XKB_MAP_CHANGED]        = "xkb::map_changed",
+	[SIG_XKB_GROUP_CHANGED]      = "xkb::group_changed",
+	[SIG_IDLE_START]             = "idle::start",
+	[SIG_IDLE_STOP]              = "idle::stop",
+	[SIG_DPMS_ON]                = "dpms::on",
+	[SIG_SPAWN_TIMEOUT]          = "spawn::timeout",
+	[SIG_SPAWN_COMPLETED]        = "spawn::completed",
+	[SIG_SWITCH_TOGGLE]          = "switch::toggle",
+	[SIG_SCREEN_FOCUS]           = "screen::focus",
+	[SIG_LOGIND_PREPARE_SLEEP]   = "logind::prepare_sleep",
+	[SIG_CLIENT_MAP]             = "client::map",
+	[SIG_CLIENT_UNMAP]           = "client::unmap",
 };
 
 /* Queue storage - simple dynamic array */
@@ -74,30 +102,58 @@ queue_push(void)
 	return &queue_buf[queue_len++];
 }
 
+/* Push a fully initialized 0-arg event; callers override what differs. */
+static some_event_t *
+queue_push_event(uint8_t event_type, struct lua_class_t *class_ptr,
+                 uint16_t signal_id)
+{
+	some_event_t *e = queue_push();
+	e->event_type = event_type;
+	e->signal_id = signal_id;
+	e->object_ref = LUA_NOREF;
+	e->nargs = 0;
+	e->args_ref = LUA_NOREF;
+	e->class_ptr = class_ptr;
+	return e;
+}
+
 void
 some_event_queue_signal0(lua_State *L, int obj_ud, uint16_t signal_id)
 {
-	some_event_t *e = queue_push();
-	e->event_type = EVENT_OBJECT;
-	e->signal_id = signal_id;
-	e->nargs = 0;
-	e->args_ref = LUA_NOREF;
-	e->class_ptr = NULL;
+	some_event_t *e = queue_push_event(EVENT_OBJECT, NULL, signal_id);
 
 	/* Capture object reference */
 	lua_pushvalue(L, obj_ud);
 	e->object_ref = luaL_ref(L, LUA_REGISTRYINDEX);
 }
 
+/* Capture the top nargs stack values into a registry-ref'd table and pop
+ * them from the caller's stack. Returns LUA_NOREF when nargs is 0. */
+static int
+queue_capture_args(lua_State *L, int nargs)
+{
+	if (nargs <= 0)
+		return LUA_NOREF;
+
+	lua_createtable(L, nargs, 0);
+	/* Arguments are at stack positions -(nargs+1) to -2
+	 * (the table is at -1) */
+	for (int i = 0; i < nargs; i++) {
+		lua_pushvalue(L, -(nargs + 1) + i);
+		lua_rawseti(L, -2, i + 1);
+	}
+	int args_ref = luaL_ref(L, LUA_REGISTRYINDEX);
+	/* Pop the original arguments from the caller's stack */
+	lua_pop(L, nargs);
+	return args_ref;
+}
+
 void
 some_event_queue_signal(lua_State *L, int obj_ud, uint16_t signal_id,
                         int nargs)
 {
-	some_event_t *e = queue_push();
-	e->event_type = EVENT_OBJECT;
-	e->signal_id = signal_id;
+	some_event_t *e = queue_push_event(EVENT_OBJECT, NULL, signal_id);
 	e->nargs = nargs;
-	e->class_ptr = NULL;
 
 	/* Capture object reference.
 	 * The caller passes obj_ud relative to the current stack which
@@ -105,45 +161,63 @@ some_event_queue_signal(lua_State *L, int obj_ud, uint16_t signal_id,
 	lua_pushvalue(L, obj_ud);
 	e->object_ref = luaL_ref(L, LUA_REGISTRYINDEX);
 
-	/* Capture arguments into a table */
-	if (nargs > 0) {
-		lua_createtable(L, nargs, 0);
-		/* Arguments are at stack positions -(nargs+1) to -2
-		 * (the table is at -1) */
-		for (int i = 0; i < nargs; i++) {
-			lua_pushvalue(L, -(nargs + 1) + i);
-			lua_rawseti(L, -2, i + 1);
-		}
-		e->args_ref = luaL_ref(L, LUA_REGISTRYINDEX);
-		/* Pop the original arguments from the caller's stack */
-		lua_pop(L, nargs);
-	} else {
-		e->args_ref = LUA_NOREF;
-	}
+	e->args_ref = queue_capture_args(L, nargs);
 }
 
 void
 some_event_queue_global(uint16_t signal_id)
 {
-	some_event_t *e = queue_push();
-	e->event_type = EVENT_GLOBAL;
-	e->signal_id = signal_id;
-	e->object_ref = LUA_NOREF;
-	e->nargs = 0;
-	e->args_ref = LUA_NOREF;
-	e->class_ptr = NULL;
+	queue_push_event(EVENT_GLOBAL, NULL, signal_id);
 }
 
 void
 some_event_queue_class(struct lua_class_t *class_ptr, uint16_t signal_id)
 {
-	some_event_t *e = queue_push();
-	e->event_type = EVENT_CLASS;
-	e->signal_id = signal_id;
-	e->object_ref = LUA_NOREF;
-	e->class_ptr = class_ptr;
-	e->nargs = 0;
-	e->args_ref = LUA_NOREF;
+	queue_push_event(EVENT_CLASS, class_ptr, signal_id);
+}
+
+void
+some_event_queue_global_args(lua_State *L, uint16_t signal_id, int nargs)
+{
+	some_event_t *e = queue_push_event(EVENT_GLOBAL, NULL, signal_id);
+	e->nargs = nargs;
+	e->args_ref = queue_capture_args(L, nargs);
+}
+
+/* Queue a global signal carrying one table argument built from alternating
+ * key/value string pairs, mirroring luaA_emit_signal_global_with_table.
+ * NULL values are skipped. No-op when the Lua state is unavailable. */
+void
+some_event_queue_global_with_table(uint16_t signal_id, int nargs, ...)
+{
+	lua_State *L = globalconf_get_lua_State();
+	va_list ap;
+
+	if (!L)
+		return;
+
+	lua_createtable(L, 0, nargs / 2);
+	va_start(ap, nargs);
+	for (int j = 0; j < nargs; j += 2) {
+		const char *key = va_arg(ap, const char *);
+		const char *value = va_arg(ap, const char *);
+		if (value) {
+			lua_pushstring(L, value);
+			lua_setfield(L, -2, key);
+		}
+	}
+	va_end(ap);
+
+	some_event_queue_global_args(L, signal_id, 1);
+}
+
+void
+some_event_queue_class_args(lua_State *L, struct lua_class_t *class_ptr,
+                            uint16_t signal_id, int nargs)
+{
+	some_event_t *e = queue_push_event(EVENT_CLASS, class_ptr, signal_id);
+	e->nargs = nargs;
+	e->args_ref = queue_capture_args(L, nargs);
 }
 
 void
@@ -197,11 +271,8 @@ some_event_queue_move(lua_State *L, int obj_ud, int local_x, int local_y)
 	}
 
 	/* No existing event found - create new one */
-	some_event_t *e = queue_push();
-	e->event_type = EVENT_OBJECT;
-	e->signal_id = SIG_MOUSE_MOVE;
+	some_event_t *e = queue_push_event(EVENT_OBJECT, NULL, SIG_MOUSE_MOVE);
 	e->nargs = 2;
-	e->class_ptr = NULL;
 	e->object_ref = luaL_ref(L, LUA_REGISTRYINDEX);  /* consumes the pushed object */
 
 	lua_createtable(L, 2, 0);
@@ -210,6 +281,25 @@ some_event_queue_move(lua_State *L, int obj_ud, int local_x, int local_y)
 	lua_pushinteger(L, local_y);
 	lua_rawseti(L, -2, 2);
 	e->args_ref = luaL_ref(L, LUA_REGISTRYINDEX);
+}
+
+/* Unpack an event's captured args table onto the stack. Returns the number
+ * of values pushed. */
+static int
+drain_unpack_args(lua_State *L, const some_event_t *e)
+{
+	if (e->args_ref == LUA_NOREF)
+		return 0;
+
+	lua_rawgeti(L, LUA_REGISTRYINDEX, e->args_ref);
+	int nargs = e->nargs;
+	/* -j always points to the args table: after pushing
+	 * j-1 values, the table has shifted from -1 to -j. */
+	for (int j = 1; j <= nargs; j++)
+		lua_rawgeti(L, -j, j);
+	/* Remove the args table (now below the unpacked values) */
+	lua_remove(L, -(nargs + 1));
+	return nargs;
 }
 
 void
@@ -237,15 +327,14 @@ some_event_queue_drain(lua_State *L)
 			goto cleanup;
 
 		if (e.event_type == EVENT_GLOBAL) {
-			luaA_emit_signal_global(name);
+			int nargs = drain_unpack_args(L, &e);
+			luaA_emit_signal_global_with_stack(L, name, nargs);
 			goto cleanup;
 		}
 
 		if (e.event_type == EVENT_CLASS) {
-			/* Class-level signal (e.g., client "list").
-			 * some_event_queue_class() never captures args today, so
-			 * there is nothing to unpack here. */
-			luaA_class_emit_signal(L, e.class_ptr, name, 0);
+			int nargs = drain_unpack_args(L, &e);
+			luaA_class_emit_signal(L, e.class_ptr, name, nargs);
 			goto cleanup;
 		}
 
@@ -254,18 +343,7 @@ some_event_queue_drain(lua_State *L)
 			goto cleanup;
 		lua_rawgeti(L, LUA_REGISTRYINDEX, e.object_ref);
 
-		/* Unpack args from registry if present */
-		int nargs = 0;
-		if (e.args_ref != LUA_NOREF) {
-			lua_rawgeti(L, LUA_REGISTRYINDEX, e.args_ref);
-			nargs = e.nargs;
-			/* -j always points to the args table: after pushing
-			 * j-1 values, the table has shifted from -1 to -j. */
-			for (int j = 1; j <= nargs; j++)
-				lua_rawgeti(L, -j, j);
-			/* Remove the args table (now below the unpacked values) */
-			lua_remove(L, -(nargs + 1));
-		}
+		int nargs = drain_unpack_args(L, &e);
 
 		/* Dispatch through existing signal mechanism */
 		luaA_object_emit_signal(L, -(nargs + 1), name, nargs);

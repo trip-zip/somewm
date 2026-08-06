@@ -27,6 +27,7 @@
 #include "xkb.h"
 #include "globalconf.h"
 #include "luaa.h"
+#include "event_queue.h"
 
 #include <glib.h>
 #include <stdbool.h>
@@ -127,10 +128,10 @@ xkb_refresh(gpointer unused)
     globalconf.xkb.update_pending = false;
 
     if (globalconf.xkb.map_changed)
-        luaA_emit_signal_global("xkb::map_changed");
+        some_event_queue_global(SIG_XKB_MAP_CHANGED);
 
     if (globalconf.xkb.group_changed)
-        luaA_emit_signal_global("xkb::group_changed");
+        some_event_queue_global(SIG_XKB_GROUP_CHANGED);
 
     globalconf.xkb.map_changed = false;
     globalconf.xkb.group_changed = false;

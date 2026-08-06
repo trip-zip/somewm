@@ -313,7 +313,6 @@ extern xcb_atom_t UTF8_STRING;
  * are declared in common/luaclass.h (after lua_object_t is defined) */
 
 /* AwesomeWM API parity - signal emitters */
-void luaA_emit_startup(void);
 void luaA_emit_refresh(void);
 
 #endif /* LUAA_H */

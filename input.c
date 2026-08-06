@@ -186,7 +186,7 @@ switchevent(struct wl_listener *listener, void *data)
 		break;
 	}
 
-	luaA_emit_signal_global_with_table("switch::toggle", 6,
+	some_event_queue_global_with_table(SIG_SWITCH_TOGGLE, 6,
 		"device_name", ts->switch_dev && ts->switch_dev->base.name
 			? ts->switch_dev->base.name : "",
 		"type", type,
@@ -602,8 +602,8 @@ buttonpress(struct wl_listener *listener, void *data)
 			mon = xytomon(cursor->x, cursor->y);
 			if (mon && mon != selmon) {
 				selmon = mon;
-				/* Emit signal so Lua knows monitor changed */
-				luaA_emit_signal_global("screen::focus");
+				/* Queue signal so Lua knows monitor changed */
+				some_event_queue_global(SIG_SCREEN_FOCUS);
 			}
 		}
 
