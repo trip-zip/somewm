@@ -41,8 +41,8 @@ local function do_fair(p, orientation)
       cols = math.ceil(#cls / rows)
     end
 
-    for k, c in ipairs(cls) do
-      k = k - 1
+    for i, c in ipairs(cls) do
+      local k = i - 1
       local g = {}
 
       local row, col
