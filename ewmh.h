@@ -36,8 +36,6 @@ void ewmh_update_net_client_list_stacking(void);
 void ewmh_client_check_hints(client_t *);
 void ewmh_client_update_desktop(client_t *);
 void ewmh_update_strut(xcb_window_t, strut_t *);
-void ewmh_process_client_strut(client_t *);
-int ewmh_process_client_message(xcb_client_message_event_t *);
 void ewmh_update_window_type(xcb_window_t window, uint32_t type);
 
 /* somewm-specific - not in AwesomeWM */
@@ -55,8 +53,6 @@ void ewmh_update_net_client_list_stacking(void);
 void ewmh_client_check_hints(client_t *c);
 void ewmh_client_update_desktop(client_t *c);
 void ewmh_update_strut(void *window, strut_t *strut);
-void ewmh_process_client_strut(client_t *c);
-int ewmh_process_client_message(void *ev);
 void ewmh_update_window_type(void *window, uint32_t type);
 void ewmh_update_net_desktop_geometry(void *conn, int phys_screen);
 

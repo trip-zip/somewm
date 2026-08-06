@@ -100,10 +100,6 @@ void systray_item_destroy(systray_item_t *item);
 void systray_item_set_icon_from_pixmap(systray_item_t *item,
                                        const unsigned char *data,
                                        int width, int height);
-void systray_item_set_icon_from_name(systray_item_t *item,
-                                     const char *icon_name,
-                                     int size);
-
 /* Overlay icon management */
 void systray_item_set_overlay_from_pixmap(systray_item_t *item,
                                           const unsigned char *data,

@@ -9,6 +9,7 @@
 #include "common/luaobject.h"
 #include "../somewm_api.h"
 #include "../globalconf.h"
+#include "../event_queue.h"
 #include "common/util.h"
 #include "../x11_compat.h"
 #include <stdio.h>
@@ -348,7 +349,8 @@ luaA_screen_scanned_done(void)
 void
 luaA_screen_emit_list(lua_State *L)
 {
-	luaA_class_emit_signal(L, &screen_class, "list", 0);
+	(void)L;
+	some_event_queue_class(&screen_class, SIG_LIST);
 }
 
 /* Forward declaration for viewports function */
@@ -363,7 +365,7 @@ luaA_screen_emit_viewports(lua_State *L)
 {
 	/* Push the viewports table onto stack as signal argument */
 	luaA_screen_viewports(L);
-	luaA_class_emit_signal(L, &screen_class, "property::_viewports", 1);
+	some_event_queue_class_args(L, &screen_class, SIG_PROPERTY_VIEWPORTS, 1);
 }
 
 /** Emit primary_changed signal on a screen object
@@ -375,7 +377,7 @@ luaA_screen_emit_primary_changed(lua_State *L, screen_t *screen)
 	if (!screen || !screen->valid)
 		return;
 	luaA_screen_push(L, screen);
-	luaA_object_emit_signal(L, -1, "primary_changed", 0);
+	some_event_queue_signal0(L, -1, SIG_PRIMARY_CHANGED);
 	lua_pop(L, 1);
 }
 
@@ -623,10 +625,10 @@ luaA_screen_update_geometry(lua_State *L, screen_t *screen)
 			}
 		}
 
-		/* Emit property::geometry signal with old geometry as argument */
+		/* Queue property::geometry signal with old geometry as argument */
 		luaA_screen_push(L, screen);
 		push_wlr_box(L, &old_geom);
-		luaA_object_emit_signal(L, -2, "property::geometry", 1);
+		some_event_queue_signal(L, -2, SIG_PROPERTY_GEOMETRY, 1);
 		lua_pop(L, 1);  /* Pop screen object */
 
 		/* Recalculate workarea including drawin struts.
@@ -672,10 +674,10 @@ screen_set_workarea(lua_State *L, screen_t *screen, struct wlr_box *workarea)
 			screen->monitor->w = new_workarea;
 		}
 
-		/* Emit property::workarea signal with old workarea as argument */
+		/* Queue property::workarea signal with old workarea as argument */
 		luaA_screen_push(L, screen);
 		push_wlr_box(L, &old_workarea);
-		luaA_object_emit_signal(L, -2, "property::workarea", 1);
+		some_event_queue_signal(L, -2, SIG_PROPERTY_WORKAREA, 1);
 		lua_pop(L, 1);  /* Pop screen object */
 	}
 }
@@ -1888,7 +1890,10 @@ luaA_screen_module_newindex(lua_State *L)
 
 		if ((new_primary_screen) && (new_primary_screen != primary_screen)) {
 			primary_screen = new_primary_screen;
-			luaA_screen_emit_primary_changed(L, primary_screen);
+			/* Lua-initiated: emit synchronously, like fake_add/swap do */
+			luaA_screen_push(L, primary_screen);
+			luaA_object_emit_signal(L, -1, "primary_changed", 0);
+			lua_pop(L, 1);
 		}
 		return 0;
 	}

@@ -368,7 +368,6 @@ client_t * client_getbyframewin(xcb_window_t);
 void client_ban(client_t *);
 void client_ban_unfocus(client_t *);
 void client_unban(client_t *);
-void client_manage(xcb_window_t, xcb_get_geometry_reply_t *, xcb_get_window_attributes_reply_t *);
 bool client_resize(client_t *, area_t, bool, bool);
 void client_unmanage(client_t *, client_unmanage_t);
 void client_kill(client_t *);
@@ -399,7 +398,6 @@ void client_set_group_window(lua_State *, int, uint32_t);  /* Changed from xcb_w
 /* void client_set_icons(client_t *, cairo_surface_array_t); */
 /* void client_set_icon_from_pixmaps(client_t *, xcb_pixmap_t, xcb_pixmap_t); */
 void client_set_skip_taskbar(lua_State *, int, bool);
-void client_set_motif_wm_hints(lua_State *, int, motif_wm_hints_t);
 void client_focus(client_t *);
 bool client_focus_update(client_t *);
 void client_focus_refresh(void);
