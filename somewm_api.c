@@ -1385,6 +1385,25 @@ some_monitor_at_cursor(void)
 }
 
 /*
+ * Find monitor by output name (e.g., "HDMI-A-1", "eDP-1")
+ */
+Monitor *
+some_monitor_by_name(const char *name)
+{
+	Monitor *m;
+
+	if (!name)
+		return NULL;
+
+	wl_list_for_each(m, &mons, link) {
+		if (m->wlr_output && m->wlr_output->name && strcmp(m->wlr_output->name, name) == 0)
+			return m;
+	}
+
+	return NULL;
+}
+
+/*
  * Get current cursor position
  */
 void
