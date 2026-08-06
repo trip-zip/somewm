@@ -1179,7 +1179,7 @@ unset_fullscreen:
 			setfullscreen(w, 0);
 	}
 
-	luaA_emit_signal_global("client::map");
+	some_event_queue_global(SIG_CLIENT_MAP);
 
 	/* If the cursor is over this new client's CONTENT, set pointer focus directly.
 	 * Don't use motionnotify(0,...) because xytonode may not find the surface yet
@@ -1809,7 +1809,7 @@ unmapnotify(struct wl_listener *listener, void *data)
 		return;
 	}
 
-	luaA_emit_signal_global("client::unmap");
+	some_event_queue_global(SIG_CLIENT_UNMAP);
 
 	if (c->toplevel_handle) {
 		wl_list_remove(&c->foreign_request_activate.link);

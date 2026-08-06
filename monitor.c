@@ -45,6 +45,7 @@
 #include "focus.h"
 #include "window.h"
 #include "somewm_internal.h"
+#include "event_queue.h"
 #include "bench.h"
 
 /* Module-private state */
@@ -565,30 +566,30 @@ requestmonstate(struct wl_listener *listener, void *data)
 		return;
 	}
 
-	/* Emit property::* signals on the output object so Lua stays in sync
+	/* Queue property::* signals on the output object so Lua stays in sync
 	 * when external tools (wlr-randr, kanshi) change output state. */
 	if (globalconf_L) {
 		Monitor *m = event->output->data;
 		if (m && m->output) {
 			luaA_object_push(globalconf_L, m->output);
 			if (committed & WLR_OUTPUT_STATE_ENABLED)
-				luaA_object_emit_signal(globalconf_L, -1, "property::enabled", 0);
+				some_event_queue_signal0(globalconf_L, -1, SIG_PROPERTY_ENABLED);
 			if (committed & WLR_OUTPUT_STATE_SCALE) {
-				luaA_object_emit_signal(globalconf_L, -1, "property::scale", 0);
+				some_event_queue_signal0(globalconf_L, -1, SIG_PROPERTY_SCALE);
 				/* Also emit on screen for backward compat */
 				screen_t *screen = luaA_screen_get_by_monitor(globalconf_L, m);
 				if (screen) {
 					luaA_object_push(globalconf_L, screen);
-					luaA_object_emit_signal(globalconf_L, -1, "property::scale", 0);
+					some_event_queue_signal0(globalconf_L, -1, SIG_PROPERTY_SCALE);
 					lua_pop(globalconf_L, 1);
 				}
 			}
 			if (committed & WLR_OUTPUT_STATE_TRANSFORM)
-				luaA_object_emit_signal(globalconf_L, -1, "property::transform", 0);
+				some_event_queue_signal0(globalconf_L, -1, SIG_PROPERTY_TRANSFORM);
 			if (committed & WLR_OUTPUT_STATE_MODE)
-				luaA_object_emit_signal(globalconf_L, -1, "property::mode", 0);
+				some_event_queue_signal0(globalconf_L, -1, SIG_PROPERTY_MODE);
 			if (committed & WLR_OUTPUT_STATE_ADAPTIVE_SYNC_ENABLED)
-				luaA_object_emit_signal(globalconf_L, -1, "property::adaptive_sync", 0);
+				some_event_queue_signal0(globalconf_L, -1, SIG_PROPERTY_ADAPTIVE_SYNC);
 			lua_pop(globalconf_L, 1);
 		}
 	}
@@ -785,10 +786,10 @@ updatemons(struct wl_listener *listener, void *data)
 			if (new_primary == screen && old_primary != screen)
 				luaA_screen_emit_primary_changed(globalconf_L, screen);
 
-			/* Emit property::screen on the output (nil→screen) */
+			/* Queue property::screen on the output (nil→screen) */
 			if (m->output) {
 				luaA_object_push(globalconf_L, m->output);
-				luaA_object_emit_signal(globalconf_L, -1, "property::screen", 0);
+				some_event_queue_signal0(globalconf_L, -1, SIG_PROPERTY_SCREEN);
 				lua_pop(globalconf_L, 1);
 			}
 
@@ -797,7 +798,7 @@ updatemons(struct wl_listener *listener, void *data)
 		}
 	}
 
-	/* Emit deferred output "added" signals. Done AFTER screen_added so that
+	/* Queue deferred output "added" signals. Done AFTER screen_added so that
 	 * o.screen is available in "added" handlers. */
 	wl_list_for_each(m, &mons, link) {
 		if (!m->needs_output_added)
@@ -805,7 +806,8 @@ updatemons(struct wl_listener *listener, void *data)
 		m->needs_output_added = 0;
 		if (m->output && globalconf_L) {
 			luaA_object_push(globalconf_L, m->output);
-			luaA_class_emit_signal(globalconf_L, &output_class, "added", 1);
+			some_event_queue_class_args(globalconf_L, &output_class,
+					SIG_OUTPUT_ADDED, 1);
 		}
 	}
 
