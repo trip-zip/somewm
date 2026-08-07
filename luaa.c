@@ -1510,9 +1510,9 @@ luaA_awesome_clear_lock_covers(lua_State *L)
 	return 0;
 }
 
-/** Force-unlock and drop the lock refs at hot-reload.
- * The refs belong to the old Lua state, which is leaked rather than closed,
- * so they are dropped without unref.
+/** Force-unlock and release the lock refs at hot-reload.
+ * The refs are unref'd against the state being closed, like every other
+ * C-held ref in the teardown.
  *
  * Staying locked is unrecoverable. The lock surface's scene tree is destroyed
  * later in the reload, so there is no lock UI left to authenticate through,
@@ -4630,6 +4630,58 @@ luaA_state_teardown_c(lua_State *L, const char *label, bool exit_emitted)
 	some_event_queue_reset(L);
 }
 
+/** Drop every C-side pointer into the object population of a state about to
+ * close: the tag, screen and drawin arrays plus the loose pointers into them.
+ * The userdata behind these pointers dies with lua_close(), but the arrays
+ * live on in globalconf and the first EWMH update, workarea walk or pointer
+ * motion after the rebuild would dereference them.
+ *
+ * Clients must already be detached. Runs after any snapshotting, before
+ * luaA_state_teardown_c().
+ */
+static void
+luaA_state_drop_object_pointers(void)
+{
+	globalconf.tags.len = 0;
+	globalconf.screens.len = 0;
+
+	/* drawable_under_mouse was luaA_object_ref'd, so it is dropped without
+	 * unref like every other old-state ref; event.c would otherwise push
+	 * and unref it against the new state on the next pointer motion. */
+	globalconf.drawable_under_mouse = NULL;
+	globalconf.mouse_under.type = UNDER_NONE;
+	globalconf.mouse_under.ptr.client = NULL;
+	globalconf.primary_screen = NULL;
+
+	/* Destroy old drawin scene trees now, or they persist as duplicates
+	 * behind the ones the rebuilt state creates. */
+	foreach(d, globalconf.drawins) {
+		drawin_t *w = *d;
+		for (int si = 0; si < SHADOW_TEXTURE_COUNT; si++) {
+			if (w->shadow.textures[si]) {
+				wlr_buffer_drop(w->shadow.textures[si]);
+				w->shadow.textures[si] = NULL;
+			}
+		}
+		if (w->scene_tree) {
+			wlr_scene_node_destroy(&w->scene_tree->node);
+			w->scene_tree = NULL;
+			w->scene_buffer = NULL;
+			w->border_buffer = NULL;
+		}
+	}
+	globalconf.drawins.len = 0;
+
+	/* The systray scene tree is a child of the parent drawin's tree, so the
+	 * loop above already destroyed it. Both pointers dangle; NULL them, or
+	 * drawin_wipe() destroys the freed scene node again at close. */
+	globalconf.systray.parent = NULL;
+	globalconf.systray.scene_tree = NULL;
+
+	/* Reset screen_refs before closing (entries become invalid) */
+	luaA_screen_refs_reset();
+}
+
 /* Snapshot of one client, taken while the Lua state that owns its userdata is
  * torn down and replayed into the state that replaces it. */
 typedef struct {
@@ -5028,15 +5080,26 @@ luaA_loadrc(void)
 			/* CRITICAL: Lua state is corrupted after siglongjmp.
 			 * We must recreate it before trying the next config.
 			 *
-			 * No signals here: the state is only safe to read from,
-			 * so this path runs the teardown without the "exit" the
-			 * reload path emits first.
+			 * No signals here: running Lua on a state aborted
+			 * mid-execution is off the table, so this path skips
+			 * the "exit" the reload path emits first. The
+			 * teardown's registry writes below are best-effort C
+			 * API calls against a state that is about to be closed
+			 * anyway.
 			 *
 			 * The GLib source sweep comes later, with the rest of
 			 * the C-side teardown. Nothing its sources could
 			 * dispatch runs in between: sources only run from the
 			 * main loop, which this path does not reach until the
 			 * retried config is loaded. */
+
+			/* Stop GC first: siglongjmp may have interrupted the
+			 * interpreter mid-allocation or mid-GC-cycle, and the
+			 * registry writes below could otherwise trigger a GC
+			 * step on that heap. The close still runs finalizers
+			 * on it, which is the residual risk either way. */
+			lua_gc(globalconf_L, LUA_GCSTOP, 0);
+
 			luaA_state_teardown_lua(globalconf_L, false);
 
 			/* At startup there are no clients yet. Reached from a hot
@@ -5056,6 +5119,12 @@ luaA_loadrc(void)
 				some_compositor_quit();
 				break;
 			}
+
+			/* Same story for tags, drawins and the loose object
+			 * pointers: the close frees their userdata while the
+			 * globalconf arrays keep the pointers, and the first
+			 * EWMH update after recovery walks them. */
+			luaA_state_drop_object_pointers();
 
 			luaA_state_teardown_c(globalconf_L, "config-timeout", false);
 			lua_close(globalconf_L);
@@ -5088,6 +5157,8 @@ luaA_loadrc(void)
 
 				globalconf.screens.len = 0;
 				luaA_screen_get_all(globalconf_L, screen_ptrs, &n);
+				if (n == 64)
+					warn("screen snapshot full at 64, extra screens dropped");
 				for (int s = 0; s < n; s++)
 					screen_array_push(&globalconf.screens, screen_ptrs[s]);
 			}
@@ -5158,7 +5229,10 @@ luaA_loadrc(void)
 			/* Accumulate runtime error for naughty notification */
 			luaA_startup_error(err);
 
-			if (i == 0 && !config_timeout_fired) {
+			/* Every candidate's failure prints, not just the first:
+			 * a fallback that dies silently leaves "FATAL: no
+			 * working Lua config found" with no way to tell why. */
+			if (!config_timeout_fired) {
 				fprintf(stderr, "somewm: error executing %s:\n%s\n",
 					config_paths[i], err);
 				fprintf(stderr, "somewm: trying alternate configs...\n");
@@ -5392,6 +5466,8 @@ luaA_hot_reload(void)
 		screen_t *screen_ptrs[64];
 		num_screens = 64;
 		luaA_screen_get_all(L, screen_ptrs, &num_screens);
+		if (num_screens == 64)
+			warn("screen snapshot full at 64, extra screens dropped");
 
 		if (num_screens > 0) {
 			screen_snaps = calloc(num_screens, sizeof(screen_snapshot_t));
@@ -5459,50 +5535,9 @@ luaA_hot_reload(void)
 	 * Phase C: Close old Lua state
 	 * ================================================================ */
 
-	/* Clear arrays so GC doesn't try to access stale data.
-	 * We've already snapshotted everything and NULL'd owned resources.
-	 * (clients, the stack and the focus went with clients_detach.) */
-	globalconf.tags.len = 0;
-	globalconf.screens.len = 0;
-
-	/* Pointers into the object population the lines above just dropped.
-	 * drawable_under_mouse was luaA_object_ref'd, so it is dropped without
-	 * unref like every other old-state ref; event.c would otherwise push
-	 * and unref it against the new state on the next pointer motion. */
-	globalconf.drawable_under_mouse = NULL;
-	globalconf.mouse_under.type = UNDER_NONE;
-	globalconf.mouse_under.ptr.client = NULL;
-	globalconf.primary_screen = NULL;
-
-	/* Destroy old drawin scene trees so they don't persist as duplicates.
-	 * During normal shutdown, drawin_wipe() handles this via GC, but
-	 * hot-reload leaks the old state with GC frozen. */
-	foreach(d, globalconf.drawins) {
-		drawin_t *w = *d;
-		for (int si = 0; si < SHADOW_TEXTURE_COUNT; si++) {
-			if (w->shadow.textures[si]) {
-				wlr_buffer_drop(w->shadow.textures[si]);
-				w->shadow.textures[si] = NULL;
-			}
-		}
-		if (w->scene_tree) {
-			wlr_scene_node_destroy(&w->scene_tree->node);
-			w->scene_tree = NULL;
-			w->scene_buffer = NULL;
-			w->border_buffer = NULL;
-		}
-	}
-	globalconf.drawins.len = 0;
-
-	/* The systray scene tree is a child of the parent drawin's tree, so the
-	 * loop above already destroyed it. Both pointers dangle; NULL them, or
-	 * the reloaded config's first awesome.systray() call kicks the systray
-	 * out of the old parent and destroys the freed scene node again. */
-	globalconf.systray.parent = NULL;
-	globalconf.systray.scene_tree = NULL;
-
-	/* Reset screen_refs before closing (entries become invalid) */
-	luaA_screen_refs_reset();
+	/* Everything is snapshotted and owned resources are NULL'd (clients,
+	 * the stack and the focus went with clients_detach). Drop the rest. */
+	luaA_state_drop_object_pointers();
 
 	luaA_state_teardown_c(L, "hot-reload", true);
 
@@ -5660,7 +5695,14 @@ luaA_hot_reload(void)
 	/* If the reloaded config hung, luaA_loadrc() aborted it, closed this
 	 * state and built another one (rebuilding screens, outputs and clients
 	 * on the way). Everything below would otherwise run against the closed
-	 * state. */
+	 * state.
+	 *
+	 * Known corner: if the hung config called client:swap() before
+	 * hanging, the abort's restore keeps that order, so the index pairing
+	 * of client_snaps against globalconf.clients below is off by the
+	 * swap. Tolerated: the screen loop skips clients the abort already
+	 * assigned, so at worst the was_mapped filter mispairs and a signal
+	 * burst targets the wrong client. */
 	if (globalconf_get_lua_State() != L) {
 		fprintf(stderr, "somewm: hot-reload: config timed out, continuing "
 			"against the state its abort rebuilt\n");
