@@ -1373,7 +1373,22 @@ some_monitor_at_cursor(void)
 }
 
 /*
- * Find monitor by output name (e.g., "HDMI-A-1", "eDP-1")
+ * Build the "make model serial" output identifier (same convention as sway
+ * and wlr-randr). Unlike the connector name (e.g. "DP-8"), this stays
+ * stable across DRM connector renumbering on replug/redock.
+ */
+static void
+monitor_output_identifier(struct wlr_output *output, char *buf, size_t len)
+{
+	snprintf(buf, len, "%s %s %s",
+		output->make ? output->make : "Unknown",
+		output->model ? output->model : "Unknown",
+		output->serial ? output->serial : "Unknown");
+}
+
+/*
+ * Find monitor by output name (e.g., "HDMI-A-1", "eDP-1") or, failing that,
+ * by its make/model/serial identifier (e.g. "Dell Inc. DELL U2415 ABC123").
  */
 Monitor *
 some_monitor_by_name(const char *name)
@@ -1385,6 +1400,17 @@ some_monitor_by_name(const char *name)
 
 	wl_list_for_each(m, &mons, link) {
 		if (m->wlr_output && m->wlr_output->name && strcmp(m->wlr_output->name, name) == 0)
+			return m;
+	}
+
+	wl_list_for_each(m, &mons, link) {
+		char id[256];
+
+		if (!m->wlr_output)
+			continue;
+
+		monitor_output_identifier(m->wlr_output, id, sizeof(id));
+		if (strcmp(id, name) == 0)
 			return m;
 	}
 
