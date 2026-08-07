@@ -984,8 +984,8 @@ local function create(args)
         local naction = require("naughty.action")
         local new_actions = {}
 
-        for idx, name in pairs(args.actions) do
-            local cb, old_idx = nil, idx
+        for key, name in pairs(args.actions) do
+            local cb, idx = nil, key
 
             if type(name) == "function" then
                 cb = name
@@ -1004,7 +1004,7 @@ local function create(args)
                 a:connect_signal("invoked", cb)
             end
 
-            new_actions[old_idx] = a
+            new_actions[key] = a
         end
 
         for old_idx, a in pairs(new_actions) do

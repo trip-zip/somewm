@@ -16,10 +16,11 @@
 #include <wlr/interfaces/wlr_keyboard.h>
 #include <wlr/types/wlr_cursor.h>
 #include <wlr/types/wlr_xcursor_manager.h>
+#include <wlr/xcursor.h>
 #include <wlr/xwayland.h>
 
 #include "somewm_api.h"
-#include "wlr/xcursor.h"
+#include "wlr_compat.h"
 #include "xkb.h"
 #include "objects/signal.h"
 #include "objects/screen.h"
@@ -37,7 +38,8 @@
 
 /* Mirror of wlroots' private keyboard_group_device struct (wlr_keyboard_group.c).
  * Needed to iterate member keyboards when setting layout group.
- * Must match the exact layout of the wlroots 0.20 struct. */
+ * Must match the exact layout of the wlroots struct; verified identical in 0.19.3
+ * and 0.20.0. */
 struct kb_group_device {
 	struct wlr_keyboard *keyboard;
 	struct wl_listener key;
@@ -554,9 +556,7 @@ some_update_cursor_theme(const char *theme_name, uint32_t size)
 	/* Sync XWayland cursor if running */
 	struct wlr_xcursor *xcursor = wlr_xcursor_manager_get_xcursor(cursor_mgr, "default", 1);
 	if (xcursor && xwayland) {
-		wlr_xwayland_set_cursor(xwayland,
-			wlr_xcursor_image_get_buffer(xcursor->images[0]),
-			xcursor->images[0]->hotspot_x, xcursor->images[0]->hotspot_y);
+		COMPAT_XWAYLAND_SET_CURSOR(xwayland, xcursor->images[0]);
 	}
 #endif
 }

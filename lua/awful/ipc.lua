@@ -2326,8 +2326,8 @@ local function register_builtin_commands()
   local function parse_modifiers(mod_str)
     if not mod_str or mod_str == "" then return {} end
     local mods = {}
-    for mod in mod_str:gmatch("[^+,]+") do
-      mod = mod:match("^%s*(.-)%s*$")  -- trim whitespace
+    for raw in mod_str:gmatch("[^+,]+") do
+      local mod = raw:match("^%s*(.-)%s*$")  -- trim whitespace
       if mod ~= "" then
         table.insert(mods, mod)
       end
