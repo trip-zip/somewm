@@ -1340,6 +1340,7 @@ function systray._cleanup()
     systray._private.signal_sub_ids = {}
     systray._private.watcher_watch_id = nil
     systray._private.initialized = false
+    systray._private.host_registered = false
     systray._private.bus = nil
 end
 
