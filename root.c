@@ -1333,7 +1333,7 @@ wallpaper_cache_preload_path(const char *path, int screen_index)
 			guchar g = src_row[x * n_channels + 1];
 			guchar b = src_row[x * n_channels + 2];
 			guchar a = (n_channels == 4) ? src_row[x * n_channels + 3] : 255;
-			dest_row[x] = (a << 24) | (r << 16) | (g << 8) | b;
+			dest_row[x] = ((uint32_t)a << 24) | (r << 16) | (g << 8) | b;
 		}
 	}
 	cairo_surface_mark_dirty(img_surface);
@@ -1461,6 +1461,31 @@ static int
 luaA_root_set_call_handler(lua_State *L)
 {
 	return luaA_registerfct(L, 1, &miss_call_handler);
+}
+
+/** Release the miss handlers and the global bindings at hot-reload.
+ * The handlers are unref'd against the state that owns them. Leaving them set
+ * is worse than a stale read: luaA_registerfct unrefs the old value when
+ * awful._compat re-registers, which would free a live slot in the new
+ * registry, and the reset loops in luaA_root_keys/luaA_root_buttons would
+ * luaA_object_unref old-state objects the moment the reloaded config assigns
+ * its bindings. The key and button arrays are item refs on the root object,
+ * which goes with the state, so wiping the arrays is all they need.
+ */
+void
+luaA_root_hot_reload(lua_State *L)
+{
+	luaL_unref(L, LUA_REGISTRYINDEX, miss_index_handler);
+	luaL_unref(L, LUA_REGISTRYINDEX, miss_newindex_handler);
+	luaL_unref(L, LUA_REGISTRYINDEX, miss_call_handler);
+	miss_index_handler = LUA_REFNIL;
+	miss_newindex_handler = LUA_REFNIL;
+	miss_call_handler = LUA_REFNIL;
+
+	key_array_wipe(&globalconf.keys);
+	key_array_init(&globalconf.keys);
+	button_array_wipe(&globalconf.buttons);
+	button_array_init(&globalconf.buttons);
 }
 
 /* ========== SCREENSHOT SUPPORT ========== */

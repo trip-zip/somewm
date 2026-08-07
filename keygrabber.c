@@ -138,6 +138,18 @@ luaA_keygrabber_run(lua_State *L)
     return 0;
 }
 
+/** Release an active grab at hot-reload.
+ * Unref'd against the state being closed. Leaving it set makes the guard in
+ * luaA_keygrabber_run refuse every later grab for the life of the process,
+ * and the stop path would unref an old-state ref against the new registry.
+ */
+void
+keygrabber_hot_reload(lua_State *L)
+{
+    luaL_unref(L, LUA_REGISTRYINDEX, globalconf.keygrabber);
+    globalconf.keygrabber = LUA_REFNIL;
+}
+
 /** Stop grabbing the keyboard.
  * @deprecated keygrabber.stop
  */

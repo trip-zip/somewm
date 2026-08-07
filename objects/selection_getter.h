@@ -27,6 +27,7 @@
 #include <xcb/xcb.h>
 
 void selection_getter_class_setup(lua_State*);
+void selection_getter_hot_reload(lua_State*);
 void event_handle_selectionnotify(xcb_selection_notify_event_t*);
 void property_handle_awesome_selection_atom(uint8_t, xcb_window_t);
 

@@ -105,9 +105,8 @@ animation_nil_handle(lua_State *L, animation_t *anim)
 
 /* Free an animation and its Lua refs */
 static void
-animation_destroy(animation_t *anim)
+animation_destroy(lua_State *L, animation_t *anim)
 {
-	lua_State *L = globalconf_get_lua_State();
 	wl_list_remove(&anim->link);
 	if (anim->tick_ref != LUA_REFNIL)
 		luaL_unref(L, LUA_REGISTRYINDEX, anim->tick_ref);
@@ -230,7 +229,7 @@ animation_tick_all(void)
 	wl_list_for_each_safe(anim, tmp, &animations, link) {
 		if (anim->cancelled) {
 			animation_nil_handle(L, anim);
-			animation_destroy(anim);
+			animation_destroy(L, anim);
 			continue;
 		}
 
@@ -262,7 +261,7 @@ animation_tick_all(void)
 			}
 
 			animation_nil_handle(L, anim);
-			animation_destroy(anim);
+			animation_destroy(L, anim);
 		}
 	}
 
@@ -271,12 +270,23 @@ animation_tick_all(void)
 }
 
 void
-animation_cleanup(void)
+animation_hot_reload(lua_State *L)
 {
 	animation_t *anim, *tmp;
 	wl_list_for_each_safe(anim, tmp, &animations, link) {
-		animation_destroy(anim);
+		animation_destroy(L, anim);
 	}
+	/* The keepalive timer belongs to the wl_event_loop, not to the state
+	 * being torn down, so it survives the reload. Removing it here left it
+	 * NULL for the rest of the process, and arm_keepalive() with it, so
+	 * nothing woke an idle loop for an animation started afterwards. */
+	disarm_keepalive();
+}
+
+void
+animation_cleanup(void)
+{
+	animation_hot_reload(globalconf_get_lua_State());
 	if (keepalive_timer) {
 		wl_event_source_remove(keepalive_timer);
 		keepalive_timer = NULL;

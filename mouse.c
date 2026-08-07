@@ -319,6 +319,20 @@ luaA_mouse_set_newindex_miss_handler(lua_State *L)
     return luaA_registerfct(L, 1, &miss_newindex_handler);
 }
 
+/** Release the miss handlers at hot-reload.
+ * Same reasoning as luaA_root_hot_reload: unref against the state that owns
+ * them, or luaA_registerfct unrefs an old-state ref against the new registry
+ * when awful.mouse re-registers.
+ */
+void
+luaA_mouse_hot_reload(lua_State *L)
+{
+    luaL_unref(L, LUA_REGISTRYINDEX, miss_index_handler);
+    luaL_unref(L, LUA_REGISTRYINDEX, miss_newindex_handler);
+    miss_index_handler = LUA_REFNIL;
+    miss_newindex_handler = LUA_REFNIL;
+}
+
 const struct luaL_Reg awesome_mouse_methods[] =
 {
     { "__index", luaA_mouse_index },

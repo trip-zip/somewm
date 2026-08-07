@@ -420,7 +420,6 @@ somewm_sources = [
   'objects/drawin.c',
   'objects/layer_surface.c',
   'objects/signal.c',
-  'objects/timer.c',
   'objects/key.c',
   'objects/keybinding.c',
   # objects/awesome.c merged into luaa.c

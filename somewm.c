@@ -420,12 +420,9 @@ some_activate_lua_lock(void)
 	}
 }
 
-/** Deactivate Lua-controlled lock mode
- * - Restores lock surface and covers to normal layers
- * - Restores normal focus
- */
-void
-some_deactivate_lua_lock(void)
+/** The scene half of deactivating the lock: layers only, no Lua. */
+static void
+lua_lock_scene_restore(void)
 {
 	drawin_t *lock_surface = some_get_lua_lock_surface();
 	int cover_count;
@@ -448,6 +445,16 @@ some_deactivate_lua_lock(void)
 
 	/* Let stack_refresh() sort everything back to proper layers */
 	stack_refresh();
+}
+
+/** Deactivate Lua-controlled lock mode
+ * - Restores lock surface and covers to normal layers
+ * - Restores normal focus
+ */
+void
+some_deactivate_lua_lock(void)
+{
+	lua_lock_scene_restore();
 
 	/* Restore focus to pre-lock client if still valid, otherwise top client */
 	if (pre_lock_focused_client && pre_lock_focused_client->scene) {
@@ -457,6 +464,21 @@ some_deactivate_lua_lock(void)
 	}
 	pre_lock_focused_client = NULL;
 	motionnotify(0, NULL, 0, 0, 0, 0);
+}
+
+/** Deactivate Lua-controlled lock mode without touching Lua.
+ *
+ * For the config-timeout abort, which unlocks on a state siglongjmp left
+ * mid-execution. The focus tail of some_deactivate_lua_lock() reaches
+ * request::focus_restore, property::urgent and the unfocus signals, none of
+ * which may run on that state. The scene is restored either way, since the
+ * lock UI is destroyed by the rebuild that follows.
+ */
+void
+some_deactivate_lua_lock_no_focus(void)
+{
+	lua_lock_scene_restore();
+	pre_lock_focused_client = NULL;
 }
 
 /** Promote a single cover to LyrBlock during an active lock.
@@ -915,6 +937,13 @@ run(char *startup_cmd)
 	 * rc.lua connects its handlers. */
 	if (globalconf_L) {
 		luaA_screen_emit_all_added(globalconf_L);
+		/* The one and only baseline: everything C owns is attached either
+		 * before this line, in setup(), or with an explicit exemption. Record
+		 * it after that and the config's own timers land below it, where no
+		 * sweep can ever reach them; record it before setup() and the sweep
+		 * destroys the libdbus watches, leaving incoming D-Bus undispatched
+		 * for good. */
+		luaA_record_glib_source_baseline();
 		luaA_loadrc();
 		/* Emit screen::scanned AFTER rc.lua loads (matches AwesomeWM).
 		 * This allows rc.lua handlers to be connected before scanned fires. */
@@ -1016,10 +1045,15 @@ run(char *startup_cmd)
 
 	/* Run the refresh cycle in the prepare phase (see refresh_source_prepare).
 	 * G_PRIORITY_HIGH so it is prepared before the default-priority timeout
-	 * sources the refresh Lua may arm. Attached before wayland_source so its
-	 * id stays below glib_source_baseline and survives hot-reload cleanup. */
+	 * sources the refresh Lua may arm.
+	 *
+	 * Both this and the Wayland source are attached after the first config has
+	 * loaded, on purpose: a refresh or a client event dispatched mid-config is
+	 * worse than a late one. That puts them above the sweep's baseline, so
+	 * they are exempted by hand instead. */
 	GSource *refresh_source = g_source_new(&refresh_source_funcs, sizeof(GSource));
 	g_source_set_priority(refresh_source, G_PRIORITY_HIGH);
+	luaA_glib_source_protect(refresh_source);
 	g_source_attach(refresh_source, NULL);
 
 	/* Create and attach Wayland GSource to GLib main context */
@@ -1028,12 +1062,8 @@ run(char *startup_cmd)
 		fprintf(stderr, "FATAL: Failed to create Wayland source\n");
 		exit(EXIT_FAILURE);
 	}
+	luaA_glib_source_protect(wayland_source);
 	g_source_attach(wayland_source, NULL);  /* Attach to default context */
-
-	/* Record highest GLib source ID before Lua loads. During hot-reload,
-	 * all sources above this baseline are removed to prevent stale Lgi
-	 * FFI closures from firing with dead lua_State* pointers. */
-	globalconf.glib_source_baseline = g_source_get_id(wayland_source);
 
 	/* Set custom poll function - THE critical integration point
 	 * This ensures some_refresh() is called before every poll() syscall,
@@ -1416,9 +1446,9 @@ setup(void)
 	luaA_init();
 	some_event_queue_init();
 
-	/* Initialize animation subsystem (must be AFTER luaA_init for Lua state) */
+	/* Initialize animation subsystem. The handle metatable is registered per
+	 * state by luaA_register_state, so only the event-loop side is set up here. */
 	animation_init(event_loop);
-	animation_setup(globalconf_get_lua_State());
 
 	/* Initialize wallpaper cache (must be AFTER luaA_init which zeroes globalconf) */
 	wallpaper_cache_init();
@@ -1725,12 +1755,11 @@ find_lgi_guard(void)
 	static char found[PATH_MAX];
 	const char *name = "/liblgi_closure_guard.so";
 
-	/* 1. Compiled-in libdir (fast path) */
-	snprintf(found, sizeof(found), "%s%s", SOMEWM_LIBDIR, name);
-	if (access(found, R_OK) == 0)
-		return found;
-
-	/* 2. Relative to the running binary (handles any prefix) */
+	/* 1. Relative to the running binary (handles any prefix).
+	 * Before the compiled-in libdir, so a binary run out of a build
+	 * directory uses the guard built beside it rather than whatever an
+	 * older `make install` left in SOMEWM_LIBDIR. For an installed
+	 * binary the two resolve to the same file. */
 	char self[PATH_MAX];
 	ssize_t len = readlink("/proc/self/exe", self, sizeof(self) - 1);
 	if (len > 0) {
@@ -1750,6 +1779,11 @@ find_lgi_guard(void)
 			}
 		}
 	}
+
+	/* 2. Compiled-in libdir */
+	snprintf(found, sizeof(found), "%s%s", SOMEWM_LIBDIR, name);
+	if (access(found, R_OK) == 0)
+		return found;
 
 	/* 3. Common system paths */
 	const char *search[] = {

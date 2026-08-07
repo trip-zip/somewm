@@ -376,6 +376,33 @@ luaA_selection_getter_gc(lua_State *L)
     return 0;
 }
 
+/** Cancel every in-flight getter at hot-reload.
+ *
+ * A getter holds a wl_event_loop fd source and an open pipe read end inside its
+ * userdata. Left armed, the next readable or hangup event runs
+ * selection_getter_read_handler against an object from the destroyed state,
+ * which also luaL_unrefs an old-state ref against the new state's tracking
+ * table. Clearing the ref first makes selection_getter_cleanup drop it instead.
+ */
+void
+selection_getter_hot_reload(lua_State *L)
+{
+    lua_pushliteral(L, REGISTRY_GETTER_TABLE_INDEX);
+    lua_rawget(L, LUA_REGISTRYINDEX);
+
+    lua_pushnil(L);
+    while (lua_next(L, -2) != 0) {
+        selection_getter_t *getter = luaA_toudata(L, -1, &selection_getter_class);
+        if (getter) {
+            /* Dropped, not unref'd: the ref belongs to the old state. */
+            getter->ref = LUA_NOREF;
+            selection_getter_cleanup(getter);
+        }
+        lua_pop(L, 1);
+    }
+    lua_pop(L, 1);
+}
+
 void
 selection_getter_class_setup(lua_State *L)
 {
