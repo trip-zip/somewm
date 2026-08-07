@@ -62,6 +62,7 @@ jobs:
             libdbus-1-dev \
             dbus \
             libglib2.0-bin \
+            bc \
             libdrm-dev \
             libgbm-dev \
             libpixman-1-dev \

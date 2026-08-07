@@ -33,11 +33,17 @@ count_events() {
     echo "${n:-0}"
 }
 
-wait_events() {
-    local file="$1" want="$2" deadline=$((SECONDS + 5))
+# The client reads the server's subscribe ack without printing it, so there
+# is nothing to poll for before the first event. Instead of sleeping and
+# hoping registration won the race, re-toggle until the event lands: a live
+# subscriber catches one of the toggles, a dead one still runs out the
+# deadline. Extra toggles only grow the count, and every check below is >=.
+pump_events() {
+    local file="$1" want="$2" deadline=$((SECONDS + 10))
     while [ "$SECONDS" -lt "$deadline" ]; do
         [ "$(count_events "$file")" -ge "$want" ] && return 0
-        sleep 0.25
+        sw_eval hr-sub "$TOGGLE" || true
+        sleep 0.5
     done
     return 1
 }
@@ -45,10 +51,9 @@ wait_events() {
 SOMEWM_SOCKET="$(sw_sock hr-sub)" "$SOMEWM_CLIENT" --subscribe tag_switch > "$SUBOUT" 2>&1 &
 sub_pid=$!
 sw_bg $sub_pid
-sleep 1
 
 check_eval hr-sub "phase-1 tag toggle" "$TOGGLE" toggled
-if wait_events "$SUBOUT" 1; then
+if pump_events "$SUBOUT" 1; then
     pass "subscriber receives events before the reload"
 else
     fail "subscriber receives events before the reload" "nothing in $SUBOUT"
@@ -63,7 +68,7 @@ check "subscriber process is still running" \
     "$(kill -0 $sub_pid 2>/dev/null && echo yes || echo no)" yes
 
 check_eval hr-sub "phase-2 tag toggle" "$TOGGLE" toggled
-if wait_events "$SUBOUT" $((before + 1)); then
+if pump_events "$SUBOUT" $((before + 1)); then
     pass "the existing subscriber still receives events after the reload"
 else
     fail "the existing subscriber still receives events after the reload" \
@@ -76,10 +81,9 @@ kill $sub_pid 2>/dev/null || true
 SOMEWM_SOCKET="$(sw_sock hr-sub)" "$SOMEWM_CLIENT" --subscribe tag_switch > "$SUBOUT2" 2>&1 &
 sub2_pid=$!
 sw_bg $sub2_pid
-sleep 1
 
 check_eval hr-sub "phase-2 tag toggle for the fresh subscriber" "$TOGGLE" toggled
-if wait_events "$SUBOUT2" 1; then
+if pump_events "$SUBOUT2" 1; then
     pass "a freshly subscribed client does receive events (transport is healthy)"
 else
     fail "a freshly subscribed client does receive events" \

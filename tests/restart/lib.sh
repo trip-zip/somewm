@@ -141,7 +141,10 @@ sw_eval() {
     wait=$(echo "$_last_eval + $SOMEWM_EVAL_PACE - $EPOCHREALTIME" | bc)
     case $wait in -*|0) ;; *) sleep "$wait" ;; esac
 
-    out=$("$SOMEWM_CLIENT" test eval --name "$name" "$lua" 2>&1)
+    # Bounded like every gdbus call: the client blocks forever on a wedged
+    # compositor, and a named eval failure beats burning the whole test
+    # timeout as an unexplained ERROR.
+    out=$(timeout 5 "$SOMEWM_CLIENT" test eval --name "$name" "$lua" 2>&1)
     rc=$?
     _last_eval=$EPOCHREALTIME
     EVAL_VALUE=""
@@ -155,6 +158,7 @@ sw_eval() {
             esac
             ;;
         1) EVAL_ERROR=${out#ERROR }; return 1 ;;
+        124) EVAL_ERROR="eval timed out after 5s"; return 2 ;;
         *) EVAL_ERROR="transport rc=$rc: $out"; return 2 ;;
     esac
 }

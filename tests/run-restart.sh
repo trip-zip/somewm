@@ -96,8 +96,9 @@ for t in $tests; do
     fi
 
     # Read the xfail declaration statically, so the classification survives a
-    # test that dies before it can print anything.
-    declared=$(sed -nE 's/^# xfail: (D[0-9]+).*/\1/p' "$t" | head -1)
+    # test that dies before it can print anything. The reason is free text,
+    # per the format in lib.sh's usage header.
+    declared=$(sed -nE 's/^# xfail: (.+)$/\1/p' "$t" | head -1)
 
     status_file="$ARTIFACT_DIR/$name.status"
     rm -f "$status_file"
