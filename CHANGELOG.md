@@ -4,11 +4,57 @@ All notable changes to somewm will be documented in this file.
 
 ## [Unreleased]
 
+## [1.4.3] - 2026-08-08
+
+Patch release. 25 commits since 1.4.2: a hot-reload rework, wlroots 0.20
+support, and border geometry fixes. One property removed to match upstream
+AwesomeWM; existing rc.lua configs otherwise run unchanged.
+
+### Added
+
+- wlroots 0.20 support, alongside 0.19. The build picks whichever version the
+  system provides; `-Dwlroots_version` forces the choice. Restores the build
+  on Debian 13 and Ubuntu 24.04 (#579)
+- Restart test suite: assertions on both sides of a real `awesome.restart()`,
+  driven from outside through `somewm-client test`
+- `make check-qa` runs luacheck, mirroring upstream AwesomeWM
+
+### Fixed
+
+- Hot-reload closes the old Lua state instead of leaking it, ending the
+  ~90 MB RSS growth per `awesome.restart()` (#574)
+- Hot-reload no longer crashes in lgi after reload: lgi's C libraries are
+  pinned across the state close (#465)
+- naughty and the status notifier watcher release their D-Bus names and
+  registrations on exit, so notifications and the systray survive reloads
+- Both rebuild paths reset C-held Lua state, including the config-timeout
+  recovery path
+- Border width no longer inflates client size: geometry is border-exclusive
+  as in AwesomeWM, fixing titlebar positioning, shadow sizing, clipping, and
+  `c.content` capture offsets
+- Destroying the focused client emits `unfocus` and `property::active`,
+  matching AwesomeWM
+- Timers armed during the refresh cycle wake the poll, so an idle session no
+  longer sleeps past a due `gears.timer`
+- The seat advertises pointer and keyboard capabilities at startup, not only
+  after the first input device appears
+- `print()` from rc.lua reaches redirected logs (stdout is line-buffered)
+- awful.ipc parses under Lua 5.5 (loop variables are read-only there)
+- tasklist and drawable no longer swallow widget errors; undefined-variable
+  bugs fixed in ipc, systray tooltips, and focus_tracker
+- `clickfinger_button_map` initialized (touchpad clickfinger crash)
+
 ### Removed
 
 - `client_shape_input` property and `awful.client.shape.update.input`,
   matching upstream AwesomeWM's revert of the feature (#4100). The drawin
   `shape_input` property is unaffected.
+
+### Notes
+
+- AwesomeWM baseline unchanged from 1.4.0, plus ported upstream fixes #4100
+  and #3998.
+- See [`DEVIATIONS.md`](DEVIATIONS.md) for Wayland vs X11 differences.
 
 ## [1.4.2] - 2026-06-22
 
