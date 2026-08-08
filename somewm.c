@@ -3,6 +3,7 @@
  */
 #define _GNU_SOURCE
 #include <dlfcn.h>
+#include <link.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <getopt.h>
@@ -7652,6 +7653,38 @@ ensure_lgi_guard(int argc, char *argv[])
 
 	execvp(argv[0], argv);
 	/* If exec fails, continue without the guard */
+}
+
+/* lua_close() dlcloses every C module the package library loaded, but
+ * GObject type registration is process-global and permanent, so
+ * libgirepository cannot be unloaded and loaded again: the fresh state's
+ * require("lgi") re-registers the GIRepository type, GLib refuses, and
+ * gi_require crashes on the failed object. */
+static int
+pin_lgi_lib_cb(struct dl_phdr_info *info, size_t size, void *data)
+{
+	(void)size;
+	(void)data;
+
+	if (!info->dlpi_name || !info->dlpi_name[0])
+		return 0;
+	if (!strstr(info->dlpi_name, "corelgilua") &&
+	    !strstr(info->dlpi_name, "libgirepository"))
+		return 0;
+
+	if (!dlopen(info->dlpi_name, RTLD_LAZY | RTLD_NOLOAD | RTLD_NODELETE))
+		fprintf(stderr, "somewm: hot-reload: failed to pin %s: %s\n",
+			info->dlpi_name, dlerror());
+	return 0;
+}
+
+/** Promote lgi's C libraries to RTLD_NODELETE so closing the Lua state
+ * leaves them resident and the next require("lgi") re-binds to the copy
+ * whose GTypes are already registered. No-op if lgi was never loaded. */
+void
+somewm_pin_lgi_libs(void)
+{
+	dl_iterate_phdr(pin_lgi_lib_cb, NULL);
 }
 
 int

@@ -288,6 +288,7 @@ static inline bool session_is_locked(void) {
 void client_remove_all_listeners(client_t *c);
 void client_reregister_listeners(client_t *c);
 void some_refresh(void);
+void somewm_pin_lgi_libs(void);
 
 /*
  * Test helpers - headless output hotplug simulation

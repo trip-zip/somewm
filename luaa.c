@@ -4487,6 +4487,12 @@ luaA_state_teardown_lua(lua_State *L, bool lua_safe)
 static void
 luaA_state_teardown_c(const char *label, bool exit_emitted)
 {
+	/* lua_close() dlcloses the C modules the state loaded, and
+	 * libgirepository cannot survive an unload/reload cycle (GType
+	 * registration is process-global). Pin lgi's libraries resident
+	 * before the state goes away. */
+	somewm_pin_lgi_libs();
+
 	/* Layer surfaces last: detaching earlier would make arrangelayers() take
 	 * the no-Lua-object branch mid-teardown, which force-grants keyboard
 	 * focus to whichever surface asked for it. */
