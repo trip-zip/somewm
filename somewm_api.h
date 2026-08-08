@@ -263,6 +263,7 @@ static inline bool session_is_locked(void) {
  * Hot-reload support
  */
 void some_refresh(void);
+void somewm_pin_lgi_libs(void);
 
 /*
  * Test helpers - headless output hotplug simulation
