@@ -385,15 +385,20 @@ some_event_queue_init(void)
 }
 
 void
-some_event_queue_reset(void)
+some_event_queue_reset(lua_State *L)
 {
-	/* Drop pending events without unref-ing. Used by hot-reload right
-	 * before the old Lua state is abandoned: the old registry goes
-	 * with the leaked state, so unref-ing is wasted work. Letting
-	 * these events survive into the new state would be a correctness
-	 * bug: the old integer refs would index unrelated slots in the
-	 * new registry and a later drain would emit on random objects
-	 * (or unref unrelated slots). */
+	/* Release the pending events against the state that owns their refs.
+	 * Letting them survive into the new state would be a correctness bug:
+	 * the old integer refs would index unrelated slots in the new registry
+	 * and a later drain would emit on random objects. L is NULL when the
+	 * queue is reset after the swap, where there is nothing left to unref
+	 * against. */
+	if (L) {
+		for (int i = 0; i < queue_len; i++) {
+			luaL_unref(L, LUA_REGISTRYINDEX, queue_buf[i].object_ref);
+			luaL_unref(L, LUA_REGISTRYINDEX, queue_buf[i].args_ref);
+		}
+	}
 	queue_len = 0;
 }
 

@@ -128,14 +128,13 @@ parse_command(lua_State *L, int idx, GError **error)
 	return argv;
 }
 
-/** Invalidate all exit callbacks in the running children array.
- * Called during hot-reload before the old Lua state is abandoned.
- * We can't luaL_unref (old state is leaked), but setting callbacks
- * to LUA_NOREF prevents spawn_child_exited from trying to call
- * stale registry refs in the new state.
+/** Release all exit callbacks in the running children array.
+ * Called during hot-reload before the old Lua state is closed. The refs
+ * are unref'd against the dying state, and LUA_NOREF keeps
+ * spawn_child_exited from resolving stale registry refs in the new one.
  */
 void
-spawn_invalidate_callbacks(void)
+spawn_invalidate_callbacks(lua_State *L)
 {
 	if (!running_children)
 		return;
@@ -143,6 +142,7 @@ spawn_invalidate_callbacks(void)
 	for (guint i = 0; i < running_children->len; i++) {
 		running_child_t *child = &g_array_index(running_children,
 			running_child_t, i);
+		luaL_unref(L, LUA_REGISTRYINDEX, child->exit_callback);
 		child->exit_callback = LUA_NOREF;
 	}
 }

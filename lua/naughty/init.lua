@@ -8,6 +8,7 @@
 
 local naughty = require("naughty.core")
 local gdebug = require("gears.debug")
+local ascreen = require("awful.screen")
 local capi = {awesome = awesome, screen = screen}
 if dbus then
     naughty.dbus = require("naughty.dbus")
@@ -33,7 +34,10 @@ naughty.notification = require("naughty.notification")
 --    screen.connect_signal("scanned", function() foobar() end)
 --
 local function screen_fallback()
-    if capi.screen.count() == 0 then
+    -- capi.screen.count() is not enough: after a config timeout the Lua state
+    -- is rebuilt while the screen refs still point at the closed one, so the
+    -- compositor reports screens that no notification can be placed on.
+    if capi.screen.count() == 0 or not ascreen.focused() then
         gdebug.print_warning("An error occurred before a screen was added")
 
         -- Private API to scan for screens now.

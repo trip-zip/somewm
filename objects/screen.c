@@ -52,18 +52,43 @@ static bool screens_scanned = false;
 extern void signal_array_init(signal_array_t *arr);
 extern void signal_array_wipe(signal_array_t *arr);
 
-/** Reset screen_refs array for hot-reload.
- * Unrefs all screen objects from the old Lua registry and resets the array.
- * Must be called BEFORE lua_close() so the unrefs happen against the live state.
+/** Drop the screen_refs array at a Lua state swap.
+ * The entries are registry refs owned by the state being torn down, so they are
+ * dropped without unref: both paths close that state, which frees the registry
+ * they index, and unreffing them against the new one would free live slots.
  */
 void
 luaA_screen_refs_reset(void)
 {
 	screen_count = 0;
-	/* Keep allocated capacity for reuse. screen_refs entries are Lua registry
-	 * refs from the old state - they become invalid after lua_close(). */
+	/* Keep allocated capacity for reuse. */
 	primary_screen = NULL;
 	screens_scanned = false;
+}
+
+/** Rebuild screen objects for the physical monitors in a fresh Lua state.
+ * The config-timeout path closes the state, which frees every screen userdata
+ * while screen_refs still holds its registry ints and the Monitor structs live
+ * on. Without this the fresh state has no screens: screen.primary is nil,
+ * pushing a stale ref warns "on non-object", and naughty's startup-error
+ * fallback concludes no screen exists and fake_adds a phantom one.
+ *
+ * The reload path does not use this; it replays its own screen snapshots so
+ * geometry and names survive. Here there is nothing to preserve, so this
+ * mirrors what createmon() does at startup.
+ */
+void
+luaA_screen_hot_reload(lua_State *L)
+{
+	Monitor *m;
+	int index = 1;
+
+	luaA_screen_refs_reset();
+
+	wl_list_for_each(m, &mons, link) {
+		luaA_screen_new(L, m, index++);
+		lua_pop(L, 1);  /* luaA_screen_new leaves the screen on the stack */
+	}
 }
 
 /** Get all screen objects for hot-reload snapshot.
@@ -94,10 +119,12 @@ luaA_screen_get_all(lua_State *L, screen_t **out_screens, int *out_count)
  * ======================================================================== */
 
 /** Create a new screen object
+ * Leaves the screen userdata on the stack on both exits, so the caller pops
+ * regardless of what comes back.
  * \param L Lua state
  * \param m Monitor pointer
  * \param index Screen index (1-based)
- * \return Pointer to new screen object
+ * \return Pointer to new screen object, NULL if the ref array could not grow
  */
 screen_t *
 luaA_screen_new(lua_State *L, Monitor *m, int index)

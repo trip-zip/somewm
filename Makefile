@@ -9,7 +9,7 @@
 
 -include .local.mk
 
-.PHONY: all install uninstall clean setup reconfigure test test-unit test-check test-signal test-integration test-orchestrator test-asan test-one test-visual test-one-visual test-ci test-fast build-test build-bench bench-run bench-run-live bench-json bench-baseline bench-compare bench-check bench-memory bench-flamegraph bench-diff bench-heaptrack profile profile-lua profile-save profile-diff
+.PHONY: all install uninstall clean setup reconfigure test test-unit test-check test-signal test-integration test-orchestrator test-restart test-one-restart test-asan test-one test-visual test-one-visual test-ci test-fast build-test build-bench bench-run bench-run-live bench-json bench-baseline bench-compare bench-check bench-memory bench-flamegraph bench-diff bench-heaptrack profile profile-lua profile-save profile-diff
 
 # Default build: optimized release, no sanitizers
 all:
@@ -49,7 +49,7 @@ reconfigure:
 # =============================================================================
 
 # Run all tests (fast, no ASAN)
-test: test-unit test-check test-signal test-orchestrator test-integration
+test: test-unit test-check test-signal test-orchestrator test-restart test-integration
 
 # Unit tests only (busted, no compositor needed)
 test-unit:
@@ -67,6 +67,22 @@ test-signal: build-test
 test-orchestrator: build-test
 	@./tests/test-test-orchestrator.sh ./build-test/somewm ./build-test/somewm-client
 
+# Restart tests: assertions on both sides of a real awesome.restart()
+test-restart: build-test
+	@SOMEWM=./build-test/somewm SOMEWM_CLIENT=./build-test/somewm-client ./tests/run-restart.sh
+
+# Run single restart test, keeping its instance log
+# Usage: make test-one-restart TEST=tests/restart/notify-after-restart.sh
+test-one-restart: build-test
+ifndef TEST
+	@echo "Usage: make test-one-restart TEST=tests/restart/restart-executes.sh"
+	@exit 1
+endif
+	@KEEP_LOGS=1 \
+	 SOMEWM=./build-test/somewm \
+	 SOMEWM_CLIENT=./build-test/somewm-client \
+	 ./tests/run-restart.sh $(TEST)
+
 # Integration tests (visual mode by default, no ASAN)
 test-integration: build-test
 	@SOMEWM=./build-test/somewm SOMEWM_CLIENT=./build-test/somewm-client ./tests/run-integration.sh
@@ -76,7 +92,7 @@ test-asan: asan
 	@SOMEWM=./build-asan/somewm SOMEWM_CLIENT=./build-asan/somewm-client ./tests/run-integration.sh
 
 # CI mode: headless (for automated testing environments)
-test-ci: build-test test-unit test-signal
+test-ci: build-test test-unit test-signal test-restart
 	@HEADLESS=1 \
 	 SOMEWM=./build-test/somewm \
 	 SOMEWM_CLIENT=./build-test/somewm-client \

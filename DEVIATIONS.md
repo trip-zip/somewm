@@ -34,8 +34,8 @@ This document tracks all known differences between somewm and AwesomeWM. These e
 - AwesomeWM re-execs itself via `execvp()`, restarting the entire process
 - SomeWM performs in-process Lua hot-reload: tears down the Lua VM, rebuilds it from `rc.lua`, and reattaches existing clients
 - wlroots, the scene graph, and client surfaces are untouched during reload
-- The old Lua state is intentionally leaked (~1-2 MB) to avoid Lgi closure crashes
-- An LD_PRELOAD closure guard (`lgi_closure_guard.so`) blocks stale FFI closures from the leaked state
+- The old Lua state is closed, so a module must release what it registered with GLib or GDBus when `"exit"` is emitted, or its callback outlives the state it points into
+- A source sweep in C and an LD_PRELOAD closure guard (`lgi_closure_guard.so`) back that contract up and report when it is broken. The sweep destroys any GLib source the closed state still owned, so it never dispatches; the guard cannot do the same, since libffi reads a closure's `cif` (which lives in the closed state) before the guard is entered
 
 **Window Visibility Timing**
 - X11: `xcb_map_window()` maps immediately, content shows when ready
@@ -262,6 +262,13 @@ These modifications to AwesomeWM's Lua libraries were necessary for Wayland comp
 | `awful/mouse/snap.lua` | ARGB32 shapes, surface lifetime | Same Wayland surface patterns as `wibox/init.lua` |
 | `gears/filesystem.lua` | `somewm/` paths | Rebranded config/cache directories |
 | `naughty/dbus.lua` | `awesome.version or "somewm-dev"` fallback | Version string safety |
+
+### Removed APIs
+
+| API | Replacement | Reason |
+|-----|-------------|--------|
+| `_timer` | `gears.timer` | An undocumented C wrapper around `wl_event_loop_add_timer` with no callers in the tree. Its timers were never removed on a hot-reload, so each one outlived the Lua state that owned it. `gears.timer` is GLib-based and unaffected. |
+| `awful.ipc.remove_subscriber` | none needed | Nothing ever called it, so the subscriber count it maintained only grew and the broadcast fast path stayed permanently on. C tracks subscriber fds itself now (`_ipc_has_subscribers`). |
 
 ### New Lua Modules (no AwesomeWM equivalent)
 

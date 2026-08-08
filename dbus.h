@@ -22,8 +22,11 @@
 #ifndef AWESOME_DBUS_H
 #define AWESOME_DBUS_H
 
+#include <lua.h>
+
 void a_dbus_init(void);
 void a_dbus_cleanup(void);
+void a_dbus_hot_reload(lua_State *L);
 
 #endif
 // vim: filetype=c:expandtab:shiftwidth=4:tabstop=8:softtabstop=4:textwidth=80

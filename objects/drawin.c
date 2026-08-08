@@ -347,7 +347,7 @@ drawin_apply_shape_mask(drawable_t *d, cairo_surface_t *shape)
 				r = (r * shape_alpha) / 255;
 				a = (a * shape_alpha) / 255;
 
-				dst_row[x] = (a << 24) | (r << 16) | (g << 8) | b;
+				dst_row[x] = ((uint32_t)a << 24) | (r << 16) | (g << 8) | b;
 			}
 		}
 	}
@@ -441,7 +441,7 @@ drawin_apply_shape_mask_for_screenshot(cairo_surface_t *src, cairo_surface_t *sh
 				r = (r * shape_alpha) / 255;
 				a = (a * shape_alpha) / 255;
 
-				dst_row[x] = (a << 24) | (r << 16) | (g << 8) | b;
+				dst_row[x] = ((uint32_t)a << 24) | (r << 16) | (g << 8) | b;
 			}
 		}
 	}

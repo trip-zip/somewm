@@ -38,4 +38,7 @@ int luaA_xkb_get_group_names(lua_State *L);
 void xkb_schedule_group_changed(void);
 void xkb_schedule_map_changed(void);
 
+/* somewm: Drop a pending refresh before a Lua state swap */
+void xkb_reset_pending(void);
+
 #endif /* SOMEWM_XKB_H */
