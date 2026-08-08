@@ -253,7 +253,16 @@ end
 local function paint()
     if not next(pending_repaint) then return end
 
-    local root_width, root_height = capi.root.size()
+    -- On X11 the root window is always at (0, 0) so AwesomeWM only needs
+    -- root.size(); on Wayland (somewm) wlr_output_layout can place outputs
+    -- at negative coordinates (portrait monitor left of the primary), so
+    -- the surface would otherwise be allocated in layout-absolute space and
+    -- all draws into negative-x screens would land off-surface. Fetch the
+    -- layout origin and pre-translate the cairo context so every subsequent
+    -- s.geometry.x / geo.x (still layout-absolute) maps onto surface pixels.
+    local root_geom = capi.root.geometry()
+    local root_x, root_y = root_geom.x, root_geom.y
+    local root_width, root_height = root_geom.width, root_geom.height
 
     -- Get the current wallpaper content.
     local source = surface(root.wallpaper())
@@ -265,11 +274,14 @@ local function paint()
     if source then
         target = source:create_similar(cairo.Content.COLOR, root_width, root_height)
         cr     = cairo.Context(target)
+        cr:translate(-root_x, -root_y)
 
         -- Copy the old wallpaper to the new one
         cr:save()
         cr.operator = cairo.Operator.SOURCE
-        cr:set_source_surface(source, 0, 0)
+        -- source is already in surface-pixel space (matches target size),
+        -- compensate the outer translate so source(0,0) lands on target(0,0).
+        cr:set_source_surface(source, root_x, root_y)
 
         for s in screen do
             cr:rectangle(
@@ -287,6 +299,7 @@ local function paint()
     else
         target = cairo.ImageSurface(cairo.Format.RGB32, root_width, root_height)
         cr     = cairo.Context(target)
+        cr:translate(-root_x, -root_y)
     end
 
     local walls = {}
