@@ -81,13 +81,22 @@ Queued signals (delivered at the next frame boundary):
 - **Mouse**: `mouse::enter`, `mouse::leave`, `mouse::move` (coalesced to one event per object per frame)
 - **Lifecycle**: `list`, `swapped`
 - **Request**: `request::activate`, `request::urgent`, `request::tag`, `request::select`, plus the systray equivalents (`request::secondary_activate`, `request::context_menu`, `request::scroll`)
+- **Output/screen topology** (when triggered by output hotplug or state changes, e.g. wlr-randr / kanshi): output `property::enabled`, `property::scale`, `property::transform`, `property::mode`, `property::adaptive_sync`, `property::screen` (screen attached), output class `added`; screen `property::scale`, `property::geometry`, `property::workarea`, `primary_changed`, screen class `list`, `property::_viewports`. The Lua-initiated paths stay synchronous: `screen.fake_add`, `screen.fake_remove`, and `s:swap(...)` emit `list` inline, and `screen.primary = s` emits `primary_changed` inline.
+- **Layer shell**: `property::layer`, `property::anchor`, `property::exclusive_zone`, `property::keyboard_interactive`, `property::margin`
+- **Globals**: `xkb::map_changed`, `xkb::group_changed`, `idle::start`, `idle::stop`, `dpms::on` (from input activity; `awesome.dpms_on()` emits synchronously), `spawn::timeout`, `spawn::completed`, `switch::toggle`, `screen::focus`, `logind::prepare_sleep`, `client::map`, `client::unmap`
 
 Kept synchronous:
 
 - `request::manage`, `request::unmanage`: rules must run before the client is visible, and client properties must still be valid during the handler
 - `request::geometry`: the Lua handler applies new geometry (fullscreen / maximize) via `c:geometry(...)`, and C code inspects `c->geometry` immediately after the emission (`client_set_fullscreen` calls `client_resize_do` on the next line). Queueing would leave that resize operating on stale bounds.
+- `request::focus_restore`: C checks whether the handler set a focused client and falls back to the topmost client otherwise, a synchronous request/response
 - `scanning`, `scanned`: startup synchronization barriers
-- Scalar `property::*` signals (`property::name`, `property::type`, `property::window`, `property::screen`, `property::fullscreen`, `property::maximized*`, `property::size_hints_honor`): the new value is already in C state when the signal fires; queueing them adds latency with no batching benefit
+- Client scalar `property::*` signals (`property::name`, `property::type`, `property::window`, `property::screen`, `property::fullscreen`, `property::maximized*`, `property::size_hints_honor`): the new value is already in C state when the signal fires; queueing them adds latency with no batching benefit. `property::screen` additionally has a synchronous Lua path (`c.screen = s`); queueing only the C path could deliver a stale change after a newer one.
+- Screen and output teardown (`removed` on both, output `property::screen` when the screen is detached): cleanup invalidates the objects before the drain runs, so queued delivery would be silently dropped, the same reason `request::unmanage` is synchronous
+- Screen addition (`added`, `_added`): the hotplug code assigns orphaned clients right after the emission and relies on Lua handlers having created the screen's tags and wibars first, the same reason `request::manage` is synchronous. Both wait on the lifecycle redesign (objects created in a pending state, resolved at the frame boundary).
+- layer_surface `request::manage`, `request::unmanage`, `request::keyboard`: same reasons as the client variants; for `request::keyboard`, C reads `has_keyboard_focus` immediately after the emission
+- Keybinding, button, and grabber dispatch (`press`, `release`, keygrabber/mousegrabber callbacks): C reads the handler's result to decide whether the input propagates to the client. The deferred design splits this into a synchronous lookup against a pre-registered binding table with dispatch through the queue; until then it stays synchronous.
+- `dbus.c` method dispatch: handler return values become the D-Bus reply
 
 ### Signals removed
 

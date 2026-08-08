@@ -45,6 +45,7 @@
 #include <fcntl.h>
 
 #include "luaa.h"
+#include "event_queue.h"
 #include "common/luaobject.h"
 #include "common/lualib.h"
 #include "x11_compat.h"
@@ -378,7 +379,7 @@ a_dbus_process_request(DBusConnection *dbus_connection, DBusMessage *msg)
             dbus_message_iter_get_basic(&iter, &is_sleeping);
 
             lua_pushboolean(L, is_sleeping);
-            luaA_emit_signal_global_with_stack(L, "logind::prepare_sleep", 1);
+            some_event_queue_global_args(L, SIG_LOGIND_PREPARE_SLEEP, 1);
         }
         /* Continue processing as normal D-Bus signal too */
     }
