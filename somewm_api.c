@@ -11,6 +11,7 @@
 #include <math.h>
 #include <glib.h>
 #include <wlr/types/wlr_fractional_scale_v1.h>
+#include <wlr/types/wlr_layer_shell_v1.h>
 #include <wlr/types/wlr_seat.h>
 #include <wlr/types/wlr_keyboard_group.h>
 #include <wlr/interfaces/wlr_keyboard.h>
@@ -420,11 +421,56 @@ some_set_seat_keyboard_focus(Client *c)
 			return;
 	}
 
-#ifdef XWAYLAND
-	/* Deactivate old surface if switching away from an X11 client */
-	if (c->client_type == X11 && seat->keyboard_state.focused_surface)
-		client_activate_surface(seat->keyboard_state.focused_surface, 0);
+	/* Resolve the previously-focused surface and apply the same old-surface
+	 * handling as focusclient() in focus.c. Without this, the Lua focus
+	 * path diverges from focusclient() on popup grabs, top-layer
+	 * layer-shell focus (rofi-like launchers) and exclusive_focus. Keep
+	 * this block in sync with focusclient(). */
+	{
+		struct wlr_surface *old = seat->keyboard_state.focused_surface;
+		Client *old_c = NULL;
+		LayerSurface *old_l = NULL;
+		int old_client_type = -1;
+		int unused_lx, unused_ly;
 
+		if (old) {
+			old_client_type = toplevel_from_wlr_surface(old, &old_c, &old_l);
+
+			/* Tear down popups rooted on the old XDG toplevel before we
+			 * change any state. */
+			if (old_client_type == XDGShell && old_c) {
+				struct wlr_xdg_popup *popup, *tmp;
+				wl_list_for_each_safe(popup, tmp,
+				                      &old_c->surface.xdg->popups, link)
+					wlr_xdg_popup_destroy(popup);
+			}
+
+			/* A top-layer layer-shell surface (rofi, session lock, etc.)
+			 * owns the seat until it relinquishes focus: skip activation
+			 * changes and let the layer surface dismiss itself first. */
+			if (old_client_type == LayerShell && old_l
+			    && wlr_scene_node_coords(&old_l->scene->node,
+			                             &unused_lx, &unused_ly)
+			    && old_l->layer_surface->current.layer
+			           >= ZWLR_LAYER_SHELL_V1_LAYER_TOP)
+				return;
+
+			/* The old client holds exclusive focus (e.g. drag grab). */
+			if (old_c && old_c == exclusive_focus
+			    && client_wants_focus(old_c))
+				return;
+
+			/* Deactivate old managed client. Skip the deactivation if the
+			 * incoming client is a winecfg-like wants-focus unmanaged
+			 * XWayland window: the parent toplevel stays activated so the
+			 * legacy input model keeps working. */
+			if (old_c && !client_is_unmanaged(old_c)
+			    && !client_wants_focus(c))
+				client_activate_surface(old, 0);
+		}
+	}
+
+#ifdef XWAYLAND
 	/* Sway pattern: inform XWayland of the active seat on every focus
 	 * change to an X11 client. Required for proper keyboard delivery. */
 	if (c->client_type == X11) {
