@@ -319,6 +319,22 @@ keyboard_shortcuts_inhibit_client_code = custom_target(
   command: [wayland_scanner, 'private-code', '@INPUT@', '@OUTPUT@'],
 )
 
+# wlr-virtual-pointer client protocol (header + code) for the input-injection
+# test client
+virtual_pointer_client_header = custom_target(
+  'wlr-virtual-pointer-unstable-v1-client-protocol.h',
+  input: 'protocols/wlr-virtual-pointer-unstable-v1.xml',
+  output: 'wlr-virtual-pointer-unstable-v1-client-protocol.h',
+  command: [wayland_scanner, 'client-header', '@INPUT@', '@OUTPUT@'],
+)
+
+virtual_pointer_client_code = custom_target(
+  'wlr-virtual-pointer-unstable-v1-client-protocol.c',
+  input: 'protocols/wlr-virtual-pointer-unstable-v1.xml',
+  output: 'wlr-virtual-pointer-unstable-v1-client-protocol.c',
+  command: [wayland_scanner, 'private-code', '@INPUT@', '@OUTPUT@'],
+)
+
 # ==============================================================================
 # Compiler Flags
 # ==============================================================================
@@ -564,6 +580,28 @@ if gbm_dep.found()
   )
 endif
 
+# Test client that injects pointer motion and clicks through
+# zwlr_virtual_pointer_v1, driving the compositor's real buttonpress() path
+# (root.fake_input bypasses it). Used by test-xwayland-pointer-grab-click.lua.
+test_virtual_pointer_client = executable(
+  'test-virtual-pointer-client',
+  ['tests/test-virtual-pointer-client.c', virtual_pointer_client_code],
+  virtual_pointer_client_header,
+  dependencies: [wayland_client],
+  install: false,
+)
+
+# X11 client that grabs the pointer like a game (confined grab, blank cursor)
+# and logs focus/button events to a marker file. Used by
+# test-xwayland-pointer-grab-click.lua.
+if have_xwayland
+  test_x11_grab_client = executable(
+    'test-x11-grab-client',
+    'tests/test-x11-grab-client.c',
+    dependencies: [xcb],
+    install: false,
+  )
+endif
 # ==============================================================================
 # Install Data
 # ==============================================================================
