@@ -235,6 +235,23 @@ jobs:
 
   # Debian stable ships wayland-server 1.23.1, libdrm 2.4.124 and xkbcommon 1.7.0,
   # all below wlroots 0.20's floors. Build there to keep the wlroots 0.19 path working.
+  lua-compat:
+    runs-on: ubuntu-26.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Lua interpreters
+        run: |
+          sudo apt-get update
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+            luajit lua5.1 lua5.2 lua5.3 lua5.4
+
+      - name: Parse lua/ with every interpreter
+        run: ./tests/check-lua-compat.sh
+        env:
+          LUA_COMPAT_REQUIRED: luajit lua5.1 lua5.2 lua5.3 lua5.4
+
   build-debian-stable:
     runs-on: ubuntu-latest
     container: debian:trixie
