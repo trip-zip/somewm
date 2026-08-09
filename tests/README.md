@@ -12,6 +12,13 @@ Unit tests test individual Lua modules in isolation using the busted framework. 
 **Framework**: busted
 **Runner**: `tests/run-unit.sh`
 
+### Lua Version Compatibility (`tests/check-lua-compat.sh`)
+
+Parses every file under `lua/` with each installed Lua interpreter (LuaJIT,
+5.1 through 5.5). Runs before the unit tests via `make test-unit`, or alone via
+`make test-lua-compat`. Missing interpreters are skipped unless listed in
+`LUA_COMPAT_REQUIRED` (CI requires the ones its images ship).
+
 ### Check Mode Tests (`tests/test-check-mode.sh`)
 
 Check mode tests validate `somewm --check` behavior by creating temporary config fixtures and verifying output and exit codes. These tests don't start the compositor — they invoke the binary directly as a CLI tool.
