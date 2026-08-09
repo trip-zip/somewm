@@ -14,7 +14,6 @@ local string = string
 local capi = { awesome = awesome }
 local gsurface = require("gears.surface")
 local gdebug  = require("gears.debug")
-local protected_call = require("gears.protected_call")
 local lgi = require("lgi")
 local cairo, Gio, GLib, GObject = lgi.cairo, lgi.Gio, lgi.GLib, lgi.GObject
 
@@ -23,6 +22,7 @@ local sbyte = string.byte
 local tcat = table.concat
 local tins = table.insert
 local unpack = unpack or table.unpack -- luacheck: globals unpack (compatibility with Lua 5.1)
+local traceback = debug.traceback
 local naughty = require("naughty.core")
 local cst     = require("naughty.constants")
 local nnotif = require("naughty.notification")
@@ -128,6 +128,10 @@ local function convert_icon(w, h, rowstride, channels, data)
     return res
 end
 
+local function reply_id(invocation, id)
+    invocation:return_value(GLib.Variant("(u)", { id }))
+end
+
 local notif_methods = {}
 
 function notif_methods.Notify(sender, object_path, interface, method, parameters, invocation)
@@ -144,8 +148,8 @@ function notif_methods.Notify(sender, object_path, interface, method, parameters
         if title ~= "" then
             args.message = title
         else
-            -- FIXME: We have to reply *something* to the DBus invocation.
-            -- Right now this leads to a memory leak, I think.
+            -- Nothing to display, but the invocation still needs a reply.
+            reply_id(invocation, nnotif._gen_next_id())
             return
         end
     end
@@ -352,11 +356,11 @@ function notif_methods.Notify(sender, object_path, interface, method, parameters
             notification:connect_signal("destroyed", function(_, r) args.destroy(r) end)
         end
 
-        invocation:return_value(GLib.Variant("(u)", { notification.id }))
+        reply_id(invocation, notification.id)
         return
     end
 
-    invocation:return_value(GLib.Variant("(u)", { nnotif._gen_next_id() }))
+    reply_id(invocation, nnotif._gen_next_id())
 end
 
 function notif_methods.CloseNotification(_, _, _, _, parameters, invocation)
@@ -381,17 +385,31 @@ function notif_methods.GetCapabilities(_, _, _, _, _, invocation)
 end
 
 local function method_call(_, sender, object_path, interface, method, parameters, invocation)
-    if not notif_methods[method] then return end
+    local handler = notif_methods[method]
+    if not handler then
+        invocation:return_error_literal(
+            Gio.DBusError.quark(),
+            Gio.DBusError.UNKNOWN_METHOD,
+            "Unknown method: " .. tostring(method)
+        )
+        return
+    end
 
-    protected_call(
-        notif_methods[method],
-        sender,
-        object_path,
-        interface,
-        method,
-        parameters,
-        invocation
-    )
+    -- An unanswered invocation freezes the sender until the D-Bus timeout
+    -- (~25s), so a handler error must still produce a reply.
+    local ok, err = xpcall(function()
+        handler(sender, object_path, interface, method, parameters, invocation)
+    end, traceback)
+    if not ok then
+        err = tostring(err)
+        gdebug.print_error("Error in org.freedesktop.Notifications."
+            .. tostring(method) .. ": " .. err)
+        invocation:return_error_literal(
+            Gio.DBusError.quark(),
+            Gio.DBusError.FAILED,
+            err:match("^[^\n]*")
+        )
+    end
 end
 
 local function on_bus_acquire(conn, _)

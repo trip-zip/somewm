@@ -498,6 +498,17 @@ check_bus_owner() {
     check "$desc" "$owner" "$want"
 }
 
+# Skip unless the instance owns the bus name. dbus-run-session still honours
+# /usr/share/dbus-1/services, so an activated dunst/mako on the "private" bus
+# would answer every call and leave a test permanently green.
+skip_unless_bus_owner() {
+    local name="$1" busname="$2" owner inst
+    inst=$(sw_pid "$name")
+    owner=$(sw_bus_owner_pid "$busname") || skip "$busname has no owner"
+    [ "$owner" = "$inst" ] || skip "$busname owned by pid $owner, not the instance ($inst)"
+    pass "the instance owns $busname"
+}
+
 # Preflight for the tests that talk to the bus from outside the compositor.
 skip_unless_bus() {
     [ -z "${SOMEWM_NO_DBUS:-}" ] || skip "dbus-run-session not available"
