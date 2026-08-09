@@ -101,6 +101,79 @@ end
 -- Signal handler
 ---------------------------------------------------------------------------
 
+local function arrange_client(c, enabled, grabbing)
+    local state = get_state(c)
+    local new_geo = c:geometry()
+    local prev_target = state.settled_geo
+    state.settled_geo = new_geo
+
+    -- When disabled or mouse is dragging: snap, no animation
+    if not enabled or grabbing then
+        stop_animation(state)
+        state.visual_geo = nil
+        return
+    end
+
+    -- Target unchanged and animation already running: re-snap to
+    -- current visual position (counteracts the non-silent
+    -- c:geometry(target) that triggered this arrange) and skip.
+    if state.anim_handle and prev_target
+            and not geos_differ(prev_target, new_geo) then
+        if state.visual_geo then
+            c:_set_geometry_silent(state.visual_geo)
+        end
+        return
+    end
+
+    -- Current visual position: mid-animation or last settled
+    local old_geo = state.visual_geo or prev_target
+
+    -- First arrange for this client: no old position, skip animation
+    if not old_geo then
+        return
+    end
+
+    -- Skip if delta is negligible
+    if not geos_differ(old_geo, new_geo) then
+        stop_animation(state)
+        state.visual_geo = nil
+        return
+    end
+
+    -- Cancel any running animation
+    stop_animation(state)
+
+    -- Snap back to old visual position (before compositor renders)
+    c:_set_geometry_silent(old_geo)
+
+    -- Animate toward new target
+    local from = old_geo
+    local target = new_geo
+    local duration = layout_animation.duration
+
+    if duration <= 0 then
+        c:_set_geometry_silent(target)
+        state.visual_geo = nil
+        return
+    end
+
+    state.anim_handle = capi.awesome.start_animation(
+        duration, layout_animation.easing,
+        function(progress)
+            if not c.valid then return end
+            local g = lerp_geo(from, target, progress)
+            state.visual_geo = g
+            c:_set_geometry_silent(g)
+        end,
+        function()
+            if c.valid then
+                c:_set_geometry_silent(target)
+            end
+            state.visual_geo = nil
+            state.anim_handle = nil
+        end)
+end
+
 capi.screen.connect_signal("arrange", function(s)
     local tiled = s.tiled_clients
     if not tiled then return end
@@ -109,78 +182,7 @@ capi.screen.connect_signal("arrange", function(s)
     local grabbing = capi.mousegrabber.isrunning()
 
     for _, c in ipairs(tiled) do
-        local state = get_state(c)
-        local new_geo = c:geometry()
-        local prev_target = state.settled_geo
-        state.settled_geo = new_geo
-
-        -- When disabled or mouse is dragging: snap, no animation
-        if not enabled or grabbing then
-            stop_animation(state)
-            state.visual_geo = nil
-            goto continue
-        end
-
-        -- Target unchanged and animation already running: re-snap to
-        -- current visual position (counteracts the non-silent
-        -- c:geometry(target) that triggered this arrange) and skip.
-        if state.anim_handle and prev_target
-                and not geos_differ(prev_target, new_geo) then
-            if state.visual_geo then
-                c:_set_geometry_silent(state.visual_geo)
-            end
-            goto continue
-        end
-
-        -- Current visual position: mid-animation or last settled
-        local old_geo = state.visual_geo or prev_target
-
-        -- First arrange for this client: no old position, skip animation
-        if not old_geo then
-            goto continue
-        end
-
-        -- Skip if delta is negligible
-        if not geos_differ(old_geo, new_geo) then
-            stop_animation(state)
-            state.visual_geo = nil
-            goto continue
-        end
-
-        -- Cancel any running animation
-        stop_animation(state)
-
-        -- Snap back to old visual position (before compositor renders)
-        c:_set_geometry_silent(old_geo)
-
-        -- Animate toward new target
-        local from = old_geo
-        local target = new_geo
-        local duration = layout_animation.duration
-
-        if duration <= 0 then
-            c:_set_geometry_silent(target)
-            state.visual_geo = nil
-            goto continue
-        end
-
-        state.anim_handle = capi.awesome.start_animation(
-            duration, layout_animation.easing,
-            function(progress)
-                if not c.valid then return end
-                local g = lerp_geo(from, target, progress)
-                state.visual_geo = g
-                c:_set_geometry_silent(g)
-            end,
-            function()
-                if c.valid then
-                    c:_set_geometry_silent(target)
-                end
-                state.visual_geo = nil
-                state.anim_handle = nil
-            end)
-
-        ::continue::
+        arrange_client(c, enabled, grabbing)
     end
 end)
 
