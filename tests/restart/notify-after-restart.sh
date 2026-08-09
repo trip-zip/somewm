@@ -24,13 +24,7 @@ NOTIFY_PATH=/org/freedesktop/Notifications
 
 sw_start hr-notify --config "$RESTART_DIR/configs/rc-dbus.lua" || finish
 
-inst_pid=$(sw_pid hr-notify)
-
-# Without this, an activated dunst/mako on the private bus would answer every
-# Notify and make this regression test permanently green.
-owner_pid=$(sw_bus_owner_pid "$NOTIFY_NAME") || skip "$NOTIFY_NAME has no owner before the reload"
-[ "$owner_pid" = "$inst_pid" ] || skip "$NOTIFY_NAME owned by pid $owner_pid, not the instance ($inst_pid)"
-pass "the instance owns $NOTIFY_NAME before the reload"
+skip_unless_bus_owner hr-notify "$NOTIFY_NAME"
 
 notify() {
     sw_bus_call "$NOTIFY_NAME" "$NOTIFY_PATH" "$NOTIFY_NAME.Notify" \

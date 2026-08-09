@@ -1,6 +1,9 @@
 # Restart / hot-reload tests
 
-Tests that assert on both sides of a real `awesome.restart()`.
+Tests that assert on both sides of a real `awesome.restart()`. The suite is
+also home to plain D-Bus tests (`notify-reply-paths.sh`): it is the only
+harness that gives each test a private session bus and drives a sandboxed
+instance from outside.
 
 ## Why this suite exists separately
 
