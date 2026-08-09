@@ -1,19 +1,23 @@
 ---------------------------------------------------------------------------
--- Tests for output class-level signals and virtual get_by_name:
---   1. output "added" fires during fake_add()
+-- Tests for output class-level signals and get_by_name:
+--   1. output "added" fires when an output is hotplugged
 --   2. o.screen is accessible inside "added" handler
---   3. get_by_name() finds virtual output by name
---   4. output "removed" fires during fake_remove()
+--   3. get_by_name() finds the output by name
+--   4. output "removed" fires when the output is destroyed
 --   5. o.valid == true and o.name accessible inside "removed" handler
 --   6. After removal: output invalidated, get_by_name returns nil
+--
+-- _test_add_output/_test_remove_output are synchronous (wlroots emits
+-- new_output/destroy inline), so the signals have already fired when they
+-- return and these steps assert directly instead of polling.
 ---------------------------------------------------------------------------
 
 local runner = require("_runner")
 
 print("TEST: Starting output-signals test")
 
-local fake_screen = nil
-local fake_output = nil
+local out_name = nil
+local hot_output = nil
 
 -- Capture tables for signal handler assertions
 local added_info = nil
@@ -24,7 +28,6 @@ local function on_added(o)
     added_info = {
         name = o.name,
         valid = o.valid,
-        virtual = o.virtual,
         screen = o.screen,
     }
     print("TEST:   [signal] added: " .. tostring(o.name)
@@ -35,26 +38,27 @@ local function on_removed(o)
     removed_info = {
         name = o.name,
         valid = o.valid,
-        virtual = o.virtual,
     }
     print("TEST:   [signal] removed: " .. tostring(o.name)
         .. " valid=" .. tostring(o.valid))
 end
 
--- Connect class-level signals before any fake_add
+-- Connect class-level signals before the hotplug
 output.connect_signal("added", on_added)
 output.connect_signal("removed", on_removed)
 
 local steps = {
-    -- Step 1: Create fake screen — "added" signal fires synchronously
+    -- Step 1: Hotplug an output - "added" signal fires
     function()
-        print("TEST: Step 1 - fake_add triggers output 'added' signal")
-        fake_screen = screen.fake_add(1400, 0, 400, 300)
-        fake_output = fake_screen.output
-
-        -- Signal fired synchronously during fake_add
-        assert(added_info ~= nil,
-            "output 'added' signal did not fire during fake_add()")
+        print("TEST: Step 1 - hotplug triggers output 'added' signal")
+        out_name = assert(awesome._test_add_output(400, 300),
+            "_test_add_output returned nil")
+        assert(added_info, "output 'added' signal did not fire")
+        assert(added_info.name == out_name,
+            "added signal fired for " .. tostring(added_info.name)
+            .. ", expected " .. out_name)
+        hot_output = assert(output.get_by_name(out_name),
+            "get_by_name should find the new output")
         print("TEST:   added signal fired OK")
         return true
     end,
@@ -66,45 +70,37 @@ local steps = {
         -- Gap 12: signal fired with the output object
         assert(added_info.valid == true,
             "output should be valid in added handler")
-        assert(added_info.virtual == true,
-            "output should be virtual in added handler")
         assert(type(added_info.name) == "string" and #added_info.name > 0,
             "output should have a name in added handler")
 
         -- Gap 9: o.screen accessible inside added handler
         assert(added_info.screen ~= nil,
             "output.screen should not be nil in added handler")
-        assert(added_info.screen == fake_screen,
-            "output.screen should reference the fake screen in added handler")
-        print("TEST:   o.screen == fake_screen in added handler OK")
+        assert(added_info.screen == hot_output.screen,
+            "output.screen should reference the new screen in added handler")
+        print("TEST:   o.screen accessible in added handler OK")
 
         return true
     end,
 
-    -- Step 3: get_by_name() finds virtual output
+    -- Step 3: get_by_name() finds the output
     function()
-        print("TEST: Step 3 - get_by_name finds virtual output")
-        local name = fake_output.name
-        local found = output.get_by_name(name)
+        print("TEST: Step 3 - get_by_name finds output")
+        local found = output.get_by_name(out_name)
         assert(found ~= nil,
-            "get_by_name('" .. name .. "') returned nil for virtual output")
-        assert(found.name == name,
+            "get_by_name('" .. out_name .. "') returned nil")
+        assert(found.name == out_name,
             "get_by_name returned wrong output")
-        assert(found.virtual == true,
-            "get_by_name result should be virtual")
-        print("TEST:   get_by_name('" .. name .. "') found virtual OK")
+        print("TEST:   get_by_name('" .. out_name .. "') found OK")
         return true
     end,
 
-    -- Step 4: fake_remove triggers "removed" signal
+    -- Step 4: Output destroy triggers "removed" signal
     function()
-        print("TEST: Step 4 - fake_remove triggers output 'removed' signal")
-        local output_name = fake_output.name
-        fake_screen:fake_remove()
-
-        -- Signal fired synchronously during fake_remove
-        assert(removed_info ~= nil,
-            "output 'removed' signal did not fire during fake_remove()")
+        print("TEST: Step 4 - destroy triggers output 'removed' signal")
+        assert(awesome._test_remove_output(out_name),
+            "_test_remove_output failed for " .. out_name)
+        assert(removed_info, "output 'removed' signal did not fire")
         print("TEST:   removed signal fired OK")
 
         -- Gap 10: o.valid == true inside "removed" handler (before invalidation)
@@ -114,28 +110,28 @@ local steps = {
         print("TEST:   o.valid == true inside removed handler OK")
 
         -- Gap 10: o.name accessible inside "removed" handler
-        assert(removed_info.name == output_name,
+        assert(removed_info.name == out_name,
             "output name should match in removed handler, expected '"
-            .. output_name .. "' got '" .. tostring(removed_info.name) .. "'")
+            .. out_name .. "' got '" .. tostring(removed_info.name) .. "'")
         print("TEST:   o.name accessible inside removed handler OK")
 
         return true
     end,
 
-    -- Step 5: After removal — output invalidated, get_by_name returns nil
+    -- Step 5: After removal - output invalidated, get_by_name returns nil
     function()
         print("TEST: Step 5 - Post-removal state")
 
-        -- Gap 10: after fake_remove, output is invalidated
-        assert(fake_output.valid == false,
-            "output should be invalid after fake_remove, got "
-            .. tostring(fake_output.valid))
+        -- Gap 10: after removal, output is invalidated
+        assert(hot_output.valid == false,
+            "output should be invalid after removal, got "
+            .. tostring(hot_output.valid))
         print("TEST:   output.valid == false after removal OK")
 
-        -- get_by_name returns nil for removed virtual output
-        local found = output.get_by_name(removed_info.name)
+        -- get_by_name returns nil for removed output
+        local found = output.get_by_name(out_name)
         assert(found == nil,
-            "get_by_name should return nil for removed virtual output")
+            "get_by_name should return nil for removed output")
         print("TEST:   get_by_name returns nil after removal OK")
 
         return true

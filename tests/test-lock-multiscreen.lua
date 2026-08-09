@@ -1,10 +1,7 @@
 ---------------------------------------------------------------------------
 -- Test: Lock multi-screen support
 --
--- Covers: MULTI-1 through MULTI-5, MULTI-7, cover API integration
---
--- Note: MULTI-6 (interactive screen removal while locked) requires
--- _test_remove_output which doesn't exist yet. Skipped.
+-- Covers: MULTI-1 through MULTI-7, cover API integration
 ---------------------------------------------------------------------------
 
 local runner = require("_runner")
@@ -22,12 +19,13 @@ end
 
 local initial_screen_count = screen.count()
 local interactive_wb, cover_wbs
+local out2_name, out3_name
 
 runner.run_steps({
     -- Step 1: Add a second headless output
     function()
-        local name = awesome._test_add_output(800, 600)
-        assert(name, "_test_add_output returned nil")
+        out2_name = awesome._test_add_output(800, 600)
+        assert(out2_name, "_test_add_output returned nil")
         return true
     end,
 
@@ -80,8 +78,8 @@ runner.run_steps({
 
     -- Step 5: Add third output while locked - create cover for it
     function()
-        local name = awesome._test_add_output(640, 480)
-        assert(name, "failed to add third output")
+        out3_name = awesome._test_add_output(640, 480)
+        assert(out3_name, "failed to add third output")
         return true
     end,
 
@@ -100,7 +98,18 @@ runner.run_steps({
         return true
     end,
 
-    -- Step 7: Authenticate and unlock - verify surfaces hidden
+    -- Step 7: Remove third output while locked (MULTI-6).
+    -- _test_remove_output is synchronous, so the screen is gone on return.
+    function()
+        assert(awesome._test_remove_output(out3_name),
+            "_test_remove_output failed for " .. out3_name)
+        assert(screen.count() == initial_screen_count + 1,
+            "expected " .. (initial_screen_count + 1) .. " screens after removal")
+        assert(awesome.locked, "should still be locked after screen removal")
+        return true
+    end,
+
+    -- Step 8: Authenticate and unlock - verify surfaces hidden
     function()
         awesome.authenticate(lock.TEST_PASSWORD)
         awesome.unlock()
@@ -113,8 +122,12 @@ runner.run_steps({
         return true
     end,
 
-    -- Cleanup
+    -- Cleanup: remove the added output so persistent runs stay clean
     function()
+        assert(awesome._test_remove_output(out2_name),
+            "_test_remove_output failed for " .. out2_name)
+        assert(screen.count() == initial_screen_count,
+            "screen count should return to " .. initial_screen_count)
         lock.teardown()
         return true
     end,

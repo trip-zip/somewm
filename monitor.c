@@ -82,6 +82,25 @@ cleanupmon(struct wl_listener *listener, void *data)
 	wlr_log(WLR_ERROR, "[HOTPLUG] cleanupmon: %s remaining_mons=%d",
 		m->wlr_output->name, wl_list_length(&mons) - 1);
 
+	/* Block updatemons() for the whole teardown. The monitor stays on `mons`
+	 * with a NULL scene_output until it is unlinked below, and updatemons()
+	 * has no guard for that: it would re-add the still-enabled output to the
+	 * layout and deref the NULL scene_output. The Lua removal work below can
+	 * reach updatemons() (output setters call it directly, and any output
+	 * commit gets there via layout::change), so the flag has to outlive it.
+	 * The pending replay at the end runs it once, after `m` is gone. */
+	in_updatemons = 1;
+
+	/* Destroy the scene output and detach from the layout before any Lua
+	 * removal work runs. Relocating clients off the removed screen moves
+	 * scene nodes, and with the scene output still alive the scene can
+	 * re-send surface enter on the dying output. Listeners registered
+	 * during the destroy emission are never invoked, so the surface's
+	 * bind listener would survive and trip the wlr_output_finish assert. */
+	wlr_scene_output_destroy(m->scene_output);
+	m->scene_output = NULL;
+	wlr_output_layout_remove(output_layout, m->wlr_output);
+
 	/* Find and remove screen BEFORE destroying monitor data (AwesomeWM pattern)
 	 * This emits instance-level "removed" signal and relocates clients.
 	 * Also emit viewports and primary_changed signals as needed. */
@@ -133,19 +152,12 @@ cleanupmon(struct wl_listener *listener, void *data)
 	if (m->lock_surface)
 		destroylocksurface(&m->destroy_lock_surface, NULL);
 	m->wlr_output->data = NULL;
-	/* Block updatemons() during output cleanup. wlr_output_layout_remove
-	 * emits layout::change which triggers updatemons(). If updatemons runs,
-	 * it does arrange/focus work that can indirectly add commit listeners
-	 * (e.g. presentation_time, gamma) to the output being destroyed, causing
-	 * wlr_output_finish() assertion failure. */
-	in_updatemons = 1;
-	wlr_scene_output_destroy(m->scene_output);
-	wlr_output_layout_remove(output_layout, m->wlr_output);
-	in_updatemons = 0;
 
 	closemon(m);
 	wlr_scene_node_destroy(&m->fullscreen_bg->node);
 	free(m);
+
+	in_updatemons = 0;
 
 	if (updatemons_pending) {
 		updatemons_pending = 0;

@@ -22,41 +22,19 @@ naughty.container = require("naughty.container")
 naughty.action = require("naughty.action")
 naughty.notification = require("naughty.notification")
 
--- Attempt to handle early errors when using the manual screen mode.
+-- An error this early has no screen to display a notification on, so log it
+-- and skip the popup.
 --
--- Creating a notification popup before the screens are added won't work. To
--- work around this, the code below initializes some screens. One potential
--- problem is that it could emit enough signal to cause even more errors and
--- lose the original error.
---
--- For example, the following error can be displayed using this fallback:
---
---    screen.connect_signal("scanned", function() foobar() end)
---
-local function screen_fallback()
-    -- capi.screen.count() is not enough: after a config timeout the Lua state
-    -- is rebuilt while the screen refs still point at the closed one, so the
-    -- compositor reports screens that no notification can be placed on.
-    if capi.screen.count() == 0 or not ascreen.focused() then
-        gdebug.print_warning("An error occurred before a screen was added")
-
-        -- Private API to scan for screens now.
-        if #screen._viewports() == 0 then
-            screen._scan_quiet()
-        end
-
-        local viewports = screen._viewports()
-
-        if #viewports > 0 then
-            for _, viewport in ipairs(viewports) do
-                local geo = viewport.geometry
-                local s = capi.screen.fake_add(geo.x, geo.y, geo.width, geo.height)
-                s.outputs = viewport.outputs
-            end
-        else
-            capi.screen.fake_add(0, 0, 640, 480)
-        end
+-- capi.screen.count() is not enough: after a config timeout the Lua state
+-- is rebuilt while the screen refs still point at the closed one, so the
+-- compositor reports screens that no notification can be placed on.
+local function can_display()
+    if capi.screen.count() > 0 and ascreen.focused() then
+        return true
     end
+
+    gdebug.print_warning("An error occurred before a screen was added")
+    return false
 end
 
 -- Handle runtime errors during startup
@@ -66,7 +44,10 @@ if capi.awesome.startup_errors then
     -- Otherwise nothing is handling them (yet).
     client.connect_signal("scanning", function()
         -- A lot of things have to go wrong for this to happen, but it can.
-        screen_fallback()
+        if not can_display() then
+            gdebug.print_error(capi.awesome.startup_errors)
+            return
+        end
 
         naughty.emit_signal(
             "request::display_error", capi.awesome.startup_errors, true
@@ -84,9 +65,11 @@ do
 
         in_error = true
 
-        screen_fallback()
-
-        naughty.emit_signal("request::display_error", tostring(err), false)
+        if can_display() then
+            naughty.emit_signal("request::display_error", tostring(err), false)
+        else
+            gdebug.print_error(err)
+        end
 
         in_error = false
     end)

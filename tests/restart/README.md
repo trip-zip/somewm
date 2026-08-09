@@ -203,7 +203,7 @@ the fallback loads):
 - `screens-after-config-timeout`: the retried config gets real screens. The
   abort closes the state, so every screen userdata is freed while the C-side
   ref arrays live on; without the rebuild, naughty's startup-error fallback
-  fake_adds a phantom screen.
+  finds no screen to display the error on.
 - `class-signals-after-config-timeout`: class signal handlers connected by the
   aborted config do not dispatch into the closed state. Class signal arrays
   live on the C-side `lua_class_t`, so they outlive the `lua_close()` the

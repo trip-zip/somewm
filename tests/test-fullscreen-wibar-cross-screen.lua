@@ -24,22 +24,28 @@ if not test_client.is_available() then
     return
 end
 
-local fake_screen
+local out_name
+local second_screen
 local c_fs, c_other
 local wibar_s2
 
 local steps = {
-    -- Step 1: Add a fake second screen and create a wibar on it
+    -- Step 1: Hotplug a second screen and create a wibar on it.
+    -- _test_add_output is synchronous, so the screen exists on return.
     function()
-        fake_screen = screen.fake_add(1400, 0, 400, 300)
-        assert(fake_screen and fake_screen.valid, "screen.fake_add failed")
+        out_name = assert(awesome._test_add_output(400, 300),
+            "_test_add_output failed")
+        second_screen = assert(output.get_by_name(out_name),
+            "no output named " .. out_name).screen
+        assert(second_screen and second_screen.valid,
+            "hotplugged screen should be valid")
         assert(screen.count() >= 2, "Need at least 2 screens")
 
         -- Create a dock-type wibar on screen 2 (goes to LyrTop)
-        wibar_s2 = awful.wibar({ position = "top", screen = fake_screen })
+        wibar_s2 = awful.wibar({ position = "top", screen = second_screen })
         assert(wibar_s2 and wibar_s2.visible, "Wibar should be visible")
 
-        io.stderr:write("[TEST] Fake screen and wibar created\n")
+        io.stderr:write("[TEST] Second screen and wibar created\n")
         return true
     end,
 
@@ -57,12 +63,12 @@ local steps = {
     -- Step 3: Move client to screen 2 and make it fullscreen
     function(count)
         if count == 1 then
-            c_fs:move_to_screen(fake_screen)
+            c_fs:move_to_screen(second_screen)
             c_fs.fullscreen = true
             c_fs:emit_signal("request::activate", "test", { raise = true })
         end
         if not c_fs.fullscreen then return nil end
-        if c_fs.screen ~= fake_screen then return nil end
+        if c_fs.screen ~= second_screen then return nil end
         if client.focus ~= c_fs then return nil end
         io.stderr:write("[TEST] Client is fullscreen on screen 2 with focus\n")
         return true
@@ -104,7 +110,7 @@ local steps = {
         assert(c_fs.valid, "Fullscreen client should still be valid")
         assert(c_fs.fullscreen,
             "Client should still be fullscreen after cross-screen focus change")
-        assert(c_fs.screen == fake_screen,
+        assert(c_fs.screen == second_screen,
             "Client should still be on screen 2")
         assert(client.focus ~= c_fs,
             "Fullscreen client should NOT have focus")
@@ -116,16 +122,26 @@ local steps = {
         return true
     end,
 
-    -- Step 7: Verify same-screen behavior is preserved: focusing another
+    -- Step 7: Move the other client onto the fullscreen client's screen.
+    -- The move itself refocuses the top-of-stack fullscreen client, so focus
+    -- is expected to land on c_fs here.
+    function(count)
+        if count == 1 then
+            c_other:move_to_screen(second_screen)
+        end
+        if c_other.screen ~= c_fs.screen then return nil end
+        io.stderr:write("[TEST] Other client moved to screen 2\n")
+        return true
+    end,
+
+    -- Step 8: Verify same-screen behavior is preserved: focusing another
     -- client on the SAME screen should still demote the fullscreen client
     -- (matching AwesomeWM behavior).
     function(count)
         if count == 1 then
-            c_other:move_to_screen(fake_screen)
             c_other:emit_signal("request::activate", "test", { raise = true })
         end
         if client.focus ~= c_other then return nil end
-        if c_other.screen ~= c_fs.screen then return nil end
         assert(c_fs.fullscreen,
             "Fullscreen property should still be set")
         io.stderr:write("[TEST] PASS: same-screen focus correctly allows " ..
@@ -133,30 +149,28 @@ local steps = {
         return true
     end,
 
-    -- Step 8: Cleanup
+    -- Step 9: Kill the clients
     function(count)
         if count == 1 then
             if wibar_s2 then wibar_s2.visible = false end
             if c_fs and c_fs.valid then c_fs:kill() end
             if c_other and c_other.valid then c_other:kill() end
         end
-        if #client.get() == 0 then
-            if fake_screen and fake_screen.valid then
-                fake_screen:fake_remove()
-            end
-            return true
-        end
+        if #client.get() == 0 then return true end
         if count >= 15 then
-            local pids = test_client.get_spawned_pids()
-            for _, pid in ipairs(pids) do
+            for _, pid in ipairs(test_client.get_spawned_pids()) do
                 os.execute("kill -9 " .. pid .. " 2>/dev/null")
-            end
-            if fake_screen and fake_screen.valid then
-                fake_screen:fake_remove()
             end
             return true
         end
         return nil
+    end,
+
+    -- Step 10: Remove the hotplugged output so persistent runs stay clean
+    function()
+        assert(awesome._test_remove_output(out_name),
+            "_test_remove_output failed for " .. out_name)
+        return true
     end,
 }
 

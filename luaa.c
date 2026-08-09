@@ -1262,6 +1262,19 @@ luaA_awesome_test_add_output(lua_State *L)
 	return 1;
 }
 
+/** awesome._test_remove_output: Destroy a headless test output by name.
+ * Drives the real output-destroy → cleanupmon() code path.
+ * \param name Output name as returned by _test_add_output
+ * \return true if the output was found and destroyed
+ */
+static int
+luaA_awesome_test_remove_output(lua_State *L)
+{
+	const char *name = luaL_checkstring(L, 1);
+	lua_pushboolean(L, some_test_remove_output(name));
+	return 1;
+}
+
 /** Reload shadow settings from beautiful theme.
  * Call this after changing beautiful.shadow_* values to apply them.
  * Regenerates shadow textures and updates all existing shadows.
@@ -2116,6 +2129,7 @@ const luaL_Reg awesome_methods[] = {
 	{ "restart", luaA_restart },
 	{ "shadow_reload", luaA_awesome_shadow_reload },
 	{ "_test_add_output", luaA_awesome_test_add_output },
+	{ "_test_remove_output", luaA_awesome_test_remove_output },
 	/* Lock API methods */
 	{ "lock", luaA_awesome_lock },
 	{ "unlock", luaA_awesome_unlock },

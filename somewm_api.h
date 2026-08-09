@@ -269,5 +269,6 @@ void somewm_pin_lgi_libs(void);
  * Test helpers - headless output hotplug simulation
  */
 const char *some_test_add_output(unsigned int width, unsigned int height);
+bool some_test_remove_output(const char *name);
 
 #endif /* SOMEWM_API_H */

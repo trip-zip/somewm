@@ -6,7 +6,11 @@ All notable changes to somewm will be documented in this file.
 
 ### Added
 
+- `awesome._test_remove_output` test helper - destroys a headless output by name, driving the real unplug path
+
 ### Fixed
+
+- Output unplug no longer crashes when clients are relocated off the removed screen
 
 ### Changed
 

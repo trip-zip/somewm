@@ -1748,6 +1748,29 @@ some_test_add_output(unsigned int width, unsigned int height)
 	return output->name;
 }
 
+bool
+some_test_remove_output(const char *name)
+{
+	Monitor *m;
+
+	/* Only a headless output, and never the last one, so a test cannot leave
+	 * the compositor without a screen. Under WLR_BACKENDS=headless the
+	 * harness's own output is headless too, so the count check is what
+	 * actually protects it there. */
+	if (wl_list_length(&mons) <= 1)
+		return false;
+
+	wl_list_for_each(m, &mons, link) {
+		if (!strcmp(m->wlr_output->name, name)
+				&& wlr_output_is_headless(m->wlr_output)) {
+			wlr_output_destroy(m->wlr_output);
+			return true;
+		}
+	}
+
+	return false;
+}
+
 /** Find liblgi_closure_guard.so by searching multiple paths.
  * Returns a pointer to a static buffer containing the path, or NULL. */
 static const char *

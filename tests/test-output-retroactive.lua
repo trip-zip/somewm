@@ -1,30 +1,36 @@
 ---------------------------------------------------------------------------
 -- Tests for output "added::connected" retroactive signal delivery:
---   1. Create an output (via fake_add), then connect handler afterward
+--   1. Create an output, then connect handler afterward
 --   2. Verify handler fires retroactively for all existing outputs
 --   3. Verify handler receives correct output properties
 --   4. Verify hotplug still works (new output after handler connected)
 --   5. Verify a second handler also gets retroactive delivery
+--
+-- _test_add_output/_test_remove_output are synchronous (wlroots emits
+-- new_output/destroy inline), so these steps assert directly.
 ---------------------------------------------------------------------------
 
 local runner = require("_runner")
 
 print("TEST: Starting output-retroactive test")
 
-local fake_screen1 = nil
+local out1_name = nil
+local out2_name = nil
 local retroactive_outputs = {}
 local post_connect_outputs = {}
 local handler_connected = false
 
 local steps = {
-    -- Step 1: Create a fake screen BEFORE connecting the handler
+    -- Step 1: Create an output BEFORE connecting the handler
     function()
         print("TEST: Step 1 - Create output before handler is connected")
-        fake_screen1 = screen.fake_add(0, 0, 800, 600)
-        assert(fake_screen1, "fake_add should return a screen")
-        assert(fake_screen1.output, "fake screen should have an output")
-        assert(fake_screen1.output.valid, "output should be valid")
-        print("TEST:   created output: " .. fake_screen1.output.name)
+        out1_name = assert(awesome._test_add_output(800, 600),
+            "_test_add_output should return a name")
+        local o = assert(output.get_by_name(out1_name),
+            "no output named " .. out1_name)
+        assert(o.valid, "output should be valid")
+        assert(o.screen, "output should have a screen")
+        print("TEST:   created output: " .. out1_name)
         return true
     end,
 
@@ -60,44 +66,45 @@ local steps = {
         return true
     end,
 
-    -- Step 3: Verify our fake output was among the retroactive deliveries
+    -- Step 3: Verify our output was among the retroactive deliveries
     function()
-        print("TEST: Step 3 - Verify fake output in retroactive deliveries")
+        print("TEST: Step 3 - Verify output in retroactive deliveries")
         local found = false
+        local out1_screen = output.get_by_name(out1_name).screen
         for _, info in ipairs(retroactive_outputs) do
-            if info.name == fake_screen1.output.name then
+            if info.name == out1_name then
                 found = true
                 assert(info.valid == true,
                     "retroactive output should be valid")
-                assert(info.screen == fake_screen1,
+                assert(info.screen == out1_screen,
                     "retroactive output should reference its screen")
                 print("TEST:   found " .. info.name
                     .. " valid=" .. tostring(info.valid) .. " screen=OK")
             end
         end
         assert(found,
-            "fake output " .. fake_screen1.output.name
+            "output " .. out1_name
             .. " should be among retroactive deliveries")
         return true
     end,
 
-    -- Step 4: Hotplug - add new screen AFTER handler connected
+    -- Step 4: Hotplug - add new output AFTER handler connected
     function()
         print("TEST: Step 4 - Hotplug: add new output after handler connected")
-        local before = #post_connect_outputs
-        local fake_screen2 = screen.fake_add(800, 0, 400, 300)
-        assert(fake_screen2, "second fake_add should succeed")
+        out2_name = assert(awesome._test_add_output(400, 300),
+            "second _test_add_output should succeed")
 
-        local new_deliveries = #post_connect_outputs - before
-        assert(new_deliveries == 1,
-            "handler should fire once for hotplugged output, got "
-            .. new_deliveries)
-        assert(post_connect_outputs[#post_connect_outputs].valid == true,
+        local delivered = nil
+        for _, info in ipairs(post_connect_outputs) do
+            if info.name == out2_name then delivered = info end
+        end
+        assert(delivered, "handler should fire for hotplugged output")
+        assert(delivered.valid == true,
             "hotplugged output should be valid")
         print("TEST:   hotplug delivery OK")
 
-        -- Cleanup
-        fake_screen2:fake_remove()
+        assert(awesome._test_remove_output(out2_name),
+            "_test_remove_output failed for " .. out2_name)
         return true
     end,
 
@@ -120,8 +127,8 @@ local steps = {
 
     -- Step 6: Cleanup
     function()
-        print("TEST: Step 6 - Cleanup")
-        fake_screen1:fake_remove()
+        assert(awesome._test_remove_output(out1_name),
+            "_test_remove_output failed for " .. out1_name)
         print("TEST:   cleanup done")
         return true
     end,

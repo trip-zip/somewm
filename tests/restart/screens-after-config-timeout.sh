@@ -6,9 +6,8 @@
 # userdata. The Monitor structs and the C-side ref arrays survive, so without a
 # rebuild the fresh state holds registry ints into a closed state: screen.primary
 # reads nil, pushing a stale ref warns "Trying to emit signal ... on non-object",
-# and naughty's startup-error fallback concludes no screen exists and fake_adds a
-# phantom one. The instance then runs with one more screen than it has outputs,
-# and awful.screen.focused() returns the phantom.
+# and naughty's startup-error fallback concludes no screen exists and the
+# startup error notification is silently lost.
 #
 # The counts assume the harness default of a single headless output.
 
@@ -20,7 +19,7 @@ check_eval hr-scr "one screen per output, and it is a real one" \
     'return "count=" .. screen.count() .. "|outputs=" .. #screen._viewports()' \
     'count=1|outputs=1'
 
-check_eval hr-scr "the screen came from C, not from a fake_add fallback" \
+check_eval hr-scr "the screen came from C" \
     'return tostring(screen[1]._managed)' C
 
 check_eval hr-scr "there is a primary screen" \

@@ -10,9 +10,10 @@
 -- Fix: screen_added() is now emitted synchronously (6ca11b1), matching
 -- AwesomeWM's screen_refresh() pattern.
 --
--- Test strategy: fake_add triggers screen_added() synchronously (screen.c uses
--- the same path). Immediately emitting property::geometry on the new screen
--- must not trigger a debug::error. Without the fix, this crashes.
+-- Test strategy: hotplug a headless output, which drives the real createmon()
+-- -> updatemons() path synchronously. When _test_add_output returns, naughty's
+-- init_screen() must already have run, so emitting property::geometry on the
+-- new screen must not trigger a debug::error. Without the fix, this crashes.
 
 local runner = require("_runner")
 
@@ -25,29 +26,34 @@ awesome.connect_signal("debug::error", function(err)
     table.insert(errors_seen, tostring(err))
 end)
 
-local fake_screen = nil
+local out_name = nil
+local hot_screen = nil
 
 local steps = {
-    -- Step 1: Add a fake screen.
-    -- screen_added() fires synchronously (same path as hotplug createmon()).
-    -- naughty's init_screen() runs immediately via connect_for_each_screen,
-    -- so by_position[fake_screen] is populated before this step returns.
+    -- Step 1: Hotplug an output.
+    -- screen_added() fires synchronously inside createmon()/updatemons(), and
+    -- naughty's init_screen() runs immediately via connect_for_each_screen, so
+    -- by_position[hot_screen] is populated before this returns.
     function()
-        fake_screen = screen.fake_add(1400, 0, 400, 300)
-        assert(fake_screen and fake_screen.valid, "screen.fake_add failed")
+        out_name = assert(awesome._test_add_output(400, 300),
+            "_test_add_output failed")
+        hot_screen = assert(output.get_by_name(out_name),
+            "no output named " .. out_name).screen
+        assert(hot_screen and hot_screen.valid,
+            "hotplugged screen should be valid")
         return true
     end,
 
     -- Step 2: Immediately emit property::geometry on the new screen.
-    -- With the fix: by_position[fake_screen] is already populated -> no crash.
-    -- Without the fix: by_position[fake_screen] could be nil -> debug::error
+    -- With the fix: by_position[hot_screen] is already populated -> no crash.
+    -- Without the fix: by_position[hot_screen] could be nil -> debug::error
     --   "bad argument #1 to 'pairs' (table expected, got nil)".
     --
     -- Pass old_geom to match the C emission pattern in screen.c:510-513;
     -- awful/layout/init.lua:426 expects this argument and crashes without it.
     function()
-        local geom = fake_screen.geometry
-        fake_screen:emit_signal("property::geometry", geom)
+        local geom = hot_screen.geometry
+        hot_screen:emit_signal("property::geometry", geom)
         return true
     end,
 
@@ -61,9 +67,11 @@ local steps = {
         return true
     end,
 
-    -- Step 4: Clean up the fake screen.
+    -- Step 4: Clean up the hotplugged output.
     function()
-        fake_screen:fake_remove()
+        assert(awesome._test_remove_output(out_name),
+            "_test_remove_output failed for " .. out_name)
+        assert(not hot_screen.valid, "screen should be invalid after removal")
         return true
     end,
 }
