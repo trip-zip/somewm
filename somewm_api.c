@@ -12,6 +12,7 @@
 #include <glib.h>
 #include <wlr/types/wlr_fractional_scale_v1.h>
 #include <wlr/types/wlr_layer_shell_v1.h>
+#include <wlr/types/wlr_pointer_constraints_v1.h>
 #include <wlr/types/wlr_seat.h>
 #include <wlr/types/wlr_keyboard_group.h>
 #include <wlr/interfaces/wlr_keyboard.h>
@@ -407,6 +408,18 @@ some_set_seat_keyboard_focus(Client *c)
 	if (seat->keyboard_state.focused_surface == surface) {
 #ifdef XWAYLAND
 		if (c->client_type == X11) {
+			struct wlr_pointer_constraint_v1 *constraint =
+				wlr_pointer_constraints_v1_constraint_for_surface(
+					pointer_constraints, surface, seat);
+			if (constraint) {
+				/* A constraint-backed X11 pointer grab is in progress
+				 * (games): the clear/re-enter cycle below becomes
+				 * FocusOut in X11 and Xwayland tears the grab down,
+				 * destroying the constraint. Focus is demonstrably
+				 * working; just make sure the constraint is active. */
+				cursorconstrain(constraint);
+				return;
+			}
 			/* KWin pattern: force focus re-delivery for X11 clients.
 			 * wlroots skips re-entry to the same surface, so we must
 			 * deactivate→clear→re-enter to deliver a new FocusIn event.
@@ -508,6 +521,12 @@ some_set_seat_keyboard_focus(Client *c)
 	if (c->client_type == X11)
 		client_activate_surface(surface, 1);
 #endif
+
+	/* Update pointer constraint for the newly focused surface, mirroring
+	 * focusclient(). Without this a constraint created around a Lua-path
+	 * focus change is never activated. */
+	cursorconstrain(wlr_pointer_constraints_v1_constraint_for_surface(
+		pointer_constraints, surface, seat));
 }
 
 /** Find the Client* that owns a given wlr_surface.
