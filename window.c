@@ -252,14 +252,9 @@ initialcommitnotify(struct wl_listener *listener, void *data)
 			WLR_XDG_TOPLEVEL_WM_CAPABILITIES_MAXIMIZE |
 			WLR_XDG_TOPLEVEL_WM_CAPABILITIES_MINIMIZE);
 
-	/* Honor state requests that arrived before the initial commit so Gtk/Qt
-	 * clients start maximized when they ask for it (e.g. via
-	 * xdg_toplevel.set_maximized before the first ack_configure). We cannot
-	 * call wlr_xdg_toplevel_set_maximized() in maximizenotify() before the
-	 * surface is initialized, so we fold the pending request into the first
-	 * configure here. Minimize is handled via Lua state only — no xdg reply. */
-	if (c->surface.xdg->toplevel->requested.maximized)
-		wlr_xdg_toplevel_set_maximized(c->surface.xdg->toplevel, true);
+	/* A set_maximized that arrived before this commit already ran through
+	 * maximizenotify() into c->maximized; apply_geometry_to_wlroots() puts
+	 * it on the wire once the client is mapped. Nothing to fold in here. */
 
 	if (c->decoration)
 		requestdecorationmode(&c->set_decoration_mode, c->decoration);
@@ -1213,88 +1208,46 @@ unset_fullscreen:
 void
 maximizenotify(struct wl_listener *listener, void *data)
 {
-	/* Emitted when a client clicks its own CSD maximize button or calls
-	 * xdg_toplevel.{set,unset}_maximized. Routes through the same Lua API
-	 * as protocols.c:foreign_toplevel_request_maximize, so both entry
-	 * points (CSD button + wibar tasklist) behave identically.
+	/* CSD maximize button, or xdg_toplevel.{set,unset}_maximized. Routes
+	 * through the same Lua setter as the foreign-toplevel path, so a
+	 * titlebar button and a tasklist click behave identically.
 	 *
-	 * Ordering matters: we MUST let Lua apply the maximized geometry
-	 * (awful arrangers resize c to the full screen rect) BEFORE we ack
-	 * the xdg maximize state. If we send set_maximized(true) first, the
-	 * next configure carries maximized=true at the OLD floating size;
-	 * Firefox/GTK computes its CSD hit regions against that stale size
-	 * and — especially after a suspend/resume cycle — can end up treating
-	 * the next pointer press as a resize drag. Letting Lua arrange first
-	 * means the only configure the client sees is
-	 * (maximized=true, full-screen size) in one coherent message.
-	 *
-	 * Protocol compliance: xdg-shell requires a configure after every
-	 * set_maximized / unset_maximized, even for redundant or policy-
-	 * ignored requests. client_set_maximized_common() emits one via
-	 * wlr_xdg_toplevel_set_maximized when the state actually changes;
-	 * if Lua short-circuits (already in the requested state), we emit a
-	 * trailing redundant-ack below. */
+	 * set_maximized while fullscreen has no effect (xdg-shell.xml:1049). */
 	Client *c = wl_container_of(listener, c, maximize);
-	struct wlr_xdg_toplevel *toplevel;
-	bool wants, before;
-	lua_State *L;
+	lua_State *L = globalconf_get_lua_State();
+	bool before;
 
 	if (!c->surface.xdg || !c->surface.xdg->toplevel)
 		return;
-	toplevel = c->surface.xdg->toplevel;
-	wants = toplevel->requested.maximized;
-
-	/* xdg-shell: set_maximized while fullscreen has no direct effect
-	 * (see xdg-shell.xml:1049). Keep our fullscreen/maximized mutual
-	 * exclusion and just ack the request with the current state. */
-	if (c->fullscreen) {
-		if (c->surface.xdg->initialized)
-			wlr_xdg_toplevel_set_maximized(toplevel, c->maximized);
-		return;
-	}
-
-	L = globalconf_get_lua_State();
-	if (!L) {
-		/* No Lua VM — still owe the client a configure. */
-		if (c->surface.xdg->initialized)
-			wlr_xdg_toplevel_set_maximized(toplevel, wants);
-		return;
-	}
 
 	before = c->maximized;
-	luaA_object_push(L, c);
-	client_set_maximized(L, -1, wants);
-	lua_pop(L, 1);
+	if (L && !c->fullscreen) {
+		luaA_object_push(L, c);
+		client_set_maximized(L, -1, c->surface.xdg->toplevel->requested.maximized);
+		lua_pop(L, 1);
+	}
 
-	/* Redundant request ack: Lua short-circuited because we were already
-	 * in the requested state, so client_set_maximized_common didn't fire
-	 * its own set_maximized. xdg-shell still requires a configure. */
-	if (c->surface.xdg->initialized && before == c->maximized)
-		wlr_xdg_toplevel_set_maximized(toplevel, c->maximized);
+	/* xdg-shell owes a configure for every request. When the state changed,
+	 * apply_geometry_to_wlroots() sends one next frame carrying the new
+	 * maximized flag and the new size together; acking here too would land
+	 * first, with stale state. So only ack what we ignored or no-opped. */
+	if (c->surface.xdg->initialized && before == (bool)c->maximized)
+		wlr_xdg_surface_schedule_configure(c->surface.xdg);
 }
 
 void
 minimizenotify(struct wl_listener *listener, void *data)
 {
-	/* Emitted when a client clicks its own CSD minimize button or calls
-	 * xdg_toplevel.set_minimized. Unlike maximize, xdg-shell has no
-	 * unset_minimized — the request is always "minimize me" (xdg-shell.xml:
-	 * 1132). Unminimize happens via Lua: wibar tasklist click
-	 * (rc.lua: c:activate { action="toggle_minimization" }) or the
-	 * Super+Ctrl+n keybind.
-	 *
-	 * The xdg protocol does not require a configure reply for minimize,
-	 * so unlike maximize we don't need to guarantee a wlroots call. We
-	 * just route the event through to Lua. */
+	/* CSD minimize button, or xdg_toplevel.set_minimized. xdg-shell has no
+	 * unset_minimized (xdg-shell.xml:1132), so the request is always
+	 * "minimize me" and unminimize stays a Lua-side concern. No configure
+	 * is owed for it either. */
 	Client *c = wl_container_of(listener, c, minimize);
 	lua_State *L;
 
 	if (!c->surface.xdg || !c->surface.xdg->toplevel)
 		return;
-	/* client_set_minimized calls wlr_xdg_toplevel_set_suspended which
-	 * needs an initialized surface. Pre-initial requests are vanishingly
-	 * rare for CSD button clicks (surface is already mapped), but guard
-	 * anyway — the banning flag isn't meaningful before map either. */
+	/* Nothing to hide before the client has committed a surface. */
 	if (!c->surface.xdg->initialized)
 		return;
 
@@ -1424,6 +1377,11 @@ apply_geometry_to_wlroots(Client *c)
 				&& c->surface.xwayland->fullscreen != c->fullscreen)
 			client_set_fullscreen_internal(c, c->fullscreen);
 #endif
+		/* Same for maximized: GTK and Chromium draw their own titlebar
+		 * button from it, and it must arrive with the matching size. */
+		if (c->client_type == XDGShell && c->surface.xdg && c->surface.xdg->toplevel
+				&& c->surface.xdg->toplevel->scheduled.maximized != !!c->maximized)
+			wlr_xdg_toplevel_set_maximized(c->surface.xdg->toplevel, !!c->maximized);
 		if (c->fullscreen) {
 			/* Fullscreen: no titlebars (and bw is 0), client gets the full geometry */
 			c->resize = client_set_size(c, c->geometry.width, c->geometry.height);
@@ -1609,18 +1567,6 @@ setfullscreen(Client *c, int fullscreen)
 	if (!c->mon || !client_surface(c)->mapped)
 		return;
 
-	/* Same-value non-fullscreen transition is a no-op. Without this early
-	 * return, the exit branch below runs resize(c, c->prev, 0), which for
-	 * a client that has never been fullscreen restores to a stale memento
-	 * (e.g. the 254x306 initial-configure rect GTK CSD clients ship with
-	 * before placement rules run) — the visible bug is Firefox/Chrome
-	 * snapping to a tiny corner after any idempotent unfullscreen notify.
-	 * The FS → FS path is intentionally allowed to fall through: setmon()
-	 * re-invokes setfullscreen(c, c->fullscreen) after a monitor move to
-	 * re-expand the client onto the new workarea. */
-	if (!fullscreen && !was_fullscreen)
-		return;
-
 	/* Fullscreen is mutually exclusive with maximized states */
 	if (fullscreen && (c->maximized || c->maximized_horizontal || c->maximized_vertical)) {
 		c->maximized = 0;
@@ -1632,20 +1578,21 @@ setfullscreen(Client *c, int fullscreen)
 	}
 
 	c->bw = fullscreen ? 0 : get_border_width();
-	client_set_fullscreen_internal(c, fullscreen);
+	/* Only on the edge: wlroots does not dedupe, so an unconditional call
+	 * would send a fullscreen configure to every client setmon() touches. */
+	if (was_fullscreen != fullscreen)
+		client_set_fullscreen_internal(c, fullscreen);
 	wlr_scene_node_reparent(&c->scene->node, layers[c->fullscreen ? LyrFS : LyrTile]);
 
+	/* c->prev is the pre-fullscreen restore point: capture only on the
+	 * non-FS -> FS edge, consume only on FS -> non-FS. setmon() and
+	 * fullscreennotify() both re-call with the current value, and running
+	 * either edge on a no-op corrupts the memento. */
 	if (fullscreen) {
-		/* Only capture pre-fullscreen geometry on the non-FS → FS
-		 * transition. Redundant enter-FS calls (setmon() re-applies
-		 * setfullscreen(c, c->fullscreen) after a monitor move, and
-		 * xdg-shell fullscreennotify() can fire while already fullscreen)
-		 * would otherwise overwrite c->prev with the current fullscreen
-		 * rect — losing the original restore point. */
 		if (!was_fullscreen)
 			c->prev = c->geometry;
 		resize(c, c->mon->m, 0);
-	} else {
+	} else if (was_fullscreen) {
 		/* restore previous size instead of arrange for floating windows since
 		 * client positions are set by the user and cannot be recalculated */
 		resize(c, c->prev, 0);
@@ -1685,14 +1632,7 @@ setmon(Client *c, Monitor *m, uint32_t newtags)
 	old_screen = c->screen;  /* Capture before update */
 
 	c->mon = m;
-	/* NOTE: do not write c->prev here. c->prev is a restore-memento owned
-	 * by setfullscreen() (and, for future maximize work, by the maximize
-	 * transition). Monitor assignment must not touch it — at map time
-	 * c->geometry still holds the initial-configure rect (e.g. GTK CSD
-	 * clients arrive with 254x306 before placement rules run), so writing
-	 * c->prev = c->geometry here poisons the memento with a stub rect and
-	 * the next same-value setfullscreen(c, 0) restores to it. Restore
-	 * points belong to their owning transition, not to setmon. */
+	/* c->prev belongs to setfullscreen(); do not write it here. */
 
 	/* Update c->screen to match c->mon for Lua property access */
 	c->screen = luaA_screen_get_by_monitor(L, m);

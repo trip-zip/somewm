@@ -2829,17 +2829,10 @@ client_set_minimized(lua_State *L, int cidx, bool s)
         if(c->scene)
             wlr_scene_node_set_enabled(&c->scene->node, !s);
 
-        /* NOTE: xdg-shell state (suspended, maximized, size) is NOT driven
-         * from here. The property::minimized signal below triggers
-         * awful.layout.arrange() → window.c arrange() which calls
-         * client_set_suspended(c, !client_isvisible(c)). wlroots batches
-         * the pending toplevel state (size, maximized, activated, suspended)
-         * into a single coherent configure, matching KWin's pattern
-         * (xdgshellwindow.cpp:873 doSetActive → scheduleConfigure). Earlier
-         * versions called set_suspended + set_maximized + apply_geometry
-         * here directly, which fired three separate events at different
-         * layers and left Firefox/Chrome CSD with stale hit regions after
-         * restore-from-minimize. */
+        /* xdg state is not set here. property::minimized below reaches
+         * arrange(), which calls client_set_suspended() - one configure
+         * carrying suspended and the new size together, instead of a bare
+         * suspended change a frame ahead of the size. */
 
         if(c->toplevel_handle)
             wlr_foreign_toplevel_handle_v1_set_minimized(c->toplevel_handle, s);
@@ -3017,14 +3010,9 @@ client_set_maximized_common(lua_State *L, int cidx, bool s, const char* type, co
             luaA_object_emit_signal(L, abs_cidx, "property::maximized", 0);
             if(c->toplevel_handle)
                 wlr_foreign_toplevel_handle_v1_set_maximized(c->toplevel_handle, c->maximized);
-            /* Inform the xdg-shell client of its new maximized state.
-             * Without this, CSD buttons in Gtk/Qt apps render stale state
-             * when maximize is toggled via Lua (c.maximized = true) or via
-             * the foreign-toplevel protocol (wibar tasklist click). The xdg
-             * protocol path calls this directly in the request handler to
-             * also cover redundant requests where next==current. */
-            if(c->client_type == XDGShell && c->surface.xdg && c->surface.xdg->initialized)
-                wlr_xdg_toplevel_set_maximized(c->surface.xdg->toplevel, c->maximized);
+            /* xdg-shell state is not written here. apply_geometry_to_wlroots()
+             * reconciles it, so it batches into the same configure as the
+             * size change (same as fullscreen). */
         }
 
         stack_windows();
@@ -4570,6 +4558,16 @@ luaA_client_get_xdg_fullscreen(lua_State *L, client_t *c)
     return 1;
 }
 
+static int
+luaA_client_get_xdg_maximized(lua_State *L, client_t *c)
+{
+    if (c->client_type == XDGShell && c->surface.xdg && c->surface.xdg->toplevel)
+        lua_pushboolean(L, c->surface.xdg->toplevel->scheduled.maximized);
+    else
+        lua_pushboolean(L, c->maximized);
+    return 1;
+}
+
 LUA_OBJECT_EXPORT_PROPERTY(client, client_t, modal, lua_pushboolean)
 LUA_OBJECT_EXPORT_PROPERTY(client, client_t, ontop, lua_pushboolean)
 LUA_OBJECT_EXPORT_PROPERTY(client, client_t, urgent, lua_pushboolean)
@@ -5376,6 +5374,7 @@ client_class_setup(lua_State *L)
         { "urgent", (lua_class_propfunc_t) luaA_client_set_urgent, (lua_class_propfunc_t) luaA_client_get_urgent, (lua_class_propfunc_t) luaA_client_set_urgent },
         { "window", NULL, (lua_class_propfunc_t) luaA_client_get_window, NULL },
         { "xdg_fullscreen", NULL, (lua_class_propfunc_t) luaA_client_get_xdg_fullscreen, NULL },
+        { "xdg_maximized", NULL, (lua_class_propfunc_t) luaA_client_get_xdg_maximized, NULL },
     };
     luaA_class_add_properties(&client_class, properties, countof(properties));
     /* _buttons is a method (in client_meta), not a property - matches AwesomeWM */
