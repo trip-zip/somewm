@@ -1542,7 +1542,7 @@ composite_widgets_directly(cairo_t *cr, bool ontop_only)
 			/* Apply shape_bounding mask if set (for rounded corners etc.) */
 			if (drawin->shape_bounding &&
 			    cairo_surface_status(drawin->shape_bounding) == CAIRO_STATUS_SUCCESS) {
-				masked_surface = drawin_apply_shape_mask_for_screenshot(
+				masked_surface = drawin_apply_shape_mask(
 					drawin->drawable->surface, drawin->shape_bounding);
 				if (masked_surface)
 					surface_to_composite = masked_surface;

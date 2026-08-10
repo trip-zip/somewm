@@ -249,29 +249,58 @@ drawin_update_drawing(lua_State *L, int widx)
 /** Refresh callback for drawable - called when drawable content should be displayed
  * This updates the scene graph buffer with new Cairo-rendered content
  */
-/** Apply shape_bounding mask to a drawable surface.
- * Creates a copy of the surface with alpha zeroed where shape is 0.
- * Returns a new cairo_surface_t that the caller must destroy.
- * Returns NULL if no shape or allocation fails.
- */
-static cairo_surface_t *
-drawin_apply_shape_mask(drawable_t *d, cairo_surface_t *shape)
+
+/* Read one pixel from a CAIRO_FORMAT_A1 surface row. Cairo packs A1
+ * into native-endian 32-bit words; on little-endian the leftmost
+ * pixel is bit (x & 31) of word (x >> 5). Caller ensures bounds. */
+static inline int
+shape_a1_get(const unsigned char *data, int stride, int x, int y)
 {
-	cairo_surface_t *src, *dst;
+	const uint32_t *row = (const uint32_t *)(data + y * stride);
+	uint32_t word = row[x >> 5];
+#if defined(__BYTE_ORDER__) && __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
+	return (word >> (31 - (x & 31))) & 1u;
+#else
+	return (word >> (x & 31)) & 1u;
+#endif
+}
+
+/** Apply a shape mask to a cairo surface.
+ * Returns a copy of src with each pixel scaled by the shape's coverage,
+ * or NULL if either surface is unusable or the shape is neither A1 nor
+ * ARGB32. Caller must destroy the returned surface.
+ *
+ * Both mask formats are in use: gears.surface.apply_shape_bounding and
+ * AwesomeWM's wibox:_apply_shape produce A1, while somewm's own
+ * _apply_shape and awful.mouse.snap produce ARGB32 for anti-aliased
+ * edges. Reading one as the other walks off the end of the buffer,
+ * since A1 rows are ~32x smaller.
+ */
+cairo_surface_t *
+drawin_apply_shape_mask(cairo_surface_t *src, cairo_surface_t *shape)
+{
+	cairo_surface_t *dst;
+	cairo_format_t shape_format;
 	unsigned char *src_data, *dst_data, *shape_data;
 	int src_stride, dst_stride, shape_stride;
 	int width, height, shape_width, shape_height;
 	int x, y;
 
-	if (!d || !d->surface || !shape)
+	if (!src || !shape)
 		return NULL;
 
 	/* Check if surfaces are still valid (not finished by GC) */
-	if (cairo_surface_status(d->surface) != CAIRO_STATUS_SUCCESS ||
+	if (cairo_surface_status(src) != CAIRO_STATUS_SUCCESS ||
 	    cairo_surface_status(shape) != CAIRO_STATUS_SUCCESS)
 		return NULL;
 
-	src = d->surface;
+	shape_format = cairo_image_surface_get_format(shape);
+	if (shape_format != CAIRO_FORMAT_A1 && shape_format != CAIRO_FORMAT_ARGB32) {
+		warn("drawin: ignoring shape mask in unsupported cairo format %d",
+		     shape_format);
+		return NULL;
+	}
+
 	cairo_surface_flush(src);
 	cairo_surface_flush(shape);
 
@@ -280,7 +309,6 @@ drawin_apply_shape_mask(drawable_t *d, cairo_surface_t *shape)
 	shape_width = cairo_image_surface_get_width(shape);
 	shape_height = cairo_image_surface_get_height(shape);
 
-	/* Create a copy of the surface */
 	dst = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, width, height);
 	if (cairo_surface_status(dst) != CAIRO_STATUS_SUCCESS) {
 		cairo_surface_destroy(dst);
@@ -302,7 +330,6 @@ drawin_apply_shape_mask(drawable_t *d, cairo_surface_t *shape)
 	shape_stride = cairo_image_surface_get_stride(shape);
 
 	/* Copy pixels, applying shape alpha mask.
-	 * Shape surface is ARGB32 with anti-aliased edges.
 	 * Note: The shape surface may be at logical scale while the source
 	 * surface is at physical (HiDPI) scale. We need to scale coordinates
 	 * when looking up shape alpha. */
@@ -319,19 +346,26 @@ drawin_apply_shape_mask(drawable_t *d, cairo_surface_t *shape)
 			/* Map physical x to logical shape x */
 			int shape_x = (shape_width > 0) ? (x * shape_width / width) : 0;
 
-			/* Check if this pixel is within shape bounds */
+			/* Check if this pixel is within shape bounds.
+			 * Outside shape bounds = alpha 0 (transparent) */
 			if (shape_x < shape_width && shape_y < shape_height) {
-				/* ARGB32 format: 4 bytes per pixel, alpha is byte 3 (on little-endian) */
-				int pixel_offset = (shape_y * shape_stride) + (shape_x * 4);
-				shape_alpha = shape_data[pixel_offset + 3];
+				if (shape_format == CAIRO_FORMAT_A1) {
+					/* 1 bit per pixel, fully in or fully out */
+					shape_alpha = shape_a1_get(shape_data, shape_stride,
+								   shape_x, shape_y) ? 255 : 0;
+				} else {
+					/* ARGB32: 4 bytes per pixel, alpha is byte 3 (on little-endian) */
+					int pixel_offset = (shape_y * shape_stride) + (shape_x * 4);
+					shape_alpha = shape_data[pixel_offset + 3];
+				}
 			}
-			/* Outside shape bounds = alpha 0 (transparent) */
 
 			if (shape_alpha == 255) {
 				/* Fully opaque - copy directly */
 				dst_row[x] = src_row[x];
 			} else if (shape_alpha == 0) {
-				/* Fully transparent */
+				/* Fully transparent. Cairo uses premultiplied
+				 * alpha, so RGB must be zeroed too. */
 				dst_row[x] = 0;
 			} else {
 				/* Partial alpha - blend (premultiplied alpha) */
@@ -342,100 +376,6 @@ drawin_apply_shape_mask(drawable_t *d, cairo_surface_t *shape)
 				uint8_t a = (pixel >> 24) & 0xFF;
 
 				/* Multiply all channels by shape_alpha/255 */
-				b = (b * shape_alpha) / 255;
-				g = (g * shape_alpha) / 255;
-				r = (r * shape_alpha) / 255;
-				a = (a * shape_alpha) / 255;
-
-				dst_row[x] = ((uint32_t)a << 24) | (r << 16) | (g << 8) | b;
-			}
-		}
-	}
-
-	cairo_surface_mark_dirty(dst);
-	return dst;
-}
-
-/** Apply shape mask to a cairo surface (exported for screenshot support).
- * Returns a new cairo_surface_t with alpha applied from ARGB32 shape mask.
- * Caller must destroy the returned surface.
- * Returns NULL if no shape or allocation fails.
- */
-cairo_surface_t *
-drawin_apply_shape_mask_for_screenshot(cairo_surface_t *src, cairo_surface_t *shape)
-{
-	cairo_surface_t *dst;
-	unsigned char *src_data, *dst_data, *shape_data;
-	int src_stride, dst_stride, shape_stride;
-	int width, height, shape_width, shape_height;
-	int x, y;
-
-	if (!src || !shape)
-		return NULL;
-
-	if (cairo_surface_status(src) != CAIRO_STATUS_SUCCESS ||
-	    cairo_surface_status(shape) != CAIRO_STATUS_SUCCESS)
-		return NULL;
-
-	cairo_surface_flush(src);
-	cairo_surface_flush(shape);
-
-	width = cairo_image_surface_get_width(src);
-	height = cairo_image_surface_get_height(src);
-	shape_width = cairo_image_surface_get_width(shape);
-	shape_height = cairo_image_surface_get_height(shape);
-
-	dst = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, width, height);
-	if (cairo_surface_status(dst) != CAIRO_STATUS_SUCCESS) {
-		cairo_surface_destroy(dst);
-		return NULL;
-	}
-
-	src_data = cairo_image_surface_get_data(src);
-	dst_data = cairo_image_surface_get_data(dst);
-	shape_data = cairo_image_surface_get_data(shape);
-
-	if (!src_data || !dst_data || !shape_data) {
-		cairo_surface_destroy(dst);
-		return NULL;
-	}
-
-	src_stride = cairo_image_surface_get_stride(src);
-	dst_stride = cairo_image_surface_get_stride(dst);
-	shape_stride = cairo_image_surface_get_stride(shape);
-
-	/* Copy pixels, applying shape alpha mask.
-	 * Shape surface is ARGB32 with anti-aliased edges.
-	 * Note: Cairo uses premultiplied alpha, so when alpha=0, RGB must also be 0. */
-	for (y = 0; y < height; y++) {
-		uint32_t *src_row = (uint32_t *)(src_data + y * src_stride);
-		uint32_t *dst_row = (uint32_t *)(dst_data + y * dst_stride);
-
-		int shape_y = (shape_height > 0) ? (y * shape_height / height) : 0;
-
-		for (x = 0; x < width; x++) {
-			uint8_t shape_alpha = 0;
-
-			int shape_x = (shape_width > 0) ? (x * shape_width / width) : 0;
-
-			if (shape_x < shape_width && shape_y < shape_height) {
-				/* ARGB32 format: 4 bytes per pixel, alpha is byte 3 */
-				int pixel_offset = (shape_y * shape_stride) + (shape_x * 4);
-				shape_alpha = shape_data[pixel_offset + 3];
-			}
-
-			if (shape_alpha == 255) {
-				dst_row[x] = src_row[x];
-			} else if (shape_alpha == 0) {
-				dst_row[x] = 0;
-			} else {
-				/* Partial alpha - blend (premultiplied alpha) */
-				uint32_t pixel = src_row[x];
-				uint8_t b = (pixel >> 0) & 0xFF;
-				uint8_t g = (pixel >> 8) & 0xFF;
-				uint8_t r = (pixel >> 16) & 0xFF;
-				uint8_t a = (pixel >> 24) & 0xFF;
-
 				b = (b * shape_alpha) / 255;
 				g = (g * shape_alpha) / 255;
 				r = (r * shape_alpha) / 255;
@@ -487,23 +427,15 @@ drawin_refresh_drawable(drawin_t *drawin)
 	/* Apply shape_clip first (clips the drawable content area)
 	 * In AwesomeWM, shape_clip restricts what's visible within the content area */
 	if (drawin->shape_clip) {
-		clipped_surface = drawin_apply_shape_mask(d, drawin->shape_clip);
+		clipped_surface = drawin_apply_shape_mask(work_surface, drawin->shape_clip);
 		if (clipped_surface)
 			work_surface = clipped_surface;
 	}
 
 	/* Apply shape_bounding mask (clips the whole window including border)
-	 * This is applied after shape_clip */
+	 * This is applied after shape_clip, chaining off its result if any */
 	if (drawin->shape_bounding) {
-		/* If we already have a clipped surface, use that as the source */
-		if (clipped_surface) {
-			/* Create a temporary drawable struct to pass to apply_shape_mask */
-			drawable_t temp_d = *d;
-			temp_d.surface = clipped_surface;
-			masked_surface = drawin_apply_shape_mask(&temp_d, drawin->shape_bounding);
-		} else {
-			masked_surface = drawin_apply_shape_mask(d, drawin->shape_bounding);
-		}
+		masked_surface = drawin_apply_shape_mask(work_surface, drawin->shape_bounding);
 		if (masked_surface)
 			work_surface = masked_surface;
 	}

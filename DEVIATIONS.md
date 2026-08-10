@@ -262,7 +262,7 @@ These modifications to AwesomeWM's Lua libraries were necessary for Wayland comp
 |------|--------|--------|
 | `wibox/widget/systray.lua` | Complete rewrite | SNI D-Bus protocol replaces X11 XEmbed |
 | `beautiful/gtk.lua` | Complete rewrite | File parsing replaces live GTK widget queries |
-| `wibox/init.lua` | ARGB32 shapes, HiDPI scaling, surface lifetime, `shape_border` | Wayland scene graph and compositing model |
+| `wibox/init.lua` | ARGB32 shape masks (AwesomeWM uses A1), HiDPI scaling, surface lifetime, `shape_border` | Wayland scene graph and compositing model; ARGB32 gives anti-aliased edges on curved shapes. The rendering path accepts either format, so a config may still assign A1 masks. |
 | `wibox/drawable.lua` | HiDPI scale-change handler | Recreates surfaces when `screen.scale` changes |
 | `awful/client.lua` | `c.type or "normal"` fallback | Native Wayland clients may not set window type |
 | `awful/permissions/init.lua` | Layer surface keyboard focus handlers | Wayland layer-shell has no X11 equivalent |
