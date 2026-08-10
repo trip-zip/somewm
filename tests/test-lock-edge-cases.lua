@@ -10,7 +10,6 @@
 ---------------------------------------------------------------------------
 
 local runner = require("_runner")
-local wibox = require("wibox")
 local lock = require("_lock_helper")
 
 local deactivate_fired = false

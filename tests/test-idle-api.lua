@@ -41,7 +41,7 @@ runner.run_steps({
     end,
 
     -- Step 2: Wait for callback + signal, verify fired state
-    function(count)
+    function(_count)
         if #callback_fired == 0 then return end
         assert(callback_fired[1] == "test1", "callback should have fired")
         assert(idle_start_count >= 1, "idle::start should have fired")

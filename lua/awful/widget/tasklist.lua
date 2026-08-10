@@ -586,14 +586,12 @@ local function tasklist_update(s, self, buttons, filter, data, style, update_fun
     local source = self.source or tasklist.source.all_clients or nil
     local list   = source and source(s, args) or capi.client.get()
 
-    for idx, c in ipairs(list) do
-        local success, result = pcall(function()
-            local skip = c.skip_taskbar or c.hidden or c.type == "splash" or c.type == "dock" or c.type == "desktop"
-            local passes_filter = filter(c, s)
-            if not skip and passes_filter then
-                table.insert(clients, c)
-            end
-        end)
+    for _, c in ipairs(list) do
+        if not (c.skip_taskbar or c.hidden
+            or c.type == "splash" or c.type == "dock" or c.type == "desktop")
+            and filter(c, s) then
+            table.insert(clients, c)
+        end
     end
 
     if self._private.last_count ~= #clients then
@@ -604,12 +602,10 @@ local function tasklist_update(s, self, buttons, filter, data, style, update_fun
 
     local function label(c, tb) return tasklist_label(c, style, tb) end
 
-    pcall(function()
-        update_function(self._private.base_layout, buttons, label, data, clients, {
-            widget_template = self._private.widget_template or default_template(self),
-            create_callback = create_callback,
-        })
-    end)
+    update_function(self._private.base_layout, buttons, label, data, clients, {
+        widget_template = self._private.widget_template or default_template(self),
+        create_callback = create_callback,
+    })
 end
 
 --- The current number of clients.

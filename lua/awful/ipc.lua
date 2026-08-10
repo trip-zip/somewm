@@ -8,9 +8,6 @@
 --   Request:  COMMAND [ARGS...]\n
 --   Response: STATUS [MESSAGE]\n[DATA...]\n\n
 
-local gstring = require("gears.string")
-local gtable = require("gears.table")
-
 -- Lua 5.2+ compatibility
 local unpack = unpack or table.unpack
 local loadstring = loadstring or load
@@ -357,6 +354,7 @@ local function register_builtin_commands()
   local awful_tag = require("awful.tag")
   local awful_placement = require("awful.placement")
   local awful_spawn = require("awful.spawn")
+  local awful_layout = require("awful.layout")
 
   --- Find a client by numeric ID
   -- @param target The numeric ID to search for (e.g., "1", "42")
@@ -783,8 +781,6 @@ local function register_builtin_commands()
   -- =================================================================
   -- LAYOUT COMMANDS
   -- =================================================================
-
-  local awful_layout = require("awful.layout")
 
   --- layout.list - List all available layouts for the current tag
   ipc.register("layout.list", function()
@@ -1852,7 +1848,7 @@ local function register_builtin_commands()
       return tostring(results[1])
     else
       local formatted = {}
-      for i, v in ipairs(results) do
+      for _, v in ipairs(results) do
         table.insert(formatted, tostring(v))
       end
       return table.concat(formatted, "\n")
@@ -1974,7 +1970,6 @@ local function register_builtin_commands()
 
     -- Get client geometry for dimensions
     local geom = c:geometry()
-    local bw = c.border_width or 0
     local _, top_size = c:titlebar_top()
     local _, right_size = c:titlebar_right()
     local _, bottom_size = c:titlebar_bottom()
@@ -2175,7 +2170,10 @@ local function register_builtin_commands()
       return true
     end, "crosshair")  -- Use crosshair cursor during grab
 
-    return string.format("Started mousegrabber test (max %d events)\nMove mouse or click buttons to generate events\nThe grabber will stop when all buttons are released", max_events)
+    return string.format(
+      "Started mousegrabber test (max %d events)\nMove mouse or click buttons to generate events\n"
+        .. "The grabber will stop when all buttons are released",
+      max_events)
   end)
 
   --- mousegrabber.track - Start mousegrabber and continuously print coordinates
@@ -2206,7 +2204,8 @@ local function register_builtin_commands()
       return any_pressed
     end, "crosshair")
 
-    return "Started mousegrabber coordinate tracking\nPress any mouse button and move the mouse\nRelease all buttons to stop"
+    return "Started mousegrabber coordinate tracking\nPress any mouse button and move the mouse\n"
+      .. "Release all buttons to stop"
   end)
 
   -- ============================================================================
@@ -2384,7 +2383,8 @@ local function register_builtin_commands()
   --- Add a global keybinding that spawns a command
   ipc.register("keybind.add", function(mod_str, key, ...)
     if not mod_str then
-      error("Usage: keybind add <modifiers> <key> <command> [description] [group]\nExample: keybind add Mod4+Shift t 'kitty' 'spawn terminal' 'launcher'")
+      error("Usage: keybind add <modifiers> <key> <command> [description] [group]\n"
+        .. "Example: keybind add Mod4+Shift t 'kitty' 'spawn terminal' 'launcher'")
     end
     if not key then
       error("Missing key")

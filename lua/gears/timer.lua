@@ -289,13 +289,6 @@ end
 
 local delayed_calls = {}
 
---- Check if there are pending delayed calls.
--- @treturn boolean True if there are pending delayed calls
--- @staticfct gears.timer.has_pending_delayed_calls
-function timer.has_pending_delayed_calls()
-    return #delayed_calls > 0
-end
-
 --- Run all pending delayed calls now. This function should best not be used at
 -- all, because it means that less batching happens and the delayed calls run
 -- prematurely.

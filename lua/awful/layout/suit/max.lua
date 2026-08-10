@@ -22,23 +22,23 @@ local max = {}
 -- @see gears.surface
 
 local function fmax(p, fs)
-  -- Fullscreen?
-  local area
-  if fs then
-    area = p.geometry
-  else
-    area = p.workarea
-  end
+    -- Fullscreen?
+    local area
+    if fs then
+        area = p.geometry
+    else
+        area = p.workarea
+    end
 
-  for _, c in pairs(p.clients) do
-    local g = {
-      x = area.x,
-      y = area.y,
-      width = area.width,
-      height = area.height,
-    }
-    p.geometries[c] = g
-  end
+    for _, c in pairs(p.clients) do
+        local g = {
+            x = area.x,
+            y = area.y,
+            width = area.width,
+            height = area.height
+        }
+        p.geometries[c] = g
+    end
 end
 
 --- Maximized layout.
@@ -46,10 +46,10 @@ end
 -- @usebeautiful beautiful.layout_max
 max.name = "max"
 function max.arrange(p)
-  return fmax(p, false)
+    return fmax(p, false)
 end
 function max.skip_gap(nclients, t) -- luacheck: no unused args
-  return true
+    return true
 end
 
 --- Fullscreen layout.
@@ -59,7 +59,7 @@ max.fullscreen = {}
 max.fullscreen.name = "fullscreen"
 max.fullscreen.skip_gap = max.skip_gap
 function max.fullscreen.arrange(p)
-  return fmax(p, true)
+    return fmax(p, true)
 end
 
 return max

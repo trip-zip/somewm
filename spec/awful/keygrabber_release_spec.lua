@@ -55,7 +55,7 @@ describe("awful.keygrabber release events", function()
    it("stop_event='release' stops on release, not press", function()
       local stop_fired = false
 
-      local kg = akeygrabber {
+      akeygrabber {
          stop_key = "Escape",
          stop_event = "release",
          stop_callback = function() stop_fired = true end,
@@ -75,9 +75,9 @@ describe("awful.keygrabber release events", function()
    it("keyreleased_callback fires on release events", function()
       local released_key = nil
 
-      local kg = akeygrabber {
+      akeygrabber {
          stop_key = "Escape",
-         keyreleased_callback = function(self, mods, key, event)
+         keyreleased_callback = function(_self, _mods, key, _event)
             released_key = key
          end,
          autostart = true,
@@ -93,7 +93,7 @@ describe("awful.keygrabber release events", function()
    it("keypressed_callback does not fire on release events", function()
       local pressed_count = 0
 
-      local kg = akeygrabber {
+      akeygrabber {
          stop_key = "Escape",
          keypressed_callback = function()
             pressed_count = pressed_count + 1
@@ -121,7 +121,7 @@ describe("awful.keygrabber release events", function()
          on_release = function() release_called = true end,
       }
 
-      local kg = akeygrabber {
+      akeygrabber {
          stop_key = "Escape",
          keybindings = { fake_binding },
          autostart = true,
@@ -157,7 +157,7 @@ describe("awful.keygrabber release events", function()
       local seq_press = nil
       local seq_release = nil
 
-      local kg = akeygrabber {
+      akeygrabber {
          stop_key = "Escape",
          keypressed_callback = function(self) seq_press = self.sequence end,
          keyreleased_callback = function(self) seq_release = self.sequence end,

@@ -234,9 +234,7 @@ end
 -- @staticfct awful.layout.arrange
 function layout.arrange(screen)
     screen = get_screen(screen)
-    if not screen or delayed_arrange[screen] then
-        return
-    end
+    if not screen or delayed_arrange[screen] then return end
     delayed_arrange[screen] = true
 
     timer.delayed_call(function()
@@ -256,7 +254,6 @@ function layout.arrange(screen)
 
             p.geometries = setmetatable({}, {__mode = "k"})
             layout.get(screen).arrange(p)
-
             for c, g in pairs(p.geometries) do
                 g.width = math.max(1, g.width - c.border_width * 2 - useless_gap * 2)
                 g.height = math.max(1, g.height - c.border_width * 2 - useless_gap * 2)

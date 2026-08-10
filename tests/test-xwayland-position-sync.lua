@@ -17,7 +17,6 @@
 
 local runner = require("_runner")
 local x11_client = require("_x11_client")
-local utils = require("_utils")
 
 -- Skip if headless (XWayland needs display)
 if os.getenv("WLR_BACKENDS") == "headless" then

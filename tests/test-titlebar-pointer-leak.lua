@@ -117,7 +117,10 @@ runner.run_async(function()
     assert(hit, string.format(
         "[1] content hover: expected enter/motion near (%d,%d), got: %s",
         cx - ox, cy - oy, (function()
-            local s = {} for _, e in ipairs(ev) do s[#s + 1] = e.kind .. " " .. tostring(e.x) .. " " .. tostring(e.y) end
+            local s = {}
+            for _, e in ipairs(ev) do
+                s[#s + 1] = e.kind .. " " .. tostring(e.x) .. " " .. tostring(e.y)
+            end
             return "[" .. table.concat(s, " | ") .. "]"
         end)()))
     io.stderr:write(string.format("[TEST 1] PASS - content enter/motion at (%d,%d)\n", hit.x, hit.y))

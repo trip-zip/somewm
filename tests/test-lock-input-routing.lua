@@ -10,7 +10,6 @@
 ---------------------------------------------------------------------------
 
 local runner = require("_runner")
-local awful = require("awful")
 local lock = require("_lock_helper")
 local test_client = require("_client")
 
@@ -50,7 +49,6 @@ runner.run_steps({
     -- the security boundary is at the wlroots seat level (keyboard events
     -- are blocked by keypress() checks in somewm.c)
     function()
-        local focused_before = client.focus
         awesome.lock()
         assert(awesome.locked, "should be locked")
         -- Keyboard focus cleared at seat level (not observable from Lua)

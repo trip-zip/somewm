@@ -103,7 +103,7 @@ gtable.crush(naughty, require("naughty.constants"))
 
 --- The reason why a notification is to be closed.
 --
--- See [the specification](https://specifications.freedesktop.org/notification-spec/notification-spec-latest.html#signals)
+-- See [the specification](https://specifications.freedesktop.org/notification-spec/latest/protocol.html#id-1.10.4.2.4)
 -- for more details.
 --
 -- @table naughty.notification_closed_reason
@@ -735,11 +735,7 @@ function naughty.app_icon_handler(self, context, hints)
     if context ~= "app_icon" then return end
 
     -- Skip placeholder icons that would just add noise.
-    local dominated = {
-        ["image-missing"] = true,
-        [""] = true,
-    }
-    if dominated[hints.app_icon] then return end
+    if hints.app_icon == "" or hints.app_icon == "image-missing" then return end
 
     local path = menubar_utils.lookup_icon(hints.app_icon)
         or menubar_utils.lookup_icon(hints.app_icon:lower())
@@ -752,7 +748,7 @@ end
 naughty.connect_signal("request::icon", naughty.client_icon_handler)
 naughty.connect_signal("request::icon", naughty.icon_path_handler  )
 naughty.connect_signal("request::icon", naughty.icon_clear_handler )
-naughty.connect_signal("request::icon", naughty.app_icon_handler   )
+naughty.connect_signal("request::icon", naughty.app_icon_handler)
 
 --@DOC_signals_COMMON@
 

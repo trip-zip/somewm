@@ -32,7 +32,6 @@ local asuit = require("awful.layout.suit")
 local beautiful = require("beautiful")
 local alayout = require("awful.layout")
 local atag = require("awful.tag")
-local ascreen = require("awful.screen")
 local gdebug = require("gears.debug")
 local wibox = require("wibox")
 local pcommon = require("awful.permissions._common")
@@ -239,7 +238,7 @@ end
 --
 --    awful.permissions.add_activate_filter(function(c)
 --        if c.class == "Firefox" then return false end
---    end, "permissions")
+--    end)
 --
 -- @tparam function f The callback
 -- @tparam[opt] string context The `request::activate` context
@@ -854,7 +853,7 @@ end
 -- @tparam string context Either "exclusive" or "on_demand".
 -- @tparam table hints Additional hints (currently unused).
 -- @sourcesignal layer_surface request::keyboard
-function permissions.layer_surface_keyboard(l, context, hints)
+function permissions.layer_surface_keyboard(l, context, _hints)
     if not pcommon.check(l, "layer_surface", "keyboard", context) then return end
 
     -- Grant keyboard focus to overlay/top layers with exclusive keyboard
@@ -879,7 +878,7 @@ end
 -- @tparam string context The unmanage context (e.g., "destroyed").
 -- @tparam table hints Additional hints (currently unused).
 -- @sourcesignal layer_surface request::unmanage
-function permissions.layer_surface_unmanage(l, context, hints)
+function permissions.layer_surface_unmanage(l, context, _hints)
     if not pcommon.check(l, "layer_surface", "unmanage", context) then return end
 end
 

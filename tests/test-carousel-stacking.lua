@@ -56,7 +56,7 @@ local steps = {
     -- Let layout settle with focus on c1. Wait until focus actually lands on
     -- c1; a late focus-on-manage from a still-mapping client would otherwise
     -- leave the following consume operating on the wrong column.
-    function(count)
+    function(_count)
         if client.focus ~= c1 then
             client.focus = c1
             c1:raise()
@@ -156,7 +156,6 @@ local steps = {
             return nil
         end
 
-        local g_before = c1:geometry()
         carousel.expel_window() -- should be no-op (c1 is alone)
 
         -- Wait for any deferred arrange

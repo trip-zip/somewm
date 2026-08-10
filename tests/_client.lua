@@ -63,9 +63,8 @@ end
 -- @tparam[opt] table sn_rules Startup notification rules (for compatibility, currently unused)
 -- @tparam[opt] function callback Callback when client appears (for compatibility, currently unused)
 -- @treturn number|nil The PID of the spawned process, or nil on failure
-local function spawn_client(_, class, title, sn_rules, callback)
+local function spawn_client(_, class, _title, _sn_rules, _callback)
     class = class or "test_client"
-    title = title or "Test Client"
 
     if not detect_terminal() then
         io.stderr:write("ERROR: Cannot spawn test client - no terminal available\n")

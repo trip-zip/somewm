@@ -105,8 +105,8 @@ local function update_display()
   -- Line 3: Focused client
   local focused = client_focus.get()
   if focused then
-    local title = _client.title(focused) or "untitled"
-    local appid = _client.appid(focused) or "unknown"
+    local title = focused.name or "untitled"
+    local appid = focused.class or "unknown"
     local is_floating = awful_client.floating.get(focused)
     local mode = is_floating and "FLOAT" or "TILE"
 
@@ -177,15 +177,6 @@ function focus_tracker.toggle()
       update_timer:stop()
     end
   else
-    -- Update position based on current focused monitor
-    local focused_mon = awful_screen.focused()
-    if focused_mon then
-      local geom = awful_screen.geometry(focused_mon)
-      -- Reposition to top-right of focused monitor
-      -- Note: wibox doesn't currently support repositioning, so this is FYI
-      -- In future, we could destroy and recreate at new position
-    end
-
     update_display()
     -- Note: _redraw() is automatic in widget system
     wb:show()

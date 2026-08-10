@@ -9,6 +9,8 @@
 -- Run with: WLR_WL_OUTPUTS=2 make test-one TEST=tests/test-tag-persistence.lua
 ---------------------------------------------------------------------------
 
+-- luacheck: globals output
+
 local runner = require("_runner")
 local test_client = require("_client")
 local utils = require("_utils")

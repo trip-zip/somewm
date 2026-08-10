@@ -41,7 +41,6 @@ if not is_test_client_available() then
 end
 
 local parent_client
-local child_client
 local proc_pid
 
 local steps = {
@@ -84,7 +83,6 @@ local steps = {
         -- so the child's class is not populated from app_id.
         for _, c in ipairs(client.get()) do
             if c.transient_for == parent_client then
-                child_client = c
                 io.stderr:write("[TEST] Child client appeared (transient of parent)\n")
                 return true
             end

@@ -419,8 +419,8 @@ function screen.object.get_bounding_geometry(self, args)
 
     self = get_screen(self or capi.mouse.screen)
 
-    local key = args.honor_workarea and "workarea" or "geometry"
-    local geo = args.bounding_rect or (args.parent and args.parent:geometry()) or self[key]
+    local geo = args.bounding_rect or (args.parent and args.parent:geometry()) or
+        self[args.honor_workarea and "workarea" or "geometry"]
 
     if (not args.parent) and (not args.bounding_rect) and args.honor_padding then
         local padding = self.padding

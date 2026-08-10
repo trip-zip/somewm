@@ -14,7 +14,7 @@ local steps = {
     function()
         local events = {}
 
-        keygrabber.run(function(mods, key, event)
+        keygrabber.run(function(_mods, key, event)
             table.insert(events, {key = key, event = event})
         end)
 
@@ -35,14 +35,11 @@ local steps = {
     -- Test 2: stop_event="release" stops on key release, not press
     function()
         local stop_fired = false
-        local press_seen = false
 
-        local kg = awful.keygrabber {
+        awful.keygrabber {
             stop_key = "Escape",
             stop_event = "release",
-            keypressed_callback = function()
-                press_seen = true
-            end,
+            keypressed_callback = function() end,
             stop_callback = function()
                 stop_fired = true
             end,
@@ -71,11 +68,11 @@ local steps = {
         local pressed = {}
         local released = {}
 
-        local kg = awful.keygrabber {
-            keypressed_callback = function(self, mods, key, event)
+        awful.keygrabber {
+            keypressed_callback = function(_self, _mods, key, _event)
                 table.insert(pressed, key)
             end,
-            keyreleased_callback = function(self, mods, key, event)
+            keyreleased_callback = function(_self, _mods, key, _event)
                 table.insert(released, key)
             end,
             stop_key = "Escape",
@@ -101,7 +98,7 @@ local steps = {
         local seq_after_press = nil
         local seq_after_release = nil
 
-        local kg = awful.keygrabber {
+        awful.keygrabber {
             keypressed_callback = function(self)
                 seq_after_press = self.sequence
             end,
@@ -131,7 +128,7 @@ local steps = {
     function()
         local events = {}
 
-        keygrabber.run(function(mods, key, event)
+        keygrabber.run(function(_mods, key, event)
             table.insert(events, {key = key, event = event})
         end)
 

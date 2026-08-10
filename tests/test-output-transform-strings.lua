@@ -7,6 +7,8 @@
 --   5. Out-of-range integer raises error
 ---------------------------------------------------------------------------
 
+-- luacheck: globals output
+
 local runner = require("_runner")
 
 print("TEST: Starting output-transform-strings test")

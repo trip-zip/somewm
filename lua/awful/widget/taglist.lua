@@ -686,6 +686,7 @@ function taglist.new(args, filter, buttons, style, update_function, base_widget)
                     tlist._do_taglist_update()
                 end
             else
+                -- No screen? Update all taglists
                 for _, list in pairs(instances) do
                     for _, tlist in pairs(list) do
                         tlist._do_taglist_update()
@@ -694,9 +695,7 @@ function taglist.new(args, filter, buttons, style, update_function, base_widget)
             end
         end
         local uc = function (c) return u(c.screen) end
-        local ut = function (t)
-            return u(t.screen)
-        end
+        local ut = function (t) return u(t.screen) end
         capi.client.connect_signal("property::active", uc)
         tag.attached_connect_signal(nil, "property::selected", ut)
         tag.attached_connect_signal(nil, "property::icon", ut)

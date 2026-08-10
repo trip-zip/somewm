@@ -59,12 +59,14 @@ local steps = {
             for i = 1, 1000 do
                 junk[i] = string.rep(string.char(round), 1000)
             end
-            junk = nil
+            for i = #junk, 1, -1 do
+                junk[i] = nil
+            end
             collectgarbage("collect")
         end
 
         -- Also create and destroy some cairo surfaces to reuse cairo's memory pool
-        for i = 1, 20 do
+        for _ = 1, 20 do
             local temp = cairo.ImageSurface.create(cairo.Format.A1, BOX_W, BOX_H)
             temp:finish()
         end

@@ -10,6 +10,12 @@ All notable changes to somewm will be documented in this file.
 
 ### Changed
 
+### Removed
+
+- `client_shape_input` property and `awful.client.shape.update.input`,
+  matching upstream AwesomeWM's revert of the feature (#4100). The drawin
+  `shape_input` property is unaffected.
+
 ## [1.4.0] - 2026-04-07
 
 First stable release. SomeWM 1.4 = AwesomeWM 4.4 on Wayland.

@@ -177,7 +177,7 @@ local steps = {
 
     -- Test 6: Error in duration
     function()
-        local ok, err = pcall(function()
+        local ok = pcall(function()
             awesome.start_animation(-1, "linear", function() end)
         end)
         assert(not ok, "Negative duration should error")

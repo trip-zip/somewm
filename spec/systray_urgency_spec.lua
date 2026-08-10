@@ -17,9 +17,6 @@
 -- Since the full module requires D-Bus (lgi.Gio), we extract the two
 -- testable functions by loading the file in a controlled environment.
 
-local systray_path = debug.getinfo(1, "S").source:match("@(.*/)")
-    or "./"
-systray_path = systray_path .. "../lua/awful/systray.lua"
 
 -- Build minimal stubs so the module can parse without errors
 local function load_systray_helpers()
