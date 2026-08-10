@@ -1,5 +1,5 @@
 ---------------------------------------------------------------------------
---- Test: topology signals from C paths defer to the frame boundary
+--- Test: output and screen signals from C paths defer to the frame boundary
 --
 -- Verifies:
 --   1. Screen property::geometry triggered by a C-side layout change
@@ -8,6 +8,11 @@
 --      geometry argument through the queue.
 --   2. Lua-initiated paths bypass the queue: screen.fake_add delivers
 --      the class "list" signal synchronously.
+--   3. property::geometry still precedes property::workarea on that C
+--      path. Both go through the queue, so the synchronous workarea
+--      emitter cannot overtake the geometry signal it should follow.
+--   4. A removed screen reports valid == false without raising, and its
+--      other properties raise "invalid object" (AwesomeWM parity).
 ---------------------------------------------------------------------------
 
 local runner = require("_runner")
@@ -18,6 +23,9 @@ local geo_old_arg
 
 local list_count = 0
 
+-- Delivery order of the two signals the C geometry path emits.
+local order = {}
+
 local fake_screen
 
 local steps = {
@@ -27,6 +35,10 @@ local steps = {
         s:connect_signal("property::geometry", function(_, old)
             geo_count = geo_count + 1
             geo_old_arg = old
+            order[#order + 1] = "geometry"
+        end)
+        s:connect_signal("property::workarea", function()
+            order[#order + 1] = "workarea"
         end)
         local o = output[1]
         local pos = o.position
@@ -45,6 +57,9 @@ local steps = {
             .. tostring(geo_at_set) .. ")")
         assert(type(geo_old_arg) == "table" and geo_old_arg.width,
             "old geometry argument lost through the event queue")
+        assert(order[1] == "geometry",
+            "property::workarea overtook property::geometry (order: "
+            .. table.concat(order, ", ") .. ")")
         return true
     end,
 
@@ -59,11 +74,25 @@ local steps = {
         return true
     end,
 
-    -- Step 4: cleanup
+    -- Step 4: a removed screen is reported invalid, so queued signals for
+    -- it get dropped by screen_checker instead of running on a zombie.
     function()
         fake_screen:fake_remove()
+        assert(fake_screen.valid == false,
+            "removed screen must report valid == false, got "
+            .. tostring(fake_screen.valid))
+        assert(screen[fake_screen] == nil,
+            "screen[removed] must be nil so get_screen() guards catch it")
+        local ok = pcall(function() return fake_screen.geometry end)
+        assert(not ok,
+            "properties other than valid must raise on a removed screen")
         return true
     end,
+
+    -- Step 5: a drain cycle passes with the removed screen still referenced.
+    -- Reaching step 6 proves drain survived it.
+    function() return true end,
+    function() return true end,
 }
 
 runner.run_steps(steps)

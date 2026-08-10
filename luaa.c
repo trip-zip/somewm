@@ -1586,10 +1586,12 @@ idle_timeout_callback(void *data)
 	/* Mark as fired so it doesn't fire again until activity resets it */
 	timeout->fired = true;
 
-	/* Queue idle::start signal on first timeout (user became idle) */
+	/* Emit idle::start on first timeout (user became idle). Stays
+	 * synchronous: the callback below runs on the next line, and queueing
+	 * only the signal would deliver it after the callback it announces. */
 	if (!user_is_idle) {
 		user_is_idle = true;
-		some_event_queue_global(SIG_IDLE_START);
+		luaA_emit_signal_global_with_stack(L, "idle::start", 0);
 	}
 
 	/* Call the Lua callback */
