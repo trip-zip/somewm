@@ -13,6 +13,7 @@ This document tracks all known differences between somewm and AwesomeWM. These e
 | GTK theme detection | Creates GTK widgets, queries `GtkStyleContext` | Parses `gtk-3.0/settings.ini` and `gtk-4.0/settings.ini` | Creating GTK windows inside a compositor is unsafe |
 | Xresources | Queries `xrdb` server | Parses `~/.Xresources` file directly | No `xrdb` server on Wayland |
 | Wibox shape surfaces | 1-bit (`cairo.Format.A1`) | Full ARGB32 with anti-aliasing | Enables anti-aliased rounded corners and HiDPI scaling |
+| Client-drawn titlebar buttons | No equivalent (X11 apps ask via `_NET_WM_STATE`) | `xdg_toplevel.set_maximized` / `set_minimized` set `c.maximized` / `c.minimized` | GTK and Chromium draw their own titlebars; the requests go through the same `request::geometry` path `awful.permissions` already governs |
 | Config/cache paths | `~/.config/awesome/`, `~/.cache/awesome/` | `~/.config/somewm/`, `~/.cache/somewm/` | Rebranded |
 
 ### Detailed Explanations

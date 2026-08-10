@@ -536,6 +536,15 @@ test_fullscreen_client = executable(
   install: false,
 )
 
+# Test XDG client that drives CSD maximize/minimize requests
+test_csd_state_client = executable(
+  'test-csd-state-client',
+  ['tests/test-csd-state-client.c', xdg_shell_client_code],
+  xdg_shell_client_header,
+  dependencies: [wayland_client],
+  install: false,
+)
+
 # Test XDG client that renders a 4-quadrant pattern at the preferred buffer
 # scale, used by test-client-content-pattern.lua to verify HiDPI c.content.
 test_content_pattern_client = executable(
