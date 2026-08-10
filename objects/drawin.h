@@ -71,7 +71,8 @@ typedef struct drawin_t {
 	shadow_nodes_t shadow;                  /* Shadow scene nodes */
 
 	/* Shape properties (AwesomeWM compatibility)
-	 * These are cairo_surface_t* in A1 format (1-bit alpha mask).
+	 * These are cairo_surface_t* alpha masks, either A1 (AwesomeWM's
+	 * format) or ARGB32 (somewm's, for anti-aliased edges).
 	 * NULL means no custom shape (full rectangle). */
 	cairo_surface_t *shape_bounding;        /* Visual bounding shape (rounded corners, etc.) */
 	cairo_surface_t *shape_clip;            /* Drawing clip region */
@@ -115,11 +116,11 @@ void luaA_drawin_apply_geometry(drawin_t *drawin);
 /* Drawin refresh cycle (called from main event loop) */
 void drawin_refresh(void);
 
-/* Apply shape mask to a drawable surface (for screenshot support).
- * Returns a new surface with alpha zeroed where shape bit is 0.
+/* Apply an A1 or ARGB32 shape mask to a surface.
+ * Returns a new surface scaled by the mask's coverage.
  * Caller must destroy the returned surface.
- * Returns NULL if no shape or allocation fails. */
-cairo_surface_t *drawin_apply_shape_mask_for_screenshot(
+ * Returns NULL if no shape, an unsupported format, or allocation fails. */
+cairo_surface_t *drawin_apply_shape_mask(
     cairo_surface_t *src, cairo_surface_t *shape);
 
 /* Object signal support
