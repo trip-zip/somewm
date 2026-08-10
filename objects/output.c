@@ -749,10 +749,20 @@ luaA_output_index(lua_State *L)
 	const char *key;
 	output_t *o;
 
+	key = luaL_checkstring(L, 2);
+
+	/* "valid" is the only property readable on a disconnected output, so it
+	 * has to be answered before luaA_checkudata() rejects one. Mirrors the
+	 * special case in luaA_class_index(). */
+	if (strcmp(key, "valid") == 0) {
+		o = (output_t *)luaA_toudata(L, 1, &output_class);
+		lua_pushboolean(L, o && o->valid);
+		return 1;
+	}
+
 	o = (output_t *)luaA_checkudata(L, 1, &output_class);
 	if (!o)
 		return 0;
-	key = luaL_checkstring(L, 2);
 
 	/* Properties */
 	if (strcmp(key, "name") == 0) return luaA_output_get_name(L, o);
@@ -1048,8 +1058,9 @@ luaA_output_call(lua_State *L)
 static bool
 output_checker(output_t *o)
 {
-	(void)o;
-	return true;
+	/* See screen_checker(): queued signals outlive luaA_output_invalidate(),
+	 * so a disconnected output must report invalid to have them dropped. */
+	return o && o->valid;
 }
 
 /* ========================================================================

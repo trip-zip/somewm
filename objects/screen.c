@@ -571,17 +571,21 @@ push_wlr_box(lua_State *L, struct wlr_box *box)
 
 /* Note: wlr_box_equal() is provided by wlroots in wlr/util/box.h */
 
+static void screen_update_workarea_ex(screen_t *screen, bool defer);
+
 /** Recalculate workarea for a screen including all drawin struts
  * \param L Lua state (unused, kept for compatibility)
  * \param screen Screen to recalculate workarea for
  *
- * Wrapper for screen_update_workarea() for internal use.
+ * Wrapper for screen_update_workarea() used by the C-initiated geometry path,
+ * which queues property::geometry. The workarea signal has to be queued too,
+ * or it would overtake the geometry signal it is supposed to follow.
  */
 static void
 luaA_screen_recalculate_workarea(lua_State *L, screen_t *screen)
 {
 	(void)L;
-	screen_update_workarea(screen);
+	screen_update_workarea_ex(screen, true);
 }
 
 /** Update screen geometry from monitor and emit property::geometry if changed
@@ -691,6 +695,15 @@ screen_set_workarea(lua_State *L, screen_t *screen, struct wlr_box *workarea)
 void
 screen_update_workarea(screen_t *screen)
 {
+	screen_update_workarea_ex(screen, false);
+}
+
+/** screen_update_workarea(), with control over how property::workarea is sent.
+ * \param defer Queue the signal instead of emitting it inline.
+ */
+static void
+screen_update_workarea_ex(screen_t *screen, bool defer)
+{
 	area_t area = screen->geometry;
 	uint16_t top = 0, bottom = 0, left = 0, right = 0;
 
@@ -786,7 +799,10 @@ screen_update_workarea(screen_t *screen)
 	lua_State *L = globalconf_get_lua_State();
 	luaA_object_push(L, screen);
 	luaA_pusharea(L, old_workarea);
-	luaA_object_emit_signal(L, -2, "property::workarea", 1);
+	if (defer)
+		some_event_queue_signal(L, -2, SIG_PROPERTY_WORKAREA, 1);
+	else
+		luaA_object_emit_signal(L, -2, "property::workarea", 1);
 	lua_pop(L, 1);
 }
 
@@ -1839,7 +1855,10 @@ luaA_screen_module_index(lua_State *L)
 	 * already be a screen object. Calling screen[s] returns s unchanged.
 	 */
 	if (lua_isuserdata(L, 2)) {
-		screen_t *s = luaA_checkscreen(L, 2);
+		/* luaA_toudata, not luaA_checkscreen: a removed screen must yield
+		 * nil here so get_screen() callers fall through their nil guard,
+		 * rather than raising "invalid object". */
+		screen_t *s = luaA_toudata(L, 2, &screen_class);
 		if (s && s->valid) {
 			/* Return the same screen object */
 			lua_pushvalue(L, 2);
@@ -2007,12 +2026,21 @@ luaA_screen_disconnect_signal(lua_State *L)
 static int
 luaA_screen_index(lua_State *L)
 {
-	const char *key;
+	const char *key = luaL_checkstring(L, 2);
+	screen_t *s;
+
+	/* "valid" is the only property readable on a torn-down screen, so it has
+	 * to be answered before luaA_checkscreen() rejects one. Mirrors the
+	 * special case in luaA_class_index(). */
+	if (strcmp(key, "valid") == 0) {
+		s = luaA_toudata(L, 1, &screen_class);
+		lua_pushboolean(L, s && s->valid);
+		return 1;
+	}
 
 	/* Validate screen object (luaA_checkscreen will error if invalid) */
-	screen_t *s = luaA_checkscreen(L, 1);
+	s = luaA_checkscreen(L, 1);
 	(void)s;  /* Used for validation */
-	key = luaL_checkstring(L, 2);
 
 	/* Check for properties */
 	if (strcmp(key, "geometry") == 0)
@@ -2027,11 +2055,6 @@ luaA_screen_index(lua_State *L)
 		return luaA_screen_get_name(L);
 	if (strcmp(key, "_managed") == 0)
 		return luaA_screen_get_managed(L);
-	if (strcmp(key, "valid") == 0) {
-		screen_t *screen = luaA_checkscreen(L, 1);
-		lua_pushboolean(L, screen->valid);
-		return 1;
-	}
 	if (strcmp(key, "scale") == 0) {
 		screen_t *screen = luaA_checkscreen(L, 1);
 		return luaA_screen_get_scale(L, screen);
@@ -2383,10 +2406,11 @@ const luaL_Reg screen_meta[] = {
 static bool
 screen_checker(screen_t *s)
 {
-	(void)s;
-	/* In somewm, screens are always valid once created
-	 * TODO: Implement proper validation if needed */
-	return true;
+	/* Signals queued before screen_removed() drain after it, so the queue
+	 * can hold the last reference to a torn-down screen. Reporting it
+	 * invalid makes luaA_object_emit_signal drop those events instead of
+	 * running handlers against a screen whose index now aliases a live one. */
+	return s && s->valid;
 }
 
 /* Screen class methods (for global screen table) */

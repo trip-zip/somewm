@@ -54,7 +54,7 @@ enum {
 	/* Global geometry signal */
 	SIG_CLIENT_PROPERTY_GEOMETRY,  /* global */
 
-	/* Output/screen topology signals */
+	/* Output and screen change signals */
 	SIG_PROPERTY_ENABLED,
 	SIG_PROPERTY_SCALE,
 	SIG_PROPERTY_TRANSFORM,
@@ -76,14 +76,12 @@ enum {
 	/* Global one-off signals */
 	SIG_XKB_MAP_CHANGED,
 	SIG_XKB_GROUP_CHANGED,
-	SIG_IDLE_START,
 	SIG_IDLE_STOP,
 	SIG_DPMS_ON,
 	SIG_SPAWN_TIMEOUT,       /* 1 arg: {id=token} */
 	SIG_SPAWN_COMPLETED,     /* 1 arg: {id=token} */
 	SIG_SWITCH_TOGGLE,       /* 1 arg: {device_name, type, state} */
 	SIG_SCREEN_FOCUS,
-	SIG_LOGIND_PREPARE_SLEEP, /* 1 arg: bool */
 	SIG_CLIENT_MAP,
 	SIG_CLIENT_UNMAP,
 
