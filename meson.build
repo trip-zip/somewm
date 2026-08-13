@@ -335,6 +335,21 @@ virtual_pointer_client_code = custom_target(
   command: [wayland_scanner, 'private-code', '@INPUT@', '@OUTPUT@'],
 )
 
+# idle-inhibit client protocol (header + code) for the idle-inhibitor test client
+idle_inhibit_client_header = custom_target(
+  'idle-inhibit-unstable-v1-client-protocol.h',
+  input: wayland_protocols_dir / 'unstable/idle-inhibit/idle-inhibit-unstable-v1.xml',
+  output: 'idle-inhibit-unstable-v1-client-protocol.h',
+  command: [wayland_scanner, 'client-header', '@INPUT@', '@OUTPUT@'],
+)
+
+idle_inhibit_client_code = custom_target(
+  'idle-inhibit-unstable-v1-client-protocol.c',
+  input: wayland_protocols_dir / 'unstable/idle-inhibit/idle-inhibit-unstable-v1.xml',
+  output: 'idle-inhibit-unstable-v1-client-protocol.c',
+  command: [wayland_scanner, 'private-code', '@INPUT@', '@OUTPUT@'],
+)
+
 # ==============================================================================
 # Compiler Flags
 # ==============================================================================
@@ -527,6 +542,16 @@ test_fullscreen_client = executable(
   'test-fullscreen-client',
   ['tests/test-fullscreen-client.c', xdg_shell_client_code],
   xdg_shell_client_header,
+  dependencies: [wayland_client],
+  install: false,
+)
+
+# Test client that creates an idle inhibitor and destroys it in either order
+# (inhibitor first while staying mapped, or surface first)
+test_idle_inhibit_client = executable(
+  'test-idle-inhibit-client',
+  ['tests/test-idle-inhibit-client.c', xdg_shell_client_code, idle_inhibit_client_code],
+  [xdg_shell_client_header, idle_inhibit_client_header],
   dependencies: [wayland_client],
   install: false,
 )
