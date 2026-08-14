@@ -352,11 +352,8 @@ some_is_idle_inhibited(void)
 		return false;
 
 	wl_list_for_each(inhibitor, &idle_inhibit_mgr->inhibitors, link) {
-		// Attention: When some_is_idle_inhibited() is called during
-		// destroyidleinhibitor() signal handler then
-		// idle_inhibit_mgr->inhibitors still contains the respective
-		// inhibitor, however, the below scene tree is already torn down and
-		// wlr_scene_node_coords() cannot be called.
+		/* An unmapped surface must not inhibit, and its scene tree may
+		 * already be gone (the !tree case below counts as inhibited). */
 		if (!inhibitor->surface->mapped)
 			continue;
 
@@ -433,10 +430,26 @@ createidleinhibitor(struct wl_listener *listener, void *data)
 	some_recompute_idle_inhibit();
 }
 
+/* wlroots emits the inhibitor destroy signal before unlinking it from
+ * idle_inhibit_mgr->inhibitors, so a recompute here would still count the
+ * dying inhibitor and, if its surface is still mapped, latch idle timers
+ * off with nothing left to ever recompute. Defer to the end of the current
+ * dispatch (same pattern as pending_flush_source, see #530). */
+static struct wl_event_source *pending_idle_recompute;
+
+static void
+recompute_idle_inhibit_idle(void *data)
+{
+	pending_idle_recompute = NULL;
+	some_recompute_idle_inhibit();
+}
+
 static void
 destroyidleinhibitor(struct wl_listener *listener, void *data)
 {
-	some_recompute_idle_inhibit();
+	if (!pending_idle_recompute)
+		pending_idle_recompute = wl_event_loop_add_idle(some_get_event_loop(),
+			recompute_idle_inhibit_idle, NULL);
 
 	wl_list_remove(&listener->link);
 	free(listener);
