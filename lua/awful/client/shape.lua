@@ -9,10 +9,6 @@
 -- Grab environment we need
 local surface = require("gears.surface")
 local cairo = require("lgi").cairo
-local capi =
-{
-    client = client,
-}
 
 local shape = {}
 shape.update = {}
@@ -89,56 +85,29 @@ function shape.get_transformed(c, shape_name)
     return result
 end
 
+-- The X11 Shape Extension does not exist on Wayland, so there is nothing to
+-- apply a transformed shape to. The update functions are kept as no-ops so
+-- configs calling them still load. See ideas/Shapes.md, #157, #342.
+
 --- Update all of a client's shapes from the shapes the client set itself.
 -- @function awful.client.shape.update.all
 -- @tparam client c The client to act on
-function shape.update.all(c)
-    shape.update.bounding(c)
-    shape.update.clip(c)
-    shape.update.input(c)
-end
+function shape.update.all() end
 
 --- Update a client's bounding shape from the shape the client set itself.
 -- @function awful.client.shape.update.bounding
 -- @tparam client c The client to act on
-function shape.update.bounding(c)
-    local res = shape.get_transformed(c, "bounding")
-    c.shape_bounding = res and res._native
-    -- Free memory
-    if res then
-        res:finish()
-    end
-end
+function shape.update.bounding() end
 
 --- Update a client's clip shape from the shape the client set itself.
 -- @function awful.client.shape.update.clip
 -- @tparam client c The client to act on
-function shape.update.clip(c)
-    local res = shape.get_transformed(c, "clip")
-    c.shape_clip = res and res._native
-    -- Free memory
-    if res then
-        res:finish()
-    end
-end
+function shape.update.clip() end
 
 --- Update a client's input shape from the shape the client set itself.
 -- @function awful.client.shape.update.input
 -- @tparam client c The client to act on
-function shape.update.input(c)
-    local res = shape.get_transformed(c, "input")
-    c.shape_input = res and res._native
-    if res then
-        res:finish()
-    end
-end
-
-capi.client.connect_signal("property::shape_client_bounding", shape.update.bounding)
-capi.client.connect_signal("property::shape_client_clip", shape.update.clip)
-capi.client.connect_signal("property::shape_client_input", shape.update.input)
-capi.client.connect_signal("property::size", shape.update.all)
-capi.client.connect_signal("property::border_width", shape.update.all)
-capi.client.connect_signal("internal::update_shapes", shape.update.all)
+function shape.update.input() end
 
 return shape
 

@@ -3329,23 +3329,41 @@ local function register_builtin_commands()
   -- WALLPAPER COMMANDS
   -- =================================================================
 
-  --- wallpaper.set <path> [screen] - Set wallpaper from image file
-  ipc.register("wallpaper.set", function(path, screen_arg)
-    if not path then
-      error("Usage: wallpaper set <path> [screen]")
-    end
-
+  local function resolve_screen(screen_arg)
     local s
     if screen_arg then
       local idx = tonumber(screen_arg)
       if idx then s = capi.screen[idx] end
     end
     s = s or awful_screen.focused()
-
     if not s then error("No screen available") end
+    return s
+  end
 
-    local gears_wallpaper = require("gears.wallpaper")
-    gears_wallpaper.maximized(path, s, false)
+  --- wallpaper.set <path> [screen] - Set wallpaper from image file
+  ipc.register("wallpaper.set", function(path, screen_arg)
+    if not path then
+      error("Usage: wallpaper set <path> [screen]")
+    end
+    local s = resolve_screen(screen_arg)
+
+    local wallpaper = require("awful.wallpaper")
+    local wibox = require("wibox")
+    wallpaper {
+      screen = s,
+      widget = {
+        {
+          image     = path,
+          upscale   = true,
+          downscale = true,
+          widget    = wibox.widget.imagebox,
+        },
+        valign = "center",
+        halign = "center",
+        tiled  = false,
+        widget = wibox.container.tile,
+      }
+    }
     return string.format("Set wallpaper to %s on screen %d", path, s.index)
   end)
 
@@ -3354,18 +3372,10 @@ local function register_builtin_commands()
     if not color then
       error("Usage: wallpaper color <hex> [screen]")
     end
+    local s = resolve_screen(screen_arg)
 
-    local s
-    if screen_arg then
-      local idx = tonumber(screen_arg)
-      if idx then s = capi.screen[idx] end
-    end
-    s = s or awful_screen.focused()
-
-    if not s then error("No screen available") end
-
-    local gears_wallpaper = require("gears.wallpaper")
-    gears_wallpaper.set(require("gears.color")(color))
+    local wallpaper = require("awful.wallpaper")
+    wallpaper { screen = s, bg = color }
     return string.format("Set wallpaper color to %s", color)
   end)
 

@@ -162,9 +162,9 @@ These APIs exist and can be called without error, but have no effect on Wayland.
 
 ### Client Shape (Rounded Corners)
 
-Location: `luaa.c` require() hook, patched at load time
+Location: `lua/awful/client/shape.lua`
 
-AwesomeWM uses the X11 Shape Extension (`xcb_shape_mask()`) to apply non-rectangular window shapes (e.g. rounded corners via `gears.shape.rounded_rect`). Wayland has no equivalent protocol-level feature. The `awful.client.shape.update.*` functions are replaced with no-ops via a require() hook so that user configs referencing `client.shape_bounding` or `client.shape_clip` load without error.
+AwesomeWM uses the X11 Shape Extension (`xcb_shape_mask()`) to apply non-rectangular window shapes (e.g. rounded corners via `gears.shape.rounded_rect`). Wayland has no equivalent protocol-level feature. The `awful.client.shape.update.*` functions are no-ops so that user configs referencing `client.shape_bounding` or `client.shape_clip` load without error.
 
 See `ideas/Shapes.md` for technical rationale and potential future approaches (shader-based clipping, custom render pass).
 
@@ -276,6 +276,7 @@ These modifications to AwesomeWM's Lua libraries were necessary for Wayland comp
 |-----|-------------|--------|
 | `_timer` | `gears.timer` | An undocumented C wrapper around `wl_event_loop_add_timer` with no callers in the tree. Its timers were never removed on a hot-reload, so each one outlived the Lua state that owned it. `gears.timer` is GLib-based and unaffected. |
 | `awful.ipc.remove_subscriber` | none needed | Nothing ever called it, so the subscriber count it maintained only grew and the broadcast fast path stayed permanently on. C tracks subscriber fds itself now (`_ipc_has_subscribers`). |
+| `gears.wallpaper` | `awful.wallpaper` | Deprecated upstream; somewmrc already uses `awful.wallpaper`. Removing it also deletes the somewm-side machinery that existed only to serve it: the `require()` hook that recorded wallpaper globals and the per-screen wallpaper cache in `root.c` (`root.wallpaper_cache_show`/`_has`/`_clear`/`_preload`), which `awful.wallpaper` never populated. An rc.lua calling `gears.wallpaper.*` errors. release/1.4 keeps it, matching AwesomeWM master. |
 
 ### New Lua Modules (no AwesomeWM equivalent)
 

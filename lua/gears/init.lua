@@ -11,7 +11,6 @@ return
     debug = require("gears.debug");
     object = require("gears.object");
     surface = require("gears.surface");
-    wallpaper = require("gears.wallpaper");
     timer = require("gears.timer");
     cache = require("gears.cache");
     matrix = require("gears.matrix");

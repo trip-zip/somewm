@@ -212,11 +212,6 @@ the fallback loads):
 - `startup-error-after-config-timeout`: the "config timed out" error is
   actually displayed. This is the one config-timeout test that loads the real
   `somewmrc.lua`, since the handler under test lives there.
-- `require-hooks-after-config-timeout`: the Wayland require() hooks (wallpaper
-  cache, no-op client shapes) are present in a config retried after a
-  timeout. They were installed once at the top of `luaA_loadrc()`, above its
-  config loop, while the timeout rebuilds the state inside that loop. They now
-  come from `luaA_register_state()`, which every state runs.
 
 ## Covered manually, not by this suite
 
