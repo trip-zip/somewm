@@ -278,9 +278,6 @@ cleanup(void)
 	/* Destroy Wayland clients while Lua is still alive so signal handlers work. */
 	wl_display_destroy_clients(dpy);
 
-	/* Cleanup wallpaper cache before destroying scene */
-	wallpaper_cache_cleanup();
-
 	/* Free animations before Lua state (they hold registry refs) */
 	animation_cleanup();
 
@@ -1450,9 +1447,6 @@ setup(void)
 	/* Initialize animation subsystem. The handle metatable is registered per
 	 * state by luaA_register_state, so only the event-loop side is set up here. */
 	animation_init(event_loop);
-
-	/* Initialize wallpaper cache (must be AFTER luaA_init which zeroes globalconf) */
-	wallpaper_cache_init();
 
 	/* Initialize D-Bus for notifications (AwesomeWM compatibility) */
 	a_dbus_init();
