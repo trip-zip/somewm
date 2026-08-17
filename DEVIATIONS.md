@@ -277,6 +277,53 @@ These modifications to AwesomeWM's Lua libraries were necessary for Wayland comp
 | `_timer` | `gears.timer` | An undocumented C wrapper around `wl_event_loop_add_timer` with no callers in the tree. Its timers were never removed on a hot-reload, so each one outlived the Lua state that owned it. `gears.timer` is GLib-based and unaffected. |
 | `awful.ipc.remove_subscriber` | none needed | Nothing ever called it, so the subscriber count it maintained only grew and the broadcast fast path stayed permanently on. C tracks subscriber fds itself now (`_ipc_has_subscribers`). |
 | `gears.wallpaper` | `awful.wallpaper` | Deprecated upstream; somewmrc already uses `awful.wallpaper`. Removing it also deletes the somewm-side machinery that existed only to serve it: the `require()` hook that recorded wallpaper globals and the per-screen wallpaper cache in `root.c` (`root.wallpaper_cache_show`/`_has`/`_clear`/`_preload`), which `awful.wallpaper` never populated. An rc.lua calling `gears.wallpaper.*` errors. release/1.4 keeps it, matching AwesomeWM master. |
+| `awesome.api_level` | none | 2.0 is a hard reset and does not promise behavior across versions, so there is nothing for a config to select. Reading it now returns `nil`, so an rc.lua that compares it to a number errors. Three library behaviors that used to branch on it are now fixed at what level 4 did: `awful.autofocus` loads without a warning, `awful.permissions` does not wire `mouse::enter` to `request::autoactivate` (rc.lua does that), and `wibox.widget.base.make_widget` still defaults `enable_properties` to `false`. |
+| `gears.debug.deprecate_class` | none | Existed only to proxy a class that moved between API levels. No callers in the tree. |
+
+`gears.debug.deprecate` stays, minus its `args.deprecated_in` option: it now always prints the warning. It no longer emits `debug::deprecation`, which had no listener anywhere, and no longer routes deprecations into `debug::error`. `debug::error` itself is unchanged and still carries real Lua errors. At level 4 a deprecation could reach neither signal, so nothing observable changed.
+
+### Removed deprecated aliases
+
+With no API level to gate them, the aliases that carried a `deprecated_in`
+version gate are gone, along with the ones AwesomeWM had already reduced to
+documentation. Each had a working replacement and no caller in the tree.
+
+| Removed | Use instead |
+|---------|-------------|
+| `awful.screen.getdistance_sq(s, x, y)` | `s:get_square_distance(x, y)` |
+| `awful.screen.padding(s, p)` | the `screen.padding` property |
+| `awful.mouse.client.dragtotag.border(c)` | set `awful.mouse.snap.drag_to_tag_enabled`, then `awful.mouse.client.move(c)` |
+| `awful.mouse.client.corner(c, corner)` | `awful.placement.closest_corner` |
+| `awful.mouse.client_under_pointer()` | `mouse.current_client` |
+| `awful.key.execute(mod, k)` | `awful.keyboard.emulate_key_combination(mod, k)` |
+| `menubar.get(s)` and calling `menubar(s)` | `menubar.refresh(s)` |
+| `beautiful.theme_assets.recolor_titlebar_normal/_focus(t, c)` | `beautiful.theme_assets.recolor_titlebar(t, c, "normal"/"focus")` |
+| `gears.filesystem.mkdir(dir)` | `gears.filesystem.make_directories(dir)` |
+| `gears.filesystem.get_dir("config"/"cache")` | `gears.filesystem.get_xdg_config_home() .. "somewm/"` / `gears.filesystem.get_cache_dir()` |
+| `wibox.layout.ratio:ajust_ratio` / `:ajust_widget_ratio` | `:adjust_ratio` / `:adjust_widget_ratio` (the spelling was a typo) |
+| `wibox.layout.grid:get_dimension()` | the `row_count` and `column_count` properties |
+| `naughty.notification.run` and `.destroy` properties | the `invoked` and `destroyed` signals |
+| the client `marked` and `unmarked` signals | `property::marked` |
+| the textbox `property::align` signal | `property::halign` |
+
+`naughty.notification.run` and `.destroy` were already inert: nothing read them
+once the legacy notification layout was dropped, so setting them did nothing
+before this change either. `naughty.notify { text = ... }` is unaffected, the
+constructor still maps `text` to `message`.
+
+A further set of `@deprecatedproperty` entries documented names that had no
+getter or setter behind them: the ten directional `wibox.layout.grid`
+properties (`forced_num_rows`, `min_cols_size`, `horizontal_spacing`, and so
+on), `wibox.container.background.shape_border_width`/`_color`,
+`naughty.notification.text`, and `wibox.widget.textbox.align`. Assigning to any
+of them was already a silent no-op. Only the documentation was removed.
+
+Some `@deprecated` entries were left in place because they are not aliases.
+`beautiful.xresources.get_dpi` is the only way to read the DPI without a
+screen; `wibox.container.background.bgimage` draws `beautiful.taglist_squares_*`
+and the tasklist background images; `wibox.layout.grid:add_widget_at` is the
+method the grid uses internally; and `menubar.icon_theme` / `menubar.index_theme`
+mark their whole API deprecated while `wibox.widget.systray_icon` depends on it.
 
 ### New Lua Modules (no AwesomeWM equivalent)
 

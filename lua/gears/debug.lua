@@ -86,30 +86,13 @@ local displayed_deprecations = {}
 
 --- Display a deprecation notice, but only once per traceback.
 --
--- This function also emits the `debug::deprecation` signal on the `awesome`
--- global object. If the deprecated API has been deprecated for more than one
--- API level, it will also send a non-fatal error.
---
 -- @param[opt] see The message to a new method / function to use.
 -- @tparam table args Extra arguments
 -- @tparam boolean args.raw Print the message as-is without the automatic context
--- @tparam integer args.deprecated_in Print the message only when Awesome's
---   version is equal to or greater than deprecated_in.
 -- @staticfct gears.debug.deprecate
 -- @noreturn
--- @emits debug::deprecation This is usually routed to stdout when the API is
---  newly deprecated.
--- @emitstparam debug::deprecation string msg The full formatted message.
--- @emitstparam debug::deprecation string see A message provided by the caller.
--- @emitstparam debug::deprecation table args Some extra context.
--- @emits debug::error When the API has been deprecated for more than
---  one API level.
--- @emitstparam debug::error string msg The full formatted message.
 function debug.deprecate(see, args)
     args = args or {}
-    if args.deprecated_in and awesome.api_level < args.deprecated_in then
-        return
-    end
     local tb = _G.debug.traceback()
     if displayed_deprecations[tb] then
         return
@@ -130,55 +113,6 @@ function debug.deprecate(see, args)
         end
     end
     debug.print_warning(msg .. ".\n" .. tb)
-
-    if awesome and awesome.api_level == args.deprecated_in then
-        awesome.emit_signal("debug::deprecation", msg, see, args)
-    end
-
-    if args.deprecated_in and awesome.api_level > args.deprecated_in then
-        awesome.emit_signal(
-            "debug::error", msg, false
-        )
-    end
-end
-
---- Create a class proxy with deprecation messages.
--- This is useful when a class has moved somewhere else.
--- @tparam table fallback The new class.
--- @tparam string old_name The old class name.
--- @tparam string new_name The new class name.
--- @tparam[opt={}] table args The name.
--- @tparam[opt] number args.deprecated_in The version which deprecated this
---  class.
--- @treturn table A proxy class.
--- @staticfct gears.debug.deprecate_class
-function debug.deprecate_class(fallback, old_name, new_name, args)
-    args = args or {}
-    if args.deprecated_in and awesome.api_level < args.deprecated_in then
-        return fallback
-    end
-
-    local message = old_name.." has been renamed to "..new_name
-
-    local function call(_,...)
-        debug.deprecate(message, {raw = true})
-
-        return fallback(...)
-    end
-
-    local function index(_, k)
-        debug.deprecate(message, {raw = true})
-
-        return fallback[k]
-    end
-
-    local function newindex(_, k, v)
-        debug.deprecate(message, {raw = true})
-
-        fallback[k] = v
-    end
-
-    return setmetatable({}, {__call = call, __index = index, __newindex  = newindex})
 end
 
 return debug

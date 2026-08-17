@@ -34,7 +34,6 @@ _G.screen = {
 -- Mock awesome
 _G.awesome = {
     connect_signal = function() end,
-    api_level = 9999,
 }
 
 -- Mock systray_item C API

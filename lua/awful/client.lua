@@ -653,8 +653,6 @@ end
 --
 -- @property marked
 -- @tparam[opt=false] boolean marked
--- @emits marked (for legacy reasons, use `property::marked`)
--- @emits unmarker (for legacy reasons, use `property::marked`)
 -- @emits property::marked
 
 function client.object.set_marked(self, value)
@@ -666,9 +664,7 @@ function client.object.set_marked(self, value)
                 table.remove(client.data.marked, k)
             end
         end
-        self:emit_signal("unmarked")
     elseif not is_marked and value then
-        self:emit_signal("marked")
         table.insert(client.data.marked, self)
     end
 
@@ -1666,12 +1662,6 @@ end)
 -- @tparam[opt=nil] string content The context (like "rules")
 -- @tparam[opt=nil] table hints Some hints.
 -- @classsignal
-
---- The client marked signal.
--- @deprecatedsignal marked
-
---- The client unmarked signal.
--- @deprecatedsignal unmarked
 
 --- Emitted when the border client might need to be update.
 --

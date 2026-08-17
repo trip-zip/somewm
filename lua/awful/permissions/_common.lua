@@ -49,13 +49,11 @@ function module.set(class, request, context, granted)
     default_permissions[class][request][context] = granted
 end
 
--- Awesome 3.3-4.3 had an `awful.autofocus` module. That module had no APIs, but
--- was simply "enabled" when you `require()`d it for the first time. This was
--- non-standard and was the only module in `awful` to only do things when
--- explicitly `require()`d.
---
--- It is now a dummy module which will set the property to `true`.
-function module._deprecated_autofocus_in_use()
+-- `awful.autofocus` has no APIs. It is "enabled" by `require()`ing it, which
+-- is what this grants. It lives in `_common` rather than in `awful.permissions`
+-- so that `require("awful.autofocus")` does not pull in the whole permissions
+-- dependency graph.
+function module.grant_autofocus()
     module.set("client", "autoactivate", "mouse_enter", true)
     module.set("client", "autoactivate", "switch_tag" , true)
     module.set("client", "autoactivate", "history"    , true)

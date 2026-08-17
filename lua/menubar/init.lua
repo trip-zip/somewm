@@ -550,24 +550,6 @@ function menubar.hide()
     end
 end
 
---- Get a menubar wibox.
--- @tparam[opt] screen scr Screen.
--- @return menubar wibox.
--- @deprecated get
-function menubar.get(scr)
-    menubar.refresh(scr)
-    -- Add to each category the name of its key in all_categories
-    for k, v in pairs(menubar.menu_gen.all_categories) do
-        v.key = k
-    end
-    return common_args.w
-end
-
-local mt = {}
-function mt.__call(_, ...)
-    return menubar.get(...)
-end
-
-return setmetatable(menubar, mt)
+return menubar
 
 -- vim: filetype=lua:expandtab:shiftwidth=4:tabstop=8:softtabstop=4:textwidth=80

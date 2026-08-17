@@ -85,15 +85,6 @@ local notification = {}
 -- @readonly
 -- @propemits true false
 
---- Text of the notification.
---
--- This exists only for the pre-AwesomeWM v4.4 new notification implementation.
--- Please always use `title`.
---
--- @deprecatedproperty text
--- @param string
--- @see title
-
 --- Title of the notification.
 --@DOC_naughty_helloworld_EXAMPLE@
 -- @property title
@@ -382,22 +373,6 @@ local notification = {}
 -- @propemits true false
 -- @see shape
 
---- Function to run on left click.
---
--- Use the signals rather than this.
---
--- @deprecatedproperty run
--- @param function
--- @see destroyed
-
---- Function to run when notification is destroyed.
---
--- Use the signals rather than this.
---
--- @deprecatedproperty destroy
--- @param function
--- @see destroyed
-
 --- Table with any of the above parameters.
 -- args will override ones defined
 --   in the preset.
@@ -653,10 +628,9 @@ local properties = {
     "width"    , "font"    , "icon"    , "icon_size"         ,
     "fg"       , "bg"      , "height"  , "border_color"      ,
     "shape"    , "opacity" , "margin"  , "ignore_suspend"    ,
-    "destroy"  , "preset"  , "callback", "actions"           ,
-    "run"      , "id"      , "ignore"  , "auto_reset_timeout",
-    "urgency"  , "image"   , "images"  , "widget_template"   ,
-    "max_width", "app_icon",
+    "preset"   , "callback", "actions" , "auto_reset_timeout",
+    "id"       , "ignore"  , "urgency" , "widget_template"   ,
+    "image"    , "images"  , "app_icon", "max_width"         ,
 }
 
 for _, prop in ipairs(properties) do
@@ -919,12 +893,6 @@ end
 -- @tparam[opt=beautiful.notification_shape] gears.shape args.shape Widget shape.
 -- @tparam[opt=beautiful.notification_opacity] gears.opacity args.opacity Widget opacity.
 -- @tparam[opt=beautiful.notification_margin] gears.margin args.margin Widget margin.
--- @tparam[opt] function args.run Function to run on left click.  The notification
---   object will be passed to it as an argument.
---   You need to call e.g.
---   `notification.die(naughty.notification_closed_reason.dismissedByUser)` from
---   there to dismiss the notification yourself.
--- @tparam[opt] function args.destroy Function to run when notification is destroyed.
 -- @tparam[opt] table args.preset Table with any of the above parameters.
 --   Note: Any parameters specified directly in args will override ones defined
 --   in the preset.

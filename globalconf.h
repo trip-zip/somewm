@@ -219,9 +219,6 @@ typedef struct
     /** The exit code that main() will return with */
     int exit_code;
 
-    /** The Global API level */
-    int api_level;
-
     /** Preferred icon size for clients */
     uint32_t preferred_icon_size;
 

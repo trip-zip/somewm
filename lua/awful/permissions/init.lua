@@ -828,16 +828,6 @@ screen.connect_signal("property::workarea", function(s)
     end
 end)
 
--- Enable sloppy focus, so that focus follows mouse.
-if awesome.api_level > 4 then
-    --TODO v5: Remove the code from `rc.lua`. It cannot be done yet because we
-    -- cannot know if the user removed it to disable sloppy focus or because
-    -- they want to use the permissions to manage it.
-    client.connect_signal("mouse::enter", function(c)
-        c:emit_signal("request::autoactivate", "mouse_enter", {raise=false})
-    end)
-end
-
 --- Default handler for layer surface keyboard focus requests (somewm-specific).
 --
 -- When a layer-shell surface requests keyboard focus, this handler decides

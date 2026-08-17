@@ -2191,11 +2191,6 @@ luaA_awesome_index(lua_State *L)
 		return 1;
 	}
 
-	if (A_STREQ(key, "api_level")) {
-		lua_pushinteger(L, globalconf.api_level);
-		return 1;
-	}
-
 	/* Monotonic count of presented output frames. Test hook for observing that a
 	 * redraw actually reached the screen (see tests/test-widget-idle-repaint.lua). */
 	if (A_STREQ(key, "_test_frame_count")) {
@@ -5856,9 +5851,6 @@ globalconf_init(lua_State *L)
 
 	/* Initialize exit code */
 	globalconf.exit_code = 0;
-
-	/* Initialize API level (AwesomeWM compatibility) */
-	globalconf.api_level = 4;  /* Match AwesomeWM's current API level */
 
 	/* Initialize icon size preference */
 	globalconf.preferred_icon_size = 0;  /* 0 = no preference */
