@@ -83,14 +83,6 @@ mouse.wibox = {}
 -- @beautiful beautiful.cursor_mouse_move
 -- @tparam[opt="fleur"] string cursor
 
---- Get the client object under the pointer.
--- @deprecated awful.mouse.client_under_pointer
--- @treturn client|nil The client object under the pointer, if one can be found.
--- @see current_client
-function mouse.client_under_pointer()
-    return mouse.object.get_current_client()
-end
-
 -- Older layouts implement their own mousegrabber.
 -- @tparam client c The client
 -- @tparam table args Additional arguments

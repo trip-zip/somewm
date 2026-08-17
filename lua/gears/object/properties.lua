@@ -9,7 +9,6 @@
 
 local gtable = require("gears.table")
 local gtimer = nil --require("gears.timer")
--- local gdebug = require("gears.debug")
 local object = {}
 local unpack = unpack or table.unpack -- luacheck: globals unpack (compatibility with Lua 5.1)
 
@@ -142,12 +141,6 @@ local function copy_object(obj, to_set, name, capi_name, is_object, join_if, set
     -- For compatibility, support this, but from now on, it's a property.
     return setmetatable(ret, {
         __call = function(_, self, new_objs)
---TODO uncomment
---             gdebug.deprecate("`"..name.."` is no longer a function, it is a property. "..
---                 "Remove the `gears.table.join` and use a brace enclosed table",
---                 {deprecated_in=5}
---             )
-
             if not is_object then
                 new_objs, self = self, obj
             end
@@ -244,14 +237,6 @@ function object._legacy_accessors(obj, name, capi_name, is_object, join_if, set_
         -- When called from a declarative property list, "buttons" will be set
         -- using the result of gears.table.join, detect this
         local is_formatted = join_if(objs)
-
---         if is_formatted then
---TODO uncomment
---             gdebug.deprecate("Remove the `gears.table.join` and replace it with braces",
---                 {deprecated_in=5}
---             )
---         end
-
 
         --TODO v6 Use the original directly and drop this legacy copy
         local function apply()

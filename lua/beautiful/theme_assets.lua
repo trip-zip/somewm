@@ -251,26 +251,6 @@ function theme_assets.recolor_titlebar(theme, color, state, postfix, toggle_stat
 end
 
 
---- Recolor unfocused titlebar icons.
--- This method is deprecated.  Use a `beautiful.theme_assets.recolor_titlebar`.
--- @tparam table theme Beautiful theme table
--- @tparam color color Icons' color.
--- @treturn table Beautiful theme table with the images recolored.
--- @deprecated recolor_titlebar_normal
-function theme_assets.recolor_titlebar_normal(theme, color)
-    return theme_assets.recolor_titlebar(theme, color, "normal")
-end
-
---- Recolor focused titlebar icons.
--- This method is deprecated.  Use a `beautiful.theme_assets.recolor_titlebar`.
--- @tparam table theme Beautiful theme table
--- @tparam color color Icons' color.
--- @treturn table Beautiful theme table with the images recolored.
--- @deprecated recolor_titlebar_focus
-function theme_assets.recolor_titlebar_focus(theme, color)
-    return theme_assets.recolor_titlebar(theme, color, "focus")
-end
-
 --- Recolor layout icons.
 -- @tparam table theme Beautiful theme table
 -- @tparam color color Icons' color.

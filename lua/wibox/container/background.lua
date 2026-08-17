@@ -514,15 +514,6 @@ function background:get_shape()
     return self._private.shape
 end
 
---- When a `shape` is set, also draw a border.
---
--- See `wibox.container.background.shape` for an usage example.
---
--- @deprecatedproperty shape_border_width
--- @tparam number width The border width
--- @renamedin 4.4 border_width
--- @see border_width
-
 --- Add a border of a specific width.
 --
 -- If the shape is set, the border will also be shaped.
@@ -548,17 +539,6 @@ end
 function background:get_border_width()
     return self._private.shape_border_width
 end
-
---- When a `shape` is set, also draw a border.
---
--- See `wibox.container.background.shape` for an usage example.
---
--- @deprecatedproperty shape_border_color
--- @usebeautiful beautiful.fg_normal Fallback when 'fg' and `border_color` aren't set.
--- @tparam color fg The border color, pattern or gradient
--- @renamedin 4.4 border_color
--- @see gears.color
--- @see border_color
 
 --- Set the color for the border.
 --

@@ -48,17 +48,6 @@ local function apply_geometry_adjustments(geo, delta)
 end
 
 --- Get the square distance between a `screen` and a point.
--- @deprecated awful.screen.getdistance_sq
--- @tparam screen s Screen
--- @tparam integer x X coordinate of point
--- @tparam integer y Y coordinate of point
--- @treturn number The squared distance of the screen to the provided point.
--- @see screen.get_square_distance
-function screen.getdistance_sq(s, x, y)
-    return screen.object.get_square_distance(s, x, y)
-end
-
---- Get the square distance between a `screen` and a point.
 -- @method get_square_distance
 -- @tparam number x X coordinate of point
 -- @tparam number y Y coordinate of point
@@ -234,22 +223,6 @@ function screen.object.get_content(s)
     cr:rectangle(0, 0, geo.width, geo.height)
     cr:fill()
     return target
-end
-
---- Get or set the screen padding.
---
--- @deprecated awful.screen.padding
--- @tparam screen s The screen object to change the padding on.
--- @tparam[opt=nil] table|integer|nil padding The padding, a table with 'top', 'left', 'right' and/or
--- 'bottom' or a number value to apply set the same padding on all sides. Can be
---  nil if you only want to retrieve padding
--- @treturn table A table with left, right, top and bottom number values.
--- @see padding
-function screen.padding(s, padding)
-    if padding then
-        screen.object.set_padding(s, padding)
-    end
-    return screen.object.get_padding(s)
 end
 
 --- The screen padding.

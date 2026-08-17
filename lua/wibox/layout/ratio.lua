@@ -342,22 +342,6 @@ function ratio:adjust_ratio(index, before, itself, after)
 
     self:emit_signal("widget::layout_changed")
 end
---- Update all widgets to match a set of a ratio.
---
--- This method is kept for backwards compatibility, please use `:adjust_ratio` instead.
--- @see wibox.layout.ratio.adjust_ratio
--- @deprecated wibox.layout.ratio.ajust_ratio
--- @tparam number index The index of the widget to change
--- @tparam number before The sum of the ratio before the widget
--- @tparam number itself The ratio for "widget"
--- @tparam number after The sum of the ratio after the widget
-function ratio:ajust_ratio(...)
-    require('gears.debug').deprecate(
-        "Use `:adjust_ratio` rather than `:ajust_ratio`",
-        { deprecated_in = 5 }
-    )
-    self:adjust_ratio(...)
-end
 
 --- Update all widgets to match a set of a ratio.
 --
@@ -370,23 +354,6 @@ end
 function ratio:adjust_widget_ratio(widget, before, itself, after)
     local index = self:index(widget)
     self:adjust_ratio(index, before, itself, after)
-end
---- Update all widgets to match a set of a ratio.
---
--- This method is kept for backwards compatibility, please use `:adjust_widget_ratio` instead.
--- @see wibox.layout.ratio.adjust_widget_ratio
--- @deprecated wibox.layout.ratio.ajust_widget_ratio
--- @tparam widget widget The widget to adjust
--- @tparam number before The sum of the ratio before the widget
--- @tparam number itself The ratio for "widget"
--- @tparam number after The sum of the ratio after the widget
--- @noreturn
-function ratio:ajust_widget_ratio(...)
-    require('gears.debug').deprecate(
-        "Use `:adjust_widget_ratio` rather than `:ajust_widget_ratio`",
-        { deprecated_in = 5 }
-    )
-    return self:adjust_widget_ratio(...)
 end
 
 --- Add some widgets to the given fixed layout.

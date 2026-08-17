@@ -34,11 +34,6 @@ function filesystem.make_directories(dir)
     return make_directory(Gio.File.new_for_path(dir))
 end
 
-function filesystem.mkdir(dir)
-    require("gears.debug").deprecate("gears.filesystem.make_directories", {deprecated_in=5})
-    return filesystem.make_directories(dir)
-end
-
 --- Create all parent directories for a given path.
 -- @tparam string path The path whose parents should be created.
 -- @return (true, nil) on success, (false, err) on failure.
@@ -163,24 +158,6 @@ end
 -- @staticfct gears.filesystem.get_awesome_icon_dir
 function filesystem.get_awesome_icon_dir()
     return (os.getenv('AWESOME_ICON_PATH') or awesome.icon_path) .. "/"
-end
-
---- Get the user's config or cache dir.
--- It first checks XDG\_CONFIG\_HOME / XDG\_CACHE\_HOME, but then goes with the
--- default paths.
--- @param d The directory to get (either "config" or "cache").
--- @return A string containing the requested path.
--- @staticfct gears.filesystem.get_dir
-function filesystem.get_dir(d)
-    if d == "config" then
-        -- No idea why this is what is returned, I recommend everyone to use
-        -- get_configuration_dir() instead
-        require("gears.debug").deprecate("gears.filesystem.get_xdg_config_home() .. 'somewm/'", {deprecated_in=5})
-        return filesystem.get_xdg_config_home() .. "somewm/"
-    elseif d == "cache" then
-        require("gears.debug").deprecate("gears.filesystem.get_cache_dir", {deprecated_in=5})
-        return filesystem.get_cache_dir()
-    end
 end
 
 --- Get the name of a random file from a given directory.

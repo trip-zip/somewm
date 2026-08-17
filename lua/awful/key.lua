@@ -229,23 +229,6 @@ local obj_mt = {
 -- @class table
 key.ignore_modifiers = { "Lock", "Mod2" }
 
---- Execute a key combination.
--- If an awesome keybinding is assigned to the combination, it should be
--- executed.
---
--- To limit the chances of accidentally leaving a modifier key locked when
--- calling this function from a keybinding, make sure is attached to the
--- release event and not the press event.
---
--- @see root.fake_input
--- @tparam table mod A modified table. Valid modifiers are: Any, Mod1,
---   Mod2, Mod3, Mod4, Mod5, Shift, Lock and Control.
--- @tparam string k The key
--- @deprecated awful.key.execute
-function key.execute(mod, k)
-    require("awful.keyboard").emulate_key_combination(mod, k)
-end
-
 --- Create a new key binding.
 --
 -- @constructorfct2 awful.key
@@ -325,7 +308,7 @@ local function new_common(mod, keys, press, release, data)
     table.insert(key.hotkeys, data)
     data.execute = function(_)
         assert(#keys == 1, "key:execute() makes no sense for groups")
-        key.execute(mod, keys[1])
+        require("awful.keyboard").emulate_key_combination(mod, keys[1])
     end
 
     -- Store the private data

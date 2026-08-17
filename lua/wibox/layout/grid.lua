@@ -53,10 +53,10 @@ local dir_properties = { "spacing", "homogeneous", "expand" }
 --@DOC_wibox_layout_grid_orientation_EXAMPLE@
 -- @tparam[opt="vertical"] string orientation Preferred orientation.
 -- @propertyvalue "horizontal" The grid can be extended horizontally. The current
---  column is filled first; if no empty cell is found up to `forced_num_rows`,
---  the next column is filled, creating it if it does not exist.
+--  column is filled first; if no empty cell is found up to `row_count`, the
+--  next column is filled, creating it if it does not exist.
 -- @propertyvalue "vertical" The grid can be extended vertically. The current row is
---  filled first; if no empty cell is found up to `forced_num_cols`, the next
+--  filled first; if no empty cell is found up to `column_count`, the next
 --  row is filled, creating it if it does not exist.
 -- @property orientation
 
@@ -68,30 +68,6 @@ local dir_properties = { "spacing", "homogeneous", "expand" }
 -- @tparam[opt=false] boolean superpose
 -- @property superpose
 
---- Force the number of rows of the layout.
---
--- Deprecated, use `row_count`.
---
--- @deprecatedproperty forced_num_rows
--- @tparam[opt=nil] number|nil forced_num_rows
--- @propertytype nil Automatically determine the number of rows.
--- @propertyunit rows
--- @negativeallowed false
--- @see forced_num_cols
--- @see row_count
-
---- Force the number of columns of the layout.
---
--- Deprecated, use `column_count`.
---
--- @deprecatedproperty forced_num_cols
--- @tparam[opt=nil] number|nil forced_num_cols
--- @propertytype nil Automatically determine the number of columns.'
--- @propertyunit columns
--- @negativeallowed false
--- @see forced_num_rows
--- @see column_count
-
 --- Set the minimum size for the columns.
 --
 --@DOC_wibox_layout_grid_min_size_EXAMPLE@
@@ -101,60 +77,14 @@ local dir_properties = { "spacing", "homogeneous", "expand" }
 -- @negativeallowed false
 -- @see minimum_row_height
 
---- Set the minimum size for the columns.
---
--- Deprecated, use `minimum_column_width`.
---
---@DOC_wibox_layout_grid_min_size_EXAMPLE@
--- @tparam[opt=0] number min_cols_size Minimum size of the columns.
--- @deprecatedproperty min_cols_size
--- @propertyunit pixel
--- @negativeallowed false
--- @see minimum_row_height
-
 --- Set the minimum size for the rows.
 -- @tparam[opt=0] number minimum_row_height Minimum size of the rows.
 -- @property minimum_row_height
 -- @propertyunit pixel
 -- @negativeallowed false
--- @see min_cols_size
-
---- Set the minimum size for the rows.
---
--- Deprecated, use `minimum_row_height`.
---
--- @tparam[opt=0] number min_rows_size Minimum size of the rows.
--- @deprecatedproperty min_rows_size
--- @propertyunit pixel
--- @negativeallowed false
--- @see min_cols_size
-
---- The spacing between columns.
---
--- Deprecated, use `spacing`.
---
--- @tparam[opt=0] number horizontal_spacing
--- @deprecatedproperty horizontal_spacing
--- @propertyunit pixel
--- @negativeallowed false
--- @see spacing
--- @see vertical_spacing
-
---- The spacing between rows.
---
--- Deprecated, use `spacing`.
---
--- @tparam[opt=0] number vertical_spacing
--- @deprecatedproperty vertical_spacing
--- @propertyunit pixel
--- @negativeallowed false
--- @see spacing
--- @see horizontal_spacing
+-- @see minimum_column_width
 
 --- The spacing between rows and columns.
---
--- Get the value `horizontal_spacing` or `vertical_spacing` defined by the
--- preferred `orientation`.
 --
 --@DOC_wibox_layout_grid_spacing_EXAMPLE@
 --
@@ -173,31 +103,8 @@ local dir_properties = { "spacing", "homogeneous", "expand" }
 --  aspects.
 -- @propertyunit pixel
 -- @negativeallowed false
--- @see vertical_spacing
--- @see horizontal_spacing
-
---- Controls if the columns are expanded to use all the available width.
---
--- Deprecated, use `expand`.
---
--- @tparam[opt=false] boolean horizontal_expand Expand the grid into the available space
--- @deprecatedproperty horizontal_expand
--- @see expand
--- @see vertical_expand
-
---- Controls if the rows are expanded to use all the available height.
---
--- Deprecated, use `expand`.
---
--- @tparam[opt=false] boolean vertical_expand Expand the grid into the available space
--- @deprecatedproperty vertical_expand
--- @see expand
--- @see horizontal_expand
 
 --- Controls if the columns/rows are expanded to use all the available space.
---
--- Get the value `horizontal_expand` or `vertical_expand` defined by the
--- preferred `orientation`.
 --
 --@DOC_wibox_layout_grid_expand_EXAMPLE@
 -- @property expand
@@ -208,34 +115,9 @@ local dir_properties = { "spacing", "homogeneous", "expand" }
 --  aspects.
 -- @propertytype table Different values for the `"vertical"` and `"horizontal"`
 --  aspects.
--- @see horizontal_expand
--- @see vertical_expand
-
---- Controls if the columns all have the same width or if the width of each
--- column depends on the content.
---
--- Deprecated, use `homogeneous`
---
--- @tparam[opt=true] boolean horizontal_homogeneous All the columns have the same width.
--- @deprecatedproperty horizontal_homogeneous
--- @see vertical_homogeneous
--- @see homogeneous
-
---- Controls if the rows all have the same height or if the height of each row
--- depends on the content.
---
--- Deprecated, use `homogeneous`
---
--- @tparam[opt=true] boolean vertical_homogeneous All the rows have the same height.
--- @deprecatedproperty vertical_homogeneous
--- @see homogeneous
--- @see horizontal_homogeneous
 
 --- Controls if the columns/rows all have the same size or if the size depends
 -- on the content.
--- Set both `horizontal_homogeneous` and `vertical_homogeneous` to the same value.
--- Get the value `horizontal_homogeneous` or `vertical_homogeneous` defined
--- by the preferred `orientation`.
 --
 --@DOC_wibox_layout_grid_expand_EXAMPLE@
 -- @property homogeneous
@@ -246,8 +128,6 @@ local dir_properties = { "spacing", "homogeneous", "expand" }
 --  aspects.
 -- @propertytype table Different values for the `"vertical"` and `"horizontal"`
 --  aspects.
--- @see vertical_homogeneous
--- @see horizontal_homogeneous
 
 --- The number of rows.
 --
@@ -258,7 +138,6 @@ local dir_properties = { "spacing", "homogeneous", "expand" }
 -- @tparam integer row_count
 -- @negativeallowed false
 -- @propertydefault autogenerated
--- @see forced_num_rows
 
 --- The number of columns.
 --
@@ -269,7 +148,6 @@ local dir_properties = { "spacing", "homogeneous", "expand" }
 -- @tparam integer column_count
 -- @negativeallowed false
 -- @propertydefault autogenerated
--- @see forced_num_cols
 
 --- Child widget position. Return of `get_widget_position`.
 -- @field row Top row index
@@ -338,15 +216,6 @@ local function find_widget(widgets_table, widget)
         end
     end
     return nil
-end
-
---- Get the number of rows and columns occupied by the widgets in the grid.
--- @deprecatedmethod get_dimension
--- @treturn number,number The number of rows and columns
--- @see row_count
--- @see column_count
-function grid:get_dimension()
-    return self._private.num_rows, self._private.num_cols
 end
 
 -- Update the number of rows and columns occupied by the widgets in the grid.
@@ -1510,13 +1379,13 @@ end
 --- Return a new horizontal grid layout.
 --
 -- Each new widget is positioned below the last widget on the same column
--- up to `forced_num_rows`. Then the next column is filled, creating it if it doesn't exist.
--- @tparam number|nil forced_num_rows Forced number of rows (`nil` for automatic).
+-- up to `row_count`. Then the next column is filled, creating it if it doesn't exist.
+-- @tparam number|nil row_count Forced number of rows (`nil` for automatic).
 -- @tparam widget ... Widgets that should be added to the layout.
 -- @constructorfct wibox.layout.grid.horizontal
-function grid.horizontal(forced_num_rows, widget, ...)
+function grid.horizontal(row_count, widget, ...)
     local ret = new("horizontal")
-    ret:set_row_count(forced_num_rows)
+    ret:set_row_count(row_count)
 
     if widget then
         ret:add(widget, ...)
@@ -1528,13 +1397,13 @@ end
 --- Return a new vertical grid layout.
 --
 -- Each new widget is positioned left of the last widget on the same row
--- up to `forced_num_cols`. Then the next row is filled, creating it if it doesn't exist.
--- @tparam number|nil forced_num_cols Forced number of columns (`nil` for automatic).
+-- up to `column_count`. Then the next row is filled, creating it if it doesn't exist.
+-- @tparam number|nil column_count Forced number of columns (`nil` for automatic).
 -- @tparam widget ... Widgets that should be added to the layout.
 -- @constructorfct wibox.layout.grid.vertical
-function grid.vertical(forced_num_cols, widget, ...)
+function grid.vertical(column_count, widget, ...)
     local ret = new("vertical")
-    ret:set_column_count(forced_num_cols)
+    ret:set_column_count(column_count)
 
     if widget then
         ret:add(widget, ...)

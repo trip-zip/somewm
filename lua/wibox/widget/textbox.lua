@@ -316,14 +316,6 @@ end
 -- @propertyvalue "right"
 -- @propemits true false
 
---- The horizontal text alignment.
---
--- Renamed to `halign` for consistency with other APIs.
---
--- @deprecatedproperty align
--- @tparam[opt="left"] string align
--- @propemits true false
-
 function textbox:set_halign(mode)
     local allowed = { left = "LEFT", center = "CENTER", right = "RIGHT" }
     if allowed[mode] then
@@ -333,7 +325,6 @@ function textbox:set_halign(mode)
         self._private.layout:set_alignment(allowed[mode])
         self:emit_signal("widget::redraw_needed")
         self:emit_signal("widget::layout_changed")
-        self:emit_signal("property::align", mode)
         self:emit_signal("property::halign", mode)
     end
 end
@@ -454,7 +445,7 @@ end
 
 --- How to indent text with multiple lines.
 --
--- Note that this does nothing if `align == "center"`.
+-- Note that this does nothing if `halign == "center"`.
 --
 --@DOC_wibox_widget_textbox_indent_EXAMPLE@
 --
