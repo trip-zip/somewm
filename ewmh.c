@@ -631,7 +631,7 @@ ewmh_update_net_desktop_names(void)
     /* Build NULL-separated UTF8 string list (EWMH spec) */
     total_len = 0;
     foreach(tag, globalconf.tags)
-        total_len += strlen((*tag)->name) + 1;
+        total_len += a_strlen((*tag)->name) + 1;
 
     if (total_len == 0)
         return;
@@ -640,7 +640,7 @@ ewmh_update_net_desktop_names(void)
     p = names;
     foreach(tag, globalconf.tags)
     {
-        len = strlen((*tag)->name);
+        len = a_strlen((*tag)->name);
         memcpy(p, (*tag)->name, len);
         p += len;
         *p++ = '\0';
