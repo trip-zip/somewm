@@ -439,13 +439,3 @@ luaA_spawn(lua_State *L)
 
 	return 5;
 }
-
-/** Setup the spawn module
- * Registers awesome.spawn() function
- */
-void
-luaA_spawn_setup(lua_State *L)
-{
-	/* Note: This function is no longer used - awesome.spawn is registered
-	 * directly in awesome.c's methods table. Kept for compatibility. */
-}

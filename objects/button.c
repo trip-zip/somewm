@@ -2,7 +2,6 @@
  * button.c - AwesomeWM-compatible button class implementation
  *
  * This file merges:
- * - Legacy _button.bind() global binding system (for backward compat)
  * - AwesomeWM class-based button objects (for awful.button)
  * - Button array functions from button_object.c
  */

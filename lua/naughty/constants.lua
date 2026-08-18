@@ -83,15 +83,10 @@ ret.notification_closed_reason = {
     too_many_on_screen   = -2,
     silent               = -1,
     expired              = 1,
-    dismissedByUser      = 2, --TODO v5 remove this undocumented legacy constant
     dismissed_by_user    = 2,
-    dismissedByCommand   = 3, --TODO v5 remove this undocumented legacy constant
     dismissed_by_command = 3,
     undefined            = 4
 }
-
--- Legacy --TODO v5 remove this alias
-ret.notificationClosedReason = ret.notification_closed_reason
 
 -- `no_clear` is used to prevent users from setting the entire table.
 -- If they did and we added a new default value, then it would not be

@@ -487,7 +487,7 @@ naughty.connect_signal("request::screen", naughty.default_screen_handler)
 --
 -- @tparam table notification The `naughty.notification` object.
 -- @tparam string context Why is the signal sent.
--- @tparam table args Any arguments passed to the `naughty.notify` function,
+-- @tparam table args Any arguments passed to the `naughty.notification` constructor,
 --  including, but not limited to, all `naughty.notification` properties.
 -- @signal request::display
 
@@ -495,7 +495,7 @@ naughty.connect_signal("request::screen", naughty.default_screen_handler)
 --
 -- @tparam table notification The `naughty.notification` object.
 -- @tparam string context Why is the signal sent.
--- @tparam table args Any arguments passed to the `naughty.notify` function,
+-- @tparam table args Any arguments passed to the `naughty.notification` constructor,
 --  including, but not limited to, all `naughty.notification` properties.
 -- @signal request::preset
 
@@ -643,46 +643,6 @@ local function set_index_miss(_, key, value)
         rawset(naughty, key, value)
     end
 end
-
---- Create a notification.
---
--- This function is deprecated, create notification objects instead:
---
---    local notif = naughty.notification(args)
---
--- @tparam table args The argument table containing any of the arguments below.
--- @string[opt=""] args.text Text of the notification.
--- @string[opt] args.title Title of the notification.
--- @int[opt=5] args.timeout Time in seconds after which popup expires.
---   Set 0 for no timeout.
--- @int[opt] args.hover_timeout Delay in seconds after which hovered popup disappears.
--- @tparam[opt=awful.screen.focused()] integer|screen args.screen Target screen for the notification.
--- @string[opt="top_right"] args.position Corner of the workarea displaying the popups.
---   Values: `"top_right"`, `"top_left"`, `"bottom_left"`,
---   `"bottom_right"`, `"top_middle"`, `"bottom_middle"`, `"middle"`.
--- @bool[opt=true] args.ontop Boolean forcing popups to display on top.
--- @int[opt=`beautiful.notification_height` or auto] args.height Popup height.
--- @int[opt=`beautiful.notification_width` or auto] args.width Popup width.
--- @string[opt=`beautiful.notification_font` or `beautiful.font` or `awesome.font`] args.font Notification font.
--- @string[opt] args.icon Path to icon.
--- @int[opt] args.icon_size Desired icon size in px.
--- @string[opt=`beautiful.notification_fg` or `beautiful.fg_focus` or `'#ffffff'`] args.fg Foreground color.
--- @string[opt=`beautiful.notification_fg` or `beautiful.bg_focus` or `'#535d6c'`] args.bg Background color.
--- @int[opt=`beautiful.notification_border_width` or 1] args.border_width Border width.
--- @string[opt=`beautiful.notification_border_color` or `beautiful.border_color_active` or `'#535d6c'`] args.border_color Border color.
--- @tparam[opt=`beautiful.notification_shape`] gears.shape args.shape Widget shape.
--- @tparam[opt=`beautiful.notification_opacity`] gears.opacity args.opacity Widget opacity.
--- @tparam[opt=`beautiful.notification_margin`] gears.margin args.margin Widget margin.
--- @tparam[opt] table args.preset Table with any of the above parameters.
---   Note: Any parameters specified directly in args will override ones defined
---   in the preset.
--- @tparam[opt] integer args.replaces_id Replace the notification with the given ID.
--- @tparam[opt] function args.callback Function that will be called with all arguments.
---   The notification will only be displayed if the function returns true.
---   Note: this function is only relevant to notifications sent via dbus.
--- @tparam[opt] table args.actions A list of `naughty.action`s.
--- @bool[opt=false] args.ignore_suspend If set to true this notification
---   will be shown even if notifications are suspended via `naughty.suspend`.
 
 --- Request handler to get the icon using the clients icons.
 -- @signalhandler naughty.client_icon_handler

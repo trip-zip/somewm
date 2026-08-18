@@ -222,8 +222,6 @@ the fallback loads):
   reach the server because nothing calls `xcb_flush()`. Either kind of test
   passes with or without the fix. Verified by instrumenting `ewmh_init_lua`
   instead.
-- The deprecated keybinding array (`_key.bind`) has no Lua callers today, so
-  its per-reload growth only affects a config that uses it.
 - The reload's allocation-failure paths have no test: reaching them from
   outside the process means faulting the allocator. Verified by making the
   tag snapshot allocation fail, which quits with the in-progress flag cleared

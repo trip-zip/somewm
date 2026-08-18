@@ -2906,7 +2906,6 @@ luaA_register_state(lua_State *L)
 	luaA_drawable_setup(L);
 	luaA_drawin_setup(L);
 	layer_surface_class_setup(L);  /* Layer shell surface class */
-	luaA_spawn_setup(L);
 	luaA_keybinding_setup(L);
 	luaA_awesome_setup(L);
 	luaA_root_setup(L);
@@ -4478,7 +4477,6 @@ luaA_state_teardown_lua(lua_State *L, bool lua_safe)
 	 * this state's registry, and unreffing it against the state that
 	 * replaces it frees an unrelated live slot. */
 	a_dbus_hot_reload(L);
-	luaA_keybinding_cleanup(L);
 	idle_timeouts_hot_reload(L);
 	luaA_gesture_hot_reload(L);
 	luaA_root_hot_reload(L);
@@ -5770,9 +5768,8 @@ void
 luaA_cleanup(void)
 {
 	if (globalconf_L) {
-		/* Clean up signal and keybinding systems first */
+		/* Clean up the signal system first */
 		luaA_signal_cleanup();
-		luaA_keybinding_cleanup(globalconf_L);
 
 		/* Clean up lock/idle state before closing Lua */
 		luaA_awesome_clear_all_idle_timeouts(globalconf_L);
