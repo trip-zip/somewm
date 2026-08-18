@@ -40,10 +40,6 @@ local function find_signal(obj, name)
     return obj._signals[name]
 end
 
-function object.add_signal()
-    require("gears.debug").deprecate("Use signals without explicitly adding them. This is now done implicitly.")
-end
-
 --- Connect to a signal.
 --
 --@DOC_text_gears_object_signal_EXAMPLE@

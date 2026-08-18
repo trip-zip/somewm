@@ -498,14 +498,6 @@ luaA_class_index(lua_State *L)
         lua_getfield(L, -1, "data");
         return 1;
     }
-    else if (A_STREQ(attr, "data"))
-    {
-        luaA_deprecate(L, "Use `._private` instead of `.data`");
-        luaA_checkudata(L, 1, class);
-        luaA_getuservalue(L, 1);
-        lua_getfield(L, -1, "data");
-        return 1;
-    }
 
     /* Property does exist and has an index callback */
     if(prop)

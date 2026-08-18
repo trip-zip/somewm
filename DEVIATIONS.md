@@ -275,10 +275,32 @@ These modifications to AwesomeWM's Lua libraries were necessary for Wayland comp
 | API | Replacement | Reason |
 |-----|-------------|--------|
 | `_timer` | `gears.timer` | An undocumented C wrapper around `wl_event_loop_add_timer` with no callers in the tree. Its timers were never removed on a hot-reload, so each one outlived the Lua state that owned it. `gears.timer` is GLib-based and unaffected. |
+| `_key` | `awful.key` | An undocumented C module (`_key.bind`, `_key.get_all`) with no callers in the tree. Nothing read back the function it stored, so a binding made through it could never fire, and the array it kept grew by a duplicate set per hot-reload. Real keybindings go through `awful.key` and the `key` object, which are untouched. |
+| `<class>.add_signal` and `gears.object.add_signal` | none needed | Signals have not needed declaring since AwesomeWM 4. The C version was a no-op generated onto every class (`client`, `screen`, `tag`, `drawin`, `key`, `button`, `output`, `layer_surface`), the Lua one only printed a deprecation. Neither had a caller. Calling either now errors instead of doing nothing. |
+| the `.data` property on capi objects | `._private` | An alias that warned and then returned the same table `._private` returns. No caller in the tree. `._private` is unchanged. |
 | `awful.ipc.remove_subscriber` | none needed | Nothing ever called it, so the subscriber count it maintained only grew and the broadcast fast path stayed permanently on. C tracks subscriber fds itself now (`_ipc_has_subscribers`). |
 | `gears.wallpaper` | `awful.wallpaper` | Deprecated upstream; somewmrc already uses `awful.wallpaper`. Removing it also deletes the somewm-side machinery that existed only to serve it: the `require()` hook that recorded wallpaper globals and the per-screen wallpaper cache in `root.c` (`root.wallpaper_cache_show`/`_has`/`_clear`/`_preload`), which `awful.wallpaper` never populated. An rc.lua calling `gears.wallpaper.*` errors. release/1.4 keeps it, matching AwesomeWM master. |
 | `awesome.api_level` | none | 2.0 is a hard reset and does not promise behavior across versions, so there is nothing for a config to select. Reading it now returns `nil`, so an rc.lua that compares it to a number errors. Three library behaviors that used to branch on it are now fixed at what level 4 did: `awful.autofocus` loads without a warning, `awful.permissions` does not wire `mouse::enter` to `request::autoactivate` (rc.lua does that), and `wibox.widget.base.make_widget` still defaults `enable_properties` to `false`. |
 | `gears.debug.deprecate_class` | none | Existed only to proxy a class that moved between API levels. No callers in the tree. |
+| `awful.util` | `gears.*` | 34 of its 38 functions already redirected to `gears.*` with a deprecation warning, so those move to the function that warning named (`awful.util.table.join` is `gears.table.join`, `awful.util.get_cache_dir` is `gears.filesystem.get_cache_dir`, and so on). Most are a straight module swap; the six that need more are listed under the table. The remaining four had no `gears` equivalent: `checkfile` was inlined into its only consumer, and `eval`, `restart` and `geticonpath` are gone, as is the `shell` field. An rc.lua touching any `awful.util` field errors, since the module itself no longer exists. |
+
+The `awful.util` redirects whose `gears` name differs, plus the two whose
+target is gone in 2.0 as well:
+
+| Old | Use instead |
+|-----|-------------|
+| `awful.util.escape` / `.unescape` | `gears.string.xml_escape` / `xml_unescape` |
+| `awful.util.mkdir` | `gears.filesystem.make_directories` |
+| `awful.util.get_rectangle_in_direction` | `gears.geometry.rectangle.get_in_direction` |
+| `awful.util.getdir("config"/"cache")` | `gears.filesystem.get_xdg_config_home() .. "somewm/"` / `gears.filesystem.get_cache_dir()` |
+| `awful.util.deprecate_class` | nothing, `gears.debug.deprecate_class` is gone too |
+
+AwesomeWM's stock `rc.lua` uses `awful.util.eval` for its "run Lua code" prompt.
+There is no replacement to call, so inline it:
+
+```lua
+exe_callback = function(s) return assert((loadstring or load)(s))() end,
+```
 
 `gears.debug.deprecate` stays, minus its `args.deprecated_in` option: it now always prints the warning. It no longer emits `debug::deprecation`, which had no listener anywhere, and no longer routes deprecations into `debug::error`. `debug::error` itself is unchanged and still carries real Lua errors. At level 4 a deprecation could reach neither signal, so nothing observable changed.
 
@@ -305,18 +327,29 @@ documentation. Each had a working replacement and no caller in the tree.
 | `naughty.notification.run` and `.destroy` properties | the `invoked` and `destroyed` signals |
 | the client `marked` and `unmarked` signals | `property::marked` |
 | the textbox `property::align` signal | `property::halign` |
+| `naughty.notificationClosedReason` | `naughty.notification_closed_reason` |
+| `notification_closed_reason.dismissedByUser` / `.dismissedByCommand` | `.dismissed_by_user` / `.dismissed_by_command` |
 
 `naughty.notification.run` and `.destroy` were already inert: nothing read them
 once the legacy notification layout was dropped, so setting them did nothing
-before this change either. `naughty.notify { text = ... }` is unaffected, the
-constructor still maps `text` to `message`.
+before this change either.
+
+The two camelCase notification-reason spellings were undocumented aliases of the
+snake_case ones and had no caller in the tree. The snake_case names are unchanged.
+
+`naughty.notify` itself is gone. It has no implementation and the `naughty`
+index handler returns `nil` for it, so calling it errors. Construct notifications
+with `naughty.notification { message = ... }`. The constructor still accepts
+`text` and maps it to `message`, so `naughty.notification { text = ... }` works.
 
 A further set of `@deprecatedproperty` entries documented names that had no
 getter or setter behind them: the ten directional `wibox.layout.grid`
 properties (`forced_num_rows`, `min_cols_size`, `horizontal_spacing`, and so
 on), `wibox.container.background.shape_border_width`/`_color`,
 `naughty.notification.text`, and `wibox.widget.textbox.align`. Assigning to any
-of them was already a silent no-op. Only the documentation was removed.
+of them was already a silent no-op. Only the documentation was removed. The
+`text` entry covers the property only; the constructor argument of the same name
+still works, as above.
 
 Some `@deprecated` entries were left in place because they are not aliases.
 `beautiful.xresources.get_dpi` is the only way to read the DPI without a

@@ -610,7 +610,7 @@ luaA_root_size_mm(lua_State *L)
 	return 2;
 }
 
-/** root.cursor(cursor_name) - Set cursor (stub for AwesomeWM compatibility)
+/** root.cursor(cursor_name) - Set the default cursor
  * \param cursor_name Name of cursor to set (e.g., "left_ptr")
  */
 static int

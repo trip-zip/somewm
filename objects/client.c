@@ -377,7 +377,7 @@ lua_class_t client_class;
  *
  *    client.connect_signal("property::urgent", function(c)
  *        if c.urgent then
- *            naughty.notify {
+ *            naughty.notification {
  *                title = "Urgent client",
  *                message = c.name,
  *            }
