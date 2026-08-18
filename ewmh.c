@@ -426,7 +426,8 @@ ewmh_update_net_desktop_names(void)
     foreach(tag, globalconf.tags)
     {
         len = a_strlen((*tag)->name);
-        memcpy(p, (*tag)->name, len);
+        if (len)
+            memcpy(p, (*tag)->name, len);
         p += len;
         *p++ = '\0';
     }
