@@ -118,6 +118,9 @@ typedef struct InputSettings {
      * surface, so cropping-then-stretching a sub-region would scale touch
      * motion itself. */
     char *tool_mode;                /* "absolute", "relative" */
+    int emulate_pointer;            /* touch-specific: synthesize wl_pointer
+                                      * clicks for clients that never bound
+                                      * wl_touch; 0=off, 1=on */
     char **map_to_output_list;      /* ordered candidates: "*", output name, or
                                       * make/model/serial identifier; first
                                       * connected candidate wins */

@@ -400,6 +400,7 @@ describe("awful.input", function()
                 { rule = { type = "touch", name = "Wacom HID 1234 Finger" },
                   properties = {
                       map_to_output = { "eDP-1", "AOC U27E3U ZX3QBHA000360" },
+                      emulate_pointer = false,
                   } },
             }
 
