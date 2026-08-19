@@ -1354,8 +1354,12 @@ apply_geometry_to_wlroots(Client *c)
 	/* Offset scene_surface by titlebar sizes (titlebars occupy space in geometry) */
 	wlr_scene_node_set_position(&c->scene_surface->node, c->bw + titlebar_left, c->bw + titlebar_top);
 	/* popups tracks scene_surface's offset exactly, so popups stay correctly
-	 * positioned, but (unlike scene_surface) is never clipped. */
+	 * positioned, but (unlike scene_surface) is never clipped. Also keep it
+	 * raised above borders/shadow: siblings created later in c->scene (the
+	 * border loop in mapnotify, the lazily-created shadow below) stack on
+	 * top by default, which would otherwise paint over open popups. */
 	wlr_scene_node_set_position(&c->popups->node, c->bw + titlebar_left, c->bw + titlebar_top);
+	wlr_scene_node_raise_to_top(&c->popups->node);
 	wlr_scene_rect_set_size(c->border[0], frame_w, c->bw);
 	wlr_scene_rect_set_size(c->border[1], frame_w, c->bw);
 	wlr_scene_rect_set_size(c->border[2], c->bw, c->geometry.height);
