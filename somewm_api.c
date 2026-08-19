@@ -1452,9 +1452,9 @@ some_fake_motion(double dx, double dy)
 }
 
 /*
- * Get mouse button states
- * Returns pressed state for buttons 1-5 (left, middle, right, side1, side2)
- * Button mapping: BTN_LEFT=1, BTN_MIDDLE=2, BTN_RIGHT=3, BTN_SIDE=4, BTN_EXTRA=5
+ * Get the X11-style 5-button state mask (Button1Mask = 1<<8, etc.).
+ * Only buttons 1-3 (left, middle, right) are ever tracked: bits 4/5 mean
+ * scroll up/down, which is synthesized from axis events and never held.
  *
  * NOTE: We use globalconf.button_state which is tracked in buttonpress(),
  * NOT seat->pointer_state. This is critical for mousegrabber to work correctly.
@@ -1462,17 +1462,15 @@ some_fake_motion(double dx, double dy)
  * but during compositor-level grabs (like window move/resize) there may be
  * no focused surface. globalconf.button_state is always accurate.
  */
-void
-some_get_button_states(int states[5])
+uint16_t
+some_button_state_mask(void)
 {
-	int i;
+	uint16_t mask = 0;
 
-	if (!states)
-		return;
-
-	/* Read from globalconf.button_state which is updated in buttonpress() */
-	for (i = 0; i < 5; i++)
-		states[i] = globalconf.button_state.buttons[i] ? 1 : 0;
+	for (int i = 0; i < 5; i++)
+		if (globalconf.button_state.buttons[i])
+			mask |= 1 << (8 + i);
+	return mask;
 }
 
 /*
