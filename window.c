@@ -97,10 +97,13 @@ client_scene_node_destroy(Client *c)
 {
 	if (client_has_surface(c)) {
 		struct wlr_surface *surface = client_surface(c);
-		client_surface_clear_scene_data(surface, c->scene);
+		client_surface_clear_scene_data(surface, c->popups);
 	}
+	/* c->popups and c->scene_surface are both descendants of c->scene,
+	 * destroyed recursively along with it. */
 	wlr_scene_node_destroy(&c->scene->node);
 	c->scene = NULL;
+	c->popups = NULL;
 }
 
 void
@@ -398,7 +401,7 @@ commitpopup(struct wl_listener *listener, void *data)
 	}
 
 	/* Set root scene tree for coordinate calculation */
-	p->root = (type == LayerShell) ? l->popups : c->scene_surface;
+	p->root = (type == LayerShell) ? l->popups : c->popups;
 
 	/* Apply initial constraint */
 	popup_unconstrain(p);
@@ -824,7 +827,7 @@ mapnotify(struct wl_listener *listener, void *data)
 	tag_t *tag;
 
 	/* Create scene tree for this client and its border */
-	c->scene = client_surface(c)->data = wlr_scene_tree_create(layers[LyrTile]);
+	c->scene = wlr_scene_tree_create(layers[LyrTile]);
 	/* Enabled later by a call to arrange() */
 	wlr_scene_node_set_enabled(&c->scene->node, client_is_unmanaged(c));
 	c->scene_surface = c->client_type == XDGShell
@@ -839,7 +842,22 @@ mapnotify(struct wl_listener *listener, void *data)
 		return;
 	}
 
-	c->scene->node.data = c->scene_surface->node.data = c;
+	/* Dedicated popup-parenting tree: tracks scene_surface's offset (see
+	 * the position update alongside it below) but, unlike scene_surface,
+	 * is never passed to wlr_scene_subsurface_tree_set_clip(). Context
+	 * menus routinely extend beyond the parent's own content bounds, so
+	 * parenting them on the clipped node would crop them (mirrors
+	 * LayerSurface::popups, which has the same exemption). */
+	c->popups = wlr_scene_tree_create(c->scene);
+
+	/* Popups (context menus, dropdowns) are parented via this surface's
+	 * data pointer (see commitpopup()). Point it at popups, not
+	 * scene_surface: scene_surface is offset by (bw + titlebar) from
+	 * scene same as popups is, but scene_surface also carries the
+	 * client's content clip, which would crop any popup parented there. */
+	client_surface(c)->data = c->popups;
+
+	c->scene->node.data = c->scene_surface->node.data = c->popups->node.data = c;
 
 	/* Register commit listener AFTER wlr_scene_xdg_surface_create() so our listener
 	 * fires AFTER wlroots' internal surface_reconfigure() which resets opacity to 1.0.
@@ -1335,6 +1353,9 @@ apply_geometry_to_wlroots(Client *c)
 	wlr_scene_node_set_position(&c->scene->node, c->geometry.x, c->geometry.y);
 	/* Offset scene_surface by titlebar sizes (titlebars occupy space in geometry) */
 	wlr_scene_node_set_position(&c->scene_surface->node, c->bw + titlebar_left, c->bw + titlebar_top);
+	/* popups tracks scene_surface's offset exactly, so popups stay correctly
+	 * positioned, but (unlike scene_surface) is never clipped. */
+	wlr_scene_node_set_position(&c->popups->node, c->bw + titlebar_left, c->bw + titlebar_top);
 	wlr_scene_rect_set_size(c->border[0], frame_w, c->bw);
 	wlr_scene_rect_set_size(c->border[1], frame_w, c->bw);
 	wlr_scene_rect_set_size(c->border[2], c->bw, c->geometry.height);

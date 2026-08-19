@@ -158,6 +158,10 @@ struct client_t
     struct wlr_scene_tree *scene;
     /** Scene surface node */
     struct wlr_scene_tree *scene_surface;
+    /** Popup parent tree: tracks scene_surface's position but is exempt
+     * from client_get_clip()'s content clip (mirrors LayerSurface::popups),
+     * since context menus routinely extend beyond the parent's bounds. */
+    struct wlr_scene_tree *popups;
     /** Border rectangles */
     struct wlr_scene_rect *border[4];
     /** Shadow configuration (NULL = use defaults) */
