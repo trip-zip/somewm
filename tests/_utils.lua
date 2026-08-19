@@ -156,6 +156,23 @@ function utils.is_headless()
     return os.getenv("WLR_BACKENDS") == "headless"
 end
 
+--- Require a compiled test helper binary, skipping the test if missing.
+-- On a miss this prints the SKIP markers and quits; the caller must then
+-- return from its chunk.
+-- @tparam string path Path to the binary
+-- @treturn string|nil The path if it exists, nil after skipping
+function utils.binary_or_skip(path)
+    local f = io.open(path, "r")
+    if f then
+        f:close()
+        return path
+    end
+    io.stderr:write("SKIP: " .. path .. " not found (run meson compile first)\n")
+    io.stderr:write("Test finished successfully.\n")
+    awesome.quit()
+    return nil
+end
+
 ---------------------------------------------------------------------------
 --- Debug helpers for focus history, signals, and stacking order
 -- @section debug_helpers

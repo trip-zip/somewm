@@ -79,21 +79,13 @@ bool
 mouse_query_pointer(int16_t *x, int16_t *y, uint16_t *mask)
 {
     double dx, dy;
-    int button_states[5];
 
     some_get_cursor_position(&dx, &dy);
     *x = (int16_t)dx;
     *y = (int16_t)dy;
 
-    if (mask) {
-        some_get_button_states(button_states);
-        /* Convert button array to X11-style mask for API compatibility */
-        *mask = 0;
-        for (int i = 0; i < 5; i++) {
-            if (button_states[i])
-                *mask |= (1 << (8 + i)); /* XCB_BUTTON_MASK_1 = 1<<8, etc. */
-        }
-    }
+    if (mask)
+        *mask = some_button_state_mask();
 
     return true;
 }
