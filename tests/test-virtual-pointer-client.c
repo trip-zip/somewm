@@ -7,10 +7,12 @@
  * path: mousegrabber routing, client button bindings, and seat notification.
  *
  * Usage: test-virtual-pointer-client <move|click> <x> <y> <x_extent> <y_extent>
+ *                                     [left|middle|right]
  *
  * x/y are layout coordinates; x_extent/y_extent the layout size (normally the
  * screen geometry). "move" only positions the cursor; "click" also presses and
- * releases BTN_LEFT. Exits after the events are flushed.
+ * releases the given button (left by default). Exits after the events are
+ * flushed.
  */
 
 #include <linux/input-event-codes.h>
@@ -55,10 +57,24 @@ static const struct wl_registry_listener registry_listener = {
     .global_remove = registry_global_remove,
 };
 
+static uint32_t button_code(const char *name) {
+    if (strcmp(name, "left") == 0) return BTN_LEFT;
+    if (strcmp(name, "middle") == 0) return BTN_MIDDLE;
+    if (strcmp(name, "right") == 0) return BTN_RIGHT;
+    return 0;
+}
+
 int main(int argc, char *argv[]) {
-    if (argc != 6 || (strcmp(argv[1], "move") != 0 && strcmp(argv[1], "click") != 0)) {
-        fprintf(stderr, "Usage: %s <move|click> <x> <y> <x_extent> <y_extent>\n",
-                argv[0]);
+    if ((argc != 6 && argc != 7)
+            || (strcmp(argv[1], "move") != 0 && strcmp(argv[1], "click") != 0)) {
+        fprintf(stderr, "Usage: %s <move|click> <x> <y> <x_extent> <y_extent> "
+                "[left|middle|right]\n", argv[0]);
+        return 1;
+    }
+    uint32_t btn = argc == 7 ? button_code(argv[6]) : BTN_LEFT;
+    if (!btn) {
+        fprintf(stderr, "Unknown button: %s (expected left, middle or right)\n",
+                argv[6]);
         return 1;
     }
     int click = strcmp(argv[1], "click") == 0;
@@ -98,12 +114,12 @@ int main(int argc, char *argv[]) {
 
     if (click) {
         sleep_ms(50);
-        zwlr_virtual_pointer_v1_button(pointer, now_ms(), BTN_LEFT,
+        zwlr_virtual_pointer_v1_button(pointer, now_ms(), btn,
                                        WL_POINTER_BUTTON_STATE_PRESSED);
         zwlr_virtual_pointer_v1_frame(pointer);
         wl_display_roundtrip(display);
         sleep_ms(50);
-        zwlr_virtual_pointer_v1_button(pointer, now_ms(), BTN_LEFT,
+        zwlr_virtual_pointer_v1_button(pointer, now_ms(), btn,
                                        WL_POINTER_BUTTON_STATE_RELEASED);
         zwlr_virtual_pointer_v1_frame(pointer);
         wl_display_roundtrip(display);
