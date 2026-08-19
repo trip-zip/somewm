@@ -122,7 +122,9 @@ typedef struct InputSettings {
     char *clickfinger_button_map;   /* "lrm", "lmr" */
     bool accel_speed_set;           /* true if accel_speed was explicitly set */
 
-    /* Tablet tool-specific rule properties (used by awful.input.rules) */
+    /* Tablet/touch rule properties (used by awful.input.rules). tool_mode
+     * is tablet tool-specific; map_to_output/map_to_region/map_from_region
+     * are shared by both "tablet" and "touch" rule types. */
     char *tool_mode;                /* "absolute", "relative" */
     char **map_to_output_list;      /* ordered candidates: "*", output name, or
                                       * make/model/serial identifier; first
@@ -146,7 +148,7 @@ typedef struct InputSettings {
 
 /** Per-device input rule (evaluated in order, last match wins per property) */
 typedef struct InputRule {
-    char *type;                     /* e.g. "touchpad", "pointer", "tablet", "tablet-tool-pen", "tablet-tool"; NULL=match any */
+    char *type;                     /* e.g. "touchpad", "pointer", "tablet", "tablet-tool-pen", "tablet-tool", "touch"; NULL=match any */
     char *name;                     /* device name substring, NULL=match any */
     InputSettings properties;
 } InputRule;
