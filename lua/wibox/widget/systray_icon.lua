@@ -709,17 +709,10 @@ end
 -- @method fit
 -- @hidden
 function systray_icon:fit(context, width, height)
-    local item = self._private.item
+    -- Every icon gets the same base_size square; :draw scales the source
+    -- pixmap into it, so a large or non-square icon letterboxes instead of
+    -- widening its slot.
     local size = self._private.forced_size or 24
-
-    if item then
-        -- Use item's icon dimensions if available
-        local iw = item.icon_width
-        local ih = item.icon_height
-        if iw and iw > 0 and ih and ih > 0 then
-            size = math.max(iw, ih)
-        end
-    end
 
     -- Respect forced_width/height
     local w = self._private.forced_width or size
