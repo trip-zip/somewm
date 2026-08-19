@@ -1067,6 +1067,7 @@ input_settings_init_unset(InputSettings *s)
 	s->tap_button_map = NULL;
 	s->accel_speed_set = false;
 	s->tool_mode = NULL;
+	s->emulate_pointer = -2;
 	s->map_to_output_list = NULL;
 	s->map_to_output_count = 0;
 	s->map_from_region_set = false;
@@ -1359,6 +1360,7 @@ luaA_awesome_set_input_rules(lua_State *L)
 			p->middle_button_emulation = input_rule_get_int(L, pidx, "middle_button_emulation", -2);
 			p->scroll_button = input_rule_get_int(L, pidx, "scroll_button", -2);
 			p->scroll_button_lock = input_rule_get_int(L, pidx, "scroll_button_lock", -2);
+			p->emulate_pointer = input_rule_get_int(L, pidx, "emulate_pointer", -2);
 
 			p->scroll_method = input_rule_get_string(L, pidx, "scroll_method");
 			p->click_method = input_rule_get_string(L, pidx, "click_method");
