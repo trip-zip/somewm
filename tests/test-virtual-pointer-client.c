@@ -65,6 +65,8 @@ static uint32_t button_code(const char *name) {
     if (strcmp(name, "right") == 0) return BTN_RIGHT;
     if (strcmp(name, "side") == 0) return BTN_SIDE;
     if (strcmp(name, "extra") == 0) return BTN_EXTRA;
+    if (strcmp(name, "forward") == 0) return BTN_FORWARD;
+    if (strcmp(name, "back") == 0) return BTN_BACK;
     return 0;
 }
 

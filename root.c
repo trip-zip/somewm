@@ -575,8 +575,11 @@ keysym_to_keycode(struct xkb_keymap *keymap, xkb_keysym_t keysym)
 	return 0;
 }
 
-/** Convert button number to Linux input event code
- * \param button Button number (1=left, 2=middle, 3=right, 4/5=scroll)
+/** Convert X11 button number to Linux input event code
+ * Inverse of translate_button_code(): 8 and up map to BTN_SIDE and up.
+ * Buttons 4-7 are scroll in X11 and have no Linux button code; fake_input
+ * synthesizes axis events for them before calling this.
+ * \param button X11 button number (1=left, 2=middle, 3=right, 8+=extra)
  * \return Linux BTN_* code
  */
 static uint32_t
@@ -586,12 +589,10 @@ button_to_code(int button)
 	case 1: return BTN_LEFT;
 	case 2: return BTN_MIDDLE;
 	case 3: return BTN_RIGHT;
-	case 4: return BTN_SIDE;
-	case 5: return BTN_EXTRA;
-	case 6: return BTN_FORWARD;
-	case 7: return BTN_BACK;
-	case 8: return BTN_TASK;
-	default: return BTN_LEFT;
+	default:
+		if (button >= 8 && button <= 8 + 0x11f - BTN_SIDE)
+			return BTN_SIDE + (button - 8);
+		return BTN_LEFT;
 	}
 }
 
@@ -603,7 +604,8 @@ button_to_code(int button)
  * \param event_type One of: "key_press", "key_release", "button_press",
  *                   "button_release", "motion_notify"
  * \param detail For key events: keysym name (string) or keycode (int)
- *               For button events: button number (1=left, 2=middle, 3=right)
+ *               For button events: X11 button number (1=left, 2=middle,
+ *               3=right, 4-7=scroll, 8+=side/extra/forward/back/...)
  *               For motion events: true for relative, false for absolute
  * \param x X coordinate (for motion events)
  * \param y Y coordinate (for motion events)
@@ -654,13 +656,11 @@ luaA_root_fake_input(lua_State *L)
 	} else if (strcmp(event_type, "button_press") == 0 || strcmp(event_type, "button_release") == 0) {
 		/* Button event - update pointer focus to match cursor position first */
 		int button;
-		uint32_t button_code;
 		enum wl_pointer_button_state state;
 		struct wlr_surface *surface = NULL;
 		double sx, sy;
 
 		button = luaL_checkinteger(L, 2);
-		button_code = button_to_code(button);
 		state = (strcmp(event_type, "button_press") == 0)
 			? WL_POINTER_BUTTON_STATE_PRESSED
 			: WL_POINTER_BUTTON_STATE_RELEASED;
@@ -672,7 +672,24 @@ luaA_root_fake_input(lua_State *L)
 			wlr_seat_pointer_notify_enter(seat, surface, sx, sy);
 		}
 
-		wlr_seat_pointer_notify_button(seat, timestamp, button_code, state);
+		if (button >= 4 && button <= 7) {
+			/* X11 buttons 4-7 are scroll: synthesize one axis tick on
+			 * press (X11 scrolls on the press; the release is a no-op) */
+			if (state == WL_POINTER_BUTTON_STATE_PRESSED) {
+				enum wl_pointer_axis orientation = button <= 5
+					? WL_POINTER_AXIS_VERTICAL_SCROLL
+					: WL_POINTER_AXIS_HORIZONTAL_SCROLL;
+				int dir = (button == 4 || button == 6) ? -1 : 1;
+
+				wlr_seat_pointer_notify_axis(seat, timestamp,
+					orientation, dir * 15, dir * 120,
+					WL_POINTER_AXIS_SOURCE_WHEEL,
+					WL_POINTER_AXIS_RELATIVE_DIRECTION_IDENTICAL);
+			}
+		} else {
+			wlr_seat_pointer_notify_button(seat, timestamp,
+				button_to_code(button), state);
+		}
 
 	} else if (strcmp(event_type, "motion_notify") == 0) {
 		/* Motion event — route through full compositor motion path so

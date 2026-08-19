@@ -305,8 +305,10 @@ luaA_button_check(uint32_t mods, uint32_t button)
  * BTN_LEFT (0x110/272) -> 1
  * BTN_RIGHT (0x111/273) -> 3
  * BTN_MIDDLE (0x112/274) -> 2
- * BTN_SIDE (0x113/275) -> 8
- * BTN_EXTRA (0x114/276) -> 9
+ * BTN_SIDE (0x113/275) and up -> 8 and up (SIDE=8, EXTRA=9, FORWARD=10,
+ * BACK=11, TASK=12, ...), matching X11's libinput driver. Buttons 4-7 are
+ * scroll in X11 and are synthesized from axis events, never from a button
+ * code.
  */
 uint32_t
 translate_button_code(uint32_t linux_button)
@@ -315,12 +317,9 @@ translate_button_code(uint32_t linux_button)
 	case 0x110: return 1;  /* BTN_LEFT */
 	case 0x111: return 3;  /* BTN_RIGHT */
 	case 0x112: return 2;  /* BTN_MIDDLE */
-	case 0x113: return 8;  /* BTN_SIDE */
-	case 0x114: return 9;  /* BTN_EXTRA */
 	default:
-		/* For other buttons, try to map sensibly */
-		if (linux_button >= 0x110 && linux_button <= 0x11f)
-			return linux_button - 0x110 + 1;
+		if (linux_button >= 0x113 && linux_button <= 0x11f)
+			return 8 + (linux_button - 0x113);
 		return linux_button;  /* Pass through if not a known button */
 	}
 }
