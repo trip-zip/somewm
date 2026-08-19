@@ -184,7 +184,7 @@ uint32_t some_get_cursor_size(void);
 void some_update_cursor_theme(const char *theme_name, uint32_t size);
 void some_get_cursor_position(double *x, double *y);
 void some_set_cursor_position(double x, double y, int silent);
-void some_get_button_states(int states[5]);
+uint16_t some_button_state_mask(void);
 Client *some_object_under_cursor(void);
 drawin_t *some_drawin_under_cursor(void);
 void some_warp_cursor_to_monitor(Monitor *m);

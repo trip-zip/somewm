@@ -225,7 +225,8 @@ typedef struct
      * This is the Wayland equivalent of X11's passive button grab state.
      */
     struct {
-        bool buttons[5];  /* Button 1-5 pressed states (true = pressed) */
+        bool buttons[5];  /* X11 button 1-5 pressed states; only 1-3 are
+                           * ever set (4/5 mean scroll, never held) */
     } button_state;
 
     /** The exit code that main() will return with */

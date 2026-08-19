@@ -797,53 +797,8 @@ axisnotify(struct wl_listener *listener, void *data)
 	wlr_idle_notifier_v1_notify_activity(idle_notifier, seat);
 	some_notify_activity();
 
-	/* If mousegrabber is active, route event to Lua callback */
-	if (mousegrabber_isrunning()) {
-		lua_State *L = globalconf_get_lua_State();
-		int button_states[5];
-		uint16_t mask = 0;
-
-		/* Get current button states */
-		some_get_button_states(button_states);
-
-		/* Convert button_states array to X11-style mask */
-		for (int i = 0; i < 5; i++) {
-			if (button_states[i])
-				mask |= (1 << (8 + i));
-		}
-
-		/* Push coords table to Lua stack */
-		mousegrabber_handleevent(L, cursor->x, cursor->y, mask);
-
-		/* Get the callback from registry */
-		lua_rawgeti(L, LUA_REGISTRYINDEX, globalconf.mousegrabber);
-
-		/* Push coords table as argument */
-		lua_pushvalue(L, -2);
-
-		/* Call callback(coords) */
-		if (lua_pcall(L, 1, 1, 0) == 0) {
-			/* Check return value */
-			int continue_grab = lua_toboolean(L, -1);
-			lua_pop(L, 1); /* Pop return value */
-
-			if (!continue_grab) {
-				/* Callback returned false, stop grabbing */
-				luaA_mousegrabber_stop(L);
-			}
-		} else {
-			/* Error in callback */
-			fprintf(stderr, "somewm: mousegrabber callback error: %s\n",
-				lua_tostring(L, -1));
-			lua_pop(L, 1);
-			luaA_mousegrabber_stop(L);
-		}
-
-		lua_pop(L, 1); /* Pop coords table */
-		return; /* Don't process event further */
-	}
-
-	/* Handle scroll wheel for mousebindings (AwesomeWM compatibility)
+	/* Handle scroll wheel for mousebindings and the mousegrabber
+	 * (AwesomeWM compatibility).
 	 * Convert axis events to X11-style button 4/5/6/7 press+release events.
 	 * In X11, each scroll tick generates a button press+release pair.
 	 *
@@ -858,6 +813,7 @@ axisnotify(struct wl_listener *listener, void *data)
 		static int32_t scroll_acc_h = 0;
 		int32_t *acc;
 		int ticks = 0;
+		uint32_t button;
 
 		acc = (event->orientation == WL_POINTER_AXIS_VERTICAL_SCROLL)
 			? &scroll_acc_v : &scroll_acc_h;
@@ -878,6 +834,18 @@ axisnotify(struct wl_listener *listener, void *data)
 		if ((event->delta > 0 && *acc < 0) || (event->delta < 0 && *acc > 0))
 			*acc = 0;
 
+		/* Determine button number based on axis orientation and direction */
+		if (event->orientation == WL_POINTER_AXIS_VERTICAL_SCROLL)
+			button = (event->delta < 0) ? 4 : 5;
+		else
+			button = (event->delta < 0) ? 6 : 7;
+
+		if (mousegrabber_isrunning()) {
+			event_handle_mousegrabber_scroll(cursor->x, cursor->y,
+					button, ticks);
+			return; /* Don't process event further */
+		}
+
 		for (int tick = 0; tick < ticks; tick++) {
 			lua_State *L = globalconf_get_lua_State();
 			struct wlr_keyboard *keyboard = wlr_seat_get_keyboard(seat);
@@ -885,15 +853,7 @@ axisnotify(struct wl_listener *listener, void *data)
 			Client *c = NULL;
 			drawin_t *drawin = NULL;
 			drawable_t *titlebar_drawable = NULL;
-			uint32_t button;
 			int rel_x, rel_y;
-
-			/* Determine button number based on axis orientation and direction */
-			if (event->orientation == WL_POINTER_AXIS_VERTICAL_SCROLL) {
-				button = (event->delta < 0) ? 4 : 5;
-			} else {
-				button = (event->delta < 0) ? 6 : 7;
-			}
 
 			/* Find what's under the cursor */
 			xytonode(cursor->x, cursor->y, NULL, &c, NULL, &drawin, &titlebar_drawable, NULL, NULL);
@@ -930,6 +890,12 @@ axisnotify(struct wl_listener *listener, void *data)
 		}
 	}
 
+	/* An active grabber consumes the remaining axis events: axis-stop
+	 * (delta == 0) frames, and a grab started inside a scroll-binding
+	 * callback above (matching the equivalent buttonpress check). */
+	if (mousegrabber_isrunning())
+		return;
+
 	/* Notify the client with pointer focus of the axis event. */
 	wlr_seat_pointer_notify_axis(seat,
 			event->time_msec, event->orientation, event->delta,
@@ -949,7 +915,9 @@ buttonpress(struct wl_listener *listener, void *data)
 
 	/* Update globalconf button state tracking FIRST, before any early returns.
 	 * This ensures mousegrabber callbacks receive accurate button states.
-	 * Map wlroots button codes (BTN_LEFT=0x110, etc.) to indices 0-4.
+	 * Only buttons 1-3 have a slot: slots 4/5 of the X11 state mask mean
+	 * scroll up/down (synthesized from axis events, never held), and
+	 * BTN_SIDE/BTN_EXTRA are X11 buttons 8/9, which have no state mask bit.
 	 */
 	{
 		int idx = -1;
@@ -957,8 +925,6 @@ buttonpress(struct wl_listener *listener, void *data)
 		case 0x110: idx = 0; break;  /* BTN_LEFT -> button 1 */
 		case 0x112: idx = 1; break;  /* BTN_MIDDLE -> button 2 */
 		case 0x111: idx = 2; break;  /* BTN_RIGHT -> button 3 */
-		case 0x113: idx = 3; break;  /* BTN_SIDE -> button 4 */
-		case 0x114: idx = 4; break;  /* BTN_EXTRA -> button 5 */
 		}
 		if (idx >= 0) {
 			globalconf.button_state.buttons[idx] =
@@ -967,50 +933,8 @@ buttonpress(struct wl_listener *listener, void *data)
 	}
 
 	/* If mousegrabber is active, route event to Lua callback */
-	if (mousegrabber_isrunning()) {
-		lua_State *L = globalconf_get_lua_State();
-		int button_states[5];
-		uint16_t mask = 0;
-
-		/* Get current button states */
-		some_get_button_states(button_states);
-
-		/* Convert button_states array to X11-style mask */
-		for (int i = 0; i < 5; i++) {
-			if (button_states[i])
-				mask |= (1 << (8 + i));
-		}
-
-		/* Push coords table to Lua stack */
-		mousegrabber_handleevent(L, cursor->x, cursor->y, mask);
-
-		/* Get the callback from registry */
-		lua_rawgeti(L, LUA_REGISTRYINDEX, globalconf.mousegrabber);
-
-		/* Push coords table as argument */
-		lua_pushvalue(L, -2);
-
-		/* Call callback(coords) */
-		if (lua_pcall(L, 1, 1, 0) == 0) {
-			/* Check return value */
-			int continue_grab = lua_toboolean(L, -1);
-			lua_pop(L, 1); /* Pop return value */
-
-			if (!continue_grab) {
-				/* Callback returned false, stop grabbing */
-				luaA_mousegrabber_stop(L);
-			}
-		} else {
-			/* Error in callback */
-			fprintf(stderr, "somewm: mousegrabber callback error: %s\n",
-				lua_tostring(L, -1));
-			lua_pop(L, 1);
-			luaA_mousegrabber_stop(L);
-		}
-
-		lua_pop(L, 1); /* Pop coords table */
+	if (event_handle_mousegrabber(cursor->x, cursor->y, 0))
 		return; /* Don't process event further */
-	}
 
 	switch (event->state) {
 	case WL_POINTER_BUTTON_STATE_PRESSED: {
@@ -4298,50 +4222,8 @@ motionnotify(uint32_t time, struct wlr_input_device *device, double dx, double d
 
 	/* If mousegrabber is active, route event to Lua callback (AwesomeWM behavior:
 	 * check mousegrabber BEFORE enter/leave signals to filter them during grabs) */
-	if (mousegrabber_isrunning()) {
-		lua_State *L = globalconf_get_lua_State();
-		int button_states[5];
-		uint16_t mask = 0;
-
-		/* Get current button states */
-		some_get_button_states(button_states);
-
-		/* Convert button_states array to X11-style mask */
-		for (int i = 0; i < 5; i++) {
-			if (button_states[i])
-				mask |= (1 << (8 + i));
-		}
-
-		/* Push coords table to Lua stack */
-		mousegrabber_handleevent(L, cursor->x, cursor->y, mask);
-
-		/* Get the callback from registry */
-		lua_rawgeti(L, LUA_REGISTRYINDEX, globalconf.mousegrabber);
-
-		/* Push coords table as argument */
-		lua_pushvalue(L, -2);
-
-		/* Call callback(coords) */
-		if (lua_pcall(L, 1, 1, 0) == 0) {
-			/* Check return value */
-			int continue_grab = lua_toboolean(L, -1);
-			lua_pop(L, 1); /* Pop return value */
-
-			if (!continue_grab) {
-				/* Callback returned false, stop grabbing */
-				luaA_mousegrabber_stop(L);
-			}
-		} else {
-			/* Error in callback */
-			fprintf(stderr, "somewm: mousegrabber callback error: %s\n",
-				lua_tostring(L, -1));
-			lua_pop(L, 1);
-			luaA_mousegrabber_stop(L);
-		}
-
-		lua_pop(L, 1); /* Pop coords table */
+	if (event_handle_mousegrabber(cursor->x, cursor->y, 0))
 		return; /* Don't process event further (skip enter/leave signals, pointerfocus) */
-	}
 
 	/* Track which object is under the cursor and emit enter/leave/move signals
 	 * (only when mousegrabber is NOT active - filtered above) */

@@ -14,6 +14,7 @@
 #include "globalconf.h"
 #include "objects/button.h"
 #include "objects/mousegrabber.h"
+#include "somewm_api.h"
 #include "luaa.h"
 #include "common/luaobject.h"
 #include "common/util.h"
@@ -139,27 +140,26 @@ event_emit_button(lua_State *L, button_event_t *ev)
 /** Handle event with mousegrabber if active
  * Ported from AwesomeWM's event_handle_mousegrabber()
  *
+ * The mask passed to the grabber is built from the tracked button state;
+ * extra_mask bits are ORed in. Scroll buttons (4-7) are synthesized from
+ * axis events and never held, so they only ever arrive via extra_mask.
+ *
  * \param x Mouse X coordinate
  * \param y Mouse Y coordinate
- * \param button_states Array of 5 button states
+ * \param extra_mask X11-style button mask bits to add to the tracked state
  * \return true if event consumed by mousegrabber
  */
-static bool __attribute__((unused))
-event_handle_mousegrabber(double x, double y, int button_states[5])
+bool
+event_handle_mousegrabber(double x, double y, uint16_t extra_mask)
 {
     lua_State *L;
-    uint16_t mask = 0;
+    uint16_t mask;
 
     if (!mousegrabber_isrunning())
         return false;
 
     L = globalconf_get_lua_State();
-
-    /* Convert button_states array to X11-style mask */
-    for (int i = 0; i < 5; i++) {
-        if (button_states[i])
-            mask |= (1 << (8 + i));
-    }
+    mask = extra_mask | some_button_state_mask();
 
     /* Push coords table to stack */
     mousegrabber_handleevent(L, (int)x, (int)y, mask);
@@ -188,6 +188,30 @@ event_handle_mousegrabber(double x, double y, int button_states[5])
 
     lua_pop(L, 1);  /* Pop coords table */
     return true;
+}
+
+/** Deliver scroll ticks to the mousegrabber as X11-style button events.
+ *
+ * X11 delivers each tick as a press+release pair: the button's state mask
+ * bit set, then cleared. Only buttons 1-5 have a state mask bit, so
+ * horizontal ticks (buttons 6/7) set no flag, matching upstream.
+ *
+ * \param x Mouse X coordinate
+ * \param y Mouse Y coordinate
+ * \param button X11 button number (4-7)
+ * \param ticks Number of full scroll ticks to deliver
+ */
+void
+event_handle_mousegrabber_scroll(double x, double y, uint32_t button, int ticks)
+{
+    uint16_t press_mask = button <= 5 ? 1 << (7 + button) : 0;
+
+    for (int tick = 0; tick < ticks; tick++) {
+        if (!event_handle_mousegrabber(x, y, press_mask))
+            break;
+        if (!event_handle_mousegrabber(x, y, 0))
+            break;
+    }
 }
 
 /** Record that the given drawable contains the pointer.

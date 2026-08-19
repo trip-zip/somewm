@@ -36,4 +36,13 @@ void event_button_callback(button_event_t *ev, button_array_t *arr,
  */
 void event_drawable_under_mouse(lua_State *L, int ud);
 
+/** Route an input event to the mousegrabber if one is active.
+ * \return true if the event was consumed by the mousegrabber.
+ */
+bool event_handle_mousegrabber(double x, double y, uint16_t extra_mask);
+
+/** Deliver scroll ticks to an active mousegrabber as press+release pairs. */
+void event_handle_mousegrabber_scroll(double x, double y, uint32_t button,
+                                      int ticks);
+
 #endif /* SOMEWM_EVENT_H */
