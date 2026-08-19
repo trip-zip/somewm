@@ -177,6 +177,7 @@ struct wl_list tracked_pointers; /* For runtime libinput config */
 struct wl_list tracked_tablets;
 struct wl_list tracked_tablet_pads;
 struct wl_list tracked_tablet_tools;
+struct wl_list tracked_touches;
 struct wlr_tablet_manager_v2 *tablet_v2_mgr;
 Monitor *selmon;
 /* in_updatemons, updatemons_pending: owned by monitor.c */
@@ -1241,6 +1242,7 @@ setup(void)
 	wl_list_init(&tracked_tablets);
 	wl_list_init(&tracked_tablet_pads);
 	wl_list_init(&tracked_tablet_tools);
+	wl_list_init(&tracked_touches);
 	wl_signal_add(&backend->events.new_output, &new_output);
 
 	/* Set up our client lists, the xdg-shell and the layer-shell. The xdg-shell is a
@@ -1448,9 +1450,12 @@ setup(void)
 	/* The cursor and the group keyboard exist regardless of physical devices,
 	 * so advertise both capabilities once here. Waiting for a device event
 	 * leaves them at zero on headless backends and clients can bind neither
-	 * wl_pointer nor wl_keyboard. */
+	 * wl_pointer nor wl_keyboard. Touch is advertised unconditionally too,
+	 * for the same reason (a bound wl_touch that never fires costs nothing,
+	 * but toggling capabilities at runtime is fragile). */
 	wlr_seat_set_capabilities(seat,
-		WL_SEAT_CAPABILITY_POINTER | WL_SEAT_CAPABILITY_KEYBOARD);
+		WL_SEAT_CAPABILITY_POINTER | WL_SEAT_CAPABILITY_KEYBOARD
+		| WL_SEAT_CAPABILITY_TOUCH);
 
 	output_mgr = wlr_output_manager_v1_create(dpy);
 	wl_signal_add(&output_mgr->events.apply, &output_mgr_apply);
