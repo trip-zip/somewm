@@ -68,6 +68,7 @@
 #include <wlr/types/wlr_tablet_pad.h>
 #include <wlr/types/wlr_tablet_tool.h>
 #include <wlr/types/wlr_tablet_v2.h>
+#include <wlr/types/wlr_touch.h>
 #include <wlr/types/wlr_viewporter.h>
 #include <wlr/types/wlr_virtual_keyboard_v1.h>
 #include <wlr/types/wlr_virtual_pointer_v1.h>
@@ -192,6 +193,20 @@ typedef struct {
 	struct wl_list link;
 } TrackedTabletTool;
 
+/* Tracked touch device. wl_touch is core-protocol (gated by
+ * wl_seat.capabilities, not a separate extension manager like tablet-v2),
+ * so no "_v2" handle is needed here. */
+typedef struct {
+	struct wlr_touch *touch;
+	struct wl_listener down;
+	struct wl_listener up;
+	struct wl_listener motion;
+	struct wl_listener cancel;
+	struct wl_listener frame;
+	struct wl_listener destroy;
+	struct wl_list link;
+} TrackedTouch;
+
 /* function declarations */
 static void applybounds(Client *c, struct wlr_box *bbox);
 void arrange(Monitor *m);
@@ -226,6 +241,7 @@ static void createnotify(struct wl_listener *listener, void *data);
 static void createpointer(struct wlr_pointer *pointer);
 static void createtablet(struct wlr_tablet *tablet);
 static void createtabletpad(struct wlr_tablet_pad *pad);
+static void createtouch(struct wlr_touch *touch);
 static void createpointerconstraint(struct wl_listener *listener, void *data);
 static void createpopup(struct wl_listener *listener, void *data);
 void cursorconstrain(struct wlr_pointer_constraint_v1 *constraint);
@@ -246,6 +262,7 @@ static void destroytrackedpointer(struct wl_listener *listener, void *data);
 static void destroytrackedtablet(struct wl_listener *listener, void *data);
 static void destroytrackedtabletpad(struct wl_listener *listener, void *data);
 static void destroytrackedtablettool(struct wl_listener *listener, void *data);
+static void destroytrackedtouch(struct wl_listener *listener, void *data);
 Monitor *dirtomon(enum wlr_direction dir);
 static void apply_input_settings_to_device(struct libinput_device *device);
 void focusclient(Client *c, int lift);
@@ -278,6 +295,11 @@ static void tabletpadnotifyring(struct wl_listener *listener, void *data);
 static void tabletpadnotifystrip(struct wl_listener *listener, void *data);
 static void tabletpadnotifyattach(struct wl_listener *listener, void *data);
 static void tabletpadnotifysurfacedestroy(struct wl_listener *listener, void *data);
+static void touchnotifydown(struct wl_listener *listener, void *data);
+static void touchnotifymotion(struct wl_listener *listener, void *data);
+static void touchnotifyup(struct wl_listener *listener, void *data);
+static void touchnotifycancel(struct wl_listener *listener, void *data);
+static void touchnotifyframe(struct wl_listener *listener, void *data);
 static int keybinding(uint32_t mods, uint32_t keycode, xkb_keysym_t sym, xkb_keysym_t base_sym);
 static void keypress(struct wl_listener *listener, void *data);
 static void keypressmod(struct wl_listener *listener, void *data);
@@ -425,6 +447,7 @@ static struct wl_list tracked_pointers; /* For runtime libinput config */
 static struct wl_list tracked_tablets;
 static struct wl_list tracked_tablet_pads;
 static struct wl_list tracked_tablet_tools;
+static struct wl_list tracked_touches;
 Monitor *selmon;
 static int in_updatemons;
 static int updatemons_pending;
@@ -2153,35 +2176,40 @@ resolve_input_settings_for_types(const char *type_primary,
 		}
 	}
 }
-/* Normalize tablet coordinates and map them into layout coordinates.
+/* Find the single enabled output, if there is exactly one. Used as a
+ * zero-config default so an unconfigured tablet/touch device maps onto
+ * the one screen that exists instead of spanning the whole layout. Once
+ * a second output is enabled this no longer applies and callers fall
+ * back to whole-layout mapping unless an explicit map_to_output rule is
+ * set. */
+static Monitor *
+single_enabled_monitor(void)
+{
+	Monitor *m, *found = NULL;
+
+	wl_list_for_each(m, &mons, link) {
+		if (!m->wlr_output || !m->wlr_output->enabled)
+			continue;
+		if (found)
+			return NULL; /* more than one enabled output */
+		found = m;
+	}
+
+	return found;
+}
+
+/* Map already-normalized [0,1] device-space coordinates (tx,ty) into layout
+ * coordinates, honoring map_to_region / map_to_output / the single-enabled-
+ * output default. Shared by tablet and touch - tablet additionally crops
+ * via map_from_region before calling this (see tablet_map_coords() below);
+ * touch calls this directly since map_from_region doesn't apply to it.
  * Returns true if an explicit output mapping was successfully applied. */
 static bool
-tablet_map_coords(const struct InputSettings *s, double in_x, double in_y,
+input_map_coords(const struct InputSettings *s, double tx, double ty,
 		double *out_lx, double *out_ly)
 {
 	struct wlr_box box = {0};
 	Monitor *target = NULL;
-	double tx = in_x;
-	double ty = in_y;
-
-	/* First restrict input region to map_from_region setting and
-	 * remap-and-bound it to the unit square.*/
-	if (s->map_from_region_set) {
-		double w = s->map_from_region_x2 - s->map_from_region_x1;
-		double h = s->map_from_region_y2 - s->map_from_region_y1;
-
-		if (fabs(w) < 1e-9 || fabs(h) < 1e-9) {
-			wlr_log(WLR_ERROR,
-				"[tablet-map] invalid map_from_region: (%f,%f)-(%f,%f), falling back to raw coords",
-				s->map_from_region_x1, s->map_from_region_y1,
-				s->map_from_region_x2, s->map_from_region_y2);
-		} else {
-			tx = (in_x - s->map_from_region_x1) / w;
-			ty = (in_y - s->map_from_region_y1) / h;
-			tx = fmax(0.0, fmin(1.0, tx));
-			ty = fmax(0.0, fmin(1.0, ty));
-		}
-	}
 
 	/* An explicit target region takes precedence over map_to_output
 	 * (mirrors sway's mutually-exclusive output/region mapping). */
@@ -2191,7 +2219,7 @@ tablet_map_coords(const struct InputSettings *s, double in_x, double in_y,
 
 		if (fabs(w) < 1e-9 || fabs(h) < 1e-9) {
 			wlr_log(WLR_ERROR,
-				"[tablet-map] invalid map_to_region: (%f,%f)-(%f,%f), falling back to map_to_output",
+				"[input-map] invalid map_to_region: (%f,%f)-(%f,%f), falling back to map_to_output",
 				s->map_to_region_x1, s->map_to_region_y1,
 				s->map_to_region_x2, s->map_to_region_y2);
 		} else {
@@ -2215,9 +2243,14 @@ tablet_map_coords(const struct InputSettings *s, double in_x, double in_y,
 			break;
 
 		wlr_log(WLR_INFO,
-			"[tablet-map] output '%s' not found, trying next candidate",
+			"[input-map] output '%s' not found, trying next candidate",
 			candidate);
 	}
+
+	/* Zero-config default: if nothing matched above and there's exactly
+	 * one enabled output, use it instead of spanning the whole layout. */
+	if (!target)
+		target = single_enabled_monitor();
 
 	/* Target output found. Map coordinates to it. */
 	if (target) {
@@ -2230,6 +2263,39 @@ tablet_map_coords(const struct InputSettings *s, double in_x, double in_y,
 	*out_lx = box.x + tx * box.width;
 	*out_ly = box.y + ty * box.height;
 	return false;
+}
+
+/* Normalize tablet tool coordinates and map them into layout coordinates.
+ * map_from_region crops-then-stretches a sub-area of the tablet's native
+ * surface across the whole target (see input_map_coords() above for why
+ * this doesn't apply to touch), matching real sway: apply_mapping_from_region()
+ * in sway/input/cursor.c is only ever called from handle_tablet_tool_position().
+ * Returns true if an explicit output mapping was successfully applied. */
+static bool
+tablet_map_coords(const struct InputSettings *s, double in_x, double in_y,
+		double *out_lx, double *out_ly)
+{
+	double tx = in_x;
+	double ty = in_y;
+
+	if (s->map_from_region_set) {
+		double w = s->map_from_region_x2 - s->map_from_region_x1;
+		double h = s->map_from_region_y2 - s->map_from_region_y1;
+
+		if (fabs(w) < 1e-9 || fabs(h) < 1e-9) {
+			wlr_log(WLR_ERROR,
+				"[tablet-map] invalid map_from_region: (%f,%f)-(%f,%f), falling back to raw coords",
+				s->map_from_region_x1, s->map_from_region_y1,
+				s->map_from_region_x2, s->map_from_region_y2);
+		} else {
+			tx = (in_x - s->map_from_region_x1) / w;
+			ty = (in_y - s->map_from_region_y1) / h;
+			tx = fmax(0.0, fmin(1.0, tx));
+			ty = fmax(0.0, fmin(1.0, ty));
+		}
+	}
+
+	return input_map_coords(s, tx, ty, out_lx, out_ly);
 }
 
 /* Resolve effective input settings for a device by overlaying matching rules
@@ -2396,6 +2462,16 @@ resolve_tablet_settings(struct wlr_tablet *tablet, struct wlr_tablet_tool *tool,
 	if (tool && (tool->type == WLR_TABLET_TOOL_TYPE_MOUSE
 			|| tool->type == WLR_TABLET_TOOL_TYPE_LENS))
 		out->tool_mode = "relative";
+}
+
+/* primary is the constant "touch"; touch devices have no secondary/tool
+ * axis analogous to tablet tools. */
+static void
+resolve_touch_settings(struct wlr_touch *touch, struct InputSettings *out)
+{
+	const char *dev_name = touch && touch->base.name ? touch->base.name : NULL;
+
+	resolve_input_settings_for_types("touch", NULL, dev_name, out);
 }
 
 static TrackedTablet *
@@ -2598,6 +2674,96 @@ tabletpadnotifysurfacedestroy(struct wl_listener *listener, void *data)
 
 	(void)data;
 	tabletpad_clear_focus(tp);
+}
+
+/* Touch is inherently absolute and multi-point (keyed by touch_id), unlike
+ * tablet tools it doesn't move a shared cursor position via motionnotify();
+ * each point maps straight to layout coords and then surface-local coords. */
+static void
+touchnotifydown(struct wl_listener *listener, void *data)
+{
+	struct wlr_touch_down_event *event = data;
+	struct InputSettings s;
+	struct wlr_surface *surface = NULL;
+	double lx, ly, sx, sy;
+
+	(void)listener;
+	resolve_touch_settings(event->touch, &s);
+	input_map_coords(&s, event->x, event->y, &lx, &ly);
+	xytonode(lx, ly, &surface, NULL, NULL, NULL, NULL, &sx, &sy);
+
+	if (surface)
+		wlr_seat_touch_notify_down(seat, surface, event->time_msec,
+			event->touch_id, sx, sy);
+}
+
+static void
+touchnotifymotion(struct wl_listener *listener, void *data)
+{
+	struct wlr_touch_motion_event *event = data;
+	struct InputSettings s;
+	struct wlr_touch_point *point;
+	struct wlr_surface *surface;
+	Client *c = NULL;
+	LayerSurface *l = NULL;
+	double lx, ly, sx, sy;
+
+	(void)listener;
+
+	point = wlr_seat_touch_get_point(seat, event->touch_id);
+	if (!point)
+		return;
+
+	resolve_touch_settings(event->touch, &s);
+	input_map_coords(&s, event->x, event->y, &lx, &ly);
+
+	/* wlr_seat_touch_notify_motion() takes no surface argument - it always
+	 * delivers to the client of the touch point's original down surface.
+	 * Re-resolving the topmost surface under the finger here, the way the
+	 * down handler does, would compute sx/sy relative to a different
+	 * surface once the finger drags across a window boundary (wrong local
+	 * coords delivered to the down surface's client), and would drop the
+	 * event outright once the finger drags off any surface at all. Stay
+	 * pinned to point->surface instead and project lx/ly onto its origin -
+	 * mirrors how motionnotify() keeps a held mouse button pinned to its
+	 * focused surface while the cursor roams elsewhere. */
+	surface = point->surface;
+	if (!surface || toplevel_from_wlr_surface(surface, &c, &l) < 0)
+		return;
+
+	sx = lx - (l ? l->scene->node.x : c->geometry.x);
+	sy = ly - (l ? l->scene->node.y : c->geometry.y);
+
+	wlr_seat_touch_notify_motion(seat, event->time_msec, event->touch_id, sx, sy);
+}
+
+static void
+touchnotifyup(struct wl_listener *listener, void *data)
+{
+	struct wlr_touch_up_event *event = data;
+
+	(void)listener;
+	wlr_seat_touch_notify_up(seat, event->time_msec, event->touch_id);
+}
+
+static void
+touchnotifycancel(struct wl_listener *listener, void *data)
+{
+	struct wlr_touch_cancel_event *event = data;
+	struct wlr_touch_point *point;
+
+	(void)listener;
+	point = wlr_seat_touch_get_point(seat, event->touch_id);
+	if (point)
+		wlr_seat_touch_notify_cancel(seat, point->client);
+}
+
+static void
+touchnotifyframe(struct wl_listener *listener, void *data)
+{
+	(void)listener;
+	(void)data;
+	wlr_seat_touch_notify_frame(seat);
 }
 
 static void
@@ -3019,6 +3185,27 @@ createtabletpad(struct wlr_tablet_pad *pad)
 			}
 		}
 	}
+}
+
+static void
+createtouch(struct wlr_touch *touch)
+{
+	TrackedTouch *tc = ecalloc(1, sizeof(*tc));
+
+	tc->touch = touch;
+	wl_list_insert(&tracked_touches, &tc->link);
+
+	LISTEN(&touch->events.down, &tc->down, touchnotifydown);
+	LISTEN(&touch->events.up, &tc->up, touchnotifyup);
+	LISTEN(&touch->events.motion, &tc->motion, touchnotifymotion);
+	LISTEN(&touch->events.cancel, &tc->cancel, touchnotifycancel);
+	LISTEN(&touch->events.frame, &tc->frame, touchnotifyframe);
+	LISTEN(&touch->base.events.destroy, &tc->destroy, destroytrackedtouch);
+
+	wlr_cursor_attach_input_device(cursor, &touch->base);
+
+	wlr_log(WLR_INFO, "[touch] new device name=%s",
+		touch->base.name ? touch->base.name : "(unknown)");
 }
 
 void
@@ -3748,6 +3935,22 @@ destroytrackedtablettool(struct wl_listener *listener, void *data)
 	free(ttt);
 }
 
+static void
+destroytrackedtouch(struct wl_listener *listener, void *data)
+{
+	TrackedTouch *tc = wl_container_of(listener, tc, destroy);
+
+	(void)data;
+	wl_list_remove(&tc->down.link);
+	wl_list_remove(&tc->up.link);
+	wl_list_remove(&tc->motion.link);
+	wl_list_remove(&tc->cancel.link);
+	wl_list_remove(&tc->frame.link);
+	wl_list_remove(&tc->destroy.link);
+	wl_list_remove(&tc->link);
+	free(tc);
+}
+
 void
 destroysessionlock(struct wl_listener *listener, void *data)
 {
@@ -4196,6 +4399,9 @@ inputdevice(struct wl_listener *listener, void *data)
 		break;
 	case WLR_INPUT_DEVICE_TABLET_PAD:
 		createtabletpad(wlr_tablet_pad_from_input_device(device));
+		break;
+	case WLR_INPUT_DEVICE_TOUCH:
+		createtouch(wlr_touch_from_input_device(device));
 		break;
 	default:
 		wlr_log(WLR_INFO,
@@ -6721,6 +6927,7 @@ setup(void)
 	wl_list_init(&tracked_tablets);
 	wl_list_init(&tracked_tablet_pads);
 	wl_list_init(&tracked_tablet_tools);
+	wl_list_init(&tracked_touches);
 	wl_signal_add(&backend->events.new_output, &new_output);
 
 	/* Set up our client lists, the xdg-shell and the layer-shell. The xdg-shell is a
@@ -6928,9 +7135,12 @@ setup(void)
 	/* The cursor and the group keyboard exist regardless of physical devices,
 	 * so advertise both capabilities once here. Waiting for a device event
 	 * leaves them at zero on headless backends and clients can bind neither
-	 * wl_pointer nor wl_keyboard. */
+	 * wl_pointer nor wl_keyboard. Touch is advertised unconditionally too,
+	 * for the same reason (a bound wl_touch that never fires costs nothing,
+	 * but toggling capabilities at runtime is fragile). */
 	wlr_seat_set_capabilities(seat,
-		WL_SEAT_CAPABILITY_POINTER | WL_SEAT_CAPABILITY_KEYBOARD);
+		WL_SEAT_CAPABILITY_POINTER | WL_SEAT_CAPABILITY_KEYBOARD
+		| WL_SEAT_CAPABILITY_TOUCH);
 
 	output_mgr = wlr_output_manager_v1_create(dpy);
 	wl_signal_add(&output_mgr->events.apply, &output_mgr_apply);

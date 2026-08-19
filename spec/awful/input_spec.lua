@@ -392,6 +392,21 @@ describe("awful.input", function()
             assert.is.same(rules, input.rules)
             assert.is.equal(1, #input_rules_calls)
         end)
+
+        it("rules accept touch properties", function()
+            local rules = {
+                { rule = { type = "touch" },
+                  properties = { map_to_output = "*" } },
+                { rule = { type = "touch", name = "Wacom HID 1234 Finger" },
+                  properties = {
+                      map_to_output = { "eDP-1", "AOC U27E3U ZX3QBHA000360" },
+                  } },
+            }
+
+            input.rules = rules
+            assert.is.same(rules, input.rules)
+            assert.is.equal(1, #input_rules_calls)
+        end)
     end)
 
     describe("realistic usage scenarios", function()
