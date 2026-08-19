@@ -1,18 +1,20 @@
 /**
  * test-virtual-pointer-client - Inject pointer input via zwlr_virtual_pointer_v1.
  *
- * Moves the cursor to an absolute layout position and performs one left click.
- * Unlike root.fake_input("button_press"), the injected events arrive through a
- * real wlr_input_device, so they traverse the compositor's full buttonpress()
- * path: mousegrabber routing, client button bindings, and seat notification.
+ * Moves the cursor to an absolute layout position and performs one left click
+ * or scroll tick. Unlike root.fake_input("button_press"), the injected events
+ * arrive through a real wlr_input_device, so they traverse the compositor's
+ * full buttonpress()/axisnotify() path: mousegrabber routing, client button
+ * bindings, and seat notification.
  *
- * Usage: test-virtual-pointer-client <move|click> <x> <y> <x_extent> <y_extent>
- *                                     [left|middle|right]
+ * Usage: test-virtual-pointer-client <move|click|scroll> <x> <y>
+ *                                     <x_extent> <y_extent>
+ *                                     [left|middle|right|side|extra|up|down]
  *
  * x/y are layout coordinates; x_extent/y_extent the layout size (normally the
  * screen geometry). "move" only positions the cursor; "click" also presses and
- * releases the given button (left by default). Exits after the events are
- * flushed.
+ * releases the given button (left by default); "scroll" sends one discrete
+ * vertical wheel tick (down by default). Exits after the events are flushed.
  */
 
 #include <linux/input-event-codes.h>
@@ -61,23 +63,41 @@ static uint32_t button_code(const char *name) {
     if (strcmp(name, "left") == 0) return BTN_LEFT;
     if (strcmp(name, "middle") == 0) return BTN_MIDDLE;
     if (strcmp(name, "right") == 0) return BTN_RIGHT;
+    if (strcmp(name, "side") == 0) return BTN_SIDE;
+    if (strcmp(name, "extra") == 0) return BTN_EXTRA;
     return 0;
 }
 
 int main(int argc, char *argv[]) {
     if ((argc != 6 && argc != 7)
-            || (strcmp(argv[1], "move") != 0 && strcmp(argv[1], "click") != 0)) {
-        fprintf(stderr, "Usage: %s <move|click> <x> <y> <x_extent> <y_extent> "
-                "[left|middle|right]\n", argv[0]);
-        return 1;
-    }
-    uint32_t btn = argc == 7 ? button_code(argv[6]) : BTN_LEFT;
-    if (!btn) {
-        fprintf(stderr, "Unknown button: %s (expected left, middle or right)\n",
-                argv[6]);
+            || (strcmp(argv[1], "move") != 0 && strcmp(argv[1], "click") != 0
+                && strcmp(argv[1], "scroll") != 0)) {
+        fprintf(stderr, "Usage: %s <move|click|scroll> <x> <y> <x_extent> "
+                "<y_extent> [left|middle|right|side|extra|up|down]\n", argv[0]);
         return 1;
     }
     int click = strcmp(argv[1], "click") == 0;
+    int scroll = strcmp(argv[1], "scroll") == 0;
+    uint32_t btn = BTN_LEFT;
+    int32_t scroll_dir = 1; /* wl_pointer convention: positive = down */
+    if (argc == 7) {
+        if (scroll) {
+            if (strcmp(argv[6], "up") == 0) {
+                scroll_dir = -1;
+            } else if (strcmp(argv[6], "down") != 0) {
+                fprintf(stderr, "Unknown direction: %s (expected up or down)\n",
+                        argv[6]);
+                return 1;
+            }
+        } else {
+            btn = button_code(argv[6]);
+            if (!btn) {
+                fprintf(stderr, "Unknown button: %s (expected left, middle, "
+                        "right, side or extra)\n", argv[6]);
+                return 1;
+            }
+        }
+    }
     uint32_t x = (uint32_t)strtoul(argv[2], NULL, 10);
     uint32_t y = (uint32_t)strtoul(argv[3], NULL, 10);
     uint32_t x_extent = (uint32_t)strtoul(argv[4], NULL, 10);
@@ -121,6 +141,14 @@ int main(int argc, char *argv[]) {
         sleep_ms(50);
         zwlr_virtual_pointer_v1_button(pointer, now_ms(), btn,
                                        WL_POINTER_BUTTON_STATE_RELEASED);
+        zwlr_virtual_pointer_v1_frame(pointer);
+        wl_display_roundtrip(display);
+    } else if (scroll) {
+        sleep_ms(50);
+        /* One discrete wheel click; wlroots scales discrete to value120 */
+        zwlr_virtual_pointer_v1_axis_discrete(pointer, now_ms(),
+                WL_POINTER_AXIS_VERTICAL_SCROLL,
+                wl_fixed_from_int(scroll_dir * 15), scroll_dir);
         zwlr_virtual_pointer_v1_frame(pointer);
         wl_display_roundtrip(display);
     }

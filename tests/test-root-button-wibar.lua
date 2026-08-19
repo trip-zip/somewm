@@ -13,17 +13,10 @@
 local runner = require("_runner")
 local async  = require("_async")
 local awful  = require("awful")
+local utils  = require("_utils")
 
-local VPOINTER = "./build-test/test-virtual-pointer-client"
-
-local f = io.open(VPOINTER, "r")
-if not f then
-    io.stderr:write("SKIP: " .. VPOINTER .. " not found (run meson compile first)\n")
-    io.stderr:write("Test finished successfully.\n")
-    awesome.quit()
-    return
-end
-f:close()
+local VPOINTER = utils.binary_or_skip("./build-test/test-virtual-pointer-client")
+if not VPOINTER then return end
 
 runner.run_async(function()
     local s  = screen[1]
