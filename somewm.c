@@ -1090,8 +1090,11 @@ buttonpress(struct wl_listener *listener, void *data)
 			}
 		}
 
-		/* Check root button bindings (ONLY for empty space, not client clicks) */
-		if (!c && !l) {
+		/* Check root button bindings (only over empty desktop). A click on a
+		 * wibar belongs to that wibar whether or not a widget consumed it:
+		 * AwesomeWM grabs root buttons on the root window, which a wibox click
+		 * never reaches. */
+		if (!c && !l && !drawin) {
 			lua_State *L = globalconf_get_lua_State();
 
 			/* Check root button bindings */
