@@ -2145,6 +2145,7 @@ resolve_input_settings_for_types(const char *type_primary,
 		if (p->middle_button_emulation != -2) out->middle_button_emulation = p->middle_button_emulation;
 		if (p->scroll_button != -2) out->scroll_button = p->scroll_button;
 		if (p->scroll_button_lock != -2) out->scroll_button_lock = p->scroll_button_lock;
+		if (p->emulate_pointer != -2) out->emulate_pointer = p->emulate_pointer;
 		if (p->scroll_method) out->scroll_method = p->scroll_method;
 		if (p->click_method) out->click_method = p->click_method;
 		if (p->clickfinger_button_map) out->clickfinger_button_map = p->clickfinger_button_map;
@@ -2661,6 +2662,81 @@ tabletpadnotifysurfacedestroy(struct wl_listener *listener, void *data)
 	tabletpad_clear_focus(tp);
 }
 
+/* A client that never bound wl_touch (e.g. it only understands wl_pointer,
+ * or - for XWayland - Xwayland itself handles touch internally and may or
+ * may not forward a click) needs a synthesized click to be usable by touch
+ * at all. Touch-aware clients (they bound wl_touch) are untouched: this
+ * check is what keeps emulation from ever firing double input for them. */
+static bool
+touch_client_needs_pointer_emulation(struct wlr_surface *surface)
+{
+	struct wlr_seat_client *sc = wlr_seat_client_for_wl_client(seat,
+		wl_resource_get_client(surface->resource));
+	return !sc || wl_list_empty(&sc->touches);
+}
+
+/* Synthesize a single left-click (press+release together, not press-on-down/
+ * release-on-up) at the touch-down point. Deliberately atomic: real touch
+ * has no hover/drag state to preserve, and firing both here means no
+ * touch_id needs to be tracked across motion/up/cancel for this to work.
+ *
+ * Routed through buttonpress() rather than calling
+ * wlr_seat_pointer_notify_button() directly: buttonpress() is also where
+ * Lua button-binding dispatch happens (luaA_client_button_check() /
+ * luaA_root_button_check()), which is where click-to-focus/raise actually
+ * lives (an rc.lua-configured behavior, not hardcoded C). A direct
+ * notify_button() call sends the client a raw click but skips that dispatch
+ * entirely, so tapping an unfocused window never focused/raised it. Real
+ * touch on touch-aware clients (Krita, GIMP, ...) is intentionally NOT
+ * routed through here - a synthetic wl_pointer click on top of their real
+ * wl_touch input would be double input. See touchnotifydown() for how those
+ * clients still get focus/raise on a plain tap, without the click. */
+static void
+touch_emulate_click(struct wlr_touch *touch, double lx, double ly, uint32_t time_msec)
+{
+	struct wlr_pointer_button_event press = {0};
+	struct wlr_pointer_button_event release = {0};
+
+	motionnotify(time_msec, &touch->base, lx - cursor->x, ly - cursor->y,
+		lx - cursor->x, ly - cursor->y);
+
+	press.time_msec = time_msec;
+	press.button = BTN_LEFT;
+	press.state = WL_POINTER_BUTTON_STATE_PRESSED;
+	buttonpress(NULL, &press);
+	wlr_seat_pointer_notify_frame(seat);
+
+	release.time_msec = time_msec;
+	release.button = BTN_LEFT;
+	release.state = WL_POINTER_BUTTON_STATE_RELEASED;
+	buttonpress(NULL, &release);
+	wlr_seat_pointer_notify_frame(seat);
+
+	/* Real touch has no hover state; clear synthetic pointer focus so the
+	 * tapped surface doesn't get stuck showing a hover highlight with no
+	 * real mouse-leave ever following. */
+	wlr_seat_pointer_notify_clear_focus(seat);
+}
+
+/* Whether some other surface already has an active touch point right now.
+ * Gates focus-stealing in touchnotifydown(): touching a second, different
+ * window while a touch is still down elsewhere (e.g. drawing on an
+ * unfocused canvas on one screen while touch-scrolling a document on
+ * another) must not disturb whichever window currently has focus - see
+ * #612. Concurrent touches on the *same* surface (a two-finger gesture)
+ * don't count as "elsewhere" and don't block focus. */
+static bool
+touch_point_active_elsewhere(struct wlr_surface *surface)
+{
+	struct wlr_touch_point *point;
+
+	wl_list_for_each(point, &seat->touch_state.touch_points, link) {
+		if (point->surface && point->surface != surface)
+			return true;
+	}
+	return false;
+}
+
 /* Touch is inherently absolute and multi-point (keyed by touch_id), unlike
  * tablet tools it doesn't move a shared cursor position via motionnotify();
  * each point maps straight to layout coords and then surface-local coords. */
@@ -2670,16 +2746,42 @@ touchnotifydown(struct wl_listener *listener, void *data)
 	struct wlr_touch_down_event *event = data;
 	struct InputSettings s;
 	struct wlr_surface *surface = NULL;
+	Client *c = NULL;
 	double lx, ly, sx, sy;
 
 	(void)listener;
 	resolve_touch_settings(event->touch, &s);
 	input_map_coords(&s, event->x, event->y, &lx, &ly);
-	xytonode(lx, ly, &surface, NULL, NULL, NULL, NULL, &sx, &sy);
+	xytonode(lx, ly, &surface, &c, NULL, NULL, NULL, &sx, &sy);
 
-	if (surface)
+	if (!surface)
+		return;
+
+	/* wlroots itself refuses to create a touch point (logged as an ERROR)
+	 * for a client with no bound wl_touch resource, so only forward the
+	 * raw event to clients that can actually use it. Everyone else gets
+	 * an emulated click instead, if enabled. */
+	if (!touch_client_needs_pointer_emulation(surface)) {
+		/* Touch-aware clients get real, raw touch - no synthetic
+		 * wl_pointer click (see touch_emulate_click()'s comment for
+		 * why). They still deserve focus/raise on a deliberate tap
+		 * though, the same way a mouse click gets it: go through the
+		 * same rc.lua button-binding dispatch buttonpress() uses,
+		 * just without the final wl_pointer delivery to the client. */
+		if (c && (!client_is_unmanaged(c) || client_wants_focus(c))
+				&& !touch_point_active_elsewhere(surface)) {
+			struct wlr_keyboard *keyboard = wlr_seat_get_keyboard(seat);
+			uint32_t mods = keyboard ? wlr_keyboard_get_modifiers(keyboard) : 0;
+			int rel_x = (int)lx - c->geometry.x;
+			int rel_y = (int)ly - c->geometry.y;
+
+			luaA_client_button_check(c, rel_x, rel_y, BTN_LEFT,
+			                        CLEANMASK(mods), true);
+		}
 		wlr_seat_touch_notify_down(seat, surface, event->time_msec,
 			event->touch_id, sx, sy);
+	} else if (s.emulate_pointer)
+		touch_emulate_click(event->touch, lx, ly, event->time_msec);
 }
 
 static void
@@ -2695,6 +2797,10 @@ touchnotifymotion(struct wl_listener *listener, void *data)
 
 	(void)listener;
 
+	/* No point was ever created for this touch_id if the down event was
+	 * emulated instead of forwarded (see touchnotifydown()) - skip, same
+	 * guard touchnotifycancel() already uses, avoids another wlroots
+	 * "unknown touch point" ERROR log. */
 	point = wlr_seat_touch_get_point(seat, event->touch_id);
 	if (!point)
 		return;
@@ -2728,7 +2834,8 @@ touchnotifyup(struct wl_listener *listener, void *data)
 	struct wlr_touch_up_event *event = data;
 
 	(void)listener;
-	wlr_seat_touch_notify_up(seat, event->time_msec, event->touch_id);
+	if (wlr_seat_touch_get_point(seat, event->touch_id))
+		wlr_seat_touch_notify_up(seat, event->time_msec, event->touch_id);
 }
 
 static void
@@ -7097,6 +7204,8 @@ setup(void)
 	globalconf.input.clickfinger_button_map = NULL;  /* String property - set via Lua */
 
 	globalconf.input.tool_mode = NULL;  /* Rule-only tablet tool property */
+	globalconf.input.emulate_pointer = 1;  /* touch: synthesize pointer clicks for
+	                                         * clients that never bound wl_touch */
 	globalconf.input.map_to_output_list = NULL;  /* Rule-only tablet property */
 	globalconf.input.map_to_output_count = 0;
 	globalconf.input.map_from_region_set = false;

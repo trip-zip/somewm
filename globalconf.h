@@ -126,6 +126,9 @@ typedef struct InputSettings {
      * is tablet tool-specific; map_to_output/map_to_region/map_from_region
      * are shared by both "tablet" and "touch" rule types. */
     char *tool_mode;                /* "absolute", "relative" */
+    int emulate_pointer;            /* touch-specific: synthesize wl_pointer
+                                      * clicks for clients that never bound
+                                      * wl_touch; 0=off, 1=on */
     char **map_to_output_list;      /* ordered candidates: "*", output name, or
                                       * make/model/serial identifier; first
                                       * connected candidate wins */
