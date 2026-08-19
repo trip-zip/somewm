@@ -1427,6 +1427,8 @@ setup(void)
 	globalconf.input.clickfinger_button_map = NULL;  /* String property - set via Lua */
 
 	globalconf.input.tool_mode = NULL;  /* Rule-only tablet tool property */
+	globalconf.input.emulate_pointer = 1;  /* touch: synthesize pointer clicks for
+	                                         * clients that never bound wl_touch */
 	globalconf.input.map_to_output_list = NULL;  /* Rule-only tablet property */
 	globalconf.input.map_to_output_count = 0;
 	globalconf.input.map_from_region_set = false;
