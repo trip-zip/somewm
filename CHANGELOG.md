@@ -4,6 +4,33 @@ All notable changes to somewm will be documented in this file.
 
 ## [Unreleased]
 
+## [1.4.4] - 2026-08-20
+
+Patch release. 10 commits since 1.4.3: client popups, input routing, and idle
+inhibitors. No API changes; existing rc.lua configs run unchanged.
+
+### Fixed
+
+- Client popup menus open where the application asked, instead of offset up and
+  left by the border width and titlebar height, and no longer get cropped at the
+  client's content edge. Context menus routinely open above and left of the
+  pointer, so this was visible in Firefox and anything else with a context menu
+- Popups paint above client borders and shadows instead of behind them
+- X11 clients keep the pointer grab when you click the window that already has
+  focus, so games no longer lose mouse capture on every click
+- Scroll ticks reach the mousegrabber as buttons 4/5, as they do in AwesomeWM.
+  BTN_SIDE and BTN_EXTRA no longer land in those slots; they are buttons 8/9
+- Clicking a wibar no longer fires the root button binding on top of whatever
+  the wibar did with the click
+- Pointer focus unpins on the seat's button count instead of a local latch, so a
+  release swallowed by a mousegrabber no longer pins focus to a stale surface
+- Destroying an idle inhibitor recomputes after wlroots unlinks it, so idle
+  timers are no longer latched off for the rest of the session
+- Systray icons size by the theme's `base_size` rather than the source pixmap,
+  so an app publishing a 256x256 icon no longer takes a 256px wide slot with the
+  icon letterboxed inside it
+- Tag names that are empty or unset no longer read through a null pointer
+
 ## [1.4.3] - 2026-08-08
 
 Patch release. 25 commits since 1.4.2: a hot-reload rework, wlroots 0.20
@@ -237,7 +264,9 @@ First stable release. SomeWM 1.4 = AwesomeWM 4.4 on Wayland.
 
 Initial public release with core AwesomeWM compatibility.
 
-[Unreleased]: https://github.com/trip-zip/somewm/compare/v1.4.2...HEAD
+[Unreleased]: https://github.com/trip-zip/somewm/compare/v1.4.4...HEAD
+[1.4.4]: https://github.com/trip-zip/somewm/compare/v1.4.3...v1.4.4
+[1.4.3]: https://github.com/trip-zip/somewm/compare/v1.4.2...v1.4.3
 [1.4.2]: https://github.com/trip-zip/somewm/compare/v1.4.1...v1.4.2
 [1.4.1]: https://github.com/trip-zip/somewm/compare/v1.4.0...v1.4.1
 [1.4.0]: https://github.com/trip-zip/somewm/compare/0.5.0...v1.4.0
