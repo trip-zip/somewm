@@ -121,11 +121,37 @@ typedef struct InputSettings {
     char *tap_button_map;           /* "lrm", "lmr" */
     char *clickfinger_button_map;   /* "lrm", "lmr" */
     bool accel_speed_set;           /* true if accel_speed was explicitly set */
+
+    /* Tablet/touch rule properties (used by awful.input.rules). tool_mode
+     * is tablet tool-specific; map_to_output/map_to_region/map_from_region
+     * are shared by both "tablet" and "touch" rule types. */
+    char *tool_mode;                /* "absolute", "relative" */
+    int emulate_pointer;            /* touch-specific: synthesize wl_pointer
+                                      * clicks for clients that never bound
+                                      * wl_touch; 0=off, 1=on */
+    char **map_to_output_list;      /* ordered candidates: "*", output name, or
+                                      * make/model/serial identifier; first
+                                      * connected candidate wins */
+    int map_to_output_count;
+    bool map_from_region_set;       /* true if region is explicitly set */
+    double map_from_region_x1;
+    double map_from_region_y1;
+    double map_from_region_x2;
+    double map_from_region_y2;
+
+    /* Absolute output-layout-pixel target rectangle; takes precedence over
+     * map_to_output_list when set (mirrors sway: an input is mapped to
+     * either an output or a region, not both). */
+    bool map_to_region_set;
+    double map_to_region_x1;
+    double map_to_region_y1;
+    double map_to_region_x2;
+    double map_to_region_y2;
 } InputSettings;
 
 /** Per-device input rule (evaluated in order, last match wins per property) */
 typedef struct InputRule {
-    char *type;                     /* "touchpad" or "pointer", NULL=match any */
+    char *type;                     /* e.g. "touchpad", "pointer", "tablet", "tablet-tool-pen", "tablet-tool", "touch"; NULL=match any */
     char *name;                     /* device name substring, NULL=match any */
     InputSettings properties;
 } InputRule;
