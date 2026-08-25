@@ -201,8 +201,26 @@ message('Using wlroots version: ' + wlroots_version)
 
 # PAM authentication (optional, for lock screen)
 pam_option = get_option('pam')
-pam_dep = dependency('pam', required: pam_option)
-have_pam = pam_dep.found()
+# There are three cases: If pam_option is disabled, we do not look for and do
+# not build against PAM. If pam_option is enabled, we require PAM to the found.
+# If pam_option is auto, we opportunistically enable it if found.
+have_pam = false
+if not pam_option.disabled()
+  pam_dep = dependency('pam', required: false)
+  if not pam_dep.found()
+    # Some distributions (e.g., Debian) do not ship PAM with pkg-config/cmake
+    # files. Do a fallback scan.
+    pam_cc = meson.get_compiler('c')
+    pam_lib = pam_cc.find_library('pam', required: false)
+    if pam_lib.found() and pam_cc.has_header('security/pam_appl.h')
+      pam_dep = pam_lib
+    endif
+  endif
+  have_pam = pam_dep.found()
+endif
+if pam_option.enabled() and not pam_dep.found()
+  error('PAM was requested (-Dpam=enabled) but libpam could not be found (checked pkgconfig, cmake, and a plain library search)')
+endif
 if have_pam
   message('PAM authentication enabled')
 else
