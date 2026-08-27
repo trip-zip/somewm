@@ -8,6 +8,7 @@ Since SomeWM is not a direct git fork, we manually port relevant changes from up
 
 | AwesomeWM PR | Description | SomeWM PR | Date |
 |--------------|-------------|-----------|------|
+| [#4122](https://github.com/awesomeWM/awesome/pull/4122) | Round placement margins and offsets to whole pixels | N/A | 2026-08-27 |
 | [#4079](https://github.com/awesomeWM/awesome/pull/4079) | Add group support for append_client_keybindings | N/A | 2026-04-01 |
 | [#4066](https://github.com/awesomeWM/awesome/pull/4066) | Use lua_pushliteral instead of lua_pushstring | N/A | 2026-04-01 |
 | [#4060](https://github.com/awesomeWM/awesome/pull/4060) | Use luaA_class_add_properties batch API | N/A | 2026-04-01 |
