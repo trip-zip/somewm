@@ -8,6 +8,7 @@ Since SomeWM is not a direct git fork, we manually port relevant changes from up
 
 | AwesomeWM PR | Description | Notes |
 |--------------|-------------|-------|
+| [#4122](https://github.com/awesomeWM/awesome/pull/4122) | Round placement margins and offsets to whole pixels | Ported here ahead of the upstream merge (somewm issue #715). Revisit if the AwesomeWM maintainers change the fix. |
 | [#4077](https://github.com/awesomeWM/awesome/pull/4077) | Decouple fullscreen stacking layer from focus | C-side (stack.c). Needs adaptation: somewm keeps the fullscreen layer when the focused client is on another screen, so the top-of-stack check must be per-screen. somewm also forces stack_windows() on focus change (somewm.c), which may already mask the upstream bug. |
 
 ## Ported PRs
