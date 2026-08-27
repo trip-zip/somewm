@@ -26,7 +26,7 @@ if [ -n "${MANAGERPID:-}" ] && [ "${SYSTEMD_EXEC_PID:-}" = "$$" ]; then
 fi
 
 # Make sure systemd is available
-if ! hash systemctl >/dev/null 2>&1; then
+if ! command -v systemctl >/dev/null 2>&1; then
     echo "systemd not found. Run somewm directly instead." >&2
     exit 1
 fi
@@ -59,7 +59,7 @@ systemctl --user set-environment \
     XDG_SESSION_TYPE=wayland
 
 # D-Bus activation environment is independent from systemd
-if hash dbus-update-activation-environment 2>/dev/null; then
+if command -v dbus-update-activation-environment 2>/dev/null; then
     dbus-update-activation-environment --all
 fi
 
