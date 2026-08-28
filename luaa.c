@@ -1222,7 +1222,7 @@ static int
 luaA_awesome_set_preferred_icon_size(lua_State *L)
 {
 	lua_Integer size = luaL_checkinteger(L, 1);
-	if (size < 0 || size > UINT32_MAX) {
+	if (size < 0 || (uint64_t)size > UINT32_MAX) {
 		return luaL_error(L, "icon size must be between 0 and %u", UINT32_MAX);
 	}
 	globalconf.preferred_icon_size = (uint32_t)size;
