@@ -2,7 +2,7 @@
 
 All notable changes to somewm will be documented in this file.
 
-## [2.0.0] - Unreleased
+## [2.0.0] - 2026-08-28
 
 Major release. 202 commits since 1.4.0. The Lua/C boundary is reworked: C
 events are queued and delivered to Lua at a defined point, instead of Lua
