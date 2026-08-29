@@ -421,6 +421,8 @@ add_project_arguments(
 
 somewm_sources = [
   'somewm.c',
+  'loop.c',
+  'version.c',
   'somewm_api.c',
   'xwayland.c',
   'protocols.c',

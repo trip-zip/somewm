@@ -14,9 +14,6 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/wait.h>
-#include <sys/time.h>
-#include <sys/utsname.h>
-#include <time.h>
 #include <unistd.h>
 #include <glib.h>
 #include <glib-unix.h>
@@ -83,7 +80,6 @@
 #include "globalconf.h"
 #include "luaa.h"
 #include "stack.h"
-#include "banning.h"
 #include "animation.h"
 #include "ipc.h"
 #include "dbus.h"
@@ -100,6 +96,8 @@
 #include "input.h"
 #include "window.h"
 #include "focus.h"
+#include "loop.h"
+#include "version.h"
 
 /* macros */
 #define TAGCOUNT (32)
@@ -110,7 +108,6 @@ static void cleanup(void);
 static void cleanuplisteners(void);
 static void handlesig(int signo);
 void printstatus(void);
-void some_refresh(void);
 static void run(char *startup_cmd);
 static void setup(void);
 void spawn(const Arg *arg);
@@ -577,10 +574,6 @@ reap_children(gint fd, GIOCondition condition, gpointer data)
  * with fallbacks to globalconf defaults. This achieves AwesomeWM compatibility:
  * themes can customize appearance without recompiling C code. */
 
-/* ========== KEYBINDING SYSTEM ========== */
-
-#include "objects/keybinding.h"
-
 void
 cursor_to_client_coordinates(Client *client, double *sx, double *sy) {
 	double bw = client->bw;
@@ -604,307 +597,6 @@ void
 printstatus(void)
 {
 	/* Status output removed - use Lua signals (client.connect_signal) instead */
-}
-
-/* ============================================================================
- * GLIB MAIN LOOP INTEGRATION - Matches AwesomeWM Architecture
- * ============================================================================
- * This section implements GLib as the primary event loop with Wayland
- * integration via GSource, exactly matching AwesomeWM's pattern of using
- * a custom poll function to handle refresh cycles before polling.
- */
-
-/* GSource for Wayland event loop integration */
-typedef struct {
-	GSource source;
-	GPollFD poll_fd;
-	struct wl_event_loop *loop;
-} WaylandSource;
-
-/* Time tracking for performance monitoring (matches AwesomeWM) */
-static struct timeval last_wakeup;
-static float main_loop_iteration_limit = 0.1f;
-
-/* Recursion guard for some_refresh() */
-static bool in_refresh = false;
-
-#include "bench.h"
-
-/* Forward declaration */
-void some_refresh(void);
-
-/* WaylandSource prepare callback - called before polling */
-static gboolean
-wayland_source_prepare(GSource *source, gint *timeout)
-{
-	/* Don't force immediate dispatch, let GLib handle timeout.
-	 * The custom poll function will handle refresh timing. */
-	*timeout = -1;
-	return FALSE;
-}
-
-/* WaylandSource check callback - check if fd has events */
-static gboolean
-wayland_source_check(GSource *source)
-{
-	WaylandSource *wl_source = (WaylandSource *)source;
-
-	/* Check if our fd has events ready */
-	return wl_source->poll_fd.revents & G_IO_IN;
-}
-
-/* WaylandSource dispatch callback - process Wayland events */
-static gboolean
-wayland_source_dispatch(GSource *source, GSourceFunc callback, gpointer user_data)
-{
-	WaylandSource *wl_source = (WaylandSource *)source;
-
-	/* Dispatch all pending Wayland events (non-blocking)
-	 * This processes backend events, client requests, etc. */
-	wl_event_loop_dispatch(wl_source->loop, 0);
-
-	return G_SOURCE_CONTINUE;
-}
-
-/* WaylandSource function table */
-static GSourceFuncs wayland_source_funcs = {
-	wayland_source_prepare,
-	wayland_source_check,
-	wayland_source_dispatch,
-	NULL,  /* finalize */
-	NULL,  /* closure_callback */
-	NULL   /* closure_marshal */
-};
-
-/* Create GSource for Wayland event loop */
-static GSource *
-create_wayland_source(struct wl_event_loop *loop)
-{
-	WaylandSource *wl_source;
-	GSource *source;
-	int fd;
-
-	/* Get the Wayland event loop's aggregate file descriptor */
-	fd = wl_event_loop_get_fd(loop);
-	if (fd < 0) {
-		fprintf(stderr, "ERROR: Failed to get Wayland event loop fd\n");
-		return NULL;
-	}
-
-	/* Create our custom GSource */
-	source = g_source_new(&wayland_source_funcs, sizeof(WaylandSource));
-	wl_source = (WaylandSource *)source;
-	wl_source->loop = loop;
-
-	/* Set up poll fd for GLib to monitor */
-	wl_source->poll_fd.fd = fd;
-	wl_source->poll_fd.events = G_IO_IN | G_IO_ERR | G_IO_HUP;
-	g_source_add_poll(source, &wl_source->poll_fd);
-
-	return source;
-}
-
-/* RefreshSource - runs the refresh cycle in GLib's prepare phase.
- *
- * some_refresh() executes Lua (the "refresh" signal, gears.timer delayed
- * calls, coroutines resumed from them), which can arm new GLib timeout
- * sources. GLib computes the poll timeout during the prepare phase, and a
- * same-thread g_source_attach() does not wake an already-computed poll, so
- * a timer armed any later in the iteration is invisible to it: on an idle
- * session the loop sleeps indefinitely while the timer is due, until an
- * unrelated fd event happens to wake it. Running the refresh here, at a
- * higher priority than the default-priority timeout sources, means sources
- * it arms are inserted into buckets this same prepare pass visits
- * afterwards, so they are included in this iteration's poll timeout. */
-static gboolean
-refresh_source_prepare(GSource *source, gint *timeout)
-{
-	lua_State *L = globalconf_get_lua_State();
-
-	some_refresh();
-
-	/* Check Lua stack integrity (matches AwesomeWM) */
-	if (L && lua_gettop(L) != 0) {
-		fprintf(stderr, "WARNING: Something left %d items on Lua stack, this is a bug!\n",
-		        lua_gettop(L));
-		luaA_dumpstack(L);
-		lua_settop(L, 0);
-	}
-
-	/* Never ready: this source only does work in prepare */
-	*timeout = -1;
-	return FALSE;
-}
-
-static gboolean
-refresh_source_check(GSource *source)
-{
-	return FALSE;
-}
-
-static gboolean
-refresh_source_dispatch(GSource *source, GSourceFunc callback, gpointer user_data)
-{
-	return G_SOURCE_CONTINUE;
-}
-
-static GSourceFuncs refresh_source_funcs = {
-	refresh_source_prepare,
-	refresh_source_check,
-	refresh_source_dispatch,
-	NULL,  /* finalize */
-	NULL,  /* closure_callback */
-	NULL   /* closure_marshal */
-};
-
-/* Custom poll function - called by GLib before every poll() syscall.
- * The refresh cycle itself runs in refresh_source_prepare() so that timers
- * it arms count toward this iteration's poll timeout; what remains here is
- * the work that must happen after every prepare and right before sleeping.
- *
- * Matches AwesomeWM's awesome.c:a_glib_poll()
- */
-static gint
-some_glib_poll(GPollFD *ufds, guint nfsd, gint timeout)
-{
-	guint res;
-	struct timeval now, length_time;
-	float length;
-	int saved_errno;
-
-	/* Flush pending Wayland client data before polling
-	 * Clients won't receive data until we flush */
-	wl_display_flush_clients(dpy);
-
-	/* Drain wlroots idle sources before sleeping. wlr_output_schedule_frame()
-	 * (called by drawin_refresh_drawable() when a wibox redraws) queues the frame
-	 * as a wl_event_loop idle, and idles only run inside wl_event_loop_dispatch().
-	 * That otherwise happens solely when the loop fd is readable from input or
-	 * client traffic (via wayland_source_dispatch), so a timer-driven redraw (e.g.
-	 * textclock / awful.widget.watch) updates the scene buffer but is never
-	 * committed on an idle session and the widget freezes until the next input.
-	 * dispatch_idle runs exactly the queued idles (not fd sources, which stay with
-	 * the GSource), presenting those frames every iteration. */
-	wl_event_loop_dispatch_idle(wl_display_get_event_loop(dpy));
-
-	/* Check iteration performance (matches AwesomeWM) */
-	gettimeofday(&now, NULL);
-	timersub(&now, &last_wakeup, &length_time);
-	length = (float)length_time.tv_sec + length_time.tv_usec * 1.0f / 1e6f;
-	if (length > main_loop_iteration_limit) {
-		fprintf(stderr, "WARNING: Last iteration took %.6f seconds (limit: %.6f)\n",
-		        length, main_loop_iteration_limit);
-		main_loop_iteration_limit = length;
-	}
-
-	/* Actually do the polling (matches AwesomeWM) */
-	res = g_poll(ufds, nfsd, timeout);
-	saved_errno = errno;
-	gettimeofday(&last_wakeup, NULL);
-	errno = saved_errno;
-
-	return res;
-}
-
-/** Main refresh cycle (AwesomeWM pattern).
- *
- * This implements AwesomeWM's awesome_refresh() pattern for Wayland.
- * Called before every event loop iteration to apply all pending changes.
- *
- * Matches AwesomeWM's awesome.c a_glib_poll() which calls:
- *   awesome_refresh() -> client_refresh() -> client_geometry_refresh()
- *
- * Without this, geometry changes calculated in Lua never reach Wayland!
- */
-void
-some_refresh(void)
-{
-	/* Prevent recursive refresh calls (matches AwesomeWM pattern) */
-	if (in_refresh)
-		return;
-	in_refresh = true;
-
-#ifdef SOMEWM_BENCH
-	struct timespec bench_ts[BENCH_STAGE_COUNT + 1];
-	clock_gettime(CLOCK_MONOTONIC, &bench_ts[0]);
-#endif
-
-	/* Step 0: Drain queued events - dispatch batched signals to Lua.
-	 * Must happen before the refresh signal so Lua handlers see
-	 * up-to-date state when layout runs.
-	 * Included in the lua_refresh stage timing. */
-	some_event_queue_drain(globalconf_L);
-
-	/* Step 1: Emit refresh signal - triggers Lua layout calculations */
-	luaA_emit_signal_global("refresh");
-
-#ifdef SOMEWM_BENCH
-	clock_gettime(CLOCK_MONOTONIC, &bench_ts[1]);
-#endif
-
-	/* Step 1.5: Tick frame-synced animations - tick callbacks that modify
-	 * client geometry will have their changes applied by client_refresh()
-	 * in the same cycle. */
-	animation_tick_all();
-
-#ifdef SOMEWM_BENCH
-	clock_gettime(CLOCK_MONOTONIC, &bench_ts[2]);
-#endif
-
-	/* Step 2: Refresh drawins (wibox/panels) FIRST - matches AwesomeWM order
-	 * AwesomeWM calls drawin_refresh() BEFORE client_refresh() in awesome_refresh().
-	 * This ensures wibar geometry is applied before client layout calculations. */
-	drawin_refresh();
-
-#ifdef SOMEWM_BENCH
-	clock_gettime(CLOCK_MONOTONIC, &bench_ts[3]);
-#endif
-
-	/* Step 3: Apply client changes (geometry, borders, focus)
-	 * This matches AwesomeWM's client_refresh() which handles all client updates. */
-	client_refresh();
-
-#ifdef SOMEWM_BENCH
-	clock_gettime(CLOCK_MONOTONIC, &bench_ts[4]);
-#endif
-
-	/* Step 4: Update client visibility (banning) */
-	bool banning_pending = globalconf.need_lazy_banning;
-	banning_refresh();
-
-	/* Step 4.5: Re-evaluate pointer focus after visibility changes.
-	 * When scene nodes are disabled (banned) wlroots sends wl_pointer.leave,
-	 * but re-enabling them does not automatically send wl_pointer.enter.
-	 * Without this, clients (notably Chromium) that were unbanned under a
-	 * stationary cursor never regain pointer focus and stop receiving all
-	 * input until the user moves the mouse. */
-	if (banning_pending)
-		motionnotify(0, NULL, 0, 0, 0, 0);
-
-#ifdef SOMEWM_BENCH
-	clock_gettime(CLOCK_MONOTONIC, &bench_ts[5]);
-#endif
-
-	/* Step 5: Update window stacking (Z-order)
-	 * This matches AwesomeWM's awesome_refresh() which calls stack_refresh() */
-	stack_refresh();
-
-#ifdef SOMEWM_BENCH
-	clock_gettime(CLOCK_MONOTONIC, &bench_ts[6]);
-#endif
-
-	/* Step 6: Destroy windows queued for deferred destruction (XWayland only)
-	 * This matches AwesomeWM's deferred destruction pattern to avoid race conditions */
-	client_destroy_later();
-
-#ifdef SOMEWM_BENCH
-	clock_gettime(CLOCK_MONOTONIC, &bench_ts[7]);
-	for (int i = 0; i < BENCH_STAGE_COUNT; i++)
-		bench_stage_record(i, timespec_diff_ns(&bench_ts[i], &bench_ts[i + 1]));
-	bench_record_frame_time(timespec_diff_ns(&bench_ts[0], &bench_ts[7]));
-#endif
-
-	in_refresh = false;
 }
 
 void
@@ -1047,16 +739,11 @@ run(char *startup_cmd)
 	/* Get Wayland event loop */
 	loop = wl_display_get_event_loop(dpy);
 
-	/* Run the refresh cycle in the prepare phase (see refresh_source_prepare).
-	 * G_PRIORITY_HIGH so it is prepared before the default-priority timeout
-	 * sources the refresh Lua may arm.
-	 *
-	 * Both this and the Wayland source are attached after the first config has
-	 * loaded, on purpose: a refresh or a client event dispatched mid-config is
-	 * worse than a late one. That puts them above the sweep's baseline, so
-	 * they are exempted by hand instead. */
-	GSource *refresh_source = g_source_new(&refresh_source_funcs, sizeof(GSource));
-	g_source_set_priority(refresh_source, G_PRIORITY_HIGH);
+	/* Both the refresh and the Wayland source are attached after the first
+	 * config has loaded, on purpose: a refresh or a client event dispatched
+	 * mid-config is worse than a late one. That puts them above the sweep's
+	 * baseline, so they are exempted by hand instead. */
+	GSource *refresh_source = create_refresh_source();
 	luaA_glib_source_protect(refresh_source);
 	g_source_attach(refresh_source, NULL);
 
@@ -1069,11 +756,7 @@ run(char *startup_cmd)
 	luaA_glib_source_protect(wayland_source);
 	g_source_attach(wayland_source, NULL);  /* Attach to default context */
 
-	/* Set custom poll function - THE critical integration point
-	 * This ensures some_refresh() is called before every poll() syscall,
-	 * matching AwesomeWM's a_glib_poll() pattern */
-	g_main_context_set_poll_func(g_main_context_default(), &some_glib_poll);
-	gettimeofday(&last_wakeup, NULL);
+	some_loop_install_poll_func();
 
 	/* Create and run GLib main loop (matches AwesomeWM) */
 	globalconf.loop = g_main_loop_new(NULL, FALSE);
@@ -1506,224 +1189,6 @@ static int num_search_paths = 0;
 /* Declared in luaa.c */
 void luaA_add_search_paths(const char **paths, int count);
 void luaA_set_confpath(const char *path);
-
-/* Get distro name from /etc/os-release */
-static const char *
-get_distro_name(void)
-{
-	static char distro[256] = "unknown";
-	char line[256];
-	FILE *f;
-
-	f = fopen("/etc/os-release", "r");
-	if (!f)
-		return distro;
-
-	while (fgets(line, sizeof(line), f)) {
-		if (strncmp(line, "PRETTY_NAME=", 12) == 0) {
-			char *start = line + 12;
-			size_t len;
-			/* Strip leading quote */
-			if (*start == '"') start++;
-			len = strlen(start);
-			/* Strip trailing newline and quote */
-			while (len > 0 && (start[len-1] == '\n' || start[len-1] == '"'))
-				start[--len] = '\0';
-			snprintf(distro, sizeof(distro), "%s", start);
-			break;
-		}
-	}
-	fclose(f);
-	return distro;
-}
-
-/* Get GPU info from /sys/class/drm */
-static const char *
-get_gpu_info(void)
-{
-	static char gpu[256] = "unknown";
-	char path[64];
-	char line[128];
-	char driver[64] = "";
-	char pci_id[32] = "";
-	FILE *f;
-	int i;
-
-	/* Try card0, card1, etc. */
-	for (i = 0; i < 4; i++) {
-		snprintf(path, sizeof(path), "/sys/class/drm/card%d/device/uevent", i);
-		f = fopen(path, "r");
-		if (!f)
-			continue;
-
-		while (fgets(line, sizeof(line), f)) {
-			if (strncmp(line, "DRIVER=", 7) == 0) {
-				char *start = line + 7;
-				size_t len = strlen(start);
-				if (len > 0 && start[len-1] == '\n')
-					start[len-1] = '\0';
-				snprintf(driver, sizeof(driver), "%s", start);
-			} else if (strncmp(line, "PCI_ID=", 7) == 0) {
-				char *start = line + 7;
-				size_t len = strlen(start);
-				if (len > 0 && start[len-1] == '\n')
-					start[len-1] = '\0';
-				snprintf(pci_id, sizeof(pci_id), "%s", start);
-			}
-		}
-		fclose(f);
-
-		if (driver[0]) {
-			snprintf(gpu, sizeof(gpu), "%s%s%s%s", driver,
-				pci_id[0] ? " (" : "", pci_id,
-				pci_id[0] ? ")" : "");
-			break;
-		}
-	}
-	return gpu;
-}
-
-/* Get Lua runtime version string */
-static const char *
-get_lua_runtime_version(lua_State *L)
-{
-	static char version[128];
-
-	/* Check for LuaJIT first */
-	lua_getglobal(L, "jit");
-	if (lua_istable(L, -1)) {
-		lua_getfield(L, -1, "version");
-		if (lua_isstring(L, -1)) {
-			snprintf(version, sizeof(version), "%s", lua_tostring(L, -1));
-			lua_pop(L, 2);
-			return version;
-		}
-		lua_pop(L, 1);
-	}
-	lua_pop(L, 1);
-
-	/* Fall back to standard Lua _VERSION */
-	lua_getglobal(L, "_VERSION");
-	if (lua_isstring(L, -1)) {
-		snprintf(version, sizeof(version), "%s", lua_tostring(L, -1));
-	} else {
-		snprintf(version, sizeof(version), "unknown");
-	}
-	lua_pop(L, 1);
-	return version;
-}
-
-/* Get LGI version */
-static const char *
-get_lgi_version(lua_State *L)
-{
-#ifdef LGI_VERSION
-	/* Use compile-time detected version */
-	(void)L;
-	return LGI_VERSION;
-#else
-	/* Fallback to runtime detection */
-	static char version[64] = "unknown";
-
-	/* Try: require('lgi.version') */
-	if (luaL_dostring(L, "return require('lgi.version')") == 0) {
-		if (lua_isstring(L, -1)) {
-			snprintf(version, sizeof(version), "%s", lua_tostring(L, -1));
-		}
-	}
-	lua_pop(L, 1);
-	return version;
-#endif
-}
-
-/* Add search paths to a Lua state's package.path and package.cpath */
-static void
-add_search_paths_to_lua(lua_State *L, const char **paths, int count)
-{
-	const char *cur_path;
-
-	for (int i = 0; i < count; i++) {
-		const char *dir = paths[i];
-
-		/* Add to package.path */
-		lua_getglobal(L, "package");
-		lua_getfield(L, -1, "path");
-		cur_path = lua_tostring(L, -1);
-		lua_pop(L, 1);
-		lua_pushfstring(L, "%s/?.lua;%s/?/init.lua;%s", dir, dir, cur_path);
-		lua_setfield(L, -2, "path");
-
-		/* Add to package.cpath */
-		lua_getfield(L, -1, "cpath");
-		cur_path = lua_tostring(L, -1);
-		lua_pop(L, 1);
-		lua_pushfstring(L, "%s/?.so;%s", dir, cur_path);
-		lua_setfield(L, -2, "cpath");
-
-		lua_pop(L, 1); /* pop package table */
-	}
-}
-
-/* Print comprehensive version info in markdown format */
-static void
-print_version_info(const char **paths, int num_paths)
-{
-	struct utsname uts;
-	lua_State *L;
-	const char *wayland_display, *xdg_session_type;
-	int is_nested;
-
-	/* Get kernel/arch info */
-	if (uname(&uts) < 0) {
-		strcpy(uts.sysname, "unknown");
-		strcpy(uts.release, "unknown");
-		strcpy(uts.machine, "unknown");
-	}
-
-	/* Create Lua state for version detection */
-	L = luaL_newstate();
-	luaL_openlibs(L);
-
-	/* Apply any -L search paths so we can find lgi */
-	if (num_paths > 0)
-		add_search_paths_to_lua(L, paths, num_paths);
-
-	/* Detect session environment */
-	wayland_display = getenv("WAYLAND_DISPLAY");
-	xdg_session_type = getenv("XDG_SESSION_TYPE");
-	is_nested = (wayland_display != NULL);
-
-	/* Print markdown-formatted version info */
-	printf("## somewm version info\n\n");
-
-	printf("**somewm:** %s (%s)\n", VERSION, COMMIT_DATE);
-	printf("**wlroots:** %s\n", WLROOTS_VERSION);
-	printf("**Lua:** %s (compiled: %s)\n", get_lua_runtime_version(L), LUA_RELEASE);
-	printf("**LGI:** %s\n", get_lgi_version(L));
-
-#ifdef WITH_DBUS
-	printf("**Build:** D-Bus=yes");
-#else
-	printf("**Build:** D-Bus=no");
-#endif
-#ifdef XWAYLAND
-	printf(", XWayland=yes\n");
-#else
-	printf(", XWayland=no\n");
-#endif
-
-	printf("\n**System:**\n");
-	printf("- Distro: %s\n", get_distro_name());
-	printf("- Kernel: %s\n", uts.release);
-	printf("- Arch: %s\n", uts.machine);
-	printf("- GPU: %s\n", get_gpu_info());
-	printf("- Session: %s (nested: %s)\n",
-		xdg_session_type ? xdg_session_type : "unknown",
-		is_nested ? "yes" : "no");
-
-	lua_close(L);
-	exit(EXIT_SUCCESS);
-}
 
 /* ========================================================================
  * Test helpers — headless output hotplug simulation
