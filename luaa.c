@@ -4574,12 +4574,7 @@ luaA_state_drop_object_pointers(void)
 	 * behind the ones the rebuilt state creates. */
 	foreach(d, globalconf.drawins) {
 		drawin_t *w = *d;
-		for (int si = 0; si < SHADOW_TEXTURE_COUNT; si++) {
-			if (w->shadow.textures[si]) {
-				wlr_buffer_drop(w->shadow.textures[si]);
-				w->shadow.textures[si] = NULL;
-			}
-		}
+		shadow_release(&w->shadow);
 		if (w->scene_tree) {
 			wlr_scene_node_destroy(&w->scene_tree->node);
 			w->scene_tree = NULL;
