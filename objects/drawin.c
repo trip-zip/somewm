@@ -11,6 +11,7 @@
 #include "common/util.h"
 #include "../globalconf.h"
 #include "../shadow.h"
+#include "../declare.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -390,6 +391,45 @@ drawin_apply_shape_mask(cairo_surface_t *src, cairo_surface_t *shape)
 	return dst;
 }
 
+static cairo_surface_t *drawin_copy_surface(cairo_surface_t *src);
+
+/* Hand an entry a new owned surface (destroying the previous one) and bump
+ * its generation so the renderer re-rasters. NULL clears the entry; a no-op
+ * clear does not bump. */
+static void
+drawin_entry_set(struct image_entry *entry, cairo_surface_t *owned)
+{
+	if (!entry->native && !owned)
+		return;
+	if (entry->native)
+		cairo_surface_destroy(entry->native);
+	entry->native = owned;
+	entry->width = owned ? cairo_image_surface_get_width(owned) : 0;
+	entry->height = owned ? cairo_image_surface_get_height(owned) : 0;
+	entry->gen++;
+}
+
+/* Rebuild the shadow composite entry when its inputs changed; the memo
+ * (entry size vs drawin size plus radius, and the stored config) makes
+ * redundant calls free. */
+static void
+drawin_update_shadow_entry(drawin_t *d, const shadow_config_t *config)
+{
+	if (!config || !config->enabled) {
+		drawin_entry_set(&d->shadow_entry, NULL);
+		return;
+	}
+	if (d->shadow_entry.native
+			&& d->shadow_entry.width == d->width + 2 * config->radius
+			&& d->shadow_entry.height == d->height + 2 * config->radius
+			&& memcmp(&d->shadow_entry_config, config, sizeof(*config)) == 0)
+		return;
+
+	drawin_entry_set(&d->shadow_entry,
+		shadow_render_composite(config, d->width, d->height));
+	d->shadow_entry_config = *config;
+}
+
 static void
 drawin_refresh_drawable(drawin_t *drawin)
 {
@@ -453,11 +493,33 @@ drawin_refresh_drawable(drawin_t *drawin)
 		buffer = drawable_create_buffer(d);
 	}
 
-	/* Clean up temporary surfaces */
-	if (clipped_surface)
-		cairo_surface_destroy(clipped_surface);
-	if (masked_surface)
-		cairo_surface_destroy(masked_surface);
+	/* Feed the renderer's content entry the same pixels: the final masked
+	 * copy when masks applied (its ownership moves to the entry), else an
+	 * owned copy of the drawable surface. The scene-buffer upload above is
+	 * the half the Clay flip deletes; the entry is the surviving half. */
+	if (work_surface != d->surface) {
+		if (clipped_surface && clipped_surface != work_surface)
+			cairo_surface_destroy(clipped_surface);
+		drawin_entry_set(&drawin->content_entry, work_surface);
+	} else {
+		struct image_entry *entry = &drawin->content_entry;
+		int cw = cairo_image_surface_get_width(d->surface);
+		int ch = cairo_image_surface_get_height(d->surface);
+
+		if (entry->native && entry->width == cw && entry->height == ch) {
+			/* Same size: repaint the owned copy in place instead of
+			 * reallocating a full surface every refresh. */
+			cairo_t *cr = cairo_create(entry->native);
+			cairo_set_operator(cr, CAIRO_OPERATOR_SOURCE);
+			cairo_set_source_surface(cr, d->surface, 0, 0);
+			cairo_paint(cr);
+			cairo_destroy(cr);
+			cairo_surface_flush(entry->native);
+			entry->gen++;
+		} else {
+			drawin_entry_set(entry, drawin_copy_surface(d->surface));
+		}
+	}
 
 	if (!buffer) {
 		return;
@@ -673,6 +735,13 @@ drawin_wipe(drawin_t *w)
 
 	/* Clear any lock surface/cover pointers referencing this drawin (EDGE-2) */
 	some_notify_drawin_destroyed(w);
+
+	/* Retire the renderer's view: the handle so a later resolve answers
+	 * NULL, and the entry surfaces the declare pass hands out. */
+	declare_handle_drop(w);
+	drawin_entry_set(&w->content_entry, NULL);
+	drawin_entry_set(&w->border_entry, NULL);
+	drawin_entry_set(&w->shadow_entry, NULL);
 
 	/* Note: drawable reference cleanup handled by class system */
 	w->drawable = NULL;
@@ -1411,6 +1480,7 @@ drawin_border_refresh_single(drawin_t *d)
 					d->width, d->height);
 			}
 		}
+		drawin_update_shadow_entry(d, shadow_config);
 	}
 
 	bw = d->border_width;
@@ -1418,6 +1488,7 @@ drawin_border_refresh_single(drawin_t *d)
 	/* If no border width, hide the border buffer */
 	if (bw <= 0) {
 		wlr_scene_buffer_set_buffer(d->border_buffer, NULL);
+		drawin_entry_set(&d->border_entry, NULL);
 		return;
 	}
 
@@ -1425,12 +1496,14 @@ drawin_border_refresh_single(drawin_t *d)
 	border_surface = drawin_render_border(d);
 	if (!border_surface) {
 		wlr_scene_buffer_set_buffer(d->border_buffer, NULL);
+		drawin_entry_set(&d->border_entry, NULL);
 		return;
 	}
 
 	/* Convert Cairo surface to wlr_buffer */
 	wlr_buf = border_buffer_from_cairo(border_surface);
-	cairo_surface_destroy(border_surface);
+	/* border_surface's ownership moves to the renderer's border entry */
+	drawin_entry_set(&d->border_entry, border_surface);
 
 	if (!wlr_buf) {
 		wlr_scene_buffer_set_buffer(d->border_buffer, NULL);

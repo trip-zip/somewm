@@ -283,6 +283,23 @@ shadow_get_effective_config(const shadow_config_t *override, bool is_drawin)
 /**
  * Free owned textures in a shadow_nodes_t.
  */
+/* Which sides a directional shadow shows (all four when clip_directional is
+ * off). The one statement of the rule, shared by the 9-slice scene path and
+ * shadow_render_composite(). Order: top, bottom, left, right. */
+static void
+shadow_slice_visibility(const shadow_config_t *config,
+                        bool *show_top, bool *show_bottom,
+                        bool *show_left, bool *show_right)
+{
+    *show_top = *show_bottom = *show_left = *show_right = true;
+    if (!config->clip_directional)
+        return;
+    *show_top = config->offset_y <= 0;
+    *show_bottom = config->offset_y >= 0;
+    *show_left = config->offset_x <= 0;
+    *show_right = config->offset_x >= 0;
+}
+
 static void
 shadow_free_textures(shadow_nodes_t *shadow)
 {
@@ -406,10 +423,10 @@ shadow_create(struct wlr_scene_tree *parent,
     if (config->clip_directional) {
         int ox = config->offset_x;
         int oy = config->offset_y;
-        bool show_top = (oy <= 0);
-        bool show_bottom = (oy >= 0);
-        bool show_left = (ox <= 0);
-        bool show_right = (ox >= 0);
+        bool show_top, show_bottom, show_left, show_right;
+
+        shadow_slice_visibility(config, &show_top, &show_bottom,
+            &show_left, &show_right);
 
         if (shadow->slice[SHADOW_CORNER_TL])
             wlr_scene_node_set_enabled(&shadow->slice[SHADOW_CORNER_TL]->node,
@@ -477,21 +494,10 @@ shadow_update_geometry(shadow_nodes_t *shadow,
     /* Visibility is determined by clip_directional and offset direction.
      * These are constant for the lifetime of the shadow, so only update
      * slices that are actually visible — skip disabled ones entirely. */
-    bool show_top = true, show_bottom = true;
-    bool show_left = true, show_right = true;
+    bool show_top, show_bottom, show_left, show_right;
 
-    if (config->clip_directional) {
-        show_top = (oy < 0);
-        show_bottom = (oy > 0);
-        show_left = (ox < 0);
-        show_right = (ox > 0);
-        if (ox == 0 && oy == 0)
-            show_top = show_bottom = show_left = show_right = true;
-        if (ox == 0)
-            show_left = show_right = true;
-        if (oy == 0)
-            show_top = show_bottom = true;
-    }
+    shadow_slice_visibility(config, &show_top, &show_bottom,
+        &show_left, &show_right);
 
     /* Position corners — only touch visible ones */
     if (shadow->slice[SHADOW_CORNER_TL] && show_top && show_left)
@@ -598,6 +604,139 @@ shadow_destroy(shadow_nodes_t *shadow)
 
     memset(shadow->slice, 0, sizeof(shadow->slice));
     shadow_free_textures(shadow);
+}
+
+/* src OVER dst, both premultiplied ARGB32. */
+static uint32_t
+shadow_blend_over(uint32_t src, uint32_t dst)
+{
+    uint32_t inv = 255 - (src >> 24);
+    uint32_t out = 0;
+
+    for (int shift = 0; shift < 32; shift += 8)
+        out |= (((src >> shift) & 0xff)
+            + (((dst >> shift) & 0xff) * inv + 127) / 255) << shift;
+    return out;
+}
+
+/* Write one gradient region into the composite. sx/sy are surface-local;
+ * horiz/vert pick the falloff axis (both = radial corner, from the inner
+ * corner at icx/icy; neither = solid fill). Regions normally tile the
+ * slice layout without touching, but an offset larger than the frame
+ * pushes a fill strip into an edge gradient; the scene path rendered
+ * that overlap as two alpha-blended nodes, so blend here too. */
+static void
+shadow_composite_region(uint32_t *pixels, int stride_px, int surf_w, int surf_h,
+                        int sx, int sy, int w, int h,
+                        bool horiz, bool vert, int icx, int icy,
+                        int radius, const float color[4], float opacity)
+{
+    float inv_radius = (radius > 1) ? 1.0f / (float)(radius - 1) : 1.0f;
+
+    for (int y = 0; y < h; y++) {
+        int py = sy + y;
+        if (py < 0 || py >= surf_h)
+            continue;
+        for (int x = 0; x < w; x++) {
+            int px = sx + x;
+            if (px < 0 || px >= surf_w)
+                continue;
+            float t;
+            if (horiz && vert) {
+                float dx = (float)(x - icx);
+                float dy = (float)(y - icy);
+                t = sqrtf(dx * dx + dy * dy) * inv_radius;
+            } else if (vert) {
+                t = (float)(icy >= 0 ? h - 1 - y : y) * inv_radius;
+            } else if (horiz) {
+                t = (float)(icx >= 0 ? w - 1 - x : x) * inv_radius;
+            } else {
+                t = 0.0f;
+            }
+            uint32_t *dst = &pixels[py * stride_px + px];
+            uint32_t src = shadow_pixel(color, opacity, shadow_falloff(t));
+            *dst = *dst ? shadow_blend_over(src, *dst) : src;
+        }
+    }
+}
+
+cairo_surface_t *
+shadow_render_composite(const shadow_config_t *config,
+                        int width, int height)
+{
+    if (!config || !config->enabled || config->radius <= 0
+            || width <= 0 || height <= 0)
+        return NULL;
+
+    int r = config->radius;
+    int ox = config->offset_x;
+    int oy = config->offset_y;
+    const float *col = config->color;
+    float op = config->opacity;
+
+    bool show_top, show_bottom, show_left, show_right;
+    shadow_slice_visibility(config, &show_top, &show_bottom,
+        &show_left, &show_right);
+
+    int surf_w = width + 2 * r;
+    int surf_h = height + 2 * r;
+    cairo_surface_t *surface = cairo_image_surface_create(
+        CAIRO_FORMAT_ARGB32, surf_w, surf_h);
+    if (cairo_surface_status(surface) != CAIRO_STATUS_SUCCESS) {
+        cairo_surface_destroy(surface);
+        return NULL;
+    }
+
+    cairo_surface_flush(surface);
+    uint32_t *pixels = (uint32_t *)cairo_image_surface_get_data(surface);
+    int stride_px = cairo_image_surface_get_stride(surface) / 4;
+
+    /* Surface origin sits at (ox - r, oy - r) in frame coordinates, so a
+     * slice at frame position (fx, fy) lands at (fx - ox + r, fy - oy + r).
+     * Inner-corner coordinates mirror shadow_render_corner(): TL's inner
+     * corner is its bottom-right pixel, and the icx/icy signs double as the
+     * edge-direction flags in shadow_composite_region(). */
+    if (show_top && show_left)
+        shadow_composite_region(pixels, stride_px, surf_w, surf_h,
+            0, 0, r, r, true, true, r - 1, r - 1, r, col, op);
+    if (show_top && show_right)
+        shadow_composite_region(pixels, stride_px, surf_w, surf_h,
+            r + width, 0, r, r, true, true, 0, r - 1, r, col, op);
+    if (show_bottom && show_left)
+        shadow_composite_region(pixels, stride_px, surf_w, surf_h,
+            0, r + height, r, r, true, true, r - 1, 0, r, col, op);
+    if (show_bottom && show_right)
+        shadow_composite_region(pixels, stride_px, surf_w, surf_h,
+            r + width, r + height, r, r, true, true, 0, 0, r, col, op);
+    if (show_top)
+        shadow_composite_region(pixels, stride_px, surf_w, surf_h,
+            r, 0, width, r, false, true, 0, 1, r, col, op);
+    if (show_bottom)
+        shadow_composite_region(pixels, stride_px, surf_w, surf_h,
+            r, r + height, width, r, false, true, 0, -1, r, col, op);
+    if (show_left)
+        shadow_composite_region(pixels, stride_px, surf_w, surf_h,
+            0, r, r, height, true, false, 1, 0, r, col, op);
+    if (show_right)
+        shadow_composite_region(pixels, stride_px, surf_w, surf_h,
+            r + width, r, r, height, true, false, -1, 0, r, col, op);
+
+    /* Fill strips bridging the offset gap (shadow_update_geometry()). */
+    if (oy != 0 && (oy > 0 ? show_bottom : show_top)) {
+        int abs_oy = oy > 0 ? oy : -oy;
+        int fy = oy > 0 ? height : oy;
+        shadow_composite_region(pixels, stride_px, surf_w, surf_h,
+            r, fy - oy + r, width, abs_oy, false, false, 0, 0, r, col, op);
+    }
+    if (ox != 0 && (ox > 0 ? show_right : show_left)) {
+        int abs_ox = ox > 0 ? ox : -ox;
+        int fx = ox > 0 ? width : ox;
+        shadow_composite_region(pixels, stride_px, surf_w, surf_h,
+            fx - ox + r, r, abs_ox, height, false, false, 0, 0, r, col, op);
+    }
+
+    cairo_surface_mark_dirty(surface);
+    return surface;
 }
 
 /* ========== Lua Integration ========== */

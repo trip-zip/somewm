@@ -21,6 +21,7 @@
 #ifndef SOMEWM_SHADOW_H
 #define SOMEWM_SHADOW_H
 
+#include <cairo.h>
 #include <lua.h>
 #include <stdbool.h>
 #include <stdint.h>
@@ -174,6 +175,18 @@ void shadow_update_config(shadow_nodes_t *shadow,
  * @param visible true to show, false to hide
  */
 void shadow_set_visible(shadow_nodes_t *shadow, bool visible);
+
+/**
+ * Render the whole shadow into one ARGB32 cairo surface, for the Clay
+ * declare pass (a drawin's shadow rides as a single image leaf). A faithful
+ * transcription of the 9-slice layout in shadow_update_geometry(): same
+ * falloff, same visibility rules, same fill strips. The surface spans
+ * (width + 2 * radius) x (height + 2 * radius), its origin at
+ * (offset - radius) relative to the object's frame origin. Caller owns the
+ * surface. NULL when the config renders nothing.
+ */
+cairo_surface_t *shadow_render_composite(const shadow_config_t *config,
+                                         int width, int height);
 
 /**
  * Destroy shadow nodes and free owned textures.

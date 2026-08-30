@@ -80,8 +80,8 @@ stack_windows(void)
  * \param c The client
  * \return The layer this client belongs in
  */
-static window_layer_t
-client_layer_translator(Client *c)
+window_layer_t
+stack_client_layer(Client *c)
 {
 	Client *focused;
 
@@ -119,6 +119,21 @@ client_layer_translator(Client *c)
 	}
 
 	return WINDOW_LAYER_NORMAL;
+}
+
+/* The drawin band policy (AwesomeWM compat): desktop/splash below clients
+ * like wallpaper, ontop above everything but fullscreen, dock above normal
+ * windows, everything else in the wibox layer. */
+int
+stack_drawin_layer(struct drawin_t *d)
+{
+	if (d->type == WINDOW_TYPE_DESKTOP || d->type == WINDOW_TYPE_SPLASH)
+		return LyrBg;
+	if (d->ontop)
+		return LyrOverlay;
+	if (d->type == WINDOW_TYPE_DOCK)
+		return LyrTop;
+	return LyrWibox;
 }
 
 /*
@@ -232,7 +247,7 @@ stack_refresh(void)
 
 		/* Unmanaged (override_redirect) X11 clients bypass the window
 		 * manager; they have no stacking attributes, so running them
-		 * through client_layer_translator() returns LyrTile and drops
+		 * through stack_client_layer() returns LyrTile and drops
 		 * Wine/Qt popups below their floating parents. mapnotify()
 		 * placed them in LyrOverlay; skip them here so the placement
 		 * survives. */
@@ -242,7 +257,7 @@ stack_refresh(void)
 			continue;
 #endif
 
-		layer = client_layer_translator(*node);
+		layer = stack_client_layer(*node);
 
 		/* Skip IGNORE layer (transients are handled with their parents) */
 		if (layer == WINDOW_LAYER_IGNORE)
@@ -258,12 +273,7 @@ stack_refresh(void)
 		prev_in_layer[layer] = stack_transients_above(*node, prev_in_layer[layer]);
 	}
 
-	/* Stack drawins (wiboxes) - AwesomeWM stacks these after clients
-	 * Layer is determined by: ontop property AND type property (AwesomeWM compat)
-	 * - type="desktop" → LyrBg (below everything, like wallpaper)
-	 * - type="dock" → LyrTop (above normal windows, like panels)
-	 * - ontop=true → LyrOverlay (above everything except fullscreen)
-	 * - otherwise → LyrTile (same as normal clients) */
+	/* Stack drawins (wiboxes) - AwesomeWM stacks these after clients */
 	foreach(drawin, globalconf.drawins) {
 		if (!(*drawin)->scene_tree)
 			continue;
@@ -275,21 +285,7 @@ stack_refresh(void)
 		if (session_is_locked() && some_is_lock_drawin(*drawin))
 			continue;
 
-		/* Determine layer based on type and ontop (AwesomeWM compatibility) */
-		if ((*drawin)->type == WINDOW_TYPE_DESKTOP ||
-		    (*drawin)->type == WINDOW_TYPE_SPLASH) {
-			/* Desktop/splash type goes to background layer (below clients) */
-			scene_layer = LyrBg;
-		} else if ((*drawin)->ontop) {
-			/* ontop drawins go to overlay layer */
-			scene_layer = LyrOverlay;
-		} else if ((*drawin)->type == WINDOW_TYPE_DOCK) {
-			/* Dock type goes above normal windows */
-			scene_layer = LyrTop;
-		} else {
-			/* Normal drawins go to wibox layer (above clients but below ontop) */
-			scene_layer = LyrWibox;
-		}
+		scene_layer = stack_drawin_layer(*drawin);
 
 		/* Reparent to correct layer if needed */
 		if ((void *)(*drawin)->scene_tree->node.parent != (void *)layers[scene_layer]) {

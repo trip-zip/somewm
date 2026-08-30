@@ -156,6 +156,8 @@ struct client_t
     } surface;
     /** Scene tree for this client */
     struct wlr_scene_tree *scene;
+    /** The render_state currently borrowing scene (render.h owner token) */
+    void *render_owner;
     /** Scene surface node */
     struct wlr_scene_tree *scene_surface;
     /** Popup parent tree: tracks scene_surface's position but is exempt

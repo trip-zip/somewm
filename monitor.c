@@ -25,6 +25,7 @@
 
 #include "somewm.h"
 #include "somewm_api.h"
+#include "declare.h"
 #include "monitor.h"
 #include "nested_inhibitor.h"
 #include "protocols.h"
@@ -145,6 +146,7 @@ cleanupmon(struct wl_listener *listener, void *data)
 	in_updatemons = 0;
 
 	closemon(m);
+	declare_output_destroy(m->declare);
 	wlr_scene_node_destroy(&m->fullscreen_bg->node);
 	free(m);
 
@@ -302,6 +304,7 @@ createmon(struct wl_listener *listener, void *data)
 	 * output (such as DPI, scale factor, manufacturer, etc).
 	 */
 	m->scene_output = wlr_scene_output_create(scene, wlr_output);
+	m->declare = declare_output_create(wlr_output);
 
 	/* Create screen object BEFORE adding to layout.
 	 * wlr_output_layout_add_auto() triggers updatemons() SYNCHRONOUSLY
@@ -696,6 +699,7 @@ updatemons(struct wl_listener *listener, void *data)
 		wlr_output_layout_get_box(output_layout, m->wlr_output, &m->m);
 		m->w = m->m;
 		wlr_scene_output_set_position(m->scene_output, m->m.x, m->m.y);
+		declare_output_update(m->declare, m->m.x, m->m.y);
 
 		wlr_scene_node_set_position(&m->fullscreen_bg->node, m->m.x, m->m.y);
 		wlr_scene_rect_set_size(m->fullscreen_bg, m->m.width, m->m.height);
