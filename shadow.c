@@ -1,5 +1,5 @@
 /*
- * shadow.c - compositor-level shadow support (9-slice drop shadow)
+ * shadow.c - compositor-level shadow support (nine-patch drop shadow)
  *
  * Copyright © 2025 somewm contributors
  *
@@ -18,6 +18,15 @@
  * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
  */
 
+/* The shadow is a rounded rectangle: the object's frame grown by `spread`
+ * on every side, translated by (offset_x, offset_y), rounded by
+ * `corner_radius`, with a `radius`-wide smoothstep falloff outside its
+ * boundary. It is assembled as a nine-patch: four corner patches carry the
+ * rounded falloff, four GPU-stretched edge strips carry the straight
+ * falloff, and up to three solid scene rects cover the interior. Falloff
+ * values agree exactly along every seam (both measure distance to the
+ * shadow rectangle), so the patches meet without visible steps. */
+
 #include "shadow.h"
 #include "color.h"
 #include "globalconf.h"
@@ -35,6 +44,8 @@ static const shadow_config_t shadow_defaults = {
     .radius = 12,
     .offset_x = -15,
     .offset_y = -15,
+    .spread = 0,
+    .corner_radius = 0,
     .opacity = 0.75f,
     .color = { 0.0f, 0.0f, 0.0f, 1.0f },
     .clip_directional = true,
@@ -111,7 +122,7 @@ shadow_buffer_create(int width, int height)
 
 /**
  * Smoothstep falloff for shadow gradient.
- * Returns 1.0 at the window edge (t=0) and 0.0 at the outer edge (t=1).
+ * Returns 1.0 at the shadow boundary (t=0) and 0.0 at the outer edge (t=1).
  */
 static inline float
 shadow_falloff(float t)
@@ -123,12 +134,29 @@ shadow_falloff(float t)
 }
 
 /**
- * Compute a premultiplied ARGB8888 pixel for a shadow gradient.
+ * Alpha for a point at signed distance sdf (pixels, positive = outside)
+ * from the shadow rectangle's boundary. radius > 0 fades over that
+ * distance; radius == 0 keeps a hard edge with 1px of anti-aliasing.
+ */
+static inline float
+shadow_alpha_at(float sdf, int radius)
+{
+    if (radius > 0)
+        return shadow_falloff(sdf / (float)radius);
+    if (sdf <= -0.5f) return 1.0f;
+    if (sdf >= 0.5f) return 0.0f;
+    return 0.5f - sdf;
+}
+
+/**
+ * Compute a premultiplied ARGB8888 pixel for the shadow color at the
+ * given alpha.
  */
 static inline uint32_t
-shadow_pixel(const float color[4], float opacity, float falloff)
+shadow_pixel(const float color[4], float alpha)
 {
-    float alpha = falloff * opacity;
+    if (alpha < 0.0f) alpha = 0.0f;
+    if (alpha > 1.0f) alpha = 1.0f;
     uint8_t a = (uint8_t)(alpha * 255.0f + 0.5f);
     uint8_t r = (uint8_t)(color[0] * alpha * 255.0f + 0.5f);
     uint8_t g = (uint8_t)(color[1] * alpha * 255.0f + 0.5f);
@@ -137,48 +165,60 @@ shadow_pixel(const float color[4], float opacity, float falloff)
            ((uint32_t)g << 8) | (uint32_t)b;
 }
 
+/** Peak paint alpha: opacity scaled by the color's own alpha channel. */
+static inline float
+shadow_paint(const shadow_config_t *config)
+{
+    float paint = config->opacity * config->color[3];
+    if (paint < 0.0f) paint = 0.0f;
+    if (paint > 1.0f) paint = 1.0f;
+    return paint;
+}
+
 /**
- * Render a corner texture with radial gradient.
+ * Render one corner patch of the shadow rectangle.
+ *
+ * The patch is a (radius + corner_radius) square covering the corner arc:
+ * falloff outside the rounded boundary, solid inside it. The math is done
+ * in top-left orientation and mirrored for the other corners.
  *
  * @param corner Corner index (0=TL, 1=TR, 2=BL, 3=BR)
- * @param radius Shadow radius (texture is radius x radius pixels)
+ * @param radius Falloff distance
+ * @param corner_radius Rounded corner radius of the shadow rect
  * @param color RGBA color
- * @param opacity Shadow opacity
+ * @param paint Peak alpha (opacity * color alpha)
  * @return wlr_buffer or NULL on failure
  */
 static struct wlr_buffer *
-shadow_render_corner(int corner, int radius, const float color[4], float opacity)
+shadow_render_corner(int corner, int radius, int corner_radius,
+                     const float color[4], float paint)
 {
-    if (radius <= 0)
+    int side = radius + corner_radius;
+    if (side <= 0)
         return NULL;
 
-    struct wlr_buffer *wlr_buf = shadow_buffer_create(radius, radius);
+    struct wlr_buffer *wlr_buf = shadow_buffer_create(side, side);
     if (!wlr_buf)
         return NULL;
 
     struct shadow_buffer *buffer = wl_container_of(wlr_buf, buffer, base);
     uint32_t *pixels = (uint32_t *)buffer->data;
 
-    /* Inner corner position (the edge closest to the window) */
-    int cx, cy;
-    switch (corner) {
-    case 0: cx = radius - 1; cy = radius - 1; break;  /* TL: inner at bottom-right */
-    case 1: cx = 0;          cy = radius - 1; break;  /* TR: inner at bottom-left */
-    case 2: cx = radius - 1; cy = 0;          break;  /* BL: inner at top-right */
-    case 3: cx = 0;          cy = 0;          break;  /* BR: inner at top-left */
-    default: cx = 0; cy = 0; break;
-    }
+    bool mirror_x = (corner == 1 || corner == 3);
+    bool mirror_y = (corner == 2 || corner == 3);
 
-    float inv_radius = (radius > 1) ? 1.0f / (float)(radius - 1) : 1.0f;
-
-    for (int y = 0; y < radius; y++) {
-        for (int x = 0; x < radius; x++) {
-            float dx = (float)(x - cx);
-            float dy = (float)(y - cy);
-            float dist = sqrtf(dx * dx + dy * dy);
-            float t = dist * inv_radius;
-            pixels[y * radius + x] = shadow_pixel(color, opacity,
-                                                   shadow_falloff(t));
+    /* In TL orientation the arc center sits at local (side, side): the
+     * patch spans [-radius, corner_radius) from the rect corner, and the
+     * center is corner_radius inside it. */
+    for (int y = 0; y < side; y++) {
+        for (int x = 0; x < side; x++) {
+            float lx = (mirror_x ? side - 1 - x : x) + 0.5f;
+            float ly = (mirror_y ? side - 1 - y : y) + 0.5f;
+            float dx = lx - (float)side;
+            float dy = ly - (float)side;
+            float sdf = sqrtf(dx * dx + dy * dy) - (float)corner_radius;
+            pixels[y * side + x] =
+                shadow_pixel(color, shadow_alpha_at(sdf, radius) * paint);
         }
     }
 
@@ -186,11 +226,12 @@ shadow_render_corner(int corner, int radius, const float color[4], float opacity
 }
 
 /**
- * Render horizontal edge texture (1 pixel wide, radius pixels tall).
- * Gradient goes from opaque at position 0 to transparent at position radius-1.
+ * Render the horizontal edge texture (1 pixel wide, radius tall).
+ * Alpha peaks at row 0 (the shadow boundary) and fades to 0 at the last
+ * row. Used as-is for the bottom edge; flipped 180 for the top edge.
  */
 static struct wlr_buffer *
-shadow_render_edge_h(int radius, const float color[4], float opacity)
+shadow_render_edge_h(int radius, const float color[4], float paint)
 {
     if (radius <= 0)
         return NULL;
@@ -202,22 +243,20 @@ shadow_render_edge_h(int radius, const float color[4], float opacity)
     struct shadow_buffer *buffer = wl_container_of(wlr_buf, buffer, base);
     uint32_t *pixels = (uint32_t *)buffer->data;
 
-    float inv_radius = (radius > 1) ? 1.0f / (float)(radius - 1) : 1.0f;
-
-    for (int y = 0; y < radius; y++) {
-        float t = (float)y * inv_radius;
-        pixels[y] = shadow_pixel(color, opacity, shadow_falloff(t));
-    }
+    for (int y = 0; y < radius; y++)
+        pixels[y] = shadow_pixel(color,
+            shadow_alpha_at((float)y + 0.5f, radius) * paint);
 
     return wlr_buf;
 }
 
 /**
- * Render vertical edge texture (radius pixels wide, 1 pixel tall).
- * Gradient goes from opaque at position 0 to transparent at position radius-1.
+ * Render the vertical edge texture (radius wide, 1 pixel tall).
+ * Alpha peaks at column 0. Used as-is for the right edge; flipped 180 for
+ * the left edge.
  */
 static struct wlr_buffer *
-shadow_render_edge_v(int radius, const float color[4], float opacity)
+shadow_render_edge_v(int radius, const float color[4], float paint)
 {
     if (radius <= 0)
         return NULL;
@@ -229,30 +268,9 @@ shadow_render_edge_v(int radius, const float color[4], float opacity)
     struct shadow_buffer *buffer = wl_container_of(wlr_buf, buffer, base);
     uint32_t *pixels = (uint32_t *)buffer->data;
 
-    float inv_radius = (radius > 1) ? 1.0f / (float)(radius - 1) : 1.0f;
-
-    for (int x = 0; x < radius; x++) {
-        float t = (float)x * inv_radius;
-        pixels[x] = shadow_pixel(color, opacity, shadow_falloff(t));
-    }
-
-    return wlr_buf;
-}
-
-/**
- * Render a 1x1 solid pixel at full shadow color and opacity.
- * Used for fill strips that bridge the gap between window edge and offset shadow.
- */
-static struct wlr_buffer *
-shadow_render_fill(const float color[4], float opacity)
-{
-    struct wlr_buffer *wlr_buf = shadow_buffer_create(1, 1);
-    if (!wlr_buf)
-        return NULL;
-
-    struct shadow_buffer *buffer = wl_container_of(wlr_buf, buffer, base);
-    uint32_t *pixels = (uint32_t *)buffer->data;
-    pixels[0] = shadow_pixel(color, opacity, 1.0f);
+    for (int x = 0; x < radius; x++)
+        pixels[x] = shadow_pixel(color,
+            shadow_alpha_at((float)x + 0.5f, radius) * paint);
 
     return wlr_buf;
 }
@@ -280,6 +298,18 @@ shadow_get_effective_config(const shadow_config_t *override, bool is_drawin)
     return is_drawin ? &globalconf.shadow.drawin : &globalconf.shadow.client;
 }
 
+static inline int
+shadow_radius(const shadow_config_t *config)
+{
+    return config->radius > 0 ? config->radius : 0;
+}
+
+static inline int
+shadow_corner_radius(const shadow_config_t *config)
+{
+    return config->corner_radius > 0 ? config->corner_radius : 0;
+}
+
 /**
  * Free owned textures in a shadow_nodes_t.
  */
@@ -296,29 +326,27 @@ shadow_free_textures(shadow_nodes_t *shadow)
 
 /**
  * Render gradient textures for a shadow configuration.
- * Stores results in shadow->textures[0..5]:
- *   [0]=corner_TL, [1]=corner_TR, [2]=corner_BL, [3]=corner_BR,
- *   [4]=edge_h, [5]=edge_v
+ * Stores results in shadow->textures:
+ *   [0..3]=corners TL,TR,BL,BR, [4]=edge_h, [5]=edge_v
+ * With radius and corner_radius both 0 no textures are needed (the shadow
+ * is a hard rectangle drawn by the fill rects alone).
  */
 static bool
 shadow_render_textures(shadow_nodes_t *shadow, const shadow_config_t *config)
 {
-    shadow->textures[0] = shadow_render_corner(0, config->radius,
-                                               config->color, config->opacity);
-    shadow->textures[1] = shadow_render_corner(1, config->radius,
-                                               config->color, config->opacity);
-    shadow->textures[2] = shadow_render_corner(2, config->radius,
-                                               config->color, config->opacity);
-    shadow->textures[3] = shadow_render_corner(3, config->radius,
-                                               config->color, config->opacity);
-    shadow->textures[4] = shadow_render_edge_h(config->radius,
-                                               config->color, config->opacity);
-    shadow->textures[5] = shadow_render_edge_v(config->radius,
-                                               config->color, config->opacity);
-    shadow->textures[6] = shadow_render_fill(config->color, config->opacity);
+    int radius = shadow_radius(config);
+    int corner_radius = shadow_corner_radius(config);
+    float paint = shadow_paint(config);
 
-    /* Check that at least corners were created */
-    if (!shadow->textures[0]) {
+    for (int i = 0; i < 4; i++)
+        shadow->textures[i] = shadow_render_corner(i, radius, corner_radius,
+                                                   config->color, paint);
+    shadow->textures[4] = shadow_render_edge_h(radius, config->color, paint);
+    shadow->textures[5] = shadow_render_edge_v(radius, config->color, paint);
+
+    /* Fail on genuine allocation failure, not on legitimately empty
+     * textures (radius 0 needs no edges, radius+corner_radius 0 no corners) */
+    if (radius + corner_radius > 0 && !shadow->textures[0]) {
         shadow_free_textures(shadow);
         return false;
     }
@@ -340,7 +368,6 @@ shadow_create(struct wlr_scene_tree *parent,
     if (!config->enabled)
         return true;
 
-    /* Render per-shadow gradient textures */
     if (!shadow_render_textures(shadow, config))
         return false;
 
@@ -353,21 +380,11 @@ shadow_create(struct wlr_scene_tree *parent,
 
     wlr_scene_node_lower_to_bottom(&shadow->tree->node);
 
-    /* Create scene buffers for each slice.
-     * Corners use their own texture each.
-     * Top/bottom edges share edge_h texture; left/right share edge_v. */
-    if (shadow->textures[0])
-        shadow->slice[SHADOW_CORNER_TL] = wlr_scene_buffer_create(
-            shadow->tree, shadow->textures[0]);
-    if (shadow->textures[1])
-        shadow->slice[SHADOW_CORNER_TR] = wlr_scene_buffer_create(
-            shadow->tree, shadow->textures[1]);
-    if (shadow->textures[2])
-        shadow->slice[SHADOW_CORNER_BL] = wlr_scene_buffer_create(
-            shadow->tree, shadow->textures[2]);
-    if (shadow->textures[3])
-        shadow->slice[SHADOW_CORNER_BR] = wlr_scene_buffer_create(
-            shadow->tree, shadow->textures[3]);
+    for (int i = 0; i < 4; i++) {
+        if (shadow->textures[i])
+            shadow->slice[SHADOW_CORNER_TL + i] = wlr_scene_buffer_create(
+                shadow->tree, shadow->textures[i]);
+    }
 
     if (shadow->textures[4]) {
         shadow->slice[SHADOW_EDGE_TOP] = wlr_scene_buffer_create(
@@ -382,8 +399,8 @@ shadow_create(struct wlr_scene_tree *parent,
             shadow->tree, shadow->textures[5]);
     }
 
-    /* Set transforms once — top/left edges need 180° flip so opaque side
-     * touches the window. These never change, so no need to repeat on resize. */
+    /* Top/left edges need a 180 flip so the opaque side touches the
+     * shadow rectangle. Constant for the shadow's lifetime. */
     if (shadow->slice[SHADOW_EDGE_TOP])
         wlr_scene_buffer_set_transform(
             shadow->slice[SHADOW_EDGE_TOP], WL_OUTPUT_TRANSFORM_180);
@@ -391,67 +408,61 @@ shadow_create(struct wlr_scene_tree *parent,
         wlr_scene_buffer_set_transform(
             shadow->slice[SHADOW_EDGE_LEFT], WL_OUTPUT_TRANSFORM_180);
 
-    /* Fill strips for offset gaps (1x1 solid pixel stretched) */
-    if (shadow->textures[6]) {
-        if (config->offset_y != 0)
-            shadow->slice[SHADOW_FILL_H] = wlr_scene_buffer_create(
-                shadow->tree, shadow->textures[6]);
-        if (config->offset_x != 0)
-            shadow->slice[SHADOW_FILL_V] = wlr_scene_buffer_create(
-                shadow->tree, shadow->textures[6]);
+    /* Solid interior rects (premultiplied color). The side columns only
+     * exist when rounded corners leave gaps beside the middle band. */
+    float paint = shadow_paint(config);
+    float fill_color[4] = {
+        config->color[0] * paint, config->color[1] * paint,
+        config->color[2] * paint, paint,
+    };
+    shadow->fill[SHADOW_FILL_MID] =
+        wlr_scene_rect_create(shadow->tree, 0, 0, fill_color);
+    if (shadow_corner_radius(config) > 0) {
+        shadow->fill[SHADOW_FILL_LEFT] =
+            wlr_scene_rect_create(shadow->tree, 0, 0, fill_color);
+        shadow->fill[SHADOW_FILL_RIGHT] =
+            wlr_scene_rect_create(shadow->tree, 0, 0, fill_color);
     }
 
-    /* Set visibility once based on clip_directional — constant for this config.
-     * Disabled slices are skipped entirely by shadow_update_geometry(). */
-    if (config->clip_directional) {
-        int ox = config->offset_x;
-        int oy = config->offset_y;
-        bool show_top = (oy <= 0);
-        bool show_bottom = (oy >= 0);
-        bool show_left = (ox <= 0);
-        bool show_right = (ox >= 0);
-
-        if (shadow->slice[SHADOW_CORNER_TL])
-            wlr_scene_node_set_enabled(&shadow->slice[SHADOW_CORNER_TL]->node,
-                show_top && show_left);
-        if (shadow->slice[SHADOW_CORNER_TR])
-            wlr_scene_node_set_enabled(&shadow->slice[SHADOW_CORNER_TR]->node,
-                show_top && show_right);
-        if (shadow->slice[SHADOW_CORNER_BL])
-            wlr_scene_node_set_enabled(&shadow->slice[SHADOW_CORNER_BL]->node,
-                show_bottom && show_left);
-        if (shadow->slice[SHADOW_CORNER_BR])
-            wlr_scene_node_set_enabled(&shadow->slice[SHADOW_CORNER_BR]->node,
-                show_bottom && show_right);
-        if (shadow->slice[SHADOW_EDGE_TOP])
-            wlr_scene_node_set_enabled(&shadow->slice[SHADOW_EDGE_TOP]->node,
-                show_top);
-        if (shadow->slice[SHADOW_EDGE_BOTTOM])
-            wlr_scene_node_set_enabled(&shadow->slice[SHADOW_EDGE_BOTTOM]->node,
-                show_bottom);
-        if (shadow->slice[SHADOW_EDGE_LEFT])
-            wlr_scene_node_set_enabled(&shadow->slice[SHADOW_EDGE_LEFT]->node,
-                show_left);
-        if (shadow->slice[SHADOW_EDGE_RIGHT])
-            wlr_scene_node_set_enabled(&shadow->slice[SHADOW_EDGE_RIGHT]->node,
-                show_right);
-        if (shadow->slice[SHADOW_FILL_H])
-            wlr_scene_node_set_enabled(&shadow->slice[SHADOW_FILL_H]->node,
-                oy > 0 ? show_bottom : show_top);
-        if (shadow->slice[SHADOW_FILL_V])
-            wlr_scene_node_set_enabled(&shadow->slice[SHADOW_FILL_V]->node,
-                ox > 0 ? show_right : show_left);
-    }
+    shadow->user_visible = true;
+    shadow->size_ok = true;
 
     /* Ensure initial geometry update always runs (cache starts at 0,0
      * from memset, which could match a zero-sized client on first map) */
     shadow->last_width = -1;
     shadow->last_height = -1;
 
-    /* Position and size all slices */
     shadow_update_geometry(shadow, config, width, height);
 
     return true;
+}
+
+/** Position a gradient slice, disabling it when it has no area. */
+static void
+shadow_place_slice(struct wlr_scene_buffer *slice, int x, int y, int w, int h)
+{
+    if (!slice)
+        return;
+    bool on = w > 0 && h > 0;
+    wlr_scene_node_set_enabled(&slice->node, on);
+    if (!on)
+        return;
+    wlr_scene_node_set_position(&slice->node, x, y);
+    wlr_scene_buffer_set_dest_size(slice, w, h);
+}
+
+/** Position a fill rect, disabling it when it has no area. */
+static void
+shadow_place_fill(struct wlr_scene_rect *fill, int x, int y, int w, int h)
+{
+    if (!fill)
+        return;
+    bool on = w > 0 && h > 0;
+    wlr_scene_node_set_enabled(&fill->node, on);
+    if (!on)
+        return;
+    wlr_scene_node_set_position(&fill->node, x, y);
+    wlr_scene_rect_set_size(fill, w, h);
 }
 
 void
@@ -462,115 +473,57 @@ shadow_update_geometry(shadow_nodes_t *shadow,
     if (!shadow || !shadow->tree || !config)
         return;
 
-    /* Skip if geometry hasn't changed — avoids redundant damage.
-     * Config changes (offset, radius) go through shadow_update_config()
-     * which does destroy+create, resetting the cache via memset. */
+    /* Skip if geometry hasn't changed - avoids redundant damage.
+     * Config changes go through shadow_update_config() which does
+     * destroy+create, resetting the cache via memset. */
     if (shadow->last_width == width && shadow->last_height == height)
         return;
     shadow->last_width = width;
     shadow->last_height = height;
 
-    int r = config->radius;
-    int ox = config->offset_x;
-    int oy = config->offset_y;
+    int radius = shadow_radius(config);
+    int cr = shadow_corner_radius(config);
+    int sw = width + 2 * config->spread;
+    int sh = height + 2 * config->spread;
+    int bx = config->offset_x - config->spread;
+    int by = config->offset_y - config->spread;
 
-    /* Visibility is determined by clip_directional and offset direction.
-     * These are constant for the lifetime of the shadow, so only update
-     * slices that are actually visible — skip disabled ones entirely. */
-    bool show_top = true, show_bottom = true;
-    bool show_left = true, show_right = true;
+    /* An object smaller than its corner patches cannot host this shadow;
+     * hide it rather than let the patches overlap. */
+    shadow->size_ok = sw >= 2 * cr && sh >= 2 * cr && sw > 0 && sh > 0;
+    wlr_scene_node_set_enabled(&shadow->tree->node,
+        shadow->user_visible && shadow->size_ok);
+    if (!shadow->size_ok)
+        return;
 
-    if (config->clip_directional) {
-        show_top = (oy < 0);
-        show_bottom = (oy > 0);
-        show_left = (ox < 0);
-        show_right = (ox > 0);
-        if (ox == 0 && oy == 0)
-            show_top = show_bottom = show_left = show_right = true;
-        if (ox == 0)
-            show_left = show_right = true;
-        if (oy == 0)
-            show_top = show_bottom = true;
-    }
+    int cs = radius + cr;     /* corner patch side */
+    int mid_w = sw - 2 * cr;  /* span between the corner columns */
+    int mid_h = sh - 2 * cr;
 
-    /* Position corners — only touch visible ones */
-    if (shadow->slice[SHADOW_CORNER_TL] && show_top && show_left)
-        wlr_scene_node_set_position(
-            &shadow->slice[SHADOW_CORNER_TL]->node, ox - r, oy - r);
-    if (shadow->slice[SHADOW_CORNER_TR] && show_top && show_right)
-        wlr_scene_node_set_position(
-            &shadow->slice[SHADOW_CORNER_TR]->node, ox + width, oy - r);
-    if (shadow->slice[SHADOW_CORNER_BL] && show_bottom && show_left)
-        wlr_scene_node_set_position(
-            &shadow->slice[SHADOW_CORNER_BL]->node, ox - r, oy + height);
-    if (shadow->slice[SHADOW_CORNER_BR] && show_bottom && show_right)
-        wlr_scene_node_set_position(
-            &shadow->slice[SHADOW_CORNER_BR]->node, ox + width, oy + height);
+    shadow_place_slice(shadow->slice[SHADOW_CORNER_TL],
+        bx - radius, by - radius, cs, cs);
+    shadow_place_slice(shadow->slice[SHADOW_CORNER_TR],
+        bx + sw - cr, by - radius, cs, cs);
+    shadow_place_slice(shadow->slice[SHADOW_CORNER_BL],
+        bx - radius, by + sh - cr, cs, cs);
+    shadow_place_slice(shadow->slice[SHADOW_CORNER_BR],
+        bx + sw - cr, by + sh - cr, cs, cs);
 
-    /* Edges — only reposition and resize visible ones */
-    if (shadow->slice[SHADOW_EDGE_TOP] && show_top) {
-        wlr_scene_node_set_position(
-            &shadow->slice[SHADOW_EDGE_TOP]->node, ox, oy - r);
-        wlr_scene_buffer_set_dest_size(
-            shadow->slice[SHADOW_EDGE_TOP], width, r);
-    }
-    if (shadow->slice[SHADOW_EDGE_BOTTOM] && show_bottom) {
-        wlr_scene_node_set_position(
-            &shadow->slice[SHADOW_EDGE_BOTTOM]->node, ox, oy + height);
-        wlr_scene_buffer_set_dest_size(
-            shadow->slice[SHADOW_EDGE_BOTTOM], width, r);
-    }
-    if (shadow->slice[SHADOW_EDGE_LEFT] && show_left) {
-        wlr_scene_node_set_position(
-            &shadow->slice[SHADOW_EDGE_LEFT]->node, ox - r, oy);
-        wlr_scene_buffer_set_dest_size(
-            shadow->slice[SHADOW_EDGE_LEFT], r, height);
-    }
-    if (shadow->slice[SHADOW_EDGE_RIGHT] && show_right) {
-        wlr_scene_node_set_position(
-            &shadow->slice[SHADOW_EDGE_RIGHT]->node, ox + width, oy);
-        wlr_scene_buffer_set_dest_size(
-            shadow->slice[SHADOW_EDGE_RIGHT], r, height);
-    }
+    shadow_place_slice(shadow->slice[SHADOW_EDGE_TOP],
+        bx + cr, by - radius, mid_w, radius);
+    shadow_place_slice(shadow->slice[SHADOW_EDGE_BOTTOM],
+        bx + cr, by + sh, mid_w, radius);
+    shadow_place_slice(shadow->slice[SHADOW_EDGE_LEFT],
+        bx - radius, by + cr, radius, mid_h);
+    shadow_place_slice(shadow->slice[SHADOW_EDGE_RIGHT],
+        bx + sw, by + cr, radius, mid_h);
 
-    /* Fill strips — only update visible ones */
-    if (shadow->slice[SHADOW_FILL_H] && oy != 0) {
-        bool fill_visible = oy > 0 ? show_bottom : show_top;
-        if (fill_visible) {
-            int abs_oy = oy > 0 ? oy : -oy;
-            int fy = oy > 0 ? height : oy;
-            int fill_x = ox;
-            int fill_w = width;
-            /* When the vertical fill strip is also visible, it owns the
-             * corner square where the two strips would cross. Shrink the
-             * horizontal strip out of that column, or the overlap gets
-             * alpha-blended twice and shows as a darker box at the corner. */
-            if (shadow->slice[SHADOW_FILL_V] && ox != 0 &&
-                    (ox > 0 ? show_right : show_left)) {
-                int abs_ox = ox > 0 ? ox : -ox;
-                fill_x = ox > 0 ? ox : 0;
-                fill_w = width - abs_ox;
-                if (fill_w < 1)
-                    fill_w = 1;
-            }
-            wlr_scene_node_set_position(
-                &shadow->slice[SHADOW_FILL_H]->node, fill_x, fy);
-            wlr_scene_buffer_set_dest_size(
-                shadow->slice[SHADOW_FILL_H], fill_w, abs_oy);
-        }
-    }
-
-    if (shadow->slice[SHADOW_FILL_V] && ox != 0) {
-        bool fill_visible = ox > 0 ? show_right : show_left;
-        if (fill_visible) {
-            int abs_ox = ox > 0 ? ox : -ox;
-            int fx = ox > 0 ? width : ox;
-            wlr_scene_node_set_position(
-                &shadow->slice[SHADOW_FILL_V]->node, fx, oy);
-            wlr_scene_buffer_set_dest_size(
-                shadow->slice[SHADOW_FILL_V], abs_ox, height);
-        }
-    }
+    shadow_place_fill(shadow->fill[SHADOW_FILL_MID],
+        bx + cr, by, mid_w, sh);
+    shadow_place_fill(shadow->fill[SHADOW_FILL_LEFT],
+        bx, by + cr, cr, mid_h);
+    shadow_place_fill(shadow->fill[SHADOW_FILL_RIGHT],
+        bx + sw - cr, by + cr, cr, mid_h);
 }
 
 void
@@ -583,7 +536,7 @@ shadow_update_config(shadow_nodes_t *shadow,
         return;
 
     /* Destroy existing shadow and recreate with new config.
-     * Gradient textures are tiny (~2.5KB) so recreation is cheap. */
+     * Gradient textures are tiny so recreation is cheap. */
     shadow_destroy(shadow);
 
     if (config->enabled)
@@ -593,10 +546,13 @@ shadow_update_config(shadow_nodes_t *shadow,
 void
 shadow_set_visible(shadow_nodes_t *shadow, bool visible)
 {
-    if (!shadow || !shadow->tree)
+    if (!shadow)
         return;
 
-    wlr_scene_node_set_enabled(&shadow->tree->node, visible);
+    shadow->user_visible = visible;
+    if (shadow->tree)
+        wlr_scene_node_set_enabled(&shadow->tree->node,
+            visible && shadow->size_ok);
 }
 
 void
@@ -605,13 +561,20 @@ shadow_destroy(shadow_nodes_t *shadow)
     if (!shadow)
         return;
 
-    if (shadow->tree) {
+    if (shadow->tree)
         wlr_scene_node_destroy(&shadow->tree->node);
-        shadow->tree = NULL;
-    }
 
-    memset(shadow->slice, 0, sizeof(shadow->slice));
+    shadow_release(shadow);
+}
+
+void
+shadow_release(shadow_nodes_t *shadow)
+{
+    if (!shadow)
+        return;
+
     shadow_free_textures(shadow);
+    memset(shadow, 0, sizeof(*shadow));
 }
 
 /* ========== Lua Integration ========== */
@@ -662,6 +625,16 @@ shadow_config_from_lua(lua_State *L, int idx, shadow_config_t *config,
     lua_getfield(L, idx, "offset_y");
     if (lua_isnumber(L, -1))
         config->offset_y = (int)lua_tonumber(L, -1);
+    lua_pop(L, 1);
+
+    lua_getfield(L, idx, "spread");
+    if (lua_isnumber(L, -1))
+        config->spread = (int)lua_tonumber(L, -1);
+    lua_pop(L, 1);
+
+    lua_getfield(L, idx, "corner_radius");
+    if (lua_isnumber(L, -1))
+        config->corner_radius = (int)lua_tonumber(L, -1);
     lua_pop(L, 1);
 
     lua_getfield(L, idx, "opacity");
@@ -726,20 +699,61 @@ shadow_config_to_lua(lua_State *L, const shadow_config_t *config)
     lua_pushinteger(L, config->offset_y);
     lua_setfield(L, -2, "offset_y");
 
+    lua_pushinteger(L, config->spread);
+    lua_setfield(L, -2, "spread");
+
+    lua_pushinteger(L, config->corner_radius);
+    lua_setfield(L, -2, "corner_radius");
+
     lua_pushnumber(L, config->opacity);
     lua_setfield(L, -2, "opacity");
 
     lua_pushboolean(L, config->clip_directional);
     lua_setfield(L, -2, "clip_directional");
 
-    /* Color as hex string */
-    char color_str[10];
-    snprintf(color_str, sizeof(color_str), "#%02X%02X%02X",
-             (int)(config->color[0] * 255),
-             (int)(config->color[1] * 255),
-             (int)(config->color[2] * 255));
+    /* Color as hex string; include the alpha byte when it carries data */
+    char color_str[11];
+    if (config->color[3] < 1.0f)
+        snprintf(color_str, sizeof(color_str), "#%02X%02X%02X%02X",
+                 (int)(config->color[0] * 255),
+                 (int)(config->color[1] * 255),
+                 (int)(config->color[2] * 255),
+                 (int)(config->color[3] * 255 + 0.5f));
+    else
+        snprintf(color_str, sizeof(color_str), "#%02X%02X%02X",
+                 (int)(config->color[0] * 255),
+                 (int)(config->color[1] * 255),
+                 (int)(config->color[2] * 255));
     lua_pushstring(L, color_str);
     lua_setfield(L, -2, "color");
+}
+
+/** Read one integer beautiful key into an int field if set. */
+static void
+shadow_beautiful_int(lua_State *L, const char *key, int *out)
+{
+    lua_getfield(L, -1, key);
+    if (lua_isnumber(L, -1))
+        *out = (int)lua_tointeger(L, -1);
+    lua_pop(L, 1);
+}
+
+/** Read one color beautiful key into a float[4] if set and valid. */
+static void
+shadow_beautiful_color(lua_State *L, const char *key, float out[4])
+{
+    lua_getfield(L, -1, key);
+    if (lua_isstring(L, -1)) {
+        const char *str = lua_tostring(L, -1);
+        color_t c;
+        if (color_init_from_string(&c, str)) {
+            out[0] = c.red / 255.0f;
+            out[1] = c.green / 255.0f;
+            out[2] = c.blue / 255.0f;
+            out[3] = c.alpha / 255.0f;
+        }
+    }
+    lua_pop(L, 1);
 }
 
 void
@@ -761,102 +775,61 @@ shadow_load_beautiful_defaults(lua_State *L)
     globalconf.shadow.client = shadow_defaults;
     globalconf.shadow.drawin = shadow_defaults;
 
+    shadow_config_t *client = &globalconf.shadow.client;
+
     /* Client shadow defaults */
     lua_getfield(L, -1, "shadow_enabled");
     if (!lua_isnil(L, -1))
-        globalconf.shadow.client.enabled = lua_toboolean(L, -1);
+        client->enabled = lua_toboolean(L, -1);
     lua_pop(L, 1);
 
-    lua_getfield(L, -1, "shadow_radius");
-    if (lua_isnumber(L, -1))
-        globalconf.shadow.client.radius = (int)lua_tointeger(L, -1);
-    lua_pop(L, 1);
-
-    lua_getfield(L, -1, "shadow_offset_x");
-    if (lua_isnumber(L, -1))
-        globalconf.shadow.client.offset_x = (int)lua_tointeger(L, -1);
-    lua_pop(L, 1);
-
-    lua_getfield(L, -1, "shadow_offset_y");
-    if (lua_isnumber(L, -1))
-        globalconf.shadow.client.offset_y = (int)lua_tointeger(L, -1);
-    lua_pop(L, 1);
+    shadow_beautiful_int(L, "shadow_radius", &client->radius);
+    shadow_beautiful_int(L, "shadow_offset_x", &client->offset_x);
+    shadow_beautiful_int(L, "shadow_offset_y", &client->offset_y);
+    shadow_beautiful_int(L, "shadow_spread", &client->spread);
+    shadow_beautiful_int(L, "shadow_corner_radius", &client->corner_radius);
 
     lua_getfield(L, -1, "shadow_opacity");
     if (lua_isnumber(L, -1))
-        globalconf.shadow.client.opacity = (float)lua_tonumber(L, -1);
+        client->opacity = (float)lua_tonumber(L, -1);
     lua_pop(L, 1);
 
     lua_getfield(L, -1, "shadow_clip");
     if (!lua_isnil(L, -1)) {
         if (lua_isboolean(L, -1)) {
-            globalconf.shadow.client.clip_directional = lua_toboolean(L, -1);
+            client->clip_directional = lua_toboolean(L, -1);
         } else if (lua_isstring(L, -1)) {
             const char *clip = lua_tostring(L, -1);
             if (clip)
-                globalconf.shadow.client.clip_directional =
+                client->clip_directional =
                     (strcmp(clip, "directional") == 0);
         }
     }
     lua_pop(L, 1);
 
-    lua_getfield(L, -1, "shadow_color");
-    if (!lua_isnil(L, -1)) {
-        if (lua_isstring(L, -1)) {
-            const char *str = lua_tostring(L, -1);
-            color_t c;
-            if (color_init_from_string(&c, str)) {
-                globalconf.shadow.client.color[0] = c.red / 255.0f;
-                globalconf.shadow.client.color[1] = c.green / 255.0f;
-                globalconf.shadow.client.color[2] = c.blue / 255.0f;
-                globalconf.shadow.client.color[3] = c.alpha / 255.0f;
-            }
-        }
-    }
-    lua_pop(L, 1);
+    shadow_beautiful_color(L, "shadow_color", client->color);
 
     /* Copy client defaults to drawin, then apply drawin-specific overrides */
-    globalconf.shadow.drawin = globalconf.shadow.client;
+    globalconf.shadow.drawin = *client;
+    shadow_config_t *drawin = &globalconf.shadow.drawin;
 
     lua_getfield(L, -1, "shadow_drawin_enabled");
     if (!lua_isnil(L, -1))
-        globalconf.shadow.drawin.enabled = lua_toboolean(L, -1);
+        drawin->enabled = lua_toboolean(L, -1);
     lua_pop(L, 1);
 
-    lua_getfield(L, -1, "shadow_drawin_radius");
-    if (lua_isnumber(L, -1))
-        globalconf.shadow.drawin.radius = (int)lua_tointeger(L, -1);
-    lua_pop(L, 1);
-
-    lua_getfield(L, -1, "shadow_drawin_offset_x");
-    if (lua_isnumber(L, -1))
-        globalconf.shadow.drawin.offset_x = (int)lua_tointeger(L, -1);
-    lua_pop(L, 1);
-
-    lua_getfield(L, -1, "shadow_drawin_offset_y");
-    if (lua_isnumber(L, -1))
-        globalconf.shadow.drawin.offset_y = (int)lua_tointeger(L, -1);
-    lua_pop(L, 1);
+    shadow_beautiful_int(L, "shadow_drawin_radius", &drawin->radius);
+    shadow_beautiful_int(L, "shadow_drawin_offset_x", &drawin->offset_x);
+    shadow_beautiful_int(L, "shadow_drawin_offset_y", &drawin->offset_y);
+    shadow_beautiful_int(L, "shadow_drawin_spread", &drawin->spread);
+    shadow_beautiful_int(L, "shadow_drawin_corner_radius", &drawin->corner_radius);
 
     lua_getfield(L, -1, "shadow_drawin_opacity");
     if (lua_isnumber(L, -1))
-        globalconf.shadow.drawin.opacity = (float)lua_tonumber(L, -1);
+        drawin->opacity = (float)lua_tonumber(L, -1);
     lua_pop(L, 1);
 
-    lua_getfield(L, -1, "shadow_drawin_color");
-    if (!lua_isnil(L, -1)) {
-        if (lua_isstring(L, -1)) {
-            const char *str = lua_tostring(L, -1);
-            color_t c;
-            if (color_init_from_string(&c, str)) {
-                globalconf.shadow.drawin.color[0] = c.red / 255.0f;
-                globalconf.shadow.drawin.color[1] = c.green / 255.0f;
-                globalconf.shadow.drawin.color[2] = c.blue / 255.0f;
-                globalconf.shadow.drawin.color[3] = c.alpha / 255.0f;
-            }
-        }
-    }
-    lua_pop(L, 1);
+    shadow_beautiful_color(L, "shadow_drawin_color", drawin->color);
 
     lua_pop(L, 1);  /* Pop beautiful table */
 }

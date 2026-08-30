@@ -895,14 +895,7 @@ drawin_wipe(drawin_t *w)
 
 	/* Shadow scene nodes are children of scene_tree and destroyed with it.
 	 * We own the texture buffers though and must free them. */
-	for (int i = 0; i < SHADOW_TEXTURE_COUNT; i++) {
-		if (w->shadow.textures[i]) {
-			wlr_buffer_drop(w->shadow.textures[i]);
-			w->shadow.textures[i] = NULL;
-		}
-	}
-	w->shadow.tree = NULL;
-	memset(w->shadow.slice, 0, sizeof(w->shadow.slice));
+	shadow_release(&w->shadow);
 	if (w->shadow_config) {
 		free(w->shadow_config);
 		w->shadow_config = NULL;

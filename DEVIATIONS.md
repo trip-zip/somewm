@@ -345,6 +345,21 @@ local surface = screen.primary.content
 
 Wiboxes and drawins have a matching `shadow` property; wibars also read the `beautiful.wibar_shadow` theme variable.
 
+### Shadows
+
+Compositor-level drop shadows for clients and wiboxes (no AwesomeWM
+equivalent; under X11 this is picom's job). Configured through
+`beautiful.shadow_*`, per-object via `client.shadow` / wibox `shadow`.
+
+The shadow is the object's frame grown by `spread`, moved by
+`offset_x`/`offset_y`, rounded by `corner_radius`, fading out over
+`radius` pixels. `color` accepts `#RRGGBBAA`; its alpha multiplies
+`opacity`.
+
+Changed in 1.4.3: `clip_directional` no longer has an effect. The shadow
+is drawn at its offset and fades out on every side; sides fully covered
+by the window are simply not visible. Configs that set it still parse.
+
 ### Edge Snap Dwell
 
 `awful.mouse.snap.snap_dwell_ms` (default 150) delays the edge-snap placeholder until the cursor has dwelled in the same edge zone for that many milliseconds, preventing accidental snaps during fast drags. Set to 0 for AwesomeWM's immediate behavior.

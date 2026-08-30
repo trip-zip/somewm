@@ -1614,14 +1614,7 @@ client_wipe(client_t *c)
 
     /* Shadow scene nodes are children of c->scene and destroyed with it.
      * We own the texture buffers though and must free them. */
-    for (int i = 0; i < SHADOW_TEXTURE_COUNT; i++) {
-        if (c->shadow.textures[i]) {
-            wlr_buffer_drop(c->shadow.textures[i]);
-            c->shadow.textures[i] = NULL;
-        }
-    }
-    c->shadow.tree = NULL;
-    memset(c->shadow.slice, 0, sizeof(c->shadow.slice));
+    shadow_release(&c->shadow);
     if (c->shadow_config) {
         free(c->shadow_config);
         c->shadow_config = NULL;
