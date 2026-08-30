@@ -539,10 +539,24 @@ shadow_update_geometry(shadow_nodes_t *shadow,
         if (fill_visible) {
             int abs_oy = oy > 0 ? oy : -oy;
             int fy = oy > 0 ? height : oy;
+            int fill_x = ox;
+            int fill_w = width;
+            /* When the vertical fill strip is also visible, it owns the
+             * corner square where the two strips would cross. Shrink the
+             * horizontal strip out of that column, or the overlap gets
+             * alpha-blended twice and shows as a darker box at the corner. */
+            if (shadow->slice[SHADOW_FILL_V] && ox != 0 &&
+                    (ox > 0 ? show_right : show_left)) {
+                int abs_ox = ox > 0 ? ox : -ox;
+                fill_x = ox > 0 ? ox : 0;
+                fill_w = width - abs_ox;
+                if (fill_w < 1)
+                    fill_w = 1;
+            }
             wlr_scene_node_set_position(
-                &shadow->slice[SHADOW_FILL_H]->node, ox, fy);
+                &shadow->slice[SHADOW_FILL_H]->node, fill_x, fy);
             wlr_scene_buffer_set_dest_size(
-                shadow->slice[SHADOW_FILL_H], width, abs_oy);
+                shadow->slice[SHADOW_FILL_H], fill_w, abs_oy);
         }
     }
 
