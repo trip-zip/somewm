@@ -49,6 +49,14 @@ endif
 
 cc = meson.get_compiler('c')
 
+# third_party holds vendored headers; clay.h is included as <clay.h> by the
+# renderer and compiled once by clay_impl.c below.
+somewm_inc = include_directories('.', 'third_party')
+
+# The renderer, named once: the compositor links it and the C unit test compiles
+# it again with the verifier forced on.
+render_sources = files('render.c', 'render_text.c', 'render_image.c')
+
 # Math library (for round(), etc.)
 m_dep = cc.find_library('m', required: false)
 
@@ -404,6 +412,23 @@ if get_option('bench')
   add_project_arguments('-DSOMEWM_BENCH', language: 'c')
 endif
 
+# The Clay tree==scene verifier. Derived from the build directory's own options
+# rather than passed in by the Makefile, so a dir that was configured before this
+# option existed still gets the right answer, and reconfiguring a dir to use a
+# sanitizer turns the verifier on with it. b_sanitize is a string in older meson
+# and an array in newer, hence the format.
+render_verify = get_option('render_verify')
+if render_verify.auto()
+  sanitizers = '@0@'.format(get_option('b_sanitize'))
+  render_verify_on = sanitizers.contains('address') or \
+    sanitizers.contains('undefined') or get_option('test_pam')
+else
+  render_verify_on = render_verify.enabled()
+endif
+if render_verify_on
+  add_project_arguments('-DSOMEWM_RENDER_VERIFY', language: 'c')
+endif
+
 # Development flags
 add_project_arguments(
   '-Wno-unused-parameter',
@@ -515,14 +540,27 @@ if have_pam
   all_deps += [pam_dep]
 endif
 
+# Clay is header-only; clay_impl.c is the single translation unit that compiles
+# it. Its own static library so -w applies to the vendored code and nothing else:
+# clay.h is not ours to keep clean against this project's warning set.
+clay_lib = static_library(
+  'clay',
+  'clay_impl.c',
+  include_directories: somewm_inc,
+  c_args: ['-w'],
+  dependencies: [m_dep],
+)
+
 somewm_exe = executable(
   'somewm',
   somewm_sources,
+  render_sources,
   protocol_headers,
   keyboard_shortcuts_inhibit_client_header,
   keyboard_shortcuts_inhibit_client_code,
   dependencies: all_deps,
-  include_directories: include_directories('.'),
+  include_directories: somewm_inc,
+  link_with: clay_lib,
   install: true,
 )
 
@@ -543,6 +581,26 @@ somewm_client = executable(
   'somewm-client.c',
   'test_orchestrator.c',
   install: true,
+)
+
+# The Clay reconciler's unit test: hand-built command arrays in, wlr_scene out.
+# It compiles the renderer itself rather than linking the compositor, so the
+# tree==scene verifier is on here whatever -Drender_verify says for the build.
+test_render = executable(
+  'test-render',
+  ['tests/test-render.c', render_sources],
+  include_directories: somewm_inc,
+  link_with: clay_lib,
+  dependencies: [wlroots, wayland_server, cairo, pangocairo, gdk_pixbuf, m_dep],
+  c_args: ['-DSOMEWM_RENDER_VERIFY'],
+  install: false,
+)
+
+# The suppressions keep an ASAN run of this test reporting only allocations the
+# renderer owns; fontconfig and pango cache fonts process-wide and never free.
+test('render', test_render, suite: 'unit',
+  env: {'LSAN_OPTIONS': 'suppressions=' +
+    meson.current_source_dir() / 'tests/lsan-suppressions.txt'},
 )
 
 # Test layer-shell client for deterministic integration tests

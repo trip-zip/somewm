@@ -1,0 +1,9 @@
+# Fontconfig builds a process-wide font cache on first use and never frees it,
+# and pango's font maps hang off it. Nothing in the renderer owns those
+# allocations.
+#
+# Deliberately only fontconfig. LeakSanitizer suppresses a leak when ANY frame
+# in its allocation stack matches, so a broader entry (libcairo, libglib,
+# libgobject) would also hide a cairo surface or a PangoLayout the renderer
+# itself leaked, which is exactly what this test exists to catch.
+leak:libfontconfig.so
