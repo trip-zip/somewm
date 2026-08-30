@@ -94,6 +94,7 @@
 #include "monitor.h"
 #include "input.h"
 #include "window.h"
+#include "declare.h"
 #include "focus.h"
 #include "loop.h"
 #include "version.h"
@@ -403,6 +404,11 @@ some_activate_lua_lock(void)
 	 * Lua-created cover wibox (e.g. hotplugged monitors). */
 	wlr_scene_node_set_enabled(&locked_bg->node, 1);
 
+	/* Show the retained lock bands and dirty every output, so the lock
+	 * scene solves this frame (declare.c). Runs before the promotions
+	 * below so a band created now sits under the raised trees. */
+	declare_lock_set_visible(true);
+
 	/* Promote all cover surfaces to LyrBlock so they hide desktop content
 	 * on secondary monitors */
 	for (int i = 0; i < cover_count; i++)
@@ -440,6 +446,10 @@ lua_lock_scene_restore(void)
 
 	/* Let stack_refresh() sort everything back to proper layers */
 	stack_refresh();
+
+	/* Hide the retained lock bands (nodes kept, so a re-engage does not
+	 * flash the previous lock frame) and re-solve the desktop. */
+	declare_lock_set_visible(false);
 }
 
 /** Deactivate Lua-controlled lock mode
@@ -838,6 +848,7 @@ setup(void)
 		layers[i] = wlr_scene_tree_create(&scene->tree);
 	drag_icon = wlr_scene_tree_create(&scene->tree);
 	wlr_scene_node_place_below(&drag_icon->node, &layers[LyrBlock]->node);
+	window_setup_render_hooks();
 
 	/* Autocreates a renderer, either Pixman, GLES2 or Vulkan for us. The user
 	 * can also specify a renderer using the WLR_RENDERER env var.

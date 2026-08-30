@@ -69,6 +69,27 @@ void render_set_position(struct render_state *rs, int x, int y);
  * this output's nodes (scale joins the raster cache key). */
 void render_set_scale(struct render_state *rs, float scale);
 
+/* The userData channel: Clay carries each element's userData word into its
+ * render commands untouched, and the renderer retains it per node. The word
+ * is a packed integer, never a pointer, so a retained command can never
+ * dangle into freed declarer state. The renderer itself reads only the
+ * opacity byte (bits 40-47, IMAGE commands; 0 means unset, fully opaque,
+ * else 1 + opacity * 254); everything else in the word is the declarer's to
+ * encode and to get back from render_hit_userdata(). */
+static inline float
+render_userdata_opacity(void *ud)
+{
+	unsigned byte = ((uintptr_t)ud >> 40) & 0xff;
+	return byte ? (float)(byte - 1) / 254.0f : 1.0f;
+}
+
+/* The retained userData word of the command that drew node (the node itself,
+ * or an ancestor for a border's side rects), or 0 for a node this
+ * render_state did not draw. Works for every command type, which is what
+ * makes it the input backmap: BORDER and TEXT nodes carry no element id
+ * (render_hit_id below) but do carry their element's word. */
+void *render_hit_userdata(struct render_state *rs, struct wlr_scene_node *node);
+
 /* The scene-node-to-Clay-id backmap: given a scene node the scene hit test
  * returned, find the retained chrome node that drew it (the node itself, or an
  * ancestor for a square border's side rects) and return that command's Clay

@@ -55,6 +55,8 @@
 #include "ewmh.h"
 #include "property.h"
 #include "shadow.h"
+#include "declare.h"
+#include "render.h"
 #include "animation.h"
 #include "event.h"
 #include "systray.h"
@@ -100,7 +102,9 @@ client_scene_node_destroy(Client *c)
 		client_surface_clear_scene_data(surface, c->popups);
 	}
 	/* c->popups and c->scene_surface are both descendants of c->scene,
-	 * destroyed recursively along with it. */
+	 * destroyed recursively along with it. Drop the render handle first so
+	 * a later resolve answers NULL instead of the dead tree. */
+	declare_handle_drop(c);
 	wlr_scene_node_destroy(&c->scene->node);
 	c->scene = NULL;
 	c->popups = NULL;
@@ -1326,6 +1330,183 @@ client_layout_clips_offscreen(Client *c)
 	return result;
 }
 
+/* --- render_client_hooks: how the reconciler reaches surface trees --- */
+
+/* Released trees park here, disabled, outside every band: a tree no output
+ * declares (banned tag, unmapped, mid-migration) must not linger in a band
+ * it no longer belongs to. */
+static struct wlr_scene_tree *render_parked;
+
+static struct wlr_scene_tree *
+parked_tree(void)
+{
+	if (!render_parked) {
+		render_parked = wlr_scene_tree_create(&scene->tree);
+		wlr_scene_node_set_enabled(&render_parked->node, false);
+	}
+	return render_parked;
+}
+
+/* The client shadow is parented inside c->scene and rides the borrowed
+ * tree; only its geometry update needs a home once
+ * apply_geometry_to_wlroots() is gone, and that home is the configure leg. */
+static void
+client_update_shadow(Client *c)
+{
+	const shadow_config_t *config = shadow_get_effective_config(
+		c->shadow_config, false);
+	int frame_w = c->geometry.width + 2 * c->bw;
+	int frame_h = c->geometry.height + 2 * c->bw;
+
+	if (!config || !config->enabled)
+		return;
+	if (c->shadow.tree)
+		shadow_update_geometry(&c->shadow, config, frame_w, frame_h);
+	else
+		shadow_create(c->scene, &c->shadow, config, frame_w, frame_h);
+}
+
+/* The scene tree, popups tree, and owner slot behind a handle. Clients and
+ * layer surfaces both borrow; anything else (a dead handle, a drawin) has
+ * no borrowed tree and returns false. */
+static bool
+handle_window(uint64_t handle, struct wlr_scene_tree **stree,
+	struct wlr_scene_tree **ptree, void ***owner)
+{
+	enum declare_kind kind;
+	void *obj = declare_handle_get(handle, &kind);
+
+	if (!obj)
+		return false;
+	if (kind == DECLARE_KIND_CLIENT) {
+		Client *c = obj;
+		*stree = c->scene;
+		*ptree = c->popups;
+		*owner = &c->render_owner;
+		return true;
+	}
+	if (kind == DECLARE_KIND_LAYER) {
+		LayerSurface *l = obj;
+		*stree = l->scene;
+		*ptree = l->popups;
+		*owner = &l->render_owner;
+		return true;
+	}
+	return false;
+}
+
+static Client *
+handle_client(uint64_t handle)
+{
+	enum declare_kind kind;
+	Client *c = declare_handle_get(handle, &kind);
+
+	return (c && kind == DECLARE_KIND_CLIENT) ? c : NULL;
+}
+
+static struct wlr_scene_tree *
+hook_resolve(void *data, uint64_t handle)
+{
+	struct wlr_scene_tree *stree, *ptree;
+	void **owner;
+
+	return handle_window(handle, &stree, &ptree, &owner) ? stree : NULL;
+}
+
+/* Both configure legs run client_configure_to_box(): the state-batched
+ * configure covers X11's position-carrying re-send (position-only moves
+ * included, client_set_size()), and the monitor-clamp clip inside is
+ * position-keyed. Layer surfaces have no C-driven configure; their only
+ * sizing path is the layer-shell arrange. */
+static void
+hook_configure(void *data, uint64_t handle, int width, int height)
+{
+	Client *c = handle_client(handle);
+
+	if (!c)
+		return;
+	client_configure_to_box(c);
+	client_update_shadow(c);
+}
+
+static void
+hook_reposition(void *data, uint64_t handle)
+{
+	Client *c = handle_client(handle);
+
+	if (c)
+		client_configure_to_box(c);
+}
+
+static void
+hook_borrow(void *data, uint64_t handle, void *owner_token)
+{
+	struct wlr_scene_tree *stree, *ptree;
+	void **owner;
+
+	if (handle_window(handle, &stree, &ptree, &owner))
+		*owner = owner_token;
+}
+
+static void
+hook_release(void *data, uint64_t handle, void *owner_token)
+{
+	struct wlr_scene_tree *stree, *ptree;
+	void **owner;
+
+	if (!handle_window(handle, &stree, &ptree, &owner))
+		return;
+	/* Another output owns the tree now: leave it be. */
+	if (*owner != owner_token)
+		return;
+	*owner = NULL;
+	wlr_scene_node_reparent(&stree->node, parked_tree());
+	wlr_scene_node_set_enabled(&stree->node, false);
+}
+
+static bool
+hook_has_popup(void *data, uint64_t handle)
+{
+	struct wlr_scene_tree *stree, *ptree;
+	void **owner;
+
+	if (!handle_window(handle, &stree, &ptree, &owner))
+		return false;
+	return ptree && !wl_list_empty(&ptree->children);
+}
+
+void
+window_setup_render_hooks(void)
+{
+	static const struct render_client_hooks hooks = {
+		.resolve = hook_resolve,
+		.configure = hook_configure,
+		.borrow = hook_borrow,
+		.release = hook_release,
+		.reposition = hook_reposition,
+		.has_popup = hook_has_popup,
+	};
+
+	declare_set_client_hooks(&hooks);
+}
+
+/* Clamp to the assigned monitor only for layouts that intentionally
+ * position tiled clients offscreen (carousel). For floating or unmanaged
+ * clients (user-authoritative geometry) and for layouts that keep clients
+ * within their workarea, skip the clamp so the scene graph can render the
+ * surface on whichever outputs it overlaps, e.g. during a cross-monitor
+ * drag where c->mon stays on the source monitor until the pointer crosses.
+ * Shared with the declare pass, which expresses the same fact as a monitor
+ * scissor around the client's border command. */
+bool
+client_clamps_to_monitor(Client *c)
+{
+	return c->mon
+		&& !client_is_unmanaged(c)
+		&& !some_client_get_floating(c)
+		&& client_layout_clips_offscreen(c);
+}
+
 /* The configure-client-to-box seam: the client-facing half of geometry
  * application. Positions and clips nodes inside the client's scene tree and
  * sends the state-batched configure, but never touches the frame somewm
@@ -1398,17 +1579,7 @@ client_configure_to_box(Client *c)
 	}
 	client_get_clip(c, &clip);
 
-	/* Clip the surface to its assigned monitor only for layouts that
-	 * intentionally position tiled clients offscreen (carousel). For
-	 * floating or unmanaged clients (user-authoritative geometry) and
-	 * for layouts that keep clients within their workarea, skip the
-	 * clamp so the scene graph can render the surface on whichever
-	 * outputs it overlaps, e.g. during a cross-monitor drag where
-	 * c->mon stays on the source monitor until the pointer crosses. */
-	bool clamp_to_mon = c->mon
-		&& !client_is_unmanaged(c)
-		&& !some_client_get_floating(c)
-		&& client_layout_clips_offscreen(c);
+	bool clamp_to_mon = client_clamps_to_monitor(c);
 
 	/* Clip client content to its assigned monitor bounds so offscreen
 	 * clients (e.g. carousel scrolling layout) don't render on adjacent

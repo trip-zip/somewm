@@ -115,6 +115,7 @@ struct Monitor {
 	int needs_screen_added; /* Set in createmon, cleared by updatemons after geometry is ready */
 	int needs_output_added; /* Set in createmon, cleared by updatemons after screen is ready */
 	output_t *output; /* Lua output object (persists across enable/disable) */
+	struct declare_output *declare; /* Per-output Clay context and render_state (declare.h) */
 };
 
 /* KeyboardGroup structure */
@@ -143,6 +144,8 @@ typedef struct LayerSurface {
 
 	Monitor *mon;
 	struct wlr_scene_tree *scene;
+	/* The render_state currently borrowing scene (render.h owner token) */
+	void *render_owner;
 	struct wlr_scene_tree *popups;
 	struct wlr_scene_layer_surface_v1 *scene_layer;
 	struct wl_list link;

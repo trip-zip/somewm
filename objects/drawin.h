@@ -11,6 +11,7 @@
 #include "common/luaclass.h"  /* For lua_class_t */
 #include "common/luaobject.h"  /* For LUA_OBJECT_FUNCS macro */
 #include "shadow.h"           /* For shadow_config_t, shadow_nodes_t */
+#include "../render_image.h"  /* For struct image_entry */
 
 /* Forward declarations */
 struct screen_t;
@@ -78,6 +79,17 @@ typedef struct drawin_t {
 	cairo_surface_t *shape_clip;            /* Drawing clip region */
 	cairo_surface_t *shape_input;           /* Input hit-test region (click-through) */
 	cairo_surface_t *shape_border;          /* Pre-rendered anti-aliased border (ARGB32) */
+
+	/* Renderer leaves (the Clay flip): stable image entries the declare
+	 * pass hands to the renderer as imageData. Each native surface is a
+	 * drawin-owned copy (masks applied), so a drawable resize can never
+	 * dangle the renderer's source; gen bumps whenever content changes.
+	 * shadow_entry_config is the memoized config the composite was built
+	 * from; the leaf's origin and the memo's size derive from it. */
+	struct image_entry content_entry;
+	struct image_entry border_entry;
+	struct image_entry shadow_entry;
+	shadow_config_t shadow_entry_config;
 } drawin_t;
 
 /* Metatable name for drawin userdata */
