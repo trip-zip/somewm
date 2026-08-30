@@ -9,7 +9,7 @@
 
 -include .local.mk
 
-.PHONY: all install uninstall clean setup reconfigure test test-unit test-lua-compat test-check test-signal test-integration test-orchestrator test-restart test-one-restart test-asan test-one test-visual test-one-visual test-ci test-fast build-test build-bench bench-run bench-run-live bench-json bench-baseline bench-compare bench-check bench-memory bench-flamegraph bench-diff bench-heaptrack profile profile-lua profile-save profile-diff
+.PHONY: all install uninstall clean setup setup-test reconfigure test test-unit test-render test-lua-compat test-check test-signal test-integration test-orchestrator test-restart test-one-restart test-asan test-one test-visual test-one-visual test-ci test-fast build-test build-bench bench-run bench-run-live bench-json bench-baseline bench-compare bench-check bench-memory bench-flamegraph bench-diff bench-heaptrack profile profile-lua profile-save profile-diff
 
 # Default build: optimized release, no sanitizers
 all:
@@ -21,9 +21,12 @@ asan:
 	@test -d build-asan || meson setup build-asan -Db_sanitize=address,undefined $(if $(LUA_PKG),-Dlua_pkg=$(LUA_PKG),) $(MESON_OPTS)
 	ninja -C build-asan
 
-# Build for tests: NO ASAN (fast) - explicitly disable sanitizers, enable test PAM stub
-build-test:
+# Configure the test build dir without building anything in it
+setup-test:
 	@test -d build-test || meson setup build-test -Db_sanitize=none -Dtest_pam=true $(if $(LUA_PKG),-Dlua_pkg=$(LUA_PKG),) $(MESON_OPTS)
+
+# Build for tests: NO ASAN (fast) - explicitly disable sanitizers, enable test PAM stub
+build-test: setup-test
 	ninja -C build-test
 
 install:
@@ -55,9 +58,16 @@ test: test-unit test-check test-signal test-orchestrator test-restart test-integ
 test-lua-compat:
 	@./tests/check-lua-compat.sh
 
-# Unit tests only (busted, no compositor needed)
-test-unit: test-lua-compat
+# Unit tests only (busted and the C renderer test; no compositor needed)
+test-unit: test-lua-compat test-render
 	@./tests/run-unit.sh
+
+# C unit tests (meson): the Clay reconciler against hand-built command arrays.
+# Builds the one test binary rather than the whole compositor, so test-unit
+# stays the cheap target.
+test-render: setup-test
+	@ninja -C build-test test-render
+	@meson test -C build-test --suite unit --print-errorlogs --no-rebuild
 
 # Check mode tests (no compositor needed, tests somewm --check)
 test-check: build-test
@@ -91,8 +101,10 @@ endif
 test-integration: build-test
 	@SOMEWM=./build-test/somewm SOMEWM_CLIENT=./build-test/somewm-client ./tests/run-integration.sh
 
-# Integration tests with ASAN (slower, catches memory bugs)
+# Integration tests with ASAN (slower, catches memory bugs). The C unit tests
+# run here too, since the ASAN build is where they are worth the most.
 test-asan: asan
+	@meson test -C build-asan --suite unit --print-errorlogs
 	@SOMEWM=./build-asan/somewm SOMEWM_CLIENT=./build-asan/somewm-client ./tests/run-integration.sh
 
 # CI mode: headless (for automated testing environments)
