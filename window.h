@@ -42,6 +42,8 @@ void apply_geometry_to_wlroots(Client *c);
  * flip's render_client_hooks land here; forced configure re-sends keep
  * calling it directly. */
 bool client_configure_to_box(Client *c);
+bool client_clamps_to_monitor(Client *c);
+void window_setup_render_hooks(void);
 void resize(Client *c, struct wlr_box geo, int interact);
 void applybounds(Client *c, struct wlr_box *bbox);
 

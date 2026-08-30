@@ -1,0 +1,683 @@
+/*
+ * declare.c - the per-output declare/solve boundary for the Clay tree
+ *
+ * Each output owns a Clay context sized to its effective resolution and a
+ * render_state parented into a band directly below LyrBlock, so everything
+ * the tree will declare stays under the session lock, its covers, and the
+ * drag icon. Per dirty frame the declare pass rebuilds the output's tree:
+ * every box somewm computes elsewhere enters as a fixed floating leaf
+ * attached to Clay's root, so Clay places without solving it, and the
+ * declaration order is the draw order (Clay_EndLayout's root sort is stable
+ * for equal zIndex, clay.h:2605-2615, and Clay_BeginLayout opens an implicit
+ * root container covering the window, clay.h:4170-4174).
+ *
+ * The order reproduces the scene layers stack.c maintained: per shared band,
+ * layer-shell surfaces below clients below drawins, bands stacked
+ * Bg < Bottom < Tile < Wibox < Top < FS < Overlay.
+ */
+
+#include <stdlib.h>
+#include <string.h>
+#include <sys/wait.h>
+#include <wlr/types/wlr_fractional_scale_v1.h>
+#include <wlr/types/wlr_layer_shell_v1.h>
+#include <wlr/types/wlr_output.h>
+#include <wlr/types/wlr_scene.h>
+#include <wlr/util/log.h>
+
+#include "clay.h"
+#include "declare.h"
+#include "render.h"
+#include "somewm.h"
+#include "somewm_types.h"
+#include "globalconf.h"
+#include "client.h"
+#include "color.h"
+#include "focus.h"
+#include "somewm_api.h"
+#include "monitor.h"
+#include "stack.h"
+#include "window.h"
+#include "common/util.h"
+#include "objects/client.h"
+#include "objects/drawin.h"
+#include "objects/screen.h"
+
+/* One Clay context plus the render_state its solved commands reconcile
+ * into. Every output has a desktop band; the lua-lock band is created when
+ * the lock engages (covers and the lock surface drawin reconcile into
+ * LyrBlock, above locked_bg, below the raised external lock surface). */
+struct declare_band {
+	Clay_Context *clay;
+	void *arena;
+	struct wlr_scene_tree *tree;
+	struct render_state *render;
+};
+
+struct declare_output {
+	struct wlr_output *wlr_output;
+	struct declare_band desktop;
+	struct declare_band lock;
+	bool dirty;
+};
+
+/* Zero hooks until window.c installs the real ones at startup; the
+ * reconciler only consults them for CUSTOM commands and borrowed nodes,
+ * neither of which can exist before then. */
+static struct render_client_hooks client_hooks;
+
+void
+declare_set_client_hooks(const struct render_client_hooks *hooks)
+{
+	client_hooks = *hooks;
+}
+
+/* --- the handle registry --- */
+
+struct handle_entry {
+	void *object;
+	enum declare_kind kind;
+	uint32_t id;
+};
+
+static struct handle_entry *handles;
+static size_t handles_len, handles_cap;
+static uint32_t handle_next = 1;
+
+static uint64_t
+handle_pack(enum declare_kind kind, uint32_t id)
+{
+	return ((uint64_t)kind << 32) | id;
+}
+
+/* Chrome scale is tens of objects; linear scans are fine. */
+static uint64_t
+handle_for(void *object, enum declare_kind kind)
+{
+	for (size_t i = 0; i < handles_len; i++)
+		if (handles[i].object == object)
+			return handle_pack(handles[i].kind, handles[i].id);
+	if (handles_len == handles_cap) {
+		handles_cap = handles_cap ? handles_cap * 2 : 32;
+		p_realloc(&handles, handles_cap);
+	}
+	handles[handles_len++] = (struct handle_entry) {
+		.object = object, .kind = kind, .id = handle_next++,
+	};
+	return handle_pack(kind, handles[handles_len - 1].id);
+}
+
+void *
+declare_handle_get(uint64_t handle, enum declare_kind *kind)
+{
+	uint32_t id = (uint32_t)handle;
+
+	for (size_t i = 0; i < handles_len; i++) {
+		if (handles[i].id != id)
+			continue;
+		if (handles[i].kind != (enum declare_kind)(handle >> 32))
+			return NULL;
+		if (kind)
+			*kind = handles[i].kind;
+		return handles[i].object;
+	}
+	return NULL;
+}
+
+void
+declare_handle_drop(void *object)
+{
+	for (size_t i = 0; i < handles_len; i++) {
+		if (handles[i].object == object) {
+			handles[i] = handles[--handles_len];
+			return;
+		}
+	}
+}
+
+/* --- leaf declarations --- */
+
+static void
+declare_leaf(Clay_ElementDeclaration *decl)
+{
+	Clay__OpenElement();
+	Clay__ConfigureOpenElementPtr(decl);
+	Clay__CloseElement();
+}
+
+static Clay_ElementDeclaration
+leaf_at(Clay_String label, uint32_t index, int x, int y, int w, int h)
+{
+	return (Clay_ElementDeclaration) {
+		.id = Clay__HashString(label, index, 0),
+		.layout.sizing = {
+			.width = CLAY_SIZING_FIXED(w),
+			.height = CLAY_SIZING_FIXED(h),
+		},
+		.floating = {
+			.offset = { .x = x, .y = y },
+			.attachTo = CLAY_ATTACH_TO_ROOT,
+		},
+	};
+}
+
+/* The per-element userData word (render.h): registry id in bits 0-31, kind
+ * in 32-39, opacity byte in 40-47. A packed integer rather than a pointer,
+ * so a retained command can never dangle into freed registry state; the low
+ * 40 bits are exactly a declare handle. */
+_Static_assert(sizeof(void *) >= 8, "userData packing needs 64-bit pointers");
+
+static void *
+leaf_userdata(uint64_t handle, float opacity)
+{
+	return (void *)(uintptr_t)(handle
+		| ((uint64_t)(1 + (unsigned)(opacity * 254.0f + 0.5f)) << 40));
+}
+
+void *
+declare_output_hit(struct declare_output *dout, struct wlr_scene_node *node,
+	enum declare_kind *kind)
+{
+	void *ud = render_hit_userdata(dout->desktop.render, node);
+
+	if (!ud && dout->lock.render)
+		ud = render_hit_userdata(dout->lock.render, node);
+	if (!ud)
+		return NULL;
+	return declare_handle_get((uintptr_t)ud & 0xFFFFFFFFFFULL, kind);
+}
+
+/* somewm colors are straight-alpha 0-1 floats; Clay_Color is 0-255.
+ * The renderer premultiplies once when converting back for wlr_scene. */
+static Clay_Color
+clay_color(const float rgba[4])
+{
+	return (Clay_Color) {
+		rgba[0] * 255.0f, rgba[1] * 255.0f,
+		rgba[2] * 255.0f, rgba[3] * 255.0f,
+	};
+}
+
+static void
+client_border_rgba(Client *c, float out[4])
+{
+	if (c->border_color.initialized)
+		color_to_floats(&c->border_color, out);
+	else
+		memcpy(out, c->urgent ? get_urgentcolor() : get_bordercolor(),
+			4 * sizeof(float));
+}
+
+/* The frame box: awful.layout's geometry plus the border ring drawn around
+ * the content, positioned output-local (the render band sits at the output's
+ * layout position). One BORDER element and one CUSTOM element at the same
+ * box, border first so the borrowed tree, popups included, stacks above it,
+ * matching the popup raise in client_configure_to_box(). */
+static void
+declare_client(Client *c, Monitor *m)
+{
+	uint64_t handle = handle_for(c, DECLARE_KIND_CLIENT);
+	uint32_t id = (uint32_t)handle;
+	int bw = c->bw;
+	int fw = c->geometry.width + 2 * bw;
+	int fh = c->geometry.height + 2 * bw;
+	int x = c->geometry.x - m->m.x;
+	int y = c->geometry.y - m->m.y;
+	bool clamp = client_clamps_to_monitor(c);
+
+	/* Under a clip-offscreen layout, a fully offscreen client declares
+	 * nothing: the sweep releases its tree disabled, which is today's
+	 * visible=false hide. The test uses the geometry box, matching the
+	 * content-box test in client_configure_to_box(). */
+	if (clamp && (x + bw + c->geometry.width <= 0
+			|| y + bw + c->geometry.height <= 0
+			|| x + bw >= m->m.width
+			|| y + bw >= m->m.height))
+		return;
+
+	if (bw > 0) {
+		Clay_ElementDeclaration b = leaf_at(
+			CLAY_STRING("client.border"), id, x, y, fw, fh);
+		float rgba[4];
+
+		client_border_rgba(c, rgba);
+		b.border.color = clay_color(rgba);
+		b.border.width = (Clay_BorderWidth) {
+			bw, bw, bw, bw, 0 };
+		b.userData = leaf_userdata(handle, 1.0f);
+		if (clamp) {
+			/* The monitor scissor: a floating clip wrapper at the
+			 * output box; the border rides inside as an
+			 * attach-to-parent child inheriting the wrapper's clip
+			 * (clay.h:2077-2079, 2123), so a partially offscreen
+			 * border clips at the output edge instead of bleeding
+			 * onto the neighbor. The surface leaf stays outside:
+			 * CUSTOM is never clipped, and the surface's own clamp
+			 * lives in client_configure_to_box(). */
+			Clay_ElementDeclaration w = leaf_at(
+				CLAY_STRING("client.clip"), id,
+				0, 0, m->m.width, m->m.height);
+			w.clip = (Clay_ClipElementConfig) {
+				.horizontal = true, .vertical = true };
+			b.floating.attachTo = CLAY_ATTACH_TO_PARENT;
+			b.floating.clipTo = CLAY_CLIP_TO_ATTACHED_PARENT;
+			Clay__OpenElement();
+			Clay__ConfigureOpenElementPtr(&w);
+			declare_leaf(&b);
+			Clay__CloseElement();
+		} else {
+			declare_leaf(&b);
+		}
+	}
+
+	Clay_ElementDeclaration s = leaf_at(
+		CLAY_STRING("client.surface"), id, x, y, fw, fh);
+	s.custom.customData = (void *)(uintptr_t)handle;
+	s.userData = leaf_userdata(handle, 1.0f);
+	declare_leaf(&s);
+}
+
+static bool
+declarable_client(Client *c)
+{
+	if (!c || !c->scene || !client_surface(c)
+			|| !client_surface(c)->mapped)
+		return false;
+	/* Banning's visibility fact (tags, minimized) becomes a declare
+	 * filter: an undeclared client's tree is released disabled by the
+	 * sweep. Unmanaged clients are not tag-tracked. */
+	return client_is_unmanaged(c) || client_isvisible(c);
+}
+
+/* Transients ride their parent: declared right above it in the parent's
+ * band, mirroring stack_transients_above() (stack.c). Unmanaged children
+ * are excluded; declare_unmanaged_clients() owns every unmanaged client,
+ * and declaring one here too would hash a duplicate Clay id and abort. */
+static void
+declare_client_tree(Client *c, Monitor *m)
+{
+	declare_client(c, m);
+	foreach(node, globalconf.stack)
+		if ((*node)->transient_for == c && (*node)->mon == m
+				&& !client_is_unmanaged(*node)
+				&& declarable_client(*node))
+			declare_client_tree(*node, m);
+}
+
+/* Whether declare_client_tree() will reach c through its parent. When it
+ * will not (parent minimized, unmapped, unmanaged, or on another output),
+ * c declares as a root in its own layer instead of vanishing; the old
+ * scene path kept exactly these clients visible per-client. The immediate
+ * parent suffices: every managed declarable client on m is declared, as a
+ * root or by riding one, so a declarable parent is a declared parent. */
+static bool
+transient_rides_parent(Client *c, Monitor *m)
+{
+	Client *p = c->transient_for;
+
+	return p && p->mon == m && !client_is_unmanaged(p)
+		&& declarable_client(p);
+}
+
+static void
+declare_clients_in_layer(Monitor *m, window_layer_t want)
+{
+	foreach(node, globalconf.stack) {
+		Client *c = *node;
+		window_layer_t layer;
+
+		/* Cheap pointer filters first; the tag-visibility checks walk
+		 * Lua state and run last. Unmanaged (override-redirect) clients
+		 * bypass stacking attributes and declare at the top of the
+		 * overlay band instead. */
+		if (!c || c->mon != m || client_is_unmanaged(c))
+			continue;
+		layer = stack_client_layer(c);
+		if (layer == WINDOW_LAYER_IGNORE)
+			layer = WINDOW_LAYER_NORMAL;
+		if (layer != want)
+			continue;
+		if (c->transient_for && transient_rides_parent(c, m))
+			continue;
+		if (!declarable_client(c))
+			continue;
+		declare_client_tree(c, m);
+	}
+}
+
+/* Unmanaged clients have no c->mon assignment to trust; each declares on
+ * exactly one output, the one under its center, so two outputs never fight
+ * over borrowing the same scene tree. */
+static Monitor *
+monitor_for_unmanaged(Client *c)
+{
+	Monitor *m = xytomon(c->geometry.x + c->geometry.width / 2.0,
+		c->geometry.y + c->geometry.height / 2.0);
+
+	return m ? m : c->mon;
+}
+
+static void
+declare_unmanaged_clients(Monitor *m)
+{
+	foreach(node, globalconf.stack) {
+		Client *c = *node;
+
+		if (!c || !client_is_unmanaged(c))
+			continue;
+		if (monitor_for_unmanaged(c) != m)
+			continue;
+		if (!declarable_client(c))
+			continue;
+		declare_client(c, m);
+	}
+}
+
+static void
+declare_layer_surface(LayerSurface *l, Monitor *m)
+{
+	uint64_t handle = handle_for(l, DECLARE_KIND_LAYER);
+	struct wlr_layer_surface_v1 *ls = l->layer_surface;
+	Clay_ElementDeclaration s = leaf_at(CLAY_STRING("layer.surface"),
+		(uint32_t)handle,
+		l->scene->node.x - m->m.x, l->scene->node.y - m->m.y,
+		ls->current.actual_width, ls->current.actual_height);
+
+	s.custom.customData = (void *)(uintptr_t)handle;
+	s.userData = leaf_userdata(handle, 1.0f);
+	declare_leaf(&s);
+}
+
+static void
+declare_layer_band(Monitor *m, int band)
+{
+	LayerSurface *l;
+
+	/* protocols.c prepends new surfaces to m->layers, and scene child
+	 * order stacks newer surfaces on top; reverse iteration declares the
+	 * oldest first, at the bottom. */
+	wl_list_for_each_reverse(l, &m->layers[band], link) {
+		if (!l->mapped || !l->scene)
+			continue;
+		declare_layer_surface(l, m);
+	}
+}
+
+/* --- drawins as whole-buffer image leaves ---
+ *
+ * Shadow below border below content, all riding the drawin's own image
+ * entries (objects/drawin.c fills them; gen bumps on content change).
+ * Opacity applies to the content leaf only, matching the old scene-buffer
+ * path, which never set opacity on the border or shadow. */
+static void
+declare_drawin(drawin_t *d, Monitor *m)
+{
+	uint64_t handle = handle_for(d, DECLARE_KIND_DRAWIN);
+	uint32_t id = (uint32_t)handle;
+	int bw = d->border_width;
+	int x = d->x - m->m.x;
+	int y = d->y - m->m.y;
+	float opacity = d->opacity >= 0 ? (float)d->opacity : 1.0f;
+
+	if (d->shadow_entry.native) {
+		int sx, sy, sw, sh;
+		shadow_box(&d->shadow_entry_config, d->width, d->height,
+			&sx, &sy, &sw, &sh);
+		Clay_ElementDeclaration s = leaf_at(CLAY_STRING("drawin.shadow"),
+			id, x + sx, y + sy, sw, sh);
+		s.image.imageData = &d->shadow_entry;
+		declare_leaf(&s);
+	}
+	if (bw > 0 && d->border_entry.native) {
+		Clay_ElementDeclaration b = leaf_at(CLAY_STRING("drawin.border"),
+			id, x - bw, y - bw, d->width + 2 * bw, d->height + 2 * bw);
+		b.image.imageData = &d->border_entry;
+		b.userData = leaf_userdata(handle, 1.0f);
+		declare_leaf(&b);
+	}
+
+	Clay_ElementDeclaration c = leaf_at(CLAY_STRING("drawin.image"), id,
+		x, y, d->width, d->height);
+	c.image.imageData = &d->content_entry;
+	c.userData = leaf_userdata(handle, opacity);
+	declare_leaf(&c);
+}
+
+/* Map-then-draw: a drawin only declares once its content entry holds pixels,
+ * the same gate the old path applied by enabling the scene node after the
+ * first refresh. */
+static bool
+declarable_drawin(drawin_t *d, Monitor *m)
+{
+	return d->visible
+		&& d->content_entry.native
+		&& d->screen && d->screen->monitor == m;
+}
+
+static void
+declare_drawins_in_band(Monitor *m, int scene_layer)
+{
+	foreach(item, globalconf.drawins) {
+		drawin_t *d = *item;
+
+		if (stack_drawin_layer(d) != scene_layer)
+			continue;
+		/* Lock drawins belong to the lock pass while locked. */
+		if (session_is_locked() && some_is_lock_drawin(d))
+			continue;
+		if (!declarable_drawin(d, m))
+			continue;
+		declare_drawin(d, m);
+	}
+}
+
+/* The opaque backing the xdg protocol requires under a non-opaque
+ * fullscreen surface; replaces the per-monitor fullscreen_bg scene rect,
+ * enabled under the same condition (arrange()'s focustop check). */
+static void
+declare_fullscreen_bg(Monitor *m)
+{
+	Client *c = focustop(m);
+
+	if (!c || !c->fullscreen)
+		return;
+
+	Clay_ElementDeclaration bg = leaf_at(CLAY_STRING("fullscreen_bg"), 0,
+		0, 0, m->m.width, m->m.height);
+	bg.backgroundColor = clay_color(globalconf.appearance.fullscreen_bg);
+	declare_leaf(&bg);
+}
+
+static void
+declare_scene(Monitor *m)
+{
+	declare_layer_band(m, ZWLR_LAYER_SHELL_V1_LAYER_BACKGROUND);
+	declare_clients_in_layer(m, WINDOW_LAYER_DESKTOP);
+	declare_drawins_in_band(m, LyrBg);
+	declare_layer_band(m, ZWLR_LAYER_SHELL_V1_LAYER_BOTTOM);
+	declare_clients_in_layer(m, WINDOW_LAYER_BELOW);
+	declare_clients_in_layer(m, WINDOW_LAYER_NORMAL);
+	declare_drawins_in_band(m, LyrWibox);
+	declare_layer_band(m, ZWLR_LAYER_SHELL_V1_LAYER_TOP);
+	declare_clients_in_layer(m, WINDOW_LAYER_ABOVE);
+	declare_drawins_in_band(m, LyrTop);
+	declare_fullscreen_bg(m);
+	declare_clients_in_layer(m, WINDOW_LAYER_FULLSCREEN);
+	declare_layer_band(m, ZWLR_LAYER_SHELL_V1_LAYER_OVERLAY);
+	declare_clients_in_layer(m, WINDOW_LAYER_ONTOP);
+	declare_drawins_in_band(m, LyrOverlay);
+	declare_unmanaged_clients(m);
+	/* Session lock: locked_bg, the lock covers, and the lock surface stay
+	 * C-owned scene nodes in LyrBlock, above this whole band. */
+}
+
+/* --- context lifecycle and the frame entry --- */
+
+static void
+handle_clay_error(Clay_ErrorData error)
+{
+	/* A Clay error (arena exhaustion, duplicate id, command array
+	 * overflow) is a bug, not a condition to ride out. */
+	wlr_log(WLR_ERROR, "clay error %d: %.*s", error.errorType,
+		error.errorText.length, error.errorText.chars);
+	abort();
+}
+
+/* One band: an arena-backed Clay context and a render_state reconciling
+ * into a fresh tree under parent. */
+static void
+declare_band_init(struct declare_band *band, struct wlr_output *wlr_output,
+	struct wlr_scene_tree *parent)
+{
+	uint32_t arena_size = Clay_MinMemorySize();
+	int width, height;
+
+	wlr_output_effective_resolution(wlr_output, &width, &height);
+	band->arena = malloc(arena_size);
+	band->clay = Clay_Initialize(
+		Clay_CreateArenaWithCapacityAndMemory(arena_size, band->arena),
+		(Clay_Dimensions) { .width = width, .height = height },
+		(Clay_ErrorHandler) { .errorHandlerFunction = handle_clay_error });
+	band->tree = wlr_scene_tree_create(parent);
+	band->render = render_create(band->tree);
+}
+
+static void
+declare_band_wipe(struct declare_band *band)
+{
+	if (!band->clay)
+		return;
+	/* The Clay_Context lives inside the arena being freed. Clay keeps a
+	 * global current-context pointer; left dangling, the next
+	 * Clay_MinMemorySize or Clay_Initialize would read freed memory. */
+	if (Clay_GetCurrentContext() == band->clay)
+		Clay_SetCurrentContext(NULL);
+	render_destroy(band->render, &client_hooks);
+	wlr_scene_node_destroy(&band->tree->node);
+	free(band->arena);
+}
+
+/* Layout dimensions, band position, and raster scale have one owner: this
+ * function, run at band creation and on every updatemons pass. The frame
+ * entry never re-derives them. */
+static void
+declare_band_update(struct declare_band *band, struct wlr_output *wlr_output,
+	int lx, int ly)
+{
+	int width, height;
+
+	if (!band->clay)
+		return;
+	wlr_output_effective_resolution(wlr_output, &width, &height);
+	Clay_SetCurrentContext(band->clay);
+	Clay_SetLayoutDimensions(
+		(Clay_Dimensions) { .width = width, .height = height });
+	render_set_position(band->render, lx, ly);
+	render_set_scale(band->render, wlr_output->scale);
+}
+
+struct declare_output *
+declare_output_create(struct wlr_output *wlr_output)
+{
+	struct declare_output *dout = calloc(1, sizeof(*dout));
+
+	dout->wlr_output = wlr_output;
+	declare_band_init(&dout->desktop, wlr_output, &scene->tree);
+	wlr_scene_node_place_below(&dout->desktop.tree->node,
+		&layers[LyrBlock]->node);
+	dout->dirty = true;
+	return dout;
+}
+
+/* The lock scene, in some_activate_lua_lock()'s own order: the covers, then
+ * the lock surface drawin on top. */
+static void
+declare_lock_scene(Monitor *m)
+{
+	drawin_t *lock_surface = some_get_lua_lock_surface();
+	int cover_count;
+	drawin_t **covers = some_get_lua_lock_covers(&cover_count);
+
+	for (int i = 0; i < cover_count; i++)
+		if (covers[i] && declarable_drawin(covers[i], m))
+			declare_drawin(covers[i], m);
+	if (lock_surface && declarable_drawin(lock_surface, m))
+		declare_drawin(lock_surface, m);
+}
+
+void
+declare_lock_set_visible(bool on)
+{
+	Monitor *m;
+
+	wl_list_for_each(m, &mons, link) {
+		if (!m->declare)
+			continue;
+		/* Create the lock band on engage, before the caller raises the
+		 * covers and lock surface: wlroots appends new children topmost,
+		 * so a band created after the raise would land above them. */
+		if (on && !m->declare->lock.clay) {
+			declare_band_init(&m->declare->lock,
+				m->declare->wlr_output, layers[LyrBlock]);
+			declare_band_update(&m->declare->lock,
+				m->declare->wlr_output, m->m.x, m->m.y);
+		}
+		if (m->declare->lock.render)
+			render_set_enabled(m->declare->lock.render, on);
+		declare_output_mark_dirty(m->declare);
+	}
+}
+
+void
+declare_output_destroy(struct declare_output *dout)
+{
+	declare_band_wipe(&dout->desktop);
+	declare_band_wipe(&dout->lock);
+	free(dout);
+}
+
+void
+declare_output_update(struct declare_output *dout, int lx, int ly)
+{
+	declare_band_update(&dout->desktop, dout->wlr_output, lx, ly);
+	declare_band_update(&dout->lock, dout->wlr_output, lx, ly);
+	declare_output_mark_dirty(dout);
+}
+
+void
+declare_output_mark_dirty(struct declare_output *dout)
+{
+	dout->dirty = true;
+	wlr_output_schedule_frame(dout->wlr_output);
+}
+
+int
+declare_output_frame(struct declare_output *dout, Monitor *m, bool lock_active)
+{
+	struct declare_band *band;
+
+	if (!dout->dirty)
+		return -1;
+	dout->dirty = false;
+
+	/* While lua-locked, this output solves its lock scene instead; the
+	 * desktop band keeps its last scene, occluded by locked_bg. The lock
+	 * band normally exists already (declare_lock_set_visible creates it
+	 * on engage, before the lock surface is raised above it); this covers
+	 * outputs created mid-lock. */
+	if (lock_active && !dout->lock.clay) {
+		declare_band_init(&dout->lock, dout->wlr_output, layers[LyrBlock]);
+		declare_band_update(&dout->lock, dout->wlr_output, m->m.x, m->m.y);
+	}
+	band = lock_active ? &dout->lock : &dout->desktop;
+
+	Clay_SetCurrentContext(band->clay);
+	Clay_BeginLayout();
+	if (lock_active)
+		declare_lock_scene(m);
+	else
+		declare_scene(m);
+	Clay_RenderCommandArray commands = Clay_EndLayout();
+
+	return render_reconcile(band->render, commands, &client_hooks);
+}

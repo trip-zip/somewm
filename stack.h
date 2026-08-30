@@ -55,4 +55,15 @@ void stack_windows(void);
  */
 void stack_refresh(void);
 
+/** The stacking layer a client's attributes place it in.
+ * Also consumed by the declare pass, which expresses the same order as
+ * Clay declaration order. */
+window_layer_t stack_client_layer(Client *c);
+
+/** The scene layer (Lyr*) a drawin's type and ontop place it in.
+ * The one statement of the drawin band policy, shared with the declare
+ * pass like stack_client_layer(). */
+struct drawin_t;
+int stack_drawin_layer(struct drawin_t *d);
+
 #endif /* STACK_H */

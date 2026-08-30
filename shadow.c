@@ -577,6 +577,76 @@ shadow_release(shadow_nodes_t *shadow)
     memset(shadow, 0, sizeof(*shadow));
 }
 
+/* ========== Composite Rendering ========== */
+
+void
+shadow_box(const shadow_config_t *config, int width, int height,
+           int *x, int *y, int *w, int *h)
+{
+    int outset = config->spread + shadow_radius(config);
+
+    *x = config->offset_x - outset;
+    *y = config->offset_y - outset;
+    *w = width + 2 * outset;
+    *h = height + 2 * outset;
+}
+
+cairo_surface_t *
+shadow_render_composite(const shadow_config_t *config, int width, int height)
+{
+    if (!config || !config->enabled)
+        return NULL;
+
+    int radius = shadow_radius(config);
+    int cr = shadow_corner_radius(config);
+    int sw = width + 2 * config->spread;
+    int sh = height + 2 * config->spread;
+
+    /* Same size gate as shadow_update_geometry(). */
+    if (sw <= 0 || sh <= 0 || sw < 2 * cr || sh < 2 * cr)
+        return NULL;
+
+    int surf_w = sw + 2 * radius;
+    int surf_h = sh + 2 * radius;
+    cairo_surface_t *surface = cairo_image_surface_create(
+        CAIRO_FORMAT_ARGB32, surf_w, surf_h);
+    if (cairo_surface_status(surface) != CAIRO_STATUS_SUCCESS) {
+        cairo_surface_destroy(surface);
+        return NULL;
+    }
+
+    cairo_surface_flush(surface);
+    uint32_t *pixels = (uint32_t *)cairo_image_surface_get_data(surface);
+    int stride_px = cairo_image_surface_get_stride(surface) / 4;
+    float paint = shadow_paint(config);
+
+    /* The shadow rect spans [radius, radius + sw) x [radius, radius + sh)
+     * in surface pixels. Each pixel center's signed distance to the rounded
+     * boundary is the one distance the corner patches and edge strips
+     * encode piecewise, so this matches the scene nine-patch exactly. */
+    float half_w = sw / 2.0f - cr;
+    float half_h = sh / 2.0f - cr;
+    float cx = radius + sw / 2.0f;
+    float cy = radius + sh / 2.0f;
+
+    for (int y = 0; y < surf_h; y++) {
+        float qy = fabsf(y + 0.5f - cy) - half_h;
+        for (int x = 0; x < surf_w; x++) {
+            float qx = fabsf(x + 0.5f - cx) - half_w;
+            float ox = qx > 0.0f ? qx : 0.0f;
+            float oy = qy > 0.0f ? qy : 0.0f;
+            float inner = qx > qy ? qx : qy;
+            float sdf = sqrtf(ox * ox + oy * oy)
+                + (inner < 0.0f ? inner : 0.0f) - cr;
+            pixels[y * stride_px + x] = shadow_pixel(config->color,
+                shadow_alpha_at(sdf, radius) * paint);
+        }
+    }
+
+    cairo_surface_mark_dirty(surface);
+    return surface;
+}
+
 /* ========== Lua Integration ========== */
 
 bool

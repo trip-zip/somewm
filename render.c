@@ -138,6 +138,10 @@ struct rnode {
 	bool borrowed;
 	uint64_t handle;
 	uint64_t gen;
+	/* The command's userData word (render.h), retained for the input
+	 * backmap; and the opacity last applied to an IMAGE node's buffer. */
+	void *user_data;
+	float opacity;
 };
 
 /* An open-addressing slot mapping a command key to its index in nodes. */
@@ -286,6 +290,9 @@ static struct rnode *rnode_add(struct render_state *rs, uint64_t key) {
 	p_grow(&rs->nodes, rs->len + 1, &rs->cap);
 	struct rnode *n = &rs->nodes[rs->len++];
 	memset(n, 0, sizeof(*n));
+	/* Matches wlroots' default: a fresh scene buffer is opaque, so a
+	 * declared opacity of 0.0 must not compare equal to the sentinel. */
+	n->opacity = 1.0f;
 	n->key = key;
 	return n;
 }
@@ -1144,6 +1151,15 @@ static int reconcile_image(struct render_state *rs, struct rnode *n,
 		muts++;
 	}
 
+	float opacity = render_userdata_opacity(cmd->userData);
+	if (opacity != n->opacity) {
+		wlr_scene_buffer_set_opacity(sb, opacity);
+		n->opacity = opacity;
+		if (!is_new) {
+			muts++;
+		}
+	}
+
 	/* Crop to the clip, exactly as reconcile_text does (buffer is ceil(box)
 	 * sized, so the source box is in box pixels). */
 	muts += rnode_apply_clip(n, sb, cmd, rbox, rs->scale, raster_changed);
@@ -1316,39 +1332,53 @@ static void verify_order(struct render_state *rs) {
 
 /* --- the scene-node-to-Clay-id backmap --- */
 
-uint32_t render_hit_id(struct render_state *rs, struct wlr_scene_node *node) {
+/* The retained node that drew a scene node: the hit node is the retained
+ * node itself (rect, buffer) or a descendant of it (a square border's side
+ * rect under its tree). */
+static struct rnode *rnode_for_scene_node(struct render_state *rs,
+		struct wlr_scene_node *node) {
 	if (node == NULL) {
-		return 0;
+		return NULL;
 	}
 	for (size_t i = 0; i < rs->len; i++) {
 		struct rnode *n = &rs->nodes[i];
 		if (n->node == NULL) {
 			continue;
 		}
-		/* The hit node is the retained node itself (rect, buffer) or a
-		 * descendant of it (a square border's side rect under its tree). */
 		for (struct wlr_scene_node *c = node; c != NULL;
 				c = c->parent != NULL ? &c->parent->node : NULL) {
 			if (c == n->node) {
-				/* RECTANGLE, IMAGE, and CUSTOM commands carry the element id
-				 * directly (comparable to Clay_GetPointerOverIds). TEXT and
-				 * BORDER commands carry a Clay-derived per-line / per-side
-				 * hash, not the element id, so they are not comparable; report
-				 * 0 for them (the structural checks cover their order and
-				 * clipping). */
-				uint32_t type = (uint32_t)(n->key >> 32);
-				if (type == CLAY_RENDER_COMMAND_TYPE_TEXT ||
-						type == CLAY_RENDER_COMMAND_TYPE_BORDER) {
-					return 0;
-				}
-				return (uint32_t)(n->key & 0xFFFFFFFF);
+				return n;
 			}
 			if (c == &rs->tree->node) {
 				break;
 			}
 		}
 	}
-	return 0;
+	return NULL;
+}
+
+void *render_hit_userdata(struct render_state *rs, struct wlr_scene_node *node) {
+	struct rnode *n = rnode_for_scene_node(rs, node);
+	return n != NULL ? n->user_data : NULL;
+}
+
+uint32_t render_hit_id(struct render_state *rs, struct wlr_scene_node *node) {
+	struct rnode *n = rnode_for_scene_node(rs, node);
+	if (n == NULL) {
+		return 0;
+	}
+	/* RECTANGLE, IMAGE, and CUSTOM commands carry the element id directly
+	 * (comparable to Clay_GetPointerOverIds). TEXT and BORDER commands
+	 * carry a Clay-derived per-line / per-side hash, not the element id,
+	 * so they are not comparable; report 0 for them (the structural checks
+	 * cover their order and clipping). */
+	uint32_t type = (uint32_t)(n->key >> 32);
+	if (type == CLAY_RENDER_COMMAND_TYPE_TEXT ||
+			type == CLAY_RENDER_COMMAND_TYPE_BORDER) {
+		return 0;
+	}
+	return (uint32_t)(n->key & 0xFFFFFFFF);
 }
 
 /* --- the reconcile pass --- */
@@ -1392,6 +1422,7 @@ int render_reconcile(struct render_state *rs, Clay_RenderCommandArray commands,
 		}
 		bool is_new = n->node == NULL;
 		n->gen = rs->gen;
+		n->user_data = cmd->userData;
 
 		/* The clip that applies to this command reflects every START/END
 		 * already crossed; this command's own START (below) affects only its

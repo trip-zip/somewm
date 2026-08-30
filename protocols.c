@@ -47,6 +47,7 @@
 struct wlr_input_device;
 
 #include "window.h"
+#include "declare.h"
 #include "focus.h"
 #include "input.h"
 #include "somewm_internal.h"
@@ -301,6 +302,7 @@ destroylayersurfacenotify(struct wl_listener *listener, void *data)
 	wl_list_remove(&l->destroy.link);
 	wl_list_remove(&l->unmap.link);
 	wl_list_remove(&l->surface_commit.link);
+	declare_handle_drop(l);
 	wlr_scene_node_destroy(&l->scene->node);
 	wlr_scene_node_destroy(&l->popups->node);
 	free(l);

@@ -452,6 +452,7 @@ somewm_sources = [
   'xwayland.c',
   'protocols.c',
   'monitor.c',
+  'declare.c',
   'input.c',
   'window.c',
   'focus.c',
