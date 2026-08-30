@@ -435,6 +435,7 @@ static void
 drawin_refresh_drawable(drawin_t *drawin)
 {
 	drawable_t *d;
+	struct image_entry *entry;
 	struct wlr_buffer *buffer;
 	cairo_surface_t *clipped_surface = NULL;
 	cairo_surface_t *masked_surface = NULL;
@@ -481,29 +482,15 @@ drawin_refresh_drawable(drawin_t *drawin)
 			work_surface = masked_surface;
 	}
 
-	/* Create SHM buffer from the final surface
-	 * This uses the shared buffer implementation in drawable.c */
-	if (work_surface != d->surface) {
-		cairo_surface_flush(work_surface);
-		buffer = drawable_create_buffer_from_data(
-			cairo_image_surface_get_width(work_surface),
-			cairo_image_surface_get_height(work_surface),
-			cairo_image_surface_get_data(work_surface),
-			cairo_image_surface_get_stride(work_surface));
-	} else {
-		buffer = drawable_create_buffer(d);
-	}
-
-	/* Feed the renderer's content entry the same pixels: the final masked
-	 * copy when masks applied (its ownership moves to the entry), else an
-	 * owned copy of the drawable surface. The scene-buffer upload above is
-	 * the half the Clay flip deletes; the entry is the surviving half. */
+	/* Feed the renderer's content entry the final pixels: the masked copy
+	 * when masks applied (its ownership moves to the entry), else an owned
+	 * copy of the drawable surface, repainted in place when sizes match. */
+	entry = &drawin->content_entry;
 	if (work_surface != d->surface) {
 		if (clipped_surface && clipped_surface != work_surface)
 			cairo_surface_destroy(clipped_surface);
-		drawin_entry_set(&drawin->content_entry, work_surface);
+		drawin_entry_set(entry, work_surface);
 	} else {
-		struct image_entry *entry = &drawin->content_entry;
 		int cw = cairo_image_surface_get_width(d->surface);
 		int ch = cairo_image_surface_get_height(d->surface);
 
@@ -515,13 +502,25 @@ drawin_refresh_drawable(drawin_t *drawin)
 			cairo_set_source_surface(cr, d->surface, 0, 0);
 			cairo_paint(cr);
 			cairo_destroy(cr);
-			cairo_surface_flush(entry->native);
 			entry->gen++;
 		} else {
 			drawin_entry_set(entry, drawin_copy_surface(d->surface));
 		}
 	}
+	if (!entry->native)
+		return;
+	cairo_surface_flush(entry->native);
 
+	/* Wake the frame path: the gen bump above changed declared content. */
+	if (drawin->screen && drawin->screen->monitor
+			&& drawin->screen->monitor->declare)
+		declare_output_mark_dirty(drawin->screen->monitor->declare);
+
+	/* The scene-buffer upload, reading the entry's pixels: the half the
+	 * Clay flip deletes. Everything above is the surviving half. */
+	buffer = drawable_create_buffer_from_data(entry->width, entry->height,
+		cairo_image_surface_get_data(entry->native),
+		cairo_image_surface_get_stride(entry->native));
 	if (!buffer) {
 		return;
 	}
@@ -550,13 +549,6 @@ drawin_refresh_drawable(drawin_t *drawin)
 		/* Show shadow too */
 		shadow_set_visible(&drawin->shadow, true);
 	}
-
-	/* Schedule a frame render on the output to ensure content is displayed
-	 * immediately, not waiting for the next external event. This mirrors
-	 * AwesomeWM's xcb_flush() which sends pending X requests immediately.
-	 * In Wayland, we request the compositor to render a new frame. */
-	if (drawin->screen && drawin->screen->monitor && drawin->screen->monitor->wlr_output)
-		wlr_output_schedule_frame(drawin->screen->monitor->wlr_output);
 }
 
 /** Assign screen to drawin based on its position
