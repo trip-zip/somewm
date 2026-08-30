@@ -59,17 +59,10 @@ typedef struct drawin_t {
 	 * Pointer retrieved via luaA_object_ref_item, pushed via luaA_object_push_item */
 	struct drawable_t *drawable;   /* Direct C pointer for callback access */
 
-	/* Scene graph integration for rendering (Wayland-specific) */
-	struct wlr_scene_tree *scene_tree;      /* Container node for positioning */
-	struct wlr_scene_buffer *scene_buffer;  /* The actual rendered surface */
-
-	/* Border rendering (Wayland-specific, shaped border support) */
-	struct wlr_scene_buffer *border_buffer; /* Single buffer for shaped border */
 	color_t border_color_parsed;            /* Cached parsed color for efficient refresh */
 
 	/* Shadow support (compositor-level, replaces picom shadows) */
 	shadow_config_t *shadow_config;         /* Per-drawin override (NULL = use defaults) */
-	shadow_nodes_t shadow;                  /* Shadow scene nodes */
 
 	/* Shape properties (AwesomeWM compatibility)
 	 * These are cairo_surface_t* alpha masks, either A1 (AwesomeWM's
@@ -124,6 +117,8 @@ void luaA_drawin_set_strut(lua_State *L, drawin_t *drawin, strut_t strut);
 
 /* Drawin geometry synchronization */
 void luaA_drawin_apply_geometry(drawin_t *drawin);
+/* Hand a renderer image entry a new owned surface (NULL clears it) */
+void drawin_entry_set(struct image_entry *entry, cairo_surface_t *owned);
 
 /* Drawin refresh cycle (called from main event loop) */
 void drawin_refresh(void);

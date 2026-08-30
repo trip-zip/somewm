@@ -10,6 +10,7 @@
 #include <glib.h>
 #include <wayland-server-core.h>
 
+#include "declare.h"
 #include "loop.h"
 #include "somewm.h"
 #include "somewm_api.h"
@@ -200,6 +201,16 @@ some_glib_poll(GPollFD *ufds, guint nfsd, gint timeout)
 	float length;
 	int saved_errno;
 
+	/* Apply pending declare marks before sleeping: input hit-testing reads
+	 * the reconciled scene, and a hidden or asleep output gets no frame
+	 * events to rebuild it in rendermon. Runs before the client flush so
+	 * configures the reconcile sends leave in this iteration. When the
+	 * scene changed, what sits under the stationary pointer may have too
+	 * (a surface mapped under it, a tag switch): re-evaluate pointer
+	 * focus, the way banning_refresh() does after visibility flips. */
+	if (declare_flush())
+		motionnotify(0, NULL, 0, 0, 0, 0);
+
 	/* Flush pending Wayland client data before polling
 	 * Clients won't receive data until we flush */
 	wl_display_flush_clients(dpy);
@@ -308,6 +319,9 @@ some_refresh(void)
 	/* Step 4: Update client visibility (banning) */
 	bool banning_pending = globalconf.need_lazy_banning;
 	banning_refresh();
+	/* Banning is a declare filter (declare.c): re-solve when it ran. */
+	if (banning_pending)
+		declare_mark_all_dirty();
 
 	/* Step 4.5: Re-evaluate pointer focus after visibility changes.
 	 * When scene nodes are disabled (banned) wlroots sends wl_pointer.leave,

@@ -24,6 +24,7 @@
 #include "globalconf.h"
 #include "color.h"
 #include "objects/drawin.h"
+#include "objects/drawable.h"
 #include "objects/systray.h"
 #include "common/luaobject.h"
 
@@ -102,112 +103,27 @@ systray_count_visible(void)
 	return count;
 }
 
-/* Systray icon buffer wrapper for wlr_scene_buffer */
-struct systray_icon_buffer {
-	struct wlr_buffer base;
-	void *data;
-	int width;
-	int height;
-	size_t stride;
-};
-
-static void systray_icon_buffer_destroy(struct wlr_buffer *wlr_buffer)
-{
-	struct systray_icon_buffer *buffer =
-		wl_container_of(wlr_buffer, buffer, base);
-	free(buffer->data);
-	free(buffer);
-}
-
-static bool systray_icon_buffer_begin_data_ptr_access(
-	struct wlr_buffer *wlr_buffer, uint32_t flags, void **data,
-	uint32_t *format, size_t *stride)
-{
-	struct systray_icon_buffer *buffer =
-		wl_container_of(wlr_buffer, buffer, base);
-	*data = buffer->data;
-	*format = DRM_FORMAT_ARGB8888;
-	*stride = buffer->stride;
-	return true;
-}
-
-static void systray_icon_buffer_end_data_ptr_access(struct wlr_buffer *wlr_buffer)
-{
-	/* Nothing to do */
-}
-
-static const struct wlr_buffer_impl systray_icon_buffer_impl = {
-	.destroy = systray_icon_buffer_destroy,
-	.begin_data_ptr_access = systray_icon_buffer_begin_data_ptr_access,
-	.end_data_ptr_access = systray_icon_buffer_end_data_ptr_access,
-};
-
-/** Create a wlr_buffer from a cairo surface */
-static struct wlr_buffer *
-systray_buffer_from_cairo(cairo_surface_t *surface)
-{
-	struct systray_icon_buffer *buffer;
-	int width, height;
-	size_t stride, size;
-	unsigned char *src_data;
-
-	if (!surface || cairo_surface_status(surface) != CAIRO_STATUS_SUCCESS)
-		return NULL;
-
-	if (cairo_image_surface_get_format(surface) != CAIRO_FORMAT_ARGB32)
-		return NULL;
-
-	width = cairo_image_surface_get_width(surface);
-	height = cairo_image_surface_get_height(surface);
-	stride = (size_t)cairo_image_surface_get_stride(surface);
-	src_data = cairo_image_surface_get_data(surface);
-
-	if (width <= 0 || height <= 0 || !src_data)
-		return NULL;
-
-	buffer = calloc(1, sizeof(*buffer));
-	if (!buffer)
-		return NULL;
-
-	size = stride * (size_t)height;
-	buffer->data = malloc(size);
-	if (!buffer->data) {
-		free(buffer);
-		return NULL;
-	}
-
-	memcpy(buffer->data, src_data, size);
-	buffer->width = width;
-	buffer->height = height;
-	buffer->stride = stride;
-
-	wlr_buffer_init(&buffer->base, &systray_icon_buffer_impl, width, height);
-
-	return &buffer->base;
-}
-
-/** Render systray icons to scene graph */
-static void
-systray_render_icons(drawin_t *drawin)
+/** Paint the visible tray icons into the hosting drawin's content pixels.
+ * Called from drawin_refresh_drawable() after the widget pixels landed in
+ * the content entry, so the icons sit on top exactly where the old scene
+ * overlay stacked them. target holds device pixels with no device scale
+ * set, so every coordinate scales by the drawable's surface scale. */
+void
+systray_composite(drawin_t *drawin, cairo_surface_t *target)
 {
 	systray_item_array_t *items;
-	int i, pos_x, pos_y, idx;
+	cairo_t *cr;
+	int i, idx;
 	int base_size, spacing, rows;
 	bool horizontal;
+	float scale;
 
-	if (!drawin || !drawin->scene_tree)
+	if (!drawin || drawin != globalconf.systray.parent)
 		return;
 
 	items = systray_get_items();
 	if (!items || items->len == 0)
 		return;
-
-	if (!globalconf.systray.scene_tree) {
-		globalconf.systray.scene_tree = wlr_scene_tree_create(drawin->scene_tree);
-		if (!globalconf.systray.scene_tree)
-			return;
-		globalconf.systray.scene_tree->node.data = drawin;
-	}
 
 	base_size = globalconf.systray.layout.base_size;
 	spacing = globalconf.systray.layout.spacing;
@@ -218,22 +134,18 @@ systray_render_icons(drawin_t *drawin)
 		base_size = 24;
 	if (rows <= 0)
 		rows = 1;
+	scale = drawin->drawable && drawin->drawable->surface_scale > 0
+		? drawin->drawable->surface_scale : 1.0f;
 
-	wlr_scene_node_set_position(&globalconf.systray.scene_tree->node,
-	                            globalconf.systray.layout.x,
-	                            globalconf.systray.layout.y);
-
-	{
-		struct wlr_scene_node *child, *tmp;
-		wl_list_for_each_safe(child, tmp, &globalconf.systray.scene_tree->children, link) {
-			wlr_scene_node_destroy(child);
-		}
-	}
+	cr = cairo_create(target);
+	cairo_scale(cr, scale, scale);
+	cairo_translate(cr, globalconf.systray.layout.x,
+	                globalconf.systray.layout.y);
 
 	idx = 0;
 	for (i = 0; i < items->len; i++) {
 		systray_item_t *item = items->tab[i];
-		int row, col;
+		int row, col, pos_x, pos_y;
 
 		if (!item || !item->is_valid)
 			continue;
@@ -243,43 +155,33 @@ systray_render_icons(drawin_t *drawin)
 		if (horizontal) {
 			col = idx / rows;
 			row = idx % rows;
-			pos_x = col * (base_size + spacing);
-			pos_y = row * (base_size + spacing);
 		} else {
 			row = idx / rows;
 			col = idx % rows;
-			pos_x = col * (base_size + spacing);
-			pos_y = row * (base_size + spacing);
 		}
+		pos_x = col * (base_size + spacing);
+		pos_y = row * (base_size + spacing);
 
-		if (item->icon) {
-			struct wlr_buffer *icon_buffer = systray_buffer_from_cairo(item->icon);
-			if (icon_buffer) {
-				struct wlr_scene_buffer *scene_buf;
-				scene_buf = wlr_scene_buffer_create(globalconf.systray.scene_tree,
-				                                    icon_buffer);
-				if (scene_buf) {
-					wlr_scene_node_set_position(&scene_buf->node, pos_x, pos_y);
-					scene_buf->node.data = drawin->drawable;
-					if (item->icon_width != base_size || item->icon_height != base_size) {
-						wlr_scene_buffer_set_dest_size(scene_buf, base_size, base_size);
-					}
-				}
-				wlr_buffer_drop(icon_buffer);
-			}
+		cairo_save(cr);
+		cairo_translate(cr, pos_x, pos_y);
+		if (item->icon
+				&& cairo_surface_status(item->icon) == CAIRO_STATUS_SUCCESS
+				&& item->icon_width > 0 && item->icon_height > 0) {
+			cairo_scale(cr, (double)base_size / item->icon_width,
+			            (double)base_size / item->icon_height);
+			cairo_set_source_surface(cr, item->icon, 0, 0);
+			cairo_paint(cr);
 		} else {
-			float color[4] = {0.5f, 0.5f, 0.8f, 1.0f};
-			struct wlr_scene_rect *rect;
-			rect = wlr_scene_rect_create(globalconf.systray.scene_tree,
-			                             base_size, base_size, color);
-			if (rect) {
-				wlr_scene_node_set_position(&rect->node, pos_x, pos_y);
-				rect->node.data = drawin->drawable;
-			}
+			/* No icon yet: the old path's placeholder tile */
+			cairo_set_source_rgba(cr, 0.5, 0.5, 0.8, 1.0);
+			cairo_rectangle(cr, 0, 0, base_size, base_size);
+			cairo_fill(cr);
 		}
+		cairo_restore(cr);
 
 		idx++;
 	}
+	cairo_destroy(cr);
 }
 
 /** Systray kickout - remove systray from a drawin */
@@ -289,12 +191,9 @@ systray_kickout(drawin_t *drawin)
 	if (globalconf.systray.parent != drawin)
 		return;
 
-	if (globalconf.systray.scene_tree) {
-		wlr_scene_node_destroy(&globalconf.systray.scene_tree->node);
-		globalconf.systray.scene_tree = NULL;
-	}
-
 	globalconf.systray.parent = NULL;
+	/* The old parent's entry still has the icons baked in; its next
+	 * redraw re-feeds the entry without them. */
 }
 
 /** awesome.systray() - Manage the system tray */
@@ -362,7 +261,9 @@ luaA_systray(lua_State *L)
 	globalconf.systray.layout.spacing = spacing;
 	globalconf.systray.layout.rows = rows > 0 ? rows : 1;
 
-	systray_render_icons(drawin);
+	/* Layout recorded; the icons composite into the drawin content entry
+	 * on its next drawable refresh, which the widget draw that called us
+	 * triggers. */
 
 	lua_pushinteger(L, systray_count_visible());
 	luaA_object_push(L, drawin);

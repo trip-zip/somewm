@@ -2283,9 +2283,6 @@ screen_client_moveto(client_t *c, screen_t *new_screen, bool doresize)
 	area_t new_geometry;
 	bool had_focus = false;
 
-	/* Forward declare apply_geometry_to_wlroots from somewm.c */
-	extern void apply_geometry_to_wlroots(client_t *c);
-
 	if (new_screen == c->screen)
 		return;
 
@@ -2359,12 +2356,9 @@ screen_client_moveto(client_t *c, screen_t *new_screen, bool doresize)
 		new_geometry.y = to.y;
 	}
 
-	/* move / resize the client */
+	/* move / resize the client; the next dirty frame declares it on the
+	 * new screen's band */
 	client_resize(c, new_geometry, false, false);
-
-	/* Force immediate scene node position update (bypass deferred refresh)
-	 * This ensures the window appears on the new screen immediately */
-	apply_geometry_to_wlroots(c);
 
 	/* emit signal */
 	luaA_object_push(L, c);
