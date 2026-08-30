@@ -227,10 +227,10 @@ arrange(Monitor *m)
 fallback:
 	/* Scene node visibility already updated at function start (Wayland-specific requirement) */
 
-	/* Update fullscreen background */
-	c = focustop(m);
-	wlr_scene_node_set_enabled(&m->fullscreen_bg->node,
-		c && c->fullscreen);
+	/* Everything arrange changed (visibility, geometry, the fullscreen_bg
+	 * condition) lands through the declare pass at the next frame. */
+	if (m->declare)
+		declare_output_mark_dirty(m->declare);
 
 	motionnotify(0, NULL, 0, 0, 0, 0);
 	some_recompute_idle_inhibit();
@@ -260,7 +260,7 @@ initialcommitnotify(struct wl_listener *listener, void *data)
 			WLR_XDG_TOPLEVEL_WM_CAPABILITIES_MINIMIZE);
 
 	/* A set_maximized that arrived before this commit already ran through
-	 * maximizenotify() into c->maximized; apply_geometry_to_wlroots() puts
+	 * maximizenotify() into c->maximized; client_configure_to_box() puts
 	 * it on the wire once the client is mapped. Nothing to fold in here. */
 
 	if (c->decoration)
@@ -296,9 +296,9 @@ commitnotify(struct wl_listener *listener, void *data)
 	 * Tiled clients have their geometry managed by the Lua layout engine,
 	 * which may intentionally position clients offscreen (e.g. carousel
 	 * layout). resize() calls applybounds() which would clamp offscreen
-	 * clients back to the monitor workarea. For tiled clients, call
-	 * apply_geometry_to_wlroots() directly to update clip, borders, scene
-	 * position, and re-send the configure event without clamping. */
+	 * clients back to the monitor workarea. For tiled clients, run the
+	 * configure leg directly to update clip and re-send the configure
+	 * event without clamping. */
 	if (some_client_get_floating(c) || c->fullscreen) {
 		resize(c, c->geometry, (some_client_get_floating(c) && !c->fullscreen));
 	} else {
@@ -307,7 +307,7 @@ commitnotify(struct wl_listener *listener, void *data)
 		 * (e.g. Ghostty) may never get a re-configure after a screen
 		 * change because client_set_size() is gated by !c->resize. */
 		client_set_bounds(c, c->geometry.width, c->geometry.height);
-		apply_geometry_to_wlroots(c);
+		client_configure_to_box(c);
 	}
 
 	/* mark a pending resize as completed */
@@ -830,8 +830,11 @@ mapnotify(struct wl_listener *listener, void *data)
 	lua_State *L;
 	tag_t *tag;
 
-	/* Create scene tree for this client and its border */
-	c->scene = wlr_scene_tree_create(layers[LyrTile]);
+	/* Create scene tree for this client, parked until the first frame that
+	 * declares it borrows the tree into an output's band; being created in
+	 * the disabled parked tree means an enable below cannot flash the
+	 * surface at 0,0 before the reconciler places it. */
+	c->scene = wlr_scene_tree_create(window_parked_tree());
 	/* Enabled later by a call to arrange() */
 	wlr_scene_node_set_enabled(&c->scene->node, client_is_unmanaged(c));
 	c->scene_surface = c->client_type == XDGShell
@@ -889,16 +892,14 @@ mapnotify(struct wl_listener *listener, void *data)
 	}
 #endif
 
-	/* Handle unmanaged clients first so we can return prior create borders */
+	/* Handle unmanaged clients first: they skip the manage machinery */
 	if (client_is_unmanaged(c)) {
 		/* Unmanaged (override_redirect) X11 surfaces bypass the window
-		 * manager and must display above all managed windows. Place
-		 * them in LyrOverlay to match X11 semantics; LyrBlock (session
-		 * lock) still covers them. stack_refresh() skips unmanaged
-		 * clients so this placement is preserved. */
-		wlr_scene_node_reparent(&c->scene->node, layers[LyrOverlay]);
-		wlr_scene_node_set_position(&c->scene->node, c->geometry.x, c->geometry.y);
+		 * manager and must display above all managed windows. The
+		 * declare pass draws them at the top of the overlay band
+		 * (declare_unmanaged_clients); LyrBlock still covers them. */
 		client_set_size(c, c->geometry.width, c->geometry.height);
+		declare_mark_all_dirty();
 		if (client_wants_focus(c)) {
 			focusclient(c, 1);
 			exclusive_focus = c;
@@ -906,14 +907,8 @@ mapnotify(struct wl_listener *listener, void *data)
 		goto unset_fullscreen;
 	}
 
-	for (i = 0; i < 4; i++) {
-		c->border[i] = wlr_scene_rect_create(c->scene, 0, 0,
-				c->urgent ? get_urgentcolor() : get_bordercolor());
-		c->border[i]->node.data = c;
-	}
-
-	/* Shadow is lazily created by apply_geometry_to_wlroots() on the first
-	 * refresh cycle after the map */
+	/* Border and shadow are drawn by the declare pass; the client shadow's
+	 * scene nodes are lazily created by the configure hook. */
 
 	/* Create foreign toplevel handle for external tools (rofi, taskbars, etc.) */
 	if (foreign_toplevel_mgr) {
@@ -1014,7 +1009,7 @@ mapnotify(struct wl_listener *listener, void *data)
 		 * above and trip-zip/somewm#530 for why this can't run synchronously
 		 * here. */
 		c->resize = 0;
-		apply_geometry_to_wlroots(c);
+		client_configure_to_box(c);
 		schedule_flush_clients(dpy);
 
 		/* Enable scene node for transient client */
@@ -1138,7 +1133,7 @@ mapnotify(struct wl_listener *listener, void *data)
 		 * Fixes Firefox tiling issue (#10). Reset c->resize to force re-send
 		 * configure even if setmon()->resize() already queued one. */
 		c->resize = 0;
-		apply_geometry_to_wlroots(c);
+		client_configure_to_box(c);
 
 		/* Schedule a flush so the encoded configure leaves the kernel buffer
 		 * at the next event-loop idle, before the loop blocks in poll(). The
@@ -1250,9 +1245,9 @@ maximizenotify(struct wl_listener *listener, void *data)
 	}
 
 	/* xdg-shell owes a configure for every request. When the state changed,
-	 * apply_geometry_to_wlroots() sends one next frame carrying the new
-	 * maximized flag and the new size together; acking here too would land
-	 * first, with stale state. So only ack what we ignored or no-opped. */
+	 * client_configure_to_box() sends one carrying the new maximized flag
+	 * and the new size together; acking here too would land first, with
+	 * stale state. So only ack what we ignored or no-opped. */
 	if (c->surface.xdg->initialized && before == (bool)c->maximized)
 		wlr_xdg_surface_schedule_configure(c->surface.xdg);
 }
@@ -1334,11 +1329,12 @@ client_layout_clips_offscreen(Client *c)
 
 /* Released trees park here, disabled, outside every band: a tree no output
  * declares (banned tag, unmapped, mid-migration) must not linger in a band
- * it no longer belongs to. */
+ * it no longer belongs to. New client and layer-surface trees are also born
+ * here, so nothing shows before the reconciler places it. */
 static struct wlr_scene_tree *render_parked;
 
-static struct wlr_scene_tree *
-parked_tree(void)
+struct wlr_scene_tree *
+window_parked_tree(void)
 {
 	if (!render_parked) {
 		render_parked = wlr_scene_tree_create(&scene->tree);
@@ -1348,8 +1344,7 @@ parked_tree(void)
 }
 
 /* The client shadow is parented inside c->scene and rides the borrowed
- * tree; only its geometry update needs a home once
- * apply_geometry_to_wlroots() is gone, and that home is the configure leg. */
+ * tree; its geometry update lives on the configure leg. */
 static void
 client_update_shadow(Client *c)
 {
@@ -1460,7 +1455,7 @@ hook_release(void *data, uint64_t handle, void *owner_token)
 	if (*owner != owner_token)
 		return;
 	*owner = NULL;
-	wlr_scene_node_reparent(&stree->node, parked_tree());
+	wlr_scene_node_reparent(&stree->node, window_parked_tree());
 	wlr_scene_node_set_enabled(&stree->node, false);
 }
 
@@ -1475,6 +1470,22 @@ hook_has_popup(void *data, uint64_t handle)
 	return ptree && !wl_list_empty(&ptree->children);
 }
 
+/* The input filter for image leaves (render.h). Only a drawin's content
+ * leaf carries a handle; its shape_input decides per pixel, and node-local
+ * coordinates are drawin-local because the leaf sits exactly at the drawin
+ * box. The border and shadow leaves carry no userData word and never take
+ * input, matching the old border_buffer's point_accepts_input. */
+static bool
+hook_accepts_input(void *data, void *userdata, double x, double y)
+{
+	enum declare_kind kind;
+	void *obj = declare_handle_get(declare_userdata_handle(userdata), &kind);
+
+	if (!obj || kind != DECLARE_KIND_DRAWIN)
+		return false;
+	return drawin_accepts_input_at(obj, x, y);
+}
+
 void
 window_setup_render_hooks(void)
 {
@@ -1485,6 +1496,7 @@ window_setup_render_hooks(void)
 		.release = hook_release,
 		.reposition = hook_reposition,
 		.has_popup = hook_has_popup,
+		.accepts_input = hook_accepts_input,
 	};
 
 	declare_set_client_hooks(&hooks);
@@ -1510,12 +1522,11 @@ client_clamps_to_monitor(Client *c)
 /* The configure-client-to-box seam: the client-facing half of geometry
  * application. Positions and clips nodes inside the client's scene tree and
  * sends the state-batched configure, but never touches the frame somewm
- * draws around the client (c->scene position, borders, shadow). At the Clay
- * flip the render_client_hooks calls (render.h) land here and the frame
- * half is replaced by the reconciler; paths that force a configure re-send
- * (c->resize = 0, then a re-apply) keep calling this directly. Returns
- * whether the client content is at least partially visible on its monitor,
- * so the caller can toggle the frame nodes it owns to match. */
+ * draws around the client (c->scene position, borders), which the
+ * reconciler owns. The render_client_hooks configure and reposition legs
+ * land here; paths that force a configure re-send (c->resize = 0, then a
+ * re-apply) call this directly. Returns whether the client content is at
+ * least partially visible on its monitor. */
 bool
 client_configure_to_box(Client *c)
 {
@@ -1649,55 +1660,6 @@ client_configure_to_box(Client *c)
 	return visible;
 }
 
-/* Apply geometry to wlroots scene graph - Wayland-specific rendering layer.
- * This function ONLY updates wlroots; it does NOT modify c->geometry or emit signals.
- * Called by resize() for interactive resize and client_resize_do() for Lua-initiated resize.
- */
-void
-apply_geometry_to_wlroots(Client *c)
-{
-	if (!c->scene || !client_surface(c) || !client_surface(c)->mapped)
-		return;
-
-	/* The frame footprint is the geometry plus the border drawn outside it */
-	int frame_w = c->geometry.width + 2 * c->bw;
-	int frame_h = c->geometry.height + 2 * c->bw;
-
-	/* Update scene-graph position and borders */
-	wlr_scene_node_set_position(&c->scene->node, c->geometry.x, c->geometry.y);
-	wlr_scene_rect_set_size(c->border[0], frame_w, c->bw);
-	wlr_scene_rect_set_size(c->border[1], frame_w, c->bw);
-	wlr_scene_rect_set_size(c->border[2], c->bw, c->geometry.height);
-	wlr_scene_rect_set_size(c->border[3], c->bw, c->geometry.height);
-	wlr_scene_node_set_position(&c->border[1]->node, 0, frame_h - c->bw);
-	wlr_scene_node_set_position(&c->border[2]->node, 0, c->bw);
-	wlr_scene_node_set_position(&c->border[3]->node, frame_w - c->bw, c->bw);
-
-	/* Update shadow geometry (lazy creation if needed) */
-	{
-		const shadow_config_t *shadow_config = shadow_get_effective_config(
-			c->shadow_config, false);
-		if (shadow_config && shadow_config->enabled) {
-			if (c->shadow.tree) {
-				shadow_update_geometry(&c->shadow, shadow_config,
-					frame_w, frame_h);
-			} else {
-				shadow_create(c->scene, &c->shadow, shadow_config,
-					frame_w, frame_h);
-			}
-		}
-	}
-
-	/* Frame decorations follow the surface's monitor-clamp visibility;
-	 * wlr_scene_rect/buffer have no clip API, so a partially offscreen
-	 * frame stays fully shown and only a fully offscreen one hides. */
-	bool visible = client_configure_to_box(c);
-	for (int i = 0; i < 4; i++)
-		wlr_scene_node_set_enabled(&c->border[i]->node, visible);
-	if (c->shadow.tree)
-		wlr_scene_node_set_enabled(&c->shadow.tree->node, visible);
-}
-
 void
 resize(Client *c, struct wlr_box geo, int interact)
 {
@@ -1732,8 +1694,10 @@ resize(Client *c, struct wlr_box geo, int interact)
 		}
 	}
 
-	/* Apply to wlroots rendering */
-	apply_geometry_to_wlroots(c);
+	/* The new box lands through the declare pass: the reconciler moves the
+	 * frame and runs the configure leg when the solved box changed. */
+	if (c->mon->declare)
+		declare_output_mark_dirty(c->mon->declare);
 
 	/* Queue per-instance geometry signals so every C-side geometry change
 	 * reaches Lua subscribers the same way Lua-side client_resize_do does
@@ -1789,7 +1753,6 @@ setfullscreen(Client *c, int fullscreen)
 	 * would send a fullscreen configure to every client setmon() touches. */
 	if (was_fullscreen != fullscreen)
 		client_set_fullscreen_internal(c, fullscreen);
-	wlr_scene_node_reparent(&c->scene->node, layers[c->fullscreen ? LyrFS : LyrTile]);
 
 	/* c->prev is the pre-fullscreen restore point: capture only on the
 	 * non-FS -> FS edge, consume only on FS -> non-FS. setmon() and

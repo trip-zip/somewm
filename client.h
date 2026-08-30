@@ -333,12 +333,14 @@ client_send_close(Client *c)
 	wlr_xdg_toplevel_send_close(c->surface.xdg->toplevel);
 }
 
+/* Record the color; the declare pass reads it (client_border_rgba) and the
+ * border_need_update flag makes the next refresh cycle dirty the outputs. */
 static inline void
 client_set_border_color(Client *c, const float color[static 4])
 {
-	int i;
-	for (i = 0; i < 4; i++)
-		wlr_scene_rect_set_color(c->border[i], color);
+	memcpy(c->border_rgba, color, 4 * sizeof(float));
+	c->border_rgba_set = true;
+	c->border_need_update = true;
 }
 
 static inline void

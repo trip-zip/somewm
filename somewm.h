@@ -125,7 +125,6 @@ extern uint32_t next_client_id;
 extern int new_client_placement;
 
 /* Layer mapping (ZWLR_LAYER_SHELL_* -> Lyr* enum) */
-extern const int layermap[];
 
 #ifdef XWAYLAND
 extern struct wlr_xwayland *xwayland;

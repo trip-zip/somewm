@@ -315,13 +315,11 @@ typedef struct
 
     /** System tray state (StatusNotifierItem protocol)
      * Unlike AwesomeWM's X11 XEmbed approach, we use D-Bus SNI protocol
-     * and render icons as scene graph nodes within the parent drawin.
+     * and composite icons into the parent drawin's content pixels.
      */
     struct {
         /** Parent drawin where systray is rendered */
         drawin_t *parent;
-        /** Scene tree containing icon buffer nodes (child of drawin's scene) */
-        struct wlr_scene_tree *scene_tree;
         /** Background color (ARGB pixel value) */
         uint32_t background_pixel;
         /** Current layout parameters (cached from last render call) */

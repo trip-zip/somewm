@@ -26,9 +26,14 @@
 #include <stdbool.h>
 #include <xcb/xcb.h>
 #include <lua.h>
+#include <cairo/cairo.h>
 
 void systray_init(void);
 void systray_cleanup(void);
+/* Paint the tray icons into the hosting drawin's content pixels; no-op for
+ * any other drawin. Called from drawin_refresh_drawable(). */
+struct drawin_t;
+void systray_composite(struct drawin_t *drawin, cairo_surface_t *target);
 int systray_process_client_message(xcb_client_message_event_t*);
 int xembed_process_client_message(xcb_client_message_event_t*);
 int luaA_systray(lua_State*);

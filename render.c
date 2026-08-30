@@ -180,6 +180,9 @@ struct render_state {
 	 * identity: every device_len below reduces to the logical length, so a
 	 * non-HiDPI output rasters exactly as before. */
 	float scale;
+	/* The hooks of the last reconcile pass, for input callbacks that fire
+	 * between passes (accepts_input). The declarer passes a stable struct. */
+	const struct render_client_hooks *hooks;
 	struct render_state *next;
 };
 
@@ -1114,6 +1117,29 @@ static struct cairo_buffer *rasterize_image(Clay_RenderCommand *cmd,
 	return cb;
 }
 
+/* The input filter on image leaves: find the owning rnode across the live
+ * render_states (same scan as border_point_accepts_input) and ask the
+ * declarer's hook with the retained userData word and the node-local point.
+ * This is what lets a shaped drawin's pass-through pixels fall through
+ * wlr_scene_node_at to whatever draws below. */
+static bool image_point_accepts_input(struct wlr_scene_buffer *sb,
+		double *sx, double *sy) {
+	for (struct render_state *rs = render_states; rs != NULL; rs = rs->next) {
+		for (size_t i = 0; i < rs->len; i++) {
+			struct rnode *n = &rs->nodes[i];
+			if (n->node != &sb->node) {
+				continue;
+			}
+			if (rs->hooks == NULL || rs->hooks->accepts_input == NULL) {
+				return true;
+			}
+			return rs->hooks->accepts_input(rs->hooks->data,
+				n->user_data, *sx, *sy);
+		}
+	}
+	return false;
+}
+
 static bool image_data_equal(Clay_ImageRenderData *a, Clay_ImageRenderData *b) {
 	return a->imageData == b->imageData &&
 		memcmp(&a->backgroundColor, &b->backgroundColor,
@@ -1131,6 +1157,7 @@ static int reconcile_image(struct render_state *rs, struct rnode *n,
 	bool is_new = n->node == NULL;
 	if (is_new) {
 		struct wlr_scene_buffer *sb = wlr_scene_buffer_create(rs->tree, NULL);
+		sb->point_accepts_input = image_point_accepts_input;
 		n->node = &sb->node;
 	}
 	struct wlr_scene_buffer *sb = wlr_scene_buffer_from_node(n->node);
@@ -1388,6 +1415,7 @@ int render_reconcile(struct render_state *rs, Clay_RenderCommandArray commands,
 	rs->gen++;
 	rs->buffers_created = 0;
 	rs->node_recreated = false;
+	rs->hooks = hooks;
 	int muts = 0;
 
 	/* Map reflects the pre-pass nodes; new nodes appended below get unique

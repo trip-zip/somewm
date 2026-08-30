@@ -40,6 +40,13 @@ struct render_client_hooks {
 	 * neighbor tile, is not occluded by that sibling. C to C, never Lua;
 	 * optional (a NULL has_popup means no client is ever folded up). */
 	bool (*has_popup)(void *data, uint64_t handle);
+	/* Whether the IMAGE leaf carrying userdata (the retained userData word)
+	 * accepts pointer input at node-local logical (x, y). A false lets the
+	 * scene hit test fall through to whatever draws below, which is how a
+	 * drawin's shape_input pass-through reaches wlr_scene_node_at. Called
+	 * from the scene's input path, never during reconcile; optional (a NULL
+	 * accepts_input accepts everywhere). */
+	bool (*accepts_input)(void *data, void *userdata, double x, double y);
 	void *data;
 };
 
