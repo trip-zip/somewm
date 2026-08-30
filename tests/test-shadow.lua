@@ -98,6 +98,10 @@ local steps = {
             "default offset_y should be -15, got " .. tostring(s.offset_y))
         assert(s.opacity > 0.74 and s.opacity < 0.76,
             "default opacity should be ~0.75, got " .. tostring(s.opacity))
+        assert(s.spread == 0,
+            "default spread should be 0, got " .. tostring(s.spread))
+        assert(s.corner_radius == 0,
+            "default corner_radius should be 0, got " .. tostring(s.corner_radius))
         io.stderr:write("[PASS] Shadow re-enable with defaults verified (D1/D3)\n")
         return true
     end,
@@ -139,6 +143,8 @@ local steps = {
             radius = 20,
             offset_x = 0,
             offset_y = 10,
+            spread = 4,
+            corner_radius = 8,
             opacity = 0.5,
         }
         local s = c.shadow
@@ -146,6 +152,9 @@ local steps = {
         assert(type(s) == "table", "client shadow should be a table")
         assert(s.radius == 20, "client radius should be 20, got " .. tostring(s.radius))
         assert(s.offset_y == 10, "client offset_y should be 10, got " .. tostring(s.offset_y))
+        assert(s.spread == 4, "client spread should be 4, got " .. tostring(s.spread))
+        assert(s.corner_radius == 8,
+            "client corner_radius should be 8, got " .. tostring(s.corner_radius))
         io.stderr:write("[PASS] Client shadow override verified\n")
         return true
     end,
