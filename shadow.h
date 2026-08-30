@@ -28,29 +28,43 @@
 #include <wlr/types/wlr_buffer.h>
 
 /**
- * Shadow slice indices for 9-slice rendering.
+ * Gradient slice indices for the shadow nine-patch.
  *
- * Layout:
+ * The shadow is a rounded rectangle: the object's frame grown by `spread`
+ * on every side, translated by the offset, with a `radius`-wide falloff
+ * outside its boundary. Corner patches carry the rounded falloff, edge
+ * strips carry the straight falloff, and solid rects (see the fill enum)
+ * cover the interior.
+ *
  *   TL  TOP  TR
- *   L   ---   R
+ *   L  (fill) R
  *   BL  BOT  BR
  */
 enum {
     SHADOW_CORNER_TL = 0,
-    SHADOW_EDGE_TOP,
     SHADOW_CORNER_TR,
+    SHADOW_CORNER_BL,
+    SHADOW_CORNER_BR,
+    SHADOW_EDGE_TOP,
+    SHADOW_EDGE_BOTTOM,
     SHADOW_EDGE_LEFT,
     SHADOW_EDGE_RIGHT,
-    SHADOW_CORNER_BL,
-    SHADOW_EDGE_BOTTOM,
-    SHADOW_CORNER_BR,
-    SHADOW_FILL_H,       /**< Horizontal fill strip for vertical offset gap */
-    SHADOW_FILL_V,       /**< Vertical fill strip for horizontal offset gap */
     SHADOW_SLICE_COUNT
 };
 
-/** Number of owned texture buffers (4 corners + h edge + v edge + 1x1 fill) */
-#define SHADOW_TEXTURE_COUNT 7
+/**
+ * Solid interior rects. The corner patches own the four corner squares of
+ * the shadow rectangle; these rects cover the rest of the interior.
+ */
+enum {
+    SHADOW_FILL_MID = 0,  /**< Full-height band between the corner columns */
+    SHADOW_FILL_LEFT,     /**< Left column between the two left corners */
+    SHADOW_FILL_RIGHT,    /**< Right column between the two right corners */
+    SHADOW_FILL_COUNT
+};
+
+/** Number of owned texture buffers (4 corners + h edge + v edge) */
+#define SHADOW_TEXTURE_COUNT 6
 
 /**
  * Shadow configuration for a single object (client or drawin).
@@ -60,27 +74,32 @@ enum {
  */
 typedef struct shadow_config_t {
     bool enabled;           /**< Shadow enabled for this object */
-    int radius;             /**< Shadow spread radius in pixels (default: 12) */
+    int radius;             /**< Falloff distance in pixels (default: 12) */
     int offset_x;           /**< Horizontal offset (default: -15) */
     int offset_y;           /**< Vertical offset (default: -15) */
+    int spread;             /**< Outset of the shadow rect before falloff (default: 0) */
+    int corner_radius;      /**< Rounded corner radius of the shadow rect (default: 0) */
     float opacity;          /**< Shadow opacity 0.0-1.0 (default: 0.75) */
-    float color[4];         /**< Shadow color RGBA (default: black) */
-    bool clip_directional;  /**< Only show shadow on offset side (default: true) */
+    float color[4];         /**< Shadow color RGBA; alpha multiplies opacity */
+    bool clip_directional;  /**< Accepted for compatibility; no longer used */
 } shadow_config_t;
 
 /**
  * Shadow scene nodes attached to a client or drawin.
  *
- * Each shadow owns its own set of gradient textures (4 corners + 2 edges).
- * The 8 scene buffer nodes are arranged in a 9-slice pattern and reference
- * these textures. Edges are stretched by the GPU via dest_size.
+ * Each shadow owns its own set of gradient textures. The slice scene
+ * buffers and solid fill rects are arranged in a nine-patch; edges are
+ * stretched by the GPU via dest_size, so a resize never re-renders.
  */
 typedef struct shadow_nodes_t {
     struct wlr_scene_tree *tree;                        /**< Container for shadow slices */
-    struct wlr_scene_buffer *slice[SHADOW_SLICE_COUNT]; /**< 9-slice scene buffers */
+    struct wlr_scene_buffer *slice[SHADOW_SLICE_COUNT]; /**< Gradient scene buffers */
+    struct wlr_scene_rect *fill[SHADOW_FILL_COUNT];     /**< Solid interior rects */
     struct wlr_buffer *textures[SHADOW_TEXTURE_COUNT];  /**< Owned gradient textures */
     int last_width;                                     /**< Cached width to skip redundant updates */
     int last_height;                                    /**< Cached height to skip redundant updates */
+    bool user_visible;                                  /**< Visibility requested via shadow_set_visible */
+    bool size_ok;                                       /**< Object large enough for the corner patches */
 } shadow_nodes_t;
 
 /**
@@ -120,8 +139,9 @@ const shadow_config_t *shadow_get_effective_config(
 /**
  * Create shadow nodes for an object.
  *
- * Renders gradient textures and creates 8 scene buffers as children
- * of the given parent tree, positioned below (behind) other content.
+ * Renders gradient textures and creates the nine-patch scene nodes as
+ * children of the given parent tree, positioned below (behind) other
+ * content.
  *
  * @param parent Parent scene tree (client->scene or drawin->scene_tree)
  * @param shadow Shadow nodes structure to populate
@@ -153,8 +173,7 @@ void shadow_update_geometry(shadow_nodes_t *shadow,
 /**
  * Update shadow after configuration change.
  *
- * If only offset changed, repositions nodes. If radius/color/opacity
- * changed, destroys and recreates the shadow with new textures.
+ * Destroys and recreates the shadow with new textures.
  *
  * @param shadow Shadow nodes structure
  * @param parent Parent scene tree (for recreation)
@@ -181,6 +200,15 @@ void shadow_set_visible(shadow_nodes_t *shadow, bool visible);
  * @param shadow Shadow nodes structure to cleanup
  */
 void shadow_destroy(shadow_nodes_t *shadow);
+
+/**
+ * Free owned textures and zero the structure WITHOUT destroying the scene
+ * nodes. For teardown paths where the parent scene tree has been (or is
+ * about to be) destroyed, taking the shadow nodes with it.
+ *
+ * @param shadow Shadow nodes structure to release
+ */
+void shadow_release(shadow_nodes_t *shadow);
 
 /* ========== Lua Integration ========== */
 

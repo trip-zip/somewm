@@ -491,6 +491,21 @@ local surface = screen.primary.content
 | `client.aspect_ratio` | Client aspect ratio hint |
 | `client.shadow` | Per-client shadow toggle |
 
+### Shadows
+
+Compositor-level drop shadows for clients and wiboxes (no AwesomeWM
+equivalent; under X11 this is picom's job). Configured through
+`beautiful.shadow_*`, per-object via `client.shadow` / wibox `shadow`.
+
+The shadow is the object's frame grown by `spread`, moved by
+`offset_x`/`offset_y`, rounded by `corner_radius`, fading out over
+`radius` pixels. `color` accepts `#RRGGBBAA`; its alpha multiplies
+`opacity`.
+
+Changed in 2.1: `clip_directional` no longer has an effect. The shadow is
+drawn at its offset and fades out on every side; sides fully covered by
+the window are simply not visible. Configs that set it still parse.
+
 ### Cursor Theming
 
 ```lua
