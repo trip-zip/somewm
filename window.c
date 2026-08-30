@@ -1205,7 +1205,7 @@ unset_fullscreen:
 	 * Gate on the content rect (geometry inset by border + titlebars), not the
 	 * full geometry: granting focus while the cursor is over the titlebar would
 	 * deliver a bogus coordinate to the client (issue: titlebar event
-	 * propagation). Mirrors the surface inset in apply_geometry_to_wlroots(). */
+	 * propagation). Mirrors the surface inset in client_configure_to_box(). */
 	if (client_surface(c) && client_surface(c)->mapped) {
 		int tl = c->fullscreen ? 0 : c->titlebar[CLIENT_TITLEBAR_LEFT].size;
 		int tt = c->fullscreen ? 0 : c->titlebar[CLIENT_TITLEBAR_TOP].size;
@@ -1326,62 +1326,38 @@ client_layout_clips_offscreen(Client *c)
 	return result;
 }
 
-/* Apply geometry to wlroots scene graph - Wayland-specific rendering layer.
- * This function ONLY updates wlroots; it does NOT modify c->geometry or emit signals.
- * Called by resize() for interactive resize and client_resize_do() for Lua-initiated resize.
- */
-void
-apply_geometry_to_wlroots(Client *c)
+/* The configure-client-to-box seam: the client-facing half of geometry
+ * application. Positions and clips nodes inside the client's scene tree and
+ * sends the state-batched configure, but never touches the frame somewm
+ * draws around the client (c->scene position, borders, shadow). At the Clay
+ * flip the render_client_hooks calls (render.h) land here and the frame
+ * half is replaced by the reconciler; paths that force a configure re-send
+ * (c->resize = 0, then a re-apply) keep calling this directly. Returns
+ * whether the client content is at least partially visible on its monitor,
+ * so the caller can toggle the frame nodes it owns to match. */
+bool
+client_configure_to_box(Client *c)
 {
 	struct wlr_box clip;
 	int titlebar_left, titlebar_top;
-	int frame_w, frame_h;
+	bool visible = true;
 
 	if (!c->scene || !client_surface(c) || !client_surface(c)->mapped)
-		return;
+		return false;
 
 	/* Get titlebar sizes - they occupy space inside geometry.
 	 * When fullscreen, ignore titlebar sizes - surface should cover entire geometry. */
 	titlebar_left = c->fullscreen ? 0 : c->titlebar[CLIENT_TITLEBAR_LEFT].size;
 	titlebar_top = c->fullscreen ? 0 : c->titlebar[CLIENT_TITLEBAR_TOP].size;
 
-	/* The frame footprint is the geometry plus the border drawn outside it */
-	frame_w = c->geometry.width + 2 * c->bw;
-	frame_h = c->geometry.height + 2 * c->bw;
-
-	/* Update scene-graph position and borders */
-	wlr_scene_node_set_position(&c->scene->node, c->geometry.x, c->geometry.y);
 	/* Offset scene_surface by titlebar sizes (titlebars occupy space in geometry) */
 	wlr_scene_node_set_position(&c->scene_surface->node, c->bw + titlebar_left, c->bw + titlebar_top);
 	/* popups tracks scene_surface's offset exactly, so popups stay correctly
 	 * positioned, but (unlike scene_surface) is never clipped. Also keep it
-	 * raised above borders/shadow: siblings created later in c->scene (the
-	 * border loop in mapnotify, the lazily-created shadow below) stack on
-	 * top by default, which would otherwise paint over open popups. */
+	 * raised above borders/shadow: later-created siblings in c->scene stack
+	 * on top by default, which would otherwise paint over open popups. */
 	wlr_scene_node_set_position(&c->popups->node, c->bw + titlebar_left, c->bw + titlebar_top);
 	wlr_scene_node_raise_to_top(&c->popups->node);
-	wlr_scene_rect_set_size(c->border[0], frame_w, c->bw);
-	wlr_scene_rect_set_size(c->border[1], frame_w, c->bw);
-	wlr_scene_rect_set_size(c->border[2], c->bw, c->geometry.height);
-	wlr_scene_rect_set_size(c->border[3], c->bw, c->geometry.height);
-	wlr_scene_node_set_position(&c->border[1]->node, 0, frame_h - c->bw);
-	wlr_scene_node_set_position(&c->border[2]->node, 0, c->bw);
-	wlr_scene_node_set_position(&c->border[3]->node, frame_w - c->bw, c->bw);
-
-	/* Update shadow geometry (lazy creation if needed) */
-	{
-		const shadow_config_t *shadow_config = shadow_get_effective_config(
-			c->shadow_config, false);
-		if (shadow_config && shadow_config->enabled) {
-			if (c->shadow.tree) {
-				shadow_update_geometry(&c->shadow, shadow_config,
-					frame_w, frame_h);
-			} else {
-				shadow_create(c->scene, &c->shadow, shadow_config,
-					frame_w, frame_h);
-			}
-		}
-	}
 
 	/* Update titlebar positions - they depend on current geometry */
 	client_update_titlebar_positions(c);
@@ -1438,9 +1414,8 @@ apply_geometry_to_wlroots(Client *c)
 	 * clients (e.g. carousel scrolling layout) don't render on adjacent
 	 * monitors. For fully-inside clients this is just a bounds check.
 	 *
-	 * We toggle individual child scene nodes (surface, borders, shadow,
-	 * titlebars) rather than c->scene->node which the banning system
-	 * controls. */
+	 * We toggle individual child scene nodes (surface, titlebars) rather
+	 * than c->scene->node, which the banning system controls. */
 	if (clamp_to_mon) {
 		struct wlr_box mon = c->mon->m;
 		bool fully_inside =
@@ -1451,18 +1426,12 @@ apply_geometry_to_wlroots(Client *c)
 
 		if (fully_inside) {
 			/* Common case: everything visible, no clipping needed.
-			 * Re-enable surface/borders/shadow that may have been hidden.
-			 * Titlebars are managed by client_update_titlebar_positions(). */
+			 * Re-enable the surface if it was hidden. Titlebars are
+			 * managed by client_update_titlebar_positions(). */
 			wlr_scene_node_set_enabled(&c->scene_surface->node, true);
-			for (int i = 0; i < 4; i++)
-				wlr_scene_node_set_enabled(&c->border[i]->node, true);
-			if (c->shadow.tree)
-				wlr_scene_node_set_enabled(&c->shadow.tree->node, true);
 		} else {
 			/* Client extends past monitor. Clip the surface to the
-			 * visible rectangle; decorations only hide when fully
-			 * offscreen (carousel scrolling) because wlr_scene_rect/
-			 * buffer have no clip API. */
+			 * visible rectangle. */
 			int cx = c->geometry.x + c->bw + titlebar_left;
 			int cy = c->geometry.y + c->bw + titlebar_top;
 			int vl = cx > mon.x ? cx : mon.x;
@@ -1472,25 +1441,21 @@ apply_geometry_to_wlroots(Client *c)
 			int vb = (cy + clip.height) < (mon.y + mon.height)
 				? (cy + clip.height) : (mon.y + mon.height);
 
-			bool partially_visible = vr > vl && vb > vt;
+			visible = vr > vl && vb > vt;
 
-			if (partially_visible) {
+			if (visible) {
 				clip.x += vl - cx;
 				clip.y += vt - cy;
 				clip.width = vr - vl;
 				clip.height = vb - vt;
 			}
 
-			wlr_scene_node_set_enabled(&c->scene_surface->node, partially_visible);
-			for (int i = 0; i < 4; i++)
-				wlr_scene_node_set_enabled(&c->border[i]->node, partially_visible);
-			if (c->shadow.tree)
-				wlr_scene_node_set_enabled(&c->shadow.tree->node, partially_visible);
+			wlr_scene_node_set_enabled(&c->scene_surface->node, visible);
 
 			/* Titlebar buffers: client_update_titlebar_positions()
 			 * already enables them based on size/fullscreen. Only
 			 * forcibly disable when fully offscreen. */
-			if (!partially_visible) {
+			if (!visible) {
 				for (client_titlebar_t bar = CLIENT_TITLEBAR_TOP;
 						bar < CLIENT_TITLEBAR_COUNT; bar++) {
 					if (c->titlebar[bar].scene_buffer)
@@ -1507,13 +1472,59 @@ apply_geometry_to_wlroots(Client *c)
 		 * disabled. Titlebars stay idempotently managed by
 		 * client_update_titlebar_positions() above. */
 		wlr_scene_node_set_enabled(&c->scene_surface->node, true);
-		for (int i = 0; i < 4; i++)
-			wlr_scene_node_set_enabled(&c->border[i]->node, true);
-		if (c->shadow.tree)
-			wlr_scene_node_set_enabled(&c->shadow.tree->node, true);
 	}
 
 	wlr_scene_subsurface_tree_set_clip(&c->scene_surface->node, &clip);
+	return visible;
+}
+
+/* Apply geometry to wlroots scene graph - Wayland-specific rendering layer.
+ * This function ONLY updates wlroots; it does NOT modify c->geometry or emit signals.
+ * Called by resize() for interactive resize and client_resize_do() for Lua-initiated resize.
+ */
+void
+apply_geometry_to_wlroots(Client *c)
+{
+	if (!c->scene || !client_surface(c) || !client_surface(c)->mapped)
+		return;
+
+	/* The frame footprint is the geometry plus the border drawn outside it */
+	int frame_w = c->geometry.width + 2 * c->bw;
+	int frame_h = c->geometry.height + 2 * c->bw;
+
+	/* Update scene-graph position and borders */
+	wlr_scene_node_set_position(&c->scene->node, c->geometry.x, c->geometry.y);
+	wlr_scene_rect_set_size(c->border[0], frame_w, c->bw);
+	wlr_scene_rect_set_size(c->border[1], frame_w, c->bw);
+	wlr_scene_rect_set_size(c->border[2], c->bw, c->geometry.height);
+	wlr_scene_rect_set_size(c->border[3], c->bw, c->geometry.height);
+	wlr_scene_node_set_position(&c->border[1]->node, 0, frame_h - c->bw);
+	wlr_scene_node_set_position(&c->border[2]->node, 0, c->bw);
+	wlr_scene_node_set_position(&c->border[3]->node, frame_w - c->bw, c->bw);
+
+	/* Update shadow geometry (lazy creation if needed) */
+	{
+		const shadow_config_t *shadow_config = shadow_get_effective_config(
+			c->shadow_config, false);
+		if (shadow_config && shadow_config->enabled) {
+			if (c->shadow.tree) {
+				shadow_update_geometry(&c->shadow, shadow_config,
+					frame_w, frame_h);
+			} else {
+				shadow_create(c->scene, &c->shadow, shadow_config,
+					frame_w, frame_h);
+			}
+		}
+	}
+
+	/* Frame decorations follow the surface's monitor-clamp visibility;
+	 * wlr_scene_rect/buffer have no clip API, so a partially offscreen
+	 * frame stays fully shown and only a fully offscreen one hides. */
+	bool visible = client_configure_to_box(c);
+	for (int i = 0; i < 4; i++)
+		wlr_scene_node_set_enabled(&c->border[i]->node, visible);
+	if (c->shadow.tree)
+		wlr_scene_node_set_enabled(&c->shadow.tree->node, visible);
 }
 
 void
