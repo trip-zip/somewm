@@ -36,6 +36,12 @@ void fullscreennotify(struct wl_listener *listener, void *data);
 
 /* Geometry */
 void apply_geometry_to_wlroots(Client *c);
+/* The client-facing half of apply_geometry_to_wlroots(): surface inset,
+ * titlebars, the configure send, and the surface clip. Returns whether the
+ * client content is at least partially visible on its monitor. The Clay
+ * flip's render_client_hooks land here; forced configure re-sends keep
+ * calling it directly. */
+bool client_configure_to_box(Client *c);
 void resize(Client *c, struct wlr_box geo, int interact);
 void applybounds(Client *c, struct wlr_box *bbox);
 
