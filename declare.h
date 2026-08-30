@@ -24,6 +24,16 @@ void declare_output_update(struct declare_output *dout, int lx, int ly);
 /* Mark the output's tree stale and schedule a frame to rebuild it. */
 void declare_output_mark_dirty(struct declare_output *dout);
 
+/* Mark every output dirty: for facts without one owning output (stacking
+ * order, banning, a drawin whose screen assignment may be stale). */
+void declare_mark_all_dirty(void);
+
+/* Run the declare pass for every dirty output now; called from the poll
+ * function each loop iteration so input hit-testing reads a current scene
+ * even when the backend delivers no frame events (a hidden nested output,
+ * an asleep monitor). Returns whether any scene mutated. */
+bool declare_flush(void);
+
 /* If dirty, declare the output's scene into its Clay context, solve, and
  * reconcile into wlr_scene. Returns the mutation count, or -1 when the
  * output was clean and nothing ran. While the lua lock is active
@@ -54,6 +64,14 @@ enum declare_kind {
 
 void *declare_handle_get(uint64_t handle, enum declare_kind *kind);
 void declare_handle_drop(void *object);
+
+/* The declare handle inside a retained userData word (render.h): the low 40
+ * bits are kind and registry id, the opacity byte rides above them. */
+static inline uint64_t
+declare_userdata_handle(void *userdata)
+{
+	return (uint64_t)(uintptr_t)userdata & 0xFFFFFFFFFFULL;
+}
 
 /* The input backmap: the object whose leaf drew node (renderer-owned image
  * nodes, border sides, borrowed surface trees), or NULL for a node this

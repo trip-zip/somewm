@@ -98,8 +98,16 @@ arrangelayer(Monitor *m, struct wl_list *list, struct wlr_box *usable_area, int 
 		if (exclusive != (layer_surface->current.exclusive_zone > 0))
 			continue;
 
+		/* The layer-shell solve writes a layout-absolute position into
+		 * the scene node (it assumes a parent at the layout origin).
+		 * Capture it output-local as the declare pass's geometry fact,
+		 * then rewrite the node to that same value: the tree lives in
+		 * the output's band (or the parked tree), and the reconciler
+		 * will keep it at exactly this box. */
 		wlr_scene_layer_surface_v1_configure(l->scene_layer, &full_area, usable_area);
-		wlr_scene_node_set_position(&l->popups->node, l->scene->node.x, l->scene->node.y);
+		l->geom.x = l->scene->node.x - m->m.x;
+		l->geom.y = l->scene->node.y - m->m.y;
+		wlr_scene_node_set_position(&l->scene->node, l->geom.x, l->geom.y);
 	}
 }
 
@@ -180,7 +188,6 @@ commitlayersurfacenotify(struct wl_listener *listener, void *data)
 {
 	LayerSurface *l = wl_container_of(listener, l, surface_commit);
 	struct wlr_layer_surface_v1 *layer_surface = l->layer_surface;
-	struct wlr_scene_tree *scene_layer = layers[layermap[layer_surface->current.layer]];
 	struct wlr_layer_surface_v1_state old_state;
 	int was_mapped;
 
@@ -210,15 +217,17 @@ commitlayersurfacenotify(struct wl_listener *listener, void *data)
 		layer_surface_emit_manage(ls, "new");
 	}
 
-	if (scene_layer != l->scene->node.parent) {
-		wlr_scene_node_reparent(&l->scene->node, scene_layer);
+	/* A layer change moves the surface between declare bands; the scene
+	 * tree itself stays wherever the reconciler put it. */
+	if (l->band != layer_surface->current.layer) {
+		l->band = layer_surface->current.layer;
 		wl_list_remove(&l->link);
-		wl_list_insert(&l->mon->layers[layer_surface->current.layer], &l->link);
-		wlr_scene_node_reparent(&l->popups->node, (layer_surface->current.layer
-				< ZWLR_LAYER_SHELL_V1_LAYER_TOP ? layers[LyrTop] : scene_layer));
+		wl_list_insert(&l->mon->layers[l->band], &l->link);
 	}
 
 	arrangelayers(l->mon);
+	if (l->mon && l->mon->declare)
+		declare_output_mark_dirty(l->mon->declare);
 
 	/* When a layer surface maps, re-evaluate pointer focus so that
 	 * wl_pointer.enter is delivered if the cursor is already over it.
@@ -258,7 +267,6 @@ createlayersurface(struct wl_listener *listener, void *data)
 	struct wlr_layer_surface_v1 *layer_surface = data;
 	LayerSurface *l;
 	struct wlr_surface *surface = layer_surface->surface;
-	struct wlr_scene_tree *scene_layer = layers[layermap[layer_surface->pending.layer]];
 
 	if (!layer_surface->output
 			&& !(layer_surface->output = selmon ? selmon->wlr_output : NULL)) {
@@ -273,18 +281,24 @@ createlayersurface(struct wl_listener *listener, void *data)
 
 	l->layer_surface = layer_surface;
 	l->mon = layer_surface->output->data;
-	l->scene_layer = wlr_scene_layer_surface_v1_create(scene_layer, layer_surface);
+	l->band = layer_surface->pending.layer;
+	/* Born parked; the reconciler borrows the tree into the output's band
+	 * once the declare pass sees the surface mapped. */
+	l->scene_layer = wlr_scene_layer_surface_v1_create(window_parked_tree(),
+			layer_surface);
 	/* Register commit listener AFTER wlr_scene_layer_surface_v1_create() so our
 	 * listener fires AFTER wlroots' internal scene commit handler. This lets
 	 * the scene graph reflect the new buffer before the commit handler calls
 	 * motionnotify(0, ...) to re-evaluate pointer focus on map. */
 	LISTEN(&surface->events.commit, &l->surface_commit, commitlayersurfacenotify);
 	l->scene = l->scene_layer->tree;
-	l->popups = surface->data = wlr_scene_tree_create(layer_surface->current.layer
-			< ZWLR_LAYER_SHELL_V1_LAYER_TOP ? layers[LyrTop] : scene_layer);
+	/* Popups ride the borrowed tree at the surface origin, like a client's
+	 * popup tree; the reconciler folds a surface with a live popup to the
+	 * top of its band, so a bottom-layer panel's menu is not occluded. */
+	l->popups = surface->data = wlr_scene_tree_create(l->scene);
 	l->scene->node.data = l->popups->node.data = l;
 
-	wl_list_insert(&l->mon->layers[layer_surface->pending.layer],&l->link);
+	wl_list_insert(&l->mon->layers[l->band], &l->link);
 	wlr_surface_send_enter(surface, layer_surface->output);
 }
 
@@ -303,8 +317,9 @@ destroylayersurfacenotify(struct wl_listener *listener, void *data)
 	wl_list_remove(&l->unmap.link);
 	wl_list_remove(&l->surface_commit.link);
 	declare_handle_drop(l);
+	/* popups is a child of scene and dies with it */
 	wlr_scene_node_destroy(&l->scene->node);
-	wlr_scene_node_destroy(&l->popups->node);
+	declare_mark_all_dirty();
 	free(l);
 }
 
@@ -324,8 +339,11 @@ unmaplayersurfacenotify(struct wl_listener *listener, void *data)
 			wlr_surface_send_leave(l->layer_surface->surface, l->layer_surface->output);
 
 		l->mon = l->layer_surface->output->data;
-		if (l->mon)
+		if (l->mon) {
 			arrangelayers(l->mon);
+			if (l->mon->declare)
+				declare_output_mark_dirty(l->mon->declare);
+		}
 	}
 
 	/* Emit request::unmanage signal if we have a Lua object */

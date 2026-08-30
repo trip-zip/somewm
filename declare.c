@@ -32,7 +32,6 @@
 #include "somewm_types.h"
 #include "globalconf.h"
 #include "client.h"
-#include "color.h"
 #include "focus.h"
 #include "somewm_api.h"
 #include "monitor.h"
@@ -184,7 +183,7 @@ declare_output_hit(struct declare_output *dout, struct wlr_scene_node *node,
 		ud = render_hit_userdata(dout->lock.render, node);
 	if (!ud)
 		return NULL;
-	return declare_handle_get((uintptr_t)ud & 0xFFFFFFFFFFULL, kind);
+	return declare_handle_get(declare_userdata_handle(ud), kind);
 }
 
 /* somewm colors are straight-alpha 0-1 floats; Clay_Color is 0-255.
@@ -196,16 +195,6 @@ clay_color(const float rgba[4])
 		rgba[0] * 255.0f, rgba[1] * 255.0f,
 		rgba[2] * 255.0f, rgba[3] * 255.0f,
 	};
-}
-
-static void
-client_border_rgba(Client *c, float out[4])
-{
-	if (c->border_color.initialized)
-		color_to_floats(&c->border_color, out);
-	else
-		memcpy(out, c->urgent ? get_urgentcolor() : get_bordercolor(),
-			4 * sizeof(float));
 }
 
 /* The frame box: awful.layout's geometry plus the border ring drawn around
@@ -378,9 +367,12 @@ declare_layer_surface(LayerSurface *l, Monitor *m)
 {
 	uint64_t handle = handle_for(l, DECLARE_KIND_LAYER);
 	struct wlr_layer_surface_v1 *ls = l->layer_surface;
+	/* l->geom is output-local, captured by arrangelayer() from the
+	 * layer-shell solve; the scene node's own position belongs to the
+	 * reconciler and may hold this same value already. */
 	Clay_ElementDeclaration s = leaf_at(CLAY_STRING("layer.surface"),
 		(uint32_t)handle,
-		l->scene->node.x - m->m.x, l->scene->node.y - m->m.y,
+		l->geom.x, l->geom.y,
 		ls->current.actual_width, ls->current.actual_height);
 
 	s.custom.customData = (void *)(uintptr_t)handle;
@@ -429,10 +421,13 @@ declare_drawin(drawin_t *d, Monitor *m)
 		declare_leaf(&s);
 	}
 	if (bw > 0 && d->border_entry.native) {
+		/* No userData: the input filter (window.c hook_accepts_input)
+		 * reads a bare word as "never accepts input", which is what the
+		 * old border_buffer's point_accepts_input answered, and the
+		 * shadow leaf below gets the same treatment for free. */
 		Clay_ElementDeclaration b = leaf_at(CLAY_STRING("drawin.border"),
 			id, x - bw, y - bw, d->width + 2 * bw, d->height + 2 * bw);
 		b.image.imageData = &d->border_entry;
-		b.userData = leaf_userdata(handle, 1.0f);
 		declare_leaf(&b);
 	}
 
@@ -583,8 +578,10 @@ declare_output_create(struct wlr_output *wlr_output)
 
 	dout->wlr_output = wlr_output;
 	declare_band_init(&dout->desktop, wlr_output, &scene->tree);
-	wlr_scene_node_place_below(&dout->desktop.tree->node,
-		&layers[LyrBlock]->node);
+	/* Directly above the legacy layers, and below the drag icon and
+	 * LyrBlock, both placed below LyrBlock at setup before any band. */
+	wlr_scene_node_place_above(&dout->desktop.tree->node,
+		&layers[LyrOverlay]->node);
 	dout->dirty = true;
 	return dout;
 }
@@ -613,9 +610,9 @@ declare_lock_set_visible(bool on)
 	wl_list_for_each(m, &mons, link) {
 		if (!m->declare)
 			continue;
-		/* Create the lock band on engage, before the caller raises the
-		 * covers and lock surface: wlroots appends new children topmost,
-		 * so a band created after the raise would land above them. */
+		/* Create the lock band on engage: wlroots appends new children
+		 * topmost, so it lands above locked_bg and below any external
+		 * session-lock tree created after it. */
 		if (on && !m->declare->lock.clay) {
 			declare_band_init(&m->declare->lock,
 				m->declare->wlr_output, layers[LyrBlock]);
@@ -651,6 +648,35 @@ declare_output_mark_dirty(struct declare_output *dout)
 	wlr_output_schedule_frame(dout->wlr_output);
 }
 
+/* Run the declare pass for every dirty output now. The poll function calls
+ * this each loop iteration: input hit-testing reads the reconciled scene,
+ * and a hidden or asleep output gets no frame events to rebuild it there.
+ * The frame handler keeps its own call for marks that land in between.
+ * Returns whether any scene mutated, so the caller can re-evaluate what is
+ * under the pointer. */
+bool
+declare_flush(void)
+{
+	Monitor *m;
+	bool mutated = false;
+
+	wl_list_for_each(m, &mons, link)
+		if (m->declare && m->wlr_output->enabled)
+			mutated |= declare_output_frame(m->declare, m,
+				some_is_lua_locked()) > 0;
+	return mutated;
+}
+
+void
+declare_mark_all_dirty(void)
+{
+	Monitor *m;
+
+	wl_list_for_each(m, &mons, link)
+		if (m->declare)
+			declare_output_mark_dirty(m->declare);
+}
+
 int
 declare_output_frame(struct declare_output *dout, Monitor *m, bool lock_active)
 {
@@ -663,8 +689,7 @@ declare_output_frame(struct declare_output *dout, Monitor *m, bool lock_active)
 	/* While lua-locked, this output solves its lock scene instead; the
 	 * desktop band keeps its last scene, occluded by locked_bg. The lock
 	 * band normally exists already (declare_lock_set_visible creates it
-	 * on engage, before the lock surface is raised above it); this covers
-	 * outputs created mid-lock. */
+	 * on engage); this covers outputs created mid-lock. */
 	if (lock_active && !dout->lock.clay) {
 		declare_band_init(&dout->lock, dout->wlr_output, layers[LyrBlock]);
 		declare_band_update(&dout->lock, dout->wlr_output, m->m.x, m->m.y);

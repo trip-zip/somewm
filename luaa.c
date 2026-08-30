@@ -1,4 +1,5 @@
 #include "luaa.h"
+#include "declare.h"
 #include "draw.h"  /* Must be before globalconf.h to avoid type conflicts */
 #include "globalconf.h"
 
@@ -1499,13 +1500,9 @@ luaA_awesome_shadow_reload(lua_State *L)
 			(*c)->geometry.height + 2 * (*c)->bw);
 	}
 
-	/* Update all existing drawin shadows */
+	/* Drawin shadow entries rebuild through the refresh cycle */
 	foreach(d, globalconf.drawins) {
-		drawin_t *drawin = *d;
-		const shadow_config_t *config = shadow_get_effective_config(
-			drawin->shadow_config, true);
-		shadow_update_config(&drawin->shadow, drawin->scene_tree, config,
-			drawin->width, drawin->height);
+		(*d)->border_need_update = true;
 	}
 
 	return 0;
@@ -4979,25 +4976,20 @@ luaA_state_drop_object_pointers(void)
 	globalconf.mouse_under.ptr.client = NULL;
 	globalconf.primary_screen = NULL;
 
-	/* Destroy old drawin scene trees now, or they persist as duplicates
-	 * behind the ones the rebuilt state creates. */
+	/* Retire the renderer's view of the old drawins now, or their retained
+	 * leaves persist as duplicates behind the ones the rebuilt state
+	 * creates. */
 	foreach(d, globalconf.drawins) {
 		drawin_t *w = *d;
-		shadow_release(&w->shadow);
-		if (w->scene_tree) {
-			wlr_scene_node_destroy(&w->scene_tree->node);
-			w->scene_tree = NULL;
-			w->scene_buffer = NULL;
-			w->border_buffer = NULL;
-		}
+		declare_handle_drop(w);
+		drawin_entry_set(&w->content_entry, NULL);
+		drawin_entry_set(&w->border_entry, NULL);
+		drawin_entry_set(&w->shadow_entry, NULL);
 	}
 	globalconf.drawins.len = 0;
+	declare_mark_all_dirty();
 
-	/* The systray scene tree is a child of the parent drawin's tree, so the
-	 * loop above already destroyed it. Both pointers dangle; NULL them, or
-	 * drawin_wipe() destroys the freed scene node again at close. */
 	globalconf.systray.parent = NULL;
-	globalconf.systray.scene_tree = NULL;
 
 	/* Reset screen_refs before closing (entries become invalid) */
 	luaA_screen_refs_reset();

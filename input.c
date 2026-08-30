@@ -44,6 +44,7 @@
 #include "event.h"
 #include "event_queue.h"
 #include "monitor.h"
+#include "declare.h"
 #include "globalconf.h"
 #include "client.h"
 #include "common/luaobject.h"
@@ -2958,90 +2959,58 @@ void
 xytonode(double x, double y, struct wlr_surface **psurface,
 		Client **pc, LayerSurface **pl, drawin_t **pd, drawable_t **pdrawable, double *nx, double *ny)
 {
-	struct wlr_scene_node *node, *pnode;
+	struct wlr_scene_node *node = NULL, *pnode;
 	struct wlr_surface *surface = NULL;
 	Client *c = NULL;
 	LayerSurface *l = NULL;
 	drawin_t *d = NULL;
 	drawable_t *titlebar_drawable = NULL;
-	int layer;
+	Monitor *m;
 
-	/* Safety check: scene must be initialized */
-	if (!scene) {
-		if (psurface) *psurface = NULL;
-		if (pc) *pc = NULL;
-		if (pl) *pl = NULL;
-		if (pd) *pd = NULL;
-		if (pdrawable) *pdrawable = NULL;
-		return;
+	if (scene)
+		node = wlr_scene_node_at(&scene->tree.node, x, y, nx, ny);
+
+	if (node && node->type == WLR_SCENE_NODE_BUFFER) {
+		struct wlr_scene_buffer *buffer = wlr_scene_buffer_from_node(node);
+		struct wlr_scene_surface *scene_surface = wlr_scene_surface_try_from_buffer(buffer);
+
+		if (scene_surface) {
+			surface = scene_surface->surface;
+		} else if (node->data) {
+			/* A titlebar buffer inside a client's scene tree carries
+			 * its drawable (AwesomeWM pattern). */
+			drawable_t *drawable = (drawable_t *)node->data;
+
+			if (drawable->owner_type == DRAWABLE_OWNER_CLIENT) {
+				c = drawable->owner.client;
+				titlebar_drawable = drawable;
+			}
+		}
 	}
 
-	for (layer = NUM_LAYERS - 1; !surface && layer >= 0; layer--) {
-		/* Safety check: layer tree must exist */
-		if (!layers[layer])
-			continue;
-		if (!(node = wlr_scene_node_at(&layers[layer]->node, x, y, nx, ny)))
-			continue;
+	/* Renderer-drawn chrome resolves through the band backmap: a drawin
+	 * image leaf names its drawin (its shape_input pass-through pixels
+	 * were already skipped inside the scene hit test), a client border
+	 * rect or corner tile names its client. */
+	if (node && !c && !d
+			&& (m = xytomon(x, y)) && m->declare) {
+		enum declare_kind kind;
+		void *obj = declare_output_hit(m->declare, node, &kind);
 
+		if (obj && kind == DECLARE_KIND_DRAWIN)
+			d = obj;
+		else if (obj && kind == DECLARE_KIND_CLIENT)
+			c = obj;
+		else if (obj && kind == DECLARE_KIND_LAYER)
+			l = obj;
+	}
 
-		if (node->type == WLR_SCENE_NODE_BUFFER) {
-			struct wlr_scene_buffer *buffer = wlr_scene_buffer_from_node(node);
-			struct wlr_scene_surface *scene_surface = wlr_scene_surface_try_from_buffer(buffer);
-
-
-			if (scene_surface) {
-				surface = scene_surface->surface;
-			} else {
-				/* Check if this buffer belongs to a drawin or titlebar */
-
-				/* node->data now stores drawable pointer (AwesomeWM pattern) */
-				if (node->data) {
-					drawable_t *drawable = (drawable_t *)node->data;
-
-					if (drawable->owner_type == DRAWABLE_OWNER_DRAWIN) {
-						/* This is a drawin's drawable */
-						drawin_t *candidate = drawable->owner.drawin;
-						/* Check shape_input to see if input passes through */
-						if (drawin_accepts_input_at(candidate, x - candidate->x, y - candidate->y)) {
-							d = candidate;
-							/* For drawins, we found what we need - skip client check */
-							goto found;
-						}
-						/* Input passes through this drawin, continue searching */
-					} else if (drawable->owner_type == DRAWABLE_OWNER_CLIENT) {
-						/* This is a titlebar drawable - store it and set client
-						 * Matches AwesomeWM event.c:76-77 client_get_drawable_offset() */
-						c = drawable->owner.client;
-						titlebar_drawable = drawable;
-						/* Continue to found label with client and titlebar_drawable set */
-					}
-				}
-			}
-		} else {
-			/* Skip parent walk for non-buffer nodes (e.g., scene rects) -
-			 * these are background elements that shouldn't intercept input */
-			continue;
-		}
-		/* Walk the tree to find a node that knows the client */
-		for (pnode = node; pnode && !c && !d; ) {
-			/* Check if this node has a drawin */
-			if (pnode->data && layer == LyrWibox) {
-				drawin_t *candidate = (drawin_t *)pnode->data;
-				/* Check shape_input to see if input passes through */
-				if (drawin_accepts_input_at(candidate, x - candidate->x, y - candidate->y)) {
-					d = candidate;
-					break;
-				}
-				/* Input passes through, continue searching to parent (don't set c) */
-			} else {
-				/* Not a drawin - could be a client */
-				c = pnode->data;
-			}
-			/* Safely traverse to parent - stop if we reach root */
-			if (!pnode->parent)
-				break;
-			pnode = &pnode->parent->node;
-		}
+	/* Fall back to the owner walk for nodes the bands did not draw or
+	 * resolve (a surface mid-release, the drag icon, lock surfaces):
+	 * client and layer-surface trees carry their owner in node.data. */
+	if (node && !c && !l && !d) {
+		for (pnode = node; pnode && !c; pnode = pnode->parent ? &pnode->parent->node : NULL)
+			c = pnode->data;
 		/* pnode->data is whatever that node's owner stored: a live
 		 * client, a live layer surface, or a pointer whose owner is
 		 * gone. Decide which by membership, never by reading a
@@ -3052,7 +3021,9 @@ xytonode(double x, double y, struct wlr_surface **psurface,
 		}
 	}
 
-found:
+	if (d && !drawin_accepts_input_at(d, x - d->x, y - d->y))
+		d = NULL;
+
 	/* Validate client pointer - ensure it's still in globalconf.clients
 	 * to avoid returning stale pointers from scene graph data fields */
 	if (c && pc && !is_client_valid(c))

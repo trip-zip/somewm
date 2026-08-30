@@ -127,8 +127,6 @@ struct wlr_scene *scene;
 struct wlr_scene_tree *layers[NUM_LAYERS];
 struct wlr_scene_tree *drag_icon;
 Client *drag_source_client;
-/* Map from ZWLR_LAYER_SHELL_* constants to Lyr* enum */
-const int layermap[] = { LyrBg, LyrBottom, LyrTop, LyrOverlay };
 struct wlr_renderer *drw;
 struct wlr_allocator *alloc;
 struct wlr_compositor *compositor;
@@ -381,16 +379,12 @@ cleanuplisteners(void)
 static Client *pre_lock_focused_client = NULL;
 
 /** Activate Lua-controlled lock mode
- * - Promotes lock surface and cover surfaces to LyrBlock
+ * - Solves the lock scene (covers + lock surface) into LyrBlock
  * - Gives keyboard focus to lock surface
  */
 void
 some_activate_lua_lock(void)
 {
-	drawin_t *lock_surface = some_get_lua_lock_surface();
-	int cover_count;
-	drawin_t **covers = some_get_lua_lock_covers(&cover_count);
-
 	/* Save currently focused client for restoration on unlock. */
 	pre_lock_focused_client = globalconf.focus.client;
 
@@ -411,50 +405,22 @@ some_activate_lua_lock(void)
 	wlr_scene_node_set_enabled(&locked_bg->node, 1);
 
 	/* Show the retained lock bands and dirty every output, so the lock
-	 * scene solves this frame (declare.c). Runs before the promotions
-	 * below so a band created now sits under the raised trees. */
+	 * scene (the covers, then the lock surface on top) solves this frame
+	 * into LyrBlock, above locked_bg (declare.c). */
 	declare_lock_set_visible(true);
-
-	/* Promote all cover surfaces to LyrBlock so they hide desktop content
-	 * on secondary monitors */
-	for (int i = 0; i < cover_count; i++)
-		some_promote_lock_cover(covers[i]);
-
-	/* Promote lock surface to LyrBlock and raise above covers */
-	if (lock_surface && lock_surface->scene_tree) {
-		wlr_scene_node_reparent(&lock_surface->scene_tree->node, layers[LyrBlock]);
-		wlr_scene_node_raise_to_top(&lock_surface->scene_tree->node);
-	}
 }
 
 /** The scene half of deactivating the lock: layers only, no Lua. */
 static void
 lua_lock_scene_restore(void)
 {
-	drawin_t *lock_surface = some_get_lua_lock_surface();
-	int cover_count;
-	drawin_t **covers = some_get_lua_lock_covers(&cover_count);
-
 	/* Disable compositor-level lock background */
 	wlr_scene_node_set_enabled(&locked_bg->node, 0);
 
-	/* Move lock surface back to normal layer (LyrWibox) */
-	if (lock_surface && lock_surface->scene_tree) {
-		wlr_scene_node_reparent(&lock_surface->scene_tree->node, layers[LyrWibox]);
-	}
-
-	/* Move cover surfaces back to normal layers via stack_refresh() */
-	for (int i = 0; i < cover_count; i++) {
-		if (covers[i] && covers[i]->scene_tree) {
-			wlr_scene_node_reparent(&covers[i]->scene_tree->node, layers[LyrWibox]);
-		}
-	}
-
-	/* Let stack_refresh() sort everything back to proper layers */
-	stack_refresh();
-
 	/* Hide the retained lock bands (nodes kept, so a re-engage does not
-	 * flash the previous lock frame) and re-solve the desktop. */
+	 * flash the previous lock frame) and re-solve the desktop; the lock
+	 * drawins rejoin the desktop declaration through the normal band
+	 * policy on that same solve. */
 	declare_lock_set_visible(false);
 }
 
@@ -492,19 +458,13 @@ some_deactivate_lua_lock_no_focus(void)
 	pre_lock_focused_client = NULL;
 }
 
-/** Promote a single cover to LyrBlock during an active lock.
- * Re-raises the interactive lock surface above the new cover so it
- * stays on top of all covers. */
+/** A cover registered during an active lock: re-solve the lock scene so it
+ * joins, still under the lock surface (declare_lock_scene's order). */
 void
 some_promote_lock_cover(drawin_t *d)
 {
-	if (d && d->scene_tree) {
-		wlr_scene_node_reparent(&d->scene_tree->node, layers[LyrBlock]);
-		wlr_scene_node_raise_to_top(&d->scene_tree->node);
-		drawin_t *lock_surface = some_get_lua_lock_surface();
-		if (lock_surface && lock_surface->scene_tree)
-			wlr_scene_node_raise_to_top(&lock_surface->scene_tree->node);
-	}
+	if (d)
+		declare_mark_all_dirty();
 }
 
 /** Clear pre_lock_focused_client if it matches the given client.
@@ -588,7 +548,7 @@ void
 cursor_to_client_coordinates(Client *client, double *sx, double *sy) {
 	double bw = client->bw;
 	/* The content surface is positioned inside the frame at (bw + titlebar_left,
-	 * bw + titlebar_top) (see apply_geometry_to_wlroots), so content-local
+	 * bw + titlebar_top) (see client_configure_to_box), so content-local
 	 * coordinates must subtract the titlebars too, not just the border. Without
 	 * this the values stay positive over a titlebar and leak onto the client's
 	 * top content rows; with it they go negative there (= pointer not in content).

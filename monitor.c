@@ -147,7 +147,6 @@ cleanupmon(struct wl_listener *listener, void *data)
 
 	closemon(m);
 	declare_output_destroy(m->declare);
-	wlr_scene_node_destroy(&m->fullscreen_bg->node);
 	free(m);
 
 	if (updatemons_pending) {
@@ -284,18 +283,6 @@ createmon(struct wl_listener *listener, void *data)
 			m->needs_output_added = 1;
 		}
 	}
-
-	/* The xdg-protocol specifies:
-	 *
-	 * If the fullscreened surface is not opaque, the compositor must make
-	 * sure that other screen content not part of the same surface tree (made
-	 * up of subsurfaces, popups or similarly coupled surfaces) are not
-	 * visible below the fullscreened surface.
-	 *
-	 */
-	/* updatemons() will resize and set correct position */
-	m->fullscreen_bg = wlr_scene_rect_create(layers[LyrFS], 0, 0, globalconf.appearance.fullscreen_bg);
-	wlr_scene_node_set_enabled(&m->fullscreen_bg->node, 0);
 
 	/* Adds this to the output layout in the order it was configured.
 	 *
@@ -533,6 +520,13 @@ rendermon(struct wl_listener *listener, void *data)
 	struct timespec bench_render_start, bench_render_end;
 	clock_gettime(CLOCK_MONOTONIC, &bench_render_start);
 #endif
+	/* The Clay frame: when the output is dirty, declare its scene, solve,
+	 * and reconcile into wlr_scene before the commit below presents it.
+	 * A clean output does zero work here. While the lua lock is engaged
+	 * the lock band solves instead of the desktop (declare.h). */
+	if (m->declare)
+		declare_output_frame(m->declare, m, some_is_lua_locked());
+
 	/* needs_frame is true only when there is something to present;
 	 * wlr_scene_output_commit() returns true without presenting otherwise, so
 	 * sample it first to count only real presents. */
@@ -700,9 +694,6 @@ updatemons(struct wl_listener *listener, void *data)
 		m->w = m->m;
 		wlr_scene_output_set_position(m->scene_output, m->m.x, m->m.y);
 		declare_output_update(m->declare, m->m.x, m->m.y);
-
-		wlr_scene_node_set_position(&m->fullscreen_bg->node, m->m.x, m->m.y);
-		wlr_scene_rect_set_size(m->fullscreen_bg, m->m.width, m->m.height);
 
 		if (m->lock_surface) {
 			struct wlr_scene_tree *scene_tree = client_surface_get_scene_tree(m->lock_surface->surface);

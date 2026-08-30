@@ -1,14 +1,14 @@
 /*
  * stack.c - client stack management for somewm
  *
- * Manages Z-order (stacking) of windows using wlroots scene graph layers.
- * Ported from AwesomeWM's stack.c, adapted for Wayland.
- *
- * Key differences from AwesomeWM:
- * - Uses wlroots scene graph layers instead of XCB stacking
+ * Maintains globalconf.stack (bottom to top) and the layer classification.
+ * The declare pass (declare.c) walks both per dirty frame and expresses the
+ * order as declaration order, so a stacking change is just a dirty mark;
+ * ported from AwesomeWM's stack.c.
  */
 
 #include "stack.h"
+#include "declare.h"
 #include "ewmh.h"
 #include "somewm_types.h"
 #include "objects/client.h"  /* For complete client_t definition */
@@ -16,16 +16,9 @@
 #include "globalconf.h"      /* For globalconf.stack and globalconf.drawins */
 #include "somewm_api.h"
 #include <stdbool.h>
-#include <wlr/types/wlr_scene.h>
-#ifdef XWAYLAND
-#include <wlr/xwayland.h>
-#endif
 
 /* Flag to mark stack as needing refresh */
 static bool need_stack_refresh = false;
-
-/* External references */
-extern struct wlr_scene_tree *layers[NUM_LAYERS];
 
 /*
  * Stack management - uses globalconf.stack (matches AwesomeWM)
@@ -94,8 +87,9 @@ stack_client_layer(Client *c)
 
 	/* Fullscreen windows only get their own layer when they have focus.
 	 * On Wayland, we also keep the fullscreen layer when the focused client
-	 * is on a different screen, since the scene graph uses separate layers
-	 * (unlike X11's flat stacking model where wibars are below all clients). */
+	 * is on a different screen, since the declare pass keeps per-band
+	 * ordering (unlike X11's flat stacking model where wibars are below all
+	 * clients). */
 	focused = some_get_focused_client();
 	if (c->fullscreen && (focused == c || !focused || focused->screen != c->screen))
 		return WINDOW_LAYER_FULLSCREEN;
@@ -136,166 +130,18 @@ stack_drawin_layer(struct drawin_t *d)
 	return LyrWibox;
 }
 
-/*
- * Scene graph integration
- */
-
-/** Get the wlroots scene layer for a window layer
- * Maps our logical layers to wlroots scene graph layers
- * \param layer Window layer
- * \return Scene graph layer index
- */
-static int
-get_scene_layer(window_layer_t layer)
-{
-	switch (layer) {
-	case WINDOW_LAYER_DESKTOP:
-		return LyrBg;
-	case WINDOW_LAYER_BELOW:
-		return LyrBottom;
-	case WINDOW_LAYER_NORMAL:
-		return LyrTile;
-	case WINDOW_LAYER_ABOVE:
-		return LyrTop;
-	case WINDOW_LAYER_FULLSCREEN:
-		return LyrFS;
-	case WINDOW_LAYER_ONTOP:
-		return LyrOverlay;
-	case WINDOW_LAYER_IGNORE:
-	case WINDOW_LAYER_COUNT:
-	default:
-		return LyrTile;
-	}
-}
-
-/** Stack a client relative to another within the same scene layer
- * \param c Client to stack
- * \param previous Previous client (stack above this one), or NULL
- */
-static void
-stack_client_relative(Client *c, Client *previous)
-{
-	if (!c || !c->scene)
-		return;
-
-	if (previous && previous->scene) {
-		/* Ensure both nodes share the same scene parent.
-		 * In X11, stacking is flat (xcb_configure_window works on any two windows).
-		 * In wlroots, wlr_scene_node_place_above requires shared parents.
-		 * Transients should visually stack with their parent regardless of
-		 * which layer they were initially placed in. */
-		if (c->scene->node.parent != previous->scene->node.parent) {
-			wlr_scene_node_reparent(&c->scene->node, previous->scene->node.parent);
-		}
-		wlr_scene_node_place_above(&c->scene->node, &previous->scene->node);
-	} else {
-		/* No previous client, raise to top of layer */
-		wlr_scene_node_raise_to_top(&c->scene->node);
-	}
-}
-
-/** Stack transient windows above their parent
- * Recursively stacks all transients above c
- * \param c Parent client
- * \param previous Last stacked window
- * \return Last stacked transient (or c if no transients)
- */
-static Client *
-stack_transients_above(Client *c, Client *previous)
-{
-	if (!c)
-		return previous;
-
-	/* Stack this client first */
-	stack_client_relative(c, previous);
-	previous = c;
-
-	/* Then stack all transients above it */
-	foreach(node, globalconf.stack) {
-		if ((*node)->transient_for == c) {
-			/* Recursively stack this transient and its transients */
-			previous = stack_transients_above(*node, previous);
-		}
-	}
-
-	return previous;
-}
-
 /** Refresh stacking order
- * Ported from AwesomeWM stack.c:stack_refresh (lines 162-199)
- * Applies computed stack order to wlroots scene graph
+ * The declare pass reads globalconf.stack per dirty frame and the
+ * reconciler restacks the scene from declaration order, so applying a stack
+ * change is a dirty mark on every output plus the EWMH mirror.
  */
 void
 stack_refresh(void)
 {
-	window_layer_t layer;
-	Client *prev_in_layer[WINDOW_LAYER_COUNT];
-	int scene_layer;
-
 	if (!need_stack_refresh)
 		return;
 
-	/* Initialize previous pointers for each layer */
-	for (layer = 0; layer < WINDOW_LAYER_COUNT; layer++) {
-		prev_in_layer[layer] = NULL;
-	}
-
-	/* Process stack from bottom to top, organizing by layer */
-	foreach(node, globalconf.stack) {
-		if (!(*node) || !(*node)->scene)
-			continue;
-
-		/* Unmanaged (override_redirect) X11 clients bypass the window
-		 * manager; they have no stacking attributes, so running them
-		 * through stack_client_layer() returns LyrTile and drops
-		 * Wine/Qt popups below their floating parents. mapnotify()
-		 * placed them in LyrOverlay; skip them here so the placement
-		 * survives. */
-#ifdef XWAYLAND
-		if ((*node)->client_type == X11 &&
-		    (*node)->surface.xwayland->override_redirect)
-			continue;
-#endif
-
-		layer = stack_client_layer(*node);
-
-		/* Skip IGNORE layer (transients are handled with their parents) */
-		if (layer == WINDOW_LAYER_IGNORE)
-			continue;
-
-		/* Move client to correct scene graph layer if needed */
-		scene_layer = get_scene_layer(layer);
-		if ((void *)(*node)->scene->node.parent != (void *)layers[scene_layer]) {
-			wlr_scene_node_reparent(&(*node)->scene->node, layers[scene_layer]);
-		}
-
-		/* Stack client and its transients */
-		prev_in_layer[layer] = stack_transients_above(*node, prev_in_layer[layer]);
-	}
-
-	/* Stack drawins (wiboxes) - AwesomeWM stacks these after clients */
-	foreach(drawin, globalconf.drawins) {
-		if (!(*drawin)->scene_tree)
-			continue;
-
-		/* Lock drawins are managed by some_activate_lua_lock() /
-		 * some_promote_lock_cover() and must stay in LyrBlock while the
-		 * session is locked. Without this skip, the normal ontop/type
-		 * logic below would reparent them out of LyrBlock. */
-		if (session_is_locked() && some_is_lock_drawin(*drawin))
-			continue;
-
-		scene_layer = stack_drawin_layer(*drawin);
-
-		/* Reparent to correct layer if needed */
-		if ((void *)(*drawin)->scene_tree->node.parent != (void *)layers[scene_layer]) {
-			wlr_scene_node_reparent(&(*drawin)->scene_tree->node, layers[scene_layer]);
-		}
-
-		/* Raise to top of its layer (drawins stack above clients in same layer) */
-		wlr_scene_node_raise_to_top(&(*drawin)->scene_tree->node);
-	}
-
+	declare_mark_all_dirty();
 	ewmh_update_net_client_list_stacking();
 
 	need_stack_refresh = false;

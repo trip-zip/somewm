@@ -112,8 +112,10 @@
 #include "../property.h"
 #include "../screenshot_compose.h"
 
-/* Forward declaration - applies client geometry to wlroots scene graph */
-void apply_geometry_to_wlroots(client_t *c);
+#include "../declare.h"
+
+/* Forward declarations - window.c's configure-client-to-box seam */
+bool client_configure_to_box(client_t *c);
 
 #include <math.h>
 #include <stdio.h>
@@ -2133,60 +2135,43 @@ client_border_refresh(void)
         c->border_need_update = false;
 
         /* Skip if client has no scene (not yet mapped) */
-        if(!c->scene || !c->border[0])
+        if(!c->scene)
             continue;
 
         /* Sync wlroots border width (bw) with Lua-facing border_width;
-         * client_geometry_refresh() runs right after this and applies the
-         * new width to the border rects, surface offset and shadow.
+         * the dirty frame below re-declares the frame at the new width.
          * Fullscreen keeps bw at 0 (matches setfullscreen()), so a
          * border_color change while fullscreen doesn't re-grow the frame. */
         c->bw = c->fullscreen ? 0 : c->border_width;
 
-        /* Update border color if initialized (matches AwesomeWM window_border_refresh pattern) */
-        if(c->border_color.initialized) {
-            float color_floats[4];
-            int i;
-
-            color_to_floats(&c->border_color, color_floats);
-
-            /* Apply color to all 4 border rectangles */
-            for(i = 0; i < 4; i++)
-                wlr_scene_rect_set_color(c->border[i], color_floats);
-        }
+        /* Width and color both land through the declare pass, which reads
+         * c->bw and client_border_rgba() per frame. */
+        if (c->mon && c->mon->declare)
+            declare_output_mark_dirty(c->mon->declare);
     }
 }
 
-/** Apply pending geometry changes to wlroots scene graph.
- *
- * This is the Wayland equivalent of AwesomeWM's X11 client_geometry_refresh().
- * Lua layout code calculates positions via c:geometry({...}), which updates
- * c->geometry in the C struct. This function applies those changes to the
- * actual wlroots scene nodes.
- *
- * Called from client_refresh() during the refresh cycle.
+/** The border color the declare pass draws for c: the Lua border_color
+ * property when set, else the C-side focus recolor, else the theme default
+ * (urgent-aware). Straight-alpha 0-1 floats.
  */
-static void
-client_geometry_refresh(void)
+void
+client_border_rgba(client_t *c, float out[4])
 {
-    foreach(_c, globalconf.clients)
-    {
-        client_t *c = *_c;
-
-        if (!c || !c->mon)
-            continue;
-
-        /* Apply c->geometry to wlroots scene graph */
-        apply_geometry_to_wlroots(c);
-    }
+    if (c->border_color.initialized)
+        color_to_floats(&c->border_color, out);
+    else if (c->border_rgba_set)
+        memcpy(out, c->border_rgba, 4 * sizeof(float));
+    else
+        memcpy(out, c->urgent ? globalconf.appearance.urgentcolor
+                              : globalconf.appearance.bordercolor,
+               4 * sizeof(float));
 }
 
 void
 client_refresh(void)
 {
-    /* Border refresh first: it syncs c->bw, which the geometry pass reads */
     client_border_refresh();
-    client_geometry_refresh();
     client_focus_refresh();
 }
 
@@ -2477,10 +2462,14 @@ client_resize_do(client_t *c, area_t geometry, bool silent)
         lua_pop(L, 2);
     }
 
-    /* Geometry will be applied to wlroots in the deferred refresh cycle.
-     * This matches AwesomeWM's pattern: client_resize_do() only updates state,
-     * and client_geometry_refresh() applies to the window system.
-     */
+    /* The frame around the client (position, borders, shadow) follows
+     * c->geometry at the next dirty frame; the configure leg runs now so
+     * the client learns its size in this cycle (titlebar-only changes
+     * shift the surface without moving the declared box, so the
+     * reconciler's configure hook alone would miss them). */
+    client_configure_to_box(c);
+    if (c->mon && c->mon->declare)
+        declare_output_mark_dirty(c->mon->declare);
 }
 
 /** Resize client window.
@@ -2744,7 +2733,7 @@ client_set_maximized_common(lua_State *L, int cidx, bool s, const char* type, co
             luaA_object_emit_signal(L, abs_cidx, "property::maximized", 0);
             if(c->toplevel_handle)
                 wlr_foreign_toplevel_handle_v1_set_maximized(c->toplevel_handle, c->maximized);
-            /* xdg-shell state is not written here. apply_geometry_to_wlroots()
+            /* xdg-shell state is not written here. client_configure_to_box()
              * reconciles it, so it batches into the same configure as the
              * size change (same as fullscreen). */
         }
@@ -3428,37 +3417,52 @@ luaA_client_get_first_tag(lua_State *L, client_t *c)
     return 0;
 }
 
-/** Get the wlroots scene-graph layer the client currently lives in.
+/** Get the stacking layer the client currently draws in.
  * Returns the layer name as a string, or nil if the client has no scene
- * node or its parent is not one of the known top-level layers. Intended
- * for integration tests that verify stacking behavior.
+ * node. Intended for integration tests that verify stacking behavior; the
+ * names are the pre-Clay scene layers, now derived from the same
+ * classification the declare pass orders bands by.
  */
 static int
 luaA_client_get__scene_layer(lua_State *L, client_t *c)
 {
-    static const char *const layer_names[NUM_LAYERS] = {
-        [LyrBg]      = "background",
-        [LyrBottom]  = "bottom",
-        [LyrTile]    = "tile",
-        [LyrFloat]   = "float",
-        [LyrWibox]   = "wibox",
-        [LyrTop]     = "top",
-        [LyrFS]      = "fullscreen",
-        [LyrOverlay] = "overlay",
-        [LyrBlock]   = "block",
+    static const char *const layer_names[WINDOW_LAYER_COUNT] = {
+        [WINDOW_LAYER_DESKTOP]    = "background",
+        [WINDOW_LAYER_BELOW]      = "bottom",
+        [WINDOW_LAYER_NORMAL]     = "tile",
+        [WINDOW_LAYER_ABOVE]      = "top",
+        [WINDOW_LAYER_FULLSCREEN] = "fullscreen",
+        [WINDOW_LAYER_ONTOP]      = "overlay",
     };
+    window_layer_t layer;
 
-    if (!c->scene || !c->scene->node.parent)
+    if (!c->scene)
         return 0;
 
-    for (int i = 0; i < NUM_LAYERS; i++) {
-        if ((void *)c->scene->node.parent == (void *)layers[i]) {
-            lua_pushstring(L, layer_names[i]);
-            return 1;
+    /* Unmanaged (override-redirect) clients draw at the top of the overlay
+     * band (declare_unmanaged_clients); transients ride their parent. */
+#ifdef XWAYLAND
+    if (c->client_type == X11 && c->surface.xwayland
+            && c->surface.xwayland->override_redirect) {
+        lua_pushstring(L, "overlay");
+        return 1;
+    }
+#endif
+    {
+        client_t *p = c;
+
+        layer = stack_client_layer(p);
+        while (layer == WINDOW_LAYER_IGNORE && p->transient_for) {
+            p = p->transient_for;
+            layer = stack_client_layer(p);
         }
     }
-
-    return 0;
+    if (layer == WINDOW_LAYER_IGNORE)
+        layer = WINDOW_LAYER_NORMAL;
+    if (!layer_names[layer])
+        return 0;
+    lua_pushstring(L, layer_names[layer]);
+    return 1;
 }
 
 /** Raise a client on top of others which are on the same layer.
@@ -3769,7 +3773,7 @@ titlebar_resize(lua_State *L, int cidx, client_t *c, client_titlebar_t bar, int 
 }
 
 /** Update all titlebar scene buffer positions based on current geometry.
- * Called from apply_geometry_to_wlroots() when client geometry changes.
+ * Called from client_configure_to_box() when client geometry changes.
  * In X11, drawable_set_geometry() implicitly repositions windows.
  * In Wayland, we must explicitly update scene_buffer positions.
  */
@@ -4965,20 +4969,21 @@ luaA_client_set_xproperty(lua_State *L)
 /** client:_border_is_focus_color() -> boolean
  *
  * Returns true if the client's rendered border color matches the
- * compositor's focus color. Reads directly from wlr_scene_rect.
+ * compositor's focus color. Reads the same color the declare pass draws.
  */
 static int
 luaA_client_border_is_focus_color(lua_State *L)
 {
     client_t *c = luaA_checkudata(L, 1, &client_class);
-    if (!c || !c->border[0]) {
+    if (!c || !c->scene) {
         lua_pushboolean(L, 0);
         return 1;
     }
 
     const float *focus = globalconf.appearance.focuscolor;
-    const float *actual = c->border[0]->color;
+    float actual[4];
 
+    client_border_rgba(c, actual);
     int matches = (actual[0] == focus[0] && actual[1] == focus[1] &&
                    actual[2] == focus[2] && actual[3] == focus[3]);
 
@@ -4995,14 +5000,15 @@ static int
 luaA_client_border_is_normal_color(lua_State *L)
 {
     client_t *c = luaA_checkudata(L, 1, &client_class);
-    if (!c || !c->border[0]) {
+    if (!c || !c->scene) {
         lua_pushboolean(L, 0);
         return 1;
     }
 
     const float *normal = globalconf.appearance.bordercolor;
-    const float *actual = c->border[0]->color;
+    float actual[4];
 
+    client_border_rgba(c, actual);
     int matches = (actual[0] == normal[0] && actual[1] == normal[1] &&
                    actual[2] == normal[2] && actual[3] == normal[3]);
 
