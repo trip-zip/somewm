@@ -1281,8 +1281,12 @@ luaA_awesome_test_declare_order(lua_State *L)
 	void *objects[ORDER_CAP];
 	int n;
 
-	if (!s->monitor || !s->monitor->declare)
-		return 0;
+	/* A screen with no monitor draws nothing. Report that as an empty
+	 * order, not nil: the caller iterates the result. */
+	if (!s->monitor || !s->monitor->declare) {
+		lua_createtable(L, 0, 0);
+		return 1;
+	}
 	n = declare_output_order(s->monitor->declare, s->monitor, objects,
 		ORDER_CAP);
 	lua_createtable(L, n, 0);

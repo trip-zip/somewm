@@ -1976,9 +1976,9 @@ client_ban(client_t *c)
         if(!c->scene)
             return;
 
-        /* Wayland: hide in scene graph (equivalent to xcb_unmap_window) */
-        wlr_scene_node_set_enabled(&c->scene->node, false);
-
+        /* The reconciler hides it: banning is a declare filter
+         * (client_isvisible in declarable_client), and banning_refresh()'s
+         * caller marks every output dirty once the sweep has to run. */
         c->isbanned = true;
 
         client_ban_unfocus(c);
@@ -2553,11 +2553,9 @@ client_set_minimized(lua_State *L, int cidx, bool s)
     if(c->minimized != s)
     {
         c->minimized = s;
+        /* The reconciler hides and shows it: banning_need_update() marks
+         * every output once banning_refresh() has to run. */
         banning_need_update();
-
-        /* Wayland: Hide/show the client's scene node */
-        if(c->scene)
-            wlr_scene_node_set_enabled(&c->scene->node, !s);
 
         /* xdg state is not set here. property::minimized below reaches
          * arrange(), which calls client_set_suspended() - one configure
@@ -2879,9 +2877,7 @@ client_unban(client_t *c)
         if(!c->scene)
             return;
 
-        /* Wayland: show in scene graph (equivalent to xcb_map_window) */
-        wlr_scene_node_set_enabled(&c->scene->node, true);
-
+        /* The reconciler shows it again; see client_ban(). */
         c->isbanned = false;
 
         /* An unbanned client shouldn't be minimized or hidden */
