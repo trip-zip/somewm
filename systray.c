@@ -192,8 +192,11 @@ systray_kickout(drawin_t *drawin)
 		return;
 
 	globalconf.systray.parent = NULL;
-	/* The old parent's entry still has the icons baked in; its next
-	 * redraw re-feeds the entry without them. */
+	/* The icons are baked into the old parent's content entry. Repaint it
+	 * now: systray_composite() is a no-op for it from here, so the widget
+	 * pixels land without them. Waiting for an unrelated redraw leaves the
+	 * tray drawn in two places. */
+	drawin_refresh_drawable(drawin);
 }
 
 /** awesome.systray() - Manage the system tray */
