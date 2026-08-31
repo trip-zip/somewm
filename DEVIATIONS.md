@@ -188,6 +188,26 @@ A client's `zIndex` follows `ontop`, `above`, `below` and `fullscreen`. A transi
 
 ---
 
+## Converted Widget Containers (somewm 2.1)
+
+A drawable's widget tree is compiled to Clay declarations from the root down, and the first widget the compile step cannot express keeps drawing itself with cairo into the drawable's surface, which the renderer shows as one image on top of the converted containers. `wibox.container.margin` and `wibox.container.background` convert; everything else, for now, does not. Widget code, signals and boxes are unchanged either way, and so is what a wibar looks like.
+
+A container stays on the cairo path when it carries something a Clay declaration does not say:
+
+- a subclass that overrides `:fit`, `:layout`, `:draw`, `before_draw_children` or `after_draw_children`
+- `visible = false`, an `opacity` other than 1, or a forced width or height
+- a background gradient, surface pattern or `bgimage`
+- a shape other than `gears.shape.rectangle` or `gears.shape.rounded_rect`, and a rounded shape together with a border width
+- a margin with `draw_empty = false`
+
+The whole drawable stays on the cairo path when its own background is not a solid color, when it has a background image, or when the drawin is shaped (`shape_bounding`, `shape_clip` or `shape_input`): those masks apply to the drawable's own pixels, which a converted container is no longer part of.
+
+**A margin's `color` draws above its child instead of below it.** The ring is the margin band, and the child is placed inside it, so the two do not overlap unless a widget draws outside its own box.
+
+**Screenshots include what the renderer draws as a flat color.** `root.content()` and `screen.content` now walk the scene for rectangles as well as buffers, so a converted container's background is in the capture. The same walk replaced `screen.content`'s own buffer pass, which ignored a scene buffer's destination size and scaled HiDPI captures wrong.
+
+---
+
 ## No-Op APIs
 
 These APIs exist and can be called without error, but have no effect on Wayland.

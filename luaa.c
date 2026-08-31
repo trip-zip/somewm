@@ -1,5 +1,6 @@
 #include "luaa.h"
 #include "declare.h"
+#include "widget.h"
 #include "draw.h"  /* Must be before globalconf.h to avoid type conflicts */
 #include "globalconf.h"
 
@@ -1526,6 +1527,39 @@ luaA_awesome_test_declare_order(lua_State *L)
 	return 1;
 }
 
+/** The boxes Clay solves for a drawin's converted widget chain, outermost
+ * first, drawin-local.
+ * Solves the chain alone, so a test can compare Clay's boxes against the
+ * ones wibox's own :fit/:layout protocol places (see
+ * tests/test-clay-widget-containers.lua). Empty for a drawin whose widget
+ * tree did not convert.
+ * \param drawin The drawin to solve.
+ * \return Array of { x, y, width, height } tables.
+ */
+static int
+luaA_awesome_test_widget_boxes(lua_State *L)
+{
+	drawin_t *d = luaA_checkdrawin(L, 1);
+	int boxes[WIDGET_NODES_MAX][4];
+	int n = 0;
+
+	if (widget_nodes_len(d) > 0)
+		n = widget_solve_boxes(d, boxes, WIDGET_NODES_MAX);
+
+	lua_createtable(L, n, 0);
+	for (int i = 0; i < n; i++) {
+		static const char *keys[] = { "x", "y", "width", "height" };
+
+		lua_createtable(L, 0, 4);
+		for (int k = 0; k < 4; k++) {
+			lua_pushinteger(L, boxes[i][k]);
+			lua_setfield(L, -2, keys[k]);
+		}
+		lua_rawseti(L, -2, i + 1);
+	}
+	return 1;
+}
+
 /** Reload shadow settings from beautiful theme.
  * Call this after changing beautiful.shadow_* values to apply them.
  * Regenerates shadow textures and updates all existing shadows.
@@ -2378,6 +2412,7 @@ const luaL_Reg awesome_methods[] = {
 	{ "_test_add_output", luaA_awesome_test_add_output },
 	{ "_test_redeclare", luaA_awesome_test_redeclare },
 	{ "_test_declare_order", luaA_awesome_test_declare_order },
+	{ "_test_widget_boxes", luaA_awesome_test_widget_boxes },
 	/* Lock API methods */
 	{ "lock", luaA_awesome_lock },
 	{ "unlock", luaA_awesome_unlock },

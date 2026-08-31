@@ -406,6 +406,24 @@ local function new(args)
     -- Make sure the wibox is drawn at least once
     ret.draw()
 
+    -- A shaped drawin keeps its whole surface: the masks apply to those
+    -- pixels, so the renderer refuses a converted widget chain for one
+    -- (widget.c) and the drawable has to paint every pixel itself again.
+    -- Only gaining or losing a mask moves that line, and _apply_shape resets
+    -- these on every geometry change.
+    local was_shaped = false
+    local function shape_changed()
+        local shaped = (w.shape_bounding or w.shape_clip or w.shape_input) ~= nil
+
+        if shaped ~= was_shaped then
+            was_shaped = shaped
+            ret._drawable._do_complete_repaint()
+        end
+    end
+    for _, prop in ipairs { "shape_bounding", "shape_clip", "shape_input" } do
+        w:connect_signal("property::" .. prop, shape_changed)
+    end
+
     ret:connect_signal("property::geometry", ret._apply_shape)
     ret:connect_signal("property::border_width", ret._apply_shape)
     ret:connect_signal("property::border_color", ret._apply_shape)
