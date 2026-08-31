@@ -81,34 +81,39 @@ local steps = {
         end
     end,
 
-    -- Step 3: Move mouse over the wibox to trigger drawin_accepts_input_at()
-    -- This will crash if the surface backing data was freed (use-after-free)
+    -- Step 3: capi.mouse.coords() only warps; object_under_pointer() is what
+    -- runs xytonode() and with it drawin_accepts_input_at(), the read of the
+    -- finished surface that used to crash. Assigning mouse.coords instead
+    -- warps nothing: awful.mouse has no set_coords, so the assignment lands
+    -- in its props table and shadows this function.
     function()
-        -- Position mouse inside the wibox
-        mouse.coords = { x = BOX_X + BOX_W / 2, y = BOX_Y + BOX_H / 2 }
-        io.stderr:write("[TEST] Mouse moved to center of wibox\n")
+        mouse.coords({ x = BOX_X + BOX_W / 2, y = BOX_Y + BOX_H / 2 })
+        assert(mouse.object_under_pointer() == test_wibox.drawin,
+            "center of the shape did not accept input")
+        io.stderr:write("[TEST] center of the wibox accepts input\n")
         return true
     end,
 
-    -- Step 4: Move mouse to corner (transparent region in rounded rect)
-    -- This tests the actual pixel lookup in drawin_accepts_input_at()
+    -- Step 4: The corners fall outside the rounded rect, so the mask reads 0
+    -- there. A mask whose backing data was freed and overwritten answers
+    -- these wrong (or crashes) instead.
     function()
-        -- Position mouse at corner where shape has transparency
-        mouse.coords = { x = BOX_X + 5, y = BOX_Y + 5 }
-        io.stderr:write("[TEST] Mouse moved to corner - shape_input check passed\n")
+        for _, corner in ipairs({
+            { BOX_X + 5, BOX_Y + 5 },
+            { BOX_X + BOX_W - 5, BOX_Y + 5 },
+            { BOX_X + BOX_W - 5, BOX_Y + BOX_H - 5 },
+            { BOX_X + 5, BOX_Y + BOX_H - 5 },
+        }) do
+            mouse.coords({ x = corner[1], y = corner[2] })
+            assert(mouse.object_under_pointer() ~= test_wibox.drawin,
+                string.format("corner (%d,%d) accepted input", corner[1],
+                    corner[2]))
+        end
+        io.stderr:write("[TEST] all four corners pass input through\n")
         return true
     end,
 
-    -- Step 5: Move mouse around more to stress test
-    function()
-        mouse.coords = { x = BOX_X + BOX_W - 5, y = BOX_Y + 5 }
-        mouse.coords = { x = BOX_X + BOX_W - 5, y = BOX_Y + BOX_H - 5 }
-        mouse.coords = { x = BOX_X + 5, y = BOX_Y + BOX_H - 5 }
-        io.stderr:write("[TEST] Mouse moved to all corners - no crash!\n")
-        return true
-    end,
-
-    -- Step 6: Cleanup
+    -- Step 5: Cleanup
     function()
         if test_wibox then
             test_wibox.visible = false
