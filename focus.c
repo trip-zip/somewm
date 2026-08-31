@@ -143,9 +143,9 @@ focusclient(Client *c, int lift)
 	globalconf.focus.client = c;
 	globalconf.focus.need_update = true;
 
-	/* Trigger stack refresh: client_layer_translator() depends on which
-	 * client has focus (e.g., fullscreen clients only get LyrFS when
-	 * focused or when the focused client is on a different screen). */
+	/* Trigger stack refresh: stack_client_layer() depends on which client
+	 * has focus (e.g. fullscreen clients only get WINDOW_LAYER_FULLSCREEN
+	 * when focused or when the focused client is on a different screen). */
 	stack_windows();
 
 	/* Activate the new client */
