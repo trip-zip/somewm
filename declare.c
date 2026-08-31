@@ -207,17 +207,32 @@ leaf_userdata(uint64_t handle, float opacity)
 		| ((uint64_t)(1 + (unsigned)(opacity * 254.0f + 0.5f)) << 40));
 }
 
+/* The band that drew a node is the one whose render_state retains it, which
+ * is not the band under the pointer: a drawin overhanging an output edge and
+ * a floating client dragged clear of its monitor both draw on a neighbor
+ * while the band that declared them stays where it is. Every band answers,
+ * and a node belongs to at most one, so the first hit is the owner. Asking
+ * all of them also covers a point in a gap between misaligned outputs, where
+ * there is no monitor to ask. */
 void *
-declare_output_hit(struct declare_output *dout, struct wlr_scene_node *node,
-	enum declare_kind *kind)
+declare_hit(struct wlr_scene_node *node, enum declare_kind *kind)
 {
-	void *ud = render_hit_userdata(dout->desktop.render, node);
+	Monitor *m;
 
-	if (!ud && dout->lock.render)
-		ud = render_hit_userdata(dout->lock.render, node);
-	if (!ud)
-		return NULL;
-	return declare_handle_get(declare_userdata_handle(ud), kind);
+	wl_list_for_each(m, &mons, link) {
+		struct declare_output *dout = m->declare;
+		void *ud;
+
+		if (!dout)
+			continue;
+		ud = render_hit_userdata(dout->desktop.render, node);
+		if (!ud && dout->lock.render)
+			ud = render_hit_userdata(dout->lock.render, node);
+		if (ud)
+			return declare_handle_get(
+				declare_userdata_handle(ud), kind);
+	}
+	return NULL;
 }
 
 /* somewm colors are straight-alpha 0-1 floats; Clay_Color is 0-255.
@@ -635,6 +650,15 @@ declare_band_init(struct declare_band *band, struct wlr_output *wlr_output,
 		Clay_CreateArenaWithCapacityAndMemory(arena_size, band->arena),
 		(Clay_Dimensions) { .width = width, .height = height },
 		(Clay_ErrorHandler) { .errorHandlerFunction = handle_clay_error });
+	/* Clay_Initialize left this the current context. Clay drops any
+	 * element whose box lies entirely outside layoutDimensions
+	 * (clay.h:2465), which saves draw calls in immediate mode and loses
+	 * windows here. Boxes are output-local, but the nodes they reconcile
+	 * into are not confined to the output: a floating client mid-drag and
+	 * a drawin overhanging an edge render on the neighbor while their box
+	 * is still relative to the output that declared them. wlr_scene does
+	 * the per-output culling. */
+	Clay_SetCullingEnabled(false);
 	band->tree = wlr_scene_tree_create(parent);
 	band->render = render_create(band->tree);
 }
