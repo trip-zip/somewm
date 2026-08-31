@@ -82,10 +82,10 @@ declare_userdata_handle(void *userdata)
 }
 
 /* The input backmap: the object whose leaf drew node (renderer-owned image
- * nodes, border sides, borrowed surface trees), or NULL for a node this
- * output's bands did not draw. Checks the desktop band, then the lock band. */
+ * nodes, border sides, borrowed surface trees), or NULL for a node no band
+ * drew. Searches every output's bands, desktop then lock, because the band
+ * that drew a node is not always the one the node is over. */
 struct wlr_scene_node;
-void *declare_output_hit(struct declare_output *dout,
-	struct wlr_scene_node *node, enum declare_kind *kind);
+void *declare_hit(struct wlr_scene_node *node, enum declare_kind *kind);
 
 #endif

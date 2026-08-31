@@ -1701,7 +1701,6 @@ xytonode(double x, double y, struct wlr_surface **psurface,
 	LayerSurface *l = NULL;
 	drawin_t *d = NULL;
 	drawable_t *titlebar_drawable = NULL;
-	Monitor *m;
 
 	if (scene)
 		node = wlr_scene_node_at(&scene->tree.node, x, y, nx, ny);
@@ -1727,11 +1726,12 @@ xytonode(double x, double y, struct wlr_surface **psurface,
 	/* Renderer-drawn chrome resolves through the band backmap: a drawin
 	 * image leaf names its drawin (its shape_input pass-through pixels
 	 * were already skipped inside the scene hit test), a client border
-	 * rect or corner tile names its client. */
-	if (node && !c && !d
-			&& (m = xytomon(x, y)) && m->declare) {
+	 * rect or corner tile names its client. The lookup is by node, not by
+	 * the monitor under the pointer: chrome declared on one output can be
+	 * drawn over its neighbor. */
+	if (node && !c && !d) {
 		enum declare_kind kind;
-		void *obj = declare_output_hit(m->declare, node, &kind);
+		void *obj = declare_hit(node, &kind);
 
 		if (obj && kind == DECLARE_KIND_DRAWIN)
 			d = obj;
