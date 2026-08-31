@@ -45,7 +45,6 @@ extern void signal_array_wipe(signal_array_t *arr);
 extern void screen_update_workarea(screen_t *screen);
 
 /* Forward declaration for drawable refresh callback */
-static void drawin_refresh_drawable(drawin_t *drawin);
 
 /** Get the effective scale for a drawin's drawable surface.
  * Returns scale_override if set (>0), otherwise the output scale.
@@ -348,7 +347,7 @@ drawin_update_shadow_entry(drawin_t *d, const shadow_config_t *config)
 	d->shadow_entry_config = *config;
 }
 
-static void
+void
 drawin_refresh_drawable(drawin_t *drawin)
 {
 	drawable_t *d;

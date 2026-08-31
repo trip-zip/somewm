@@ -169,21 +169,25 @@ arrange(Monitor *m)
 	if (!L)
 		return;
 
-	/* WAYLAND-SPECIFIC: Always update scene node visibility, even during initialization.
-	 * Unlike X11 where windows are visible by default, Wayland scene nodes start disabled.
-	 * This MUST run before any early returns to ensure clients become visible. */
+	/* Suspend the surfaces this monitor is no longer showing. Node
+	 * visibility is not set here: the reconciler owns the enabled bit, and
+	 * the mark below is what makes it re-derive one. */
 	foreach(client, globalconf.clients) {
-		bool visible;
 		c = *client;
 		if (!c->mon || c->mon != m || !c->scene)
 			continue;
 
-		visible = client_isvisible(c);
-		wlr_scene_node_set_enabled(&c->scene->node, visible);
-		client_set_suspended(c, !visible);
+		client_set_suspended(c, !client_isvisible(c));
 	}
 
-	/* Safety check: if not initialized yet, skip Lua arrange but scene nodes are already updated */
+	/* Everything arrange changes (visibility, geometry, the fullscreen_bg
+	 * condition) lands through the declare pass at the next frame. Marked
+	 * before the early returns below, which would otherwise leave a
+	 * visibility change with nothing to apply it. */
+	if (m->declare)
+		declare_output_mark_dirty(m->declare);
+
+	/* Safety check: if not initialized yet, skip Lua arrange */
 	if (!globalconf.screens.tab) {
 		return;
 	}
@@ -225,13 +229,6 @@ arrange(Monitor *m)
 	lua_pop(L, 2);  /* Pop layout and awful */
 
 fallback:
-	/* Scene node visibility already updated at function start (Wayland-specific requirement) */
-
-	/* Everything arrange changed (visibility, geometry, the fullscreen_bg
-	 * condition) lands through the declare pass at the next frame. */
-	if (m->declare)
-		declare_output_mark_dirty(m->declare);
-
 	motionnotify(0, NULL, 0, 0, 0, 0);
 	some_recompute_idle_inhibit();
 }
@@ -851,12 +848,10 @@ mapnotify(struct wl_listener *listener, void *data)
 	tag_t *tag;
 
 	/* Create scene tree for this client, parked until the first frame that
-	 * declares it borrows the tree into an output's band; being created in
-	 * the disabled parked tree means an enable below cannot flash the
-	 * surface at 0,0 before the reconciler places it. */
+	 * declares it borrows the tree into an output's band. The parked tree is
+	 * disabled, so nothing here can flash the surface at 0,0 before the
+	 * reconciler places it, and the borrow is what enables it. */
 	c->scene = wlr_scene_tree_create(window_parked_tree());
-	/* Enabled later by a call to arrange() */
-	wlr_scene_node_set_enabled(&c->scene->node, client_is_unmanaged(c));
 	c->scene_surface = c->client_type == XDGShell
 			? wlr_scene_xdg_surface_create(c->scene, c->surface.xdg)
 			: wlr_scene_subsurface_tree_create(c->scene, client_surface(c));
@@ -919,7 +914,6 @@ mapnotify(struct wl_listener *listener, void *data)
 		 * declare pass draws them at the top of the overlay band
 		 * (declare_unmanaged_clients); LyrBlock still covers them. */
 		client_set_size(c, c->geometry.width, c->geometry.height);
-		declare_mark_all_dirty();
 		if (client_wants_focus(c)) {
 			focusclient(c, 1);
 			exclusive_focus = c;
@@ -1031,11 +1025,6 @@ mapnotify(struct wl_listener *listener, void *data)
 		c->resize = 0;
 		client_configure_to_box(c);
 		schedule_flush_clients(dpy);
-
-		/* Enable scene node for transient client */
-		if (client_on_selected_tags(c)) {
-			wlr_scene_node_set_enabled(&c->scene->node, true);
-		}
 	} else {
 		Monitor *target_mon;
 		screen_t *target_screen;
@@ -1168,10 +1157,10 @@ mapnotify(struct wl_listener *listener, void *data)
 		 * We only need to make the client visible in the scene graph.
 		 * AwesomeWM's client_manage() (objects/client.c:2278-2294) does NOT call arrange()
 		 * after request::manage - layout is handled by the Lua signal system.
-		 * Calling arrange() here would overwrite geometry set by Lua placement code. */
-		if (client_on_selected_tags(c)) {
-			wlr_scene_node_set_enabled(&c->scene->node, true);
-		}
+		 * Calling arrange() here would overwrite geometry set by Lua placement code.
+		 * Showing the client is the reconciler's: the mark at the end of
+		 * this function is what gets the declare pass to borrow the tree
+		 * in and enable it. */
 	}
 	printstatus();
 
@@ -1217,6 +1206,13 @@ unset_fullscreen:
 	}
 
 	some_event_queue_global(SIG_CLIENT_MAP);
+
+	/* A newly mapped client has to reach the declare pass to be drawn at
+	 * all. setmon() above usually marks on the way through arrange(), but
+	 * it returns early when c->mon was already the target, which would
+	 * leave the client undeclared until unrelated activity marked. Mapping
+	 * also reorders the stack, which is not one output's fact. */
+	declare_mark_all_dirty();
 
 	/* If the cursor is over this new client's CONTENT, set pointer focus directly.
 	 * Don't use motionnotify(0,...) because xytonode may not find the surface yet
