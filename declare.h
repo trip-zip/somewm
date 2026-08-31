@@ -31,8 +31,8 @@ void declare_mark_all_dirty(void);
 /* Run the declare pass for every dirty output now; called from the poll
  * function each loop iteration so input hit-testing reads a current scene
  * even when the backend delivers no frame events (a hidden nested output,
- * an asleep monitor). Returns whether any scene mutated. */
-bool declare_flush(void);
+ * an asleep monitor). Returns the scene mutations that took. */
+int declare_flush(void);
 
 /* If dirty, declare the output's scene into its Clay context, solve, and
  * reconcile into wlr_scene. Returns the mutation count, or -1 when the
@@ -64,6 +64,14 @@ enum declare_kind {
 
 void *declare_handle_get(uint64_t handle, enum declare_kind *kind);
 void declare_handle_drop(void *object);
+
+/* Test hook (awesome._test_declare_order): the desktop band's draw order for
+ * m, bottom to top, one entry per declared object. A fresh solve of the
+ * current state with no reconcile, so it reads what the next frame would
+ * draw without touching the scene; while the lua lock is up it still reports
+ * the desktop band, which is the one it solves. Returns the entries written. */
+int declare_output_order(struct declare_output *dout, struct Monitor *m,
+	void **objects, int cap);
 
 /* The declare handle inside a retained userData word (render.h): the low 40
  * bits are kind and registry id, the opacity byte rides above them. */

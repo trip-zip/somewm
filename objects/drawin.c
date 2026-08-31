@@ -291,6 +291,25 @@ drawin_apply_shape_mask(cairo_surface_t *src, cairo_surface_t *shape)
 
 static cairo_surface_t *drawin_copy_surface(cairo_surface_t *src);
 
+/* Paint src onto cr's target one pixel to one pixel. A drawable surface
+ * carries a device scale (set below so Lua draws in logical coordinates) and
+ * cairo honours it on the source pattern, which would land a HiDPI surface in
+ * the top-left 1/scale of the destination and drop the rest. Undoing it on the
+ * context makes this the plain pixel copy an image_entry is expected to hold,
+ * matching what drawin_apply_shape_mask already produces. */
+static void
+drawin_paint_pixels(cairo_t *cr, cairo_surface_t *src)
+{
+	double sx = 1.0, sy = 1.0;
+
+	cairo_surface_get_device_scale(src, &sx, &sy);
+	if (sx > 0.0 && sy > 0.0)
+		cairo_scale(cr, sx, sy);
+	cairo_set_source_surface(cr, src, 0, 0);
+	cairo_set_operator(cr, CAIRO_OPERATOR_SOURCE);
+	cairo_paint(cr);
+}
+
 /* Hand an entry a new owned surface (destroying the previous one) and bump
  * its generation so the renderer re-rasters. NULL clears the entry; a no-op
  * clear does not bump. */
@@ -394,9 +413,7 @@ drawin_refresh_drawable(drawin_t *drawin)
 			/* Same size: repaint the owned copy in place instead of
 			 * reallocating a full surface every refresh. */
 			cairo_t *cr = cairo_create(entry->native);
-			cairo_set_operator(cr, CAIRO_OPERATOR_SOURCE);
-			cairo_set_source_surface(cr, d->surface, 0, 0);
-			cairo_paint(cr);
+			drawin_paint_pixels(cr, d->surface);
 			cairo_destroy(cr);
 			entry->gen++;
 		} else {
@@ -1615,9 +1632,7 @@ drawin_copy_surface(cairo_surface_t *src)
 
 	/* Copy the content */
 	cr = cairo_create(dst);
-	cairo_set_source_surface(cr, src, 0, 0);
-	cairo_set_operator(cr, CAIRO_OPERATOR_SOURCE);
-	cairo_paint(cr);
+	drawin_paint_pixels(cr, src);
 	cairo_destroy(cr);
 
 	return dst;

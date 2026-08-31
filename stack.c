@@ -115,19 +115,20 @@ stack_client_layer(Client *c)
 	return WINDOW_LAYER_NORMAL;
 }
 
-/* The drawin band policy (AwesomeWM compat): desktop/splash below clients
- * like wallpaper, ontop above everything but fullscreen, dock above normal
- * windows, everything else in the wibox layer. */
-int
-stack_drawin_layer(struct drawin_t *d)
+/* A transient that sets no stacking attribute of its own inherits its
+ * parent's layer, so a dialog stays with its parent while ontop on the
+ * dialog itself still wins. WINDOW_LAYER_IGNORE means exactly the first
+ * case, so the walk ends at the first client that set something. */
+window_layer_t
+stack_client_effective_layer(Client *c)
 {
-	if (d->type == WINDOW_TYPE_DESKTOP || d->type == WINDOW_TYPE_SPLASH)
-		return LyrBg;
-	if (d->ontop)
-		return LyrOverlay;
-	if (d->type == WINDOW_TYPE_DOCK)
-		return LyrTop;
-	return LyrWibox;
+	window_layer_t layer = stack_client_layer(c);
+
+	while (layer == WINDOW_LAYER_IGNORE && c->transient_for) {
+		c = c->transient_for;
+		layer = stack_client_layer(c);
+	}
+	return layer == WINDOW_LAYER_IGNORE ? WINDOW_LAYER_NORMAL : layer;
 }
 
 /** Refresh stacking order

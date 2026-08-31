@@ -3446,8 +3446,9 @@ luaA_client_get__scene_layer(lua_State *L, client_t *c)
     if (!c->scene)
         return 0;
 
-    /* Unmanaged (override-redirect) clients draw at the top of the overlay
-     * band (declare_unmanaged_clients); transients ride their parent. */
+    /* Unmanaged (override-redirect) clients draw above everything
+     * (declare.c's z table); every other client draws in the layer
+     * stack_client_effective_layer() names. */
 #ifdef XWAYLAND
     if (c->client_type == X11 && c->surface.xwayland
             && c->surface.xwayland->override_redirect) {
@@ -3455,17 +3456,7 @@ luaA_client_get__scene_layer(lua_State *L, client_t *c)
         return 1;
     }
 #endif
-    {
-        client_t *p = c;
-
-        layer = stack_client_layer(p);
-        while (layer == WINDOW_LAYER_IGNORE && p->transient_for) {
-            p = p->transient_for;
-            layer = stack_client_layer(p);
-        }
-    }
-    if (layer == WINDOW_LAYER_IGNORE)
-        layer = WINDOW_LAYER_NORMAL;
+    layer = stack_client_effective_layer(c);
     if (!layer_names[layer])
         return 0;
     lua_pushstring(L, layer_names[layer]);
