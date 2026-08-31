@@ -32,8 +32,9 @@ struct widget_node {
  * count the output's Clay arena has to hold. */
 #define WIDGET_NODES_MAX 32
 
-/* Read a chain off the top of the Lua stack (the array lua/wibox/clay.lua
- * returns) and store it on d, replacing whatever was there. Returns false
+/* Read a chain from the array at absolute stack index idx (what
+ * lua/wibox/clay.lua returns) and store it on d, replacing whatever was
+ * there. Returns false
  * and stores nothing when the chain is malformed or the drawin cannot take
  * one, which is Lua's signal to paint the whole drawable itself.
  *
@@ -43,18 +44,5 @@ struct widget_node {
  * the converted node's scene rect, which takes input everywhere it draws. */
 bool widget_nodes_set(lua_State *L, drawin_t *d, int idx);
 void widget_nodes_clear(drawin_t *d);
-size_t widget_nodes_len(const drawin_t *d);
-
-/* Declare d's chain into the current Clay context: one fixed floating
- * element at the drawin's output-local box, each further node growing into
- * its parent, and the leaf carrying the drawable's image entry. */
-void widget_declare(drawin_t *d, uint32_t id, int16_t z, int x, int y,
-	void *leaf_userdata);
-
-/* Test readback (awesome._test_widget_boxes): solve the chain alone at the
- * drawin's size and report each node's box, drawin-local and rounded, so a
- * test can compare what Clay solves against what wibox's own layout would
- * have placed. Returns the number of boxes written. */
-int widget_solve_boxes(drawin_t *d, int (*boxes)[4], int cap);
 
 #endif

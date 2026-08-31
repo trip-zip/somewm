@@ -123,31 +123,6 @@ local function do_redraw(self)
         end
     end
 
-    -- Compile the front of the widget tree into Clay declarations. The
-    -- renderer draws what converted; the rest keeps painting into this
-    -- surface, which rides as the chain's innermost leaf.
-    local chain, leaf_widget, leaf_fg, leaf, leaf_parent
-    if not self.background_image then
-        chain, leaf_widget, leaf_fg = wclay.compile(self.background_color,
-            self._widget, self.foreground_color)
-    end
-    local converted = self.drawable:_clay_nodes(chain)
-
-    if converted then
-        -- The leaf draws the first widget the chain did not reach, so walk
-        -- down to it. A hierarchy that does not end where the chain says it
-        -- does is a compile bug: give up on the chain rather than draw the
-        -- tree in the wrong place.
-        leaf = self._widget_hierarchy
-        for _ = 1, #chain - 2 do
-            leaf_parent, leaf = leaf, leaf and leaf:get_children()[1]
-        end
-        if (leaf and leaf:get_widget()) ~= leaf_widget then
-            converted = false
-            self.drawable:_clay_nodes(nil)
-        end
-    end
-
     -- Clip to the dirty area
     if self._dirty_area:is_empty() then
         return
@@ -158,6 +133,15 @@ local function do_redraw(self)
     end
     self._dirty_area = cairo.Region.create()
     cr:clip()
+
+    -- Compile the front of the widget tree into Clay declarations. The
+    -- renderer draws what converted; the rest keeps painting into this
+    -- surface, which rides as the chain's innermost leaf. Below the empty
+    -- region check because every property that feeds a node dirties the
+    -- region on its way here.
+    local chain, leaf, leaf_parent, leaf_fg =
+        wclay.compile(self, self._widget_hierarchy)
+    local converted = self.drawable:_clay_nodes(chain)
 
     -- Draw the background
     cr:save()

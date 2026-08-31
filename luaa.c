@@ -1300,8 +1300,8 @@ luaA_awesome_test_declare_order(lua_State *L)
 
 /** The boxes Clay solves for a drawin's converted widget chain, outermost
  * first, drawin-local.
- * Solves the chain alone, so a test can compare Clay's boxes against the
- * ones wibox's own :fit/:layout protocol places (see
+ * What the last frame solved, so a test can compare Clay's boxes against
+ * the ones wibox's own :fit/:layout protocol places (see
  * tests/test-clay-widget-containers.lua). Empty for a drawin whose widget
  * tree did not convert.
  * \param drawin The drawin to solve.
@@ -1312,10 +1312,7 @@ luaA_awesome_test_widget_boxes(lua_State *L)
 {
 	drawin_t *d = luaA_checkdrawin(L, 1);
 	int boxes[WIDGET_NODES_MAX][4];
-	int n = 0;
-
-	if (widget_nodes_len(d) > 0)
-		n = widget_solve_boxes(d, boxes, WIDGET_NODES_MAX);
+	int n = declare_widget_boxes(d, boxes);
 
 	lua_createtable(L, n, 0);
 	for (int i = 0; i < n; i++) {

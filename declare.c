@@ -13,6 +13,7 @@
  * follow the stack and layer-shell surfaces the oldest first.
  */
 
+#include <math.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/wait.h>
@@ -177,22 +178,30 @@ enum {
 	Z_LOCK_SURFACE = 20,
 };
 
+/* The placement every box somewm computes elsewhere enters with: a fixed
+ * size at an explicit offset from the root, so Clay places it without
+ * solving for it. */
+static void
+place_fixed(Clay_ElementDeclaration *decl, int16_t z, int x, int y,
+	int w, int h)
+{
+	decl->layout.sizing.width = CLAY_SIZING_FIXED(w);
+	decl->layout.sizing.height = CLAY_SIZING_FIXED(h);
+	decl->floating.offset = (Clay_Vector2) { x, y };
+	decl->floating.attachTo = CLAY_ATTACH_TO_ROOT;
+	decl->floating.zIndex = z;
+}
+
 static Clay_ElementDeclaration
 leaf_at(Clay_String label, uint32_t index, int16_t z,
 	int x, int y, int w, int h)
 {
-	return (Clay_ElementDeclaration) {
+	Clay_ElementDeclaration decl = {
 		.id = Clay__HashString(label, index, 0),
-		.layout.sizing = {
-			.width = CLAY_SIZING_FIXED(w),
-			.height = CLAY_SIZING_FIXED(h),
-		},
-		.floating = {
-			.offset = { .x = x, .y = y },
-			.attachTo = CLAY_ATTACH_TO_ROOT,
-			.zIndex = z,
-		},
 	};
+
+	place_fixed(&decl, z, x, y, w, h);
+	return decl;
 }
 
 /* The per-element userData word (render.h): registry id in bits 0-31, kind
@@ -483,6 +492,75 @@ declare_layer_surfaces(Monitor *m)
 	}
 }
 
+/* --- the converted widget chain (widget.h) ---
+ *
+ * One element per node, each the previous one's only child, so the chain
+ * nests exactly as lua/wibox/clay.lua walked it. The outermost is the
+ * drawin's own box, fixed and floating like any other leaf here; the rest
+ * grow into whatever their parent's padding leaves them, which is the
+ * layout wibox's :fit and :layout used to compute.
+ *
+ * The id mixes the drawin's registry id with the node's depth, so a chain
+ * that grows or shrinks renames nothing above the change and the reconciler
+ * keeps the nodes it already has.
+ */
+static Clay_ElementId
+widget_node_id(uint32_t id, size_t depth)
+{
+	return Clay__HashString(CLAY_STRING("drawin.widget"), id,
+		(uint32_t)depth);
+}
+
+static Clay_ElementDeclaration
+widget_node_decl(const struct widget_node *n, uint32_t id, size_t depth)
+{
+	Clay_ElementDeclaration e = {
+		.id = widget_node_id(id, depth),
+		.layout = {
+			.sizing = {
+				.width = CLAY_SIZING_GROW(0),
+				.height = CLAY_SIZING_GROW(0),
+			},
+			.padding = { n->pad[0], n->pad[1], n->pad[2], n->pad[3] },
+		},
+		.cornerRadius = { n->radius, n->radius, n->radius, n->radius },
+	};
+
+	if (n->bg[3] > 0)
+		e.backgroundColor = clay_color(n->bg);
+	if (n->border[3] > 0) {
+		e.border.color = clay_color(n->border);
+		e.border.width = (Clay_BorderWidth) {
+			n->bw[0], n->bw[1], n->bw[2], n->bw[3], 0 };
+	}
+	return e;
+}
+
+static void
+declare_widget_chain(drawin_t *d, uint32_t id, int16_t z, int x, int y,
+	void *leaf_userdata)
+{
+	size_t len = d->widget_nodes_len;
+
+	d->widget_nodes_declared = true;
+
+	for (size_t i = 0; i < len; i++) {
+		const struct widget_node *n = &d->widget_nodes[i];
+		Clay_ElementDeclaration e = widget_node_decl(n, id, i);
+
+		if (i == 0)
+			place_fixed(&e, z, x, y, d->width, d->height);
+		if (n->raster) {
+			e.image.imageData = &d->content_entry;
+			e.userData = leaf_userdata;
+		}
+		Clay__OpenElement();
+		Clay__ConfigureOpenElementPtr(&e);
+	}
+	while (len-- > 0)
+		Clay__CloseElement();
+}
+
 /* --- drawins as whole-buffer image leaves ---
  *
  * Shadow below border below content, all riding the drawin's own image
@@ -521,11 +599,11 @@ declare_drawin(drawin_t *d, Monitor *m, int16_t z)
 	}
 
 	/* A converted widget chain declares the content leaf itself, inside the
-	 * containers lua/wibox/clay.lua peeled off it (widget.c). Those draw
-	 * below the leaf, which still covers the whole drawin and is
-	 * transparent wherever they show through. */
-	if (widget_nodes_len(d) > 0) {
-		widget_declare(d, id, z, x, y,
+	 * containers lua/wibox/clay.lua peeled off it. Those draw below the
+	 * leaf, which still covers the whole drawin and is transparent wherever
+	 * they show through. */
+	if (d->widget_nodes_len > 0) {
+		declare_widget_chain(d, id, z, x, y,
 			leaf_userdata(handle, opacity));
 		return;
 	}
@@ -605,6 +683,50 @@ declare_scene(Monitor *m)
 	declare_unmanaged_clients(m);
 	/* Session lock: locked_bg, the lock covers, and the lock surface stay
 	 * C-owned scene nodes in LyrBlock, above this whole band. */
+}
+
+int
+declare_widget_boxes(drawin_t *d, int (*boxes)[4])
+{
+	Monitor *m = d->screen ? d->screen->monitor : NULL;
+	struct declare_output *dout = m ? m->declare : NULL;
+	Clay_Context *previous;
+	Clay_BoundingBox root = { 0 };
+	uint32_t id;
+	int n = 0;
+
+	/* Clay's hashmap answers with the last box an id ever had, so a chain
+	 * the declare pass has not reached yet would read back the boxes of
+	 * the one it replaced. Report nothing until it has. */
+	if (!dout || !d->widget_nodes_declared)
+		return 0;
+
+	/* What the last frame solved, not a second solve of its own: Clay
+	 * keeps every element's box in the context's hashmap, so the readback
+	 * is one lookup per node against the boxes the output drew. */
+	previous = Clay_GetCurrentContext();
+	Clay_SetCurrentContext(dout->desktop.clay);
+	id = (uint32_t)handle_for(d, DECLARE_KIND_DRAWIN);
+
+	for (size_t i = 0; i < d->widget_nodes_len && n < WIDGET_NODES_MAX; i++) {
+		Clay_ElementData data = Clay_GetElementData(widget_node_id(id, i));
+
+		if (!data.found)
+			break;
+		if (i == 0)
+			root = data.boundingBox;
+		/* Clay solves float32; round here, and against the chain's own
+		 * root, so a box crossing into Lua is the whole drawin-local
+		 * pixel the old layout would have placed. */
+		boxes[n][0] = (int)floorf(data.boundingBox.x - root.x + 0.5f);
+		boxes[n][1] = (int)floorf(data.boundingBox.y - root.y + 0.5f);
+		boxes[n][2] = (int)floorf(data.boundingBox.width + 0.5f);
+		boxes[n][3] = (int)floorf(data.boundingBox.height + 0.5f);
+		n++;
+	}
+
+	Clay_SetCurrentContext(previous);
+	return n;
 }
 
 int

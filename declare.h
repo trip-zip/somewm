@@ -7,6 +7,7 @@
 struct wlr_output;
 struct Monitor;
 struct render_client_hooks;
+typedef struct drawin_t drawin_t;
 
 /* Per-output declare/solve state: the output's Clay context, the retained
  * render_state its solved commands reconcile into, and the dirty flag the
@@ -64,6 +65,14 @@ enum declare_kind {
 
 void *declare_handle_get(uint64_t handle, enum declare_kind *kind);
 void declare_handle_drop(void *object);
+
+/* Test hook (awesome._test_widget_boxes): the boxes the last solve gave a
+ * drawin's converted widget chain (widget.h), outermost first, drawin-local
+ * and rounded. Reads the output's own context, so it reports what the frame
+ * drew rather than a second solve of its own, and reports nothing until the
+ * declare pass has put the current chain in front of Clay. Writes at most
+ * WIDGET_NODES_MAX entries and returns how many. */
+int declare_widget_boxes(drawin_t *d, int (*boxes)[4]);
 
 /* Test hook (awesome._test_declare_order): the desktop band's draw order for
  * m, bottom to top, one entry per declared object. A fresh solve of the

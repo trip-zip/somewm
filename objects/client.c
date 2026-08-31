@@ -4391,7 +4391,7 @@ luaA_client_get_content(lua_State *L, client_t *c)
     cairo_t *cr;
     int dst_width  = c->geometry.width;
     int dst_height = c->geometry.height;
-    struct screenshot_render_data rdata;
+    struct screenshot_render_data rdata = { 0 };
 
     /* Logical client size without decorations - what we return to Lua. */
     dst_width  -= c->titlebar[CLIENT_TITLEBAR_LEFT].size + c->titlebar[CLIENT_TITLEBAR_RIGHT].size;

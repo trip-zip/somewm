@@ -91,6 +91,11 @@ typedef struct drawin_t {
 	 * finds nothing to convert in. */
 	struct widget_node *widget_nodes;
 	size_t widget_nodes_len;
+	/* Whether the declare pass has put this chain in front of Clay yet.
+	 * Clay's element hashmap is persistent and answers a lookup with the
+	 * last box an id ever had, so without this a chain that changed since
+	 * the last frame would read back the boxes of the one it replaced. */
+	bool widget_nodes_declared;
 } drawin_t;
 
 /* Metatable name for drawin userdata */
