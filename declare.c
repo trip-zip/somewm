@@ -6,14 +6,11 @@
  * the tree will declare stays under the session lock, its covers, and the
  * drag icon. Per dirty frame the declare pass rebuilds the output's tree:
  * every box somewm computes elsewhere enters as a fixed floating leaf
- * attached to Clay's root, so Clay places without solving it, and the
- * declaration order is the draw order (Clay_EndLayout's root sort is stable
- * for equal zIndex, clay.h:2605-2615, and Clay_BeginLayout opens an implicit
- * root container covering the window, clay.h:4170-4174).
+ * attached to Clay's root, so Clay places without solving it.
  *
- * The order reproduces the scene layers stack.c maintained: per shared band,
- * layer-shell surfaces below clients below drawins, bands stacked
- * Bg < Bottom < Tile < Wibox < Top < FS < Overlay.
+ * Draw order is Clay's own: zIndex picks the band and declaration order
+ * breaks ties inside it. The bands are the table below; within one, clients
+ * follow the stack and layer-shell surfaces the oldest first.
  */
 
 #include <stdlib.h>
@@ -144,8 +141,44 @@ declare_leaf(Clay_ElementDeclaration *decl)
 	Clay__CloseElement();
 }
 
+/* --- the draw order ---
+ *
+ * One band per line, bottom first. Clay sorts floating tree roots by zIndex
+ * (every floating element is one, clay.h:2102-2107; the sort is at
+ * clay.h:2603-2615 and is stable), so declaration order decides only within
+ * a band. A window's band comes from its stacking attribute; a transient
+ * that sets none inherits its parent's. */
+enum {
+	Z_LAYER_BACKGROUND = 10,
+	Z_CLIENT_DESKTOP = 20,
+	Z_DRAWIN_BG = 30,
+	Z_LAYER_BOTTOM = 40,
+	Z_CLIENT_BELOW = 50,
+	Z_CLIENT_NORMAL = 60,
+	Z_DRAWIN_WIBOX = 70,
+	Z_LAYER_TOP = 80,
+	Z_CLIENT_ABOVE = 90,
+	Z_DRAWIN_TOP = 100,
+	Z_FULLSCREEN_BG = 105,
+	Z_CLIENT_FULLSCREEN = 110,
+	Z_LAYER_OVERLAY = 120,
+	Z_CLIENT_ONTOP = 130,
+	Z_DRAWIN_OVERLAY = 140,
+	/* Override-redirect X11 windows (menus, tooltips, drag icons) carry
+	 * no stacking attribute to place them and are always transient UI for
+	 * the window below, so they sit above everything. */
+	Z_CLIENT_UNMANAGED = 150,
+};
+
+/* The lock band is a separate Clay context with its own order. */
+enum {
+	Z_LOCK_COVER = 10,
+	Z_LOCK_SURFACE = 20,
+};
+
 static Clay_ElementDeclaration
-leaf_at(Clay_String label, uint32_t index, int x, int y, int w, int h)
+leaf_at(Clay_String label, uint32_t index, int16_t z,
+	int x, int y, int w, int h)
 {
 	return (Clay_ElementDeclaration) {
 		.id = Clay__HashString(label, index, 0),
@@ -156,6 +189,7 @@ leaf_at(Clay_String label, uint32_t index, int x, int y, int w, int h)
 		.floating = {
 			.offset = { .x = x, .y = y },
 			.attachTo = CLAY_ATTACH_TO_ROOT,
+			.zIndex = z,
 		},
 	};
 }
@@ -203,7 +237,7 @@ clay_color(const float rgba[4])
  * box, border first so the borrowed tree, popups included, stacks above it,
  * matching the popup raise in client_configure_to_box(). */
 static void
-declare_client(Client *c, Monitor *m)
+declare_client(Client *c, Monitor *m, int16_t z)
 {
 	uint64_t handle = handle_for(c, DECLARE_KIND_CLIENT);
 	uint32_t id = (uint32_t)handle;
@@ -226,7 +260,7 @@ declare_client(Client *c, Monitor *m)
 
 	if (bw > 0) {
 		Clay_ElementDeclaration b = leaf_at(
-			CLAY_STRING("client.border"), id, x, y, fw, fh);
+			CLAY_STRING("client.border"), id, z, x, y, fw, fh);
 		float rgba[4];
 
 		client_border_rgba(c, rgba);
@@ -244,7 +278,7 @@ declare_client(Client *c, Monitor *m)
 			 * CUSTOM is never clipped, and the surface's own clamp
 			 * lives in client_configure_to_box(). */
 			Clay_ElementDeclaration w = leaf_at(
-				CLAY_STRING("client.clip"), id,
+				CLAY_STRING("client.clip"), id, z,
 				0, 0, m->m.width, m->m.height);
 			w.clip = (Clay_ClipElementConfig) {
 				.horizontal = true, .vertical = true };
@@ -260,7 +294,7 @@ declare_client(Client *c, Monitor *m)
 	}
 
 	Clay_ElementDeclaration s = leaf_at(
-		CLAY_STRING("client.surface"), id, x, y, fw, fh);
+		CLAY_STRING("client.surface"), id, z, x, y, fw, fh);
 	s.custom.customData = (void *)(uintptr_t)handle;
 	s.userData = leaf_userdata(handle, 1.0f);
 	declare_leaf(&s);
@@ -278,55 +312,86 @@ declarable_client(Client *c)
 	return client_is_unmanaged(c) || client_isvisible(c);
 }
 
-/* Transients ride their parent: declared right above it in the parent's
- * band, mirroring stack_transients_above() (stack.c). Unmanaged children
- * are excluded; declare_unmanaged_clients() owns every unmanaged client,
- * and declaring one here too would hash a duplicate Clay id and abort. */
+/* A transient that sets no stacking attribute of its own inherits its
+ * parent's band and is declared right above it. One that sets ontop, above,
+ * below or fullscreen declares as a root in that band instead, so the
+ * attribute wins over the parent's placement, as in AwesomeWM.
+ * stack_client_layer() returns WINDOW_LAYER_IGNORE for exactly the first
+ * case, so this implies c->transient_for. */
+static bool
+transient_inherits(Client *c)
+{
+	return stack_client_layer(c) == WINDOW_LAYER_IGNORE;
+}
+
+static int16_t
+client_z(Client *c)
+{
+	if (client_is_unmanaged(c))
+		return Z_CLIENT_UNMANAGED;
+
+	switch (stack_client_effective_layer(c)) {
+	case WINDOW_LAYER_DESKTOP:
+		return Z_CLIENT_DESKTOP;
+	case WINDOW_LAYER_BELOW:
+		return Z_CLIENT_BELOW;
+	case WINDOW_LAYER_ABOVE:
+		return Z_CLIENT_ABOVE;
+	case WINDOW_LAYER_FULLSCREEN:
+		return Z_CLIENT_FULLSCREEN;
+	case WINDOW_LAYER_ONTOP:
+		return Z_CLIENT_ONTOP;
+	default:
+		return Z_CLIENT_NORMAL;
+	}
+}
+
+/* Inheriting transients ride their parent: declared right above it in the
+ * band it resolved to, mirroring stack_transients_above() (stack.c).
+ * Unmanaged children are excluded; declare_unmanaged_clients() owns every
+ * unmanaged client, and declaring one here too would hash a duplicate Clay
+ * id and abort. */
 static void
 declare_client_tree(Client *c, Monitor *m)
 {
-	declare_client(c, m);
+	declare_client(c, m, client_z(c));
 	foreach(node, globalconf.stack)
 		if ((*node)->transient_for == c && (*node)->mon == m
 				&& !client_is_unmanaged(*node)
+				&& transient_inherits(*node)
 				&& declarable_client(*node))
 			declare_client_tree(*node, m);
 }
 
 /* Whether declare_client_tree() will reach c through its parent. When it
- * will not (parent minimized, unmapped, unmanaged, or on another output),
- * c declares as a root in its own layer instead of vanishing; the old
- * scene path kept exactly these clients visible per-client. The immediate
- * parent suffices: every managed declarable client on m is declared, as a
- * root or by riding one, so a declarable parent is a declared parent. */
+ * will not (c carries a stacking attribute of its own, or the parent is
+ * minimized, unmapped, unmanaged, or on another output), c declares as a
+ * root instead of vanishing; the old scene path kept exactly these clients
+ * visible per-client. The immediate parent suffices: every managed
+ * declarable client on m is declared, as a root or by riding one, so a
+ * declarable parent is a declared parent. */
 static bool
 transient_rides_parent(Client *c, Monitor *m)
 {
 	Client *p = c->transient_for;
 
-	return p && p->mon == m && !client_is_unmanaged(p)
-		&& declarable_client(p);
+	return p && transient_inherits(c) && p->mon == m
+		&& !client_is_unmanaged(p) && declarable_client(p);
 }
 
 static void
-declare_clients_in_layer(Monitor *m, window_layer_t want)
+declare_clients(Monitor *m)
 {
 	foreach(node, globalconf.stack) {
 		Client *c = *node;
-		window_layer_t layer;
 
-		/* Cheap pointer filters first; the tag-visibility checks walk
-		 * Lua state and run last. Unmanaged (override-redirect) clients
-		 * bypass stacking attributes and declare at the top of the
-		 * overlay band instead. */
+		/* Cheap pointer filters first, then the riding test, which
+		 * skips a transient before it pays for its own tag-visibility
+		 * check. Unmanaged (override-redirect) clients are declared by
+		 * declare_unmanaged_clients() instead. */
 		if (!c || c->mon != m || client_is_unmanaged(c))
 			continue;
-		layer = stack_client_layer(c);
-		if (layer == WINDOW_LAYER_IGNORE)
-			layer = WINDOW_LAYER_NORMAL;
-		if (layer != want)
-			continue;
-		if (c->transient_for && transient_rides_parent(c, m))
+		if (transient_rides_parent(c, m))
 			continue;
 		if (!declarable_client(c))
 			continue;
@@ -358,12 +423,12 @@ declare_unmanaged_clients(Monitor *m)
 			continue;
 		if (!declarable_client(c))
 			continue;
-		declare_client(c, m);
+		declare_client(c, m, client_z(c));
 	}
 }
 
 static void
-declare_layer_surface(LayerSurface *l, Monitor *m)
+declare_layer_surface(LayerSurface *l, Monitor *m, int16_t z)
 {
 	uint64_t handle = handle_for(l, DECLARE_KIND_LAYER);
 	struct wlr_layer_surface_v1 *ls = l->layer_surface;
@@ -371,8 +436,7 @@ declare_layer_surface(LayerSurface *l, Monitor *m)
 	 * layer-shell solve; the scene node's own position belongs to the
 	 * reconciler and may hold this same value already. */
 	Clay_ElementDeclaration s = leaf_at(CLAY_STRING("layer.surface"),
-		(uint32_t)handle,
-		l->geom.x, l->geom.y,
+		(uint32_t)handle, z, l->geom.x, l->geom.y,
 		ls->current.actual_width, ls->current.actual_height);
 
 	s.custom.customData = (void *)(uintptr_t)handle;
@@ -381,17 +445,25 @@ declare_layer_surface(LayerSurface *l, Monitor *m)
 }
 
 static void
-declare_layer_band(Monitor *m, int band)
+declare_layer_surfaces(Monitor *m)
 {
+	static const int16_t band_z[] = {
+		[ZWLR_LAYER_SHELL_V1_LAYER_BACKGROUND] = Z_LAYER_BACKGROUND,
+		[ZWLR_LAYER_SHELL_V1_LAYER_BOTTOM] = Z_LAYER_BOTTOM,
+		[ZWLR_LAYER_SHELL_V1_LAYER_TOP] = Z_LAYER_TOP,
+		[ZWLR_LAYER_SHELL_V1_LAYER_OVERLAY] = Z_LAYER_OVERLAY,
+	};
 	LayerSurface *l;
 
 	/* protocols.c prepends new surfaces to m->layers, and scene child
 	 * order stacks newer surfaces on top; reverse iteration declares the
 	 * oldest first, at the bottom. */
-	wl_list_for_each_reverse(l, &m->layers[band], link) {
-		if (!l->mapped || !l->scene)
-			continue;
-		declare_layer_surface(l, m);
+	for (size_t band = 0; band < LENGTH(m->layers); band++) {
+		wl_list_for_each_reverse(l, &m->layers[band], link) {
+			if (!l->mapped || !l->scene)
+				continue;
+			declare_layer_surface(l, m, band_z[band]);
+		}
 	}
 }
 
@@ -402,7 +474,7 @@ declare_layer_band(Monitor *m, int band)
  * Opacity applies to the content leaf only, matching the old scene-buffer
  * path, which never set opacity on the border or shadow. */
 static void
-declare_drawin(drawin_t *d, Monitor *m)
+declare_drawin(drawin_t *d, Monitor *m, int16_t z)
 {
 	uint64_t handle = handle_for(d, DECLARE_KIND_DRAWIN);
 	uint32_t id = (uint32_t)handle;
@@ -414,7 +486,7 @@ declare_drawin(drawin_t *d, Monitor *m)
 	if (d->shadow_entry.native) {
 		int r = d->shadow_entry_config.radius;
 		Clay_ElementDeclaration s = leaf_at(CLAY_STRING("drawin.shadow"),
-			id, x + d->shadow_entry_config.offset_x - r,
+			id, z, x + d->shadow_entry_config.offset_x - r,
 			y + d->shadow_entry_config.offset_y - r,
 			d->shadow_entry.width, d->shadow_entry.height);
 		s.image.imageData = &d->shadow_entry;
@@ -426,12 +498,13 @@ declare_drawin(drawin_t *d, Monitor *m)
 		 * old border_buffer's point_accepts_input answered, and the
 		 * shadow leaf below gets the same treatment for free. */
 		Clay_ElementDeclaration b = leaf_at(CLAY_STRING("drawin.border"),
-			id, x - bw, y - bw, d->width + 2 * bw, d->height + 2 * bw);
+			id, z, x - bw, y - bw,
+			d->width + 2 * bw, d->height + 2 * bw);
 		b.image.imageData = &d->border_entry;
 		declare_leaf(&b);
 	}
 
-	Clay_ElementDeclaration c = leaf_at(CLAY_STRING("drawin.image"), id,
+	Clay_ElementDeclaration c = leaf_at(CLAY_STRING("drawin.image"), id, z,
 		x, y, d->width, d->height);
 	c.image.imageData = &d->content_entry;
 	c.userData = leaf_userdata(handle, opacity);
@@ -449,20 +522,33 @@ declarable_drawin(drawin_t *d, Monitor *m)
 		&& d->screen && d->screen->monitor == m;
 }
 
+/* The drawin band policy (AwesomeWM compat): desktop and splash below
+ * clients like wallpaper, ontop above everything, dock above normal
+ * windows, everything else in the wibox band. */
+static int16_t
+drawin_z(drawin_t *d)
+{
+	if (d->type == WINDOW_TYPE_DESKTOP || d->type == WINDOW_TYPE_SPLASH)
+		return Z_DRAWIN_BG;
+	if (d->ontop)
+		return Z_DRAWIN_OVERLAY;
+	if (d->type == WINDOW_TYPE_DOCK)
+		return Z_DRAWIN_TOP;
+	return Z_DRAWIN_WIBOX;
+}
+
 static void
-declare_drawins_in_band(Monitor *m, int scene_layer)
+declare_drawins(Monitor *m)
 {
 	foreach(item, globalconf.drawins) {
 		drawin_t *d = *item;
 
-		if (stack_drawin_layer(d) != scene_layer)
-			continue;
 		/* Lock drawins belong to the lock pass while locked. */
 		if (session_is_locked() && some_is_lock_drawin(d))
 			continue;
 		if (!declarable_drawin(d, m))
 			continue;
-		declare_drawin(d, m);
+		declare_drawin(d, m, drawin_z(d));
 	}
 }
 
@@ -478,7 +564,7 @@ declare_fullscreen_bg(Monitor *m)
 		return;
 
 	Clay_ElementDeclaration bg = leaf_at(CLAY_STRING("fullscreen_bg"), 0,
-		0, 0, m->m.width, m->m.height);
+		Z_FULLSCREEN_BG, 0, 0, m->m.width, m->m.height);
 	bg.backgroundColor = clay_color(globalconf.appearance.fullscreen_bg);
 	declare_leaf(&bg);
 }
@@ -486,24 +572,40 @@ declare_fullscreen_bg(Monitor *m)
 static void
 declare_scene(Monitor *m)
 {
-	declare_layer_band(m, ZWLR_LAYER_SHELL_V1_LAYER_BACKGROUND);
-	declare_clients_in_layer(m, WINDOW_LAYER_DESKTOP);
-	declare_drawins_in_band(m, LyrBg);
-	declare_layer_band(m, ZWLR_LAYER_SHELL_V1_LAYER_BOTTOM);
-	declare_clients_in_layer(m, WINDOW_LAYER_BELOW);
-	declare_clients_in_layer(m, WINDOW_LAYER_NORMAL);
-	declare_drawins_in_band(m, LyrWibox);
-	declare_layer_band(m, ZWLR_LAYER_SHELL_V1_LAYER_TOP);
-	declare_clients_in_layer(m, WINDOW_LAYER_ABOVE);
-	declare_drawins_in_band(m, LyrTop);
+	declare_layer_surfaces(m);
+	declare_clients(m);
+	declare_drawins(m);
 	declare_fullscreen_bg(m);
-	declare_clients_in_layer(m, WINDOW_LAYER_FULLSCREEN);
-	declare_layer_band(m, ZWLR_LAYER_SHELL_V1_LAYER_OVERLAY);
-	declare_clients_in_layer(m, WINDOW_LAYER_ONTOP);
-	declare_drawins_in_band(m, LyrOverlay);
 	declare_unmanaged_clients(m);
 	/* Session lock: locked_bg, the lock covers, and the lock surface stay
 	 * C-owned scene nodes in LyrBlock, above this whole band. */
+}
+
+int
+declare_output_order(struct declare_output *dout, Monitor *m, void **objects,
+	int cap)
+{
+	int n = 0;
+
+	Clay_SetCurrentContext(dout->desktop.clay);
+	Clay_BeginLayout();
+	declare_scene(m);
+	Clay_RenderCommandArray commands = Clay_EndLayout();
+
+	for (int32_t i = 0; i < commands.length && n < cap; i++) {
+		Clay_RenderCommand *cmd = Clay_RenderCommandArray_Get(&commands, i);
+		void *object = declare_handle_get(
+			declare_userdata_handle(cmd->userData), NULL);
+
+		/* A leaf with no handle (the clip wrapper, the fullscreen
+		 * backing) is not an object. A client declares a border leaf
+		 * and a surface leaf, a drawin up to three image leaves; the
+		 * object enters the order once, at its lowest leaf. */
+		if (!object || (n > 0 && objects[n - 1] == object))
+			continue;
+		objects[n++] = object;
+	}
+	return n;
 }
 
 /* --- context lifecycle and the frame entry --- */
@@ -597,9 +699,9 @@ declare_lock_scene(Monitor *m)
 
 	for (int i = 0; i < cover_count; i++)
 		if (covers[i] && declarable_drawin(covers[i], m))
-			declare_drawin(covers[i], m);
+			declare_drawin(covers[i], m, Z_LOCK_COVER);
 	if (lock_surface && declarable_drawin(lock_surface, m))
-		declare_drawin(lock_surface, m);
+		declare_drawin(lock_surface, m, Z_LOCK_SURFACE);
 }
 
 void
@@ -652,19 +754,23 @@ declare_output_mark_dirty(struct declare_output *dout)
  * this each loop iteration: input hit-testing reads the reconciled scene,
  * and a hidden or asleep output gets no frame events to rebuild it there.
  * The frame handler keeps its own call for marks that land in between.
- * Returns whether any scene mutated, so the caller can re-evaluate what is
- * under the pointer. */
-bool
+ * Returns the scene mutations that took, so the caller can re-evaluate what
+ * is under the pointer.
+ */
+int
 declare_flush(void)
 {
 	Monitor *m;
-	bool mutated = false;
+	int mutations = 0, n;
 
-	wl_list_for_each(m, &mons, link)
-		if (m->declare && m->wlr_output->enabled)
-			mutated |= declare_output_frame(m->declare, m,
-				some_is_lua_locked()) > 0;
-	return mutated;
+	wl_list_for_each(m, &mons, link) {
+		if (!m->declare || !m->wlr_output->enabled)
+			continue;
+		n = declare_output_frame(m->declare, m, some_is_lua_locked());
+		if (n > 0)
+			mutations += n;
+	}
+	return mutations;
 }
 
 void

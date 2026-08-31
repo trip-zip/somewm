@@ -1252,6 +1252,47 @@ luaA_awesome_test_add_output(lua_State *L)
 	return 1;
 }
 
+/** awesome._test_redeclare: re-declare every output and report the scene
+ * mutations that took. Nothing else having changed between two calls, the
+ * second must return 0 (see tests/test-declare-zero-mutations.lua).
+ * \return Number of scene mutations
+ */
+static int
+luaA_awesome_test_redeclare(lua_State *L)
+{
+	declare_mark_all_dirty();
+	lua_pushinteger(L, declare_flush());
+	return 1;
+}
+
+/** The draw order of a screen's windows, wiboxes and layer surfaces,
+ * bottom to top.
+ * Solves the screen's Clay tree again and reports what it would draw, so a
+ * test can assert stacking directly instead of inferring it from attributes
+ * (see tests/test-declare-order.lua).
+ * \param screen The screen to solve.
+ * \return Array of the objects drawn, bottom first.
+ */
+static int
+luaA_awesome_test_declare_order(lua_State *L)
+{
+	enum { ORDER_CAP = 256 };
+	screen_t *s = luaA_checkscreen(L, 1);
+	void *objects[ORDER_CAP];
+	int n;
+
+	if (!s->monitor || !s->monitor->declare)
+		return 0;
+	n = declare_output_order(s->monitor->declare, s->monitor, objects,
+		ORDER_CAP);
+	lua_createtable(L, n, 0);
+	for (int i = 0; i < n; i++) {
+		luaA_object_push(L, objects[i]);
+		lua_rawseti(L, -2, i + 1);
+	}
+	return 1;
+}
+
 /** Reload shadow settings from beautiful theme.
  * Call this after changing beautiful.shadow_* values to apply them.
  * Regenerates shadow textures and updates all existing shadows.
@@ -2102,6 +2143,8 @@ const luaL_Reg awesome_methods[] = {
 	{ "restart", luaA_restart },
 	{ "shadow_reload", luaA_awesome_shadow_reload },
 	{ "_test_add_output", luaA_awesome_test_add_output },
+	{ "_test_redeclare", luaA_awesome_test_redeclare },
+	{ "_test_declare_order", luaA_awesome_test_declare_order },
 	/* Lock API methods */
 	{ "lock", luaA_awesome_lock },
 	{ "unlock", luaA_awesome_unlock },

@@ -29,7 +29,7 @@
  * (awful.mouse.client.move/resize) instead of C-level cursor_mode state machine */
 enum { CurNormal, CurPressed }; /* cursor */
 enum { XDGShell, LayerShell, X11 }; /* client types */
-enum { LyrBg, LyrBottom, LyrTile, LyrFloat, LyrWibox, LyrTop, LyrFS, LyrOverlay, LyrBlock, NUM_LAYERS }; /* scene layers */
+enum { LyrBg, LyrWibox, LyrTop, LyrOverlay, LyrBlock, NUM_LAYERS }; /* scene layers */
 
 /* Window types (for stacking and EWMH) - AwesomeWM compatibility */
 typedef enum {
