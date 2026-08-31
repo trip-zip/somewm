@@ -1172,6 +1172,17 @@ composite_scene_buffer_to_cairo(struct wlr_scene_buffer *scene_buffer,
  *
  * Shared with objects/screen.c via screenshot_compose.h.
  */
+/* Whether a node's layout box reaches the target at all. */
+static bool
+within_bounds(const struct screenshot_render_data *rdata, int x, int y,
+              int w, int h)
+{
+	if (rdata->bound_w <= 0 || rdata->bound_h <= 0)
+		return true;
+	return !(x + w <= rdata->bound_x || x >= rdata->bound_x + rdata->bound_w
+		|| y + h <= rdata->bound_y || y >= rdata->bound_y + rdata->bound_h);
+}
+
 void
 composite_scene_node_to_cairo(struct wlr_scene_node *node, void *data)
 {
@@ -1183,16 +1194,29 @@ composite_scene_node_to_cairo(struct wlr_scene_node *node, void *data)
 		return;
 
 	switch (node->type) {
-	case WLR_SCENE_NODE_BUFFER:
-		if (wlr_scene_node_coords(node, &lx, &ly))
-			composite_scene_buffer_to_cairo(
-				wlr_scene_buffer_from_node(node), lx, ly, rdata);
+	case WLR_SCENE_NODE_BUFFER: {
+		struct wlr_scene_buffer *buffer = wlr_scene_buffer_from_node(node);
+		int w, h;
+
+		if (!wlr_scene_node_coords(node, &lx, &ly) || !buffer->buffer)
+			return;
+		/* The size it draws at, not the size of its pixels: a shadow
+		 * edge is a one-pixel texture stretched the length of a client,
+		 * and culling on the texture would drop it. */
+		w = buffer->dst_width > 0 ? buffer->dst_width : buffer->buffer->width;
+		h = buffer->dst_height > 0 ? buffer->dst_height : buffer->buffer->height;
+		if (!within_bounds(rdata, lx, ly, w, h))
+			return;
+		composite_scene_buffer_to_cairo(buffer, lx, ly, rdata);
 		return;
+	}
 	case WLR_SCENE_NODE_RECT: {
 		struct wlr_scene_rect *rect = wlr_scene_rect_from_node(node);
 		float a = rect->color[3];
 
 		if (!wlr_scene_node_coords(node, &lx, &ly))
+			return;
+		if (!within_bounds(rdata, lx, ly, rect->width, rect->height))
 			return;
 		/* Scene rect colors are premultiplied; cairo wants straight. */
 		cairo_save(rdata->cr);
@@ -1230,7 +1254,7 @@ luaA_root_get_content(lua_State *L)
 	cairo_surface_t *surface;
 	cairo_t *cr;
 	int width, height;
-	struct screenshot_render_data rdata;
+	struct screenshot_render_data rdata = { 0 };
 	bool preserve_alpha = false;
 
 	/* Check for optional preserve_alpha parameter */
@@ -1273,6 +1297,7 @@ luaA_root_get_content(lua_State *L)
 	rdata.renderer = drw;
 	rdata.offset_x = 0;
 	rdata.offset_y = 0;
+	/* bound_w stays zero: the whole layout is the target. */
 
 	/* Walk the scene for client content and the chrome the renderer drew */
 	composite_scene_node_to_cairo(&scene->tree.node, &rdata);

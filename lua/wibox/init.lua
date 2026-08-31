@@ -406,11 +406,11 @@ local function new(args)
     -- Make sure the wibox is drawn at least once
     ret.draw()
 
-    -- A shaped drawin keeps its whole surface: the masks apply to those
-    -- pixels, so the renderer refuses a converted widget chain for one
-    -- (widget.c) and the drawable has to paint every pixel itself again.
-    -- Only gaining or losing a mask moves that line, and _apply_shape resets
-    -- these on every geometry change.
+    -- Gaining or losing a shape is the one thing that changes whether the
+    -- renderer takes a converted widget chain (widget.c) without also
+    -- redrawing a widget, so it has to ask for the repaint itself. The test
+    -- is on the masks rather than the signal because _apply_shape re-sets
+    -- them on every geometry change, unchanged.
     local was_shaped = false
     local function shape_changed()
         local shaped = (w.shape_bounding or w.shape_clip or w.shape_input) ~= nil

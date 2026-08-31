@@ -688,11 +688,8 @@ luaA_drawable_clay_nodes(lua_State *L)
 		lua_pushboolean(L, false);
 		return 1;
 	}
-	if (lua_isnoneornil(L, 2)) {
-		widget_nodes_clear(drawin);
-		lua_pushboolean(L, false);
-		return 1;
-	}
+	/* nil is not a chain, so widget_nodes_set drops whatever was stored
+	 * and answers false, which is the whole of "paint it yourself". */
 	lua_pushboolean(L, widget_nodes_set(L, drawin, 2));
 	return 1;
 }

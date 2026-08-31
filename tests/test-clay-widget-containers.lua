@@ -13,6 +13,7 @@
 
 local ffi = require("ffi")
 local runner = require("_runner")
+local utils = require("_utils")
 local wibox = require("wibox")
 local base = require("wibox.widget.base")
 local cairo = require("lgi").cairo
@@ -61,15 +62,12 @@ local function hierarchy_boxes()
     return boxes
 end
 
-local function box_string(b)
-    return string.format("%dx%d+%d+%d", b.width, b.height, b.x, b.y)
-end
-
 local function assert_box(got, want, what)
-    assert(got and got.x == want.x and got.y == want.y
-        and got.width == want.width and got.height == want.height,
-        string.format("%s: got %s, want %s", what,
-            got and box_string(got) or "nothing", box_string(want)))
+    assert(got, what .. ": no box")
+
+    local ok, err = pcall(utils.assert_geometry, got, want)
+
+    assert(ok, what .. ": " .. tostring(err))
 end
 
 -- The wibar's pixels out of a screen capture, as one string.
@@ -135,6 +133,21 @@ local function compare(count, what)
         end
     end
     error(what .. " differs outside the compared channels")
+end
+
+-- A step that runs `setup` once and then waits for the readback to say the
+-- tree did or did not convert. The fallbacks repaint a frame or two later,
+-- so every one of these polls.
+local function step_until(converted, setup, what)
+    return function(count)
+        if count == 1 then
+            setup()
+        end
+        if (#awesome._test_widget_boxes(bar.drawin) > 0) == converted then
+            return true
+        end
+        assert(count < 20, what)
+    end
 end
 
 local steps = {
@@ -215,40 +228,20 @@ local steps = {
     -- The same tree painted whole. A shape puts the drawable back on the
     -- path where cairo paints every pixel, because the mask applies to those
     -- pixels; a full-rectangle shape masks nothing away.
-    function(count)
-        if count == 1 then
-            bar.shape = gshape.rectangle
-        end
-        if #awesome._test_widget_boxes(bar.drawin) == 0 then
-            return true
-        end
-        assert(count < 20, "a shape did not put the drawable back on cairo")
-    end,
+    step_until(false, function() bar.shape = gshape.rectangle end,
+        "a shape did not put the drawable back on cairo"),
 
     function(count)
         return compare(count, "a shaped drawable")
     end,
 
     -- And a background image, the other thing the chain cannot carry.
-    function(count)
-        if count == 1 then
-            bar.shape = nil
-        end
-        if #awesome._test_widget_boxes(bar.drawin) > 0 then
-            return true
-        end
-        assert(count < 20, "dropping the shape did not convert the tree again")
-    end,
+    step_until(true, function() bar.shape = nil end,
+        "dropping the shape did not convert the tree again"),
 
-    function(count)
-        if count == 1 then
-            bar.bgimage = cairo.ImageSurface(cairo.Format.ARGB32, 1, 1)
-        end
-        if #awesome._test_widget_boxes(bar.drawin) == 0 then
-            return true
-        end
-        assert(count < 20, "a background image did not put the drawable back")
-    end,
+    step_until(false, function()
+        bar.bgimage = cairo.ImageSurface(cairo.Format.ARGB32, 1, 1)
+    end, "a background image did not put the drawable back"),
 
     function(count)
         return compare(count, "a background image")

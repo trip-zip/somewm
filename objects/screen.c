@@ -1242,7 +1242,7 @@ luaA_screen_get_content(lua_State *L, screen_t *s)
 {
 	cairo_surface_t *surface;
 	cairo_t *cr;
-	struct screenshot_render_data rdata;
+	struct screenshot_render_data rdata = { 0 };
 	int width, height;
 
 	if (!s || !s->valid)
@@ -1270,6 +1270,10 @@ luaA_screen_get_content(lua_State *L, screen_t *s)
 	rdata.renderer = drw;
 	rdata.offset_x = -s->geometry.x;
 	rdata.offset_y = -s->geometry.y;
+	rdata.bound_x = s->geometry.x;
+	rdata.bound_y = s->geometry.y;
+	rdata.bound_w = width;
+	rdata.bound_h = height;
 
 	/* First, composite wallpaper (cropped to screen area) */
 	if (globalconf.wallpaper) {

@@ -3,14 +3,16 @@
 --
 -- The declare pass (declare.c) draws a drawin as one image leaf holding the
 -- whole drawable surface. This module peels containers off the front of that
--- leaf: walking down from the root widget, every node whose class and
--- properties map onto a Clay declaration becomes one, and the first node that
--- does not stops the walk. Whatever is left rasters into the same drawable
--- surface it always did and rides as the leaf, now declared inside the
--- converted chain instead of alone.
+-- leaf: walking down from the root, every widget whose class and properties
+-- map onto a Clay declaration becomes one, and the first widget that does not
+-- stops the walk. Whatever is left rasters into the same drawable surface it
+-- always did and rides as the leaf, now declared inside the converted chain
+-- instead of alone.
 --
--- A node is pure description. Nothing here draws, measures, or reads a box:
--- Clay solves the chain, and `compile` only says what the chain is.
+-- The walk descends the drawable's `wibox.hierarchy`, which is the structure
+-- that will draw the leaf, so the chain can never name a widget the drawing
+-- does not reach. It reads no box from it: a node is pure description, Clay
+-- solves the chain, and `compile` only says what the chain is.
 --
 -- @module wibox.clay
 ---------------------------------------------------------------------------
@@ -186,81 +188,101 @@ local function describe_background(w)
         end
     end
 
-    return node
+    -- A background's fg is the source its children draw with, so it rides
+    -- alongside the node rather than in it: the leaf takes the innermost one.
+    return node, p.foreground
 end
 
---- Compile the widget tree `root` under a drawable painted with `bg`.
+--- Whether a widget is one of the classes the chain knows at all. Cheap, and
+-- separate from `describe` so a tree that can never convert costs two table
+-- lookups rather than a walk.
+local function convertible_class(w)
+    return w.fit == margin_class.fit or w.fit == background_class.fit
+end
+
+--- The node a widget compiles to, plus any foreground it puts in force, or
+-- nil for a widget that keeps drawing itself.
+local function describe(w)
+    if not common_convertible(w) then
+        return nil
+    end
+    if w.fit == margin_class.fit then
+        return describe_margin(w)
+    end
+    return describe_background(w)
+end
+
+--- Compile the front of a drawable's laid-out widget tree.
 --
 -- Returns the node chain outermost first, always ending in the raster leaf,
--- plus the widget the leaf draws (nil when the chain consumed the whole tree)
--- and the foreground color in force where the leaf starts. Returns nil when
--- nothing converts, which leaves the drawable on the path it has always
--- taken: one leaf, painted whole.
+-- plus the hierarchy the leaf draws (nil when the chain consumed the whole
+-- tree), that hierarchy's parent, and the foreground in force where the leaf
+-- starts. Returns nil when nothing converts, which leaves the drawable on the
+-- path it has always taken: one leaf, painted whole.
 --
 -- A node is a table with any of `pad`, `bg`, `border`, `bw`, `radius`; the
 -- last one is `{ raster = true }`, the leaf.
 --
--- @tparam cairo.Pattern|nil bg The drawable's own background.
--- @tparam widget|nil root The drawable's widget.
--- @tparam cairo.Pattern|nil fg The drawable's own foreground.
+-- @tparam table self The drawable, for its own background, background image
+--  and foreground.
+-- @tparam wibox.hierarchy|nil root The drawable's laid-out widget tree.
 -- @treturn[1] table The node chain.
--- @treturn[1] widget|nil The widget the raster leaf draws.
--- @treturn[1] cairo.Pattern|nil The foreground in force at the leaf.
+-- @treturn[1] wibox.hierarchy The hierarchy the raster leaf draws.
+-- @treturn[1] wibox.hierarchy The leaf's parent, whose transform places it.
+-- @treturn[1] cairo.Pattern The foreground in force at the leaf.
 -- @treturn[2] nil Nothing converted.
-function clay.compile(bg, root, fg)
-    local base = solid_rgba(bg)
+function clay.compile(self, root)
+    -- A background image is a painter over the whole drawable, with no Clay
+    -- equivalent short of rastering it, which is what the leaf already does.
+    if not root or self.background_image
+            or not convertible_class(root:get_widget()) then
+        return nil
+    end
 
     -- The drawable's own background becomes the outermost rectangle, so it
     -- has to be one Clay can name before anything inside it can convert.
+    local base = solid_rgba(self.background_color)
+
     if not base then
         return nil
     end
 
-    local chain, w = { { bg = base, radius = 0 } }, root
+    local chain, h, parent = { { bg = base, radius = 0 } }, root, nil
+    local fg = self.foreground_color
     -- A rounded background clips its children to its shape. The leaf carries
     -- that radius instead, which is the same clip only while the leaf's box
     -- is the rounded element's box, so padding on either side of one ends the
     -- walk.
     local radius, padding = 0, false
 
-    while w and common_convertible(w) do
-        local node
-
-        if w.fit == margin_class.fit then
-            node = describe_margin(w)
-        elseif w.fit == background_class.fit then
-            node = describe_background(w)
-        end
+    while h do
+        local node, node_fg = describe(h:get_widget())
 
         if not node then
             break
         end
-        if radius > 0 and padded(node) then
-            break
-        end
-        if (node.radius or 0) > 0 and padding then
+        if (radius > 0 and padded(node))
+                or ((node.radius or 0) > 0 and padding) then
             break
         end
 
         padding = padding or padded(node)
         radius = math.max(radius, node.radius or 0)
+        fg = node_fg or fg
         chain[#chain + 1] = node
-        if w.fit == background_class.fit and w._private.foreground then
-            fg = w._private.foreground
-        end
-        w = w._private.widget
+        parent, h = h, h:get_children()[1]
     end
 
-    -- Only the drawable's own background converted: the leaf still covers
-    -- every pixel it did, so there is nothing to gain and a whole path to
-    -- keep off.
+    -- The root's class matched but its properties did not: the leaf still
+    -- covers every pixel it did, so there is nothing to gain and a whole
+    -- path to keep off.
     if #chain == 1 then
         return nil
     end
 
     chain[#chain + 1] = { raster = true, radius = radius }
 
-    return chain, w, fg
+    return chain, h, parent, fg
 end
 
 return clay
