@@ -13,6 +13,7 @@
 #include "../shadow.h"
 #include "../declare.h"
 #include "../systray.h"
+#include "../widget.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -570,6 +571,7 @@ drawin_wipe(drawin_t *w)
 	/* Retire the renderer's view: the handle so a later resolve answers
 	 * NULL, and the entry surfaces the declare pass hands out. */
 	declare_handle_drop(w);
+	widget_nodes_clear(w);
 	drawin_entry_set(&w->content_entry, NULL);
 	drawin_entry_set(&w->border_entry, NULL);
 	drawin_entry_set(&w->shadow_entry, NULL);
@@ -1369,6 +1371,7 @@ luaA_drawin_gc(lua_State *L)
 		/* Retire the renderer's view and drop the retained leaves at the
 		 * next frame */
 		declare_handle_drop(drawin);
+		widget_nodes_clear(drawin);
 		drawin_entry_set(&drawin->content_entry, NULL);
 		drawin_entry_set(&drawin->border_entry, NULL);
 		drawin_entry_set(&drawin->shadow_entry, NULL);

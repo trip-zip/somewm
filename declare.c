@@ -33,6 +33,7 @@
 #include "somewm_api.h"
 #include "monitor.h"
 #include "stack.h"
+#include "widget.h"
 #include "window.h"
 #include "common/util.h"
 #include "objects/client.h"
@@ -517,6 +518,16 @@ declare_drawin(drawin_t *d, Monitor *m, int16_t z)
 			d->width + 2 * bw, d->height + 2 * bw);
 		b.image.imageData = &d->border_entry;
 		declare_leaf(&b);
+	}
+
+	/* A converted widget chain declares the content leaf itself, inside the
+	 * containers lua/wibox/clay.lua peeled off it (widget.c). Those draw
+	 * below the leaf, which still covers the whole drawin and is
+	 * transparent wherever they show through. */
+	if (widget_nodes_len(d) > 0) {
+		widget_declare(d, id, z, x, y,
+			leaf_userdata(handle, opacity));
+		return;
 	}
 
 	Clay_ElementDeclaration c = leaf_at(CLAY_STRING("drawin.image"), id, z,

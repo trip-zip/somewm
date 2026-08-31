@@ -15,6 +15,7 @@
 #include "luaa.h"
 #include "common/util.h"
 #include "../x11_compat.h"
+#include "../widget.h"
 #include "common/luaclass.h"
 #include "common/luaobject.h"
 
@@ -659,6 +660,43 @@ luaA_drawable_refresh(lua_State *L)
 	return 0;
 }
 
+/** Hand the drawable's compiled widget chain to the renderer.
+ *
+ * lua/wibox/drawable.lua calls this once per redraw with what
+ * lua/wibox/clay.lua compiled, or with nil when nothing converted. A false
+ * return means the chain was refused (this drawable has no drawin, or the
+ * drawin is shaped), and the caller has to paint every pixel itself, which
+ * is the path every drawable took before any container converted.
+ *
+ * \param L The Lua VM state.
+ * \param nodes The node chain, or nil.
+ * \return true when the renderer took the chain.
+ */
+static int
+luaA_drawable_clay_nodes(lua_State *L)
+{
+	drawable_t *d = (drawable_t *)lua_touserdata(L, 1);
+	drawin_t *drawin;
+
+	if (!d) {
+		return luaL_error(L, "expected drawable, got %s",
+			lua_typename(L, lua_type(L, 1)));
+	}
+
+	drawin = d->owner_type == DRAWABLE_OWNER_DRAWIN ? d->owner.drawin : NULL;
+	if (!drawin) {
+		lua_pushboolean(L, false);
+		return 1;
+	}
+	if (lua_isnoneornil(L, 2)) {
+		widget_nodes_clear(drawin);
+		lua_pushboolean(L, false);
+		return 1;
+	}
+	lua_pushboolean(L, widget_nodes_set(L, drawin, 2));
+	return 1;
+}
+
 /* ============================================================================
  * Lua Class Setup
  * ============================================================================ */
@@ -762,6 +800,7 @@ drawable_class_setup(lua_State *L)
 		{ "__newindex", luaA_drawable_newindex },
 		{ "refresh", luaA_drawable_refresh },
 		{ "geometry", luaA_drawable_geometry },
+		{ "_clay_nodes", luaA_drawable_clay_nodes },
 		LUA_OBJECT_META(drawable)
 		{ NULL, NULL }
 	};

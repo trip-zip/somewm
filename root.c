@@ -1124,6 +1124,58 @@ composite_scene_buffer_to_cairo(struct wlr_scene_buffer *scene_buffer,
 		free(pixels);
 }
 
+
+/** Composite one scene node and its children onto a cairo target.
+ *
+ * wlr_scene_node_for_each_buffer only reaches buffers, and the renderer draws
+ * a flat color as a wlr_scene_rect (render.c): a converted widget container's
+ * background is a rectangle and nothing else, and so is the backing behind a
+ * non-opaque fullscreen surface. Walking once covers both kinds, in the order
+ * the compositor stacks them.
+ *
+ * Shared with objects/screen.c via screenshot_compose.h.
+ */
+void
+composite_scene_node_to_cairo(struct wlr_scene_node *node, void *data)
+{
+	struct screenshot_render_data *rdata = data;
+	struct wlr_scene_node *child;
+	int lx, ly;
+
+	if (!node->enabled)
+		return;
+
+	switch (node->type) {
+	case WLR_SCENE_NODE_BUFFER:
+		if (wlr_scene_node_coords(node, &lx, &ly))
+			composite_scene_buffer_to_cairo(
+				wlr_scene_buffer_from_node(node), lx, ly, rdata);
+		return;
+	case WLR_SCENE_NODE_RECT: {
+		struct wlr_scene_rect *rect = wlr_scene_rect_from_node(node);
+		float a = rect->color[3];
+
+		if (!wlr_scene_node_coords(node, &lx, &ly))
+			return;
+		/* Scene rect colors are premultiplied; cairo wants straight. */
+		cairo_save(rdata->cr);
+		cairo_set_source_rgba(rdata->cr,
+		                      a > 0 ? rect->color[0] / a : 0,
+		                      a > 0 ? rect->color[1] / a : 0,
+		                      a > 0 ? rect->color[2] / a : 0, a);
+		cairo_rectangle(rdata->cr, lx + rdata->offset_x, ly + rdata->offset_y,
+		                rect->width, rect->height);
+		cairo_fill(rdata->cr);
+		cairo_restore(rdata->cr);
+		return;
+	}
+	case WLR_SCENE_NODE_TREE:
+		wl_list_for_each(child, &wlr_scene_tree_from_node(node)->children, link)
+			composite_scene_node_to_cairo(child, rdata);
+		return;
+	}
+}
+
 /** root.content([preserve_alpha]) - Get screenshot of entire desktop
  *
  * Returns a Cairo surface containing the current desktop content.
@@ -1185,9 +1237,8 @@ luaA_root_get_content(lua_State *L)
 	rdata.offset_x = 0;
 	rdata.offset_y = 0;
 
-	/* Iterate scene buffers for client content (GPU-rendered surfaces) */
-	wlr_scene_node_for_each_buffer(&scene->tree.node,
-		composite_scene_buffer_to_cairo, &rdata);
+	/* Walk the scene for client content and the chrome the renderer drew */
+	composite_scene_node_to_cairo(&scene->tree.node, &rdata);
 
 	/* Composite widgets in z-order: normal first, then ontop.
 	 * This ensures correct layering where ontop popups appear above titlebars. */

@@ -12,6 +12,7 @@
 #include "../event_queue.h"
 #include "common/util.h"
 #include "../x11_compat.h"
+#include "../screenshot_compose.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -1115,14 +1116,6 @@ luaA_screen_get_managed(lua_State *L)
 
 /* ========== SCREEN CONTENT (SCREENSHOT) SUPPORT ========== */
 
-/** Callback data for scene buffer iteration during screenshot */
-struct screen_screenshot_data {
-	cairo_t *cr;
-	struct wlr_renderer *renderer;
-	int screen_x, screen_y;  /* Screen offset to subtract */
-	int screen_w, screen_h;  /* Screen bounds */
-};
-
 /** Composite a Cairo surface onto the screenshot at the given position */
 static void
 screen_composite_cairo_surface(cairo_t *cr, cairo_surface_t *surface,
@@ -1145,87 +1138,6 @@ box_intersects_screen(int x, int y, int w, int h,
                       int sx, int sy, int sw, int sh)
 {
 	return !(x + w <= sx || x >= sx + sw || y + h <= sy || y >= sy + sh);
-}
-
-/** Composite a scene buffer to Cairo surface (for screen screenshot) */
-static void
-screen_composite_scene_buffer(struct wlr_scene_buffer *buffer,
-                              int sx, int sy, void *data)
-{
-	struct screen_screenshot_data *sdata = data;
-	struct wlr_buffer *wlr_buf;
-	struct wlr_texture *texture;
-	void *shm_data;
-	uint32_t shm_format;
-	size_t shm_stride;
-	int rel_x, rel_y;
-	size_t stride;
-	void *pixels;
-
-	if (!buffer->buffer)
-		return;
-
-	wlr_buf = buffer->buffer;
-
-	/* Check if buffer intersects with screen */
-	if (!box_intersects_screen(sx, sy, wlr_buf->width, wlr_buf->height,
-	                           sdata->screen_x, sdata->screen_y,
-	                           sdata->screen_w, sdata->screen_h))
-		return;
-
-	/* Offset position relative to screen origin */
-	rel_x = sx - sdata->screen_x;
-	rel_y = sy - sdata->screen_y;
-
-	/* Try SHM buffer access first */
-	if (wlr_buffer_begin_data_ptr_access(wlr_buf, WLR_BUFFER_DATA_PTR_ACCESS_READ,
-	                                     &shm_data, &shm_format, &shm_stride)) {
-		if (shm_format == DRM_FORMAT_ARGB8888 || shm_format == DRM_FORMAT_XRGB8888) {
-			cairo_format_t fmt = (shm_format == DRM_FORMAT_ARGB8888) ?
-			                     CAIRO_FORMAT_ARGB32 : CAIRO_FORMAT_RGB24;
-			cairo_surface_t *tmp = cairo_image_surface_create_for_data(
-				shm_data, fmt, wlr_buf->width, wlr_buf->height, shm_stride);
-			if (cairo_surface_status(tmp) == CAIRO_STATUS_SUCCESS) {
-				screen_composite_cairo_surface(sdata->cr, tmp,
-				                               rel_x, rel_y,
-				                               wlr_buf->width, wlr_buf->height);
-			}
-			cairo_surface_destroy(tmp);
-		}
-		wlr_buffer_end_data_ptr_access(wlr_buf);
-		return;
-	}
-
-	/* Fall back to GPU texture path */
-	texture = wlr_texture_from_buffer(sdata->renderer, wlr_buf);
-	if (!texture)
-		return;
-
-	stride = wlr_buf->width * 4;
-	pixels = malloc(stride * wlr_buf->height);
-	if (!pixels) {
-		wlr_texture_destroy(texture);
-		return;
-	}
-
-	if (wlr_texture_read_pixels(texture, &(struct wlr_texture_read_pixels_options){
-	    .data = pixels,
-	    .format = DRM_FORMAT_ARGB8888,
-	    .stride = stride,
-	    .src_box = { .x = 0, .y = 0, .width = wlr_buf->width, .height = wlr_buf->height },
-	})) {
-		cairo_surface_t *tmp = cairo_image_surface_create_for_data(
-			pixels, CAIRO_FORMAT_ARGB32, wlr_buf->width, wlr_buf->height, stride);
-		if (cairo_surface_status(tmp) == CAIRO_STATUS_SUCCESS) {
-			screen_composite_cairo_surface(sdata->cr, tmp,
-			                               rel_x, rel_y,
-			                               wlr_buf->width, wlr_buf->height);
-		}
-		cairo_surface_destroy(tmp);
-	}
-
-	free(pixels);
-	wlr_texture_destroy(texture);
 }
 
 /** Composite widgets within the screen bounds, filtered by ontop state */
@@ -1330,7 +1242,7 @@ luaA_screen_get_content(lua_State *L, screen_t *s)
 {
 	cairo_surface_t *surface;
 	cairo_t *cr;
-	struct screen_screenshot_data sdata;
+	struct screenshot_render_data rdata;
 	int width, height;
 
 	if (!s || !s->valid)
@@ -1353,13 +1265,11 @@ luaA_screen_get_content(lua_State *L, screen_t *s)
 	cairo_set_source_rgb(cr, 0, 0, 0);
 	cairo_paint(cr);
 
-	/* Set up screenshot data */
-	sdata.cr = cr;
-	sdata.renderer = drw;
-	sdata.screen_x = s->geometry.x;
-	sdata.screen_y = s->geometry.y;
-	sdata.screen_w = width;
-	sdata.screen_h = height;
+	/* Scene coordinates are the layout's; this target is the screen's. */
+	rdata.cr = cr;
+	rdata.renderer = drw;
+	rdata.offset_x = -s->geometry.x;
+	rdata.offset_y = -s->geometry.y;
 
 	/* First, composite wallpaper (cropped to screen area) */
 	if (globalconf.wallpaper) {
@@ -1369,9 +1279,8 @@ luaA_screen_get_content(lua_State *L, screen_t *s)
 		                               cairo_image_surface_get_height(globalconf.wallpaper));
 	}
 
-	/* Then iterate scene buffers for client content */
-	wlr_scene_node_for_each_buffer(&scene->tree.node,
-		screen_composite_scene_buffer, &sdata);
+	/* Then walk the scene for client content and drawn chrome */
+	composite_scene_node_to_cairo(&scene->tree.node, &rdata);
 
 	/* Composite widgets in z-order: normal first, then ontop */
 	screen_composite_widgets(cr, s->geometry.x, s->geometry.y, width, height, false);

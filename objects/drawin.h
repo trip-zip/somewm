@@ -16,6 +16,7 @@
 /* Forward declarations */
 struct screen_t;
 struct drawable_t;
+struct widget_node;
 
 /* Drawin object structure - represents a drawable window (wibox/panel/popup)
  *
@@ -83,6 +84,13 @@ typedef struct drawin_t {
 	struct image_entry border_entry;
 	struct image_entry shadow_entry;
 	shadow_config_t shadow_entry_config;
+
+	/* The converted widget chain (widget.h), outermost first and always
+	 * ending in the raster leaf that carries content_entry. NULL while the
+	 * drawable paints itself whole, which is every drawin lua/wibox/clay.lua
+	 * finds nothing to convert in. */
+	struct widget_node *widget_nodes;
+	size_t widget_nodes_len;
 } drawin_t;
 
 /* Metatable name for drawin userdata */

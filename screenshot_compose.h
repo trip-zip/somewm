@@ -27,4 +27,11 @@ struct screenshot_render_data {
 void composite_scene_buffer_to_cairo(struct wlr_scene_buffer *scene_buffer,
                                      int sx, int sy, void *data);
 
+/* The whole subtree, buffers and rectangles alike, in stacking order. Reaches
+ * what the renderer draws as a flat color, which for_each_buffer never sees: a
+ * converted widget container's background, and the fullscreen backing. Unlike
+ * for_each_buffer this reads each node's position from the scene root, so a
+ * caller starting below the root still gets layout coordinates. */
+void composite_scene_node_to_cairo(struct wlr_scene_node *node, void *data);
+
 #endif
