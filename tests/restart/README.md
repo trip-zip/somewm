@@ -190,8 +190,11 @@ release it on `"exit"` reddens whichever reload test runs next.
   config under a running instance, since no startup can reach that state: at
   startup there are no clients yet.
 - `tags-after-restart`, `client-survives-restart`, `client-order-after-restart`,
-  `transient-screen-restart`: clients, tags, stacking order and transient
-  relationships survive a reload.
+  `transient-screen-restart`, `client-screen-after-restart`: clients, tags,
+  stacking order, transient relationships and the client's screen survive a
+  reload.
+- `startup-flag-across-reload`: `awesome.startup` is true during a reload's
+  config load too, and `awesome._restart` says which it was.
 
 Config-timeout tests (a config that hangs longer than the limit is aborted and
 the fallback loads):
