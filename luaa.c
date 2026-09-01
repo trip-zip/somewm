@@ -3067,6 +3067,9 @@ pattern_doc_anchor(const char *description)
 		{"awful.widget.clienticon - clients have no icon", "client-icons"},
 		{"c.icon - clients have no icon", "client-icons"},
 		{"xrdb Xresources loading", "xresources-and-xrdb"},
+		{"awesome.get_xproperty() - not defined", "x11-properties"},
+		{"awesome.set_xproperty() - not defined", "x11-properties"},
+		{"awesome.register_xproperty() - does nothing", "x11-properties"},
 		{NULL, NULL}
 	};
 	int i;
@@ -3081,14 +3084,17 @@ pattern_doc_anchor(const char *description)
 static const x11_pattern_t x11_patterns[] = {
 	/* === CRITICAL: Will fail or hang === */
 
-	/* X11 property APIs - safe no-op stubs that won't hang
-	 * Downgraded to WARNING since they just return nil, not block */
-	{"awesome.get_xproperty", "awesome.get_xproperty() [X11 only]",
-	 "Use persistent storage (gears.filesystem) or remove", SEVERITY_WARNING},
-	{"awesome.set_xproperty", "awesome.set_xproperty() [X11 only]",
-	 "Use persistent storage (gears.filesystem) or remove", SEVERITY_WARNING},
-	{"awesome.register_xproperty", "awesome.register_xproperty() [X11 only]",
-	 "Remove - X11 properties don't exist on Wayland", SEVERITY_WARNING},
+	/* Only register_xproperty is bound, as a no-op. get and set are not, so
+	 * calling either raises and the whole config fails to load. */
+	{"awesome.get_xproperty", "awesome.get_xproperty() - not defined",
+	 "Calling it aborts the config. For restart detection use awesome.startup",
+	 SEVERITY_CRITICAL},
+	{"awesome.set_xproperty", "awesome.set_xproperty() - not defined",
+	 "Calling it aborts the config. For restart detection use awesome.startup",
+	 SEVERITY_CRITICAL},
+	{"awesome.register_xproperty", "awesome.register_xproperty() - does nothing",
+	 "It is a no-op stub. Remove it, X11 properties don't exist on Wayland",
+	 SEVERITY_WARNING},
 
 	/* Blocking X11 tool calls that will hang */
 	{"io.popen(\"xrandr", "io.popen with xrandr (blocks)",
