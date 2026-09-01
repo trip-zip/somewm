@@ -687,7 +687,7 @@ test_xproperty_get_is_critical() {
     run_check "$cfg"
     assert_exit "$name" 2 || return
     assert_contains "$name" "awesome.get_xproperty() - not defined" || return
-    assert_contains "$name" "awesome.startup" || return
+    assert_contains "$name" "awesome._restart" || return
     pass "$name"
 }
 test_xproperty_get_is_critical
