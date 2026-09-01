@@ -2204,7 +2204,11 @@ luaA_awesome_index(lua_State *L)
 	}
 
 	if (A_STREQ(key, "startup")) {
-		lua_pushboolean(L, globalconf.loop == NULL);
+		/* Upstream restarts by execvp, so its rc.lua and client scan
+		 * always run before the loop exists. Ours run inside the loop
+		 * during a hot-reload, which must read as startup too. */
+		lua_pushboolean(L, globalconf.loop == NULL ||
+			globalconf.hot_reload_in_progress);
 		return 1;
 	}
 
