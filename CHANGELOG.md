@@ -4,6 +4,55 @@ All notable changes to somewm will be documented in this file.
 
 ## [Unreleased]
 
+## [1.4.5] - 2026-09-01
+
+Patch release. 10 commits since 1.4.4: shadows, config checking, and two build
+fixes. No API changes; existing rc.lua configs run unchanged.
+
+### Added
+
+- Shadows take `spread`, `corner_radius`, and an alpha channel on their colour
+- `somewm --check` detects a GTK application built inside the compositor,
+  `Gtk.IconTheme.get_default()`, bare `xrdb`, client icon use, and
+  `xsettingsd`. Every finding it can explain now prints a link to the section
+  of the migration guide that explains it
+
+### Fixed
+
+- `somewm --check` and the startup scan read the whole config. A `require()`
+  whose name had no dot was treated as a standard library and skipped, so a
+  config split across modules was never read past its `rc.lua`
+- A pattern found during startup no longer refuses the config. It reports and
+  loads; a config that genuinely hangs is still caught by the load alarm
+- Only the first occurrence of each pattern in a file was examined, so a
+  mention in a comment hid the real use below it
+- A line matching several patterns for one tool was reported once per pattern
+- `require("pkg.mod." .. name)` left a trailing dot, which resolved to a `//`
+  path and scanned the same file twice
+- The `xset` patterns matched `xsettingsd`, which is a different program
+- A missing module is reported at the line of its `require`, not line 0
+- `awesome.get_xproperty` and `awesome.set_xproperty` are not defined, so
+  calling either one aborts the config. `--check` ranks them critical and points
+  at `awesome.startup`
+- A shadow with a diagonal offset no longer shows a darker square at the corner
+  where both fill strips overlapped, and no longer cuts off hard at the corners
+- Fractional placement margins no longer grow an attached drawable by a pixel
+  per pass until the C stack overflows. Port of AwesomeWM PR #4122
+- PAM is found on distributions that ship no `pam.pc`, by looking for the header
+  and library directly
+- Builds on 32-bit architectures, where comparing `lua_Integer` against
+  `UINT32_MAX` raised `-Wsign-compare`
+- `somewm-client test start` keeps its state directory when a start fails, so
+  the log it names is still there to read
+
+### Changed
+
+- Shadows are drawn as the frame grown by `spread`, moved by its offset, and
+  faded over the radius on every side with rounded corners. `clip_directional`
+  no longer has an effect
+- `SOMEWM_TEST_KEEP_FAILED` is removed. A failed start always keeps its state
+  directory, and the next start under that name clears it
+
 ## [1.4.4] - 2026-08-20
 
 Patch release. 10 commits since 1.4.3: client popups, input routing, and idle
@@ -264,7 +313,8 @@ First stable release. SomeWM 1.4 = AwesomeWM 4.4 on Wayland.
 
 Initial public release with core AwesomeWM compatibility.
 
-[Unreleased]: https://github.com/trip-zip/somewm/compare/v1.4.4...HEAD
+[Unreleased]: https://github.com/trip-zip/somewm/compare/v1.4.5...HEAD
+[1.4.5]: https://github.com/trip-zip/somewm/compare/v1.4.4...v1.4.5
 [1.4.4]: https://github.com/trip-zip/somewm/compare/v1.4.3...v1.4.4
 [1.4.3]: https://github.com/trip-zip/somewm/compare/v1.4.2...v1.4.3
 [1.4.2]: https://github.com/trip-zip/somewm/compare/v1.4.1...v1.4.2
