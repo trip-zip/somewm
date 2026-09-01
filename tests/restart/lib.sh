@@ -38,7 +38,6 @@ SOMEWM_EVAL_PACE=${SOMEWM_EVAL_PACE:-0.5}
 # The orchestrator must find the compositor, and a failed start must leave the
 # state dir (including the log) behind for us to copy.
 export SOMEWM_BINARY="$SOMEWM"
-export SOMEWM_TEST_KEEP_FAILED=1
 
 # Pin the closure guard to the one built beside the binary under test. The
 # compositor self-installs it by re-exec and looks in its compiled-in libdir
