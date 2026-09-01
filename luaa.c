@@ -2333,7 +2333,11 @@ luaA_awesome_index(lua_State *L)
 	}
 
 	if (A_STREQ(key, "startup")) {
-		lua_pushboolean(L, globalconf.loop == NULL);
+		/* Upstream restarts by execvp, so its rc.lua and client scan
+		 * always run before the loop exists. Ours run inside the loop
+		 * during a hot-reload, which must read as startup too. */
+		lua_pushboolean(L, globalconf.loop == NULL ||
+			globalconf.hot_reload_in_progress);
 		return 1;
 	}
 
@@ -3316,10 +3320,10 @@ static const x11_pattern_t x11_patterns[] = {
 	/* Only register_xproperty is bound, as a no-op. get and set are not, so
 	 * calling either raises and the whole config fails to load. */
 	{"awesome.get_xproperty", "awesome.get_xproperty() - not defined",
-	 "Calling it aborts the config. For restart detection use awesome.startup",
+	 "Calling it aborts the config. For restart detection use awesome._restart",
 	 SEVERITY_CRITICAL},
 	{"awesome.set_xproperty", "awesome.set_xproperty() - not defined",
-	 "Calling it aborts the config. For restart detection use awesome.startup",
+	 "Calling it aborts the config. For restart detection use awesome._restart",
 	 SEVERITY_CRITICAL},
 	{"awesome.register_xproperty", "awesome.register_xproperty() - does nothing",
 	 "It is a no-op stub. Remove it, X11 properties don't exist on Wayland",
