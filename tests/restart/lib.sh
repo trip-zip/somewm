@@ -38,7 +38,6 @@ SOMEWM_EVAL_PACE=${SOMEWM_EVAL_PACE:-0.5}
 # The orchestrator must find the compositor, and a failed start must leave the
 # state dir (including the log) behind for us to copy.
 export SOMEWM_BINARY="$SOMEWM"
-export SOMEWM_TEST_KEEP_FAILED=1
 
 # The fixture configs layer on the shared minimal test config rather than
 # copying it, so changes to tests/rc.lua reach this suite too. The orchestrator

@@ -761,6 +761,9 @@ test_start(int argc, char *argv[])
 		_exit(127);
 	}
 
+	/* Past this point a failure keeps the state directory. The log is the only
+	 * account of why the start failed, and the next start under this name
+	 * clears the directory anyway. */
 	if (write_pidfile_excl(state_dir, pid) < 0) {
 		fprintf(stderr, "Error: could not write pidfile\n");
 		kill(pid, SIGTERM);
@@ -772,8 +775,6 @@ test_start(int argc, char *argv[])
 		fprintf(stderr,
 		        "       Inspect %s for details.\n", log_path);
 		kill_and_wait(pid, sock_path);
-		if (!getenv("SOMEWM_TEST_KEEP_FAILED"))
-			rmtree(state_dir);
 		return 5;
 	}
 
@@ -782,8 +783,6 @@ test_start(int argc, char *argv[])
 		fprintf(stderr, "Error: nested compositor reported %s\n", fatal_line);
 		fprintf(stderr, "       Inspect %s for the full log.\n", log_path);
 		kill_and_wait(pid, sock_path);
-		if (!getenv("SOMEWM_TEST_KEEP_FAILED"))
-			rmtree(state_dir);
 		return 5;
 	}
 
