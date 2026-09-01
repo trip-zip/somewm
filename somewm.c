@@ -3895,6 +3895,31 @@ client_reregister_listeners(client_t *c)
 	}
 }
 
+/** Point every scene node that carries a back-pointer to this client at \a ptr.
+ *
+ * xytonode() reads these to answer "what is under the cursor", so each one
+ * must name a live client_t. A hot-reload frees the old userdata and builds
+ * new objects, so every node here has to be re-pointed: miss one and the
+ * next motion event reads through freed memory.
+ *
+ * Keep this the only place that list lives.
+ */
+void
+client_set_node_data(client_t *c, void *ptr)
+{
+	int i;
+
+	if (c->scene)
+		c->scene->node.data = ptr;
+	if (c->scene_surface)
+		c->scene_surface->node.data = ptr;
+	if (c->popups)
+		c->popups->node.data = ptr;
+	for (i = 0; i < 4; i++)
+		if (c->border[i])
+			c->border[i]->node.data = ptr;
+}
+
 void
 destroynotify(struct wl_listener *listener, void *data)
 {
@@ -4912,7 +4937,7 @@ mapnotify(struct wl_listener *listener, void *data)
 	 * client's content clip, which would crop any popup parented there. */
 	client_surface(c)->data = c->popups;
 
-	c->scene->node.data = c->scene_surface->node.data = c->popups->node.data = c;
+	client_set_node_data(c, c);
 
 	/* Register commit listener AFTER wlr_scene_xdg_surface_create() so our listener
 	 * fires AFTER wlroots' internal surface_reconfigure() which resets opacity to 1.0.
@@ -4957,11 +4982,10 @@ mapnotify(struct wl_listener *listener, void *data)
 		goto unset_fullscreen;
 	}
 
-	for (i = 0; i < 4; i++) {
+	for (i = 0; i < 4; i++)
 		c->border[i] = wlr_scene_rect_create(c->scene, 0, 0,
 				c->urgent ? get_urgentcolor() : get_bordercolor());
-		c->border[i]->node.data = c;
-	}
+	client_set_node_data(c, c);
 
 	/* Shadow is lazily created by apply_geometry_to_wlroots() on the first
 	 * refresh cycle after the map */
@@ -5386,6 +5410,26 @@ is_client_valid(Client* client)
 	return false;
 }
 
+/** Is \a ptr a layer surface this compositor currently tracks? */
+static bool
+is_layersurface_valid(void *ptr)
+{
+	Monitor *m;
+	LayerSurface *l;
+	int i;
+
+	if (ptr == NULL)
+		return false;
+
+	wl_list_for_each(m, &mons, link)
+		for (i = 0; i < 4; i++)
+			wl_list_for_each(l, &m->layers[i], link)
+				if (l == ptr)
+					return true;
+
+	return false;
+}
+
 void
 motionnotify(uint32_t time, struct wlr_input_device *device, double dx, double dy,
 		double dx_unaccel, double dy_unaccel)
@@ -5487,11 +5531,6 @@ motionnotify(uint32_t time, struct wlr_input_device *device, double dx, double d
 
 		/* Find what's under cursor */
 		xytonode(cursor->x, cursor->y, NULL, &current_client, NULL, &current_drawin, &titlebar_drawable, NULL, NULL);
-
-		/* Validate client pointer - xytonode can return stale pointers from scene graph
-		 * if a node's data field wasn't cleared when the client was destroyed */
-		if (current_client && !is_client_valid(current_client))
-				current_client = NULL;  /* Ignore stale/invalid client pointer */
 
 		if (current_client) {
 			/* Mouse is over a client */
@@ -8184,11 +8223,12 @@ xytonode(double x, double y, struct wlr_surface **psurface,
 				break;
 			pnode = &pnode->parent->node;
 		}
-		/* Check type at offset 0 - LayerSurface has 'type' as first field,
-		 * but Client has WINDOW_OBJECT_HEADER before client_type.
-		 * LayerSurface.type is at offset 0 and set to LayerShell. */
-		if (c && *((unsigned int *)c) == LayerShell) {
-			l = (LayerSurface *)c;
+		/* pnode->data is whatever that node's owner stored: a live
+		 * client, a live layer surface, or a pointer whose owner is
+		 * gone. Decide which by membership, never by reading a
+		 * discriminator through the pointer itself. */
+		if (c && !is_client_valid(c)) {
+			l = is_layersurface_valid(c) ? (LayerSurface *)c : NULL;
 			c = NULL;
 		}
 	}

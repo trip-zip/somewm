@@ -288,6 +288,7 @@ static inline bool session_is_locked(void) {
  */
 void client_remove_all_listeners(client_t *c);
 void client_reregister_listeners(client_t *c);
+void client_set_node_data(client_t *c, void *ptr);
 void some_refresh(void);
 void somewm_pin_lgi_libs(void);
 
