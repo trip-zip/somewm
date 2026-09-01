@@ -815,24 +815,9 @@ motionnotify(uint32_t time, struct wlr_input_device *device, double dx, double d
 		Client *current_client = NULL;
 		drawin_t *current_drawin = NULL;
 		drawable_t *titlebar_drawable = NULL;
-		bool client_valid = false;
 
 		/* Find what's under cursor */
 		xytonode(cursor->x, cursor->y, NULL, &current_client, NULL, &current_drawin, &titlebar_drawable, NULL, NULL);
-
-		/* Validate client pointer - xytonode can return stale pointers from scene graph
-		 * if a node's data field wasn't cleared when the client was destroyed */
-		if (current_client) {
-			foreach(elem, globalconf.clients) {
-				if (*elem == current_client) {
-					client_valid = true;
-					break;
-				}
-			}
-			if (!client_valid) {
-				current_client = NULL;  /* Ignore stale/invalid client pointer */
-			}
-		}
 
 		if (current_client) {
 			/* Mouse is over a client */
@@ -1690,6 +1675,40 @@ drawin_accepts_input_at(drawin_t *d, double local_x, double local_y)
  * achieves the same result (titlebar clicks emit signals on the drawable) but
  * uses scene graph spatial queries instead of post-hoc geometry iteration.
  */
+/** Is \a client one this compositor currently tracks? */
+static bool
+is_client_valid(Client *client)
+{
+	if (client == NULL)
+		return false;
+
+	foreach(elem, globalconf.clients)
+		if (*elem == client)
+			return true;
+
+	return false;
+}
+
+/** Is \a ptr a layer surface this compositor currently tracks? */
+static bool
+is_layersurface_valid(void *ptr)
+{
+	Monitor *m;
+	LayerSurface *l;
+	int i;
+
+	if (ptr == NULL)
+		return false;
+
+	wl_list_for_each(m, &mons, link)
+		for (i = 0; i < 4; i++)
+			wl_list_for_each(l, &m->layers[i], link)
+				if (l == ptr)
+					return true;
+
+	return false;
+}
+
 void
 xytonode(double x, double y, struct wlr_surface **psurface,
 		Client **pc, LayerSurface **pl, drawin_t **pd, drawable_t **pdrawable, double *nx, double *ny)
@@ -1778,11 +1797,12 @@ xytonode(double x, double y, struct wlr_surface **psurface,
 				break;
 			pnode = &pnode->parent->node;
 		}
-		/* Check type at offset 0 - LayerSurface has 'type' as first field,
-		 * but Client has WINDOW_OBJECT_HEADER before client_type.
-		 * LayerSurface.type is at offset 0 and set to LayerShell. */
-		if (c && *((unsigned int *)c) == LayerShell) {
-			l = (LayerSurface *)c;
+		/* pnode->data is whatever that node's owner stored: a live
+		 * client, a live layer surface, or a pointer whose owner is
+		 * gone. Decide which by membership, never by reading a
+		 * discriminator through the pointer itself. */
+		if (c && !is_client_valid(c)) {
+			l = is_layersurface_valid(c) ? (LayerSurface *)c : NULL;
 			c = NULL;
 		}
 	}
@@ -1790,18 +1810,8 @@ xytonode(double x, double y, struct wlr_surface **psurface,
 found:
 	/* Validate client pointer - ensure it's still in globalconf.clients
 	 * to avoid returning stale pointers from scene graph data fields */
-	if (c && pc) {
-		bool valid = false;
-		foreach(elem, globalconf.clients) {
-			if (*elem == c) {
-				valid = true;
-				break;
-			}
-		}
-		if (!valid) {
-			c = NULL;  /* Stale pointer - don't return it */
-		}
-	}
+	if (c && pc && !is_client_valid(c))
+		c = NULL;  /* Stale pointer - don't return it */
 
 	if (psurface) *psurface = surface;
 	if (pc) *pc = c;

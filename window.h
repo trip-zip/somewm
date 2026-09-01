@@ -60,6 +60,7 @@ void tagmon(const Arg *arg);
 /* Listener management (hot-reload) */
 void client_remove_all_listeners(client_t *c);
 void client_reregister_listeners(client_t *c);
+void client_set_node_data(client_t *c, void *ptr);
 
 /* Listener structs */
 extern struct wl_listener new_xdg_toplevel;
