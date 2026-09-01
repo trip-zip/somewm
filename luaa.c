@@ -3223,10 +3223,17 @@ static const x11_pattern_t x11_patterns[] = {
 	 "Xresources are X11-only. Use beautiful.xresources or your terminal's own config", SEVERITY_WARNING},
 	{"'xrdb", "xrdb Xresources loading",
 	 "Xresources are X11-only. Use beautiful.xresources or your terminal's own config", SEVERITY_WARNING},
-	{"\"xset", "xset display settings",
+	/* Trailing space: bare "xset matches "xsettingsd, a different program. */
+	{"\"xset ", "xset display settings",
 	 "Most settings are handled by compositor or wlr-randr", SEVERITY_WARNING},
-	{"'xset", "xset display settings",
+	{"'xset ", "xset display settings",
 	 "Most settings are handled by compositor or wlr-randr", SEVERITY_WARNING},
+	/* XSETTINGS is an X11 protocol, so the daemon has nothing to talk to.
+	 * Trailing space to catch the spawn, not a path or a local of that name. */
+	{"\"xsettingsd ", "xsettingsd XSETTINGS daemon",
+	 "XSETTINGS is X11-only. Use gsettings or gtk config files", SEVERITY_WARNING},
+	{"'xsettingsd ", "xsettingsd XSETTINGS daemon",
+	 "XSETTINGS is X11-only. Use gsettings or gtk config files", SEVERITY_WARNING},
 	{"\"xinput", "xinput device settings",
 	 "Use compositor input settings or libinput config", SEVERITY_WARNING},
 	{"'xinput", "xinput device settings",
@@ -3395,7 +3402,7 @@ prescan_module_is_external(const char *name)
  */
 static bool
 prescan_next_require(const char **pos, const char *content,
-                     char *out, size_t outlen)
+                     char *out, size_t outlen, int *line_out)
 {
 	const char *p = *pos;
 
@@ -3413,6 +3420,13 @@ prescan_next_require(const char **pos, const char *content,
 		line = p;
 		while (line > content && *(line - 1) != '\n')
 			line--;
+		if (line_out) {
+			const char *c;
+			*line_out = 1;
+			for (c = content; c < line; c++)
+				if (*c == '\n')
+					(*line_out)++;
+		}
 		for (indent = line; indent < p && (*indent == ' ' || *indent == '\t'); indent++)
 			;
 		if (indent[0] == '-' && indent[1] == '-') {
@@ -3435,6 +3449,16 @@ prescan_next_require(const char **pos, const char *content,
 		len = end - start;
 		memcpy(out, start, len);
 		out[len] = '\0';
+
+		/* require("pkg.mod." .. name) leaves a trailing dot, which becomes a
+		 * trailing slash and resolves to the same file twice. A concatenated
+		 * name cannot be resolved statically, so skip it. */
+		if (len == 0 || out[0] == '.' || out[len - 1] == '.' ||
+		    strstr(out, "..") != NULL) {
+			p = end + 1;
+			continue;
+		}
+
 		*pos = end + 1;
 		return true;
 	}
@@ -3493,11 +3517,13 @@ luaA_prescan_requires(const char *content, const char *config_dir, int depth)
 	const char *pos = content;
 	char module_name[256];
 	char path[PATH_MAX], try1[PATH_MAX], try2[PATH_MAX];
+	int require_line = 0;
 
 	if (depth >= PRESCAN_MAX_DEPTH || !config_dir)
 		return;
 
-	while (prescan_next_require(&pos, content, module_name, sizeof(module_name))) {
+	while (prescan_next_require(&pos, content, module_name, sizeof(module_name),
+	                            &require_line)) {
 		if (prescan_module_is_external(module_name))
 			continue;
 
@@ -3721,9 +3747,20 @@ check_mode_add_issue(const char *file_path, int line_num, const char *line_conte
                      const x11_pattern_t *pattern)
 {
 	check_issue_t *issue;
+	int i;
 
 	if (check_issue_count >= CHECK_MAX_ISSUES)
 		return;
+
+	/* Several patterns describe the same tool ("xclip, 'xclip, | xclip), so one
+	 * line can match more than once. Report it once. */
+	for (i = 0; i < check_issue_count; i++) {
+		if (check_issues[i].line_number == line_num &&
+		    !check_issues[i].is_syntax_error &&
+		    !strcmp(check_issues[i].pattern_desc, pattern->description) &&
+		    !strcmp(check_issues[i].file_path, file_path))
+			return;
+	}
 
 	issue = &check_issues[check_issue_count++];
 	issue->file_path = strdup(file_path);
@@ -3774,7 +3811,8 @@ check_mode_add_syntax_error(const char *file_path, const char *error_msg)
 
 /** Store a missing module error found during check mode */
 static void
-check_mode_add_missing_module(const char *source_file, const char *module_name,
+check_mode_add_missing_module(const char *source_file, int line_num,
+                              const char *module_name,
                               const char *tried_path1, const char *tried_path2)
 {
 	check_issue_t *issue;
@@ -3787,7 +3825,7 @@ check_mode_add_missing_module(const char *source_file, const char *module_name,
 
 	issue = &check_issues[check_issue_count++];
 	issue->file_path = strdup(source_file);
-	issue->line_number = 0;
+	issue->line_number = line_num;
 	issue->line_content = strdup("");
 	issue->pattern_desc = strdup(desc);
 	issue->suggestion = "Check module path or install missing dependency";
@@ -4082,11 +4120,13 @@ check_mode_scan_requires(const char *content, const char *config_dir,
 	const char *pos = content;
 	char module_name[256];
 	char path[PATH_MAX], try1[PATH_MAX], try2[PATH_MAX];
+	int require_line = 0;
 
 	if (depth >= PRESCAN_MAX_DEPTH || !config_dir)
 		return;
 
-	while (prescan_next_require(&pos, content, module_name, sizeof(module_name))) {
+	while (prescan_next_require(&pos, content, module_name, sizeof(module_name),
+	                            &require_line)) {
 		if (prescan_module_is_external(module_name))
 			continue;
 
@@ -4094,7 +4134,8 @@ check_mode_scan_requires(const char *content, const char *config_dir,
 		                           try1, sizeof(try1), try2, sizeof(try2)))
 			check_mode_scan_file(path, config_dir, depth + 1);
 		else
-			check_mode_add_missing_module(source_file, module_name, try1, try2);
+			check_mode_add_missing_module(source_file, require_line,
+			                              module_name, try1, try2);
 	}
 }
 

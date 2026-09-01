@@ -5,8 +5,7 @@
 # Two faults used to compound here. Any require() whose name had no dot was
 # treated as a standard library and skipped, so a config split across modules
 # was never read past its rc.lua. And any pattern that did match refused the
-# whole config, which cost valid configs over substring matches such as "xset
-# matching a path named xsettingsd.
+# whole config, so one reported call was enough to lose the config.
 #
 # A config that genuinely hangs is caught by the load alarm instead.
 
@@ -19,8 +18,9 @@ check_eval hr-prescan "the module behind the dotless require ran" \
 check_eval hr-prescan "and the compositor serves the API" \
     'return tostring(screen.count())' 1
 
-check_log hr-prescan "the substring match in rc.lua was reported" \
+check_log hr-prescan "the X11 call in rc.lua was reported" \
     "xset display settings"
+check_log_count hr-prescan "but the lookalike name was not" "xsettingsd" 0
 check_log hr-prescan "the scanner reached the required module" "deepmod.lua"
 check_log hr-prescan "and reported the pattern it found there" \
     "GDK initialization deadlock"
