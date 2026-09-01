@@ -5,10 +5,12 @@
 -- past its rc.lua. The module carries somewm's one CRITICAL pattern, and this
 -- config still has to load: the scanner warns, it does not refuse.
 
--- A path that only looks like an X11 tool: the scanner matches its xset
--- pattern inside this name. Refusing a config over that is what warn-only
--- fixes. Keep the pattern out of this comment: only the first occurrence
--- of a pattern in a file is examined, so a comment above would mask it.
+-- A genuine X11 call. It is reported, and the config still loads: the
+-- scanner warns, it does not refuse.
+local x11_call = "xset s off"
+
+-- A different program whose name starts the same way. It must not be
+-- reported as the one above.
 local x11_lookalike = "xsettingsd"
 
 dofile(assert(os.getenv("SOMEWM_TEST_BASE_RC"),
@@ -16,4 +18,4 @@ dofile(assert(os.getenv("SOMEWM_TEST_BASE_RC"),
 
 require("deepmod")
 
-return x11_lookalike
+return x11_call, x11_lookalike
