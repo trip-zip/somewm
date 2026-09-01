@@ -642,6 +642,31 @@ client_reregister_listeners(client_t *c)
 	}
 }
 
+/** Point every scene node that carries a back-pointer to this client at \a ptr.
+ *
+ * xytonode() reads these to answer "what is under the cursor", so each one
+ * must name a live client_t. A hot-reload frees the old userdata and builds
+ * new objects, so every node here has to be re-pointed: miss one and the
+ * next motion event reads through freed memory.
+ *
+ * Keep this the only place that list lives.
+ */
+void
+client_set_node_data(client_t *c, void *ptr)
+{
+	int i;
+
+	if (c->scene)
+		c->scene->node.data = ptr;
+	if (c->scene_surface)
+		c->scene_surface->node.data = ptr;
+	if (c->popups)
+		c->popups->node.data = ptr;
+	for (i = 0; i < 4; i++)
+		if (c->border[i])
+			c->border[i]->node.data = ptr;
+}
+
 void
 destroynotify(struct wl_listener *listener, void *data)
 {
@@ -857,7 +882,7 @@ mapnotify(struct wl_listener *listener, void *data)
 	 * client's content clip, which would crop any popup parented there. */
 	client_surface(c)->data = c->popups;
 
-	c->scene->node.data = c->scene_surface->node.data = c->popups->node.data = c;
+	client_set_node_data(c, c);
 
 	/* Register commit listener AFTER wlr_scene_xdg_surface_create() so our listener
 	 * fires AFTER wlroots' internal surface_reconfigure() which resets opacity to 1.0.
@@ -902,11 +927,10 @@ mapnotify(struct wl_listener *listener, void *data)
 		goto unset_fullscreen;
 	}
 
-	for (i = 0; i < 4; i++) {
+	for (i = 0; i < 4; i++)
 		c->border[i] = wlr_scene_rect_create(c->scene, 0, 0,
 				c->urgent ? get_urgentcolor() : get_bordercolor());
-		c->border[i]->node.data = c;
-	}
+	client_set_node_data(c, c);
 
 	/* Shadow is lazily created by apply_geometry_to_wlroots() on the first
 	 * refresh cycle after the map */
