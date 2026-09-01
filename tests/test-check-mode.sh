@@ -591,6 +591,93 @@ end)')
 }
 test_client_icon_info
 
+# Four patterns describe xclip ("xclip, 'xclip, | xclip, " xclip "), and more
+# than one can match the same line. The report should name it once.
+test_overlapping_patterns_report_once() {
+    local name="overlapping_patterns_report_once"
+    local cfg
+    cfg=$(write_config "dupe.lua" 'local cmd = "xclip -selection clipboard | xclip -i"')
+    run_check "$cfg"
+    local hits
+    hits=$(echo "$CHECK_STDOUT" | grep -c "xclip clipboard tool")
+    if [ "$hits" -ne 1 ]; then
+        fail "$name" "expected 1 xclip finding, got $hits"
+        return
+    fi
+    pass "$name"
+}
+test_overlapping_patterns_report_once
+
+# require("pkg.mod." .. name) yields a trailing dot, which used to resolve to
+# <dir>/pkg/mod//init.lua and scan the same file a second time.
+test_dynamic_require_not_scanned_twice() {
+    local name="dynamic_require_not_scanned_twice"
+    local cfg
+    mkdir -p "$TMP_DIR/widgets"
+    printf '%s\n' 'local cmd = "maim -s"' > "$TMP_DIR/widgets/init.lua"
+    cfg=$(write_config "dyn.lua" 'local w = require("widgets")
+for _, k in ipairs({"a"}) do w[k] = require("widgets." .. k) end')
+    run_check "$cfg"
+    assert_not_contains "$name" "//init.lua" || return
+    local hits
+    hits=$(echo "$CHECK_STDOUT" | grep -c "maim screenshot tool")
+    if [ "$hits" -ne 1 ]; then
+        fail "$name" "expected 1 maim finding, got $hits"
+        return
+    fi
+    pass "$name"
+}
+test_dynamic_require_not_scanned_twice
+
+# xsettingsd is a different program from xset, and needs different advice.
+test_xsettingsd_is_not_xset() {
+    local name="xsettingsd_is_not_xset"
+    local cfg
+    cfg=$(write_config "xsd.lua" 'os.execute("xsettingsd --config /etc/xsettingsd &")')
+    run_check "$cfg"
+    assert_contains "$name" "xsettingsd XSETTINGS daemon" || return
+    assert_not_contains "$name" "xset display settings" || return
+    pass "$name"
+}
+test_xsettingsd_is_not_xset
+
+# A path or a local named xsettingsd is not a spawn of it.
+test_xsettingsd_name_is_not_a_spawn() {
+    local name="xsettingsd_name_is_not_a_spawn"
+    local cfg
+    cfg=$(write_config "xsdname.lua" 'local xsettingsd = dir .. "xsettingsd"
+local f = io.open(xsettingsd, "r")')
+    run_check "$cfg"
+    assert_not_contains "$name" "xsettingsd XSETTINGS daemon" || return
+    pass "$name"
+}
+test_xsettingsd_name_is_not_a_spawn
+
+# A real xset call still has to be caught.
+test_xset_still_warns() {
+    local name="xset_still_warns"
+    local cfg
+    cfg=$(write_config "xset.lua" 'awful.spawn("xset s on +dpms")')
+    run_check "$cfg"
+    assert_contains "$name" "xset display settings" || return
+    pass "$name"
+}
+test_xset_still_warns
+
+# A missing module used to be reported at line 0.
+test_missing_module_has_line_number() {
+    local name="missing_module_has_line_number"
+    local cfg
+    cfg=$(write_config "modline.lua" '-- padding
+-- padding
+local _m = require("totally_missing_module_xyz")')
+    run_check "$cfg"
+    assert_contains "$name" "modline.lua:3" || return
+    assert_not_contains "$name" "modline.lua:0" || return
+    pass "$name"
+}
+test_missing_module_has_line_number
+
 # === Summary ===
 
 echo ""
