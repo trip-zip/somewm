@@ -4899,9 +4899,8 @@ clients_detach(client_snapshot_t **out, int *out_count)
 				c->surface.xwayland->data = &snap->data;
 		}
 #endif
-		/* Also update scene tree data pointers */
-		if (c->scene)
-			c->scene->node.data = &snap->data;
+		/* Also update scene node back-pointers */
+		client_set_node_data(c, &snap->data);
 
 		/* NULL out owned resources in the OLD Lua userdata so that
 		 * client_wipe (called during lua_close GC) doesn't free them.
@@ -5000,11 +4999,7 @@ clients_restore(lua_State *L, client_snapshot_t *snaps, int num_clients)
 				c->surface.xwayland->data = c;
 		}
 #endif
-		if (c->scene) {
-			c->scene->node.data = c;
-			if (c->scene_surface)
-				c->scene_surface->node.data = c;
-		}
+		client_set_node_data(c, c);
 
 		/* Reference and push to arrays */
 		lua_pushvalue(L, -1);

@@ -556,6 +556,15 @@ test_transient_client = executable(
   install: false,
 )
 
+# Test XDG client that opens a real xdg_popup, for hit-testing regressions
+test_popup_client = executable(
+  'test-popup-client',
+  ['tests/test-popup-client.c', xdg_shell_client_code],
+  xdg_shell_client_header,
+  dependencies: [wayland_client],
+  install: false,
+)
+
 # Test XDG fullscreen client for fullscreen protocol tests
 test_fullscreen_client = executable(
   'test-fullscreen-client',

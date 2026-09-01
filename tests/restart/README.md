@@ -195,6 +195,10 @@ release it on `"exit"` reddens whichever reload test runs next.
   reload.
 - `startup-flag-across-reload`: `awesome.startup` is true during a reload's
   config load too, and `awesome._restart` says which it was.
+- `client-popup-node-data-after-restart`: every scene node holding a
+  back-pointer to a client names the current `client_t`. The restore used to
+  re-point only `Client::scene` and `Client::scene_surface`, so a pointer
+  motion over an open popup read through the freed userdata.
 
 Config-timeout tests (a config that hangs longer than the limit is aborted and
 the fallback loads):
