@@ -678,6 +678,31 @@ local _m = require("totally_missing_module_xyz")')
 }
 test_missing_module_has_line_number
 
+# get_xproperty and set_xproperty are not bound at all, so calling either
+# raises and the config never loads. register_xproperty is a real no-op stub.
+test_xproperty_get_is_critical() {
+    local name="xproperty_get_is_critical"
+    local cfg
+    cfg=$(write_config "xprop_get.lua" 'local seen = awesome.get_xproperty("restarted")')
+    run_check "$cfg"
+    assert_exit "$name" 2 || return
+    assert_contains "$name" "awesome.get_xproperty() - not defined" || return
+    assert_contains "$name" "awesome.startup" || return
+    pass "$name"
+}
+test_xproperty_get_is_critical
+
+test_xproperty_register_stays_warning() {
+    local name="xproperty_register_stays_warning"
+    local cfg
+    cfg=$(write_config "xprop_reg.lua" 'awesome.register_xproperty("restarted", "boolean")')
+    run_check "$cfg"
+    assert_exit "$name" 1 || return
+    assert_contains "$name" "does nothing" || return
+    pass "$name"
+}
+test_xproperty_register_stays_warning
+
 # === Summary ===
 
 echo ""
