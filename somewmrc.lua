@@ -34,19 +34,19 @@ naughty.connect_signal("request::display_error", function(message, startup)
     }
 end)
 
--- Show notification if we fell back due to X11-specific patterns in user config
+-- Show notification if the config pre-scan found X11-specific patterns
 if awesome.x11_fallback_info then
     -- Defer notification until after startup (naughty needs event loop running)
     gears.timer.delayed_call(function()
         local info = awesome.x11_fallback_info
         local msg = string.format(
-            "Your config was skipped because it contains X11-specific code that " ..
-            "won't work on Wayland.\n\n" ..
+            "Your config contains X11-specific code that won't work on Wayland. " ..
+            "It was loaded anyway; the code below will not do anything.\n\n" ..
             "File: %s:%d\n" ..
             "Pattern: %s\n" ..
             "Code: %s\n\n" ..
             "Suggestion: %s\n\n" ..
-            "Edit your rc.lua to remove X11 dependencies, then restart somewm.",
+            "Run `somewm --check` on your config for the full list.",
             info.config_path or "unknown",
             info.line_number or 0,
             info.pattern or "unknown",
@@ -55,7 +55,7 @@ if awesome.x11_fallback_info then
         )
         naughty.notification {
             urgency = "critical",
-            title   = "Config contains X11 patterns - using fallback",
+            title   = "Config contains X11 patterns",
             message = msg,
             timeout = 0  -- Don't auto-dismiss
         }
