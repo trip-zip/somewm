@@ -502,6 +502,95 @@ test_check_level_default
 test_gtk_lgi_warning
 test_gdk_lgi_critical
 
+# A pattern named in a comment must not hide a real use further down the file.
+# Only the first occurrence used to be examined, so the comment consumed it.
+test_comment_does_not_mask_later_use() {
+    local name="comment_does_not_mask_later_use"
+    local cfg
+    cfg=$(write_config "masked.lua" '-- we used to spawn "picom here
+local cmd = "picom -b"
+return cmd')
+    run_check "$cfg"
+    assert_contains "$name" "masked.lua:2" || return
+    pass "$name"
+}
+test_comment_does_not_mask_later_use
+
+# GdkPixbuf decodes images and opens no display, so it is not the GDK hazard.
+test_gdkpixbuf_is_not_gdk() {
+    local name="gdkpixbuf_is_not_gdk"
+    local cfg
+    cfg=$(write_config "pixbuf.lua" 'local lgi = require("lgi")
+local GdkPixbuf = lgi.require("GdkPixbuf", "2.0")
+return GdkPixbuf')
+    run_check "$cfg"
+    assert_exit "$name" 0 || return
+    assert_not_contains "$name" "GDK initialization deadlock" || return
+    pass "$name"
+}
+test_gdkpixbuf_is_not_gdk
+
+# A GTK main loop started inside the compositor never hands control back.
+test_gtk_application_is_critical() {
+    local name="gtk_application_is_critical"
+    local cfg
+    cfg=$(write_config "gtkapp.lua" 'local lgi = require("lgi")
+local Gtk = lgi.require("Gtk", "3.0")
+local app = Gtk.Application({ application_id = "test.app" })
+return app:run()')
+    run_check "$cfg"
+    assert_exit "$name" 2 || return
+    assert_contains "$name" "GTK app inside the compositor" || return
+    assert_contains "$name" "separate process" || return
+    pass "$name"
+}
+test_gtk_application_is_critical
+
+# get_default() needs gtk_init, which the compositor stubs out, so it is nil.
+test_icontheme_get_default_warns() {
+    local name="icontheme_get_default_warns"
+    local cfg
+    cfg=$(write_config "icontheme.lua" 'local lgi = require("lgi")
+local Gtk = lgi.require("Gtk", "3.0")
+local theme = Gtk.IconTheme.get_default()
+return theme')
+    run_check "$cfg"
+    assert_exit "$name" 1 || return
+    assert_contains "$name" "IconTheme.get_default() - returns nil" || return
+    assert_contains "$name" "IconTheme.new()" || return
+    pass "$name"
+}
+test_icontheme_get_default_warns
+
+# xrdb was only detected inside io.popen, so os.execute and a plain spawn
+# went unreported. It now has a bare form like xset and xclip.
+test_xrdb_bare_warns() {
+    local name="xrdb_bare_warns"
+    local cfg
+    cfg=$(write_config "xrdb.lua" 'os.execute("xrdb " .. os.getenv("HOME") .. "/.Xresources")')
+    run_check "$cfg"
+    assert_exit "$name" 1 || return
+    assert_contains "$name" "xrdb Xresources loading" || return
+    pass "$name"
+}
+test_xrdb_bare_warns
+
+# Wayland has no _NET_WM_ICON equivalent, so c.icon is nil and a tasklist or
+# dock draws the same fallback for every client.
+test_client_icon_info() {
+    local name="client_icon_info"
+    local cfg
+    cfg=$(write_config "clienticon.lua" 'client.connect_signal("request::manage", function(c)
+    if not c.icon then return end
+end)')
+    run_check "$cfg"
+    assert_exit "$name" 0 || return
+    assert_contains "$name" "clients have no icon" || return
+    assert_contains "$name" "c.class" || return
+    pass "$name"
+}
+test_client_icon_info
+
 # === Summary ===
 
 echo ""

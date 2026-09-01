@@ -3078,6 +3078,39 @@ typedef struct {
 	x11_severity_t severity;  /* How serious the issue is */
 } x11_pattern_t;
 
+/* Where the long-form explanations live. Update the version on a backport. */
+#define SOMEWM_DOCS_MIGRATING "https://somewm.org/docs/1.4/getting-started/migrating"
+
+/** Anchor on the migration page for a pattern, or NULL if it has no section.
+ * Keyed on the description so the quote variants of a pattern share an entry.
+ * \param description Pattern description
+ * \return Anchor without the leading '#', or NULL
+ */
+static const char *
+pattern_doc_anchor(const char *description)
+{
+	static const struct { const char *desc, *anchor; } docs[] = {
+		{"lgi.require(\"Gtk\") - GTK loading (partially mitigated)", "gtkgdk-via-lgi"},
+		{"lgi.require('Gtk') - GTK loading (partially mitigated)", "gtkgdk-via-lgi"},
+		{"lgi.require(\"Gdk\") - GDK initialization deadlock", "gtkgdk-via-lgi"},
+		{"lgi.require('Gdk') - GDK initialization deadlock", "gtkgdk-via-lgi"},
+		{"Gtk.Application - GTK app inside the compositor", "running-a-gtk-app"},
+		{"Gtk.main() - GTK main loop inside the compositor", "running-a-gtk-app"},
+		{"Gtk.IconTheme.get_default() - returns nil", "icon-theme-lookups"},
+		{"awful.widget.clienticon - clients have no icon", "client-icons"},
+		{"c.icon - clients have no icon", "client-icons"},
+		{"xrdb Xresources loading", "xresources-and-xrdb"},
+		{NULL, NULL}
+	};
+	int i;
+
+	for (i = 0; docs[i].desc; i++)
+		if (strcmp(description, docs[i].desc) == 0)
+			return docs[i].anchor;
+
+	return NULL;
+}
+
 static const x11_pattern_t x11_patterns[] = {
 	/* === CRITICAL: Will fail or hang === */
 
@@ -3148,10 +3181,33 @@ static const x11_pattern_t x11_patterns[] = {
 	 "somewm prevents the deadlock, but display-dependent GTK features won't work", SEVERITY_WARNING},
 	{"lgi.require('Gtk", "lgi.require('Gtk') - GTK loading (partially mitigated)",
 	 "somewm prevents the deadlock, but display-dependent GTK features won't work", SEVERITY_WARNING},
-	{"lgi.require(\"Gdk", "lgi.require(\"Gdk\") - GDK initialization deadlock",
-	 "GDK init connects to display server and will deadlock. Load lazily after startup", SEVERITY_CRITICAL},
-	{"lgi.require('Gdk", "lgi.require('Gdk') - GDK initialization deadlock",
-	 "GDK init connects to display server and will deadlock. Load lazily after startup", SEVERITY_CRITICAL},
+	/* Closing quote included: GdkPixbuf loads images and opens no display. */
+	{"lgi.require(\"Gdk\"", "lgi.require(\"Gdk\") - GDK initialization deadlock",
+	 "GDK connects to the display server, which is this process, so it hangs whenever it runs. Use GdkPixbuf, or spawn a separate process", SEVERITY_CRITICAL},
+	{"lgi.require('Gdk'", "lgi.require('Gdk') - GDK initialization deadlock",
+	 "GDK connects to the display server, which is this process, so it hangs whenever it runs. Use GdkPixbuf, or spawn a separate process", SEVERITY_CRITICAL},
+
+	/* A GTK application runs its own main loop. Started from inside the
+	 * compositor it never returns, so the compositor stops dispatching and
+	 * only a power cycle gets the session back. */
+	{"Gtk.Application(", "Gtk.Application - GTK app inside the compositor",
+	 "Its main loop never returns and freezes the compositor. Spawn the app as a separate process", SEVERITY_CRITICAL},
+	{"Gtk.Application.new", "Gtk.Application - GTK app inside the compositor",
+	 "Its main loop never returns and freezes the compositor. Spawn the app as a separate process", SEVERITY_CRITICAL},
+	{"Gtk.main()", "Gtk.main() - GTK main loop inside the compositor",
+	 "It never returns and freezes the compositor. Spawn the app as a separate process", SEVERITY_CRITICAL},
+
+	/* get_default() needs gtk_init, which we stub out to avoid the deadlock
+	 * above, so it returns nil and every icon lookup through it fails. */
+	{"IconTheme.get_default", "Gtk.IconTheme.get_default() - returns nil",
+	 "It needs gtk_init, which the compositor stubs out. Use Gtk.IconTheme.new() with set_custom_theme()", SEVERITY_WARNING},
+
+	/* Wayland has no _NET_WM_ICON equivalent, so a client arrives with no
+	 * icon of its own and anything drawing one gets the same fallback. */
+	{"awful.widget.clienticon", "awful.widget.clienticon - clients have no icon",
+	 "Wayland clients supply no icon. Resolve one from c.class through the icon theme", SEVERITY_INFO},
+	{"c.icon", "c.icon - clients have no icon",
+	 "Wayland clients supply no icon, so this is nil. Resolve one from c.class through the icon theme", SEVERITY_INFO},
 
 	/* === WARNING: Needs Wayland alternative === */
 
@@ -3194,6 +3250,12 @@ static const x11_pattern_t x11_patterns[] = {
 	 "Use wl-copy/wl-paste instead", SEVERITY_WARNING},
 
 	/* Display/input tools used async */
+	/* Bare form, like the other tools: io.popen("xrdb is covered above, but
+	 * os.execute("xrdb and a plain spawn were not. */
+	{"\"xrdb", "xrdb Xresources loading",
+	 "Xresources are X11-only. Use beautiful.xresources or your terminal's own config", SEVERITY_WARNING},
+	{"'xrdb", "xrdb Xresources loading",
+	 "Xresources are X11-only. Use beautiful.xresources or your terminal's own config", SEVERITY_WARNING},
 	{"\"xset", "xset display settings",
 	 "Most settings are handled by compositor or wlr-randr", SEVERITY_WARNING},
 	{"'xset", "xset display settings",
@@ -3318,109 +3380,178 @@ prescan_cleanup_visited(void)
 }
 
 /** Internal recursive pre-scan function */
-static bool
+static void
 luaA_prescan_file(const char *config_path, const char *config_dir, int depth);
 
-/** Extract and scan all require()d files from content
+/** Modules we never scan: the Lua stdlib, our own libraries, and common
+ * third-party ones. Everything else is treated as config-local and resolved
+ * against config_dir. Shared by the pre-scan and by --check so both walk the
+ * same set of files.
+ * \param name Module name as written in require()
+ * \return true if the module is external and should be skipped
+ */
+static bool
+prescan_module_is_external(const char *name)
+{
+	static const char *const exact[] = {
+		"string", "table", "math", "io", "os", "debug", "coroutine",
+		"package", "utf8", "bit", "bit32", "ffi", "jit",
+		"ruled", "lgi", "lain", "freedesktop", "vicious", "revelation",
+		"collision", "tyrannical", "cyclefocus", "radical", "cairo",
+		"posix", "cjson", "dkjson", "json", "socket", "http",
+		"penlight", "inspect", "luassert", "busted", NULL
+	};
+	static const char *const prefixes[] = {
+		"awful", "gears", "wibox", "naughty", "beautiful", "menubar",
+		"ruled.", "lgi.", "lain.", "freedesktop.", "vicious.",
+		"posix.", "cjson.", "socket.", "pl.", NULL
+	};
+	int i;
+
+	for (i = 0; exact[i]; i++)
+		if (strcmp(name, exact[i]) == 0)
+			return true;
+	for (i = 0; prefixes[i]; i++)
+		if (strncmp(name, prefixes[i], strlen(prefixes[i])) == 0)
+			return true;
+
+	return false;
+}
+
+/** Read the next require("mod") out of a file, skipping qualified calls such
+ * as lgi.require() and requires that are commented out.
+ * \param pos Cursor into content, advanced past the match
+ * \param content Start of the file, for backwards line scanning
+ * \param out Receives the module name
+ * \param outlen Size of out
+ * \return true when a module name was read
+ */
+static bool
+prescan_next_require(const char **pos, const char *content,
+                     char *out, size_t outlen)
+{
+	const char *p = *pos;
+
+	while ((p = strstr(p, "require")) != NULL) {
+		const char *start, *end, *line, *indent;
+		char quote;
+		size_t len;
+
+		/* lgi.require(), foo.require() - not a module load */
+		if (p > content && *(p - 1) == '.') {
+			p += 7;
+			continue;
+		}
+
+		line = p;
+		while (line > content && *(line - 1) != '\n')
+			line--;
+		for (indent = line; indent < p && (*indent == ' ' || *indent == '\t'); indent++)
+			;
+		if (indent[0] == '-' && indent[1] == '-') {
+			p += 7;
+			continue;
+		}
+
+		p += 7;
+		while (*p == ' ' || *p == '\t' || *p == '(')
+			p++;
+		if (*p != '"' && *p != '\'')
+			continue;
+
+		quote = *p++;
+		start = p;
+		end = strchr(p, quote);
+		if (!end || (size_t)(end - start) >= outlen - 1)
+			continue;
+
+		len = end - start;
+		memcpy(out, start, len);
+		out[len] = '\0';
+		*pos = end + 1;
+		return true;
+	}
+
+	*pos = content + strlen(content);
+	return false;
+}
+
+/** Resolve a config-local module to a file under config_dir.
+ * \param name Module name as written in require()
+ * \param dir Directory to resolve against
+ * \param path Receives the resolved path on success
+ * \param pathlen Size of path
+ * \param try1 Receives the "<dir>/mod.lua" candidate
+ * \param t1len Size of try1
+ * \param try2 Receives the "<dir>/mod/init.lua" candidate
+ * \param t2len Size of try2
+ * \return true if one of the candidates exists
+ */
+static bool
+prescan_resolve_module(const char *name, const char *dir,
+                       char *path, size_t pathlen,
+                       char *try1, size_t t1len, char *try2, size_t t2len)
+{
+	char rel[256];
+	char *p;
+
+	snprintf(rel, sizeof(rel), "%s", name);
+	for (p = rel; *p; p++)
+		if (*p == '.')
+			*p = '/';
+
+	snprintf(try1, t1len, "%s/%s.lua", dir, rel);
+	snprintf(try2, t2len, "%s/%s/init.lua", dir, rel);
+
+	if (access(try1, R_OK) == 0) {
+		snprintf(path, pathlen, "%s", try1);
+		return true;
+	}
+	if (access(try2, R_OK) == 0) {
+		snprintf(path, pathlen, "%s", try2);
+		return true;
+	}
+
+	return false;
+}
+
+/** Scan every require()d file for X11 patterns.
  * \param content File content to scan
  * \param config_dir Directory for resolving relative requires
  * \param depth Current recursion depth
- * \return true if all required files are safe, false if dangerous patterns found
  */
-static bool
+static void
 luaA_prescan_requires(const char *content, const char *config_dir, int depth)
 {
 	const char *pos = content;
 	char module_name[256];
-	char resolved_path[PATH_MAX];
-	bool all_safe = true;
+	char path[PATH_MAX], try1[PATH_MAX], try2[PATH_MAX];
 
 	if (depth >= PRESCAN_MAX_DEPTH || !config_dir)
-		return true;
+		return;
 
-	/* Scan for require("module") and require('module') patterns */
-	while ((pos = strstr(pos, "require")) != NULL) {
-		const char *start;
-		const char *end;
-		char quote;
-		size_t len;
-
-		pos += 7;  /* Skip "require" */
-
-		/* Skip whitespace and optional ( */
-		while (*pos == ' ' || *pos == '\t' || *pos == '(')
-			pos++;
-
-		/* Check for string delimiter */
-		if (*pos != '"' && *pos != '\'')
+	while (prescan_next_require(&pos, content, module_name, sizeof(module_name))) {
+		if (prescan_module_is_external(module_name))
 			continue;
 
-		quote = *pos++;
-		start = pos;
-
-		/* Find end of string */
-		end = strchr(pos, quote);
-		if (!end || (end - start) >= (int)sizeof(module_name) - 1)
-			continue;
-
-		len = end - start;
-		memcpy(module_name, start, len);
-		module_name[len] = '\0';
-		pos = end + 1;
-
-		/* Skip standard library modules (no dots = likely stdlib) */
-		/* We only care about local modules like "fishlive.helpers" */
-		if (strchr(module_name, '.') == NULL &&
-		    strcmp(module_name, "fishlive") != 0 &&
-		    strcmp(module_name, "lain") != 0 &&
-		    strcmp(module_name, "freedesktop") != 0)
-			continue;
-
-		/* Convert module.name to module/name */
-		{
-			char *p;
-			for (p = module_name; *p; p++) {
-				if (*p == '.') *p = '/';
-			}
-		}
-
-		/* Try module_name.lua */
-		snprintf(resolved_path, sizeof(resolved_path),
-		         "%s/%s.lua", config_dir, module_name);
-
-		if (access(resolved_path, R_OK) == 0) {
-			if (!luaA_prescan_file(resolved_path, config_dir, depth + 1))
-				all_safe = false;
-			continue;
-		}
-
-		/* Try module_name/init.lua */
-		snprintf(resolved_path, sizeof(resolved_path),
-		         "%s/%s/init.lua", config_dir, module_name);
-
-		if (access(resolved_path, R_OK) == 0) {
-			if (!luaA_prescan_file(resolved_path, config_dir, depth + 1))
-				all_safe = false;
-		}
+		if (prescan_resolve_module(module_name, config_dir, path, sizeof(path),
+		                           try1, sizeof(try1), try2, sizeof(try2)))
+			luaA_prescan_file(path, config_dir, depth + 1);
 	}
-
-	return all_safe;
 }
 
 /** Internal pre-scan implementation with recursion
  * \param config_path Path to the config file
  * \param config_dir Directory containing the config (for require resolution)
  * \param depth Current recursion depth
- * \return true if config is safe to load, false if dangerous patterns found
  */
-static bool
+static void
 luaA_prescan_file(const char *config_path, const char *config_dir, int depth)
 {
 	FILE *fp;
 	char *content = NULL;
 	long file_size;
 	const x11_pattern_t *pattern;
-	bool found_fatal = false;
 	int line_num;
 	char *line_start;
 	char *match_pos;
@@ -3428,17 +3559,17 @@ luaA_prescan_file(const char *config_path, const char *config_dir, int depth)
 
 	/* Check recursion depth */
 	if (depth >= PRESCAN_MAX_DEPTH)
-		return true;
+		return;
 
 	/* Skip already-visited files */
 	if (prescan_already_visited(config_path))
-		return true;
+		return;
 	prescan_mark_visited(config_path);
 
 	fp = fopen(config_path, "r");
 	if (!fp) {
 		/* File doesn't exist - not a pre-scan failure, let normal loading handle it */
-		return true;
+		return;
 	}
 
 	/* Get file size */
@@ -3449,28 +3580,33 @@ luaA_prescan_file(const char *config_path, const char *config_dir, int depth)
 	if (file_size <= 0 || file_size > 10 * 1024 * 1024) {
 		/* Empty or too large (>10MB) - skip pre-scan */
 		fclose(fp);
-		return true;
+		return;
 	}
 
 	content = malloc(file_size + 1);
 	if (!content) {
 		fclose(fp);
-		return true;
+		return;
 	}
 
 	if (fread(content, 1, file_size, fp) != (size_t)file_size) {
 		free(content);
 		fclose(fp);
-		return true;
+		return;
 	}
 	content[file_size] = '\0';
 	fclose(fp);
 
 	/* Scan for each dangerous pattern */
 	for (pattern = x11_patterns; pattern->pattern != NULL; pattern++) {
-		match_pos = strstr(content, pattern->pattern);
-		if (match_pos) {
+		char *search = content;
+
+		/* Every occurrence, not just the first: a mention in a comment
+		 * would otherwise mask the real use further down the file. */
+		while ((match_pos = strstr(search, pattern->pattern)) != NULL) {
 			int line_len;
+
+			search = match_pos + 1;
 
 			/* Found a match - calculate line number */
 			line_num = 1;
@@ -3507,6 +3643,12 @@ luaA_prescan_file(const char *config_path, const char *config_dir, int depth)
 			fprintf(stderr, "somewm: \n");
 			fprintf(stderr, "somewm: This may hang on Wayland (no X11 display).\n");
 			fprintf(stderr, "somewm: Suggestion: %s\n", pattern->suggestion);
+			{
+				const char *doc = pattern_doc_anchor(pattern->description);
+				if (doc)
+					fprintf(stderr, "somewm: Docs: %s#%s\n",
+					        SOMEWM_DOCS_MIGRATING, doc);
+			}
 			fprintf(stderr, "somewm: \n");
 
 			/* Show the offending line */
@@ -3516,7 +3658,7 @@ luaA_prescan_file(const char *config_path, const char *config_dir, int depth)
 			}
 
 			/* Store first detected pattern for Lua notification */
-			if (!found_fatal) {
+			if (!globalconf.x11_fallback.config_path) {
 				globalconf.x11_fallback.config_path = strdup(config_path);
 				globalconf.x11_fallback.line_number = line_num;
 				globalconf.x11_fallback.pattern_desc = strdup(pattern->description);
@@ -3524,30 +3666,24 @@ luaA_prescan_file(const char *config_path, const char *config_dir, int depth)
 				globalconf.x11_fallback.line_content = strndup(line_start, line_len);
 			}
 
-			found_fatal = true;
-			/* Continue scanning to report all issues */
+			/* Keep scanning so every issue is reported */
 		}
 	}
 
 	/* Recursively scan required files */
-	if (!found_fatal && config_dir) {
-		if (!luaA_prescan_requires(content, config_dir, depth))
-			found_fatal = true;
-	}
+	if (config_dir)
+		luaA_prescan_requires(content, config_dir, depth);
 
 	free(content);
-	return !found_fatal;
 }
 
 /** Public pre-scan function - scans config and all required files
  * \param config_path Path to the main config file
  * \param config_dir Directory containing the config (for require resolution)
- * \return true if config is safe to load, false if dangerous patterns found
  */
-static bool
+static void
 luaA_prescan_config(const char *config_path, const char *config_dir)
 {
-	bool result;
 	char dir_buf[PATH_MAX];
 	const char *dir = config_dir;
 
@@ -3566,17 +3702,9 @@ luaA_prescan_config(const char *config_path, const char *config_dir)
 		}
 	}
 
-	result = luaA_prescan_file(config_path, dir, 0);
-
-	if (!result) {
-		fprintf(stderr, "\n");
-		fprintf(stderr, "somewm: Skipping this config to prevent hang.\n");
-		fprintf(stderr, "somewm: Falling back to default somewmrc.lua...\n");
-		fprintf(stderr, "\n");
-	}
+	luaA_prescan_file(config_path, dir, 0);
 
 	prescan_cleanup_visited();
-	return result;
 }
 
 /* ============================================================================
@@ -3595,6 +3723,7 @@ typedef struct {
 	char *line_content;
 	const char *pattern_desc;   /* Points into x11_patterns - don't free */
 	const char *suggestion;     /* Points into x11_patterns - don't free */
+	const char *doc;            /* Points into x11_patterns - don't free */
 	x11_severity_t severity;
 	bool is_syntax_error;       /* If true, pattern_desc is dynamically allocated */
 } check_issue_t;
@@ -3635,6 +3764,7 @@ check_mode_add_issue(const char *file_path, int line_num, const char *line_conte
 	issue->line_content = strdup(line_content);
 	issue->pattern_desc = pattern->description;
 	issue->suggestion = pattern->suggestion;
+	issue->doc = pattern_doc_anchor(pattern->description);
 	issue->severity = pattern->severity;
 	issue->is_syntax_error = false;
 
@@ -3930,6 +4060,15 @@ check_mode_print_report(const char *config_path, bool use_color)
 				printf("    %s→ %s%s\n", COL_GRAY, issue->suggestion, COL_RESET);
 			else
 				printf("    → %s\n", issue->suggestion);
+
+			if (issue->doc) {
+				if (use_color)
+					printf("    %s  docs: %s#%s%s\n", COL_GRAY,
+					       SOMEWM_DOCS_MIGRATING, issue->doc, COL_RESET);
+				else
+					printf("      docs: %s#%s\n",
+					       SOMEWM_DOCS_MIGRATING, issue->doc);
+			}
 		}
 		if (printed_header)
 			printf("\n");
@@ -3975,143 +4114,20 @@ check_mode_scan_requires(const char *content, const char *config_dir,
 {
 	const char *pos = content;
 	char module_name[256];
-	char module_path[256];
-	char resolved_path[PATH_MAX];
-	char resolved_path2[PATH_MAX];
+	char path[PATH_MAX], try1[PATH_MAX], try2[PATH_MAX];
 
 	if (depth >= PRESCAN_MAX_DEPTH || !config_dir)
 		return;
 
-	while ((pos = strstr(pos, "require")) != NULL) {
-		const char *start;
-		const char *end;
-		char quote;
-		size_t len;
-
-		/* Skip lgi.require, some_module.require, etc. */
-		if (pos > content && *(pos - 1) == '.') {
-			pos += 7;
-			continue;
-		}
-
-		/* Skip if line is a Lua comment (starts with -- after whitespace) */
-		{
-			const char *line_start = pos;
-			while (line_start > content && *(line_start - 1) != '\n')
-				line_start--;
-			const char *p = line_start;
-			while (p < pos && (*p == ' ' || *p == '\t'))
-				p++;
-			if (p[0] == '-' && p[1] == '-') {
-				pos += 7;
-				continue;
-			}
-		}
-
-		pos += 7;
-
-		while (*pos == ' ' || *pos == '\t' || *pos == '(')
-			pos++;
-
-		if (*pos != '"' && *pos != '\'')
+	while (prescan_next_require(&pos, content, module_name, sizeof(module_name))) {
+		if (prescan_module_is_external(module_name))
 			continue;
 
-		quote = *pos++;
-		start = pos;
-		end = strchr(pos, quote);
-		if (!end || (end - start) >= (int)sizeof(module_name) - 1)
-			continue;
-
-		len = end - start;
-		memcpy(module_name, start, len);
-		module_name[len] = '\0';
-		pos = end + 1;
-
-		/* Skip standard Lua library modules */
-		if (strcmp(module_name, "string") == 0 ||
-		    strcmp(module_name, "table") == 0 ||
-		    strcmp(module_name, "math") == 0 ||
-		    strcmp(module_name, "io") == 0 ||
-		    strcmp(module_name, "os") == 0 ||
-		    strcmp(module_name, "debug") == 0 ||
-		    strcmp(module_name, "coroutine") == 0 ||
-		    strcmp(module_name, "package") == 0 ||
-		    strcmp(module_name, "utf8") == 0 ||
-		    strcmp(module_name, "bit") == 0 ||
-		    strcmp(module_name, "bit32") == 0 ||
-		    strcmp(module_name, "ffi") == 0 ||
-		    strcmp(module_name, "jit") == 0)
-			continue;
-
-		/* Skip AwesomeWM library modules (they're in system paths) */
-		if (strncmp(module_name, "awful", 5) == 0 ||
-		    strncmp(module_name, "gears", 5) == 0 ||
-		    strncmp(module_name, "wibox", 5) == 0 ||
-		    strncmp(module_name, "naughty", 7) == 0 ||
-		    strncmp(module_name, "beautiful", 9) == 0 ||
-		    strncmp(module_name, "menubar", 7) == 0 ||
-		    strcmp(module_name, "ruled") == 0 ||
-		    strncmp(module_name, "ruled.", 6) == 0)
-			continue;
-
-		/* Skip common third-party modules (installed separately) */
-		if (strcmp(module_name, "lgi") == 0 ||
-		    strncmp(module_name, "lgi.", 4) == 0 ||
-		    strcmp(module_name, "lain") == 0 ||
-		    strncmp(module_name, "lain.", 5) == 0 ||
-		    strcmp(module_name, "freedesktop") == 0 ||
-		    strncmp(module_name, "freedesktop.", 12) == 0 ||
-		    strcmp(module_name, "vicious") == 0 ||
-		    strncmp(module_name, "vicious.", 8) == 0 ||
-		    strcmp(module_name, "revelation") == 0 ||
-		    strcmp(module_name, "collision") == 0 ||
-		    strcmp(module_name, "tyrannical") == 0 ||
-		    strcmp(module_name, "cyclefocus") == 0 ||
-		    strcmp(module_name, "radical") == 0 ||
-		    strcmp(module_name, "cairo") == 0 ||
-		    strcmp(module_name, "posix") == 0 ||
-		    strncmp(module_name, "posix.", 6) == 0 ||
-		    strcmp(module_name, "cjson") == 0 ||
-		    strncmp(module_name, "cjson.", 6) == 0 ||
-		    strcmp(module_name, "dkjson") == 0 ||
-		    strcmp(module_name, "json") == 0 ||
-		    strcmp(module_name, "socket") == 0 ||
-		    strncmp(module_name, "socket.", 7) == 0 ||
-		    strcmp(module_name, "http") == 0 ||
-		    strncmp(module_name, "pl.", 3) == 0 ||
-		    strcmp(module_name, "penlight") == 0 ||
-		    strcmp(module_name, "inspect") == 0 ||
-		    strcmp(module_name, "luassert") == 0 ||
-		    strcmp(module_name, "busted") == 0)
-			continue;
-
-		/* Save original module name for error reporting */
-		snprintf(module_path, sizeof(module_path), "%s", module_name);
-
-		/* Convert module.name to module/name */
-		for (char *p = module_name; *p; p++) {
-			if (*p == '.') *p = '/';
-		}
-
-		/* Try module_name.lua */
-		snprintf(resolved_path, sizeof(resolved_path),
-		         "%s/%s.lua", config_dir, module_name);
-		if (access(resolved_path, R_OK) == 0) {
-			check_mode_scan_file(resolved_path, config_dir, depth + 1);
-			continue;
-		}
-
-		/* Try module_name/init.lua */
-		snprintf(resolved_path2, sizeof(resolved_path2),
-		         "%s/%s/init.lua", config_dir, module_name);
-		if (access(resolved_path2, R_OK) == 0) {
-			check_mode_scan_file(resolved_path2, config_dir, depth + 1);
-			continue;
-		}
-
-		/* Module not found - report it */
-		check_mode_add_missing_module(source_file, module_path,
-		                              resolved_path, resolved_path2);
+		if (prescan_resolve_module(module_name, config_dir, path, sizeof(path),
+		                           try1, sizeof(try1), try2, sizeof(try2)))
+			check_mode_scan_file(path, config_dir, depth + 1);
+		else
+			check_mode_add_missing_module(source_file, module_name, try1, try2);
 	}
 }
 
@@ -4163,9 +4179,12 @@ check_mode_scan_file(const char *config_path, const char *config_dir, int depth)
 
 	/* Scan for all patterns (not just critical) */
 	for (pattern = x11_patterns; pattern->pattern != NULL; pattern++) {
-		char *match_pos = strstr(content, pattern->pattern);
-		if (match_pos) {
+		char *match_pos, *search = content;
+
+		while ((match_pos = strstr(search, pattern->pattern)) != NULL) {
 			int line_num = 1;
+
+			search = match_pos + 1;
 			char *line_start;
 			char *newline;
 			int line_len;
@@ -4899,12 +4918,9 @@ luaA_loadrc(void)
 
 	/* Try to load config file */
 	for (i = 0; config_paths[i] != NULL; i++) {
-		/* Pre-scan config for X11 patterns that may hang on Wayland */
-		if (!luaA_prescan_config(config_paths[i], NULL)) {
-			/* Dangerous patterns found - skip this config */
-			luaA_startup_error("Config contains X11-specific patterns that may hang on Wayland");
-			continue;
-		}
+		/* Warn about X11 patterns. Advisory only: a config that really
+		 * hangs is caught by the load alarm below. */
+		luaA_prescan_config(config_paths[i], NULL);
 
 		/* Use luaL_loadfile + lua_pcall with traceback for better errors */
 		load_result = luaL_loadfile(globalconf_L, config_paths[i]);
