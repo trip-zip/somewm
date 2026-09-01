@@ -2,7 +2,8 @@
 #
 # awesome.startup is true while a config loads, on a fresh start and on a
 # reload alike, and false once the loop is running. awesome._restart is what
-# says which of the two it was.
+# says which of the two it was; somewm --check points configs at it as the
+# replacement for the X11 restart probe built from awesome.get_xproperty.
 
 . "$(dirname "$0")/lib.sh"
 
