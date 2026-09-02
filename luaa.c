@@ -3026,31 +3026,17 @@ luaA_add_search_paths(const char **paths, int count)
 	}
 }
 
-/** Register everything a Lua state needs: the standard library, somewm's
- * search paths, and every somewm module and class.
+/** Point a Lua state at every directory somewm loads modules from: the
+ * development tree, the installed datadir, any -L/--search paths, and the
+ * user library directory.
  *
- * Boot (luaA_init) and the post-reload rebuild (luaA_create_fresh_state) both
- * run this, so there is one list instead of two that drift apart. Anything a
- * state needs belongs here; luaA_init keeps only the once-per-process work.
+ * Boot, the post-reload rebuild, and `--check` all call this, so what the
+ * checker believes require() can find is what require() can actually find.
  */
 static void
-luaA_register_state(lua_State *L)
+luaA_setup_package_paths(lua_State *L)
 {
 	const char *cur_path;
-
-	/* Panic handler for unprotected errors (AwesomeWM API parity) */
-	lua_atpanic(L, luaA_panic);
-
-	/* Set error handling function */
-	lualib_dofunction_on_error = luaA_dofunction_on_error;
-
-	luaL_openlibs(L);
-
-	/* Add AwesomeWM-compatible Lua extensions */
-	luaA_fixups(L);
-
-	/* Initialize the AwesomeWM object system (must precede any class setup) */
-	luaA_object_setup(L);
 
 	/* Add lua/ directory to package.path for require() support */
 	lua_getglobal(L, "package");
@@ -3127,6 +3113,33 @@ luaA_register_state(lua_State *L)
 			lua_pop(L, 1);  /* pop package table */
 		}
 	}
+}
+
+/** Register everything a Lua state needs: the standard library, somewm's
+ * search paths, and every somewm module and class.
+ *
+ * Boot (luaA_init) and the post-reload rebuild (luaA_create_fresh_state) both
+ * run this, so there is one list instead of two that drift apart. Anything a
+ * state needs belongs here; luaA_init keeps only the once-per-process work.
+ */
+static void
+luaA_register_state(lua_State *L)
+{
+	/* Panic handler for unprotected errors (AwesomeWM API parity) */
+	lua_atpanic(L, luaA_panic);
+
+	/* Set error handling function */
+	lualib_dofunction_on_error = luaA_dofunction_on_error;
+
+	luaL_openlibs(L);
+
+	/* Add AwesomeWM-compatible Lua extensions */
+	luaA_fixups(L);
+
+	/* Initialize the AwesomeWM object system (must precede any class setup) */
+	luaA_object_setup(L);
+
+	luaA_setup_package_paths(L);
 
 	/* Register somewm Lua modules */
 	luaA_signal_setup(L);
@@ -3625,41 +3638,6 @@ prescan_cleanup_visited(void)
 static void
 luaA_prescan_file(const char *config_path, const char *config_dir, int depth);
 
-/** Modules we never scan: the Lua stdlib, our own libraries, and common
- * third-party ones. Everything else is treated as config-local and resolved
- * against config_dir. Shared by the pre-scan and by --check so both walk the
- * same set of files.
- * \param name Module name as written in require()
- * \return true if the module is external and should be skipped
- */
-static bool
-prescan_module_is_external(const char *name)
-{
-	static const char *const exact[] = {
-		"string", "table", "math", "io", "os", "debug", "coroutine",
-		"package", "utf8", "bit", "bit32", "ffi", "jit",
-		"ruled", "lgi", "lain", "freedesktop", "vicious", "revelation",
-		"collision", "tyrannical", "cyclefocus", "radical", "cairo",
-		"posix", "cjson", "dkjson", "json", "socket", "http",
-		"penlight", "inspect", "luassert", "busted", NULL
-	};
-	static const char *const prefixes[] = {
-		"awful", "gears", "wibox", "naughty", "beautiful", "menubar",
-		"ruled.", "lgi.", "lain.", "freedesktop.", "vicious.",
-		"posix.", "cjson.", "socket.", "pl.", NULL
-	};
-	int i;
-
-	for (i = 0; exact[i]; i++)
-		if (strcmp(name, exact[i]) == 0)
-			return true;
-	for (i = 0; prefixes[i]; i++)
-		if (strncmp(name, prefixes[i], strlen(prefixes[i])) == 0)
-			return true;
-
-	return false;
-}
-
 /** Read the next require("mod") out of a file, skipping qualified calls such
  * as lgi.require() and requires that are commented out.
  * \param pos Cursor into content, advanced past the match
@@ -3740,18 +3718,13 @@ prescan_next_require(const char **pos, const char *content,
  * \param dir Directory to resolve against
  * \param path Receives the resolved path on success
  * \param pathlen Size of path
- * \param try1 Receives the "<dir>/mod.lua" candidate
- * \param t1len Size of try1
- * \param try2 Receives the "<dir>/mod/init.lua" candidate
- * \param t2len Size of try2
  * \return true if one of the candidates exists
  */
 static bool
 prescan_resolve_module(const char *name, const char *dir,
-                       char *path, size_t pathlen,
-                       char *try1, size_t t1len, char *try2, size_t t2len)
+                       char *path, size_t pathlen)
 {
-	char rel[256];
+	char rel[256], try[PATH_MAX];
 	char *p;
 
 	snprintf(rel, sizeof(rel), "%s", name);
@@ -3759,15 +3732,15 @@ prescan_resolve_module(const char *name, const char *dir,
 		if (*p == '.')
 			*p = '/';
 
-	snprintf(try1, t1len, "%s/%s.lua", dir, rel);
-	snprintf(try2, t2len, "%s/%s/init.lua", dir, rel);
-
-	if (access(try1, R_OK) == 0) {
-		snprintf(path, pathlen, "%s", try1);
+	snprintf(try, sizeof(try), "%s/%s.lua", dir, rel);
+	if (access(try, R_OK) == 0) {
+		snprintf(path, pathlen, "%s", try);
 		return true;
 	}
-	if (access(try2, R_OK) == 0) {
-		snprintf(path, pathlen, "%s", try2);
+
+	snprintf(try, sizeof(try), "%s/%s/init.lua", dir, rel);
+	if (access(try, R_OK) == 0) {
+		snprintf(path, pathlen, "%s", try);
 		return true;
 	}
 
@@ -3784,7 +3757,7 @@ luaA_prescan_requires(const char *content, const char *config_dir, int depth)
 {
 	const char *pos = content;
 	char module_name[256];
-	char path[PATH_MAX], try1[PATH_MAX], try2[PATH_MAX];
+	char path[PATH_MAX];
 	int require_line = 0;
 
 	if (depth >= PRESCAN_MAX_DEPTH || !config_dir)
@@ -3792,11 +3765,7 @@ luaA_prescan_requires(const char *content, const char *config_dir, int depth)
 
 	while (prescan_next_require(&pos, content, module_name, sizeof(module_name),
 	                            &require_line)) {
-		if (prescan_module_is_external(module_name))
-			continue;
-
-		if (prescan_resolve_module(module_name, config_dir, path, sizeof(path),
-		                           try1, sizeof(try1), try2, sizeof(try2)))
+		if (prescan_resolve_module(module_name, config_dir, path, sizeof(path)))
 			luaA_prescan_file(path, config_dir, depth + 1);
 	}
 }
@@ -4080,8 +4049,7 @@ check_mode_add_syntax_error(const char *file_path, const char *error_msg)
 /** Store a missing module error found during check mode */
 static void
 check_mode_add_missing_module(const char *source_file, int line_num,
-                              const char *module_name,
-                              const char *tried_path1, const char *tried_path2)
+                              const char *module_name)
 {
 	check_issue_t *issue;
 	char desc[512];
@@ -4089,14 +4057,15 @@ check_mode_add_missing_module(const char *source_file, int line_num,
 	if (check_issue_count >= CHECK_MAX_ISSUES)
 		return;
 
-	snprintf(desc, sizeof(desc), "require('%s') - module not found", module_name);
+	snprintf(desc, sizeof(desc), "require('%s') - not found on this system",
+	         module_name);
 
 	issue = &check_issues[check_issue_count++];
 	issue->file_path = strdup(source_file);
 	issue->line_number = line_num;
 	issue->line_content = strdup("");
 	issue->pattern_desc = strdup(desc);
-	issue->suggestion = "Check module path or install missing dependency";
+	issue->suggestion = "Install it, or check the name. Every path require() uses was searched";
 	issue->severity = SEVERITY_WARNING;
 	issue->is_syntax_error = true;  /* pattern_desc is dynamically allocated */
 
@@ -4380,6 +4349,141 @@ check_mode_print_report(const char *config_path, bool use_color)
 static void
 check_mode_scan_file(const char *config_path, const char *config_dir, int depth);
 
+/* A Lua state carrying somewm's real search paths, so --check asks Lua where a
+ * module lives instead of guessing. */
+static lua_State *check_resolver_L = NULL;
+static char check_config_root[PATH_MAX];
+
+#define CHECK_RESOLVER_KEY "somewm.check.resolve"
+
+/* Resolve a module the way require() does, but without loading it: --check
+ * must never run the config. package.searchpath arrived in 5.2, so 5.1 gets
+ * the same walk over the ';'-separated templates. */
+static const char check_resolver_lua[] =
+	"local searchpath = package.searchpath or function(name, path)\n"
+	"  local fname = (name:gsub('%.', '/'))\n"
+	"  for tmpl in path:gmatch('[^;]+') do\n"
+	"    local candidate = (tmpl:gsub('%?', fname))\n"
+	"    local f = io.open(candidate, 'r')\n"
+	"    if f then f:close() return candidate end\n"
+	"  end\n"
+	"end\n"
+	"return function(name)\n"
+	"  if package.loaded[name] ~= nil or package.preload[name] ~= nil then\n"
+	"    return ''\n"
+	"  end\n"
+	"  return searchpath(name, package.path) or searchpath(name, package.cpath)\n"
+	"end\n";
+
+/** Build the state --check resolves requires against.
+ * \param config_dir Directory holding the config, or NULL
+ */
+static void
+check_resolver_init(const char *config_dir)
+{
+	lua_State *L = luaL_newstate();
+
+	check_config_root[0] = '\0';
+
+	if (!L)
+		return;
+
+	luaL_openlibs(L);
+	luaA_setup_package_paths(L);
+
+	/* The config directory goes on front, exactly as it does at load time. */
+	if (config_dir) {
+		const char *old_path;
+
+		lua_getglobal(L, "package");
+		lua_getfield(L, -1, "path");
+		old_path = lua_tostring(L, -1);
+		lua_pop(L, 1);
+		lua_pushfstring(L, "%s/?.lua;%s/?/init.lua;%s",
+		                config_dir, config_dir, old_path);
+		lua_setfield(L, -2, "path");
+		lua_pop(L, 1);
+
+		snprintf(check_config_root, sizeof(check_config_root), "%s", config_dir);
+	}
+
+	if (luaL_loadstring(L, check_resolver_lua) || lua_pcall(L, 0, 1, 0)) {
+		lua_close(L);
+		return;
+	}
+	lua_setfield(L, LUA_REGISTRYINDEX, CHECK_RESOLVER_KEY);
+
+	check_resolver_L = L;
+}
+
+static void
+check_resolver_free(void)
+{
+	if (check_resolver_L) {
+		lua_close(check_resolver_L);
+		check_resolver_L = NULL;
+	}
+	check_config_root[0] = '\0';
+}
+
+/** Ask Lua whether require() would find a module.
+ * \param name Module name as written in require()
+ * \param path Receives the file it resolves to, empty for a built-in
+ * \param pathlen Size of path
+ * \return true if require() would find it
+ */
+static bool
+check_resolve_module(const char *name, char *path, size_t pathlen)
+{
+	lua_State *L = check_resolver_L;
+	const char *found;
+	bool ok = false;
+
+	path[0] = '\0';
+
+	/* With no resolver there is nothing to test, so stay quiet rather than
+	 * call every module missing. */
+	if (!L)
+		return true;
+
+	lua_getfield(L, LUA_REGISTRYINDEX, CHECK_RESOLVER_KEY);
+	lua_pushstring(L, name);
+	if (lua_pcall(L, 1, 1, 0)) {
+		lua_pop(L, 1);
+		return true;
+	}
+
+	found = lua_tostring(L, -1);
+	if (found) {
+		snprintf(path, pathlen, "%s", found);
+		ok = true;
+	}
+	lua_pop(L, 1);
+
+	return ok;
+}
+
+/** Is a resolved module the user's own Lua, and so worth scanning?
+ *
+ * A config-local module resolves through the template built from config_dir,
+ * so it comes back with that exact prefix and a plain compare is enough.
+ */
+static bool
+check_module_is_config_local(const char *resolved)
+{
+	size_t rootlen, len;
+
+	if (!resolved[0] || !check_config_root[0])
+		return false;
+
+	rootlen = strlen(check_config_root);
+	if (strncmp(resolved, check_config_root, rootlen) || resolved[rootlen] != '/')
+		return false;
+
+	len = strlen(resolved);
+	return len > 4 && !strcmp(resolved + len - 4, ".lua");
+}
+
 /** Scan requires in check mode */
 static void
 check_mode_scan_requires(const char *content, const char *config_dir,
@@ -4387,7 +4491,7 @@ check_mode_scan_requires(const char *content, const char *config_dir,
 {
 	const char *pos = content;
 	char module_name[256];
-	char path[PATH_MAX], try1[PATH_MAX], try2[PATH_MAX];
+	char resolved[PATH_MAX];
 	int require_line = 0;
 
 	if (depth >= PRESCAN_MAX_DEPTH || !config_dir)
@@ -4395,15 +4499,16 @@ check_mode_scan_requires(const char *content, const char *config_dir,
 
 	while (prescan_next_require(&pos, content, module_name, sizeof(module_name),
 	                            &require_line)) {
-		if (prescan_module_is_external(module_name))
-			continue;
-
-		if (prescan_resolve_module(module_name, config_dir, path, sizeof(path),
-		                           try1, sizeof(try1), try2, sizeof(try2)))
-			check_mode_scan_file(path, config_dir, depth + 1);
-		else
+		if (!check_resolve_module(module_name, resolved, sizeof(resolved))) {
 			check_mode_add_missing_module(source_file, require_line,
-			                              module_name, try1, try2);
+			                              module_name);
+			continue;
+		}
+
+		/* Only descend into the user's own files. Library and rock sources
+		 * are not theirs to fix, and a C module is not Lua at all. */
+		if (check_module_is_config_local(resolved))
+			check_mode_scan_file(resolved, config_dir, depth + 1);
 	}
 }
 
@@ -4535,7 +4640,9 @@ luaA_check_config(const char *config_path, bool use_color, int min_severity)
 	}
 
 	/* Scan the config and all its dependencies */
+	check_resolver_init(dir);
 	check_mode_scan_file(config_path, dir, 0);
+	check_resolver_free();
 
 	/* Run luacheck if available (gracefully skips if not installed) */
 	check_mode_run_luacheck(config_path);
