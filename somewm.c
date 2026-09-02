@@ -2767,14 +2767,11 @@ touchnotifydown(struct wl_listener *listener, void *data)
 	input_map_coords(&s, event->x, event->y, &lx, &ly);
 	xytonode(lx, ly, &surface, &c, NULL, NULL, NULL, &sx, &sy);
 
-	if (!surface)
-		return;
-
 	/* wlroots itself refuses to create a touch point (logged as an ERROR)
 	 * for a client with no bound wl_touch resource, so only forward the
 	 * raw event to clients that can actually use it. Everyone else gets
 	 * an emulated click instead, if enabled. */
-	if (!touch_client_needs_pointer_emulation(surface)) {
+	if (surface && !touch_client_needs_pointer_emulation(surface)) {
 		/* Touch-aware clients get real, raw touch - no synthetic
 		 * wl_pointer click (see touch_emulate_click()'s comment for
 		 * why). They still deserve focus/raise on a deliberate tap
