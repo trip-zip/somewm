@@ -37,6 +37,7 @@
 #include <wlr/types/wlr_buffer.h>
 #include <wlr/render/allocator.h>
 #include <wlr/types/wlr_xcursor_manager.h>
+#include <wlr/util/transform.h>
 #include <cairo.h>
 #include <drm_fourcc.h>
 #include <string.h>
@@ -985,20 +986,74 @@ composite_widgets_directly(cairo_t *cr, bool ontop_only)
 	}
 }
 
-/** Paint buf_surface at the node position, cropped to src and scaled to
- * dst_width x dst_height.
+/** Orient a source box of sw x sh under transform t, the way the scene
+ * renderer orients a buffer. */
+static void
+composite_transform_matrix(cairo_matrix_t *m, enum wl_output_transform t,
+                           double sw, double sh)
+{
+	switch (t) {
+	case WL_OUTPUT_TRANSFORM_90:
+		cairo_matrix_init(m, 0, -1, 1, 0, 0, sw); break;
+	case WL_OUTPUT_TRANSFORM_180:
+		cairo_matrix_init(m, -1, 0, 0, -1, sw, sh); break;
+	case WL_OUTPUT_TRANSFORM_270:
+		cairo_matrix_init(m, 0, 1, -1, 0, sh, 0); break;
+	case WL_OUTPUT_TRANSFORM_FLIPPED:
+		cairo_matrix_init(m, -1, 0, 0, 1, sw, 0); break;
+	case WL_OUTPUT_TRANSFORM_FLIPPED_90:
+		cairo_matrix_init(m, 0, 1, 1, 0, 0, 0); break;
+	case WL_OUTPUT_TRANSFORM_FLIPPED_180:
+		cairo_matrix_init(m, 1, 0, 0, -1, 0, sh); break;
+	case WL_OUTPUT_TRANSFORM_FLIPPED_270:
+		cairo_matrix_init(m, 0, -1, -1, 0, sh, sw); break;
+	default:
+		cairo_matrix_init_identity(m); break;
+	}
+}
+
+/** Paint buf_surface, the pixels of scene_buffer's buffer, at the node
+ * position the way the scene renderer would place them.
+ *
+ * Honours src_box (the crop wlroots sets when a surface is clipped to its xdg
+ * window geometry), dst_width/dst_height and transform. Deliberately ignores
+ * blend_mode and the wait timeline, which do not apply to a cairo target, and
+ * does not yet honour opacity or filter_mode.
  */
 static void
 composite_paint(struct screenshot_render_data *rdata, cairo_surface_t *buf_surface,
-                const struct wlr_fbox *src, int sx, int sy,
-                int dst_width, int dst_height)
+                struct wlr_scene_buffer *scene_buffer, int sx, int sy)
 {
+	enum wl_output_transform t = wlr_output_transform_invert(scene_buffer->transform);
+	bool swaps = t & WL_OUTPUT_TRANSFORM_90;
+	struct wlr_fbox src = scene_buffer->src_box;
+	int dst_width, dst_height;
+	double tw, th;
+	cairo_matrix_t m;
+
+	if (wlr_fbox_empty(&src))
+		src = (struct wlr_fbox){ 0, 0, scene_buffer->buffer->width,
+		                        scene_buffer->buffer->height };
+
+	tw = swaps ? src.height : src.width;
+	th = swaps ? src.width : src.height;
+
+	dst_width = scene_buffer->dst_width;
+	dst_height = scene_buffer->dst_height;
+	if (dst_width <= 0 || dst_height <= 0) {
+		dst_width = tw;
+		dst_height = th;
+	}
+
+	composite_transform_matrix(&m, t, src.width, src.height);
+
 	cairo_save(rdata->cr);
 	cairo_translate(rdata->cr, sx + rdata->offset_x, sy + rdata->offset_y);
 	cairo_rectangle(rdata->cr, 0, 0, dst_width, dst_height);
 	cairo_clip(rdata->cr);
-	cairo_scale(rdata->cr, dst_width / src->width, dst_height / src->height);
-	cairo_translate(rdata->cr, -src->x, -src->y);
+	cairo_scale(rdata->cr, dst_width / tw, dst_height / th);
+	cairo_transform(rdata->cr, &m);
+	cairo_translate(rdata->cr, -src.x, -src.y);
 	cairo_set_source_surface(rdata->cr, buf_surface, 0, 0);
 	cairo_paint(rdata->cr);
 	cairo_restore(rdata->cr);
@@ -1017,8 +1072,6 @@ composite_scene_buffer_to_cairo(struct wlr_scene_buffer *scene_buffer,
 	struct screenshot_render_data *rdata = data;
 	struct wlr_buffer *buffer;
 	cairo_surface_t *buf_surface;
-	struct wlr_fbox src_box;
-	int dst_width, dst_height;
 	int buf_width, buf_height;
 	void *shm_data;
 	uint32_t shm_format;
@@ -1038,20 +1091,6 @@ composite_scene_buffer_to_cairo(struct wlr_scene_buffer *scene_buffer,
 	if (buf_width <= 0 || buf_height <= 0)
 		return;
 
-	/* wlroots sets src_box when a surface is clipped to its xdg window
-	 * geometry, so cropping to it keeps client-side-decoration shadow
-	 * margins out of the capture. */
-	src_box = scene_buffer->src_box;
-	if (wlr_fbox_empty(&src_box))
-		src_box = (struct wlr_fbox){ 0, 0, buf_width, buf_height };
-
-	dst_width = scene_buffer->dst_width;
-	dst_height = scene_buffer->dst_height;
-	if (dst_width <= 0 || dst_height <= 0) {
-		dst_width = src_box.width;
-		dst_height = src_box.height;
-	}
-
 	/* First try direct buffer access (works for SHM buffers - widgets) */
 	if (wlr_buffer_begin_data_ptr_access(buffer, WLR_BUFFER_DATA_PTR_ACCESS_READ,
 	                                     &shm_data, &shm_format, &shm_stride)) {
@@ -1066,8 +1105,7 @@ composite_scene_buffer_to_cairo(struct wlr_scene_buffer *scene_buffer,
 				shm_data, cairo_fmt, buf_width, buf_height, shm_stride);
 
 			if (cairo_surface_status(buf_surface) == CAIRO_STATUS_SUCCESS) {
-				composite_paint(rdata, buf_surface, &src_box,
-					sx, sy, dst_width, dst_height);
+				composite_paint(rdata, buf_surface, scene_buffer, sx, sy);
 				cairo_surface_destroy(buf_surface);
 			}
 		}
@@ -1116,7 +1154,7 @@ composite_scene_buffer_to_cairo(struct wlr_scene_buffer *scene_buffer,
 		return;
 	}
 
-	composite_paint(rdata, buf_surface, &src_box, sx, sy, dst_width, dst_height);
+	composite_paint(rdata, buf_surface, scene_buffer, sx, sy);
 
 	cairo_surface_destroy(buf_surface);
 	if (need_free)

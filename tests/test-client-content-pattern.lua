@@ -12,7 +12,9 @@
 ---
 --- Runs at scale=1, at scale=2 (HiDPI), and once more at scale=1 with the
 --- client attaching a transparent shadow margin around a smaller xdg window
---- geometry, the way a client-side-decorated app does.
+--- geometry, the way a client-side-decorated app does. Eight more runs
+--- commit the buffer with each wl_surface.set_buffer_transform, which
+--- permutes the on-screen quadrants; c.content must permute with them.
 --- Exercises the SHM fast path of luaA_client_get_content; the GPU texture
 --- path uses identical composite logic but exercising it requires a
 --- DMA-BUF client.
@@ -89,7 +91,32 @@ local function pixel_rgb(raw_surface, x, y)
     local data   = ffi.C.cairo_image_surface_get_data(raw_surface)
     local stride = ffi.C.cairo_image_surface_get_stride(raw_surface)
     local off = y * stride + x * 4
-    return data[off + 2], data[off + 1], data[off + 0]   -- R, G, B
+    return data[off + 2], data[off + 1], data[off + 0], data[off + 3]
+end
+
+-- Re-fetch c.content until every quadrant sample is opaque. A commit that has
+-- landed in the marker file has not necessarily reached the scene graph, and
+-- the geometry change above can retrigger one, so a capture taken too early
+-- comes back part transparent. Gates on paintedness only, never on colour, so
+-- a genuinely wrong orientation still fails rather than spinning.
+local function content_when_painted(c, timeout_secs)
+    local raw
+    async.wait_for_condition(function()
+        raw = c.content
+        if not raw then return false end
+        -- Dimensions via FFI, not gears.surface: an lgi wrapper owns the
+        -- surface and would destroy it here, leaving the caller a dangling
+        -- pointer.
+        local w = ffi.C.cairo_image_surface_get_width(raw)
+        local h = ffi.C.cairo_image_surface_get_height(raw)
+        if w <= 4 or h <= 4 then return false end
+        for _, p in ipairs({{0.25, 0.25}, {0.75, 0.25}, {0.25, 0.75}, {0.75, 0.75}}) do
+            local _, _, _, a = pixel_rgb(raw, math.floor(w * p[1]), math.floor(h * p[2]))
+            if a < 200 then return false end
+        end
+        return true
+    end, timeout_secs or 5, 0.02)
+    return raw
 end
 
 local function dominant_color(r, g, b)
@@ -100,14 +127,40 @@ local function dominant_color(r, g, b)
     return string.format("rgb(%d,%d,%d)", r, g, b)
 end
 
-local function run_at_scale(target_scale, pids, margin)
+-- On-screen quadrant order per wl_surface.set_buffer_transform. Each row was
+-- read off a grim capture of the compositor's own output, so the expectations
+-- are independent of how root.c builds its matrices.
+local TRANSFORM_QUADRANTS = {
+    [0] = {"red",    "green",  "blue",   "yellow"},
+    [1] = {"blue",   "red",    "yellow", "green"},
+    [2] = {"yellow", "blue",   "green",  "red"},
+    [3] = {"green",  "yellow", "red",    "blue"},
+    [4] = {"green",  "red",    "yellow", "blue"},
+    [5] = {"red",    "blue",   "green",  "yellow"},
+    [6] = {"blue",   "yellow", "red",    "green"},
+    [7] = {"yellow", "green",  "blue",   "red"},
+}
+local CORNERS = {"TL", "TR", "BL", "BR"}
+
+-- Spawned client pids, drained by the cleanup block at the end.
+local pids = {}
+
+local function run_case(args)
     local s = screen[1]
-    s.scale = target_scale
-    async.sleep(0.05)   -- let the scale change propagate to outputs
+    local margin, transform = args.margin, args.transform
+    if s.scale ~= args.scale then
+        s.scale = args.scale
+        async.sleep(0.05)   -- let the scale change propagate to outputs
+    end
 
     local cmd = {BINARY}
     if margin then
-        cmd[2], cmd[3] = "--margin", tostring(margin)
+        table.insert(cmd, "--margin")
+        table.insert(cmd, tostring(margin))
+    end
+    if transform then
+        table.insert(cmd, "--transform")
+        table.insert(cmd, tostring(transform))
     end
     local pid = awful.spawn(cmd)
     assert(type(pid) == "number" and pid > 0,
@@ -115,7 +168,7 @@ local function run_at_scale(target_scale, pids, margin)
     table.insert(pids, pid)
 
     local c = async.wait_for_client(APP_ID, 5)
-    assert(c, "Client never appeared at scale=" .. tostring(target_scale))
+    assert(c, "Client never appeared at scale=" .. tostring(args.scale))
 
     -- Move the client off the scene origin so c.content's scene-tree walk
     -- exercises non-zero buffer positions. A regression here (commit
@@ -129,19 +182,19 @@ local function run_at_scale(target_scale, pids, margin)
     -- Wait for the buffer at the target scale to actually be committed.
     -- At scale=1 this is the first commit; at scale=2 the C client first
     -- commits at scale=1 (default) then re-renders after preferred_buffer_scale.
-    local ok = wait_for_scale_commit(pid, target_scale, 5)
+    local ok = wait_for_scale_commit(pid, args.scale, 5)
     assert(ok, string.format(
-        "C client never committed scale=%d (marker file never matched)", target_scale))
+        "C client never committed scale=%d (marker file never matched)", args.scale))
 
     -- Surface dims should now match logical content dimensions.
-    local raw = c.content
-    assert(raw, "c.content returned nil at scale=" .. tostring(target_scale))
+    local raw = content_when_painted(c, 5)
+    assert(raw, "c.content returned nil at scale=" .. tostring(args.scale))
 
     local img = gears.surface(raw)
     local w = img:get_width()
     local h = img:get_height()
     assert(w > 4 and h > 4, string.format(
-        "c.content surface too small (%dx%d) at scale=%d", w, h, target_scale))
+        "c.content surface too small (%dx%d) at scale=%d", w, h, args.scale))
 
     -- Sample one pixel near the center of each logical quadrant.
     local qx1, qx2 = math.floor(w * 0.25), math.floor(w * 0.75)
@@ -151,22 +204,27 @@ local function run_at_scale(target_scale, pids, margin)
     local bl = dominant_color(pixel_rgb(raw, qx1, qy2))
     local br = dominant_color(pixel_rgb(raw, qx2, qy2))
 
-    io.stderr:write(string.format(
-        "[content-pattern] scale=%s margin=%s surface=%dx%d TL=%s TR=%s BL=%s BR=%s\n",
-        tostring(target_scale), tostring(margin), w, h, tl, tr, bl, br))
+    local want = TRANSFORM_QUADRANTS[transform or 0]
+    assert(want, "no expected quadrants for transform " .. tostring(transform))
 
-    assert(tl == "red"   , "TL quadrant should be red, got "    .. tl)
-    assert(tr == "green" , "TR quadrant should be green, got "  .. tr)
-    assert(bl == "blue"  , "BL quadrant should be blue, got "   .. bl)
-    assert(br == "yellow", "BR quadrant should be yellow, got " .. br)
+    io.stderr:write(string.format(
+        "[content-pattern] scale=%s margin=%s transform=%s surface=%dx%d TL=%s TR=%s BL=%s BR=%s\n",
+        tostring(args.scale), tostring(margin), tostring(transform),
+        w, h, tl, tr, bl, br))
+
+    for i, got in ipairs({tl, tr, bl, br}) do
+        assert(got == want[i], string.format(
+            "%s quadrant should be %s, got %s (transform=%s)",
+            CORNERS[i], want[i], got, tostring(transform)))
+    end
 
     if margin then
         -- The shadow margin must be cropped out, not squeezed into the
         -- content rect, so the very corner is pattern rather than the
         -- transparent ring.
         local corner = dominant_color(pixel_rgb(raw, 1, 1))
-        assert(corner == "red",
-            "margin run: pixel (1,1) should be red, got " .. corner)
+        assert(corner == want[1],
+            "margin run: pixel (1,1) should be " .. want[1] .. ", got " .. corner)
     end
 
     c:kill()
@@ -176,12 +234,14 @@ end
 runner.run_async(function()
     local s = screen[1]
     local original_scale = s.scale
-    local pids = {}
 
     local ok, err = pcall(function()
-        run_at_scale(1.0, pids)
-        run_at_scale(2.0, pids)
-        run_at_scale(1.0, pids, 40)
+        run_case { scale = 1.0 }
+        run_case { scale = 2.0 }
+        run_case { scale = 1.0, margin = 40 }
+        for t = 1, 7 do
+            run_case { scale = 1.0, transform = t }
+        end
     end)
 
     -- Always-run cleanup
