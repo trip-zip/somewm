@@ -178,14 +178,14 @@ test_require_missing_reported() {
 return true')
     run_check "$cfg"
     assert_contains "$name" "totally_missing_module_xyz" || return
-    assert_contains "$name" "module not found" || return
+    assert_contains "$name" "not found on this system" || return
     pass "$name"
 }
 
 test_require_stdlib_skipped() {
     local name="require_stdlib_skipped"
     local cfg
-    # Verify none of these stdlib modules appear as "module not found"
+    # Verify none of these stdlib modules are reported missing
     cfg=$(write_config "req_stdlib.lua" 'require("string")
 require("table")
 require("math")
@@ -195,14 +195,14 @@ require("debug")
 require("coroutine")
 require("package")')
     run_check "$cfg"
-    assert_not_contains "$name" "module not found" || return
+    assert_not_contains "$name" "not found on this system" || return
     pass "$name"
 }
 
 test_require_awesomewm_skipped() {
     local name="require_awesomewm_skipped"
     local cfg
-    # Verify none of these AwesomeWM modules appear as "module not found"
+    # Verify none of these AwesomeWM modules are reported missing
     cfg=$(write_config "req_awesome.lua" 'require("awful")
 require("gears")
 require("wibox")
@@ -211,21 +211,30 @@ require("beautiful")
 require("menubar")
 require("ruled")')
     run_check "$cfg"
-    assert_not_contains "$name" "module not found" || return
+    assert_not_contains "$name" "not found on this system" || return
     pass "$name"
 }
 
-test_require_thirdparty_skipped() {
-    local name="require_thirdparty_skipped"
+test_require_somewm_module_found() {
+    local name="require_somewm_module_found"
     local cfg
-    # Verify none of these known third-party modules appear as "module not found"
-    cfg=$(write_config "req_thirdparty.lua" 'require("lgi")
-require("cairo")
-require("inspect")
-require("lain")
-require("dkjson")')
+    # somewm's own bundled modules resolve through package.path like any other
+    cfg=$(write_config "req_somewm.lua" 'require("somewm.layout_animation")')
     run_check "$cfg"
-    assert_not_contains "$name" "module not found" || return
+    assert_not_contains "$name" "not found on this system" || return
+    pass "$name"
+}
+
+test_require_library_not_scanned() {
+    local name="require_library_not_scanned"
+    local cfg
+    # A resolved library is not the user's code: report that it exists, but do
+    # not walk into it. awful/screen.lua and awful/client.lua both mention X11
+    # tools, so a leak shows up as findings in files the user cannot fix.
+    cfg=$(write_config "req_lib_scan.lua" 'require("awful")')
+    run_check "$cfg"
+    assert_not_contains "$name" "awful/screen.lua" || return
+    assert_not_contains "$name" "awful/client.lua" || return
     pass "$name"
 }
 
@@ -237,7 +246,7 @@ test_require_method_skipped() {
 local GLib = lgi.require("GLib")
 return GLib')
     run_check "$cfg"
-    assert_not_contains "$name" "module not found" || return
+    assert_not_contains "$name" "GLib" || return
     pass "$name"
 }
 
@@ -481,7 +490,8 @@ test_require_commented_ignored
 test_require_missing_reported
 test_require_stdlib_skipped
 test_require_awesomewm_skipped
-test_require_thirdparty_skipped
+test_require_somewm_module_found
+test_require_library_not_scanned
 test_require_method_skipped
 test_require_local_module
 test_require_init_module
