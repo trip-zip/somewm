@@ -19,6 +19,9 @@
  * pattern and the xdg window geometry points at the pattern, mimicking a
  * client-side-decoration shadow margin.
  *
+ * With --transform N the buffer is committed with wl_surface.set_buffer_transform
+ * N, so the compositor re-orients it and the on-screen quadrants permute.
+ *
  * Lifecycle: SIGTERM/SIGINT for clean exit. App ID: "content_pattern_test".
  */
 
@@ -50,6 +53,7 @@ static struct wl_buffer *g_current_buffer;
 
 static int g_logical_w = 200, g_logical_h = 200;
 static int g_margin = 0;
+static int g_transform = 0;
 static int g_pending_scale = 1;
 static int g_current_scale = 0;     /* 0 = nothing committed yet */
 static char g_marker_path[256];
@@ -135,6 +139,7 @@ static void render_pattern(void) {
     }
 
     wl_surface_set_buffer_scale(g_surface, scale);
+    wl_surface_set_buffer_transform(g_surface, g_transform);
     if (g_margin > 0)
         xdg_surface_set_window_geometry(g_xdg_surface, g_margin, g_margin,
                                         g_logical_w, g_logical_h);
@@ -276,10 +281,22 @@ static const struct wl_registry_listener registry_listener = {
 };
 
 int main(int argc, char *argv[]) {
-    if (argc == 3 && strcmp(argv[1], "--margin") == 0)
-        g_margin = atoi(argv[2]);
+    for (int i = 1; i < argc; i++) {
+        if (strcmp(argv[i], "--margin") == 0 && i + 1 < argc)
+            g_margin = atoi(argv[++i]);
+        else if (strcmp(argv[i], "--transform") == 0 && i + 1 < argc)
+            g_transform = atoi(argv[++i]);
+        else {
+            fprintf(stderr, "Usage: %s [--margin N] [--transform N]\n", argv[0]);
+            return 1;
+        }
+    }
     if (g_margin < 0)
         g_margin = 0;
+    if (g_transform < 0 || g_transform > 7) {
+        fprintf(stderr, "--transform must be 0..7\n");
+        return 1;
+    }
 
     snprintf(g_marker_path, sizeof(g_marker_path),
              "/tmp/test-content-pattern-%d.scale", (int)getpid());
