@@ -255,7 +255,7 @@ luaA_keybind(lua_State *L)
  * \return 1 if handled, 0 if not
  */
 int
-luaA_key_check_and_emit(uint32_t mods, uint32_t keycode, xkb_keysym_t sym, xkb_keysym_t base_sym)
+luaA_key_check_and_emit(uint32_t mods, uint32_t keycode, xkb_keysym_t sym, xkb_keysym_t base_sym, bool is_keypress)
 {
 	xkb_keysym_t lower_base = xkb_keysym_to_lower(base_sym);
 	int i;
@@ -285,7 +285,7 @@ luaA_key_check_and_emit(uint32_t mods, uint32_t keycode, xkb_keysym_t sym, xkb_k
 		if (key->modifiers == mods && (keycode_match || keysym_match)) {
 			/* Push key object onto stack and emit signal using AwesomeWM's proper function */
 			luaA_object_push(global_L, key);
-			luaA_awm_object_emit_signal(global_L, -1, "press", 0);
+			luaA_awm_object_emit_signal(global_L, -1, is_keypress ? "press" : "release", 0);
 			lua_pop(global_L, 1);
 
 			/* Return after emitting - no need for further processing */
@@ -307,7 +307,7 @@ luaA_key_check_and_emit(uint32_t mods, uint32_t keycode, xkb_keysym_t sym, xkb_k
  * \return 1 if handled, 0 if not
  */
 int
-luaA_client_key_check_and_emit(client_t *c, uint32_t mods, uint32_t keycode, xkb_keysym_t sym, xkb_keysym_t base_sym)
+luaA_client_key_check_and_emit(client_t *c, uint32_t mods, uint32_t keycode, xkb_keysym_t sym, xkb_keysym_t base_sym, bool is_keypress)
 {
 	xkb_keysym_t lower_base = xkb_keysym_to_lower(base_sym);
 	int i;
@@ -344,7 +344,7 @@ luaA_client_key_check_and_emit(client_t *c, uint32_t mods, uint32_t keycode, xkb
 			luaA_object_push_item(global_L, -1, key);
 			/* Emit signal with client as argument (1 arg) - client is at -2, key at -1 */
 			lua_pushvalue(global_L, -2);  /* Copy client to top for signal arg */
-			luaA_awm_object_emit_signal(global_L, -2, "press", 1);
+			luaA_awm_object_emit_signal(global_L, -2, is_keypress ? "press" : "release", 1);
 			/* Pop key object and client */
 			lua_pop(global_L, 2);
 
