@@ -15,6 +15,10 @@
  *   TL = red    (0xFFFF0000)   TR = green  (0xFF00FF00)
  *   BL = blue   (0xFF0000FF)   BR = yellow (0xFFFFFF00)
  *
+ * With --margin N a transparent ring N logical pixels wide surrounds the
+ * pattern and the xdg window geometry points at the pattern, mimicking a
+ * client-side-decoration shadow margin.
+ *
  * Lifecycle: SIGTERM/SIGINT for clean exit. App ID: "content_pattern_test".
  */
 
@@ -45,6 +49,7 @@ static struct xdg_toplevel *g_toplevel;
 static struct wl_buffer *g_current_buffer;
 
 static int g_logical_w = 200, g_logical_h = 200;
+static int g_margin = 0;
 static int g_pending_scale = 1;
 static int g_current_scale = 0;     /* 0 = nothing committed yet */
 static char g_marker_path[256];
@@ -56,14 +61,17 @@ static void handle_term(int sig) {
     g_running = 0;
 }
 
-/* Create an SHM-backed wl_buffer at the given physical dims, filled with the
- * 4-quadrant ARGB8888 pattern. Caller owns the returned buffer. */
-static struct wl_buffer *create_pattern_buffer(int w, int h) {
+/* Create an SHM-backed wl_buffer holding the 4-quadrant ARGB8888 pattern at
+ * the given physical dims, inset by a transparent ring of m physical pixels.
+ * Caller owns the returned buffer. */
+static struct wl_buffer *create_pattern_buffer(int w, int h, int m) {
     if (w <= 0 || h <= 0)
         return NULL;
 
-    int stride = w * 4;
-    size_t size = (size_t)stride * (size_t)h;
+    int buf_w = w + 2 * m;
+    int buf_h = h + 2 * m;
+    int stride = buf_w * 4;
+    size_t size = (size_t)stride * (size_t)buf_h;
 
     char tmpl[] = "/tmp/test-content-pattern-buf-XXXXXX";
     int fd = mkstemp(tmpl);
@@ -86,6 +94,8 @@ static struct wl_buffer *create_pattern_buffer(int w, int h) {
         return NULL;
     }
 
+    memset(data, 0, size);
+
     int half_w = w / 2;
     int half_h = h / 2;
     for (int y = 0; y < h; y++) {
@@ -95,14 +105,14 @@ static struct wl_buffer *create_pattern_buffer(int w, int h) {
             else if (x >= half_w && y <  half_h) color = 0xFF00FF00; /* TR green  */
             else if (x <  half_w && y >= half_h) color = 0xFF0000FF; /* BL blue   */
             else                                 color = 0xFFFFFF00; /* BR yellow */
-            data[y * w + x] = color;
+            data[(y + m) * buf_w + (x + m)] = color;
         }
     }
     munmap(data, size);
 
     struct wl_shm_pool *pool = wl_shm_create_pool(g_shm, fd, size);
     struct wl_buffer *buf = wl_shm_pool_create_buffer(
-        pool, 0, w, h, stride, WL_SHM_FORMAT_ARGB8888);
+        pool, 0, buf_w, buf_h, stride, WL_SHM_FORMAT_ARGB8888);
     wl_shm_pool_destroy(pool);
     close(fd);
 
@@ -115,8 +125,9 @@ static void render_pattern(void) {
     int scale = g_pending_scale > 0 ? g_pending_scale : 1;
     int phys_w = g_logical_w * scale;
     int phys_h = g_logical_h * scale;
+    int phys_m = g_margin * scale;
 
-    struct wl_buffer *buf = create_pattern_buffer(phys_w, phys_h);
+    struct wl_buffer *buf = create_pattern_buffer(phys_w, phys_h, phys_m);
     if (!buf) {
         fprintf(stderr, "[content-pattern-client] buffer alloc failed (%dx%d)\n",
                 phys_w, phys_h);
@@ -124,8 +135,11 @@ static void render_pattern(void) {
     }
 
     wl_surface_set_buffer_scale(g_surface, scale);
+    if (g_margin > 0)
+        xdg_surface_set_window_geometry(g_xdg_surface, g_margin, g_margin,
+                                        g_logical_w, g_logical_h);
     wl_surface_attach(g_surface, buf, 0, 0);
-    wl_surface_damage_buffer(g_surface, 0, 0, phys_w, phys_h);
+    wl_surface_damage_buffer(g_surface, 0, 0, INT32_MAX, INT32_MAX);
     wl_surface_commit(g_surface);
     wl_display_flush(g_display);
 
@@ -262,7 +276,10 @@ static const struct wl_registry_listener registry_listener = {
 };
 
 int main(int argc, char *argv[]) {
-    (void)argc; (void)argv;
+    if (argc == 3 && strcmp(argv[1], "--margin") == 0)
+        g_margin = atoi(argv[2]);
+    if (g_margin < 0)
+        g_margin = 0;
 
     snprintf(g_marker_path, sizeof(g_marker_path),
              "/tmp/test-content-pattern-%d.scale", (int)getpid());
