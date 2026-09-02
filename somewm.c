@@ -65,6 +65,7 @@
 #include <wlr/types/wlr_session_lock_v1.h>
 #include <wlr/types/wlr_single_pixel_buffer_v1.h>
 #include <wlr/types/wlr_subcompositor.h>
+#include <wlr/types/wlr_switch.h>
 #include <wlr/types/wlr_tablet_pad.h>
 #include <wlr/types/wlr_tablet_tool.h>
 #include <wlr/types/wlr_tablet_v2.h>
@@ -207,6 +208,12 @@ typedef struct {
 	struct wl_list link;
 } TrackedTouch;
 
+typedef struct {
+	struct wlr_switch *switch_dev;
+	struct wl_listener toggle;
+	struct wl_listener destroy;
+} TrackedSwitch;
+
 /* function declarations */
 static void applybounds(Client *c, struct wlr_box *bbox);
 void arrange(Monitor *m);
@@ -239,6 +246,7 @@ static void createlocksurface(struct wl_listener *listener, void *data);
 static void createmon(struct wl_listener *listener, void *data);
 static void createnotify(struct wl_listener *listener, void *data);
 static void createpointer(struct wlr_pointer *pointer);
+static void createswitch(struct wlr_switch *sw);
 static void createtablet(struct wlr_tablet *tablet);
 static void createtabletpad(struct wlr_tablet_pad *pad);
 static void createtouch(struct wlr_touch *touch);
@@ -258,6 +266,7 @@ static void destroynotify(struct wl_listener *listener, void *data);
 static void destroypointerconstraint(struct wl_listener *listener, void *data);
 static void destroysessionlock(struct wl_listener *listener, void *data);
 static void destroykeyboardgroup(struct wl_listener *listener, void *data);
+static void destroyswitchtracker(struct wl_listener *listener, void *data);
 static void destroytrackedpointer(struct wl_listener *listener, void *data);
 static void destroytrackedtablet(struct wl_listener *listener, void *data);
 static void destroytrackedtabletpad(struct wl_listener *listener, void *data);
@@ -286,6 +295,7 @@ static void gestureholdend(struct wl_listener *listener, void *data);
 static void gpureset(struct wl_listener *listener, void *data);
 static void handlesig(int signo);
 static void inputdevice(struct wl_listener *listener, void *data);
+static void switchevent(struct wl_listener *listener, void *data);
 static void tabletnotifyaxis(struct wl_listener *listener, void *data);
 static void tabletnotifyproximity(struct wl_listener *listener, void *data);
 static void tabletnotifytip(struct wl_listener *listener, void *data);
@@ -3201,6 +3211,16 @@ tabletpadnotifyattach(struct wl_listener *listener, void *data)
 }
 
 static void
+createswitch(struct wlr_switch *sw)
+{
+	TrackedSwitch *ts = ecalloc(1, sizeof(*ts));
+
+	ts->switch_dev = sw;
+	LISTEN(&sw->events.toggle, &ts->toggle, switchevent);
+	LISTEN(&sw->base.events.destroy, &ts->destroy, destroyswitchtracker);
+}
+
+static void
 createtablet(struct wlr_tablet *tablet)
 {
 	TrackedTablet *tt = ecalloc(1, sizeof(*tt));
@@ -3990,6 +4010,44 @@ destroypointerconstraint(struct wl_listener *listener, void *data)
 }
 
 static void
+destroyswitchtracker(struct wl_listener *listener, void *data)
+{
+	TrackedSwitch *ts = wl_container_of(listener, ts, destroy);
+	wl_list_remove(&ts->toggle.link);
+	wl_list_remove(&ts->destroy.link);
+	free(ts);
+}
+
+static void
+switchevent(struct wl_listener *listener, void *data)
+{
+	TrackedSwitch *ts = wl_container_of(listener, ts, toggle);
+	struct wlr_switch_toggle_event *event = data;
+
+	char* type;
+	switch (event->switch_type) {
+	case WLR_SWITCH_TYPE_LID:
+		type = "lid";
+		break;
+	case WLR_SWITCH_TYPE_TABLET_MODE:
+		type = "tablet_mode";
+		break;
+	case WLR_SWITCH_TYPE_KEYPAD_SLIDE:
+		type = "keypad_slide";
+		break;
+	default:
+		type = "unknown";
+		break;
+	}
+
+	luaA_emit_signal_global_with_table("switch::toggle", 6,
+		"device_name", ts->switch_dev && ts->switch_dev->base.name
+			? ts->switch_dev->base.name : "",
+		"type", type,
+		"state", event->switch_state == WLR_SWITCH_STATE_ON ? "on" : "off");
+}
+
+static void
 destroytrackedpointer(struct wl_listener *listener, void *data)
 {
 	TrackedPointer *tp = wl_container_of(listener, tp, destroy);
@@ -4513,6 +4571,9 @@ inputdevice(struct wl_listener *listener, void *data)
 		break;
 	case WLR_INPUT_DEVICE_POINTER:
 		createpointer(wlr_pointer_from_input_device(device));
+		break;
+	case WLR_INPUT_DEVICE_SWITCH:
+		createswitch(wlr_switch_from_input_device(device));
 		break;
 	case WLR_INPUT_DEVICE_TABLET:
 		createtablet(wlr_tablet_from_input_device(device));
