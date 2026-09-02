@@ -123,6 +123,25 @@ describe("wibox.widget.textbox", function()
             assert.is.equal(2, redraw_needed)
             assert.is.equal(2, layout_changed)
         end)
+
+        it("set_font does not commit on failure", function()
+            widget:set_font("foo")
+
+            local get_font = beautiful.get_font
+            beautiful.get_font = function() error("nope") end
+            local ok = pcall(widget.set_font, widget, "bar")
+            beautiful.get_font = get_font
+
+            assert.is_false(ok)
+            assert.is.equal("foo", widget:get_font())
+            assert.is.equal(1, redraw_needed)
+            assert.is.equal(1, layout_changed)
+
+            widget:set_font("bar")
+            assert.is.equal("bar", widget:get_font())
+            assert.is.equal(2, redraw_needed)
+            assert.is.equal(2, layout_changed)
+        end)
     end)
 
     describe("auxiliary", function()
