@@ -10,7 +10,9 @@
 --- The Lua driver samples one pixel near the center of each logical
 --- quadrant via FFI to cairo and asserts the dominant color.
 ---
---- Runs at scale=1 (guards the src==dst fast path) and scale=2 (HiDPI).
+--- Runs at scale=1, at scale=2 (HiDPI), and once more at scale=1 with the
+--- client attaching a transparent shadow margin around a smaller xdg window
+--- geometry, the way a client-side-decorated app does.
 --- Exercises the SHM fast path of luaA_client_get_content; the GPU texture
 --- path uses identical composite logic but exercising it requires a
 --- DMA-BUF client.
@@ -98,12 +100,16 @@ local function dominant_color(r, g, b)
     return string.format("rgb(%d,%d,%d)", r, g, b)
 end
 
-local function run_at_scale(target_scale, pids)
+local function run_at_scale(target_scale, pids, margin)
     local s = screen[1]
     s.scale = target_scale
     async.sleep(0.05)   -- let the scale change propagate to outputs
 
-    local pid = awful.spawn({BINARY})
+    local cmd = {BINARY}
+    if margin then
+        cmd[2], cmd[3] = "--margin", tostring(margin)
+    end
+    local pid = awful.spawn(cmd)
     assert(type(pid) == "number" and pid > 0,
         "Failed to spawn binary: " .. tostring(pid))
     table.insert(pids, pid)
@@ -146,13 +152,22 @@ local function run_at_scale(target_scale, pids)
     local br = dominant_color(pixel_rgb(raw, qx2, qy2))
 
     io.stderr:write(string.format(
-        "[content-pattern] scale=%s surface=%dx%d TL=%s TR=%s BL=%s BR=%s\n",
-        tostring(target_scale), w, h, tl, tr, bl, br))
+        "[content-pattern] scale=%s margin=%s surface=%dx%d TL=%s TR=%s BL=%s BR=%s\n",
+        tostring(target_scale), tostring(margin), w, h, tl, tr, bl, br))
 
     assert(tl == "red"   , "TL quadrant should be red, got "    .. tl)
     assert(tr == "green" , "TR quadrant should be green, got "  .. tr)
     assert(bl == "blue"  , "BL quadrant should be blue, got "   .. bl)
     assert(br == "yellow", "BR quadrant should be yellow, got " .. br)
+
+    if margin then
+        -- The shadow margin must be cropped out, not squeezed into the
+        -- content rect, so the very corner is pattern rather than the
+        -- transparent ring.
+        local corner = dominant_color(pixel_rgb(raw, 1, 1))
+        assert(corner == "red",
+            "margin run: pixel (1,1) should be red, got " .. corner)
+    end
 
     c:kill()
     async.wait_for_no_clients(3)
@@ -166,6 +181,7 @@ runner.run_async(function()
     local ok, err = pcall(function()
         run_at_scale(1.0, pids)
         run_at_scale(2.0, pids)
+        run_at_scale(1.0, pids, 40)
     end)
 
     -- Always-run cleanup
