@@ -370,9 +370,9 @@ When a lock screen, layer surface, or output change releases focus, the composit
 
 When a screen is removed, `awful.permissions.tag_screen` saves its tag state (name, selection, layout, master settings, clients) into `awful.permissions.saved_tags`, keyed by output name. `somewmrc.lua` restores the saved state when the output reconnects.
 
-A hot-reload (`awesome.restart()`) re-runs `rc.lua` in the same process, so every tag is built from scratch. Before the old Lua state closes, the compositor records each tag's screen and name, active layout name, whether it was selected, and which clients were on it. After `rc.lua` has run, each recorded tag is matched to the first new tag on the same screen with the same name, or to nothing. There is no fallback by position: a tag renamed in `rc.lua` loses its clients to the rules, and a tag created at runtime (a `new_tag` rule, a volatile tag) never lands on a config tag.
+A hot-reload (`awesome.restart()`) re-runs `rc.lua` in the same process, so every tag is built from scratch. Before the old Lua state closes, the compositor records each tag's screen and name, whether it was selected, which clients were on it, and the state `awful` keeps for it in Lua: the layout name, `master_width_factor`, `master_count`, `column_count` and `gap`. After `rc.lua` has run, each recorded tag is matched to the first new tag on the same screen with the same name, or to nothing. There is no fallback by position: a tag renamed in `rc.lua` loses its clients to the rules, and a tag created at runtime (a `new_tag` rule, a volatile tag) never lands on a config tag.
 
-For each matched tag, the compositor selects the first same-named layout from the rebuilt tag's allowed `layouts` list before it restores clients or selection. Layout objects belong to their Lua state and cannot be reused directly. If the old layout has no named match in the new list, the tag keeps the layout selected by `rc.lua`.
+For each matched tag, the compositor selects the first same-named layout from the rebuilt tag's allowed `layouts` list, and puts the four numbers back, before it restores clients or selection. Layout objects belong to their Lua state and cannot be reused directly. If the old layout has no named match in the new list, the tag keeps the layout selected by `rc.lua`. Only what the old session actually set is recorded, so a property it left alone comes back from the new config and theme instead of from the old session.
 
 For each client with at least one match, the compositor emits `request::tag` on the client before the rules run, with the first matched tag as the tag argument and hints of:
 
@@ -384,7 +384,9 @@ For each client with at least one match, the compositor emits `request::tag` on 
 
 The selection is restored next, still before the rules run, so a client the rules place on the selected tags lands on the restored selection. Per screen with at least one recorded selected tag that matched, every tag on the screen is set selected or not to match the record, then `tag::history::update` is emitted once, so `awful.tag`'s history holds the restored set and nothing in between. No `request::select` is emitted. A screen whose selected tags matched nothing keeps the selection `rc.lua` made.
 
-Explicit per-client floating state is not restored. Titlebars are rebuilt by the rules; their old extents are removed before their Lua drawables are discarded so recreating the same titlebars does not grow client geometry across reloads.
+A client's floating state is restored before the rules run, so a rule with a `floating` property still wins. Only a floating state something set explicitly is restored: a client that floats because of its type floats again for the same reason.
+
+Titlebars are rebuilt by the rules; their old extents are removed before their Lua drawables are discarded so recreating the same titlebars does not grow client geometry across reloads.
 
 ### Cursor Theming
 

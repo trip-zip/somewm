@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
-# Client tag membership, selected tags, layouts and floating geometry must
-# survive a hot-reload.
+# Client tag membership, selected tags, a tag's own state and floating geometry
+# must survive a hot-reload.
 #
 # rc.lua builds every tag from scratch when it re-runs, so before the reload
 # the compositor snapshots which tags each client was on and which were
@@ -51,6 +51,10 @@ client_geometry() {
     echo "local pid = $1; for _, c in ipairs(client.get()) do if c.pid == pid then local g = c:geometry(); local _, top = c:titlebar_top(); return g.x .. \",\" .. g.y .. \",\" .. g.width .. \",\" .. g.height .. \":\" .. tostring(c.floating) .. \":\" .. top end end; return \"no client\""
 }
 
+# The master and gap numbers awful keeps beside the layout, which live in Lua
+# and so go with the state the reload closes.
+NUMBERS='local t = screen.primary.tags[2]; return t.master_width_factor .. ":" .. t.master_count .. ":" .. t.column_count .. ":" .. t.gap'
+
 # Move the client with this pid onto the tags at these 1-based positions.
 retag() {
     local pid="$1" idx="$2"
@@ -81,6 +85,13 @@ check_eval hr-tags "client A moved to tag 3" "$(retag "$PID_A" 3)" ok
 check_eval hr-tags "client B moved to tags 2 and 3" "$(retag "$PID_B" "2, 3")" ok
 check_eval hr-tags "tag 2 changed to tile" \
     'screen.primary.tags[2].layout = require("awful").layout.suit.tile; return screen.primary.tags[2].layout.name' tile
+
+sw_eval hr-tags "$NUMBERS"
+default_numbers=$EVAL_VALUE
+info "tag 2 numbers as the config left them: $default_numbers"
+check_eval hr-tags "tag 2 given its own master and gap numbers" \
+    'local t = screen.primary.tags[2]; t.master_width_factor = 0.7; t.master_count = 2; t.column_count = 3; t.gap = 5; return "ok"' \
+    ok
 check_eval hr-tags "tags 2 and 3 viewed together" "$(view "2, 3")" ok
 
 sw_eval hr-tags "$(client_geometry "$PID_A")"
@@ -104,6 +115,7 @@ check_eval hr-tags "client A geometry does not grow on the first reload" \
     "$(client_geometry "$PID_A")" "$before_geometry_a"
 check_eval hr-tags "client B geometry does not grow on the first reload" \
     "$(client_geometry "$PID_B")" "$before_geometry_b"
+check_eval hr-tags "tag 2 keeps its master and gap numbers" "$NUMBERS" "0.7:2:3:5"
 
 sw_check_log_clean hr-tags "log after the first reload" || finish
 
@@ -139,6 +151,8 @@ check_eval hr-tags "client A geometry does not grow on the third reload" \
     "$(client_geometry "$PID_A")" "$before_geometry_a"
 check_eval hr-tags "client B geometry does not grow on the third reload" \
     "$(client_geometry "$PID_B")" "$before_geometry_b"
+check_eval hr-tags "the renamed tag matches nothing and keeps the config's numbers" \
+    "$NUMBERS" "$default_numbers"
 
 sw_check_log_clean hr-tags "log after the third reload"
 
