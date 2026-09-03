@@ -148,7 +148,7 @@
 
 /* Tracked pointer device for runtime libinput configuration */
 typedef struct {
-	struct libinput_device *libinput_dev;
+	struct wlr_pointer *pointer;
 	struct wl_listener destroy;
 	struct wl_list link;
 } TrackedPointer;
@@ -274,7 +274,7 @@ static void destroytrackedtabletpad(struct wl_listener *listener, void *data);
 static void destroytrackedtablettool(struct wl_listener *listener, void *data);
 static void destroytrackedtouch(struct wl_listener *listener, void *data);
 Monitor *dirtomon(enum wlr_direction dir);
-static void apply_input_settings_to_device(struct libinput_device *device);
+static void apply_input_settings_to_device(struct wlr_input_device *base);
 void focusclient(Client *c, int lift);
 void focusmon(const Arg *arg);
 void focus_restore(Monitor *m);
@@ -2063,10 +2063,26 @@ createnotify(struct wl_listener *listener, void *data)
 
 /* Determine device type string for input rule matching */
 static const char *
-get_input_device_type(struct libinput_device *device)
-{
-	return libinput_device_config_tap_get_finger_count(device) > 0
-		? "touchpad" : "pointer";
+get_input_device_type(struct wlr_input_device *base) {
+	switch (base->type) {
+	case WLR_INPUT_DEVICE_KEYBOARD:
+		return "keyboard";
+	case WLR_INPUT_DEVICE_POINTER:
+		struct libinput_device *libinput_dev =
+			wlr_libinput_get_device_handle(base);
+		return libinput_device_config_tap_get_finger_count(libinput_dev) > 0
+			? "touchpad" : "pointer";
+	case WLR_INPUT_DEVICE_TOUCH:
+		return "touch";
+	case WLR_INPUT_DEVICE_TABLET:
+		return "tablet";
+	case WLR_INPUT_DEVICE_TABLET_PAD:
+		return "tablet-pad";
+	case WLR_INPUT_DEVICE_SWITCH:
+		return "switch";
+	default:
+		return NULL;
+	}
 }
 
 static const char *
@@ -2097,12 +2113,12 @@ tablet_tool_type_to_rule_type(enum wlr_tablet_tool_type type)
 /* A rule's `type` can match on either of two independent axes: the device
  * class (`primary`, e.g. "tablet") or, for tablets, which tool triggered
  * the current event (`secondary`, e.g. "tablet-tool-pen"). Plain pointer/
- * touchpad devices only have a `primary` axis (see resolve_input_settings());
- * tablets pass both, since `primary` is always the constant "tablet" while
- * `secondary` varies per event (see resolve_tablet_settings()) - so
- * `{type="tablet"}` matches any tool on any tablet, `{type="tablet-tool-pen"}`
- * matches a pen on any tablet, and both can be combined with `name` (always
- * the tablet's own name, never the tool's) to narrow to one device. */
+ * touchpad devices only have a `primary` axis, while tablets pass both, since
+ * `primary` is always the constant "tablet" while `secondary` varies per event
+ * (see resolve_tablet_settings()) - so `{type="tablet"}` matches any tool on
+ * any tablet, `{type="tablet-tool-pen"}` matches a pen on any tablet, and both
+ * can be combined with `name` (always the tablet's own name, never the tool's)
+ * to narrow to one device. */
 static bool
 input_rule_type_matches(const char *rule_type, const char *primary, const char *secondary)
 {
@@ -2310,23 +2326,22 @@ tablet_map_coords(const struct InputSettings *s, double in_x, double in_y,
 	return input_map_coords(s, tx, ty, out_lx, out_ly);
 }
 
-/* Resolve effective input settings for a device by overlaying matching rules
- * on top of the global defaults. String fields in the result are borrowed
- * pointers (not owned), so the caller must not free them. */
+/* Apply resolved input settings to an input device */
 static void
-resolve_input_settings(struct libinput_device *device, struct InputSettings *out)
-{
-	const char *dev_type = get_input_device_type(device);
-	const char *dev_name = libinput_device_get_name(device);
-	resolve_input_settings_for_types(dev_type, NULL, dev_name, out);
-}
-
-/* Apply resolved input settings to a single libinput device */
-static void
-apply_input_settings_to_device(struct libinput_device *device)
+apply_input_settings_to_device(struct wlr_input_device *base)
 {
 	struct InputSettings s;
-	resolve_input_settings(device, &s);
+	struct libinput_device *device;
+	const char *dev_type = NULL;
+	const char *dev_name = NULL;
+
+	if (!wlr_input_device_is_libinput(base))
+		return;
+
+	dev_type = get_input_device_type(base);
+	device = wlr_libinput_get_device_handle(base);
+	dev_name = libinput_device_get_name(device);
+	resolve_input_settings_for_types(dev_type, NULL, dev_name, &s);
 
 	if (libinput_device_config_tap_get_finger_count(device)) {
 		if (s.tap_to_click >= 0)
@@ -2445,14 +2460,26 @@ apply_input_settings_to_device(struct libinput_device *device)
 	}
 }
 
-/* Apply input settings to all tracked pointer devices */
+/* Apply input settings to all tracked libinput devices */
 void
 apply_input_settings_to_all_devices(void)
 {
 	TrackedPointer *tp;
-	wl_list_for_each(tp, &tracked_pointers, link) {
-		apply_input_settings_to_device(tp->libinput_dev);
-	}
+	TrackedTouch *tc;
+	TrackedTablet *tt;
+	TrackedTabletPad *ttp;
+
+	wl_list_for_each(tp, &tracked_pointers, link)
+		apply_input_settings_to_device(&tp->pointer->base);
+
+	wl_list_for_each(tc, &tracked_touches, link)
+		apply_input_settings_to_device(&tc->touch->base);
+
+	wl_list_for_each(tt, &tracked_tablets, link)
+		apply_input_settings_to_device(&tt->tablet->base);
+
+	wl_list_for_each(ttp, &tracked_tablet_pads, link)
+		apply_input_settings_to_device(&ttp->pad->base);
 }
 
 /* primary is the constant "tablet" (see input_rule_type_matches()); only
@@ -3235,6 +3262,10 @@ createtablet(struct wlr_tablet *tablet)
 	LISTEN(&tablet->events.button, &tt->button, tabletnotifybutton);
 	LISTEN(&tablet->base.events.destroy, &tt->destroy, destroytrackedtablet);
 
+	/* Apply settings from globalconf to actual wlr_input_device(s), thus tablet tools,
+	 * such as pens and pencils are excluded */
+	apply_input_settings_to_device(&tablet->base);
+
 	wlr_cursor_attach_input_device(cursor, &tablet->base);
 
 	wlr_log(WLR_INFO,
@@ -3277,6 +3308,9 @@ createtabletpad(struct wlr_tablet_pad *pad)
 	LISTEN(&pad->events.attach_tablet, &tp->attach_tablet, tabletpadnotifyattach);
 	LISTEN(&pad->base.events.destroy, &tp->destroy, destroytrackedtabletpad);
 
+	/* Apply settings from globalconf to libinput device */
+	apply_input_settings_to_device(&pad->base);
+
 	wlr_log(WLR_INFO,
 		"[tablet-pad] new device name=%s buttons=%zu rings=%zu strips=%zu",
 		pad->base.name ? pad->base.name : "(unknown)",
@@ -3315,6 +3349,9 @@ createtouch(struct wlr_touch *touch)
 	LISTEN(&touch->events.frame, &tc->frame, touchnotifyframe);
 	LISTEN(&touch->base.events.destroy, &tc->destroy, destroytrackedtouch);
 
+	/* Apply settings from globalconf to libinput device */
+	apply_input_settings_to_device(&touch->base);
+
 	wlr_cursor_attach_input_device(cursor, &touch->base);
 
 	wlr_log(WLR_INFO, "[touch] new device name=%s",
@@ -3324,21 +3361,16 @@ createtouch(struct wlr_touch *touch)
 void
 createpointer(struct wlr_pointer *pointer)
 {
-	struct libinput_device *device;
 	TrackedPointer *tp;
 
-	if (wlr_input_device_is_libinput(&pointer->base)
-			&& (device = wlr_libinput_get_device_handle(&pointer->base))) {
+	/* Apply settings from globalconf */
+	apply_input_settings_to_device(&pointer->base);
 
-		/* Apply settings from globalconf */
-		apply_input_settings_to_device(device);
-
-		/* Track this device for runtime reconfiguration */
-		tp = ecalloc(1, sizeof(*tp));
-		tp->libinput_dev = device;
-		wl_list_insert(&tracked_pointers, &tp->link);
-		LISTEN(&pointer->base.events.destroy, &tp->destroy, destroytrackedpointer);
-	}
+	/* Track this device for runtime reconfiguration */
+	tp = ecalloc(1, sizeof(*tp));
+	tp->pointer = pointer;
+	wl_list_insert(&tracked_pointers, &tp->link);
+	LISTEN(&pointer->base.events.destroy, &tp->destroy, destroytrackedpointer);
 
 	wlr_cursor_attach_input_device(cursor, &pointer->base);
 }
