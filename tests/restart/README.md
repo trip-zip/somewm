@@ -189,10 +189,14 @@ release it on `"exit"` reddens whichever reload test runs next.
   clients already restored into the state it closes. The test swaps the
   config under a running instance, since no startup can reach that state: at
   startup there are no clients yet.
-- `tags-after-restart`, `client-survives-restart`, `client-order-after-restart`,
-  `transient-screen-restart`, `client-screen-after-restart`: clients, tags,
-  stacking order, transient relationships and the client's screen survive a
-  reload.
+- `tags-after-restart`: each client comes back on the tags it was on and each
+  screen comes back on the tags it had viewed, across three reloads: the same
+  config with two tags viewed, one that drops a tag (a client left with nothing
+  is placed by the rules on the restored selection), and one that renames the
+  tags (everything falls through to the rules).
+- `client-survives-restart`, `client-order-after-restart`,
+  `transient-screen-restart`, `client-screen-after-restart`: clients, stacking
+  order, transient relationships and the client's screen survive a reload.
 - `startup-flag-across-reload`: `awesome.startup` is true during a reload's
   config load too, and `awesome._restart` says which it was.
 - `client-popup-node-data-after-restart`: every scene node holding a

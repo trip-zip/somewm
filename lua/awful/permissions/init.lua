@@ -308,6 +308,8 @@ end
 -- @tparam[opt] tag|boolean t A tag to use. If `true`, then the client is made `sticky`.
 -- @tparam[opt={}] table hints Extra information.
 -- @tparam[opt=nil] nil|string hints.reason Why the tag is being changed.
+-- @tparam[opt=nil] nil|table hints.tags Every tag to apply, used in place of
+--  `t` alone. somewm sets this when restoring tags across a hot-reload.
 -- @sourcesignal client request::tag
 function permissions.tag(c, t, hints) --luacheck: no unused
     -- There is nothing to do
@@ -340,7 +342,9 @@ function permissions.tag(c, t, hints) --luacheck: no unused
         c.sticky = true
     else
         c.screen = t.screen
-        c:tags({ t })
+        -- A hot-reload restore names every tag the client had, not just the
+        -- first. Any other caller passes no list and keeps upstream behavior.
+        c:tags(hints and hints.tags or { t })
     end
 end
 

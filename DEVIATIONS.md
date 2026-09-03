@@ -187,7 +187,7 @@ These modifications to AwesomeWM's Lua libraries were necessary for Wayland comp
 | `awful/widget/tasklist.lua` | Icon slot falls back to `awful.client.get_icon_path(c)`; templates can receive a file path string where upstream always passes a surface | Same missing Wayland icon protocol |
 | `awful/widget/keyboardlayout.lua` | `next_layout`/`set_layout` wrap-around off-by-one fixed | Upstream cycles to an out-of-range group index |
 | `awful/widget/layoutlist.lua` | `source.for_screen` returns `{}` for a nil screen instead of asserting | Screens can be absent mid hot-reload |
-| `awful/permissions/init.lua` | Layer surface keyboard focus handlers; `request::tag` guards a nil `transient_for.screen`; hosts the focus restore and tag persistence handlers (see SomeWM-Only Features) | Wayland layer-shell, output hotplug and hot-reload have no X11 equivalent |
+| `awful/permissions/init.lua` | Layer surface keyboard focus handlers; `request::tag` guards a nil `transient_for.screen` and applies `hints.tags` when the signal carries a list; hosts the focus restore and tag persistence handlers (see SomeWM-Only Features) | Wayland layer-shell, output hotplug and hot-reload have no X11 equivalent |
 | `awful/mouse/snap.lua` | ARGB32 shapes, surface lifetime; edge snap dwell gating (see SomeWM-Only Features) | Same Wayland surface patterns as `wibox/init.lua` |
 | `awful/root.lua` | `_remove_*` calls the C-side removal hook immediately when present | somewm's C layer exposes `_remove_` hooks; also flushes removals upstream leaves queued |
 | `awful/screenshot.lua` | Snipping overlay wibox sets `surface_scale = 1.0` | HiDPI overlay repaint was ~1 FPS at physical resolution |
@@ -369,6 +369,20 @@ by the window are simply not visible. Configs that set it still parse.
 When a lock screen, layer surface, or output change releases focus, the compositor emits the somewm-only `request::focus_restore` screen signal. `awful.permissions.focus_restore` handles it by activating the best client from focus history.
 
 When a screen is removed, `awful.permissions.tag_screen` saves its tag state (name, selection, layout, master settings, clients) into `awful.permissions.saved_tags`, keyed by output name. `somewmrc.lua` restores the saved state when the output reconnects.
+
+A hot-reload (`awesome.restart()`) re-runs `rc.lua` in the same process, so every tag is built from scratch. Before the old Lua state closes, the compositor records each tag's screen and name, whether it was selected, and which clients were on it. After `rc.lua` has run, each recorded tag is matched to the first new tag on the same screen with the same name, or to nothing. There is no fallback by position: a tag renamed in `rc.lua` loses its clients to the rules, and a tag created at runtime (a `new_tag` rule, a volatile tag) never lands on a config tag.
+
+For each client with at least one match, the compositor emits `request::tag` on the client before the rules run, with the first matched tag as the tag argument and hints of:
+
+```lua
+{ reason = "restart", tags = { <every matched tag> } }
+```
+
+`awful.permissions.tag` applies `hints.tags` when present, so a client on several tags comes back on all of them. AwesomeWM does the same thing on its own restart through `_NET_WM_DESKTOP`, but restores only the first tag and does not restore the selection. The rules then run as on AwesomeWM's restart: a rule with no `tag` property emits `request::tag` with reason `"rules"` and the handler returns early because the client already has tags, a `tag =` rule replaces the restored tags, a `tags =` rule merges only when given tag objects on the client's screen and replaces when given names, and a `screen =` rule pointing at another screen discards the restore. A client whose tags all fail to match gets no signal and is placed by the rules as if it were new.
+
+The selection is restored next, still before the rules run, so a client the rules place on the selected tags lands on the restored selection. Per screen with at least one recorded selected tag that matched, every tag on the screen is set selected or not to match the record, then `tag::history::update` is emitted once, so `awful.tag`'s history holds the restored set and nothing in between. No `request::select` is emitted. A screen whose selected tags matched nothing keeps the selection `rc.lua` made.
+
+Floating state and per-tag layout are not restored.
 
 ### Cursor Theming
 

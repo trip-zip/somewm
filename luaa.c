@@ -5546,12 +5546,39 @@ typedef struct {
 	/* Owns the name string (transferred from old tag_t to prevent
 	 * double-free during GC). Freed in cleanup. */
 	char *name;
+	/* Screen index (0-based, -1 if the tag had no screen). */
+	int screen_index;
+	bool selected;
 } tag_snapshot_t;
 
 typedef struct {
 	char *bus_name;
 	char *object_path;
 } systray_snapshot_t;
+
+/** Find the tag a snapshot maps onto in the tag list rc.lua just rebuilt: the
+ * first tag on the same screen with the same name. There is no fallback by
+ * position; globalconf.tags holds creation order, not the order the user sees,
+ * and a tag created at runtime would land on whatever config tag now sits in
+ * its slot.
+ *
+ * \param ts The snapshot to resolve.
+ * \return The matching tag, or NULL if the new config has nothing to match.
+ */
+static tag_t *
+tag_resolve_snapshot(const tag_snapshot_t *ts)
+{
+	screen_t *screen;
+
+	if (!ts->name || ts->screen_index < 0 || ts->screen_index >= globalconf.screens.len)
+		return NULL;
+	screen = globalconf.screens.tab[ts->screen_index];
+
+	foreach(tag, globalconf.tags)
+		if ((*tag)->screen == screen && (*tag)->name && !strcmp(ts->name, (*tag)->name))
+			return *tag;
+	return NULL;
+}
 
 /** Perform in-process hot-reload of the Lua state.
  * Must be called from an idle callback, NOT from within a Lua pcall.
@@ -5569,6 +5596,11 @@ luaA_hot_reload(void)
 	int num_screens = 0;
 	tag_snapshot_t *tag_snaps = NULL;
 	int num_tags = 0;
+	/* num_tags by num_clients: was client i on tag t before the reload? */
+	bool *tag_members = NULL;
+	/* Each snapshot tag's counterpart in the rebuilt tag list, or NULL. */
+	tag_t **tag_map = NULL;
+	int num_retagged = 0;
 	systray_snapshot_t *systray_snaps = NULL;
 	int num_systray = 0;
 
@@ -5688,17 +5720,13 @@ luaA_hot_reload(void)
 	}
 
 	/* ================================================================
-	 * Phase B2: Snapshot and detach clients
-	 * ================================================================ */
-
-	if (!clients_detach(&client_snaps, &num_clients)) {
-		fprintf(stderr, "somewm: hot-reload: failed to allocate client snapshots\n");
-		goto fail;
-	}
-
-	/* ================================================================
-	 * Phase B3: Snapshot tags
-	 * ================================================================ */
+	 * Phase B2: Snapshot tag membership
+	 * ================================================================
+	 * Before the clients detach: a tag's client array holds pointers that
+	 * are only resolvable while globalconf.clients is populated, and a
+	 * client's position there is also its position in the snapshot array
+	 * clients_detach() builds.
+	 */
 
 	num_tags = globalconf.tags.len;
 	if (num_tags > 0) {
@@ -5708,13 +5736,55 @@ luaA_hot_reload(void)
 			num_tags = 0;
 			goto fail;
 		}
+		if (globalconf.clients.len > 0) {
+			tag_members = calloc((size_t)num_tags * globalconf.clients.len, sizeof(bool));
+			if (!tag_members) {
+				fprintf(stderr, "somewm: hot-reload: failed to allocate tag membership\n");
+				goto fail;
+			}
+		}
 	}
+
+	for (i = 0; i < num_tags; i++) {
+		tag_t *t = globalconf.tags.tab[i];
+		tag_snapshot_t *ts = &tag_snaps[i];
+		int j, k;
+
+		ts->screen_index = -1;
+		for (j = 0; j < globalconf.screens.len; j++)
+			if (globalconf.screens.tab[j] == t->screen) {
+				ts->screen_index = j;
+				break;
+			}
+		ts->selected = t->selected;
+
+		for (k = 0; k < t->clients.len; k++)
+			for (j = 0; j < globalconf.clients.len; j++)
+				if (globalconf.clients.tab[j] == t->clients.tab[k]) {
+					tag_members[i * globalconf.clients.len + j] = true;
+					break;
+				}
+	}
+
+	/* ================================================================
+	 * Phase B3: Snapshot and detach clients
+	 * ================================================================ */
+
+	if (!clients_detach(&client_snaps, &num_clients)) {
+		fprintf(stderr, "somewm: hot-reload: failed to allocate client snapshots\n");
+		goto fail;
+	}
+
+	/* ================================================================
+	 * Phase B4: Take the tag names and drop the stale client arrays
+	 * ================================================================ */
 
 	for (i = 0; i < num_tags; i++) {
 		tag_t *t = globalconf.tags.tab[i];
 
 		/* Transfer name ownership to snapshot so tag_wipe doesn't free it.
-		 * Tags are recreated from rc.lua defaults, not restored from snapshots. */
+		 * Tags themselves are recreated by rc.lua; only their membership
+		 * and selection are restored onto the result. */
 		tag_snaps[i].name = t->name;
 		t->name = NULL;
 
@@ -5961,6 +6031,93 @@ luaA_hot_reload(void)
 		}
 	}
 
+	/* Restore tag membership before the rules run. AwesomeWM's own restart
+	 * does the same through _NET_WM_DESKTOP and request::tag; the hints
+	 * carry every tag rather than only the first. A rule with an explicit
+	 * tag still overrides this, and a client whose tags resolve to nothing
+	 * falls through to the rules untouched. */
+	if (num_tags > 0) {
+		tag_map = calloc(num_tags, sizeof(tag_t *));
+		if (!tag_map) {
+			fprintf(stderr, "somewm: hot-reload: failed to allocate tag map\n");
+			goto fail;
+		}
+		for (i = 0; i < num_tags; i++)
+			tag_map[i] = tag_resolve_snapshot(&tag_snaps[i]);
+	}
+
+	for (i = 0; i < num_clients; i++) {
+		client_t *c = globalconf.clients.tab[i];
+		tag_t *first = NULL;
+		int t, slot = 0;
+
+		if (!client_snaps[i].was_mapped)
+			continue;
+
+		luaA_object_push(L, c);
+		lua_createtable(L, 0, 2);
+		lua_pushliteral(L, "restart");
+		lua_setfield(L, -2, "reason");
+		lua_newtable(L);
+
+		for (t = 0; t < num_tags; t++) {
+			if (!tag_map[t] || !tag_members[t * num_clients + i])
+				continue;
+			if (!first)
+				first = tag_map[t];
+			luaA_object_push(L, tag_map[t]);
+			lua_rawseti(L, -2, ++slot);
+		}
+		lua_setfield(L, -2, "tags");
+
+		if (!first) {
+			lua_pop(L, 2);
+			continue;
+		}
+
+		luaA_object_push(L, first);
+		lua_insert(L, -2);
+		luaA_object_emit_signal(L, -3, "request::tag", 2);
+		lua_pop(L, 1);
+		num_retagged++;
+	}
+
+	/* Restore the selected tags, still before the rules run: a client that
+	 * resolved nothing is then placed on the selection the screen comes back
+	 * to, and no rule has had the chance to delete a tag that tag_map points at.
+	 * Every tag on the screen is set in C and awful.tag's history is updated
+	 * once, so it never records a half-restored set. A screen whose selected
+	 * tags all resolved to nothing keeps the selection rc.lua made. */
+	for (i = 0; i < num_screens && i < globalconf.screens.len; i++) {
+		screen_t *screen = globalconf.screens.tab[i];
+		bool restored = false;
+		int j, t;
+
+		for (t = 0; t < num_tags; t++)
+			if (tag_snaps[t].selected && tag_snaps[t].screen_index == i && tag_map[t])
+				restored = true;
+		if (!restored)
+			continue;
+
+		for (j = 0; j < globalconf.tags.len; j++) {
+			tag_t *tag = globalconf.tags.tab[j];
+			bool view = false;
+
+			if (tag->screen != screen)
+				continue;
+			for (t = 0; t < num_tags; t++)
+				if (tag_snaps[t].selected && tag_map[t] == tag)
+					view = true;
+			luaA_object_push(L, tag);
+			tag_view(L, -1, view);
+			lua_pop(L, 1);
+		}
+
+		luaA_object_push(L, screen);
+		luaA_object_emit_signal(L, -1, "tag::history::update", 0);
+		lua_pop(L, 1);
+	}
+
 	for (i = 0; i < num_clients; i++) {
 		client_t *c = globalconf.clients.tab[i];
 
@@ -6021,8 +6178,8 @@ luaA_hot_reload(void)
 
 	globalconf.hot_reload_in_progress = false;
 
-	fprintf(stderr, "somewm: hot-reload: complete (%d clients, %d screens, %d tags reset)\n",
-		num_clients, num_screens, num_tags);
+	fprintf(stderr, "somewm: hot-reload: complete (%d clients, %d screens, %d tags, "
+		"%d clients retagged)\n", num_clients, num_screens, num_tags, num_retagged);
 
 	/* Mark new Lgi closures as ready - allows guard to dispatch them.
 	 * Must be called AFTER rc.lua is fully loaded and Lgi is stable. */
@@ -6059,6 +6216,8 @@ cleanup:
 	free(client_snaps);
 	free(screen_snaps);
 	free(tag_snaps);
+	free(tag_members);
+	free(tag_map);
 	free(systray_snaps);
 }
 
