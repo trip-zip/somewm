@@ -19,6 +19,8 @@ if [ ! -x "$SOMEWM" ]; then
     exit 1
 fi
 
+SOMEWM=$(cd "$(dirname "$SOMEWM")" && pwd)/$(basename "$SOMEWM")
+
 # Setup temp directory
 TMP_DIR=$(mktemp -d)
 trap 'rm -rf "$TMP_DIR"' EXIT INT TERM
@@ -235,6 +237,23 @@ test_require_library_not_scanned() {
     run_check "$cfg"
     assert_not_contains "$name" "awful/screen.lua" || return
     assert_not_contains "$name" "awful/client.lua" || return
+    pass "$name"
+}
+
+test_bare_filename_walks_requires() {
+    local name="bare_filename_walks_requires"
+    # The config directory came from the path alone, so a config named without
+    # one left it unset and the whole walk was skipped in silence.
+    write_config "bare/mod.lua" 'local lgi = require("lgi")
+local Gdk = lgi.require("Gdk")
+return Gdk' >/dev/null
+    write_config "bare/rc.lua" 'require("mod")' >/dev/null
+    set +e
+    CHECK_STDOUT=$(cd "$TMP_DIR/bare" && "$SOMEWM" --check rc.lua 2>/dev/null)
+    CHECK_EXIT=$?
+    set -e
+    assert_contains "$name" "mod.lua" || return
+    assert_contains "$name" "GDK initialization deadlock" || return
     pass "$name"
 }
 
@@ -492,6 +511,7 @@ test_require_stdlib_skipped
 test_require_awesomewm_skipped
 test_require_somewm_module_found
 test_require_library_not_scanned
+test_bare_filename_walks_requires
 test_require_method_skipped
 test_require_local_module
 test_require_init_module
