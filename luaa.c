@@ -5087,25 +5087,11 @@ clients_restore(lua_State *L, client_snapshot_t *snaps, int num_clients)
 		c->screen = NULL;
 		c->transient_for = NULL;
 		/* Geometry includes the old titlebars, but their Lua drawables cannot
-		 * cross into the new state. Strip the old extents before resetting the
-		 * sizes so request::titlebars can add the rebuilt bars exactly once.
-		 * Keep this as the inverse of titlebar_resize(), including X11 gravity. */
-		{
-			int left = c->titlebar[CLIENT_TITLEBAR_LEFT].size;
-			int right = c->titlebar[CLIENT_TITLEBAR_RIGHT].size;
-			int top = c->titlebar[CLIENT_TITLEBAR_TOP].size;
-			int bottom = c->titlebar[CLIENT_TITLEBAR_BOTTOM].size;
-
-			c->geometry.width = MAX(1, c->geometry.width - left - right);
-			c->geometry.height = MAX(1, c->geometry.height - top - bottom);
-			if (c->size_hints.flags & XCB_ICCCM_SIZE_HINT_P_WIN_GRAVITY)
-				xwindow_translate_for_gravity(c->size_hints.win_gravity,
-					-left, -top, -right, -bottom,
-					&c->geometry.x, &c->geometry.y);
-		}
+		 * cross into the new state. Strip the extents and the sizes together
+		 * so request::titlebars can add the rebuilt bars exactly once. */
+		client_strip_titlebar_geometry(c);
 		for (j = 0; j < CLIENT_TITLEBAR_COUNT; j++) {
 			c->titlebar[j].drawable = NULL;
-			c->titlebar[j].size = 0;
 			if (c->titlebar[j].scene_buffer) {
 				wlr_scene_node_destroy(&c->titlebar[j].scene_buffer->node);
 				c->titlebar[j].scene_buffer = NULL;
@@ -5559,9 +5545,10 @@ typedef struct {
 	screen_lifecycle_t lifecycle;
 } screen_snapshot_t;
 
-/* The per-tag numbers a session is worth keeping, the same set
- * awful.permissions.tag_screen saves when a screen goes away. awful does not
- * always store a property under its own name: gap is stored as useless_gap. */
+/* The per-tag numbers a session is worth keeping. awful.permissions.tag_screen
+ * answers the same question for a screen that goes away and saves all of these
+ * but column_count. awful does not always store a property under its own name:
+ * gap is stored as useless_gap. */
 static const struct {
 	const char *stored;
 	const char *property;
@@ -5655,12 +5642,46 @@ none:
 	return false;
 }
 
-/** Restore a snapshotted tag's Lua-side state onto the tag rc.lua rebuilt.
+/** Select the layout named `name` from the layouts a tag allows.
  *
  * Layout objects belong to a Lua state, so only their stable public name can
- * cross a hot-reload: the name is matched against the rebuilt tag's allowed
- * list, and a layout that has no named match there leaves rc.lua's choice
- * untouched.
+ * cross a hot-reload. A name the rebuilt list does not offer leaves rc.lua's
+ * choice untouched.
+ *
+ * \param tag_idx Stack index of the tag.
+ */
+static void
+tag_select_layout_by_name(lua_State *L, int tag_idx, const char *name)
+{
+	int layouts_idx, len, i;
+
+	lua_getfield(L, tag_idx, "layouts");
+	if (!lua_istable(L, -1)) {
+		lua_pop(L, 1);
+		return;
+	}
+	layouts_idx = lua_gettop(L);
+	len = (int) luaA_rawlen(L, layouts_idx);
+
+	for (i = 1; i <= len; i++) {
+		lua_rawgeti(L, layouts_idx, i);
+		if (!lua_istable(L, -1)) {
+			lua_pop(L, 1);
+			continue;
+		}
+		lua_getfield(L, -1, "name");
+		if (lua_isstring(L, -1) && !strcmp(name, lua_tostring(L, -1))) {
+			lua_pop(L, 1);
+			lua_setfield(L, tag_idx, "layout");
+			break;
+		}
+		lua_pop(L, 2);
+	}
+
+	lua_pop(L, 1);
+}
+
+/** Restore a snapshotted tag's Lua-side state onto the tag rc.lua rebuilt.
  *
  * Called through hot_reload_call: the tag is at 1, the snapshot at 2.
  */
@@ -5670,32 +5691,8 @@ tag_restore_snapshot_state(lua_State *L)
 	const tag_snapshot_t *ts = lua_touserdata(L, 2);
 	int i;
 
-	if (ts->layout_name) {
-		lua_getfield(L, 1, "layouts");
-		if (lua_istable(L, -1)) {
-			int layouts_idx = lua_gettop(L);
-
-			for (i = 1; i <= (int) luaA_rawlen(L, layouts_idx); i++) {
-				bool matches;
-
-				lua_rawgeti(L, layouts_idx, i);
-				if (!lua_istable(L, -1)) {
-					lua_pop(L, 1);
-					continue;
-				}
-				lua_getfield(L, -1, "name");
-				matches = lua_isstring(L, -1)
-					&& !strcmp(ts->layout_name, lua_tostring(L, -1));
-				lua_pop(L, 1);
-				if (matches) {
-					lua_setfield(L, 1, "layout");
-					break;
-				}
-				lua_pop(L, 1);
-			}
-		}
-		lua_pop(L, 1);
-	}
+	if (ts->layout_name)
+		tag_select_layout_by_name(L, 1, ts->layout_name);
 
 	for (i = 0; i < TAG_NUMBER_COUNT; i++)
 		if (ts->has_number[i]) {
@@ -5724,7 +5721,9 @@ client_restore_floating(lua_State *L)
  *
  * Protected, because a property setter runs config code: past the point the
  * old state closed, a reload has nothing to unwind to and an error would take
- * the compositor with it.
+ * the compositor with it. A plain pcall rather than luaA_dofunction: its error
+ * handler emits debug::error, which would re-enter the config from inside a
+ * half-restored reload.
  */
 static void
 hot_reload_call(lua_State *L, lua_CFunction fn, void *object, const void *arg)
@@ -6260,7 +6259,7 @@ luaA_hot_reload(void)
 		if (!client_snaps[i].was_mapped)
 			continue;
 
-		if (client_floating && client_floating[i] >= 0)
+		if (client_floating[i] >= 0)
 			hot_reload_call(L, client_restore_floating, c,
 					&client_floating[i]);
 

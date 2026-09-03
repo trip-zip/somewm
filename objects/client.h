@@ -420,6 +420,7 @@ void client_emit_scanning(void);
 drawable_t *client_get_drawable(client_t *, int, int);
 drawable_t *client_get_drawable_offset(client_t *, int *, int *);
 area_t client_get_undecorated_geometry(client_t *);
+void client_strip_titlebar_geometry(client_t *);
 void client_apply_opacity_to_scene(client_t *, float);
 void client_update_titlebar_positions(client_t *);
 

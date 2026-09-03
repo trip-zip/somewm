@@ -41,14 +41,19 @@ set_floating_only() {
 # Tag names, selection, order and layout on the primary screen.
 TAGS='local t = {}; for _, tg in ipairs(screen.primary.tags) do t[#t+1] = tg.name .. ":" .. tostring(tg.selected) .. ":" .. tg.layout.name end; return table.concat(t, ",")'
 
+# Run a body against the client with this pid, as `c`.
+for_client() {
+    echo "local pid = $1; for _, c in ipairs(client.get()) do if c.pid == pid then $2 end end; return \"no client\""
+}
+
 # The sorted tag names of the client with this pid.
 client_tags() {
-    echo "local pid = $1; for _, c in ipairs(client.get()) do if c.pid == pid then local n = {}; for _, t in ipairs(c:tags()) do n[#n+1] = t.name end; table.sort(n); return table.concat(n, \",\") end end; return \"no client\""
+    for_client "$1" 'local n = {}; for _, t in ipairs(c:tags()) do n[#n+1] = t.name end; table.sort(n); return table.concat(n, ",")'
 }
 
 # Exact outer geometry, floating state and rebuilt titlebar size for a client.
 client_geometry() {
-    echo "local pid = $1; for _, c in ipairs(client.get()) do if c.pid == pid then local g = c:geometry(); local _, top = c:titlebar_top(); return g.x .. \",\" .. g.y .. \",\" .. g.width .. \",\" .. g.height .. \":\" .. tostring(c.floating) .. \":\" .. top end end; return \"no client\""
+    for_client "$1" 'local g = c:geometry(); local _, top = c:titlebar_top(); return g.x .. "," .. g.y .. "," .. g.width .. "," .. g.height .. ":" .. tostring(c.floating) .. ":" .. top'
 }
 
 # The master and gap numbers awful keeps beside the layout, which live in Lua
@@ -57,8 +62,15 @@ NUMBERS='local t = screen.primary.tags[2]; return t.master_width_factor .. ":" .
 
 # Move the client with this pid onto the tags at these 1-based positions.
 retag() {
-    local pid="$1" idx="$2"
-    echo "local pid = $pid; for _, c in ipairs(client.get()) do if c.pid == pid then local ts = screen.primary.tags; local sel = {}; for _, i in ipairs({$idx}) do sel[#sel+1] = ts[i] end; c:tags(sel); return \"ok\" end end; return \"no client\""
+    for_client "$1" "local ts = screen.primary.tags; local sel = {}; for _, i in ipairs({$2}) do sel[#sel+1] = ts[i] end; c:tags(sel); return \"ok\""
+}
+
+# Both clients still have the geometry they started with.
+check_geometry_stable() {
+    check_eval hr-tags "client A geometry does not grow on the $1 reload" \
+        "$(client_geometry "$PID_A")" "$before_geometry_a"
+    check_eval hr-tags "client B geometry does not grow on the $1 reload" \
+        "$(client_geometry "$PID_B")" "$before_geometry_b"
 }
 
 # View the tags at these 1-based positions, and only those.
@@ -111,10 +123,7 @@ check_eval hr-tags "tag names, order and both viewed tags survive the reload" \
     "$TAGS" "1:false:floating,2:true:tile,3:true:floating"
 check_eval hr-tags "client A is still on tag 3 alone" "$(client_tags "$PID_A")" "3"
 check_eval hr-tags "client B is still on tags 2 and 3" "$(client_tags "$PID_B")" "2,3"
-check_eval hr-tags "client A geometry does not grow on the first reload" \
-    "$(client_geometry "$PID_A")" "$before_geometry_a"
-check_eval hr-tags "client B geometry does not grow on the first reload" \
-    "$(client_geometry "$PID_B")" "$before_geometry_b"
+check_geometry_stable first
 check_eval hr-tags "tag 2 keeps its master and gap numbers" "$NUMBERS" "0.7:2:3:5"
 
 sw_check_log_clean hr-tags "log after the first reload" || finish
@@ -131,10 +140,7 @@ check_eval hr-tags "an unavailable old layout falls back to rc.lua's default" \
 check_eval hr-tags "client A resolves nothing and the rules place it on the restored selection" \
     "$(client_tags "$PID_A")" "2"
 check_eval hr-tags "client B keeps the tag that still exists" "$(client_tags "$PID_B")" "2"
-check_eval hr-tags "client A geometry does not grow on the second reload" \
-    "$(client_geometry "$PID_A")" "$before_geometry_a"
-check_eval hr-tags "client B geometry does not grow on the second reload" \
-    "$(client_geometry "$PID_B")" "$before_geometry_b"
+check_geometry_stable second
 
 sw_check_log_clean hr-tags "log after the second reload" || finish
 
@@ -147,10 +153,7 @@ check_eval hr-tags "renamed tags keep rc.lua's selection and default layouts" \
     "$TAGS" "a:true:floating,b:false:floating"
 check_eval hr-tags "client A falls through to the rules" "$(client_tags "$PID_A")" "a"
 check_eval hr-tags "client B falls through to the rules" "$(client_tags "$PID_B")" "a"
-check_eval hr-tags "client A geometry does not grow on the third reload" \
-    "$(client_geometry "$PID_A")" "$before_geometry_a"
-check_eval hr-tags "client B geometry does not grow on the third reload" \
-    "$(client_geometry "$PID_B")" "$before_geometry_b"
+check_geometry_stable third
 check_eval hr-tags "the renamed tag matches nothing and keeps the config's numbers" \
     "$NUMBERS" "$default_numbers"
 
