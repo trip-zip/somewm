@@ -5086,6 +5086,23 @@ clients_restore(lua_State *L, client_snapshot_t *snaps, int num_clients)
 		c->toplevel_handle = NULL;
 		c->screen = NULL;
 		c->transient_for = NULL;
+		/* Geometry includes the old titlebars, but their Lua drawables cannot
+		 * cross into the new state. Strip the old extents before resetting the
+		 * sizes so request::titlebars can add the rebuilt bars exactly once.
+		 * Keep this as the inverse of titlebar_resize(), including X11 gravity. */
+		{
+			int left = c->titlebar[CLIENT_TITLEBAR_LEFT].size;
+			int right = c->titlebar[CLIENT_TITLEBAR_RIGHT].size;
+			int top = c->titlebar[CLIENT_TITLEBAR_TOP].size;
+			int bottom = c->titlebar[CLIENT_TITLEBAR_BOTTOM].size;
+
+			c->geometry.width = MAX(1, c->geometry.width - left - right);
+			c->geometry.height = MAX(1, c->geometry.height - top - bottom);
+			if (c->size_hints.flags & XCB_ICCCM_SIZE_HINT_P_WIN_GRAVITY)
+				xwindow_translate_for_gravity(c->size_hints.win_gravity,
+					-left, -top, -right, -bottom,
+					&c->geometry.x, &c->geometry.y);
+		}
 		for (j = 0; j < CLIENT_TITLEBAR_COUNT; j++) {
 			c->titlebar[j].drawable = NULL;
 			c->titlebar[j].size = 0;
@@ -5546,6 +5563,8 @@ typedef struct {
 	/* Owns the name string (transferred from old tag_t to prevent
 	 * double-free during GC). Freed in cleanup. */
 	char *name;
+	/* Name of the active Lua layout, copied before class teardown. */
+	char *layout_name;
 	/* Screen index (0-based, -1 if the tag had no screen). */
 	int screen_index;
 	bool selected;
@@ -5578,6 +5597,50 @@ tag_resolve_snapshot(const tag_snapshot_t *ts)
 		if ((*tag)->screen == screen && (*tag)->name && !strcmp(ts->name, (*tag)->name))
 			return *tag;
 	return NULL;
+}
+
+/** Restore a snapshotted layout from the matched tag's rebuilt allowed list.
+ * Layout objects belong to a Lua state, so only their stable public name can
+ * cross a hot-reload. A missing or nameless layout leaves rc.lua's choice
+ * untouched.
+ */
+static void
+tag_restore_snapshot_layout(lua_State *L, tag_t *tag, const tag_snapshot_t *ts)
+{
+	int tag_idx, layouts_idx;
+
+	if (!tag || !ts->layout_name)
+		return;
+
+	luaA_object_push(L, tag);
+	tag_idx = lua_gettop(L);
+	lua_getfield(L, tag_idx, "layouts");
+	if (!lua_istable(L, -1)) {
+		lua_pop(L, 2);
+		return;
+	}
+	layouts_idx = lua_gettop(L);
+
+	for (int i = 1; i <= (int)luaA_rawlen(L, layouts_idx); i++) {
+		lua_rawgeti(L, layouts_idx, i);
+		if (!lua_istable(L, -1)) {
+			lua_pop(L, 1);
+			continue;
+		}
+		lua_getfield(L, -1, "name");
+		bool matches = lua_isstring(L, -1)
+			&& !strcmp(ts->layout_name, lua_tostring(L, -1));
+		lua_pop(L, 1);
+		if (matches) {
+			lua_pushvalue(L, -1);
+			lua_setfield(L, tag_idx, "layout");
+			lua_pop(L, 1);
+			break;
+		}
+		lua_pop(L, 1);
+	}
+
+	lua_pop(L, 2);
 }
 
 /** Perform in-process hot-reload of the Lua state.
@@ -5679,6 +5742,35 @@ luaA_hot_reload(void)
 			g_main_context_iteration(NULL, FALSE);
 	}
 
+	/* Layouts live entirely in Lua. Copy their names before class teardown
+	 * clears the property handlers needed to reach tag.layout. The remaining
+	 * tag state is filled in after screens are available for index lookups. */
+	num_tags = globalconf.tags.len;
+	if (num_tags > 0) {
+		tag_snaps = calloc(num_tags, sizeof(tag_snapshot_t));
+		if (!tag_snaps) {
+			fprintf(stderr, "somewm: hot-reload: failed to allocate tag snapshots\n");
+			goto fail;
+		}
+	}
+	for (i = 0; i < num_tags; i++) {
+		luaA_object_push(L, globalconf.tags.tab[i]);
+		lua_getfield(L, -1, "layout");
+		if (lua_istable(L, -1)) {
+			lua_getfield(L, -1, "name");
+			if (lua_isstring(L, -1)) {
+				tag_snaps[i].layout_name = strdup(lua_tostring(L, -1));
+				if (!tag_snaps[i].layout_name) {
+					lua_pop(L, 3);
+					fprintf(stderr, "somewm: hot-reload: failed to copy tag layout name\n");
+					goto fail;
+				}
+			}
+			lua_pop(L, 1);
+		}
+		lua_pop(L, 2);
+	}
+
 	luaA_state_teardown_lua(L, true);
 
 	/* ================================================================
@@ -5728,14 +5820,7 @@ luaA_hot_reload(void)
 	 * clients_detach() builds.
 	 */
 
-	num_tags = globalconf.tags.len;
 	if (num_tags > 0) {
-		tag_snaps = calloc(num_tags, sizeof(tag_snapshot_t));
-		if (!tag_snaps) {
-			fprintf(stderr, "somewm: hot-reload: failed to allocate tag snapshots\n");
-			num_tags = 0;
-			goto fail;
-		}
 		if (globalconf.clients.len > 0) {
 			tag_members = calloc((size_t)num_tags * globalconf.clients.len, sizeof(bool));
 			if (!tag_members) {
@@ -6046,6 +6131,11 @@ luaA_hot_reload(void)
 			tag_map[i] = tag_resolve_snapshot(&tag_snaps[i]);
 	}
 
+	/* Re-select the old layout from each matched tag's rebuilt layout list
+	 * before tagging or selection can arrange clients. */
+	for (i = 0; i < num_tags; i++)
+		tag_restore_snapshot_layout(L, tag_map[i], &tag_snaps[i]);
+
 	for (i = 0; i < num_clients; i++) {
 		client_t *c = globalconf.clients.tab[i];
 		tag_t *first = NULL;
@@ -6203,8 +6293,10 @@ fail:
 cleanup:
 	/* Free snapshot arrays */
 	if (tag_snaps)
-		for (i = 0; i < num_tags; i++)
+		for (i = 0; i < num_tags; i++) {
 			free(tag_snaps[i].name);
+			free(tag_snaps[i].layout_name);
+		}
 	if (screen_snaps)
 		for (i = 0; i < num_screens; i++)
 			free(screen_snaps[i].name);

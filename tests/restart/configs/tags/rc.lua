@@ -9,6 +9,7 @@
 pcall(require, "luarocks.loader")
 
 local awful = require("awful")
+local ruled = require("ruled")
 require("awful.autofocus")
 
 awful.layout.layouts = {
@@ -18,6 +19,19 @@ awful.layout.layouts = {
 
 awful.screen.connect_for_each_screen(function(s)
     awful.tag({ "1", "2", "3" }, s, awful.layout.layouts[1])
+end)
+
+-- Rebuild a known titlebar on floating clients so repeated reloads also prove
+-- that discarding stale Lua drawables does not grow the preserved geometry.
+ruled.client.connect_signal("request::rules", function()
+    ruled.client.append_rule {
+        rule = {},
+        properties = { floating = true, titlebars_enabled = true },
+    }
+end)
+
+client.connect_signal("request::titlebars", function(c)
+    awful.titlebar(c, { size = 23, position = "top" })
 end)
 
 awesome.connect_signal("debug::error", function(err)
