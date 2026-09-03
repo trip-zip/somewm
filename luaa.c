@@ -3115,6 +3115,30 @@ luaA_setup_package_paths(lua_State *L)
 	}
 }
 
+/** Put a directory at the front of package.path, so a module beside the config
+ * wins over one from the search paths.
+ *
+ * The config load does this for the config's own directory, and the scanners
+ * do it to the state they resolve against, so both agree on where a
+ * config-local require() comes from.
+ * \param L Lua state
+ * \param dir Directory to prepend
+ */
+static void
+luaA_prepend_module_dir(lua_State *L, const char *dir)
+{
+	const char *old_path;
+
+	lua_getglobal(L, "package");
+	lua_getfield(L, -1, "path");
+	old_path = lua_tostring(L, -1);
+	lua_pop(L, 1);
+
+	lua_pushfstring(L, "%s/?.lua;%s/?/init.lua;%s", dir, dir, old_path);
+	lua_setfield(L, -2, "path");
+	lua_pop(L, 1);
+}
+
 /** Register everything a Lua state needs: the standard library, somewm's
  * search paths, and every somewm module and class.
  *
@@ -3713,38 +3737,155 @@ prescan_next_require(const char **pos, const char *content,
 	return false;
 }
 
-/** Resolve a config-local module to a file under config_dir.
+/** Reduce a config path to the directory holding it, in place.
+ *
+ * A bare filename gives ".", so `somewm --check rc.lua` walks the requires
+ * instead of quietly scanning one file.
+ * \param path Config path, overwritten with its directory
+ * \return path, now the directory
+ */
+static const char *
+prescan_dirname(char *path)
+{
+	char *last_slash = strrchr(path, '/');
+
+	if (last_slash)
+		*last_slash = '\0';
+	else
+		strcpy(path, ".");
+
+	return path;
+}
+
+/* A Lua state carrying somewm's real search paths, so the scanners ask Lua
+ * where a module lives instead of guessing. The boot pre-scan and --check both
+ * resolve through it, so they walk the same set of files. */
+static lua_State *prescan_resolver_L = NULL;
+
+#define PRESCAN_RESOLVER_KEY "somewm.prescan.resolve"
+
+/* Resolve a module the way require() does, but without loading it: neither
+ * scanner may run the config. package.searchpath arrived in 5.2, so 5.1 gets
+ * the same walk over the ';'-separated templates. Answers are kept, because a
+ * config split across files requires the same handful of modules in each one
+ * and a miss costs an open() per template. */
+static const char prescan_resolver_lua[] =
+	"local searchpath = package.searchpath or function(name, path)\n"
+	"  local fname = (name:gsub('%.', '/'))\n"
+	"  for tmpl in path:gmatch('[^;]+') do\n"
+	"    local candidate = (tmpl:gsub('%?', fname))\n"
+	"    local f = io.open(candidate, 'r')\n"
+	"    if f then f:close() return candidate end\n"
+	"  end\n"
+	"end\n"
+	"local seen = {}\n"
+	"return function(name)\n"
+	"  local hit = seen[name]\n"
+	"  if hit ~= nil then return hit or nil end\n"
+	"  if package.loaded[name] ~= nil or package.preload[name] ~= nil then\n"
+	"    seen[name] = ''\n"
+	"    return ''\n"
+	"  end\n"
+	"  local found = searchpath(name, package.path)\n"
+	"           or searchpath(name, package.cpath)\n"
+	"  seen[name] = found or false\n"
+	"  return found\n"
+	"end\n";
+
+/** Build the state the scanners resolve requires against.
+ * \param config_dir Directory holding the config, or NULL
+ */
+static void
+prescan_resolver_init(const char *config_dir)
+{
+	lua_State *L = luaL_newstate();
+
+	if (!L)
+		return;
+
+	luaL_openlibs(L);
+	luaA_setup_package_paths(L);
+
+	/* The config directory goes on front, exactly as it does at load time. */
+	if (config_dir)
+		luaA_prepend_module_dir(L, config_dir);
+
+	if (luaL_loadstring(L, prescan_resolver_lua) || lua_pcall(L, 0, 1, 0)) {
+		lua_close(L);
+		return;
+	}
+	lua_setfield(L, LUA_REGISTRYINDEX, PRESCAN_RESOLVER_KEY);
+
+	prescan_resolver_L = L;
+}
+
+static void
+prescan_resolver_free(void)
+{
+	if (prescan_resolver_L) {
+		lua_close(prescan_resolver_L);
+		prescan_resolver_L = NULL;
+	}
+}
+
+/** Ask Lua whether require() would find a module.
  * \param name Module name as written in require()
- * \param dir Directory to resolve against
- * \param path Receives the resolved path on success
+ * \param path Receives the file it resolves to, empty for a built-in
  * \param pathlen Size of path
- * \return true if one of the candidates exists
+ * \return true if require() would find it
  */
 static bool
-prescan_resolve_module(const char *name, const char *dir,
-                       char *path, size_t pathlen)
+prescan_resolve_module(const char *name, char *path, size_t pathlen)
 {
-	char rel[256], try[PATH_MAX];
-	char *p;
+	lua_State *L = prescan_resolver_L;
+	const char *found;
+	bool ok = false;
 
-	snprintf(rel, sizeof(rel), "%s", name);
-	for (p = rel; *p; p++)
-		if (*p == '.')
-			*p = '/';
+	path[0] = '\0';
 
-	snprintf(try, sizeof(try), "%s/%s.lua", dir, rel);
-	if (access(try, R_OK) == 0) {
-		snprintf(path, pathlen, "%s", try);
+	/* With no resolver there is nothing to test, so stay quiet rather than
+	 * call every module missing. */
+	if (!L)
+		return true;
+
+	lua_getfield(L, LUA_REGISTRYINDEX, PRESCAN_RESOLVER_KEY);
+	lua_pushstring(L, name);
+	if (lua_pcall(L, 1, 1, 0)) {
+		lua_pop(L, 1);
 		return true;
 	}
 
-	snprintf(try, sizeof(try), "%s/%s/init.lua", dir, rel);
-	if (access(try, R_OK) == 0) {
-		snprintf(path, pathlen, "%s", try);
-		return true;
+	found = lua_tostring(L, -1);
+	if (found) {
+		snprintf(path, pathlen, "%s", found);
+		ok = true;
 	}
+	lua_pop(L, 1);
 
-	return false;
+	return ok;
+}
+
+/** Is a resolved module the user's own Lua, and so worth scanning?
+ *
+ * A config-local module resolves through the template built from config_dir,
+ * so it comes back with that exact prefix and a plain compare is enough.
+ * \param config_dir Directory holding the config
+ * \param resolved File the module resolved to
+ */
+static bool
+prescan_module_is_config_local(const char *config_dir, const char *resolved)
+{
+	size_t rootlen, len;
+
+	if (!resolved[0])
+		return false;
+
+	rootlen = strlen(config_dir);
+	if (strncmp(resolved, config_dir, rootlen) || resolved[rootlen] != '/')
+		return false;
+
+	len = strlen(resolved);
+	return len > 4 && !strcmp(resolved + len - 4, ".lua");
 }
 
 /** Scan every require()d file for X11 patterns.
@@ -3757,16 +3898,19 @@ luaA_prescan_requires(const char *content, const char *config_dir, int depth)
 {
 	const char *pos = content;
 	char module_name[256];
-	char path[PATH_MAX];
+	char resolved[PATH_MAX];
 	int require_line = 0;
 
-	if (depth >= PRESCAN_MAX_DEPTH || !config_dir)
+	if (depth >= PRESCAN_MAX_DEPTH)
 		return;
 
 	while (prescan_next_require(&pos, content, module_name, sizeof(module_name),
 	                            &require_line)) {
-		if (prescan_resolve_module(module_name, config_dir, path, sizeof(path)))
-			luaA_prescan_file(path, config_dir, depth + 1);
+		/* Only descend into the user's own files. Library and rock sources
+		 * are not theirs to fix, and a C module is not Lua at all. */
+		if (prescan_resolve_module(module_name, resolved, sizeof(resolved))
+		    && prescan_module_is_config_local(config_dir, resolved))
+			luaA_prescan_file(resolved, config_dir, depth + 1);
 	}
 }
 
@@ -3901,8 +4045,7 @@ luaA_prescan_file(const char *config_path, const char *config_dir, int depth)
 	}
 
 	/* Recursively scan required files */
-	if (config_dir)
-		luaA_prescan_requires(content, config_dir, depth);
+	luaA_prescan_requires(content, config_dir, depth);
 
 	free(content);
 }
@@ -3920,19 +4063,19 @@ luaA_prescan_config(const char *config_path, const char *config_dir)
 	/* Reset visited tracking */
 	prescan_cleanup_visited();
 
+	if (!config_path || access(config_path, R_OK) != 0)
+		return;
+
 	/* If no config_dir provided, derive from config_path */
-	if (!dir && config_path) {
-		char *last_slash;
+	if (!dir) {
 		strncpy(dir_buf, config_path, sizeof(dir_buf) - 1);
 		dir_buf[sizeof(dir_buf) - 1] = '\0';
-		last_slash = strrchr(dir_buf, '/');
-		if (last_slash) {
-			*last_slash = '\0';
-			dir = dir_buf;
-		}
+		dir = prescan_dirname(dir_buf);
 	}
 
+	prescan_resolver_init(dir);
 	luaA_prescan_file(config_path, dir, 0);
+	prescan_resolver_free();
 
 	prescan_cleanup_visited();
 }
@@ -4349,140 +4492,6 @@ check_mode_print_report(const char *config_path, bool use_color)
 static void
 check_mode_scan_file(const char *config_path, const char *config_dir, int depth);
 
-/* A Lua state carrying somewm's real search paths, so --check asks Lua where a
- * module lives instead of guessing. */
-static lua_State *check_resolver_L = NULL;
-static char check_config_root[PATH_MAX];
-
-#define CHECK_RESOLVER_KEY "somewm.check.resolve"
-
-/* Resolve a module the way require() does, but without loading it: --check
- * must never run the config. package.searchpath arrived in 5.2, so 5.1 gets
- * the same walk over the ';'-separated templates. */
-static const char check_resolver_lua[] =
-	"local searchpath = package.searchpath or function(name, path)\n"
-	"  local fname = (name:gsub('%.', '/'))\n"
-	"  for tmpl in path:gmatch('[^;]+') do\n"
-	"    local candidate = (tmpl:gsub('%?', fname))\n"
-	"    local f = io.open(candidate, 'r')\n"
-	"    if f then f:close() return candidate end\n"
-	"  end\n"
-	"end\n"
-	"return function(name)\n"
-	"  if package.loaded[name] ~= nil or package.preload[name] ~= nil then\n"
-	"    return ''\n"
-	"  end\n"
-	"  return searchpath(name, package.path) or searchpath(name, package.cpath)\n"
-	"end\n";
-
-/** Build the state --check resolves requires against.
- * \param config_dir Directory holding the config, or NULL
- */
-static void
-check_resolver_init(const char *config_dir)
-{
-	lua_State *L = luaL_newstate();
-
-	check_config_root[0] = '\0';
-
-	if (!L)
-		return;
-
-	luaL_openlibs(L);
-	luaA_setup_package_paths(L);
-
-	/* The config directory goes on front, exactly as it does at load time. */
-	if (config_dir) {
-		const char *old_path;
-
-		lua_getglobal(L, "package");
-		lua_getfield(L, -1, "path");
-		old_path = lua_tostring(L, -1);
-		lua_pop(L, 1);
-		lua_pushfstring(L, "%s/?.lua;%s/?/init.lua;%s",
-		                config_dir, config_dir, old_path);
-		lua_setfield(L, -2, "path");
-		lua_pop(L, 1);
-
-		snprintf(check_config_root, sizeof(check_config_root), "%s", config_dir);
-	}
-
-	if (luaL_loadstring(L, check_resolver_lua) || lua_pcall(L, 0, 1, 0)) {
-		lua_close(L);
-		return;
-	}
-	lua_setfield(L, LUA_REGISTRYINDEX, CHECK_RESOLVER_KEY);
-
-	check_resolver_L = L;
-}
-
-static void
-check_resolver_free(void)
-{
-	if (check_resolver_L) {
-		lua_close(check_resolver_L);
-		check_resolver_L = NULL;
-	}
-	check_config_root[0] = '\0';
-}
-
-/** Ask Lua whether require() would find a module.
- * \param name Module name as written in require()
- * \param path Receives the file it resolves to, empty for a built-in
- * \param pathlen Size of path
- * \return true if require() would find it
- */
-static bool
-check_resolve_module(const char *name, char *path, size_t pathlen)
-{
-	lua_State *L = check_resolver_L;
-	const char *found;
-	bool ok = false;
-
-	path[0] = '\0';
-
-	/* With no resolver there is nothing to test, so stay quiet rather than
-	 * call every module missing. */
-	if (!L)
-		return true;
-
-	lua_getfield(L, LUA_REGISTRYINDEX, CHECK_RESOLVER_KEY);
-	lua_pushstring(L, name);
-	if (lua_pcall(L, 1, 1, 0)) {
-		lua_pop(L, 1);
-		return true;
-	}
-
-	found = lua_tostring(L, -1);
-	if (found) {
-		snprintf(path, pathlen, "%s", found);
-		ok = true;
-	}
-	lua_pop(L, 1);
-
-	return ok;
-}
-
-/** Is a resolved module the user's own Lua, and so worth scanning?
- *
- * A config-local module resolves through the template built from config_dir,
- * so it comes back with that exact prefix and a plain compare is enough.
- */
-static bool
-check_module_is_config_local(const char *resolved)
-{
-	size_t rootlen, len;
-
-	if (!resolved[0] || !check_config_root[0])
-		return false;
-
-	rootlen = strlen(check_config_root);
-	if (strncmp(resolved, check_config_root, rootlen) || resolved[rootlen] != '/')
-		return false;
-
-	len = strlen(resolved);
-	return len > 4 && !strcmp(resolved + len - 4, ".lua");
-}
 
 /** Scan requires in check mode */
 static void
@@ -4494,12 +4503,12 @@ check_mode_scan_requires(const char *content, const char *config_dir,
 	char resolved[PATH_MAX];
 	int require_line = 0;
 
-	if (depth >= PRESCAN_MAX_DEPTH || !config_dir)
+	if (depth >= PRESCAN_MAX_DEPTH)
 		return;
 
 	while (prescan_next_require(&pos, content, module_name, sizeof(module_name),
 	                            &require_line)) {
-		if (!check_resolve_module(module_name, resolved, sizeof(resolved))) {
+		if (!prescan_resolve_module(module_name, resolved, sizeof(resolved))) {
 			check_mode_add_missing_module(source_file, require_line,
 			                              module_name);
 			continue;
@@ -4507,7 +4516,7 @@ check_mode_scan_requires(const char *content, const char *config_dir,
 
 		/* Only descend into the user's own files. Library and rock sources
 		 * are not theirs to fix, and a C module is not Lua at all. */
-		if (check_module_is_config_local(resolved))
+		if (prescan_module_is_config_local(config_dir, resolved))
 			check_mode_scan_file(resolved, config_dir, depth + 1);
 	}
 }
@@ -4606,8 +4615,7 @@ check_mode_scan_file(const char *config_path, const char *config_dir, int depth)
 	}
 
 	/* Recursively scan required files */
-	if (config_dir)
-		check_mode_scan_requires(content, config_dir, config_path, depth);
+	check_mode_scan_requires(content, config_dir, config_path, depth);
 
 	free(content);
 }
@@ -4622,8 +4630,7 @@ int
 luaA_check_config(const char *config_path, bool use_color, int min_severity)
 {
 	char dir_buf[PATH_MAX];
-	const char *dir = NULL;
-	char *last_slash;
+	const char *dir;
 	int result;
 
 	/* Reset state */
@@ -4633,16 +4640,12 @@ luaA_check_config(const char *config_path, bool use_color, int min_severity)
 	/* Derive config_dir from config_path */
 	strncpy(dir_buf, config_path, sizeof(dir_buf) - 1);
 	dir_buf[sizeof(dir_buf) - 1] = '\0';
-	last_slash = strrchr(dir_buf, '/');
-	if (last_slash) {
-		*last_slash = '\0';
-		dir = dir_buf;
-	}
+	dir = prescan_dirname(dir_buf);
 
 	/* Scan the config and all its dependencies */
-	check_resolver_init(dir);
+	prescan_resolver_init(dir);
 	check_mode_scan_file(config_path, dir, 0);
-	check_resolver_free();
+	prescan_resolver_free();
 
 	/* Run luacheck if available (gracefully skips if not installed) */
 	check_mode_run_luacheck(config_path);
@@ -5334,28 +5337,11 @@ luaA_loadrc(void)
 		/* Add config directory to package.path so require() can find local modules
 		 * (AwesomeWM compatibility - allows require("src.theme.user_variables")) */
 		{
-			char config_dir[512];
-			char *last_slash;
-			const char *old_path;
+			char config_dir[PATH_MAX];
 
 			strncpy(config_dir, config_paths[i], sizeof(config_dir) - 1);
 			config_dir[sizeof(config_dir) - 1] = '\0';
-
-			last_slash = strrchr(config_dir, '/');
-			if (last_slash) {
-				*last_slash = '\0';  /* Truncate at last slash to get directory */
-
-				/* Prepend config directory to package.path */
-				lua_getglobal(globalconf_L, "package");
-				lua_getfield(globalconf_L, -1, "path");
-				old_path = lua_tostring(globalconf_L, -1);
-				lua_pop(globalconf_L, 1);
-
-				lua_pushfstring(globalconf_L, "%s/?.lua;%s/?/init.lua;%s",
-					config_dir, config_dir, old_path);
-				lua_setfield(globalconf_L, -2, "path");
-				lua_pop(globalconf_L, 1);  /* pop package table */
-			}
+			luaA_prepend_module_dir(globalconf_L, prescan_dirname(config_dir));
 		}
 
 		/* Set conffile path BEFORE execution (AwesomeWM pattern) */
