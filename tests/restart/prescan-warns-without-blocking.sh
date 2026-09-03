@@ -24,6 +24,7 @@ check_log_count hr-prescan "but the lookalike name was not" "xsettingsd" 0
 check_log hr-prescan "the scanner reached the required module" "deepmod.lua"
 check_log hr-prescan "and reported the pattern it found there" \
     "GDK initialization deadlock"
+check_log_count hr-prescan "but not into somewm's own libraries" "awful/client.lua" 0
 check_log_count hr-prescan "no config was skipped" "Skipping this config" 0
 
 finish

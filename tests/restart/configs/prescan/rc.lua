@@ -18,4 +18,8 @@ dofile(assert(os.getenv("SOMEWM_TEST_BASE_RC"),
 
 require("deepmod")
 
+-- A library the scanner can now resolve, but must not read: findings in
+-- somewm's own Lua are not the user's to fix.
+require("awful")
+
 return x11_call, x11_lookalike
