@@ -225,7 +225,7 @@ luaA_tag_set_name(lua_State *L, tag_t *tag)
  * \param udx The index of the tag on the stack.
  * \param view Set selected or not.
  */
-static void
+void
 tag_view(lua_State *L, int udx, bool view)
 {
 	tag_t *tag = luaA_checkudata(L, udx, &tag_class);

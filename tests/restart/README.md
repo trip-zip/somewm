@@ -189,10 +189,18 @@ release it on `"exit"` reddens whichever reload test runs next.
   clients already restored into the state it closes. The test swaps the
   config under a running instance, since no startup can reach that state: at
   startup there are no clients yet.
-- `tags-after-restart`, `client-survives-restart`, `client-order-after-restart`,
-  `transient-screen-restart`, `client-screen-after-restart`: clients, tags,
-  stacking order, transient relationships and the client's screen survive a
-  reload.
+- `tags-after-restart`: each client comes back on the tags it was on, each
+  screen keeps its viewed tags, layouts and master and gap numbers, and
+  floating geometry remains stable across three reloads: the same config with
+  two tags viewed, one that drops a tag and the saved layout (a client left
+  with nothing is placed by the rules on the restored selection, and the
+  matched tag keeps the new default), and one that renames the tags
+  (everything falls through to the rules and keeps the new config's defaults).
+- `floating-after-restart`: a client made floating on a tiled tag is still
+  floating after a reload.
+- `client-survives-restart`, `client-order-after-restart`,
+  `transient-screen-restart`, `client-screen-after-restart`: clients, stacking
+  order, transient relationships and the client's screen survive a reload.
 - `startup-flag-across-reload`: `awesome.startup` is true during a reload's
   config load too, and `awesome._restart` says which it was.
 - `client-popup-node-data-after-restart`: every scene node holding a

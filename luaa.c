@@ -5086,9 +5086,12 @@ clients_restore(lua_State *L, client_snapshot_t *snaps, int num_clients)
 		c->toplevel_handle = NULL;
 		c->screen = NULL;
 		c->transient_for = NULL;
+		/* Geometry includes the old titlebars, but their Lua drawables cannot
+		 * cross into the new state. Strip the extents and the sizes together
+		 * so request::titlebars can add the rebuilt bars exactly once. */
+		client_strip_titlebar_geometry(c);
 		for (j = 0; j < CLIENT_TITLEBAR_COUNT; j++) {
 			c->titlebar[j].drawable = NULL;
-			c->titlebar[j].size = 0;
 			if (c->titlebar[j].scene_buffer) {
 				wlr_scene_node_destroy(&c->titlebar[j].scene_buffer->node);
 				c->titlebar[j].scene_buffer = NULL;
@@ -5542,16 +5545,204 @@ typedef struct {
 	screen_lifecycle_t lifecycle;
 } screen_snapshot_t;
 
+/* The per-tag numbers a session is worth keeping. awful.permissions.tag_screen
+ * answers the same question for a screen that goes away and saves all of these
+ * but column_count. awful does not always store a property under its own name:
+ * gap is stored as useless_gap. */
+static const struct {
+	const char *stored;
+	const char *property;
+} tag_numbers[] = {
+	{ "master_width_factor", "master_width_factor" },
+	{ "master_count",        "master_count"        },
+	{ "column_count",        "column_count"        },
+	{ "useless_gap",         "gap"                 },
+};
+#define TAG_NUMBER_COUNT ((int) (sizeof(tag_numbers) / sizeof(tag_numbers[0])))
+
 typedef struct {
 	/* Owns the name string (transferred from old tag_t to prevent
 	 * double-free during GC). Freed in cleanup. */
 	char *name;
+	/* Name of the active Lua layout. Owned, freed in cleanup. */
+	char *layout_name;
+	/* Screen index (0-based, -1 if the tag had no screen). */
+	int screen_index;
+	bool selected;
+	/* The rest of awful's Lua-side tag state. Only what the old state had
+	 * set: what it left alone has to come back from the new config and
+	 * theme, not from here. */
+	double numbers[TAG_NUMBER_COUNT];
+	bool has_number[TAG_NUMBER_COUNT];
+	/* Lua 5.3 tells an integer from a float, and a count restored as a
+	 * float reads as "2.0" wherever a config prints it. */
+	bool integer_number[TAG_NUMBER_COUNT];
 } tag_snapshot_t;
 
 typedef struct {
 	char *bus_name;
 	char *object_path;
 } systray_snapshot_t;
+
+/** Find the tag a snapshot maps onto in the tag list rc.lua just rebuilt: the
+ * first tag on the same screen with the same name. There is no fallback by
+ * position; globalconf.tags holds creation order, not the order the user sees,
+ * and a tag created at runtime would land on whatever config tag now sits in
+ * its slot.
+ *
+ * \param ts The snapshot to resolve.
+ * \return The matching tag, or NULL if the new config has nothing to match.
+ */
+static tag_t *
+tag_resolve_snapshot(const tag_snapshot_t *ts)
+{
+	screen_t *screen;
+
+	if (!ts->name || ts->screen_index < 0 || ts->screen_index >= globalconf.screens.len)
+		return NULL;
+	screen = globalconf.screens.tab[ts->screen_index];
+
+	foreach(tag, globalconf.tags)
+		if ((*tag)->screen == screen && (*tag)->name && !strcmp(ts->name, (*tag)->name))
+			return *tag;
+	return NULL;
+}
+
+/** Push the value awful stores for one of an object's properties.
+ *
+ * awful keeps a tag's layout and a client's floating state in a Lua table on
+ * the object (awful.tag.setproperty, awful.client.property.set), so both go
+ * with the state. Reading that table rather than the property matters: the
+ * property getters fall back to the theme, or to an implicit value, and what
+ * the old config never set has to come back from the new one. It is also what
+ * lets the read happen after the class teardown, which leaves the property
+ * handlers behind but not the object's private table.
+ *
+ * \param bag The table awful stores the property in.
+ * \return true when a value was pushed, false when the object has none.
+ */
+static bool
+object_push_awful_property(lua_State *L, void *object, const char *bag, const char *key)
+{
+	luaA_object_push(L, object);
+	lua_getfield(L, -1, "_private");
+	lua_remove(L, -2);
+	if (!lua_istable(L, -1))
+		goto none;
+
+	lua_getfield(L, -1, bag);
+	lua_remove(L, -2);
+	if (!lua_istable(L, -1))
+		goto none;
+
+	lua_getfield(L, -1, key);
+	lua_remove(L, -2);
+	if (lua_isnil(L, -1))
+		goto none;
+	return true;
+none:
+	lua_pop(L, 1);
+	return false;
+}
+
+/** Select the layout named `name` from the layouts a tag allows.
+ *
+ * Layout objects belong to a Lua state, so only their stable public name can
+ * cross a hot-reload. A name the rebuilt list does not offer leaves rc.lua's
+ * choice untouched.
+ *
+ * \param tag_idx Stack index of the tag.
+ */
+static void
+tag_select_layout_by_name(lua_State *L, int tag_idx, const char *name)
+{
+	int layouts_idx, len, i;
+
+	lua_getfield(L, tag_idx, "layouts");
+	if (!lua_istable(L, -1)) {
+		lua_pop(L, 1);
+		return;
+	}
+	layouts_idx = lua_gettop(L);
+	len = (int) luaA_rawlen(L, layouts_idx);
+
+	for (i = 1; i <= len; i++) {
+		lua_rawgeti(L, layouts_idx, i);
+		if (!lua_istable(L, -1)) {
+			lua_pop(L, 1);
+			continue;
+		}
+		lua_getfield(L, -1, "name");
+		if (lua_isstring(L, -1) && !strcmp(name, lua_tostring(L, -1))) {
+			lua_pop(L, 1);
+			lua_setfield(L, tag_idx, "layout");
+			break;
+		}
+		lua_pop(L, 2);
+	}
+
+	lua_pop(L, 1);
+}
+
+/** Restore a snapshotted tag's Lua-side state onto the tag rc.lua rebuilt.
+ *
+ * Called through hot_reload_call: the tag is at 1, the snapshot at 2.
+ */
+static int
+tag_restore_snapshot_state(lua_State *L)
+{
+	const tag_snapshot_t *ts = lua_touserdata(L, 2);
+	int i;
+
+	if (ts->layout_name)
+		tag_select_layout_by_name(L, 1, ts->layout_name);
+
+	for (i = 0; i < TAG_NUMBER_COUNT; i++)
+		if (ts->has_number[i]) {
+			if (ts->integer_number[i])
+				lua_pushinteger(L, (lua_Integer) ts->numbers[i]);
+			else
+				lua_pushnumber(L, ts->numbers[i]);
+			lua_setfield(L, 1, tag_numbers[i].property);
+		}
+	return 0;
+}
+
+/** Put a client's floating state back, before the rules run so a rule with an
+ * explicit floating property still wins.
+ *
+ * Called through hot_reload_call: the client is at 1, the flag at 2.
+ */
+static int
+client_restore_floating(lua_State *L)
+{
+	const int *floating = lua_touserdata(L, 2);
+
+	lua_pushboolean(L, *floating);
+	lua_setfield(L, 1, "floating");
+	return 0;
+}
+
+/** Call one of the restore functions above with the object and its snapshot.
+ *
+ * Protected, because a property setter runs config code: past the point the
+ * old state closed, a reload has nothing to unwind to and an error would take
+ * the compositor with it. A plain pcall rather than luaA_dofunction: its error
+ * handler emits debug::error, which would re-enter the config from inside a
+ * half-restored reload.
+ */
+static void
+hot_reload_call(lua_State *L, lua_CFunction fn, void *object, const void *arg)
+{
+	lua_pushcfunction(L, fn);
+	luaA_object_push(L, object);
+	lua_pushlightuserdata(L, (void *) arg);
+	if (lua_pcall(L, 2, 0, 0)) {
+		fprintf(stderr, "somewm: hot-reload: restoring state: %s\n",
+			lua_tostring(L, -1));
+		lua_pop(L, 1);
+	}
+}
 
 /** Perform in-process hot-reload of the Lua state.
  * Must be called from an idle callback, NOT from within a Lua pcall.
@@ -5569,6 +5760,13 @@ luaA_hot_reload(void)
 	int num_screens = 0;
 	tag_snapshot_t *tag_snaps = NULL;
 	int num_tags = 0;
+	/* num_tags by num_clients: was client i on tag t before the reload? */
+	bool *tag_members = NULL;
+	/* Per client: the floating state something set, or -1 for none. */
+	int *client_floating = NULL;
+	/* Each snapshot tag's counterpart in the rebuilt tag list, or NULL. */
+	tag_t **tag_map = NULL;
+	int num_retagged = 0;
 	systray_snapshot_t *systray_snaps = NULL;
 	int num_systray = 0;
 
@@ -5688,17 +5886,14 @@ luaA_hot_reload(void)
 	}
 
 	/* ================================================================
-	 * Phase B2: Snapshot and detach clients
-	 * ================================================================ */
-
-	if (!clients_detach(&client_snaps, &num_clients)) {
-		fprintf(stderr, "somewm: hot-reload: failed to allocate client snapshots\n");
-		goto fail;
-	}
-
-	/* ================================================================
-	 * Phase B3: Snapshot tags
-	 * ================================================================ */
+	 * Phase B2: Snapshot what only the old Lua state knows
+	 * ================================================================
+	 * Before the clients detach: a tag's client array holds pointers that
+	 * are only resolvable while globalconf.clients is populated, and a
+	 * client's position there is also its position in the snapshot array
+	 * clients_detach() builds. The state is still readable here, which is
+	 * the one chance to take the tag and client state that lives in Lua.
+	 */
 
 	num_tags = globalconf.tags.len;
 	if (num_tags > 0) {
@@ -5708,13 +5903,94 @@ luaA_hot_reload(void)
 			num_tags = 0;
 			goto fail;
 		}
+		if (globalconf.clients.len > 0) {
+			tag_members = calloc((size_t)num_tags * globalconf.clients.len, sizeof(bool));
+			if (!tag_members) {
+				fprintf(stderr, "somewm: hot-reload: failed to allocate tag membership\n");
+				goto fail;
+			}
+		}
 	}
+
+	/* Whether a client floats is a Lua-side property, and only an explicit
+	 * one is worth recording: a client that floats because of its type
+	 * floats again for the same reason once the rules have run. */
+	if (globalconf.clients.len > 0) {
+		client_floating = calloc(globalconf.clients.len, sizeof(int));
+		if (!client_floating) {
+			fprintf(stderr, "somewm: hot-reload: failed to allocate floating states\n");
+			goto fail;
+		}
+		for (i = 0; i < globalconf.clients.len; i++) {
+			client_t *c = globalconf.clients.tab[i];
+
+			client_floating[i] = -1;
+			if (object_push_awful_property(L, c, "awful_client_properties",
+						       "floating")) {
+				client_floating[i] = lua_toboolean(L, -1);
+				lua_pop(L, 1);
+			}
+		}
+	}
+
+	for (i = 0; i < num_tags; i++) {
+		tag_t *t = globalconf.tags.tab[i];
+		tag_snapshot_t *ts = &tag_snaps[i];
+		int j, k;
+
+		ts->screen_index = -1;
+		for (j = 0; j < globalconf.screens.len; j++)
+			if (globalconf.screens.tab[j] == t->screen) {
+				ts->screen_index = j;
+				break;
+			}
+		ts->selected = t->selected;
+
+		if (object_push_awful_property(L, t, "awful_tag_properties", "layout")) {
+			lua_getfield(L, -1, "name");
+			if (lua_isstring(L, -1))
+				ts->layout_name = strdup(lua_tostring(L, -1));
+			lua_pop(L, 2);
+		}
+
+		for (j = 0; j < TAG_NUMBER_COUNT; j++)
+			if (object_push_awful_property(L, t, "awful_tag_properties",
+						       tag_numbers[j].stored)) {
+				ts->has_number[j] = lua_isnumber(L, -1);
+				ts->numbers[j] = lua_tonumber(L, -1);
+#if LUA_VERSION_NUM >= 503
+				ts->integer_number[j] = lua_isinteger(L, -1);
+#endif
+				lua_pop(L, 1);
+			}
+
+		for (k = 0; k < t->clients.len; k++)
+			for (j = 0; j < globalconf.clients.len; j++)
+				if (globalconf.clients.tab[j] == t->clients.tab[k]) {
+					tag_members[i * globalconf.clients.len + j] = true;
+					break;
+				}
+	}
+
+	/* ================================================================
+	 * Phase B3: Snapshot and detach clients
+	 * ================================================================ */
+
+	if (!clients_detach(&client_snaps, &num_clients)) {
+		fprintf(stderr, "somewm: hot-reload: failed to allocate client snapshots\n");
+		goto fail;
+	}
+
+	/* ================================================================
+	 * Phase B4: Take the tag names and drop the stale client arrays
+	 * ================================================================ */
 
 	for (i = 0; i < num_tags; i++) {
 		tag_t *t = globalconf.tags.tab[i];
 
 		/* Transfer name ownership to snapshot so tag_wipe doesn't free it.
-		 * Tags are recreated from rc.lua defaults, not restored from snapshots. */
+		 * Tags themselves are recreated by rc.lua; only their membership
+		 * and selection are restored onto the result. */
 		tag_snaps[i].name = t->name;
 		t->name = NULL;
 
@@ -5961,6 +6237,105 @@ luaA_hot_reload(void)
 		}
 	}
 
+	/* Restore tag membership before the rules run. AwesomeWM's own restart
+	 * does the same through _NET_WM_DESKTOP and request::tag; the hints
+	 * carry every tag rather than only the first. A rule with an explicit
+	 * tag still overrides this, and a client whose tags resolve to nothing
+	 * falls through to the rules untouched. */
+	if (num_tags > 0) {
+		tag_map = calloc(num_tags, sizeof(tag_t *));
+		if (!tag_map) {
+			fprintf(stderr, "somewm: hot-reload: failed to allocate tag map\n");
+			goto fail;
+		}
+		for (i = 0; i < num_tags; i++)
+			tag_map[i] = tag_resolve_snapshot(&tag_snaps[i]);
+	}
+
+	/* Re-select the old layout from each matched tag's rebuilt layout list,
+	 * and put its master and gap numbers back, before tagging or selection
+	 * can arrange clients. */
+	for (i = 0; i < num_tags; i++)
+		if (tag_map[i])
+			hot_reload_call(L, tag_restore_snapshot_state,
+					tag_map[i], &tag_snaps[i]);
+
+	for (i = 0; i < num_clients; i++) {
+		client_t *c = globalconf.clients.tab[i];
+		tag_t *first = NULL;
+		int t, slot = 0;
+
+		if (!client_snaps[i].was_mapped)
+			continue;
+
+		if (client_floating[i] >= 0)
+			hot_reload_call(L, client_restore_floating, c,
+					&client_floating[i]);
+
+		luaA_object_push(L, c);
+		lua_createtable(L, 0, 2);
+		lua_pushliteral(L, "restart");
+		lua_setfield(L, -2, "reason");
+		lua_newtable(L);
+
+		for (t = 0; t < num_tags; t++) {
+			if (!tag_map[t] || !tag_members[t * num_clients + i])
+				continue;
+			if (!first)
+				first = tag_map[t];
+			luaA_object_push(L, tag_map[t]);
+			lua_rawseti(L, -2, ++slot);
+		}
+		lua_setfield(L, -2, "tags");
+
+		if (!first) {
+			lua_pop(L, 2);
+			continue;
+		}
+
+		luaA_object_push(L, first);
+		lua_insert(L, -2);
+		luaA_object_emit_signal(L, -3, "request::tag", 2);
+		lua_pop(L, 1);
+		num_retagged++;
+	}
+
+	/* Restore the selected tags, still before the rules run: a client that
+	 * resolved nothing is then placed on the selection the screen comes back
+	 * to, and no rule has had the chance to delete a tag that tag_map points at.
+	 * Every tag on the screen is set in C and awful.tag's history is updated
+	 * once, so it never records a half-restored set. A screen whose selected
+	 * tags all resolved to nothing keeps the selection rc.lua made. */
+	for (i = 0; i < num_screens && i < globalconf.screens.len; i++) {
+		screen_t *screen = globalconf.screens.tab[i];
+		bool restored = false;
+		int j, t;
+
+		for (t = 0; t < num_tags; t++)
+			if (tag_snaps[t].selected && tag_snaps[t].screen_index == i && tag_map[t])
+				restored = true;
+		if (!restored)
+			continue;
+
+		for (j = 0; j < globalconf.tags.len; j++) {
+			tag_t *tag = globalconf.tags.tab[j];
+			bool view = false;
+
+			if (tag->screen != screen)
+				continue;
+			for (t = 0; t < num_tags; t++)
+				if (tag_snaps[t].selected && tag_map[t] == tag)
+					view = true;
+			luaA_object_push(L, tag);
+			tag_view(L, -1, view);
+			lua_pop(L, 1);
+		}
+
+		luaA_object_push(L, screen);
+		luaA_object_emit_signal(L, -1, "tag::history::update", 0);
+		lua_pop(L, 1);
+	}
+
 	for (i = 0; i < num_clients; i++) {
 		client_t *c = globalconf.clients.tab[i];
 
@@ -6021,8 +6396,8 @@ luaA_hot_reload(void)
 
 	globalconf.hot_reload_in_progress = false;
 
-	fprintf(stderr, "somewm: hot-reload: complete (%d clients, %d screens, %d tags reset)\n",
-		num_clients, num_screens, num_tags);
+	fprintf(stderr, "somewm: hot-reload: complete (%d clients, %d screens, %d tags, "
+		"%d clients retagged)\n", num_clients, num_screens, num_tags, num_retagged);
 
 	/* Mark new Lgi closures as ready - allows guard to dispatch them.
 	 * Must be called AFTER rc.lua is fully loaded and Lgi is stable. */
@@ -6046,8 +6421,10 @@ fail:
 cleanup:
 	/* Free snapshot arrays */
 	if (tag_snaps)
-		for (i = 0; i < num_tags; i++)
+		for (i = 0; i < num_tags; i++) {
 			free(tag_snaps[i].name);
+			free(tag_snaps[i].layout_name);
+		}
 	if (screen_snaps)
 		for (i = 0; i < num_screens; i++)
 			free(screen_snaps[i].name);
@@ -6059,6 +6436,9 @@ cleanup:
 	free(client_snaps);
 	free(screen_snaps);
 	free(tag_snaps);
+	free(tag_members);
+	free(tag_map);
+	free(client_floating);
 	free(systray_snaps);
 }
 

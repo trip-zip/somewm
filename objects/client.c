@@ -2502,6 +2502,35 @@ client_add_titlebar_geometry(client_t *c, area_t *geometry)
     geometry->height += c->titlebar[CLIENT_TITLEBAR_BOTTOM].size;
 }
 
+/** Take the titlebars out of a client's geometry and forget their sizes, the
+ * inverse of growing every bar from zero with titlebar_resize().
+ *
+ * The hot-reload calls this: titlebar drawables belong to the Lua state and
+ * cannot cross a reload, so the sizes reset to zero while the geometry still
+ * counts them. Without this the config re-creating the same titlebars grows
+ * the client by their extents on every reload.
+ *
+ * \param c The client to strip.
+ */
+void
+client_strip_titlebar_geometry(client_t *c)
+{
+    int left = c->titlebar[CLIENT_TITLEBAR_LEFT].size;
+    int right = c->titlebar[CLIENT_TITLEBAR_RIGHT].size;
+    int top = c->titlebar[CLIENT_TITLEBAR_TOP].size;
+    int bottom = c->titlebar[CLIENT_TITLEBAR_BOTTOM].size;
+
+    c->geometry.width = MAX(1, c->geometry.width - left - right);
+    c->geometry.height = MAX(1, c->geometry.height - top - bottom);
+    if (c->size_hints.flags & XCB_ICCCM_SIZE_HINT_P_WIN_GRAVITY)
+        xwindow_translate_for_gravity(c->size_hints.win_gravity,
+                                      -left, -top, -right, -bottom,
+                                      &c->geometry.x, &c->geometry.y);
+
+    for (client_titlebar_t bar = CLIENT_TITLEBAR_TOP; bar < CLIENT_TITLEBAR_COUNT; bar++)
+        c->titlebar[bar].size = 0;
+}
+
 area_t
 client_get_undecorated_geometry(client_t *c)
 {

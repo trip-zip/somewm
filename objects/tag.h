@@ -81,6 +81,7 @@ ARRAY_TYPE(tag_t *, tag)
 int tags_get_current_or_first_selected_index(void);
 void tag_client(lua_State *, client_t *);
 void untag_client(client_t *, tag_t *);
+void tag_view(lua_State *, int, bool);
 bool is_client_tagged(client_t *, tag_t *);
 void tag_unref_simplified(tag_t **);
 
