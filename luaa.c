@@ -5574,6 +5574,9 @@ typedef struct {
 	 * theme, not from here. */
 	double numbers[TAG_NUMBER_COUNT];
 	bool has_number[TAG_NUMBER_COUNT];
+	/* Lua 5.3 tells an integer from a float, and a count restored as a
+	 * float reads as "2.0" wherever a config prints it. */
+	bool integer_number[TAG_NUMBER_COUNT];
 } tag_snapshot_t;
 
 typedef struct {
@@ -5696,7 +5699,10 @@ tag_restore_snapshot_state(lua_State *L)
 
 	for (i = 0; i < TAG_NUMBER_COUNT; i++)
 		if (ts->has_number[i]) {
-			lua_pushnumber(L, ts->numbers[i]);
+			if (ts->integer_number[i])
+				lua_pushinteger(L, (lua_Integer) ts->numbers[i]);
+			else
+				lua_pushnumber(L, ts->numbers[i]);
 			lua_setfield(L, 1, tag_numbers[i].property);
 		}
 	return 0;
@@ -5952,6 +5958,9 @@ luaA_hot_reload(void)
 						       tag_numbers[j].stored)) {
 				ts->has_number[j] = lua_isnumber(L, -1);
 				ts->numbers[j] = lua_tonumber(L, -1);
+#if LUA_VERSION_NUM >= 503
+				ts->integer_number[j] = lua_isinteger(L, -1);
+#endif
 				lua_pop(L, 1);
 			}
 
