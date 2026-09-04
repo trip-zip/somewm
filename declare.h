@@ -67,11 +67,12 @@ void *declare_handle_get(uint64_t handle, enum declare_kind *kind);
 void declare_handle_drop(void *object);
 
 /* Test hook (awesome._test_widget_boxes): the boxes the last solve gave a
- * drawin's converted widget chain (widget.h), outermost first, drawin-local
- * and rounded. Reads the output's own context, so it reports what the frame
- * drew rather than a second solve of its own, and reports nothing until the
- * declare pass has put the current chain in front of Clay. Writes at most
- * WIDGET_NODES_MAX entries and returns how many. */
+ * drawin's converted widget tree (widget.h), in the tree's preorder, one per
+ * node that stands for a widget, drawin-local and rounded. Reads the output's
+ * own context, so it reports what the frame drew rather than a second solve
+ * of its own, and reports nothing until the declare pass has put the current
+ * tree in front of Clay. Writes at most WIDGET_NODES_MAX entries and returns
+ * how many. */
 int declare_widget_boxes(drawin_t *d, int (*boxes)[4]);
 
 /* Test hook (awesome._test_declare_order): the desktop band's draw order for

@@ -406,24 +406,6 @@ local function new(args)
     -- Make sure the wibox is drawn at least once
     ret.draw()
 
-    -- Gaining or losing a shape is the one thing that changes whether the
-    -- renderer takes a converted widget chain (widget.c) without also
-    -- redrawing a widget, so it has to ask for the repaint itself. The test
-    -- is on the masks rather than the signal because _apply_shape re-sets
-    -- them on every geometry change, unchanged.
-    local was_shaped = false
-    local function shape_changed()
-        local shaped = (w.shape_bounding or w.shape_clip or w.shape_input) ~= nil
-
-        if shaped ~= was_shaped then
-            was_shaped = shaped
-            ret._drawable._do_complete_repaint()
-        end
-    end
-    for _, prop in ipairs { "shape_bounding", "shape_clip", "shape_input" } do
-        w:connect_signal("property::" .. prop, shape_changed)
-    end
-
     ret:connect_signal("property::geometry", ret._apply_shape)
     ret:connect_signal("property::border_width", ret._apply_shape)
     ret:connect_signal("property::border_color", ret._apply_shape)

@@ -226,10 +226,12 @@ void render_set_scale(struct render_state *rs, float scale) {
  * sample 1:1 (no upscale blur) and two tiles sharing a logical edge land on the
  * same device pixel (no seam). origin is the node's output-local logical position
  * ((int)box coordinate); wlroots derives the same offset. At scale 1 this is len. */
-static int device_len(int origin, int len, float scale) {
+int render_device_len(int origin, int len, float scale) {
 	return (int)(round((double)(origin + len) * scale) -
 		round((double)origin * scale));
 }
+
+#define device_len render_device_len
 
 /* Corner radii in device pixels: a rounded corner drawn into a device-sized
  * buffer must scale its arc, or it shrinks (in logical terms) as scale grows. */
@@ -1101,7 +1103,12 @@ static struct cairo_buffer *rasterize_image(Clay_RenderCommand *cmd,
 		rounded_rect_path(cr, 0, 0, w, h, radius);
 		cairo_clip(cr);
 	}
-	cairo_scale(cr, (double)w / entry->width, (double)h / entry->height);
+	/* An exact entry is placed one to one: a box the solver rounded a pixel
+	 * away from the size the surface was made for crops a column or leaves
+	 * one transparent, where scaling would resample the whole leaf. */
+	if (!entry->exact) {
+		cairo_scale(cr, (double)w / entry->width, (double)h / entry->height);
+	}
 	Clay_Color ink = cmd->renderData.image.backgroundColor;
 	if (ink.a > 0) {
 		cairo_set_source_rgba(cr, clay_srgb(ink.r), clay_srgb(ink.g),

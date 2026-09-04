@@ -190,19 +190,30 @@ A client's `zIndex` follows `ontop`, `above`, `below` and `fullscreen`. A transi
 
 ## Converted Widget Containers (somewm 2.1)
 
-A drawable's widget tree is compiled to Clay declarations from the root down, and the first widget the compile step cannot express keeps drawing itself with cairo into the drawable's surface, which the renderer shows as one image on top of the converted containers. `wibox.container.margin` and `wibox.container.background` convert; everything else, for now, does not. Widget code, signals and boxes are unchanged either way, and so is what a wibar looks like.
+A drawable's widget tree is compiled to Clay declarations from the root down. Every widget the compile step can express becomes one Clay element, and every subtree it cannot keeps drawing itself with cairo, into a surface of its own that the renderer shows at the box Clay solves for it. `wibox.container.margin`, `wibox.container.background`, `wibox.container.place`, `wibox.layout.fixed`, `wibox.layout.flex`, `wibox.layout.align` and `wibox.layout.stack` convert; everything else, for now, does not. Widget code, signals and boxes are unchanged either way, and so is what a wibar looks like, with the one-pixel exceptions below.
 
-A container stays on the cairo path when it carries something a Clay declaration does not say:
+A widget stays on the cairo path, with its whole subtree, when it carries something a Clay declaration does not say:
 
-- a subclass that overrides `:fit`, `:layout`, `:draw`, `before_draw_children` or `after_draw_children`
+- a subclass that overrides `:fit`, `:layout`, `:draw`, `before_draw_children` or `after_draw_children` (the systray widget is one, and so is any widget built with a custom `:layout`)
 - `visible = false`, an `opacity` other than 1, or a forced width or height
-- a background gradient, surface pattern or `bgimage`
-- a shape other than `gears.shape.rectangle` or `gears.shape.rounded_rect`, and a rounded shape together with a border width
-- a margin with `draw_empty = false`
+- `background`: a gradient, a surface pattern or a `bgimage`; a shape other than `gears.shape.rectangle` or `gears.shape.rounded_rect`; a rounded shape together with a border width; a rounded shape over a child that converts (a layout or container), since Clay clips to rectangles and only a leaf at the same box can carry the corners
+- `margin`: `draw_empty = false`, or a color that is not solid
+- `fixed` and `flex`: a `spacing_widget` with a spacing other than 0, a negative or fractional spacing
+- `align`: `expand = "outside"` with no second widget, which places the first and third over each other at full size
+- `stack`: a negative or fractional offset or spacing
+- `place`: nothing beyond the common list
 
-The whole drawable stays on the cairo path when its own background is not a solid color, when it has a background image, or when the drawin is shaped (`shape_bounding`, `shape_clip` or `shape_input`): those masks apply to the drawable's own pixels, which a converted container is no longer part of.
+The whole drawable stays on the cairo path when its own background is not a solid color or is fully transparent, when it has a background image, when the drawin is shaped (`shape_bounding`, `shape_clip` or `shape_input`), when the drawin's `opacity` is below 1, or when the drawin hosts the legacy `awesome.systray`. Shapes, opacity and the tray composite apply to the drawable's own pixels as one layer, which a converted tree no longer is.
+
+**Odd leftovers round differently.** The engine floors: `flex` hands out its leftover pixels one at a time from the left, `align` with `expand = "outside"` or `"none"` floors the half beside the middle widget, and `place` floors a centered child's offset. Clay solves in float and rounds at the boundary, so when the space to split is odd a box can sit one pixel to the right of, or one pixel wider than, where the engine put it. Sizes that divide evenly are identical.
+
+**A slot that grows keeps content wider than its share.** The engine gives every `flex` child the same share whatever it holds, and gives `align`'s expanded slots what the fixed ones leave. Clay grows an element up from the size of its own content and never compresses it below that, so a slot whose converted subtree is already wider than its share keeps that width and the slots beside it get what is left. A slot holding a raster leaf has no content of its own and always takes exactly its share, which is every slot whose subtree did not convert.
+
+**A widget that draws outside its own box is clipped to it.** Each degraded subtree draws into a surface the size of its box. The drawable surface used to catch anything a widget painted past its edges; a leaf's surface does not. Where the box the surface was made for and the box Clay solved differ by the pixel above, the surface is placed at the box's top left and the odd row or column is cropped or left transparent, rather than the whole subtree being resampled to fit.
 
 **A margin's `color` draws above its child instead of below it.** The ring is the margin band, and the child is placed inside it, so the two do not overlap unless a widget draws outside its own box.
+
+**A fixed layout that overflows is clipped, not truncated.** The engine stops placing children once one starts past the edge and clamps the last one it places to what is left; Clay places the same children at the same sizes, and the drawin clips them. Nothing visible changes.
 
 **Screenshots include what the renderer draws as a flat color.** `root.content()` and `screen.content` now walk the scene for rectangles as well as buffers, so a converted container's background is in the capture. The same walk replaced `screen.content`'s own buffer pass, which ignored a scene buffer's destination size and scaled HiDPI captures wrong.
 

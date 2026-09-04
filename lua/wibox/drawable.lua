@@ -64,6 +64,91 @@ local function get_widget_context(self)
     return context
 end
 
+-- The box the layout engine gave each raster leaf, in drawable coordinates:
+-- what sizes the leaf's surface (widget.c), and what Clay has to agree with.
+local function leaf_boxes(leaves)
+    local boxes = {}
+
+    for i, leaf in ipairs(leaves) do
+        local hier = leaf.hierarchy
+        local x, y, w, h = matrix.transform_rectangle(
+            hier:get_matrix_to_device(), 0, 0, hier:get_size())
+
+        boxes[i] = { x = x, y = y, width = w, height = h }
+    end
+    return boxes
+end
+
+-- Whether a leaf's box meets the dirty region, both in drawable
+-- coordinates. The region's rectangles are read once per redraw, so this
+-- costs no allocation per leaf.
+local function touches(rects, box)
+    for _, r in ipairs(rects) do
+        if r[1] < box.x + box.width and box.x < r[1] + r[3]
+                and r[2] < box.y + box.height and box.y < r[2] + r[4] then
+            return true
+        end
+    end
+    return false
+end
+
+-- Paint the raster leaves into their own surfaces, only where the dirty
+-- region touches them, so a clock tick re-rasters the clock and nothing
+-- else. A leaf keeps its surface by its index in the tree, so a subtree
+-- that moved to another index paints whole; its surface may have been
+-- another widget's. A leaf's own matrix is relative to its parent, so the
+-- parent's matrix to the drawable goes on first, after moving the
+-- drawable's origin to the leaf's. The surfaces hold device pixels.
+local function draw_leaves(self, context, leaves, boxes, scale, dirty)
+    local indices = setmetatable({}, { __mode = "k" })
+    local rects, drawn = {}, {}
+
+    for r = 0, dirty:num_rectangles() - 1 do
+        local d = dirty:get_rectangle(r)
+
+        rects[r + 1] = { d.x, d.y, d.width, d.height }
+    end
+
+    for i, leaf in ipairs(leaves) do
+        local box = boxes[i]
+        local whole = self._clay_leaf_indices[leaf.hierarchy] ~= i
+
+        indices[leaf.hierarchy] = i
+        if whole or touches(rects, box) then
+            -- A widget's own draw can make its drawin paint whole (it
+            -- hosts the systray now, its opacity changed), which drops
+            -- every leaf surface from under this loop. That flip asks for
+            -- a complete repaint of its own, so stop and let it run.
+            local native = self.drawable:_clay_leaf_surface(i)
+
+            if not native then
+                break
+            end
+
+            local lcr = cairo.Context(surface.load_silently(native, false))
+
+            lcr:scale(scale, scale)
+            if not whole then
+                for _, r in ipairs(rects) do
+                    lcr:rectangle(r[1] - box.x, r[2] - box.y, r[3], r[4])
+                end
+                lcr:clip()
+            end
+            lcr.operator = cairo.Operator.SOURCE
+            lcr:set_source_rgba(0, 0, 0, 0)
+            lcr:paint()
+            lcr.operator = cairo.Operator.OVER
+            lcr:set_source(leaf.fg)
+            lcr:translate(-box.x, -box.y)
+            lcr:transform(leaf.parent:get_matrix_to_device():to_cairo_matrix())
+            leaf.hierarchy:draw(context, lcr)
+            drawn[i] = true
+        end
+    end
+    self._clay_leaf_indices = indices
+    self.drawable:_clay_leaves_drawn(drawn)
+end
+
 local function do_redraw(self)
     if not self.drawable.valid then
         return
@@ -123,36 +208,52 @@ local function do_redraw(self)
         end
     end
 
-    -- Clip to the dirty area
-    if self._dirty_area:is_empty() then
+    local dirty = self._dirty_area
+    if dirty:is_empty() then
         return
     end
-    for i = 0, self._dirty_area:num_rectangles() - 1 do
-        local rect = self._dirty_area:get_rectangle(i)
+    self._dirty_area = cairo.Region.create()
+
+    -- Compile the widget tree into Clay declarations. The renderer draws
+    -- what converted, and every subtree that did not is a raster leaf with
+    -- a surface of its own; this surface is then not drawn at all. Below
+    -- the empty region check because every property that feeds a node
+    -- dirties the region on its way here.
+    local tree, leaves = wclay.compile(self, self._widget_hierarchy, context)
+    local boxes = tree and leaf_boxes(leaves)
+    local scale = self.drawable:_clay_nodes(tree, boxes)
+    local converted = scale and true or false
+
+    -- Crossing between the two paths invalidates every pixel: this surface
+    -- was never painted while the leaves were drawing, and the leaves are
+    -- new surfaces when the tree converts again, so neither holds what this
+    -- frame's region says it does.
+    if converted ~= self._clay_converted then
+        self._clay_converted = converted
+        self._clay_leaf_indices = {}
+        dirty = cairo.Region.create()
+        dirty:union_rectangle(cairo.RectangleInt {
+            x = 0, y = 0, width = width, height = height
+        })
+    end
+
+    if scale then
+        draw_leaves(self, context, leaves, boxes, scale, dirty)
+        self.drawable:refresh()
+        return
+    end
+
+    -- Clip to the dirty area
+    for i = 0, dirty:num_rectangles() - 1 do
+        local rect = dirty:get_rectangle(i)
         cr:rectangle(rect.x, rect.y, rect.width, rect.height)
     end
-    self._dirty_area = cairo.Region.create()
     cr:clip()
-
-    -- Compile the front of the widget tree into Clay declarations. The
-    -- renderer draws what converted; the rest keeps painting into this
-    -- surface, which rides as the chain's innermost leaf. Below the empty
-    -- region check because every property that feeds a node dirties the
-    -- region on its way here.
-    local chain, leaf, leaf_parent, leaf_fg =
-        wclay.compile(self, self._widget_hierarchy)
-    local converted = self.drawable:_clay_nodes(chain)
 
     -- Draw the background
     cr:save()
 
-    if converted then
-        -- The chain's outermost node is this background, drawn by the
-        -- renderer. What is left here is the leaf, so the surface starts
-        -- empty and shows the chain through wherever the leaf does not draw.
-        cr.operator = cairo.Operator.SOURCE
-        cr:set_source_rgba(0, 0, 0, 0)
-    elseif not capi.awesome.composite_manager_running then
+    if not capi.awesome.composite_manager_running then
         -- This is pseudo-transparency: We draw the wallpaper in the background
         local wallpaper = surface.load_silently(capi.root.wallpaper(), false)
         cr.operator = cairo.Operator.SOURCE
@@ -188,18 +289,7 @@ local function do_redraw(self)
     end
 
     -- Draw the widget
-    if converted then
-        -- Only the leaf: every container above it is a Clay declaration now.
-        -- The leaf's own matrix is relative to its parent, so the parent's
-        -- matrix to the surface goes on first.
-        if leaf then
-            cr:save()
-            cr:set_source(leaf_fg)
-            cr:transform(leaf_parent:get_matrix_to_device():to_cairo_matrix())
-            leaf:draw(context, cr)
-            cr:restore()
-        end
-    elseif self._widget_hierarchy then
+    if self._widget_hierarchy then
         cr:set_source(self.foreground_color)
         self._widget_hierarchy:draw(context, cr)
     end
@@ -425,6 +515,8 @@ function drawable.new(d, widget_context_skeleton, drawable_name)
     ret._need_complete_repaint = true
     ret._need_relayout = true
     ret._dirty_area = cairo.Region.create()
+    ret._clay_leaf_indices = {}
+    ret._clay_converted = false
     setup_signals(ret)
 
     for k, v in pairs(drawable) do
