@@ -510,13 +510,25 @@ local function describe(w, hier, ctx)
     return describe_class(w, hier, ctx)
 end
 
+--- Classes whose instances do not carry their own name.
+--
+-- `wibox.layout.stack` and `wibox.layout.flex` are both built by calling
+-- `wibox.layout.fixed.horizontal`, so `widget_name` is set from fixed's
+-- source path and all three report the same name. Each defines its own
+-- `:fit`, which is what tells them apart here and in the `classes` table
+-- below.
+local named_classes = {
+    [stack_class.fit] = "wibox.layout.stack",
+    [flex_class.fit] = "wibox.layout.flex",
+}
+
 --- The widget's class, for the `somewm-client clay tree` dump.
 --
 -- `gears.object.modulename` derives `widget_name` from the source path and
 -- only trims it at a `lib/` directory; somewm installs its library under
 -- `lua/`, so the name arrives with the path still in front of it.
 local function class_name(w)
-    local name = w.widget_name
+    local name = named_classes[w.fit] or w.widget_name
 
     if not name then
         return nil

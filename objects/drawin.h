@@ -92,9 +92,14 @@ typedef struct drawin_t {
 	size_t widget_nodes_len;
 	struct image_entry *widget_leaves;
 	size_t widget_leaves_len;
-	/* The last answer of widget_nodes_refused(), so a setter that changes
-	 * it can ask for the repaint that moves the drawable across. */
+	/* Whether widget_nodes_refused() named any reason, so a setter that
+	 * changes that can ask for the repaint that moves the drawable
+	 * across. */
 	bool widget_nodes_refused;
+	/* What the last compile answered (enum widget_nodes_state, widget.h),
+	 * for the tree dump. A uint8_t because drawin.h names no widget
+	 * type. */
+	uint8_t widget_nodes_state;
 	/* Whether the declare pass has put this tree in front of Clay yet.
 	 * Clay's element hashmap is persistent and answers a lookup with the
 	 * last box an id ever had, so without this a tree that changed since

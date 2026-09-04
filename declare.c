@@ -1183,10 +1183,149 @@ dump_node(void *user, const struct render_node_view *v)
 	buffer_adds(buf, "\n");
 }
 
+/* One axis of a node's sizing, as the tree says it, not as it solved. */
 static void
-dump_band(buffer_t *buf, struct declare_band *band, struct wlr_output *o,
-	const char *name)
+dump_sizing(buffer_t *buf, const struct widget_node *n, int axis)
 {
+	if (n->fixed[axis])
+		buffer_addf(buf, "%g", n->size[axis]);
+	else if (n->max[axis] > 0)
+		buffer_addf(buf, "grow<=%g", n->max[axis]);
+	else
+		buffer_adds(buf, "grow");
+}
+
+/* One line per node of a converted tree, in preorder, indented by depth:
+ * what the tree says the node is and the box the last solve gave it.
+ *
+ * This walks the element tree, not the render commands, and that is the
+ * point: Clay emits a RECTANGLE only for an element whose background has
+ * alpha (clay.h:2778-2781), so a container that paints nothing is solved and
+ * placed but appears in no command. The command list below can never show
+ * those, and they are most of a widget tree. */
+static size_t
+dump_widget_node(buffer_t *buf, drawin_t *d, size_t i, Clay_ElementId id,
+	int depth)
+{
+	const struct widget_node *n = &d->widget_nodes[i];
+	Clay_ElementData data = Clay_GetElementData(id);
+	size_t next = i + 1;
+
+	buffer_addf(buf, "    %08x %*s%s", id.id, depth * 2, "",
+		n->cls ? n->cls : "-");
+	if (n->raster)
+		buffer_adds(buf, " raster");
+	if (!n->widget)
+		buffer_adds(buf, " spacer");
+	buffer_adds(buf, " w=");
+	dump_sizing(buf, n, 0);
+	buffer_adds(buf, " h=");
+	dump_sizing(buf, n, 1);
+	if (data.found)
+		buffer_addf(buf, " box %d,%d %dx%d",
+			(int)data.boundingBox.x, (int)data.boundingBox.y,
+			(int)data.boundingBox.width,
+			(int)data.boundingBox.height);
+	else
+		buffer_adds(buf, " box -");
+	buffer_adds(buf, "\n");
+
+	for (uint16_t k = 0; k < n->children; k++)
+		next = dump_widget_node(buf, d, next, widget_child_id(id, k),
+			depth + 1);
+	return next;
+}
+
+/* Why a drawin paints itself whole, in the words widget.h names the reasons
+ * with, so the dump answers the question rather than only reporting that one
+ * image leaf drew. */
+static void
+dump_whole(buffer_t *buf, drawin_t *d)
+{
+	static const struct {
+		unsigned bit;
+		const char *name;
+	} reasons[] = {
+		{ WIDGET_REFUSED_SHAPE_BOUNDING, "shape_bounding" },
+		{ WIDGET_REFUSED_SHAPE_CLIP, "shape_clip" },
+		{ WIDGET_REFUSED_SHAPE_INPUT, "shape_input" },
+		{ WIDGET_REFUSED_OPACITY, "opacity" },
+		{ WIDGET_REFUSED_SYSTRAY, "systray" },
+	};
+	unsigned mask;
+
+	switch (d->widget_nodes_state) {
+	case WIDGET_NODES_REFUSED:
+		mask = widget_nodes_refused(d);
+		for (size_t i = 0; i < LENGTH(reasons); i++)
+			if (mask & reasons[i].bit)
+				buffer_addf(buf, " %s", reasons[i].name);
+		break;
+	case WIDGET_NODES_NONE:
+		buffer_adds(buf, " nothing converted");
+		break;
+	case WIDGET_NODES_MALFORMED:
+		buffer_adds(buf, " malformed tree");
+		break;
+	case WIDGET_NODES_OVER_BUDGET:
+		buffer_adds(buf, " over the output's element budget");
+		break;
+	default:
+		buffer_adds(buf, " not compiled yet");
+		break;
+	}
+	buffer_adds(buf, "\n");
+}
+
+static void
+dump_drawin(buffer_t *buf, drawin_t *d)
+{
+	buffer_addf(buf, "  drawin screen %d %dx%d+%d+%d ",
+		d->screen ? d->screen->index : 0, d->width, d->height,
+		d->x, d->y);
+	if (d->widget_nodes_len == 0) {
+		buffer_adds(buf, "whole:");
+		dump_whole(buf, d);
+		return;
+	}
+	buffer_addf(buf, "converted: %zu nodes, %zu raster\n",
+		d->widget_nodes_len, d->widget_leaves_len);
+	/* Clay's hashmap answers with the last box an id ever had, so a tree
+	 * the declare pass has not reached yet would read back the boxes of
+	 * the one it replaced (declare_widget_boxes says the same). */
+	if (!d->widget_nodes_declared) {
+		buffer_adds(buf, "    not declared yet\n");
+		return;
+	}
+	dump_widget_node(buf, d, 0, widget_root_id(
+		(uint32_t)handle_for(d, DECLARE_KIND_DRAWIN)), 0);
+}
+
+/* The drawins the band draws, converted or whole, on the same filters the
+ * band's own declare pass applies. */
+static void
+dump_drawins(buffer_t *buf, Monitor *m, bool lock)
+{
+	foreach(item, globalconf.drawins) {
+		drawin_t *d = *item;
+
+		if (lock ? !some_is_lock_drawin(d)
+				: (session_is_locked()
+					&& some_is_lock_drawin(d)))
+			continue;
+		if (!declarable_drawin(d, m))
+			continue;
+		dump_drawin(buf, d);
+	}
+}
+
+static void
+dump_band(buffer_t *buf, struct declare_band *band, Monitor *m,
+	const char *name, bool lock)
+{
+	struct wlr_output *o = m->wlr_output;
+	Clay_Context *previous;
+
 	if (!band->clay)
 		return;
 	buffer_addf(buf, "output %s band %s scale %.2f\n", o->name, name,
@@ -1200,6 +1339,12 @@ dump_band(buffer_t *buf, struct declare_band *band, struct wlr_output *o,
 		render_buffers_created(band->render),
 		band->declare_us, band->solve_us, band->reconcile_us);
 	render_walk(band->render, dump_node, buf);
+	/* The solved boxes come out of this band's own Clay context, which is
+	 * a read of its hashmap; nothing here declares or solves. */
+	previous = Clay_GetCurrentContext();
+	Clay_SetCurrentContext(band->clay);
+	dump_drawins(buf, m, lock);
+	Clay_SetCurrentContext(previous);
 }
 
 char *
@@ -1211,8 +1356,8 @@ declare_dump(Monitor *only)
 	wl_list_for_each(m, &mons, link) {
 		if (!m->declare || (only && m != only))
 			continue;
-		dump_band(&buf, &m->declare->desktop, m->wlr_output, "desktop");
-		dump_band(&buf, &m->declare->lock, m->wlr_output, "lock");
+		dump_band(&buf, &m->declare->desktop, m, "desktop", false);
+		dump_band(&buf, &m->declare->lock, m, "lock", true);
 	}
 	return buffer_detach(&buf);
 }

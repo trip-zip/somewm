@@ -292,24 +292,39 @@ widget_nodes_clear(drawin_t *d)
 	d->widget_nodes_declared = false;
 }
 
-bool
+unsigned
 widget_nodes_refused(drawin_t *d)
 {
-	return d->shape_bounding || d->shape_clip || d->shape_input
-		|| (d->opacity >= 0 && d->opacity < 1)
-		|| d == globalconf.systray.parent;
+	return (d->shape_bounding ? WIDGET_REFUSED_SHAPE_BOUNDING : 0)
+		| (d->shape_clip ? WIDGET_REFUSED_SHAPE_CLIP : 0)
+		| (d->shape_input ? WIDGET_REFUSED_SHAPE_INPUT : 0)
+		| (d->opacity >= 0 && d->opacity < 1
+			? WIDGET_REFUSED_OPACITY : 0)
+		| (d == globalconf.systray.parent
+			? WIDGET_REFUSED_SYSTRAY : 0);
+}
+
+/* Drop whatever was stored and say why, which is Lua's signal to paint the
+ * whole drawable itself. The reason is the tree dump's to report; nothing
+ * here branches on it. */
+static bool
+nodes_drop(drawin_t *d, enum widget_nodes_state why)
+{
+	widget_nodes_clear(d);
+	d->widget_nodes_state = why;
+	return false;
 }
 
 void
 widget_nodes_gate(lua_State *L, drawin_t *d, int udx)
 {
-	bool refused = widget_nodes_refused(d);
+	bool refused = widget_nodes_refused(d) != 0;
 
 	if (refused == d->widget_nodes_refused)
 		return;
 	d->widget_nodes_refused = refused;
 	if (refused)
-		widget_nodes_clear(d);
+		nodes_drop(d, WIDGET_NODES_REFUSED);
 	/* The drawable is an item of the drawin's own env table, so reaching it
 	 * needs the drawin already on the stack. The object registry does not
 	 * hold a wibox's drawin, so looking it up there answers nil. A caller
@@ -322,6 +337,28 @@ widget_nodes_gate(lua_State *L, drawin_t *d, int udx)
 	}
 }
 
+/* Whether len more nodes would take this drawin's output past the budget
+ * every converted tree on it shares (widget.h). The drawin's own stored tree
+ * is the one being replaced, so it does not count against the new one, and a
+ * drawin with no screen declares nowhere and is not counted at all. */
+static bool
+over_budget(drawin_t *d, size_t len)
+{
+	Monitor *m = d->screen ? d->screen->monitor : NULL;
+	size_t total = len;
+
+	if (!m)
+		return false;
+	foreach(item, globalconf.drawins) {
+		drawin_t *other = *item;
+
+		if (other != d && other->screen
+				&& other->screen->monitor == m)
+			total += other->widget_nodes_len;
+	}
+	return total > WIDGET_NODES_OUTPUT_MAX;
+}
+
 bool
 widget_nodes_set(lua_State *L, drawin_t *d, int idx, int leaves_idx,
 	float scale)
@@ -331,14 +368,23 @@ widget_nodes_set(lua_State *L, drawin_t *d, int idx, int leaves_idx,
 	static struct widget_node nodes[WIDGET_NODES_MAX];
 	size_t len = 0, leaves = 0;
 
-	d->widget_nodes_refused = widget_nodes_refused(d);
-	if (d->widget_nodes_refused || !lua_istable(L, idx)
-			|| !read_tree(L, idx, nodes, &len, &leaves)
-			|| !leaves_set(L, d, leaves_idx, leaves, scale)) {
-		widget_nodes_clear(d);
-		return false;
-	}
+	d->widget_nodes_refused = widget_nodes_refused(d) != 0;
+	if (d->widget_nodes_refused)
+		return nodes_drop(d, WIDGET_NODES_REFUSED);
+	if (!lua_istable(L, idx))
+		return nodes_drop(d, WIDGET_NODES_NONE);
+	/* read_tree refuses a tree of its own cap's size before reading a node
+	 * of it, so a full scratch tree is the one failure that is a size and
+	 * not a malformed table. */
+	if (!read_tree(L, idx, nodes, &len, &leaves))
+		return nodes_drop(d, len == WIDGET_NODES_MAX
+			? WIDGET_NODES_OVER_BUDGET : WIDGET_NODES_MALFORMED);
+	if (over_budget(d, len))
+		return nodes_drop(d, WIDGET_NODES_OVER_BUDGET);
+	if (!leaves_set(L, d, leaves_idx, leaves, scale))
+		return nodes_drop(d, WIDGET_NODES_MALFORMED);
 
+	d->widget_nodes_state = WIDGET_NODES_CONVERTED;
 	if (d->widget_nodes_len == len
 			&& memcmp(d->widget_nodes, nodes, len * sizeof(*nodes)) == 0)
 		return true;

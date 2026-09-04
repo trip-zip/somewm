@@ -50,14 +50,47 @@ struct widget_node {
  * holds 8192 elements (clay.h:1019), shared by every drawin on the output. */
 #define WIDGET_NODES_MAX 1024
 
-/* Whether d has to paint itself whole: shape_bounding and shape_clip are
- * applied to the drawable's own pixels (objects/drawin.c), which a converted
- * node is no longer part of; shape_input's pass-through would be swallowed by
- * a converted node's scene rect, which takes input everywhere it draws; a
+/* Elements every converted tree on one output may take together. Clay's
+ * context holds 8192 (clay.h:1019, allocated at 2151-2168) and every drawin
+ * on the output declares into that one context, alongside its clients, layer
+ * surfaces and leaves; the rest is the reserve for those, at up to three
+ * elements per client. A tree that would take its output past this is refused
+ * and the drawable paints itself whole, because exceeding Clay's own capacity
+ * raises CLAY_ERROR_TYPE_ELEMENTS_CAPACITY_EXCEEDED (clay.h:780), which the
+ * error handler treats as the bug it is and aborts on. */
+#define WIDGET_NODES_OUTPUT_MAX 6144
+
+/* Why d has to paint itself whole, as a mask of reasons, or 0 for a drawin
+ * that can convert: shape_bounding and shape_clip are applied to the
+ * drawable's own pixels (objects/drawin.c), which a converted node is no
+ * longer part of; shape_input's pass-through would be swallowed by a
+ * converted node's scene rect, which takes input everywhere it draws; a
  * translucent drawin blends once as one layer, where a tree of nodes each
  * carrying the opacity would blend every overlap twice; and the legacy tray
  * (awesome.systray) composites into the drawable's pixels. */
-bool widget_nodes_refused(drawin_t *d);
+enum {
+	WIDGET_REFUSED_SHAPE_BOUNDING = 1 << 0,
+	WIDGET_REFUSED_SHAPE_CLIP     = 1 << 1,
+	WIDGET_REFUSED_SHAPE_INPUT    = 1 << 2,
+	WIDGET_REFUSED_OPACITY        = 1 << 3,
+	WIDGET_REFUSED_SYSTRAY        = 1 << 4,
+};
+unsigned widget_nodes_refused(drawin_t *d);
+
+/* What the last widget_nodes_set() answered, kept so the tree dump can say
+ * why a drawin paints itself whole rather than only that it does. Zero is a
+ * drawin no redraw has compiled yet, so a field that was never written reads
+ * as the fact it stands for. */
+enum widget_nodes_state {
+	WIDGET_NODES_UNTRIED = 0,
+	WIDGET_NODES_CONVERTED,
+	/* The compile step (lua/wibox/clay.lua) returned no tree at all. */
+	WIDGET_NODES_NONE,
+	/* widget_nodes_refused(), which names which reasons. */
+	WIDGET_NODES_REFUSED,
+	WIDGET_NODES_MALFORMED,
+	WIDGET_NODES_OVER_BUDGET,
+};
 
 /* For the setters that change that answer: when it flips, drop the tree and
  * ask Lua for a complete repaint (property::surface on the drawable), so the
