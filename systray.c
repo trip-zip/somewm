@@ -21,6 +21,7 @@
  */
 
 #include "systray.h"
+#include "widget.h"
 #include "globalconf.h"
 #include "color.h"
 #include "objects/drawin.h"
@@ -228,6 +229,7 @@ luaA_systray(lua_State *L)
 
 	if (nargs == 1) {
 		systray_kickout(drawin);
+		widget_nodes_gate(L, drawin);
 		lua_pushinteger(L, systray_count_visible());
 		lua_pushnil(L);
 		return 2;
@@ -243,9 +245,16 @@ luaA_systray(lua_State *L)
 	rows = luaL_optinteger(L, 9, 1);
 
 	if (globalconf.systray.parent != drawin) {
-		if (globalconf.systray.parent)
-			systray_kickout(globalconf.systray.parent);
+		drawin_t *old = globalconf.systray.parent;
+
+		if (old)
+			systray_kickout(old);
 		globalconf.systray.parent = drawin;
+		/* The host paints itself whole (widget.c); the tree is refused
+		 * on the new one and allowed again on the old. */
+		if (old)
+			widget_nodes_gate(L, old);
+		widget_nodes_gate(L, drawin);
 	}
 
 	if (color_init_from_string(&bg, bg_color)) {

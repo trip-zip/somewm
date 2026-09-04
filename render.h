@@ -76,6 +76,11 @@ void render_set_position(struct render_state *rs, int x, int y);
  * this output's nodes (scale joins the raster cache key). */
 void render_set_scale(struct render_state *rs, float scale);
 
+/* The device length of a logical span, rounded at both edges: what every
+ * raster buffer is sized by, so a surface sized with it lands in its box
+ * without resampling. */
+int render_device_len(int origin, int len, float scale);
+
 /* The userData channel: Clay carries each element's userData word into its
  * render commands untouched, and the renderer retains it per node. The word
  * is a packed integer, never a pointer, so a retained command can never

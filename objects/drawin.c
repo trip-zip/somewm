@@ -349,6 +349,14 @@ drawin_update_shadow_entry(drawin_t *d, const shadow_config_t *config)
 }
 
 void
+drawin_mark_dirty(drawin_t *drawin)
+{
+	if (drawin->screen && drawin->screen->monitor
+			&& drawin->screen->monitor->declare)
+		declare_output_mark_dirty(drawin->screen->monitor->declare);
+}
+
+void
 drawin_refresh_drawable(drawin_t *drawin)
 {
 	drawable_t *d;
@@ -367,6 +375,13 @@ drawin_refresh_drawable(drawin_t *drawin)
 	if (!d->surface || !d->refreshed) {
 		return;
 	}
+
+	/* A converted tree draws through its leaves (widget.c): the drawable
+	 * surface holds nothing for the renderer, and the entry only has to
+	 * exist for the declare filter. The frame path is woken by whichever
+	 * of the tree and the leaves changed, not from here. */
+	if (drawin->widget_nodes_len > 0 && drawin->content_entry.native)
+		return;
 
 	work_surface = d->surface;
 
@@ -432,9 +447,7 @@ drawin_refresh_drawable(drawin_t *drawin)
 	/* Wake the frame path: the gen bump above changed declared content.
 	 * Map-then-draw holds through the declare filter, which skips a
 	 * drawin until its entry has pixels. */
-	if (drawin->screen && drawin->screen->monitor
-			&& drawin->screen->monitor->declare)
-		declare_output_mark_dirty(drawin->screen->monitor->declare);
+	drawin_mark_dirty(drawin);
 }
 
 /** Assign screen to drawin based on its position
@@ -1263,8 +1276,7 @@ drawin_border_refresh_single(drawin_t *d)
 	border_surface = d->border_width > 0 ? drawin_render_border(d) : NULL;
 	drawin_entry_set(&d->border_entry, border_surface);
 
-	if (d->screen && d->screen->monitor && d->screen->monitor->declare)
-		declare_output_mark_dirty(d->screen->monitor->declare);
+	drawin_mark_dirty(d);
 }
 
 /** Refresh all visible drawins (AwesomeWM compatibility)
@@ -1542,6 +1554,7 @@ luaA_drawin_set_opacity(lua_State *L, drawin_t *drawin)
 		drawin->opacity = opacity;
 		/* Opacity rides the content leaf's userData word (declare.c) */
 		declare_mark_all_dirty();
+		widget_nodes_gate(L, drawin);
 		luaA_object_emit_signal(L, -3, "property::opacity", 0);
 	}
 	return 0;
@@ -1668,6 +1681,7 @@ luaA_drawin_set_shape_bounding(lua_State *L, drawin_t *drawin)
 		cairo_surface_destroy(drawin->shape_bounding);
 
 	drawin->shape_bounding = copy;
+	widget_nodes_gate(L, drawin);
 
 	/* Trigger redraw to apply shape (Wayland equivalent of xwindow_set_shape) */
 	if (drawin->visible)
@@ -1718,6 +1732,7 @@ luaA_drawin_set_shape_clip(lua_State *L, drawin_t *drawin)
 		cairo_surface_destroy(drawin->shape_clip);
 
 	drawin->shape_clip = copy;
+	widget_nodes_gate(L, drawin);
 
 	/* Trigger redraw to apply shape (Wayland equivalent of xwindow_set_shape) */
 	if (drawin->visible)
@@ -1765,6 +1780,7 @@ luaA_drawin_set_shape_input(lua_State *L, drawin_t *drawin)
 		cairo_surface_destroy(drawin->shape_input);
 
 	drawin->shape_input = copy;
+	widget_nodes_gate(L, drawin);
 
 	/* Note: No redraw needed for input shape - it's checked at input time.
 	 * A 0x0 surface means pass through ALL input (AwesomeWM convention). */

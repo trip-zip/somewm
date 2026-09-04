@@ -11,143 +11,24 @@
 --
 -- Run: make test-one TEST=tests/test-clay-widget-containers.lua
 
-local ffi = require("ffi")
 local runner = require("_runner")
-local utils = require("_utils")
+local capture = require("_widget_capture")
 local wibox = require("wibox")
-local base = require("wibox.widget.base")
 local cairo = require("lgi").cairo
 local gshape = require("gears.shape")
-local matrix = require("gears.matrix")
-
-ffi.cdef [[
-    void cairo_surface_flush(void *surface);
-    unsigned char *cairo_image_surface_get_data(void *surface);
-    int cairo_image_surface_get_stride(void *surface);
-]]
 
 local s = screen[1]
 local BX, BY, BW, BH = 0, 0, 200, 40
 local OUTER, INNER, BORDER = 4, 6, 2
 local BAR_BG, BOX_BG, BORDER_COLOR = "#101010", "#204080", "#ff8000"
 
+local cap = capture.new(s, BX, BY, BW, BH)
 local bar, captured
 
--- A widget the compile step can never convert, so the chain always ends here.
-local function leaf_widget()
-    local w = base.make_widget()
-
-    rawset(w, "fit", function(_, _, width, height) return width, height end)
-    rawset(w, "draw", function(_, _, cr, width, height)
-        cr:set_source_rgb(1, 0, 0)
-        cr:rectangle(0, 0, width, height)
-        cr:fill()
-    end)
-    return w
-end
-
--- Every widget box in the drawable's hierarchy, outermost first, in drawable
--- coordinates. This is what the old layout engine places, and what Clay has
--- to agree with.
-local function hierarchy_boxes()
-    local boxes, h = {}, bar._drawable._widget_hierarchy
-
-    while h do
-        local x, y, w, hh = matrix.transform_rectangle(
-            h:get_matrix_to_device(), 0, 0, h:get_size())
-
-        boxes[#boxes + 1] = { x = x, y = y, width = w, height = hh }
-        h = h:get_children()[1]
-    end
-    return boxes
-end
-
-local function assert_box(got, want, what)
-    assert(got, what .. ": no box")
-
-    local ok, err = pcall(utils.assert_geometry, got, want)
-
-    assert(ok, what .. ": " .. tostring(err))
-end
-
--- The wibar's pixels out of a screen capture, as one string.
-local function capture()
-    local surface = s.content
-
-    assert(surface, "screen.content returned nothing")
-
-    -- screen.content comes back as an lgi record; the FFI wants the pointer.
-    local raw = surface._native or surface
-
-    ffi.C.cairo_surface_flush(raw)
-
-    local data = ffi.C.cairo_image_surface_get_data(raw)
-    local stride = ffi.C.cairo_image_surface_get_stride(raw)
-    local rows = {}
-
-    for y = BY, BY + BH - 1 do
-        rows[#rows + 1] = ffi.string(data + y * stride + BX * 4, BW * 4)
-    end
-    return table.concat(rows)
-end
-
--- R, G, B of one pixel of a capture, drawable-local.
-local function pixel(shot, x, y)
-    local off = (y * BW + x) * 4
-
-    return shot:byte(off + 3), shot:byte(off + 2), shot:byte(off + 1)
-end
-
-local function assert_pixel(shot, x, y, hex, what)
-    local r, g, b = pixel(shot, x, y)
-    local want_r = tonumber(hex:sub(2, 3), 16)
-    local want_g = tonumber(hex:sub(4, 5), 16)
-    local want_b = tonumber(hex:sub(6, 7), 16)
-
-    assert(math.abs(r - want_r) <= 1 and math.abs(g - want_g) <= 1
-        and math.abs(b - want_b) <= 1,
-        string.format("%s at %d,%d: got #%02x%02x%02x, want %s",
-            what, x, y, r, g, b, hex))
-end
-
--- The wibar looks the same painted whole as it does converted. Retried
--- because the repaint the fallback needs lands a frame or two later.
-local function compare(count, what)
-    local shot = capture()
-
-    if shot == captured then
-        io.stderr:write("[PASS] " .. what .. " draws what the chain drew\n")
-        return true
-    end
-    if count < 20 then
-        return
-    end
-    for y = 0, BH - 1 do
-        for x = 0, BW - 1 do
-            local r, g, b = pixel(shot, x, y)
-            local wr, wg, wb = pixel(captured, x, y)
-
-            assert(r == wr and g == wg and b == wb, string.format(
-                "%s differs at %d,%d: #%02x%02x%02x, converted #%02x%02x%02x",
-                what, x, y, r, g, b, wr, wg, wb))
-        end
-    end
-    error(what .. " differs outside the compared channels")
-end
-
 -- A step that runs `setup` once and then waits for the readback to say the
--- tree did or did not convert. The fallbacks repaint a frame or two later,
--- so every one of these polls.
+-- tree did or did not convert.
 local function step_until(converted, setup, what)
-    return function(count)
-        if count == 1 then
-            setup()
-        end
-        if (#awesome._test_widget_boxes(bar.drawin) > 0) == converted then
-            return true
-        end
-        assert(count < 20, what)
-    end
+    return capture.step_until(function() return bar end, converted, setup, what)
 end
 
 local steps = {
@@ -168,7 +49,7 @@ local steps = {
                     {
                         widget = wibox.container.margin,
                         margins = INNER,
-                        leaf_widget(),
+                        capture.leaf_widget(math.huge, nil, "#ff0000"),
                     },
                 },
             }
@@ -182,6 +63,8 @@ local steps = {
     -- Clay's boxes for the chain, against wibox's own.
     function()
         local boxes = awesome._test_widget_boxes(bar.drawin)
+
+        local assert_box = capture.assert_box
 
         assert(#boxes == 5, "expected five nodes, got " .. #boxes)
         assert_box(boxes[1], { x = 0, y = 0, width = BW, height = BH },
@@ -199,7 +82,7 @@ local steps = {
 
         -- The chain's widget nodes are boxes 2 to 5; the hierarchy holds the
         -- same widgets, starting at the outer margin.
-        local want = hierarchy_boxes()
+        local want = capture.hierarchy_boxes(bar._drawable._widget_hierarchy)
 
         for i = 1, #want do
             assert_box(boxes[i + 1], want[i],
@@ -211,14 +94,14 @@ local steps = {
 
     -- What the converted chain draws.
     function()
-        local shot = capture()
+        local shot = cap:shot()
 
-        assert_pixel(shot, 1, 1, BAR_BG, "the drawable's own background")
-        assert_pixel(shot, OUTER + 1, OUTER + 1, BORDER_COLOR,
+        cap:assert_pixel(shot, 1, 1, BAR_BG, "the drawable's own background")
+        cap:assert_pixel(shot, OUTER + 1, OUTER + 1, BORDER_COLOR,
             "the background's border")
-        assert_pixel(shot, OUTER + BORDER + 2, OUTER + BORDER + 2, BOX_BG,
+        cap:assert_pixel(shot, OUTER + BORDER + 2, OUTER + BORDER + 2, BOX_BG,
             "the background's fill")
-        assert_pixel(shot, math.floor(BW / 2), math.floor(BH / 2), "#ff0000",
+        cap:assert_pixel(shot, math.floor(BW / 2), math.floor(BH / 2), "#ff0000",
             "the raster leaf")
         captured = shot
         io.stderr:write("[PASS] the converted chain draws where it should\n")
@@ -232,7 +115,7 @@ local steps = {
         "a shape did not put the drawable back on cairo"),
 
     function(count)
-        return compare(count, "a shaped drawable")
+        return cap:compare(count, captured, "a shaped drawable")
     end,
 
     -- And a background image, the other thing the chain cannot carry.
@@ -244,7 +127,7 @@ local steps = {
     end, "a background image did not put the drawable back"),
 
     function(count)
-        return compare(count, "a background image")
+        return cap:compare(count, captured, "a background image")
     end,
 
     function()
