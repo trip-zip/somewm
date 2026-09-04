@@ -136,6 +136,9 @@ print_usage(const char *progname)
 	fprintf(stderr, "  screenshot screen <path> [ID]  Save single screen screenshot\n");
 	fprintf(stderr, "  screenshot interactive <path>  Drag-to-select region and save\n\n");
 
+	fprintf(stderr, "CLAY COMMANDS:\n");
+	fprintf(stderr, "  clay tree [screen]             Dump the solved Clay tree\n\n");
+
 	fprintf(stderr, "INPUT SETTINGS:\n");
 	fprintf(stderr, "  input                          Show all input settings\n");
 	fprintf(stderr, "  input <setting> [value]        Get or set an input setting\n");
@@ -425,7 +428,7 @@ print_completions(const char *shell)
 		printf("  prev=\"${COMP_WORDS[COMP_CWORD-1]}\"\n");
 		printf("\n");
 		printf("  # Top-level commands\n");
-		printf("  local categories=\"client dpms eval exec hotkeys idle input keybind launcher layout lock menubar mouse notify output ping quit reload restart rule screen screenshot subscribe tag test theme titlebar version wallpaper wibar\"\n");
+		printf("  local categories=\"clay client dpms eval exec hotkeys idle input keybind launcher layout lock menubar mouse notify output ping quit reload restart rule screen screenshot subscribe tag test theme titlebar version wallpaper wibar\"\n");
 		printf("\n");
 		printf("  if [[ ${COMP_CWORD} -eq 1 ]]; then\n");
 		printf("    COMPREPLY=( $(compgen -W \"${categories} --json --subscribe --help\" -- \"${cur}\") )\n");
@@ -435,6 +438,9 @@ print_completions(const char *shell)
 		printf("  case \"${COMP_WORDS[1]}\" in\n");
 		printf("    tag)\n");
 		printf("      COMPREPLY=( $(compgen -W \"view toggle current list add delete rename screen swap layout gap mwfact\" -- \"${cur}\") )\n");
+		printf("      ;;\n");
+		printf("    clay)\n");
+		printf("      COMPREPLY=( $(compgen -W \"tree\" -- \"${cur}\") )\n");
 		printf("      ;;\n");
 		printf("    client)\n");
 		printf("      COMPREPLY=( $(compgen -W \"list kill close focus movetotag toggletag movetoscreen geometry move resize moveresize center placement floating fullscreen sticky ontop minimized maximized maximized_horizontal maximized_vertical hidden modal focusable urgent above below skip_taskbar opacity raise lower swap swapidx zoom visible tiled master info\" -- \"${cur}\") )\n");
@@ -492,6 +498,7 @@ print_completions(const char *shell)
 		printf("_somewm_client() {\n");
 		printf("  local -a categories\n");
 		printf("  categories=(\n");
+		printf("    'clay:Clay tree observability'\n");
 		printf("    'client:Client management'\n");
 		printf("    'dpms:Display power management'\n");
 		printf("    'eval:Execute Lua code'\n");
@@ -536,6 +543,7 @@ print_completions(const char *shell)
 		printf("    args)\n");
 		printf("      case ${words[1]} in\n");
 		printf("        tag) _values 'subcommand' view toggle current list add delete rename screen swap layout gap mwfact ;;\n");
+		printf("        clay) _values 'subcommand' tree ;;\n");
 		printf("        client) _values 'subcommand' list kill close focus movetotag toggletag movetoscreen geometry move resize moveresize center placement floating fullscreen sticky ontop minimized maximized hidden modal focusable urgent above below skip_taskbar opacity raise lower swap swapidx zoom visible tiled master info ;;\n");
 		printf("        screen) _values 'subcommand' list focused count clients scale focus ;;\n");
 		printf("        layout) _values 'subcommand' list get set next prev ;;\n");
@@ -558,7 +566,7 @@ print_completions(const char *shell)
 		printf("_somewm_client \"$@\"\n");
 	} else if (strcmp(shell, "fish") == 0) {
 		printf("# Fish completions for somewm-client\n\n");
-		printf("set -l categories client dpms eval exec hotkeys idle input keybind launcher layout lock menubar mouse notify output ping quit reload restart rule screen screenshot tag theme titlebar version wallpaper wibar\n\n");
+		printf("set -l categories clay client dpms eval exec hotkeys idle input keybind launcher layout lock menubar mouse notify output ping quit reload restart rule screen screenshot tag theme titlebar version wallpaper wibar\n\n");
 		printf("complete -c somewm-client -f\n");
 		printf("complete -c somewm-client -n '__fish_use_subcommand' -l json -d 'Output in JSON format'\n");
 		printf("complete -c somewm-client -n '__fish_use_subcommand' -l subscribe -d 'Subscribe to events'\n");
@@ -585,6 +593,7 @@ print_completions(const char *shell)
 		printf("complete -c somewm-client -n '__fish_use_subcommand' -a 'reload' -d 'Reload configuration'\n");
 		printf("complete -c somewm-client -n '__fish_use_subcommand' -a 'restart' -d 'Restart compositor'\n");
 		printf("complete -c somewm-client -n '__fish_use_subcommand' -a 'rule' -d 'Client rules'\n");
+		printf("complete -c somewm-client -n '__fish_use_subcommand' -a 'clay' -d 'Clay tree observability'\n");
 		printf("complete -c somewm-client -n '__fish_use_subcommand' -a 'screen' -d 'Screen management'\n");
 		printf("complete -c somewm-client -n '__fish_use_subcommand' -a 'screenshot' -d 'Screenshot capture'\n");
 		printf("complete -c somewm-client -n '__fish_use_subcommand' -a 'tag' -d 'Tag management'\n");
@@ -608,6 +617,8 @@ print_completions(const char *shell)
 		printf("complete -c somewm-client -n '__fish_seen_subcommand_from rule' -a 'list add remove test'\n");
 		printf("# Wibar subcommands\n");
 		printf("complete -c somewm-client -n '__fish_seen_subcommand_from wibar' -a 'list show hide toggle'\n");
+		printf("# Clay subcommands\n");
+		printf("complete -c somewm-client -n '__fish_seen_subcommand_from clay' -a 'tree'\n");
 		printf("# Screenshot subcommands\n");
 		printf("complete -c somewm-client -n '__fish_seen_subcommand_from screenshot' -a 'save client screen interactive'\n");
 		printf("# Mouse subcommands\n");

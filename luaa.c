@@ -1557,6 +1557,34 @@ luaA_awesome_test_widget_boxes(lua_State *L)
 	return 1;
 }
 
+/** The solved Clay tree of every screen, or of one screen, as text.
+ * Backs `somewm-client clay tree`: reads back what the last reconcile
+ * retained (declare.h), so it reports the frame the output drew rather than
+ * solving again.
+ * \param screen Optional screen to report; every output when absent.
+ * \return The dump.
+ */
+static int
+luaA_awesome_clay_tree(lua_State *L)
+{
+	Monitor *m = NULL;
+	char *dump;
+
+	if (!lua_isnoneornil(L, 1)) {
+		screen_t *s = luaA_checkscreen(L, 1);
+
+		if (!s->monitor) {
+			lua_pushliteral(L, "");
+			return 1;
+		}
+		m = s->monitor;
+	}
+	dump = declare_dump(m);
+	lua_pushstring(L, dump);
+	p_delete(&dump);
+	return 1;
+}
+
 /** Reload shadow settings from beautiful theme.
  * Call this after changing beautiful.shadow_* values to apply them.
  * Regenerates shadow textures and updates all existing shadows.
@@ -2408,6 +2436,7 @@ const luaL_Reg awesome_methods[] = {
 	{ "shadow_reload", luaA_awesome_shadow_reload },
 	{ "_test_add_output", luaA_awesome_test_add_output },
 	{ "_test_redeclare", luaA_awesome_test_redeclare },
+	{ "_clay_tree", luaA_awesome_clay_tree },
 	{ "_test_declare_order", luaA_awesome_test_declare_order },
 	{ "_test_widget_boxes", luaA_awesome_test_widget_boxes },
 	/* Lock API methods */

@@ -13,9 +13,11 @@
  * follow the stack and layer-shell surfaces the oldest first.
  */
 
+#include <inttypes.h>
 #include <math.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 #include <sys/wait.h>
 #include <wlr/types/wlr_fractional_scale_v1.h>
 #include <wlr/types/wlr_layer_shell_v1.h>
@@ -36,6 +38,7 @@
 #include "stack.h"
 #include "widget.h"
 #include "window.h"
+#include "common/buffer.h"
 #include "common/util.h"
 #include "objects/client.h"
 #include "objects/drawin.h"
@@ -50,6 +53,12 @@ struct declare_band {
 	void *arena;
 	struct wlr_scene_tree *tree;
 	struct render_state *render;
+	/* The last frame's readback for the tree dump: what the solve
+	 * produced, what the reconcile changed, and how long each step took.
+	 * Written by declare_output_frame only, so a band that has not drawn
+	 * since the last dump reports the frame it did draw. */
+	int commands, mutations;
+	int64_t declare_us, solve_us, reconcile_us;
 };
 
 struct declare_output {
@@ -815,6 +824,15 @@ declare_output_order(struct declare_output *dout, Monitor *m, void **objects,
 
 /* --- context lifecycle and the frame entry --- */
 
+static int64_t
+now_us(void)
+{
+	struct timespec ts;
+
+	clock_gettime(CLOCK_MONOTONIC, &ts);
+	return (int64_t)ts.tv_sec * 1000000 + ts.tv_nsec / 1000;
+}
+
 static void
 handle_clay_error(Clay_ErrorData error)
 {
@@ -1001,6 +1019,7 @@ int
 declare_output_frame(struct declare_output *dout, Monitor *m, bool lock_active)
 {
 	struct declare_band *band;
+	int64_t declared, solved;
 
 	if (!dout->dirty)
 		return -1;
@@ -1016,13 +1035,184 @@ declare_output_frame(struct declare_output *dout, Monitor *m, bool lock_active)
 	}
 	band = lock_active ? &dout->lock : &dout->desktop;
 
+	band->declare_us = now_us();
 	Clay_SetCurrentContext(band->clay);
 	Clay_BeginLayout();
 	if (lock_active)
 		declare_lock_scene(m);
 	else
 		declare_scene(m);
+	declared = now_us();
 	Clay_RenderCommandArray commands = Clay_EndLayout();
+	solved = now_us();
 
-	return render_reconcile(band->render, commands, &client_hooks);
+	band->commands = commands.length;
+	band->mutations = render_reconcile(band->render, commands,
+		&client_hooks);
+	band->reconcile_us = now_us() - solved;
+	band->solve_us = solved - declared;
+	band->declare_us = declared - band->declare_us;
+	return band->mutations;
+}
+
+/* --- the solved tree dump (somewm-client clay tree) ---
+ *
+ * One header line of counters per band and one line per retained node, in
+ * draw order, read back from what the last reconcile retained (render.h).
+ * Nothing here solves or declares: the dump reports the frame the output
+ * drew. It doubles as a tree==scene check in release builds, where the
+ * verifier is compiled out, by printing the renderer's own mismatch answer.
+ */
+
+static const char *
+command_name(uint32_t type)
+{
+	switch (type) {
+	case CLAY_RENDER_COMMAND_TYPE_RECTANGLE:	return "RECTANGLE";
+	case CLAY_RENDER_COMMAND_TYPE_BORDER:		return "BORDER";
+	case CLAY_RENDER_COMMAND_TYPE_TEXT:		return "TEXT";
+	case CLAY_RENDER_COMMAND_TYPE_IMAGE:		return "IMAGE";
+	case CLAY_RENDER_COMMAND_TYPE_SCISSOR_START:	return "SCISSOR_START";
+	case CLAY_RENDER_COMMAND_TYPE_SCISSOR_END:	return "SCISSOR_END";
+	case CLAY_RENDER_COMMAND_TYPE_CUSTOM:		return "CUSTOM";
+	default:					return "UNKNOWN";
+	}
+}
+
+/* The widget node an element id names, walking the same path hashing the
+ * declare pass used. The walk visits every node so the preorder index keeps
+ * up with the id path; NULL when the id names no node in this tree. */
+static const struct widget_node *
+widget_node_for_id(drawin_t *d, size_t *i, Clay_ElementId id, uint32_t want)
+{
+	const struct widget_node *n = &d->widget_nodes[(*i)++];
+	const struct widget_node *hit = id.id == want ? n : NULL;
+
+	for (uint16_t k = 0; k < n->children; k++) {
+		const struct widget_node *c = widget_node_for_id(d, i,
+			widget_child_id(id, k), want);
+
+		if (c && !hit)
+			hit = c;
+	}
+	return hit;
+}
+
+/* What the node is. A leaf that carries no handle (a client's clip wrapper,
+ * a drawin's shadow and border, the fullscreen backing, every SCISSOR
+ * marker) stands for no object and says so. */
+static void
+dump_what(buffer_t *buf, uint32_t id, void *userdata)
+{
+	enum declare_kind kind = 0;
+	void *object = declare_handle_get(declare_userdata_handle(userdata),
+		&kind);
+
+	if (!object) {
+		buffer_adds(buf, "-");
+		return;
+	}
+	switch (kind) {
+	case DECLARE_KIND_CLIENT:
+		buffer_addf(buf, "client %s", client_get_appid(object));
+		break;
+	case DECLARE_KIND_LAYER: {
+		struct wlr_layer_surface_v1 *ls =
+			((LayerSurface *)object)->layer_surface;
+
+		buffer_addf(buf, "layer %s", ls->namespace ? ls->namespace : "?");
+		break;
+	}
+	case DECLARE_KIND_DRAWIN: {
+		drawin_t *d = object;
+		const struct widget_node *n = NULL;
+		size_t i = 0;
+
+		/* A converted drawin declares no leaf of its own, so every
+		 * node carrying its handle is a widget node. The tree's root
+		 * is the drawin's own box, and naming it as the drawin is what
+		 * keeps a converted drawin in the dump under its own name. */
+		if (d->widget_nodes_len > 0)
+			n = widget_node_for_id(d, &i, widget_root_id(
+				(uint32_t)handle_for(d, DECLARE_KIND_DRAWIN)),
+				id);
+		if (n && n != d->widget_nodes)
+			buffer_addf(buf, "widget %s%s", n->cls ? n->cls : "-",
+				n->raster ? " raster" : "");
+		else
+			buffer_addf(buf, "drawin screen %d %dx%d+%d+%d",
+				d->screen ? d->screen->index : 0,
+				d->width, d->height, d->x, d->y);
+		break;
+	}
+	}
+}
+
+static void
+dump_node(void *user, const struct render_node_view *v)
+{
+	buffer_t *buf = user;
+
+	/* Only RECTANGLE carries the band it landed in (clay.h:2908). Every
+	 * other command type is built without a zIndex (clay.h:2790, 2986) and
+	 * would read as the bottom band, so those say they have none. Draw
+	 * order is the line order either way. */
+	buffer_addf(buf, "  %08x %-13s ", v->id, command_name(v->type));
+	if (v->type == CLAY_RENDER_COMMAND_TYPE_RECTANGLE)
+		buffer_addf(buf, "z=%-4d ", v->z);
+	else
+		buffer_adds(buf, "z=-    ");
+	buffer_addf(buf, "box %d,%d %dx%d rbox %d,%d %dx%d ",
+		(int)v->box.x, (int)v->box.y,
+		(int)v->box.width, (int)v->box.height,
+		(int)v->rbox.x, (int)v->rbox.y,
+		(int)v->rbox.width, (int)v->rbox.height);
+	dump_what(buf, v->id, v->user_data);
+	if (v->raster_bytes)
+		buffer_addf(buf, " raster=%zu", v->raster_bytes);
+	/* A SCISSOR marker realizes no node by design; anything else that did
+	 * not is a surface whose client died mid-frame. */
+	if (!v->has_node && v->type != CLAY_RENDER_COMMAND_TYPE_SCISSOR_START
+			&& v->type != CLAY_RENDER_COMMAND_TYPE_SCISSOR_END)
+		buffer_adds(buf, " no-node");
+	if (v->rbox.width != v->box.width || v->rbox.height != v->box.height
+			|| v->rbox.x != v->box.x || v->rbox.y != v->box.y)
+		buffer_adds(buf, " [solved!=realized]");
+	if (v->mismatch)
+		buffer_adds(buf, " [tree!=scene]");
+	buffer_adds(buf, "\n");
+}
+
+static void
+dump_band(buffer_t *buf, struct declare_band *band, struct wlr_output *o,
+	const char *name)
+{
+	if (!band->clay)
+		return;
+	buffer_addf(buf, "output %s band %s scale %.2f\n", o->name, name,
+		o->scale);
+	buffer_addf(buf, "  commands %d mutations %d nodes %zu raster_bytes %zu "
+		"buffers %d declare %" PRId64 "us solve %" PRId64 "us "
+		"reconcile %" PRId64 "us\n",
+		band->commands, band->mutations,
+		render_node_count(band->render),
+		render_raster_bytes(band->render),
+		render_buffers_created(band->render),
+		band->declare_us, band->solve_us, band->reconcile_us);
+	render_walk(band->render, dump_node, buf);
+}
+
+char *
+declare_dump(Monitor *only)
+{
+	buffer_t buf = BUFFER_INIT;
+	Monitor *m;
+
+	wl_list_for_each(m, &mons, link) {
+		if (!m->declare || (only && m != only))
+			continue;
+		dump_band(&buf, &m->declare->desktop, m->wlr_output, "desktop");
+		dump_band(&buf, &m->declare->lock, m->wlr_output, "lock");
+	}
+	return buffer_detach(&buf);
 }

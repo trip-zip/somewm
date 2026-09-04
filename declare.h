@@ -91,6 +91,14 @@ declare_userdata_handle(void *userdata)
 	return (uint64_t)(uintptr_t)userdata & 0xFFFFFFFFFFULL;
 }
 
+/* The solved tree of every output (or of `only`), in draw order: one header
+ * line of counters per band, then one line per retained node naming its
+ * element id, command type, z, solved box, realized box and what it is.
+ * Reads back the last reconcile rather than solving again, and marks a node
+ * the scene disagrees with, so a release build without the tree==scene
+ * verifier still reports a divergence. The caller frees the string. */
+char *declare_dump(struct Monitor *only);
+
 /* The input backmap: the object whose leaf drew node (renderer-owned image
  * nodes, border sides, borrowed surface trees), or NULL for a node no band
  * drew. Searches every output's bands, desktop then lock, because the band

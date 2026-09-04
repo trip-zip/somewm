@@ -22,6 +22,12 @@ typedef struct drawin_t drawin_t;
  * Colors are straight alpha, 0-1, as everywhere else on this side; an alpha
  * of zero means the node draws no fill or no ring. */
 struct widget_node {
+	/* The widget's class name (wibox.widget.base's widget_name), interned
+	 * so the whole struct still compares by memcmp. Only the tree dump
+	 * (somewm-client clay tree) reads it: Clay carries no string from an
+	 * element id to a render command. NULL for a node that stands for no
+	 * widget. */
+	const char *cls;
 	uint16_t pad[4];     /* left, right, top, bottom */
 	uint16_t bw[4];      /* border widths, same order */
 	float bg[4];

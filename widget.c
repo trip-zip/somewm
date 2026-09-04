@@ -116,6 +116,25 @@ read_align(lua_State *L, int idx, const char *name, uint8_t *out)
 	return ok;
 }
 
+/* The class names seen so far, interned so a node holds a stable pointer and
+ * the tree still compares by memcmp. A config names a couple of dozen widget
+ * classes and never frees one, so the table only grows, by a pointer each. */
+static const char *
+intern_class(const char *name)
+{
+	static const char **names;
+	static size_t len, cap;
+
+	for (size_t i = 0; i < len; i++)
+		if (strcmp(names[i], name) == 0)
+			return names[i];
+	if (len == cap) {
+		cap = cap ? cap * 2 : 32;
+		p_realloc(&names, cap);
+	}
+	return names[len++] = a_strdup(name);
+}
+
 static bool
 read_node(lua_State *L, int idx, struct widget_node *n)
 {
@@ -166,6 +185,11 @@ read_node(lua_State *L, int idx, struct widget_node *n)
 	lua_pop(L, 1);
 	lua_getfield(L, idx, "spacer");
 	n->widget = !lua_toboolean(L, -1);
+	lua_pop(L, 1);
+
+	lua_getfield(L, idx, "class");
+	if (lua_isstring(L, -1))
+		n->cls = intern_class(lua_tostring(L, -1));
 	lua_pop(L, 1);
 
 	return ok;
