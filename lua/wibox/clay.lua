@@ -510,11 +510,37 @@ local function describe(w, hier, ctx)
     return describe_class(w, hier, ctx)
 end
 
+--- Classes whose instances do not carry their own name.
+--
+-- `wibox.layout.stack` and `wibox.layout.flex` are both built by calling
+-- `wibox.layout.fixed.horizontal`, so `widget_name` is set from fixed's
+-- source path and all three report the same name. Each defines its own
+-- `:fit`, which is what tells them apart here and in the `classes` table
+-- below.
+local named_classes = {
+    [stack_class.fit] = "wibox.layout.stack",
+    [flex_class.fit] = "wibox.layout.flex",
+}
+
+--- The widget's class, for the `somewm-client clay tree` dump.
+--
+-- `gears.object.modulename` derives `widget_name` from the source path and
+-- only trims it at a `lib/` directory; somewm installs its library under
+-- `lua/`, so the name arrives with the path still in front of it.
+local function class_name(w)
+    local name = named_classes[w.fit] or w.widget_name
+
+    if not name then
+        return nil
+    end
+    return (name:gsub("^.*%.lua%.", ""):gsub("^[^%a]+", ""))
+end
+
 --- A raster leaf for the subtree at `hier`: the widget draws itself, with
 -- its parent's transform placing it and `fg` as its source.
 local function leaf(st, hier, parent, fg)
     st.leaves[#st.leaves + 1] = { hierarchy = hier, parent = parent, fg = fg }
-    return { raster = true }
+    return { raster = true, class = class_name(hier:get_widget()) }
 end
 
 local compile_node
@@ -582,6 +608,7 @@ function compile_node(st, hier, parent, fg)
     end
 
     node.children = children
+    node.class = class_name(hier:get_widget())
     return node
 end
 
@@ -598,7 +625,8 @@ end
 -- `hmax` as grow ceilings, `dir` ("y" for top to bottom), `gap`, `align`
 -- (`x` and `y`, as wibox.container.place names them), `float` (attached to
 -- the parent's top left, off the flow), `raster` for a leaf, `spacer` for an
--- element that stands for no widget, and `children`.
+-- element that stands for no widget, `class` (the widget's `widget_name`, for
+-- the `somewm-client clay tree` dump), and `children`.
 --
 -- @tparam table self The drawable, for its own background, background image
 --  and foreground.
@@ -635,7 +663,8 @@ function clay.compile(self, root, context)
         return nil
     end
 
-    return { bg = base_rgba, radius = 0, children = { node } }, st.leaves
+    return { bg = base_rgba, radius = 0, class = "drawable",
+        children = { node } }, st.leaves
 end
 
 return clay

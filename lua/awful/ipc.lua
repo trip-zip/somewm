@@ -1887,6 +1887,34 @@ local function register_builtin_commands()
   end)
 
   -- =================================================================
+  -- CLAY COMMANDS
+  -- =================================================================
+
+  --- clay.tree [screen] - Dump the solved Clay tree
+  -- Reports what the last frame solved and reconciled on every output, or on
+  -- one screen: counters per band, then one line per retained node in draw
+  -- order.
+  ipc.register("clay.tree", function(target)
+    local s = nil
+
+    if target then
+      local index = tonumber(target)
+
+      if not index or not capi.screen[index] then
+        error("Screen not found: " .. tostring(target))
+      end
+      s = capi.screen[index]
+    end
+
+    local dump = capi.awesome._clay_tree(s)
+
+    if dump == "" then
+      return "No output has a Clay tree"
+    end
+    return dump
+  end)
+
+  -- =================================================================
   -- SCREENSHOT COMMANDS
   -- =================================================================
 

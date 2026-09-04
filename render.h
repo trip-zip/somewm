@@ -120,6 +120,28 @@ void *render_hit_userdata(struct render_state *rs, struct wlr_scene_node *node);
  * unknown widget. */
 uint32_t render_hit_id(struct render_state *rs, struct wlr_scene_node *node);
 
+/* One retained node, as the tree dump reads it back (declare.c formats the
+ * line). The renderer names no object: user_data is the declarer's word and
+ * id its Clay element id, both handed back untouched. */
+struct render_node_view {
+	uint32_t type;   /* Clay_RenderCommandType */
+	uint32_t id;     /* the Clay element id; TEXT and BORDER carry a
+			  * Clay-derived per-line / per-side hash instead */
+	int16_t z;
+	Clay_BoundingBox box;   /* what Clay solved */
+	Clay_BoundingBox rbox;  /* what was realized, after the clip */
+	size_t raster_bytes;    /* nonzero for a node holding a cairo raster */
+	bool has_node;          /* false for a SCISSOR marker or a dead surface */
+	bool mismatch;          /* the scene disagrees with rbox */
+	void *user_data;
+};
+
+/* Walk the retained nodes in the last pass's draw order, bottom to top, for
+ * the tree dump. Reads only what the reconcile already retained; it neither
+ * solves nor touches the scene. */
+void render_walk(struct render_state *rs,
+	void (*fn)(void *user, const struct render_node_view *view), void *user);
+
 /* Profiling readback, logged on every solve so a long-running session can
  * assert growth stays proportional to on-screen content: live retained nodes,
  * resident cairo raster bytes across them, and buffers allocated by the last

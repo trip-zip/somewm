@@ -105,6 +105,9 @@ struct rnode {
 	 * construction, so a green check proves no path skipped the clip. */
 	Clay_BoundingBox clip;
 	Clay_RenderData data;
+	/* The command's z order, retained only so the tree dump can print the
+	 * band a node landed in without re-solving. */
+	int16_t z;
 	char *text;
 	int32_t text_len;
 	/* RECTANGLE: a scene rect. TEXT: a scene buffer. BORDER: a tree
@@ -364,7 +367,6 @@ static Clay_BoundingBox box_inf(void) {
 	return b;
 }
 
-#ifdef SOMEWM_RENDER_VERIFY
 /* inner lies within outer, with a half-pixel tolerance for float noise. */
 static bool box_contains(Clay_BoundingBox outer, Clay_BoundingBox inner) {
 	const float eps = 0.5f;
@@ -372,7 +374,6 @@ static bool box_contains(Clay_BoundingBox outer, Clay_BoundingBox inner) {
 		inner.x + inner.width <= outer.x + outer.width + eps &&
 		inner.y + inner.height <= outer.y + outer.height + eps;
 }
-#endif
 
 /* --- shared raster helpers ---
  *
@@ -1253,57 +1254,59 @@ static int reconcile_surface(struct render_state *rs, struct rnode *n,
 
 /* --- tree==scene: every solved box must match the scene, every frame --- */
 
-#ifdef SOMEWM_RENDER_VERIFY
-
-static void verify_node(struct rnode *n) {
+/* Whether the scene disagrees with what the command solved: a node placed or
+ * sized somewhere other than its realized box, one drawing outside its
+ * innermost scissor scope, or one enabled when it clipped away (an empty rbox
+ * is the only case where a declared node may be off). The verifier below
+ * aborts on it; the tree dump prints it, so a release build without the
+ * verifier still reports the divergence rather than drawing it silently. */
+static bool rnode_scene_mismatch(const struct rnode *n) {
 	if (n->node == NULL) {
-		return;
+		return false;
 	}
-	/* A leaf clipped to nothing is legitimately disabled; that is the only
-	 * case where a declared node may be off. */
 	if (box_empty(n->rbox)) {
-		if (n->node->enabled) {
-			wlr_log(WLR_ERROR, "tree==scene: key %" PRIx64
-				" clipped empty but still enabled", n->key);
-			abort();
-		}
-		return;
+		return n->node->enabled;
 	}
-	if (!n->node->enabled) {
-		wlr_log(WLR_ERROR, "tree==scene: node for key %" PRIx64
-			" is disabled while declared", n->key);
-		abort();
-	}
-	/* Check 2 of the agreement invariant: no node draws outside its innermost
-	 * active scissor box. rbox is the box already intersected with that scope,
-	 * so this fires only if a future path realized a node past its clip. */
-	if (!box_contains(n->clip, n->rbox)) {
-		wlr_log(WLR_ERROR, "tree==scene: key %" PRIx64
-			" realized box %d,%d %dx%d escapes clip scope %d,%d %dx%d",
-			n->key, (int)n->rbox.x, (int)n->rbox.y,
-			(int)n->rbox.width, (int)n->rbox.height,
-			(int)n->clip.x, (int)n->clip.y,
-			(int)n->clip.width, (int)n->clip.height);
-		abort();
+	if (!n->node->enabled || !box_contains(n->clip, n->rbox)) {
+		return true;
 	}
 	if (n->node->x != (int)n->rbox.x || n->node->y != (int)n->rbox.y) {
-		wlr_log(WLR_ERROR, "tree==scene: key %" PRIx64
-			" at %d,%d but realized box says %d,%d",
-			n->key, n->node->x, n->node->y,
-			(int)n->rbox.x, (int)n->rbox.y);
-		abort();
+		return true;
 	}
 	if (n->node->type == WLR_SCENE_NODE_RECT) {
 		struct wlr_scene_rect *rect = wlr_scene_rect_from_node(n->node);
-		if (rect->width != (int)n->rbox.width ||
-				rect->height != (int)n->rbox.height) {
-			wlr_log(WLR_ERROR, "tree==scene: rect %" PRIx64
-				" is %dx%d but realized box says %dx%d",
-				n->key, rect->width, rect->height,
-				(int)n->rbox.width, (int)n->rbox.height);
-			abort();
-		}
+
+		return rect->width != (int)n->rbox.width ||
+			rect->height != (int)n->rbox.height;
 	}
+	/* A raster leaf's dest size is its logical footprint, always set to the
+	 * realized box (buffer_apply_clip), so it is comparable too. A border's
+	 * node is a tree and a place-leaf's is a borrowed client tree; neither
+	 * carries a size of its own. */
+	if (n->node->type == WLR_SCENE_NODE_BUFFER) {
+		struct wlr_scene_buffer *sb = wlr_scene_buffer_from_node(n->node);
+
+		return sb->dst_width != (int)n->rbox.width ||
+			sb->dst_height != (int)n->rbox.height;
+	}
+	return false;
+}
+
+#ifdef SOMEWM_RENDER_VERIFY
+
+static void verify_node(struct rnode *n) {
+	if (!rnode_scene_mismatch(n)) {
+		return;
+	}
+	wlr_log(WLR_ERROR, "tree==scene: key %" PRIx64 " %s at %d,%d but "
+		"realized box says %d,%d %dx%d inside clip %d,%d %dx%d",
+		n->key, n->node->enabled ? "enabled" : "disabled",
+		n->node->x, n->node->y,
+		(int)n->rbox.x, (int)n->rbox.y,
+		(int)n->rbox.width, (int)n->rbox.height,
+		(int)n->clip.x, (int)n->clip.y,
+		(int)n->clip.width, (int)n->clip.height);
+	abort();
 }
 
 #endif /* SOMEWM_RENDER_VERIFY */
@@ -1457,6 +1460,7 @@ int render_reconcile(struct render_state *rs, Clay_RenderCommandArray commands,
 		}
 		bool is_new = n->node == NULL;
 		n->gen = rs->gen;
+		n->z = cmd->zIndex;
 		n->user_data = cmd->userData;
 
 		/* The clip that applies to this command reflects every START/END
@@ -1697,6 +1701,31 @@ void render_destroy(struct render_state *rs,
 	free(rs->build);
 	free(rs->map);
 	free(rs);
+}
+
+void render_walk(struct render_state *rs,
+		void (*fn)(void *user, const struct render_node_view *view),
+		void *user) {
+	for (size_t i = 0; i < rs->order_len; i++) {
+		size_t idx = rmap_get(rs, rs->order[i]);
+
+		if (idx == SIZE_MAX) {
+			continue;
+		}
+		struct rnode *n = &rs->nodes[idx];
+
+		fn(user, &(struct render_node_view) {
+			.type = (uint32_t)(n->key >> 32),
+			.id = (uint32_t)n->key,
+			.z = n->z,
+			.box = n->box,
+			.rbox = n->rbox,
+			.raster_bytes = n->raster_bytes,
+			.has_node = n->node != NULL,
+			.mismatch = rnode_scene_mismatch(n),
+			.user_data = n->user_data,
+		});
+	}
 }
 
 size_t render_node_count(struct render_state *rs) {
