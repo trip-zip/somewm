@@ -23,7 +23,7 @@ local OUTER, INNER, BORDER = 4, 6, 2
 local BAR_BG, BOX_BG, BORDER_COLOR = "#101010", "#204080", "#ff8000"
 
 local cap = capture.new(s, BX, BY, BW, BH)
-local bar, captured
+local bar, captured, shaped
 
 -- A step that runs `setup` once and then waits for the readback to say the
 -- tree did or did not convert.
@@ -32,6 +32,38 @@ local function step_until(converted, setup, what)
 end
 
 local steps = {
+    -- A wibox built with a shape, the way awful.wibar applies the theme's
+    -- wibar_shape: the shape lands before the drawin is visible, which is
+    -- before it enters the object registry, so the renderer cannot reach it
+    -- by pointer there. It has to paint whole, and it has to survive.
+    function(count)
+        if count == 1 then
+            shaped = wibox {
+                x = BX, y = BY + BH + 10, width = BW, height = BH,
+                visible = false, screen = s, bg = BAR_BG,
+            }
+            shaped:setup {
+                widget = wibox.container.margin,
+                margins = OUTER,
+                capture.leaf_widget(math.huge, nil, "#ff0000"),
+            }
+            -- Shaped before it is ever visible, which is before the drawin
+            -- enters the object registry.
+            shaped.shape = function(cr, w, h)
+                gshape.rounded_rect(cr, w, h, 4)
+            end
+            shaped.visible = true
+            return nil
+        end
+        assert(#awesome._test_widget_boxes(shaped.drawin) == 0,
+            "a shaped wibox converted")
+        if count > 3 then
+            shaped.visible = false
+            io.stderr:write("[PASS] a wibox born shaped paints whole\n")
+            return true
+        end
+    end,
+
     function(count)
         if count == 1 then
             bar = wibox {

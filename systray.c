@@ -229,7 +229,7 @@ luaA_systray(lua_State *L)
 
 	if (nargs == 1) {
 		systray_kickout(drawin);
-		widget_nodes_gate(L, drawin);
+		widget_nodes_gate(L, drawin, 1);
 		lua_pushinteger(L, systray_count_visible());
 		lua_pushnil(L);
 		return 2;
@@ -253,8 +253,8 @@ luaA_systray(lua_State *L)
 		/* The host paints itself whole (widget.c); the tree is refused
 		 * on the new one and allowed again on the old. */
 		if (old)
-			widget_nodes_gate(L, old);
-		widget_nodes_gate(L, drawin);
+			widget_nodes_gate(L, old, 0);
+		widget_nodes_gate(L, drawin, 1);
 	}
 
 	if (color_init_from_string(&bg, bg_color)) {

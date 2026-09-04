@@ -1554,7 +1554,7 @@ luaA_drawin_set_opacity(lua_State *L, drawin_t *drawin)
 		drawin->opacity = opacity;
 		/* Opacity rides the content leaf's userData word (declare.c) */
 		declare_mark_all_dirty();
-		widget_nodes_gate(L, drawin);
+		widget_nodes_gate(L, drawin, -3);
 		luaA_object_emit_signal(L, -3, "property::opacity", 0);
 	}
 	return 0;
@@ -1681,7 +1681,7 @@ luaA_drawin_set_shape_bounding(lua_State *L, drawin_t *drawin)
 		cairo_surface_destroy(drawin->shape_bounding);
 
 	drawin->shape_bounding = copy;
-	widget_nodes_gate(L, drawin);
+	widget_nodes_gate(L, drawin, -3);
 
 	/* Trigger redraw to apply shape (Wayland equivalent of xwindow_set_shape) */
 	if (drawin->visible)
@@ -1732,7 +1732,7 @@ luaA_drawin_set_shape_clip(lua_State *L, drawin_t *drawin)
 		cairo_surface_destroy(drawin->shape_clip);
 
 	drawin->shape_clip = copy;
-	widget_nodes_gate(L, drawin);
+	widget_nodes_gate(L, drawin, -3);
 
 	/* Trigger redraw to apply shape (Wayland equivalent of xwindow_set_shape) */
 	if (drawin->visible)
@@ -1780,7 +1780,7 @@ luaA_drawin_set_shape_input(lua_State *L, drawin_t *drawin)
 		cairo_surface_destroy(drawin->shape_input);
 
 	drawin->shape_input = copy;
-	widget_nodes_gate(L, drawin);
+	widget_nodes_gate(L, drawin, -3);
 
 	/* Note: No redraw needed for input shape - it's checked at input time.
 	 * A 0x0 surface means pass through ALL input (AwesomeWM convention). */

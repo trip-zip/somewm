@@ -56,8 +56,9 @@ bool widget_nodes_refused(drawin_t *d);
 /* For the setters that change that answer: when it flips, drop the tree and
  * ask Lua for a complete repaint (property::surface on the drawable), so the
  * drawable moves between painting whole and converting without a widget
- * having to redraw first. */
-void widget_nodes_gate(lua_State *L, drawin_t *d);
+ * having to redraw first. udx is the drawin's stack index, or 0 for a caller
+ * that does not have it on the stack. */
+void widget_nodes_gate(lua_State *L, drawin_t *d, int udx);
 
 /* Read a tree from the table at absolute stack index idx (what
  * lua/wibox/clay.lua returns) and the leaf boxes at leaves_idx, and store

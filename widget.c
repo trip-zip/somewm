@@ -277,7 +277,7 @@ widget_nodes_refused(drawin_t *d)
 }
 
 void
-widget_nodes_gate(lua_State *L, drawin_t *d)
+widget_nodes_gate(lua_State *L, drawin_t *d, int udx)
 {
 	bool refused = widget_nodes_refused(d);
 
@@ -286,10 +286,16 @@ widget_nodes_gate(lua_State *L, drawin_t *d)
 	d->widget_nodes_refused = refused;
 	if (refused)
 		widget_nodes_clear(d);
-	luaA_object_push(L, d);
-	luaA_object_push_item(L, -1, d->drawable);
-	luaA_object_emit_signal(L, -1, "property::surface", 0);
-	lua_pop(L, 2);
+	/* The drawable is an item of the drawin's own env table, so reaching it
+	 * needs the drawin already on the stack. The object registry does not
+	 * hold a wibox's drawin, so looking it up there answers nil. A caller
+	 * with no index (the tray's previous host) leaves the repaint to the
+	 * next redraw, which sees the converted state change either way. */
+	if (udx != 0 && d->drawable) {
+		luaA_object_push_item(L, udx, d->drawable);
+		luaA_object_emit_signal(L, -1, "property::surface", 0);
+		lua_pop(L, 1);
+	}
 }
 
 bool
