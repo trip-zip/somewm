@@ -1302,10 +1302,14 @@ dump_drawin(buffer_t *buf, drawin_t *d)
 }
 
 /* The drawins the band draws, converted or whole, on the same filters the
- * band's own declare pass applies. */
+ * band's own declare pass applies. The lock band solves only while the
+ * session is locked; before that its drawins are the desktop band's, and
+ * listing them here too would name them twice. */
 static void
 dump_drawins(buffer_t *buf, Monitor *m, bool lock)
 {
+	if (lock && !session_is_locked())
+		return;
 	foreach(item, globalconf.drawins) {
 		drawin_t *d = *item;
 

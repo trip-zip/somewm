@@ -340,7 +340,13 @@ widget_nodes_gate(lua_State *L, drawin_t *d, int udx)
 /* Whether len more nodes would take this drawin's output past the budget
  * every converted tree on it shares (widget.h). The drawin's own stored tree
  * is the one being replaced, so it does not count against the new one, and a
- * drawin with no screen declares nowhere and is not counted at all. */
+ * drawin with no screen declares nowhere and is not counted at all.
+ *
+ * A hidden drawin's tree is counted, though it declares nothing: visibility
+ * flips without a redraw, so a tree admitted while its drawin was hidden
+ * would reach Clay unchecked. Counting it can refuse a tree the output had
+ * room for, which costs one drawable its conversion; not counting it can
+ * exhaust the context, which aborts. */
 static bool
 over_budget(drawin_t *d, size_t len)
 {

@@ -13,6 +13,7 @@
 
 local runner = require("_runner")
 local utils = require("_utils")
+local lock = require("_lock_helper")
 local awful = require("awful")
 local wibox = require("wibox")
 
@@ -22,7 +23,7 @@ if not TEST_CLIENT then
 end
 
 local s = screen[1]
-local bar, c, proc_pid
+local bar, bar2, c, proc_pid, lock_surface
 
 local function lines()
     local out = {}
@@ -136,6 +137,125 @@ local steps = {
         assert_line("the client surface leaf", "CUSTOM", box, "client ")
         assert_line("the client border", "BORDER", box, "client ")
         assert_agrees()
+        return true
+    end,
+
+    -- A second output solves in a Clay context of its own, so the dump has
+    -- to read every band's boxes from the band that drew them. Reading the
+    -- wrong context finds no element and prints no box.
+    function(count)
+        if count == 1 then
+            awesome._test_add_output(800, 600)
+            return nil
+        end
+        if screen.count() < 2 then
+            assert(count < 30, "the second output never arrived")
+            return nil
+        end
+        if not bar2 then
+            bar2 = awful.wibar({ position = "top", screen = screen[2],
+                height = 24 })
+            bar2:setup({
+                layout = wibox.layout.fixed.horizontal,
+                { widget = wibox.widget.textbox, text = "two" },
+            })
+            return nil
+        end
+
+        local d = bar2.drawin
+        local want = string.format("  drawin screen 2 %dx%d+%d+%d ",
+            d.width, d.height, d.x, d.y)
+        local outputs, head, tree = {}, nil, {}
+
+        for line in awesome._clay_tree():gmatch("[^\n]+") do
+            local name = line:match("^output (%S+) band desktop")
+
+            if name then
+                outputs[name] = true
+                head = nil
+            elseif line:sub(1, #want) == want then
+                head = line
+            elseif head and line:match("^    %x+ ") then
+                tree[#tree + 1] = line
+            elseif head then
+                head = nil
+            end
+        end
+
+        local count_outputs = 0
+
+        for _ in pairs(outputs) do
+            count_outputs = count_outputs + 1
+        end
+        assert(count_outputs >= 2,
+            "the dump names " .. count_outputs .. " outputs, expected two")
+        if #tree == 0 then
+            assert(count < 30, "the second output's bar never converted")
+            return nil
+        end
+
+        local solved = 0
+
+        for _, line in ipairs(tree) do
+            assert(not line:find("box -", 1, true),
+                "a node on the second output has no box: " .. line)
+            solved = solved + 1
+        end
+        io.stderr:write("[PASS] each output's boxes come from its own band, "
+            .. solved .. " nodes\n")
+        bar2.visible = false
+        return true
+    end,
+
+    -- While the session is locked the lock band solves instead of the
+    -- desktop one, and each band reports the drawins it draws.
+    function(count)
+        if count == 1 then
+            lock_surface = lock.setup()
+            awesome.lock()
+            -- Showing the lock surface is the config's job, in its
+            -- lock::activate handler; the compositor only raises the band.
+            lock_surface.visible = true
+            return nil
+        end
+
+        local band, found = nil, nil
+        local d = lock_surface.drawin
+        local want = string.format("  drawin screen %d %dx%d+%d+%d ",
+            s.index, d.width, d.height, d.x, d.y)
+
+        for _, line in ipairs(lines()) do
+            local name = line:match("^output %S+ band (%S+)")
+
+            if name then
+                band = name
+            elseif line:sub(1, #want) == want then
+                assert(band == "lock",
+                    "the lock surface is listed under the " .. band .. " band")
+                found = line
+            end
+        end
+        if not found then
+            assert(count < 20, "the lock surface never reached the dump")
+            return nil
+        end
+        assert_agrees()
+        io.stderr:write("[PASS] the lock band lists its own drawins\n")
+        lock.teardown()
+        return true
+    end,
+
+    -- The dump reads back what the last frame retained, so asking twice
+    -- with nothing moving in between answers the same thing. Each call owns
+    -- a buffer, which is what the sanitizer build is watching.
+    function()
+        local first = awesome._clay_tree(s)
+
+        for _ = 1, 200 do
+            assert(awesome._clay_tree(s) == first,
+                "two dumps of a settled scene disagree")
+        end
+        io.stderr:write("[PASS] a settled scene dumps the same every time\n")
         return true
     end,
 

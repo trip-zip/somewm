@@ -20,6 +20,7 @@ local s = screen[1]
 local leaf_widget = capture.leaf_widget
 
 local bars = {}
+local budget_bars = {}
 
 local function lines()
     local out = {}
@@ -248,6 +249,56 @@ local steps = {
         assert(head:find("budget", 1, true),
             "the size is not named: " .. head)
     end),
+    -- The budget is shared: one output's Clay context holds every drawin's
+    -- tree, so enough bars that each fit on their own still spend it, and
+    -- the one that would cross the line paints whole instead of taking the
+    -- context past a capacity Clay treats as fatal.
+    function(count)
+        if count == 1 then
+            for i = 1, 8 do
+                local w = leaf_widget(10, 10, "#ff0000")
+
+                for _ = 1, 900 do
+                    w = { w, margins = 0,
+                        widget = wibox.container.margin }
+                end
+                budget_bars[i] = wibox {
+                    x = 0, y = 200 + i, width = 40, height = 8,
+                    screen = s, bg = "#101010", visible = true,
+                }
+                budget_bars[i]:setup(w)
+            end
+            return nil
+        end
+
+        local converted, refused = 0, 0
+
+        for _, bar in ipairs(budget_bars) do
+            local head = block(bar)
+
+            if not head then
+                assert(count < 30, "a budget bar never reached the dump")
+                return nil
+            end
+            if head:find("converted", 1, true) then
+                converted = converted + 1
+            elseif head:find("budget", 1, true) then
+                refused = refused + 1
+            end
+        end
+        assert(converted + refused == #budget_bars, string.format(
+            "%d converted and %d refused, of %d bars",
+            converted, refused, #budget_bars))
+        assert(refused > 0, "no bar was held back by the shared budget")
+        assert(converted > 0, "the shared budget refused every bar")
+        io.stderr:write(string.format(
+            "[PASS] the shared budget holds: %d bars converted, %d paint whole\n",
+            converted, refused))
+        for _, bar in ipairs(budget_bars) do
+            bar.visible = false
+        end
+        return true
+    end,
 }
 
 runner.run_steps(steps)
