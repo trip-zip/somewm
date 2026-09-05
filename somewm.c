@@ -2449,8 +2449,34 @@ void
 apply_input_settings_to_all_devices(void)
 {
 	TrackedPointer *tp;
+	TrackedTouch *tc;
+	TrackedTablet *tt;
+	TrackedTabletPad *ttp;
+	struct libinput_device *device;
+
 	wl_list_for_each(tp, &tracked_pointers, link) {
 		apply_input_settings_to_device(tp->libinput_dev);
+	}
+
+	/* Touch */
+	wl_list_for_each(tc, &tracked_touches, link) {
+		if (wlr_input_device_is_libinput(&tc->touch->base)
+				&& (device = wlr_libinput_get_device_handle(&tc->touch->base)))
+			apply_input_settings_to_device(device);
+	}
+
+	/* Tablet */
+	wl_list_for_each(tt, &tracked_tablets, link) {
+		if (wlr_input_device_is_libinput(&tt->tablet->base)
+				&& (device = wlr_libinput_get_device_handle(&tt->tablet->base)))
+			apply_input_settings_to_device(device);
+	}
+
+	/* Tablet Pad */
+	wl_list_for_each(ttp, &tracked_tablet_pads, link) {
+		if (wlr_input_device_is_libinput(&ttp->pad->base)
+				&& (device = wlr_libinput_get_device_handle(&ttp->pad->base)))
+			apply_input_settings_to_device(device);
 	}
 }
 
@@ -3221,6 +3247,7 @@ static void
 createtablet(struct wlr_tablet *tablet)
 {
 	TrackedTablet *tt = ecalloc(1, sizeof(*tt));
+	struct libinput_device *device;
 
 	tt->tablet = tablet;
 	tt->tablet_v2 = tablet_v2_mgr
@@ -3233,6 +3260,13 @@ createtablet(struct wlr_tablet *tablet)
 	LISTEN(&tablet->events.tip, &tt->tip, tabletnotifytip);
 	LISTEN(&tablet->events.button, &tt->button, tabletnotifybutton);
 	LISTEN(&tablet->base.events.destroy, &tt->destroy, destroytrackedtablet);
+
+	if (wlr_input_device_is_libinput(&tablet->base)
+			&& (device = wlr_libinput_get_device_handle(&tablet->base))) {
+
+		/* Apply settings from globalconf to libinput device */
+		apply_input_settings_to_device(device);
+	}
 
 	wlr_cursor_attach_input_device(cursor, &tablet->base);
 
@@ -3262,6 +3296,7 @@ static void
 createtabletpad(struct wlr_tablet_pad *pad)
 {
 	TrackedTabletPad *tp = ecalloc(1, sizeof(*tp));
+	struct libinput_device *device;
 
 	tp->pad = pad;
 	tp->pad_v2 = tablet_v2_mgr
@@ -3275,6 +3310,13 @@ createtabletpad(struct wlr_tablet_pad *pad)
 	LISTEN(&pad->events.strip, &tp->strip, tabletpadnotifystrip);
 	LISTEN(&pad->events.attach_tablet, &tp->attach_tablet, tabletpadnotifyattach);
 	LISTEN(&pad->base.events.destroy, &tp->destroy, destroytrackedtabletpad);
+
+	if (wlr_input_device_is_libinput(&pad->base)
+			&& (device = wlr_libinput_get_device_handle(&pad->base))) {
+
+		/* Apply settings from globalconf to libinput device */
+		apply_input_settings_to_device(device);
+	}
 
 	wlr_log(WLR_INFO,
 		"[tablet-pad] new device name=%s buttons=%zu rings=%zu strips=%zu",
@@ -3303,6 +3345,7 @@ static void
 createtouch(struct wlr_touch *touch)
 {
 	TrackedTouch *tc = ecalloc(1, sizeof(*tc));
+	struct libinput_device *device;
 
 	tc->touch = touch;
 	wl_list_insert(&tracked_touches, &tc->link);
@@ -3313,6 +3356,13 @@ createtouch(struct wlr_touch *touch)
 	LISTEN(&touch->events.cancel, &tc->cancel, touchnotifycancel);
 	LISTEN(&touch->events.frame, &tc->frame, touchnotifyframe);
 	LISTEN(&touch->base.events.destroy, &tc->destroy, destroytrackedtouch);
+
+	if (wlr_input_device_is_libinput(&touch->base)
+			&& (device = wlr_libinput_get_device_handle(&touch->base))) {
+
+		/* Apply settings from globalconf to libinput device */
+		apply_input_settings_to_device(device);
+	}
 
 	wlr_cursor_attach_input_device(cursor, &touch->base);
 
