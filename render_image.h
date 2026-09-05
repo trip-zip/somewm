@@ -32,13 +32,9 @@ struct image_entry {
 	size_t bytes;
 	uint64_t touch;
 	bool decoded, failed;
-	/* The surface already holds its box's pixels at the output scale, so
-	 * the renderer places them one to one instead of scaling them into the
-	 * solved box. A decoded file has a size of its own and is scaled; a
-	 * surface somewm rendered for one box is not, because the solver and
-	 * the layout that sized the surface can round a shared edge a pixel
-	 * apart, and resampling every pixel to absorb that blurs the glyphs. */
-	bool exact;
+	/* A surface made for one box and not yet painted: whoever draws into
+	 * it paints it whole once, wherever their dirty region reaches. */
+	bool fresh;
 };
 
 struct image_cache;

@@ -17,7 +17,6 @@ ffi.cdef [[
 
 local base = require("wibox.widget.base")
 local gcolor = require("gears.color")
-local matrix = require("gears.matrix")
 local utils = require("_utils")
 
 local capture = {}
@@ -38,38 +37,6 @@ function capture.leaf_widget(width, height, color)
         cr:fill()
     end)
     return w
-end
-
--- Every widget box in a hierarchy, in the preorder the compile step
--- declares (an align's children in slot order, because its :layout places
--- the third before the second), in drawable coordinates. This is what the
--- layout engine places, and what Clay has to agree with.
-function capture.hierarchy_boxes(h, out)
-    out = out or {}
-
-    local x, y, w, hh = matrix.transform_rectangle(h:get_matrix_to_device(),
-        0, 0, h:get_size())
-
-    out[#out + 1] = { x = x, y = y, width = w, height = hh }
-
-    local children = h:get_children()
-    local widget = h:get_widget()
-
-    if widget.get_first then
-        local by_widget = {}
-
-        for _, child in ipairs(children) do
-            by_widget[child:get_widget()] = child
-        end
-        children = {}
-        for _, slot in ipairs { widget.first, widget.second, widget.third } do
-            children[#children + 1] = by_widget[slot]
-        end
-    end
-    for _, child in ipairs(children) do
-        capture.hierarchy_boxes(child, out)
-    end
-    return out
 end
 
 function capture.assert_box(got, want, what)

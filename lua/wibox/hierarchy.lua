@@ -224,12 +224,16 @@ end
 -- @param width The available width for this hierarchy.
 -- @param height The available height for this hierarchy.
 -- @param[opt] region A region to use for accumulating changed parts
+-- @param[opt] matrix_to_device Where this hierarchy sits on the device, for
+--   a root that is not at the device's origin (a raster leaf of a converted
+--   widget tree, at the box Clay solved for it). Kept when absent.
 -- @return A cairo region describing the changed parts (either the `region`
 --   argument or a new, internally created region).
 -- @method update
-function hierarchy:update(context, widget, width, height, region)
+function hierarchy:update(context, widget, width, height, region, matrix_to_device)
     region = region or cairo.Region.create()
-    hierarchy_update(self, context, widget, width, height, region, self._matrix, self._matrix_to_device)
+    hierarchy_update(self, context, widget, width, height, region, self._matrix,
+        matrix_to_device or self._matrix_to_device)
     return region
 end
 

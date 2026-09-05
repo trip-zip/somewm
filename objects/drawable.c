@@ -16,6 +16,7 @@
 #include "common/util.h"
 #include "../x11_compat.h"
 #include "../widget.h"
+#include "../declare.h"
 #include "common/luaclass.h"
 #include "common/luaobject.h"
 
@@ -660,19 +661,20 @@ luaA_drawable_refresh(lua_State *L)
 	return 0;
 }
 
-/** Hand the renderer the converted widget tree.
+/** Hand the renderer the converted widget tree, and solve it.
  * lua/wibox/drawable.lua calls this once per redraw with the tree
- * lua/wibox/clay.lua compiled and the layout engine's box for each raster
- * leaf, or with nil when nothing converted. Returns the scale the leaf
- * surfaces hold their pixels at, or false when the tree was refused (this
- * drawable has no drawin, or the drawin paints itself whole), in which case
- * the caller paints every pixel itself, which is the path every drawable
- * took before any container converted.
+ * lua/wibox/clay.lua compiled, or with nil when nothing converted. The tree
+ * is solved there and then (declare_widget_solve), which sizes every raster
+ * leaf's surface, and the box of every widget node comes back for Lua to
+ * draw the leaves and hit-test against. Returns false when the tree was
+ * refused (this drawable has no drawin, or the drawin paints itself whole),
+ * in which case the caller paints every pixel itself, which is the path
+ * every drawable took before any container converted.
  *
  * \param L The Lua VM state.
  * \param tree The node tree, or nil.
- * \param leaves The leaf boxes, drawin-local, in the tree's preorder.
  * \return The leaf surface scale, or false.
+ * \return The boxes, drawin-local, one per widget node in preorder.
  */
 static drawin_t *
 drawable_drawin(lua_State *L)
@@ -685,24 +687,38 @@ drawable_drawin(lua_State *L)
 static int
 luaA_drawable_clay_nodes(lua_State *L)
 {
+	static int boxes[WIDGET_NODES_MAX][4], dev[WIDGET_NODES_MAX][2];
+	static const char *keys[] = { "x", "y", "width", "height" };
 	drawable_t *d = (drawable_t *)lua_touserdata(L, 1);
 	drawin_t *drawin = drawable_drawin(L);
-	float scale;
+	int n;
 
 	if (!d) {
 		return luaL_error(L, "expected drawable, got %s",
 			lua_typename(L, lua_type(L, 1)));
 	}
 
-	scale = d->surface_scale > 0 ? d->surface_scale : 1.0f;
 	/* nil is not a tree, so widget_nodes_set drops whatever was stored
-	 * and answers false, which is the whole of "paint it yourself". */
-	if (!drawin || !widget_nodes_set(L, drawin, 2, 3, scale)) {
+	 * and answers false, which is the whole of "paint it yourself". A
+	 * drawin off every output solves to nothing, and paints itself too. */
+	if (!drawin || !widget_nodes_set(L, drawin, 2)
+			|| (n = declare_widget_solve(drawin, boxes, dev)) == 0) {
 		lua_pushboolean(L, false);
 		return 1;
 	}
-	lua_pushnumber(L, scale);
-	return 1;
+	widget_leaves_size(drawin, dev);
+
+	lua_pushnumber(L, d->surface_scale > 0 ? d->surface_scale : 1.0f);
+	lua_createtable(L, n, 0);
+	for (int i = 0; i < n; i++) {
+		lua_createtable(L, 0, 4);
+		for (int k = 0; k < 4; k++) {
+			lua_pushinteger(L, boxes[i][k]);
+			lua_setfield(L, -2, keys[k]);
+		}
+		lua_rawseti(L, -2, i + 1);
+	}
+	return 2;
 }
 
 /** A leaf's surface, for Lua to draw into: a new reference, owned by the
@@ -710,20 +726,24 @@ luaA_drawable_clay_nodes(lua_State *L)
  * \param L The Lua VM state.
  * \param i The leaf's index in the tree's preorder, from 1.
  * \return The surface, or nil past the last leaf.
+ * \return Whether the surface is new and holds no pixels yet.
  */
 static int
 luaA_drawable_clay_leaf_surface(lua_State *L)
 {
 	drawin_t *drawin = drawable_drawin(L);
 	lua_Integer i = luaL_checkinteger(L, 2);
+	bool fresh = false;
 	cairo_surface_t *s = drawin && i >= 1
-		? widget_leaf_surface(drawin, (size_t)i - 1) : NULL;
+		? widget_leaf_surface(drawin, (size_t)i - 1, &fresh) : NULL;
 
-	if (s)
-		lua_pushlightuserdata(L, s);
-	else
+	if (!s) {
 		lua_pushnil(L);
-	return 1;
+		return 1;
+	}
+	lua_pushlightuserdata(L, s);
+	lua_pushboolean(L, fresh);
+	return 2;
 }
 
 /** Mark the leaves Lua just drew, so the renderer re-rasters exactly those.

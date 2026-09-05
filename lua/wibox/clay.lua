@@ -7,15 +7,23 @@
 -- surface (widget.c) and shown at the box Clay solves for it. When nothing
 -- converts the drawable paints itself whole, as it always did.
 --
--- The walk descends the drawable's `wibox.hierarchy`, which is the structure
--- that draws the leaves, so the tree can never name a widget the drawing does
--- not reach. It reads no position or size for a node from it: a node is pure
--- description, Clay solves the tree, and `compile` only says what the tree
--- is. A raster leaf is described by its preferred size, which is the `:fit`
--- answer of the widget at the top of the degraded subtree, asked with the
--- bound its parent's layout would have offered; that bound is the only box
--- the walk takes from the hierarchy, and only because the engine took the
--- same one from its own parent.
+-- The walk descends the widget tree itself, not a laid-out hierarchy: Clay
+-- is the only solver of a converted tree, and no box is computed here. A
+-- node is pure description, and its sizing is Clay's own, one of the three
+-- types clay.h names: `fit` wraps the content, which is Clay's default
+-- (CLAY_SIZING_FIT), `grow` fills the parent (CLAY_SIZING_GROW), and a
+-- number is told (CLAY_SIZING_FIXED). A container says which of the first
+-- two each child gets, in place of the `:fit` question the layout engine
+-- asked; a widget's own preference (a forced size, a place that fills)
+-- refines fit and never overrides grow, since fit is the content size and
+-- that preference is the content.
+--
+-- A raster leaf is the one node the walk sizes. Clay measures nothing but
+-- text (Clay_SetMeasureTextFunction), and an image element is a bare
+-- pointer (Clay_ImageElementConfig), so a leaf is declared as Clay's own
+-- image examples declare one: sized by its caller. The size is the leaf
+-- widget's `:fit` at the drawin's bound, and an axis on which the widget
+-- takes all it is offered grows instead, which is what that answer means.
 --
 -- @module wibox.clay
 ---------------------------------------------------------------------------
@@ -24,7 +32,6 @@ local base = require("wibox.widget.base")
 local beautiful = require("beautiful")
 local gcolor = require("gears.color")
 local gshape = require("gears.shape")
-local gtable = require("gears.table")
 local margin_class = require("wibox.container.margin")
 local background_class = require("wibox.container.background")
 local place_class = require("wibox.container.place")
@@ -64,19 +71,13 @@ local function whole(v)
     return type(v) == "number" and v >= 0 and v <= 65535 and v % 1 == 0
 end
 
---- Properties every widget carries that a converted node cannot express.
---
+--- Properties every widget carries that a converted node cannot express:
 -- `visible` and `opacity` are applied by `wibox.hierarchy`, which a converted
--- node no longer passes through, and a forced size is a `:fit` answer, which
--- a node sized by its parent's rule never asks for. Each keeps the widget
--- drawing itself.
+-- node no longer passes through. Each keeps the widget drawing itself.
 local function common_convertible(w)
     local p = w._private
 
-    return p.visible ~= false
-        and (p.opacity == nil or p.opacity == 1)
-        and p.forced_width == nil
-        and p.forced_height == nil
+    return p.visible ~= false and (p.opacity == nil or p.opacity == 1)
 end
 
 --- The corner radius a shape function stands for, or nil for one Clay cannot
@@ -95,6 +96,12 @@ local function shape_radius(shape, args)
     return nil
 end
 
+--- The spec for a container's only child: the whole padded box, which is
+-- what `margin:layout` and `background:layout` place it at.
+local function whole_box(widget)
+    return widget and { { widget = widget, w = "grow", h = "grow" } } or {}
+end
+
 --- wibox.container.margin -> Clay padding, and the margin color -> a Clay
 -- border of the same widths, which covers exactly the ring `margin:draw`
 -- fills with the even-odd rule.
@@ -104,8 +111,8 @@ local function describe_margin(w)
     if w.layout ~= margin_class.layout or w.draw ~= margin_class.draw then
         return nil
     end
-    -- draw_empty=false makes the margin's own size depend on what the child
-    -- fits to, which is a :fit answer the node never gives.
+    -- draw_empty=false makes an empty margin no size at all, where Clay's
+    -- fit wraps the padding.
     if p.draw_empty == false then
         return nil
     end
@@ -118,7 +125,7 @@ local function describe_margin(w)
         end
     end
 
-    local node = { pad = pad }
+    local node = { pad = pad, specs = whole_box(p.widget) }
 
     if p.color then
         local rgba = solid_rgba(p.color)
@@ -171,7 +178,7 @@ local function describe_background(w)
         return nil
     end
 
-    local node = { radius = radius }
+    local node = { radius = radius, specs = whole_box(p.widget) }
 
     if p.background then
         node.bg = solid_rgba(p.background)
@@ -197,27 +204,13 @@ local function describe_background(w)
     return node, p.foreground
 end
 
---- The hierarchy children of a layout that places its widgets in order, or
--- nil when they are not the first widgets of the list: a layout that stopped
--- early still matches, one whose `:layout` is not the class's own does not.
-local function children_in_order(hier, widgets)
-    local children = hier:get_children()
-
-    for i, child in ipairs(children) do
-        if child:get_widget() ~= widgets[i] then
-            return nil
-        end
-    end
-    return children
-end
-
 --- What wibox.layout.fixed and flex share: a layout direction and a child
 -- gap, which Clay's childGap (clay.h:344) carries only when the spacing is
 -- whole, not negative, and not a spacing widget, which is a widget placed
 -- between the children rather than a gap.
--- Returns the node, the placed children and whether the direction is
--- vertical, or nil when the layout keeps drawing itself.
-local function describe_linear(w, hier, class)
+-- Returns the node and the axis names along and across the direction, or
+-- nil when the layout keeps drawing itself.
+local function describe_linear(w, class)
     local p = w._private
     local spacing = p.spacing or 0
 
@@ -225,50 +218,35 @@ local function describe_linear(w, hier, class)
             or (spacing ~= 0 and p.spacing_widget) then
         return nil
     end
-
-    local children = children_in_order(hier, p.widgets)
-
-    if not children then
-        return nil
+    if p.dir == "y" then
+        return { dir = "y", gap = spacing, specs = {} }, "h", "w"
     end
-    return { dir = p.dir, gap = spacing, specs = {} }, children, p.dir == "y"
+    return { dir = "x", gap = spacing, specs = {} }, "w", "h"
 end
 
---- wibox.layout.fixed: every child fixed at its `:fit` along the direction,
--- asked with the space left after the children and gaps before it, and
--- growing across. The last child grows along too when `fill_space` is set.
+--- wibox.layout.fixed: every child at its content size along the direction,
+-- which is the `:fit` the engine asked it for, and the whole size across.
+-- The last child grows along too when `fill_space` is set.
 --
--- A child whose `:fit` is zero along the direction is left out: the engine
--- places it at zero size and skips its spacing, and Clay's childGap is
--- added between every pair of children whatever their size
--- (clay.h:3080-3082). The engine also stops placing children once one
--- starts past the edge; those are not in the hierarchy, so they are not
--- here either.
-local function describe_fixed(w, hier, ctx)
-    local node, children, is_y = describe_linear(w, hier, fixed_class)
+-- Clay's childGap is added between every pair of children whatever their
+-- size (clay.h:3080-3082), where the engine skipped the spacing of a child
+-- whose `:fit` was zero.
+local function describe_fixed(w)
+    local node, along, across = describe_linear(w, fixed_class)
 
     if not node then
         return nil
     end
 
     local p = w._private
-    local width, height = hier:get_size()
-    local pos = 0
 
-    for i, child in ipairs(children) do
+    for i, child in ipairs(p.widgets) do
+        local spec = { widget = child, [across] = "grow" }
+
         if i == #p.widgets and p.fill_space then
-            node.specs[#node.specs + 1] = { hier = child }
-        else
-            local fw, fh = base.fit_widget(w, ctx, child:get_widget(),
-                is_y and width or width - pos, is_y and height - pos or height)
-            local along = is_y and fh or fw
-
-            if along > 0 then
-                node.specs[#node.specs + 1] =
-                    { hier = child, [is_y and "h" or "w"] = along }
-                pos = pos + along + node.gap
-            end
+            spec[along] = "grow"
         end
+        node.specs[i] = spec
     end
     return node
 end
@@ -280,63 +258,51 @@ end
 -- engine gives every child the same share whatever its content, so a child
 -- whose converted content is wider than its share keeps that width here and
 -- takes it from the others.
-local function describe_flex(w, hier)
-    local node, children, is_y = describe_linear(w, hier, flex_class)
-    local p = w._private
+local function describe_flex(w)
+    local node, along = describe_linear(w, flex_class)
 
-    if not node or #children ~= #p.widgets then
+    if not node then
         return nil
     end
-    for i, child in ipairs(children) do
-        node.specs[i] =
-            { hier = child, [is_y and "hmax" or "wmax"] = p.max_widget_size }
+
+    local p = w._private
+
+    for i, child in ipairs(p.widgets) do
+        node.specs[i] = { widget = child, w = "grow", h = "grow",
+            [along .. "max"] = p.max_widget_size }
     end
     return node
 end
 
 --- wibox.layout.align -> three children along the direction, sized as the
--- `expand` mode says. Empty elements stand in where the engine leaves space:
--- a grow spacer where a missing second widget would have been, and in
--- "none" mode a grow wrapper around each outer widget, aligned to its edge,
--- so the second centers in the whole width as the engine centers it.
+-- `expand` mode says: fit for the slots the engine asked `:fit`, grow for
+-- the ones it gave what was left. Empty elements stand in where the engine
+-- leaves space: a grow spacer where a missing second widget would have
+-- been, and in "none" mode a grow wrapper around each outer widget, aligned
+-- to its edge, so the second centers in the whole width as the engine
+-- centers it.
 --
 -- A slot that grows starts at the size of what it holds and is only ever
 -- given more (clay.h:1815-1827 sums a child's content, 2357-2391 grows),
 -- and the compress pass will not take it below that content
--- (clay.h:2334-2338). So a grown slot whose own subtree converted, and
--- therefore carries fixed children, keeps a content width larger than the
--- share the engine would have given it, and takes that width from the
--- slots beside it. A slot holding a raster leaf has no content of its own
--- and takes exactly its share.
-local function describe_align(w, hier, ctx)
+-- (clay.h:2334-2338). So a grown slot whose own subtree converted keeps a
+-- content width larger than the share the engine would have given it, and
+-- takes that width from the slots beside it.
+local function describe_align(w)
     local p = w._private
 
     if w.layout ~= align_class.layout then
         return nil
     end
 
-    local is_y = p.dir == "y"
-    local width, height = hier:get_size()
-    local total = is_y and height or width
-    local along = is_y and "h" or "w"
-    local slots = {}
+    local along, across = "w", "h"
 
-    for _, child in ipairs(hier:get_children()) do
-        local cw = child:get_widget()
-        local slot = cw == p.first and "first" or cw == p.second and "second"
-            or cw == p.third and "third"
-
-        if not slot or slots[slot] then
-            return nil
-        end
-        slots[slot] = child
+    if p.dir == "y" then
+        along, across = "h", "w"
     end
 
-    local function fit_along(widget, bound)
-        local fw, fh = base.fit_widget(w, ctx, widget,
-            is_y and width or bound, is_y and bound or height)
-
-        return is_y and fh or fw
+    local function slot(widget, sizing)
+        return { widget = widget, [along] = sizing, [across] = "grow" }
     end
 
     local specs = {}
@@ -345,69 +311,49 @@ local function describe_align(w, hier, ctx)
     -- "outside" with no second widget gives both outer widgets the whole
     -- length, one over the other, which two elements in a row cannot say.
     if p.expand == "outside" and not p.second then
-        if slots.first or slots.third then
+        if p.first or p.third then
             return nil
         end
         return node
     end
 
     if p.expand == "inside" or not p.second then
-        -- The outer widgets at their fit, the first bounded by the whole and
-        -- the third by what the first left; the second grows between. With
+        -- The outer widgets at their fit; the second grows between. With
         -- no second widget the third still sits at the far edge.
-        local remains = total
-
-        if slots.first then
-            local size = fit_along(p.first, remains)
-
-            remains = remains - size
-            specs[#specs + 1] = { hier = slots.first, [along] = size }
+        if p.first then
+            specs[#specs + 1] = slot(p.first, "fit")
         end
-        if slots.second then
-            specs[#specs + 1] = { hier = slots.second }
-        elseif not p.second and slots.third then
-            specs[#specs + 1] = {}
+        if p.second then
+            specs[#specs + 1] = slot(p.second, "grow")
+        elseif p.third then
+            specs[#specs + 1] = { [along] = "grow" }
         end
-        if slots.third then
-            specs[#specs + 1] = { hier = slots.third,
-                [along] = fit_along(p.third, remains) }
-        end
-        return node
-    end
-
-    -- "outside" and "none" size the second first, at its fit within the
-    -- whole; a second that wants it all is placed alone at full size.
-    local second = fit_along(p.second, total)
-
-    if second >= total then
-        if slots.second then
-            specs[1] = { hier = slots.second }
+        if p.third then
+            specs[#specs + 1] = slot(p.third, "fit")
         end
         return node
     end
 
     if p.expand == "outside" then
-        -- The outer widgets take what the second leaves, splitting it
-        -- evenly unless one of them holds converted content wider than its
-        -- half; a missing one leaves its half empty.
-        specs[1] = slots.first and { hier = slots.first } or {}
-        specs[2] = { hier = slots.second, [along] = second }
-        specs[3] = slots.third and { hier = slots.third } or {}
+        -- The second at its fit; the outer widgets take what it leaves,
+        -- splitting it evenly unless one of them holds converted content
+        -- wider than its half. A missing one leaves its half empty.
+        specs[1] = p.first and slot(p.first, "grow") or { [along] = "grow" }
+        specs[2] = slot(p.second, "fit")
+        specs[3] = p.third and slot(p.third, "grow") or { [along] = "grow" }
         return node
     end
 
-    -- "none": the outer widgets at their fit within half of what the second
-    -- leaves, each pinned to its edge of a half that grows.
-    local half = math.floor((total - second) / 2)
-    local first = slots.first and { hier = slots.first,
-        [along] = fit_along(p.first, half) } or nil
-    local third = slots.third and { hier = slots.third,
-        [along] = fit_along(p.third, half) } or nil
-
-    specs[1] = { children = { first }, align = { x = "left", y = "top" } }
-    specs[2] = { hier = slots.second, [along] = second }
-    specs[3] = { children = { third }, align = is_y
-        and { x = "left", y = "bottom" } or { x = "right", y = "top" } }
+    -- "none": the second at its fit, the outer widgets at theirs, each
+    -- pinned to its edge of a half that grows.
+    specs[1] = { [along] = "grow", [across] = "grow",
+        align = { x = "left", y = "top" },
+        children = { p.first and slot(p.first, "fit") } }
+    specs[2] = slot(p.second, "fit")
+    specs[3] = { [along] = "grow", [across] = "grow",
+        align = p.dir == "y" and { x = "left", y = "bottom" }
+            or { x = "right", y = "top" },
+        children = { p.third and slot(p.third, "fit") } }
     return node
 end
 
@@ -419,7 +365,7 @@ end
 -- how the engine shrinks each child: by twice the spacing and by the offset
 -- times the child count. A negative offset would need negative padding, so
 -- it keeps the stack drawing itself.
-local function describe_stack(w, hier)
+local function describe_stack(w)
     local p = w._private
     local spacing, ho, vo = p.spacing or 0, p.h_offset or 0, p.v_offset or 0
 
@@ -428,34 +374,31 @@ local function describe_stack(w, hier)
         return nil
     end
 
-    local children = children_in_order(hier, p.widgets)
-
-    if not children then
-        return nil
-    end
-
     local n = #p.widgets
     local specs = {}
 
-    for i, child in ipairs(children) do
+    for i, child in ipairs(p.widgets) do
         local k = i - 1
 
         specs[i] = {
-            float = true,
+            float = true, w = "grow", h = "grow",
             pad = { spacing + k * ho, spacing + (n - k) * ho,
                 spacing + k * vo, spacing + (n - k) * vo },
-            children = { { hier = child } },
+            children = whole_box(child),
         }
+        if p.top_only then
+            break
+        end
     end
 
     return { specs = specs }
 end
 
---- wibox.container.place -> child alignment, with the child fixed at its
--- `:fit` on each axis unless `content_fill_*` makes it grow there.
--- `fill_horizontal` and `fill_vertical` only change the place's own `:fit`,
--- which is the parent's to ask.
-local function describe_place(w, hier, ctx)
+--- wibox.container.place -> child alignment, with the child at its content
+-- size on each axis unless `content_fill_*` makes it grow there. The place
+-- itself fills the axes `fill_*` names, which is what its own `:fit`
+-- answered.
+local function describe_place(w)
     local p = w._private
 
     if w.layout ~= place_class.layout then
@@ -463,23 +406,15 @@ local function describe_place(w, hier, ctx)
     end
 
     local node = { specs = {},
-        align = { x = p.halign or "center", y = p.valign or "center" } }
-    local children = hier:get_children()
+        align = { x = p.halign or "center", y = p.valign or "center" },
+        w = p.fill_horizontal and "grow" or nil,
+        h = p.fill_vertical and "grow" or nil }
 
-    if #children == 0 then
-        return node
+    if p.widget then
+        node.specs[1] = { widget = p.widget,
+            w = p.content_fill_horizontal and "grow" or "fit",
+            h = p.content_fill_vertical and "grow" or "fit" }
     end
-    if #children ~= 1 or children[1]:get_widget() ~= p.widget then
-        return nil
-    end
-
-    local fw, fh = base.fit_widget(w, ctx, p.widget, hier:get_size())
-
-    node.specs[1] = {
-        hier = children[1],
-        w = not p.content_fill_horizontal and fw or nil,
-        h = not p.content_fill_vertical and fh or nil,
-    }
     return node
 end
 
@@ -498,16 +433,23 @@ local classes = {
 }
 
 --- The node a widget compiles to, plus any foreground it puts in force, or
--- nil for a widget that keeps drawing itself. `node.specs`, when set, is how
--- the widget sizes its children; a container without it gives its children
--- the whole padded box.
-local function describe(w, hier, ctx)
+-- nil for a widget that keeps drawing itself. `node.specs` is how the widget
+-- sizes its children. A forced size is the widget's own `:fit` answer,
+-- whatever its class would have said.
+local function describe(w)
     local describe_class = classes[w.fit]
 
     if not describe_class or not common_convertible(w) then
         return nil
     end
-    return describe_class(w, hier, ctx)
+
+    local node, fg = describe_class(w)
+
+    if node then
+        node.w = w._private.forced_width or node.w
+        node.h = w._private.forced_height or node.h
+    end
+    return node, fg
 end
 
 --- Classes whose instances do not carry their own name.
@@ -536,11 +478,39 @@ local function class_name(w)
     return (name:gsub("^.*%.lua%.", ""):gsub("^[^%a]+", ""))
 end
 
---- A raster leaf for the subtree at `hier`: the widget draws itself, with
--- its parent's transform placing it and `fg` as its source.
-local function leaf(st, hier, parent, fg)
-    st.leaves[#st.leaves + 1] = { hierarchy = hier, parent = parent, fg = fg }
-    return { raster = true, class = class_name(hier:get_widget()) }
+--- A raster leaf for the subtree at `widget`: the widget draws itself, with
+-- `fg` as its source, at its `:fit` within the drawin. An axis it takes
+-- whole grows, so Clay gives it what the drawin's layout leaves, which is
+-- the bound the engine would have asked it with.
+local function leaf(st, widget, parent, fg)
+    local fw, fh = base.fit_widget(parent, st.context, widget,
+        st.width, st.height)
+    local node = { raster = true, class = class_name(widget),
+        widget = widget, leaf = #st.leaves + 1,
+        w = fw < st.width and math.ceil(fw) or "grow",
+        h = fh < st.height and math.ceil(fh) or "grow" }
+
+    st.leaves[node.leaf] = { widget = widget, fg = fg, node = node }
+    return node
+end
+
+--- The parent's sizing for a child, over the child's own. Grow stands, and
+-- a size the child gave becomes its floor (Clay_SizingMinMax.min): the
+-- child fills what it is given, and a parent that wraps its content still
+-- counts that size, as the engine's `:fit` counted it through a container
+-- that hands its child the whole box. Fit gives way to what the child said.
+local function merge_sizing(node, spec)
+    for _, k in ipairs { "w", "h" } do
+        if spec[k] == "grow" then
+            if type(node[k]) == "number" then
+                node[k .. "min"] = node[k]
+            end
+            node[k] = "grow"
+        elseif node[k] == nil then
+            node[k] = spec[k]
+        end
+    end
+    node.wmax, node.hmax = spec.wmax, spec.hmax
 end
 
 local compile_node
@@ -548,48 +518,38 @@ local compile_node
 --- The nodes for a list of child specs: a widget's node with the sizing its
 -- parent decided, or an empty element the parent asked for, which stands for
 -- no widget and is left out of the box readback.
-local function compile_specs(st, specs, hier, fg)
+local function compile_specs(st, specs, parent, fg)
     local nodes = {}
 
     for i, spec in ipairs(specs) do
         local node
 
-        if spec.hier then
-            node = compile_node(st, spec.hier, hier, fg)
-            spec.hier = nil
-            gtable.crush(node, spec)
+        if spec.widget then
+            node = compile_node(st, spec.widget, parent, fg)
+            merge_sizing(node, spec)
         else
             node = spec
             node.spacer = true
             node.children = spec.children
-                and compile_specs(st, spec.children, hier, fg) or nil
+                and compile_specs(st, spec.children, parent, fg) or nil
         end
         nodes[i] = node
     end
     return nodes
 end
 
---- The node tree for the widget at `hier`.
-function compile_node(st, hier, parent, fg)
-    local node, node_fg = describe(hier:get_widget(), hier, st.context)
+--- The node tree for `widget`.
+function compile_node(st, widget, parent, fg)
+    local node, node_fg = describe(widget)
 
     if not node then
-        return leaf(st, hier, parent, fg)
+        return leaf(st, widget, parent, fg)
     end
 
-    local specs = node.specs
-    local mark, children = #st.leaves, {}
+    local mark = #st.leaves
+    local children = compile_specs(st, node.specs, widget, node_fg or fg)
 
     node.specs = nil
-    if specs then
-        children = compile_specs(st, specs, hier, node_fg or fg)
-    else
-        -- A container with no sizing rule of its own gives every child the
-        -- whole padded box, which is what a node grows into by default.
-        for i, child in ipairs(hier:get_children()) do
-            children[i] = compile_node(st, child, hier, node_fg or fg)
-        end
-    end
 
     -- A rounded background clips its children to its shape, and Clay clips
     -- to rectangles: a SCISSOR command carries a box and nothing else
@@ -603,43 +563,47 @@ function compile_node(st, hier, parent, fg)
             for i = #st.leaves, mark + 1, -1 do
                 st.leaves[i] = nil
             end
-            return leaf(st, hier, parent, fg)
+            return leaf(st, widget, parent, fg)
         end
     end
 
     node.children = children
-    node.class = class_name(hier:get_widget())
+    node.class = class_name(widget)
+    node.widget = widget
     return node
 end
 
---- Compile a drawable's laid-out widget tree.
+--- Compile a drawable's widget tree.
 --
 -- Returns the node tree, rooted at the drawable's own background, and the
--- raster leaves in the tree's preorder, each with the hierarchy it draws,
--- that hierarchy's parent and the foreground in force. Returns nil when
--- nothing converts, which leaves the drawable on the path it has always
--- taken: painted whole.
+-- raster leaves in the tree's preorder, each with the widget it draws, the
+-- foreground in force and its node. Returns nil when nothing converts, which
+-- leaves the drawable on the path it has always taken: painted whole.
 --
 -- A node is a table with any of `pad`, `bg`, `border`, `bw`, `radius`, the
--- sizing `w` and `h` (a fixed number, else the node grows) with `wmax` and
--- `hmax` as grow ceilings, `dir` ("y" for top to bottom), `gap`, `align`
--- (`x` and `y`, as wibox.container.place names them), `float` (attached to
--- the parent's top left, off the flow), `raster` for a leaf, `spacer` for an
--- element that stands for no widget, `class` (the widget's `widget_name`, for
--- the `somewm-client clay tree` dump), and `children`.
+-- sizing `w` and `h` (`"fit"` or absent, `"grow"`, or a fixed number) with
+-- `wmin`, `hmin`, `wmax` and `hmax` as the floor and ceiling of fit and
+-- grow, `dir` ("y" for top to bottom), `gap`,
+-- `align` (`x` and `y`, as wibox.container.place names them), `float`
+-- (attached to the parent's top left, off the flow), `raster` for a leaf
+-- with `leaf` as its index, `spacer` for an element that stands for no
+-- widget, `class` (the widget's `widget_name`, for the `somewm-client clay
+-- tree` dump), `widget`, and `children`. The C side reads the description
+-- and ignores `widget` and `leaf`, which are the drawable's.
 --
 -- @tparam table self The drawable, for its own background, background image
 --  and foreground.
--- @tparam wibox.hierarchy|nil root The drawable's laid-out widget tree.
--- @tparam table context The widget context the tree was laid out in.
+-- @tparam wibox.widget|nil root The drawable's widget.
+-- @tparam table context The widget context.
+-- @tparam number width The drawable's width, the bound every leaf is fit in.
+-- @tparam number height The drawable's height.
 -- @treturn[1] table The node tree.
 -- @treturn[1] table The raster leaves, in preorder.
 -- @treturn[2] nil Nothing converted.
-function clay.compile(self, root, context)
+function clay.compile(self, root, context, width, height)
     -- A background image is a painter over the whole drawable, with no Clay
     -- equivalent short of rastering it, which is what painting whole does.
-    if not root or self.background_image
-            or not classes[root:get_widget().fit] then
+    if not root or self.background_image or not classes[root.fit] then
         return nil
     end
 
@@ -653,8 +617,9 @@ function clay.compile(self, root, context)
         return nil
     end
 
-    local st = { leaves = {}, context = context }
-    local node = compile_node(st, root, nil, self.foreground_color)
+    local st = { leaves = {}, context = context, width = width, height = height }
+    local node = compile_node(st, root, base.no_parent_I_know_what_I_am_doing,
+        self.foreground_color)
 
     -- The root's class matched but its properties did not: the leaf still
     -- covers every pixel it did, so there is nothing to gain and a whole
@@ -663,6 +628,8 @@ function clay.compile(self, root, context)
         return nil
     end
 
+    -- The widget gets the whole drawin, as the engine gave it.
+    merge_sizing(node, { w = "grow", h = "grow" })
     return { bg = base_rgba, radius = 0, class = "drawable",
         children = { node } }, st.leaves
 end

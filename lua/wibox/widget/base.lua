@@ -121,7 +121,7 @@ local base = {}
 -- the widget.
 -- @tparam widget find_widgets_result.widget The widget being displayed.
 -- @tparam wibox.hierarchy find_widgets_result.hierarchy The hierarchy
--- managing the widget's geometry.
+-- managing the widget's geometry, or nil for a widget Clay solved.
 -- @tparam number find_widgets_result.x An approximation of the X position that
 -- the widget is visible at on the surface.
 -- @tparam number find_widgets_result.y An approximation of the Y position that
@@ -152,7 +152,7 @@ local base = {}
 -- the widget.
 -- @tparam widget find_widgets_result.widget The widget being displayed.
 -- @tparam wibox.hierarchy find_widgets_result.hierarchy The hierarchy
--- managing the widget's geometry.
+-- managing the widget's geometry, or nil for a widget Clay solved.
 -- @tparam number find_widgets_result.x An approximation of the X position that
 -- the widget is visible at on the surface.
 -- @tparam number find_widgets_result.y An approximation of the Y position that
@@ -177,7 +177,7 @@ local base = {}
 -- the widget.
 -- @tparam widget find_widgets_result.widget The widget being displayed.
 -- @tparam wibox.hierarchy find_widgets_result.hierarchy The hierarchy
--- managing the widget's geometry.
+-- managing the widget's geometry, or nil for a widget Clay solved.
 -- @tparam number find_widgets_result.x An approximation of the X position that
 -- the widget is visible at on the surface.
 -- @tparam number find_widgets_result.y An approximation of the Y position that
@@ -202,7 +202,7 @@ local base = {}
 -- the widget.
 -- @tparam widget find_widgets_result.widget The widget being displayed.
 -- @tparam wibox.hierarchy find_widgets_result.hierarchy The hierarchy
--- managing the widget's geometry.
+-- managing the widget's geometry, or nil for a widget Clay solved.
 -- @tparam number find_widgets_result.x An approximation of the X position that
 -- the widget is visible at on the surface.
 -- @tparam number find_widgets_result.y An approximation of the Y position that

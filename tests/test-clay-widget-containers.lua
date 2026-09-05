@@ -1,10 +1,9 @@
 -- Test: margin and background containers convert to Clay declarations, and a
 -- wibar drawn that way is pixel-identical to the same wibar painted whole.
 --
--- Two things are checked. First, that the boxes Clay solves for the converted
--- chain are the boxes wibox's own :fit/:layout protocol places, read back
--- through awesome._test_widget_boxes(). Second, that the screen looks the
--- same either way: setting a bgimage puts the drawable back on the path where
+-- Two things are checked. First, the boxes Clay solves for the converted
+-- chain, read back through awesome._test_widget_boxes(). Second, that the
+-- screen looks the same either way: setting a bgimage puts the drawable back on the path where
 -- cairo paints every pixel (lua/wibox/clay.lua refuses a background image),
 -- so the same tree renders twice, once converted and once whole, and the two
 -- captures have to agree.
@@ -92,7 +91,7 @@ local steps = {
         assert(count < 20, "the widget tree never converted")
     end,
 
-    -- Clay's boxes for the chain, against wibox's own.
+    -- Clay's boxes for the chain.
     function()
         local boxes = awesome._test_widget_boxes(bar.drawin)
 
@@ -111,16 +110,7 @@ local steps = {
         assert_box(boxes[5], { x = OUTER + INNER, y = OUTER + INNER,
             width = BW - 2 * (OUTER + INNER),
             height = BH - 2 * (OUTER + INNER) }, "the raster leaf")
-
-        -- The chain's widget nodes are boxes 2 to 5; the hierarchy holds the
-        -- same widgets, starting at the outer margin.
-        local want = capture.hierarchy_boxes(bar._drawable._widget_hierarchy)
-
-        for i = 1, #want do
-            assert_box(boxes[i + 1], want[i],
-                "Clay and wibox disagree at hierarchy depth " .. i)
-        end
-        io.stderr:write("[PASS] Clay solves the boxes wibox places\n")
+        io.stderr:write("[PASS] Clay solves the chain\n")
         return true
     end,
 

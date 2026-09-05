@@ -1104,12 +1104,7 @@ static struct cairo_buffer *rasterize_image(Clay_RenderCommand *cmd,
 		rounded_rect_path(cr, 0, 0, w, h, radius);
 		cairo_clip(cr);
 	}
-	/* An exact entry is placed one to one: a box the solver rounded a pixel
-	 * away from the size the surface was made for crops a column or leaves
-	 * one transparent, where scaling would resample the whole leaf. */
-	if (!entry->exact) {
-		cairo_scale(cr, (double)w / entry->width, (double)h / entry->height);
-	}
+	cairo_scale(cr, (double)w / entry->width, (double)h / entry->height);
 	Clay_Color ink = cmd->renderData.image.backgroundColor;
 	if (ink.a > 0) {
 		cairo_set_source_rgba(cr, clay_srgb(ink.r), clay_srgb(ink.g),

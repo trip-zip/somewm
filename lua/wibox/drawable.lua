@@ -64,21 +64,6 @@ local function get_widget_context(self)
     return context
 end
 
--- The box the layout engine gave each raster leaf, in drawable coordinates:
--- what sizes the leaf's surface (widget.c), and what Clay has to agree with.
-local function leaf_boxes(leaves)
-    local boxes = {}
-
-    for i, leaf in ipairs(leaves) do
-        local hier = leaf.hierarchy
-        local x, y, w, h = matrix.transform_rectangle(
-            hier:get_matrix_to_device(), 0, 0, hier:get_size())
-
-        boxes[i] = { x = x, y = y, width = w, height = h }
-    end
-    return boxes
-end
-
 -- Whether a leaf's box meets the dirty region, both in drawable
 -- coordinates. The region's rectangles are read once per redraw, so this
 -- costs no allocation per leaf.
@@ -92,15 +77,55 @@ local function touches(rects, box)
     return false
 end
 
+-- The hierarchy that draws raster leaf i, laid out at the box Clay solved
+-- for it. The layout engine survives only here, under a leaf: each leaf has
+-- a `wibox.hierarchy` of its own, kept by the leaf's index in the tree as
+-- its surface is (widget.c), placed on the drawable by its device matrix so
+-- its dirty extents, its hit test and the mouse handlers that read
+-- `find_widgets_result.hierarchy` all speak drawable coordinates.
+local function leaf_hierarchy(self, i, leaf, context, dirty)
+    local box = leaf.node.box
+    local state = self._clay_leaves[i]
+
+    if not state then
+        state = {}
+        state.hierarchy = whierarchy.new(context, leaf.widget,
+            box.width, box.height, self._clay_leaf_redraw,
+            self._clay_leaf_layout, state)
+        self._clay_leaves[i] = state
+    end
+    state.hierarchy:update(context, leaf.widget, box.width, box.height,
+        dirty, matrix.create_translate(box.x, box.y))
+    return state.hierarchy
+end
+
+-- How many times a counted widget (wibox.hierarchy.count_widget) is placed
+-- under the leaves, which is where the engine still places anything.
+local function count_in_leaves(self, widget)
+    local n = 0
+
+    for _, state in ipairs(self._clay_leaves) do
+        n = n + state.hierarchy:get_count(widget)
+    end
+    return n
+end
+
+-- Drop the leaf hierarchies past `keep`, and every one when the tree stops
+-- converting: their widgets' signals reach this drawable through the whole
+-- tree's hierarchy again, or through the leaves that stay.
+local function drop_leaves(self, keep)
+    for i = #self._clay_leaves, keep + 1, -1 do
+        self._clay_leaves[i].dropped = true
+        self._clay_leaves[i] = nil
+    end
+end
+
 -- Paint the raster leaves into their own surfaces, only where the dirty
 -- region touches them, so a clock tick re-rasters the clock and nothing
--- else. A leaf keeps its surface by its index in the tree, so a subtree
--- that moved to another index paints whole; its surface may have been
--- another widget's. A leaf's own matrix is relative to its parent, so the
--- parent's matrix to the drawable goes on first, after moving the
--- drawable's origin to the leaf's. The surfaces hold device pixels.
-local function draw_leaves(self, context, leaves, boxes, scale, dirty)
-    local indices = setmetatable({}, { __mode = "k" })
+-- else. A surface new since it was last painted paints whole, wherever the
+-- region reaches. A leaf's hierarchy draws from its own origin, which is the
+-- surface's; the surfaces hold device pixels.
+local function draw_leaves(self, context, leaves, scale, dirty)
     local rects, drawn = {}, {}
 
     for r = 0, dirty:num_rectangles() - 1 do
@@ -110,25 +135,21 @@ local function draw_leaves(self, context, leaves, boxes, scale, dirty)
     end
 
     for i, leaf in ipairs(leaves) do
-        local box = boxes[i]
-        local whole = self._clay_leaf_indices[leaf.hierarchy] ~= i
+        local box = leaf.node.box
+        -- A widget's own draw can make its drawin paint whole (it hosts
+        -- the systray now, its opacity changed), which drops every leaf
+        -- surface from under this loop. That flip asks for a complete
+        -- repaint of its own, so stop and let it run.
+        local native, fresh = self.drawable:_clay_leaf_surface(i)
 
-        indices[leaf.hierarchy] = i
-        if whole or touches(rects, box) then
-            -- A widget's own draw can make its drawin paint whole (it
-            -- hosts the systray now, its opacity changed), which drops
-            -- every leaf surface from under this loop. That flip asks for
-            -- a complete repaint of its own, so stop and let it run.
-            local native = self.drawable:_clay_leaf_surface(i)
-
-            if not native then
-                break
-            end
-
+        if not native then
+            break
+        end
+        if fresh or touches(rects, box) then
             local lcr = cairo.Context(surface.load_silently(native, false))
 
             lcr:scale(scale, scale)
-            if not whole then
+            if not fresh then
                 for _, r in ipairs(rects) do
                     lcr:rectangle(r[1] - box.x, r[2] - box.y, r[3], r[4])
                 end
@@ -139,14 +160,94 @@ local function draw_leaves(self, context, leaves, boxes, scale, dirty)
             lcr:paint()
             lcr.operator = cairo.Operator.OVER
             lcr:set_source(leaf.fg)
-            lcr:translate(-box.x, -box.y)
-            lcr:transform(leaf.parent:get_matrix_to_device():to_cairo_matrix())
-            leaf.hierarchy:draw(context, lcr)
+            self._clay_leaves[i].hierarchy:draw(context, lcr)
             drawn[i] = true
         end
     end
-    self._clay_leaf_indices = indices
     self.drawable:_clay_leaves_drawn(drawn)
+end
+
+-- The signals `wibox.hierarchy` connects for the layout engine, connected
+-- here for the widgets Clay solves instead: a change in any of them is a
+-- change in the tree, so the tree compiles again. `widgets` maps each
+-- widget in the tree to its parent, for `emit_signal_recursive`.
+local function wire_widgets(self, widgets)
+    local wired = self._clay_wired
+
+    for w in pairs(wired) do
+        if not widgets[w] then
+            w:disconnect_signal("widget::redraw_needed", self._clay_relayout)
+            w:disconnect_signal("widget::layout_changed", self._clay_relayout)
+            w:disconnect_signal("widget::emit_recursive", self._clay_emit)
+        end
+    end
+    for w in pairs(widgets) do
+        if not wired[w] then
+            w:weak_connect_signal("widget::redraw_needed", self._clay_relayout)
+            w:weak_connect_signal("widget::layout_changed", self._clay_relayout)
+            w:weak_connect_signal("widget::emit_recursive", self._clay_emit)
+        end
+    end
+    self._clay_wired = widgets
+end
+
+-- Pair every widget node with the box Clay solved for it, in the preorder
+-- both sides use, and collect the converted widgets with their parents. A
+-- leaf's widget is its hierarchy's, which reaches the drawable on its own.
+local function place_nodes(node, boxes, widgets, parent, k)
+    if not node.spacer then
+        k = k + 1
+        node.box = boxes[k]
+    end
+    if node.widget and not node.raster then
+        widgets[node.widget] = parent or false
+        parent = node.widget
+    end
+    for _, child in ipairs(node.children or {}) do
+        k = place_nodes(child, boxes, widgets, parent, k)
+    end
+    return k
+end
+
+-- Draw a converted tree: Clay solved every box, the leaves paint their own
+-- surfaces at theirs, and the renderer draws the rest. Returns false when
+-- the tree did not convert, in which case nothing here ran.
+local function draw_converted(self, context, width, height, dirty)
+    local tree, leaves = wclay.compile(self, self._widget, context, width, height)
+    -- nil is not a tree: the renderer drops whatever it held and answers
+    -- false, which is the whole of "paint it yourself".
+    local scale, boxes = self.drawable:_clay_nodes(tree)
+
+    if not scale then
+        drop_leaves(self, 0)
+        wire_widgets(self, {})
+        self._clay_tree = nil
+        return false
+    end
+
+    local widgets = {}
+
+    place_nodes(tree, boxes, widgets, nil, 0)
+    self._clay_tree = tree
+    wire_widgets(self, widgets)
+    -- The whole tree's hierarchy is the engine's; a converted tree has no
+    -- use for it, and dropping it takes its signal connections with it.
+    self._widget_hierarchy = nil
+    self._widget_hierarchy_callback_arg = nil
+
+    local had_systray = systray_widget and count_in_leaves(self, systray_widget) > 0
+
+    for i, leaf in ipairs(leaves) do
+        leaf_hierarchy(self, i, leaf, context, dirty)
+    end
+    drop_leaves(self, #leaves)
+    if had_systray and count_in_leaves(self, systray_widget) == 0 then
+        systray_widget:_kickout(context)
+    end
+
+    draw_leaves(self, context, leaves, scale, dirty)
+    self.drawable:refresh()
+    return true
 end
 
 local function do_redraw(self)
@@ -176,70 +277,59 @@ local function do_redraw(self)
     local x, y, width, height = geom.x, geom.y, geom.width, geom.height
     local context = get_widget_context(self)
 
-    -- Relayout
-    if self._need_relayout or self._need_complete_repaint then
-        self._need_relayout = false
-        if self._widget_hierarchy and self._widget then
-            local had_systray = systray_widget and self._widget_hierarchy:get_count(systray_widget) > 0
-
-            self._widget_hierarchy:update(context,
-                self._widget, width, height, self._dirty_area)
-
-            local has_systray = systray_widget and self._widget_hierarchy:get_count(systray_widget) > 0
-            if had_systray and not has_systray then
-                systray_widget:_kickout(context)
-            end
-        else
-            self._need_complete_repaint = true
-            if self._widget then
-                self._widget_hierarchy_callback_arg = {}
-                self._widget_hierarchy = whierarchy.new(context, self._widget, width, height,
-                        self._redraw_callback, self._layout_callback, self._widget_hierarchy_callback_arg)
-            else
-                self._widget_hierarchy = nil
-            end
-        end
-
-        if self._need_complete_repaint then
-            self._need_complete_repaint = false
-            self._dirty_area:union_rectangle(cairo.RectangleInt{
-                x = 0, y = 0, width = width, height = height
-            })
-        end
+    if self._need_complete_repaint then
+        self._need_complete_repaint = false
+        self._dirty_area:union_rectangle(cairo.RectangleInt{
+            x = 0, y = 0, width = width, height = height
+        })
     end
 
+    -- Compile the widget tree into Clay declarations and solve it, before
+    -- the engine lays anything out: the engine runs only under a raster
+    -- leaf.
     local dirty = self._dirty_area
-    if dirty:is_empty() then
-        return
-    end
+
     self._dirty_area = cairo.Region.create()
 
-    -- Compile the widget tree into Clay declarations. The renderer draws
-    -- what converted, and every subtree that did not is a raster leaf with
-    -- a surface of its own; this surface is then not drawn at all. Below
-    -- the empty region check because every property that feeds a node
-    -- dirties the region on its way here.
-    local tree, leaves = wclay.compile(self, self._widget_hierarchy, context)
-    local boxes = tree and leaf_boxes(leaves)
-    local scale = self.drawable:_clay_nodes(tree, boxes)
-    local converted = scale and true or false
+    local converted = draw_converted(self, context, width, height, dirty)
 
-    -- Crossing between the two paths invalidates every pixel: this surface
-    -- was never painted while the leaves were drawing, and the leaves are
-    -- new surfaces when the tree converts again, so neither holds what this
-    -- frame's region says it does.
-    if converted ~= self._clay_converted then
-        self._clay_converted = converted
-        self._clay_leaf_indices = {}
-        dirty = cairo.Region.create()
+    if converted then
+        self._clay_converted = true
+        return
+    end
+    -- This surface was never painted while the leaves were drawing, so
+    -- leaving the converted path invalidates every pixel of it. (Entering
+    -- it needs nothing: the leaves' surfaces are new, and paint whole.)
+    if self._clay_converted then
+        self._clay_converted = false
         dirty:union_rectangle(cairo.RectangleInt {
             x = 0, y = 0, width = width, height = height
         })
     end
 
-    if scale then
-        draw_leaves(self, context, leaves, boxes, scale, dirty)
-        self.drawable:refresh()
+    -- Relayout
+    if self._widget_hierarchy and self._widget then
+        local had_systray = systray_widget and self._widget_hierarchy:get_count(systray_widget) > 0
+
+        self._widget_hierarchy:update(context,
+            self._widget, width, height, dirty)
+
+        local has_systray = systray_widget and self._widget_hierarchy:get_count(systray_widget) > 0
+        if had_systray and not has_systray then
+            systray_widget:_kickout(context)
+        end
+    elseif self._widget then
+        self._widget_hierarchy_callback_arg = {}
+        self._widget_hierarchy = whierarchy.new(context, self._widget, width, height,
+                self._redraw_callback, self._layout_callback, self._widget_hierarchy_callback_arg)
+        dirty:union_rectangle(cairo.RectangleInt{
+            x = 0, y = 0, width = width, height = height
+        })
+    else
+        self._widget_hierarchy = nil
+    end
+
+    if dirty:is_empty() then
         return
     end
 
@@ -332,21 +422,51 @@ local function find_widgets(self, result, hierarchy, x, y)
     end
 end
 
+-- The widgets of a converted tree under a point, outermost first: the
+-- preorder the tree was declared in, which is the order Clay_GetPointerOverIds
+-- answers in (clay.h), each tested as Clay_PointerOver tests one element,
+-- against the box Clay solved. A raster leaf hands over to the hierarchy
+-- that draws it, which sits on the drawable at the leaf's box.
+local function find_clay_widgets(self, result, node, x, y)
+    local box = node.box
+
+    if node.widget and x >= box.x and y >= box.y
+            and x < box.x + box.width and y < box.y + box.height then
+        if node.raster then
+            return find_widgets(self, result,
+                self._clay_leaves[node.leaf].hierarchy, x, y)
+        end
+        table.insert(result, {
+            x = box.x, y = box.y, width = box.width, height = box.height,
+            widget_width = box.width,
+            widget_height = box.height,
+            drawable = self,
+            widget = node.widget,
+        })
+    end
+    for _, child in ipairs(node.children or {}) do
+        find_clay_widgets(self, result, child, x, y)
+    end
+end
+
 -- Find a widget by a point.
 -- The drawable must have drawn itself at least once for this to work.
 -- @param x X coordinate of the point
 -- @param y Y coordinate of the point
 -- @treturn table A table containing a description of all the widgets that
 -- contain the given point. Each entry is a table containing this drawable as
--- its `.drawable` entry, the widget under `.widget` and the instance of
--- `wibox.hierarchy` describing the size and position of the widget under
--- `.hierarchy`. For convenience, `.x`, `.y`, `.width` and `.height` contain an
+-- its `.drawable` entry, the widget under `.widget` and, for a widget the
+-- layout engine placed, the instance of `wibox.hierarchy` describing the size
+-- and position of the widget under `.hierarchy`; a widget Clay solved has no
+-- hierarchy. For convenience, `.x`, `.y`, `.width` and `.height` contain an
 -- approximation of the widget's extents on the surface. `widget_width` and
 -- `widget_height` contain the exact size of the widget in its own, local
 -- coordinate system (which may e.g. be rotated and scaled).
 function drawable:find_widgets(x, y)
     local result = {}
-    if self._widget_hierarchy then
+    if self._clay_tree then
+        find_clay_widgets(self, result, self._clay_tree, x, y)
+    elseif self._widget_hierarchy then
         find_widgets(self, result, self._widget_hierarchy, x, y)
     end
     return result
@@ -363,7 +483,6 @@ function drawable:set_widget(widget)
     self._widget = base.make_widget_from_value(widget)
 
     -- Make sure the widget gets drawn
-    self._need_relayout = true
     self.draw()
 end
 
@@ -513,9 +632,9 @@ function drawable.new(d, widget_context_skeleton, drawable_name)
     ret.drawable = d
     ret._widget_context_skeleton = widget_context_skeleton
     ret._need_complete_repaint = true
-    ret._need_relayout = true
     ret._dirty_area = cairo.Region.create()
-    ret._clay_leaf_indices = {}
+    ret._clay_leaves = {}
+    ret._clay_wired = {}
     ret._clay_converted = false
     setup_signals(ret)
 
@@ -569,7 +688,10 @@ function drawable.new(d, widget_context_skeleton, drawable_name)
             local widgets = ret:find_widgets(x, y)
             for _, v in pairs(widgets) do
                 -- Calculate x/y inside of the widget
-                local lx, ly = v.hierarchy:get_matrix_from_device():transform_point(x, y)
+                local lx, ly = x - v.x, y - v.y
+                if v.hierarchy then
+                    lx, ly = v.hierarchy:get_matrix_from_device():transform_point(x, y)
+                end
                 v.widget:emit_signal(name, lx, ly, button, modifiers,v)
             end
         end)
@@ -581,14 +703,7 @@ function drawable.new(d, widget_context_skeleton, drawable_name)
     d:connect_signal("mouse::leave", function() handle_leave(ret) end)
 
     -- Set up our callbacks for repaints
-    ret._redraw_callback = function(hierar, arg)
-        -- Avoid crashes when a drawable was partly finalized and dirty_area is broken.
-        if not ret._visible then
-            return
-        end
-        if ret._widget_hierarchy_callback_arg ~= arg then
-            return
-        end
+    local function dirty_extents(hierar)
         local m = hierar:get_matrix_to_device()
         local x, y, width, height = matrix.transform_rectangle(m, hierar:get_draw_extents())
         local x1, y1 = math.floor(x), math.floor(y)
@@ -598,11 +713,44 @@ function drawable.new(d, widget_context_skeleton, drawable_name)
         })
         ret:draw()
     end
+    ret._redraw_callback = function(hierar, arg)
+        -- Avoid crashes when a drawable was partly finalized and dirty_area is broken.
+        if not ret._visible then
+            return
+        end
+        if ret._widget_hierarchy_callback_arg ~= arg then
+            return
+        end
+        dirty_extents(hierar)
+    end
+    -- The same, for a raster leaf's own hierarchy, placed on the drawable
+    -- at its box; a dropped leaf's widgets speak through another one.
+    ret._clay_leaf_redraw = function(hierar, state)
+        if ret._visible and not state.dropped then
+            dirty_extents(hierar)
+        end
+    end
+    ret._clay_leaf_layout = function(_, state)
+        if ret._visible and not state.dropped then
+            ret:draw()
+        end
+    end
+    -- A converted widget's signals: any change compiles the tree again.
+    ret._clay_relayout = function()
+        if ret._visible then
+            ret:draw()
+        end
+    end
+    ret._clay_emit = function(widget, name, ...)
+        while widget do
+            widget:emit_signal(name, ...)
+            widget = ret._clay_wired[widget] or nil
+        end
+    end
     ret._layout_callback = function(_, arg)
         if ret._widget_hierarchy_callback_arg ~= arg then
             return
         end
-        ret._need_relayout = true
         -- When not visible, we will be redrawn when we become visible. In the
         -- mean-time, the layout does not matter much.
         if ret._visible then

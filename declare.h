@@ -75,6 +75,12 @@ void declare_handle_drop(void *object);
  * how many. */
 int declare_widget_boxes(drawin_t *d, int (*boxes)[4]);
 
+/* Solve d's stored widget tree on its own, now, and read back the box of
+ * every widget node in preorder (as declare_widget_boxes) plus each raster
+ * leaf's device size in leaf order. Returns the box count, 0 for a drawin
+ * with no tree or no output. */
+int declare_widget_solve(drawin_t *d, int (*boxes)[4], int (*dev)[2]);
+
 /* Test hook (awesome._test_declare_order): the desktop band's draw order for
  * m, bottom to top, one entry per declared object. A fresh solve of the
  * current state with no reconcile, so it reads what the next frame would

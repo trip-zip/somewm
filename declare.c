@@ -538,8 +538,14 @@ widget_child_id(Clay_ElementId parent, uint16_t index)
 static Clay_SizingAxis
 widget_sizing(const struct widget_node *n, int axis)
 {
-	return n->fixed[axis] ? CLAY_SIZING_FIXED(n->size[axis])
-		: CLAY_SIZING_GROW(0, n->max[axis]);
+	switch (n->sizing[axis]) {
+	case WIDGET_SIZING_FIXED:
+		return CLAY_SIZING_FIXED(n->size[axis]);
+	case WIDGET_SIZING_GROW:
+		return CLAY_SIZING_GROW(n->min[axis], n->max[axis]);
+	default:
+		return CLAY_SIZING_FIT(n->min[axis], n->max[axis]);
+	}
 }
 
 static Clay_ElementDeclaration
@@ -739,11 +745,14 @@ declare_scene(Monitor *m)
 
 /* The boxes of one subtree, in the preorder the tree table uses, rounded
  * against the root's own box so a box crossing into Lua is the whole
- * drawin-local pixel the layout engine would have placed. Edges round, not
- * the size, so two boxes that share an edge in Clay share it here. */
+ * drawin-local pixel. Edges round, not the size, so two boxes that share an
+ * edge in Clay share it here. With dev, each raster leaf's box in device
+ * pixels as well, by the arithmetic rasterize_image (render.c) runs on the
+ * same box, so the surface Lua draws into is the size the renderer shows it
+ * at and is never resampled. */
 static size_t
 widget_boxes_walk(drawin_t *d, size_t i, Clay_ElementId id, int (*boxes)[4],
-	int *n, Clay_BoundingBox root)
+	int *n, Clay_BoundingBox root, int (*dev)[2], int *nleaf, float scale)
 {
 	const struct widget_node *node = &d->widget_nodes[i];
 	Clay_ElementData data = Clay_GetElementData(id);
@@ -759,10 +768,17 @@ widget_boxes_walk(drawin_t *d, size_t i, Clay_ElementId id, int (*boxes)[4],
 		boxes[*n][2] = (int)floorf(b.x + b.width - root.x + 0.5f) - x0;
 		boxes[*n][3] = (int)floorf(b.y + b.height - root.y + 0.5f) - y0;
 		(*n)++;
+		if (dev && node->raster) {
+			dev[*nleaf][0] = render_device_len((int)b.x,
+				(int)b.width, scale);
+			dev[*nleaf][1] = render_device_len((int)b.y,
+				(int)b.height, scale);
+			(*nleaf)++;
+		}
 	}
 	for (uint16_t k = 0; k < node->children; k++)
 		next = widget_boxes_walk(d, next, widget_child_id(id, k), boxes,
-			n, root);
+			n, root, dev, nleaf, scale);
 	return next;
 }
 
@@ -790,7 +806,57 @@ declare_widget_boxes(drawin_t *d, int (*boxes)[4])
 	root_id = widget_root_id((uint32_t)handle_for(d, DECLARE_KIND_DRAWIN));
 	root = Clay_GetElementData(root_id);
 	if (root.found)
-		widget_boxes_walk(d, 0, root_id, boxes, &n, root.boundingBox);
+		widget_boxes_walk(d, 0, root_id, boxes, &n, root.boundingBox,
+			NULL, NULL, 1);
+	Clay_SetCurrentContext(previous);
+	return n;
+}
+
+static void handle_clay_error(Clay_ErrorData error);
+
+/* Solve d's tree now, before any frame, and read every box back: what
+ * drawable:_clay_nodes returns to Lua, which sizes the leaf surfaces and
+ * draws and hit-tests against them. The solve runs in a context of its own
+ * holding only this tree: a partial layout in the output's context would
+ * evict every other element's box from Clay's hashmap (clay.h, generation
+ * eviction in Clay__AddHashMapItem), and the frame's own declare, solve and
+ * reconcile follow anyway. The tree is placed where the frame will place it,
+ * at the drawin's output-local origin, so the device rounding matches the
+ * renderer's to the pixel. */
+int
+declare_widget_solve(drawin_t *d, int (*boxes)[4], int (*dev)[2])
+{
+	static Clay_Context *ctx;
+	Monitor *m = d->screen ? d->screen->monitor : NULL;
+	Clay_Context *previous;
+	Clay_ElementId root_id;
+	Clay_ElementData root;
+	int n = 0, nleaf = 0;
+	size_t leaf = 0;
+
+	if (!m || d->widget_nodes_len == 0)
+		return 0;
+	if (!ctx) {
+		uint32_t arena_size = Clay_MinMemorySize();
+
+		ctx = Clay_Initialize(Clay_CreateArenaWithCapacityAndMemory(
+			arena_size, malloc(arena_size)),
+			(Clay_Dimensions) { 0, 0 },
+			(Clay_ErrorHandler) {
+				.errorHandlerFunction = handle_clay_error });
+		Clay_SetCullingEnabled(false);
+	}
+	previous = Clay_GetCurrentContext();
+	Clay_SetCurrentContext(ctx);
+	Clay_BeginLayout();
+	root_id = widget_root_id((uint32_t)handle_for(d, DECLARE_KIND_DRAWIN));
+	declare_widget_subtree(d, 0, root_id, 0, d->x - m->m.x, d->y - m->m.y,
+		NULL, &leaf);
+	Clay_EndLayout();
+	root = Clay_GetElementData(root_id);
+	if (root.found)
+		widget_boxes_walk(d, 0, root_id, boxes, &n, root.boundingBox,
+			dev, &nleaf, m->wlr_output->scale);
 	Clay_SetCurrentContext(previous);
 	return n;
 }
@@ -1183,16 +1249,22 @@ dump_node(void *user, const struct render_node_view *v)
 	buffer_adds(buf, "\n");
 }
 
-/* One axis of a node's sizing, as the tree says it, not as it solved. */
+/* One axis of a node's sizing, as the tree declares it, not as it solved:
+ * a number is CLAY_SIZING_FIXED, fit and grow are Clay's other two types,
+ * with the floor and ceiling when the node set them. The root is fixed at the drawin's
+ * geometry by place_fixed whatever the node says. */
 static void
 dump_sizing(buffer_t *buf, const struct widget_node *n, int axis)
 {
-	if (n->fixed[axis])
+	if (n->sizing[axis] == WIDGET_SIZING_FIXED) {
 		buffer_addf(buf, "%g", n->size[axis]);
-	else if (n->max[axis] > 0)
-		buffer_addf(buf, "grow<=%g", n->max[axis]);
-	else
-		buffer_adds(buf, "grow");
+		return;
+	}
+	buffer_adds(buf, n->sizing[axis] == WIDGET_SIZING_GROW ? "grow" : "fit");
+	if (n->min[axis] > 0)
+		buffer_addf(buf, ">=%g", n->min[axis]);
+	if (n->max[axis] > 0)
+		buffer_addf(buf, "<=%g", n->max[axis]);
 }
 
 /* One line per node of a converted tree, in preorder, indented by depth:
@@ -1217,10 +1289,14 @@ dump_widget_node(buffer_t *buf, drawin_t *d, size_t i, Clay_ElementId id,
 		buffer_adds(buf, " raster");
 	if (!n->widget)
 		buffer_adds(buf, " spacer");
-	buffer_adds(buf, " w=");
-	dump_sizing(buf, n, 0);
-	buffer_adds(buf, " h=");
-	dump_sizing(buf, n, 1);
+	if (i == 0) {
+		buffer_addf(buf, " w=%d h=%d", d->width, d->height);
+	} else {
+		buffer_adds(buf, " w=");
+		dump_sizing(buf, n, 0);
+		buffer_adds(buf, " h=");
+		dump_sizing(buf, n, 1);
+	}
 	if (data.found)
 		buffer_addf(buf, " box %d,%d %dx%d",
 			(int)data.boundingBox.x, (int)data.boundingBox.y,

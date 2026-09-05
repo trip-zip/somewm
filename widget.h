@@ -10,6 +10,15 @@
 
 typedef struct drawin_t drawin_t;
 
+/* One axis of a node's sizing, Clay's own types by name (Clay__SizingType,
+ * clay.h): fit wraps the content, grow fills the parent, fixed is told. Fit
+ * is Clay's default and this tree's: a node that says nothing fits. */
+enum widget_sizing {
+	WIDGET_SIZING_FIT = 0,
+	WIDGET_SIZING_GROW,
+	WIDGET_SIZING_FIXED,
+};
+
 /* One converted widget node, as lua/wibox/clay.lua describes it.
  *
  * The tree is stored in preorder: a node's subtree is the `children` nodes
@@ -33,15 +42,18 @@ struct widget_node {
 	float bg[4];
 	float border[4];
 	float radius;
-	bool fixed[2];       /* sized to size[] on this axis, else grows */
-	float size[2];
-	float max[2];        /* the grow ceiling per axis, 0 for none */
+	uint8_t sizing[2];   /* enum widget_sizing per axis */
+	float size[2];       /* the fixed size, for WIDGET_SIZING_FIXED */
+	float min[2];        /* Clay_SizingMinMax for fit and grow: the floor,
+	                      * and the ceiling, 0 for none, which is Clay's own
+	                      * convention (clay.h:1936) */
+	float max[2];
 	uint8_t align[2];    /* child alignment per axis, Clay_LayoutAlignmentX/Y */
 	uint16_t gap;        /* between children, along the direction */
 	bool vertical;       /* children top to bottom, else left to right */
 	bool floating;       /* attached to the parent's top left, off the flow */
 	bool raster;         /* an image leaf */
-	bool widget;         /* stands for a widget the layout engine also placed */
+	bool widget;         /* stands for a widget, so has a box Lua reads back */
 	uint16_t children;
 };
 
@@ -100,19 +112,24 @@ enum widget_nodes_state {
 void widget_nodes_gate(lua_State *L, drawin_t *d, int udx);
 
 /* Read a tree from the table at absolute stack index idx (what
- * lua/wibox/clay.lua returns) and the leaf boxes at leaves_idx, and store
- * them on d, replacing whatever was there. Returns false and stores nothing
- * when the tree is malformed or the drawin is refused, which is Lua's signal
- * to paint the whole drawable itself. Leaf surfaces hold device pixels with
- * no device scale set, like every other image entry; a kept surface keeps
- * its pixels, so Lua repaints only what its dirty region says. */
-bool widget_nodes_set(lua_State *L, drawin_t *d, int idx, int leaves_idx,
-	float scale);
+ * lua/wibox/clay.lua returns) and store it on d, replacing whatever was
+ * there. Returns false and stores nothing when the tree is malformed or the
+ * drawin is refused, which is Lua's signal to paint the whole drawable
+ * itself. */
+bool widget_nodes_set(lua_State *L, drawin_t *d, int idx);
 void widget_nodes_clear(drawin_t *d);
 
+/* Size each leaf's surface to the device size the solve gave it
+ * (declare_widget_solve), in leaf order. Leaf surfaces hold device pixels
+ * with no device scale set, like every other image entry; a kept surface
+ * keeps its pixels, so Lua repaints only what its dirty region says. */
+void widget_leaves_size(drawin_t *d, int (*dev)[2]);
+
 /* A new reference to leaf i's surface, for Lua to draw into and own the
- * reference of (the drawable.surface convention); NULL past the last leaf. */
-cairo_surface_t *widget_leaf_surface(drawin_t *d, size_t i);
+ * reference of (the drawable.surface convention); NULL past the last leaf.
+ * fresh says whether the surface is new since it was last handed out, so
+ * holds no pixels yet. */
+cairo_surface_t *widget_leaf_surface(drawin_t *d, size_t i, bool *fresh);
 
 /* Bump the generation of every leaf whose index is a key in the table at
  * idx, so the renderer re-rasters exactly the leaves Lua redrew. */

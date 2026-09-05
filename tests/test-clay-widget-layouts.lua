@@ -4,10 +4,10 @@
 -- The tree is the shape of somewmrc.lua's wibar: a stack of an align of two
 -- fixed layouts and a background, and a centered place, with a widget the
 -- compile step can never convert standing in for every textbox and imagebox.
--- Four things are checked: the tree converts; Clay's box for every node is
--- the box wibox's own :fit/:layout protocol placed, read back through
--- awesome._test_widget_boxes(); the pointer over a gap between two leaves
--- still reaches the wibox; and the screen looks the same converted as it
+-- Four things are checked: the tree converts; Clay's boxes, read back
+-- through awesome._test_widget_boxes(), are where the engine used to put
+-- the same widgets; the pointer over a gap between two leaves still reaches
+-- the wibox; and the screen looks the same converted as it
 -- does painted whole (a shape puts the drawable back on the path where cairo
 -- paints every pixel, and a full-rectangle shape masks nothing away).
 --
@@ -77,19 +77,14 @@ local steps = {
         assert(count < 20, "the bar never converted")
     end,
 
-    -- Clay's boxes against wibox's own, node for node.
+    -- Clay's boxes: the drawable and twelve widgets, the stack's wrappers
+    -- standing for none.
     function()
         local boxes = awesome._test_widget_boxes(bar.drawin)
-        local want = capture.hierarchy_boxes(bar._drawable._widget_hierarchy)
 
-        assert(#boxes == #want + 1, string.format(
-            "%d boxes for %d hierarchy nodes and the drawable", #boxes, #want))
+        assert(#boxes == 13, #boxes .. " boxes, expected 13")
         assert_box(boxes[1], { x = 0, y = 0, width = BW, height = BH },
             "the drawable's own background")
-        for i = 1, #want do
-            assert_box(boxes[i + 1], want[i],
-                "Clay and wibox disagree at preorder node " .. i)
-        end
 
         -- The shape: left fixed 40+6+60+6+30 wide, the background between,
         -- the right fixed 50+24 at the far edge, the clock centered.
@@ -97,7 +92,7 @@ local steps = {
         assert_box(boxes[8], { x = 142, y = 0, width = 184, height = BH }, "the middle")
         assert_box(boxes[9], { x = 326, y = 0, width = 74, height = BH }, "the right fixed")
         assert_box(boxes[13], { x = 165, y = 4, width = 70, height = 16 }, "the clock")
-        io.stderr:write("[PASS] Clay solves the boxes wibox places\n")
+        io.stderr:write("[PASS] Clay solves the bar\n")
         return true
     end,
 
@@ -123,6 +118,38 @@ local steps = {
         assert(obj == bar.drawin, "over the gap: got " .. tostring(obj) .. ", want the wibox")
         io.stderr:write("[PASS] a gap between leaves reaches the wibox\n")
         mouse.coords({ x = 100, y = 100 })
+        return true
+    end,
+
+    -- A button press lands on the converted widgets under the point, from
+    -- the outermost in, with the point in each widget's own coordinates:
+    -- find_widgets reads Clay's boxes, and a converted widget has no
+    -- hierarchy to read.
+    function()
+        local middle = bar.widget:get_children()[1]:get_children()[2]
+        local got
+
+        middle:connect_signal("button::press", function(_, lx, ly, button, _, geo)
+            got = { lx = lx, ly = ly, button = button, geo = geo }
+        end)
+        bar.drawin.drawable:emit_signal("button::press", 200, 12, 1, {})
+        assert(got, "the middle background got no press")
+        assert(got.lx == 58 and got.ly == 12, string.format(
+            "the press landed at %d,%d in the middle, want 58,12", got.lx, got.ly))
+        assert(got.geo.hierarchy == nil and got.geo.width == 184,
+            "the middle's geometry is not Clay's box")
+
+        -- Under the point: the stack, the align, the middle, then the place
+        -- and the clock over them, the clock through its own hierarchy.
+        local clock = bar.widget:get_children()[2]:get_children()[1]
+        local under = bar._drawable:find_widgets(200, 12)
+
+        assert(#under == 5, "find_widgets found " .. #under .. " widgets, want 5")
+        assert(under[1].widget == bar.widget, "find_widgets did not start at the stack")
+        assert(under[3].widget == middle, "the middle is not third")
+        assert(under[5].widget == clock and under[5].hierarchy,
+            "the clock is not last, with its hierarchy")
+        io.stderr:write("[PASS] a press reaches the converted widgets under it\n")
         return true
     end,
 
