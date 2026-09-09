@@ -1,15 +1,8 @@
 ## Description
-<!-- What does this change and why? -->
+  <!-- What problem does this solve, and what changes? Note any public Lua API changes. -->
 
-
-## Test Plan
-<!-- How did you verify this works? -->
-
+## Validation
+  <!-- What did you run, and what were the results? Include failures, skipped checks, and anything still unverified. -->
 
 ## AI Usage
-<!-- Per AI_POLICY.md: state the tool used and how much of the work was AI-assisted, or "None". -->
-
-
-## Checklist
-- [ ] Lua libraries (`lua/awful/`, `lua/gears/`, `lua/wibox/`, `lua/naughty/`) are **not modified** — if a bug surfaces in Lua, the fix belongs in C
-- [ ] Tests pass (`make test-unit && make test-integration`)
+  <!-- Per AI_POLICY.md: name the tool and describe how much of the work was AI-assisted, or write "None". -->
