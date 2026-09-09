@@ -1307,6 +1307,8 @@ setup(void)
 		}
 	}
 	cursor_mgr = wlr_xcursor_manager_create(cursor_theme, cursor_size);
+	/* root.cursor() validates at scale 1 before outputs load their scales. */
+	wlr_xcursor_manager_load(cursor_mgr, 1.0);
 
 	/*
 	 * wlr_cursor *only* displays an image on screen. It does not move around

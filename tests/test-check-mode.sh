@@ -89,6 +89,22 @@ assert_not_contains() {
 
 # === Group 1: Clean Configs ===
 
+# Installed configs sit beside lua/, but run from an unrelated directory.
+# Resolving a library beneath the config directory must not make it user code.
+test_installed_library_not_scanned() {
+    local name="installed_library_not_scanned" cfg
+    cfg=$(write_config "installed/rc.lua" 'require("installed_fixture")')
+    write_config "installed/lua/installed_fixture.lua" 'awesome.register_xproperty("test", "boolean")' >/dev/null
+    mkdir -p "$TMP_DIR/unrelated"
+    pushd "$TMP_DIR/unrelated" >/dev/null
+    LUA_PATH="$TMP_DIR/installed/lua/?.lua;;" run_check "$cfg"
+    popd >/dev/null
+    assert_exit "$name" 0 || return
+    assert_contains "$name" "No compatibility issues found" || return
+    assert_not_contains "$name" "does nothing" || return
+    pass "$name"
+}
+
 test_valid_config() {
     local name="valid_config"
     local cfg
@@ -500,6 +516,7 @@ return Gdk')
 # === Run All Tests ===
 
 test_valid_config
+test_installed_library_not_scanned
 test_empty_config
 test_x11_critical
 test_x11_warning

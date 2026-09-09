@@ -615,6 +615,8 @@ some_update_cursor_theme(const char *theme_name, uint32_t size)
 
 	/* Create new manager with specified theme/size */
 	cursor_mgr = wlr_xcursor_manager_create(theme_copy, size);
+	/* Keep scale 1 available for cursor validation after a theme change. */
+	wlr_xcursor_manager_load(cursor_mgr, 1.0);
 
 	free(theme_copy);
 

@@ -381,7 +381,12 @@ function utils.parse_dir(dir_path, callback)
         local query = gio.FILE_ATTRIBUTE_STANDARD_NAME .. "," .. gio.FILE_ATTRIBUTE_STANDARD_TYPE
         local enum, err = file:async_enumerate_children(query, gio.FileQueryInfoFlags.NONE)
         if not enum then
-            gdebug.print_warning(get_readable_path(file) .. ": " .. tostring(err))
+            -- XDG search paths often include optional directories that do
+            -- not exist yet. Keep reporting other errors, such as access
+            -- failures, while treating an absent directory as empty.
+            if not (err and err.domain == gio.IOErrorEnum and err.code == "NOT_FOUND") then
+                gdebug.print_warning(get_readable_path(file) .. ": " .. tostring(err))
+            end
             return
         end
         local files_per_call = 100 -- Actual value is not that important

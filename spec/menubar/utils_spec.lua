@@ -145,4 +145,37 @@ describe("menubar.utils lookup_icon_uncached", function()
     end)
 end)
 
+describe("menubar.utils.parse_dir", function()
+    local gdebug = require("gears.debug")
+    local warning
+
+    before_each(function()
+        warning = stub(gdebug, "print_warning")
+    end)
+
+    after_each(function()
+        warning:revert()
+    end)
+
+    it("returns an empty list without warning for an absent directory", function()
+        local directory = assert(glib.dir_make_tmp("somewm-menubar-XXXXXX"))
+        local loop = glib.MainLoop()
+        local result
+        local timeout = glib.timeout_add(glib.PRIORITY_DEFAULT, 2000, function()
+            loop:quit()
+            return false
+        end)
+        utils.parse_dir(directory .. "/missing/applications", function(programs)
+            result = programs
+            loop:quit()
+        end)
+        if not result then loop:run() end
+        if result then glib.source_remove(timeout) end
+        glib.rmdir(directory)
+        assert.is_not_nil(result, "directory callback did not complete")
+        assert.same({}, result)
+        assert.stub(warning).was_not_called()
+    end)
+end)
+
 -- vim: filetype=lua:expandtab:shiftwidth=4:tabstop=8:softtabstop=4:textwidth=80

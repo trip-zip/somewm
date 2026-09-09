@@ -3866,27 +3866,35 @@ prescan_resolve_module(const char *name, char *path, size_t pathlen)
 	return ok;
 }
 
-/** Is a resolved module the user's own Lua, and so worth scanning?
+/** Did a module resolve through one of the config-local Lua templates?
  *
- * A config-local module resolves through the template built from config_dir,
- * so it comes back with that exact prefix and a plain compare is enough.
+ * A directory prefix alone also includes bundled libraries when the config
+ * lives above lua/, as the development default does. Match the actual module
+ * templates so user overrides are scanned but library search paths are not.
  * \param config_dir Directory holding the config
+ * \param name Required module name
  * \param resolved File the module resolved to
  */
 static bool
-prescan_module_is_config_local(const char *config_dir, const char *resolved)
+prescan_module_is_config_local(const char *config_dir, const char *name,
+                              const char *resolved)
 {
-	size_t rootlen, len;
+	char module[PATH_MAX], candidate[PATH_MAX];
+	int len;
 
-	if (!resolved[0])
+	if (!config_dir || !resolved[0] || strlen(name) >= sizeof(module))
 		return false;
 
-	rootlen = strlen(config_dir);
-	if (strncmp(resolved, config_dir, rootlen) || resolved[rootlen] != '/')
-		return false;
+	strcpy(module, name);
+	for (char *p = module; *p; p++)
+		if (*p == '.')
+			*p = '/';
 
-	len = strlen(resolved);
-	return len > 4 && !strcmp(resolved + len - 4, ".lua");
+	len = snprintf(candidate, sizeof(candidate), "%s/%s.lua", config_dir, module);
+	if (len >= 0 && (size_t)len < sizeof(candidate) && !strcmp(resolved, candidate))
+		return true;
+	len = snprintf(candidate, sizeof(candidate), "%s/%s/init.lua", config_dir, module);
+	return len >= 0 && (size_t)len < sizeof(candidate) && !strcmp(resolved, candidate);
 }
 
 /** Scan every require()d file for X11 patterns.
@@ -3910,7 +3918,7 @@ luaA_prescan_requires(const char *content, const char *config_dir, int depth)
 		/* Only descend into the user's own files. Library and rock sources
 		 * are not theirs to fix, and a C module is not Lua at all. */
 		if (prescan_resolve_module(module_name, resolved, sizeof(resolved))
-		    && prescan_module_is_config_local(config_dir, resolved))
+		    && prescan_module_is_config_local(config_dir, module_name, resolved))
 			luaA_prescan_file(resolved, config_dir, depth + 1);
 	}
 }
@@ -4517,7 +4525,7 @@ check_mode_scan_requires(const char *content, const char *config_dir,
 
 		/* Only descend into the user's own files. Library and rock sources
 		 * are not theirs to fix, and a C module is not Lua at all. */
-		if (prescan_module_is_config_local(config_dir, resolved))
+		if (prescan_module_is_config_local(config_dir, module_name, resolved))
 			check_mode_scan_file(resolved, config_dir, depth + 1);
 	}
 }
