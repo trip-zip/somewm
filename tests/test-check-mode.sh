@@ -605,22 +605,6 @@ test_xrdb_bare_warns() {
 }
 test_xrdb_bare_warns
 
-# Wayland has no _NET_WM_ICON equivalent, so c.icon is nil and a tasklist or
-# dock draws the same fallback for every client.
-test_client_icon_info() {
-    local name="client_icon_info"
-    local cfg
-    cfg=$(write_config "clienticon.lua" 'client.connect_signal("request::manage", function(c)
-    if not c.icon then return end
-end)')
-    run_check "$cfg"
-    assert_exit "$name" 0 || return
-    assert_contains "$name" "clients have no icon" || return
-    assert_contains "$name" "c.class" || return
-    pass "$name"
-}
-test_client_icon_info
-
 # Four patterns describe xclip ("xclip, 'xclip, | xclip, " xclip "), and more
 # than one can match the same line. The report should name it once.
 test_overlapping_patterns_report_once() {

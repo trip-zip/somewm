@@ -3363,8 +3363,6 @@ pattern_doc_anchor(const char *description)
 		{"Gtk.Application - GTK app inside the compositor", "running-a-gtk-app"},
 		{"Gtk.main() - GTK main loop inside the compositor", "running-a-gtk-app"},
 		{"Gtk.IconTheme.get_default() - returns nil", "icon-theme-lookups"},
-		{"awful.widget.clienticon - clients have no icon", "client-icons"},
-		{"c.icon - clients have no icon", "client-icons"},
 		{"xrdb Xresources loading", "xresources-and-xrdb"},
 		{"awesome.get_xproperty() - not defined", "x11-properties"},
 		{"awesome.set_xproperty() - not defined", "x11-properties"},
@@ -3473,13 +3471,6 @@ static const x11_pattern_t x11_patterns[] = {
 	 * above, so it returns nil and every icon lookup through it fails. */
 	{"IconTheme.get_default", "Gtk.IconTheme.get_default() - returns nil",
 	 "It needs gtk_init, which the compositor stubs out. Use Gtk.IconTheme.new() with set_custom_theme()", SEVERITY_WARNING},
-
-	/* Wayland has no _NET_WM_ICON equivalent, so a client arrives with no
-	 * icon of its own and anything drawing one gets the same fallback. */
-	{"awful.widget.clienticon", "awful.widget.clienticon - clients have no icon",
-	 "Wayland clients supply no icon. Resolve one from c.class through the icon theme", SEVERITY_INFO},
-	{"c.icon", "c.icon - clients have no icon",
-	 "Wayland clients supply no icon, so this is nil. Resolve one from c.class through the icon theme", SEVERITY_INFO},
 
 	/* === WARNING: Needs Wayland alternative === */
 

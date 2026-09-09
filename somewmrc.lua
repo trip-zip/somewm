@@ -224,7 +224,6 @@ end)
 screen.connect_signal("request::wallpaper", function(s)
     local colors = beautiful.wallpaper_colors
     if colors then
-        local dpi = beautiful.xresources.apply_dpi
         local logo_size = dpi(200)
         local logo_color = beautiful.wallpaper_logo_color
         local logo_path = gears.filesystem.get_themes_dir() .. "../icons/somewm-logo.svg"
