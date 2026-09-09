@@ -190,10 +190,6 @@ luaA_typerror(lua_State *L, int narg, const char *tname)
 {
     const char *msg = lua_pushfstring(L, "%s expected, got %s",
                                       tname, luaL_typename(L, narg));
-#if LUA_VERSION_NUM >= 502
-    luaL_traceback(L, L, NULL, 2);
-    lua_concat(L, 2);
-#endif
     return luaL_argerror(L, narg, msg);
 }
 
@@ -202,10 +198,6 @@ luaA_rangerror(lua_State *L, int narg, double min, double max)
 {
     const char *msg = lua_pushfstring(L, "value in [%f, %f] expected, got %f",
                                       min, max, (double) lua_tonumber(L, narg));
-#if LUA_VERSION_NUM >= 502
-    luaL_traceback(L, L, NULL, 2);
-    lua_concat(L, 2);
-#endif
     return luaL_argerror(L, narg, msg);
 }
 
