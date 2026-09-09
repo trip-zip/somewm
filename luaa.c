@@ -49,6 +49,7 @@
 static lua_State *luaA_create_fresh_state(void);
 #include "common/luaclass.h"
 #include "common/lualib.h"
+#include <execinfo.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -515,6 +516,15 @@ static int
 luaA_panic(lua_State *L)
 {
     warn("unprotected error in call to Lua API: %s", lua_tostring(L, -1));
+    void *frames[64];
+    int count = backtrace(frames, sizeof(frames) / sizeof(frames[0]));
+    backtrace_symbols_fd(frames, count, STDERR_FILENO);
+#if LUA_VERSION_NUM >= 502 || defined(LUA_JITLIBNAME)
+    /* Lua 5.4+ resets the stack before panic; C-to-Lua errors (LGI) can lack Lua frames.
+     * The Lua trace can be empty, so the C backtrace is the reliable part. */
+    luaL_traceback(L, L, "panic", 1);
+    fprintf(stderr, "%s\n", lua_tostring(L, -1));
+#endif
     return 0;
 }
 
