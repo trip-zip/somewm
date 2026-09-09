@@ -59,7 +59,7 @@ luaA_gesture_inject(lua_State *L)
     lua_rawgeti(L, LUA_REGISTRYINDEX, gesture_handler_ref);
     lua_pushvalue(L, 1);
 
-    if (lua_pcall(L, 1, 1, 0) != LUA_OK) {
+    if (lua_pcall(L, 1, 1, 0) != 0) {
         warn("gesture handler error: %s", lua_tostring(L, -1));
         lua_pop(L, 1);
         lua_pushboolean(L, 0);
@@ -90,7 +90,7 @@ gesture_call_handler(lua_State *L)
     lua_rawgeti(L, LUA_REGISTRYINDEX, gesture_handler_ref);
     lua_insert(L, -2); /* put handler below event table */
 
-    if (lua_pcall(L, 1, 1, 0) != LUA_OK) {
+    if (lua_pcall(L, 1, 1, 0) != 0) {
         warn("gesture handler error: %s", lua_tostring(L, -1));
         lua_pop(L, 1);
         return 0;
