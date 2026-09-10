@@ -88,6 +88,12 @@ extern struct wlr_cursor_shape_manager_v1 *cursor_shape_mgr;
 /* Input state */
 extern struct wlr_cursor *cursor;
 extern struct wlr_xcursor_manager *cursor_mgr;
+extern struct wlr_xcursor_manager *cursor_mgr_hires;
+extern uint32_t cursor_base_size;
+extern float cursor_scale;
+extern float last_applied_scale;
+extern char *current_cursor_name;
+extern bool cursor_is_surface;
 extern struct wlr_seat *seat;
 extern KeyboardGroup *kb_group;
 extern void *exclusive_focus;

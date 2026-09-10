@@ -158,6 +158,12 @@ struct wlr_pointer_constraint_v1 *active_constraint;
 
 struct wlr_cursor *cursor;
 struct wlr_xcursor_manager *cursor_mgr;
+struct wlr_xcursor_manager *cursor_mgr_hires;
+uint32_t cursor_base_size = 0;
+float cursor_scale = 1.0f;
+float last_applied_scale = 1.0f;
+char *current_cursor_name = NULL;
+bool cursor_is_surface = false;
 char* selected_root_cursor;
 
 struct wlr_scene_rect *root_bg;
@@ -310,8 +316,12 @@ cleanup(void)
 		waitpid(child_pid, NULL, 0);
 	}
 	wlr_xcursor_manager_destroy(cursor_mgr);
+	wlr_xcursor_manager_destroy(cursor_mgr_hires);
+	cursor_mgr_hires = NULL;
 
 	free(selected_root_cursor);
+	free(current_cursor_name);
+	current_cursor_name = NULL;
 
 	destroykeyboardgroup(&kb_group->destroy, NULL);
 
@@ -1027,7 +1037,7 @@ run(char *startup_cmd)
 	 * initialized, as the image/coordinates are not transformed for the
 	 * monitor when displayed here */
 	wlr_cursor_warp_closest(cursor, NULL, cursor->x, cursor->y);
-	wlr_cursor_set_xcursor(cursor, cursor_mgr, "default");
+	some_apply_cursor("default");
 
 	/* ========================================================================
 	 * RUN GLIB MAIN LOOP (Matches AwesomeWM Architecture)
@@ -1307,6 +1317,7 @@ setup(void)
 		}
 	}
 	cursor_mgr = wlr_xcursor_manager_create(cursor_theme, cursor_size);
+	cursor_base_size = cursor_size;
 	/* root.cursor() validates at scale 1 before outputs load their scales. */
 	wlr_xcursor_manager_load(cursor_mgr, 1.0);
 
