@@ -51,4 +51,14 @@
 /* XDG surface geometry */
 #define COMPAT_XDG_SURFACE_GEOMETRY(surface) ((surface)->geometry)
 
+/* text-input-v3 / input-method-v2: 0.20 renamed the manager "a new object was
+ * created" signals. Everything else in both interfaces is unchanged. */
+#if WLR_VERSION_NUM >= ((0 << 16) | (20 << 8))
+#define COMPAT_TEXT_INPUT_MANAGER_NEW(mgr)   (&(mgr)->events.new_text_input)
+#define COMPAT_INPUT_METHOD_MANAGER_NEW(mgr) (&(mgr)->events.new_input_method)
+#else
+#define COMPAT_TEXT_INPUT_MANAGER_NEW(mgr)   (&(mgr)->events.text_input)
+#define COMPAT_INPUT_METHOD_MANAGER_NEW(mgr) (&(mgr)->events.input_method)
+#endif
+
 #endif /* WLR_COMPAT_H */

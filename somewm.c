@@ -98,6 +98,7 @@
 #include "protocols.h"
 #include "monitor.h"
 #include "input.h"
+#include "input_method.h"
 #include "window.h"
 #include "focus.h"
 
@@ -353,6 +354,7 @@ cleanuplisteners(void)
 	 * immediately before wlr_backend_destroy() to satisfy wlroots
 	 * assertions that require all backend listeners to be present until
 	 * backend destruction. */
+	input_method_relay_finish();
 	wl_list_remove(&new_virtual_keyboard.link);
 	wl_list_remove(&new_virtual_pointer.link);
 	wl_list_remove(&new_pointer_constraint.link);
@@ -1359,6 +1361,10 @@ setup(void)
 	wl_signal_add(&seat->events.request_start_drag, &request_start_drag);
 	wl_signal_add(&seat->events.start_drag, &start_drag);
 	tablet_v2_mgr = wlr_tablet_v2_create(dpy);
+
+	/* text-input-v3 and input-method-v2. Must follow seat creation: the relay
+	 * listens on seat->keyboard_state.events.focus_change. */
+	input_method_relay_init();
 
 	/* Initialize runtime configuration with C defaults (before Lua loads).
 	 * These defaults provide sane fallbacks if rc.lua doesn't set values.
