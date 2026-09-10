@@ -182,6 +182,22 @@ struct wl_list *some_get_keyboard_groups(void);
 const char *some_get_cursor_theme(void);
 uint32_t some_get_cursor_size(void);
 void some_update_cursor_theme(const char *theme_name, uint32_t size);
+
+/*
+ * Cursor magnification API.
+ *
+ * some_apply_cursor() sets the cursor image by name, magnifying it via a
+ * pre-loaded high-resolution xcursor manager when cursor_scale > 1. At scale 1
+ * the normal xcursor path is used (hardware cursor when the output supports
+ * it). Pass NULL to hide the cursor.
+ *
+ * some_set_cursor_scale() changes the magnification factor and re-applies the
+ * current cursor so the change takes effect immediately. Animating the scale
+ * is cheap: it re-renders the existing high-res image at a new size and never
+ * reloads the cursor theme from disk.
+ */
+void some_apply_cursor(const char *name);
+void some_set_cursor_scale(float scale);
 void some_get_cursor_position(double *x, double *y);
 void some_set_cursor_position(double x, double y, int silent);
 uint16_t some_button_state_mask(void);
