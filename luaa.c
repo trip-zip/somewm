@@ -1,4 +1,7 @@
 #include "luaa.h"
+#include "declare.h"
+#include "render_text.h"
+#include "widget.h"
 #include "draw.h"  /* Must be before globalconf.h to avoid type conflicts */
 #include "globalconf.h"
 
@@ -27,7 +30,6 @@
 /* objects/awesome.h merged into this file */
 #include "animation.h"
 #include "ewmh.h"
-#include "objects/wibox.h"
 #include "objects/ipc.h"
 #include "objects/root.h"
 #include "objects/button.h"
@@ -63,7 +65,6 @@ static lua_State *luaA_create_fresh_state(void);
 #include <dlfcn.h>
 
 /* Includes merged from objects/awesome.c */
-#include "systray.h"
 #include "somewm_api.h"
 #include "somewm_internal.h"
 #include "protocols.h"
@@ -1490,6 +1491,178 @@ luaA_awesome_test_add_output(lua_State *L)
 	return 1;
 }
 
+/** awesome._test_redeclare: run the frame for every output now and report
+ * the scene mutations that took. Nothing else having changed between two
+ * calls, the second must return 0 (see tests/test-declare-zero-mutations.lua).
+ * \return Number of scene mutations
+ */
+static int
+luaA_awesome_test_redeclare(lua_State *L)
+{
+	Monitor *m;
+	int mutations = 0, n;
+
+	declare_mark_all_dirty();
+	wl_list_for_each(m, some_get_monitors(), link) {
+		if (!m->declare || !m->wlr_output->enabled)
+			continue;
+		n = declare_output_frame(m->declare, m, session_is_locked());
+		if (n > 0)
+			mutations += n;
+	}
+	lua_pushinteger(L, mutations);
+	return 1;
+}
+
+/** The draw order of a screen's windows, wiboxes and layer surfaces,
+ * bottom to top.
+ * Solves the screen's Clay tree again and reports what it would draw, so a
+ * test can assert stacking directly instead of inferring it from attributes
+ * (see tests/test-declare-order.lua).
+ * \param screen The screen to solve.
+ * \return Array of the objects drawn, bottom first.
+ */
+static int
+luaA_awesome_test_declare_order(lua_State *L)
+{
+	enum { ORDER_CAP = 256 };
+	screen_t *s = luaA_checkscreen(L, 1);
+	void *objects[ORDER_CAP];
+	int n;
+
+	/* A screen with no monitor draws nothing. Report that as an empty
+	 * order, not nil: the caller iterates the result. */
+	if (!s->monitor || !s->monitor->declare) {
+		lua_createtable(L, 0, 0);
+		return 1;
+	}
+	n = declare_output_order(s->monitor->declare, s->monitor, objects,
+		ORDER_CAP);
+	lua_createtable(L, n, 0);
+	for (int i = 0; i < n; i++) {
+		luaA_object_push(L, objects[i]);
+		lua_rawseti(L, -2, i + 1);
+	}
+	return 1;
+}
+
+/** The boxes Clay solves for a drawin's converted widget tree, outermost
+ * first, drawin-local.
+ * What the last frame solved (see tests/test-clay-widget-layouts.lua).
+ * Empty for a drawin whose widget tree did not convert.
+ * \param drawin The drawin to solve.
+ * \return Array of { x, y, width, height } tables.
+ */
+static int
+luaA_awesome_test_widget_boxes(lua_State *L)
+{
+	drawin_t *d = luaA_todrawin(L, 1);
+	int boxes[WIDGET_NODES_MAX][4];
+	struct widget_host host;
+	bool found = d ? drawin_widget_host(d, &host)
+		: drawable_widget_host(luaA_checkudata(L, 1, &drawable_class), &host);
+	int n = found ? declare_widget_boxes(&host, boxes) : 0;
+
+	lua_createtable(L, n, 0);
+	for (int i = 0; i < n; i++) {
+		static const char *keys[] = { "x", "y", "width", "height" };
+
+		lua_createtable(L, 0, 4);
+		for (int k = 0; k < 4; k++) {
+			lua_pushinteger(L, boxes[i][k]);
+			lua_setfield(L, -2, keys[k]);
+		}
+		lua_rawseti(L, -2, i + 1);
+	}
+	return 1;
+}
+
+/** Intern a Pango font description for a converted textbox, and answer the
+ * id its text element declares as fontId (render_text.h). Nil for a
+ * description the font table refuses, which keeps that textbox drawing
+ * itself.
+ * \param desc The description, with an absolute size or none.
+ * \return The font id, or nil.
+ */
+static int
+luaA_awesome_clay_font(lua_State *L)
+{
+	int32_t id = render_font_intern(luaL_checkstring(L, 1));
+
+	if (id < 0)
+		lua_pushnil(L);
+	else
+		lua_pushinteger(L, id);
+	return 1;
+}
+
+/** Style the Clay debug inspector (declare.h), for somewm.inspector: a
+ * table of six colors as {r, g, b, a} in 0-255 under bg, bg_alt, border,
+ * fg, bg_selected and highlight, the panel width, and the font for entry 0
+ * of the font table, all required. Process-global; every screen showing
+ * the panel re-solves.
+ * \param style The style table.
+ * \return Nil, or the reason the font was refused.
+ */
+static int
+luaA_awesome_inspector_style(lua_State *L)
+{
+	static const char *const keys[] = {
+		"bg", "bg_alt", "border", "fg", "bg_selected", "highlight" };
+	struct declare_inspector_style style;
+	int err;
+
+	luaL_checktype(L, 1, LUA_TTABLE);
+	for (size_t i = 0; i < countof(keys); i++) {
+		lua_getfield(L, 1, keys[i]);
+		if (!lua_istable(L, -1))
+			return luaL_error(L, "inspector style: %s is not a color", keys[i]);
+		for (int c = 0; c < 4; c++) {
+			lua_rawgeti(L, -1, c + 1);
+			style.colors[i][c] = (float)luaL_checknumber(L, -1);
+			lua_pop(L, 1);
+		}
+		lua_pop(L, 1);
+	}
+	lua_getfield(L, 1, "width");
+	style.width = (float)luaL_checknumber(L, -1);
+	lua_getfield(L, 1, "font");
+	err = declare_inspector_style(&style, luaL_checkstring(L, -1));
+	if (err == RENDER_FONT_ERR_SIZE)
+		lua_pushliteral(L, "carries a point size, name one in px");
+	else
+		lua_pushnil(L);
+	return 1;
+}
+
+/** The solved Clay tree of every screen, or of one screen, as text.
+ * Backs `somewm-client clay tree`: reads back what the last reconcile
+ * retained (declare.h), so it reports the frame the output drew rather than
+ * solving again.
+ * \param screen Optional screen to report; every output when absent.
+ * \return The dump.
+ */
+static int
+luaA_awesome_clay_tree(lua_State *L)
+{
+	Monitor *m = NULL;
+	char *dump;
+
+	if (!lua_isnoneornil(L, 1)) {
+		screen_t *s = luaA_checkscreen(L, 1);
+
+		if (!s->monitor) {
+			lua_pushliteral(L, "");
+			return 1;
+		}
+		m = s->monitor;
+	}
+	dump = declare_dump(m);
+	lua_pushstring(L, dump);
+	p_delete(&dump);
+	return 1;
+}
+
 /** Reload shadow settings from beautiful theme.
  * Call this after changing beautiful.shadow_* values to apply them.
  * Regenerates shadow textures and updates all existing shadows.
@@ -1500,23 +1673,7 @@ luaA_awesome_shadow_reload(lua_State *L)
 	/* Reload config from beautiful */
 	shadow_load_beautiful_defaults(L);
 
-	/* Update all existing client shadows */
-	foreach(c, globalconf.clients) {
-		const shadow_config_t *config = shadow_get_effective_config(
-			(*c)->shadow_config, false);
-		shadow_update_config(&(*c)->shadow, (*c)->scene, config,
-			(*c)->geometry.width + 2 * (*c)->bw,
-			(*c)->geometry.height + 2 * (*c)->bw);
-	}
-
-	/* Update all existing drawin shadows */
-	foreach(d, globalconf.drawins) {
-		drawin_t *drawin = *d;
-		const shadow_config_t *config = shadow_get_effective_config(
-			drawin->shadow_config, true);
-		shadow_update_config(&drawin->shadow, drawin->scene_tree, config,
-			drawin->width, drawin->height);
-	}
+	declare_mark_all_dirty();
 
 	return 0;
 }
@@ -2332,7 +2489,6 @@ const luaL_Reg awesome_methods[] = {
 	{ "xrdb_get_value", luaA_awesome_xrdb_get_value },
 	{ "register_xproperty", luaA_awesome_register_xproperty },
 	{ "pixbuf_to_surface", luaA_pixbuf_to_surface },
-	{ "systray", luaA_systray },
 	{ "sync", luaA_awesome_sync },
 	{ "_set_input_setting", luaA_awesome_set_input_setting },
 	{ "_set_input_rules", luaA_awesome_set_input_rules },
@@ -2344,6 +2500,12 @@ const luaL_Reg awesome_methods[] = {
 	{ "restart", luaA_restart },
 	{ "shadow_reload", luaA_awesome_shadow_reload },
 	{ "_test_add_output", luaA_awesome_test_add_output },
+	{ "_test_redeclare", luaA_awesome_test_redeclare },
+	{ "_clay_tree", luaA_awesome_clay_tree },
+	{ "_clay_font", luaA_awesome_clay_font },
+	{ "_inspector_style", luaA_awesome_inspector_style },
+	{ "_test_declare_order", luaA_awesome_test_declare_order },
+	{ "_test_widget_boxes", luaA_awesome_test_widget_boxes },
 	/* Lock API methods */
 	{ "lock", luaA_awesome_lock },
 	{ "unlock", luaA_awesome_unlock },
@@ -3200,7 +3362,6 @@ luaA_register_state(lua_State *L)
 	selection_setup(L); /* Creates "selection" global from class globals */
 
 	luaA_mouse_setup(L);
-	luaA_wibox_setup(L);
 	luaA_ipc_setup(L);
 	systray_item_class_setup(L);  /* SNI systray item class */
 
@@ -4988,25 +5149,17 @@ luaA_state_drop_object_pointers(void)
 	globalconf.mouse_under.ptr.client = NULL;
 	globalconf.primary_screen = NULL;
 
-	/* Destroy old drawin scene trees now, or they persist as duplicates
-	 * behind the ones the rebuilt state creates. */
+	/* Retire the renderer's view of the old drawins now, or their retained
+	 * leaves persist as duplicates behind the ones the rebuilt state
+	 * creates. */
 	foreach(d, globalconf.drawins) {
 		drawin_t *w = *d;
-		shadow_release(&w->shadow);
-		if (w->scene_tree) {
-			wlr_scene_node_destroy(&w->scene_tree->node);
-			w->scene_tree = NULL;
-			w->scene_buffer = NULL;
-			w->border_buffer = NULL;
-		}
+		declare_handle_drop(w);
+		image_entry_set(&w->border_entry, NULL);
+		shadow_leaves_clear(&w->shadow);
 	}
 	globalconf.drawins.len = 0;
-
-	/* The systray scene tree is a child of the parent drawin's tree, so the
-	 * loop above already destroyed it. Both pointers dangle; NULL them, or
-	 * drawin_wipe() destroys the freed scene node again at close. */
-	globalconf.systray.parent = NULL;
-	globalconf.systray.scene_tree = NULL;
+	declare_mark_all_dirty();
 
 	/* Reset screen_refs before closing (entries become invalid) */
 	luaA_screen_refs_reset();
@@ -5065,6 +5218,11 @@ clients_detach(client_snapshot_t **out, int *out_count)
 		/* Remove all wlroots listeners */
 		client_remove_all_listeners(c);
 
+		for (j = 0; j < CLIENT_TITLEBAR_COUNT; j++) {
+			declare_handle_drop(c->titlebar[j].drawable);
+			widget_nodes_clear(&c->titlebar[j].widgets);
+		}
+
 		/* Copy entire client_t via memcpy */
 		memcpy(&snap->data, c, sizeof(client_t));
 		snap->was_mapped = (c->scene != NULL);
@@ -5117,9 +5275,8 @@ clients_detach(client_snapshot_t **out, int *out_count)
 		c->icons.tab = NULL; c->icons.len = c->icons.size = 0;
 		c->buttons.tab = NULL; c->buttons.len = c->buttons.size = 0;
 		c->protocols.atoms = NULL; c->protocols.atoms_len = 0;
-		/* Don't let GC touch shadow textures - snapshot owns them */
-		for (j = 0; j < SHADOW_TEXTURE_COUNT; j++)
-			c->shadow.textures[j] = NULL;
+		/* The snapshot owns the shadow surfaces. */
+		memset(&c->shadow, 0, sizeof(c->shadow));
 		c->shadow_config = NULL;
 		/* Don't let GC destroy the scene tree */
 		c->scene = NULL;
@@ -5178,10 +5335,6 @@ clients_restore(lua_State *L, client_snapshot_t *snaps, int num_clients)
 		for (j = 0; j < CLIENT_TITLEBAR_COUNT; j++) {
 			c->titlebar[j].drawable = NULL;
 			c->titlebar[j].size = 0;
-			if (c->titlebar[j].scene_buffer) {
-				wlr_scene_node_destroy(&c->titlebar[j].scene_buffer->node);
-				c->titlebar[j].scene_buffer = NULL;
-			}
 		}
 
 		/* Re-register wlroots listeners */
@@ -5804,6 +5957,11 @@ luaA_hot_reload(void)
 	 * Phase B2: Snapshot and detach clients
 	 * ================================================================ */
 
+	/* Release borrowed trees before clients_detach clears client scene pointers. */
+	declare_hot_reload();
+	foreach(drawin, globalconf.drawins)
+		widget_nodes_clear(&(*drawin)->widgets);
+
 	if (!clients_detach(&client_snaps, &num_clients)) {
 		fprintf(stderr, "somewm: hot-reload: failed to allocate client snapshots\n");
 		goto fail;
@@ -6273,10 +6431,6 @@ globalconf_wipe(void)
 	if (globalconf.wallpaper) {
 		cairo_surface_destroy(globalconf.wallpaper);
 		globalconf.wallpaper = NULL;
-	}
-	if (globalconf.wallpaper_buffer_node) {
-		wlr_scene_node_destroy(&globalconf.wallpaper_buffer_node->node);
-		globalconf.wallpaper_buffer_node = NULL;
 	}
 
 	/* Zero out the structure */

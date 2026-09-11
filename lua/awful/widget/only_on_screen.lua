@@ -34,19 +34,14 @@ local function should_display_on(self, s)
     return capi.screen[self._private.screen] == s
 end
 
--- Layout this layout
-function only_on_screen:layout(context, ...)
-    if not should_display_on(self, context.screen) then return end
-    return { base.place_widget_at(self._private.widget, 0, 0, ...) }
-end
 
--- Fit this layout into the given area
-function only_on_screen:fit(context, ...)
-    if not should_display_on(self, context.screen) then
-        return 0, 0
+
+only_on_screen._clay = { describe = function(w, _, st)
+    if not should_display_on(w, st.context.screen) then
+        return { w = 0, h = 0 }
     end
-    return base.fit_widget(self, context, self._private.widget, ...)
-end
+    return { specs = require("wibox.clay").whole_box(w._private.widget) }
+end }
 
 --- The widget to be displayed
 -- @property widget

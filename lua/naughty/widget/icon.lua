@@ -29,59 +29,7 @@ local icon = {}
 -- @beautiful beautiful.notification_icon_resize_strategy
 -- @param number
 
-function icon:fit(_, width, height)
-    -- Until someone complains, adding a "leave blank space" isn't supported
-    if not self._private.image then return 0, 0 end
 
-    local maximum  = math.min(width, height)
-    local strategy = self._private.resize_strategy or "resize"
-    local optimal  = math.min(
-        (
-            self._private.notification[1] and self._private.notification[1].icon_size
-        ) or beautiful.notification_icon_size or dpi(48),
-        maximum
-    )
-
-    local w = self._private.image:get_width()
-    local h = self._private.image:get_height()
-
-    if strategy == "resize" then
-        return math.min(w, optimal, maximum), math.min(h, optimal, maximum)
-    else
-        return optimal, optimal
-    end
-end
-
-function icon:draw(_, cr, width, height)
-    if not self._private.image then return end
-    if width == 0 or height == 0 then return end
-
-    -- Let's scale the image so that it fits into (width, height)
-    local strategy = self._private.resize_strategy or "resize"
-    local w = self._private.image:get_width()
-    local h = self._private.image:get_height()
-    local aspect = width / w
-    local aspect_h = height / h
-
-    if aspect > aspect_h then aspect = aspect_h end
-
-    if aspect < 1 or (strategy == "scale" and (w < width or h < height)) then
-        cr:scale(aspect, aspect)
-    end
-
-    local x, y = 0, 0
-
-    if (strategy == "center" and aspect < 1) or strategy == "resize" then
-        x = math.floor((width  - w*aspect) / 2)
-        y = math.floor((height - h*aspect) / 2)
-    elseif strategy == "center" and aspect > 1 then
-        x = math.floor((width  - w) / 2)
-        y = math.floor((height - h) / 2)
-    end
-
-    cr:set_source_surface(self._private.image, x, y)
-    cr:paint()
-end
 
 --- The attached notification.
 -- @property notification
@@ -181,5 +129,40 @@ local function new(args)
 end
 
 --@DOC_object_COMMON@
+
+-- The icon as a Clay image element inside a box of the widget's `:fit`,
+-- placed as `icon:draw` places it: scaled down to fit (and up under the
+-- `scale` strategy), centered under `resize` and `center`, else at the top
+-- left. No image is an empty element.
+local clay = require("wibox.clay")
+
+clay.describe_class(icon, function(w, _, st)
+    local p = w._private
+    local image = p.image
+
+    if not image then
+        return {}
+    end
+
+    local iw, ih = image:get_width(), image:get_height()
+    local strategy = p.resize_strategy or "resize"
+    local maximum = math.min(st.width, st.height)
+    local optimal = math.min((p.notification[1] and p.notification[1].icon_size)
+        or beautiful.notification_icon_size or dpi(48), maximum)
+    local fw, fh = optimal, optimal
+    if strategy == "resize" then
+        fw, fh = math.min(iw, optimal, maximum), math.min(ih, optimal, maximum)
+    end
+    local ratio = math.min(fw / iw, fh / ih)
+    local scale = (ratio < 1 or (strategy == "scale" and (iw < fw or ih < fh)))
+        and ratio or 1
+    local centered = strategy == "resize"
+        or (strategy == "center" and ratio ~= 1)
+
+    return { w = fw, h = fh,
+        align = centered and { x = "center", y = "center" } or nil,
+        specs = { { image = image._native, class = "image",
+            w = math.ceil(iw * scale), h = math.ceil(ih * scale) } } }
+end)
 
 return setmetatable(icon, {__call = function(_, ...) return new(...) end})

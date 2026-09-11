@@ -44,6 +44,7 @@
 #include "event.h"
 #include "event_queue.h"
 #include "monitor.h"
+#include "declare.h"
 #include "globalconf.h"
 #include "client.h"
 #include "common/luaobject.h"
@@ -379,6 +380,20 @@ axisnotify(struct wl_listener *listener, void *data)
 	wlr_idle_notifier_v1_notify_activity(idle_notifier, seat);
 	some_notify_activity();
 
+	/* A wheel over the Clay inspector's panel scrolls the panel: nothing
+	 * under it, no button 4/5 for Lua, no axis for the focused client. One
+	 * notch is about 15, Clay multiplies the delta by 10, and a row is 30
+	 * units, so a fifth of a notch is one row; the sign flips because a
+	 * wheel down moves the content up. */
+	if (!session_is_locked() && event->delta != 0
+			&& declare_inspector_covers(cursor->x, cursor->y)) {
+		if (event->orientation == WL_POINTER_AXIS_VERTICAL_SCROLL)
+			declare_inspector_scroll(0, -event->delta / 5);
+		else
+			declare_inspector_scroll(-event->delta / 5, 0);
+		return;
+	}
+
 	/* Handle scroll wheel for mousebindings and the mousegrabber
 	 * (AwesomeWM compatibility).
 	 * Convert axis events to X11-style button 4/5/6/7 press+release events.
@@ -540,6 +555,18 @@ buttonpress(struct wl_listener *listener, void *data)
 		if (some_is_lua_locked() && drawin != some_get_lua_lock_surface())
 			return;
 
+		/* The Clay inspector's seat mirror learns every left press; a press
+		 * inside its panel is the panel's, with the edge its next solve
+		 * turns into a click, and reaches neither Lua nor a client. */
+		{
+			bool inside = declare_inspector_covers(cursor->x, cursor->y);
+
+			declare_inspector_pointer(event->button == BTN_LEFT ? 1 : -1,
+				inside && event->button == BTN_LEFT);
+			if (inside)
+				return;
+		}
+
 		/* Get keyboard modifiers */
 		keyboard = wlr_seat_get_keyboard(seat);
 		mods = keyboard ? wlr_keyboard_get_modifiers(keyboard) : 0;
@@ -626,6 +653,12 @@ buttonpress(struct wl_listener *listener, void *data)
 
 		/* NOTE: C-level move/resize exit handling removed - Lua mousegrabber handles this now */
 		cursor_mode = CurNormal;
+
+		/* The inspector's mirror learns the left release wherever it lands;
+		 * one inside the panel goes nowhere else, like its press. */
+		declare_inspector_pointer(event->button == BTN_LEFT ? 0 : -1, false);
+		if (declare_inspector_covers(cursor->x, cursor->y))
+			return;
 
 		/* Check if a drawin was released over */
 		if (!session_is_locked()) {
@@ -856,8 +889,14 @@ motionnotify(uint32_t time, struct wlr_input_device *device, double dx, double d
 		}
 	}
 
-	/* Update drag icon's position */
-	wlr_scene_node_set_position(&drag_icon->node, (int)round(cursor->x), (int)round(cursor->y));
+	/* The Clay inspector's seat mirror: a moved cursor re-solves the panel
+	 * it is over (and the one it left), for the hovered row. */
+	declare_inspector_pointer(-1, false);
+
+	/* A drag icon rides the pointer: its leaf is declared at the cursor
+	 * on the output under it, so every motion re-declares. */
+	if (seat->drag && seat->drag->icon)
+		declare_mark_all_dirty();
 
 
 	/* If drag source became invalid, clear it. */
@@ -2849,220 +2888,68 @@ virtualpointer(struct wl_listener *listener, void *data)
 		wlr_cursor_map_input_to_output(cursor, device, event->suggested_output);
 }
 
-/** Check if a drawin accepts input at a given point (relative to drawin).
- * Returns true if input should be accepted, false if it should pass through.
- * Used for implementing click-through regions via shape_input and shape_bounding.
- *
- * In X11/AwesomeWM, shape_bounding affects both visual AND input regions.
- * shape_input takes precedence if set; otherwise shape_bounding is used.
- */
+/* Input follows the content's rounded box, unless the drawin passes it through. */
 bool
 drawin_accepts_input_at(drawin_t *d, double local_x, double local_y)
 {
-	cairo_surface_t *shape;
-	int width, height;
-	unsigned char *data;
-	int stride;
-	int px, py;
-	int byte_offset, bit_offset;
-
 	if (!d)
 		return true;
-
-	/* shape_input takes precedence over shape_bounding */
-	shape = d->shape_input;
-
-	/* If no shape_input, fall back to shape_bounding (X11 compatibility) */
-	if (!shape)
-		shape = d->shape_bounding;
-
-	/* No shape = accept all input */
-	if (!shape)
-		return true;
-
-	/* Verify surface is valid before accessing (fixes issue #197) */
-	if (cairo_surface_status(shape) != CAIRO_STATUS_SUCCESS)
-		return true;
-
-	/* Get shape dimensions */
-	width = cairo_image_surface_get_width(shape);
-	height = cairo_image_surface_get_height(shape);
-
-	/* 0x0 surface means pass through ALL input (AwesomeWM convention) */
-	if (width == 0 || height == 0)
+	if (d->shape_input && cairo_image_surface_get_width(d->shape_input) == 0
+			&& cairo_image_surface_get_height(d->shape_input) == 0)
 		return false;
-
-	/* Convert coordinates to integers */
-	px = (int)local_x;
-	py = (int)local_y;
-
-	/* Bounds check - outside shape = don't accept */
-	if (px < 0 || py < 0 || px >= width || py >= height)
-		return false;
-
-	/* Get pixel data (A1 format: 1 bit per pixel, packed) */
-	cairo_surface_flush(shape);
-	data = cairo_image_surface_get_data(shape);
-	stride = cairo_image_surface_get_stride(shape);
-
-	/* A1 format: pixels packed 8 per byte, LSB first */
-	byte_offset = (py * stride) + (px / 8);
-	bit_offset = px % 8;
-
-	return (data[byte_offset] >> bit_offset) & 1;
+	double r = d->shape_radius;
+	if (r <= 0)
+		return true;
+	double dx = local_x < r ? r - local_x
+		: local_x > d->width - r ? local_x - (d->width - r) : 0;
+	double dy = local_y < r ? r - local_y
+		: local_y > d->height - r ? local_y - (d->height - r) : 0;
+	return dx == 0 || dy == 0 || dx * dx + dy * dy <= r * r;
 }
 
 /* WAYLAND-DEVIATION: pdrawable parameter for titlebar hit-testing
  * AwesomeWM: Uses client_get_drawable_offset() to iterate titlebar geometries
  * after receiving a frame_window event (objects/client.c:3501).
- * somewm: The wlroots scene graph already knows which node is at (x,y), so we
- * extract the drawable directly from node->data during the scene walk. This
- * achieves the same result (titlebar clicks emit signals on the drawable) but
- * uses scene graph spatial queries instead of post-hoc geometry iteration.
+ * somewm: the declared tree names what is under the point (declare_hit_at),
+ * a titlebar's drawable included, so the drawable comes straight from the
+ * walk rather than from post-hoc geometry iteration.
  */
-/** Is \a client one this compositor currently tracks? */
-static bool
-is_client_valid(Client *client)
-{
-	if (client == NULL)
-		return false;
-
-	foreach(elem, globalconf.clients)
-		if (*elem == client)
-			return true;
-
-	return false;
-}
-
-/** Is \a ptr a layer surface this compositor currently tracks? */
-static bool
-is_layersurface_valid(void *ptr)
-{
-	Monitor *m;
-	LayerSurface *l;
-	int i;
-
-	if (ptr == NULL)
-		return false;
-
-	wl_list_for_each(m, &mons, link)
-		for (i = 0; i < 4; i++)
-			wl_list_for_each(l, &m->layers[i], link)
-				if (l == ptr)
-					return true;
-
-	return false;
-}
-
 void
 xytonode(double x, double y, struct wlr_surface **psurface,
 		Client **pc, LayerSurface **pl, drawin_t **pd, drawable_t **pdrawable, double *nx, double *ny)
 {
-	struct wlr_scene_node *node, *pnode;
-	struct wlr_surface *surface = NULL;
+	struct declare_hit hit;
 	Client *c = NULL;
 	LayerSurface *l = NULL;
 	drawin_t *d = NULL;
 	drawable_t *titlebar_drawable = NULL;
-	int layer;
 
-	/* Safety check: scene must be initialized */
-	if (!scene) {
-		if (psurface) *psurface = NULL;
-		if (pc) *pc = NULL;
-		if (pl) *pl = NULL;
-		if (pd) *pd = NULL;
-		if (pdrawable) *pdrawable = NULL;
-		return;
+	declare_hit_at(x, y, &hit);
+	switch (hit.kind) {
+	case DECLARE_KIND_CLIENT:
+		c = hit.object;
+		break;
+	case DECLARE_KIND_LAYER:
+		l = hit.object;
+		break;
+	case DECLARE_KIND_DRAWIN:
+		d = hit.object;
+		break;
+	case DECLARE_KIND_TITLEBAR:
+		titlebar_drawable = hit.object;
+		c = titlebar_drawable->owner.client;
+		break;
+	default:
+		break;
 	}
 
-	for (layer = NUM_LAYERS - 1; !surface && layer >= 0; layer--) {
-		/* Safety check: layer tree must exist */
-		if (!layers[layer])
-			continue;
-		if (!(node = wlr_scene_node_at(&layers[layer]->node, x, y, nx, ny)))
-			continue;
-
-
-		if (node->type == WLR_SCENE_NODE_BUFFER) {
-			struct wlr_scene_buffer *buffer = wlr_scene_buffer_from_node(node);
-			struct wlr_scene_surface *scene_surface = wlr_scene_surface_try_from_buffer(buffer);
-
-
-			if (scene_surface) {
-				surface = scene_surface->surface;
-			} else {
-				/* Check if this buffer belongs to a drawin or titlebar */
-
-				/* node->data now stores drawable pointer (AwesomeWM pattern) */
-				if (node->data) {
-					drawable_t *drawable = (drawable_t *)node->data;
-
-					if (drawable->owner_type == DRAWABLE_OWNER_DRAWIN) {
-						/* This is a drawin's drawable */
-						drawin_t *candidate = drawable->owner.drawin;
-						/* Check shape_input to see if input passes through */
-						if (drawin_accepts_input_at(candidate, x - candidate->x, y - candidate->y)) {
-							d = candidate;
-							/* For drawins, we found what we need - skip client check */
-							goto found;
-						}
-						/* Input passes through this drawin, continue searching */
-					} else if (drawable->owner_type == DRAWABLE_OWNER_CLIENT) {
-						/* This is a titlebar drawable - store it and set client
-						 * Matches AwesomeWM event.c:76-77 client_get_drawable_offset() */
-						c = drawable->owner.client;
-						titlebar_drawable = drawable;
-						/* Continue to found label with client and titlebar_drawable set */
-					}
-				}
-			}
-		} else {
-			/* Skip parent walk for non-buffer nodes (e.g., scene rects) -
-			 * these are background elements that shouldn't intercept input */
-			continue;
-		}
-		/* Walk the tree to find a node that knows the client */
-		for (pnode = node; pnode && !c && !d; ) {
-			/* Check if this node has a drawin */
-			if (pnode->data && layer == LyrWibox) {
-				drawin_t *candidate = (drawin_t *)pnode->data;
-				/* Check shape_input to see if input passes through */
-				if (drawin_accepts_input_at(candidate, x - candidate->x, y - candidate->y)) {
-					d = candidate;
-					break;
-				}
-				/* Input passes through, continue searching to parent (don't set c) */
-			} else {
-				/* Not a drawin - could be a client */
-				c = pnode->data;
-			}
-			/* Safely traverse to parent - stop if we reach root */
-			if (!pnode->parent)
-				break;
-			pnode = &pnode->parent->node;
-		}
-		/* pnode->data is whatever that node's owner stored: a live
-		 * client, a live layer surface, or a pointer whose owner is
-		 * gone. Decide which by membership, never by reading a
-		 * discriminator through the pointer itself. */
-		if (c && !is_client_valid(c)) {
-			l = is_layersurface_valid(c) ? (LayerSurface *)c : NULL;
-			c = NULL;
-		}
-	}
-
-found:
-	/* Validate client pointer - ensure it's still in globalconf.clients
-	 * to avoid returning stale pointers from scene graph data fields */
-	if (c && pc && !is_client_valid(c))
-		c = NULL;  /* Stale pointer - don't return it */
-
-	if (psurface) *psurface = surface;
+	if (psurface) *psurface = hit.surface;
 	if (pc) *pc = c;
 	if (pl) *pl = l;
 	if (pd) *pd = d;
 	if (pdrawable) *pdrawable = titlebar_drawable;
+	if (nx) *nx = hit.sx;
+	if (ny) *ny = hit.sy;
 }
 
 void
@@ -3170,6 +3057,8 @@ destroydragicon(struct wl_listener *listener, void *data)
 {
 	wl_list_remove(&listener->link);
 	free(listener);
+	declare_handle_drop(data);
+	declare_mark_all_dirty();
 }
 
 void
@@ -3185,6 +3074,8 @@ startdrag(struct wl_listener *listener, void *data)
 	if (!drag->icon)
 		return;
 
-	drag->icon->data = &wlr_scene_drag_icon_create(drag_icon, drag->icon)->node;
+	/* Born parked; the frame that declares it borrows it into a band. */
+	drag->icon->data = wlr_scene_drag_icon_create(window_parked_tree(), drag->icon);
 	LISTEN_STATIC(&drag->icon->events.destroy, destroydragicon);
+	declare_mark_all_dirty();
 }

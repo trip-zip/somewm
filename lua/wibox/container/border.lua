@@ -47,6 +47,7 @@ local imagebox = require("wibox.widget.imagebox")
 local base     = require("wibox.widget.base")
 local gsurface = require("gears.surface")
 local cairo    = require("lgi").cairo
+local clay     = require("wibox.clay")
 
 local components = {
     "top_left", "top", "top_right", "right", "bottom_right", "bottom",
@@ -69,18 +70,6 @@ local fit_types = { "corners", "sides", "filling" }
 
 local module = {}
 
-local function imagebox_fit(self, _, w, h)
-    return math.min(w, self.source_width or 0), math.min(h, self.source_height or 0)
-end
-
-local function fit_common(widget, ctx, max_w, max_h)
-    if not widget then return 0, 0 end
-
-    local w, h = widget:fit(ctx, max_w or math.huge, max_h or math.huge)
-
-    return w, h
-end
-
 local function uses_slice(self)
     return not (self._private.border_widgets or self._private.border_image_widgets)
 end
@@ -94,13 +83,6 @@ local function get_widget(self, ctx, component)
         or slices[component]
 end
 
-local function get_all_widgets(self, partial, ctx)
-    for _, position in ipairs(components) do
-        partial[position] = partial[position] or get_widget(self, ctx, position)
-    end
-
-    return partial
-end
 
 --- Common code to load the `border_image`.
 local function setup_origin_common(self, ctx)
@@ -149,17 +131,16 @@ local function setup_origin_common(self, ctx)
     }
 end
 
-local function compute_side_borders(self, ctx, max_w, max_h)
+local function compute_side_borders(self, ctx)
     local override = self._private.borders or {}
-    local mer      = self._private.border_merging or {}
 
     self._private.original_md = setup_origin_common(self, ctx)
 
     local m = {
-        left   = override.left,
-        right  = override.right,
-        top    = override.top,
-        bottom = override.bottom,
+        left   = clay.pixels(self, "borders.left", override.left),
+        right  = clay.pixels(self, "borders.right", override.right),
+        top    = clay.pixels(self, "borders.top", override.top),
+        bottom = clay.pixels(self, "borders.bottom", override.bottom),
     }
 
     -- Limit the border to what the surface can provide.
@@ -183,49 +164,12 @@ local function compute_side_borders(self, ctx, max_w, max_h)
         bottom = get_widget(self, ctx, "bottom") or false,
     }
 
-    -- Call `:fit()` on the sides.
-    local l_w, l_h = fit_common(wdgs.left  , ctx, max_w, max_h)
-    local r_w, r_h = fit_common(wdgs.right , ctx, max_w, max_h)
-    local t_w, t_h = fit_common(wdgs.top   , ctx, max_w, max_h)
-    local b_w, b_h = fit_common(wdgs.bottom, ctx, max_w, max_h)
+    return m, wdgs
 
-    -- Either use the provided borders of the `:fit()` results.
-    m.left   = m.left   or l_w
-    m.right  = m.right  or r_w
-    m.top    = m.top    or t_h
-    m.bottom = m.bottom or b_h
-
-    -- Allow the corner widgets to affect the border size.
-    if self._private.expand_corners then
-        wdgs.top_left     = get_widget(self, ctx, "top_left"    ) or false
-        wdgs.top_right    = get_widget(self, ctx, "top_right"   ) or false
-        wdgs.bottom_left  = get_widget(self, ctx, "bottom_left" ) or false
-        wdgs.bottom_right = get_widget(self, ctx, "bottom_right") or false
-
-        local tl_w, tl_h = fit_common(wdgs.top_left    , ctx, max_w, max_h)
-        local tr_w, tr_h = fit_common(wdgs.top_right   , ctx, max_w, max_h)
-        local bl_w, bl_h = fit_common(wdgs.bottom_left , ctx, max_w, max_h)
-        local br_w, br_h = fit_common(wdgs.bottom_right, ctx, max_w, max_h)
-
-        m.left   = math.max(m.left  , tl_w, bl_w)
-        m.right  = math.max(m.right , tr_w, br_w)
-        m.top    = math.max(m.top   , tl_h, tr_h)
-        m.bottom = math.max(m.bottom, bl_h, br_h)
-    end
-
-    -- The sides should have matching size unless merging is enabled.
-    local minimums = {
-        left   = mer.right  and l_h or math.max(l_h, r_h),
-        right  = mer.left   and r_h or math.max(l_h, r_h),
-        top    = mer.bottom and t_w or math.max(t_w, b_w),
-        bottom = mer.top    and b_w or math.max(t_w, b_w),
-    }
-
-    return m, wdgs, minimums
 end
 
 local function compute_borders(self, ctx, width, height, fit_width, fit_height)
-    local m, widgets, mins = compute_side_borders(self, ctx, width, height)
+    local m, widgets = compute_side_borders(self, ctx)
     local ret = {}
 
     -- Add some fallback values.
@@ -249,12 +193,6 @@ local function compute_borders(self, ctx, width, height, fit_width, fit_height)
     ret.right  = {m.right                 , height - m.top - m.bottom, width-m.right, m.top            }
     ret.top    = {width - m.left - m.right, m.top                    , m.left       , 0                }
     ret.bottom = {width - m.left - m.right, m.bottom                 , m.left       , height - m.bottom}
-
-    -- Honor the border_widgets `:fit()`
-    ret.left  [2] = math.max(mins.left  , ret.left  [2])
-    ret.right [2] = math.max(mins.right , ret.right [2])
-    ret.top   [1] = math.max(mins.top   , ret.top   [1])
-    ret.bottom[1] = math.max(mins.bottom, ret.bottom[1])
 
     -- Center / fill
     ret.fill = {width - m.left - m.right, height - m.top - m.bottom, m.left, m.top}
@@ -430,27 +368,6 @@ local function setup_background(self, ctx)
     return self._private.background_widget
 end
 
-local function children_layout(self, borders, width, height, wdg_w, wdg_h)
-    assert(wdg_w > 0 and wdg_h > 0)
-
-    -- This need to be after the other because it has to be on top.
-    if self._private.widget then
-        local p = self._private.paddings or {}
-        if not self._private.honor_borders then
-            wdg_w, wdg_h = width - (p.right or 0) - (p.left or 0), height - (p.top or 0) - (p.bottom or 0)
-            wdg_w, wdg_h = math.max(0, wdg_w), math.max(0, wdg_h)
-
-            return base.place_widget_at(self._private.widget, 0 + (p.left or 0), 0 + (p.top or 0), wdg_w, wdg_h)
-        else
-            wdg_w, wdg_h = wdg_w - (p.right or 0) - (p.left or 0), wdg_h - (p.top or 0) - (p.bottom or 0)
-            wdg_w, wdg_h = math.max(0, wdg_w), math.max(0, wdg_h)
-
-            return base.place_widget_at(
-                self._private.widget, borders.left[1] + (p.left or 0), borders.top[2] + (p.top or 0), wdg_w, wdg_h
-            )
-        end
-    end
-end
 
 -- Delayed initialization of the border_images.
 local function init_border_images(self)
@@ -464,7 +381,6 @@ local function init_border_images(self)
 
         for _, t in ipairs(fit_types) do
             local ib = imagebox(value)
-            rawset(ib, "fit", imagebox_fit)
             init_imagebox(self, ib, self._private[t.."_fit_policy"])
             ibs[t] = ib
         end
@@ -488,7 +404,6 @@ local function init_border_images(self)
             end
 
             local ib = v or imagebox()
-            rawset(ib, "fit", imagebox_fit)
             local mode = slice_modes[component].."_fit_policy"
             init_imagebox(self, ib, self._private[mode])
             ib.image = img
@@ -497,82 +412,7 @@ local function init_border_images(self)
     end
 end
 
-function module:fit(ctx, width, height)
-    if self._private.pending_border_images then
-        init_border_images(self)
-    end
 
-    local w, h, borders = 0, 0
-
-    if self._private.widget then
-        w, h = base.fit_widget(self, ctx, self._private.widget, width, height)
-
-        -- Add padding.
-        if w > 0 and h > 0 and self._private.paddings then
-            w = w + (self._private.paddings.left or 0) + (self._private.paddings.right  or 0)
-            h = h + (self._private.paddings.top  or 0) + (self._private.paddings.bottom or 0)
-        end
-
-        assert(w >= 0 and h>=0)
-
-        borders = compute_borders(self, ctx, width, height, w, h)
-    else
-        borders = compute_borders(self, ctx, width, height, width, height)
-    end
-
-    -- Make sure the border `fit` are taken into account.
-    w = math.max(borders.top [1], w)
-    h = math.max(borders.left[2], h)
-
-    -- Add the borders around the central widget.
-    w, h = w + borders.left[1] + borders.right[1], h + borders.top[2] + borders.bottom[2]
-
-    assert(w >= 0 and h >= 0)
-
-    return math.min(width, w), math.min(height, h)
-end
-
-function module:layout(ctx, width, height)
-    local positioned = {}
-    local borders, widgets = compute_borders(self, ctx, width, height)
-
-    local wdg_w = width  - borders.left[1] - borders.right[1]
-    local wdg_h = height - borders.top[2]  - borders.bottom[2]
-
-    if self._private.ontop == false and self._private.widget then
-        table.insert(positioned, children_layout(self, borders, width, height, wdg_w, wdg_h))
-    end
-
-    if self._private.slice then
-        slice(self, ctx, borders)
-        get_all_widgets(self, widgets, ctx)
-
-        -- Use `ipairs` rather than `pairs` on the widget to keep the order stable.
-        for _, position in ipairs(components) do
-            local geo = borders[position]
-            --TODO use unpack
-            if geo and widgets[position] and not (position == "fill" and not self._private.fill) then
-                local place = base.place_widget_at(widgets[position], geo[3], geo[4], geo[1], geo[2])
-                table.insert(positioned, place)
-            end
-        end
-    else
-        local bg = setup_background(self, ctx)
-
-        if bg then
-            table.insert(
-                positioned,
-                base.place_widget_at(bg, 0, 0, width, height)
-            )
-        end
-    end
-
-    if self._private.ontop ~= false and self._private.widget then
-        table.insert(positioned, children_layout(self, borders, width, height, wdg_w, wdg_h))
-    end
-
-    return positioned
-end
 
 --- The widget to display inside of the border.
 --
@@ -1055,5 +895,127 @@ local function new(_, args)
 
     return ret
 end
+
+local function describe_border(w, _, st)
+    local p = w._private
+
+    if p.pending_border_images then
+        init_border_images(w)
+    end
+    if p.honor_borders == false then
+        return clay.refuse(w, "honor_borders", "is not drawn")
+    end
+    if p.ontop == false then
+        return clay.refuse(w, "ontop", "is not drawn")
+    end
+    if p.border_merging then
+        return clay.refuse(w, "border_merging", "is not drawn")
+    end
+    if p.expand_corners then
+        return clay.refuse(w, "expand_corners", "is not drawn")
+    end
+    if p.border_image_dpi then
+        return clay.refuse(w, "border_image_dpi", "is not drawn")
+    end
+    for _, mode in ipairs(fit_types) do
+        if p[mode .. "_fit_policy"] ~= "fit" then
+            clay.ignore(w, mode .. "_fit_policy", "is drawn as fit")
+        end
+    end
+
+    local paddings = p.paddings or {}
+    local pad = {}
+
+    for i, side in ipairs { "left", "right", "top", "bottom" } do
+        local value = clay.pixels(w, "paddings." .. side, paddings[side])
+        pad[i] = p.widget and value or 0
+    end
+
+    local boxes = compute_borders(w, st.context, st.width, st.height)
+    local m = { left = boxes.top_left[1], top = boxes.top_left[2],
+        right = boxes.top_right[1], bottom = boxes.bottom_left[2] }
+
+    if not p.slice then
+        local box = { w = "grow", h = "grow",
+            pad = { m.left + pad[1], m.right + pad[2],
+                m.top + pad[3], m.bottom + pad[4] },
+            children = clay.whole_box(p.widget) }
+        local bg = setup_background(w, st.context)
+
+        if bg then
+            local image = bg._private
+
+            if image.handle or not image.image
+                    or image.default.width == 0 or image.default.height == 0 then
+                return clay.refuse(w, "border_images", "is an SVG or has no size to render at")
+            end
+            box.image, box.class = image.image._native, "image"
+            box.filter = image.scaling_quality
+        end
+        return { specs = { box } }
+    end
+
+    slice(w, st.context, boxes)
+    local images = p.border_image_widgets or {}
+    local slices = p.slice_cache and p.slice_cache[st.context.dpi] or {}
+    local checked = {}
+
+    for _, group in ipairs { images, slices } do
+        for _, ib in pairs(group) do
+            if not checked[ib] then
+                local image = ib._private
+
+                if image.handle or not image.image
+                        or image.default.width == 0 or image.default.height == 0 then
+                    return clay.refuse(w, "border_images", "is an SVG or has no size to render at")
+                end
+                checked[ib] = true
+            end
+        end
+    end
+
+    -- FIT counts child content and padding (third_party/clay.h:1791-1880).
+    -- GROW fills the cross axis (third_party/clay.h:2394-2412).
+    local node = { dir = "y", specs = {} }
+    local widgets = p.border_widgets or {}
+    local rows = {
+        { m.top, "top_left", "top", "top_right" },
+        { "grow", "left", "fill", "right" },
+        { m.bottom, "bottom_left", "bottom", "bottom_right" },
+    }
+
+    for _, positions in ipairs(rows) do
+        if positions[1] ~= 0 then
+            local row = { dir = "x", w = "grow", h = positions[1], children = {} }
+
+            for i, width in ipairs { m.left, "grow", m.right } do
+                if width ~= 0 then
+                    local position = positions[i + 1]
+                    local cell = { w = width, h = "grow" }
+
+                    if position ~= "fill" or p.fill then
+                        local ib = images[position] or slices[position]
+
+                        if widgets[position] then
+                            cell.children = clay.whole_box(widgets[position])
+                        elseif ib then
+                            cell.image, cell.class = ib._private.image._native, "image"
+                            cell.filter = ib._private.scaling_quality
+                        end
+                    end
+                    if position == "fill" then
+                        cell.pad = p.widget and pad or nil
+                        cell.children = clay.whole_box(p.widget)
+                    end
+                    row.children[#row.children + 1] = cell
+                end
+            end
+            node.specs[#node.specs + 1] = row
+        end
+    end
+    return node
+end
+
+module._clay = { describe = describe_border }
 
 return setmetatable(module, {__call=new})

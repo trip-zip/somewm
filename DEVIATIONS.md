@@ -149,6 +149,108 @@ Widget-layer consumers (`naughty.list`, `awful.widget.tasklist`, `awful.widget.t
 
 ---
 
+## Clay Draw Order (somewm 2.1)
+
+somewm 2.1 draws each output from one Clay layout tree. Every client, drawin and layer-shell surface is a Clay floating element with a `zIndex`. Clay sorts by `zIndex` and leaves equal values in declaration order, so clients sharing a `zIndex` draw in stack order and layer-shell surfaces oldest first.
+
+A client's `zIndex` follows `ontop`, `above`, `below` and `fullscreen`. A transient that sets none of them gets its parent's.
+
+| zIndex | draws |
+|--------|-------|
+| 0 | the wallpaper |
+| 10 | layer-shell background |
+| 20 | desktop clients |
+| 30 | desktop and splash drawins |
+| 40 | layer-shell bottom |
+| 50 | `below` clients |
+| 60 | normal clients |
+| 70 | drawins (wibars, popups) |
+| 80 | layer-shell top |
+| 90 | `above` clients |
+| 100 | dock drawins |
+| 105 | fullscreen backing rectangle |
+| 110 | fullscreen clients |
+| 120 | layer-shell overlay |
+| 130 | `ontop` clients |
+| 140 | `ontop` drawins |
+| 150 | override-redirect X11 windows |
+
+**Override-redirect X11 windows draw above everything.** X11 menus and tooltips set no stacking properties, so somewm gives them the top `zIndex`. AwesomeWM stacks them with the client that owns them, and somewm 2.0 left the result to scene insertion order. The lock screen is unaffected: it has its own Clay tree above this one.
+
+**A drawin's border and shadow do not accept pointer input.** Clicks fall through to whatever draws below, as in 2.0.
+
+**Clicking a client's border focuses that client.** In 2.0 the border was a separate scene rectangle that reported no client, so the click did nothing.
+
+**`border_color` set from Lua survives focus changes.** somewm recolors a client's border on focus only while the config has not set the color itself. AwesomeWM never recolors it.
+
+**xdg popups draw above the client's tiled neighbours.** A popup wider than its client is no longer covered by the next tile.
+
+**`client._scene_layer`** returns the name of the layer a client draws in. It is a test aid, not AwesomeWM API.
+
+---
+
+## Widgets Are Clay Descriptions (somewm 2.1)
+
+A widget is a description of a Clay subtree, and nothing else draws. A drawable's widget tree is compiled to Clay declarations from the root down, Clay solves every box, and the renderer draws every element into the scene: rectangles, borders, text, images and the shape leaves that carry vector art (a piechart, an arc, a separator's shape, a gradient fill). Every stock widget class carries a describer that says what it is in Clay terms, and every stock class's `:draw`, `:fit` and `:layout` code is gone, together with `wibox.hierarchy`, the layout engine behind them. Widget properties and signals are unchanged, and so is what a wibar looks like, with the exceptions below.
+
+**A widget that draws itself is left out, loudly.** A widget that defines `draw`, `fit`, `layout`, `before_draw_children` or `after_draw_children`, on its class or on the instance, or whose class has no describer, is refused: one warning per class names the class and the methods it defines, and the widget's whole subtree is left out of the tree. The bar keeps drawing around the hole. A custom widget is written as a describer now: `widget._clay = { describe = function(w, fg, st) ... end }`, returning the node table `wibox.clay` documents, and `wibox.widget.base.make_widget(template)` gives a template widget a describer that passes through to the template. The stock classes that never had a describer are refused the same way: `wibox.container.rotate`, `wibox.container.mirror`, `wibox.container.tile` (Clay has no transforms and no tiling), and `wibox.container.scroll` until it gets one.
+
+**A property Clay cannot hold refuses the widget too, for now.** Each describer answers nothing for a value outside Clay's vocabulary, and that refuses the widget with the same warning until the describers learn to ignore or round such values: a fractional or negative spacing, padding, offset or border width; a gradient or surface pattern where a solid color is expected (a margin's `color`, a border's color, a checkbox's or graph's colors); a `background` with a gradient and a corner radius or a border together; a rounded shape together with a border on a `background` or a `progressbar`; `draw_empty = false` on a margin; `align`'s `expand = "outside"` with no second widget; a `grid` with a border, a row span, or `expand` without `homogeneous`; `manual` positions given as functions; an `imagebox` with a `clip_shape`, a fit policy other than `"auto"`, `downscale = false`, a `max_scaling_factor`, or an SVG with no size to render at; `textbox` markup with more than one run of one font and color, an underline or other Pango attribute, `justify`, an `indent`, a `line_spacing_factor`, or an `ellipsize` of `"start"` or `"middle"`; a `progressbar` with ticks or a bar border; a `slider` with a bar border; a `systray` with `beautiful.systray_max_rows` above 1; a `systray_icon` that is hovered, urgent or overlaid, or any `beautiful.systray_icon_style`; a `separator` with a `draw` painter; and `border_merging`, `expand_corners`, `honor_borders = false` or `ontop = false` on a `border` container.
+
+**Deleted API.** `wibox.hierarchy`, `wibox.widget.base.fit_widget`, `layout_widget`, `place_widget_at`, `place_widget_via_matrix` and `rect_to_device_geometry`, `wibox.widget.draw_to_cairo_context`, `draw_to_svg_file` and `draw_to_image_surface`, `wibox:to_widget` and `wibox:save_to_svg`, `wibox.drawable.surface` and `drawable:refresh()`. A widget is never handed a cairo context, so there is nothing for them to draw with; a picture of a widget comes from `root.content()` or `screen.content` while it is on screen.
+
+**visible and opacity.** A widget with `visible = false` is left out of the tree, silently. A widget `opacity` multiplies the alpha of every solid color and gradient stop in its subtree; images are unchanged.
+
+**A translucent drawin blends per node.** A drawin `opacity` below 1 applies to every element the drawin draws, not once to the drawin as a layer, so where two fills overlap they compound: a bar at 0.5 holding a background container of the same color shows as 0.75.
+
+**A shaped drawin is a rounded rectangle or nothing.** A `shape` that draws a rounded rectangle, with or without a `border_width`, becomes the corner radius of the drawin's own background, the border ring included; any other shape is drawn unshaped, with a warning naming the drawin, since the masks used to cut the drawin's own pixels and there are none. `shape_input` masks are ignored with a warning: input follows the box, rounded by the shape; `wibox.input_passthrough` still passes everything through (and now works, where the 0x0 mask it sets was dropped before).
+
+**A tree the output cannot hold shows nothing.** A drawin whose tree is past the output's element budget (`WIDGET_NODES_OUTPUT_MAX` in widget.h, shared by every drawin on the output) or malformed shows nothing, with a warning once, until the tree changes; `somewm-client clay tree` lists it with the reason.
+
+**Gradients are shape-leaf fills.** A linear or radial gradient (`gears.color`'s table or string forms, up to 16 stops) on a `background` container, a drawable's own `bg`, or an `awful.wallpaper` `bg` is rasterised by the renderer as the fill of a rectangle holding the widget; a gradient on a rounded or bordered `background` refuses it for now.
+
+**awful.wallpaper is a desktop wibox.** Each wallpaper owns one wibox of type desktop at its panning area, below every client, passing input through, holding its widget in the same background container as before. Screen areas its panning area does not cover show the plain root wallpaper (`gears.wallpaper`); `uncovered_areas_color` and `dpi` are gone (a value set is stored and ignored), and a tiled wallpaper (`wibox.container.tile`) is gone with the tile container.
+
+**A transparent wibox converts.** A drawable whose own background is a transparent color (an `awful.tooltip`, a popup that draws its background in a container inside) is a root that draws nothing and still takes pointer input over its whole box, as a wibox does.
+
+**A rounded background cuts its children to the arc.** A `background` whose shape is a rounded rectangle holds whatever it holds, filled or not, and the renderer clips every node under it to the shape's box and arc, as the container's own cairo clip did. Clipping is the renderer's rather than Clay's: a Clay clip element is a scroll container, and a context holds ten of them, so the count of converted wiboxes on an output is bounded by the element budget alone. A `background` border's straight edges are the one thing not cut: a bordered widget touching a rounded corner shows its edge past the arc.
+
+**A popup's tree sizes its drawin.** An `awful.popup` sizes itself to its widget: the drawin's root element wraps the tree (`CLAY_SIZING_FIT`) within the popup's `minimum_width`, `maximum_width`, `minimum_height` and `maximum_height`, and the popup takes the box Clay solves, one frame after the tree changes.
+
+**A forced size is Clay's, where a parent asks for it.** `forced_width` and `forced_height` on a widget are its sizing: a `fixed` or `align` slot places the widget at that size, and a container that hands its child the whole box (`margin`, `background`) still gives it the whole box, counting the forced size as the least the box can be. An `imagebox` with one forced axis wraps its image on the other, where the engine kept the other axis from the offer.
+
+**Told sizes do not shrink.** A widget of its own size (an imagebox, an icon) keeps it; a bar its content overflows compresses its text before its icons, where the engine squeezed everything in the order it laid out.
+
+**Odd leftovers round differently.** The engine floored: `flex` handed out its leftover pixels one at a time from the left, `align` with `expand = "outside"` or `"none"` floored the half beside the middle widget, and `place` floored a centered child's offset. Clay solves in float and rounds at the boundary, so when the space to split is odd a box can sit one pixel to the right of, or one pixel wider than, where the engine put it. Sizes that divide evenly are identical.
+
+**A slot that grows keeps content wider than its share.** The engine gave every `flex` child the same share whatever it held, and gave `align`'s expanded slots what the fixed ones left. Clay grows an element up from the size of its own content and never compresses it below that, so a slot whose content is already wider than its share keeps that width and the slots beside it get what is left. An `align` whose middle widget wants the whole length no longer drops the outer two; it places all three and the middle takes what they leave. A `ratio` layout under a parent that wraps its content has no size of its own.
+
+**A tree wider than its drawin is cut, not squeezed.** The widget lays out at its own size, at least the drawin's, and the drawin's edge cuts what overflows, a text with its ellipsis there; only a `constraint` or a forced size squeezes what it holds. The engine gave every layout the drawin's box to divide.
+
+**A fixed layout's spacing is between every pair of children.** Clay's `childGap` does not know a child's size. The engine skipped the spacing beside a child whose `:fit` was zero along the direction, and stopped placing children once one started past the edge; a `fixed` places every child with the spacing between each pair, and the drawin clips what overflows.
+
+**A textbox is laid out by Clay, and drawn by the renderer.** Clay measures the text through the renderer's Pango setup at the output's scale, with the font's size taken at the screen's dpi, and wraps by words: `wrap = "char"` and `"word_char"` wrap by words too, and a word wider than the box overflows it. Each line is a text command the renderer rasters; a line the box's clip cuts is ellipsized there when `ellipsize = "end"`, which is the default, so a title wider than the bar ends in an ellipsis at the bar's edge rather than at its slot. The text's own size is one line wide, so a layout that asks the textbox its size gets its unwrapped width, and wraps it only when something narrower holds it; a text Clay squeezes takes the width it was squeezed to, so a popup wrapping its message is as wide as its cap, where the widget measured the widest line. An empty textbox takes no size of its own.
+
+**An imagebox is an image element with an aspect ratio.** The renderer shows the widget's own surface, scaled into the box Clay solved. A surface whose pixels change under the same object is drawn again only when something else in the tree changes.
+
+**A margin's `color` draws above its child instead of below it.** The ring is the margin band, and the child is placed inside it, so the two do not overlap unless a widget draws outside its own box.
+
+**Padded art pads all four sides.** A `radialprogressbar` pads its content by its border and padding on every side, where the engine's fit added only the left and top offsets. An `arcchart` centres a square whose side is the smaller of the drawable's two sides, so a box whose smaller side is not the drawable's gets the wrong square.
+
+**A border container's sides are told.** The engine carried a side's minimum from a resized image's aspect-scaled fit and placed sliced sides past the box; a `border`'s sides and corners are told sizes inside the box. Its paddings count whenever a widget is set, where the engine counted them only when the child had a size.
+
+**A background image sits inside an inner border.** With `border_strategy = "inner"` a `background`'s `bgimage` is inside the border's padding, where the engine painted it over the whole box under the border; only a translucent border shows the difference.
+
+**An overflow layout follows the previous solve.** Its scrollbar and offset are those of the last solve, one redraw behind, so the first frame after it converts shows the content unscrolled and without a bar. Clay places every child and cuts to the box, where the engine placed only the children in view. A scrolling node is a Clay clip element, and a context holds ten: the eleventh scrolling drawin on an output is past the budget and shows nothing.
+
+**A grid is rows of cells told from a measuring solve.** Clay has no grid: a `grid` is a column of rows whose cells are told the sizes a measuring solve of the cells at their content size gave, homogeneous taking the largest and expand the larger of that and the box's share. A column or row shrinks only when the grid itself changes (a widget added or removed, a property set); growth is followed. Under expand a cell is never squeezed below its content, so the row overflows. A spanning widget's measure takes the spacing between its columns out first, where the engine divided the whole fit.
+
+**`find_widgets` asks Clay which widgets are under a point.** The widgets under a point are the elements Clay's own pointer query names against the output's last solve, in the tree's order: parents before children, a stack's children bottom to top. A result carries `.widget`, `.drawable` and Clay's box as `.x`, `.y`, `.width` and `.height`; the `.hierarchy` field is gone with `wibox.hierarchy`.
+
+**Screenshots read the scene and nothing else.** `root.content()` and `screen.content` walk the scene for rectangles as well as buffers, so a container's background is in the capture. The wallpaper comes from its own leaf in the tree, `root.content(true)` leaves that leaf out, and a translucent drawin captures at its opacity. The scene walk also replaced `screen.content`'s own buffer pass, which ignored a scene buffer's destination size and scaled HiDPI captures wrong.
+
+---
+
 ## No-Op APIs
 
 These APIs exist and can be called without error, but have no effect on Wayland.
@@ -282,6 +384,8 @@ These modifications to AwesomeWM's Lua libraries were necessary for Wayland comp
 | `gears.wallpaper` | `awful.wallpaper` | Deprecated upstream; somewmrc already uses `awful.wallpaper`. Removing it also deletes the somewm-side machinery that existed only to serve it: the `require()` hook that recorded wallpaper globals and the per-screen wallpaper cache in `root.c` (`root.wallpaper_cache_show`/`_has`/`_clear`/`_preload`), which `awful.wallpaper` never populated. An rc.lua calling `gears.wallpaper.*` errors. release/1.4 keeps it, matching AwesomeWM master. |
 | `awesome.api_level` | none | 2.0 is a hard reset and does not promise behavior across versions, so there is nothing for a config to select. Reading it now returns `nil`, so an rc.lua that compares it to a number errors. Three library behaviors that used to branch on it are now fixed at what level 4 did: `awful.autofocus` loads without a warning, `awful.permissions` does not wire `mouse::enter` to `request::autoactivate` (rc.lua does that), and `wibox.widget.base.make_widget` still defaults `enable_properties` to `false`. |
 | `gears.debug.deprecate_class` | none | Existed only to proxy a class that moved between API levels. No callers in the tree. |
+| `_wibox` | `wibox` | An undocumented C module that put a layer-shell surface on screen and showed a buffer Lua drew into it, from before drawins rendered through the scene. No callers in the tree. |
+| `awesome.systray` | `wibox.widget.systray` | The X11 tray's C entry point, kept as a host that painted StatusNotifierItem icons into a wibox's pixels. Nothing in the tree called it: the systray widget draws every icon itself, and a wibox hosting it could not convert to Clay. Calling it now errors with a nil field. |
 | `awful.util` | `gears.*` | 34 of its 38 functions already redirected to `gears.*` with a deprecation warning, so those move to the function that warning named (`awful.util.table.join` is `gears.table.join`, `awful.util.get_cache_dir` is `gears.filesystem.get_cache_dir`, and so on). Most are a straight module swap; the six that need more are listed under the table. The remaining four had no `gears` equivalent: `checkfile` was inlined into its only consumer, and `eval`, `restart` and `geticonpath` are gone, as is the `shell` field. An rc.lua touching any `awful.util` field errors, since the module itself no longer exists. |
 
 The `awful.util` redirects whose `gears` name differs, plus the two whose

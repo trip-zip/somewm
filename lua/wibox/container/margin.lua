@@ -8,68 +8,17 @@
 -- @supermodule wibox.widget.base
 ---------------------------------------------------------------------------
 
+local clay = require("wibox.clay")
 local pairs = pairs
 local setmetatable = setmetatable
 local base = require("wibox.widget.base")
 local gcolor = require("gears.color")
-local cairo = require("lgi").cairo
 local gtable = require("gears.table")
 
 local margin = { mt = {} }
 
--- Draw a margin layout
-function margin:draw(_, cr, width, height)
-    local x = self._private.left
-    local y = self._private.top
-    local w = self._private.right
-    local h = self._private.bottom
-    local color = self._private.color
 
-    if not self._private.widget or width <= x + w or height <= y + h then
-        return
-    end
 
-    if color then
-        cr:set_source(color)
-        cr:rectangle(0, 0, width, height)
-        cr:rectangle(x, y, width - x - w, height - y - h)
-        cr:set_fill_rule(cairo.FillRule.EVEN_ODD)
-        cr:fill()
-    end
-end
-
--- Layout a margin layout
-function margin:layout(_, width, height)
-    if self._private.widget then
-        local x = self._private.left
-        local y = self._private.top
-        local w = self._private.right
-        local h = self._private.bottom
-
-        local resulting_width = width - x - w
-        local resulting_height = height - y - h
-
-        if resulting_width >= 0 and resulting_height >= 0 then
-            return { base.place_widget_at(self._private.widget, x, y, resulting_width, resulting_height) }
-        end
-    end
-end
-
--- Fit a margin layout into the given space
-function margin:fit(context, width, height)
-    local extra_w = self._private.left + self._private.right
-    local extra_h = self._private.top + self._private.bottom
-    local w, h = 0, 0
-    if self._private.widget then
-        w, h = base.fit_widget(self, context, self._private.widget, width - extra_w, height - extra_h)
-    end
-
-    if self._private.draw_empty == false and (w == 0 or h == 0) then
-        return 0, 0
-    end
-
-    return w + extra_w, h + extra_h
-end
 
 --- The widget to be wrapped by the margins.
 --
@@ -256,6 +205,41 @@ end
 function margin.mt:__call(...)
     return new(...)
 end
+
+--- wibox.container.margin -> Clay padding, and the margin color -> a Clay
+-- border of the same widths, which covers exactly the ring `margin:draw`
+-- fills with the even-odd rule.
+local function describe_margin(w)
+    local p = w._private
+
+    if p.draw_empty == false and not p.widget then
+        return { pad = { 0, 0, 0, 0 }, specs = {} }
+    end
+    if p.draw_empty == false then
+        clay.ignore(w, "draw_empty", "is false and the margins are drawn around an empty child")
+    end
+
+    local pad = {}
+    for i, side in ipairs { "left", "right", "top", "bottom" } do
+        pad[i] = clay.pixels(w, side, p[side])
+    end
+
+    local node = { pad = pad, specs = clay.whole_box(p.widget) }
+
+    if p.color then
+        local rgba = clay.solid_rgba(p.color)
+
+        if not rgba then
+            clay.ignore(w, "color", "is not solid and is transparent")
+        else
+            node.border, node.bw = rgba, pad
+        end
+    end
+
+    return node
+end
+
+margin._clay = { describe = describe_margin }
 
 return setmetatable(margin, margin.mt)
 

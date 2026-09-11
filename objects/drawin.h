@@ -10,11 +10,20 @@
 #include "signal.h"
 #include "common/luaclass.h"  /* For lua_class_t */
 #include "common/luaobject.h"  /* For LUA_OBJECT_FUNCS macro */
-#include "shadow.h"           /* For shadow_config_t, shadow_nodes_t */
+#include "shadow.h"           /* Shadow configuration and textures */
+#include "../render.h"
+#include "../widget.h"
+#include "../render_image.h"  /* For struct image_entry */
+
+struct widget_shape {
+	struct render_shape shape;
+	int ref;
+};
 
 /* Forward declarations */
 struct screen_t;
 struct drawable_t;
+struct widget_node;
 
 /* Drawin object structure - represents a drawable window (wibox/panel/popup)
  *
@@ -47,7 +56,7 @@ typedef struct drawin_t {
 	char *cursor;                  /* Mouse cursor name (e.g., "left_ptr") */
 
 	/* Surface scale override (somewm extension, not in AwesomeWM).
-	 * 0.0 = auto (use output scale), >0.0 = force this scale for drawable surface.
+	 * 0.0 = auto (use output scale), >0.0 = force this scale for masks and borders.
 	 * Avoids HiDPI CPU upscaling for content like screenshot overlays. */
 	float scale_override;
 
@@ -58,17 +67,10 @@ typedef struct drawin_t {
 	 * Pointer retrieved via luaA_object_ref_item, pushed via luaA_object_push_item */
 	struct drawable_t *drawable;   /* Direct C pointer for callback access */
 
-	/* Scene graph integration for rendering (Wayland-specific) */
-	struct wlr_scene_tree *scene_tree;      /* Container node for positioning */
-	struct wlr_scene_buffer *scene_buffer;  /* The actual rendered surface */
-
-	/* Border rendering (Wayland-specific, shaped border support) */
-	struct wlr_scene_buffer *border_buffer; /* Single buffer for shaped border */
 	color_t border_color_parsed;            /* Cached parsed color for efficient refresh */
 
 	/* Shadow support (compositor-level, replaces picom shadows) */
 	shadow_config_t *shadow_config;         /* Per-drawin override (NULL = use defaults) */
-	shadow_nodes_t shadow;                  /* Shadow scene nodes */
 
 	/* Shape properties (AwesomeWM compatibility)
 	 * These are cairo_surface_t* alpha masks, either A1 (AwesomeWM's
@@ -78,7 +80,22 @@ typedef struct drawin_t {
 	cairo_surface_t *shape_clip;            /* Drawing clip region */
 	cairo_surface_t *shape_input;           /* Input hit-test region (click-through) */
 	cairo_surface_t *shape_border;          /* Pre-rendered anti-aliased border (ARGB32) */
+	/* Content corner radius of rounded bounding and clip masks, including
+	 * bordered shapes. -1 means the masks are not one rounded rectangle
+	 * and the converted drawin draws unshaped. Set at every mask change. */
+	float shape_radius;
+
+	/* Stable border and shadow image entries, owned by the drawin. */
+	struct image_entry border_entry;
+	struct shadow_leaves shadow;
+
+	/* The described widget tree (widget.h) and its image entries in
+	 * preorder. Empty until the drawable's first compile stores a tree,
+	 * which is what lets a visible drawin declare (declare.c). */
+	struct widget_tree widgets;
 } drawin_t;
+
+bool drawin_widget_host(drawin_t *d, struct widget_host *out);
 
 /* Metatable name for drawin userdata */
 #define DRAWIN_MT "drawin"
@@ -113,15 +130,12 @@ void luaA_drawin_set_strut(lua_State *L, drawin_t *drawin, strut_t strut);
 /* Drawin geometry synchronization */
 void luaA_drawin_apply_geometry(drawin_t *drawin);
 
+/* Mark the output this drawin is on stale, so the next frame re-declares it.
+ * A no-op for a drawin with no screen yet, or a screen with no monitor. */
+void drawin_mark_dirty(drawin_t *drawin);
+
 /* Drawin refresh cycle (called from main event loop) */
 void drawin_refresh(void);
-
-/* Apply an A1 or ARGB32 shape mask to a surface.
- * Returns a new surface scaled by the mask's coverage.
- * Caller must destroy the returned surface.
- * Returns NULL if no shape, an unsupported format, or allocation fails. */
-cairo_surface_t *drawin_apply_shape_mask(
-    cairo_surface_t *src, cairo_surface_t *shape);
 
 /* Object signal support
  * Note: luaA_object_emit_signal() is now declared in awm_luaobject.h

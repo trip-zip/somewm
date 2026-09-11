@@ -15,10 +15,9 @@
 -- @supermodule wibox.layout.fixed
 ---------------------------------------------------------------------------
 
-local base  = require("wibox.widget.base" )
+local clay = require("wibox.clay")
 local fixed = require("wibox.layout.fixed")
 local table = table
-local pairs = pairs
 local gtable  = require("gears.table")
 
 local stack = {mt={}}
@@ -69,35 +68,6 @@ local stack = {mt={}}
 -- @propemits true false
 -- @interface layout
 
-function stack:layout(_, width, height)
-    local result = {}
-    local spacing = self._private.spacing
-
-    width  = width  - math.abs(self._private.h_offset * #self._private.widgets) - 2*spacing
-    height = height - math.abs(self._private.v_offset * #self._private.widgets) - 2*spacing
-
-    local h_off, v_off = spacing, spacing
-
-    for _, v in pairs(self._private.widgets) do
-        table.insert(result, base.place_widget_at(v, h_off, v_off, width, height))
-        h_off, v_off = h_off + self._private.h_offset, v_off + self._private.v_offset
-        if self._private.top_only then break end
-    end
-
-    return result
-end
-
-function stack:fit(context, orig_width, orig_height)
-    local max_w, max_h = 0,0
-    local spacing = self._private.spacing
-
-    for _, v in pairs(self._private.widgets) do
-        local w, h = base.fit_widget(self, context, v, orig_width, orig_height)
-        max_w, max_h = math.max(max_w, w+2*spacing), math.max(max_h, h+2*spacing)
-    end
-
-    return math.min(max_w, orig_width), math.min(max_h, orig_height)
-end
 
 --- If only the first stack widget is drawn.
 --
@@ -219,6 +189,42 @@ function stack.mt:__call(...)
 end
 
 --@DOC_fixed_COMMON@
+
+--- wibox.layout.stack -> one floating element per child, attached to the
+-- stack's top left and sized to it (clay.h:2230-2234 sizes a floating root
+-- with grow sizing to its parent), each drawn over the one before (equal
+-- zIndex, declaration order, clay.h:2603-2615). The stack's spacing and the
+-- accumulated offsets are that element's padding around the child, which is
+-- how the engine shrinks each child: by twice the spacing and by the offset
+-- times the child count.
+local function describe_stack(w)
+    local p = w._private
+    local spacing = clay.pixels(w, "spacing", p.spacing)
+    local ho = clay.pixels(w, "horizontal_offset", p.h_offset)
+    local vo = clay.pixels(w, "vertical_offset", p.v_offset)
+
+    local n = #p.widgets
+    local specs = {}
+
+    for i, child in ipairs(p.widgets) do
+        local k = i - 1
+
+        specs[i] = {
+            float = true, w = "grow", h = "grow",
+            pad = { spacing + k * ho, spacing + (n - k) * ho,
+                spacing + k * vo, spacing + (n - k) * vo },
+            children = clay.whole_box(child),
+        }
+        if p.top_only then
+            break
+        end
+    end
+
+    return { specs = specs }
+end
+
+-- Fixed's constructor builds stack, so widget_name names fixed.
+stack._clay = { describe = describe_stack, name = "wibox.layout.stack" }
 
 return setmetatable(stack, stack.mt)
 -- vim: filetype=lua:expandtab:shiftwidth=4:tabstop=8:softtabstop=4:textwidth=80

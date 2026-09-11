@@ -298,19 +298,7 @@ function actionlist:get_notification()
     return self._private.notification
 end
 
-function actionlist:layout(_, width, height)
-    if self._private.layout then
-        return { wibox.widget.base.place_widget_at(self._private.layout, 0, 0, width, height) }
-    end
-end
 
-function actionlist:fit(context, width, height)
-    if not self._private.layout then
-        return 0, 0
-    end
-
-    return wibox.widget.base.fit_widget(self, context, self._private.layout, width, height)
-end
 
 --- Create an action list.
 --
@@ -366,6 +354,8 @@ local function new(_, args)
 end
 
 --@DOC_object_COMMON@
+
+require("wibox.clay").passthrough(actionlist, "layout")
 
 return setmetatable(module, {__call = new})
 

@@ -26,14 +26,13 @@
 local setmetatable = setmetatable
 local unpack = unpack or table.unpack -- luacheck: globals unpack (compatibility with Lua 5.1)
 local table = table
-local pairs = pairs
 local ipairs = ipairs
 local math = math
 local gtable = require("gears.table")
 local gmath = require("gears.math")
 local gcolor = require("gears.color")
 local base = require("wibox.widget.base")
-local cairo = require("lgi").cairo
+local clay = require("wibox.clay")
 
 local grid = { mt = {} }
 
@@ -165,14 +164,6 @@ local function max_value(t)
     return m
 end
 
--- Return the sum of the values in the table.
-local function sum_values(t)
-    local m = 0
-    for _,v in ipairs(t) do
-        m = m + v
-    end
-    return m
-end
 
 
 -- Find a widget in a widget_table, by matching the coordinates.
@@ -893,36 +884,6 @@ for _, prop in ipairs(dir_properties) do
 end
 
 
--- Return two tables of the fitted sizes of the rows and columns
--- @treturn table,table Tables of row heights and column widths
-local function get_grid_sizes(self, context, orig_width, orig_height)
-    local rows_size = {}
-    local cols_size = {}
-
-    -- Set the row and column sizes to the minimum value
-    for i = 1,self._private.num_rows do
-        rows_size[i] = self._private.min_rows_size
-    end
-    for j = 1,self._private.num_cols do
-        cols_size[j] = self._private.min_cols_size
-    end
-
-    -- Calculate cell sizes
-    for _, data in ipairs(self._private.widgets) do
-        local w, h = base.fit_widget(self, context, data.widget, orig_width, orig_height)
-        h = math.max( self._private.min_rows_size, h / data.row_span )
-        w = math.max( self._private.min_cols_size, w / data.col_span )
-        -- update the row and column maximum size
-        for i = data.row, data.row + data.row_span - 1 do
-            if h > rows_size[i] then rows_size[i] = h end
-        end
-        for j = data.col, data.col + data.col_span - 1 do
-            if w > cols_size[j] then cols_size[j] = w end
-        end
-    end
-    return rows_size, cols_size
-end
-
 -- All the code to get the width of a specific border.
 --
 -- This table module supports partial borders and "just add a border" modes.
@@ -959,352 +920,127 @@ local function setup_border_widths(self)
     }
 end
 
--- Fit the grid layout into the given space.
--- @param context The context in which we are fit.
--- @param orig_width The available width.
--- @param orig_height The available height.
-function grid:fit(context, orig_width, orig_height)
-    local width, height = orig_width, orig_height
 
-    -- Calculate the space needed
-    local function fit_direction(dir, sizes, border_widths)
-        local m = border_widths[1]
-        local space = self._private[dir .. "_spacing"]
 
-        -- First border
-        m = m > 0 and m + space or m
 
-        if self._private[dir .. "_homogeneous"] then
-            local max = max_value(sizes)
 
-            -- all the columns/rows have the same size
-            if self._private.has_border then
+-- Rows fit their cells and gaps (third_party/clay.h:1818-1856), with
+-- told sizes as floors (third_party/clay.h:1867-1868,1878-1879).
+-- Content growth raises the floors; shrinking content keeps them until
+-- the grid emits widget::layout_changed.
+local function describe_grid(w)
+    local p = w._private
+    if p.has_border then
+        return clay.refuse(w, "border_width", "is not drawn")
+    end
+    if (p.horizontal_expand and not p.horizontal_homogeneous)
+            or (p.vertical_expand and not p.vertical_homogeneous) then
+        return clay.refuse(w, "expand", "needs homogeneous")
+    end
+    local horizontal_spacing = clay.pixels(w, "horizontal_spacing", p.horizontal_spacing)
+    local vertical_spacing = clay.pixels(w, "vertical_spacing", p.vertical_spacing)
+    local min_cols_size = clay.pixels(w, "min_cols_size", p.min_cols_size)
+    local min_rows_size = clay.pixels(w, "min_rows_size", p.min_rows_size)
+    for _, data in ipairs(p.widgets) do
+        if data.row_span > 1
+                or #find_widgets_at(p.widgets, data.row, data.col, data.row_span, data.col_span) > 1 then
+            return clay.refuse(w, "row_span", "and overlapping cells are not laid out")
+        end
+    end
 
-                -- Not all borders are identical, so the loop is required.
-                for i in ipairs(sizes) do
-                    local bw = border_widths[i+1]
-
-                    -- When there is a border, it needs the spacing on both sides.
-
-                    m = m + max + (space*(bw > 0 and 2 or 1)) + bw
+    local told, rows, records = p.told, {}, {}
+    for r = 1, p.num_rows do
+        local cells = {}
+        rows[r] = { dir = "x", gap = horizontal_spacing, children = cells,
+            hmin = told and told.rows[r] }
+        records[r] = {}
+        local c = 1
+        while c <= p.num_cols do
+            local found = find_widgets_at(p.widgets, r, c)
+            local data = found and p.widgets[found[1]]
+            local cell = {}
+            if data then
+                cell.widget = data.widget
+                records[r][#records[r] + 1] = { index = #cells + 1, col = c, span = data.col_span }
+                if told then
+                    local width = (data.col_span - 1) * horizontal_spacing
+                    for j = c, c + data.col_span - 1 do
+                        width = width + told.cols[j]
+                    end
+                    cell.w, cell.h = "grow", "grow"
+                    cell.wmin, cell.hmin = width, told.rows[r]
                 end
+                c = c + data.col_span
             else
-                -- Much simpler.
-                m = #sizes * max + (#sizes - 1) * space
+                cell.wmin = told and told.cols[c]
+                c = c + 1
             end
-        else
-            -- sum the columns/rows size
-            for i, s in ipairs(sizes) do
-                local bw = border_widths[i+1]
-
-                -- When there is a border, it needs the spacing on both sides.
-                m = m + s + (space * (bw > 0 and 2 or 1)) + bw
-            end
-
+            cells[#cells + 1] = cell
         end
-
-        return m
     end
 
-    -- fit matrix cells
-    local rows_size, cols_size = get_grid_sizes(self, context, width, height)
-
-    -- compute the width
-    local borders = self._private.meta_borders
-    local used_width_max  = fit_direction("horizontal", cols_size, borders.cols)
-    local used_height_max = fit_direction("vertical", rows_size, borders.rows)
-
-    return used_width_max, used_height_max
+    local node = { dir = "y", gap = vertical_spacing, specs = rows }
+    node.solved = function(n)
+        local cols, heights = {}, {}
+        for c = 1, p.num_cols do
+            cols[c] = told and told.cols[c] or min_cols_size
+        end
+        for r = 1, p.num_rows do
+            heights[r] = told and told.rows[r] or min_rows_size
+            for _, cell in ipairs(records[r]) do
+                local box = rows[r].children[cell.index].box
+                local spacing = (cell.span - 1) * horizontal_spacing
+                local width = spacing
+                if told then
+                    for c = cell.col, cell.col + cell.span - 1 do
+                        width = width + told.cols[c]
+                    end
+                end
+                if not told or box.width > width then
+                    local measured = math.ceil((box.width - spacing) / cell.span)
+                    for c = cell.col, cell.col + cell.span - 1 do
+                        cols[c] = math.max(cols[c], measured)
+                    end
+                end
+                if not told or box.height > told.rows[r] then
+                    heights[r] = math.max(heights[r], box.height)
+                end
+            end
+        end
+        if p.horizontal_homogeneous then
+            local size = max_value(cols)
+            if p.horizontal_expand and p.num_cols > 0 then
+                size = math.max(size,
+                    math.floor((n.box.width - (p.num_cols - 1) * horizontal_spacing) / p.num_cols))
+            end
+            for c = 1, p.num_cols do cols[c] = size end
+        end
+        if p.vertical_homogeneous then
+            local size = max_value(heights)
+            if p.vertical_expand and p.num_rows > 0 then
+                size = math.max(size,
+                    math.floor((n.box.height - (p.num_rows - 1) * vertical_spacing) / p.num_rows))
+            end
+            for r = 1, p.num_rows do heights[r] = size end
+        end
+        local changed = not p.told
+        for c = 1, p.num_cols do
+            if not p.told or cols[c] ~= p.told.cols[c] then changed = true end
+        end
+        for r = 1, p.num_rows do
+            if not p.told or heights[r] ~= p.told.rows[r] then changed = true end
+        end
+        if changed then
+            p.told = { cols = cols, rows = heights }
+            w:emit_signal("widget::redraw_needed")
+        end
+    end
+    return node
 end
 
-local function layout_common(self, context, width, height, h_homogeneous, v_homogeneous)
-    local result, areas = {}, {}
-    local hspacing, vspacing = self._private.horizontal_spacing, self._private.vertical_spacing
+grid._clay = { describe = describe_grid }
 
-    -- Fit matrix cells
-    local rows_size, cols_size = get_grid_sizes(self, context, width, height)
-    local total_expected_width, total_expected_height = sum_values(cols_size), sum_values(rows_size)
 
-    local h_bw, v_bw = self._private.meta_borders.cols, self._private.meta_borders.rows
-
-    -- Do it once, the result wont change unless widgets are added.
-    if self._private.has_border and not self._private.area_cache.total_horizontal_border_width then
-        -- Also add the "second" spacing here. This avoid having some `if` below.
-        local total_h = h_bw[1] + h_bw[#cols_size+1] + 1*hspacing
-        local total_v = v_bw[1] + v_bw[#rows_size+1] + 1*vspacing
-
-        for j = 1, #cols_size do
-            local bw = h_bw[j+1]
-            total_h =  total_h + bw + hspacing*(bw > 0 and 1 or 0)
-        end
-
-        for i = 1, #rows_size do
-            local bw = v_bw[i+1]
-            total_v = total_v + bw + vspacing*(bw > 0 and 1 or 0)
-        end
-
-        self._private.area_cache.total_horizontal_border_width = total_h - h_bw[1]
-        self._private.area_cache.total_vertical_border_width = total_v - v_bw[1]
-    end
-
-    local total_h = self._private.area_cache.total_horizontal_border_width or 0
-    local total_v = self._private.area_cache.total_vertical_border_width or 0
-
-    -- Figure out the maximum size we can give out to sub-widgets
-    local single_width, single_height = max_value(cols_size), max_value(rows_size)
-
-    if self._private.horizontal_expand then
-        single_width = (width - (self._private.num_cols-1)*hspacing - total_h) / self._private.num_cols
-    end
-
-    if self._private.vertical_expand then
-        single_height = (height - (self._private.num_rows-1)*vspacing - total_v) / self._private.num_rows
-    end
-
-    -- Calculate the position and size to place the widgets
-    local cumul_width, cumul_height = {}, {}
-    local c_hor, c_ver = h_bw[1], v_bw[1]
-
-    -- If there is an outer border, then it needs inner spacing too.
-    c_hor, c_ver = c_hor > 0 and c_hor + hspacing or 0, c_ver > 0 and c_ver + vspacing or 0
-
-    for j = 1, #cols_size do
-        cumul_width[j] = c_hor
-
-        if h_homogeneous then
-            cols_size[j] = math.max(self._private.min_cols_size, single_width)
-        elseif self._private.horizontal_expand then
-            local hpercent = self._private.num_cols * single_width * cols_size[j] / total_expected_width
-            cols_size[j] = math.max(self._private.min_cols_size, hpercent)
-        end
-
-        local bw = h_bw[j+1]
-        c_hor = c_hor + cols_size[j] + (bw > 0 and 2 or 1)*hspacing + bw
-    end
-
-    cumul_width[#cols_size + 1] = c_hor
-
-    for i = 1, #rows_size do
-        cumul_height[i] = c_ver
-
-        if v_homogeneous then
-            rows_size[i] = math.max(self._private.min_rows_size, single_height)
-        elseif self._private.vertical_expand then
-            local vpercent = self._private.num_rows * single_height * rows_size[i] / total_expected_height
-            rows_size[i] = math.max(self._private.min_rows_size, vpercent)
-        end
-
-        local bw = v_bw[i+1]
-        c_ver = c_ver + rows_size[i] + (bw > 0 and 2 or 1)*vspacing + bw
-    end
-
-    cumul_height[#rows_size + 1] = c_ver
-
-    -- Place widgets
-    local fill_space = true  -- should be fill_space property?
-    for _, v in pairs(self._private.widgets) do
-        local x, y, w, h
-
-        -- If there is a border, then the spacing is needed on both sides.
-        local col_bw, row_bw = h_bw[v.col+v.col_span], v_bw[v.row+v.row_span]
-        local col_spacing = hspacing * (col_bw > 0 and 2 or 1)
-        local row_spacing = vspacing * (row_bw > 0 and 2 or 1)
-
-        -- Round numbers to avoid decimals error, force to place tight widgets
-        -- and avoid redraw glitches
-        x = math.floor(cumul_width[v.col])
-        y = math.floor(cumul_height[v.row])
-        w = math.floor(cumul_width[v.col + v.col_span] - col_spacing - x - col_bw)
-        h = math.floor(cumul_height[v.row + v.row_span] - row_spacing - y - row_bw)
-
-        -- Handle large spacing and/or border_width. The grid doesn't support
-        -- dropping widgets. It would be very hard to implement.
-        w, h = math.max(0, w), math.max(0, h)
-
-        -- Recalculate the width so the last widget fits
-        if (fill_space or self._private.horizontal_expand) and x + w > width then
-            w = math.floor(math.max(self._private.min_cols_size, width - x))
-        end
-        -- Recalculate the height so the last widget fits
-        if (fill_space or self._private.vertical_expand) and y + h > height then
-            h = math.floor(math.max(self._private.min_rows_size, height - y))
-        end
-        -- Place the widget if it fits in the area
-        if x + w <= width and y + h <= height then
-            table.insert(result, base.place_widget_at(v.widget, x, y, w, h))
-            table.insert(areas, {
-                x      = x - hspacing,
-                y      = y - vspacing,
-                width  = w + col_spacing,
-                height = h + row_spacing,
-            })
-        end
-    end
-
-    -- Sometime, the `:fit()` size and `:layout()` size are different, thus it's
-    -- important to say where the widget actually ends.
-    areas.end_x = cumul_width[#cumul_width] - hspacing
-    areas.end_y = cumul_height[#cumul_height] - vspacing
-    areas.column_count = #cols_size
-    areas.row_count = #rows_size
-    areas.cols = cumul_width
-    areas.rows = cumul_height
-
-    return result, areas
-end
-
-local function get_area_cache_hash(width, height)
-   return width*1.5+height*15
-end
-
--- Layout a grid layout.
--- @param context The context in which we are drawn.
--- @param width The available width.
--- @param height The available height.
-function grid:layout(context, width, height)
-    local l, areas = layout_common(
-        self,
-        context,
-        width,
-        height,
-        self._private.horizontal_homogeneous,
-        self._private.vertical_homogeneous
-    )
-
-    self._private.area_cache[get_area_cache_hash(width, height)] = areas
-
-    return l
-end
-
-local function create_border_mask(self, areas, default_color)
-    if areas.surface then return areas.surface end
-
-    local meta = self._private.meta_borders
-
-    local top, bottom = meta.rows[1], meta.rows[areas.row_count+1]
-    local left, right = meta.cols[1], meta.cols[areas.column_count+1]
-
-    -- A1 is fine because :layout() aligns to pixel boundary and `border_width`
-    -- are integers.
-    local img = cairo.RecordingSurface(cairo.Content.COLOR_ALPHA, cairo.Rectangle {
-        x      = 0,
-        y      = 0,
-        width  = areas.end_x + right,
-        height = areas.end_y + bottom
-    })
-    local cr = cairo.Context(img)
-    cr:set_source(default_color)
-
-    local bw_i, bw_o = self._private.border_width.inner, self._private.border_width.outer
-
-    if bw_i ~= bw_o then
-        if bw_o then
-            if self._private.border_color.outer then
-                cr:set_source(self._private.border_color.outer)
-            end
-
-            -- Clip the outside region. It cannot use `cr:set_line_width()` because
-            -- each border might be different.
-            cr:rectangle(0, 0, areas.end_x, top)
-            cr:rectangle(0, areas.end_y - bottom, areas.end_x, bottom)
-            cr:rectangle(0, top, left, areas.end_y - top - bottom)
-            cr:rectangle(areas.end_x - right, top, right, areas.end_y - top - bottom)
-            cr:clip()
-            cr:paint()
-            cr:reset_clip()
-        end
-
-        cr:rectangle(left, top, areas.end_x - top - bottom, areas.end_y - left - right)
-        cr:clip()
-    else
-        cr:rectangle(0,0, areas.end_x, areas.end_y)
-        cr:clip()
-    end
-
-    if bw_i then
-        if self._private.border_color.inner then
-            cr:set_source(self._private.border_color.inner)
-        end
-        cr:rectangle(0, 0, areas.end_x, areas.end_y)
-        cr:fill()
-    end
-
-    -- Add the custom horizontal and borders.
-    -- This is a lifeline for users who want borders only on specific places.
-    -- Implementing word processing style borders would be overkill and
-    -- too hard to maintain.
-    for _, orientation in ipairs { "rows", "cols" } do
-        for row, args in pairs(self._private.custom_border_width[orientation]) do
-            local line_height = meta[orientation][row]
-            cr:save()
-            cr:rectangle(0,0, areas.end_x, areas.end_y)
-            cr:clip()
-            cr:set_line_width(line_height)
-
-            if args.dashes then
-                cr:set_dash(args.dashes, #args.dashes, args.offset or 0)
-            end
-
-            if args.caps then
-                cr:set_line_cap(cairo.LineCap[args.caps:upper()])
-            end
-
-            cr:set_source(args.color)
-
-            -- Cairo draw the stroke equally on both side, for `line_height/2` is
-            -- needed.
-            local y = (row == 1 and line_height or areas[orientation][row] or 0) - math.ceil(line_height/2)
-
-            if orientation == "rows" then
-                cr:move_to(0, y)
-                cr:line_to(areas.end_x, y)
-            else
-                cr:move_to(y, 0)
-                cr:line_to(y, areas.end_y)
-            end
-
-            cr:stroke()
-            cr:restore()
-        end
-    end
-
-    -- Remove the area used by widgets. This needs to be done regardless of the
-    -- border mode to handle row/col span.
-    cr:set_operator(cairo.Operator.CLEAR)
-
-    for _, area in ipairs(areas) do
-        cr:rectangle(area.x, area.y, area.width, area.height)
-    end
-
-    cr:fill()
-
-    areas.surface = img
-
-    return img
-end
-
--- Draw the border.
-function grid:after_draw_children(ctx, cr, width, height)
-    if not self._private.has_border then return end
-
-    local hash = get_area_cache_hash(width, height)
-
-    if not self._private.area_cache[hash] then
-        self._private.area_cache[hash] = select(2, layout_common(
-            self,
-            ctx,
-            width,
-            height,
-            self._private.horizontal_homogeneous,
-            self._private.vertical_homogeneous
-        ))
-    end
-
-    local areas = self._private.area_cache[hash]
-
-    cr:set_source_surface(create_border_mask(self, areas, cr:get_source()), 0 ,0)
-    cr:paint()
-end
 
 --- Reset the grid layout.
 -- Remove all widgets and reset row and column counts
@@ -1369,6 +1105,7 @@ local function new(orientation)
 
     ret:connect_signal("widget::layout_changed", function(self)
         self._private.area_cache = {}
+        self._private.told = nil
     end)
 
     setup_border_widths(ret)

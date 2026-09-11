@@ -25,6 +25,7 @@
 #include "wlr_compat.h"
 #include "event_queue.h"
 #include "xwayland.h"
+#include "declare.h"
 #include "globalconf.h"
 #include "common/luaobject.h"
 #include "objects/signal.h"
@@ -106,7 +107,11 @@ configurex11(struct wl_listener *listener, void *data)
 		return;
 	}
 	if (client_is_unmanaged(c)) {
-		wlr_scene_node_set_position(&c->scene->node, event->x, event->y);
+		/* Unmanaged geometry is the client's own; record it and let the
+		 * next frame declare the tree at the new box. */
+		c->geometry = (struct wlr_box){.x = event->x, .y = event->y,
+				.width = event->width, .height = event->height};
+		declare_mark_all_dirty();
 		wlr_xwayland_surface_configure(c->surface.xwayland,
 				event->x, event->y, event->width, event->height);
 		return;

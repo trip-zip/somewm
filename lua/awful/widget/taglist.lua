@@ -470,19 +470,7 @@ function taglist:get_count()
     return self._private.last_count
 end
 
-function taglist:layout(_, width, height)
-    if self._private.base_layout then
-        return { base.place_widget_at(self._private.base_layout, 0, 0, width, height) }
-    end
-end
 
-function taglist:fit(context, width, height)
-    if not self._private.base_layout then
-        return 0, 0
-    end
-
-    return base.fit_widget(self, context, self._private.base_layout, width, height)
-end
 
 --- An alternative function to configure the content.
 --
@@ -769,6 +757,9 @@ function taglist.mt:__call(...)
 end
 
 --@DOC_object_COMMON@
+
+-- A wrapper around base_layout: Clay solves the list as that layout.
+require("wibox.clay").passthrough(taglist, "base_layout")
 
 return setmetatable(taglist, taglist.mt)
 

@@ -11,18 +11,19 @@
 -- @supermodule wibox.widget.base
 ---------------------------------------------------------------------------
 
-local color     = require( "gears.color"       )
 local base      = require( "wibox.widget.base" )
 local beautiful = require( "beautiful"         )
 local gtable    = require( "gears.table"       )
 local pie       = require( "gears.shape"       ).pie
-local unpack    = unpack or table.unpack -- luacheck: globals unpack (compatibility with Lua 5.1)
+
+local clay = require("wibox.clay")
 
 local module = {}
 
 local piechart = {}
 
-local function draw_label(cr,angle,radius,center_x,center_y,text)
+
+local function label_path(cr,angle,radius,center_x,center_y,text)
     local edge_x = center_x+(radius/2)*math.cos(angle)
     local edge_y = center_y+(radius/2)*math.sin(angle)
 
@@ -41,13 +42,10 @@ local function draw_label(cr,angle,radius,center_x,center_y,text)
         ext.height/2
     )
 
-    cr:show_text(text) --TODO eventually port away from the toy API
-    cr:stroke()
+    cr:text_path(text)
 
     cr:arc(edge_x, edge_y,2,0,2*math.pi)
     cr:arc(x+(x>center_x and radius/2 or -radius/2),y,2,0,2*math.pi)
-
-    cr:fill()
 end
 
 local function compute_sum(data)
@@ -59,83 +57,7 @@ local function compute_sum(data)
     return ret
 end
 
-local function draw(self, _, cr, width, height)
-    if not self._private.data_list then return end
 
-    local radius = (height > width and width or height) / 4
-    local sum, start, count = compute_sum(self._private.data_list),0,0
-    local has_label = self._private.display_labels ~= false
-
-    -- Labels need to be drawn later so the original source is kept
-    -- use get_source() wont work are the reference cannot be set from Lua(?)
-    local labels = {}
-
-    local border_width = self:get_border_width() or 1
-    local border_color = self:get_border_color()
-    border_color       = border_color and color(border_color)
-
-    -- Draw the pies
-    cr:save()
-    cr:set_line_width(border_width)
-
-    -- Alternate from a given sets or colors
-    local colors = self:get_colors()
-    local col_count = colors and #colors or 0
-
-    for _, entry in ipairs(self._private.data_list) do
-        local k, v = entry[1], entry[2]
-        local end_angle = start + 2*math.pi*(v/sum)
-
-        local col = colors and color(colors[math.fmod(count,col_count)+1]) or nil
-
-        pie(cr, width, height, start, end_angle, radius)
-
-        if col then
-            cr:save()
-            cr:set_source(color(col))
-        end
-
-        if border_width > 0 then
-            if col then
-                cr:fill_preserve()
-                cr:restore()
-            end
-
-            -- By default, it uses the fg color
-            if border_color then
-                cr:set_source(border_color)
-            end
-            cr:stroke()
-        elseif col then
-            cr:fill()
-            cr:restore()
-        end
-
-        -- Store the label position for later
-        if has_label then
-            table.insert(labels, {
-                --[[angle   ]] start+(end_angle-start)/2,
-                --[[radius  ]] radius,
-                --[[center_x]] width/2,
-                --[[center_y]] height/2,
-                --[[text    ]] k,
-            })
-        end
-        start,count = end_angle,count+1
-    end
-    cr:restore()
-
-    -- Draw the labels
-    if has_label then
-        for _, v in ipairs(labels) do
-            draw_label(cr, unpack(v))
-        end
-    end
-end
-
-local function fit(_, _, width, height)
-    return width, height
-end
 
 --- The pie chart data list.
 --
@@ -264,13 +186,100 @@ local function new(data_list)
 
     gtable.crush(ret, piechart)
 
-    rawset(ret, "fit" , fit )
-    rawset(ret, "draw", draw)
 
     ret:set_data_list(data_list)
 
     return ret
 end
+
+local function describe_piechart(w, fg)
+    local data = w._private.data_list
+    if not data then return { w = "grow", h = "grow" } end
+    local sum = compute_sum(data)
+    if sum ~= sum or sum <= 0 then return { w = "grow", h = "grow" } end
+    local has_label = w._private.display_labels ~= false
+    local border_width = w:get_border_width() or 1
+    local border_color = w:get_border_color()
+    local colors = w:get_colors()
+    local col_count = colors and #colors or 0
+    local border = clay.solid_rgba(border_color)
+    if border_color and not border then
+        clay.ignore(w, "border_color", "is not solid and is transparent")
+    end
+    local foreground
+    if has_label or (border_width > 0 and not border_color) then
+        foreground = clay.solid_rgba(fg)
+        if not foreground then
+            clay.ignore(w, "fg", "is not solid and the labels are not drawn")
+            has_label = false
+        end
+    end
+    local stroke = border_width > 0 and (border or (not border_color and foreground)) or nil
+    -- Floating GROW takes the parent box (third_party/clay.h:2224-2237),
+    -- anchored to it (third_party/clay.h:2634-2636); equal zIndex roots
+    -- paint in declaration order (third_party/clay.h:2603-2615).
+    local node = { w = "grow", h = "grow", specs = {} }
+    local specs, labels = node.specs, {}
+    local start, count = 0, 0
+    for _, entry in ipairs(data) do
+        local k, v = entry[1], entry[2]
+        local start_angle = start
+        local end_angle = start + 2 * math.pi * (v / sum)
+        local col = colors and colors[math.fmod(count, col_count) + 1]
+        local fill = clay.solid_rgba(col)
+        if col and not fill then
+            clay.ignore(w, "colors", "holds a colour that is not solid, drawn transparent")
+        elseif fill or stroke then
+            specs[#specs + 1] = {
+                float = true, w = "grow", h = "grow", fill = fill,
+                stroke = stroke, stroke_width = border_width,
+                shape = function(width, height)
+                    local radius = (height > width and width or height) / 4
+                    return clay.shape_ops(pie, width, height, 0, 0,
+                        start_angle, end_angle, radius)
+                end,
+            }
+        end
+        if has_label then
+            labels[#labels + 1] = { start + (end_angle - start) / 2, k }
+        end
+        start, count = end_angle, count + 1
+    end
+    for _, label in ipairs(labels) do
+        local angle, text = label[1], label[2]
+        specs[#specs + 1] = {
+            float = true, w = "grow", h = "grow", stroke = foreground,
+            -- The shape recorder starts with the cairo default line width;
+            -- draw_label strokes with cairo's default after the outer restore.
+            stroke_width = 2,
+            shape = function(width, height)
+                local radius = (height > width and width or height) / 4
+                local center_x, center_y = width / 2, height / 2
+                return clay.shape_ops(function(cr)
+                    local edge_x = center_x + (radius / 2) * math.cos(angle)
+                    local edge_y = center_y + (radius / 2) * math.sin(angle)
+                    cr:move_to(edge_x, edge_y)
+                    cr:rel_line_to(radius * math.cos(angle), radius * math.sin(angle))
+                    local x = cr:get_current_point()
+                    cr:rel_line_to(x > center_x and radius / 2 or -radius / 2, 0)
+                end, width, height)
+            end,
+        }
+        specs[#specs + 1] = {
+            float = true, w = "grow", h = "grow", fill = foreground,
+            shape = function(width, height)
+                local radius = (height > width and width or height) / 4
+                local center_x, center_y = width / 2, height / 2
+                return clay.shape_ops(function(cr)
+                    label_path(cr, angle, radius, center_x, center_y, text)
+                end, width, height)
+            end,
+        }
+    end
+    return node
+end
+
+piechart._clay = { describe = describe_piechart }
 
 return setmetatable(module, { __call = function(_, ...) return new(...) end })
 -- vim: filetype=lua:expandtab:shiftwidth=4:tabstop=8:softtabstop=4:textwidth=80

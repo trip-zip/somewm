@@ -35,6 +35,7 @@
 #include "color.h"
 #include "objects/window.h"
 #include "shadow.h"
+#include "widget.h"
 
 /* Forward declarations */
 typedef struct screen_t screen_t;
@@ -156,18 +157,25 @@ struct client_t
     } surface;
     /** Scene tree for this client */
     struct wlr_scene_tree *scene;
+    /** The render_state currently borrowing scene (render.h owner token) */
+    void *render_owner;
+    /** The surface leaf's last solved box, layout coordinates: what the
+     * configure leg sends and clips to. Empty until the first frame that
+     * declares the client. */
+    struct wlr_box surface_box;
     /** Scene surface node */
     struct wlr_scene_tree *scene_surface;
     /** Popup parent tree: tracks scene_surface's position but is exempt
      * from client_get_clip()'s content clip (mirrors LayerSurface::popups),
      * since context menus routinely extend beyond the parent's bounds. */
-    struct wlr_scene_tree *popups;
-    /** Border rectangles */
-    struct wlr_scene_rect *border[4];
+    /** C-side border recolor (focus tracking): the declare pass reads this
+     * when the Lua border_color property was never set. */
+    float border_rgba[4];
+    bool border_rgba_set;
     /** Shadow configuration (NULL = use defaults) */
     shadow_config_t *shadow_config;
-    /** Shadow scene nodes */
-    shadow_nodes_t shadow;
+    /** Shadow textures */
+    struct shadow_leaves shadow;
     /** Wayland listeners */
     struct wl_listener initial_commit; /* For initial XDG commit before scene surface exists */
     struct wl_listener commit;         /* For subsequent commits after scene surface exists */
@@ -337,8 +345,7 @@ struct client_t
         uint16_t size;
         /** The drawable for this bar. */
         drawable_t *drawable;
-        /** Scene buffer for rendering (Wayland-specific) */
-        struct wlr_scene_buffer *scene_buffer;
+        struct widget_tree widgets;
     } titlebar[CLIENT_TITLEBAR_COUNT];
     /** Motif WM hints, with an additional MWM_HINTS_AWESOME_SET bit */
     motif_wm_hints_t motif_wm_hints;
@@ -406,11 +413,11 @@ void client_focus(client_t *);
 bool client_focus_update(client_t *);
 void client_focus_refresh(void);
 void client_refresh(void);
+void client_border_rgba(client_t *, float out[4]);
 void client_destroy_later(void);
 bool client_hasproto(client_t *, uint32_t);  /* Changed from xcb_atom_t */
 void client_ignore_enterleave_events(void);
 void client_restore_enterleave_events(void);
-void client_refresh_partial(client_t *, int16_t, int16_t, uint16_t, uint16_t);
 void client_class_setup(lua_State *);
 void client_send_configure(client_t *);
 void client_find_transient_for(client_t *);
@@ -419,8 +426,7 @@ void client_emit_scanning(void);
 drawable_t *client_get_drawable(client_t *, int, int);
 drawable_t *client_get_drawable_offset(client_t *, int *, int *);
 area_t client_get_undecorated_geometry(client_t *);
-void client_apply_opacity_to_scene(client_t *, float);
-void client_update_titlebar_positions(client_t *);
+bool client_titlebar_host(client_t *c, drawable_t *d, struct widget_host *out);
 
 /* Forward declarations for inline functions
  * Note: luaA_object_emit_signal() is declared in awm_luaobject.h (included above) */

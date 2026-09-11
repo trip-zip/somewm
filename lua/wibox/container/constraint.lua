@@ -8,6 +8,7 @@
 -- @supermodule wibox.widget.base
 ---------------------------------------------------------------------------
 
+local clay = require("wibox.clay")
 local setmetatable = setmetatable
 local base = require("wibox.widget.base")
 local gtable = require("gears.table")
@@ -15,30 +16,7 @@ local math = math
 
 local constraint = { mt = {} }
 
--- Layout a constraint layout
-function constraint:layout(_, width, height)
-    if self._private.widget then
-        return { base.place_widget_at(self._private.widget, 0, 0, width, height) }
-    end
-end
 
--- Fit a constraint layout into the given space
-function constraint:fit(context, width, height)
-    local w, h
-    if self._private.widget then
-        w = self._private.strategy(width, self._private.width)
-        h = self._private.strategy(height, self._private.height)
-
-        w, h = base.fit_widget(self, context, self._private.widget, w, h)
-    else
-        w, h = 0, 0
-    end
-
-    w = self._private.strategy(w, self._private.width)
-    h = self._private.strategy(h, self._private.height)
-
-    return w, h
-end
 
 --- The widget to be constrained.
 --
@@ -87,6 +65,7 @@ function constraint:set_strategy(val)
     end
 
     self._private.strategy = func[val]
+    self._private.strategy_name = val
     self:emit_signal("widget::layout_changed")
     self:emit_signal("property::strategy", val)
 end
@@ -183,6 +162,33 @@ end
 function constraint.mt:__call(...)
     return new(...)
 end
+
+--- wibox.container.constraint -> the child's whole box under a
+-- Clay_SizingMinMax on each axis it limits: `max` caps the fit
+-- (CLAY_SIZING_FIT(0, limit)), `min` floors it, and `exact` is
+-- CLAY_SIZING_FIXED.
+local function describe_constraint(w)
+    local p = w._private
+    local strategy = p.strategy_name
+
+
+    local node = { specs = clay.whole_box(p.widget) }
+
+    for axis, limit in pairs({ w = p.width, h = p.height }) do
+        if strategy == "exact" then
+            node[axis] = limit
+        elseif strategy == "min" then
+            node[axis .. "min"] = limit
+        elseif strategy == "max" then
+            node[axis .. "max"] = limit
+        else
+            clay.ignore(w, "strategy", "is unknown and no limit is applied")
+        end
+    end
+    return node
+end
+
+constraint._clay = { describe = describe_constraint }
 
 return setmetatable(constraint, constraint.mt)
 
