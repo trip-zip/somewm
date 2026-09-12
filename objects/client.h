@@ -163,6 +163,8 @@ struct client_t
      * configure leg sends and clips to. Empty until the first frame that
      * declares the client. */
     struct wlr_box surface_box;
+    /** Present in the current output declaration as a tile flow cell. */
+    bool clay_tiled;
     /** Scene surface node */
     struct wlr_scene_tree *scene_surface;
     /** Popup parent tree: tracks scene_surface's position but is exempt
@@ -426,6 +428,7 @@ void client_emit_scanning(void);
 drawable_t *client_get_drawable(client_t *, int, int);
 drawable_t *client_get_drawable_offset(client_t *, int *, int *);
 area_t client_get_undecorated_geometry(client_t *);
+void client_set_solved_geometry(client_t *c, area_t geometry);
 bool client_titlebar_host(client_t *c, drawable_t *d, struct widget_host *out);
 
 /* Forward declarations for inline functions

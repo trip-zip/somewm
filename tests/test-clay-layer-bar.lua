@@ -9,6 +9,7 @@
 -- Run: make test-one TEST=tests/test-clay-layer-bar.lua
 ---------------------------------------------------------------------------
 local runner = require("_runner")
+local example = require("_clay_example")
 local utils = require("_utils")
 local awful = require("awful")
 local wibox = require("wibox")
@@ -32,8 +33,9 @@ end
 
 local steps = {
     function()
-        bar = awful.wibar({ position = "top", screen = s, height = 28 })
+        bar = awful.wibar({ position = "top", screen = s, height = 28, bg = "#00ff00" })
         bar:setup({ widget = wibox.widget.textbox, text = "bar" })
+        require("gears.wallpaper").set("#000000")
         pid = awful.spawn(string.format(
             "%s --namespace test-layer-bar --keyboard none"
                 .. " --anchor top,left,right --size 0,40 --exclusive-zone 40",
@@ -63,6 +65,11 @@ local steps = {
         assert(geo.y == s.geometry.y + 40 and geo.height == 28
             and geo.width == s.geometry.width,
             string.format("the wibar is %dx%d+%d+%d", geo.width, geo.height, geo.x, geo.y))
+        example.check("layer-shell-bar", awesome._clay_tree(s))
+        example.pixel(100,20,"#808080")
+        example.pixel(100,50,"#00ff00")
+        example.pixel(100,80,"#000000")
+        io.stderr:write("[PASS] exclusive layer bar golden and surface/wibar/workarea pixels\n")
         return true
     end,
     function(count)

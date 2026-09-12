@@ -318,6 +318,9 @@ read_node(lua_State *L, int idx, struct widget_node *n)
 			|| !read_number(L, idx, "hmax", 0, 1e6, &n->max[1]))
 		return false;
 	n->gap = (uint16_t)gap;
+	lua_getfield(L, idx, "last_frame_size");
+	n->last_frame_size = lua_toboolean(L, -1);
+	lua_pop(L, 1);
 	if (!read_sizing(L, idx, "w", &n->sizing[0], &n->size[0])
 			|| !read_sizing(L, idx, "h", &n->sizing[1], &n->size[1]))
 		return false;

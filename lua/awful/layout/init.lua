@@ -250,6 +250,10 @@ function layout.arrange(screen)
 
         -- protected call to ensure that arrange_lock will be reset
         protected_call(function()
+            if layout.get(screen)._clay then
+                capi.awesome._clay_dirty()
+                return
+            end
             local p = layout.parameters(nil, screen)
 
             local useless_gap = p.useless_gap
@@ -328,6 +332,12 @@ end
 function layout.getname(_layout)
     _layout = _layout or layout.get()
     return _layout.name
+end
+
+-- Called once per dirty output declaration. No rectangle is computed here.
+function layout._clay_describe(s)
+    local current = layout.get(s)
+    return current._clay and current._clay(s), current == layout.suit.floating
 end
 
 local function arrange_prop_nf(obj)

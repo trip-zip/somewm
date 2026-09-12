@@ -1491,6 +1491,13 @@ luaA_awesome_test_add_output(lua_State *L)
 	return 1;
 }
 
+static int
+luaA_awesome_clay_dirty(lua_State *L)
+{
+    declare_mark_all_dirty();
+    return 0;
+}
+
 /** awesome._test_redeclare: run the frame for every output now and report
  * the scene mutations that took. Nothing else having changed between two
  * calls, the second must return 0 (see tests/test-declare-zero-mutations.lua).
@@ -2501,6 +2508,7 @@ const luaL_Reg awesome_methods[] = {
 	{ "shadow_reload", luaA_awesome_shadow_reload },
 	{ "_test_add_output", luaA_awesome_test_add_output },
 	{ "_test_redeclare", luaA_awesome_test_redeclare },
+	{ "_clay_dirty", luaA_awesome_clay_dirty },
 	{ "_clay_tree", luaA_awesome_clay_tree },
 	{ "_clay_font", luaA_awesome_clay_font },
 	{ "_inspector_style", luaA_awesome_inspector_style },

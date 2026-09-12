@@ -85,6 +85,7 @@ struct widget_node {
 	float radius;
 	uint8_t sizing[2];   /* enum widget_sizing per axis */
 	float size[2];       /* the fixed size or percent */
+	bool last_frame_size; /* aspect/square resolved from the drawable's prior offer */
 	float min[2];        /* Clay_SizingMinMax for fit and grow: the floor,
 	                      * and the ceiling, 0 for none, which is Clay's own
 	                      * convention (clay.h:1936) */

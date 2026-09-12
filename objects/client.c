@@ -2465,6 +2465,14 @@ client_resize_do(client_t *c, area_t geometry, bool silent)
         declare_output_mark_dirty(c->mon->declare);
 }
 
+/* The frame solve is authoritative; never apply protocol hints to the slot. */
+void
+client_set_solved_geometry(client_t *c, area_t geometry)
+{
+    if (!AREA_EQUAL(c->geometry, geometry))
+        client_resize_do(c, geometry, false);
+}
+
 /** Resize client window.
  * The sizes given as parameters are *without* borders!
  * \param c Client to resize.

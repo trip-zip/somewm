@@ -429,6 +429,9 @@ local function resolve_size(node, offer)
         end
     end
     if node.aspect or node.square then
+        -- The compile's offer begins with the drawable's previous box.
+        -- Preserve that provenance when aspect sizing fixes an axis.
+        node.last_frame_size = type(node.w) ~= "number" or type(node.h) ~= "number"
         local w = math.min(offer.w, node.wmax or math.huge)
         local h = math.min(offer.h, node.hmax or math.huge)
         local rw, rh

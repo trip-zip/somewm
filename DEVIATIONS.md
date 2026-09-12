@@ -716,3 +716,23 @@ Potential future compatibility improvements:
 3. **Session management** - Wayland-native session protocol support
 4. **EWMH frame extents** - Send `_NET_FRAME_EXTENTS` to XWayland clients
 5. **EWMH desktop geometry** - Report actual output geometry instead of hardcoded 1920x1080
+
+### Client layout declarations (2.1)
+
+Tile, tile.left, tile.top and tile.bottom declare clients in the Clay
+workarea. Each client is a column of titlebars and its surface; side titlebars
+add a body row. Client borders are padding. Protocol min/max hints constrain
+the surface, so a surface minimum wider than its percent slot overhangs the
+slot; the configure carries that solved surface size.
+
+`useless_gap = g` now means **g** at each workarea edge and **g** between
+clients, instead of AwesomeWM's **2g** between clients. With one client,
+`gap_single_client = false` declares no gap or padding. Mouse resize changes
+`master_width_factor`; per-client window factors no longer resize tile rows.
+
+Fair (including horizontal), spiral (including dwindle), corner (nw/ne/sw/se),
+magnifier, carousel (including vertical), max and max.fullscreen retain
+`awful.layout` geometry until 2.2. Each client in these layouts is declared as
+one float at its computed box, marked `derived` in the dump. Tile has no such
+computed client boxes. Floating geometry is a user input, fullscreen grows to
+OUTPUT at band 40, and raise changes declaration order within a band.

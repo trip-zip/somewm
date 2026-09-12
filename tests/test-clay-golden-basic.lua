@@ -12,7 +12,7 @@
 ---------------------------------------------------------------------------
 local runner = require("_runner")
 local utils = require("_utils")
-local golden = require("_clay_golden")
+local golden = require("_clay_example")
 local awful = require("awful")
 local wibox = require("wibox")
 
@@ -26,6 +26,8 @@ local bar, c, pid, last
 
 local steps = {
     function()
+        s.selected_tag.layout = awful.layout.suit.tile
+        s.selected_tag.gap = 0
         bar = awful.wibar({ position = "top", screen = s, height = 28 })
         bar:setup({
             layout = wibox.layout.align.horizontal,
@@ -44,6 +46,9 @@ local steps = {
     function(count)
         c = utils.find_client_by_class("transient_test_parent")
         if c then
+            c.floating = false
+            c.border_width = 1
+            c.shadow = false
             awful.titlebar(c, { size = 24 })
             return true
         end

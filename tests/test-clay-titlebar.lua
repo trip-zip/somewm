@@ -77,7 +77,7 @@ runner.run_steps({
         return true
     end,
     function(count)
-        local titlebar = find("widgets transient_test_parent ", "converted:")
+        local titlebar = find("TITLEBAR transient_test_parent ", "converted:")
         update_frame()
         if not titlebar or not find("CUSTOM", surface_box(0)) then
             assert(count < 20, "the converted top titlebar never reached its box")
@@ -136,7 +136,7 @@ runner.run_steps({
             assert(count < 20, "the fullscreen surface still has an inset")
             return
         end
-        assert(not find("titlebar transient_test_parent", ""),
+        assert(not find("TITLEBAR transient_test_parent", ""),
             "fullscreen still declares titlebars")
         assert_agrees()
         c.fullscreen = false
@@ -147,7 +147,7 @@ runner.run_steps({
             assert(count < 20, "leaving fullscreen did not restore the surface box")
             return
         end
-        assert(find("widgets transient_test_parent ", "converted:"),
+        assert(find("TITLEBAR transient_test_parent ", "converted:"),
             "leaving fullscreen did not restore the titlebar")
         assert_agrees()
         c:kill()
