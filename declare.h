@@ -58,10 +58,6 @@ int declare_output_frame(struct declare_output *dout, struct Monitor *m,
  * solve. The lock context is never touched. */
 bool declare_inspector_get(struct declare_output *dout);
 void declare_inspector_set(struct declare_output *dout, bool on);
-/* The right strut the panel takes while up, for the screen's workarea
- * (objects/screen.c): the desktop reflows into what is left, as a tree that
- * fills Clay's root does when Clay narrows it for the panel. 0 while down. */
-int declare_inspector_strut(struct declare_output *dout);
 
 /* The panel's style is process-global (the palette and width are globals in
  * clay.h, the font is entry 0 of the font table), so a write is addressed

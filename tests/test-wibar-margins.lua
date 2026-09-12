@@ -1,9 +1,10 @@
 --- Test that fractional margins do not make a wibar grow.
 --
--- The placement code adds the margins to the geometry it reads and removes
--- them from the geometry it writes. The drawin geometry is rounded to whole
--- pixels, so a fractional margin used to make the wibar one pixel taller every
--- time the attached placement ran, until the C stack overflowed (#4121).
+-- The margins are the padding of the bar's slot in the output's flow, in
+-- whole pixels, and the wibar's geometry is the box its tree solved to. The
+-- placement code used to add the margins to the geometry it read and remove
+-- them from the geometry it wrote, so a fractional margin made the wibar one
+-- pixel taller every time the attached placement ran (#4121).
 
 local wibar = require("awful.wibar")
 
@@ -38,8 +39,18 @@ table.insert(steps, function()
     return true
 end)
 
--- The placement is re-applied every time the size changes, so keep checking
--- the geometry for a while to make sure it stays put.
+-- The geometry arrives with the first frame that solves the bar.
+table.insert(steps, function(count)
+    local geo = w:geometry()
+
+    if geo.x == expected.x and geo.width == expected.width then
+        return true
+    end
+    assert(count < 30, string.format("the wibar never settled at %dx%d+%d+%d",
+        geo.width, geo.height, geo.x, geo.y))
+end)
+
+-- Keep checking the geometry for a while to make sure it stays put.
 for _=1, 3 do
     table.insert(steps, function()
         local geo = w:geometry()
@@ -56,7 +67,7 @@ for _=1, 3 do
 end
 
 table.insert(steps, function()
-    -- The strut covers the wibar and the margin above it.
+    -- The slot covers the wibar and the margin above it.
     local expected_y = expected.y + expected.height
 
     assert(screen.primary.workarea.y == expected_y, string.format(

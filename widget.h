@@ -44,6 +44,11 @@ struct widget_host {
 	int x, y, w, h;       /* Output-local box. */
 	float radius;        /* Shaped drawin corners, 0 for titlebars. */
 	bool in_parent;
+	/* The root fills the element it is declared in, a slot the frame
+	 * sized, instead of being told the host box and floating at it. An
+	 * axis with a told length (a bar that does not stretch) is fixed. */
+	bool flow;
+	int told[2];
 };
 
 /* One axis of a node's sizing, Clay's own types by name (Clay__SizingType,

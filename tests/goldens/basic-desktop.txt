@@ -1,21 +1,23 @@
 output
-  roots flow 1 floating 2 derived 2
+  roots flow 1 floating 1 derived 1
   OUTPUT WL-1 w=fixed(1280) h=fixed(720) output column
-  client transient_test_parent w=fixed(202) h=fixed(226) derived column pad 1,1,1,1 attach ROOT band 60
+    BACKGROUND WL-1 w=grow h=grow output row attach PARENT band -10
+    WIBAR screen 1 converted w=grow h=fixed(28) theme row
+        drawable clip w=grow h=grow
+          wibox.layout.align w=fit h=fit
+            wibox.layout.fixed w=grow h=grow
+              wibox.widget.textbox w=fit h=grow
+                text "menu" font=1
+              wibox.widget.textbox w=fit h=grow
+                text "tags" font=1
+            wibox.widget.textbox w=fit h=grow
+              text "clock" font=1
+            wibox.widget.textbox w=grow h=grow
+              text "status" font=1
+    WORKAREA - w=grow h=grow row
+  client transient_test_parent w=fixed(202) h=fixed(226) derived column pad 1,1,1,1 attach ROOT band 20
     client.titlebar.top transient_test_parent w=grow h=fixed(24) theme row
-      widgets transient_test_parent converted w=fixed(200) h=fixed(24) theme row attach PARENT band 60
+      widgets transient_test_parent converted w=fixed(200) h=fixed(24) theme row attach PARENT band 20
           drawable clip w=fixed(200) h=fixed(24)
     client.row transient_test_parent w=grow h=grow row
       client.surface transient_test_parent w=grow h=grow custom
-  drawin screen 1 converted w=fixed(1280) h=fixed(28) derived row attach ROOT band 100
-      drawable clip w=fixed(1280) h=fixed(28)
-        wibox.layout.align w=fit h=fit
-          wibox.layout.fixed w=grow h=grow
-            wibox.widget.textbox w=fit h=grow
-              text "menu" font=1
-            wibox.widget.textbox w=fit h=grow
-              text "tags" font=1
-          wibox.widget.textbox w=fit h=grow
-            text "clock" font=1
-          wibox.widget.textbox w=grow h=grow
-            text "status" font=1

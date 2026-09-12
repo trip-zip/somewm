@@ -83,36 +83,14 @@ static size_t pending_tokens_cap = 0;
  * Layer Shell
  * ========================================================================== */
 
+/* The topmost keyboard-interactive layer surface takes the keyboard: Lua
+ * decides through request::keyboard for a surface with an object, the
+ * legacy path grants it outright. Where the surface sits is the tree's
+ * business (declare.c). */
 void
-arrangelayer(Monitor *m, struct wl_list *list, struct wlr_box *usable_area, int exclusive)
-{
-	LayerSurface *l;
-	struct wlr_box full_area = m->m;
-
-	wl_list_for_each(l, list, link) {
-		struct wlr_layer_surface_v1 *layer_surface = l->layer_surface;
-
-		if (!layer_surface->initialized)
-			continue;
-
-		if (exclusive != (layer_surface->current.exclusive_zone > 0))
-			continue;
-
-		/* The layer-shell solve writes a layout-absolute position into
-		 * the scene node (it assumes a parent at the layout origin).
-		 * Capture it output-local as the declare pass's geometry fact;
-		 * the reconciler places the tree at the box the leaf solves to. */
-		wlr_scene_layer_surface_v1_configure(l->scene_layer, &full_area, usable_area);
-		l->geom.x = l->scene->node.x - m->m.x;
-		l->geom.y = l->scene->node.y - m->m.y;
-	}
-}
-
-void
-arrangelayers(Monitor *m)
+layer_keyboard_focus(Monitor *m)
 {
 	int i;
-	struct wlr_box usable_area = m->m;
 	LayerSurface *l;
 	uint32_t layers_above_shell[] = {
 		ZWLR_LAYER_SHELL_V1_LAYER_OVERLAY,
@@ -121,40 +99,6 @@ arrangelayers(Monitor *m)
 	if (!m->wlr_output->enabled)
 		return;
 
-	/* Arrange exclusive surfaces from top->bottom */
-	for (i = 3; i >= 0; i--)
-		arrangelayer(m, &m->layers[i], &usable_area, 1);
-
-	/* Apply drawin struts (from Lua wibars) to the usable area
-	 * This must happen AFTER layer shell exclusive zones but BEFORE setting m->w */
-	some_monitor_apply_drawin_struts(m, &usable_area);
-
-	if (!wlr_box_equal(&usable_area, &m->w)) {
-		lua_State *L;
-		screen_t *screen;
-
-		m->w = usable_area;
-
-		/* Update Lua screen.workarea property to match the new usable area
-		 * This emits property::workarea signal so layouts get the correct workarea */
-		L = globalconf_get_lua_State();
-		if (L && globalconf.screens.tab) {
-			screen = luaA_screen_get_by_monitor(L, m);
-			if (screen) {
-				screen_set_workarea(L, screen, &usable_area);
-			}
-		}
-
-		arrange(m);
-	}
-
-	/* Arrange non-exlusive surfaces from top->bottom */
-	for (i = 3; i >= 0; i--)
-		arrangelayer(m, &m->layers[i], &usable_area, 0);
-
-	/* Find topmost keyboard interactive layer and emit request::keyboard signal
-	 * If the layer surface has a Lua object, let Lua decide whether to grant focus.
-	 * Otherwise, use legacy auto-grant behavior. */
 	for (i = 0; i < (int)LENGTH(layers_above_shell); i++) {
 		wl_list_for_each_reverse(l, &m->layers[layers_above_shell[i]], link) {
 			if (locked || !l->layer_surface->current.keyboard_interactive || !l->mapped)
@@ -185,18 +129,14 @@ commitlayersurfacenotify(struct wl_listener *listener, void *data)
 {
 	LayerSurface *l = wl_container_of(listener, l, surface_commit);
 	struct wlr_layer_surface_v1 *layer_surface = l->layer_surface;
-	struct wlr_layer_surface_v1_state old_state;
 	int was_mapped;
 
 	if (l->layer_surface->initial_commit) {
 		client_set_scale(layer_surface->surface, l->mon->wlr_output->scale);
-
-		/* Temporarily set the layer's current state to pending
-		 * so that we can easily arrange it */
-		old_state = l->layer_surface->current;
-		l->layer_surface->current = l->layer_surface->pending;
-		arrangelayers(l->mon);
-		l->layer_surface->current = old_state;
+		/* Initialized now: the next frame declares the surface and its
+		 * first configure carries the size the tree solved. */
+		if (l->mon->declare)
+			declare_output_mark_dirty(l->mon->declare);
 		return;
 	}
 
@@ -222,7 +162,7 @@ commitlayersurfacenotify(struct wl_listener *listener, void *data)
 		wl_list_insert(&l->mon->layers[l->band], &l->link);
 	}
 
-	arrangelayers(l->mon);
+	layer_keyboard_focus(l->mon);
 	if (l->mon && l->mon->declare)
 		declare_output_mark_dirty(l->mon->declare);
 
@@ -332,7 +272,7 @@ unmaplayersurfacenotify(struct wl_listener *listener, void *data)
 
 		l->mon = l->layer_surface->output->data;
 		if (l->mon) {
-			arrangelayers(l->mon);
+			layer_keyboard_focus(l->mon);
 			if (l->mon->declare)
 				declare_output_mark_dirty(l->mon->declare);
 		}

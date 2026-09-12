@@ -9,7 +9,7 @@ local wibox = require("wibox")
 local s = screen[1]
 local geo = s.geometry
 local W, H = geo.width, geo.height
-local wall, other
+local wall, other, bar
 
 local function pixel(x, y, hex)
     local r, g, b = capture.read(gsurface(root.content()), x, y)
@@ -33,7 +33,7 @@ runner.run_steps {
             }
             return nil
         end
-        local header = string.format("  drawin screen %d %dx%d+%d+%d converted",
+        local header = string.format("  WALLPAPER screen %d %dx%d+%d+%d converted",
             s.index, W, H, geo.x, geo.y)
         local inside, shape_indent, place = false, nil, false
         for line in awesome._clay_tree(s):gmatch("[^\n]+") do
@@ -71,6 +71,20 @@ runner.run_steps {
             return nil
         end
         io.stderr:write("[PASS] wallpaper shape holds its widget above the gradient\n")
+        return true
+    end,
+    function(count)
+        if count == 1 then
+            bar = awful.wibar { screen = s, position = "top", height = 32, bg = "#ffff00",
+                widget = wibox.widget.textbox("bar") }
+            return nil
+        end
+        if not pixel(geo.x + 20, geo.y + 10, "#ffff00") then
+            assert(count < 20, "the wibar never painted above the wallpaper")
+            return nil
+        end
+        io.stderr:write("[PASS] a wibar draws above the wallpaper\n")
+        bar:remove()
         return true
     end,
     function()

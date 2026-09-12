@@ -698,8 +698,7 @@ updatemons(struct wl_listener *listener, void *data)
 		if (m->lock_surface)
 			wlr_session_lock_surface_v1_configure(m->lock_surface, m->m.width, m->m.height);
 
-		/* Calculate the effective monitor geometry to use for clients */
-		arrangelayers(m);
+		layer_keyboard_focus(m);
 		/* Update screen object geometry and emit property:: signals if changed */
 		{
 			screen_t *screen = luaA_screen_get_by_monitor(globalconf_L, m);

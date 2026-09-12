@@ -4,6 +4,7 @@
 #include "signal.h"
 #include "button.h"
 #include "luaa.h"
+#include "common/lualib.h"
 #include "common/luaclass.h"
 #include "common/luaobject.h"
 #include "../somewm_api.h"
@@ -29,7 +30,6 @@ extern void signal_array_init(signal_array_t *arr);
 extern void signal_array_wipe(signal_array_t *arr);
 
 /* Forward declarations for workarea updates */
-extern void screen_update_workarea(screen_t *screen);
 
 
 /** Get the effective scale for drawin masks and borders.
@@ -424,6 +424,93 @@ luaA_drawin_get_ontop(lua_State *L, drawin_t *drawin)
 	return 1;
 }
 
+static const char *const sides[] = { "left", "right", "top", "bottom" };
+static const char *const aligns[] = { "centered", "start", "end" };
+
+/** drawin.bar - The edge the drawin is a bar at, or nil (declare.c). */
+static int
+luaA_drawin_get_bar(lua_State *L, drawin_t *drawin)
+{
+	static const char *const edges[] = { NULL, "top", "bottom", "left", "right" };
+
+	if (!drawin->bar.edge) {
+		lua_pushnil(L);
+		return 1;
+	}
+	lua_createtable(L, 0, 5);
+	lua_pushstring(L, edges[drawin->bar.edge]);
+	lua_setfield(L, -2, "edge");
+	lua_pushboolean(L, drawin->bar.reserve);
+	lua_setfield(L, -2, "reserve");
+	lua_pushboolean(L, drawin->bar.stretch);
+	lua_setfield(L, -2, "stretch");
+	lua_pushstring(L, aligns[drawin->bar.align]);
+	lua_setfield(L, -2, "align");
+	lua_createtable(L, 0, 4);
+	for (size_t i = 0; i < 4; i++) {
+		lua_pushinteger(L, drawin->bar.margins[i]);
+		lua_setfield(L, -2, sides[i]);
+	}
+	lua_setfield(L, -2, "margins");
+	return 1;
+}
+
+/** drawin.bar - Make the drawin a bar: a table with `edge` (top, bottom,
+ * left or right), `reserve` (false floats it at the edge without reserving
+ * space), `margins` (left, right, top, bottom, whole pixels), `stretch`
+ * (false keeps the drawin's own length along the edge) and `align` (start,
+ * end or centered, for a bar that does not stretch), or nil for a drawin
+ * placed by its geometry. */
+static int
+luaA_drawin_set_bar(lua_State *L, drawin_t *drawin)
+{
+	static const char *const edges[] = { "top", "bottom", "left", "right" };
+
+	if (lua_isnil(L, -1)) {
+		drawin->bar.edge = DRAWIN_EDGE_NONE;
+	} else {
+		const char *edge;
+
+		luaA_checktable(L, -1);
+		lua_getfield(L, -1, "edge");
+		edge = luaL_checkstring(L, -1);
+		drawin->bar.edge = DRAWIN_EDGE_NONE;
+		for (size_t i = 0; i < countof(edges); i++)
+			if (strcmp(edge, edges[i]) == 0)
+				drawin->bar.edge = (uint8_t)(i + 1);
+		if (!drawin->bar.edge)
+			luaL_error(L, "bar.edge must be top, bottom, left or right");
+		lua_pop(L, 1);
+		lua_getfield(L, -1, "reserve");
+		drawin->bar.reserve = lua_isnil(L, -1) || lua_toboolean(L, -1);
+		lua_pop(L, 1);
+		lua_getfield(L, -1, "stretch");
+		drawin->bar.stretch = lua_isnil(L, -1) || lua_toboolean(L, -1);
+		lua_pop(L, 1);
+		lua_getfield(L, -1, "align");
+		drawin->bar.align = 0;
+		for (size_t i = 1; i < countof(aligns); i++)
+			if (lua_isstring(L, -1) && strcmp(lua_tostring(L, -1), aligns[i]) == 0)
+				drawin->bar.align = (uint8_t)i;
+		lua_pop(L, 1);
+		lua_getfield(L, -1, "margins");
+		for (size_t i = 0; i < 4; i++) {
+			double v = 0;
+
+			if (lua_istable(L, -1)) {
+				lua_getfield(L, -1, sides[i]);
+				v = lua_tonumber(L, -1);
+				lua_pop(L, 1);
+			}
+			drawin->bar.margins[i] = (uint16_t)MAX(0, MIN(UINT16_MAX, floor(v + 0.5)));
+		}
+		lua_pop(L, 1);
+	}
+	declare_mark_all_dirty();
+	luaA_object_emit_signal(L, -3, "property::bar", 0);
+	return 0;
+}
+
 /** drawin.opacity - Get opacity (AwesomeWM signature) */
 static int
 luaA_drawin_get_opacity(lua_State *L, drawin_t *drawin)
@@ -673,15 +760,6 @@ luaA_drawin_struts(lua_State *L)
 			lua_pushvalue(L, 1);  /* Push drawin */
 			luaA_awm_object_emit_signal(L, -1, "property::struts", 0);
 			lua_pop(L, 1);
-
-			/* We don't know the correct screen, update them all.
-			 * globalconf.screens is unpopulated here; the live list is
-			 * behind luaA_screen_get_all(). */
-			screen_t *all[16];
-			int n = countof(all);
-			luaA_screen_get_all(L, all, &n);
-			for (int i = 0; i < n; i++)
-				screen_update_workarea(all[i]);
 		}
 
 		return 0;
@@ -764,12 +842,6 @@ drawin_moveresize(lua_State *L, int udx, int x, int y, int width, int height)
 	/* Update screen assignment if position changed */
 	if (old_x != drawin->x || old_y != drawin->y)
 		drawin_assign_screen(L, drawin, udx);
-
-	/* Update workarea if struts are set and drawin is visible */
-	if (drawin->visible && drawin->screen &&
-	    (drawin->strut.left || drawin->strut.right || drawin->strut.top || drawin->strut.bottom)) {
-		screen_update_workarea(drawin->screen);
-	}
 
 	/* Size change requires border entry refresh */
 	if (old_width != drawin->width || old_height != drawin->height)
@@ -867,12 +939,6 @@ drawin_set_visible(lua_State *L, int udx, bool v)
 	/* Emit signal using the passed stack index (matches AwesomeWM exactly) */
 	luaA_object_emit_signal(L, udx, "property::visible", 0);
 
-	/* Update workarea if struts are set */
-	if (drawin->screen &&
-	    (drawin->strut.left || drawin->strut.right || drawin->strut.top || drawin->strut.bottom)) {
-		screen_update_workarea(drawin->screen);
-	}
-
 	/* Visibility changes update the declared tree. */
 	declare_mark_all_dirty();
 
@@ -895,11 +961,6 @@ luaA_drawin_set_strut(lua_State *L, drawin_t *drawin, strut_t strut)
 	luaA_object_push(L, drawin);
 	luaA_awm_object_emit_signal(L, -1, "property::struts", 0);
 	lua_pop(L, 1);
-
-	/* Update workarea if drawin is visible */
-	if (drawin->visible && drawin->screen) {
-		screen_update_workarea(drawin->screen);
-	}
 }
 
 /** Apply pending geometry changes */
@@ -1720,6 +1781,7 @@ drawin_class_setup(lua_State *L)
 		{ "drawable", NULL, (lua_class_propfunc_t) luaA_drawin_get_drawable, NULL },
 		{ "visible", (lua_class_propfunc_t) luaA_drawin_set_visible, (lua_class_propfunc_t) luaA_drawin_get_visible, (lua_class_propfunc_t) luaA_drawin_set_visible },
 		{ "ontop", (lua_class_propfunc_t) luaA_drawin_set_ontop, (lua_class_propfunc_t) luaA_drawin_get_ontop, (lua_class_propfunc_t) luaA_drawin_set_ontop },
+		{ "bar", (lua_class_propfunc_t) luaA_drawin_set_bar, (lua_class_propfunc_t) luaA_drawin_get_bar, (lua_class_propfunc_t) luaA_drawin_set_bar },
 		{ "cursor", (lua_class_propfunc_t) luaA_drawin_set_cursor, (lua_class_propfunc_t) luaA_drawin_get_cursor, (lua_class_propfunc_t) luaA_drawin_set_cursor },
 		{ "x", (lua_class_propfunc_t) luaA_drawin_set_x, (lua_class_propfunc_t) luaA_drawin_get_x, (lua_class_propfunc_t) luaA_drawin_set_x },
 		{ "y", (lua_class_propfunc_t) luaA_drawin_set_y, (lua_class_propfunc_t) luaA_drawin_get_y, (lua_class_propfunc_t) luaA_drawin_set_y },

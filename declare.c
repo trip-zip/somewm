@@ -159,7 +159,6 @@ static void inspector_resync(void);
 static bool inspector_feed(struct declare_output *dout, Monitor *m,
 	Clay_Vector2 *point);
 static void inspector_emit_closed(Monitor *m);
-static void inspector_workarea(struct declare_output *dout);
 
 bool
 declare_in_frame(void)
@@ -360,36 +359,46 @@ declare_leaf(const char *role, uint64_t handle, enum declare_src src,
 
 /* --- the draw order ---
  *
- * One band per line, bottom first. Clay sorts floating tree roots by zIndex
+ * The board's band table (doc-2): a flow element has no band, a floating
+ * element's band is its zIndex. Clay sorts floating tree roots by zIndex
  * (every floating element is one, clay.h:2102-2107; the sort is at
  * clay.h:2603-2615 and is stable), so declaration order decides only within
  * a band. A window's band comes from its stacking attribute; a transient
- * that sets none inherits its parent's. */
+ * that sets none of its own inherits its parent's. The rows the table
+ * leaves out (layer-shell background and bottom, desktop clients and
+ * drawins, a plain wibox, the fullscreen backing) sit between its lines in
+ * their old relative order. The flow root is in that sort too, at zIndex 0,
+ * so what draws under the bars (a wallpaper wibox, a desktop client, the
+ * background and bottom layers) carries a negative band. */
 enum {
-	Z_LAYER_BACKGROUND = 10,
-	Z_CLIENT_DESKTOP = 20,
-	Z_DRAWIN_BG = 30,
-	Z_LAYER_BOTTOM = 40,
-	Z_CLIENT_BELOW = 50,
-	Z_CLIENT_NORMAL = 60,
-	Z_DRAWIN_WIBOX = 70,
-	Z_LAYER_TOP = 80,
-	Z_CLIENT_ABOVE = 90,
-	Z_DRAWIN_TOP = 100,
-	Z_FULLSCREEN_BG = 105,
-	Z_CLIENT_FULLSCREEN = 110,
-	Z_LAYER_OVERLAY = 120,
-	Z_CLIENT_ONTOP = 130,
-	Z_DRAWIN_OVERLAY = 140,
+	/* The output's own fill: the root colour, or the root wallpaper. */
+	Z_OUTPUT_BG = -10,
+	Z_LAYER_BACKGROUND = -8,
+	Z_CLIENT_DESKTOP = -6,
+	Z_DRAWIN_BG = -4,
+	Z_LAYER_BOTTOM = -2,
+	Z_CLIENT_BELOW = 10,
+	Z_CLIENT_NORMAL = 20,
+	/* A wibox placed by its geometry, neither a bar in flow nor ontop. */
+	Z_DRAWIN = 25,
+	Z_CLIENT_ABOVE = 30,
+	Z_FULLSCREEN_BG = 38,
+	Z_CLIENT_FULLSCREEN = 40,
+	Z_CLIENT_ONTOP = 50,
+	Z_BAR_ONTOP = 60,
+	Z_LAYER_TOP = 70,
+	/* Popups, menus and tooltips: an ontop drawin, or an xdg popup over its
+	 * owner and whatever the owner overlaps. */
+	Z_DRAWIN_ONTOP = 80,
+	Z_POPUP = 80,
+	Z_NOTIFICATION = 90,
+	Z_LAYER_OVERLAY = 100,
 	/* Override-redirect X11 windows (menus, tooltips, drag icons) carry
 	 * no stacking attribute to place them and are always transient UI for
 	 * the window below, so they sit above everything. */
-	/* An xdg popup: a menu or tooltip over its owner and whatever the
-	 * owner overlaps, like an override-redirect window. */
-	Z_POPUP = 145,
-	Z_CLIENT_UNMANAGED = 150,
+	Z_CLIENT_UNMANAGED = 110,
 	/* The drag icon rides the pointer above everything on the desktop. */
-	Z_DRAG_ICON = 160,
+	Z_DRAG_ICON = 120,
 };
 
 /* The lock band is a separate Clay context with its own order: its root
@@ -674,6 +683,8 @@ declare_shadow(struct shadow_leaves *s, const shadow_config_t *config,
 
 static void declare_widget_tree(const struct widget_host *host, int16_t z,
 	void *userdata);
+static Clay_ElementId output_id(Monitor *m);
+static Clay_ElementId workarea_id(Monitor *m);
 
 /* The popups whose parent is `parent` (a toplevel's or a popup's surface),
  * each a borrowed surface leaf attached to the element `parent_id` and
@@ -964,49 +975,6 @@ declare_unmanaged_clients(Monitor *m)
 	}
 }
 
-static void
-declare_layer_surface(LayerSurface *l, Monitor *m, int16_t z)
-{
-	uint64_t handle = declare_handle_for(l, DECLARE_KIND_LAYER);
-	struct wlr_layer_surface_v1 *ls = l->layer_surface;
-	/* l->geom is output-local, captured by arrangelayer() from the
-	 * layer-shell solve; the scene node's own position belongs to the
-	 * reconciler and may hold this same value already. */
-	Clay_ElementDeclaration s = leaf_at(z, l->geom.x, l->geom.y,
-		ls->current.actual_width, ls->current.actual_height);
-
-	Clay_ElementId id = Clay__HashStringWithOffset(
-		CLAY_STRING("layer.surface"), (uint32_t)handle, 0);
-
-	s.custom.customData = (void *)(uintptr_t)handle;
-	s.userData = leaf_userdata(handle, 1.0f);
-	declare_leaf("layer.surface", handle, DECLARE_SRC_DERIVED, id, &s);
-	declare_popups(ls->surface, id, 0, 0);
-}
-
-static void
-declare_layer_surfaces(Monitor *m)
-{
-	static const int16_t band_z[] = {
-		[ZWLR_LAYER_SHELL_V1_LAYER_BACKGROUND] = Z_LAYER_BACKGROUND,
-		[ZWLR_LAYER_SHELL_V1_LAYER_BOTTOM] = Z_LAYER_BOTTOM,
-		[ZWLR_LAYER_SHELL_V1_LAYER_TOP] = Z_LAYER_TOP,
-		[ZWLR_LAYER_SHELL_V1_LAYER_OVERLAY] = Z_LAYER_OVERLAY,
-	};
-	LayerSurface *l;
-
-	/* protocols.c prepends new surfaces to m->layers, and scene child
-	 * order stacks newer surfaces on top; reverse iteration declares the
-	 * oldest first, at the bottom. */
-	for (size_t band = 0; band < LENGTH(m->layers); band++) {
-		wl_list_for_each_reverse(l, &m->layers[band], link) {
-			if (!l->mapped || !l->scene)
-				continue;
-			declare_layer_surface(l, m, band_z[band]);
-		}
-	}
-}
-
 /* --- the converted widget tree (widget.h) ---
  *
  * One element per node, nested as lua/wibox/clay.lua compiled them. The
@@ -1169,7 +1137,14 @@ declare_widget_subtree(const struct widget_host *host, size_t i, Clay_ElementId 
 	}
 
 	e = widget_node_decl(n, z, word);
-	if (i == 0) {
+	if (i == 0 && host->flow) {
+		/* A bar's root fills the slot the frame sized for it; the
+		 * drawin's geometry is what this element solves to. */
+		e.layout.sizing = (Clay_Sizing) {
+			host->told[0] ? CLAY_SIZING_FIXED(host->told[0]) : CLAY_SIZING_GROW(0),
+			host->told[1] ? CLAY_SIZING_FIXED(host->told[1]) : CLAY_SIZING_GROW(0),
+		};
+	} else if (i == 0) {
 		/* A titlebar root attaches at its parent's origin; a drawin
 		 * uses an output-local offset (third_party/clay.h:2074-2080,
 		 * 2625-2677). Fixed axes use the host box, while an awful.popup
@@ -1185,13 +1160,13 @@ declare_widget_subtree(const struct widget_host *host, size_t i, Clay_ElementId 
 			n->sizing[1] == WIDGET_SIZING_FIXED
 				? CLAY_SIZING_FIXED(host->h) : widget_sizing(n, 1),
 		};
-		/* A shaped drawin's masks, as the root's corners (drawin.h
-		 * shape_radius), which the root's clip scope carries to every
-		 * node under it. */
-		if (host->radius > 0)
-			e.cornerRadius = (Clay_CornerRadius) { host->radius,
-				host->radius, host->radius, host->radius };
 	}
+	/* A shaped drawin's masks, as the root's corners (drawin.h
+	 * shape_radius), which the root's clip scope carries to every node
+	 * under it. */
+	if (i == 0 && host->radius > 0)
+		e.cornerRadius = (Clay_CornerRadius) { host->radius,
+			host->radius, host->radius, host->radius };
 	if (n->image && *leaf < d->leaves_len)
 		e.image.imageData = &d->leaves[(*leaf)++];
 	if (n->shape)
@@ -1199,10 +1174,11 @@ declare_widget_subtree(const struct widget_host *host, size_t i, Clay_ElementId 
 
 	Clay__OpenElementWithId(id);
 	Clay__ConfigureOpenElementPtr(&e);
-	if (i == 0) {
+	if (i == 0 && !host->flow) {
 		/* The root stands for the drawin, at the box placement gave it;
 		 * a titlebar's root fills the slot the theme sized. The nodes
-		 * under it are the tree's own, walked from the store. */
+		 * under it are the tree's own, walked from the store. A bar's
+		 * slot recorded itself with this host. */
 		bool fixed = n->sizing[0] == WIDGET_SIZING_FIXED
 			|| n->sizing[1] == WIDGET_SIZING_FIXED;
 
@@ -1214,7 +1190,7 @@ declare_widget_subtree(const struct widget_host *host, size_t i, Clay_ElementId 
 	for (uint16_t k = 0; k < n->children; k++)
 		next = declare_widget_subtree(host, next,
 			widget_child_id(d, next, id, k), z, userdata, leaf);
-	if (i == 0)
+	if (i == 0 && !host->flow)
 		record_close();
 	Clay__CloseElement();
 	return next;
@@ -1296,6 +1272,45 @@ declare_drawin(drawin_t *d, Monitor *m, int16_t z)
 
 }
 
+/* A desktop drawin covering its screen (awful.wallpaper): a slot floating
+ * over the output, grow by grow, holding the tree as a child that fills it,
+ * so no number of its own enters the tree. */
+static bool
+drawin_covers_output(drawin_t *d, Monitor *m)
+{
+	return d->type == WINDOW_TYPE_DESKTOP && d->x == m->m.x && d->y == m->m.y
+		&& d->width == m->m.width && d->height == m->m.height;
+}
+
+static void
+declare_wallpaper_drawin(drawin_t *d, Monitor *m, int16_t z)
+{
+	uint64_t handle = declare_handle_for(d, DECLARE_KIND_DRAWIN);
+	float opacity = d->opacity >= 0 ? (float)d->opacity : 1.0f;
+	struct widget_host host;
+	Clay_ElementDeclaration slot = {
+		.layout.sizing = { CLAY_SIZING_GROW(0), CLAY_SIZING_GROW(0) },
+		.floating = {
+			.attachTo = CLAY_ATTACH_TO_ELEMENT_WITH_ID,
+			.parentId = output_id(m).id,
+			.zIndex = z,
+			.pointerCaptureMode = CLAY_POINTER_CAPTURE_MODE_PASSTHROUGH,
+		},
+	};
+	Clay_ElementId id = Clay__HashStringWithOffset(CLAY_STRING("WALLPAPER"),
+		(uint32_t)handle, 0);
+
+	if (!drawin_widget_host(d, &host))
+		return;
+	host.flow = true;
+	Clay__OpenElementWithId(id);
+	Clay__ConfigureOpenElementPtr(&slot);
+	record_open("WALLPAPER", handle, id, &slot, DECLARE_SRC_NONE, &host);
+	declare_widget_tree(&host, z, leaf_userdata(handle, opacity));
+	record_close();
+	Clay__CloseElement();
+}
+
 /* A visible drawin declares once its first compile stores a tree. */
 static bool
 declarable_drawin(drawin_t *d, Monitor *m)
@@ -1305,19 +1320,327 @@ declarable_drawin(drawin_t *d, Monitor *m)
 		&& d->screen && d->screen->monitor == m;
 }
 
-/* The drawin band policy (AwesomeWM compat): desktop and splash below
- * clients like wallpaper, ontop above everything, dock above normal
- * windows, everything else in the wibox band. */
+/* --- layer surfaces ---
+ *
+ * A layer surface is a slot holding its surface leaf, the way a wibar is:
+ * the slot's padding is the protocol's margins and its child alignment its
+ * anchors, and the leaf is the size the client asked for, or grow on an
+ * axis anchored to both sides (protocol). A surface with an exclusive zone
+ * at an edge is a bar in the output's flow at that edge, the slot fixed
+ * across it by the zone plus the margin there. Any other floats in its
+ * layer's band over the workarea, which is what the zones leave and where
+ * wlroots arranged it, or over the whole output for a zone of -1. A surface
+ * is declared once it is initialized: its first configure carries the size
+ * the tree solved, and it maps into it. Until it maps it takes no input
+ * (hit_accept). */
+static const int16_t layer_band_z[] = {
+	[ZWLR_LAYER_SHELL_V1_LAYER_BACKGROUND] = Z_LAYER_BACKGROUND,
+	[ZWLR_LAYER_SHELL_V1_LAYER_BOTTOM] = Z_LAYER_BOTTOM,
+	[ZWLR_LAYER_SHELL_V1_LAYER_TOP] = Z_LAYER_TOP,
+	[ZWLR_LAYER_SHELL_V1_LAYER_OVERLAY] = Z_LAYER_OVERLAY,
+};
+
+static bool
+declarable_layer(LayerSurface *l, Monitor *m)
+{
+	return l->mon == m && l->scene && l->layer_surface->initialized;
+}
+
+static void
+declare_layer_slot(LayerSurface *l, Monitor *m, enum wlr_edges edge, int16_t z)
+{
+	struct wlr_layer_surface_v1 *ls = l->layer_surface;
+	struct wlr_layer_surface_v1_state *st = &ls->current;
+	uint64_t handle = declare_handle_for(l, DECLARE_KIND_LAYER);
+	bool left = st->anchor & ZWLR_LAYER_SURFACE_V1_ANCHOR_LEFT;
+	bool right = st->anchor & ZWLR_LAYER_SURFACE_V1_ANCHOR_RIGHT;
+	bool top = st->anchor & ZWLR_LAYER_SURFACE_V1_ANCHOR_TOP;
+	bool bottom = st->anchor & ZWLR_LAYER_SURFACE_V1_ANCHOR_BOTTOM;
+	bool told = st->desired_width || st->desired_height;
+	Clay_ElementDeclaration slot = {
+		.layout = {
+			.sizing = { CLAY_SIZING_GROW(0), CLAY_SIZING_GROW(0) },
+			.padding = { st->margin.left, st->margin.right,
+				st->margin.top, st->margin.bottom },
+			.childAlignment = {
+				left && !right ? CLAY_ALIGN_X_LEFT
+					: right && !left ? CLAY_ALIGN_X_RIGHT : CLAY_ALIGN_X_CENTER,
+				top && !bottom ? CLAY_ALIGN_Y_TOP
+					: bottom && !top ? CLAY_ALIGN_Y_BOTTOM : CLAY_ALIGN_Y_CENTER,
+			},
+		},
+	};
+	Clay_ElementDeclaration leaf = {
+		.layout.sizing = {
+			st->desired_width ? CLAY_SIZING_FIXED(st->desired_width)
+				: CLAY_SIZING_GROW(0),
+			st->desired_height ? CLAY_SIZING_FIXED(st->desired_height)
+				: CLAY_SIZING_GROW(0),
+		},
+		.custom.customData = (void *)(uintptr_t)handle,
+		.userData = leaf_userdata(handle, 1.0f),
+	};
+	Clay_ElementId slot_id = Clay__HashStringWithOffset(CLAY_STRING("LAYER"),
+		(uint32_t)handle, 0);
+	Clay_ElementId id = Clay__HashStringWithOffset(
+		CLAY_STRING("layer.surface"), (uint32_t)handle, 0);
+
+	switch (edge) {
+	case WLR_EDGE_TOP:
+		slot.layout.sizing.height = CLAY_SIZING_FIXED(
+			st->exclusive_zone + st->margin.top);
+		slot.layout.padding.bottom = 0;
+		break;
+	case WLR_EDGE_BOTTOM:
+		slot.layout.sizing.height = CLAY_SIZING_FIXED(
+			st->exclusive_zone + st->margin.bottom);
+		slot.layout.padding.top = 0;
+		break;
+	case WLR_EDGE_LEFT:
+		slot.layout.sizing.width = CLAY_SIZING_FIXED(
+			st->exclusive_zone + st->margin.left);
+		slot.layout.padding.right = 0;
+		break;
+	case WLR_EDGE_RIGHT:
+		slot.layout.sizing.width = CLAY_SIZING_FIXED(
+			st->exclusive_zone + st->margin.right);
+		slot.layout.padding.left = 0;
+		break;
+	default:
+		slot.floating.attachTo = CLAY_ATTACH_TO_ELEMENT_WITH_ID;
+		slot.floating.parentId = (st->exclusive_zone < 0
+			? output_id(m) : workarea_id(m)).id;
+		slot.floating.zIndex = z;
+		slot.floating.pointerCaptureMode = CLAY_POINTER_CAPTURE_MODE_PASSTHROUGH;
+	}
+	Clay__OpenElementWithId(slot_id);
+	Clay__ConfigureOpenElementPtr(&slot);
+	record_open(edge != WLR_EDGE_NONE ? "LAYER_BAR" : "LAYER", handle, slot_id,
+		&slot, edge != WLR_EDGE_NONE ? DECLARE_SRC_PROTOCOL : DECLARE_SRC_NONE,
+		NULL);
+	declare_leaf("layer.surface", handle,
+		told ? DECLARE_SRC_PROTOCOL : DECLARE_SRC_NONE, id, &leaf);
+	record_close();
+	Clay__CloseElement();
+	declare_popups(ls->surface, id, 0, 0);
+}
+
+/* The layer surfaces that float, oldest first at the bottom of their band
+ * (protocols.c prepends new surfaces to m->layers). */
+static void
+declare_floating_layers(Monitor *m)
+{
+	LayerSurface *l;
+
+	for (size_t band = 0; band < LENGTH(m->layers); band++)
+		wl_list_for_each_reverse(l, &m->layers[band], link)
+			if (declarable_layer(l, m) && wlr_layer_surface_v1_get_exclusive_edge(
+					l->layer_surface) == WLR_EDGE_NONE)
+				declare_layer_slot(l, m, WLR_EDGE_NONE, layer_band_z[band]);
+}
+
+/* --- bars (awful.wibar) ---
+ *
+ * A bar is a slot at an edge of the output: grow along the edge, fixed
+ * across it by the drawin's thickness (the theme's wibar height), holding
+ * the drawin's widget tree as a child that fills it. In the output's flow
+ * the slot reserves that space; an ontop bar, or one that reserves nothing,
+ * floats over the output at the same edge in its band. The drawin's
+ * geometry is whatever its tree's root solved to, written back after the
+ * solve (bars_settle), so Lua reads the box the frame drew and input finds
+ * the bar there. A bar declares no shadow: a flow element has no band to
+ * put one under. */
+struct bar_record {
+	drawin_t *d;
+	struct widget_host host;
+};
+
+static struct bar_record bars[64];
+static size_t bars_len;
+
+static bool
+bar_flows(drawin_t *d)
+{
+	return d->bar.reserve && !d->ontop;
+}
+
+static void
+declare_bar(drawin_t *d, Monitor *m, int16_t z)
+{
+	static const Clay_FloatingAttachPointType points[] = {
+		[DRAWIN_EDGE_TOP] = CLAY_ATTACH_POINT_CENTER_TOP,
+		[DRAWIN_EDGE_BOTTOM] = CLAY_ATTACH_POINT_CENTER_BOTTOM,
+		[DRAWIN_EDGE_LEFT] = CLAY_ATTACH_POINT_LEFT_CENTER,
+		[DRAWIN_EDGE_RIGHT] = CLAY_ATTACH_POINT_RIGHT_CENTER,
+	};
+	uint64_t handle = declare_handle_for(d, DECLARE_KIND_DRAWIN);
+	bool horizontal = d->bar.edge == DRAWIN_EDGE_TOP
+		|| d->bar.edge == DRAWIN_EDGE_BOTTOM;
+	const uint16_t *mg = d->bar.margins;
+	int thickness = horizontal ? d->height + mg[2] + mg[3]
+		: d->width + mg[0] + mg[1];
+	float opacity = d->opacity >= 0 ? (float)d->opacity : 1.0f;
+	Clay_ElementDeclaration slot = {
+		.layout = {
+			.sizing = {
+				horizontal ? CLAY_SIZING_GROW(0) : CLAY_SIZING_FIXED(thickness),
+				horizontal ? CLAY_SIZING_FIXED(thickness) : CLAY_SIZING_GROW(0),
+			},
+			.padding = { mg[0], mg[1], mg[2], mg[3] },
+			.childAlignment = {
+				horizontal && d->bar.align
+					? (d->bar.align == 1 ? CLAY_ALIGN_X_LEFT : CLAY_ALIGN_X_RIGHT)
+					: CLAY_ALIGN_X_CENTER,
+				!horizontal && d->bar.align
+					? (d->bar.align == 1 ? CLAY_ALIGN_Y_TOP : CLAY_ALIGN_Y_BOTTOM)
+					: CLAY_ALIGN_Y_CENTER,
+			},
+			.layoutDirection = horizontal
+				? CLAY_LEFT_TO_RIGHT : CLAY_TOP_TO_BOTTOM,
+		},
+	};
+	Clay_ElementId id = Clay__HashStringWithOffset(CLAY_STRING("WIBAR"),
+		(uint32_t)handle, 0);
+	struct bar_record *bar;
+
+	if (bars_len == LENGTH(bars))
+		return;
+	bar = &bars[bars_len++];
+	bar->d = d;
+	drawin_widget_host(d, &bar->host);
+	bar->host.flow = true;
+	if (!d->bar.stretch)
+		bar->host.told[horizontal ? 0 : 1] = horizontal ? d->width : d->height;
+	if (z) {
+		slot.floating.attachTo = CLAY_ATTACH_TO_PARENT;
+		slot.floating.attachPoints.element = points[d->bar.edge];
+		slot.floating.attachPoints.parent = points[d->bar.edge];
+		slot.floating.zIndex = z;
+		slot.floating.pointerCaptureMode = CLAY_POINTER_CAPTURE_MODE_PASSTHROUGH;
+	}
+	Clay__OpenElementWithId(id);
+	Clay__ConfigureOpenElementPtr(&slot);
+	record_open("WIBAR", handle, id, &slot, DECLARE_SRC_THEME, &bar->host);
+	declare_widget_tree(&bar->host, z, leaf_userdata(handle, opacity));
+	record_close();
+	Clay__CloseElement();
+}
+
+/* What is in flow at one edge: the layer surfaces with an exclusive zone
+ * there, overlay layer down to background and newest first as wlroots
+ * arranged them, then the wibars in the order they became visible. A
+ * bottom or right edge declares them last first, so the first stays at
+ * the edge. */
+struct flow_item {
+	drawin_t *d;
+	LayerSurface *l;
+};
+
+static const enum wlr_edges wlr_edge_of[] = {
+	[DRAWIN_EDGE_TOP] = WLR_EDGE_TOP,
+	[DRAWIN_EDGE_BOTTOM] = WLR_EDGE_BOTTOM,
+	[DRAWIN_EDGE_LEFT] = WLR_EDGE_LEFT,
+	[DRAWIN_EDGE_RIGHT] = WLR_EDGE_RIGHT,
+};
+
+static size_t
+edge_items(Monitor *m, enum drawin_edge edge, struct flow_item *items, size_t cap)
+{
+	size_t n = 0;
+	LayerSurface *l;
+
+	for (size_t band = LENGTH(m->layers); band-- > 0;)
+		wl_list_for_each(l, &m->layers[band], link)
+			if (declarable_layer(l, m) && n < cap
+					&& wlr_layer_surface_v1_get_exclusive_edge(l->layer_surface)
+						== wlr_edge_of[edge])
+				items[n++] = (struct flow_item) { .l = l };
+	foreach(item, globalconf.drawins) {
+		drawin_t *d = *item;
+
+		if (d->bar.edge == edge && bar_flows(d) && declarable_drawin(d, m)
+				&& n < cap)
+			items[n++] = (struct flow_item) { .d = d };
+	}
+	return n;
+}
+
+static void
+declare_edge(Monitor *m, enum drawin_edge edge)
+{
+	struct flow_item items[LENGTH(bars)];
+	size_t n = edge_items(m, edge, items, LENGTH(items));
+	bool reverse = edge == DRAWIN_EDGE_BOTTOM || edge == DRAWIN_EDGE_RIGHT;
+
+	for (size_t i = 0; i < n; i++) {
+		struct flow_item *it = &items[reverse ? n - 1 - i : i];
+
+		if (it->d)
+			declare_bar(it->d, m, 0);
+		else
+			declare_layer_slot(it->l, m, wlr_edge_of[edge], 0);
+	}
+}
+
+static bool
+edge_has_bars(Monitor *m, enum drawin_edge edge)
+{
+	struct flow_item item;
+
+	return edge_items(m, edge, &item, 1) > 0;
+}
+
+/* The bars over the output rather than in its flow, at their edges. */
+static void
+declare_floating_bars(Monitor *m)
+{
+	foreach(item, globalconf.drawins) {
+		drawin_t *d = *item;
+
+		if (d->bar.edge && !bar_flows(d) && declarable_drawin(d, m))
+			declare_bar(d, m, d->ontop ? Z_BAR_ONTOP : Z_DRAWIN);
+	}
+}
+
+/* After the solve: each bar's drawin takes the box its tree's root solved
+ * to, in layout coordinates. A changed size marks the drawable, and the
+ * frame's second pass compiles the tree at that size. */
+static void
+bars_settle(Monitor *m)
+{
+	size_t len = bars_len;
+
+	bars_len = 0;
+	for (size_t i = 0; i < len; i++) {
+		drawin_t *d = bars[i].d;
+		Clay_ElementData root = Clay_GetElementData(
+			widget_root_id(bars[i].host.id));
+		Clay_BoundingBox b = root.boundingBox;
+		int x, y, w, h;
+
+		if (!root.found)
+			continue;
+		x = m->m.x + (int)floorf(b.x + 0.5f);
+		y = m->m.y + (int)floorf(b.y + 0.5f);
+		w = (int)floorf(b.width + 0.5f);
+		h = (int)floorf(b.height + 0.5f);
+		if (x != d->x || y != d->y || w != d->width || h != d->height)
+			luaA_drawin_set_geometry(globalconf_L, d, x, y, w, h);
+	}
+}
+
+/* The drawin band policy: desktop and splash below clients like the
+ * wallpaper, an ontop drawin with the popups (a notification above them),
+ * everything else placed by its geometry just above normal clients. */
 static int16_t
 drawin_z(drawin_t *d)
 {
 	if (d->type == WINDOW_TYPE_DESKTOP || d->type == WINDOW_TYPE_SPLASH)
 		return Z_DRAWIN_BG;
 	if (d->ontop)
-		return Z_DRAWIN_OVERLAY;
-	if (d->type == WINDOW_TYPE_DOCK)
-		return Z_DRAWIN_TOP;
-	return Z_DRAWIN_WIBOX;
+		return d->type == WINDOW_TYPE_NOTIFICATION
+			? Z_NOTIFICATION : Z_DRAWIN_ONTOP;
+	return Z_DRAWIN;
 }
 
 static void
@@ -1326,12 +1649,16 @@ declare_drawins(Monitor *m)
 	foreach(item, globalconf.drawins) {
 		drawin_t *d = *item;
 
-		/* Lock drawins belong to the lock pass while locked. */
+		/* Lock drawins belong to the lock pass while locked; bars are
+		 * the output's own. */
 		if (session_is_locked() && some_is_lock_drawin(d))
 			continue;
-		if (!declarable_drawin(d, m))
+		if (d->bar.edge || !declarable_drawin(d, m))
 			continue;
-		declare_drawin(d, m, drawin_z(d));
+		if (drawin_covers_output(d, m))
+			declare_wallpaper_drawin(d, m, drawin_z(d));
+		else
+			declare_drawin(d, m, drawin_z(d));
 	}
 }
 
@@ -1398,14 +1725,81 @@ wallpaper_crop(Monitor *m)
  * background with alpha, clay.h:3025-3083, so the two are exclusive). Its
  * word names the Monitor under DECLARE_KIND_WALLPAPER, so the input filter
  * (window.c) refuses it pointer input, the way it refused the wallpaper
- * leaf, and the screenshot path can skip it. Nothing flows inside it yet:
- * every other root still attaches to Clay's root at a computed box. */
+ * leaf, and the screenshot path can skip it. It is a column: the top bars,
+ * then a row of the left bars and right bars around the middle when there
+ * are any, then the bottom bars. The bars that float sit over it at their
+ * edges. */
+/* The workarea: what the bars leave of the output, where the clients go.
+ * screen.workarea is the box this element solves to (workarea_settle). */
+static Clay_ElementId
+workarea_id(Monitor *m)
+{
+	return Clay__HashStringWithOffset(CLAY_STRING("WORKAREA"),
+		(uint32_t)declare_handle_for(m, DECLARE_KIND_WALLPAPER), 0);
+}
+
+/* After the solve: the screen's workarea is the WORKAREA box, in layout
+ * coordinates. screen_set_workarea queues property::workarea when it
+ * changed, and awful.layout arranges on it. */
 static void
-declare_output_root(Monitor *m)
+workarea_settle(Monitor *m)
+{
+	Clay_ElementData data = Clay_GetElementData(workarea_id(m));
+	Clay_BoundingBox b = data.boundingBox;
+	screen_t *s = luaA_screen_get_by_monitor(globalconf_L, m);
+	struct wlr_box box;
+
+	if (!data.found || !s)
+		return;
+	box.x = m->m.x + (int)floorf(b.x + 0.5f);
+	box.y = m->m.y + (int)floorf(b.y + 0.5f);
+	box.width = (int)floorf(b.x + b.width + 0.5f) - (int)floorf(b.x + 0.5f);
+	box.height = (int)floorf(b.y + b.height + 0.5f) - (int)floorf(b.y + 0.5f);
+	screen_set_workarea(globalconf_L, s, &box);
+}
+
+static Clay_ElementId
+output_id(Monitor *m)
+{
+	return Clay__HashStringWithOffset(CLAY_STRING("OUTPUT"),
+		(uint32_t)declare_handle_for(m, DECLARE_KIND_WALLPAPER), 0);
+}
+
+/* The output's own fill, the root wallpaper or the root colour: a float the
+ * size of the output at the lowest band, so what draws under the bars (a
+ * wallpaper wibox, a desktop client, the background and bottom layers)
+ * draws over it. Were it OUTPUT's own background, Clay would draw it after
+ * every negative band and before the bars, hiding the one under the other.
+ * Its word is the output's, so the input filter and the screenshot path
+ * treat it as they treated the wallpaper leaf. */
+static void
+declare_background(Monitor *m, uint64_t handle)
+{
+	Clay_ElementDeclaration bg = {
+		.layout.sizing = { CLAY_SIZING_GROW(0), CLAY_SIZING_GROW(0) },
+		.floating = {
+			.attachTo = CLAY_ATTACH_TO_PARENT,
+			.zIndex = Z_OUTPUT_BG,
+			.pointerCaptureMode = CLAY_POINTER_CAPTURE_MODE_PASSTHROUGH,
+		},
+		.userData = leaf_userdata(handle, 1.0f),
+	};
+
+	wallpaper_crop(m);
+	if (m->declare->wallpaper.native)
+		bg.image.imageData = &m->declare->wallpaper;
+	else
+		bg.backgroundColor = clay_color(globalconf.appearance.rootcolor);
+	declare_leaf("BACKGROUND", handle, DECLARE_SRC_OUTPUT,
+		Clay__HashStringWithOffset(CLAY_STRING("BACKGROUND"), (uint32_t)handle, 0),
+		&bg);
+}
+
+static void
+declare_output(Monitor *m)
 {
 	uint64_t handle = declare_handle_for(m, DECLARE_KIND_WALLPAPER);
-	Clay_ElementId id = Clay__HashStringWithOffset(CLAY_STRING("OUTPUT"),
-		(uint32_t)handle, 0);
+	Clay_ElementId id = output_id(m);
 	Clay_ElementDeclaration o = {
 		.layout = {
 			.sizing = { CLAY_SIZING_FIXED(m->m.width),
@@ -1414,15 +1808,40 @@ declare_output_root(Monitor *m)
 		},
 		.userData = leaf_userdata(handle, 1.0f),
 	};
+	Clay_ElementDeclaration workarea = {
+		.layout.sizing = { CLAY_SIZING_GROW(0), CLAY_SIZING_GROW(0) },
+	};
 
-	wallpaper_crop(m);
-	if (m->declare->wallpaper.native)
-		o.image.imageData = &m->declare->wallpaper;
-	else
-		o.backgroundColor = clay_color(globalconf.appearance.rootcolor);
+	/* The inspector's panel takes the right edge while it is up (Clay
+	 * narrows its own root by the same width, clay.h:4363): the desktop
+	 * reflows into what is left, as beside a right bar. */
+	if (m->declare->inspecting)
+		o.layout.padding.right = (uint16_t)Clay__debugViewWidth;
 	Clay__OpenElementWithId(id);
 	Clay__ConfigureOpenElementPtr(&o);
 	record_open("OUTPUT", handle, id, &o, DECLARE_SRC_OUTPUT, NULL);
+	declare_background(m, handle);
+	declare_edge(m, DRAWIN_EDGE_TOP);
+	if (edge_has_bars(m, DRAWIN_EDGE_LEFT) || edge_has_bars(m, DRAWIN_EDGE_RIGHT)) {
+		Clay_ElementDeclaration middle = {
+			.layout.sizing = { CLAY_SIZING_GROW(0), CLAY_SIZING_GROW(0) },
+		};
+		Clay_ElementId middle_id = Clay__HashStringWithOffset(
+			CLAY_STRING("MIDDLE"), (uint32_t)handle, 0);
+
+		Clay__OpenElementWithId(middle_id);
+		Clay__ConfigureOpenElementPtr(&middle);
+		record_open("MIDDLE", 0, middle_id, &middle, DECLARE_SRC_NONE, NULL);
+		declare_edge(m, DRAWIN_EDGE_LEFT);
+		declare_leaf("WORKAREA", 0, DECLARE_SRC_NONE, workarea_id(m), &workarea);
+		declare_edge(m, DRAWIN_EDGE_RIGHT);
+		record_close();
+		Clay__CloseElement();
+	} else {
+		declare_leaf("WORKAREA", 0, DECLARE_SRC_NONE, workarea_id(m), &workarea);
+	}
+	declare_edge(m, DRAWIN_EDGE_BOTTOM);
+	declare_floating_bars(m);
 	record_close();
 	Clay__CloseElement();
 }
@@ -1453,8 +1872,9 @@ declare_drag_icon(Monitor *m)
 static void
 declare_scene(Monitor *m)
 {
-	declare_output_root(m);
-	declare_layer_surfaces(m);
+	bars_len = 0;
+	declare_output(m);
+	declare_floating_layers(m);
 	declare_clients(m);
 	declare_drawins(m);
 	declare_fullscreen_bg(m);
@@ -2068,6 +2488,10 @@ declare_output_frame(struct declare_output *dout, Monitor *m, bool lock_active)
 		}
 		band->declare_us += declared - start;
 		band->solve_us += solved - declared;
+		if (!lock_active) {
+			bars_settle(m);
+			workarea_settle(m);
+		}
 		solved_emit();
 		if (!dout->dirty)
 			break;
@@ -2083,10 +2507,8 @@ declare_output_frame(struct declare_output *dout, Monitor *m, bool lock_active)
 	in_frame = false;
 	band->reconcile_us = now_us() - start;
 	in_pass = false;
-	if (insp_closed) {
-		inspector_workarea(dout);
+	if (insp_closed)
 		inspector_emit_closed(m);
-	}
 	return band->mutations;
 }
 
@@ -2115,23 +2537,6 @@ inspector_resync(void)
 			insp.count++;
 }
 
-int
-declare_inspector_strut(struct declare_output *dout)
-{
-	return dout->inspecting ? (int)Clay__debugViewWidth : 0;
-}
-
-/* The workarea follows the panel like a right wibar's strut. */
-static void
-inspector_workarea(struct declare_output *dout)
-{
-	Monitor *m = dout->wlr_output->data;
-	screen_t *s = m ? luaA_screen_get_by_monitor(globalconf_L, m) : NULL;
-
-	if (s)
-		screen_update_workarea(s);
-}
-
 bool
 declare_inspector_get(struct declare_output *dout)
 {
@@ -2157,7 +2562,6 @@ declare_inspector_set(struct declare_output *dout, bool on)
 	dout->scroll_x = dout->scroll_y = 0;
 	inspector_resync();
 	declare_output_mark_dirty(dout);
-	inspector_workarea(dout);
 }
 
 int
@@ -2189,10 +2593,8 @@ declare_inspector_style(const struct declare_inspector_style *style,
 			Clay_SetCurrentContext(m->declare->desktop.clay);
 			Clay_ResetMeasureTextCache();
 		}
-		if (m->declare->inspecting) {
+		if (m->declare->inspecting)
 			declare_output_mark_dirty(m->declare);
-			inspector_workarea(m->declare);
-		}
 	}
 	Clay_SetCurrentContext(previous);
 	return err;
@@ -2585,6 +2987,14 @@ dump_widget_node(buffer_t *buf, const struct widget_host *host, size_t i, Clay_E
 	if (n->text) {
 		buffer_addf(buf, " \"%.*s\" font=%u", (int)n->text_len,
 			d->text + n->text_off, n->font);
+	} else if (i == 0 && host->flow) {
+		for (int axis = 0; axis < 2; axis++) {
+			buffer_adds(buf, axis ? " h=" : " w=");
+			if (host->told[axis])
+				buffer_addf(buf, "fixed(%d)", host->told[axis]);
+			else
+				buffer_adds(buf, "grow");
+		}
 	} else if (i == 0 && n->sizing[0] == WIDGET_SIZING_FIXED
 			&& n->sizing[1] == WIDGET_SIZING_FIXED) {
 		buffer_addf(buf, " w=fixed(%d) h=fixed(%d)", host->w, host->h);

@@ -1419,12 +1419,29 @@ hook_resolve(void *data, uint64_t handle)
  * X11's position-carrying re-send (position-only moves included,
  * client_set_size()) and the monitor-clamp clip, which is position-keyed.
  * The position arrives band-local and is stored in layout coordinates.
- * Layer surfaces and popups have no C-driven configure. */
+ * A layer surface is configured to its solved size, which is its first
+ * configure too (declared once initialized); its position is kept
+ * output-local for its popups. Popups have no C-driven configure. */
+static LayerSurface *
+handle_layer(uint64_t handle)
+{
+	enum declare_kind kind;
+	LayerSurface *l = declare_handle_get(handle, &kind);
+
+	return (l && kind == DECLARE_KIND_LAYER) ? l : NULL;
+}
+
 static void
 hook_configure(void *data, uint64_t handle, int width, int height)
 {
 	Client *c = handle_client(handle);
+	LayerSurface *l = handle_layer(handle);
 
+	if (l) {
+		if (l->layer_surface->initialized)
+			wlr_layer_surface_v1_configure(l->layer_surface, width, height);
+		return;
+	}
 	if (!c)
 		return;
 	c->surface_box.width = width;
@@ -1436,7 +1453,13 @@ static void
 hook_reposition(void *data, uint64_t handle, int x, int y)
 {
 	Client *c = handle_client(handle);
+	LayerSurface *l = handle_layer(handle);
 
+	if (l) {
+		l->geom.x = x;
+		l->geom.y = y;
+		return;
+	}
 	if (!c || !c->mon)
 		return;
 	c->surface_box.x = c->mon->m.x + x;

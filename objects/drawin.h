@@ -93,7 +93,29 @@ typedef struct drawin_t {
 	 * preorder. Empty until the drawable's first compile stores a tree,
 	 * which is what lets a visible drawin declare (declare.c). */
 	struct widget_tree widgets;
+
+	/* A bar at an edge of its screen (awful.wibar): declared in the
+	 * output's flow at that edge, where it reserves its thickness and
+	 * margins, or floating over the output at the same edge when it is
+	 * ontop or reserves nothing. A bar that does not stretch keeps its own
+	 * length along the edge, aligned within it. Edge 0 is a drawin placed
+	 * by its geometry. */
+	struct {
+		uint8_t edge;
+		bool reserve;
+		uint16_t margins[4];   /* left, right, top, bottom */
+		bool stretch;
+		uint8_t align;         /* 0 centered, 1 the start, 2 the end */
+	} bar;
 } drawin_t;
+
+enum drawin_edge {
+	DRAWIN_EDGE_NONE,
+	DRAWIN_EDGE_TOP,
+	DRAWIN_EDGE_BOTTOM,
+	DRAWIN_EDGE_LEFT,
+	DRAWIN_EDGE_RIGHT,
+};
 
 bool drawin_widget_host(drawin_t *d, struct widget_host *out);
 

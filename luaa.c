@@ -5101,7 +5101,7 @@ luaA_state_teardown_c(lua_State *L, const char *label, bool exit_emitted)
 	 * before the state goes away. */
 	somewm_pin_lgi_libs();
 
-	/* Layer surfaces last: detaching earlier would make arrangelayers() take
+	/* Layer surfaces last: detaching earlier would make layer_keyboard_focus() take
 	 * the no-Lua-object branch mid-teardown, which force-grants keyboard
 	 * focus to whichever surface asked for it. */
 	layer_surface_hot_reload_detach();

@@ -37,6 +37,8 @@ static const char *g_namespace = "test-layer";
 static uint32_t g_keyboard_mode = 1; /* EXCLUSIVE */
 static const char *g_pointer_marker = NULL;
 static uint32_t g_anchor = 0;
+static int32_t g_exclusive_zone = 0;
+static uint32_t g_desired_w = 100, g_desired_h = 100;
 
 /* Signal handler for clean shutdown */
 static void handle_signal(int sig) {
@@ -291,6 +293,8 @@ static void print_usage(const char *prog) {
     fprintf(stderr, "  --pointer-marker PATH Write \"entered\\n\" to PATH on wl_pointer.enter\n");
     fprintf(stderr, "  --anchor EDGES        Comma-separated anchor edges: top,bottom,left,right\n");
     fprintf(stderr, "                        (default: unanchored; compositor chooses position)\n");
+    fprintf(stderr, "  --exclusive-zone N    Reserve N pixels at the anchored edge (default: 0)\n");
+    fprintf(stderr, "  --size W,H            Surface size; 0 spans the anchored axis (default: 100,100)\n");
 }
 
 int main(int argc, char *argv[]) {
@@ -313,6 +317,13 @@ int main(int argc, char *argv[]) {
             }
         } else if (strcmp(argv[i], "--pointer-marker") == 0 && i + 1 < argc) {
             g_pointer_marker = argv[++i];
+        } else if (strcmp(argv[i], "--exclusive-zone") == 0 && i + 1 < argc) {
+            g_exclusive_zone = atoi(argv[++i]);
+        } else if (strcmp(argv[i], "--size") == 0 && i + 1 < argc) {
+            if (sscanf(argv[++i], "%u,%u", &g_desired_w, &g_desired_h) != 2) {
+                print_usage(argv[0]);
+                return 1;
+            }
         } else if (strcmp(argv[i], "--anchor") == 0 && i + 1 < argc) {
             const char *edges = argv[++i];
             char *buf = strdup(edges);
@@ -372,9 +383,11 @@ int main(int argc, char *argv[]) {
         g_layer_shell, g_surface, NULL,
         ZWLR_LAYER_SHELL_V1_LAYER_TOP, g_namespace);
 
-    zwlr_layer_surface_v1_set_size(g_layer_surface, 100, 100);
+    zwlr_layer_surface_v1_set_size(g_layer_surface, g_desired_w, g_desired_h);
     if (g_anchor)
         zwlr_layer_surface_v1_set_anchor(g_layer_surface, g_anchor);
+    if (g_exclusive_zone)
+        zwlr_layer_surface_v1_set_exclusive_zone(g_layer_surface, g_exclusive_zone);
     zwlr_layer_surface_v1_set_keyboard_interactivity(g_layer_surface, g_keyboard_mode);
     zwlr_layer_surface_v1_add_listener(g_layer_surface, &layer_surface_listener, NULL);
 

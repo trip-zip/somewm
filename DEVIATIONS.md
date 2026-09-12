@@ -151,31 +151,35 @@ Widget-layer consumers (`naughty.list`, `awful.widget.tasklist`, `awful.widget.t
 
 ## Clay Draw Order (somewm 2.1)
 
-somewm 2.1 draws each output from one Clay layout tree. Every client, drawin and layer-shell surface is a Clay floating element with a `zIndex`. Clay sorts by `zIndex` and leaves equal values in declaration order, so clients sharing a `zIndex` draw in stack order and layer-shell surfaces oldest first.
+somewm 2.1 draws each output from one Clay layout tree. What does not overlap anything is in the tree's flow and has no band: the wibars, layer-shell surfaces with an exclusive zone, and the workarea. What overlaps something is a floating element with a band, Clay's `zIndex`. Clay sorts by band and leaves equal values in declaration order, so clients sharing a band draw in stack order and layer-shell surfaces oldest first. The flow itself sorts at 0, so what draws under the bars, from the output's own fill up, has a negative band.
 
-A client's `zIndex` follows `ontop`, `above`, `below` and `fullscreen`. A transient that sets none of them gets its parent's.
+A client's band follows `ontop`, `above`, `below` and `fullscreen`. A transient that sets none of them gets its parent's.
 
-| zIndex | draws |
-|--------|-------|
-| 0 | the wallpaper |
-| 10 | layer-shell background |
-| 20 | desktop clients |
-| 30 | desktop and splash drawins |
-| 40 | layer-shell bottom |
-| 50 | `below` clients |
-| 60 | normal clients |
-| 70 | drawins (wibars, popups) |
-| 80 | layer-shell top |
-| 90 | `above` clients |
-| 100 | dock drawins |
-| 105 | fullscreen backing rectangle |
-| 110 | fullscreen clients |
-| 120 | layer-shell overlay |
-| 130 | `ontop` clients |
-| 140 | `ontop` drawins |
-| 150 | override-redirect X11 windows |
+| band | draws |
+|------|-------|
+| -10 | the output's own fill: the root colour or the root wallpaper |
+| -8 | layer-shell background |
+| -6 | desktop clients |
+| -4 | desktop and splash drawins (`awful.wallpaper`) |
+| -2 | layer-shell bottom |
+| 10 | `below` clients |
+| 20 | normal floating clients |
+| 25 | a wibox placed by its geometry |
+| 30 | `above` clients |
+| 38 | fullscreen backing rectangle |
+| 40 | fullscreen clients |
+| 50 | `ontop` clients |
+| 60 | `ontop` wibars |
+| 70 | layer-shell top |
+| 80 | popups, menus and tooltips: `ontop` drawins and xdg popups |
+| 90 | notifications |
+| 100 | layer-shell overlay |
+| 110 | override-redirect X11 windows |
+| 120 | the drag icon |
 
-**Override-redirect X11 windows draw above everything.** X11 menus and tooltips set no stacking properties, so somewm gives them the top `zIndex`. AwesomeWM stacks them with the client that owns them, and somewm 2.0 left the result to scene insertion order. The lock screen is unaffected: it has its own Clay tree above this one.
+**Every floating client draws above a wibar that is not `ontop`.** The bar is in flow, so it has no band; a floating client has one. AwesomeWM stacks the same way.
+
+**Override-redirect X11 windows draw above everything.** X11 menus and tooltips set no stacking properties, so somewm gives them the top band. AwesomeWM stacks them with the client that owns them, and somewm 2.0 left the result to scene insertion order. The lock screen is unaffected: it has its own Clay tree above this one.
 
 **A drawin's border and shadow do not accept pointer input.** Clicks fall through to whatever draws below, as in 2.0.
 
@@ -186,6 +190,24 @@ A client's `zIndex` follows `ontop`, `above`, `below` and `fullscreen`. A transi
 **xdg popups draw above the client's tiled neighbours.** A popup wider than its client is no longer covered by the next tile.
 
 **`client._scene_layer`** returns the name of the layer a client draws in. It is a test aid, not AwesomeWM API.
+
+---
+
+## Bars and the Workarea (somewm 2.1)
+
+The output is a column: the top bars, then the left bars, the workarea and the right bars in a row, then the bottom bars. Clay solves it, and `screen.workarea` is the box the workarea element solved to. Nothing computes a bar's position or a strut.
+
+- **A wibar is laid out by the compositor at its edge.** `awful.wibar` no longer places itself with `awful.placement`; it tells the drawin its edge, margins, stretch and align (the drawin's `bar` property, somewm-only), and its geometry is what the frame solved. `wibar:geometry()` reads the same box as before, without the margins.
+- **`screen.workarea` changes with the frame.** Creating, hiding or resizing a bar changes the workarea at the next frame, and `property::workarea` fires then. AwesomeWM changed it synchronously.
+- **Margins are the bar's padding.** A margin rounds to whole pixels.
+- **Bars on one edge stack in the order they became visible.** AwesomeWM kept its own list and moved a bar whose `position` changed to the inside. Hiding and showing a bar moves it to the inside here.
+- **`beautiful.wibar_favor_vertical` is gone.** Horizontal bars always span the output; vertical bars sit between them.
+- **An `ontop` wibar reserves no space.** It floats over the output at its edge in the `ontop` wibar band. AwesomeWM kept the workarea clear under it.
+- **A wibar draws no shadow.** A bar in flow has no band to put one under.
+- **`restrict_workarea = false`** floats the bar at its edge, in the band of a wibox placed by its geometry.
+- **Struts are ignored.** `drawin:struts()` and `client:struts()` store what they are given and emit `property::struts`, and nothing reads it. `awful.placement`'s `update_workarea` option does nothing. A wibox reserves space only as an `awful.wibar`.
+- **A layer-shell surface with an exclusive zone is a bar in flow.** It reserves its zone plus its margin at its edge, ahead of the wibars, as wlroots arranged it. Any other layer surface floats over the workarea from its anchors and margins, or over the whole output for a zone of -1. Its configure carries the size the frame solved, one frame after its initial commit.
+- **`awful.wallpaper`'s wibox is a float the size of the output.** It is declared without a number of its own.
 
 ---
 

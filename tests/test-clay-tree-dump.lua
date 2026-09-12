@@ -86,14 +86,14 @@ local steps = {
                 { widget = wibox.widget.textbox, text = "bar" },
             })
         end
-        if find("drawin screen " .. s.index, "converted:") then
+        if find("WIBAR screen " .. s.index, "converted:") then
             return true
         end
         assert(count < 20, "the wibar never converted in the dump")
     end,
 
     function()
-        assert_line("the wibar drawin", "drawin screen " .. s.index,
+        assert_line("the wibar", "WIBAR screen " .. s.index,
             string.format("%dx%d+%d+%d", bar.drawin.width, bar.drawin.height,
                 bar.drawin.x, bar.drawin.y))
         -- The textbox converts to a text element: the tree names it and
@@ -168,7 +168,7 @@ local steps = {
         end
 
         local d = bar2.drawin
-        local want = string.format("  drawin screen 2 %dx%d+%d+%d ",
+        local want = string.format("    WIBAR screen 2 %dx%d+%d+%d ",
             d.width, d.height, d.x, d.y)
         local outputs, head, tree = {}, nil, {}
 

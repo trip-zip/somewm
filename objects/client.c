@@ -2551,8 +2551,6 @@ client_set_minimized(lua_State *L, int cidx, bool s)
         if(c->toplevel_handle)
             wlr_foreign_toplevel_handle_v1_set_minimized(c->toplevel_handle, s);
 
-        if(strut_has_value(&c->strut))
-            screen_update_workarea(c->screen);
         luaA_object_emit_signal(L, cidx, "property::minimized", 0);
     }
 }
@@ -2571,8 +2569,6 @@ client_set_hidden(lua_State *L, int cidx, bool s)
     {
         c->hidden = s;
         banning_need_update();
-        if(strut_has_value(&c->strut))
-            screen_update_workarea(c->screen);
         luaA_object_emit_signal(L, cidx, "property::hidden", 0);
     }
 }
@@ -2592,8 +2588,6 @@ client_set_sticky(lua_State *L, int cidx, bool s)
         c->sticky = s;
         banning_need_update();
         ewmh_client_update_desktop(c);
-        if(strut_has_value(&c->strut))
-            screen_update_workarea(c->screen);
         luaA_object_emit_signal(L, cidx, "property::sticky", 0);
     }
 }
@@ -2952,9 +2946,6 @@ client_unmanage(client_t *c, client_unmanage_t reason)
     lua_pop(L, 1);
 
     some_event_queue_class(&client_class, SIG_LIST);
-
-    if(strut_has_value(&c->strut))
-        screen_update_workarea(c->screen);
 
     /* Get rid of all titlebars */
     for (client_titlebar_t bar = CLIENT_TITLEBAR_TOP; bar < CLIENT_TITLEBAR_COUNT; bar++) {

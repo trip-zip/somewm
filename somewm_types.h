@@ -146,8 +146,8 @@ typedef struct LayerSurface {
 	struct wlr_scene_tree *scene;
 	/* The render_state currently borrowing scene (render.h owner token) */
 	void *render_owner;
-	/* Output-local position from the last layer-shell arrange; the declare
-	 * pass reads this, never the scene node the reconciler owns. */
+	/* Output-local position of the surface leaf, written by the renderer's
+	 * reposition hook (window.c) for the surface's popups. */
 	struct { int x, y; } geom;
 	/* The zwlr layer this surface last committed to, keyed to the
 	 * m->layers list holding it (= its declare band). */

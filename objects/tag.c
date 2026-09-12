@@ -233,9 +233,6 @@ tag_view(lua_State *L, int udx, bool view)
 	{
 		tag->selected = view;
 		banning_need_update();
-		foreach(screen, globalconf.screens)
-			screen_update_workarea(*screen);
-
 		luaA_object_emit_signal(L, udx, "property::selected", 0);
 
 		/* Arrange the monitor for the tag's screen */
