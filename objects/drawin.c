@@ -311,6 +311,7 @@ drawin_wipe(drawin_t *w)
 	widget_nodes_clear(&w->widgets);
 
 	image_entry_set(&w->border_entry, NULL);
+    image_entry_set(&w->attachment_decoration, NULL);
 	shadow_leaves_clear(&w->shadow);
 
 	/* Note: drawable reference cleanup handled by class system */
@@ -509,6 +510,51 @@ luaA_drawin_set_bar(lua_State *L, drawin_t *drawin)
 	declare_mark_all_dirty();
 	luaA_object_emit_signal(L, -3, "property::bar", 0);
 	return 0;
+}
+
+/* Genuine attachment inputs; no sibling rectangle crosses this boundary. */
+static int
+luaA_drawin_set_attachment(lua_State *L, drawin_t *d)
+{
+    typeof(d->attachment) next = {0};
+    if (!lua_isnil(L, -1)) {
+        luaA_checktable(L, -1);
+#define ATTACH_NUMBER(field, low, high) do { lua_getfield(L, -1, #field); \
+        double v = lua_isnil(L, -1) ? 0 : luaL_checknumber(L, -1); \
+        if (!isfinite(v) || v < (low) || v > (high)) \
+            return luaL_error(L, "invalid attachment " #field); \
+        next.field = v; lua_pop(L, 1); } while (0)
+        ATTACH_NUMBER(kind, 0, 4); ATTACH_NUMBER(target, 0, UINT32_MAX);
+        ATTACH_NUMBER(parent, 0, 8); ATTACH_NUMBER(own, 0, 8);
+        ATTACH_NUMBER(x, -INT_MAX, INT_MAX); ATTACH_NUMBER(y, -INT_MAX, INT_MAX);
+        ATTACH_NUMBER(width, 0, UINT16_MAX); ATTACH_NUMBER(gap, 0, UINT16_MAX);
+        ATTACH_NUMBER(position, 0, 8);
+#undef ATTACH_NUMBER
+        lua_getfield(L, -1, "passthrough");
+        next.passthrough = lua_toboolean(L, -1); lua_pop(L, 1);
+        lua_getfield(L, -1, "hover");
+        next.hover = lua_toboolean(L, -1); lua_pop(L, 1);
+    }
+    if (!memcmp(&next, &d->attachment, sizeof(next))) return 0;
+    d->attachment = next;
+    drawin_mark_dirty(d);
+    return 0;
+}
+
+static int
+luaA_drawin_get_attachment(lua_State *L, drawin_t *d)
+{
+    if (!d->attachment.kind) { lua_pushnil(L); return 1; }
+    lua_newtable(L);
+#define ATTACH_NUMBER(field) do { lua_pushnumber(L, d->attachment.field); \
+    lua_setfield(L, -2, #field); } while (0)
+    ATTACH_NUMBER(kind); ATTACH_NUMBER(target); ATTACH_NUMBER(parent);
+    ATTACH_NUMBER(own); ATTACH_NUMBER(x); ATTACH_NUMBER(y); ATTACH_NUMBER(width);
+    ATTACH_NUMBER(gap); ATTACH_NUMBER(position);
+#undef ATTACH_NUMBER
+    lua_pushboolean(L, d->attachment.passthrough); lua_setfield(L, -2, "passthrough");
+    lua_pushboolean(L, d->attachment.hover); lua_setfield(L, -2, "hover");
+    return 1;
 }
 
 /** drawin.opacity - Get opacity (AwesomeWM signature) */
@@ -866,6 +912,15 @@ luaA_drawin_set_geometry(lua_State *L, drawin_t *drawin, int x, int y, int width
 	lua_pop(L, 1);
 }
 
+/* A hidden popup is not in the object registry. Its caller holds the
+ * userdata while the isolated content solve applies its measured size. */
+void
+luaA_drawin_set_size(lua_State *L, int udx, int width, int height)
+{
+    drawin_t *d = luaA_checkudata(L, udx, &drawin_class);
+    drawin_moveresize(L, udx, d->x, d->y, width, height);
+}
+
 /** Set drawin visibility (AwesomeWM pattern - takes stack index)
  * \param L The Lua VM state.
  * \param udx The drawin stack index.
@@ -1100,6 +1155,7 @@ luaA_drawin_gc(lua_State *L)
 		widget_nodes_clear(&drawin->widgets);
 
 		image_entry_set(&drawin->border_entry, NULL);
+        image_entry_set(&drawin->attachment_decoration, NULL);
 		shadow_leaves_clear(&drawin->shadow);
 		declare_mark_all_dirty();
 	}
@@ -1781,6 +1837,7 @@ drawin_class_setup(lua_State *L)
 		{ "drawable", NULL, (lua_class_propfunc_t) luaA_drawin_get_drawable, NULL },
 		{ "visible", (lua_class_propfunc_t) luaA_drawin_set_visible, (lua_class_propfunc_t) luaA_drawin_get_visible, (lua_class_propfunc_t) luaA_drawin_set_visible },
 		{ "ontop", (lua_class_propfunc_t) luaA_drawin_set_ontop, (lua_class_propfunc_t) luaA_drawin_get_ontop, (lua_class_propfunc_t) luaA_drawin_set_ontop },
+		{ "attachment", (lua_class_propfunc_t) luaA_drawin_set_attachment, (lua_class_propfunc_t) luaA_drawin_get_attachment, (lua_class_propfunc_t) luaA_drawin_set_attachment },
 		{ "bar", (lua_class_propfunc_t) luaA_drawin_set_bar, (lua_class_propfunc_t) luaA_drawin_get_bar, (lua_class_propfunc_t) luaA_drawin_set_bar },
 		{ "cursor", (lua_class_propfunc_t) luaA_drawin_set_cursor, (lua_class_propfunc_t) luaA_drawin_get_cursor, (lua_class_propfunc_t) luaA_drawin_set_cursor },
 		{ "x", (lua_class_propfunc_t) luaA_drawin_set_x, (lua_class_propfunc_t) luaA_drawin_get_x, (lua_class_propfunc_t) luaA_drawin_set_x },

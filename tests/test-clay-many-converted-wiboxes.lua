@@ -21,7 +21,7 @@ local menu
 -- The dump's line for drawin d.
 local function line(d)
     return awesome._clay_tree(s):match(string.format(
-        "  drawin screen %d %dx%d%%+%d%%+%d [^\n]*", s.index,
+        "  %s screen %d %dx%d%%+%d%%+%d [^\n]*", d.attachment and "POPUP" or "drawin", s.index,
         d.width, d.height, d.x, d.y))
 end
 

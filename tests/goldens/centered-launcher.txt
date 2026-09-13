@@ -1,0 +1,22 @@
+output
+  roots flow 1 floating 1 derived 0
+  OUTPUT WL-1 w=fixed(1280) h=fixed(720) output column
+    BACKGROUND WL-1 w=grow h=grow output attach PARENT band -10 image
+    WIBAR screen 1 converted w=grow h=fixed(28) theme row
+        drawable clip w=grow h=grow
+          wibox.widget.textbox w=fit h=fit
+            text "bar" font=1
+    WORKAREA - w=grow h=grow row
+  LAUNCHER screen 1 converted w=fixed(600) h=fit theme column attach OUTPUT band 90
+      drawable clip w=grow h=fit
+        awful.popup w=grow h=grow
+          wibox.layout.fixed w=grow h=grow
+            wibox.widget.textbox w=grow h=fit
+              text "Search" font=1
+            wibox.layout.fixed w=grow h=fit
+              wibox.widget.textbox w=grow h=fit
+                text "Terminal" font=1
+              wibox.widget.textbox w=grow h=fit
+                text "Browser" font=1
+              wibox.widget.textbox w=grow h=fit
+                text "Files" font=1

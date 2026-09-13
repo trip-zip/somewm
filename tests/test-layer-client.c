@@ -39,6 +39,10 @@ static const char *g_pointer_marker = NULL;
 static uint32_t g_anchor = 0;
 static int32_t g_exclusive_zone = 0;
 static uint32_t g_desired_w = 100, g_desired_h = 100;
+static uint32_t g_layer = ZWLR_LAYER_SHELL_V1_LAYER_TOP;
+static int32_t g_margin_top, g_margin_right, g_margin_bottom, g_margin_left;
+static const char *g_configure_report;
+static uint32_t g_color = 0x80808080;
 
 /* Signal handler for clean shutdown */
 static void handle_signal(int sig) {
@@ -72,8 +76,9 @@ static struct wl_buffer *create_buffer(void) {
         return NULL;
     }
 
-    /* Fill with semi-transparent gray */
-    memset(data, 0x80, size);
+    /* Default remains semi-transparent gray; fixtures may supply opaque art. */
+    uint32_t *pixels = data;
+    for (int i = 0; i < size / 4; i++) pixels[i] = g_color;
     munmap(data, size);
 
     struct wl_shm_pool *pool = wl_shm_create_pool(g_shm, fd, size);
@@ -93,6 +98,10 @@ static void layer_surface_configure(void *data,
     g_width = w > 0 ? w : 100;
     g_height = h > 0 ? h : 100;
     zwlr_layer_surface_v1_ack_configure(lsurface, serial);
+    if (g_configure_report) {
+        FILE *f = fopen(g_configure_report, "w");
+        if (f) { fprintf(f, "%u %u\n", w, h); fclose(f); }
+    }
 
     struct wl_buffer *buffer = create_buffer();
     if (buffer) {
@@ -294,6 +303,10 @@ static void print_usage(const char *prog) {
     fprintf(stderr, "  --anchor EDGES        Comma-separated anchor edges: top,bottom,left,right\n");
     fprintf(stderr, "                        (default: unanchored; compositor chooses position)\n");
     fprintf(stderr, "  --exclusive-zone N    Reserve N pixels at the anchored edge (default: 0)\n");
+    fprintf(stderr, "  --layer top|overlay   Protocol layer (default: top)\n");
+    fprintf(stderr, "  --margins T,R,B,L     Protocol margin inputs\n");
+    fprintf(stderr, "  --color AARRGGBB      Buffer pixel colour\n");
+    fprintf(stderr, "  --configure-report P Write latest configure size to P\n");
     fprintf(stderr, "  --size W,H            Surface size; 0 spans the anchored axis (default: 100,100)\n");
 }
 
@@ -315,6 +328,18 @@ int main(int argc, char *argv[]) {
                 print_usage(argv[0]);
                 return 1;
             }
+        } else if (strcmp(argv[i], "--color") == 0 && i + 1 < argc) {
+            g_color = (uint32_t)strtoul(argv[++i], NULL, 16);
+        } else if (strcmp(argv[i], "--layer") == 0 && i + 1 < argc) {
+            const char *layer = argv[++i];
+            if (!strcmp(layer, "overlay")) g_layer = ZWLR_LAYER_SHELL_V1_LAYER_OVERLAY;
+            else if (!strcmp(layer, "top")) g_layer = ZWLR_LAYER_SHELL_V1_LAYER_TOP;
+            else return 1;
+        } else if (strcmp(argv[i], "--margins") == 0 && i + 1 < argc) {
+            if (sscanf(argv[++i], "%d,%d,%d,%d", &g_margin_top, &g_margin_right,
+                    &g_margin_bottom, &g_margin_left) != 4) return 1;
+        } else if (strcmp(argv[i], "--configure-report") == 0 && i + 1 < argc) {
+            g_configure_report = argv[++i];
         } else if (strcmp(argv[i], "--pointer-marker") == 0 && i + 1 < argc) {
             g_pointer_marker = argv[++i];
         } else if (strcmp(argv[i], "--exclusive-zone") == 0 && i + 1 < argc) {
@@ -381,9 +406,11 @@ int main(int argc, char *argv[]) {
     /* Create layer surface */
     g_layer_surface = zwlr_layer_shell_v1_get_layer_surface(
         g_layer_shell, g_surface, NULL,
-        ZWLR_LAYER_SHELL_V1_LAYER_TOP, g_namespace);
+        g_layer, g_namespace);
 
     zwlr_layer_surface_v1_set_size(g_layer_surface, g_desired_w, g_desired_h);
+    zwlr_layer_surface_v1_set_margin(g_layer_surface, g_margin_top,
+        g_margin_right, g_margin_bottom, g_margin_left);
     if (g_anchor)
         zwlr_layer_surface_v1_set_anchor(g_layer_surface, g_anchor);
     if (g_exclusive_zone)

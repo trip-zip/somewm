@@ -1145,6 +1145,10 @@ function placement.align(d, args)
     d    = d or capi.client.focus
 
     if not d or not args.position then return end
+    if type(d) == "table" and d._private and d._private.container and not args.pretend then
+        require("awful._attachment").corner(d, args.position, args.offset)
+        return d:geometry()
+    end
 
     local sgeo = get_parent_geometry(d, args)
     local dgeo = geometry_common(d, args)
@@ -1428,6 +1432,12 @@ function placement.next_to(d, args)
     args = add_context(args, "next_to")
     d    = d or capi.client.focus
 
+    if type(d) == "table" and d._private and d._private.container and not args.pretend then
+        local position, anchor = require("awful._attachment").next_to(d,
+            args.geometry or args.parent, args.preferred_positions, args.preferred_anchors,
+            args.offset)
+        return d:geometry(), position, anchor -- last solved box, as with other readback APIs
+    end
     local osize = type(d.geometry) == "function"  and d:geometry() or d.geometry
     local original_pos, original_anchors = args.preferred_positions, args.preferred_anchors
 

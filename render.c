@@ -40,6 +40,7 @@ struct cairo_buffer {
 
 static void cairo_buffer_destroy(struct wlr_buffer *buffer) {
 	struct cairo_buffer *cb = wl_container_of(buffer, cb, base);
+	wlr_buffer_finish(buffer);
 	cairo_surface_destroy(cb->surface);
 	free(cb);
 }
@@ -68,6 +69,55 @@ static const struct wlr_buffer_impl cairo_buffer_impl = {
 	.begin_data_ptr_access = cairo_buffer_begin_data_ptr_access,
 	.end_data_ptr_access = cairo_buffer_end_data_ptr_access,
 };
+
+/* wlroots can release a scene buffer's CPU pixels after uploading its texture.
+ * Scene readback still needs those pixels. Hold one consumer reference for the
+ * node's current raster, shared with the renderer rather than copied, and drop
+ * it on replacement or node destruction. This is bounded by raster_bytes. */
+struct raster_readback {
+	struct wlr_addon addon;
+	struct wlr_buffer *buffer;
+};
+
+static void raster_readback_destroy(struct wlr_addon *addon) {
+	struct raster_readback *readback = wl_container_of(addon, readback, addon);
+	wlr_addon_finish(addon);
+	if (readback->buffer != NULL) {
+		wlr_buffer_unlock(readback->buffer);
+	}
+	free(readback);
+}
+
+static const struct wlr_addon_interface raster_readback_impl = {
+	.name = "somewm raster readback",
+	.destroy = raster_readback_destroy,
+};
+
+static void raster_set_buffer(struct wlr_scene_buffer *sb, struct cairo_buffer *cb) {
+	struct wlr_addon *addon = wlr_addon_find(&sb->node.addons, NULL,
+		&raster_readback_impl);
+	struct raster_readback *readback = addon != NULL
+		? wl_container_of(addon, readback, addon) : NULL;
+	if (readback == NULL && cb != NULL) {
+		readback = calloc(1, sizeof(*readback));
+		if (readback == NULL) {
+			/* Keep rendering if the optional capture reference cannot allocate. */
+			wlr_scene_buffer_set_buffer(sb, &cb->base);
+			return;
+		}
+		wlr_addon_init(&readback->addon, &sb->node.addons, NULL,
+			&raster_readback_impl);
+	}
+	struct wlr_buffer *buffer = cb != NULL ? wlr_buffer_lock(&cb->base) : NULL;
+	/* Detach the scene's old release listener before releasing its old raster. */
+	wlr_scene_buffer_set_buffer(sb, buffer);
+	if (readback != NULL) {
+		if (readback->buffer != NULL) {
+			wlr_buffer_unlock(readback->buffer);
+		}
+		readback->buffer = buffer;
+	}
+}
 
 /* NULL when the surface could not be created. Cairo hands back a nil surface
  * rather than crashing when a dimension exceeds its limits, and a nil surface's
@@ -627,7 +677,7 @@ static void rnode_set_raster(struct render_state *rs, struct rnode *n,
 	}
 	rs->raster_bytes = rs->raster_bytes - n->raster_bytes + bytes;
 	n->raster_bytes = bytes;
-	wlr_scene_buffer_set_buffer(sb, cb != NULL ? &cb->base : NULL);
+	raster_set_buffer(sb, cb);
 	if (cb != NULL) {
 		wlr_buffer_drop(&cb->base);
 	}
@@ -1046,8 +1096,7 @@ static int reconcile_border(struct render_state *rs, struct rnode *n,
 		for (int c = 0; c < 4; c++) {
 			struct cairo_buffer *cb =
 				rasterize_border_corner(cmd, ext, rs->scale, c);
-			wlr_scene_buffer_set_buffer(n->border_corners[c],
-				cb != NULL ? &cb->base : NULL);
+			raster_set_buffer(n->border_corners[c], cb);
 			n->border_tile[c] = cb != NULL;
 			if (cb != NULL) {
 				bytes += cairo_buffer_bytes(cb);

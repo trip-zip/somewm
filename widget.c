@@ -378,6 +378,9 @@ read_node(lua_State *L, int idx, struct widget_node *n)
 	lua_getfield(L, idx, "spacer");
 	n->widget = !lua_toboolean(L, -1);
 	lua_pop(L, 1);
+	lua_getfield(L, idx, "identity");
+	n->identity = (uint32_t)lua_tointeger(L, -1);
+	lua_pop(L, 1);
 
 	return ok;
 }

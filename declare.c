@@ -103,6 +103,8 @@ struct declare_record {
 	Clay_FloatingAttachToElement attach_to;
 	uint32_t attach_id;
 	Clay_Vector2 offset;
+	Clay_FloatingAttachPoints points;
+	bool passthrough;
 	int16_t band;
 	bool vertical;
 	Clay_Padding padding;
@@ -273,6 +275,8 @@ record_open(const char *role, uint64_t handle, Clay_ElementId id,
 		.attach_to = decl->floating.attachTo,
 		.attach_id = decl->floating.parentId,
 		.offset = decl->floating.offset,
+        .points = decl->floating.attachPoints,
+        .passthrough = decl->floating.pointerCaptureMode == CLAY_POINTER_CAPTURE_MODE_PASSTHROUGH,
 		.band = decl->floating.zIndex,
 		.vertical = decl->layout.layoutDirection == CLAY_TOP_TO_BOTTOM,
 		.padding = decl->layout.padding,
@@ -1169,6 +1173,18 @@ declare_unmanaged_clients(Monitor *m)
  * and declare_hit has to resolve that node to the drawin (input.c then takes
  * drawin-local coordinates from the drawin's own box, not the node's).
  */
+/* This pass's widget identities resolve to the existing path-based Clay ids.
+ * Keeping this map separate preserves repeated widgets and every subtree. */
+static struct { uint32_t identity, id; } attachment_targets[WIDGET_NODES_MAX];
+static size_t attachment_targets_len;
+static uint32_t
+attachment_target(uint32_t identity)
+{
+    for (size_t i = 0; i < attachment_targets_len; i++)
+        if (attachment_targets[i].identity == identity) return attachment_targets[i].id;
+    return 0;
+}
+
 static Clay_ElementId
 widget_root_id(uint32_t id)
 {
@@ -1305,13 +1321,17 @@ declare_widget_subtree(const struct widget_host *host, size_t i, Clay_ElementId 
 		return next;
 	}
 
-	e = widget_node_decl(n, z, word);
+	if (n->identity && attachment_targets_len < LENGTH(attachment_targets)) {
+        attachment_targets[attachment_targets_len].identity = n->identity;
+        attachment_targets[attachment_targets_len++].id = id.id;
+    }
+    e = widget_node_decl(n, z, word);
 	if (i == 0 && host->flow) {
 		/* A bar's root fills the slot the frame sized for it; the
 		 * drawin's geometry is what this element solves to. */
 		e.layout.sizing = (Clay_Sizing) {
-			host->told[0] ? CLAY_SIZING_FIXED(host->told[0]) : CLAY_SIZING_GROW(0),
-			host->told[1] ? CLAY_SIZING_FIXED(host->told[1]) : CLAY_SIZING_GROW(0),
+			host->fit[0] ? widget_sizing(n, 0) : host->told[0] ? CLAY_SIZING_FIXED(host->told[0]) : CLAY_SIZING_GROW(0),
+			host->fit[1] ? widget_sizing(n, 1) : host->told[1] ? CLAY_SIZING_FIXED(host->told[1]) : CLAY_SIZING_GROW(0),
 		};
 	} else if (i == 0) {
 		/* A titlebar root attaches at its parent's origin; a drawin
@@ -1575,20 +1595,62 @@ declare_layer_slot(LayerSurface *l, Monitor *m, enum wlr_edges edge, int16_t z)
 			st->exclusive_zone + st->margin.right);
 		slot.layout.padding.left = 0;
 		break;
-	default:
-		slot.floating.attachTo = CLAY_ATTACH_TO_ELEMENT_WITH_ID;
-		slot.floating.parentId = (st->exclusive_zone < 0
-			? output_id(m) : workarea_id(m)).id;
-		slot.floating.zIndex = z;
-		slot.floating.pointerCaptureMode = CLAY_POINTER_CAPTURE_MODE_PASSTHROUGH;
+	default: {
+        /* A nonexclusive surface is the floating slot itself, attached to
+         * OUTPUT from protocol anchors. Two-sided stretch uses padding to
+         * inset its surface; no output/sibling rectangle is computed. */
+        unsigned xpoint = left && !right ? 0 : right && !left ? 2 : 1;
+        unsigned ypoint = top && !bottom ? 0 : bottom && !top ? 2 : 1;
+        slot.layout.sizing = leaf.layout.sizing;
+        slot.layout.padding = (Clay_Padding) {0};
+        if (!st->desired_width) {
+            slot.layout.padding.left = MAX(0, st->margin.left);
+            slot.layout.padding.right = MAX(0, st->margin.right);
+        }
+        if (!st->desired_height) {
+            slot.layout.padding.top = MAX(0, st->margin.top);
+            slot.layout.padding.bottom = MAX(0, st->margin.bottom);
+        }
+        slot.floating.attachTo = CLAY_ATTACH_TO_ELEMENT_WITH_ID;
+        slot.floating.parentId = output_id(m).id;
+        slot.floating.attachPoints.parent = xpoint * 3 + ypoint;
+        slot.floating.attachPoints.element = xpoint * 3 + ypoint;
+        slot.floating.offset = (Clay_Vector2) {
+            left && !right ? st->margin.left : right && !left ? -st->margin.right
+                : left && right && st->desired_width ? (st->margin.left - st->margin.right) / 2.0f : 0,
+            top && !bottom ? st->margin.top : bottom && !top ? -st->margin.bottom
+                : top && bottom && st->desired_height ? (st->margin.top - st->margin.bottom) / 2.0f : 0,
+        };
+        slot.floating.zIndex = z;
+        slot.floating.pointerCaptureMode = CLAY_POINTER_CAPTURE_MODE_PASSTHROUGH;
+        leaf.layout.sizing = (Clay_Sizing) {CLAY_SIZING_GROW(0), CLAY_SIZING_GROW(0)};
+        break;
+    }
 	}
 	Clay__OpenElementWithId(slot_id);
 	Clay__ConfigureOpenElementPtr(&slot);
-	record_open(edge != WLR_EDGE_NONE ? "LAYER_BAR" : "LAYER", handle, slot_id,
-		&slot, edge != WLR_EDGE_NONE ? DECLARE_SRC_PROTOCOL : DECLARE_SRC_NONE,
+	record_open(edge != WLR_EDGE_NONE ? "LAYER_BAR" : "LAYER_OVERLAY", handle, slot_id,
+		&slot, DECLARE_SRC_PROTOCOL,
 		NULL);
+    if (edge == WLR_EDGE_NONE && ((!st->desired_width && (st->margin.left < 0 || st->margin.right < 0))
+            || (!st->desired_height && (st->margin.top < 0 || st->margin.bottom < 0)))) {
+        /* Positive margins are padding. Negative protocol margins expand a
+         * surface leaf about that inset; no sibling or output box is read. */
+        Clay_ElementId inset_id = Clay__HashStringWithOffset(CLAY_STRING("layer.inset"), (uint32_t)handle, 0);
+        Clay_ElementDeclaration inset = {.layout.sizing = {CLAY_SIZING_GROW(0), CLAY_SIZING_GROW(0)}};
+        declare_leaf("layer.inset", handle, DECLARE_SRC_NONE, inset_id, &inset);
+        float ml = st->desired_width ? 0 : MIN(0, st->margin.left);
+        float mr = st->desired_width ? 0 : MIN(0, st->margin.right);
+        float mt = st->desired_height ? 0 : MIN(0, st->margin.top);
+        float mb = st->desired_height ? 0 : MIN(0, st->margin.bottom);
+        leaf.floating = (Clay_FloatingElementConfig){
+            .attachTo = CLAY_ATTACH_TO_ELEMENT_WITH_ID, .parentId = inset_id.id,
+            .offset = {(ml-mr)/2, (mt-mb)/2}, .expand = {-(ml+mr)/2, -(mt+mb)/2},
+            .zIndex = z, .pointerCaptureMode = CLAY_POINTER_CAPTURE_MODE_PASSTHROUGH,
+        };
+    }
 	declare_leaf("layer.surface", handle,
-		told ? DECLARE_SRC_PROTOCOL : DECLARE_SRC_NONE, id, &leaf);
+		edge != WLR_EDGE_NONE && told ? DECLARE_SRC_PROTOCOL : DECLARE_SRC_NONE, id, &leaf);
 	record_close();
 	Clay__CloseElement();
 	declare_popups(ls->surface, id, 0, 0);
@@ -1624,7 +1686,7 @@ struct bar_record {
 	struct widget_host host;
 };
 
-static struct bar_record bars[64];
+static struct bar_record bars[WIDGET_NODES_MAX];
 static size_t bars_len;
 
 static bool
@@ -1798,6 +1860,26 @@ bars_settle(Monitor *m)
 	}
 }
 
+/* Content-sized drawins without an attachment also take their solved size.
+ * This replaces popup's fit callback writing width/height in Lua. */
+static void
+popups_settle(Monitor *m)
+{
+    foreach(item, globalconf.drawins) {
+        drawin_t *d = *item;
+        if (d->bar.edge || d->attachment.kind || !declarable_drawin(d, m)
+                || d->widgets.nodes[0].sizing[0] != WIDGET_SIZING_FIT
+                || d->widgets.nodes[0].sizing[1] != WIDGET_SIZING_FIT) continue;
+        uint64_t handle = declare_handle_for(d, DECLARE_KIND_DRAWIN);
+        Clay_ElementData root = Clay_GetElementData(widget_root_id((uint32_t)handle));
+        if (!root.found) continue;
+        Clay_BoundingBox b = root.boundingBox;
+        int w = (int)floorf(b.width + 0.5f), h = (int)floorf(b.height + 0.5f);
+        if (w != d->width || h != d->height)
+            luaA_drawin_set_geometry(globalconf_L, d, d->x, d->y, w, h);
+    }
+}
+
 /* The drawin band policy: desktop and splash below clients like the
  * wallpaper, an ontop drawin with the popups (a notification above them),
  * everything else placed by its geometry just above normal clients. */
@@ -1812,6 +1894,176 @@ drawin_z(drawin_t *d)
 	return Z_DRAWIN;
 }
 
+/* Decorations are pixels inside an image, not a second placement engine.
+ * A container reserves the theme extent as padding. Both kinds retain the existing
+ * widget subtree and use its solved size for the next raster. */
+static Clay_Dimensions
+attachment_decoration(drawin_t *d)
+{
+    const shadow_config_t *s = shadow_get_effective_config(d->shadow_config, true);
+    int ex = d->border_width, ey = ex;
+    if (s->enabled) {
+        int outset = MAX(0, s->spread + s->radius);
+        ex = MAX(ex, outset + abs(s->offset_x));
+        ey = MAX(ey, outset + abs(s->offset_y));
+    }
+    if (!ex && !ey) {
+        image_entry_set(&d->attachment_decoration, NULL);
+        return (Clay_Dimensions){0};
+    }
+    int w = MAX(1, d->width), h = MAX(1, d->height);
+    if (d->attachment_decoration.native && d->decoration_width == w
+            && d->decoration_height == h && d->decoration_border_gen == d->border_entry.gen
+            && !memcmp(&d->decoration_shadow, s, sizeof(*s)))
+        return (Clay_Dimensions){ex, ey};
+    cairo_surface_t *surface = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, w+2*ex, h+2*ey);
+    cairo_t *cr = cairo_create(surface);
+    cairo_translate(cr, ex, ey);
+    struct wlr_box boxes[SHADOW_SLICE_COUNT + SHADOW_FILL_COUNT];
+    shadow_leaves_update(&d->shadow, s);
+    if (d->shadow.ready && shadow_layout(s, w, h, boxes)) {
+        for (size_t i = 0; i < LENGTH(boxes); i++) {
+            struct wlr_box b = boxes[i];
+            if (b.width <= 0 || b.height <= 0) continue;
+            cairo_save(cr);
+            cairo_rectangle(cr, b.x, b.y, b.width, b.height);
+            cairo_clip(cr);
+            if (i < SHADOW_SLICE_COUNT) {
+                struct image_entry *tex = &d->shadow.tex[i];
+                if (!tex->native) { cairo_restore(cr); continue; }
+                cairo_translate(cr, b.x, b.y);
+                cairo_scale(cr, (double)b.width/tex->width, (double)b.height/tex->height);
+                cairo_set_source_surface(cr, tex->native, 0, 0);
+            } else cairo_set_source_rgba(cr, s->color[0], s->color[1], s->color[2], shadow_paint(s));
+            cairo_paint(cr);
+            cairo_restore(cr);
+        }
+    }
+    if (d->border_entry.native) {
+        cairo_set_source_surface(cr, d->border_entry.native, -d->border_width, -d->border_width);
+        cairo_paint(cr);
+    }
+    cairo_destroy(cr);
+    image_entry_set(&d->attachment_decoration, surface);
+    d->decoration_width = w; d->decoration_height = h;
+    d->decoration_border_gen = d->border_entry.gen;
+    d->decoration_shadow = *s;
+    return (Clay_Dimensions){ex, ey};
+}
+
+static bool
+declare_attachment(drawin_t *d, Monitor *m)
+{
+    if (d->attachment.kind == 2 && !d->attachment.target) return false;
+    uint32_t target = d->attachment.target
+        ? attachment_target(d->attachment.target) : output_id(m).id;
+    if (!target || bars_len == LENGTH(bars)) return false;
+    if (d->attachment.hover && !Clay_PointerOver((Clay_ElementId){.id=target})) return false;
+    uint64_t handle = declare_handle_for(d, DECLARE_KIND_DRAWIN);
+    struct bar_record *a = &bars[bars_len++];
+    a->d = d;
+    drawin_widget_host(d, &a->host);
+    a->host.flow = true;
+    a->host.fit[0] = a->host.fit[1] = true;
+    const struct widget_node *n = &d->widgets.nodes[0];
+    Clay_ElementDeclaration slot = {
+        .layout.sizing = { widget_sizing(n, 0), widget_sizing(n, 1) },
+        .floating = {
+            .attachTo = CLAY_ATTACH_TO_ELEMENT_WITH_ID, .parentId = target,
+            .attachPoints = { .parent = d->attachment.parent, .element = d->attachment.own },
+            .offset = { d->attachment.x, d->attachment.y },
+            .zIndex = Z_POPUP,
+            .pointerCaptureMode = d->attachment.passthrough
+                ? CLAY_POINTER_CAPTURE_MODE_PASSTHROUGH : CLAY_POINTER_CAPTURE_MODE_CAPTURE,
+        },
+    };
+    if (d->attachment.kind == 3) {
+        slot.layout.sizing.width = CLAY_SIZING_FIXED(d->attachment.width);
+        slot.layout.layoutDirection = CLAY_TOP_TO_BOTTOM;
+        slot.floating.zIndex = Z_NOTIFICATION;
+        a->host.fit[0] = false;
+    }
+    Clay_Dimensions decoration = attachment_decoration(d);
+    slot.layout.padding = (Clay_Padding){decoration.width, decoration.width,
+        decoration.height, decoration.height};
+    /* Attach the content's own point; decoration extends around it. */
+    slot.floating.offset.x += ((int)d->attachment.own / 3 - 1) * decoration.width;
+    slot.floating.offset.y += ((int)d->attachment.own % 3 - 1) * decoration.height;
+    if (d->attachment.kind == 3)
+        slot.layout.sizing.width = CLAY_SIZING_FIXED(d->attachment.width + 2*decoration.width);
+    slot.image.imageData = d->attachment_decoration.native ? &d->attachment_decoration : NULL;
+    Clay_ElementId id = Clay__HashStringWithOffset(CLAY_STRING("ATTACHMENT"),
+        (uint32_t)handle, 0);
+    Clay__OpenElementWithId(id);
+    Clay__ConfigureOpenElementPtr(&slot);
+    record_open(d->attachment.kind == 3 ? "LAUNCHER" : d->attachment.kind == 2 ? "TOOLTIP" : "POPUP",
+        handle, id, &slot, d->attachment.kind == 3 ? DECLARE_SRC_THEME : DECLARE_SRC_NONE, &a->host);
+    declare_widget_tree(&a->host, slot.floating.zIndex, leaf_userdata(handle,
+        d->opacity >= 0 ? (float)d->opacity : 1.0f));
+    record_close();
+    Clay__CloseElement();
+    return true;
+}
+
+/* A nonempty notification position is one root float with flow children. */
+static void
+declare_notifications(Monitor *m)
+{
+    for (int position = 0; position < 9; position++) {
+        drawin_t *first = NULL;
+        foreach(item, globalconf.drawins) {
+            drawin_t *d = *item;
+            if (d->attachment.kind == 4 && d->attachment.position == position
+                    && declarable_drawin(d, m)) { first = d; break; }
+        }
+        if (!first) continue;
+        Clay_ElementDeclaration stack = {
+            .layout = {
+                .sizing = { CLAY_SIZING_FIXED(first->attachment.width), CLAY_SIZING_FIT(0) },
+                .layoutDirection = CLAY_TOP_TO_BOTTOM, .childGap = first->attachment.gap,
+            },
+            .floating = {
+                .attachTo = CLAY_ATTACH_TO_ELEMENT_WITH_ID, .parentId = output_id(m).id,
+                .attachPoints = { .parent = position, .element = position },
+                .offset = {first->attachment.x, first->attachment.y},
+                .zIndex = Z_NOTIFICATION,
+                .pointerCaptureMode = CLAY_POINTER_CAPTURE_MODE_PASSTHROUGH,
+            },
+        };
+        Clay_ElementId stack_id = Clay__HashStringWithOffset(CLAY_STRING("NOTIFICATIONS"), position, 0);
+        Clay__OpenElementWithId(stack_id);
+        Clay__ConfigureOpenElementPtr(&stack);
+        record_open("NOTIFICATIONS", 0, stack_id, &stack, DECLARE_SRC_THEME, NULL);
+        foreach(item, globalconf.drawins) {
+            drawin_t *d = *item;
+            if (d->attachment.kind != 4 || d->attachment.position != position
+                    || !declarable_drawin(d, m) || bars_len == LENGTH(bars)) continue;
+            struct bar_record *a = &bars[bars_len++];
+            a->d = d;
+            drawin_widget_host(d, &a->host);
+            a->host.flow = true; a->host.fit[1] = true;
+            uint64_t handle = declare_handle_for(d, DECLARE_KIND_DRAWIN);
+            Clay_ElementDeclaration child = {
+                .layout.sizing = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIT(0) },
+            };
+            Clay_Dimensions decoration = attachment_decoration(d);
+            child.layout.padding = (Clay_Padding){decoration.width, decoration.width,
+                decoration.height, decoration.height};
+            child.image.imageData = d->attachment_decoration.native ? &d->attachment_decoration : NULL;
+            Clay_ElementId id = Clay__HashStringWithOffset(CLAY_STRING("ATTACHMENT"), (uint32_t)handle, 0);
+            Clay__OpenElementWithId(id);
+            Clay__ConfigureOpenElementPtr(&child);
+            record_open("NOTIFICATION", handle, id, &child, DECLARE_SRC_NONE, &a->host);
+            declare_widget_tree(&a->host, Z_NOTIFICATION, leaf_userdata(handle,
+                d->opacity >= 0 ? (float)d->opacity : 1.0f));
+            record_close();
+            Clay__CloseElement();
+        }
+        record_close();
+        Clay__CloseElement();
+    }
+}
+
 static void
 declare_drawins(Monitor *m)
 {
@@ -1822,13 +2074,27 @@ declare_drawins(Monitor *m)
 		 * the output's own. */
 		if (session_is_locked() && some_is_lock_drawin(d))
 			continue;
-		if (d->bar.edge || !declarable_drawin(d, m))
+		if (d->bar.edge || d->attachment.kind || !declarable_drawin(d, m))
 			continue;
 		if (drawin_covers_output(d, m))
 			declare_wallpaper_drawin(d, m, drawin_z(d));
 		else
 			declare_drawin(d, m, drawin_z(d));
 	}
+    declare_notifications(m);
+    /* Targets in other popups must be declared first, independent of the
+     * drawins list's order. Missing/hidden targets leave the popup absent. */
+    bool progress;
+    do {
+        progress = false;
+        foreach(item, globalconf.drawins) {
+            drawin_t *d = *item;
+            if (!d->attachment.kind || d->attachment.kind == 4 || !declarable_drawin(d, m)) continue;
+            bool done = false;
+            for (size_t i = 0; i < bars_len; i++) if (bars[i].d == d) done = true;
+            if (!done && declare_attachment(d, m)) progress = true;
+        }
+    } while (progress);
 }
 
 /* The opaque backing the xdg protocol requires under a non-opaque
@@ -2038,6 +2304,7 @@ declare_drag_icon(Monitor *m)
 static void
 declare_scene(Monitor *m)
 {
+	attachment_targets_len = 0;
 	bars_len = 0;
 	tile_prepare(m);
 	declare_output(m);
@@ -2659,6 +2926,7 @@ declare_output_frame(struct declare_output *dout, Monitor *m, bool lock_active)
 		band->solve_us += solved - declared;
 		if (!lock_active) {
 			bars_settle(m);
+            popups_settle(m);
 			workarea_settle(m);
 			clients_settle(m);
 		}
@@ -3160,7 +3428,9 @@ dump_widget_node(buffer_t *buf, const struct widget_host *host, size_t i, Clay_E
 	} else if (i == 0 && host->flow) {
 		for (int axis = 0; axis < 2; axis++) {
 			buffer_adds(buf, axis ? " h=" : " w=");
-			if (host->told[axis])
+			if (host->fit[axis])
+                dump_sizing(buf, n, axis);
+            else if (host->told[axis])
 				buffer_addf(buf, "fixed(%d)", host->told[axis]);
 			else
 				buffer_adds(buf, "grow");
@@ -3311,6 +3581,15 @@ dump_records(buffer_t *buf, struct declare_band *band)
 			buffer_addf(buf, " attach %s offset %g,%g band %d",
 				attach, r->offset.x, r->offset.y,
 				r->band);
+        if (r->floating && (!strcmp(r->role, "POPUP") || !strcmp(r->role, "TOOLTIP")
+                || !strcmp(r->role, "NOTIFICATIONS") || !strcmp(r->role, "LAUNCHER")
+                || !strcmp(r->role, "LAYER_OVERLAY"))) {
+            static const char *points[] = { "LEFT_TOP", "LEFT_CENTER", "LEFT_BOTTOM",
+                "TOP_CENTER", "CENTER", "BOTTOM_CENTER", "RIGHT_TOP", "RIGHT_CENTER", "RIGHT_BOTTOM" };
+            buffer_addf(buf, " target %08x parent %s own %s pointer %s", r->attach_id,
+                points[r->points.parent], points[r->points.element],
+                r->passthrough ? "passthrough" : "capture");
+        }
 		if (r->custom)
 			buffer_adds(buf, " custom");
 		if (r->image)

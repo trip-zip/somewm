@@ -49,6 +49,7 @@ struct widget_host {
 	 * axis with a told length (a bar that does not stretch) is fixed. */
 	bool flow;
 	int told[2];
+	bool fit[2];
 };
 
 /* One axis of a node's sizing, Clay's own types by name (Clay__SizingType,
@@ -78,6 +79,7 @@ struct widget_node {
 	 * element id to a render command. NULL for a node that stands for no
 	 * widget. */
 	const char *cls;
+	uint32_t identity; /* Lua widget identity; resolves to this frame's path id. */
 	uint16_t pad[4];     /* left, right, top, bottom */
 	uint16_t bw[4];      /* border widths, same order */
 	float bg[4];

@@ -40,6 +40,16 @@ local gsurface = require("gears.surface")
 
 local cairo = require("lgi").cairo
 local clay = {}
+local identities = setmetatable({}, {__mode = "k"})
+local next_identity = 0
+-- Identity names the widget, not its box or position in a compiled subtree.
+function clay.identity(widget)
+    if not identities[widget] then
+        next_identity = next_identity + 1
+        identities[widget] = next_identity
+    end
+    return identities[widget]
+end
 local probe = cairo.Context(cairo.ImageSurface(cairo.Format.A8, 1, 1))
 
 --- Record a shape path in logical pixels, offset by dx and dy.
@@ -586,6 +596,7 @@ function compile_node(st, widget, parent, fg, offer, spec, alpha)
     node.specs = nil
     node.class = class_name(widget)
     node.widget = widget
+    node.identity = clay.identity(widget)
     merge_sizing(node, spec)
     if alpha ~= 1 then fade(node, alpha) end
 
@@ -699,8 +710,8 @@ function clay.compile(self, root, context, width, height)
         w = width, h = height, children = { node }, widgets = st.widgets }
 
     if node then
-        if node.fit then
-            tree.fit, node.fit = node.fit, nil
+        if node.fit or self._attachment_fit then
+            tree.fit, node.fit = node.fit or function() end, nil
             tree.w, tree.h = "fit", "fit"
             tree.wmin, tree.wmax = node.wmin, node.wmax
             tree.hmin, tree.hmax = node.hmin, node.hmax

@@ -777,6 +777,39 @@ static void test_text_crops_to_its_clip(void) {
 	fixture_finish(&f, &no_hooks);
 }
 
+struct raster_destroy_watch {
+	struct wl_listener listener;
+	bool destroyed;
+};
+
+static void raster_destroyed(struct wl_listener *listener, void *data) {
+	struct raster_destroy_watch *watch = wl_container_of(listener, watch, listener);
+	watch->destroyed = true;
+	wl_list_remove(&listener->link);
+}
+
+static void test_raster_readback_lifetime(void) {
+	struct fixture f;
+	fixture_init(&f);
+	Clay_RenderCommand cmds[] = { cmd_text(1, 0, 0, 80, 16, "first", false) };
+	render_reconcile(f.rs, commands_of(cmds, 1), &no_hooks, no_bounds);
+	struct wlr_scene_buffer *sb = wlr_scene_buffer_from_node(
+		child_at(render_tree(f.parent), 0));
+	struct raster_destroy_watch old = { .listener.notify = raster_destroyed };
+	wl_signal_add(&sb->buffer->events.destroy, &old.listener);
+	cmds[0] = cmd_text(1, 0, 0, 80, 16, "replacement", false);
+	render_reconcile(f.rs, commands_of(cmds, 1), &no_hooks, no_bounds);
+	CHECK(old.destroyed);
+	struct raster_destroy_watch current = { .listener.notify = raster_destroyed };
+	wl_signal_add(&sb->buffer->events.destroy, &current.listener);
+	CHECK_EQ(render_reconcile(f.rs, commands_of(cmds, 1), &no_hooks, no_bounds), 0);
+	CHECK(!current.destroyed);
+	render_reconcile(f.rs, commands_of(cmds, 0), &no_hooks, no_bounds);
+	CHECK(current.destroyed);
+	CHECK_EQ(render_raster_bytes(f.rs), 0);
+	fixture_finish(&f, &no_hooks);
+}
+
 static void fake_image_entry(struct image_entry *e, int w, int h) {
 	memset(e, 0, sizeof(*e));
 	e->native = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, w, h);
@@ -1053,6 +1086,7 @@ int main(void) {
 		{ "float boxes truncate", test_float_boxes_truncate },
 		{ "text rasters once per change", test_text_rasters_once_per_change },
 		{ "text crops to its clip", test_text_crops_to_its_clip },
+		{ "raster readback lifetime", test_raster_readback_lifetime },
 		{ "image rerasters on generation bump", test_image_rerasters_on_generation_bump },
 		{ "shape leaf", test_shape_leaf },
 		{ "font interning", test_font_interning },

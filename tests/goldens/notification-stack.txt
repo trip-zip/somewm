@@ -1,0 +1,25 @@
+output
+  roots flow 1 floating 1 derived 0
+  OUTPUT WL-1 w=fixed(1280) h=fixed(720) output column
+    BACKGROUND WL-1 w=grow h=grow output attach PARENT band -10 image
+    WIBAR screen 1 converted w=grow h=fixed(28) theme row
+        drawable clip w=grow h=grow
+          wibox.widget.textbox w=fit h=fit
+            text "bar" font=1
+    WORKAREA - w=grow h=grow row
+  NOTIFICATIONS - w=fixed(320) h=fit theme column gap 8 attach OUTPUT band 90
+    NOTIFICATION screen 1 converted w=grow h=fit row
+        drawable clip w=grow h=fit
+          awful.popup w=grow h=grow
+            wibox.widget.textbox w=grow h=grow
+              text "Download complete" font=1
+    NOTIFICATION screen 1 converted w=grow h=fit row
+        drawable clip w=grow h=fit
+          awful.popup w=grow h=grow
+            wibox.widget.textbox w=grow h=grow
+              text "Battery low" font=1
+    NOTIFICATION screen 1 converted w=grow h=fit row
+        drawable clip w=grow h=fit
+          awful.popup w=grow h=grow
+            wibox.widget.textbox w=grow h=grow
+              text "New message" font=1

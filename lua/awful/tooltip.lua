@@ -48,7 +48,7 @@ local gtable = require("gears.table")
 local object = require("gears.object")
 local color = require("gears.color")
 local wibox = require("wibox")
-local a_placement = require("awful.placement")
+local attachment = require("awful._attachment")
 local a_button = require("awful.button")
 local shape = require("gears.shape")
 local beautiful = require("beautiful")
@@ -58,32 +58,6 @@ local ipairs = ipairs
 local capi = {mouse=mouse, awesome=awesome}
 
 local tooltip = { mt = {} }
-
--- The mouse point is 1x1, so anything aligned based on it as parent
--- geometry will go out of bound. To get the desired placement, it is
--- necessary to swap left with right and top with bottom
-local align_convert = {
-    top_left     = "bottom_right",
-    left         = "right",
-    bottom_left  = "top_right",
-    right        = "left",
-    top_right    = "bottom_left",
-    bottom_right = "top_left",
-    top          = "bottom",
-    bottom       = "top",
-}
-
--- If the wibox is under the cursor, it will trigger a mouse::leave
-local offset = {
-    top_left     = {x =  0, y =  0 },
-    left         = {x =  0, y =  0 },
-    bottom_left  = {x =  0, y =  0 },
-    right        = {x =  1, y =  0 },
-    top_right    = {x =  0, y =  0 },
-    bottom_right = {x =  1, y =  1 },
-    top          = {x =  0, y =  0 },
-    bottom       = {x =  0, y =  1 },
-}
 
 --- The tooltip border color.
 -- @beautiful beautiful.tooltip_border_color
@@ -122,52 +96,30 @@ local offset = {
 -- @see shape
 -- @see gears.shape
 
-local function apply_mouse_mode(self)
-    local w              = self:get_wibox()
-    local align          = self._private.align
-    local real_placement = align_convert[align]
-
-    a_placement[real_placement](w, {
-        parent = capi.mouse,
-        offset = offset[align]
-    })
-end
-
-local function apply_outside_mode(self)
-    local w = self:get_wibox()
-
-    local _, position = a_placement.next_to(w, {
-        geometry            = self._private.widget_geometry,
-        preferred_positions = self.preferred_positions,
-        preferred_anchors   = self.preferred_alignments,
-        honor_workarea      = true,
-        margins             = self._private.gaps
-    })
-
-    self.current_position = position
-end
-
--- Place the tooltip under the mouse.
---
--- @tparam tooltip self A tooltip object.
+-- Content sizes itself; the opener and input gap are all placement needs.
 local function set_geometry(self)
-    -- calculate width / height
-    local n_w, n_h = self.textbox:get_preferred_size(capi.mouse.screen)
-    n_w = n_w + self.marginbox.left + self.marginbox.right
-    n_h = n_h + self.marginbox.top + self.marginbox.bottom
-
     local w = self:get_wibox()
-    w:geometry({ width = n_w, height = n_h })
-
-    local mode = self.mode
-
-    if mode == "outside" and self._private.widget_geometry then
-        apply_outside_mode(self)
-    else
-        apply_mouse_mode(self)
+    local gaps = self._private.gaps
+    local pos = self.preferred_positions
+    local anchors = self.preferred_alignments
+    if self.mode == 'mouse' and not self._private.preferred_positions then
+        -- Default tooltips open inward from the hover input snapshot. These
+        -- select attachment points only; no tooltip or sibling rectangle is
+        -- measured or corrected after the solve. Explicit positions win.
+        pos = {self._private.hover_position or 'bottom'}
+        if not self._private.preferred_alignments then
+            anchors = {self._private.hover_anchor or 'front'}
+        end
     end
-
-    a_placement.no_offscreen(w)
+    local direction = type(pos)=='table' and pos[1] or pos or 'bottom'
+    local gap = type(gaps)=='number' and gaps or (gaps and gaps[direction]) or 0
+    local offset = {x=direction=='left' and -gap or direction=='right' and gap or 0,
+        y=direction=='top' and -gap or direction=='bottom' and gap or 0}
+    self.current_position = attachment.next_to(w, self._private.target or capi.mouse.current_widget,
+        pos or {'bottom'}, anchors or {'middle'}, offset, 2)
+    local a=w.drawin.attachment
+    a.passthrough=true; a.hover=true
+    w.drawin.attachment=a
 end
 
 -- Show a tooltip.
@@ -176,6 +128,10 @@ end
 local function show(self)
     -- do nothing if the tooltip is already shown
     if self._private.visible then return end
+    local input = capi.mouse.coords()
+    local output = capi.mouse.screen.geometry
+    self._private.hover_position = input.y-output.y < output.height/2 and 'bottom' or 'top'
+    self._private.hover_anchor = input.x-output.x < output.width/2 and 'front' or 'back'
     if self.timer then
         if not self.timer.started then
             self.timer:start()
@@ -215,7 +171,9 @@ function tooltip:get_wibox()
     end
 
     local wb = wibox(self.wibox_properties)
+    wb._drawable._attachment_fit = true
     wb:set_widget(self.widget)
+    wb.input_passthrough = true
 
     -- Close the tooltip when clicking it.  This gets done on release, to not
     -- emit the release event on an underlying object, e.g. the titlebar icon.
@@ -310,9 +268,10 @@ function tooltip:set_shape(s)
 end
 
 --- Set the tooltip positioning mode.
--- This affects how the tooltip is placed. By default, the tooltip is `align`ed
--- close to the mouse cursor. It is also possible to place the tooltip relative
--- to the widget geometry.
+-- Tooltips attach to their widget. The default mouse mode chooses inward
+-- attachment points from the pointer input captured when opening. Outside
+-- mode uses the preferred positions and alignments. Explicit preferred
+-- positions also override the default mouse policy.
 --
 -- **mouse:**
 --
@@ -324,7 +283,7 @@ end
 --
 -- @property mode
 -- @tparam[opt="mouse"] string mode
--- @propertyvalue "mouse" Next to the mouse cursor.
+-- @propertyvalue "mouse" Attach inward using the opening pointer input.
 -- @propertyvalue "outside" Outside of the widget.
 -- @propemits true false
 
@@ -584,6 +543,7 @@ end
 
 function tooltip:set_gaps(val)
     self._private.gaps = val
+    if self._private.visible then set_geometry(self) end
 end
 
 function tooltip:get_gaps()
@@ -612,17 +572,6 @@ end
 function tooltip:remove_from_object(obj)
     obj:disconnect_signal("mouse::enter", self.show)
     obj:disconnect_signal("mouse::leave", self.hide)
-end
-
--- Tooltip can be applied to both widgets, wibox and client, their geometry
--- works differently.
-
-local function get_parent_geometry(arg1, arg2)
-    if type(arg2) == "table" and arg2.width then
-        return arg2
-    elseif type(arg1) == "table" and arg1.width then
-        return arg1
-    end
 end
 
 --- Create a new tooltip and link it to a widget.
@@ -684,13 +633,8 @@ function tooltip.new(args)
         end)
 
         function self.show(other, geo)
-            -- Auto detect clients and wiboxes
-            if other.drawable or other.pid then
-                geo = other:geometry()
-            end
-
-            -- Cache the geometry in case it is needed later
-            self._private.widget_geometry = get_parent_geometry(other, geo)
+            -- Retain the opener identity and its host across the show delay.
+            self._private.target = geo or other
 
             if not delay_timeout.started then
                 delay_timeout:start()
@@ -704,13 +648,7 @@ function tooltip.new(args)
         end
     else
         function self.show(other, geo)
-            -- Auto detect clients and wiboxes
-            if other.drawable or other.pid then
-                geo = other
-            end
-
-            -- Cache the geometry in case it is needed later
-            self._private.widget_geometry = get_parent_geometry(other, geo)
+            self._private.target = geo or other
 
             show(self)
         end

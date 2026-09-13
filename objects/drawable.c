@@ -463,6 +463,12 @@ luaA_drawable_clay_measure(lua_State *L)
 	if (!drawable_widget_host(d, &host)
 			|| !declare_widget_measure(&host, &w, &h))
 		return 0;
+    /* Preserve popup's immediate content-size read without a Lua geometry
+     * writer. This isolated solve has no siblings or attachment rectangles. */
+    if (lua_isuserdata(L, 2) && d->owner_type == DRAWABLE_OWNER_DRAWIN
+            && lua_touserdata(L, 2) == d->owner.drawin) {
+        luaA_drawin_set_size(L, 2, w, h);
+    }
 	lua_pushinteger(L, w);
 	lua_pushinteger(L, h);
 	return 2;

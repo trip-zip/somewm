@@ -293,6 +293,11 @@ function drawable:_force_screen(s)
     self._forced_screen = s
 end
 
+-- The host output is attachment input, independent of the widget's solved box.
+function drawable:get_screen()
+    return get_widget_context(self).screen
+end
+
 function drawable:_inform_visible(visible)
     self._visible = visible
     if visible then

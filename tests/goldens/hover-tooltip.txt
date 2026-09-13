@@ -1,0 +1,15 @@
+output
+  roots flow 1 floating 1 derived 0
+  OUTPUT WL-1 w=fixed(1280) h=fixed(720) output column
+    BACKGROUND WL-1 w=grow h=grow output attach PARENT band -10 image
+    WIBAR screen 1 converted w=grow h=fixed(28) theme row
+        drawable clip w=grow h=grow
+          wibox.widget.textbox w=fit h=fit
+            text "wifi" font=1
+    WORKAREA - w=grow h=grow row
+  TOOLTIP screen 1 converted w=fit h=fit row attach ELEMENT band 80
+      drawable clip w=fit h=fit
+        wibox.container.background w=grow h=grow
+          wibox.container.margin w=grow h=grow
+            wibox.widget.textbox w=grow h=grow
+              text "Connected to Home Wi-Fi" font=1

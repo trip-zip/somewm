@@ -37,7 +37,7 @@ end
 
 -- The tree nodes of the box's dump block.
 local function nodes(d)
-    local want = string.format("  drawin screen %d %dx%d+%d+%d ", s.index,
+    local want = string.format("    NOTIFICATION screen %d %dx%d+%d+%d ", s.index,
         d.width, d.height, d.x, d.y)
     local head, out = nil, {}
 

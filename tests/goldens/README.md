@@ -23,10 +23,17 @@ name so the same handwritten fixtures work with either backend.
 | 3 | Floating and fullscreen clients | floating-and-fullscreen-clients | test-clay-client-bands |
 | 3 | Gaps, workarea half | client-gaps | test-clay-golden-clients |
 | 3 | Bands | bands-normal; bands-raised; bands-ontop | test-clay-client-bands |
+| 4 | Floating widget anchored to another widget | floating-widget-anchored-to-another-widget | test-clay-attachment-popup |
+| 4 | Hover tooltip | hover-tooltip | test-clay-attachment-tooltip |
+| 4 | Notification stack | notification-stack | test-clay-attachment-notifications |
+| 4 | Centered launcher | centered-launcher | test-clay-attachment-launcher |
+| 4 | Layer shell, overlay half | layer-shell-overlay | test-clay-attachment-layer-overlay |
 
 Task 3's resizable-split gate is the existing tile mouse-resize interaction:
 it changes `master_width_factor`. It does not add the schematic divider widget.
-The band examples cover clients and wibars, not task 4's attachments. Existing
+Task 3's band examples cover clients and wibars. Task 4's additional
+`test-clay-attachment-bands` checks actual overlap pixels through bands 60, 80,
+90 and 100, including declaration order within 90. Existing
 converted widget subtrees remain intact; wrapper folding belongs to task 10.
 The background image lives on OUTPUT's grow/grow BACKGROUND child at band -10,
 as established by task 2's wallpaper fix; the golden shows this representation.
@@ -45,3 +52,25 @@ and an unnecessary fullscreen backing element in the expected fixture.
 For new implementation, write and review the expected text first and keep the
 test red until the declaration matches. `SOMEWM_GOLDEN=record` is only for a
 shape already accepted; it is not a way to resolve a failing example.
+
+## Task 4 evidence contract
+
+All five task-4 expectations were shown for review and handwritten in the first
+step commit, before fixtures or implementation. Every fixture first failed at
+its first differing line. These golden files have remained unchanged.
+
+The reduced vocabulary omits target IDs, attach points, offsets, pointer mode
+and boxes. The fixtures therefore also assert those raw fields, actual
+`root.content()` pixels, real tooltip pointer input, notification dismissal and
+reflow, and layer-client configure sizes. The popup fixture changes the bar
+layout and checks the painted attachment follows its widget. Launcher coverage
+also exercises the real menubar/prompt path; separate menu, decoration, protocol
+margin and XDG composition tests preserve their contracts.
+
+Explicit tooltip visibility requests still require a widget opener and Clay's
+previous-frame hover to declare a tooltip. A manual show can use the widget
+currently under the pointer; no opener means no tooltip declaration.
+
+The local review and original red evidence live in the companion board under
+`evidence/task-4/`. No recording mode, wrapper folding or task-10 rewrite is
+part of this task.

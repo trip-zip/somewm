@@ -32,71 +32,33 @@ local module = {}
 local main_widget = {}
 
 -- Get the optimal direction for the wibox
--- This (try to) avoid going offscreen
+-- Placement properties describe attachments; solved dimensions are read back
+-- by the compositor after the frame, never used to place against a sibling.
+local attachment = require("awful._attachment")
 local function set_position(self)
-    -- First, if there is size to be applied, do it
-    if self._private.next_width then
-        self.width = self._private.next_width
-        self._private.next_width = nil
-    end
-
-    if self._private.next_height then
-        self.height = self._private.next_height
-        self._private.next_height = nil
-    end
-
-    local pf = self._private.placement
-
-    if pf == false then return end
-
-    if pf then
-        pf(self, {bounding_rect = self.screen.geometry})
+    local p = self._private
+    if p.placement == false then return end
+    if p.placement then
+        for name in pairs(attachment.points) do
+            if p.placement == placement[name] then
+                attachment.corner(self, name, p.offset)
+                return
+            end
+        end
+        -- User callbacks can still supply explicit inputs through the API.
+        p.placement(self)
         return
     end
-
-    local geo = self._private.widget_geo
-
-    if not geo then return end
-
-    local _, pos_name, anchor_name = placement.next_to(self, {
-        preferred_positions = self._private.preferred_directions,
-        geometry            = geo,
-        preferred_anchors   = self._private.preferred_anchors,
-        offset              = self._private.offset or { x = 0, y = 0},
-    })
-
-    if pos_name ~= self._private.current_position then
-        local old = self._private.current_position
-        self._private.current_position = pos_name
-        self:emit_signal("property::current_position", pos_name, old)
+    if not p.widget_geo then return end
+    local position, anchor = attachment.next_to(self, p.widget_geo,
+        p.preferred_directions, p.preferred_anchors, p.offset)
+    if position ~= p.current_position then
+        local old=p.current_position; p.current_position=position
+        self:emit_signal("property::current_position", position, old)
     end
-
-    if anchor_name ~= self._private.current_anchor then
-        local old = self._private.current_anchor
-        self._private.current_anchor = anchor_name
-        self:emit_signal("property::current_anchor", anchor_name, old)
-    end
-end
-
--- Set the wibox size taking into consideration the limits
-local function apply_size(self, width, height, set_pos)
-    local prev_geo = self:geometry()
-
-    width  = math.max(self._private.minimum_width  or 1, math.ceil(width  or 1))
-    height = math.max(self._private.minimum_height or 1, math.ceil(height or 1))
-
-    if self._private.maximum_width then
-        width = math.min(self._private.maximum_width, width)
-    end
-
-    if self._private.maximum_height then
-        height = math.min(self._private.maximum_height, height)
-    end
-
-    self._private.next_width, self._private.next_height = width, height
-
-    if set_pos or width ~= prev_geo.width or height ~= prev_geo.height then
-        set_position(self)
+    if anchor ~= p.current_anchor then
+        local old=p.current_anchor; p.current_anchor=anchor
+        self:emit_signal("property::current_anchor", anchor, old)
     end
 end
 
@@ -241,17 +203,9 @@ function popup:move_next_to(obj)
 
     self._private.widget_geo = obj
 
-    obj = obj or capi.mouse
-
-    if obj._apply_size_now then
-        obj:_apply_size_now(false)
-    end
-
+    self._private.widget_geo = obj or capi.mouse.coords()
+    set_position(self)
     self.visible = true
-
-    self:_apply_size_now(true)
-
-    self._private.widget_geo = nil
 end
 
 --- Bind the popup to a widget button press.
@@ -396,23 +350,11 @@ end
 
 -- For the tests and the race condition when 2 popups are placed next to each
 -- other.
-function popup:_apply_size_now(skip_set)
+function popup:_apply_size_now()
     if not self.widget then return end
-
-    -- Compile now and measure the tree on its own: the size lands before
-    -- any frame, as it did with the engine.
     self._drawable._do_redraw()
-    local w, h = self._drawable.drawable:_clay_measure()
-    if not w then return end
-
-    -- It is important to do it for the obscure reason that calling `w:geometry()`
-    -- is actually mutating the state due to quantum determinism thanks to XCB
-    -- async nature... It is only true the very first time `w:geometry()` is
-    -- called
-    self.width  = math.max(1, math.ceil(w or 1))
-    self.height = math.max(1, math.ceil(h or 1))
-
-    apply_size(self, w, h, skip_set ~= false)
+    self._drawable.drawable:_clay_measure(self.drawin)
+    set_position(self)
 end
 
 function popup:set_widget(wid)
@@ -475,13 +417,13 @@ local function create_popup(_, args)
         return { specs = { { widget = ii._private.widget, w = "grow", h = "grow" } },
             wmin = p.minimum_width, wmax = p.maximum_width,
             hmin = p.minimum_height, hmax = p.maximum_height,
-            fit = function(width, height) apply_size(w, width, height, true) end }
+            fit = function() end }
     end, "awful.popup")
 
     -- Create the signal handlers
     function w._private.show_fct(wdg, _, _, button, _, geo)
         if button == w._private.button_for_widget[wdg] then
-            w:move_next_to(geo)
+            w:move_next_to(geo or wdg)
         end
     end
     function w._private.hide_fct()

@@ -32,6 +32,7 @@ function golden.shape(dump)
         elseif keep and not line:match("^  commands ") then
             -- a widget node: drop the element id, keep the indentation
             line = line:gsub("^    %x%x%x%x%x%x%x%x ", "    ")
+            line = line:gsub(" target %x+ parent %S+ own %S+ pointer %S+", "")
             line = line:gsub(" box %-?%d+,%-?%d+ %d+x%d+", "")
             line = line:gsub(" box %-$", "")
             line = line:gsub(" offset %-?[%d.]+,%-?[%d.]+", "")

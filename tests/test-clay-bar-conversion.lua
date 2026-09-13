@@ -22,7 +22,7 @@ local leaf_widget = capture.leaf_widget
 
 local bars = {}
 local budget_bars = {}
-local tooltip
+local tooltip, tooltip_pointer_sent
 
 local function lines()
     local out = {}
@@ -51,7 +51,7 @@ local function block(bar)
     local d = bar.drawin
     -- The drawin's own line, not the command line that draws it: a whole
     -- drawin's image leaf names itself the same way.
-    local want = string.format("  drawin screen %d %dx%d+%d+%d ", s.index,
+    local want = string.format("  %s screen %d %dx%d+%d+%d ", d.type == "tooltip" and "TOOLTIP" or "drawin", s.index,
         d.width, d.height, d.x, d.y)
     local head, nodes = nil, {}
 
@@ -235,11 +235,19 @@ local steps = {
                     widget = wibox.container.margin },
             })
             tooltip = awful.tooltip { objects = { bar }, text = "a tip" }
-            tooltip.visible = true
+            tooltip_pointer_sent = false
             return nil
         end
 
         local head = block(bar)
+        -- Input must arrive after the target has a solved tree. Sending it
+        -- during construction races the first frame under a full-suite load.
+        if head and not tooltip_pointer_sent then
+            awful.spawn {"./build-test/test-virtual-pointer-client", "move",
+                tostring(bar.x+4), tostring(bar.y+4), "1280", "720"}
+            tooltip_pointer_sent = true
+            return nil
+        end
         local tip = block(tooltip.wibox)
 
         if not (head and tip) then

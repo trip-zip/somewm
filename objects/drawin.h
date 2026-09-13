@@ -88,6 +88,12 @@ typedef struct drawin_t {
 	/* Stable border and shadow image entries, owned by the drawin. */
 	struct image_entry border_entry;
 	struct shadow_leaves shadow;
+    /* Cached decoration pixels. Its extent is theme input; its content
+     * dimensions are the drawin's previous solved size. */
+    struct image_entry attachment_decoration;
+    uint64_t decoration_border_gen;
+    shadow_config_t decoration_shadow;
+    int decoration_width, decoration_height;
 
 	/* The described widget tree (widget.h) and its image entries in
 	 * preorder. Empty until the drawable's first compile stores a tree,
@@ -107,6 +113,15 @@ typedef struct drawin_t {
 		bool stretch;
 		uint8_t align;         /* 0 centered, 1 the start, 2 the end */
 	} bar;
+    struct {
+        uint8_t kind; /* 1 popup, 2 tooltip, 3 launcher, 4 notification */
+        uint32_t target; /* Lua widget identity, 0 means OUTPUT */
+        uint8_t parent, own; /* Clay attach point */
+        float x, y, width;
+        uint16_t gap;
+        uint8_t position;
+        bool passthrough, hover;
+    } attachment;
 } drawin_t;
 
 enum drawin_edge {
@@ -146,6 +161,7 @@ void luaA_drawin_setup(lua_State *L);
 void drawin_class_setup(lua_State *L);
 
 /* Drawin geometry synchronization (external API - for wibox code etc) */
+void luaA_drawin_set_size(lua_State *L, int udx, int width, int height);
 void luaA_drawin_set_geometry(lua_State *L, drawin_t *drawin, int x, int y, int width, int height);
 void luaA_drawin_set_strut(lua_State *L, drawin_t *drawin, strut_t strut);
 
