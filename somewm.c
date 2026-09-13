@@ -4409,10 +4409,26 @@ void
 fullscreennotify(struct wl_listener *listener, void *data)
 {
 	Client *c = wl_container_of(listener, c, request_fullscreen);
+	int wants_fullscreen;
+
 	/* Guard against stale XWayland client after client_unmanage() */
 	if (c->client_type == X11 && c->window == XCB_NONE)
 		return;
-	setfullscreen(c, client_wants_fullscreen(c));
+
+	/* Put client to the requested fullscreen output monitor, if set. However,
+	 * it is possible that the client surface is not yet mapped. We need to
+	 * guard against this, otherwise the fullscreen flag is going to be set,
+	 * but not yet (and never) visually applied. We move the client to
+	 * fullscreen_output in mapnotify(). */
+	wants_fullscreen = client_wants_fullscreen(c);
+	if (wants_fullscreen && c->client_type != X11 && client_surface(c)->mapped) {
+		struct wlr_output *req_output = c->surface.xdg->toplevel->requested.fullscreen_output;
+		Monitor *m = req_output ? req_output->data : NULL;
+		if (m && m != c->mon)
+			setmon(c, m, 0);
+	}
+
+	setfullscreen(c, wants_fullscreen);
 }
 
 /* Foreign toplevel management handlers - allow external tools like rofi
@@ -5210,6 +5226,14 @@ mapnotify(struct wl_listener *listener, void *data)
 		/* Set the client's monitor BEFORE emitting signals (matches AwesomeWM line 2206).
 		 * This ensures the client has a screen when signal handlers run. */
 		target_mon = c->mon ? c->mon : xytomon(c->geometry.x, c->geometry.y);
+		/* Assume fullscreen_output was set. In fullscreennotify() we guarded
+		 * against client surface not being mapped yet. Move the by now
+		 * fullscreen client to the right output now. */
+		if (c->fullscreen && c->client_type != X11) {
+			struct wlr_output *req_output = c->surface.xdg->toplevel->requested.fullscreen_output;
+			if (req_output && req_output->data)
+				target_mon = req_output->data;
+		}
 		if (!target_mon)
 			target_mon = selmon;
 		setmon(c, target_mon, 0);
