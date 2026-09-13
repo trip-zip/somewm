@@ -2,11 +2,7 @@ local runner=require('_runner')
 local awful=require('awful')
 local utils=require('_utils')
 local s=screen[1]
-local layouts={awful.layout.suit.fair,awful.layout.suit.fair.horizontal,
- awful.layout.suit.spiral,awful.layout.suit.spiral.dwindle,
- awful.layout.suit.corner.nw,awful.layout.suit.corner.ne,awful.layout.suit.corner.sw,awful.layout.suit.corner.se,
- awful.layout.suit.magnifier,awful.layout.suit.carousel,awful.layout.suit.carousel.vertical,
- awful.layout.suit.max,awful.layout.suit.max.fullscreen}
+local layouts={awful.layout.suit.carousel,awful.layout.suit.carousel.vertical}
 local a,b
 local steps={
  function()
@@ -39,7 +35,11 @@ for _,layout in ipairs(layouts) do
   return true
  end
 end
-steps[#steps+1]=function()s.selected_tag.layout=awful.layout.suit.tile;return true end
+for _,native in ipairs {awful.layout.suit.tile, awful.layout.suit.spiral, awful.layout.suit.spiral.dwindle,
+ awful.layout.suit.max, awful.layout.suit.max.fullscreen, awful.layout.suit.magnifier,
+ awful.layout.suit.fair, awful.layout.suit.fair.horizontal,
+ awful.layout.suit.corner.nw, awful.layout.suit.corner.ne, awful.layout.suit.corner.sw, awful.layout.suit.corner.se} do
+steps[#steps+1]=function()s.selected_tag.layout=native;return true end
 steps[#steps+1]=function(n)
  local dump=awesome._clay_tree(s)
  if not dump:find('derived 0',1,true) then assert(n<30,dump);return end
@@ -49,8 +49,9 @@ steps[#steps+1]=function(n)
     or line:find(' protocol',1,true) or line:find(' user',1,true) or line:find(' last%-frame'),line)
   end
  end
- io.stderr:write('[PASS] tile: derived 0; fixed inputs carry source words\n')
+ io.stderr:write('[PASS] '..native.name..': derived 0; fixed inputs carry source words\n')
  return true
+end
 end
 steps[#steps+1]=function()a:kill();b:kill();return true end
 runner.run_steps(steps,{kill_clients=false})

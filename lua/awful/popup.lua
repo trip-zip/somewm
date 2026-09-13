@@ -348,12 +348,11 @@ function popup:set_placement(f)
     self:emit_signal("property::placement")
 end
 
--- For the tests and the race condition when 2 popups are placed next to each
--- other.
+-- Apply placement inputs and request the normal output frame. Size reads
+-- remain the completed frame's; chained attachments resolve in declaration.
 function popup:_apply_size_now()
     if not self.widget then return end
-    self._drawable._do_redraw()
-    self._drawable.drawable:_clay_measure(self.drawin)
+    self._drawable:draw()
     set_position(self)
 end
 
@@ -417,7 +416,7 @@ local function create_popup(_, args)
         return { specs = { { widget = ii._private.widget, w = "grow", h = "grow" } },
             wmin = p.minimum_width, wmax = p.maximum_width,
             hmin = p.minimum_height, hmax = p.maximum_height,
-            fit = function() end }
+            fit = true }
     end, "awful.popup")
 
     -- Create the signal handlers

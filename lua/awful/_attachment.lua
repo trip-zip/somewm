@@ -14,21 +14,30 @@ function M.next_to(w, target, positions, anchors, offset, kind)
     local widget = target and (target.is_widget and target or target.widget)
     -- Widget objects expose emit_signal, while explicit point input does not.
     if target and not widget and target.emit_signal and not target.geometry then widget=target end
+    local occurrence = target and target.occurrence
+    local host
     if widget then
         -- Keep the event's drawable: a widget can occur on multiple outputs.
         -- Programmatic show while hovered can use the same previous-frame hit.
         -- Wibox objects keep the Lua host under _drawable; their public
         -- drawable is the C object. A widget hit already names the Lua host.
-        local host = target._drawable or target.drawable
-        if not host then
+        host = target._drawable or target.drawable
+        if not occurrence then
             for _, hit in ipairs(mouse.current_widget_geometries or {}) do
-                if hit.widget == widget then host = hit.drawable; break end
+                if hit.widget == widget and (not host or host == hit.drawable) then
+                    occurrence, host = hit.occurrence, hit.drawable
+                end
             end
+        end
+        if not occurrence then
+            host = require('wibox.drawable')._clay_target(widget, host) or host
         end
         if host then w.screen = host:get_screen() end
     end
     local a = {kind=kind or 1, parent=parent, own=own,
         target=widget and require('wibox.clay').identity(widget) or 0,
+        occurrence=occurrence or 0,
+        host=host and host.drawable,
         x=offset and offset.x or 0, y=offset and offset.y or 0}
     if not widget then
         local point = target or mouse.coords()

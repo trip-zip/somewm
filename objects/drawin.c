@@ -525,6 +525,21 @@ luaA_drawin_set_attachment(lua_State *L, drawin_t *d)
             return luaL_error(L, "invalid attachment " #field); \
         next.field = v; lua_pop(L, 1); } while (0)
         ATTACH_NUMBER(kind, 0, 4); ATTACH_NUMBER(target, 0, UINT32_MAX);
+        ATTACH_NUMBER(occurrence, 0, UINT32_MAX);
+        lua_getfield(L, -1, "host");
+        if (lua_isuserdata(L, -1)) {
+            drawable_t *host = luaA_checkudata(L, -1, &drawable_class);
+            if (host->owner_type == DRAWABLE_OWNER_DRAWIN)
+                next.host = (uint32_t)declare_handle_for(host->owner.drawin, DECLARE_KIND_DRAWIN);
+            else if (host->owner_type == DRAWABLE_OWNER_CLIENT)
+                next.host = (uint32_t)declare_handle_for(host, DECLARE_KIND_TITLEBAR);
+        } else {
+            double id = lua_isnil(L, -1) ? 0 : luaL_checknumber(L, -1);
+            if (!isfinite(id) || id < 0 || id > UINT32_MAX)
+                return luaL_error(L, "invalid attachment host");
+            next.host = id;
+        }
+        lua_pop(L, 1);
         ATTACH_NUMBER(parent, 0, 8); ATTACH_NUMBER(own, 0, 8);
         ATTACH_NUMBER(x, -INT_MAX, INT_MAX); ATTACH_NUMBER(y, -INT_MAX, INT_MAX);
         ATTACH_NUMBER(width, 0, UINT16_MAX); ATTACH_NUMBER(gap, 0, UINT16_MAX);
@@ -537,6 +552,7 @@ luaA_drawin_set_attachment(lua_State *L, drawin_t *d)
     }
     if (!memcmp(&next, &d->attachment, sizeof(next))) return 0;
     d->attachment = next;
+    d->attachment_ambiguous = false;
     drawin_mark_dirty(d);
     return 0;
 }
@@ -549,6 +565,8 @@ luaA_drawin_get_attachment(lua_State *L, drawin_t *d)
 #define ATTACH_NUMBER(field) do { lua_pushnumber(L, d->attachment.field); \
     lua_setfield(L, -2, #field); } while (0)
     ATTACH_NUMBER(kind); ATTACH_NUMBER(target); ATTACH_NUMBER(parent);
+    ATTACH_NUMBER(occurrence);
+    ATTACH_NUMBER(host);
     ATTACH_NUMBER(own); ATTACH_NUMBER(x); ATTACH_NUMBER(y); ATTACH_NUMBER(width);
     ATTACH_NUMBER(gap); ATTACH_NUMBER(position);
 #undef ATTACH_NUMBER
@@ -1025,12 +1043,26 @@ luaA_drawin_apply_geometry(drawin_t *drawin)
 	drawin->geometry_dirty = false;
 }
 
+bool
+drawin_native_attachment_border(const drawin_t *d)
+{
+	return d->attachment.kind
+		&& !(d->shape_border && cairo_surface_status(d->shape_border) == CAIRO_STATUS_SUCCESS)
+		&& !shadow_get_effective_config(d->shadow_config, true)->enabled;
+}
+
 /** Refresh a single drawin's border entry.
  * Rebuilds the border image the declare pass hands the renderer. */
 static void
 drawin_border_refresh_single(drawin_t *d)
 {
 	cairo_surface_t *border_surface;
+	bool native = drawin_native_attachment_border(d);
+	/* Attachment/shadow policy may change independently of border properties.
+	 * Retire the replaced raster, or recreate it when leaving this path. */
+	if ((native && d->border_entry.native)
+			|| (!native && d->border_width > 0 && !d->border_entry.native))
+		d->border_need_update = true;
 
 	/* Skip if no update needed */
 	if (!d->border_need_update) {
@@ -1041,7 +1073,7 @@ drawin_border_refresh_single(drawin_t *d)
 
 	/* border_surface's ownership moves to the renderer's border entry;
 	 * without a border there is no entry and no leaf. */
-	border_surface = d->border_width > 0 ? drawin_render_border(d) : NULL;
+	border_surface = !native && d->border_width > 0 ? drawin_render_border(d) : NULL;
 	image_entry_set(&d->border_entry, border_surface);
 
 	drawin_mark_dirty(d);

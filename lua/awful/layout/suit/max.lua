@@ -7,7 +7,8 @@
 ---------------------------------------------------------------------------
 
 -- Grab environment we need
-local pairs = pairs
+local ipairs = ipairs
+local client = require("awful.client")
 
 local max = {}
 
@@ -21,33 +22,26 @@ local max = {}
 -- @param surface
 -- @see gears.surface
 
-local function fmax(p, fs)
-  -- Fullscreen?
-  local area
-  if fs then
-    area = p.geometry
-  else
-    area = p.workarea
+local function describe(s, fullscreen)
+  local floating = {}
+  local gap = s.selected_tag.gap_single_client == false and 0 or s.selected_tag.gap
+  for _, c in ipairs(client.tiled(s)) do
+    if not c.ontop and not c.above and not c.below then
+      floating[c] = {attach_to = fullscreen and "output" or "workarea", padding = gap}
+    end
   end
-
-  for _, c in pairs(p.clients) do
-    local g = {
-      x = area.x,
-      y = area.y,
-      width = area.width,
-      height = area.height,
-    }
-    p.geometries[c] = g
-  end
+  return {role = "WORKAREA", direction = "row", children = {}, floating = floating}
 end
+
+-- Public method shape is retained; awful.layout schedules native declarations.
+local function arrange() end
 
 --- Maximized layout.
 -- @clientlayout awful.layout.suit.max
 -- @usebeautiful beautiful.layout_max
 max.name = "max"
-function max.arrange(p)
-  return fmax(p, false)
-end
+max.arrange = arrange
+max._clay = function(s) return describe(s, false) end
 function max.skip_gap(nclients, t) -- luacheck: no unused args
   return true
 end
@@ -58,9 +52,8 @@ end
 max.fullscreen = {}
 max.fullscreen.name = "fullscreen"
 max.fullscreen.skip_gap = max.skip_gap
-function max.fullscreen.arrange(p)
-  return fmax(p, true)
-end
+max.fullscreen.arrange = arrange
+max.fullscreen._clay = function(s) return describe(s, true) end
 
 return max
 

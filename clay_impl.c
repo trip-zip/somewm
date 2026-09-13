@@ -1,5 +1,5 @@
-/* Pristine third_party/clay.h and licenses/LICENSE.clay pin:
- * e6cc36941ab2af5d81107617039d6f527a1c660b. No patches in M0a. */
+/* Clay upstream pin e6cc36941ab2af5d81107617039d6f527a1c660b.
+ * Local native extensions: third_party/README.clay.md and clay-local.patch. */
 
 /* The single production translation unit that compiles Clay itself. Clay is a
  * header-only library: every other production file includes clay.h for the
@@ -9,6 +9,24 @@
 #include "clay.h"
 
 #include "clay_impl.h"
+
+Clay_RenderCommandArray
+clay_render_commands(void)
+{
+	return Clay_GetCurrentContext()->renderCommands;
+}
+
+bool
+clay_element_declaration(Clay_ElementId id, Clay_ElementDeclaration *out)
+{
+	Clay_LayoutElementHashMapItem *item = Clay__GetHashMapItem(id.id);
+	if (item == &Clay_LayoutElementHashMapItem_DEFAULT
+			|| item->generation != Clay_GetCurrentContext()->generation + 1
+			|| !item->layoutElement || item->layoutElement->isTextElement)
+		return false;
+	*out = item->layoutElement->config;
+	return true;
+}
 
 /* Offsets come from Lua on every layout (third_party/clay.h:2733-2745).
  * Clay_UpdateScrollContainers skips a swapped record during cleanup and

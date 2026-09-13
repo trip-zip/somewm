@@ -1,0 +1,10 @@
+output
+  roots flow 1 floating 1 derived 0
+  OUTPUT WL-1 w=fixed(1280) h=fixed(720) output column
+    BACKGROUND WL-1 w=grow h=grow output row attach PARENT band -10
+    WORKAREA - w=grow h=grow row
+  POPUP screen 1 converted clip w=fit h=fit theme row pad 1,1,1,1 attach OUTPUT band 80
+    wibox.layout.fixed w=fit h=fit row gap 4
+      text "A" font=1
+      wibox.widget.base w=fixed(20) h=grow user row
+      text "B" font=1

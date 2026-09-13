@@ -1,0 +1,15 @@
+output
+  roots flow 1 floating 0 derived 0
+  OUTPUT WL-1 w=fixed(1280) h=fixed(720) output column
+    BACKGROUND WL-1 w=grow h=grow output row attach PARENT band -10
+    WORKAREA - w=grow h=grow row
+      CLIENT CLIENT_A w=grow h=grow theme column pad 2,2,2,2
+        TITLEBAR CLIENT_A converted clip w=grow h=fixed(30) theme row
+          image image 512x512 w=fixed(30) h=fixed(30) theme
+          wibox.layout.flex w=grow h=grow row
+            text "Example" font=1
+          wibox.layout.fixed w=fit h=grow row
+            image image 240x240 w=fixed(30) h=fixed(30) theme
+            image image 240x240 w=fixed(30) h=fixed(30) theme
+            image image 240x240 w=fixed(30) h=fixed(30) theme
+        SURFACE CLIENT_A w=grow h=grow custom

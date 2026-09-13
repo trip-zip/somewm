@@ -47,16 +47,27 @@ local function nodes()
     return head, out
 end
 
--- The textbox nodes, in order, each with the text node under it if any.
+-- Each original textbox binds to its actual sizing container. Its glyph is
+-- a native TEXT child; the empty textbox still has its empty allocation.
 local function textboxes(list)
     local out = {}
-    for i, node in ipairs(list) do
-        if node.class == "wibox.widget.textbox" then
-            local child = list[i + 1]
-            out[#out + 1] = { node = node,
-                text = child and child.depth == node.depth + 1
-                    and child.class == "text" and child or nil }
+    for _, widget in ipairs { plain, span, bold, empty } do
+        local binding = assert(bar._drawable._clay_wired[widget])[1]
+        local element = assert(binding.element)
+        local found, glyph
+        for index, node in ipairs(list) do
+            local box = node.box
+            if box and box.x == element.box.x and box.y == element.box.y
+                    and box.width == element.box.width and box.height == element.box.height
+                    and node.class == (element.text and "text" or "wibox.widget.textbox") then
+                assert(not found, "ambiguous textbox element in native dump")
+                found = node
+                glyph = element.text and node or list[index + 1]
+                if glyph and (glyph.class ~= "text" or (not element.text and glyph.depth ~= node.depth + 1)) then glyph = nil end
+            end
         end
+        assert(found, "original textbox has no matching real solved element")
+        out[#out + 1] = {node = found, text = glyph, element = element}
     end
     return out
 end
@@ -123,7 +134,8 @@ local steps = {
             and tb[4].node.box.width == 0,
             "an empty textbox is not an empty element: " .. tb[4].node.line)
         -- Clay sized the textboxes: fit along, the whole bar across.
-        assert(tb[1].node.line:find(" w=fit h=grow ", 1, true),
+        assert(not tb[1].element.text and (tb[1].element.w or "fit") == "fit"
+            and tb[1].element.h == "grow",
             "the textbox is not sized by Clay: " .. tb[1].node.line)
         assert(tb[1].node.box.width > 20 and tb[1].node.box.height == BH,
             "the textbox has no text-sized box: " .. tb[1].node.line)

@@ -1,6 +1,7 @@
 local runner = require("_runner")
 local utils = require("_utils")
 local golden = require("_clay_example")
+local checks = golden.batch()
 local awful = require("awful")
 
 local binary = assert(utils.binary_or_skip("./build-test/test-transient-client"))
@@ -44,7 +45,7 @@ local function check(name)
     return function(count)
         local dump = awesome._clay_tree(s)
         if dump == last and dump:find("converted", 1, true) then
-            golden.check(name, dump)
+            checks.check(name, dump)
             return true
         end
         last = dump
@@ -81,4 +82,5 @@ steps[#steps + 1] = check("client-gaps")
 steps[#steps + 1] = function() awful.spawn({ binary, "CLIENT_C" }); return true end
 steps[#steps + 1] = mapped("CLIENT_C")
 steps[#steps + 1] = check("nested-client-layouts")
+steps[#steps + 1] = checks.finish
 runner.run_steps(steps)

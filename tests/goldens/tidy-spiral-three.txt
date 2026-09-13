@@ -1,0 +1,12 @@
+output
+  roots flow 1 floating 0 derived 0
+  OUTPUT WL-1 w=fixed(1280) h=fixed(720) output column
+    BACKGROUND WL-1 w=grow h=grow output row attach PARENT band -10
+    WORKAREA - w=grow h=grow row
+      CLIENT A w=percent(0.5) h=grow theme column pad 1,1,1,1
+        SURFACE A w=grow h=grow custom
+      STACK - w=grow h=grow column
+        CLIENT B w=grow h=percent(0.5) theme column pad 1,1,1,1
+          SURFACE B w=grow h=grow custom
+        CLIENT C w=grow h=grow theme column pad 1,1,1,1
+          SURFACE C w=grow h=grow custom

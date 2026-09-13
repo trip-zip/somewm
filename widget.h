@@ -16,6 +16,8 @@ typedef struct Monitor Monitor;
 struct widget_tree {
 	struct widget_node *nodes;
 	size_t nodes_len;
+	struct widget_binding *bindings;
+	size_t bindings_len;
 	size_t scrolls;
 	struct image_entry *leaves;
 	size_t leaves_len;
@@ -32,6 +34,9 @@ struct widget_tree {
 	 * so without this a tree that changed since
 	 * the last frame would read back the boxes of the one it replaced. */
 	bool declared;
+	/* The actual root element of the completed declaration, including a
+	 * host slot that owns its drawable contribution directly. No geometry. */
+	uint32_t root_id;
 };
 
 /* A converted widget tree at a box on an output. */
@@ -62,6 +67,11 @@ enum widget_sizing {
 	WIDGET_SIZING_PERCENT,
 };
 
+/* Original Lua identities bound to actual elements, without geometry. */
+struct widget_binding {
+	uint32_t identity, occurrence;
+};
+
 /* One converted widget node, as lua/wibox/clay.lua describes it.
  *
  * The tree is stored in preorder: a node's subtree is the `children` nodes
@@ -79,7 +89,9 @@ struct widget_node {
 	 * element id to a render command. NULL for a node that stands for no
 	 * widget. */
 	const char *cls;
-	uint32_t identity; /* Lua widget identity; resolves to this frame's path id. */
+	uint32_t identity; /* Original Lua object identity, shared by its occurrences. */
+	uint32_t occurrence; /* Stable Lua placement token, unique across hosts. */
+	uint32_t binding_start, binding_count;
 	uint16_t pad[4];     /* left, right, top, bottom */
 	uint16_t bw[4];      /* border widths, same order */
 	float bg[4];
@@ -119,11 +131,13 @@ struct widget_node {
 	 * Numbered here rather than by Lua, from the tree's shape alone. */
 	uint8_t clip_opens, clip_by;
 
-	/* A text element (CLAY_TEXT), the child a converted textbox holds: the
+	/* A text element (CLAY_TEXT), or a compatible textbox's own element: the
 	 * run in the drawin's widget_text buffer, and its Clay_TextElementConfig.
 	 * fontSize is 0, the interned face carries its own size (render_text.h).
-	 * A text node has no children and stands for no widget. */
+	 * A text node has no children. text_layout lets FIT/GROW text own the
+	 * original widget's allocated area, with aligned glyph commands inside. */
 	bool text;
+	bool text_layout;
 	uint32_t text_off, text_len;
 	uint16_t font;       /* render_font_intern's id */
 	uint8_t wrap;        /* Clay_TextElementConfigWrapMode */
@@ -143,6 +157,10 @@ struct widget_node {
  * tasklist) is a few hundred nodes; Clay's default context holds 8192
  * elements (clay.h:1019), shared by every drawin on the output. */
 #define WIDGET_NODES_MAX 1024
+
+/* Folding can bind many original widgets to a small native tree. Bound the
+ * input walk as well, including a malformed cyclic binding list. */
+#define WIDGET_BINDINGS_MAX 65536
 
 /* Elements every converted tree on one output may take together. Clay's
  * context holds 8192 (clay.h:1019, allocated at 2151-2168) and every drawin

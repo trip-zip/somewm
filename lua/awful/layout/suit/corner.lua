@@ -9,8 +9,7 @@
 
 -- Grab environment we need
 local ipairs = ipairs
-local math = math
-local capi = { screen = screen }
+local client = require("awful.client")
 
 --- The cornernw layout layoutbox icon.
 -- @beautiful beautiful.layout_cornernw
@@ -32,135 +31,72 @@ local capi = { screen = screen }
 -- @param surface
 -- @see gears.surface
 
--- Actually arrange clients of p.clients for corner layout
--- @param p Mandatory table containing required information for layouts
--- (clients to arrange, workarea geometry, etc.)
--- @param orientation String indicating in which corner is the master window.
--- Available values are : NE, NW, SW, SE
-local function do_corner(p, orientation)
-  local t = p.tag or capi.screen[p.screen].selected_tag
-  local wa = p.workarea
-  local cls = p.clients
-
-  if #cls == 0 then
-    return
+-- Membership and native composition only. The original alternating column
+-- and row membership remains; each group now allocates its actual children.
+local function describe(s, orientation)
+  local t = s.selected_tag
+  local clients = {}
+  for _, c in ipairs(client.tiled(s)) do
+    if not c.ontop and not c.above and not c.below then
+      clients[#clients + 1] = c
+    end
   end
-
-  local master = {}
-  local column = {}
-  local row = {}
-  -- Use the nmaster field of the tag in a cheaty way
-  local row_privileged = ((cls[1].screen.selected_tag.master_count % 2) == 0)
-
-  local master_factor = cls[1].screen.selected_tag.master_width_factor
-  master.width = master_factor * wa.width
-  master.height = master_factor * wa.height
-
-  local number_privileged_win = math.ceil((#cls - 1) / 2)
-  local number_unprivileged_win = (#cls - 1) - number_privileged_win
-
-  -- Define some obvious parameters
-  column.width = wa.width - master.width
-  column.x_increment = 0
-  row.height = wa.height - master.height
-  row.y_increment = 0
-
-  -- Place master at the right place and move row and column accordingly
-  column.y = wa.y
-  row.x = wa.x
-  if orientation:match("N.") then
-    master.y = wa.y
-    row.y = master.y + master.height
-  elseif orientation:match("S.") then
-    master.y = wa.y + wa.height - master.height
-    row.y = wa.y
+  local n = #clients
+  local row_privileged = t.master_count % 2 == 0
+  local factor = t.master_width_factor
+  local west, north = orientation:sub(2,2) == "W", orientation:sub(1,1) == "N"
+  local gap = (t.gap_single_client ~= false
+      or not (n == 1 and t.master_fill_policy == "expand")) and t.gap or 0
+  local function leaf(c)
+    local item = {client = c, contain_size = true}
+    if gap > 0 then
+      item = {role = "CELL", direction = "row", padding = gap, children = {item}}
+    end
+    return item
   end
-  if orientation:match(".W") then
-    master.x = wa.x
-    column.x = master.x + master.width
-  elseif orientation:match(".E") then
-    master.x = wa.x + wa.width - master.width
-    column.x = wa.x
+  local function group(direction, items)
+    if #items == 1 then return items[1] end
+    return {role = "STACK", direction = direction, children = items}
   end
-  -- At this point, master is in a corner
-  -- but row and column are overlaied in the opposite corner...
-
-  -- Reduce the unprivileged slaves to remove overlay
-  -- and define actual width and height
-  if row_privileged then
-    row.width = wa.width
-    row.number_win = number_privileged_win
-    column.y = master.y
-    column.height = master.height
-    column.number_win = number_unprivileged_win
+  local function order(first, second, forward)
+    return forward and {first, second} or {second, first}
+  end
+  local root = {role = "WORKAREA", direction = row_privileged and "column" or "row", children = {}}
+  if n == 0 then return root end
+  local master = leaf(clients[1])
+  local axis = row_privileged and "h" or "w"
+  if n == 1 then
+    root.center = t.master_fill_policy ~= "expand"
+    if root.center then master[axis] = factor end
+    root.children = {master}
+  elseif n == 2 then
+    -- With only a slave, split along the privileged axis; there is no
+    -- opposite group whose nonexistent count could divide a rectangle.
+    master[axis] = factor
+    root.children = order(master, leaf(clients[2]), row_privileged and north or not row_privileged and west)
   else
-    column.height = wa.height
-    column.number_win = number_privileged_win
-    row.x = master.x
-    row.width = master.width
-    row.number_win = number_unprivileged_win
-  end
-
-  column.win_height = column.height / column.number_win
-  column.win_width = column.width
-  column.y_increment = column.win_height
-  column.win_idx = 0
-
-  row.win_width = row.width / row.number_win
-  row.win_height = row.height
-  row.x_increment = row.win_width
-  row.win_idx = 0
-
-  -- Extend master if there is only a few windows and "expand" policy is set
-  if #cls < 3 then
+    local column, row = {}, {}
+    for i = 2, n do
+      local items = i % 2 == 0 and column or row
+      items[#items + 1] = leaf(clients[i])
+    end
     if row_privileged then
-      master.x = wa.x
-      master.width = wa.width
+      master.w = factor
+      local band = group("row", order(master, group("column", column), west))
+      band.h = factor
+      root.children = order(band, group("row", row), north)
     else
-      master.y = wa.y
-      master.height = wa.height
-    end
-    if #cls < 2 then
-      if t.master_fill_policy == "expand" then
-        master = wa
-      else
-        master.x = master.x + (wa.width - master.width) / 2
-        master.y = master.y + (wa.height - master.height) / 2
-      end
+      master.h = factor
+      local band = group("column", order(master, group("row", row), north))
+      band.w = factor
+      root.children = order(band, group("column", column), west)
     end
   end
-
-  for i, c in ipairs(cls) do
-    local g
-    -- Handle master window
-    if i == 1 then
-      g = {
-        x = master.x,
-        y = master.y,
-        width = master.width,
-        height = master.height,
-      }
-      -- handle column windows
-    elseif i % 2 == 0 then
-      g = {
-        x = column.x + column.win_idx * column.x_increment,
-        y = column.y + column.win_idx * column.y_increment,
-        width = column.win_width,
-        height = column.win_height,
-      }
-      column.win_idx = column.win_idx + 1
-    else
-      g = {
-        x = row.x + row.win_idx * row.x_increment,
-        y = row.y + row.win_idx * row.y_increment,
-        width = row.win_width,
-        height = row.win_height,
-      }
-      row.win_idx = row.win_idx + 1
-    end
-    p.geometries[c] = g
-  end
+  return root
 end
+
+-- Public method shape remains; awful.layout schedules the native producer.
+local function arrange() end
 
 local corner = {}
 corner.row_privileged = false
@@ -176,9 +112,8 @@ end
 -- @usebeautiful beautiful.layout_cornernw
 corner.nw = {
   name = "cornernw",
-  arrange = function(p)
-    return do_corner(p, "NW")
-  end,
+  arrange = arrange,
+  _clay = function(s) return describe(s, "NW") end,
   skip_gap = corner.skip_gap,
 }
 
@@ -189,9 +124,8 @@ corner.nw = {
 -- @usebeautiful beautiful.layout_cornerne
 corner.ne = {
   name = "cornerne",
-  arrange = function(p)
-    return do_corner(p, "NE")
-  end,
+  arrange = arrange,
+  _clay = function(s) return describe(s, "NE") end,
   skip_gap = corner.skip_gap,
 }
 
@@ -202,9 +136,8 @@ corner.ne = {
 -- @usebeautiful beautiful.layout_cornersw
 corner.sw = {
   name = "cornersw",
-  arrange = function(p)
-    return do_corner(p, "SW")
-  end,
+  arrange = arrange,
+  _clay = function(s) return describe(s, "SW") end,
   skip_gap = corner.skip_gap,
 }
 
@@ -215,9 +148,8 @@ corner.sw = {
 -- @usebeautiful beautiful.layout_cornerse
 corner.se = {
   name = "cornerse",
-  arrange = function(p)
-    return do_corner(p, "SE")
-  end,
+  arrange = arrange,
+  _clay = function(s) return describe(s, "SE") end,
   skip_gap = corner.skip_gap,
 }
 

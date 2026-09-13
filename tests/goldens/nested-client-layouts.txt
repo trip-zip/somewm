@@ -4,15 +4,12 @@ output
     BACKGROUND WL-1 w=grow h=grow output row attach PARENT band -10
     WORKAREA - w=grow h=grow theme row pad 8,8,8,8 gap 8
       CLIENT CLIENT_A w=percent(0.5) h=grow theme column pad 1,1,1,1
-        TITLEBAR CLIENT_A converted w=grow h=fixed(24) theme row
-            drawable clip w=grow h=grow
+        TITLEBAR CLIENT_A converted clip w=grow h=fixed(24) theme row
         SURFACE CLIENT_A w=grow h=grow custom
       STACK - w=grow h=grow theme column gap 8
         CLIENT CLIENT_B w=grow h=grow theme column pad 1,1,1,1
-          TITLEBAR CLIENT_B converted w=grow h=fixed(24) theme row
-              drawable clip w=grow h=grow
+          TITLEBAR CLIENT_B converted clip w=grow h=fixed(24) theme row
           SURFACE CLIENT_B w=grow h=grow custom
         CLIENT CLIENT_C w=grow h=grow theme column pad 1,1,1,1
-          TITLEBAR CLIENT_C converted w=grow h=fixed(24) theme row
-              drawable clip w=grow h=grow
+          TITLEBAR CLIENT_C converted clip w=grow h=fixed(24) theme row
           SURFACE CLIENT_C w=grow h=grow custom

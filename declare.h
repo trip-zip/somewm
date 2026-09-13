@@ -133,17 +133,10 @@ int declare_widget_boxes(const struct widget_host *host, int (*boxes)[4]);
  * tree has been declared. */
 int declare_widget_hits(const struct widget_host *host, double x, double y, int *out, int cap);
 
-/* Solve host's stored tree on its own, now, and answer the size its root
- * takes: what an awful.popup reads before any frame. False for a drawin with
- * no tree or no output. */
-bool declare_widget_measure(const struct widget_host *host, int *w, int *h);
-
 /* Test hook (awesome._test_declare_order): the desktop band's draw order for
- * m, bottom to top, one entry per declared object. A fresh solve of the
- * current state with no reconcile, so it reads what the next frame would
- * draw without touching the scene; while the lua lock is up it still reports
- * the desktop band, which is the one it solves. Returns the entries written. */
-int declare_output_order(struct declare_output *dout, struct Monitor *m,
+ * the last completed solve, bottom to top. While locked, read the retained
+ * desktop commands. No declaration, solve or scene mutation occurs. */
+int declare_output_order(struct declare_output *dout,
 	void **objects, int cap);
 
 /* The declare handle inside a retained userData word (render.h): the low 40

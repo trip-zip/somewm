@@ -61,10 +61,11 @@ local function get_widget_context(self)
 end
 
 -- Widget changes compile the tree again. `widgets` includes refused widgets
--- so changing their properties can restore them, and maps each widget to its
--- parent for `emit_signal_recursive`.
+-- so changing their properties can restore them. Each object maps to its
+-- original occurrences; the shorter Clay tree does not define Lua parents.
 local function wire_widgets(self, widgets)
     local wired = self._clay_wired
+    if widgets == wired then return end
 
     for w in pairs(wired) do
         if not widgets[w] then
@@ -85,18 +86,15 @@ end
 
 -- Pair every widget node with the box Clay solved for it, in the preorder
 -- both sides use, and collect the described widgets with their parents.
-local function place_nodes(node, boxes, widgets, parent, k, index)
+local function place_nodes(node, boxes, k, index)
     index[#index + 1] = node
     if not node.spacer then
         k = k + 1
         node.box = boxes[k]
     end
-    if node.widget then
-        widgets[node.widget] = parent or false
-        parent = node.widget
-    end
+    for _, binding in wclay.bindings(node) do binding.element = node end
     for _, child in ipairs(node.children or {}) do
-        k = place_nodes(child, boxes, widgets, parent, k, index)
+        k = place_nodes(child, boxes, k, index)
     end
     if node.solved then
         node.solved(node)
@@ -136,19 +134,11 @@ local function place_solved(self, boxes)
     end
     local tree, index = stored.tree, {}
 
-    place_nodes(tree, boxes, tree.widgets, nil, 0, index)
+    place_nodes(tree, boxes, 0, index)
     self._clay_tree = tree
     -- The tree's nodes in preorder, which is how the C side numbers them
     -- (widget.c read_tree), so a hit comes back as an index into this.
     self._clay_index = index
-    -- A tree that sizes its drawin: the root's solved box is the size the
-    -- drawin takes, as the engine applied a popup's fit after its layout.
-    -- The resize marks the drawable again, and the same frame compiles and
-    -- solves it at that size.
-    if tree.fit and (tree.box.width ~= stored.width
-            or tree.box.height ~= stored.height) then
-        tree.fit(tree.box.width, tree.box.height)
-    end
 end
 
 local function do_redraw(self)
@@ -184,13 +174,14 @@ local function find_clay_widgets(self, result, x, y)
         local node = self._clay_index[i]
         local box = node.box
 
-        if node.widget then
+        for _, binding in wclay.bindings(node) do
             table.insert(result, {
                 x = box.x, y = box.y, width = box.width, height = box.height,
                 widget_width = box.width,
                 widget_height = box.height,
                 drawable = self,
-                widget = node.widget,
+                widget = binding.widget,
+                occurrence = binding.id,
             })
         end
     end
@@ -298,6 +289,29 @@ function drawable:get_screen()
     return get_widget_context(self).screen
 end
 
+-- Select identity metadata only. No position is inferred from an old box.
+-- A caller with an event token bypasses this lookup; a programmatic target
+-- must name one visible original placement, optionally within a given host.
+function drawable._clay_target(widget, host)
+    local owner
+    local function visit(candidate)
+        local cache = candidate._clay_cache
+        for _, item in ipairs(cache and cache.widgets[widget] or {}) do
+            local entry = cache.entries[item]
+            if entry and entry.node then
+                assert(not owner, 'ambiguous attachment target; pass a widget hit with its occurrence')
+                owner = candidate
+            end
+        end
+    end
+    if host then
+        if host._visible then visit(host) end
+    else
+        for candidate in pairs(visible_drawables) do visit(candidate) end
+    end
+    return owner
+end
+
 function drawable:_inform_visible(visible)
     self._visible = visible
     if visible then
@@ -312,7 +326,7 @@ end
 local function emit_difference(name, list, skip)
     local function in_table(table, val)
         for _, v in pairs(table) do
-            if v.widget == val.widget then
+            if v.occurrence == val.occurrence then
                 return true
             end
         end
@@ -383,8 +397,7 @@ function drawable.new(d, widget_context_skeleton, drawable_name)
         end
     end
 
-    -- Compile now: the frame's clay::declare, or an awful.popup sizing
-    -- itself before any frame.
+    -- Compile the pending inputs at the frame's clay::declare boundary.
     ret._do_redraw = function()
         pending[ret] = nil
         do_redraw(ret)
@@ -444,9 +457,13 @@ function drawable.new(d, widget_context_skeleton, drawable_name)
         end
     end
     ret._clay_emit = function(widget, name, ...)
-        while widget do
-            widget:emit_signal(name, ...)
-            widget = ret._clay_wired[widget] or nil
+        -- Preserve emit_signal_recursive's documented once-per-upward-path
+        -- delivery when an object has several original placements.
+        for _, item in ipairs(ret._clay_wired[widget] or {}) do
+            while item and item.widget do
+                item.widget:emit_signal(name, ...)
+                item = item.parent
+            end
         end
     end
     -- Add __tostring method to metatable.

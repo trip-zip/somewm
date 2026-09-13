@@ -447,33 +447,6 @@ luaA_drawable_clay_nodes(lua_State *L)
 	return 1;
 }
 
-/** The size the stored tree's root takes, from a solve of its own now
- * (declare_widget_measure): what an awful.popup sizes itself by before any
- * frame. Nil for a drawable with no stored tree or no output.
- * \param L The Lua VM state.
- * \return The width and height, or nil.
- */
-static int
-luaA_drawable_clay_measure(lua_State *L)
-{
-	drawable_t *d = (drawable_t *)lua_touserdata(L, 1);
-	struct widget_host host;
-	int w, h;
-
-	if (!drawable_widget_host(d, &host)
-			|| !declare_widget_measure(&host, &w, &h))
-		return 0;
-    /* Preserve popup's immediate content-size read without a Lua geometry
-     * writer. This isolated solve has no siblings or attachment rectangles. */
-    if (lua_isuserdata(L, 2) && d->owner_type == DRAWABLE_OWNER_DRAWIN
-            && lua_touserdata(L, 2) == d->owner.drawin) {
-        luaA_drawin_set_size(L, 2, w, h);
-    }
-	lua_pushinteger(L, w);
-	lua_pushinteger(L, h);
-	return 2;
-}
-
 /** Mark the drawable's output dirty, so a frame comes to compile and
  * declare it. Nothing for a drawable without an output.
  * \param L The Lua VM state.
@@ -597,7 +570,6 @@ drawable_class_setup(lua_State *L)
 		{ "__newindex", luaA_drawable_newindex },
 		{ "geometry", luaA_drawable_geometry },
 		{ "_clay_nodes", luaA_drawable_clay_nodes },
-		{ "_clay_measure", luaA_drawable_clay_measure },
 		{ "_clay_dirty", luaA_drawable_clay_dirty },
 		{ "_clay_hits", luaA_drawable_clay_hits },
 		LUA_OBJECT_META(drawable)

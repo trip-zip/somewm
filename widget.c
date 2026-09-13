@@ -216,6 +216,23 @@ read_text(lua_State *L, int idx, struct widget_node *n)
 	lua_getfield(L, idx, "ellipsize");
 	n->ellipsize = lua_toboolean(L, -1);
 	lua_pop(L, 1);
+	lua_getfield(L, idx, "text_layout");
+	n->text_layout = lua_toboolean(L, -1);
+	lua_pop(L, 1);
+	if (n->text_layout) {
+		if (n->wrap != CLAY_TEXT_WRAP_WORDS
+				|| !read_sizing(L, idx, "w", &n->sizing[0], &n->size[0])
+				|| !read_sizing(L, idx, "h", &n->sizing[1], &n->size[1])
+				|| n->sizing[0] > WIDGET_SIZING_GROW || n->sizing[1] > WIDGET_SIZING_GROW
+				|| !read_align(L, idx, "valign", &n->align[1]))
+			return false;
+		static const char *const bounds[] = { "wmin", "hmin", "wmax", "hmax" };
+		for (size_t i = 0; i < sizeof(bounds) / sizeof(bounds[0]); i++) {
+			float bound = 0;
+			if (!read_number(L, idx, bounds[i], 0, 1e6, &bound) || bound != 0)
+				return false;
+		}
+	}
 	return ok;
 }
 
@@ -280,6 +297,15 @@ read_node(lua_State *L, int idx, struct widget_node *n)
 	lua_getfield(L, idx, "class");
 	if (lua_isstring(L, -1))
 		n->cls = intern_class(lua_tostring(L, -1));
+	lua_pop(L, 1);
+	lua_getfield(L, idx, "spacer");
+	n->widget = !lua_toboolean(L, -1);
+	lua_pop(L, 1);
+	lua_getfield(L, idx, "identity");
+	n->identity = (uint32_t)lua_tointeger(L, -1);
+	lua_pop(L, 1);
+	lua_getfield(L, idx, "occurrence");
+	n->occurrence = (uint32_t)lua_tointeger(L, -1);
 	lua_pop(L, 1);
 	lua_getfield(L, idx, "shape");
 	ok = lua_isnil(L, -1) || lua_isfunction(L, -1);
@@ -375,13 +401,6 @@ read_node(lua_State *L, int idx, struct widget_node *n)
 			return false;
 		n->scroll++;
 	}
-	lua_getfield(L, idx, "spacer");
-	n->widget = !lua_toboolean(L, -1);
-	lua_pop(L, 1);
-	lua_getfield(L, idx, "identity");
-	n->identity = (uint32_t)lua_tointeger(L, -1);
-	lua_pop(L, 1);
-
 	return ok;
 }
 
@@ -391,6 +410,40 @@ read_node(lua_State *L, int idx, struct widget_node *n)
  * (widget.h clip_opens): the root opens one, and so does a rounded node
  * with children. Past WIDGET_CLIPS_MAX, clips is left one over and the tree
  * is refused. */
+static struct widget_binding binding_buf[WIDGET_BINDINGS_MAX];
+static size_t binding_len;
+
+static bool
+read_bindings(lua_State *L, int idx, struct widget_node *n)
+{
+	n->binding_start = (uint32_t)binding_len;
+	lua_getfield(L, idx, "bindings");
+	while (lua_istable(L, -1)) {
+		if (binding_len == WIDGET_BINDINGS_MAX) {
+			lua_pop(L, 1);
+			return false;
+		}
+		lua_getfield(L, -1, "item");
+		if (!lua_istable(L, -1)) {
+			lua_pop(L, 2);
+			return false;
+		}
+		lua_getfield(L, -1, "identity");
+		uint32_t identity = (uint32_t)lua_tointeger(L, -1);
+		lua_pop(L, 1);
+		lua_getfield(L, -1, "id");
+		uint32_t occurrence = (uint32_t)lua_tointeger(L, -1);
+		lua_pop(L, 2);
+		binding_buf[binding_len++] = (struct widget_binding) {identity, occurrence};
+		n->binding_count++;
+		lua_getfield(L, -1, "next");
+		lua_remove(L, -2);
+	}
+	bool ok = lua_isnil(L, -1);
+	lua_pop(L, 1);
+	return ok;
+}
+
 static bool
 read_tree(lua_State *L, int idx, struct widget_node *nodes, size_t *len,
 	size_t *leaves, unsigned clip_by, unsigned *clips, int shapes)
@@ -402,11 +455,11 @@ read_tree(lua_State *L, int idx, struct widget_node *nodes, size_t *len,
 	/* Two slots per level are live across the recursion (the children
 	 * table and the child), plus what read_node needs at the bottom; a C
 	 * function is only guaranteed LUA_MINSTACK. */
-	if (*len == WIDGET_NODES_MAX || !lua_checkstack(L, 4))
+	if (*len == WIDGET_NODES_MAX || !lua_checkstack(L, 8))
 		return false;
 	n = &nodes[(*len)++];
 	memset(n, 0, sizeof(*n));
-	if (!read_node(L, idx, n))
+	if (!read_node(L, idx, n) || !read_bindings(L, idx, n))
 		return false;
 	if (n->shape) {
 		if (n->image)
@@ -499,6 +552,8 @@ widget_nodes_clear(struct widget_tree *d)
 	d->leaves_len = 0;
 	p_delete(&d->nodes);
 	d->nodes_len = 0;
+	p_delete(&d->bindings);
+	d->bindings_len = 0;
 	d->scrolls = 0;
 	p_delete(&d->text);
 	d->text_len = 0;
@@ -569,6 +624,7 @@ widget_nodes_set(lua_State *L, struct widget_tree *d, Monitor *m, int idx)
 	unsigned clips = 0;
 
 	text_len = 0;
+	binding_len = 0;
 	if (!lua_istable(L, idx))
 		return nodes_drop(d, WIDGET_NODES_NONE);
 	/* read_tree refuses a tree of its own cap's size before reading a node
@@ -583,7 +639,7 @@ widget_nodes_set(lua_State *L, struct widget_tree *d, Monitor *m, int idx)
 	if (!ok || over_budget(d, m, len, scrolls)) {
 		lua_pop(L, 1);
 		enum widget_nodes_state why = ok ? WIDGET_NODES_OVER_BUDGET
-			: len == WIDGET_NODES_MAX || clips > WIDGET_CLIPS_MAX
+			: len == WIDGET_NODES_MAX || binding_len == WIDGET_BINDINGS_MAX || clips > WIDGET_CLIPS_MAX
 			? WIDGET_NODES_OVER_BUDGET : WIDGET_NODES_MALFORMED;
 		if (why != d->state)
 			warn("widget tree %s, showing nothing", why == WIDGET_NODES_OVER_BUDGET
@@ -632,6 +688,9 @@ widget_nodes_set(lua_State *L, struct widget_tree *d, Monitor *m, int idx)
 	d->nodes = p_new(struct widget_node, len);
 	memcpy(d->nodes, nodes, len * sizeof(*nodes));
 	d->nodes_len = len;
+	p_delete(&d->bindings);
+	d->bindings = binding_len ? p_dup(binding_buf, binding_len) : NULL;
+	d->bindings_len = binding_len;
 	d->scrolls = scrolls;
 	p_delete(&d->text);
 	d->text = text_len ? p_dup(text_buf, text_len) : NULL;

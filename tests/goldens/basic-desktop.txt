@@ -2,20 +2,17 @@ output
   roots flow 1 floating 0 derived 0
   OUTPUT WL-1 w=fixed(1280) h=fixed(720) output column
     BACKGROUND WL-1 w=grow h=grow output row attach PARENT band -10
-    WIBAR screen 1 converted w=grow h=fixed(28) theme row
-        drawable clip w=grow h=grow
-          wibox.layout.align w=fit h=fit
-            wibox.layout.fixed w=grow h=grow
-              wibox.widget.textbox w=fit h=grow
-                text "menu" font=1
-              wibox.widget.textbox w=fit h=grow
-                text "tags" font=1
-            wibox.widget.textbox w=fit h=grow
-              text "clock" font=1
-            wibox.widget.textbox w=grow h=grow
-              text "status" font=1
+    WIBAR screen 1 converted clip w=grow h=fixed(28) theme row
+      wibox.layout.fixed w=grow h=grow row
+        wibox.widget.textbox w=fit h=grow row
+          text "menu" font=1
+        wibox.widget.textbox w=fit h=grow row
+          text "tags" font=1
+      wibox.widget.textbox w=fit h=grow row
+        text "clock" font=1
+      wibox.widget.textbox w=grow h=grow row
+        text "status" font=1
     WORKAREA - w=grow h=grow row
       CLIENT transient_test_parent w=grow h=grow theme column pad 1,1,1,1
-        TITLEBAR transient_test_parent converted w=grow h=fixed(24) theme row
-            drawable clip w=grow h=grow
+        TITLEBAR transient_test_parent converted clip w=grow h=fixed(24) theme row
         SURFACE transient_test_parent w=grow h=grow custom

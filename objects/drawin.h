@@ -116,12 +116,15 @@ typedef struct drawin_t {
     struct {
         uint8_t kind; /* 1 popup, 2 tooltip, 3 launcher, 4 notification */
         uint32_t target; /* Lua widget identity, 0 means OUTPUT */
+        uint32_t host; /* Optional declare handle ID, 0 searches visible hosts. */
+        uint32_t occurrence; /* Event placement token, 0 selects an unambiguous target. */
         uint8_t parent, own; /* Clay attach point */
         float x, y, width;
         uint16_t gap;
         uint8_t position;
         bool passthrough, hover;
     } attachment;
+    bool attachment_ambiguous; /* Suppress repeated reports until inputs change. */
 } drawin_t;
 
 enum drawin_edge {
@@ -133,6 +136,8 @@ enum drawin_edge {
 };
 
 bool drawin_widget_host(drawin_t *d, struct widget_host *out);
+/* Rectangular attachment borders are native Clay paint, without a raster. */
+bool drawin_native_attachment_border(const drawin_t *d);
 
 /* Metatable name for drawin userdata */
 #define DRAWIN_MT "drawin"

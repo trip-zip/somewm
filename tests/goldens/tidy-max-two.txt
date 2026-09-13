@@ -1,0 +1,9 @@
+output
+  roots flow 1 floating 2 derived 0
+  OUTPUT WL-1 w=fixed(1280) h=fixed(720) output column
+    BACKGROUND WL-1 w=grow h=grow output row attach PARENT band -10
+    WORKAREA - w=grow h=grow row
+  CLIENT B w=grow h=grow theme column pad 1,1,1,1 attach ELEMENT band 20
+    SURFACE B w=grow h=grow custom
+  CLIENT A w=grow h=grow theme column pad 1,1,1,1 attach ELEMENT band 20
+    SURFACE A w=grow h=grow custom

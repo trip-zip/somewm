@@ -2,8 +2,6 @@ output
   roots flow 1 floating 0 derived 0
   OUTPUT WL-1 w=fixed(1280) h=fixed(720) output column
     BACKGROUND WL-1 w=grow h=grow output attach PARENT band -10 image
-    WIBAR screen 1 converted w=grow h=fixed(28) theme row
-        drawable clip w=grow h=grow
-          wibox.widget.textbox w=fit h=fit
-            text "bar" font=1
+    WIBAR screen 1 converted clip w=grow h=fixed(28) theme row
+      text "bar" font=1
     WORKAREA - w=grow h=grow row

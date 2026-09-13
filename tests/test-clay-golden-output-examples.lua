@@ -3,6 +3,7 @@ local runner = require('_runner')
 local awful = require('awful')
 local wibox = require('wibox')
 local example = require('_clay_example')
+local checks = example.batch()
 local s = screen[1]
 local bars, steps, last = {}, {}, nil
 local function text(value) return wibox.widget.textbox(value or 'bar') end
@@ -30,10 +31,11 @@ local function add(name, setup, verify)
             assert(n < 30, name .. ' did not settle')
             return
         end
-        -- Once settled, a differing golden fails immediately at its first line.
-        example.check(name, dump)
+        local matched = checks.check(name, dump)
         verify()
-        io.stderr:write('[PASS] ' .. name .. ': golden, solved boxes and pixels\n')
+        if matched then
+            io.stderr:write('[PASS] ' .. name .. ': golden, solved boxes and pixels\n')
+        end
         return true
     end
 end
@@ -91,4 +93,5 @@ end, function()
     example.pixel(100,14,'#00ff00'); example.pixel(100,40,'#123456')
 end)
 steps[#steps+1] = function() for _, b in ipairs(bars) do b:remove() end; return true end
+steps[#steps+1] = checks.finish
 runner.run_steps(steps)

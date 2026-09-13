@@ -4,6 +4,7 @@ local utils=require('_utils')
 local capture=require('_widget_capture')
 local surface=require('gears.surface')
 local golden=require('_clay_example')
+local checks=golden.batch()
 local a,b,c,bar,before
 local reports={os.tmpname(),os.tmpname(),os.tmpname()}
 local function pixel(x,y)
@@ -61,14 +62,14 @@ runner.run_steps({
   assert(pixel(50,100)=='#0033cc','float not above tile or raise order wrong')
   assert(pixel(50,16)=='#ffff00','float titlebar not above normal wibar')
   assert(pixel(500,16)=='#0000ff','tiled client not below normal wibar')
-  golden.check('bands-normal',awesome._clay_tree(screen[1]))
+  checks.check('bands-normal',awesome._clay_tree(screen[1]))
   before=blocks()
   io.stderr:write('[PASS] user float attached OUTPUT band 20, pixels above tile and normal wibar\n')
  end),
  function()b:raise();return true end,
  wait(function()
   assert(pixel(50,100)=='#cc3300','raise did not change pixels')
-  golden.check('bands-raised',awesome._clay_tree(screen[1]))
+  checks.check('bands-raised',awesome._clay_tree(screen[1]))
   assert(blocks()==before,'raise changed more than declaration order')
   local dump=awesome._clay_tree(screen[1]); assert(dump:find('CLIENT band_blue',1,true)<dump:find('CLIENT band_red',1,true),'raise declaration order')
   io.stderr:write('[PASS] raise changes only declaration order and top pixel\n')
@@ -76,7 +77,7 @@ runner.run_steps({
  function()bar.ontop=true;return true end,
  wait(function()
   assert(pixel(50,16)=='#0000ff' and pixel(500,16)=='#0000ff','ontop wibar not above float and tile')
-  golden.check('bands-ontop',awesome._clay_tree(screen[1]))
+  checks.check('bands-ontop',awesome._clay_tree(screen[1]))
   io.stderr:write('[PASS] ontop wibar pixels above floating and tiled clients\n')
  end),
  function()b.fullscreen=true; b:activate{context='test',raise=true};return true end,
@@ -88,7 +89,7 @@ runner.run_steps({
   assert(pixel(50,16)=='#0000ff','ontop bar must remain above fullscreen')
   local f=assert(io.open(reports[2]));local sizes=f:read('*a');f:close()
   assert(sizes=='1280 720\n','fullscreen configure differs from solved surface')
-  golden.check('floating-and-fullscreen-clients',awesome._clay_tree(screen[1]))
+  checks.check('floating-and-fullscreen-clients',awesome._clay_tree(screen[1]))
   io.stderr:write('[PASS] fullscreen grow x grow band 40, received 1280x720\n')
  end),
  function()
@@ -96,4 +97,5 @@ runner.run_steps({
   for _,p in ipairs(reports) do os.remove(p) end
   bar.visible=false;return true
  end,
+ checks.finish,
 },{kill_clients=false})

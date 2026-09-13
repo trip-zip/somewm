@@ -5,6 +5,7 @@ local wibox = require('wibox')
 local example = require('_clay_example')
 local M = {}
 function M.run(name)
+    local checks = example.batch()
     local s = screen[1]
     local bar, popup, tooltip, target, pid
     local notifications = {}
@@ -14,6 +15,31 @@ function M.run(name)
     local layer_report=os.tmpname()
     local stretch_pid, stretch_report=nil,os.tmpname()
     local function text(value) return wibox.widget.textbox(value) end
+    local function clock_box(dump)
+        -- Resolve the original occurrence's real sizing area, independently
+        -- of whether its native glyph needs a separate element.
+        local bindings=bar._drawable._clay_wired[target]
+        if not bindings or not bindings[1].element then return end
+        local element=bindings[1].element
+        local box=element.box
+        local previous
+        for line in dump:gmatch('[^\n]+') do
+            if line:find('text "clock"',1,true) then
+                local actual=element.text and line or previous
+                assert(actual and (element.text or actual:find('wibox.widget.textbox',1,true)))
+                local id=actual:match('^    (%x+)')
+                local x,y,width,height=actual:match('box (%d+),(%d+) (%d+)x(%d+)')
+                -- The dump truncates native floats; Lua readback rounds edges.
+                assert(id and math.abs(tonumber(x)-bar.x-box.x)<=1
+                    and math.abs(tonumber(y)-bar.y-box.y)<=1
+                    and math.abs(tonumber(width)-box.width)<=1
+                    and math.abs(tonumber(height)-box.height)<=1)
+                return id,x,y,width,height
+            end
+            previous=line
+        end
+        assert(false,'clock binding has no matching native element')
+    end
     runner.run_steps {
         function()
             require('gears.wallpaper').set('#123456')
@@ -83,12 +109,7 @@ function M.run(name)
                 assert(n < 30, name .. ' did not settle:\n' .. dump)
                 return
             end
-            local ok, err = pcall(example.check, name, dump)
-            if not ok then
-                local f = assert(io.open('/tmp/task4-first-difference-' .. name .. '.txt', 'w'))
-                f:write(tostring(err), '\n'); f:close()
-                error(err)
-            end
+            checks.check(name, dump)
             if name == 'layer-shell-overlay' then
                 assert(dump:find('offset -12,16 band 100',1,true))
                 assert(dump:find('parent RIGHT_TOP own RIGHT_TOP',1,true))
@@ -103,7 +124,7 @@ function M.run(name)
             if name == 'floating-widget-anchored-to-another-widget' then
                 local a = popup.drawin.attachment
                 assert(a.parent==5 and a.own==3 and a.target==require('wibox.clay').identity(target))
-                local id, x, y, width, height = dump:match('(%x+) +wibox.widget.textbox[^\n]- box (%d+),(%d+) (%d+)x(%d+)\n[^\n]-text "clock"')
+                local id, x, y, width, height = clock_box(dump)
                 assert(id, 'clock element missing')
                 local g=popup:geometry()
                 assert(dump:find('target '..id..' parent BOTTOM_CENTER own TOP_CENTER',1,true))
@@ -119,7 +140,7 @@ function M.run(name)
         function(n)
             if not popup_before then return true end
             local dump=awesome._clay_tree(s)
-            local x,y,width,height=dump:match('wibox.widget.textbox[^\n]- box (%d+),(%d+) (%d+)x(%d+)\n[^\n]-text "clock"')
+            local _,x,y,width,height=clock_box(dump)
             local g=popup:geometry()
             if not x or tonumber(x)==target_before or g.x==popup_before.x then
                 assert(n<30,'clock/popup did not move'); return
@@ -285,6 +306,7 @@ function M.run(name)
             bar:remove()
             return true
         end,
+        checks.finish,
     }
 end
 return M

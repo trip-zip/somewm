@@ -3,7 +3,7 @@
 -- tree whose solved boxes change what it shows (a grid telling its rows, a
 -- popup taking its content's size) declares once more in the same frame:
 -- one synchronous frame leaves the scene final, and a second one mutates
--- nothing. A popup still knows its size before any frame.
+-- nothing. A popup receives its content size from the frame that declares it.
 ---------------------------------------------------------------------------
 
 local runner = require("_runner")
@@ -55,15 +55,14 @@ local steps = {
         return true
     end,
 
-    -- A placed popup sizes itself before any frame, and a content change
-    -- resizes it in the frame that declares the new content.
+    -- A placed popup and later content changes take their sizes from the
+    -- normal frame, without a preliminary measurement solve.
     function()
         popup = awful.popup { widget = wibox.widget.textbox("short"),
             screen = s, placement = awful.placement.top_left, visible = true }
-        local w, h = popup.width, popup.height
-
-        assert(w > 1 and h > 1, "the popup has no size before its frame")
         awesome._test_redeclare()
+        local w, h = popup.width, popup.height
+        assert(w > 1 and h > 1, "the frame did not size the popup")
         local root = awesome._test_widget_boxes(popup.drawin)[1]
         assert(root and root.width == w and root.height == h,
             "the frame solved the popup at another size")

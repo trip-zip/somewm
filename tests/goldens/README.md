@@ -6,6 +6,10 @@ subtrees; it removes solved boxes and offsets. Tests check geometry, client
 configures and pixels separately. `_clay_example.lua` optionally saves dumps
 and PNGs to `SOMEWM_EXAMPLE_EVIDENCE`; it normalizes only the headless output
 name so the same handwritten fixtures work with either backend.
+Task 10's batch fixtures save every independent shape difference and fail
+after collecting the cases. A failed shape never counts as a passing case.
+Evidence includes the full dump, reduced shape and captured pixels; none of
+these artifacts changes an expectation.
 
 | Task | Doc-2 example | Golden(s) | Integration test |
 | --- | --- | --- | --- |
@@ -28,17 +32,30 @@ name so the same handwritten fixtures work with either backend.
 | 4 | Notification stack | notification-stack | test-clay-attachment-notifications |
 | 4 | Centered launcher | centered-launcher | test-clay-attachment-launcher |
 | 4 | Layer shell, overlay half | layer-shell-overlay | test-clay-attachment-layer-overlay |
+| 10 | Pinned bundled bar and titlebar | tidy-bundled-wibar; tidy-bundled-titlebar | test-clay-tidy-bundled |
+| 10 | Fold/retain boundaries, spacers, systray and native overlap | tidy-background-padding; tidy-padding-background; tidy-nested-backgrounds; tidy-shared-click-box; tidy-empty-and-spacer; tidy-systray-empty; tidy-systray-two; tidy-clay-overlap | test-clay-tidy-widgets |
+| 10 | Shared grid tracks, independent axes, counts, holes, spans, wrapping, borders, overlap and nesting | all19 tidy-grid-* files | test-clay-tidy-grid |
+| 10 | Stock-client declarations | tidy-fair-four; tidy-spiral-three; tidy-corner-nw-three; tidy-max-two; tidy-magnifier-three | test-clay-tidy-client-layouts |
 
 Task 3's resizable-split gate is the existing tile mouse-resize interaction:
 it changes `master_width_factor`. It does not add the schematic divider widget.
 Task 3's band examples cover clients and wibars. Task 4's additional
 `test-clay-attachment-bands` checks actual overlap pixels through bands 60, 80,
 90 and 100, including declaration order within 90. Existing
-converted widget subtrees remain intact; wrapper folding belongs to task 10.
+attachment behavior checks remain required while task10 folds widget subtrees.
 The background image lives on OUTPUT's grow/grow BACKGROUND child at band -10,
 as established by task 2's wallpaper fix; the golden shows this representation.
 
 ## Historical limitation
+
+Task10's55 complete expected texts were accepted before the first feature
+commit, which contains only those text files. They replace21 existing shapes
+and add34; the two resizable-split goldens are unchanged. Fixtures follow in
+the next commit, before production declaration changes. The board's
+evidence/task-10/grid-review packet contains the exact handwritten text and
+the raw geometry, identity, input, pixels and performance requirements that
+reduced shapes cannot express. The new grid text supersedes both preparation
+grid candidates and preserves shared column alignment.
 
 The original basic-desktop and three client goldens preceded their respective
 implementations (the tasks retain the pre-squash red-test evidence). The other

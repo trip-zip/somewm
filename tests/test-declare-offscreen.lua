@@ -8,8 +8,8 @@
 -- element whose box lies entirely outside the layout dimensions, which would
 -- delete both instead of drawing them, so the bands run with culling off.
 --
--- awesome._test_declare_order(screen) solves the screen's tree again and
--- returns what it would draw, so absence here is exactly the vanishing.
+-- awesome._test_declare_order(screen) reads the completed frame's commands.
+-- Wait for the solved offscreen box before checking that the object survived.
 ---------------------------------------------------------------------------
 
 local runner = require("_runner")
@@ -26,6 +26,14 @@ local s = screen[1]
 local geo = s.geometry
 local bar
 local c
+
+local function solved_offscreen(role, right)
+    local dump=awesome._clay_tree(s)
+    local x,width=dump:match('\n%s+'..role..' [^\n]- box (%-?%d+),%-?%d+ (%d+)x%d+')
+    x,width=tonumber(x),tonumber(width)
+    if not x then return false end
+    return right and x>geo.width or not right and x+width<0
+end
 
 local function declared(object)
     for _, o in ipairs(awesome._test_declare_order(s)) do
@@ -59,8 +67,19 @@ local steps = {
     -- neighbor output is where those pixels belong.
     function()
         bar.x = geo.x + geo.width + 200
+        return true
+    end,
+    function(count)
+        if not solved_offscreen('drawin screen',true) then
+            assert(count<19,'offscreen declaration did not settle:\n'..awesome._clay_tree(s))
+            return
+        end
         assert_declared(bar, "wibox past the right edge")
         bar.x = geo.x - bar.width - 200
+        return true
+    end,
+    function(count)
+        if not solved_offscreen('drawin screen',false) then assert(count<30);return end
         assert_declared(bar, "wibox past the left edge")
         return true
     end,
@@ -82,6 +101,10 @@ local steps = {
             x = geo.x + geo.width + 200, y = geo.y,
             width = 200, height = 200,
         })
+        return true
+    end,
+    function(count)
+        if not solved_offscreen('CLIENT transient_test_parent',true) then assert(count<30);return end
         assert_declared(c, "floating client past the right edge")
         return true
     end,

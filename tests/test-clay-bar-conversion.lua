@@ -109,8 +109,9 @@ local function new_bar(args)
         {
             {
                 { leaf_widget(70, 16, "#00ffff"), margins = 4,
-                    widget = wibox.container.margin },
+                    id = "inset_margin", widget = wibox.container.margin },
                 bg = "#204080",
+                id = "inset_background",
                 widget = wibox.container.background,
             },
             halign = "center",
@@ -160,19 +161,23 @@ local steps = {
         function(head, nodes, bar)
             assert(head:find("converted", 1, true),
                 "the bar did not convert: " .. head)
+            assert(head:find(" clip ", 1, true), "the actual host root lost its clip")
 
             for _, class in ipairs({
-                "drawable",
                 "wibox.layout.stack",
                 "wibox.layout.align",
                 "wibox.layout.fixed",
                 "wibox.container.place",
                 "wibox.container.background",
-                "wibox.container.margin",
             }) do
                 assert(node_named(nodes, class),
                     "no " .. class .. " in the solved tree")
             end
+            local margin = assert(bar:get_children_by_id("inset_margin")[1])
+            local background = assert(bar:get_children_by_id("inset_background")[1])
+            local bound = bar._drawable._clay_wired
+            assert(bound[margin][1].element == bound[background][1].element,
+                "the original padding/background objects lost their shared element")
 
             -- Four described leaf widgets fill their solved boxes.
             local leaves = 0
@@ -218,7 +223,9 @@ local steps = {
             "the text was squeezed to %d in a bar of %d", text.width, bar.width))
         assert(leaf.x == text.width and leaf.width == 30, string.format(
             "the leaf sits at %d+%d, want %d+30", leaf.x, leaf.width, text.width))
-        assert(#nodes == 5, #nodes .. " nodes, expected 5: the text is one line")
+        -- The host header is the real root; the allocated textbox retains
+        -- its container around the native glyph beside the color leaf.
+        assert(#nodes == 4, #nodes .. " descendants, expected layout, textbox, text and leaf")
     end),
 
     -- A transparent bar converts: its root draws nothing and still takes
@@ -374,7 +381,8 @@ local steps = {
         widget = (function()
             local w = leaf_widget(10, 10, "#ff0000")
             for _ = 1, 1100 do
-                w = { w, margins = 0, widget = wibox.container.margin }
+                -- Effectful padding keeps real elements for the native cap.
+                w = { w, margins = 1, widget = wibox.container.margin }
             end
             return w
         end)(),
@@ -392,7 +400,7 @@ local steps = {
                 local w = leaf_widget(10, 10, "#ff0000")
 
                 for _ = 1, 900 do
-                    w = { w, margins = 0,
+                    w = { w, margins = 1,
                         widget = wibox.container.margin }
                 end
                 budget_bars[i] = wibox {

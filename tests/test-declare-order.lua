@@ -1,8 +1,8 @@
 -- Test: the declare pass draws windows in the band their stacking attribute
 -- names, and a transient that sets none inherits its parent's.
 --
--- awesome._test_declare_order(screen) solves the screen's Clay tree again and
--- returns the clients and drawins it would draw, bottom first, so the
+-- awesome._test_declare_order(screen) reads the completed frame's command
+-- order, bottom first, so the
 -- assertions read the real draw order rather than inferring it from
 -- attributes.
 
@@ -40,6 +40,14 @@ local function assert_above(a, b, what)
     assert(ia > ib, string.format("%s: expected above (%d vs %d)",
         what, ia, ib))
     io.stderr:write("[PASS] " .. what .. "\n")
+end
+
+local function wait_for_frame(check)
+    return function(count)
+        local ok,err=pcall(check)
+        if ok then return true end
+        assert(count<30,err)
+    end
 end
 
 local steps = {
@@ -93,19 +101,23 @@ local steps = {
     -- ontop on the child wins over the parent's placement, as in AwesomeWM.
     function()
         child_client.ontop = true
-        assert_above(child_client, bar, "ontop transient above wibox")
         return true
     end,
+    wait_for_frame(function()
+        assert_above(child_client, bar, "ontop transient above wibox")
+    end),
 
     -- Back to inheriting, and now the parent is the one that is ontop: the
     -- child follows it above the wibox without setting anything itself.
     function()
         child_client.ontop = false
         parent_client.ontop = true
-        assert_above(child_client, parent_client, "inheriting child above parent")
-        assert_above(child_client, bar, "inheriting child above wibox")
         return true
     end,
+    wait_for_frame(function()
+        assert_above(child_client, parent_client, "inheriting child above parent")
+        assert_above(child_client, bar, "inheriting child above wibox")
+    end),
 
     function(count)
         if count == 1 then

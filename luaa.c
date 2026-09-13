@@ -1523,10 +1523,10 @@ luaA_awesome_test_redeclare(lua_State *L)
 
 /** The draw order of a screen's windows, wiboxes and layer surfaces,
  * bottom to top.
- * Solves the screen's Clay tree again and reports what it would draw, so a
- * test can assert stacking directly instead of inferring it from attributes
+ * Reads the screen's completed command order, so a test can assert stacking
+ * directly instead of inferring it from attributes
  * (see tests/test-declare-order.lua).
- * \param screen The screen to solve.
+ * \param screen The screen to read.
  * \return Array of the objects drawn, bottom first.
  */
 static int
@@ -1543,7 +1543,7 @@ luaA_awesome_test_declare_order(lua_State *L)
 		lua_createtable(L, 0, 0);
 		return 1;
 	}
-	n = declare_output_order(s->monitor->declare, s->monitor, objects,
+	n = declare_output_order(s->monitor->declare, objects,
 		ORDER_CAP);
 	lua_createtable(L, n, 0);
 	for (int i = 0; i < n; i++) {

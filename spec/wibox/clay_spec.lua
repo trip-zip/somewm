@@ -37,17 +37,27 @@ local function compile(bg, root, fg)
     return wclay.compile(drawable, root, context, 100, 100)
 end
 
+local function node_for(tree, widget)
+    for _, item in wclay.bindings(tree) do
+        if item.widget == widget then return tree end
+    end
+    for _, child in ipairs(tree.children or {}) do
+        local found = node_for(child, widget)
+        if found then return found end
+    end
+end
+
 -- The child node under a margin, or nil when the child is refused.
 local function layout_node(w)
     local tree = compile(BG, margin(w, 1, 1, 1, 1), BG)
 
-    return tree.children[1].children[1]
+    return node_for(tree, w)
 end
 
 -- The node for a widget put in a fixed layout, which asks it for its size
 -- along the direction rather than handing it a box.
 local function fixed_node(w)
-    return layout_node(fixed.horizontal(w)).children[1]
+    return node_for(compile(BG, margin(fixed.horizontal(w), 1, 1, 1, 1), BG), w)
 end
 
 local function degraded(w)
@@ -162,15 +172,13 @@ describe("wibox.clay", function()
         assert.is_same(BG_RGBA, nodes[1].bg)
         assert.is_same({ 1, 2, 3, 4 }, nodes[2].pad)
         assert.is_nil(nodes[2].border)
-        -- The drawable's widget takes at least the whole drawin and floats
-        -- off the root, so an overflowing tree is cut and never squeezed;
-        -- the margin's child takes the whole padded box, with its own size
-        -- as the floor a parent that wraps its content counts.
-        assert.is_true(nodes[2].float)
-        assert.is_equal("fit", nodes[2].w)
-        assert.is_equal("fit", nodes[2].h)
-        assert.is_equal(100, nodes[2].wmin)
-        assert.is_equal(100, nodes[2].hmin)
+        -- The native host clip retains overflow. Its widget grows from the
+        -- solved allocation, without a float or previous-drawable-size floor.
+        assert.is_nil(nodes[2].float)
+        assert.is_equal("grow", nodes[2].w)
+        assert.is_equal("grow", nodes[2].h)
+        assert.is_nil(nodes[2].wmin)
+        assert.is_nil(nodes[2].hmin)
         assert.is_equal("leaf", nodes[3].class)
         assert.is_equal("grow", nodes[3].w)
         assert.is_equal(10, nodes[3].wmin)
@@ -270,12 +278,13 @@ describe("wibox.clay", function()
         local tree, leaves = compile(BG, w, BG)
         local nodes = chain(tree)
 
-        -- The renderer cuts the margin and its leaf to the arc; the tree
-        -- only names the radius.
-        assert.is_equal(4, #nodes)
+        -- Background and margin share the outer area. Its padding and arc
+        -- belong to that element; the inset leaf retains a separate box.
+        assert.is_equal(3, #nodes)
         assert.is_equal(8, nodes[2].radius)
-        assert.is_same({ 2, 2, 2, 2 }, nodes[3].pad)
-        assert.is_equal("leaf", nodes[4].class)
+        assert.is_same({ 2, 2, 2, 2 }, nodes[2].pad)
+        assert.is_equal("leaf", nodes[3].class)
+        assert.is_equal(nodes[2], node_for(tree, inner))
         assert.is_equal(0, #leaves)
     end)
 
@@ -314,11 +323,12 @@ describe("wibox.clay", function()
             background(margin(stopper, 4, 4, 4, 4), "#00ff00"), BG)
         local nodes = chain(tree)
 
-        -- The rotate and its subtree are absent beneath the margin.
-        assert.is_equal(3, #nodes)
+        -- The refused subtree is absent; purposeful padding belongs to the
+        -- painted outer element even without visible content.
+        assert.is_equal(2, #nodes)
         assert.is_same({ 0, 1, 0, 1 }, nodes[2].bg)
-        assert.is_same({ 4, 4, 4, 4 }, nodes[3].pad)
-        assert.is_nil(nodes[4])
+        assert.is_same({ 4, 4, 4, 4 }, nodes[2].pad)
+        assert.is_nil(nodes[3])
     end)
 
     it("carries the innermost background foreground to the leaf", function()
@@ -389,6 +399,106 @@ describe("wibox.clay cache", function()
         return tree.children[1].children[1].children
     end
 
+    it("binds a content-sized image to its original widget and preserves allocation boundaries", function()
+        local cairo = require('lgi').cairo
+        local imagebox = require('wibox.widget.imagebox')
+        local src = cairo.ImageSurface(cairo.Format.ARGB32, 20, 10)
+        local image = imagebox(src, false)
+        local wrapper = margin(image, 0, 0, 0, 0)
+        local host = {_attachment_fit = true}
+        local function build(root)
+            return wclay.compile(host, root or wrapper, context, 100, 100)
+        end
+        local first, images = build()
+        local node = node_for(first, image)
+        assert.is_equal(src._native, node.image)
+        assert.is_equal(20, node.w)
+        assert.is_equal(10, node.h)
+        assert.is_equal(node, images[1].node)
+        local token = node.occurrence
+        assert.is_equal(token, node_for(build(), image).occurrence)
+
+        -- A larger minimum is an input area even where the image is empty.
+        image.forced_width = 40
+        wclay.invalidate(host, image)
+        local bounded = node_for(build(), image)
+        assert.is_nil(bounded.image)
+        assert.is_equal(token, bounded.occurrence)
+        assert.is_equal(src._native, bounded.children[1].image)
+        assert.is_equal(40, bounded.wmin)
+
+        image.forced_width = nil
+        wclay.invalidate(host, image)
+        local restored = node_for(build(), image)
+        assert.is_equal(src._native, restored.image)
+        assert.is_equal(token, restored.occurrence)
+        -- A definite drawable still allocates the imagebox its whole area.
+        host._attachment_fit = nil
+        assert.is_nil(node_for(build(), image).image)
+    end)
+
+    it("shares a content host without changing cached bindings or nested paint", function()
+        local host = {_attachment_fit = true, background_color = '#00000000'}
+        local leaf = leaf_widget(10, 10)
+        local pad = margin(leaf, 4, 4, 4, 4)
+        local root = background(pad, '#0000ff')
+        local function build()
+            return wclay.compile(host, root, context, 100, 100)
+        end
+        local first = build()
+        assert.is_equal(first, node_for(first, root))
+        assert.is_equal(first, node_for(first, pad))
+        assert.is_same({4, 4, 4, 4}, first.pad)
+        local inner = node_for(first, leaf)
+        local token = first.occurrence
+        local again = build()
+        assert.is_equal(inner, node_for(again, leaf))
+        assert.is_equal(token, again.occurrence)
+        -- Different paint layers cannot share an element, even if their
+        -- current sizes happen to coincide. The original binding stays live.
+        host.background_color = '#ff000080'
+        local distinct = build()
+        assert.is_not_equal(distinct, node_for(distinct, root))
+        assert.is_equal(token, node_for(distinct, root).occurrence)
+        assert.is_equal(inner, node_for(distinct, leaf))
+        host.background_color = nil
+        local restored = build()
+        assert.is_equal(restored, node_for(restored, root))
+        assert.is_equal(token, restored.occurrence)
+    end)
+
+    it("recompiles a child when its parent starts allocating a minimum extent", function()
+        local child, root = leaf_widget(), base.make_widget()
+        local minimum, calls = 0, 0
+        local describe = child._clay.describe
+        child._clay.describe = function(...)
+            calls = calls + 1
+            return describe(...)
+        end
+        wclay.describe_widget(root, function()
+            return {fit=true, wmin=minimum, pad={1,1,1,1},
+                specs={{widget=child,w='grow',h='grow'}}}
+        end, 'content-root')
+        local first = node_for(recompile(root), child)
+        assert.is_equal('fit', first.w)
+        assert.is_equal(10, first.wmin) -- Preferred size remains a lower bound.
+        assert.is_equal(first, node_for(recompile(root), child))
+        assert.is_equal(1, calls)
+        minimum = 40
+        wclay.invalidate(drawable, root)
+        local allocated = node_for(recompile(root), child)
+        assert.is_equal('grow', allocated.w)
+        assert.is_equal(10, allocated.wmin)
+        assert.is_equal(first.occurrence, allocated.occurrence)
+        assert.is_equal(2, calls)
+        minimum = 0
+        wclay.invalidate(drawable, root)
+        local restored = node_for(recompile(root), child)
+        assert.is_equal('fit', restored.w)
+        assert.is_equal(first.occurrence, restored.occurrence)
+        assert.is_equal(3, calls)
+    end)
+
     it("keeps a sibling's subtree and describes the marked widget again", function()
         local a, b = leaf_widget(), leaf_widget()
         local root = margin(fixed.horizontal(a, b), 1, 1, 1, 1)
@@ -420,9 +530,33 @@ describe("wibox.clay cache", function()
         recompile(root)
         wclay.invalidate(drawable, box)
         local tree = recompile(root)
-        local node = tree.children[1].children[1].children[1].children[1]
+        local node = node_for(tree, a)
         assert.is_equal(0.5, node.bg[4])
-        assert.is_equal(row, tree.widgets[refused])
+        assert.is_equal(row, tree.widgets[refused][1].parent.widget)
+    end)
+
+    it("reuses repeated placements and invalidates every occurrence of a changed object", function()
+        local shared = leaf_widget()
+        local describe, calls = shared._clay.describe, 0
+        shared._clay.describe = function(...)
+            calls = calls + 1
+            return describe(...)
+        end
+        local row = fixed.horizontal(background(shared), background(shared))
+        local root = margin(row, 1, 1, 1, 1)
+        local first = recompile(root)
+        assert.is_equal(2, calls)
+        local second = recompile(root)
+        assert.is_equal(2, calls)
+        assert.is_equal(first.children[1].children[1].children[1],
+            second.children[1].children[1].children[1])
+        shared:set_forced_width(23)
+        wclay.invalidate(drawable, shared)
+        local third = recompile(root)
+        assert.is_equal(4, calls)
+        local children = third.children[1].children[1].children
+        assert.is_equal(23, children[1].children[1].wmin)
+        assert.is_equal(23, children[2].children[1].wmin)
     end)
 end)
 

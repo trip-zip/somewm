@@ -72,8 +72,7 @@ struct declare_band {
 	 * slots, leaves) with their parent, sizing and where each number came
 	 * from. A widget tree records its root only; the dump walks its nodes
 	 * from the retained widget_tree. Filled by declare_output_frame's pass
-	 * alone: the out-of-frame solves (declare_widget_measure,
-	 * declare_output_order) record nothing. */
+	 * alone; queries read the completed declarations and commands. */
 	struct declare_record *records;
 	size_t records_len, records_cap;
 };
@@ -109,7 +108,7 @@ struct declare_record {
 	bool vertical;
 	Clay_Padding padding;
 	uint16_t gap;
-	bool custom, image;
+	bool custom, image, clip;
 	/* A widget tree root: the host whose nodes the dump walks under it. */
 	bool has_host;
 	struct widget_host host;
@@ -281,8 +280,9 @@ record_open(const char *role, uint64_t handle, Clay_ElementId id,
 		.vertical = decl->layout.layoutDirection == CLAY_TOP_TO_BOTTOM,
 		.padding = decl->layout.padding,
 		.gap = decl->layout.childGap,
-		.custom = decl->custom.customData != NULL,
+		.custom = decl->custom.customData != NULL && decl->custom.customData != RENDER_CLIP_MARK,
 		.image = decl->image.imageData != NULL,
+		.clip = render_userdata_byte(decl->userData, RENDER_UD_OPENS_SHIFT) != 0,
 		.has_host = host != NULL,
 	};
 	if (host)
@@ -690,6 +690,9 @@ declare_shadow(struct shadow_leaves *s, const shadow_config_t *config,
 
 static void declare_widget_tree(const struct widget_host *host, int16_t z,
 	void *userdata);
+static void declare_widget_slot(const struct widget_host *host, Clay_ElementId id,
+	const Clay_ElementDeclaration *slot, const char *role, enum declare_src src,
+	int16_t z, void *userdata);
 static Clay_ElementId output_id(Monitor *m);
 static Clay_ElementId workarea_id(Monitor *m);
 static bool floating_layout;
@@ -760,13 +763,15 @@ declare_titlebar(Client *c, client_titlebar_t bar, uint32_t id, int16_t z)
 	Clay_ElementId slot = Clay__HashStringWithOffset(
 		CLAY_STRING("client.titlebar"), id * 4 + bar, 0);
 
+	if (host.tree->nodes_len > 0) {
+		host.flow = true;
+		declare_widget_slot(&host, slot, &e, roles[bar], DECLARE_SRC_THEME,
+			z, leaf_userdata(handle, 1.0f));
+		return;
+	}
 	Clay__OpenElementWithId(slot);
 	Clay__ConfigureOpenElementPtr(&e);
-	host.flow = true;
-	record_open(roles[bar], handle, slot, &e, DECLARE_SRC_THEME,
-		host.tree->nodes_len ? &host : NULL);
-	if (host.tree->nodes_len > 0)
-		declare_widget_tree(&host, z, leaf_userdata(handle, 1.0f));
+	record_open(roles[bar], handle, slot, &e, DECLARE_SRC_THEME, NULL);
 	record_close();
 	Clay__CloseElement();
 }
@@ -775,7 +780,7 @@ declare_titlebar(Client *c, client_titlebar_t bar, uint32_t id, int16_t z)
  * Fixed bars leave the growing surface the remaining space
  * (third_party/clay.h:2349-2392, 2409-2411). */
 static void
-declare_client(Client *c, Monitor *m, int16_t z, const Clay_Sizing *sizing)
+declare_client(Client *c, Monitor *m, int16_t z, const Clay_ElementDeclaration *allocation)
 {
 	uint64_t handle = declare_handle_for(c, DECLARE_KIND_CLIENT);
 	uint32_t id = (uint32_t)handle;
@@ -786,20 +791,20 @@ declare_client(Client *c, Monitor *m, int16_t z, const Clay_Sizing *sizing)
 	int y = c->geometry.y - m->m.y;
 	bool clamp = client_clamps_to_monitor(c);
 
-	if (!sizing && clamp && (x + bw + c->geometry.width <= 0
+	if (!allocation && clamp && (x + bw + c->geometry.width <= 0
 			|| y + bw + c->geometry.height <= 0
 			|| x + bw >= m->m.width
 			|| y + bw >= m->m.height))
 		return;
 
-	if (!sizing)
+	if (!allocation)
 	declare_shadow(&c->shadow,
 		shadow_get_effective_config(c->shadow_config, false),
 		CLAY_STRING("client.shadow"), handle, z, x, y, fw, fh);
-    Clay_ElementDeclaration frame = sizing
-        ? (Clay_ElementDeclaration) { .layout.sizing = *sizing }
+    Clay_ElementDeclaration frame = allocation
+        ? *allocation
         : leaf_at(z, x, y, fw, fh);
-	if (!sizing && !client_is_unmanaged(c)) {
+	if (!allocation && !client_is_unmanaged(c)) {
 		frame.floating.attachTo = CLAY_ATTACH_TO_ELEMENT_WITH_ID;
 		frame.floating.parentId = output_id(m).id;
 		if (c->fullscreen) {
@@ -819,10 +824,10 @@ declare_client(Client *c, Monitor *m, int16_t z, const Clay_Sizing *sizing)
 		frame.border.color = clay_color(rgba);
 		frame.border.width = (Clay_BorderWidth) { bw, bw, bw, bw, 0 };
 	}
-	/* Where the frame's box came from: a tiled client's is awful.layout's
-	 * arithmetic, a floating one's the user's own placement, fullscreen the
-	 * output, an override-redirect window the protocol's. */
-	enum declare_src src = sizing ? DECLARE_SRC_THEME : client_is_unmanaged(c) ? DECLARE_SRC_PROTOCOL
+	/* Native layouts contribute sizing/attachments. Remaining old layouts
+	 * still expose derived rectangles; user placement and protocol inputs
+	 * retain their own provenance. */
+	enum declare_src src = allocation ? DECLARE_SRC_THEME : client_is_unmanaged(c) ? DECLARE_SRC_PROTOCOL
 		: c->fullscreen ? DECLARE_SRC_OUTPUT
 		: some_client_get_floating(c) || floating_layout ? DECLARE_SRC_USER
 		: c->ontop || c->above || c->below ? DECLARE_SRC_LAST_FRAME : DECLARE_SRC_DERIVED;
@@ -939,6 +944,8 @@ client_z(Client *c)
 	}
 }
 
+static bool layout_client_declaration(Client *c, Monitor *m, Clay_ElementDeclaration *e);
+
 /* Inheriting transients ride their parent: declared right above it in the
  * band it resolved to, mirroring stack_transients_above() (stack.c).
  * Unmanaged children are excluded; declare_unmanaged_clients() owns every
@@ -947,7 +954,27 @@ client_z(Client *c)
 static void
 declare_client_tree(Client *c, Monitor *m)
 {
-	declare_client(c, m, client_z(c), NULL);
+	Clay_ElementDeclaration e;
+	bool native = layout_client_declaration(c, m, &e);
+	if (native) c->clay_tiled = true;
+	bool inset = native && e.layout.padding.left;
+	if (inset) {
+		Clay_ElementId id = Clay__HashStringWithOffset(CLAY_STRING("client.cell"),
+			(uint32_t)declare_handle_for(c, DECLARE_KIND_CLIENT), 0);
+		Clay__OpenElementWithId(id);
+		Clay__ConfigureOpenElementPtr(&e);
+		record_open("CELL", 0, id, &e, DECLARE_SRC_THEME, NULL);
+		/* The inset is the allocation; surface protocol minima may
+		 * overhang it without expanding the client border/titlebar area. */
+		e = (Clay_ElementDeclaration) {
+			.layout.sizing = { CLAY_SIZING_PERCENT(1), CLAY_SIZING_PERCENT(1) },
+		};
+	}
+	declare_client(c, m, client_z(c), native ? &e : NULL);
+	if (inset) {
+		record_close();
+		Clay__CloseElement();
+	}
 	foreach(node, globalconf.stack)
 		if ((*node)->transient_for == c && (*node)->mon == m
 				&& !client_is_unmanaged(*node)
@@ -968,8 +995,10 @@ static bool
 transient_rides_parent(Client *c, Monitor *m)
 {
 	Client *p = c->transient_for;
+	Clay_ElementDeclaration e;
 
-	return p && !p->clay_tiled && transient_inherits(c) && p->mon == m
+	return p && p->mon == m && transient_inherits(c)
+		&& (!p->clay_tiled || layout_client_declaration(p, m, &e))
 		&& !client_is_unmanaged(p) && declarable_client(p);
 }
 
@@ -1029,23 +1058,79 @@ slot_number(lua_State *L, int index, const char *key)
     return value;
 }
 
+/* Absence means GROW; an authored zero remains a percentage allocation. */
+static Clay_SizingAxis
+slot_sizing(lua_State *L, int index, const char *key)
+{
+    lua_getfield(L, index, key);
+    bool specified = lua_isnumber(L, -1);
+    float share = lua_tonumber(L, -1);
+    lua_pop(L, 1);
+    return specified ? CLAY_SIZING_PERCENT(share) : CLAY_SIZING_GROW(0);
+}
+
+/* Native layout floats are looked up by original client while the existing
+ * stack walk declares them. This retains raise/lower and transient order;
+ * the Lua map contains attachment/sizing policy, never solved rectangles. */
+static bool
+layout_client_declaration(Client *c, Monitor *m, Clay_ElementDeclaration *e)
+{
+    lua_State *L = globalconf_L;
+    int top = lua_gettop(L);
+    bool found = false;
+    if (tile_ref == LUA_NOREF) return false;
+    lua_rawgeti(L, LUA_REGISTRYINDEX, tile_ref);
+    lua_getfield(L, -1, "floating");
+    if (!lua_istable(L, -1)) goto done;
+    luaA_object_push(L, c);
+    lua_rawget(L, -2);
+    if (!lua_istable(L, -1)) goto done;
+    int pad = slot_number(L, -1, "padding");
+    *e = (Clay_ElementDeclaration) {
+        .layout.sizing = { slot_sizing(L, -1, "w"), slot_sizing(L, -1, "h") },
+        .floating = {
+            .attachTo = CLAY_ATTACH_TO_ELEMENT_WITH_ID,
+            .parentId = workarea_id(m).id,
+            .zIndex = client_z(c),
+            .pointerCaptureMode = CLAY_POINTER_CAPTURE_MODE_PASSTHROUGH,
+        },
+    };
+    e->layout.padding = (Clay_Padding) { pad, pad, pad, pad };
+    lua_getfield(L, -1, "attach_to");
+    if (lua_isstring(L, -1) && !strcmp(lua_tostring(L, -1), "output"))
+        e->floating.parentId = output_id(m).id;
+    lua_pop(L, 1);
+    lua_getfield(L, -1, "center");
+    if (lua_toboolean(L, -1))
+        e->floating.attachPoints = (Clay_FloatingAttachPoints) {
+            .element = CLAY_ATTACH_POINT_CENTER_CENTER,
+            .parent = CLAY_ATTACH_POINT_CENTER_CENTER,
+        };
+    lua_pop(L, 1);
+    found = true;
+done:
+    lua_settop(L, top);
+    return found;
+}
+
 static void
 declare_tile_slot(Monitor *m, int index, unsigned ordinal, bool root)
 {
     lua_State *L = globalconf_L;
     index = luaA_absindex(L, index);
-    float w = slot_number(L, index, "w"), h = slot_number(L, index, "h");
     Clay_ElementDeclaration e = {
-        .layout.sizing = { w ? CLAY_SIZING_PERCENT(w) : CLAY_SIZING_GROW(0),
-            h ? CLAY_SIZING_PERCENT(h) : CLAY_SIZING_GROW(0) },
+        .layout.sizing = { slot_sizing(L, index, "w"), slot_sizing(L, index, "h") },
     };
+    lua_getfield(L, index, "contain_size");
+    e.layout.sizeContain = lua_toboolean(L, -1);
+    lua_pop(L, 1);
     lua_getfield(L, index, "client");
     if (lua_isuserdata(L, -1)) {
         Client *c = luaA_checkudata(L, -1, &client_class);
         lua_pop(L, 1);
         if (declarable_client(c)) {
             c->clay_tiled = true;
-            declare_client(c, m, 0, &e.layout.sizing);
+            declare_client(c, m, 0, &e);
         }
         return;
     }
@@ -1053,6 +1138,9 @@ declare_tile_slot(Monitor *m, int index, unsigned ordinal, bool root)
     int gap = slot_number(L, index, "gap");
     int pad = slot_number(L, index, "padding");
     e.layout.childGap = gap;
+    lua_getfield(L, index, "ceil_grow");
+    e.layout.ceilGrow = lua_toboolean(L, -1);
+    lua_pop(L, 1);
     e.layout.padding = (Clay_Padding) { pad, pad, pad, pad };
     lua_getfield(L, index, "direction");
     e.layout.layoutDirection = !strcmp(lua_tostring(L, -1), "column")
@@ -1151,7 +1239,8 @@ declare_unmanaged_clients(Monitor *m)
 /* --- the converted widget tree (widget.h) ---
  *
  * One element per node, nested as lua/wibox/clay.lua compiled them. The
- * root is the drawin's own box, fixed and floating like any other leaf here.
+ * root is the drawable's box, or the host slot with the same area. Distinct
+ * host insets keep a separate content element.
  * Clipping is the renderer's, not Clay's: a Clay clip element is a scroll
  * container, a context holds ten (clay.h:2194), and one clipping axis stops
  * Clay compressing the children along it (clay.h:2305-2311). Instead every
@@ -1161,28 +1250,103 @@ declare_unmanaged_clients(Monitor *m)
  * nothing outside the drawin and a rounded background cuts its children to
  * its arc, as the container's own clip did.
  *
- * Ids follow the path from the root: the root hashes the drawin's registry
- * id, and a child hashes its index seeded with its parent's id, the shape of
- * CLAY_IDI_LOCAL (clay.h:92). A widget inserted among its siblings renames
- * the siblings after it and their subtrees and nothing else, so the rest of
- * the tree keeps its retained nodes; a preorder index would rename every
- * node after the insertion point.
+ * The tree records its actual declared root ID. Original widget occurrences
+ * retain stable IDs across sibling changes and host combination; anonymous
+ * structure follows its parent's path, and unbound text uses Clay's hash.
  *
  * Every node carries the drawin's handle in userData, containers included:
  * the pointer over a gap between leaves lands on a container's rectangle,
  * and declare_hit has to resolve that node to the drawin (input.c then takes
  * drawin-local coordinates from the drawin's own box, not the node's).
  */
-/* This pass's widget identities resolve to the existing path-based Clay ids.
- * Keeping this map separate preserves repeated widgets and every subtree. */
-static struct { uint32_t identity, id; } attachment_targets[WIDGET_NODES_MAX];
-static size_t attachment_targets_len;
-static uint32_t
-attachment_target(uint32_t identity)
+/* This pass's widget identities resolve to their declared Clay elements. */
+static struct { uint32_t identity, occurrence, host, id; } *attachment_targets;
+static size_t attachment_targets_len, attachment_targets_cap;
+
+static void
+attachment_bind(struct widget_binding binding, uint32_t host, uint32_t id)
 {
+	if (!binding.identity)
+		return;
+	if (attachment_targets_len == attachment_targets_cap) {
+		attachment_targets_cap = attachment_targets_cap ? attachment_targets_cap * 2 : 64;
+		p_realloc(&attachment_targets, attachment_targets_cap);
+	}
+	attachment_targets[attachment_targets_len].identity = binding.identity;
+	attachment_targets[attachment_targets_len].occurrence = binding.occurrence;
+	attachment_targets[attachment_targets_len].host = host;
+	attachment_targets[attachment_targets_len++].id = id;
+}
+
+static unsigned
+attachment_occurrences(const struct widget_tree *tree, uint32_t identity)
+{
+    unsigned count = 0;
+    for (size_t i = 0; i < tree->bindings_len && count < 2; i++)
+        count += tree->bindings[i].identity == identity;
+    return count;
+}
+
+/* Before the first completed frame Lua may have no occurrence registry yet.
+ * Count authored visible placements in the stored trees, including attachment
+ * hosts that have not been declared yet. Declaration order cannot select one
+ * copy of an ambiguous target. This reads identity metadata, never boxes. */
+static bool
+attachment_is_ambiguous(uint32_t identity, uint32_t host_id)
+{
+    unsigned count = 0;
+    if (host_id) {
+        drawin_t *d = declare_handle_get(handle_pack(DECLARE_KIND_DRAWIN, host_id), NULL);
+        if (d)
+            return d->visible && d->screen && !some_is_lock_drawin(d)
+                && attachment_occurrences(&d->widgets, identity) > 1;
+        drawable_t *drawable = declare_handle_get(handle_pack(DECLARE_KIND_TITLEBAR, host_id), NULL);
+        Client *c = drawable && drawable->owner_type == DRAWABLE_OWNER_CLIENT
+            ? drawable->owner.client : NULL;
+        if (c && declarable_client(c) && !c->fullscreen)
+            for (int bar = 0; bar < CLIENT_TITLEBAR_COUNT; bar++)
+                if (c->titlebar[bar].drawable == drawable && c->titlebar[bar].size)
+                    return attachment_occurrences(&c->titlebar[bar].widgets, identity) > 1;
+        return false;
+    }
+    foreach(item, globalconf.drawins) {
+        drawin_t *d = *item;
+        if (d->visible && d->screen && !some_is_lock_drawin(d))
+            count += attachment_occurrences(&d->widgets, identity);
+        if (count > 1) return true;
+    }
+    foreach(item, globalconf.clients) {
+        Client *c = *item;
+        if (!declarable_client(c) || c->fullscreen) continue;
+        for (int bar = 0; bar < CLIENT_TITLEBAR_COUNT; bar++) {
+            if (c->titlebar[bar].size)
+                count += attachment_occurrences(&c->titlebar[bar].widgets, identity);
+            if (count > 1) return true;
+        }
+    }
+    return false;
+}
+
+static uint32_t
+attachment_target(drawin_t *d)
+{
+    uint32_t identity = d->attachment.target, occurrence = d->attachment.occurrence;
+    uint32_t id = 0;
+    if (!occurrence && attachment_is_ambiguous(identity, d->attachment.host)) {
+        if (!d->attachment_ambiguous)
+            wlr_log(WLR_ERROR, "ambiguous attachment target %"PRIu32
+                "; pass a widget hit with its occurrence", identity);
+        d->attachment_ambiguous = true;
+        return 0;
+    }
     for (size_t i = 0; i < attachment_targets_len; i++)
-        if (attachment_targets[i].identity == identity) return attachment_targets[i].id;
-    return 0;
+        if (attachment_targets[i].identity == identity
+                && (!d->attachment.host || attachment_targets[i].host == d->attachment.host)
+                && (!occurrence || attachment_targets[i].occurrence == occurrence)) {
+            if (id && id != attachment_targets[i].id) return 0;
+            id = attachment_targets[i].id;
+        }
+    return id;
 }
 
 static Clay_ElementId
@@ -1209,13 +1373,16 @@ clay_hash_number(uint32_t offset, uint32_t seed)
 	return hash + 1;
 }
 
-/* Child k's id. The pinned Clay text hash counts flow AND floating
- * children, so k is the declaration index, including floating siblings.
- * Emission, box/hit readback and inspection must all use this same index. */
+/* Widget elements, including promoted text, use stable placement tokens.
+ * Unbound text uses Clay's index hash, including floating siblings. Anonymous structure
+ * uses its parent's path. Emission, readback and inspection share this rule. */
 static Clay_ElementId
 widget_child_id(struct widget_tree *d, size_t child, Clay_ElementId parent,
 	uint16_t index)
 {
+	if (d->nodes[child].occurrence)
+		return Clay__HashStringWithOffset(CLAY_STRING("widget.occurrence"),
+			d->nodes[child].occurrence, 0);
 	if (d->nodes[child].text)
 		return (Clay_ElementId) { .id = clay_hash_number(index, parent.id) };
 	return Clay__HashStringWithOffset(CLAY_STRING("drawin.widget"), index, parent.id);
@@ -1292,13 +1459,16 @@ widget_node_decl(const struct widget_node *n, int16_t z,
 
 static size_t
 declare_widget_subtree(const struct widget_host *host, size_t i, Clay_ElementId id, int16_t z,
-	void *userdata, size_t *leaf)
+	void *userdata, size_t *leaf, const Clay_ElementDeclaration *root_decl)
 {
 	struct widget_tree *d = host->tree;
 	const struct widget_node *n = &d->nodes[i];
 	void *word = userdata_clip(userdata, n->clip_opens, n->clip_by);
 	Clay_ElementDeclaration e;
 	size_t next = i + 1;
+
+	for (uint32_t k = 0; k < n->binding_count; k++)
+		attachment_bind(d->bindings[n->binding_start + k], host->id, id.id);
 
 	/* A text element, as CLAY_TEXT declares one: the run and its config,
 	 * no children, the drawin's word riding the config's userData to the
@@ -1314,26 +1484,32 @@ declare_widget_subtree(const struct widget_host *host, size_t i, Clay_ElementId 
 			.wrapMode = n->wrap,
 			.textAlignment = n->text_align,
 		};
-		Clay__OpenTextElement((Clay_String) {
+		Clay_TextElementLayout layout = {
+			.growWidth = n->sizing[0] == WIDGET_SIZING_GROW,
+			.growHeight = n->sizing[1] == WIDGET_SIZING_GROW,
+			.verticalAlignment = n->align[1],
+		};
+		Clay__OpenTextElementWithLayout(id, (Clay_String) {
 			.length = (int32_t)n->text_len,
 			.chars = d->text + n->text_off,
-		}, cfg);
+		}, cfg, n->text_layout ? &layout : NULL);
 		return next;
 	}
 
-	if (n->identity && attachment_targets_len < LENGTH(attachment_targets)) {
-        attachment_targets[attachment_targets_len].identity = n->identity;
-        attachment_targets[attachment_targets_len++].id = id.id;
-    }
-    e = widget_node_decl(n, z, word);
-	if (i == 0 && host->flow) {
+	e = root_decl ? *root_decl : widget_node_decl(n, z, word);
+	/* Definite hosts keep overflowing content at its own size. Passive
+	 * native clipping replaces the old FLOAT/FIT root's previous-size floor. */
+	if (i == 0 && n->sizing[0] == WIDGET_SIZING_FIXED
+			&& n->sizing[1] == WIDGET_SIZING_FIXED)
+		e.clip = (Clay_ClipElementConfig) {.horizontal = true, .vertical = true, .passive = true};
+	if (i == 0 && host->flow && !root_decl) {
 		/* A bar's root fills the slot the frame sized for it; the
 		 * drawin's geometry is what this element solves to. */
 		e.layout.sizing = (Clay_Sizing) {
 			host->fit[0] ? widget_sizing(n, 0) : host->told[0] ? CLAY_SIZING_FIXED(host->told[0]) : CLAY_SIZING_GROW(0),
 			host->fit[1] ? widget_sizing(n, 1) : host->told[1] ? CLAY_SIZING_FIXED(host->told[1]) : CLAY_SIZING_GROW(0),
 		};
-	} else if (i == 0) {
+	} else if (i == 0 && !root_decl) {
 		/* A titlebar root attaches at its parent's origin; a drawin
 		 * uses an output-local offset (third_party/clay.h:2074-2080,
 		 * 2625-2677). Fixed axes use the host box, while an awful.popup
@@ -1378,7 +1554,7 @@ declare_widget_subtree(const struct widget_host *host, size_t i, Clay_ElementId 
 	}
 	for (uint16_t k = 0; k < n->children; k++)
 		next = declare_widget_subtree(host, next,
-			widget_child_id(d, next, id, k), z, userdata, leaf);
+			widget_child_id(d, next, id, k), z, userdata, leaf, NULL);
 	if (i == 0 && !host->flow)
 		record_close();
 	Clay__CloseElement();
@@ -1391,12 +1567,15 @@ static struct widget_host *solved_hosts;
 static size_t solved_len, solved_cap;
 
 static void
-declare_widget_tree(const struct widget_host *host, int16_t z,
-	void *userdata)
+declare_widget_tree_at(const struct widget_host *host, Clay_ElementId id, int16_t z,
+	void *userdata, const Clay_ElementDeclaration *root_decl)
 {
 	struct widget_tree *d = host->tree;
 	size_t leaf = 0;
 
+	if (d->root_id != id.id)
+		d->declared = false;
+	d->root_id = id.id;
 	if (!d->declared) {
 		d->declared = true;
 		if (solved_len == solved_cap) {
@@ -1405,8 +1584,34 @@ declare_widget_tree(const struct widget_host *host, int16_t z,
 		}
 		solved_hosts[solved_len++] = *host;
 	}
-	declare_widget_subtree(host, 0, widget_root_id(host->id), z, userdata,
-		&leaf);
+	declare_widget_subtree(host, 0, id, z, userdata, &leaf, root_decl);
+}
+
+static void
+declare_widget_tree(const struct widget_host *host, int16_t z, void *userdata)
+{
+	declare_widget_tree_at(host, widget_root_id(host->id), z, userdata, NULL);
+}
+
+/* The slot and drawable have equal areas: keep the slot's authored sizing
+ * and attachment, and the drawable's paint, clipping and child arrangement.
+ * Callers retain distinct content elements for margins/non-stretched bars. */
+static void
+declare_widget_slot(const struct widget_host *host, Clay_ElementId id,
+	const Clay_ElementDeclaration *slot, const char *role, enum declare_src src,
+	int16_t z, void *userdata)
+{
+	const struct widget_node *n = &host->tree->nodes[0];
+	Clay_ElementDeclaration e = widget_node_decl(n, z,
+		userdata_clip(userdata, n->clip_opens, n->clip_by));
+	e.layout.sizing = slot->layout.sizing;
+	e.floating = slot->floating;
+	if (host->radius > 0)
+		e.cornerRadius = (Clay_CornerRadius) {host->radius, host->radius,
+			host->radius, host->radius};
+	record_open(role, declare_userdata_handle(userdata), id, &e, src, host);
+	declare_widget_tree_at(host, id, z, userdata, &e);
+	record_close();
 }
 
 /* --- drawins ---
@@ -1492,12 +1697,8 @@ declare_wallpaper_drawin(drawin_t *d, Monitor *m, int16_t z)
 	if (!drawin_widget_host(d, &host))
 		return;
 	host.flow = true;
-	Clay__OpenElementWithId(id);
-	Clay__ConfigureOpenElementPtr(&slot);
-	record_open("WALLPAPER", handle, id, &slot, DECLARE_SRC_NONE, &host);
-	declare_widget_tree(&host, z, leaf_userdata(handle, opacity));
-	record_close();
-	Clay__CloseElement();
+	declare_widget_slot(&host, id, &slot, "WALLPAPER", DECLARE_SRC_NONE,
+		z, leaf_userdata(handle, opacity));
 }
 
 /* A visible drawin declares once its first compile stores a tree. */
@@ -1749,6 +1950,11 @@ declare_bar(drawin_t *d, Monitor *m, int16_t z)
 		slot.floating.zIndex = z;
 		slot.floating.pointerCaptureMode = CLAY_POINTER_CAPTURE_MODE_PASSTHROUGH;
 	}
+	if (d->bar.stretch && !mg[0] && !mg[1] && !mg[2] && !mg[3]) {
+		declare_widget_slot(&bar->host, id, &slot, "WIBAR", DECLARE_SRC_THEME,
+			z, leaf_userdata(handle, opacity));
+		return;
+	}
 	Clay__OpenElementWithId(id);
 	Clay__ConfigureOpenElementPtr(&slot);
 	record_open("WIBAR", handle, id, &slot, DECLARE_SRC_THEME, &bar->host);
@@ -1845,7 +2051,7 @@ bars_settle(Monitor *m)
 	for (size_t i = 0; i < len; i++) {
 		drawin_t *d = bars[i].d;
 		Clay_ElementData root = Clay_GetElementData(
-			widget_root_id(bars[i].host.id));
+			(Clay_ElementId) {.id = bars[i].host.tree->root_id});
 		Clay_BoundingBox b = root.boundingBox;
 		int x, y, w, h;
 
@@ -1898,10 +2104,19 @@ drawin_z(drawin_t *d)
  * A container reserves the theme extent as padding. Both kinds retain the existing
  * widget subtree and use its solved size for the next raster. */
 static Clay_Dimensions
-attachment_decoration(drawin_t *d)
+attachment_decoration(drawin_t *d, Clay_ElementDeclaration *slot)
 {
     const shadow_config_t *s = shadow_get_effective_config(d->shadow_config, true);
     int ex = d->border_width, ey = ex;
+    if (drawin_native_attachment_border(d)) {
+        const color_t *color = &d->border_color_parsed;
+        slot->border = (Clay_BorderElementConfig) {
+            .color = {color->red, color->green, color->blue, color->alpha},
+            .width = {ex, ex, ex, ex, 0},
+        };
+        image_entry_set(&d->attachment_decoration, NULL);
+        return (Clay_Dimensions){ex, ey};
+    }
     if (s->enabled) {
         int outset = MAX(0, s->spread + s->radius);
         ex = MAX(ex, outset + abs(s->offset_x));
@@ -1914,8 +2129,10 @@ attachment_decoration(drawin_t *d)
     int w = MAX(1, d->width), h = MAX(1, d->height);
     if (d->attachment_decoration.native && d->decoration_width == w
             && d->decoration_height == h && d->decoration_border_gen == d->border_entry.gen
-            && !memcmp(&d->decoration_shadow, s, sizeof(*s)))
+            && !memcmp(&d->decoration_shadow, s, sizeof(*s))) {
+        slot->image.imageData = &d->attachment_decoration;
         return (Clay_Dimensions){ex, ey};
+    }
     cairo_surface_t *surface = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, w+2*ex, h+2*ey);
     cairo_t *cr = cairo_create(surface);
     cairo_translate(cr, ex, ey);
@@ -1948,6 +2165,7 @@ attachment_decoration(drawin_t *d)
     d->decoration_width = w; d->decoration_height = h;
     d->decoration_border_gen = d->border_entry.gen;
     d->decoration_shadow = *s;
+    slot->image.imageData = &d->attachment_decoration;
     return (Clay_Dimensions){ex, ey};
 }
 
@@ -1956,7 +2174,7 @@ declare_attachment(drawin_t *d, Monitor *m)
 {
     if (d->attachment.kind == 2 && !d->attachment.target) return false;
     uint32_t target = d->attachment.target
-        ? attachment_target(d->attachment.target) : output_id(m).id;
+        ? attachment_target(d) : output_id(m).id;
     if (!target || bars_len == LENGTH(bars)) return false;
     if (d->attachment.hover && !Clay_PointerOver((Clay_ElementId){.id=target})) return false;
     uint64_t handle = declare_handle_for(d, DECLARE_KIND_DRAWIN);
@@ -1983,7 +2201,7 @@ declare_attachment(drawin_t *d, Monitor *m)
         slot.floating.zIndex = Z_NOTIFICATION;
         a->host.fit[0] = false;
     }
-    Clay_Dimensions decoration = attachment_decoration(d);
+    Clay_Dimensions decoration = attachment_decoration(d, &slot);
     slot.layout.padding = (Clay_Padding){decoration.width, decoration.width,
         decoration.height, decoration.height};
     /* Attach the content's own point; decoration extends around it. */
@@ -1991,13 +2209,20 @@ declare_attachment(drawin_t *d, Monitor *m)
     slot.floating.offset.y += ((int)d->attachment.own % 3 - 1) * decoration.height;
     if (d->attachment.kind == 3)
         slot.layout.sizing.width = CLAY_SIZING_FIXED(d->attachment.width + 2*decoration.width);
-    slot.image.imageData = d->attachment_decoration.native ? &d->attachment_decoration : NULL;
     Clay_ElementId id = Clay__HashStringWithOffset(CLAY_STRING("ATTACHMENT"),
         (uint32_t)handle, 0);
+    const char *role = d->attachment.kind == 3 ? "LAUNCHER"
+        : d->attachment.kind == 2 ? "TOOLTIP" : "POPUP";
+    enum declare_src src = d->attachment.kind == 3 || decoration.width || decoration.height
+        ? DECLARE_SRC_THEME : DECLARE_SRC_NONE;
+    if (!decoration.width && !decoration.height) {
+        declare_widget_slot(&a->host, id, &slot, role, src,
+            slot.floating.zIndex, leaf_userdata(handle, d->opacity >= 0 ? (float)d->opacity : 1.0f));
+        return true;
+    }
     Clay__OpenElementWithId(id);
     Clay__ConfigureOpenElementPtr(&slot);
-    record_open(d->attachment.kind == 3 ? "LAUNCHER" : d->attachment.kind == 2 ? "TOOLTIP" : "POPUP",
-        handle, id, &slot, d->attachment.kind == 3 ? DECLARE_SRC_THEME : DECLARE_SRC_NONE, &a->host);
+    record_open(role, handle, id, &slot, src, &a->host);
     declare_widget_tree(&a->host, slot.floating.zIndex, leaf_userdata(handle,
         d->opacity >= 0 ? (float)d->opacity : 1.0f));
     record_close();
@@ -2046,11 +2271,15 @@ declare_notifications(Monitor *m)
             Clay_ElementDeclaration child = {
                 .layout.sizing = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIT(0) },
             };
-            Clay_Dimensions decoration = attachment_decoration(d);
+            Clay_Dimensions decoration = attachment_decoration(d, &child);
             child.layout.padding = (Clay_Padding){decoration.width, decoration.width,
                 decoration.height, decoration.height};
-            child.image.imageData = d->attachment_decoration.native ? &d->attachment_decoration : NULL;
             Clay_ElementId id = Clay__HashStringWithOffset(CLAY_STRING("ATTACHMENT"), (uint32_t)handle, 0);
+            if (!decoration.width && !decoration.height) {
+                declare_widget_slot(&a->host, id, &child, "NOTIFICATION", DECLARE_SRC_NONE,
+                    Z_NOTIFICATION, leaf_userdata(handle, d->opacity >= 0 ? (float)d->opacity : 1.0f));
+                continue;
+            }
             Clay__OpenElementWithId(id);
             Clay__ConfigureOpenElementPtr(&child);
             record_open("NOTIFICATION", handle, id, &child, DECLARE_SRC_NONE, &a->host);
@@ -2412,7 +2641,7 @@ declare_widget_hits(const struct widget_host *host, double x, double y, int *out
 	Clay_SetPointerState((Clay_Vector2) {
 		(float)(host->x + x), (float)(host->y + y) }, false);
 	ids = Clay_GetPointerOverIds();
-	root_id = widget_root_id(host->id);
+	root_id = (Clay_ElementId) {.id = d->root_id};
 #ifdef SOMEWM_RENDER_VERIFY
 	/* The scene named this drawable at the point (input.c), so the query
 	 * (third_party/clay.h:3900-3967) must reach its root: the two disagreeing
@@ -2434,7 +2663,7 @@ declare_widget_hits(const struct widget_host *host, double x, double y, int *out
 static int
 widget_boxes_read(const struct widget_host *host, int (*boxes)[4])
 {
-	Clay_ElementId root_id = widget_root_id(host->id);
+	Clay_ElementId root_id = {.id = host->tree->root_id};
 	Clay_ElementData root = Clay_GetElementData(root_id);
 	int n = 0;
 
@@ -2499,73 +2728,18 @@ solved_emit(void)
 	}
 }
 
-static void handle_clay_error(Clay_ErrorData error);
-
-/* Solve host's stored tree on its own, now, in a context holding only this
- * tree: a partial layout in the output's context would evict every other
- * element's box from Clay's hashmap (clay.h, generation eviction in
- * Clay__AddHashMapItem). The tree is placed where the frame will place it,
- * so the device rounding matches the renderer's to the pixel. */
-bool
-declare_widget_measure(const struct widget_host *host, int *w, int *h)
-{
-	static Clay_Context *ctx;
-	Monitor *m = host->m;
-	Clay_Context *previous;
-	Clay_ElementId root_id = widget_root_id(host->id);
-	Clay_ElementData root;
-	size_t leaf = 0;
-
-	if (!m || host->tree->nodes_len == 0)
-		return false;
-	if (!ctx) {
-		uint32_t arena_size = Clay_MinMemorySize();
-
-		ctx = Clay_Initialize(Clay_CreateArenaWithCapacityAndMemory(
-			arena_size, malloc(arena_size)),
-			(Clay_Dimensions) { 0, 0 },
-			(Clay_ErrorHandler) {
-				.errorHandlerFunction = handle_clay_error });
-		Clay_SetCullingEnabled(false);
-		Clay_SetMeasureTextFunction(render_measure_text, NULL);
-	}
-	struct declare_band *was_recording = recording;
-
-	previous = Clay_GetCurrentContext();
-	Clay_SetCurrentContext(ctx);
-	render_text_set_measure_scale(m->wlr_output->scale);
-	clay_scroll_records_clear();
-	declare_begin_layout();
-	struct widget_host isolated = *host;
-	isolated.in_parent = false;
-	/* A measuring solve from a clay::declare handler runs inside the
-	 * frame's pass; its root is not part of the frame's tree. */
-	recording = NULL;
-	declare_widget_subtree(&isolated, 0, root_id, 0, NULL, &leaf);
-	recording = was_recording;
-	Clay_EndLayout(0);
-	root = Clay_GetElementData(root_id);
-	Clay_SetCurrentContext(previous);
-	if (!root.found)
-		return false;
-	/* Rounded as widget_boxes_walk rounds a root-relative box. */
-	*w = (int)floorf(root.boundingBox.width + 0.5f);
-	*h = (int)floorf(root.boundingBox.height + 0.5f);
-	return true;
-}
 
 int
-declare_output_order(struct declare_output *dout, Monitor *m, void **objects,
+declare_output_order(struct declare_output *dout, void **objects,
 	int cap)
 {
 	int n = 0;
 
+	if (!dout->desktop.clay)
+		return 0;
+	Clay_Context *previous = Clay_GetCurrentContext();
 	Clay_SetCurrentContext(dout->desktop.clay);
-	render_text_set_measure_scale(dout->wlr_output->scale);
-	clay_scroll_records_clear();
-	declare_begin_layout();
-	declare_scene(m);
-	Clay_RenderCommandArray commands = Clay_EndLayout(0);
+	Clay_RenderCommandArray commands = clay_render_commands();
 
 	for (int32_t i = 0; i < commands.length && n < cap; i++) {
 		Clay_RenderCommand *cmd = Clay_RenderCommandArray_Get(&commands, i);
@@ -2586,6 +2760,7 @@ declare_output_order(struct declare_output *dout, Monitor *m, void **objects,
 			continue;
 		objects[n++] = object;
 	}
+	Clay_SetCurrentContext(previous);
 	return n;
 }
 
@@ -3309,7 +3484,7 @@ dump_what(buffer_t *buf, uint32_t id, void *userdata)
 	if (kind == DECLARE_KIND_DRAWIN && d->widgets.nodes_len > 0) {
 		size_t i = 0;
 		const struct widget_node *n = widget_node_for_id(&d->widgets,
-			&i, widget_root_id((uint32_t)handle), id);
+			&i, (Clay_ElementId) {.id = d->widgets.root_id}, id);
 
 		if (n && n != d->widgets.nodes) {
 			buffer_addf(buf, "widget %s%s", n->cls ? n->cls : "-",
@@ -3451,6 +3626,19 @@ dump_widget_node(buffer_t *buf, const struct widget_host *host, size_t i, Clay_E
 				|| n->sizing[1] == WIDGET_SIZING_FIXED) {
 			buffer_adds(buf, i == 0 || n->last_frame_size ? " last-frame" : " user");
 		}
+		if (!n->image && !n->shape)
+			buffer_adds(buf, n->vertical ? " column" : " row");
+		if (n->pad[0] || n->pad[1] || n->pad[2] || n->pad[3])
+			buffer_addf(buf, " pad %u,%u,%u,%u", n->pad[0], n->pad[1], n->pad[2], n->pad[3]);
+		if (n->gap)
+			buffer_addf(buf, " gap %u", n->gap);
+		if (n->floating && data.found) {
+			Clay_ElementDeclaration declared;
+			if (clay_element_declaration(id, &declared)) {
+				const Clay_FloatingElementConfig *f = &declared.floating;
+				buffer_addf(buf, " attach PARENT offset %g,%g band %d", f->offset.x, f->offset.y, f->zIndex);
+			}
+		}
 	}
 	if (data.found)
 		buffer_addf(buf, " box %d,%d %dx%d",
@@ -3557,6 +3745,8 @@ dump_records(buffer_t *buf, struct declare_band *band)
 			if (r->host.radius > 0)
 				buffer_addf(buf, ", radius %g", r->host.radius);
 		}
+		if (r->clip)
+			buffer_adds(buf, " clip");
 		buffer_adds(buf, " w=");
 		dump_axis(buf, r->sizing.width);
 		buffer_adds(buf, " h=");
@@ -3601,9 +3791,17 @@ dump_records(buffer_t *buf, struct declare_band *band)
 				(int)data.boundingBox.height);
 		else
 			buffer_adds(buf, " box -\n");
-		if (r->has_host)
-			dump_widget_node(buf, &r->host, 0,
-				widget_root_id(r->host.id), d + 1);
+		if (r->has_host) {
+			struct widget_tree *tree = r->host.tree;
+			Clay_ElementId root_id = {.id = tree->root_id};
+			if (r->id == root_id.id) {
+				size_t next = 1;
+				for (uint16_t k = 0; k < tree->nodes[0].children; k++)
+					next = dump_widget_node(buf, &r->host, next,
+						widget_child_id(tree, next, root_id, k), d);
+			} else
+				dump_widget_node(buf, &r->host, 0, root_id, d);
+		}
 	}
 }
 

@@ -18,7 +18,7 @@ local wibox = require("wibox")
 
 local s = screen[1]
 local leaf_widget = capture.leaf_widget
-local bar
+local bar, leaves
 
 -- The dump block for the bar: the drawin line and the tree nodes under it.
 local function block()
@@ -48,6 +48,12 @@ end
 local steps = {
     function(count)
         if count == 1 then
+            leaves = {
+                leaf_widget(40, nil, "#ff0000"),
+                leaf_widget(math.huge, nil, "#00ff00"),
+                leaf_widget(30, nil, "#0000ff"),
+                leaf_widget(70, 16, "#00ffff"),
+            }
             -- The bundled bar's shape, unshaped, plus one container with a
             -- forced size.
             bar = wibox {
@@ -61,9 +67,9 @@ local steps = {
                     {
                         layout = wibox.layout.fixed.horizontal,
                         spacing = 6,
-                        leaf_widget(40, nil, "#ff0000"),
+                        leaves[1],
                         {
-                            leaf_widget(math.huge, nil, "#00ff00"),
+                            leaves[2],
                             forced_width = 100,
                             widget = wibox.container.margin,
                         },
@@ -71,12 +77,12 @@ local steps = {
                     { widget = wibox.container.background, bg = "#204080" },
                     {
                         layout = wibox.layout.fixed.horizontal,
-                        leaf_widget(30, nil, "#0000ff"),
+                        leaves[3],
                     },
                 },
                 {
                     {
-                        { leaf_widget(70, 16, "#00ffff"), margins = 4,
+                        { leaves[4], margins = 4,
                             widget = wibox.container.margin },
                         bg = "#204080",
                         widget = wibox.container.background,
@@ -98,14 +104,14 @@ local steps = {
         assert(head:find("converted", 1, true),
             "the bar did not convert: " .. head)
 
-        local boxes = awesome._test_widget_boxes(bar.drawin)
+        require('_clay_example').save('widget-sizing-original-leaves', awesome._clay_tree(s))
         for i, want in ipairs {
-            { index = 5, width = 40, height = 24 },
-            { index = 7, width = 100, height = 24 },
-            { index = 10, width = 30, height = 24 },
-            { index = 14, width = 70, height = 16 },
+            { width = 40, height = 24 },
+            { width = 100, height = 24 },
+            { width = 30, height = 24 },
+            { width = 70, height = 16 },
         } do
-            local box = boxes[want.index]
+            local box = assert(bar._drawable._clay_wired[leaves[i]])[1].element.box
             assert(box and box.width == want.width and box.height == want.height,
                 "unexpected leaf box " .. i)
         end

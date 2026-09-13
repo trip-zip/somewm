@@ -4,6 +4,5 @@ output
     BACKGROUND WL-1 w=grow h=grow output row attach PARENT band -10
     WORKAREA - w=grow h=grow row
       CLIENT CLIENT_A w=grow h=grow theme column pad 1,1,1,1
-        TITLEBAR CLIENT_A converted w=grow h=fixed(24) theme row
-            drawable clip w=grow h=grow
+        TITLEBAR CLIENT_A converted clip w=grow h=fixed(24) theme row
         SURFACE CLIENT_A w=grow h=grow custom
