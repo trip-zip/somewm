@@ -465,24 +465,31 @@ function systray_icon:draw(context, cr, width, height)
     -- Check for per-icon icon_override first
     local icon_override = get_icon_style(item, "icon_override")
     if icon_override then
-        local override_path = lookup_icon_by_name(icon_override, math.floor(math.min(width, height)))
-        if override_path then
-            local icon_surface = surface.load_silently(override_path)
-            if icon_surface then
-                local iw = cairo.ImageSurface.get_width(icon_surface)
-                local ih = cairo.ImageSurface.get_height(icon_surface)
-                if iw > 0 and ih > 0 then
-                    local scale = math.min(width / iw, height / ih)
-                    local dx = (width - iw * scale) / 2
-                    local dy = (height - ih * scale) / 2
-                    cr:save()
-                    cr:translate(dx, dy)
-                    cr:scale(scale, scale)
-                    cr:set_source_surface(icon_surface, 0, 0)
-                    cr:paint()
-                    cr:restore()
-                    icon_drawn = true
-                end
+        -- Cache the loaded surface so we don't re-scan the icon theme
+        -- and re-read from disk on every redraw (e.g. on hover).
+        if self._private.override_cache_name ~= icon_override then
+            self._private.override_cache_name = icon_override
+            self._private.override_surface = nil
+            local override_path = lookup_icon_by_name(icon_override, math.floor(math.min(width, height)))
+            if override_path then
+                self._private.override_surface = surface.load_silently(override_path)
+            end
+        end
+        local icon_surface = self._private.override_surface
+        if icon_surface then
+            local iw = cairo.ImageSurface.get_width(icon_surface)
+            local ih = cairo.ImageSurface.get_height(icon_surface)
+            if iw > 0 and ih > 0 then
+                local scale = math.min(width / iw, height / ih)
+                local dx = (width - iw * scale) / 2
+                local dy = (height - ih * scale) / 2
+                cr:save()
+                cr:translate(dx, dy)
+                cr:scale(scale, scale)
+                cr:set_source_surface(icon_surface, 0, 0)
+                cr:paint()
+                cr:restore()
+                icon_drawn = true
             end
         end
     end
@@ -496,29 +503,23 @@ function systray_icon:draw(context, cr, width, height)
         icon_drawn = ok and result
     end
 
-    -- If no pixmap, try icon_name via theme lookup
+    -- If no pixmap, use the cached icon surface (pre-loaded by _update_icon)
     if not icon_drawn then
-        local icon_name = item.icon_name
-        if icon_name and icon_name ~= "" then
-            local icon_path = lookup_icon_by_name(icon_name, math.floor(math.min(width, height)), item.icon_theme_path)
-            if icon_path then
-                local icon_surface = surface.load_silently(icon_path)
-                if icon_surface then
-                    local iw = cairo.ImageSurface.get_width(icon_surface)
-                    local ih = cairo.ImageSurface.get_height(icon_surface)
-                    if iw > 0 and ih > 0 then
-                        local scale = math.min(width / iw, height / ih)
-                        local dx = (width - iw * scale) / 2
-                        local dy = (height - ih * scale) / 2
-                        cr:save()
-                        cr:translate(dx, dy)
-                        cr:scale(scale, scale)
-                        cr:set_source_surface(icon_surface, 0, 0)
-                        cr:paint()
-                        cr:restore()
-                        icon_drawn = true
-                    end
-                end
+        local icon_surface = self._private.current_icon_surface
+        if icon_surface then
+            local iw = cairo.ImageSurface.get_width(icon_surface)
+            local ih = cairo.ImageSurface.get_height(icon_surface)
+            if iw > 0 and ih > 0 then
+                local scale = math.min(width / iw, height / ih)
+                local dx = (width - iw * scale) / 2
+                local dy = (height - ih * scale) / 2
+                cr:save()
+                cr:translate(dx, dy)
+                cr:scale(scale, scale)
+                cr:set_source_surface(icon_surface, 0, 0)
+                cr:paint()
+                cr:restore()
+                icon_drawn = true
             end
         end
     end
@@ -583,23 +584,28 @@ function systray_icon:draw(context, cr, width, height)
         local ok = pcall(function()
             item:draw_overlay(cr._native or cr, overlay_x, overlay_y, overlay_size)
         end)
-        -- If C draw_overlay failed, try icon_name lookup
+        -- If C draw_overlay failed, try icon_name lookup (cached)
         if not ok and item.overlay_icon_name and item.overlay_icon_name ~= "" then
-            local overlay_path = lookup_icon_by_name(item.overlay_icon_name, overlay_size, item.icon_theme_path)
-            if overlay_path then
-                local overlay_surface = surface.load_silently(overlay_path)
-                if overlay_surface then
-                    local ow = cairo.ImageSurface.get_width(overlay_surface)
-                    local oh = cairo.ImageSurface.get_height(overlay_surface)
-                    if ow > 0 and oh > 0 then
-                        local scale = overlay_size / math.max(ow, oh)
-                        cr:save()
-                        cr:translate(overlay_x, overlay_y)
-                        cr:scale(scale, scale)
-                        cr:set_source_surface(overlay_surface, 0, 0)
-                        cr:paint()
-                        cr:restore()
-                    end
+            if self._private.overlay_cache_name ~= item.overlay_icon_name then
+                self._private.overlay_cache_name = item.overlay_icon_name
+                self._private.overlay_surface = nil
+                local overlay_path = lookup_icon_by_name(item.overlay_icon_name, overlay_size, item.icon_theme_path)
+                if overlay_path then
+                    self._private.overlay_surface = surface.load_silently(overlay_path)
+                end
+            end
+            local overlay_surface = self._private.overlay_surface
+            if overlay_surface then
+                local ow = cairo.ImageSurface.get_width(overlay_surface)
+                local oh = cairo.ImageSurface.get_height(overlay_surface)
+                if ow > 0 and oh > 0 then
+                    local scale = overlay_size / math.max(ow, oh)
+                    cr:save()
+                    cr:translate(overlay_x, overlay_y)
+                    cr:scale(scale, scale)
+                    cr:set_source_surface(overlay_surface, 0, 0)
+                    cr:paint()
+                    cr:restore()
                 end
             end
         end
@@ -729,6 +735,7 @@ function systray_icon:_update_icon()
     local item = self._private.item
     if not item then
         self._private.current_icon = nil
+        self._private.current_icon_surface = nil
         return
     end
 
@@ -736,7 +743,21 @@ function systray_icon:_update_icon()
                  self._private.forced_width or
                  self._private.forced_height or 24
 
-    self._private.current_icon = get_item_icon(item, size)
+    local icon = get_item_icon(item, size)
+    self._private.current_icon = icon
+
+    -- Pre-load the cairo surface so draw() doesn't re-do the icon-theme
+    -- lookup + disk read on every redraw.  get_item_icon returns either a
+    -- cairo.Surface (pixmap case, also drawn via the C path) or a path
+    -- string (icon-name case); resolve the latter to a surface here.
+    if type(icon) == "string" then
+        self._private.current_icon_surface = surface.load_silently(icon)
+    elseif icon then
+        self._private.current_icon_surface = icon
+    else
+        self._private.current_icon_surface = nil
+    end
+
     self:emit_signal("widget::redraw_needed")
 end
 
