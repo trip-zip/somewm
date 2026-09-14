@@ -509,8 +509,10 @@ end
 -- @staticfct awful.spawn.read_lines
 function spawn.read_lines(input_stream, line_callback, done_callback, close)
     local stream = Gio.DataInputStream.new(input_stream)
+    local cancellable = Gio.Cancellable()
     local function done()
         if close then
+            cancellable:cancel()
             stream:close()
         end
         stream:set_buffer_size(0)
@@ -520,10 +522,13 @@ function spawn.read_lines(input_stream, line_callback, done_callback, close)
     end
     local start_read, finish_read
     start_read = function()
-        stream:read_line_async(GLib.PRIORITY_DEFAULT, nil, finish_read)
+        stream:read_line_async(GLib.PRIORITY_DEFAULT, cancellable, finish_read)
     end
     finish_read = function(obj, res)
         local line, length = obj:read_line_finish(res)
+        if cancellable:is_cancelled() then
+            return
+        end
         if type(length) ~= "number" then
             -- Error
             print("Error in awful.spawn.read_lines:", tostring(length))
