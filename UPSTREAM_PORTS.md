@@ -15,6 +15,7 @@ Since SomeWM is not a direct git fork, we manually port relevant changes from up
 
 | AwesomeWM PR | Description | SomeWM PR | Date |
 |--------------|-------------|-----------|------|
+| [#4118](https://github.com/awesomeWM/awesome/pull/4118) | Stop parsing group names after the layout list | (this PR) | 2026-09-16 |
 | [#4100](https://github.com/awesomeWM/awesome/pull/4100) | Revert #4036 (client_shape_input) | (this PR) | 2026-08-02 |
 | [#3998](https://github.com/awesomeWM/awesome/pull/3998) | Add make_widget_from_value() in fixed:insert() | (this PR) | 2026-08-02 |
 | [#4095](https://github.com/awesomeWM/awesome/pull/4095), [#3971](https://github.com/awesomeWM/awesome/pull/3971), 05b8695d | Doc fixes and Lua 5.5 cleanups, via file sync | (this PR) | 2026-08-02 |
