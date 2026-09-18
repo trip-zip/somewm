@@ -20,6 +20,7 @@
 #include "luaa.h"
 #include "common/util.h"
 #include "../globalconf.h"
+#include <glib.h>
 #include <xkbcommon/xkbcommon.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -235,8 +236,15 @@ luaA_keystore(lua_State *L, int ud, const char *str, ssize_t len)
 
 	keyb_t *key = luaA_checkudata(L, ud, &key_class);
 
+	if (!g_utf8_validate(str, len, NULL)) {
+		key->keycode = 0;
+		key->keysym = XKB_KEY_NoSymbol;
+		luaA_warn(L, "failed to convert key into keysym (invalid UTF-8 string)");
+		return;
+	}
+
 	if (len == 1) {
-		/* Single character - use as keysym directly */
+		/* A valid single-byte UTF-8 character is ASCII. */
 		key->keycode = 0;
 		key->keysym = str[0];
 	} else if (str[0] == '#') {
@@ -247,6 +255,16 @@ luaA_keystore(lua_State *L, int ud, const char *str, ssize_t len)
 		/* Named keysym - use xkb_keysym_from_name */
 		key->keycode = 0;
 		key->keysym = xkb_keysym_from_name(str, XKB_KEYSYM_CASE_INSENSITIVE);
+
+		if (key->keysym == XKB_KEY_NoSymbol) {
+			/* Compose sequences such as o + combining diaeresis before
+			 * requiring one character. Use xkbcommon's legacy keysym
+			 * mappings so the result matches symbols from the keymap. */
+			gchar *composed = g_utf8_normalize(str, len, G_NORMALIZE_DEFAULT_COMPOSE);
+			if (composed && g_utf8_strlen(composed, -1) == 1)
+				key->keysym = xkb_utf32_to_keysym(g_utf8_get_char(composed));
+			g_free(composed);
+		}
 
 		if (key->keysym == XKB_KEY_NoSymbol) {
 			luaA_warn(L, "failed to convert \"%s\" into keysym", str);

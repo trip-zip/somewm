@@ -12,6 +12,7 @@
 #include <glib-unix.h>
 #include <libinput.h>
 #include <linux/input-event-codes.h>
+#include <locale.h>
 #include <math.h>
 #include <signal.h>
 #include <stdio.h>
@@ -9024,6 +9025,11 @@ main(int argc, char *argv[])
 
 	ensure_lgi_guard(argc, argv);
 	unsetenv("LD_PRELOAD");  /* Guard is loaded; don't leak to children */
+
+	/* string.wlen() uses mbstowcs(), which needs the environment's character
+	 * locale. Leave numeric parsing and formatting in the C locale. */
+	if (!setlocale(LC_CTYPE, ""))
+		fprintf(stderr, "somewm: could not initialize character locale from environment\n");
 
 	char *startup_cmd = NULL;
 	char *check_config = NULL;
