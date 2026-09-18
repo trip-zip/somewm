@@ -444,16 +444,21 @@ end
 -- @see spawn.with_line_callback
 -- @staticfct awful.spawn.easy_async
 function spawn.easy_async(cmd, callback)
-    local stdout = ''
-    local stderr = ''
+    local stdout_lines = {}
+    local stderr_lines = {}
     local exitcode, exitreason
     local function parse_stdout(str)
-        stdout = stdout .. str .. "\n"
+        table.insert(stdout_lines, str)
+        table.insert(stdout_lines, "\n")
     end
     local function parse_stderr(str)
-        stderr = stderr .. str .. "\n"
+        table.insert(stderr_lines, str)
+        table.insert(stderr_lines, "\n")
     end
     local function done_callback()
+        -- Avoid quadratic complexity by calling concat() once
+        local stdout = table.concat(stdout_lines)
+        local stderr = table.concat(stderr_lines)
         return callback(stdout, stderr, exitreason, exitcode)
     end
     local exit_callback_fired = false
