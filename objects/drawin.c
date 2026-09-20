@@ -70,10 +70,18 @@ static void drawin_refresh_drawable(drawin_t *drawin);
 static float
 drawin_get_effective_scale(drawin_t *d)
 {
+	Monitor *monitor = NULL;
+
 	if (d->scale_override > 0.0f)
 		return d->scale_override;
-	if (d->screen && d->screen->monitor && d->screen->monitor->wlr_output)
-		return d->screen->monitor->wlr_output->scale;
+	if (d->screen) {
+		monitor = d->screen->monitor;
+		if (!monitor)
+			monitor = luaA_monitor_get_by_screen(globalconf_get_lua_State(),
+					d->screen);
+	}
+	if (monitor && monitor->wlr_output)
+		return monitor->wlr_output->scale;
 	return 1.0f;
 }
 
@@ -694,17 +702,19 @@ drawin_assign_screen(lua_State *L, drawin_t *drawin, int drawin_idx)
 	screen_t *new_screen;
 	screen_t *old_screen = drawin->screen;
 
-	/* Get monitor at drawin's position */
-	m = some_monitor_at((double)drawin->x, (double)drawin->y);
-	if (!m) {
-		/* No monitor at this position, try getting focused monitor */
-		m = some_get_focused_monitor();
-	}
+	/* Prefer the Awesome-compatible screen whose geometry contains the
+	 * drawin.  A 4K output may be split into fake screens; mapping through the
+	 * physical Monitor first would assign the right-half wibar to the left
+	 * physical screen and leave fake screen 2 without a top strut. */
+	new_screen = luaA_screen_getbycoord(L, drawin->x, drawin->y);
 
-	if (m) {
-		new_screen = luaA_screen_get_by_monitor(L, m);
-	} else {
-		new_screen = NULL;
+	if (!new_screen) {
+		/* Fall back to the physical monitor for layouts with gaps or before
+		 * screen geometry has been initialized. */
+		m = some_monitor_at((double)drawin->x, (double)drawin->y);
+		if (!m)
+			m = some_get_focused_monitor();
+		new_screen = m ? luaA_screen_get_by_monitor(L, m) : NULL;
 	}
 
 	/* If screen changed, update and emit signal */
@@ -1525,6 +1535,28 @@ luaA_drawin_set_geometry(lua_State *L, drawin_t *drawin, int x, int y, int width
 	luaA_object_push(L, drawin);
 	drawin_moveresize(L, -1, x, y, width, height);
 	lua_pop(L, 1);
+}
+
+/** Reassign a drawin after its screen has been removed.
+ * The caller must remove the old screen from the screen list first so the
+ * coordinate lookup cannot select the invalid screen again. */
+void
+luaA_drawin_reassign_screen(lua_State *L, drawin_t *drawin)
+{
+	screen_t *old_screen;
+
+	if (!drawin)
+		return;
+
+	old_screen = drawin->screen;
+	luaA_object_push(L, drawin);
+	drawin_assign_screen(L, drawin, -1);
+	lua_pop(L, 1);
+
+	if (old_screen != drawin->screen && drawin->visible && drawin->screen &&
+	    (drawin->strut.left || drawin->strut.right || drawin->strut.top ||
+	     drawin->strut.bottom))
+		screen_update_workarea(drawin->screen);
 }
 
 /** Set drawin visibility (AwesomeWM pattern - takes stack index)

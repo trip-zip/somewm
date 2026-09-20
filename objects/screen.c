@@ -498,6 +498,12 @@ screen_removed(lua_State *L, screen_t *screen)
 		}
 	}
 
+	/* The removed screen is no longer in the lookup table, so each drawin can
+	 * safely resolve its coordinate to a surviving logical screen. */
+	foreach(drawin, globalconf.drawins)
+		if ((*drawin)->screen == screen)
+			luaA_drawin_reassign_screen(L, *drawin);
+
 	/* Step 6: Emit class-level "list" signal to notify of screen array change */
 	luaA_class_emit_signal(L, &screen_class, "list", 0);
 }
@@ -691,6 +697,29 @@ screen_update_workarea(screen_t *screen)
 {
 	area_t area = screen->geometry;
 	uint16_t top = 0, bottom = 0, left = 0, right = 0;
+
+	/* fake_add() viewports do not own a Monitor.  Start them from the
+	 * overlapping physical output's usable area instead of raw geometry, so
+	 * tag switches cannot reset a fake half underneath the physical wibar. */
+	if (screen->monitor == NULL) {
+		Monitor *monitor = luaA_monitor_get_by_screen(globalconf_get_lua_State(), screen);
+		if (monitor) {
+			struct wlr_box monitor_area;
+			some_monitor_get_window_area(monitor, &monitor_area);
+			int x1 = MAX(area.x, monitor_area.x);
+			int y1 = MAX(area.y, monitor_area.y);
+			int x2 = MIN(area.x + area.width,
+					monitor_area.x + monitor_area.width);
+			int y2 = MIN(area.y + area.height,
+					monitor_area.y + monitor_area.height);
+			if (x2 > x1 && y2 > y1) {
+				area.x = x1;
+				area.y = y1;
+				area.width = x2 - x1;
+				area.height = y2 - y1;
+			}
+		}
+	}
 
 #define COMPUTE_STRUT(o) \
 	{ \
@@ -2236,6 +2265,20 @@ luaA_monitor_get_by_screen(lua_State *L, screen_t *screen)
 
 	wl_list_for_each(m, &mons, link) {
 		if (luaA_screen_get_by_monitor(L, m) == screen)
+			return m;
+	}
+
+	/* A screen created by screen.fake_add() has no Monitor pointer.  Associate
+	 * it with the physical output whose geometry contains the fake rectangle so
+	 * clients moved to a fake screen still participate in that output's arrange
+	 * and scene update passes. */
+	struct wlr_box monitor_geometry;
+	wl_list_for_each(m, &mons, link) {
+		some_monitor_get_geometry(m, &monitor_geometry);
+		if (screen->geometry.x < monitor_geometry.x + monitor_geometry.width
+			&& screen->geometry.x + screen->geometry.width > monitor_geometry.x
+			&& screen->geometry.y < monitor_geometry.y + monitor_geometry.height
+			&& screen->geometry.y + screen->geometry.height > monitor_geometry.y)
 			return m;
 	}
 	return NULL;
