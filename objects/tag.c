@@ -238,9 +238,17 @@ tag_view(lua_State *L, int udx, bool view)
 
 		luaA_object_emit_signal(L, udx, "property::selected", 0);
 
-		/* Arrange the monitor for the tag's screen */
-		if (tag->screen && tag->screen->monitor)
-			some_monitor_arrange(tag->screen->monitor);
+		/* Arrange the monitor for the tag's screen.  Fake screens have no
+		 * Monitor pointer of their own; resolve them through the overlapping
+		 * physical output so changing a tag on a fake half also refreshes
+		 * visibility and layout immediately. */
+		if (tag->screen) {
+			Monitor *monitor = tag->screen->monitor;
+			if (!monitor)
+				monitor = luaA_monitor_get_by_screen(L, tag->screen);
+			if (monitor)
+				some_monitor_arrange(monitor);
+		}
 	}
 }
 
