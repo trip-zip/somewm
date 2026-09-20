@@ -108,6 +108,7 @@ void drawin_class_setup(lua_State *L);
 
 /* Drawin geometry synchronization (external API - for wibox code etc) */
 void luaA_drawin_set_geometry(lua_State *L, drawin_t *drawin, int x, int y, int width, int height);
+void luaA_drawin_reassign_screen(lua_State *L, drawin_t *drawin);
 void luaA_drawin_set_strut(lua_State *L, drawin_t *drawin, strut_t strut);
 
 /* Drawin geometry synchronization */

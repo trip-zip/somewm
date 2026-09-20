@@ -150,6 +150,35 @@ sync_tiling_reorder(Client *c)
 
 }
 
+/* Arrange one Awesome-compatible screen through the Lua layout engine. A
+ * physical Monitor normally owns one screen, but screen.fake_add() creates
+ * additional viewport objects with no Monitor pointer. */
+static void
+arrange_lua_screen(lua_State *L, screen_t *screen)
+{
+	int stack_top;
+
+	if (!L || !screen || !screen->valid)
+		return;
+
+	stack_top = lua_gettop(L);
+	lua_getglobal(L, "awful");
+	if (!lua_istable(L, -1))
+		goto done;
+	lua_getfield(L, -1, "layout");
+	if (!lua_istable(L, -1))
+		goto done;
+	lua_getfield(L, -1, "arrange");
+	if (!lua_isfunction(L, -1))
+		goto done;
+	luaA_object_push(L, screen);
+	if (lua_pcall(L, 1, 0, 0) != 0)
+		lua_pop(L, 1);
+
+done:
+	lua_settop(L, stack_top);
+}
+
 void
 arrange(Monitor *m)
 {
@@ -190,37 +219,27 @@ arrange(Monitor *m)
 		return;
 	}
 
-	/* Call awful.layout.arrange(screen) in Lua */
-	lua_getglobal(L, "awful");        /* Get awful module */
-	if (!lua_istable(L, -1)) {
-		lua_pop(L, 1);
-		goto fallback;
+	/* Arrange the physical screen first, then every fake viewport that overlaps
+	 * this physical output. Without the second pass, tag changes on a fake
+	 * screen update selected state but never re-run its layout. */
+	arrange_lua_screen(L, screen);
+	{
+		int n = 64;
+		screen_t *all_screens[64];
+		luaA_screen_get_all(L, all_screens, &n);
+		for (int i = 0; i < n; i++) {
+			screen_t *candidate = all_screens[i];
+			if (!candidate || candidate == screen || !candidate->valid
+				|| candidate->monitor != NULL)
+				continue;
+			if (candidate->geometry.x < m->m.x + m->m.width
+				&& candidate->geometry.x + candidate->geometry.width > m->m.x
+				&& candidate->geometry.y < m->m.y + m->m.height
+				&& candidate->geometry.y + candidate->geometry.height > m->m.y)
+				arrange_lua_screen(L, candidate);
+		}
 	}
 
-	lua_getfield(L, -1, "layout");    /* Get awful.layout */
-	if (!lua_istable(L, -1)) {
-		lua_pop(L, 2);
-		goto fallback;
-	}
-
-	lua_getfield(L, -1, "arrange");   /* Get awful.layout.arrange */
-	if (!lua_isfunction(L, -1)) {
-		lua_pop(L, 3);
-		goto fallback;
-	}
-
-	/* Push screen as argument */
-	luaA_object_push(L, screen);
-
-	/* Call awful.layout.arrange(screen) */
-	if (lua_pcall(L, 1, 0, 0) != 0) {
-		lua_pop(L, 1);
-	}
-
-	/* Clean up stack */
-	lua_pop(L, 2);  /* Pop layout and awful */
-
-fallback:
 	/* Scene node visibility already updated at function start (Wayland-specific requirement) */
 
 	/* Update fullscreen background */
