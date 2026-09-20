@@ -17,6 +17,7 @@
 #include "../x11_compat.h"
 #include "common/luaclass.h"
 #include "common/luaobject.h"
+#include "../globalconf.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -70,6 +71,7 @@ drawable_get_scale(drawable_t *d)
 
 	/* Default: use output scale for HiDPI rendering */
 	screen_t *screen = NULL;
+	Monitor *monitor = NULL;
 
 	if (d->owner_type == DRAWABLE_OWNER_DRAWIN && d->owner.drawin) {
 		screen = d->owner.drawin->screen;
@@ -77,8 +79,14 @@ drawable_get_scale(drawable_t *d)
 		screen = d->owner.client->screen;
 	}
 
-	if (screen && screen->monitor && screen->monitor->wlr_output) {
-		return screen->monitor->wlr_output->scale;
+	if (screen) {
+		monitor = screen->monitor;
+		if (!monitor)
+			monitor = luaA_monitor_get_by_screen(globalconf_get_lua_State(), screen);
+	}
+
+	if (monitor && monitor->wlr_output) {
+		return monitor->wlr_output->scale;
 	}
 
 	return 1.0f;

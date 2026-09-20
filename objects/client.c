@@ -1785,12 +1785,17 @@ client_on_selected_tags(client_t *c)
     if(c->sticky)
         return true;
 
-    if(!c->mon)
-        return false;
-
-    /* Get screen object for this client's monitor */
-    L = globalconf_get_lua_State();
-    client_screen = luaA_screen_get_by_monitor(L, c->mon);
+    /* The client screen is authoritative.  A fake screen created with
+     * screen.fake_add() intentionally has no physical Monitor pointer, so
+     * recovering the screen through c->mon incorrectly maps fake clients to
+     * the physical screen (or leaves them invisible).  Keep the monitor
+     * lookup only as a compatibility fallback for clients during early
+     * management, before c->screen has been assigned. */
+    client_screen = c->screen;
+    if(!client_screen && c->mon) {
+        L = globalconf_get_lua_State();
+        client_screen = luaA_screen_get_by_monitor(L, c->mon);
+    }
     if(!client_screen)
         return false;
 
