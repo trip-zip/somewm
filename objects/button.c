@@ -498,6 +498,10 @@ luaA_drawable_button_emit(void *client_ptr, void *drawable_ptr, int x, int y,
 	signal_name = is_press ? "button::press" : "button::release";
 	translated_button = translate_button_code(button);
 
+	/* x and y arrive client-relative; the drawable wants them relative to
+	 * its own origin, which differs per titlebar position. */
+	client_get_drawable_offset(client, &x, &y);
+
 	/* Push client first (matches AwesomeWM event.c:260 pattern) */
 	luaA_object_push(L, client);
 

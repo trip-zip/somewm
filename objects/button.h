@@ -66,10 +66,11 @@ int luaA_drawin_button_check(void *drawin_ptr, int x, int y, uint32_t button,
                              uint32_t mods, bool is_press);
 
 /* Emit button signals directly on a drawable (for titlebars)
+ * Converts the coordinates to the drawable's own origin before emitting.
  * \param client_ptr Client pointer (client_t*) - needed to access titlebar drawable
  * \param drawable_ptr Drawable pointer (drawable_t*)
- * \param x Relative X coordinate
- * \param y Relative Y coordinate
+ * \param x Relative X coordinate (client-relative)
+ * \param y Relative Y coordinate (client-relative)
  * \param button Button code
  * \param mods Modifier mask
  * \param is_press true for press, false for release
