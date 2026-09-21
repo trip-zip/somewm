@@ -28,6 +28,7 @@ if not test_client.is_available() then
 end
 
 local SIZE = 24
+local W, H = 500, 400
 local POSITIONS = { "top", "left", "right", "bottom" }
 
 runner.run_async(function()
@@ -38,8 +39,7 @@ runner.run_async(function()
     assert(c, "client did not appear")
 
     c.floating = true
-    c:geometry { x = sg.x + 200, y = sg.y + 200, width = 500, height = 400 }
-    async.sleep(0.2)
+    c:geometry { x = sg.x + 200, y = sg.y + 200, width = W, height = H }
 
     -- Every bar must exist before any geometry is read: the left, right and
     -- bottom areas are derived from the other bars' sizes.
@@ -47,7 +47,16 @@ runner.run_async(function()
     for _, pos in ipairs(POSITIONS) do
         bars[pos] = awful.titlebar(c, { position = pos, size = SIZE }).drawable
     end
-    async.sleep(0.3)
+
+    -- A bar reports a stale geometry for a frame or two after it is created,
+    -- and a stale one aims the click off the bar. Wait until they tile the
+    -- client instead of guessing at a sleep.
+    assert(async.wait_for_condition(function()
+        local cg = c:geometry()
+        return cg.width == W + 2 * SIZE and cg.height == H + 2 * SIZE
+           and bars.top:geometry().width == cg.width
+           and bars.left:geometry().height == H
+    end, 5), "titlebar geometry never settled")
 
     for _, pos in ipairs(POSITIONS) do
         local gx, gy
