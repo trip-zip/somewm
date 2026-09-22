@@ -420,7 +420,7 @@ function popup:_apply_size_now(skip_set)
 
     local w, h = wibox.widget.base.fit_widget(
         self.widget,
-        {dpi= self.screen.dpi or xresources.get_dpi()},
+        {dpi= self.screen and self.screen.dpi or xresources.get_dpi()},
         self.widget,
         self._private.maximum_width  or 9999,
         self._private.maximum_height or 9999
