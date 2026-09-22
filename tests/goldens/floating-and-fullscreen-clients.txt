@@ -1,0 +1,13 @@
+output
+  roots flow 1 floating 3 derived 0
+  Clay__RootContainer w=fixed(1280) h=fixed(720) output row
+    OUTPUT WL-1 w=fixed(1280) h=fixed(720) output column
+      WORKAREA - w=grow h=grow row
+        CLIENT band_tile w=grow h=grow theme column pad 1,1,1,1
+          SURFACE band_tile w=grow h=grow custom
+  CLIENT band_blue w=fixed(202) h=fixed(186) user column pad 1,1,1,1 attach OUTPUT band 20
+    TITLEBAR band_blue converted clip w=grow h=fixed(24) theme row
+    SURFACE band_blue w=grow h=grow custom
+  CLIENT band_red w=grow h=grow output column attach OUTPUT band 40
+    SURFACE band_red w=grow h=grow custom
+  WIBAR screen 1 converted clip w=grow h=fixed(32) theme row attach PARENT band 60

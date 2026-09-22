@@ -5,7 +5,7 @@
 -- transient_for) get the correct client.type in Lua. This exercises the
 -- property_update_xwayland_properties() window type detection path.
 --
--- Regression test for #337: XWayland dialogs tile instead of float because
+-- Regression test: XWayland dialogs tile instead of float because
 -- _NET_WM_WINDOW_TYPE was never read for non-transient X11 clients.
 ---------------------------------------------------------------------------
 
@@ -108,7 +108,7 @@ for i, tc in ipairs(test_cases) do
             string.format("client must be XWayland: class=%s", tc.class))
         assert(my_client.type == tc.expected,
             string.format(
-                "regression #337: expected type '%s', got '%s' for class=%s",
+                "expected type '%s', got '%s' for class=%s",
                 tc.expected, tostring(my_client.type), tc.class
             ))
 

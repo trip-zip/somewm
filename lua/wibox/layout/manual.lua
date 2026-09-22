@@ -12,6 +12,7 @@
 ---------------------------------------------------------------------------
 local gtable = require("gears.table")
 local base = require("wibox.widget.base")
+local clay = require("wibox.clay")
 local unpack = unpack or table.unpack -- luacheck: globals unpack (compatibility with Lua 5.1)
 
 local manual_layout = {}
@@ -54,62 +55,12 @@ function manual_layout:insert(index, widget)
     self:emit_signal("widget::layout_changed")
 end
 
---- Remove one or more widgets from the layout.
---
--- The last parameter can be a boolean, forcing a recursive seach of the
--- widget(s) to remove.
---
--- @method remove_widgets
--- @tparam widget ... Widgets that should be removed (must at least be one)
--- @treturn boolean If the operation is successful
-
-
-function manual_layout:fit(_, width, height)
-    return width, height
-end
 
 local function geometry(self, new)
     self._new_geo = new
     return self._new_geo or self
 end
 
-function manual_layout:layout(context, width, height)
-    local res = {}
-
-    for k, v in ipairs(self._private.widgets) do
-        local pt = self._private.pos[k] or {x=0,y=0}
-        local w, h = base.fit_widget(self, context, v, width, height)
-
-        -- Make sure the signature is compatible with `awful.placement`. `Wibox`,
-        -- doesn't depend on `awful`, but it is still nice not to have to code
-        -- geometry functions again and again.
-        if type(pt) == "function" or (getmetatable(pt) or {}).__call then
-            local geo = {
-                x      = 0,
-                y      = 0,
-                width  = w,
-                height = h,
-                geometry = geometry,
-            }
-            pt = pt(geo, {
-                parent = {
-                    x=0, y=0, width = width, height = height, geometry = geometry
-                }
-            })
-            -- Trick to ensure compatibility with `awful.placement`
-            gtable.crush(pt, geo._new_geo or {})
-        end
-
-        assert(pt.x)
-        assert(pt.y)
-
-        table.insert(res, base.place_widget_at(
-            v, pt.x, pt.y, pt.width or w, pt.height or h
-        ))
-    end
-
-    return res
-end
 
 function manual_layout:add(...)
     local wdgs = {}
@@ -248,6 +199,42 @@ local function new_manual(...)
 
     return ret
 end
+
+local function describe_manual(w)
+    local node = { w = "grow", h = "grow", specs = {} }
+    for k, child in ipairs(w._private.widgets) do
+        local pt = w._private.pos[k] or { x = 0, y = 0 }
+        local valid = true
+        if type(pt) == "function" or (getmetatable(pt) or {}).__call then
+            clay.ignore(w, "position", "is a function and the widget is skipped")
+            valid = false
+        else
+            for _, key in ipairs { "x", "y", "width", "height" } do
+                if pt[key] ~= nil and type(pt[key]) ~= "number" then
+                    clay.ignore(w, "position", "is not a number and the widget is skipped")
+                    valid = false
+                    break
+                end
+            end
+        end
+        if valid then
+            local width, height = pt.width, pt.height
+            if width and width < 0 then
+                clay.ignore(w, "width", "is negative and is 0")
+                width = 0
+            end
+            if height and height < 0 then
+                clay.ignore(w, "height", "is negative and is 0")
+                height = 0
+            end
+            node.specs[#node.specs + 1] = { widget = child, float = true,
+                x = pt.x, y = pt.y, w = width, h = height }
+        end
+    end
+    return node
+end
+
+manual_layout._clay = { describe = describe_manual }
 
 --@DOC_fixed_COMMON@
 

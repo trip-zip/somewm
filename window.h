@@ -18,8 +18,7 @@ struct wlr_box;
  * (e.g. surface->events.map handlers, or any code path that may execute
  * during signal dispatch). A synchronous flush in that context can call
  * wl_client_destroy() on a hung-up peer and tear down a resource whose
- * signal is still being emitted, which trips a wlroots assertion. See
- * trip-zip/somewm#530. */
+ * signal is still being emitted, which trips a wlroots assertion. */
 void schedule_flush_clients(struct wl_display *display);
 
 /* XDG shell / window lifecycle */
@@ -35,7 +34,15 @@ void minimizenotify(struct wl_listener *listener, void *data);
 void fullscreennotify(struct wl_listener *listener, void *data);
 
 /* Geometry */
-void apply_geometry_to_wlroots(Client *c);
+/* The client-facing half of geometry application: surface inset,
+ * titlebars, the configure send, and the surface clip. render_client_hooks
+ * and forced configure re-sends call it directly. */
+void client_configure_to_box(Client *c);
+bool client_clamps_to_monitor(Client *c);
+void window_setup_render_hooks(void);
+/* The disabled parking tree new and released surface trees live in until
+ * the reconciler borrows them into a band. */
+struct wlr_scene_tree *window_parked_tree(void);
 void resize(Client *c, struct wlr_box geo, int interact);
 void applybounds(Client *c, struct wlr_box *bbox);
 
@@ -81,5 +88,20 @@ client_surface_clear_scene_data(struct wlr_surface *surface, struct wlr_scene_tr
 }
 
 void client_scene_node_destroy(Client* c);
+
+/* An xdg popup: its own surface tree, born parked, declared as a floating
+ * element attached to its parent's surface element (declare.c) and borrowed
+ * by the renderer at the box Clay solves, like a client. */
+typedef struct Popup {
+	struct wlr_xdg_popup *popup;
+	struct wlr_scene_tree *tree;   /* NULL until the initial commit */
+	void *render_owner;
+	struct wl_list link;           /* in popups, creation order */
+	struct wl_listener commit;
+	struct wl_listener reposition;
+	struct wl_listener destroy;
+} Popup;
+/* Every live popup, parents before their nested popups. */
+extern struct wl_list popups;
 
 #endif /* WINDOW_H */

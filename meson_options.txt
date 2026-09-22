@@ -47,3 +47,10 @@ option(
   value: '',
   description: 'Force a specific Lua pkg-config name (e.g. lua5.5, luajit). Empty = autodetect (LuaJIT > 5.5 > 5.4 > ... > 5.1).',
 )
+
+option(
+  'render_verify',
+  type: 'feature',
+  value: 'auto',
+  description: 'Compile the Clay tree==scene verifier into the renderer. It walks every retained node after each reconcile and aborts on divergence. auto = on for a sanitizer or test build, off otherwise.',
+)

@@ -23,6 +23,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/socket.h>
+#include <sys/stat.h>
 #include <sys/un.h>
 #include <unistd.h>
 #include <wayland-server-core.h>
@@ -56,6 +57,9 @@ static struct wl_event_loop *ipc_event_loop = NULL;
 static struct wl_list ipc_clients;
 static int ipc_subscriber_count = 0;
 static char ipc_socket_path[256];
+/* The inode the socket file had when this process bound it, so cleanup can
+ * tell its own file from one a later instance bound at the same path. */
+static struct stat ipc_socket_stat;
 
 const char *
 ipc_get_socket_path(void)
@@ -120,6 +124,8 @@ ipc_init(struct wl_event_loop *event_loop)
 		ipc_socket_fd = -1;
 		return -1;
 	}
+	if (stat(ipc_socket_path, &ipc_socket_stat) < 0)
+		memset(&ipc_socket_stat, 0, sizeof(ipc_socket_stat));
 
 	/* Listen for connections */
 	if (listen(ipc_socket_fd, IPC_MAX_CLIENTS) < 0) {
@@ -172,9 +178,17 @@ ipc_cleanup(void)
 		ipc_socket_fd = -1;
 	}
 
-	/* Remove socket file */
+	/* Remove the socket file, but only our own: a new instance started
+	 * while this one was still exiting has already unlinked it and bound
+	 * its own at the same path, and unlinking that would leave the new
+	 * compositor listening on a socket nothing can reach. */
 	if (ipc_socket_path[0]) {
-		unlink(ipc_socket_path);
+		struct stat now;
+
+		if (stat(ipc_socket_path, &now) == 0
+				&& now.st_dev == ipc_socket_stat.st_dev
+				&& now.st_ino == ipc_socket_stat.st_ino)
+			unlink(ipc_socket_path);
 		ipc_socket_path[0] = '\0';
 	}
 }

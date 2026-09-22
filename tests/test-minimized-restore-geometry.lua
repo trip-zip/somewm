@@ -1,7 +1,7 @@
 ---------------------------------------------------------------------------
 --- Test: minimized clients restore to full size after other clients close
 --
--- Regression test for #329: when a tiled client is minimized, the other
+-- Regression test: when a tiled client is minimized, the other
 -- client is closed, and the minimized client is restored, the window frame
 -- occupies the full layout area but the client's rendered content stays at
 -- the old (half) size because the suspended state was never cleared.
@@ -96,8 +96,9 @@ local steps = {
         return true
     end,
 
-    -- Step 7: Wait a frame for layout to settle, then verify geometry
-    function()
+    -- Step 7: Wait for the output frame to publish its solved geometry.
+    -- The runner's refresh callback can precede that frame.
+    function(count)
         -- After restore, c1 should be the only client and should fill
         -- the full layout area (the workarea minus any gaps/borders).
         local wa = tag.screen.workarea
@@ -117,11 +118,14 @@ local steps = {
         -- The client should use at least 80% of the workarea width.
         -- (Exact match depends on gaps/useless_gap settings, but half-width
         -- would be ~50%, so 80% is a safe threshold.)
-        assert(total_w > wa.width * 0.8,
+        if total_w <= wa.width * 0.8 then
+            assert(count < 20,
             string.format(
                 "Client width %d is too small (workarea width %d). " ..
                 "Client did not restore to full size after unminimize.",
                 total_w, wa.width))
+            return nil
+        end
 
         io.stderr:write("[TEST] PASS: client restored to full layout size\n")
         return true

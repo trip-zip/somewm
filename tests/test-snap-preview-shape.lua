@@ -1,4 +1,4 @@
--- Test: Snap preview shape_bounding with ARGB32 surface (issue #224)
+-- Test: Snap preview shape_bounding with ARGB32 surface
 -- Verifies A1→ARGB32 format fix doesn't regress.
 
 local runner = require("_runner")
@@ -47,7 +47,7 @@ local steps = {
         gears.shape.rounded_rect(cr, geo.width - 2 * line_width, geo.height - 2 * line_width, 10)
         cr:stroke()
 
-        -- This assignment would crash with A1 format (issue #224)
+        -- This assignment would crash with A1 format
         test_wibox.shape_bounding = img._native
         test_wibox._shape_bounding_surface = img  -- Keep reference to prevent GC
 

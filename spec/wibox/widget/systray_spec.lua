@@ -9,18 +9,8 @@ local unpack = unpack or table.unpack -- luacheck: globals unpack (compatibility
 -- Mock items for systray_item.get_items()
 local mock_items = {}
 
--- Track registered systray widget
-local systray_widget = nil
-
 -- Track created systray_icon widgets
 local created_icons = {}
-
--- Mock drawable
-local drawable_mock = {
-    _set_systray_widget = function(widget)
-        systray_widget = widget
-    end
-}
 
 -- Mock beautiful with configurable theme values
 local beautiful_mock = {}
@@ -44,7 +34,6 @@ _G.systray_item = {
 }
 
 -- Pre-load mocks before requiring the module
-package.loaded["wibox.drawable"] = drawable_mock
 package.loaded.beautiful = beautiful_mock
 
 -- Mock systray_icon module - creates trackable stub widgets using gears.object
@@ -55,7 +44,6 @@ local function create_mock_systray_icon(item)
     local widget = object()
     widget._private = { item = item, forced_size = 24, visible = true, opacity = 1 }
     widget.is_widget = true
-    widget._private.widget_caches = {}
 
     function widget:set_forced_size(size)
         self._private.forced_size = size
@@ -65,10 +53,6 @@ local function create_mock_systray_icon(item)
         return self._private.forced_size
     end
 
-    function widget:fit()
-        local size = self._private.forced_size or 24
-        return size, size
-    end
 
     table.insert(created_icons, { item = item, widget = widget })
     return widget
@@ -93,7 +77,6 @@ describe("wibox.widget.systray (SNI)", function()
         -- Reset state before each test
         mock_items = {}
         created_icons = {}
-        systray_widget = nil
         beautiful_mock.systray_icon_spacing = nil
         beautiful_mock.systray_max_rows = nil
         beautiful_mock.systray_paddings = nil
@@ -113,9 +96,6 @@ describe("wibox.widget.systray (SNI)", function()
             assert.is_true(widget.is_widget or widget.layout ~= nil)
         end)
 
-        it("registers with drawable system", function()
-            assert.is_equal(widget, systray_widget)
-        end)
 
         it("returns same instance on subsequent calls", function()
             local widget2 = systray()
@@ -196,99 +176,27 @@ describe("wibox.widget.systray (SNI)", function()
         end)
     end)
 
-    describe("fit", function()
-        local context = { wibox = { drawin = true } }
 
-        it("returns minimum size when empty", function()
-            mock_items = {}
-            widget:_sync_items()
-
-            -- Default base_size is 24, default padding is 0
-            -- Minimum size should be padding*2 + icon_size = 0 + 24 = 24
-            local w, h = widget:fit(context, 100, 100)
-            assert.is_true(w >= 24)
-            assert.is_true(h >= 24)
-        end)
-
-        it("respects padding in minimum size", function()
-            beautiful_mock.systray_paddings = 10
-            mock_items = {}
-
-            -- Reset to pick up new beautiful value
-            package.loaded["wibox.widget.systray"] = nil
-            systray = require("wibox.widget.systray")
-            widget = systray()
-            widget:_sync_items()
-
-            local w, h = widget:fit(context, 100, 100)
-            -- Minimum: padding*2 + icon_size = 20 + 24 = 44
-            assert.is_true(w >= 44)
-            assert.is_true(h >= 44)
-        end)
-
-        it("calculates single row width correctly", function()
-            mock_items = { "item1", "item2", "item3" }
-            widget:_sync_items()
-
-            local w, h = widget:fit(context, 1000, 100)
-            -- 3 icons * 24px each = 72px minimum (no spacing)
-            assert.is_true(w >= 72)
-        end)
-
-        it("includes spacing in width calculation", function()
-            beautiful_mock.systray_icon_spacing = 10
-
-            -- Reset to pick up new beautiful value
-            package.loaded["wibox.widget.systray"] = nil
-            systray = require("wibox.widget.systray")
-            widget = systray()
-
-            mock_items = { "item1", "item2", "item3" }
-            widget:_sync_items()
-
-            local w, h = widget:fit(context, 1000, 100)
-            -- 3 icons * 24px + 2 gaps * 10px = 72 + 20 = 92px minimum
-            assert.is_true(w >= 92)
-        end)
-    end)
-
-    describe("layout with max_rows", function()
-        local context = { wibox = { drawin = true } }
-
-        it("uses single row by default", function()
-            mock_items = { "item1", "item2" }
-            widget:_sync_items()
-
-            local result = widget:layout(context, 100, 100)
-            if result and #result >= 2 then
-                -- Both items should have same y position (single row)
-                -- Layout result uses _matrix.y0 for y position
-                local y1 = result[1]._matrix.y0
-                local y2 = result[2]._matrix.y0
-                assert.is_equal(y1, y2)
-            end
-        end)
-
-        it("uses grid layout with max_rows > 1", function()
+    describe("clay properties", function()
+        it("draws multiple rows as one", function()
             beautiful_mock.systray_max_rows = 2
+            local warning = stub(require("gears.debug"), "print_warning")
+            assert.is_not_nil(widget._clay.describe(widget))
+            assert.stub(warning).was_called(1)
+            warning:revert()
+        end)
 
-            -- Reset to pick up new beautiful value
-            package.loaded["wibox.widget.systray"] = nil
-            systray = require("wibox.widget.systray")
-            widget = systray()
+        it("rounds padding", function()
+            beautiful_mock.systray_paddings = 2.5
+            assert.is_same({ 3, 3, 3, 3 }, widget._clay.describe(widget).pad)
+        end)
 
-            mock_items = { "item1", "item2" }
-            widget:_sync_items()
-
-            local result = widget:layout(context, 100, 100)
-            -- With 2 items and max 2 rows, should stack vertically
-            if result and #result >= 2 then
-                -- Layout result uses _matrix.y0 for y position
-                local y1 = result[1]._matrix.y0
-                local y2 = result[2]._matrix.y0
-                -- Items should be at different y positions
-                assert.is_not_equal(y1, y2)
-            end
+        it("omits a gradient background", function()
+            beautiful_mock.bg_systray = "linear:0,0:10,0:0,#000000:1,#ffffff"
+            local warning = stub(require("gears.debug"), "print_warning")
+            assert.is_nil(widget._clay.describe(widget).bg)
+            assert.stub(warning).was_called(1)
+            warning:revert()
         end)
     end)
 
@@ -301,10 +209,9 @@ describe("wibox.widget.systray (SNI)", function()
             systray = require("wibox.widget.systray")
             widget = systray()
 
-            -- The draw function should use this color
-            -- We can verify the widget was created successfully
+            -- The describer carries the configured background color.
             assert.is_not_nil(widget)
-            assert.is_not_nil(widget.draw)
+            assert.is_same({ 1, 0, 0, 1 }, widget._clay.describe(widget).bg)
         end)
     end)
 end)

@@ -13,39 +13,11 @@ local error = error
 local ipairs = ipairs
 local setmetatable = setmetatable
 local base = require("wibox.widget.base")
-local matrix = require("gears.matrix")
 local gtable = require("gears.table")
 
 local mirror = { mt = {} }
 
--- Layout this layout
-function mirror:layout(_, width, height)
-    if not self._private.widget then return end
 
-    local m = matrix.identity
-    local t = { x = 0, y = 0 } -- translation
-    local s = { x = 1, y = 1 } -- scale
-    if self._private.horizontal then
-        t.x = width
-        s.x = -1
-    end
-    if self._private.vertical then
-        t.y = height
-        s.y = -1
-    end
-    m = m:translate(t.x, t.y)
-    m = m:scale(s.x, s.y)
-
-    return { base.place_widget_via_matrix(self._private.widget, m, width, height) }
-end
-
--- Fit this layout into the given area.
-function mirror:fit(context, ...)
-    if not self._private.widget then
-        return 0, 0
-    end
-    return base.fit_widget(self, context, self._private.widget, ...)
-end
 
 --- The widget to be reflected.
 --

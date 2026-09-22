@@ -431,7 +431,7 @@ local function tasklist_label(c, args, tb)
     local fg_minimize = gcolor.ensure_pango_color(args.fg_minimize or theme.tasklist_fg_minimize or theme.fg_minimize,
                                                   fg_normal)
     local bg_minimize = args.bg_minimize or theme.tasklist_bg_minimize or theme.bg_minimize or bg_normal
-    -- FIXME v5, remove the fallback theme.bg_image_* variables, see GH#1403
+    -- The theme.bg_image_* variables are compatibility fallbacks.
     local bg_image_normal = args.bg_image_normal or theme.tasklist_bg_image_normal or theme.bg_image_normal
     local bg_image_focus = args.bg_image_focus or theme.tasklist_bg_image_focus or theme.bg_image_focus
     local bg_image_urgent = args.bg_image_urgent or theme.tasklist_bg_image_urgent or theme.bg_image_urgent
@@ -726,19 +726,7 @@ function tasklist:get_count()
     return self._private.last_count
 end
 
-function tasklist:layout(_, width, height)
-    if self._private.base_layout then
-        return { base.place_widget_at(self._private.base_layout, 0, 0, width, height) }
-    end
-end
 
-function tasklist:fit(context, width, height)
-    if not self._private.base_layout then
-        return 0, 0
-    end
-
-    return base.fit_widget(self, context, self._private.base_layout, width, height)
-end
 
 for _, prop in ipairs { "screen", "filter", "update_function", "widget_template", "source"} do
     tasklist["set_"..prop] = function(self, value)
@@ -1128,6 +1116,9 @@ function tasklist.mt:__call(...)
 end
 
 --@DOC_object_COMMON@
+
+-- A wrapper around base_layout: Clay solves the list as that layout.
+require("wibox.clay").passthrough(tasklist, "base_layout")
 
 return setmetatable(tasklist, tasklist.mt)
 

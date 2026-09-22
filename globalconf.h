@@ -333,42 +333,12 @@ typedef struct
 
     /* ========== WALLPAPER SUPPORT ========== */
 
-    /** Cached wallpaper surface (AwesomeWM compatibility)
-     * This is a cairo_surface_t* that stores the current wallpaper pattern.
-     * Matches AwesomeWM's globalconf.wallpaper exactly.
-     */
+    /** The wallpaper, painted over the whole output layout (root.c), as
+     * AwesomeWM's globalconf.wallpaper. Each output declares its crop of
+     * it as an image leaf (declare.c); screenshots composite it directly. */
     cairo_surface_t *wallpaper;
-
-    /** Wallpaper scene graph node
-     * Wayland-specific: wlr_scene_buffer in LyrBg layer for display
-     */
-    struct wlr_scene_buffer *wallpaper_buffer_node;
-
-    /* ========== SYSTRAY SUPPORT ========== */
-
-    /** System tray state (StatusNotifierItem protocol)
-     * Unlike AwesomeWM's X11 XEmbed approach, we use D-Bus SNI protocol
-     * and render icons as scene graph nodes within the parent drawin.
-     */
-    struct {
-        /** Parent drawin where systray is rendered */
-        drawin_t *parent;
-        /** Scene tree containing icon buffer nodes (child of drawin's scene) */
-        struct wlr_scene_tree *scene_tree;
-        /** Background color (ARGB pixel value) */
-        uint32_t background_pixel;
-        /** Current layout parameters (cached from last render call) */
-        struct {
-            int x, y;           /* Position within parent drawin */
-            int base_size;      /* Icon size */
-            bool horizontal;    /* Layout direction */
-            bool reverse;       /* Reverse order */
-            int spacing;        /* Spacing between icons */
-            int rows;           /* Max rows in grid */
-        } layout;
-        /** Textures for rendered icons (lazily created, keyed by item pointer) */
-        void *icon_textures;  /* TODO: hash table of wlr_texture* */
-    } systray;
+    /** Bumped on every set, so an output knows to crop again. */
+    uint64_t wallpaper_gen;
 
     /* ========== X11 COMPATIBILITY STUBS ========== */
     /* These are kept as stubs for XWayland compatibility

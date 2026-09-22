@@ -72,7 +72,8 @@
 --
 -- **update_workarea** (*boolean*):
 --
--- If *attach* is true, also update the screen workarea.
+-- Ignored. A wibox reserves screen space only as an `awful.wibar`, which the
+-- compositor lays out at its edge; `screen.workarea` is what the bars leave.
 --
 -- @author Emmanuel Lepage Vallee &lt;elv1313@gmail.com&gt;
 -- @author Julien Danjou &lt;julien@danjou.info&gt;
@@ -107,12 +108,8 @@ end
 local wrap_client = nil
 local placement
 
--- Store function -> keys
-local reverse_align_map = {}
-
 -- Forward declarations
 local area_common
-local wibox_update_strut
 local attach
 
 --- Allow multiple placement functions to be daisy chained.
@@ -284,29 +281,6 @@ local outer_positions = {
 }
 
 -- Map the opposite side for a string
-local opposites = {
-    top    = "bottom",
-    bottom = "top",
-    left   = "right",
-    right  = "left",
-    width  = "height",
-    height = "width",
-    x      = "y",
-    y      = "x",
-}
-
--- List reletvant sides for each orientation.
-local struts_orientation_to_sides = {
-    horizontal = { "top" , "bottom" },
-    vertical   = { "left", "right"  }
-}
-
--- Map orientation to the length components (width/height).
-local orientation_to_length = {
-    horizontal = "width",
-    vertical   = "height"
-}
-
 --- Add a context to the arguments.
 -- This function extend the argument table. The context is used by some
 -- internal helper methods. If there already is a context, it has priority and
@@ -354,7 +328,7 @@ local function get_decoration(args)
     -- removed again when it is written back, but the C code rounds the drawin
     -- geometry to whole pixels. Fractional values, such as half of an odd
     -- theme size, would make that round trip grow the drawable by one pixel on
-    -- every pass of an attached placement, until the C stack overflows (#4121).
+    -- every pass of an attached placement, until the C stack overflows.
     return {
         left   = gmath.round(m.left   or 0),
         right  = gmath.round(m.right  or 0),
@@ -514,37 +488,6 @@ local function move_into_geometry(source, target)
     return ret
 end
 
--- Update the workarea
-wibox_update_strut = function(d, position, args)
-    -- If the drawable isn't visible, remove the struts
-    if not d.visible then
-        d:struts { left = 0, right = 0, bottom = 0, top = 0 }
-        return
-    end
-
-    -- Detect horizontal or vertical drawables
-    local geo         = area_common(d)
-    local orientation = geo.width < geo.height and "vertical" or "horizontal"
-
-    -- Look into the `position` string to find the relevants sides to crop from
-    -- the workarea
-    local struts = { left = 0, right = 0, bottom = 0, top = 0 }
-
-    local m = get_decoration(args)
-
-    for _, v in ipairs(struts_orientation_to_sides[orientation]) do
-        if (not position) or position:match(v) then
-            -- Add the "short" rectangle length then the above and below margins.
-            struts[v] = geo[opposites[orientation_to_length[orientation]]]
-                + m[v]
-                + m[opposites[v]]
-        end
-    end
-
-    -- Update the workarea
-    d:struts(struts)
-end
-
 -- Pin a drawable to a placement function.
 -- Automatically update the position when the size change.
 -- All other arguments will be passed to the `position` function (if any)
@@ -589,20 +532,9 @@ attach = function(d, position_f, args)
     d:connect_signal("property::height"      , tracker)
     d:connect_signal("property::border_width", tracker)
 
-    local function tracker_struts()
-        --TODO this is too fragile and doesn't work with all methods.
-        wibox_update_strut(d, d.position or reverse_align_map[position_f], args)
-    end
-
     local parent = args.parent or d.screen
 
-    if args.update_workarea then
-        d:connect_signal("property::geometry" , tracker_struts)
-        d:connect_signal("property::visible"  , tracker_struts)
-        capi.client.connect_signal("property::struts", tracker_struts)
-
-        tracker_struts()
-    elseif parent == d.screen then
+    if parent == d.screen then
         if args.honor_workarea then
             parent:connect_signal("property::workarea", tracker)
         end
@@ -635,12 +567,6 @@ attach = function(d, position_f, args)
                     parent:disconnect_signal("property::padding", tracker)
                 end
             end
-        end
-
-        if args.update_workarea then
-            d:disconnect_signal("property::geometry" , tracker_struts)
-            d:disconnect_signal("property::visible"  , tracker_struts)
-            capi.client.disconnect_signal("property::struts", tracker_struts)
         end
     end
 end
@@ -1219,6 +1145,10 @@ function placement.align(d, args)
     d    = d or capi.client.focus
 
     if not d or not args.position then return end
+    if type(d) == "table" and d._private and d._private.container and not args.pretend then
+        require("awful._attachment").corner(d, args.position, args.offset)
+        return d:geometry()
+    end
 
     local sgeo = get_parent_geometry(d, args)
     local dgeo = geometry_common(d, args)
@@ -1251,7 +1181,6 @@ for k in pairs(align_map) do
         args.position = k
         return placement_private.align(d, args)
     end
-    reverse_align_map[placement[k]] = k
 end
 
 -- Add the documentation for align alias
@@ -1503,6 +1432,12 @@ function placement.next_to(d, args)
     args = add_context(args, "next_to")
     d    = d or capi.client.focus
 
+    if type(d) == "table" and d._private and d._private.container and not args.pretend then
+        local position, anchor = require("awful._attachment").next_to(d,
+            args.geometry or args.parent, args.preferred_positions, args.preferred_anchors,
+            args.offset)
+        return d:geometry(), position, anchor -- last solved box, as with other readback APIs
+    end
     local osize = type(d.geometry) == "function"  and d:geometry() or d.geometry
     local original_pos, original_anchors = args.preferred_positions, args.preferred_anchors
 

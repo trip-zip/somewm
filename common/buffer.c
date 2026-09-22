@@ -79,7 +79,12 @@ buffer_addvf(buffer_t *buf, const char *fmt, va_list args)
     va_list ap;
 
     va_copy(ap, args);
-    buffer_ensure(buf, BUFSIZ);
+    /* buffer_ensure() takes the whole length the buffer must hold, not the
+     * room to add: asking it for the fragment's own length is a no-op on any
+     * buffer already longer than the fragment, which leaves vsnprintf its
+     * truncated answer and advances len past the allocation, so the NUL
+     * below lands outside it. */
+    buffer_ensure(buf, buf->len + BUFSIZ);
 
     len = vsnprintf(buf->s + buf->len, buf->size - buf->len, fmt, args);
     if (unlikely(len < 0))
@@ -89,7 +94,7 @@ buffer_addvf(buffer_t *buf, const char *fmt, va_list args)
     }
     if (len >= buf->size - buf->len)
     {
-        buffer_ensure(buf, len);
+        buffer_ensure(buf, buf->len + len);
         vsnprintf(buf->s + buf->len, buf->size - buf->len, fmt, ap);
     }
     buf->len += len;

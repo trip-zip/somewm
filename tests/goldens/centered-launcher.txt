@@ -1,0 +1,17 @@
+output
+  roots flow 1 floating 1 derived 0
+  Clay__RootContainer w=fixed(1280) h=fixed(720) output row
+    OUTPUT WL-1 w=fixed(1280) h=fixed(720) output column image
+      WIBAR screen 1 converted clip w=grow h=fixed(28) theme row
+        text "bar" font=1
+      WORKAREA - w=grow h=grow row
+  LAUNCHER screen 1 converted clip w=fixed(600) h=fit theme column attach OUTPUT band 90
+    wibox.widget.textbox w=grow h=fit row
+      text "Search" font=1
+    wibox.layout.fixed w=grow h=fit column
+      wibox.widget.textbox w=grow h=fit row
+        text "Terminal" font=1
+      wibox.widget.textbox w=grow h=fit row
+        text "Browser" font=1
+      wibox.widget.textbox w=grow h=fit row
+        text "Files" font=1

@@ -21,31 +21,7 @@ local function icon_surface(c)
     return s, w, h
 end
 
-function clienticon:draw(_, cr, width, height)
-    local s, w, h = icon_surface(self._private.client)
-    if not s then return end
-    local aspect = math.min(width / w, height / h)
-    cr:scale(aspect, aspect)
-    cr:set_source_surface(s, 0, 0)
-    cr:paint()
-end
 
-function clienticon:fit(_, width, height)
-    local _, w, h = icon_surface(self._private.client)
-    if not w then return 0, 0 end
-
-    if w > width then
-        h = h * width / w
-        w = width
-    end
-    if h > height then
-        w = w * height / h
-        h = height
-    end
-
-    local aspect = math.min(width / w, height / h)
-    return w * aspect, h * aspect
-end
 
 --- The widget's @{client}.
 --
@@ -88,6 +64,23 @@ client.connect_signal("property::icon", function(c)
             obj:emit_signal("widget::redraw_needed")
         end
     end
+end)
+
+-- The icon as a Clay image element at the widget's `:fit`, which keeps
+-- the icon's aspect within the bound, as `clienticon:draw` scales it; no
+-- icon is an empty element, as `:fit` answers 0.
+local clay = require("wibox.clay")
+
+clay.describe_class(clienticon, function(w)
+    local s, sw, sh = icon_surface(w._private.client)
+
+    if not s then
+        return {}
+    end
+
+    local image = { image = s._native, class = "image", aspect = sw / sh }
+
+    return { specs = { image } }
 end)
 
 return setmetatable(clienticon, {

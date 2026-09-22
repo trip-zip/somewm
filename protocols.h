@@ -16,9 +16,7 @@ struct wlr_box;
 struct wlr_surface;
 
 /* Layer shell */
-void arrangelayer(Monitor *m, struct wl_list *list,
-		struct wlr_box *usable_area, int exclusive);
-void arrangelayers(Monitor *m);
+void layer_keyboard_focus(Monitor *m);
 void commitlayersurfacenotify(struct wl_listener *listener, void *data);
 void createlayersurface(struct wl_listener *listener, void *data);
 void destroylayersurfacenotify(struct wl_listener *listener, void *data);

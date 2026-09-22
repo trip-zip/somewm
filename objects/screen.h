@@ -61,9 +61,7 @@ screen_t *luaA_screen_getbycoord(lua_State *L, int x, int y);
 
 /* Screen geometry and workarea updates */
 void luaA_screen_update_geometry(lua_State *L, screen_t *screen);
-void screen_update_workarea(screen_t *screen);
 void screen_set_workarea(lua_State *L, screen_t *screen, struct wlr_box *workarea);
-void luaA_monitor_apply_drawin_struts(lua_State *L, Monitor *m, struct wlr_box *area);
 
 /* Screen-client operations (AwesomeWM compatibility) */
 struct client_t;

@@ -1,5 +1,5 @@
 ---------------------------------------------------------------------------
---- Reproduction test for issue #438: keyboardlayout widget errors when
+--- Reproduction test: keyboardlayout widget errors when
 --- cycling layouts via mouse click at the wrap-around point.
 ---
 --- The next_layout() modulo arithmetic produced an out-of-range group

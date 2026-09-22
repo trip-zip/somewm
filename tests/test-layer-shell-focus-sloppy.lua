@@ -5,7 +5,7 @@
 -- correct client even when sloppy focus (mouse::enter) is enabled and the
 -- mouse cursor is positioned over a different client.
 --
--- This is the exact scenario from issue #414: two windows, rofi opens and
+-- With two windows, a layer-shell launcher opens and
 -- closes, focus should return to the previously focused window, not the one
 -- under the cursor.
 --

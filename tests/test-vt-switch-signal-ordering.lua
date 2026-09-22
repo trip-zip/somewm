@@ -1,5 +1,5 @@
 ---------------------------------------------------------------------------
--- Regression test for VT-switch signal ordering (PR #243)
+-- Regression test for VT-switch signal ordering
 --
 -- Root cause: updatemons() emitted property::geometry BEFORE _added for
 -- newly hotplugged screens. naughty's property::geometry handler does

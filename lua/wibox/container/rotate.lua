@@ -9,55 +9,15 @@
 ---------------------------------------------------------------------------
 
 local error = error
-local pi = math.pi
 local setmetatable = setmetatable
 local tostring = tostring
 local base = require("wibox.widget.base")
-local matrix = require("gears.matrix")
 local gtable = require("gears.table")
 
 local rotate = { mt = {} }
 
-local function transform(layout, width, height)
-    local dir = layout:get_direction()
-    if dir == "east" or dir == "west" then
-        return height, width
-    end
-    return width, height
-end
 
--- Layout this layout
-function rotate:layout(_, width, height)
-    if not self._private.widget or not self._private.widget._private.visible then
-        return
-    end
 
-    local dir = self:get_direction()
-
-    local m = matrix.identity
-    if dir == "west" then
-        m = m:rotate(pi / 2)
-        m = m:translate(0, -width)
-    elseif dir == "south" then
-        m = m:rotate(pi)
-        m = m:translate(-width, -height)
-    elseif dir == "east" then
-        m = m:rotate(3 * pi / 2)
-        m = m:translate(-height, 0)
-    end
-
-    -- Since we rotated, we might have to swap width and height.
-    -- transform() does that for us.
-    return { base.place_widget_via_matrix(self._private.widget, m, transform(self, width, height)) }
-end
-
--- Fit this layout into the given area
-function rotate:fit(context, width, height)
-    if not self._private.widget then
-        return 0, 0
-    end
-    return transform(self, base.fit_widget(self, context, self._private.widget, transform(self, width, height)))
-end
 
 --- The widget to be rotated.
 --
