@@ -1,5 +1,5 @@
 ---------------------------------------------------------------------------
--- Pixel-content test for c.content with a DMA-BUF client (issue #539).
+-- Pixel-content test for c.content with a DMA-BUF client.
 --
 -- The companion C client (test-dmabuf-pattern-client) allocates a linear
 -- ARGB8888 buffer via gbm, fills it with a 4-quadrant pattern (TL=red,
@@ -92,7 +92,7 @@ runner.run_async(function()
     end
 
     -- Position the client at a non-zero scene coord. The first version of the
-    -- scene-tree-walk fix (#539) used wlr_scene_node_coords as an "origin" to
+    -- scene-tree-walk fix used wlr_scene_node_coords as an "origin" to
     -- offset buffer positions; that math broke for any client not at (0, 0)
     -- because wlr_scene_node_for_each_buffer reports positions relative to
     -- the starting node, not scene-absolute. Tests that left the client at

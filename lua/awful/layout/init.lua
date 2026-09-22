@@ -232,10 +232,20 @@ end
 -- @tparam screen screen The screen to arrange.
 -- @noreturn
 -- @staticfct awful.layout.arrange
-function layout.arrange(screen)
+function layout.arrange(screen, geometry_only)
     screen = get_screen(screen)
     if not screen or delayed_arrange[screen] then
         return
+    end
+    if geometry_only and layout.get(screen)._clay then
+        local published = true
+        for _, c in ipairs(screen.clients) do
+            if not c:_clay_geometry_is_solved() then
+                published = false
+                break
+            end
+        end
+        if published then return end
     end
     delayed_arrange[screen] = true
 
@@ -250,6 +260,10 @@ function layout.arrange(screen)
 
         -- protected call to ensure that arrange_lock will be reset
         protected_call(function()
+            if layout.get(screen)._clay then
+                capi.awesome._clay_dirty()
+                return
+            end
             local p = layout.parameters(nil, screen)
 
             local useless_gap = p.useless_gap
@@ -330,6 +344,12 @@ function layout.getname(_layout)
     return _layout.name
 end
 
+-- Called once per dirty output declaration. No rectangle is computed here.
+function layout._clay_describe(s)
+    local current = layout.get(s)
+    return current._clay and current._clay(s), current == layout.suit.floating
+end
+
 local function arrange_prop_nf(obj)
     if not client.object.get_floating(obj) then
         layout.arrange(obj.screen)
@@ -348,7 +368,11 @@ capi.client.connect_signal("property::maximized_vertical", arrange_prop_nf)
 capi.client.connect_signal("property::border_width", arrange_prop_nf)
 capi.client.connect_signal("property::hidden", arrange_prop_nf)
 capi.client.connect_signal("property::floating", arrange_prop)
-capi.client.connect_signal("property::geometry", arrange_prop_nf)
+capi.client.connect_signal("property::geometry", function(c)
+    if not client.object.get_floating(c) then
+        layout.arrange(c.screen, true)
+    end
+end)
 capi.client.connect_signal("property::screen", function(c, old_screen)
     if old_screen then
         layout.arrange(old_screen)

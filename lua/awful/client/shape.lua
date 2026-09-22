@@ -87,7 +87,7 @@ end
 
 -- The X11 Shape Extension does not exist on Wayland, so there is nothing to
 -- apply a transformed shape to. The update functions are kept as no-ops so
--- configs calling them still load. See ideas/Shapes.md, #157, #342.
+-- configs calling them still load.
 
 --- Update all of a client's shapes from the shapes the client set itself.
 -- @function awful.client.shape.update.all

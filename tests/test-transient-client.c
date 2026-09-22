@@ -45,6 +45,8 @@ static struct xdg_surface *g_child_xdg_surface;
 static struct xdg_toplevel *g_child_toplevel;
 
 static uint32_t g_width = 200, g_height = 200;
+static const char *g_configure_report;
+static uint32_t g_parent_color = 0xFF404040;
 
 /* Signal handlers */
 static void handle_sigterm(int sig) {
@@ -109,7 +111,7 @@ static void xdg_surface_configure(void *data,
 
     if (xdg_surface == g_parent_xdg_surface) {
         surface = g_parent_surface;
-        color = 0xFF404040;
+        color = g_parent_color;
     } else if (xdg_surface == g_child_xdg_surface) {
         surface = g_child_surface;
         color = 0xFF804040; /* reddish for child */
@@ -134,6 +136,12 @@ static void toplevel_configure(void *data, struct xdg_toplevel *toplevel,
     (void)data; (void)toplevel; (void)states;
     if (w > 0) g_width = w;
     if (h > 0) g_height = h;
+    if (g_configure_report && toplevel == g_parent_toplevel) {
+        FILE *report = fopen(g_configure_report, "w");
+        if (!report) abort();
+        fprintf(report, "%d %d\n", w, h);
+        fclose(report);
+    }
 }
 
 static void toplevel_close(void *data, struct xdg_toplevel *toplevel) {
@@ -224,7 +232,8 @@ static void create_child(void) {
 }
 
 int main(int argc, char *argv[]) {
-    (void)argc; (void)argv;
+    g_configure_report = argc > 2 ? argv[2] : NULL;
+    if (argc > 4) g_parent_color = strtoul(argv[4], NULL, 16);
 
     /* Setup signal handlers.
      * Use sigaction WITHOUT SA_RESTART so that wl_display_dispatch() returns
@@ -261,7 +270,10 @@ int main(int argc, char *argv[]) {
 
     g_parent_toplevel = xdg_surface_get_toplevel(g_parent_xdg_surface);
     xdg_toplevel_add_listener(g_parent_toplevel, &toplevel_listener, NULL);
-    xdg_toplevel_set_app_id(g_parent_toplevel, "transient_test_parent");
+    xdg_toplevel_set_app_id(g_parent_toplevel, argc > 1 ? argv[1] : "transient_test_parent");
+    if (argc > 3)
+        xdg_toplevel_set_min_size(g_parent_toplevel, atoi(argv[3]),
+            argc > 5 ? atoi(argv[5]) : 0);
     xdg_toplevel_set_title(g_parent_toplevel, "Transient Parent");
 
     /* Initial commit to get configure event */

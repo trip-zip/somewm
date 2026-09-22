@@ -28,7 +28,7 @@ describe("awful.keygrabber", function()
       }
    end)
 
-   -- issue #3567: add_keybinding fail when called with an `awful.key` instance
+   -- add_keybinding accepts an `awful.key` instance
    it("awful.keygrabber:add_keybinding() doesn't throw error", function()
       kg:add_keybinding(fake_key)
 

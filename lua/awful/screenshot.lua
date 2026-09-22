@@ -232,7 +232,7 @@ local function show_frame(self, surface, geo)
 
     -- Render at logical resolution; let the GPU upscale for display. Without
     -- this, the snipping overlay repaints at physical resolution on every
-    -- mouse move and drops to ~1 FPS at HiDPI scales (issue #541).
+    -- mouse move and drops to ~1 FPS at HiDPI scales.
     self._private.frame.surface_scale = 1.0
 end
 

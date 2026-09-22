@@ -12,6 +12,7 @@
 ---------------------------------------------------------------------------
 
 local submodules = {
+    inspector = "somewm.inspector",
     layout_animation = "somewm.layout_animation",
 }
 

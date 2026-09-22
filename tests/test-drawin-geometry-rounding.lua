@@ -5,7 +5,6 @@
 --   x, y   → round()  (C99 round, away from zero at .5)
 --   w, h   → ceil()   (C99 ceil, always rounds up)
 --
--- Regression test for #200.
 ---------------------------------------------------------------------------
 
 local runner = require("_runner")

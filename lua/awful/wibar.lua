@@ -28,7 +28,6 @@ local ipairs = ipairs
 local error = error
 local wibox = require("wibox")
 local beautiful = require("beautiful")
-local placement = require("awful.placement")
 local gtable = require("gears.table")
 
 local function get_screen(s)
@@ -40,13 +39,6 @@ local awfulwibar = { mt = {} }
 --- Array of table with wiboxes inside.
 -- It's an array so it is ordered.
 local wiboxes = setmetatable({}, {__mode = "v"})
-
-local opposite_margin = {
-    top    = "bottom",
-    bottom = "top",
-    left   = "right",
-    right  = "left"
-}
 
 local align_map = {
     top      = "left",
@@ -121,20 +113,6 @@ local align_map = {
 -- @see client.struts
 -- @see screen.workarea
 
---- If there is both vertical and horizontal wibar, give more space to vertical ones.
---
--- By default, if multiple wibars risk overlapping, it will be resolved
--- by giving more space to the horizontal one:
---
--- ![wibar position](../images/AUTOGEN_awful_wibar_position.svg)
---
--- If this variable is to to `true`, it will behave like:
---
--- @DOC_awful_wibar_position2_EXAMPLE@
---
--- @beautiful beautiful.wibar_favor_vertical
--- @tparam[opt=false] boolean favor_vertical
-
 --- The wibar border width.
 -- @beautiful beautiful.wibar_border_width
 -- @tparam integer border_width
@@ -192,96 +170,21 @@ local align_map = {
 -- @tparam string align
 
 
--- Compute the margin on one side
-local function get_margin(w, position, auto_stop)
-    local h_or_w = (position == "top" or position == "bottom") and "height" or "width"
-    local ret = 0
-
-    for _, v in ipairs(wiboxes) do
-        -- Ignore the wibars placed after this one
-        if auto_stop and v == w then break end
-
-        if v.position == position and v.screen == w.screen and v.visible then
-            ret = ret + v[h_or_w]
-
-            local wb_margins = v.margins
-
-            if wb_margins then
-                ret = ret + wb_margins[position] + wb_margins[opposite_margin[position]]
-            end
-
-        end
-
-    end
-
-    return ret
-end
-
--- `honor_workarea` cannot be used as it does modify the workarea itself.
--- a manual padding has to be generated.
-local function get_margins(w)
-    local position = w.position
-    assert(position)
-
-    local margins = gtable.clone(w._private.margins)
-
-    margins[position] =  margins[position] + get_margin(w, position, true)
-
-    -- Avoid overlapping wibars
-    if (position == "left" or position == "right") and not beautiful.wibar_favor_vertical then
-        margins.top    = get_margin(w, "top"   )
-        margins.bottom = get_margin(w, "bottom")
-    elseif (position == "top" or position == "bottom") and beautiful.wibar_favor_vertical then
-        margins.left  = get_margin(w, "left" )
-        margins.right = get_margin(w, "right")
-    end
-
-    return margins
-end
-
--- Create the placement function
-local function gen_placement(position, align, stretch)
-    local maximize = (position == "right" or position == "left") and
-        "maximize_vertically" or "maximize_horizontally"
-
-    local corner = nil
-
-    if align ~= "centered" then
-        if position == "right" or position == "left" then
-            corner = placement[align .. "_" .. position]
-                or placement[align_map[align] .. "_" .. position]
-        else
-            corner = placement[position .. "_" .. align]
-                or placement[position .. "_" .. align_map[align]]
-        end
-    end
-
-    corner = corner or placement[position]
-
-    return corner + (stretch and placement[maximize] or nil)
-end
-
--- Attach the placement function.
-local function attach(wb, position)
-    gen_placement(position, wb._private.align, wb._stretch)(wb, {
-        attach          = true,
-        update_workarea = wb._private.restrict_workarea,
-        margins         = get_margins(wb)
-    })
-end
-
--- Re-attach all wibars on a given wibar screen
-local function reattach(wb)
-    local s = wb.screen
-    for _, w in ipairs(wiboxes) do
-        if w ~= wb and w.screen == s then
-            if w.detach_callback then
-                w.detach_callback()
-                w.detach_callback = nil
-            end
-            attach(w, w.position)
-        end
-    end
+-- Tell the C side what the bar is (declare.c): the edge it sits at,
+-- whether it reserves its space there, its margins, and how a bar that does
+-- not stretch sits along the edge. The output declares the bar in its flow
+-- at that edge, the margins as the slot's padding, and the bar's geometry
+-- is what the frame solves.
+local function attach(wb)
+    local align = wb._private.align
+    wb.drawin.bar = {
+        edge    = wb.position,
+        reserve = wb._private.restrict_workarea,
+        margins = wb._private.margins,
+        stretch = wb._stretch,
+        align   = (align == "left" or align == "top") and "start"
+            or (align == "right" or align == "bottom") and "end" or "centered",
+    }
 end
 
 --- The wibox position.
@@ -303,23 +206,6 @@ end
 function awfulwibar.set_position(wb, position)
     if position == wb._position then return end
 
-    -- Detach first to avoid any unneeded callbacks
-    if wb.detach_callback then
-        wb.detach_callback()
-
-        -- Avoid disconnecting twice, this produces a lot of warnings
-        wb.detach_callback = nil
-    end
-
-    -- Move the wibar to the end of the list to avoid messing up the others in
-    -- case there is stacked wibars on one side.
-    for k, w in ipairs(wiboxes) do
-        if w == wb then
-            table.remove(wiboxes, k)
-        end
-    end
-    table.insert(wiboxes, wb)
-
     -- In case the position changed, it may be necessary to reset the size
     if (wb._position == "left" or wb._position == "right")
       and (position == "top" or position == "bottom") then
@@ -329,20 +215,8 @@ function awfulwibar.set_position(wb, position)
         wb.width = math.ceil(beautiful.get_font_height(wb.font) * 1.5)
     end
 
-    -- Set the new position
     wb._position = position
-
-    -- Attach to the new position
-    attach(wb, position)
-
-    -- A way to skip reattach is required when first adding a wibar as it's not
-    -- in the `wiboxes` table yet and can't be added until it's attached.
-    if not wb._private.skip_reattach then
-        -- Changing the position will also cause the other margins to be invalidated.
-        -- For example, adding a wibar to the top will change the margins of any left
-        -- or right wibars. To solve, this, they need to be re-attached.
-        reattach(wb)
-    end
+    attach(wb)
 
     wb:emit_signal("property::position", position)
 end
@@ -354,7 +228,7 @@ end
 function awfulwibar.set_stretch(w, value)
     w._stretch = value
 
-    attach(w, w.position)
+    attach(w)
 
     w:emit_signal("property::stretch", value)
 end
@@ -367,7 +241,7 @@ end
 function awfulwibar.set_restrict_workarea(w, value)
     w._private.restrict_workarea = value
 
-    attach(w, w.position)
+    attach(w)
 
     w:emit_signal("property::restrict_workarea", value)
 end
@@ -394,7 +268,7 @@ function awfulwibar.set_margins(w, value)
 
     w._private.margins = value
 
-    attach(w, w.position)
+    attach(w)
 
     w:emit_signal("property::margins", value)
 end
@@ -424,7 +298,7 @@ function awfulwibar.set_align(self, value)
 
     self._private.align = value
 
-    attach(self, self.position)
+    attach(self)
 
     self:emit_signal("property::align", value)
 end
@@ -435,11 +309,7 @@ end
 
 function awfulwibar.remove(self)
     self.visible = false
-
-    if self.detach_callback then
-        self.detach_callback()
-        self.detach_callback = nil
-    end
+    self.drawin.bar = nil
 
     for k, w in ipairs(wiboxes) do
         if w == self then
@@ -466,7 +336,6 @@ end
 --@DOC_wibox_constructor_COMMON@
 -- @return The new wibar
 -- @constructorfct awful.wibar
--- @usebeautiful beautiful.wibar_favor_vertical
 -- @usebeautiful beautiful.wibar_border_width
 -- @usebeautiful beautiful.wibar_border_color
 -- @usebeautiful beautiful.wibar_ontop
@@ -547,15 +416,12 @@ function awfulwibar.new(args)
 
     w._private.restrict_workarea = true
 
-    -- `w` needs to be inserted in `wiboxes` before reattach or its own offset
-    -- will not be taken into account by the "older" wibars when `reattach` is
-    -- called. `skip_reattach` is required.
-    w._private.skip_reattach = true
-
-
     w.screen   = screen
     w._screen  = screen --HACK When a screen is removed, then getbycoords won't work
-    w._stretch = args.stretch == nil and has_to_stretch or args.stretch
+    w._stretch = args.stretch
+    if w._stretch == nil then
+        w._stretch = has_to_stretch
+    end
 
     if args.visible == nil then
         w.visible = true
@@ -564,15 +430,8 @@ function awfulwibar.new(args)
     gtable.crush(w, awfulwibar, true)
     gtable.crush(w, args, false)
 
-    -- Now, let set_position behave normally.
-    w._private.skip_reattach = false
-
     awfulwibar.set_margins(w, args.margins)
-
-    -- Force all the wibars to be moved
-    reattach(w)
-
-    w:connect_signal("property::visible", function() reattach(w) end)
+    table.insert(wiboxes, w)
 
     assert(w.buttons)
 

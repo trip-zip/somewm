@@ -1,13 +1,13 @@
 -- Test: D-Bus signal bugs in naughty notification dismiss path.
 --
--- Bug #3944 - Action always executes on dismiss:
+-- Action always executes on dismiss:
 --   dbus.lua:72-73 - sendNotificationClosed() unconditionally calls
 --   sendActionInvoked(notificationId, "default") whenever the close reason
 --   is dismissed_by_user. This fires the default action on every dismiss,
 --   even when the user just swiped away the notification without clicking
 --   any action. Apps like Firefox open URLs on mere dismissal.
 --
--- Bug #3836 - Wrong signal order:
+-- Wrong signal order:
 --   ActionInvoked emits BEFORE NotificationClosed. The freedesktop spec
 --   requires close AFTER action (if any action was invoked). But the real
 --   issue is that ActionInvoked fires even when no action was invoked.
@@ -60,7 +60,7 @@ end)
 
 local steps = {}
 
--- Bug #3944: Verify that dismissing a D-Bus notification triggers
+-- Verify that dismissing a D-Bus notification triggers
 -- spurious ActionInvoked signal.
 --
 -- We intercept the D-Bus signals to check if ActionInvoked fires

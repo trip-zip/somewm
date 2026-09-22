@@ -1,7 +1,7 @@
 ---------------------------------------------------------------------------
 --- Test: compositor survives focus transfer when focused client unmaps
 --
--- Regression test for #386: when the focused XDG client is killed, the
+-- Regression test: when the focused XDG client is killed, the
 -- compositor must not crash while deactivating its surface during focus
 -- restoration. The bug was that seat keyboard focus still pointed at the
 -- dying surface (already uninitialized by wlroots) when focusclient()

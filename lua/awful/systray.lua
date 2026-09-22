@@ -569,7 +569,7 @@ local function register_item(service, path)
             end
         end
 
-        -- Set baseline icon fingerprint for badge detection (BEH-7)
+        -- Set baseline icon fingerprint for badge detection
         item_data.baseline_icon_fingerprint = systray._compute_icon_fingerprint(
             icon_name, initial_raw_data)
 

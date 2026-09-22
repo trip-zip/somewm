@@ -10,10 +10,13 @@
 -- @supermodule wibox.widget.base
 ---------------------------------------------------------------------------
 
+local clay = require("wibox.clay")
 local base = require("wibox.widget.base")
 local gdebug = require("gears.debug")
 local beautiful = require("beautiful")
 local lgi = require("lgi")
+local lgi_core = require("lgi.core")
+local capi = { awesome = _G.awesome }
 local gtable = require("gears.table")
 local Pango = lgi.Pango
 local PangoCairo = lgi.PangoCairo
@@ -31,27 +34,7 @@ local function setup_dpi(box, dpi)
     end
 end
 
---- Setup a pango layout for the given textbox and dpi
-local function setup_layout(box, width, height, dpi)
-    box._private.layout.width = Pango.units_from_double(width)
-    box._private.layout.height = Pango.units_from_double(height)
-    setup_dpi(box, dpi)
-end
 
--- Draw the given textbox on the given cairo context in the given geometry
-function textbox:draw(context, cr, width, height)
-    setup_layout(self, width, height, context.dpi)
-    cr:update_layout(self._private.layout)
-    local _, logical = self._private.layout:get_pixel_extents()
-    local offset = 0
-    if self._private.valign == "center" then
-        offset = (height - logical.height) / 2
-    elseif self._private.valign == "bottom" then
-        offset = height - logical.height
-    end
-    cr:move_to(0, offset)
-    cr:show_layout(self._private.layout)
-end
 
 local function do_fit_return(self)
     local _, logical = self._private.layout:get_pixel_extents()
@@ -61,11 +44,6 @@ local function do_fit_return(self)
     return logical.width, logical.height
 end
 
--- Fit the given textbox
-function textbox:fit(context, width, height)
-    setup_layout(self, width, height, context.dpi)
-    return do_fit_return(self)
-end
 
 --- Get the preferred size of a textbox.
 --
@@ -477,6 +455,12 @@ local function new(text, ignore_markup)
 
     gtable.crush(ret, textbox, true)
 
+    local function invalidate_text_inputs()
+        ret._private.clay_text_inputs = nil
+    end
+    ret:connect_signal("widget::redraw_needed", invalidate_text_inputs)
+    ret:connect_signal("widget::layout_changed", invalidate_text_inputs)
+
     ret._private.dpi = -1
     ret._private.ctx = PangoCairo.font_map_get_default():create_context()
     ret._private.layout = Pango.Layout.new(ret._private.ctx)
@@ -522,6 +506,182 @@ function textbox.get_markup_geometry(text, s, font)
     local _, logical = playout:get_pixel_extents()
     return logical
 end
+
+--- The color a Pango foreground attribute names, straight alpha 0-1.
+local function attr_rgba(attr)
+    local c = lgi_core.record.cast(attr, Pango.AttrColor).color
+
+    return { c.red / 65535, c.green / 65535, c.blue / 65535, 1 }
+end
+
+local function same_rgba(a, b)
+    if not a or not b then
+        return a == b
+    end
+    return a[1] == b[1] and a[2] == b[2] and a[3] == b[3] and a[4] == b[4]
+end
+
+--- Pango attributes a Clay text element has no field for.
+local unsupported_attrs = {
+    "UNDERLINE", "STRIKETHROUGH", "RISE", "SHAPE", "SCALE", "LETTER_SPACING",
+    "BACKGROUND", "FOREGROUND_ALPHA", "BACKGROUND_ALPHA", "LINE_HEIGHT",
+}
+
+--- The text with the first run's font and color. Unsupported attributes
+-- are ignored (third_party/clay.h:374-398). Pango's own
+-- attribute iterator answers, so a `<span font_desc color>` around escaped
+-- text, which is what the taglist and tasklist labels are, is one run.
+local function text_run(w, layout)
+    local text = layout.text or ""
+    local desc = layout:get_font_description()
+    local attrs = layout.attributes
+
+    desc = desc or Pango.FontDescription.new()
+    if not attrs then
+        return text, desc, nil
+    end
+
+    local it = attrs:get_iterator()
+    -- Plain calendar labels also come through set_markup, which retains an
+    -- empty AttrList. Do not query every unsupported attribute/font override
+    -- when Pango says this one empty range covers the whole text.
+    local start, finish = it:range()
+    if start == 0 and finish >= #text and #it:get_attrs() == 0 then
+        return text, desc, nil
+    end
+    local run_desc, run_color, first
+
+    first = true
+    repeat
+        local start = it:range()
+
+        if start < #text then
+            for _, name in ipairs(unsupported_attrs) do
+                if Pango.AttrType[name] and it:get(Pango.AttrType[name]) then
+                    clay.ignore(w, "markup", "uses an attribute a text element has no field for, which is not drawn")
+                end
+            end
+
+            local d = desc:copy()
+            local fg = it:get(Pango.AttrType.FOREGROUND)
+            local color = fg and attr_rgba(fg) or nil
+
+            it:get_font(d, nil, nil)
+            if first then
+                run_desc, run_color, first = d, color, false
+            elseif d:to_string() ~= run_desc:to_string()
+                    or not same_rgba(color, run_color) then
+                clay.ignore(w, "markup", "has more than one run and is drawn as one")
+            end
+        end
+    until not it:next()
+    return text, run_desc or desc, run_color
+end
+
+--- wibox.widget.textbox -> an element aligning one CLAY_TEXT child, which
+-- is what Clay's own examples make of a label: `CLAY({ .layout = {
+-- .childAlignment } }) { CLAY_TEXT(text, CLAY_TEXT_CONFIG({ .fontId,
+-- .textColor, .wrapMode, .textAlignment })) }`. The face is interned with
+-- an absolute size at the context's dpi (render_text.h), since Clay's
+-- fontSize is a whole number (third_party/clay.h:374-398). Clay wraps by
+-- words and never by character, and the renderer ellipsizes a line at its
+-- clip. What a text config has no field for is ignored: markup uses the
+-- first font and color, justify, indent and line spacing are not applied,
+-- and start and middle ellipses use the end. Only a face that cannot be
+-- interned is refused.
+-- Pango inputs do not depend on a grid's natural/minimum/height offer.
+-- Cache only the semantic text inputs, never declarations or solved geometry.
+-- Widget signals invalidate content/style; DPI has its own cache key. Fit calls
+-- only change Pango's measurement offer, not these semantic inputs.
+local font_inputs = setmetatable({}, { __mode = "v" })
+
+local function text_inputs(w, dpi)
+    local p = w._private
+    local layout = p.layout
+    local cached = p.clay_text_inputs
+    if cached and cached.dpi == dpi then
+        return cached
+    end
+
+    -- An empty textbox draws nothing and takes no size of its own.
+    if (layout.text or "") == "" then
+        return {}
+    end
+    if layout:get_justify() then
+        clay.ignore(w, "justify", "is not applied")
+    end
+    if layout:get_indent() ~= 0 then
+        clay.ignore(w, "indent", "is not applied")
+    end
+    if layout:get_line_spacing() ~= 0 then
+        clay.ignore(w, "line_spacing", "is not applied")
+    end
+
+    local ellipsize = layout:get_ellipsize()
+
+    if ellipsize ~= "NONE" and ellipsize ~= "END" then
+        clay.ignore(w, "ellipsize", "start and middle ellipsize at the end")
+        ellipsize = "END"
+    end
+
+    local text, desc, color = text_run(w, layout)
+    -- Equal descriptions at the same DPI name the same native font. Keep this
+    -- immutable input alive with its textboxes; neither layout offers nor text
+    -- content affect it. Copy before scaling so Pango's layout stays untouched.
+    local font_key = tostring(dpi) .. ":" .. desc:to_string()
+    local font_input = font_inputs[font_key]
+    if not font_input or font_input.provider ~= capi.awesome._clay_font then
+        local size = desc:get_size() / Pango.SCALE
+        if size <= 0 then
+            clay.ignore(w, "font", "has no size and the text is not drawn")
+            return {}
+        end
+        if not desc:get_size_is_absolute() then size = size * dpi / 72 end
+        desc = desc:copy()
+        desc:set_absolute_size(size * Pango.SCALE)
+        local font = capi.awesome._clay_font(desc:to_string())
+        if not font then return clay.refuse(w, "font", "could not be interned") end
+        font_input = {font = font, provider = capi.awesome._clay_font}
+        font_inputs[font_key] = font_input
+    end
+
+    local halign = ({ LEFT = "left", CENTER = "center", RIGHT = "right" })
+        [layout:get_alignment()] or "left"
+
+    cached = { dpi = dpi, text = text, font = font_input.font, font_input = font_input,
+        color = color, halign = halign, ellipsize = ellipsize == "END" }
+    p.clay_text_inputs = cached
+    return cached
+end
+
+local function describe_textbox(w, fg, st)
+    local inputs = text_inputs(w, st.context.dpi)
+    if not inputs then return nil end
+    if not inputs.text then return {} end
+    -- The compiler may fade the declaration's color; keep cached input private.
+    local c = inputs.color
+    if not c then
+        -- Solid Cairo patterns have immutable RGBA, as do color strings.
+        -- Color specification tables can be edited in place and are re-read.
+        local cacheable = type(fg) == "string" or type(fg) == "userdata"
+        if cacheable and inputs.fg == fg then
+            c = inputs.fg_color
+        else
+            c = clay.solid_rgba(fg)
+            if cacheable then inputs.fg, inputs.fg_color = fg, c end
+        end
+    end
+    local color = c and { c[1], c[2], c[3], c[4] }
+    if not color then
+        clay.ignore(w, "fg", "is not solid and the text is transparent")
+        color = { 0, 0, 0, 0 }
+    end
+    return { align = { x = inputs.halign, y = w._private.valign or "center" },
+        specs = { { text = inputs.text, font = inputs.font, color = color, wrap = "words",
+            halign = inputs.halign, ellipsize = inputs.ellipsize, class = "text" } } }
+end
+
+textbox._clay = { describe = describe_textbox }
 
 return setmetatable(textbox, textbox.mt)
 

@@ -24,8 +24,10 @@
 ---------------------------------------------------------------------------
 local beautiful = require( "beautiful"         )
 local base      = require( "wibox.widget.base" )
-local color     = require( "gears.color"       )
 local gtable    = require( "gears.table"       )
+
+local gshape = require("gears.shape")
+local clay = require("wibox.clay")
 
 local separator = {}
 
@@ -129,68 +131,73 @@ local separator = {}
 -- @tparam[opt=gears.shape.rectangle] shape shape A valid shape function
 -- @see gears.shape
 
-local function draw_shape(self, _, cr, width, height, shape)
-    local bw = self._private.border_width or beautiful.separator_border_width or 0
-    local bc = self._private.border_color or beautiful.separator_border_color
 
-    cr:translate(bw/2, bw/2)
 
-    shape(cr, width-bw, height-bw)
 
-    if bw == 0 then
-        cr:fill()
-    elseif bc then
-        cr:fill_preserve()
-        cr:set_source(color(bc))
-        cr:set_line_width(bw)
-        cr:stroke()
+
+local function describe_separator(w)
+    local p = w._private
+    local s = p.shape or beautiful.separator_shape
+    if p.draw or beautiful.separator_draw then
+        clay.ignore(w, "draw", "is not applied")
     end
+    local col = p.color or beautiful.separator_color
+    local fill = clay.solid_rgba(col)
+    if col and not fill then
+        clay.ignore(w, "color", "is not solid and is transparent")
+        fill = { 0, 0, 0, 0 }
+    end
+    fill = fill or { 0, 0, 0, 1 }
+    if not s then
+        local thickness = p.thickness or beautiful.separator_thickness or 1
+        local orientation = p.orientation
+        -- Clay rejects percentages over 1 (third_party/clay.h:2030-2033).
+        local span_ratio = math.max(0, math.min(1, w.span_ratio or 1))
+        local child
+        if orientation == "horizontal" then
+            child = { w = { percent = span_ratio }, h = thickness, bg = fill }
+        elseif orientation == "vertical" then
+            child = { w = thickness, h = { percent = span_ratio }, bg = fill }
+        else
+            child = { w = "grow", h = "grow", fill = fill,
+                shape = function(width, height)
+                    if width > height then
+                        local lw = width * span_ratio
+                        return clay.shape_ops(gshape.rectangle, lw, thickness,
+                            (width - lw) / 2, height / 2 - thickness / 2)
+                    end
+                    local lh = height * span_ratio
+                    return clay.shape_ops(gshape.rectangle, thickness, lh,
+                        width / 2 - thickness / 2, (height - lh) / 2)
+                end }
+        end
+        -- Percent contributes no fit content (third_party/clay.h:2273),
+        -- and uses the parent's size minus padding and gaps (:2292-2293).
+        return { w = "grow", h = "grow", align = { x = "center", y = "center" },
+            specs = { child } }
+    end
+    local bw = p.border_width or beautiful.separator_border_width or 0
+    local bc = p.border_color or beautiful.separator_border_color
+    local stroke
+    if bw > 0 then
+        if bc then
+            stroke = clay.solid_rgba(bc)
+            if not stroke then
+                clay.ignore(w, "border_color", "is not solid and is transparent")
+            end
+        else
+            fill = nil
+        end
+    end
+    return { w = "grow", h = "grow", specs = {
+        { w = "grow", h = "grow", fill = fill, stroke = stroke, stroke_width = bw,
+            shape = function(width, height)
+                return clay.shape_ops(s, width - bw, height - bw, bw / 2, bw / 2)
+            end },
+    } }
 end
 
-local function draw_line(self, _, cr, width, height)
-    local thickness = self._private.thickness or beautiful.separator_thickness or 1
-
-    local orientation = self._private.orientation ~= "auto" and
-        self._private.orientation or (width > height and "horizontal" or "vertical")
-
-    local span_ratio = self.span_ratio or 1
-
-    if orientation == "horizontal" then
-        local w = width*span_ratio
-        cr:rectangle((width-w)/2, height/2 - thickness/2, w, thickness)
-    else
-        local h = height*span_ratio
-        cr:rectangle(width/2 - thickness/2, (height-h)/2, thickness, h)
-    end
-
-    cr:fill()
-end
-
-local function draw(self, _, cr, width, height)
-    -- In case there is a specialized.
-    local draw_custom = self._private.draw or beautiful.separator_draw
-    if draw_custom then
-        return draw_custom(self, _, cr, width, height)
-    end
-
-    local col = self._private.color or beautiful.separator_color
-
-    if col then
-        cr:set_source(color(col))
-    end
-
-    local s = self._private.shape or beautiful.separator_shape
-
-    if s then
-        draw_shape(self, _, cr, width, height, s)
-    else
-        draw_line(self, _, cr, width, height)
-    end
-end
-
-local function fit(_, _, width, height)
-    return width, height
-end
+separator._clay = { describe = describe_separator }
 
 for _, prop in ipairs {"orientation", "color", "thickness", "span_ratio",
                        "border_width", "border_color", "shape" } do
@@ -222,8 +229,6 @@ local function new(args)
     gtable.crush(ret, separator, true)
     gtable.crush(ret, args or {})
     ret._private.orientation = ret._private.orientation or "auto"
-    rawset(ret, "fit" , fit )
-    rawset(ret, "draw", draw)
     return ret
 end
 

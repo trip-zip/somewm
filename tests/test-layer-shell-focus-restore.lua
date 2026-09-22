@@ -198,7 +198,7 @@ local steps = {
         -- client in history (B), not just any client
         if client.focus == client_b then
             -- Check ACTUAL Wayland seat keyboard focus, not just Lua bookkeeping.
-            -- This catches the bug from issue #237 where client.focus was correct
+            -- This catches a focus mismatch where client.focus was correct
             -- but seat->keyboard_state.focused_surface was not restored.
             assert(client_b:has_keyboard_focus(),
                 "Client B regained visual focus but NOT keyboard focus (seat desync)")

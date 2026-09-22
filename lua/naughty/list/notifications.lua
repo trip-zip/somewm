@@ -231,19 +231,7 @@ function notificationlist:set_style(style)
     self:emit_signal("property::style", style)
 end
 
-function notificationlist:layout(_, width, height)
-    if self._private.base_layout then
-        return { wibox.widget.base.place_widget_at(self._private.base_layout, 0, 0, width, height) }
-    end
-end
 
-function notificationlist:fit(context, width, height)
-    if not self._private.base_layout then
-        return 0, 0
-    end
-
-    return wibox.widget.base.fit_widget(self, context, self._private.base_layout, width, height)
-end
 
 --- A function to prevent some notifications from being added to the list.
 -- @property filter
@@ -377,6 +365,8 @@ function module.filter.most_recent(n, count)
 end
 
 --@DOC_object_COMMON@
+
+require("wibox.clay").passthrough(notificationlist, "base_layout")
 
 return setmetatable(module, {__call = new})
 

@@ -144,7 +144,6 @@ function runner.run_steps(steps, options)
 
     if options.kill_clients then
         -- Add a final step to kill all clients and wait for them to finish.
-        -- Ref: https://github.com/awesomeWM/awesome/pull/1904#issuecomment-312793006
         steps[#steps + 1] = runner.step_kill_clients
     end
 

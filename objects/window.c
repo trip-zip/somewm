@@ -103,9 +103,6 @@ luaA_window_struts(lua_State *L)
     {
         luaA_tostrut(L, 2, &window->strut);
         luaA_object_emit_signal(L, 1, "property::struts", 0);
-        /* We don't know the correct screen, update them all */
-        foreach(s, globalconf.screens)
-            screen_update_workarea(*s);
     }
 
     return luaA_pushstrut(L, window->strut);

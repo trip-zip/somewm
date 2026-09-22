@@ -21,11 +21,10 @@
 #ifndef SOMEWM_SHADOW_H
 #define SOMEWM_SHADOW_H
 
-#include <lua.h>
+#include <cairo.h>
+typedef struct lua_State lua_State;
 #include <stdbool.h>
 #include <stdint.h>
-#include <wlr/types/wlr_scene.h>
-#include <wlr/types/wlr_buffer.h>
 
 /**
  * Gradient slice indices for the shadow nine-patch.
@@ -63,9 +62,6 @@ enum {
     SHADOW_FILL_COUNT
 };
 
-/** Number of owned texture buffers (4 corners + h edge + v edge) */
-#define SHADOW_TEXTURE_COUNT 6
-
 /**
  * Shadow configuration for a single object (client or drawin).
  *
@@ -83,24 +79,6 @@ typedef struct shadow_config_t {
     float color[4];         /**< Shadow color RGBA; alpha multiplies opacity */
     bool clip_directional;  /**< Accepted for compatibility; no longer used */
 } shadow_config_t;
-
-/**
- * Shadow scene nodes attached to a client or drawin.
- *
- * Each shadow owns its own set of gradient textures. The slice scene
- * buffers and solid fill rects are arranged in a nine-patch; edges are
- * stretched by the GPU via dest_size, so a resize never re-renders.
- */
-typedef struct shadow_nodes_t {
-    struct wlr_scene_tree *tree;                        /**< Container for shadow slices */
-    struct wlr_scene_buffer *slice[SHADOW_SLICE_COUNT]; /**< Gradient scene buffers */
-    struct wlr_scene_rect *fill[SHADOW_FILL_COUNT];     /**< Solid interior rects */
-    struct wlr_buffer *textures[SHADOW_TEXTURE_COUNT];  /**< Owned gradient textures */
-    int last_width;                                     /**< Cached width to skip redundant updates */
-    int last_height;                                    /**< Cached height to skip redundant updates */
-    bool user_visible;                                  /**< Visibility requested via shadow_set_visible */
-    bool size_ok;                                       /**< Object large enough for the corner patches */
-} shadow_nodes_t;
 
 /**
  * Global shadow defaults (stored in globalconf.shadow).
@@ -136,79 +114,7 @@ const shadow_config_t *shadow_get_effective_config(
 
 /* ========== Shadow Rendering ========== */
 
-/**
- * Create shadow nodes for an object.
- *
- * Renders gradient textures and creates the nine-patch scene nodes as
- * children of the given parent tree, positioned below (behind) other
- * content.
- *
- * @param parent Parent scene tree (client->scene or drawin->scene_tree)
- * @param shadow Shadow nodes structure to populate
- * @param config Shadow configuration to use
- * @param width Object width in pixels
- * @param height Object height in pixels
- * @return true on success, false on failure
- */
-bool shadow_create(struct wlr_scene_tree *parent,
-                   shadow_nodes_t *shadow,
-                   const shadow_config_t *config,
-                   int width, int height);
-
-/**
- * Update shadow geometry after object resize.
- *
- * Fast operation: just repositions scene nodes and updates dest_size.
- * No texture re-rendering.
- *
- * @param shadow Shadow nodes structure
- * @param config Shadow configuration
- * @param width New object width
- * @param height New object height
- */
-void shadow_update_geometry(shadow_nodes_t *shadow,
-                           const shadow_config_t *config,
-                           int width, int height);
-
-/**
- * Update shadow after configuration change.
- *
- * Destroys and recreates the shadow with new textures.
- *
- * @param shadow Shadow nodes structure
- * @param parent Parent scene tree (for recreation)
- * @param config New configuration
- * @param width Object width
- * @param height Object height
- */
-void shadow_update_config(shadow_nodes_t *shadow,
-                         struct wlr_scene_tree *parent,
-                         const shadow_config_t *config,
-                         int width, int height);
-
-/**
- * Show or hide shadow.
- *
- * @param shadow Shadow nodes structure
- * @param visible true to show, false to hide
- */
-void shadow_set_visible(shadow_nodes_t *shadow, bool visible);
-
-/**
- * Destroy shadow nodes and free owned textures.
- *
- * @param shadow Shadow nodes structure to cleanup
- */
-void shadow_destroy(shadow_nodes_t *shadow);
-
-/**
- * Free owned textures and zero the structure WITHOUT destroying the scene
- * nodes. For teardown paths where the parent scene tree has been (or is
- * about to be) destroyed, taking the shadow nodes with it.
- *
- * @param shadow Shadow nodes structure to release
- */
-void shadow_release(shadow_nodes_t *shadow);
+float shadow_paint(const shadow_config_t *config);
 
 /* ========== Lua Integration ========== */
 

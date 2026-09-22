@@ -9,6 +9,7 @@
 -- Grab environment we need
 local ipairs = ipairs
 local math = math
+local aclient = require("awful.client")
 local capi = {
   client = client,
   screen = screen,
@@ -54,95 +55,39 @@ function magnifier.mouse_resize_handler(c, corner, x, y)
   end, corner .. "_corner")
 end
 
-local function get_screen(s)
-  return s and capi.screen[s]
-end
+-- Public method shape is retained; awful.layout schedules the native tree.
+function magnifier.arrange() end
 
-function magnifier.arrange(p)
-  -- Fullscreen?
-  local area = p.workarea
-  local cls = p.clients
-  local focus = p.focus or capi.client.focus
-  local t = p.tag or capi.screen[p.screen].selected_tag
-  local mwfact = t.master_width_factor
-  local fidx
-
-  -- Check that the focused window is on the right screen
-  if focus and focus.screen ~= get_screen(p.screen) then
-    focus = nil
+function magnifier._clay(s)
+  local t = s.selected_tag
+  local clients, focused = {}, nil
+  for _, c in ipairs(aclient.tiled(s)) do
+    if not c.ontop and not c.above and not c.below then
+      clients[#clients + 1] = c
+      if c == capi.client.focus then focused = #clients end
+    end
   end
-
-  -- If no window is focused or focused window is not tiled, take the first tiled one.
-  if not focus or focus.floating then
-    focus = cls[1]
-    fidx = 1
-  end
-
-  -- Abort if no clients are present
-  if not focus then
-    return
-  end
-
-  local geometry = {}
-  if #cls > 1 then
-    geometry.width = area.width * math.sqrt(mwfact)
-    geometry.height = area.height * math.sqrt(mwfact)
-    geometry.x = area.x + (area.width - geometry.width) / 2
-    geometry.y = area.y + (area.height - geometry.height) / 2
-  else
-    geometry.x = area.x
-    geometry.y = area.y
-    geometry.width = area.width
-    geometry.height = area.height
-  end
-
-  local g = {
-    x = geometry.x,
-    y = geometry.y,
-    width = geometry.width,
-    height = geometry.height,
-  }
-  p.geometries[focus] = g
-
-  if #cls > 1 then
-    geometry.x = area.x
-    geometry.y = area.y
-    geometry.height = area.height / (#cls - 1)
-    geometry.width = area.width
-
-    -- We don't know the focus window index. Try to find it.
-    if not fidx then
-      for k, c in ipairs(cls) do
-        if c == focus then
-          fidx = k
-          break
-        end
+  local n = #clients
+  local children, floating = {}, {}
+  if n > 0 then
+    focused = focused or 1
+    local gap = n == 1 and t.gap_single_client == false and 0 or t.gap
+    local share = n > 1 and math.sqrt(t.master_width_factor) or nil
+    floating[clients[focused]] = {attach_to = "workarea", center = true,
+      w = share, h = share, padding = gap}
+    -- Background clients start after the focused client and wrap around.
+    for offset = 1, n - 1 do
+      local c = clients[(focused + offset - 1) % n + 1]
+      local item = {client = c}
+      if gap > 0 then
+        item = {role = "CELL", direction = "row", padding = gap,
+          children = {item}}
       end
-    end
-
-    -- First move clients that are before focused client.
-    for k = fidx + 1, #cls do
-      p.geometries[cls[k]] = {
-        x = geometry.x,
-        y = geometry.y,
-        width = geometry.width,
-        height = geometry.height,
-      }
-      geometry.y = geometry.y + geometry.height
-    end
-
-    -- Then move clients that are after focused client.
-    -- So the next focused window will be the one at the top of the screen.
-    for k = 1, fidx - 1 do
-      p.geometries[cls[k]] = {
-        x = geometry.x,
-        y = geometry.y,
-        width = geometry.width,
-        height = geometry.height,
-      }
-      geometry.y = geometry.y + geometry.height
+      children[#children + 1] = item
     end
   end
+  return {role = "WORKAREA", direction = "column", children = children,
+    floating = floating}
 end
 
 --- The magnifier layout.

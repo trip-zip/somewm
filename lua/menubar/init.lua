@@ -499,6 +499,7 @@ function menubar.show(scr)
         local layout = wibox.layout.fixed.horizontal()
         layout:add(instance.prompt)
         layout:add(instance.widget)
+        instance.wibox._drawable._attachment_fit = true
         instance.wibox:set_widget(layout)
     end
 
@@ -508,14 +509,19 @@ function menubar.show(scr)
         menubar.refresh(scr)
     end
 
-    -- Set position and size
-    local scrgeom = scr.workarea
+    -- Width/font are content inputs; OUTPUT owns the centered position.
     local geometry = menubar.geometry
-    instance.geometry = {x = geometry.x or scrgeom.x,
-                             y = geometry.y or scrgeom.y,
-                             height = geometry.height or gmath.round(theme.get_font_height(font) * 1.5),
-                             width = (geometry.width or scrgeom.width) - border_width * 2}
-    instance.wibox:geometry(instance.geometry)
+    instance.geometry = {
+        height = geometry.height or gmath.round(theme.get_font_height(font) * 1.5),
+        width = geometry.width or theme.launcher_width or 600,
+    }
+    instance.wibox.screen = scr
+    instance.wibox.widget.forced_height = instance.geometry.height
+    require('awful._attachment').corner(instance.wibox, 'centered',
+        {x=geometry.x or 0,y=geometry.y or 0}, 3)
+    local a=instance.wibox.drawin.attachment
+    a.width=instance.geometry.width
+    instance.wibox.drawin.attachment=a
 
     current_item = 1
     current_category = nil

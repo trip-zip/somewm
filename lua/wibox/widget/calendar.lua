@@ -33,6 +33,7 @@ local grid = require("wibox.layout.grid")
 local textbox = require("wibox.widget.textbox")
 local bgcontainer = require("wibox.container.background")
 local base = require("wibox.widget.base")
+local clay = require("wibox.clay")
 local beautiful = require("beautiful")
 
 local calendar = { mt = {} }
@@ -434,6 +435,9 @@ local function get_calendar(type, date, font)
     local ct = bgcontainer()
     local ret = base.make_widget(ct, "calendar", {enable_properties = true})
     gtable.crush(ret, calendar, true)
+    clay.describe_widget(ret, function(w)
+        return { specs = clay.whole_box(w._private.container) }
+    end, "wibox.widget.calendar")
 
     ret._private.type = type
     ret._private.container = ct

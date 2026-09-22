@@ -7,7 +7,7 @@
 -- swallowed the "0x" of a "0x0 ..." string as a hex-float lead-in instead
 -- of stopping at the intended 'x' separator, breaking any region string
 -- whose first coordinate is 0 - the natural top-left corner, so the single
--- most common value anyone would type (#692).
+-- most common value anyone would type.
 
 local input = require("awful.input")
 

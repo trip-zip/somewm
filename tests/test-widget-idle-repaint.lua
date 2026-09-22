@@ -1,5 +1,5 @@
 ---------------------------------------------------------------------------
--- Test: widgets repaint on a timer with no input (issue #609)
+-- Test: widgets repaint on a timer with no input
 --
 -- A gears.timer-driven widget update (textclock, awful.widget.watch, ...) must
 -- reach the screen even when nothing is focused and no input arrives. The redraw

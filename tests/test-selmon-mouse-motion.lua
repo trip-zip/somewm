@@ -1,7 +1,7 @@
 ---------------------------------------------------------------------------
 --- Test: selmon tracks cursor across monitor boundaries
 --
--- Regression test for #245: selmon was only updated on button press or
+-- Regression test: selmon was only updated on button press or
 -- focusclient(), so layer-shell clients (rofi) that don't specify an
 -- output appeared on the wrong monitor after moving the mouse.
 --
@@ -67,7 +67,7 @@ local steps = {
         io.stderr:write(string.format(
             "[TEST] mouse.screen=%d (expected %d)\n", ms.index, s2.index))
         assert(ms == s2,
-            string.format("BUG #245: Expected mouse on screen %d, got screen %d",
+            string.format("Expected mouse on screen %d, got screen %d",
                 s2.index, ms.index))
         io.stderr:write("[TEST] PASS: cursor tracked to screen 2\n")
         return true

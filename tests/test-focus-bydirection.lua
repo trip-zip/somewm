@@ -1,4 +1,4 @@
--- Test for https://github.com/awesomeWM/awesome/pull/3225
+-- Test directional focus between horizontally arranged clients.
 
 local runner = require("_runner")
 local awful = require("awful")
