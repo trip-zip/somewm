@@ -582,9 +582,99 @@ widget_leaves_set(struct widget_tree *d)
 	}
 }
 
+struct widget_storage {
+    unsigned references;
+    struct widget_tree payload;
+};
+
+static void storage_release(struct widget_storage *storage)
+{
+    if (!storage || --storage->references) return;
+    widget_nodes_clear(&storage->payload);
+    free(storage);
+}
+
+struct widget_tree *widget_tree_hold(struct widget_tree *d)
+{
+    struct widget_tree *copy = malloc(sizeof(*copy));
+    uint32_t *ids = d->nodes_len ? malloc(d->nodes_len * sizeof(*ids)) : NULL;
+    if (!copy || (d->nodes_len && !ids)) { free(copy); free(ids); return NULL; }
+    if (!d->storage) {
+        d->storage = malloc(sizeof(*d->storage));
+        if (!d->storage) { free(copy); free(ids); return NULL; }
+        *d->storage = (struct widget_storage) { .references = 1, .payload = *d };
+        d->storage->payload.storage = NULL;
+        d->storage->payload.ids = NULL;
+    }
+    *copy = *d;
+    copy->ids = ids;
+    if (ids) memcpy(ids, d->ids, d->nodes_len * sizeof(*ids));
+    copy->storage->references++;
+    return copy;
+}
+
+size_t widget_tree_bytes(const struct widget_tree *d)
+{
+    return sizeof(*d) + d->nodes_len * (sizeof(*d->nodes) + sizeof(*d->ids))
+        + d->bindings_len * sizeof(*d->bindings) + d->text_len
+        + d->leaves_len * sizeof(*d->leaves) + d->shapes_len * sizeof(*d->shapes);
+}
+
+bool widget_tree_referenced(const struct widget_tree *d)
+{
+    return Clay__ReferencesMemory(d->text, d->text_len, UINTPTR_MAX)
+        || Clay__ReferencesMemory(d->leaves, d->leaves_len * sizeof(*d->leaves), UINTPTR_MAX)
+        || Clay__ReferencesMemory(d->shapes, d->shapes_len * sizeof(*d->shapes), ~(uintptr_t)RENDER_SHAPE_TAG);
+}
+
+void widget_tree_release(struct widget_tree *d)
+{
+    if (!d) return;
+    widget_nodes_clear(d);
+    free(d);
+}
+
+/* Only changed input payloads copy. Declaration writes IDs and root metadata,
+ * which the retained view already owns separately from these shared arrays. */
+static bool widget_writable(struct widget_tree *d)
+{
+    if (!d->storage) return true;
+    struct widget_tree copy = *d;
+#define DUP(field, count) do { \
+    copy.field = d->count ? malloc(d->count * sizeof(*d->field)) : NULL; \
+    if (copy.field) memcpy(copy.field, d->field, d->count * sizeof(*d->field)); \
+} while (0)
+    DUP(nodes, nodes_len); DUP(bindings, bindings_len); DUP(text, text_len);
+    DUP(leaves, leaves_len); DUP(shapes, shapes_len);
+#undef DUP
+    if ((d->nodes_len && !copy.nodes) || (d->bindings_len && !copy.bindings)
+            || (d->text_len && !copy.text) || (d->leaves_len && !copy.leaves)
+            || (d->shapes_len && !copy.shapes)) {
+        free(copy.nodes); free(copy.bindings); free(copy.text); free(copy.leaves); free(copy.shapes);
+        return false;
+    }
+    for (size_t i = 0; i < copy.leaves_len; i++)
+        if (copy.leaves[i].native) cairo_surface_reference(copy.leaves[i].native);
+    for (size_t i = 0; i < copy.shapes_len; i++) {
+        lua_rawgeti(globalconf.L, LUA_REGISTRYINDEX, copy.shapes[i].ref);
+        copy.shapes[i].ref = luaL_ref(globalconf.L, LUA_REGISTRYINDEX);
+    }
+    storage_release(d->storage);
+    copy.storage = NULL;
+    *d = copy;
+    return true;
+}
+
 void
 widget_nodes_clear(struct widget_tree *d)
 {
+    if (d->storage) {
+        uint64_t generation = d->shape_generation;
+        storage_release(d->storage);
+        free(d->ids);
+        *d = (struct widget_tree) { .shape_generation = generation };
+        return;
+    }
 	for (size_t i = 0; i < d->shapes_len; i++)
 		luaL_unref(globalconf.L, LUA_REGISTRYINDEX, d->shapes[i].ref);
 	p_delete(&d->shapes);
@@ -622,7 +712,7 @@ nodes_drop(struct widget_tree *d, enum widget_nodes_state why)
  * flips without a redraw, so a tree admitted while its drawin was hidden
  * would reach Clay unchecked. Counting it can refuse a tree the output had
  * room for, which costs one drawable its conversion; not counting it can
- * exhaust the context, which aborts. */
+ * exhaust the context and abandon the frame. */
 static bool
 over_budget(struct widget_tree *d, Monitor *m, size_t len, size_t scrolls)
 {
@@ -653,7 +743,7 @@ over_budget(struct widget_tree *d, Monitor *m, size_t len, size_t scrolls)
 			scrolls += other->scrolls;
 		}
 	}
-	return total > WIDGET_NODES_OUTPUT_MAX || scrolls > WIDGET_SCROLLS_OUTPUT_MAX;
+	return total > declare_widget_budget(m->declare) || scrolls > WIDGET_SCROLLS_OUTPUT_MAX;
 }
 
 bool
@@ -661,6 +751,10 @@ widget_nodes_set(lua_State *L, struct widget_tree *d, Monitor *m, int idx)
 {
 	if (declare_in_frame())
 		luaL_error(L, "widget tree changed from inside a frame");
+    if (!widget_writable(d)) {
+        declare_output_resource_failure(m ? m->declare : NULL);
+        return false;
+    }
 	/* One scratch tree for every drawin: a redraw reads into it before
 	 * the stored tree is replaced. */
 	static struct widget_node nodes[WIDGET_NODES_MAX];
@@ -694,8 +788,7 @@ widget_nodes_set(lua_State *L, struct widget_tree *d, Monitor *m, int idx)
 	}
 	leaves_count(d, leaves);
 	size_t count = luaA_rawlen(L, shapes);
-	bool shapes_changed = count != d->shapes_len;
-	if (shapes_changed) {
+	if (count != d->shapes_len) {
 		for (size_t i = count; i < d->shapes_len; i++)
 			luaL_unref(L, LUA_REGISTRYINDEX, d->shapes[i].ref);
 		p_realloc(&d->shapes, count);
@@ -721,7 +814,6 @@ widget_nodes_set(lua_State *L, struct widget_tree *d, Monitor *m, int idx)
 			 * these slots before reconciliation. Never reuse the old generation
 			 * for a new path at an otherwise identical command ID and box. */
 			slot->shape.gen = ++d->shape_generation;
-			shapes_changed = true;
 		}
 		slot->shape.gradient = n->gradient;
 		memcpy(slot->shape.fill, n->fill, sizeof(n->fill));
@@ -729,8 +821,6 @@ widget_nodes_set(lua_State *L, struct widget_tree *d, Monitor *m, int idx)
 		slot->shape.stroke_width = n->stroke_width;
 	}
 	lua_pop(L, 1);
-	if (shapes_changed && m && m->declare)
-		declare_output_mark_dirty(m->declare);
 
 	d->state = WIDGET_NODES_CONVERTED;
 	p_delete(&d->nodes);
@@ -746,8 +836,5 @@ widget_nodes_set(lua_State *L, struct widget_tree *d, Monitor *m, int idx)
 	d->text = text_len ? p_dup(text_buf, text_len) : NULL;
 	d->text_len = text_len;
 	d->declared = false;
-	/* Every stored tree change wakes the frame path. */
-	if (m && m->declare)
-		declare_output_mark_dirty(m->declare);
 	return true;
 }

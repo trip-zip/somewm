@@ -34,6 +34,28 @@ void motionabsolute(struct wl_listener *listener, void *data);
 void pointerfocus(Client *c, struct wlr_surface *surface,
 		double sx, double sy, uint32_t time);
 
+/* The pointer image: what the seat shows at the pointer. declare_cursor()
+ * declares it as a leaf of the output under the pointer; nothing sets an
+ * image on the wlr_cursor, so wlroots paints no cursor of its own. A themed
+ * name, or a client's cursor surface with its hotspot, or neither while a
+ * client hides the pointer. gen counts every change, so an output's copy of
+ * a themed image is rebuilt when the theme is. */
+struct cursor_image {
+	char *name;
+	struct wlr_surface *surface;
+	/* The surface's scene tree, born parked and borrowed by the output
+	 * that declares it (its declare handle is the surface); NULL again
+	 * once wlroots destroyed it with the surface. */
+	struct wlr_scene_tree *tree;
+	void *render_owner;
+	int hotspot_x, hotspot_y;
+	uint64_t gen;
+	struct wl_listener surface_destroy, surface_commit;
+};
+extern struct cursor_image cursor_image;
+void cursor_set_xcursor(const char *name);
+void cursor_set_surface(struct wlr_surface *surface, int hotspot_x, int hotspot_y);
+
 /* Keyboard */
 int keybinding(uint32_t mods, uint32_t keycode, xkb_keysym_t sym,
 		xkb_keysym_t base_sym, bool is_keypress);

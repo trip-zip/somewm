@@ -1,4 +1,4 @@
--- Actual compiler -> untouched upstream solver -> production Lua publication.
+-- Compile widget declarations, solve with production Clay and publish Lua areas.
 -- The C fixture's TSV interface marshals ordinary declarations only.
 local clay = require('wibox.clay')
 local M = {}
@@ -8,7 +8,7 @@ function M.start()
     if not binary then
         temporary = os.tmpname()
         binary = temporary
-        assert(os.execute('cc -std=c99 -isystem tests/clay/vendor -O2 tests/clay/grid-constructor.c -lm -o '..binary))
+        assert(os.execute('cc -std=c99 -isystem third_party -O2 tests/grid-declaration-solver.c -lm -o '..binary))
     end
 end
 function M.stop()
@@ -28,7 +28,7 @@ function M.solve(tree, label)
         local id = #nodes
         nodes[id+1] = n
         indices[n]=id
-        assert(not n.grid and not n.ceil_grow and not n.size_contain)
+        assert(not n.grid and not n.size_contain)
         assert(not n.text, 'actual text requires the compositor/font bridge')
         out:write(parent,' node',id,' ',n.dir=='y' and 1 or 0,' ',n.gap or 0,
             ' ',axis(n,'w'),' ',axis(n,'h'),' ',n.bg and 1 or 0,

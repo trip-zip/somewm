@@ -525,13 +525,12 @@ rendermon(struct wl_listener *listener, void *data)
 	/* The Clay frame: when the output is dirty, have Lua compile what
 	 * changed, declare the scene, solve, and reconcile into wlr_scene
 	 * before the commit below presents it. A clean output does zero work
-	 * here. While the lua lock is engaged the lock band solves instead of
-	 * the desktop (declare.h). When the scene changed, what sits under the
-	 * stationary pointer may have too (a surface mapped under it, a tag
-	 * switch): re-evaluate pointer focus, the way banning_refresh() does
-	 * after visibility flips. */
-	if (m->declare && declare_output_frame(m->declare, m,
-			session_is_locked()) > 0)
+	 * here. While the session is locked the same pass adds the lock
+	 * section on top (declare.h). When the scene changed, what sits under
+	 * the stationary pointer may have too (a surface mapped under it, a
+	 * tag switch): re-evaluate pointer focus, the way banning_refresh()
+	 * does after visibility flips. */
+	if (m->declare && declare_output_frame(m->declare, m) > 0)
 		motionnotify(0, NULL, 0, 0, 0, 0);
 
 	/* needs_frame is true only when there is something to present;
@@ -824,12 +823,10 @@ updatemons(struct wl_listener *listener, void *data)
 	wlr_log(WLR_ERROR, "[HOTPLUG] updatemons exit selmon=%s",
 		selmon ? selmon->wlr_output->name : "NULL");
 
-	/* FIXME: figure out why the cursor image is at 0,0 after turning all
-	 * the monitors on.
-	 * Move the cursor image where it used to be. It does not generate a
-	 * wl_pointer.motion event for the clients, it's only the image what it's
-	 * at the wrong position after all. */
+	/* Keep the pointer inside the new layout. It does not generate a
+	 * wl_pointer.motion event for the clients. */
 	wlr_cursor_move(cursor, NULL, 0, 0);
+	declare_cursor_changed();
 
 	in_updatemons = 0;
 	wlr_output_manager_v1_set_configuration(output_mgr, config);

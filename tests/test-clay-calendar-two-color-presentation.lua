@@ -6,7 +6,7 @@ local awful=require('awful')
 local clay=require('wibox.clay')
 local example=require('_clay_example')
 local check=require('_clay_grid_presentation')
-local solver=dofile('tests/clay/grid-helper.lua')
+local solver=dofile('tests/_grid_solver.lua')
 local pointer=assert(require('_utils').binary_or_skip('./build-test/test-virtual-pointer-client'))
 local GLib=require('lgi').GLib
 local function now() return GLib.get_monotonic_time()/1000 end

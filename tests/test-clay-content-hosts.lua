@@ -59,7 +59,7 @@ runner.run_async(function()
             'original parent/child delivery changed: ' .. table.concat(events, ','))
         local tree = popup._drawable._clay_tree
         local folded = node_for(tree, background) == tree and node_for(tree, margin) == tree
-        if folded ~= (phase ~= 'paint-boundary') then failures[#failures + 1] = phase end
+        if not folded then failures[#failures + 1] = phase end
         example.save('content-host-' .. phase, awesome._clay_tree(screen[1]))
     end
     screen[1].inspector = true

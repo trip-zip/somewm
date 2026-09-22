@@ -317,6 +317,17 @@ function lockscreen.init(opts)
         end
     end)
 
+    -- A surface is always its screen's box: outputs come up at scale 1 and
+    -- get their configured scale afterwards, and adding an output repacks
+    -- the layout, both of which move or resize a screen that already has a
+    -- surface. The widget tree follows the new box; nothing is rebuilt.
+    screen.connect_signal("property::geometry", function(s)
+        local wb = surfaces[s]
+        if wb then
+            wb:geometry(s.geometry)
+        end
+    end)
+
     -- Handle lock activation
     awesome.connect_signal("lock::activate", function()
         password = ""

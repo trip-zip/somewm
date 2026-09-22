@@ -1,29 +1,38 @@
 /*
  * declare.c - the per-output declare/solve boundary for the Clay tree
  *
- * Each output owns a Clay context sized to its effective resolution and a
- * render_state parented into a band directly below LyrBlock, so everything
- * the tree will declare stays under the session lock, its covers, and the
- * drag icon. Per dirty frame the declare pass rebuilds the output's tree:
- * every box somewm computes elsewhere enters as a fixed floating leaf
- * attached to Clay's root, so Clay places without solving it.
+ * Each output owns one Clay context sized to its effective resolution and
+ * one render_state. Per dirty frame the declare pass rebuilds the output's
+ * tree: every box somewm computes elsewhere enters as a fixed floating leaf
+ * attached to Clay's root, so Clay places without solving it. While the
+ * session is locked the same pass adds the lock section (the backdrop, the
+ * covers, the lock surface) at the top of the same tree.
  *
  * Draw order is Clay's own: zIndex picks the band and declaration order
  * breaks ties inside it. The bands are the table below; within one, clients
  * follow the stack and layer-shell surfaces the oldest first.
  */
 
+#define _DEFAULT_SOURCE
 #include <inttypes.h>
+#include <setjmp.h>
+#include <limits.h>
 #include <math.h>
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
 #include <sys/wait.h>
+#include <sys/mman.h>
+#include <unistd.h>
+#include <wlr/backend/headless.h>
+#include <wlr/backend/wayland.h>
+#include <wlr/types/wlr_cursor.h>
 #include <wlr/types/wlr_fractional_scale_v1.h>
 #include <wlr/types/wlr_data_device.h>
 #include <wlr/types/wlr_layer_shell_v1.h>
 #include <wlr/types/wlr_output.h>
 #include <wlr/types/wlr_scene.h>
+#include <wlr/types/wlr_xcursor_manager.h>
 #include <wlr/util/log.h>
 
 #include "clay.h"
@@ -55,11 +64,24 @@
 void luaA_drawin_set_solved_geometry(lua_State *L, drawin_t *drawin,
         int x, int y, int width, int height);
 
-/* One Clay context plus the render_state its solved commands reconcile
- * into. Every output has a desktop band; the lua-lock band is created when
- * the lock engages (covers and the lock surface drawin reconcile into
- * LyrBlock, above locked_bg, below the raised external lock surface). */
+/* The output's Clay context plus the render_state its solved commands
+ * reconcile into, and the readback the tree dump prints. */
+struct declared_host {
+    struct widget_host host;
+    struct widget_tree *view;
+};
+
 struct declare_band {
+    bool exhausted, armed;
+    jmp_buf failure;
+    void *backup;
+    size_t backup_cap;
+    struct declared_host *hosts;
+    size_t hosts_len;
+    struct widget_tree **retired;
+    size_t retired_len;
+    int fail_pass, fail_elements;
+    int layout_ref;
 	Clay_Context *clay;
 	void *arena;
 	struct wlr_scene_tree *tree;
@@ -127,8 +149,7 @@ struct declare_record {
 
 struct declare_output {
 	struct wlr_output *wlr_output;
-	struct declare_band desktop;
-	struct declare_band lock;
+	struct declare_band band;
 	bool dirty;
 	bool grid_pending; /* Private helper declarations still need a solve. */
 	/* The frame deadline: a mark arms it, and an output the backend never
@@ -138,10 +159,18 @@ struct declare_output {
 	bool deadline_armed;
 	/* Shared wallpaper source and this output's layout-logical selection. */
 	struct image_entry wallpaper;
-	/* The inspector's per-output facts: the desktop context's debug flag
-	 * copied as a gate for the seat mirror (refreshed wherever the flag
-	 * can change), and the press latched for the next solve. */
+	/* This output's copy of the themed pointer image at its scale, keyed
+	 * on the xcursor frame it was built from and the seat's image
+	 * generation; whether the last frame declared the pointer here. */
+	struct image_entry cursor;
+	const struct wlr_xcursor_image *cursor_frame;
+	uint64_t cursor_gen;
+	bool cursor_shown;
+	/* Requested inspector visibility, committed panel width for input gating,
+     * and the press latched for the next solve. Failed frames keep the
+     * committed panel's hit area until a successful retry removes it. */
 	bool inspecting;
+    unsigned inspector_width;
 	bool press_pending;
 	double scroll_x, scroll_y;
 	int64_t last_frame_us;
@@ -168,6 +197,11 @@ static struct {
 #define DECLARE_DEADLINE_MS 50
 static int deadline_fire(void *data);
 static void inspector_resync(void);
+/* Whether this frame declares the debug panel. Clay declares it above every
+ * band this file can name (clay.h:3765, 3890, 3912), so a locked screen
+ * would show the desktop's whole tree through the lock; the screen's own
+ * setting stays put and comes back on unlock. */
+static bool inspector_declares(const struct declare_output *dout);
 static bool inspector_feed(struct declare_output *dout, Monitor *m,
 	Clay_Vector2 *point);
 static void inspector_emit_closed(Monitor *m);
@@ -288,8 +322,7 @@ record_open(const char *role, uint64_t handle, Clay_ElementId id,
 		.gap = decl->layout.childGap,
 		.custom = decl->custom.customData != NULL && decl->custom.customData != RENDER_CLIP_MARK,
 		.image = decl->image.imageData != NULL,
-		.clip = render_userdata_byte(decl->userData, RENDER_UD_OPENS_SHIFT) != 0
-			|| render_userdata_byte(decl->clip.userData, RENDER_UD_OPENS_SHIFT) != 0,
+		.clip = render_userdata_byte(decl->userData, RENDER_UD_OPENS_SHIFT) != 0,
 		.has_host = host != NULL,
 	};
 	if (host)
@@ -400,13 +433,18 @@ enum {
 	Z_CLIENT_UNMANAGED = 110,
 	/* The drag icon rides the pointer above everything on the desktop. */
 	Z_DRAG_ICON = 120,
-};
-
-/* The lock band is a separate Clay context with its own order: its root
- * element is the opaque backdrop, then the covers, then the lock surface. */
-enum {
-	Z_LOCK_COVER = 10,
-	Z_LOCK_SURFACE = 20,
+	/* The lock section. Above every band above, so a locked session shows
+	 * the backdrop and nothing else whatever the desktop declared: the
+	 * roots are sorted by zIndex (clay.h:3479-3492) and the reconcile
+	 * keeps that order in the scene (render.c:2505-2528). The backdrop is
+	 * also what stops the input walk (hit_accept, DECLARE_KIND_LOCK_BLOCK). */
+	Z_LOCK_BACKDROP = 200,
+	Z_LOCK_COVER = 210,
+	Z_LOCK_SURFACE = 220,
+	/* The pointer image, above the lock section and above Clay's own
+	 * inspector panel (clay.h:3890-3912 declares that at 32765 and
+	 * 32766), so the pointer is never under anything it points at. */
+	Z_CURSOR = INT16_MAX,
 };
 
 /* The placement every box somewm computes elsewhere enters with: a fixed
@@ -480,9 +518,7 @@ declare_hit(struct wlr_scene_node *node, enum declare_kind *kind)
 
 		if (!dout)
 			continue;
-		ud = render_hit_userdata(dout->desktop.render, node);
-		if (!ud && dout->lock.render)
-			ud = render_hit_userdata(dout->lock.render, node);
+		ud = render_hit_userdata(dout->band.render, node);
 		if (ud)
 			return declare_handle_get(
 				declare_userdata_handle(ud), kind);
@@ -512,6 +548,12 @@ hit_accept(void *user, const struct render_node_view *v, double sx, double sy)
 	if (!obj)
 		return false;
 	switch (kind) {
+	case DECLARE_KIND_LOCK_BLOCK:
+		/* The lock backdrop. It answers the point with nothing, which
+		 * ends the walk: the desktop nodes below it are retained and
+		 * must not take input through the lock. */
+		*out = (struct declare_hit) { 0 };
+		return true;
 	case DECLARE_KIND_DRAWIN: {
 		drawin_t *d = obj;
 
@@ -598,6 +640,9 @@ hit_accept(void *user, const struct render_node_view *v, double sx, double sy)
 		*out = (struct declare_hit) { kind, ls, surface, sub_x, sub_y };
 		return true;
 	}
+	case DECLARE_KIND_CURSOR:
+		/* The pointer image: what is under the pointer is under it. */
+		return false;
 	default:
 		/* The output's own background, the drag icon: nothing takes the
 		 * point here; whatever is below may. */
@@ -612,16 +657,13 @@ hit_band(struct declare_band *band, Monitor *m, struct hit_walk *w)
 		w->ly - m->m.y, hit_accept, w);
 }
 
-/* While locked, only the lock band answers: its backdrop covers the
- * desktop, whose retained nodes must not take input through it. */
+/* While locked the walk still starts at the top of the same order, where
+ * the lock section is, and the backdrop takes the point (hit_accept,
+ * DECLARE_KIND_LOCK_BLOCK), so no desktop node below it is ever asked. */
 static bool
 hit_output(Monitor *m, struct hit_walk *w)
 {
-	if (!m->declare)
-		return false;
-	if (session_is_locked())
-		return hit_band(&m->declare->lock, m, w);
-	return hit_band(&m->declare->desktop, m, w);
+	return m->declare && hit_band(&m->declare->band, m, w);
 }
 
 void
@@ -1217,9 +1259,9 @@ declare_tile_slot(Monitor *m, int index, unsigned ordinal, bool root)
     e.clip.vertical = slot_word(L, index, "clip", "y");
     lua_getfield(L, index, "client");
     if (lua_isuserdata(L, -1)) {
-        Client *c = luaA_checkudata(L, -1, &client_class);
+        Client *c = luaA_toudata(L, -1, &client_class);
         lua_pop(L, 1);
-        if (declarable_client(c)) {
+        if (c && client_has_surface(c) && declarable_client(c)) {
             c->clay_tiled = true;
             declare_client(c, m, 0, &e);
         }
@@ -1230,9 +1272,6 @@ declare_tile_slot(Monitor *m, int index, unsigned ordinal, bool root)
     int gap = slot_number(L, index, "gap");
     int pad = slot_number(L, index, "padding");
     e.layout.childGap = gap;
-    lua_getfield(L, index, "ceil_grow");
-    e.layout.ceilGrow = lua_toboolean(L, -1);
-    lua_pop(L, 1);
     e.layout.padding = (Clay_Padding) { pad, pad, pad, pad };
     lua_getfield(L, index, "direction");
     const char *direction = lua_tostring(L, -1);
@@ -1371,9 +1410,9 @@ luaA_client_geometry_is_solved(lua_State *L)
     Client *c = luaA_checkudata(L, 1, &client_class);
     Monitor *m = c->mon;
     bool matches = false;
-    if (m && m->declare && m->declare->desktop.clay) {
+    if (m && m->declare && m->declare->band.clay) {
         Clay_Context *previous = Clay_GetCurrentContext();
-        Clay_SetCurrentContext(m->declare->desktop.clay);
+        Clay_SetCurrentContext(m->declare->band.clay);
         Clay_ElementId id = Clay__HashStringWithOffset(CLAY_STRING("client"),
             (uint32_t)declare_handle_for(c, DECLARE_KIND_CLIENT), 0);
         Clay_ElementData data = Clay_GetElementData(id);
@@ -1435,14 +1474,12 @@ declare_unmanaged_clients(Monitor *m)
  * One element per node, nested as lua/wibox/clay.lua compiled them. The
  * root is the drawable's box, or the host slot with the same area. Distinct
  * host insets keep a separate content element.
- * Clipping is the renderer's, not Clay's: a Clay clip element is a scroll
- * container, a context holds ten (clay.h:2194), and one clipping axis stops
- * Clay compressing the children along it (clay.h:2305-2311). Instead every
- * node's word names the scope it is clipped by and, for the root and a
- * rounded container, the scope it opens (widget.c numbers them, render.h
- * says how the renderer reads them), so a layout that overflows draws
- * nothing outside the drawin and a rounded background cuts its children to
- * its arc, as the container's own clip did.
+ * Clay's passive host clips and ordinary scrolling clips emit rectangular
+ * scissors. Rounded clipping uses each node's userData scope: the scope
+ * clipping it and the scope it opens (widget.c assigns scope numbers;
+ * render.h defines their encoding). The renderer intersects these scopes
+ * with native scissors, keeping overflow inside the host and rounded
+ * background children inside its arc.
  *
  * The tree records its actual declared root ID. Original widget occurrences
  * retain stable IDs across sibling changes and host combination; anonymous
@@ -1679,8 +1716,8 @@ declare_widget_subtree(const struct widget_host *host, size_t i, Clay_ElementId 
 	struct widget_tree *d = host->tree;
 	const struct widget_node *n = &d->nodes[i];
 	void *word = userdata_clip(userdata,
-		i == 0 && host->inset_clip ? 0 : n->clip_opens,
-		i == 0 && host->inset_clip ? n->clip_opens : n->clip_by);
+		i == 0 && host->inner_clip ? 0 : n->clip_opens,
+		i == 0 && host->inner_clip ? n->clip_opens : n->clip_by);
 	Clay_ElementDeclaration e;
 	size_t next = i + 1;
 	ids[i] = id.id;
@@ -1719,11 +1756,11 @@ declare_widget_subtree(const struct widget_host *host, size_t i, Clay_ElementId 
 		e.floating.attachTo = CLAY_ATTACH_TO_ELEMENT_WITH_ID;
 		e.floating.parentId = ids[n->attach - 1];
 	}
-	if (host->inset_clip && n->floating)
+	if (host->inner_clip && n->floating)
 		e.floating.clipTo = CLAY_CLIP_TO_ATTACHED_PARENT;
 	/* Definite hosts keep overflowing content at its own size. Passive
 	 * native clipping replaces the old FLOAT/FIT root's previous-size floor. */
-	if (i == 0 && !host->inset_clip && n->sizing[0] == WIDGET_SIZING_FIXED
+	if (i == 0 && !host->inner_clip && n->sizing[0] == WIDGET_SIZING_FIXED
 			&& n->sizing[1] == WIDGET_SIZING_FIXED)
 		e.clip = (Clay_ClipElementConfig) {.horizontal = true, .vertical = true, .passive = true};
 	if (i == 0 && host->flow && !root_decl) {
@@ -1846,19 +1883,17 @@ static size_t solved_len, solved_cap;
 static void
 widget_host_bind(const struct widget_host *host, Clay_ElementId id)
 {
-	struct widget_tree *d = host->tree;
-
-	if (d->root_id != id.id)
-		d->declared = false;
-	d->root_id = id.id;
-	if (!d->declared) {
-		d->declared = true;
-		if (solved_len == solved_cap) {
-			solved_cap = solved_cap ? solved_cap * 2 : 16;
-			p_realloc(&solved_hosts, solved_cap);
-		}
-		solved_hosts[solved_len++] = *host;
-	}
+    struct widget_tree *d = host->tree;
+    if (!d->declared || d->root_id != id.id) d->publish_pending = true;
+    d->root_id = id.id;
+    d->declared = true;
+    for (size_t i = 0; i < solved_len; i++)
+        if (solved_hosts[i].tree == d) return;
+    if (solved_len == solved_cap) {
+        solved_cap = solved_cap ? solved_cap * 2 : 16;
+        p_realloc(&solved_hosts, solved_cap);
+    }
+    solved_hosts[solved_len++] = *host;
 }
 
 static void
@@ -1906,8 +1941,16 @@ declare_widget_slot(const struct widget_host *host, Clay_ElementId id,
 	declare_widget_tree_at(host, id, z, userdata, &e);
 }
 
-/* A decorated host clips its padded content, while its border and shadow
- * keep their own areas. Rounded content retains its separate mask scope. */
+/* The inner clip element of a decorated host, by the host's handle. */
+static Clay_ElementId
+inner_clip_id(uint64_t handle)
+{
+	return Clay__HashStringWithOffset(CLAY_STRING("CLIP"), (uint32_t)handle, 0);
+}
+
+/* A decorated host clips its padded content through an inner passive
+ * element, while its border and shadow keep their own areas. Rounded
+ * content retains its separate mask scope. */
 static void
 declare_widget_frame(drawin_t *d, struct widget_host *host, Clay_ElementId id,
 	Clay_ElementDeclaration *slot, const char *role, enum declare_src src)
@@ -1920,17 +1963,29 @@ declare_widget_frame(drawin_t *d, struct widget_host *host, Clay_ElementId id,
 		declare_widget_slot(host, id, slot, role, src, z, word);
 		return;
 	}
-	if (host->radius <= 0 && n->radius == 0 && !n->shape) {
-		host->inset_clip = true;
-		slot->clip = (Clay_ClipElementConfig) {
-			.horizontal=true, .vertical=true, .passive=true, .toPadding=true,
-			.userData=userdata_clip(word, n->clip_opens, 0)};
-	}
+	host->inner_clip = host->radius <= 0 && n->radius == 0 && !n->shape;
 	Clay__OpenElementWithId(id);
 	Clay__ConfigureOpenElementPtr(slot);
 	record_open(role, handle, id, slot, src, host);
 	declare_shadow(&d->shadow, d->shadow_config, true, handle, slot);
+	if (host->inner_clip) {
+		/* Fills the slot's padded box and carries the root's clip scope,
+		 * so the border paints outside it with the slot's own metadata. */
+		Clay_ElementDeclaration inner = {
+			.layout = {
+				.sizing = { CLAY_SIZING_GROW(0), CLAY_SIZING_GROW(0) },
+				.layoutDirection = slot->layout.layoutDirection,
+				.childAlignment = slot->layout.childAlignment,
+			},
+			.clip = { .horizontal = true, .vertical = true, .passive = true },
+			.userData = userdata_clip(word, n->clip_opens, 0),
+		};
+		Clay__OpenElementWithId(inner_clip_id(handle));
+		Clay__ConfigureOpenElementPtr(&inner);
+	}
 	declare_widget_tree(host, z, word);
+	if (host->inner_clip)
+		Clay__CloseElement();
 	Clay__CloseElement();
 }
 
@@ -2769,7 +2824,7 @@ declare_output(Monitor *m)
 	/* The inspector's panel takes the right edge while it is up (Clay
 	 * narrows its own root by the same width, clay.h:4363): the desktop
 	 * reflows into what is left, as beside a right bar. */
-	if (m->declare->inspecting)
+	if (inspector_declares(m->declare))
 		o.layout.padding.right = (uint16_t)Clay__debugViewWidth;
 	Clay__OpenElementWithId(id);
 	Clay__ConfigureOpenElementPtr(&o);
@@ -2820,6 +2875,181 @@ declare_drag_icon(Monitor *m)
 		(uint32_t)handle, 0), &s);
 }
 
+/* --- the pointer image ---
+ *
+ * The seat's pointer image (input.h, cursor_image) is a leaf of the output
+ * under the pointer, at the pointer less its hotspot: a client's cursor
+ * surface as a borrowed surface leaf, or the themed xcursor at this
+ * output's scale as an image leaf built from the frame's pixels. It passes
+ * every hit through (hit_accept) and Clay's pointer query skips it like
+ * every root here (place_fixed). Nothing sets an image on the wlr_cursor,
+ * so wlroots' output cursors stay empty and the leaf is the only pointer
+ * painted. Where the last frame put it, for declare_cursor_changed(). */
+static int cursor_declared_x = INT_MIN, cursor_declared_y = INT_MIN;
+static uint64_t cursor_declared_gen;
+
+static void
+cursor_mark(void)
+{
+	Monitor *under = xytomon(cursor->x, cursor->y), *m;
+
+	wl_list_for_each(m, &mons, link)
+		if (m->declare && (m == under || m->declare->cursor_shown))
+			declare_output_mark_dirty(m->declare);
+}
+
+/* The xcursor frame this output shows for the themed name, or NULL when the
+ * theme has neither it nor "default". An animated cursor shows its first
+ * frame: a frame per animation step would keep an idle output declaring
+ * for as long as a busy cursor is up. */
+static const struct wlr_xcursor_image *
+cursor_xcursor_frame(Monitor *m)
+{
+	float scale = m->wlr_output->scale;
+	struct wlr_xcursor *xc;
+
+	wlr_xcursor_manager_load(cursor_mgr, scale);
+	xc = wlr_xcursor_manager_get_xcursor(cursor_mgr, cursor_image.name, scale);
+	if (!xc)
+		xc = wlr_xcursor_manager_get_xcursor(cursor_mgr, "default", scale);
+	return xc && xc->image_count ? xc->images[0] : NULL;
+}
+
+/* A copy of an xcursor frame's pixels: ARGB32 premultiplied in both. */
+static cairo_surface_t *
+cursor_frame_surface(const struct wlr_xcursor_image *frame)
+{
+	cairo_surface_t *s = cairo_image_surface_create(CAIRO_FORMAT_ARGB32,
+		frame->width, frame->height);
+	int stride = cairo_image_surface_get_stride(s);
+	unsigned char *dst = cairo_image_surface_get_data(s);
+
+	if (cairo_surface_status(s) != CAIRO_STATUS_SUCCESS || !dst) {
+		cairo_surface_destroy(s);
+		return NULL;
+	}
+	cairo_surface_flush(s);
+	for (uint32_t y = 0; y < frame->height; y++)
+		memcpy(dst + y * stride, frame->buffer + (size_t)y * frame->width * 4,
+			(size_t)frame->width * 4);
+	cairo_surface_mark_dirty(s);
+	return s;
+}
+
+static void
+declare_cursor(Monitor *m)
+{
+	struct declare_output *dout = m->declare;
+	int x = (int)round(cursor->x), y = (int)round(cursor->y);
+	uint64_t handle;
+	Clay_ElementDeclaration s;
+
+	dout->cursor_shown = false;
+	if (xytomon(cursor->x, cursor->y) != m)
+		return;
+	cursor_declared_x = x;
+	cursor_declared_y = y;
+	cursor_declared_gen = cursor_image.gen;
+	x -= m->m.x;
+	y -= m->m.y;
+	if (cursor_image.surface) {
+		struct wlr_surface *surface = cursor_image.surface;
+		int w = surface->current.width, h = surface->current.height;
+
+		if (!cursor_image.tree || w < 1 || h < 1)
+			return;
+		handle = declare_handle_for(surface, DECLARE_KIND_CURSOR);
+		s = leaf_at(Z_CURSOR, x - cursor_image.hotspot_x,
+			y - cursor_image.hotspot_y, w, h);
+		s.custom.customData = (void *)(uintptr_t)handle;
+		s.userData = leaf_userdata(handle, 1.0f);
+		declare_leaf("cursor", handle, DECLARE_SRC_PROTOCOL,
+			Clay__HashStringWithOffset(CLAY_STRING("cursor"),
+			(uint32_t)handle, 0), &s);
+	} else if (cursor_image.name) {
+		const struct wlr_xcursor_image *frame = cursor_xcursor_frame(m);
+		float scale = m->wlr_output->scale;
+
+		if (!frame)
+			return;
+		if (dout->cursor_frame != frame || dout->cursor_gen != cursor_image.gen) {
+			image_entry_set(&dout->cursor, cursor_frame_surface(frame));
+			dout->cursor_frame = frame;
+			dout->cursor_gen = cursor_image.gen;
+		}
+		if (!dout->cursor.native)
+			return;
+		handle = declare_handle_for(cursor, DECLARE_KIND_CURSOR);
+		s = leaf_at(Z_CURSOR, x - (int)round(frame->hotspot_x / scale),
+			y - (int)round(frame->hotspot_y / scale),
+			(int)round(frame->width / scale),
+			(int)round(frame->height / scale));
+		s.image.imageData = &dout->cursor;
+		s.userData = leaf_userdata(handle, 1.0f);
+		declare_leaf("cursor", handle, DECLARE_SRC_THEME,
+			Clay__HashStringWithOffset(CLAY_STRING("cursor"),
+			(uint32_t)handle, 0), &s);
+	} else
+		return;
+	dout->cursor_shown = true;
+}
+
+void
+declare_cursor_changed(void)
+{
+	if ((int)round(cursor->x) == cursor_declared_x
+			&& (int)round(cursor->y) == cursor_declared_y
+			&& cursor_image.gen == cursor_declared_gen)
+		return;
+	cursor_mark();
+}
+
+/* The lock section: the top of the output's own tree while the session is
+ * locked, in some_activate_lua_lock()'s order, the covers then the lock
+ * surface drawin on top.
+ *
+ * The backdrop is declared by the compositor, not the config, at a fixed
+ * output size and fully opaque, so an output with no cover drawin (one
+ * plugged in while locked, before the config's screen handler runs) still
+ * shows nothing of the desktop. It carries a DECLARE_KIND_LOCK_BLOCK handle,
+ * which is what ends the input walk at it (hit_accept). */
+static void
+declare_lock_section(Monitor *m)
+{
+	drawin_t *lock_surface = some_get_lua_lock_surface();
+	int cover_count;
+	drawin_t **covers = some_get_lua_lock_covers(&cover_count);
+	uint64_t block = declare_handle_for(m->declare, DECLARE_KIND_LOCK_BLOCK);
+	Clay_ElementDeclaration backdrop = leaf_at(Z_LOCK_BACKDROP, 0, 0,
+		m->m.width, m->m.height);
+
+	backdrop.backgroundColor = (Clay_Color) { 0.1f * 255, 0.1f * 255,
+		0.1f * 255, 255 };
+	backdrop.userData = leaf_userdata(block, 1.0f);
+	declare_leaf("LOCK", block, DECLARE_SRC_OUTPUT,
+		Clay__HashStringWithOffset(CLAY_STRING("LOCK"), 0, 0), &backdrop);
+
+	for (int i = 0; i < cover_count; i++)
+		if (covers[i] && declarable_drawin(covers[i], m))
+			declare_drawin(covers[i], m, Z_LOCK_COVER);
+	if (lock_surface && declarable_drawin(lock_surface, m))
+		declare_drawin(lock_surface, m, Z_LOCK_SURFACE);
+	/* An ext-session-lock client's surface for this output: a borrowed
+	 * surface leaf filling the output, which the protocol configured to
+	 * that size. */
+	if (m->lock_surface) {
+		uint64_t handle = declare_handle_for(m->lock_surface, DECLARE_KIND_LOCK);
+		Clay_ElementDeclaration s = leaf_at(Z_LOCK_SURFACE, 0, 0,
+			m->m.width, m->m.height);
+
+		s.custom.customData = (void *)(uintptr_t)handle;
+		s.userData = leaf_userdata(handle, 1.0f);
+		declare_leaf("lock.surface", handle, DECLARE_SRC_OUTPUT,
+			Clay__HashStringWithOffset(CLAY_STRING("lock.surface"),
+			(uint32_t)handle, 0), &s);
+	}
+}
+
 static void
 declare_scene(Monitor *m)
 {
@@ -2833,6 +3063,9 @@ declare_scene(Monitor *m)
 	declare_fullscreen_bg(m);
 	declare_unmanaged_clients(m);
 	declare_drag_icon(m);
+	if (session_is_locked())
+		declare_lock_section(m);
+	declare_cursor(m);
 }
 
 /* The boxes of one subtree, in the preorder the tree table uses, rounded
@@ -2898,39 +3131,34 @@ widget_hits_walk(struct widget_tree *d, size_t i, Clay_ElementId id,
 	return next;
 }
 
-/* The band whose last solve placed host's tree: the lock band for a lock
- * drawin while the session is locked, else the desktop. NULL before the band
- * exists. */
-static struct declare_band *
-host_band(const struct widget_host *host)
-{
-	struct declare_output *dout = host->m->declare;
-	struct declare_band *band = session_is_locked()
-		&& some_is_lock_drawin(declare_handle_get(
-			handle_pack(DECLARE_KIND_DRAWIN, host->id), NULL))
-		? &dout->lock : &dout->desktop;
-
-	return band->clay ? band : NULL;
-}
-
 Clay_Context *
 declare_output_context(struct declare_output *dout)
 {
-    return dout ? dout->desktop.clay : NULL;
+    return dout ? dout->band.clay : NULL;
 }
 
 Clay_Context *
 declare_widget_context(const struct widget_host *host)
 {
-	struct declare_band *band = host->m && host->m->declare ? host_band(host) : NULL;
+	struct declare_output *dout = host->m ? host->m->declare : NULL;
 
-	return band ? band->clay : NULL;
+	return dout ? dout->band.clay : NULL;
+}
+
+static const struct widget_tree *published_tree(const struct widget_host *host)
+{
+    if (!host->m || !host->m->declare) return NULL;
+    struct declare_band *band = &host->m->declare->band;
+    for (size_t i = 0; i < band->hosts_len; i++)
+        if (band->hosts[i].host.id == host->id && band->hosts[i].host.drawable == host->drawable)
+            return band->hosts[i].view;
+    return NULL;
 }
 
 int
 declare_widget_hits(const struct widget_host *host, double x, double y, int *out, int cap)
 {
-	struct widget_tree *d = host->tree;
+	struct widget_tree *d = (struct widget_tree *)published_tree(host);
 	Monitor *m = host->m;
 	struct declare_output *dout = m ? m->declare : NULL;
 	struct declare_band *band;
@@ -2939,7 +3167,7 @@ declare_widget_hits(const struct widget_host *host, double x, double y, int *out
 	Clay_ElementIdArray ids;
 	int n = 0;
 
-	if (!dout || !d->declared || !(band = host_band(host)))
+	if (!dout || !d || !d->declared || !(band = dout->band.clay ? &dout->band : NULL))
 		return 0;
 	/* The query runs against the boxes of the output's last solve, in
 	 * output coordinates, and answers every element under the point
@@ -2985,6 +3213,10 @@ widget_boxes_read(const struct widget_host *host, int (*boxes)[4], uint32_t *ids
 int
 declare_widget_boxes(const struct widget_host *host, int (*boxes)[4])
 {
+    struct widget_host committed = *host;
+    committed.tree = (struct widget_tree *)published_tree(host);
+    if (!committed.tree) return 0;
+    host = &committed;
 	struct declare_band *band;
 	Clay_Context *previous;
 	int n;
@@ -2993,7 +3225,8 @@ declare_widget_boxes(const struct widget_host *host, int (*boxes)[4])
 	 * the declare pass has not reached yet would read back the boxes of
 	 * the one it replaced. Report nothing until it has. */
 	if (!host->m || !host->m->declare || !host->tree->declared
-			|| !(band = host_band(host)))
+			|| !(band = host->m->declare->band.clay
+				? &host->m->declare->band : NULL))
 		return 0;
 	previous = Clay_GetCurrentContext();
 	Clay_SetCurrentContext(band->clay);
@@ -3002,10 +3235,10 @@ declare_widget_boxes(const struct widget_host *host, int (*boxes)[4])
 	return n;
 }
 
-/* Publish changed trees' boxes and ids as clay::solved. Grid handlers
- * can request another dependency stage before this frame reconciles. */
+/* Private settlement can request another dependency stage. Only the final
+ * pass publishes changed trees' boxes and IDs through the public signal. */
 static void
-solved_emit(void)
+solved_emit(bool publish)
 {
 	static int boxes[WIDGET_NODES_MAX][4];
 	static uint32_t ids[WIDGET_NODES_MAX];
@@ -3013,10 +3246,11 @@ solved_emit(void)
 	lua_State *L = globalconf_L;
 	size_t len = solved_len;
 
-	solved_len = 0;
 	if (!L)
 		return;
 	for (size_t i = 0; i < len; i++) {
+        if (publish && !solved_hosts[i].tree->publish_pending) continue;
+        if (publish) solved_hosts[i].tree->publish_pending = false;
 		int n = widget_boxes_read(&solved_hosts[i], boxes, ids);
 		int top = lua_gettop(L);
 
@@ -3032,7 +3266,13 @@ solved_emit(void)
 			}
 			lua_rawseti(L, -2, k + 1);
 		}
-		luaA_object_emit_signal(L, -2, "clay::solved", 1);
+        if (!publish) {
+            Clay_ElementData root = Clay_GetElementData((Clay_ElementId){.id = solved_hosts[i].tree->root_id});
+            lua_createtable(L, 0, 2);
+            lua_pushinteger(L, lroundf(root.boundingBox.width)); lua_setfield(L, -2, "width");
+            lua_pushinteger(L, lroundf(root.boundingBox.height)); lua_setfield(L, -2, "height");
+        }
+        luaA_object_emit_signal(L, publish ? -2 : -3, publish ? "clay::solved" : "clay::_settle", publish ? 1 : 2);
 		lua_settop(L, top);
 	}
 }
@@ -3044,10 +3284,10 @@ declare_output_order(struct declare_output *dout, void **objects,
 {
 	int n = 0;
 
-	if (!dout->desktop.clay)
+	if (!dout->band.clay)
 		return 0;
 	Clay_Context *previous = Clay_GetCurrentContext();
-	Clay_SetCurrentContext(dout->desktop.clay);
+	Clay_SetCurrentContext(dout->band.clay);
 	Clay_RenderCommandArray commands = clay_render_commands();
 
 	for (int32_t i = 0; i < commands.length && n < cap; i++) {
@@ -3084,14 +3324,61 @@ now_us(void)
 	return (int64_t)ts.tv_sec * 1000000 + ts.tv_nsec / 1000;
 }
 
+static int context_capacity = CLAY_ELEMENTS_MAX;
+static int allocation_failures;
+
+size_t declare_widget_budget(struct declare_output *dout)
+{
+    int capacity = CLAY_ELEMENTS_MAX;
+    if (dout && dout->band.clay) {
+        Clay_Context *previous = Clay_GetCurrentContext();
+        Clay_SetCurrentContext(dout->band.clay);
+        capacity = Clay__Capacity().capacity;
+        Clay_SetCurrentContext(previous);
+    }
+    return capacity > 8192 ? (size_t)(capacity / 2 - 4096) : 256;
+}
+
+void declare_output_resource_failure(struct declare_output *dout)
+{
+    if (dout) dout->band.exhausted = true;
+}
+
+void declare_test_capacity(int capacity, int failures)
+{
+    context_capacity = capacity;
+    allocation_failures = failures;
+}
+
+void declare_test_failure(struct declare_output *dout, int pass, int elements)
+{
+    dout->band.fail_pass = pass;
+    dout->band.fail_elements = elements;
+    declare_output_mark_dirty(dout);
+}
+
 static void
 handle_clay_error(Clay_ErrorData error)
 {
-	/* A Clay error (arena exhaustion, duplicate id, command array
-	 * overflow) is a bug, not a condition to ride out. */
-	fprintf(stderr, "clay error %d: %.*s\n", error.errorType,
-		error.errorText.length, error.errorText.chars);
-	abort();
+    struct declare_band *band = error.userData;
+    switch (error.errorType) {
+    case CLAY_ERROR_TYPE_ARENA_CAPACITY_EXCEEDED:
+    case CLAY_ERROR_TYPE_ELEMENTS_CAPACITY_EXCEEDED:
+    case CLAY_ERROR_TYPE_TEXT_MEASUREMENT_CAPACITY_EXCEEDED:
+    case CLAY_ERROR_TYPE_HASH_MAP_CAPACITY_EXCEEDED:
+    case CLAY_ERROR_TYPE_ARRAY_CAPACITY_EXCEEDED:
+        band->exhausted = true;
+        fprintf(stderr, "clay resource %d: %.*s\n", error.errorType,
+            error.errorText.length, error.errorText.chars);
+        /* The trap surrounds native declaration/solve only. Lua compilation
+         * and private settlement return before it is armed. */
+        if (band->armed) longjmp(band->failure, 1);
+        return;
+    default:
+        fprintf(stderr, "clay invariant %d: %.*s\n", error.errorType,
+            error.errorText.length, error.errorText.chars);
+        abort();
+    }
 }
 
 /* One band: an arena-backed Clay context and a render_state reconciling
@@ -3100,15 +3387,32 @@ static void
 declare_band_init(struct declare_band *band, struct wlr_output *wlr_output,
 	struct wlr_scene_tree *parent)
 {
-	uint32_t arena_size = Clay_MinMemorySize();
+    band->layout_ref = LUA_NOREF;
+    Clay_SetCurrentContext(NULL);
+    Clay_SetMaxElementCount(context_capacity);
+    uint32_t arena_size = Clay_MinMemorySize();
 	int width, height;
 
 	wlr_output_effective_resolution(wlr_output, &width, &height);
-	band->arena = malloc(arena_size);
+    /* Sparse fixed arenas should fault ordinary pages, rather than a huge page
+     * for every small used array prefix. Align the allocation so the advice
+     * cannot affect unrelated allocator storage. */
+    size_t page = (size_t)sysconf(_SC_PAGESIZE);
+    size_t allocation_size = (arena_size + page - 1) / page * page;
+    if (allocation_failures > 0) {
+        allocation_failures--;
+    } else if (posix_memalign(&band->arena, page, allocation_size) == 0) {
+        madvise(band->arena, allocation_size, MADV_NOHUGEPAGE);
+    }
 	band->clay = Clay_Initialize(
 		Clay_CreateArenaWithCapacityAndMemory(arena_size, band->arena),
 		(Clay_Dimensions) { .width = width, .height = height },
-		(Clay_ErrorHandler) { .errorHandlerFunction = handle_clay_error });
+		(Clay_ErrorHandler) { .errorHandlerFunction = handle_clay_error, .userData = band });
+    if (!band->clay) {
+        free(band->arena);
+        band->arena = NULL;
+        return;
+    }
 	/* Clay_Initialize left this the current context. Clay drops any
 	 * element whose box lies entirely outside layoutDimensions
 	 * (clay.h:2465), which saves draw calls in immediate mode and loses
@@ -3133,6 +3437,12 @@ declare_band_wipe(struct declare_band *band)
 	 * Clay_MinMemorySize or Clay_Initialize would read freed memory. */
 	if (Clay_GetCurrentContext() == band->clay)
 		Clay_SetCurrentContext(NULL);
+    for (size_t i = 0; i < band->hosts_len; i++) widget_tree_release(band->hosts[i].view);
+    free(band->hosts);
+    for (size_t i = 0; i < band->retired_len; i++) widget_tree_release(band->retired[i]);
+    free(band->retired);
+    if (band->layout_ref != LUA_NOREF) luaL_unref(globalconf_L, LUA_REGISTRYINDEX, band->layout_ref);
+    free(band->backup);
 	render_destroy(band->render, &client_hooks);
 	wlr_scene_node_destroy(&band->tree->node);
 	free(band->arena);
@@ -3167,80 +3477,12 @@ declare_output_create(struct wlr_output *wlr_output)
 	dout->wlr_output = wlr_output;
 	dout->deadline = wl_event_loop_add_timer(
 		wl_display_get_event_loop(some_get_display()), deadline_fire, dout);
-	/* Every desktop band lives in LyrDesktop, below LyrBlock. */
-	declare_band_init(&dout->desktop, wlr_output, layers[LyrDesktop]);
+	/* Every band lives in LyrDesktop; LyrBlock above it is the parent an
+	 * ext-session-lock client's surfaces are created under, before the
+	 * declare pass borrows them into this tree. */
+	declare_band_init(&dout->band, wlr_output, layers[LyrDesktop]);
 	dout->dirty = true;
 	return dout;
-}
-
-/* The lock scene, in some_activate_lua_lock()'s own order: the covers, then
- * the lock surface drawin on top. */
-static void
-declare_lock_scene(Monitor *m)
-{
-	drawin_t *lock_surface = some_get_lua_lock_surface();
-	int cover_count;
-	drawin_t **covers = some_get_lua_lock_covers(&cover_count);
-	/* The backdrop: the band's flow root, opaque over the whole output,
-	 * so desktop content is never visible while locked, even on an output
-	 * with no cover drawin (a hotplugged monitor). */
-	Clay_ElementId id = Clay__HashStringWithOffset(CLAY_STRING("LOCK"), 0, 0);
-	Clay_ElementDeclaration backdrop = {
-		.layout = {
-			.sizing = { CLAY_SIZING_FIXED(m->m.width),
-				CLAY_SIZING_FIXED(m->m.height) },
-			.layoutDirection = CLAY_TOP_TO_BOTTOM,
-		},
-		.backgroundColor = { 0.1f * 255, 0.1f * 255, 0.1f * 255, 255 },
-	};
-
-	Clay__OpenElementWithId(id);
-	Clay__ConfigureOpenElementPtr(&backdrop);
-	record_open("LOCK", 0, id, &backdrop, DECLARE_SRC_OUTPUT, NULL);
-	Clay__CloseElement();
-
-	for (int i = 0; i < cover_count; i++)
-		if (covers[i] && declarable_drawin(covers[i], m))
-			declare_drawin(covers[i], m, Z_LOCK_COVER);
-	if (lock_surface && declarable_drawin(lock_surface, m))
-		declare_drawin(lock_surface, m, Z_LOCK_SURFACE);
-	/* An ext-session-lock client's surface for this output: a borrowed
-	 * surface leaf filling the output, which the protocol configured to
-	 * that size. */
-	if (m->lock_surface) {
-		uint64_t handle = declare_handle_for(m->lock_surface, DECLARE_KIND_LOCK);
-		Clay_ElementDeclaration s = leaf_at(Z_LOCK_SURFACE, 0, 0,
-			m->m.width, m->m.height);
-
-		s.custom.customData = (void *)(uintptr_t)handle;
-		s.userData = leaf_userdata(handle, 1.0f);
-		declare_leaf("lock.surface", handle, DECLARE_SRC_OUTPUT,
-			Clay__HashStringWithOffset(CLAY_STRING("lock.surface"),
-			(uint32_t)handle, 0), &s);
-	}
-}
-
-void
-declare_lock_set_visible(bool on)
-{
-	Monitor *m;
-
-	wl_list_for_each(m, &mons, link) {
-		if (!m->declare)
-			continue;
-		/* Create the lock band on engage: wlroots appends new children
-		 * topmost, so it lands above locked_bg and below any external
-		 * session-lock tree created after it. */
-		if (on && !m->declare->lock.clay) {
-			declare_band_init(&m->declare->lock,
-				m->declare->wlr_output, layers[LyrBlock]);
-			declare_band_update(&m->declare->lock,
-				m->declare->wlr_output, m->m.x, m->m.y);
-		}
-		if (m->declare->lock.render)
-			render_set_enabled(m->declare->lock.render, on);
-		declare_output_mark_dirty(m->declare);
-	}
 }
 
 void
@@ -3253,18 +3495,55 @@ declare_output_destroy(struct declare_output *dout)
 		dout->inspecting = false;
 		inspector_resync();
 	}
-	declare_band_wipe(&dout->desktop);
-	declare_band_wipe(&dout->lock);
+	declare_band_wipe(&dout->band);
+	declare_handle_drop(dout);
 	image_entry_set(&dout->wallpaper, NULL);
+	image_entry_set(&dout->cursor, NULL);
 	free(dout);
 }
 
 void
 declare_output_update(struct declare_output *dout, int lx, int ly)
 {
-	declare_band_update(&dout->desktop, dout->wlr_output, lx, ly);
-	declare_band_update(&dout->lock, dout->wlr_output, lx, ly);
+	declare_band_update(&dout->band, dout->wlr_output, lx, ly);
 	declare_output_mark_dirty(dout);
+}
+
+/* Release references owned by the departing Lua VM before its registry dies.
+ * Reinitialize the existing arena so no transition or input map retains a
+ * pointer into that VM's native widget payloads. */
+void
+declare_state_clear(void)
+{
+    Monitor *m;
+    luaL_unref(globalconf_L, LUA_REGISTRYINDEX, tile_ref);
+    tile_ref = LUA_NOREF;
+    solved_len = 0;
+    wl_list_for_each(m, &mons, link) {
+        if (!m->declare) continue;
+        struct declare_band *band = &m->declare->band;
+        if (!band->clay) continue;
+        for (size_t i = 0; i < band->hosts_len; i++) widget_tree_release(band->hosts[i].view);
+        free(band->hosts);
+        band->hosts = NULL;
+        band->hosts_len = 0;
+        for (size_t i = 0; i < band->retired_len; i++) widget_tree_release(band->retired[i]);
+        free(band->retired);
+        band->retired = NULL;
+        band->retired_len = 0;
+        band->records_len = 0;
+        luaL_unref(globalconf_L, LUA_REGISTRYINDEX, band->layout_ref);
+        band->layout_ref = LUA_NOREF;
+        Clay_SetCurrentContext(band->clay);
+        int width, height;
+        wlr_output_effective_resolution(m->declare->wlr_output, &width, &height);
+        Clay_Dimensions dimensions = {width, height};
+        band->clay = Clay_Initialize(Clay_CreateArenaWithCapacityAndMemory(
+            Clay_MinMemorySize(), band->arena), dimensions,
+            (Clay_ErrorHandler) { .errorHandlerFunction = handle_clay_error, .userData = band });
+        Clay_SetCullingEnabled(false);
+        Clay_SetMeasureTextFunction(render_measure_text, NULL);
+    }
 }
 
 void
@@ -3274,19 +3553,11 @@ declare_hot_reload(void)
 
 	wl_list_for_each(m, &mons, link) {
 		struct declare_output *dout = m->declare;
-		if (!dout)
+		if (!dout || !dout->band.render)
 			continue;
-		struct declare_band *bands[] = { &dout->desktop, &dout->lock };
-		for (size_t i = 0; i < LENGTH(bands); i++) {
-			struct declare_band *band = bands[i];
-			if (!band->render)
-				continue;
-			render_destroy(band->render, &client_hooks);
-			band->render = render_create(band->tree);
-			declare_band_update(band, dout->wlr_output, m->m.x, m->m.y);
-			if (band == &dout->lock)
-				render_set_enabled(band->render, some_is_lua_locked());
-		}
+		render_destroy(dout->band.render, &client_hooks);
+		dout->band.render = render_create(dout->band.tree);
+		declare_band_update(&dout->band, dout->wlr_output, m->m.x, m->m.y);
 		declare_output_mark_dirty(dout);
 	}
 }
@@ -3297,8 +3568,11 @@ declare_output_mark_dirty(struct declare_output *dout)
 	dout->dirty = true;
 	wlr_output_schedule_frame(dout->wlr_output);
 	if (!dout->deadline_armed) {
+		bool is_virtual = wlr_output_is_headless(dout->wlr_output)
+				|| wlr_output_is_wl(dout->wlr_output);
 		dout->deadline_armed = true;
-		wl_event_source_timer_update(dout->deadline, DECLARE_DEADLINE_MS);
+		wl_event_source_timer_update(dout->deadline,
+				is_virtual ? 16 : DECLARE_DEADLINE_MS);
 	}
 }
 
@@ -3321,7 +3595,7 @@ deadline_fire(void *data)
 
 	dout->deadline_armed = false;
 	if (m && dout->wlr_output->enabled
-			&& declare_output_frame(dout, m, some_is_lua_locked()) > 0)
+			&& declare_output_frame(dout, m) > 0)
 		motionnotify(0, NULL, 0, 0, 0, 0);
 	return 0;
 }
@@ -3336,51 +3610,128 @@ declare_mark_all_dirty(void)
 			declare_output_mark_dirty(m->declare);
 }
 
+struct native_pass {
+    struct declare_band *band;
+    Monitor *m;
+    float elapse;
+    Clay_RenderCommandArray *commands;
+    int64_t *declared;
+};
+
+static void native_run(struct native_pass *pass)
+{
+    struct declare_band *band = pass->band;
+		declare_begin_layout();
+		record_begin(band);
+        declare_scene(pass->m);
+        if (band->fail_pass == band->passes) {
+            for (int i = 0; i < band->fail_elements; i++) {
+                Clay__OpenElementWithId(Clay__HashStringWithOffset(CLAY_STRING("capacity.probe"), i, 0));
+                Clay__ConfigureOpenElementPtr(&(Clay_ElementDeclaration){
+                    .layout.sizing = {CLAY_SIZING_FIXED(1), CLAY_SIZING_FIXED(1)},
+                });
+                Clay__CloseElement();
+            }
+        }
+        record_end();
+		*pass->declared = now_us();
+		/* Time advances once per frame: a second declaration pass of the
+		 * same frame re-solves the transitions where they are. */
+        *pass->commands = Clay_EndLayout(pass->elapse);
+}
+
+static bool native_try(struct native_pass *pass)
+{
+    if (setjmp(pass->band->failure)) {
+        pass->band->armed = false;
+        return false;
+    }
+    pass->band->armed = true;
+    native_run(pass);
+    pass->band->armed = false;
+    return true;
+}
+
+static bool shares_payload(struct widget_tree *tree, struct declared_host *hosts, size_t length)
+{
+    for (size_t i = 0; i < length; i++)
+        if (tree->storage == hosts[i].view->storage) return true;
+    return false;
+}
+
 int
-declare_output_frame(struct declare_output *dout, Monitor *m, bool lock_active)
+declare_output_frame(struct declare_output *dout, Monitor *m)
 {
 	static bool in_pass;
-	struct declare_band *band;
+	struct declare_band *band = &dout->band;
 	Clay_RenderCommandArray commands;
 	Clay_Vector2 insp_point = { -1, -1 };
 	bool inspecting, insp_edge = false, insp_closed = false;
+    unsigned panel_width = 0;
 	int64_t start, declared, solved;
-	float dt = 0, elapse = 0;
+    float dt = 0, elapse = 0;
+    int lua_top = lua_gettop(globalconf_L);
+    struct declare_record *old_records = band->records;
+    size_t old_len = band->records_len, old_cap = band->records_cap;
+    struct declared_host *next_hosts = NULL;
+    size_t next_len = 0;
+    struct widget_tree **retired = NULL;
+    size_t retired_len = 0, retired_bytes = 0;
+    Clay__CapacityData failed_counts = {0};
 
 	/* A clay::solved handler that runs a frame of its own (awesome
 	 * ._test_redeclare) finds this one mid-pass. */
 	if (!dout->dirty || in_pass)
 		return -1;
-	in_pass = true;
+    in_pass = true;
+    if (!band->clay) {
+        declare_band_init(band, dout->wlr_output, layers[LyrDesktop]);
+        if (!band->clay) { dout->dirty = false; in_pass = false; return -1; }
+        declare_band_update(band, dout->wlr_output, m->m.x, m->m.y);
+    }
+    band->exhausted = false;
+    Clay_SetCurrentContext(band->clay);
+    size_t backup_size = Clay__StateSize();
+    if (backup_size > band->backup_cap) {
+        void *backup = realloc(band->backup, backup_size);
+        if (!backup) {
+            fprintf(stderr, "clay output %s: cannot allocate %zu bytes of recovery state; retained scene\n",
+                dout->wlr_output->name, backup_size);
+            dout->dirty = false; in_pass = false; return -1;
+        }
+        band->backup = backup;
+        band->backup_cap = backup_size;
+    }
+    Clay__StateSave(band->backup, band->backup_cap);
+    band->records = NULL;
+    band->records_len = band->records_cap = 0;
 
-	/* While lua-locked, this output solves its lock scene instead; the
-	 * desktop band keeps its last scene, occluded by locked_bg. The lock
-	 * band normally exists already (declare_lock_set_visible creates it
-	 * on engage); this covers outputs created mid-lock. */
-	if (lock_active && !dout->lock.clay) {
-		declare_band_init(&dout->lock, dout->wlr_output, layers[LyrBlock]);
-		declare_band_update(&dout->lock, dout->wlr_output, m->m.x, m->m.y);
-	}
-	band = lock_active ? &dout->lock : &dout->desktop;
 	band->declare_us = band->solve_us = 0;
 	band->frames++;
 	band->passes = 0;
-	/* The panel is the desktop context's; the lock band never shows it. */
-	inspecting = dout->inspecting && !lock_active;
+	inspecting = inspector_declares(dout);
 
-	/* Compile pending inputs, declare, solve and publish their geometry,
-	 * then reconcile once. A mark made anywhere in the frame is for the
+	/* Compile pending inputs and privately settle dependencies before publishing
+     * geometry and reconciling once. A mark made anywhere in the frame is for the
 	 * next frame. Only the grid helper's pending dependency stages repeat;
 	 * pointer state, scroll input and transition time advance once. */
 	dout->dirty = false;
 	do {
 		band->passes++;
-		scrollbar_records_len = 0;
-		luaA_emit_signal_global("clay::declare");
+        scrollbar_records_len = 0;
+        solved_len = 0;
+        luaA_emit_signal_global("clay::declare");
+        if (band->exhausted) goto failed;
 		dout->grid_pending = false;
 		start = now_us();
-		in_frame = true;
-		Clay_SetCurrentContext(band->clay);
+        in_frame = true;
+        Clay_SetCurrentContext(band->clay);
+		/* Clay draws the panel from this flag inside Clay_EndLayout, and
+		 * reserves its width in Clay_BeginLayout (clay.h:4716), so it is
+		 * written before the layout opens and from the same answer
+		 * OUTPUT's padding used. */
+		if (Clay_IsDebugModeEnabled() != inspecting)
+			Clay_SetDebugModeEnabled(inspecting);
 		render_text_set_measure_scale(dout->wlr_output->scale);
 		if (inspecting && band->passes == 1)
 			insp_edge = inspector_feed(dout, m, &insp_point);
@@ -3403,17 +3754,9 @@ declare_output_frame(struct declare_output *dout, Monitor *m, bool lock_active)
 				(Clay_Vector2) { dout->scroll_x, dout->scroll_y }, dt);
 			dout->scroll_x = dout->scroll_y = 0;
 		}
-		declare_begin_layout();
-		record_begin(band);
-		if (lock_active)
-			declare_lock_scene(m);
-		else
-			declare_scene(m);
-		record_end();
-		declared = now_us();
-		/* Time advances once per frame: a second declaration pass of the
-		 * same frame re-solves the transitions where they are. */
-		commands = Clay_EndLayout(band->passes == 1 ? elapse : 0);
+        struct native_pass pass = {band, m, band->passes == 1 ? elapse : 0, &commands, &declared};
+        if (!native_try(&pass)) goto failed;
+        if (band->exhausted) goto failed;
 		/* Collapsing a track changes the content's box too. Compare both
 		 * dimensions even when the record has no overflow. A changed record
 		 * supplies the next frame's thumb declaration. */
@@ -3431,6 +3774,7 @@ declare_output_frame(struct declare_output *dout, Monitor *m, bool lock_active)
 		}
 		solved = now_us();
 		in_frame = false;
+		panel_width = inspecting ? Clay__debugViewWidth : 0;
 		if (inspecting) {
 			/* Retire the edge now that the pass that wanted it is over
 			 * (inspector_feed says why). This is also the call that
@@ -3452,15 +3796,65 @@ declare_output_frame(struct declare_output *dout, Monitor *m, bool lock_active)
 		}
 		band->declare_us += declared - start;
 		band->solve_us += solved - declared;
-		if (!lock_active) {
-			bars_settle(m);
-            popups_settle(m);
-			workarea_settle(m);
-			clients_settle(m);
-			tile_publish(m);
-		}
-		solved_emit();
+        solved_emit(false);
 	} while (dout->grid_pending);
+
+    next_len = solved_len;
+    next_hosts = calloc(next_len ? next_len : 1, sizeof(*next_hosts));
+    if (!next_hosts) goto failed;
+    for (size_t i = 0; i < next_len; i++) {
+        next_hosts[i].host = solved_hosts[i];
+        next_hosts[i].view = widget_tree_hold(solved_hosts[i].tree);
+        if (!next_hosts[i].view) goto failed;
+    }
+    retired = calloc(band->retired_len + band->hosts_len + 1, sizeof(*retired));
+    if (!retired) goto failed;
+    for (size_t i = 0; i < band->retired_len + band->hosts_len; i++) {
+        struct widget_tree *tree = i < band->retired_len ? band->retired[i] : band->hosts[i - band->retired_len].view;
+        if (!shares_payload(tree, next_hosts, next_len) && widget_tree_referenced(tree)) {
+            retired_bytes += widget_tree_bytes(tree);
+            if (retired_bytes > 8 * 1024 * 1024) {
+                fprintf(stderr, "clay output %s: retained widget payloads exceed 8 MiB\n", dout->wlr_output->name);
+                goto failed;
+            }
+            retired[retired_len++] = tree;
+        }
+    }
+    for (size_t i = 0; i < band->retired_len + band->hosts_len; i++) {
+        struct widget_tree *tree = i < band->retired_len ? band->retired[i] : band->hosts[i - band->retired_len].view;
+        bool keep = false;
+        for (size_t j = 0; j < retired_len; j++) if (retired[j] == tree) keep = true;
+        if (!keep) widget_tree_release(tree);
+    }
+    free(band->retired);
+    band->retired = retired;
+    band->retired_len = retired_len;
+    free(band->hosts);
+    band->hosts = next_hosts;
+    band->hosts_len = next_len;
+    for (size_t i = 0; i < band->records_len; i++) {
+        struct declare_record *record = &band->records[i];
+        if (!record->has_host) continue;
+        for (size_t j = 0; j < next_len; j++)
+            if (record->host.tree == next_hosts[j].host.tree)
+                record->host.tree = next_hosts[j].view;
+    }
+    free(old_records);
+    luaL_unref(globalconf_L, LUA_REGISTRYINDEX, band->layout_ref);
+    band->layout_ref = LUA_NOREF;
+    if (tile_ref != LUA_NOREF) {
+        lua_rawgeti(globalconf_L, LUA_REGISTRYINDEX, tile_ref);
+        band->layout_ref = luaL_ref(globalconf_L, LUA_REGISTRYINDEX);
+    }
+    dout->inspector_width = panel_width;
+    bars_settle(m);
+    popups_settle(m);
+    workarea_settle(m);
+    clients_settle(m);
+    tile_publish(m);
+    solved_emit(true);
+    luaA_emit_signal_global_with_screen("clay::_commit", luaA_screen_get_by_monitor(globalconf_L, m));
+    solved_len = 0;
 
 	/* The reconcile rasterises shape leaves through their Lua callbacks,
 	 * which must not change the tree it is drawing. */
@@ -3482,7 +3876,37 @@ declare_output_frame(struct declare_output *dout, Monitor *m, bool lock_active)
 	band->transitioning = transitioning;
 	if (insp_closed)
 		inspector_emit_closed(m);
-	return band->mutations;
+    return band->mutations;
+
+failed:
+    band->armed = false;
+    in_frame = false;
+    record_end();
+    lua_settop(globalconf_L, lua_top);
+    Clay_SetCurrentContext(band->clay);
+    failed_counts = Clay__Capacity();
+    Clay__StateRestore(band->backup);
+    for (size_t i = 0; i < next_len; i++)
+        if (next_hosts) widget_tree_release(next_hosts[i].view);
+    free(next_hosts);
+    free(retired);
+    free(band->records);
+    band->records = old_records;
+    band->records_len = old_len;
+    band->records_cap = old_cap;
+    for (size_t i = 0; i < solved_len; i++) solved_hosts[i].tree->declared = false;
+    solved_len = scrollbar_records_len = bars_len = 0;
+    dout->grid_pending = false;
+    dout->dirty = false;
+    fprintf(stderr, "clay output %s capacity exhausted: elements %d/%d map %d free %d transitions %d inspector %s; retained scene\n",
+        dout->wlr_output->name, failed_counts.elements, failed_counts.capacity,
+        failed_counts.map, failed_counts.freeIds, failed_counts.transitions, inspecting ? "on" : "off");
+    if (inspecting) {
+        declare_inspector_set(dout, false);
+        inspector_emit_closed(m);
+    }
+    in_pass = false;
+    return -1;
 }
 
 /* --- the Clay debug inspector (declare.h) --- */
@@ -3510,26 +3934,26 @@ inspector_resync(void)
 			insp.count++;
 }
 
+static bool
+inspector_declares(const struct declare_output *dout)
+{
+	return dout->inspecting && !session_is_locked();
+}
+
 bool
 declare_inspector_get(struct declare_output *dout)
 {
-	Clay_Context *previous = Clay_GetCurrentContext();
-	bool on;
-
-	Clay_SetCurrentContext(dout->desktop.clay);
-	on = Clay_IsDebugModeEnabled();
-	Clay_SetCurrentContext(previous);
-	return on;
+	/* The screen's own setting, not Clay's flag: the frame writes that
+	 * flag from this one and forces it off while the session is locked,
+	 * so reading it back would report the lock rather than the screen.
+	 * A panel that closed itself from inside the solve is mirrored here
+	 * by the frame that saw it (declare_output_frame). */
+	return dout->inspecting;
 }
 
 void
 declare_inspector_set(struct declare_output *dout, bool on)
 {
-	Clay_Context *previous = Clay_GetCurrentContext();
-
-	Clay_SetCurrentContext(dout->desktop.clay);
-	Clay_SetDebugModeEnabled(on);
-	Clay_SetCurrentContext(previous);
 	dout->inspecting = on;
 	dout->press_pending = false;
 	dout->scroll_x = dout->scroll_y = 0;
@@ -3562,8 +3986,8 @@ declare_inspector_style(const struct declare_inspector_style *style,
 		/* Clay's measure cache keys on the font id, so a new face behind
 		 * id 0 would keep answering with the old one's widths
 		 * (clay.h:919 exists for this). */
-		if (font && !err) {
-			Clay_SetCurrentContext(m->declare->desktop.clay);
+		if (font && !err && m->declare->band.clay) {
+			Clay_SetCurrentContext(m->declare->band.clay);
 			Clay_ResetMeasureTextCache();
 		}
 		if (m->declare->inspecting)
@@ -3622,13 +4046,13 @@ declare_wheel(double dx, double dy)
 bool
 declare_inspector_covers(double lx, double ly)
 {
-	Monitor *m = insp.count ? xytomon(lx, ly) : NULL;
+	Monitor *m = xytomon(lx, ly);
 
-	/* While lua-locked the desktop band, panel included, sits under
-	 * locked_bg. */
-	if (!m || !m->declare || !m->declare->inspecting || some_is_lua_locked())
+	/* A locked session never declares the panel (declare_output_frame),
+	 * so nothing there can own the point either. */
+	if (!m || !m->declare || !m->declare->inspector_width || session_is_locked())
 		return false;
-	return lx - m->m.x >= m->m.width - (double)Clay__debugViewWidth;
+	return lx - m->m.x >= m->m.width - (double)m->declare->inspector_width;
 }
 
 /* Hand Clay one pass's worth of seat, for the panel only. Every state is
@@ -3708,6 +4132,10 @@ inspector_emit_closed(Monitor *m)
  * reports the frame the output drew. The realized list doubles as a
  * tree==scene check in release builds, where the verifier is compiled out,
  * by printing the renderer's own mismatch answer.
+ *
+ * Every box a line prints is in logical coordinates with both edges rounded
+ * to whole pixels, so an element's box is the box the scene realizes and the
+ * one a client's configure and geometry carry.
  */
 
 static const char *
@@ -3754,8 +4182,10 @@ static const char *const kind_names[] = {
 	[DECLARE_KIND_TITLEBAR] = "titlebar",
 	[DECLARE_KIND_WALLPAPER] = "output",
 	[DECLARE_KIND_LOCK] = "lock",
+	[DECLARE_KIND_LOCK_BLOCK] = "lock",
 	[DECLARE_KIND_DRAG] = "drag",
 	[DECLARE_KIND_POPUP] = "popup",
+	[DECLARE_KIND_CURSOR] = "cursor",
 };
 
 /* The object a handle names, bare: the record line puts its role before it
@@ -3788,8 +4218,15 @@ dump_object(buffer_t *buf, uint64_t handle)
 		buffer_adds(buf, ((Monitor *)((struct wlr_session_lock_surface_v1 *)
 			object)->output->data)->wlr_output->name);
 		break;
+	case DECLARE_KIND_LOCK_BLOCK:
+		buffer_adds(buf, ((struct declare_output *)object)->wlr_output->name);
+		break;
 	case DECLARE_KIND_DRAG:
 		buffer_adds(buf, "icon");
+		break;
+	case DECLARE_KIND_CURSOR:
+		buffer_adds(buf, object != cursor ? "surface"
+			: cursor_image.name ? cursor_image.name : "-");
 		break;
 	case DECLARE_KIND_POPUP: {
 		Client *c = NULL;
@@ -3844,6 +4281,21 @@ dump_what(buffer_t *buf, uint32_t id, void *userdata)
 	}
 	buffer_addf(buf, "%s ", kind_names[kind]);
 	dump_object(buf, handle);
+}
+
+/* A dump line's box is whole pixels, and an element's solved box is a float.
+ * Round both of its edges, the rule render.c realizes a box with and
+ * client_solved_box writes a client's geometry with, so the line prints the
+ * box on screen. Truncating instead loses the fractional edge of a GROW
+ * split and reads a pixel short of what the scene and the configure carry.
+ * These stay logical coordinates; the scale is applied further down. */
+static Clay_BoundingBox
+dump_box(Clay_BoundingBox b)
+{
+	float x = lroundf(b.x), y = lroundf(b.y);
+
+	return (Clay_BoundingBox) { x, y,
+		lroundf(b.x + b.width) - x, lroundf(b.y + b.height) - y };
 }
 
 static void
@@ -3935,7 +4387,7 @@ dump_widget_line(buffer_t *buf, const struct widget_host *host, size_t i, Clay_E
 		buffer_adds(buf, " shape");
 	if (!n->widget && !n->text && !n->image)
 		buffer_adds(buf, " spacer");
-	if (n->clip_opens && !(i == 0 && host->inset_clip))
+	if (n->clip_opens && !(i == 0 && host->inner_clip))
 		buffer_adds(buf, " clip");
 	if (n->scroll) {
 		Clay_ElementDeclaration e = { 0 };
@@ -3996,12 +4448,12 @@ dump_widget_line(buffer_t *buf, const struct widget_host *host, size_t i, Clay_E
 			}
 		}
 	}
-	if (data.found)
+	if (data.found) {
+		Clay_BoundingBox b = dump_box(data.boundingBox);
+
 		buffer_addf(buf, " box %d,%d %dx%d",
-			(int)data.boundingBox.x, (int)data.boundingBox.y,
-			(int)data.boundingBox.width,
-			(int)data.boundingBox.height);
-	else
+			(int)b.x, (int)b.y, (int)b.width, (int)b.height);
+	} else
 		buffer_adds(buf, " box -");
 	buffer_adds(buf, "\n");
 }
@@ -4130,12 +4582,12 @@ dump_record_line(buffer_t *buf, struct declare_band *band,
 		buffer_adds(buf, " custom");
 	if (r->image)
 		buffer_adds(buf, " image");
-	if (data.found)
+	if (data.found) {
+		Clay_BoundingBox b = dump_box(data.boundingBox);
+
 		buffer_addf(buf, " box %d,%d %dx%d\n",
-			(int)data.boundingBox.x, (int)data.boundingBox.y,
-			(int)data.boundingBox.width,
-			(int)data.boundingBox.height);
-	else
+			(int)b.x, (int)b.y, (int)b.width, (int)b.height);
+	} else
 		buffer_adds(buf, " box -\n");
 }
 
@@ -4181,11 +4633,12 @@ dump_clay_line(buffer_t *buf, const struct clay_element_view *el, int d)
 				: c->floating.attachTo == CLAY_ATTACH_TO_ROOT ? "ROOT" : "ELEMENT",
 				c->floating.offset.x, c->floating.offset.y, c->floating.zIndex);
 	}
-	if (data.found)
+	if (data.found) {
+		Clay_BoundingBox b = dump_box(data.boundingBox);
+
 		buffer_addf(buf, " box %d,%d %dx%d\n",
-			(int)data.boundingBox.x, (int)data.boundingBox.y,
-			(int)data.boundingBox.width, (int)data.boundingBox.height);
-	else
+			(int)b.x, (int)b.y, (int)b.width, (int)b.height);
+	} else
 		buffer_adds(buf, " box -\n");
 }
 
@@ -4197,6 +4650,7 @@ struct dump_ann {
 	struct declare_record *record;
 	const struct widget_host *host;
 	size_t node;
+	bool clip;   /* the inner clip element of a decorated host */
 };
 
 static struct dump_ann *anns;
@@ -4204,14 +4658,14 @@ static size_t anns_len, anns_cap;
 
 static void
 ann_add(uint32_t id, struct declare_record *r, const struct widget_host *host,
-	size_t node)
+	size_t node, bool clip)
 {
 	if (anns_len == anns_cap) {
 		anns_cap = anns_cap ? anns_cap * 2 : 256;
 		p_realloc(&anns, anns_cap);
 	}
 	anns[anns_len++] = (struct dump_ann) {
-		.id = id, .record = r, .host = host, .node = node,
+		.id = id, .record = r, .host = host, .node = node, .clip = clip,
 	};
 }
 
@@ -4232,7 +4686,7 @@ ann_widget_tree(const struct widget_host *host, size_t i, Clay_ElementId id)
 	struct widget_tree *d = host->tree;
 	size_t next = i + 1;
 
-	ann_add(id.id, NULL, host, i);
+	ann_add(id.id, NULL, host, i, false);
 	for (uint16_t k = 0; k < d->nodes[i].children; k++)
 		next = ann_widget_tree(host, next, widget_child_id(d, next, id, k));
 	return next;
@@ -4243,7 +4697,7 @@ ann_build(struct declare_band *band)
 {
 	anns_len = 0;
 	for (size_t i = 0; i < band->records_len; i++)
-		ann_add(band->records[i].id, &band->records[i], NULL, 0);
+		ann_add(band->records[i].id, &band->records[i], NULL, 0, false);
 	for (size_t i = 0; i < band->records_len; i++) {
 		struct declare_record *r = &band->records[i];
 		struct widget_tree *tree;
@@ -4261,7 +4715,30 @@ ann_build(struct declare_band *band)
 					widget_child_id(tree, next, root_id, k));
 		} else
 			ann_widget_tree(&r->host, 0, root_id);
+		if (r->host.inner_clip)
+			ann_add(inner_clip_id(r->handle).id, NULL, &r->host, 0, true);
 	}
+}
+
+/* The inner clip element of a decorated host: a widget-style line at the
+ * host's widget indentation, with the widget lines under it no deeper. Its
+ * sizing is the declaration's, as every other line prints (Clay rewrites an
+ * unbounded GROW max after the solve). */
+static void
+dump_clip_line(buffer_t *buf, const struct clay_element_view *el, int depth)
+{
+	Clay_ElementData data = Clay_GetElementData((Clay_ElementId) { .id = el->id });
+
+	buffer_addf(buf, "    %08x %*sclip w=grow h=grow%s", el->id, depth * 2, "",
+		el->config.layout.layoutDirection == CLAY_TOP_TO_BOTTOM
+		? " column" : " row");
+	if (data.found) {
+		Clay_BoundingBox b = dump_box(data.boundingBox);
+
+		buffer_addf(buf, " box %d,%d %dx%d\n",
+			(int)b.x, (int)b.y, (int)b.width, (int)b.height);
+	} else
+		buffer_adds(buf, " box -\n");
 }
 
 /* One element of Clay's tree and, in Clay's child order, the elements
@@ -4283,6 +4760,8 @@ dump_clay_element(buffer_t *buf, struct declare_band *band, int32_t index,
 	if (a && a->record) {
 		dump_record_line(buf, band, a->record, depth);
 		wdepth = depth;
+	} else if (a && a->clip) {
+		dump_clip_line(buf, &el, wdepth);
 	} else if (a) {
 		dump_widget_line(buf, a->host, a->node,
 			(Clay_ElementId) { .id = el.id }, wdepth);
@@ -4333,17 +4812,11 @@ dump_tree(buffer_t *buf, struct declare_band *band)
  * widget.h): a tree that failed to convert is left out of the tree by name,
  * never drawn by a fallback. */
 static void
-dump_refused(buffer_t *buf, Monitor *m, bool lock)
+dump_refused(buffer_t *buf, Monitor *m)
 {
-	if (lock && !session_is_locked())
-		return;
 	foreach(item, globalconf.drawins) {
 		drawin_t *d = *item;
 
-		if (lock ? !some_is_lock_drawin(d)
-				: (session_is_locked()
-					&& some_is_lock_drawin(d)))
-			continue;
 		if (!d->visible || !d->screen || d->screen->monitor != m
 				|| d->widgets.nodes_len > 0)
 			continue;
@@ -4354,8 +4827,7 @@ dump_refused(buffer_t *buf, Monitor *m, bool lock)
 }
 
 static void
-dump_band(buffer_t *buf, struct declare_band *band, Monitor *m,
-	const char *name, bool lock)
+dump_band(buffer_t *buf, struct declare_band *band, Monitor *m)
 {
 	struct wlr_output *o = m->wlr_output;
 	Clay_Context *previous;
@@ -4367,9 +4839,10 @@ dump_band(buffer_t *buf, struct declare_band *band, Monitor *m,
 	 * solves. */
 	previous = Clay_GetCurrentContext();
 	Clay_SetCurrentContext(band->clay);
-	buffer_addf(buf, "output %s band %s scale %.2f inspector %s frames %d passes %d\n",
-		o->name, name, o->scale, Clay_IsDebugModeEnabled() ? "on" : "off",
-		band->frames, band->passes);
+    Clay__CapacityData capacity = Clay__Capacity();
+    buffer_addf(buf, "output %s scale %.2f inspector %s frames %d passes %d elements %d/%d map %d free %d\n",
+        o->name, o->scale, m->declare->inspector_width ? "on" : "off",
+        band->frames, band->passes, capacity.elements, capacity.capacity, capacity.map, capacity.freeIds);
 	buffer_addf(buf, "  commands %d mutations %d nodes %zu raster_bytes %zu "
 		"buffers %d declare %" PRId64 "us solve %" PRId64 "us "
 		"reconcile %" PRId64 "us\n",
@@ -4379,7 +4852,7 @@ dump_band(buffer_t *buf, struct declare_band *band, Monitor *m,
 		render_buffers_created(band->render),
 		band->declare_us, band->solve_us, band->reconcile_us);
 	dump_tree(buf, band);
-	dump_refused(buf, m, lock);
+	dump_refused(buf, m);
 	buffer_adds(buf, "  realized:\n");
 	render_walk(band->render, dump_node, buf);
 	Clay_SetCurrentContext(previous);
@@ -4394,8 +4867,7 @@ declare_dump(Monitor *only)
 	wl_list_for_each(m, &mons, link) {
 		if (!m->declare || (only && m != only))
 			continue;
-		dump_band(&buf, &m->declare->desktop, m, "desktop", false);
-		dump_band(&buf, &m->declare->lock, m, "lock", true);
+		dump_band(&buf, &m->declare->band, m);
 	}
 	return buffer_detach(&buf);
 }

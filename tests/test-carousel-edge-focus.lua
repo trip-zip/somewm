@@ -64,11 +64,14 @@ local steps = {
             return nil
         end
 
-        -- focus_first_column changes focus asynchronously; wait for it to land.
-        if client.focus ~= c1 then return nil end
-
+        -- Focus and the following frame's scroll must both reach c1.
         local wa = screen.primary.workarea
         local g1 = c1:geometry()
+        if client.focus ~= c1 or not (g1.x >= wa.x - 1 and g1.x < wa.x + wa.width) then
+            assert(count < 30,
+                string.format("c1 should be visible after focus_first_column (x=%d)", g1.x))
+            return nil
+        end
         io.stderr:write(string.format(
             "[TEST] focus_first: c1 x=%d, wa.x=%d\n", g1.x, wa.x))
 
@@ -87,11 +90,14 @@ local steps = {
             return nil
         end
 
-        -- focus_last_column changes focus asynchronously; wait for it to land.
-        if client.focus ~= c3 then return nil end
-
+        -- Focus and the following frame's scroll must both reach c3.
         local wa = screen.primary.workarea
         local g3 = c3:geometry()
+        if client.focus ~= c3 or not (g3.x >= wa.x - 1 and g3.x < wa.x + wa.width) then
+            assert(count < 30,
+                string.format("c3 should be visible after focus_last_column (x=%d)", g3.x))
+            return nil
+        end
         io.stderr:write(string.format(
             "[TEST] focus_last: c3 x=%d, wa.x=%d, wa.w=%d\n",
             g3.x, wa.x, wa.width))
@@ -111,11 +117,13 @@ local steps = {
             return nil
         end
 
-        -- Wait for the round-trip focus change to land back on c1.
-        if client.focus ~= c1 then return nil end
-
+        -- Wait for both round-trip focus and the following scroll frame.
         local wa = screen.primary.workarea
         local g1 = c1:geometry()
+        if client.focus ~= c1 or not (g1.x >= wa.x - 1 and g1.x < wa.x + wa.width) then
+            assert(count < 30, "c1 should be visible after round-trip")
+            return nil
+        end
         assert(g1.x >= wa.x - 1 and g1.x < wa.x + wa.width,
             "c1 should be visible after round-trip")
 

@@ -90,12 +90,13 @@ local steps = {
 
         local assert_box = capture.assert_box
 
-        assert(#boxes == 4, "expected four real elements, got " .. #boxes)
+        assert(#boxes == 3, "expected host, background and leaf, got " .. #boxes)
         assert_box(boxes[1], { x = 0, y = 0, width = BW, height = BH },
             "the drawable's own background")
-        assert_box(boxes[2], { x = 0, y = 0, width = BW, height = BH },
+        assert_box(bar._drawable._clay_wired[bar.widget][1].element.box,
+            { x = 0, y = 0, width = BW, height = BH },
             "the outer margin")
-        assert_box(boxes[3], { x = OUTER, y = OUTER,
+        assert_box(boxes[2], { x = OUTER, y = OUTER,
             width = BW - 2 * OUTER, height = BH - 2 * OUTER }, "the background")
         local found = {}
         for _, hit in ipairs(bar:find_widgets(OUTER + 1, OUTER + 1)) do
@@ -103,8 +104,8 @@ local steps = {
         end
         assert(found[box] and found[box.widget],
             "the combined element lost an original background or margin")
-        assert_box(found[box.widget], boxes[3], "the original inner margin shares the background area")
-        assert_box(boxes[4], { x = OUTER + INNER, y = OUTER + INNER,
+        assert_box(found[box.widget], boxes[2], "the original inner margin shares the background area")
+        assert_box(boxes[3], { x = OUTER + INNER, y = OUTER + INNER,
             width = BW - 2 * (OUTER + INNER),
             height = BH - 2 * (OUTER + INNER) }, "the raster leaf")
         io.stderr:write("[PASS] Clay solves the chain\n")
@@ -148,7 +149,7 @@ local steps = {
             assert(count < 20, "the rounded background never drew")
             return nil
         end
-        assert(#awesome._test_widget_boxes(bar.drawin) == 4,
+        assert(#awesome._test_widget_boxes(bar.drawin) == 3,
             "a rounded background put its subtree on cairo")
         cap:assert_pixel(shot, OUTER + 2, OUTER + 2, BAR_BG,
             "the leaf's corner past the arc")
@@ -174,7 +175,7 @@ local steps = {
 
         local shot = cap:shot()
 
-        assert(#awesome._test_widget_boxes(bar.drawin) == 4,
+        assert(#awesome._test_widget_boxes(bar.drawin) == 3,
             "an unfilled rounded background put its subtree on cairo")
         cap:assert_pixel(shot, OUTER + 2, OUTER + 2, BAR_BG,
             "the leaf's corner past the arc, unfilled")
@@ -192,7 +193,7 @@ local steps = {
             box.widget.margins = INNER
             return nil
         end
-        if #awesome._test_widget_boxes(bar.drawin) == 4 then
+        if #awesome._test_widget_boxes(bar.drawin) == 3 then
             io.stderr:write("[PASS] a rounded shape with a border converts\n")
             box.shape = nil
             return true
@@ -201,7 +202,7 @@ local steps = {
     end,
 
     function(count)
-        if #awesome._test_widget_boxes(bar.drawin) == 4 then
+        if #awesome._test_widget_boxes(bar.drawin) == 3 then
             return true
         end
         assert(count < 20, "dropping the shape did not convert the background again")
@@ -214,7 +215,7 @@ local steps = {
             bar.shape = gshape.hexagon
             return nil
         end
-        assert(#awesome._test_widget_boxes(bar.drawin) == 4,
+        assert(#awesome._test_widget_boxes(bar.drawin) == 3,
             "a hexagon put the drawable back on cairo")
         return cap:compare(count, captured, "a hexagon drawn unshaped")
     end,

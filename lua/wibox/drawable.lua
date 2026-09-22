@@ -25,6 +25,7 @@ local visible_drawables = {}
 
 -- The drawables whose widgets changed since the frame last compiled them.
 local pending = {}
+local pending_empty = setmetatable({}, {__mode="k"})
 
 
 -- Get the widget context. This should always return the same table (if
@@ -92,6 +93,16 @@ local function unconvert(self)
     return false
 end
 
+capi.awesome.connect_signal("clay::_commit", function(s)
+    for self in pairs(pending_empty) do
+        if get_widget_context(self).screen == s then
+            unconvert(self)
+            self._clay_offer = nil
+            pending_empty[self] = nil
+        end
+    end
+end)
+
 -- Compile the tree, hand it to the renderer and connect signals. The frame
 -- solves it and sends the boxes back as clay::solved.
 local function draw_converted(self, context, width, height)
@@ -99,11 +110,16 @@ local function draw_converted(self, context, width, height)
     local stored, why = self.drawable:_clay_nodes(tree)
 
     if not stored then
-        unconvert(self)
+        self._clay_stored = { tree = false, context = context }
+        pending_empty[self] = true
         return why ~= nil
     end
+    pending_empty[self] = nil
     self._clay_stored = { tree = tree, width = width, height = height, context = context }
-    wire_widgets(self, tree.widgets)
+    local wired = {}
+    for widget, occurrences in pairs(self._clay_tree and self._clay_tree.widgets or {}) do wired[widget] = occurrences end
+    for widget, occurrences in pairs(tree.widgets) do wired[widget] = occurrences end
+    wire_widgets(self, wired)
     return true
 end
 
@@ -114,7 +130,10 @@ local function place_solved(self, boxes)
     if not stored then
         return
     end
+    if not stored.tree then unconvert(self); return end
     wclay._publish(self, stored.tree, boxes)
+    wire_widgets(self, stored.tree.widgets)
+    self._clay_offer = nil
 end
 
 local function do_redraw(self)
@@ -127,7 +146,9 @@ local function do_redraw(self)
 
     local success, geom = pcall(function() return self.drawable:geometry() end)
     if not success then return end
-    draw_converted(self, get_widget_context(self), geom.width, geom.height)
+    draw_converted(self, get_widget_context(self),
+        self._clay_offer and self._clay_offer.width or geom.width,
+        self._clay_offer and self._clay_offer.height or geom.height)
 end
 
 -- The frame is about to declare: compile every drawable marked since the
@@ -364,6 +385,7 @@ function drawable.new(d, widget_context_skeleton, drawable_name)
 
     -- A redraw marks the drawable for the next frame and asks for one.
     ret.draw = function()
+        ret._clay_offer = nil
         pending[ret] = true
         d:_clay_dirty()
     end
@@ -371,6 +393,17 @@ function drawable.new(d, widget_context_skeleton, drawable_name)
     ret._do_complete_repaint = function()
         ret:draw()
     end
+    d:connect_signal("clay::_settle", function(_, boxes, offer)
+        local stored = ret._clay_stored
+        if stored and stored.tree then
+            wclay._settle(stored.tree, boxes)
+            if offer.width ~= stored.width or offer.height ~= stored.height then
+                ret._clay_offer = offer
+                ret._clay_compile()
+                d:_clay_grid_pending()
+            end
+        end
+    end)
     d:connect_signal("clay::solved", function(_, boxes) place_solved(ret, boxes) end)
 
     -- Geometry changes trigger a redraw.

@@ -2,7 +2,8 @@
 local runner = require("_runner")
 local awful = require("awful")
 local wibox = require("wibox")
-local leaf_widget = require("_widget_capture").leaf_widget
+local capture = require("_widget_capture")
+local leaf_widget = capture.leaf_widget
 local s = screen[1]
 local bar, container
 
@@ -36,13 +37,18 @@ local function block(bar)
     return head, nodes
 end
 
-local function node_named(nodes, class)
-    for _, node in ipairs(nodes) do
-        if node.class == class then
-            return node
-        end
-    end
-    return nil
+local function element(widget)
+    local bindings = bar._drawable._clay_wired[widget]
+    return bindings and bindings[1] and bindings[1].element
+end
+
+local function displayed()
+    local child = element(container.widget)
+    local other = element(bar.widget:get_children()[2])
+    if not child or not other or element(container) ~= child then return false end
+    capture.assert_box(child.box, {x=0,y=0,width=40,height=24}, "displayed child")
+    capture.assert_box(other.box, {x=40,y=0,width=30,height=24}, "following child")
+    return true
 end
 
 local steps = {
@@ -59,16 +65,15 @@ local steps = {
             container = bar.widget:get_children()[1]
             return nil
         end
-        local head, nodes = block(bar)
+        local head = block(bar)
         local boxes = awesome._test_widget_boxes(bar.drawin)
         if not head or #boxes == 0 then
             assert(count < 20, "the bar never declared its tree")
             return nil
         end
         assert(head:find("converted", 1, true), head)
-        assert(node_named(nodes, "awful.widget.only_on_screen"), "the container is missing")
-        assert(#boxes == 5 and boxes[3].width == 40 and boxes[5].x == 40,
-            "the displayed container did not reserve 40 pixels")
+        assert(element(container), "the container is missing")
+        assert(displayed(), "the displayed container did not reserve 40 pixels")
         io.stderr:write("[PASS] only_on_screen describes its displayed child\n")
         return true
     end,
@@ -77,8 +82,11 @@ local steps = {
             container.screen = screen.count() + 1
             return nil
         end
-        local boxes = awesome._test_widget_boxes(bar.drawin)
-        if #boxes == 4 and boxes[3].width == 0 and boxes[4].x == 0 then
+        local hidden = element(container)
+        local other = element(bar.widget:get_children()[2])
+        if (not hidden or hidden.box.width == 0) and not element(container.widget)
+                and other and other.box.x == 0 then
+            capture.assert_box(other.box, {x=0,y=0,width=30,height=24}, "following child without gap")
             io.stderr:write("[PASS] an invalid screen hides the child and takes no width\n")
             return true
         end
@@ -89,8 +97,7 @@ local steps = {
             container.screen = s
             return nil
         end
-        local boxes = awesome._test_widget_boxes(bar.drawin)
-        if #boxes == 5 and boxes[5].x == 40 then
+        if displayed() then
             io.stderr:write("[PASS] restoring the screen restores the child and width\n")
             bar.visible = false
             return true

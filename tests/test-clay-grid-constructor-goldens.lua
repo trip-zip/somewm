@@ -1,7 +1,7 @@
 -- Public grid diagnostic retaining every example, reducer and golden assertion.
 -- Behavioral checks run even when a tree representation differs.
 local tidy = require('_clay_tidy')
-local solver=dofile('tests/clay/grid-helper.lua')
+local solver=dofile('tests/_grid_solver.lua')
 local check=require('_clay_grid_presentation')
 local pointer=assert(require('_utils').binary_or_skip('./build-test/test-virtual-pointer-client'))
 local original_run = tidy.run
