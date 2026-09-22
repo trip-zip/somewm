@@ -66,11 +66,11 @@ local function assert_agrees()
 end
 
 local steps = {
-    -- The dump has a header for the desktop band before anything else is
+    -- The dump has a header for the output before anything else is
     -- declared, and its counters come from a frame that ran.
     function()
-        local header = assert_line("the desktop band header", "band desktop")
-        assert(header:find("output "), "the header names no output")
+        local header = assert_line("the output header", "output ", "scale ")
+        assert(header:find("inspector "), "the header has no inspector word")
         assert_line("the counters", "commands ", "mutations ", "nodes ",
             "raster_bytes ", "buffers ", "declare ", "solve ", "reconcile ")
         return true
@@ -106,8 +106,9 @@ local steps = {
         -- The registered command, through the dispatcher somewm-client
         -- talks to: "clay tree <index>" reaches clay.tree with the screen.
         local response = require("awful.ipc").dispatch("clay tree " .. s.index)
-        assert(response:find("band desktop", 1, true),
-            "clay tree did not dump the desktop band: " .. response)
+        assert(response:find("output ", 1, true)
+            and response:find(" scale ", 1, true),
+            "clay tree did not dump the output: " .. response)
         io.stderr:write("[PASS] the clay.tree ipc command\n")
         return true
     end,
@@ -173,7 +174,7 @@ local steps = {
         local outputs, head, tree = {}, nil, {}
 
         for line in awesome._clay_tree():gmatch("[^\n]+") do
-            local name = line:match("^output (%S+) band desktop")
+            local name = line:match("^output (%S+) scale")
 
             if name then
                 outputs[name] = true
@@ -212,40 +213,42 @@ local steps = {
         return true
     end,
 
-    -- While the session is locked the lock band solves instead of the
-    -- desktop one, and each band reports the drawins it draws.
+    -- While the session is locked the one tree gains the lock section:
+    -- the LOCK backdrop the compositor declares, and the lock drawins.
     function(count)
         if count == 1 then
             lock_surface = lock.setup()
             awesome.lock()
             -- Showing the lock surface is the config's job, in its
-            -- lock::activate handler; the compositor only raises the band.
+            -- lock::activate handler; the compositor only declares the
+            -- section around it.
             lock_surface.visible = true
             return nil
         end
 
-        local band, found = nil, nil
         local d = lock_surface.drawin
         local want = string.format("  drawin screen %d %dx%d+%d+%d ",
             s.index, d.width, d.height, d.x, d.y)
+        local found, backdrop, outputs = nil, nil, 0
 
         for _, line in ipairs(lines()) do
-            local name = line:match("^output %S+ band (%S+)")
-
-            if name then
-                band = name
+            if line:match("^output %S+ scale") then
+                outputs = outputs + 1
+            elseif line:find("LOCK ", 1, true) and line:find("band 200", 1, true) then
+                backdrop = line
             elseif line:sub(1, #want) == want then
-                assert(band == "lock",
-                    "the lock surface is listed under the " .. band .. " band")
                 found = line
             end
         end
-        if not found then
-            assert(count < 20, "the lock surface never reached the dump")
+        assert(outputs == 1,
+            "the dump prints " .. outputs .. " headers for one screen")
+        if not found or not backdrop then
+            assert(count < 20, "the lock section never reached the dump")
             return nil
         end
         assert_agrees()
-        io.stderr:write("[PASS] the lock band lists its own drawins\n")
+        io.stderr:write("[PASS] one band, with the lock section: "
+            .. backdrop .. "\n")
         lock.teardown()
         return true
     end,

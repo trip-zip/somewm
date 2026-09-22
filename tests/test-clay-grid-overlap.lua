@@ -7,7 +7,7 @@ local clay=require('wibox.clay')
 local describe=wibox.layout.grid._clay.describe
 local example=require('_clay_example')
 local pointer=assert(require('_utils').binary_or_skip('./build-test/test-virtual-pointer-client'))
-local solver=dofile('tests/clay/grid-helper.lua')
+local solver=dofile('tests/_grid_solver.lua')
 local phase,solves,declares='initial',0,0
 local function children(w)
     if w._private.container then return {w._private.container} end
@@ -18,9 +18,10 @@ local function prepare(w)
         w._clay={describe=function(...)
             local node,why=describe(...)
             assert(node,why)
-            local callback=node.solved
+            assert(node._settle)
+            -- Observe committed geometry; private settlement runs independently.
             node.solved=function(n)
-                callback(n);solves=solves+1
+                solves=solves+1
                 local state=solver.find(n,w)[1].binding.grid_state
                 io.stderr:write(string.format('[GRID] %s id=%s phase=%s settled=%s box=%dx%d updates=%d\n',
                     phase,tostring(n.occurrence),tostring(state.phase),tostring(state.settled),
@@ -89,7 +90,7 @@ local function attach(host,w,class)
     local n=floats(host,w)[1].node
     assert(n.float and n._attach and n._attach.spacer)
     assert(not n._attach.bindings and not n._attach.bg and not n._attach.shape)
-    if class then assert(n._attach.class==class) else assert(n._attach.solved) end
+    if class then assert(n._attach.class==class) else assert(n._attach._settle) end
     return n._attach
 end
 runner.run_async(function()

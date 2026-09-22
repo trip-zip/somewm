@@ -495,6 +495,17 @@ static void clay_color_to_float(Clay_Color c, float out[4]) {
 	out[3] = a;
 }
 
+/* The one rounding rule for a box the scene realizes: round both edges to whole
+ * pixels, the size is their difference. This is client_solved_box's rule
+ * (declare.c), applied once at the top of the reconcile walk, so a client's
+ * configure equals its geometry and two boxes sharing a solved edge share a
+ * realized one. Every (int) cast below then reads an exact integer. */
+static Clay_BoundingBox box_snap(Clay_BoundingBox b) {
+	float x = lroundf(b.x), y = lroundf(b.y);
+	return (Clay_BoundingBox){ x, y,
+		lroundf(b.x + b.width) - x, lroundf(b.y + b.height) - y };
+}
+
 static bool box_pos_equal(Clay_BoundingBox a, Clay_BoundingBox b) {
 	return (int)a.x == (int)b.x && (int)a.y == (int)b.y;
 }
@@ -2296,6 +2307,16 @@ int render_reconcile(struct render_state *rs, Clay_RenderCommandArray commands,
 
 	for (int32_t i = 0; i < commands.length; i++) {
 		Clay_RenderCommand *cmd = Clay_RenderCommandArray_Get(&commands, i);
+		/* A SCISSOR realizes no node of its own: its box bounds other boxes.
+		 * Rounding it would round a real cut away, because a clip less than
+		 * half a logical pixel inside its content rounds to the content's own
+		 * edges and stops clipping. Above scale 1 that half pixel is more than
+		 * a device pixel, which the crop and the text bound below can still
+		 * express, so a scissor keeps its solved edges and only the boxes that
+		 * become scene nodes snap. */
+		if (cmd->commandType != CLAY_RENDER_COMMAND_TYPE_SCISSOR_START) {
+			cmd->boundingBox = box_snap(cmd->boundingBox);
+		}
 		uint64_t key = (uint64_t)cmd->commandType << 32 | cmd->id;
 		rs->build[i] = key;
 

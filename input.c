@@ -898,6 +898,7 @@ motionnotify(uint32_t time, struct wlr_input_device *device, double dx, double d
 	 * on the output under it, so every motion re-declares. */
 	if (seat->drag && seat->drag->icon)
 		declare_mark_all_dirty();
+	declare_cursor_changed();
 
 
 	/* If drag source became invalid, clear it. */
@@ -1027,9 +1028,9 @@ motionnotify(uint32_t time, struct wlr_input_device *device, double dx, double d
 		drawin_t *hover_drawin = NULL;
 		xytonode(cursor->x, cursor->y, NULL, NULL, NULL, &hover_drawin, NULL, NULL, NULL);
 		if (hover_drawin && hover_drawin->cursor)
-			wlr_cursor_set_xcursor(cursor, cursor_mgr, hover_drawin->cursor);
+			cursor_set_xcursor(hover_drawin->cursor);
 		else
-			wlr_cursor_set_xcursor(cursor, cursor_mgr, selected_root_cursor ? selected_root_cursor : "default");
+			cursor_set_xcursor(selected_root_cursor ? selected_root_cursor : "default");
 	}
 
 	/* Tablet-capable clients should receive stylus motion via tablet-v2 only.
@@ -1053,6 +1054,19 @@ motionnotify(uint32_t time, struct wlr_input_device *device, double dx, double d
 	pointerfocus(c, surface, sx, sy, time);
 }
 
+/* Whether the surface belongs to an ext-session-lock client's lock surface
+ * for some output, the one client allowed the pointer while locked. */
+static bool
+surface_is_session_lock(struct wlr_surface *surface)
+{
+	Monitor *m;
+
+	wl_list_for_each(m, &mons, link)
+		if (m->lock_surface && m->lock_surface->surface == surface)
+			return true;
+	return false;
+}
+
 void
 pointerfocus(Client *c, struct wlr_surface *surface, double sx, double sy,
 		uint32_t time)
@@ -1070,8 +1084,12 @@ pointerfocus(Client *c, struct wlr_surface *surface, double sx, double sy,
 		return;
 	}
 
-	/* Don't give pointer focus to clients when Lua-locked */
-	if (some_is_lua_locked()) {
+	/* Don't give pointer focus to a desktop client while the session is
+	 * locked. The lock backdrop takes every point below it (declare.c),
+	 * so the only surface that can reach here is an ext-session-lock
+	 * client's own, and that one keeps the pointer: swaylock and its kind
+	 * need motion. */
+	if (session_is_locked() && !surface_is_session_lock(surface)) {
 		wlr_seat_pointer_notify_clear_focus(seat);
 		return;
 	}
@@ -1382,6 +1400,7 @@ cursorwarptohint(void)
 	if (c && active_constraint->current.cursor_hint.enabled) {
 		wlr_cursor_warp(cursor, NULL, sx + c->geometry.x + c->bw, sy + c->geometry.y + c->bw);
 		wlr_seat_pointer_warp(active_constraint->seat, sx, sy);
+		declare_cursor_changed();
 	}
 }
 
@@ -2987,6 +3006,93 @@ xytonode(double x, double y, struct wlr_surface **psurface,
 	if (ny) *ny = hit.sy;
 }
 
+struct cursor_image cursor_image;
+
+static void
+cursor_surface_forget(void)
+{
+	if (!cursor_image.surface)
+		return;
+	wl_list_remove(&cursor_image.surface_destroy.link);
+	wl_list_remove(&cursor_image.surface_commit.link);
+	declare_handle_drop(cursor_image.surface);
+	cursor_image.surface = NULL;
+	cursor_image.tree = NULL;
+	cursor_image.render_owner = NULL;
+}
+
+/* The client's cursor surface is gone, and wlroots destroyed its scene tree
+ * with it; the next frame declares no leaf for it and the renderer forgets
+ * the borrow it can no longer resolve. */
+static void
+cursor_surface_destroy(struct wl_listener *listener, void *data)
+{
+	cursor_surface_forget();
+	cursor_image.gen++;
+	declare_cursor_changed();
+}
+
+/* A commit can move the hotspot by the buffer offset (wl_pointer.set_cursor)
+ * and change the size the leaf is declared at. */
+static void
+cursor_surface_commit(struct wl_listener *listener, void *data)
+{
+	cursor_image.hotspot_x -= cursor_image.surface->current.dx;
+	cursor_image.hotspot_y -= cursor_image.surface->current.dy;
+	cursor_image.gen++;
+	declare_cursor_changed();
+}
+
+static void
+cursor_surface_drop(void)
+{
+	if (!cursor_image.surface)
+		return;
+	wlr_scene_node_destroy(&cursor_image.tree->node);
+	cursor_surface_forget();
+}
+
+void
+cursor_set_xcursor(const char *name)
+{
+	if (!cursor_image.surface && cursor_image.name
+			&& !strcmp(cursor_image.name, name))
+		return;
+	cursor_surface_drop();
+	free(cursor_image.name);
+	cursor_image.name = strdup(name);
+	cursor_image.gen++;
+	declare_cursor_changed();
+}
+
+/* A NULL surface hides the pointer, as wl_pointer.set_cursor says. */
+void
+cursor_set_surface(struct wlr_surface *surface, int hotspot_x, int hotspot_y)
+{
+	if (surface == cursor_image.surface && !cursor_image.name
+			&& hotspot_x == cursor_image.hotspot_x
+			&& hotspot_y == cursor_image.hotspot_y)
+		return;
+	if (surface != cursor_image.surface) {
+		cursor_surface_drop();
+		if (surface) {
+			cursor_image.surface = surface;
+			cursor_image.tree = wlr_scene_subsurface_tree_create(
+				window_parked_tree(), surface);
+			cursor_image.surface_destroy.notify = cursor_surface_destroy;
+			wl_signal_add(&surface->events.destroy, &cursor_image.surface_destroy);
+			cursor_image.surface_commit.notify = cursor_surface_commit;
+			wl_signal_add(&surface->events.commit, &cursor_image.surface_commit);
+		}
+	}
+	free(cursor_image.name);
+	cursor_image.name = NULL;
+	cursor_image.hotspot_x = hotspot_x;
+	cursor_image.hotspot_y = hotspot_y;
+	cursor_image.gen++;
+	declare_cursor_changed();
+}
+
 void
 setcursor(struct wl_listener *listener, void *data)
 {
@@ -2998,13 +3104,9 @@ setcursor(struct wl_listener *listener, void *data)
 	if (cursor_mode != CurNormal && cursor_mode != CurPressed)
 		return;
 	/* This can be sent by any client, so we check to make sure this one
-	 * actually has pointer focus first. If so, we can tell the cursor to
-	 * use the provided surface as the cursor image. It will set the
-	 * hardware cursor on the output that it's currently on and continue to
-	 * do so as the cursor moves between outputs. */
+	 * actually has pointer focus first. */
 	if (event->seat_client == seat->pointer_state.focused_client)
-		wlr_cursor_set_surface(cursor, event->surface,
-				event->hotspot_x, event->hotspot_y);
+		cursor_set_surface(event->surface, event->hotspot_x, event->hotspot_y);
 }
 
 void
@@ -3017,8 +3119,7 @@ setcursorshape(struct wl_listener *listener, void *data)
 	 * actually has pointer focus first. If so, we can tell the cursor to
 	 * use the provided cursor shape. */
 	if (event->seat_client == seat->pointer_state.focused_client)
-		wlr_cursor_set_xcursor(cursor, cursor_mgr,
-				wlr_cursor_shape_v1_name(event->shape));
+		cursor_set_xcursor(wlr_cursor_shape_v1_name(event->shape));
 }
 
 void

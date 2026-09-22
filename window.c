@@ -1409,6 +1409,14 @@ handle_window(uint64_t handle, struct wlr_scene_tree **stree, void ***owner)
 		*stree = ((struct wlr_drag_icon *)obj)->data;
 		*owner = &drag_render_owner;
 		return true;
+	case DECLARE_KIND_CURSOR:
+		/* A client's cursor surface; the themed image is an image leaf
+		 * with no tree to borrow. */
+		if (obj != cursor_image.surface || !cursor_image.tree)
+			return false;
+		*stree = cursor_image.tree;
+		*owner = &cursor_image.render_owner;
+		return true;
 	default:
 		return false;
 	}

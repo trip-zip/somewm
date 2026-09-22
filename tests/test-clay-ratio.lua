@@ -63,8 +63,17 @@ local steps = {
             layout.spacing = 5
             return nil
         end
-        local line = awesome._clay_tree(s):match("[^\n]*wibox.layout.ratio[^\n]*")
-        assert(line, "wibox.layout.ratio did not convert")
+        local wired = bar._drawable._clay_wired
+        local element = assert(wired[layout])[1].element
+        assert(element == bar._drawable._clay_tree and element.gap == 0,
+            "the ratio lost its host binding or ignored gap")
+        local x = 0
+        for i, child in ipairs(layout:get_children()) do
+            local width = math.floor(bar.width * layout:get_ratio(i) + 0.5)
+            capture.assert_box(assert(wired[child])[1].element.box,
+                {x=x,y=0,width=width,height=bar.height}, "ratio allocation")
+            x = x + width
+        end
         assert(#awesome._test_widget_boxes(bar.drawin) == converted_boxes, "the converted box count changed")
         bar.visible = false
         io.stderr:write("[PASS] spacing is ignored in the ratio\n")

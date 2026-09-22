@@ -20,6 +20,7 @@ local golden = {}
 function golden.shape(dump)
     local out = {}
     local keep = false
+    local roots
     for line in dump:gmatch("[^\n]+") do
         if line:match("^output ") then
             keep = false
@@ -27,8 +28,15 @@ function golden.shape(dump)
         elseif line:match("^  roots ") then
             keep = true
             out[#out + 1] = line
+            roots = #out
         elseif line == "  realized:" then
             keep = false
+        elseif line:match("^  cursor ") then
+            -- the pointer image rides the pointer, an input of the frame
+            -- and not of the shape: drop its root and its count
+            out[roots] = out[roots]:gsub("floating (%d+)", function(n)
+                return "floating " .. (tonumber(n) - 1)
+            end)
         elseif keep and not line:match("^  commands ") then
             -- a widget node: drop the element id, keep the indentation
             line = line:gsub("^    %x%x%x%x%x%x%x%x ", "    ")

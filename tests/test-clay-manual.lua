@@ -74,8 +74,14 @@ local steps = {
             layout:add_at(wibox.container.background(), function() return { x = 0, y = 0 } end)
             return nil
         end
-        local line = awesome._clay_tree(s):match("[^\n]*wibox.layout.manual[^\n]*")
-        assert(line, "wibox.layout.manual did not convert")
+        local children = layout:get_children()
+        local wired = bar._drawable._clay_wired
+        capture.assert_box(assert(wired[children[1]])[1].element.box,
+            {x=50,y=5,width=30,height=20}, "first supported child")
+        capture.assert_box(assert(wired[children[2]])[1].element.box,
+            {x=100,y=10,width=40,height=20}, "second supported child")
+        assert(not wired[children[3]] or not wired[children[3]][1].element,
+            "a callable position declared its child")
         assert(#awesome._test_widget_boxes(bar.drawin) == converted_boxes, "the converted box count changed")
         bar.visible = false
         io.stderr:write("[PASS] callable points skip their child in the manual layout\n")

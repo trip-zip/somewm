@@ -418,7 +418,7 @@ destroylock(SessionLock *lock, int unlock)
 	if ((locked = !unlock))
 		goto destroy;
 
-	declare_lock_set_visible(false);
+	declare_mark_all_dirty();
 
 	focus_restore(selmon);
 	motionnotify(0, NULL, 0, 0, 0, 0);
@@ -504,7 +504,7 @@ locksession(struct wl_listener *listener, void *data)
 	lock->scene = wlr_scene_tree_create(layers[LyrBlock]);
 	cur_lock = lock->lock = session_lock;
 	locked = 1;
-	declare_lock_set_visible(true);
+	declare_mark_all_dirty();
 
 	LISTEN(&session_lock->events.new_surface, &lock->new_surface, createlocksurface);
 	LISTEN(&session_lock->events.destroy, &lock->destroy, destroysessionlock);

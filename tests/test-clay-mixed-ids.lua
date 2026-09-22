@@ -1,5 +1,5 @@
--- M0a: exercise the production adapter's text-ID readback after floating
--- siblings, including synchronous measurement, frame solve and inspection.
+-- Exercise text-ID readback after floating siblings, popup presentation,
+-- frame solve and inspection.
 local runner = require("_runner")
 local wibox = require("wibox")
 local clay = require("wibox.clay")
@@ -53,10 +53,17 @@ end
 
 runner.run_steps {
     function()
-        -- Popup construction invokes the isolated measurement EndLayout site.
+        -- The popup receives its content size when the frame is solved.
         popup = require("awful").popup { screen = s, visible = true,
             placement = require("awful").placement.top_left,
             widget = wibox.widget.textbox("M0a measurement") }
+        return true
+    end,
+    function(count)
+        if not popup._drawable._clay_tree or popup.width <= 1 or popup.height <= 1 then
+            assert(count < 30, "popup did not become ready")
+            return nil
+        end
         assert(popup.width > 1 and popup.height > 1)
         popup.visible = false
         bar = wibox { screen = s, x = s.geometry.x + 10, y = s.geometry.y + 20,

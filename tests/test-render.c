@@ -835,24 +835,26 @@ static void test_custom_crops_to_its_clip(void) {
 	fixture_finish(&f, &hooks);
 }
 
-static void test_float_boxes_truncate(void) {
+static void test_float_boxes_round(void) {
 	struct fixture f;
 	fixture_init(&f);
-	/* Clay solves in float32, and the reconciler truncates at the scene
-	 * boundary. Anything that wants pixel parity with somewm's integer
-	 * geometry has to round before it declares, not after. */
+	/* Clay solves in float32, and the reconciler rounds both edges of every
+	 * box at the scene boundary, the rule client_solved_box uses. Here
+	 * [10.6, 41.3) rounds to [11, 41) and [20.4, 60.6) to [20, 61), so the
+	 * width stays 30 while the height grows to 41. */
 	Clay_RenderCommand cmds[] = { cmd_rect(1, 10.6f, 20.4f, 30.7f, 40.2f, 0) };
 	render_reconcile(f.rs, commands_of(cmds, 1), &no_hooks, no_bounds);
 	struct wlr_scene_tree *rt = render_tree(f.parent);
 	struct wlr_scene_rect *r = wlr_scene_rect_from_node(child_at(rt, 0));
-	CHECK_EQ(child_at(rt, 0)->x, 10);
+	CHECK_EQ(child_at(rt, 0)->x, 11);
 	CHECK_EQ(child_at(rt, 0)->y, 20);
 	CHECK_EQ(r->width, 30);
-	CHECK_EQ(r->height, 40);
+	CHECK_EQ(r->height, 41);
 
-	/* A sub-pixel drift that truncates to the same integers is not a change. */
-	cmds[0].boundingBox.x = 10.9f;
-	CHECK_EQ(render_reconcile(f.rs, commands_of(cmds, 1), &no_hooks, no_bounds), 0);
+	/* A sub-pixel drift whose edges round to the same integers is not a
+	 * change: [10.7, 41.4) rounds to [11, 41) again. */
+	Clay_RenderCommand drift[] = { cmd_rect(1, 10.7f, 20.4f, 30.7f, 40.2f, 0) };
+	CHECK_EQ(render_reconcile(f.rs, commands_of(drift, 1), &no_hooks, no_bounds), 0);
 
 	fixture_finish(&f, &no_hooks);
 }
@@ -1284,14 +1286,15 @@ static void test_border_ring_has_no_gap_or_overlap(void) {
 }
 
 /* A clipped raster is a crop of the full-box buffer, so the crop has to be
- * expressed on the grid that buffer was sized on: device_len from the truncated
- * logical origin. Reading the crop origin off the unrounded box.x instead moves
- * the whole raster by a pixel whenever the solved origin is fractional. */
+ * expressed on the grid that buffer was sized on: device_len from the box's
+ * rounded logical origin. Reading the crop origin off the unrounded box.x
+ * instead moves the whole raster by a pixel whenever the solved origin is
+ * fractional. */
 static void test_clip_source_matches_the_buffer_grid(void) {
 	struct fixture f;
 	fixture_init(&f);
-	/* The buffer spans logical [10, 50); the clip starts at 15, its 5th column.
-	 * Rounding 10.6 to 11 instead would call it the 4th. */
+	/* [10.6, 50.6) rounds to [11, 51), so the buffer spans logical [11, 51)
+	 * and the clip starting at 15 takes it from the 4th column. */
 	Clay_RenderCommand cmds[] = {
 		cmd_clip(10, 15, 0, 100, 20, true, true),
 		cmd_rect(1, 10.6f, 0, 40, 20, 4),
@@ -1301,9 +1304,9 @@ static void test_clip_source_matches_the_buffer_grid(void) {
 	struct wlr_scene_node *node = child_at(render_tree(f.parent), 0);
 	struct wlr_scene_buffer *sb = wlr_scene_buffer_from_node(node);
 	CHECK_EQ(node->x, 15);
-	CHECK_EQ((int)sb->src_box.x, 5);
-	CHECK_EQ((int)sb->src_box.width, 35);
-	CHECK_EQ(sb->dst_width, 35);
+	CHECK_EQ((int)sb->src_box.x, 4);
+	CHECK_EQ((int)sb->src_box.width, 36);
+	CHECK_EQ(sb->dst_width, 36);
 	fixture_finish(&f, &no_hooks);
 }
 
@@ -1355,7 +1358,8 @@ static void test_fractional_moves_refresh_rasters(void) {
 				cmds[1].boundingBox.x = 371.333313f + move;
 				cmds[1].boundingBox.y = 6 + move;
 				render_reconcile(f.rs, commands_of(cmds, 3), &hooks, no_bounds);
-				int w = render_device_len(371 + move, 229, scales[si]);
+				/* [371.333, 601.333) rounds to [371, 601): 230 logical. */
+				int w = render_device_len(371 + move, 230, scales[si]);
 				int h = render_device_len(6 + move, kind == 0 ? 20 : 21, scales[si]);
 				CHECK_EQ(render_buffers_created(f.rs), move == 0 || w != prev_w || h != prev_h);
 				struct wlr_scene_buffer *sb = wlr_scene_buffer_from_node(child_at(render_tree(f.parent), 0));
@@ -1551,7 +1555,7 @@ int main(void) {
 		{ "border clips to the bounds", test_border_clips_to_the_bounds },
 		{ "client surface hooks", test_client_surface_hooks },
 		{ "custom crops to its clip", test_custom_crops_to_its_clip },
-		{ "float boxes truncate", test_float_boxes_truncate },
+		{ "float boxes round", test_float_boxes_round },
 		{ "text rasters once per change", test_text_rasters_once_per_change },
 		{ "text crops to its clip", test_text_crops_to_its_clip },
 		{ "fractional text matches Pango", test_fractional_text_clipping },

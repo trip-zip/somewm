@@ -78,7 +78,7 @@ local function extent(sums, first, span, gap)
     return sums[first+span-1]-sums[first-1]+gaps(gap,first,span)
 end
 
--- Inspect only current bindings. Postorder publication means descendant helpers
+-- Inspect only current bindings. Postorder private settlement means descendant helpers
 -- have already declared whether this solve reflects their current requirements.
 local function sample_content(cell, parent)
     local sample = {width=0,height=0,ready=true,remeasuring=false,flexible=false,dependent=false}
@@ -237,7 +237,7 @@ function constructor.describe(widget, fg, compiler, occurrence, offer)
                 hmin=measuring_height and ymin or nil,
                 children=anchor and {{widget=item.widget,w=(natural or minimum) and 'fit' or 'grow',
                     h=measuring_height and 'fit' or 'grow'}} or {},
-                solved=function(n) if anchor then samples[index] = sample_content(n,occurrence) end end}
+                _settle=function(n) if anchor then samples[index] = sample_content(n,occurrence) end end}
             if compact then
                 local last_col=first+span
                 local last_row=r+(measuring_height and 1 or height_span)
@@ -344,7 +344,7 @@ function constructor.describe(widget, fg, compiler, occurrence, offer)
             node.specs[#node.specs+1]={widget=item.widget,float=true,_attach=anchor,w='fit',h='fit'}
         end
     end
-    node.solved = function(solved)
+    node._settle = function(solved)
         if occurrence.grid_state ~= state or occurrence.revision ~= state.revision
                 or compiler.cache.layout_revision ~= state.layout_revision then return end
         state.solves = state.solves+1

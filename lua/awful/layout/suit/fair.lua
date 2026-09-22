@@ -48,10 +48,10 @@ local function describe(s, horizontal)
     end
     groups[#groups + 1] = #items == 1 and items[1] or {
       role = "ROW", direction = horizontal and "row" or "column",
-      ceil_grow = true, children = items}
+      children = items}
   end
   return {role = "WORKAREA", direction = horizontal and "column" or "row",
-    ceil_grow = true, children = groups}
+    children = groups}
 end
 
 -- Preserve public method shape; awful.layout schedules native declarations.

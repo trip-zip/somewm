@@ -24,6 +24,7 @@
 #include "screenshot_compose.h"
 #include "somewm_types.h"
 #include "declare.h"
+#include "input.h"
 #include <xkbcommon/xkbcommon.h>
 #include <wlr/types/wlr_seat.h>
 #include <wlr/types/wlr_data_device.h>
@@ -639,7 +640,7 @@ luaA_root_cursor(lua_State *L)
 	free(selected_root_cursor);
 	selected_root_cursor = strdup(cursor_name);
 	if(some_get_focused_client() == NULL) {
-		wlr_cursor_set_xcursor(cursor, cursor_mgr, cursor_name);
+		cursor_set_xcursor(cursor_name);
 	}
 	return 0;
 }
@@ -1055,9 +1056,14 @@ composite_scene_node_to_cairo(struct wlr_scene_node *node, void *data)
 {
 	struct screenshot_render_data *rdata = data;
 	struct wlr_scene_node *child;
+	enum declare_kind kind;
 	int lx, ly;
 
 	if (!node->enabled)
+		return;
+	/* The pointer image is never in a capture, as under X11, where the
+	 * cursor sprite is not in the framebuffer XGetImage reads. */
+	if (declare_hit(node, &kind) && kind == DECLARE_KIND_CURSOR)
 		return;
 
 	switch (node->type) {
@@ -1074,12 +1080,9 @@ composite_scene_node_to_cairo(struct wlr_scene_node *node, void *data)
 		h = buffer->dst_height > 0 ? buffer->dst_height : buffer->buffer->height;
 		if (!within_bounds(rdata, lx, ly, w, h))
 			return;
-		if (rdata->skip_wallpaper) {
-			enum declare_kind kind;
-
-			if (declare_hit(node, &kind) && kind == DECLARE_KIND_WALLPAPER)
-				return;
-		}
+		if (rdata->skip_wallpaper && declare_hit(node, &kind)
+				&& kind == DECLARE_KIND_WALLPAPER)
+			return;
 		composite_scene_buffer_to_cairo(buffer, lx, ly, rdata);
 		return;
 	}

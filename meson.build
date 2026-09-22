@@ -315,6 +315,21 @@ xdg_shell_client_code = custom_target(
   command: [wayland_scanner, 'private-code', '@INPUT@', '@OUTPUT@'],
 )
 
+# ext-session-lock-v1 client protocol (header + code) for the lock test client
+ext_session_lock_client_header = custom_target(
+  'ext-session-lock-v1-client-protocol.h',
+  input: wayland_protocols_dir / 'staging/ext-session-lock/ext-session-lock-v1.xml',
+  output: 'ext-session-lock-v1-client-protocol.h',
+  command: [wayland_scanner, 'client-header', '@INPUT@', '@OUTPUT@'],
+)
+
+ext_session_lock_client_code = custom_target(
+  'ext-session-lock-v1-client-protocol.c',
+  input: wayland_protocols_dir / 'staging/ext-session-lock/ext-session-lock-v1.xml',
+  output: 'ext-session-lock-v1-client-protocol.c',
+  command: [wayland_scanner, 'private-code', '@INPUT@', '@OUTPUT@'],
+)
+
 # linux-dmabuf-v1 client protocol (header + code) for the DMA-BUF test client
 linux_dmabuf_client_header = custom_target(
   'linux-dmabuf-v1-client-protocol.h',
@@ -628,19 +643,13 @@ test('clay-solver', test_clay_solver, suite: 'unit',
     meson.current_source_dir() / 'tests/lsan-suppressions.txt'},
 )
 
-# Only render.c may write scene node position, order or visibility: every
-# other object file is checked for the mutation symbols.
+# Only render.c may create visible rectangles/buffers or mutate scene nodes.
 test('scene-writers', find_program('tests/check-scene-writers.sh'),
   args: [meson.current_build_dir() / 'somewm.p'],
   depends: somewm_exe, suite: 'unit',
 )
 
-# Constructor proofs use the hash-checked pristine header, independently of
-# production Clay extensions. Contract gaps are reported by these proofs;
-# accepted grid golden comparisons remain separate failing diagnostics.
-test('grid-constructor-upstream', find_program('tests/clay/run-grid-constructor.sh'),
-  suite: 'unit')
-test('grid-constructor-compiler', find_program('tests/clay/run-grid-compiler.sh'),
+test('scene-writers-controls', find_program('tests/test-scene-writers.sh'),
   suite: 'unit')
 
 # Test layer-shell client for deterministic integration tests
@@ -657,6 +666,15 @@ test_transient_client = executable(
   'test-transient-client',
   ['tests/test-transient-client.c', xdg_shell_client_code],
   xdg_shell_client_header,
+  dependencies: [wayland_client],
+  install: false,
+)
+
+# Test ext-session-lock client for the session-lock path
+test_session_lock_client = executable(
+  'test-session-lock-client',
+  ['tests/test-session-lock-client.c', ext_session_lock_client_code],
+  ext_session_lock_client_header,
   dependencies: [wayland_client],
   install: false,
 )

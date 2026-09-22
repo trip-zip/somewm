@@ -391,6 +391,8 @@ drawable_push(lua_State *L, drawable_t *d)
 		return 1;
 	}
 	luaA_object_push(L, owner);
+	if (lua_isnil(L, -1))
+		return 1;
 	luaA_object_push_item(L, -1, d);
 	lua_remove(L, -2);
 	return 1;

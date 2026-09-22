@@ -1496,6 +1496,27 @@ luaA_awesome_test_add_output(lua_State *L)
 	return 1;
 }
 
+#ifdef TEST_PAM
+static int luaA_awesome_test_clay_capacity(lua_State *L)
+{
+    int capacity = luaL_checkinteger(L, 1);
+    int failures = luaL_optinteger(L, 2, 0);
+    luaL_argcheck(L, capacity >= 64 && capacity <= CLAY_ELEMENTS_MAX, 1, "capacity outside test range");
+    luaL_argcheck(L, failures >= 0, 2, "negative failure count");
+    declare_test_capacity(capacity, failures);
+    return 0;
+}
+
+static int luaA_awesome_test_clay_failure(lua_State *L)
+{
+    screen_t *s = luaA_checkscreen(L, 1);
+    int pass = luaL_checkinteger(L, 2), elements = luaL_checkinteger(L, 3);
+    luaL_argcheck(L, pass >= 0 && elements >= 0 && elements <= 65536, 2, "invalid failure injection");
+    declare_test_failure(s->monitor->declare, pass, elements);
+    return 0;
+}
+#endif
+
 static int
 luaA_awesome_clay_dirty(lua_State *L)
 {
@@ -1518,7 +1539,7 @@ luaA_awesome_test_redeclare(lua_State *L)
 	wl_list_for_each(m, some_get_monitors(), link) {
 		if (!m->declare || !m->wlr_output->enabled)
 			continue;
-		n = declare_output_frame(m->declare, m, session_is_locked());
+		n = declare_output_frame(m->declare, m);
 		if (n > 0)
 			mutations += n;
 	}
@@ -2565,6 +2586,10 @@ const luaL_Reg awesome_methods[] = {
 	{ "load_image", luaA_load_image },
 	{ "restart", luaA_restart },
 	{ "shadow_reload", luaA_awesome_shadow_reload },
+#ifdef TEST_PAM
+    { "_test_clay_capacity", luaA_awesome_test_clay_capacity },
+    { "_test_clay_failure", luaA_awesome_test_clay_failure },
+#endif
 	{ "_test_add_output", luaA_awesome_test_add_output },
 	{ "_test_redeclare", luaA_awesome_test_redeclare },
 	{ "_clay_client_transition", luaA_awesome_clay_client_transition },
@@ -5175,6 +5200,7 @@ luaA_state_teardown_lua(lua_State *L, bool lua_safe)
 static void
 luaA_state_teardown_c(lua_State *L, const char *label, bool exit_emitted)
 {
+    declare_state_clear();
 	/* lua_close() dlcloses the C modules the state loaded, and
 	 * libgirepository cannot survive an unload/reload cycle (GType
 	 * registration is process-global). Pin lgi's libraries resident
@@ -6394,6 +6420,7 @@ void
 luaA_cleanup(void)
 {
 	if (globalconf_L) {
+        declare_state_clear();
 		/* Clean up the signal system first */
 		luaA_signal_cleanup();
 

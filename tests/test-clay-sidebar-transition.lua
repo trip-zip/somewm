@@ -41,7 +41,7 @@ local function exiting(dump)
 end
 
 local function frames(dump)
-    return tonumber((assert(dump:match('band desktop [^\n]* frames (%d+)'), dump)))
+    return tonumber((assert(dump:match('output %S+ scale [^\n]* frames (%d+)'), dump)))
 end
 
 runner.run_async(function()

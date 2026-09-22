@@ -118,9 +118,20 @@ runner.run_async(function()
     check(stack,0,0,120,80); check(b,50,35,70,45)
     pixel(60,40,'#00ff00'); pixel(130,40,'#101010')
     example.save('widget-overlap-minimum',awesome._clay_tree(s))
-    bar.width=80; async.sleep(0.2)
-    local r,g,bv=capture.read(surface(root.content()),190,110)
+    local function frames()
+        return assert(tonumber(awesome._clay_tree(s):match('^[^\n]- frames (%d+) passes ')))
+    end
+    local before=frames()
+    bar.width=80
+    local r,g,bv
     local dr,dg,db=capture.read(desktop,190,110)
+    for _=1,100 do
+        async.sleep(0.02)
+        if frames()>before then
+            r,g,bv=capture.read(surface(root.content()),190,110)
+            if r==dr and g==dg and bv==db then break end
+        end
+    end
     assert(r==dr and g==dg and bv==db, 'float painted beyond its host clip')
     example.save('widget-overlap-clipped',awesome._clay_tree(s))
     bar.visible=false
@@ -143,7 +154,10 @@ runner.run_async(function()
             'clock box is not centered')
         assert(not old_width or old_width==c.width, 'clock intrinsic width changed')
         old_width=c.width
-        assert(bar._drawable._clay_wired[place][1].element==bar._drawable._clay_wired[background][1].element)
+        check(place,0,0,width,bar.height)
+        if c.x~=0 or c.y~=0 or c.width~=width or c.height~=bar.height then
+            assert(bar._drawable._clay_wired[place][1].element~=bar._drawable._clay_wired[background][1].element)
+        end
         assert(bar._drawable._clay_wired[inset][1].element==bar._drawable._clay_wired[background][1].element)
         local glyph=box(clock)
         local image=surface(root.content())
@@ -157,7 +171,12 @@ runner.run_async(function()
             end
         end
         assert(count>50 and math.abs((minx+maxx)/2-width/2)<4,'glyph pixels are not centered')
-        assert(awesome._clay_tree(s):find('parent CENTER own CENTER pointer passthrough',1,true))
+        local placed=bar._drawable._clay_wired[place][1].element
+        assert(placed.align.x=='center' and placed.align.y=='center')
+        local originals={}
+        for _,hit in ipairs(bar:find_widgets(glyph.x+1,glyph.y+1)) do originals[hit.widget]=true end
+        assert(originals[place] and originals[background] and originals[clock],
+            'centered content did not pass lookup through its original containers')
         example.save('widget-clock-'..width,awesome._clay_tree(s))
     end
     bar.visible=false

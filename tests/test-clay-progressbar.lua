@@ -104,8 +104,10 @@ local steps = {
             progressbar.ticks = true
             return nil
         end
-        local line = awesome._clay_tree(s):match("[^\n]*wibox.widget.progressbar[^\n]*")
-        assert(line, "wibox.widget.progressbar did not convert")
+        local binding = assert(bar._drawable._clay_wired[progressbar])[1]
+        assert(binding.element, "the progressbar lost its binding")
+        capture.assert_box(binding.element.box, {x=0,y=0,width=200,height=40},
+            "the progressbar allocation with ignored ticks")
         assert(#awesome._test_widget_boxes(bar.drawin) == converted_boxes, "ticks changed the widget boxes")
         assert(pixel(51, 20, "#00ff00"), "the centre is not green")
         bar.visible = false

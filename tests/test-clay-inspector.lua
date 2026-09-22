@@ -14,7 +14,9 @@
 local runner = require("_runner")
 local beautiful = require("beautiful")
 local inspector = require("somewm.inspector")
+local lock = require("_lock_helper")
 
+local lock_surface
 local s = screen[1]
 local geo = s.geometry
 local workarea = s.workarea.width
@@ -28,9 +30,9 @@ local function dump()
     return awesome._clay_tree(s)
 end
 
--- The dump header's inspector word for the desktop band.
+-- The dump header's inspector word.
 local function state()
-    return dump():match("band desktop scale [%d.]+ inspector (%a+)")
+    return dump():match("output %S+ scale [%d.]+ inspector (%a+)")
 end
 
 -- The panel's header row: a RECTANGLE in the panel's band, at the top
@@ -147,6 +149,48 @@ local steps = {
         assert(s.inspector == false, "screen.inspector still reads true")
         assert_workarea(0)
         io.stderr:write("[PASS] the x button closes the panel\n")
+        return true
+    end,
+
+    -- Clay declares the panel above every band somewm has, so a locked
+    -- session must not show it. The screen's own setting is untouched and
+    -- the panel comes back on unlock.
+    function(count)
+        if count == 1 then
+            lock_surface = lock.setup()
+            assert(inspector.toggle(s) == true, "toggle did not enable")
+            return nil
+        end
+        if not header(300) then
+            assert(count < 20, "the panel never came up before the lock")
+            return nil
+        end
+        awesome.lock()
+        lock_surface.visible = true
+        return true
+    end,
+
+    function(count)
+        if header(300) then
+            assert(count < 20, "the panel is still declared under the lock")
+            return nil
+        end
+        assert(s.inspector == true, "the lock turned the inspector off")
+        assert(dump():find("LOCK ", 1, true), "the lock section is not declared")
+        io.stderr:write("[PASS] a locked screen declares no inspector panel\n")
+        awesome.authenticate(lock.TEST_PASSWORD)
+        awesome.unlock()
+        return true
+    end,
+
+    function(count)
+        if not header(300) then
+            assert(count < 20, "the panel never came back after the unlock")
+            return nil
+        end
+        assert(inspector.toggle(s) == false, "toggle did not disable")
+        lock.teardown()
+        io.stderr:write("[PASS] the panel comes back when the session unlocks\n")
         return true
     end,
 }

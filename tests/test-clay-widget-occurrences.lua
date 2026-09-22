@@ -77,8 +77,10 @@ runner.run_steps {
         end
         local dump=awesome._clay_tree()
         if dump~=last then last=dump; assert(n<20); return end
-        local second=ids(screen[2])
-        assert(#second==1 and second[1]~=before[1] and second[1]~=before[2],
+        local second=host2._drawable._clay_wired[shared]
+        local first=host._drawable._clay_wired[shared]
+        assert(#second==1 and second[1].element==host2._drawable._clay_tree)
+        assert(second[1].id~=first[1].id and second[1].id~=first[2].id,
             'a second output reused another placement ID')
         local found
         for _, hit in ipairs(host2:find_widgets(10,10)) do

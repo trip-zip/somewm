@@ -30,18 +30,19 @@ runner.run_async(function()
         local boxes=awesome._test_widget_boxes(host.drawin)
         example.save(ad_hoc and 'contributions-ad-hoc-before' or 'contributions-built-in-before',
             awesome._clay_tree(screen[1]))
-        assert(#boxes==3,'background and padding must share one real element')
-        capture.assert_box(boxes[2],{x=0,y=0,width=200,height=60},'combined outer element')
-        capture.assert_box(boxes[3],{x=8,y=8,width=184,height=44},'distinct inset content')
+        assert(#boxes==2,'host, background and padding must share one real element')
+        capture.assert_box(boxes[1],{x=0,y=0,width=200,height=60},'combined outer element')
+        capture.assert_box(boxes[2],{x=8,y=8,width=184,height=44},'distinct inset content')
         local found={}
         for _, hit in ipairs(host:find_widgets(2,2)) do found[hit.widget]=hit end
         assert(found[background] and found[margin] and not found[leaf],
             'padding lookup lost original objects or included the inset child')
-        capture.assert_box(found[background],boxes[2],'original background area')
-        capture.assert_box(found[margin],boxes[2],'original padding area')
+        capture.assert_box(found[background],boxes[1],'original background area')
+        capture.assert_box(found[margin],boxes[1],'original padding area')
         local list=host._drawable._clay_wired
         assert(list[background][1].element==list[margin][1].element,
             'aliases must name the same real solved element')
+        assert(list[background][1].element==host._drawable._clay_tree)
         assert(list[leaf][1].element~=list[margin][1].element)
         example.pixel(102,102,'#0000ff')
         example.pixel(110,110,'#ff0000')
@@ -56,10 +57,10 @@ runner.run_async(function()
         assert(popup.x==190 and popup.y==160,'folded padding attachment has the wrong area')
         local before=awesome._clay_tree(screen[1])
         local target=assert(before:match('POPUP [^\n]- target (%x+)'))
-        local target_line=assert(before:match('\n    '..target..' ([^\n]+)'),
-            'attachment target is not a real element')
-        assert(target_line:find('box 100,100 200x60',1,true),
-            'attachment alias did not name the combined outer element')
+        assert(tonumber(target,16)==list[margin][1].element.id,
+            'attachment target is not the original padding element')
+        capture.assert_box(list[margin][1].element.box,
+            {x=0,y=0,width=200,height=60}, 'attachment alias area')
         example.pixel(192,162,'#00ff00')
         host.x=200
         async.sleep(0.2)
@@ -90,8 +91,11 @@ runner.run_async(function()
     local host=wibox{screen=screen[1],x=100,y=100,width=200,height=60,
         visible=true,widget=wrapped}
     async.sleep(0.2)
-    assert(#awesome._test_widget_boxes(host.drawin)==2,
-        'zero-padding chain must share one content element under its host')
+    assert(#awesome._test_widget_boxes(host.drawin)==1,
+        'zero-padding chain must share its content element with the host')
+    for _,widget in ipairs(widgets) do
+        assert(host._drawable._clay_wired[widget][1].element==host._drawable._clay_tree)
+    end
     local hits=host:find_widgets(2,2)
     assert(#hits==257,'deep binding list lost an original widget')
     for i,hit in ipairs(hits) do

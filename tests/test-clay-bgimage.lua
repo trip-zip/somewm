@@ -72,10 +72,9 @@ local steps = {
             assert(count < 20, "the background never converted")
             return nil
         end
-        assert(head:find("converted: 5 nodes, 1 images", 1, true), head)
+        assert(head:find("converted: 4 nodes, 1 images", 1, true), head)
         check_box(dump:match("[^\n]* image 20x20 natural [^\n]*"), 0, 0, 100, 60)
         local backgrounds = dump:gmatch("[^\n]*wibox.container.background[^\n]*")
-        backgrounds()
         check_box(backgrounds(), 10, 10, 80, 40)
         assert(pixel(2, 2, "#ff0000"), "the image does not paint over the fill")
         assert(pixel(15, 15, "#0000ff"), "the child does not paint over the image")
@@ -92,7 +91,7 @@ local steps = {
         end
         local dump, head = nodes()
 
-        assert(head and head:find("converted: 4 nodes, 0 images", 1, true), head)
+        assert(head and head:find("converted: 3 nodes, 0 images", 1, true), head)
         assert(not dump:find(" image ", 1, true), "the cleared background still has an image")
         assert(pixel(2, 2, "#00ff00"), "the cleared image hides the fill")
         assert(pixel(15, 15, "#0000ff"), "the child colour is missing")

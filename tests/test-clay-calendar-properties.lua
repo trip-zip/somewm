@@ -5,7 +5,7 @@ local wibox=require('wibox')
 local awful=require('awful')
 local example=require('_clay_example')
 local check=require('_clay_grid_presentation')
-local solver=dofile('tests/clay/grid-helper.lua')
+local solver=dofile('tests/_grid_solver.lua')
 runner.run_async(function()
     for _,kind in ipairs{'month','year'} do
         local cal=wibox.widget.calendar[kind](nil,'monospace 10')

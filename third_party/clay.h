@@ -13,6 +13,7 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include <stddef.h>
+#include <string.h>
 
 // SIMD includes on supported platforms
 #if !defined(CLAY_DISABLE_SIMD) && (defined(__x86_64__) || defined(_M_X64) || defined(_M_AMD64))
@@ -355,7 +356,6 @@ typedef struct Clay_LayoutConfig {
     uint16_t childGap; // Controls the gap in pixels between child elements along the layout axis (horizontal gap for LEFT_TO_RIGHT, vertical gap for TOP_TO_BOTTOM).
     Clay_ChildAlignment childAlignment; // Controls how child elements are aligned on each axis.
     Clay_LayoutDirection layoutDirection; // Controls the direction in which child elements will be automatically laid out.
-    bool ceilGrow; // Local: round leading GROW allocations up to whole pixels; the last retains the remainder within its minimum.
     bool sizeContain; // Local: children do not contribute intrinsic size; own sizing/padding still constrain this allocation. No clipping.
 } Clay_LayoutConfig;
 
@@ -544,9 +544,7 @@ typedef struct Clay_ClipElementConfig {
     bool horizontal; // Clip overflowing elements on the X axis.
     bool vertical; // Clip overflowing elements on the Y axis.
     bool passive; // Local extension: clip with authored offsets, without scrolling state or input.
-    bool toPadding; // Local extension: clip children to the padded content box; keep the outer border outside this clip.
     Clay_Vector2 childOffset; // Offsets the x,y positions of all child elements. Used primarily for scrolling containers.
-    void *userData; // Optional clip-command metadata, independent of the element's paint metadata.
 } Clay_ClipElementConfig;
 
 CLAY__WRAPPER_STRUCT(Clay_ClipElementConfig);
@@ -912,7 +910,9 @@ typedef CLAY_PACKED_ENUM {
     CLAY_ERROR_TYPE_INTERNAL_ERROR,
     // Clay__OpenElement was called more times than Clay__CloseElement, so there were still remaining open elements when the layout ended.
     CLAY_ERROR_TYPE_UNBALANCED_OPEN_CLOSE,
-    CLAY_ERROR_TYPE_HASH_MAP_CAPACITY_EXCEEDED
+    CLAY_ERROR_TYPE_HASH_MAP_CAPACITY_EXCEEDED,
+    // Local: a bounded working array is full; distinct from invalid indexing.
+    CLAY_ERROR_TYPE_ARRAY_CAPACITY_EXCEEDED
 } Clay_ErrorType;
 
 // Data to identify the error that clay has encountered.
@@ -947,7 +947,15 @@ typedef struct {
 
 // Public API functions ------------------------------------------
 
-// Returns the size, in bytes, of the minimum amount of memory Clay requires to operate at its current settings.
+// Local: transaction backup of used arrays, restored to their original addresses.
+CLAY_DLL_EXPORT size_t Clay__StateSize(void);
+CLAY_DLL_EXPORT bool Clay__StateSave(void *memory, size_t capacity);
+CLAY_DLL_EXPORT void Clay__StateRestore(const void *memory);
+typedef struct { int32_t elements, capacity, map, freeIds, transitions; } Clay__CapacityData;
+CLAY_DLL_EXPORT Clay__CapacityData Clay__Capacity(void);
+CLAY_DLL_EXPORT bool Clay__ReferencesMemory(const void *memory, size_t size, uintptr_t mask);
+
+// Returns the minimum arena size for the current capacity settings.
 CLAY_DLL_EXPORT uint32_t Clay_MinMemorySize(void);
 // Creates an arena for clay to use for its internal allocations, given a certain capacity in bytes and a pointer to an allocation of at least that size.
 // Intended to be used with Clay_MinMemorySize in the following way:
@@ -1117,7 +1125,7 @@ typeName *arrayName##_GetCheckCapacity(arrayName *array, int32_t index) {       
 }                                                                                                               \
                                                                                                                 \
 typeName *arrayName##_Add(arrayName *array, typeName item) {                                                    \
-    if (Clay__Array_AddCapacityCheck(array->length, array->capacity)) {                                         \
+    if (Clay__RetainedCapacityCheck(array->internalArray, array->length, array->capacity)) {                                         \
         array->internalArray[array->length++] = item;                                                           \
         return &array->internalArray[array->length - 1];                                                        \
     }                                                                                                           \
@@ -1202,6 +1210,7 @@ Clay__Warning *Clay__WarningArray_Add(Clay__WarningArray *array, Clay__Warning i
 void* Clay__Array_Allocate_Arena(int32_t capacity, uint32_t itemSize, Clay_Arena *arena);
 bool Clay__Array_RangeCheck(int32_t index, int32_t length);
 bool Clay__Array_AddCapacityCheck(int32_t length, int32_t capacity);
+bool Clay__RetainedCapacityCheck(void *array, int32_t length, int32_t capacity);
 
 CLAY__ARRAY_DEFINE(bool, Clay__boolArray)
 CLAY__ARRAY_DEFINE(int32_t, Clay__int32_tArray)
@@ -1415,6 +1424,14 @@ Clay_Context* Clay__Context_Allocate_Arena(Clay_Arena *arena) {
 }
 
 Clay_String Clay__WriteStringToCharBuffer(Clay__charArray *buffer, Clay_String string) {
+    if (string.length > buffer->capacity - buffer->length) {
+        Clay_Context *c = Clay_GetCurrentContext();
+        c->errorHandler.errorHandlerFunction(CLAY__INIT(Clay_ErrorData) {
+            .errorType = CLAY_ERROR_TYPE_ARRAY_CAPACITY_EXCEEDED,
+            .errorText = CLAY_STRING("Clay inspector string buffer capacity exhausted."),
+            .userData = c->errorHandler.userData });
+        return CLAY__STRING_DEFAULT;
+    }
     for (int32_t i = 0; i < string.length; i++) {
         buffer->internalArray[buffer->length + i] = string.chars[i];
     }
@@ -1810,16 +1827,6 @@ bool Clay__PointIsInsideRect(Clay_Vector2 point, Clay_BoundingBox rect) {
 
 Clay_LayoutElementHashMapItem* Clay__AddHashMapItem(Clay_ElementId elementId, Clay_LayoutElement* layoutElement) {
     Clay_Context* context = Clay_GetCurrentContext();
-    if (context->layoutElementsHashMapInternal.length == context->layoutElementsHashMapInternal.capacity - 1) {
-        if (!context->booleanWarnings.hashMapCapacityExceeded) {
-            context->errorHandler.errorHandlerFunction(CLAY__INIT(Clay_ErrorData) {
-                .errorType = CLAY_ERROR_TYPE_HASH_MAP_CAPACITY_EXCEEDED,
-                .errorText = CLAY_STRING("Clay has run out of space in it's internal element ID hashmap.  Try using Clay_SetMaxElementCount() with a higher value."),
-                .userData = context->errorHandler.userData });
-            context->booleanWarnings.hashMapCapacityExceeded = true;
-        }
-        return NULL;
-    }
     Clay_LayoutElementHashMapItem item = { .elementId = elementId, .layoutElement = layoutElement, .nextIndex = -1, .generation = context->generation + 1, .appearedThisFrame = true };
     uint32_t hashBucket = elementId.id % context->layoutElementsHashMap.capacity;
     int32_t hashItemPrevious = -1;
@@ -1851,6 +1858,16 @@ Clay_LayoutElementHashMapItem* Clay__AddHashMapItem(Clay_ElementId elementId, Cl
         hashItemIndex = hashItem->nextIndex;
     }
 
+    if (context->layoutElementsHashMapFreeList.length == 0 && context->layoutElementsHashMapInternal.length >= context->layoutElementsHashMapInternal.capacity - 1) {
+        if (!context->booleanWarnings.hashMapCapacityExceeded) {
+            context->errorHandler.errorHandlerFunction(CLAY__INIT(Clay_ErrorData) {
+                .errorType = CLAY_ERROR_TYPE_HASH_MAP_CAPACITY_EXCEEDED,
+                .errorText = CLAY_STRING("Clay has run out of space in it's internal element ID hashmap.  Try using Clay_SetMaxElementCount() with a higher value."),
+                .userData = context->errorHandler.userData });
+            context->booleanWarnings.hashMapCapacityExceeded = true;
+        }
+        return NULL;
+    }
     int32_t indexToUse = 0;
     if (context->layoutElementsHashMapFreeList.length > 0) {
         indexToUse = Clay__int32_tArray_GetValue(&context->layoutElementsHashMapFreeList, context->layoutElementsHashMapFreeList.length - 1);
@@ -2107,8 +2124,14 @@ bool Clay__MemCmp(const char *s1, const char *s2, int32_t length);
 
 void Clay__OpenElement(void) {
     Clay_Context* context = Clay_GetCurrentContext();
-    if (context->layoutElements.length == context->layoutElements.capacity - 1 || context->booleanWarnings.maxElementsExceeded) {
-        context->booleanWarnings.maxElementsExceeded = true;
+    if (context->layoutElements.length >= context->layoutElements.capacity - context->exitingElementsLength - 1 || context->booleanWarnings.maxElementsExceeded) {
+        if (!context->booleanWarnings.maxElementsExceeded) {
+            context->booleanWarnings.maxElementsExceeded = true;
+            context->errorHandler.errorHandlerFunction(CLAY__INIT(Clay_ErrorData) {
+                .errorType = CLAY_ERROR_TYPE_ELEMENTS_CAPACITY_EXCEEDED,
+                .errorText = CLAY_STRING("Clay layout element capacity exhausted."),
+                .userData = context->errorHandler.userData });
+        }
         return;
     }
     Clay_LayoutElement layoutElement = CLAY__DEFAULT_STRUCT;
@@ -2130,8 +2153,14 @@ void Clay__OpenElement(void) {
 
 void Clay__OpenElementWithId(Clay_ElementId elementId) {
     Clay_Context* context = Clay_GetCurrentContext();
-    if (context->layoutElements.length == context->layoutElements.capacity - 1 || context->booleanWarnings.maxElementsExceeded) {
-        context->booleanWarnings.maxElementsExceeded = true;
+    if (context->layoutElements.length >= context->layoutElements.capacity - context->exitingElementsLength - 1 || context->booleanWarnings.maxElementsExceeded) {
+        if (!context->booleanWarnings.maxElementsExceeded) {
+            context->booleanWarnings.maxElementsExceeded = true;
+            context->errorHandler.errorHandlerFunction(CLAY__INIT(Clay_ErrorData) {
+                .errorType = CLAY_ERROR_TYPE_ELEMENTS_CAPACITY_EXCEEDED,
+                .errorText = CLAY_STRING("Clay layout element capacity exhausted."),
+                .userData = context->errorHandler.userData });
+        }
         return;
     }
     Clay_LayoutElement layoutElement = CLAY__DEFAULT_STRUCT;
@@ -2160,8 +2189,14 @@ void Clay__OpenTextElementWithLayout(Clay_ElementId id, Clay_String text, Clay_T
             .userData = context->errorHandler.userData });
         return;
     }
-    if (context->layoutElements.length == context->layoutElements.capacity - 1 || context->booleanWarnings.maxElementsExceeded) {
-        context->booleanWarnings.maxElementsExceeded = true;
+    if (context->layoutElements.length >= context->layoutElements.capacity - context->exitingElementsLength - 1 || context->booleanWarnings.maxElementsExceeded) {
+        if (!context->booleanWarnings.maxElementsExceeded) {
+            context->booleanWarnings.maxElementsExceeded = true;
+            context->errorHandler.errorHandlerFunction(CLAY__INIT(Clay_ErrorData) {
+                .errorType = CLAY_ERROR_TYPE_ELEMENTS_CAPACITY_EXCEEDED,
+                .errorText = CLAY_STRING("Clay layout element capacity exhausted."),
+                .userData = context->errorHandler.userData });
+        }
         return;
     }
     Clay_LayoutElement *parentElement = Clay__GetOpenLayoutElement();
@@ -2684,36 +2719,6 @@ void Clay__SizeContainersAlongAxis(bool xAxis, float deltaTime, Clay__int32_tArr
                         }
                     }
                 }
-                // Local whole-pixel policy for layouts whose leading equal
-                // shares round up. This uses the native axis allocation and
-                // never changes authored sizing or rounds FIXED/PERCENT/FIT.
-                if (parent->config.layout.ceilGrow && growContainerCount > 1) {
-                    int32_t lastGrow = -1;
-                    float remaining = parentSize - totalPaddingAndChildGaps;
-                    for (int32_t growOffset = 0; growOffset < parent->children.length; growOffset++) {
-                        Clay_LayoutElement *child = Clay_LayoutElementArray_Get(&context->layoutElements, parent->children.elements[growOffset]);
-                        if (child->exiting) continue;
-                        if (Clay__GetElementSizing(child, xAxis).type == CLAY__SIZING_TYPE_GROW) lastGrow = growOffset;
-                        else remaining -= xAxis ? child->dimensions.width : child->dimensions.height;
-                    }
-                    for (int32_t growOffset = 0; growOffset <= lastGrow; growOffset++) {
-                        Clay_LayoutElement *child = Clay_LayoutElementArray_Get(&context->layoutElements, parent->children.elements[growOffset]);
-                        Clay_SizingAxis sizing = Clay__GetElementSizing(child, xAxis);
-                        if (child->exiting || sizing.type != CLAY__SIZING_TYPE_GROW) continue;
-                        float *size = xAxis ? &child->dimensions.width : &child->dimensions.height;
-                        if (growOffset == lastGrow) {
-                            float minimum = xAxis ? child->minDimensions.width : child->minDimensions.height;
-                            *size = CLAY__MAX(minimum, CLAY__MIN(remaining, sizing.size.minMax.max));
-                        } else if (*size > 0 && *size < 16777216) {
-                            // Larger positive floats already have no fraction.
-                            float rounded = (float)(uint32_t)*size;
-                            if (rounded < *size) rounded += 1;
-                            rounded = CLAY__MIN(rounded, sizing.size.minMax.max);
-                            *size = rounded;
-                        }
-                        remaining -= *size;
-                    }
-                }
             // Sizing along the non layout axis ("off axis")
             } else {
                 for (int32_t childOffset = 0; childOffset < resizableContainerBuffer.length; childOffset++) {
@@ -2800,17 +2805,6 @@ static bool Clay__IsBackdropCommand(Clay_RenderCommand *command) {
             command->commandType != CLAY_RENDER_COMMAND_TYPE_RECTANGLE) return false;
     Clay_LayoutElement *element = Clay__GetHashMapItem(command->id)->layoutElement;
     return element && !element->isTextElement && element->config.backgroundBeforeRoots;
-}
-
-static Clay_BoundingBox Clay__ClipBounds(Clay_LayoutElement *element, Clay_BoundingBox box) {
-    if (element->config.clip.toPadding) {
-        Clay_Padding padding = element->config.layout.padding;
-        box.x += padding.left;
-        box.y += padding.top;
-        box.width = CLAY__MAX(0, box.width - padding.left - padding.right);
-        box.height = CLAY__MAX(0, box.height - padding.top - padding.bottom);
-    }
-    return box;
 }
 
 void Clay__CalculateFinalLayout(float deltaTime, bool useStoredBoundingBoxes, bool generateRenderCommands) {
@@ -3047,7 +3041,7 @@ void Clay__CalculateFinalLayout(float deltaTime, bool useStoredBoundingBoxes, bo
                 }
                 if (generateRenderCommands) {
                     Clay__AddRenderCommand(CLAY__INIT(Clay_RenderCommand) {
-                        .boundingBox = Clay__ClipBounds(clipHashMapItem->layoutElement, clipHashMapItem->boundingBox),
+                        .boundingBox = clipHashMapItem->boundingBox,
                         .userData = 0,
                         .id = Clay__HashNumber(rootElement->id, rootElement->children.length + 10).id, // TODO need a better strategy for managing derived ids
                         .zIndex = root->zIndex,
@@ -3093,13 +3087,6 @@ void Clay__CalculateFinalLayout(float deltaTime, bool useStoredBoundingBoxes, bo
                         }
                     }
 
-                    if (closeClipElement && currentElement->config.clip.toPadding) {
-                        Clay__AddRenderCommand(CLAY__INIT(Clay_RenderCommand) {
-                            .id = Clay__HashNumber(currentElement->id, rootElement->children.length + 11).id,
-                            .commandType = CLAY_RENDER_COMMAND_TYPE_SCISSOR_END,
-                        });
-                        closeClipElement = false;
-                    }
                     if (Clay__BorderHasAnyWidth(&currentElement->config.border)) {
                         Clay_BoundingBox currentElementBoundingBox = currentElementData->boundingBox;
                         Clay_BorderElementConfig *borderConfig = &currentElement->config.border;
@@ -3341,15 +3328,14 @@ void Clay__CalculateFinalLayout(float deltaTime, bool useStoredBoundingBoxes, bo
                     }
                     if (currentElement->config.clip.horizontal || currentElement->config.clip.vertical) {
                         Clay_RenderCommand renderCommand = {
-                            .boundingBox = Clay__ClipBounds(currentElement, currentElementBoundingBox),
+                            .boundingBox = currentElementBoundingBox,
                             .renderData = {
                                 .clip = {
                                     .horizontal = currentElement->config.clip.horizontal,
                                     .vertical = currentElement->config.clip.vertical,
                                 }
                             },
-                            .userData = currentElement->config.clip.userData
-                                ? currentElement->config.clip.userData : currentElement->config.userData,
+                            .userData = currentElement->config.userData,
                             .id = currentElement->id,
                             .zIndex = root->zIndex,
                             .commandType = CLAY_RENDER_COMMAND_TYPE_SCISSOR_START,
@@ -3584,7 +3570,16 @@ typedef struct {
     int32_t selectedElementRowIndex;
 } Clay__RenderDebugLayoutData;
 
-// Returns row count
+// Local: indentation is row padding, so hidden ancestors declare no containers.
+static bool Clay__DebugVisibleRow(int32_t row, int32_t first, int32_t last) {
+    if (row < first || row > last) return false;
+    if (row == first && first > 0) {
+        CLAY(CLAY_ID("Clay__DebugRowsBefore"), { .layout.sizing.height = CLAY_SIZING_FIXED((float)first * CLAY__DEBUGVIEW_ROW_HEIGHT) }) {}
+    }
+    return true;
+}
+
+// Returns the full row count, including hidden rows and text previews.
 Clay__RenderDebugLayoutData Clay__RenderDebugLayoutElementsList(int32_t initialRootsLength, int32_t highlightedRowIndex) {
     Clay_Context* context = Clay_GetCurrentContext();
     Clay__int32_tArray dfsBuffer = context->reusableElementIndexBuffer;
@@ -3592,35 +3587,31 @@ Clay__RenderDebugLayoutData Clay__RenderDebugLayoutElementsList(int32_t initialR
     Clay__RenderDebugLayoutData layoutData = CLAY__DEFAULT_STRUCT;
 
     uint32_t highlightedElementId = 0;
+    Clay_ScrollContainerData pane = Clay_GetScrollContainerData(CLAY_ID("Clay__DebugViewOuterScrollPane"));
+    float offset = pane.found ? -pane.scrollPosition->y : 0;
+    float height = CLAY__MAX(0, context->layoutDimensions.height - CLAY__DEBUGVIEW_ROW_HEIGHT - 302);
+    int32_t first = CLAY__MAX(0, (int32_t)(offset / CLAY__DEBUGVIEW_ROW_HEIGHT) - 2);
+    int32_t last = (int32_t)((offset + height) / CLAY__DEBUGVIEW_ROW_HEIGHT) + 3;
 
     for (int32_t rootIndex = 0; rootIndex < initialRootsLength; ++rootIndex) {
         dfsBuffer.length = 0;
         Clay__LayoutElementTreeRoot *root = Clay__LayoutElementTreeRootArray_Get(&context->layoutElementTreeRoots, rootIndex);
         Clay__int32_tArray_Add(&dfsBuffer, (int32_t)root->layoutElementIndex);
-        context->treeNodeVisited.internalArray[0] = false;
+        context->layoutElementTreeNodeArray1.internalArray[0].position.x = 0;
         if (rootIndex > 0) {
+            if (Clay__DebugVisibleRow(layoutData.rowCount, first, last)) {
             CLAY(CLAY_IDI("Clay__DebugView_EmptyRowOuter", rootIndex), { .layout = { .sizing = {.width = CLAY_SIZING_GROW(0)}, .padding = {CLAY__DEBUGVIEW_INDENT_WIDTH / 2, 0, 0, 0} } }) {
                 CLAY(CLAY_IDI("Clay__DebugView_EmptyRow", rootIndex), { .layout = { .sizing = { .width = CLAY_SIZING_GROW(0), .height = CLAY_SIZING_FIXED((float)CLAY__DEBUGVIEW_ROW_HEIGHT) }}, .border = { .color = CLAY__DEBUGVIEW_COLOR_3, .width = { .top = 1 } } }) {}
+            }
             }
             layoutData.rowCount++;
         }
         while (dfsBuffer.length > 0) {
             int32_t currentElementIndex = Clay__int32_tArray_GetValue(&dfsBuffer, (int)dfsBuffer.length - 1);
             Clay_LayoutElement *currentElement = Clay_LayoutElementArray_Get(&context->layoutElements, (int)currentElementIndex);
-            if (context->treeNodeVisited.internalArray[dfsBuffer.length - 1]) {
-                if (!currentElement->isTextElement && currentElement->children.length > 0) {
-                    Clay__CloseElement();
-                    Clay__CloseElement();
-                    Clay__CloseElement();
-                }
-                dfsBuffer.length--;
-                continue;
-            }
-
-            if (currentElement->exiting) { // TODO there is a duplicate ID problem with exiting elements
-                dfsBuffer.length--;
-                continue;
-            }
+            int32_t depth = (int32_t)context->layoutElementTreeNodeArray1.internalArray[dfsBuffer.length - 1].position.x;
+            dfsBuffer.length--;
+            if (currentElement->exiting) continue;
 
             if (highlightedRowIndex == layoutData.rowCount) {
                 if (context->pointerInfo.state == CLAY_POINTER_DATA_PRESSED_THIS_FRAME) {
@@ -3629,12 +3620,13 @@ Clay__RenderDebugLayoutData Clay__RenderDebugLayoutElementsList(int32_t initialR
                 highlightedElementId = currentElement->id;
             }
 
-            context->treeNodeVisited.internalArray[dfsBuffer.length - 1] = true;
             Clay_LayoutElementHashMapItem *currentElementData = Clay__GetHashMapItem(currentElement->id);
             bool offscreen = Clay__ElementIsOffscreen(&currentElementData->boundingBox);
             if (context->debugSelectedElementId == currentElement->id) {
                 layoutData.selectedElementRowIndex = layoutData.rowCount;
             }
+            if (Clay__DebugVisibleRow(layoutData.rowCount, first, last)) {
+            Clay__DebugView_ScrollViewItemLayoutConfig.padding.left = (uint16_t)CLAY__MIN(depth * (CLAY__DEBUGVIEW_INDENT_WIDTH + 8), 65535);
             CLAY(CLAY_IDI("Clay__DebugView_ElementOuter", currentElement->id), { .layout = Clay__DebugView_ScrollViewItemLayoutConfig }) {
                 // Collapse icon / button
                 if (!(currentElement->isTextElement || currentElement->children.length == 0)) {
@@ -3716,12 +3708,14 @@ Clay__RenderDebugLayoutData Clay__RenderDebugLayoutElementsList(int32_t initialR
                 }
             }
 
+            }
             // Render the text contents below the element as a non-interactive row
             if (currentElement->isTextElement) {
                 layoutData.rowCount++;
+                if (Clay__DebugVisibleRow(layoutData.rowCount, first, last)) {
                 Clay__TextElementData *textElementData = &currentElement->textElementData;
                 Clay_TextElementConfig rawTextConfig = offscreen ? CLAY__INIT(Clay_TextElementConfig) { .textColor = CLAY__DEBUGVIEW_COLOR_3, .fontSize = 16 } : Clay__DebugView_TextNameConfig;
-                CLAY_AUTO_ID({ .layout = { .sizing = { .height = CLAY_SIZING_FIXED(CLAY__DEBUGVIEW_ROW_HEIGHT)}, .childAlignment = { .y = CLAY_ALIGN_Y_CENTER } } }) {
+                CLAY(CLAY_IDI("Clay__DebugTextPreview", currentElement->id), { .layout = { .padding.left = (uint16_t)CLAY__MIN(depth * (CLAY__DEBUGVIEW_INDENT_WIDTH + 8), 65535), .sizing = { .height = CLAY_SIZING_FIXED(CLAY__DEBUGVIEW_ROW_HEIGHT)}, .childAlignment = { .y = CLAY_ALIGN_Y_CENTER } } }) {
                     CLAY_AUTO_ID({ .layout = { .sizing = {.width = CLAY_SIZING_FIXED(CLAY__DEBUGVIEW_INDENT_WIDTH + 16) } } }) {}
                     CLAY_TEXT(CLAY_STRING("\""), rawTextConfig);
                     CLAY_TEXT(textElementData->text.length > 40 ? (CLAY__INIT(Clay_String) { .length = 40, .chars = textElementData->text.chars }) : textElementData->text, rawTextConfig);
@@ -3730,23 +3724,22 @@ Clay__RenderDebugLayoutData Clay__RenderDebugLayoutElementsList(int32_t initialR
                     }
                     CLAY_TEXT(CLAY_STRING("\""), rawTextConfig);
                 }
-            } else if (currentElement->children.length > 0) {
-                Clay__OpenElement();
-                Clay__ConfigureOpenElement(CLAY__INIT(Clay_ElementDeclaration) { .layout = { .padding = { .left = 8 } } });
-                Clay__OpenElement();
-                Clay__ConfigureOpenElement(CLAY__INIT(Clay_ElementDeclaration) { .layout = { .padding = { .left = CLAY__DEBUGVIEW_INDENT_WIDTH }}, .border = { .color = CLAY__DEBUGVIEW_COLOR_3, .width = { .left = 1 } }});
-                Clay__OpenElement();
-                Clay__ConfigureOpenElement(CLAY__INIT(Clay_ElementDeclaration) { .layout = { .layoutDirection = CLAY_TOP_TO_BOTTOM } });
+                }
             }
 
             layoutData.rowCount++;
             if (!(currentElement->isTextElement || (currentElementData && currentElementData->debugData.collapsed))) {
                 for (int32_t i = currentElement->children.length - 1; i >= 0; --i) {
                     Clay__int32_tArray_Add(&dfsBuffer, currentElement->children.elements[i]);
-                    context->treeNodeVisited.internalArray[dfsBuffer.length - 1] = false; // TODO needs to be ranged checked
+                    context->layoutElementTreeNodeArray1.internalArray[dfsBuffer.length - 1].position.x = (float)(depth + 1);
                 }
             }
         }
+    }
+
+    int32_t skipped = layoutData.rowCount <= first ? layoutData.rowCount : CLAY__MAX(0, layoutData.rowCount - last - 1);
+    if (skipped) {
+        CLAY(CLAY_ID("Clay__DebugRowsAfter"), { .layout.sizing.height = CLAY_SIZING_FIXED((float)skipped * CLAY__DEBUGVIEW_ROW_HEIGHT) }) {}
     }
 
     if (context->pointerInfo.state == CLAY_POINTER_DATA_PRESSED_THIS_FRAME) {
@@ -3916,7 +3909,13 @@ void Clay__RenderDebugView(void) {
                 }
                 float contentWidth = Clay__GetHashMapItem(panelContentsId.id)->layoutElement->dimensions.width;
                 CLAY_AUTO_ID({ .layout = { .sizing = {.width = CLAY_SIZING_FIXED(contentWidth) }, .layoutDirection = CLAY_TOP_TO_BOTTOM } }) {}
-                for (int32_t i = 0; i < layoutData.rowCount; i++) {
+                float viewport = CLAY__MAX(0, context->layoutDimensions.height - CLAY__DEBUGVIEW_ROW_HEIGHT - 302);
+                int32_t firstRow = CLAY__MIN(layoutData.rowCount, CLAY__MAX(0, (int32_t)(-scrollYOffset / CLAY__DEBUGVIEW_ROW_HEIGHT) - 2));
+                int32_t endRow = CLAY__MIN(layoutData.rowCount, (int32_t)((-scrollYOffset + viewport) / CLAY__DEBUGVIEW_ROW_HEIGHT) + 4);
+                if (firstRow) {
+                    CLAY(CLAY_ID("Clay__DebugStripesBefore"), { .layout.sizing.height = CLAY_SIZING_FIXED((float)firstRow * CLAY__DEBUGVIEW_ROW_HEIGHT) }) {}
+                }
+                for (int32_t i = firstRow; i < endRow; i++) {
                     Clay_Color rowColor = (i & 1) == 0 ? CLAY__DEBUGVIEW_COLOR_2 : CLAY__DEBUGVIEW_COLOR_1;
                     if (i == layoutData.selectedElementRowIndex) {
                         rowColor = CLAY__DEBUGVIEW_COLOR_SELECTED_ROW;
@@ -3926,7 +3925,10 @@ void Clay__RenderDebugView(void) {
                         rowColor.g *= 1.25f;
                         rowColor.b *= 1.25f;
                     }
-                    CLAY_AUTO_ID({ .layout = { .sizing = {CLAY_SIZING_GROW(0), CLAY_SIZING_FIXED(CLAY__DEBUGVIEW_ROW_HEIGHT)}, .layoutDirection = CLAY_TOP_TO_BOTTOM }, .backgroundColor = rowColor } ) {}
+                    CLAY(CLAY_IDI("Clay__DebugStripe", i), { .layout = { .sizing = {CLAY_SIZING_GROW(0), CLAY_SIZING_FIXED(CLAY__DEBUGVIEW_ROW_HEIGHT)}, .layoutDirection = CLAY_TOP_TO_BOTTOM }, .backgroundColor = rowColor } ) {}
+                }
+                if (endRow < layoutData.rowCount) {
+                    CLAY(CLAY_ID("Clay__DebugStripesAfter"), { .layout.sizing.height = CLAY_SIZING_FIXED((float)(layoutData.rowCount - endRow) * CLAY__DEBUGVIEW_ROW_HEIGHT) }) {}
                 }
             }
         }
@@ -4004,10 +4006,6 @@ void Clay__RenderDebugView(void) {
                         if (layoutConfig->sizeContain) {
                             CLAY_TEXT(CLAY_STRING("Size Containment"), infoTitleConfig);
                             CLAY_TEXT(CLAY_STRING("Own sizing and padding"), infoTextConfig);
-                        }
-                        if (layoutConfig->ceilGrow) {
-                            CLAY_TEXT(CLAY_STRING("Grow Rounding"), infoTitleConfig);
-                            CLAY_TEXT(CLAY_STRING("Leading ceil, last remainder"), infoTextConfig);
                         }
                         // .childAlignment
                         CLAY_TEXT(CLAY_STRING("Child Alignment"), infoTitleConfig);
@@ -4253,8 +4251,6 @@ void Clay__RenderDebugView(void) {
                             CLAY_TEXT(clipConfig->horizontal ? CLAY_STRING("true") : CLAY_STRING("false") , infoTextConfig);
                             CLAY_TEXT(CLAY_STRING("Passive"), infoTitleConfig);
                             CLAY_TEXT(clipConfig->passive ? CLAY_STRING("true") : CLAY_STRING("false"), infoTextConfig);
-                            CLAY_TEXT(CLAY_STRING("To Padding"), infoTitleConfig);
-                            CLAY_TEXT(clipConfig->toPadding ? CLAY_STRING("true") : CLAY_STRING("false"), infoTextConfig);
                         }
                     }
                     Clay_BorderElementConfig *borderConfig = &selectedItem->layoutElement->config.border;
@@ -4362,6 +4358,13 @@ bool Clay__Array_RangeCheck(int32_t index, int32_t length)
     return false;
 }
 
+bool Clay__RetainedCapacityCheck(void *array, int32_t length, int32_t capacity) {
+    Clay_Context *c = Clay_GetCurrentContext();
+    if (c && array == c->layoutElements.internalArray) capacity -= c->exitingElementsLength;
+    if (c && array == c->layoutElementChildren.internalArray) capacity -= c->exitingElementsChildrenLength;
+    return Clay__Array_AddCapacityCheck(length, capacity);
+}
+
 bool Clay__Array_AddCapacityCheck(int32_t length, int32_t capacity)
 {
     if (length < capacity) {
@@ -4369,13 +4372,104 @@ bool Clay__Array_AddCapacityCheck(int32_t length, int32_t capacity)
     }
     Clay_Context* context = Clay_GetCurrentContext();
     context->errorHandler.errorHandlerFunction(CLAY__INIT(Clay_ErrorData) {
-        .errorType = CLAY_ERROR_TYPE_INTERNAL_ERROR,
-        .errorText = CLAY_STRING("Clay attempted to make an out of bounds array access. This is an internal error and is likely a bug."),
+        .errorType = CLAY_ERROR_TYPE_ARRAY_CAPACITY_EXCEEDED,
+        .errorText = CLAY_STRING("Clay bounded working array capacity exhausted."),
         .userData = context->errorHandler.userData });
     return false;
 }
 
 // PUBLIC API FROM HERE ---------------------------------------
+
+// Local: transient scratch is included only where it has a used prefix. Bucket
+// arrays are fully initialized; retained exit subtrees occupy separate tails.
+static size_t Clay__TransferState(void *memory, bool restore) {
+    Clay_Context *context = Clay_GetCurrentContext();
+    unsigned char *bytes = (unsigned char *)memory;
+    size_t offset = sizeof(*context);
+    if (memory) {
+        if (restore) memcpy(context, bytes, sizeof(*context));
+        else memcpy(bytes, context, sizeof(*context));
+    }
+#define COPY(address, size) do { \
+    size_t n = (size); \
+    if (memory && n) { \
+        if (restore) memcpy((address), bytes + offset, n); \
+        else memcpy(bytes + offset, (address), n); \
+    } \
+    offset += n; \
+} while (0)
+#define SPAN(name, count) COPY(context->name.internalArray, (size_t)context->name.count * sizeof(*context->name.internalArray))
+    SPAN(warnings, length);
+    SPAN(layoutElements, length);
+    SPAN(renderCommands, length);
+    SPAN(rootCommandBuffer, length);
+    SPAN(rootDeclarationOrder, length);
+    SPAN(openLayoutElementStack, length);
+    SPAN(layoutElementChildren, length);
+    SPAN(layoutElementChildrenBuffer, length);
+    SPAN(reusableElementIndexBuffer, length);
+    SPAN(layoutElementClipElementIds, length);
+    SPAN(layoutElementIdStrings, length);
+    SPAN(wrappedTextLines, length);
+    SPAN(layoutElementTreeNodeArray1, length);
+    SPAN(layoutElementTreeRoots, length);
+    SPAN(layoutElementsHashMapInternal, length);
+    SPAN(layoutElementsHashMap, capacity);
+    SPAN(layoutElementsHashMapFreeList, length);
+    SPAN(measureTextHashMapInternal, length);
+    SPAN(measureTextHashMapInternalFreeList, length);
+    SPAN(measureTextHashMap, capacity);
+    SPAN(measuredWords, length);
+    SPAN(measuredWordsFreeList, length);
+    SPAN(openClipElementStack, length);
+    SPAN(pointerOverIds, length);
+    SPAN(scrollContainerDatas, length);
+    SPAN(transitionDatas, length);
+    SPAN(treeNodeVisited, length);
+    SPAN(dynamicStringData, length);
+
+#undef SPAN
+    COPY(context->layoutElements.internalArray + context->layoutElements.capacity - context->exitingElementsLength,
+        (size_t)context->exitingElementsLength * sizeof(Clay_LayoutElement));
+    COPY(context->layoutElementIdStrings.internalArray + context->layoutElementIdStrings.capacity - context->exitingElementsLength,
+        (size_t)context->exitingElementsLength * sizeof(Clay_String));
+    COPY(context->layoutElementChildren.internalArray + context->layoutElementChildren.capacity - context->exitingElementsChildrenLength,
+        (size_t)context->exitingElementsChildrenLength * sizeof(int32_t));
+#undef COPY
+    return offset;
+}
+size_t Clay__StateSize(void) { return Clay__TransferState(NULL, false); }
+bool Clay__StateSave(void *memory, size_t capacity) {
+    if (!memory || capacity < Clay__StateSize()) return false;
+    Clay__TransferState(memory, false);
+    return true;
+}
+void Clay__StateRestore(const void *memory) { Clay__TransferState((void *)memory, true); }
+bool Clay__ReferencesMemory(const void *memory, size_t size, uintptr_t mask) {
+    if (!memory || !size) return false;
+    Clay_Context *c = Clay_GetCurrentContext();
+    uintptr_t begin = (uintptr_t)memory;
+    for (int32_t i = 0; i < c->layoutElements.length + c->exitingElementsLength; i++) {
+        int32_t index = i < c->layoutElements.length ? i
+            : c->layoutElements.capacity - c->exitingElementsLength + i - c->layoutElements.length;
+        Clay_LayoutElement *element = &c->layoutElements.internalArray[index];
+        uintptr_t pointers[2] = {0};
+        if (element->isTextElement) pointers[0] = (uintptr_t)element->textElementData.text.chars;
+        else {
+            pointers[0] = (uintptr_t)element->config.image.imageData;
+            pointers[1] = (uintptr_t)element->config.custom.customData;
+        }
+        for (int j = 0; j < 2; j++)
+            if ((pointers[j] & mask) >= begin && (pointers[j] & mask) - begin < size) return true;
+    }
+    return false;
+}
+
+Clay__CapacityData Clay__Capacity(void) {
+    Clay_Context *c = Clay_GetCurrentContext();
+    return CLAY__INIT(Clay__CapacityData) {c->layoutElements.length, c->maxElementCount,
+        c->layoutElementsHashMapInternal.length, c->layoutElementsHashMapFreeList.length, c->transitionDatas.length};
+}
 
 CLAY_WASM_EXPORT("Clay_MinMemorySize")
 uint32_t Clay_MinMemorySize(void) {
@@ -4489,7 +4583,7 @@ void Clay_SetPointerState(Clay_Vector2 position, bool isPointerDown) {
                 Clay_BoundingBox elementBox = mapItem->boundingBox;
                 elementBox.x -= root->pointerOffset.x;
                 elementBox.y -= root->pointerOffset.y;
-                if ((Clay__PointIsInsideRect(position, elementBox)) && (clipElementId == 0 || (Clay__PointIsInsideRect(position, Clay__ClipBounds(clipItem->layoutElement, clipItem->boundingBox))) || context->externalScrollHandlingEnabled)) {
+                if ((Clay__PointIsInsideRect(position, elementBox)) && (clipElementId == 0 || (Clay__PointIsInsideRect(position, clipItem->boundingBox)) || context->externalScrollHandlingEnabled)) {
                     if (!skipTree) {
                         if (mapItem->onHoverFunction) {
                             mapItem->onHoverFunction(mapItem->elementId, context->pointerInfo, mapItem->hoverFunctionUserData);
@@ -4536,6 +4630,16 @@ CLAY_DLL_EXPORT Clay_PointerData Clay_GetPointerState(void) {
 
 CLAY_WASM_EXPORT("Clay_Initialize")
 Clay_Context* Clay_Initialize(Clay_Arena arena, Clay_Dimensions layoutDimensions, Clay_ErrorHandler errorHandler) {
+    // Local: reject incomplete storage before installing or writing a context.
+    if (!arena.memory || arena.capacity < Clay_MinMemorySize()) {
+        if (errorHandler.errorHandlerFunction) {
+            errorHandler.errorHandlerFunction(CLAY__INIT(Clay_ErrorData) {
+                .errorType = CLAY_ERROR_TYPE_ARENA_CAPACITY_EXCEEDED,
+                .errorText = CLAY_STRING("Clay context requires a complete, non-null arena."),
+                .userData = errorHandler.userData });
+        }
+        return NULL;
+    }
     // Cacheline align memory passed in
     uintptr_t baseOffset = 64 - ((uintptr_t)arena.memory % 64);
     baseOffset = baseOffset == 64 ? 0 : baseOffset;
@@ -4736,6 +4840,13 @@ void Clay__CloneElementsWithExitTransition() {
         if (data->transitionOut) {
             Clay__int32_tArray bfsBuffer = context->openLayoutElementStack;
             bfsBuffer.length = 0;
+            if (nextIndex < context->layoutElements.length) {
+                context->errorHandler.errorHandlerFunction(CLAY__INIT(Clay_ErrorData) {
+                    .errorType = CLAY_ERROR_TYPE_ELEMENTS_CAPACITY_EXCEEDED,
+                    .errorText = CLAY_STRING("Clay retained transition elements exceed remaining capacity."),
+                    .userData = context->errorHandler.userData });
+                return;
+            }
             Clay_LayoutElement* newElement = Clay_LayoutElementArray_Set_DontTouchLength(&context->layoutElements, nextIndex, *data->elementThisFrame);
             Clay__StringArray_Set_DontTouchLength(&context->layoutElementIdStrings, nextIndex, *Clay__StringArray_GetCheckCapacity(&context->layoutElementIdStrings, data->elementThisFrame - context->layoutElements.internalArray));
             Clay__int32_tArray_Add(&bfsBuffer, nextIndex);
@@ -4747,6 +4858,13 @@ void Clay__CloneElementsWithExitTransition() {
                 Clay_LayoutElement *layoutElement = Clay_LayoutElementArray_GetCheckCapacity(&context->layoutElements, Clay__int32_tArray_GetValue(&bfsBuffer, bufferIndex));
                 bufferIndex++;
                 for (int j = layoutElement->children.length - 1; j >= 0; --j) {
+                    if (nextIndex < context->layoutElements.length || nextChildIndex < context->layoutElementChildren.length) {
+                        context->errorHandler.errorHandlerFunction(CLAY__INIT(Clay_ErrorData) {
+                            .errorType = CLAY_ERROR_TYPE_ELEMENTS_CAPACITY_EXCEEDED,
+                            .errorText = CLAY_STRING("Clay retained transition subtree exceeds remaining capacity."),
+                            .userData = context->errorHandler.userData });
+                        return;
+                    }
                     Clay_LayoutElement* childElement = Clay_LayoutElementArray_GetCheckCapacity(&context->layoutElements, layoutElement->children.elements[j]);
                     Clay__int32_tArray_Add(&bfsBuffer, nextIndex);
                     Clay_LayoutElement* newChildElement = Clay_LayoutElementArray_Set_DontTouchLength(&context->layoutElements, nextIndex, *childElement);
@@ -4759,6 +4877,8 @@ void Clay__CloneElementsWithExitTransition() {
             }
         }
     }
+    context->exitingElementsLength = context->layoutElements.capacity - 1 - nextIndex;
+    context->exitingElementsChildrenLength = context->layoutElementChildren.capacity - 1 - nextChildIndex;
 };
 
 void Clay_ApplyTransitionedPropertiesToElement(Clay_LayoutElement* currentElement, Clay_TransitionProperty properties, Clay_TransitionData currentTransitionData, Clay_BoundingBox* boundingBox, bool reparented) {
@@ -4801,6 +4921,8 @@ void Clay_ApplyTransitionedPropertiesToElement(Clay_LayoutElement* currentElemen
 CLAY_WASM_EXPORT("Clay_EndLayout")
 Clay_RenderCommandArray Clay_EndLayout(float deltaTime) {
     Clay_Context* context = Clay_GetCurrentContext();
+    if (context->booleanWarnings.maxElementsExceeded || context->booleanWarnings.hashMapCapacityExceeded)
+        return context->renderCommands;
     Clay__CloseElement();
 
     if (context->openLayoutElementStack.length > 1) {
@@ -5167,6 +5289,10 @@ Clay_RenderCommandArray Clay_EndLayout(float deltaTime) {
         }
     }
 
+    if (!context->transitionDatas.length) {
+        context->exitingElementsLength = 0;
+        context->exitingElementsChildrenLength = 0;
+    }
     return context->renderCommands;
 }
 

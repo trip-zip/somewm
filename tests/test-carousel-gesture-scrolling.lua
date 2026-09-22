@@ -27,6 +27,7 @@ end
 local tag
 local c1, c2, c3
 local gesture_binding
+local last_start_geometry
 
 local steps = {
     -- Step 1: Set up carousel layout and gesture binding
@@ -83,6 +84,7 @@ local steps = {
     -- Focus c1 and let settle
     function(count)
         if count == 1 then
+            last_start_geometry = nil
             client.focus = c1
             c1:raise()
             awful.layout.arrange(screen.primary)
@@ -90,6 +92,12 @@ local steps = {
         end
 
         local g1 = c1:geometry()
+        local geometry = string.format("%d,%d,%d,%d", g1.x, g1.y, g1.width, g1.height)
+        if geometry ~= last_start_geometry then
+            assert(count < 30, "c1 geometry did not settle before swipe")
+            last_start_geometry = geometry
+            return nil
+        end
         io.stderr:write(string.format("[TEST] Before gesture: c1.x=%d\n", g1.x))
         rawset(_G, "_test_start_x", g1.x)
         return true
@@ -109,6 +117,12 @@ local steps = {
         -- During swipe, viewport should have moved
         local g1 = c1:geometry()
         local start_x = rawget(_G, "_test_start_x")
+        if not (g1.x < start_x) then
+            assert(count < 30,
+                string.format("Swipe left should scroll right: x=%d, was=%d",
+                    g1.x, start_x))
+            return nil
+        end
 
         io.stderr:write(string.format(
             "[TEST] During swipe: c1.x=%d (was %d)\n", g1.x, start_x))
@@ -196,4 +210,4 @@ local steps = {
     end,
 }
 
-runner.run_steps(steps, { kill_clients = false })
+runner.run_steps(steps, { kill_clients = false, wait_per_step = 3 })

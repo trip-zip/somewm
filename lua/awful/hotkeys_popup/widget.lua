@@ -719,13 +719,6 @@ function widget.new(args)
         end
         table.insert(pages, columns)
 
-        -- Function to place the widget in the center and account for the
-        -- workarea. This will be called in the placement field of the
-        -- awful.popup constructor.
-        local place_func = function(c)
-            awful.placement.centered(c, {honor_workarea = true})
-        end
-
         -- Construct the popup with the widget
         local mypopup = awful.popup {
             widget = pages[1],
@@ -736,7 +729,7 @@ function widget.new(args)
             border_width = self.border_width,
             border_color = self.border_color,
             shape = self.shape,
-            placement = place_func,
+            placement = "centered",
             minimum_width = wibox_width,
             minimum_height = wibox_height,
             screen = s,
