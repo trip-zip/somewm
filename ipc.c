@@ -91,6 +91,33 @@ ipc_init(struct wl_event_loop *event_loop)
 		         "%s/%s", runtime_dir, IPC_SOCKET_NAME);
 	}
 
+	size_t path_len = strlen(ipc_socket_path);
+	if (path_len >= sizeof(addr.sun_path)) {
+		fprintf(stderr, "IPC: Socket path too long (%zu >= %zu)\n",
+		        path_len, sizeof(addr.sun_path));
+		return -1;
+	}
+
+	/* Refuse to steal the path from a live compositor: probe the socket
+	 * before unlinking. A stale file (dead instance) fails connect() and is
+	 * safe to remove; a live one means another somewm owns this path. */
+	{
+		int probe = socket(AF_UNIX, SOCK_STREAM, 0);
+		if (probe >= 0) {
+			struct sockaddr_un probe_addr = {0};
+			probe_addr.sun_family = AF_UNIX;
+			memcpy(probe_addr.sun_path, ipc_socket_path, path_len + 1);
+			if (connect(probe, (struct sockaddr *)&probe_addr,
+			          sizeof(probe_addr)) == 0) {
+				close(probe);
+				fprintf(stderr, "IPC: %s is owned by a live instance; "
+				        "not rebinding\n", ipc_socket_path);
+				return -1;
+			}
+			close(probe);
+		}
+	}
+
 	/* Create socket */
 	ipc_socket_fd = socket(AF_UNIX, SOCK_STREAM, 0);
 	if (ipc_socket_fd < 0) {
@@ -103,14 +130,6 @@ ipc_init(struct wl_event_loop *event_loop)
 
 	/* Bind to path */
 	addr.sun_family = AF_UNIX;
-	size_t path_len = strlen(ipc_socket_path);
-	if (path_len >= sizeof(addr.sun_path)) {
-		fprintf(stderr, "IPC: Socket path too long (%zu >= %zu)\n",
-		        path_len, sizeof(addr.sun_path));
-		close(ipc_socket_fd);
-		ipc_socket_fd = -1;
-		return -1;
-	}
 	memcpy(addr.sun_path, ipc_socket_path, path_len + 1);
 
 	if (bind(ipc_socket_fd, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
