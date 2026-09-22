@@ -498,6 +498,10 @@ function spawn.easy_async_with_shell(cmd, callback)
     return spawn.easy_async({ shell, "-c", cmd or "" }, callback)
 end
 
+-- Cancellables of in-flight read_lines() calls, so "exit" can abort reads
+-- still pending when the state goes down.
+local pending_reads = setmetatable({}, { __mode = "k" })
+
 --- Read lines from a Gio input stream
 -- @tparam Gio.InputStream input_stream The input stream to read from.
 -- @tparam function line_callback Function that is called with each line
@@ -510,9 +514,10 @@ end
 function spawn.read_lines(input_stream, line_callback, done_callback, close)
     local stream = Gio.DataInputStream.new(input_stream)
     local cancellable = Gio.Cancellable()
+    pending_reads[cancellable] = true
     local function done()
+        pending_reads[cancellable] = nil
         if close then
-            cancellable:cancel()
             stream:close()
         end
         stream:set_buffer_size(0)
@@ -525,10 +530,14 @@ function spawn.read_lines(input_stream, line_callback, done_callback, close)
         stream:read_line_async(GLib.PRIORITY_DEFAULT, cancellable, finish_read)
     end
     finish_read = function(obj, res)
-        local line, length = obj:read_line_finish(res)
         if cancellable:is_cancelled() then
+            -- Cancelled by the "exit" handler during hot-reload teardown;
+            -- the stream still owns its fd.
+            pending_reads[cancellable] = nil
+            stream:close()
             return
         end
+        local line, length = obj:read_line_finish(res)
         if type(length) ~= "number" then
             -- Error
             print("Error in awful.spawn.read_lines:", tostring(length))
@@ -748,6 +757,16 @@ function spawn.raise_or_spawn(cmd, rules, matcher, unique_id, callback)
 
     return nil
 end
+
+-- Hot-reload emits "exit" and drains the main context before sweeping the
+-- GLib sources this state attached. Cancelling here lets each pending read
+-- return its GTask inside that drain, where the sweep would otherwise
+-- finalize it without it ever returning.
+capi.awesome.connect_signal("exit", function()
+    for cancellable in pairs(pending_reads) do
+        cancellable:cancel()
+    end
+end)
 
 capi.awesome.connect_signal("spawn::canceled" , spawn.on_snid_cancel   )
 capi.awesome.connect_signal("spawn::timeout"  , spawn.on_snid_cancel   )
