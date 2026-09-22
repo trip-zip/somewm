@@ -11,9 +11,7 @@ local resize    = require("awful.mouse.resize")
 local aplace    = require("awful.placement")
 local wibox     = require("wibox")
 local beautiful = require("beautiful")
-local color     = require("gears.color")
 local shape     = require("gears.shape")
-local cairo     = require("lgi").cairo
 local GLib      = require("lgi").GLib
 local alayout   = require("awful.layout")
 
@@ -46,37 +44,20 @@ local function show_placeholder(geo)
         return
     end
 
+    local bw = beautiful.xresources.apply_dpi(beautiful.snap_border_width or 5)
     placeholder_w = placeholder_w or wibox {
         ontop = true,
-        bg    = color(beautiful.snap_bg or beautiful.bg_urgent or "#ff0000"),
+        bg = "#00000000",
+        border_color = beautiful.snap_bg or beautiful.bg_urgent or "#ff0000",
+        border_width = bw,
+        shape = beautiful.snap_shape or function(cr, w, h)
+            shape.rounded_rect(cr, w, h, 10)
+        end,
     }
-
-    placeholder_w:geometry(geo)
-
-    local img = cairo.ImageSurface(cairo.Format.ARGB32, geo.width, geo.height)
-    local cr = cairo.Context(img)
-    cr:set_antialias(cairo.Antialias.BEST)
-
-    cr:set_operator(cairo.Operator.CLEAR)
-    cr:set_source_rgba(0,0,0,1)
-    cr:paint()
-    cr:set_operator(cairo.Operator.SOURCE)
-    cr:set_source_rgba(1,1,1,1)
-
-    local line_width = beautiful.snap_border_width or 5
-    cr:set_line_width(beautiful.xresources.apply_dpi(line_width))
-
-    local f = beautiful.snap_shape or function()
-        cr:translate(line_width,line_width)
-        shape.rounded_rect(cr,geo.width-2*line_width,geo.height-2*line_width, 10)
-    end
-
-    f(cr, geo.width, geo.height)
-
-    cr:stroke()
-
-    placeholder_w.shape_bounding = img._native
-    placeholder_w._shape_bounding_surface = img  -- Keep reference to prevent GC
+    placeholder_w:geometry {
+        x = geo.x + bw, y = geo.y + bw,
+        width = geo.width - 2 * bw, height = geo.height - 2 * bw,
+    }
 
     placeholder_w.visible = true
 end

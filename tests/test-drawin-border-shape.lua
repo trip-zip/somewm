@@ -1,12 +1,10 @@
 ---------------------------------------------------------------------------
 -- Test: Drawin borders follow shape_bounding
 --
--- Regression test for issue #172: borders should be clipped to match
+-- Regression test: borders should be clipped to match
 -- the shape_bounding mask, not remain rectangular.
 --
--- Verifies properties are correctly set. The C code applies shape to
--- border when both are present - that's an implementation detail verified
--- by code review, not pixel-peeping.
+-- Verifies shape and border property assignments; does not assert rendered pixels.
 ---------------------------------------------------------------------------
 
 local runner = require("_runner")

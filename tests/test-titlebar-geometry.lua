@@ -2,12 +2,12 @@
 --- Integration tests for titlebar geometry, surface clipping, and fullscreen.
 ---
 --- Covers:
----   Bug 1: surface clip bleeds past borders (client_get_clip fix)
----   Bug 2: crash/underflow when resizing client with titlebar to small size
----   Bug 6: fullscreen rendering broken with titlebars
+---   surface clip bleeds past borders (client_get_clip fix)
+---   crash/underflow when resizing client with titlebar to small size
+---   fullscreen rendering broken with titlebars
 ---   Bonus: client.aspect_ratio Lua property
 ---
---- Pointer focus bugs (3, 4, 5) require cursor simulation at the C level and
+--- Pointer focus checks require cursor simulation at the C level and
 --- cannot be exercised from Lua. They are verified manually.
 ---
 --- Run: make test-one TEST=tests/test-titlebar-geometry.lua
@@ -41,7 +41,7 @@ end
 runner.run_async(function()
 
     ---------------------------------------------------------------------------
-    -- TEST 1: Bug 2 — no crash when resizing a client with titlebars to tiny size
+    -- TEST 1: no crash when resizing a client with titlebars to tiny size
     -- applybounds() must enforce minimum = 1 + 2*bw + titlebar sizes
     ---------------------------------------------------------------------------
     io.stderr:write("[TEST 1] Resize with titlebar — no crash, geometry clamped\n")
@@ -83,7 +83,7 @@ runner.run_async(function()
     assert(cleanup(c), "Cleanup: client did not close")
 
     ---------------------------------------------------------------------------
-    -- TEST 2: Bug 6 — fullscreen hides titlebar and surface fills screen
+    -- TEST 2: fullscreen hides titlebar and surface fills screen
     -- client_update_titlebar_positions() must disable titlebar nodes when fullscreen;
     -- apply_geometry_to_wlroots() must zero titlebar offsets.
     ---------------------------------------------------------------------------
@@ -133,7 +133,7 @@ runner.run_async(function()
     assert(cleanup(c2), "Cleanup: client did not close")
 
     ---------------------------------------------------------------------------
-    -- TEST 3: Bug 1 — clip self-consistency with multiple titlebars
+    -- TEST 3: clip self-consistency with multiple titlebars
     -- The clip rect is C-internal; we verify that content dimensions (geometry
     -- minus borders and all titlebar sizes) are always >= 1.
     ---------------------------------------------------------------------------

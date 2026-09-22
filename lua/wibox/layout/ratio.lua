@@ -11,14 +11,13 @@
 -- @see 03-declarative-layout.md
 ---------------------------------------------------------------------------
 
+local clay = require("wibox.clay")
 local base  = require("wibox.widget.base" )
 local flex  = require("wibox.layout.flex" )
+local fixed = require("wibox.layout.fixed")
 local table = table
 local pairs = pairs
-local floor = math.floor
-local gmath = require("gears.math")
 local gtable = require("gears.table")
-local unpack = unpack or table.unpack -- luacheck: globals unpack (compatibility with Lua 5.1)
 
 local ratio = {}
 
@@ -100,111 +99,6 @@ local function normalize(self)
     assert(new_sum > 0.99 and new_sum < 1.01)
 end
 
-function ratio:layout(context, width, height)
-    local preliminary_results = {}
-    local pos,spacing = 0, self._private.spacing
-    local strategy = self:get_inner_fill_strategy()
-    local has_stragety = strategy ~= "default"
-    local to_redistribute, void_count = 0, 0
-    local dir = self._private.dir or "x"
-    local spacing_widget = self._private.spacing_widget
-    local abspace = math.abs(spacing)
-    local spoffset = spacing < 0 and 0 or spacing
-    local is_y = self._private.dir == "y"
-    local is_x = not is_y
-
-    for k, v in ipairs(self._private.widgets) do
-        local space, is_void
-        local x, y, w, h, fit_h, fit_w
-
-        if dir == "y" then
-            space = height * self._private.ratios[k]
-            x, y = 0, gmath.round(pos)
-            w, h = width, floor(space)
-        else
-            space = width * self._private.ratios[k]
-            x, y = gmath.round(pos), 0
-            w, h = floor(space), height
-        end
-
-        -- Keep track of the unused entries
-        if has_stragety then
-            fit_h, fit_w = base.fit_widget(
-                self, context, v,
-                dir == "x" and floor(space) or w,
-                dir == "y" and floor(space) or h
-            )
-
-            is_void = (v.visible == false)
-                or (dir == "x" and fit_w == 0)
-                or (dir == "y" and fit_h == 0)
-
-            if is_void then
-                to_redistribute = to_redistribute + space + spacing
-                void_count = void_count + 1
-            end
-        end
-
-        table.insert(preliminary_results, {v, x, y, w, h, is_void})
-
-        pos = pos + space + spacing
-
-        -- Make sure all widgets fit in the layout, if they aren't, something
-        -- went wrong
-        if (dir == "y" and gmath.round(pos) >= height) or
-            (dir ~= "y" and gmath.round(pos) >= width) then
-            break
-        end
-    end
-
-    local active = #preliminary_results - void_count
-    local result, real_pos, space_front = {}, 0, strategy == "right" and
-        to_redistribute or (
-            strategy == "center" and math.floor(to_redistribute/2) or 0
-        )
-
-    -- The number of spaces between `n` element is `n-1`, if there is spaces
-    -- outside, then it is `n+1`
-    if strategy == "spacing" then
-        space_front = (space_front+to_redistribute/(active + 1))
-        to_redistribute = (to_redistribute/(active + 1))*(active - 1)
-    end
-
-    spacing = strategy:match("spacing")
-        and to_redistribute/(active - 1) or 0
-
-    -- Only the `justify` strategy changes the original widget size.
-    to_redistribute = (strategy == "justify") and to_redistribute or 0
-
-    for k, entry in ipairs(preliminary_results) do
-        local v, x, y, w, h, is_void = unpack(entry)
-
-        -- Redistribute the space or move the widgets
-        if strategy ~= "default" then
-            if dir == "y" then
-                h = is_void and 0 or h + (to_redistribute / (active))
-                y = space_front + real_pos
-                real_pos = real_pos + h + (is_void and 0 or spacing)
-
-            else
-                w = is_void and 0 or w + (to_redistribute / (active))
-                x = space_front + real_pos
-                real_pos = real_pos + w + (is_void and 0 or spacing)
-            end
-        end
-
-        if k > 1 and abspace > 0 and spacing_widget then
-            table.insert(result, base.place_widget_at(
-                spacing_widget, is_x and (x - spoffset) or x, is_y and (y - spoffset) or y,
-                is_x and abspace or w, is_y and abspace or h
-            ))
-        end
-
-        table.insert(result, base.place_widget_at(v, x, y, w, h))
-    end
-
-    return result
-end
 
 --- Increase the ratio of "widget".
 -- If the increment produce an invalid ratio (not between 0 and 1), the method
@@ -493,6 +387,26 @@ end
 function ratio.vertical(...)
     return get_layout("vertical", ...)
 end
+
+local function describe_ratio(w)
+    local node, along, across = fixed.describe_linear(w)
+
+    if w._private.spacing ~= 0 then
+        clay.ignore(w, "spacing", "is not drawn")
+        node.gap = 0
+    end
+    if w:get_inner_fill_strategy() ~= "default" then
+        clay.ignore(w, "inner_fill_strategy",
+            "is not applied; the space the ratios leave stays at the end")
+    end
+    for k, child in ipairs(w._private.widgets) do
+        local share = math.max(0, math.min(1, w._private.ratios[k] or 0))
+        node.specs[k] = { widget = child, [along] = { percent = share }, [across] = "grow" }
+    end
+    return node
+end
+
+ratio._clay = { describe = describe_ratio, name = "wibox.layout.ratio" }
 
 --@DOC_fixed_COMMON@
 

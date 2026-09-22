@@ -1,13 +1,10 @@
 ---------------------------------------------------------------------------
 -- Unit test: systray urgency / badge detection
 --
--- Covers: BEH-1 (icon change sets urgency when differs from baseline),
---         BEH-2 (icon returning to baseline clears urgency),
---         BEH-3 (NewStatus Active clears icon-change urgency),
---         BEH-4 (NewStatus NeedsAttention clears icon-change urgency),
---         BEH-5 (activate updates baseline on next icon),
---         BEH-6 (activate clears urgency immediately),
---         BEH-7 (initial icon does not trigger urgency)
+-- Covers icon changes setting urgency relative to a baseline, returning to
+-- that baseline clearing urgency, and NewStatus Active/NeedsAttention clearing
+-- icon-change urgency. Activation clears urgency immediately and updates the
+-- baseline on the next icon; the initial icon does not trigger urgency.
 --
 -- Tests the extracted _process_icon_change and _compute_icon_fingerprint
 -- functions directly, without D-Bus.
@@ -123,7 +120,7 @@ describe("systray urgency", function()
             assert.is_false(systray._process_icon_change(nil, "fp"))
         end)
 
-        -- BEH-7: initial icon does not trigger urgency
+        -- initial icon does not trigger urgency
         it("sets baseline on first call without setting urgency", function()
             local data = {}
             local changed = systray._process_icon_change(data, "normal-icon")
@@ -132,7 +129,7 @@ describe("systray urgency", function()
             assert.is_nil(data.urgent_from_icon_change)
         end)
 
-        -- BEH-1: icon change sets urgency when differs from baseline
+        -- icon change sets urgency when differs from baseline
         it("sets urgency when icon differs from baseline", function()
             local data = { baseline_icon_fingerprint = "normal-icon" }
             local changed = systray._process_icon_change(data, "badge-icon")
@@ -140,7 +137,7 @@ describe("systray urgency", function()
             assert.is_true(data.urgent_from_icon_change)
         end)
 
-        -- BEH-2: icon returning to baseline clears urgency
+        -- icon returning to baseline clears urgency
         it("clears urgency when icon returns to baseline", function()
             local data = {
                 baseline_icon_fingerprint = "normal-icon",
@@ -162,7 +159,7 @@ describe("systray urgency", function()
             assert.is_true(data.urgent_from_icon_change)
         end)
 
-        -- BEH-5: activate updates baseline on next icon
+        -- activate updates baseline on next icon
         it("updates baseline after activate flag is set", function()
             local data = {
                 baseline_icon_fingerprint = "normal-icon",
@@ -248,7 +245,7 @@ describe("systray urgency", function()
     end)
 
     describe("NewStatus clearing urgency", function()
-        -- BEH-3 and BEH-4: These test the pattern used in the NewStatus handler.
+        -- These test the pattern used in the NewStatus handler.
         -- The actual handler does: if status == "Active" or "NeedsAttention",
         -- then data.urgent_from_icon_change = false
 
@@ -290,7 +287,7 @@ describe("systray urgency", function()
         end)
     end)
 
-    -- BEH-8: Passive items are hidden from the tray
+    -- Passive items are hidden from the tray
     describe("Passive status filtering", function()
         it("filters out items with Passive status", function()
             local items = {
@@ -346,7 +343,7 @@ describe("systray urgency", function()
     end)
 
     describe("activate handler pattern", function()
-        -- BEH-6: activate clears urgency immediately
+        -- activate clears urgency immediately
 
         it("clears urgency and sets baseline update flag", function()
             local data = {

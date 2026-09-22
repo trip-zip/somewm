@@ -3,9 +3,9 @@
 # A timer armed while the config loads must be released when the state closes.
 #
 # Getting this wrong crashes rather than leaks: reverting the gears.timer
-# release segfaults this test inside libffi under g_timeout_dispatch, which is
-# somewm issue 465 (see luaA_cleanup_stale_glib_sources in luaa.c for why the
-# closure guard cannot catch it).
+# release segfaults this test inside libffi under g_timeout_dispatch. See
+# luaA_cleanup_stale_glib_sources in luaa.c for why the closure guard cannot
+# catch it.
 #
 # The assertions are the warnings, not the crash. A callback that outlives its
 # state prints every run; the segfault needs the timeout to come due at the

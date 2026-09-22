@@ -47,6 +47,7 @@
 struct wlr_input_device;
 
 #include "window.h"
+#include "declare.h"
 #include "focus.h"
 #include "input.h"
 #include "somewm_internal.h"
@@ -82,31 +83,14 @@ static size_t pending_tokens_cap = 0;
  * Layer Shell
  * ========================================================================== */
 
+/* The topmost keyboard-interactive layer surface takes the keyboard: Lua
+ * decides through request::keyboard for a surface with an object, the
+ * legacy path grants it outright. Where the surface sits is the tree's
+ * business (declare.c). */
 void
-arrangelayer(Monitor *m, struct wl_list *list, struct wlr_box *usable_area, int exclusive)
-{
-	LayerSurface *l;
-	struct wlr_box full_area = m->m;
-
-	wl_list_for_each(l, list, link) {
-		struct wlr_layer_surface_v1 *layer_surface = l->layer_surface;
-
-		if (!layer_surface->initialized)
-			continue;
-
-		if (exclusive != (layer_surface->current.exclusive_zone > 0))
-			continue;
-
-		wlr_scene_layer_surface_v1_configure(l->scene_layer, &full_area, usable_area);
-		wlr_scene_node_set_position(&l->popups->node, l->scene->node.x, l->scene->node.y);
-	}
-}
-
-void
-arrangelayers(Monitor *m)
+layer_keyboard_focus(Monitor *m)
 {
 	int i;
-	struct wlr_box usable_area = m->m;
 	LayerSurface *l;
 	uint32_t layers_above_shell[] = {
 		ZWLR_LAYER_SHELL_V1_LAYER_OVERLAY,
@@ -115,40 +99,6 @@ arrangelayers(Monitor *m)
 	if (!m->wlr_output->enabled)
 		return;
 
-	/* Arrange exclusive surfaces from top->bottom */
-	for (i = 3; i >= 0; i--)
-		arrangelayer(m, &m->layers[i], &usable_area, 1);
-
-	/* Apply drawin struts (from Lua wibars) to the usable area
-	 * This must happen AFTER layer shell exclusive zones but BEFORE setting m->w */
-	some_monitor_apply_drawin_struts(m, &usable_area);
-
-	if (!wlr_box_equal(&usable_area, &m->w)) {
-		lua_State *L;
-		screen_t *screen;
-
-		m->w = usable_area;
-
-		/* Update Lua screen.workarea property to match the new usable area
-		 * This emits property::workarea signal so layouts get the correct workarea */
-		L = globalconf_get_lua_State();
-		if (L && globalconf.screens.tab) {
-			screen = luaA_screen_get_by_monitor(L, m);
-			if (screen) {
-				screen_set_workarea(L, screen, &usable_area);
-			}
-		}
-
-		arrange(m);
-	}
-
-	/* Arrange non-exlusive surfaces from top->bottom */
-	for (i = 3; i >= 0; i--)
-		arrangelayer(m, &m->layers[i], &usable_area, 0);
-
-	/* Find topmost keyboard interactive layer and emit request::keyboard signal
-	 * If the layer surface has a Lua object, let Lua decide whether to grant focus.
-	 * Otherwise, use legacy auto-grant behavior. */
 	for (i = 0; i < (int)LENGTH(layers_above_shell); i++) {
 		wl_list_for_each_reverse(l, &m->layers[layers_above_shell[i]], link) {
 			if (locked || !l->layer_surface->current.keyboard_interactive || !l->mapped)
@@ -179,19 +129,14 @@ commitlayersurfacenotify(struct wl_listener *listener, void *data)
 {
 	LayerSurface *l = wl_container_of(listener, l, surface_commit);
 	struct wlr_layer_surface_v1 *layer_surface = l->layer_surface;
-	struct wlr_scene_tree *scene_layer = layers[layermap[layer_surface->current.layer]];
-	struct wlr_layer_surface_v1_state old_state;
 	int was_mapped;
 
 	if (l->layer_surface->initial_commit) {
 		client_set_scale(layer_surface->surface, l->mon->wlr_output->scale);
-
-		/* Temporarily set the layer's current state to pending
-		 * so that we can easily arrange it */
-		old_state = l->layer_surface->current;
-		l->layer_surface->current = l->layer_surface->pending;
-		arrangelayers(l->mon);
-		l->layer_surface->current = old_state;
+		/* Initialized now: the next frame declares the surface and its
+		 * first configure carries the size the tree solved. */
+		if (l->mon->declare)
+			declare_output_mark_dirty(l->mon->declare);
 		return;
 	}
 
@@ -209,15 +154,17 @@ commitlayersurfacenotify(struct wl_listener *listener, void *data)
 		layer_surface_emit_manage(ls, "new");
 	}
 
-	if (scene_layer != l->scene->node.parent) {
-		wlr_scene_node_reparent(&l->scene->node, scene_layer);
+	/* A layer change moves the surface between declare bands; the scene
+	 * tree itself stays wherever the reconciler put it. */
+	if (l->band != layer_surface->current.layer) {
+		l->band = layer_surface->current.layer;
 		wl_list_remove(&l->link);
-		wl_list_insert(&l->mon->layers[layer_surface->current.layer], &l->link);
-		wlr_scene_node_reparent(&l->popups->node, (layer_surface->current.layer
-				< ZWLR_LAYER_SHELL_V1_LAYER_TOP ? layers[LyrTop] : scene_layer));
+		wl_list_insert(&l->mon->layers[l->band], &l->link);
 	}
 
-	arrangelayers(l->mon);
+	layer_keyboard_focus(l->mon);
+	if (l->mon && l->mon->declare)
+		declare_output_mark_dirty(l->mon->declare);
 
 	/* When a layer surface maps, re-evaluate pointer focus so that
 	 * wl_pointer.enter is delivered if the cursor is already over it.
@@ -257,7 +204,6 @@ createlayersurface(struct wl_listener *listener, void *data)
 	struct wlr_layer_surface_v1 *layer_surface = data;
 	LayerSurface *l;
 	struct wlr_surface *surface = layer_surface->surface;
-	struct wlr_scene_tree *scene_layer = layers[layermap[layer_surface->pending.layer]];
 
 	if (!layer_surface->output
 			&& !(layer_surface->output = selmon ? selmon->wlr_output : NULL)) {
@@ -272,18 +218,21 @@ createlayersurface(struct wl_listener *listener, void *data)
 
 	l->layer_surface = layer_surface;
 	l->mon = layer_surface->output->data;
-	l->scene_layer = wlr_scene_layer_surface_v1_create(scene_layer, layer_surface);
+	l->band = layer_surface->pending.layer;
+	/* Born parked; the reconciler borrows the tree into the output's band
+	 * once the declare pass sees the surface mapped. */
+	l->scene_layer = wlr_scene_layer_surface_v1_create(window_parked_tree(),
+			layer_surface);
 	/* Register commit listener AFTER wlr_scene_layer_surface_v1_create() so our
 	 * listener fires AFTER wlroots' internal scene commit handler. This lets
 	 * the scene graph reflect the new buffer before the commit handler calls
 	 * motionnotify(0, ...) to re-evaluate pointer focus on map. */
 	LISTEN(&surface->events.commit, &l->surface_commit, commitlayersurfacenotify);
 	l->scene = l->scene_layer->tree;
-	l->popups = surface->data = wlr_scene_tree_create(layer_surface->current.layer
-			< ZWLR_LAYER_SHELL_V1_LAYER_TOP ? layers[LyrTop] : scene_layer);
-	l->scene->node.data = l->popups->node.data = l;
+	surface->data = l->scene;
+	l->scene->node.data = l;
 
-	wl_list_insert(&l->mon->layers[layer_surface->pending.layer],&l->link);
+	wl_list_insert(&l->mon->layers[l->band], &l->link);
 	wlr_surface_send_enter(surface, layer_surface->output);
 }
 
@@ -301,8 +250,9 @@ destroylayersurfacenotify(struct wl_listener *listener, void *data)
 	wl_list_remove(&l->destroy.link);
 	wl_list_remove(&l->unmap.link);
 	wl_list_remove(&l->surface_commit.link);
+	declare_handle_drop(l);
 	wlr_scene_node_destroy(&l->scene->node);
-	wlr_scene_node_destroy(&l->popups->node);
+	declare_mark_all_dirty();
 	free(l);
 }
 
@@ -312,7 +262,6 @@ unmaplayersurfacenotify(struct wl_listener *listener, void *data)
 	LayerSurface *l = wl_container_of(listener, l, unmap);
 
 	l->mapped = 0;
-	wlr_scene_node_set_enabled(&l->scene->node, 0);
 	if (l == exclusive_focus)
 		exclusive_focus = NULL;
 
@@ -322,8 +271,11 @@ unmaplayersurfacenotify(struct wl_listener *listener, void *data)
 			wlr_surface_send_leave(l->layer_surface->surface, l->layer_surface->output);
 
 		l->mon = l->layer_surface->output->data;
-		if (l->mon)
-			arrangelayers(l->mon);
+		if (l->mon) {
+			layer_keyboard_focus(l->mon);
+			if (l->mon->declare)
+				declare_output_mark_dirty(l->mon->declare);
+		}
 	}
 
 	/* Emit request::unmanage signal if we have a Lua object */
@@ -434,7 +386,7 @@ createidleinhibitor(struct wl_listener *listener, void *data)
  * idle_inhibit_mgr->inhibitors, so a recompute here would still count the
  * dying inhibitor and, if its surface is still mapped, latch idle timers
  * off with nothing left to ever recompute. Defer to the end of the current
- * dispatch (same pattern as pending_flush_source, see #530). */
+ * dispatch (same pattern as pending_flush_source). */
 static struct wl_event_source *pending_idle_recompute;
 
 static void
@@ -466,7 +418,7 @@ destroylock(SessionLock *lock, int unlock)
 	if ((locked = !unlock))
 		goto destroy;
 
-	wlr_scene_node_set_enabled(&locked_bg->node, 0);
+	declare_lock_set_visible(false);
 
 	focus_restore(selmon);
 	motionnotify(0, NULL, 0, 0, 0, 0);
@@ -488,6 +440,8 @@ destroylocksurface(struct wl_listener *listener, void *data)
 	struct wlr_session_lock_surface_v1 *surface, *lock_surface = m->lock_surface;
 
 	m->lock_surface = NULL;
+	declare_handle_drop(lock_surface);
+	declare_output_mark_dirty(m->declare);
 	wl_list_remove(&m->destroy_lock_surface.link);
 
 	if (lock_surface->surface != seat->keyboard_state.focused_surface)
@@ -516,12 +470,12 @@ createlocksurface(struct wl_listener *listener, void *data)
 	SessionLock *lock = wl_container_of(listener, lock, new_surface);
 	struct wlr_session_lock_surface_v1 *lock_surface = data;
 	Monitor *m = lock_surface->output->data;
-	struct wlr_scene_tree *scene_tree = lock_surface->surface->data
-			= wlr_scene_subsurface_tree_create(lock->scene, lock_surface->surface);
+	lock_surface->surface->data
+		= wlr_scene_subsurface_tree_create(lock->scene, lock_surface->surface);
 	m->lock_surface = lock_surface;
 
-	wlr_scene_node_set_position(&scene_tree->node, m->m.x, m->m.y);
 	wlr_session_lock_surface_v1_configure(lock_surface, m->m.width, m->m.height);
+	declare_output_mark_dirty(m->declare);
 
 	LISTEN(&lock_surface->events.destroy, &m->destroy_lock_surface, destroylocksurface);
 
@@ -538,19 +492,19 @@ locksession(struct wl_listener *listener, void *data)
 		wlr_session_lock_v1_destroy(session_lock);
 		return;
 	}
-	/* EDGE-3: Reject ext-session-lock when Lua lock is active */
+	/* Reject ext-session-lock when Lua lock is active */
 	if (some_is_lua_locked()) {
 		fprintf(stderr, "somewm: ext-session-lock rejected while Lua lock is active\n");
 		wlr_session_lock_v1_destroy(session_lock);
 		return;
 	}
-	wlr_scene_node_set_enabled(&locked_bg->node, 1);
 	lock = session_lock->data = ecalloc(1, sizeof(*lock));
 	focusclient(NULL, 0);
 
 	lock->scene = wlr_scene_tree_create(layers[LyrBlock]);
 	cur_lock = lock->lock = session_lock;
 	locked = 1;
+	declare_lock_set_visible(true);
 
 	LISTEN(&session_lock->events.new_surface, &lock->new_surface, createlocksurface);
 	LISTEN(&session_lock->events.destroy, &lock->destroy, destroysessionlock);

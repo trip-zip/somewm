@@ -150,3 +150,59 @@ describe("wibox.widget.textbox", function()
 end)
 
 -- vim: filetype=lua:expandtab:shiftwidth=4:tabstop=8:softtabstop=4:textwidth=80
+
+-- The helper changes offers repeatedly without changing text semantics. These
+-- checks cover the cache's real invalidators and declaration ownership.
+describe("textbox Clay text inputs", function()
+    local old_font, calls
+    before_each(function()
+        old_font = awesome._clay_font
+        calls = 0
+        awesome._clay_font = function(description)
+            calls = calls + 1
+            return description
+        end
+    end)
+    after_each(function() awesome._clay_font = old_font end)
+    local function describe_text(w, dpi, fg)
+        return textbox._clay.describe(w, fg or '#ffffff', {context={dpi=dpi or 96}})
+    end
+    it("reuses metadata across offers, but refreshes content, font and DPI", function()
+        local w = textbox('first');w.font='monospace 10'
+        local first = describe_text(w).specs[1]
+        assert.equals('first', first.text)
+        assert.equals(first.font, describe_text(w).specs[1].font)
+        assert.equals(1, calls)
+        w.text='second'
+        assert.equals('second', describe_text(w).specs[1].text)
+        assert.equals(1, calls)
+        local sibling=textbox('third');sibling.font='monospace 10'
+        local description=w._private.layout:get_font_description():to_string()
+        assert.equals(first.font,describe_text(sibling).specs[1].font)
+        assert.equals(1,calls)
+        assert.equals(description,w._private.layout:get_font_description():to_string())
+        w.font='monospace 16'
+        local larger=describe_text(w).specs[1].font
+        assert.is_not.equals(first.font, larger)
+        assert.is_not.equals(larger, describe_text(w,192).specs[1].font)
+        w.text=''
+        assert.is_nil(describe_text(w).specs)
+        w.text='restored'
+        assert.equals('restored',describe_text(w).specs[1].text)
+    end)
+    it("keeps foreground and opacity mutations outside cached markup inputs", function()
+        local w=textbox('<span foreground="#ff0000">red</span>')
+        local first=describe_text(w).specs[1]
+        first.color[4]=0.25
+        local second=describe_text(w).specs[1]
+        assert.same({1,0,0,1},second.color)
+        assert.equals(1,calls)
+        w.text='plain'
+        assert.same({0,1,0,1},describe_text(w,96,'#00ff00').specs[1].color)
+        assert.same({0,0,1,1},describe_text(w,96,'#0000ff').specs[1].color)
+        w.halign='right';w.valign='top';w.ellipsize='none'
+        local n=describe_text(w)
+        assert.same({x='right',y='top'},n.align)
+        assert.is_false(n.specs[1].ellipsize)
+    end)
+end)

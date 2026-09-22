@@ -887,7 +887,8 @@ local function update_on_signal(c, signal, widget)
 end
 
 --- Honor the font.
-local function draw_title(self, ctx, cr, width, height)
+local function describe_title(self, fg, st)
+    local ctx = st.context
     if ctx.position and ctx.client then
         local bars = all_titlebars[ctx.client]
         local data = bars and bars[ctx.position]
@@ -897,7 +898,7 @@ local function draw_title(self, ctx, cr, width, height)
         end
     end
 
-    textbox.draw(self, ctx, cr, width, height)
+    return textbox._clay.describe(self, fg, st)
 end
 
 --- Create a new title widget.
@@ -912,7 +913,7 @@ end
 function titlebar.widget.titlewidget(c)
     local ret = textbox()
 
-    rawset(ret, "draw", draw_title)
+    require("wibox.clay").describe_widget(ret, describe_title, "wibox.widget.textbox")
 
     local function update()
         ret:set_text(c.name or titlebar.fallback_name)

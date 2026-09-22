@@ -1,9 +1,9 @@
 ---------------------------------------------------------------------------
 -- Test: Lock edge cases
 --
--- Covers: EDGE-2 force-unlock path (via clear_lock_surface while locked)
+-- Covers: force-unlock path (via clear_lock_surface while locked)
 --
--- Note: The true EDGE-2 scenario (drawin destroyed by wl_surface destruction)
+-- Note: The true scenario (drawin destroyed by wl_surface destruction)
 -- cannot be triggered from Lua because the lock surface registry reference
 -- keeps the drawin alive. This test exercises the force-unlock path by
 -- clearing the surface while locked, which triggers the same recovery logic.

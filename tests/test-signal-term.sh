@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# Regression test: somewm must terminate on SIGTERM (issue 613).
+# Regression test: somewm must terminate on SIGTERM.
 #
 # Before the fix, the SIGINT/SIGTERM handler called wl_display_terminate(),
 # which is a no-op because the primary loop is g_main_loop_run(), not

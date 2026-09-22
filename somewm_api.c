@@ -35,6 +35,7 @@
 #include "focus.h"
 #include "input.h"
 #include "window.h"
+#include "declare.h"
 #include "monitor.h"
 #include "somewm_internal.h"
 
@@ -444,7 +445,6 @@ some_set_seat_keyboard_focus(Client *c)
 		Client *old_c = NULL;
 		LayerSurface *old_l = NULL;
 		int old_client_type = -1;
-		int unused_lx, unused_ly;
 
 		if (old) {
 			old_client_type = toplevel_from_wlr_surface(old, &old_c, &old_l);
@@ -458,12 +458,12 @@ some_set_seat_keyboard_focus(Client *c)
 					wlr_xdg_popup_destroy(popup);
 			}
 
-			/* A top-layer layer-shell surface (rofi, session lock, etc.)
-			 * owns the seat until it relinquishes focus: skip activation
-			 * changes and let the layer surface dismiss itself first. */
-			if (old_client_type == LayerShell && old_l
-			    && wlr_scene_node_coords(&old_l->scene->node,
-			                             &unused_lx, &unused_ly)
+			/* A mapped top-layer layer-shell surface (rofi, session lock,
+			 * etc.) owns the seat until it relinquishes focus: skip
+			 * activation changes and let the layer surface dismiss itself
+			 * first. Mapped is the declared fact; its scene node stays
+			 * until the next frame parks it. */
+			if (old_client_type == LayerShell && old_l && old_l->mapped
 			    && old_l->layer_surface->current.layer
 			           >= ZWLR_LAYER_SHELL_V1_LAYER_TOP)
 				return;
@@ -943,10 +943,9 @@ some_client_set_minimized(Client *c, int minimized)
 		return;
 
 	c->minimized = minimized;
-
-	/* Minimized clients are unmapped from scene */
-	if (c->scene && c->scene->node.enabled != !minimized)
-		wlr_scene_node_set_enabled(&c->scene->node, !minimized);
+	/* A minimized client is not declared; the sweep parks its tree. */
+	if (c->mon && c->mon->declare)
+		declare_output_mark_dirty(c->mon->declare);
 
 	/* Update arrangements */
 	if (c->mon)
@@ -969,10 +968,9 @@ some_client_set_hidden(Client *c, int hidden)
 		return;
 
 	c->hidden = hidden;
-
-	/* Hidden clients are not shown in scene */
-	if (c->scene && c->scene->node.enabled != !hidden)
-		wlr_scene_node_set_enabled(&c->scene->node, !hidden);
+	/* A hidden client is not declared; the sweep parks its tree. */
+	if (c->mon && c->mon->declare)
+		declare_output_mark_dirty(c->mon->declare);
 
 	/* Update arrangements */
 	if (c->mon)
@@ -1572,21 +1570,6 @@ some_warp_cursor_to_monitor(Monitor *m)
 	wlr_cursor_warp(cursor, NULL,
 		box.x + box.width / 2,
 		box.y + box.height / 2);
-}
-
-/*
- * Apply drawin struts (from Lua wibars) to a usable area
- * This is called from arrangelayers() to preserve wibar struts
- */
-void
-some_monitor_apply_drawin_struts(Monitor *m, struct wlr_box *area)
-{
-	extern lua_State *globalconf_L;
-
-	if (!globalconf_L || !m || !area)
-		return;
-
-	luaA_monitor_apply_drawin_struts(globalconf_L, m, area);
 }
 
 /*

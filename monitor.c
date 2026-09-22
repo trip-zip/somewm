@@ -25,6 +25,8 @@
 
 #include "somewm.h"
 #include "somewm_api.h"
+#include "declare.h"
+#include "input.h"
 #include "monitor.h"
 #include "nested_inhibitor.h"
 #include "protocols.h"
@@ -145,7 +147,8 @@ cleanupmon(struct wl_listener *listener, void *data)
 	in_updatemons = 0;
 
 	closemon(m);
-	wlr_scene_node_destroy(&m->fullscreen_bg->node);
+	declare_handle_drop(m);
+	declare_output_destroy(m->declare);
 	free(m);
 
 	if (updatemons_pending) {
@@ -283,18 +286,6 @@ createmon(struct wl_listener *listener, void *data)
 		}
 	}
 
-	/* The xdg-protocol specifies:
-	 *
-	 * If the fullscreened surface is not opaque, the compositor must make
-	 * sure that other screen content not part of the same surface tree (made
-	 * up of subsurfaces, popups or similarly coupled surfaces) are not
-	 * visible below the fullscreened surface.
-	 *
-	 */
-	/* updatemons() will resize and set correct position */
-	m->fullscreen_bg = wlr_scene_rect_create(layers[LyrFS], 0, 0, globalconf.appearance.fullscreen_bg);
-	wlr_scene_node_set_enabled(&m->fullscreen_bg->node, 0);
-
 	/* Adds this to the output layout in the order it was configured.
 	 *
 	 * The output layout utility automatically adds a wl_output global to the
@@ -302,6 +293,7 @@ createmon(struct wl_listener *listener, void *data)
 	 * output (such as DPI, scale factor, manufacturer, etc).
 	 */
 	m->scene_output = wlr_scene_output_create(scene, wlr_output);
+	m->declare = declare_output_create(wlr_output);
 
 	/* Create screen object BEFORE adding to layout.
 	 * wlr_output_layout_add_auto() triggers updatemons() SYNCHRONOUSLY
@@ -530,6 +522,18 @@ rendermon(struct wl_listener *listener, void *data)
 	struct timespec bench_render_start, bench_render_end;
 	clock_gettime(CLOCK_MONOTONIC, &bench_render_start);
 #endif
+	/* The Clay frame: when the output is dirty, have Lua compile what
+	 * changed, declare the scene, solve, and reconcile into wlr_scene
+	 * before the commit below presents it. A clean output does zero work
+	 * here. While the lua lock is engaged the lock band solves instead of
+	 * the desktop (declare.h). When the scene changed, what sits under the
+	 * stationary pointer may have too (a surface mapped under it, a tag
+	 * switch): re-evaluate pointer focus, the way banning_refresh() does
+	 * after visibility flips. */
+	if (m->declare && declare_output_frame(m->declare, m,
+			session_is_locked()) > 0)
+		motionnotify(0, NULL, 0, 0, 0, 0);
+
 	/* needs_frame is true only when there is something to present;
 	 * wlr_scene_output_commit() returns true without presenting otherwise, so
 	 * sample it first to count only real presents. */
@@ -627,7 +631,7 @@ updatemons(struct wl_listener *listener, void *data)
 	 * (transitioning to disabled), properly remove the screen and close.
 	 * Already-disabled monitors just get a config_head so output manager
 	 * clients (wlr-randr, wlopm, kanshi) can still see and re-enable
-	 * them. Fixes #269. */
+	 * them. */
 	wl_list_for_each(m, &mons, link) {
 		if (m->wlr_output->enabled || m->asleep)
 			continue;
@@ -680,13 +684,6 @@ updatemons(struct wl_listener *listener, void *data)
 	/* Now that we update the output layout we can get its box */
 	wlr_output_layout_get_box(output_layout, NULL, &sgeom);
 
-	wlr_scene_node_set_position(&root_bg->node, sgeom.x, sgeom.y);
-	wlr_scene_rect_set_size(root_bg, sgeom.width, sgeom.height);
-
-	/* Make sure the clients are hidden when somewm is locked */
-	wlr_scene_node_set_position(&locked_bg->node, sgeom.x, sgeom.y);
-	wlr_scene_rect_set_size(locked_bg, sgeom.width, sgeom.height);
-
 	wl_list_for_each(m, &mons, link) {
 		if (!m->wlr_output->enabled)
 			continue;
@@ -696,18 +693,12 @@ updatemons(struct wl_listener *listener, void *data)
 		wlr_output_layout_get_box(output_layout, m->wlr_output, &m->m);
 		m->w = m->m;
 		wlr_scene_output_set_position(m->scene_output, m->m.x, m->m.y);
+		declare_output_update(m->declare, m->m.x, m->m.y);
 
-		wlr_scene_node_set_position(&m->fullscreen_bg->node, m->m.x, m->m.y);
-		wlr_scene_rect_set_size(m->fullscreen_bg, m->m.width, m->m.height);
-
-		if (m->lock_surface) {
-			struct wlr_scene_tree *scene_tree = client_surface_get_scene_tree(m->lock_surface->surface);
-			wlr_scene_node_set_position(&scene_tree->node, m->m.x, m->m.y);
+		if (m->lock_surface)
 			wlr_session_lock_surface_v1_configure(m->lock_surface, m->m.width, m->m.height);
-		}
 
-		/* Calculate the effective monitor geometry to use for clients */
-		arrangelayers(m);
+		layer_keyboard_focus(m);
 		/* Update screen object geometry and emit property:: signals if changed */
 		{
 			screen_t *screen = luaA_screen_get_by_monitor(globalconf_L, m);

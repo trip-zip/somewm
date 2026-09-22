@@ -26,14 +26,13 @@
 local setmetatable = setmetatable
 local unpack = unpack or table.unpack -- luacheck: globals unpack (compatibility with Lua 5.1)
 local table = table
-local pairs = pairs
 local ipairs = ipairs
 local math = math
 local gtable = require("gears.table")
 local gmath = require("gears.math")
 local gcolor = require("gears.color")
 local base = require("wibox.widget.base")
-local cairo = require("lgi").cairo
+local constructor = require("wibox.layout._grid_constructor")
 
 local grid = { mt = {} }
 
@@ -155,25 +154,6 @@ local dir_properties = { "spacing", "homogeneous", "expand" }
 -- @field row_span Number of rows to span
 -- @field col_span Number of columns to span
 -- @table position
-
--- Return the maximum value of a table.
-local function max_value(t)
-    local m = 0
-    for _,v in ipairs(t) do
-        if m < v then m = v end
-    end
-    return m
-end
-
--- Return the sum of the values in the table.
-local function sum_values(t)
-    local m = 0
-    for _,v in ipairs(t) do
-        m = m + v
-    end
-    return m
-end
-
 
 -- Find a widget in a widget_table, by matching the coordinates.
 -- Using the  `row`:`col` coordinates, and the spans `row_span` and `col_span`
@@ -478,7 +458,7 @@ local function update_widgets_position(table_widgets, orientation, index, mode)
     -- last  : Offset index for bottom-right cell of the widgets to resize
     local inc, first, last
     if mode == "remove" then
-        inc, first, last = -1, 1, 1
+        inc, first, last = -1, 1, 0
     elseif mode == "insert" then
         inc, first, last = 1, 0, 0
     elseif mode == "extend" then
@@ -523,6 +503,7 @@ function grid:insert_column(index)
     update_widgets_position(self._private.widgets, "horizontal", index, "insert")
     -- Recalculate number of rows and columns
     self._private.num_cols = self._private.num_cols + 1
+    self:emit_signal("widget::layout_changed")
     return index
 end
 
@@ -540,6 +521,7 @@ function grid:extend_column(index)
     update_widgets_position(self._private.widgets, "horizontal", index, "extend")
     -- Recalculate number of rows and columns
     self._private.num_cols = self._private.num_cols + 1
+    self:emit_signal("widget::layout_changed")
     return index
 end
 
@@ -558,6 +540,7 @@ function grid:remove_column(index)
     update_widgets_position(self._private.widgets, "horizontal", index, "remove")
     -- Recalculate number of rows and columns
     update_dimension(self)
+    self:emit_signal("widget::layout_changed")
     return index
 end
 
@@ -576,6 +559,7 @@ function grid:insert_row(index)
     update_widgets_position(self._private.widgets, "vertical", index, "insert")
     -- Recalculate number of rows and columns
     self._private.num_rows = self._private.num_rows + 1
+    self:emit_signal("widget::layout_changed")
     return index
 end
 
@@ -594,6 +578,7 @@ function grid:extend_row(index)
     update_widgets_position(self._private.widgets, "vertical", index, "extend")
     -- Recalculate number of rows and columns
     self._private.num_rows = self._private.num_rows + 1
+    self:emit_signal("widget::layout_changed")
     return index
 end
 
@@ -612,6 +597,7 @@ function grid:remove_row(index)
     update_widgets_position(self._private.widgets, "vertical", index, "remove")
     -- Recalculate number of rows and columns
     update_dimension(self)
+    self:emit_signal("widget::layout_changed")
     return index
 end
 
@@ -790,9 +776,8 @@ function grid:set_border_width(val)
     self._private.border_width.inner = gmath.round(self._private.border_width.inner)
     self._private.border_width.outer = gmath.round(self._private.border_width.outer)
 
-    -- Drawing the border takes both a lot of memory (for the cached masks)
-    -- and CPU, so make sure it is no-op for the 99% of cases where there is
-    -- no border.
+    -- Borderless grids use plain row/cell declarations without anonymous
+    -- decoration segments.
     self._private.has_border = self._private.border_width.inner ~= 0
         or self._private.border_width.outer ~= 0
 
@@ -893,36 +878,6 @@ for _, prop in ipairs(dir_properties) do
 end
 
 
--- Return two tables of the fitted sizes of the rows and columns
--- @treturn table,table Tables of row heights and column widths
-local function get_grid_sizes(self, context, orig_width, orig_height)
-    local rows_size = {}
-    local cols_size = {}
-
-    -- Set the row and column sizes to the minimum value
-    for i = 1,self._private.num_rows do
-        rows_size[i] = self._private.min_rows_size
-    end
-    for j = 1,self._private.num_cols do
-        cols_size[j] = self._private.min_cols_size
-    end
-
-    -- Calculate cell sizes
-    for _, data in ipairs(self._private.widgets) do
-        local w, h = base.fit_widget(self, context, data.widget, orig_width, orig_height)
-        h = math.max( self._private.min_rows_size, h / data.row_span )
-        w = math.max( self._private.min_cols_size, w / data.col_span )
-        -- update the row and column maximum size
-        for i = data.row, data.row + data.row_span - 1 do
-            if h > rows_size[i] then rows_size[i] = h end
-        end
-        for j = data.col, data.col + data.col_span - 1 do
-            if w > cols_size[j] then cols_size[j] = w end
-        end
-    end
-    return rows_size, cols_size
-end
-
 -- All the code to get the width of a specific border.
 --
 -- This table module supports partial borders and "just add a border" modes.
@@ -959,352 +914,11 @@ local function setup_border_widths(self)
     }
 end
 
--- Fit the grid layout into the given space.
--- @param context The context in which we are fit.
--- @param orig_width The available width.
--- @param orig_height The available height.
-function grid:fit(context, orig_width, orig_height)
-    local width, height = orig_width, orig_height
 
-    -- Calculate the space needed
-    local function fit_direction(dir, sizes, border_widths)
-        local m = border_widths[1]
-        local space = self._private[dir .. "_spacing"]
 
-        -- First border
-        m = m > 0 and m + space or m
 
-        if self._private[dir .. "_homogeneous"] then
-            local max = max_value(sizes)
 
-            -- all the columns/rows have the same size
-            if self._private.has_border then
-
-                -- Not all borders are identical, so the loop is required.
-                for i in ipairs(sizes) do
-                    local bw = border_widths[i+1]
-
-                    -- When there is a border, it needs the spacing on both sides.
-
-                    m = m + max + (space*(bw > 0 and 2 or 1)) + bw
-                end
-            else
-                -- Much simpler.
-                m = #sizes * max + (#sizes - 1) * space
-            end
-        else
-            -- sum the columns/rows size
-            for i, s in ipairs(sizes) do
-                local bw = border_widths[i+1]
-
-                -- When there is a border, it needs the spacing on both sides.
-                m = m + s + (space * (bw > 0 and 2 or 1)) + bw
-            end
-
-        end
-
-        return m
-    end
-
-    -- fit matrix cells
-    local rows_size, cols_size = get_grid_sizes(self, context, width, height)
-
-    -- compute the width
-    local borders = self._private.meta_borders
-    local used_width_max  = fit_direction("horizontal", cols_size, borders.cols)
-    local used_height_max = fit_direction("vertical", rows_size, borders.rows)
-
-    return used_width_max, used_height_max
-end
-
-local function layout_common(self, context, width, height, h_homogeneous, v_homogeneous)
-    local result, areas = {}, {}
-    local hspacing, vspacing = self._private.horizontal_spacing, self._private.vertical_spacing
-
-    -- Fit matrix cells
-    local rows_size, cols_size = get_grid_sizes(self, context, width, height)
-    local total_expected_width, total_expected_height = sum_values(cols_size), sum_values(rows_size)
-
-    local h_bw, v_bw = self._private.meta_borders.cols, self._private.meta_borders.rows
-
-    -- Do it once, the result wont change unless widgets are added.
-    if self._private.has_border and not self._private.area_cache.total_horizontal_border_width then
-        -- Also add the "second" spacing here. This avoid having some `if` below.
-        local total_h = h_bw[1] + h_bw[#cols_size+1] + 1*hspacing
-        local total_v = v_bw[1] + v_bw[#rows_size+1] + 1*vspacing
-
-        for j = 1, #cols_size do
-            local bw = h_bw[j+1]
-            total_h =  total_h + bw + hspacing*(bw > 0 and 1 or 0)
-        end
-
-        for i = 1, #rows_size do
-            local bw = v_bw[i+1]
-            total_v = total_v + bw + vspacing*(bw > 0 and 1 or 0)
-        end
-
-        self._private.area_cache.total_horizontal_border_width = total_h - h_bw[1]
-        self._private.area_cache.total_vertical_border_width = total_v - v_bw[1]
-    end
-
-    local total_h = self._private.area_cache.total_horizontal_border_width or 0
-    local total_v = self._private.area_cache.total_vertical_border_width or 0
-
-    -- Figure out the maximum size we can give out to sub-widgets
-    local single_width, single_height = max_value(cols_size), max_value(rows_size)
-
-    if self._private.horizontal_expand then
-        single_width = (width - (self._private.num_cols-1)*hspacing - total_h) / self._private.num_cols
-    end
-
-    if self._private.vertical_expand then
-        single_height = (height - (self._private.num_rows-1)*vspacing - total_v) / self._private.num_rows
-    end
-
-    -- Calculate the position and size to place the widgets
-    local cumul_width, cumul_height = {}, {}
-    local c_hor, c_ver = h_bw[1], v_bw[1]
-
-    -- If there is an outer border, then it needs inner spacing too.
-    c_hor, c_ver = c_hor > 0 and c_hor + hspacing or 0, c_ver > 0 and c_ver + vspacing or 0
-
-    for j = 1, #cols_size do
-        cumul_width[j] = c_hor
-
-        if h_homogeneous then
-            cols_size[j] = math.max(self._private.min_cols_size, single_width)
-        elseif self._private.horizontal_expand then
-            local hpercent = self._private.num_cols * single_width * cols_size[j] / total_expected_width
-            cols_size[j] = math.max(self._private.min_cols_size, hpercent)
-        end
-
-        local bw = h_bw[j+1]
-        c_hor = c_hor + cols_size[j] + (bw > 0 and 2 or 1)*hspacing + bw
-    end
-
-    cumul_width[#cols_size + 1] = c_hor
-
-    for i = 1, #rows_size do
-        cumul_height[i] = c_ver
-
-        if v_homogeneous then
-            rows_size[i] = math.max(self._private.min_rows_size, single_height)
-        elseif self._private.vertical_expand then
-            local vpercent = self._private.num_rows * single_height * rows_size[i] / total_expected_height
-            rows_size[i] = math.max(self._private.min_rows_size, vpercent)
-        end
-
-        local bw = v_bw[i+1]
-        c_ver = c_ver + rows_size[i] + (bw > 0 and 2 or 1)*vspacing + bw
-    end
-
-    cumul_height[#rows_size + 1] = c_ver
-
-    -- Place widgets
-    local fill_space = true  -- should be fill_space property?
-    for _, v in pairs(self._private.widgets) do
-        local x, y, w, h
-
-        -- If there is a border, then the spacing is needed on both sides.
-        local col_bw, row_bw = h_bw[v.col+v.col_span], v_bw[v.row+v.row_span]
-        local col_spacing = hspacing * (col_bw > 0 and 2 or 1)
-        local row_spacing = vspacing * (row_bw > 0 and 2 or 1)
-
-        -- Round numbers to avoid decimals error, force to place tight widgets
-        -- and avoid redraw glitches
-        x = math.floor(cumul_width[v.col])
-        y = math.floor(cumul_height[v.row])
-        w = math.floor(cumul_width[v.col + v.col_span] - col_spacing - x - col_bw)
-        h = math.floor(cumul_height[v.row + v.row_span] - row_spacing - y - row_bw)
-
-        -- Handle large spacing and/or border_width. The grid doesn't support
-        -- dropping widgets. It would be very hard to implement.
-        w, h = math.max(0, w), math.max(0, h)
-
-        -- Recalculate the width so the last widget fits
-        if (fill_space or self._private.horizontal_expand) and x + w > width then
-            w = math.floor(math.max(self._private.min_cols_size, width - x))
-        end
-        -- Recalculate the height so the last widget fits
-        if (fill_space or self._private.vertical_expand) and y + h > height then
-            h = math.floor(math.max(self._private.min_rows_size, height - y))
-        end
-        -- Place the widget if it fits in the area
-        if x + w <= width and y + h <= height then
-            table.insert(result, base.place_widget_at(v.widget, x, y, w, h))
-            table.insert(areas, {
-                x      = x - hspacing,
-                y      = y - vspacing,
-                width  = w + col_spacing,
-                height = h + row_spacing,
-            })
-        end
-    end
-
-    -- Sometime, the `:fit()` size and `:layout()` size are different, thus it's
-    -- important to say where the widget actually ends.
-    areas.end_x = cumul_width[#cumul_width] - hspacing
-    areas.end_y = cumul_height[#cumul_height] - vspacing
-    areas.column_count = #cols_size
-    areas.row_count = #rows_size
-    areas.cols = cumul_width
-    areas.rows = cumul_height
-
-    return result, areas
-end
-
-local function get_area_cache_hash(width, height)
-   return width*1.5+height*15
-end
-
--- Layout a grid layout.
--- @param context The context in which we are drawn.
--- @param width The available width.
--- @param height The available height.
-function grid:layout(context, width, height)
-    local l, areas = layout_common(
-        self,
-        context,
-        width,
-        height,
-        self._private.horizontal_homogeneous,
-        self._private.vertical_homogeneous
-    )
-
-    self._private.area_cache[get_area_cache_hash(width, height)] = areas
-
-    return l
-end
-
-local function create_border_mask(self, areas, default_color)
-    if areas.surface then return areas.surface end
-
-    local meta = self._private.meta_borders
-
-    local top, bottom = meta.rows[1], meta.rows[areas.row_count+1]
-    local left, right = meta.cols[1], meta.cols[areas.column_count+1]
-
-    -- A1 is fine because :layout() aligns to pixel boundary and `border_width`
-    -- are integers.
-    local img = cairo.RecordingSurface(cairo.Content.COLOR_ALPHA, cairo.Rectangle {
-        x      = 0,
-        y      = 0,
-        width  = areas.end_x + right,
-        height = areas.end_y + bottom
-    })
-    local cr = cairo.Context(img)
-    cr:set_source(default_color)
-
-    local bw_i, bw_o = self._private.border_width.inner, self._private.border_width.outer
-
-    if bw_i ~= bw_o then
-        if bw_o then
-            if self._private.border_color.outer then
-                cr:set_source(self._private.border_color.outer)
-            end
-
-            -- Clip the outside region. It cannot use `cr:set_line_width()` because
-            -- each border might be different.
-            cr:rectangle(0, 0, areas.end_x, top)
-            cr:rectangle(0, areas.end_y - bottom, areas.end_x, bottom)
-            cr:rectangle(0, top, left, areas.end_y - top - bottom)
-            cr:rectangle(areas.end_x - right, top, right, areas.end_y - top - bottom)
-            cr:clip()
-            cr:paint()
-            cr:reset_clip()
-        end
-
-        cr:rectangle(left, top, areas.end_x - top - bottom, areas.end_y - left - right)
-        cr:clip()
-    else
-        cr:rectangle(0,0, areas.end_x, areas.end_y)
-        cr:clip()
-    end
-
-    if bw_i then
-        if self._private.border_color.inner then
-            cr:set_source(self._private.border_color.inner)
-        end
-        cr:rectangle(0, 0, areas.end_x, areas.end_y)
-        cr:fill()
-    end
-
-    -- Add the custom horizontal and borders.
-    -- This is a lifeline for users who want borders only on specific places.
-    -- Implementing word processing style borders would be overkill and
-    -- too hard to maintain.
-    for _, orientation in ipairs { "rows", "cols" } do
-        for row, args in pairs(self._private.custom_border_width[orientation]) do
-            local line_height = meta[orientation][row]
-            cr:save()
-            cr:rectangle(0,0, areas.end_x, areas.end_y)
-            cr:clip()
-            cr:set_line_width(line_height)
-
-            if args.dashes then
-                cr:set_dash(args.dashes, #args.dashes, args.offset or 0)
-            end
-
-            if args.caps then
-                cr:set_line_cap(cairo.LineCap[args.caps:upper()])
-            end
-
-            cr:set_source(args.color)
-
-            -- Cairo draw the stroke equally on both side, for `line_height/2` is
-            -- needed.
-            local y = (row == 1 and line_height or areas[orientation][row] or 0) - math.ceil(line_height/2)
-
-            if orientation == "rows" then
-                cr:move_to(0, y)
-                cr:line_to(areas.end_x, y)
-            else
-                cr:move_to(y, 0)
-                cr:line_to(y, areas.end_y)
-            end
-
-            cr:stroke()
-            cr:restore()
-        end
-    end
-
-    -- Remove the area used by widgets. This needs to be done regardless of the
-    -- border mode to handle row/col span.
-    cr:set_operator(cairo.Operator.CLEAR)
-
-    for _, area in ipairs(areas) do
-        cr:rectangle(area.x, area.y, area.width, area.height)
-    end
-
-    cr:fill()
-
-    areas.surface = img
-
-    return img
-end
-
--- Draw the border.
-function grid:after_draw_children(ctx, cr, width, height)
-    if not self._private.has_border then return end
-
-    local hash = get_area_cache_hash(width, height)
-
-    if not self._private.area_cache[hash] then
-        self._private.area_cache[hash] = select(2, layout_common(
-            self,
-            ctx,
-            width,
-            height,
-            self._private.horizontal_homogeneous,
-            self._private.vertical_homogeneous
-        ))
-    end
-
-    local areas = self._private.area_cache[hash]
-
-    cr:set_source_surface(create_border_mask(self, areas, cr:get_source()), 0 ,0)
-    cr:paint()
-end
+grid._clay = { describe = constructor.describe }
 
 --- Reset the grid layout.
 -- Remove all widgets and reset row and column counts
@@ -1349,8 +963,6 @@ local function new(orientation)
     ret._private.widgets = {}
     ret._private.num_rows = 0
     ret._private.num_cols = 0
-    ret._private.rows_size = {}
-    ret._private.cols_size = {}
 
     ret._private.superpose       = false
     ret._private.forced_num_rows = nil
@@ -1364,12 +976,6 @@ local function new(orientation)
     ret._private.vertical_expand        = false
     ret._private.horizontal_spacing     = 0
     ret._private.vertical_spacing       = 0
-
-    ret._private.area_cache, ret._private.border_color = {}, {}
-
-    ret:connect_signal("widget::layout_changed", function(self)
-        self._private.area_cache = {}
-    end)
 
     setup_border_widths(ret)
 

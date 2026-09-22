@@ -158,36 +158,6 @@ client_get_appid(Client *c)
 }
 
 static inline void
-client_get_clip(Client *c, struct wlr_box *clip)
-{
-	/* Content area: geometry minus titlebars (borders sit outside the
-	 * geometry). Clipping to it keeps oversized buffers off the borders. */
-	int tl = c->fullscreen ? 0 : c->titlebar[CLIENT_TITLEBAR_LEFT].size;
-	int tt = c->fullscreen ? 0 : c->titlebar[CLIENT_TITLEBAR_TOP].size;
-	int tr = c->fullscreen ? 0 : c->titlebar[CLIENT_TITLEBAR_RIGHT].size;
-	int tb = c->fullscreen ? 0 : c->titlebar[CLIENT_TITLEBAR_BOTTOM].size;
-	int cw = c->geometry.width - tl - tr;
-	int ch = c->geometry.height - tt - tb;
-	if (cw < 1) cw = 1;
-	if (ch < 1) ch = 1;
-
-	*clip = (struct wlr_box){
-		.x = 0,
-		.y = 0,
-		.width = cw,
-		.height = ch,
-	};
-
-#ifdef XWAYLAND
-	if (client_is_x11(c))
-		return;
-#endif
-
-	clip->x = COMPAT_XDG_SURFACE_GEOMETRY(c->surface.xdg).x;
-	clip->y = COMPAT_XDG_SURFACE_GEOMETRY(c->surface.xdg).y;
-}
-
-static inline void
 client_get_geometry(Client *c, struct wlr_box *geom)
 {
 #ifdef XWAYLAND
@@ -333,12 +303,14 @@ client_send_close(Client *c)
 	wlr_xdg_toplevel_send_close(c->surface.xdg->toplevel);
 }
 
+/* Record the color; the declare pass reads it (client_border_rgba) and the
+ * border_need_update flag makes the next refresh cycle dirty the outputs. */
 static inline void
 client_set_border_color(Client *c, const float color[static 4])
 {
-	int i;
-	for (i = 0; i < 4; i++)
-		wlr_scene_rect_set_color(c->border[i], color);
+	memcpy(c->border_rgba, color, 4 * sizeof(float));
+	c->border_rgba_set = true;
+	c->border_need_update = true;
 }
 
 static inline void
@@ -369,10 +341,8 @@ client_set_size(Client *c, uint32_t width, uint32_t height)
 		 * Configure if size OR position changed. Position-only changes
 		 * must also be sent so X11 clients know where they are — without
 		 * this, popup menus (e.g. Steam) appear at the old position. */
-		int tl = c->fullscreen ? 0 : c->titlebar[CLIENT_TITLEBAR_LEFT].size;
-		int tt = c->fullscreen ? 0 : c->titlebar[CLIENT_TITLEBAR_TOP].size;
-		int16_t cx = c->geometry.x + c->bw + tl;
-		int16_t cy = c->geometry.y + c->bw + tt;
+		int16_t cx = c->surface_box.x;
+		int16_t cy = c->surface_box.y;
 		if (width == c->surface.xwayland->width
 				&& height == c->surface.xwayland->height
 				&& cx == c->surface.xwayland->x

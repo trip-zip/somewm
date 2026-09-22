@@ -1,8 +1,7 @@
 #!/usr/bin/env bash
 #
 # Every org.freedesktop.Notifications call must get a reply. An unanswered
-# invocation freezes the sender until the D-Bus timeout (~25s), which is how
-# issue 657 presented. Covers the paths that used to drop the invocation:
+# invocation freezes the sender until the D-Bus timeout (~25s). Covers:
 # a Lua error inside a handler, an unknown method, and a Notify with nothing
 # to display.
 

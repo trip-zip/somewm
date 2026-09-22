@@ -1,9 +1,9 @@
 ---------------------------------------------------------------------------
 -- Test: Lock multi-screen support
 --
--- Covers: MULTI-1 through MULTI-5, MULTI-7, cover API integration
+-- Covers lock surfaces and cover registration across multiple screens.
 --
--- Note: MULTI-6 (interactive screen removal while locked) requires
+-- Note: Interactive screen removal while locked requires
 -- _test_remove_output which doesn't exist yet. Skipped.
 ---------------------------------------------------------------------------
 

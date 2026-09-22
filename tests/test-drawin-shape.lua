@@ -1,9 +1,7 @@
 ---------------------------------------------------------------------------
 -- Test: Drawin shape (rounded corners) properties
 --
--- Verifies that shape_bounding is correctly applied to drawins.
--- The C rendering code's correctness is verified by code review,
--- not pixel-peeping screenshots.
+-- Verifies drawin shape_bounding properties; does not assert rendered pixels.
 --
 -- @author somewm contributors
 -- @copyright 2026 somewm contributors

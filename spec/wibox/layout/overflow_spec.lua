@@ -4,72 +4,12 @@
 
 local overflow = require("wibox.layout.overflow")
 local base = require("wibox.widget.base")
-local utils = require("wibox.test_utils")
-local p = require("wibox.widget.base").place_widget_at
 
 describe("wibox.layout.overflow", function()
     local layout
 
     before_each(function()
         layout = overflow.vertical()
-    end)
-
-    it("empty layout fit", function()
-        assert.widget_fit(layout, { 10, 10 }, { 0, 0 })
-    end)
-
-    it("empty layout layout", function()
-        assert.widget_layout(layout, { 0, 0 }, {})
-    end)
-
-    describe("with widgets that fit", function()
-        local first, second, third
-
-        before_each(function()
-            first = utils.widget_stub(10, 10)
-            second = utils.widget_stub(15, 15)
-            third = utils.widget_stub(10, 10)
-
-            layout:add(first, second, third)
-        end)
-
-        it("fit without overflow", function()
-            assert.widget_fit(layout, { 100, 100 }, { 15, 35 })
-        end)
-
-        it("layout without overflow", function()
-            assert.widget_layout(layout, { 100, 100 }, {
-                p(first,  0,  0, 100, 10),
-                p(second, 0, 10, 100, 15),
-                p(third,  0, 25, 100, 10),
-            })
-        end)
-    end)
-
-    describe("with widgets that overflow", function()
-        local first, second, third
-
-        before_each(function()
-            first = utils.widget_stub(10, 20)
-            second = utils.widget_stub(10, 20)
-            third = utils.widget_stub(10, 20)
-
-            layout:add(first, second, third)
-        end)
-
-        it("fit is clamped but includes scrollbar width", function()
-            -- Total height = 60, available = 50, so scrollbar is needed.
-            -- scrollbar_width default = 5, so used_max = 10 + 5 = 15
-            -- Height is clamped to available (50) by base.fit_widget
-            assert.widget_fit(layout, { 100, 50 }, { 15, 50 })
-        end)
-
-        it("fit without scrollbar enabled", function()
-            layout:set_scrollbar_enabled(false)
-            -- No scrollbar, so used_max = 10 (max widget width)
-            -- Height clamped to 50
-            assert.widget_fit(layout, { 100, 50 }, { 10, 50 })
-        end)
     end)
 
     describe("scrollbar properties", function()
@@ -168,67 +108,4 @@ describe("wibox.layout.overflow", function()
         assert.is.same({}, layout:get_children())
     end)
 
-    describe("horizontal", function()
-        local hlayout
-
-        before_each(function()
-            hlayout = overflow.horizontal()
-        end)
-
-        it("empty layout fit", function()
-            assert.widget_fit(hlayout, { 10, 10 }, { 0, 0 })
-        end)
-
-        it("fit without overflow", function()
-            local first = utils.widget_stub(10, 10)
-            local second = utils.widget_stub(15, 15)
-            hlayout:add(first, second)
-            assert.widget_fit(hlayout, { 100, 100 }, { 25, 15 })
-        end)
-
-        it("fit with overflow adds scrollbar height", function()
-            local first = utils.widget_stub(30, 10)
-            local second = utils.widget_stub(30, 10)
-            hlayout:add(first, second)
-            -- Total width = 60, available = 50, so scrollbar needed.
-            -- scrollbar_width default = 5, so used_max = 10 + 5 = 15
-            -- Width clamped to 50 by base.fit_widget
-            assert.widget_fit(hlayout, { 50, 100 }, { 50, 15 })
-        end)
-    end)
-
-    describe("with spacing", function()
-        local first, second, third
-
-        before_each(function()
-            first = utils.widget_stub(10, 10)
-            second = utils.widget_stub(15, 15)
-            third = utils.widget_stub(10, 10)
-
-            layout:add(first, second, third)
-            layout:set_spacing(5)
-        end)
-
-        it("fit includes spacing in content size", function()
-            -- Total = 10 + 15 + 10 + 5*2 = 45
-            assert.widget_fit(layout, { 100, 100 }, { 15, 45 })
-        end)
-
-        it("fit with overflow includes spacing", function()
-            -- Total = 45, available = 40, so scrollbar needed
-            -- used_max = 15 + 5 (scrollbar) = 20
-            -- Height clamped to 40 by base.fit_widget
-            assert.widget_fit(layout, { 100, 40 }, { 20, 40 })
-        end)
-    end)
-
-    it("fill_space defaults to true", function()
-        local w = utils.widget_stub(10, 10)
-        layout:add(w)
-        -- With fill_space=true, widget gets full width
-        local result = layout:layout({ "fake context" }, 100, 100)
-        assert.is.equal(100, result[1]._width)
-    end)
 end)
-
--- vim: filetype=lua:expandtab:shiftwidth=4:tabstop=8:softtabstop=4:textwidth=80

@@ -183,8 +183,12 @@ function common.list_update(w, buttons, label, data, objects, args)
 
         end
 
+        -- An awful.widget.clienticon under icon_role shows its client's
+        -- icon itself and has no set_image.
         if cache.ib and icon then
-            cache.ib:set_image(icon)
+            if cache.ib.set_image then
+                cache.ib:set_image(icon)
+            end
         elseif cache.ibm then
             cache.ibm:set_margins(0)
         end

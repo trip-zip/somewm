@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
 #
-# Notifications must still work after a hot-reload. This is the regression test
-# for issue 444.
+# Notifications must still work after a hot-reload.
 #
 # The reload used to close the shared GDBus session connection. GLib caches that
 # connection in a GWeakRef cleared only on finalize, so every later

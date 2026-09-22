@@ -267,8 +267,7 @@ screen.connect_signal("request::wallpaper", function(s)
                 },
                 valign = "center",
                 halign = "center",
-                tiled  = false,
-                widget = wibox.container.tile,
+                widget = wibox.container.place,
             }
         }
     else
@@ -480,6 +479,13 @@ awful.keyboard.append_global_keybindings({
         key         = "Escape",
         on_press    = function() awesome.lock() end,
         description = "lock screen",
+        group       = "somewm",
+    },
+    awful.key {
+        modifiers   = { modkey, "Shift" },
+        key         = "i",
+        on_press    = function() require("somewm.inspector").toggle() end,
+        description = "toggle the clay inspector",
         group       = "somewm",
     },
     awful.key {

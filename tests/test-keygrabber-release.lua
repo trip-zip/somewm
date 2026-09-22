@@ -1,4 +1,4 @@
--- Test: keygrabber key release events (issue #409).
+-- Test: keygrabber key release events.
 --
 -- Verifies that key release events reach keygrabber callbacks via the
 -- _keygrabber.inject() C test helper. Before the fix, the C layer only
