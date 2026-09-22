@@ -436,7 +436,7 @@ describe("wibox.widget.graph", function()
 
         describe("property step_shape()", function()
             it("is not called when there are no values", function()
-                widget.step_shape = spy.new()
+                widget.step_shape = spy.new(function() end)
 
                 widget:draw(context, cr, unpack(dimensions))
                 widget:draw(context, cr, unpack(dimensions))
@@ -446,7 +446,7 @@ describe("wibox.widget.graph", function()
             end)
 
             it("is called to draw values", function()
-                widget.step_shape = spy.new()
+                widget.step_shape = spy.new(function() end)
 
                 -- It is called once for each value.
                 push_data(widget, data)
@@ -462,7 +462,7 @@ describe("wibox.widget.graph", function()
             end)
 
             it("receives proper arguments from draw()", function()
-                widget.step_shape = spy.new()
+                widget.step_shape = spy.new(function() end)
                 push_data(widget, data)
                 widget:draw(context, cr, unpack(dimensions))
                 assert.spy(widget.step_shape).was_called_with(
@@ -526,7 +526,7 @@ describe("wibox.widget.graph", function()
                 -- TODO: if should_draw_data_group() gets decided on,
                 -- this should be rewritten in terms of it and
                 -- should_draw_data_group() should be tested by colors in turn.
-                widget.step_shape = spy.new()
+                widget.step_shape = spy.new(function() end)
                 widget.group_colors = { "#feedf00d", "#deadbeef", "#0badcafe" }
                 push_data(widget, data, 1)
                 push_data(widget, data, 2)
@@ -798,7 +798,7 @@ describe("wibox.widget.graph", function()
 
             describe("method pick_data_group_color()", function()
                 it("is called by draw() for each data group", function()
-                    widget.pick_data_group_color = spy.new()
+                    widget.pick_data_group_color = spy.new(function() end)
                     -- Not used, when there are no data groups.
                     widget:draw(context, cr, unpack(dimensions))
                     assert.spy(widget.pick_data_group_color).was_not.called()
