@@ -630,7 +630,10 @@ some_update_cursor_theme(const char *theme_name, uint32_t size)
 	if (wlr_xcursor_manager_get_xcursor(cursor_mgr, cursor_name, 1.0) == NULL) {
 		cursor_name = "default";
 	}
-	wlr_cursor_set_xcursor(cursor, cursor_mgr, cursor_name);
+	/* The images every output copied came from the old manager. */
+	cursor_image.gen++;
+	cursor_set_xcursor(cursor_name);
+	declare_cursor_changed();
 
 #ifdef XWAYLAND
 	/* Sync XWayland cursor if running */
@@ -1480,6 +1483,7 @@ some_set_cursor_position(double x, double y, int silent)
 	}
 
 	wlr_cursor_warp(cursor, NULL, x, y);
+	declare_cursor_changed();
 }
 
 /*
@@ -1570,6 +1574,7 @@ some_warp_cursor_to_monitor(Monitor *m)
 	wlr_cursor_warp(cursor, NULL,
 		box.x + box.width / 2,
 		box.y + box.height / 2);
+	declare_cursor_changed();
 }
 
 /*

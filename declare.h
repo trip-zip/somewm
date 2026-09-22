@@ -12,10 +12,17 @@ struct Monitor;
 struct render_client_hooks;
 typedef struct drawin_t drawin_t;
 
-/* Per-output declare/solve state: the output's Clay context, the retained
- * render_state its solved commands reconcile into, and the dirty flag the
- * frame handler consumes. */
+/* Per-output declare/solve state: the output's one Clay context, the
+ * retained render_state its solved commands reconcile into, and the dirty
+ * flag the frame handler consumes. The lock screen is part of that tree,
+ * not a second one. */
 struct declare_output;
+#define CLAY_ELEMENTS_MAX 32768
+size_t declare_widget_budget(struct declare_output *dout);
+void declare_output_resource_failure(struct declare_output *dout);
+/* Private test-build controls for newly created contexts and solve failures. */
+void declare_test_capacity(int capacity, int allocation_failures);
+void declare_test_failure(struct declare_output *dout, int pass, int elements);
 
 struct declare_output *declare_output_create(struct wlr_output *wlr_output);
 void declare_output_destroy(struct declare_output *dout);
@@ -35,11 +42,18 @@ void declare_output_grid_pending(struct declare_output *dout);
 /* Mark every output dirty: for facts without one owning output (stacking
  * order, banning, a drawin whose screen assignment may be stale). */
 void declare_mark_all_dirty(void);
+
+/* The pointer moved or its image changed: the output under the pointer and
+ * every output whose tree shows the pointer run a frame. A no-op while the
+ * pointer is where the last frame declared it with the same image, so the
+ * hit-test rerun a frame ends with cannot start another frame. */
+void declare_cursor_changed(void);
 /* How long a tiled client's box takes to reach a new allocation, in
  * seconds. Zero snaps. */
 void declare_client_transition(float seconds);
 /* Release retained nodes while their owning objects are still alive. */
 void declare_hot_reload(void);
+void declare_state_clear(void);
 bool declare_in_frame(void);
 
 /* If dirty, run the frame: the global signal clay::declare has Lua compile
@@ -49,19 +63,18 @@ bool declare_in_frame(void);
  * reconcile into wlr_scene. A clay::solved handler
  * that dirties the output again gets one more declare and solve before the
  * reconcile. Returns the mutation count, or -1 when the output was clean
- * and nothing ran. While the lua lock is active (lock_active), the lock
- * scene solves instead, in a second per-output context reconciling into a
- * band in LyrBlock; the desktop band keeps its last scene, occluded by
- * locked_bg below that band. */
-int declare_output_frame(struct declare_output *dout, struct Monitor *m,
-	bool lock_active);
+ * and nothing ran. While the session is locked the same pass adds the lock
+ * section on top of the same tree, and the frame reads the lock state
+ * itself rather than taking it from the caller. */
+int declare_output_frame(struct declare_output *dout, struct Monitor *m);
 
 /* The Clay debug inspector (clay.h:897-899, Clay__RenderDebugView at
  * clay.h:3378). Clay draws the panel inside Clay_EndLayout when the
- * context's flag is set, so its commands reconcile through the desktop band
- * like every other. The flag is per screen: the desktop context's own, read
- * back rather than copied, since the panel closes itself from inside the
- * solve. The lock context is never touched. */
+ * context's flag is set, so its commands reconcile like every other. The
+ * flag is per screen, read back rather than copied, since the panel closes
+ * itself from inside the solve. Clay declares the panel above every band
+ * this compositor can name, so a locked session never sets the flag for
+ * the solve (declare_output_frame). */
 bool declare_inspector_get(struct declare_output *dout);
 void declare_inspector_set(struct declare_output *dout, bool on);
 
@@ -90,11 +103,6 @@ void declare_wheel(double dx, double dy);
  * there is the panel's, and input.c gives none of it to Lua or clients. */
 bool declare_inspector_covers(double lx, double ly);
 
-/* Show or hide every output's retained lock band, and dirty all outputs;
- * called on lua lock engage and disengage. Hiding keeps the retained nodes,
- * so re-engaging does not first flash the previous lock frame. */
-void declare_lock_set_visible(bool on);
-
 /* How the reconciler reaches surface scene trees (render.h); implemented by
  * window.c, set once at startup, before any output declares. */
 void declare_set_client_hooks(const struct render_client_hooks *hooks);
@@ -113,11 +121,19 @@ enum declare_kind {
 	/* The object is a wlr_session_lock_surface_v1 (ext-session-lock);
 	 * its output's Monitor holds the borrow owner slot. */
 	DECLARE_KIND_LOCK,
+	/* The lock backdrop, whose object is the output's declare_output. It
+	 * draws the opaque cover and it answers the input walk with nothing,
+	 * which is what keeps the desktop below it from taking input. */
+	DECLARE_KIND_LOCK_BLOCK,
 	/* The object is the seat's wlr_drag_icon; its data is the scene tree
 	 * wlr_scene_drag_icon_create made for it. */
 	DECLARE_KIND_DRAG,
 	/* The object is a Popup (window.h): an xdg popup with its own tree. */
 	DECLARE_KIND_POPUP,
+	/* The pointer image (input.h, cursor_image): the object is the
+	 * wlr_cursor for a themed image leaf, or the client's cursor surface
+	 * for a borrowed one. It passes every hit through. */
+	DECLARE_KIND_CURSOR,
 };
 
 uint64_t declare_handle_for(void *object, enum declare_kind kind);
@@ -142,9 +158,9 @@ Clay_Context *declare_widget_context(const struct widget_host *host);
  * tree has been declared. */
 int declare_widget_hits(const struct widget_host *host, double x, double y, int *out, int cap);
 
-/* Test hook (awesome._test_declare_order): the desktop band's draw order for
- * the last completed solve, bottom to top. While locked, read the retained
- * desktop commands. No declaration, solve or scene mutation occurs. */
+/* Test hook (awesome._test_declare_order): the output's draw order for the
+ * last completed solve, bottom to top. No declaration, solve or scene
+ * mutation occurs. */
 int declare_output_order(struct declare_output *dout,
 	void **objects, int cap);
 
@@ -157,7 +173,7 @@ declare_userdata_handle(void *userdata)
 	return (uint64_t)(uintptr_t)userdata & RENDER_UD_OWNER_MASK;
 }
 
-/* The tree of every output (or of `only`): per band, a header of counters,
+/* The tree of every output (or of `only`): a header of counters,
  * the flow-root, floating-root and derived counts, the declared hierarchy
  * as the last frame's pass recorded it (role, object, sizing and its
  * source, flow, attachment, solved box), the drawins it refused, and the
@@ -168,10 +184,11 @@ declare_userdata_handle(void *userdata)
  * divergence. The caller frees the string. */
 char *declare_dump(struct Monitor *only);
 
-/* What is under a layout point, by walking the declared tree: each band's
- * retained draw order from the top, the output under the point first
- * (its lock band while locked, else its desktop band), then the other
- * outputs', so chrome overhanging onto a neighbor is still found. A
+/* What is under a layout point, by walking the declared tree: the retained
+ * draw order from the top, the output under the point first, then the other
+ * outputs', so chrome overhanging onto a neighbor is still found. While the
+ * session is locked the lock backdrop is at the top of that order and takes
+ * every point, so nothing below it answers. A
  * candidate is accepted by what it stands for: a surface at its input
  * region, a drawin by its shape and pass-through flag, a titlebar or a
  * client's border anywhere; a refusal continues below. kind is 0 when
@@ -185,7 +202,7 @@ struct declare_hit {
 void declare_hit_at(double lx, double ly, struct declare_hit *out);
 
 /* The screenshot backmap: the object whose leaf drew node, or NULL for a
- * node no band drew. Searches every output's bands, desktop then lock. */
+ * node no band drew. Searches every output's band. */
 struct wlr_scene_node;
 void *declare_hit(struct wlr_scene_node *node, enum declare_kind *kind);
 

@@ -153,7 +153,7 @@ runner.run_async(function()
     async.sleep(.5)
     local after = awesome._clay_tree(s)
     local function frames(dump)
-        return assert(dump:match('band desktop [^\n]* frames (%d+)'), dump)
+        return assert(dump:match('output %S+ scale [^\n]* frames (%d+)'), dump)
     end
     assert(frames(before) == frames(after), before .. '\n' .. after)
 

@@ -16,6 +16,7 @@
 
 #include <assert.h>
 #include <signal.h>
+#include <setjmp.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -390,15 +391,14 @@ static void test_passive_clips(void) {
 		.clip={.horizontal=true,.vertical=true,.passive=true}});
 	Clay__CloseElement();
 	Clay_RenderCommandArray inspected=Clay_EndLayout(0);
-	bool passive_shown=false, padding_shown=false;
+	bool passive_shown=false;
 	for (int i=0;i<inspected.length;i++) {
 		Clay_RenderCommand *cmd=&inspected.internalArray[i];
 		if (cmd->commandType!=CLAY_RENDER_COMMAND_TYPE_TEXT) continue;
 		Clay_StringSlice text=cmd->renderData.text.stringContents;
 		if (text.length==7 && !memcmp(text.chars,"Passive",7)) passive_shown=true;
-		if (text.length==10 && !memcmp(text.chars,"To Padding",10)) padding_shown=true;
 	}
-	assert(passive_shown && padding_shown);
+	assert(passive_shown);
 	stop_context(arena);
 	/* Capacity is independent of the inspector's own scrolling panes. */
 	arena=start_context();
@@ -418,86 +418,6 @@ static void test_passive_clips(void) {
 	assert(!Clay_GetScrollContainerData(id(1000)).found);
 	assert(Clay_GetScrollContainerData(id(1240)).found);
 	stop_context(arena);
-}
-
-static void test_grow_rounding(void) {
-    void *arena = start_context();
-    for (int vertical = 0; vertical < 2; vertical++) {
-        for (int enabled = 0; enabled < 2; enabled++) {
-            Clay_BeginLayout();
-            open_node(100, (Clay_ElementDeclaration){.layout = {
-                .sizing = {CLAY_SIZING_FIXED(vertical ? 10 : 1280), CLAY_SIZING_FIXED(vertical ? 1280 : 10)},
-                .layoutDirection = vertical ? CLAY_TOP_TO_BOTTOM : CLAY_LEFT_TO_RIGHT,
-                .ceilGrow = enabled}});
-            for (int i = 0; i < 3; i++) {
-                open_node(101+i, (Clay_ElementDeclaration){
-                    .layout.sizing = {CLAY_SIZING_GROW(0), CLAY_SIZING_GROW(0)},
-                    .backgroundColor = {255, 0, 0, 255}});
-                Clay__CloseElement();
-            }
-            Clay__CloseElement();
-            Clay_EndLayout(0);
-            for (int i = 0; i < 3; i++) {
-                Clay_BoundingBox b = Clay_GetElementData(id(101+i)).boundingBox;
-                float extent = vertical ? b.height : b.width;
-                float origin = vertical ? b.y : b.x;
-                if (enabled) {
-                    assert(extent == (i == 2 ? 426 : 427));
-                    assert(origin == i * 427);
-                } else {
-                    assert(extent > 426 && extent < 427);
-                }
-                assert(element(101+i)->config.layout.sizing.width.type == CLAY__SIZING_TYPE_GROW);
-                assert(element(101+i)->config.layout.sizing.height.type == CLAY__SIZING_TYPE_GROW);
-            }
-        }
-    }
-    // Authored fractional bounds win over rounding; minima can overflow.
-    for (int minimum = 0; minimum < 2; minimum++) {
-        Clay_BeginLayout();
-        open_node(100, (Clay_ElementDeclaration){.layout = {
-            .sizing = {CLAY_SIZING_FIXED(100), CLAY_SIZING_FIXED(10)}, .ceilGrow = true}});
-        open_node(101, (Clay_ElementDeclaration){.layout.sizing = {
-            minimum ? CLAY_SIZING_GROW(0) : CLAY_SIZING_GROW(0,30.5), CLAY_SIZING_GROW(0)}});
-        Clay__CloseElement();
-        open_node(102, (Clay_ElementDeclaration){.layout.sizing = {
-            CLAY_SIZING_GROW(minimum ? 70.5 : 0), CLAY_SIZING_GROW(0)}});
-        Clay__CloseElement();Clay__CloseElement();Clay_EndLayout(0);
-        assert(Clay_GetElementData(id(101)).boundingBox.width == (minimum ? 30 : 30.5));
-        assert(Clay_GetElementData(id(102)).boundingBox.width == (minimum ? 70.5 : 69.5));
-    }
-    // Fixed siblings, gaps and padding retain their declared sizes.
-    Clay_BeginLayout();
-    open_node(100, (Clay_ElementDeclaration){.layout = {
-        .sizing = {CLAY_SIZING_FIXED(1280), CLAY_SIZING_FIXED(10)},
-        .ceilGrow = true, .padding = {.left=2,.right=2}, .childGap=3}});
-    open_node(101, (Clay_ElementDeclaration){.layout.sizing={CLAY_SIZING_FIXED(9),CLAY_SIZING_GROW(0)}});
-    Clay__CloseElement();
-    for (int i=0;i<3;i++) {
-        open_node(102+i,(Clay_ElementDeclaration){.layout.sizing={CLAY_SIZING_GROW(0),CLAY_SIZING_GROW(0)}});
-        Clay__CloseElement();
-    }
-    Clay__CloseElement();Clay_EndLayout(0);
-    box(Clay_GetElementData(id(101)).boundingBox,2,0,9,10);
-    box(Clay_GetElementData(id(102)).boundingBox,14,0,420,10);
-    box(Clay_GetElementData(id(103)).boundingBox,437,0,420,10);
-    box(Clay_GetElementData(id(104)).boundingBox,860,0,418,10);
-    Clay_SetDebugModeEnabled(true);
-    Clay_GetCurrentContext()->debugSelectedElementId=100;
-    Clay_BeginLayout();
-    open_node(100,(Clay_ElementDeclaration){.layout={
-        .sizing={CLAY_SIZING_FIXED(100),CLAY_SIZING_FIXED(100)},.ceilGrow=true}});
-    Clay__CloseElement();
-    Clay_RenderCommandArray inspected=Clay_EndLayout(0);
-    bool shown=false;
-    for (int i=0;i<inspected.length;i++) {
-        Clay_RenderCommand *cmd=&inspected.internalArray[i];
-        if (cmd->commandType!=CLAY_RENDER_COMMAND_TYPE_TEXT) continue;
-        Clay_StringSlice text=cmd->renderData.text.stringContents;
-        if (text.length==13 && !memcmp(text.chars,"Grow Rounding",13)) shown=true;
-    }
-    assert(shown);
-    stop_context(arena);
 }
 
 static void test_size_containment(void) {
@@ -721,15 +641,19 @@ static void test_root_position_and_paint_order(void) {
  * border retains its own command metadata and paints outside that scope. */
 static void test_padding_clip(void) {
     void *arena = start_context();
+    int host;
     for (int frame = 0; frame < 3; frame++) {
         float width = frame == 1 ? 60 : 40;
         Clay_BeginLayout();
         open_node(301, (Clay_ElementDeclaration){
             .layout = {.sizing={CLAY_SIZING_FIXED(width),CLAY_SIZING_FIXED(30)},
                 .padding={2,3,4,5}},
-            .clip={.horizontal=true,.vertical=true,.passive=true,.toPadding=true,
-                .userData=arena},
-            .border={.color={255,0,0,255},.width={1,1,1,1,0}}});
+            .border={.color={255,0,0,255},.width={1,1,1,1,0}},
+            .userData=&host});
+        open_node(304, (Clay_ElementDeclaration){
+            .layout.sizing={CLAY_SIZING_GROW(0),CLAY_SIZING_GROW(0)},
+            .clip={.horizontal=true,.vertical=true,.passive=true},
+            .userData=arena});
         open_node(302, (Clay_ElementDeclaration){
             .layout.sizing={CLAY_SIZING_FIXED(80),CLAY_SIZING_FIXED(50)},
             .backgroundColor={0,0,255,255}});
@@ -740,7 +664,7 @@ static void test_padding_clip(void) {
                 .clipTo=CLAY_CLIP_TO_ATTACHED_PARENT,
                 .pointerCaptureMode=CLAY_POINTER_CAPTURE_MODE_PASSTHROUGH},
             .backgroundColor={0,255,0,255}});
-        Clay__CloseElement(); Clay__CloseElement();
+        Clay__CloseElement(); Clay__CloseElement(); Clay__CloseElement();
         Clay_RenderCommandArray commands = Clay_EndLayout(0);
         int depth=0, starts=0, borders=0;
         for (int i=0;i<commands.length;i++) {
@@ -752,7 +676,7 @@ static void test_padding_clip(void) {
             } else if (cmd->commandType==CLAY_RENDER_COMMAND_TYPE_SCISSOR_END) {
                 assert(--depth==0);
             } else if (cmd->commandType==CLAY_RENDER_COMMAND_TYPE_BORDER) {
-                assert(depth==0 && cmd->userData==NULL);
+                assert(depth==0 && cmd->userData==&host);
                 box(cmd->boundingBox,0,0,width,30);
                 borders++;
             } else assert(depth==1);
@@ -810,8 +734,232 @@ static void test_output_backdrop(void) {
     stop_context(arena);
 }
 
+static jmp_buf capacity_jump;
+static Clay_ErrorType capacity_error;
+static void capacity_handler(Clay_ErrorData error) {
+    capacity_error = error.errorType;
+    switch (error.errorType) {
+    case CLAY_ERROR_TYPE_ELEMENTS_CAPACITY_EXCEEDED:
+    case CLAY_ERROR_TYPE_ARRAY_CAPACITY_EXCEEDED:
+    case CLAY_ERROR_TYPE_HASH_MAP_CAPACITY_EXCEEDED:
+    case CLAY_ERROR_TYPE_TEXT_MEASUREMENT_CAPACITY_EXCEEDED:
+        longjmp(capacity_jump, 1);
+    default: clay_error(error);
+    }
+}
+static void capacity_leaves(int first, int count) {
+    Clay_BeginLayout();
+    for (int i = 0; i < count; i++) {
+        open_node(first+i, (Clay_ElementDeclaration){
+            .layout.sizing={CLAY_SIZING_FIXED(10),CLAY_SIZING_FIXED(10)},
+            .backgroundColor={255,0,0,255}});
+        Clay__CloseElement();
+    }
+    Clay_EndLayout(0);
+}
+static void capacity_transitions(void) {
+    Clay_BeginLayout();
+    for (int i=0;i<201;i++) {
+        open_node(100+i,(Clay_ElementDeclaration){
+            .layout.sizing={CLAY_SIZING_FIXED(10),CLAY_SIZING_FIXED(10)},
+            .transition={.handler=Clay_EaseOut,.duration=1,.properties=CLAY_TRANSITION_PROPERTY_WIDTH}});
+        Clay__CloseElement();
+    }
+}
+static bool capacity_try(int first, int count, bool transitions) {
+    if (setjmp(capacity_jump)) return true;
+    if (transitions) capacity_transitions();
+    else capacity_leaves(first,count);
+    return false;
+}
+static void allocation_handler(Clay_ErrorData error) {
+    assert(error.errorType == CLAY_ERROR_TYPE_ARENA_CAPACITY_EXCEEDED);
+    capacity_error = error.errorType;
+}
+static void test_capacity_recovery(void) {
+    Clay_SetMaxElementCount(128);
+    void *arena = start_context();
+    Clay_Context *context=Clay_GetCurrentContext();
+    context->errorHandler.errorHandlerFunction=capacity_handler;
+    for (int frame=0; frame<20; frame++) {
+        capacity_leaves(1000+100*frame,63);
+        assert(!context->booleanWarnings.hashMapCapacityExceeded);
+    }
+    assert(context->layoutElementsHashMapInternal.length==127);
+    assert(context->layoutElementsHashMapFreeList.length==63);
+    Clay_SetPointerState((Clay_Vector2){5,5},false);
+    assert(Clay_PointerOver(id(2900)));
+    size_t size=Clay__StateSize();
+    void *saved=malloc(size);assert(saved);
+    assert(!Clay__StateSave(saved,size-1));
+    assert(Clay__StateSave(saved,size));
+    assert(capacity_try(5000,100,false));
+    assert(capacity_error==CLAY_ERROR_TYPE_HASH_MAP_CAPACITY_EXCEEDED);
+    Clay__StateRestore(saved);
+    assert(context==Clay_GetCurrentContext());
+    Clay_SetPointerState((Clay_Vector2){5,5},false);
+    assert(Clay_PointerOver(id(2900)) && !Clay_PointerOver(id(5000)));
+    capacity_leaves(2900,1);
+    assert(context->layoutElements.length==2);
+    assert(Clay_GetElementData(id(2900)).found);
+    free(saved);
+    stop_context(arena);
+
+    Clay_SetMaxElementCount(64);
+    arena=start_context();
+    context=Clay_GetCurrentContext();
+    context->errorHandler.errorHandlerFunction=capacity_handler;
+    assert(capacity_try(100,100,false));
+    assert(capacity_error==CLAY_ERROR_TYPE_ELEMENTS_CAPACITY_EXCEEDED);
+    assert(context->booleanWarnings.maxElementsExceeded);
+    stop_context(arena);
+
+    Clay_SetMaxElementCount(32768);
+    arena=start_context();
+    context=Clay_GetCurrentContext();
+    context->errorHandler.errorHandlerFunction=capacity_handler;
+    assert(capacity_try(0,0,true));
+    assert(capacity_error==CLAY_ERROR_TYPE_ARRAY_CAPACITY_EXCEEDED);
+    assert(context->transitionDatas.length==200);
+    Clay_ErrorHandler handler={allocation_handler,NULL};
+    assert(!Clay_Initialize(Clay_CreateArenaWithCapacityAndMemory(Clay_MinMemorySize(),NULL),
+        (Clay_Dimensions){200,160},handler));
+    assert(Clay_GetCurrentContext()==context);
+    assert(!Clay_Initialize(Clay_CreateArenaWithCapacityAndMemory(sizeof(Clay_Context),arena),
+        (Clay_Dimensions){200,160},handler));
+    assert(Clay_GetCurrentContext()==context);
+    stop_context(arena);
+    Clay_SetMaxElementCount(8192);
+}
+static Clay_TransitionData capacity_exit(Clay_TransitionData data, Clay_TransitionProperty properties) {
+    (void)properties;
+    data.boundingBox.width=0;
+    return data;
+}
+static void capacity_scroll_transition(float width, bool show, const char *text, float dt) {
+    Clay_BeginLayout();
+    open_node(71,(Clay_ElementDeclaration){
+        .layout={.sizing={CLAY_SIZING_FIXED(80),CLAY_SIZING_FIXED(60)},.layoutDirection=CLAY_TOP_TO_BOTTOM},
+        .clip={.vertical=true,.childOffset=Clay_GetScrollOffset()}});
+    open_node(72,(Clay_ElementDeclaration){.layout.sizing={CLAY_SIZING_FIXED(60),CLAY_SIZING_FIXED(200)}});
+    CLAY_TEXT(((Clay_String){.length=(int)strlen(text),.chars=text}),CLAY_TEXT_CONFIG({.fontSize=12}));
+    Clay__CloseElement();
+    Clay__CloseElement();
+    if(show) {
+        open_node(73,(Clay_ElementDeclaration){
+            .layout.sizing={CLAY_SIZING_FIXED(width),CLAY_SIZING_FIXED(60)},
+            .backgroundColor={255,0,0,255},
+            .transition={.handler=Clay_EaseOut,.duration=1,.properties=CLAY_TRANSITION_PROPERTY_WIDTH,
+                .exit.setFinalState=capacity_exit}});
+        Clay__CloseElement();
+    }
+    Clay_EndLayout(dt);
+}
+static void test_capacity_persistent_state(void) {
+    Clay_SetMaxElementCount(32768);
+    void *arena=start_context();
+    Clay_Context *c=Clay_GetCurrentContext();
+    c->errorHandler.errorHandlerFunction=capacity_handler;
+    char *old=strdup("retained text"), *pending=strdup("pending text");
+    assert(old && pending);
+    capacity_scroll_transition(60,true,old,0);
+    capacity_scroll_transition(60,true,old,0);
+    capacity_scroll_transition(60,true,old,0);
+    Clay_ScrollContainerData scroll=Clay_GetScrollContainerData(id(71));
+    assert(scroll.found);
+    scroll.scrollPosition->y=-40;
+    capacity_scroll_transition(120,true,old,.1f);
+    capacity_scroll_transition(120,true,old,.1f);
+    Clay_ElementData before=Clay_GetElementData(id(73));
+    assert(before.found && before.boundingBox.width>60 && before.boundingBox.width<120);
+    size_t size=Clay__StateSize();void *saved=malloc(size);assert(saved);
+    assert(Clay__StateSave(saved,size));
+    capacity_scroll_transition(180,true,pending,.1f);
+    assert(capacity_try(1000,32768,false));
+    Clay__StateRestore(saved);
+    assert(Clay_GetElementData(id(73)).boundingBox.width==before.boundingBox.width);
+    assert(Clay_GetScrollContainerData(id(71)).scrollPosition->y==-40);
+    assert(Clay__ReferencesMemory(old,strlen(old),UINTPTR_MAX));
+    assert(!Clay__ReferencesMemory(pending,strlen(pending),UINTPTR_MAX));
+    free(pending);
+    capacity_scroll_transition(120,false,old,.1f);
+    assert(c->exitingElementsLength>0 && c->transitionDatas.length==1);
+    free(saved);size=Clay__StateSize();saved=malloc(size);assert(saved);
+    assert(Clay__StateSave(saved,size));
+    int tails=c->exitingElementsLength;
+    assert(capacity_try(1000,32768,false));
+    Clay__StateRestore(saved);
+    assert(c->exitingElementsLength==tails);
+    assert(Clay_GetScrollContainerData(id(71)).scrollPosition->y==-40);
+    for(int i=0;i<20;i++) capacity_scroll_transition(120,false,old,.1f);
+    assert(c->transitionDatas.length==0 && c->exitingElementsLength==0);
+    free(saved);free(old);stop_context(arena);
+    Clay_SetMaxElementCount(8192);
+}
+
+static void inspector_layout(void) {
+    Clay_BeginLayout();
+    open_node(700,(Clay_ElementDeclaration){.layout.sizing={CLAY_SIZING_GROW(0),CLAY_SIZING_GROW(0)}});
+    for(int i=0;i<3000;i++){
+        open_node(10000+i,(Clay_ElementDeclaration){.layout.sizing={CLAY_SIZING_FIXED(1),CLAY_SIZING_FIXED(1)}});
+        Clay__CloseElement();
+    }
+    Clay__CloseElement();
+    Clay_EndLayout(0);
+}
+static void test_inspector_capacity(void) {
+    Clay_SetMaxElementCount(32768);
+    void *arena=start_context();
+    Clay_Context *c=Clay_GetCurrentContext();
+    Clay_SetLayoutDimensions((Clay_Dimensions){1280,720});
+    Clay_SetDebugModeEnabled(true);
+    inspector_layout();
+    Clay_ElementId pane=CLAY_ID("Clay__DebugViewOuterScrollPane");
+    Clay_ScrollContainerData data=Clay_GetScrollContainerData(pane);
+    assert(data.found && data.contentDimensions.height==3002*30);
+    assert(c->layoutElements.length-3002<512);
+    assert(!Clay_GetElementData(CLAY_IDI("Clay__DebugView_ElementOuter",12999)).found);
+    data.scrollPosition->y=-(data.contentDimensions.height-data.scrollContainerDimensions.height);
+    inspector_layout();
+    assert(c->layoutElements.length-3002<512);
+    Clay_ElementData last=Clay_GetElementData(CLAY_IDI("Clay__DebugView_ElementOuter",12999));
+    assert(last.found);
+    Clay_SetPointerState((Clay_Vector2){last.boundingBox.x+30,last.boundingBox.y+15},false);
+    Clay_SetPointerState((Clay_Vector2){last.boundingBox.x+30,last.boundingBox.y+15},true);
+    inspector_layout();
+    assert(c->debugSelectedElementId==12999);
+    data=Clay_GetScrollContainerData(pane);data.scrollPosition->y=0;
+    Clay_SetPointerState((Clay_Vector2){-1,-1},false);
+    inspector_layout();
+    assert(c->debugSelectedElementId==12999);
+    Clay_ElementData collapse=Clay_GetElementData(CLAY_IDI("Clay__DebugView_CollapseElement",700));
+    assert(collapse.found);
+    Clay_SetPointerState((Clay_Vector2){collapse.boundingBox.x+8,collapse.boundingBox.y+8},true);
+    inspector_layout();
+    Clay_SetPointerState((Clay_Vector2){-1,-1},false);
+    inspector_layout();
+    data=Clay_GetScrollContainerData(pane);
+    assert(data.contentDimensions.height<3002*30);
+    assert(Clay__GetHashMapItem(700)->debugData.collapsed);
+    collapse=Clay_GetElementData(CLAY_IDI("Clay__DebugView_CollapseElement",700));
+    Clay_SetPointerState((Clay_Vector2){collapse.boundingBox.x+8,collapse.boundingBox.y+8},true);
+    inspector_layout();
+    Clay_SetPointerState((Clay_Vector2){-1,-1},false);
+    inspector_layout();
+    data=Clay_GetScrollContainerData(pane);
+    assert(data.contentDimensions.height==3002*30);
+    assert(!Clay__GetHashMapItem(700)->debugData.collapsed);
+    /* Clicking the collapse control also selects its owning row. */
+    assert(c->debugSelectedElementId==700);
+    stop_context(arena);
+    Clay_SetMaxElementCount(8192);
+}
+
 int main(void) {
-	test_padding_clip(); puts("ok padded host clip, flow/floating input, resize, border order and independent metadata without scroll state");
+    test_capacity_persistent_state(); puts("ok intermediate rollback, native text lifetime, scrolling and retained exits");
+    test_capacity_recovery(); puts("ok capacity rollback, map reuse, bounded transitions and allocation rejection");
+    test_inspector_capacity(); puts("ok bounded inspector rows, full extent, selection and collapse");
+	test_padding_clip(); puts("ok inner passive host clip, flow/floating input, resize, border order and independent metadata without scroll state");
 	test_output_backdrop(); puts("ok OUTPUT color/image before negative-band roots, flow children above them, repeated traversal");
 	test_root_position_and_paint_order(); puts("ok root first-open/move/FIT grow/shrink/in-flow, stable paint and pointer order, nested scissor ranges");
 	test_primitives(); puts("ok pinned primitives, mixed identities, structural negative, repeated frames and teardown");
@@ -819,7 +967,6 @@ int main(void) {
 	test_overlay_rejected(); puts("ok unsupported overlay start/end rejected");
 	test_text_area(); puts("ok native text area, glyph paint/owner, wrapping, input and stable attachment identity");
 	test_passive_clips(); puts("ok passive clip overflow, offsets, input, state retirement and 120 roots without scroll allocation");
-	test_grow_rounding(); puts("ok opt-in native GROW whole-pixel allocation, both axes, bounds, padding and fixed siblings");
 	test_size_containment(); puts("ok native size containment, surface minima, independent allocation, bounds and unclipped input");
 	test_intrinsic_images(); puts("ok intrinsic image first solve, resize, caps, FIT/GROW/FIXED and independent text allocation");
 	render_text_finish();

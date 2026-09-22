@@ -74,8 +74,9 @@ runner.run_async(function()
     -- Nothing stands in for the empty text, the empty image or the hidden
     -- child: the row is the label, the spacer, and one gap between them.
     local base = classes(bar)
-    assert(base == 'wibox.layout.fixed wibox.widget.textbox text spacer',
+    assert(base == 'wibox.widget.textbox text spacer',
         'the empty and hidden widgets left something behind: ' .. base)
+    assert(bar._drawable._clay_tree.gap == row.spacing, 'the host lost the row gap')
     local label_box = assert(node_of(bar, 'wibox.widget.textbox'))
     local spacer_box = assert(node_of(bar, 'spacer'))
     assert(label_box.x == BX and spacer_box.x == BX + label_box.width + 4,

@@ -377,7 +377,7 @@ cleanuplisteners(void)
 static Client *pre_lock_focused_client = NULL;
 
 /** Activate Lua-controlled lock mode
- * - Solves the lock scene (covers + lock surface) into LyrBlock
+ * - Has every output declare the lock section on its next frame
  * - Gives keyboard focus to lock surface
  */
 void
@@ -396,21 +396,20 @@ some_activate_lua_lock(void)
 		luaA_mousegrabber_stop(L);
 	}
 
-	/* Show the retained lock bands and dirty every output, so the lock
-	 * scene (the opaque backdrop, the covers, then the lock surface on
-	 * top) solves this frame into LyrBlock (declare.c). */
-	declare_lock_set_visible(true);
+	/* Dirty every output, so the lock section (the opaque backdrop, the
+	 * covers, then the lock surface on top) joins each output's tree on
+	 * its next frame (declare.c). */
+	declare_mark_all_dirty();
 }
 
-/** The scene half of deactivating the lock: layers only, no Lua. */
+/** The scene half of deactivating the lock: the tree only, no Lua. */
 static void
 lua_lock_scene_restore(void)
 {
-	/* Hide the retained lock bands (nodes kept, so a re-engage does not
-	 * flash the previous lock frame) and re-solve the desktop; the lock
-	 * drawins rejoin the desktop declaration through the normal band
-	 * policy on that same solve. */
-	declare_lock_set_visible(false);
+	/* Dirty every output: the next frame declares no lock section, and
+	 * the lock drawins rejoin the ordinary declaration on that same
+	 * solve. */
+	declare_mark_all_dirty();
 }
 
 /** Deactivate Lua-controlled lock mode
@@ -678,7 +677,7 @@ run(char *startup_cmd)
 	 * initialized, as the image/coordinates are not transformed for the
 	 * monitor when displayed here */
 	wlr_cursor_warp_closest(cursor, NULL, cursor->x, cursor->y);
-	wlr_cursor_set_xcursor(cursor, cursor_mgr, "default");
+	cursor_set_xcursor("default");
 
 	/* ========================================================================
 	 * RUN GLIB MAIN LOOP (Matches AwesomeWM Architecture)

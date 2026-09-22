@@ -1,11 +1,9 @@
 ---------------------------------------------------------------------------
 -- Test: a notification box converts to Clay declarations
 --
--- naughty's default box is a constraint (the notification's maximum width)
--- around its background, margins and layouts, with the icon, title and
--- message as its leaves. The constraint is a Clay size limit, the icon an
--- image element and the texts text elements, so the message wraps where
--- Clay wraps it.
+-- The notification stack owns the width of its boxes. Background, margins
+-- and layouts retain the icon, title and message as image and text leaves,
+-- so the message wraps within the stack allocation.
 --
 -- Run: make test-one TEST=tests/test-clay-notification.lua
 ---------------------------------------------------------------------------
@@ -105,10 +103,8 @@ local steps = {
         assert(#images == 1, "expected one notification icon image: " .. table.concat(images, ", "))
 
         local limit = beautiful.notification_max_width or 500
-        local constraint = first(list, "wibox.container.constraint")
-
-        assert(constraint and constraint.line:find("<=" .. limit .. " ", 1, true),
-            "the constraint is not a size limit: " .. tostring(constraint and constraint.line))
+        assert(awesome._clay_tree(s):find("NOTIFICATIONS - w=fixed(320)", 1, true),
+            "the notification stack lost its width")
         assert(d.width <= limit, "the box is wider than its limit")
 
         local texts = {}

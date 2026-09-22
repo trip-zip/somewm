@@ -180,10 +180,29 @@ A client's band follows `ontop`, `above`, `below` and `fullscreen`. A transient 
 | 100 | layer-shell overlay |
 | 110 | override-redirect X11 windows |
 | 120 | the drag icon |
+| 200 | the lock backdrop, while the session is locked |
+| 210 | the lock covers |
+| 220 | the lock surface |
+| 32767 | the pointer image |
 
 **Every floating client draws above a wibar that is not `ontop`.** The bar is in flow, so it has no band; a floating client has one. AwesomeWM stacks the same way.
 
-**Override-redirect X11 windows draw above everything.** X11 menus and tooltips set no stacking properties, so somewm gives them the top band. AwesomeWM stacks them with the client that owns them, and somewm 2.0 left the result to scene insertion order. The lock screen is unaffected: it has its own Clay tree above this one.
+**Override-redirect X11 windows draw above everything.** X11 menus and tooltips set no stacking properties, so somewm gives them the top band. AwesomeWM stacks them with the client that owns them, and somewm 2.0 left the result to scene insertion order. The lock screen still draws above them: it is part of the same tree, in a band above the drag icon.
+
+**The lock screen is part of the output's tree, not a second one.** While the session is locked, somewm declares an opaque backdrop, then the lock covers, then the lock surface, above every band in the table. The backdrop answers every click and every pointer motion itself, so nothing below it can take input, and the compositor sizes it to the output, so a monitor plugged in while locked is covered before the config sees it.
+
+**The pointer is a leaf of the output's tree.** somewm declares the pointer image on the output under the pointer, above every other band: the theme's cursor at that output's scale, or the cursor surface the focused client set, placed at the pointer less its hotspot. wlroots paints no cursor of its own, on a hardware plane or in software, so the leaf is the only pointer drawn. What follows:
+- The pointer moves at the output's frame rate, like everything else in the tree. wlroots applied a hardware cursor move at the next output commit too, so the pace is the same.
+- The pointer image takes no input. What is under it is what the pointer is over.
+- `root.content()` and `screen.content` leave the pointer out, as an X11 screenshot does. A screencopy client such as grim sees it, because it is part of the frame.
+- A fullscreen client with the pointer over it is composited rather than scanned out directly. A client that hides its cursor gets direct scan-out back.
+- An animated theme cursor (`watch`, `progress`) shows its first frame and does not animate. Animating it would keep an idle output declaring a frame per step for as long as the cursor is up.
+
+**The Clay inspector is not drawn while the session is locked.** Clay declares its panel above every band somewm has, so a locked screen would show the desktop's whole element tree through the lock. `screen.inspector` keeps whatever it was set to and the panel comes back on unlock.
+
+**`wibox:find_widgets` answers from the current frame while locked.** The desktop is still being solved under the lock, so a query against a desktop wibox reports where its widgets are now.
+
+**A drawin keeps the geometry its config gives it.** somewm never resizes a drawin when its screen changes size or moves, so anything sized from `screen.geometry` at construction keeps that size, a percentage `awful.wibar` height or width included, and a full-screen overlay follows `property::geometry` itself; the bundled lockscreen does, and its surfaces always match their screen.
 
 **A drawin's border and shadow do not accept pointer input.** Clicks fall through to whatever draws below, as in 2.0.
 
@@ -230,7 +249,9 @@ A widget is a description of a Clay subtree, and nothing else draws. A drawable'
 
 **A widget that draws itself is left out, loudly.** A widget that defines `draw`, `fit`, `layout`, `before_draw_children` or `after_draw_children`, on its class or on the instance, or whose class has no describer, is refused: one warning per class names the class and the methods it defines, and the widget's whole subtree is left out of the tree. The bar keeps drawing around the hole. A custom widget is written as a describer now: `widget._clay = { describe = function(w, fg, st) ... end }`, returning the node table `wibox.clay` documents, and `wibox.widget.base.make_widget(template)` gives a template widget a describer that passes through to the template. The stock classes that never had a describer are refused the same way: `wibox.container.rotate`, `wibox.container.mirror`, `wibox.container.tile` (Clay has no transforms and no tiling).
 
-**A property Clay cannot hold refuses the widget too, for now.** Each describer answers nothing for a value outside Clay's vocabulary, and that refuses the widget with the same warning until the describers learn to ignore or round such values: a fractional or negative spacing, padding, offset or border width; a gradient or surface pattern where a solid color is expected (a margin's `color`, a border's color, a checkbox's or graph's colors); a `background` with a gradient and a corner radius or a border together; a rounded shape together with a border on a `background` or a `progressbar`; `draw_empty = false` on a margin; `align`'s `expand = "outside"` with no second widget; `manual` positions given as functions; an `imagebox` with a `clip_shape`, a fit policy other than `"auto"`, `downscale = false`, a `max_scaling_factor`, or an SVG with no size to render at; `textbox` markup with more than one run of one font and color, an underline or other Pango attribute, `justify`, an `indent`, a `line_spacing_factor`, or an `ellipsize` of `"start"` or `"middle"`; a `progressbar` with ticks or a bar border; a `slider` with a bar border; a `systray` with `beautiful.systray_max_rows` above 1; a `systray_icon` that is hovered, urgent or overlaid, or any `beautiful.systray_icon_style`; a `separator` with a `draw` painter; and `border_merging`, `expand_corners`, `honor_borders = false` or `ontop = false` on a `border` container.
+**Unsupported properties warn; some modes omit the widget.** Numeric spacing, padding and border widths are rounded and clamped to unsigned 16-bit values by `clay.pixels`. Imagebox clip shapes, scaling caps and `downscale=false` are ignored with warnings; non-auto fit policies use auto. Every SVG imagebox is refused, including SVGs with intrinsic or forced dimensions, because the describer requires a raster image surface. Rotate, mirror and tile containers have no describer and are omitted. Border containers refuse `honor_borders=false`, `ontop=false`, `border_merging`, `expand_corners`, `border_image_dpi` and unsupported SVG side images. Manual function-valued positions skip those children with a warning.
+
+Textbox attributes outside the native text vocabulary are ignored with warnings: multiple markup runs become one run, unsupported attributes are not drawn, justify/indent/line spacing are ignored, and start/middle ellipsizing uses end. Unsupported solid-color properties become transparent; nonrectangular background shapes draw as their box. Margin `draw_empty=false`, progressbar ticks/bar borders, slider bar borders, systray extra rows, and systray hover/urgent/overlay styling are ignored with named warnings. None of these paths invokes a widget painter or rasterizes a widget subtree outside the renderer.
 
 **Deleted API.** `wibox.hierarchy`, `wibox.widget.base.fit_widget`, `layout_widget`, `place_widget_at`, `place_widget_via_matrix` and `rect_to_device_geometry`, `wibox.widget.draw_to_cairo_context`, `draw_to_svg_file` and `draw_to_image_surface`, `wibox:to_widget` and `wibox:save_to_svg`, `wibox.drawable.surface` and `drawable:refresh()`. A widget is never handed a cairo context, so there is nothing for them to draw with; a picture of a widget comes from `root.content()` or `screen.content` while it is on screen.
 
@@ -242,7 +263,7 @@ A widget is a description of a Clay subtree, and nothing else draws. A drawable'
 
 **A tree the output cannot hold shows nothing.** A drawin whose tree is past the output's element budget (`WIDGET_NODES_OUTPUT_MAX` in widget.h, shared by every drawin on the output) or malformed shows nothing, with a warning once, until the tree changes; `somewm-client clay tree` lists it with the reason.
 
-**Gradients are shape-leaf fills.** A linear or radial gradient (`gears.color`'s table or string forms, up to 16 stops) on a `background` container, a drawable's own `bg`, or an `awful.wallpaper` `bg` is rasterised by the renderer as the fill of a rectangle holding the widget; a gradient on a rounded or bordered `background` refuses it for now.
+**Gradients are shape-leaf fills.** A linear or radial gradient (`gears.color`'s table or string forms, up to 16 stops) on a `background` container, a drawable's own `bg`, or an `awful.wallpaper` `bg` is rasterised by the renderer as the fill of a rectangle holding the widget; rounded background fills retain their radius, and native border declarations paint the border separately.
 
 **awful.wallpaper is a desktop wibox.** Each wallpaper owns one wibox of type desktop at its panning area, below every client, passing input through, holding its widget in the same background container as before. Screen areas its panning area does not cover show the plain root wallpaper (`gears.wallpaper`); `uncovered_areas_color` and `dpi` are gone (a value set is stored and ignored), and a tiled wallpaper (`wibox.container.tile`) is gone with the tile container.
 
@@ -252,13 +273,13 @@ A widget is a description of a Clay subtree, and nothing else draws. A drawable'
 
 Content-sized drawable roots use the same contribution rules as widget parents. Fully transparent solid colors contribute no paint, matching the renderer; visible nested paint, definite sizing and incompatible bounds retain their real elements. Original widget bindings and cached children survive changes between combined and separate representations.
 
-An image can carry its original widget bindings when both declared axes guarantee the same area. A larger minimum, independent growing allocation, padding or paint keeps a real container, including input in the unpainted area beside an image. This applies equally to built-in imageboxes and supported ad-hoc image declarations. Image aspect sizing still uses the existing allocation path pending the native sizing increment; this fold does not remove its `last-frame` provenance.
+An image can carry its original widget bindings when both declared axes guarantee the same area. A larger minimum, independent growing allocation, padding or paint keeps a real container, including input in the unpainted area beside an image. This applies equally to built-in imageboxes and supported ad-hoc image declarations. Image aspect sizing uses natural source dimensions and the current native allocation; it does not declare an image size from the previous host rectangle.
 
-**A rounded background cuts its children to the arc.** A `background` whose shape is a rounded rectangle holds whatever it holds, filled or not, and the renderer clips every node under it to the shape's box and arc, as the container's own cairo clip did. Clipping is the renderer's rather than Clay's: a Clay clip element is a scroll container, and a context holds ten of them, so the count of converted wiboxes on an output is bounded by the element budget alone. A `background` border's straight edges are the one thing not cut: a bordered widget touching a rounded corner shows its edge past the arc.
+**A rounded background cuts its children to the arc.** A `background` whose shape is a rounded rectangle holds whatever it holds, filled or not, and the renderer clips every node under it to the shape's box and arc, as the container's own cairo clip did. Rounded clipping is a renderer scope. Rectangular host clips use Clay's passive flag and consume no scroll records; ordinary scrolling clips have separate state. A `background` border's straight edges are the one thing not cut: a bordered widget touching a rounded corner shows its edge past the arc.
 
 **A popup's tree sizes its drawin.** An `awful.popup` sizes itself to its widget: the drawin's root element wraps the tree (`CLAY_SIZING_FIT`) within the popup's `minimum_width`, `maximum_width`, `minimum_height` and `maximum_height`, and the popup takes the box Clay solves, one frame after the tree changes. Geometry and draw-order reads expose the completed frame; they do not advance layout or run an isolated measurement.
 
-**Image aspect sizing uses native content and current constraints.** Imageboxes and tray icons declare their natural dimensions, aspect and authored bounds. A content-sized image with no definite allocation starts at its natural size; a definite bar or container scales it within the current allocation. Resizing no longer fixes image axes from the drawable's previous offer. `resize=false` and `upscale=false` retain natural caps; forced axes constrain image content while the original widget keeps its existing FIT/GROW allocation rules. The previous outward pixel rounding is retained for fractional image ratios. A larger clickable widget area remains a real container. Source replacement, original objects, occurrences and input delivery are unchanged. Checkbox and arcchart square-offer sizing and shared host feedback remain unsupported. Existing unsupported image fit policies, clip shapes, downscale-off and maximum-scaling options retain their named warnings.
+**Image aspect sizing uses native content and current constraints.** Imageboxes and tray icons declare their natural dimensions, aspect and authored bounds. A content-sized image with no definite allocation starts at its natural size; a definite bar or container scales it within the current allocation. Resizing no longer fixes image axes from the drawable's previous offer. `resize=false` and `upscale=false` retain natural caps; forced axes constrain image content while the original widget keeps its existing FIT/GROW allocation rules. The previous outward pixel rounding is retained for fractional image ratios. A larger clickable widget area remains a real container. Source replacement, original objects, occurrences and input delivery are unchanged. Checkbox and arcchart square sizing still computes a fixed side from the compiler offer and labels it `last-frame`; that offer can include current parent sizing and padding. These widgets remain declared, so the label does not establish genuine last-frame provenance. Image fit policies, clip shapes, downscale-off and maximum-scaling options retain their named warnings and ignored-property behavior. SVG imageboxes remain refused regardless of intrinsic size.
 
 **Border containers declare native rows and cells.** Side widths, corner sizes and content padding come from authored values; remaining space is allocated by Clay in the same solve. Image crops use only source dimensions and border widths, and survive host resize without recropping. Changing borders, source images or source styles invalidates the corresponding input cache. Widget-only and separate-image borders need no source image. Sliced borders are bounded by the source even when some cells have widget/image overrides; opposing widths that consume the whole source are clamped to leave a nonempty center, and zero-width sides produce no images. With `slice=false`, authored border widths and padding inset content without being limited by the background image dimensions. `honor_borders=false`, `ontop=false`, `border_merging`, `expand_corners` and `border_image_dpi` still refuse the border by name. Non-fit policies still warn and render as fit; separate SVG border images remain refused. Grid sizing and general host folding are unchanged.
 
@@ -298,17 +319,19 @@ left/top inset, while later children attach to the full stack box.
 
 **A margin's `color` draws above its child instead of below it.** The ring is the margin band, and the child is placed inside it, so the two do not overlap unless a widget draws outside its own box.
 
-**Padded art pads all four sides.** A `radialprogressbar` pads its content by its border and padding on every side, where the engine's fit added only the left and top offsets. An `arcchart` centres a square whose side is the smaller of the drawable's two sides, so a box whose smaller side is not the drawable's gets the wrong square.
+**Padded art pads all four sides.** A `radialprogressbar` pads its content by its border and padding on every side, where the engine's fit added only the left and top offsets. An `arcchart` centres a square whose side comes from the compiler's offered inner dimensions. A shared allocation can differ from that offer, so this square can disagree with the space Clay actually assigns.
 
 **A border container's sides are told.** The engine carried a side's minimum from a resized image's aspect-scaled fit and placed sliced sides past the box; a `border`'s sides and corners are told sizes inside the box. Its paddings count whenever a widget is set, where the engine counted them only when the child had a size.
 
 **A background image sits inside an inner border.** With `border_strategy = "inner"` a `background`'s `bgimage` is inside the border's padding, where the engine painted it over the whole box under the border; only a translucent border shows the difference.
 
-**An overflow layout follows the previous solve.** Its scrollbar and offset are those of the last solve, one redraw behind, so the first frame after it converts shows the content unscrolled and without a bar. Clay places every child and cuts to the box, where the engine placed only the children in view. A scrolling node is a Clay clip element, and a context holds ten: the eleventh scrolling drawin on an output is past the budget and shows nothing.
+**An overflow layout follows the previous solve.** Its scrollbar and offset are those of the last solve, one redraw behind, so the first frame after it converts shows the content unscrolled and without a bar. A content change that shows or hides the bar takes two frames, one to show the bar and one to size the thumb for the narrowed content. Clay places every child and cuts to the box, where the engine placed only the children in view. The bridge admits at most eight widget scroll containers per output (`WIDGET_SCROLLS_OUTPUT_MAX`), although the native context has 100 scroll records. Exceeding the bridge limit refuses the additional tree.
 
 **A scroll container uses Clay's scroll record.** `wibox.container.scroll` writes its position at `fps`, and Clay clamps the record to the content bounds. While scrolling, the child is declared twice with `extra_space` between the copies, so a wrapping step function has no seam. A child that has just become too long is initially clipped at zero and starts scrolling on the following tick. A child that fits has one copy at zero and stops the ticker. `pause` stops the ticker, `continue` re-arms it, and `reset_scrolling` writes the record to zero without undoing a pause.
 
 A step function is supported when its five arguments (`elapsed`, `size`, `visible_size`, `speed`, `extra_space`) produce an offset between zero and `size + extra_space`, as every function in `scroll.step_functions` does. An offset outside that range is clamped by Clay's content bounds instead of drawn out of range. `expand` is accepted but no longer lays the child out over the extra space: Clay cannot size a child to its own extent plus a constant, so the extra space is always empty. Mouse events reach the widgets inside the container, with a click delivered to whichever copy is under it; the drawing-only container swallowed those events.
+
+**Large widget layouts have bounded capacity.** Each output owns a fixed 32768-element Clay context. A tree may contain at most 2048 native widget nodes, with 12288 admitted per output. Clients, decorations, layout slots, inspector rows and retained transitions also consume native capacity, so admission alone cannot guarantee a solve. The inspector declares visible rows plus a small overscan and preserves the full tree's scroll extent. Clay's separate transition table holds 200 records. If any checked capacity is exhausted, the last successful scene, public widget geometry and pointer targets remain in use. An open inspector closes and permits one retry; otherwise recovery waits for changed input. Private grid measurements publish neither tentative geometry nor public solved callbacks. The arena stays at its original address and size throughout normal operation.
 
 **A grid declares shared tracks measured from its original content.** `wibox.layout.grid` and month/year calendars use `_grid_constructor.lua`. Natural and native-minimum requirements shrink or grow after content, font, visibility and membership changes. Row/column operations invalidate the declarations, including removal of the last covered track of a span. Grids with no logical tracks or borders use ordinary empty declarations: an unallocated empty grid has no native element or pointer target, while authored forced allocations and later child restoration remain available. Homogeneous sizing, proportional expansion, authored minima, spans and integer floor/trailing-remainder allocation use ordinary Clay rows and cells. Wrapping and nested heights can require additional solves; the output completes those dependency stages before presenting geometry, pixels and pointer targets.
 
@@ -796,7 +819,7 @@ clients, instead of AwesomeWM's **2g** between clients. With one client,
 
 **Magnifier uses a native centered attachment for its focused client.** Its width/height shares remain the square root of `master_width_factor`; background clients retain their cyclic order after the focused client in the native workarea column. Gap insets remain real cells. The focused surface retains protocol minima without enlarging its allocation. The old geometry writer is removed; the mouse resize handler still changes the authored factor.
 
-**Fair retains its existing column-first client positions.** The horizontal variant transposes the same groups, including the partially filled final group. Native GROW groups use the explicit whole-pixel policy: leading allocations round up, and the last retains the remainder within its bounds. This preserves the existing427/427/426 split at1280px without Lua rectangle arithmetic. Fair client allocations use native size containment: their own bounds/padding constrain the cell, while protocol SURFACE minima remain local and may overhang. Per-client gap insets remain real cells. In overlapping minimum-size surfaces, paint/input follow native flow declaration order, as for tile and spiral; the prior derived-float stacking order does not reorder these flow children.
+**Fair retains its existing column-first client positions.** The horizontal variant transposes the same groups, including the partially filled final group. Native GROW allocation is fractional, and the bridge rounds slot edges so cells tile with no gap or overlap; the odd pixel of a split that does not divide evenly lands where edge rounding puts it, so 1280 three ways is 427, 426, 427 where 2.0 gave 427, 427, 426. Fair client allocations use native size containment: their own bounds/padding constrain the cell, while protocol SURFACE minima remain local and may overhang. Per-client gap insets remain real cells. In overlapping minimum-size surfaces, paint/input follow native flow declaration order, as for tile and spiral; the prior derived-float stacking order does not reorder these flow children.
 
 **Corner uses native row/column groups in all four orientations.** Alternating column/row client membership, master fraction, privilege policy and per-client gap insets remain. Size containment keeps protocol minima local to surfaces; overhang paint/input follow native flow order. The replaced writer had inconsistent group divisors in even-client row-privileged layouts, including a two-client NaN position and infinite height. Native groups divide their actual children; two-client row privilege uses a master row and slave row. A single non-expanded master now centers in every orientation, correcting the old double offset in east column-privileged and south row-privileged variants. Ordinary valid placements remain; these broken modes intentionally change.
 
@@ -824,7 +847,7 @@ and bottom, so those sides remain covered by the owner's frame.
 
 Bars, titlebars, popups, tooltips, notifications and launchers use the same declaration-based contribution folding for built-in and equivalent custom widgets. Compatible host/layout/paint contributions share an element while immutable binding chains preserve every original occurrence and local input area. Empty zero-area FIT paint contributes no command. An opaque rectangular child can cover a plain equal-area background; translucent content, host opacity below one, rounded masks, borders, padding and authored allocation bounds retain their required layers. Changing drawin opacity across one invalidates the fold cache.
 
-Decorated attachment and notification hosts share one declaration path. Their native passive clip covers the padded content rectangle, and their border and shadow retain separate areas and paint metadata. Rounded content retains its mask boundary. Anonymous vertical host slots inherit their authored direction. Protocol surface sizing keeps its protocol provenance.
+Decorated attachment and notification hosts share one declaration path. An inner passive clip element under the host cuts the content to the padded box, while the border and shadow keep their own areas and paint metadata. Rounded content retains its mask boundary. Anonymous vertical host slots inherit their authored direction. Protocol surface sizing keeps its protocol provenance.
 
 A content-sized parent preserves authored fixed children. Native text can own its compatible area in content-sized rows; independently allocated textboxes, flex and bounded areas remain. Intrinsic images keep distinct widget allocation boundaries where an aspect image can paint less than its original input area, including short hosts, sibling text, caps and forced dimensions. Genuinely fixed systray slots remain fixed and carry producer/theme sizing provenance. No prior image dimensions or runtime geometry decide a fold. Grid declarations and native scrolling state use separate paths.
 
@@ -848,8 +871,8 @@ wrapped heights. Stable helpers stop requesting updates. There is no production
 iteration cap. Pending dependency stages complete inside the output frame before
 reconciliation, so intermediate probe and height declarations are not presented.
 
-The bridge supports 2048 nodes per drawable. The aggregate output budget is 6144
-within an 8192-element Clay context, allowing a borderless twelve-month calendar's
+The bridge supports 2048 nodes per drawable. The aggregate output budget is 12288
+within a 32768-element Clay context, allowing a borderless twelve-month calendar's
 widget tree to fit without a separate measurement tree. Uniform solid borders
 use padded cells with native border/fill commands, so a twelve-month calendar
 with week numbers, spacing 3 and `border_width=1` also fits. Distinct solid inner/outer
@@ -945,8 +968,12 @@ frames request no helper updates, and idle event-loop windows stop scheduling.
 A dirty output frame runs one declaration pass and one reconcile. A drawin or
 client receives its solved geometry as published properties with the same
 geometry signals, without recompiling its tree for that size. Drawable moves
-only recompile when the widget context changes screen or dpi.
+only recompile when the widget context changes screen or dpi. A describer sizes
+from the space it is offered, never from the host's solved size.
 awful.layout.arrange does nothing for a client geometry the solve itself wrote.
+An output the backend never frames runs off a display-rate deadline instead.
+A slot whose client has closed is skipped until the layout publishes again,
+rather than declaring a dead handle.
 
 The workarea for awful.layout, a carousel follow, the inspector's close, the
 overflow thumb and a real shape mask re-rendered at the solved size are genuine
@@ -1033,6 +1060,12 @@ interpolator remains.
 - Boxes are animated on whole pixels, so an animating element and its neighbour
   stay flush.
 
+Every box the scene draws rounds both of its edges to whole pixels, the same
+rule `c:geometry()` uses, so a client's configure equals its geometry and two
+boxes that share a solved edge share a realized one with no gap between them. A
+clip rectangle is the exception and keeps its solved edges, so it can still cut
+content at a fraction of a pixel.
+
 A declared slot animates its own box the same way. It names a duration, which of
 its position and size to animate, whether it collapses on the way in and on the
 way out, and where an exiting one sits among its siblings.
@@ -1042,3 +1075,9 @@ Clay's semantics: it is drawn, but it holds no space. The sibling order it asks
 for places it in the flow, so `above` draws it after its siblings. A panel that
 must reflow while it closes declares a fixed width of zero and removes itself
 once that has settled, which is a transition rather than an exit.
+
+### Public placement and strut boundaries
+
+`awful.placement` still handles public floating-client geometry requests, rule placement callbacks, interactive resize/snap and IPC placement commands. Startup `no_offscreen` keeps restored floating clients reachable. These calls update geometry inputs that the output tree subsequently declares. A popup's named corner placement uses a native attachment to OUTPUT; an arbitrary callback remains callable. Hotkeys help uses the named `centered` attachment. Popup centering is relative to OUTPUT, including when a placement callback passes `honor_workarea=true`, because the popup branch of `awful.placement.align` delegates to the same attachment.
+
+Wibars reserve space through declared flow elements and layer surfaces through protocol exclusive-zone declarations. Public `struts()` properties retain stored values and change signals, but those values do not independently subtract rectangles from the workarea. The workarea is the solved native element.

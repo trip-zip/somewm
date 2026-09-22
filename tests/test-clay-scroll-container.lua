@@ -88,7 +88,7 @@ end
 local function diagnostics(label, first, last)
     local function counters(dump)
         return string.format("frames=%s mutations=%s commands=%s",
-            dump:match("band desktop [^\n]* frames (%d+)") or "?",
+            dump:match("output %S+ scale [^\n]* frames (%d+)") or "?",
             dump:match("mutations (%d+)") or "?", dump:match("commands (%d+)") or "?")
     end
     -- Keep the summary and both dumps within the runner's line-limited output.
@@ -117,7 +117,7 @@ local function settled(count, size, copies, vertical, ready)
 end
 
 local function frames(dump)
-    return assert(dump:match("band desktop [^\n]* frames (%d+)"), dump)
+    return assert(dump:match("output %S+ scale [^\n]* frames (%d+)"), dump)
 end
 
 local function sample(count)

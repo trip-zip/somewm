@@ -18,9 +18,15 @@ runner.run_async(function()
     g._clay={describe=function(...)
         local node,why=describe(...)
         if not node then return node,why end
-        local solved=node.solved
-        node.solved=function(n)
+        local solved=assert(node._settle)
+        node._settle=function(n)
+            local _, before=find(n,g)
+            local already_settled=before.grid_state.settled
+            local updates=before.grid_state.updates
             solved(n)
+            -- Forced idle declarations still call private settlement. Count
+            -- dependency stages separately from those unchanged inspections.
+            if already_settled and before.grid_state.updates==updates then return end
             local b,item=find(n,g)
             traces[#traces+1]={phase=phase,w=b.width,h=b.height,
                 state=item.grid_state,columns=table.concat(item.grid_state.columns,',')}

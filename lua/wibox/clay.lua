@@ -544,7 +544,7 @@ end
 -- Its GROW axis can therefore remain FIT without changing either area.
 -- Siblings and minimum extents retain their independent allocations.
 local function fit_children(node, children)
-    if #children ~= 1 or node.share or node.solved or node.scroll
+    if #children ~= 1 or node.share or node.solved or node._settle or node.scroll
             or node.image or node.aspect or node.square or node.grid then return 0 end
     local w = (node.w or 'fit') == 'fit' and (node.wmin or 0) == 0
     local h = (node.h or 'fit') == 'fit' and (node.hmin or 0) == 0
@@ -1107,8 +1107,29 @@ local function update_declarations(self, item)
     end
 end
 
--- Publish the whole current generation before invoking any user/helper callback.
--- A callback failure must not leave native hits indexing the preceding tree.
+-- Grid dependencies consume a separate geometry tree. Cached declarations,
+-- binding targets and the drawable's published index keep their committed boxes.
+function clay._settle(tree, boxes)
+    local k = 0
+    local function stage(node)
+        local copy = {}
+        for key, value in pairs(node) do copy[key] = value end
+        if not node.spacer or node.scroll then
+            k = k + 1
+            copy.box = boxes[k]
+            copy.id = copy.box and copy.box.id
+        end
+        copy.children = {}
+        for i, child in ipairs(node.children or empty_list) do
+            copy.children[i] = stage(child)
+        end
+        if node._settle then node._settle(copy) end
+        return copy
+    end
+    return stage(tree)
+end
+
+-- Commit geometry and binding targets before invoking public solved callbacks.
 function clay._publish(self, tree, boxes)
     local index, callbacks, k = {}, {}, 0
     local function place(node)
@@ -1229,7 +1250,7 @@ function clay.compile(self, root, context, width, height)
     local building = {slots = {}, children = {}}
     local st = { building = {[owner] = building}, compiled = 0, reused = 0,
         active = {}, context = context, opaque_host = opaque_host,
-        width = width, height = height, cache = cache, stale = cache.stale,
+        cache = cache, stale = cache.stale,
         drawable = self.drawable }
     st.update_declarations = function(item) update_declarations(self, item) end
     -- A helper observing allocated boxes also depends on siblings/ancestors

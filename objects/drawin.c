@@ -873,18 +873,6 @@ drawin_moveresize(lua_State *L, int udx, int x, int y, int width, int height, bo
 		declare_mark_all_dirty();
 }
 
-/** Set drawin geometry (wrapper for external callers)
- * This is called when the object IS in the registry (not during construction).
- */
-void
-luaA_drawin_set_geometry(lua_State *L, drawin_t *drawin, int x, int y, int width, int height)
-{
-	/* Push drawin to stack, then call drawin_moveresize with stack index */
-	luaA_object_push(L, drawin);
-	drawin_moveresize(L, -1, x, y, width, height, false);
-	lua_pop(L, 1);
-}
-
 /** Reassign a drawin after its screen has been removed.
  * The caller must remove the old screen from the screen list first so the
  * coordinate lookup cannot select the invalid screen again. */
@@ -910,7 +898,8 @@ luaA_drawin_set_solved_geometry(lua_State *L, drawin_t *drawin,
         int x, int y, int width, int height)
 {
     luaA_object_push(L, drawin);
-    drawin_moveresize(L, -1, x, y, width, height, true);
+    if (luaA_toudata(L, -1, &drawin_class))
+        drawin_moveresize(L, -1, x, y, width, height, true);
     lua_pop(L, 1);
 }
 
@@ -964,22 +953,6 @@ drawin_set_visible(lua_State *L, int udx, bool v)
 
 		if (drawin->drawable)
 			drawin_update_drawing(L, udx);
-
-		/* Wayland-specific: if drawin was invisible during a screen geometry
-		 * change (e.g., scale change), its geometry may be stale. Auto-shrink
-		 * if it starts at screen origin and extends beyond screen bounds.
-		 * This handles lockscreen overlays created at init (scale=1.0) that
-		 * become visible after scale changes. */
-		if (drawin->screen) {
-			screen_t *s = drawin->screen;
-			if (drawin->x == s->geometry.x && drawin->y == s->geometry.y &&
-			    (drawin->width > s->geometry.width ||
-			     drawin->height > s->geometry.height)) {
-				drawin_moveresize(L, udx,
-					s->geometry.x, s->geometry.y,
-					s->geometry.width, s->geometry.height, false);
-			}
-		}
 	} else {
 		/* Unregister from object registry (AwesomeWM drawin.c:402) */
 		luaA_object_unref(L, drawin);
@@ -999,25 +972,6 @@ drawin_set_visible(lua_State *L, int udx, bool v)
 	/* Visibility changes update the declared tree. */
 	declare_mark_all_dirty();
 
-}
-
-/** Set strut and update workarea */
-void
-luaA_drawin_set_strut(lua_State *L, drawin_t *drawin, strut_t strut)
-{
-	strut_t old_strut = drawin->strut;
-
-	if (old_strut.left == strut.left &&
-	    old_strut.right == strut.right &&
-	    old_strut.top == strut.top &&
-	    old_strut.bottom == strut.bottom)
-		return;  /* No change */
-
-	drawin->strut = strut;
-
-	luaA_object_push(L, drawin);
-	luaA_awm_object_emit_signal(L, -1, "property::struts", 0);
-	lua_pop(L, 1);
 }
 
 /** Apply pending geometry changes */

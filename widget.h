@@ -13,7 +13,10 @@
 typedef struct drawin_t drawin_t;
 typedef struct Monitor Monitor;
 
+struct widget_storage;
+
 struct widget_tree {
+	struct widget_storage *storage;
 	struct widget_node *nodes;
 	uint32_t *ids;
 	size_t nodes_len;
@@ -36,6 +39,7 @@ struct widget_tree {
 	 * so without this a tree that changed since
 	 * the last frame would read back the boxes of the one it replaced. */
 	bool declared;
+    bool publish_pending;
 	/* The actual root element of the completed declaration, including a
 	 * host slot that owns its drawable contribution directly. No geometry. */
 	uint32_t root_id;
@@ -58,7 +62,7 @@ struct widget_host {
 	 * sized, instead of being told the host box and floating at it. An
 	 * axis with a told length (a bar that does not stretch) is fixed. */
 	bool flow;
-	bool inset_clip;      /* The enclosing decorated host owns the content clip. */
+	bool inner_clip;      /* The decorated host clips its content through an inner element. */
 	int told[2];
 	bool fit[2];
 };
@@ -175,18 +179,14 @@ struct widget_node {
  * input walk as well, including a malformed cyclic binding list. */
 #define WIDGET_BINDINGS_MAX 65536
 
-/* Elements every converted tree on one output may take together. Clay's
- * context holds 8192 (clay.h:1019, allocated at 2151-2168) and every drawin
- * on the output declares into that one context, alongside its clients, layer
- * surfaces and leaves; the rest is the reserve for those, at up to three
- * elements per client. A tree past this budget shows nothing. Exceeding capacity
- * raises CLAY_ERROR_TYPE_ELEMENTS_CAPACITY_EXCEEDED (clay.h:780), which the
- * error handler treats as the bug it is and aborts on. */
-#define WIDGET_NODES_OUTPUT_MAX 6144
+/* Admission budget for native widget nodes. Host decoration, clients and
+ * retained transitions are counted by Clay's runtime capacity checks. This
+ * budget leaves headroom but does not prove ID or command capacity sufficient. */
+#define WIDGET_NODES_OUTPUT_MAX 12288
 
-/* Scroll records per context: ten (third_party/clay.h:2194), less the two
- * Clay's debug inspector declares for its own panes (clay.h:3437, 3767),
- * kept free always so a toggle is never what exceeds the array. */
+/* Widget admission allows eight scroll records per output. Clay allocates
+ * 100 native records, also used by the inspector and client scrolling.
+ * Passive clips do not consume scroll records. */
 #define WIDGET_SCROLLS_OUTPUT_MAX 8
 
 /* What the last widget_nodes_set() answered, kept so the tree dump can say
@@ -206,6 +206,11 @@ enum widget_nodes_state {
  * NONE, MALFORMED and OVER_BUDGET show nothing. */
 bool widget_nodes_set(lua_State *L, struct widget_tree *d, Monitor *m, int idx);
 void widget_nodes_clear(struct widget_tree *d);
+/* Retain immutable payloads and a separate solved ID mapping until release. */
+struct widget_tree *widget_tree_hold(struct widget_tree *d);
+void widget_tree_release(struct widget_tree *d);
+size_t widget_tree_bytes(const struct widget_tree *d);
+bool widget_tree_referenced(const struct widget_tree *d);
 
 /* Point image entries at their widget surfaces. */
 void widget_leaves_set(struct widget_tree *d);

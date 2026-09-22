@@ -5,9 +5,13 @@ local wibox = require('wibox')
 local awful = require('awful')
 local clay = require('wibox.clay')
 local check = require('_clay_grid_presentation')
-local solver = dofile('tests/clay/grid-helper.lua')
+local solver = dofile('tests/_grid_solver.lua')
 local example = require('_clay_example')
 local pointer = assert(require('_utils').binary_or_skip('./build-test/test-virtual-pointer-client'))
+
+local function frames()
+    return assert(tonumber(awesome._clay_tree(screen[1]):match('^[^\n]- frames (%d+) passes ')))
+end
 
 runner.run_async(function()
     local host, calendar, day
@@ -19,14 +23,14 @@ runner.run_async(function()
     end
     awesome.connect_signal('clay::declare', function() declarations = declarations + 1 end)
     local function transition(label, action)
-        local before, frame = compiles, awesome._test_frame_count
+        local before, frame = compiles, frames()
         action()
         assert(async.wait_for_condition(function()
             local d = host._drawable
             local cache = d._clay_cache
             if compiles == before or not d._clay_tree or not cache
                     or next(cache.stale) or cache.width ~= host.width
-                    or cache.height ~= host.height or awesome._test_frame_count == frame then
+                    or cache.height ~= host.height or frames() <= frame then
                 return false
             end
             local settled = true
@@ -61,6 +65,12 @@ runner.run_async(function()
         assert(async.wait_for_condition(function() return pressed == 1 and released == 1 end, 2, .01))
         day:disconnect_signal('button::press', press)
         day:disconnect_signal('button::release', release)
+        -- The click left the pointer over the calendar. The pointer image is
+        -- a leaf of the tree, so a later transition that moves the calendar
+        -- out from under it would change the image, a frame of its own; park
+        -- the pointer over the root and let that frame land first.
+        awful.spawn{pointer, 'move', '1200', '700', '1280', '720'}
+        async.sleep(.1)
         io.stderr:write('[SETTLEMENT] ' .. label .. ' current=true presented=true idle=true input=true\n')
     end
     for _, colors in ipairs{'#ffffff', {inner = '#ffffff80', outer = '#00ffffc0'}} do

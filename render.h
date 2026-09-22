@@ -123,10 +123,9 @@ int render_device_len(int origin, int len, float scale);
  *   command is cut to the scope's box, rectangle and arc; a rectangle that
  *   opens a scope of its own composes it with the one it is clipped by.
  *
- * Clipping is the renderer's, not Clay's: a Clay clip element is a scroll
- * container, and a context holds ten (clay.h:2194). Clay's own SCISSOR
- * commands still cut what they enclose, so a clip element it emits for
- * itself (the debug inspector) is honored too. */
+ * These scopes provide rounded clipping. Clay's SCISSOR commands provide
+ * rectangular clipping for passive hosts, scrolling and the inspector;
+ * the renderer intersects both kinds of clip when they overlap. */
 #define RENDER_UD_OWNER_MASK 0xFFFFFFFFFFULL
 /* The customData of a CUSTOM command that names no client: the element opens
  * the scope its word says and is realized as a fully transparent rect, which

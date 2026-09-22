@@ -70,7 +70,7 @@ local function print_scroll(stage)
 end
 
 local function frames(dump)
-    return assert(tonumber(dump:match("band desktop [^\n]* frames (%d+)")))
+    return assert(tonumber(dump:match("output %S+ scale [^\n]* frames (%d+)")))
 end
 
 local function measure(trigger, before_frames, follows)
@@ -80,20 +80,25 @@ local function measure(trigger, before_frames, follows)
         awesome._test_redeclare()
         dump = awesome._clay_tree(s)
     end
-    local header, counts = dump:match("([^\n]*band desktop [^\n]*)\n([^\n]*)")
+    local header, counts = dump:match("([^\n]*output %S+ scale [^\n]*)\n([^\n]*)")
     local n = tonumber((header or ""):match(" frames %d+ passes (%d+)"))
     io.stderr:write(string.format("[PASSES] %s %s\n%s\n%s\n", trigger, tostring(n),
-        header or "missing desktop band header", counts or "missing band counters"))
+        header or "missing the output header", counts or "missing the counters"))
     if trigger == "carousel-focus" then print_scroll("after-first") end
     assert(n, trigger .. ": missing passes counter")
-    if follows then
+    for i = 1, follows or 0 do
         local before = awesome._clay_tree(s)
         local mutations = awesome._test_redeclare()
         local after = awesome._clay_tree(s)
-        io.stderr:write(string.format("[FOLLOWS] %s %d\n", trigger, mutations))
+        io.stderr:write(string.format("[FOLLOWS] %s %d %d\n", trigger, i, mutations))
         print_realized_diff(before, after)
-        assert(mutations > 0, trigger .. ": the follow-up frame mutated no nodes")
+        assert(i > 1 or mutations > 0, trigger .. ": the follow-up frame mutated no nodes")
     end
+    assert(trigger == "grid-grow" and n <= 4 or n == 1, trigger .. ": passes " .. n)
+    return awesome._clay_tree(s)
+end
+
+local function check_mutations(trigger)
     local before = awesome._clay_tree(s)
     local mutations = awesome._test_redeclare()
     local after = awesome._clay_tree(s)
@@ -106,7 +111,6 @@ local function measure(trigger, before_frames, follows)
         assert(mutations == 0, trigger .. ": the settled frame mutated " .. mutations
             .. " nodes")
     end
-    assert(trigger == "grid-grow" and n <= 4 or n == 1, trigger .. ": passes " .. n)
     return after
 end
 
@@ -121,7 +125,21 @@ local function add_trigger(name, setup, change, follows)
         return true
     end
     steps[#steps + 1] = function()
-        settled = measure(name, before_frames, follows)
+        measure(name, before_frames, follows)
+        settled = check_mutations(name)
+        return true
+    end
+    steps[#steps + 1] = function(count)
+        if count < 6 then return end
+        local after = awesome._clay_tree(s)
+        local settled_frames, after_frames = frames(settled), frames(after)
+        io.stderr:write(string.format("[SETTLED] %s frames %d -> %d\n",
+            name, settled_frames, after_frames))
+        if settled_frames ~= after_frames then
+            io.stderr:write(after:match("([^\n]*output %S+ scale [^\n]*\n[^\n]*)") .. "\n")
+            print_realized_diff(settled, after)
+        end
+        assert(settled_frames == after_frames, name .. ": trigger frame scheduled work")
         return true
     end
     steps[#steps + 1] = function(count)
@@ -131,7 +149,7 @@ local function add_trigger(name, setup, change, follows)
         io.stderr:write(string.format("[IDLE] %s frames %d -> %d\n",
             name, settled_frames, after_frames))
         if settled_frames ~= after_frames then
-            io.stderr:write(after:match("([^\n]*band desktop [^\n]*\n[^\n]*)") .. "\n")
+            io.stderr:write(after:match("([^\n]*output %S+ scale [^\n]*\n[^\n]*)") .. "\n")
             print_realized_diff(settled, after)
         end
         assert(settled_frames == after_frames, name .. ": settled frame scheduled work")
@@ -187,7 +205,7 @@ add_trigger("overflow-grow", function()
 end, function()
     content.forced_height = 400
     return function() overflow_box.visible = false end
-end, true)
+end, 2)
 
 steps[#steps + 1] = function(count)
     if count == 1 then
@@ -253,7 +271,7 @@ end, function()
     return function()
         assert(not s.inspector, "the x button did not close the inspector")
     end
-end, true)
+end, 1)
 
 local grid, grid_box
 add_trigger("grid-grow", function()
@@ -290,7 +308,7 @@ end, function()
         tooltip.hide()
         tooltip_bar:remove()
     end
-end, true)
+end, 1)
 
 steps[#steps + 1] = function()
     for _, report in ipairs(reports) do os.remove(report) end
