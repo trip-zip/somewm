@@ -243,8 +243,11 @@ is_lgi_function(void (*fun)(ffi_cif *, void *, void **, void *))
 static void *
 guard_resolve(const char *sym)
 {
-	void *fn = dlvsym(RTLD_NEXT, sym, "LIBFFI_CLOSURE_8.0");
+	void *fn = NULL;
 
+#ifdef __GLIBC__
+	fn = dlvsym(RTLD_NEXT, sym, "LIBFFI_CLOSURE_8.0");
+#endif
 	if (!fn)
 		fn = dlsym(RTLD_NEXT, sym);
 	if (!fn) {
