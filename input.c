@@ -986,10 +986,25 @@ motionnotify(uint32_t time, struct wlr_input_device *device, double dx, double d
 	if (!surface && !seat->drag) {
 		drawin_t *hover_drawin = NULL;
 		xytonode(cursor->x, cursor->y, NULL, NULL, NULL, &hover_drawin, NULL, NULL, NULL);
-		if (hover_drawin && hover_drawin->cursor)
-			wlr_cursor_set_xcursor(cursor, cursor_mgr, hover_drawin->cursor);
-		else
-			wlr_cursor_set_xcursor(cursor, cursor_mgr, selected_root_cursor ? selected_root_cursor : "default");
+		const char *cursor_name = (hover_drawin && hover_drawin->cursor)
+			? hover_drawin->cursor
+			: (selected_root_cursor ? selected_root_cursor : "default");
+		/* When transitioning from a client cursor surface to the root cursor,
+		 * reset magnification: cursor_scale may have accumulated while the
+		 * client cursor was displayed (some_set_cursor_scale updates the
+		 * scale but does not apply it while cursor_is_surface is true). */
+		if (cursor_is_surface) {
+			cursor_scale = 1.0f;
+		}
+		/* Skip redundant updates on plain motion: some_apply_cursor() does
+		 * strdup + wlr_cursor_set_* on every call, and this fires on every
+		 * pointer motion event. Only call when something actually changed. */
+		if (cursor_is_surface
+				|| !current_cursor_name
+				|| strcmp(current_cursor_name, cursor_name) != 0
+				|| cursor_scale != last_applied_scale) {
+			some_apply_cursor(cursor_name);
+		}
 	}
 
 	/* Tablet-capable clients should receive stylus motion via tablet-v2 only.
@@ -1009,6 +1024,14 @@ motionnotify(uint32_t time, struct wlr_input_device *device, double dx, double d
 			return;
 		}
 	}
+
+	/* Emit pointer::motion for Lua consumers (e.g., shake detection).
+	 * This replaces polling-based detection with event-driven detection,
+	 * eliminating timer wakeups when the pointer is idle. */
+	lua_State *L = globalconf_get_lua_State();
+	lua_pushnumber(L, cursor->x);
+	lua_pushnumber(L, cursor->y);
+	luaA_signal_emit(L, "pointer::motion", 2);
 
 	pointerfocus(c, surface, sx, sy, time);
 }
@@ -3080,9 +3103,11 @@ setcursor(struct wl_listener *listener, void *data)
 	 * use the provided surface as the cursor image. It will set the
 	 * hardware cursor on the output that it's currently on and continue to
 	 * do so as the cursor moves between outputs. */
-	if (event->seat_client == seat->pointer_state.focused_client)
+	if (event->seat_client == seat->pointer_state.focused_client) {
+		cursor_is_surface = true;
 		wlr_cursor_set_surface(cursor, event->surface,
 				event->hotspot_x, event->hotspot_y);
+	}
 }
 
 void
@@ -3095,8 +3120,7 @@ setcursorshape(struct wl_listener *listener, void *data)
 	 * actually has pointer focus first. If so, we can tell the cursor to
 	 * use the provided cursor shape. */
 	if (event->seat_client == seat->pointer_state.focused_client)
-		wlr_cursor_set_xcursor(cursor, cursor_mgr,
-				wlr_cursor_shape_v1_name(event->shape));
+		some_apply_cursor(wlr_cursor_shape_v1_name(event->shape));
 }
 
 void

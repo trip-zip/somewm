@@ -17,6 +17,7 @@
 #include <wlr/types/wlr_keyboard_group.h>
 #include <wlr/interfaces/wlr_keyboard.h>
 #include <wlr/types/wlr_cursor.h>
+#include <wlr/types/wlr_output.h>
 #include <wlr/types/wlr_xcursor_manager.h>
 #include <wlr/xcursor.h>
 #include <wlr/xwayland.h>
@@ -593,6 +594,10 @@ some_get_cursor_theme(void)
 	return cursor_mgr->name ? cursor_mgr->name : "default";
 }
 
+/* Forward declaration: created lazily by some_apply_cursor() and rebuilt by
+ * some_update_cursor_theme(). */
+void cursor_mgr_hires_create(void);
+
 uint32_t
 some_get_cursor_size(void)
 {
@@ -625,12 +630,22 @@ some_update_cursor_theme(const char *theme_name, uint32_t size)
 		wlr_xcursor_manager_load(cursor_mgr, m->wlr_output->scale);
 	}
 
+	cursor_base_size = size;
+
+	/* The high-res magnification manager is stale after a theme/size change:
+	 * rebuild it so magnified cursors use the new theme. */
+	if (cursor_mgr_hires) {
+		wlr_xcursor_manager_destroy(cursor_mgr_hires);
+		cursor_mgr_hires = NULL;
+		cursor_mgr_hires_create();
+	}
+
 	/* Update displayed cursor - fall back to "default" if current cursor doesn't exist in new theme */
 	const char *cursor_name = selected_root_cursor ? selected_root_cursor : "default";
 	if (wlr_xcursor_manager_get_xcursor(cursor_mgr, cursor_name, 1.0) == NULL) {
 		cursor_name = "default";
 	}
-	wlr_cursor_set_xcursor(cursor, cursor_mgr, cursor_name);
+	some_apply_cursor(cursor_name);
 
 #ifdef XWAYLAND
 	/* Sync XWayland cursor if running */
@@ -639,6 +654,109 @@ some_update_cursor_theme(const char *theme_name, uint32_t size)
 		COMPAT_XWAYLAND_SET_CURSOR(xwayland, xcursor->images[0]);
 	}
 #endif
+}
+
+/*
+ * Cursor magnification
+ *
+ * The high-resolution xcursor manager is loaded at base_size * CURSOR_HIRES_MULT
+ * so magnification up to CURSOR_HIRES_MULTx stays crisp (the hires image is
+ * downscaled or shown 1:1). It is created lazily on first magnification and
+ * rebuilt by some_update_cursor_theme() when the theme or base size changes.
+ */
+#define CURSOR_HIRES_MULT 4
+
+void
+cursor_mgr_hires_create(void)
+{
+	if (cursor_mgr_hires) {
+		return;
+	}
+	if (cursor_base_size == 0) {
+		cursor_base_size = cursor_mgr->size;
+	}
+	uint32_t hires_size = cursor_base_size * CURSOR_HIRES_MULT;
+	cursor_mgr_hires = wlr_xcursor_manager_create(cursor_mgr->name, hires_size);
+	if (!cursor_mgr_hires) {
+		wlr_log(WLR_ERROR, "failed to create hires xcursor manager");
+		return;
+	}
+	wlr_xcursor_manager_load(cursor_mgr_hires, 1.0f);
+	Monitor *m;
+	wl_list_for_each(m, &mons, link) {
+		wlr_xcursor_manager_load(cursor_mgr_hires, m->wlr_output->scale);
+	}
+}
+
+void
+some_apply_cursor(const char *name)
+{
+	cursor_is_surface = false;
+	/* strdup before freeing the old value: some_set_cursor_scale() calls us
+	 * with current_cursor_name as the argument, so freeing first would read
+	 * freed memory. Use current_cursor_name (the new copy) everywhere below
+	 * instead of name, which may point to the freed old allocation. */
+	char *new_name = name ? strdup(name) : NULL;
+	free(current_cursor_name);
+	current_cursor_name = new_name;
+	last_applied_scale = cursor_scale;
+
+	if (current_cursor_name && cursor_scale >= 1.0f && cursor_base_size > 0) {
+		if (!cursor_mgr_hires) {
+			cursor_mgr_hires_create();
+		}
+		if (cursor_mgr_hires) {
+			struct wlr_xcursor *xc =
+				wlr_xcursor_manager_get_xcursor(cursor_mgr_hires, current_cursor_name, 1.0f);
+			if (xc && xc->image_count > 0) {
+				struct wlr_xcursor_image *img = xc->images[0];
+				struct wlr_buffer *buf = wlr_xcursor_image_get_buffer(img);
+				if (buf) {
+					/* wlr_cursor_set_buffer() displays buffer pixels divided by
+					 * buffer_scale as logical pixels, so choose buffer_scale so
+					 * that img->width / buffer_scale == base_size * cursor_scale.
+					 * The hotspot is expressed in logical coordinates. */
+					float logical = (float)cursor_base_size * cursor_scale;
+					float bscale = (float)img->width / logical;
+					int32_t hx = (int32_t)llroundf((float)img->hotspot_x / bscale);
+					int32_t hy = (int32_t)llroundf((float)img->hotspot_y / bscale);
+					wlr_cursor_set_buffer(cursor, buf, hx, hy, bscale);
+					/* On atomic-modesetting backends (e.g. AMDGPU DRM) the
+					 * cursor plane is only committed during a page flip.
+					 * The cursor is not part of the scene graph, so scene
+					 * damage alone will not schedule a frame. Force one. */
+					Monitor *m;
+					wl_list_for_each(m, some_get_monitors(), link)
+						wlr_output_schedule_frame(m->wlr_output);
+					return;
+				}
+			}
+		}
+		/* hires image unavailable for this name: fall back to normal */
+	}
+
+	if (current_cursor_name) {
+		wlr_cursor_set_xcursor(cursor, cursor_mgr, current_cursor_name);
+	} else {
+		wlr_cursor_unset_image(cursor);
+	}
+}
+
+void
+some_set_cursor_scale(float scale)
+{
+	if (scale < 1.0f) {
+		scale = 1.0f;
+	}
+	if (scale == cursor_scale) {
+		return;
+	}
+	cursor_scale = scale;
+	/* A client-provided surface cursor is not magnified; leave it untouched
+	 * until the next xcursor shape change re-enters some_apply_cursor(). */
+	if (!cursor_is_surface) {
+		some_apply_cursor(current_cursor_name);
+	}
 }
 
 struct wl_list *
