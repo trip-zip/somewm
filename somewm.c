@@ -7382,6 +7382,9 @@ setup(void)
 	globalconf.input.map_to_region_x2 = 0.0;
 	globalconf.input.map_to_region_y2 = 0.0;
 
+	/* Default for dpms wakeup triggering from input events */
+	globalconf.dpms_ignore_activity = false;
+
 	/* Logging defaults (only set if not already set by -d flag) */
 	if (globalconf.log_level == 0)
 		globalconf.log_level = 1;  /* WLR_ERROR - can be changed via -d flag or awesome.log_level */

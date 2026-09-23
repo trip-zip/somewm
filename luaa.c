@@ -2037,8 +2037,9 @@ some_notify_activity(void)
 {
 	lua_State *L = globalconf_get_lua_State();
 
-	/* Wake displays from DPMS if any are asleep */
-	if (dpms_wake_all_monitors()) {
+	/* Wake displays from DPMS if any are asleep and configuration does not
+	 * prohibit it */
+	if (!globalconf.dpms_ignore_activity && dpms_wake_all_monitors()) {
 		luaA_emit_signal_global_with_stack(L, "dpms::on", 0);
 	}
 
@@ -2428,6 +2429,11 @@ luaA_awesome_index(lua_State *L)
 		return 1;
 	}
 
+	if (A_STREQ(key, "dpms_ignore_activity")) {
+		lua_pushboolean(L, globalconf.dpms_ignore_activity);
+		return 1;
+	}
+
 	/* Compositor readiness milestones (counterparts of "somewm::ready" and
 	 * "xwayland::ready" signals). True once the corresponding signal has
 	 * fired at least once; persists across hot-reload via globalconf. */
@@ -2474,6 +2480,11 @@ luaA_awesome_newindex(lua_State *L)
 	if (A_STREQ(key, "idle_inhibit")) {
 		lua_idle_inhibited = lua_toboolean(L, 3);
 		some_recompute_idle_inhibit();
+		return 0;
+	}
+
+	if (A_STREQ(key, "dpms_ignore_activity")) {
+		globalconf.dpms_ignore_activity = lua_toboolean(L, 3);
 		return 0;
 	}
 
@@ -6091,6 +6102,8 @@ luaA_hot_reload(void)
 		}
 	}
 
+	globalconf.dpms_ignore_activity = false;
+
 	fprintf(stderr, "somewm: hot-reload: closed old Lua state, creating fresh state\n");
 
 	/* ================================================================
@@ -6455,6 +6468,7 @@ luaA_cleanup(void)
 		luaA_awesome_clear_all_idle_timeouts(globalconf_L);
 		lua_idle_inhibited = false;
 		some_recompute_idle_inhibit();
+		globalconf.dpms_ignore_activity = false;
 		luaA_awesome_clear_lock_surface(globalconf_L);
 		luaA_awesome_clear_lock_covers(globalconf_L);
 
