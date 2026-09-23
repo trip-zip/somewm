@@ -11,8 +11,9 @@ When in doubt, check [AwesomeWM's source](https://github.com/awesomeWM/awesome) 
 ## Building
 
 ```bash
-make                  # Build with ASAN
-make build-test       # Build without ASAN (faster)
+make                  # Release build
+make asan             # AddressSanitizer + UBSan build
+make build-test       # Build used by the test suite
 ```
 
 ## Testing
@@ -34,6 +35,7 @@ make test-one TEST=tests/test-foo.lua  # Single test (handy for TDD)
 
 ## Submitting a PR
 
+- Discuss your approach in an [issue](https://github.com/trip-zip/somewm/issues) or [discussion](https://github.com/trip-zip/somewm/discussions) before opening a PR
 - Fix bugs in C, not by patching Lua libraries
 - Include a test when possible (`tests/test-*.lua`)
 - Run `make test-unit && make test-integration` before pushing
