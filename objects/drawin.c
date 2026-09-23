@@ -1103,6 +1103,12 @@ drawin_moveresize(lua_State *L, int udx, int x, int y, int width, int height)
 		drawin->height = height;
 	drawin->geometry_dirty = true;
 
+	/* Update the owning screen before touching the drawable so a surface
+	 * (re)created below picks up the new output's scale. */
+	bool position_changed = (old_x != drawin->x || old_y != drawin->y);
+	if (position_changed)
+		drawin_assign_screen(L, drawin, udx);
+
 	/* Propagate geometry to drawable (this creates the Cairo surface) */
 	if (drawin->drawable) {
 		drawable_t *d = drawin->drawable;
@@ -1114,8 +1120,13 @@ drawin_moveresize(lua_State *L, int udx, int x, int y, int width, int height)
 		d->geometry.width = drawin->width;
 		d->geometry.height = drawin->height;
 
-		/* If size changed, recreate surface */
-		if (old_dwidth != drawin->width || old_dheight != drawin->height) {
+		/* If size or output scale changed, recreate surface. The scale
+		 * changes when the drawin moves onto a monitor with a different
+		 * wlr_output->scale; without recreation the compositor keeps
+		 * resampling the stale-scale buffer (blurry/rescaled edges). */
+		float scale = drawin_get_effective_scale(drawin);
+		if (old_dwidth != drawin->width || old_dheight != drawin->height ||
+		    d->surface_scale != scale) {
 			/* Clean up old surface */
 			if (d->surface) {
 				cairo_surface_finish(d->surface);
@@ -1133,7 +1144,6 @@ drawin_moveresize(lua_State *L, int udx, int x, int y, int width, int height)
 			if (drawin->width > 0 && drawin->height > 0) {
 				/* Get scale for HiDPI support.
 				 * Use floorf to match what Cairo will actually draw with device_scale. */
-				float scale = drawin_get_effective_scale(drawin);
 				int scaled_width = (int)floorf(drawin->width * scale);
 				int scaled_height = (int)floorf(drawin->height * scale);
 				if (scaled_width < 1) scaled_width = 1;
@@ -1173,10 +1183,6 @@ drawin_moveresize(lua_State *L, int udx, int x, int y, int width, int height)
 	if (old_height != drawin->height)
 		luaA_object_emit_signal(L, udx, "property::height", 0);
 
-	/* Update screen assignment if position changed */
-	if (old_x != drawin->x || old_y != drawin->y)
-		drawin_assign_screen(L, drawin, udx);
-
 	/* Update workarea if struts are set and drawin is visible */
 	if (drawin->visible && drawin->screen &&
 	    (drawin->strut.left || drawin->strut.right || drawin->strut.top || drawin->strut.bottom)) {
@@ -1184,7 +1190,7 @@ drawin_moveresize(lua_State *L, int udx, int x, int y, int width, int height)
 	}
 
 	/* Update scene graph node position if position changed */
-	if (drawin->scene_tree && (old_x != drawin->x || old_y != drawin->y))
+	if (drawin->scene_tree && position_changed)
 		wlr_scene_node_set_position(&drawin->scene_tree->node, drawin->x, drawin->y);
 
 	/* Update scene buffer destination size if size changed */
