@@ -1191,6 +1191,17 @@ drawin_moveresize(lua_State *L, int udx, int x, int y, int width, int height)
 	if (drawin->scene_buffer && (old_width != drawin->width || old_height != drawin->height))
 		wlr_scene_buffer_set_dest_size(drawin->scene_buffer, drawin->width, drawin->height);
 
+	/* Moving a scene node only marks damage; it doesn't schedule a render.
+	 * With a hardware cursor plane, cursor motion during a drag never
+	 * triggers rendermon on its own, so a dragged popup would only catch
+	 * up to the pointer whenever some unrelated event (a timer redraw,
+	 * client traffic) happened to schedule a frame - producing visible
+	 * judder. Schedule one explicitly, same as drawin_refresh_drawable()
+	 * does after a content repaint, so every drag step is presented. */
+	if ((old_x != drawin->x || old_y != drawin->y) &&
+	    drawin->screen && drawin->screen->monitor && drawin->screen->monitor->wlr_output)
+		wlr_output_schedule_frame(drawin->screen->monitor->wlr_output);
+
 	/* Size change requires border + shadow refresh */
 	if (old_width != drawin->width || old_height != drawin->height)
 		drawin->border_need_update = true;
