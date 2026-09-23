@@ -71,6 +71,10 @@ libinput = dependency('libinput')
 have_3fg_drag = cc.has_function('libinput_device_config_3fg_drag_get_finger_count',
                                  dependencies: libinput)
 libdrm = dependency('libdrm')
+# backtrace() is in glibc; musl and the BSDs need libexecinfo, else none
+execinfo_dep = cc.find_library('execinfo', required: false)
+have_execinfo = cc.has_function('backtrace_symbols_fd', prefix: '#include <execinfo.h>',
+                                dependencies: execinfo_dep)
 # Not linked directly; wlroots pulls it in. Probed only so the wlroots version choice
 # below can read its version, so not required: with no pixman-1.pc at all, wlroots
 # resolves pixman through its own wrap and the floor below stops applying.
@@ -396,6 +400,10 @@ if have_pam
   add_project_arguments('-DHAVE_PAM', language: 'c')
 endif
 
+if have_execinfo
+  add_project_arguments('-DHAVE_EXECINFO', language: 'c')
+endif
+
 if get_option('test_pam')
   add_project_arguments('-DTEST_PAM', language: 'c')
 endif
@@ -503,6 +511,7 @@ all_deps = [
   lua_dep,
   wlroots,
   m_dep,
+  execinfo_dep,
 ]
 
 if have_xwayland
