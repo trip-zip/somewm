@@ -126,9 +126,27 @@ local function do_redraw(self)
     if self._dirty_area:is_empty() then
         return
     end
+    -- Snap clip edges outward to whole device pixels. At fractional output
+    -- scales an integer user-space edge lands mid-pixel, and cairo's
+    -- antialiased clip then only partially repaints that column, leaving a
+    -- half-faded seam that persists until a repaint fully covers it.
+    local scale = context.screen and context.screen.scale or 1
+    if context.wibox and context.wibox.surface_scale > 0 then
+        scale = context.wibox.surface_scale
+    end
     for i = 0, self._dirty_area:num_rectangles() - 1 do
         local rect = self._dirty_area:get_rectangle(i)
-        cr:rectangle(rect.x, rect.y, rect.width, rect.height)
+        local rx, ry = rect.x, rect.y
+        local rw, rh = rect.width, rect.height
+        if scale ~= 1 then
+            local rx2 = math.ceil((rx + rw) * scale) / scale
+            local ry2 = math.ceil((ry + rh) * scale) / scale
+            rx = math.floor(rx * scale) / scale
+            ry = math.floor(ry * scale) / scale
+            rw = rx2 - rx
+            rh = ry2 - ry
+        end
+        cr:rectangle(rx, ry, rw, rh)
     end
     self._dirty_area = cairo.Region.create()
     cr:clip()
