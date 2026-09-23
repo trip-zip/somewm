@@ -354,25 +354,30 @@ local function lookup_icon_by_name(icon_name, size, theme_path)
 
     -- If app provides custom icon theme path, check there first
     if theme_path and theme_path ~= "" then
-        -- Try common icon locations within the custom path
+        -- Try common icon locations within the custom path. SNI hosts must
+        -- search every context dir, not just apps/: e.g. Quassel materialises
+        -- its tray icons under hicolor/<size>/status/ at runtime.
         local extensions = {"png", "svg", "xpm"}
         local sizes = {size or 24, 48, 32, 24, 22, 16}
+        local contexts = {"apps", "status", "panel", "actions"}
         for _, s in ipairs(sizes) do
             for _, ext in ipairs(extensions) do
-                -- Try hicolor-style path
-                local path = string.format("%s/hicolor/%dx%d/apps/%s.%s",
-                    theme_path, s, s, icon_name, ext)
-                if gfs.file_readable(path) then
-                    return path
-                end
-                -- Try scalable
-                path = string.format("%s/hicolor/scalable/apps/%s.%s",
-                    theme_path, icon_name, ext)
-                if gfs.file_readable(path) then
-                    return path
+                for _, ctx in ipairs(contexts) do
+                    -- Try hicolor-style path
+                    local path = string.format("%s/hicolor/%dx%d/%s/%s.%s",
+                        theme_path, s, s, ctx, icon_name, ext)
+                    if gfs.file_readable(path) then
+                        return path
+                    end
+                    -- Try scalable
+                    path = string.format("%s/hicolor/scalable/%s/%s.%s",
+                        theme_path, ctx, icon_name, ext)
+                    if gfs.file_readable(path) then
+                        return path
+                    end
                 end
                 -- Try direct path
-                path = string.format("%s/%s.%s", theme_path, icon_name, ext)
+                local path = string.format("%s/%s.%s", theme_path, icon_name, ext)
                 if gfs.file_readable(path) then
                     return path
                 end
