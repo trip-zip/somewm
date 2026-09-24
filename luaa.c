@@ -2032,14 +2032,14 @@ dpms_wake_all_monitors(void)
 	return any_woken;
 }
 
-/** Called from somewm.c when user activity is detected.
- * Wakes DPMS, resets all idle timers, and emits idle::stop if user was idle.
+/** Called from input.c when user activity is detected.
+ * Wakes displays unless disabled by configuration, resets uninhibited idle
+ * timers, and queues idle::stop if the user was idle.
  */
 void
 some_notify_activity(void)
 {
-	/* Wake displays from DPMS if any are asleep */
-	if (dpms_wake_all_monitors()) {
+	if (!globalconf.dpms_ignore_activity && dpms_wake_all_monitors()) {
 		some_event_queue_global(SIG_DPMS_ON);
 	}
 
@@ -2528,6 +2528,11 @@ luaA_awesome_index(lua_State *L)
 		return 1;
 	}
 
+	if (A_STREQ(key, "dpms_ignore_activity")) {
+		lua_pushboolean(L, globalconf.dpms_ignore_activity);
+		return 1;
+	}
+
 	/* DPMS state property */
 	if (A_STREQ(key, "dpms_state")) {
 		/* Return table of {output_name = "on"/"off", ...} */
@@ -2574,6 +2579,11 @@ luaA_awesome_newindex(lua_State *L)
 	if (A_STREQ(key, "idle_inhibit")) {
 		lua_idle_inhibited = lua_toboolean(L, 3);
 		some_recompute_idle_inhibit();
+		return 0;
+	}
+
+	if (A_STREQ(key, "dpms_ignore_activity")) {
+		globalconf.dpms_ignore_activity = lua_toboolean(L, 3);
 		return 0;
 	}
 
@@ -5886,6 +5896,8 @@ luaA_hot_reload(void)
 		}
 	}
 
+	globalconf.dpms_ignore_activity = false;
+
 	fprintf(stderr, "somewm: hot-reload: closed old Lua state, creating fresh state\n");
 
 	/* ================================================================
@@ -6163,6 +6175,7 @@ luaA_cleanup(void)
 		luaA_awesome_clear_all_idle_timeouts(globalconf_L);
 		lua_idle_inhibited = false;
 		some_recompute_idle_inhibit();
+		globalconf.dpms_ignore_activity = false;
 		luaA_awesome_clear_lock_surface(globalconf_L);
 		luaA_awesome_clear_lock_covers(globalconf_L);
 

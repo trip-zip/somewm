@@ -298,6 +298,9 @@ typedef struct
     InputRule *input_rules;
     int input_rules_count;
 
+    /** Suppress display wakeups from input activity when true. */
+    bool dpms_ignore_activity;
+
     /** Logging configuration */
     int log_level;  /* wlroots log level: WLR_SILENT, WLR_ERROR, WLR_INFO, WLR_DEBUG */
 
