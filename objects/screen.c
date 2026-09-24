@@ -698,29 +698,6 @@ screen_update_workarea(screen_t *screen)
 	area_t area = screen->geometry;
 	uint16_t top = 0, bottom = 0, left = 0, right = 0;
 
-	/* fake_add() viewports do not own a Monitor.  Start them from the
-	 * overlapping physical output's usable area instead of raw geometry, so
-	 * tag switches cannot reset a fake half underneath the physical wibar. */
-	if (screen->monitor == NULL) {
-		Monitor *monitor = luaA_monitor_get_by_screen(globalconf_get_lua_State(), screen);
-		if (monitor) {
-			struct wlr_box monitor_area;
-			some_monitor_get_window_area(monitor, &monitor_area);
-			int x1 = MAX(area.x, monitor_area.x);
-			int y1 = MAX(area.y, monitor_area.y);
-			int x2 = MIN(area.x + area.width,
-					monitor_area.x + monitor_area.width);
-			int y2 = MIN(area.y + area.height,
-					monitor_area.y + monitor_area.height);
-			if (x2 > x1 && y2 > y1) {
-				area.x = x1;
-				area.y = y1;
-				area.width = x2 - x1;
-				area.height = y2 - y1;
-			}
-		}
-	}
-
 #define COMPUTE_STRUT(o) \
 	{ \
 		if((o)->strut.top_start_x || (o)->strut.top_end_x || (o)->strut.top) \

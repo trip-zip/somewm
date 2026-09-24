@@ -59,8 +59,11 @@ local steps = {
         if count == 1 then
             c_fs:move_to_screen(fake_screen)
             c_fs.fullscreen = true
-            c_fs:emit_signal("request::activate", "test", { raise = true })
         end
+        -- awful.tag retags screen moves in a delayed call. Activation requires
+        -- visibility on a selected tag of the destination screen.
+        if not c_fs:isvisible() then return nil end
+        c_fs:emit_signal("request::activate", "test", { raise = true })
         if not c_fs.fullscreen then return nil end
         if c_fs.screen ~= fake_screen then return nil end
         if client.focus ~= c_fs then return nil end
@@ -86,8 +89,9 @@ local steps = {
             if c_other.screen ~= s1 then
                 c_other:move_to_screen(s1)
             end
-            c_other:emit_signal("request::activate", "test", { raise = true })
         end
+        if not c_other:isvisible() then return nil end
+        c_other:emit_signal("request::activate", "test", { raise = true })
         if client.focus ~= c_other then return nil end
         if c_other.screen == c_fs.screen then return nil end
         io.stderr:write("[TEST] Focus moved to client on screen 1\n")
@@ -122,8 +126,9 @@ local steps = {
     function(count)
         if count == 1 then
             c_other:move_to_screen(fake_screen)
-            c_other:emit_signal("request::activate", "test", { raise = true })
         end
+        if not c_other:isvisible() then return nil end
+        c_other:emit_signal("request::activate", "test", { raise = true })
         if client.focus ~= c_other then return nil end
         if c_other.screen ~= c_fs.screen then return nil end
         assert(c_fs.fullscreen,
