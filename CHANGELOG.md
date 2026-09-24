@@ -4,6 +4,73 @@ All notable changes to somewm will be documented in this file.
 
 ## [Unreleased]
 
+## [1.4.6] - 2026-09-24
+
+Patch release. 35 commits since 1.4.5: drawing tablets, touchscreens, hot-reload
+state, and fake screens. Only additions to the API; existing rc.lua configs run
+unchanged.
+
+### Added
+
+- Drawing tablets (tablet-v2). Pressure, tilt, distance, rotation, slider,
+  wheel, and pad buttons, rings and strips reach apps that support tablets;
+  other apps, wibars and titlebars get pointer motion and a left click on tip.
+  `awful.input.rules` take `tool_mode`, `map_to_output`, `map_to_region` and
+  `map_from_region`
+- `map_to_output` takes a connector name, a `"make model serial"` identifier
+  that survives the connector being renumbered, or a list tried in order
+- Touchscreens (`wl_touch`). A tap clicks apps that do not handle touch,
+  wibars and titlebars included; `emulate_pointer = false` in a touch rule
+  turns that off. A touch device maps onto the only enabled output by default
+- Lid and tablet-mode switches emit `switch::toggle` with `device_name`, `type`
+  and `state`
+- `awesome.dpms_ignore_activity = true` stops input from turning monitors back
+  on after DPMS off
+- A `somewm-portals.conf` is installed. Portals default to gtk, Screenshot and
+  ScreenCast stay on wlr, and Inhibit is disabled so apps use the Wayland
+  idle-inhibit protocol instead
+- A panic prints Lua and C tracebacks
+- An unsupported input device is logged
+
+### Fixed
+
+- Key bindings run their `on_release` callbacks
+- A hot-reload restores each tag's clients, selection, layout,
+  `master_width_factor`, `master_count`, `column_count` and `gap`, and each
+  client's explicitly set floating state. See DEVIATIONS.md for the matching
+  rules
+- `awesome.startup` is true during a hot-reload, as it is on an AwesomeWM
+  restart
+- Moving the pointer over an open popup after a hot-reload no longer reads
+  freed memory
+- Assigning `screen.primary` changes the primary screen and emits
+  `primary_changed`
+- Fake screens are arranged and show their own tags, each has its own workarea
+  from its wibar struts, and a wibar moves to a remaining screen when its fake
+  screen is removed
+- Titlebar button events on the left, right and bottom titlebars carry
+  titlebar-relative coordinates, so clicks land on the right button
+- Key bindings accept literal Unicode keys such as `"ä"`, and prompts count
+  UTF-8 characters correctly
+- A fullscreen request naming an output (e.g. `wl-mirror --fullscreen-output`)
+  goes to that output
+- libinput settings such as `tap_to_click` and `accel_speed` apply to every
+  input device, not only pointers
+- `c.content` and `root.content` crop client-side decoration shadow margins
+  instead of squeezing them in, and follow the buffer transform
+- `awful.widget.keyboardlayout` no longer shows a truncated option as an extra
+  layout ("gr" instead of "us"). Port of AwesomeWM PR #4118
+- `somewm --check` resolves `require` through Lua's package path, so somewm's
+  own modules and installed rocks like `lfs` are no longer reported missing.
+  `somewm --check rc.lua` with no directory reads the whole config, and the
+  boot scan reads the same files as `--check`
+- `somewm --check` no longer flags client icon use, which the shipped config
+  tripped
+- The systemd session wrapper no longer deletes other Wayland sessions' sockets
+  from `XDG_RUNTIME_DIR`
+- Builds on libcs without `execinfo` or `dlvsym`, such as musl
+- The graph widget unit tests run with luassert 1.7
+
 ## [1.4.5] - 2026-09-01
 
 Patch release. 10 commits since 1.4.4: shadows, config checking, and two build
@@ -313,7 +380,8 @@ First stable release. SomeWM 1.4 = AwesomeWM 4.4 on Wayland.
 
 Initial public release with core AwesomeWM compatibility.
 
-[Unreleased]: https://github.com/trip-zip/somewm/compare/v1.4.5...HEAD
+[Unreleased]: https://github.com/trip-zip/somewm/compare/v1.4.6...HEAD
+[1.4.6]: https://github.com/trip-zip/somewm/compare/v1.4.5...v1.4.6
 [1.4.5]: https://github.com/trip-zip/somewm/compare/v1.4.4...v1.4.5
 [1.4.4]: https://github.com/trip-zip/somewm/compare/v1.4.3...v1.4.4
 [1.4.3]: https://github.com/trip-zip/somewm/compare/v1.4.2...v1.4.3
