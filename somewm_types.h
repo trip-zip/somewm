@@ -20,6 +20,8 @@
 #include <wlr/types/wlr_xdg_shell.h>
 #include <xkbcommon/xkbcommon.h>
 
+struct wlr_virtual_keyboard_v1;
+
 #ifdef XWAYLAND
 #include <wlr/xwayland.h>
 #endif
@@ -120,6 +122,11 @@ struct Monitor {
 /* KeyboardGroup structure */
 typedef struct {
 	struct wlr_keyboard_group *wlr_group;
+
+	/* Set when this group wraps a single virtual keyboard (virtualkeyboard()
+	 * gives each one its own group), NULL for physical keyboards. Used to keep
+	 * an input method's own key events from being routed back into it. */
+	struct wlr_virtual_keyboard_v1 *virtual_keyboard;
 
 	int nsyms;
 	const xkb_keysym_t *keysyms; /* invalid if nsyms == 0 */

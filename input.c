@@ -61,8 +61,10 @@
 #include "objects/signal.h"
 #include "event.h"
 #include "xkb.h"
+#include <wlr/types/wlr_input_method_v2.h>
 #include <wlr/types/wlr_virtual_keyboard_v1.h>
 #include <wlr/types/wlr_virtual_pointer_v1.h>
+#include "input_method.h"
 
 /* macros */
 #define CLEANMASK(mask) (mask & ~WLR_MODIFIER_CAPS & ~WLR_MODIFIER_MOD2)
@@ -1138,6 +1140,7 @@ keypress(struct wl_listener *listener, void *data)
 	int handled = 0;
 	uint32_t mods;
 	xkb_keysym_t base_sym;
+	struct wlr_input_method_keyboard_grab_v2 *kb_grab;
 	/* This event is raised when a key is pressed or released. */
 	KeyboardGroup *group = wl_container_of(listener, group, key);
 	struct wlr_keyboard_key_event *event = data;
@@ -1221,6 +1224,16 @@ keypress(struct wl_listener *listener, void *data)
 	if (some_is_lua_locked())
 		return;
 
+	/* An input method holding the keyboard grab consumes what the compositor
+	 * did not. Checked after keybindings so bindings still win over the IME. */
+	if ((kb_grab = input_method_get_keyboard_grab(group))) {
+		wlr_input_method_keyboard_grab_v2_set_keyboard(kb_grab,
+				&group->wlr_group->keyboard);
+		wlr_input_method_keyboard_grab_v2_send_key(kb_grab,
+				event->time_msec, event->keycode, event->state);
+		return;
+	}
+
 	wlr_seat_set_keyboard(seat, &group->wlr_group->keyboard);
 	/* Pass unhandled keycodes along to the client. */
 	wlr_seat_keyboard_notify_key(seat, event->time_msec,
@@ -1234,11 +1247,21 @@ keypressmod(struct wl_listener *listener, void *data)
 	 * pressed. We simply communicate this to the client. */
 	KeyboardGroup *group = wl_container_of(listener, group, modifiers);
 	xkb_layout_index_t current_group;
+	struct wlr_input_method_keyboard_grab_v2 *kb_grab;
 
-	wlr_seat_set_keyboard(seat, &group->wlr_group->keyboard);
-	/* Send modifiers to the client. */
-	wlr_seat_keyboard_notify_modifiers(seat,
-			&group->wlr_group->keyboard.modifiers);
+	/* Modifiers follow the keys: while an input method holds the grab they go
+	 * to the IME rather than the focused client. */
+	if ((kb_grab = input_method_get_keyboard_grab(group))) {
+		wlr_input_method_keyboard_grab_v2_set_keyboard(kb_grab,
+				&group->wlr_group->keyboard);
+		wlr_input_method_keyboard_grab_v2_send_modifiers(kb_grab,
+				&group->wlr_group->keyboard.modifiers);
+	} else {
+		wlr_seat_set_keyboard(seat, &group->wlr_group->keyboard);
+		/* Send modifiers to the client. */
+		wlr_seat_keyboard_notify_modifiers(seat,
+				&group->wlr_group->keyboard.modifiers);
+	}
 
 	/* Check for layout group change (e.g., from Alt+Shift toggle) */
 	current_group = xkb_state_serialize_layout(
@@ -2830,6 +2853,9 @@ virtualkeyboard(struct wl_listener *listener, void *data)
 	struct wlr_virtual_keyboard_v1 *kb = data;
 	/* virtual keyboards shouldn't share keyboard group */
 	KeyboardGroup *group = createkeyboardgroup();
+	/* Recorded so an input method's own virtual keyboard can be told apart
+	 * from a real one when routing keys to its grab (input_method.c) */
+	group->virtual_keyboard = kb;
 	/* Set the keymap to match the group keymap */
 	wlr_keyboard_set_keymap(&kb->keyboard, group->wlr_group->keyboard.keymap);
 	LISTEN(&kb->keyboard.base.events.destroy, &group->destroy, destroykeyboardgroup);

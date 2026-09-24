@@ -426,6 +426,7 @@ somewm_sources = [
   'protocols.c',
   'monitor.c',
   'input.c',
+  'input_method.c',
   'window.c',
   'focus.c',
   'event_queue.c',
