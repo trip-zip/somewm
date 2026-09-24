@@ -7,11 +7,19 @@
 local awful = require("awful")
 local runner = require("_runner")
 local utils = require("_utils")
-local ffi = require("ffi")
+local has_ffi, ffi = pcall(require, "ffi")
 
-ffi.cdef[[
-int cairo_image_surface_get_width(void *surface);
-]]
+if has_ffi then
+    ffi.cdef[[
+    int cairo_image_surface_get_width(void *surface);
+    ]]
+end
+
+local function surface_has_width(surface, expected)
+    -- Pixel inspection needs LuaJIT; layout and visibility checks run on every Lua.
+    if not has_ffi then return true end
+    return surface and ffi.C.cairo_image_surface_get_width(surface) == expected
+end
 
 local function find_client_binary()
     local somewm = os.getenv("SOMEWM") or "./build-test/somewm"
@@ -42,6 +50,7 @@ local original_geometry = physical.geometry
 local fake
 local middle
 local bar
+local physical_bar
 local tag1
 local tag2
 local test_client
@@ -50,6 +59,11 @@ local expected_workarea_y
 local original_scale
 
 local steps = {
+    function()
+        physical_bar = awful.wibar { position = "top", screen = physical, height = 24 }
+        return true
+    end,
+
     function()
         original_scale = physical.scale
         physical.scale = 2.0
@@ -105,12 +119,11 @@ local steps = {
     function(count)
         local geometry = bar:geometry()
         local surface = bar.drawable.surface
-        local surface_width = surface and ffi.C.cairo_image_surface_get_width(surface)
         local expected_surface_width = math.floor(geometry.width * physical.scale)
         expected_workarea_y = geometry.y + geometry.height
 
         if bar.screen ~= fake or fake.workarea.y ~= expected_workarea_y or
-                surface_width ~= expected_surface_width then
+                not surface_has_width(surface, expected_surface_width) then
             if count < 20 then return nil end
         end
 
@@ -121,9 +134,10 @@ local steps = {
             fake.workarea.y, expected_workarea_y))
         assert(fake.workarea.x == fake.geometry.x,
             "fake workarea lost its horizontal viewport")
-        assert(surface_width == expected_surface_width,
-            string.format("fake-screen wibar surface is %s pixels wide, expected %s",
-                tostring(surface_width), tostring(expected_surface_width)))
+        assert(surface_has_width(surface, expected_surface_width),
+            "fake-screen wibar surface does not match the physical output scale")
+        assert(middle.workarea.y == middle.geometry.y,
+            "unreserved viewport inherited the physical screen's wibar strut")
         return true
     end,
 
@@ -134,14 +148,12 @@ local steps = {
         bar.drawable:geometry(geometry)
 
         local surface = bar.drawable.surface
-        local surface_width = surface and ffi.C.cairo_image_surface_get_width(surface)
         local expected_surface_width = math.floor(geometry.width * physical.scale)
-        if surface_width ~= expected_surface_width and count < 20 then
+        if not surface_has_width(surface, expected_surface_width) and count < 20 then
             return nil
         end
-        assert(surface_width == expected_surface_width,
-            string.format("fake-screen drawable surface is %s pixels wide, expected %s",
-                tostring(surface_width), tostring(expected_surface_width)))
+        assert(surface_has_width(surface, expected_surface_width),
+            "fake-screen drawable surface does not match the physical output scale")
         return true
     end,
 
@@ -210,8 +222,18 @@ local steps = {
         end
         if #client.get() > 0 and count < 20 then return nil end
 
-        -- Expand the physical screen before removing the fake viewport, then
-        -- verify the visible wibar no longer points at an invalid screen.
+        -- Wibars hide themselves on screen removal. A plain drawin stays visible
+        -- and must transfer its strut to the surviving screen.
+        local survivor = drawin {
+            x = fake.geometry.x,
+            y = fake.geometry.y + fake.geometry.height - 12,
+            width = 32,
+            height = 12,
+            visible = true,
+        }
+        survivor:struts { bottom = 12 }
+        local reassigned = false
+        survivor:connect_signal("property::screen", function() reassigned = true end)
         physical:fake_resize(
             original_geometry.x,
             original_geometry.y,
@@ -221,8 +243,14 @@ local steps = {
         if fake and fake.valid then fake:fake_remove() end
         assert(bar.screen == physical and bar.screen.valid,
             "fake_remove left the wibar assigned to an invalid screen")
+        assert(reassigned, "fake_remove did not reassign the surviving drawin")
+        assert(physical.workarea.y + physical.workarea.height ==
+            original_geometry.y + original_geometry.height - 12,
+            "surviving drawin did not reserve its new screen's workarea")
+        survivor.visible = false
         if middle and middle.valid then middle:fake_remove() end
         if bar then bar.visible = false end
+        physical_bar.visible = false
         physical.scale = original_scale
         return true
     end,
