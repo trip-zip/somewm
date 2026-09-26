@@ -92,8 +92,8 @@ local steps = {
         assert(top and top:find(" w=grow h=fixed(20) theme row", 1, true), "top: " .. tostring(top))
         assert(bottom and bottom:find(" w=grow h=fixed(20) theme row", 1, true), "bottom: " .. tostring(bottom))
         assert(middle, "no middle row:\n" .. awesome._clay_tree(s))
-        assert(left and left:find(" w=fixed(30) h=grow theme column", 1, true), "left: " .. tostring(left))
-        assert(right and right:find(" w=fixed(30) h=grow theme column", 1, true), "right: " .. tostring(right))
+        assert(left and left:find(" w=fixed(30) h=grow theme row", 1, true), "left: " .. tostring(left))
+        assert(right and right:find(" w=fixed(30) h=grow theme row", 1, true), "right: " .. tostring(right))
         assert(workarea, "no workarea in the middle row:\n" .. awesome._clay_tree(s))
         local tg, bg, lg, rg = bars.top:geometry(), bars.bottom:geometry(),
             bars.left:geometry(), bars.right:geometry()

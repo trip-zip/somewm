@@ -6,6 +6,8 @@ output
   POPUP screen 1 converted w=fit h=fit theme row pad 1,1,1,1 attach OUTPUT band 80
     clip w=grow h=grow row
     wibox.layout.fixed w=fit h=fit row gap 4
-      text "A" font=1
+      wibox.widget.textbox w=fit h=grow row
+        text "A" font=1
       wibox.widget.base w=fixed(20) h=grow user row
-      text "B" font=1
+      wibox.widget.textbox w=fit h=grow row
+        text "B" font=1

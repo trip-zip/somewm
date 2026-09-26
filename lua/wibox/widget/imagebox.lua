@@ -648,10 +648,10 @@ function imagebox.mt:__call(...)
     return new(...)
 end
 
---- wibox.widget.imagebox -> an element aligning one image leaf, whose
--- aspect and natural dimensions Clay sizes in the normal solve. The renderer references
--- the widget's surface and scales it into that box (third_party/clay.h:414-416).
--- Clip shapes, fit policies, downscaling off and scaling caps are ignored.
+--- wibox.widget.imagebox -> an element aligning one image leaf. The compiler
+-- composes its size from the surface, scaling flags and authored constraints.
+-- The renderer references the surface and scales it into the solved box.
+-- Clip shapes, fit policies and scaling caps are ignored.
 -- An SVG handle or an image with no default size is refused.
 local function describe_imagebox(w)
     local p = w._private
@@ -675,12 +675,9 @@ local function describe_imagebox(w)
             clay.ignore(w, prop, "is drawn as auto")
         end
     end
-    if p.downscale == false then
-        clay.ignore(w, "downscale", "is not applied")
-    end
-
-    local image = { image = p.image._native, class = "image",
+    local image = { image = p.image._native, name = "image",
         aspect = p.default.width / p.default.height,
+        image_resize = p.resize, image_downscale = p.downscale,
         image_width = p.default.width, image_height = p.default.height }
 
     if p.upscale == false or p.resize == false then

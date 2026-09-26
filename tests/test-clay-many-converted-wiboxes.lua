@@ -1,10 +1,8 @@
 -- Test: twelve converted wiboxes on one output, one of them an awful.menu
 -- with twelve items, all draw through Clay at once.
 --
--- Every converted drawin used to be a Clay clip element, and a Clay context
--- holds ten scroll containers (clay.h:2194), so the eleventh aborted the
--- compositor. Clipping is the renderer's now, so the count is bounded by
--- the element budget alone.
+-- Renderer scopes cut every host. The 100 native clip records preserve
+-- overflow sizing where available; host admission uses the element budget.
 --
 -- Run: make test-one TEST=tests/test-clay-many-converted-wiboxes.lua
 

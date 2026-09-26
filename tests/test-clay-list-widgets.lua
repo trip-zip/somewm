@@ -30,11 +30,11 @@ local function nodes()
 
     for line in awesome._clay_tree(s):gmatch("[^\n]+") do
         if head then
-            local indent, class = line:match("^    %x+ ( *)([%w_.-]+)")
+            local indent, name = line:match("^    %x+ ( *)([%w_.-]+)")
             if not indent then
                 break
             end
-            out[#out + 1] = { depth = #indent / 2, class = class,
+            out[#out + 1] = { depth = #indent / 2, name = name,
                 image = line:find(" image ", 1, true) ~= nil, line = line }
         elseif line:sub(1, #want) == want then
             head = line
@@ -43,27 +43,27 @@ local function nodes()
     return head, out
 end
 
-local function count(list, class, image)
+local function count(list, name, image)
     local n = 0
     for _, node in ipairs(list) do
-        if node.class == class and node.image == image then
+        if node.name == name and node.image == image then
             n = n + 1
         end
     end
     return n
 end
 
--- The elements directly under the first one of `class`, which is one item
+-- The elements directly under the first one of `name`, which is one item
 -- per tag or client. An item's own name depends on which of its template's
 -- objects share the element, so the list's own children are what is counted.
-local function items(list, class)
+local function items(list, name)
     local out, depth = {}, nil
     for _, node in ipairs(list) do
         if depth and node.depth <= depth then
             break
         elseif depth and node.depth == depth + 1 then
             out[#out + 1] = node
-        elseif node.class == class and not node.image then
+        elseif node.name == name and not node.image then
             depth = node.depth
         end
     end
@@ -135,9 +135,9 @@ local steps = {
         -- icon as an image element.
         assert(#items(list, "awful.widget.taglist") == 3, "expected three tags")
         assert(#items(list, "wibox.layout.flex") == 1, "expected one task")
-        assert(count(list, "wibox.widget.textbox", false) == 4,
-            "expected four textboxes as text elements")
-        assert(count(list, "awful.widget.clienticon", false) == 1
+        assert(count(list, "text_role", false) == 4,
+            "expected four text_role textboxes as text elements")
+        assert(count(list, "icon_role", false) == 1
             and count(list, "image", true) == 1,
             "the task's clienticon is not an image element")
         io.stderr:write("[PASS] the lists pass through to their items\n")

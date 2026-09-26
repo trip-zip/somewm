@@ -36,12 +36,12 @@ local function nodes()
 
     for line in awesome._clay_tree(s):gmatch("[^\n]+") do
         if head then
-            local indent, class = line:match("^    %x+ ( *)([%w_.-]+)")
+            local indent, name = line:match("^    %x+ ( *)([%w_.-]+)")
             if not indent then
                 break
             end
             local x, y, w, h = line:match("box (%d+),(%d+) (%d+)x(%d+)")
-            out[#out + 1] = { depth = #indent / 2, class = class, line = line,
+            out[#out + 1] = { depth = #indent / 2, name = name, line = line,
                 image = line:find(" image ", 1, true) ~= nil,
                 box = x and { x = tonumber(x), y = tonumber(y),
                     width = tonumber(w), height = tonumber(h) } }
@@ -52,10 +52,10 @@ local function nodes()
     return head, out
 end
 
-local function count(list, class, image)
+local function count(list, name, image)
     local n = 0
     for _, node in ipairs(list) do
-        if node.class == class and node.image == image then
+        if node.name == name and node.image == image then
             n = n + 1
         end
     end

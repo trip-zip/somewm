@@ -30,7 +30,7 @@ runner.run_async(function()
                 events[#events+1]=signal..':'..c.class
             end)
         end
-        if count==2 or count==4 then
+        if count>=2 then
             for i,wanted in ipairs(clients) do
                 local current=awful.client.tiled(s)[i]
                 if current~=wanted then current:swap(wanted) end
@@ -49,6 +49,14 @@ runner.run_async(function()
                     local height=kind=='fairv' and count==2 and 720 or 360
                     if g.x~=gap or g.y~=gap or g.width~=width-2-2*gap or g.height~=height-2-2*gap then
                         failures[#failures+1]=name..'-client-allocation'
+                    end
+                    if count==3 then
+                        local last=clients[3]:geometry()
+                        local x,y,w,h=640,0,640,720
+                        if kind=='fairh' then x,y,w,h=0,360,1280,360 end
+                        assert(last.x==x+gap and last.y==y+gap
+                            and last.width==w-2-2*gap and last.height==h-2-2*gap,
+                            name..'-singleton-must-fill-column')
                     end
                     local line=assert(dump:match('SURFACE FAIR_HINT_1 [^\n]+'))
                     local sw,sh=line:match('box %-?%d+,%-?%d+ (%d+)x(%d+)')

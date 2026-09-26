@@ -1,5 +1,5 @@
 ---------------------------------------------------------------------------
--- Test: a textbox converts to a Clay text element
+-- Test: a textbox converts to a container with a Clay text child
 --
 -- A converted textbox is a content descriptor: Clay measures it through the
 -- renderer's measure callback and the renderer rasters it with pangocairo,
@@ -32,12 +32,12 @@ local function nodes()
 
     for line in awesome._clay_tree(s):gmatch("[^\n]+") do
         if head then
-            local indent, class = line:match("^    %x+ ( *)([%w_.-]+)")
+            local indent, name = line:match("^    %x+ ( *)([%w_.-]+)")
             if not indent then
                 break
             end
             local x, y, w, h = line:match("box (%d+),(%d+) (%d+)x(%d+)")
-            out[#out + 1] = { depth = #indent / 2, class = class,
+            out[#out + 1] = { depth = #indent / 2, name = name,
                 image = line:find(" image ", 1, true) ~= nil, line = line,
                 box = x and { x = tonumber(x), y = tonumber(y),
                     width = tonumber(w), height = tonumber(h) } }
@@ -55,16 +55,19 @@ local function textboxes(list)
     for _, widget in ipairs { plain, span, bold } do
         local binding = assert(bar._drawable._clay_wired[widget])[1]
         local element = assert(binding.element)
+        assert(not element.text and element.children[1].text,
+            "the wired textbox must be a container with a text child")
+        assert(not element.children[1].box, "a glyph box must not be published")
         local found, glyph
         for index, node in ipairs(list) do
             local box = node.box
             if box and box.x == element.box.x and box.y == element.box.y
                     and box.width == element.box.width and box.height == element.box.height
-                    and node.class == (element.text and "text" or "wibox.widget.textbox") then
+                    and node.name == "wibox.widget.textbox" then
                 assert(not found, "ambiguous textbox element in native dump")
                 found = node
-                glyph = element.text and node or list[index + 1]
-                if glyph and (glyph.class ~= "text" or (not element.text and glyph.depth ~= node.depth + 1)) then glyph = nil end
+                glyph = list[index + 1]
+                if glyph and (glyph.name ~= "text" or glyph.depth ~= node.depth + 1) then glyph = nil end
             end
         end
         assert(found, "original textbox has no matching real solved element")

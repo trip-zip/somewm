@@ -42,7 +42,7 @@ runner.run_async(function()
         else
             icon = wibox.widget.base.make_widget(nil,nil,{enable_properties=true})
             clay.describe_widget(icon, function()
-                return {specs={{image=src._native, class='image', aspect=2,
+                return {specs={{image=src._native, name='image', aspect=2,
                     image_width=20, image_height=10, wmax=capped and 20 or icon._private.forced_width, hmax=capped and 10 or icon._private.forced_height}}}
             end, 'intrinsic-image')
         end

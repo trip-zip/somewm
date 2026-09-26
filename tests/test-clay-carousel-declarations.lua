@@ -59,7 +59,8 @@ runner.run_async(function()
         async.sleep(.15)
         local dump = awesome._clay_tree(s)
         example.save(name, dump)
-        assert(dump:find('derived 0', 1, true), dump)
+        assert(tonumber(dump:match('roots flow %d+ floating %d+ derived (%d+)'))
+            == #inputs.columns, dump)
         assert(not dump:find('[tree!=scene]', 1, true), dump)
         for i, c in ipairs(clients) do
             local w, h = dump:match('SURFACE ' .. c.class .. ' [^\n]-box %-?%d+,%-?%d+ (%d+)x(%d+)')
@@ -184,6 +185,51 @@ runner.run_async(function()
     local order = {}
     for name in regrouped:gmatch('\n%s+CLIENT (STRIP_%d+) ') do order[#order + 1] = name end
     assert(table.concat(order, ',') == 'STRIP_3,STRIP_1,STRIP_2')
+
+    -- Public centering computes margins from the workarea; peek alone is authored.
+    local beautiful = require('beautiful')
+    beautiful.carousel_default_column_width = .5
+    beautiful.carousel_peek_width = 20
+    beautiful.carousel_dynamic_peek_width = -1
+    carousel.scroll_duration = 0
+    s.selected_tag.gap = 0
+    local provenance = {
+        {layout = carousel, mode = 'always', name = 'horizontal-centered',
+            column = 'CAROUSEL_COLUMN - w=fixed(620) h=percent(1) derived column',
+            margin = 'CAROUSEL_MARGIN - w=fixed(330) h=percent(1) derived row'},
+        {layout = carousel, mode = 'never', name = 'horizontal-peek',
+            column = 'CAROUSEL_COLUMN - w=fixed(620) h=percent(1) derived column',
+            margin = 'CAROUSEL_MARGIN - w=fixed(20) h=percent(1) theme row'},
+        {layout = carousel.vertical, mode = 'always', name = 'vertical-centered',
+            column = 'CAROUSEL_COLUMN - w=percent(1) h=fixed(340) derived row',
+            margin = 'CAROUSEL_MARGIN - w=percent(1) h=fixed(190) derived row'},
+        {layout = carousel.vertical, mode = 'never', name = 'vertical-peek',
+            column = 'CAROUSEL_COLUMN - w=percent(1) h=fixed(340) derived row',
+            margin = 'CAROUSEL_MARGIN - w=percent(1) h=fixed(20) theme row'},
+    }
+    for _, case in ipairs(provenance) do
+        beautiful.carousel_center_mode = case.mode
+        s.selected_tag.layout = case.layout
+        awful.layout.arrange(s)
+        async.sleep(.15)
+        case.dump = awesome._clay_tree(s)
+        example.save(case.name, case.dump)
+    end
+    for _, case in ipairs(provenance) do
+        local columns, margins = 0, 0
+        for line in case.dump:gmatch('[^\n]+') do
+            local column = line:match('^%s*(CAROUSEL_COLUMN .-) box ')
+            local margin = line:match('^%s*(CAROUSEL_MARGIN .-) box ')
+            if column then
+                assert(column == case.column, case.name .. ': ' .. line .. ' expected ' .. case.column)
+                columns = columns + 1
+            elseif margin then
+                assert(margin == case.margin, case.name .. ': ' .. line .. ' expected ' .. case.margin)
+                margins = margins + 1
+            end
+        end
+        assert(columns == 3 and margins == 2, case.name .. ': missing carousel slots')
+    end
 
     s.selected_tag.layout = awful.layout.suit.tile
     for _, c in ipairs(clients) do c:kill() end

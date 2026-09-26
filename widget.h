@@ -93,12 +93,11 @@ struct widget_binding {
  * Colors are straight alpha, 0-1, as everywhere else on this side; an alpha
  * of zero means the node draws no fill or no ring. */
 struct widget_node {
-	/* The widget's class name (wibox.widget.base's widget_name), interned
-	 * so the whole struct still compares by memcmp. Only the tree dump
-	 * (somewm-client clay tree) reads it: Clay carries no string from an
-	 * element id to a render command. NULL for a node that stands for no
-	 * widget. */
-	const char *cls;
+	/* The declarative id or full widget class name, interned for the program's
+	 * lifetime so the struct still compares by memcmp. The element id and
+	 * both dump lines read it. Synthetic nodes may supply a role name;
+	 * NULL when the node has no name. */
+	const char *name;
 	uint32_t identity; /* Original Lua object identity, shared by its occurrences. */
 	uint32_t occurrence; /* Stable Lua placement token, unique across hosts. */
 	uint32_t binding_start, binding_count;
@@ -110,7 +109,6 @@ struct widget_node {
 	uint8_t sizing[2];   /* enum widget_sizing per axis */
 	float size[2];       /* the fixed size or percent */
 	bool theme_size; /* fixed dimensions supplied by a theme/producer slot */
-	bool last_frame_size; /* remaining square producers use the drawable's prior offer */
 	float min[2];        /* Clay_SizingMinMax for fit and grow: the floor,
 	                      * and the ceiling, 0 for none, which is Clay's own
 	                      * convention (clay.h:1936) */
@@ -146,13 +144,11 @@ struct widget_node {
 	 * Numbered here rather than by Lua, from the tree's shape alone. */
 	uint8_t clip_opens, clip_by;
 
-	/* A text element (CLAY_TEXT), or a compatible textbox's own element: the
-	 * run in the drawin's widget_text buffer, and its Clay_TextElementConfig.
-	 * fontSize is 0, the interned face carries its own size (render_text.h).
-	 * A text node has no children. text_layout lets FIT/GROW text own the
-	 * original widget's allocated area, with aligned glyph commands inside. */
+	/* A text element (CLAY_TEXT): the run in the drawin's widget_text buffer
+	 * and its Clay_TextElementConfig. fontSize is 0; the interned face carries
+	 * its own size (render_text.h). The parent container owns the widget's
+	 * identity, bindings, alignment and published box. Text has no children. */
 	bool text;
-	bool text_layout;
 	uint32_t text_off, text_len;
 	uint16_t font;       /* render_font_intern's id */
 	uint8_t wrap;        /* Clay_TextElementConfigWrapMode */
@@ -184,10 +180,9 @@ struct widget_node {
  * budget leaves headroom but does not prove ID or command capacity sufficient. */
 #define WIDGET_NODES_OUTPUT_MAX 12288
 
-/* Widget admission allows eight scroll records per output. Clay allocates
- * 100 native records, also used by the inspector and client scrolling.
- * Passive clips do not consume scroll records. */
-#define WIDGET_SCROLLS_OUTPUT_MAX 8
+/* Clay has 100 clip records per output. Declaration reserves scrolling
+ * before granting the remaining records to hosts for overflow sizing. */
+#define WIDGET_SCROLLS_OUTPUT_MAX 100
 
 /* What the last widget_nodes_set() answered, kept so the tree dump can say
  * why a drawin shows nothing. Zero is a

@@ -34,7 +34,7 @@ runner.run_async(function()
         else
             image = wibox.widget.base.make_widget(nil, nil, {enable_properties = true})
             clay.describe_widget(image, function()
-                return {specs = {{image = current_src._native, class = 'image', w = 20, h = 10}}}
+                return {specs = {{image = current_src._native, name = 'image', w = 20, h = 10}}}
             end, 'image-contribution')
         end
         local margin = wibox.container.margin(image, 0, 0, 0, 0)

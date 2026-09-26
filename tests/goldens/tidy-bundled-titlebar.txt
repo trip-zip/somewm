@@ -8,7 +8,8 @@ output
             awful.widget.clienticon w=fit h=grow row
               image image 512x512 w=fit h=fit
             wibox.layout.flex w=grow h=grow row
-              text "Example" font=1
+              wibox.widget.textbox w=grow h=grow row
+                text "Example" font=1
             wibox.layout.fixed w=fit h=grow row
               wibox.widget.imagebox w=fit h=grow row
                 image image 240x240 w=fit h=fit

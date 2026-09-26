@@ -23,12 +23,12 @@ local function block(bar)
 
     for _, line in ipairs(lines()) do
         if head then
-            local id, indent, class = line:match("^    (%x+) ( *)([%w_.-]+)")
+            local id, indent, name = line:match("^    (%x+) ( *)([%w_.-]+)")
             if not id then
                 break
             end
             nodes[#nodes + 1] = {
-                id = id, depth = #indent / 2, class = class, line = line,
+                id = id, depth = #indent / 2, name = name, line = line,
             }
         elseif line:sub(1, #want) == want then
             head = line

@@ -15,6 +15,7 @@
 #include "luaa.h"
 
 #include "widget.h"
+#include "clay_impl.h"
 #include "common/util.h"
 #include "declare.h"
 #include "globalconf.h"
@@ -138,11 +139,10 @@ read_align(lua_State *L, int idx, const char *name, uint8_t *out)
 	return ok;
 }
 
-/* The class names seen so far, interned so a node holds a stable pointer and
- * the tree still compares by memcmp. A config names a couple of dozen widget
- * classes and never frees one, so the table only grows, by a pointer each. */
+/* Intern node names for the program's lifetime so element id strings stay
+ * valid and tree nodes compare by memcmp. */
 static const char *
-intern_class(const char *name)
+intern_name(const char *name)
 {
 	static const char **names;
 	static size_t len, cap;
@@ -203,6 +203,8 @@ read_text(lua_State *L, int idx, struct widget_node *n)
 	}
 	memcpy(text_buf + text_len, text, len);
 	n->text = true;
+	n->widget = false;
+	n->identity = n->occurrence = 0;
 	n->text_off = (uint32_t)text_len;
 	n->text_len = (uint32_t)len;
 	text_len += len;
@@ -216,23 +218,6 @@ read_text(lua_State *L, int idx, struct widget_node *n)
 	lua_getfield(L, idx, "ellipsize");
 	n->ellipsize = lua_toboolean(L, -1);
 	lua_pop(L, 1);
-	lua_getfield(L, idx, "text_layout");
-	n->text_layout = lua_toboolean(L, -1);
-	lua_pop(L, 1);
-	if (n->text_layout) {
-		if (n->wrap != CLAY_TEXT_WRAP_WORDS
-				|| !read_sizing(L, idx, "w", &n->sizing[0], &n->size[0])
-				|| !read_sizing(L, idx, "h", &n->sizing[1], &n->size[1])
-				|| n->sizing[0] > WIDGET_SIZING_GROW || n->sizing[1] > WIDGET_SIZING_GROW
-				|| !read_align(L, idx, "valign", &n->align[1]))
-			return false;
-		static const char *const bounds[] = { "wmin", "hmin", "wmax", "hmax" };
-		for (size_t i = 0; i < sizeof(bounds) / sizeof(bounds[0]); i++) {
-			float bound = 0;
-			if (!read_number(L, idx, bounds[i], 0, 1e6, &bound) || bound != 0)
-				return false;
-		}
-	}
 	return ok;
 }
 
@@ -294,9 +279,9 @@ read_node(lua_State *L, int idx, struct widget_node *n)
 
 	if (!lua_istable(L, idx))
 		return false;
-	lua_getfield(L, idx, "class");
+	lua_getfield(L, idx, "name");
 	if (lua_isstring(L, -1))
-		n->cls = intern_class(lua_tostring(L, -1));
+		n->name = intern_name(lua_tostring(L, -1));
 	lua_pop(L, 1);
 	lua_getfield(L, idx, "spacer");
 	n->widget = !lua_toboolean(L, -1);
@@ -346,9 +331,6 @@ read_node(lua_State *L, int idx, struct widget_node *n)
 	n->gap = (uint16_t)gap;
 	lua_getfield(L, idx, "theme_size");
 	n->theme_size = lua_toboolean(L, -1);
-	lua_pop(L, 1);
-	lua_getfield(L, idx, "last_frame_size");
-	n->last_frame_size = lua_toboolean(L, -1);
 	lua_pop(L, 1);
 	if (!read_sizing(L, idx, "w", &n->sizing[0], &n->size[0])
 			|| !read_sizing(L, idx, "h", &n->sizing[1], &n->size[1]))
@@ -486,7 +468,7 @@ read_tree(lua_State *L, int idx, struct widget_node *nodes, size_t *len,
 		return false;
 	n = &nodes[(*len)++];
 	memset(n, 0, sizeof(*n));
-	if (!read_node(L, idx, n) || !read_bindings(L, idx, n))
+	if (!read_node(L, idx, n) || (!n->text && !read_bindings(L, idx, n)))
 		return false;
 	/* References can only target an earlier declaration in this very tree.
 	 * Do not accept cached indices, cross-host targets or forward references. */
@@ -494,7 +476,8 @@ read_tree(lua_State *L, int idx, struct widget_node *nodes, size_t *len,
 	if (!lua_isnil(L, -1)) {
 		lua_rawget(L, anchors);
 		lua_Integer target = lua_tointeger(L, -1);
-		if (!n->floating || target <= 0 || (size_t)target >= *len) {
+		if (n->text || !n->floating || target <= 0 || (size_t)target >= *len
+				|| nodes[target - 1].text) {
 			lua_pop(L, 1);
 			return false;
 		}
@@ -622,9 +605,9 @@ size_t widget_tree_bytes(const struct widget_tree *d)
 
 bool widget_tree_referenced(const struct widget_tree *d)
 {
-    return Clay__ReferencesMemory(d->text, d->text_len, UINTPTR_MAX)
-        || Clay__ReferencesMemory(d->leaves, d->leaves_len * sizeof(*d->leaves), UINTPTR_MAX)
-        || Clay__ReferencesMemory(d->shapes, d->shapes_len * sizeof(*d->shapes), ~(uintptr_t)RENDER_SHAPE_TAG);
+    return clay_references_memory(d->text, d->text_len, UINTPTR_MAX)
+        || clay_references_memory(d->leaves, d->leaves_len * sizeof(*d->leaves), UINTPTR_MAX)
+        || clay_references_memory(d->shapes, d->shapes_len * sizeof(*d->shapes), ~(uintptr_t)RENDER_SHAPE_TAG);
 }
 
 void widget_tree_release(struct widget_tree *d)
@@ -743,6 +726,8 @@ over_budget(struct widget_tree *d, Monitor *m, size_t len, size_t scrolls)
 			scrolls += other->scrolls;
 		}
 	}
+	/* Client layout and inspector clips share this native budget; declare.c
+	 * reserves their records before it admits any host sizing clips. */
 	return total > declare_widget_budget(m->declare) || scrolls > WIDGET_SCROLLS_OUTPUT_MAX;
 }
 

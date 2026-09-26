@@ -52,7 +52,8 @@ runner.run_async(function()
         async.sleep(.15)
         local dump = awesome._clay_tree(s)
         example.save(name, dump)
-        assert(dump:find('derived 0', 1, true), dump)
+        assert(tonumber(dump:match('\n  roots flow %d+ floating %d+ derived (%d+)\n'))
+            == #boxes(dump, 'CAROUSEL_COLUMN'), dump)
         assert(not dump:find('[tree!=scene]', 1, true), dump)
         return dump
     end

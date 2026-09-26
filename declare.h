@@ -17,7 +17,7 @@ typedef struct drawin_t drawin_t;
  * flag the frame handler consumes. The lock screen is part of that tree,
  * not a second one. */
 struct declare_output;
-#define CLAY_ELEMENTS_MAX 32768
+#define CLAY_ELEMENTS_MAX 65536
 size_t declare_widget_budget(struct declare_output *dout);
 void declare_output_resource_failure(struct declare_output *dout);
 /* Private test-build controls for newly created contexts and solve failures. */
@@ -155,7 +155,7 @@ Clay_Context *declare_widget_context(const struct widget_host *host);
  * Clay's pointer query answers it against the output's last solve
  * (Clay_SetPointerState, Clay_GetPointerOverIds): preorder indices of the
  * nodes that stand for a widget, outermost first, up to cap. 0 until the
- * tree has been declared. */
+ * tree has been declared, and while a failed context awaits a valid frame. */
 int declare_widget_hits(const struct widget_host *host, double x, double y, int *out, int cap);
 
 /* Test hook (awesome._test_declare_order): the output's draw order for the
