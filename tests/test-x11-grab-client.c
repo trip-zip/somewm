@@ -16,7 +16,8 @@
  * window must not produce FOCUS_OUT, which is what makes Xwayland tear the
  * grab down.
  *
- * Usage: test-x11-grab-client <marker-path> <wm-class> <x> <y> <w> <h>
+ * Usage: test-x11-grab-client <marker-path> <wm-class> <x> <y> <w> <h> [no-grab]
+ * With no-grab, paint the window and wait for events without grabbing.
  *
  * The window is created at the given box. It must match where the compositor
  * places the client and avoid the X pointer's resting position: a window that
@@ -72,8 +73,8 @@ static xcb_cursor_t blank_cursor(xcb_connection_t *conn, xcb_screen_t *screen) {
 }
 
 int main(int argc, char *argv[]) {
-    if (argc != 7) {
-        fprintf(stderr, "Usage: %s <marker-path> <wm-class> <x> <y> <w> <h>\n",
+    if (argc != 7 && !(argc == 8 && strcmp(argv[7], "no-grab") == 0)) {
+        fprintf(stderr, "Usage: %s <marker-path> <wm-class> <x> <y> <w> <h> [no-grab]\n",
                 argv[0]);
         return 1;
     }
@@ -151,7 +152,7 @@ int main(int argc, char *argv[]) {
         }
         case XCB_ENTER_NOTIFY:
             log_line("ENTER");
-            if (!grabbed)
+            if (argc == 7 && !grabbed)
                 grabbed = try_grab(conn, win, cursor);
             break;
         case XCB_FOCUS_IN: {

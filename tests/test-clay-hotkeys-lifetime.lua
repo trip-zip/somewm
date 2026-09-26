@@ -34,6 +34,8 @@ runner.run_async(function()
         box, instance = nil, nil
     end
     async.sleep(.1)
+    -- A LuaJIT trace specialized on a per-instance closure keeps that instance alive until the traces are flushed.
+    if jit then jit.flush() end
     collectgarbage('collect')
     collectgarbage('collect')
     bar.height = 80
@@ -41,6 +43,7 @@ runner.run_async(function()
     local after = handler_count(s)
     assert(after == before, 'hidden help grew the screen handler count')
     -- Finalizable drawins can survive a collection until their callbacks drain.
+    if jit then jit.flush() end
     collectgarbage('collect')
     collectgarbage('collect')
     io.stderr:write(string.format('[HOTKEYS LIFETIME] screen handlers %d -> %d; retained help %s\n',

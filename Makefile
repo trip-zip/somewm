@@ -79,6 +79,7 @@ test-signal: build-test
 # An exiting somewm leaves a newer instance's IPC socket alone
 test-ipc-socket: build-test
 	@./tests/test-ipc-socket-handoff.sh ./build-test/somewm ./build-test/somewm-client
+	@./tests/test-ipc-socket-live-owner.sh ./build-test/somewm ./build-test/somewm-client
 
 # Test orchestrator (somewm-client test ...): spawns headless nested compositor
 test-orchestrator: build-test

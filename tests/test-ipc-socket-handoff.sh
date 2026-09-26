@@ -1,17 +1,13 @@
 #!/usr/bin/env bash
 #
-# Regression test: an exiting somewm must not remove the IPC socket a newer
-# instance bound at the same path.
+# A live IPC listener is never taken over. An exiting compositor removes its
+# own file and then closes its listener, allowing a newer instance to bind
+# the same path. Cleanup unlinks the socket only while its inode still
+# belongs to that process.
 #
-# A restart by install starts the new compositor while the old one is still
-# on its way out. The new one unlinks the stale socket file and binds its
-# own; the old one's cleanup then unlinked the path again, taking the new
-# socket with it, and somewm-client could not reach the session until the
-# next full restart. Cleanup now unlinks the file only while it is still the
-# one this process bound.
-#
-# Two headless compositors share one runtime dir: A comes up, B rebinds the
-# socket path, A gets SIGTERM, and the path must still lead to B.
+# Two headless compositors share one runtime dir: A comes up, gets SIGTERM,
+# and B starts during A's exit. The five-second retry in ipc_init lets B
+# wait for A to remove its file. A's exit must leave B's socket intact.
 #
 # Usage: ./tests/test-ipc-socket-handoff.sh [somewm] [somewm-client]
 
@@ -80,7 +76,9 @@ wait_socket() {
     local pid="$1" not_inode="$2" count=0 max=$(( START_TIMEOUT * 10 ))
     while [ "$count" -lt "$max" ]; do
         kill -0 "$pid" 2>/dev/null || fail "somewm (pid $pid) exited during startup"
-        if [ -S "$SOCKET" ] && [ "$(stat -c %i "$SOCKET")" != "$not_inode" ]; then
+        local inode
+        inode="$(stat -c %i "$SOCKET" 2>/dev/null)" || inode=""
+        if [ -n "$inode" ] && [ "$inode" != "$not_inode" ]; then
             return 0
         fi
         sleep 0.1
@@ -95,15 +93,15 @@ wait_socket "$PID_A" ""
 INODE_A="$(stat -c %i "$SOCKET")"
 echo "--- INFO: A up (pid $PID_A, socket inode $INODE_A)"
 
-# B binds the same path, which unlinks A's file first.
+# Start B during A's exit, before waiting for A to finish.
+kill -TERM "$PID_A"
 "$SOMEWM" >"$LOG_B" 2>&1 &
 PID_B=$!
 wait_socket "$PID_B" "$INODE_A"
 INODE_B="$(stat -c %i "$SOCKET")"
 echo "--- INFO: B up (pid $PID_B, socket inode $INODE_B)"
 
-# A exits; its cleanup must leave B's socket alone.
-kill -TERM "$PID_A"
+# Wait for A's exit; its cleanup must leave B's socket alone.
 ( sleep "$EXIT_TIMEOUT"; kill -KILL "$PID_A" 2>/dev/null ) &
 WATCHDOG=$!
 wait "$PID_A" 2>/dev/null

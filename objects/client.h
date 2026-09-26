@@ -234,9 +234,8 @@ struct client_t
     /* c->tags bitmask removed - tags now managed by arrays (tag->clients) */
     /** Border width (somewm compat - duplicates border_width from WINDOW_OBJECT_HEADER) */
     unsigned int bw;
-    /** Floating state removed - now managed entirely by Lua property system (AwesomeWM-compatible).
-     * C code queries floating state via some_client_get_floating() which calls Lua's c.floating property.
-     * This matches AwesomeWM where C doesn't store floating state. */
+    /** Named scalar properties owned by the client across Lua hot reloads. */
+    struct client_xproperty *xproperties;
     /** Client name */
     char *name, *alt_name, *icon_name, *alt_icon_name;
     /** WM_CLASS stuff */

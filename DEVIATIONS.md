@@ -15,7 +15,7 @@ A floating place container without independent bounds contributes native parent/
 | Systray | X11 `_NET_SYSTEMTRAY` embed | StatusNotifierItem D-Bus (SNI) | X11 tray protocol doesn't exist on Wayland |
 | Titlebar borders | Outside frame (X server draws) | Inset by `border_width` | Scene graph positioning differs |
 | Window visibility | `xcb_map_window()` shows immediately | Content must exist before showing | Prevents smearing artifacts |
-| WM restart | `awesome.restart()` re-execs the process | In-process Lua hot-reload (clients survive) | Wayland compositor can't re-exec; tears down and rebuilds Lua VM instead |
+| WM restart | `awesome.restart()` re-execs the process | In-process Lua hot-reload (clients and persistent client properties survive) | Wayland compositor can't re-exec; tears down and rebuilds Lua VM instead |
 | GTK theme detection | Creates GTK widgets, queries `GtkStyleContext` | Parses `gtk-3.0/settings.ini` and `gtk-4.0/settings.ini` | Creating GTK windows inside a compositor is unsafe |
 | Xresources | Queries `xrdb` server | Parses `~/.Xresources` file directly | No `xrdb` server on Wayland |
 | Wibox shape surfaces | 1-bit (`cairo.Format.A1`) | Full ARGB32 with anti-aliasing | Enables anti-aliased rounded corners and HiDPI scaling |
@@ -40,6 +40,7 @@ A floating place container without independent bounds contributes native parent/
 **WM Restart**
 - AwesomeWM re-execs itself via `execvp()`, restarting the entire process
 - SomeWM performs in-process Lua hot-reload: tears down the Lua VM, rebuilds it from `rc.lua`, and reattaches existing clients
+- Persistent awful.client properties, including floating state and single-instance IDs, also survive a hot reload.
 - wlroots, the scene graph, and client surfaces are untouched during reload
 - The old Lua state is closed, so a module must release what it registered with GLib or GDBus when `"exit"` is emitted, or its callback outlives the state it points into
 - A source sweep in C and an LD_PRELOAD closure guard (`lgi_closure_guard.so`) back that contract up and report when it is broken. The sweep destroys any GLib source the closed state still owned, so it never dispatches; the guard cannot do the same, since libffi reads a closure's `cif` (which lives in the closed state) before the guard is entered
@@ -382,7 +383,7 @@ These APIs exist as stubs for compatibility but don't function:
 
 ### X Property APIs
 
-The global stubs (`luaA_register_xproperty()`, `luaA_set_xproperty()`, `luaA_get_xproperty()` in `property.c`) and per-client stubs (`luaA_client_get_xproperty()`, `luaA_client_set_xproperty()` in `objects/client.c`) return "not yet implemented" warnings.
+The global APIs (`luaA_register_xproperty()`, `luaA_set_xproperty()`, `luaA_get_xproperty()` in `property.c`) remain stubs. The per-client methods (`luaA_client_get_xproperty()`, `luaA_client_set_xproperty()` in `objects/client.c`) use a client-owned store of named booleans, numbers and strings; nil removes an entry. This store survives Lua hot reloads and is freed with the client, without reading or writing X11 properties.
 
 X11 properties were used for:
 - Storing persistent per-window state
@@ -391,7 +392,6 @@ X11 properties were used for:
 
 Wayland alternatives (not yet implemented):
 - D-Bus for IPC
-- Compositor-side storage for persistent state
 
 ### XKB Layout Functions
 

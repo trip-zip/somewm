@@ -1574,13 +1574,39 @@ int luaA_client_geometry_is_solved(lua_State *L);
 static void client_resize_do(client_t *c, area_t geometry, bool silent, bool solved);
 static void client_set_maximized_common(lua_State *L, int cidx, bool s, const char* type, const int val);
 
-/** Collect a client.
- * \param L The Lua VM state.
- * \return The number of element pushed on stack.
- */
+typedef struct client_xproperty {
+    struct client_xproperty *next;
+    char *name;
+    int type;
+    union {
+        bool boolean;
+        lua_Number number;
+        struct {
+            char *data;
+            size_t len;
+        } string;
+    } value;
+} client_xproperty_t;
+
+static void
+client_xproperty_free(client_xproperty_t *property)
+{
+    if (property->type == LUA_TSTRING)
+        free(property->value.string.data);
+    free(property->name);
+    free(property);
+}
+
+/** Release resources owned by the client userdata. */
 static void
 client_wipe(client_t *c)
 {
+    while (c->xproperties) {
+        client_xproperty_t *property = c->xproperties;
+        c->xproperties = property->next;
+        client_xproperty_free(property);
+    }
+
     /* Cleanup button array (AwesomeWM pattern - DO_NOTHING means Lua GC handles buttons) */
     button_array_wipe(&c->buttons);
 
@@ -4796,26 +4822,41 @@ client_checker(client_t *c)
     return true;
 }
 
-/** Get an X property on a client (stub for Wayland compatibility).
- * On Wayland, X properties don't exist - always returns nil.
- * This allows AwesomeWM configs using awful.client.property.persist() to load
- * without errors, even though the persistence mechanism doesn't apply.
+/** Get a named value from the client's C-owned property store.
+ * Values retain their Lua scalar type across hot reloads; missing names return nil.
  *
  * \param L The Lua VM state.
- * \return Number of elements pushed on stack (1 - nil).
+ * \return Number of elements pushed on stack (1).
  */
 static int
 luaA_client_get_xproperty(lua_State *L)
 {
-    /* X properties don't exist on Wayland - return nil */
+    client_t *c = luaA_checkudata(L, 1, &client_class);
+    const char *name = luaL_checkstring(L, 2);
+
+    for (client_xproperty_t *property = c->xproperties; property; property = property->next) {
+        if (strcmp(property->name, name) != 0)
+            continue;
+        switch (property->type) {
+        case LUA_TBOOLEAN:
+            lua_pushboolean(L, property->value.boolean);
+            break;
+        case LUA_TNUMBER:
+            lua_pushnumber(L, property->value.number);
+            break;
+        case LUA_TSTRING:
+            lua_pushlstring(L, property->value.string.data, property->value.string.len);
+            break;
+        }
+        return 1;
+    }
     lua_pushnil(L);
     return 1;
 }
 
-/** Set an X property on a client (stub for Wayland compatibility).
- * On Wayland, X properties don't exist - silently ignored.
- * This allows AwesomeWM configs using awful.client.property.persist() to load
- * without errors, even though the persistence mechanism doesn't apply.
+/** Store a named boolean, number or string on the client; nil removes it.
+ * The client owns the copied value independently of the Lua state, so it survives
+ * hot reloads and is freed with the client. No X property registration is needed.
  *
  * \param L The Lua VM state.
  * \return Number of elements pushed on stack (0).
@@ -4823,7 +4864,49 @@ luaA_client_get_xproperty(lua_State *L)
 static int
 luaA_client_set_xproperty(lua_State *L)
 {
-    /* X properties don't exist on Wayland - no-op */
+    client_t *c = luaA_checkudata(L, 1, &client_class);
+    const char *name = luaL_checkstring(L, 2);
+    int type = lua_type(L, 3);
+    if (type != LUA_TNIL && type != LUA_TBOOLEAN && type != LUA_TNUMBER && type != LUA_TSTRING)
+        return luaL_argerror(L, 3, "expected boolean, number, string or nil");
+
+    client_xproperty_t **slot = &c->xproperties;
+    while (*slot && strcmp((*slot)->name, name) != 0)
+        slot = &(*slot)->next;
+
+    client_xproperty_t *property = *slot;
+    if (type == LUA_TNIL) {
+        if (property) {
+            *slot = property->next;
+            client_xproperty_free(property);
+        }
+        return 0;
+    }
+
+    if (!property) {
+        property = p_new(client_xproperty_t, 1);
+        property->name = p_dup(name, strlen(name) + 1);
+        *slot = property;
+    } else if (property->type == LUA_TSTRING) {
+        free(property->value.string.data);
+    }
+    property->type = type;
+    switch (type) {
+    case LUA_TBOOLEAN:
+        property->value.boolean = lua_toboolean(L, 3);
+        break;
+    case LUA_TNUMBER:
+        property->value.number = lua_tonumber(L, 3);
+        break;
+    case LUA_TSTRING: {
+        size_t len;
+        const char *value = lua_tolstring(L, 3, &len);
+        property->value.string.data = p_new(char, len + 1);
+        memcpy(property->value.string.data, value, len);
+        property->value.string.len = len;
+        break;
+    }
+    }
     return 0;
 }
 

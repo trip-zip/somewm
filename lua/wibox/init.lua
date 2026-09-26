@@ -38,6 +38,28 @@ local force_forward = {
     shape_input = true,
 }
 
+local wibox_metatable = {
+    __index = function(self, k)
+        if rawget(self, "get_"..k) then
+            return self["get_"..k](self)
+        else
+            return rawget(self, "drawin")[k]
+        end
+    end,
+    __newindex = function(self, k, v)
+        if rawget(self, "set_"..k) then
+            self["set_"..k](self, v)
+        else
+            local w = rawget(self, "drawin")
+            if force_forward[k] or w[k] ~= nil then
+                w[k] = v
+            else
+                rawset(self, k, v)
+            end
+        end
+    end
+}
+
 --@DOC_wibox_COMMON@
 
 function wibox:set_widget(widget)
@@ -329,15 +351,6 @@ local function new(args)
     ret:set_bg(args.bg or beautiful.bg_normal)
     ret:set_fg(args.fg or beautiful.fg_normal)
 
-    -- Add __tostring method to metatable.
-    local mt = {}
-    local orig_string = tostring(ret)
-    mt.__tostring = function()
-        return string.format("wibox: %s (%s)",
-                             tostring(ret._drawable), orig_string)
-    end
-    ret = setmetatable(ret, mt)
-
     -- Make sure the wibox is drawn at least once
     ret.draw()
 
@@ -346,29 +359,7 @@ local function new(args)
     ret:connect_signal("property::border_color", ret._apply_shape)
 
     -- If a value is not found, look in the drawin
-    setmetatable(ret, {
-        __index = function(self, k)
-            if rawget(self, "get_"..k) then
-                return self["get_"..k](self)
-            else
-                return w[k]
-            end
-        end,
-        __newindex = function(self, k,v)
-            local has_setter = rawget(self, "set_"..k)
-            if has_setter then
-                self["set_"..k](self, v)
-            else
-                local is_force_forward = force_forward[k]
-                local drawin_value = w[k]
-                if is_force_forward or drawin_value ~= nil then
-                    w[k] = v
-                else
-                    rawset(self, k, v)
-                end
-            end
-        end
-    })
+    setmetatable(ret, wibox_metatable)
 
     -- Set other wibox specific arguments
     if args.bgimage then
