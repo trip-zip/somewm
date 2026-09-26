@@ -830,6 +830,8 @@ All tiled layouts declare native client slots without computed client boxes.
 Floating geometry is a user input, fullscreen grows to OUTPUT at band 40, and
 raise changes declaration order within a band.
 
+Floating a tiled client keeps the box it had in the layout; AwesomeWM restores the geometry the client last had while floating. The client moves only when the user or a rule moves it.
+
 Shadows in 2.1 are one native `SHADOW` custom command per owner. The dump
 prints GROW sizing, `theme` or `user` provenance, `attach PARENT`, authored
 `offset`, nonzero `expand`, and `band`. The renderer paints shared corner and
