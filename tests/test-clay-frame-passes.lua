@@ -94,23 +94,32 @@ local function measure(trigger, before_frames, follows)
         print_realized_diff(before, after)
         assert(i > 1 or mutations > 0, trigger .. ": the follow-up frame mutated no nodes")
     end
-    assert(trigger == "grid-grow" and n <= 4 or n == 1, trigger .. ": passes " .. n)
+    assert(trigger == "grid-grow" and n <= 4 or trigger ~= "grid-grow" and n == (trigger == "carousel-focus" and 2 or 1), trigger .. ": passes " .. n)
     return awesome._clay_tree(s)
 end
 
 local function check_mutations(trigger)
     local before = awesome._clay_tree(s)
+    local root, before_x
+    if trigger == "carousel-focus" then
+        root = awful.layout.suit.carousel._test.get_state(s.selected_tag).publish
+        before_x = awesome._clay_scroll_get(s, root.id)
+    end
     local mutations = awesome._test_redeclare()
+    local after_x
+    if trigger == "carousel-focus" then
+        after_x = awesome._clay_scroll_get(s, root.id)
+    end
     local after = awesome._clay_tree(s)
     io.stderr:write(string.format("[MUTATIONS] %s %d\n", trigger, mutations))
     if trigger == "carousel-focus" then print_scroll("after-second") end
     if mutations ~= 0 then print_realized_diff(before, after) end
     if trigger == "carousel-focus" then
-        io.stderr:write("[KNOWN] carousel-focus: record past the clamp, TASK-44\n")
-    else
-        assert(mutations == 0, trigger .. ": the settled frame mutated " .. mutations
-            .. " nodes")
+        assert(before_x == after_x, "carousel-focus: the record moved from " .. before_x
+            .. " to " .. after_x)
     end
+    assert(mutations == 0, trigger .. ": the settled frame mutated " .. mutations
+        .. " nodes")
     return after
 end
 
