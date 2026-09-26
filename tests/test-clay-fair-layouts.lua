@@ -74,9 +74,8 @@ runner.run_async(function()
                 for _, signal in ipairs {'button::press', 'button::release'} do
                     widget:connect_signal(signal, function(original, x, y, button, mods, area)
                         assert(original == widget and area.widget == widget)
-                        -- Existing titlebar signals are client-relative and
-                        -- include the border origin (objects/button.c).
-                        assert(x == 6 and y == 6 and button == 1 and #mods == 0,
+                        -- Coordinates are relative to the titlebar drawable, which begins inside the border.
+                        assert(x == 6 - c.border_width and y == 6 - c.border_width and button == 1 and #mods == 0,
                             string.format('titlebar local coordinates: %g,%g button %s modifiers %d', x, y, tostring(button), #mods))
                         events[#events + 1] = signal .. i
                     end)

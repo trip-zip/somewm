@@ -93,14 +93,18 @@ luaA_screen_hot_reload(lua_State *L)
 	}
 }
 
-/** Get all screen objects for hot-reload snapshot.
+/** Get all screen objects for a snapshot.
  * \param L Lua state (for accessing registry)
- * \param out_screens Output array (caller-allocated, at least *out_count entries)
+ * \param out_screens Output array, or NULL to query the required entry count
  * \param out_count In: size of out_screens array. Out: actual number of screens.
  */
 void
 luaA_screen_get_all(lua_State *L, screen_t **out_screens, int *out_count)
 {
+    if (!out_screens) {
+        *out_count = screen_count;
+        return;
+    }
 	int max = *out_count;
 	int count = 0;
 	size_t i;
