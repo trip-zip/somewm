@@ -37,6 +37,8 @@ Integration tests run somewm in headless mode and execute test scenarios via IPC
 **Framework**: Custom step-wise runner (`tests/_runner.lua`)
 **Runner**: `tests/run-integration.sh`
 
+The nested runner never loads the installed SomeWM Lua tree, while system Lua modules remain available.
+
 ## Running Tests
 
 ### Run All Tests

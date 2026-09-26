@@ -3304,8 +3304,8 @@ luaA_add_search_paths(const char **paths, int count)
 }
 
 /** Point a Lua state at every directory somewm loads modules from: the
- * development tree, the installed datadir, any -L/--search paths, and the
- * user library directory.
+ * development tree, the installed datadir unless SOMEWM_SKIP_INSTALLED_LUA=1,
+ * any -L/--search paths, and the user library directory.
  *
  * Boot, the post-reload rebuild, and `--check` all call this, so what the
  * checker believes require() can find is what require() can actually find.
@@ -3314,6 +3314,8 @@ static void
 luaA_setup_package_paths(lua_State *L)
 {
 	const char *cur_path;
+	const char *skip_installed = getenv("SOMEWM_SKIP_INSTALLED_LUA");
+	const bool use_installed = !skip_installed || strcmp(skip_installed, "1") != 0;
 
 	/* Add lua/ directory to package.path for require() support */
 	lua_getglobal(L, "package");
@@ -3321,11 +3323,12 @@ luaA_setup_package_paths(lua_State *L)
 	cur_path = lua_tostring(L, -1);
 	lua_pop(L, 1);
 
-	/* Prepend lua paths: development paths first, then system-wide paths */
+	/* Prepend development paths and, when enabled, the installed datadir. */
 	lua_pushfstring(L,
-		"./lua/?.lua;./lua/?/init.lua;./lua/lib/?.lua;./lua/lib/?/init.lua;"
-		DATADIR "/somewm/lua/?.lua;" DATADIR "/somewm/lua/?/init.lua;"
-		DATADIR "/somewm/lua/lib/?.lua;" DATADIR "/somewm/lua/lib/?/init.lua;%s",
+		"./lua/?.lua;./lua/?/init.lua;./lua/lib/?.lua;./lua/lib/?/init.lua;%s%s",
+		use_installed ?
+			DATADIR "/somewm/lua/?.lua;" DATADIR "/somewm/lua/?/init.lua;"
+			DATADIR "/somewm/lua/lib/?.lua;" DATADIR "/somewm/lua/lib/?/init.lua;" : "",
 		cur_path);
 	lua_setfield(L, -2, "path");
 
@@ -3334,10 +3337,11 @@ luaA_setup_package_paths(lua_State *L)
 	cur_path = lua_tostring(L, -1);
 	lua_pop(L, 1);
 
-	/* Prepend C module paths: development paths first, then system-wide paths */
+	/* Keep the existing system C module paths in both modes. */
 	lua_pushfstring(L,
-		"./lua/?.so;./lua/lib/?.so;"
-		DATADIR "/somewm/lua/?.so;" DATADIR "/somewm/lua/lib/?.so;%s",
+		"./lua/?.so;./lua/lib/?.so;%s%s",
+		use_installed ?
+			DATADIR "/somewm/lua/?.so;" DATADIR "/somewm/lua/lib/?.so;" : "",
 		cur_path);
 	lua_setfield(L, -2, "cpath");
 
