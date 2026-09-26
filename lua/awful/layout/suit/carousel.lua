@@ -271,10 +271,12 @@ end
 
 function carousel._native.pan(s, root, delta)
     if not root.id then return end
-    local x, y = awesome._clay_scroll_get(s, root.id)
+    local x, y, cw, ch, vw, vh = awesome._clay_scroll_get(s, root.id)
     if x == nil then return end
     local nx, ny = x, y
     if root.vertical then ny = y - delta else nx = x - delta end
+    nx = math.min(math.max(nx, -math.max(cw - vw, 0)), 0)
+    ny = math.min(math.max(ny, -math.max(ch - vh, 0)), 0)
     if nx ~= x or ny ~= y then
         awesome._clay_scroll_set(s, root.id, nx, ny)
     end
