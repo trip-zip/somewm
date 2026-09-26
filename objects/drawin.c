@@ -481,11 +481,16 @@ luaA_drawin_set_attachment(lua_State *L, drawin_t *d)
         ATTACH_NUMBER(parent, 0, 8); ATTACH_NUMBER(own, 0, 8);
         ATTACH_NUMBER(x, -INT_MAX, INT_MAX); ATTACH_NUMBER(y, -INT_MAX, INT_MAX);
         ATTACH_NUMBER(width, 0, UINT16_MAX);
+        ATTACH_NUMBER(height, 0, UINT16_MAX);
+        ATTACH_NUMBER(width_override, 0, UINT16_MAX);
         ATTACH_NUMBER(gap, 0, UINT16_MAX);
         ATTACH_NUMBER(position, 0, 8);
 #undef ATTACH_NUMBER
-        lua_getfield(L, -1, "lua_width");
-        next.lua_width = lua_toboolean(L, -1); lua_pop(L, 1);
+        lua_getfield(L, -1, "width_override");
+        if (lua_isnil(L, -1)) next.width_override = -1;
+        lua_pop(L, 1);
+        lua_getfield(L, -1, "bounded");
+        next.bounded = lua_toboolean(L, -1); lua_pop(L, 1);
         lua_getfield(L, -1, "passthrough");
         next.passthrough = lua_toboolean(L, -1); lua_pop(L, 1);
         lua_getfield(L, -1, "hover");
@@ -510,7 +515,11 @@ luaA_drawin_get_attachment(lua_State *L, drawin_t *d)
     ATTACH_NUMBER(host);
     ATTACH_NUMBER(own); ATTACH_NUMBER(x); ATTACH_NUMBER(y); ATTACH_NUMBER(width);
     ATTACH_NUMBER(gap); ATTACH_NUMBER(position);
-    lua_pushboolean(L, d->attachment.lua_width); lua_setfield(L, -2, "lua_width");
+    if (d->attachment.bounded) {
+        ATTACH_NUMBER(height);
+        lua_pushboolean(L, true); lua_setfield(L, -2, "bounded");
+    }
+    if (d->attachment.width_override >= 0) { ATTACH_NUMBER(width_override); }
 #undef ATTACH_NUMBER
     lua_pushboolean(L, d->attachment.passthrough); lua_setfield(L, -2, "passthrough");
     lua_pushboolean(L, d->attachment.hover); lua_setfield(L, -2, "hover");

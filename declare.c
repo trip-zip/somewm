@@ -1274,6 +1274,26 @@ slot_number(lua_State *L, int index, const char *key)
     return value;
 }
 
+static Clay_Padding
+slot_padding(lua_State *L, int index)
+{
+    lua_getfield(L, index, "padding");
+    Clay_Padding padding;
+    if (lua_istable(L, -1)) {
+        padding = (Clay_Padding) {
+            .left = slot_number(L, -1, "left"),
+            .right = slot_number(L, -1, "right"),
+            .top = slot_number(L, -1, "top"),
+            .bottom = slot_number(L, -1, "bottom"),
+        };
+    } else {
+        int pad = lua_tonumber(L, -1);
+        padding = (Clay_Padding) { pad, pad, pad, pad };
+    }
+    lua_pop(L, 1);
+    return padding;
+}
+
 /* Absence means GROW; numbers are percentages, including authored zero.
  * FIT and fixed extents let slot trees describe overflowing native strips. */
 static Clay_SizingAxis
@@ -1365,9 +1385,9 @@ layout_client_declaration(Client *c, Monitor *m, Clay_ElementDeclaration *e)
     luaA_object_push(L, c);
     lua_rawget(L, -2);
     if (!lua_istable(L, -1)) goto done;
-    int pad = slot_number(L, -1, "padding");
     *e = (Clay_ElementDeclaration) {
         .layout.sizing = { slot_sizing(L, -1, "w"), slot_sizing(L, -1, "h") },
+        .layout.padding = slot_padding(L, -1),
         .floating = {
             .attachTo = CLAY_ATTACH_TO_ELEMENT_WITH_ID,
             .parentId = workarea_id(m).id,
@@ -1375,7 +1395,6 @@ layout_client_declaration(Client *c, Monitor *m, Clay_ElementDeclaration *e)
             .pointerCaptureMode = CLAY_POINTER_CAPTURE_MODE_PASSTHROUGH,
         },
     };
-    e->layout.padding = (Clay_Padding) { pad, pad, pad, pad };
     lua_getfield(L, -1, "attach_to");
     if (lua_isstring(L, -1) && !strcmp(lua_tostring(L, -1), "output"))
         e->floating.parentId = screen_root_id(m).id;
@@ -1416,9 +1435,8 @@ declare_tile_slot(Monitor *m, int index, unsigned ordinal, bool root)
     lua_pop(L, 1);
     slot_transition(L, index, &e);
     int gap = slot_number(L, index, "gap");
-    int pad = slot_number(L, index, "padding");
     e.layout.childGap = gap;
-    e.layout.padding = (Clay_Padding) { pad, pad, pad, pad };
+    e.layout.padding = slot_padding(L, index);
     lua_getfield(L, index, "direction");
     const char *direction = lua_tostring(L, -1);
     e.layout.layoutDirection = direction && !strcmp(direction, "column")
@@ -1440,14 +1458,13 @@ declare_tile_slot(Monitor *m, int index, unsigned ordinal, bool root)
     if (e.clip.horizontal || e.clip.vertical)
         e.clip.childOffset = clay_scroll_offset(id);
     native_configure(&e);
-    bool authored = gap || pad || e.clip.horizontal || e.clip.vertical
+    bool authored = gap || e.layout.padding.left || e.layout.padding.right
+        || e.layout.padding.top || e.layout.padding.bottom
+        || e.clip.horizontal || e.clip.vertical
         || e.layout.sizing.width.type == CLAY__SIZING_TYPE_FIXED
         || e.layout.sizing.height.type == CLAY__SIZING_TYPE_FIXED;
-    lua_getfield(L, index, "derived");
-    bool derived = lua_toboolean(L, -1);
-    lua_pop(L, 1);
-    record_open(role, 0, id, &e, derived ? DECLARE_SRC_DERIVED
-        : authored ? DECLARE_SRC_THEME : DECLARE_SRC_NONE, NULL);
+    record_open(role, 0, id, &e,
+        authored ? DECLARE_SRC_THEME : DECLARE_SRC_NONE, NULL);
     lua_getfield(L, index, "children");
     for (unsigned i = 1; i <= lua_objlen(L, -1); i++) {
         lua_rawgeti(L, -1, i);
@@ -2024,7 +2041,7 @@ declare_widget_subtree(const struct widget_host *host, size_t i, Clay_ElementId 
 		record_open(host->in_parent ? "widgets" : "drawin",
 			userdata ? declare_userdata_handle(userdata) : 0, id, &e,
 			!fixed ? DECLARE_SRC_NONE : host->in_parent
-				? DECLARE_SRC_THEME : DECLARE_SRC_DERIVED, host);
+				? DECLARE_SRC_THEME : DECLARE_SRC_USER, host);
 	}
 	if (!n->track) {
 		scroll_id = (Clay_ElementId) {0};
@@ -2677,8 +2694,9 @@ static bool
 declare_attachment(drawin_t *d, Monitor *m)
 {
     if (d->attachment.kind == 2 && !d->attachment.target) return false;
-    uint32_t target = d->attachment.target
-        ? attachment_target(d) : screen_root_id(m).id;
+    bool bounded = d->attachment.kind == 3 && d->attachment.bounded;
+    uint32_t target = bounded ? workarea_id(m).id
+        : d->attachment.target ? attachment_target(d) : screen_root_id(m).id;
     if (!target || bars_len == LENGTH(bars)) return false;
     if (d->attachment.hover && !Clay_PointerOver((Clay_ElementId){.id=target})) return false;
     uint64_t handle = declare_handle_for(d, DECLARE_KIND_DRAWIN);
@@ -2702,10 +2720,14 @@ declare_attachment(drawin_t *d, Monitor *m)
         },
     };
     if (d->attachment.kind == 3) {
-        slot.layout.sizing.width = CLAY_SIZING_FIXED(d->attachment.width);
         slot.layout.layoutDirection = CLAY_TOP_TO_BOTTOM;
         slot.floating.zIndex = Z_NOTIFICATION;
         a->host.fit[0] = false;
+        if (bounded) {
+            a->host.fit[1] = false;
+            slot.floating.attachPoints.parent = CLAY_ATTACH_POINT_CENTER_CENTER;
+            slot.floating.attachPoints.element = CLAY_ATTACH_POINT_CENTER_CENTER;
+        }
     }
     Clay_Dimensions decoration = attachment_decoration(d, &slot);
     slot.layout.padding = (Clay_Padding){decoration.width, decoration.width,
@@ -2713,15 +2735,20 @@ declare_attachment(drawin_t *d, Monitor *m)
     /* Attach the content's own point; decoration extends around it. */
     slot.floating.offset.x += ((int)d->attachment.own / 3 - 1) * decoration.width;
     slot.floating.offset.y += ((int)d->attachment.own % 3 - 1) * decoration.height;
-    if (d->attachment.kind == 3)
-        slot.layout.sizing.width = CLAY_SIZING_FIXED(d->attachment.width + 2*decoration.width);
+    if (d->attachment.kind == 3) {
+        slot.layout.sizing.width = d->attachment.width_override >= 0
+            ? CLAY_SIZING_FIXED(d->attachment.width_override + 2*decoration.width)
+            : bounded ? CLAY_SIZING_GROW(0, d->attachment.width + 2*decoration.width)
+            : CLAY_SIZING_FIXED(d->attachment.width + 2*decoration.width);
+        if (bounded)
+            slot.layout.sizing.height = CLAY_SIZING_GROW(0, d->attachment.height + 2*decoration.height);
+    }
     Clay_ElementId id = Clay__HashStringWithOffset(CLAY_STRING("ATTACHMENT"),
         (uint32_t)handle, 0);
     const char *role = d->attachment.kind == 3 ? "LAUNCHER"
         : d->attachment.kind == 2 ? "TOOLTIP" : "POPUP";
     enum declare_src src = d->attachment.kind == 3 || decoration.width || decoration.height
-        ? DECLARE_SRC_THEME : DECLARE_SRC_NONE;
-    if (d->attachment.lua_width) src = DECLARE_SRC_DERIVED;
+        ? DECLARE_SRC_THEME : n->sizing[0] == WIDGET_SIZING_FIXED || n->sizing[1] == WIDGET_SIZING_FIXED ? DECLARE_SRC_USER : DECLARE_SRC_NONE;
     declare_widget_frame(d, &a->host, id, &slot, role, src);
     return true;
 }

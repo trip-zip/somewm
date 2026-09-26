@@ -53,6 +53,7 @@ runner.run_async(function()
         assert(not id or id == next_id, 'decoration changed original occurrence ID')
         id = next_id
         local head = assert(dump:match('POPUP [^\n]+'))
+        assert(head:find(bw > 0 and ' theme ' or ' user ', 1, true), head)
         if head:find(' image ', 1, true) then structural[#structural + 1] = name end
     end
     for _, width in ipairs {80, 160, 40} do

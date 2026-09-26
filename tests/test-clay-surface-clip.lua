@@ -35,7 +35,7 @@ end
 runner.run_async(function()
     local report = os.tmpname()
     local events = {}
-    local inputs = {columns = {}, viewport_extent = 1200, gap = 8,
+    local inputs = {columns = {}, gap = 8,
         trail = 600, vertical = false}
     local inset = 40
     local tree
@@ -53,7 +53,7 @@ runner.run_async(function()
         local dump = awesome._clay_tree(s)
         example.save(name, dump)
         assert(tonumber(dump:match('\n  roots flow %d+ floating %d+ derived (%d+)\n'))
-            == #boxes(dump, 'CAROUSEL_COLUMN'), dump)
+            == 0, dump)
         assert(not dump:find('[tree!=scene]', 1, true), dump)
         return dump
     end
@@ -120,7 +120,7 @@ runner.run_async(function()
         end
         error('unexpected phase A surface box\n' .. table.concat(lines, '\n'))
     end
-    expect(a, 'CAROUSEL_STRIP', {{-560,40,1800,640}})
+    expect(a, 'CAROUSEL_MARGIN', {{640,40,600,640}})
     expect(a, 'CAROUSEL_COLUMN', {{-560,40,1200,640}})
     expect(a, 'CLIENT', {{-552,48,1184,624}})
     expect(a, 'SURFACE', {{-551,49,1182,622}})
@@ -134,11 +134,11 @@ runner.run_async(function()
 
     s.scale = 1.25
     async.sleep(.3)
-    inputs.viewport_extent, inputs.trail = 944, 472
+    inputs.trail = 472
     solve('surface-clip-scale125-before-scroll')
     awesome._clay_scroll_set(s, tree.id, -472, 0)
     local b = solve('surface-clip-scale125')
-    expect(b, 'CAROUSEL_STRIP', {{-432,40,1416,496}})
+    expect(b, 'CAROUSEL_COLUMN', {{-432,40,944,496}})
     expect(b, 'SURFACE', {{-423,49,926,478}})
     configure(926, 478)
     pixels()
@@ -148,7 +148,7 @@ runner.run_async(function()
 
     c:kill()
     assert(async.wait_for_condition(function() return not c.valid end, 2, .02))
-    inputs.viewport_extent, inputs.trail = 1200, 600
+    inputs.trail = 600
     local pid = awful.spawn {'./build-test/test-popup-client'}
     local parent = attach('popup_test')
     solve('surface-clip-popup-before-scroll')

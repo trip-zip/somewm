@@ -398,7 +398,6 @@ local function create_popup(_, args)
 
     rawset(w, "_private", {
         container            = ii,
-        size_source          = args._size_source,
         preferred_directions = { "right", "left", "top", "bottom" },
         preferred_anchors    = { "back", "front", "middle" },
         widget = child_widget

@@ -1,4 +1,4 @@
--- Hotkeys help uses the same OUTPUT attachment as popup centering.
+-- Hotkeys help is a floating element of the workarea, centered in it.
 local runner = require('_runner')
 local async = require('_async')
 local awful = require('awful')
@@ -22,8 +22,9 @@ runner.run_async(function()
         local a = popup.drawin.attachment
         assert(a.kind==3 and a.parent==4 and a.own==4)
         assert(popup.width==400 and popup.height==240)
-        assert(popup.x==output.x+math.floor((output.width-popup.width)/2+0.5))
-        assert(popup.y==output.y+math.floor((output.height-popup.height)/2+0.5))
+        local wa = s.workarea
+        assert(popup.x==wa.x+math.floor((wa.width-popup.width)/2+0.5))
+        assert(popup.y==wa.y+math.floor((wa.height-popup.height)/2+0.5))
         example.pixel(popup.x+popup.width-2, popup.y+popup.height-2, '#204080')
         assert(#popup:find_widgets(10,10)>0)
     end
@@ -31,7 +32,7 @@ runner.run_async(function()
     bar.height=100
     async.sleep(0.3)
     check()
-    example.save('hotkeys-output-attachment', awesome._clay_tree(s))
+    example.save('hotkeys-workarea-attachment', awesome._clay_tree(s))
     box:hide()
     bar:remove()
     async.sleep(.1)
