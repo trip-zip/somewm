@@ -620,7 +620,7 @@ crules._execute = function(_, c, props, callbacks)
 
     -- Apply the remaining properties (after known race conditions are handled).
     for property, value in pairs(props) do
-        if property ~= "focus" and property ~= "shape" and type(value) == "function" then
+        if property ~= "focus" and property ~= "shape" and not force_ignore[property] and type(value) == "function" then
             value = value(c, props)
         end
 
