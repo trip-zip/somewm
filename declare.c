@@ -90,6 +90,7 @@ struct declare_band {
 	void *arena;
 	struct wlr_scene_tree *tree;
 	struct render_state *render;
+	float scale;
 	/* The last frame's readback for the tree dump: what the solve
 	 * produced, what the reconcile changed, and how long each step took.
 	 * Written by declare_output_frame only, so a band that has not drawn
@@ -3796,6 +3797,12 @@ declare_band_update(struct declare_band *band, struct wlr_output *wlr_output,
 		(Clay_Dimensions) { .width = width, .height = height });
 	render_set_position(band->render, lx, ly);
 	render_set_scale(band->render, wlr_output->scale);
+	if (band->scale != wlr_output->scale) {
+		/* Clay keys cached text widths on content and text config, while
+		 * render_measure_text also depends on the output's scale. */
+		Clay_ResetMeasureTextCache();
+		band->scale = wlr_output->scale;
+	}
 }
 
 struct declare_output *

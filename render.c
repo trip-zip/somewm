@@ -207,6 +207,10 @@ struct rnode {
 	/* IMAGE: the decode generation last rasterized, so a reload re-rasters. */
 	uint64_t img_gen;
 	int img_src_x, img_src_y;
+	cairo_surface_t *img_native;
+	int img_width, img_height;
+	uint8_t img_filter;
+	bool img_stretch, img_natural;
 	struct render_shape shape;
 	struct shadow_cache *shadow;
 	struct wlr_scene_buffer *shadow_tiles[SHADOW_SLICE_COUNT];
@@ -478,6 +482,8 @@ static void rnode_remove(struct render_state *rs, struct rnode *n,
 		const struct render_client_hooks *hooks) {
 	free(n->text);
 	free(n->shape_ops);
+	if (n->img_native)
+		cairo_surface_destroy(n->img_native);
 	if (n->shadow)
 		shadow_cache_release(rs, n->shadow);
 	else
@@ -1466,8 +1472,7 @@ static bool rnode_point_in_arcs(struct rnode *n, double sx, double sy) {
 }
 
 static bool image_data_equal(Clay_ImageRenderData *a, Clay_ImageRenderData *b) {
-	return a->imageData == b->imageData &&
-		memcmp(&a->backgroundColor, &b->backgroundColor,
+	return memcmp(&a->backgroundColor, &b->backgroundColor,
 			sizeof(a->backgroundColor)) == 0 &&
 		memcmp(&a->cornerRadius, &b->cornerRadius,
 			sizeof(a->cornerRadius)) == 0;
@@ -1494,16 +1499,31 @@ static int reconcile_image(struct render_state *rs, struct rnode *n,
 			&& !raster_size_equal(n->box, cmd->boundingBox, rs->scale)) ||
 		n->raster_scale != rs->scale ||
 		!image_data_equal(&n->data.image, &cmd->renderData.image) ||
+		(usable ? entry->native : NULL) != n->img_native ||
 		(usable && (entry->gen != n->img_gen
-			|| entry->src_x != n->img_src_x || entry->src_y != n->img_src_y)) ||
+			|| entry->src_x != n->img_src_x || entry->src_y != n->img_src_y
+			|| entry->width != n->img_width || entry->height != n->img_height
+			|| entry->filter != n->img_filter || entry->stretch != n->img_stretch
+			|| entry->natural != n->img_natural)) ||
 		clip_round_changed(&n->mask, mask);
 
 	if (raster_changed) {
 		rnode_set_raster(rs, n, sb,
 			usable ? rasterize_image(cmd, entry, rs->scale, mask) : NULL);
+		/* Hold the surface so its address cannot be reused while cached.
+		 * This makes pointer identity lifetime-safe without an ID counter. */
+		cairo_surface_t *native = usable ? cairo_surface_reference(entry->native) : NULL;
+		if (n->img_native)
+			cairo_surface_destroy(n->img_native);
+		n->img_native = native;
 		n->img_gen = usable ? entry->gen : 0;
 		n->img_src_x = usable ? entry->src_x : 0;
 		n->img_src_y = usable ? entry->src_y : 0;
+		n->img_width = usable ? entry->width : 0;
+		n->img_height = usable ? entry->height : 0;
+		n->img_filter = usable ? entry->filter : 0;
+		n->img_stretch = usable && entry->stretch;
+		n->img_natural = usable && entry->natural;
 		n->raster_scale = rs->scale;
 		clip_round_keep(&n->mask, mask);
 		muts++;
@@ -2630,6 +2650,8 @@ void render_destroy(struct render_state *rs,
 		}
 		free(rs->nodes[i].text);
 		free(rs->nodes[i].shape_ops);
+		if (rs->nodes[i].img_native)
+			cairo_surface_destroy(rs->nodes[i].img_native);
 		shadow_cache_release(rs, rs->nodes[i].shadow);
 	}
 	wlr_scene_node_destroy(&rs->tree->node);
