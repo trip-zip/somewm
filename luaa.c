@@ -1745,7 +1745,7 @@ luaA_awesome_clay_scroll_set(lua_State *L)
         Clay_SetCurrentContext(context);
         clay_scroll_set(id, x, y);
         Clay_SetCurrentContext(previous);
-        declare_output_mark_dirty(s->monitor->declare);
+        declare_output_scroll_written(s->monitor->declare);
     }
     return 0;
 }

@@ -38,6 +38,7 @@ void declare_output_mark_dirty(struct declare_output *dout);
 /* Private grid readback changed declarations; finish its dependency stages
  * within the frame transaction before pixels and native input become visible. */
 void declare_output_grid_pending(struct declare_output *dout);
+void declare_output_scroll_written(struct declare_output *dout);
 
 /* Mark every output dirty: for facts without one owning output (stacking
  * order, banning, a drawin whose screen assignment may be stale). */

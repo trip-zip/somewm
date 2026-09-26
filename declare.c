@@ -187,6 +187,7 @@ struct declare_output {
 static struct render_client_hooks client_hooks;
 
 static bool in_frame;
+static bool in_tile_solved;
 
 /* The seat mirror (declare.h): the left button's state, where the cursor
  * was last mirrored, the output it was over, and how many outputs show the
@@ -1550,7 +1551,9 @@ tile_publish(Monitor *m)
     if (lua_isfunction(L, -1)) {
         lua_pushvalue(L, -2);
         lua_insert(L, -2);
+        in_tile_solved = true;
         luaA_dofunction(L, 1, 0);
+        in_tile_solved = false;
     }
     lua_settop(L, top);
 }
@@ -3904,6 +3907,15 @@ declare_output_grid_pending(struct declare_output *dout)
 	dout->grid_pending = true;
 }
 
+void
+declare_output_scroll_written(struct declare_output *dout)
+{
+	if (in_tile_solved)
+		dout->grid_pending = true;
+	else
+		declare_output_mark_dirty(dout);
+}
+
 /* The deadline fired: the frame ran and cleared the mark, or the backend
  * sent no frame event and this is where the output declares. */
 static int
@@ -4035,10 +4047,10 @@ declare_output_frame(struct declare_output *dout, Monitor *m)
 	band->passes = 0;
 	inspecting = inspector_declares(dout);
 
-	/* Compile pending inputs and privately settle dependencies before publishing
-     * geometry and reconciling once. A mark made anywhere in the frame is for the
-	 * next frame. Only the grid helper's pending dependency stages repeat;
-	 * pointer state, scroll input and transition time advance once. */
+	/* Compile pending inputs and settle dependencies before reconciling once.
+	 * Grid dependencies and scroll writes from the layout's solved callback
+	 * repeat the pass. Ordinary dirty marks schedule the next frame; pointer
+	 * state, scroll input and transition time advance once. */
 	dout->dirty = false;
 	do {
 		band->passes++;
@@ -4123,6 +4135,11 @@ declare_output_frame(struct declare_output *dout, Monitor *m)
 		band->declare_us += declared - start;
 		band->solve_us += solved - declared;
         solved_emit(false);
+        for (size_t i = 0; i < screen_declarations_len; i++) {
+            screen_activate(&screen_declarations[i]);
+            if (active_screen->screen->valid) tile_publish(m);
+        }
+        screen_activate(NULL);
 	} while (dout->grid_pending);
 
     next_handles = malloc((size_t)(commands.length + 1) * sizeof(*next_handles));
@@ -4196,11 +4213,6 @@ declare_output_frame(struct declare_output *dout, Monitor *m)
     }
     screen_activate(NULL);
     clients_settle(m);
-    for (size_t i = 0; i < screen_declarations_len; i++) {
-        screen_activate(&screen_declarations[i]);
-        if (active_screen->screen->valid) tile_publish(m);
-    }
-    screen_activate(NULL);
     solved_emit(true);
     for (size_t i = 0; i < screen_declarations_len; i++) {
         screen_t *screen = screen_declarations[i].screen;
