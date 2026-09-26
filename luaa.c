@@ -5374,6 +5374,7 @@ clients_detach(client_snapshot_t **out, int *out_count)
 		c->alt_icon_name = NULL;
 		c->machine = NULL;
 		c->startup_id = NULL;
+		c->xproperties = NULL;
 		c->role = NULL;
 		c->keys.tab = NULL; c->keys.len = c->keys.size = 0;
 		c->icons.tab = NULL; c->icons.len = c->icons.size = 0;

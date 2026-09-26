@@ -107,7 +107,7 @@ cleanup() {
     fi
 
     # Clean up socket in visual mode (it's in real XDG_RUNTIME_DIR)
-    [ "$HEADLESS" != 1 ] && rm -f "$SOCKET" 2>/dev/null || true
+    [ "$HEADLESS" != 1 ] && [ -n "$SOMEWM_PID" ] && rm -f "$SOCKET" 2>/dev/null || true
 
     rm -rf "$TMP_DIR" || true
 
