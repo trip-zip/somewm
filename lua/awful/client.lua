@@ -694,11 +694,6 @@ function client.object.set_floating(c, s)
     c = c or capi.client.focus
     if c and client.property.get(c, "floating") ~= s then
         client.property.set(c, "floating", s)
-        local scr = c.screen
-        if s == true then
-            c:geometry(client.property.get(c, "floating_geometry"))
-        end
-        c.screen = scr
 
         if s then
             c:emit_signal("request::border", "floating", {})

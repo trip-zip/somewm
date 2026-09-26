@@ -2409,7 +2409,7 @@ client_resize_do(client_t *c, area_t geometry, bool silent, bool solved)
     area_t old_geometry;
     screen_t *new_screen = c->screen;
 
-    if(!silent && (!new_screen || !screen_area_in_screen(new_screen, geometry)))
+    if(!silent && !solved && (!new_screen || !screen_area_in_screen(new_screen, geometry)))
         new_screen = screen_getbycoord(geometry.x, geometry.y);
 
     /* Also store geometry including border */
