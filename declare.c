@@ -1474,7 +1474,7 @@ declare_tile_slot(Monitor *m, int index, unsigned ordinal, bool root)
     record_open(role, 0, id, &e,
         authored ? DECLARE_SRC_THEME : DECLARE_SRC_NONE, NULL);
     lua_getfield(L, index, "children");
-    for (unsigned i = 1; i <= lua_objlen(L, -1); i++) {
+    for (unsigned i = 1; i <= luaA_rawlen(L, -1); i++) {
         lua_rawgeti(L, -1, i);
         declare_tile_slot(m, -1, ordinal * 31 + i, false);
         lua_pop(L, 1);
@@ -1538,7 +1538,7 @@ tile_publish_slot(Monitor *m, int index, unsigned ordinal, bool root)
     }
     lua_setfield(L, index, "scroll");
     lua_getfield(L, index, "children");
-    for (unsigned i = 1; i <= lua_objlen(L, -1); i++) {
+    for (unsigned i = 1; i <= luaA_rawlen(L, -1); i++) {
         lua_rawgeti(L, -1, i);
         tile_publish_slot(m, -1, ordinal * 31 + i, false);
         lua_pop(L, 1);
@@ -3313,7 +3313,7 @@ static size_t slot_scroll_count(lua_State *L, int index)
     index = luaA_absindex(L, index);
     size_t count = slot_word(L, index, "clip", "x") || slot_word(L, index, "clip", "y");
     lua_getfield(L, index, "children");
-    for (size_t i = 1; i <= lua_objlen(L, -1); i++) {
+    for (size_t i = 1; i <= luaA_rawlen(L, -1); i++) {
         lua_rawgeti(L, -1, i);
         count += slot_scroll_count(L, -1);
         lua_pop(L, 1);
