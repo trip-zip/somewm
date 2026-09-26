@@ -173,6 +173,8 @@ start_somewm() {
 # Sets: TEST_DURATION (seconds with decimals)
 run_test() {
     local test_file="$1"
+    local timeout=$(sed -n '/^-- timeout: [0-9][0-9]*$/{s/^-- timeout: //;p;q;}' "$test_file")
+    local TEST_TIMEOUT="${timeout:-$TEST_TIMEOUT}"
     local test_name=$(basename "$test_file")
     local start_time end_time
 
@@ -254,6 +256,8 @@ run_test() {
 # Sets: TEST_DURATION (seconds with decimals)
 run_test_persistent() {
     local test_file="$1"
+    local timeout=$(sed -n '/^-- timeout: [0-9][0-9]*$/{s/^-- timeout: //;p;q;}' "$test_file")
+    local TEST_TIMEOUT="${timeout:-$TEST_TIMEOUT}"
     local test_name=$(basename "$test_file")
     local start_time end_time
 
