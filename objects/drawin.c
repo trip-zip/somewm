@@ -116,6 +116,7 @@ drawin_widget_host(drawin_t *d, struct widget_host *out)
 		.x = d->x - m->m.x, .y = d->y - m->m.y,
 		.w = d->width, .h = d->height,
 		.radius = d->shape_radius,
+		.visible = d->visible,
 	};
 	return true;
 }

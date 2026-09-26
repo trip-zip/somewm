@@ -57,6 +57,7 @@ struct widget_host {
 	uint32_t id;          /* The owner's declare handle id. */
 	int x, y, w, h;       /* Output-local box. */
 	float radius;        /* Shaped drawin corners, 0 for titlebars. */
+	bool visible;
 	bool in_parent;
 	/* The root fills the element it is declared in, a slot the frame
 	 * sized, instead of being told the host box and floating at it. An
