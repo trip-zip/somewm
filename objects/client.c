@@ -3620,6 +3620,7 @@ client_titlebar_host(client_t *c, drawable_t *d, struct widget_host *out)
             .y = area.y + c->geometry.y - c->mon->m.y,
             .w = area.width, .h = area.height,
             .radius = 0,
+            .visible = client_isvisible(c),
             .in_parent = true,
         };
         return true;

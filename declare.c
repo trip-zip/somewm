@@ -601,6 +601,12 @@ hit_accept(void *user, const struct render_node_view *v, double sx, double sy)
 	case DECLARE_KIND_DRAWIN: {
 		drawin_t *d = obj;
 
+		/* A retained node outlives a hidden drawin by one frame: the
+		 * drawin is unregistered at once and stays in the order until
+		 * the next solve. Only what the next frame would declare takes
+		 * the point. */
+		if (!d->visible)
+			return false;
 		if (!drawin_accepts_input_at(d, w->lx - d->x, w->ly - d->y))
 			return false;
 		*out = (struct declare_hit) { kind, d, NULL, 0, 0 };
@@ -3472,6 +3478,9 @@ static const struct widget_tree *published_tree(const struct widget_host *host)
 int
 declare_widget_hits(const struct widget_host *host, double x, double y, int *out, int cap)
 {
+	if (!host->visible || x < 0 || y < 0 || x >= host->w || y >= host->h)
+		return 0;
+
 	struct widget_tree *d = (struct widget_tree *)published_tree(host);
 	Monitor *m = host->m;
 	struct declare_output *dout = m ? m->declare : NULL;
@@ -3484,9 +3493,10 @@ declare_widget_hits(const struct widget_host *host, double x, double y, int *out
 	if (!dout || !d || !d->declared || !(band = dout->band.clay ? &dout->band : NULL)
 			|| !band->context_valid)
 		return 0;
-	/* The query runs against the boxes of the output's last solve, in
-	 * output coordinates, and answers every element under the point
-	 * across the whole context: this tree's nodes are picked out of it. */
+	/* The query answers only a visible host inside its box. It runs against
+	 * the boxes of the output's last solve, in output coordinates, and
+	 * answers every element under the point across the whole context:
+	 * this tree's nodes are picked out of it. */
 	previous = Clay_GetCurrentContext();
 	Clay_SetCurrentContext(band->clay);
 	Clay_SetPointerState((Clay_Vector2) {
