@@ -41,12 +41,12 @@ local function nodes(d)
 
     for line in awesome._clay_tree(s):gmatch("[^\n]+") do
         if head then
-            local indent, class = line:match("^    %x+ ( *)([%w_.-]+)")
+            local indent, name = line:match("^    %x+ ( *)([%w_.-]+)")
             if not indent then
                 break
             end
             local x, y, w, h = line:match("box (%d+),(%d+) (%d+)x(%d+)")
-            out[#out + 1] = { depth = #indent / 2, class = class, line = line,
+            out[#out + 1] = { depth = #indent / 2, name = name, line = line,
                 image = line:find(" image ", 1, true) ~= nil,
                 box = x and { x = tonumber(x), y = tonumber(y),
                     width = tonumber(w), height = tonumber(h) } }
@@ -57,9 +57,9 @@ local function nodes(d)
     return head, out
 end
 
-local function first(list, class)
+local function first(list, name)
     for _, node in ipairs(list) do
-        if node.class == class then
+        if node.name == name then
             return node
         end
     end
@@ -97,7 +97,7 @@ local steps = {
         local images = {}
         for _, node in ipairs(list) do
             if node.image then
-                images[#images + 1] = node.class
+                images[#images + 1] = node.name
             end
         end
         assert(#images == 1, "expected one notification icon image: " .. table.concat(images, ", "))
@@ -109,7 +109,7 @@ local steps = {
 
         local texts = {}
         for _, node in ipairs(list) do
-            if node.class == "text" then
+            if node.name == "text" then
                 texts[#texts + 1] = node
             end
         end

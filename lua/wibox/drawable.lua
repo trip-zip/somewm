@@ -397,7 +397,8 @@ function drawable.new(d, widget_context_skeleton, drawable_name)
         local stored = ret._clay_stored
         if stored and stored.tree then
             wclay._settle(stored.tree, boxes)
-            if offer.width ~= stored.width or offer.height ~= stored.height then
+            if stored.tree.offer_dependent
+                    and (offer.width ~= stored.width or offer.height ~= stored.height) then
                 ret._clay_offer = offer
                 ret._clay_compile()
                 d:_clay_grid_pending()

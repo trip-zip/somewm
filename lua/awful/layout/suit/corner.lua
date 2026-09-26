@@ -47,18 +47,24 @@ local function describe(s, orientation)
   local gap = (t.gap_single_client ~= false
       or not (n == 1 and t.master_fill_policy == "expand")) and t.gap or 0
   local function leaf(c)
-    local item = {client = c, contain_size = true}
+    local item = {client = c, w = 1, h = 1}
     if gap > 0 then
-      item = {role = "CELL", direction = "row", padding = gap, children = {item}}
+      item = {role = "CELL", direction = "row", w = 1, h = 1,
+        padding = gap, children = {item}}
     end
     return item
   end
   local function group(direction, items)
     if #items == 1 then return items[1] end
-    return {role = "STACK", direction = direction, children = items}
+    local axis = direction == "row" and "w" or "h"
+    for _, item in ipairs(items) do item[axis] = 1 / #items end
+    return {role = "STACK", direction = direction, w = 1, h = 1, children = items}
   end
-  local function order(first, second, forward)
-    return forward and {first, second} or {second, first}
+  local function split(direction, first, second, forward)
+    local axis = direction == "row" and "w" or "h"
+    first[axis], second[axis] = factor, 1 - factor
+    return {role = "STACK", direction = direction, w = 1, h = 1,
+      children = forward and {first, second} or {second, first}}
   end
   local root = {role = "WORKAREA", direction = row_privileged and "column" or "row", children = {}}
   if n == 0 then return root end
@@ -71,8 +77,8 @@ local function describe(s, orientation)
   elseif n == 2 then
     -- With only a slave, split along the privileged axis; there is no
     -- opposite group whose nonexistent count could divide a rectangle.
-    master[axis] = factor
-    root.children = order(master, leaf(clients[2]), row_privileged and north or not row_privileged and west)
+    root.children = split(root.direction, master, leaf(clients[2]),
+      row_privileged and north or not row_privileged and west).children
   else
     local column, row = {}, {}
     for i = 2, n do
@@ -80,15 +86,11 @@ local function describe(s, orientation)
       items[#items + 1] = leaf(clients[i])
     end
     if row_privileged then
-      master.w = factor
-      local band = group("row", order(master, group("column", column), west))
-      band.h = factor
-      root.children = order(band, group("row", row), north)
+      local band = split("row", master, group("column", column), west)
+      root.children = split("column", band, group("row", row), north).children
     else
-      master.h = factor
-      local band = group("column", order(master, group("row", row), north))
-      band.w = factor
-      root.children = order(band, group("column", column), west)
+      local band = split("column", master, group("row", row), north)
+      root.children = split("row", band, group("column", column), west).children
     end
   end
   return root

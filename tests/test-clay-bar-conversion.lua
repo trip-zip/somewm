@@ -43,12 +43,12 @@ local function block(bar)
 
     for _, line in ipairs(lines()) do
         if head then
-            local id, indent, class = line:match("^    (%x+) ( *)([%w_.-]+)")
+            local id, indent, name = line:match("^    (%x+) ( *)([%w_.-]+)")
             if not id then
                 break
             end
             nodes[#nodes + 1] = {
-                id = id, depth = #indent / 2, class = class, line = line,
+                id = id, depth = #indent / 2, name = name, line = line,
             }
         elseif line:sub(1, #want) == want then
             head = line
@@ -57,9 +57,9 @@ local function block(bar)
     return head, nodes
 end
 
-local function node_named(nodes, class)
+local function node_named(nodes, name)
     for _, node in ipairs(nodes) do
-        if node.class == class then
+        if node.name == name then
             return node
         end
     end
@@ -149,12 +149,12 @@ local steps = {
                 "the bar did not convert: " .. head)
             assert(head:find(" clip ", 1, true), "the actual host root lost its clip")
 
-            for _, class in ipairs({
+            for _, name in ipairs({
                 "wibox.layout.fixed",
                 "wibox.container.background",
             }) do
-                assert(node_named(nodes, class),
-                    "no " .. class .. " in the solved tree")
+                assert(node_named(nodes, name),
+                    "no " .. name .. " in the solved tree")
             end
             assert(not node_named(nodes, "wibox.container.place"),
                 "the floating place must contribute attachment points")
@@ -170,7 +170,7 @@ local steps = {
             -- Four described leaf widgets fill their solved boxes.
             local leaves = 0
             for _, node in ipairs(nodes) do
-                if node.class == "leaf" then
+                if node.name == "leaf" then
                     leaves = leaves + 1
                 end
             end
@@ -396,7 +396,8 @@ local steps = {
     end),
     function(count)
         if count == 1 then
-            for i = 1, 8 do
+            -- Sixteen chains of about 901 nodes pass the 12288-node output budget at the fourteenth bar; each chain stays under the 2048-per-tree cap.
+            for i = 1, 16 do
                 local w = leaf_widget(10, 10, "#ff0000")
 
                 for _ = 1, 900 do

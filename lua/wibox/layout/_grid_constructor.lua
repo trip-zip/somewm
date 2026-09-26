@@ -192,6 +192,7 @@ function constructor.describe(widget, fg, compiler, occurrence, offer)
         -- Ancestor probe offers are phase inputs, not new authored content.
         state.phase = 'natural'
     end
+    compiler.offer_dependent = true
     state.offer_width, state.scope = offer.w, scope
     local minimum = state.phase == 'minimum'
     local natural = state.phase == 'natural'
@@ -330,7 +331,7 @@ function constructor.describe(widget, fg, compiler, occurrence, offer)
                     return measuring_height and 0 or sums[first-1]+gaps(gap,1,first)
                         +(decorated and gap[1].size or 0)
                 end
-                anchor={class='grid.span-area',w=size(columns,item.col,item.col_span,xgap),
+                anchor={name='grid.span-area',w=size(columns,item.col,item.col_span,xgap),
                     h=size(heights,item.row,item.row_span,ygap)}
                 rows[#rows+1]={float=true,passthrough=true,dir='y',w='fit',h='fit',children={
                     {w=0,h=before(heights,item.row,ygap)},

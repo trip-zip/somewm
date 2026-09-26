@@ -2,6 +2,7 @@ local runner=require('_runner')
 local async=require('_async')
 
 runner.run_async(function()
+    local default_capacity = assert(tonumber(awesome._clay_tree(screen[1]):match('elements %d+/(%d+)')))
     awesome._test_clay_capacity(64,2)
     local name=awesome._test_add_output(640,480)
     local s
@@ -31,20 +32,25 @@ runner.run_async(function()
     local elements,capacity=awesome._clay_tree(s):match('elements (%d+)/(%d+)')
     assert(tonumber(elements)>=32 and tonumber(capacity)==64, 'fixture did not reach the small context')
     local before=frames()
+    local retained = awesome._clay_tree(s):match('  realized:\n(.*)')
     local closed=0
     s:connect_signal('property::inspector',function()
         if not s.inspector then closed=closed+1 end
     end)
     s.inspector=true
-    assert(async.wait_for_condition(function() return closed==1 end,2,.01), 'small context did not exhaust in the inspector')
+    assert(async.wait_for_condition(function() return closed==1 end,2,.01), 'small context did not refuse the inspector')
     async.sleep(.15)
     assert(not s.inspector)
-    assert(frames()==before+2, 'inspector exhaustion did not use exactly one retry')
+    assert(frames()==before+2, 'inspector refusal did not use exactly one retry')
+    assert(awesome._clay_tree(s):match('  realized:\n(.*)')==retained,
+        'inspector refusal changed the desktop scene')
+    local hits=host._drawable:find_widgets(5,5)
+    assert(#hits>0, 'pointer routing did not recover after the inspector retry')
     local idle=frames()
     async.sleep(.25)
     assert(frames()==idle, 'allocation or inspector exhaustion loops while idle')
     assert(awesome._clay_tree(s):find('inspector off',1,true))
     host.visible=false
-    awesome._test_clay_capacity(32768)
+    awesome._test_clay_capacity(default_capacity)
     runner.done()
 end)

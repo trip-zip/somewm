@@ -51,8 +51,10 @@ end
 function M.corner(w, name, offset, kind)
     local point=assert(M.points[name], 'unknown attachment point: '..tostring(name))
     local launcher = name=='centered'
+    local override = require('beautiful').launcher_width
     w.drawin.attachment={kind=kind or (launcher and 3 or 1),parent=point,own=point,
-        width=launcher and (require('beautiful').launcher_width or w.minimum_width or 600) or 0,
+        width=launcher and (override or w.minimum_width or 600) or 0,
+        lua_width=launcher and not override and w._private and w._private.size_source == "workarea",
         x=offset and offset.x or 0,y=offset and offset.y or 0}
 end
 return M

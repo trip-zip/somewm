@@ -86,11 +86,11 @@ local function pixel(host,x,y,color) example.pixel(host.x+x,host.y+y,color) end
 local function floats(host,w)
     return solver.find(host._drawable._clay_tree,w)
 end
-local function attach(host,w,class)
+local function attach(host,w,name)
     local n=floats(host,w)[1].node
     assert(n.float and n._attach and n._attach.spacer)
     assert(not n._attach.bindings and not n._attach.bg and not n._attach.shape)
-    if class then assert(n._attach.class==class) else assert(n._attach._settle) end
+    if name then assert(n._attach.name==name) else assert(n._attach._settle) end
     return n._attach
 end
 runner.run_async(function()

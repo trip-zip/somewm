@@ -14,10 +14,10 @@ local function mixed()
     clay.describe_widget(w, function()
         return { w = "grow", h = "grow", gap = 4, specs = {
             { float = true, x = 100, y = 0, w = 10, h = 10, bg = {1, 0, 0, 1} },
-            { text = "M0a first", font = font, color = {1, 1, 1, 1}, wrap = "none", halign = "left", class = "text" },
+            { text = "M0a first", font = font, color = {1, 1, 1, 1}, wrap = "none", halign = "left", name = "text" },
             { w = 12, h = 12, bg = {0, 1, 0, 1} },
             { float = true, x = 140, y = 0, w = 10, h = 10, bg = {0, 0, 1, 1} },
-            { text = "M0a second", font = font, color = {1, 1, 1, 1}, wrap = "none", halign = "left", class = "text" },
+            { text = "M0a second", font = font, color = {1, 1, 1, 1}, wrap = "none", halign = "left", name = "text" },
         } }
     end, "m0a.mixed")
     return w

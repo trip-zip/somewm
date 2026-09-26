@@ -798,7 +798,7 @@ local function describe_border(w, _, st)
                     or image.default.width == 0 or image.default.height == 0 then
                 return clay.refuse(w, "border_images", "is an SVG or has no size to render at")
             end
-            box.image, box.class = image.image._native, "image"
+            box.image, box.name = image.image._native, "image"
             box.filter = image.scaling_quality
         end
         return { specs = { box } }
@@ -848,7 +848,7 @@ local function describe_border(w, _, st)
                         if widgets[position] then
                             cell.children = clay.whole_box(widgets[position])
                         elseif ib then
-                            cell.image, cell.class = ib._private.image._native, "image"
+                            cell.image, cell.name = ib._private.image._native, "image"
                             cell.filter = ib._private.scaling_quality
                         end
                     end

@@ -4,6 +4,7 @@ local awful = require('awful')
 local wibox = require('wibox')
 local example = require('_clay_example')
 local s = screen[1]
+local capacity = assert(tonumber(awesome._clay_tree(s):match('elements %d+/(%d+)')))
 
 local function frame()
     return tonumber(awesome._clay_tree(s):match(' frames (%d+)'))
@@ -30,7 +31,7 @@ runner.run_async(function()
     p.drawable:connect_signal('clay::solved',function() publications=publications+1 end)
     p.drawable:connect_signal('clay::_settle',function() stages=stages+1 end)
     local before=frame()
-    awesome._test_clay_failure(s,2,32768)
+    awesome._test_clay_failure(s,2,capacity)
     p.widget=wibox.widget.calendar.year({year=2026},'monospace 11')
     assert(async.wait_for_condition(function() return frame()>before and stages>0 end,2,.01))
     async.sleep(.1)
@@ -40,19 +41,18 @@ runner.run_async(function()
     assert(realized()==pixels,'failed solve changed retained scene nodes')
     example.pixel(p.x+10,p.y+p.height-2,"#aa2211")
     local after=p._drawable:find_widgets(5,5)
-    assert(#after==#targets and after[#after].widget==targets[#targets].widget,
-        'failed replacement changed pointer targets')
+    assert(#after==0, 'failed context answered widget hits before recovery')
     local idle=frame()
     async.sleep(.25)
     assert(frame()==idle,'capacity failure scheduled another failed frame')
 
-    awesome._test_clay_failure(s,1,32768)
+    awesome._test_clay_failure(s,1,capacity)
     p.widget=nil
     before=frame()
     assert(async.wait_for_condition(function() return frame()>before end,2,.01))
     assert(p._drawable._clay_tree==tree,'failed removal dropped committed Lua mappings')
     assert(realized()==pixels,'failed removal changed pixels')
-    assert(p._drawable:find_widgets(5,5)[#targets].widget==old,'failed removal lost native payload')
+    assert(#p._drawable:find_widgets(5,5)==0,'failed removal answered widget hits before recovery')
 
     awesome._test_clay_failure(s,0,0)
     local replacement=wibox.widget { text='recovered',forced_width=180,forced_height=45,
@@ -86,21 +86,23 @@ runner.run_async(function()
     local transition_dump = awesome._clay_tree(s)
     local width_now = tonumber(transition_dump:match('SIDEBAR [^\n]-box %-?%d+,%-?%d+ (%d+)x'))
     assert(width_now and width_now>0 and width_now<240, 'fixture did not start a transition')
-    awesome._test_clay_failure(s,1,32768)
+    awesome._test_clay_failure(s,1,capacity)
     awesome._test_redeclare()
     local frozen=realized()
     local frozen_frame=frame()
     async.sleep(.25)
     assert(frame()==frozen_frame and realized()==frozen, 'failed transition kept advancing')
     local failed_scroll = {overflow._private.drawable:_clay_scroll_get(overflow._private.content.id)}
-    assert(failed_scroll[2]==saved_scroll[2], 'failed transition lost scrolling')
+    assert(failed_scroll[2]==nil, 'reinitialized context retained a scroll record')
     awesome._test_clay_failure(s,0,0)
     showing=false
     awful.layout.arrange(s)
     async.sleep(.1)
     assert(not awesome._clay_tree(s):find('[tree!=scene]',1,true))
     local recovered_scroll = {overflow._private.drawable:_clay_scroll_get(overflow._private.content.id)}
-    assert(recovered_scroll[2]==saved_scroll[2], 'transition recovery lost scrolling')
+    assert(recovered_scroll[2]==0, 'new scroll record did not start at zero')
+    assert(not awesome._clay_tree(s):find('SIDEBAR ',1,true),
+        'reinitialized context retained an exit transition')
     scrolling.visible=false
     p.visible=false
     runner.done()

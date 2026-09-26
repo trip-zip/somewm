@@ -29,13 +29,13 @@ local function block()
 
     for line in awesome._clay_tree(s):gmatch("[^\n]+") do
         if head then
-            local indent, class, w, h = line:match(
+            local indent, name, w, h = line:match(
                 "^    %x+ ( *)([%w_.-]+).- w=(%S+) h=(%S+)")
             if not indent then
                 break
             end
             nodes[#nodes + 1] = {
-                depth = #indent / 2, class = class, w = w, h = h,
+                depth = #indent / 2, name = name, w = w, h = h,
                 line = line,
             }
         elseif line:sub(1, #want) == want then

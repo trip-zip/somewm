@@ -55,7 +55,8 @@ runner.run_async(function()
         local dump = awesome._clay_tree(s)
         example.save(name, dump)
         assert(solved > before, 'solved callback did not run')
-        assert(dump:find('derived 0', 1, true), dump)
+        assert(tonumber(dump:match('\n  roots flow %d+ floating %d+ derived (%d+)\n'))
+            == select(2, dump:gsub('\n%s*CAROUSEL_%u+ [^\n]* derived ', '')), dump)
         assert(not dump:find('[tree!=scene]', 1, true), dump)
         local actual = {}
         for line in dump:gmatch('[^\n]+') do
@@ -64,6 +65,7 @@ runner.run_async(function()
                 actual[#actual + 1] = table.concat({x, y, w, h}, ',')
             end
         end
+        assert(select(2, dump:gsub('\n%s*CAROUSEL_COLUMN [^\n]* derived ', '')) == #actual, dump)
         if expected then
             assert(#actual == #expected, name .. '\n' .. diagnostic(dump))
             for i, box in ipairs(expected) do

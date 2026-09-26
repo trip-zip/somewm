@@ -200,7 +200,11 @@ end
 
 
 
-local function describe_checkbox(w)
+local function describe_checkbox(w, fg, st, item, offer)
+    if not offer.w_definite and not offer.h_definite
+        and not w.forced_width and not w.forced_height then
+        return clay.refuse(w, "size", "has no definite axis; force a size or put it in a sized host")
+    end
 
     local main_color = w:get_color()
     local bg = w:get_bg()

@@ -259,9 +259,11 @@ end, function()
     end
 end)
 
-add_trigger("inspector-close", function()
-    s.inspector = true
-    return true
+add_trigger("inspector-close", function(count)
+    if count == 1 then s.inspector = true end
+    if awesome._clay_tree(s):match("output %S+ scale [%d.]+ inspector on") then
+        return true
+    end
 end, function()
     local x, y = geo.x + geo.width - 20, geo.y + 15
     root.fake_input("motion_notify", false, x, y)
@@ -271,7 +273,7 @@ end, function()
     return function()
         assert(not s.inspector, "the x button did not close the inspector")
     end
-end, 1)
+end)
 
 local grid, grid_box
 add_trigger("grid-grow", function()

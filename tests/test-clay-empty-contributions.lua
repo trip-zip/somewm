@@ -20,7 +20,7 @@ local function square(color)
     return image
 end
 
--- The bar's widget nodes: class, box and the widget objects bound to each.
+-- The bar's widget nodes: name, box and the widget objects bound to each.
 local function nodes(bar)
     local want = string.format('  drawin screen %d %dx%d+%d+%d ', s.index,
         bar.drawin.width, bar.drawin.height, bar.drawin.x, bar.drawin.y)
@@ -28,10 +28,10 @@ local function nodes(bar)
 
     for line in awesome._clay_tree(s):gmatch('[^\n]+') do
         if head then
-            local class = line:match('^    %x+ *([%w_.-]+)')
-            if not class then break end
+            local name = line:match('^    %x+ *([%w_.-]+)')
+            if not name then break end
             local x, y, w, h = line:match('box (%-?%d+),(%-?%d+) (%d+)x(%d+)')
-            out[#out + 1] = { class = class, line = line, x = tonumber(x),
+            out[#out + 1] = { name = name, line = line, x = tonumber(x),
                 y = tonumber(y), width = tonumber(w), height = tonumber(h) }
         elseif line:sub(1, #want) == want then
             head = line
@@ -42,13 +42,13 @@ end
 
 local function classes(bar)
     local out = {}
-    for _, node in ipairs(nodes(bar)) do out[#out + 1] = node.class end
+    for _, node in ipairs(nodes(bar)) do out[#out + 1] = node.name end
     return table.concat(out, ' ')
 end
 
-local function node_of(bar, class)
+local function node_of(bar, name)
     for _, node in ipairs(nodes(bar)) do
-        if node.class == class then return node end
+        if node.name == name then return node end
     end
 end
 
@@ -94,14 +94,14 @@ runner.run_async(function()
     -- the rest along by its width and one gap, and paints there.
     for _, step in ipairs {
         { name = 'text', set = function() empty.text = 'X' end,
-          clear = function() empty.text = '' end, class = 'wibox.widget.textbox' },
+          clear = function() empty.text = '' end, node_name = 'wibox.widget.textbox' },
         { name = 'image', set = function() icon.image = square('red') end,
-          clear = function() icon.image = nil end, class = 'image' },
+          clear = function() icon.image = nil end, node_name = 'image' },
     } do
         step.set()
         async.sleep(0.2)
         local present = nodes(bar)
-        local added = node_of(bar, step.class)
+        local added = node_of(bar, step.node_name)
         assert(added and added.x == BX and added.width > 0,
             step.name .. ' declared no element of its own')
         assert(#present == #nodes(bar), step.name .. ' did not settle')

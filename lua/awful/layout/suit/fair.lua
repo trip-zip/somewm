@@ -35,20 +35,25 @@ local function describe(s, horizontal)
   local rows = n == 2 and 1 or math.ceil(math.sqrt(n))
   local columns = n > 0 and math.ceil(n / rows) or 0
   local gap = n == 1 and t.gap_single_client == false and 0 or t.gap
+  local axis, cross = horizontal and "h" or "w", horizontal and "w" or "h"
   local groups = {}
   for column = 1, columns do
     local items = {}
+    local count = math.min(rows, n - (column - 1) * rows)
     for i = (column - 1) * rows + 1, math.min(column * rows, n) do
-      local item = {client = clients[i], contain_size = true}
+      local item = {client = clients[i], w = 1, h = 1}
       if gap > 0 then
         item = {role = "CELL", direction = "row", padding = gap,
           children = {item}}
       end
+      item[axis], item[cross] = 1, 1 / count
       items[#items + 1] = item
     end
-    groups[#groups + 1] = #items == 1 and items[1] or {
+    local group = #items == 1 and items[1] or {
       role = "ROW", direction = horizontal and "row" or "column",
       children = items}
+    group[axis], group[cross] = 1 / columns, 1
+    groups[#groups + 1] = group
   end
   return {role = "WORKAREA", direction = horizontal and "column" or "row",
     children = groups}

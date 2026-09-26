@@ -69,6 +69,19 @@ function runner.verbose(message)
     end
 end
 
+--- Assert that the redirected compositor stderr contains no unhandled Lua errors.
+function runner.assert_no_errors()
+    io.stderr:flush()
+    local log = assert(io.open('/proc/self/fd/2', 'r'))
+    local contents = log:read('*a')
+    log:close()
+    local count = 0
+    for line in contents:gmatch('[^\n]+') do
+        if line:find('ERROR:', 1, true) then count = count + 1 end
+    end
+    assert(count == 0, 'compositor log contains '..count..' unhandled Lua errors')
+end
+
 --- When using run_direct(), this function indicates that the test is now done.
 -- @tparam[opt=nil] string message An error message explaining the test failure, if it failed.
 function runner.done(message)

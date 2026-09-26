@@ -28,10 +28,9 @@
 #include "render_text.h"
 #include "shadow.h"
 
-/* Max SCISSOR nesting the clip stack holds; deeper scopes reuse the innermost
- * bound (degenerate, and far past any real chrome). CLIP_INF stands in for an
- * unclipped axis: outputs are at most a few thousand px, so it never clamps. */
-#define CLIP_STACK_MAX 64
+/* All 100 native clips may nest inside a floating root's inherited scissor.
+ * CLIP_INF leaves an unclipped axis larger than the output's coordinates. */
+#define CLIP_STACK_MAX 101
 #define CLIP_INF 1.0e6f
 
 /* A wlr_buffer backed by a cairo image surface, for rasterized text. */
@@ -248,16 +247,16 @@ struct rnode_slot {
 };
 
 struct render_state {
+	uint32_t output_id;
 	bool visibility_batched;
 	struct shadow_cache *shadows;
 	struct wlr_scene_tree *tree;
 	struct rnode *nodes;
 	size_t len, cap;
 	uint64_t gen;
-	/* Command keys in draw order (popup-owners folded to the tail) from the
-	 * previous frame, to detect reordering without touching the scene when
-	 * order is unchanged. build assembles this frame's order before the fold,
-	 * kept off order so the previous final order survives the comparison. */
+	/* Retained scene order: OUTPUT's rectangle and image first, followed by
+	 * every other command in Clay order. build keeps the new order separate
+	 * so an unchanged frame can avoid restacking. */
 	uint64_t *order;
 	size_t order_len, order_cap;
 	uint64_t *build;
@@ -373,6 +372,10 @@ void render_set_position(struct render_state *rs, int x, int y) {
 	wlr_scene_node_set_position(&rs->tree->node, x, y);
 }
 
+void render_set_output_id(struct render_state *rs, uint32_t id) {
+	rs->output_id = id;
+}
+
 void render_set_scale(struct render_state *rs, float scale) {
 	rs->scale = scale > 0.0f ? scale : 1.0f;
 }
@@ -446,6 +449,14 @@ static size_t rmap_get(struct render_state *rs, uint64_t key) {
 		s = (s + 1) & mask;
 	}
 	return SIZE_MAX;
+}
+
+bool render_shadow_box(struct render_state *rs, uint32_t id, Clay_BoundingBox *box) {
+	size_t idx = rmap_get(rs, (uint64_t)CLAY_RENDER_COMMAND_TYPE_CUSTOM << 32 | id);
+	if (idx == SIZE_MAX || !rs->nodes[idx].shadow)
+		return false;
+	*box = rs->nodes[idx].box;
+	return true;
 }
 
 static struct rnode *rnode_add(struct render_state *rs, uint64_t key) {
@@ -1809,6 +1820,19 @@ static struct shadow_cache *shadow_cache_get(struct render_state *rs,
 	return c;
 }
 
+/* The lower-band command may precede its owner during Clay positioning.
+ * Its own box is not a placement input, even on the next unchanged frame. */
+static Clay_BoundingBox shadow_owner_box(const struct render_shadow *style)
+{
+	Clay_BoundingBox box = style->owner_box;
+	int expand = style->spread + style->radius;
+	box.x += style->offset_x - expand;
+	box.y += style->offset_y - expand;
+	box.width += 2 * expand;
+	box.height += 2 * expand;
+	return box;
+}
+
 static int reconcile_shadow(struct render_state *rs, struct rnode *n,
 		Clay_RenderCommand *cmd)
 {
@@ -2114,8 +2138,8 @@ static void verify_node(struct rnode *n) {
 
 #ifdef SOMEWM_RENDER_VERIFY
 
-/* Check 1 of the agreement invariant: scene sibling order equals command
- * order. The restack raises each command's node to the top in order, so a
+/* Check 1 of the agreement invariant: scene sibling order equals retained
+ * paint order. The restack raises each command's node to the top in order, so a
  * forward walk of the children list (bottom to top) must visit exactly the
  * nodes rs->order names, in the same sequence, skipping commands that realized
  * no node (SCISSOR markers, dead surfaces). A dropped raise reorders a sibling
@@ -2186,6 +2210,7 @@ static void scope_open(struct render_state *rs, void *word, Clay_BoundingBox rbo
 	if (opens == 0) {
 		return;
 	}
+	struct clip_round inherited = under ? under->round : (struct clip_round){0};
 	if (rs->scopes_len == rs->scopes_cap) {
 		rs->scopes_cap = rs->scopes_cap ? rs->scopes_cap * 2 : 32;
 		p_realloc(&rs->scopes, rs->scopes_cap);
@@ -2197,10 +2222,8 @@ static void scope_open(struct render_state *rs, void *word, Clay_BoundingBox rbo
 	if (radius > 0) {
 		sc->round.box = rbox;
 		sc->round.radius = radius;
-	} else if (under != NULL) {
-		sc->round = under->round;
 	} else {
-		sc->round = (struct clip_round) { 0 };
+		sc->round = inherited;
 	}
 }
 
@@ -2305,8 +2328,19 @@ int render_reconcile(struct render_state *rs, Clay_RenderCommandArray commands,
 	int clip_depth = 0;
 	const struct clip_scope bounds_scope = { .box = bounds };
 
+	uint64_t backdrop[2] = {0};
+	size_t build_len = 0;
 	for (int32_t i = 0; i < commands.length; i++) {
 		Clay_RenderCommand *cmd = Clay_RenderCommandArray_Get(&commands, i);
+		Clay_RenderCommand decoration;
+		if (cmd->commandType == CLAY_RENDER_COMMAND_TYPE_CUSTOM &&
+				cmd->renderData.custom.customData != RENDER_CLIP_MARK &&
+				((uintptr_t)cmd->renderData.custom.customData & RENDER_SHADOW_TAG)) {
+			decoration = *cmd;
+			decoration.boundingBox = shadow_owner_box(
+				render_shadow_of(cmd->renderData.custom.customData));
+			cmd = &decoration;
+		}
 		/* A SCISSOR realizes no node of its own: its box bounds other boxes.
 		 * Rounding it would round a real cut away, because a clip less than
 		 * half a logical pixel inside its content rounds to the content's own
@@ -2317,8 +2351,20 @@ int render_reconcile(struct render_state *rs, Clay_RenderCommandArray commands,
 		if (cmd->commandType != CLAY_RENDER_COMMAND_TYPE_SCISSOR_START) {
 			cmd->boundingBox = box_snap(cmd->boundingBox);
 		}
+		bool output = rs->output_id && cmd->id == rs->output_id;
+		Clay_RenderCommand image;
+		if (output && cmd->commandType == CLAY_RENDER_COMMAND_TYPE_IMAGE) {
+			image = *cmd;
+			image.renderData.image.backgroundColor = (Clay_Color){0};
+			cmd = &image;
+		}
 		uint64_t key = (uint64_t)cmd->commandType << 32 | cmd->id;
-		rs->build[i] = key;
+		if (output && cmd->commandType == CLAY_RENDER_COMMAND_TYPE_RECTANGLE)
+			backdrop[0] = key;
+		else if (output && cmd->commandType == CLAY_RENDER_COMMAND_TYPE_IMAGE)
+			backdrop[1] = key;
+		else
+			rs->build[build_len++] = key;
 
 		size_t idx = rmap_get(rs, key);
 		struct rnode *n = idx == SIZE_MAX ? NULL : &rs->nodes[idx];
@@ -2437,7 +2483,6 @@ int render_reconcile(struct render_state *rs, Clay_RenderCommandArray commands,
 			if (clip_depth < CLIP_STACK_MAX) {
 				clip_stack[clip_depth] = sc;
 			}
-			scope_open(rs, cmd->userData, sc, scope, 0);
 			clip_depth++;
 			break;
 		}
@@ -2498,7 +2543,17 @@ int render_reconcile(struct render_state *rs, Clay_RenderCommandArray commands,
 		n->clip = (clip_top != NULL && clippable) ? *clip_top : box_inf();
 		n->data = cmd->renderData;
 	}
-	size_t build_len = commands.length;
+	/* OUTPUT is unclipped. Its two paint nodes precede even negative-band
+	 * roots; colour is an underlay and never an image tint. */
+	size_t backdrop_len = !!backdrop[0] + !!backdrop[1];
+	if (backdrop_len) {
+		memmove(rs->build + backdrop_len, rs->build,
+			build_len * sizeof(*rs->build));
+		for (size_t i = 0, j = 0; i < 2; i++)
+			if (backdrop[i])
+				rs->build[j++] = backdrop[i];
+		build_len += backdrop_len;
+	}
 	if (clip_depth != 0) {
 		wlr_log(WLR_ERROR, "unbalanced SCISSOR scopes: depth %d at frame end",
 			clip_depth);
@@ -2526,8 +2581,8 @@ int render_reconcile(struct render_state *rs, Clay_RenderCommandArray commands,
 	}
 
 	/* order_changed against the previous frame's order, so an identical
-	 * frame restacks nothing. The array's order is the order: the renderer
-	 * never reorders what Clay produced. A kind-swap recreation forces a
+	 * frame restacks nothing. OUTPUT's paint leads the retained order; all
+	 * other commands keep Clay order. A kind-swap recreation forces a
 	 * restack regardless: the fresh scene node sits at the top of the
 	 * sibling list while its command key is unchanged. */
 	bool order_changed = build_len != rs->order_len || rs->node_recreated;
@@ -2539,7 +2594,7 @@ int render_reconcile(struct render_state *rs, Clay_RenderCommandArray commands,
 	memcpy(rs->order, rs->build, build_len * sizeof(*rs->order));
 	rs->order_len = build_len;
 
-	/* Commands are sorted by z; restack only when the order changed. */
+	/* Restack only when the retained scene order changed. */
 	if (order_changed) {
 		for (size_t i = 0; i < rs->order_len; i++) {
 			size_t idx = rmap_get(rs, rs->order[i]);

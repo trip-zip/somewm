@@ -678,7 +678,7 @@ local function describe_textbox(w, fg, st)
     end
     return { align = { x = inputs.halign, y = w._private.valign or "center" },
         specs = { { text = inputs.text, font = inputs.font, color = color, wrap = "words",
-            halign = inputs.halign, ellipsize = inputs.ellipsize, class = "text" } } }
+            halign = inputs.halign, ellipsize = inputs.ellipsize, name = "text" } } }
 end
 
 textbox._clay = { describe = describe_textbox }

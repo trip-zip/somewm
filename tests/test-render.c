@@ -606,6 +606,48 @@ static void test_opacity_from_the_word(void) {
 	fixture_finish(&f, &no_hooks);
 }
 
+static void test_full_clip_budget(void) {
+    struct fixture f;
+    fixture_init(&f);
+    Clay_RenderCommand cmds[204];
+    for (int i = 0; i < 101; i++)
+        cmds[i] = cmd_clip(i + 1, i, 0, 200 - i, 24, true, true);
+    cmds[101] = cmd_rect(102, 0, 0, 300, 24, 0);
+    for (int i = 0; i < 101; i++) cmds[102 + i] = cmd_clip_end(101 - i);
+    cmds[203] = cmd_rect(103, 0, 30, 300, 24, 0);
+    render_reconcile(f.rs, commands_of(cmds, 204), &no_hooks, no_bounds);
+    struct wlr_scene_tree *tree = render_tree(f.parent);
+    CHECK_EQ(child_count(tree), 2);
+    CHECK_EQ(child_at(tree, 0)->x, 100);
+    CHECK_EQ(wlr_scene_rect_from_node(child_at(tree, 0))->width, 100);
+    CHECK_EQ(wlr_scene_rect_from_node(child_at(tree, 1))->width, 300);
+    fixture_finish(&f, &no_hooks);
+}
+
+static void test_many_host_scopes(void) {
+    struct fixture f;
+    fixture_init(&f);
+    Clay_RenderCommand cmds[240];
+    for (int i = 0; i < 120; i++) {
+        cmds[i * 2] = cmd_custom(i * 2 + 1,
+            (uint64_t)(uintptr_t)RENDER_CLIP_MARK, i * 3, 0, 2, 24);
+        cmds[i * 2].userData = word(i + 1, 1, 0);
+        cmds[i * 2 + 1] = cmd_rect(i * 2 + 2, i * 3, 0, 100, 24, 0);
+        cmds[i * 2 + 1].userData = word(i + 1, 0, 1);
+    }
+    render_reconcile(f.rs, commands_of(cmds, 240), &no_hooks, no_bounds);
+    struct wlr_scene_tree *tree = render_tree(f.parent);
+    CHECK_EQ(child_count(tree), 240);
+    for (int i = 0; i < 120; i++) {
+        struct wlr_scene_rect *rect = wlr_scene_rect_from_node(child_at(tree, i * 2 + 1));
+        CHECK_EQ(rect->width, 2);
+        CHECK_EQ(rect->height, 24);
+        CHECK_EQ(rect->node.x, i * 3);
+    }
+    CHECK_EQ(render_reconcile(f.rs, commands_of(cmds, 240), &no_hooks, no_bounds), 0);
+    fixture_finish(&f, &no_hooks);
+}
+
 static void test_scopes_from_the_word(void) {
 	struct fixture f;
 	fixture_init(&f);
@@ -1082,6 +1124,73 @@ static void fake_image_entry(struct image_entry *e, int w, int h) {
 	e->gen = 1;
 }
 
+static void test_output_backdrop(void) {
+	struct fixture f;
+	fixture_init(&f);
+	struct image_entry entry;
+	fake_image_entry(&entry, 8, 8);
+	cairo_t *cr = cairo_create(entry.native);
+	cairo_set_source_rgba(cr, 0, 1, 0, 0.5);
+	cairo_rectangle(cr, 0, 0, 4, 8);
+	cairo_fill(cr);
+	cairo_destroy(cr);
+	entry.natural = true;
+	render_set_output_id(f.rs, 1);
+	Clay_RenderCommand cmds[] = {
+		cmd_rect(2, 20, 0, 8, 8, 0),
+		cmd_image(1, 0, 0, 8, 8, &entry),
+		cmd_rect(1, 0, 0, 8, 8, 0),
+		cmd_rect(3, 30, 0, 8, 8, 0),
+		cmd_rect(4, 40, 0, 8, 8, 0),
+	};
+	cmds[0].zIndex = -4;
+	cmds[4].zIndex = 200;
+	cmds[1].renderData.image.backgroundColor = (Clay_Color){255, 0, 0, 255};
+	for (int scale = 0; scale < 2; scale++) {
+		render_set_scale(f.rs, scale ? 1.5f : 1);
+		render_reconcile(f.rs, commands_of(cmds, 5), &no_hooks, no_bounds);
+		struct wlr_scene_tree *rt = render_tree(f.parent);
+		CHECK_EQ(child_at(rt, 0)->type, WLR_SCENE_NODE_RECT);
+		CHECK_EQ(child_at(rt, 1)->type, WLR_SCENE_NODE_BUFFER);
+		CHECK_EQ(child_at(rt, 2)->x, 20);
+		CHECK_EQ(child_at(rt, 3)->x, 30);
+		CHECK_EQ(child_at(rt, 4)->x, 40);
+		struct wlr_scene_buffer *sb = wlr_scene_buffer_from_node(child_at(rt, 1));
+		void *data;
+		uint32_t format;
+		size_t pitch;
+		bool readable = wlr_buffer_begin_data_ptr_access(sb->buffer,
+			WLR_BUFFER_DATA_PTR_ACCESS_READ, &data, &format, &pitch);
+		CHECK(readable);
+		if (readable) {
+			uint32_t *row = (uint32_t *)((char *)data + 2 * pitch);
+			CHECK_EQ(row[2], 0x80008000u);
+			CHECK_EQ(row[sb->buffer->width - 2], 0);
+			wlr_buffer_end_data_ptr_access(sb->buffer);
+		}
+		CHECK_EQ(cmds[1].renderData.image.backgroundColor.a, 255);
+		CHECK_EQ(render_reconcile(f.rs, commands_of(cmds, 5), &no_hooks, no_bounds), 0);
+		/* Clay may place OUTPUT after a negative root or before it. */
+		Clay_RenderCommand reordered[] = {cmds[2], cmds[1], cmds[0], cmds[3], cmds[4]};
+		CHECK_EQ(render_reconcile(f.rs, commands_of(reordered, 5), &no_hooks, no_bounds), 0);
+		/* Unlock removes only the top overlay; image/colour swaps sweep the
+		 * vanished node while keeping the remaining paint below the desktop. */
+		render_reconcile(f.rs, commands_of(cmds, 4), &no_hooks, no_bounds);
+		CHECK_EQ(render_node_count(f.rs), 4);
+		Clay_RenderCommand solid[] = {cmds[0], cmds[2], cmds[3]};
+		render_reconcile(f.rs, commands_of(solid, 3), &no_hooks, no_bounds);
+		CHECK_EQ(child_at(rt, 0)->type, WLR_SCENE_NODE_RECT);
+		CHECK_EQ(child_at(rt, 1)->x, 20);
+		Clay_RenderCommand image[] = {cmds[0], cmds[1], cmds[3]};
+		render_reconcile(f.rs, commands_of(image, 3), &no_hooks, no_bounds);
+		CHECK_EQ(child_at(rt, 0)->type, WLR_SCENE_NODE_BUFFER);
+		CHECK_EQ(child_at(rt, 1)->x, 20);
+		CHECK_EQ(render_reconcile(f.rs, commands_of(image, 3), &no_hooks, no_bounds), 0);
+	}
+	fixture_finish(&f, &no_hooks);
+	cairo_surface_destroy(entry.native);
+}
+
 static void test_image_rerasters_on_generation_bump(void) {
 	struct fixture f;
 	fixture_init(&f);
@@ -1477,10 +1586,12 @@ static void test_shadow_tiles(void) {
 	struct fixture f;
 	fixture_init(&f);
 	struct render_shadow style = {.gen = 1, .radius = 12, .corner_radius = 8,
-		.rgba = {0, 0, 0, 0.75f}};
+		.rgba = {0, 0, 0, 0.75f}, .owner_box = {22, 22, 4000, 2160}};
+	struct render_shadow second = style;
+	second.owner_box = (Clay_BoundingBox){62, 62, 200, 100};
 	Clay_RenderCommand cmds[] = {
 		cmd_custom(1, (uintptr_t)render_shadow_tag(&style), 10, 10, 4024, 2184),
-		cmd_custom(2, (uintptr_t)render_shadow_tag(&style), 50, 50, 224, 124),
+		cmd_custom(2, (uintptr_t)render_shadow_tag(&second), 50, 50, 224, 124),
 	};
 	CHECK(render_reconcile(f.rs, commands_of(cmds, 2), &no_hooks, no_bounds) > 0);
 	CHECK_EQ(render_buffers_created(f.rs), 8);
@@ -1488,7 +1599,7 @@ static void test_shadow_tiles(void) {
 	CHECK_EQ(render_raster_bytes(f.rs), (4*20*20 + 4*12)*4);
 	CHECK_EQ(child_count(wlr_scene_tree_from_node(child_at(render_tree(f.parent), 0))), 11);
 	CHECK_EQ(render_reconcile(f.rs, commands_of(cmds, 2), &no_hooks, no_bounds), 0);
-	cmds[0].boundingBox.width = 1024;
+	style.owner_box.width = 1000;
 	CHECK(render_reconcile(f.rs, commands_of(cmds, 2), &no_hooks, no_bounds) > 0);
 	CHECK_EQ(render_buffers_created(f.rs), 0);
 	CHECK_EQ(render_raster_bytes(f.rs), (4*20*20 + 4*12)*4);
@@ -1506,6 +1617,74 @@ static void test_shadow_tiles(void) {
 	CHECK_EQ(render_buffers_created(f.rs), 8);
 	render_reconcile(f.rs, commands_of(cmds, 0), &no_hooks, no_bounds);
 	CHECK_EQ(render_raster_bytes(f.rs), 0);
+	fixture_finish(&f, &no_hooks);
+}
+
+/* Author expected positions independently of the stale decoration command. */
+static void test_shadow_current_owner(void) {
+	struct fixture f;
+	fixture_init(&f);
+	struct render_shadow style = {.gen = 1, .radius = 12,
+		.rgba = {0, 0, 0, 0.75f}, .owner_id = 2,
+		.offset_x = -15, .offset_y = -15};
+	Clay_RenderCommand cmds[] = {
+		cmd_custom(1, (uintptr_t)render_shadow_tag(&style), -27, -27, 104, 84),
+		cmd_rect(2, 50, 40, 80, 60, 0),
+	};
+	cmds[0].zIndex = -1;
+	for (int scale = 0; scale < 2; scale++) {
+		render_set_scale(f.rs, scale ? 1.5f : 1);
+		style.owner_box = cmds[1].boundingBox = (Clay_BoundingBox){50, 40, 80, 60};
+		render_reconcile(f.rs, commands_of(cmds, 2), &no_hooks, no_bounds);
+		struct wlr_scene_tree *tree = render_tree(f.parent);
+		struct wlr_scene_node *shadow = child_at(tree, 0);
+		CHECK_EQ(shadow->x, 23);
+		CHECK_EQ(shadow->y, 13);
+		CHECK_EQ(child_at(tree, 1)->x, 50);
+		Clay_BoundingBox box;
+		CHECK(render_shadow_box(f.rs, 1, &box));
+		CHECK_EQ(box.width, 104);
+		CHECK_EQ(box.height, 84);
+		cmds[0].boundingBox = (Clay_BoundingBox){23, 13, 104, 84};
+		CHECK_EQ(render_reconcile(f.rs, commands_of(cmds, 2), &no_hooks, no_bounds), 0);
+		style.owner_box.x = cmds[1].boundingBox.x = 100;
+		CHECK(render_reconcile(f.rs, commands_of(cmds, 2), &no_hooks, no_bounds) > 0);
+		CHECK_EQ(shadow->x, 73);
+		CHECK_EQ(render_buffers_created(f.rs), 0);
+		cmds[0].boundingBox.x = 73;
+		CHECK_EQ(render_reconcile(f.rs, commands_of(cmds, 2), &no_hooks, no_bounds), 0);
+		/* Centered FIT growth changes both the owner's width and origin. */
+		style.owner_box = cmds[1].boundingBox = (Clay_BoundingBox){60, 40, 160, 60};
+		render_reconcile(f.rs, commands_of(cmds, 2), &no_hooks, no_bounds);
+		CHECK_EQ(shadow->x, 33);
+		CHECK(render_shadow_box(f.rs, 1, &box));
+		CHECK_EQ(box.width, 184);
+		CHECK_EQ(render_buffers_created(f.rs), 0);
+		cmds[0].boundingBox = (Clay_BoundingBox){33, 13, 184, 84};
+		CHECK_EQ(render_reconcile(f.rs, commands_of(cmds, 2), &no_hooks, no_bounds), 0);
+		style.owner_box = cmds[1].boundingBox = (Clay_BoundingBox){120, 40, 40, 60};
+		render_reconcile(f.rs, commands_of(cmds, 2), &no_hooks, no_bounds);
+		CHECK_EQ(shadow->x, 93);
+		CHECK(render_shadow_box(f.rs, 1, &box));
+		CHECK_EQ(box.width, 64);
+		cmds[0].boundingBox = (Clay_BoundingBox){93, 13, 64, 84};
+		CHECK_EQ(render_reconcile(f.rs, commands_of(cmds, 2), &no_hooks, no_bounds), 0);
+		CHECK(child_at(tree, 0) == shadow);
+		/* A transparent borderless owner has no command. */
+		style.owner_box = (Clay_BoundingBox){200, 80, 100, 60};
+		style.spread = 3;
+		render_reconcile(f.rs, commands_of(cmds, 1), &no_hooks, no_bounds);
+		CHECK_EQ(shadow->x, 170);
+		CHECK_EQ(shadow->y, 50);
+		CHECK(render_shadow_box(f.rs, 1, &box));
+		CHECK_EQ(box.width, 130);
+		CHECK_EQ(box.height, 90);
+		cmds[0].boundingBox = (Clay_BoundingBox){170, 50, 130, 90};
+		CHECK_EQ(render_reconcile(f.rs, commands_of(cmds, 1), &no_hooks, no_bounds), 0);
+		style.spread = 0;
+	}
+	render_reconcile(f.rs, commands_of(cmds, 0), &no_hooks, no_bounds);
+	CHECK_EQ(render_node_count(f.rs), 0);
 	fixture_finish(&f, &no_hooks);
 }
 
@@ -1549,9 +1728,11 @@ int main(void) {
 		{ "kind swap destroys and restacks", test_kind_swap_destroys_and_restacks },
 		{ "restack only when order changed", test_restack_only_when_order_changed },
 		{ "clip stack", test_clip_stack },
+        { "full clip budget inside a floating root", test_full_clip_budget },
 		{ "clip axes", test_clip_axes },
 		{ "opacity from the word", test_opacity_from_the_word },
 		{ "scopes from the word", test_scopes_from_the_word },
+        { "120 renderer host scopes without native clips", test_many_host_scopes },
 		{ "border clips to the bounds", test_border_clips_to_the_bounds },
 		{ "client surface hooks", test_client_surface_hooks },
 		{ "custom crops to its clip", test_custom_crops_to_its_clip },
@@ -1560,12 +1741,14 @@ int main(void) {
 		{ "text crops to its clip", test_text_crops_to_its_clip },
 		{ "fractional text matches Pango", test_fractional_text_clipping },
 		{ "raster readback lifetime", test_raster_readback_lifetime },
+		{ "output backdrop", test_output_backdrop },
 		{ "image rerasters on generation bump", test_image_rerasters_on_generation_bump },
 		{ "image source origin", test_image_source_origin },
 		{ "shape leaf", test_shape_leaf },
 		{ "fractional moves refresh rasters", test_fractional_moves_refresh_rasters },
 		{ "stretched image crop uses source extent", test_stretched_image_crop_uses_source_extent },
 		{ "shared shadow tiles", test_shadow_tiles },
+		{ "shadow follows current owner", test_shadow_current_owner },
 		{ "font interning", test_font_interning },
 		{ "measure is monotonic", test_measure_is_monotonic },
 		{ "border ring has no gap or overlap", test_border_ring_has_no_gap_or_overlap },

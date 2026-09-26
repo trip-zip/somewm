@@ -1511,7 +1511,7 @@ static int luaA_awesome_test_clay_failure(lua_State *L)
 {
     screen_t *s = luaA_checkscreen(L, 1);
     int pass = luaL_checkinteger(L, 2), elements = luaL_checkinteger(L, 3);
-    luaL_argcheck(L, pass >= 0 && elements >= 0 && elements <= 65536, 2, "invalid failure injection");
+    luaL_argcheck(L, pass >= 0 && elements >= 0 && elements <= 2 * CLAY_ELEMENTS_MAX, 2, "invalid failure injection");
     declare_test_failure(s->monitor->declare, pass, elements);
     return 0;
 }

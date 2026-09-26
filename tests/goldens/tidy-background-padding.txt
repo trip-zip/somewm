@@ -6,4 +6,5 @@ output
   POPUP screen 1 converted w=fit h=fit theme row pad 1,1,1,1 attach OUTPUT band 80
     clip w=grow h=grow row
     wibox.container.background w=fit h=fit row pad 8,8,0,0
-      text "12:34" font=1
+      wibox.widget.textbox w=fit h=fit row
+        text "12:34" font=1

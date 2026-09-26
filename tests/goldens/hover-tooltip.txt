@@ -6,4 +6,5 @@ output
         text "wifi" font=1
       WORKAREA - w=grow h=grow row
   TOOLTIP screen 1 converted clip w=fit h=fit row pad 4,4,4,4 attach ELEMENT band 80
-    text "Connected to Home Wi-Fi" font=1
+    text_role w=fit h=fit row
+      text "Connected to Home Wi-Fi" font=1
