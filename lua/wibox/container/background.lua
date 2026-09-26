@@ -342,7 +342,7 @@ local function describe_background(w)
     if type(p.bgimage) == "function" then
         clay.ignore(w, "bgimage", "is a function and is not drawn")
     elseif p.bgimage then
-        node.specs = { { image = p.bgimage._native, class = "image", natural = true,
+        node.specs = { { image = p.bgimage._native, name = "image", natural = true,
             w = "grow", h = "grow", children = clay.whole_box(p.widget) } }
     end
 

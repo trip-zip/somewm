@@ -259,7 +259,11 @@ function arcchart.mt:__call(...)
     return new(...)
 end
 
-local function describe_arcchart(w, fg)
+local function describe_arcchart(w, fg, st, item, offer)
+    if not offer.w_definite and not offer.h_definite
+        and not w.forced_width and not w.forced_height then
+        return clay.refuse(w, "size", "has no definite axis; force a size or put it in a sized host")
+    end
 
     local values = w:get_values() or {}
     local border_width = w:get_border_width() or 0
@@ -298,8 +302,8 @@ local function describe_arcchart(w, fg)
     local use_rounded_edges = sum ~= max_val and w:get_rounded_edge()
     local offset_angle = w:get_start_angle() or math.pi
 
-    -- The content square is the smaller inner side of the offer, as fit
-    -- answers it; centre alignment places it where content_workarea does.
+    -- Lua bounds the inner square from the authored padded offer before
+    -- compiling the child; native alignment centres that square.
     -- render.c rounded_rect_path clamps PILL to half its side, so its clip
     -- scope is the circle before_draw_children cuts to.
     local PILL = 1e6

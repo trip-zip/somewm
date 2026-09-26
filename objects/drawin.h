@@ -112,6 +112,7 @@ typedef struct drawin_t {
         uint32_t occurrence; /* Event placement token, 0 selects an unambiguous target. */
         uint8_t parent, own; /* Clay attach point */
         float x, y, width;
+        bool lua_width; /* Width composed from public Lua policy inputs. */
         uint16_t gap;
         uint8_t position;
         bool passthrough, hover;
@@ -156,8 +157,7 @@ luaA_todrawin(lua_State *L, int idx)
 void luaA_drawin_setup(lua_State *L);
 void drawin_class_setup(lua_State *L);
 
-/* Drawin geometry synchronization (external API - for wibox code etc) */
-void luaA_drawin_set_size(lua_State *L, int udx, int width, int height);
+/* Reassign after the drawin's screen is removed */
 void luaA_drawin_reassign_screen(lua_State *L, drawin_t *drawin);
 
 /* Drawin geometry synchronization */

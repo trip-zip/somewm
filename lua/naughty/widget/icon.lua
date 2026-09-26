@@ -136,7 +136,7 @@ end
 -- left. No image is an empty element.
 local clay = require("wibox.clay")
 
-clay.describe_class(icon, function(w, _, _, _, offer)
+clay.describe_class(icon, function(w, _, compiler, _, offer)
     local p = w._private
     local image = p.image
 
@@ -146,6 +146,7 @@ clay.describe_class(icon, function(w, _, _, _, offer)
 
     local iw, ih = image:get_width(), image:get_height()
     local strategy = p.resize_strategy or "resize"
+    compiler.offer_dependent = true
     local maximum = math.min(offer.w, offer.h)
     local optimal = math.min((p.notification[1] and p.notification[1].icon_size)
         or beautiful.notification_icon_size or dpi(48), maximum)
@@ -161,7 +162,7 @@ clay.describe_class(icon, function(w, _, _, _, offer)
 
     return { w = fw, h = fh,
         align = centered and { x = "center", y = "center" } or nil,
-        specs = { { image = image._native, class = "image",
+        specs = { { image = image._native, name = "image",
             w = math.ceil(iw * scale), h = math.ceil(ih * scale) } } }
 end)
 

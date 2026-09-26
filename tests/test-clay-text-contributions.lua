@@ -1,5 +1,4 @@
--- Allocated textboxes retain their sizing area; content-sized text and a
--- sole root contribution can bind directly to native TEXT.
+-- Textboxes retain their sizing container and an anonymous native text child.
 local runner=require('_runner')
 local async=require('_async')
 local awful=require('awful')
@@ -135,7 +134,11 @@ runner.run_async(function()
         kept_hosts[#kept_hosts+1]=host
         async.sleep(0.2)
         local node=assert(host._drawable._clay_wired[label][1].element)
-        assert(node.text=='Native' and node.text_layout,'compatible text did not own a native TEXT element')
+        assert(not node.text and node.children[1].text=='Native',
+            'the wired textbox must be a container with a text child')
+        local glyph=node.children[1]
+        assert(not glyph.bindings and not glyph.occurrence and not glyph._attach and not glyph.box,
+            'the anonymous text child must not own bindings, attachments or a published box')
         if content_sized then
             assert(node.box.width>0 and node.box.width<160 and node.box.height>0 and node.box.height<60)
         else capture.assert_box(node.box,{x=0,y=0,width=160,height=60},'sole root text') end
@@ -146,6 +149,6 @@ runner.run_async(function()
         host.visible=false
         async.sleep(0.1)
     end
-    io.stderr:write('[PASS] built-in/ad-hoc allocated textboxes retain containers; alignment/wrapping pixels, original parent/child input and moving attachments agree; content-sized and sole-root text bind to native TEXT\n')
+    io.stderr:write('[PASS] built-in/ad-hoc allocated textboxes retain containers; alignment/wrapping pixels, original parent/child input and moving attachments agree; content-sized and sole-root text bind to containers with native text children\n')
     runner.done()
 end)

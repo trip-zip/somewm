@@ -39,12 +39,12 @@ local function nodes()
 
     for line in awesome._clay_tree(s):gmatch("[^\n]+") do
         if head then
-            local indent, class = line:match("^    %x+ ( *)([%w_.-]+)")
+            local indent, name = line:match("^    %x+ ( *)([%w_.-]+)")
             if not indent then
                 break
             end
             local x, y, w, h = line:match("box (%d+),(%d+) (%d+)x(%d+)")
-            out[#out + 1] = { depth = #indent / 2, class = class, line = line,
+            out[#out + 1] = { depth = #indent / 2, name = name, line = line,
                 image = line:find(" image ", 1, true) ~= nil,
                 box = x and { x = tonumber(x), y = tonumber(y),
                     width = tonumber(w), height = tonumber(h) } }

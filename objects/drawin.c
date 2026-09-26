@@ -480,9 +480,12 @@ luaA_drawin_set_attachment(lua_State *L, drawin_t *d)
         lua_pop(L, 1);
         ATTACH_NUMBER(parent, 0, 8); ATTACH_NUMBER(own, 0, 8);
         ATTACH_NUMBER(x, -INT_MAX, INT_MAX); ATTACH_NUMBER(y, -INT_MAX, INT_MAX);
-        ATTACH_NUMBER(width, 0, UINT16_MAX); ATTACH_NUMBER(gap, 0, UINT16_MAX);
+        ATTACH_NUMBER(width, 0, UINT16_MAX);
+        ATTACH_NUMBER(gap, 0, UINT16_MAX);
         ATTACH_NUMBER(position, 0, 8);
 #undef ATTACH_NUMBER
+        lua_getfield(L, -1, "lua_width");
+        next.lua_width = lua_toboolean(L, -1); lua_pop(L, 1);
         lua_getfield(L, -1, "passthrough");
         next.passthrough = lua_toboolean(L, -1); lua_pop(L, 1);
         lua_getfield(L, -1, "hover");
@@ -507,6 +510,7 @@ luaA_drawin_get_attachment(lua_State *L, drawin_t *d)
     ATTACH_NUMBER(host);
     ATTACH_NUMBER(own); ATTACH_NUMBER(x); ATTACH_NUMBER(y); ATTACH_NUMBER(width);
     ATTACH_NUMBER(gap); ATTACH_NUMBER(position);
+    lua_pushboolean(L, d->attachment.lua_width); lua_setfield(L, -2, "lua_width");
 #undef ATTACH_NUMBER
     lua_pushboolean(L, d->attachment.passthrough); lua_setfield(L, -2, "passthrough");
     lua_pushboolean(L, d->attachment.hover); lua_setfield(L, -2, "hover");
@@ -901,15 +905,6 @@ luaA_drawin_set_solved_geometry(lua_State *L, drawin_t *drawin,
     if (luaA_toudata(L, -1, &drawin_class))
         drawin_moveresize(L, -1, x, y, width, height, true);
     lua_pop(L, 1);
-}
-
-/* A hidden popup is not in the object registry. Its caller holds the
- * userdata while the isolated content solve applies its measured size. */
-void
-luaA_drawin_set_size(lua_State *L, int udx, int width, int height)
-{
-    drawin_t *d = luaA_checkudata(L, udx, &drawin_class);
-    drawin_moveresize(L, udx, d->x, d->y, width, height, false);
 }
 
 /** Set drawin visibility (AwesomeWM pattern - takes stack index)

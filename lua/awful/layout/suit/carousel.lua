@@ -212,6 +212,7 @@ end
 -- columns = {{clients = {...}, width_fraction = number}, ...}, vertical,
 -- viewport_extent (the scroll-axis size inside workarea padding), gap, peek, lead and trail.
 -- Peek reduces the fraction basis; peek, lead and trail declare end margins.
+-- centered marks lead and trail as computed from the workarea extent.
 -- Clay owns the strip position, column allocation and viewport clip.
 function carousel._build_declarations(inputs)
     local vertical = inputs.vertical
@@ -219,25 +220,28 @@ function carousel._build_declarations(inputs)
     local direction = vertical and "column" or "row"
     local gap, peek = inputs.gap or 0, inputs.peek or 0
     local extent = effective_viewport_size(inputs.viewport_extent, peek)
-    local lead = { role = "CAROUSEL_MARGIN", children = {} }
+    local lead = { role = "CAROUSEL_MARGIN", derived = inputs.centered, children = {} }
     lead[axis], lead[cross] = { fixed = peek + (inputs.lead or 0) }, 1
     local strip = { role = "CAROUSEL_STRIP", direction = direction, children = { lead } }
     local columns = {}
     strip[axis], strip[cross] = "fit", 1
     for _, column in ipairs(inputs.columns) do
-        local group = { role = "CAROUSEL_COLUMN",
+        local group = { role = "CAROUSEL_COLUMN", derived = true,
             direction = vertical and "row" or "column",
             padding = gap, gap = 2 * gap, children = {} }
         group[axis] = { fixed = math.floor(column.width_fraction * extent) }
+        group[cross] = 1
         for _, c in ipairs(column.clients) do
             -- Protocol minima remain on the surface; they must not change
             -- column fractions or the equal allocation of grouped clients.
-            group.children[#group.children + 1] = { client = c, contain_size = true }
+            local item = { client = c }
+            item[axis], item[cross] = 1, 1 / #column.clients
+            group.children[#group.children + 1] = item
         end
         strip.children[#strip.children + 1] = group
         columns[#columns + 1] = group
     end
-    local trail = { role = "CAROUSEL_MARGIN", children = {} }
+    local trail = { role = "CAROUSEL_MARGIN", derived = inputs.centered, children = {} }
     trail[axis], trail[cross] = { fixed = peek + (inputs.trail or 0) }, 1
     strip.children[#strip.children + 1] = trail
     return { role = "WORKAREA", direction = direction,
@@ -346,6 +350,7 @@ local function describe(s, vertical)
     local tree = carousel._build_declarations {
         columns = columns, vertical = vertical, viewport_extent = viewport,
         gap = gap, peek = peek, lead = lead, trail = trail,
+        centered = #columns > 0 and mode == "always",
     }
     tree.role = "CAROUSEL_VIEWPORT"
     tree.peek, tree.dynamic_peek = peek, dynamic_peek

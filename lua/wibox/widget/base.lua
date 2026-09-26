@@ -551,6 +551,10 @@ local function drill(ids, content)
     -- Get the optional identifier to create a virtual widget tree to place
     -- in an "access table" to be able to retrieve the widget.
     local id = attributes.id
+    local private = rawget(l, "_private")
+    if id and private then
+        private.declarative_id = id
+    end
 
     -- Clear the internal attributes.
     attributes.id, attributes.layout, attributes.widget = nil, nil, nil

@@ -7,24 +7,23 @@
 -- surfaces. A widget that draws itself or has no describer is
 -- refused together with its subtree; the drawable background remains.
 --
--- The walk descends the widget tree itself, not a laid-out hierarchy: Clay
--- is the only solver of a converted tree, and the walk computes no box,
--- only the offer each node passes down. A node's sizing is one of the four
+-- The walk descends the widget tree and composes sizing declarations from
+-- authored values. Clay solves their allocations and positions. A node's
+-- sizing is one of the four
 -- types clay.h names: `fit` wraps the content, which is Clay's default
 -- (CLAY_SIZING_FIT), `grow` fills the parent (CLAY_SIZING_GROW), a number
 -- is told (CLAY_SIZING_FIXED), and a table `{ percent = p }` is a share of
 -- the parent (CLAY_SIZING_PERCENT, clay.h:66-72, 289-297). A container
--- says which of the first two each child gets, in place of the
--- `:fit` question the layout engine asked; a widget's own preference (a
+-- says which of the first two each child gets; a widget's own preference (a
 -- forced size, a place that fills) refines fit and never overrides grow,
 -- since fit is the content size and that preference is the content.
 --
--- The offer is the box the engine's `:fit` was asked with: the drawin at
--- the root, less each node's padding on the way down. A node may divide
--- the offer among its children along one axis. Clay measures
--- text and intrinsic images in its native sizing stages. Image source
--- dimensions and aspect are inputs; their allocation never uses the offer.
--- Remaining `square` producers still use offer sizing.
+-- The offer starts with the authored drawin dimensions at the root, less
+-- each node's padding on the way down. A node may divide
+-- the offer among its children along one axis. Clay measures text;
+-- Lua composes image bounds from source dimensions and authored offers.
+-- Content-sized hosts use natural image sizes until an axis is authored.
+-- Square bounds use the definite authored axes, or zero without one.
 -- A cap of `"offer"` (`wmax`, `hmax`) is the
 -- offer on that axis, for a node whose content it cuts rather than
 -- outgrows. A described leaf gives its preferred dimensions directly, using
@@ -297,7 +296,7 @@ function clay.systray_icon(w)
     end
 
     return { w = sw, h = sh, theme_size = not p.forced_width and not p.forced_height, align = { x = "center", y = "center" },
-        specs = { { image = surface, class = "image",
+        specs = { { image = surface, name = "image",
             aspect = iw / ih, image_width = iw, image_height = ih,
             wmax = sw, hmax = sh } } }
 end
@@ -444,20 +443,84 @@ local axes = {"w", "h"}
 local empty_list = {}
 local no_padding = {0, 0, 0, 0}
 
--- Resolve a shape's size from the offer before forced axes override it.
-local function resolve_size(node, offer)
+-- Seed both FIT axes before Clay's width-first allocation. The paired bounds
+-- preserve outward rounding and let a smaller authored offer cap natural size.
+local function size_image(node, offer)
+    local nw, nh = node.image_width, node.image_height
+    if not node.image or not node.aspect or node.aspect <= 0
+            or not nw or not nh or nw <= 0 or nh <= 0 then return end
+    if node.image_resize == false then
+        node.w, node.h = nw, nh
+    else
+        local width = math.min(type(node.w) == 'number' and node.w or offer.w, node.wmax or math.huge)
+        local height = math.min(type(node.h) == 'number' and node.h or offer.h, node.hmax or math.huge)
+        if not offer.w_definite and not offer.h_definite
+                and type(node.w) ~= 'number' and type(node.h) ~= 'number' then
+            width, height = math.min(width, nw), math.min(height, nh)
+        end
+        local ratio = node.aspect
+        local w = math.ceil(math.max(0, math.min(width, height * ratio)))
+        local h = math.ceil(math.max(0, math.min(height, width / ratio)))
+        if node.image_downscale == false then w, h = math.max(w, nw), math.max(h, nh) end
+        for _, axis in ipairs {{'w', w, nw}, {'h', h, nh}} do
+            local key, value, natural = axis[1], axis[2], axis[3]
+            if type(node[key]) ~= 'number' then
+                if value == 0 then node[key] = 0
+                else
+                    node[key] = 'fit'
+                    node[key .. 'min'] = math.max(natural, value, node[key .. 'min'] or 0)
+                    node[key .. 'max'] = value
+                end
+            end
+        end
+    end
+    node.aspect, node.image_resize, node.image_downscale = nil, nil, nil
+end
+
+-- Establish both square axes before Clay's width-first allocation. Parent
+-- GROW allocations keep their rectangular area; only FIT preferences use the
+-- paired bounds. A square spec without a widget bounds its real child instead.
+local function size_square(node, offer, allocation)
+    if not node.square then return end
+    local width = type(node.w) == 'number' and node.w or offer.w
+    local height = type(node.h) == 'number' and node.h or offer.h
+    local wd = type(node.w) == 'number' or offer.w_definite
+    local hd = type(node.h) == 'number' or offer.h_definite
+    local side = wd and hd and math.min(width, height)
+        or wd and width or hd and height or 0
+    side = math.max(0, math.min(side, node.wmax or math.huge, node.hmax or math.huge))
+    for _, k in ipairs(axes) do
+        if type(node[k]) ~= 'number' and (not allocation or allocation[k] ~= 'grow') then
+            if side == 0 then node[k] = 0
+            else
+                node[k] = 'fit'
+                node[k .. 'min'] = side
+                node[k .. 'max'] = side
+            end
+        end
+    end
+    -- Clay treats a zero maximum as unbounded, even for FIXED(0). Floating
+    -- content cannot enlarge that empty square, and its clip still excludes
+    -- the child's pixels and input while preserving the original occurrence.
+    if side == 0 then
+        for _, child in ipairs(node.children or empty_list) do child.float = true end
+    end
+end
+
+-- Resolve explicit caps before composing dimensions from the same offer.
+local function resolve_size(st, node, offer, allocation)
     for _, k in ipairs(axes) do
         if node[k .. "max"] == "offer" then
             node[k .. "max"] = offer[k]
+            st.offer_dependent = true
         end
     end
-    if node.square then
-        -- Square producers retain their offer sizing.
-        node.last_frame_size = type(node.w) ~= "number" or type(node.h) ~= "number"
-        local size = math.min(offer.w, offer.h, node.wmax or math.huge, node.hmax or math.huge)
-        node.w = type(node.w) == "number" and node.w or size
-        node.h = type(node.h) == "number" and node.h or size
+    if (node.image or node.square)
+            and (type(node.w) ~= 'number' or type(node.h) ~= 'number') then
+        st.offer_dependent = true
     end
+    size_image(node, offer)
+    size_square(node, offer, allocation)
 end
 
 local function padded(node)
@@ -487,7 +550,7 @@ end
 -- describer returned is a boundary, and keeps the element.
 local inert_fields = {}
 for _, key in ipairs {'w','h','wmin','hmin','wmax','hmax','pad','dir','gap',
-        'align','children','class','widget','identity','occurrence','bindings',
+        'align','children','name','widget','identity','occurrence','bindings',
         'spacer','owner','bg','radius','box'} do inert_fields[key] = true end
 
 local function inert(node, along)
@@ -517,11 +580,13 @@ local function node_offer(node, offer)
         box[k] = math.min(type(size) == "number" and size
             or type(size) == "table" and offer[k] * size.percent or offer[k],
             node[k .. "max"] or math.huge)
+        box[k .. '_definite'] = type(size) == 'number' or offer[k .. '_definite'] or false
     end
     local pad = node.pad or no_padding
 
     return { w = math.max(0, box.w - pad[1] - pad[2]),
-        h = math.max(0, box.h - pad[3] - pad[4]) }, box
+        h = math.max(0, box.h - pad[3] - pad[4]),
+        w_definite = box.w_definite, h_definite = box.h_definite }, box
 end
 
 local compile_node
@@ -572,7 +637,7 @@ local function compile_specs(st, specs, parent, fg, offer, box, alpha, parent_fi
         local node
         local bound = spec.float and box or offer
 
-        resolve_size(spec, bound)
+        resolve_size(st, spec, bound)
         local inner, spec_box = node_offer(spec, bound)
 
         if spec.widget then
@@ -660,7 +725,7 @@ end
 -- `box` is solve readback metadata on cached nodes, not a sizing input.
 local fold_fields = {}
 for _, key in ipairs {'w','h','wmin','hmin','wmax','hmax','pad','bg','border','bw',
-        'radius','dir','gap','align','children','class','widget','identity',
+        'radius','dir','gap','align','children','name','widget','identity',
         'occurrence','bindings','spacer','owner','box','theme_size'} do fold_fields[key] = true end
 
 -- An opaque rectangular child completely covers a plain background at the
@@ -763,7 +828,7 @@ local function combine(node, opaque_host, host)
     -- keeps the name. Both placements stay in the bindings below.
     if node.owner or (node.widget and (painted(node) or node.radius ~= nil))
             or not child.occurrence then
-        result.class, result.identity, result.occurrence = node.class, node.identity, node.occurrence
+        result.name, result.identity, result.occurrence = node.name, node.identity, node.occurrence
     end
     result.widget, result.spacer = node.widget, nil
     result.bindings = join_bindings(node.bindings, child.bindings)
@@ -779,17 +844,12 @@ for _, key in ipairs {'image', 'natural', 'aspect', 'image_width', 'image_height
     image_fields[key] = true
 end
 
--- A square told twice: the container's two told numbers, and the image's own
--- caps and declared ratio, say the image fills that box exactly, so centring
--- it inside adds nothing. A systray icon at its slot size is this. A
--- different ratio, or a cap below the box, leaves real space around the
--- image and keeps its container. Clay leaves a told axis of an intrinsic
--- image alone (third_party/clay.h:2855-2862).
+-- Both image bounds must prove equality with the authored slot. A different
+-- aspect or a smaller cap leaves space around the image and keeps its container.
 local function image_fills(node, child)
     if type(node.w) ~= 'number' or type(node.h) ~= 'number' then return false end
-    if not child.aspect or child.aspect ~= node.w / node.h then return false end
     for _, axis in ipairs(axes) do
-        if (child[axis] or 'fit') ~= 'fit' or (child[axis .. 'min'] or 0) ~= 0
+        if (child[axis] or 'fit') ~= 'fit' or (child[axis .. 'min'] or 0) < node[axis]
                 or child[axis .. 'max'] ~= node[axis] then
             return false
         end
@@ -841,55 +901,6 @@ local function combine_image(node)
     return result
 end
 
-local text_fields = {}
-for _, key in ipairs {'w','h','wmin','hmin','wmax','hmax','class','widget',
-        'identity','occurrence','bindings','spacer','children','text','font',
-        'color','wrap','halign','ellipsize','text_layout','valign'} do text_fields[key] = true end
-
--- Native text can own this transparent container's FIT/GROW area. Clay sizes
--- that element and aligns its glyph commands inside it. Authored bounds and
--- other area effects retain a real container; no font/sibling box is measured
--- here to decide whether the widget happens to match its glyphs this frame.
-local function combine_text(node, root)
-    if #(node.children or empty_list) ~= 1 or padded(node) or painted(node) then return node end
-    -- An independently allocated textbox remains a real sizing container.
-    -- Content-sized text and the drawable's sole text contribution can own
-    -- their area directly; neither case removes a sibling allocation boundary.
-    if not root and ((node.w or 'fit') ~= 'fit' or (node.h or 'fit') ~= 'fit') then
-        return node
-    end
-    local child = node.children[1]
-    if not child.text or #(child.children or empty_list) ~= 0
-            or (child.wrap or 'words') ~= 'words' then return node end
-    for key in pairs(node) do if not fold_fields[key] then return node end end
-    for key in pairs(child) do if not text_fields[key] then return node end end
-    for _, axis in ipairs {'w','h'} do
-        for _, bound in ipairs {'min','max'} do
-            if (node[axis .. bound] or 0) ~= 0 or (child[axis .. bound] or 0) ~= 0 then
-                return node
-            end
-        end
-        local outer, inner = node[axis] or 'fit', child[axis] or 'fit'
-        if outer ~= 'fit' and outer ~= 'grow' then return node end
-        if child.text_layout then
-            if inner ~= 'grow' and not (outer == 'fit' and inner == 'fit') then return node end
-        elseif child[axis] ~= nil then return node end
-    end
-    if not child.text_layout
-            and ((node.align and node.align.x) or 'left') ~= (child.halign or 'left') then
-        return node
-    end
-    local result = {}
-    for key, value in pairs(child) do result[key] = value end
-    result.w, result.h = node.w, node.h
-    result.valign = child.text_layout and (child.valign or 'top') or ((node.align and node.align.y) or 'top')
-    result.text_layout, result.children, result.spacer = true, nil, nil
-    result.class, result.widget = child.class or 'text', node.widget
-    result.identity, result.occurrence = node.identity, node.occurrence
-    result.bindings = join_bindings(node.bindings, child.bindings)
-    return result
-end
-
 --- The node tree for `widget`, sized as its parent's `spec` decided.
 --
 -- A widget's finished subtree depends on its own state, its offer, its
@@ -927,6 +938,8 @@ function compile_node(st, widget, parent, fg, offer, spec, alpha, parent_fit)
             and (not item.layout_dependent or entry.grid_measurement == scope)
             and entry.parent_fit == parent_fit
             and entry.offer.w == offer.w and entry.offer.h == offer.h
+            and entry.offer.w_definite == offer.w_definite
+            and entry.offer.h_definite == offer.h_definite
             and same_spec(entry.spec, spec) then
         st.reused = st.reused + 1
         return entry.node
@@ -949,17 +962,18 @@ function compile_node(st, widget, parent, fg, offer, spec, alpha, parent_fit)
     end
 
     if node.fit then
-        offer = { w = node.wmax or 9999, h = node.hmax or 9999 }
+        offer = { w = node.wmax or 9999, h = node.hmax or 9999,
+            w_definite = false, h_definite = false }
     end
-    resolve_size(node, offer)
-    local intrinsic_w, intrinsic_h = node.w, node.h
-    local inner, box = node_offer(node, offer)
     local allocation = spec
     if parent_fit ~= 0 and not spec.float and not spec.stack then
         allocation = {}
         for key, value in pairs(spec) do allocation[key] = value end
         fit_grow(allocation, parent_fit)
     end
+    resolve_size(st, node, offer, allocation)
+    local intrinsic_w, intrinsic_h = node.w, node.h
+    local inner, box = node_offer(node, offer)
     merge_sizing(node, allocation)
     fit_grow(node, parent_fit)
     if node.fit then node.w, node.h = 'fit', 'fit' end
@@ -971,15 +985,6 @@ function compile_node(st, widget, parent, fg, offer, spec, alpha, parent_fit)
     node.children = compile_specs(st, node.specs or empty_list, item, node_fg or fg, inner, box, alpha,
         fit_children(node, node.stack and {true} or node.specs or empty_list),
         node.dir == "y" and "h" or "w", node.stack and node)
-    if not node.stack and (node.h or 'fit') == 'fit' and (node.hmin or 0) == 0 then
-        -- In a content-sized row, native text owns its cross-axis allocation.
-        -- A definite/GROW parent retains independently allocated textboxes.
-        for i, child in ipairs(node.children) do
-            if (child.w or 'fit') == 'fit' and not child.float then
-                node.children[i] = combine_text(child, true)
-            end
-        end
-    end
     if not node.stack and #node.children == 1 then
         local child = node.children[1]
         local fitting = fit_children(node, node.children)
@@ -988,10 +993,6 @@ function compile_node(st, widget, parent, fg, offer, spec, alpha, parent_fit)
             for key, value in pairs(child) do copy[key] = value end
             fit_grow(copy, fitting)
             node.children[1] = copy
-        elseif node.share then
-            -- The sharing layout retains the allocation; its sole textbox
-            -- can put native aligned text directly into that same box.
-            node.children[1] = combine_text(child, true)
         end
     end
     node.specs = nil
@@ -1011,13 +1012,13 @@ function compile_node(st, widget, parent, fg, offer, spec, alpha, parent_fit)
         st.active[widget] = nil
         return nil
     end
-    node.class = class_name(widget)
+    local private = rawget(widget, "_private")
+    node.name = private and private.declarative_id or class_name(widget) or "widget"
     node.widget = widget
     node.identity = item.identity
     node.occurrence = item.id
     node.bindings = {item = item}
     if alpha ~= 1 then fade(node, alpha) end
-    if not spec.float then node = combine_text(node, not parent.widget) end
     if parent.widget then node = combine_image(node) end
     node = combine(node, st.opaque_host)
     local fitting = fit_children(node, node.children or empty_list)
@@ -1114,7 +1115,7 @@ function clay._settle(tree, boxes)
     local function stage(node)
         local copy = {}
         for key, value in pairs(node) do copy[key] = value end
-        if not node.spacer or node.scroll then
+        if not node.text and (not node.spacer or node.scroll) then
             k = k + 1
             copy.box = boxes[k]
             copy.id = copy.box and copy.box.id
@@ -1134,7 +1135,7 @@ function clay._publish(self, tree, boxes)
     local index, callbacks, k = {}, {}, 0
     local function place(node)
         index[#index + 1] = node
-        if not node.spacer or node.scroll then
+        if not node.text and (not node.spacer or node.scroll) then
             k = k + 1
             node.box = boxes[k]
             node.id = node.box and node.box.id
@@ -1204,17 +1205,18 @@ end
 -- (off the flow), `x`/`y` offsets, `parent`/`own` attachment points (0-8,
 -- top left by default), `passthrough` (true by default), `spacer` for an element
 -- that stands for no
--- widget, `class` (the element's describing widget, for the `somewm-client clay
--- tree` dump), `widget`, and `children`. Original placements use immutable
+-- widget, `name` (the declarative id or full widget class name, shared by
+-- the element id and tree dumps), `widget`, and `children`. Original placements use immutable
 -- shared-tail `bindings` lists, enumerated with clay.bindings(node). A text element is a node with
 -- `text`, `font` (an id from `awesome._clay_font`), `color`, `wrap`,
---- `halign` and `ellipsize`. Compatible transparent widgets add `text_layout`,
--- FIT/GROW `w`/`h`, `valign` and original bindings to that actual text element;
--- bounds, fixed/percent sizing and distinct paint/clip/float areas keep a
--- container. An image leaf is a node with
+-- `halign` and `ellipsize`. A textbox container owns its sizing, alignment
+-- and original bindings; its anonymous text child has no published box.
+-- An image leaf is a node with
 -- `image` (a cairo surface's native pointer) and its sizing. The compile
--- step passes `aspect`, `image_width` and `image_height` to native sizing.
--- Other `square` producers still resolve their size from the offer.
+-- step composes its bounds from `aspect`, `image_width` and `image_height`.
+-- `square` requests paired bounds composed from the authored offer in Lua.
+-- It also keeps the widget and inner clip boundaries from folding together;
+-- the native bridge receives only their ordinary sizing bounds.
 --
 -- @tparam table self The drawable, for its own background, background image
 --  and foreground.
@@ -1264,8 +1266,12 @@ function clay.compile(self, root, context, width, height)
     end
     cache.stale = {}
     local node = root and compile_node(st, root, owner, self.foreground_color,
-        { w = width, h = height }, { w = "grow", h = "grow" }, 1,
+        { w = self._attachment_fit and 9999 or width,
+            h = self._attachment_fit and 9999 or height,
+            w_definite = not self._attachment_fit, h_definite = not self._attachment_fit },
+        { w = "grow", h = "grow" }, 1,
         self._attachment_fit and 3 or 0)
+    cache.offer_dependent = cache.offer_dependent or st.offer_dependent or false
     finish_children(st, owner, building)
     if st.membership_changed or not next(cache.widgets) then
         local widgets, used = {}, {}
@@ -1281,7 +1287,7 @@ function clay.compile(self, root, context, width, height)
     -- the drawin (an awful.popup follows its content, `node.fit`): then
     -- the root wraps the widget (CLAY_SIZING_FIT) within the widget's
     -- limits, and the drawin takes the box Clay solves for it.
-    local tree = { bg = base_rgba, radius = 0, class = "drawable",
+    local tree = { bg = base_rgba, radius = 0, name = "drawable",
         w = width, h = height, children = { node } }
 
     if node then
@@ -1291,13 +1297,11 @@ function clay.compile(self, root, context, width, height)
             tree.wmin, tree.wmax = node.wmin, node.wmax
             tree.hmin, tree.hmax = node.hmin, node.hmax
             node.wmin, node.wmax, node.hmin, node.hmax = nil, nil, nil, nil
-            -- The host owns these bounds. A positive host minimum still
-            -- allocates its content the whole axis instead of its natural fit.
+            -- Positive host minima make the content fill the whole axis.
             node.w = (tree.wmin or 0) > 0 and 'grow'
                 or type(node.w) == 'number' and node.w or 'fit'
             node.h = (tree.hmin or 0) > 0 and 'grow'
                 or type(node.h) == 'number' and node.h or 'fit'
-            node = combine_text(node, true)
             node = combine(node, opaque_host)
         end
         node = combine_image(node)
@@ -1307,7 +1311,7 @@ function clay.compile(self, root, context, width, height)
         if type(self.background_image) == "function" then
             clay.ignore("drawable", "bgimage", "is a function and is not drawn")
         else
-            node = { image = self.background_image._native, class = "image", natural = true,
+            node = { image = self.background_image._native, name = "image", natural = true,
                 w = "grow", h = "grow", spacer = true, children = { node } }
             table.insert(st.leaves, 1, { image = true, node = node })
         end
@@ -1323,6 +1327,7 @@ function clay.compile(self, root, context, width, height)
     -- Definite hosts share only provably equal allocations. Incompatible
     -- bounds/paint and potentially overflowing content retain their boundary.
     tree = combine(tree, opaque_host, true)
+    tree.offer_dependent = cache.offer_dependent
     tree.widgets = cache.widgets
     tree.compiled, tree.reused = st.compiled, st.reused
     return tree, st.leaves

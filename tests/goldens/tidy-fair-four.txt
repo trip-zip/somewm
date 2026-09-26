@@ -3,13 +3,13 @@ output
   Clay__RootContainer w=fixed(1280) h=fixed(720) output row
     OUTPUT WL-1 w=fixed(1280) h=fixed(720) output column
       WORKAREA - w=grow h=grow row
-        ROW - w=grow h=grow column
-          CLIENT A w=grow h=grow theme column pad 1,1,1,1
+        ROW - w=percent(0.5) h=percent(1) column
+          CLIENT A w=percent(1) h=percent(0.5) theme column pad 1,1,1,1
             SURFACE A w=grow h=grow custom
-          CLIENT B w=grow h=grow theme column pad 1,1,1,1
+          CLIENT B w=percent(1) h=percent(0.5) theme column pad 1,1,1,1
             SURFACE B w=grow h=grow custom
-        ROW - w=grow h=grow column
-          CLIENT C w=grow h=grow theme column pad 1,1,1,1
+        ROW - w=percent(0.5) h=percent(1) column
+          CLIENT C w=percent(1) h=percent(0.5) theme column pad 1,1,1,1
             SURFACE C w=grow h=grow custom
-          CLIENT D w=grow h=grow theme column pad 1,1,1,1
+          CLIENT D w=percent(1) h=percent(0.5) theme column pad 1,1,1,1
             SURFACE D w=grow h=grow custom

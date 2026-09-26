@@ -87,6 +87,13 @@ void render_destroy(struct render_state *rs,
 int render_reconcile(struct render_state *rs, Clay_RenderCommandArray commands,
 	const struct render_client_hooks *hooks, Clay_BoundingBox bounds);
 
+/* Identify OUTPUT, whose own rectangle and untinted image paint below all
+ * other commands. Zero leaves every element in ordinary command order. */
+void render_set_output_id(struct render_state *rs, uint32_t id);
+
+/* Read the retained shadow geometry used for painting and dump records. */
+bool render_shadow_box(struct render_state *rs, uint32_t id, Clay_BoundingBox *box);
+
 /* Move the per-output UI tree to the output's position in the layout. */
 void render_set_position(struct render_state *rs, int x, int y);
 
@@ -140,6 +147,10 @@ struct render_shadow {
 	uint64_t gen;
 	int radius, corner_radius;
 	float rgba[4];
+	uint32_t owner_id;
+	int spread, offset_x, offset_y;
+	/* Current completed layout, including owners with no paint command. */
+	Clay_BoundingBox owner_box;
 };
 
 #define RENDER_SHADOW_TAG (UINT64_C(1) << 62)
@@ -197,7 +208,7 @@ struct render_node_view {
 	uint32_t id;     /* the Clay element id; TEXT and BORDER carry a
 			  * Clay-derived per-line / per-side hash instead */
 	int16_t z;
-	Clay_BoundingBox box;   /* what Clay solved */
+	Clay_BoundingBox box;   /* solved geometry, or owner-relative shadow geometry */
 	Clay_BoundingBox rbox;  /* what was realized, after the clip */
 	size_t raster_bytes;    /* nonzero for a node holding a cairo raster */
 	bool has_node;          /* false for a SCISSOR marker, a clip mark or a
