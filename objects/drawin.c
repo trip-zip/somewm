@@ -96,17 +96,17 @@ shape_a1_get(const unsigned char *data, int stride, int x, int y)
 void
 drawin_mark_dirty(drawin_t *drawin)
 {
-	if (drawin->screen && drawin->screen->monitor
-			&& drawin->screen->monitor->declare)
-		declare_output_mark_dirty(drawin->screen->monitor->declare);
+	Monitor *m = luaA_monitor_get_by_screen(globalconf_get_lua_State(), drawin->screen);
+	if (m && m->declare)
+		declare_output_mark_dirty(m->declare);
 }
 
 bool
 drawin_widget_host(drawin_t *d, struct widget_host *out)
 {
-	if (!d->screen || !d->screen->monitor)
+	Monitor *m = luaA_monitor_get_by_screen(globalconf_get_lua_State(), d->screen);
+	if (!m)
 		return false;
-	Monitor *m = d->screen->monitor;
 
 	*out = (struct widget_host) {
 		.tree = &d->widgets,

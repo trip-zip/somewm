@@ -183,19 +183,18 @@ runner.run_async(function()
     local b=wait_for(function() return utils.find_client_by_class('SHADOW_TILE_B') end)
     a.floating=false;b.floating=false
     dump=wait_for(function()
-        local tree=awesome._clay_tree(screen[1]);local line=record(tree,'SHADOW','SHADOW_TILE_B')
-        if line and line:find('band -1',1,true) then return tree end
-    end)
-    wait_for(function()
         local tree=awesome._clay_tree(screen[1])
         local im=surface(root.content())
         for _,name in ipairs{'SHADOW_TILE_A','SHADOW_TILE_B'} do
-            local content=box(record(tree,'SURFACE',name))
+            local client=record(tree,'CLIENT',name)
+            local line=record(tree,'SURFACE',name)
+            local shadow=record(tree,'SHADOW',name)
+            if not client or not line or not shadow or not shadow:find('band -1',1,true) then return false end
+            local content=box(line)
             local r,g,b=capture.read(im,content.x+content.width-2,content.y+50)
             if r~=64 or g~=64 or b~=64 then return false end
         end
-        dump=tree
-        return true
+        return tree
     end)
     for _,name in ipairs{'SHADOW_TILE_A','SHADOW_TILE_B'} do
         local frame=box(record(dump,'CLIENT',name));local content=box(record(dump,'SURFACE',name))

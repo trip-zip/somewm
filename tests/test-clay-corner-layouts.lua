@@ -94,8 +94,8 @@ runner.run_async(function()
                 for _,signal in ipairs{'button::press','button::release'} do
                     widget:connect_signal(signal,function(original,x,y,button,mods,area)
                         assert(original==widget and area.widget==widget)
-                        -- Existing titlebar input includes the client border origin.
-                        assert(x==6 and y==6 and button==1 and #mods==0)
+                        -- Coordinates are relative to the titlebar drawable, which begins inside the border.
+                        assert(x == 6 - c.border_width and y == 6 - c.border_width and button==1 and #mods==0)
                         events[#events+1]=signal..i
                     end)
                 end

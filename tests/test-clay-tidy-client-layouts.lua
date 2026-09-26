@@ -29,6 +29,7 @@ local function count_clients(count)
             local current = awful.client.tiled(s)[i]
             if current ~= wanted then current:swap(wanted) end
         end
+        for i = count, 1, -1 do clients[i]:raise() end
         return true
     end
 end

@@ -216,26 +216,7 @@ arrange(Monitor *m)
 		return;
 	}
 
-	/* Arrange the physical screen first, then every fake viewport that overlaps
-	 * this physical output. Without the second pass, tag changes on a fake
-	 * screen update selected state but never re-run its layout. */
 	arrange_lua_screen(L, screen);
-	{
-		int n = 64;
-		screen_t *all_screens[64];
-		luaA_screen_get_all(L, all_screens, &n);
-		for (int i = 0; i < n; i++) {
-			screen_t *candidate = all_screens[i];
-			if (!candidate || candidate == screen || !candidate->valid
-				|| candidate->monitor != NULL)
-				continue;
-			if (candidate->geometry.x < m->m.x + m->m.width
-				&& candidate->geometry.x + candidate->geometry.width > m->m.x
-				&& candidate->geometry.y < m->m.y + m->m.height
-				&& candidate->geometry.y + candidate->geometry.height > m->m.y)
-				arrange_lua_screen(L, candidate);
-		}
-	}
 
 	motionnotify(0, NULL, 0, 0, 0, 0);
 	some_recompute_idle_inhibit();

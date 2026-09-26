@@ -707,7 +707,7 @@ over_budget(struct widget_tree *d, Monitor *m, size_t len, size_t scrolls)
 		drawin_t *other = *item;
 
 		if (&other->widgets != d && other->screen
-				&& other->screen->monitor == m) {
+				&& luaA_monitor_get_by_screen(globalconf_L, other->screen) == m) {
 			total += other->widgets.nodes_len;
 			scrolls += other->widgets.scrolls;
 		}

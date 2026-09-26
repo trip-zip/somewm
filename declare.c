@@ -131,6 +131,7 @@ enum declare_src {
 struct declare_record {
 	const char *role;
 	uint64_t handle;       /* the object it stands for, 0 for none */
+	int screen_index;     /* SCREEN ownership captured at declaration */
 	uint32_t id;           /* the Clay element id, for the solved box */
 	Clay_Sizing sizing;
 	enum declare_src src;
@@ -782,6 +783,43 @@ static Clay_ElementId output_id(Monitor *m);
 static Clay_ElementId workarea_id(Monitor *m);
 static bool floating_layout;
 
+/* Each output pass pins its hosted screens and Lua descriptions until all
+ * boxes have been published. The active entry scopes screen composition;
+ * output-only declarations run with no active screen. */
+struct screen_declaration {
+    screen_t *screen;
+    struct wlr_box geometry;
+    int index, screen_ref, layout_ref;
+    bool floating;
+};
+static struct screen_declaration *screen_declarations, *active_screen;
+static size_t screen_declarations_len;
+static bool screen_subtrees;
+
+static Clay_ElementId
+screen_root_id(Monitor *m)
+{
+    return active_screen && screen_subtrees
+        ? Clay__HashStringWithOffset(CLAY_STRING("SCREEN"), active_screen->index, output_id(m).id)
+        : output_id(m);
+}
+
+static struct wlr_box
+screen_origin(Monitor *m)
+{
+    return active_screen && screen_subtrees ? active_screen->geometry : m->m;
+}
+
+static bool
+screen_hosted(screen_t *s, Monitor *m)
+{
+    if (!s || !s->valid || luaA_monitor_get_by_screen(globalconf_L, s) != m)
+        return false;
+    return s->monitor == m || (s->geometry.x >= m->m.x && s->geometry.y >= m->m.y
+        && s->geometry.x + s->geometry.width <= m->m.x + m->m.width
+        && s->geometry.y + s->geometry.height <= m->m.y + m->m.height);
+}
+
 /* The popups whose parent is `parent` (a toplevel's or a popup's surface),
  * each a borrowed surface leaf attached to the element `parent_id` and
  * offset by the protocol's popup geometry, then their own popups. The
@@ -912,7 +950,10 @@ declare_client(Client *c, Monitor *m, int16_t z, const Clay_ElementDeclaration *
         : leaf_at(z, x, y, fw, fh);
 	if (!allocation && !client_is_unmanaged(c)) {
 		frame.floating.attachTo = CLAY_ATTACH_TO_ELEMENT_WITH_ID;
-		frame.floating.parentId = output_id(m).id;
+		frame.floating.parentId = screen_root_id(m).id;
+        struct wlr_box origin = screen_origin(m);
+        frame.floating.offset.x += m->m.x - origin.x;
+        frame.floating.offset.y += m->m.y - origin.y;
 		if (c->fullscreen) {
 			frame.layout.sizing = (Clay_Sizing) { CLAY_SIZING_GROW(0), CLAY_SIZING_GROW(0) };
 			frame.floating.offset = (Clay_Vector2) { 0, 0 };
@@ -1090,6 +1131,7 @@ declare_client_tree(Client *c, Monitor *m)
 	}
 	foreach(node, globalconf.stack)
 		if ((*node)->transient_for == c && (*node)->mon == m
+				&& (*node)->screen == c->screen
 				&& !client_is_unmanaged(*node)
 				&& !(*node)->clay_tiled
 				&& transient_inherits(*node)
@@ -1099,10 +1141,10 @@ declare_client_tree(Client *c, Monitor *m)
 
 /* Whether declare_client_tree() will reach c through its parent. When it
  * will not (c carries a stacking attribute of its own, or the parent is
- * minimized, unmapped, unmanaged, or on another output), c declares as a
+ * minimized, unmapped, unmanaged, or on another screen), c declares as a
  * root instead of vanishing; the old scene path kept exactly these clients
  * visible per-client. The immediate parent suffices: every managed
- * declarable client on m is declared, as a root or by riding one, so a
+ * declarable client on the screen is declared, as a root or by riding one, so a
  * declarable parent is a declared parent. */
 static bool
 transient_rides_parent(Client *c, Monitor *m)
@@ -1110,7 +1152,7 @@ transient_rides_parent(Client *c, Monitor *m)
 	Client *p = c->transient_for;
 	Clay_ElementDeclaration e;
 
-	return p && p->mon == m && transient_inherits(c)
+	return p && p->mon == m && p->screen == c->screen && transient_inherits(c)
 		&& (!p->clay_tiled || layout_client_declaration(p, m, &e))
 		&& !client_is_unmanaged(p) && declarable_client(p);
 }
@@ -1125,7 +1167,8 @@ declare_clients(Monitor *m)
 		 * skips a transient before it pays for its own tag-visibility
 		 * check. Unmanaged (override-redirect) clients are declared by
 		 * declare_unmanaged_clients() instead. */
-		if (!c || c->mon != m || client_is_unmanaged(c) || c->clay_tiled)
+		if (!c || c->mon != m || c->screen != active_screen->screen
+                || client_is_unmanaged(c) || c->clay_tiled)
 			continue;
 		if (transient_rides_parent(c, m))
 			continue;
@@ -1140,26 +1183,86 @@ declare_clients(Monitor *m)
 static int tile_ref = LUA_NOREF;
 
 static void
+screen_activate(struct screen_declaration *entry)
+{
+    active_screen = entry;
+    tile_ref = entry ? entry->layout_ref : LUA_NOREF;
+    floating_layout = entry && entry->floating;
+}
+
+static void
+screens_clear(void)
+{
+    for (size_t i = 0; i < screen_declarations_len; i++) {
+        luaL_unref(globalconf_L, LUA_REGISTRYINDEX, screen_declarations[i].layout_ref);
+        luaL_unref(globalconf_L, LUA_REGISTRYINDEX, screen_declarations[i].screen_ref);
+    }
+    free(screen_declarations);
+    screen_declarations = NULL;
+    screen_declarations_len = 0;
+    screen_subtrees = false;
+    screen_activate(NULL);
+}
+
+static void
 tile_prepare(Monitor *m)
 {
     lua_State *L = globalconf_L;
     int top = lua_gettop(L);
     foreach(node, globalconf.clients)
-        if ((*node)->mon == m) (*node)->clay_tiled = false;
-    luaL_unref(L, LUA_REGISTRYINDEX, tile_ref);
-    tile_ref = LUA_NOREF;
-    floating_layout = false;
+        if ((*node)->mon == m && (*node)->screen == active_screen->screen)
+            (*node)->clay_tiled = false;
     lua_getglobal(L, "require");
     lua_pushliteral(L, "awful.layout");
     if (lua_pcall(L, 1, 1, 0)) goto done;
     lua_getfield(L, -1, "_clay_describe");
-    luaA_screen_push(L, luaA_screen_get_by_monitor(L, m));
+    luaA_screen_push(L, active_screen->screen);
     if (lua_pcall(L, 1, 2, 0)) goto done;
-    floating_layout = lua_toboolean(L, -1);
+    active_screen->floating = floating_layout = lua_toboolean(L, -1);
     lua_pop(L, 1);
-    if (lua_istable(L, -1)) tile_ref = luaL_ref(L, LUA_REGISTRYINDEX);
+    if (lua_istable(L, -1))
+        active_screen->layout_ref = tile_ref = luaL_ref(L, LUA_REGISTRYINDEX);
 done:
     lua_settop(L, top);
+}
+
+static bool
+screens_prepare(Monitor *m)
+{
+    lua_State *L = globalconf_L;
+    int count = 0;
+    screens_clear();
+    luaA_screen_get_all(L, NULL, &count);
+    screen_t **screens = calloc(count ? count : 1, sizeof(*screens));
+    screen_declarations = calloc(count ? count : 1, sizeof(*screen_declarations));
+    if (!screens || !screen_declarations) {
+        free(screens);
+        recording->exhausted = true;
+        return false;
+    }
+    luaA_screen_get_all(L, screens, &count);
+    for (int i = 0; i < count; i++) {
+        screen_t *screen = screens[i];
+        if (!screen_hosted(screen, m)) continue;
+        luaA_screen_push(L, screen);
+        screen_declarations[screen_declarations_len++] = (struct screen_declaration) {
+            .screen = screen, .geometry = screen->geometry, .index = screen->index,
+            .screen_ref = luaL_ref(L, LUA_REGISTRYINDEX), .layout_ref = LUA_NOREF,
+        };
+    }
+    free(screens);
+    screen_subtrees = screen_declarations_len != 1;
+    if (screen_declarations_len == 1) {
+        struct wlr_box g = screen_declarations[0].geometry;
+        screen_subtrees = g.x != m->m.x || g.y != m->m.y
+            || g.width != m->m.width || g.height != m->m.height;
+    }
+    for (size_t i = 0; i < screen_declarations_len; i++) {
+        screen_activate(&screen_declarations[i]);
+        tile_prepare(m);
+    }
+    screen_activate(NULL);
+    return true;
 }
 
 static float
@@ -1275,7 +1378,7 @@ layout_client_declaration(Client *c, Monitor *m, Clay_ElementDeclaration *e)
     e->layout.padding = (Clay_Padding) { pad, pad, pad, pad };
     lua_getfield(L, -1, "attach_to");
     if (lua_isstring(L, -1) && !strcmp(lua_tostring(L, -1), "output"))
-        e->floating.parentId = output_id(m).id;
+        e->floating.parentId = screen_root_id(m).id;
     lua_pop(L, 1);
     lua_getfield(L, -1, "center");
     if (lua_toboolean(L, -1))
@@ -1433,8 +1536,6 @@ tile_publish(Monitor *m)
         luaA_dofunction(L, 1, 0);
     }
     lua_settop(L, top);
-    luaL_unref(L, LUA_REGISTRYINDEX, tile_ref);
-    tile_ref = LUA_NOREF;
 }
 
 static area_t
@@ -1835,7 +1936,8 @@ declare_widget_subtree(const struct widget_host *host, size_t i, Clay_ElementId 
 		};
 	} else if (i == 0 && !root_decl) {
 		/* A titlebar root attaches at its parent's origin; a drawin
-		 * uses an output-local offset (third_party/clay.h:2074-2080,
+		 * uses its screen's origin when split, otherwise the output's
+		 * (third_party/clay.h:2074-2080,
 		 * 2625-2677). Fixed axes use the host box, while an awful.popup
 		 * fits within its tree's limits. */
 		e.floating.offset = host->in_parent ? (Clay_Vector2) { 0, 0 }
@@ -1843,6 +1945,12 @@ declare_widget_subtree(const struct widget_host *host, size_t i, Clay_ElementId 
 		e.floating.attachTo = host->in_parent
 			? CLAY_ATTACH_TO_PARENT : CLAY_ATTACH_TO_ROOT;
 		e.floating.zIndex = z;
+        if (!host->in_parent && active_screen && screen_subtrees) {
+            e.floating.attachTo = CLAY_ATTACH_TO_ELEMENT_WITH_ID;
+            e.floating.parentId = screen_root_id(host->m).id;
+            e.floating.offset.x -= active_screen->geometry.x - host->m->m.x;
+            e.floating.offset.y -= active_screen->geometry.y - host->m->m.y;
+        }
 		e.layout.sizing = (Clay_Sizing) {
 			n->sizing[0] == WIDGET_SIZING_FIXED
 				? CLAY_SIZING_FIXED(host->w) : widget_sizing(n, 0),
@@ -2090,7 +2198,10 @@ declare_drawin(drawin_t *d, Monitor *m, int16_t z)
 	Clay_ElementDeclaration frame = leaf_at(z, x - bw, y - bw,
 		d->width + 2 * bw, d->height + 2 * bw);
 	frame.floating.attachTo = CLAY_ATTACH_TO_ELEMENT_WITH_ID;
-	frame.floating.parentId = output_id(m).id;
+	frame.floating.parentId = screen_root_id(m).id;
+    struct wlr_box origin = screen_origin(m);
+    frame.floating.offset.x += m->m.x - origin.x;
+    frame.floating.offset.y += m->m.y - origin.y;
 	frame.layout.padding = (Clay_Padding){bw, bw, bw, bw};
 	const color_t *color = &d->border_color_parsed;
 	frame.border = (Clay_BorderElementConfig){
@@ -2118,8 +2229,9 @@ declare_drawin(drawin_t *d, Monitor *m, int16_t z)
 static bool
 drawin_covers_output(drawin_t *d, Monitor *m)
 {
-	return d->type == WINDOW_TYPE_DESKTOP && d->x == m->m.x && d->y == m->m.y
-		&& d->width == m->m.width && d->height == m->m.height;
+	struct wlr_box g = screen_origin(m);
+    return d->type == WINDOW_TYPE_DESKTOP && d->x == g.x && d->y == g.y
+        && d->width == g.width && d->height == g.height;
 }
 
 static void
@@ -2132,7 +2244,7 @@ declare_wallpaper_drawin(drawin_t *d, Monitor *m, int16_t z)
 		.layout.sizing = { CLAY_SIZING_GROW(0), CLAY_SIZING_GROW(0) },
 		.floating = {
 			.attachTo = CLAY_ATTACH_TO_ELEMENT_WITH_ID,
-			.parentId = output_id(m).id,
+			.parentId = screen_root_id(m).id,
 			.zIndex = z,
 			.pointerCaptureMode = CLAY_POINTER_CAPTURE_MODE_PASSTHROUGH,
 		},
@@ -2153,7 +2265,8 @@ declarable_drawin(drawin_t *d, Monitor *m)
 {
 	return d->visible
 		&& d->widgets.nodes_len > 0
-		&& d->screen && d->screen->monitor == m;
+		&& screen_hosted(d->screen, m)
+        && (!active_screen || d->screen == active_screen->screen);
 }
 
 /* --- layer surfaces ---
@@ -2432,7 +2545,8 @@ edge_items(Monitor *m, enum drawin_edge edge, struct flow_item *items, size_t ca
 
 	for (size_t band = LENGTH(m->layers); band-- > 0;)
 		wl_list_for_each(l, &m->layers[band], link)
-			if (declarable_layer(l, m) && n < cap
+			if ((!active_screen || active_screen->screen->monitor == m)
+                    && declarable_layer(l, m) && n < cap
 					&& wlr_layer_surface_v1_get_exclusive_edge(l->layer_surface)
 						== wlr_edge_of[edge])
 				items[n++] = (struct flow_item) { .l = l };
@@ -2564,7 +2678,7 @@ declare_attachment(drawin_t *d, Monitor *m)
 {
     if (d->attachment.kind == 2 && !d->attachment.target) return false;
     uint32_t target = d->attachment.target
-        ? attachment_target(d) : output_id(m).id;
+        ? attachment_target(d) : screen_root_id(m).id;
     if (!target || bars_len == LENGTH(bars)) return false;
     if (d->attachment.hover && !Clay_PointerOver((Clay_ElementId){.id=target})) return false;
     uint64_t handle = declare_handle_for(d, DECLARE_KIND_DRAWIN);
@@ -2630,14 +2744,15 @@ declare_notifications(Monitor *m)
                 .layoutDirection = CLAY_TOP_TO_BOTTOM, .childGap = first->attachment.gap,
             },
             .floating = {
-                .attachTo = CLAY_ATTACH_TO_ELEMENT_WITH_ID, .parentId = output_id(m).id,
+                .attachTo = CLAY_ATTACH_TO_ELEMENT_WITH_ID, .parentId = screen_root_id(m).id,
                 .attachPoints = { .parent = position, .element = position },
                 .offset = {first->attachment.x, first->attachment.y},
                 .zIndex = Z_NOTIFICATION,
                 .pointerCaptureMode = CLAY_POINTER_CAPTURE_MODE_PASSTHROUGH,
             },
         };
-        Clay_ElementId stack_id = Clay__HashStringWithOffset(CLAY_STRING("NOTIFICATIONS"), position, 0);
+        Clay_ElementId stack_id = Clay__HashStringWithOffset(CLAY_STRING("NOTIFICATIONS"), position,
+            screen_subtrees ? screen_root_id(m).id : 0);
         native_open(stack_id);
         native_configure(&stack);
         record_open("NOTIFICATIONS", 0, stack_id, &stack, DECLARE_SRC_THEME, NULL);
@@ -2716,13 +2831,15 @@ declare_fullscreen_bg(Monitor *m)
 		Clay__HashStringWithOffset(CLAY_STRING("fullscreen_bg"), 0, 0), &bg);
 }
 
-/* The workarea: what the bars leave of the output, where the clients go.
+/* The workarea: what the bars leave of the screen, where the clients go.
  * screen.workarea is the box this element solves to (workarea_settle). */
 static Clay_ElementId
 workarea_id(Monitor *m)
 {
 	return Clay__HashStringWithOffset(CLAY_STRING("WORKAREA"),
-		(uint32_t)declare_handle_for(m, DECLARE_KIND_WALLPAPER), 0);
+        active_screen && screen_subtrees ? (uint32_t)active_screen->index
+            : (uint32_t)declare_handle_for(m, DECLARE_KIND_WALLPAPER),
+        active_screen && screen_subtrees ? screen_root_id(m).id : 0);
 }
 
 /* After the solve: the screen's workarea is the WORKAREA box, in layout
@@ -2733,10 +2850,10 @@ workarea_settle(Monitor *m)
 {
 	Clay_ElementData data = Clay_GetElementData(workarea_id(m));
 	Clay_BoundingBox b = data.boundingBox;
-	screen_t *s = luaA_screen_get_by_monitor(globalconf_L, m);
+	screen_t *s = active_screen->screen;
 	struct wlr_box box;
 
-	if (!data.found || !s)
+	if (!data.found || !s->valid)
 		return;
 	box.x = m->m.x + (int)floorf(b.x + 0.5f);
 	box.y = m->m.y + (int)floorf(b.y + 0.5f);
@@ -2784,10 +2901,10 @@ output_wallpaper_fill(Monitor *m, Clay_ElementId id, Clay_ElementDeclaration *o)
 	unsigned desktops = 0;
 	foreach(item, globalconf.drawins) {
 		drawin_t *d = *item;
-		if (!d->screen || d->screen->monitor != m)
+		if (!screen_hosted(d->screen, m))
 			continue;
 		d->widgets.output_fill = false;
-		if (declarable_drawin(d, m) && d->type == WINDOW_TYPE_DESKTOP) {
+		if (!screen_subtrees && declarable_drawin(d, m) && d->type == WINDOW_TYPE_DESKTOP) {
 			desktops++;
 			candidate = d;
 		}
@@ -2866,7 +2983,35 @@ output_wallpaper_fill(Monitor *m, Clay_ElementId id, Clay_ElementDeclaration *o)
 		attachment_bind(tree->bindings[i], host.id, id.id);
 }
 
-/* OUTPUT owns the fill and the column of edge bars around WORKAREA.
+/* Edge bars and native tile runs use the active screen's own allocation. */
+static void
+declare_screen_contents(Monitor *m)
+{
+	declare_edge(m, DRAWIN_EDGE_TOP);
+	if (edge_has_bars(m, DRAWIN_EDGE_LEFT) || edge_has_bars(m, DRAWIN_EDGE_RIGHT)) {
+		Clay_ElementDeclaration middle = {
+			.layout.sizing = { CLAY_SIZING_GROW(0), CLAY_SIZING_GROW(0) },
+		};
+		Clay_ElementId middle_id = Clay__HashStringWithOffset(
+			CLAY_STRING("MIDDLE"), (uint32_t)declare_handle_for(m, DECLARE_KIND_WALLPAPER),
+            screen_subtrees ? screen_root_id(m).id : 0);
+
+		native_open(middle_id);
+		native_configure(&middle);
+		record_open("MIDDLE", 0, middle_id, &middle, DECLARE_SRC_NONE, NULL);
+		declare_edge(m, DRAWIN_EDGE_LEFT);
+		declare_workarea(m);
+		declare_edge(m, DRAWIN_EDGE_RIGHT);
+		native_close();
+	} else {
+		declare_workarea(m);
+	}
+	declare_edge(m, DRAWIN_EDGE_BOTTOM);
+	declare_floating_bars(m);
+}
+
+/* OUTPUT owns the fill. A sole full-output screen keeps its edge column
+ * here; split outputs give each screen a fixed floating subtree.
  * The renderer places its backdrop below all roots; flow children retain band 0.
  * The root wallpaper carries the Monitor's word for screenshot exclusion;
  * an awful.wallpaper fill keeps its drawin's ownership and widget bindings. */
@@ -2895,26 +3040,36 @@ declare_output(Monitor *m)
 	native_open(id);
 	native_configure(&o);
 	record_open("OUTPUT", handle, id, &o, DECLARE_SRC_OUTPUT, NULL);
-	declare_edge(m, DRAWIN_EDGE_TOP);
-	if (edge_has_bars(m, DRAWIN_EDGE_LEFT) || edge_has_bars(m, DRAWIN_EDGE_RIGHT)) {
-		Clay_ElementDeclaration middle = {
-			.layout.sizing = { CLAY_SIZING_GROW(0), CLAY_SIZING_GROW(0) },
-		};
-		Clay_ElementId middle_id = Clay__HashStringWithOffset(
-			CLAY_STRING("MIDDLE"), (uint32_t)handle, 0);
-
-		native_open(middle_id);
-		native_configure(&middle);
-		record_open("MIDDLE", 0, middle_id, &middle, DECLARE_SRC_NONE, NULL);
-		declare_edge(m, DRAWIN_EDGE_LEFT);
-		declare_workarea(m);
-		declare_edge(m, DRAWIN_EDGE_RIGHT);
-		native_close();
-	} else {
-		declare_workarea(m);
-	}
-	declare_edge(m, DRAWIN_EDGE_BOTTOM);
-	declare_floating_bars(m);
+    for (size_t i = 0; i < screen_declarations_len; i++) {
+        screen_activate(&screen_declarations[i]);
+        if (screen_subtrees) {
+            struct wlr_box g = active_screen->geometry;
+            Clay_ElementId screen_id = screen_root_id(m);
+            Clay_ElementDeclaration screen = {
+                .layout = {
+                    .sizing = {CLAY_SIZING_FIXED(g.width), CLAY_SIZING_FIXED(g.height)},
+                    .layoutDirection = CLAY_TOP_TO_BOTTOM,
+                },
+                .floating = {
+                    .attachTo = CLAY_ATTACH_TO_ELEMENT_WITH_ID, .parentId = id.id,
+                    .offset = {g.x - m->m.x, g.y - m->m.y},
+                    .pointerCaptureMode = CLAY_POINTER_CAPTURE_MODE_PASSTHROUGH,
+                },
+            };
+            native_open(screen_id);
+            native_configure(&screen);
+            record_open("SCREEN", 0, screen_id, &screen, DECLARE_SRC_USER, NULL);
+            if (!recording->exhausted)
+                recording->records[recording->records_len - 1].screen_index = active_screen->index;
+        }
+        declare_screen_contents(m);
+        if (screen_subtrees) {
+            declare_clients(m);
+            declare_drawins(m);
+            native_close();
+        }
+    }
+    screen_activate(NULL);
 	native_close();
 }
 
@@ -3139,7 +3294,7 @@ static bool clips_prepare(Monitor *m)
     size_t scrolls = 0;
     foreach(item, globalconf.drawins) {
         drawin_t *d = *item;
-        if (d->screen && d->screen->monitor == m) scrolls += d->widgets.scrolls;
+        if (screen_hosted(d->screen, m)) scrolls += d->widgets.scrolls;
     }
     foreach(item, globalconf.clients) {
         Client *c = *item;
@@ -3147,8 +3302,10 @@ static bool clips_prepare(Monitor *m)
         for (int bar = 0; bar < CLIENT_TITLEBAR_COUNT; bar++)
             scrolls += c->titlebar[bar].widgets.scrolls;
     }
-    if (tile_ref != LUA_NOREF) {
-        lua_rawgeti(globalconf_L, LUA_REGISTRYINDEX, tile_ref);
+    for (size_t i = 0; i < screen_declarations_len; i++) {
+        int ref = screen_declarations[i].layout_ref;
+        if (ref == LUA_NOREF) continue;
+        lua_rawgeti(globalconf_L, LUA_REGISTRYINDEX, ref);
         scrolls += slot_scroll_count(globalconf_L, -1);
         lua_pop(globalconf_L, 1);
     }
@@ -3170,16 +3327,19 @@ declare_scene(Monitor *m)
 {
 	attachment_targets_len = 0;
 	bars_len = 0;
-	tile_prepare(m);
-    if (!clips_prepare(m)) return;
+    if (!screens_prepare(m) || !clips_prepare(m)) return;
 	declare_output(m);
     if (recording->exhausted) return;
 	declare_floating_layers(m);
     if (recording->exhausted) return;
-	declare_clients(m);
-    if (recording->exhausted) return;
-	declare_drawins(m);
-    if (recording->exhausted) return;
+    if (!screen_subtrees && screen_declarations_len == 1) {
+        screen_activate(&screen_declarations[0]);
+        declare_clients(m);
+        if (recording->exhausted) return;
+        declare_drawins(m);
+        screen_activate(NULL);
+        if (recording->exhausted) return;
+    }
 	declare_fullscreen_bg(m);
     if (recording->exhausted) return;
 	declare_unmanaged_clients(m);
@@ -3645,8 +3805,7 @@ void
 declare_state_clear(void)
 {
     Monitor *m;
-    luaL_unref(globalconf_L, LUA_REGISTRYINDEX, tile_ref);
-    tile_ref = LUA_NOREF;
+    screens_clear();
     solved_len = 0;
     wl_list_for_each(m, &mons, link) {
         if (!m->declare) continue;
@@ -3927,6 +4086,13 @@ declare_output_frame(struct declare_output *dout, Monitor *m)
 		 * (inspector_feed says why). */
 		if (insp_edge)
 			Clay_SetPointerState(insp_point, insp.down);
+		if (inspecting && band->inspector_refused) {
+			dout->inspecting = false;
+			inspecting = false;
+			insp_closed = true;
+			inspector_resync();
+			declare_output_mark_dirty(dout);
+		}
 		band->declare_us += declared - start;
 		band->solve_us += solved - declared;
         solved_emit(false);
@@ -3986,18 +4152,34 @@ declare_output_frame(struct declare_output *dout, Monitor *m)
     band->retained_dump = NULL;
     luaL_unref(globalconf_L, LUA_REGISTRYINDEX, band->layout_ref);
     band->layout_ref = LUA_NOREF;
-    if (tile_ref != LUA_NOREF) {
-        lua_rawgeti(globalconf_L, LUA_REGISTRYINDEX, tile_ref);
-        band->layout_ref = luaL_ref(globalconf_L, LUA_REGISTRYINDEX);
+    lua_createtable(globalconf_L, screen_declarations_len, 0);
+    for (size_t i = 0; i < screen_declarations_len; i++) {
+        int ref = screen_declarations[i].layout_ref;
+        if (ref == LUA_NOREF) continue;
+        lua_rawgeti(globalconf_L, LUA_REGISTRYINDEX, ref);
+        lua_rawseti(globalconf_L, -2, i + 1);
     }
+    band->layout_ref = luaL_ref(globalconf_L, LUA_REGISTRYINDEX);
     dout->inspector_width = panel_width;
     bars_settle(m);
     popups_settle(m);
-    workarea_settle(m);
+    for (size_t i = 0; i < screen_declarations_len; i++) {
+        screen_activate(&screen_declarations[i]);
+        workarea_settle(m);
+    }
+    screen_activate(NULL);
     clients_settle(m);
-    tile_publish(m);
+    for (size_t i = 0; i < screen_declarations_len; i++) {
+        screen_activate(&screen_declarations[i]);
+        if (active_screen->screen->valid) tile_publish(m);
+    }
+    screen_activate(NULL);
     solved_emit(true);
-    luaA_emit_signal_global_with_screen("clay::_commit", luaA_screen_get_by_monitor(globalconf_L, m));
+    for (size_t i = 0; i < screen_declarations_len; i++) {
+        screen_t *screen = screen_declarations[i].screen;
+        if (screen->valid) luaA_emit_signal_global_with_screen("clay::_commit", screen);
+    }
+    screens_clear();
     solved_len = 0;
 
 	/* The reconcile rasterises shape leaves through their Lua callbacks,
@@ -4038,6 +4220,7 @@ declare_output_frame(struct declare_output *dout, Monitor *m)
 
 failed:
     in_frame = false;
+    screens_clear();
     record_end();
     lua_settop(globalconf_L, lua_top);
     Clay_SetCurrentContext(band->clay);
@@ -4686,7 +4869,9 @@ dump_record_line(buffer_t *buf, struct declare_band *band,
 		data.found = render_shadow_box(band->render, r->id, &data.boundingBox);
 
 	buffer_addf(buf, "  %*s%s ", d * 2, "", r->role);
-	if (r->handle)
+    if (r->screen_index)
+        buffer_addf(buf, "%d", r->screen_index);
+	else if (r->handle)
 		dump_object(buf, r->handle);
 	else
 		buffer_adds(buf, "-");
@@ -4977,7 +5162,7 @@ dump_refused(buffer_t *buf, Monitor *m)
 	foreach(item, globalconf.drawins) {
 		drawin_t *d = *item;
 
-		if (!d->visible || !d->screen || d->screen->monitor != m
+		if (!d->visible || !screen_hosted(d->screen, m)
 				|| d->widgets.nodes_len > 0)
 			continue;
 		buffer_addf(buf, "  drawin screen %d %dx%d+%d+%d nothing:",
