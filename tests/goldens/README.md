@@ -1,5 +1,7 @@
 # Clay example goldens
 
+Goldens and pixel expectations are written against Noto Sans CJK KR and Noto Sans Mono CJK KR, pinned by `tests/fonts.conf`.
+
 These files specify the integration examples in `tests/_clay_golden.lua` vocabulary.
 The reducer preserves sizing, source words, declaration order and widget
 subtrees; it removes solved boxes and offsets. The dump walks Clay's own

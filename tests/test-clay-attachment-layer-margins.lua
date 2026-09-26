@@ -8,7 +8,7 @@ local function launch(anchor,size,margins)
   '--configure-report',report,'--color','ff0000ff'}
 end
 runner.run_steps {
- function() require('gears.wallpaper').set('#123456'); launch('top,left,right','0,80','10,12,0,-16'); return true end,
+ function() root.wallpaper(require('gears.color')('#123456')); launch('top,left,right','0,80','10,12,0,-16'); return true end,
  function(n)
   local d=awesome._clay_tree(screen[1])
   local f=io.open(report);local size=f and f:read('*a');if f then f:close() end

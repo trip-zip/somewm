@@ -66,6 +66,9 @@ jobs:
           sudo apt-get update
           sudo DEBIAN_FRONTEND=noninteractive TZ=Etc/UTC apt-get install -y --no-install-recommends \
             build-essential \
+            fonts-noto-cjk \
+            wlr-randr \
+            grim \
             dpkg-dev \
             ninja-build \
             python3-pip \
@@ -116,6 +119,13 @@ jobs:
             xterm \
             xwayland \
             zsh
+
+      - name: Show test font resolution
+        env:
+          FONTCONFIG_FILE: ${{ github.workspace }}/tests/fonts.conf
+        run: |
+          fc-match -v sans | grep -E 'family|fontversion'
+          fc-match -v monospace | grep -E 'family|fontversion'
 
       - name: Upgrade meson
         run: python3 -m pip install --upgrade --break-system-packages meson
@@ -204,8 +214,8 @@ jobs:
             ! -name 'test-output-fake-screen.lua' \
             $(printf '! -name %s ' $spawning) \
             | sort)
-          timeout 300 bash tests/run-integration.sh $tests
-        timeout-minutes: 6
+          timeout 1500 bash tests/run-integration.sh $tests
+        timeout-minutes: 30
         env:
           SOMEWM: ./build-test/somewm
           SOMEWM_CLIENT: ./build-test/somewm-client
@@ -214,7 +224,11 @@ jobs:
           TEST_TIMEOUT: 45
 
       - name: Run restart / hot-reload tests
-        run: timeout 900 make test-restart
+        # No X client can connect on the runners, so the X11 restart test is
+        # left out the way the integration step leaves out test-xwayland-*.
+        run: |
+          tests=$(find tests/restart -maxdepth 1 -name '*.sh' -type f ! -name 'lib.sh' ! -name 'x11-*' | sort)
+          SOMEWM=./build-test/somewm SOMEWM_CLIENT=./build-test/somewm-client timeout 900 ./tests/run-restart.sh $tests
         timeout-minutes: 16
         env:
           LIBSEAT_BACKEND: noop

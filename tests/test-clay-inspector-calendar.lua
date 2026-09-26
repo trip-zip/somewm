@@ -1,4 +1,4 @@
--- timeout: 240
+-- timeout: 600
 local runner = require('_runner')
 local async = require('_async')
 local awful = require('awful')

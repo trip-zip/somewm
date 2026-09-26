@@ -19,7 +19,7 @@ local function add(name, setup, verify)
     steps[#steps + 1] = function()
         for _, b in ipairs(bars) do b:remove() end
         bars = {}
-        require('gears.wallpaper').set('#123456')
+        root.wallpaper(require('gears.color')('#123456'))
         setup()
         last = nil
         return true
@@ -73,7 +73,7 @@ add('adding-a-background-to-clay-trees', function()
     local cr = cairo.Context(image)
     cr:set_source_rgb(1,0,0); cr:paint()
     cr:set_source_rgb(0,0,1); cr:rectangle(640,0,640,720); cr:fill()
-    require('gears.wallpaper').set(image)
+    root.wallpaper(require('lgi').cairo.Pattern.create_for_surface(image))
 end, function()
     example.pixel(100,14,'#00ff00'); example.pixel(100,100,'#ff0000')
     example.pixel(1000,100,'#0000ff')

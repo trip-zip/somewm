@@ -15,7 +15,7 @@ local function wait(fn)
 end
 runner.run_steps{
     function()
-        require('gears.wallpaper').set('#ffffff')
+        root.wallpaper(require('gears.color')('#ffffff'))
         local function bar(color)
             return awful.wibar{screen=s,position='top',height=20,bg=color,
                 widget=wibox.widget.textbox(''),shadow={enabled=true,radius=8,

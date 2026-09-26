@@ -1,13 +1,5 @@
 -- Pixel readback, color leaves and capture comparisons for widget-tree tests.
 
-local ffi = require("ffi")
-
-ffi.cdef [[
-    void cairo_surface_flush(void *surface);
-    unsigned char *cairo_image_surface_get_data(void *surface);
-    int cairo_image_surface_get_stride(void *surface);
-]]
-
 local base = require("wibox.widget.base")
 local utils = require("_utils")
 
@@ -40,13 +32,9 @@ function capture.read(surface, x, y)
     -- An lgi record carries the pointer in _native; a bare one is the pointer.
     local ok, native = pcall(function() return surface._native end)
     local raw = ok and native or surface
+    local b, g, r, a = awesome._surface_pixels(raw, x, y, 1, 1):byte(1, 4)
 
-    ffi.C.cairo_surface_flush(raw)
-
-    local data = ffi.C.cairo_image_surface_get_data(raw)
-    local off = y * ffi.C.cairo_image_surface_get_stride(raw) + x * 4
-
-    return data[off + 2], data[off + 1], data[off], data[off + 3]
+    return r, g, b, a
 end
 
 -- A capture of the box (x, y, width, height) of screen s.
@@ -62,19 +50,10 @@ function capture:shot()
 
     assert(surface, "screen.content returned nothing")
 
-    -- screen.content comes back as an lgi record; the FFI wants the pointer.
+    -- screen.content comes back as an lgi record; the binding wants the pointer.
     local raw = surface._native or surface
 
-    ffi.C.cairo_surface_flush(raw)
-
-    local data = ffi.C.cairo_image_surface_get_data(raw)
-    local stride = ffi.C.cairo_image_surface_get_stride(raw)
-    local rows = {}
-
-    for row = self.y, self.y + self.height - 1 do
-        rows[#rows + 1] = ffi.string(data + row * stride + self.x * 4, self.width * 4)
-    end
-    return table.concat(rows)
+    return awesome._surface_pixels(raw, self.x, self.y, self.width, self.height)
 end
 
 -- R, G, B of one pixel of a shot, box-local.

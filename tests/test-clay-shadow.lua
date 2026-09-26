@@ -66,7 +66,7 @@ local function shadow(dump, owner, band, src, frame, ox, oy, radius)
 end
 
 runner.run_async(function()
-    require('gears.wallpaper').set('#ffffff')
+    root.wallpaper(require('gears.color')('#ffffff'))
     beautiful.shadow_enabled, beautiful.shadow_drawin_enabled = true,true
     beautiful.shadow_radius, beautiful.shadow_spread = 12,0
     beautiful.shadow_offset_x, beautiful.shadow_offset_y = -15,-15

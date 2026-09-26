@@ -42,7 +42,7 @@ function M.run(name)
     end
     runner.run_steps {
         function()
-            require('gears.wallpaper').set('#123456')
+            root.wallpaper(require('gears.color')('#123456'))
             bar = awful.wibar { screen=s, position='top', height=28,
                 bg='#00ff00', widget=text('bar') }
             if name == 'floating-widget-anchored-to-another-widget' then
