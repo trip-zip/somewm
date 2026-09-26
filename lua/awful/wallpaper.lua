@@ -51,9 +51,6 @@
 --
 --@DOC_awful_wallpaper_tiled2_EXAMPLE@
 --
--- See the `wibox.container.tile` for more advanced tiling configuration
--- options.
---
 -- Solid colors and gradients
 -- ==========================
 --
@@ -132,17 +129,14 @@
 require("awful._compat")
 local gtable     = require( "gears.table"               )
 local gobject    = require( "gears.object"              )
-local gcolor     = require( "gears.color"               )
-local gtimer     = require( "gears.timer"               )
-local surface    = require( "gears.surface"             )
 local base       = require( "wibox.widget.base"         )
 local background = require( "wibox.container.background")
 local beautiful  = require( "beautiful"                 )
-local cairo      = require( "lgi" ).cairo
-local draw       = require( "wibox.widget" ).draw_to_cairo_context
 local grect      = require( "gears.geometry" ).rectangle
 
-local capi = { screen = screen, root = root }
+local wibox = require("wibox")
+
+local capi = { screen = screen }
 
 local module = {}
 
@@ -151,8 +145,6 @@ local function get_screen(s)
 end
 
 -- Screen as key, wallpaper as values.
-local pending_repaint = setmetatable({}, {__mode = 'k'})
-
 local backgrounds = setmetatable({}, {__mode = 'k'})
 
 local panning_modes = {}
@@ -250,158 +242,10 @@ function panning_modes.inner(self)
 end
 
 
-local function paint()
-    if not next(pending_repaint) then return end
-
-    local root_width, root_height = capi.root.size()
-
-    -- Get the current wallpaper content.
-    local source = surface(root.wallpaper())
-
-    local target, cr
-
-    -- It's possible that a wallpaper for 1 screen is set using another tool, so make
-    -- sure we copy the current content.
-    if source then
-        target = source:create_similar(cairo.Content.COLOR, root_width, root_height)
-        cr     = cairo.Context(target)
-
-        -- Copy the old wallpaper to the new one
-        cr:save()
-        cr.operator = cairo.Operator.SOURCE
-        cr:set_source_surface(source, 0, 0)
-
-        for s in screen do
-            cr:rectangle(
-                s.geometry.x,
-                s.geometry.y,
-                s.geometry.width,
-                s.geometry.height
-            )
-        end
-
-        cr:clip()
-
-        cr:paint()
-        cr:restore()
-    else
-        target = cairo.ImageSurface(cairo.Format.RGB32, root_width, root_height)
-        cr     = cairo.Context(target)
-    end
-
-    local walls = {}
-
-    for _, wall in pairs(backgrounds) do
-        walls[wall] = true
-    end
-
-    -- Not supposed to happen, but there is enough API surface for
-    -- it to be a side effect of some signals. Calling the panning
-    -- mode callback with zero screen is not supported.
-    if not next(walls) then
-        return
-    end
-
-    for wall in pairs(walls) do
-
-        local geo = type(wall._private.panning_area) == "function" and
-            wall._private.panning_area(wall) or
-            panning_modes[wall._private.panning_area](wall)
-
-        -- If false, this panning area isn't well suited for the screen geometry.
-        if geo.width > 0 or geo.height > 0 then
-            local uncovered_areas = grect.area_remove(get_rectangles(wall.screens, false, false), geo)
-
-            cr:save()
-
-            -- Prevent overwrite then there is multiple non-continuous screens.
-            for _, s in ipairs(wall.screens) do
-                cr:rectangle(
-                    s.geometry.x,
-                    s.geometry.y,
-                    s.geometry.width,
-                    s.geometry.height
-                )
-            end
-
-            cr:clip()
-
-            -- The older surface might contain garbage, optionally clean it.
-            if wall.uncovered_areas_color then
-                cr:set_source(gcolor(wall.uncovered_areas_color))
-
-                for _, area in ipairs(uncovered_areas) do
-                    cr:rectangle(area.x, area.y, area.width, area.height)
-                    cr:fill()
-                end
-            end
-
-            if not wall._private.container then
-                wall._private.container = background()
-                wall._private.container.bg = wall._private.bg or beautiful.wallpaper_bg or "#000000"
-                wall._private.container.fg = wall._private.fg or beautiful.wallpaper_fg or "#ffffff"
-                wall._private.container.widget = wall.widget
-            end
-
-            local a_context = {
-                dpi = wall._private.context.dpi
-            }
-
-            -- Pick the lowest DPI.
-            if not a_context.dpi then
-                a_context.dpi = math.huge
-                for _, s in ipairs(wall.screens) do
-                    a_context.dpi = math.min(
-                        s.dpi and s.dpi or s.preferred_dpi, a_context.dpi
-                    )
-                end
-            end
-
-            -- Fallback.
-            if not a_context.dpi then
-                a_context.dpi = 96
-            end
-
-            cr:translate(geo.x, geo.y)
-            draw(wall._private.container, cr, geo.width, geo.height, a_context)
-            cr:restore()
-        end
-    end
-
-    -- Set the wallpaper.
-    local pattern = cairo.Pattern.create_for_surface(target)
-    capi.root.wallpaper(pattern)
-
-    -- Limit some potential GC induced increase in memory usage.
-    -- But really, is someone is trying to apply wallpaper changes more
-    -- often than the GC is executed, they are doing it wrong.
-    target:finish()
-
-end
-
-local mutex = false
-
--- Uploading the surface to X11 is *very* resource intensive. Given the updates
--- will often happen in batch (like startup), make sure to only do one "real"
--- update.
-local function update()
-    if mutex then return end
-
-    mutex = true
-
-    gtimer.delayed_call(function()
-        -- Remove the mutex first in case `paint()` raises an exception.
-        mutex = false
-        paint()
-    end)
-end
-
 capi.screen.connect_signal("removed", function(s)
     if not backgrounds[s] then return end
 
     backgrounds[s]:remove_screen(s)
-
-    update()
 end)
 
 capi.screen.connect_signal("property::geometry", function(s)
@@ -419,30 +263,6 @@ end)
 -- @property widget
 -- @tparam[opt=nil] widget|nil widget
 -- @see wibox.widget.imagebox
--- @see wibox.container.tile
-
---- The wallpaper DPI (dots per inch).
---
--- Each screen has a DPI. This value will be used by default, but sometime it
--- is useful to override the screen DPI and use a custom one. This makes
--- possible, for example, to draw the widgets bigger than they would otherwise
--- be.
---
--- If not DPI is defined, it will use the smallest DPI from any of the screen.
---
--- In this example, there is 3 screens with DPI of 100, 200 and 300. As you can
--- see, only the text size is affected. Many widgetds are DPI aware, but not all
--- of them. This is either because DPI isn't relevant to them or simply because it
--- isn't supported (like `wibox.widget.graph`).
---
--- @DOC_awful_wallpaper_dpi1_EXAMPLE@
---
--- @property dpi
--- @tparam[opt=self.screen.dpi] number dpi
--- @propertyunit pixel\_per\_inch
--- @negativeallowed false
--- @see screen
--- @see screen.dpi
 
 --- The wallpaper screen.
 --
@@ -548,20 +368,6 @@ end)
 -- @tablerowkey number height
 -- @see honor_workarea
 -- @see honor_padding
--- @see uncovered_areas_color
-
---- The color for the uncovered areas.
---
--- Some application rely on the wallpaper for "fake" transparency. Even if an
--- area is hidden under a wibar (or other clients), its background can still
--- become visible. If you use such application and change your screen geometry
--- often enough, it is possible some areas would become filled with the remains
--- of previous wallpapers. This property allows to clean those areas with a solid
--- color or a gradient.
---
--- @property uncovered_areas_color
--- @tparam[opt="transparent"] color uncovered_areas_color
--- @see uncovered_areas
 
 --- Defines where the wallpaper is placed when there is multiple screens.
 --
@@ -640,15 +446,6 @@ end
 
 function module:get_widget()
     return self._private.widget
-end
-
-function module:set_dpi(dpi)
-    self._private.context.dpi = dpi
-    self:repaint()
-end
-
-function module:get_dpi()
-    return self._private.context.dpi
 end
 
 function module:set_screen(s)
@@ -772,28 +569,48 @@ function module:detach()
     for _, s in ipairs(screens) do
         self:remove_screen(s)
     end
+    self:repaint()
 end
 
 function module:_clear()
     self._private.screens = setmetatable({}, {__mode = "v"})
-    update()
+    self:repaint()
 end
 
 --- Repaint the wallpaper.
 --
--- By default, even if the widget changes, the wallpaper will **NOT** be
--- automatically repainted. Repainting the native X11 wallpaper is slow and
--- it would be too easy to accidentally cause a performance problem. If you
--- really need to repaint the wallpaper, call this method.
---
 -- @method repaint
 -- @noreturn
 function module:repaint()
-    for _, s in ipairs(self._private.screens) do
-        pending_repaint[s] = true
+    local s = self._private.screens[1]
+    if not s then
+        if self._private.wibox then self._private.wibox.visible = false end
+        return
     end
 
-    update()
+    if not self._private.wibox then
+        local container = background()
+        container.bg = self._private.bg or beautiful.wallpaper_bg or "#000000"
+        container.fg = self._private.fg or beautiful.wallpaper_fg or "#ffffff"
+        container.widget = self.widget
+        self._private.container = container
+        self._private.wibox = wibox {
+            type = "desktop", input_passthrough = true, bg = "#00000000",
+            visible = false, screen = s, widget = container,
+        }
+    end
+
+    local geo = type(self._private.panning_area) == "function" and
+        self._private.panning_area(self) or
+        panning_modes[self._private.panning_area](self)
+    local box = self._private.wibox
+    if geo.width > 0 and geo.height > 0 then
+        box.screen = s
+        box:geometry(geo)
+        box.visible = true
+    else
+        box.visible = false
+    end
 end
 
 --- Remove a screen.
@@ -854,7 +671,6 @@ end
 --  (Note: the expected table should be an array-like table `{screen1, screen2, ...}`)
 -- @tparam[opt] gears.color args.bg The background color.
 -- @tparam[opt] gears.color args.fg The foreground color.
--- @tparam[opt] gears.color args.uncovered_areas_color The color for the uncovered areas.
 -- @tparam[opt] boolean args.honor_workarea Honor the workarea.
 -- @tparam[opt] boolean args.honor_padding Honor the screen padding.
 -- @tparam[opt] table args.uncovered_areas Returns the list of screen(s) area which won't be covered by the wallpaper.
@@ -868,7 +684,6 @@ local function new(_, args)
     }
 
     rawset(ret, "_private", {})
-    ret._private.context      = {}
     ret._private.panning_area = "outer"
 
     gtable.crush(ret, module, true)

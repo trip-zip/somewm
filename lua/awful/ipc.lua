@@ -947,7 +947,7 @@ local function register_builtin_commands()
       capi.awesome.kill(pid, 9) -- SIGKILL
       return string.format("Force-killed client (pid=%d)", pid)
     else
-      capi.client.kill(c)
+      c:kill()
       return string.format("Killed client %s", target)
     end
   end)
@@ -984,7 +984,7 @@ local function register_builtin_commands()
   --- client.close <ID|focused> - Close a client gracefully
   ipc.register("client.close", function(target)
     local c = resolve_client(target)
-    capi.client.kill(c)
+    c:kill()
     return string.format("Closed client %s", target or "focused")
   end)
 
@@ -1884,6 +1884,34 @@ local function register_builtin_commands()
     end
     menubar.show()
     return "Showing application launcher (menubar)"
+  end)
+
+  -- =================================================================
+  -- CLAY COMMANDS
+  -- =================================================================
+
+  --- clay.tree [screen] - Dump the solved Clay tree
+  -- Reports what the last frame solved and reconciled on every output, or on
+  -- one screen: counters per band, then one line per retained node in draw
+  -- order.
+  ipc.register("clay.tree", function(target)
+    local s = nil
+
+    if target then
+      local index = tonumber(target)
+
+      if not index or not capi.screen[index] then
+        error("Screen not found: " .. tostring(target))
+      end
+      s = capi.screen[index]
+    end
+
+    local dump = capi.awesome._clay_tree(s)
+
+    if dump == "" then
+      return "No output has a Clay tree"
+    end
+    return dump
   end)
 
   -- =================================================================
@@ -3360,8 +3388,7 @@ local function register_builtin_commands()
         },
         valign = "center",
         halign = "center",
-        tiled  = false,
-        widget = wibox.container.tile,
+        widget = wibox.container.place,
       }
     }
     return string.format("Set wallpaper to %s on screen %d", path, s.index)

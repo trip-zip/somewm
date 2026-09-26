@@ -1,5 +1,5 @@
 ---------------------------------------------------------------------------
---- Regression test: titlebar event propagation (issue 593).
+--- Regression test: titlebar event propagation.
 ---
 --- The compositor must NOT deliver pointer events to a client while the cursor
 --- is over the client's server-side titlebar. The bug delivered wl_pointer

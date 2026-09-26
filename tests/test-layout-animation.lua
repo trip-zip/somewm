@@ -6,6 +6,7 @@
 -- 2. Animates mwfact changes smoothly (clients reach target geometry)
 -- 3. Handles rapid retargeting (multiple changes converge)
 -- 4. Skips animation during mousegrabber (mouse drag)
+-- 5. Animates on the way, not only at the end
 ---------------------------------------------------------------------------
 
 local runner = require("_runner")
@@ -205,6 +206,41 @@ local steps = {
             assert(false, "mwfact did not snap during mousegrabber")
         end
         return nil
+    end,
+
+    ---------------------------------------------------------------------------
+    -- Test 5: the animation is visible on the way, not only at its end
+    ---------------------------------------------------------------------------
+    function(count)
+        if count == 1 then
+            layout_animation.enabled = false
+            tag.master_width_factor = 0.5
+            return nil
+        end
+        -- Nothing happens for over a second first: an output frames when
+        -- something dirties it, so the frame that starts the animation
+        -- arrives long after the last one and must not count that gap as
+        -- elapsed time.
+        if count < 14 then return nil end
+        layout_animation.duration = 1
+        layout_animation.enabled = true
+        tag.master_width_factor = 0.8
+        return true
+    end,
+
+    function(count)
+        local wa = screen.primary.workarea
+        local _, actual_w = master_width_matches(0.8)
+
+        -- A snap is never caught between the two widths; an animation is.
+        if actual_w > wa.width * 0.5 + 10 and actual_w < wa.width * 0.8 - 10 then
+            io.stderr:write(string.format(
+                "[TEST] PASS: mid-animation master.w=%d\n", actual_w))
+            return true
+        end
+        assert(count < 8, string.format(
+            "master never animated: w=%d, wanted between %d and %d",
+            actual_w, wa.width * 0.5, wa.width * 0.8))
     end,
 
     ---------------------------------------------------------------------------

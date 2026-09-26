@@ -23,7 +23,9 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/socket.h>
+#include <sys/stat.h>
 #include <sys/un.h>
+#include <time.h>
 #include <unistd.h>
 #include <wayland-server-core.h>
 
@@ -56,11 +58,42 @@ static struct wl_event_loop *ipc_event_loop = NULL;
 static struct wl_list ipc_clients;
 static int ipc_subscriber_count = 0;
 static char ipc_socket_path[256];
+/* The inode the socket file had when this process bound it, so cleanup can
+ * tell its own file from one a later instance bound at the same path. */
+static struct stat ipc_socket_stat;
 
 const char *
 ipc_get_socket_path(void)
 {
 	return ipc_socket_path;
+}
+
+/* Return 1 for a listener, 0 for a missing or stale socket, and -1 for
+ * other failures, preserving the errno that prevented the probe. */
+static int
+ipc_probe_socket(void)
+{
+	struct sockaddr_un addr = {0};
+	size_t path_len = strlen(ipc_socket_path);
+	if (path_len >= sizeof(addr.sun_path)) {
+		errno = ENAMETOOLONG;
+		return -1;
+	}
+	addr.sun_family = AF_UNIX;
+	memcpy(addr.sun_path, ipc_socket_path, path_len + 1);
+
+	int fd = socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0);
+	if (fd < 0)
+		return -1;
+	int result = connect(fd, (struct sockaddr *)&addr, sizeof(addr));
+	int saved_errno = errno;
+	close(fd);
+	if (result == 0)
+		return 1;
+	if (saved_errno == ENOENT || saved_errno == ECONNREFUSED)
+		return 0;
+	errno = saved_errno;
+	return -1;
 }
 
 int
@@ -92,13 +125,32 @@ ipc_init(struct wl_event_loop *event_loop)
 	}
 
 	/* Create socket */
-	ipc_socket_fd = socket(AF_UNIX, SOCK_STREAM, 0);
+	ipc_socket_fd = socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0);
 	if (ipc_socket_fd < 0) {
 		fprintf(stderr, "IPC: Failed to create socket: %s\n", strerror(errno));
 		return -1;
 	}
 
-	/* Remove stale socket file if it exists */
+	/* Allow an exiting compositor to close its listener before removing
+	 * the stale socket file, but never take a running compositor's path. */
+	int probe = ipc_probe_socket();
+	struct timespec delay = { .tv_sec = 0, .tv_nsec = 100000000 };
+	for (int retry = 0; probe > 0 && retry < 50; retry++) {
+		nanosleep(&delay, NULL);
+		probe = ipc_probe_socket();
+	}
+	if (probe != 0) {
+		if (probe > 0)
+			fprintf(stderr, "IPC: %s is held by a running somewm; set SOMEWM_SOCKET to another path\n",
+			        ipc_socket_path);
+		else
+			fprintf(stderr, "IPC: Failed to probe %s: %s\n",
+			        ipc_socket_path, strerror(errno));
+		close(ipc_socket_fd);
+		ipc_socket_fd = -1;
+		ipc_socket_path[0] = '\0';
+		return -1;
+	}
 	unlink(ipc_socket_path);
 
 	/* Bind to path */
@@ -120,6 +172,8 @@ ipc_init(struct wl_event_loop *event_loop)
 		ipc_socket_fd = -1;
 		return -1;
 	}
+	if (stat(ipc_socket_path, &ipc_socket_stat) < 0)
+		memset(&ipc_socket_stat, 0, sizeof(ipc_socket_stat));
 
 	/* Listen for connections */
 	if (listen(ipc_socket_fd, IPC_MAX_CLIENTS) < 0) {
@@ -166,16 +220,23 @@ ipc_cleanup(void)
 		ipc_event_source = NULL;
 	}
 
+	/* Remove our socket file while this process still listens, so a newer
+	 * instance probing the path cannot bind between stat and unlink. The
+	 * inode guard preserves a file that something else replaced. */
+	if (ipc_socket_path[0]) {
+		struct stat now;
+
+		if (stat(ipc_socket_path, &now) == 0
+				&& now.st_dev == ipc_socket_stat.st_dev
+				&& now.st_ino == ipc_socket_stat.st_ino)
+			unlink(ipc_socket_path);
+		ipc_socket_path[0] = '\0';
+	}
+
 	/* Close listening socket */
 	if (ipc_socket_fd >= 0) {
 		close(ipc_socket_fd);
 		ipc_socket_fd = -1;
-	}
-
-	/* Remove socket file */
-	if (ipc_socket_path[0]) {
-		unlink(ipc_socket_path);
-		ipc_socket_path[0] = '\0';
 	}
 }
 

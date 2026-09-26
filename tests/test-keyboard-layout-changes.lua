@@ -1,4 +1,4 @@
--- Test for bug #1494: Using xmodmap freezes awesome since it re-queries the
+-- Test: Using xmodmap freezes awesome since it re-queries the
 -- keyboard layout many, many times. (xmodmap applies each change on its own)
 
 local runner = require("_runner")

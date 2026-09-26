@@ -68,6 +68,7 @@ fi
 # Setup temp directory and log file
 TMP_DIR=$(mktemp -d)
 LOG="$TMP_DIR/somewm.log"
+export SOMEWM_TEST_LOG="$LOG"
 
 # Create isolated runtime directory for test compositor
 TEST_RUNTIME_DIR="$TMP_DIR/runtime"
@@ -107,7 +108,7 @@ cleanup() {
     fi
 
     # Clean up socket in visual mode (it's in real XDG_RUNTIME_DIR)
-    [ "$HEADLESS" != 1 ] && rm -f "$SOCKET" 2>/dev/null || true
+    [ "$HEADLESS" != 1 ] && [ -n "$SOMEWM_PID" ] && rm -f "$SOCKET" 2>/dev/null || true
 
     rm -rf "$TMP_DIR" || true
 
@@ -172,6 +173,8 @@ start_somewm() {
 # Sets: TEST_DURATION (seconds with decimals)
 run_test() {
     local test_file="$1"
+    local timeout=$(sed -n '/^-- timeout: [0-9][0-9]*$/{s/^-- timeout: //;p;q;}' "$test_file")
+    local TEST_TIMEOUT="${timeout:-$TEST_TIMEOUT}"
     local test_name=$(basename "$test_file")
     local start_time end_time
 
@@ -253,6 +256,8 @@ run_test() {
 # Sets: TEST_DURATION (seconds with decimals)
 run_test_persistent() {
     local test_file="$1"
+    local timeout=$(sed -n '/^-- timeout: [0-9][0-9]*$/{s/^-- timeout: //;p;q;}' "$test_file")
+    local TEST_TIMEOUT="${timeout:-$TEST_TIMEOUT}"
     local test_name=$(basename "$test_file")
     local start_time end_time
 

@@ -12,11 +12,8 @@
 ---------------------------------------------------------------------------
 
 local fixed = require("wibox.layout.fixed")
-local drawable = require("wibox.drawable")
 local beautiful = require("beautiful")
 local gtable = require("gears.table")
-local gcolor = require("gears.color")
-local base = require("wibox.widget.base")
 local capi = {
     awesome = awesome,
     screen = screen,
@@ -52,12 +49,6 @@ local display_on_screen = "primary"
 -- @beautiful beautiful.systray_paddings
 -- @tparam[opt=0] integer systray_paddings The padding around the systray
 
-local function should_display_on(s)
-    if display_on_screen == "primary" then
-        return s == capi.screen.primary
-    end
-    return s == display_on_screen
-end
 
 -- Check if the function was called like :foo() or .foo() and do the right thing
 local function get_args(self, ...)
@@ -139,14 +130,6 @@ function systray:set_screen(s)
     end
 end
 
---- Private API. Called when systray is removed from a drawable.
--- @method _kickout
--- @hidden
-function systray:_kickout(context)
-    -- For SNI-based systray, we don't need to do anything special
-    -- as each icon is a separate widget
-end
-
 --- Update icon sizes based on base_size setting.
 -- @method _update_icon_sizes
 -- @hidden
@@ -172,7 +155,7 @@ function systray:_sync_items()
 
     local all_items = capi.systray_item and capi.systray_item.get_items() or {}
 
-    -- BEH-8: Hide items with Passive status
+    -- Hide items with Passive status
     local items = {}
     local item_set = {}
     for _, item in ipairs(all_items) do
@@ -253,119 +236,8 @@ local function new(revers)
     local spacing = beautiful.systray_icon_spacing or 0
     ret:set_spacing(spacing)
 
-    -- Override draw to paint background (beautiful.bg_systray)
-    local orig_draw = ret.draw
-    function ret:draw(context, cr, width, height)
-        local bg = beautiful.bg_systray
-        if bg then
-            cr:set_source(gcolor(bg))
-            cr:rectangle(0, 0, width, height)
-            cr:fill()
-        end
-        -- Note: padding offset is handled in layout(), draw just paints bg
-        if orig_draw then
-            orig_draw(self, context, cr, width, height)
-        end
-    end
-
-    -- Override layout for systray_max_rows grid arrangement + padding
-    local orig_layout = ret.layout
-    function ret:layout(context, width, height)
-        local padding = beautiful.systray_paddings or 0
-        local max_rows = math.floor(tonumber(beautiful.systray_max_rows) or 1)
-
-        if max_rows <= 1 then
-            -- Use original fixed layout behavior, but offset by padding
-            local orig_result = orig_layout(self, context, width - padding * 2, height - padding * 2)
-            if padding > 0 and orig_result then
-                -- Offset all widgets by padding
-                local result = {}
-                for _, item in ipairs(orig_result) do
-                    local widget, x, y, w, h = item[1], item[2], item[3], item[4], item[5]
-                    table.insert(result, base.place_widget_at(widget, x + padding, y + padding, w, h))
-                end
-                return result
-            end
-            return orig_result
-        end
-
-        -- Grid layout for multiple rows
-        local children = self:get_children()
-        local num_entries = #children
-        if num_entries == 0 then return {} end
-
-        local icon_spacing = beautiful.systray_icon_spacing or 0
-        local icon_size = base_size or 24
-
-        -- Calculate rows/cols
-        local rows = math.min(num_entries, max_rows)
-        local cols = math.ceil(num_entries / rows)
-
-        local result = {}
-        for i, widget in ipairs(children) do
-            local idx = i - 1
-            local row, col
-            if horizontal then
-                -- Fill columns first (top to bottom, then left to right)
-                col = math.floor(idx / rows)
-                row = idx % rows
-            else
-                -- Fill rows first (left to right, then top to bottom)
-                row = math.floor(idx / cols)
-                col = idx % cols
-            end
-
-            local x = padding + col * (icon_size + icon_spacing)
-            local y = padding + row * (icon_size + icon_spacing)
-
-            table.insert(result, base.place_widget_at(widget, x, y, icon_size, icon_size))
-        end
-        return result
-    end
-
-    -- Override fit for systray_max_rows grid sizing + padding + minimum size
-    local orig_fit = ret.fit
-    function ret:fit(context, width, height)
-        local padding = beautiful.systray_paddings or 0
-        local max_rows = math.floor(tonumber(beautiful.systray_max_rows) or 1)
-        local icon_size = base_size or 24
-
-        -- Minimum size: at least show padding + one icon slot (for empty systray visibility)
-        local min_size = padding * 2 + icon_size
-
-        if max_rows <= 1 then
-            -- Use original fixed layout behavior + padding
-            local w, h = orig_fit(self, context, width, height)
-            -- Add padding and ensure minimum size
-            w = math.max(w + padding * 2, min_size)
-            h = math.max(h + padding * 2, icon_size + padding * 2)
-            return w, h
-        end
-
-        -- Grid fit for multiple rows
-        local children = self:get_children()
-        local num_entries = #children
-
-        local icon_spacing = beautiful.systray_icon_spacing or 0
-
-        -- If empty, return minimum size
-        if num_entries == 0 then
-            return min_size, icon_size + padding * 2
-        end
-
-        -- Calculate rows/cols
-        local rows = math.min(num_entries, max_rows)
-        local cols = math.ceil(num_entries / rows)
-
-        local total_width = cols * icon_size + (cols - 1) * icon_spacing + padding * 2
-        local total_height = rows * icon_size + (rows - 1) * icon_spacing + padding * 2
-
-        if horizontal then
-            return total_width, total_height
-        else
-            return total_height, total_width
-        end
-    end
+    require("wibox.clay").describe_widget(ret, require("wibox.clay").systray,
+        "wibox.widget.systray")
 
     -- Sync items when systray updates
     capi.awesome.connect_signal("systray::update", function()
@@ -381,9 +253,6 @@ local function new(revers)
 
     -- Initial sync
     ret:_sync_items()
-
-    -- Register with drawable system for AwesomeWM compatibility
-    drawable._set_systray_widget(ret)
 
     return ret
 end

@@ -8,10 +8,12 @@
 #include "common/luaclass.h"
 #include "common/luaobject.h"
 #include "../somewm_api.h"
+#include "../declare.h"
 #include "../globalconf.h"
 #include "../event_queue.h"
 #include "common/util.h"
 #include "../x11_compat.h"
+#include "../screenshot_compose.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -91,14 +93,18 @@ luaA_screen_hot_reload(lua_State *L)
 	}
 }
 
-/** Get all screen objects for hot-reload snapshot.
+/** Get all screen objects for a snapshot.
  * \param L Lua state (for accessing registry)
- * \param out_screens Output array (caller-allocated, at least *out_count entries)
+ * \param out_screens Output array, or NULL to query the required entry count
  * \param out_count In: size of out_screens array. Out: actual number of screens.
  */
 void
 luaA_screen_get_all(lua_State *L, screen_t **out_screens, int *out_count)
 {
+    if (!out_screens) {
+        *out_count = screen_count;
+        return;
+    }
 	int max = *out_count;
 	int count = 0;
 	size_t i;
@@ -577,23 +583,6 @@ push_wlr_box(lua_State *L, struct wlr_box *box)
 
 /* Note: wlr_box_equal() is provided by wlroots in wlr/util/box.h */
 
-static void screen_update_workarea_ex(screen_t *screen, bool defer);
-
-/** Recalculate workarea for a screen including all drawin struts
- * \param L Lua state (unused, kept for compatibility)
- * \param screen Screen to recalculate workarea for
- *
- * Wrapper for screen_update_workarea() used by the C-initiated geometry path,
- * which queues property::geometry. The workarea signal has to be queued too,
- * or it would overtake the geometry signal it is supposed to follow.
- */
-static void
-luaA_screen_recalculate_workarea(lua_State *L, screen_t *screen)
-{
-	(void)L;
-	screen_update_workarea_ex(screen, true);
-}
-
 /** Update screen geometry from monitor and emit property::geometry if changed
  * \param L Lua state
  * \param screen Screen to update
@@ -620,32 +609,11 @@ luaA_screen_update_geometry(lua_State *L, screen_t *screen)
 		/* Update cached geometry */
 		screen->geometry = new_geom;
 
-		/* Wayland-specific: auto-resize visible drawins that filled the old
-		 * screen geometry. Handles scale/mode changes that shrink/grow the
-		 * logical screen size. AwesomeWM never needs this (no per-output scaling). */
-		foreach(item, globalconf.drawins) {
-			drawin_t *d = *item;
-			if (!d->visible || d->screen != screen)
-				continue;
-			if (d->x == old_geom.x && d->y == old_geom.y &&
-			    d->width == old_geom.width && d->height == old_geom.height) {
-				luaA_drawin_set_geometry(L, d,
-					new_geom.x, new_geom.y,
-					new_geom.width, new_geom.height);
-			}
-		}
-
 		/* Queue property::geometry signal with old geometry as argument */
 		luaA_screen_push(L, screen);
 		push_wlr_box(L, &old_geom);
 		some_event_queue_signal(L, -2, SIG_PROPERTY_GEOMETRY, 1);
 		lua_pop(L, 1);  /* Pop screen object */
-
-		/* Recalculate workarea including drawin struts.
-		 * We pass NULL as drawin since we want to recalculate for ALL drawins
-		 * on this screen, not just one specific drawin. The function will
-		 * iterate through globalconf.drawins to find all visible ones. */
-		luaA_screen_recalculate_workarea(L, screen);
 	}
 }
 
@@ -654,8 +622,7 @@ luaA_screen_update_geometry(lua_State *L, screen_t *screen)
  * \param screen Screen to update
  * \param workarea New workarea to set
  *
- * This is used by Wayland layer shell to set workarea based on exclusive zones.
- * For strut-based workarea calculation, use screen_update_workarea() instead.
+ * The workarea is the box the tree's WORKAREA element solved to (declare.c).
  */
 void
 screen_set_workarea(lua_State *L, screen_t *screen, struct wlr_box *workarea)
@@ -689,161 +656,6 @@ screen_set_workarea(lua_State *L, screen_t *screen, struct wlr_box *workarea)
 		push_wlr_box(L, &old_workarea);
 		some_event_queue_signal(L, -2, SIG_PROPERTY_WORKAREA, 1);
 		lua_pop(L, 1);  /* Pop screen object */
-	}
-}
-
-/** Update screen workarea based on all drawin and client struts
- * \param screen Screen to update workarea for
- *
- * This matches AwesomeWM's screen_update_workarea() signature.
- * Aggregates struts from ALL visible drawins and clients on the screen.
- */
-void
-screen_update_workarea(screen_t *screen)
-{
-	screen_update_workarea_ex(screen, false);
-}
-
-/** screen_update_workarea(), with control over how property::workarea is sent.
- * \param defer Queue the signal instead of emitting it inline.
- */
-static void
-screen_update_workarea_ex(screen_t *screen, bool defer)
-{
-	area_t area = screen->geometry;
-	uint16_t top = 0, bottom = 0, left = 0, right = 0;
-
-#define COMPUTE_STRUT(o) \
-	{ \
-		if((o)->strut.top_start_x || (o)->strut.top_end_x || (o)->strut.top) \
-		{ \
-			if((o)->strut.top) \
-				top = MAX(top, (o)->strut.top); \
-			else \
-				top = MAX(top, ((o)->geometry.y - area.y) + (o)->geometry.height); \
-		} \
-		if((o)->strut.bottom_start_x || (o)->strut.bottom_end_x || (o)->strut.bottom) \
-		{ \
-			if((o)->strut.bottom) \
-				bottom = MAX(bottom, (o)->strut.bottom); \
-			else \
-				bottom = MAX(bottom, (area.y + area.height) - (o)->geometry.y); \
-		} \
-		if((o)->strut.left_start_y || (o)->strut.left_end_y || (o)->strut.left) \
-		{ \
-			if((o)->strut.left) \
-				left = MAX(left, (o)->strut.left); \
-			else \
-				left = MAX(left, ((o)->geometry.x - area.x) + (o)->geometry.width); \
-		} \
-		if((o)->strut.right_start_y || (o)->strut.right_end_y || (o)->strut.right) \
-		{ \
-			if((o)->strut.right) \
-				right = MAX(right, (o)->strut.right); \
-			else \
-				right = MAX(right, (area.x + area.width) - (o)->geometry.x); \
-		} \
-	}
-
-	foreach(c, globalconf.clients)
-		if((*c)->screen == screen && client_isvisible(*c))
-			COMPUTE_STRUT(*c)
-
-#undef COMPUTE_STRUT
-
-	/* Drawin uses separate x/y/width/height fields instead of geometry struct */
-#define COMPUTE_DRAWIN_STRUT(d) \
-	{ \
-		if((d)->strut.top_start_x || (d)->strut.top_end_x || (d)->strut.top) \
-		{ \
-			if((d)->strut.top) \
-				top = MAX(top, (d)->strut.top); \
-			else \
-				top = MAX(top, ((d)->y - area.y) + (d)->height); \
-		} \
-		if((d)->strut.bottom_start_x || (d)->strut.bottom_end_x || (d)->strut.bottom) \
-		{ \
-			if((d)->strut.bottom) \
-				bottom = MAX(bottom, (d)->strut.bottom); \
-			else \
-				bottom = MAX(bottom, (area.y + area.height) - (d)->y); \
-		} \
-		if((d)->strut.left_start_y || (d)->strut.left_end_y || (d)->strut.left) \
-		{ \
-			if((d)->strut.left) \
-				left = MAX(left, (d)->strut.left); \
-			else \
-				left = MAX(left, ((d)->x - area.x) + (d)->width); \
-		} \
-		if((d)->strut.right_start_y || (d)->strut.right_end_y || (d)->strut.right) \
-		{ \
-			if((d)->strut.right) \
-				right = MAX(right, (d)->strut.right); \
-			else \
-				right = MAX(right, (area.x + area.width) - (d)->x); \
-		} \
-	}
-
-	/* Use the explicit drawin->screen pointer (matches client filter above);
-	 * coord-based lookup races with staggered geometry updates at startup. */
-	foreach(drawin, globalconf.drawins)
-		if((*drawin)->visible && (*drawin)->screen == screen)
-			COMPUTE_DRAWIN_STRUT(*drawin)
-
-#undef COMPUTE_DRAWIN_STRUT
-
-	area.x += left;
-	area.y += top;
-	area.width -= MIN(area.width, left + right);
-	area.height -= MIN(area.height, top + bottom);
-
-	if (AREA_EQUAL(area, screen->workarea))
-		return;
-
-	area_t old_workarea = screen->workarea;
-	screen->workarea = area;
-	lua_State *L = globalconf_get_lua_State();
-	luaA_object_push(L, screen);
-	luaA_pusharea(L, old_workarea);
-	if (defer)
-		some_event_queue_signal(L, -2, SIG_PROPERTY_WORKAREA, 1);
-	else
-		luaA_object_emit_signal(L, -2, "property::workarea", 1);
-	lua_pop(L, 1);
-}
-
-/** Apply all drawin struts for a monitor to a usable area
- * \param L Lua state
- * \param m Monitor to get drawins for
- * \param area Box to apply struts to (modified in place)
- *
- * This is called from arrangelayers() to ensure drawin struts (from Lua wibars)
- * are preserved when layer shell surfaces rearrange.
- */
-void
-luaA_monitor_apply_drawin_struts(lua_State *L, Monitor *m, struct wlr_box *area)
-{
-	screen_t *screen;
-
-	if (!m || !area)
-		return;
-
-	/* Find the screen object for this monitor */
-	screen = luaA_screen_get_by_monitor(L, m);
-	if (!screen || !screen->valid)
-		return;
-
-	/* Apply the screen's cached workarea which already includes drawin struts
-	 * The workarea is updated whenever drawin struts change via
-	 * screen_update_workarea() */
-	if (screen->workarea.width > 0 && screen->workarea.height > 0) {
-		/* Only apply if the workarea is smaller than current area (has struts) */
-		if (screen->workarea.y > area->y ||
-		    screen->workarea.x > area->x ||
-		    (screen->workarea.width < area->width) ||
-		    (screen->workarea.height < area->height)) {
-			*area = screen->workarea;
-		}
 	}
 }
 
@@ -1121,212 +933,7 @@ luaA_screen_get_managed(lua_State *L)
 
 /* ========== SCREEN CONTENT (SCREENSHOT) SUPPORT ========== */
 
-/** Callback data for scene buffer iteration during screenshot */
-struct screen_screenshot_data {
-	cairo_t *cr;
-	struct wlr_renderer *renderer;
-	int screen_x, screen_y;  /* Screen offset to subtract */
-	int screen_w, screen_h;  /* Screen bounds */
-};
-
-/** Composite a Cairo surface onto the screenshot at the given position */
-static void
-screen_composite_cairo_surface(cairo_t *cr, cairo_surface_t *surface,
-                               int x, int y, int width, int height)
-{
-	if (!surface || cairo_surface_status(surface) != CAIRO_STATUS_SUCCESS)
-		return;
-
-	cairo_save(cr);
-	cairo_set_source_surface(cr, surface, x, y);
-	cairo_set_operator(cr, CAIRO_OPERATOR_OVER);
-	cairo_rectangle(cr, x, y, width, height);
-	cairo_fill(cr);
-	cairo_restore(cr);
-}
-
-/** Check if a box intersects with the screen bounds */
-static bool
-box_intersects_screen(int x, int y, int w, int h,
-                      int sx, int sy, int sw, int sh)
-{
-	return !(x + w <= sx || x >= sx + sw || y + h <= sy || y >= sy + sh);
-}
-
-/** Composite a scene buffer to Cairo surface (for screen screenshot) */
-static void
-screen_composite_scene_buffer(struct wlr_scene_buffer *buffer,
-                              int sx, int sy, void *data)
-{
-	struct screen_screenshot_data *sdata = data;
-	struct wlr_buffer *wlr_buf;
-	struct wlr_texture *texture;
-	void *shm_data;
-	uint32_t shm_format;
-	size_t shm_stride;
-	int rel_x, rel_y;
-	size_t stride;
-	void *pixels;
-
-	if (!buffer->buffer)
-		return;
-
-	wlr_buf = buffer->buffer;
-
-	/* Check if buffer intersects with screen */
-	if (!box_intersects_screen(sx, sy, wlr_buf->width, wlr_buf->height,
-	                           sdata->screen_x, sdata->screen_y,
-	                           sdata->screen_w, sdata->screen_h))
-		return;
-
-	/* Offset position relative to screen origin */
-	rel_x = sx - sdata->screen_x;
-	rel_y = sy - sdata->screen_y;
-
-	/* Try SHM buffer access first */
-	if (wlr_buffer_begin_data_ptr_access(wlr_buf, WLR_BUFFER_DATA_PTR_ACCESS_READ,
-	                                     &shm_data, &shm_format, &shm_stride)) {
-		if (shm_format == DRM_FORMAT_ARGB8888 || shm_format == DRM_FORMAT_XRGB8888) {
-			cairo_format_t fmt = (shm_format == DRM_FORMAT_ARGB8888) ?
-			                     CAIRO_FORMAT_ARGB32 : CAIRO_FORMAT_RGB24;
-			cairo_surface_t *tmp = cairo_image_surface_create_for_data(
-				shm_data, fmt, wlr_buf->width, wlr_buf->height, shm_stride);
-			if (cairo_surface_status(tmp) == CAIRO_STATUS_SUCCESS) {
-				screen_composite_cairo_surface(sdata->cr, tmp,
-				                               rel_x, rel_y,
-				                               wlr_buf->width, wlr_buf->height);
-			}
-			cairo_surface_destroy(tmp);
-		}
-		wlr_buffer_end_data_ptr_access(wlr_buf);
-		return;
-	}
-
-	/* Fall back to GPU texture path */
-	texture = wlr_texture_from_buffer(sdata->renderer, wlr_buf);
-	if (!texture)
-		return;
-
-	stride = wlr_buf->width * 4;
-	pixels = malloc(stride * wlr_buf->height);
-	if (!pixels) {
-		wlr_texture_destroy(texture);
-		return;
-	}
-
-	if (wlr_texture_read_pixels(texture, &(struct wlr_texture_read_pixels_options){
-	    .data = pixels,
-	    .format = DRM_FORMAT_ARGB8888,
-	    .stride = stride,
-	    .src_box = { .x = 0, .y = 0, .width = wlr_buf->width, .height = wlr_buf->height },
-	})) {
-		cairo_surface_t *tmp = cairo_image_surface_create_for_data(
-			pixels, CAIRO_FORMAT_ARGB32, wlr_buf->width, wlr_buf->height, stride);
-		if (cairo_surface_status(tmp) == CAIRO_STATUS_SUCCESS) {
-			screen_composite_cairo_surface(sdata->cr, tmp,
-			                               rel_x, rel_y,
-			                               wlr_buf->width, wlr_buf->height);
-		}
-		cairo_surface_destroy(tmp);
-	}
-
-	free(pixels);
-	wlr_texture_destroy(texture);
-}
-
-/** Composite widgets within the screen bounds, filtered by ontop state */
-static void
-screen_composite_widgets(cairo_t *cr, int sx, int sy, int sw, int sh, bool ontop_only)
-{
-	int i, bar;
-	drawin_t *drawin;
-	client_t *c;
-	bool is_ontop;
-
-	/* Composite visible drawins filtered by ontop state */
-	for (i = 0; i < globalconf.drawins.len; i++) {
-		drawin = globalconf.drawins.tab[i];
-		if (!drawin || !drawin->visible || !drawin->drawable)
-			continue;
-
-		/* Filter by ontop to ensure correct z-order in screenshots */
-		if (drawin->ontop != ontop_only)
-			continue;
-
-		if (!box_intersects_screen(drawin->x, drawin->y, drawin->width, drawin->height,
-		                           sx, sy, sw, sh))
-			continue;
-
-		if (drawin->drawable->surface &&
-		    cairo_surface_status(drawin->drawable->surface) == CAIRO_STATUS_SUCCESS) {
-			screen_composite_cairo_surface(cr, drawin->drawable->surface,
-			                               drawin->x - sx, drawin->y - sy,
-			                               drawin->width, drawin->height);
-		}
-	}
-
-	/* Composite client titlebars filtered by ontop/fullscreen state */
-	for (i = 0; i < globalconf.clients.len; i++) {
-		c = globalconf.clients.tab[i];
-		if (!c)
-			continue;
-
-		/* Filter by ontop/fullscreen to ensure correct z-order */
-		is_ontop = c->ontop || c->fullscreen;
-		if (is_ontop != ontop_only)
-			continue;
-
-		for (bar = 0; bar < CLIENT_TITLEBAR_COUNT; bar++) {
-			drawable_t *d = c->titlebar[bar].drawable;
-			int size = c->titlebar[bar].size;
-			int tb_x, tb_y, tb_w, tb_h;
-
-			if (!d || !d->surface || size <= 0)
-				continue;
-
-			/* Calculate titlebar position */
-			switch (bar) {
-			case CLIENT_TITLEBAR_TOP:
-				tb_x = c->geometry.x;
-				tb_y = c->geometry.y;
-				tb_w = c->geometry.width;
-				tb_h = size;
-				break;
-			case CLIENT_TITLEBAR_BOTTOM:
-				tb_x = c->geometry.x;
-				tb_y = c->geometry.y + c->geometry.height - size;
-				tb_w = c->geometry.width;
-				tb_h = size;
-				break;
-			case CLIENT_TITLEBAR_LEFT:
-				tb_x = c->geometry.x;
-				tb_y = c->geometry.y + c->titlebar[CLIENT_TITLEBAR_TOP].size;
-				tb_w = size;
-				tb_h = c->geometry.height - c->titlebar[CLIENT_TITLEBAR_TOP].size
-				       - c->titlebar[CLIENT_TITLEBAR_BOTTOM].size;
-				break;
-			case CLIENT_TITLEBAR_RIGHT:
-				tb_x = c->geometry.x + c->geometry.width - size;
-				tb_y = c->geometry.y + c->titlebar[CLIENT_TITLEBAR_TOP].size;
-				tb_w = size;
-				tb_h = c->geometry.height - c->titlebar[CLIENT_TITLEBAR_TOP].size
-				       - c->titlebar[CLIENT_TITLEBAR_BOTTOM].size;
-				break;
-			default:
-				continue;
-			}
-
-			if (!box_intersects_screen(tb_x, tb_y, tb_w, tb_h, sx, sy, sw, sh))
-				continue;
-
-			screen_composite_cairo_surface(cr, d->surface,
-			                               tb_x - sx, tb_y - sy,
-			                               tb_w, tb_h);
-		}
-	}
-}
-
-/** Get screenshot of this screen
+/** Get screenshot of this screen, composited on the CPU from the scene.
  * \param L Lua state
  * \param s Screen object
  * \return 1 (cairo surface lightuserdata on stack)
@@ -1336,7 +943,7 @@ luaA_screen_get_content(lua_State *L, screen_t *s)
 {
 	cairo_surface_t *surface;
 	cairo_t *cr;
-	struct screen_screenshot_data sdata;
+	struct screenshot_render_data rdata = { 0 };
 	int width, height;
 
 	if (!s || !s->valid)
@@ -1359,29 +966,19 @@ luaA_screen_get_content(lua_State *L, screen_t *s)
 	cairo_set_source_rgb(cr, 0, 0, 0);
 	cairo_paint(cr);
 
-	/* Set up screenshot data */
-	sdata.cr = cr;
-	sdata.renderer = drw;
-	sdata.screen_x = s->geometry.x;
-	sdata.screen_y = s->geometry.y;
-	sdata.screen_w = width;
-	sdata.screen_h = height;
+	/* Scene coordinates are the layout's; this target is the screen's. */
+	rdata.cr = cr;
+	rdata.renderer = drw;
+	rdata.offset_x = -s->geometry.x;
+	rdata.offset_y = -s->geometry.y;
+	rdata.bound_x = s->geometry.x;
+	rdata.bound_y = s->geometry.y;
+	rdata.bound_w = width;
+	rdata.bound_h = height;
 
-	/* First, composite wallpaper (cropped to screen area) */
-	if (globalconf.wallpaper) {
-		screen_composite_cairo_surface(cr, globalconf.wallpaper,
-		                               -s->geometry.x, -s->geometry.y,
-		                               cairo_image_surface_get_width(globalconf.wallpaper),
-		                               cairo_image_surface_get_height(globalconf.wallpaper));
-	}
-
-	/* Then iterate scene buffers for client content */
-	wlr_scene_node_for_each_buffer(&scene->tree.node,
-		screen_composite_scene_buffer, &sdata);
-
-	/* Composite widgets in z-order: normal first, then ontop */
-	screen_composite_widgets(cr, s->geometry.x, s->geometry.y, width, height, false);
-	screen_composite_widgets(cr, s->geometry.x, s->geometry.y, width, height, true);
+	/* The scene is the reconciled tree: OUTPUT's fill, the chrome the
+	 * renderer drew, and the client surfaces it borrowed, in draw order. */
+	composite_scene_node_to_cairo(&scene->tree.node, &rdata);
 
 	cairo_destroy(cr);
 
@@ -1449,6 +1046,46 @@ static int luaA_screen_get_scale(lua_State *L, screen_t *s)
  * \param s The screen object.
  * \return Number of values pushed on stack (0).
  */
+/** The Clay debug inspector on this screen (declare.h): Clay's own flag on
+ * the screen's desktop context, read back rather than stored, since the
+ * panel closes itself through its x button. */
+static int
+luaA_screen_get_inspector(lua_State *L, screen_t *s)
+{
+	lua_pushboolean(L, s && s->monitor && s->monitor->declare
+		&& declare_inspector_get(s->monitor->declare));
+	return 1;
+}
+
+/** Set it. Enabling first hands somewm.inspector its restyle, so the panel
+ * comes up in the theme's colors and font rather than Clay's; a screen
+ * without an output stores nothing. Emits property::inspector on a change,
+ * the signal the frame also emits when the panel closes itself.
+ */
+static int
+luaA_screen_set_inspector(lua_State *L, screen_t *s)
+{
+	bool on = lua_toboolean(L, -1);
+
+	if (!s || !s->monitor || !s->monitor->declare)
+		return 0;
+	if (on == declare_inspector_get(s->monitor->declare))
+		return 0;
+	if (on) {
+		lua_getglobal(L, "require");
+		lua_pushliteral(L, "somewm.inspector");
+		lua_call(L, 1, 1);
+		lua_getfield(L, -1, "restyle");
+		lua_call(L, 0, 0);
+		lua_pop(L, 1);
+	}
+	declare_inspector_set(s->monitor->declare, on);
+	luaA_screen_push(L, s);
+	luaA_object_emit_signal(L, -1, "property::inspector", 0);
+	lua_pop(L, 1);
+	return 0;
+}
+
 static int luaA_screen_set_scale(lua_State *L, screen_t *s)
 {
 	float scale = luaL_checknumber(L, -1);
@@ -1729,10 +1366,6 @@ luaA_screen_fake_resize(lua_State *L)
 	screen->geometry.y = y;
 	screen->geometry.width = width;
 	screen->geometry.height = height;
-
-	/* Update workarea properly (accounts for struts from wibars)
-	 * This will use geometry as baseline and emit property::workarea if needed */
-	screen_update_workarea(screen);
 
 	/* Emit property::geometry signal with old value */
 	luaA_screen_push(L, screen);
@@ -2069,6 +1702,8 @@ luaA_screen_index(lua_State *L)
 		screen_t *screen = luaA_checkscreen(L, 1);
 		return luaA_screen_get_output(L, screen);
 	}
+	if (strcmp(key, "inspector") == 0)
+		return luaA_screen_get_inspector(L, luaA_checkscreen(L, 1));
 
 	/* Check for _private table (AwesomeWM compatibility) */
 	if (strcmp(key, "_private") == 0) {
@@ -2153,6 +1788,12 @@ luaA_screen_newindex(lua_State *L)
 	if (strcmp(key, "scale") == 0) {
 		lua_pushvalue(L, 3);  /* Push value to top where setter expects it */
 		luaA_screen_set_scale(L, screen);
+		lua_pop(L, 1);
+		return 0;
+	}
+	if (strcmp(key, "inspector") == 0) {
+		lua_pushvalue(L, 3);
+		luaA_screen_set_inspector(L, screen);
 		lua_pop(L, 1);
 		return 0;
 	}
@@ -2303,9 +1944,6 @@ screen_client_moveto(client_t *c, screen_t *new_screen, bool doresize)
 	area_t new_geometry;
 	bool had_focus = false;
 
-	/* Forward declare apply_geometry_to_wlroots from somewm.c */
-	extern void apply_geometry_to_wlroots(client_t *c);
-
 	if (new_screen == c->screen)
 		return;
 
@@ -2379,12 +2017,9 @@ screen_client_moveto(client_t *c, screen_t *new_screen, bool doresize)
 		new_geometry.y = to.y;
 	}
 
-	/* move / resize the client */
+	/* move / resize the client; the next dirty frame declares it on the
+	 * new screen's band */
 	client_resize(c, new_geometry, false, false);
-
-	/* Force immediate scene node position update (bypass deferred refresh)
-	 * This ensures the window appears on the new screen immediately */
-	apply_geometry_to_wlroots(c);
 
 	/* emit signal */
 	luaA_object_push(L, c);
@@ -2482,6 +2117,7 @@ screen_class_setup(lua_State *L)
 		{ "content", NULL, (lua_class_propfunc_t) luaA_screen_get_content, NULL },
 		{ "scale", (lua_class_propfunc_t) luaA_screen_set_scale, (lua_class_propfunc_t) luaA_screen_get_scale, (lua_class_propfunc_t) luaA_screen_set_scale },
 		{ "output", NULL, (lua_class_propfunc_t) luaA_screen_get_output, NULL },
+		{ "inspector", (lua_class_propfunc_t) luaA_screen_set_inspector, (lua_class_propfunc_t) luaA_screen_get_inspector, (lua_class_propfunc_t) luaA_screen_set_inspector },
 	};
 	luaA_class_add_properties(&screen_class, properties, countof(properties));
 }

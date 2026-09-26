@@ -176,6 +176,8 @@ Unit tests run with mocked globals defined in `spec/preload.lua`:
 
 ### Integration Test Environment
 
+A test whose first lines contain `-- timeout: N` gets N seconds instead of `TEST_TIMEOUT`; `test-clay-inspector-calendar` uses this override.
+
 Integration tests run in an isolated environment:
 - **Config**: Minimal test config (`tests/rc.lua`)
 - **Backend**: Headless Wayland (`WLR_BACKENDS=headless`)

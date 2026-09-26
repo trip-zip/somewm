@@ -1,0 +1,12 @@
+output
+  roots flow 1 floating 0 derived 0
+  Clay__RootContainer w=fixed(1280) h=fixed(720) output row
+    OUTPUT WL-1 w=fixed(1280) h=fixed(720) output column
+      WORKAREA - w=grow h=grow row
+        STACK - w=percent(0.5) h=percent(1) column
+          CLIENT A w=percent(1) h=percent(0.5) theme column pad 1,1,1,1
+            SURFACE A w=grow h=grow custom
+          CLIENT C w=percent(1) h=percent(0.5) theme column pad 1,1,1,1
+            SURFACE C w=grow h=grow custom
+        CLIENT B w=percent(0.5) h=percent(1) theme column pad 1,1,1,1
+          SURFACE B w=grow h=grow custom

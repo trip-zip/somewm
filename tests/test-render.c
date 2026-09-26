@@ -1,0 +1,1770 @@
+/* Unit tests for the Clay reconciler: hand-built command arrays in, wlr_scene
+ * out. No compositor and no output; wlr_scene is a plain data structure until
+ * something drives an output from it, so the whole reconcile path runs in
+ * process. */
+
+#include <assert.h>
+#include <math.h>
+#include <pango/pangocairo.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <signal.h>
+#include <sys/wait.h>
+#include <unistd.h>
+#include <wlr/types/wlr_scene.h>
+
+#include "clay.h"
+#include "render.h"
+#include "render_image.h"
+#include "render_text.h"
+
+static int failures;
+static const char *current_test;
+
+#define CHECK(cond) do { \
+	if (!(cond)) { \
+		fprintf(stderr, "%s:%d: %s: FAIL %s\n", __FILE__, __LINE__, \
+			current_test, #cond); \
+		failures++; \
+	} \
+} while (0)
+
+#define CHECK_EQ(got, want) do { \
+	long long g_ = (long long)(got), w_ = (long long)(want); \
+	if (g_ != w_) { \
+		fprintf(stderr, "%s:%d: %s: FAIL %s: got %lld, want %lld\n", \
+			__FILE__, __LINE__, current_test, #got, g_, w_); \
+		failures++; \
+	} \
+} while (0)
+
+/* --- command builders --- */
+
+static Clay_RenderCommand cmd_rect(uint32_t id, float x, float y, float w,
+		float h, float radius) {
+	Clay_RenderCommand c = { 0 };
+	c.commandType = CLAY_RENDER_COMMAND_TYPE_RECTANGLE;
+	c.id = id;
+	c.boundingBox = (Clay_BoundingBox) { x, y, w, h };
+	c.renderData.rectangle.backgroundColor = (Clay_Color) { 255, 0, 0, 255 };
+	c.renderData.rectangle.cornerRadius =
+		(Clay_CornerRadius) { radius, radius, radius, radius };
+	return c;
+}
+
+static Clay_RenderCommand cmd_border(uint32_t id, float x, float y, float w,
+		float h, int width, float radius) {
+	Clay_RenderCommand c = { 0 };
+	c.commandType = CLAY_RENDER_COMMAND_TYPE_BORDER;
+	c.id = id;
+	c.boundingBox = (Clay_BoundingBox) { x, y, w, h };
+	c.renderData.border.color = (Clay_Color) { 0, 255, 0, 255 };
+	c.renderData.border.width =
+		(Clay_BorderWidth) { width, width, width, width, 0 };
+	c.renderData.border.cornerRadius =
+		(Clay_CornerRadius) { radius, radius, radius, radius };
+	return c;
+}
+
+static Clay_RenderCommand cmd_text(uint32_t id, float x, float y, float w,
+		float h, const char *text, bool ellipsize) {
+	Clay_RenderCommand c = { 0 };
+	c.commandType = CLAY_RENDER_COMMAND_TYPE_TEXT;
+	c.id = id;
+	c.boundingBox = (Clay_BoundingBox) { x, y, w, h };
+	c.renderData.text.stringContents = (Clay_StringSlice) {
+		.length = (int32_t)strlen(text), .chars = text, .baseChars = text };
+	c.renderData.text.textColor = (Clay_Color) { 255, 255, 255, 255 };
+	c.renderData.text.fontSize = 12;
+	c.userData = ellipsize ? (void *)(uintptr_t)RENDER_TEXT_ELLIPSIZE : NULL;
+	return c;
+}
+
+static Clay_RenderCommand cmd_image(uint32_t id, float x, float y, float w,
+		float h, struct image_entry *entry) {
+	Clay_RenderCommand c = { 0 };
+	c.commandType = CLAY_RENDER_COMMAND_TYPE_IMAGE;
+	c.id = id;
+	c.boundingBox = (Clay_BoundingBox) { x, y, w, h };
+	c.renderData.image.imageData = entry;
+	return c;
+}
+
+static Clay_RenderCommand cmd_custom(uint32_t id, uint64_t handle, float x,
+		float y, float w, float h) {
+	Clay_RenderCommand c = { 0 };
+	c.commandType = CLAY_RENDER_COMMAND_TYPE_CUSTOM;
+	c.id = id;
+	c.boundingBox = (Clay_BoundingBox) { x, y, w, h };
+	c.renderData.custom.customData = (void *)(uintptr_t)handle;
+	return c;
+}
+
+static Clay_RenderCommand cmd_clip(uint32_t id, float x, float y, float w,
+		float h, bool horizontal, bool vertical) {
+	Clay_RenderCommand c = { 0 };
+	c.commandType = CLAY_RENDER_COMMAND_TYPE_SCISSOR_START;
+	c.id = id;
+	c.boundingBox = (Clay_BoundingBox) { x, y, w, h };
+	c.renderData.clip.horizontal = horizontal;
+	c.renderData.clip.vertical = vertical;
+	return c;
+}
+
+static Clay_RenderCommand cmd_clip_end(uint32_t id) {
+	Clay_RenderCommand c = { 0 };
+	c.commandType = CLAY_RENDER_COMMAND_TYPE_SCISSOR_END;
+	c.id = id;
+	return c;
+}
+
+static Clay_RenderCommandArray commands_of(Clay_RenderCommand *cmds, int32_t n) {
+	return (Clay_RenderCommandArray) {
+		.capacity = n, .length = n, .internalArray = cmds };
+}
+
+/* The userData word (render.h): the declarer's owner bits, the clip scope a
+ * RECTANGLE opens, and the scope the command is clipped by. */
+static void *word(uint64_t owner, unsigned opens, unsigned clipped_by) {
+	return (void *)(uintptr_t)(owner
+		| (uint64_t)opens << RENDER_UD_OPENS_SHIFT
+		| (uint64_t)clipped_by << RENDER_UD_CLIP_SHIFT);
+}
+
+/* Frame bounds for the cases that name none. */
+static const Clay_BoundingBox no_bounds = { 0, 0, 4096, 4096 };
+
+/* --- scene inspection ---
+ *
+ * render_create puts its retained nodes in a tree of its own under the parent
+ * it was handed, so the parent's only child is that tree and its children are
+ * the retained nodes, bottom to top. */
+
+static struct wlr_scene_tree *render_tree(struct wlr_scene_tree *parent) {
+	struct wlr_scene_node *node =
+		wl_container_of(parent->children.next, node, link);
+	return wlr_scene_tree_from_node(node);
+}
+
+static int child_count(struct wlr_scene_tree *tree) {
+	return wl_list_length(&tree->children);
+}
+
+/* The nth child from the bottom of the draw order, or NULL. */
+static struct wlr_scene_node *child_at(struct wlr_scene_tree *tree, int n) {
+	struct wlr_scene_node *child;
+	int i = 0;
+	wl_list_for_each(child, &tree->children, link) {
+		if (i++ == n) {
+			return child;
+		}
+	}
+	return NULL;
+}
+
+/* --- the client hooks fake ---
+ *
+ * One scene tree per handle, parented to a home tree the way a real client's
+ * tree hangs off its layer, so release has somewhere to hand it back to. */
+
+#define FAKE_CLIENTS 4
+
+struct fake_clients {
+	struct wlr_scene_tree *home;
+	struct wlr_scene_tree *trees[FAKE_CLIENTS];
+	bool gone[FAKE_CLIENTS];
+	void *owner[FAKE_CLIENTS];
+	int borrows, releases, repositions;
+	int configured_w, configured_h, configures;
+	int clip_x, clip_y, clip_w, clip_h, clips;
+};
+
+static struct wlr_scene_tree *fake_resolve(void *data, uint64_t handle) {
+	struct fake_clients *fc = data;
+	return fc->gone[handle] ? NULL : fc->trees[handle];
+}
+
+static void fake_configure(void *data, uint64_t handle, int width, int height) {
+	struct fake_clients *fc = data;
+	(void)handle;
+	fc->configured_w = width;
+	fc->configured_h = height;
+	fc->configures++;
+}
+
+static void fake_borrow(void *data, uint64_t handle, void *owner) {
+	struct fake_clients *fc = data;
+	fc->owner[handle] = owner;
+	fc->borrows++;
+}
+
+static bool fake_release(void *data, uint64_t handle, void *owner) {
+	struct fake_clients *fc = data;
+	if (fc->owner[handle] != owner) {
+		return false;   /* not the owner: the migration race, a no-op by contract */
+	}
+	fc->owner[handle] = NULL;
+	fc->releases++;
+	/* The renderer parks the tree itself, unless the client is gone. */
+	return !fc->gone[handle];
+}
+
+static void fake_reposition(void *data, uint64_t handle, int x, int y) {
+	struct fake_clients *fc = data;
+	(void)handle; (void)x; (void)y;
+	fc->repositions++;
+}
+
+static void fake_clip(void *data, uint64_t handle, int x, int y, int width, int height) {
+	struct fake_clients *fc = data;
+	(void)handle;
+	fc->clip_x = x;
+	fc->clip_y = y;
+	fc->clip_w = width;
+	fc->clip_h = height;
+	fc->clips++;
+}
+
+static void fake_clients_init(struct fake_clients *fc,
+		struct wlr_scene_tree *root, struct render_client_hooks *hooks) {
+	memset(fc, 0, sizeof(*fc));
+	/* Trees are born in the renderer's parked tree, as in production. */
+	fc->home = render_parked_tree(root);
+	for (int i = 0; i < FAKE_CLIENTS; i++) {
+		fc->trees[i] = wlr_scene_tree_create(fc->home);
+		wlr_scene_node_set_enabled(&fc->trees[i]->node, false);
+	}
+	*hooks = (struct render_client_hooks) {
+		.resolve = fake_resolve,
+		.configure = fake_configure,
+		.borrow = fake_borrow,
+		.release = fake_release,
+		.reposition = fake_reposition,
+		.clip = fake_clip,
+		.data = fc,
+	};
+}
+
+/* For the cases that declare no CUSTOM command. Not a zeroed table: the
+ * reconciler calls resolve for every CUSTOM command before anything is
+ * borrowed, and marks the node borrowed either way, so the sweep calls release
+ * too. Answering NULL degrades a stray CUSTOM command to "client is gone"
+ * instead of a NULL call. */
+static struct wlr_scene_tree *no_resolve(void *data, uint64_t handle) {
+	(void)data; (void)handle;
+	return NULL;
+}
+static bool no_release(void *data, uint64_t handle, void *owner) {
+	(void)data; (void)handle; (void)owner;
+	return false;
+}
+static const struct render_client_hooks no_hooks = {
+	.resolve = no_resolve,
+	.release = no_release,
+};
+
+/* --- fixture --- */
+
+struct fixture {
+	struct wlr_scene *scene;
+	struct wlr_scene_tree *parent;
+	struct render_state *rs;
+};
+
+static void fixture_init(struct fixture *f) {
+	f->scene = wlr_scene_create();
+	f->parent = wlr_scene_tree_create(&f->scene->tree);
+	f->rs = render_create(f->parent);
+}
+
+static void fixture_finish(struct fixture *f,
+		const struct render_client_hooks *hooks) {
+	render_destroy(f->rs, hooks);
+	wlr_scene_node_destroy(&f->scene->tree.node);
+}
+
+/* A fixture with clients behind it, for the CUSTOM cases. */
+static void fixture_init_clients(struct fixture *f, struct fake_clients *fc,
+		struct render_client_hooks *hooks) {
+	fixture_init(f);
+	fake_clients_init(fc, &f->scene->tree, hooks);
+}
+
+/* --- tests --- */
+
+static void quiet_listener(struct wl_listener *listener, void *data) {
+    (void)listener; (void)data;
+}
+
+static void test_visibility_batch_guards(void) {
+    struct fixture f;
+    fixture_init(&f);
+    Clay_RenderCommand cmds[] = {
+        cmd_border(1, 0, 0, 100, 40, 2, 8),
+        cmd_text(2, 5, 5, 30, 20, "test", false),
+        cmd_rect(3, 0, 0, 10, 10, 0),
+    };
+    render_reconcile(f.rs, commands_of(cmds, 2), &no_hooks, no_bounds);
+    struct wlr_scene_tree *rt = render_tree(f.parent);
+    CHECK(render_visibility_batched(f.rs));
+    CHECK(rt->node.enabled);
+    CHECK_EQ(render_reconcile(f.rs, commands_of(cmds, 2), &no_hooks, no_bounds), 0);
+    CHECK(!render_visibility_batched(f.rs));
+
+    /* A previously hidden scene stays hidden even when membership changes. */
+    render_set_enabled(f.rs, false);
+    render_reconcile(f.rs, commands_of(cmds, 3), &no_hooks, no_bounds);
+    CHECK(!render_visibility_batched(f.rs));
+    CHECK(!rt->node.enabled);
+    render_set_enabled(f.rs, true);
+    render_reconcile(f.rs, commands_of(cmds, 2), &no_hooks, no_bounds);
+    CHECK(render_visibility_batched(f.rs));
+    CHECK(rt->node.enabled);
+
+    /* Visibility updates visit other branches as well as this renderer. */
+    struct wlr_scene_buffer *other = wlr_scene_buffer_create(&f.scene->tree, NULL);
+    struct wl_signal *signals[] = {&other->events.output_enter,
+        &other->events.output_leave, &other->events.outputs_update,
+        &other->events.output_sample, &other->events.frame_done};
+    for (size_t i = 0; i < sizeof(signals)/sizeof(signals[0]); i++) {
+        struct wl_listener listener = {.notify = quiet_listener};
+        wl_signal_add(signals[i], &listener);
+        cmds[1].id++;
+        render_reconcile(f.rs, commands_of(cmds, 2), &no_hooks, no_bounds);
+        CHECK(!render_visibility_batched(f.rs));
+        CHECK(rt->node.enabled);
+        wl_list_remove(&listener.link);
+    }
+    wlr_scene_node_destroy(&other->node);
+
+    /* Disabled owned descendants can be enabled or destroyed by this pass. */
+    struct wlr_scene_node *text = child_at(rt, 1);
+    struct wl_listener listener = {.notify = quiet_listener};
+    wlr_scene_node_set_enabled(text, false);
+    struct wlr_scene_buffer *owned = wlr_scene_buffer_from_node(text);
+    wl_signal_add(&owned->events.output_enter, &listener);
+    render_reconcile(f.rs, commands_of(cmds, 3), &no_hooks, no_bounds);
+    CHECK(!render_visibility_batched(f.rs));
+    CHECK(rt->node.enabled && text->enabled);
+    wl_list_remove(&listener.link);
+    wl_signal_add(&text->events.destroy, &listener);
+    render_reconcile(f.rs, commands_of(cmds, 2), &no_hooks, no_bounds);
+    CHECK(!render_visibility_batched(f.rs));
+    wl_list_remove(&listener.link);
+    render_reconcile(f.rs, commands_of(cmds, 3), &no_hooks, no_bounds);
+    CHECK(render_visibility_batched(f.rs));
+
+    cmds[2] = cmd_custom(99, (uint64_t)(uintptr_t)RENDER_CLIP_MARK, 0, 0, 20, 20);
+    render_reconcile(f.rs, commands_of(cmds, 3), &no_hooks, no_bounds);
+    CHECK(!render_visibility_batched(f.rs));
+    render_reconcile(f.rs, commands_of(cmds, 2), &no_hooks, no_bounds);
+    CHECK(!render_visibility_batched(f.rs));
+    cmds[1].id++;
+    render_reconcile(f.rs, commands_of(cmds, 2), &no_hooks, no_bounds);
+    CHECK(render_visibility_batched(f.rs));
+    CHECK(rt->node.enabled);
+    CHECK_EQ(render_reconcile(f.rs, commands_of(cmds, 2), &no_hooks, no_bounds), 0);
+    fixture_finish(&f, &no_hooks);
+}
+
+static void test_identical_frame_reconciles_to_zero(void) {
+	struct fixture f;
+	fixture_init(&f);
+	Clay_RenderCommand cmds[] = {
+		cmd_rect(1, 0, 0, 100, 20, 0),
+		cmd_rect(2, 10, 30, 40, 40, 8),
+		cmd_border(3, 0, 0, 100, 100, 2, 0),
+	};
+	Clay_RenderCommandArray arr = commands_of(cmds, 3);
+
+	CHECK(render_reconcile(f.rs, arr, &no_hooks, no_bounds) > 0);
+	CHECK_EQ(render_node_count(f.rs), 3);
+	CHECK_EQ(render_reconcile(f.rs, arr, &no_hooks, no_bounds), 0);
+	CHECK_EQ(render_reconcile(f.rs, arr, &no_hooks, no_bounds), 0);
+	/* Nothing re-rastered on the identical frames. */
+	CHECK_EQ(render_buffers_created(f.rs), 0);
+
+	fixture_finish(&f, &no_hooks);
+}
+
+static void test_add_remove_move(void) {
+	struct fixture f;
+	fixture_init(&f);
+	Clay_RenderCommand cmds[] = {
+		cmd_rect(1, 0, 0, 100, 20, 0),
+		cmd_rect(2, 0, 30, 100, 20, 0),
+		cmd_rect(3, 0, 60, 100, 20, 0),
+	};
+	struct wlr_scene_tree *rt;
+
+	render_reconcile(f.rs, commands_of(cmds, 2), &no_hooks, no_bounds);
+	rt = render_tree(f.parent);
+	CHECK_EQ(child_count(rt), 2);
+	CHECK_EQ(render_node_count(f.rs), 2);
+
+	/* Add: the third command creates a node. */
+	render_reconcile(f.rs, commands_of(cmds, 3), &no_hooks, no_bounds);
+	CHECK_EQ(child_count(rt), 3);
+	CHECK_EQ(render_node_count(f.rs), 3);
+
+	/* Move: one position change, one mutation, no restack. */
+	cmds[1].boundingBox.y = 35;
+	CHECK_EQ(render_reconcile(f.rs, commands_of(cmds, 3), &no_hooks, no_bounds), 1);
+	CHECK_EQ(child_at(rt, 1)->y, 35);
+
+	/* Remove: the vanished id is swept. */
+	CHECK(render_reconcile(f.rs, commands_of(cmds, 2), &no_hooks, no_bounds) > 0);
+	CHECK_EQ(child_count(rt), 2);
+	CHECK_EQ(render_node_count(f.rs), 2);
+
+	fixture_finish(&f, &no_hooks);
+}
+
+static void test_kind_swap_destroys_and_restacks(void) {
+	struct fixture f;
+	fixture_init(&f);
+	/* The swapping command is FIRST, so a recreated node appended at the top
+	 * of the sibling list is in the wrong place unless the swap forces a
+	 * restack. With the verifier compiled in, a missed restack aborts here. */
+	Clay_RenderCommand cmds[] = {
+		cmd_rect(1, 0, 0, 50, 50, 0),
+		cmd_rect(2, 100, 0, 50, 50, 0),
+	};
+	struct wlr_scene_tree *rt;
+
+	render_reconcile(f.rs, commands_of(cmds, 2), &no_hooks, no_bounds);
+	rt = render_tree(f.parent);
+	CHECK_EQ(child_at(rt, 0)->type, WLR_SCENE_NODE_RECT);
+	CHECK_EQ(child_at(rt, 0)->x, 0);
+
+	/* Square to rounded: a scene rect cannot draw an arc, so the node kind
+	 * changes and the old node is destroyed. */
+	cmds[0] = cmd_rect(1, 0, 0, 50, 50, 8);
+	CHECK(render_reconcile(f.rs, commands_of(cmds, 2), &no_hooks, no_bounds) > 0);
+	CHECK_EQ(child_count(rt), 2);
+	CHECK_EQ(child_at(rt, 0)->type, WLR_SCENE_NODE_BUFFER);
+	CHECK_EQ(child_at(rt, 0)->x, 0);
+	CHECK_EQ(child_at(rt, 1)->x, 100);
+
+	/* And back, with the frame after each swap settling to zero. */
+	CHECK_EQ(render_reconcile(f.rs, commands_of(cmds, 2), &no_hooks, no_bounds), 0);
+	cmds[0] = cmd_rect(1, 0, 0, 50, 50, 0);
+	CHECK(render_reconcile(f.rs, commands_of(cmds, 2), &no_hooks, no_bounds) > 0);
+	CHECK_EQ(child_at(rt, 0)->type, WLR_SCENE_NODE_RECT);
+	CHECK_EQ(child_at(rt, 0)->x, 0);
+	CHECK_EQ(render_reconcile(f.rs, commands_of(cmds, 2), &no_hooks, no_bounds), 0);
+
+	fixture_finish(&f, &no_hooks);
+}
+
+static void test_restack_only_when_order_changed(void) {
+	struct fixture f;
+	fixture_init(&f);
+	Clay_RenderCommand cmds[] = {
+		cmd_rect(1, 0, 0, 10, 10, 0),
+		cmd_rect(2, 20, 0, 10, 10, 0),
+		cmd_rect(3, 40, 0, 10, 10, 0),
+	};
+	struct wlr_scene_tree *rt;
+
+	render_reconcile(f.rs, commands_of(cmds, 3), &no_hooks, no_bounds);
+	rt = render_tree(f.parent);
+	CHECK_EQ(child_at(rt, 0)->x, 0);
+	CHECK_EQ(child_at(rt, 2)->x, 40);
+	CHECK_EQ(render_reconcile(f.rs, commands_of(cmds, 3), &no_hooks, no_bounds), 0);
+
+	/* Same commands, new draw order: the scene follows, and the restack is
+	 * the only mutation (one raise per node). */
+	Clay_RenderCommand swapped[] = { cmds[2], cmds[0], cmds[1] };
+	CHECK_EQ(render_reconcile(f.rs, commands_of(swapped, 3), &no_hooks, no_bounds), 3);
+	CHECK_EQ(child_at(rt, 0)->x, 40);
+	CHECK_EQ(child_at(rt, 1)->x, 0);
+	CHECK_EQ(child_at(rt, 2)->x, 20);
+
+	/* Settled again in the new order. */
+	CHECK_EQ(render_reconcile(f.rs, commands_of(swapped, 3), &no_hooks, no_bounds), 0);
+
+	fixture_finish(&f, &no_hooks);
+}
+
+static void test_clip_stack(void) {
+	struct fixture f;
+	fixture_init(&f);
+	/* A clip scope, a leaf straddling it, a leaf entirely outside it, a
+	 * nested scope, and a leaf after the scope closes. */
+	Clay_RenderCommand cmds[] = {
+		cmd_clip(10, 0, 0, 50, 50, true, true),
+		cmd_rect(1, 25, 25, 50, 50, 0),          /* clipped to 25x25 */
+		cmd_rect(2, 100, 100, 10, 10, 0),        /* fully outside */
+		cmd_clip(11, 0, 0, 30, 100, true, true), /* nested: intersects to 30x50 */
+		cmd_rect(3, 20, 20, 40, 40, 0),          /* clipped to 10x30 */
+		cmd_clip_end(11),
+		cmd_clip_end(10),
+		cmd_rect(4, 200, 0, 10, 10, 0),          /* unclipped */
+	};
+	struct wlr_scene_tree *rt;
+
+	render_reconcile(f.rs, commands_of(cmds, 8), &no_hooks, no_bounds);
+	rt = render_tree(f.parent);
+	/* SCISSOR commands realize no node. */
+	CHECK_EQ(child_count(rt), 4);
+
+	struct wlr_scene_rect *r = wlr_scene_rect_from_node(child_at(rt, 0));
+	CHECK_EQ(child_at(rt, 0)->x, 25);
+	CHECK_EQ(r->width, 25);
+	CHECK_EQ(r->height, 25);
+
+	/* Clipped to nothing: disabled, not drawn at a degenerate size. */
+	CHECK(!child_at(rt, 1)->enabled);
+
+	r = wlr_scene_rect_from_node(child_at(rt, 2));
+	CHECK_EQ(child_at(rt, 2)->x, 20);
+	CHECK_EQ(r->width, 10);
+	CHECK_EQ(r->height, 30);
+
+	r = wlr_scene_rect_from_node(child_at(rt, 3));
+	CHECK_EQ(child_at(rt, 3)->x, 200);
+	CHECK_EQ(r->width, 10);
+
+	CHECK_EQ(render_reconcile(f.rs, commands_of(cmds, 8), &no_hooks, no_bounds), 0);
+
+	fixture_finish(&f, &no_hooks);
+}
+
+static void test_clip_axes(void) {
+	/* Naming neither axis means both, not none: Clay emits an unfilled clip
+	 * config for a floating element whose clipTo names an ancestor, and its own
+	 * hit test clips such a root on both axes. A single named axis leaves the
+	 * other one unbounded. */
+	static const struct {
+		bool horizontal, vertical;
+		int want_w, want_h;
+	} cases[] = {
+		{ false, false, 25, 25 },
+		{ true,  false, 25, 50 },
+		{ false, true,  50, 25 },
+		{ true,  true,  25, 25 },
+	};
+
+	for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); i++) {
+		struct fixture f;
+		fixture_init(&f);
+		Clay_RenderCommand cmds[] = {
+			cmd_clip(10, 0, 0, 50, 50, cases[i].horizontal, cases[i].vertical),
+			cmd_rect(1, 25, 25, 50, 50, 0),
+			cmd_clip_end(10),
+		};
+		render_reconcile(f.rs, commands_of(cmds, 3), &no_hooks, no_bounds);
+		struct wlr_scene_rect *r =
+			wlr_scene_rect_from_node(child_at(render_tree(f.parent), 0));
+		CHECK_EQ(r->width, cases[i].want_w);
+		CHECK_EQ(r->height, cases[i].want_h);
+		fixture_finish(&f, &no_hooks);
+	}
+}
+
+static void test_opacity_from_the_word(void) {
+	struct fixture f;
+	fixture_init(&f);
+	Clay_RenderCommand cmds[] = {
+		cmd_rect(1, 0, 0, 20, 20, 0),
+		cmd_rect(2, 20, 0, 20, 20, 4),
+		cmd_border(3, 40, 0, 20, 20, 2, 0),
+		cmd_text(4, 60, 0, 20, 20, "hi", false),
+	};
+	for (unsigned byte = 128; byte <= 255; byte += 127) {
+		for (int i = 0; i < 4; i++)
+			cmds[i].userData = (void *)((uintptr_t)word(7, 0, 0)
+				| (uint64_t)byte << RENDER_UD_OPACITY_SHIFT);
+		CHECK(render_reconcile(f.rs, commands_of(cmds, 4), &no_hooks, no_bounds) > 0);
+		float opacity = byte == 128 ? 0.5f : 1.0f;
+		struct wlr_scene_tree *tree = render_tree(f.parent);
+		struct wlr_scene_rect *rect = wlr_scene_rect_from_node(child_at(tree, 0));
+		float color[] = { opacity, 0, 0, opacity };
+		CHECK(memcmp(rect->color, color, sizeof(color)) == 0);
+		CHECK(wlr_scene_buffer_from_node(child_at(tree, 1))->opacity == opacity);
+		CHECK(wlr_scene_buffer_from_node(child_at(tree, 3))->opacity == opacity);
+		struct wlr_scene_tree *border = wlr_scene_tree_from_node(child_at(tree, 2));
+		CHECK_EQ(child_count(border), 4);
+		for (int i = 0; i < 4; i++)
+			CHECK(wlr_scene_rect_from_node(child_at(border, i))->color[3] == opacity);
+		CHECK_EQ(render_reconcile(f.rs, commands_of(cmds, 4), &no_hooks, no_bounds), 0);
+		cmds[2].renderData.border.cornerRadius = (Clay_CornerRadius){4,4,4,4};
+		CHECK(render_reconcile(f.rs, commands_of(cmds, 4), &no_hooks, no_bounds) > 0);
+		CHECK_EQ(child_count(border), 8);
+		for (int i = 4; i < 8; i++)
+			CHECK(wlr_scene_buffer_from_node(child_at(border, i))->opacity == opacity);
+		CHECK_EQ(render_reconcile(f.rs, commands_of(cmds, 4), &no_hooks, no_bounds), 0);
+		cmds[2].renderData.border.cornerRadius = (Clay_CornerRadius){0};
+		render_reconcile(f.rs, commands_of(cmds, 4), &no_hooks, no_bounds);
+		for (int i = 4; i < 8; i++) CHECK(!child_at(border, i)->enabled);
+		/* A fresh square border has no corner buffer allocations. */
+		cmds[2].id++;
+		render_reconcile(f.rs, commands_of(cmds, 4), &no_hooks, no_bounds);
+	}
+	fixture_finish(&f, &no_hooks);
+}
+
+static void test_full_clip_budget(void) {
+    struct fixture f;
+    fixture_init(&f);
+    Clay_RenderCommand cmds[204];
+    for (int i = 0; i < 101; i++)
+        cmds[i] = cmd_clip(i + 1, i, 0, 200 - i, 24, true, true);
+    cmds[101] = cmd_rect(102, 0, 0, 300, 24, 0);
+    for (int i = 0; i < 101; i++) cmds[102 + i] = cmd_clip_end(101 - i);
+    cmds[203] = cmd_rect(103, 0, 30, 300, 24, 0);
+    render_reconcile(f.rs, commands_of(cmds, 204), &no_hooks, no_bounds);
+    struct wlr_scene_tree *tree = render_tree(f.parent);
+    CHECK_EQ(child_count(tree), 2);
+    CHECK_EQ(child_at(tree, 0)->x, 100);
+    CHECK_EQ(wlr_scene_rect_from_node(child_at(tree, 0))->width, 100);
+    CHECK_EQ(wlr_scene_rect_from_node(child_at(tree, 1))->width, 300);
+    fixture_finish(&f, &no_hooks);
+}
+
+static void test_many_host_scopes(void) {
+    struct fixture f;
+    fixture_init(&f);
+    Clay_RenderCommand cmds[240];
+    for (int i = 0; i < 120; i++) {
+        cmds[i * 2] = cmd_custom(i * 2 + 1,
+            (uint64_t)(uintptr_t)RENDER_CLIP_MARK, i * 3, 0, 2, 24);
+        cmds[i * 2].userData = word(i + 1, 1, 0);
+        cmds[i * 2 + 1] = cmd_rect(i * 2 + 2, i * 3, 0, 100, 24, 0);
+        cmds[i * 2 + 1].userData = word(i + 1, 0, 1);
+    }
+    render_reconcile(f.rs, commands_of(cmds, 240), &no_hooks, no_bounds);
+    struct wlr_scene_tree *tree = render_tree(f.parent);
+    CHECK_EQ(child_count(tree), 240);
+    for (int i = 0; i < 120; i++) {
+        struct wlr_scene_rect *rect = wlr_scene_rect_from_node(child_at(tree, i * 2 + 1));
+        CHECK_EQ(rect->width, 2);
+        CHECK_EQ(rect->height, 24);
+        CHECK_EQ(rect->node.x, i * 3);
+    }
+    CHECK_EQ(render_reconcile(f.rs, commands_of(cmds, 240), &no_hooks, no_bounds), 0);
+    fixture_finish(&f, &no_hooks);
+}
+
+static void test_scopes_from_the_word(void) {
+	struct fixture f;
+	fixture_init(&f);
+	/* Owner 7 opens scope 1 with its box; a leaf clipped by it straddles;
+	 * owner 8 names scope 1 and is not clipped, the number is 7's; a rounded
+	 * rectangle under 1 opens scope 2 and turns a square leaf at its corner
+	 * into a raster, and a leaf over the whole output into a raster cut to
+	 * scope 2's box; a leaf naming a scope nobody opened is unclipped. */
+	Clay_RenderCommand cmds[] = {
+		cmd_rect(10, 0, 0, 50, 50, 0),
+		cmd_rect(1, 25, 25, 50, 50, 0),
+		cmd_rect(2, 25, 25, 50, 50, 0),
+		cmd_rect(11, 10, 10, 30, 30, 8),
+		cmd_rect(3, 10, 10, 10, 10, 0),
+		cmd_rect(4, 0, 0, 100, 100, 0),
+		cmd_rect(5, 200, 0, 10, 10, 0),
+		cmd_custom(12, (uint64_t)(uintptr_t)RENDER_CLIP_MARK, 60, 60, 30, 30),
+		cmd_rect(6, 55, 55, 50, 50, 0),
+	};
+	cmds[0].userData = word(7, 1, 0);
+	cmds[1].userData = word(7, 0, 1);
+	cmds[2].userData = word(8, 0, 1);
+	cmds[3].userData = word(7, 2, 1);
+	cmds[4].userData = word(7, 0, 2);
+	cmds[5].userData = word(7, 0, 2);
+	cmds[6].userData = word(7, 0, 9);
+	/* A clip mark: a rounded scope with no fill, realized as a transparent
+	 * rect that takes input, cutting the leaf under it to its box and arc. */
+	cmds[7].userData = word(7, 3, 0);
+	cmds[7].renderData.custom.cornerRadius = (Clay_CornerRadius) { 6, 6, 6, 6 };
+	cmds[8].userData = word(7, 0, 3);
+	struct wlr_scene_tree *rt;
+
+	render_reconcile(f.rs, commands_of(cmds, 9), &no_hooks, no_bounds);
+	rt = render_tree(f.parent);
+	CHECK_EQ(child_count(rt), 9);
+
+	struct wlr_scene_rect *r = wlr_scene_rect_from_node(child_at(rt, 1));
+	CHECK_EQ(child_at(rt, 1)->x, 25);
+	CHECK_EQ(r->width, 25);
+	CHECK_EQ(r->height, 25);
+
+	r = wlr_scene_rect_from_node(child_at(rt, 2));
+	CHECK_EQ(r->width, 50);
+
+	CHECK_EQ(child_at(rt, 4)->type, WLR_SCENE_NODE_BUFFER);
+	CHECK_EQ(child_at(rt, 4)->x, 10);
+
+	CHECK_EQ(child_at(rt, 5)->type, WLR_SCENE_NODE_BUFFER);
+	struct wlr_scene_buffer *sb = wlr_scene_buffer_from_node(child_at(rt, 5));
+	CHECK_EQ(child_at(rt, 5)->x, 10);
+	CHECK_EQ(child_at(rt, 5)->y, 10);
+	CHECK_EQ(sb->dst_width, 30);
+	CHECK_EQ(sb->dst_height, 30);
+
+	r = wlr_scene_rect_from_node(child_at(rt, 6));
+	CHECK_EQ(child_at(rt, 6)->x, 200);
+	CHECK_EQ(r->width, 10);
+
+	CHECK_EQ(child_at(rt, 7)->type, WLR_SCENE_NODE_RECT);
+	r = wlr_scene_rect_from_node(child_at(rt, 7));
+	CHECK_EQ(child_at(rt, 7)->x, 60);
+	CHECK_EQ(r->width, 30);
+	CHECK(r->color[3] == 0.0f);
+
+	CHECK_EQ(child_at(rt, 8)->type, WLR_SCENE_NODE_BUFFER);
+	sb = wlr_scene_buffer_from_node(child_at(rt, 8));
+	CHECK_EQ(child_at(rt, 8)->x, 60);
+	CHECK_EQ(sb->dst_width, 30);
+
+	CHECK_EQ(render_reconcile(f.rs, commands_of(cmds, 9), &no_hooks, no_bounds), 0);
+
+	/* Text clips to a scope too: the run is wider than scope 1, so it crops
+	 * and truncates there, and widening the scope re-rasters it. */
+	Clay_RenderCommand text[] = {
+		cmd_rect(10, 0, 0, 40, 16, 0),
+		cmd_text(1, 0, 0, 80, 16, "a long enough run", true),
+	};
+	text[0].userData = word(7, 1, 0);
+	text[1].userData = (void *)((uintptr_t)word(7, 0, 1) | RENDER_TEXT_ELLIPSIZE);
+	CHECK(render_reconcile(f.rs, commands_of(text, 2), &no_hooks, no_bounds) > 0);
+	sb = wlr_scene_buffer_from_node(child_at(rt, 1));
+	CHECK_EQ(sb->dst_width, 40);
+	text[0].boundingBox.width = 60;
+	CHECK(render_reconcile(f.rs, commands_of(text, 2), &no_hooks, no_bounds) > 0);
+	CHECK_EQ(sb->dst_width, 60);
+
+	fixture_finish(&f, &no_hooks);
+}
+
+static void test_border_clips_to_the_bounds(void) {
+	struct fixture f;
+	fixture_init(&f);
+	/* A border straddling the right edge of a 100x100 frame, clipped to it:
+	 * the top edge stops at the frame and the right edge is gone. Without
+	 * the word's flag the same border draws whole. */
+	Clay_BoundingBox bounds = { 0, 0, 100, 100 };
+	Clay_RenderCommand c = cmd_border(1, 90, 0, 40, 40, 2, 0);
+	c.userData = word(7, 0, RENDER_CLIP_BOUNDS);
+
+	render_reconcile(f.rs, commands_of(&c, 1), &no_hooks, bounds);
+	struct wlr_scene_tree *bt =
+		wlr_scene_tree_from_node(child_at(render_tree(f.parent), 0));
+	struct wlr_scene_rect *top = wlr_scene_rect_from_node(child_at(bt, 0));
+	CHECK_EQ(top->width, 10);
+	CHECK_EQ(child_count(bt), 3);
+	struct wlr_scene_node *side;
+	wl_list_for_each(side, &bt->children, link) {
+		struct wlr_scene_rect *rect = wlr_scene_rect_from_node(side);
+		CHECK(side->x + rect->width <= 10);
+	}
+
+	c.userData = word(7, 0, 0);
+	CHECK(render_reconcile(f.rs, commands_of(&c, 1), &no_hooks, bounds) > 0);
+	CHECK_EQ(top->width, 40);
+	CHECK_EQ(child_count(bt), 4);
+	struct wlr_scene_rect *right = wlr_scene_rect_from_node(child_at(bt, 3));
+	CHECK_EQ(right->node.x, 38);
+	CHECK_EQ(right->width, 2);
+	CHECK_EQ(right->height, 36);
+	CHECK_EQ(render_reconcile(f.rs, commands_of(&c, 1), &no_hooks, bounds), 0);
+
+	fixture_finish(&f, &no_hooks);
+}
+
+static void test_client_surface_hooks(void) {
+	struct fixture f;
+	struct fake_clients fc;
+	struct render_client_hooks hooks;
+	fixture_init_clients(&f, &fc, &hooks);
+
+	Clay_RenderCommand cmds[] = {
+		cmd_custom(1, 0, 0, 0, 400, 300),
+		cmd_custom(2, 1, 400, 0, 400, 300),
+	};
+
+	render_reconcile(f.rs, commands_of(cmds, 2), &hooks, no_bounds);
+	struct wlr_scene_tree *rt = render_tree(f.parent);
+	/* Borrowed, not owned: the client's own tree is reparented in. */
+	CHECK_EQ(child_count(rt), 2);
+	CHECK_EQ(child_at(rt, 0), &fc.trees[0]->node);
+	CHECK_EQ(child_at(rt, 1), &fc.trees[1]->node);
+	CHECK(child_at(rt, 0)->enabled);
+	CHECK_EQ(fc.borrows, 2);
+	CHECK_EQ(fc.configures, 2);
+	CHECK_EQ(fc.configured_w, 400);
+	CHECK_EQ(fc.configured_h, 300);
+	/* Both placements fire reposition; the borrow's configure ran before the
+	 * position existed. */
+	CHECK_EQ(fc.repositions, 2);
+
+	CHECK_EQ(render_reconcile(f.rs, commands_of(cmds, 2), &hooks, no_bounds), 0);
+	CHECK_EQ(fc.repositions, 2);
+
+	/* A move re-derives anything keyed to the tree's scene position. */
+	cmds[1].boundingBox.x = 500;
+	render_reconcile(f.rs, commands_of(cmds, 2), &hooks, no_bounds);
+	CHECK_EQ(fc.repositions, 3);
+	CHECK_EQ(fc.trees[1]->node.x, 500);
+
+	/* A resize configures, without a reposition. */
+	cmds[1].boundingBox.width = 300;
+	render_reconcile(f.rs, commands_of(cmds, 2), &hooks, no_bounds);
+	CHECK_EQ(fc.configures, 3);
+	CHECK_EQ(fc.configured_w, 300);
+	CHECK_EQ(fc.repositions, 3);
+
+	/* Undeclared: the sweep hands the tree back, disabled, at home. */
+	render_reconcile(f.rs, commands_of(cmds, 1), &hooks, no_bounds);
+	CHECK_EQ(fc.releases, 1);
+	CHECK_EQ(child_count(rt), 1);
+	CHECK(!fc.trees[1]->node.enabled);
+	CHECK_EQ(fc.trees[1]->node.parent, fc.home);
+
+	/* A client that died between declare and reconcile realizes no node. */
+	fc.gone[1] = true;
+	render_reconcile(f.rs, commands_of(cmds, 2), &hooks, no_bounds);
+	CHECK_EQ(child_count(rt), 1);
+
+	fixture_finish(&f, &hooks);
+}
+
+static void test_custom_crops_to_its_clip(void) {
+	struct fixture f;
+	struct fake_clients fc;
+	struct render_client_hooks hooks;
+	fixture_init_clients(&f, &fc, &hooks);
+
+	Clay_RenderCommand cmds[] = {
+		cmd_clip(10, 0, 0, 50, 50, true, true),
+		cmd_custom(1, 0, 25, 25, 400, 300),
+		cmd_clip_end(10),
+	};
+	render_reconcile(f.rs, commands_of(cmds, 3), &hooks, no_bounds);
+	CHECK_EQ(fc.trees[0]->node.x, 25);
+	CHECK_EQ(fc.trees[0]->node.y, 25);
+	CHECK(fc.trees[0]->node.enabled);
+	CHECK_EQ(fc.configured_w, 400);
+	CHECK_EQ(fc.configured_h, 300);
+
+	CHECK_EQ(fc.clips, 1);
+	CHECK_EQ(fc.clip_x, 0);
+	CHECK_EQ(fc.clip_y, 0);
+	CHECK_EQ(fc.clip_w, 25);
+	CHECK_EQ(fc.clip_h, 25);
+	CHECK_EQ(render_reconcile(f.rs, commands_of(cmds, 3), &hooks, no_bounds), 0);
+
+	cmds[1].boundingBox.x = cmds[1].boundingBox.y = -10;
+	render_reconcile(f.rs, commands_of(cmds, 3), &hooks, no_bounds);
+	CHECK_EQ(fc.trees[0]->node.x, -10);
+	CHECK_EQ(fc.trees[0]->node.y, -10);
+	CHECK(fc.trees[0]->node.enabled);
+	CHECK_EQ(fc.clip_x, 10);
+	CHECK_EQ(fc.clip_y, 10);
+	CHECK_EQ(fc.clip_w, 50);
+	CHECK_EQ(fc.clip_h, 50);
+
+	cmds[1].boundingBox.x = cmds[1].boundingBox.y = 100;
+	render_reconcile(f.rs, commands_of(cmds, 3), &hooks, no_bounds);
+	CHECK(!fc.trees[0]->node.enabled);
+	render_reconcile(f.rs, commands_of(&cmds[1], 1), &hooks, no_bounds);
+	CHECK_EQ(fc.trees[0]->node.x, 100);
+	CHECK_EQ(fc.trees[0]->node.y, 100);
+	CHECK(fc.trees[0]->node.enabled);
+	CHECK_EQ(fc.clip_w, 0);
+
+	fixture_finish(&f, &hooks);
+}
+
+static void test_float_boxes_round(void) {
+	struct fixture f;
+	fixture_init(&f);
+	/* Clay solves in float32, and the reconciler rounds both edges of every
+	 * box at the scene boundary, the rule client_solved_box uses. Here
+	 * [10.6, 41.3) rounds to [11, 41) and [20.4, 60.6) to [20, 61), so the
+	 * width stays 30 while the height grows to 41. */
+	Clay_RenderCommand cmds[] = { cmd_rect(1, 10.6f, 20.4f, 30.7f, 40.2f, 0) };
+	render_reconcile(f.rs, commands_of(cmds, 1), &no_hooks, no_bounds);
+	struct wlr_scene_tree *rt = render_tree(f.parent);
+	struct wlr_scene_rect *r = wlr_scene_rect_from_node(child_at(rt, 0));
+	CHECK_EQ(child_at(rt, 0)->x, 11);
+	CHECK_EQ(child_at(rt, 0)->y, 20);
+	CHECK_EQ(r->width, 30);
+	CHECK_EQ(r->height, 41);
+
+	/* A sub-pixel drift whose edges round to the same integers is not a
+	 * change: [10.7, 41.4) rounds to [11, 41) again. */
+	Clay_RenderCommand drift[] = { cmd_rect(1, 10.7f, 20.4f, 30.7f, 40.2f, 0) };
+	CHECK_EQ(render_reconcile(f.rs, commands_of(drift, 1), &no_hooks, no_bounds), 0);
+
+	fixture_finish(&f, &no_hooks);
+}
+
+static void test_text_rasters_once_per_change(void) {
+	struct fixture f;
+	fixture_init(&f);
+	Clay_RenderCommand cmds[] = { cmd_text(1, 0, 0, 80, 16, "hello", false) };
+
+	CHECK(render_reconcile(f.rs, commands_of(cmds, 1), &no_hooks, no_bounds) > 0);
+	struct wlr_scene_tree *rt = render_tree(f.parent);
+	CHECK_EQ(child_count(rt), 1);
+	CHECK_EQ(child_at(rt, 0)->type, WLR_SCENE_NODE_BUFFER);
+	CHECK_EQ(render_reconcile(f.rs, commands_of(cmds, 1), &no_hooks, no_bounds), 0);
+
+	/* New content re-rasters, and nothing else moves. */
+	cmds[0] = cmd_text(1, 0, 0, 80, 16, "goodbye", false);
+	CHECK_EQ(render_reconcile(f.rs, commands_of(cmds, 1), &no_hooks, no_bounds), 1);
+	CHECK_EQ(render_reconcile(f.rs, commands_of(cmds, 1), &no_hooks, no_bounds), 0);
+
+	/* A style change with the same string re-rasters too. */
+	cmds[0].renderData.text.textColor = (Clay_Color) { 0, 0, 0, 255 };
+	CHECK_EQ(render_reconcile(f.rs, commands_of(cmds, 1), &no_hooks, no_bounds), 1);
+
+	/* An empty run: a real case (a label with nothing in it), and the one that
+	 * puts NULL through the content compare, which UBSan rejects. */
+	cmds[0] = cmd_text(2, 0, 0, 80, 16, "", false);
+	render_reconcile(f.rs, commands_of(cmds, 1), &no_hooks, no_bounds);
+	CHECK_EQ(render_reconcile(f.rs, commands_of(cmds, 1), &no_hooks, no_bounds), 0);
+
+	fixture_finish(&f, &no_hooks);
+}
+
+static void test_text_crops_to_its_clip(void) {
+	struct fixture f;
+	fixture_init(&f);
+	/* The run is wider than the clip, so it crops. Its own box never moves, so
+	 * only the clip can tell the raster where to truncate. */
+	Clay_RenderCommand cmds[] = {
+		cmd_clip(10, 0, 0, 40, 16, true, true),
+		cmd_text(1, 0, 0, 80, 16, "a long enough run", true),
+		cmd_clip_end(10),
+	};
+	render_reconcile(f.rs, commands_of(cmds, 3), &no_hooks, no_bounds);
+	struct wlr_scene_tree *rt = render_tree(f.parent);
+	struct wlr_scene_buffer *sb = wlr_scene_buffer_from_node(child_at(rt, 0));
+	CHECK_EQ(child_at(rt, 0)->x, 0);
+	CHECK_EQ(sb->dst_width, 40);
+	CHECK_EQ(render_reconcile(f.rs, commands_of(cmds, 3), &no_hooks, no_bounds), 0);
+
+	/* Narrowing the clip re-rasters at the tighter bound. */
+	cmds[0].boundingBox.width = 20;
+	CHECK(render_reconcile(f.rs, commands_of(cmds, 3), &no_hooks, no_bounds) > 0);
+	CHECK_EQ(sb->dst_width, 20);
+
+	fixture_finish(&f, &no_hooks);
+}
+
+/* Independent Pango reference: no renderer measurement or clip helper. */
+static PangoLayout *fractional_reference(cairo_t *cr, float scale, int bound)
+{
+	PangoLayout *layout = pango_cairo_create_layout(cr);
+	PangoFontDescription *font = pango_font_description_from_string("monospace 13.333333px");
+	pango_font_description_set_absolute_size(font, pango_font_description_get_size(font) *
+													   (double)scale);
+	pango_layout_set_font_description(layout, font);
+	pango_font_description_free(font);
+	pango_layout_set_text(layout, "Su", 2);
+	pango_layout_set_width(layout, bound > 0 ? bound * PANGO_SCALE : -1);
+	pango_layout_set_ellipsize(layout, bound > 0 ? PANGO_ELLIPSIZE_END : PANGO_ELLIPSIZE_NONE);
+	return layout;
+}
+
+static void test_fractional_text_clipping(void)
+{
+	const float scales[] = {1, 1.5f, 2};
+	const float origins[] = {10, 119.999985f};
+	int font = render_font_intern("monospace 13.333333px");
+	CHECK(font > 0);
+	for (size_t si = 0; si < 3; si++) {
+		float scale = scales[si];
+		cairo_surface_t *scratch = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, 1, 1);
+		cairo_t *measure = cairo_create(scratch);
+		PangoLayout *natural = fractional_reference(measure, scale, 0);
+		int nw, nh;
+		pango_layout_get_pixel_size(natural, &nw, &nh);
+		g_object_unref(natural);
+		cairo_destroy(measure);
+		cairo_surface_destroy(scratch);
+		for (size_t oi = 0; oi < 2; oi++)
+			for (int ellipsize = 0; ellipsize < 2; ellipsize++) {
+				struct fixture f;
+				fixture_init(&f);
+				render_set_scale(f.rs, scale);
+				float x = origins[oi];
+				/* Full, one-pixel right, larger right, left-only, both, restored,
+				 * just either side of a device-width boundary, exact, oversized. */
+				const float cuts[] = {0, 1, 6, 0, 6, 0, .6f, .4f, 0, -1, 0};
+				for (size_t k = 0; k < sizeof(cuts) / sizeof(*cuts); k++) {
+					float left = k == 3 || k == 4 ? 3.0f / scale : 0;
+					float right = k == 0 || k == 3 || k == 5 ? 100 : (nw - cuts[k]) / scale;
+					Clay_RenderCommand cmds[] = {
+						cmd_clip(10, x + left, 0, right - left, 100, true, true),
+						cmd_text(1, x, 0, nw / scale, nh / scale, "Su", ellipsize),
+						cmd_clip_end(10),
+					};
+					cmds[1].renderData.text.fontId = font;
+					cmds[1].renderData.text.fontSize = 0;
+					Clay_RenderCommandArray commands =
+						k == 10 ? commands_of(&cmds[1], 1) : commands_of(cmds, 3);
+					render_reconcile(f.rs, commands, &no_hooks, no_bounds);
+					struct wlr_scene_buffer *sb =
+						wlr_scene_buffer_from_node(child_at(render_tree(f.parent), 0));
+					CHECK(sb->buffer->width >= nw);
+					CHECK(sb->buffer->height >= nh);
+					int bound =
+						!ellipsize || cuts[k] < .5f ? 0 : nw - (k == 6 ? 1 : (int)cuts[k]);
+					cairo_surface_t *ref = cairo_image_surface_create(
+						CAIRO_FORMAT_ARGB32, sb->buffer->width, sb->buffer->height);
+					cairo_t *cr = cairo_create(ref);
+					PangoLayout *layout = fractional_reference(cr, scale, bound);
+					cairo_set_source_rgba(cr, 1, 1, 1, 1);
+					pango_cairo_show_layout(cr, layout);
+					g_object_unref(layout);
+					cairo_destroy(cr);
+					cairo_surface_flush(ref);
+					void *data;
+					uint32_t format;
+					size_t pitch;
+					bool readable = wlr_buffer_begin_data_ptr_access(
+						sb->buffer, WLR_BUFFER_DATA_PTR_ACCESS_READ, &data, &format, &pitch);
+					CHECK(readable);
+					if (readable) {
+						int mismatch = 0;
+						for (int y = 0; y < sb->buffer->height; y++)
+							mismatch += memcmp((char *)data + y * pitch,
+											   cairo_image_surface_get_data(ref) +
+												   y * cairo_image_surface_get_stride(ref),
+											   sb->buffer->width * 4) != 0;
+						if (mismatch)
+							fprintf(stderr,
+									"  fractional text scale=%g origin=%g ellipsize=%d "
+									"case=%zu Pango-bound=%d mismatched-rows=%d\n",
+									scale, x, ellipsize, k, bound, mismatch);
+						CHECK_EQ(mismatch, 0);
+						const char *evidence = getenv("SOMEWM_TEXT_EVIDENCE");
+						if (evidence != NULL) {
+							char path[1024];
+							snprintf(path, sizeof(path), "%s/s%g-o%zu-e%d-c%zu-reference.png",
+									 evidence, scale, oi, ellipsize, k);
+							CHECK_EQ(cairo_surface_write_to_png(ref, path),
+									 CAIRO_STATUS_SUCCESS);
+							cairo_surface_t *actual = cairo_image_surface_create_for_data(
+								data, CAIRO_FORMAT_ARGB32, sb->buffer->width,
+								sb->buffer->height, pitch);
+							snprintf(path, sizeof(path), "%s/s%g-o%zu-e%d-c%zu-actual.png",
+									 evidence, scale, oi, ellipsize, k);
+							CHECK_EQ(cairo_surface_write_to_png(actual, path),
+									 CAIRO_STATUS_SUCCESS);
+							cairo_surface_destroy(actual);
+							printf("text scale=%g origin=%.9g ellipsize=%d case=%zu "
+								   "natural=%dx%d clip=%.9g+%.9g pango-bound=%d raster=%dx%d "
+								   "dest=%d+%d source=%g+%g\n",
+								   scale, x, ellipsize, k, nw, nh, cmds[0].boundingBox.x,
+								   cmds[0].boundingBox.width, bound, sb->buffer->width,
+								   sb->buffer->height, sb->node.x, sb->dst_width,
+								   sb->src_box.x, sb->src_box.width);
+						}
+						wlr_buffer_end_data_ptr_access(sb->buffer);
+					}
+					cairo_surface_destroy(ref);
+					CHECK(sb->src_box.x >= 0 && sb->src_box.y >= 0);
+					CHECK(sb->src_box.x + sb->src_box.width <= sb->buffer->width);
+					CHECK(sb->src_box.y + sb->src_box.height <= sb->buffer->height);
+					if (left > 0)
+						CHECK(sb->src_box.x > 0);
+					if (cuts[k] / scale >= 1)
+						CHECK(sb->src_box.width > 0 && sb->src_box.width < sb->buffer->width);
+					CHECK_EQ(render_reconcile(f.rs, commands, &no_hooks, no_bounds), 0);
+					CHECK_EQ(render_buffers_created(f.rs), 0);
+				}
+				fixture_finish(&f, &no_hooks);
+			}
+	}
+}
+
+struct raster_destroy_watch {
+	struct wl_listener listener;
+	bool destroyed;
+};
+
+static void raster_destroyed(struct wl_listener *listener, void *data) {
+	struct raster_destroy_watch *watch = wl_container_of(listener, watch, listener);
+	watch->destroyed = true;
+	wl_list_remove(&listener->link);
+}
+
+static void test_raster_readback_lifetime(void) {
+	struct fixture f;
+	fixture_init(&f);
+	Clay_RenderCommand cmds[] = { cmd_text(1, 0, 0, 80, 16, "first", false) };
+	render_reconcile(f.rs, commands_of(cmds, 1), &no_hooks, no_bounds);
+	struct wlr_scene_buffer *sb = wlr_scene_buffer_from_node(
+		child_at(render_tree(f.parent), 0));
+	struct raster_destroy_watch old = { .listener.notify = raster_destroyed };
+	wl_signal_add(&sb->buffer->events.destroy, &old.listener);
+	cmds[0] = cmd_text(1, 0, 0, 80, 16, "replacement", false);
+	render_reconcile(f.rs, commands_of(cmds, 1), &no_hooks, no_bounds);
+	CHECK(old.destroyed);
+	struct raster_destroy_watch current = { .listener.notify = raster_destroyed };
+	wl_signal_add(&sb->buffer->events.destroy, &current.listener);
+	CHECK_EQ(render_reconcile(f.rs, commands_of(cmds, 1), &no_hooks, no_bounds), 0);
+	CHECK(!current.destroyed);
+	render_reconcile(f.rs, commands_of(cmds, 0), &no_hooks, no_bounds);
+	CHECK(current.destroyed);
+	CHECK_EQ(render_raster_bytes(f.rs), 0);
+	fixture_finish(&f, &no_hooks);
+}
+
+static void fake_image_entry(struct image_entry *e, int w, int h) {
+	memset(e, 0, sizeof(*e));
+	e->native = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, w, h);
+	e->width = w;
+	e->height = h;
+	e->gen = 1;
+}
+
+static void test_output_backdrop(void) {
+	struct fixture f;
+	fixture_init(&f);
+	struct image_entry entry;
+	fake_image_entry(&entry, 8, 8);
+	cairo_t *cr = cairo_create(entry.native);
+	cairo_set_source_rgba(cr, 0, 1, 0, 0.5);
+	cairo_rectangle(cr, 0, 0, 4, 8);
+	cairo_fill(cr);
+	cairo_destroy(cr);
+	entry.natural = true;
+	render_set_output_id(f.rs, 1);
+	Clay_RenderCommand cmds[] = {
+		cmd_rect(2, 20, 0, 8, 8, 0),
+		cmd_image(1, 0, 0, 8, 8, &entry),
+		cmd_rect(1, 0, 0, 8, 8, 0),
+		cmd_rect(3, 30, 0, 8, 8, 0),
+		cmd_rect(4, 40, 0, 8, 8, 0),
+	};
+	cmds[0].zIndex = -4;
+	cmds[4].zIndex = 200;
+	cmds[1].renderData.image.backgroundColor = (Clay_Color){255, 0, 0, 255};
+	for (int scale = 0; scale < 2; scale++) {
+		render_set_scale(f.rs, scale ? 1.5f : 1);
+		render_reconcile(f.rs, commands_of(cmds, 5), &no_hooks, no_bounds);
+		struct wlr_scene_tree *rt = render_tree(f.parent);
+		CHECK_EQ(child_at(rt, 0)->type, WLR_SCENE_NODE_RECT);
+		CHECK_EQ(child_at(rt, 1)->type, WLR_SCENE_NODE_BUFFER);
+		CHECK_EQ(child_at(rt, 2)->x, 20);
+		CHECK_EQ(child_at(rt, 3)->x, 30);
+		CHECK_EQ(child_at(rt, 4)->x, 40);
+		struct wlr_scene_buffer *sb = wlr_scene_buffer_from_node(child_at(rt, 1));
+		void *data;
+		uint32_t format;
+		size_t pitch;
+		bool readable = wlr_buffer_begin_data_ptr_access(sb->buffer,
+			WLR_BUFFER_DATA_PTR_ACCESS_READ, &data, &format, &pitch);
+		CHECK(readable);
+		if (readable) {
+			uint32_t *row = (uint32_t *)((char *)data + 2 * pitch);
+			CHECK_EQ(row[2], 0x80008000u);
+			CHECK_EQ(row[sb->buffer->width - 2], 0);
+			wlr_buffer_end_data_ptr_access(sb->buffer);
+		}
+		CHECK_EQ(cmds[1].renderData.image.backgroundColor.a, 255);
+		CHECK_EQ(render_reconcile(f.rs, commands_of(cmds, 5), &no_hooks, no_bounds), 0);
+		/* Clay may place OUTPUT after a negative root or before it. */
+		Clay_RenderCommand reordered[] = {cmds[2], cmds[1], cmds[0], cmds[3], cmds[4]};
+		CHECK_EQ(render_reconcile(f.rs, commands_of(reordered, 5), &no_hooks, no_bounds), 0);
+		/* Unlock removes only the top overlay; image/colour swaps sweep the
+		 * vanished node while keeping the remaining paint below the desktop. */
+		render_reconcile(f.rs, commands_of(cmds, 4), &no_hooks, no_bounds);
+		CHECK_EQ(render_node_count(f.rs), 4);
+		Clay_RenderCommand solid[] = {cmds[0], cmds[2], cmds[3]};
+		render_reconcile(f.rs, commands_of(solid, 3), &no_hooks, no_bounds);
+		CHECK_EQ(child_at(rt, 0)->type, WLR_SCENE_NODE_RECT);
+		CHECK_EQ(child_at(rt, 1)->x, 20);
+		Clay_RenderCommand image[] = {cmds[0], cmds[1], cmds[3]};
+		render_reconcile(f.rs, commands_of(image, 3), &no_hooks, no_bounds);
+		CHECK_EQ(child_at(rt, 0)->type, WLR_SCENE_NODE_BUFFER);
+		CHECK_EQ(child_at(rt, 1)->x, 20);
+		CHECK_EQ(render_reconcile(f.rs, commands_of(image, 3), &no_hooks, no_bounds), 0);
+	}
+	fixture_finish(&f, &no_hooks);
+	cairo_surface_destroy(entry.native);
+}
+
+static void test_image_rerasters_on_generation_bump(void) {
+	struct fixture f;
+	fixture_init(&f);
+	struct image_entry entry;
+	fake_image_entry(&entry, 4, 4);
+	Clay_RenderCommand cmds[] = { cmd_image(1, 0, 0, 32, 32, &entry) };
+
+	render_reconcile(f.rs, commands_of(cmds, 1), &no_hooks, no_bounds);
+	CHECK_EQ(render_buffers_created(f.rs), 1);
+	CHECK(render_raster_bytes(f.rs) > 0);
+	CHECK_EQ(render_reconcile(f.rs, commands_of(cmds, 1), &no_hooks, no_bounds), 0);
+	CHECK_EQ(render_buffers_created(f.rs), 0);
+
+	/* The entry pointer never changes across a reload, so gen is what tells the
+	 * renderer the pixels are new. */
+	entry.gen++;
+	CHECK_EQ(render_reconcile(f.rs, commands_of(cmds, 1), &no_hooks, no_bounds), 1);
+	CHECK_EQ(render_buffers_created(f.rs), 1);
+
+	fixture_finish(&f, &no_hooks);
+	cairo_surface_destroy(entry.native);
+
+	/* An entry with no surface draws nothing at all. */
+	struct image_entry failed = { 0 };
+	Clay_RenderCommand miss[] = { cmd_image(2, 0, 0, 32, 32, &failed) };
+	struct fixture g;
+	fixture_init(&g);
+	render_reconcile(g.rs, commands_of(miss, 1), &no_hooks, no_bounds);
+	CHECK_EQ(child_count(render_tree(g.parent)), 1);
+	CHECK_EQ(render_buffers_created(g.rs), 0);
+	CHECK_EQ(render_raster_bytes(g.rs), 0);
+	fixture_finish(&g, &no_hooks);
+}
+
+/* Read the actual device raster at integer and fractional scales.
+ * A coordinate-coded source distinguishes origin selection from stretching. */
+static void test_image_source_origin(void) {
+	struct fixture f;
+	fixture_init(&f);
+	struct image_entry entry = { .natural = true,
+		.filter = CAIRO_FILTER_NEAREST + 1, .src_x = 8, .src_y = 12 };
+	cairo_surface_t *source = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, 64, 64);
+	uint32_t *pixels = (uint32_t *)cairo_image_surface_get_data(source);
+	int stride = cairo_image_surface_get_stride(source) / 4;
+	for (int y = 0; y < 64; y++)
+		for (int x = 0; x < 64; x++)
+			pixels[y * stride + x] = 0xff000040u | (x * 3u << 16) | (y * 3u << 8);
+	cairo_surface_mark_dirty(source);
+	image_entry_set(&entry, source);
+	CHECK_EQ(entry.src_x, 8);
+	CHECK_EQ(entry.src_y, 12);
+	Clay_RenderCommand cmds[] = { cmd_image(1, 0, 0, 16, 12, &entry) };
+	const float scales[] = { 1.0f, 1.25f };
+	for (size_t i = 0; i < sizeof(scales) / sizeof(scales[0]); i++) {
+		render_set_scale(f.rs, scales[i]);
+		for (int move = 0; move < 3; move++) {
+			if (move == 1) entry.src_x += 4;
+			if (move == 2) entry.src_y += 4;
+			CHECK(render_reconcile(f.rs, commands_of(cmds, 1), &no_hooks, no_bounds) > 0);
+			CHECK_EQ(render_buffers_created(f.rs), 1);
+			struct wlr_scene_buffer *sb = wlr_scene_buffer_from_node(
+				child_at(render_tree(f.parent), 0));
+			int w = (int)(16 * scales[i]), h = (int)(12 * scales[i]);
+			CHECK_EQ(sb->buffer->width, w);
+			CHECK_EQ(sb->buffer->height, h);
+			CHECK_EQ(render_raster_bytes(f.rs), w * h * 4);
+			void *data;
+			uint32_t format;
+			size_t pitch;
+			bool readable = wlr_buffer_begin_data_ptr_access(sb->buffer,
+				WLR_BUFFER_DATA_PTR_ACCESS_READ, &data, &format, &pitch);
+			CHECK(readable);
+			if (readable) {
+				for (int y = 0; y < h; y++) {
+					uint32_t *row = (uint32_t *)((char *)data + y * pitch);
+					for (int x = 0; x < w; x++) {
+						int sx = entry.src_x + (int)floor((x + 0.5) / scales[i]);
+						int sy = entry.src_y + (int)floor((y + 0.5) / scales[i]);
+						/* At an exact texel boundary Cairo's fixed-point
+						 * nearest filter may choose either neighbor. */
+						double px = (x + 0.5) / scales[i];
+						double py = (y + 0.5) / scales[i];
+						if (scales[i] == 1 || (fabs(px - round(px)) > 0.001
+								&& fabs(py - round(py)) > 0.001))
+							CHECK_EQ(row[x], pixels[sy * stride + sx]);
+					}
+				}
+				wlr_buffer_end_data_ptr_access(sb->buffer);
+			}
+			CHECK_EQ(entry.gen, 1);
+			CHECK_EQ(render_reconcile(f.rs, commands_of(cmds, 1), &no_hooks, no_bounds), 0);
+			CHECK_EQ(render_buffers_created(f.rs), 0);
+		}
+	}
+	fixture_finish(&f, &no_hooks);
+	image_entry_set(&entry, NULL);
+}
+
+static void test_font_interning(void) {
+	/* Entry 0 is the fallback face, and Clay's debug view writes fontId 0
+	 * without interning anything. */
+	CHECK_EQ(render_font_intern("Sans"), 0);
+	int32_t mono = render_font_intern("Monospace");
+	CHECK(mono > 0);
+	/* Write-once: the same description resolves to the same id. */
+	CHECK_EQ(render_font_intern("Monospace"), mono);
+
+	/* A description carrying a size is refused, because size is its own
+	 * channel and would be silently overridden. */
+	CHECK_EQ(render_font_intern("Monospace 12"), RENDER_FONT_ERR_SIZE);
+	/* Pango's parser is what decides: it reads a trailing number as a size, and
+	 * a family whose name ends in a digit with no space before it as a family. */
+	CHECK(render_font_intern("M+ 1c") > 0);
+}
+
+static void test_measure_is_monotonic(void) {
+	/* Font availability is the system's, so the only claims here are the ones
+	 * that hold with any face, including none at all. */
+	render_text_set_measure_scale(1.0f);
+	Clay_TextElementConfig config = { .fontId = 0, .fontSize = 12 };
+	Clay_StringSlice empty = { .length = 0, .chars = "", .baseChars = "" };
+	Clay_StringSlice run = { .length = 5, .chars = "hello", .baseChars = "hello" };
+
+	Clay_Dimensions d_empty = render_measure_text(empty, &config, NULL);
+	Clay_Dimensions d_run = render_measure_text(run, &config, NULL);
+	CHECK_EQ(d_empty.width, 0);
+	CHECK(d_run.width >= d_empty.width);
+	/* Same input, same answer: the measure callback is pure. */
+	CHECK_EQ(render_measure_text(run, &config, NULL).width, d_run.width);
+}
+
+/* The verifier aborts the process, so the divergence runs in a child. */
+/* Every box a border draws, whether it is an edge rect or a corner tile. */
+static int ring_cover(struct wlr_scene_tree *bt, int px, int py) {
+	int n = 0;
+	struct wlr_scene_node *child;
+	wl_list_for_each(child, &bt->children, link) {
+		if (!child->enabled) {
+			continue;
+		}
+		int w, h;
+		if (child->type == WLR_SCENE_NODE_RECT) {
+			struct wlr_scene_rect *r = wlr_scene_rect_from_node(child);
+			w = r->width;
+			h = r->height;
+		} else {
+			struct wlr_scene_buffer *b = wlr_scene_buffer_from_node(child);
+			w = b->dst_width;
+			h = b->dst_height;
+		}
+		if (px >= child->x && px < child->x + w &&
+				py >= child->y && py < child->y + h) {
+			n++;
+		}
+	}
+	return n;
+}
+
+/* The four edges and the corner tiles must partition the border frame: every
+ * pixel of it drawn, and no pixel drawn twice (the border color can be
+ * translucent, so a double-draw shows as plainly as a hole). The case that
+ * fails when the edges are inset by the radius on one axis and the border width
+ * on the other is 0 < radius < width: nothing then draws the band between them
+ * at any corner. */
+static void test_border_ring_has_no_gap_or_overlap(void) {
+	static const struct { int width, radius; } cases[] = {
+		{ 5, 0 }, { 5, 3 }, { 5, 5 }, { 5, 10 }, { 2, 8 }, { 8, 1 },
+	};
+	const int size = 100;
+	for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); i++) {
+		struct fixture f;
+		fixture_init(&f);
+		int bw = cases[i].width;
+		Clay_RenderCommand c = cmd_border(1, 0, 0, (float)size, (float)size,
+			bw, (float)cases[i].radius);
+		render_reconcile(f.rs, commands_of(&c, 1), &no_hooks, no_bounds);
+		struct wlr_scene_tree *bt =
+			wlr_scene_tree_from_node(child_at(render_tree(f.parent), 0));
+
+		int gaps = 0, overlaps = 0;
+		for (int y = 0; y < size; y++) {
+			for (int x = 0; x < size; x++) {
+				bool frame = x < bw || y < bw ||
+					x >= size - bw || y >= size - bw;
+				int n = ring_cover(bt, x, y);
+				if (frame && n == 0) {
+					gaps++;
+				}
+				if (n > 1) {
+					overlaps++;
+				}
+			}
+		}
+		if (gaps != 0 || overlaps != 0) {
+			fprintf(stderr, "  width %d radius %d: %d gap px, %d overlap px\n",
+				bw, cases[i].radius, gaps, overlaps);
+		}
+		CHECK_EQ(gaps, 0);
+		CHECK_EQ(overlaps, 0);
+		fixture_finish(&f, &no_hooks);
+	}
+}
+
+/* A clipped raster is a crop of the full-box buffer, so the crop has to be
+ * expressed on the grid that buffer was sized on: device_len from the box's
+ * rounded logical origin. Reading the crop origin off the unrounded box.x
+ * instead moves the whole raster by a pixel whenever the solved origin is
+ * fractional. */
+static void test_clip_source_matches_the_buffer_grid(void) {
+	struct fixture f;
+	fixture_init(&f);
+	/* [10.6, 50.6) rounds to [11, 51), so the buffer spans logical [11, 51)
+	 * and the clip starting at 15 takes it from the 4th column. */
+	Clay_RenderCommand cmds[] = {
+		cmd_clip(10, 15, 0, 100, 20, true, true),
+		cmd_rect(1, 10.6f, 0, 40, 20, 4),
+		cmd_clip_end(10),
+	};
+	render_reconcile(f.rs, commands_of(cmds, 3), &no_hooks, no_bounds);
+	struct wlr_scene_node *node = child_at(render_tree(f.parent), 0);
+	struct wlr_scene_buffer *sb = wlr_scene_buffer_from_node(node);
+	CHECK_EQ(node->x, 15);
+	CHECK_EQ((int)sb->src_box.x, 4);
+	CHECK_EQ((int)sb->src_box.width, 36);
+	CHECK_EQ(sb->dst_width, 36);
+	fixture_finish(&f, &no_hooks);
+}
+
+static bool accept_any(void *user, const struct render_node_view *v,
+		double sx, double sy) {
+	(void)user; (void)v; (void)sx; (void)sy;
+	return true;
+}
+
+static size_t triangle_ops(void *data, const struct render_shape *shape,
+		float w, float h, float *ops, size_t cap) {
+	static const float path[] = { 0, 0, 0, 1, 40, 0, 1, 0, 40, 3 };
+	CHECK(cap >= sizeof(path) / sizeof(*path));
+	memcpy(ops, path, sizeof(path));
+	return sizeof(path) / sizeof(*path);
+}
+
+/* A logical move can change the rounded device extent at fractional scale.
+ * The crashing tasklist retained 343 columns and submitted a 344-column crop. */
+static void test_fractional_moves_refresh_rasters(void) {
+	struct image_entry entry = { 0 };
+	image_entry_set(&entry, cairo_image_surface_create(CAIRO_FORMAT_ARGB32, 32, 32));
+	cairo_t *cr = cairo_create(entry.native);
+	cairo_set_source_rgb(cr, 0, 1, 0);
+	cairo_paint(cr);
+	cairo_destroy(cr);
+	struct render_shape shape = { .gen = 1, .fill = { 1, 0, 0, 1 } };
+	struct render_client_hooks hooks = no_hooks;
+	hooks.shape_ops = triangle_ops;
+	const float scales[] = { 1, 1.25f, 1.5f, 2 };
+	for (int kind = 0; kind < 4; kind++) {
+		struct fixture f;
+		fixture_init(&f);
+		Clay_RenderCommand leaf;
+		switch (kind) {
+		case 0: leaf = cmd_text(1, 0, 0, 229.999985f, 20, "tasklist", false); break;
+		case 1: leaf = cmd_rect(1, 0, 0, 229.999985f, 21, 4); break;
+		case 2: leaf = cmd_image(1, 0, 0, 229.999985f, 21, &entry); break;
+		default: leaf = cmd_custom(1, (uint64_t)(uintptr_t)render_shape_tag(&shape),
+			0, 0, 229.999985f, 21); break;
+		}
+		Clay_RenderCommand cmds[] = {
+			cmd_clip(10, 348.333313f, 0, 260, 100, true, true), leaf, cmd_clip_end(10),
+		};
+		for (size_t si = 0; si < sizeof(scales) / sizeof(*scales); si++) {
+			render_set_scale(f.rs, scales[si]);
+			int prev_w = 0, prev_h = 0;
+			for (int move = 0; move < 6; move++) {
+				cmds[1].boundingBox.x = 371.333313f + move;
+				cmds[1].boundingBox.y = 6 + move;
+				render_reconcile(f.rs, commands_of(cmds, 3), &hooks, no_bounds);
+				/* [371.333, 601.333) rounds to [371, 601): 230 logical. */
+				int w = render_device_len(371 + move, 230, scales[si]);
+				int h = render_device_len(6 + move, kind == 0 ? 20 : 21, scales[si]);
+				CHECK_EQ(render_buffers_created(f.rs), move == 0 || w != prev_w || h != prev_h);
+				struct wlr_scene_buffer *sb = wlr_scene_buffer_from_node(child_at(render_tree(f.parent), 0));
+				CHECK_EQ(sb->buffer->width, w);
+				CHECK_EQ(sb->buffer->height, h);
+				CHECK(sb->src_box.x >= 0 && sb->src_box.y >= 0);
+				CHECK(sb->src_box.x + sb->src_box.width <= sb->buffer->width);
+				CHECK(sb->src_box.y + sb->src_box.height <= sb->buffer->height);
+				/* The retained result must contain exactly the freshly drawn pixels. */
+				struct fixture fresh;
+				fixture_init(&fresh);
+				render_set_scale(fresh.rs, scales[si]);
+				render_reconcile(fresh.rs, commands_of(cmds, 3), &hooks, no_bounds);
+				struct wlr_scene_buffer *other = wlr_scene_buffer_from_node(child_at(render_tree(fresh.parent), 0));
+				void *a, *b;
+				uint32_t af, bf;
+				size_t ap, bp;
+				bool ar = wlr_buffer_begin_data_ptr_access(sb->buffer, WLR_BUFFER_DATA_PTR_ACCESS_READ, &a, &af, &ap);
+				bool br = wlr_buffer_begin_data_ptr_access(other->buffer, WLR_BUFFER_DATA_PTR_ACCESS_READ, &b, &bf, &bp);
+				CHECK(ar && br);
+				if (ar && br && sb->buffer->width == w && sb->buffer->height == h) {
+					for (int y = 0; y < h; y++)
+						CHECK(memcmp((char *)a + y * ap, (char *)b + y * bp, w * 4) == 0);
+				}
+				if (ar) wlr_buffer_end_data_ptr_access(sb->buffer);
+				if (br) wlr_buffer_end_data_ptr_access(other->buffer);
+				fixture_finish(&fresh, &hooks);
+				CHECK_EQ(render_reconcile(f.rs, commands_of(cmds, 3), &hooks, no_bounds), 0);
+				CHECK_EQ(render_buffers_created(f.rs), 0);
+				prev_w = w; prev_h = h;
+			}
+		}
+		fixture_finish(&f, &hooks);
+	}
+	cairo_surface_destroy(entry.native);
+}
+
+static void test_stretched_image_crop_uses_source_extent(void) {
+	struct fixture f;
+	fixture_init(&f);
+	struct image_entry entry = { .stretch = true };
+	image_entry_set(&entry, cairo_image_surface_create(CAIRO_FORMAT_ARGB32, 20, 10));
+	Clay_RenderCommand cmds[] = {
+		cmd_clip(10, 50, 10, 50, 20, true, true),
+		cmd_image(1, 0, 0, 100, 40, &entry), cmd_clip_end(10),
+	};
+	render_set_scale(f.rs, 1.5f);
+	render_reconcile(f.rs, commands_of(cmds, 3), &no_hooks, no_bounds);
+	struct wlr_scene_buffer *sb = wlr_scene_buffer_from_node(child_at(render_tree(f.parent), 0));
+	CHECK_EQ(sb->buffer->width, 30);
+	CHECK_EQ(sb->buffer->height, 15);
+	CHECK(sb->src_box.x == 15 && sb->src_box.width == 15);
+	CHECK(sb->src_box.y == 3.75 && sb->src_box.height == 7.5);
+	CHECK_EQ(sb->dst_width, 50);
+	CHECK_EQ(sb->dst_height, 20);
+	/* A one-logical-pixel crop can cover less than one source pixel. */
+	cmds[0].boundingBox = (Clay_BoundingBox){ 99, 0, 1, 40 };
+	render_reconcile(f.rs, commands_of(cmds, 3), &no_hooks, no_bounds);
+	CHECK_EQ(render_buffers_created(f.rs), 0);
+	CHECK(fabs(sb->src_box.x - 29.8) < 0.00001);
+	CHECK(fabs(sb->src_box.width - 0.2) < 0.00001);
+	/* Moving the source under a stationary clip must update its source box. */
+	cmds[1].boundingBox.x = 1;
+	render_reconcile(f.rs, commands_of(cmds, 3), &no_hooks, no_bounds);
+	CHECK_EQ(render_buffers_created(f.rs), 0);
+	CHECK(fabs(sb->src_box.x - 29.4) < 0.00001);
+	fixture_finish(&f, &no_hooks);
+	cairo_surface_destroy(entry.native);
+}
+
+static void test_shape_leaf(void) {
+	struct fixture f;
+	fixture_init(&f);
+	struct render_shape shape = { .gen = 1, .fill = { 1, 0, 0, 1 } };
+	struct render_client_hooks hooks = no_hooks;
+	hooks.shape_ops = triangle_ops;
+	Clay_RenderCommand cmd = cmd_custom(1,
+		(uint64_t)(uintptr_t)render_shape_tag(&shape), 0, 0, 40, 40);
+	CHECK(render_reconcile(f.rs, commands_of(&cmd, 1), &hooks, no_bounds) > 0);
+	struct wlr_scene_node *node = child_at(render_tree(f.parent), 0);
+	CHECK_EQ(node->type, WLR_SCENE_NODE_BUFFER);
+	CHECK(render_raster_bytes(f.rs) > 0);
+	CHECK_EQ(render_buffers_created(f.rs), 1);
+	CHECK_EQ(render_reconcile(f.rs, commands_of(&cmd, 1), &hooks, no_bounds), 0);
+	CHECK_EQ(render_buffers_created(f.rs), 0);
+	/* The input walk admits a point inside the path and refuses one in the
+	 * leaf's box but outside it. */
+	CHECK(render_hit(f.rs, 5, 5, accept_any, NULL));
+	CHECK(!render_hit(f.rs, 35, 35, accept_any, NULL));
+	cmd.boundingBox.width = 50;
+	CHECK(render_reconcile(f.rs, commands_of(&cmd, 1), &hooks, no_bounds) > 0);
+	CHECK_EQ(render_buffers_created(f.rs), 1);
+	shape.gen++;
+	CHECK_EQ(render_reconcile(f.rs, commands_of(&cmd, 1), &hooks, no_bounds), 1);
+	CHECK_EQ(render_buffers_created(f.rs), 1);
+	shape.gradient = (struct render_gradient) {
+		.kind = 1, .points = { 0, 0, 40, 40 }, .count = 2,
+		.stops = { { 0, 1, 0, 0, 1 }, { 1, 0, 0, 1, 1 } },
+	};
+	CHECK(render_reconcile(f.rs, commands_of(&cmd, 1), &hooks, no_bounds) > 0);
+	CHECK_EQ(child_at(render_tree(f.parent), 0)->type, WLR_SCENE_NODE_BUFFER);
+	CHECK_EQ(render_reconcile(f.rs, commands_of(&cmd, 1), &hooks, no_bounds), 0);
+	shape.gradient.stops[0][2] = 1;
+	CHECK(render_reconcile(f.rs, commands_of(&cmd, 1), &hooks, no_bounds) > 0);
+	fixture_finish(&f, &hooks);
+
+	fixture_init(&f);
+	CHECK(render_reconcile(f.rs, commands_of(&cmd, 1), &no_hooks, no_bounds) > 0);
+	CHECK_EQ(render_raster_bytes(f.rs), 0);
+	CHECK_EQ(render_reconcile(f.rs, commands_of(&cmd, 1), &no_hooks, no_bounds), 0);
+	fixture_finish(&f, &no_hooks);
+}
+
+static void test_shadow_tiles(void) {
+	struct fixture f;
+	fixture_init(&f);
+	struct render_shadow style = {.gen = 1, .radius = 12, .corner_radius = 8,
+		.rgba = {0, 0, 0, 0.75f}, .owner_box = {22, 22, 4000, 2160}};
+	struct render_shadow second = style;
+	second.owner_box = (Clay_BoundingBox){62, 62, 200, 100};
+	Clay_RenderCommand cmds[] = {
+		cmd_custom(1, (uintptr_t)render_shadow_tag(&style), 10, 10, 4024, 2184),
+		cmd_custom(2, (uintptr_t)render_shadow_tag(&second), 50, 50, 224, 124),
+	};
+	CHECK(render_reconcile(f.rs, commands_of(cmds, 2), &no_hooks, no_bounds) > 0);
+	CHECK_EQ(render_buffers_created(f.rs), 8);
+	/* Four 20x20 corners and four 12x1 edges, shared between both owners. */
+	CHECK_EQ(render_raster_bytes(f.rs), (4*20*20 + 4*12)*4);
+	CHECK_EQ(child_count(wlr_scene_tree_from_node(child_at(render_tree(f.parent), 0))), 11);
+	CHECK_EQ(render_reconcile(f.rs, commands_of(cmds, 2), &no_hooks, no_bounds), 0);
+	style.owner_box.width = 1000;
+	CHECK(render_reconcile(f.rs, commands_of(cmds, 2), &no_hooks, no_bounds) > 0);
+	CHECK_EQ(render_buffers_created(f.rs), 0);
+	CHECK_EQ(render_raster_bytes(f.rs), (4*20*20 + 4*12)*4);
+	/* Dropping one owner retains the shared tiles for the other. */
+	render_reconcile(f.rs, commands_of(cmds, 1), &no_hooks, no_bounds);
+	CHECK_EQ(render_raster_bytes(f.rs), (4*20*20 + 4*12)*4);
+	render_set_scale(f.rs, 1.25f);
+	render_reconcile(f.rs, commands_of(cmds, 1), &no_hooks, no_bounds);
+	CHECK_EQ(render_buffers_created(f.rs), 8);
+	CHECK_EQ(render_raster_bytes(f.rs), (4*25*25 + 4*15)*4);
+	CHECK_EQ(render_reconcile(f.rs, commands_of(cmds, 1), &no_hooks, no_bounds), 0);
+	style.rgba[3] = 0.25f;
+	style.gen++;
+	render_reconcile(f.rs, commands_of(cmds, 1), &no_hooks, no_bounds);
+	CHECK_EQ(render_buffers_created(f.rs), 8);
+	render_reconcile(f.rs, commands_of(cmds, 0), &no_hooks, no_bounds);
+	CHECK_EQ(render_raster_bytes(f.rs), 0);
+	fixture_finish(&f, &no_hooks);
+}
+
+/* Author expected positions independently of the stale decoration command. */
+static void test_shadow_current_owner(void) {
+	struct fixture f;
+	fixture_init(&f);
+	struct render_shadow style = {.gen = 1, .radius = 12,
+		.rgba = {0, 0, 0, 0.75f}, .owner_id = 2,
+		.offset_x = -15, .offset_y = -15};
+	Clay_RenderCommand cmds[] = {
+		cmd_custom(1, (uintptr_t)render_shadow_tag(&style), -27, -27, 104, 84),
+		cmd_rect(2, 50, 40, 80, 60, 0),
+	};
+	cmds[0].zIndex = -1;
+	for (int scale = 0; scale < 2; scale++) {
+		render_set_scale(f.rs, scale ? 1.5f : 1);
+		style.owner_box = cmds[1].boundingBox = (Clay_BoundingBox){50, 40, 80, 60};
+		render_reconcile(f.rs, commands_of(cmds, 2), &no_hooks, no_bounds);
+		struct wlr_scene_tree *tree = render_tree(f.parent);
+		struct wlr_scene_node *shadow = child_at(tree, 0);
+		CHECK_EQ(shadow->x, 23);
+		CHECK_EQ(shadow->y, 13);
+		CHECK_EQ(child_at(tree, 1)->x, 50);
+		Clay_BoundingBox box;
+		CHECK(render_shadow_box(f.rs, 1, &box));
+		CHECK_EQ(box.width, 104);
+		CHECK_EQ(box.height, 84);
+		cmds[0].boundingBox = (Clay_BoundingBox){23, 13, 104, 84};
+		CHECK_EQ(render_reconcile(f.rs, commands_of(cmds, 2), &no_hooks, no_bounds), 0);
+		style.owner_box.x = cmds[1].boundingBox.x = 100;
+		CHECK(render_reconcile(f.rs, commands_of(cmds, 2), &no_hooks, no_bounds) > 0);
+		CHECK_EQ(shadow->x, 73);
+		CHECK_EQ(render_buffers_created(f.rs), 0);
+		cmds[0].boundingBox.x = 73;
+		CHECK_EQ(render_reconcile(f.rs, commands_of(cmds, 2), &no_hooks, no_bounds), 0);
+		/* Centered FIT growth changes both the owner's width and origin. */
+		style.owner_box = cmds[1].boundingBox = (Clay_BoundingBox){60, 40, 160, 60};
+		render_reconcile(f.rs, commands_of(cmds, 2), &no_hooks, no_bounds);
+		CHECK_EQ(shadow->x, 33);
+		CHECK(render_shadow_box(f.rs, 1, &box));
+		CHECK_EQ(box.width, 184);
+		CHECK_EQ(render_buffers_created(f.rs), 0);
+		cmds[0].boundingBox = (Clay_BoundingBox){33, 13, 184, 84};
+		CHECK_EQ(render_reconcile(f.rs, commands_of(cmds, 2), &no_hooks, no_bounds), 0);
+		style.owner_box = cmds[1].boundingBox = (Clay_BoundingBox){120, 40, 40, 60};
+		render_reconcile(f.rs, commands_of(cmds, 2), &no_hooks, no_bounds);
+		CHECK_EQ(shadow->x, 93);
+		CHECK(render_shadow_box(f.rs, 1, &box));
+		CHECK_EQ(box.width, 64);
+		cmds[0].boundingBox = (Clay_BoundingBox){93, 13, 64, 84};
+		CHECK_EQ(render_reconcile(f.rs, commands_of(cmds, 2), &no_hooks, no_bounds), 0);
+		CHECK(child_at(tree, 0) == shadow);
+		/* A transparent borderless owner has no command. */
+		style.owner_box = (Clay_BoundingBox){200, 80, 100, 60};
+		style.spread = 3;
+		render_reconcile(f.rs, commands_of(cmds, 1), &no_hooks, no_bounds);
+		CHECK_EQ(shadow->x, 170);
+		CHECK_EQ(shadow->y, 50);
+		CHECK(render_shadow_box(f.rs, 1, &box));
+		CHECK_EQ(box.width, 130);
+		CHECK_EQ(box.height, 90);
+		cmds[0].boundingBox = (Clay_BoundingBox){170, 50, 130, 90};
+		CHECK_EQ(render_reconcile(f.rs, commands_of(cmds, 1), &no_hooks, no_bounds), 0);
+		style.spread = 0;
+	}
+	render_reconcile(f.rs, commands_of(cmds, 0), &no_hooks, no_bounds);
+	CHECK_EQ(render_node_count(f.rs), 0);
+	fixture_finish(&f, &no_hooks);
+}
+
+static void test_verifier_catches_divergence(void) {
+#ifndef SOMEWM_RENDER_VERIFY
+	fprintf(stderr, "skipped: built without SOMEWM_RENDER_VERIFY\n");
+	return;
+#else
+	pid_t pid = fork();
+	CHECK(pid >= 0);
+	if (pid == 0) {
+		/* The abort's own diagnostic is the expected output here, not a
+		 * failure to report. */
+		freopen("/dev/null", "w", stderr);
+		struct fixture f;
+		fixture_init(&f);
+		Clay_RenderCommand cmds[] = { cmd_rect(1, 0, 0, 10, 10, 0) };
+		render_reconcile(f.rs, commands_of(cmds, 1), &no_hooks, no_bounds);
+		/* Move the node behind the reconciler's back. The next pass sees an
+		 * unchanged command, so nothing repositions it and the scene no longer
+		 * agrees with the tree. */
+		wlr_scene_node_set_position(child_at(render_tree(f.parent), 0), 999, 999);
+		render_reconcile(f.rs, commands_of(cmds, 1), &no_hooks, no_bounds);
+		_exit(0);   /* reached only if the verifier let the divergence stand */
+	}
+	int status = 0;
+	CHECK(waitpid(pid, &status, 0) == pid);
+	CHECK(WIFSIGNALED(status));
+	CHECK_EQ(WTERMSIG(status), SIGABRT);
+#endif
+}
+
+int main(void) {
+	static const struct {
+		const char *name;
+		void (*fn)(void);
+	} tests[] = {
+		{ "visibility batch guards", test_visibility_batch_guards },
+		{ "identical frame reconciles to zero", test_identical_frame_reconciles_to_zero },
+		{ "add, remove and move", test_add_remove_move },
+		{ "kind swap destroys and restacks", test_kind_swap_destroys_and_restacks },
+		{ "restack only when order changed", test_restack_only_when_order_changed },
+		{ "clip stack", test_clip_stack },
+        { "full clip budget inside a floating root", test_full_clip_budget },
+		{ "clip axes", test_clip_axes },
+		{ "opacity from the word", test_opacity_from_the_word },
+		{ "scopes from the word", test_scopes_from_the_word },
+        { "120 renderer host scopes without native clips", test_many_host_scopes },
+		{ "border clips to the bounds", test_border_clips_to_the_bounds },
+		{ "client surface hooks", test_client_surface_hooks },
+		{ "custom crops to its clip", test_custom_crops_to_its_clip },
+		{ "float boxes round", test_float_boxes_round },
+		{ "text rasters once per change", test_text_rasters_once_per_change },
+		{ "text crops to its clip", test_text_crops_to_its_clip },
+		{ "fractional text matches Pango", test_fractional_text_clipping },
+		{ "raster readback lifetime", test_raster_readback_lifetime },
+		{ "output backdrop", test_output_backdrop },
+		{ "image rerasters on generation bump", test_image_rerasters_on_generation_bump },
+		{ "image source origin", test_image_source_origin },
+		{ "shape leaf", test_shape_leaf },
+		{ "fractional moves refresh rasters", test_fractional_moves_refresh_rasters },
+		{ "stretched image crop uses source extent", test_stretched_image_crop_uses_source_extent },
+		{ "shared shadow tiles", test_shadow_tiles },
+		{ "shadow follows current owner", test_shadow_current_owner },
+		{ "font interning", test_font_interning },
+		{ "measure is monotonic", test_measure_is_monotonic },
+		{ "border ring has no gap or overlap", test_border_ring_has_no_gap_or_overlap },
+		{ "clip source matches the buffer grid", test_clip_source_matches_the_buffer_grid },
+		{ "verifier catches divergence", test_verifier_catches_divergence },
+	};
+
+	for (size_t i = 0; i < sizeof(tests) / sizeof(tests[0]); i++) {
+		current_test = tests[i].name;
+		int before = failures;
+		tests[i].fn();
+		printf("%s %s\n", failures == before ? "ok  " : "FAIL", tests[i].name);
+	}
+	render_text_finish();
+	if (failures > 0) {
+		fprintf(stderr, "%d check(s) failed\n", failures);
+	}
+	return failures > 0 ? 1 : 0;
+}

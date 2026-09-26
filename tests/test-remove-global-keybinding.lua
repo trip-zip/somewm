@@ -1,5 +1,5 @@
 ---------------------------------------------------------------------------
---- Reproduction test for issue #405: root._remove_key() is a silent no-op
+--- Reproduction test: root._remove_key() is a silent no-op
 ---
 --- Verifies that awful.keyboard.remove_global_keybinding() immediately
 --- removes ALL C key objects (one per modifier combo) from the C layer.

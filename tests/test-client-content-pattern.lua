@@ -171,9 +171,8 @@ local function run_case(args)
     assert(c, "Client never appeared at scale=" .. tostring(args.scale))
 
     -- Move the client off the scene origin so c.content's scene-tree walk
-    -- exercises non-zero buffer positions. A regression here (commit
-    -- introducing #539's scene-walk) only manifested when the client was
-    -- somewhere other than (0, 0).
+    -- exercises non-zero buffer positions. Using scene coordinates as the
+    -- capture origin would shift the content of a client away from (0, 0).
     c.floating = true
     local g = c:geometry()
     c:geometry { x = 173, y = 109, width = g.width, height = g.height }

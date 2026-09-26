@@ -1,0 +1,1341 @@
+---------------------------------------------------------------------------
+--- Compile a drawable's widget tree into Clay declarations.
+--
+-- The declare pass (declare.c) draws a drawin from the tree this module
+-- returns: locally compatible descriptions share elements, with every original
+-- placement bound to its actual element. Image elements reference their own
+-- surfaces. A widget that draws itself or has no describer is
+-- refused together with its subtree; the drawable background remains.
+--
+-- The walk descends the widget tree and composes sizing declarations from
+-- authored values. Clay solves their allocations and positions. A node's
+-- sizing is one of the four
+-- types clay.h names: `fit` wraps the content, which is Clay's default
+-- (CLAY_SIZING_FIT), `grow` fills the parent (CLAY_SIZING_GROW), a number
+-- is told (CLAY_SIZING_FIXED), and a table `{ percent = p }` is a share of
+-- the parent (CLAY_SIZING_PERCENT, clay.h:66-72, 289-297). A container
+-- says which of the first two each child gets; a widget's own preference (a
+-- forced size, a place that fills) refines fit and never overrides grow,
+-- since fit is the content size and that preference is the content.
+--
+-- The offer starts with the authored drawin dimensions at the root, less
+-- each node's padding on the way down. A node may divide
+-- the offer among its children along one axis. Clay measures text;
+-- Lua composes image bounds from source dimensions and authored offers.
+-- Content-sized hosts use natural image sizes until an axis is authored.
+-- Square bounds use the definite authored axes, or zero without one.
+-- A cap of `"offer"` (`wmax`, `hmax`) is the
+-- offer on that axis, for a node whose content it cuts rather than
+-- outgrows. A described leaf gives its preferred dimensions directly, using
+-- grow on an axis that takes the whole offer.
+--
+-- @module wibox.clay
+---------------------------------------------------------------------------
+
+local gdebug = require("gears.debug")
+local beautiful = require("beautiful")
+local gcolor = require("gears.color")
+local gshape = require("gears.shape")
+local gsurface = require("gears.surface")
+
+local cairo = require("lgi").cairo
+local clay = {}
+local identities = setmetatable({}, {__mode = "k"})
+local next_identity = 0
+local next_occurrence = 0
+-- Identity names the widget, not its box or position in a compiled subtree.
+function clay.identity(widget)
+    if not identities[widget] then
+        next_identity = next_identity + 1
+        identities[widget] = next_identity
+    end
+    return identities[widget]
+end
+local probe = cairo.Context(cairo.ImageSurface(cairo.Format.A8, 1, 1))
+
+--- Record a shape path in logical pixels, offset by dx and dy.
+function clay.shape_ops(shape, w, h, dx, dy, ...)
+    probe:new_path()
+    local ops = {}
+    local kinds = { MOVE_TO = 0, LINE_TO = 1, CURVE_TO = 2, CLOSE_PATH = 3 }
+    local function append_path()
+        for kind, points in probe:copy_path():pairs() do
+            ops[#ops + 1] = kinds[kind]
+            for _, point in ipairs(points) do
+                ops[#ops + 1] = point.x + (dx or 0)
+                ops[#ops + 1] = point.y + (dy or 0)
+            end
+        end
+    end
+    local recorder = setmetatable({}, { __index = function(_, name)
+        if name == "stroke" or name == "fill" then
+            return function()
+                append_path()
+                probe:new_path()
+            end
+        elseif name == "stroke_preserve" or name == "fill_preserve" then
+            return append_path
+        end
+        return function(_, ...)
+            return probe[name](probe, ...)
+        end
+    end })
+    shape(recorder, w, h, ...)
+    append_path()
+    return ops
+end
+
+--- The corner radius a shape stands for, or nil for one Clay cannot name.
+-- A shape is an arbitrary painter: the two gears shapes that are rectangles
+-- are known by identity, and any other function by the path it draws;
+-- `rounded_bar` and the rest keep drawing themselves.
+
+local function same_path(a, b)
+    if #a ~= #b then
+        return false
+    end
+    for i, value in ipairs(a) do
+        if value ~= b[i] then
+            return false
+        end
+    end
+    return true
+end
+
+--- The radius a shape function draws when its path is
+-- gears.shape.rounded_rect's, which is what a theme's `function(cr, w, h)
+-- gears.shape.rounded_rect(cr, w, h, r) end` draws: the same path at two
+-- sizes, with the radius read off the path's first point (0, r). Cached
+-- per function; false for one that draws anything else.
+local shape_radii = setmetatable({}, { __mode = "k" })
+
+local function closure_radius(shape)
+    local r = shape_radii[shape]
+
+    if r == nil then
+        local w, h = 160, 96
+        local path = clay.shape_ops(shape, w, h)
+
+        r = false
+        if path[1] == 0 and path[2] == 0 then
+            local radius = path[3]
+
+            if same_path(path, clay.shape_ops(gshape.rounded_rect, w, h, 0, 0, radius))
+                    and same_path(clay.shape_ops(shape, 2 * w, 2 * h),
+                        clay.shape_ops(gshape.rounded_rect, 2 * w, 2 * h, 0, 0, radius)) then
+                r = radius
+            end
+        end
+        shape_radii[shape] = r
+    end
+    return r or nil
+end
+
+local function shape_radius(shape, args)
+    if shape == nil or shape == gshape.rectangle then
+        return 0
+    end
+    if shape == gshape.rounded_rect then
+        local r = args and args[1] or 10
+
+        return (type(r) == "number" and r >= 0) and r or nil
+    end
+    if type(shape) == "function" then
+        return closure_radius(shape)
+    end
+    return nil
+end
+
+clay.shape_radius = shape_radius
+
+--- The straight-alpha components of a solid color pattern, or nil for a
+-- gradient, a surface pattern, or no color at all. A solid color carries
+-- four components (third_party/clay.h:223-225); the renderer uses straight alpha.
+local function solid_rgba(col)
+    if not col then
+        return nil
+    end
+
+    local pattern = gcolor(col)
+
+    if pattern:get_type() ~= "SOLID" then
+        return nil
+    end
+
+    local status, r, g, b, a = pattern:get_rgba()
+
+    if status ~= "SUCCESS" then
+        return nil
+    end
+
+    return { r, g, b, a }
+end
+
+--- A solid fill or a linear or radial gradient in logical pixels.
+function clay.fill(col)
+    if not col then return nil end
+    local pattern = gcolor(col)
+    local kind = pattern:get_type()
+    if kind == "SOLID" then return solid_rgba(col) end
+    if kind ~= "LINEAR" and kind ~= "RADIAL" then return nil end
+    local status, count = pattern:get_color_stop_count()
+    if status ~= "SUCCESS" or count > 16 then return nil end
+    local points = kind == "LINEAR" and { pattern:get_linear_points() }
+        or { pattern:get_radial_circles() }
+    if table.remove(points, 1) ~= "SUCCESS" then return nil end
+    local fill = { stops = {} }
+    fill[kind == "LINEAR" and "linear" or "radial"] = points
+    for i = 0, count - 1 do
+        local stop = { pattern:get_color_stop_rgba(i) }
+        if table.remove(stop, 1) ~= "SUCCESS" then return nil end
+        fill.stops[#fill.stops + 1] = stop
+    end
+    return fill
+end
+
+--- The spec for a container's only child: the whole padded box, which is
+-- what `margin:layout` and `background:layout` place it at.
+local function whole_box(widget)
+    return widget and { { widget = widget, w = "grow", h = "grow" } } or {}
+end
+
+--- The parent's sizing for a child, over the child's own. Grow stands, and
+-- a size the child gave becomes its floor (Clay_SizingMinMax.min): the
+-- child fills what it is given, and a parent that wraps its content still
+-- counts that size, as the engine's `:fit` counted it through a container
+-- that hands its child the whole box. Fit gives way to what the child said.
+-- A floor from either side stands, and the larger of two.
+local function merge_sizing(node, spec)
+    for _, k in ipairs { "w", "h" } do
+        if spec.float or spec.stack then
+            -- Overlaid children keep their own size, including the stack's
+            -- in-flow content. An explicit manual allocation can enlarge it.
+            if type(spec[k]) == "number" then
+                node[k] = math.max(spec[k], type(node[k]) == "number" and node[k] or 0,
+                    node[k .. "min"] or 0)
+            else
+                node[k] = node[k] or spec[k]
+            end
+        elseif spec[k] == "grow" then
+            if type(node[k]) == "number" then
+                node[k .. "min"] = node[k]
+            end
+            node[k] = "grow"
+        elseif node[k] == nil then
+            node[k] = spec[k]
+        end
+    end
+    for _, k in ipairs { "wmin", "hmin" } do
+        if spec[k] and node[k] then
+            node[k] = math.max(spec[k], node[k])
+        else
+            node[k] = spec[k] or node[k]
+        end
+    end
+    -- A cap from either side stands, and the tighter of two.
+    for _, k in ipairs { "wmax", "hmax" } do
+        if spec[k] and node[k] then
+            node[k] = math.min(spec[k], node[k])
+        else
+            node[k] = spec[k] or node[k]
+        end
+    end
+end
+
+--- awful.widget.systray_icon -> an element centering one image leaf: the
+-- item's pixmap, or the icon file its name resolves to, at the slot's
+-- square scaled to keep the icon's aspect, as `systray_icon:draw` paints
+-- it (third_party/clay.h:414-416). Hover, urgency, overlays and
+-- `beautiful.systray_icon_style` are ignored. An icon without a usable
+-- pixmap or icon file is refused.
+function clay.systray_icon(w)
+    local p = w._private
+    local item = p.item
+
+    if not item then
+        return clay.refuse(w, "icon", "has no pixmap and no icon file to draw")
+    end
+    if p.is_hovered then
+        clay.ignore(w, "is_hovered", "is drawn as the plain icon")
+    end
+    if item.status == "NeedsAttention" then
+        clay.ignore(w, "status", "is drawn as the plain icon")
+    end
+    if item.overlay_icon then
+        clay.ignore(w, "overlay_icon", "is drawn as the plain icon")
+    end
+    if beautiful.systray_icon_style then
+        clay.ignore(w, "systray_icon_style", "is drawn as the plain icon")
+    end
+
+    local size = p.forced_size or 24
+    local sw, sh = p.forced_width or size, p.forced_height or size
+    local surface, iw, ih = item:_icon_surface()
+
+    if not surface then
+        -- The icon file, loaded once per path so the surface the leaf
+        -- references stays the same object across compiles.
+        local path = p.current_icon
+
+        if type(path) ~= "string" then
+            return clay.refuse(w, "icon", "has no pixmap and no icon file to draw")
+        end
+        if not p.clay_icon or p.clay_icon.path ~= path then
+            local loaded = gsurface.load_silently(path)
+
+            if not loaded then
+                return clay.refuse(w, "icon", "has no pixmap and no icon file to draw")
+            end
+            p.clay_icon = { path = path, surface = loaded }
+        end
+        surface = p.clay_icon.surface._native
+        iw, ih = p.clay_icon.surface.width, p.clay_icon.surface.height
+    end
+    if not (iw > 0 and ih > 0) then
+        return clay.refuse(w, "icon", "has no pixmap and no icon file to draw")
+    end
+
+    return { w = sw, h = sh, theme_size = not p.forced_width and not p.forced_height, align = { x = "center", y = "center" },
+        specs = { { image = surface, name = "image",
+            aspect = iw / ih, image_width = iw, image_height = ih,
+            wmax = sw, hmax = sh } } }
+end
+
+--- wibox.widget.systray -> the fixed layout it is, with the padding and
+-- the background its overrides add (`beautiful.systray_paddings`,
+-- `beautiful.bg_systray`) and the least size its `:fit` answers. More than
+-- one row is drawn as one; spacing widgets and a non-solid background
+-- are ignored. Padding and spacing round to uint16 pixels
+-- (third_party/clay.h:330-335, 344).
+function clay.systray(w)
+    local p = w._private
+    local padding = clay.pixels(w, "systray_paddings", beautiful.systray_paddings)
+    local rows = math.floor(tonumber(beautiful.systray_max_rows) or 1)
+    local spacing = clay.pixels(w, "spacing", p.spacing)
+    local size = w.base_size or 24
+
+    if rows > 1 then
+        clay.ignore(w, "systray_max_rows", "above 1 is one row")
+    end
+    if spacing ~= 0 and p.spacing_widget then
+        clay.ignore(w, "spacing_widget", "is not drawn")
+    end
+
+    local along = p.dir == "y" and "h" or "w"
+
+    -- Icons keep their own square and the tray centres them across its
+    -- direction, in place of a grown slot around each one.
+    local node = { dir = p.dir, gap = spacing, specs = {},
+        align = { [p.dir == "y" and "x" or "y"] = "center" },
+        pad = { padding, padding, padding, padding },
+        [along .. "min"] = padding * 2 + size }
+
+    if beautiful.bg_systray then
+        node.bg = solid_rgba(beautiful.bg_systray)
+        if not node.bg then
+            clay.ignore(w, "bg_systray", "is not solid and is transparent")
+        end
+    end
+    for i, child in ipairs(p.widgets) do
+        node.specs[i] = { widget = child }
+    end
+    return node
+end
+
+--- Register the describer for one widget.
+-- @tparam wibox.widget w The widget.
+-- @tparam function describer The describer, as the class table's entries.
+-- @tparam string name The widget's class, for the `somewm-client clay
+--  tree` dump, where `widget_name` names the class it was built from.
+-- @staticfct wibox.clay.describe_widget
+function clay.describe_widget(w, describer, name)
+    w._clay = { describe = describer, name = name }
+end
+
+
+--- The widget's class, for the `somewm-client clay tree` dump.
+--
+-- `gears.object.modulename` derives `widget_name` from the source path and
+-- only trims it at a `lib/` directory; somewm installs its library under
+-- `lua/`, so the name arrives with the path still in front of it.
+local function class_name(w)
+    local name = w._clay and w._clay.name or w.widget_name
+
+    if not name then
+        return nil
+    end
+    return (name:gsub("^.*%.lua%.", ""):gsub("^[^%a]+", ""))
+end
+
+local warned = {}
+local warned_props = {}
+
+--- Warn once per class and property that a value Clay cannot hold is
+-- left out, and go on without it. `who` is a widget or a name.
+function clay.ignore(who, property, what)
+    local name = type(who) == "string" and who or class_name(who) or "?"
+    local key = name .. " " .. property
+    if not warned_props[key] then
+        warned_props[key] = true
+        gdebug.print_warning("wibox.clay: " .. key .. " " .. what)
+    end
+end
+
+--- The same warning for a property that keeps the widget out of the
+-- tree; a describer returns it.
+function clay.refuse(who, property, what)
+    clay.ignore(who, property, what .. " and is left out of the tree")
+    return nil
+end
+
+--- The nearest whole pixel.
+function clay.round(v)
+    return math.floor(v + 0.5)
+end
+
+--- A padding, gap, offset or border width as Clay holds it: whole uint16
+-- pixels (clay.h:330-335, 344, 533-541). A fraction rounds silently; a
+-- negative or oversized value is clamped with a warning.
+function clay.pixels(who, property, v)
+    v = clay.round(v or 0)
+    if v < 0 then
+        clay.ignore(who, property, "is negative and is 0")
+        return 0
+    elseif v > 65535 then
+        clay.ignore(who, property, "exceeds 65535 and is 65535")
+        return 65535
+    end
+    return v
+end
+
+--- The node a widget compiles to, plus any foreground it puts in force, or
+-- nil for a hidden or refused widget. `node.specs` sizes its children.
+-- A forced size overrides the size returned by the describer.
+local function describe(w, fg, st, item, offer)
+    local record = w._clay
+
+    if w._private.visible == false then return nil end
+    local methods = {}
+    for _, method in ipairs { "draw", "fit", "layout", "before_draw_children", "after_draw_children" } do
+        if rawget(w, method) ~= nil then methods[#methods + 1] = ":" .. method end
+    end
+    if #methods > 0 or not record then
+        local name = class_name(w) or "?"
+        if not warned[name] then
+            warned[name] = true
+            local reason = #methods > 0 and "draws itself (" .. table.concat(methods, ", ") .. ")"
+                or "has no describer"
+            gdebug.print_warning("wibox.clay: " .. name .. " " .. reason .. " and is left out of the tree")
+        end
+        return nil
+    end
+
+    local node, node_fg = record.describe(w, fg, st, item, offer)
+
+    if node then
+        node.w = w._private.forced_width or node.w
+        node.h = w._private.forced_height or node.h
+    end
+    return node, node_fg
+end
+
+local axes = {"w", "h"}
+local empty_list = {}
+local no_padding = {0, 0, 0, 0}
+
+-- Seed both FIT axes before Clay's width-first allocation. The paired bounds
+-- preserve outward rounding and let a smaller authored offer cap natural size.
+local function size_image(node, offer)
+    local nw, nh = node.image_width, node.image_height
+    if not node.image or not node.aspect or node.aspect <= 0
+            or not nw or not nh or nw <= 0 or nh <= 0 then return end
+    if node.image_resize == false then
+        node.w, node.h = nw, nh
+    else
+        local width = math.min(type(node.w) == 'number' and node.w or offer.w, node.wmax or math.huge)
+        local height = math.min(type(node.h) == 'number' and node.h or offer.h, node.hmax or math.huge)
+        if not offer.w_definite and not offer.h_definite
+                and type(node.w) ~= 'number' and type(node.h) ~= 'number' then
+            width, height = math.min(width, nw), math.min(height, nh)
+        end
+        local ratio = node.aspect
+        local w = math.ceil(math.max(0, math.min(width, height * ratio)))
+        local h = math.ceil(math.max(0, math.min(height, width / ratio)))
+        if node.image_downscale == false then w, h = math.max(w, nw), math.max(h, nh) end
+        for _, axis in ipairs {{'w', w, nw}, {'h', h, nh}} do
+            local key, value, natural = axis[1], axis[2], axis[3]
+            if type(node[key]) ~= 'number' then
+                if value == 0 then node[key] = 0
+                else
+                    node[key] = 'fit'
+                    node[key .. 'min'] = math.max(natural, value, node[key .. 'min'] or 0)
+                    node[key .. 'max'] = value
+                end
+            end
+        end
+    end
+    node.aspect, node.image_resize, node.image_downscale = nil, nil, nil
+end
+
+-- Establish both square axes before Clay's width-first allocation. Parent
+-- GROW allocations keep their rectangular area; only FIT preferences use the
+-- paired bounds. A square spec without a widget bounds its real child instead.
+local function size_square(node, offer, allocation)
+    if not node.square then return end
+    local width = type(node.w) == 'number' and node.w or offer.w
+    local height = type(node.h) == 'number' and node.h or offer.h
+    local wd = type(node.w) == 'number' or offer.w_definite
+    local hd = type(node.h) == 'number' or offer.h_definite
+    local side = wd and hd and math.min(width, height)
+        or wd and width or hd and height or 0
+    side = math.max(0, math.min(side, node.wmax or math.huge, node.hmax or math.huge))
+    for _, k in ipairs(axes) do
+        if type(node[k]) ~= 'number' and (not allocation or allocation[k] ~= 'grow') then
+            if side == 0 then node[k] = 0
+            else
+                node[k] = 'fit'
+                node[k .. 'min'] = side
+                node[k .. 'max'] = side
+            end
+        end
+    end
+    -- Clay treats a zero maximum as unbounded, even for FIXED(0). Floating
+    -- content cannot enlarge that empty square, and its clip still excludes
+    -- the child's pixels and input while preserving the original occurrence.
+    if side == 0 then
+        for _, child in ipairs(node.children or empty_list) do child.float = true end
+    end
+end
+
+-- Resolve explicit caps before composing dimensions from the same offer.
+local function resolve_size(st, node, offer, allocation)
+    for _, k in ipairs(axes) do
+        if node[k .. "max"] == "offer" then
+            node[k .. "max"] = offer[k]
+            st.offer_dependent = true
+        end
+    end
+    if (node.image or node.square)
+            and (type(node.w) ~= 'number' or type(node.h) ~= 'number') then
+        st.offer_dependent = true
+    end
+    size_image(node, offer)
+    size_square(node, offer, allocation)
+end
+
+local function padded(node)
+    for _, value in ipairs(node.pad or empty_list) do
+        if value ~= 0 then return true end
+    end
+    return false
+end
+
+local function painted(node)
+    return (node.bg and node.bg[4] ~= 0)
+        or (node.border and node.border[4] ~= 0) or node.image or node.shape
+        or (node.radius or 0) > 0
+end
+
+-- A node with nothing in it, nothing on it and no extent along its parent's
+-- flow: an empty textbox or imagebox, an empty list icon slot, an empty
+-- tasklist. It has no layout, paint, input or attachment effect, and Clay
+-- would still put a childGap on either side of it (clay.h:3080-3082), where
+-- the engine skipped the spacing of a child whose `:fit` was zero. So it is
+-- not declared. Its occurrence stays registered, so the widget still marks
+-- its parent and a later value declares the element again.
+--
+-- Only the fields that stay harmless on an empty box are listed: a solid
+-- colour has no pixels on a zero-area box. A ring, image, text, float,
+-- share or an unknown field an ad-hoc
+-- describer returned is a boundary, and keeps the element.
+local inert_fields = {}
+for _, key in ipairs {'w','h','wmin','hmin','wmax','hmax','pad','dir','gap',
+        'align','children','name','widget','identity','occurrence','bindings',
+        'spacer','owner','bg','radius','box'} do inert_fields[key] = true end
+
+local function inert(node, along)
+    if #(node.children or empty_list) ~= 0 or padded(node) or (node.radius or 0) > 0 then return false end
+    for key in pairs(node) do
+        if not inert_fields[key] then return false end
+    end
+    -- Along the flow it must take nothing: grow claims what is left over and
+    -- a told size claims itself. Across it, grow only fills what its
+    -- siblings already decided, so an empty box still spans nothing.
+    local across = node[along == 'w' and 'h' or 'w'] or 'fit'
+
+    if (node[along] or 'fit') ~= 'fit' or (across ~= 'fit' and across ~= 'grow') then
+        return false
+    end
+    return (node.wmin or 0) == 0 and (node.hmin or 0) == 0
+end
+
+-- The node's box at most, and the offer its padding leaves for children.
+-- Floating children take the full box (third_party/clay.h:2224-2237).
+local function node_offer(node, offer)
+    local box = {}
+
+    for _, k in ipairs(axes) do
+        local size = node[k]
+
+        box[k] = math.min(type(size) == "number" and size
+            or type(size) == "table" and offer[k] * size.percent or offer[k],
+            node[k .. "max"] or math.huge)
+        box[k .. '_definite'] = type(size) == 'number' or offer[k .. '_definite'] or false
+    end
+    local pad = node.pad or no_padding
+
+    return { w = math.max(0, box.w - pad[1] - pad[2]),
+        h = math.max(0, box.h - pad[3] - pad[4]),
+        w_definite = box.w_definite, h_definite = box.h_definite }, box
+end
+
+local compile_node
+
+--- The nodes for a list of child specs: a widget's node with the sizing its
+-- parent decided, or an empty element the parent asked for, which stands for
+-- no widget and is left out of the box readback.
+-- A node's own colors at the opacity its widget and ancestors compound to.
+local function fade(node, alpha)
+    for _, key in ipairs { "bg", "border", "fill", "stroke", "color" } do
+        local color = node[key]
+        if color and color[4] then color[4] = color[4] * alpha end
+    end
+    if node.fill and node.fill.stops then
+        for _, stop in ipairs(node.fill.stops) do stop[5] = stop[5] * alpha end
+    end
+end
+
+-- A sole child determines an unbounded-below FIT parent's content extent.
+-- Its GROW axis can therefore remain FIT without changing either area.
+-- Siblings and minimum extents retain their independent allocations.
+local function fit_children(node, children)
+    if #children ~= 1 or node.share or node.solved or node._settle or node.scroll
+            or node.image or node.aspect or node.square or node.grid then return 0 end
+    local w = (node.w or 'fit') == 'fit' and (node.wmin or 0) == 0
+    local h = (node.h or 'fit') == 'fit' and (node.hmin or 0) == 0
+    return (w and 1 or 0) + (h and 2 or 0)
+end
+
+local function fit_grow(node, parent_fit)
+    if node.w == 'grow' and parent_fit % 2 == 1 then node.w = 'fit' end
+    if node.h == 'grow' and parent_fit >= 2 then node.h = 'fit' end
+end
+
+local function compile_specs(st, specs, parent, fg, offer, box, alpha, parent_fit, along, stack)
+    local nodes = {}
+
+    for _, spec in ipairs(specs) do
+        if stack then
+            spec.float = #nodes > 0 or nil
+            if not spec.float then
+                -- Native padding places the content. Floats still attach to
+                -- the full stack box, with their original declaration offsets.
+                stack.pad = {spec.x, 0, spec.y, 0}
+                spec.x, spec.y = nil, nil
+            end
+        end
+        local node
+        local bound = spec.float and box or offer
+
+        resolve_size(st, spec, bound)
+        local inner, spec_box = node_offer(spec, bound)
+
+        if spec.widget then
+            node = compile_node(st, spec.widget, parent, fg, spec_box, spec, alpha,
+                spec.float and 0 or parent_fit)
+        else
+            node = spec
+            node.spacer = true
+            fit_grow(node, spec.float and 0 or parent_fit)
+            node.children = spec.children
+                and compile_specs(st, spec.children, parent, fg, inner, spec_box, alpha,
+                    fit_children(node, spec.children), spec.dir == "y" and "h" or "w") or nil
+            if alpha ~= 1 then fade(node, alpha) end
+        end
+        if node and not inert(node, along) then
+            nodes[#nodes + 1] = node
+            if stack and stack.top_only then break end
+        end
+    end
+    return nodes
+end
+
+local spec_keys = { "w", "h", "wmin", "hmin", "wmax", "hmax",
+    "float", "stack", "x", "y", "parent", "own", "passthrough", "_attach" }
+
+local function same_spec(a, b)
+    for _, k in ipairs(spec_keys) do
+        local x, y = a[k], b[k]
+
+        if x ~= y and not (k ~= '_attach' and type(x) == "table" and type(y) == "table"
+                and x.percent == y.percent) then
+            return false
+        end
+    end
+    return true
+end
+
+-- A placement belongs to its original Lua parent, independently of the Clay
+-- elements that represent it. Repeated references occupy separate slots;
+-- inserting an unrelated sibling does not renumber either slot.
+local function occurrence(st, widget, parent)
+    local building = st.building[parent]
+    local slots = building.slots[widget]
+    if not slots then slots = {}; building.slots[widget] = slots end
+    local previous = parent.slots[widget]
+    local item = previous and previous[#slots + 1]
+    if not item then
+        next_occurrence = next_occurrence + 1
+        assert(next_occurrence < 4294967296, 'widget occurrence IDs exhausted')
+        item = {id = next_occurrence, identity = clay.identity(widget), widget = widget, parent = parent,
+            slots = {}, children = {}}
+    end
+    slots[#slots + 1] = item
+    building.children[#building.children + 1] = item
+    return item
+end
+
+local function finish_children(st, item, building)
+    if #item.children ~= #building.children then
+        st.membership_changed = true
+    else
+        for i, child in ipairs(building.children) do
+            if item.children[i] ~= child then st.membership_changed = true; break end
+        end
+    end
+    item.slots, item.children = building.slots, building.children
+end
+
+-- Binding lists share their tails with cached fragments. Folding a chain
+-- prepends one occurrence at each level, without copying its descendants.
+local function next_binding(first, previous)
+    local list = first
+    if previous then list = previous.next end
+    if list then return list, list.item end
+end
+
+function clay.bindings(node)
+    return next_binding, node.bindings
+end
+
+-- This local rule only combines boxes whose equality follows directly from
+-- the declarations. A child's cap/floor, floating placement or a parent's
+-- inset can give it a different area and therefore keeps its real element.
+-- Unknown declaration fields are conservative boundaries for ad-hoc widgets.
+-- `box` is solve readback metadata on cached nodes, not a sizing input.
+local fold_fields = {}
+for _, key in ipairs {'w','h','wmin','hmin','wmax','hmax','pad','bg','border','bw',
+        'radius','dir','gap','align','children','name','widget','identity',
+        'occurrence','bindings','spacer','owner','box','theme_size'} do fold_fields[key] = true end
+
+-- An opaque rectangular child completely covers a plain background at the
+-- same area. Keeping only that child's paint preserves source-over order,
+-- including translucent ancestors. Rounded edges and borders keep their
+-- independent paint/clip scopes; translucent layers are never flattened.
+local function covers_background(node, child)
+    return node.bg and not node.border and (node.radius or 0) == 0
+        and child.bg and child.bg[4] == 1 and (child.radius or 0) == 0
+end
+
+local function same_axis(node, child, axis, host)
+    local outer, inner = node[axis] or 'fit', child[axis] or 'fit'
+    local floor, cap = child[axis .. 'min'] or 0, child[axis .. 'max'] or 0
+    if host and inner == 'grow' and floor == 0 and cap == 0 then
+        -- The root widget requests the host allocation. Keep overflow on its
+        -- original descendants and keep the host's passive clip, rather than
+        -- inserting an unbounded GROW layout between that clip and content.
+        return true
+    end
+    if type(outer) == 'number' then
+        -- The definite drawable root carries a passive clip, which also
+        -- prevents compression of its immediate children. Moving a layout
+        -- into that root would change its children's allocation policy.
+        if #(child.children or empty_list) ~= 0 then return false end
+        if type(inner) == 'number' then return inner == outer end
+        -- A bounded GROW child fills this exact allocation. An unbounded
+        -- container may overflow through its descendants' intrinsic minima,
+        -- so only an empty leaf can prove the same fact without a cap.
+        return inner == 'grow' and floor <= outer
+            and (cap == outer or (cap == 0 and not padded(child)))
+    end
+    if outer == 'fit' and inner == 'fit'
+            and (node[axis .. 'min'] or 0) == 0
+            and (node[axis .. 'max'] or 0) == 0 then return true end
+    if floor ~= 0 or cap ~= 0 or type(outer) ~= 'string'
+            or (node[axis .. 'max'] or 0) ~= 0
+            or (inner == 'fit' and (node[axis .. 'min'] or 0) ~= 0) then
+        return false
+    end
+    if outer == 'fit' and type(inner) == 'number'
+            and (node[axis .. 'min'] or 0) == 0 then return true end
+    return inner == 'grow' or (outer == 'fit' and inner == 'fit')
+end
+
+-- Concatenate immutable binding chains: repeated folds must retain every
+-- original widget, including contributions already absorbed by the parent.
+local function join_bindings(prefix, tail)
+    if not prefix then return tail end
+    return {item = prefix.item, next = join_bindings(prefix.next, tail)}
+end
+
+local function combine(node, opaque_host, host)
+    if #(node.children or empty_list) == 0 or padded(node) then return node end
+    local child = node.children[1]
+    for i = 2, #node.children do
+        if not node.children[i].float then return node end
+    end
+    for key in pairs(node) do
+        if not fold_fields[key] then return node end
+    end
+    for key in pairs(child) do
+        if not fold_fields[key] then return node end
+    end
+    local covered = opaque_host and covers_background(node, child)
+    if painted(node) and painted(child) and not covered then return node end
+    for _, axis in ipairs(axes) do
+        if not same_axis(node, child, axis, host) then return node end
+    end
+    -- The result owns its fields; neither the child's cached declaration nor
+    -- its shared binding tail is mutated by a different parent occurrence.
+    local result = {}
+    for key, value in pairs(child) do result[key] = value end
+    if #node.children > 1 then
+        result.children = {}
+        for _, grandchild in ipairs(child.children or empty_list) do
+            result.children[#result.children + 1] = grandchild
+        end
+        for i = 2, #node.children do
+            result.children[#result.children + 1] = node.children[i]
+        end
+    end
+    for _, key in ipairs {'w','h','wmin','hmin','wmax','hmax'} do
+        if (key == 'w' or key == 'h') and (node[key] or 'fit') == 'fit'
+                and type(child[key]) == 'number' then
+            result[key] = child[key]
+        elseif key ~= 'w' and key ~= 'h' and node[key] == nil
+                and (node[key:sub(1,1)] or 'fit') == 'fit' then
+            result[key] = child[key]
+        else
+            result[key] = node[key]
+        end
+    end
+    if painted(node) and not covered then
+        for _, key in ipairs {'bg','border','bw','radius'} do result[key] = node[key] end
+    end
+    -- The inner object names the shared element, since it is the one that
+    -- stays as wrappers around it come and go. A list is the exception: it
+    -- is the object the config holds and its base layout is its own, so it
+    -- keeps the name. Both placements stay in the bindings below.
+    if node.owner or (node.widget and (painted(node) or node.radius ~= nil))
+            or not child.occurrence then
+        result.name, result.identity, result.occurrence = node.name, node.identity, node.occurrence
+    end
+    result.widget, result.spacer = node.widget, nil
+    result.bindings = join_bindings(node.bindings, child.bindings)
+    return result
+end
+
+-- An image may own an original widget's area only when both declared axes
+-- guarantee equality. In particular, a fixed image inside a GROW widget
+-- keeps that widget's larger input area, even if today's boxes coincide.
+local image_fields = {}
+for key in pairs(fold_fields) do image_fields[key] = true end
+for _, key in ipairs {'image', 'natural', 'aspect', 'image_width', 'image_height'} do
+    image_fields[key] = true
+end
+
+-- Both image bounds must prove equality with the authored slot. A different
+-- aspect or a smaller cap leaves space around the image and keeps its container.
+local function image_fills(node, child)
+    if type(node.w) ~= 'number' or type(node.h) ~= 'number' then return false end
+    for _, axis in ipairs(axes) do
+        if (child[axis] or 'fit') ~= 'fit' or (child[axis .. 'min'] or 0) < node[axis]
+                or child[axis .. 'max'] ~= node[axis] then
+            return false
+        end
+    end
+    return true
+end
+
+local function combine_image(node)
+    if #(node.children or empty_list) ~= 1 or padded(node) or painted(node) then return node end
+    local child = node.children[1]
+    if not child.image or #(child.children or empty_list) ~= 0 then return node end
+    for key in pairs(node) do
+        if not fold_fields[key] then return node end
+    end
+    for key in pairs(child) do
+        if not image_fields[key] then return node end
+    end
+    local sizes = {}
+    for _, axis in ipairs(axes) do
+        if (node[axis .. 'min'] or 0) ~= 0 or (node[axis .. 'max'] or 0) ~= 0 then return node end
+    end
+    if image_fills(node, child) then
+        sizes.w, sizes.h = node.w, node.h
+    else
+        for _, axis in ipairs(axes) do
+            local outer, inner = node[axis] or 'fit', child[axis] or 'fit'
+            if type(inner) == 'number' and (outer == 'fit' or outer == inner) then
+                sizes[axis] = inner
+            elseif inner == 'fit' and outer == 'fit' then
+                sizes[axis] = 'fit'
+            elseif inner == 'grow' and not child.aspect
+                    and (child[axis .. 'min'] or 0) == 0
+                    and (child[axis .. 'max'] or 0) == 0 then
+                sizes[axis] = outer
+            else
+                return node
+            end
+        end
+    end
+    local result = {}
+    for key, value in pairs(child) do result[key] = value end
+    result.w, result.h = sizes.w, sizes.h
+    result.theme_size = node.theme_size or child.theme_size
+    result.widget, result.spacer = node.widget, nil
+    if not child.occurrence then
+        result.identity, result.occurrence = node.identity, node.occurrence
+    end
+    result.bindings = join_bindings(node.bindings, child.bindings)
+    return result
+end
+
+--- The node tree for `widget`, sized as its parent's `spec` decided.
+--
+-- A widget's finished subtree depends on its own state, its offer, its
+-- spec, its foreground and the opacity compounded down to it, and on
+-- nothing of its siblings: compile_specs hands every child the same offer.
+-- So a widget that no signal marked since the last compile keeps its
+-- subtree when those inputs are equal, describers and all. The root is
+-- always compiled, since every mark reaches it and the drawable's own
+-- sizing is applied to its node.
+function compile_node(st, widget, parent, fg, offer, spec, alpha, parent_fit)
+    local cache = st.cache
+    local item = occurrence(st, widget, parent)
+    local entry = cache.entries[item]
+    -- Grid measurement must propagate through cached embeddings: 0 allocated,
+    -- 2 height, 3 natural on both axes, 4 minimum width (strongest scope).
+    -- Include this scope in cache identity so descendant grids release expansion
+    -- while an ancestor measures, without turning a declaration into content dirt.
+    -- Ordinary subtrees without observers do not depend on that scope.
+    local scope, ancestor = 0, parent
+    while ancestor do
+        local grid = ancestor.grid_state
+        if grid and grid.phase == 'minimum' then scope = 4; break end
+        if grid and grid.phase == 'natural' then scope = 3 end
+        if grid and grid.phase == 'height' and scope == 0 then scope = 2 end
+        ancestor = ancestor.parent
+    end
+    item.grid_measurement = scope
+    item.grid_fit_width = (spec.w or 'fit') == 'fit'
+        or (spec.w == 'grow' and parent_fit % 2 == 1)
+
+    alpha = alpha * (widget._private.opacity or 1)
+    if entry and parent.widget and not st.stale[item]
+            and (not entry.layout_revision or entry.layout_revision == cache.layout_revision)
+            and entry.fg == fg and entry.alpha == alpha
+            and (not item.layout_dependent or entry.grid_measurement == scope)
+            and entry.parent_fit == parent_fit
+            and entry.offer.w == offer.w and entry.offer.h == offer.h
+            and entry.offer.w_definite == offer.w_definite
+            and entry.offer.h_definite == offer.h_definite
+            and same_spec(entry.spec, spec) then
+        st.reused = st.reused + 1
+        return entry.node
+    end
+
+    assert(not st.active[widget], 'cycle in widget declarations')
+    st.active[widget] = true
+    local building = {slots = {}, children = {}}
+    st.building[item] = building
+    local given = offer
+
+    st.compiled = st.compiled + 1
+    local node, node_fg = describe(widget, fg, st, item, offer)
+
+    if not node then
+        cache.entries[item] = nil
+        finish_children(st, item, building)
+        st.active[widget] = nil
+        return nil
+    end
+
+    if node.fit then
+        offer = { w = node.wmax or 9999, h = node.hmax or 9999,
+            w_definite = false, h_definite = false }
+    end
+    local allocation = spec
+    if parent_fit ~= 0 and not spec.float and not spec.stack then
+        allocation = {}
+        for key, value in pairs(spec) do allocation[key] = value end
+        fit_grow(allocation, parent_fit)
+    end
+    resolve_size(st, node, offer, allocation)
+    local intrinsic_w, intrinsic_h = node.w, node.h
+    local inner, box = node_offer(node, offer)
+    merge_sizing(node, allocation)
+    fit_grow(node, parent_fit)
+    if node.fit then node.w, node.h = 'fit', 'fit' end
+
+    if node.share and #node.specs > 0 then
+        local axis, count = node.share, #node.specs
+        inner[axis] = math.max(0, (inner[axis] - (node.gap or 0) * (count - 1)) / count)
+    end
+    node.children = compile_specs(st, node.specs or empty_list, item, node_fg or fg, inner, box, alpha,
+        fit_children(node, node.stack and {true} or node.specs or empty_list),
+        node.dir == "y" and "h" or "w", node.stack and node)
+    if not node.stack and #node.children == 1 then
+        local child = node.children[1]
+        local fitting = fit_children(node, node.children)
+        if fitting ~= 0 and #(node.specs or empty_list) > 1 and not child.float then
+            local copy = {}
+            for key, value in pairs(child) do copy[key] = value end
+            fit_grow(copy, fitting)
+            node.children[1] = copy
+        end
+    end
+    node.specs = nil
+    local empty = node.stack and #node.children == 0
+    node.stack, node.top_only = nil, nil
+    if spec.stack and not empty then
+        -- Test participation before the stack's default GROW allocation can
+        -- turn an empty layout into a spacer. Authored extents still count.
+        local w, h = node.w, node.h
+        node.w, node.h = intrinsic_w, intrinsic_h
+        empty = inert(node, "w")
+        node.w, node.h = w, h
+    end
+    if empty then
+        cache.entries[item] = nil
+        finish_children(st, item, building)
+        st.active[widget] = nil
+        return nil
+    end
+    local private = rawget(widget, "_private")
+    node.name = private and private.declarative_id or class_name(widget) or "widget"
+    node.widget = widget
+    node.identity = item.identity
+    node.occurrence = item.id
+    node.bindings = {item = item}
+    if alpha ~= 1 then fade(node, alpha) end
+    if parent.widget then node = combine_image(node) end
+    node = combine(node, st.opaque_host)
+    local fitting = fit_children(node, node.children or empty_list)
+    if fitting ~= 0 and node.children[1] and not node.children[1].float then
+        local child = node.children[1]
+        if (child.w == 'grow' and fitting % 2 == 1)
+                or (child.h == 'grow' and fitting >= 2) then
+            local copy = {}
+            for key, value in pairs(child) do copy[key] = value end
+            fit_grow(copy, fitting)
+            node.children = {copy}
+        end
+    end
+    if spec.float then
+        -- A floating place fills its parent's area only to align its child.
+        -- Native attach points express that placement without another box.
+        -- Authored bounds and nested floats keep their distinct areas.
+        local child = node.children and node.children[1]
+        local place = widget._clay.attachment and child and #node.children == 1
+            and not child.float and not child.text
+        for _, axis in ipairs(axes) do
+            place = place and type(node[axis] or "fit") == "string"
+                and not node[axis .. "min"] and not node[axis .. "max"]
+        end
+        local point
+        if place then
+            local align = node.align or {}
+            local x = child.w == "grow" and 0
+                or ({ left = 0, center = 1, right = 2 })[align.x or "center"]
+            local y = child.h == "grow" and 0
+                or ({ top = 0, center = 1, bottom = 2 })[align.y or "center"]
+            point = x * 3 + y
+            local result = {}
+            for key, value in pairs(child) do result[key] = value end
+            result.bindings = {item = item, next = child.bindings}
+            node = result
+        end
+        node.float = true
+        node._attach = spec._attach
+        node.x, node.y = spec.x or node.x, spec.y or node.y
+        node.parent, node.own = point or spec.parent or node.parent, point or spec.own or node.own
+        if spec.passthrough ~= nil then node.passthrough = spec.passthrough end
+    end
+
+    local inputs = {}
+    for _, k in ipairs(spec_keys) do inputs[k] = spec[k] end
+    cache.entries[item] = { node = node, fg = fg, alpha = alpha, offer = given,
+        spec = inputs, parent_fit = parent_fit, grid_measurement = scope,
+        layout_revision = item.layout_dependent and cache.layout_revision or nil }
+    finish_children(st, item, building)
+    st.active[widget] = nil
+    return node
+end
+
+--- Mark `widget` as changed in `self`'s tree, up to the root: the next
+-- compile describes those again. Helpers observing layout also resample when
+-- siblings change their allocation; other subtrees retain their cached nodes.
+-- @tparam table self The drawable.
+-- @tparam wibox.widget widget The widget that signalled.
+-- @staticfct wibox.clay.invalidate
+function clay.invalidate(self, widget)
+    local cache = self._clay_cache
+
+    if not cache then return end
+    self._clay_layout_revision = (self._clay_layout_revision or 0) + 1
+    cache.layout_revision = self._clay_layout_revision
+    for _, item in ipairs(cache.widgets[widget] or {}) do
+        while item and item.widget do
+            item.revision = (item.revision or 0) + 1
+            cache.stale[item] = true
+            item = item.parent
+        end
+    end
+end
+
+-- A solved helper changed declarations, not content. Preserve content revisions
+-- and invalidate only this occurrence's path (including repeated widget uses).
+local function update_declarations(self, item)
+    local cache = self._clay_cache
+    while item and item.widget do
+        cache.stale[item] = true
+        item = item.parent
+    end
+    if self._clay_compile then self._clay_compile() end
+    if self.drawable and self.drawable._clay_grid_pending then
+        self.drawable:_clay_grid_pending()
+    end
+end
+
+-- Grid dependencies consume a separate geometry tree. Cached declarations,
+-- binding targets and the drawable's published index keep their committed boxes.
+function clay._settle(tree, boxes)
+    local k = 0
+    local function stage(node)
+        local copy = {}
+        for key, value in pairs(node) do copy[key] = value end
+        if not node.text and (not node.spacer or node.scroll) then
+            k = k + 1
+            copy.box = boxes[k]
+            copy.id = copy.box and copy.box.id
+        end
+        copy.children = {}
+        for i, child in ipairs(node.children or empty_list) do
+            copy.children[i] = stage(child)
+        end
+        if node._settle then node._settle(copy) end
+        return copy
+    end
+    return stage(tree)
+end
+
+-- Commit geometry and binding targets before invoking public solved callbacks.
+function clay._publish(self, tree, boxes)
+    local index, callbacks, k = {}, {}, 0
+    local function place(node)
+        index[#index + 1] = node
+        if not node.text and (not node.spacer or node.scroll) then
+            k = k + 1
+            node.box = boxes[k]
+            node.id = node.box and node.box.id
+        end
+        for _, binding in clay.bindings(node) do binding.element = node end
+        for _, child in ipairs(node.children or empty_list) do place(child) end
+        if node.solved then callbacks[#callbacks + 1] = node end
+    end
+    place(tree)
+    self._clay_tree, self._clay_index = tree, index
+    local protected_call = require('gears.protected_call')
+    for _, node in ipairs(callbacks) do protected_call(node.solved, node) end
+end
+
+-- Enumerate the original placements once, including hidden/refused widgets
+-- that must still invalidate their parent. Cached fragments do not contain
+-- copies of all descendant registrations or image lists.
+local function collect_occurrences(item, widgets, used)
+    used[item] = true
+    local list = widgets[item.widget]
+    if not list then list = {}; widgets[item.widget] = list end
+    list[#list + 1] = item
+    for _, child in ipairs(item.children) do collect_occurrences(child, widgets, used) end
+end
+
+local function collect_leaves(node, leaves)
+    if node.image then leaves[#leaves + 1] = {image = true, node = node} end
+    for _, child in ipairs(node.children or empty_list) do collect_leaves(child, leaves) end
+end
+
+--- Add a wrapper class that passes through to one child: the widget under
+-- `field` gets the whole box, so the node holds that child's spec. What
+-- awful.widget.taglist and tasklist are around their `base_layout`; they
+-- register here, since awful depends on wibox and not the other way.
+--
+-- @tparam table class The widget class.
+-- @tparam string field The `_private` field holding the child.
+-- @staticfct wibox.clay.passthrough
+function clay.passthrough(class, field)
+    class._clay = { describe = function(w)
+        return { specs = whole_box(w._private[field]), owner = true }
+    end }
+end
+
+--- Add a widget class with its describer, for a class defined outside
+-- wibox (awful.widget's systray_icon). Instances must provide their
+-- contents through this describer.
+-- @tparam table class The widget class.
+-- @tparam function describer The describer, as the class table's entries.
+-- @staticfct wibox.clay.describe_class
+function clay.describe_class(class, describer)
+    class._clay = { describe = describer }
+end
+
+--- Compile a drawable's widget tree.
+--
+-- Returns the node tree, rooted at the drawable's own background, and the
+-- image leaves in preorder. A missing or refused root leaves the drawable
+-- background in the tree. Refused and hidden widgets remain connected to
+-- property signals so a supported property value can restore their subtree.
+--
+-- A node is a table with any of `pad`, `bg`, `border`, `bw`, `radius`, the
+-- sizing `w` and `h` (`"fit"` or absent, `"grow"`, or a fixed number) with
+-- `wmin`, `hmin`, `wmax` and `hmax` as the floor and ceiling of fit and
+-- grow, `dir` ("y" for top to bottom), `gap`,
+-- `align` (`x` and `y`, as wibox.container.place names them), `float`
+-- (off the flow), `x`/`y` offsets, `parent`/`own` attachment points (0-8,
+-- top left by default), `passthrough` (true by default), `spacer` for an element
+-- that stands for no
+-- widget, `name` (the declarative id or full widget class name, shared by
+-- the element id and tree dumps), `widget`, and `children`. Original placements use immutable
+-- shared-tail `bindings` lists, enumerated with clay.bindings(node). A text element is a node with
+-- `text`, `font` (an id from `awesome._clay_font`), `color`, `wrap`,
+-- `halign` and `ellipsize`. A textbox container owns its sizing, alignment
+-- and original bindings; its anonymous text child has no published box.
+-- An image leaf is a node with
+-- `image` (a cairo surface's native pointer) and its sizing. The compile
+-- step composes its bounds from `aspect`, `image_width` and `image_height`.
+-- `square` requests paired bounds composed from the authored offer in Lua.
+-- It also keeps the widget and inner clip boundaries from folding together;
+-- the native bridge receives only their ordinary sizing bounds.
+--
+-- @tparam table self The drawable, for its own background, background image
+--  and foreground.
+-- @tparam wibox.widget|nil root The drawable's widget.
+-- @tparam table context The widget context.
+-- @tparam number width The drawable's width, the root's offer.
+-- @tparam number height The drawable's height.
+-- @treturn[1] table The node tree.
+-- @treturn[1] table The image leaves, in preorder.
+function clay.compile(self, root, context, width, height)
+    local opaque_host = not self.drawable or self.drawable._clay_opaque ~= false
+    local base_rgba = solid_rgba(self.background_color)
+    local fill = not base_rgba and clay.fill(self.background_color)
+    if self.background_color and not base_rgba and not fill then
+        clay.ignore("drawable", "bg", "is not a solid or a gradient and is transparent")
+    end
+    -- The kept subtrees, from the last compile of this context and size.
+    -- Entries belong to occurrences, so repeated objects retain independent
+    -- fragments. Context changes discard fragments but preserve placement IDs.
+    local cache = self._clay_cache
+    if not cache or cache.context ~= context or cache.width ~= width
+            or cache.height ~= height or cache.opaque_host ~= opaque_host then
+        cache = { context = context, width = width, height = height,
+            layout_revision = self._clay_layout_revision or 0,
+            entries = {}, stale = {}, widgets = {}, opaque_host = opaque_host }
+        self._clay_cache = cache
+    end
+    local owner = self._clay_occurrence_root
+    if not owner then
+        owner = {slots = {}, children = {}}
+        self._clay_occurrence_root = owner
+    end
+    local building = {slots = {}, children = {}}
+    local st = { building = {[owner] = building}, compiled = 0, reused = 0,
+        active = {}, context = context, opaque_host = opaque_host,
+        cache = cache, stale = cache.stale,
+        drawable = self.drawable }
+    st.update_declarations = function(item) update_declarations(self, item) end
+    -- A helper observing allocated boxes also depends on siblings/ancestors
+    -- which can change its available space without changing its compiler offer.
+    -- Preserve that dependency through cached ancestor fragments.
+    st.observe_layout = function(item)
+        while item and item.widget do
+            item.layout_dependent = true
+            item = item.parent
+        end
+    end
+    cache.stale = {}
+    local node = root and compile_node(st, root, owner, self.foreground_color,
+        { w = self._attachment_fit and 9999 or width,
+            h = self._attachment_fit and 9999 or height,
+            w_definite = not self._attachment_fit, h_definite = not self._attachment_fit },
+        { w = "grow", h = "grow" }, 1,
+        self._attachment_fit and 3 or 0)
+    cache.offer_dependent = cache.offer_dependent or st.offer_dependent or false
+    finish_children(st, owner, building)
+    if st.membership_changed or not next(cache.widgets) then
+        local widgets, used = {}, {}
+        for _, item in ipairs(owner.children) do collect_occurrences(item, widgets, used) end
+        for item in pairs(cache.entries) do
+            if not used[item] then cache.entries[item] = nil end
+        end
+        cache.widgets = widgets
+    end
+    st.leaves = {}
+    -- The widget gets the whole drawin, as the engine gave it. The root is
+    -- the drawin's box, told (CLAY_SIZING_FIXED), unless the widget sizes
+    -- the drawin (an awful.popup follows its content, `node.fit`): then
+    -- the root wraps the widget (CLAY_SIZING_FIT) within the widget's
+    -- limits, and the drawin takes the box Clay solves for it.
+    local tree = { bg = base_rgba, radius = 0, name = "drawable",
+        w = width, h = height, children = { node } }
+
+    if node then
+        if node.fit or self._attachment_fit then
+            node.fit = nil
+            tree.w, tree.h = "fit", "fit"
+            tree.wmin, tree.wmax = node.wmin, node.wmax
+            tree.hmin, tree.hmax = node.hmin, node.hmax
+            node.wmin, node.wmax, node.hmin, node.hmax = nil, nil, nil, nil
+            -- Positive host minima make the content fill the whole axis.
+            node.w = (tree.wmin or 0) > 0 and 'grow'
+                or type(node.w) == 'number' and node.w or 'fit'
+            node.h = (tree.hmin or 0) > 0 and 'grow'
+                or type(node.h) == 'number' and node.h or 'fit'
+            node = combine(node, opaque_host)
+        end
+        node = combine_image(node)
+        collect_leaves(node, st.leaves)
+    end
+    if self.background_image then
+        if type(self.background_image) == "function" then
+            clay.ignore("drawable", "bgimage", "is a function and is not drawn")
+        else
+            node = { image = self.background_image._native, name = "image", natural = true,
+                w = "grow", h = "grow", spacer = true, children = { node } }
+            table.insert(st.leaves, 1, { image = true, node = node })
+        end
+    end
+    if fill then
+        node = { shape = function(w, h) return clay.shape_ops(gshape.rectangle, w, h) end,
+            fill = fill, w = "grow", h = "grow", spacer = true, children = { node } }
+    end
+
+    tree.children = { node }
+    -- An anonymous content-sized host follows the same local area rules as
+    -- a widget parent. Its registry is metadata, outside that contribution.
+    -- Definite hosts share only provably equal allocations. Incompatible
+    -- bounds/paint and potentially overflowing content retain their boundary.
+    tree = combine(tree, opaque_host, true)
+    tree.offer_dependent = cache.offer_dependent
+    tree.widgets = cache.widgets
+    tree.compiled, tree.reused = st.compiled, st.reused
+    return tree, st.leaves
+end
+
+clay.solid_rgba = solid_rgba
+clay.whole_box = whole_box
+
+return clay
+
+-- vim: filetype=lua:expandtab:shiftwidth=4:tabstop=8:softtabstop=4:textwidth=80

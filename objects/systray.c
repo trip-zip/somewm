@@ -677,6 +677,31 @@ luaA_systray_item_draw_icon(lua_State *L)
 }
 
 /**
+ * The item's icon surface, for a converted systray_icon to hand the
+ * renderer as an image leaf (lua/wibox/clay.lua): the surface itself as
+ * lightuserdata, which the leaf references, so a pixmap the item replaces
+ * stays alive until the next compile, and its size. Nil without a pixmap
+ * icon.
+ * Lua: item:_icon_surface()
+ */
+static int
+luaA_systray_item_icon_surface(lua_State *L)
+{
+	systray_item_t *item = luaA_checkudata(L, 1, &systray_item_class);
+
+	if (!item->icon) {
+		lua_pushnil(L);
+		return 1;
+	}
+	lua_pushlightuserdata(L, item->icon);
+	lua_pushinteger(L, item->icon_width > 0 ? item->icon_width
+		: cairo_image_surface_get_width(item->icon));
+	lua_pushinteger(L, item->icon_height > 0 ? item->icon_height
+		: cairo_image_surface_get_height(item->icon));
+	return 3;
+}
+
+/**
  * Draw the item's overlay icon to a cairo context
  * Lua: item:draw_overlay(cr, x, y, size)
  * cr is a cairo context (lightuserdata from lgi)
@@ -1177,6 +1202,7 @@ systray_item_class_setup(lua_State *L)
 		{ "set_overlay_pixmap", luaA_systray_item_set_overlay_pixmap },
 		{ "clear_overlay", luaA_systray_item_clear_overlay },
 		{ "draw_icon", luaA_systray_item_draw_icon },
+		{ "_icon_surface", luaA_systray_item_icon_surface },
 		{ "draw_overlay", luaA_systray_item_draw_overlay },
 		{ NULL, NULL }
 	};

@@ -49,6 +49,14 @@ endif
 
 cc = meson.get_compiler('c')
 
+# third_party holds vendored headers; clay.h is included as <clay.h> by the
+# renderer and compiled once by clay_impl.c below.
+somewm_inc = include_directories('.', 'third_party')
+
+# The renderer, named once: the compositor links it and the C unit test compiles
+# it again with the verifier forced on.
+render_sources = files('render.c', 'render_text.c')
+
 # Math library (for round(), etc.)
 m_dep = cc.find_library('m', required: false)
 
@@ -307,6 +315,21 @@ xdg_shell_client_code = custom_target(
   command: [wayland_scanner, 'private-code', '@INPUT@', '@OUTPUT@'],
 )
 
+# ext-session-lock-v1 client protocol (header + code) for the lock test client
+ext_session_lock_client_header = custom_target(
+  'ext-session-lock-v1-client-protocol.h',
+  input: wayland_protocols_dir / 'staging/ext-session-lock/ext-session-lock-v1.xml',
+  output: 'ext-session-lock-v1-client-protocol.h',
+  command: [wayland_scanner, 'client-header', '@INPUT@', '@OUTPUT@'],
+)
+
+ext_session_lock_client_code = custom_target(
+  'ext-session-lock-v1-client-protocol.c',
+  input: wayland_protocols_dir / 'staging/ext-session-lock/ext-session-lock-v1.xml',
+  output: 'ext-session-lock-v1-client-protocol.c',
+  command: [wayland_scanner, 'private-code', '@INPUT@', '@OUTPUT@'],
+)
+
 # linux-dmabuf-v1 client protocol (header + code) for the DMA-BUF test client
 linux_dmabuf_client_header = custom_target(
   'linux-dmabuf-v1-client-protocol.h',
@@ -412,6 +435,23 @@ if get_option('bench')
   add_project_arguments('-DSOMEWM_BENCH', language: 'c')
 endif
 
+# The Clay tree==scene verifier. Derived from the build directory's own options
+# rather than passed in by the Makefile, so a dir that was configured before this
+# option existed still gets the right answer, and reconfiguring a dir to use a
+# sanitizer turns the verifier on with it. b_sanitize is a string in older meson
+# and an array in newer, hence the format.
+render_verify = get_option('render_verify')
+if render_verify.auto()
+  sanitizers = '@0@'.format(get_option('b_sanitize'))
+  render_verify_on = sanitizers.contains('address') or \
+    sanitizers.contains('undefined') or get_option('test_pam')
+else
+  render_verify_on = render_verify.enabled()
+endif
+if render_verify_on
+  add_project_arguments('-DSOMEWM_RENDER_VERIFY', language: 'c')
+endif
+
 # Development flags
 add_project_arguments(
   '-Wno-unused-parameter',
@@ -429,10 +469,14 @@ add_project_arguments(
 
 somewm_sources = [
   'somewm.c',
+  'loop.c',
+  'version.c',
   'somewm_api.c',
   'xwayland.c',
   'protocols.c',
   'monitor.c',
+  'declare.c',
+  'widget.c',
   'input.c',
   'window.c',
   'focus.c',
@@ -445,7 +489,6 @@ somewm_sources = [
   'ewmh.c',
   'event.c',
   'xkb.c',
-  'systray.c',
   'shadow.c',
   'strut.c',
   'property.c',
@@ -482,7 +525,6 @@ somewm_sources = [
   'objects/keybinding.c',
   # objects/awesome.c merged into luaa.c
   'objects/button.c',
-  'objects/wibox.c',
   'objects/ipc.c',
   'objects/selection_getter.c',
   'objects/selection_acquire.c',
@@ -522,14 +564,27 @@ if have_pam
   all_deps += [pam_dep]
 endif
 
+# Clay is header-only; clay_impl.c is the single translation unit that compiles
+# it. Its own static library so -w applies to the vendored code and nothing else:
+# clay.h is not ours to keep clean against this project's warning set.
+clay_lib = static_library(
+  'clay',
+  'clay_impl.c',
+  include_directories: somewm_inc,
+  c_args: ['-w'],
+  dependencies: [m_dep],
+)
+
 somewm_exe = executable(
   'somewm',
   somewm_sources,
+  render_sources,
   protocol_headers,
   keyboard_shortcuts_inhibit_client_header,
   keyboard_shortcuts_inhibit_client_code,
   dependencies: all_deps,
-  include_directories: include_directories('.'),
+  include_directories: somewm_inc,
+  link_with: clay_lib,
   install: true,
 )
 
@@ -552,6 +607,51 @@ somewm_client = executable(
   install: true,
 )
 
+# The Clay reconciler's unit test: hand-built command arrays in, wlr_scene out.
+# It compiles the renderer itself rather than linking the compositor, so the
+# tree==scene verifier is on here whatever -Drender_verify says for the build.
+test_render = executable(
+  'test-render',
+  ['tests/test-render.c', render_sources],
+  include_directories: somewm_inc,
+  link_with: clay_lib,
+  dependencies: [wlroots, wayland_server, cairo, pangocairo, m_dep],
+  c_args: ['-DSOMEWM_RENDER_VERIFY'],
+  install: false,
+)
+
+# The suppressions keep an ASAN run of this test reporting only allocations the
+# renderer owns; fontconfig and pango cache fonts process-wide and never free.
+test('render', test_render, suite: 'unit',
+  env: {'LSAN_OPTIONS': 'suppressions=' +
+    meson.current_source_dir() / 'tests/lsan-suppressions.txt'},
+)
+
+# Compile the production pin in the solver test TU so it can inspect actual
+# declarations independently. Do not link clay_lib (a second implementation).
+test_clay_solver = executable(
+  'test-clay-solver',
+  ['tests/test-clay-solver.c', render_sources],
+  include_directories: somewm_inc,
+  dependencies: [wlroots, wayland_server, cairo, pangocairo, m_dep],
+  c_args: ['-DSOMEWM_RENDER_VERIFY'],
+  override_options: ['b_ndebug=false'],
+  install: false,
+)
+test('clay-solver', test_clay_solver, suite: 'unit',
+  env: {'LSAN_OPTIONS': 'suppressions=' +
+    meson.current_source_dir() / 'tests/lsan-suppressions.txt'},
+)
+
+# Only render.c may create visible rectangles/buffers or mutate scene nodes.
+test('scene-writers', find_program('tests/check-scene-writers.sh'),
+  args: [meson.current_build_dir() / 'somewm.p'],
+  depends: somewm_exe, suite: 'unit',
+)
+
+test('scene-writers-controls', find_program('tests/test-scene-writers.sh'),
+  suite: 'unit')
+
 # Test layer-shell client for deterministic integration tests
 test_layer_client = executable(
   'test-layer-client',
@@ -561,11 +661,20 @@ test_layer_client = executable(
   install: false,
 )
 
-# Test XDG transient client for stacking regression tests (issue #276)
+# Test XDG transient client for stacking regression tests
 test_transient_client = executable(
   'test-transient-client',
   ['tests/test-transient-client.c', xdg_shell_client_code],
   xdg_shell_client_header,
+  dependencies: [wayland_client],
+  install: false,
+)
+
+# Test ext-session-lock client for the session-lock path
+test_session_lock_client = executable(
+  'test-session-lock-client',
+  ['tests/test-session-lock-client.c', ext_session_lock_client_code],
+  ext_session_lock_client_header,
   dependencies: [wayland_client],
   install: false,
 )

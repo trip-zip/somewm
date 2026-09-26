@@ -1,7 +1,7 @@
 ---------------------------------------------------------------------------
 -- Test: Lock surface and cover API
 --
--- Covers: BEH-9, BEH-10, BEH-11, BEH-12, cover API
+-- Covers lock surface validation, replacement, GC retention and cover registration.
 ---------------------------------------------------------------------------
 
 local runner = require("_runner")
@@ -10,7 +10,7 @@ local awful = require("awful")
 local lock = require("_lock_helper")
 
 runner.run_steps({
-    -- Step 1: BEH-9 - set_lock_surface accepts wibox
+    -- Step 1: set_lock_surface accepts wibox
     function()
         local s = awful.screen.focused()
         local wb = wibox({
@@ -30,7 +30,7 @@ runner.run_steps({
         return true
     end,
 
-    -- Step 2: BEH-12 - rejects invalid types
+    -- Step 2: rejects invalid types
     function()
         local ok, err
 
@@ -49,7 +49,7 @@ runner.run_steps({
         return true
     end,
 
-    -- Step 3: BEH-11 - setting new surface replaces old (lock still works)
+    -- Step 3: setting new surface replaces old (lock still works)
     function()
         local wb1 = wibox({
             x = 0, y = 0, width = 100, height = 100,
@@ -70,7 +70,7 @@ runner.run_steps({
         return true
     end,
 
-    -- Step 4: BEH-10 - surface survives GC after registration
+    -- Step 4: surface survives GC after registration
     function()
         do
             local wb = wibox({

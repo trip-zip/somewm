@@ -31,13 +31,33 @@ wibox.layout = require("wibox.layout")
 wibox.container = require("wibox.container")
 wibox.widget = require("wibox.widget")
 wibox.drawable = require("wibox.drawable")
-wibox.hierarchy = require("wibox.hierarchy")
 
 local force_forward = {
     shape_bounding = true,
     shape_clip = true,
     shape_input = true,
-    shape_border = true,
+}
+
+local wibox_metatable = {
+    __index = function(self, k)
+        if rawget(self, "get_"..k) then
+            return self["get_"..k](self)
+        else
+            return rawget(self, "drawin")[k]
+        end
+    end,
+    __newindex = function(self, k, v)
+        if rawget(self, "set_"..k) then
+            self["set_"..k](self, v)
+        else
+            local w = rawget(self, "drawin")
+            if force_forward[k] or w[k] ~= nil then
+                w[k] = v
+            else
+                rawset(self, k, v)
+            end
+        end
+    end
 }
 
 --@DOC_wibox_COMMON@
@@ -78,51 +98,15 @@ function wibox:_buttons(btns)
     return btns and self.drawin:_buttons(btns) or self.drawin:_buttons()
 end
 
---- Create a widget that reflects the current state of this wibox.
--- @treturn widget A new widget.
--- @method to_widget
-function wibox:to_widget()
-    local bw = self.border_width or beautiful.border_width or 0
-    return wibox.widget {
-        {
-            self:get_widget(),
-            margins = bw,
-            widget  = wibox.container.margin
-        },
-        bg                 = self.bg or beautiful.bg_normal or "#ffffff",
-        fg                 = self.fg or beautiful.fg_normal or "#000000",
-        shape_border_color = self.border_color or beautiful.border_color or "#000000",
-        shape_border_width = bw*2,
-        shape_clip         = true,
-        shape              = self._shape,
-        forced_width       = self:geometry().width  + 2*bw,
-        forced_height      = self:geometry().height + 2*bw,
-        widget             = wibox.container.background
-    }
-end
-
---- Save a screenshot of the wibox to `path`.
--- @tparam string path The path.
--- @tparam[opt=nil] table context A widget context.
--- @method save_to_svg
--- @noreturn
-function wibox:save_to_svg(path, context)
-    wibox.widget.draw_to_svg_file(
-        self:to_widget(), path, self:geometry().width, self:geometry().height, context
-    )
-end
-
 function wibox:_apply_shape()
     local shape = self._shape
 
     if not shape then
         self.shape_bounding = nil
         self.shape_clip = nil
-        self.shape_border = nil
         -- Clear surface references so they can be GC'd
         self._shape_bounding_surface = nil
         self._shape_clip_surface = nil
-        self._shape_border_surface = nil
         return
     end
 
@@ -184,34 +168,7 @@ function wibox:_apply_shape()
     -- NOTE: Do NOT call img:finish() here! (see comment above for shape_bounding)
     self._shape_clip_surface = img
 
-    -- Handle the border shape (ARGB32 for anti-aliased rendering)
-    -- This creates a pre-rendered border surface with smooth edges.
-    -- Scale for HiDPI to get proper anti-aliasing at display resolution.
-    if bw > 0 then
-        local bc = self.border_color or "#ffffff"
-        img = cairo.ImageSurface(cairo.Format.ARGB32, scaled_total_w, scaled_total_h)
-        cr = cairo.Context(img)
-        cr:set_antialias(cairo.Antialias.BEST)
-        cr:scale(scale, scale)
 
-        -- Draw border: offset by bw so shape aligns with content after buffer positioning
-        cr:translate(bw, bw)
-        shape(cr, geo.width, geo.height)
-        cr:set_source(color(bc))
-        cr:set_line_width(2 * bw)    -- Stroke 2*bw: half inside, half outside
-        cr:stroke()
-
-        -- Clear the interior, leaving only the outer half of the stroke
-        cr:set_operator(cairo.Operator.CLEAR)
-        shape(cr, geo.width, geo.height)
-        cr:fill()
-
-        self.shape_border = img._native
-        self._shape_border_surface = img
-    else
-        self.shape_border = nil
-        self._shape_border_surface = nil
-    end
 end
 
 function wibox:set_shape(shape)
@@ -394,15 +351,6 @@ local function new(args)
     ret:set_bg(args.bg or beautiful.bg_normal)
     ret:set_fg(args.fg or beautiful.fg_normal)
 
-    -- Add __tostring method to metatable.
-    local mt = {}
-    local orig_string = tostring(ret)
-    mt.__tostring = function()
-        return string.format("wibox: %s (%s)",
-                             tostring(ret._drawable), orig_string)
-    end
-    ret = setmetatable(ret, mt)
-
     -- Make sure the wibox is drawn at least once
     ret.draw()
 
@@ -411,29 +359,7 @@ local function new(args)
     ret:connect_signal("property::border_color", ret._apply_shape)
 
     -- If a value is not found, look in the drawin
-    setmetatable(ret, {
-        __index = function(self, k)
-            if rawget(self, "get_"..k) then
-                return self["get_"..k](self)
-            else
-                return w[k]
-            end
-        end,
-        __newindex = function(self, k,v)
-            local has_setter = rawget(self, "set_"..k)
-            if has_setter then
-                self["set_"..k](self, v)
-            else
-                local is_force_forward = force_forward[k]
-                local drawin_value = w[k]
-                if is_force_forward or drawin_value ~= nil then
-                    w[k] = v
-                else
-                    rawset(self, k, v)
-                end
-            end
-        end
-    })
+    setmetatable(ret, wibox_metatable)
 
     -- Set other wibox specific arguments
     if args.bgimage then

@@ -1,5 +1,5 @@
 ---------------------------------------------------------------------------
---- Test: XWayland override_redirect popup stacking (issue #415)
+--- Test: XWayland override_redirect popup stacking
 --
 -- Bug: Override_redirect X11 surfaces (Wine menus, Steam popups, Qt
 -- tooltips) appeared BELOW their parent window instead of above it.
@@ -104,7 +104,7 @@ local function assert_popup_in_overlay(popup, context)
     assert(popup.valid, context .. ": popup should be valid")
     local layer = popup._scene_layer
     assert(layer == "overlay", string.format(
-        "%s: expected popup in LyrOverlay, got %q (bug #415 regression)",
+        "%s: expected popup in LyrOverlay, got %q",
         context, tostring(layer)
     ))
     io.stderr:write(string.format(

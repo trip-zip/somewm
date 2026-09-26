@@ -114,9 +114,6 @@ extern struct wl_list tracked_touches;
 extern struct wlr_tablet_manager_v2 *tablet_v2_mgr;
 
 /* Scene elements */
-extern struct wlr_scene_tree *drag_icon;
-extern struct wlr_scene_rect *root_bg;
-extern struct wlr_scene_rect *locked_bg;
 
 /* Session lock state */
 extern int locked;
@@ -130,7 +127,6 @@ extern uint32_t next_client_id;
 extern int new_client_placement;
 
 /* Layer mapping (ZWLR_LAYER_SHELL_* -> Lyr* enum) */
-extern const int layermap[];
 
 #ifdef XWAYLAND
 extern struct wlr_xwayland *xwayland;

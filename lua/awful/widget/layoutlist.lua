@@ -378,19 +378,7 @@ function layoutlist:set_widget_template(widget_template)
     self:emit_signal("property::widget_template", widget_template)
 end
 
-function layoutlist:layout(_, width, height)
-    if self._private.layout then
-        return { wibox.widget.base.place_widget_at(self._private.layout, 0, 0, width, height) }
-    end
-end
 
-function layoutlist:fit(context, width, height)
-    if not self._private.layout then
-        return 0, 0
-    end
-
-    return wibox.widget.base.fit_widget(self, context, self._private.layout, width, height)
-end
 
 --- Create a layout list.
 --
@@ -475,5 +463,7 @@ local function new(_, args)
 
     return ret
 end
+
+require("wibox.clay").passthrough(layoutlist, "layout")
 
 return setmetatable(module, {__call = new})

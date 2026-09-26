@@ -17,6 +17,7 @@ local base      = require( "wibox.widget.base" )
 local beautiful = require( "beautiful"         )
 local shape     = require( "gears.shape"       )
 local gtable    = require( "gears.table"       )
+local clay      = require( "wibox.clay"        )
 
 local checkbox = {}
 
@@ -197,68 +198,69 @@ local function content_workarea(self, width, height)
     return wa
 end
 
-local function draw(self, _, cr, width, height)
-    local size = math.min(width, height)
 
-    local background_shape = self:get_shape() or shape.rectangle
-    local border_width = self:get_border_width() or 1
 
-    local main_color = self:get_color()
-    local bg = self:get_bg()
-    local border_color = self:get_border_color()
-
-    -- If no color is set, it will fallback to the default one
-    if border_color or main_color then
-        cr:set_source(color(border_color or main_color))
+local function describe_checkbox(w, fg, st, item, offer)
+    if not offer.w_definite and not offer.h_definite
+        and not w.forced_width and not w.forced_height then
+        return clay.refuse(w, "size", "has no definite axis; force a size or put it in a sized host")
     end
 
-    local wa = outline_workarea(self, size, size)
-    cr:translate(wa.x, wa.y)
-    background_shape(cr, wa.width, wa.height)
-    cr:set_line_width(border_width)
-
-    if bg then
-        cr:save()
-        cr:set_source(color(bg))
-        cr:fill_preserve()
-        cr:restore()
+    local main_color = w:get_color()
+    local bg = w:get_bg()
+    local border_color = w:get_border_color()
+    local check_color = w:get_check_color()
+    local check_border_color = w:get_check_border_color()
+    local main = clay.solid_rgba(main_color)
+    local background = clay.solid_rgba(bg)
+    local border = clay.solid_rgba(border_color)
+    local check_fill = clay.solid_rgba(check_color)
+    local check_border = clay.solid_rgba(check_border_color)
+    if main_color and not main then
+        clay.ignore(w, "color", "is not solid and is transparent")
+    end
+    if bg and not background then
+        clay.ignore(w, "bg", "is not solid and is transparent")
+    end
+    if border_color and not border then
+        clay.ignore(w, "border_color", "is not solid and is transparent")
+    end
+    if check_color and not check_fill then
+        clay.ignore(w, "check_color", "is not solid and is transparent")
+    end
+    if check_border_color and not check_border then
+        clay.ignore(w, "check_border_color", "is not solid and is transparent")
     end
 
-    cr:stroke()
-
-    cr:translate(-wa.x, -wa.y)
-
-    -- Draw the checked part
-    if self._private.checked then
-        local col = self:get_check_color() or main_color
-        border_color = self:get_check_border_color()
-        border_width = self:get_check_border_width() or 0
-        local check_shape = self:get_check_shape() or background_shape
-
-        wa = content_workarea(self, size, size)
-        cr:translate(wa.x, wa.y)
-
-        check_shape(cr, wa.width, wa.height)
-
-        if col then
-            cr:set_source(color(col))
-        end
-
-        if border_width > 0 then
-            cr:fill_preserve()
-            cr:set_line_width(border_width)
-            cr:set_source(color(border_color))
-            cr:stroke()
-        else
-            cr:fill()
-        end
+    local background_shape = w:get_shape() or shape.rectangle
+    local border_width = w:get_border_width() or 1
+    local stroke = border or main or { 0, 0, 0, 1 }
+    local outline = { w = "grow", h = "grow", fill = background,
+        stroke = border_width > 0 and stroke or nil, stroke_width = border_width,
+        shape = function(width, height)
+            local size = math.min(width, height)
+            local wa = outline_workarea(w, size, size)
+            return clay.shape_ops(background_shape, wa.width, wa.height, wa.x, wa.y)
+        end }
+    local check
+    if w._private.checked then
+        local check_shape = w:get_check_shape() or background_shape
+        local check_border_width = w:get_check_border_width() or 0
+        check = { float = true, w = "grow", h = "grow",
+            fill = check_fill or main or stroke,
+            stroke = check_border_width > 0 and (check_border or { 0, 0, 0, 1 }) or nil,
+            stroke_width = check_border_width,
+            shape = function(width, height)
+                local size = math.min(width, height)
+                local wa = content_workarea(w, size, size)
+                return clay.shape_ops(check_shape, wa.width, wa.height, wa.x, wa.y)
+            end }
     end
+    local node = { square = true, specs = { outline, check } }
+    return node
 end
 
-local function fit(_, _, w, h)
-    local size = math.min(w, h)
-    return size, size
-end
+checkbox._clay = { describe = describe_checkbox }
 
 --- If the checkbox is checked.
 -- @property checked
@@ -306,8 +308,6 @@ local function new(checked, args)
     ret._private.checked = checked
     ret._private.color = args.color and color(args.color) or nil
 
-    rawset(ret, "fit" , fit )
-    rawset(ret, "draw", draw)
 
     return ret
 end

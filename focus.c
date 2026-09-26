@@ -43,7 +43,7 @@ void
 focusclient(Client *c, int lift)
 {
 	struct wlr_surface *old = seat->keyboard_state.focused_surface;
-	int unused_lx, unused_ly, old_client_type;
+	int old_client_type;
 	Client *old_c = NULL;
 	LayerSurface *old_l = NULL;
 	struct wlr_surface *surface;
@@ -52,13 +52,10 @@ focusclient(Client *c, int lift)
 	if (session_is_locked())
 		return;
 
-	/* Raise client in stacking order if requested */
-	if (c && lift) {
-		if (!client_is_unmanaged(c))
-			stack_client_append(c);
-		else
-			wlr_scene_node_raise_to_top(&c->scene->node);
-	}
+	/* Raise client in stacking order if requested: the stack is the
+	 * declaration order within a band. */
+	if (c && lift)
+		stack_client_append(c);
 
 	if (c && client_surface(c) == old)
 		return;
@@ -95,11 +92,12 @@ focusclient(Client *c, int lift)
 
 	/* Deactivate old client if focus is changing */
 	if (old && (!c || client_surface(c) != old)) {
-		/* If an overlay is focused, don't focus or activate the client,
-		 * but only update its position in the focus stack to render its border with focuscolor
-		 * and focus it after the overlay is closed. */
-		if (old_client_type == LayerShell && wlr_scene_node_coords(
-					&old_l->scene->node, &unused_lx, &unused_ly)
+		/* If a mapped overlay is focused, don't focus or activate the
+		 * client, but only update its position in the focus stack to
+		 * render its border with focuscolor and focus it after the
+		 * overlay is closed. Mapped is the declared fact; the scene
+		 * node stays until the next frame parks it. */
+		if (old_client_type == LayerShell && old_l->mapped
 				&& old_l->layer_surface->current.layer >= ZWLR_LAYER_SHELL_V1_LAYER_TOP) {
 			return;
 		} else if (old_c && old_c == exclusive_focus && client_wants_focus(old_c)) {
@@ -143,9 +141,9 @@ focusclient(Client *c, int lift)
 	globalconf.focus.client = c;
 	globalconf.focus.need_update = true;
 
-	/* Trigger stack refresh: client_layer_translator() depends on which
-	 * client has focus (e.g., fullscreen clients only get LyrFS when
-	 * focused or when the focused client is on a different screen). */
+	/* Trigger stack refresh: stack_client_layer() depends on which client
+	 * has focus (e.g. fullscreen clients only get WINDOW_LAYER_FULLSCREEN
+	 * when focused or when the focused client is on a different screen). */
 	stack_windows();
 
 	/* Activate the new client */

@@ -1,0 +1,42 @@
+# Bundled Clay
+
+Upstream revision: `e6cc36941ab2af5d81107617039d6f527a1c660b`.
+Header SHA256: `54aef6d5f96b14e296bebb6db4a755543e98fd7e6c188411afb2f22a4b4f7728`.
+The production header is byte-identical to this pin, also kept at `tests/clay/vendor/clay.h` as a provenance fixture for independent upstream comparisons. The license remains in `licenses/LICENSE.clay`.
+
+No local header patch exists. The production solver tests compile this pinned header. Textbox containers carry widget identity, sizing and child alignment; their text children use the pinned `CLAY_TEXT` entry point.
+
+Imagebox, client icon and tray describers supply natural surface dimensions, scaling flags and authored size limits to `lua/wibox/clay.lua`. The compiler fits the image to its current authored offer, including padding and flex shares, and rounds both axes outward in Lua. Content-sized hosts without a definite axis use natural size. Ordinary FIT bounds carry the result; disabled resizing uses FIXED natural axes. Images with composed bounds do not use the upstream width-first aspect stage. Declarations without natural dimensions can retain upstream aspect sizing. Distinct image and widget allocations retain their containers and input bindings.
+
+Hotkeys help computes its content limits in Lua from `screen.workarea` and border insets. A request strictly below the workarea extent is retained; otherwise the extent minus both borders is used, floored at zero. Ordinary popup minima and the fixed-width launcher attachment express those limits, with `beautiful.launcher_width` taking precedence and height retaining content growth. Pagination uses the same workarea budgets. The float remains centered on OUTPUT. Visible help refreshes through `property::workarea`; hidden help refreshes when reopened. Clay receives ordinary sizing declarations, with no independent floating sizing reference.
+
+Each output allocates one 65536-element context. Widget admission remains limited to 2048 native nodes per tree and 12288 per output. A native widget node emits one Clay element; host decoration, client frames and surfaces, layout slots, layer surfaces, the cursor, inspector declarations and retained exit subtrees add elements outside that widget budget. The ID map holds old IDs until pruning at the end of a successful layout, so a completely replaced layout temporarily needs both generations. The budget provides headroom, not a proof that every ID or command fits. Runtime checks cover all declarations, command buffers and text caches. The separate transition array holds 200 records, including idle configured transitions. Pinned Clay clones exit subtrees into the tails of its element and child-index arrays without reserving those slots from declarations. Widget budgets and inspector admission leave headroom for these copies. At the ID map high-water limit, pinned Clay reports exhaustion before looking for an existing ID or a free slot; the application handles that failure by resetting the arena.
+
+The inspector uses the pinned full-tree traversal. Before entering it, `clay_inspector_fits` budgets 18 times the authored element count plus 2048 elements, and 20 times that count plus 2048 bytes for temporary integer strings. Admission also reserves ID-map space for the live generation. The per-element budgets are twice the approximate named-row cost of nine elements and ten integer-string bytes; the fixed reserve covers the panel and selected details. An oversized request closes the inspector with a named warning before its traversal runs. The authored frame completes without the debug view or a context reset, retaining scroll offsets; the next frame removes the panel space reserved during declaration. The pinned integer formatter does not check its buffer, so checking only after the inspector solve is insufficient. Generated inspector ID collisions retain Clay's diagnostic behavior; duplicate IDs involving desktop declarations remain invariant errors.
+
+Application declaration wrappers stop calling Clay once the band reports exhaustion. Failed frames publish no geometry and perform no scene reconciliation. Widget hit queries use the band's Clay context and return no hits until a valid frame follows a reset. `declare_output_frame` reinitializes that same arena after failure, resetting native scroll records, transitions and text measurements. Allocation is checked before initialization. No solver-state backup, context growth or state migration occurs. Native widget views continue to share immutable payloads; changed inputs copy them, and exit transitions keep referenced payloads alive within an additional 8 MiB metadata/text budget. Referenced image surfaces retain their existing surface allocations. Views and layout references are released before their Lua VM closes.
+
+Grid dependency stages use private geometry copies and private callbacks. Public widget geometry and solved callbacks are published only after the final successful stage. Failed frames remain clean until input changes; an open inspector is disabled with at most one retry. The dump header reports element capacity, ID-map high-water length and free slots. Test builds provide controls for new-output capacity, context allocation rejection and extra declarations on a selected dependency stage. Fixed arenas use page-aligned storage with huge-page promotion disabled, allowing unused array ranges to remain nonresident. Committed object order remains in application storage; the tree dump retains the displayed tree while its solver context is reset.
+
+## somewm code that reads Clay internals
+
+`clay_impl.c` compiles the bundled header and exposes the following application functions. These field and array assumptions are part of the compatibility surface for a pin bump.
+
+| Function | Context fields and purpose |
+| --- | --- |
+| `clay_capacity` | Reads `layoutElements.length`, `maxElementCount`, `layoutElementsHashMapInternal.length`, `layoutElementsHashMapFreeList.length` and `transitionDatas.length` for admission and committed dump counters. |
+| `clay_references_memory` | Reads completed `layoutElements` text, image and custom payload pointers to retain widget storage; exiting subtrees are in the active array and their tail clones borrow the same payloads. |
+| `clay_clips_begin` | Copies `scrollContainerDatas`, clears its length and restores inspector records identified by their `layoutElements` addresses so authored scroll containers claim the remaining records first. |
+| `clay_scroll_offset` | Reads the application copy of `scrollContainerDatas` by element ID to recover an offset before redeclaration; it does not access the current context directly. |
+| `clay_clip_restore` | Reads the open element through `openLayoutElementStack` and `layoutElements`; writes the matching `scrollContainerDatas` record, updates its element pointer and marks it open this frame. |
+| `clay_declaration_full` | Reads `layoutElements.length` and `.capacity` to stop application declarations before the element array fills. |
+| `clay_capacity_failed` | Reads `booleanWarnings` for element, ID-map, measured-text and render-command exhaustion after solving. |
+| `clay_inspector_fits` | Reads `layoutElements.length`, `maxElementCount`, `dynamicStringData.capacity` and ID-map lengths to bound debug-view elements, temporary strings and live IDs before traversal. |
+| `clay_inspector_duplicate` | Reads the last `layoutElements` entry and its ID-map item to distinguish generated inspector collisions from authored duplicates. |
+| `clay_render_commands` | Borrows `renderCommands` from the completed layout for readback. |
+| `clay_element_declaration` | Reads the ID map, `generation` and the mapped element configuration to expose a non-text declaration in the current frame. |
+| `clay_scroll_set` | Uses `Clay_GetScrollContainerData` to write a matching `scrollContainerDatas.scrollPosition`; it does not address the context directly. |
+| `clay_root_count` | Reads `layoutElementTreeRoots.length` for tree-dump traversal. |
+| `clay_root_element` | Reads a `layoutElementTreeRoots` entry's `layoutElementIndex` to locate a dump root. |
+| `clay_element_view` | Reads `layoutElements` and the ID map for names, child indices, text or container configuration, floating state and exit state in the tree dump. |
+| `clay_transitions_active` | Reads `transitionDatas` states to request further frames until every transition is idle. |

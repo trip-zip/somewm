@@ -6,7 +6,6 @@ local gtable = require("gears.table")
 
 -- This test has been proven to perform unreliably in automated environments.
 -- GC timing depends on many factors and client cleanup may be delayed.
--- See https://github.com/awesomeWM/awesome/pull/3292.
 --
 -- Skip in CI-like environments. Run manually with TEST_LEAK=1 if needed.
 local is_ci = os.getenv("GITHUB_ACTIONS") or os.getenv("CI")

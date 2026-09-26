@@ -18,7 +18,6 @@ local gtable     = require("gears.table")
 local wibox      = require("wibox")
 local popup      = require("awful.popup")
 local awcommon   = require("awful.widget.common")
-local placement  = require("awful.placement")
 local abutton    = require("awful.button")
 local ascreen    = require("awful.screen")
 local gpcall     = require("gears.protected_call")
@@ -73,44 +72,21 @@ capi.screen.connect_signal("removed", function(scr)
     end)
 end)
 
-local function get_spacing()
-    local margin = beautiful.notification_spacing or dpi(2)
-    return {top = margin, bottom = margin}
-end
-
-local function get_offset(position, preset)
-    preset = preset or {}
-    local margin = preset.padding or beautiful.notification_spacing or dpi(4)
-    if position:match('_right') then
-        return {x = -margin}
-    elseif position:match('_left') then
-        return {x = margin}
-    end
-    return {}
-end
-
--- Leverage `awful.placement` to create the stacks.
+-- Each position is one Clay flow container. Lua supplies theme inputs and
+-- membership only; resizing or dismissing a child reflows it in the solve.
+local positions = {top_left=0, top_middle=3, top_right=6,
+    bottom_left=2, bottom_middle=5, bottom_right=8}
 local function update_position(position, preset)
-    local pref  = position:match("top_") and "bottom" or "top"
-    local align = position:match("_(.*)")
-        :gsub("left", "front"):gsub("right", "back")
-
+    preset = preset or {}
+    local point=positions[position]
+    local padding=preset.padding or beautiful.notification_padding or dpi(16)
     for _, pos in pairs(by_position) do
-        for k, wdg in ipairs(pos[position]) do
-            local args = {
-                geometry            = pos[position][k-1],
-                preferred_positions = {pref },
-                preferred_anchors   = {align},
-                margins             = get_spacing(),
-                honor_workarea      = true,
-            }
-            if k == 1 then
-                args.offset = get_offset(position, preset)
-            end
-
-            -- The first entry is aligned to the workarea, then the following to the
-            -- previous widget.
-            placement[k==1 and position:gsub("_middle", "") or "next_to"](wdg, args)
+        for _, wdg in ipairs(pos[position]) do
+            wdg.drawin.attachment = {kind=4,position=point,parent=point,own=point,
+                width=beautiful.notification_width or dpi(320),
+                gap=beautiful.notification_spacing or dpi(8),
+                x=point<3 and padding or point>5 and -padding or 0,
+                y=point%3==0 and padding or -padding}
         end
     end
 end
@@ -134,17 +110,6 @@ local function finish(self)
 
     self._private.notification = {}
 end
-
--- It isn't a good idea to use the `attach` `awful.placement` property. If the
--- screen is resized or the notification is moved, it causes side effects.
--- Better listen to geometry changes and reflow.
-capi.screen.connect_signal("property::geometry", function(s)
-    for pos, notifs in pairs(by_position[s]) do
-        if #notifs > 0 then
-            update_position(pos, notifs[1].preset)
-        end
-    end
-end)
 
 --- The maximum notification width.
 -- @beautiful beautiful.notification_max_width
@@ -285,7 +250,6 @@ local function init(self, notification)
         end
     end
 
-    self:connect_signal("property::geometry", self._private.update)
     notification:weak_connect_signal("property::margin", self._private.update)
     notification:weak_connect_signal("property::suspended", self._private.hide)
     notification:weak_connect_signal("destroyed", self._private.destroy_callback)

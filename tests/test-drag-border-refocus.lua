@@ -1,7 +1,7 @@
 ---------------------------------------------------------------------------
 --- Test: border colors update correctly after drag ends
 --
--- Regression test for issue #308: when a drag operation ends, the focused
+-- Regression test: when a drag operation ends, the focused
 -- client's border should return to the correct focus color. Previously,
 -- destroydragicon() fired while seat->drag was still set, so the border
 -- color guard in focusclient() blocked the update.

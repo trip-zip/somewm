@@ -93,6 +93,12 @@ local steps = {
         end
 
         local fg = focus:geometry()
+        if not (fg.x >= wa.x - 1 and fg.x < wa.x + wa.width) then
+            assert(count < 30,
+                string.format("Focused client x=%d should be within workarea [%d, %d)",
+                    fg.x, wa.x, wa.x + wa.width))
+            return nil
+        end
         io.stderr:write(string.format("[TEST] Focused client %s at x=%d, width=%d\n",
             focus.class, fg.x, fg.width))
 
@@ -175,4 +181,4 @@ local steps = {
     end,
 }
 
-runner.run_steps(steps, { kill_clients = false })
+runner.run_steps(steps, { kill_clients = false, wait_per_step = 3 })

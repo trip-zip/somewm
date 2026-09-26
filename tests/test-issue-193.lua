@@ -1,4 +1,4 @@
--- Test: naughty notification batch destroy (issue #193).
+-- Test: naughty notification batch destroy.
 --
 -- Bug: lua/naughty/core.lua:502-507 uses ipairs + table.remove without break.
 -- When destroying multiple notifications, table.remove shifts indices down,

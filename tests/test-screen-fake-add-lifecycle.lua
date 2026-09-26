@@ -3,7 +3,7 @@
 --   1. fake_add creates a valid screen with tags and wibar
 --   2. Signals fire correctly during fake_add
 --   3. fake_remove invalidates the screen
---   4. Layoutlist widget survives screen removal (PR #391 regression)
+--   4. Layoutlist widget survives screen removal
 --   5. Multiple add/remove cycles don't leak or crash
 ---------------------------------------------------------------------------
 
@@ -82,7 +82,7 @@ local steps = {
         return true
     end,
 
-    -- Step 5: Layoutlist gracefully handles removed screen (PR #391)
+    -- Step 5: Layoutlist gracefully handles removed screen
     function()
         print("TEST: Step 5 - Layoutlist handles removed screen")
         local ok, result = pcall(awful.widget.layoutlist.source.for_screen,

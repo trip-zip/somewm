@@ -1,6 +1,6 @@
 -- Test: Notification position bugs.
 --
--- Bug #3170 - Box has no fallback when notification weak ref is cleared:
+-- Box has no fallback when notification weak ref is cleared:
 --   box.lua:305 stores the notification in a weak table ({__mode="v"}).
 --   box.lua:314-322 get_position() returns the notification's position, but
 --   when the weak ref is nil (after GC), it returns fallback "top_right"
@@ -15,7 +15,7 @@
 --   reference (simulating what happens after GC), verify get_position()
 --   returns the wrong value.
 --
--- Bug #3035 - middle position shifts on update:
+-- middle position shifts on update:
 --   box.lua:95-96 computes align = position:match("_(.*)") which for
 --   "top_middle" gives "middle". The gsub("left","front"):gsub("right","back")
 --   doesn't match, leaving align = "middle". awful.placement.next_to with
@@ -33,7 +33,7 @@ end)
 
 local steps = {}
 
--- Bug #3170: Box returns wrong position when notification ref is lost.
+-- Box returns wrong position when notification ref is lost.
 -- The box stores the notification in a weak table. If the notification is
 -- collected or the reference is otherwise lost, get_position() returns
 -- "top_right" instead of the original position. This means finish() would
@@ -41,7 +41,7 @@ local steps = {}
 table.insert(steps, function()
     -- Create notification at "top_left"
     local n = notification {
-        title    = "Bug 3170 - position fallback",
+        title    = "Notification position fallback",
         text     = "Box should remember its position",
         position = "top_left",
         timeout  = 0,
@@ -60,14 +60,14 @@ table.insert(steps, function()
     -- the design flaw: the box has no cached position.
     b._private.notification = setmetatable({}, {__mode = "v"})
 
-    -- BUG #3170: get_position() now returns "top_right" (the hardcoded
+    -- get_position() now returns "top_right" (the hardcoded
     -- fallback at box.lua:321) instead of "top_left". If finish() runs
     -- in this state, it would look for this box in by_position[s]["top_right"]
     -- instead of by_position[s]["top_left"], failing to clean it up.
     local pos = b:get_position()
     assert(pos == "top_left",
         string.format(
-            "BUG #3170: box position should be 'top_left' after notification "..
+            "box position should be 'top_left' after notification "..
             "ref is lost, got '%s' - get_position() falls back to 'top_right' "..
             "because box has no cached position. finish() would look in the "..
             "wrong position list and fail to remove this ghost box.",
@@ -79,20 +79,20 @@ table.insert(steps, function()
     return true
 end)
 
--- Bug #3035: Notification position "middle" anchor not handled correctly.
+-- Notification position "middle" anchor not handled correctly.
 -- The update_position function at box.lua:93-96 computes the anchor from
 -- the position name. For "top_middle", align becomes "middle" which is not
 -- transformed by the gsub chain and isn't a valid anchor for awful.placement.
 table.insert(steps, function()
     -- Create two notifications at "top_middle" to test stacking
     local n1 = notification {
-        title    = "Bug 3035 - middle 1",
+        title    = "Middle notification 1",
         text     = "First notification at top_middle",
         position = "top_middle",
         timeout  = 0,
     }
     local n2 = notification {
-        title    = "Bug 3035 - middle 2",
+        title    = "Middle notification 2",
         text     = "Second notification at top_middle",
         position = "top_middle",
         timeout  = 0,
@@ -113,13 +113,13 @@ table.insert(steps, function()
 
     local g1_after = b1:geometry()
 
-    -- BUG #3035: The x position may shift because "middle" isn't a valid
+    -- The x position may shift because "middle" isn't a valid
     -- anchor for awful.placement.next_to. The first widget placement uses
     -- position:gsub("_middle", "") which strips "_middle", but subsequent
     -- widgets use "middle" as anchor which causes incorrect positioning.
     assert(g1_after.x == g1_before.x,
         string.format(
-            "BUG #3035: notification at top_middle shifted x position on "..
+            "notification at top_middle shifted x position on "..
             "update: before=%d, after=%d - 'middle' anchor not handled "..
             "correctly by awful.placement",
             g1_before.x, g1_after.x))

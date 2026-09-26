@@ -1,8 +1,7 @@
 ---------------------------------------------------------------------------
 -- Unit test: carousel pure-logic functions
 --
--- Tests compute_column_positions, strip_width, clamp_offset,
--- offset_to_center_column, and reconcile without a running compositor.
+-- Tests membership reconciliation and native focus policy without a compositor.
 ---------------------------------------------------------------------------
 
 -- Minimal mocks so carousel module loads without the compositor.
@@ -21,6 +20,7 @@ _G.screen = mock_screen
 _G.awesome = mock_awesome
 
 -- Stub requires that carousel touches at load time.
+package.loaded["awful.client"] = { tiled = function() return {} end }
 package.loaded["awful.screen"] = { focused = function() return nil end }
 package.loaded["awful.layout"] = {
     get = function() return nil end,
@@ -30,121 +30,6 @@ package.loaded["beautiful"] = {}
 
 local carousel = require("awful.layout.suit.carousel")
 local T = carousel._test
-
-describe("compute_column_positions", function()
-    it("returns empty table for no columns", function()
-        local pos = T.compute_column_positions({}, 1000)
-        assert.are.equal(0, #pos)
-    end)
-
-    it("computes sequential positions with no gap", function()
-        local cols = {
-            { width_fraction = 0.5 },
-            { width_fraction = 0.5 },
-        }
-        local pos = T.compute_column_positions(cols, 1000)
-        assert.are.equal(2, #pos)
-        assert.are.equal(0, pos[1].canvas_x)
-        assert.are.equal(500, pos[1].pixel_width)
-        assert.are.equal(500, pos[2].canvas_x)
-        assert.are.equal(500, pos[2].pixel_width)
-    end)
-
-    it("does not add extra gap between columns", function()
-        local cols = {
-            { width_fraction = 1.0 },
-            { width_fraction = 1.0 },
-        }
-        local pos = T.compute_column_positions(cols, 800)
-        assert.are.equal(0, pos[1].canvas_x)
-        assert.are.equal(800, pos[1].pixel_width)
-        assert.are.equal(800, pos[2].canvas_x) -- no extra gap in column advance
-        assert.are.equal(800, pos[2].pixel_width)
-    end)
-
-    it("floors fractional pixel widths", function()
-        local cols = { { width_fraction = 1/3 } }
-        local pos = T.compute_column_positions(cols, 1000)
-        assert.are.equal(333, pos[1].pixel_width) -- floor(333.33)
-    end)
-end)
-
-describe("strip_width", function()
-    it("returns 0 for empty positions", function()
-        assert.are.equal(0, T.strip_width({}))
-    end)
-
-    it("returns right edge of last column", function()
-        local pos = {
-            { canvas_x = 0, pixel_width = 500 },
-            { canvas_x = 510, pixel_width = 500 },
-        }
-        assert.are.equal(1010, T.strip_width(pos))
-    end)
-
-    it("works with single column", function()
-        local pos = { { canvas_x = 0, pixel_width = 800 } }
-        assert.are.equal(800, T.strip_width(pos))
-    end)
-end)
-
-describe("clamp_offset", function()
-    it("returns 0 for empty positions", function()
-        assert.are.equal(0, T.clamp_offset(100, {}, 800))
-    end)
-
-    it("centers strip when narrower than viewport", function()
-        local pos = { { canvas_x = 0, pixel_width = 400 } }
-        -- strip=400, viewport=800, should center: -(800-400)/2 = -200
-        assert.are.equal(-200, T.clamp_offset(0, pos, 800))
-    end)
-
-    it("clamps to 0 when offset is negative", function()
-        local pos = {
-            { canvas_x = 0, pixel_width = 500 },
-            { canvas_x = 510, pixel_width = 500 },
-        }
-        -- strip=1010, viewport=800, min=0
-        assert.are.equal(0, T.clamp_offset(-100, pos, 800))
-    end)
-
-    it("clamps to max when offset exceeds strip", function()
-        local pos = {
-            { canvas_x = 0, pixel_width = 500 },
-            { canvas_x = 510, pixel_width = 500 },
-        }
-        -- strip=1010, viewport=800, max=1010-800=210
-        assert.are.equal(210, T.clamp_offset(9999, pos, 800))
-    end)
-
-    it("passes through valid offset unchanged", function()
-        local pos = {
-            { canvas_x = 0, pixel_width = 500 },
-            { canvas_x = 510, pixel_width = 500 },
-        }
-        -- strip=1010, viewport=800, valid range [0, 210]
-        assert.are.equal(100, T.clamp_offset(100, pos, 800))
-    end)
-end)
-
-describe("offset_to_center_column", function()
-    it("returns 0 for nil input", function()
-        assert.are.equal(0, T.offset_to_center_column(nil, 800))
-    end)
-
-    it("centers a column in the viewport", function()
-        local col_pos = { canvas_x = 500, pixel_width = 200 }
-        -- center of column = 500 + 100 = 600
-        -- offset = 600 - 800/2 = 600 - 400 = 200
-        assert.are.equal(200, T.offset_to_center_column(col_pos, 800))
-    end)
-
-    it("returns negative offset for first column", function()
-        local col_pos = { canvas_x = 0, pixel_width = 200 }
-        -- center = 100, offset = 100 - 400 = -300
-        assert.are.equal(-300, T.offset_to_center_column(col_pos, 800))
-    end)
-end)
 
 describe("reconcile", function()
     -- Fake client objects (identity matters, not fields)
@@ -237,54 +122,6 @@ describe("reconcile", function()
     end)
 end)
 
-describe("peek_width effect on column positions", function()
-    it("reduces column pixel widths with effective_viewport", function()
-        local cols = {
-            { width_fraction = 1.0 },
-        }
-        -- Without peek: column fills 1000px
-        local pos_full = T.compute_column_positions(cols, 1000)
-        assert.are.equal(1000, pos_full[1].pixel_width)
-
-        -- With peek=50: effective_viewport = 1000 - 100 = 900
-        local effective = 1000 - 2 * 50
-        local pos_peek = T.compute_column_positions(cols, effective)
-        assert.are.equal(900, pos_peek[1].pixel_width)
-    end)
-
-    it("half-width columns are proportional to effective_viewport", function()
-        local cols = {
-            { width_fraction = 0.5 },
-            { width_fraction = 0.5 },
-        }
-        local effective = 1000 - 2 * 50 -- 900
-        local pos = T.compute_column_positions(cols, effective)
-        assert.are.equal(450, pos[1].pixel_width)
-        assert.are.equal(450, pos[2].pixel_width)
-        assert.are.equal(450, pos[2].canvas_x)
-    end)
-
-    it("clamp_offset centers strip within effective_viewport", function()
-        -- Single narrow column: strip < effective_viewport
-        local pos = { { canvas_x = 0, pixel_width = 400 } }
-        local effective = 900
-        -- strip=400, viewport=900, center: -(900-400)/2 = -250
-        assert.are.equal(-250, T.clamp_offset(0, pos, effective))
-    end)
-
-    it("clamp_offset bounds to strip with effective_viewport", function()
-        local pos = {
-            { canvas_x = 0, pixel_width = 900 },
-            { canvas_x = 910, pixel_width = 900 },
-        }
-        local effective = 900
-        -- strip = 910 + 900 = 1810, max_offset = 1810 - 900 = 910
-        assert.are.equal(0, T.clamp_offset(-100, pos, effective))
-        assert.are.equal(910, T.clamp_offset(9999, pos, effective))
-        assert.are.equal(500, T.clamp_offset(500, pos, effective))
-    end)
-end)
-
 describe("reconcile index", function()
     local c1 = { id = 1 }
     local c2 = { id = 2 }
@@ -299,5 +136,41 @@ describe("reconcile index", function()
         assert.are.equal(1, e1.row_idx)
         assert.are.equal(2, e2.col_idx)
         assert.are.equal(1, e2.row_idx)
+    end)
+end)
+
+
+describe("_native.target", function()
+    local target = carousel._native.target
+
+    it("centres every column in always mode", function()
+        assert.are.equal(-160, target("always", 0, 960, 1280, 0, 0))
+        assert.are.equal(800, target("always", 960, 960, 1280, 0, 0))
+        assert.are.equal(1760, target("always", 1920, 960, 1280, 0, 0))
+    end)
+
+    it("moves only completely hidden columns in never mode", function()
+        assert.are.equal(0, target("never", 960, 960, 1280, 0, 0))
+        assert.are.equal(1600, target("never", 1920, 960, 1280, 0, 0))
+        assert.are.equal(0, target("never", 0, 960, 1280, 960, 0))
+        assert.are.equal(32, target("never", 0, 960, 1280, 960, 32))
+        assert.are.equal(1632, target("never", 1920, 960, 1280, 0, 32))
+        assert.are.equal(0, target("never", 960, 960, 1280, 0, 32))
+    end)
+
+    it("aligns overflowing edges and adds the caller's padding", function()
+        assert.are.equal(640, target("edge", 960, 960, 1280, 0, 0))
+        assert.are.equal(960, target("edge", 960, 960, 1280, 1600, 0))
+        assert.are.equal(832, target("edge", 960, 960, 1280, 800, 32))
+        assert.are.equal(672, target("edge", 960, 960, 1280, 0, 32))
+        assert.are.equal(992, target("edge", 960, 960, 1280, 1600, 32))
+    end)
+
+    it("recentres a column only when it overflows", function()
+        assert.are.equal(800, target("on-overflow", 960, 960, 1280, 0, 0))
+        assert.are.equal(1760, target("on-overflow", 1920, 960, 1280, 800, 0))
+        assert.are.equal(800, target("on-overflow", 960, 960, 1280, 1600, 0))
+        assert.are.equal(-160, target("on-overflow", 0, 960, 1280, 800, 0))
+        assert.are.equal(800, target("on-overflow", 960, 960, 1280, 800, 32))
     end)
 end)

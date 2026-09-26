@@ -8,10 +8,7 @@
 ---------------------------------------------------------------------------
 
 local object = require("gears.object")
-local cache = require("gears.cache")
-local matrix = require("gears.matrix")
 local gdebug = require("gears.debug")
-local protected_call = require("gears.protected_call")
 local gtable = require("gears.table")
 local setmetatable = setmetatable
 local pairs = pairs
@@ -120,8 +117,6 @@ local base = {}
 -- @tparam wibox.drawable find_widgets_result.drawable The drawable containing
 -- the widget.
 -- @tparam widget find_widgets_result.widget The widget being displayed.
--- @tparam wibox.hierarchy find_widgets_result.hierarchy The hierarchy
--- managing the widget's geometry.
 -- @tparam number find_widgets_result.x An approximation of the X position that
 -- the widget is visible at on the surface.
 -- @tparam number find_widgets_result.y An approximation of the Y position that
@@ -151,8 +146,6 @@ local base = {}
 -- @tparam wibox.drawable find_widgets_result.drawable The drawable containing
 -- the widget.
 -- @tparam widget find_widgets_result.widget The widget being displayed.
--- @tparam wibox.hierarchy find_widgets_result.hierarchy The hierarchy
--- managing the widget's geometry.
 -- @tparam number find_widgets_result.x An approximation of the X position that
 -- the widget is visible at on the surface.
 -- @tparam number find_widgets_result.y An approximation of the Y position that
@@ -176,8 +169,6 @@ local base = {}
 -- @tparam wibox.drawable find_widgets_result.drawable The drawable containing
 -- the widget.
 -- @tparam widget find_widgets_result.widget The widget being displayed.
--- @tparam wibox.hierarchy find_widgets_result.hierarchy The hierarchy
--- managing the widget's geometry.
 -- @tparam number find_widgets_result.x An approximation of the X position that
 -- the widget is visible at on the surface.
 -- @tparam number find_widgets_result.y An approximation of the Y position that
@@ -201,8 +192,6 @@ local base = {}
 -- @tparam wibox.drawable find_widgets_result.drawable The drawable containing
 -- the widget.
 -- @tparam widget find_widgets_result.widget The widget being displayed.
--- @tparam wibox.hierarchy find_widgets_result.hierarchy The hierarchy
--- managing the widget's geometry.
 -- @tparam number find_widgets_result.x An approximation of the X position that
 -- the widget is visible at on the surface.
 -- @tparam number find_widgets_result.y An approximation of the Y position that
@@ -300,7 +289,6 @@ end
 --- Set the widget's forced width.
 -- @tparam[opt] number width With `nil` the default mechanism of calling the
 --   `:fit` method is used.
--- @see wibox.widget.base:fit_widget
 -- @method wibox.widget.base:set_forced_width
 -- @hidden
 function base.widget:set_forced_width(width)
@@ -317,7 +305,6 @@ end
 -- If there is no forced width/height, then the only way to get the widget's
 -- actual size is during a `mouse::enter`, `mouse::leave` or button event.
 -- @treturn[opt] number The forced width (nil if automatic).
--- @see fit_widget
 -- @method wibox.widget.base:get_forced_width
 -- @hidden
 function base.widget:get_forced_width()
@@ -327,7 +314,6 @@ end
 --- Set the widget's forced height.
 -- @tparam[opt] number height With `nil` the default mechanism of calling the
 --   `:fit` method is used.
--- @see wibox.widget.base:fit_widget
 -- @method wibox.widget.base:set_height
 -- @hidden
 function base.widget:set_forced_height(height)
@@ -469,151 +455,6 @@ function base.widget:index(widget, recursive, ...)
 end
 -- }}}
 
--- {{{ Caches
-
--- Indexes are widgets, allow them to be garbage-collected.
-local widget_dependencies = setmetatable({}, { __mode = "kv" })
-
--- Get the cache of the given kind for this widget. This returns a gears.cache
--- that calls the callback of kind `kind` on the widget.
-local function get_cache(widget, kind)
-    if not widget._private.widget_caches[kind] then
-        widget._private.widget_caches[kind] = cache.new(function(...)
-            return protected_call(widget[kind], widget, ...)
-        end)
-    end
-    return widget._private.widget_caches[kind]
-end
-
--- Special value to skip the dependency recording that is normally done by
--- base.fit_widget() and base.layout_widget(). The caller must ensure that no
--- caches depend on the result of the call and/or must handle the children's
--- widget::layout_changed signal correctly when using this.
-base.no_parent_I_know_what_I_am_doing = {}
-
--- Record a dependency from parent to child: The layout of `parent` depends on
--- the layout of `child`.
-local function record_dependency(parent, child)
-    if parent == base.no_parent_I_know_what_I_am_doing then
-        return
-    end
-
-    base.check_widget(parent)
-    base.check_widget(child)
-
-    local deps = widget_dependencies[child] or {}
-    deps[parent] = true
-    widget_dependencies[child] = deps
-end
-
--- Clear the caches for `widget` and all widgets that depend on it.
-local clear_caches
-function clear_caches(widget)
-    local deps = widget_dependencies[widget] or {}
-    widget_dependencies[widget] = {}
-    widget._private.widget_caches = {}
-    for w in pairs(deps) do
-        clear_caches(w)
-    end
-end
-
--- }}}
-
---- Figure out the geometry in the device coordinate space.
---
--- This gives only tight bounds if no rotations by non-multiples of 90° are
--- used.
--- @staticfct wibox.widget.base.rect_to_device_geometry
--- @param cr The cairo context.
--- @tparam number x The `x` value.
--- @tparam number y The `y` value.
--- @tparam number width The `width` value.
--- @tparam number height The `height` value.
--- @treturn number The new `x` value.
--- @treturn number The new `y` value.
--- @treturn number The new `width` value.
--- @treturn number The new `height` value.
-function base.rect_to_device_geometry(cr, x, y, width, height)
-    return matrix.transform_rectangle(cr.matrix, x, y, width, height)
-end
-
---- Fit a widget for the given available width and height.
---
--- This calls the widget's `:fit` callback and caches the result for later use.
--- Never call `:fit` directly, but always through this function!
--- @tparam widget parent The parent widget which requests this information.
--- @tparam table context The context in which we are fit.
--- @tparam widget widget The widget to fit (this uses
---   `widget:fit(context, width, height)`).
--- @tparam number width The available width for the widget.
--- @tparam number height The available height for the widget.
--- @treturn number The width that the widget wants to use.
--- @treturn number The height that the widget wants to use.
--- @staticfct wibox.widget.base.fit_widget
-function base.fit_widget(parent, context, widget, width, height)
-    record_dependency(parent, widget)
-
-    if not widget._private.visible then
-        return 0, 0
-    end
-
-    -- Sanitize the input. This also filters out e.g. NaN.
-    width = math.max(0, width)
-    height = math.max(0, height)
-
-    local w, h = 0, 0
-    if widget.fit then
-        w, h = get_cache(widget, "fit"):get(context, width, height)
-    else
-        -- If it has no fit method, calculate based on the size of children
-        local children = base.layout_widget(parent, context, widget, width, height)
-        for _, info in ipairs(children or {}) do
-            local x, y, w2, h2 = matrix.transform_rectangle(info._matrix,
-                0, 0, info._width, info._height)
-            w, h = math.max(w, x + w2), math.max(h, y + h2)
-        end
-    end
-
-    -- Apply forced size and handle nil's
-    w = widget._private.forced_width or w or 0
-    h = widget._private.forced_height or h or 0
-
-    -- Also sanitize the output.
-    w = math.max(0, math.min(w, width))
-    h = math.max(0, math.min(h, height))
-    return w, h
-end
-
---- Lay out a widget for the given available width and height.
---
--- This calls the widget's `:layout` callback and caches the result for later
--- use.  Never call `:layout` directly, but always through this function!
--- However, normally there shouldn't be any reason why you need to use this
--- function.
--- @tparam widget parent The parent widget which requests this information.
--- @tparam table context The context in which we are laid out.
--- @tparam widget widget The widget to layout (this uses
---   `widget:layout(context, width, height)`).
--- @tparam number width The available width for the widget.
--- @tparam number height The available height for the widget.
--- @treturn[opt] table The result from the widget's `:layout` callback.
--- @staticfct wibox.widget.base.layout_widget
-function base.layout_widget(parent, context, widget, width, height)
-    record_dependency(parent, widget)
-
-    if not widget._private.visible then
-        return
-    end
-
-    -- Sanitize the input. This also filters out e.g. NaN.
-    width = math.max(0, width)
-    height = math.max(0, height)
-
-    if widget.layout then
-        return get_cache(widget, "layout"):get(context, width, height)
-    end
-end
-
 --- Handle a button event on a widget.
 --
 -- This is used internally and should not be called directly.
@@ -655,46 +496,6 @@ function base.handle_button(event, widget, x, y, button, modifiers, geometry)
         v:emit_signal(event,geometry)
     end
 end
-
---- Create widget placement information. This should be used in a widget's
--- `:layout()` callback.
--- @tparam widget widget The widget that should be placed.
--- @param mat A matrix transforming from the parent widget's coordinate
---   system. For example, use matrix.create_translate(1, 2) to draw a
---   widget at position (1, 2) relative to the parent widget.
--- @tparam number width The width of the widget in its own coordinate system.
---   That is, after applying the transformation matrix.
--- @tparam number height The height of the widget in its own coordinate system.
---   That is, after applying the transformation matrix.
--- @treturn table An opaque object that can be returned from `:layout()`.
--- @staticfct wibox.widget.base.place_widget_via_matrix
-function base.place_widget_via_matrix(widget, mat, width, height)
-    assert(width >= 0, "A widget's width cannot be negative: " ..  tostring(width))
-    assert(height >= 0, "A widget's height cannot be negative: " ..  tostring(height))
-    return {
-        _widget = widget,
-        _width = width,
-        _height = height,
-        _matrix = mat
-    }
-end
-
---- Create widget placement information. This should be used for a widget's
--- `:layout()` callback.
--- @tparam widget widget The widget that should be placed.
--- @tparam number x The x coordinate for the widget.
--- @tparam number y The y coordinate for the widget.
--- @tparam number width The width of the widget in its own coordinate system.
---   That is, after applying the transformation matrix.
--- @tparam number height The height of the widget in its own coordinate system.
---   That is, after applying the transformation matrix.
--- @treturn table An opaque object that can be returned from `:layout()`.
--- @staticfct wibox.widget.base.place_widget_at
-function base.place_widget_at(widget, x, y, width, height)
-    return base.place_widget_via_matrix(widget, matrix.create_translate(x, y), width, height)
-end
-
--- Check if `obj` can be called (either using the metacall or as a function)
 local function is_callable(obj)
     local t = type(obj)
     return t == "function" or (
@@ -750,6 +551,10 @@ local function drill(ids, content)
     -- Get the optional identifier to create a virtual widget tree to place
     -- in an "access table" to be able to retrieve the widget.
     local id = attributes.id
+    local private = rawget(l, "_private")
+    if id and private then
+        private.declarative_id = id
+    end
 
     -- Clear the internal attributes.
     attributes.id, attributes.layout, attributes.widget = nil, nil, nil
@@ -917,7 +722,6 @@ end
 -- @tparam[opt=false] boolean args.enable_properties Enable automatic getter
 --   and setter methods.
 -- @tparam[opt=nil] table args.class The widget class
--- @see fit_widget
 -- @constructorfct wibox.widget.base.make_widget
 function base.make_widget(proxy, widget_name, args)
     args = args or {}
@@ -959,12 +763,9 @@ function base.make_widget(proxy, widget_name, args)
     end)
 
     if proxy then
-        rawset(ret, "fit", function(_, context, width, height)
-            return base.fit_widget(ret, context, proxy, width, height)
-        end)
-        rawset(ret, "layout", function(_, _, width, height)
-            return { base.place_widget_at(proxy, 0, 0, width, height) }
-        end)
+        rawset(ret, "_clay", { describe = function()
+            return { specs = require("wibox.clay").whole_box(proxy) }
+        end })
         proxy:connect_signal("widget::layout_changed", function()
             ret:emit_signal("widget::layout_changed")
         end)
@@ -972,12 +773,6 @@ function base.make_widget(proxy, widget_name, args)
             ret:emit_signal("widget::redraw_needed")
         end)
     end
-
-    -- Set up caches.
-    clear_caches(ret)
-    ret:connect_signal("widget::layout_changed", function()
-        clear_caches(ret)
-    end)
 
     -- Add functions.
     for k, v in pairs(base.widget) do

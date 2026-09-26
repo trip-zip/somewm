@@ -13,12 +13,16 @@
  * client receives NO pointer events while the cursor is over its titlebar, and
  * correct content-local coordinates while over its content.
  *
- * Usage: test-pointer-logger --app-id ID --marker PATH [--size WxH]
+ * With --cursor WxH+HX+HY it answers every pointer enter with a solid blue
+ * cursor surface of that size and hotspot (wl_pointer.set_cursor).
+ *
+ * Usage: test-pointer-logger --app-id ID --marker PATH [--size WxH] [--cursor WxH+HX+HY]
  */
 
 #include <signal.h>
 #include <stdarg.h>
 #include <stdbool.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -40,6 +44,8 @@ static struct xdg_toplevel *g_toplevel;
 
 static bool g_running = true;
 static int g_width = 600, g_height = 400;
+static int g_cursor_w, g_cursor_h, g_cursor_hx, g_cursor_hy;
+static struct wl_surface *g_cursor_surface;
 
 static const char *g_app_id = "pointer_logger";
 static const char *g_marker = NULL;
@@ -64,7 +70,7 @@ static void log_event(const char *fmt, ...) {
     fclose(f);
 }
 
-static struct wl_buffer *create_buffer(int w, int h) {
+static struct wl_buffer *create_buffer(int w, int h, uint32_t pixel) {
     int stride = w * 4;
     int size = stride * h;
 
@@ -88,7 +94,8 @@ static struct wl_buffer *create_buffer(int w, int h) {
         close(fd);
         return NULL;
     }
-    memset(data, 0xC0, size); /* opaque-ish solid fill */
+    for (int i = 0; i < w * h; i++)
+        ((uint32_t *)data)[i] = pixel;
     munmap(data, size);
 
     struct wl_shm_pool *pool = wl_shm_create_pool(g_shm, fd, size);
@@ -102,8 +109,18 @@ static struct wl_buffer *create_buffer(int w, int h) {
 /* Pointer */
 static void pointer_enter(void *data, struct wl_pointer *ptr, uint32_t serial,
         struct wl_surface *surf, wl_fixed_t sx, wl_fixed_t sy) {
-    (void)data; (void)ptr; (void)serial; (void)surf;
+    (void)data; (void)surf;
     log_event("enter %d %d", wl_fixed_to_int(sx), wl_fixed_to_int(sy));
+    if (g_cursor_w > 0) {
+        if (!g_cursor_surface) {
+            g_cursor_surface = wl_compositor_create_surface(g_compositor);
+            struct wl_buffer *buffer = create_buffer(g_cursor_w, g_cursor_h, 0xFF0000FFu);
+            wl_surface_attach(g_cursor_surface, buffer, 0, 0);
+            wl_surface_damage_buffer(g_cursor_surface, 0, 0, g_cursor_w, g_cursor_h);
+            wl_surface_commit(g_cursor_surface);
+        }
+        wl_pointer_set_cursor(ptr, serial, g_cursor_surface, g_cursor_hx, g_cursor_hy);
+    }
 }
 
 static void pointer_leave(void *data, struct wl_pointer *ptr, uint32_t serial,
@@ -169,7 +186,7 @@ static const struct wl_seat_listener seat_listener = {
 static void xdg_surface_configure(void *data, struct xdg_surface *xs, uint32_t serial) {
     (void)data;
     xdg_surface_ack_configure(xs, serial);
-    struct wl_buffer *buffer = create_buffer(g_width, g_height);
+    struct wl_buffer *buffer = create_buffer(g_width, g_height, 0xC0C0C0C0u);
     if (buffer) {
         wl_surface_attach(g_surface, buffer, 0, 0);
         wl_surface_damage_buffer(g_surface, 0, 0, g_width, g_height);
@@ -244,7 +261,7 @@ static const struct wl_registry_listener registry_listener = {
 };
 
 static void print_usage(const char *prog) {
-    fprintf(stderr, "Usage: %s --app-id ID --marker PATH [--size WxH]\n", prog);
+    fprintf(stderr, "Usage: %s --app-id ID --marker PATH [--size WxH] [--cursor WxH+HX+HY]\n", prog);
 }
 
 int main(int argc, char *argv[]) {
@@ -258,6 +275,12 @@ int main(int argc, char *argv[]) {
             if (sscanf(argv[++i], "%dx%d", &w, &h) == 2 && w > 0 && h > 0) {
                 g_width = w;
                 g_height = h;
+            }
+        } else if (strcmp(argv[i], "--cursor") == 0 && i + 1 < argc) {
+            if (sscanf(argv[++i], "%dx%d+%d+%d", &g_cursor_w, &g_cursor_h,
+                    &g_cursor_hx, &g_cursor_hy) != 4 || g_cursor_w < 1 || g_cursor_h < 1) {
+                print_usage(argv[0]);
+                return 1;
             }
         } else if (strcmp(argv[i], "--help") == 0 || strcmp(argv[i], "-h") == 0) {
             print_usage(argv[0]);
@@ -305,6 +328,7 @@ int main(int argc, char *argv[]) {
         /* keep running */
     }
 
+    if (g_cursor_surface) wl_surface_destroy(g_cursor_surface);
     if (g_toplevel) xdg_toplevel_destroy(g_toplevel);
     if (g_xdg_surface) xdg_surface_destroy(g_xdg_surface);
     if (g_surface) wl_surface_destroy(g_surface);

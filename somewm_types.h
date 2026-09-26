@@ -29,7 +29,9 @@
  * (awful.mouse.client.move/resize) instead of C-level cursor_mode state machine */
 enum { CurNormal, CurPressed }; /* cursor */
 enum { XDGShell, LayerShell, X11 }; /* client types */
-enum { LyrBg, LyrBottom, LyrTile, LyrFloat, LyrWibox, LyrTop, LyrFS, LyrOverlay, LyrBlock, NUM_LAYERS }; /* scene layers */
+/* scene layers: the output bands, then the parent an ext-session-lock
+ * client's surfaces are created under before the declare pass borrows them */
+enum { LyrDesktop, LyrBlock, NUM_LAYERS };
 
 /* Window types (for stacking and EWMH) - AwesomeWM compatibility */
 typedef enum {
@@ -99,12 +101,12 @@ struct Monitor {
 	struct wl_list link;
 	struct wlr_output *wlr_output;
 	struct wlr_scene_output *scene_output;
-	struct wlr_scene_rect *fullscreen_bg; /* See createmon() for info */
 	struct wl_listener frame;
 	struct wl_listener destroy;
 	struct wl_listener request_state;
 	struct wl_listener destroy_lock_surface;
 	struct wlr_session_lock_surface_v1 *lock_surface;
+	void *lock_render_owner;
 	struct wlr_box m; /* monitor area, layout-relative */
 	struct wlr_box w; /* window area, layout-relative */
 	struct wl_list layers[4]; /* LayerSurface.link */
@@ -115,6 +117,7 @@ struct Monitor {
 	int needs_screen_added; /* Set in createmon, cleared by updatemons after geometry is ready */
 	int needs_output_added; /* Set in createmon, cleared by updatemons after screen is ready */
 	output_t *output; /* Lua output object (persists across enable/disable) */
+	struct declare_output *declare; /* Per-output Clay context and render_state (declare.h) */
 };
 
 /* KeyboardGroup structure */
@@ -143,7 +146,14 @@ typedef struct LayerSurface {
 
 	Monitor *mon;
 	struct wlr_scene_tree *scene;
-	struct wlr_scene_tree *popups;
+	/* The render_state currently borrowing scene (render.h owner token) */
+	void *render_owner;
+	/* Output-local position of the surface leaf, written by the renderer's
+	 * reposition hook (window.c) for the surface's popups. */
+	struct { int x, y; } geom;
+	/* The zwlr layer this surface last committed to, keyed to the
+	 * m->layers list holding it (= its declare band). */
+	uint32_t band;
 	struct wlr_scene_layer_surface_v1 *scene_layer;
 	struct wl_list link;
 	int mapped;
