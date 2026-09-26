@@ -17,7 +17,7 @@ end
 
 runner.run_steps {
     function()
-        require('gears.wallpaper').set('#ffffff')
+        root.wallpaper(require('gears.color')('#ffffff'))
         make_hosts()
         scroll = wibox.container.scroll.horizontal(wibox.widget {
             bg='#00ff00', forced_width=300, forced_height=20,

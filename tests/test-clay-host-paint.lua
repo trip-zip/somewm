@@ -10,7 +10,7 @@ local pointer = assert(require('_utils').binary_or_skip('./build-test/test-virtu
 local s = screen[1]
 
 runner.run_async(function()
-    require('gears.wallpaper').set('#ffffff')
+    root.wallpaper(require('gears.color')('#ffffff'))
     local missing, receipts, measurements = {}, {}, {}
     local function measure(name, start, memory)
         awesome._test_redeclare()

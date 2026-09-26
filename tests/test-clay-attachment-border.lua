@@ -9,7 +9,7 @@ local capture = require('_widget_capture')
 local pointer = assert(require('_utils').binary_or_skip('./build-test/test-virtual-pointer-client'))
 
 runner.run_async(function()
-    require('gears.wallpaper').set('#ffffff')
+    root.wallpaper(require('gears.color')('#ffffff'))
     local leaf = wibox.widget.base.make_widget(nil, nil, {enable_properties = true})
     clay.describe_widget(leaf, function()
         return {w = leaf.forced_width, h = 40, bg = {1, 0, 0, 1}}

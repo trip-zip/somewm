@@ -5,7 +5,7 @@ local menu, child
 local called=0
 runner.run_steps {
     function()
-        require('gears.wallpaper').set('#123456')
+        root.wallpaper(require('gears.color')('#123456'))
         menu=awful.menu {items={{'Sub',{{'Action',function() called=called+1 end}}},
             {'Other',function() end}}, theme={width=120,height=24,border_width=0,
                 bg_normal='#ff0000',bg_focus='#ff0000'}}
