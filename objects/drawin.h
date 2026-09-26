@@ -83,6 +83,7 @@ typedef struct drawin_t {
 	 * bordered shapes. -1 means the masks are not one rounded rectangle
 	 * and the converted drawin draws unshaped. Set at every mask change. */
 	float shape_radius;
+	bool shape_warned;
 
 	/* Native shadow style; tiles are shared by the renderer. */
 	struct render_shadow shadow;

@@ -1389,8 +1389,12 @@ mask_rounded_radius(cairo_surface_t *mask, int w, int h, float scale)
 			break;
 		}
 	}
-	if (first < 0)
-		return -1;
+	if (first < 0) {
+		double radius = fmin(w, h) / 2.0;
+
+		return mask_matches_rounded_rect(mask, w, h, scale, radius)
+			? (float)radius : -1;
+	}
 	/* The arc meets the top edge at the radius, so the first covered
 	 * pixel is at or just past it; the fractions between are tried. */
 	for (double dev = first; dev >= first - 1.0 && dev >= 0; dev -= 0.25) {
@@ -1419,9 +1423,9 @@ mask_fits(cairo_surface_t *mask, int w, int h, float scale)
  * has an inner edge of radius r - bw, square when r <= bw), which is what
  * wibox:_apply_shape draws. The content's corner is the radius the root
  * element takes. A missing mask agrees with the one present. Masks that say
- * anything else leave -1, and one that is no rounded rectangle is named
- * once the pair is at the drawin's size; a stale mask mid-update says
- * nothing. */
+ * anything else leave -1. A non-rounded shape warns once at the drawin's
+ * size until it reads as rounded again or both masks are cleared; a stale
+ * mask mid-update says nothing. */
 static void
 drawin_shape_update(drawin_t *d)
 {
@@ -1430,8 +1434,10 @@ drawin_shape_update(drawin_t *d)
 	float rb, rc;
 
 	d->shape_radius = -1;
-	if (!d->shape_bounding && !d->shape_clip)
+	if (!d->shape_bounding && !d->shape_clip) {
+		d->shape_warned = false;
 		return;
+	}
 	rb = d->shape_bounding
 		? mask_rounded_radius(d->shape_bounding,
 			d->width + 2 * bw, d->height + 2 * bw, scale) : -2;
@@ -1442,16 +1448,19 @@ drawin_shape_update(drawin_t *d)
 		rb = rc + bw;
 	if (rb >= 0 && rc >= 0 && fabsf(fmaxf(rb - bw, 0) - rc) < 0.01f) {
 		d->shape_radius = rc;
+		d->shape_warned = false;
 		return;
 	}
 	/* Two rounded rectangles whose radii disagree are a border change in
 	 * progress; a mask that is no rounded rectangle at all is the shape. */
-	if ((rb < 0 || rc < 0)
+	if (!d->shape_warned && (rb < 0 || rc < 0)
 			&& (!d->shape_bounding || mask_fits(d->shape_bounding,
 				d->width + 2 * bw, d->height + 2 * bw, scale))
 			&& (!d->shape_clip
-				|| mask_fits(d->shape_clip, d->width, d->height, scale)))
+				|| mask_fits(d->shape_clip, d->width, d->height, scale))) {
 		warn("drawin: shape is not a rounded rectangle, drawing it unshaped");
+		d->shape_warned = true;
+	}
 }
 
 /** drawin.shape_bounding - Get visual bounding shape (AwesomeWM signature) */

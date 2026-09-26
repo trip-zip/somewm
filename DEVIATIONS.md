@@ -1108,8 +1108,9 @@ interpolator remains.
 Every box the scene draws rounds both of its edges to whole pixels, the same
 rule `c:geometry()` uses, so a client's configure equals its geometry and two
 boxes that share a solved edge share a realized one with no gap between them. A
-clip rectangle is the exception and keeps its solved edges, so it can still cut
-content at a fraction of a pixel.
+clip keeps its solved edges only to decide where text ellipsizes; the box a
+clipped element realizes rounds like every other, so a cut smaller than one
+logical pixel can round away.
 
 A declared slot animates its own box the same way. It names a duration, which of
 its position and size to animate, whether it collapses on the way in and on the

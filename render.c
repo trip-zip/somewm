@@ -2341,13 +2341,9 @@ int render_reconcile(struct render_state *rs, Clay_RenderCommandArray commands,
 				render_shadow_of(cmd->renderData.custom.customData));
 			cmd = &decoration;
 		}
-		/* A SCISSOR realizes no node of its own: its box bounds other boxes.
-		 * Rounding it would round a real cut away, because a clip less than
-		 * half a logical pixel inside its content rounds to the content's own
-		 * edges and stops clipping. Above scale 1 that half pixel is more than
-		 * a device pixel, which the crop and the text bound below can still
-		 * express, so a scissor keeps its solved edges and only the boxes that
-		 * become scene nodes snap. */
+		/* The scissor command stays solved for the clip stack and
+		 * text_ellipsis_width. Every realized box rounds once, including
+		 * the clipped intersection below. */
 		if (cmd->commandType != CLAY_RENDER_COMMAND_TYPE_SCISSOR_START) {
 			cmd->boundingBox = box_snap(cmd->boundingBox);
 		}
@@ -2408,7 +2404,7 @@ int render_reconcile(struct render_state *rs, Clay_RenderCommandArray commands,
 			cmd->commandType == CLAY_RENDER_COMMAND_TYPE_IMAGE || clip_mark || shape ||
 			(cmd->commandType == CLAY_RENDER_COMMAND_TYPE_CUSTOM && !shadow);
 		Clay_BoundingBox rbox = (clip_top != NULL && clippable) ?
-			box_intersect(cmd->boundingBox, *clip_top) : cmd->boundingBox;
+			box_snap(box_intersect(cmd->boundingBox, *clip_top)) : cmd->boundingBox;
 		/* The arc of the nearest rounded clip, for a raster that reaches a
 		 * corner of it. */
 		const struct clip_round *mask = scope != NULL && clippable &&

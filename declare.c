@@ -4690,11 +4690,12 @@ dump_node(void *user, const struct render_node_view *v)
 		buffer_addf(buf, "z=%-4d ", v->z);
 	else
 		buffer_adds(buf, "z=-    ");
+	Clay_BoundingBox box = dump_box(v->box), rbox = dump_box(v->rbox);
 	buffer_addf(buf, "box %d,%d %dx%d rbox %d,%d %dx%d ",
-		(int)v->box.x, (int)v->box.y,
-		(int)v->box.width, (int)v->box.height,
-		(int)v->rbox.x, (int)v->rbox.y,
-		(int)v->rbox.width, (int)v->rbox.height);
+		(int)box.x, (int)box.y,
+		(int)box.width, (int)box.height,
+		(int)rbox.x, (int)rbox.y,
+		(int)rbox.width, (int)rbox.height);
 	dump_what(buf, v->id, v->user_data);
 	if (v->raster_bytes)
 		buffer_addf(buf, " raster=%zu", v->raster_bytes);

@@ -1073,7 +1073,7 @@ static void test_fractional_text_clipping(void)
 					CHECK(sb->src_box.y + sb->src_box.height <= sb->buffer->height);
 					if (left > 0)
 						CHECK(sb->src_box.x > 0);
-					if (cuts[k] >= 1)
+					if (cuts[k] / scale >= 1)
 						CHECK(sb->src_box.width > 0 && sb->src_box.width < sb->buffer->width);
 					CHECK_EQ(render_reconcile(f.rs, commands, &no_hooks, no_bounds), 0);
 					CHECK_EQ(render_buffers_created(f.rs), 0);
