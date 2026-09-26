@@ -13,12 +13,12 @@ local s = screen[1]
 runner.run_async(function()
     local clients, reports, columns = {}, {}, {}
     local root, solved = nil, 0
-    local inputs = {columns = columns, viewport_extent = 1280, gap = 0, peek = 0}
+    local inputs = {columns = columns, gap = 0, peek = 0}
     local fixture = {name = 'native-carousel-state', arrange = function() end,
         _clay = function()
             root = carousel._build_declarations(inputs)
             root.solved = function(tree)
-                assert(tree == root and tree.box and tree.strip.box)
+                assert(tree == root and tree.box)
                 if #tree.columns > 1 then assert(tree.columns[2].box) end
                 solved = solved + 1
             end
@@ -56,7 +56,7 @@ runner.run_async(function()
         example.save(name, dump)
         assert(solved > before, 'solved callback did not run')
         assert(tonumber(dump:match('\n  roots flow %d+ floating %d+ derived (%d+)\n'))
-            == select(2, dump:gsub('\n%s*CAROUSEL_%u+ [^\n]* derived ', '')), dump)
+            == 0, dump)
         assert(not dump:find('[tree!=scene]', 1, true), dump)
         local actual = {}
         for line in dump:gmatch('[^\n]+') do
@@ -65,7 +65,7 @@ runner.run_async(function()
                 actual[#actual + 1] = table.concat({x, y, w, h}, ',')
             end
         end
-        assert(select(2, dump:gsub('\n%s*CAROUSEL_COLUMN [^\n]* derived ', '')) == #actual, dump)
+        assert(select(2, dump:gsub('\n%s*CAROUSEL_COLUMN ', '')) == #actual, dump)
         if expected then
             assert(#actual == #expected, name .. '\n' .. diagnostic(dump))
             for i, box in ipairs(expected) do
@@ -88,7 +88,7 @@ runner.run_async(function()
         solve(mode .. '-' .. i, horizontal(a,b,c), {r,0,2880,720,1280,720})
     end
     solve('initial', horizontal(0,960,1920), {0,0,2880,720,1280,720})
-    assert(root.strip.box.x == 0)
+    assert(root.box.x == 0)
     follow(2, 'on-overflow', -800,160,1120, -800)
     follow(3, 'on-overflow', -1600,-640,320, -1600)
     follow(2, 'on-overflow', -800,160,1120, -800)
@@ -127,7 +127,7 @@ runner.run_async(function()
     solve('pan-after-end', horizontal(-1600,-640,320), {-1600,0,2880,720,1280,720})
     assert(native.nearest(s, root) == 3)
 
-    inputs.vertical, inputs.viewport_extent, inputs.gap = true, 720, 8
+    inputs.vertical, inputs.gap = true, 8
     awesome._clay_scroll_set(s, root.id, 0, 0)
     solve('wheel-reset', {{8,8,1264,524}, {8,548,1264,524}, {8,1088,1264,524}},
         {0,0,1280,1620,1280,720})

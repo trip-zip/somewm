@@ -51,6 +51,7 @@ runner.run_async(function()
                 assert(not line:find(' derived ',1,true) and not line:find('last-frame',1,true), line)
             end
         end
+        assert(dump:find(string.format('w=fixed(%d) h=fixed(%d) user ', bar.width, bar.height), 1, true), dump)
         local found
         for _, hit in ipairs(bar:find_widgets(box.x+1, box.y+1)) do
             if hit.widget == child then found = hit end

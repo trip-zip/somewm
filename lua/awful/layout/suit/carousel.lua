@@ -97,11 +97,6 @@ local function clamp(val, lo, hi)
     return math.max(lo, math.min(hi, val))
 end
 
---- Compute effective viewport after subtracting peek zones.
-local function effective_viewport_size(viewport_size, peek)
-    return math.max(1, viewport_size - 2 * peek)
-end
-
 --- Build a set from an array for O(1) lookups.
 local function make_set(arr)
     local s = {}
@@ -115,7 +110,7 @@ end
 -- Axis abstraction helpers
 ---------------------------------------------------------------------------
 
---- Return the scroll-axis extent of the workarea.
+--- Return the scroll-axis extent of a solved box.
 -- Horizontal: width, Vertical: height
 local function scroll_extent(wa, vertical)
     return vertical and wa.height or wa.width
@@ -208,29 +203,31 @@ local function reconcile(state, cls, default_width, focus)
     rebuild_index(state)
 end
 
--- Build a private client-slot tree from reconciled membership. Inputs are
--- columns = {{clients = {...}, width_fraction = number}, ...}, vertical,
--- viewport_extent (the scroll-axis size inside workarea padding), gap, peek, lead and trail.
--- Peek reduces the fraction basis; peek, lead and trail declare end margins.
--- centered marks lead and trail as computed from the workarea extent.
--- Clay owns the strip position, column allocation and viewport clip.
+-- Build a private client-slot tree from reconciled membership. Column fractions
+-- use the viewport inside peek padding. Centered end margins are percentages;
+-- explicit lead and trail inputs are authored pixel margins.
+-- Clay owns column allocation, alignment and the viewport scroll record.
 function carousel._build_declarations(inputs)
     local vertical = inputs.vertical
     local axis, cross = vertical and "h" or "w", vertical and "w" or "h"
     local direction = vertical and "column" or "row"
     local gap, peek = inputs.gap or 0, inputs.peek or 0
-    local extent = effective_viewport_size(inputs.viewport_extent, peek)
-    local lead = { role = "CAROUSEL_MARGIN", derived = inputs.centered, children = {} }
-    lead[axis], lead[cross] = { fixed = peek + (inputs.lead or 0) }, 1
-    local strip = { role = "CAROUSEL_STRIP", direction = direction, children = { lead } }
-    local columns = {}
-    strip[axis], strip[cross] = "fit", 1
+    local children, columns = {}, {}
+    local function margin(size)
+        local item = { role = "CAROUSEL_MARGIN", children = {} }
+        item[axis], item[cross] = size, 1
+        children[#children + 1] = item
+    end
+    if inputs.centered and #inputs.columns > 0 then
+        margin(math.max(0, (1 - inputs.columns[1].width_fraction) / 2))
+    elseif (inputs.lead or 0) > 0 then
+        margin({ fixed = inputs.lead })
+    end
     for _, column in ipairs(inputs.columns) do
-        local group = { role = "CAROUSEL_COLUMN", derived = true,
+        local group = { role = "CAROUSEL_COLUMN",
             direction = vertical and "row" or "column",
             padding = gap, gap = 2 * gap, children = {} }
-        group[axis] = { fixed = math.floor(column.width_fraction * extent) }
-        group[cross] = 1
+        group[axis], group[cross] = column.width_fraction, 1
         for _, c in ipairs(column.clients) do
             -- Protocol minima remain on the surface; they must not change
             -- column fractions or the equal allocation of grouped clients.
@@ -238,16 +235,18 @@ function carousel._build_declarations(inputs)
             item[axis], item[cross] = 1, 1 / #column.clients
             group.children[#group.children + 1] = item
         end
-        strip.children[#strip.children + 1] = group
+        children[#children + 1] = group
         columns[#columns + 1] = group
     end
-    local trail = { role = "CAROUSEL_MARGIN", derived = inputs.centered, children = {} }
-    trail[axis], trail[cross] = { fixed = peek + (inputs.trail or 0) }, 1
-    strip.children[#strip.children + 1] = trail
-    return { role = "WORKAREA", direction = direction,
+    if inputs.centered and #inputs.columns > 0 then
+        margin(math.max(0, (1 - inputs.columns[#inputs.columns].width_fraction) / 2))
+    elseif (inputs.trail or 0) > 0 then
+        margin({ fixed = inputs.trail })
+    end
+    return { role = "CAROUSEL_VIEWPORT", direction = direction,
         clip = vertical and "y" or "x", center = true,
-        vertical = vertical, strip = strip, columns = columns,
-        children = { strip } }
+        padding = vertical and { top = peek, bottom = peek } or { left = peek, right = peek },
+        vertical = vertical, columns = columns, children = children }
 end
 
 carousel._native = {}
@@ -289,7 +288,7 @@ function carousel._native.follow(s, root, i, mode, dp)
     if x == nil then return end
     local r = -(root.vertical and y or x)
     local target = carousel._native.target(mode,
-        column.box[axis] - root.strip.box[axis], column.box[extent], root.box[extent], r, dp)
+        column.box[axis] - root.box[axis] + r, column.box[extent], root.box[extent], r, dp)
     carousel._native.pan(s, root, target - r)
 end
 
@@ -321,42 +320,35 @@ local function describe(s, vertical)
     state.vertical = vertical
 
     local gap = t.gap_single_client == false and 0 or t.gap
-    local viewport = scroll_extent(s.workarea, vertical) - 2 * gap
     local peek = math.max(0, beautiful.carousel_peek_width or carousel.peek_width)
     if peek > 0 then peek = peek + gap end
     local dynamic_peek = beautiful.carousel_dynamic_peek_width or carousel.dynamic_peek_width
     local mode = beautiful.carousel_center_mode or carousel.center_mode
-    local extent = effective_viewport_size(viewport, peek)
-    local lead, trail = 0, 0
+    local trail = 0
     local columns = state.columns
     local ci = focused_col_idx(state, focus)
         or math.min((state.last_focused_ci or 1) - 1, #columns)
     if ci == 0 then ci = nil end
     state.last_focused_ci = ci
 
-    if #columns > 0 then
-        if mode == "always" then
-            lead = math.max(0, extent / 2 - math.floor(columns[1].width_fraction * extent) / 2)
-            trail = math.max(0, extent / 2 - math.floor(columns[#columns].width_fraction * extent) / 2)
-        elseif (mode == "never" or mode == "edge") and dynamic_peek >= 0 and ci == #columns then
-            local total = 0
-            for _, column in ipairs(columns) do
-                total = total + math.floor(column.width_fraction * extent)
-            end
-            if total > viewport then trail = math.max(0, dynamic_peek + gap - peek) end
+    if #columns > 0 and (mode == "never" or mode == "edge")
+            and dynamic_peek >= 0 and ci == #columns then
+        local total = 0
+        for _, column in ipairs(columns) do
+            total = total + column.width_fraction
         end
+        if total > 1 then trail = math.max(0, dynamic_peek + gap - peek) end
     end
 
     local tree = carousel._build_declarations {
-        columns = columns, vertical = vertical, viewport_extent = viewport,
-        gap = gap, peek = peek, lead = lead, trail = trail,
+        columns = columns, vertical = vertical,
+        gap = gap, peek = peek, trail = trail,
         centered = #columns > 0 and mode == "always",
     }
-    tree.role = "CAROUSEL_VIEWPORT"
     tree.peek, tree.dynamic_peek = peek, dynamic_peek
 
     -- Follow changed declarations once; scroll-only solves keep the same policy.
-    local policy = { tostring(vertical), viewport, gap, peek, dynamic_peek, mode }
+    local policy = { tostring(vertical), gap, peek, dynamic_peek, mode }
     for _, column in ipairs(columns) do
         policy[#policy + 1] = column.width_fraction
         for _, c in ipairs(column.clients) do policy[#policy + 1] = tostring(c) end

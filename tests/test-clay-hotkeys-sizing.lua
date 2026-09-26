@@ -1,4 +1,4 @@
--- Lua workarea limits size help independently of its OUTPUT attachment.
+-- Clay sizes hotkeys help within its centered WORKAREA attachment.
 local runner = require('_runner')
 local async = require('_async')
 local awful = require('awful')
@@ -23,7 +23,7 @@ runner.run_async(function()
     async.sleep(.1)
     assert(s.workarea.width == width and s.workarea.height == height-60)
     local cases = {
-        {'below',width-1,height-61,3,width-1,height-61},
+        {'below',width-1,height-61,3,width-6,height-66},
         {'equal',width,height-60,3,width-6,height-66},
         {'above',width+1,height-59,3,width-6,height-66},
         {'mixed',400,height,3,400,height-66},
@@ -47,26 +47,25 @@ runner.run_async(function()
         local p, origin = box.popup, s.geometry
         assert(p.width == ew and p.height == eh, name..': content dimensions')
         assert(p.x == origin.x+math.floor((width-ew)/2+.5)
-            and p.y == origin.y+math.floor((height-eh)/2+.5), name..': OUTPUT center')
-        assert(p.minimum_width == ew and p.minimum_height == eh)
+            and p.y == origin.y+60+math.floor((height-60-eh)/2+.5), name..': WORKAREA center')
         local a = p.drawin.attachment
         assert(a.target == 0 and a.parent == 4 and a.own == 4)
-        assert(a.width == ew)
         local dump = awesome._clay_tree(s)
         assert(dump:find(string.format('scale %.2f',scale),1,true))
         example.save('hotkeys-'..name,dump)
         local line = assert(dump:match('  LAUNCHER [^\n]+'))
-        assert(line:find('attach OUTPUT',1,true))
+        assert(line:find('attach ELEMENT',1,true))
+        assert(not line:find('attach OUTPUT',1,true))
         assert(not line:find('available WORKAREA',1,true))
-        assert(line:find('w=fixed('..(ew+2*bw)..')',1,true))
-        assert(line:find(override and ' theme ' or ' derived ',1,true))
+        assert(line:find(override and 'w=fixed('..(ew+2*bw)..')'
+            or 'w=grow<='..((rw or 1200)+2*bw),1,true))
+        assert(line:find('h=grow<='..((rh or 800)+2*bw),1,true))
+        assert(line:find(' theme ',1,true))
         local x,y,w,h = line:match(' box (%-?%d+),(%-?%d+) (%d+)x(%d+)')
-        local left,top = (width-ew-2*bw)/2,(height-eh-2*bw)/2
+        local left,top = (width-ew-2*bw)/2,60+(height-60-eh-2*bw)/2
         assert(tonumber(x)==edge(left) and tonumber(y)==edge(top), name..": "..line)
         assert(tonumber(w)==edge(left+ew+2*bw)-edge(left)
             and tonumber(h)==edge(top+eh+2*bw)-edge(top), name..": "..line)
-        local tree = p._drawable._clay_tree
-        assert(tree.wmin == ew and tree.hmin == eh, 'Lua limits missing from declaration')
         local column = p.widget:get_children()[1]
         local found = false
         for _,hit in ipairs(p:find_widgets(10,eh-2)) do
@@ -89,8 +88,7 @@ runner.run_async(function()
     bar.height = 100
     async.sleep(.08)
     assert(box.popup.height == height-106)
-    assert(box.popup.y == s.geometry.y+53)
-    assert(box.popup.minimum_height == height-106)
+    assert(box.popup.y == s.geometry.y+103)
     assert(box.popup.widget ~= visible_widget, "workarea change retained stale pages")
     local previous_widget = box.popup.widget
     box:hide()
@@ -121,7 +119,7 @@ runner.run_async(function()
         local shown = h:_create_wibox(target,{'commands'},false)
         shown:show(); async.sleep(.08)
         assert(shown.popup.width==size[1]-6 and shown.popup.height==size[2]-66)
-        assert(shown.popup.x==target.geometry.x+3 and shown.popup.y==target.geometry.y+33)
+        assert(shown.popup.x==target.geometry.x+3 and shown.popup.y==target.geometry.y+63)
         example.save('hotkeys-output-'..size[1]..'x'..size[2],awesome._clay_tree(target))
         shown:hide(); reserved:remove()
     end

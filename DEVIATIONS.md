@@ -720,18 +720,18 @@ Modern D-Bus tray protocol instead of X11 embed. Implementation:
 
 ### Carousel Layout
 
-`awful.layout.suit.carousel` and its vertical variant declare a native Clay tree.
-Reconciled client membership forms fixed-fraction columns with equal percentage
-client slots, gap padding and twice-gap separation. The workarea padding contains
-a clipped viewport and one FIT strip. Peek and centring room are margin slots;
-Clay solves client boxes, centres short strips and clamps scrolling. Surface
-protocol minima do not change column fractions.
+`awful.layout.suit.carousel` and its vertical variant declare a scroll container
+of percent columns with the peek as padding on the scroll axis. Reconciled client membership
+forms columns with equal percentage client slots, gap padding and twice-gap
+separation. Centered end margins are percentages of the viewport; a dynamic-peek
+trail is an authored theme size. Clay solves client boxes, centers short content
+and clamps scrolling. Surface protocol minima do not change column fractions.
 
-The strip position is Clay's scroll record. Switching tags starts it at 0 because
+The viewport position is Clay's scroll record. Switching tags starts it at 0 because
 Clay drops undeclared records. Focus-follow reads solved column boxes and requests
-at most one more solve. Gestures pan the record and centre the nearest column on
-release. A wheel over a client does not pan the strip.
-`carousel.get().position` reports the strip's scroll position without the dynamic peek adjustment applied by the old geometry writer.
+at most one more solve. Gestures pan the record and center the nearest column on
+release. A wheel over a client does not pan the viewport.
+`carousel.get().position` reports the viewport's scroll position.
 
 `carousel.scroll_duration` is accepted and ignored. Scrolling animates client
 slots through `somewm.layout_animation` when enabled and snaps when disabled.
@@ -741,8 +741,7 @@ and cancellable handles for animating things other than client boxes.
 `client:_set_geometry_silent(geo)` remains available, but carousel does not call it.
 
 `carousel._build_declarations(inputs)` accepts reconciled `columns`, `vertical`,
-`viewport_extent`, `gap`, `peek`, `lead` and `trail`. The fraction basis is
-`max(1, viewport_extent - 2 * peek)`, where the viewport excludes workarea padding.
+`gap`, `peek`, `centered` and authored pixel `lead` and `trail` margins.
 Non-client slots publish solved IDs, boxes and scroll records before the root's
 `solved` callback. `carousel._native` implements target selection, follow, pan and
 nearest-column selection against those results.
@@ -971,18 +970,13 @@ frames request no helper updates, and idle event-loop windows stop scheduling.
 
 ### Hotkeys help sizing and page membership
 
-Hotkeys help remains centered on OUTPUT, including when bars reserve workarea.
-Lua computes its popup minima from `screen.workarea` and its border width.
-For each dimension, a request strictly below the workarea extent is retained;
-at equality or above, that extent minus both borders supplies the content
-extent, floored at zero. The ordinary launcher attachment fixes the outer width,
-while height remains a content-growing floor. `beautiful.launcher_width`
-overrides the popup width minimum and attachment width without a workarea cap;
-pagination still uses the requested workarea budget. Explicit hotkeys dimensions
-otherwise precede the dpi-scaled 1200x800 defaults. The dump and inspector expose
-ordinary fixed/FIT constraints rather than a separate sizing reference.
-Workarea-composed fixed widths are marked `derived`; an explicit launcher
-width retains its `theme` source.
+Hotkeys help is a floating element of the workarea, centered in it. Clay grows
+its width and height to at most the authored dimensions and never past the
+workarea, with the border as slot padding. `beautiful.launcher_width` supplies
+a fixed theme width. Explicit hotkeys dimensions otherwise precede the
+dpi-scaled 1200x800 defaults. Page capacity still reads the workarea to decide
+how groups split into columns and how columns fit on pages. Nothing in the
+hotkeys attachment is marked derived.
 
 A bar reservation changes the public `screen.workarea` after native layout.
 Visible help refreshes its constraints and pages on `property::workarea`, so it

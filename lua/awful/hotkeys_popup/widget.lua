@@ -722,16 +722,16 @@ function widget.new(args)
         end
     end
 
-    function widget_instance:_workarea_limits(s)
+    function widget_instance:_page_budget(s)
         local wa = s.workarea
-        -- Equality reserves both borders; smaller requests keep their extent.
+        -- The budget decides group splitting and column membership on each page.
         local width = self.width < wa.width and self.width or math.max(0, wa.width - self.border_width * 2)
         local height = self.height < wa.height and self.height or math.max(0, wa.height - self.border_width * 2)
         return width, height
     end
 
     function widget_instance:_create_pages(s, available_groups, show_awesome_keys)
-        local wibox_width, wibox_height = self:_workarea_limits(s)
+        local wibox_width, wibox_height = self:_page_budget(s)
 
         -- arrange hotkey groups into columns
         local column_layouts = {}
@@ -798,7 +798,10 @@ function widget.new(args)
         s = get_screen(s)
         local pages = self:_create_pages(s, available_groups, show_awesome_keys)
         local owner = self
-        local width, height = self:_workarea_limits(s)
+        local function place_launcher(p)
+            require("awful._attachment").corner(p, "centered", nil, 3,
+                {width=owner.width, height=owner.height})
+        end
         local mypopup = awful.popup {
             widget = pages[1],
             ontop = true,
@@ -808,10 +811,7 @@ function widget.new(args)
             border_width = self.border_width,
             border_color = self.border_color,
             shape = self.shape,
-            placement = "centered",
-            minimum_width = beautiful.launcher_width or width,
-            minimum_height = height,
-            _size_source = "workarea",
+            placement = place_launcher,
             screen = s,
         }
 
@@ -853,10 +853,7 @@ function widget.new(args)
                 for _, key in ipairs {"bg", "fg", "opacity", "border_width", "border_color", "shape"} do
                     if owner[key] ~= nil then p[key] = owner[key] end
                 end
-                local limit_width, limit_height = owner:_workarea_limits(s)
-                p.minimum_width = beautiful.launcher_width or limit_width
-                p.minimum_height = limit_height
-                p.placement = "centered"
+                p.placement = place_launcher
                 p:set_widget(pages[w_self.current_page])
                 w_self.inputs = inputs
             end

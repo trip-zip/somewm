@@ -107,12 +107,13 @@ typedef struct drawin_t {
 	} bar;
     struct {
         uint8_t kind; /* 1 popup, 2 tooltip, 3 launcher, 4 notification */
-        uint32_t target; /* Lua widget identity, 0 means OUTPUT */
+        uint32_t target; /* Lua widget identity, 0 means OUTPUT. */
         uint32_t host; /* Optional declare handle ID, 0 searches visible hosts. */
         uint32_t occurrence; /* Event placement token, 0 selects an unambiguous target. */
         uint8_t parent, own; /* Clay attach point */
-        float x, y, width;
-        bool lua_width; /* Width composed from public Lua policy inputs. */
+        float x, y, width, height;
+        float width_override; /* Negative means no fixed theme width. */
+        bool bounded; /* A launcher grows within WORKAREA using authored maxima. */
         uint16_t gap;
         uint8_t position;
         bool passthrough, hover;
