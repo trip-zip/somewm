@@ -1,4 +1,4 @@
--- Exercise the private strip through the production client declaration bridge.
+-- Exercise the private viewport through the production client declaration bridge.
 local runner = require('_runner')
 local async = require('_async')
 local awful = require('awful')
@@ -34,7 +34,7 @@ runner.run_async(function()
     local clients, reports = {}, {}
     local events = {}
     local colors = {'ffcc0000', 'ff00cc00', 'ff0000cc'}
-    local inputs = setmetatable({columns = {}, viewport_extent = 1280}, {
+    local inputs = setmetatable({columns = {}}, {
         __index = function(_, key)
             assert(key ~= 'col_positions' and key ~= 'workarea' and key ~= 'scroll_offset',
                 'builder read legacy layout state: ' .. key)
@@ -60,7 +60,7 @@ runner.run_async(function()
         local dump = awesome._clay_tree(s)
         example.save(name, dump)
         assert(tonumber(dump:match('roots flow %d+ floating %d+ derived (%d+)'))
-            == #inputs.columns, dump)
+            == 0, dump)
         assert(not dump:find('[tree!=scene]', 1, true), dump)
         for i, c in ipairs(clients) do
             local w, h = dump:match('SURFACE ' .. c.class .. ' [^\n]-box %-?%d+,%-?%d+ (%d+)x(%d+)')
@@ -73,8 +73,8 @@ runner.run_async(function()
     end
 
     local empty = solve('empty-strip')
-    expect(empty, 'CAROUSEL_STRIP', {{640, 0, 0, 720}})
-    expect(empty, 'CAROUSEL_COLUMN', {})
+    assert(not empty:find('CAROUSEL_STRIP ', 1, true), empty)
+    assert(not empty:find('CAROUSEL_COLUMN ', 1, true), empty)
     for i = 1, 3 do
         reports[i] = os.tmpname()
         awful.spawn {binary, 'STRIP_' .. i, reports[i], i == 1 and '800' or '0',
@@ -106,13 +106,12 @@ runner.run_async(function()
         },
     }
     for _, vertical in ipairs {false, true} do
-        inputs.vertical, inputs.viewport_extent = vertical, vertical and 720 or 1280
+        inputs.vertical = vertical
         local orientation = vertical and 'vertical' or 'horizontal'
         for _, gap in ipairs {0, 8} do
             inputs.gap = gap
             local dump = solve(orientation .. '-gap' .. gap)
             expect(dump, 'CLIENT', expected[orientation][gap])
-            expect(dump, 'CAROUSEL_STRIP', vertical and {{0,0,1280,1080}} or {{0,0,1920,720}})
             expect(dump, 'CAROUSEL_COLUMN', vertical and
                 {{0,0,1280,360},{0,360,1280,720}} or {{0,0,640,720},{640,0,1280,720}})
             local surfaces = boxes(dump, 'SURFACE')
@@ -133,14 +132,13 @@ runner.run_async(function()
     }
     inputs.gap, inputs.peek = 5, 20
     for _, vertical in ipairs {false, true} do
-        inputs.vertical, inputs.viewport_extent = vertical, vertical and 720 or 1280
+        inputs.vertical = vertical
         solve('fractions-before-scroll')
         awesome._clay_scroll_set(s, root.id, vertical and 0 or -100, vertical and -100 or 0)
         local dump = solve(vertical and 'vertical-fractions' or 'horizontal-fractions')
         expect(dump, 'CAROUSEL_COLUMN', vertical and
-            {{0,-80,1280,226},{0,146,1280,453},{0,599,1280,340}} or
-            {{-80,0,413,720},{333,0,826,720},{1159,0,620,720}})
-        expect(dump, 'CAROUSEL_STRIP', vertical and {{0,-100,1280,1059}} or {{-100,0,1899,720}})
+            {{0,-80,1280,227},{0,147,1280,453},{0,600,1280,340}} or
+            {{-80,0,413,720},{333,0,827,720},{1160,0,620,720}})
     end
 
     -- A smaller viewport exposes its native scissor independently of output
@@ -148,12 +146,11 @@ runner.run_async(function()
     inset = 40
     inputs.columns, inputs.gap, inputs.peek = grouped, 8, 0
     for _, vertical in ipairs {false, true} do
-        inputs.vertical, inputs.viewport_extent = vertical, vertical and 640 or 1200
+        inputs.vertical = vertical
         solve('clipped-before-scroll')
         awesome._clay_scroll_set(s, root.id, vertical and 0 or -100, vertical and -100 or 0)
         local dump = solve(vertical and 'vertical-clipped' or 'horizontal-clipped')
         expect(dump, 'CAROUSEL_VIEWPORT', {{40,40,1200,640}})
-        expect(dump, 'CAROUSEL_STRIP', vertical and {{40,-60,1200,960}} or {{-60,40,1800,640}})
         assert(dump:find('SCISSOR_START z=-    box 40,40 1200x640', 1, true), dump)
         assert(dump:find('SCISSOR_END', 1, true), dump)
         example.pixel(50,50,'#cc0000')
@@ -174,10 +171,10 @@ runner.run_async(function()
     local after = clients[1]:geometry()
     for key, value in pairs(before) do assert(after[key] == value) end
     assert(inputs.columns == grouped and grouped[1].clients[1] == clients[1])
-    assert(tree.children[1].children[2].children[1].client == clients[1])
+    assert(tree.children[1].children[1].client == clients[1])
     awesome._clay_scroll_set(s, root.id, 0, 200)
     local clamped = solve('vertical-scroll-past-start-clamps-to-zero')
-    expect(clamped, 'CAROUSEL_STRIP', {{40,40,1200,960}})
+    expect(clamped, 'CAROUSEL_COLUMN', {{40,40,1200,320},{40,360,1200,640}})
     inputs.columns = {{clients = {clients[3], clients[1], clients[2]}, width_fraction = 1}}
     awesome._clay_scroll_set(s, root.id, 0, 0)
     local regrouped = solve('regrouped')
@@ -186,7 +183,7 @@ runner.run_async(function()
     for name in regrouped:gmatch('\n%s+CLIENT (STRIP_%d+) ') do order[#order + 1] = name end
     assert(table.concat(order, ',') == 'STRIP_3,STRIP_1,STRIP_2')
 
-    -- Public centering computes margins from the workarea; peek alone is authored.
+    -- Public centering declares percent margins; peek is viewport padding.
     local beautiful = require('beautiful')
     beautiful.carousel_default_column_width = .5
     beautiful.carousel_peek_width = 20
@@ -195,17 +192,15 @@ runner.run_async(function()
     s.selected_tag.gap = 0
     local provenance = {
         {layout = carousel, mode = 'always', name = 'horizontal-centered',
-            column = 'CAROUSEL_COLUMN - w=fixed(620) h=percent(1) derived column',
-            margin = 'CAROUSEL_MARGIN - w=fixed(330) h=percent(1) derived row'},
+            column = 'CAROUSEL_COLUMN - w=percent(0.5) h=percent(1) column',
+            margin = 'CAROUSEL_MARGIN - w=percent(0.25) h=percent(1) row'},
         {layout = carousel, mode = 'never', name = 'horizontal-peek',
-            column = 'CAROUSEL_COLUMN - w=fixed(620) h=percent(1) derived column',
-            margin = 'CAROUSEL_MARGIN - w=fixed(20) h=percent(1) theme row'},
+            column = 'CAROUSEL_COLUMN - w=percent(0.5) h=percent(1) column'},
         {layout = carousel.vertical, mode = 'always', name = 'vertical-centered',
-            column = 'CAROUSEL_COLUMN - w=percent(1) h=fixed(340) derived row',
-            margin = 'CAROUSEL_MARGIN - w=percent(1) h=fixed(190) derived row'},
+            column = 'CAROUSEL_COLUMN - w=percent(1) h=percent(0.5) row',
+            margin = 'CAROUSEL_MARGIN - w=percent(1) h=percent(0.25) row'},
         {layout = carousel.vertical, mode = 'never', name = 'vertical-peek',
-            column = 'CAROUSEL_COLUMN - w=percent(1) h=fixed(340) derived row',
-            margin = 'CAROUSEL_MARGIN - w=percent(1) h=fixed(20) theme row'},
+            column = 'CAROUSEL_COLUMN - w=percent(1) h=percent(0.5) row'},
     }
     for _, case in ipairs(provenance) do
         beautiful.carousel_center_mode = case.mode
@@ -224,11 +219,11 @@ runner.run_async(function()
                 assert(column == case.column, case.name .. ': ' .. line .. ' expected ' .. case.column)
                 columns = columns + 1
             elseif margin then
-                assert(margin == case.margin, case.name .. ': ' .. line .. ' expected ' .. case.margin)
+                assert(margin == case.margin, case.name .. ': ' .. line .. ' expected ' .. tostring(case.margin))
                 margins = margins + 1
             end
         end
-        assert(columns == 3 and margins == 2, case.name .. ': missing carousel slots')
+        assert(columns == 3 and margins == (case.mode == 'always' and 2 or 0), case.name .. ': missing carousel slots')
     end
 
     s.selected_tag.layout = awful.layout.suit.tile
