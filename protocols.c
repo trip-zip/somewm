@@ -439,6 +439,15 @@ destroylocksurface(struct wl_listener *listener, void *data)
 	Monitor *m = wl_container_of(listener, m, destroy_lock_surface);
 	struct wlr_session_lock_surface_v1 *surface, *lock_surface = m->lock_surface;
 
+	/* A borrowed tree outlives the lock container. Park it before dropping
+	 * the handle, while its wl_surface can still outlive the lock protocol
+	 * object; the renderer's release hook cannot resolve a dropped handle. */
+	if (m->lock_render_owner) {
+		struct wlr_scene_tree *tree = lock_surface->surface->data;
+
+		render_park(&tree->node);
+		m->lock_render_owner = NULL;
+	}
 	m->lock_surface = NULL;
 	declare_handle_drop(lock_surface);
 	declare_output_mark_dirty(m->declare);

@@ -11,7 +11,7 @@ local function box(width,height,color,placement,offset)
 end
 runner.run_steps {
  function()
-  require('gears.wallpaper').set('#123456')
+  root.wallpaper(require('gears.color')('#123456'))
   bar=awful.wibar {screen=screen[1],height=28,ontop=true,bg='#ff00ff',widget=wibox.widget.textbox('bar')}
   popup=box(320,80,'#ff0000',awful.placement.top_right,{x=-16,y=16})
   return true

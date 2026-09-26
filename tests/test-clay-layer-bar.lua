@@ -35,7 +35,7 @@ local steps = {
     function()
         bar = awful.wibar({ position = "top", screen = s, height = 28, bg = "#00ff00" })
         bar:setup({ widget = wibox.widget.textbox, text = "bar" })
-        require("gears.wallpaper").set("#000000")
+        root.wallpaper(require('gears.color')("#000000"))
         pid = awful.spawn(string.format(
             "%s --namespace test-layer-bar --keyboard none"
                 .. " --anchor top,left,right --size 0,40 --exclusive-zone 40",

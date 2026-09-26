@@ -5,7 +5,7 @@ local example=require('_clay_example')
 local popup
 runner.run_steps {
  function()
-  require('gears.wallpaper').set('#ffffff')
+  root.wallpaper(require('gears.color')('#ffffff'))
   popup=awful.popup {screen=screen[1],x=100,y=100,ontop=true,visible=true,bg='#ff0000',
    border_width=3,border_color='#0000ff',
    shadow={radius=6,offset_x=6,offset_y=6,spread=0,corner_radius=0,opacity=1,color='#000000'},
