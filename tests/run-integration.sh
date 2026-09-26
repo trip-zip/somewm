@@ -68,6 +68,7 @@ fi
 # Setup temp directory and log file
 TMP_DIR=$(mktemp -d)
 LOG="$TMP_DIR/somewm.log"
+export SOMEWM_TEST_LOG="$LOG"
 
 # Create isolated runtime directory for test compositor
 TEST_RUNTIME_DIR="$TMP_DIR/runtime"
