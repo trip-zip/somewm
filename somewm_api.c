@@ -1639,6 +1639,31 @@ some_xkb_get_keymap(void)
 	return kb_group->wlr_group->keyboard.keymap;
 }
 
+/* Feed a synthetic key into the group keyboard's xkb state, like XTest on
+ * X11, so held modifiers show up in awesome._active_modifiers and in the
+ * clients' wl_keyboard.modifiers (via keypressmod()). Keybindings do not run. */
+void
+some_xkb_fake_key(xkb_keycode_t keycode, bool pressed)
+{
+	if (!kb_group || !kb_group->wlr_group)
+		return;
+
+	struct wlr_keyboard *kbd = &kb_group->wlr_group->keyboard;
+	if (!kbd->xkb_state)
+		return;
+
+	xkb_state_update_key(kbd->xkb_state, keycode,
+		pressed ? XKB_KEY_DOWN : XKB_KEY_UP);
+
+	/* Re-applies the mask just computed (a no-op on xkb_state); this
+	 * refreshes kbd->modifiers and emits the modifiers signal if they changed. */
+	wlr_keyboard_notify_modifiers(kbd,
+		xkb_state_serialize_mods(kbd->xkb_state, XKB_STATE_MODS_DEPRESSED),
+		xkb_state_serialize_mods(kbd->xkb_state, XKB_STATE_MODS_LATCHED),
+		xkb_state_serialize_mods(kbd->xkb_state, XKB_STATE_MODS_LOCKED),
+		xkb_state_serialize_layout(kbd->xkb_state, XKB_STATE_LAYOUT_EFFECTIVE));
+}
+
 /* Set the keyboard layout group.
  *
  * Strategy: use wlr_keyboard_notify_modifiers() on member keyboards.

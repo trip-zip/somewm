@@ -213,6 +213,7 @@ struct wlr_allocator *some_get_allocator(void);
 struct xkb_state *some_xkb_get_state(void);
 struct xkb_keymap *some_xkb_get_keymap(void);
 int some_xkb_set_layout_group(xkb_layout_index_t group);
+void some_xkb_fake_key(xkb_keycode_t keycode, bool pressed);
 const char *some_xkb_get_group_names(void);
 void some_rebuild_keyboard_keymap(void);
 void some_apply_keyboard_repeat_info(void);

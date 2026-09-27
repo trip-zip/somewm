@@ -436,6 +436,9 @@ luaA_root_fake_input(lua_State *L)
 		/* XKB keycodes are evdev keycodes + 8 */
 		wlr_seat_keyboard_notify_key(seat, timestamp, keycode - 8, state);
 
+		/* Necessary to ensure fake modifier presses function */
+		some_xkb_fake_key(keycode, state == WL_KEYBOARD_KEY_STATE_PRESSED);
+
 	} else if (strcmp(event_type, "button_press") == 0 || strcmp(event_type, "button_release") == 0) {
 		/* Button event - update pointer focus to match cursor position first */
 		int button;

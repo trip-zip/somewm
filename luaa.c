@@ -287,18 +287,31 @@ luaA_get_modifiers(lua_State *L)
     return 1;
 }
 
-/** Get currently active modifiers (X11-only stub).
- * X11: Queries XCB for current modifier state.
- * Wayland: Use xkbcommon state instead.
- * \return Table of active modifier names (empty in Wayland stub)
+/** Get currently active modifiers, served as awesome._active_modifiers.
+ * Reads the keyboard group's xkb state, so it covers real keys and
+ * root.fake_input keys.
+ * \return Table of active modifier names (e.g. {"Control", "Mod1"})
  */
 static int
 luaA_get_active_modifiers(lua_State *L)
 {
-    /* X11-only: uses XCB to query active modifiers.
-     * Wayland gets modifier state from xkbcommon. */
-    lua_newtable(L);
-    return 1;
+	struct xkb_state *state = some_xkb_get_state();
+	int n = 0;
+
+	lua_newtable(L);
+	if (!state)
+		return 1;
+
+	/* xkbcommon always puts the 8 real modifiers at indices 0-7, named
+	 * Shift, Lock, Control, Mod1..Mod5, the same keys as awesome._modifiers. */
+	struct xkb_keymap *keymap = xkb_state_get_keymap(state);
+	for (xkb_mod_index_t i = 0; i < 8; i++) {
+		if (xkb_state_mod_index_is_active(state, i, XKB_STATE_MODS_EFFECTIVE) > 0) {
+			lua_pushstring(L, xkb_keymap_mod_get_name(keymap, i));
+			lua_rawseti(L, -2, ++n);
+		}
+	}
+	return 1;
 }
 
 /* ==========================================================================
@@ -2389,6 +2402,9 @@ luaA_awesome_index(lua_State *L)
 		return 1;
 	}
 
+	if (A_STREQ(key, "_active_modifiers"))
+		return luaA_get_active_modifiers(L);
+
 	if (A_STREQ(key, "startup_errors")) {
 		if (globalconf.startup_errors.len == 0)
 			return 0;
@@ -2650,9 +2666,6 @@ luaA_awesome_setup(lua_State *L)
 	lua_setfield(L, -2, "Mod5");
 
 	lua_setfield(L, -2, "_modifiers");
-
-	lua_newtable(L);
-	lua_setfield(L, -2, "_active_modifiers");
 
 	lua_pushboolean(L, 1);
 	lua_setfield(L, -2, "composite_manager_running");
