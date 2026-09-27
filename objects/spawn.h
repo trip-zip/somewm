@@ -9,7 +9,6 @@
 /* XDG Activation protocol for startup notification */
 extern struct wlr_xdg_activation_v1 *activation;
 
-void spawn_init(void);
 int luaA_spawn(lua_State*);
 void spawn_child_exited(pid_t, int);
 void spawn_invalidate_callbacks(lua_State *L);

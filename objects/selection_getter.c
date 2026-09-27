@@ -70,30 +70,6 @@ typedef struct selection_getter_t
 static lua_class_t selection_getter_class;
 LUA_OBJECT_FUNCS(selection_getter_class, selection_getter_t, selection_getter)
 
-/** Handle X11 selection notify event.
- * \param ev The event.
- */
-void
-event_handle_selectionnotify(xcb_selection_notify_event_t *ev)
-{
-    /* X11-only: Handles SelectionNotify events.
-     * Wayland uses wlr_data_source pipe reads instead. */
-    (void)ev;
-}
-
-/** Handle X11 property change for selection transfer.
- * \param state The property state.
- * \param window The window.
- */
-void
-property_handle_awesome_selection_atom(uint8_t state, xcb_window_t window)
-{
-    /* X11-only: Handles incremental selection transfers.
-     * Wayland selection transfer is handled via wl_event_loop. */
-    (void)state;
-    (void)window;
-}
-
 /** Check if a MIME type is available in the data source.
  * \param source The data source to check.
  * \param mime_type The MIME type to look for.

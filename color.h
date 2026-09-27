@@ -45,14 +45,6 @@ typedef struct {
  */
 bool color_init_from_string(color_t *color, const char *colstr);
 
-/** Convert color_t to Cairo color format (doubles 0.0-1.0)
- * \param color Source color
- * \param r Pointer to store red (0.0-1.0)
- * \param g Pointer to store green (0.0-1.0)
- * \param b Pointer to store blue (0.0-1.0)
- * \param a Pointer to store alpha (0.0-1.0)
- */
-void color_to_cairo(const color_t *color, double *r, double *g, double *b, double *a);
 
 /** Convert color_t to float array for wlroots (0.0-1.0)
  * Format: float[4] = {r, g, b, a} where each is 0.0-1.0
@@ -69,12 +61,6 @@ void color_to_floats(const color_t *color, float floats[static 4]);
  */
 uint32_t color_to_uint32(const color_t *color);
 
-/** Convert color_t to uint32_t RGBA format
- * Format: 0xRRGGBBAA (alternative format)
- * \param color Source color
- * \return uint32_t in RGBA format
- */
-uint32_t color_to_uint32_rgba(const color_t *color);
 
 /** Push a color as a hex string onto the Lua stack
  * Format: "#RRGGBB" or "#RRGGBBAA" if alpha < 0xff

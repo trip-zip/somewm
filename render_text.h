@@ -91,8 +91,5 @@ void render_text_set_measure_scale(float scale);
 Clay_Dimensions render_measure_text(Clay_StringSlice text,
 	Clay_TextElementConfig *config, void *user_data);
 
-/* Drop the shared measure layout. The font table is process-lifetime by design
- * (ids are write-once), so it is not touched. */
-void render_text_finish(void);
 
 #endif

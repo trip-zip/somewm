@@ -134,28 +134,6 @@ luaA_output_new_virtual(lua_State *L, const char *name)
 }
 
 void
-luaA_output_push(lua_State *L, output_t *o)
-{
-	size_t i;
-
-	if (!o) {
-		lua_pushnil(L);
-		return;
-	}
-
-	for (i = 0; i < output_count; i++) {
-		output_t *candidate;
-		lua_rawgeti(L, LUA_REGISTRYINDEX, output_refs[i]);
-		candidate = (output_t *)lua_touserdata(L, -1);
-		if (candidate == o)
-			return;  /* Found - userdata is on stack */
-		lua_pop(L, 1);
-	}
-
-	lua_pushnil(L);
-}
-
-void
 luaA_output_invalidate(lua_State *L, output_t *o)
 {
 	size_t i;

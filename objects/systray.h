@@ -110,9 +110,6 @@ void systray_item_clear_overlay(systray_item_t *item);
 void systray_item_emit_property_changed(systray_item_t *item,
                                         const char *property);
 
-/* Global signals */
-void systray_emit_item_added(systray_item_t *item);
-void systray_emit_item_removed(systray_item_t *item);
 
 /* Get all current items (for iteration) */
 systray_item_array_t *systray_get_items(void);

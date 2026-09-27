@@ -28,63 +28,6 @@
 #include <stdlib.h>
 #include <math.h>
 
-/* Cairo user data key for automatic buffer cleanup */
-static cairo_user_data_key_t data_key;
-
-/** Free data callback for Cairo surface user data */
-static inline void
-free_data(void *data)
-{
-    free(data);
-}
-
-/** Create a Cairo surface from raw ARGB data
- *
- * Extracted from AwesomeWM draw.c lines 50-78.
- * No modifications needed - this is pure Cairo code with no X11 dependencies.
- *
- * \param width Width of the image in pixels
- * \param height Height of the image in pixels
- * \param data Pointer to ARGB pixel data (format: 0xAARRGGBB per pixel)
- * \return A new Cairo image surface, or NULL on error
- */
-cairo_surface_t *
-draw_surface_from_data(int width, int height, uint32_t *data)
-{
-    unsigned long int len;
-    unsigned long int i;
-    uint32_t *buffer;
-    cairo_surface_t *surface;
-
-    len = width * height;
-    buffer = malloc(len * sizeof(uint32_t));
-    if (!buffer)
-        return NULL;
-
-    /* Cairo wants premultiplied alpha, meh :( */
-    for(i = 0; i < len; i++)
-    {
-        uint8_t a = (data[i] >> 24) & 0xff;
-        double alpha = a / 255.0;
-        uint8_t r = (uint8_t)(((data[i] >> 16) & 0xff) * alpha);
-        uint8_t g = (uint8_t)(((data[i] >>  8) & 0xff) * alpha);
-        uint8_t b = (uint8_t)(((data[i] >>  0) & 0xff) * alpha);
-        /* (uint32_t) casts: uint8_t promotes to int; a<<24 is UB when a>=128 (same fix as draw_surface_from_pixbuf) */
-        buffer[i] = ((uint32_t)a << 24) | ((uint32_t)r << 16) | ((uint32_t)g << 8) | b;
-    }
-
-    surface =
-        cairo_image_surface_create_for_data((unsigned char *) buffer,
-                                            CAIRO_FORMAT_ARGB32,
-                                            width,
-                                            height,
-                                            width*4);
-    /* This makes sure that buffer will be freed */
-    cairo_surface_set_user_data(surface, &data_key, buffer, &free_data);
-
-    return surface;
-}
-
 /** Create a Cairo surface from a GdkPixbuf
  *
  * Extracted from AwesomeWM draw.c lines 84-134.
@@ -259,34 +202,6 @@ draw_find_visual(const void *s, uint32_t visual)
     (void)s;
     (void)visual;
     return NULL;
-}
-
-void *
-draw_default_visual(const void *s)
-{
-    (void)s;
-    return NULL;
-}
-
-void *
-draw_argb_visual(const void *s)
-{
-    (void)s;
-    return NULL;
-}
-
-uint8_t
-draw_visual_depth(const void *s, uint32_t vis)
-{
-    (void)s;
-    (void)vis;
-    return 32;  /* Default to 32-bit depth for ARGB */
-}
-
-void
-draw_test_cairo_xcb(void)
-{
-    /* No-op in Wayland - Cairo/XCB integration test not needed */
 }
 
 #endif /* XWAYLAND */

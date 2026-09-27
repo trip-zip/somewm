@@ -59,17 +59,6 @@ typedef struct selection_watcher_t
 static lua_class_t selection_watcher_class;
 LUA_OBJECT_FUNCS(selection_watcher_class, selection_watcher_t, selection_watcher)
 
-/** Handle XFixes selection notify event (X11).
- * \param ev The event.
- */
-void
-event_handle_xfixes_selection_notify(xcb_generic_event_t *ev)
-{
-    /* X11-only: XFixes selection change notification.
-     * Wayland uses wlr_seat set_selection events instead. */
-    (void)ev;
-}
-
 /** Handle selection change event from seat.
  * \param listener The wl_listener
  * \param data The seat (unused, we use globalconf)

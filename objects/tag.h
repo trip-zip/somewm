@@ -77,12 +77,9 @@ typedef struct tag_t
 ARRAY_TYPE(tag_t *, tag)
 #endif
 
-/* Helper function declarations */
-int tags_get_current_or_first_selected_index(void);
 void tag_client(lua_State *, client_t *);
 void untag_client(client_t *, tag_t *);
 bool is_client_tagged(client_t *, tag_t *);
-void tag_unref_simplified(tag_t **);
 
 /* Define tag_array_t functions with DO_NOTHING destructor.
  * Tag objects are freed by Lua GC when lua_close() is called,
@@ -99,9 +96,6 @@ void tag_class_setup(lua_State *L);
 /* Tag initialization (creates tag_t objects and populates globalconf.tags) */
 void luaA_tags_init(lua_State *L, int tagcount, const char **tagnames);
 
-/* Property accessors (AwesomeWM compatibility) */
-bool tag_get_selected(tag_t *);
-char *tag_get_name(tag_t *);
 
 #endif /* SOMEWM_OBJECTS_TAG_H */
 /* vim: filetype=c:expandtab:shiftwidth=4:tabstop=8:softtabstop=4:textwidth=80 */

@@ -287,6 +287,5 @@ int main(void) {
 	test_primitives(); puts("ok pinned primitives, mixed identities, structural negative, repeated frames and teardown");
 	test_clips(); puts("ok 12 nested clips, three frames");
 	test_overlay_rejected(); puts("ok unsupported overlay start/end rejected");
-	render_text_finish();
 	return 0;
 }

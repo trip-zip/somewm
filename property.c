@@ -34,14 +34,6 @@
  * X11 Property API Stubs (for AwesomeWM compatibility)
  * ======================================================================== */
 
-/* X11-only: Handle property notify event from XCB.
- * Wayland clients emit toplevel events instead. */
-void
-property_handle_propertynotify(xcb_property_notify_event_t *ev)
-{
-    (void)ev;
-}
-
 /* Macro to generate property_get_* and property_update_* stubs */
 #define PROPERTY_STUB(name) \
     xcb_get_property_cookie_t \
@@ -113,45 +105,6 @@ property_handle_toplevel_title(struct wl_listener *listener, void *data)
 	L = globalconf_get_lua_State();
 	luaA_object_push(L, c);
 	client_set_name(L, -1, title ? strdup(title) : NULL);
-	lua_pop(L, 1);
-}
-
-/** Handle xdg_toplevel.set_app_id event
- * Called when a native Wayland client changes its app_id (equivalent to WM_CLASS)
- * \param listener The wl_listener
- * \param data User data (not used, app_id comes from toplevel)
- */
-void
-property_handle_toplevel_app_id(struct wl_listener *listener, void *data)
-{
-	client_t *c;
-	struct wlr_xdg_toplevel *toplevel;
-	lua_State *L;
-	const char *app_id;
-
-	(void)data; /* Unused */
-
-	/* Get client from listener - note: we reuse set_title listener for app_id
-	 * In practice, app_id changes are rare after initial mapping */
-	c = wl_container_of(listener, c, set_title);
-	if (!c || c->client_type != XDGShell || !c->surface.xdg)
-		return;
-
-	/* Get app_id from xdg_toplevel */
-	toplevel = c->surface.xdg->toplevel;
-	if (!toplevel)
-		return;
-
-	app_id = toplevel->app_id;
-
-	/* Update client class using proper AwesomeWM setter
-	 * This will emit property::class signal on the client object
-	 * Note: Wayland doesn't have "instance" like X11, so we set class only */
-	L = globalconf_get_lua_State();
-	luaA_object_push(L, c);
-	client_set_class_instance(L, -1,
-		app_id ? app_id : "",
-		""); /* Empty instance for Wayland clients */
 	lua_pop(L, 1);
 }
 

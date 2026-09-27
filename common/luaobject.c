@@ -172,32 +172,6 @@ luaA_settype(lua_State *L, lua_class_t *lua_class)
     return 1;
 }
 
-/** Add a signal.
- * @tparam string name A signal name.
- * @tparam func func A function to call when the signal is emitted.
- * @function connect_signal
- */
-void
-luaA_object_connect_signal(lua_State *L, int oud,
-                           const char *name, lua_CFunction fn)
-{
-    lua_pushcfunction(L, fn);
-    luaA_object_connect_signal_from_stack(L, oud, name, -1);
-}
-
-/** Remove a signal.
- * @tparam string name A signal name.
- * @tparam func func A function to remove.
- * @function disconnect_signal
- */
-void
-luaA_object_disconnect_signal(lua_State *L, int oud,
-                              const char *name, lua_CFunction fn)
-{
-    lua_pushcfunction(L, fn);
-    luaA_object_disconnect_signal_from_stack(L, oud, name, -1);
-}
-
 /** Add a signal to an object.
  * \param L The Lua VM state.
  * \param oud The object index on the stack.

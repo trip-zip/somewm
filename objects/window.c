@@ -198,18 +198,6 @@ luaA_window_set_type(lua_State *L, window_t *w)
     return 0;
 }
 
-/* Translate a window_type_t into the corresponding EWMH atom value.
- * Note: In Wayland, this is a no-op stub. Kept for API compatibility.
- * @param type The type to translate.
- * @return A constant representing the type (no actual EWMH atoms in Wayland).
- */
-uint32_t
-window_translate_type(window_type_t type)
-{
-    /* Wayland doesn't use EWMH atoms, return the type value directly */
-    return (uint32_t)type;
-}
-
 /** Get border width property.
  * \param L The Lua VM state.
  * \param window The window object.
@@ -266,20 +254,6 @@ window_set_border_width(lua_State *L, int idx, int width)
         (*window->border_width_callback)(window, old_width, width);
 
     luaA_object_emit_signal(L, idx, "property::border_width", 0);
-}
-
-/** Refresh window borders (C API).
- * \param window The window object.
- */
-void
-window_border_refresh(window_t *window)
-{
-    if (!window || !window->border_need_update)
-        return;
-
-    /* Border refresh is implementation-specific (client vs drawin) */
-    /* Actual rendering update happens in client.c or drawin.c */
-    window->border_need_update = false;
 }
 
 /** Set border width property (Lua property setter).

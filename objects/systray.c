@@ -1105,56 +1105,6 @@ systray_item_clear_overlay(systray_item_t *item)
 }
 
 /**
- * Emit systray::added global signal
- */
-void
-systray_emit_item_added(systray_item_t *item)
-{
-	lua_State *L = globalconf_get_lua_State();
-	if (!L || !item)
-		return;
-
-	/* Use awesome.emit_signal pattern via Lua */
-	lua_getglobal(L, "awesome");
-	if (lua_istable(L, -1)) {
-		lua_getfield(L, -1, "emit_signal");
-		if (lua_isfunction(L, -1)) {
-			lua_pushstring(L, "systray::added");
-			luaA_object_push(L, item);
-			lua_call(L, 2, 0);
-		} else {
-			lua_pop(L, 1);
-		}
-	}
-	lua_pop(L, 1);
-}
-
-/**
- * Emit systray::removed global signal
- */
-void
-systray_emit_item_removed(systray_item_t *item)
-{
-	lua_State *L = globalconf_get_lua_State();
-	if (!L || !item)
-		return;
-
-	/* Use awesome.emit_signal pattern via Lua */
-	lua_getglobal(L, "awesome");
-	if (lua_istable(L, -1)) {
-		lua_getfield(L, -1, "emit_signal");
-		if (lua_isfunction(L, -1)) {
-			lua_pushstring(L, "systray::removed");
-			luaA_object_push(L, item);
-			lua_call(L, 2, 0);
-		} else {
-			lua_pop(L, 1);
-		}
-	}
-	lua_pop(L, 1);
-}
-
-/**
  * Get array of all items
  */
 systray_item_array_t *

@@ -153,12 +153,3 @@ Clay_Dimensions render_measure_text(Clay_StringSlice text,
 
 	return (Clay_Dimensions) { .width = width / scale, .height = height / scale };
 }
-
-void render_text_finish(void) {
-	if (render_measure_layout != NULL) {
-		g_object_unref(render_measure_layout);
-		g_object_unref(render_pango);
-		render_measure_layout = NULL;
-		render_pango = NULL;
-	}
-}

@@ -59,7 +59,5 @@ struct widget_host;
 int drawable_push(lua_State *L, drawable_t *d);
 bool drawable_widget_host(drawable_t *d, struct widget_host *out);
 
-/* Buffer creation from raw Cairo pixel data (for non-drawable Cairo surfaces) */
-struct wlr_buffer *drawable_create_buffer_from_data(int width, int height, const void *cairo_data, size_t cairo_stride);
 
 #endif /* DRAWABLE_H */

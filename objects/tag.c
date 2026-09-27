@@ -142,50 +142,6 @@ is_client_tagged(client_t *c, tag_t *t)
 	return false;
 }
 
-/** Get the index of the tag with focused client or first selected
- * \return Its index
- */
-int
-tags_get_current_or_first_selected_index(void)
-{
-	/* Consider "current desktop" a tag, that has focused window,
-	 * basically a tag user actively interacts with.
-	 * If no focused windows are present, fallback to first selected.
-	 */
-	if (globalconf.focus.client)
-	{
-		foreach(tag, globalconf.tags)
-		{
-			if ((*tag)->selected && is_client_tagged(globalconf.focus.client, *tag))
-				return tag_array_indexof(&globalconf.tags, tag);
-		}
-	}
-	foreach(tag, globalconf.tags)
-	{
-		if ((*tag)->selected)
-			return tag_array_indexof(&globalconf.tags, tag);
-	}
-	return 0;
-}
-
-void
-tag_unref_simplified(tag_t **tag)
-{
-	luaA_object_unref(globalconf.L, *tag);
-}
-
-bool
-tag_get_selected(tag_t *tag)
-{
-	return tag->selected;
-}
-
-char *
-tag_get_name(tag_t *tag)
-{
-	return tag->name;
-}
-
 /* ========================================================================
  * Tag Lua API - property getters/setters
  * ======================================================================== */

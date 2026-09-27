@@ -1762,7 +1762,6 @@ int main(void) {
 		tests[i].fn();
 		printf("%s %s\n", failures == before ? "ok  " : "FAIL", tests[i].name);
 	}
-	render_text_finish();
 	if (failures > 0) {
 		fprintf(stderr, "%d check(s) failed\n", failures);
 	}
