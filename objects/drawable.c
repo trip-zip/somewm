@@ -27,193 +27,12 @@
 #include <lauxlib.h>
 #include <wlr/types/wlr_buffer.h>
 #include <wlr/interfaces/wlr_buffer.h>
-#include <sys/mman.h>
-#include <fcntl.h>
-#include <errno.h>
-#include <unistd.h>
-#include <drm_fourcc.h>
 
 /* Drawable class (AwesomeWM class system) */
 lua_class_t drawable_class;
 
-/* Forward declarations for internal functions */
-static drawable_t *luaA_checkdrawable(lua_State *L, int idx);
-
 /* Generate LUA_OBJECT helper functions (drawable_new, drawable_ref, etc.) */
 LUA_OBJECT_FUNCS(drawable_class, drawable_t, drawable)
-
-/* Ensure MFD_CLOEXEC is defined (for older systems) */
-#ifndef MFD_CLOEXEC
-#define MFD_CLOEXEC 0x0001U
-#endif
-#ifndef MFD_ALLOW_SEALING
-#define MFD_ALLOW_SEALING 0x0002U
-#endif
-
-/* ============================================================================
- * SHM Buffer Implementation
- * ============================================================================
- *
- * Custom SHM (shared memory) buffer for CPU-accessible rendering.
- * This allows Cairo pixel data to be efficiently displayed via the scene graph.
- *
- * Based on wlroots cairo-buffer.c example and adapted for drawable integration.
- */
-
-typedef struct {
-	struct wlr_buffer base;
-	void *data;          /* mmap'd shared memory */
-	int fd;              /* memfd file descriptor */
-	uint32_t format;     /* DRM_FORMAT_ARGB8888 */
-	int width, height;
-	size_t stride;
-	bool accessed;       /* Track if currently being accessed */
-} DrawableShmBuffer;
-
-static void
-drawable_shm_buffer_destroy(struct wlr_buffer *wlr_buffer)
-{
-	DrawableShmBuffer *buffer = wl_container_of(wlr_buffer, buffer, base);
-
-	if (buffer->data) {
-		munmap(buffer->data, buffer->height * buffer->stride);
-	}
-	if (buffer->fd >= 0) {
-		close(buffer->fd);
-	}
-	free(buffer);
-}
-
-static bool
-drawable_shm_buffer_get_shm(struct wlr_buffer *wlr_buffer,
-		struct wlr_shm_attributes *attribs)
-{
-	DrawableShmBuffer *buffer = wl_container_of(wlr_buffer, buffer, base);
-
-	attribs->fd = buffer->fd;
-	attribs->format = buffer->format;
-	attribs->width = buffer->width;
-	attribs->height = buffer->height;
-	attribs->stride = buffer->stride;
-	attribs->offset = 0;
-	return true;
-}
-
-static bool
-drawable_shm_buffer_begin_data_ptr_access(struct wlr_buffer *wlr_buffer,
-		uint32_t flags, void **data, uint32_t *format, size_t *stride)
-{
-	DrawableShmBuffer *buffer = wl_container_of(wlr_buffer, buffer, base);
-
-	if (buffer->accessed) {
-		return false;  /* Already being accessed */
-	}
-
-	*data = buffer->data;
-	*format = buffer->format;
-	*stride = buffer->stride;
-	buffer->accessed = true;
-	return true;
-}
-
-static void
-drawable_shm_buffer_end_data_ptr_access(struct wlr_buffer *wlr_buffer)
-{
-	DrawableShmBuffer *buffer = wl_container_of(wlr_buffer, buffer, base);
-	buffer->accessed = false;
-}
-
-static bool
-drawable_shm_buffer_get_dmabuf(struct wlr_buffer *wlr_buffer,
-		struct wlr_dmabuf_attributes *attribs)
-{
-	return false;  /* SHM buffer, not DMA-BUF */
-}
-
-static const struct wlr_buffer_impl drawable_shm_buffer_impl = {
-	.destroy = drawable_shm_buffer_destroy,
-	.get_shm = drawable_shm_buffer_get_shm,
-	.begin_data_ptr_access = drawable_shm_buffer_begin_data_ptr_access,
-	.end_data_ptr_access = drawable_shm_buffer_end_data_ptr_access,
-	.get_dmabuf = drawable_shm_buffer_get_dmabuf,
-};
-
-/**
- * Create an SHM buffer from raw Cairo pixel data.
- * This is the low-level function that handles the actual buffer creation.
- *
- * Returns a wlr_buffer that supports CPU data pointer access.
- * The caller must call wlr_buffer_drop() when done with the buffer.
- */
-struct wlr_buffer *
-drawable_create_buffer_from_data(int width, int height, const void *cairo_data, size_t cairo_stride)
-{
-	DrawableShmBuffer *buffer;
-	size_t size;
-	int fd;
-	void *data;
-
-	if (!cairo_data || width <= 0 || height <= 0) {
-		return NULL;
-	}
-
-	/* Allocate buffer structure */
-	buffer = calloc(1, sizeof(DrawableShmBuffer));
-	if (!buffer) {
-		return NULL;
-	}
-
-	/* Calculate buffer size */
-	buffer->stride = width * 4;  /* 4 bytes per pixel (ARGB8888) */
-	size = buffer->stride * height;
-
-	/* Create anonymous file in memory */
-	fd = memfd_create("drawable-shm", MFD_CLOEXEC);
-	if (fd < 0) {
-		fprintf(stderr, "drawable_create_buffer: memfd_create failed: %s\n", strerror(errno));
-		free(buffer);
-		return NULL;
-	}
-
-	/* Set file size */
-	if (ftruncate(fd, size) < 0) {
-		fprintf(stderr, "drawable_create_buffer: ftruncate failed: %s\n", strerror(errno));
-		close(fd);
-		free(buffer);
-		return NULL;
-	}
-
-	/* Map into memory */
-	data = mmap(NULL, size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
-	if (data == MAP_FAILED) {
-		fprintf(stderr, "drawable_create_buffer: mmap failed: %s\n", strerror(errno));
-		close(fd);
-		free(buffer);
-		return NULL;
-	}
-
-	/* Copy Cairo pixel data into shared memory.
-	 * No memset needed: buffer->stride == width * 4, so every byte is
-	 * overwritten by the memcpy loop below (destination is fully covered). */
-	for (int y = 0; y < height; y++) {
-		memcpy((uint8_t *)data + y * buffer->stride,
-		       (const uint8_t *)cairo_data + y * cairo_stride,
-		       width * 4);
-	}
-
-	/* Initialize buffer fields */
-	buffer->data = data;
-	buffer->fd = fd;
-	buffer->format = DRM_FORMAT_ARGB8888;
-	buffer->width = width;
-	buffer->height = height;
-	buffer->accessed = false;
-
-	/* Initialize wlr_buffer */
-	wlr_buffer_init(&buffer->base, &drawable_shm_buffer_impl, width, height);
-
-	return &buffer->base;
-}
 
 /* ============================================================================
  * Object Signal Support - Per-instance signals
@@ -267,13 +86,6 @@ drawable_allocator_wrapper(lua_State *L)
  * Helper Functions
  * ============================================================================ */
 
-/** Check if value at index is a drawable */
-static drawable_t *
-luaA_checkdrawable(lua_State *L, int idx)
-{
-	return (drawable_t *)luaL_checkudata(L, idx, drawable_class.name);
-}
-
 /* ============================================================================
  * Drawable Properties
  * ============================================================================ */
@@ -307,26 +119,6 @@ drawable_set_geometry(lua_State *L, int didx, area_t geom, bool solved)
 		luaA_object_emit_signal(L, didx, "property::width", 0);
 	if (old.height != geom.height)
 		luaA_object_emit_signal(L, didx, "property::height", 0);
-}
-
-/** Set drawable geometry (legacy wrapper for compatibility) */
-void
-luaA_drawable_set_geometry(lua_State *L, int didx, int x, int y, int width, int height)
-{
-	drawable_t *d = luaA_checkdrawable(L, didx);
-	int old_width = d->geometry.width;
-	int old_height = d->geometry.height;
-	bool size_changed;
-
-	d->geometry.x = x;
-	d->geometry.y = y;
-	d->geometry.width = width;
-	d->geometry.height = height;
-
-	size_changed = (old_width != width || old_height != height);
-	if (size_changed && width > 0 && height > 0)
-		luaA_object_emit_signal(L, didx, "property::surface", 0);
-
 }
 
 /** Get or set drawable geometry

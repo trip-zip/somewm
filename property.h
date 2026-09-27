@@ -53,7 +53,6 @@ PROPERTY(motif_wm_hints);
 
 #undef PROPERTY
 
-void property_handle_propertynotify(xcb_property_notify_event_t *ev);
 
 /* ========================================================================
  * Wayland Property Listeners (Native Wayland clients)
@@ -71,11 +70,6 @@ void property_register_wayland_listeners(client_t *c);
  */
 void property_handle_toplevel_title(struct wl_listener *listener, void *data);
 
-/** Handle xdg_toplevel.set_app_id event
- * \param listener The wl_listener
- * \param data User data (client_t *)
- */
-void property_handle_toplevel_app_id(struct wl_listener *listener, void *data);
 
 /* ========================================================================
  * XWayland Property Handling (X11 clients)

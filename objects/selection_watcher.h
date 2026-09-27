@@ -28,7 +28,6 @@
 
 void selection_watcher_class_setup(lua_State*);
 void selection_watcher_hot_reload(lua_State*);
-void event_handle_xfixes_selection_notify(xcb_generic_event_t*);
 
 #endif
 

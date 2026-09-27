@@ -53,7 +53,6 @@ void arrange(Monitor *m);
 unsigned int get_border_width(void);
 const float *get_focuscolor(void);
 const float *get_bordercolor(void);
-const float *get_urgentcolor(void);
 
 /* Client commands */
 void setmon(Client *c, Monitor *m, uint32_t newtags);

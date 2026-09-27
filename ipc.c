@@ -62,12 +62,6 @@ static char ipc_socket_path[256];
  * tell its own file from one a later instance bound at the same path. */
 static struct stat ipc_socket_stat;
 
-const char *
-ipc_get_socket_path(void)
-{
-	return ipc_socket_path;
-}
-
 /* Return 1 for a listener, 0 for a missing or stale socket, and -1 for
  * other failures, preserving the errno that prevented the probe. */
 static int

@@ -519,12 +519,6 @@ layer_surface_unfocus(layer_surface_t *ls)
  * Refresh (placeholder for main loop integration)
  */
 
-void
-layer_surface_refresh(void)
-{
-	/* Currently nothing to do - layer surfaces are managed by wlroots */
-}
-
 /*
  * Class setup
  */

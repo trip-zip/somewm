@@ -48,18 +48,6 @@ shadow_paint(const shadow_config_t *config)
 
 /* ========== Core API ========== */
 
-void
-shadow_init(void)
-{
-    /* Styles are authored inputs; render states own all tiles. */
-}
-
-void
-shadow_cleanup(void)
-{
-    /* Render state teardown releases its shared tiles. */
-}
-
 const shadow_config_t *
 shadow_get_effective_config(const shadow_config_t *override, bool is_drawin)
 {

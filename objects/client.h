@@ -377,8 +377,6 @@ LUA_OBJECT_FUNCS(client_class, client_t, client)
 bool client_on_selected_tags(client_t *);
 bool clients_share_tags(client_t *, client_t *);
 client_t * client_getbywin(xcb_window_t);
-client_t * client_getbynofocuswin(xcb_window_t);
-client_t * client_getbyframewin(xcb_window_t);
 
 void client_ban(client_t *);
 void client_ban_unfocus(client_t *);
@@ -410,8 +408,6 @@ void client_set_startup_id(lua_State *L, int, char *);
 void client_set_alt_name(lua_State *L, int, char *);
 void client_set_group_window(lua_State *, int, uint32_t);  /* Changed from xcb_window_t */
 /* TODO: Define cairo_surface_array_t or use inline struct */
-/* void client_set_icons(client_t *, cairo_surface_array_t); */
-/* void client_set_icon_from_pixmaps(client_t *, xcb_pixmap_t, xcb_pixmap_t); */
 void client_set_skip_taskbar(lua_State *, int, bool);
 void client_focus(client_t *);
 bool client_focus_update(client_t *);
@@ -423,11 +419,9 @@ bool client_hasproto(client_t *, uint32_t);  /* Changed from xcb_atom_t */
 void client_ignore_enterleave_events(void);
 void client_restore_enterleave_events(void);
 void client_class_setup(lua_State *);
-void client_send_configure(client_t *);
 void client_find_transient_for(client_t *);
 void client_emit_scanned(void);
 void client_emit_scanning(void);
-drawable_t *client_get_drawable(client_t *, int, int);
 drawable_t *client_get_drawable_offset(client_t *, int *, int *);
 area_t client_get_undecorated_geometry(client_t *);
 void client_set_solved_geometry(client_t *c, area_t geometry);
