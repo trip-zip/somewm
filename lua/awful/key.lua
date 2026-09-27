@@ -183,13 +183,6 @@ function key:get_has_root_binding()
     return capi.root.has_key(self)
 end
 
--- This is used by the keygrabber and prompt to identify valid awful.key
--- objects. It *cannot* be put directly in the object since `capi` uses a lot
--- of `next` internally and fixing that would suck more.
-function key:get__is_awful_key()
-    return true
-end
-
 local function index_handler(self, k)
     if key["get_"..k] then
         return key["get_"..k](self)

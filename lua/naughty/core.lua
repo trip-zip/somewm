@@ -365,10 +365,6 @@ function naughty.get__has_preset_handler()
     return conns["request::preset"] and #conns["request::preset"] > 0 or false
 end
 
-function naughty._reset_display_handlers()
-    conns["request::display"] = nil
-end
-
 
 -- Remove the notification from the internal list(s)
 local function cleanup(self, reason)

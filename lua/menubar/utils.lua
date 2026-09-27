@@ -429,12 +429,6 @@ end
 
 -- luacov: disable
 
-function utils.compute_textbox_width(textbox, s)
-    s = screen[s or mouse.screen]
-    local w, _ = textbox:get_preferred_size(s)
-    return w
-end
-
 function utils.compute_text_width(text, s, font)
     return w_textbox.get_markup_geometry(text, s, font)['width']
 end
