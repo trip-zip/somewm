@@ -40,6 +40,7 @@ fi
 # Setup Lua path to include tests directory
 export LUA_PATH="$ROOT_DIR/lua/?.lua;$ROOT_DIR/lua/?/init.lua;$ROOT_DIR/tests/?.lua;;"
 export SOMEWM_SKIP_INSTALLED_LUA=1
+export FONTCONFIG_FILE="$ROOT_DIR/tests/fonts.conf"
 
 # Wayland backend setup based on HEADLESS mode
 if [ "$HEADLESS" = 1 ]; then

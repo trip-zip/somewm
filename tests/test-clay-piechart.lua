@@ -82,13 +82,17 @@ local steps = {
         assert(pixel(100, 80, "#ffffff"), "the bottom label line is not white")
         assert(pixel(94, 87, "#ffffff"), "the bottom label tick is not white")
         assert(pixel(87, 87, "#ffffff"), "the bottom label dot is not white")
+        -- The glyph is a filled outline left of the dot, at about x 71 to 78
+        -- and y 84 to 91; how bright the rasterizer fills it is not ours.
+        local content = gsurface(root.content())
         local glyph = false
-        for y = 80, 95 do
-            for x = 60, 78 do
-                glyph = pixel(x, y, "#ffffff") or glyph
+        for y = 76, 99 do
+            for x = 56, 84 do
+                local r, g = capture.read(content, bar.x + x, bar.y + y)
+                glyph = glyph or (r >= 128 and g >= 128)
             end
         end
-        assert(glyph, "the bottom label glyph is not white")
+        assert(glyph, "the bottom label glyph is not lit")
         assert(pixel(100, 20, "#ffffff"), "the top label line is not white")
         io.stderr:write("[PASS] labels paint lines, ticks, dots and glyphs\n")
         return true

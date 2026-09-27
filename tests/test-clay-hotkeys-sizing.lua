@@ -7,6 +7,7 @@ local beautiful = require('beautiful')
 local help = require('awful.hotkeys_popup.widget')
 local example = require('_clay_example')
 local shape = require('gears.shape')
+local unpack = unpack or table.unpack
 local function edge(value)
     return value < 0 and math.ceil(value-.5) or math.floor(value+.5)
 end

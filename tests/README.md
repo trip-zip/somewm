@@ -39,6 +39,8 @@ Integration tests run somewm in headless mode and execute test scenarios via IPC
 
 The nested runner never loads the installed SomeWM Lua tree, while system Lua modules remain available.
 
+Goldens and pixel expectations are written against Noto Sans CJK KR and Noto Sans Mono CJK KR, pinned by `tests/fonts.conf`.
+
 ## Running Tests
 
 ### Run All Tests

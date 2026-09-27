@@ -193,10 +193,12 @@ describe("textbox Clay text inputs", function()
     it("keeps foreground and opacity mutations outside cached markup inputs", function()
         local w=textbox('<span foreground="#ff0000">red</span>')
         local first=describe_text(w).specs[1]
+        -- Lua 5.2 and 5.3 can hand back the same closure for the stub, so count from here.
+        local before=calls
         first.color[4]=0.25
         local second=describe_text(w).specs[1]
         assert.same({1,0,0,1},second.color)
-        assert.equals(1,calls)
+        assert.equals(before,calls)
         w.text='plain'
         assert.same({0,1,0,1},describe_text(w,96,'#00ff00').specs[1].color)
         assert.same({0,0,1,1},describe_text(w,96,'#0000ff').specs[1].color)
@@ -204,5 +206,6 @@ describe("textbox Clay text inputs", function()
         local n=describe_text(w)
         assert.same({x='right',y='top'},n.align)
         assert.is_false(n.specs[1].ellipsize)
+        assert.equals(before,calls)
     end)
 end)

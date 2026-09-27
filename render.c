@@ -345,6 +345,14 @@ struct wlr_scene_tree *render_parked_tree(struct wlr_scene_tree *root) {
 	return parked;
 }
 
+void render_park(struct wlr_scene_node *node) {
+	struct wlr_scene_tree *root = node->parent;
+	while (root->node.parent != NULL)
+		root = root->node.parent;
+	wlr_scene_node_reparent(node, render_parked_tree(root));
+	wlr_scene_node_set_enabled(node, false);
+}
+
 void render_tree_set_opacity(struct wlr_scene_node *node, float opacity) {
 	if (node->type == WLR_SCENE_NODE_BUFFER) {
 		wlr_scene_buffer_set_opacity(wlr_scene_buffer_from_node(node), opacity);
@@ -361,13 +369,7 @@ void render_tree_set_opacity(struct wlr_scene_node *node, float opacity) {
 static void render_release(struct render_state *rs, struct rnode *n,
 		const struct render_client_hooks *hooks) {
 	if (hooks->release(hooks->data, n->handle, rs) && n->node != NULL) {
-		/* The parked tree hangs off the scene root, the top of this
-		 * band's parent chain. */
-		struct wlr_scene_tree *root = rs->tree;
-		while (root->node.parent != NULL)
-			root = root->node.parent;
-		wlr_scene_node_reparent(n->node, render_parked_tree(root));
-		wlr_scene_node_set_enabled(n->node, false);
+		render_park(n->node);
 	}
 }
 

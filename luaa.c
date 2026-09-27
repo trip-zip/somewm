@@ -1640,6 +1640,43 @@ luaA_awesome_clay_font(lua_State *L)
 	return 1;
 }
 
+/** Raw bytes of an image surface box, for tests that compare pixels: the
+ * rows, each width * 4 bytes, in cairo's own byte order. Plain Lua has no
+ * ffi to read them.
+ * \param native The surface's _native pointer.
+ * \param x, y, width, height The box, inside the surface.
+ * \return The bytes as one string.
+ */
+static int
+luaA_awesome_surface_pixels(lua_State *L)
+{
+	cairo_surface_t *surface = lua_touserdata(L, 1);
+	int x = luaL_checkinteger(L, 2), y = luaL_checkinteger(L, 3);
+	int width = luaL_checkinteger(L, 4), height = luaL_checkinteger(L, 5);
+	cairo_format_t format;
+	const unsigned char *data;
+	int stride;
+	luaL_Buffer b;
+
+	if (!surface || cairo_surface_get_type(surface) != CAIRO_SURFACE_TYPE_IMAGE)
+		return luaL_error(L, "not an image surface");
+	format = cairo_image_surface_get_format(surface);
+	if (format != CAIRO_FORMAT_ARGB32 && format != CAIRO_FORMAT_RGB24)
+		return luaL_error(L, "not a 32-bit surface");
+	if (x < 0 || y < 0 || width < 0 || height < 0
+			|| x + width > cairo_image_surface_get_width(surface)
+			|| y + height > cairo_image_surface_get_height(surface))
+		return luaL_error(L, "box outside the surface");
+	cairo_surface_flush(surface);
+	data = cairo_image_surface_get_data(surface);
+	stride = cairo_image_surface_get_stride(surface);
+	luaL_buffinit(L, &b);
+	for (int row = y; row < y + height; row++)
+		luaL_addlstring(&b, (const char *)data + row * stride + x * 4, width * 4);
+	luaL_pushresult(&b);
+	return 1;
+}
+
 /** Style the Clay debug inspector (declare.h), for somewm.inspector: a
  * table of six colors as {r, g, b, a} in 0-255 under bg, bg_alt, border,
  * fg, bg_selected and highlight, the panel width, and the font for entry 0
@@ -2598,6 +2635,7 @@ const luaL_Reg awesome_methods[] = {
 	{ "_clay_scroll_get", luaA_awesome_clay_scroll_get },
 	{ "_clay_scroll_set", luaA_awesome_clay_scroll_set },
 	{ "_clay_font", luaA_awesome_clay_font },
+	{ "_surface_pixels", luaA_awesome_surface_pixels },
 	{ "_inspector_style", luaA_awesome_inspector_style },
 	{ "_test_declare_order", luaA_awesome_test_declare_order },
 	{ "_test_widget_boxes", luaA_awesome_test_widget_boxes },

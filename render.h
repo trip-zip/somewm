@@ -68,6 +68,10 @@ struct render_state *render_create(struct wlr_scene_tree *parent);
  * use. */
 struct wlr_scene_tree *render_parked_tree(struct wlr_scene_tree *root);
 
+/* Reparent the node to the parked tree under its own scene root
+ * and disable it. */
+void render_park(struct wlr_scene_node *node);
+
 /* Apply a declared opacity to every buffer under a borrowed surface tree.
  * The reconcile applies the word's opacity; a surface commit resets
  * wlroots' buffers to opaque, so the commit path re-applies it. */

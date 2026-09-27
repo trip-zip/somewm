@@ -32,9 +32,14 @@ check_eval hr-hints "xterm is detected for the unhinted client" \
     'local app = require("_x11_client").get_app_info(); return app and app.executable or "unavailable"' xterm
 [ "$fail_count" -eq 0 ] || finish
 
-# XWayland starts lazily and its first client may never map.
+# XWayland starts lazily and its first client may never map. A client that
+# cannot connect at all means this host has no usable X display, as on the
+# CI runners, where every X client test is skipped.
 sw_spawn hr-hints "$CLIENT $XDG_RUNTIME_DIR/warmup.marker RestartWarmup 100 100 100 100 no-grab" || finish
-sw_wait_client hr-hints RestartWarmup 2 || info "warmup client did not map; continuing with the hinted client"
+if ! sw_wait_client hr-hints RestartWarmup 2; then
+    ! log_has hr-hints "Failed to connect to X display" || skip "no X display: the X client cannot connect on this host"
+    info "warmup client did not map; continuing with the hinted client"
+fi
 
 sw_spawn hr-hints "$CLIENT $XDG_RUNTIME_DIR/hinted.marker RestartHinted -200 100 300 200 no-grab" || finish
 hinted_pid=$SPAWN_PID

@@ -39,6 +39,12 @@ runner.run_async(function()
         columns[i] = {clients = {c}, width_fraction = .75}
     end
 
+    -- Lua 5.3 prints the record's floats as 0.0; compare them as numbers.
+    local function csv(values)
+        local out = {}
+        for i, v in ipairs(values) do out[i] = string.format('%g', v) end
+        return table.concat(out, ',')
+    end
     local function diagnostic(dump)
         local lines = {}
         for line in dump:gmatch('[^\n]+') do
@@ -73,8 +79,8 @@ runner.run_async(function()
             end
         end
         if record then
-            assert(table.concat({awesome._clay_scroll_get(s, root.id)}, ',') ==
-                table.concat(record, ','), name .. '\n' .. diagnostic(dump))
+            assert(csv({awesome._clay_scroll_get(s, root.id)}) == csv(record),
+                name .. '\n' .. diagnostic(dump))
             assert(root.scroll.x == record[1] and root.scroll.y == record[2], diagnostic(dump))
         end
         return dump
