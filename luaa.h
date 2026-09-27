@@ -131,7 +131,6 @@ int luaA_check_config(const char *config_path, bool use_color, int min_severity)
 /* Helper functions for module/class registration */
 void luaA_openlib(lua_State *L, const char *name,
                   const luaL_Reg methods[], const luaL_Reg meta[]);
-int luaA_dofunction_from_file(lua_State *L, const char *path);
 
 /* AwesomeWM compatibility: Object property miss handlers
  * Stores handlers for dynamic property access on C objects

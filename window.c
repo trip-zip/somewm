@@ -792,15 +792,6 @@ get_bordercolor(void)
 	return globalconf.appearance.bordercolor;
 }
 
-/** Get urgent color from beautiful.border_urgent or globalconf default */
-const float *
-get_urgentcolor(void)
-{
-	/* TODO: Add beautiful.border_urgent parsing (hex string to RGBA)
-	 * For now, just return globalconf default */
-	return globalconf.appearance.urgentcolor;
-}
-
 void
 killclient(const Arg *arg)
 {

@@ -90,17 +90,7 @@ typedef struct shadow_defaults_t {
 
 /* ========== Core API ========== */
 
-/**
- * Initialize shadow subsystem.
- * Call once at compositor startup.
- */
-void shadow_init(void);
 
-/**
- * Cleanup shadow subsystem.
- * Call at compositor shutdown.
- */
-void shadow_cleanup(void);
 
 /**
  * Get effective shadow configuration for an object.

@@ -66,19 +66,6 @@ static int miss_index_handler = LUA_REFNIL;
 static int miss_newindex_handler = LUA_REFNIL;
 static int miss_call_handler = LUA_REFNIL;
 
-/** Convert string to X11 keycode (X11-only stub).
- * \param s The key name string.
- * \return The keycode (always 0 in Wayland).
- */
-static xcb_keycode_t __attribute__((unused))
-_string_to_key_code(const char *s)
-{
-    /* X11-only: Uses XStringToKeysym and xcb_key_symbols_get_keycode.
-     * Wayland uses xkb_keymap_key_by_name or keysym_to_keycode. */
-    (void)s;
-    return 0;
-}
-
 /** root._remove_key(key) - Remove a global keybinding
  *
  * Accepts a single C key object or an awful.key table containing multiple

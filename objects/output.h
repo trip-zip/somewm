@@ -27,7 +27,6 @@ void output_class_setup(lua_State *L);
 /* Output object creation and management */
 output_t *luaA_output_new(lua_State *L, Monitor *m);
 output_t *luaA_output_new_virtual(lua_State *L, const char *name);
-void luaA_output_push(lua_State *L, output_t *output);
 void luaA_output_invalidate(lua_State *L, output_t *output);
 void luaA_output_hot_reload_detach(void);
 void luaA_output_hot_reload(lua_State *L);

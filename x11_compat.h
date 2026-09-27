@@ -126,10 +126,6 @@ static inline xcb_void_cookie_t xcb_no_operation(void *connection) {
     return cookie;
 }
 
-/** Stub for xcb_ungrab_server */
-static inline void xcb_ungrab_server(void *connection) {
-    (void)connection;
-}
 #endif
 
 /** Utility wrapper for ungrab_server */
@@ -163,45 +159,11 @@ static inline void xwindow_grabkeys(xcb_window_t window, void *keys) {
     /* No-op for Wayland - key handling is done through compositor */
 }
 
-/** Set window border (stub - Wayland uses server-side decorations) */
-static inline void xwindow_set_border_width(void *connection, xcb_window_t window, uint32_t width) {
-    (void)connection;
-    (void)window;
-    (void)width;
-    /* No-op for Wayland */
-}
-
-/** Set client border attributes (stub) */
-static inline void client_set_border_width_commit(client_t *c) {
-    (void)c;
-    /* TODO: Update wlr scene graph border */
-}
-
-/** Emit X11 events to Lua (stub) */
-static inline void event_emit_refresh(void) {
-    /* No-op for Wayland */
-}
-
 /* Sequence pair array stubs - for enter/leave event tracking */
 typedef struct {
     sequence_pair_t *tab;
     int len, size;
 } sequence_pair_array_t;
-
-static inline void sequence_pair_array_init(sequence_pair_array_t *arr) {
-    arr->tab = NULL;
-    arr->len = 0;
-    arr->size = 0;
-}
-
-static inline void sequence_pair_array_wipe(sequence_pair_array_t *arr) {
-    if (arr->tab) {
-        free(arr->tab);
-        arr->tab = NULL;
-    }
-    arr->len = 0;
-    arr->size = 0;
-}
 
 static inline void sequence_pair_array_append(sequence_pair_array_t *arr, sequence_pair_t pair) {
     (void)arr;
@@ -215,14 +177,6 @@ static inline void sequence_pair_array_append(sequence_pair_array_t *arr, sequen
 typedef struct screen_t screen_t;
 
 /* screen_client_moveto() and screen_update_workarea() now implemented in objects/screen.c */
-
-/* Client property functions */
-static inline void client_set_border_width_callback(void *ctx, uint16_t old_width, uint16_t new_width) {
-    (void)ctx;
-    (void)old_width;
-    (void)new_width;
-    /* TODO: Implement border width change handling */
-}
 
 /* Key/button array functions - now implemented in objects/key.c */
 /* See objects/key.h for declarations of luaA_key_array_set and luaA_key_array_get */
@@ -242,12 +196,6 @@ extern xcb_atom_t WM_TAKE_FOCUS;
 extern xcb_atom_t _NET_STARTUP_ID;
 extern xcb_atom_t WM_DELETE_WINDOW;
 extern xcb_atom_t WM_PROTOCOLS;
-
-/* X11 window functions */
-static inline void xwindow_takefocus(xcb_window_t w) {
-    (void)w;
-    /* TODO: Implement for XWayland - send WM_TAKE_FOCUS client message */
-}
 
 #ifndef XWAYLAND
 
@@ -275,24 +223,7 @@ static inline void xwindow_translate_for_gravity(int gravity, int16_t change_wid
 
 /* X11 property functions moved to property.c for AwesomeWM API parity */
 
-/* xwindow opacity helpers - still needed here */
-static inline xcb_get_property_cookie_t xwindow_get_opacity_unchecked(xcb_window_t w) {
-    xcb_get_property_cookie_t cookie = {0};
-    (void)w;
-    return cookie;
-}
-
-static inline void xwindow_set_opacity(xcb_window_t w, double opacity) {
-    (void)w; (void)opacity;
-    /* TODO: Set _NET_WM_WINDOW_OPACITY property */
-}
-
 /* EWMH functions removed - now implemented in ewmh.c */
-
-static inline double xwindow_get_opacity_from_cookie(xcb_get_property_cookie_t cookie) {
-    (void)cookie;
-    return 1.0;  /* Default: fully opaque */
-}
 
 /* Systray stubs moved to systray.c */
 
@@ -313,21 +244,6 @@ static inline void xwindow_set_state(xcb_window_t w, uint32_t state) {
 
 /* ewmh_client_check_hints() removed - now implemented in ewmh.c */
 
-static inline char *xutil_get_text_property_from_reply(void *reply) {
-    (void)reply;
-    return NULL;  /* TODO: Extract text from property reply */
-}
-
-static inline void event_handle(void *event) {
-    (void)event;
-    /* TODO: Handle X11 event */
-}
-
-static inline void xwindow_configure(xcb_window_t w, area_t geom, uint16_t border) {
-    (void)w; (void)geom; (void)border;
-    /* TODO: Send ConfigureNotify */
-}
-
 static inline unsigned int unsigned_subtract(unsigned int a, unsigned int b) {
     return a > b ? a - b : 0;
 }
@@ -335,11 +251,6 @@ static inline unsigned int unsigned_subtract(unsigned int a, unsigned int b) {
 /* screen_area_in_screen() now implemented in objects/screen.c */
 
 /* drawable_set_geometry() now implemented in objects/drawable.c (AwesomeWM pattern) */
-
-/* Add globalconf.loop field stub */
-static inline void *globalconf_get_loop(void) {
-    return NULL;  /* TODO: Return event loop */
-}
 
 static inline void xwindow_buttons_grab(xcb_window_t w, void *buttons) {
     (void)w; (void)buttons;
@@ -366,12 +277,6 @@ typedef struct {
 } cairo_surface_array_t;
 #endif
 
-static inline void cairo_surface_array_init(cairo_surface_array_t *arr) {
-    arr->tab = NULL;
-    arr->len = 0;
-    arr->size = 0;
-}
-
 static inline void cairo_surface_array_push(cairo_surface_array_t *arr, void *surf) {
     if (arr->len >= arr->size) {
         int new_size = arr->size ? arr->size * 2 : 4;
@@ -387,11 +292,6 @@ static inline void cairo_surface_array_push(cairo_surface_array_t *arr, void *su
 
 /* client_set_icons - real implementation in objects/client.c */
 
-static inline void *cairo_xcb_surface_create_for_bitmap(void *conn, void *screen, uint32_t pixmap, int w, int h) {
-    (void)conn; (void)screen; (void)pixmap; (void)w; (void)h;
-    return NULL;  /* Stub: Returns NULL on Wayland (X11-only function) */
-}
-
 static inline void cairo_surface_array_wipe(cairo_surface_array_t *arr) {
     if (arr->tab) {
 #ifdef XWAYLAND
@@ -404,11 +304,6 @@ static inline void cairo_surface_array_wipe(cairo_surface_array_t *arr) {
     }
     arr->len = 0;
     arr->size = 0;
-}
-
-static inline void *cairo_xcb_surface_create(void *conn, uint32_t drawable, void *visual, int w, int h) {
-    (void)conn; (void)drawable; (void)visual; (void)w; (void)h;
-    return NULL;  /* Stub: Returns NULL on Wayland (X11-only function) */
 }
 
 /* Stub key_array_t - button_array_t is defined in objects/button.h */

@@ -666,11 +666,6 @@ end
 
 function module.execute(...) crules:_execute(...) end
 
--- TODO v5 deprecate this
-function module.completed_with_payload_callback(c, props, callbacks)
-    module.execute(c, props, callbacks)
-end
-
 gobject._setup_class_signals(module)
 
 capi.client.connect_signal("request::manage", module.apply)

@@ -215,35 +215,6 @@ some_has_exclusive_focus(void)
 /* attempt to encapsulate suck into one file */
 #include "client.h"
 
-/* Synchronize client removal from globalconf arrays
- * NOTE: This function is currently unused as client_unmanage() handles removal.
- * Kept for reference or future use. */
-static void __attribute__((unused))
-sync_client_remove_from_arrays(Client *c)
-{
-	/* Safety check: if arrays not initialized yet, skip sync */
-	if (!globalconf.clients.tab || !globalconf.stack.tab) {
-		return;
-	}
-
-	/* Remove from clients array */
-	foreach(elem, globalconf.clients) {
-		if (*elem == c) {
-			client_array_remove(&globalconf.clients, elem);
-			break;
-		}
-	}
-
-	/* Remove from stack array */
-	foreach(elem, globalconf.stack) {
-		if (*elem == c) {
-			client_array_remove(&globalconf.stack, elem);
-			break;
-		}
-	}
-
-}
-
 void
 some_recompute_idle_inhibit(void)
 {
