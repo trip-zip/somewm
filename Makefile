@@ -9,7 +9,7 @@
 
 -include .local.mk
 
-.PHONY: all install uninstall clean setup reconfigure test test-unit test-lua-compat test-check test-signal test-integration test-orchestrator test-restart test-one-restart test-asan test-one test-visual test-one-visual test-ci test-fast build-test build-bench bench-run bench-run-live bench-json bench-baseline bench-compare bench-check bench-memory bench-flamegraph bench-diff bench-heaptrack profile profile-lua profile-save profile-diff
+.PHONY: all install uninstall clean setup reconfigure test test-unit test-lua-compat test-check test-signal test-nested-pointer test-integration test-orchestrator test-restart test-one-restart test-asan test-one test-visual test-one-visual test-ci test-fast build-test build-bench bench-run bench-run-live bench-json bench-baseline bench-compare bench-check bench-memory bench-flamegraph bench-diff bench-heaptrack profile profile-lua profile-save profile-diff
 
 # Default build: optimized release, no sanitizers
 all:
@@ -49,7 +49,7 @@ reconfigure:
 # =============================================================================
 
 # Run all tests (fast, no ASAN)
-test: test-unit test-check test-signal test-orchestrator test-restart test-integration
+test: test-unit test-check test-signal test-nested-pointer test-orchestrator test-restart test-integration
 
 # Parse lua/ with every installed Lua version (no compositor needed)
 test-lua-compat:
@@ -66,6 +66,10 @@ test-check: build-test
 # SIGTERM regression test (issue 613): a headless somewm must exit on SIGTERM
 test-signal: build-test
 	@./tests/test-signal-term.sh ./build-test/somewm
+
+# Nested-backend pointer mapping: two compositors, one hosting the other
+test-nested-pointer: build-test
+	@./tests/test-nested-pointer-mapping.sh ./build-test/somewm ./build-test/somewm-client
 
 # Test orchestrator (somewm-client test ...): spawns headless nested compositor
 test-orchestrator: build-test

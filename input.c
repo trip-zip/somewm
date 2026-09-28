@@ -727,6 +727,17 @@ motionabsolute(struct wl_listener *listener, void *data)
 	struct wlr_pointer_motion_absolute_event *event = data;
 	double lx, ly, dx, dy;
 
+	/* Nested X11/Wayland backends create one pointer per output whose 0..1
+	 * range covers only that output's host window (output_name). Without a
+	 * mapping wlr_cursor spans the whole layout, so with 2+ outputs the
+	 * cursor lands far from the real pointer. Resolved per event so output
+	 * hotplug can never leave a stale mapping behind. */
+	if (event->pointer->output_name) {
+		Monitor *m = some_monitor_by_name(event->pointer->output_name);
+		wlr_cursor_map_input_to_output(cursor, &event->pointer->base,
+			m ? m->wlr_output : NULL);
+	}
+
 	if (!event->time_msec) /* this is 0 with virtual pointers */
 		wlr_cursor_warp_absolute(cursor, &event->pointer->base, event->x, event->y);
 
