@@ -1502,15 +1502,11 @@ set_device_keymap(struct wlr_keyboard *keyboard, struct xkb_keymap *keymap)
 	KeyboardGroup *target = kb_group;
 	struct xkb_keymap *previous = xkb_keymap_ref(keyboard->keymap);
 
-	/* The repeat callback retains keysyms from the previous keymap. */
-	if (old) {
-		old->nsyms = 0;
-		wl_event_source_timer_update(old->key_repeat_source, 0);
-	}
-
 	if (!wlr_keyboard_keymaps_match(keymap, kb_group->wlr_group->keyboard.keymap)) {
 		if (old && old != kb_group) {
-			/* This group contains only this physical keyboard. */
+			/* The repeat callback retains keysyms from this keymap. */
+			old->nsyms = 0;
+			wl_event_source_timer_update(old->key_repeat_source, 0);
 			xkb_keymap_unref(previous);
 			return wlr_keyboard_set_keymap(keyboard, keymap);
 		}
@@ -1527,8 +1523,24 @@ set_device_keymap(struct wlr_keyboard *keyboard, struct xkb_keymap *keymap)
 		return true;
 	}
 
-	if (old)
+	if (old) {
 		wlr_keyboard_group_remove_keyboard(old->wlr_group, keyboard);
+		/* Keep a shared group's repeat only if its repeating key is still
+		 * held by another member. The keysyms remain valid while its
+		 * keymap is unchanged. */
+		bool held = false;
+		struct wlr_keyboard *group_kbd = &old->wlr_group->keyboard;
+		for (size_t i = 0; i < group_kbd->num_keycodes; i++) {
+			if (group_kbd->keycodes[i] + 8 == old->keycode) {
+				held = true;
+				break;
+			}
+		}
+		if (old->nsyms && !held) {
+			old->nsyms = 0;
+			wl_event_source_timer_update(old->key_repeat_source, 0);
+		}
+	}
 	bool ok = wlr_keyboard_set_keymap(keyboard, keymap) &&
 		wlr_keyboard_group_add_keyboard(target->wlr_group, keyboard);
 	if (!ok) {
@@ -1553,6 +1565,15 @@ some_set_device_keymap(struct wlr_keyboard *keyboard, struct xkb_keymap *keymap)
 	xkb_mod_index_t num = xkb_keymap_mod_get_index(keyboard->keymap, XKB_MOD_NAME_NUM);
 	bool numlock = num != XKB_MOD_INVALID &&
 		(keyboard->modifiers.locked & (1u << num));
+	/* A newly attached keyboard has no lock state yet. Inherit the seat's
+	 * current NumLock state before moving it to a private group. */
+	if (keyboard->group == kb_group->wlr_group) {
+		struct wlr_keyboard *default_kbd = &kb_group->wlr_group->keyboard;
+		xkb_mod_index_t default_num = xkb_keymap_mod_get_index(
+			default_kbd->keymap, XKB_MOD_NAME_NUM);
+		if (default_num != XKB_MOD_INVALID)
+			numlock = default_kbd->modifiers.locked & (1u << default_num);
+	}
 	changing_device_keymap = true;
 	bool ok = set_device_keymap(keyboard, keymap);
 	if (ok && keyboard->xkb_state) {

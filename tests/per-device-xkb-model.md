@@ -28,11 +28,14 @@ Models producing identical keymaps can safely share the default group.
 3. Switch between the two layouts using the Lua layout API and an XKB layout
    toggle. Both keyboards should follow the selected layout without changing
    each other's keymaps.
-4. Enable NumLock through the input API. Check both keyboards. Change an
-   override and confirm its NumLock state and selected layout survive.
+4. Enable NumLock through the input API, then plug in the second keyboard.
+   Check that it inherits NumLock, including when its override creates a
+   separate group. Change the override and confirm its NumLock state and
+   selected layout survive.
 5. Change repeat rate and delay. Check both keyboards and compositor shortcuts.
-   Change a rule while a repeating shortcut is held; no old shortcut should
-   continue repeating after the keymap changes.
+   Change a rule while a repeating shortcut is held on the affected keyboard;
+   it must stop if that keyboard leaves the group or its keymap changes. Repeat
+   while holding the shortcut on the other keyboard; its repeat must continue.
 6. Unplug the overridden keyboard. Change rules and global XKB settings while
    it is absent, then reconnect it. There must be no crash or stale-device
    access, and the reconnected keyboard must receive its override.
