@@ -1639,6 +1639,10 @@ some_xkb_get_keymap(void)
 	return kb_group->wlr_group->keyboard.keymap;
 }
 
+static void sync_device_layouts(xkb_layout_index_t group);
+static void set_device_numlock(int enabled);
+static void set_device_repeat_info(void);
+
 /* Set the keyboard layout group.
  *
  * Strategy: use wlr_keyboard_notify_modifiers() on member keyboards.
@@ -1673,8 +1677,11 @@ some_xkb_set_layout_group(xkb_layout_index_t group)
 	xkb_layout_index_t old_group = xkb_state_serialize_layout(
 		kbd->xkb_state, XKB_STATE_LAYOUT_EFFECTIVE);
 
-	if (old_group == group)
-		return 1; /* Already at requested group */
+	/* Modifier callbacks can re-enter this function while we synchronize. */
+	static bool syncing;
+	if (syncing)
+		return 1;
+	syncing = true;
 
 	/* Sway pattern: call wlr_keyboard_notify_modifiers() on each member.
 	 * This updates the member's xkb_state via xkb_state_update_mask(),
@@ -1703,6 +1710,9 @@ some_xkb_set_layout_group(xkb_layout_index_t group)
 			xkb_state_serialize_mods(kbd->xkb_state, XKB_STATE_MODS_LOCKED),
 			group);
 	}
+
+	sync_device_layouts(group);
+	syncing = false;
 
 	/* Client notification happens via keypressmod() — the wlroots cascade
 	 * above triggers the group keyboard's modifiers signal, which fires
@@ -1860,11 +1870,201 @@ some_rebuild_keyboard_keymap(void)
 			}
 		}
 
+		/* The member sync above resets every keymap to the group keymap,
+		 * so re-apply the per-device XKB model overrides afterwards. */
+		some_apply_per_device_keymaps();
+
 		xkb_keymap_unref(keymap);
 		xkb_schedule_map_changed();
 	}
 
 	xkb_context_unref(context);
+}
+
+/*
+ * Per-device XKB model overrides (awful.input.rules)
+ * ====================================================
+ * Each overridden keyboard gets its own wlroots group. wlroots propagates
+ * member keymaps to the entire group, so assigning an override inside the
+ * default group would silently change every keyboard. Layout selection is
+ * synchronized explicitly; modifier masks remain local to each keymap.
+ * Rules match a substring of the device name, not a vendor/product ID.
+ *
+ * The registry maps each registered keyboard to its device name, so
+ * the override can be re-resolved when rules or global settings change.
+ */
+struct keyboard_record {
+	struct wlr_keyboard *keyboard;
+	char *name;
+	struct wl_listener destroy;
+	struct wl_list link;
+};
+
+static struct wl_list kbd_records = { &kbd_records, &kbd_records };
+
+static struct keyboard_record *
+find_keyboard_record(struct wlr_keyboard *keyboard)
+{
+	struct keyboard_record *rec;
+	wl_list_for_each(rec, &kbd_records, link) {
+		if (rec->keyboard == keyboard)
+			return rec;
+	}
+	return NULL;
+}
+
+static void
+unregister_keyboard(struct wl_listener *listener, void *data)
+{
+	struct keyboard_record *rec = wl_container_of(listener, rec, destroy);
+	wl_list_remove(&rec->destroy.link);
+	wl_list_remove(&rec->link);
+	some_release_device_keyboard(rec->keyboard);
+	free(rec->name);
+	free(rec);
+}
+
+void
+some_register_keyboard(struct wlr_keyboard *keyboard, const char *name)
+{
+	if (find_keyboard_record(keyboard))
+		return;
+
+	struct keyboard_record *rec = calloc(1, sizeof(*rec));
+	if (!rec)
+		return;
+	if (name && !(rec->name = strdup(name))) {
+		free(rec);
+		return;
+	}
+	rec->keyboard = keyboard;
+	rec->destroy.notify = unregister_keyboard;
+	wl_signal_add(&keyboard->base.events.destroy, &rec->destroy);
+	wl_list_insert(&kbd_records, &rec->link);
+}
+
+void
+some_clear_keyboard_registry(void)
+{
+	struct keyboard_record *rec, *tmp;
+	wl_list_for_each_safe(rec, tmp, &kbd_records, link)
+		unregister_keyboard(&rec->destroy, NULL);
+}
+
+/*
+ * Look up the per-device XKB model for a keyboard with libinput name
+ * `name`. Rules are consulted in declaration order; the last matching
+ * rule that carries an xkb_model wins. Only rules without a type or
+ * with type "keyboard" are eligible; the name is a device-name
+ * substring, consistent with the other input rules.
+ */
+static const char *
+keyboard_rule_xkb_model(const char *name)
+{
+	const char *model = NULL;
+
+	for (int i = 0; i < globalconf.input_rules_count; i++) {
+		const InputRule *r = &globalconf.input_rules[i];
+
+		if (!r->xkb_model)
+			continue;
+		if (r->type && strcmp(r->type, "keyboard") != 0)
+			continue;
+		if (r->name && (!name || !strstr(name, r->name)))
+			continue;
+		model = r->xkb_model;
+	}
+
+	return model;
+}
+
+void
+some_apply_per_device_keymap(struct wlr_keyboard *keyboard)
+{
+	struct keyboard_record *rec = find_keyboard_record(keyboard);
+	const char *model = rec ? keyboard_rule_xkb_model(rec->name) : NULL;
+
+	if (!rec || !kb_group || !kb_group->wlr_group)
+		return;
+
+	if (!model || (globalconf.keyboard.xkb_model &&
+	    strcmp(model, globalconf.keyboard.xkb_model) == 0)) {
+		/* Also restore a previous override when the model becomes default. */
+		if (!some_set_device_keymap(keyboard, kb_group->wlr_group->keyboard.keymap))
+			wlr_log(WLR_ERROR, "Failed to restore default keyboard keymap");
+		return;
+	}
+
+	struct xkb_context *context = xkb_context_new(XKB_CONTEXT_NO_FLAGS);
+	if (!context)
+		return;
+
+	struct xkb_rule_names rules = {0};
+	rules.layout  = globalconf.keyboard.xkb_layout;
+	rules.variant = globalconf.keyboard.xkb_variant;
+	rules.options = globalconf.keyboard.xkb_options;
+	rules.rules   = globalconf.keyboard.xkb_rules;
+	rules.model   = model;
+
+	struct xkb_keymap *keymap =
+		xkb_keymap_new_from_names(context, &rules, XKB_KEYMAP_COMPILE_NO_FLAGS);
+	if (keymap) {
+		if (!some_set_device_keymap(keyboard, keymap))
+			wlr_log(WLR_ERROR, "Failed to apply XKB model %s", model);
+		xkb_keymap_unref(keymap);
+		xkb_schedule_map_changed();
+	}
+	xkb_context_unref(context);
+}
+
+void
+some_apply_per_device_keymaps(void)
+{
+	struct keyboard_record *rec;
+	wl_list_for_each(rec, &kbd_records, link)
+		some_apply_per_device_keymap(rec->keyboard);
+	if (kb_group && kb_group->wlr_group)
+		sync_device_layouts(kb_group->wlr_group->keyboard.modifiers.group);
+}
+
+static void
+sync_device_layouts(xkb_layout_index_t group)
+{
+	struct keyboard_record *rec;
+	wl_list_for_each(rec, &kbd_records, link) {
+		struct wlr_keyboard *kbd = rec->keyboard;
+		if (kbd->xkb_state && group < xkb_keymap_num_layouts(kbd->keymap) &&
+		    kbd->modifiers.group != group)
+			wlr_keyboard_notify_modifiers(kbd, kbd->modifiers.depressed,
+				kbd->modifiers.latched, kbd->modifiers.locked, group);
+	}
+}
+
+static void
+set_device_numlock(int enabled)
+{
+	struct keyboard_record *rec;
+	wl_list_for_each(rec, &kbd_records, link) {
+		struct wlr_keyboard *kbd = rec->keyboard;
+		if (!kbd->keymap || !kbd->xkb_state)
+			continue;
+		xkb_mod_index_t idx = xkb_keymap_mod_get_index(kbd->keymap, XKB_MOD_NAME_NUM);
+		if (idx == XKB_MOD_INVALID)
+			continue;
+		xkb_mod_mask_t locked_mods = kbd->modifiers.locked;
+		locked_mods = enabled ? locked_mods | (1u << idx) : locked_mods & ~(1u << idx);
+		wlr_keyboard_notify_modifiers(kbd, kbd->modifiers.depressed,
+			kbd->modifiers.latched, locked_mods, kbd->modifiers.group);
+	}
+}
+
+static void
+set_device_repeat_info(void)
+{
+	struct keyboard_record *rec;
+	wl_list_for_each(rec, &kbd_records, link)
+		wlr_keyboard_set_repeat_info(rec->keyboard,
+			globalconf.keyboard.repeat_rate, globalconf.keyboard.repeat_delay);
 }
 
 /* Enable or disable NumLock by toggling the Mod2 locked modifier.
@@ -1926,6 +2126,7 @@ some_set_numlock(int enabled)
 			locked_mods, group);
 	}
 
+	set_device_numlock(enabled);
 	wlr_log(WLR_INFO, "[KEYBOARD] NumLock %s", enabled ? "ON" : "OFF");
 }
 
@@ -1938,6 +2139,7 @@ some_apply_keyboard_repeat_info(void)
 
 	wlr_keyboard_set_repeat_info(&kb_group->wlr_group->keyboard,
 		globalconf.keyboard.repeat_rate, globalconf.keyboard.repeat_delay);
+	set_device_repeat_info();
 }
 
 /*

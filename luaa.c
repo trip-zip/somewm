@@ -1042,6 +1042,7 @@ input_rules_free(void)
 		InputRule *r = &globalconf.input_rules[i];
 		free(r->type);
 		free(r->name);
+		free(r->xkb_model);
 		free(r->properties.scroll_method);
 		free(r->properties.click_method);
 		free(r->properties.clickfinger_button_map);
@@ -1332,6 +1333,7 @@ luaA_awesome_set_input_rules(lua_State *L)
 	int count = luaA_rawlen(L, 1);
 	if (count == 0) {
 		apply_input_settings_to_all_devices();
+		some_apply_per_device_keymaps();
 		return 0;
 	}
 
@@ -1383,6 +1385,9 @@ luaA_awesome_set_input_rules(lua_State *L)
 			p->send_events_mode = input_rule_get_string(L, pidx, "send_events_mode");
 			p->accel_profile = input_rule_get_string(L, pidx, "accel_profile");
 			p->tap_button_map = input_rule_get_string(L, pidx, "tap_button_map");
+			/* Keyboard rules may carry a per-device XKB model. It is not a
+			 * libinput setting, so it is stored on the rule itself. */
+			r->xkb_model = input_rule_get_string(L, pidx, "xkb_model");
 			p->tool_mode = input_rule_get_tool_mode(L, pidx, "tool_mode");
 			input_rule_get_map_to_output(L, pidx, "map_to_output",
 				&p->map_to_output_list, &p->map_to_output_count);
@@ -1412,6 +1417,8 @@ luaA_awesome_set_input_rules(lua_State *L)
 	}
 
 	apply_input_settings_to_all_devices();
+	/* Rules may have gained or lost per-device XKB models: re-resolve them, */
+	some_apply_per_device_keymaps();
 	return 0;
 }
 

@@ -18,6 +18,7 @@
 #include <wlr/types/wlr_fractional_scale_v1.h>
 #include <wlr/types/wlr_idle_notify_v1.h>
 #include <wlr/types/wlr_input_device.h>
+#include <wlr/interfaces/wlr_keyboard.h>
 #include <wlr/types/wlr_keyboard.h>
 #include <wlr/types/wlr_keyboard_group.h>
 #include <wlr/types/wlr_layer_shell_v1.h>
@@ -37,10 +38,13 @@
 #include <wlr/util/log.h>
 #include <wlr/util/region.h>
 #include <xkbcommon/xkbcommon.h>
+#include <xkbcommon/xkbcommon-names.h>
 
 #include "somewm.h"
 #include "somewm_api.h"
 #include "input.h"
+
+extern bool changing_device_keymap;
 #include "event.h"
 #include "event_queue.h"
 #include "monitor.h"
@@ -1235,6 +1239,9 @@ keypressmod(struct wl_listener *listener, void *data)
 	KeyboardGroup *group = wl_container_of(listener, group, modifiers);
 	xkb_layout_index_t current_group;
 
+	if (changing_device_keymap)
+		return;
+
 	wlr_seat_set_keyboard(seat, &group->wlr_group->keyboard);
 	/* Send modifiers to the client. */
 	wlr_seat_keyboard_notify_modifiers(seat,
@@ -1247,6 +1254,10 @@ keypressmod(struct wl_listener *listener, void *data)
 
 	if (current_group != globalconf.xkb.last_group) {
 		globalconf.xkb.last_group = current_group;
+		some_xkb_set_layout_group(current_group);
+		wlr_seat_set_keyboard(seat, &group->wlr_group->keyboard);
+		wlr_seat_keyboard_notify_modifiers(seat,
+			&group->wlr_group->keyboard.modifiers);
 		xkb_schedule_group_changed();
 	}
 }
@@ -1354,8 +1365,20 @@ inputdevice(struct wl_listener *listener, void *data)
 
 	switch (device->type) {
 	case WLR_INPUT_DEVICE_KEYBOARD:
-		createkeyboard(wlr_keyboard_from_input_device(device));
+	{
+		struct wlr_keyboard *keyboard = wlr_keyboard_from_input_device(device);
+		if (wlr_input_device_is_libinput(device)) {
+			struct libinput_device *libinput_device =
+				wlr_libinput_get_device_handle(device);
+			some_register_keyboard(keyboard, libinput_device
+				? libinput_device_get_name(libinput_device) : NULL);
+		} else {
+			some_register_keyboard(keyboard, device->name);
+		}
+		createkeyboard(keyboard);
+		some_apply_per_device_keymap(keyboard);
 		break;
+	}
 	case WLR_INPUT_DEVICE_POINTER:
 		createpointer(wlr_pointer_from_input_device(device));
 		break;
@@ -1424,6 +1447,8 @@ createkeyboardgroup(void)
 	wlr_keyboard_set_repeat_info(&group->wlr_group->keyboard,
 		globalconf.keyboard.repeat_rate, globalconf.keyboard.repeat_delay);
 
+	wl_list_init(&group->destroy.link);
+
 	/* Set up listeners for keyboard events */
 	LISTEN(&group->wlr_group->keyboard.events.key, &group->key, keypress);
 	LISTEN(&group->wlr_group->keyboard.events.modifiers, &group->modifiers, keypressmod);
@@ -1443,6 +1468,11 @@ void
 destroykeyboardgroup(struct wl_listener *listener, void *data)
 {
 	KeyboardGroup *group = wl_container_of(listener, group, destroy);
+	if (group == kb_group)
+		some_clear_keyboard_registry();
+	if (wlr_seat_get_keyboard(seat) == &group->wlr_group->keyboard)
+		wlr_seat_set_keyboard(seat, group == kb_group ? NULL :
+			&kb_group->wlr_group->keyboard);
 	wl_event_source_remove(group->key_repeat_source);
 	wl_list_remove(&group->key.link);
 	wl_list_remove(&group->modifiers.link);
