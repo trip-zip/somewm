@@ -25,6 +25,7 @@
 #include <wlr/backend.h>
 #include <wlr/backend/headless.h>
 #include <wlr/backend/multi.h>
+#include <wlr/interfaces/wlr_keyboard.h>
 #include <wlr/render/allocator.h>
 #include <wlr/render/wlr_renderer.h>
 #include <wlr/types/wlr_alpha_modifier_v1.h>
@@ -1489,6 +1490,94 @@ setup(void)
 	/* Initialize IPC socket for CLI commands */
 	if (ipc_init(event_loop) < 0)
 		fprintf(stderr, "Warning: Failed to initialize IPC socket\n");
+}
+
+bool changing_device_keymap;
+
+/* Different keymaps must never share a wlroots keyboard group. */
+static bool
+set_device_keymap(struct wlr_keyboard *keyboard, struct xkb_keymap *keymap)
+{
+	KeyboardGroup *old = keyboard->group ? keyboard->group->data : NULL;
+	KeyboardGroup *target = kb_group;
+	struct xkb_keymap *previous = xkb_keymap_ref(keyboard->keymap);
+
+	/* The repeat callback retains keysyms from the previous keymap. */
+	if (old) {
+		old->nsyms = 0;
+		wl_event_source_timer_update(old->key_repeat_source, 0);
+	}
+
+	if (!wlr_keyboard_keymaps_match(keymap, kb_group->wlr_group->keyboard.keymap)) {
+		if (old && old != kb_group) {
+			/* This group contains only this physical keyboard. */
+			xkb_keymap_unref(previous);
+			return wlr_keyboard_set_keymap(keyboard, keymap);
+		}
+		struct wlr_keyboard *active = wlr_seat_get_keyboard(seat);
+		target = createkeyboardgroup();
+		wlr_seat_set_keyboard(seat, active);
+		if (!wlr_keyboard_set_keymap(&target->wlr_group->keyboard, keymap)) {
+			destroykeyboardgroup(&target->destroy, NULL);
+			xkb_keymap_unref(previous);
+			return false;
+		}
+	} else if (old == kb_group) {
+		xkb_keymap_unref(previous);
+		return true;
+	}
+
+	if (old)
+		wlr_keyboard_group_remove_keyboard(old->wlr_group, keyboard);
+	bool ok = wlr_keyboard_set_keymap(keyboard, keymap) &&
+		wlr_keyboard_group_add_keyboard(target->wlr_group, keyboard);
+	if (!ok) {
+		wlr_keyboard_set_keymap(keyboard, previous);
+		if (old && !wlr_keyboard_group_add_keyboard(old->wlr_group, keyboard))
+			wlr_log(WLR_ERROR, "Failed to restore keyboard group");
+		if (target != kb_group)
+			destroykeyboardgroup(&target->destroy, NULL);
+	} else if (old && old != kb_group) {
+		destroykeyboardgroup(&old->destroy, NULL);
+	}
+	xkb_keymap_unref(previous);
+	return ok;
+}
+
+bool
+some_set_device_keymap(struct wlr_keyboard *keyboard, struct xkb_keymap *keymap)
+{
+	/* Keymap changes reset XKB state and emit modifiers synchronously. Do
+	 * not let these transient events reset the layout on other keyboards. */
+	xkb_layout_index_t layout = kb_group->wlr_group->keyboard.modifiers.group;
+	xkb_mod_index_t num = xkb_keymap_mod_get_index(keyboard->keymap, XKB_MOD_NAME_NUM);
+	bool numlock = num != XKB_MOD_INVALID &&
+		(keyboard->modifiers.locked & (1u << num));
+	changing_device_keymap = true;
+	bool ok = set_device_keymap(keyboard, keymap);
+	if (ok && keyboard->xkb_state) {
+		if (layout >= xkb_keymap_num_layouts(keyboard->keymap))
+			layout = 0;
+		num = xkb_keymap_mod_get_index(keyboard->keymap, XKB_MOD_NAME_NUM);
+		xkb_mod_mask_t locked_mods = keyboard->modifiers.locked;
+		if (num != XKB_MOD_INVALID)
+			locked_mods = numlock ? locked_mods | (1u << num) : locked_mods & ~(1u << num);
+		wlr_keyboard_notify_modifiers(keyboard, keyboard->modifiers.depressed,
+			keyboard->modifiers.latched, locked_mods, layout);
+	}
+	changing_device_keymap = false;
+	if (ok && keyboard->group &&
+	    wlr_seat_get_keyboard(seat) == &keyboard->group->keyboard)
+		wlr_seat_keyboard_notify_modifiers(seat, &keyboard->group->keyboard.modifiers);
+	return ok;
+}
+
+void
+some_release_device_keyboard(struct wlr_keyboard *keyboard)
+{
+	KeyboardGroup *group = keyboard->group ? keyboard->group->data : NULL;
+	if (group && group != kb_group)
+		destroykeyboardgroup(&group->destroy, NULL);
 }
 
 void

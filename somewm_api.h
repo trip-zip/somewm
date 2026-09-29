@@ -219,6 +219,31 @@ void some_apply_keyboard_repeat_info(void);
 void some_set_numlock(int enabled);
 
 /*
+ * Per-device XKB model overrides
+ * awful.input.rules can carry a per-keyboard XKB model (properties.xkb_model),
+ * matched by device name substring. Overridden keyboards use separate wlroots
+ * groups so their keymaps cannot propagate to other physical keyboards.
+ */
+struct wlr_keyboard;
+/* Record a keyboard's libinput name so its per-device XKB model can be
+ * resolved when the keymap is (re)built. Call before the keyboard is added
+ * to the keyboard group. */
+void some_register_keyboard(struct wlr_keyboard *keyboard, const char *name);
+/* Resolve the per-device XKB model for one keyboard and apply it (or, if no
+ * rule matches any more, restore the keyboard group keymap). */
+void some_apply_per_device_keymap(struct wlr_keyboard *keyboard);
+/* Re-resolve and apply the per-device XKB model for every registered
+ * keyboard. Call after the global keymap was rebuilt or after input rules
+ * changed. */
+void some_apply_per_device_keymaps(void);
+/* Clear physical keyboards on main-group teardown, not virtual-keyboard exit. */
+void some_clear_keyboard_registry(void);
+/* Move a keyboard to a compatible group, or update its private group. */
+bool some_set_device_keymap(struct wlr_keyboard *keyboard, struct xkb_keymap *keymap);
+/* Destroy any private group when its physical keyboard is removed. */
+void some_release_device_keyboard(struct wlr_keyboard *keyboard);
+
+/*
  * Layer Surface Focus API
  * Called from objects/layer_surface.c when Lua sets has_keyboard_focus property
  */
