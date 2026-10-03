@@ -780,14 +780,14 @@ luaA_root_size_mm(lua_State *L)
 	struct wlr_box box;
 	struct wl_list *monitors;
 	Monitor *m;
-	double total_width_mm, total_height_mm, total_pixels;
+	double total_horizontal_mm_per_pixel, total_vertical_mm_per_pixel, total_pixels;
 	int width_mm, height_mm;
 
 	/* Calculate weighted average physical size based on all monitors.
 	 * Since monitors can have different DPI, we weight by pixel count.
 	 */
-	total_width_mm = 0.0;
-	total_height_mm = 0.0;
+	total_horizontal_mm_per_pixel = 0.0;
+	total_vertical_mm_per_pixel = 0.0;
 	total_pixels = 0.0;
 
 	monitors = some_get_monitors();
@@ -801,9 +801,9 @@ luaA_root_size_mm(lua_State *L)
 		some_monitor_get_geometry(m, &mon_box);
 		pixels = (double)(mon_box.width * mon_box.height);
 
-		/* Weight each monitor's physical size by its pixel count */
-		total_width_mm += (double)m->wlr_output->phys_width * pixels;
-		total_height_mm += (double)m->wlr_output->phys_height * pixels;
+		/* Weight each monitor's inverse pixel density by its pixel count */
+		total_horizontal_mm_per_pixel += (double)m->wlr_output->phys_width * pixels/mon_box.width;
+		total_vertical_mm_per_pixel += (double)m->wlr_output->phys_height * pixels/mon_box.height;
 		total_pixels += pixels;
 	}
 
@@ -812,8 +812,8 @@ luaA_root_size_mm(lua_State *L)
 
 	/* Calculate average DPI and apply to virtual screen size */
 	if (total_pixels > 0.0) {
-		double avg_width_mm_per_pixel = total_width_mm / total_pixels;
-		double avg_height_mm_per_pixel = total_height_mm / total_pixels;
+		double avg_width_mm_per_pixel = total_horizontal_mm_per_pixel / total_pixels;
+		double avg_height_mm_per_pixel = total_vertical_mm_per_pixel / total_pixels;
 		width_mm = (int)(box.width * avg_width_mm_per_pixel);
 		height_mm = (int)(box.height * avg_height_mm_per_pixel);
 	} else {
