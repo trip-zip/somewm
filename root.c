@@ -587,14 +587,19 @@ luaA_root_size_mm(lua_State *L)
 
 		if (!m->wlr_output || !m->wlr_output->enabled)
 			continue;
+		if (!m->wlr_output->phys_width || !m->wlr_output->phys_height)
+			continue;
 
 		some_monitor_get_geometry(m, &mon_box);
 		pixels = (double)(mon_box.width * mon_box.height);
-
-		/* Weight each monitor's inverse pixel density by its pixel count */
-		total_horizontal_mm_per_pixel += (double)m->wlr_output->phys_width * pixels/mon_box.width;
-		total_vertical_mm_per_pixel += (double)m->wlr_output->phys_height * pixels/mon_box.height;
-		total_pixels += pixels;
+		/* Weight each monitor's inverse pixel density by its pixel count.
+		 * Skip monitor if pixel count is empty.
+		 * */
+		if (pixels > 0.0) {
+			total_horizontal_mm_per_pixel += (double)m->wlr_output->phys_width * pixels/mon_box.width;
+			total_vertical_mm_per_pixel += (double)m->wlr_output->phys_height * pixels/mon_box.height;
+			total_pixels += pixels;
+		}
 	}
 
 	/* Get total virtual screen size */
