@@ -1154,6 +1154,10 @@ clients_settle(Monitor *m, struct declare_band *band)
         Client *c = declare_handle_get(band->settle[i].handle, NULL);
         Clay_ElementData data = Clay_GetElementData((Clay_ElementId) { .id = band->settle[i].id });
         if (!c || c->mon != m || !data.found) continue;
+        /* A pending configure means the chrome still wraps an older answer. */
+        if (c->resize) continue;
+        /* A fullscreen client's box is the monitor's. */
+        if (c->fullscreen) continue;
         client_set_solved_geometry(c, client_solved_box(c, m, data.boundingBox));
     }
 }
@@ -1406,8 +1410,8 @@ widget_node_decl(const struct widget_node *n, int16_t z,
 	}
 	if (n->scroll) {
 		e.clip = (Clay_ClipElementConfig) {
-			.horizontal = n->scroll == 1,
-			.vertical = n->scroll == 2,
+			.horizontal = n->scroll & 1,
+			.vertical = n->scroll & 2,
 		};
 	}
 	if (n->transition)
@@ -1462,6 +1466,10 @@ widget_subtree_end(const struct widget_tree *d, size_t i)
 		next = widget_subtree_end(d, next);
 	return next;
 }
+
+/* Set while a frame that holds a configure probe declares its chrome: the
+ * surface leaf in it sends no configure (render.h RENDER_PROBED_TAG). */
+static bool composite_probed;
 
 /* A node of a client composite as lua/awful/client/clay.lua describes it.
  * Every node carries the client's word, so a hit routes to the client and
@@ -1520,13 +1528,15 @@ declare_composite(const struct widget_host *host, size_t i, int16_t z,
 			 * enclosing clip, a carousel's scroll among them. */
 			.clipTo = CLAY_CLIP_TO_ATTACHED_PARENT,
 		};
-		e.custom.customData = (void *)(uintptr_t)n->surface;
+		e.custom.customData = (void *)(uintptr_t)(n->surface
+			| (n->probe ? RENDER_PROBE_TAG : composite_probed ? RENDER_PROBED_TAG : 0));
 		e.cornerRadius = (Clay_CornerRadius) { .topLeft = n->radii[0],
 			.topRight = n->radii[1], .bottomRight = n->radii[2], .bottomLeft = n->radii[3] };
 		e.userData = userdata_clip(leaf_userdata(n->surface, n->opacity), 0, clip);
 		declare_leaf(name, n->surface, n->src[0], n->src[1], id, &e);
 		/* The client's popups attach to its surface leaf. */
-		declare_popups(client_surface(c), id, 0, 0);
+		if (!n->probe)
+			declare_popups(client_surface(c), id, 0, 0);
 		return i + 1;
 	}
 	e = widget_node_decl(n, z, userdata_clip(leaf_userdata(handle, 1.0f), 0, clip));
@@ -1540,8 +1550,19 @@ declare_composite(const struct widget_host *host, size_t i, int16_t z,
 	return next;
 }
 
+/* A frame whose client drew a size other than the one configured holds
+ * two children (awful.client.clay): the chrome, which is the client's box
+ * around the size drawn, and the configure probe filling the frame. */
+static bool
+frame_holds_chrome(const struct widget_tree *d, size_t i)
+{
+	return d->nodes[i].children == 2 && d->nodes[i + 1].client;
+}
+
 /* The composite's frame, under the id clients_settle reads it by. The
- * shadow is declared right after it opens, as for a root client. */
+ * shadow is declared right after it opens, as for a root client. A frame
+ * holding a chrome keeps the allocation, takes no input and is not read
+ * back; the chrome is declared as the frame. */
 static void
 declare_client_frame(const struct widget_host *host, size_t i, int16_t z,
 	Clay_ElementDeclaration *e, uint8_t wsrc, uint8_t hsrc, uint32_t *ids)
@@ -1550,6 +1571,26 @@ declare_client_frame(const struct widget_host *host, size_t i, int16_t z,
 	const struct widget_node *n = &d->nodes[i];
 	Client *c = declare_handle_get(n->client, NULL);
 	bool clamp = client_clamps_to_monitor(c);
+	const char *name = n->name ? n->name : "-";
+
+	if (frame_holds_chrome(d, i)) {
+		Clay_ElementId frame = Clay__HashStringWithOffset((Clay_String) {
+			.isStaticallyAllocated = true, .length = (int32_t)strlen(name), .chars = name,
+		}, (uint32_t)n->client, 0);
+		Clay_ElementDeclaration chrome = widget_node_decl(&d->nodes[i + 1], z, NULL);
+
+		ids[i] = frame.id;
+		native_open(frame);
+		native_configure(e);
+		record_open(name, n->client, frame, e, wsrc, hsrc, NULL);
+		composite_probed = true;
+		declare_client_frame(host, i + 1, z, &chrome, d->nodes[i + 1].src[0],
+			d->nodes[i + 1].src[1], ids);
+		composite_probed = false;
+		declare_composite(host, widget_subtree_end(d, i + 1), z, n->client, clamp, ids);
+		native_close();
+		return;
+	}
 	Clay_ElementId id = Clay__HashStringWithOffset(CLAY_STRING("client"),
 		(uint32_t)n->client, 0);
 	/* A box the user or a config's layout authored (both axes fixed, spec
@@ -1571,7 +1612,7 @@ declare_client_frame(const struct widget_host *host, size_t i, int16_t z,
 		clamp ? RENDER_CLIP_BOUNDS : 0);
 	native_open(id);
 	native_configure(e);
-	record_open(n->name ? n->name : "-", n->client, id, e, wsrc, hsrc, NULL);
+	record_open(name, n->client, id, e, wsrc, hsrc, NULL);
 	declare_shadow(&c->shadow, c->shadow_config, false, n->client, e);
 	size_t next = i + 1;
 	for (uint16_t k = 0; k < n->children; k++)
@@ -1619,7 +1660,7 @@ declare_layout_client(const struct widget_host *host, size_t i, Clay_ElementDecl
         }
         e->floating.zIndex = z;
         e->floating.pointerCaptureMode = CLAY_POINTER_CAPTURE_MODE_PASSTHROUGH;
-        if (!d->nodes[i + 1].client) {
+        if (!d->nodes[i + 1].client || frame_holds_chrome(d, i)) {
             declare_client_frame(host, i, z, e, n->src[0], n->src[1], ids);
             return end;
         }
@@ -3242,7 +3283,7 @@ widget_boxes_walk(struct widget_tree *d, size_t i, Clay_ElementId id, int (*boxe
 		/* A scroll node's declared offset as the dump prints it, NAN for
 		 * others. */
 		if (scrolled) {
-			float offset = node->scroll ? node->scrolled[node->scroll - 1] : 0;
+			float offset = node->scroll && node->scroll < 3 ? node->scrolled[node->scroll - 1] : 0;
 			scrolled[*n] = !node->scroll ? NAN : offset == 0 ? 0 : -offset;
 		}
 		boxes[*n][0] = x0;
@@ -4527,10 +4568,13 @@ dump_node(void *user, const struct render_node_view *v)
 	dump_what(buf, v->id, v->user_data);
 	if (v->raster_bytes)
 		buffer_addf(buf, " raster=%zu", v->raster_bytes);
-	/* A SCISSOR marker and a clip mark realize no node by design; anything
-	 * else that did not is a surface whose client died mid-frame. */
+	/* A SCISSOR marker, a clip mark and a configure probe realize no node
+	 * by design; anything else that did not is a surface whose client died
+	 * mid-frame. */
 	if (v->clip_mark)
 		buffer_adds(buf, " clip");
+	else if (v->probe)
+		buffer_adds(buf, " configure");
 	else if (!v->has_node && v->type != CLAY_RENDER_COMMAND_TYPE_SCISSOR_START
 			&& v->type != CLAY_RENDER_COMMAND_TYPE_SCISSOR_END)
 		buffer_adds(buf, " no-node");

@@ -2095,7 +2095,8 @@ static struct wlr_box surface_clip_box(Clay_BoundingBox box, Clay_BoundingBox rb
 static int reconcile_surface(struct render_state *rs, struct rnode *n,
 		Clay_RenderCommand *cmd, Clay_BoundingBox rbox,
 		const struct render_client_hooks *hooks) {
-	uint64_t handle = (uint64_t)(uintptr_t)cmd->renderData.custom.customData;
+	uint64_t data = (uint64_t)(uintptr_t)cmd->renderData.custom.customData;
+	uint64_t handle = data & ~RENDER_PROBED_TAG;
 	struct wlr_scene_tree *tree = hooks->resolve(hooks->data, handle);
 	n->borrowed = true;
 	n->handle = handle;
@@ -2126,7 +2127,9 @@ static int reconcile_surface(struct render_state *rs, struct rnode *n,
 		abort();
 	}
 
-	if (!box_size_equal(n->box, cmd->boundingBox)) {
+	/* Beside a probe the surface is drawn at the size it committed; the
+	 * probe sends the configure. */
+	if (!(data & RENDER_PROBED_TAG) && !box_size_equal(n->box, cmd->boundingBox)) {
 		hooks->configure(hooks->data, handle,
 			(int)cmd->boundingBox.width, (int)cmd->boundingBox.height);
 		muts++;
@@ -2150,6 +2153,18 @@ static int reconcile_surface(struct render_state *rs, struct rnode *n,
 		muts++;
 	}
 	return muts;
+}
+
+/* A configure probe (render.h): no node and nothing borrowed, only the
+ * configure leg, when its solved size changed. */
+static int reconcile_probe(struct rnode *n, Clay_RenderCommand *cmd,
+		const struct render_client_hooks *hooks) {
+	if (box_size_equal(n->box, cmd->boundingBox))
+		return 0;
+	hooks->configure(hooks->data,
+		(uint64_t)(uintptr_t)cmd->renderData.custom.customData & ~RENDER_PROBE_TAG,
+		(int)cmd->boundingBox.width, (int)cmd->boundingBox.height);
+	return 1;
 }
 
 /* Whether node is one kept dark for an element still in the tree. */
@@ -2582,6 +2597,10 @@ int render_reconcile(struct render_state *rs, Clay_RenderCommandArray commands,
 				muts += reconcile_shadow(rs, n, cmd);
 				break;
 			}
+			if ((uintptr_t)cmd->renderData.custom.customData & RENDER_PROBE_TAG) {
+				muts += reconcile_probe(n, cmd, hooks);
+				break;
+			}
 			if (shape) {
 				muts += reconcile_shape(rs, n, cmd, rbox, mask, hooks);
 				scope_open(rs, cmd->userData, rbox, scope,
@@ -2917,6 +2936,9 @@ void render_walk(struct render_state *rs,
 			.has_node = n->node != NULL,
 			.clip_mark = (uint32_t)(n->key >> 32) == CLAY_RENDER_COMMAND_TYPE_CUSTOM
 				&& n->data.custom.customData == RENDER_CLIP_MARK,
+			.probe = (uint32_t)(n->key >> 32) == CLAY_RENDER_COMMAND_TYPE_CUSTOM
+				&& n->data.custom.customData != RENDER_CLIP_MARK
+				&& ((uintptr_t)n->data.custom.customData & RENDER_PROBE_TAG),
 			.mismatch = rnode_scene_mismatch(n),
 			.user_data = n->user_data,
 		});

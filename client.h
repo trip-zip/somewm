@@ -307,21 +307,13 @@ client_set_size(Client *c, uint32_t width, uint32_t height)
 	 * This catches clients that ack a configure but render at a different size
 	 * (e.g. Firefox using its saved geometry on relaunch). */
 	struct wlr_box _geo = c->surface.xdg->geometry;
-	if ((int32_t)width == _geo.width && (int32_t)height == _geo.height) {
-		c->configure_resent = false;
+	if ((int32_t)width == _geo.width && (int32_t)height == _geo.height)
 		return 0;
-	}
-	/* If the client already acked this size but rendered differently (e.g.
-	 * terminals rounding to cell boundaries), re-send once then accept it
-	 * to avoid an infinite configure loop. */
+	/* Acknowledged and drawn at another size: configure_retry() in
+	 * window.c sends it again. */
 	if ((int32_t)width == c->surface.xdg->toplevel->current.width
-			&& (int32_t)height == c->surface.xdg->toplevel->current.height) {
-		if (c->configure_resent)
-			return 0;
-		c->configure_resent = true;
-	} else {
-		c->configure_resent = false;
-	}
+			&& (int32_t)height == c->surface.xdg->toplevel->current.height)
+		return 0;
 	return wlr_xdg_toplevel_set_size(c->surface.xdg->toplevel, (int32_t)width, (int32_t)height);
 }
 

@@ -3283,6 +3283,22 @@ luaA_client_get_first_tag(lua_State *L, client_t *c)
     return 0;
 }
 
+/** The size the client's last commit drew when it is not the size it was
+ * configured, {width, height} in logical pixels, else nil. Read by
+ * awful.client.clay. */
+static int
+luaA_client_get__committed_size(lua_State *L, client_t *c)
+{
+    if (!c->committed_width)
+        return 0;
+    lua_createtable(L, 0, 2);
+    lua_pushinteger(L, c->committed_width);
+    lua_setfield(L, -2, "width");
+    lua_pushinteger(L, c->committed_height);
+    lua_setfield(L, -2, "height");
+    return 1;
+}
+
 /** Get the stacking layer the client currently draws in.
  * Returns the layer name as a string, or nil if the client has no scene
  * node. Intended for integration tests that verify stacking behavior; the
@@ -4830,6 +4846,7 @@ client_class_setup(lua_State *L)
         { "pid", NULL, (lua_class_propfunc_t) luaA_client_get_pid, NULL },
         { "role", NULL, (lua_class_propfunc_t) luaA_client_get_role, NULL },
         { "_scene_layer", NULL, (lua_class_propfunc_t) luaA_client_get__scene_layer, NULL },
+        { "_committed_size", NULL, (lua_class_propfunc_t) luaA_client_get__committed_size, NULL },
         { "screen", NULL, (lua_class_propfunc_t) luaA_client_get_screen, (lua_class_propfunc_t) luaA_client_set_screen },
         { "shadow", (lua_class_propfunc_t) luaA_client_set_shadow, (lua_class_propfunc_t) luaA_client_get_shadow, (lua_class_propfunc_t) luaA_client_set_shadow },
         { "shape", (lua_class_propfunc_t) luaA_client_set_shape, (lua_class_propfunc_t) luaA_client_get_shape, (lua_class_propfunc_t) luaA_client_set_shape },
