@@ -97,13 +97,11 @@ require('_runner').run_steps {
         local clock_box = wibox.container.background(
             wibox.container.margin(clock,8,8,0,0), '#3c3836')
         bar = awful.wibar {screen=s, position='top', widget={
-            layout=wibox.layout.stack,
-            {layout=wibox.layout.align.horizontal,
-                {layout=wibox.layout.fixed.horizontal, launcher,tags,prompt,tasks},
-                {widget=wibox.container.background},
-                {layout=wibox.layout.fixed.horizontal, wibox.widget.systray(),
-                    awful.widget.layoutbox(s)}},
-            {clock_box, halign='center', widget=wibox.container.place}}}
+            layout=wibox.layout.align.horizontal, expand='none',
+            {layout=wibox.layout.fixed.horizontal, launcher,tags,prompt,tasks},
+            {clock_box, top=6, bottom=6, widget=wibox.container.margin},
+            {layout=wibox.layout.fixed.horizontal, wibox.widget.systray(),
+                awful.widget.layoutbox(s)}}}
         return true
     end,
     settled('tidy-bundled-wibar'),
@@ -139,8 +137,8 @@ require('_runner').run_steps {
             c:activate {context='titlebar',action='mouse_resize'}
         end)}
         awful.titlebar(c,{size=30}).widget = {
-            {awful.titlebar.widget.iconwidget(c), buttons=buttons,
-                layout=wibox.layout.fixed.horizontal},
+            {{awful.titlebar.widget.iconwidget(c), left=6, widget=wibox.container.margin},
+                buttons=buttons, layout=wibox.layout.fixed.horizontal},
             {{halign='center',widget=awful.titlebar.widget.titlewidget(c)},
                 buttons=buttons,layout=wibox.layout.flex.horizontal},
             {awful.titlebar.widget.floatingbutton(c), awful.titlebar.widget.maximizedbutton(c),
