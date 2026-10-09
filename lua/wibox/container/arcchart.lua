@@ -305,9 +305,8 @@ local function describe_arcchart(w, fg, st, item, bound)
     local offset_angle = w:get_start_angle() or math.pi
 
     -- The content is a square at the authored bound less the padding,
-    -- centred in the box. render.c rounded_rect_path clamps PILL to half
-    -- its side, so its clip scope is the circle before_draw_children cuts
-    -- to. Clay reads a zero maximum as unbounded, so content floats in an
+    -- centred in the box. The renderer fits PILL to half its side, so its
+    -- clip scope is the circle before_draw_children cuts to. Clay reads a zero maximum as unbounded, so content floats in an
     -- empty square and adds neither pixels nor input.
     local PILL = 1e6
     local content = clay.whole_box(w._private.widget)

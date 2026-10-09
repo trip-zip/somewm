@@ -32,6 +32,7 @@
 #include <wlr/types/wlr_output_layout.h>
 #include <linux/input-event-codes.h>
 #include <time.h>
+#include <wlr/render/interface.h>
 #include <wlr/types/wlr_scene.h>
 #include <wlr/render/wlr_renderer.h>
 #include <wlr/render/wlr_texture.h>
@@ -42,6 +43,7 @@
 #include <wlr/util/transform.h>
 #include <cairo.h>
 #include <drm_fourcc.h>
+#include <math.h>
 #include <string.h>
 
 /* External references to somewm.c globals */
@@ -867,6 +869,42 @@ composite_transform_matrix(cairo_matrix_t *m, enum wl_output_transform t,
 	}
 }
 
+/** The box with its corners cut by radii (top-left, top-right,
+ * bottom-right, bottom-left), fitted to the box by the edge rule the
+ * renderers use; a plain rectangle when every radius is 0. */
+static void
+composite_rounded_path(cairo_t *cr, double x, double y, double w, double h,
+                       const float radii[4])
+{
+	float r[4];
+	double deg = 3.14159265358979323846 / 180.0;
+
+	wlr_render_fit_corner_radii(r, radii, w, h);
+	if (r[0] == 0 && r[1] == 0 && r[2] == 0 && r[3] == 0) {
+		cairo_rectangle(cr, x, y, w, h);
+		return;
+	}
+	cairo_new_sub_path(cr);
+	cairo_arc(cr, x + w - r[1], y + r[1], r[1], -90.0 * deg, 0.0);
+	cairo_arc(cr, x + w - r[2], y + h - r[2], r[2], 0.0, 90.0 * deg);
+	cairo_arc(cr, x + r[3], y + h - r[3], r[3], 90.0 * deg, 180.0 * deg);
+	cairo_arc(cr, x + r[0], y + r[0], r[0], 180.0 * deg, 270.0 * deg);
+	cairo_close_path(cr);
+}
+
+/** Clip to every rounded clip of a node, in node-local coordinates. */
+static void
+composite_clip_rounded(cairo_t *cr, const struct wlr_render_rounded_clip *clips,
+                       size_t len)
+{
+	for (size_t i = 0; i < len; i++) {
+		const struct wlr_box *b = &clips[i].box;
+
+		composite_rounded_path(cr, b->x, b->y, b->width, b->height, clips[i].radii);
+		cairo_clip(cr);
+	}
+}
+
 /** Paint buf_surface, the pixels of scene_buffer's buffer, at the node
  * position the way the scene renderer would place them.
  *
@@ -904,8 +942,11 @@ composite_paint(struct screenshot_render_data *rdata, cairo_surface_t *buf_surfa
 
 	cairo_save(rdata->cr);
 	cairo_translate(rdata->cr, sx + rdata->offset_x, sy + rdata->offset_y);
-	cairo_rectangle(rdata->cr, 0, 0, dst_width, dst_height);
+	/* The buffer's corner radii and rounded clips, as the output cuts it. */
+	composite_rounded_path(rdata->cr, 0, 0, dst_width, dst_height,
+		scene_buffer->corner_radii);
 	cairo_clip(rdata->cr);
+	composite_clip_rounded(rdata->cr, scene_buffer->clips, scene_buffer->clips_len);
 	cairo_scale(rdata->cr, dst_width / tw, dst_height / th);
 	cairo_transform(rdata->cr, &m);
 	cairo_translate(rdata->cr, -src.x, -src.y);
@@ -1081,14 +1122,25 @@ composite_scene_node_to_cairo(struct wlr_scene_node *node, void *data)
 			return;
 		if (!within_bounds(rdata, lx, ly, rect->width, rect->height))
 			return;
-		/* Scene rect colors are premultiplied; cairo wants straight. */
+		/* Scene rect colors are premultiplied; cairo wants straight. The
+		 * rect's radii, its cutout and its rounded clips, as the output
+		 * draws it. */
 		cairo_save(rdata->cr);
+		cairo_translate(rdata->cr, lx + rdata->offset_x, ly + rdata->offset_y);
+		composite_clip_rounded(rdata->cr, rect->clips, rect->clips_len);
 		cairo_set_source_rgba(rdata->cr,
 		                      a > 0 ? rect->color[0] / a : 0,
 		                      a > 0 ? rect->color[1] / a : 0,
 		                      a > 0 ? rect->color[2] / a : 0, a);
-		cairo_rectangle(rdata->cr, lx + rdata->offset_x, ly + rdata->offset_y,
-		                rect->width, rect->height);
+		composite_rounded_path(rdata->cr, 0, 0, rect->width, rect->height,
+		                       rect->corner_radii);
+		if (rect->cutout_box.width > 0) {
+			struct wlr_box b = rect->cutout_box;
+
+			composite_rounded_path(rdata->cr, b.x, b.y, b.width, b.height,
+			                       rect->cutout_radii);
+			cairo_set_fill_rule(rdata->cr, CAIRO_FILL_RULE_EVEN_ODD);
+		}
 		cairo_fill(rdata->cr);
 		cairo_restore(rdata->cr);
 		return;

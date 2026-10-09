@@ -1425,6 +1425,17 @@ hook_clip(void *data, uint64_t handle, int x, int y, int width, int height)
 }
 
 static void
+hook_corners(void *data, uint64_t handle, const float radii[4])
+{
+	Client *c = handle_client(handle);
+
+	if (!c)
+		return;
+	memcpy(c->surface_radii, radii, sizeof(c->surface_radii));
+	client_configure_to_box(c);
+}
+
+static void
 hook_reposition(void *data, uint64_t handle, int x, int y)
 {
 	Client *c = handle_client(handle);
@@ -1477,6 +1488,7 @@ window_setup_render_hooks(void)
 		.release = hook_release,
 		.reposition = hook_reposition,
 		.clip = hook_clip,
+		.corners = hook_corners,
 	};
 
 	wl_list_init(&popups);
@@ -1497,6 +1509,53 @@ client_clamps_to_monitor(Client *c)
 		&& !client_is_unmanaged(c)
 		&& !some_client_get_floating(c)
 		&& client_layout_clips_offscreen(c);
+}
+
+struct corner_apply {
+	/* The window box in the client tree's coordinates, and its radii. */
+	struct wlr_box box;
+	const float *radii;
+};
+
+/* The window box's corners on one buffer of the surface tree, at (sx, sy)
+ * in the client tree: the buffer that is the window box takes the radii as
+ * its own corners; one that reaches into a corner square takes the window
+ * box as a rounded clip; one that touches no corner takes zeros. */
+static void
+apply_corners_to_buffer(struct wlr_scene_buffer *buffer, int sx, int sy, void *data)
+{
+	static const float none[4];
+	struct corner_apply *a = data;
+	struct wlr_box own = { sx, sy, buffer->dst_width, buffer->dst_height };
+	bool touches = false;
+
+	if (own.width <= 0 && buffer->buffer) {
+		own.width = buffer->buffer->width;
+		own.height = buffer->buffer->height;
+	}
+	if (wlr_box_equal(&own, &a->box)) {
+		wlr_scene_buffer_set_corner_radii(buffer, a->radii);
+		wlr_scene_buffer_set_rounded_clips(buffer, NULL, 0);
+		return;
+	}
+	for (int i = 0; i < 4 && !touches; i++) {
+		int r = (int)ceilf(a->radii[i]);
+		struct wlr_box square = {
+			i == 0 || i == 3 ? a->box.x : a->box.x + a->box.width - r,
+			i == 0 || i == 1 ? a->box.y : a->box.y + a->box.height - r, r, r };
+
+		touches = r > 0 && wlr_box_intersection(&square, &square, &own);
+	}
+	wlr_scene_buffer_set_corner_radii(buffer, none);
+	if (touches) {
+		struct wlr_render_rounded_clip clip = {
+			.box = { a->box.x - sx, a->box.y - sy, a->box.width, a->box.height } };
+
+		memcpy(clip.radii, a->radii, sizeof(clip.radii));
+		wlr_scene_buffer_set_rounded_clips(buffer, &clip, 1);
+	} else {
+		wlr_scene_buffer_set_rounded_clips(buffer, NULL, 0);
+	}
 }
 
 /* The configure-client-to-box seam: the client-facing half of geometry
@@ -1557,6 +1616,14 @@ client_configure_to_box(Client *c)
 	}
 
 	wlr_scene_subsurface_tree_set_clip(&c->scene_surface->node, &clip);
+
+	/* The radii the renderer handed hook_corners, on every buffer the
+	 * surface tree holds now: a later commit can add a subsurface. */
+	struct corner_apply corners = {
+		.box = { 0, 0, box.width, box.height },
+		.radii = c->surface_radii,
+	};
+	wlr_scene_node_for_each_buffer(&c->scene_surface->node, apply_corners_to_buffer, &corners);
 }
 
 void

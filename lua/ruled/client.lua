@@ -630,7 +630,7 @@ crules._execute = function(_, c, props, callbacks)
         if not ignore then
             if module.extra_properties[property] then
                 module.extra_properties[property](c, value, props)
-            elseif type(c[property]) == "function" then
+            elseif property ~= "shape" and type(c[property]) == "function" then
                 c[property](c, value)
             else
                 c[property] = value

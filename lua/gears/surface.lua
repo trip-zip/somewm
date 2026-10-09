@@ -195,15 +195,15 @@ end
 
 --- Apply a shape to a client or a wibox.
 --
---  If the wibox or client size change, this function need to be called
---   again.
+-- A wibox or a client takes the shape as its `shape` property and follows
+-- its size; a client draws it only as a rounded rectangle.
 -- @tparam client|wibox draw A wibox or a client.
 -- @tparam gears.shape|function shape The shape.
 -- @param[opt] ... Any additional parameters will be passed to the shape function.
 -- @staticfct apply_shape_bounding
 -- @noreturn
 function surface.apply_shape_bounding(draw, shape, ...)
-  if draw.set_shape then
+  if draw.set_shape or type(draw) == "client" then
     local args, count = {...}, select('#', ...)
     local unpack = unpack or table.unpack
     draw.shape = function(cr, w, h)

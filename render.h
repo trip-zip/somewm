@@ -56,6 +56,10 @@ struct render_client_hooks {
 	/* Realized origin relative to the solved origin; width 0 removes the crop.
 	 * Optional, like reposition. */
 	void (*clip)(void *data, uint64_t handle, int x, int y, int width, int height);
+	/* The corner radii cutting the surface, logical pixels, top-left,
+	 * top-right, bottom-right, bottom-left; 0 is a square corner. Called on
+	 * the first borrow and on change. Optional, like reposition. */
+	void (*corners)(void *data, uint64_t handle, const float radii[4]);
 	/* Path floats for the solved logical box, 0 for no path. A count above
 	 * cap reports overflow. NULL draws no shape leaves. */
 	size_t (*shape_ops)(void *data, const struct render_shape *shape,

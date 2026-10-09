@@ -48,7 +48,8 @@ export XDG_DATA_DIRS="$ROOT_DIR/tests/xdg:${XDG_DATA_DIRS:-/usr/local/share:/usr
 # Wayland backend setup based on HEADLESS mode
 if [ "$HEADLESS" = 1 ]; then
     export WLR_BACKENDS=headless
-    export WLR_RENDERER=pixman
+    # A renderer already in the environment (WLR_RENDERER=gles2) stays
+    export WLR_RENDERER=${WLR_RENDERER:-pixman}
 else
     export WLR_BACKENDS=wayland
     # Use GPU renderer in visual mode

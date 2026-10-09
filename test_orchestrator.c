@@ -583,7 +583,8 @@ exec_child(const struct start_opts *opts, const char *state_dir,
 			setenv("WLR_X11_OUTPUTS", "1", 1);
 	} else if (opts->host == HOST_HEADLESS) {
 		setenv("WLR_BACKENDS", "headless", 1);
-		setenv("WLR_RENDERER", "pixman", 1);
+		/* A renderer already in the environment (WLR_RENDERER=gles2) stays */
+		setenv("WLR_RENDERER", "pixman", 0);
 		if (!getenv("WLR_WL_OUTPUTS"))
 			setenv("WLR_WL_OUTPUTS", "1", 1);
 	} else {

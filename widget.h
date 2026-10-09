@@ -60,6 +60,8 @@ struct widget_host {
 	uint32_t id;          /* The owner's declare handle id. */
 	int x, y, w, h;       /* Output-local box. */
 	float radius;        /* Shaped drawin corners, 0 for titlebars. */
+	float radii[4];      /* A titlebar's corners from its client's shape,
+	                      * top-left, top-right, bottom-right, bottom-left. */
 	bool visible;
 	bool in_parent;
 	/* The root fills the element it is declared in, a slot the frame
@@ -113,6 +115,9 @@ struct widget_node {
 	float bg[4];
 	float border[4];
 	float radius;
+	/* A surface leaf's or titlebar host's corners from the client's shape,
+	 * top-left, top-right, bottom-right, bottom-left. */
+	float radii[4];
 	uint8_t sizing[2];   /* enum widget_sizing per axis */
 	float size[2];       /* the fixed size or percent */
 	uint8_t src[2];      /* enum declare_src per axis, from wsrc and hsrc */

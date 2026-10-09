@@ -4,6 +4,7 @@
 -- the screen; declare.c reads no client field to compose it.
 local capi = {mousegrabber = mousegrabber}
 local gdebug = require("gears.debug")
+local wclay = require("wibox.clay")
 
 local clay = {}
 
@@ -47,6 +48,42 @@ local function surface(c, fullscreen)
     return node
 end
 
+-- The radius c.shape stands for: a number as given; a function through
+-- wibox.clay's rounded rectangle detection (gears.shape.rounded_rect or a
+-- closure drawing its path). Any other function warns once per client and
+-- function, naming the client, and the client is described square; c.shape
+-- keeps what was set, as a wibox keeps its function.
+local shape_warned = setmetatable({}, {__mode = "k"})
+local function shape_radius(c)
+    local shape = c.shape
+    if shape == nil then return 0 end
+    if type(shape) == "number" then return shape end
+    local r = wclay.shape_radius(shape)
+    if r then return r end
+    if shape_warned[c] ~= shape then
+        shape_warned[c] = shape
+        gdebug.print_warning("client: shape is not a rounded rectangle, the client stays square: "
+            .. tostring(c.class or c.name))
+    end
+    return 0
+end
+
+-- The corners of the shape, less the border as a wibox's content takes
+-- them: a titlebar on an edge takes that edge's corners, the surface the
+-- rest. Nothing is authored when the client is square. A border stays
+-- square here and takes a click in the corner; without one the surface's
+-- own cut corner lets the click through.
+local function assign_corners(c, bw, top, right, bottom, left, pixels)
+    local r = math.max(shape_radius(c) - bw, 0)
+    if r <= 0 then return end
+    local radii = {r, r, r, r}  -- top-left, top-right, bottom-right, bottom-left
+    if top then top.radii = {r, r, 0, 0}; radii[1], radii[2] = 0, 0 end
+    if bottom then bottom.radii = {0, 0, r, r}; radii[3], radii[4] = 0, 0 end
+    if left then left.radii = {radii[1], 0, 0, radii[4]}; radii[1], radii[4] = 0, 0 end
+    if right then right.radii = {0, radii[2], radii[3], 0}; radii[2], radii[3] = 0, 0 end
+    pixels.radii = radii
+end
+
 --- The composite for c at a layout's allocation: the frame carries the
 -- allocation's sizing, words and float; a padded float is a cell holding
 -- the frame at its whole inset.
@@ -62,7 +99,11 @@ function clay.describe(c, allocation)
         bottom = bar(c, "TITLEBAR_BOTTOM", "bottom", true)
         left = bar(c, "TITLEBAR_LEFT", "left", false)
     end
-    local body = {name = "SLOT", w = "grow", h = "grow", children = {surface(c, fullscreen)}}
+    local pixels = surface(c, fullscreen)
+    local body = {name = "SLOT", w = "grow", h = "grow", children = {pixels}}
+    if not fullscreen then
+        assign_corners(c, bw, top, right, bottom, left, pixels)
+    end
     if left or right then
         local row = {}
         row[#row + 1] = left
