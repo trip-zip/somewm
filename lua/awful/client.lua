@@ -1443,19 +1443,6 @@ object.properties._legacy_accessors(client, "keys", "_keys", true, function(new_
     ) or false
 end, true, true, "keybinding")
 
-local shape_warned = false
-
---- Set the client shape.
---
--- @property shape
--- @tparam[opt=gears.shape.rectangle] shape shape A gears.shape compatible function.
--- @see gears.shape
-function client.object.set_shape()
-    if shape_warned then return end
-    shape_warned = true
-    gdebug.print_warning("awful.client: shape is not applied, the client stays rectangular")
-end
-
 -- Proxy those properties to decorate their accessors with an extra flag to
 -- define when they are set by the user. This allows to "manage" the value of
 -- those properties internally until they are manually overridden.

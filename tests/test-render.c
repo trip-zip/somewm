@@ -13,6 +13,7 @@
 #include <signal.h>
 #include <sys/wait.h>
 #include <unistd.h>
+#include <wlr/render/interface.h>
 #include <wlr/types/wlr_scene.h>
 
 #include "clay.h"
@@ -179,6 +180,8 @@ struct fake_clients {
 	int borrows, releases, repositions;
 	int configured_w, configured_h, configures;
 	int clip_x, clip_y, clip_w, clip_h, clips;
+	float radii[4];
+	int corners;
 };
 
 static struct wlr_scene_tree *fake_resolve(void *data, uint64_t handle) {
@@ -227,6 +230,13 @@ static void fake_clip(void *data, uint64_t handle, int x, int y, int width, int 
 	fc->clips++;
 }
 
+static void fake_corners(void *data, uint64_t handle, const float radii[4]) {
+	struct fake_clients *fc = data;
+	(void)handle;
+	memcpy(fc->radii, radii, sizeof(fc->radii));
+	fc->corners++;
+}
+
 static void fake_clients_init(struct fake_clients *fc,
 		struct wlr_scene_tree *root, struct render_client_hooks *hooks) {
 	memset(fc, 0, sizeof(*fc));
@@ -243,6 +253,7 @@ static void fake_clients_init(struct fake_clients *fc,
 		.release = fake_release,
 		.reposition = fake_reposition,
 		.clip = fake_clip,
+		.corners = fake_corners,
 		.data = fc,
 	};
 }
@@ -477,38 +488,37 @@ static void test_retained_node_returns(void) {
 	fixture_finish(&f, &hooks);
 }
 
-static void test_kind_swap_destroys_and_restacks(void) {
+static void test_radius_toggle_keeps_the_node(void) {
 	struct fixture f;
 	fixture_init(&f);
-	/* The swapping command is FIRST, so a recreated node appended at the top
-	 * of the sibling list is in the wrong place unless the swap forces a
-	 * restack. With the verifier compiled in, a missed restack aborts here. */
+	/* The toggling command is FIRST: a recreated node would land at the top
+	 * of the sibling list, so the order proves the node was kept. */
 	Clay_RenderCommand cmds[] = {
 		cmd_rect(1, 0, 0, 50, 50, 0),
 		cmd_rect(2, 100, 0, 50, 50, 0),
 	};
-	struct wlr_scene_tree *rt;
-
 	render_reconcile(f.rs, commands_of(cmds, 2), &no_hooks, no_bounds);
-	rt = render_tree(f.parent);
-	CHECK_EQ(child_at(rt, 0)->type, WLR_SCENE_NODE_RECT);
-	CHECK_EQ(child_at(rt, 0)->x, 0);
+	struct wlr_scene_tree *rt = render_tree(f.parent);
+	struct wlr_scene_node *first = child_at(rt, 0);
+	CHECK_EQ(first->type, WLR_SCENE_NODE_RECT);
 
-	/* Square to rounded: a scene rect cannot draw an arc, so the node kind
-	 * changes and the old node is destroyed. */
+	/* Square to rounded: the same rect with the radii on it; nothing is
+	 * created, swept, rastered or restacked. */
 	cmds[0] = cmd_rect(1, 0, 0, 50, 50, 8);
-	CHECK(render_reconcile(f.rs, commands_of(cmds, 2), &no_hooks, no_bounds) > 0);
-	CHECK_EQ(child_count(rt), 2);
-	CHECK_EQ(child_at(rt, 0)->type, WLR_SCENE_NODE_BUFFER);
-	CHECK_EQ(child_at(rt, 0)->x, 0);
+	CHECK_EQ(render_reconcile(f.rs, commands_of(cmds, 2), &no_hooks, no_bounds), 1);
+	CHECK(child_at(rt, 0) == first);
 	CHECK_EQ(child_at(rt, 1)->x, 100);
-
-	/* And back, with the frame after each swap settling to zero. */
+	CHECK_EQ(wlr_scene_rect_from_node(first)->corner_radii[0], 8);
+	CHECK_EQ(render_nodes_created(f.rs), 0);
+	CHECK_EQ(render_nodes_swept(f.rs), 0);
+	CHECK_EQ(render_buffers_created(f.rs), 0);
 	CHECK_EQ(render_reconcile(f.rs, commands_of(cmds, 2), &no_hooks, no_bounds), 0);
+
+	/* And back. */
 	cmds[0] = cmd_rect(1, 0, 0, 50, 50, 0);
-	CHECK(render_reconcile(f.rs, commands_of(cmds, 2), &no_hooks, no_bounds) > 0);
-	CHECK_EQ(child_at(rt, 0)->type, WLR_SCENE_NODE_RECT);
-	CHECK_EQ(child_at(rt, 0)->x, 0);
+	CHECK_EQ(render_reconcile(f.rs, commands_of(cmds, 2), &no_hooks, no_bounds), 1);
+	CHECK(child_at(rt, 0) == first);
+	CHECK_EQ(wlr_scene_rect_from_node(first)->corner_radii[0], 0);
 	CHECK_EQ(render_reconcile(f.rs, commands_of(cmds, 2), &no_hooks, no_bounds), 0);
 
 	fixture_finish(&f, &no_hooks);
@@ -639,23 +649,20 @@ static void test_opacity_from_the_word(void) {
 		struct wlr_scene_rect *rect = wlr_scene_rect_from_node(child_at(tree, 0));
 		float color[] = { opacity, 0, 0, opacity };
 		CHECK(memcmp(rect->color, color, sizeof(color)) == 0);
-		CHECK(wlr_scene_buffer_from_node(child_at(tree, 1))->opacity == opacity);
+		/* A rounded rect and a border fold the opacity into their colour as
+		 * a square rect does; a text buffer takes it as its own. */
+		CHECK(wlr_scene_rect_from_node(child_at(tree, 1))->color[3] == opacity);
+		CHECK(wlr_scene_rect_from_node(child_at(tree, 2))->color[3] == opacity);
 		CHECK(wlr_scene_buffer_from_node(child_at(tree, 3))->opacity == opacity);
-		struct wlr_scene_tree *border = wlr_scene_tree_from_node(child_at(tree, 2));
-		CHECK_EQ(child_count(border), 4);
-		for (int i = 0; i < 4; i++)
-			CHECK(wlr_scene_rect_from_node(child_at(border, i))->color[3] == opacity);
 		CHECK_EQ(render_reconcile(f.rs, commands_of(cmds, 4), &no_hooks, no_bounds), 0);
 		cmds[2].renderData.border.cornerRadius = (Clay_CornerRadius){4,4,4,4};
 		CHECK(render_reconcile(f.rs, commands_of(cmds, 4), &no_hooks, no_bounds) > 0);
-		CHECK_EQ(child_count(border), 8);
-		for (int i = 4; i < 8; i++)
-			CHECK(wlr_scene_buffer_from_node(child_at(border, i))->opacity == opacity);
+		CHECK_EQ(child_count(tree), 4);
+		CHECK(wlr_scene_rect_from_node(child_at(tree, 2))->color[3] == opacity);
+		CHECK_EQ(render_buffers_created(f.rs), 0);
 		CHECK_EQ(render_reconcile(f.rs, commands_of(cmds, 4), &no_hooks, no_bounds), 0);
 		cmds[2].renderData.border.cornerRadius = (Clay_CornerRadius){0};
 		render_reconcile(f.rs, commands_of(cmds, 4), &no_hooks, no_bounds);
-		for (int i = 4; i < 8; i++) CHECK(!child_at(border, i)->enabled);
-		/* A fresh square border has no corner buffer allocations. */
 		cmds[2].id++;
 		render_reconcile(f.rs, commands_of(cmds, 4), &no_hooks, no_bounds);
 	}
@@ -709,9 +716,9 @@ static void test_scopes_from_the_word(void) {
 	fixture_init(&f);
 	/* Owner 7 opens scope 1 with its box; a leaf clipped by it straddles;
 	 * owner 8 names scope 1 and is not clipped, the number is 7's; a rounded
-	 * rectangle under 1 opens scope 2 and turns a square leaf at its corner
-	 * into a raster, and a leaf over the whole output into a raster cut to
-	 * scope 2's box; a leaf naming a scope nobody opened is unclipped. */
+	 * rectangle under 1 opens scope 2, gives a square leaf at its corner its
+	 * arcs as a clip, and cuts a leaf over the whole output to scope 2's box;
+	 * a leaf naming a scope nobody opened is unclipped. */
 	Clay_RenderCommand cmds[] = {
 		cmd_rect(10, 0, 0, 50, 50, 0),
 		cmd_rect(1, 25, 25, 50, 50, 0),
@@ -749,15 +756,21 @@ static void test_scopes_from_the_word(void) {
 	r = wlr_scene_rect_from_node(child_at(rt, 2));
 	CHECK_EQ(r->width, 50);
 
-	CHECK_EQ(child_at(rt, 4)->type, WLR_SCENE_NODE_BUFFER);
+	CHECK_EQ(child_at(rt, 4)->type, WLR_SCENE_NODE_RECT);
 	CHECK_EQ(child_at(rt, 4)->x, 10);
+	r = wlr_scene_rect_from_node(child_at(rt, 4));
+	CHECK_EQ(r->clips_len, 1);
+	CHECK_EQ(r->clips[0].radii[0], 8);
 
-	CHECK_EQ(child_at(rt, 5)->type, WLR_SCENE_NODE_BUFFER);
-	struct wlr_scene_buffer *sb = wlr_scene_buffer_from_node(child_at(rt, 5));
+	CHECK_EQ(child_at(rt, 5)->type, WLR_SCENE_NODE_RECT);
+	r = wlr_scene_rect_from_node(child_at(rt, 5));
 	CHECK_EQ(child_at(rt, 5)->x, 10);
 	CHECK_EQ(child_at(rt, 5)->y, 10);
-	CHECK_EQ(sb->dst_width, 30);
-	CHECK_EQ(sb->dst_height, 30);
+	CHECK_EQ(r->width, 30);
+	CHECK_EQ(r->height, 30);
+	CHECK_EQ(r->clips_len, 1);
+	CHECK_EQ(r->clips[0].box.x, 0);
+	CHECK_EQ(r->clips[0].box.width, 30);
 
 	r = wlr_scene_rect_from_node(child_at(rt, 6));
 	CHECK_EQ(child_at(rt, 6)->x, 200);
@@ -769,10 +782,12 @@ static void test_scopes_from_the_word(void) {
 	CHECK_EQ(r->width, 30);
 	CHECK(r->color[3] == 0.0f);
 
-	CHECK_EQ(child_at(rt, 8)->type, WLR_SCENE_NODE_BUFFER);
-	sb = wlr_scene_buffer_from_node(child_at(rt, 8));
+	CHECK_EQ(child_at(rt, 8)->type, WLR_SCENE_NODE_RECT);
+	r = wlr_scene_rect_from_node(child_at(rt, 8));
 	CHECK_EQ(child_at(rt, 8)->x, 60);
-	CHECK_EQ(sb->dst_width, 30);
+	CHECK_EQ(r->width, 30);
+	CHECK_EQ(r->clips_len, 1);
+	CHECK_EQ(r->clips[0].radii[0], 6);
 
 	CHECK_EQ(render_reconcile(f.rs, commands_of(cmds, 9), &no_hooks, no_bounds), 0);
 
@@ -785,7 +800,7 @@ static void test_scopes_from_the_word(void) {
 	text[0].userData = word(7, 1, 0);
 	text[1].userData = (void *)((uintptr_t)word(7, 0, 1) | RENDER_TEXT_ELLIPSIZE);
 	CHECK(render_reconcile(f.rs, commands_of(text, 2), &no_hooks, no_bounds) > 0);
-	sb = wlr_scene_buffer_from_node(child_at(rt, 1));
+	struct wlr_scene_buffer *sb = wlr_scene_buffer_from_node(child_at(rt, 1));
 	CHECK_EQ(sb->dst_width, 40);
 	text[0].boundingBox.width = 60;
 	CHECK(render_reconcile(f.rs, commands_of(text, 2), &no_hooks, no_bounds) > 0);
@@ -830,6 +845,9 @@ static uint32_t raster_pixel(struct wlr_scene_node *node, int x, int y) {
 	return pixel;
 }
 
+/* A path cuts the rects under it as a raster of their fill, with their own
+ * arcs as the buffer's radii; a rect clear of the path is a scene rect, and
+ * a rounded host's arcs reach either as clips. */
 static void test_path_scopes_from_the_word(void) {
 	struct fixture f;
 	fixture_init(&f);
@@ -858,11 +876,21 @@ static void test_path_scopes_from_the_word(void) {
 	CHECK_EQ(child_at(tree, 2)->type, WLR_SCENE_NODE_RECT);
 	CHECK_EQ(raster_pixel(child_at(tree, 1), 1, 1), 0);
 	CHECK_EQ(raster_pixel(child_at(tree, 1), 20, 20), 0xffff0000u);
-	/* This point clears the inner radius of four but is outside the circle. */
+	/* The rounded host the circle cuts: its fill rastered square, its own
+	 * arcs on the buffer. */
+	CHECK_EQ(child_at(tree, 3)->type, WLR_SCENE_NODE_BUFFER);
+	CHECK_EQ(wlr_scene_buffer_from_node(child_at(tree, 3))->corner_radii[0], 4);
+	/* This point clears the inner radius of four but is outside the circle;
+	 * the inner radius itself is a clip on the buffer. */
 	CHECK_EQ(raster_pixel(child_at(tree, 4), 4, 2), 0);
-	/* This smaller host is inside the circle but still cuts its own corners. */
-	CHECK_EQ(raster_pixel(child_at(tree, 6), 1, 1), 0);
-	CHECK_EQ(raster_pixel(child_at(tree, 6), 10, 10), 0xffff0000u);
+	CHECK_EQ(wlr_scene_buffer_from_node(child_at(tree, 4))->clips_len, 1);
+	/* This smaller host is inside the circle: a scene rect with its radii,
+	 * and the rect under it a scene rect with those arcs as a clip. */
+	CHECK_EQ(child_at(tree, 5)->type, WLR_SCENE_NODE_RECT);
+	CHECK_EQ(wlr_scene_rect_from_node(child_at(tree, 5))->corner_radii[0], 8);
+	CHECK_EQ(child_at(tree, 6)->type, WLR_SCENE_NODE_RECT);
+	CHECK_EQ(wlr_scene_rect_from_node(child_at(tree, 6))->clips_len, 1);
+	CHECK_EQ(wlr_scene_rect_from_node(child_at(tree, 6))->clips[0].radii[0], 8);
 	CHECK(!render_point_in_masks(f.rs, 1, 11, 21));
 	CHECK(render_point_in_masks(f.rs, 1, 30, 40));
 	CHECK(!render_point_in_masks(f.rs, 10, 11, 21));
@@ -884,7 +912,7 @@ static void test_path_scopes_from_the_word(void) {
 	shifted[0].userData = word(7, 4, 0);
 	memcpy(shifted + 1, cmds, sizeof(cmds));
 	render_reconcile(f.rs, commands_of(shifted, 8), &hooks, no_bounds);
-	CHECK_EQ(render_buffers_created(f.rs), 1);
+	CHECK_EQ(render_buffers_created(f.rs), 0);
 	CHECK(!render_point_in_masks(f.rs, 1, 11, 21));
 	CHECK(render_point_in_masks(f.rs, 1, 30, 40));
 	CHECK(render_hit(f.rs, 30, 40, accept_clip_child, &child));
@@ -892,10 +920,11 @@ static void test_path_scopes_from_the_word(void) {
 	CHECK_EQ(render_buffers_created(f.rs), 0);
 	CHECK(!render_point_in_masks(f.rs, 1, 11, 21));
 	CHECK(render_point_in_masks(f.rs, 1, 30, 40));
-	/* Changing the shape generation invalidates every dependent raster. */
+	/* Changing the shape generation invalidates every raster under the path:
+	 * the shape and the three rects it cuts, not the two inside it. */
 	shape.gen++;
 	CHECK(render_reconcile(f.rs, commands_of(cmds, 7), &hooks, no_bounds) > 0);
-	CHECK_EQ(render_buffers_created(f.rs), 6);
+	CHECK_EQ(render_buffers_created(f.rs), 4);
 	CHECK_EQ(render_reconcile(f.rs, commands_of(cmds, 7), &hooks, no_bounds), 0);
 	/* An unpainted shape still supplies its path to the clipping query. */
 	shape.fill[3] = 0;
@@ -924,33 +953,39 @@ static void test_border_clips_to_the_bounds(void) {
 	struct fixture f;
 	fixture_init(&f);
 	/* A border straddling the right edge of a 100x100 frame, clipped to it:
-	 * the top edge stops at the frame and the right edge is gone. Without
-	 * the word's flag the same border draws whole. */
+	 * one rect cropped to the 10 columns inside the frame, its hole where
+	 * the solved box puts it. Without the word's flag the same border draws
+	 * whole. */
 	Clay_BoundingBox bounds = { 0, 0, 100, 100 };
 	Clay_RenderCommand c = cmd_border(1, 90, 0, 40, 40, 2, 0);
 	c.userData = word(7, 0, RENDER_CLIP_BOUNDS);
 
 	render_reconcile(f.rs, commands_of(&c, 1), &no_hooks, bounds);
-	struct wlr_scene_tree *bt =
-		wlr_scene_tree_from_node(child_at(render_tree(f.parent), 0));
-	struct wlr_scene_rect *top = wlr_scene_rect_from_node(child_at(bt, 0));
-	CHECK_EQ(top->width, 10);
-	CHECK_EQ(child_count(bt), 3);
-	struct wlr_scene_node *side;
-	wl_list_for_each(side, &bt->children, link) {
-		struct wlr_scene_rect *rect = wlr_scene_rect_from_node(side);
-		CHECK(side->x + rect->width <= 10);
-	}
+	struct wlr_scene_node *node = child_at(render_tree(f.parent), 0);
+	CHECK_EQ(node->type, WLR_SCENE_NODE_RECT);
+	struct wlr_scene_rect *rect = wlr_scene_rect_from_node(node);
+	CHECK_EQ(node->x, 90);
+	CHECK_EQ(rect->width, 10);
+	CHECK_EQ(rect->height, 40);
+	CHECK_EQ(rect->cutout_box.x, 2);
+	CHECK_EQ(rect->cutout_box.y, 2);
+	CHECK_EQ(rect->cutout_box.width, 36);
+	CHECK_EQ(rect->cutout_box.height, 36);
 
 	c.userData = word(7, 0, 0);
 	CHECK(render_reconcile(f.rs, commands_of(&c, 1), &no_hooks, bounds) > 0);
-	CHECK_EQ(top->width, 40);
-	CHECK_EQ(child_count(bt), 4);
-	struct wlr_scene_rect *right = wlr_scene_rect_from_node(child_at(bt, 3));
-	CHECK_EQ(right->node.x, 38);
-	CHECK_EQ(right->width, 2);
-	CHECK_EQ(right->height, 36);
+	CHECK_EQ(rect->width, 40);
+	CHECK_EQ(rect->cutout_box.x, 2);
+	CHECK_EQ(rect->cutout_box.width, 36);
 	CHECK_EQ(render_reconcile(f.rs, commands_of(&c, 1), &no_hooks, bounds), 0);
+
+	/* Cropped from the left, the hole moves with the solved box. */
+	c.boundingBox.x = -20;
+	c.userData = word(7, 0, RENDER_CLIP_BOUNDS);
+	render_reconcile(f.rs, commands_of(&c, 1), &no_hooks, bounds);
+	CHECK_EQ(node->x, 0);
+	CHECK_EQ(rect->width, 20);
+	CHECK_EQ(rect->cutout_box.x, -18);
 
 	fixture_finish(&f, &no_hooks);
 }
@@ -1008,6 +1043,61 @@ static void test_client_surface_hooks(void) {
 	fc.gone[1] = true;
 	render_reconcile(f.rs, commands_of(cmds, 2), &hooks, no_bounds);
 	CHECK_EQ(child_count(rt), 1);
+
+	fixture_finish(&f, &hooks);
+}
+
+static void test_client_corners_call_the_hook(void) {
+	struct fixture f;
+	struct fake_clients fc;
+	struct render_client_hooks hooks;
+	fixture_init_clients(&f, &fc, &hooks);
+
+	Clay_RenderCommand cmds[] = { cmd_custom(1, 0, 0, 0, 400, 300) };
+	cmds[0].renderData.custom.cornerRadius = (Clay_CornerRadius) {
+		.topLeft = 24, .topRight = 16, .bottomRight = 8, .bottomLeft = 4 };
+
+	/* The first borrow hands the four radii over, top-left first. */
+	render_reconcile(f.rs, commands_of(cmds, 1), &hooks, no_bounds);
+	CHECK_EQ(fc.corners, 1);
+	CHECK(fc.radii[0] == 24 && fc.radii[1] == 16 && fc.radii[2] == 8 && fc.radii[3] == 4);
+
+	/* A repeat frame calls nothing. */
+	CHECK_EQ(render_reconcile(f.rs, commands_of(cmds, 1), &hooks, no_bounds), 0);
+	CHECK_EQ(fc.corners, 1);
+
+	/* A change calls again with the new radii. */
+	cmds[0].renderData.custom.cornerRadius.bottomRight = 12;
+	CHECK(render_reconcile(f.rs, commands_of(cmds, 1), &hooks, no_bounds) > 0);
+	CHECK_EQ(fc.corners, 2);
+	CHECK(fc.radii[2] == 12 && fc.radii[3] == 4);
+
+	fixture_finish(&f, &hooks);
+}
+
+static void test_click_in_a_client_corner_falls_through(void) {
+	struct fixture f;
+	struct fake_clients fc;
+	struct render_client_hooks hooks;
+	fixture_init_clients(&f, &fc, &hooks);
+
+	/* A rect below, the client above it with 24 pixel corners. */
+	Clay_RenderCommand cmds[] = {
+		cmd_rect(10, 0, 0, 400, 300, 0),
+		cmd_custom(1, 0, 0, 0, 400, 300),
+	};
+	cmds[1].renderData.custom.cornerRadius = (Clay_CornerRadius) { 24, 24, 24, 24 };
+	render_reconcile(f.rs, commands_of(cmds, 2), &hooks, no_bounds);
+
+	uint32_t below = 10, client = 1;
+	/* The corner point is not the client's; the rect below takes it. */
+	CHECK(!render_hit(f.rs, 1, 1, accept_clip_child, &client));
+	CHECK(render_hit(f.rs, 1, 1, accept_clip_child, &below));
+	CHECK(!render_hit(f.rs, 398, 298, accept_clip_child, &client));
+	/* Inside the arc, and along the edges away from the corners, it is. */
+	CHECK(render_hit(f.rs, 24, 24, accept_clip_child, &client));
+	CHECK(render_hit(f.rs, 200, 0, accept_clip_child, &client));
+	CHECK(render_hit(f.rs, 0, 150, accept_clip_child, &client));
 
 	fixture_finish(&f, &hooks);
 }
@@ -1630,78 +1720,6 @@ static void test_measure_is_monotonic(void) {
 	CHECK_EQ(render_measure_text(run, &config, NULL).width, d_run.width);
 }
 
-/* The verifier aborts the process, so the divergence runs in a child. */
-/* Every box a border draws, whether it is an edge rect or a corner tile. */
-static int ring_cover(struct wlr_scene_tree *bt, int px, int py) {
-	int n = 0;
-	struct wlr_scene_node *child;
-	wl_list_for_each(child, &bt->children, link) {
-		if (!child->enabled) {
-			continue;
-		}
-		int w, h;
-		if (child->type == WLR_SCENE_NODE_RECT) {
-			struct wlr_scene_rect *r = wlr_scene_rect_from_node(child);
-			w = r->width;
-			h = r->height;
-		} else {
-			struct wlr_scene_buffer *b = wlr_scene_buffer_from_node(child);
-			w = b->dst_width;
-			h = b->dst_height;
-		}
-		if (px >= child->x && px < child->x + w &&
-				py >= child->y && py < child->y + h) {
-			n++;
-		}
-	}
-	return n;
-}
-
-/* The four edges and the corner tiles must partition the border frame: every
- * pixel of it drawn, and no pixel drawn twice (the border color can be
- * translucent, so a double-draw shows as plainly as a hole). The case that
- * fails when the edges are inset by the radius on one axis and the border width
- * on the other is 0 < radius < width: nothing then draws the band between them
- * at any corner. */
-static void test_border_ring_has_no_gap_or_overlap(void) {
-	static const struct { int width, radius; } cases[] = {
-		{ 5, 0 }, { 5, 3 }, { 5, 5 }, { 5, 10 }, { 2, 8 }, { 8, 1 },
-	};
-	const int size = 100;
-	for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); i++) {
-		struct fixture f;
-		fixture_init(&f);
-		int bw = cases[i].width;
-		Clay_RenderCommand c = cmd_border(1, 0, 0, (float)size, (float)size,
-			bw, (float)cases[i].radius);
-		render_reconcile(f.rs, commands_of(&c, 1), &no_hooks, no_bounds);
-		struct wlr_scene_tree *bt =
-			wlr_scene_tree_from_node(child_at(render_tree(f.parent), 0));
-
-		int gaps = 0, overlaps = 0;
-		for (int y = 0; y < size; y++) {
-			for (int x = 0; x < size; x++) {
-				bool frame = x < bw || y < bw ||
-					x >= size - bw || y >= size - bw;
-				int n = ring_cover(bt, x, y);
-				if (frame && n == 0) {
-					gaps++;
-				}
-				if (n > 1) {
-					overlaps++;
-				}
-			}
-		}
-		if (gaps != 0 || overlaps != 0) {
-			fprintf(stderr, "  width %d radius %d: %d gap px, %d overlap px\n",
-				bw, cases[i].radius, gaps, overlaps);
-		}
-		CHECK_EQ(gaps, 0);
-		CHECK_EQ(overlaps, 0);
-		fixture_finish(&f, &no_hooks);
-	}
-}
-
 /* A clipped raster is a crop of the full-box buffer, so the crop has to be
  * expressed on the grid that buffer was sized on: device_len from the box's
  * rounded logical origin. Reading the crop origin off the unrounded box.x
@@ -1710,11 +1728,13 @@ static void test_border_ring_has_no_gap_or_overlap(void) {
 static void test_clip_source_matches_the_buffer_grid(void) {
 	struct fixture f;
 	fixture_init(&f);
+	struct image_entry entry;
+	fake_image_entry(&entry, 40, 20);
 	/* [10.6, 50.6) rounds to [11, 51), so the buffer spans logical [11, 51)
 	 * and the clip starting at 15 takes it from the 4th column. */
 	Clay_RenderCommand cmds[] = {
 		cmd_clip(10, 15, 0, 100, 20, true, true),
-		cmd_rect(1, 10.6f, 0, 40, 20, 4),
+		cmd_image(1, 10.6f, 0, 40, 20, &entry),
 		cmd_clip_end(10),
 	};
 	render_reconcile(f.rs, commands_of(cmds, 3), &no_hooks, no_bounds);
@@ -1725,6 +1745,7 @@ static void test_clip_source_matches_the_buffer_grid(void) {
 	CHECK_EQ((int)sb->src_box.width, 36);
 	CHECK_EQ(sb->dst_width, 36);
 	fixture_finish(&f, &no_hooks);
+	cairo_surface_destroy(entry.native);
 }
 
 static bool accept_any(void *user, const struct render_node_view *v,
@@ -1754,14 +1775,13 @@ static void test_fractional_moves_refresh_rasters(void) {
 	struct render_client_hooks hooks = no_hooks;
 	hooks.shape_ops = triangle_ops;
 	const float scales[] = { 1, 1.25f, 1.5f, 2 };
-	for (int kind = 0; kind < 4; kind++) {
+	for (int kind = 0; kind < 3; kind++) {
 		struct fixture f;
 		fixture_init(&f);
 		Clay_RenderCommand leaf;
 		switch (kind) {
 		case 0: leaf = cmd_text(1, 0, 0, 229.999985f, 20, "tasklist", false); break;
-		case 1: leaf = cmd_rect(1, 0, 0, 229.999985f, 21, 4); break;
-		case 2: leaf = cmd_image(1, 0, 0, 229.999985f, 21, &entry); break;
+		case 1: leaf = cmd_image(1, 0, 0, 229.999985f, 21, &entry); break;
 		default: leaf = cmd_custom(1, (uint64_t)(uintptr_t)render_shape_tag(&shape),
 			0, 0, 229.999985f, 21); break;
 		}
@@ -1845,6 +1865,313 @@ static void test_stretched_image_crop_uses_source_extent(void) {
 	CHECK(fabs(sb->src_box.x - 29.4) < 0.00001);
 	fixture_finish(&f, &no_hooks);
 	cairo_surface_destroy(entry.native);
+}
+
+/* Whether a pixel centre is inside a box with its corners cut by radii fitted
+ * by the edge rule: what the scene draws for a rect or a cutout. */
+static bool in_fitted_box(double px, double py, int x, int y, int w, int h,
+		const float radii[4]) {
+	float r[4];
+	wlr_render_fit_corner_radii(r, radii, w, h);
+	if (px < x || py < y || px >= x + w || py >= y + h) {
+		return false;
+	}
+	for (int i = 0; i < 4; i++) {
+		bool left = i == 0 || i == 3, top = i == 0 || i == 1;
+		double cx = left ? x + r[i] : x + w - r[i];
+		double cy = top ? y + r[i] : y + h - r[i];
+		double dx = left ? cx - px : px - cx, dy = top ? cy - py : py - cy;
+		if (r[i] > 0 && dx > 0 && dy > 0 && dx * dx + dy * dy > r[i] * r[i]) {
+			return false;
+		}
+	}
+	return true;
+}
+
+/* A border is one rect with a cutout, and its ring hit test agrees with that
+ * rect pixel for pixel: a point is on the ring exactly when it is inside the
+ * rect's rounded box and outside its cutout. Widths that meet leave no
+ * cutout and the whole box is ring. */
+static void test_border_ring_matches_its_rect(void) {
+	static const struct { int width, radius; } cases[] = {
+		{ 5, 0 }, { 5, 3 }, { 5, 5 }, { 5, 10 }, { 2, 8 }, { 8, 1 }, { 60, 10 },
+	};
+	const int size = 100;
+	for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); i++) {
+		struct fixture f;
+		fixture_init(&f);
+		int bw = cases[i].width;
+		Clay_RenderCommand c = cmd_border(1, 0, 0, (float)size, (float)size,
+			bw, (float)cases[i].radius);
+		render_reconcile(f.rs, commands_of(&c, 1), &no_hooks, no_bounds);
+		struct wlr_scene_tree *rt = render_tree(f.parent);
+		CHECK_EQ(child_count(rt), 1);
+		CHECK_EQ(child_at(rt, 0)->type, WLR_SCENE_NODE_RECT);
+		struct wlr_scene_rect *rect = wlr_scene_rect_from_node(child_at(rt, 0));
+		bool hole = 2 * bw < size;
+		CHECK_EQ(rect->width, size);
+		CHECK_EQ(rect->corner_radii[0], cases[i].radius);
+		CHECK_EQ(rect->cutout_box.x, hole ? bw : 0);
+		CHECK_EQ(rect->cutout_box.width, hole ? size - 2 * bw : 0);
+		CHECK_EQ(rect->cutout_radii[0], hole ? fmax(0, cases[i].radius - bw) : 0);
+		CHECK_EQ(render_raster_bytes(f.rs), 0);
+
+		int disagree = 0;
+		for (int y = 0; y < size; y++) {
+			for (int x = 0; x < size; x++) {
+				double px = x + 0.5, py = y + 0.5;
+				bool drawn = in_fitted_box(px, py, 0, 0, size, size,
+						rect->corner_radii) &&
+					!(hole && in_fitted_box(px, py, rect->cutout_box.x,
+						rect->cutout_box.y, rect->cutout_box.width,
+						rect->cutout_box.height, rect->cutout_radii));
+				if (drawn != render_hit(f.rs, px, py, accept_any, NULL)) {
+					disagree++;
+				}
+			}
+		}
+		if (disagree != 0) {
+			fprintf(stderr, "  width %d radius %d: %d px disagree\n",
+				bw, cases[i].radius, disagree);
+		}
+		CHECK_EQ(disagree, 0);
+		fixture_finish(&f, &no_hooks);
+	}
+}
+
+/* A rounded RECTANGLE is a scene rect with the radii on it and no buffer; a
+ * resize or a radius change rasters nothing. Cropped by a clip, the rect
+ * shrinks and keeps its arcs where the solved box puts them, as a rounded
+ * clip at that box. */
+static void test_rounded_rect_is_a_scene_rect(void) {
+	struct fixture f;
+	fixture_init(&f);
+	Clay_RenderCommand cmds[] = { cmd_rect(1, 10, 10, 100, 60, 8) };
+	CHECK(render_reconcile(f.rs, commands_of(cmds, 1), &no_hooks, no_bounds) > 0);
+	struct wlr_scene_node *node = child_at(render_tree(f.parent), 0);
+	CHECK_EQ(node->type, WLR_SCENE_NODE_RECT);
+	struct wlr_scene_rect *rect = wlr_scene_rect_from_node(node);
+	CHECK(rect->corner_radii[0] == 8 && rect->corner_radii[1] == 8 &&
+		rect->corner_radii[2] == 8 && rect->corner_radii[3] == 8);
+	CHECK_EQ(rect->clips_len, 0);
+	CHECK_EQ(render_raster_bytes(f.rs), 0);
+	CHECK_EQ(render_buffers_created(f.rs), 0);
+	CHECK_EQ(render_reconcile(f.rs, commands_of(cmds, 1), &no_hooks, no_bounds), 0);
+
+	cmds[0].boundingBox.x = 20;
+	cmds[0].boundingBox.width = 150;
+	CHECK(render_reconcile(f.rs, commands_of(cmds, 1), &no_hooks, no_bounds) > 0);
+	CHECK(child_at(render_tree(f.parent), 0) == node);
+	CHECK_EQ(rect->width, 150);
+	CHECK_EQ(render_buffers_created(f.rs), 0);
+	CHECK_EQ(render_raster_bytes(f.rs), 0);
+
+	/* Top-left and top-right only: the node keeps what Clay said, in the
+	 * scene's clockwise order. */
+	cmds[0].renderData.rectangle.cornerRadius = (Clay_CornerRadius) {
+		.topLeft = 24, .topRight = 24 };
+	CHECK_EQ(render_reconcile(f.rs, commands_of(cmds, 1), &no_hooks, no_bounds), 1);
+	CHECK(rect->corner_radii[0] == 24 && rect->corner_radii[1] == 24 &&
+		rect->corner_radii[2] == 0 && rect->corner_radii[3] == 0);
+
+	/* Cropped: the rect is the crop, its arcs a clip at the solved box. */
+	Clay_RenderCommand clipped[] = {
+		cmd_clip(10, 0, 0, 60, 40, true, true), cmds[0], cmd_clip_end(10),
+	};
+	CHECK(render_reconcile(f.rs, commands_of(clipped, 3), &no_hooks, no_bounds) > 0);
+	CHECK_EQ(rect->width, 40);
+	CHECK_EQ(rect->height, 30);
+	CHECK_EQ(rect->corner_radii[0], 0);
+	CHECK_EQ(rect->clips_len, 1);
+	CHECK_EQ(rect->clips[0].box.x, 0);
+	CHECK_EQ(rect->clips[0].box.y, 0);
+	CHECK_EQ(rect->clips[0].box.width, 150);
+	CHECK_EQ(rect->clips[0].box.height, 60);
+	CHECK_EQ(rect->clips[0].radii[0], 24);
+	CHECK_EQ(render_buffers_created(f.rs), 0);
+	CHECK_EQ(render_reconcile(f.rs, commands_of(clipped, 3), &no_hooks, no_bounds), 0);
+
+	fixture_finish(&f, &no_hooks);
+}
+
+/* A rounded BORDER is one scene rect: the command's radii outside, a cutout
+ * inset by the four widths with inset_corner_radius's radii inside, and no
+ * child nodes or buffer. */
+static void test_rounded_border_is_one_rect(void) {
+	struct fixture f;
+	fixture_init(&f);
+	Clay_RenderCommand c = cmd_border(1, 5, 5, 100, 60, 3, 8);
+	c.renderData.border.width = (Clay_BorderWidth) {
+		.left = 3, .right = 4, .top = 2, .bottom = 5 };
+	CHECK(render_reconcile(f.rs, commands_of(&c, 1), &no_hooks, no_bounds) > 0);
+	struct wlr_scene_tree *rt = render_tree(f.parent);
+	CHECK_EQ(child_count(rt), 1);
+	struct wlr_scene_node *node = child_at(rt, 0);
+	CHECK_EQ(node->type, WLR_SCENE_NODE_RECT);
+	struct wlr_scene_rect *rect = wlr_scene_rect_from_node(node);
+	CHECK_EQ(node->x, 5);
+	CHECK_EQ(rect->width, 100);
+	CHECK_EQ(rect->height, 60);
+	CHECK_EQ(rect->corner_radii[0], 8);
+	CHECK_EQ(rect->cutout_box.x, 3);
+	CHECK_EQ(rect->cutout_box.y, 2);
+	CHECK_EQ(rect->cutout_box.width, 93);
+	CHECK_EQ(rect->cutout_box.height, 53);
+	/* Each hole corner: the radius less the thicker of its two edges. */
+	CHECK(rect->cutout_radii[0] == 5 && rect->cutout_radii[1] == 4 &&
+		rect->cutout_radii[2] == 3 && rect->cutout_radii[3] == 3);
+	CHECK_EQ(render_raster_bytes(f.rs), 0);
+	CHECK_EQ(render_buffers_created(f.rs), 0);
+	CHECK_EQ(render_reconcile(f.rs, commands_of(&c, 1), &no_hooks, no_bounds), 0);
+
+	/* A resize moves the hole and rasters nothing. */
+	c.boundingBox.width = 120;
+	CHECK(render_reconcile(f.rs, commands_of(&c, 1), &no_hooks, no_bounds) > 0);
+	CHECK_EQ(rect->cutout_box.width, 113);
+	CHECK_EQ(render_buffers_created(f.rs), 0);
+
+	/* Widths that meet leave no hole. */
+	c.boundingBox.width = 7;
+	render_reconcile(f.rs, commands_of(&c, 1), &no_hooks, no_bounds);
+	CHECK_EQ(rect->cutout_box.width, 0);
+
+	fixture_finish(&f, &no_hooks);
+}
+
+/* A square rect reaching a rounded host's corner square is a rect with that
+ * host's arcs as a clip, not a buffer; one clear of every corner square
+ * carries none. Two nested hosts over a rect give two clips, the inner
+ * first. */
+static void test_rects_under_radius_scopes_carry_clips(void) {
+	struct fixture f;
+	fixture_init(&f);
+	Clay_RenderCommand cmds[] = {
+		cmd_rect(10, 0, 0, 100, 100, 8),
+		cmd_rect(11, 10, 10, 50, 50, 4),
+		cmd_rect(1, 10, 10, 20, 20, 0),
+		cmd_rect(2, 30, 30, 10, 10, 0),
+		cmd_rect(3, 0, 0, 30, 30, 0),
+	};
+	cmds[0].userData = word(7, 1, 0);
+	cmds[1].userData = word(7, 2, 1);
+	cmds[2].userData = word(7, 0, 2);
+	cmds[3].userData = word(7, 0, 2);
+	cmds[4].userData = word(7, 0, 1);
+	render_reconcile(f.rs, commands_of(cmds, 5), &no_hooks, no_bounds);
+	struct wlr_scene_tree *rt = render_tree(f.parent);
+	for (int i = 0; i < 5; i++) {
+		CHECK_EQ(child_at(rt, i)->type, WLR_SCENE_NODE_RECT);
+	}
+	/* The inner host is clear of the outer host's corners: no clip. */
+	struct wlr_scene_rect *r = wlr_scene_rect_from_node(child_at(rt, 1));
+	CHECK_EQ(r->clips_len, 0);
+	CHECK_EQ(r->corner_radii[0], 4);
+	/* The leaf at the inner host's corner: its box, node-local, as a clip. */
+	r = wlr_scene_rect_from_node(child_at(rt, 2));
+	CHECK_EQ(r->clips_len, 1);
+	CHECK_EQ(r->clips[0].box.x, 0);
+	CHECK_EQ(r->clips[0].box.y, 0);
+	CHECK_EQ(r->clips[0].box.width, 50);
+	CHECK_EQ(r->clips[0].radii[0], 4);
+	/* The leaf in the middle: none. */
+	r = wlr_scene_rect_from_node(child_at(rt, 3));
+	CHECK_EQ(r->clips_len, 0);
+	/* The leaf at the outer host's corner. */
+	r = wlr_scene_rect_from_node(child_at(rt, 4));
+	CHECK_EQ(r->clips_len, 1);
+	CHECK_EQ(r->clips[0].radii[0], 8);
+	CHECK_EQ(render_buffers_created(f.rs), 0);
+	CHECK_EQ(render_raster_bytes(f.rs), 0);
+	CHECK_EQ(render_reconcile(f.rs, commands_of(cmds, 5), &no_hooks, no_bounds), 0);
+
+	/* The inner host moves to the outer corner: it takes the outer arcs as
+	 * a clip, and the leaf under both takes two, the inner first. */
+	cmds[1] = cmd_rect(11, 0, 0, 50, 50, 4);
+	cmds[1].userData = word(7, 2, 1);
+	cmds[2] = cmd_rect(1, 0, 0, 20, 20, 0);
+	cmds[2].userData = word(7, 0, 2);
+	CHECK(render_reconcile(f.rs, commands_of(cmds, 5), &no_hooks, no_bounds) > 0);
+	r = wlr_scene_rect_from_node(child_at(rt, 1));
+	CHECK_EQ(r->clips_len, 1);
+	CHECK_EQ(r->clips[0].radii[0], 8);
+	r = wlr_scene_rect_from_node(child_at(rt, 2));
+	CHECK_EQ(r->clips_len, 2);
+	CHECK_EQ(r->clips[0].radii[0], 4);
+	CHECK_EQ(r->clips[0].box.width, 50);
+	CHECK_EQ(r->clips[1].radii[0], 8);
+	CHECK_EQ(r->clips[1].box.width, 100);
+	CHECK_EQ(render_buffers_created(f.rs), 0);
+	CHECK_EQ(render_reconcile(f.rs, commands_of(cmds, 5), &no_hooks, no_bounds), 0);
+
+	fixture_finish(&f, &no_hooks);
+}
+
+/* A TEXT under a rounded host rasters once; a move inside the host rasters
+ * nothing, since the arcs are a clip on the buffer, not in its pixels. */
+static void test_text_under_radius_scope_rasters_once(void) {
+	struct fixture f;
+	fixture_init(&f);
+	Clay_RenderCommand cmds[] = {
+		cmd_rect(10, 0, 0, 100, 40, 8),
+		cmd_text(1, 2, 2, 60, 16, "hello", false),
+	};
+	cmds[0].userData = word(7, 1, 0);
+	cmds[1].userData = word(7, 0, 1);
+	render_reconcile(f.rs, commands_of(cmds, 2), &no_hooks, no_bounds);
+	CHECK_EQ(render_buffers_created(f.rs), 1);
+	struct wlr_scene_buffer *sb =
+		wlr_scene_buffer_from_node(child_at(render_tree(f.parent), 1));
+	CHECK_EQ(sb->clips_len, 1);
+	CHECK_EQ(sb->clips[0].box.x, -2);
+	CHECK_EQ(sb->clips[0].box.y, -2);
+	CHECK_EQ(sb->clips[0].box.width, 100);
+	CHECK_EQ(sb->clips[0].radii[0], 8);
+	CHECK_EQ(render_reconcile(f.rs, commands_of(cmds, 2), &no_hooks, no_bounds), 0);
+
+	cmds[1].boundingBox.x = 4;
+	CHECK(render_reconcile(f.rs, commands_of(cmds, 2), &no_hooks, no_bounds) > 0);
+	CHECK_EQ(render_buffers_created(f.rs), 0);
+	CHECK_EQ(sb->clips[0].box.x, -4);
+
+	/* Moved clear of every corner square, the clip goes. */
+	cmds[1].boundingBox = (Clay_BoundingBox) { 20, 10, 60, 16 };
+	render_reconcile(f.rs, commands_of(cmds, 2), &no_hooks, no_bounds);
+	CHECK_EQ(render_buffers_created(f.rs), 0);
+	CHECK_EQ(sb->clips_len, 0);
+
+	fixture_finish(&f, &no_hooks);
+}
+
+/* The edge rule: two radii of 24 on top of a 1000 by 30 rect stay 24 (a
+ * half-height clamp would make them 15), so the point 6 in from the top-left
+ * corner on both axes is outside the arc and reaches the rect below. Four
+ * equal radii beyond the box still fit to half its height: a pill. */
+static void test_edge_rule_hit(void) {
+	struct fixture f;
+	fixture_init(&f);
+	Clay_RenderCommand cmds[] = {
+		cmd_rect(10, 0, 0, 1000, 30, 0),
+		cmd_rect(1, 0, 0, 1000, 30, 0),
+	};
+	cmds[1].renderData.rectangle.cornerRadius = (Clay_CornerRadius) {
+		.topLeft = 24, .topRight = 24 };
+	render_reconcile(f.rs, commands_of(cmds, 2), &no_hooks, no_bounds);
+	uint32_t below = 10, bar = 1;
+	CHECK(!render_hit(f.rs, 6, 6, accept_clip_child, &bar));
+	CHECK(render_hit(f.rs, 6, 6, accept_clip_child, &below));
+	CHECK(!render_hit(f.rs, 994, 6, accept_clip_child, &bar));
+	/* Inside the arc, and at the square bottom-left corner, the bar. */
+	CHECK(render_hit(f.rs, 24, 24, accept_clip_child, &bar));
+	CHECK(render_hit(f.rs, 0, 29, accept_clip_child, &bar));
+
+	cmds[1].renderData.rectangle.cornerRadius = (Clay_CornerRadius) {
+		1e6, 1e6, 1e6, 1e6 };
+	render_reconcile(f.rs, commands_of(cmds, 2), &no_hooks, no_bounds);
+	CHECK(!render_hit(f.rs, 2, 2, accept_clip_child, &bar));
+	CHECK(render_hit(f.rs, 15, 2, accept_clip_child, &bar));
+	CHECK(render_hit(f.rs, 2, 15, accept_clip_child, &bar));
+
+	fixture_finish(&f, &no_hooks);
 }
 
 static void test_shape_leaf(void) {
@@ -2029,6 +2356,7 @@ static void test_shadow_current_owner(void) {
 	fixture_finish(&f, &no_hooks);
 }
 
+/* The verifier aborts the process, so the divergence runs in a child. */
 static void test_verifier_catches_divergence(void) {
 #ifndef SOMEWM_RENDER_VERIFY
 	fprintf(stderr, "skipped: built without SOMEWM_RENDER_VERIFY\n");
@@ -2067,7 +2395,7 @@ int main(void) {
 		{ "identical frame reconciles to zero", test_identical_frame_reconciles_to_zero },
 		{ "add, remove and move", test_add_remove_move },
 		{ "retained node returns", test_retained_node_returns },
-		{ "kind swap destroys and restacks", test_kind_swap_destroys_and_restacks },
+		{ "a radius toggle keeps the node", test_radius_toggle_keeps_the_node },
 		{ "restack only when order changed", test_restack_only_when_order_changed },
 		{ "clip stack", test_clip_stack },
         { "full clip budget inside a floating root", test_full_clip_budget },
@@ -2078,6 +2406,8 @@ int main(void) {
 		{ "border clips to the bounds", test_border_clips_to_the_bounds },
 		{ "client surface hooks", test_client_surface_hooks },
 		{ "custom crops to its clip", test_custom_crops_to_its_clip },
+		{ "client corners call the hook", test_client_corners_call_the_hook },
+		{ "a click in a client's corner falls through", test_click_in_a_client_corner_falls_through },
 		{ "float boxes round", test_float_boxes_round },
 		{ "text rasters once per change", test_text_rasters_once_per_change },
 		{ "text of length -1 is an empty line", test_text_negative_length_is_empty },
@@ -2098,7 +2428,12 @@ int main(void) {
 		{ "shadow follows current owner", test_shadow_current_owner },
 		{ "font interning", test_font_interning },
 		{ "measure is monotonic", test_measure_is_monotonic },
-		{ "border ring has no gap or overlap", test_border_ring_has_no_gap_or_overlap },
+		{ "a border's ring matches its rect", test_border_ring_matches_its_rect },
+		{ "a rounded rect is a scene rect", test_rounded_rect_is_a_scene_rect },
+		{ "a rounded border is one rect", test_rounded_border_is_one_rect },
+		{ "rects under radius scopes carry clips", test_rects_under_radius_scopes_carry_clips },
+		{ "text under a radius scope rasters once", test_text_under_radius_scope_rasters_once },
+		{ "the edge rule in the hit test", test_edge_rule_hit },
 		{ "clip source matches the buffer grid", test_clip_source_matches_the_buffer_grid },
 		{ "verifier catches divergence", test_verifier_catches_divergence },
 	};

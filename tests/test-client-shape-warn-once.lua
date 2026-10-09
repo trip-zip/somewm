@@ -28,17 +28,33 @@ runner.run_steps {
         assert(warnings == 1, "expected one client warning, got " .. warnings)
         return true
     end,
+    -- A rounded rectangle is kept; any other shape is kept too and warns
+    -- once naming the client when the layout pass reads it.
     function()
         local c = utils.find_client_by_class("shape_warn_once")
-        local rounded_rect = require("gears.shape").rounded_rect
-        c.shape = rounded_rect
-        c.shape = rounded_rect
-        assert(c.shape == nil)
+        local gshape = require("gears.shape")
+        c.shape = gshape.rounded_rect
+        assert(c.shape == gshape.rounded_rect)
+        c.shape = 12
+        assert(c.shape == 12)
+        c.shape = gshape.circle
+        c.shape = gshape.circle
+        assert(c.shape == gshape.circle)
+        return true
+    end,
+    function(count)
+        local c = utils.find_client_by_class("shape_warn_once")
+        assert(c.shape == require("gears.shape").circle, "the shape stays what was set")
         io.stderr:flush()
         local f = assert(io.open(assert(os.getenv("SOMEWM_TEST_LOG"))))
         local text = f:read("*a")
         f:close()
-        local _, warnings = text:gsub("awful.client: shape is not applied", "")
+        local _, warnings = text:gsub(
+            "client: shape is not a rounded rectangle, the client stays square: shape_warn_once", "")
+        if warnings == 0 then
+            assert(count < 20, "a shape that is not a rounded rectangle warns")
+            return nil
+        end
         assert(warnings == 1, "expected one shape warning, got " .. warnings)
         return true
     end,

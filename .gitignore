@@ -19,6 +19,7 @@ build-bench/
 builddir/
 # Each wrap unpacks into a directory here; only the .wrap files are tracked
 subprojects/*/
+!subprojects/packagefiles/
 
 # Development tooling & reports (local only)
 tools/

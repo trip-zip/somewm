@@ -472,6 +472,7 @@ read_node(lua_State *L, int idx, struct widget_node *n)
 	}
 
 	if (!read_number(L, idx, "radius", 0, 1e6, &n->radius)
+			|| !read_quad(L, idx, "radii", n->radii)
 			|| !read_number(L, idx, "x", -1e6, 1e6, &n->offset[0])
 			|| !read_number(L, idx, "y", -1e6, 1e6, &n->offset[1])
 			|| !read_number(L, idx, "gap", 0, UINT16_MAX, &gap)

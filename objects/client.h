@@ -164,6 +164,13 @@ struct client_t
     struct wlr_box surface_box;
     /** Realized crop relative to surface_box; width 0 means no crop. */
     struct wlr_box surface_clip;
+    /** The corner radii the renderer last handed window.c for the surface
+     * (render.h corners), logical pixels, zeros for square corners. */
+    float surface_radii[4];
+    /** The shape property: a registry ref of its function, 0 for none, or
+     * its radius, 0 for none. */
+    int shape_ref;
+    float shape_radius;
     /** Scene surface node */
     struct wlr_scene_tree *scene_surface;
     /** Popup parent tree: tracks scene_surface's position but is exempt

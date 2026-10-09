@@ -1545,6 +1545,8 @@ client_xproperty_free(client_xproperty_t *property)
 static void
 client_wipe(client_t *c)
 {
+    if (c->shape_ref)
+        luaL_unref(globalconf_get_lua_State(), LUA_REGISTRYINDEX, c->shape_ref);
     while (c->xproperties) {
         client_xproperty_t *property = c->xproperties;
         c->xproperties = property->next;
@@ -4369,6 +4371,61 @@ luaA_client_get_size_hints(lua_State *L, client_t *c)
     return 1;
 }
 
+/** The client's shape: nil, a number (one corner radius in pixels for all
+ * four corners) or a shape function. A function is read by awful.client.clay:
+ * `gears.shape.rounded_rect`, or a closure drawing its path, becomes that
+ * radius; any other function warns once naming the client, which stays
+ * square. A titlebar takes the corners on its edge and the surface the rest.
+ * `gears.surface.apply_shape_bounding` sets this on a client.
+ *
+ * @property shape
+ * @tparam[opt=nil] number|function|nil shape
+ * @propemits false false
+ * @see gears.shape
+ * @see gears.surface.apply_shape_bounding
+ */
+static int
+luaA_client_get_shape(lua_State *L, client_t *c)
+{
+    if (c->shape_ref)
+        lua_rawgeti(L, LUA_REGISTRYINDEX, c->shape_ref);
+    else if (c->shape_radius > 0)
+        lua_pushnumber(L, c->shape_radius);
+    else
+        lua_pushnil(L);
+    return 1;
+}
+
+static int
+luaA_client_set_shape(lua_State *L, client_t *c)
+{
+    int type = lua_type(L, -1);
+    if (type != LUA_TNIL && type != LUA_TNUMBER && type != LUA_TFUNCTION)
+        return luaL_error(L, "shape must be nil, a number or a function");
+    if (type == LUA_TNUMBER && lua_tonumber(L, -1) < 0)
+        return luaL_error(L, "shape radius must be at least 0");
+    bool same = !c->shape_ref
+        && ((type == LUA_TNIL && c->shape_radius <= 0)
+            || (type == LUA_TNUMBER && lua_tonumber(L, -1) == c->shape_radius));
+    if (type == LUA_TFUNCTION && c->shape_ref) {
+        lua_rawgeti(L, LUA_REGISTRYINDEX, c->shape_ref);
+        same = lua_rawequal(L, -1, -2);
+        lua_pop(L, 1);
+    }
+    if (same)
+        return 0;
+    if (c->shape_ref)
+        luaL_unref(L, LUA_REGISTRYINDEX, c->shape_ref);
+    c->shape_ref = 0;
+    c->shape_radius = type == LUA_TNUMBER ? lua_tonumber(L, -1) : 0;
+    if (type == LUA_TFUNCTION) {
+        lua_pushvalue(L, -1);
+        c->shape_ref = luaL_ref(L, LUA_REGISTRYINDEX);
+    }
+    luaA_object_emit_signal(L, -3, "property::shape", 0);
+    return 0;
+}
+
 static int
 luaA_client_get_shape_mask(lua_State *L, client_t *c)
 {
@@ -4775,6 +4832,7 @@ client_class_setup(lua_State *L)
         { "_scene_layer", NULL, (lua_class_propfunc_t) luaA_client_get__scene_layer, NULL },
         { "screen", NULL, (lua_class_propfunc_t) luaA_client_get_screen, (lua_class_propfunc_t) luaA_client_set_screen },
         { "shadow", (lua_class_propfunc_t) luaA_client_set_shadow, (lua_class_propfunc_t) luaA_client_get_shadow, (lua_class_propfunc_t) luaA_client_set_shadow },
+        { "shape", (lua_class_propfunc_t) luaA_client_set_shape, (lua_class_propfunc_t) luaA_client_get_shape, (lua_class_propfunc_t) luaA_client_set_shape },
         { "shape_bounding", (lua_class_propfunc_t) luaA_client_set_shape_mask, (lua_class_propfunc_t) luaA_client_get_shape_mask, (lua_class_propfunc_t) luaA_client_set_shape_mask },
         { "shape_clip", (lua_class_propfunc_t) luaA_client_set_shape_mask, (lua_class_propfunc_t) luaA_client_get_shape_mask, (lua_class_propfunc_t) luaA_client_set_shape_mask },
         { "shape_input", (lua_class_propfunc_t) luaA_client_set_shape_mask, (lua_class_propfunc_t) luaA_client_get_shape_mask, (lua_class_propfunc_t) luaA_client_set_shape_mask },

@@ -182,6 +182,7 @@ struct declare_record {
 	Clay_Padding padding;
 	uint16_t gap;
 	bool custom, image, clip;
+	Clay_CornerRadius radius;
 	/* A widget tree root: the host whose nodes the dump walks under it. */
 	bool has_host;
 	struct widget_host host;
@@ -488,6 +489,7 @@ record_open(const char *role, uint64_t handle, Clay_ElementId id,
 		.padding = decl->layout.padding,
 		.gap = decl->layout.childGap,
 		.custom = decl->custom.customData != NULL && decl->custom.customData != RENDER_CLIP_MARK,
+		.radius = decl->cornerRadius,
 		.image = decl->image.imageData != NULL,
 		.clip = render_userdata_byte(decl->userData, RENDER_UD_OPENS_SHIFT) != 0,
 		.has_host = host != NULL,
@@ -1494,6 +1496,7 @@ declare_composite(const struct widget_host *host, size_t i, int16_t z,
 
 		if (drawable && drawable_widget_host(drawable, &bar) && bar.tree->nodes_len > 0) {
 			bar.flow = true;
+			memcpy(bar.radii, n->radii, sizeof(bar.radii));
 			declare_widget_slot(&bar, id, &e, name, n->src[0], n->src[1], z,
 				leaf_userdata(n->host, 1.0f));
 		} else {
@@ -1518,6 +1521,8 @@ declare_composite(const struct widget_host *host, size_t i, int16_t z,
 			.clipTo = CLAY_CLIP_TO_ATTACHED_PARENT,
 		};
 		e.custom.customData = (void *)(uintptr_t)n->surface;
+		e.cornerRadius = (Clay_CornerRadius) { .topLeft = n->radii[0],
+			.topRight = n->radii[1], .bottomRight = n->radii[2], .bottomLeft = n->radii[3] };
 		e.userData = userdata_clip(leaf_userdata(n->surface, n->opacity), 0, clip);
 		declare_leaf(name, n->surface, n->src[0], n->src[1], id, &e);
 		/* The client's popups attach to its surface leaf. */
@@ -1905,6 +1910,11 @@ declare_widget_slot(const struct widget_host *host, Clay_ElementId id,
 	if (host->radius > 0)
 		e.cornerRadius = (Clay_CornerRadius) {host->radius, host->radius,
 			host->radius, host->radius};
+	else if (host->radii[0] > 0 || host->radii[1] > 0 || host->radii[2] > 0
+			|| host->radii[3] > 0)
+		e.cornerRadius = (Clay_CornerRadius) { .topLeft = host->radii[0],
+			.topRight = host->radii[1], .bottomRight = host->radii[2],
+			.bottomLeft = host->radii[3] };
 	record_open(role, declare_userdata_handle(userdata), id, &e, wsrc, hsrc, host);
 	declare_widget_tree_at(host, id, z, userdata, &e);
 }
@@ -4804,6 +4814,12 @@ dump_record_line(buffer_t *buf, struct declare_band *band,
 		if (r->host.radius > 0)
 			buffer_addf(buf, ", radius %g", r->host.radius);
 	}
+	/* A surface leaf's or titlebar host's corners from the client's shape. */
+	if ((r->has_host ? r->host.radius <= 0 : r->custom)
+			&& (r->radius.topLeft > 0 || r->radius.topRight > 0
+				|| r->radius.bottomRight > 0 || r->radius.bottomLeft > 0))
+		buffer_addf(buf, " radii %g,%g,%g,%g", r->radius.topLeft, r->radius.topRight,
+			r->radius.bottomRight, r->radius.bottomLeft);
 	if (r->clip)
 		buffer_adds(buf, " clip");
 	buffer_adds(buf, " w=");

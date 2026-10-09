@@ -250,8 +250,8 @@ local function describe_radialprogressbar(w)
         pad[i] = clay.pixels(w, "paddings." .. side, bw / 2 + (padding[side] or 0))
     end
 
-    -- render.c rounded_rect_path clamps PILL to half the shorter side,
-    -- cutting the child to the same pill as before_draw_children.
+    -- The renderer fits PILL to half the shorter side, cutting the child
+    -- to the same pill as before_draw_children.
     local PILL = 1e6
     local node = { pad = pad, specs = {
         { w = "grow", h = "grow", radius = PILL,
