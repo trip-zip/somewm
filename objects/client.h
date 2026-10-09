@@ -162,6 +162,10 @@ struct client_t
      * configure leg sends and clips to. Empty until the first frame that
      * declares the client. */
     struct wlr_box surface_box;
+    /** The size the client's last commit drew, when it is not the size of
+     * the configure that commit acknowledged; 0,0 when they match. The
+     * composite draws this size (awful.client.clay, _committed_size). */
+    int committed_width, committed_height;
     /** Realized crop relative to surface_box; width 0 means no crop. */
     struct wlr_box surface_clip;
     /** The corner radii the renderer last handed window.c for the surface
@@ -212,10 +216,12 @@ struct client_t
     struct wl_listener foreign_request_minimize;
     /** Pending resize serial for Wayland configure */
     uint32_t resize;
-    /** Set when we re-sent a configure because actual geometry didn't match
-     *  the acked configure. Prevents infinite loop with clients that
-     *  intentionally render smaller (e.g. terminals rounding to cell size). */
-    bool configure_resent;
+    /** Re-sends of the acknowledged size since the committed size last
+     * changed, when the last one went out (monotonic ms) and the timer that
+     * sends the next (configure_retry() in window.c). */
+    int configure_retries;
+    int64_t configure_retry_msec;
+    struct wl_event_source *configure_retry;
     /** Previous geometry for restore */
     area_t prev;
     /** Size bounds */

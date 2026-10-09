@@ -273,6 +273,9 @@ read_composite(lua_State *L, int idx, struct widget_node *n)
 			|| !read_host(L, idx, n)
 			|| !read_number(L, idx, "opacity", 0, 1, &n->opacity))
 		return false;
+	lua_getfield(L, idx, "probe");
+	n->probe = n->surface && lua_toboolean(L, -1);
+	lua_pop(L, 1);
 	if (n->client || n->surface || n->host)
 		n->widget = false;
 	return true;
@@ -566,9 +569,9 @@ read_node(lua_State *L, int idx, struct widget_node *n)
 	bool has_scroll = !lua_isnil(L, -1);
 	lua_pop(L, 1);
 	if (has_scroll) {
-		static const char *const axes[] = { "x", "y" };
+		static const char *const axes[] = { "x", "y", "both" };
 
-		if (!read_word(L, idx, "scroll", axes, 2, &n->scroll))
+		if (!read_word(L, idx, "scroll", axes, 3, &n->scroll))
 			return false;
 		n->scroll++;
 	}

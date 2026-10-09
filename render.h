@@ -181,6 +181,13 @@ static inline struct render_shadow *render_shadow_of(void *data)
 
 #define RENDER_SHAPE_TAG (UINT64_C(1) << 63)
 
+/* A client's configure probe: a CUSTOM leaf naming the client's handle
+ * that realizes nothing and sends its solved size as the configure. A
+ * surface leaf drawn beside a probe carries RENDER_PROBED_TAG and sends
+ * none. */
+#define RENDER_PROBE_TAG (UINT64_C(1) << 61)
+#define RENDER_PROBED_TAG (UINT64_C(1) << 60)
+
 static inline void *render_shape_tag(struct render_shape *shape)
 {
 	return (void *)((uintptr_t)shape | RENDER_SHAPE_TAG);
@@ -230,6 +237,7 @@ struct render_node_view {
 	bool has_node;          /* false for a SCISSOR marker, a clip mark or a
 				 * dead surface */
 	bool clip_mark;         /* a CUSTOM command carrying RENDER_CLIP_MARK */
+	bool probe;             /* a CUSTOM command carrying RENDER_PROBE_TAG */
 	bool mismatch;          /* the scene disagrees with rbox */
 	void *user_data;
 };

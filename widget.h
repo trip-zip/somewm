@@ -141,6 +141,9 @@ struct widget_node {
 	 * surface's opacity. */
 	uint64_t surface;
 	float opacity;
+	/* The surface leaf is the client's configure probe: it sends its
+	 * solved size as the configure and draws nothing. */
+	bool probe;
 	/* The drawable whose compiled tree is declared in flow here, by its
 	 * titlebar declare handle. */
 	uint64_t host;
@@ -158,7 +161,7 @@ struct widget_node {
 	bool natural;
 	float aspect;
 	float image_size[2];
-	uint8_t scroll;      /* 0 none, 1 x, 2 y */
+	uint8_t scroll;      /* 0 none, 1 x, 2 y, 3 both */
 	bool track, thumb;
 	/* The child offset this scroll node last declared; written only where
 	 * declare.c declares it, so a moved record publishes the tree. */

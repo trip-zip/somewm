@@ -253,12 +253,13 @@ initialcommitnotify(struct wl_listener *listener, void *data)
 	 * initial size. Forcing set_size to the workarea here would make
 	 * clients opened under awful.layout.suit.floating fill the screen,
 	 * because floating.arrange() is a no-op and never resizes them. */
-	if (m && !client_is_unmanaged(c)) {
-		wlr_xdg_toplevel_set_bounds(c->surface.xdg->toplevel,
-			m->w.width, m->w.height);
-	}
+	if (m && !client_is_unmanaged(c))
+		client_set_bounds(c, m->w.width, m->w.height);
 	wlr_xdg_toplevel_set_size(c->surface.xdg->toplevel, 0, 0);
 }
+
+static void client_apply_corners(Client *c);
+static void configure_retry_arm(Client *c);
 
 /* Handle subsequent XDG commits - resizing and opacity.
  * This listener is registered in mapnotify AFTER wlr_scene_xdg_surface_create
@@ -275,6 +276,32 @@ commitnotify(struct wl_listener *listener, void *data)
 #ifdef SOMEWM_BENCH
 	bench_manage_end(c);
 #endif
+
+	/* The size this commit drew, kept when it is not the size of the
+	 * configure the commit acknowledges: the composite draws it
+	 * (awful.client.clay). A configure that left the size to the client
+	 * (0) is matched by any size. */
+	struct wlr_box committed = c->surface.xdg->geometry;
+	struct wlr_xdg_toplevel_state *asked = &c->surface.xdg->toplevel->current;
+	if (wlr_box_empty(&committed))
+		committed = (struct wlr_box) { 0, 0, client_surface(c)->current.width,
+			client_surface(c)->current.height };
+	bool same = !asked->width || !asked->height
+		|| (committed.width == asked->width && committed.height == asked->height);
+	int width = same ? 0 : committed.width, height = same ? 0 : committed.height;
+	if (width != c->committed_width || height != c->committed_height) {
+		lua_State *L = globalconf_get_lua_State();
+
+		c->committed_width = width;
+		c->committed_height = height;
+		c->configure_retries = 0;
+		luaA_object_push(L, c);
+		luaA_object_emit_signal(L, -1, "property::_committed_size", 0);
+		lua_pop(L, 1);
+		if (c->mon && c->mon->declare)
+			declare_output_mark_dirty(c->mon->declare);
+		client_apply_corners(c);
+	}
 
 	/* mark a pending resize as completed */
 	if (c->resize) {
@@ -293,13 +320,10 @@ commitnotify(struct wl_listener *listener, void *data)
 	if (some_client_get_floating(c) || c->fullscreen) {
 		resize(c, c->geometry, (some_client_get_floating(c) && !c->fullscreen));
 	} else {
-		/* Send toplevel bounds so wlroots schedules a configure that
-		 * carries the pending size. Without this, slow-to-resize clients
-		 * (e.g. Ghostty) may never get a re-configure after a screen
-		 * change because client_set_size() is gated by !c->resize. */
-		client_set_bounds(c, c->geometry.width, c->geometry.height);
 		client_configure_to_box(c);
 	}
+
+	configure_retry_arm(c);
 
 	struct wlr_xdg_toplevel_state *hints = &c->surface.xdg->toplevel->current;
 	int32_t bounds[4] = { hints->min_width, hints->min_height,
@@ -685,6 +709,9 @@ destroynotify(struct wl_listener *listener, void *data)
 	bool already_unmanaged;
 	int i;
 
+	if (c->configure_retry)
+		wl_event_source_remove(c->configure_retry);
+	c->configure_retry = NULL;
 
 	/* Safety: If Lua state destroyed during cleanup, skip client_unmanage()
 	 * which emits signals. This should never happen with correct cleanup
@@ -1558,6 +1585,20 @@ apply_corners_to_buffer(struct wlr_scene_buffer *buffer, int sx, int sy, void *d
 	}
 }
 
+/* The radii the renderer handed hook_corners, on every buffer the surface
+ * tree holds now: a later commit can add a subsurface. The window box is
+ * the size the client drew. */
+static void
+client_apply_corners(Client *c)
+{
+	struct corner_apply corners = {
+		.box = { 0, 0, c->committed_width ? c->committed_width : c->surface_box.width,
+			c->committed_height ? c->committed_height : c->surface_box.height },
+		.radii = c->surface_radii,
+	};
+	wlr_scene_node_for_each_buffer(&c->scene_surface->node, apply_corners_to_buffer, &corners);
+}
+
 /* The configure-client-to-box seam: the client-facing half of geometry
  * application. Sends the state-batched configure for the surface box Clay
  * solved (c->surface_box, written by the render hooks) and clips the
@@ -1574,6 +1615,13 @@ client_configure_to_box(Client *c)
 	if (!c->scene || !client_surface(c) || !client_surface(c)->mapped
 			|| box.width <= 0 || box.height <= 0)
 		return;
+
+	/* The bounds are the workarea, the most a client may take on its
+	 * own, never the box it drew: GTK sizes a toplevel within its bounds
+	 * whenever it lays out without a configured size, so bounds taken
+	 * from a client's own commit hold it at that size for good. */
+	if (c->mon)
+		client_set_bounds(c, c->mon->w.width, c->mon->w.height);
 
 	/* CRITICAL: Only send configure if there's no pending resize waiting
 	 * for client commit. Without this check, we flood the client with
@@ -1616,14 +1664,57 @@ client_configure_to_box(Client *c)
 	}
 
 	wlr_scene_subsurface_tree_set_clip(&c->scene_surface->node, &clip);
+	client_apply_corners(c);
+}
 
-	/* The radii the renderer handed hook_corners, on every buffer the
-	 * surface tree holds now: a later commit can add a subsurface. */
-	struct corner_apply corners = {
-		.box = { 0, 0, box.width, box.height },
-		.radii = c->surface_radii,
-	};
-	wlr_scene_node_for_each_buffer(&c->scene_surface->node, apply_corners_to_buffer, &corners);
+/* A client that acknowledged its size and committed another is sent that
+ * size again: ghostty draws its old size once after a scale change and
+ * then the next size it is sent, a terminal rounds to whole cells. At most
+ * three re-sends a second apart while the committed size stays the same,
+ * then the client is drawn at the size it committed. A timer sends them,
+ * since an unfocused ghostty commits only when it is configured. */
+#define CONFIGURE_RETRIES 3
+#define CONFIGURE_RETRY_MS 1000
+
+static int64_t
+monotonic_msec(void)
+{
+	struct timespec now;
+
+	clock_gettime(CLOCK_MONOTONIC, &now);
+	return (int64_t)now.tv_sec * 1000 + now.tv_nsec / 1000000;
+}
+
+static int
+configure_retry(void *data)
+{
+	Client *c = data;
+	struct wlr_xdg_toplevel_state *acked = &c->surface.xdg->toplevel->current;
+
+	if (!client_surface(c)->mapped || c->resize || !c->committed_width
+			|| c->configure_retries >= CONFIGURE_RETRIES
+			|| c->surface_box.width != acked->width
+			|| c->surface_box.height != acked->height)
+		return 0;
+	c->configure_retries++;
+	c->configure_retry_msec = monotonic_msec();
+	c->resize = wlr_xdg_toplevel_set_size(c->surface.xdg->toplevel,
+		acked->width, acked->height);
+	return 0;
+}
+
+static void
+configure_retry_arm(Client *c)
+{
+	int64_t wait;
+
+	if (!c->committed_width || c->configure_retries >= CONFIGURE_RETRIES)
+		return;
+	if (!c->configure_retry)
+		c->configure_retry = wl_event_loop_add_timer(some_get_event_loop(),
+			configure_retry, c);
+	wait = c->configure_retry_msec + CONFIGURE_RETRY_MS - monotonic_msec();
+	wl_event_source_timer_update(c->configure_retry, wait > 1 ? (int)wait : 1);
 }
 
 void
@@ -1638,7 +1729,7 @@ resize(Client *c, struct wlr_box geo, int interact)
 
 	bbox = interact ? &sgeom : &c->mon->w;
 
-	client_set_bounds(c, geo.width, geo.height);
+	client_set_bounds(c, c->mon->w.width, c->mon->w.height);
 	c->geometry = geo;
 	applybounds(c, bbox);
 
