@@ -204,14 +204,9 @@ print_version_info(const char **paths, int num_paths)
 	printf("**LGI:** %s\n", get_lgi_version(L));
 
 #ifdef WITH_DBUS
-	printf("**Build:** D-Bus=yes");
+	printf("**Build:** D-Bus=yes\n");
 #else
-	printf("**Build:** D-Bus=no");
-#endif
-#ifdef XWAYLAND
-	printf(", XWayland=yes\n");
-#else
-	printf(", XWayland=no\n");
+	printf("**Build:** D-Bus=no\n");
 #endif
 
 	printf("\n**System:**\n");

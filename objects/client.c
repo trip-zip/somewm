@@ -2096,11 +2096,9 @@ client_set_border_color(client_t *c, const float color[4])
 int
 client_border(client_t *c)
 {
-#ifdef XWAYLAND
     if (c->client_type == X11 && c->surface.xwayland
             && c->surface.xwayland->override_redirect)
         return 0;
-#endif
     return c->fullscreen ? 0 : c->border_width;
 }
 
@@ -2145,7 +2143,6 @@ client_destroy_later(void)
     if(globalconf.destroy_later_windows.len == 0)
         return;
 
-#ifdef XWAYLAND
     /* Only destroy if we have an X11 connection (XWayland is enabled and connected) */
     if(!globalconf.connection)
     {
@@ -2163,7 +2160,6 @@ client_destroy_later(void)
     }
     if (ignored_enterleave)
         client_restore_enterleave_events();
-#endif
 
     /* Everything's done, clear the list */
     globalconf.destroy_later_windows.len = 0;
@@ -2336,7 +2332,6 @@ client_resize_do(client_t *c, area_t geometry, bool silent, bool solved)
      * any lag causes menus to appear at stale positions (e.g. Steam dropdowns).
      * The deferred xwm_schedule_flush() inside wlr_xwayland_surface_configure()
      * delivers the update on the next event loop iteration. */
-#ifdef XWAYLAND
     if (c->client_type == X11 && c->surface.xwayland
             && (old_geometry.x != geometry.x || old_geometry.y != geometry.y)) {
         int tl = c->fullscreen ? 0 : c->titlebar[CLIENT_TITLEBAR_LEFT].size;
@@ -2350,7 +2345,6 @@ client_resize_do(client_t *c, area_t geometry, bool silent, bool solved)
                     c->surface.xwayland->height);
         }
     }
-#endif
 
     if(!silent)
     {
@@ -2975,23 +2969,19 @@ client_unmanage(client_t *c, client_unmanage_t reason)
     if (c->client_type == XDGShell) {
         c->surface.xdg = NULL;
     }
-#ifdef XWAYLAND
     else if (c->client_type == X11) {
         /* X11 window invalidation handled below */
     }
-#endif
 
     /* set client as invalid (X11/XWayland compatibility) */
     c->window = XCB_NONE;
 
-#ifdef XWAYLAND
     /* For XWayland UNMAP: keep the Lua reference alive so that re-mapping
      * the same surface (e.g., Discord close-to-tray then re-open) can push
      * the client object to Lua.  The reference will be released by
      * destroynotify() when the XWayland surface is actually destroyed. */
     if (c->client_type == X11 && reason == CLIENT_UNMANAGE_UNMAP)
         return;
-#endif
 
     luaA_object_unref(L, c);
 }
@@ -3015,14 +3005,12 @@ client_kill(client_t *c)
         return;
     }
 
-#ifdef XWAYLAND
     if (c->client_type == X11 && c->surface.xwayland) {
         /* Use wlroots' XWayland close which properly sends WM_DELETE_WINDOW
          * or force-closes the window. This is more reliable than manual XCB. */
         wlr_xwayland_surface_close(c->surface.xwayland);
         return;
     }
-#endif
 
     warn("client_kill: Unknown client type or invalid surface");
 }
@@ -3318,13 +3306,11 @@ luaA_client_get__scene_layer(lua_State *L, client_t *c)
     /* Unmanaged (override-redirect) clients draw above everything
      * (declare.c's z table); every other client draws in the layer
      * stack_client_effective_layer() names. */
-#ifdef XWAYLAND
     if (c->client_type == X11 && c->surface.xwayland
             && c->surface.xwayland->override_redirect) {
         lua_pushstring(L, "overlay");
         return 1;
     }
-#endif
     layer = stack_client_effective_layer(c);
     if (!layer_names[layer])
         return 0;
@@ -4235,12 +4221,10 @@ luaA_client_get_focusable(lua_State *L, client_t *c)
          * For XWayland clients, use wlr_xwayland_surface_icccm_input_model()
          * because the WM_TAKE_FOCUS xcb_atom_t stub is 0 and client_hasproto()
          * compares against real non-zero atom values, so it always fails. */
-#ifdef XWAYLAND
         if (c->client_type == X11)
             ret = wlr_xwayland_surface_icccm_input_model(c->surface.xwayland)
                   != WLR_ICCCM_INPUT_MODEL_NONE;
         else
-#endif
             ret = client_hasproto(c, WM_TAKE_FOCUS);
     }
 
@@ -4541,11 +4525,9 @@ client_checker(client_t *c)
     if (c->client_type == XDGShell)
         return c->surface.xdg != NULL;
 
-#ifdef XWAYLAND
     /* For X11 clients, check if window ID exists */
     if (c->client_type == X11)
         return c->window != XCB_NONE;
-#endif
 
     /* For other types (LayerShell, etc.), assume valid if we have the struct */
     return true;

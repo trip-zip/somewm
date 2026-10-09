@@ -75,16 +75,12 @@ void property_handle_toplevel_title(struct wl_listener *listener, void *data);
  * XWayland Property Handling (X11 clients)
  * ======================================================================== */
 
-#ifdef XWAYLAND
-
 /** Update all XWayland properties for a client
  * Called during initial client setup to fetch all X11 properties at once.
  * Uses wlroots' cached XWayland surface properties (title, class, pid, etc.)
  * \param c The client
  */
 void property_update_xwayland_properties(client_t *c);
-
-#endif /* XWAYLAND */
 
 /* ========================================================================
  * Custom Property Types (for Lua API)

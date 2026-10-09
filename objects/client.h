@@ -152,9 +152,7 @@ struct client_t
     /** Wayland surface union */
     union {
         struct wlr_xdg_surface *xdg;
-#ifdef XWAYLAND
         struct wlr_xwayland_surface *xwayland;
-#endif
     } surface;
     /** Scene tree for this client */
     struct wlr_scene_tree *scene;
@@ -192,13 +190,11 @@ struct client_t
     struct wl_listener request_fullscreen;  /* Renamed to avoid conflict with bool fullscreen */
     struct wl_listener set_decoration_mode;
     struct wl_listener destroy_decoration;
-#ifdef XWAYLAND
     struct wl_listener activate;
     struct wl_listener associate;
     struct wl_listener dissociate;
     struct wl_listener configure;
     struct wl_listener set_hints;
-#endif
     /** Decoration */
     struct wlr_xdg_toplevel_decoration_v1 *decoration;
     struct wlr_foreign_toplevel_handle_v1 *toplevel_handle;

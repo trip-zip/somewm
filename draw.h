@@ -19,9 +19,7 @@
 #include <gdk-pixbuf/gdk-pixbuf.h>
 #include <lua.h>
 
-#ifdef XWAYLAND
 #include <xcb/xcb.h>
-#endif
 
 
 /** Create a Cairo surface from a GdkPixbuf
@@ -61,8 +59,6 @@ cairo_surface_t *draw_load_image(lua_State *L, const char *path, GError **error)
  * Note: We use void* instead of xcb_screen_t* because somewm's globalconf.screen
  * is not an xcb_screen_t* like in AwesomeWM. These stubs just return NULL anyway.
  */
-#ifdef XWAYLAND
 void *draw_find_visual(const void *s, uint32_t visual);
-#endif
 
 #endif /* DRAW_H */

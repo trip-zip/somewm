@@ -66,17 +66,14 @@
 #include <wlr/types/wlr_xdg_output_v1.h>
 #include <wlr/types/wlr_xdg_shell.h>
 #include <wlr/util/log.h>
-#ifdef XWAYLAND
 #include <wlr/xwayland.h>
 #include <xcb/xcb.h>
-#endif
 
 #include "somewm.h"
 #include "somewm_types.h"
 #include "somewm_api.h"
 #include "common/util.h"
 #include "common/lualib.h"
-#include "wlr_compat.h"
 #include "nested_inhibitor.h"
 #include "globalconf.h"
 #include "luaa.h"
@@ -186,9 +183,7 @@ static struct wl_listener new_session_lock = {.notify = locksession};
 struct wlr_pointer_gestures_v1 *pointer_gestures;
 /* gesture_*_consumed: owned by input.c */
 
-#ifdef XWAYLAND
 struct wlr_xwayland *xwayland;
-#endif
 
 /* Helper functions to expose layouts array to somewm_api.c */
 /* Layouts are now managed in Lua - no C layout functions needed */
@@ -825,7 +820,7 @@ setup(void)
 	wlr_viewporter_create(dpy);
 	wlr_single_pixel_buffer_manager_v1_create(dpy);
 	wlr_fractional_scale_manager_v1_create(dpy, 1);
-	COMPAT_PRESENTATION_CREATE(dpy, backend);
+	wlr_presentation_create(dpy, backend, 2);
 	wlr_alpha_modifier_v1_create(dpy);
 	pointer_gestures = wlr_pointer_gestures_v1_create(dpy);
 
@@ -1077,7 +1072,7 @@ setup(void)
 	 * e.g when running in the x11 backend or the wayland backend and the
 	 * compositor has Xwayland support */
 	unsetenv("DISPLAY");
-	/* Initialise the XWayland X server (no-op if XWAYLAND is not enabled).
+	/* Initialise the XWayland X server.
 	 * It will be started when the first X client is started. */
 	xwayland_setup();
 

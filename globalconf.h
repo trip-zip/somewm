@@ -369,7 +369,6 @@ typedef struct
         uint32_t root_visual;  /* For EWMH initialization */
     } *screen;
 
-#ifdef XWAYLAND
     /** EWMH (Extended Window Manager Hints) state tracking
      * This maintains the EWMH support window and advertised capabilities
      * for XWayland clients. Matches AwesomeWM's ewmh tracking exactly.
@@ -379,7 +378,6 @@ typedef struct
         xcb_atom_t *supported_atoms;      /* List of supported atoms */
         size_t supported_atoms_count;     /* Number of atoms (46 EWMH atoms) */
     } ewmh;
-#endif
 
     /** Drawable under mouse for enter/leave signals */
     drawable_t *drawable_under_mouse;

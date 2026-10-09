@@ -1,9 +1,9 @@
 /*
- * x11_compat.h - X11 compatibility stubs for Wayland
+ * x11_compat.h - X11 names AwesomeWM's code expects
  *
- * This provides stub implementations of X11-specific functions and macros
- * used by AwesomeWM's client.c. These are no-ops for native Wayland clients
- * and will need proper implementation when XWayland support is added.
+ * Includes the XCB headers and holds the X11 event masks, shape kinds and
+ * size limits, the area and MIN/MAX macros, and no-op stand-ins for the
+ * AwesomeWM X11 helpers (key and button grabs, gravity, WM_STATE).
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -26,18 +26,9 @@
 typedef struct wlr_box area_t;
 /* lua_object_t is typedef'd in common/luaclass.h - don't redeclare it here */
 
-/* Include real XCB headers if available (wlroots includes them) */
-#ifdef XWAYLAND
 #include <xcb/xcb.h>
 #include <cairo.h>
 #include <limits.h>
-#else
-/* X11 constants (only if not using XWayland) */
-#define XCB_NONE 0
-#define XCB_COPY_FROM_PARENT 0
-#define XCB_GET_PROPERTY_TYPE_ANY 0
-#define UINT_MAX 0xFFFFFFFF
-#endif
 
 /* X11 event masks - always needed */
 #ifndef CLIENT_SELECT_INPUT_EVENT_MASK
@@ -48,23 +39,6 @@ typedef struct wlr_box area_t;
 #endif
 #ifndef ROOT_WINDOW_EVENT_MASK
 #define ROOT_WINDOW_EVENT_MASK 0
-#endif
-
-#ifndef XWAYLAND
-
-/* X11 type stubs (only if not using XWayland) */
-typedef uint32_t xcb_window_t;
-typedef uint32_t xcb_atom_t;
-typedef uint32_t xcb_timestamp_t;
-typedef uint32_t xcb_connection_t;
-
-/* Void cookie stub */
-typedef struct {
-    uint32_t sequence;
-} xcb_void_cookie_t;
-
-/* Cairo stub */
-typedef struct cairo_surface_t cairo_surface_t;
 #endif
 
 /* Sequence pair for enter/leave event tracking */
@@ -115,24 +89,10 @@ typedef struct {
 /* Forward declarations for client and window types */
 typedef struct client_t client_t;
 
-/* X11 function stubs - XCB functions are already defined if XWAYLAND is set.
- * We only need wrapper/utility functions here. */
-
-#ifndef XWAYLAND
-/** Stub for xcb_no_operation (returns empty cookie for Wayland) */
-static inline xcb_void_cookie_t xcb_no_operation(void *connection) {
-    (void)connection;
-    xcb_void_cookie_t cookie = {0};
-    return cookie;
-}
-
-#endif
-
 /** Utility wrapper for ungrab_server */
 static inline void xutil_ungrab_server(void *connection) {
     xcb_ungrab_server(connection);
 }
-
 
 /** Grab keys on window (stub - Wayland uses compositor keybindings) */
 static inline void xwindow_grabkeys(xcb_window_t window, void *keys) {
@@ -179,21 +139,6 @@ extern xcb_atom_t _NET_STARTUP_ID;
 extern xcb_atom_t WM_DELETE_WINDOW;
 extern xcb_atom_t WM_PROTOCOLS;
 
-#ifndef XWAYLAND
-
-static inline xcb_void_cookie_t xcb_create_window(void *conn, uint8_t depth, xcb_window_t wid,
-                                                   xcb_window_t parent, int16_t x, int16_t y,
-                                                   uint16_t width, uint16_t height, uint16_t border_width,
-                                                   uint16_t _class, uint32_t visual, uint32_t value_mask,
-                                                   const void *value_list) {
-    xcb_void_cookie_t cookie = {0};
-    (void)conn; (void)depth; (void)wid; (void)parent; (void)x; (void)y;
-    (void)width; (void)height; (void)border_width; (void)_class; (void)visual;
-    (void)value_mask; (void)value_list;
-    return cookie;
-}
-#endif /* XWAYLAND */
-
 /* X11 window gravity translation */
 static inline void xwindow_translate_for_gravity(int gravity, int16_t change_width, int16_t change_height,
                                                   int16_t change_width2, int16_t change_height2,
@@ -211,7 +156,7 @@ static inline void xwindow_translate_for_gravity(int gravity, int16_t change_wid
 
 /* draw_find_visual moved to draw.c where it belongs (AwesomeWM parity) */
 
-/* Shape extension stub - always use stub even with XWAYLAND */
+/* Shape extension stub */
 static inline void xcb_shape_select_input(void *conn, xcb_window_t w, uint8_t enable) {
     (void)conn; (void)w; (void)enable;
     /* Stub for shape extension - not needed for Wayland */
@@ -276,11 +221,9 @@ static inline void cairo_surface_array_push(cairo_surface_array_t *arr, void *su
 
 static inline void cairo_surface_array_wipe(cairo_surface_array_t *arr) {
     if (arr->tab) {
-#ifdef XWAYLAND
         for (int i = 0; i < arr->len; i++)
             if (arr->tab[i])
                 cairo_surface_destroy((cairo_surface_t *)arr->tab[i]);
-#endif
         free(arr->tab);
         arr->tab = NULL;
     }

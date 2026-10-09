@@ -53,9 +53,7 @@ struct wlr_xdg_activation_v1;
 struct wlr_xdg_decoration_manager_v1;
 struct wlr_xdg_shell;
 
-#ifdef XWAYLAND
 struct wlr_xwayland;
-#endif
 
 /* Core compositor state */
 extern int running;
@@ -128,8 +126,6 @@ extern int new_client_placement;
 
 /* Layer mapping (ZWLR_LAYER_SHELL_* -> Lyr* enum) */
 
-#ifdef XWAYLAND
 extern struct wlr_xwayland *xwayland;
-#endif
 
 #endif /* SOMEWM_H */

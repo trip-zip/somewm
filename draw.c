@@ -193,7 +193,6 @@ draw_load_image(lua_State *L, const char *path, GError **error)
  * is not an xcb_screen_t* like in AwesomeWM. These stubs just return NULL anyway.
  */
 
-#ifdef XWAYLAND
 #include <xcb/xcb.h>
 
 void *
@@ -204,4 +203,3 @@ draw_find_visual(const void *s, uint32_t visual)
     return NULL;
 }
 
-#endif /* XWAYLAND */

@@ -190,8 +190,6 @@ property_register_wayland_listeners(client_t *c)
  * XWayland Property Handling (X11 clients)
  * ======================================================================== */
 
-#ifdef XWAYLAND
-
 #include <wlr/xwayland.h>
 #include <xcb/xcb_icccm.h>
 
@@ -332,7 +330,5 @@ property_update_xwayland_properties(client_t *c)
 
 	lua_pop(L, 1);
 }
-
-#endif /* XWAYLAND */
 
 // vim: filetype=c:expandtab:shiftwidth=4:tabstop=8:softtabstop=4:textwidth=80

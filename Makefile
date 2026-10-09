@@ -29,8 +29,10 @@ setup-test:
 build-test: setup-test
 	ninja -C build-test
 
+# meson install never deletes, and a stale 2.0 module would shadow the error a config should get.
 install:
-	meson install -C build
+	dir=$$(meson introspect build --buildoptions | python3 -c 'import json, os, sys; o = {x["name"]: x["value"] for x in json.load(sys.stdin)}; print(os.path.join(o["prefix"], o["datadir"], "somewm", "lua"))') && rm -rf "$(DESTDIR)$$dir"
+	meson install -C build --skip-subprojects
 
 uninstall:
 	ninja -C build uninstall
