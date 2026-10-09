@@ -17,9 +17,7 @@
 #include <wlr/types/wlr_scene.h>
 #include <wlr/types/wlr_seat.h>
 #include <wlr/types/wlr_xdg_shell.h>
-#ifdef XWAYLAND
 #include <wlr/xwayland.h>
-#endif
 
 #include "somewm.h"
 #include "somewm_api.h"
@@ -162,22 +160,18 @@ focusclient(Client *c, int lift)
 	 * map event has fired. We use c->scene as the indicator that mapnotify() has
 	 * processed this client and it's ready for input. */
 	int surface_ready;
-#ifdef XWAYLAND
 	if (c->client_type == X11) {
 		surface_ready = (surface && c->scene != NULL);
 	} else
-#endif
 	{
 		surface_ready = (surface && surface->mapped);
 	}
 
 	if (surface_ready) {
-#ifdef XWAYLAND
 		/* Sway pattern: inform XWayland of the active seat on every focus
 		 * change to an X11 client. Required for proper keyboard delivery. */
 		if (c->client_type == X11)
 			wlr_xwayland_set_seat(xwayland, seat);
-#endif
 		kb = wlr_seat_get_keyboard(seat);
 		if (kb) {
 			wlr_seat_keyboard_notify_enter(seat, surface,

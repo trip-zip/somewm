@@ -4,7 +4,6 @@
  * Handles X11 client lifecycle, configuration, activation, and EWMH
  * initialization for XWayland surfaces.
  */
-#ifdef XWAYLAND
 
 #include <signal.h>
 #include <stdio.h>
@@ -22,7 +21,6 @@
 
 #include "somewm.h"
 #include "somewm_api.h"
-#include "wlr_compat.h"
 #include "event_queue.h"
 #include "xwayland.h"
 #include "declare.h"
@@ -230,7 +228,8 @@ xwaylandready(struct wl_listener *listener, void *data)
 
 	/* Set the default XWayland cursor to match the rest of somewm. */
 	if ((xcursor = wlr_xcursor_manager_get_xcursor(cursor_mgr, "default", 1)))
-		COMPAT_XWAYLAND_SET_CURSOR(xwayland, xcursor->images[0]);
+		wlr_xwayland_set_cursor(xwayland, wlr_xcursor_image_get_buffer(xcursor->images[0]),
+			xcursor->images[0]->hotspot_x, xcursor->images[0]->hotspot_y);
 
 	/* Initialize XCB connection for EWMH support (AwesomeWM pattern) */
 	conn = xcb_connect(xwayland->display_name, NULL);
@@ -308,4 +307,3 @@ xwayland_cleanup(void)
 	}
 }
 
-#endif /* XWAYLAND */

@@ -761,14 +761,12 @@ hit_accept(void *user, const struct render_node_view *v, double sx, double sy)
 			*out = (struct declare_hit) { kind, c, NULL, 0, 0 };
 			return true;
 		}
-#ifdef XWAYLAND
 		if (client_is_x11(c))
 			surface = wlr_surface_surface_at(client_surface(c), sx, sy,
 				&sub_x, &sub_y);
 		else
-#endif
 		{
-			struct wlr_box geo = COMPAT_XDG_SURFACE_GEOMETRY(c->surface.xdg);
+			struct wlr_box geo = c->surface.xdg->geometry;
 
 			surface = wlr_xdg_surface_surface_at(c->surface.xdg,
 				sx + geo.x, sy + geo.y, &sub_x, &sub_y);

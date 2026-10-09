@@ -23,11 +23,9 @@
 #include <wlr/types/wlr_xdg_decoration_v1.h>
 #include <wlr/types/wlr_xdg_shell.h>
 #include <wlr/util/log.h>
-#ifdef XWAYLAND
 #include <wlr/xwayland.h>
 #include <xcb/xcb.h>
 #include "xwayland.h"
-#endif
 
 #include "somewm.h"
 #include "somewm_api.h"
@@ -550,7 +548,6 @@ client_remove_all_listeners(client_t *c)
 	wl_list_remove(&c->destroy.link);
 	wl_list_remove(&c->set_title.link);
 	wl_list_remove(&c->request_fullscreen.link);
-#ifdef XWAYLAND
 	if (c->client_type != XDGShell) {
 		wl_list_remove(&c->activate.link);
 		wl_list_remove(&c->associate.link);
@@ -563,7 +560,6 @@ client_remove_all_listeners(client_t *c)
 			wl_list_remove(&c->unmap.link);
 		}
 	} else
-#endif
 	{
 		wl_list_remove(&c->initial_commit.link);
 		/* commit.link is removed in unmapnotify for XDG clients.
@@ -606,7 +602,6 @@ client_remove_all_listeners(client_t *c)
 void
 client_reregister_listeners(client_t *c)
 {
-#ifdef XWAYLAND
 	if (c->client_type != XDGShell) {
 		struct wlr_xwayland_surface *xsurface = c->surface.xwayland;
 
@@ -626,7 +621,6 @@ client_reregister_listeners(client_t *c)
 			LISTEN(&xsurface->surface->events.unmap, &c->unmap, unmapnotify);
 		}
 	} else
-#endif
 	{
 		struct wlr_xdg_toplevel *toplevel = c->surface.xdg->toplevel;
 
@@ -719,12 +713,10 @@ destroynotify(struct wl_listener *listener, void *data)
 		/* Client already removed from array by unmapnotify, skip client_unmanage.
 		 * For XWayland clients, client_unmanage(UNMAP) kept the Lua reference
 		 * alive to allow re-mapping.  Release it now. */
-#ifdef XWAYLAND
 		if (c->client_type == X11) {
 			lua_State *L = globalconf_get_lua_State();
 			luaA_object_unref(L, c);
 		}
-#endif
 	} else {
 		/* Edge case: client still in array (destroyed without unmap), need to unmanage */
 		client_unmanage(c, CLIENT_UNMANAGE_DESTROYED);
@@ -863,7 +855,6 @@ mapnotify(struct wl_listener *listener, void *data)
 
 	client_get_geometry(c, &c->geometry);
 
-#ifdef XWAYLAND
 	/* Re-manage XWayland clients that were previously unmapped (e.g., Discord
 	 * close-to-tray then re-open).  client_unmanage(UNMAP) removed the client
 	 * from arrays and invalidated window, but kept the Lua reference alive.
@@ -872,7 +863,6 @@ mapnotify(struct wl_listener *listener, void *data)
 		c->window = c->surface.xwayland->window_id;
 		client_array_push(&globalconf.clients, c);
 	}
-#endif
 
 	/* Listed from the first map, as AwesomeWM's client_manage does. */
 	stack_client_push(c);
@@ -933,11 +923,9 @@ mapnotify(struct wl_listener *listener, void *data)
 		if (c->client_type == XDGShell) {
 			property_register_wayland_listeners(c);
 		}
-#ifdef XWAYLAND
 		else {
 			property_update_xwayland_properties(c);
 		}
-#endif
 
 		/* Wayland transient windows should be treated as dialogs.
 		 * XDG shell doesn't have explicit window type hints like X11's _NET_WM_WINDOW_TYPE,
@@ -1008,11 +996,9 @@ mapnotify(struct wl_listener *listener, void *data)
 		if (c->client_type == XDGShell) {
 			property_register_wayland_listeners(c);
 		}
-#ifdef XWAYLAND
 		else {
 			property_update_xwayland_properties(c);
 		}
-#endif
 
 		/* Initialize the window type after property fetch.
 		 * For native Wayland clients, infer dialog-like float types from the XDG
@@ -1070,7 +1056,6 @@ mapnotify(struct wl_listener *listener, void *data)
 		lua_newtable(L);            /* hints table (empty for now) */
 		luaA_object_emit_signal(L, -3, "request::manage", 2);
 
-#ifdef XWAYLAND
 		/* For XWayland clients, emit request::activate to grant focus.
 		 * Native Wayland clients use XDG activation protocol which triggers
 		 * the urgent() handler. X11 clients don't have this mechanism, so
@@ -1089,7 +1074,6 @@ mapnotify(struct wl_listener *listener, void *data)
 			lua_setfield(L, -2, "raise");
 			some_event_queue_signal(L, -3, SIG_REQUEST_ACTIVATE, 2);
 		}
-#endif
 
 		/* Pop client from Lua stack */
 		lua_pop(L, 1);
@@ -1142,17 +1126,13 @@ mapnotify(struct wl_listener *listener, void *data)
 		 * clients, surface->mapped may be false even after map event,
 		 * so check c->scene instead. */
 		int ready;
-#ifdef XWAYLAND
 		if (c->client_type == X11)
 			ready = (c->scene != NULL);
 		else
-#endif
 			ready = client_surface(c)->mapped;
 		if (ready && seat->keyboard_state.focused_surface != client_surface(c)) {
-#ifdef XWAYLAND
 			if (c->client_type == X11)
 				wlr_xwayland_set_seat(xwayland, seat);
-#endif
 			struct wlr_keyboard *kb = wlr_seat_get_keyboard(seat);
 			if (kb) {
 				wlr_seat_keyboard_notify_enter(seat, client_surface(c),
@@ -1547,11 +1527,9 @@ client_configure_to_box(Client *c)
 		if (c->client_type == XDGShell && c->surface.xdg && c->surface.xdg->toplevel
 				&& c->surface.xdg->toplevel->scheduled.fullscreen != c->fullscreen)
 			client_set_fullscreen_internal(c, c->fullscreen);
-#ifdef XWAYLAND
 		else if (c->client_type == X11 && c->surface.xwayland
 				&& c->surface.xwayland->fullscreen != c->fullscreen)
 			client_set_fullscreen_internal(c, c->fullscreen);
-#endif
 		/* Same for maximized: GTK and Chromium draw their own titlebar
 		 * button from it, and it must arrive with the matching size. */
 		if (c->client_type == XDGShell && c->surface.xdg && c->surface.xdg->toplevel
@@ -1562,19 +1540,17 @@ client_configure_to_box(Client *c)
 
 	/* The clip is the solved box in surface coordinates: an oversized
 	 * buffer stays off the chrome. */
-#ifdef XWAYLAND
 	if (!client_is_x11(c))
-#endif
 	{
-		clip.x = COMPAT_XDG_SURFACE_GEOMETRY(c->surface.xdg).x;
-		clip.y = COMPAT_XDG_SURFACE_GEOMETRY(c->surface.xdg).y;
+		clip.x = c->surface.xdg->geometry.x;
+		clip.y = c->surface.xdg->geometry.y;
 	}
 
 	if (c->surface_clip.width) {
 		struct wlr_box crop = c->surface_clip;
 		if (c->client_type == XDGShell) {
-			crop.x += COMPAT_XDG_SURFACE_GEOMETRY(c->surface.xdg).x;
-			crop.y += COMPAT_XDG_SURFACE_GEOMETRY(c->surface.xdg).y;
+			crop.x += c->surface.xdg->geometry.x;
+			crop.y += c->surface.xdg->geometry.y;
 		}
 		if (!wlr_box_intersection(&clip, &clip, &crop))
 			clip = crop;

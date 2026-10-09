@@ -7,8 +7,6 @@
 #ifndef XWAYLAND_H
 #define XWAYLAND_H
 
-#ifdef XWAYLAND
-
 struct wl_listener;
 
 void xwayland_setup(void);
@@ -21,12 +19,5 @@ void configurex11(struct wl_listener *listener, void *data);
 void createnotifyx11(struct wl_listener *listener, void *data);
 void dissociatex11(struct wl_listener *listener, void *data);
 void sethints(struct wl_listener *listener, void *data);
-
-#else
-
-static inline void xwayland_setup(void) {}
-static inline void xwayland_cleanup(void) {}
-
-#endif /* XWAYLAND */
 
 #endif /* XWAYLAND_H */

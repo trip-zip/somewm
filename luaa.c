@@ -114,7 +114,6 @@ xcb_atom_t _NET_STARTUP_ID = 0;
 xcb_atom_t WM_DELETE_WINDOW = 0;
 xcb_atom_t WM_PROTOCOLS = 0;
 
-#ifdef XWAYLAND
 /* EWMH atoms - Extended Window Manager Hints for XWayland compatibility */
 
 /* Root Window Atoms (WM capabilities) */
@@ -175,7 +174,6 @@ xcb_atom_t _NET_WM_STRUT_PARTIAL = 0;
 
 /* UTF8_STRING atom for text properties */
 xcb_atom_t UTF8_STRING = 0;
-#endif /* XWAYLAND */
 
 /* Global handler storage for object property miss handlers */
 luaA_class_handlers_t client_handlers = {LUA_REFNIL, LUA_REFNIL};
@@ -2687,7 +2685,6 @@ luaA_awesome_set_conffile(lua_State *L, const char *conffile)
 
 /* End of awesome module code */
 
-#ifdef XWAYLAND
 /** Initialize EWMH atoms (Extended Window Manager Hints).
  * This function interns all 46 EWMH atoms from the X server.
  * Uses the batched cookie pattern from AwesomeWM for efficiency:
@@ -2875,7 +2872,6 @@ init_ewmh_atoms(xcb_connection_t *conn)
 	if (reply) { UTF8_STRING = reply->atom; free(reply); }
 
 }
-#endif /* XWAYLAND */
 
 /** UTF-8 aware string length computing.
  * \param L The Lua VM state.
@@ -5114,12 +5110,10 @@ clients_detach(client_snapshot_t **out, int *out_count)
 			if (c->surface.xdg)
 				c->surface.xdg->data = &snap->data;
 		}
-#ifdef XWAYLAND
 		else {
 			if (c->surface.xwayland)
 				c->surface.xwayland->data = &snap->data;
 		}
-#endif
 		/* Also update scene node back-pointers */
 		client_set_node_data(c, &snap->data);
 
@@ -5211,12 +5205,10 @@ clients_restore(lua_State *L, client_snapshot_t *snaps, int num_clients)
 			if (c->surface.xdg)
 				c->surface.xdg->data = c;
 		}
-#ifdef XWAYLAND
 		else {
 			if (c->surface.xwayland)
 				c->surface.xwayland->data = c;
 		}
-#endif
 		client_set_node_data(c, c);
 
 		/* Reference and push to arrays */

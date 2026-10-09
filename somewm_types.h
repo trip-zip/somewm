@@ -20,9 +20,7 @@
 #include <wlr/types/wlr_xdg_shell.h>
 #include <xkbcommon/xkbcommon.h>
 
-#ifdef XWAYLAND
 #include <wlr/xwayland.h>
-#endif
 
 /* Enums */
 /* NOTE: CurMove and CurResize removed - move/resize now handled by Lua mousegrabber

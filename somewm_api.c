@@ -22,7 +22,6 @@
 #include <wlr/xwayland.h>
 
 #include "somewm_api.h"
-#include "wlr_compat.h"
 #include "xkb.h"
 #include "objects/signal.h"
 #include "objects/screen.h"
@@ -182,11 +181,9 @@ some_set_seat_keyboard_focus(Client *c)
 	/* Check if surface is ready for keyboard input.
 	 * For XWayland clients, wlr_surface->mapped may be false at map time;
 	 * use c->scene (set by mapnotify) as the readiness indicator instead. */
-#ifdef XWAYLAND
 	if (c->client_type == X11)
 		surface_ready = (c->scene != NULL);
 	else
-#endif
 		surface_ready = surface->mapped;
 
 	if (!surface_ready) {
@@ -197,7 +194,6 @@ some_set_seat_keyboard_focus(Client *c)
 	}
 
 	if (seat->keyboard_state.focused_surface == surface) {
-#ifdef XWAYLAND
 		if (c->client_type == X11) {
 			struct wlr_pointer_constraint_v1 *constraint =
 				wlr_pointer_constraints_v1_constraint_for_surface(
@@ -218,7 +214,6 @@ some_set_seat_keyboard_focus(Client *c)
 			client_activate_surface(surface, 0);
 			wlr_seat_keyboard_notify_clear_focus(seat);
 		} else
-#endif
 			/* XDG: early return — re-entering the same surface is a
 			 * no-op in wlroots, and the clear→re-enter cycle would
 			 * disrupt active popup grabs. */
@@ -273,14 +268,12 @@ some_set_seat_keyboard_focus(Client *c)
 		}
 	}
 
-#ifdef XWAYLAND
 	/* Sway pattern: inform XWayland of the active seat on every focus
 	 * change to an X11 client. Required for proper keyboard delivery. */
 	if (c->client_type == X11) {
 		extern struct wlr_xwayland *xwayland;
 		wlr_xwayland_set_seat(xwayland, seat);
 	}
-#endif
 
 	/* Activate the new surface before delivering keyboard enter. For XDG
 	 * toplevels this sends xdg_toplevel.configure{activated=true}; Chromium
@@ -305,12 +298,10 @@ some_set_seat_keyboard_focus(Client *c)
 		 * Needed for XWayland clients that may lack a keyboard device. */
 		wlr_seat_keyboard_notify_enter(seat, surface, NULL, 0, NULL);
 	}
-#ifdef XWAYLAND
 	/* Activate X11 surface after keyboard enter — sends FocusIn event.
 	 * Safe because X11 clients use X11 popup mechanisms, not XDG grabs. */
 	if (c->client_type == X11)
 		client_activate_surface(surface, 1);
-#endif
 
 	/* Update pointer constraint for the newly focused surface, mirroring
 	 * focusclient(). Without this a constraint created around a Lua-path
@@ -419,13 +410,12 @@ some_update_cursor_theme(const char *theme_name, uint32_t size)
 	cursor_set_xcursor(cursor_name);
 	declare_cursor_changed();
 
-#ifdef XWAYLAND
 	/* Sync XWayland cursor if running */
 	struct wlr_xcursor *xcursor = wlr_xcursor_manager_get_xcursor(cursor_mgr, "default", 1);
 	if (xcursor && xwayland) {
-		COMPAT_XWAYLAND_SET_CURSOR(xwayland, xcursor->images[0]);
+		wlr_xwayland_set_cursor(xwayland, wlr_xcursor_image_get_buffer(xcursor->images[0]),
+			xcursor->images[0]->hotspot_x, xcursor->images[0]->hotspot_y);
 	}
-#endif
 }
 
 /*
