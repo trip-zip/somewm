@@ -48,7 +48,9 @@ runner.run_async(function()
             local _,pc=dump:gsub('CLIENT transient_test_parent ', '')
             local _,cc=dump:gsub('CLIENT transient_test_child ', '')
             assert(pc==1 and cc==1,'native child of floating parent was declared incorrectly')
-            example.pixel(150,150,'#804040')
+            -- A floating client is a root after the workarea tree, so it is
+            -- above the layout's clients, as under tile.
+            example.pixel(150,150,'#404040')
             example.save(kind .. '-gap' .. gap .. '-native-transient',dump)
         end
     end

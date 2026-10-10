@@ -9,7 +9,7 @@ local awful = require("awful")
 
 local s = screen[1]
 local geo = s.geometry
-local bar, ov
+local bar, ov, announced
 local BG = "#204080"
 
 local function pixel(x, y, hex)
@@ -57,16 +57,38 @@ local function backgrounds(dump)
     return out
 end
 
-local function thumb_record(dump)
-    local p = ov._private
-    local record = { p.drawable:_clay_scroll_get(p.content.id) }
-    return dump .. "\nscroll record: " .. table.concat(record, ", ")
-end
-
 local function check_thumb(dump, x, y, width, height)
     local ok, err = pcall(check_box,
         dump:match("[^\n]* wibox%.widget%.separator [^\n]*"), x, y, width, height)
-    assert(ok, tostring(err) .. "\n" .. thumb_record(dump))
+    assert(ok, tostring(err) .. "\n" .. dump)
+end
+
+-- The track and thumb lines: the separator's grandparent and parent.
+local function scrollbar(dump)
+    local lines = {}
+    for line in dump:gmatch("[^\n]+") do
+        if line:find(" wibox.widget.separator ", 1, true) then
+            return lines[#lines - 1], lines[#lines]
+        end
+        lines[#lines + 1] = line
+    end
+end
+
+local function check_scrollbar(dump, pad)
+    local track, thumb = scrollbar(dump)
+    assert(thumb and thumb:find(" w=fixed(5) user h=fixed(66) scroll ", 1, true),
+        "the thumb does not declare its length: " .. dump)
+    assert(track and track:find(" pad " .. pad .. " ", 1, true),
+        "the track does not declare its offset: " .. dump)
+end
+
+local function record_announcements()
+    if not announced then
+        ov:connect_signal("property::scroll_factor", function(_, factor)
+            table.insert(announced, factor)
+        end)
+    end
+    announced = {}
 end
 
 local steps = {
@@ -108,12 +130,15 @@ local steps = {
     end,
     function(count)
         if count == 1 then
+            record_announcements()
             ov.scroll_factor = 1
             return nil
         end
         local _, dump = nodes()
         local bg = backgrounds(dump)
         assert(dump:match(" spacer scroll=y scrolled=50 "), "the content did not scroll to 50")
+        assert(announced[#announced] == 1, "property::scroll_factor did not announce 1")
+        check_scrollbar(dump, "0,0,34,0")
         check_box(bg[1], 0, -50, 195, 30)
         check_box(bg[5], 0, 70, 195, 30)
         check_thumb(dump, 195, 34, 5, 66)
@@ -134,6 +159,7 @@ local steps = {
         assert(dump:match(" spacer scroll=y scrolled=25 "), "the content did not scroll to 25")
         check_box(bg[2], 0, 5, 195, 30)
         check_thumb(dump, 195, 17, 5, 66)
+        check_scrollbar(dump, "0,0,17,0")
         assert(pixel(100, 2, "#ff0000"), "the first child's visible strip is not red")
         assert(pixel(100, 7, "#00ff00"), "the second child is not green")
         io.stderr:write("[PASS] overflow scrolls halfway\n")
@@ -145,6 +171,7 @@ local steps = {
             ov.scroll_factor = 0
             return nil
         elseif count == 3 then
+            record_announcements()
             awful.spawn(string.format("./build-test/test-virtual-pointer-client scroll %d %d 1280 720 down",
                 bar.x + 100, bar.y + 15))
             return nil
@@ -155,6 +182,8 @@ local steps = {
         local bg = backgrounds(dump)
         assert(dump:match(" spacer scroll=y scrolled=30 "), "the wheel did not scroll to 30: " .. dump)
         assert(math.abs(ov.scroll_factor - 0.6) < 1e-9, "the wheel factor is not 0.6")
+        assert(#announced == 1 and math.abs(announced[1] - 0.6) < 1e-9,
+            "the wheel did not announce 0.6 once: " .. table.concat(announced, ", "))
         check_box(bg[2], 0, 0, 195, 30)
         check_box(bg[3], 0, 30, 195, 30)
         check_thumb(dump, 195, 20, 5, 66)
@@ -193,7 +222,7 @@ local steps = {
         check_box(dump:match("[^\n]* spacer scroll=y[^\n]*"), 0, 0, 200, 100)
         local separator = dump:match("[^\n]* wibox%.widget%.separator [^\n]*")
         assert(separator and separator:match("box %-?%d+,%-?%d+ 0x"),
-            "the scrollbar did not collapse: " .. thumb_record(dump))
+            "the scrollbar did not collapse: " .. dump)
         assert(dump:match(" spacer scroll=y scrolled=0 "), "reset did not clear the scroll offset: " .. dump)
         assert(pixel(197, 75, "#0000ff"), "the blue child did not fill the collapsed track")
         io.stderr:write("[PASS] fitting content collapses the track and takes its width\n")

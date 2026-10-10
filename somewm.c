@@ -505,7 +505,7 @@ reap_children(gint fd, GIOCondition condition, gpointer data)
 
 void
 cursor_to_client_coordinates(Client *client, double *sx, double *sy) {
-	double bw = client->bw;
+	double bw = client_border(client);
 	/* The content surface is positioned inside the frame at (bw + titlebar_left,
 	 * bw + titlebar_top) (see client_configure_to_box), so content-local
 	 * coordinates must subtract the titlebars too, not just the border. Without
@@ -973,7 +973,6 @@ setup(void)
 	 */
 
 	/* Appearance defaults (from config.h) */
-	globalconf.appearance.border_width = 1;
 	globalconf.appearance.rootcolor[0] = 0x22/255.0f;
 	globalconf.appearance.rootcolor[1] = 0x22/255.0f;
 	globalconf.appearance.rootcolor[2] = 0x22/255.0f;

@@ -1,11 +1,14 @@
 output
-  roots flow 1 floating 1 derived 0 legacy 0
+  roots flow 1 floating 4 derived 0 legacy 0
   Clay__RootContainer w=fixed(1280) output h=fixed(720) output row
     OUTPUT WL-1 w=fixed(1280) output h=fixed(720) output column
       WORKAREA - w=grow h=grow column
         CLIENT B w=grow h=grow column pad 1,1,1,1
-          SURFACE B w=grow h=grow custom
+          SLOT B w=grow h=grow row
         CLIENT C w=grow h=grow column pad 1,1,1,1
-          SURFACE C w=grow h=grow custom
+          SLOT C w=grow h=grow row
+  SURFACE B w=grow h=grow attach PARENT band 20 custom
+  SURFACE C w=grow h=grow attach PARENT band 20 custom
   CLIENT A w=percent(0.5) user h=percent(0.5) user column pad 1,1,1,1 attach ELEMENT band 20
-    SURFACE A w=grow h=grow custom
+    SLOT A w=grow h=grow row
+  SURFACE A w=grow h=grow attach PARENT band 20 custom

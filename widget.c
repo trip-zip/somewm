@@ -179,6 +179,105 @@ read_word(lua_State *L, int idx, const char *name, const char *const *words,
 	return ok;
 }
 
+/* A word field that may be absent, which leaves *out at its default. */
+static bool
+read_option(lua_State *L, int idx, const char *name, const char *const *words,
+	size_t count, uint8_t *out)
+{
+	lua_getfield(L, idx, name);
+	bool absent = lua_isnil(L, -1);
+	lua_pop(L, 1);
+	return absent || read_word(L, idx, name, words, count, out);
+}
+
+static bool
+field_is(lua_State *L, int idx, const char *name, const char *word)
+{
+	lua_getfield(L, idx, name);
+	bool same = lua_isstring(L, -1) && !strcmp(lua_tostring(L, -1), word);
+	lua_pop(L, 1);
+	return same;
+}
+
+/* A layout node's own transition, Clay's config in Lua words: what to
+ * interpolate, for how long, and whether it collapses on the way in and on
+ * the way out. An exiting node is drawn where it stood and holds no space
+ * (third_party/clay.h:2557). */
+static bool
+read_transition(lua_State *L, int idx, struct widget_node *n)
+{
+	static const char *const properties[] = {
+		"box", "position", "size", "width", "height" };
+	static const uint16_t bits[] = {
+		CLAY_TRANSITION_PROPERTY_BOUNDING_BOX, CLAY_TRANSITION_PROPERTY_POSITION,
+		CLAY_TRANSITION_PROPERTY_DIMENSIONS, CLAY_TRANSITION_PROPERTY_WIDTH,
+		CLAY_TRANSITION_PROPERTY_HEIGHT };
+	static const char *const orders[] = { "underneath", "natural", "above" };
+	uint8_t property = 0;
+	bool ok;
+
+	lua_getfield(L, idx, "transition");
+	if (lua_isnil(L, -1)) {
+		lua_pop(L, 1);
+		return true;
+	}
+	int t = lua_gettop(L);
+	n->transition = true;
+	n->exit_order = CLAY_EXIT_TRANSITION_ORDERING_NATURAL_ORDER;
+	ok = lua_istable(L, t)
+		&& read_number(L, t, "duration", 0, 1e6, &n->duration)
+		&& read_option(L, t, "properties", properties, 5, &property)
+		&& read_option(L, t, "exit_order", orders, 3, &n->exit_order);
+	n->transition_properties = bits[property];
+	n->enter_collapse = ok && field_is(L, t, "enter", "collapse");
+	n->exit_collapse = ok && field_is(L, t, "exit", "collapse");
+	lua_pop(L, 1);
+	return ok;
+}
+
+/* A client composite's root (client) and its pixels leaf (surface), kept as
+ * the client's declare handle. A client that has gone keeps a handle no
+ * client answers to, so the frame skips it. */
+static bool
+read_client(lua_State *L, int idx, const char *name, uint64_t *out)
+{
+	lua_getfield(L, idx, name);
+	client_t *c = lua_isnil(L, -1) ? NULL : luaA_toudata(L, -1, &client_class);
+	bool ok = lua_isnil(L, -1) || c;
+	lua_pop(L, 1);
+	if (c)
+		*out = c->scene ? declare_handle_for(c, DECLARE_KIND_CLIENT)
+			: (uint64_t)DECLARE_KIND_CLIENT << 32;
+	return ok;
+}
+
+/* A composite's titlebar host, kept as its drawable's declare handle. */
+static bool
+read_host(lua_State *L, int idx, struct widget_node *n)
+{
+	lua_getfield(L, idx, "host");
+	drawable_t *d = lua_isnil(L, -1) ? NULL : luaA_toudata(L, -1, &drawable_class);
+	bool ok = lua_isnil(L, -1) || d;
+	lua_pop(L, 1);
+	if (d)
+		n->host = declare_handle_for(d, DECLARE_KIND_TITLEBAR);
+	return ok;
+}
+
+static bool
+read_composite(lua_State *L, int idx, struct widget_node *n)
+{
+	n->opacity = 1;
+	if (!read_client(L, idx, "client", &n->client)
+			|| !read_client(L, idx, "surface", &n->surface)
+			|| !read_host(L, idx, n)
+			|| !read_number(L, idx, "opacity", 0, 1, &n->opacity))
+		return false;
+	if (n->client || n->surface || n->host)
+		n->widget = false;
+	return true;
+}
+
 /* The scratch text buffer a tree is read into, alongside the scratch nodes:
  * a redraw reads into both and usually finds the stored tree unchanged. */
 static char text_buf[WIDGET_TEXT_MAX];
@@ -465,7 +564,7 @@ read_node(lua_State *L, int idx, struct widget_node *n)
 			return false;
 		n->scroll++;
 	}
-	return ok;
+	return ok && read_transition(L, idx, n) && read_composite(L, idx, n);
 }
 
 /* The subtree rooted at the table at idx, in preorder, into nodes. A leaf
@@ -528,7 +627,14 @@ read_tree(lua_State *L, int idx, struct widget_node *nodes, size_t *len,
 	/* References can only target an earlier declaration in this very tree.
 	 * Do not accept cached indices, cross-host targets or forward references. */
 	lua_getfield(L, idx, "_attach");
-	if (!lua_isnil(L, -1)) {
+	if (lua_type(L, -1) == LUA_TSTRING) {
+		bool output = !strcmp(lua_tostring(L, -1), "output");
+		lua_pop(L, 1);
+		if (!output || n->text || !n->floating)
+			return false;
+		n->attach = WIDGET_ATTACH_OUTPUT;
+		lua_pushnil(L);
+	} else if (!lua_isnil(L, -1)) {
 		lua_rawget(L, anchors);
 		lua_Integer target = lua_tointeger(L, -1);
 		if (n->text || !n->floating || target <= 0 || (size_t)target >= *len
@@ -560,6 +666,8 @@ read_tree(lua_State *L, int idx, struct widget_node *nodes, size_t *len,
 	ok = lua_isnil(L, -1) || (lua_istable(L, -1) && !n->text);
 	count = ok ? luaA_rawlen(L, -1) : 0;
 	n->children = (uint16_t)count;
+	if (n->client && !count)
+		ok = false;
 	if (ok && (*len == 1 || ((n->radius > 0 || shape_clip) && count > 0))) {
 		if (*clips == WIDGET_CLIPS_MAX)
 			ok = false;
@@ -795,7 +903,18 @@ over_budget(struct widget_tree *d, Monitor *m, size_t len, size_t scrolls)
 			scrolls += other->scrolls;
 		}
 	}
-	/* Client layout and inspector clips share this native budget; declare.c
+	int count = 0;
+	luaA_screen_get_all(globalconf_L, NULL, &count);
+	screen_t *screens[count ? count : 1];
+	luaA_screen_get_all(globalconf_L, screens, &count);
+	for (int i = 0; i < count; i++) {
+		if (&screens[i]->layout != d
+				&& luaA_monitor_get_by_screen(globalconf_L, screens[i]) == m) {
+			total += screens[i]->layout.nodes_len;
+			scrolls += screens[i]->layout.scrolls;
+		}
+	}
+	/* Inspector clips share this native budget; declare.c
 	 * reserves their records before it admits any host sizing clips. */
 	return total > declare_widget_budget(m->declare) || scrolls > WIDGET_SCROLLS_OUTPUT_MAX;
 }

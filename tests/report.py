@@ -17,6 +17,7 @@ HEADER = re.compile(r'roots flow (\d+) floating (\d+) derived (\d+)(?: legacy (\
 HEX = re.compile(r'^[0-9a-f]{8}$')
 BANDS = {
     'CLIENT': {-6, 10, 20, 30, 40, 50, 110},
+    'SURFACE': {-6, 10, 20, 30, 40, 50, 110},
     'CELL': {20},
     'drawin': {25, 80},
     'WIBOX': {25},

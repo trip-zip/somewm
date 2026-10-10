@@ -52,9 +52,10 @@ runner.run_async(function()
         local configured = f:read('*a'); f:close()
         assert(configured == '240 160\n', 'client configure: '..configured)
         -- Read the composited client, independently of the tree dump.
+        -- screen.content is the screen's logical size.
         local im = surface(s.content)
-        local x = math.floor((g.x-s.geometry.x+120)*s.scale)
-        local y = math.floor((g.y-s.geometry.y+80)*s.scale)
+        local x = g.x-s.geometry.x+120
+        local y = g.y-s.geometry.y+80
         local r, green, b = capture.read(im, x, y)
         assert(r == 64 and green == 64 and b == 64, 'client pixels lost on migration')
         for _, output_screen in ipairs(screens) do

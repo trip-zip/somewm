@@ -68,6 +68,7 @@ struct widget_host {
 	bool flow;
 	bool path_clip;       /* The frame carries the root scope as a path. */
 	bool inner_clip;      /* The decorated host clips its content through an inner element. */
+	bool layout;          /* A screen's client layout: records every node, no userData. */
 	int told[2];
 	bool fit[2];
 	uint8_t src[2];      /* enum declare_src of the host box and told axes */
@@ -126,7 +127,25 @@ struct widget_node {
 	uint8_t parent, own; /* Clay_FloatingAttachPointType, top left by default */
 	bool passthrough;    /* floats pass pointer hits to siblings by default */
 	bool floating;       /* attached to the parent, off the flow */
-	uint16_t attach;     /* 1-based earlier node in this tree, 0 means parent */
+	uint16_t attach;     /* 1-based earlier node in this tree, 0 means parent,
+	                      * WIDGET_ATTACH_OUTPUT the screen's root */
+	/* A client composite's root: the client's declare handle, 0 for none.
+	 * A composite always has children. */
+	uint64_t client;
+	/* A composite's pixels leaf: the client's declare handle, with the
+	 * surface's opacity. */
+	uint64_t surface;
+	float opacity;
+	/* The drawable whose compiled tree is declared in flow here, by its
+	 * titlebar declare handle. */
+	uint64_t host;
+	/* The box's own transition (Clay_TransitionElementConfig): the
+	 * properties are Clay_TransitionProperty bits, exit_order a
+	 * Clay_ExitTransitionSiblingOrdering. */
+	bool transition, enter_collapse, exit_collapse;
+	uint8_t exit_order;
+	uint16_t transition_properties;
+	float duration;
 	/* The widget's cairo surface or RsvgHandle, referenced by an image entry. */
 	const void *image;
 	bool vector;
@@ -136,6 +155,9 @@ struct widget_node {
 	float image_size[2];
 	uint8_t scroll;      /* 0 none, 1 x, 2 y */
 	bool track, thumb;
+	/* The child offset this scroll node last declared; written only where
+	 * declare.c declares it, so a moved record publishes the tree. */
+	float scrolled[2];
 	uint16_t shape;
 	float fill[4];
 	struct render_gradient gradient;
@@ -168,6 +190,9 @@ struct widget_node {
 /* The text every text node of one drawin holds, together. Clay's render
  * commands slice it, so it lives until the next tree replaces it. */
 #define WIDGET_TEXT_MAX 65536
+
+/* A float node's _attach = "output": the screen's root element. */
+#define WIDGET_ATTACH_OUTPUT UINT16_MAX
 
 /* Clip scopes a tree may open: a byte of the word numbers them (render.h). */
 #define WIDGET_CLIPS_MAX 255

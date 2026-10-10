@@ -1,5 +1,6 @@
 -- The menubar lists its items as FIT children of a horizontal overflow; selection scrolls it.
 local runner = require('_runner')
+local awful = require('awful')
 local async = require('_async')
 local menubar = require('menubar')
 local example = require('_clay_example')
@@ -35,11 +36,11 @@ local function key(name)
 end
 
 -- The menubar settles within a few frames; every check waits for its dump.
-local function until_dump(check, message)
+local function until_dump(check, message, timeout)
     assert(async.wait_for_condition(function()
         local dump, lines, items, viewport = state()
         return dump and check(dump, lines, items, viewport)
-    end, 1, .01), message)
+    end, timeout or 1, .01), message)
     return state()
 end
 
@@ -89,9 +90,20 @@ runner.run_async(function()
     example.save('menubar-end', dump)
 
     key('Home')
-    until_dump(function(_, l, _, v)
+    local _, _, _, start = until_dump(function(_, l, _, v)
         return v:find('scrolled=0 ', 1, true) and l:find('"▶▶"', 1, true) and not l:find('"◀◀"', 1, true)
     end, 'Home returns to the start')
+
+    -- One horizontal wheel tick over the items moves Clay's record 30
+    -- pixels; the tree publishes, so the left label follows it.
+    local geo = screen[1].geometry
+    local vx, vy, vw, vh = start:match(' box (%-?%d+),(%-?%d+) (%d+)x(%d+)')
+    awful.spawn(string.format('./build-test/test-virtual-pointer-client scroll %d %d 1280 720 right',
+        geo.x + vx + math.floor(vw / 2), geo.y + vy + math.floor(vh / 2)))
+    dump = until_dump(function(_, l, _, v)
+        return v:find('scrolled=30 ', 1, true) and l:find('"◀◀"', 1, true)
+    end, 'the wheel did not scroll the items or show the left label', 5)
+    example.save('menubar-wheel', dump)
     key('Escape')
     runner.done()
 end)

@@ -117,8 +117,8 @@ configurex11(struct wl_listener *listener, void *data)
 		return;
 	}
 	if (some_client_get_floating(c)) {
-		resize(c, (struct wlr_box){.x = event->x - c->bw,
-				.y = event->y - c->bw, .width = event->width,
+		resize(c, (struct wlr_box){.x = event->x - client_border(c),
+				.y = event->y - client_border(c), .width = event->width,
 				.height = event->height}, 0);
 	} else {
 		arrange(c->mon);
@@ -149,7 +149,6 @@ createnotifyx11(struct wl_listener *listener, void *data)
 	c->client_type = X11;
 	/* Set the window ID for EWMH/X11 property lookups */
 	c->window = xsurface->window_id;
-	c->bw = client_is_unmanaged(c) ? 0 : get_border_width();
 
 	/* NOTE: Do NOT call ewmh_client_check_hints() here!
 	 * At this point the XWayland surface exists but may not be fully initialized.

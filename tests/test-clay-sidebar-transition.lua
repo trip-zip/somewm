@@ -66,12 +66,12 @@ runner.run_async(function()
         _clay = function()
             local children = {}
             if showing then
-                children[1] = {role = 'SIDEBAR', w = {fixed = 240}, wsrc = 'user', h = 'grow',
+                children[1] = {name = 'SIDEBAR', w = 240, wsrc = 'user', h = 'grow',
                     transition = {duration = duration, properties = 'width',
                         enter = 'collapse', exit = 'collapse', exit_order = 'natural'}}
             end
-            children[#children + 1] = {client = c}
-            return {role = 'WORKAREA', direction = 'row', children = children}
+            children[#children + 1] = {client = c, w = 'grow', h = 'grow'}
+            return {name = 'WORKAREA', dir = 'x', children = children}
         end}
     s.selected_tag.layout = fixture
 

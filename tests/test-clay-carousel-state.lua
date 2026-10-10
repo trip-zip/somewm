@@ -81,7 +81,6 @@ runner.run_async(function()
         if record then
             assert(csv({awesome._clay_scroll_get(s, root.id)}) == csv(record),
                 name .. '\n' .. diagnostic(dump))
-            assert(root.scroll.x == record[1] and root.scroll.y == record[2], diagnostic(dump))
         end
         return dump
     end

@@ -863,8 +863,8 @@ motionnotify(uint32_t time, struct wlr_input_device *device, double dx, double d
 		if (active_constraint) {
 			toplevel_from_wlr_surface(active_constraint->surface, &c, NULL);
 			if (c && active_constraint->surface == seat->pointer_state.focused_surface) {
-				sx = cursor->x - c->geometry.x - c->bw;
-				sy = cursor->y - c->geometry.y - c->bw;
+				sx = cursor->x - c->geometry.x - client_border(c);
+				sy = cursor->y - c->geometry.y - client_border(c);
 				if (wlr_region_confine(&active_constraint->region, sx, sy,
 						sx + dx, sy + dy, &sx_confined, &sy_confined)) {
 					dx = sx_confined - sx;
@@ -1398,7 +1398,8 @@ cursorwarptohint(void)
 
 	toplevel_from_wlr_surface(active_constraint->surface, &c, NULL);
 	if (c && active_constraint->current.cursor_hint.enabled) {
-		wlr_cursor_warp(cursor, NULL, sx + c->geometry.x + c->bw, sy + c->geometry.y + c->bw);
+		wlr_cursor_warp(cursor, NULL, sx + c->geometry.x + client_border(c),
+			sy + c->geometry.y + client_border(c));
 		wlr_seat_pointer_warp(active_constraint->seat, sx, sy);
 		declare_cursor_changed();
 	}

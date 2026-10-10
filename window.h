@@ -50,7 +50,6 @@ void applybounds(Client *c, struct wlr_box *bbox);
 void arrange(Monitor *m);
 
 /* Appearance */
-unsigned int get_border_width(void);
 const float *get_focuscolor(void);
 const float *get_bordercolor(void);
 

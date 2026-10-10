@@ -166,8 +166,6 @@ struct client_t
     struct wlr_box surface_box;
     /** Realized crop relative to surface_box; width 0 means no crop. */
     struct wlr_box surface_clip;
-    /** Present in the current output declaration as a tile flow cell. */
-    bool clay_tiled;
     /** Scene surface node */
     struct wlr_scene_tree *scene_surface;
     /** Popup parent tree: tracks scene_surface's position but is exempt
@@ -233,8 +231,6 @@ struct client_t
     /** Monitor this client is on (somewm addition) */
     Monitor *mon;
     /* c->tags bitmask removed - tags now managed by arrays (tag->clients) */
-    /** Border width (somewm compat - duplicates border_width from WINDOW_OBJECT_HEADER) */
-    unsigned int bw;
     /** Named scalar properties owned by the client across Lua hot reloads. */
     struct client_xproperty *xproperties;
     /** Client name */
@@ -327,6 +323,8 @@ struct client_t
         int max_aspect_num, max_aspect_den;
         int win_gravity;
     } size_hints;
+    /** An XDG toplevel's min and max at its last commit, to tell a change. */
+    int32_t xdg_bounds[4];
 
     /* X11 visualtype - not needed for Wayland */
     /* xcb_visualtype_t *visualtype; */
@@ -415,6 +413,8 @@ bool client_focus_update(client_t *);
 void client_focus_refresh(void);
 void client_refresh(void);
 void client_border_rgba(client_t *, float out[4]);
+void client_set_border_color(client_t *, const float color[4]);
+int client_border(client_t *);
 void client_destroy_later(void);
 bool client_hasproto(client_t *, uint32_t);  /* Changed from xcb_atom_t */
 void client_ignore_enterleave_events(void);

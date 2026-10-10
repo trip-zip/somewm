@@ -207,44 +207,42 @@ end
 function carousel._build_declarations(inputs)
     local vertical = inputs.vertical
     local axis, cross = vertical and "h" or "w", vertical and "w" or "h"
-    local direction = vertical and "column" or "row"
     local gap, peek = inputs.gap or 0, inputs.peek or 0
     local children, columns = {}, {}
     local function margin(size)
-        local item = { role = "CAROUSEL_MARGIN", children = {} }
-        item[axis], item[cross] = size, 1
+        local item = { name = "CAROUSEL_MARGIN", children = {} }
+        item[axis], item[cross] = size, { percent = 1 }
         item.wsrc, item.hsrc = "theme", "theme"
         children[#children + 1] = item
     end
     if inputs.centered and #inputs.columns > 0 then
-        margin(math.max(0, (1 - inputs.columns[1].width_fraction) / 2))
+        margin({ percent = math.max(0, (1 - inputs.columns[1].width_fraction) / 2) })
     elseif (inputs.lead or 0) > 0 then
-        margin({ fixed = inputs.lead })
+        margin(inputs.lead)
     end
     for _, column in ipairs(inputs.columns) do
-        local group = { role = "CAROUSEL_COLUMN",
-            direction = vertical and "row" or "column",
-            padding = gap, gap = 2 * gap, children = {} }
-        group[axis], group[cross] = column.width_fraction, 1
+        local group = { name = "CAROUSEL_COLUMN", dir = vertical and "x" or "y",
+            pad = { gap, gap, gap, gap }, gap = 2 * gap, children = {} }
+        group[axis], group[cross] = { percent = column.width_fraction }, { percent = 1 }
         group.wsrc, group.hsrc = "theme", "theme"
         for _, c in ipairs(column.clients) do
             -- Protocol minima remain on the surface; they must not change
             -- column fractions or the equal allocation of grouped clients.
             local item = { client = c, wsrc = "theme", hsrc = "theme" }
-            item[axis], item[cross] = 1, 1 / #column.clients
+            item[axis], item[cross] = { percent = 1 }, { percent = 1 / #column.clients }
             group.children[#group.children + 1] = item
         end
         children[#children + 1] = group
         columns[#columns + 1] = group
     end
     if inputs.centered and #inputs.columns > 0 then
-        margin(math.max(0, (1 - inputs.columns[#inputs.columns].width_fraction) / 2))
+        margin({ percent = math.max(0, (1 - inputs.columns[#inputs.columns].width_fraction) / 2) })
     elseif (inputs.trail or 0) > 0 then
-        margin({ fixed = inputs.trail })
+        margin(inputs.trail)
     end
-    return { role = "CAROUSEL_VIEWPORT", direction = direction,
-        clip = vertical and "y" or "x", center = true,
-        padding = vertical and { top = peek, bottom = peek } or { left = peek, right = peek },
+    return { name = "CAROUSEL_VIEWPORT", dir = vertical and "y" or "x",
+        scroll = vertical and "y" or "x", align = vertical and { y = "center" } or { x = "center" },
+        pad = vertical and { 0, 0, peek, peek } or { peek, peek, 0, 0 }, w = "grow", h = "grow",
         vertical = vertical, columns = columns, children = children }
 end
 
@@ -283,7 +281,7 @@ end
 
 function carousel._native.follow(s, root, i, mode, dp)
     local column = root.columns[i]
-    if not column or not column.box or not root.box or not root.scroll then return end
+    if not column or not column.box or not root.box then return end
     local axis, extent = root.vertical and "y" or "x", root.vertical and "height" or "width"
     local x, y = awesome._clay_scroll_get(s, root.id)
     if x == nil then return end
@@ -359,8 +357,8 @@ local function describe(s, vertical)
         state.pending_follow = true
     end
 
-    return { role = "WORKAREA", direction = vertical and "column" or "row",
-        padding = gap, children = { tree }, solved = function()
+    return { name = "WORKAREA", dir = vertical and "y" or "x",
+        pad = { gap, gap, gap, gap }, children = { tree }, solved = function()
             state.publish = tree
             if not state.pending_follow then return end
             state.pending_follow = nil
@@ -446,8 +444,9 @@ function carousel.get()
     local box = root and root.box or scr.workarea
     local peek = root and root.peek or 0
     local dp = root and root.dynamic_peek or -1
-    local position = root and root.scroll and
-        -(root.vertical and root.scroll.y or root.scroll.x) or 0
+    local x, y
+    if root and root.id then x, y = awesome._clay_scroll_get(scr, root.id) end
+    local position = x and -(root.vertical and y or x) or 0
     local width = 0
     if root and #root.columns > 0 then
         local first, last = root.columns[1].box, root.columns[#root.columns].box
@@ -795,8 +794,10 @@ local function _make_gesture_binding(vertical)
 
             swipe_tag = t
             local root = get_state(t).publish
-            if not root or not root.scroll then swipe_tag = nil; return end
-            swipe_start_offset = vertical and root.scroll.y or root.scroll.x
+            local x, y
+            if root and root.id then x, y = awesome._clay_scroll_get(s, root.id) end
+            if x == nil then swipe_tag = nil; return end
+            swipe_start_offset = vertical and y or x
         end,
 
         on_update = function(gs)

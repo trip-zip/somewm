@@ -62,32 +62,31 @@ function magnifier._clay(s)
   local t = s.selected_tag
   local clients, focused = {}, nil
   for _, c in ipairs(aclient.tiled(s)) do
-    if not c.ontop and not c.above and not c.below then
-      clients[#clients + 1] = c
-      if c == capi.client.focus then focused = #clients end
-    end
+    clients[#clients + 1] = c
+    if c == capi.client.focus then focused = #clients end
   end
   local n = #clients
-  local children, floating = {}, {}
+  local children = {}
   if n > 0 then
     focused = focused or 1
     local gap = n == 1 and t.gap_single_client == false and 0 or t.gap
-    local share = n > 1 and math.sqrt(t.master_width_factor) or nil
-    floating[clients[focused]] = {attach_to = "workarea", center = true,
-      w = share, h = share, wsrc = "user", hsrc = "user", padding = gap}
+    local pad = {gap, gap, gap, gap}
     -- Background clients start after the focused client and wrap around.
     for offset = 1, n - 1 do
       local c = clients[(focused + offset - 1) % n + 1]
-      local item = {client = c}
+      local item = {client = c, w = "grow", h = "grow"}
       if gap > 0 then
-        item = {role = "CELL", direction = "row", padding = gap,
+        item = {name = "CELL", dir = "x", pad = pad, w = "grow", h = "grow",
           children = {item}}
       end
       children[#children + 1] = item
     end
+    -- The focused client floats at the workarea's centre (CENTER_CENTER).
+    local share = n > 1 and {percent = math.sqrt(t.master_width_factor)} or "grow"
+    children[#children + 1] = {client = clients[focused], float = true,
+      parent = 4, own = 4, w = share, h = share, wsrc = "user", hsrc = "user", pad = pad}
   end
-  return {role = "WORKAREA", direction = "column", children = children,
-    floating = floating}
+  return {name = "WORKAREA", dir = "y", children = children}
 end
 
 --- The magnifier layout.

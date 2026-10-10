@@ -86,6 +86,35 @@ runner.run_async(function()
             end
         end
     end
+    -- A minimum wider than the output sizes the surface; the cell and WORKAREA keep theirs.
+    clients[1]:kill()
+    reports[5]=os.tmpname()
+    awful.spawn{binary,'FAIR_HINT_WIDE',reports[5],'1600',colors[1],'500'}
+    local wide
+    for _=1,30 do
+        wide=utils.find_client_by_class('FAIR_HINT_WIDE')
+        if wide then break end
+        async.sleep(0.02)
+    end
+    wide=assert(wide);wide.floating,wide.shadow,wide.border_width,wide.size_hints_honor=false,false,1,true
+    clients[1]=wide
+    for i,wanted in ipairs(clients) do
+        local current=awful.client.tiled(s)[i]
+        if current~=wanted then current:swap(wanted) end
+    end
+    s.selected_tag.layout,s.selected_tag.gap=awful.layout.suit.fair,0
+    async.sleep(0.12)
+    local dump=awesome._clay_tree(s)
+    example.save('fairv-4-wide-gap0',dump)
+    local g=wide:geometry()
+    assert(g.x==0 and g.y==0 and g.width==638 and g.height==358,'wide minimum moved its cell')
+    assert(dump:match('WORKAREA [^\n]- box 0,0 1280x720\n'),'wide minimum resized WORKAREA')
+    assert(dump:match('SURFACE FAIR_HINT_WIDE [^\n]-w=grow>=1600 protocol h=grow>=500 protocol[^\n]- box 1,1 1600x500\n'),
+        'wide surface is not its 1600x500 minimum')
+    -- The describer's words: the SURFACE bounds are what c.size_hints reports.
+    local hints=wide.size_hints
+    assert(hints.min_width==1600 and hints.min_height==500 and hints.max_width==0,
+        'size_hints does not report the toplevel minimum the SURFACE line carries')
     for _,c in ipairs(clients) do c:kill() end
     for _,report in ipairs(reports) do os.remove(report) end
     assert(#failures==0,table.concat(failures,', '))

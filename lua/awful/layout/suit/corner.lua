@@ -34,51 +34,52 @@ local client = require("awful.client")
 -- and row membership remains; each group now allocates its actual children.
 local function describe(s, orientation)
   local t = s.selected_tag
-  local clients = {}
-  for _, c in ipairs(client.tiled(s)) do
-    if not c.ontop and not c.above and not c.below then
-      clients[#clients + 1] = c
-    end
-  end
+  local clients = client.tiled(s)
   local n = #clients
   local row_privileged = t.master_count % 2 == 0
   local factor = t.master_width_factor
   local west, north = orientation:sub(2,2) == "W", orientation:sub(1,1) == "N"
   local gap = (t.gap_single_client ~= false
       or not (n == 1 and t.master_fill_policy == "expand")) and t.gap or 0
+  local whole = {percent = 1}
   local function leaf(c)
-    local item = {client = c, w = 1, h = 1, wsrc = "theme", hsrc = "theme"}
+    local item = {client = c, w = whole, h = whole, wsrc = "theme", hsrc = "theme"}
     if gap > 0 then
-      item = {role = "CELL", direction = "row", w = 1, h = 1, wsrc = "theme", hsrc = "theme",
-        padding = gap, children = {item}}
+      item = {name = "CELL", dir = "x", w = whole, h = whole, wsrc = "theme", hsrc = "theme",
+        pad = {gap, gap, gap, gap}, children = {item}}
     end
     return item
   end
-  local function group(direction, items)
+  local function group(dir, items)
     if #items == 1 then return items[1] end
-    local axis = direction == "row" and "w" or "h"
-    for _, item in ipairs(items) do item[axis], item[axis .. "src"] = 1 / #items, "theme" end
-    return {role = "STACK", direction = direction, w = 1, h = 1, wsrc = "theme", hsrc = "theme", children = items}
+    local axis = dir == "x" and "w" or "h"
+    for _, item in ipairs(items) do
+      item[axis], item[axis .. "src"] = {percent = 1 / #items}, "theme"
+    end
+    return {name = "STACK", dir = dir, w = whole, h = whole, wsrc = "theme", hsrc = "theme",
+      children = items}
   end
-  local function split(direction, first, second, forward)
-    local axis = direction == "row" and "w" or "h"
-    first[axis], second[axis] = factor, 1 - factor
+  local function split(dir, first, second, forward)
+    local axis = dir == "x" and "w" or "h"
+    first[axis], second[axis] = {percent = factor}, {percent = 1 - factor}
     first[axis .. "src"], second[axis .. "src"] = "user", "user"
-    return {role = "STACK", direction = direction, w = 1, h = 1, wsrc = "theme", hsrc = "theme",
+    return {name = "STACK", dir = dir, w = whole, h = whole, wsrc = "theme", hsrc = "theme",
       children = forward and {first, second} or {second, first}}
   end
-  local root = {role = "WORKAREA", direction = row_privileged and "column" or "row", children = {}}
+  local root = {name = "WORKAREA", dir = row_privileged and "y" or "x", children = {}}
   if n == 0 then return root end
   local master = leaf(clients[1])
   local axis = row_privileged and "h" or "w"
   if n == 1 then
-    root.center = t.master_fill_policy ~= "expand"
-    if root.center then master[axis], master[axis .. "src"] = factor, "user" end
+    if t.master_fill_policy ~= "expand" then
+      root.align = row_privileged and {y = "center"} or {x = "center"}
+      master[axis], master[axis .. "src"] = {percent = factor}, "user"
+    end
     root.children = {master}
   elseif n == 2 then
     -- With only a slave, split along the privileged axis; there is no
     -- opposite group whose nonexistent count could divide a rectangle.
-    root.children = split(root.direction, master, leaf(clients[2]),
+    root.children = split(root.dir, master, leaf(clients[2]),
       row_privileged and north or not row_privileged and west).children
   else
     local column, row = {}, {}
@@ -87,11 +88,11 @@ local function describe(s, orientation)
       items[#items + 1] = leaf(clients[i])
     end
     if row_privileged then
-      local band = split("row", master, group("column", column), west)
-      root.children = split("column", band, group("row", row), north).children
+      local band = split("x", master, group("y", column), west)
+      root.children = split("y", band, group("x", row), north).children
     else
-      local band = split("column", master, group("row", row), north)
-      root.children = split("row", band, group("column", column), west).children
+      local band = split("y", master, group("x", row), north)
+      root.children = split("x", band, group("y", column), west).children
     end
   end
   return root

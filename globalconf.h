@@ -260,7 +260,6 @@ typedef struct
 
     /** Appearance settings (beautiful theme integration) */
     struct {
-        unsigned int border_width;    /* Window border thickness in pixels */
         float rootcolor[4];           /* Background color RGBA */
         float bordercolor[4];         /* Unfocused border color RGBA */
         float focuscolor[4];          /* Focused border color RGBA */

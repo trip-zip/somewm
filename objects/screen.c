@@ -473,6 +473,7 @@ screen_removed(lua_State *L, screen_t *screen)
 	}
 
 	/* Step 4: Mark screen as invalid */
+	widget_nodes_clear(&screen->layout);
 	screen->valid = false;
 	screen->monitor = NULL;
 
@@ -1245,6 +1246,7 @@ luaA_screen_fake_add(lua_State *L)
 	screen->workarea = screen->geometry;
 	screen->name = NULL;
 	screen->virtual_output = NULL;
+	screen->layout = (struct widget_tree) {0};
 	signal_array_init(&screen->signals);
 
 	/* Set metatable using class-based lookup (not named metatable) */
@@ -1840,6 +1842,7 @@ luaA_screen_gc(lua_State *L)
 	screen_t *screen = luaA_toscreen(L, 1);
 	if (screen) {
 		screen->valid = false;
+		widget_nodes_clear(&screen->layout);
 		signal_array_wipe(&screen->signals);
 		/* Free name if allocated */
 		if (screen->name) {
@@ -2034,6 +2037,33 @@ screen_client_moveto(client_t *c, screen_t *new_screen, bool doresize)
 		client_focus(c);
 }
 
+/** Store the selected layout's node tree for the screen's output.
+ * awful.layout calls this from the frame's clay::declare with the table the
+ * layout described, or nil to drop it; its arrange already asked for the
+ * frame, so this marks nothing dirty. The frame declares the tree as
+ * WORKAREA and, once solved, sends the screen clay::solved with the boxes.
+ * \param L The Lua VM state.
+ * \param tree The node tree, or nil.
+ * \return Whether a tree was stored.
+ * \return The reason nothing shows, when the tree was refused.
+ */
+static int
+luaA_screen_clay_layout(lua_State *L)
+{
+	screen_t *s = luaA_checkscreen(L, 1);
+	Monitor *m = luaA_monitor_get_by_screen(L, s);
+	bool stored = widget_nodes_set(L, &s->layout, m, 2);
+
+	lua_pushboolean(L, stored);
+	if (s->layout.state == WIDGET_NODES_OVER_BUDGET
+			|| s->layout.state == WIDGET_NODES_MALFORMED) {
+		lua_pushstring(L, s->layout.state == WIDGET_NODES_OVER_BUDGET
+			? "budget" : "malformed");
+		return 2;
+	}
+	return 1;
+}
+
 /* ========================================================================
  * Screen class setup
  * ======================================================================== */
@@ -2054,6 +2084,7 @@ const luaL_Reg screen_meta[] = {
 	{ "fake_remove", luaA_screen_fake_remove },
 	{ "fake_resize", luaA_screen_fake_resize },
 	{ "swap", luaA_screen_swap },
+	{ "_clay_layout", luaA_screen_clay_layout },
 	{ NULL, NULL }
 };
 

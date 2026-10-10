@@ -69,8 +69,9 @@ runner.run_async(function()
         awesome._test_redeclare()
         local describe = case.layout._clay
         local held = describe(s)
-        -- Hold the stock slots until the close is observed, without allowing
-        -- a new membership query to discard the handle before C reads it.
+        -- Hold the described node table until the close is observed, without
+        -- allowing a new membership query to drop the client before the frame
+        -- walks its handle.
         case.layout._clay = function() return held end
         local killed = clients[3].class
         clients[3]:kill()

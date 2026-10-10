@@ -1628,10 +1628,22 @@ client_set_urgent(lua_State *L, int cidx, bool urgent)
     }
 DO_CLIENT_SET_PROPERTY(group_window)
 DO_CLIENT_SET_PROPERTY(type)
-DO_CLIENT_SET_PROPERTY(transient_for)
 DO_CLIENT_SET_PROPERTY(pid)
 DO_CLIENT_SET_PROPERTY(skip_taskbar)
 #undef DO_CLIENT_SET_PROPERTY
+
+/* The next stack refresh lifts a transient right above its parent. */
+void
+client_set_transient_for(lua_State *L, int cidx, client_t *value)
+{
+    client_t *c = luaA_checkudata(L, cidx, &client_class);
+    if(c->transient_for != value)
+    {
+        c->transient_for = value;
+        stack_windows();
+        luaA_object_emit_signal(L, cidx, "property::transient_for", 0);
+    }
+}
 
 #define DO_CLIENT_SET_STRING_PROPERTY2(prop, signal) \
     void \
@@ -2062,38 +2074,34 @@ client_focus_refresh(void)
     globalconf.focus.need_update = false;
 }
 
-/** Apply pending border updates (AwesomeWM deferred border pattern for Wayland).
- * This function iterates through all clients and applies any pending border changes
- * to the wlr_scene_rect nodes if border_need_update is true.
+/** The C focus recolour: record the colour (client_border_rgba reads it when
+ * the Lua border_color property was never set) and queue
+ * property::border_color, on which awful.layout describes the frame again.
  */
-static void
-client_border_refresh(void)
+void
+client_set_border_color(client_t *c, const float color[4])
 {
-    foreach(_c, globalconf.clients)
-    {
-        client_t *c = *_c;
+    lua_State *L = globalconf_get_lua_State();
 
-        /* Check if border needs update */
-        if(!c->border_need_update)
-            continue;
+    memcpy(c->border_rgba, color, 4 * sizeof(float));
+    c->border_rgba_set = true;
+    luaA_object_push(L, c);
+    some_event_queue_signal0(L, -1, SIG_PROPERTY_BORDER_COLOR);
+    lua_pop(L, 1);
+}
 
-        c->border_need_update = false;
-
-        /* Skip if client has no scene (not yet mapped) */
-        if(!c->scene)
-            continue;
-
-        /* Sync wlroots border width (bw) with Lua-facing border_width;
-         * the dirty frame below re-declares the frame at the new width.
-         * Fullscreen keeps bw at 0 (matches setfullscreen()), so a
-         * border_color change while fullscreen doesn't re-grow the frame. */
-        c->bw = c->fullscreen ? 0 : c->border_width;
-
-        /* Width and color both land through the declare pass, which reads
-         * c->bw and client_border_rgba() per frame. */
-        if (c->mon && c->mon->declare)
-            declare_output_mark_dirty(c->mon->declare);
-    }
+/** The border the frame draws: border_width, none when fullscreen or for
+ * an unmanaged (override-redirect) client.
+ */
+int
+client_border(client_t *c)
+{
+#ifdef XWAYLAND
+    if (c->client_type == X11 && c->surface.xwayland
+            && c->surface.xwayland->override_redirect)
+        return 0;
+#endif
+    return c->fullscreen ? 0 : c->border_width;
 }
 
 /** The border color the declare pass draws for c: the Lua border_color
@@ -2116,7 +2124,6 @@ client_border_rgba(client_t *c, float out[4])
 void
 client_refresh(void)
 {
-    client_border_refresh();
     client_focus_refresh();
 }
 
@@ -2334,8 +2341,8 @@ client_resize_do(client_t *c, area_t geometry, bool silent, bool solved)
             && (old_geometry.x != geometry.x || old_geometry.y != geometry.y)) {
         int tl = c->fullscreen ? 0 : c->titlebar[CLIENT_TITLEBAR_LEFT].size;
         int tt = c->fullscreen ? 0 : c->titlebar[CLIENT_TITLEBAR_TOP].size;
-        int16_t cx = geometry.x + c->bw + tl;
-        int16_t cy = geometry.y + c->bw + tt;
+        int16_t cx = geometry.x + client_border(c) + tl;
+        int16_t cy = geometry.y + client_border(c) + tt;
         if (cx != c->surface.xwayland->x || cy != c->surface.xwayland->y) {
             wlr_xwayland_surface_configure(c->surface.xwayland,
                     cx, cy,
@@ -2833,7 +2840,10 @@ client_unmanage(client_t *c, client_unmanage_t reason)
     {
         client_t *tc = *_tc;
         if(tc->transient_for == c)
+        {
             tc->transient_for = NULL;
+            stack_windows();
+        }
     }
 
     /* Emit synchronously: this client is invalidated before the event queue is
@@ -3398,7 +3408,7 @@ static area_t
 titlebar_get_area(client_t *c, client_titlebar_t bar)
 {
     area_t result = c->geometry;
-    int bw = c->bw;
+    int bw = client_border(c);
 
     /* Wayland deviation: titlebars must be inset by border_width.
      * In X11, borders are drawn OUTSIDE the frame by the X server.
@@ -4276,6 +4286,20 @@ luaA_client_get_size_hints(lua_State *L, client_t *c)
         lua_setfield(L, -2, u_or_p);
     }
 
+    if(c->client_type == XDGShell && c->surface.xdg && c->surface.xdg->toplevel)
+    {
+        /* An XDG toplevel's committed minimum and maximum; 0 is none. */
+        struct wlr_xdg_toplevel_state *hints = &c->surface.xdg->toplevel->current;
+        lua_pushinteger(L, hints->min_width);
+        lua_setfield(L, -2, "min_width");
+        lua_pushinteger(L, hints->min_height);
+        lua_setfield(L, -2, "min_height");
+        lua_pushinteger(L, hints->max_width);
+        lua_setfield(L, -2, "max_width");
+        lua_pushinteger(L, hints->max_height);
+        lua_setfield(L, -2, "max_height");
+    }
+
     if(c->size_hints.flags & XCB_ICCCM_SIZE_HINT_P_MIN_SIZE)
     {
         lua_pushinteger(L, c->size_hints.min_width);
@@ -4640,6 +4664,23 @@ luaA_client_border_is_focus_color(lua_State *L)
     return 1;
 }
 
+/** client:_border_rgba() -> r, g, b, a
+ *
+ * The border colour the frame draws (client_border_rgba), straight alpha
+ * 0-1, for lua/awful/client/clay.lua.
+ */
+static int
+luaA_client_border_rgba(lua_State *L)
+{
+    client_t *c = luaA_checkudata(L, 1, &client_class);
+    float rgba[4];
+
+    client_border_rgba(c, rgba);
+    for (int i = 0; i < 4; i++)
+        lua_pushnumber(L, rgba[i]);
+    return 4;
+}
+
 /** client:_border_is_normal_color() -> boolean
  *
  * Returns true if the client's rendered border color matches the
@@ -4705,6 +4746,7 @@ client_class_setup(lua_State *L)
         { "set_xproperty", luaA_client_set_xproperty },
         { "_border_is_focus_color", luaA_client_border_is_focus_color },
         { "_border_is_normal_color", luaA_client_border_is_normal_color },
+        { "_border_rgba", luaA_client_border_rgba },
         { NULL, NULL }
     };
 
