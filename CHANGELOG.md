@@ -6,25 +6,261 @@ All notable changes to somewm will be documented in this file.
 
 ### Added
 
+- client.shape: nil, a corner radius in pixels, or a gears.shape function.
+  gears.surface.apply_shape_bounding sets it on a client as it sets
+  wibox.shape. gears.shape.rounded_rect, or a function drawing its path, is
+  read as that radius; any other function warns once naming the client, which
+  stays square. A titlebar takes the corners on its edge and the surface the
+  rest. The suite's headless runner keeps a WLR_RENDERER already set in the
+  environment instead of forcing pixman.
 - awful.widget.calendar_popup.month and .year take a width argument,
   defaulting to beautiful.calendar_popup_width, and the popup is an
   awful.popup placed by its position inside the workarea; awful.popup gains
   honor_workarea.
+- screen.inspector: Clay's debug inspector on that screen, its element tree
+  and the selected element's solved box and configuration; property::inspector
+  fires on a change, also when the panel's close button closes it.
+  somewm.inspector.toggle(s) flips it on s or the focused screen, and
+  somewm.inspector.restyle() re-reads the theme: beautiful.inspector_bg,
+  inspector_bg_alt, inspector_border, inspector_fg, inspector_bg_selected,
+  inspector_highlight, inspector_width and inspector_font.
+- somewm-client clay tree [screen] prints what the last frame solved on every
+  output, or on one screen: counters per band, then one line per retained node
+  in draw order.
+- beautiful.launcher_width: the menubar launcher's width, ahead of
+  menubar.geometry.width; without either the launcher spans the workarea.
+
+### Changed
+
+- somewm always builds with XWayland support; the -Dxwayland build option is
+  gone, and a build without it had not compiled. Building needs xcb, xcb-icccm
+  and Xwayland installed, and running X11 applications needs the Xwayland
+  binary.
+- Client shape masks are accepted and never read: shape_bounding, shape_clip and
+  shape_input, and client_shape_bounding, client_shape_clip and
+  client_shape_input, which always read nil. A client's corners come from its
+  shape property.
+- A wibox with an opacity below 1 blends each of its fills at that opacity, so
+  fills that overlap add up: a blue background container on a blue wibox at
+  opacity 0.5 shows denser blue than either alone. 2.0 blended the whole wibox
+  once.
+- A drawin's widget tree holds at most 4096 nodes; a larger tree shows nothing
+  and the drawin warns once that it is over the output's element budget.
+- An imagebox without a forced size takes its size from the bound above it: the
+  cross-axis bound times its aspect, lowered to the flow-axis bound when that is
+  smaller, as 2.0's fit did. With no bound on either axis, along a flex or
+  linear layout's flow, it declares its natural size and can leave slack or
+  overflow its parent. An imagebox forced on one axis scales its image to that
+  axis.
+- Hotkeys help and menubar scroll instead of paging; every key and item stays
+  reachable. Hotkeys: one column per group, continued every
+  `beautiful.hotkeys_rows` rows (new theme value, default 20); PgDn/PgUp scroll
+  by one viewport; the "PgDn - Next Page"/"PgUp - Prev Page" labels are gone.
+  Menubar: `left_label`/`right_label` show while items lie beyond that side. A
+  bordered popup whose content is larger than its slot keeps its slot geometry;
+  the content is clipped as it was already drawn.
+- A non-homogeneous grid no longer sizes its columns to the widest cell across
+  rows.
+- A homogeneous grid inside a content-sized box takes content-sized cells and
+  warns.
+- A row span occupies its first row only and warns.
+- Grid border dashes draw as solid lines and gradient border colours are
+  transparent, both warn.
+- A client whose protocol minimum exceeds its tiled cell overhangs the cell; the
+  workarea and its neighbours keep their size and c:geometry() reports the cell.
+- An ontop, above or below client under a stock layout now tiles into its slot,
+  as in AwesomeWM, instead of keeping its last box.
+- Under max and magnifier a floating client is above the layout's clients
+  whatever the raise order, as under tile, including a floating parent whose
+  transient is tiled under max.
+- A transient of a max or magnifier client is a root of its own above every
+  client of that layout, not above its parent only.
+- c.size_hints now reports min_width, min_height, max_width and max_height for
+  Wayland clients, from the toplevel's committed bounds (0 means none);
+  property::size_hints fires when they change. A Wayland client whose min equals
+  max now reports is_fixed and floats, as an X11 client with those hints did.
+- A client whose rules set no border_width now draws no border, as in AwesomeWM;
+  before, the theme's border_width was applied from C and could not be read from
+  Lua.
+- property::border_color also fires on a client when the focus recolour changes
+  the drawn border, with c.border_color unchanged unless a config set it.
+- property::scroll_factor on wibox.layout.overflow fires once the frame has
+  applied a change, from a setter, scroll() or the mouse wheel, with the applied
+  factor; before, it fired inside the setter with the requested value and never
+  for the wheel.
+- property::scroll_factor on wibox.layout.overflow also fires when a change in
+  content or viewport size moves the factor without a scroll, and does not fire
+  when a set leaves the applied factor unchanged.
+- A slider bar_color gradient without bar_margins is drawn in the bar's box;
+  upstream used the widget's box. Clay centres the bar.
+- An arcchart colors gradient in a non-square box is drawn in the box; upstream
+  used the centred square.
+- A separator color gradient on a horizontal or vertical line is drawn in the
+  line's box; upstream used the widget's box.
+- Text under a rotate or mirror draws as one line; a textbox with more than one
+  line under one is left out with a warning.
+- A wibox.container.scroll under a rotate or mirror, and a rotate or mirror
+  inside another, are left out with a warning.
+- A widget under a rotate receives press coordinates relative to its rotated
+  box; v2.0.0 mapped them through the container's matrix into the widget's own
+  frame.
+- Setting c.shape stores it, emits property::shape and arranges the screen; a
+  shape that is not a rounded rectangle warns once naming the client, and the
+  client stays square.
+- The client and drawin shape mask warnings name shape_bounding, shape_clip and
+  shape_input.
+- A layout leaf that is both placed (x or y) and sized (grow, fit or a percent)
+  on the same axis is left out of the tree with one warning naming the client.
+  Before, the leaf floated at x,y with its sized box and could run past the
+  output.
+- somewm builds its own wlroots 0.20.2 and links it in; an installed wlroots is
+  not used. The wlroots 0.19 path and `-Dwlroots_version` are gone. A distro
+  whose wayland, libdrm, xkbcommon, pixman or wayland-protocols is older than
+  wlroots 0.20.2 gets that library built alongside it.
+- wibox.layout.align with expand none lets an outer widget wider than its half
+  push the centre widget off centre instead of cutting the outer widget at the
+  half; v2.0.0 cut it.
+- A function bgimage on a wibox or a wibox.container.background is not drawn;
+  setting one warns and clears the image. 2.0 called it to paint the
+  background.
+- A shape function is used as the path it traces; anything else it does, such
+  as setting a source or painting, is dropped. 2.0 ran it on the widget's cairo
+  context.
+- Without somewm.layout_animation loaded, a client frame declares no
+  transition, so an output with clients solves its layout once per frame
+  instead of twice. A client's first frame after the module loads, or after
+  a reload, does not animate.
+- A textbox wraps at words whatever its wrap is; wrap = "char" warns once. 2.0
+  broke inside a word for "char", and for the default "word_char" when a word
+  did not fit the line.
+- wibox.container.tile with tiled true, its default, draws one copy of its
+  widget, placed as wibox.container.place places it, and warns once. 2.0
+  repeated the widget across its box.
+- A fractional padding, gap, offset or border width rounds to the nearest whole
+  pixel. 2.0 kept the fraction.
+
+### Removed
+
+- The `fit`, `draw`, `layout`, `before_draw_children` and `after_draw_children`
+  methods of the stock widget, container and layout classes (73 methods over 33
+  classes). Clay sizes and places every widget from its description, so no stock
+  class measures, lays out or paints itself.
+- `wibox.hierarchy` and the `wibox.hierarchy` field: `new`, `count_widget`,
+  `update`, `get_widget`, `get_matrix_to_parent`, `get_matrix_to_device`,
+  `get_matrix_from_parent`, `get_matrix_from_device`, `get_draw_extents`,
+  `get_size`, `get_children`, `get_count` and `draw`. The widget tree is
+  declared to Clay; no tree of placed widgets is kept to walk.
+- The `wibox.widget.base` placement helpers `fit_widget`, `layout_widget`,
+  `place_widget_at`, `place_widget_via_matrix` and `rect_to_device_geometry`.
+  Clay places every widget.
+- `wibox.widget.draw_to_cairo_context`, `draw_to_image_surface` and
+  `draw_to_svg_file`. Widgets no longer paint into cairo; the renderer draws
+  their description.
+- `wibox:to_widget` and `wibox:save_to_svg`, for the same reason.
+- `wibox.container.border`. No configuration uses it; loading it is an error.
+- Properties no configuration sets: `horizontal_offset` (wibox.layout.stack),
+  `minimum_column_width` and `superpose` (wibox.layout.grid, which always
+  refuses a widget added over another), `inner_fill_strategy`
+  (wibox.layout.ratio), `stretch_horizontally` and `stretch_vertically`
+  (wibox.container.background), `paddings` (wibox.container.radialprogressbar),
+  `horizontal_crop` and `vertical_crop` (wibox.container.tile), `auto_dpi` and
+  `source_width` (wibox.widget.imagebox), `ticks_gap` (wibox.widget.progressbar),
+  `bar_border_color`, `bar_border_width` and `handle_margins`
+  (wibox.widget.slider), `empty_cell_mode`, `empty_color` and `empty_widget`
+  (wibox.widget.calendar), and `check_border_color`, `check_border_width` and
+  `check_shape` (wibox.widget.checkbox, whose check takes `shape`). Setting one
+  warns once that it is ignored; reading one gives nil. The theme variables
+  only they read are gone too: `radialprogressbar_paddings`,
+  `slider_bar_border_color`,
+  `slider_bar_border_width`, `slider_handle_margins`, `calendar_empty_color`,
+  `checkbox_check_border_color`, `checkbox_check_border_width` and
+  `checkbox_check_shape`.
+- The scroll container's draw-context fields `context`, `first_x`, `first_y`,
+  `fit_width`, `fit_height`, `hierarchy`, `surface_width` and `surface_height`.
+  The container is a Clay scroll element and no longer draws its child into a
+  surface of its own.
+- `awful.wallpaper` `uncovered_areas_color`, `dpi` and `get_dpi`. Setting one
+  warns once: the root wallpaper shows in the uncovered areas, and the output
+  scale applies.
+- `carousel.scroll_duration`. Scrolling animates client slots through
+  `somewm.layout_animation`.
+- `somewm.layout_animation.easing`. Clay animates the transition; setting it
+  warns.
+- The drawin `surface_scale` property. A drawin has no surface of its own to
+  scale.
+- The drawable `refresh` method and `surface` property. A drawable holds no
+  cairo surface.
+- `awesome.systray`; see [`DEVIATIONS.md`](DEVIATIONS.md) under "Removed APIs".
+- `wibox.widget.textbox:get_preferred_size`,
+  `wibox.widget.textbox:get_preferred_size_at_dpi`,
+  `wibox.widget.textbox:get_height_for_width`,
+  `wibox.widget.textbox:get_height_for_width_at_dpi`,
+  `wibox.widget.textbox.get_markup_geometry` and
+  `menubar.utils.compute_text_width`. Clay measures text; nothing measures it in
+  Lua.
+- `awful.client.shape`: `get_transformed`, `update.all`, `update.bounding`,
+  `update.clip` and `update.input`. The shape was never applied on Wayland.
+- `menubar.utils.compute_textbox_width`. It measured through
+  `textbox:get_preferred_size`, which is gone.
+- `ruled.client.completed_with_payload_callback`. It was an alias of
+  `ruled.client.execute`; call that.
+- The drawin `shape_border` property, a border surface drawn in Lua. The
+  renderer draws the border of a shaped wibox itself.
+- `wibox.widget.base.no_parent_I_know_what_I_am_doing`, the marker for
+  `base.fit_widget` and `base.layout_widget`, which are gone.
+- The wibox `__tostring`. `tostring()` of a wibox prints the table, where 2.0
+  printed `wibox: <drawable> (<table>)`.
 
 ### Fixed
 
-- A widget tree of up to 4096 nodes shows; a year calendar popup, about 2300
-  nodes, showed nothing.
-- A client max size hint of 1,000,000 or more no longer bounds its surface
-  and no longer blanks its tag; the client warns once naming the hint
-- A tiled desktop-type client draws at its cell above the wallpaper wibox;
-  before, it sat under the wallpaper and the bars.
-- An image inside a column slot takes the column's height as a cap, as 2.0's
-  fit did; before it declared its natural size and the bar overflowed.
-- A popup placed with awful.placement.centered is sized by its widget at the
-  popup band, as the other placements are; before it was boxed at 600 px at
-  the notification band. A menubar without a width spans the workarea as it
-  did in 2.0.
+- wibox.layout.grid emitted property::minimum_column_width when
+  minimum_row_height changed.
+- A rounded background, border or clipped widget draws through somewm's
+  wlroots build instead of a cairo raster: resizing, moving or clipping it
+  rasters nothing, and a titlebar's or bar's corner radius is no longer cut to
+  half the bar's height when only two corners are rounded.
+- A client shaped with a rounded rectangle (gears.surface.apply_shape_bounding
+  with gears.shape.rounded_rect, or client.shape) draws rounded corners on
+  Wayland, through somewm's own wlroots 0.20.2 build: the surface and the
+  titlebar on an edge are cut by their radii under gles2 and pixman, nothing
+  under a cut corner is culled, a click in the corner reaches what is below,
+  and screen.content shows the cut. 2.0 accepted the shape and drew a square.
+- A client that commits a size other than the one it was configured is drawn
+  at the committed size: its titlebar, border, shadow and corners wrap the
+  surface, and the next configure still carries the layout's or the user's
+  box. 2.0 drew the frame at the configured size, so a terminal keeping whole
+  cells had its titlebar overhang the surface.
+- A slider bar_active_color gradient now draws. Upstream raised an error for a
+  gradient string (parse_color returns nil for it and add_color_stop_rgba fails)
+  and skipped the active part for a gradient table.
+- Every new client starts with size_hints_honor true, as the property documents
+  and as 1.4 and AwesomeWM do; 2.0.0 started it false. A client's protocol
+  minimum and maximum now reach the dump and the solve without a rule setting
+  the flag. Rules that set it false keep winning.
+- client.get(), client::list, the stack and _NET_CLIENT_LIST see a client from
+  its first map, as in AwesomeWM. Before, a surface that was created and never
+  mapped was listed with no name, class or pid, and wlroots' no-focus window
+  stayed listed from the first X client until exit.
+- The systray urgent, hover and overlay backgrounds and the grid hole take a
+  gradient, filling the node's own box with its points as authored. A surface or
+  mesh pattern warns once naming urgent_bg, hover_bg, overlay_bg or
+  border_color, and the node stays transparent. Before, each of these drew
+  nothing and said nothing.
+- Wrapped text with a word wider than its box, then a space, then a newline no
+  longer crashes the compositor. That line draws as an empty line.
+- The bundled bar puts the clock between its left and right groups; before it
+  floated over the tasklist.
+- A client that acknowledges a new size and keeps drawing its old one, as
+  ghostty does after moving to a screen with another scale, is sent the size
+  again up to three times a second apart and takes its cell. Before, it was
+  sent once more and could stay at its old width beside an empty strip.
+- A client that draws larger than its cell, as a terminal moved from a bigger
+  screen does, no longer grows the cell, the row and the screen's workarea; its
+  drawing is cut at the cell and it is asked for the cell.
+- make install removes the installed Lua tree (somewm/lua in the install's
+  datadir) before installing, so a module removed since the last install is
+  gone. Before, 2.0's wibox.hierarchy and wibox.container.border stayed and
+  loaded in place of the error a config should get.
 
 ## [2.0.1] - 2026-10-10
 
