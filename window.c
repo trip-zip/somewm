@@ -303,6 +303,18 @@ commitnotify(struct wl_listener *listener, void *data)
 		client_configure_to_box(c);
 	}
 
+	struct wlr_xdg_toplevel_state *hints = &c->surface.xdg->toplevel->current;
+	int32_t bounds[4] = { hints->min_width, hints->min_height,
+		hints->max_width, hints->max_height };
+	if (memcmp(bounds, c->xdg_bounds, sizeof(bounds))) {
+		lua_State *L = globalconf_get_lua_State();
+
+		memcpy(c->xdg_bounds, bounds, sizeof(bounds));
+		luaA_object_push(L, c);
+		luaA_object_emit_signal(L, -1, "property::size_hints", 0);
+		lua_pop(L, 1);
+	}
+
 	/* Re-apply opacity after wlroots' surface_reconfigure() resets it to 1.0.
 	 * Our listener fires after wlroots' because we registered it after
 	 * wlr_scene_xdg_surface_create() in mapnotify(). */
@@ -354,7 +366,7 @@ popup_unconstrain(Popup *p)
 		box.x -= m->m.x + l->geom.x;
 		box.y -= m->m.y + l->geom.y;
 	} else {
-		int bw = c->fullscreen ? 0 : c->bw;
+		int bw = client_border(c);
 
 		box = m->w;
 		box.x -= c->geometry.x + bw
@@ -470,7 +482,6 @@ createnotify(struct wl_listener *listener, void *data)
 	toplevel->base->data = c;
 	c->surface.xdg = toplevel->base;
 	c->client_type = XDGShell;
-	c->bw = get_border_width();
 
 	/* Register Wayland event listeners (adapts X11 event masks to Wayland signals)
 	 * Note: The main commit listener is registered in mapnotify() AFTER wlr_scene_xdg_surface_create()
@@ -746,34 +757,6 @@ fullscreennotify(struct wl_listener *listener, void *data)
  * with fallbacks to globalconf defaults. This achieves AwesomeWM compatibility:
  * themes can customize appearance without recompiling C code. */
 
-/** Get border width from beautiful.border_width or globalconf default */
-unsigned int
-get_border_width(void)
-{
-	lua_State *L = globalconf_get_lua_State();
-	if (!L) return globalconf.appearance.border_width;
-
-	/* Use require() to get beautiful module (it's typically local, not global) */
-	lua_getglobal(L, "require");
-	lua_pushstring(L, "beautiful");
-	if (lua_pcall(L, 1, 1, 0) != 0) {
-		lua_pop(L, 1);
-		return globalconf.appearance.border_width;
-	}
-	if (lua_istable(L, -1)) {
-		lua_getfield(L, -1, "border_width");
-		if (lua_isnumber(L, -1)) {
-			unsigned int val = lua_tointeger(L, -1);
-			lua_pop(L, 2);
-			return val;
-		}
-		lua_pop(L, 1);
-	}
-	lua_pop(L, 1);
-
-	return globalconf.appearance.border_width;
-}
-
 /** Get focus color from beautiful.border_focus or globalconf default */
 const float *
 get_focuscolor(void)
@@ -891,7 +874,6 @@ mapnotify(struct wl_listener *listener, void *data)
 	 * Restore the client to a manageable state before proceeding. */
 	if (c->client_type == X11 && c->window == XCB_NONE) {
 		c->window = c->surface.xwayland->window_id;
-		c->bw = client_is_unmanaged(c) ? 0 : get_border_width();
 		client_array_push(&globalconf.clients, c);
 		stack_client_push(c);
 		luaA_class_emit_signal(globalconf_get_lua_State(),
@@ -1215,10 +1197,11 @@ unset_fullscreen:
 		int tt = c->fullscreen ? 0 : c->titlebar[CLIENT_TITLEBAR_TOP].size;
 		int tr = c->fullscreen ? 0 : c->titlebar[CLIENT_TITLEBAR_RIGHT].size;
 		int tb = c->fullscreen ? 0 : c->titlebar[CLIENT_TITLEBAR_BOTTOM].size;
-		int x0 = c->geometry.x + (int)c->bw + tl;
-		int y0 = c->geometry.y + (int)c->bw + tt;
-		int x1 = c->geometry.x + (int)c->bw + c->geometry.width  - tr;
-		int y1 = c->geometry.y + (int)c->bw + c->geometry.height - tb;
+		int bw = client_border(c);
+		int x0 = c->geometry.x + bw + tl;
+		int y0 = c->geometry.y + bw + tt;
+		int x1 = c->geometry.x + bw + c->geometry.width  - tr;
+		int y1 = c->geometry.y + bw + c->geometry.height - tb;
 		if (cursor->x >= x0 && cursor->x < x1 && cursor->y >= y0 && cursor->y < y1) {
 			double sx, sy;
 			cursor_to_client_coordinates(c, &sx, &sy);
@@ -1691,7 +1674,6 @@ setfullscreen(Client *c, int fullscreen)
 			wlr_xdg_toplevel_set_maximized(c->surface.xdg->toplevel, 0);
 	}
 
-	c->bw = fullscreen ? 0 : get_border_width();
 	/* Only on the edge: wlroots does not dedupe, so an unconditional call
 	 * would send a fullscreen configure to every client setmon() touches. */
 	if (was_fullscreen != fullscreen)

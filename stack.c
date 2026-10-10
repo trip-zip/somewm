@@ -16,6 +16,8 @@
 #include "globalconf.h"      /* For globalconf.stack and globalconf.drawins */
 #include "somewm_api.h"
 #include <stdbool.h>
+#include <stdlib.h>
+#include <string.h>
 
 /* Flag to mark stack as needing refresh */
 static bool need_stack_refresh = false;
@@ -131,7 +133,48 @@ stack_client_effective_layer(Client *c)
 	return layer == WINDOW_LAYER_IGNORE ? WINDOW_LAYER_NORMAL : layer;
 }
 
+static bool
+stack_has(Client *c)
+{
+	foreach(node, globalconf.stack)
+		if (*node == c)
+			return true;
+	return false;
+}
+
+/* Whether c rides its parent: its transient_for chain reaches a client in
+ * the stack that is no transient of one, within the stack's length (a
+ * cycle never does, so its members keep their own places). */
+static bool
+stack_rides(Client *c)
+{
+	Client *p = c;
+
+	for (int i = 0; i < globalconf.stack.len; i++) {
+		Client *q = p->transient_for;
+		if (!q || !stack_has(q))
+			return p != c;
+		p = q;
+	}
+	return false;
+}
+
+/* c, then each client riding it in the old order, each followed by its own.
+ * rides[] was read from the old stack. */
+static void
+stack_place(Client *c, Client **old, const bool *rides, int len)
+{
+	if (stack_has(c))
+		return;
+	client_array_append(&globalconf.stack, c);
+	for (int i = 0; i < len; i++)
+		if (rides[i] && old[i]->transient_for == c)
+			stack_place(old[i], old, rides, len);
+}
+
 /** Refresh stacking order
+ * Every transient sits right above its parent, siblings in their old order,
+ * so declaration order, client.get(s, true) and hit routing read one order.
  * The declare pass reads globalconf.stack per dirty frame and the
  * reconciler restacks the scene from declaration order, so applying a stack
  * change is a dirty mark on every output plus the EWMH mirror.
@@ -141,6 +184,21 @@ stack_refresh(void)
 {
 	if (!need_stack_refresh)
 		return;
+
+	int len = globalconf.stack.len;
+	Client **old = len ? malloc(len * sizeof(*old)) : NULL;
+	bool *rides = len ? calloc(len, sizeof(*rides)) : NULL;
+	if (old && rides) {
+		memcpy(old, globalconf.stack.tab, len * sizeof(*old));
+		for (int i = 0; i < len; i++)
+			rides[i] = stack_rides(old[i]);
+		globalconf.stack.len = 0;
+		for (int i = 0; i < len; i++)
+			if (!rides[i])
+				stack_place(old[i], old, rides, len);
+	}
+	free(rides);
+	free(old);
 
 	declare_mark_all_dirty();
 	ewmh_update_net_client_list_stacking();

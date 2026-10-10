@@ -89,10 +89,11 @@ runner.run_steps({
             return
         end
         assert(client_line, "missing CLIENT " .. master.class .. "\n" .. dump)
-        local pl, pt, pr, pb = client_line:match("pad (%d+),(%d+),(%d+),(%d+)")
-        pl, pt, pr, pb = tonumber(pl), tonumber(pt), tonumber(pr), tonumber(pb)
-        assert(pl and pt and pr and pb, "expected client padding: " .. client_line)
-        local width = math.floor(w + 0.5) - pl - pr
+        -- The frame's padding is the client's border_width; none prints no pad.
+        local bw = master.border_width
+        assert(client_line:find(bw > 0 and string.format(" pad %d,%d,%d,%d", bw, bw, bw, bw)
+            or " column box ", 1, true), "client padding is not border_width " .. bw .. ": " .. client_line)
+        local width = math.floor(w + 0.5) - 2 * bw
         local evidence = os.getenv("SOMEWM_EXAMPLE_EVIDENCE")
         if evidence then
             local file = assert(io.open(evidence .. "/titlebar-clip-rounding.txt", "w"))

@@ -29,19 +29,14 @@ local spiral = {}
 -- cell so it does not alter the percentage split of its parent region.
 local function describe(s, is_spiral)
     local t = s.selected_tag
-    local clients = {}
-    for _, c in ipairs(client.tiled(s)) do
-        if not c.ontop and not c.above and not c.below then
-            clients[#clients + 1] = c
-        end
-    end
+    local clients = client.tiled(s)
     local n = #clients
     local gap = n == 1 and t.gap_single_client == false and 0 or t.gap
     local function leaf(c)
-        local item = {client = c}
+        local item = {client = c, w = "grow", h = "grow"}
         if gap > 0 then
-            return {role = "CELL", direction = "row", padding = gap,
-                children = {item}}
+            return {name = "CELL", dir = "x", pad = {gap, gap, gap, gap},
+                w = "grow", h = "grow", children = {item}}
         end
         return item
     end
@@ -50,15 +45,15 @@ local function describe(s, is_spiral)
         local horizontal = i % 2 == 1
         local head = leaf(clients[i])
         local axis = horizontal and "w" or "h"
-        head[axis] = i == 1 and (t.master_width_factor + 0.5) / 2 or 0.5
+        head[axis] = {percent = i == 1 and (t.master_width_factor + 0.5) / 2 or 0.5}
         head[axis .. "src"] = i == 1 and "user" or "theme"
         local reverse = is_spiral and (i % 4 == 3 or i % 4 == 0)
-        tail = {role = i == 1 and "WORKAREA" or "STACK",
-            direction = horizontal and "row" or "column",
+        tail = {name = i == 1 and "WORKAREA" or "STACK",
+            dir = horizontal and "x" or "y", w = "grow", h = "grow",
             children = reverse and {tail, head} or {head, tail}}
     end
     if n < 2 then
-        return {role = "WORKAREA", direction = "row", children = {tail}}
+        return {name = "WORKAREA", dir = "x", children = {tail}}
     end
     return tail
 end

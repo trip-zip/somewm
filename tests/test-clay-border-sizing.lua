@@ -48,7 +48,7 @@ runner.run_async(function()
         local dump = awesome._clay_tree(screen[1])
         for line in dump:gmatch('[^\n]+') do
             if line:match('^    %x+ ') then
-                assert(not line:find(' derived ',1,true) and not line:find('last-frame',1,true), line)
+                assert(not line:find(' derived ',1,true), line)
             end
         end
         assert(dump:find(string.format('w=fixed(%d) user h=fixed(%d) user ', bar.width, bar.height), 1, true), dump)

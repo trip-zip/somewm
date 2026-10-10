@@ -70,6 +70,18 @@ struct declared_host {
     struct widget_tree *view;
 };
 
+/* What a track or thumb node declared from its scroll record: the thumb's
+ * length and the track's offset along axis (2 is y), both 0 when the
+ * content fits and the track collapses. The dump prints these. */
+struct scrollbar_record {
+	Clay_ElementId id, node;
+	bool found, collapsed;
+	uint8_t axis;
+	float length, offset;
+	Clay_Vector2 position;
+	Clay_Dimensions content, box;
+};
+
 struct declare_band {
     bool exhausted, context_valid, inspector_refused;
     bool inspector_solving, inspector_collision_logged;
@@ -85,7 +97,9 @@ struct declare_band {
     int fail_elements;
     size_t host_clips_left, clips_declared;
     bool clip_warning;
-    int layout_ref;
+    /* The scrollbar records of this band's last frame. */
+    struct scrollbar_record scrollbar_records[WIDGET_SCROLLS_OUTPUT_MAX * 2];
+    size_t scrollbar_records_len;
 	Clay_Context *clay;
 	void *arena;
 	struct wlr_scene_tree *tree;
@@ -120,6 +134,13 @@ struct declare_band {
 		uint8_t src[2];
 	} *words;
 	size_t words_len, words_cap;
+	/* The client frames this pass declared whose box Clay solves, by
+	 * handle and frame id: what clients_settle reads back. */
+	struct settle_frame {
+		uint64_t handle;
+		uint32_t id;
+	} *settle;
+	size_t settle_len, settle_cap;
 };
 
 const char *const declare_src_names[DECLARE_SRC_COUNT] = {
@@ -131,7 +152,6 @@ const char *const declare_src_names[DECLARE_SRC_COUNT] = {
 	[DECLARE_SRC_TRANSITION] = "transition",
 	[DECLARE_SRC_SCROLL] = "scroll",
 	[DECLARE_SRC_DERIVED] = "derived",
-	[DECLARE_SRC_LAST_FRAME] = "last-frame",
 };
 
 enum declare_src
@@ -328,6 +348,7 @@ record_begin(struct declare_band *band)
 {
 	recording = band;
 	band->records_len = 0;
+	band->settle_len = 0;
 }
 
 static void
@@ -864,7 +885,6 @@ static void declare_widget_slot(const struct widget_host *host, Clay_ElementId i
 	enum declare_src hsrc, int16_t z, void *userdata);
 static Clay_ElementId output_id(Monitor *m);
 static Clay_ElementId workarea_id(Monitor *m);
-static bool floating_layout;
 
 /* Each output pass pins its hosted screens and Lua descriptions until all
  * boxes have been published. The active entry scopes screen composition;
@@ -872,8 +892,7 @@ static bool floating_layout;
 struct screen_declaration {
     screen_t *screen;
     struct wlr_box geometry;
-    int index, screen_ref, layout_ref;
-    bool floating;
+    int index, screen_ref;
 };
 static struct screen_declaration *screen_declarations, *active_screen;
 static size_t screen_declarations_len;
@@ -946,41 +965,6 @@ declare_popups(struct wlr_surface *parent, Clay_ElementId parent_id,
 	}
 }
 
-static void
-declare_titlebar(Client *c, client_titlebar_t bar, uint32_t id, int16_t z)
-{
-	struct widget_host host;
-	int size = c->titlebar[bar].size;
-
-	if (size == 0 || !client_titlebar_host(c, c->titlebar[bar].drawable, &host))
-		return;
-	bool horizontal = bar == CLIENT_TITLEBAR_TOP || bar == CLIENT_TITLEBAR_BOTTOM;
-	uint64_t handle = declare_handle_for(c->titlebar[bar].drawable, DECLARE_KIND_TITLEBAR);
-	Clay_ElementDeclaration e = {
-		.layout.sizing = {
-			horizontal ? CLAY_SIZING_GROW(0) : CLAY_SIZING_FIXED(size),
-			horizontal ? CLAY_SIZING_FIXED(size) : CLAY_SIZING_GROW(0),
-		},
-	};
-
-	static const char *const roles[] = {
-		"TITLEBAR", "TITLEBAR_RIGHT", "TITLEBAR_BOTTOM", "TITLEBAR_LEFT",
-	};
-	Clay_ElementId slot = Clay__HashStringWithOffset(
-		CLAY_STRING("client.titlebar"), id * 4 + bar, 0);
-
-	if (host.tree->nodes_len > 0) {
-		host.flow = true;
-		declare_widget_slot(&host, slot, &e, roles[bar], DECLARE_SRC_THEME, DECLARE_SRC_THEME,
-			z, leaf_userdata(handle, 1.0f));
-		return;
-	}
-	native_open(slot);
-	native_configure(&e);
-	record_open(roles[bar], handle, slot, &e, DECLARE_SRC_THEME, DECLARE_SRC_THEME, NULL);
-	native_close();
-}
-
 /* Clay's ease-out on whole pixels. The scene truncates at its boundary, so
  * a fractional box leaves a one pixel seam between an animating element and
  * its neighbour for as long as the animation runs. */
@@ -995,145 +979,13 @@ transition_ease_out(Clay_TransitionCallbackArguments arguments)
 	return complete;
 }
 
-/* How long a tiled client's box takes to reach its new place, set by
- * somewm.layout_animation. Zero snaps: the ease-out completes at once
- * (third_party/clay.h:5332-5336). */
-static float client_transition;
-
-void
-declare_client_transition(float seconds)
+/* Entering from, and exiting to, nothing on the animated axes. */
+static Clay_TransitionData
+transition_collapse(Clay_TransitionData state, Clay_TransitionProperty properties)
 {
-	client_transition = seconds;
-	declare_mark_all_dirty();
-}
-
-/* Padding starts the children inside the border (third_party/clay.h:2704).
- * Fixed bars leave the growing surface the remaining space
- * (third_party/clay.h:2349-2392, 2409-2411). */
-static void
-declare_client(Client *c, Monitor *m, int16_t z, const Clay_ElementDeclaration *allocation,
-	const uint8_t *allocation_src)
-{
-	uint64_t handle = declare_handle_for(c, DECLARE_KIND_CLIENT);
-	uint32_t id = (uint32_t)handle;
-	int bw = c->fullscreen ? 0 : c->bw;
-	int fw = c->geometry.width + 2 * bw;
-	int fh = c->geometry.height + 2 * bw;
-	int x = c->geometry.x - m->m.x;
-	int y = c->geometry.y - m->m.y;
-	bool clamp = client_clamps_to_monitor(c);
-
-	if (!allocation && clamp && (x + bw + c->geometry.width <= 0
-			|| y + bw + c->geometry.height <= 0
-			|| x + bw >= m->m.width
-			|| y + bw >= m->m.height))
-		return;
-
-    Clay_ElementDeclaration frame = allocation
-        ? *allocation
-        : leaf_at(z, x, y, fw, fh);
-	if (!allocation && !client_is_unmanaged(c)) {
-		frame.floating.attachTo = CLAY_ATTACH_TO_ELEMENT_WITH_ID;
-		frame.floating.parentId = screen_root_id(m).id;
-        struct wlr_box origin = screen_origin(m);
-        frame.floating.offset.x += m->m.x - origin.x;
-        frame.floating.offset.y += m->m.y - origin.y;
-		if (c->fullscreen) {
-			frame.layout.sizing = (Clay_Sizing) { CLAY_SIZING_GROW(0), CLAY_SIZING_GROW(0) };
-			frame.floating.offset = (Clay_Vector2) { 0, 0 };
-		}
-	}
-	if (allocation)
-		frame.transition = (Clay_TransitionElementConfig) {
-			.handler = transition_ease_out,
-			.duration = globalconf.mousegrabber != LUA_REFNIL
-				? 0 : client_transition,
-			.properties = CLAY_TRANSITION_PROPERTY_BOUNDING_BOX,
-		};
-	frame.layout.layoutDirection = CLAY_TOP_TO_BOTTOM;
-	frame.layout.padding = (Clay_Padding) { bw, bw, bw, bw };
-	frame.userData = leaf_userdata(handle, 1.0f);
-	if (clamp)
-		frame.userData = userdata_clip(frame.userData, 0, RENDER_CLIP_BOUNDS);
-	if (bw > 0) {
-		float rgba[4];
-
-		client_border_rgba(c, rgba);
-		frame.border.color = clay_color(rgba);
-		frame.border.width = (Clay_BorderWidth) { bw, bw, bw, bw, 0 };
-	}
-	/* Native layouts contribute sizing/attachments. Remaining old layouts
-	 * still expose derived rectangles; user placement and protocol inputs
-	 * retain their own provenance. */
-	enum declare_src src = client_is_unmanaged(c) ? DECLARE_SRC_PROTOCOL
-		: c->fullscreen ? DECLARE_SRC_OUTPUT
-		: some_client_get_floating(c) || floating_layout ? DECLARE_SRC_USER
-		: c->ontop || c->above || c->below ? DECLARE_SRC_LAST_FRAME : DECLARE_SRC_LEGACY;
-	Clay_ElementId frame_id = Clay__HashStringWithOffset(CLAY_STRING("client"), id, 0);
-
-	native_open(frame_id);
-	native_configure(&frame);
-	record_open("CLIENT", handle, frame_id, &frame, allocation ? allocation_src[0] : src,
-		allocation ? allocation_src[1] : src, NULL);
-	declare_shadow(&c->shadow, c->shadow_config, false, handle, &frame);
-	if (!c->fullscreen)
-		declare_titlebar(c, CLIENT_TITLEBAR_TOP, id, z);
-	Clay_ElementDeclaration row = {
-		.layout = {
-			.sizing = { CLAY_SIZING_GROW(0), CLAY_SIZING_GROW(0) },
-			.layoutDirection = CLAY_LEFT_TO_RIGHT,
-		},
-	};
-	Clay_ElementId row_id = Clay__HashStringWithOffset(CLAY_STRING("client.row"), id, 0);
-
-	bool sides = !c->fullscreen && (c->titlebar[CLIENT_TITLEBAR_LEFT].size
-		|| c->titlebar[CLIENT_TITLEBAR_RIGHT].size);
-	if (sides) {
-		native_open(row_id);
-		native_configure(&row);
-		record_open("CLIENT_BODY", handle, row_id, &row, DECLARE_SRC_NONE, DECLARE_SRC_NONE, NULL);
-	}
-	if (!c->fullscreen)
-		declare_titlebar(c, CLIENT_TITLEBAR_LEFT, id, z);
-	Clay_ElementDeclaration surface = {
-		.layout.sizing = { CLAY_SIZING_GROW(0), CLAY_SIZING_GROW(0) },
-		.custom.customData = (void *)(uintptr_t)handle,
-		.userData = leaf_userdata(handle,
-			c->opacity >= 0 ? (float)c->opacity : 1.0f),
-	};
-	if (clamp)
-		surface.userData = userdata_clip(surface.userData, 0, RENDER_CLIP_BOUNDS);
-	Clay_ElementId surface_id = Clay__HashStringWithOffset(
-		CLAY_STRING("client.surface"), id, 0);
-	float minw = 0, minh = 0, maxw = 0, maxh = 0;
-	if (c->size_hints_honor && !c->fullscreen) {
-		if (c->client_type == XDGShell) {
-			struct wlr_xdg_toplevel_state hints = c->surface.xdg->toplevel->current;
-			minw = hints.min_width; minh = hints.min_height;
-			maxw = hints.max_width; maxh = hints.max_height;
-		} else {
-			minw = c->size_hints.min_width; minh = c->size_hints.min_height;
-			maxw = c->size_hints.max_width; maxh = c->size_hints.max_height;
-		}
-	}
-	surface.layout.sizing = (Clay_Sizing) {
-		CLAY_SIZING_GROW(minw, maxw), CLAY_SIZING_GROW(minh, maxh),
-	};
-	/* Hints belong to the surface, never the percent slot. On the cross
-	 * axis Clay lets this leaf overhang a narrower slot (decision 1). */
-	enum declare_src hints = minw || minh || maxw || maxh
-		? DECLARE_SRC_PROTOCOL : DECLARE_SRC_NONE;
-	declare_leaf("SURFACE", handle, hints, hints, surface_id, &surface);
-	if (!c->fullscreen)
-		declare_titlebar(c, CLIENT_TITLEBAR_RIGHT, id, z);
-	if (sides) {
-		native_close();
-	}
-	if (!c->fullscreen)
-		declare_titlebar(c, CLIENT_TITLEBAR_BOTTOM, id, z);
-	native_close();
-	/* The client's popups attach to its surface leaf, declared above. */
-	declare_popups(client_surface(c), surface_id, 0, 0);
+    if (properties & CLAY_TRANSITION_PROPERTY_WIDTH) state.boundingBox.width = 0;
+    if (properties & CLAY_TRANSITION_PROPERTY_HEIGHT) state.boundingBox.height = 0;
+    return state;
 }
 
 static bool
@@ -1146,18 +998,6 @@ declarable_client(Client *c)
 	 * filter: an undeclared client's tree is released disabled by the
 	 * sweep. Unmanaged clients are not tag-tracked. */
 	return client_is_unmanaged(c) || client_isvisible(c);
-}
-
-/* A transient that sets no stacking attribute of its own inherits its
- * parent's band and is declared right above it. One that sets ontop, above,
- * below or fullscreen declares as a root in that band instead, so the
- * attribute wins over the parent's placement, as in AwesomeWM.
- * stack_client_layer() returns WINDOW_LAYER_IGNORE for exactly the first
- * case, so this implies c->transient_for. */
-static bool
-transient_inherits(Client *c)
-{
-	return stack_client_layer(c) == WINDOW_LAYER_IGNORE;
 }
 
 static int16_t
@@ -1184,135 +1024,22 @@ client_z(Client *c)
 	}
 }
 
-static bool layout_client_declaration(Client *c, Monitor *m, Clay_ElementDeclaration *e,
-	uint8_t src[2]);
-
-/* Inheriting transients ride their parent: declared right above it in the
- * band it resolved to, mirroring stack_transients_above() (stack.c).
- * Unmanaged children are excluded; declare_unmanaged_clients() owns every
- * unmanaged client, and declaring one here too would hash a duplicate Clay
- * id and abort. */
-static void
-declare_client_tree(Client *c, Monitor *m)
-{
-	Clay_ElementDeclaration e;
-	uint8_t src[2];
-	bool native = layout_client_declaration(c, m, &e, src);
-	if (native) c->clay_tiled = true;
-	bool inset = native && e.layout.padding.left;
-	if (inset) {
-		Clay_ElementId id = Clay__HashStringWithOffset(CLAY_STRING("client.cell"),
-			(uint32_t)declare_handle_for(c, DECLARE_KIND_CLIENT), 0);
-		native_open(id);
-		native_configure(&e);
-		record_open("CELL", 0, id, &e, src[0], src[1], NULL);
-		/* The inset is the allocation; surface protocol minima may
-		 * overhang it without expanding the client border/titlebar area. */
-		e = (Clay_ElementDeclaration) {
-			.layout.sizing = { CLAY_SIZING_PERCENT(1), CLAY_SIZING_PERCENT(1) },
-		};
-		src[0] = src[1] = DECLARE_SRC_THEME;
-	}
-	declare_client(c, m, client_z(c), native ? &e : NULL, src);
-	if (inset) {
-		native_close();
-	}
-	foreach(node, globalconf.stack)
-		if ((*node)->transient_for == c && (*node)->mon == m
-				&& (*node)->screen == c->screen
-				&& !client_is_unmanaged(*node)
-				&& !(*node)->clay_tiled
-				&& transient_inherits(*node)
-				&& declarable_client(*node))
-			declare_client_tree(*node, m);
-}
-
-/* Whether declare_client_tree() will reach c through its parent. When it
- * will not (c carries a stacking attribute of its own, or the parent is
- * minimized, unmapped, unmanaged, or on another screen), c declares as a
- * root instead of vanishing; the old scene path kept exactly these clients
- * visible per-client. The immediate parent suffices: every managed
- * declarable client on the screen is declared, as a root or by riding one, so a
- * declarable parent is a declared parent. */
-static bool
-transient_rides_parent(Client *c, Monitor *m)
-{
-	Client *p = c->transient_for;
-	Clay_ElementDeclaration e;
-	uint8_t src[2];
-
-	return p && p->mon == m && p->screen == c->screen && transient_inherits(c)
-		&& (!p->clay_tiled || layout_client_declaration(p, m, &e, src))
-		&& !client_is_unmanaged(p) && declarable_client(p);
-}
-
-static void
-declare_clients(Monitor *m)
-{
-	foreach(node, globalconf.stack) {
-		Client *c = *node;
-
-		/* Cheap pointer filters first, then the riding test, which
-		 * skips a transient before it pays for its own tag-visibility
-		 * check. Unmanaged (override-redirect) clients are declared by
-		 * declare_unmanaged_clients() instead. */
-		if (!c || c->mon != m || c->screen != active_screen->screen
-                || client_is_unmanaged(c) || c->clay_tiled)
-			continue;
-		if (transient_rides_parent(c, m))
-			continue;
-		if (!declarable_client(c))
-			continue;
-		declare_client_tree(c, m);
-	}
-}
-
-/* Lua contributes the slot tree, retaining the AwesomeWM client order and
- * tag policy. C translates sizing and composition directly to Clay. */
-static int tile_ref = LUA_NOREF;
-
 static void
 screen_activate(struct screen_declaration *entry)
 {
     active_screen = entry;
-    tile_ref = entry ? entry->layout_ref : LUA_NOREF;
-    floating_layout = entry && entry->floating;
 }
 
 static void
 screens_clear(void)
 {
-    for (size_t i = 0; i < screen_declarations_len; i++) {
-        luaL_unref(globalconf_L, LUA_REGISTRYINDEX, screen_declarations[i].layout_ref);
+    for (size_t i = 0; i < screen_declarations_len; i++)
         luaL_unref(globalconf_L, LUA_REGISTRYINDEX, screen_declarations[i].screen_ref);
-    }
     free(screen_declarations);
     screen_declarations = NULL;
     screen_declarations_len = 0;
     screen_subtrees = false;
     screen_activate(NULL);
-}
-
-static void
-tile_prepare(Monitor *m)
-{
-    lua_State *L = globalconf_L;
-    int top = lua_gettop(L);
-    foreach(node, globalconf.clients)
-        if ((*node)->mon == m && (*node)->screen == active_screen->screen)
-            (*node)->clay_tiled = false;
-    lua_getglobal(L, "require");
-    lua_pushliteral(L, "awful.layout");
-    if (lua_pcall(L, 1, 1, 0)) goto done;
-    lua_getfield(L, -1, "_clay_describe");
-    luaA_screen_push(L, active_screen->screen);
-    if (lua_pcall(L, 1, 2, 0)) goto done;
-    active_screen->floating = floating_layout = lua_toboolean(L, -1);
-    lua_pop(L, 1);
-    if (lua_istable(L, -1))
-        active_screen->layout_ref = tile_ref = luaL_ref(L, LUA_REGISTRYINDEX);
-done:
-    lua_settop(L, top);
 }
 
 static bool
@@ -1336,7 +1063,7 @@ screens_prepare(Monitor *m)
         luaA_screen_push(L, screen);
         screen_declarations[screen_declarations_len++] = (struct screen_declaration) {
             .screen = screen, .geometry = screen->geometry, .index = screen->index,
-            .screen_ref = luaL_ref(L, LUA_REGISTRYINDEX), .layout_ref = LUA_NOREF,
+            .screen_ref = luaL_ref(L, LUA_REGISTRYINDEX),
         };
     }
     free(screens);
@@ -1346,320 +1073,15 @@ screens_prepare(Monitor *m)
         screen_subtrees = g.x != m->m.x || g.y != m->m.y
             || g.width != m->m.width || g.height != m->m.height;
     }
-    for (size_t i = 0; i < screen_declarations_len; i++) {
-        screen_activate(&screen_declarations[i]);
-        tile_prepare(m);
-    }
-    screen_activate(NULL);
     return true;
-}
-
-static float
-slot_number(lua_State *L, int index, const char *key)
-{
-    lua_getfield(L, index, key);
-    float value = lua_tonumber(L, -1);
-    lua_pop(L, 1);
-    return value;
-}
-
-static Clay_Padding
-slot_padding(lua_State *L, int index)
-{
-    lua_getfield(L, index, "padding");
-    Clay_Padding padding;
-    if (lua_istable(L, -1)) {
-        padding = (Clay_Padding) {
-            .left = slot_number(L, -1, "left"),
-            .right = slot_number(L, -1, "right"),
-            .top = slot_number(L, -1, "top"),
-            .bottom = slot_number(L, -1, "bottom"),
-        };
-    } else {
-        int pad = lua_tonumber(L, -1);
-        padding = (Clay_Padding) { pad, pad, pad, pad };
-    }
-    lua_pop(L, 1);
-    return padding;
-}
-
-/* Absence means GROW; numbers are percentages, including authored zero.
- * FIT and fixed extents let slot trees describe overflowing native strips. */
-static Clay_SizingAxis
-slot_sizing(lua_State *L, int index, const char *key)
-{
-    lua_getfield(L, index, key);
-    if (lua_istable(L, -1)) {
-        float extent = slot_number(L, -1, "fixed");
-        lua_pop(L, 1);
-        return CLAY_SIZING_FIXED(extent);
-    }
-    if (lua_type(L, -1) == LUA_TSTRING && !strcmp(lua_tostring(L, -1), "fit")) {
-        lua_pop(L, 1);
-        return CLAY_SIZING_FIT(0);
-    }
-    bool specified = lua_isnumber(L, -1);
-    float share = lua_tonumber(L, -1);
-    lua_pop(L, 1);
-    return specified ? CLAY_SIZING_PERCENT(share) : CLAY_SIZING_GROW(0);
-}
-
-/* Entering from, and exiting to, nothing on the animated axes. */
-static Clay_TransitionData
-transition_collapse(Clay_TransitionData state, Clay_TransitionProperty properties)
-{
-    if (properties & CLAY_TRANSITION_PROPERTY_WIDTH) state.boundingBox.width = 0;
-    if (properties & CLAY_TRANSITION_PROPERTY_HEIGHT) state.boundingBox.height = 0;
-    return state;
-}
-
-static bool
-slot_word(lua_State *L, int index, const char *key, const char *word)
-{
-    lua_getfield(L, index, key);
-    bool same = lua_isstring(L, -1) && !strcmp(lua_tostring(L, -1), word);
-    lua_pop(L, 1);
-    return same;
-}
-
-/* The word a slot declares for one axis, none when it declares none. */
-static enum declare_src
-slot_src(lua_State *L, int index, const char *key)
-{
-    lua_getfield(L, index, key);
-    enum declare_src src = declare_src_parse(lua_tostring(L, -1));
-    lua_pop(L, 1);
-    return src;
-}
-
-/* A slot animates its own box: what to interpolate, for how long, and
- * whether it collapses on the way in and on the way out. An exiting slot is
- * drawn where it stood and holds no space (third_party/clay.h:2557). */
-static void
-slot_transition(lua_State *L, int index, Clay_ElementDeclaration *e)
-{
-    static const char *const properties[] = {
-        "box", "position", "size", "width", "height", NULL };
-    static const Clay_TransitionProperty bits[] = {
-        CLAY_TRANSITION_PROPERTY_BOUNDING_BOX, CLAY_TRANSITION_PROPERTY_POSITION,
-        CLAY_TRANSITION_PROPERTY_DIMENSIONS, CLAY_TRANSITION_PROPERTY_WIDTH,
-        CLAY_TRANSITION_PROPERTY_HEIGHT };
-    static const char *const orders[] = { "underneath", "natural", "above", NULL };
-
-    lua_getfield(L, index, "transition");
-    if (lua_istable(L, -1)) {
-        int t = lua_gettop(L);
-        e->transition.handler = transition_ease_out;
-        e->transition.duration = slot_number(L, t, "duration");
-        lua_getfield(L, t, "properties");
-        e->transition.properties = bits[lua_isstring(L, -1)
-            ? luaL_checkoption(L, lua_gettop(L), NULL, properties) : 0];
-        lua_pop(L, 1);
-        if (slot_word(L, t, "enter", "collapse"))
-            e->transition.enter.setInitialState = transition_collapse;
-        if (slot_word(L, t, "exit", "collapse"))
-            e->transition.exit.setFinalState = transition_collapse;
-        lua_getfield(L, t, "exit_order");
-        e->transition.exit.siblingOrdering = lua_isstring(L, -1)
-            ? luaL_checkoption(L, lua_gettop(L), NULL, orders)
-            : CLAY_EXIT_TRANSITION_ORDERING_NATURAL_ORDER;
-        lua_pop(L, 1);
-    }
-    lua_pop(L, 1);
-}
-
-/* Native layout floats are looked up by original client while the existing
- * stack walk declares them. This retains raise/lower and transient order;
- * the Lua map contains attachment/sizing policy, never solved rectangles. */
-static bool
-layout_client_declaration(Client *c, Monitor *m, Clay_ElementDeclaration *e,
-	uint8_t src[2])
-{
-    lua_State *L = globalconf_L;
-    int top = lua_gettop(L);
-    bool found = false;
-    if (tile_ref == LUA_NOREF) return false;
-    lua_rawgeti(L, LUA_REGISTRYINDEX, tile_ref);
-    lua_getfield(L, -1, "floating");
-    if (!lua_istable(L, -1)) goto done;
-    luaA_object_push(L, c);
-    lua_rawget(L, -2);
-    if (!lua_istable(L, -1)) goto done;
-    *e = (Clay_ElementDeclaration) {
-        .layout.sizing = { slot_sizing(L, -1, "w"), slot_sizing(L, -1, "h") },
-        .layout.padding = slot_padding(L, -1),
-        .floating = {
-            .attachTo = CLAY_ATTACH_TO_ELEMENT_WITH_ID,
-            .parentId = workarea_id(m).id,
-            .zIndex = client_z(c),
-            .pointerCaptureMode = CLAY_POINTER_CAPTURE_MODE_PASSTHROUGH,
-        },
-    };
-    src[0] = slot_src(L, -1, "wsrc");
-    src[1] = slot_src(L, -1, "hsrc");
-    lua_getfield(L, -1, "attach_to");
-    if (lua_isstring(L, -1) && !strcmp(lua_tostring(L, -1), "output"))
-        e->floating.parentId = screen_root_id(m).id;
-    lua_pop(L, 1);
-    lua_getfield(L, -1, "center");
-    if (lua_toboolean(L, -1))
-        e->floating.attachPoints = (Clay_FloatingAttachPoints) {
-            .element = CLAY_ATTACH_POINT_CENTER_CENTER,
-            .parent = CLAY_ATTACH_POINT_CENTER_CENTER,
-        };
-    lua_pop(L, 1);
-    found = true;
-done:
-    lua_settop(L, top);
-    return found;
-}
-
-static void
-declare_tile_slot(Monitor *m, int index, unsigned ordinal, bool root)
-{
-    lua_State *L = globalconf_L;
-    index = luaA_absindex(L, index);
-    Clay_ElementDeclaration e = {
-        .layout.sizing = { slot_sizing(L, index, "w"), slot_sizing(L, index, "h") },
-    };
-    uint8_t src[2] = { slot_src(L, index, "wsrc"), slot_src(L, index, "hsrc") };
-    e.clip.horizontal = slot_word(L, index, "clip", "x");
-    e.clip.vertical = slot_word(L, index, "clip", "y");
-    lua_getfield(L, index, "client");
-    if (lua_isuserdata(L, -1)) {
-        Client *c = luaA_toudata(L, -1, &client_class);
-        lua_pop(L, 1);
-        if (c && client_has_surface(c) && declarable_client(c)) {
-            c->clay_tiled = true;
-            declare_client(c, m, 0, &e, src);
-        }
-        return;
-    }
-    lua_pop(L, 1);
-    slot_transition(L, index, &e);
-    int gap = slot_number(L, index, "gap");
-    e.layout.childGap = gap;
-    e.layout.padding = slot_padding(L, index);
-    lua_getfield(L, index, "direction");
-    const char *direction = lua_tostring(L, -1);
-    e.layout.layoutDirection = direction && !strcmp(direction, "column")
-        ? CLAY_TOP_TO_BOTTOM : CLAY_LEFT_TO_RIGHT;
-    lua_pop(L, 1);
-    lua_getfield(L, index, "center");
-    if (lua_toboolean(L, -1)) {
-        if (e.layout.layoutDirection == CLAY_TOP_TO_BOTTOM)
-            e.layout.childAlignment.y = CLAY_ALIGN_Y_CENTER;
-        else
-            e.layout.childAlignment.x = CLAY_ALIGN_X_CENTER;
-    }
-    lua_pop(L, 1);
-    lua_getfield(L, index, "role");
-    const char *role = lua_tostring(L, -1);
-    Clay_ElementId id = root ? workarea_id(m)
-        : Clay__HashStringWithOffset(CLAY_STRING("tile.run"), ordinal, workarea_id(m).id);
-    /* Once it exits, Clay solves it from its transition record. */
-    if (e.transition.handler)
-        declare_element_word(recording, id, DECLARE_SRC_TRANSITION, DECLARE_SRC_TRANSITION);
-    native_open(id);
-    if (e.clip.horizontal || e.clip.vertical)
-        e.clip.childOffset = clay_scroll_offset(id);
-    native_configure(&e);
-    record_open(role, 0, id, &e, src[0], src[1], NULL);
-    lua_getfield(L, index, "children");
-    for (unsigned i = 1; i <= luaA_rawlen(L, -1); i++) {
-        lua_rawgeti(L, -1, i);
-        declare_tile_slot(m, -1, ordinal * 31 + i, false);
-        lua_pop(L, 1);
-    }
-    lua_pop(L, 2);
-    native_close();
-}
-
-static void
-declare_workarea(Monitor *m)
-{
-    if (tile_ref != LUA_NOREF) {
-        lua_rawgeti(globalconf_L, LUA_REGISTRYINDEX, tile_ref);
-        declare_tile_slot(m, -1, 1, true);
-        lua_pop(globalconf_L, 1);
-    } else {
-        Clay_ElementDeclaration e = {
-            .layout.sizing = { CLAY_SIZING_GROW(0), CLAY_SIZING_GROW(0) },
-        };
-        declare_leaf("WORKAREA", 0, DECLARE_SRC_NONE, DECLARE_SRC_NONE, workarea_id(m), &e);
-    }
-}
-
-static void
-tile_publish_slot(Monitor *m, int index, unsigned ordinal, bool root)
-{
-    lua_State *L = globalconf_L;
-    index = luaA_absindex(L, index);
-    lua_getfield(L, index, "client");
-    bool client = lua_isuserdata(L, -1);
-    lua_pop(L, 1);
-    if (client) return;
-    Clay_ElementId id = root ? workarea_id(m)
-        : Clay__HashStringWithOffset(CLAY_STRING("tile.run"), ordinal, workarea_id(m).id);
-    lua_pushinteger(L, id.id);
-    lua_setfield(L, index, "id");
-    Clay_ElementData data = Clay_GetElementData(id);
-    if (data.found) {
-        Clay_BoundingBox b = data.boundingBox;
-        const char *keys[] = { "x", "y", "width", "height" };
-        int x = lroundf(b.x), y = lroundf(b.y);
-        int values[] = { x, y, lroundf(b.x + b.width) - x, lroundf(b.y + b.height) - y };
-        lua_createtable(L, 0, 4);
-        for (int i = 0; i < 4; i++) {
-            lua_pushinteger(L, values[i]);
-            lua_setfield(L, -2, keys[i]);
-        }
-    } else {
-        lua_pushnil(L);
-    }
-    lua_setfield(L, index, "box");
-    Clay_ScrollContainerData scroll = Clay_GetScrollContainerData(id);
-    if (scroll.found) {
-        lua_createtable(L, 0, 2);
-        lua_pushnumber(L, scroll.scrollPosition->x);
-        lua_setfield(L, -2, "x");
-        lua_pushnumber(L, scroll.scrollPosition->y);
-        lua_setfield(L, -2, "y");
-    } else {
-        lua_pushnil(L);
-    }
-    lua_setfield(L, index, "scroll");
-    lua_getfield(L, index, "children");
-    for (unsigned i = 1; i <= luaA_rawlen(L, -1); i++) {
-        lua_rawgeti(L, -1, i);
-        tile_publish_slot(m, -1, ordinal * 31 + i, false);
-        lua_pop(L, 1);
-    }
-    lua_pop(L, 1);
-}
-
-static void
-tile_publish(Monitor *m)
-{
-    lua_State *L = globalconf_L;
-    if (tile_ref == LUA_NOREF) return;
-    int top = lua_gettop(L);
-    lua_rawgeti(L, LUA_REGISTRYINDEX, tile_ref);
-    tile_publish_slot(m, -1, 1, true);
-    lua_getfield(L, -1, "solved");
-    if (lua_isfunction(L, -1)) {
-        lua_pushvalue(L, -2);
-        lua_insert(L, -2);
-        luaA_dofunction(L, 1, 0);
-    }
-    lua_settop(L, top);
 }
 
 static area_t
 client_solved_box(Client *c, Monitor *m, Clay_BoundingBox b)
 {
     int x = lroundf(b.x), y = lroundf(b.y);
-    int border = c->fullscreen ? 0 : 2 * c->bw;
+    /* The frame is described from border_width (awful.client.clay). */
+    int border = 2 * client_border(c);
     return (area_t) {
         .x = m->m.x + x, .y = m->m.y + y,
         .width = MAX(1, lroundf(b.x + b.width) - x - border),
@@ -1691,17 +1113,15 @@ luaA_client_geometry_is_solved(lua_State *L)
     return 1;
 }
 
+/* The frames declare_client_frame listed write their solved boxes back;
+ * an authored box was never listed. */
 static void
-clients_settle(Monitor *m)
+clients_settle(Monitor *m, struct declare_band *band)
 {
-    foreach(node, globalconf.clients) {
-        Client *c = *node;
-        if (c->mon != m || (!c->clay_tiled && !c->fullscreen)
-                || !declarable_client(c)) continue;
-        Clay_ElementId id = Clay__HashStringWithOffset(CLAY_STRING("client"),
-            (uint32_t)declare_handle_for(c, DECLARE_KIND_CLIENT), 0);
-        Clay_ElementData data = Clay_GetElementData(id);
-        if (!data.found) continue;
+    for (size_t i = 0; i < band->settle_len; i++) {
+        Client *c = declare_handle_get(band->settle[i].handle, NULL);
+        Clay_ElementData data = Clay_GetElementData((Clay_ElementId) { .id = band->settle[i].id });
+        if (!c || c->mon != m || !data.found) continue;
         client_set_solved_geometry(c, client_solved_box(c, m, data.boundingBox));
     }
 }
@@ -1718,9 +1138,13 @@ monitor_for_unmanaged(Client *c)
 	return m ? m : c->mon;
 }
 
+/* Each unmanaged client is its surface leaf at the protocol's box, above
+ * every band a managed client uses, with its popups. */
 static void
 declare_unmanaged_clients(Monitor *m)
 {
+	struct wlr_box origin = screen_origin(m);
+
 	foreach(node, globalconf.stack) {
 		Client *c = *node;
 
@@ -1730,7 +1154,18 @@ declare_unmanaged_clients(Monitor *m)
 			continue;
 		if (!declarable_client(c))
 			continue;
-		declare_client(c, m, client_z(c), NULL, NULL);
+		uint64_t handle = declare_handle_for(c, DECLARE_KIND_CLIENT);
+		Clay_ElementId id = Clay__HashStringWithOffset(CLAY_STRING("SURFACE"),
+			(uint32_t)handle, 0);
+		Clay_ElementDeclaration s = leaf_at(client_z(c), c->geometry.x - origin.x,
+			c->geometry.y - origin.y, c->geometry.width, c->geometry.height);
+
+		s.floating.attachTo = CLAY_ATTACH_TO_ELEMENT_WITH_ID;
+		s.floating.parentId = screen_root_id(m).id;
+		s.custom.customData = (void *)(uintptr_t)handle;
+		s.userData = leaf_userdata(handle, 1.0f);
+		declare_leaf("SURFACE", handle, DECLARE_SRC_PROTOCOL, DECLARE_SRC_PROTOCOL, id, &s);
+		declare_popups(client_surface(c), id, 0, 0);
 	}
 }
 
@@ -1943,6 +1378,17 @@ widget_node_decl(const struct widget_node *n, int16_t z,
 			.vertical = n->scroll == 2,
 		};
 	}
+	if (n->transition)
+		e.transition = (Clay_TransitionElementConfig) {
+			.handler = transition_ease_out,
+			.duration = n->duration,
+			.properties = n->transition_properties,
+			.enter.setInitialState = n->enter_collapse ? transition_collapse : NULL,
+			.exit = {
+				.setFinalState = n->exit_collapse ? transition_collapse : NULL,
+				.siblingOrdering = n->exit_order,
+			},
+		};
 	if (n->floating) {
 		/* A widget float: off the flow, attached to its parent, in the
 		 * drawin's band (a floating element is its own tree root, sorted
@@ -1976,14 +1422,6 @@ static bool host_clip(const struct widget_host *host)
     return false;
 }
 
-static struct scrollbar_record {
-	Clay_ElementId id;
-	bool found;
-	Clay_Vector2 position;
-	Clay_Dimensions content, box;
-} scrollbar_records[WIDGET_SCROLLS_OUTPUT_MAX * 2];
-static size_t scrollbar_records_len;
-
 static size_t
 widget_subtree_end(const struct widget_tree *d, size_t i)
 {
@@ -1991,6 +1429,193 @@ widget_subtree_end(const struct widget_tree *d, size_t i)
 	for (uint16_t k = 0; k < d->nodes[i].children; k++)
 		next = widget_subtree_end(d, next);
 	return next;
+}
+
+/* A node of a client composite as lua/awful/client/clay.lua describes it.
+ * Every node carries the client's word, so a hit routes to the client and
+ * its record prints the client's handle. A host node is a titlebar's
+ * compiled tree in flow; a surface node is the pixels leaf, floating in its
+ * slot: a float adds nothing to its parent's minimum (third_party/clay.h:
+ * 2102-2107), so a protocol minimum sizes the surface and never the cell or
+ * WORKAREA, and Clay sizes a GROW float to its parent and then clamps it to
+ * its own minimum and maximum (third_party/clay.h:2298-2327). */
+static size_t
+declare_composite(const struct widget_host *host, size_t i, int16_t z,
+	uint64_t handle, bool clamp, uint32_t *ids)
+{
+	struct widget_tree *d = host->tree;
+	const struct widget_node *n = &d->nodes[i];
+	const char *name = n->name ? n->name : "-";
+	unsigned clip = clamp ? RENDER_CLIP_BOUNDS : 0;
+	/* By name and client, so a node keeps its id when a bar comes or goes
+	 * or the client moves between a cell and a root: the surface's scene
+	 * tree is borrowed by its command's id. */
+	Clay_ElementId id = Clay__HashStringWithOffset((Clay_String) {
+		.isStaticallyAllocated = true, .length = (int32_t)strlen(name), .chars = name,
+	}, (uint32_t)handle, 0);
+	Clay_ElementDeclaration e = {
+		.layout.sizing = { widget_sizing(n, 0), widget_sizing(n, 1) },
+	};
+
+	ids[i] = id.id;
+	if (n->host) {
+		drawable_t *drawable = declare_handle_get(n->host, NULL);
+		struct widget_host bar;
+
+		if (drawable && drawable_widget_host(drawable, &bar) && bar.tree->nodes_len > 0) {
+			bar.flow = true;
+			declare_widget_slot(&bar, id, &e, name, n->src[0], n->src[1], z,
+				leaf_userdata(n->host, 1.0f));
+		} else {
+			native_open(id);
+			native_configure(&e);
+			record_open(name, n->host, id, &e, n->src[0], n->src[1], NULL);
+			native_close();
+		}
+		return widget_subtree_end(d, i);
+	}
+	if (n->surface) {
+		Client *c = declare_handle_get(n->surface, NULL);
+
+		if (!c)
+			return i + 1;
+		e.floating = (Clay_FloatingElementConfig) {
+			.attachTo = CLAY_ATTACH_TO_PARENT,
+			.zIndex = client_z(c),
+			.pointerCaptureMode = CLAY_POINTER_CAPTURE_MODE_PASSTHROUGH,
+			/* Clipped where an in-flow surface would be: by the slot's
+			 * enclosing clip, a carousel's scroll among them. */
+			.clipTo = CLAY_CLIP_TO_ATTACHED_PARENT,
+		};
+		e.custom.customData = (void *)(uintptr_t)n->surface;
+		e.userData = userdata_clip(leaf_userdata(n->surface, n->opacity), 0, clip);
+		declare_leaf(name, n->surface, n->src[0], n->src[1], id, &e);
+		/* The client's popups attach to its surface leaf. */
+		declare_popups(client_surface(c), id, 0, 0);
+		return i + 1;
+	}
+	e = widget_node_decl(n, z, userdata_clip(leaf_userdata(handle, 1.0f), 0, clip));
+	native_open(id);
+	native_configure(&e);
+	record_open(name, handle, id, &e, n->src[0], n->src[1], NULL);
+	size_t next = i + 1;
+	for (uint16_t k = 0; k < n->children; k++)
+		next = declare_composite(host, next, z, handle, clamp, ids);
+	native_close();
+	return next;
+}
+
+/* The composite's frame, under the id clients_settle reads it by. The
+ * shadow is declared right after it opens, as for a root client. */
+static void
+declare_client_frame(const struct widget_host *host, size_t i, int16_t z,
+	Clay_ElementDeclaration *e, uint8_t wsrc, uint8_t hsrc, uint32_t *ids)
+{
+	struct widget_tree *d = host->tree;
+	const struct widget_node *n = &d->nodes[i];
+	Client *c = declare_handle_get(n->client, NULL);
+	bool clamp = client_clamps_to_monitor(c);
+	Clay_ElementId id = Clay__HashStringWithOffset(CLAY_STRING("client"),
+		(uint32_t)n->client, 0);
+	/* A box the user or a config's layout authored (both axes fixed, spec
+	 * D050) is the client's geometry already, and a queued geometry change
+	 * may be newer than the tree that declared it: it is never read back. */
+	bool authored = n->sizing[0] == WIDGET_SIZING_FIXED && n->sizing[1] == WIDGET_SIZING_FIXED
+		&& (n->src[0] == DECLARE_SRC_USER || n->src[0] == DECLARE_SRC_LEGACY);
+
+	if (!authored && recording) {
+		struct declare_band *band = recording;
+		if (band->settle_len == band->settle_cap) {
+			band->settle_cap = band->settle_cap ? band->settle_cap * 2 : 16;
+			p_realloc(&band->settle, band->settle_cap);
+		}
+		band->settle[band->settle_len++] = (struct settle_frame) { n->client, id.id };
+	}
+	ids[i] = id.id;
+	e->userData = userdata_clip(leaf_userdata(n->client, 1.0f), 0,
+		clamp ? RENDER_CLIP_BOUNDS : 0);
+	native_open(id);
+	native_configure(e);
+	record_open(n->name ? n->name : "-", n->client, id, e, wsrc, hsrc, NULL);
+	declare_shadow(&c->shadow, c->shadow_config, false, n->client, e);
+	size_t next = i + 1;
+	for (uint16_t k = 0; k < n->children; k++)
+		next = declare_composite(host, next, z, n->client, clamp, ids);
+	native_close();
+}
+
+/* A layout's client composite (spec D190). In flow in the normal layer the
+ * frame takes the node's place with its sizing and words; in another layer
+ * it floats over its cell, filling it (a GROW float takes its parent's box,
+ * third_party/clay.h:2298-2309), at the layer's zIndex. A float node is
+ * attached to its parent, or to the screen's root, at the client's band; a
+ * padded float is the cell, holding the frame as its one child. */
+static size_t
+declare_layout_client(const struct widget_host *host, size_t i, Clay_ElementDeclaration *e,
+	uint32_t *ids)
+{
+    struct widget_tree *d = host->tree;
+    const struct widget_node *n = &d->nodes[i];
+    size_t end = widget_subtree_end(d, i);
+    Client *c = declare_handle_get(n->client, NULL);
+    if (!c || !client_has_surface(c) || client_is_unmanaged(c) || !declarable_client(c))
+        return end;
+    /* A clamped root wholly off its monitor is not declared: the box inside
+     * its border, from the node's offset (screen-relative) and fixed size. */
+    if (n->attach == WIDGET_ATTACH_OUTPUT && n->sizing[0] == WIDGET_SIZING_FIXED
+            && n->sizing[1] == WIDGET_SIZING_FIXED && client_clamps_to_monitor(c)) {
+        struct wlr_box origin = screen_origin(host->m);
+        int bw = client_border(c);
+        int x = n->offset[0] + origin.x - host->m->m.x + bw;
+        int y = n->offset[1] + origin.y - host->m->m.y + bw;
+        if (x + n->size[0] - 2 * bw <= 0 || y + n->size[1] - 2 * bw <= 0
+                || x >= host->m->m.width || y >= host->m->m.height)
+            return end;
+    }
+    int16_t z = client_z(c);
+    Clay_ElementId cell = Clay__HashStringWithOffset(CLAY_STRING("client.cell"),
+        (uint32_t)n->client, 0);
+    if (n->floating) {
+        if (!n->attach) {
+            e->floating.attachTo = CLAY_ATTACH_TO_ELEMENT_WITH_ID;
+            e->floating.parentId = Clay_GetOpenElementId();
+        }
+        e->floating.zIndex = z;
+        e->floating.pointerCaptureMode = CLAY_POINTER_CAPTURE_MODE_PASSTHROUGH;
+        if (!d->nodes[i + 1].client) {
+            declare_client_frame(host, i, z, e, n->src[0], n->src[1], ids);
+            return end;
+        }
+        /* The inset is the allocation; surface protocol minima may
+         * overhang it without expanding the client border/titlebar area. */
+        ids[i] = cell.id;
+        native_open(cell);
+        native_configure(e);
+        record_open("CELL", 0, cell, e, n->src[0], n->src[1], NULL);
+        Clay_ElementDeclaration frame = widget_node_decl(&d->nodes[i + 1], z, NULL);
+        declare_client_frame(host, i + 1, z, &frame, d->nodes[i + 1].src[0],
+            d->nodes[i + 1].src[1], ids);
+        native_close();
+        return end;
+    }
+    if (z == Z_CLIENT_NORMAL) {
+        declare_client_frame(host, i, 0, e, n->src[0], n->src[1], ids);
+        return end;
+    }
+    Clay_ElementDeclaration slot = { .layout.sizing = e->layout.sizing };
+    native_open(cell);
+    native_configure(&slot);
+    record_open("CELL", n->client, cell, &slot, n->src[0], n->src[1], NULL);
+    e->layout.sizing = (Clay_Sizing) { CLAY_SIZING_GROW(0), CLAY_SIZING_GROW(0) };
+    e->floating = (Clay_FloatingElementConfig) {
+        .attachTo = CLAY_ATTACH_TO_PARENT,
+        .zIndex = z,
+        .pointerCaptureMode = CLAY_POINTER_CAPTURE_MODE_PASSTHROUGH,
+        .clipTo = CLAY_CLIP_TO_ATTACHED_PARENT,
+    };
+    declare_client_frame(host, i, z, e, DECLARE_SRC_NONE, DECLARE_SRC_NONE, ids);
+    native_close();
+    return end;
 }
 
 static size_t
@@ -2001,7 +1626,7 @@ declare_widget_subtree(const struct widget_host *host, size_t i, Clay_ElementId 
 	struct widget_tree *d = host->tree;
     if (recording && recording->exhausted) return widget_subtree_end(d, i);
 	const struct widget_node *n = &d->nodes[i];
-	void *word = userdata_clip(userdata,
+	void *word = host->layout ? NULL : userdata_clip(userdata,
 		i == 0 && (host->inner_clip || host->path_clip) ? 0 : n->clip_opens,
 		i == 0 && (host->inner_clip || host->path_clip) ? n->clip_opens : n->clip_by);
 	Clay_ElementDeclaration e;
@@ -2035,13 +1660,16 @@ declare_widget_subtree(const struct widget_host *host, size_t i, Clay_ElementId 
 	e = root_decl ? *root_decl : widget_node_decl(n, z, word);
 	if (n->attach) {
 		e.floating.attachTo = CLAY_ATTACH_TO_ELEMENT_WITH_ID;
-		e.floating.parentId = ids[n->attach - 1];
+		e.floating.parentId = n->attach == WIDGET_ATTACH_OUTPUT
+			? screen_root_id(host->m).id : ids[n->attach - 1];
 	}
+	if (n->client)
+		return declare_layout_client(host, i, &e, ids);
 	if (host->inner_clip && n->floating)
 		e.floating.clipTo = CLAY_CLIP_TO_ATTACHED_PARENT;
 	/* A native clip preserves natural overflow sizing while records remain.
 	 * Pixel clipping is always supplied by the root's renderer scope. */
-	if (i == 0 && !host->inner_clip && n->sizing[0] == WIDGET_SIZING_FIXED
+	if (i == 0 && !host->inner_clip && !host->layout && n->sizing[0] == WIDGET_SIZING_FIXED
 			&& n->sizing[1] == WIDGET_SIZING_FIXED && !n->scroll && host_clip(host))
 		e.clip = (Clay_ClipElementConfig) {.horizontal = true, .vertical = true};
 	if (i == 0 && host->flow && !root_decl) {
@@ -2084,31 +1712,32 @@ declare_widget_subtree(const struct widget_host *host, size_t i, Clay_ElementId 
 	if (n->shape)
 		e.custom.customData = render_shape_tag(&d->shapes[n->shape - 1].shape);
 
+	/* Once it exits, Clay solves it from its transition record. */
+	if (host->layout && n->transition)
+		declare_element_word(recording, id, DECLARE_SRC_TRANSITION, DECLARE_SRC_TRANSITION);
 	native_open(id);
-	if (n->scroll)
+	if (n->scroll) {
 		e.clip.childOffset = clay_scroll_offset(id);
+		float *scrolled = d->nodes[i].scrolled;
+		if (scrolled[0] != e.clip.childOffset.x || scrolled[1] != e.clip.childOffset.y)
+			d->publish_pending = true;
+		scrolled[0] = e.clip.childOffset.x;
+		scrolled[1] = e.clip.childOffset.y;
+	}
 	if (n->track || n->thumb) {
 		Clay_ScrollContainerData data = Clay_GetScrollContainerData(scroll_id);
-		if (scrollbar_records_len < LENGTH(scrollbar_records)) {
-			scrollbar_records[scrollbar_records_len++] = (struct scrollbar_record) {
-				.id = scroll_id,
-				.found = data.found,
-				.position = data.found ? *data.scrollPosition : (Clay_Vector2) {0},
-				.content = data.contentDimensions,
-				.box = data.scrollContainerDimensions,
-			};
-		} else {
-			declare_output_mark_dirty(host->m->declare);
-		}
 		bool is_y = scroll_axis == 2;
 		float box = is_y ? data.scrollContainerDimensions.height
 			: data.scrollContainerDimensions.width;
 		float content = is_y ? data.contentDimensions.height : data.contentDimensions.width;
-		if (data.found && content > box) {
-			float len = floorf(box / content * box);
+		bool collapsed = !data.found || content <= box;
+		float len = 0;
+		uint16_t offset = 0;
+		if (!collapsed) {
+			float position = is_y ? data.scrollPosition->y : data.scrollPosition->x;
+			len = floorf(box / content * box);
+			offset = floorf((box - len) * -position / (content - box));
 			if (n->track) {
-				float position = is_y ? data.scrollPosition->y : data.scrollPosition->x;
-				uint16_t offset = floorf((box - len) * -position / (content - box));
 				if (is_y)
 					e.layout.padding.top = offset;
 				else
@@ -2126,8 +1755,28 @@ declare_widget_subtree(const struct widget_host *host, size_t i, Clay_ElementId 
 			if (n->thumb || !is_y)
 				e.layout.sizing.height = CLAY_SIZING_FIXED(0);
 		}
+		struct declare_band *band = &host->m->declare->band;
+		if (band->scrollbar_records_len < LENGTH(band->scrollbar_records)) {
+			band->scrollbar_records[band->scrollbar_records_len++] = (struct scrollbar_record) {
+				.id = scroll_id,
+				.node = id,
+				.found = data.found,
+				.collapsed = collapsed,
+				.axis = scroll_axis,
+				.length = len,
+				.offset = offset,
+				.position = data.found ? *data.scrollPosition : (Clay_Vector2) {0},
+				.content = data.contentDimensions,
+				.box = data.scrollContainerDimensions,
+			};
+		} else {
+			declare_output_mark_dirty(host->m->declare);
+		}
 	}
 	native_configure(&e);
+	/* A layout prints a line per node; its tree has no widget lines. */
+	if (host->layout)
+		record_open(n->name ? n->name : "-", 0, id, &e, n->src[0], n->src[1], NULL);
 	if (i == 0 && !host->flow) {
 		/* The root stands for the drawin, at the box placement gave it;
 		 * a titlebar's root fills the slot the theme sized. The nodes
@@ -3153,6 +2802,31 @@ output_wallpaper_fill(Monitor *m, Clay_ElementId id, Clay_ElementDeclaration *o)
 		attachment_bind(tree->bindings[i], host.id, id.id);
 }
 
+/* The workarea: the active screen's layout tree (screen:_clay_layout), its
+ * root filling what the bars leave, or an empty element without one. */
+static void
+declare_workarea(Monitor *m)
+{
+    struct widget_tree *tree = &active_screen->screen->layout;
+    Clay_ElementId id = workarea_id(m);
+    if (!tree->nodes_len) {
+        Clay_ElementDeclaration e = {
+            .layout.sizing = { CLAY_SIZING_GROW(0), CLAY_SIZING_GROW(0) },
+        };
+        declare_leaf("WORKAREA", 0, DECLARE_SRC_NONE, DECLARE_SRC_NONE, id, &e);
+        return;
+    }
+    struct widget_host host = {
+        .tree = tree, .m = m, .id = id.id, .flow = true, .in_parent = true, .layout = true,
+    };
+    Clay_ElementDeclaration root = widget_node_decl(&tree->nodes[0], 0, NULL);
+    size_t leaf = 0;
+    root.layout.sizing = (Clay_Sizing) { CLAY_SIZING_GROW(0), CLAY_SIZING_GROW(0) };
+    tree->root_id = id.id;
+    declare_widget_subtree(&host, 0, id, 0, NULL, &leaf, &root, tree->ids,
+        (Clay_ElementId) {0}, 0);
+}
+
 /* Edge bars and native tile runs use the active screen's own allocation. */
 static void
 declare_screen_contents(Monitor *m)
@@ -3234,7 +2908,6 @@ declare_output(Monitor *m)
         }
         declare_screen_contents(m);
         if (screen_subtrees) {
-            declare_clients(m);
             declare_drawins(m);
             native_close();
         }
@@ -3441,20 +3114,6 @@ declare_lock_section(Monitor *m)
 	}
 }
 
-static size_t slot_scroll_count(lua_State *L, int index)
-{
-    index = luaA_absindex(L, index);
-    size_t count = slot_word(L, index, "clip", "x") || slot_word(L, index, "clip", "y");
-    lua_getfield(L, index, "children");
-    for (size_t i = 1; i <= luaA_rawlen(L, -1); i++) {
-        lua_rawgeti(L, -1, i);
-        count += slot_scroll_count(L, -1);
-        lua_pop(L, 1);
-    }
-    lua_pop(L, 1);
-    return count;
-}
-
 /* Reserve authored scrolling before any host is configured. Hidden widget
  * trees retain their admission reservation so becoming visible cannot let
  * an earlier host take their records. The inspector has a main pane and
@@ -3472,13 +3131,8 @@ static bool clips_prepare(Monitor *m)
         for (int bar = 0; bar < CLIENT_TITLEBAR_COUNT; bar++)
             scrolls += c->titlebar[bar].widgets.scrolls;
     }
-    for (size_t i = 0; i < screen_declarations_len; i++) {
-        int ref = screen_declarations[i].layout_ref;
-        if (ref == LUA_NOREF) continue;
-        lua_rawgeti(globalconf_L, LUA_REGISTRYINDEX, ref);
-        scrolls += slot_scroll_count(globalconf_L, -1);
-        lua_pop(globalconf_L, 1);
-    }
+    for (size_t i = 0; i < screen_declarations_len; i++)
+        scrolls += screen_declarations[i].screen->layout.scrolls;
     size_t inspector = Clay_IsDebugModeEnabled() ? 3 : 0;
     if (scrolls + inspector > WIDGET_SCROLLS_OUTPUT_MAX) {
         recording->exhausted = true;
@@ -3504,8 +3158,6 @@ declare_scene(Monitor *m)
     if (recording->exhausted) return;
     if (!screen_subtrees && screen_declarations_len == 1) {
         screen_activate(&screen_declarations[0]);
-        declare_clients(m);
-        if (recording->exhausted) return;
         declare_drawins(m);
         screen_activate(NULL);
         if (recording->exhausted) return;
@@ -3528,12 +3180,15 @@ declare_scene(Monitor *m)
  * edge in the solved layout share it here. */
 static size_t
 widget_boxes_walk(struct widget_tree *d, size_t i, Clay_ElementId id, int (*boxes)[4],
-	int *n, Clay_BoundingBox root, uint32_t *ids)
+	int *n, Clay_BoundingBox root, uint32_t *ids, float *scrolled)
 {
 	const struct widget_node *node = &d->nodes[i];
 	Clay_ElementData data = Clay_GetElementData(id);
 	size_t next = i + 1;
 
+	/* A client composite publishes nothing; its frame is the client's. */
+	if (node->client)
+		return widget_subtree_end(d, i);
 	if (!node->text && data.found && (node->widget || (ids && node->scroll))) {
 		Clay_BoundingBox b = data.boundingBox;
 		int x0 = (int)floorf(b.x - root.x + 0.5f);
@@ -3541,6 +3196,12 @@ widget_boxes_walk(struct widget_tree *d, size_t i, Clay_ElementId id, int (*boxe
 
 		if (ids)
 			ids[*n] = d->ids[i];
+		/* A scroll node's declared offset as the dump prints it, NAN for
+		 * others. */
+		if (scrolled) {
+			float offset = node->scroll ? node->scrolled[node->scroll - 1] : 0;
+			scrolled[*n] = !node->scroll ? NAN : offset == 0 ? 0 : -offset;
+		}
 		boxes[*n][0] = x0;
 		boxes[*n][1] = y0;
 		boxes[*n][2] = (int)floorf(b.x + b.width - root.x + 0.5f) - x0;
@@ -3549,7 +3210,7 @@ widget_boxes_walk(struct widget_tree *d, size_t i, Clay_ElementId id, int (*boxe
 	}
 	for (uint16_t k = 0; k < node->children; k++)
 		next = widget_boxes_walk(d, next, widget_child_id(d, next, id, k),
-			boxes, n, root, ids);
+			boxes, n, root, ids, scrolled);
 	return next;
 }
 
@@ -3661,7 +3322,8 @@ declare_widget_hits(const struct widget_host *host, double x, double y, int *out
 /* The boxes of host's tree in the current context: one lookup per node
  * against what that context last solved. */
 static int
-widget_boxes_read(const struct widget_host *host, int (*boxes)[4], uint32_t *ids)
+widget_boxes_read(const struct widget_host *host, int (*boxes)[4], uint32_t *ids,
+	float *scrolled)
 {
 	Clay_ElementId root_id = {.id = host->tree->root_id};
 	Clay_ElementData root = Clay_GetElementData(root_id);
@@ -3669,7 +3331,7 @@ widget_boxes_read(const struct widget_host *host, int (*boxes)[4], uint32_t *ids
 
 	if (root.found)
 		widget_boxes_walk(host->tree, 0, root_id, boxes, &n,
-			root.boundingBox, ids);
+			root.boundingBox, ids, scrolled);
 	return n;
 }
 
@@ -3693,18 +3355,47 @@ declare_widget_boxes(const struct widget_host *host, int (*boxes)[4])
 		return 0;
 	previous = Clay_GetCurrentContext();
 	Clay_SetCurrentContext(band->clay);
-	n = widget_boxes_read(host, boxes, NULL);
+	n = widget_boxes_read(host, boxes, NULL, NULL);
 	Clay_SetCurrentContext(previous);
 	return n;
+}
+
+/* Send the object on top of the stack clay::solved with the boxes and ids
+ * of tree, and pop it. */
+static void
+solved_signal(lua_State *L, struct widget_tree *tree)
+{
+	static int boxes[WIDGET_NODES_MAX][4];
+	static uint32_t ids[WIDGET_NODES_MAX];
+	static float scrolled[WIDGET_NODES_MAX];
+	static const char *keys[] = { "x", "y", "width", "height" };
+	struct widget_host host = { .tree = tree };
+	int top = lua_gettop(L) - 1;
+	int n = widget_boxes_read(&host, boxes, ids, scrolled);
+
+	lua_createtable(L, n, 0);
+	for (int k = 0; k < n; k++) {
+		lua_createtable(L, 0, 6);
+		lua_pushinteger(L, ids[k]);
+		lua_setfield(L, -2, "id");
+		if (!isnan(scrolled[k])) {
+			lua_pushnumber(L, scrolled[k]);
+			lua_setfield(L, -2, "scrolled");
+		}
+		for (int j = 0; j < 4; j++) {
+			lua_pushinteger(L, boxes[k][j]);
+			lua_setfield(L, -2, keys[j]);
+		}
+		lua_rawseti(L, -2, k + 1);
+	}
+	luaA_object_emit_signal(L, -2, "clay::solved", 1);
+	lua_settop(L, top);
 }
 
 /* Publish changed trees' boxes and IDs through the public signal. */
 static void
 solved_emit(void)
 {
-	static int boxes[WIDGET_NODES_MAX][4];
-	static uint32_t ids[WIDGET_NODES_MAX];
-	static const char *keys[] = { "x", "y", "width", "height" };
 	lua_State *L = globalconf_L;
 	size_t len = solved_len;
 
@@ -3713,23 +3404,8 @@ solved_emit(void)
 	for (size_t i = 0; i < len; i++) {
         if (!solved_hosts[i].tree->publish_pending) continue;
         solved_hosts[i].tree->publish_pending = false;
-		int n = widget_boxes_read(&solved_hosts[i], boxes, ids);
-		int top = lua_gettop(L);
-
 		drawable_push(L, solved_hosts[i].drawable);
-		lua_createtable(L, n, 0);
-		for (int k = 0; k < n; k++) {
-			lua_createtable(L, 0, 5);
-			lua_pushinteger(L, ids[k]);
-			lua_setfield(L, -2, "id");
-			for (int j = 0; j < 4; j++) {
-				lua_pushinteger(L, boxes[k][j]);
-				lua_setfield(L, -2, keys[j]);
-			}
-			lua_rawseti(L, -2, k + 1);
-		}
-        luaA_object_emit_signal(L, -2, "clay::solved", 1);
-		lua_settop(L, top);
+		solved_signal(L, solved_hosts[i].tree);
 	}
 }
 
@@ -3844,7 +3520,6 @@ static void
 declare_band_init(struct declare_band *band, struct wlr_output *wlr_output,
 	struct wlr_scene_tree *parent)
 {
-    band->layout_ref = LUA_NOREF;
     Clay_SetCurrentContext(NULL);
     Clay_SetMaxElementCount(context_capacity);
     uint32_t arena_size = Clay_MinMemorySize();
@@ -3899,9 +3574,9 @@ declare_band_wipe(struct declare_band *band)
     free(band->hosts);
     for (size_t i = 0; i < band->retired_len; i++) widget_tree_release(band->retired[i]);
     free(band->retired);
-    if (band->layout_ref != LUA_NOREF) luaL_unref(globalconf_L, LUA_REGISTRYINDEX, band->layout_ref);
     free(band->retained_dump);
     free(band->words);
+    free(band->settle);
     free(band->command_handles);
 	render_destroy(band->render, &client_hooks);
 	wlr_scene_node_destroy(&band->tree->node);
@@ -3999,12 +3674,11 @@ declare_state_clear(void)
         band->retired = NULL;
         band->retired_len = 0;
         band->records_len = 0;
+        band->settle_len = 0;
         band->context_valid = false;
         free(band->retained_dump);
         band->retained_dump = NULL;
         band->command_handles_len = 0;
-        luaL_unref(globalconf_L, LUA_REGISTRYINDEX, band->layout_ref);
-        band->layout_ref = LUA_NOREF;
         Clay_SetCurrentContext(band->clay);
         int width, height;
         wlr_output_effective_resolution(m->declare->wlr_output, &width, &height);
@@ -4178,7 +3852,7 @@ declare_output_frame(struct declare_output *dout, Monitor *m)
 	/* Compile pending inputs, declare and solve once, then reconcile.
 	 * Dirty marks raised from here on schedule the next frame. */
 	dout->dirty = false;
-    scrollbar_records_len = 0;
+    band->scrollbar_records_len = 0;
     solved_len = 0;
     luaA_emit_signal_global("clay::declare");
     if (band->exhausted) goto failed;
@@ -4226,8 +3900,8 @@ declare_output_frame(struct declare_output *dout, Monitor *m)
 	/* Collapsing a track changes the content's box too. Compare both
 	 * dimensions even when the record has no overflow. A changed record
 	 * supplies the next frame's thumb declaration. */
-	for (size_t i = 0; i < scrollbar_records_len; i++) {
-		const struct scrollbar_record *record = &scrollbar_records[i];
+	for (size_t i = 0; i < band->scrollbar_records_len; i++) {
+		const struct scrollbar_record *record = &band->scrollbar_records[i];
 		Clay_ScrollContainerData data = Clay_GetScrollContainerData(record->id);
 		Clay_Vector2 position = data.found ? *data.scrollPosition : (Clay_Vector2) {0};
 		if (record->found != data.found
@@ -4254,11 +3928,13 @@ declare_output_frame(struct declare_output *dout, Monitor *m)
 	}
 	band->declare_us = declared - start;
 	band->solve_us = solved - declared;
+    /* Every frame: a scroll moves a layout's boxes without a new tree. */
     for (size_t i = 0; i < screen_declarations_len; i++) {
-        screen_activate(&screen_declarations[i]);
-        if (active_screen->screen->valid) tile_publish(m);
+        screen_t *screen = screen_declarations[i].screen;
+        if (!screen->valid || !screen->layout.nodes_len) continue;
+        luaA_screen_push(globalconf_L, screen);
+        solved_signal(globalconf_L, &screen->layout);
     }
-    screen_activate(NULL);
 
     next_handles = malloc((size_t)(commands.length + 1) * sizeof(*next_handles));
     if (!next_handles) goto failed;
@@ -4312,16 +3988,6 @@ declare_output_frame(struct declare_output *dout, Monitor *m)
     band->context_valid = true;
     free(band->retained_dump);
     band->retained_dump = NULL;
-    luaL_unref(globalconf_L, LUA_REGISTRYINDEX, band->layout_ref);
-    band->layout_ref = LUA_NOREF;
-    lua_createtable(globalconf_L, screen_declarations_len, 0);
-    for (size_t i = 0; i < screen_declarations_len; i++) {
-        int ref = screen_declarations[i].layout_ref;
-        if (ref == LUA_NOREF) continue;
-        lua_rawgeti(globalconf_L, LUA_REGISTRYINDEX, ref);
-        lua_rawseti(globalconf_L, -2, i + 1);
-    }
-    band->layout_ref = luaL_ref(globalconf_L, LUA_REGISTRYINDEX);
     dout->inspector_width = panel_width;
     bars_settle(m);
     popups_settle(m);
@@ -4330,7 +3996,7 @@ declare_output_frame(struct declare_output *dout, Monitor *m)
         workarea_settle(m);
     }
     screen_activate(NULL);
-    clients_settle(m);
+    clients_settle(m, band);
     solved_emit();
     for (size_t i = 0; i < screen_declarations_len; i++) {
         screen_t *screen = screen_declarations[i].screen;
@@ -4401,7 +4067,7 @@ failed:
     band->records_len = old_len;
     band->records_cap = old_cap;
     for (size_t i = 0; i < solved_len; i++) solved_hosts[i].tree->declared = false;
-    solved_len = scrollbar_records_len = bars_len = 0;
+    solved_len = band->scrollbar_records_len = bars_len = 0;
     dout->dirty = false;
     fprintf(stderr, "clay output %s capacity exhausted: elements %d/%d map %d free %d transitions %d inspector %s; retained scene, context reinitialized\n",
         dout->wlr_output->name, failed_counts.elements, failed_counts.capacity,
@@ -4860,6 +4526,37 @@ dump_sizing(buffer_t *buf, const struct widget_node *n, int axis)
 	dump_word(buf, n->src[axis]);
 }
 
+/* The record a track or thumb element declared from in the last frame, or
+ * NULL when the band's record array was full. */
+static const struct scrollbar_record *
+scrollbar_record_for(const struct declare_band *band, Clay_ElementId node)
+{
+	for (size_t i = 0; i < band->scrollbar_records_len; i++)
+		if (band->scrollbar_records[i].node.id == node.id)
+			return &band->scrollbar_records[i];
+	return NULL;
+}
+
+/* One axis of a track or thumb as the frame declared it from its record:
+ * the thumb's length along the scroll axis, nothing across a collapsed
+ * track, the authored sizing otherwise. */
+static void
+dump_scrollbar_sizing(buffer_t *buf, const struct widget_node *n,
+	const struct scrollbar_record *r, int axis)
+{
+	bool along = axis == (r->axis == 2);
+
+	if (n->thumb && along)
+		buffer_addf(buf, "fixed(%g)", r->length);
+	else if (r->collapsed && !along)
+		buffer_adds(buf, "fixed(0)");
+	else {
+		dump_sizing(buf, n, axis);
+		return;
+	}
+	dump_word(buf, DECLARE_SRC_SCROLL);
+}
+
 /* One line for a widget node: what the tree says the node is and the box
  * the last solve gave it. Widget lines carry the element id and a four
  * space prefix, which is what the widget tests read. */
@@ -4870,6 +4567,9 @@ dump_widget_line(buffer_t *buf, const struct widget_host *host, size_t i, Clay_E
 	struct widget_tree *d = host->tree;
 	const struct widget_node *n = &d->nodes[i];
 	Clay_ElementData data = Clay_GetElementData(id);
+	const struct scrollbar_record *bar = (n->track || n->thumb)
+			&& host->m && host->m->declare
+		? scrollbar_record_for(&host->m->declare->band, id) : NULL;
 
 	buffer_addf(buf, "    %08x %*s%s", id.id, depth * 2, "",
 		n->name ? n->name : "-");
@@ -4919,6 +4619,11 @@ dump_widget_line(buffer_t *buf, const struct widget_host *host, size_t i, Clay_E
 		dump_word(buf, host->src[0]);
 		buffer_addf(buf, " h=fixed(%d)", host->h);
 		dump_word(buf, host->src[1]);
+	} else if (bar) {
+		buffer_adds(buf, " w=");
+		dump_scrollbar_sizing(buf, n, bar, 0);
+		buffer_adds(buf, " h=");
+		dump_scrollbar_sizing(buf, n, bar, 1);
 	} else {
 		buffer_adds(buf, " w=");
 		dump_sizing(buf, n, 0);
@@ -4926,10 +4631,14 @@ dump_widget_line(buffer_t *buf, const struct widget_host *host, size_t i, Clay_E
 		dump_sizing(buf, n, 1);
 	}
 	if (!n->text) {
+		uint16_t pad[4] = { n->pad[0], n->pad[1], n->pad[2], n->pad[3] };
+		/* A track's offset is the padding before the thumb. */
+		if (bar && n->track && !bar->collapsed)
+			pad[bar->axis == 2 ? 2 : 0] = bar->offset;
 		if (!n->image && !n->shape)
 			buffer_adds(buf, n->vertical ? " column" : " row");
-		if (n->pad[0] || n->pad[1] || n->pad[2] || n->pad[3])
-			buffer_addf(buf, " pad %u,%u,%u,%u", n->pad[0], n->pad[1], n->pad[2], n->pad[3]);
+		if (pad[0] || pad[1] || pad[2] || pad[3])
+			buffer_addf(buf, " pad %u,%u,%u,%u", pad[0], pad[1], pad[2], pad[3]);
 		if (n->gap)
 			buffer_addf(buf, " gap %u", n->gap);
 		if (n->floating && data.found) {

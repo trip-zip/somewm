@@ -38,6 +38,8 @@ local gsurface = require("gears.surface")
 
 local cairo = require("lgi").cairo
 local clay = {}
+-- SOMEWM_CLAY_NO_CACHE=1 starts every compile from an empty fragment cache.
+local no_cache = os.getenv("SOMEWM_CLAY_NO_CACHE") == "1"
 local identities = setmetatable({}, {__mode = "k"})
 local next_identity = 0
 local next_occurrence = 0
@@ -1112,22 +1114,30 @@ end
 
 -- Commit geometry and binding targets before invoking public solved callbacks.
 function clay._publish(self, tree, boxes)
-    local index, callbacks, k = {}, {}, 0
-    local function place(node)
+    local index, callbacks, scrolled, k = {}, {}, {}, 0
+    -- above is the nearest widget above node.
+    local function place(node, above)
         index[#index + 1] = node
-        if not node.text and (not node.spacer or node.scroll) then
+        if not node.text and not node.client and (not node.spacer or node.scroll) then
             k = k + 1
             node.box = boxes[k]
             node.id = node.box and node.box.id
+            if node.scroll and above and node.box and node.box.scrolled then
+                scrolled[#scrolled + 1] = { above, node.box.scrolled }
+            end
         end
         for _, binding in clay.bindings(node) do binding.element = node end
-        for _, child in ipairs(node.children or empty_list) do place(child) end
+        -- A client composite publishes nothing (declare.c widget_boxes_walk).
+        for _, child in ipairs(not node.client and node.children or empty_list) do
+            place(child, node.widget or above)
+        end
         if node.solved then callbacks[#callbacks + 1] = node end
     end
     place(tree)
     self._clay_tree, self._clay_index = tree, index
     local protected_call = require('gears.protected_call')
     for _, node in ipairs(callbacks) do protected_call(node.solved, node) end
+    for _, pair in ipairs(scrolled) do pair[1]:emit_signal("clay::scrolled", pair[2]) end
 end
 
 -- Enumerate the original placements once, including hidden/refused widgets
@@ -1215,7 +1225,7 @@ function clay.compile(self, root, context, width, height, words)
     -- Entries belong to occurrences, so repeated objects retain independent
     -- fragments. Context changes discard fragments but preserve placement IDs.
     local cache = self._clay_cache
-    if not cache or cache.context ~= context or cache.width ~= width
+    if no_cache or not cache or cache.context ~= context or cache.width ~= width
             or cache.height ~= height or cache.opaque_host ~= opaque_host then
         cache = { context = context, width = width, height = height,
             entries = {}, stale = {}, widgets = {}, opaque_host = opaque_host }

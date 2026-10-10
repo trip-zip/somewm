@@ -84,31 +84,32 @@ end
 -- The layout contributes declarations only. Clay owns every rectangle.
 local function describe(s, orientation)
   local t = s.selected_tag
-  local clients = {}
-  for _, c in ipairs(client.tiled(s)) do
-    if not c.ontop and not c.above and not c.below then clients[#clients+1] = c end
-  end
+  local clients = client.tiled(s)
   local n = #clients
   local gap = n == 1 and t.gap_single_client == false and 0 or t.gap
   local vertical = orientation == "top" or orientation == "bottom"
   local reverse = orientation == "left" or orientation == "top"
   local axis = vertical and "h" or "w"
-  local cross = vertical and "row" or "column"
-  local root = { role = "WORKAREA", direction = vertical and "column" or "row",
-      gap = gap, padding = gap, children = {} }
+  local cross = vertical and "x" or "y"
+  local root = { name = "WORKAREA", dir = vertical and "y" or "x",
+      gap = gap, pad = {gap, gap, gap, gap}, children = {} }
   local masters = math.min(t.master_count, n)
-  root.center = masters == n and t.master_fill_policy ~= "expand"
-  local function run(first, last, share, role, word)
+  local center = masters == n and t.master_fill_policy ~= "expand"
+  if center then root.align = vertical and {y = "center"} or {x = "center"} end
+  local function run(first, last, share, name, word)
     if first > last then return end
-    local group = { role = role, direction = cross, gap = gap, children = {} }
-    if first == last then group.client = clients[first] else
-      for i = first, last do group.children[#group.children+1] = { client = clients[i] } end
+    local group = { name = name, dir = cross, gap = gap, children = {} }
+    if first == last then group = { client = clients[first] } else
+      for i = first, last do
+        group.children[#group.children+1] = { client = clients[i], w = "grow", h = "grow" }
+      end
     end
-    group[axis], group[axis .. "src"] = share, word
+    group.w, group.h = "grow", "grow"
+    if share then group[axis], group[axis .. "src"] = { percent = share }, word end
     root.children[#root.children+1] = group
   end
   local function master()
-    run(1, masters, (masters < n or root.center) and t.master_width_factor or nil, "MASTER", "user")
+    run(1, masters, (masters < n or center) and t.master_width_factor or nil, "MASTER", "user")
   end
   if not reverse then master() end
   local columns = math.min(t.column_count, n-masters)

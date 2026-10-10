@@ -53,12 +53,16 @@ local function assert_declaration(label, G, tree)
         end
     end
     assert(client_line, label .. ": missing CLIENT " .. slave.class .. "\n" .. tree)
+    -- The frame's padding is the client's border_width; none prints no pad.
+    local bw = slave.border_width
     local pl, pt, pr, pb = client_line:match("pad (%d+),(%d+),(%d+),(%d+)")
+    pl, pt, pr, pb = tonumber(pl) or 0, tonumber(pt) or 0, tonumber(pr) or 0, tonumber(pb) or 0
+    assert(pl == bw and pt == bw and pr == bw and pb == bw,
+        string.format("%s: padding is not border_width %d: %s", label, bw, client_line))
     local X, Y, W, H = client_line:match("box (%-?%d+),(%-?%d+) (%d+)x(%d+)")
-    pl, pt, pr, pb = tonumber(pl), tonumber(pt), tonumber(pr), tonumber(pb)
     X, Y, W, H = tonumber(X), tonumber(Y), tonumber(W), tonumber(H)
-    assert(pl and pt and pr and pb and X and Y and W and H,
-        string.format("%s: expected padding and box for %d,%d %dx%d: %s",
+    assert(X and Y and W and H,
+        string.format("%s: expected a box for %d,%d %dx%d: %s",
             label, G.x, G.y, G.width, G.height, client_line))
     local message = string.format("%s: expected box %d,%d %dx%d and w=fixed(%d) user h=fixed(%d) user: %s",
         label, G.x, G.y, G.width + pl + pr, G.height + pt + pb, W, H, client_line)

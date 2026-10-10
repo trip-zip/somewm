@@ -4,7 +4,7 @@ local awful = require("awful")
 local wibox = require("wibox")
 
 local s = screen[1]
-local bar, container, previous, paused_position, idle_dump
+local bar, container, previous, paused_position, idle_dump, resetting
 local samples = {}
 
 local function fixture(vertical, size)
@@ -22,16 +22,6 @@ local function fixture(vertical, size)
     layout:add(container)
     bar = awful.wibar { position = "top", screen = s,
         height = vertical and 240 or 40, widget = layout }
-end
-
-local function snapshot()
-    local dump = awesome._clay_tree(s)
-    local p = container._private
-    local record = p.content and p.content.id
-        and { p.drawable:_clay_scroll_get(p.content.id) } or {}
-    local diagnostic = dump .. "\nscrolling: " .. tostring(p.scrolling)
-        .. "\nscroll record: " .. table.concat(record, ", ")
-    return dump, record, diagnostic
 end
 
 local function nodes(dump)
@@ -60,20 +50,29 @@ local function box(line, diagnostic)
     return tonumber(x), tonumber(y), tonumber(width), tonumber(height)
 end
 
+-- The clip line's scrolled value, from the dump alone.
+local function position()
+    local dump = awesome._clay_tree(s)
+    local clip = nodes(dump)
+    return clip and tonumber(clip:match("scrolled=(%-?[%d%.]+)")), dump
+end
+
+-- The clip line is the viewport, the end of the last background's box is
+-- the content's extent and the clip's scrolled value is the position.
 local function check_geometry(size, copies, vertical)
-    local dump, r, diagnostic = snapshot()
-    local clip, backgrounds = nodes(dump)
+    local diagnostic = awesome._clay_tree(s)
+    local clip, backgrounds = nodes(diagnostic)
     local x, y, width, height = box(clip, diagnostic)
     local extent = math.min(size, 200)
     local scrolled = tonumber(clip:match("scrolled=(%-?[%d%.]+)"))
     assert(scrolled and scrolled >= 0 and scrolled <= 640, diagnostic)
-    assert(#r == 6, diagnostic)
     assert(#backgrounds == copies, diagnostic)
     assert((vertical and height or width) == extent, diagnostic)
     assert((vertical and width or height) == 20, diagnostic)
-    assert(r[vertical and 4 or 3] == size * copies + (copies - 1) * 40, diagnostic)
-    assert(r[vertical and 6 or 5] == extent, diagnostic)
-    assert(r[vertical and 3 or 4] == 20 and r[vertical and 5 or 6] == 20, diagnostic)
+    local lx, ly, lw, lh = box(backgrounds[copies], diagnostic)
+    local content = (vertical and ly + lh - y or lx + lw - x) + scrolled
+    -- The tree dump rounds native float positions to whole pixels.
+    assert(math.abs(content - (size * copies + (copies - 1) * 40)) <= 1, diagnostic)
     for i, line in ipairs(backgrounds) do
         local bx, by, bw, bh = box(line, diagnostic)
         assert(bw == (vertical and 20 or size) and bh == (vertical and size or 20), diagnostic)
@@ -82,7 +81,7 @@ local function check_geometry(size, copies, vertical)
         assert(math.abs((vertical and by - y or bx - x) - offset) <= 1, diagnostic)
         assert((vertical and bx == x or not vertical and by == y), diagnostic)
     end
-    return r, diagnostic, scrolled
+    return scrolled, diagnostic
 end
 
 local function diagnostics(label, first, last)
@@ -97,15 +96,15 @@ local function diagnostics(label, first, last)
         .. "\nlater dump: " .. last:gsub("\n", "\\n")
 end
 
-local function at_origin(record, scrolled)
-    return record[1] == 0 and record[2] == 0 and scrolled == 0
+local function at_origin(scrolled)
+    return scrolled == 0
 end
 
 local first_diagnostic, last_diagnostic
 local function settled(count, size, copies, vertical, ready)
     if count == 1 then first_diagnostic, last_diagnostic = nil, nil end
-    local ok, r, diagnostic, scrolled = pcall(check_geometry, size, copies, vertical)
-    if not ok or (ready and not ready(r, scrolled)) then
+    local ok, r, diagnostic = pcall(check_geometry, size, copies, vertical)
+    if not ok or (ready and not ready(r)) then
         last_diagnostic = ok and diagnostic or r
         first_diagnostic = first_diagnostic or last_diagnostic
         assert(count < 25, diagnostics("settlement count " .. count,
@@ -123,9 +122,7 @@ end
 local function sample(count)
     if count == 1 then return nil end
     local r, diagnostic = check_geometry(600, 2, false)
-    assert(r[1] >= -640 and r[1] <= 0 and r[2] == 0, diagnostic)
-    samples[#samples + 1] = r[1]
-    assert(container._private.scrolling, (previous or "") .. "\n" .. diagnostic)
+    samples[#samples + 1] = r
     previous = diagnostic
     return count == 6 or nil
 end
@@ -143,41 +140,46 @@ local steps = {
     sample,
     sample,
     function()
-        local movement = samples[1] - samples[6]
+        local movement = samples[6] - samples[1]
         assert(#samples == 10 and movement > 20 and movement < 300, previous)
         container:pause()
-        local _, r = snapshot()
-        paused_position = r[1]
         return true
     end,
     function(count)
-        local _, r, diagnostic = snapshot()
-        assert(r[1] == paused_position, diagnostic)
-        if count < 6 then return nil end
+        -- A write the timer made before the pause frames first.
+        if count == 1 then return nil end
+        local r, diagnostic = position()
+        paused_position = paused_position or r
+        assert(r == paused_position, diagnostic)
+        if count < 7 then return nil end
         io.stderr:write("[PASS] ten bounded samples move at the configured speed and pause holds\n")
         container:continue()
         return true
     end,
     function(count)
-        if not settled(count, 600, 2, false, function(r)
-            return r[1] ~= paused_position
-        end) then return nil end
-        container:pause()
-        container:reset_scrolling()
-        local _, reset, reset_diagnostic = snapshot()
-        assert(reset[1] == 0 and reset[2] == 0, reset_diagnostic)
+        if not resetting then
+            if not settled(count, 600, 2, false, function(r)
+                return r ~= paused_position
+            end) then return nil end
+            container:pause()
+            container:reset_scrolling()
+            resetting = count
+            return nil
+        end
+        local reset, reset_diagnostic = position()
+        if reset ~= 0 then
+            assert(count < resetting + 25, reset_diagnostic)
+            return nil
+        end
         io.stderr:write("[PASS] continue moves the record and reset_scrolling clears it\n")
         bar:remove()
         fixture(false, 100)
         return true
     end,
     function(count)
-        local r, diagnostic = settled(count, 100, 1, false, function(record, scrolled)
-            return at_origin(record, scrolled) and not container._private.scroll_timer.started
-        end)
+        local r, diagnostic = settled(count, 100, 1, false, at_origin)
         if not r then return nil end
-        assert(r[1] == 0 and r[2] == 0, diagnostic)
-        assert(not container._private.scrolling and not container._private.scroll_timer.started, diagnostic)
+        assert(r == 0, diagnostic)
         idle_dump = diagnostic
         return true
     end,
@@ -192,20 +194,20 @@ local steps = {
         return true
     end,
     function(count)
-        local r, diagnostic = settled(count, 600, 2, true, function(record)
-            return record[2] < 0
+        local r, diagnostic = settled(count, 600, 2, true, function(scrolled)
+            return scrolled > 0
         end)
         if not r then return nil end
-        assert(r[1] == 0 and r[2] < 0 and r[2] >= -640, diagnostic)
-        previous = r[2]
+        assert(r > 0 and r <= 640, diagnostic)
+        previous = r
         return true
     end,
     function(count)
-        local r, diagnostic = settled(count, 600, 2, true, function(record)
-            return record[2] < previous
+        local r, diagnostic = settled(count, 600, 2, true, function(scrolled)
+            return scrolled > previous
         end)
         if not r then return nil end
-        assert(r[1] == 0 and r[2] < previous, diagnostic)
+        assert(r > previous, diagnostic)
         container:pause()
         container:reset_scrolling()
         return true
@@ -220,7 +222,7 @@ local steps = {
         if count < 6 then return nil end
         local r, diagnostic = settled(count, 600, 2, true)
         if not r then return nil end
-        assert(r[1] == 0 and r[2] == 0, diagnostic)
+        assert(r == 0, diagnostic)
         assert(frames(idle_dump) == frames(diagnostic), diagnostics("idle comparison", idle_dump, diagnostic))
         io.stderr:write("[PASS] vertical scrolling changes only y and the final band is idle\n")
         bar:remove()

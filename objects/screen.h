@@ -5,6 +5,7 @@
 #include "../somewm_types.h"
 #include "signal.h"
 #include "common/luaclass.h"  /* For LUA_OBJECT_HEADER macro */
+#include "widget.h"
 
 /* Forward declarations */
 struct drawin_t;
@@ -30,6 +31,7 @@ typedef struct screen_t {
 	struct wlr_box workarea;       /* Cached workarea (geometry minus struts) */
 	char *name;                    /* User-assigned screen name */
 	struct output_t *virtual_output; /* Virtual output for fake screens (NULL for real screens) */
+	struct widget_tree layout;     /* The selected layout's node tree (screen:_clay_layout) */
 } screen_t;
 
 /* Metatable name for screen userdata */

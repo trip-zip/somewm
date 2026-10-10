@@ -2,8 +2,8 @@
 --- Animated layout transitions for tiled clients.
 --
 -- Clay animates each tiled client's box from its previous place to the new
--- one. This module is the switch: the duration it pushes reaches every
--- client allocated by a layout.
+-- one. This module is the switch: awful.client.clay reads the duration into
+-- every client frame a layout places, at the next arrange.
 --
 -- Usage in rc.lua:
 --     local layout_anim = require("somewm.layout_animation")
@@ -13,7 +13,6 @@
 -- @module somewm.layout_animation
 ---------------------------------------------------------------------------
 
-local capi = { awesome = awesome }
 local gdebug = require("gears.debug")
 
 local fields = {
@@ -26,22 +25,15 @@ local fields = {
     enabled = true,
 }
 
-local function push()
-    capi.awesome._clay_client_transition(fields.enabled and fields.duration or 0)
-end
-
 local layout_animation = setmetatable({}, {
     __index = fields,
     __newindex = function(_, key, value)
         if key == "duration" or key == "enabled" then
             fields[key] = value
-            push()
         else
             gdebug.print_warning("somewm.layout_animation: " .. tostring(key) .. " is not a field")
         end
     end,
 })
-
-push()
 
 return layout_animation

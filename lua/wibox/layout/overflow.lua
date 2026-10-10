@@ -159,8 +159,6 @@ function overflow:set_scroll_factor(factor)
     else
         p.pending_scroll_factor = clamped
     end
-
-    self:emit_signal("property::scroll_factor", factor)
 end
 
 function overflow:get_scroll_factor()
@@ -356,6 +354,16 @@ local function new(dir, ...)
     local scrollbar_widget = separator({ shape = gshape.rectangle })
     apply_scrollbar_mouse_signal(ret, scrollbar_widget)
     ret._private.scrollbar_widget = scrollbar_widget
+
+    -- The factor is announced once a frame has applied it, whether a
+    -- setter, scroll() or the wheel moved the record.
+    ret._private.announced_scroll_factor = 0
+    ret:connect_signal("clay::scrolled", function(self)
+        local factor = self:get_scroll_factor()
+        if factor == self._private.announced_scroll_factor then return end
+        self._private.announced_scroll_factor = factor
+        self:emit_signal("property::scroll_factor", factor)
+    end)
 
     return ret
 end

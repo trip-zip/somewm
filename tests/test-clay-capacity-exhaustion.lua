@@ -76,8 +76,8 @@ runner.run_async(function()
     local showing = true
     s.selected_tag.layout = {name='capacity-transition', arrange=function() end,
         _clay=function()
-            return {role='WORKAREA', direction='row', children=showing and {
-                {role='SIDEBAR', w={fixed=240}, wsrc='user', h='grow', transition={duration=2,
+            return {name='WORKAREA', dir='x', children=showing and {
+                {name='SIDEBAR', w=240, wsrc='user', h='grow', transition={duration=2,
                     properties='width', enter='collapse', exit='collapse'}}} or {}}
         end}
     awful.layout.arrange(s)

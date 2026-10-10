@@ -73,20 +73,23 @@ int main(int argc, char *argv[]) {
             || (strcmp(argv[1], "move") != 0 && strcmp(argv[1], "click") != 0
                 && strcmp(argv[1], "scroll") != 0)) {
         fprintf(stderr, "Usage: %s <move|click|scroll> <x> <y> <x_extent> "
-                "<y_extent> [left|middle|right|side|extra|up|down]\n", argv[0]);
+                "<y_extent> [left|middle|right|side|extra | scroll: up|down|left|right]\n", argv[0]);
         return 1;
     }
     int click = strcmp(argv[1], "click") == 0;
     int scroll = strcmp(argv[1], "scroll") == 0;
     uint32_t btn = BTN_LEFT;
-    int32_t scroll_dir = 1; /* wl_pointer convention: positive = down */
+    int32_t scroll_dir = 1; /* wl_pointer convention: positive = down, right */
+    uint32_t scroll_axis = WL_POINTER_AXIS_VERTICAL_SCROLL;
     if (argc == 7) {
         if (scroll) {
-            if (strcmp(argv[6], "up") == 0) {
+            if (strcmp(argv[6], "left") == 0 || strcmp(argv[6], "right") == 0)
+                scroll_axis = WL_POINTER_AXIS_HORIZONTAL_SCROLL;
+            if (strcmp(argv[6], "up") == 0 || strcmp(argv[6], "left") == 0) {
                 scroll_dir = -1;
-            } else if (strcmp(argv[6], "down") != 0) {
-                fprintf(stderr, "Unknown direction: %s (expected up or down)\n",
-                        argv[6]);
+            } else if (strcmp(argv[6], "down") != 0 && strcmp(argv[6], "right") != 0) {
+                fprintf(stderr, "Unknown direction: %s (expected up, down, left "
+                        "or right)\n", argv[6]);
                 return 1;
             }
         } else {
@@ -146,8 +149,7 @@ int main(int argc, char *argv[]) {
     } else if (scroll) {
         sleep_ms(50);
         /* One discrete wheel click; wlroots scales discrete to value120 */
-        zwlr_virtual_pointer_v1_axis_discrete(pointer, now_ms(),
-                WL_POINTER_AXIS_VERTICAL_SCROLL,
+        zwlr_virtual_pointer_v1_axis_discrete(pointer, now_ms(), scroll_axis,
                 wl_fixed_from_int(scroll_dir * 15), scroll_dir);
         zwlr_virtual_pointer_v1_frame(pointer);
         wl_display_roundtrip(display);

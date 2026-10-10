@@ -8,12 +8,14 @@ local s = screen[1]
 local clients, reports, steps, previous = {}, {}, {}, nil
 local colors = {'ffff0000','ff00ff00','ff0000ff','ffffff00'}
 
-local function count_clients(count)
+-- minimum: client A's protocol minimum as {width, height}.
+local function count_clients(count, minimum)
     steps[#steps + 1] = function()
         for i = count + 1, #clients do clients[i]:kill() end
         for i = #clients + 1, count do
             reports[i] = os.tmpname()
-            awful.spawn{binary, string.char(64+i), reports[i], '0', colors[i]}
+            local min = i == 1 and minimum or {'0', '0'}
+            awful.spawn{binary, string.char(64+i), reports[i], min[1], colors[i], min[2]}
         end
         return true
     end
@@ -23,6 +25,7 @@ local function count_clients(count)
         for i = 1, count do
             local c = assert(utils.find_client_by_class(string.char(64+i)))
             c.floating, c.shadow, c.border_width = false, false, 1
+            c.size_hints_honor = i == 1 and minimum ~= nil
             clients[i] = c
         end
         for i, wanted in ipairs(clients) do
@@ -75,8 +78,35 @@ layout('tidy-spiral-three', awful.layout.suit.spiral)
 layout('tidy-corner-nw-three', awful.layout.suit.corner.nw)
 count_clients(2)
 layout('tidy-max-two', awful.layout.suit.max)
+count_clients(2)
+steps[#steps + 1] = function()
+    clients[2].ontop = true
+    return true
+end
+layout('tidy-tile-ontop-two', awful.layout.suit.tile)
+steps[#steps + 1] = function()
+    -- The ontop frame fills its cell.
+    local dump = awesome._clay_tree(s)
+    local cell = assert(dump:match('\n%s*CELL B [^\n]- box ([^\n]+)'), dump)
+    local frame = assert(dump:match('\n%s*CLIENT B [^\n]- box ([^\n]+)'), dump)
+    assert(cell == frame, cell .. ' ~= ' .. frame)
+    clients[2].ontop = false
+    return true
+end
 count_clients(3)
 layout('tidy-magnifier-three', awful.layout.suit.magnifier, 0.25)
+steps[#steps + 1] = function()
+    for _, c in ipairs(clients) do c:kill() end
+    for _, report in ipairs(reports) do os.remove(report) end
+    clients = {}
+    return true
+end
+steps[#steps + 1] = function(n)
+    if #client.get() > 0 then assert(n<30, 'clients did not close'); return end
+    return true
+end
+count_clients(4, {'1600', '500'})
+layout('tidy-fair-four-min1600', awful.layout.suit.fair)
 steps[#steps + 1] = function()
     for _, c in ipairs(clients) do c:kill() end
     for _, report in ipairs(reports) do os.remove(report) end

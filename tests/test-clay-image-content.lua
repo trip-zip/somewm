@@ -50,7 +50,6 @@ runner.run_async(function()
             if line:match('^    %x+ .* image 20x10 ') then
                 local w,h=line:match('box %-?%d+,%-?%d+ (%d+)x(%d+)')
                 assert(tonumber(w)==size and tonumber(h)==size/2,line)
-                assert(not line:find('last-frame',1,true),line)
                 found=true
             end
         end

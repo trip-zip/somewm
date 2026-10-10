@@ -25,12 +25,7 @@ local fair = {}
 
 local function describe(s, horizontal)
   local t = s.selected_tag
-  local clients = {}
-  for _, c in ipairs(client.tiled(s)) do
-    if not c.ontop and not c.above and not c.below then
-      clients[#clients + 1] = c
-    end
-  end
+  local clients = client.tiled(s)
   local n = #clients
   local rows = n == 2 and 1 or math.ceil(math.sqrt(n))
   local columns = n > 0 and math.ceil(n / rows) or 0
@@ -41,23 +36,24 @@ local function describe(s, horizontal)
     local items = {}
     local count = math.min(rows, n - (column - 1) * rows)
     for i = (column - 1) * rows + 1, math.min(column * rows, n) do
-      local item = {client = clients[i], w = 1, h = 1, wsrc = "theme", hsrc = "theme"}
+      local item = {client = clients[i], w = {percent = 1}, h = {percent = 1},
+        wsrc = "theme", hsrc = "theme"}
       if gap > 0 then
-        item = {role = "CELL", direction = "row", padding = gap,
+        item = {name = "CELL", dir = "x", pad = {gap, gap, gap, gap},
           children = {item}}
       end
-      item[axis], item[cross] = 1, 1 / count
+      item[axis], item[cross] = {percent = 1}, {percent = 1 / count}
       item.wsrc, item.hsrc = "theme", "theme"
       items[#items + 1] = item
     end
     local group = #items == 1 and items[1] or {
-      role = "ROW", direction = horizontal and "row" or "column",
+      name = "ROW", dir = horizontal and "x" or "y",
       children = items}
-    group[axis], group[cross] = 1 / columns, 1
+    group[axis], group[cross] = {percent = 1 / columns}, {percent = 1}
     group.wsrc, group.hsrc = "theme", "theme"
     groups[#groups + 1] = group
   end
-  return {role = "WORKAREA", direction = horizontal and "column" or "row",
+  return {name = "WORKAREA", dir = horizontal and "y" or "x",
     children = groups}
 end
 

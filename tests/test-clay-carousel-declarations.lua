@@ -47,8 +47,8 @@ runner.run_async(function()
             local tree = carousel._build_declarations(inputs)
             root = tree
             if inset == 0 then return tree end
-            tree.role = 'CAROUSEL_VIEWPORT'
-            return {role = 'WORKAREA', direction = 'row', padding = inset, children = {tree}}
+            return {name = 'WORKAREA', dir = 'x', pad = {inset, inset, inset, inset},
+                children = {tree}}
         end}
     s.selected_tag.layout = fixture
     assert(type(carousel._clay) == 'function' and type(carousel.vertical._clay) == 'function',

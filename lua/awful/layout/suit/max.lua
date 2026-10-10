@@ -8,6 +8,7 @@
 
 -- Grab environment we need
 local ipairs = ipairs
+local capi = { client = client }
 local client = require("awful.client")
 
 local max = {}
@@ -22,15 +23,19 @@ local max = {}
 -- @param surface
 -- @see gears.surface
 
+-- Each tiled client floats over the workarea, or the output, bottom first.
 local function describe(s, fullscreen)
-  local floating = {}
   local gap = s.selected_tag.gap_single_client == false and 0 or s.selected_tag.gap
-  for _, c in ipairs(client.tiled(s)) do
-    if not c.ontop and not c.above and not c.below then
-      floating[c] = {attach_to = fullscreen and "output" or "workarea", padding = gap}
+  local tiled, children = {}, {}
+  for _, c in ipairs(client.tiled(s)) do tiled[c] = true end
+  local stacked = capi.client.get(s, true)
+  for i = #stacked, 1, -1 do
+    if tiled[stacked[i]] then
+      children[#children + 1] = {client = stacked[i], float = true, w = "grow", h = "grow",
+        pad = {gap, gap, gap, gap}, _attach = fullscreen and "output" or nil}
     end
   end
-  return {role = "WORKAREA", direction = "row", children = {}, floating = floating}
+  return {name = "WORKAREA", dir = "x", children = children}
 end
 
 -- Public method shape is retained; awful.layout schedules native declarations.

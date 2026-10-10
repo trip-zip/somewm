@@ -16,6 +16,7 @@
 
 #include "objects/tag.h"
 #include "objects/client.h"
+#include "stack.h"
 #include "objects/screen.h"
 #include "objects/output.h"
 #include "objects/drawin.h"
@@ -1276,17 +1277,6 @@ luaA_awesome_test_redeclare(lua_State *L)
 	return 1;
 }
 
-/** awesome._clay_client_transition: how long a tiled client's box takes to
- * reach a new allocation. Zero snaps. Set by somewm.layout_animation.
- * \param seconds Duration in seconds
- */
-static int
-luaA_awesome_clay_client_transition(lua_State *L)
-{
-	declare_client_transition((float)luaL_checknumber(L, 1));
-	return 0;
-}
-
 /** The draw order of a screen's windows, wiboxes and layer surfaces,
  * bottom to top.
  * Reads the screen's completed command order, so a test can assert stacking
@@ -2358,7 +2348,6 @@ const luaL_Reg awesome_methods[] = {
 #endif
 	{ "_test_add_output", luaA_awesome_test_add_output },
 	{ "_test_redeclare", luaA_awesome_test_redeclare },
-	{ "_clay_client_transition", luaA_awesome_clay_client_transition },
 	{ "_clay_dirty", luaA_awesome_clay_dirty },
 	{ "_clay_tree", luaA_awesome_clay_tree },
 	{ "_clay_scroll_get", luaA_awesome_clay_scroll_get },
@@ -5208,6 +5197,7 @@ clients_restore(lua_State *L, client_snapshot_t *snaps, int num_clients)
 		c->toplevel_handle = NULL;
 		c->screen = NULL;
 		c->transient_for = NULL;
+		stack_windows();
 		for (j = 0; j < CLIENT_TITLEBAR_COUNT; j++) {
 			c->titlebar[j].drawable = NULL;
 			c->titlebar[j].size = 0;
@@ -5248,6 +5238,7 @@ clients_restore(lua_State *L, client_snapshot_t *snaps, int num_clients)
 			if (snaps[j].data.id == snaps[i].transient_for_id) {
 				globalconf.clients.tab[base + i]->transient_for =
 					globalconf.clients.tab[base + j];
+				stack_windows();
 				break;
 			}
 		}

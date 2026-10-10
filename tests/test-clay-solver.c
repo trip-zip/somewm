@@ -253,6 +253,32 @@ static void test_clips(void) {
 	wlr_scene_node_destroy(&scene->tree.node);
 	stop_context(arena);
 }
+/* The spec's layer fixture (E030): roots A, B, C as 501, 502, 503. */
+static void test_layers(void) {
+	const int16_t z[2][3] = {{20, 20, 20}, {20, 10, 20}};
+	const uint32_t order[2][3] = {{501, 502, 503}, {502, 501, 503}};
+	for (int row = 0; row < 2; row++) {
+		void *arena = start_context();
+		Clay_BeginLayout();
+		open_node(500, (Clay_ElementDeclaration){
+			.layout.sizing = {CLAY_SIZING_FIXED(200), CLAY_SIZING_FIXED(160)}});
+		for (int i = 0; i < 3; i++) {
+			open_node(501 + i, (Clay_ElementDeclaration){
+				.layout.sizing = {CLAY_SIZING_FIXED(20), CLAY_SIZING_FIXED(20)},
+				.floating = {.attachTo = CLAY_ATTACH_TO_PARENT, .zIndex = z[row][i]},
+				.backgroundColor = {255,255,255,255}});
+			Clay__CloseElement();
+		}
+		Clay__CloseElement();
+		Clay_RenderCommandArray commands = Clay_EndLayout(0);
+		assert(commands.length == 3);
+		for (int i = 0; i < 3; i++) {
+			assert(commands.internalArray[i].commandType == CLAY_RENDER_COMMAND_TYPE_RECTANGLE);
+			assert(commands.internalArray[i].id == order[row][i]);
+		}
+		stop_context(arena);
+	}
+}
 static void test_overlay_rejected(void) {
 	/* Properties remain unexposed. Verify each new command still aborts if
 	 * it reaches the renderer; tint has no implemented group-opacity meaning. */
@@ -286,6 +312,9 @@ static void test_overlay_rejected(void) {
 int main(void) {
 	test_primitives(); puts("ok pinned primitives, mixed identities, structural negative, repeated frames and teardown");
 	test_clips(); puts("ok 12 nested clips, three frames");
+	test_layers();
+	puts("ok layer row 1: equal zIndex keeps declaration order A, B, C");
+	puts("ok layer row 2: B at 10 under A and C at 20 gives B, A, C");
 	test_overlay_rejected(); puts("ok unsupported overlay start/end rejected");
 	return 0;
 }

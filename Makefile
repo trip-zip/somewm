@@ -9,7 +9,7 @@
 
 -include .local.mk
 
-.PHONY: all install uninstall clean setup setup-test reconfigure test test-unit test-render test-lua-compat test-check test-signal test-ipc-socket test-integration test-orchestrator test-restart test-one-restart test-asan test-one test-visual test-one-visual test-ci test-fast build-test build-bench bench-run bench-run-live bench-json bench-baseline bench-compare bench-check bench-memory bench-flamegraph bench-diff bench-heaptrack profile profile-lua profile-save profile-diff
+.PHONY: all install uninstall clean setup setup-test reconfigure test test-unit test-render test-lua-compat test-check test-signal test-ipc-socket test-integration test-orchestrator test-cache-equivalence test-restart test-one-restart test-asan test-one test-visual test-one-visual test-ci test-fast build-test build-bench bench-run bench-run-live bench-json bench-baseline bench-compare bench-check bench-memory bench-flamegraph bench-diff bench-heaptrack profile profile-lua profile-save profile-diff
 
 # Default build: optimized release, no sanitizers
 all:
@@ -52,7 +52,7 @@ reconfigure:
 # =============================================================================
 
 # Run all tests (fast, no ASAN)
-test: test-unit test-check test-signal test-ipc-socket test-orchestrator test-restart test-integration
+test: test-unit test-check test-signal test-ipc-socket test-orchestrator test-cache-equivalence test-restart test-integration
 
 # Parse lua/ with every installed Lua version (no compositor needed)
 test-lua-compat:
@@ -84,6 +84,10 @@ test-ipc-socket: build-test
 # Test orchestrator (somewm-client test ...): spawns headless nested compositor
 test-orchestrator: build-test
 	@./tests/test-test-orchestrator.sh ./build-test/somewm ./build-test/somewm-client
+
+# The bundled config dumps the same tree with the fragment cache off
+test-cache-equivalence: build-test
+	@./tests/test-clay-cache-equivalence.sh ./build-test/somewm ./build-test/somewm-client
 
 # Restart tests: assertions on both sides of a real awesome.restart()
 test-restart: build-test

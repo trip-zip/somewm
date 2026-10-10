@@ -42,8 +42,8 @@ runner.run_async(function()
     local fixture = {name = 'private-strip-fixture', arrange = function() end,
         _clay = function()
             tree = carousel._build_declarations(inputs)
-            tree.role = 'CAROUSEL_VIEWPORT'
-            return {role = 'WORKAREA', direction = 'row', padding = inset, children = {tree}}
+            return {name = 'WORKAREA', dir = 'x', pad = {inset, inset, inset, inset},
+                children = {tree}}
         end}
     s.selected_tag.layout = fixture
 
