@@ -21,6 +21,16 @@ local gtable = require("gears.table")
 local Pango = lgi.Pango
 local PangoCairo = lgi.PangoCairo
 local setmetatable = setmetatable
+-- The layout accessors a textbox calls each time it changes, resolved once:
+-- a method or property looked up on the layout goes through lgi's element
+-- search, a string match per call.
+local Layout = Pango.Layout
+local get_layout_text, set_layout_text = Layout.get_text, Layout.set_text
+local get_attributes, set_attributes = Layout.get_attributes, Layout.set_attributes
+local get_font_description, get_justify, get_indent = Layout.get_font_description,
+    Layout.get_justify, Layout.get_indent
+local get_line_spacing, get_ellipsize, get_alignment = Layout.get_line_spacing,
+    Layout.get_ellipsize, Layout.get_alignment
 
 local textbox = { mt = {} }
 
@@ -46,8 +56,8 @@ function textbox:set_markup_silently(text)
     end
 
     self._private.markup = text
-    self._private.layout.text = parsed
-    self._private.layout.attributes = attr
+    set_layout_text(self._private.layout, parsed)
+    set_attributes(self._private.layout, attr)
     self:emit_signal("widget::redraw_needed")
     self:emit_signal("widget::layout_changed")
     self:emit_signal("property::markup", text)
@@ -104,12 +114,13 @@ end
 -- @see markup
 
 function textbox:set_text(text)
-    if self._private.layout.text == text and self._private.layout.attributes == nil then
+    local layout = self._private.layout
+    if get_layout_text(layout) == text and get_attributes(layout) == nil then
         return
     end
     self._private.markup = nil
-    self._private.layout.text = text
-    self._private.layout.attributes = nil
+    set_layout_text(layout, text)
+    set_attributes(layout, nil)
     self:emit_signal("widget::redraw_needed")
     self:emit_signal("widget::layout_changed")
     self:emit_signal("property::text", text)
@@ -416,9 +427,9 @@ local draw_attrs = { "FOREGROUND", "FOREGROUND_ALPHA", "BACKGROUND",
 
 --- Keep the first font and collect metric-neutral attributes at byte ranges.
 local function text_run(w, layout)
-    local text = layout.text or ""
-    local desc = layout:get_font_description()
-    local attrs = layout.attributes
+    local text = get_layout_text(layout) or ""
+    local desc = get_font_description(layout)
+    local attrs = get_attributes(layout)
 
     desc = desc or Pango.FontDescription.new()
     if not attrs then
@@ -508,20 +519,20 @@ local function text_inputs(w, dpi)
     end
 
     -- An empty textbox draws nothing and takes no size of its own.
-    if (layout.text or "") == "" then
+    if (get_layout_text(layout) or "") == "" then
         return {}
     end
-    if layout:get_justify() then
+    if get_justify(layout) then
         clay.ignore(w, "justify", "is not applied")
     end
-    if layout:get_indent() ~= 0 then
+    if get_indent(layout) ~= 0 then
         clay.ignore(w, "indent", "is not applied")
     end
-    if layout:get_line_spacing() ~= 0 then
+    if get_line_spacing(layout) ~= 0 then
         clay.ignore(w, "line_spacing", "is not applied")
     end
 
-    local ellipsize = layout:get_ellipsize()
+    local ellipsize = get_ellipsize(layout)
 
     if ellipsize ~= "NONE" and ellipsize ~= "END" then
         clay.ignore(w, "ellipsize", "start and middle ellipsize at the end")
@@ -550,7 +561,7 @@ local function text_inputs(w, dpi)
     end
 
     local halign = ({ LEFT = "left", CENTER = "center", RIGHT = "right" })
-        [layout:get_alignment()] or "left"
+        [get_alignment(layout)] or "left"
 
     cached = { dpi = dpi, text = text, font = font_input.font, font_input = font_input,
         color = color, attrs = attrs, halign = halign, ellipsize = ellipsize == "END" }

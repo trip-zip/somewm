@@ -115,9 +115,14 @@ local function draw_converted(self, context, width, height, words)
     end
     pending_empty[self] = nil
     self._clay_stored = { tree = tree, width = width, height = height, context = context }
-    local wired = {}
-    for widget, occurrences in pairs(self._clay_tree and self._clay_tree.widgets or {}) do wired[widget] = occurrences end
-    for widget, occurrences in pairs(tree.widgets) do wired[widget] = occurrences end
+    -- Until the frame publishes, both trees' widgets stay wired. A compile
+    -- that kept the membership hands back the same table.
+    local old, wired = self._clay_tree and self._clay_tree.widgets, tree.widgets
+    if old and old ~= wired then
+        wired = {}
+        for widget, occurrences in pairs(old) do wired[widget] = occurrences end
+        for widget, occurrences in pairs(tree.widgets) do wired[widget] = occurrences end
+    end
     wire_widgets(self, wired)
     return true
 end
