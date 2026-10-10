@@ -13,18 +13,12 @@ local wibox = require("wibox")
 local CLIENT = "./build-test/test-session-lock-client"
 
 if not awful.spawn.with_line_callback then
-    io.stderr:write("SKIP: awful.spawn.with_line_callback not available\n")
-    io.stderr:write("Test finished successfully.\n")
-    awesome.quit()
-    return
+    return runner.skip("awful.spawn.with_line_callback not available")
 end
 
 local f = io.open(CLIENT, "r")
 if not f then
-    io.stderr:write("SKIP: " .. CLIENT .. " not built\n")
-    io.stderr:write("Test finished successfully.\n")
-    awesome.quit()
-    return
+    return runner.skip(CLIENT .. " not built")
 end
 f:close()
 

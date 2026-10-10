@@ -16,9 +16,7 @@ local awful = require("awful")
 local layout_animation = require("somewm.layout_animation")
 
 if not test_client.is_available() then
-    io.stderr:write("Test finished successfully.\n")
-    awesome.quit()
-    return
+    return runner.skip("no terminal available for test clients")
 end
 
 local tag

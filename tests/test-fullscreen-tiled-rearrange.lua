@@ -29,10 +29,7 @@ local function is_test_client_available()
 end
 
 if not is_test_client_available() then
-    io.stderr:write("SKIP: test-fullscreen-client not found (run make build-test)\n")
-    io.stderr:write("Test finished successfully.\n")
-    awesome.quit()
-    return
+    return runner.skip("test-fullscreen-client not found (run make build-test)")
 end
 
 local client_a       -- fullscreen test client (supports SIGUSR2 unfullscreen)
@@ -225,7 +222,6 @@ local steps = {
             if proc_pid_a then
                 os.execute("kill -9 " .. proc_pid_a .. " 2>/dev/null")
             end
-            os.execute("pkill -9 test-fullscreen 2>/dev/null")
             for _, c in ipairs(client.get()) do
                 c:kill()
             end

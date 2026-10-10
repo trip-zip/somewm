@@ -40,10 +40,7 @@ end
 
 local client_binary = find_client_binary()
 if not client_binary then
-    io.stderr:write("SKIP: test-fullscreen-client not found (run make build-test)\n")
-    io.stderr:write("Test finished successfully.\n")
-    awesome.quit()
-    return
+    return runner.skip("test-fullscreen-client not found (run make build-test)")
 end
 
 local physical = screen.primary

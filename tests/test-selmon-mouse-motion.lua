@@ -17,10 +17,7 @@ local runner = require("_runner")
 
 -- Skip if fewer than 2 screens (default headless has 1)
 if screen.count() < 2 then
-    io.stderr:write("SKIP: test-selmon-mouse-motion requires WLR_WL_OUTPUTS=2\n")
-    io.stderr:write("Test finished successfully.\n")
-    awesome.quit()
-    return
+    return runner.skip("test-selmon-mouse-motion requires WLR_WL_OUTPUTS=2")
 end
 
 local s1, s2

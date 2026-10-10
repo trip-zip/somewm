@@ -14,10 +14,7 @@ local lock = require("_lock_helper")
 local test_client = require("_client")
 
 if not test_client.is_available() then
-    io.stderr:write("SKIP: No terminal available for test clients\n")
-    io.stderr:write("Test finished successfully.\n")
-    awesome.quit()
-    return
+    return runner.skip("No terminal available for test clients")
 end
 
 runner.run_steps({

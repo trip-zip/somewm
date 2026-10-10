@@ -26,10 +26,7 @@ local TB_SIZE = 24
 -- wl_pointer events the client receives. The headless backend (CI) has no input
 -- device and never delivers pointer events, so skip there (run it headful).
 if os.getenv("WLR_BACKENDS") == "headless" then
-    io.stderr:write("SKIP: needs a real pointer device (headless backend has none)\n")
-    io.stderr:write("Test finished successfully.\n")
-    awesome.quit()
-    return
+    return runner.skip("needs a real pointer device (headless backend has none)")
 end
 
 local function file_exists(path)
@@ -38,10 +35,7 @@ local function file_exists(path)
 end
 
 if not file_exists(CLIENT) then
-    io.stderr:write("SKIP: " .. CLIENT .. " not found (run meson compile first)\n")
-    io.stderr:write("Test finished successfully.\n")
-    awesome.quit()
-    return
+    return runner.skip(CLIENT .. " not found (run meson compile first)")
 end
 
 local marker = string.format("/tmp/somewm-tbptr-%d.log", os.time() * 1000 + math.random(0, 999))

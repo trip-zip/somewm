@@ -14,7 +14,7 @@
 --
 -- These bugs are at the D-Bus protocol level (sendNotificationClosed calls
 -- sendActionInvoked unconditionally). They cannot be tested without a real
--- D-Bus session bus. The test skips in the test runner environment.
+-- D-Bus session bus; the runner gives each compositor a private one.
 --
 -- CONFIRMED BY CODE INSPECTION:
 --   dbus.lua:68-80 shows sendNotificationClosed() always calling
@@ -31,22 +31,17 @@
 
 local runner = require("_runner")
 
--- Skip in test runner (WLR_BACKENDS is set for nested/headless compositors)
-if os.getenv("WLR_BACKENDS") then
-    io.stderr:write("[SKIP] test-naughty-dbus-signals: "..
-        "D-Bus protocol test requires real session (no WLR_BACKENDS)\n")
-    io.stderr:write("Test finished successfully.\n")
-    awesome.quit()
-    return
-end
-
 -- Skip if D-Bus is not available
 if not dbus or not os.getenv("DBUS_SESSION_BUS_ADDRESS") then
-    io.stderr:write("[SKIP] test-naughty-dbus-signals: "..
-        "D-Bus session bus not available\n")
-    io.stderr:write("Test finished successfully.\n")
-    awesome.quit()
-    return
+    return runner.skip("D-Bus session bus not available")
+end
+
+-- Request D-Bus name for monitoring
+local ok = pcall(function()
+    dbus.request_name("session", "org.awesomewm.naughtytest")
+end)
+if not ok then
+    return runner.skip("Could not request D-Bus name")
 end
 
 local naughty = require("naughty")
@@ -66,15 +61,6 @@ local steps = {}
 -- We intercept the D-Bus signals to check if ActionInvoked fires
 -- when we close a notification with reason=dismissed_by_user.
 table.insert(steps, function()
-    -- Request D-Bus name for monitoring
-    local ok = pcall(function()
-        dbus.request_name("session", "org.awesomewm.naughtytest")
-    end)
-    if not ok then
-        io.stderr:write("[SKIP] Could not request D-Bus name\n")
-        return true
-    end
-
     -- Track signals emitted on the bus
     local signals_received = {}
     local function signal_tracker(data)

@@ -28,25 +28,16 @@ local x11_client = require("_x11_client")
 local utils = require("_utils")
 
 if utils.is_headless() then
-    io.stderr:write("SKIP: override_redirect test requires visual mode (HEADLESS=0)\n")
-    io.stderr:write("Test finished successfully.\n")
-    awesome.quit()
-    return
+    return runner.skip("override_redirect test requires visual mode (HEADLESS=0)")
 end
 
 if not x11_client.is_available() then
-    io.stderr:write("SKIP: no X11 application available (install xterm)\n")
-    io.stderr:write("Test finished successfully.\n")
-    awesome.quit()
-    return
+    return runner.skip("no X11 application available (install xterm)")
 end
 
 local python3_check = os.execute("which python3 >/dev/null 2>&1")
 if not python3_check then
-    io.stderr:write("SKIP: python3 not available for X11 helper\n")
-    io.stderr:write("Test finished successfully.\n")
-    awesome.quit()
-    return
+    return runner.skip("python3 not available for X11 helper")
 end
 
 local awful = require("awful")
@@ -206,7 +197,7 @@ local steps = {
             if popup_pid then
                 os.execute("kill " .. popup_pid .. " 2>/dev/null")
             end
-            os.execute("pkill -f x11_override_redirect.py 2>/dev/null")
+            if type(popup_pid) == "number" then awesome.kill(popup_pid, 9) end
 
             if parent_client and parent_client.valid then
                 parent_client:kill()

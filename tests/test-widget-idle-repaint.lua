@@ -98,11 +98,8 @@ local steps = {
 -- check is only meaningful on the headless backend (HEADLESS=1, as CI runs it).
 -- Skip elsewhere rather than pass without actually exercising the bug.
 if not (os.getenv("WLR_BACKENDS") or ""):find("headless", 1, true) then
-    runner.run_direct()
-    io.stderr:write("[SKIP] test-widget-idle-repaint: needs the headless backend "
-        .. "(HEADLESS=1); a nested parent compositor masks the bug under test.\n")
-    runner.done()
-    return
+    return runner.skip("needs the headless backend (HEADLESS=1); "
+        .. "a nested parent compositor masks the bug under test")
 end
 
 runner.run_steps(steps)

@@ -27,17 +27,11 @@ end
 
 -- Skip test if requirements not met
 if not is_test_layer_client_available() then
-    io.stderr:write("SKIP: test-layer-client not found (run meson compile first)\n")
-    io.stderr:write("Test finished successfully.\n")
-    awesome.quit()
-    return
+    return runner.skip("test-layer-client not found (run meson compile first)")
 end
 
 if not test_client.is_available() then
-    io.stderr:write("SKIP: no terminal available for test clients\n")
-    io.stderr:write("Test finished successfully.\n")
-    awesome.quit()
-    return
+    return runner.skip("no terminal available for test clients")
 end
 
 local my_client
@@ -92,8 +86,7 @@ local steps = {
 
         -- Timeout (should be fast - test-layer-client starts instantly)
         if count > 20 then
-            io.stderr:write("[TEST] ERROR: layer surface did not appear\n")
-            return true
+            error("layer surface did not appear")
         end
 
         return nil
@@ -102,8 +95,7 @@ local steps = {
     -- Step 4: Verify layer surface has keyboard focus and client lost focus
     function(count)
         if not layer_surf then
-            io.stderr:write("[TEST] SKIP: layer surface not found\n")
-            return true
+            error("layer surface not found")
         end
 
         -- Give focus a moment to transfer
@@ -182,7 +174,7 @@ local steps = {
         if count == 1 then
             io.stderr:write("[TEST] Cleanup: killing remaining clients\n")
             if my_client and my_client.valid then my_client:kill() end
-            os.execute("pkill -9 test-layer-client 2>/dev/null")
+            if type(layer_pid) == "number" then awesome.kill(layer_pid, 9) end
         end
 
         if #client.get() == 0 then

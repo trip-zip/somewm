@@ -14,10 +14,7 @@ local runner = require("_runner")
 local wibox = require("wibox")
 
 if not awesome._test_add_output then
-    io.stderr:write("SKIP: awesome._test_add_output not available\n")
-    io.stderr:write("Test finished successfully.\n")
-    awesome.quit()
-    return
+    return runner.skip("awesome._test_add_output not available")
 end
 
 local initial_count = screen.count()

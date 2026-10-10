@@ -26,6 +26,7 @@ TEST_TIMEOUT=${TEST_TIMEOUT:-30}
 VERBOSE=${VERBOSE:-0}
 HEADLESS=${HEADLESS:-0}
 PERSISTENT=${PERSISTENT:-0}
+JOBS=${JOBS:-4}
 TEST_RC_LUA="${TEST_RC_LUA:-}"
 
 # Change to script's directory
@@ -41,6 +42,8 @@ fi
 export LUA_PATH="$ROOT_DIR/lua/?.lua;$ROOT_DIR/lua/?/init.lua;$ROOT_DIR/tests/?.lua;;"
 export SOMEWM_SKIP_INSTALLED_LUA=1
 export FONTCONFIG_FILE="$ROOT_DIR/tests/fonts.conf"
+# tests/xdg holds fixture icons that menubar.utils.lookup_icon finds by name
+export XDG_DATA_DIRS="$ROOT_DIR/tests/xdg:${XDG_DATA_DIRS:-/usr/local/share:/usr/share}"
 
 # Wayland backend setup based on HEADLESS mode
 if [ "$HEADLESS" = 1 ]; then
@@ -50,7 +53,7 @@ else
     export WLR_BACKENDS=wayland
     # Use GPU renderer in visual mode
 fi
-export WLR_WL_OUTPUTS=1
+export WLR_WL_OUTPUTS=${WLR_WL_OUTPUTS:-1}
 export NO_AT_BRIDGE=1
 export GDK_SCALE=1
 
@@ -71,6 +74,14 @@ fi
 TMP_DIR=$(mktemp -d)
 LOG="$TMP_DIR/somewm.log"
 export SOMEWM_TEST_LOG="$LOG"
+[ -n "$SOMEWM_TEST_LOG_DIR" ] && mkdir -p "$SOMEWM_TEST_LOG_DIR"
+
+# Each compositor gets a private session bus, so tests that own D-Bus names
+# (notifications, the tray watcher) can run side by side.
+DBUS_RUN_SESSION=$(command -v dbus-run-session || true)
+if [ -z "$DBUS_RUN_SESSION" ]; then
+    echo "Warning: dbus-run-session not found, tests share the host session bus" >&2
+fi
 
 # Create isolated runtime directory for test compositor
 TEST_RUNTIME_DIR="$TMP_DIR/runtime"
@@ -100,11 +111,11 @@ cleanup() {
 
     if [ -n "$SOMEWM_PID" ]; then
         if kill -0 $SOMEWM_PID 2>/dev/null; then
-            kill -TERM $SOMEWM_PID 2>/dev/null || true
+            kill -TERM -- -"$SOMEWM_PID" 2>/dev/null || true
             # Give it a moment to cleanup
             sleep 0.5
             # Force kill if still running
-            kill -KILL $SOMEWM_PID 2>/dev/null || true
+            kill -KILL -- -"$SOMEWM_PID" 2>/dev/null || true
         fi
         wait $SOMEWM_PID 2>/dev/null || true
     fi
@@ -146,13 +157,15 @@ start_somewm() {
     # immediately and the IPC connection test fails.
     rm -f "$SOCKET"
 
-    # Start compositor (uses XDG_CONFIG_HOME for config)
-    timeout $TEST_TIMEOUT "$SOMEWM" > "$LOG" 2>&1 &
+    # Start compositor (uses XDG_CONFIG_HOME for config) in its own process
+    # group led by SOMEWM_PID. timeout comes first: it moves itself into a new
+    # group unless it already leads one.
+    setsid timeout "$TEST_TIMEOUT" ${DBUS_RUN_SESSION:+"$DBUS_RUN_SESSION" --} "$SOMEWM" >> "$LOG" 2>&1 &
     SOMEWM_PID=$!
 
     # Wait for socket
     if ! wait_for_socket; then
-        kill -KILL $SOMEWM_PID 2>/dev/null || true
+        kill -KILL -- -"$SOMEWM_PID" 2>/dev/null || true
         wait $SOMEWM_PID 2>/dev/null || true
         return 1
     fi
@@ -162,7 +175,7 @@ start_somewm() {
         echo "Error: IPC connection test failed" >&2
         echo "Last 50 lines of log:" >&2
         tail -50 "$LOG" >&2
-        kill -KILL $SOMEWM_PID 2>/dev/null || true
+        kill -KILL -- -"$SOMEWM_PID" 2>/dev/null || true
         wait $SOMEWM_PID 2>/dev/null || true
         return 1
     fi
@@ -170,8 +183,19 @@ start_somewm() {
     return 0
 }
 
+# A test that called runner.skip wrote "Test skipped." and never the success
+# line. Returns 0 if the log holds a skip, 1 otherwise.
+log_skipped() {
+    grep -q "^Test skipped\.$" "$LOG" && ! grep -q "Test finished successfully\." "$LOG"
+}
+
+# Reason a skipping test gave, from its "[SKIP] " line
+skip_reason() {
+    sed -n 's/^\[SKIP\] //p' "$LOG" | head -1
+}
+
 # Run a single test file
-# Returns: 0 on success, 1 on failure
+# Returns: 0 on success, 1 on failure, 2 when the test skipped
 # Sets: TEST_DURATION (seconds with decimals)
 run_test() {
     local test_file="$1"
@@ -206,7 +230,7 @@ run_test() {
 
     # If IPC timed out, kill compositor and fail
     if [ $ipc_exit -eq 124 ]; then
-        kill -KILL $SOMEWM_PID 2>/dev/null || true
+        kill -KILL -- -"$SOMEWM_PID" 2>/dev/null || true
         wait $SOMEWM_PID 2>/dev/null || true
         end_time=$(date +%s.%N)
         TEST_DURATION=$(echo "$end_time - $start_time" | bc)
@@ -224,26 +248,36 @@ run_test() {
 
     # Force kill if still running
     if kill -0 $SOMEWM_PID 2>/dev/null; then
-        kill -KILL $SOMEWM_PID 2>/dev/null || true
+        kill -KILL -- -"$SOMEWM_PID" 2>/dev/null || true
     fi
 
     wait $SOMEWM_PID 2>/dev/null || true
+    kill -KILL -- -"$SOMEWM_PID" 2>/dev/null || true
 
     # Kill orphaned test client processes (terminals running "sleep infinity")
     # that may outlive the compositor. Without this, they can reconnect to
-    # the next test's compositor and inject unexpected clients.
-    pkill -9 -f "sleep infinity" 2>/dev/null || true
-    # Wait and verify all orphans are gone before starting next test.
-    local retries=0
-    while pgrep -f "sleep infinity" > /dev/null 2>&1 && [ $retries -lt 10 ]; do
+    # the next test's compositor and inject unexpected clients. Spawned
+    # clients may leave the process group, so ours are the ones that
+    # inherited this run's SOMEWM_TEST_LOG.
+    local retries=0 found pid
+    while [ $retries -lt 10 ]; do
+        found=0
+        for pid in $(pgrep -f "sleep infinity"); do
+            if tr '\0' '\n' 2>/dev/null < /proc/$pid/environ | grep -qxF "SOMEWM_TEST_LOG=$LOG"; then
+                kill -9 $pid 2>/dev/null || true
+                found=1
+            fi
+        done
+        [ $found -eq 0 ] && break
         sleep 0.1
-        pkill -9 -f "sleep infinity" 2>/dev/null || true
         retries=$((retries + 1))
     done
 
     # Record end time
     end_time=$(date +%s.%N)
     TEST_DURATION=$(echo "$end_time - $start_time" | bc)
+
+    log_skipped && return 2
 
     # Check for success
     if grep -q "Test finished successfully\." "$LOG"; then
@@ -254,7 +288,7 @@ run_test() {
 }
 
 # Run a single test in persistent mode (compositor already running)
-# Returns: 0 on success, 1 on failure
+# Returns: 0 on success, 1 on failure, 2 when the test skipped
 # Sets: TEST_DURATION (seconds with decimals)
 run_test_persistent() {
     local test_file="$1"
@@ -296,6 +330,12 @@ run_test_persistent() {
     local wait_count=0
     local max_wait=$((TEST_TIMEOUT * 10))  # 10 checks per second
     while [ $wait_count -lt $max_wait ]; do
+        if log_skipped; then
+            end_time=$(date +%s.%N)
+            TEST_DURATION=$(echo "$end_time - $start_time" | bc)
+            return 2
+        fi
+
         # Check for success
         if grep -q "Test finished successfully\." "$LOG"; then
             end_time=$(date +%s.%N)
@@ -303,8 +343,8 @@ run_test_persistent() {
             return 0
         fi
 
-        # Check for explicit failure
-        if grep -q "^Error: " "$LOG"; then
+        # Check for explicit failure (runner.done with a message)
+        if grep -q "^Test failed\.$" "$LOG"; then
             end_time=$(date +%s.%N)
             TEST_DURATION=$(echo "$end_time - $start_time" | bc)
             return 1
@@ -333,6 +373,18 @@ else
     tests="$@"
 fi
 
+# Tests with a "-- timeout:" header are the longest, so they start first
+first="" rest="" n=0
+for test in $tests; do
+    if grep -qs '^-- timeout: [0-9][0-9]*$' "$test"; then
+        first="$first $test"
+    else
+        rest="$rest $test"
+    fi
+    n=$((n + 1))
+done
+tests="$first$rest"
+
 # Track total time
 total_start=$(date +%s.%N)
 
@@ -340,7 +392,30 @@ total_start=$(date +%s.%N)
 test_count=0
 pass_count=0
 fail_count=0
+skip_count=0
 failed_tests=""
+
+# Print and count one result: 0 pass, 1 fail, 2 skip
+report_result() {
+    case $1 in
+    0)
+        pass_count=$((pass_count + 1))
+        printf -- "--- PASS: %s (%.2fs)\n" "$test_name" "$TEST_DURATION"
+        ;;
+    2)
+        skip_count=$((skip_count + 1))
+        printf -- "--- SKIP: %s (%s)\n" "$test_name" "$(skip_reason)"
+        ;;
+    *)
+        fail_count=$((fail_count + 1))
+        failed_tests="$failed_tests $test_name"
+        printf -- "--- FAIL: %s (%.2fs)\n" "$test_name" "$TEST_DURATION"
+        # Show log on failure
+        echo "    Log output:"
+        tail -30 "$LOG" | sed 's/^/    /'
+        ;;
+    esac
+}
 
 # Run tests based on mode
 if [ "$PERSISTENT" = 1 ]; then
@@ -362,17 +437,12 @@ if [ "$PERSISTENT" = 1 ]; then
         [ $VERBOSE -eq 1 ] && echo "=== RUN   $test_name"
 
         # Run test in persistent mode
-        if run_test_persistent "$test"; then
-            pass_count=$((pass_count + 1))
-            printf -- "--- PASS: %s (%.2fs)\n" "$test_name" "$TEST_DURATION"
-        else
-            fail_count=$((fail_count + 1))
-            failed_tests="$failed_tests $test_name"
-            printf -- "--- FAIL: %s (%.2fs)\n" "$test_name" "$TEST_DURATION"
-            # Show log on failure
-            echo "    Log output:"
-            tail -30 "$LOG" | sed 's/^/    /'
-        fi
+        rc=0
+        run_test_persistent "$test" || rc=$?
+        report_result $rc
+
+        # Keep this test's compositor output before it is emptied
+        [ -n "$SOMEWM_TEST_LOG_DIR" ] && cp "$LOG" "$SOMEWM_TEST_LOG_DIR/$test_name.log"
 
         # Clear the success marker from log for next test
         > "$LOG"
@@ -383,7 +453,26 @@ if [ "$PERSISTENT" = 1 ]; then
     kill -TERM $SOMEWM_PID 2>/dev/null || true
     wait $SOMEWM_PID 2>/dev/null || true
     SOMEWM_PID=""
+elif [ "$JOBS" != 1 ] && [ $n -gt 1 ]; then
+    # Parallel mode: each test runs in a child invocation of this script,
+    # which prints its result under the lock and appends it to the results
+    results="$TMP_DIR/results"
+    : > "$results"
+    printf '%s\n' $tests | xargs -P "$JOBS" -n 1 env JOBS=1 \
+        SOMEWM_PARALLEL_LOCK="$TMP_DIR/lock" SOMEWM_PARALLEL_RESULTS="$results" \
+        "$ROOT_DIR/tests/run-integration.sh" || true
+    test_count=$n
+    pass_count=$(grep -c '^PASS ' "$results" || true)
+    skip_count=$(grep -c '^SKIP ' "$results" || true)
+    # A child that wrote no line counts as failed
+    fail_count=$((test_count - pass_count - skip_count))
+    failed_tests=$(awk '$1 == "FAIL" { printf " %s", $2 }' "$results")
 else
+    # A parallel child prints its result only when it holds the lock
+    if [ -n "$SOMEWM_PARALLEL_RESULTS" ]; then
+        exec 3>&1 > "$TMP_DIR/out"
+    fi
+
     # Normal mode: fresh compositor per test
     for test in $tests; do
         test_count=$((test_count + 1))
@@ -396,18 +485,25 @@ else
         [ $VERBOSE -eq 1 ] && echo "=== RUN   $test_name"
 
         # Run test
-        if run_test "$test"; then
-            pass_count=$((pass_count + 1))
-            printf -- "--- PASS: %s (%.2fs)\n" "$test_name" "$TEST_DURATION"
-        else
-            fail_count=$((fail_count + 1))
-            failed_tests="$failed_tests $test_name"
-            printf -- "--- FAIL: %s (%.2fs)\n" "$test_name" "$TEST_DURATION"
-            # Show log on failure
-            echo "    Log output:"
-            tail -30 "$LOG" | sed 's/^/    /'
-        fi
+        rc=0
+        run_test "$test" || rc=$?
+        report_result $rc
+
+        # Keep this test's compositor output before the next test empties it
+        [ -n "$SOMEWM_TEST_LOG_DIR" ] && cp "$LOG" "$SOMEWM_TEST_LOG_DIR/$test_name.log"
     done
+
+    if [ -n "$SOMEWM_PARALLEL_RESULTS" ]; then
+        result=PASS
+        [ $skip_count -gt 0 ] && result=SKIP
+        [ $fail_count -gt 0 ] && result=FAIL
+        {
+            flock 9
+            cat "$TMP_DIR/out" >&3
+            printf "%s %s %.2f\n" "$result" "$test_name" "$TEST_DURATION" >> "$SOMEWM_PARALLEL_RESULTS"
+        } 9>> "$SOMEWM_PARALLEL_LOCK"
+        exit $((fail_count > 0))
+    fi
 fi
 
 # Calculate total time
@@ -418,11 +514,13 @@ total_time=$(echo "$total_end - $total_start" | bc)
 echo ""
 if [ $fail_count -eq 0 ]; then
     echo "PASS"
+    printf "ok\t%d passed, %d skipped\t%.2fs\n" "$pass_count" "$skip_count" "$total_time"
 else
     echo "FAIL"
     echo "Failed tests:$failed_tests"
+    printf "FAIL\t%d passed, %d failed, %d skipped\t%.2fs\n" \
+        "$pass_count" "$fail_count" "$skip_count" "$total_time"
 fi
-printf "ok\t%d tests\t%.2fs\n" "$test_count" "$total_time"
 
 if [ $fail_count -gt 0 ]; then
     exit 1

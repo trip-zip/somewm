@@ -24,10 +24,7 @@ local function is_test_client_available()
 end
 
 if not is_test_client_available() then
-    io.stderr:write("SKIP: test-csd-state-client not found (run make build-test)\n")
-    io.stderr:write("Test finished successfully.\n")
-    awesome.quit()
-    return
+    return runner.skip("test-csd-state-client not found (run make build-test)")
 end
 
 local SIGUSR1, SIGUSR2, SIGHUP = 10, 12, 1
@@ -127,7 +124,6 @@ local steps = {
             if proc_pid then
                 os.execute("kill -9 " .. proc_pid .. " 2>/dev/null")
             end
-            os.execute("pkill -9 test-csd-state-client 2>/dev/null")
             return true
         end
     end,

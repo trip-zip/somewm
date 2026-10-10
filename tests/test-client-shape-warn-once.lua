@@ -4,9 +4,7 @@ local utils = require("_utils")
 local cairo = require("lgi").cairo
 
 if not test_client.is_available() then
-    io.stderr:write("Test finished successfully.\n")
-    awesome.quit()
-    return
+    return runner.skip("no terminal available for test clients")
 end
 
 runner.run_steps {

@@ -21,17 +21,11 @@ local utils = require("_utils")
 
 -- Skip if headless (XWayland needs display)
 if os.getenv("WLR_BACKENDS") == "headless" then
-	io.stderr:write("SKIP: XWayland tests require visual mode (HEADLESS=0)\n")
-	io.stderr:write("Test finished successfully.\n")
-	awesome.quit()
-	return
+	return runner.skip("XWayland tests require visual mode (HEADLESS=0)")
 end
 
 if not x11_client.is_available() then
-	io.stderr:write("SKIP: no X11 application available (install xterm)\n")
-	io.stderr:write("Test finished successfully.\n")
-	awesome.quit()
-	return
+	return runner.skip("no X11 application available (install xterm)")
 end
 
 local c_x11
@@ -258,7 +252,7 @@ local steps = {
 			if c_x11 and c_x11.valid then
 				c_x11:kill()
 			end
-			os.execute("pkill -9 xterm 2>/dev/null")
+			x11_client.terminate()
 		end
 
 		if #client.get() == 0 then

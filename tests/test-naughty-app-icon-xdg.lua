@@ -16,21 +16,13 @@ end)
 
 local steps = {}
 
--- Test that the app_icon handler resolves known XDG icons.
+-- Test that the app_icon handler resolves known XDG icons. The runner puts
+-- tests/xdg first in XDG_DATA_DIRS; it holds this icon in a hicolor tree.
 table.insert(steps, function()
-    -- Find an icon that actually exists in this environment
-    local test_icon_name = nil
-    for _, name in ipairs({"utilities-terminal", "application-x-executable", "text-x-generic"}) do
-        if menubar_utils.lookup_icon(name) then
-            test_icon_name = name
-            break
-        end
-    end
-
-    if not test_icon_name then
-        io.stderr:write("[SKIP] test-naughty-app-icon-xdg: no XDG icons found\n")
-        return true
-    end
+    local test_icon_name = "somewm-test-app-icon"
+    local path = menubar_utils.lookup_icon(test_icon_name)
+    assert(path and path:match("/tests/xdg/icons/hicolor/16x16/apps/somewm%-test%-app%-icon%.png$"),
+        "fixture icon not found by menubar.utils.lookup_icon: " .. tostring(path))
 
     local n = notification {
         title    = "app_icon XDG test",

@@ -29,10 +29,7 @@ local async  = require("_async")
 
 local ok_ffi, ffi = pcall(require, "ffi")
 if not ok_ffi then
-    io.stderr:write("SKIP: ffi not available (non-LuaJIT build); pixel sampling needs FFI\n")
-    io.stderr:write("Test finished successfully.\n")
-    awesome.quit()
-    return
+    return runner.skip("ffi not available (non-LuaJIT build); pixel sampling needs FFI")
 end
 
 ffi.cdef[[
@@ -63,10 +60,7 @@ end
 
 local BINARY = find_binary()
 if not BINARY then
-    io.stderr:write("SKIP: test-content-pattern-client not found (run `make` or `make build-test`)\n")
-    io.stderr:write("Test finished successfully.\n")
-    awesome.quit()
-    return
+    return runner.skip("test-content-pattern-client not found (run `make` or `make build-test`)")
 end
 
 -- Wait for the C client to have committed at the target scale by polling its

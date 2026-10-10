@@ -20,10 +20,7 @@ local awful = require("awful")
 
 -- Skip test if no terminal available
 if not test_client.is_available() then
-    io.stderr:write("SKIP: No terminal available for spawning test clients\n")
-    io.stderr:write("Test finished successfully.\n")
-    awesome.quit()
-    return
+    return runner.skip("No terminal available for spawning test clients")
 end
 
 local terminal_info = test_client.get_terminal_info()
