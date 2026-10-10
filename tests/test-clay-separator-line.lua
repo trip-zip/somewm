@@ -88,6 +88,28 @@ local steps = {
         end
         assert(count < 20, "the centre never turned green")
     end,
+    -- The line is 100 wide from x 50; the gradient is in the line's box.
+    function(count)
+        if count == 1 then
+            separator = wibox.widget.separator {
+                orientation = "horizontal", span_ratio = 0.5,
+                thickness = 4, color = capture.gradient(0, 100),
+            }
+            bar = wibox { x = geo.x + 100, y = geo.y + 100, width = 200, height = 40,
+                screen = s, visible = true, bg = BG, widget = separator }
+            return nil
+        end
+        local line = capture.dump_line(s, capture.gradient_record(0, 0, 100))
+        if not (line and pixel(52, 20, "#ff0000") and pixel(147, 20, "#0000ff")) then
+            assert(count < 20, "the gradient line never drew: " .. awesome._clay_tree(s))
+            return nil
+        end
+        check_box("[^\n]* w=percent%(0%.5%)[^\n]*", 50, 18, 100, 4)
+        assert(line:find(" w=percent", 1, true), "the gradient is not on the line: " .. line)
+        bar.visible = false
+        io.stderr:write("[PASS] a gradient colour draws red to blue along the line\n")
+        return true
+    end,
 }
 
 runner.run_steps(steps)

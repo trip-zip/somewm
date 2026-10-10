@@ -26,8 +26,22 @@ runner.run_steps {
         local f = assert(io.open(assert(os.getenv("SOMEWM_TEST_LOG"))))
         local text = f:read("*a")
         f:close()
-        local _, warnings = text:gsub("client: shape masks are not read", "")
+        local _, warnings = text:gsub("client: shape_bounding, shape_clip and shape_input are not read", "")
         assert(warnings == 1, "expected one client warning, got " .. warnings)
+        return true
+    end,
+    function()
+        local c = utils.find_client_by_class("shape_warn_once")
+        local rounded_rect = require("gears.shape").rounded_rect
+        c.shape = rounded_rect
+        c.shape = rounded_rect
+        assert(c.shape == nil)
+        io.stderr:flush()
+        local f = assert(io.open(assert(os.getenv("SOMEWM_TEST_LOG"))))
+        local text = f:read("*a")
+        f:close()
+        local _, warnings = text:gsub("awful.client: shape is not applied", "")
+        assert(warnings == 1, "expected one shape warning, got " .. warnings)
         return true
     end,
 }

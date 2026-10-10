@@ -97,6 +97,30 @@ local steps = {
         io.stderr:write("[PASS] the square content clips the child to its circle\n")
         return true
     end,
+    -- The first arc is the upper half of a ring 50 out and 10 thick in a
+    -- 100 square: its ends at y 48 are 2 pixels in from x 0 and x 100.
+    function(count)
+        if count == 1 then
+            chart = wibox.widget {
+                values = { 1, 1 }, colors = { capture.gradient(0, 100), "#00ff00" },
+                thickness = 10, widget = wibox.container.arcchart,
+            }
+            bar = wibox { x = geo.x + 100, y = geo.y + 100, width = 100, height = 100,
+                screen = s, visible = true, bg = BG,
+                widget = wibox.container.margin(chart) }
+            return nil
+        end
+        local line = capture.dump_line(s, capture.gradient_record(0, 0, 100))
+        if not (line and pixel(2, 48, "#ff0000") and pixel(97, 48, "#0000ff")) then
+            assert(count < 20, "the gradient arc never drew: " .. awesome._clay_tree(s))
+            return nil
+        end
+        check_box(line, 0, 0, 100, 100)
+        assert(pixel(50, 97, "#00ff00"), "the second arc is not green")
+        bar.visible = false
+        io.stderr:write("[PASS] a gradient arc colour draws red to blue along the arc\n")
+        return true
+    end,
 }
 
 runner.run_steps(steps)

@@ -211,29 +211,34 @@ local function describe_checkbox(w, fg, st, item, bound)
     local border_color = w:get_border_color()
     local check_color = w:get_check_color()
     local check_border_color = w:get_check_border_color()
+    -- A gradient starts where `draw` set it: at each work area's corner.
+    local outline_wa, content_wa = outline_workarea(w, side, side), content_workarea(w, side, side)
     local main = clay.solid_rgba(main_color)
-    local background = clay.solid_rgba(bg)
+    local main_fill = clay.fill(main_color, content_wa.x, content_wa.y)
+    local background = clay.fill(bg, outline_wa.x, outline_wa.y)
     local border = clay.solid_rgba(border_color)
-    local check_fill = clay.solid_rgba(check_color)
+    local check_fill = clay.fill(check_color, content_wa.x, content_wa.y)
     local check_border = clay.solid_rgba(check_border_color)
-    if main_color and not main then
-        clay.ignore(w, "color", "is not solid and is transparent")
+    local border_width = w:get_border_width() or 1
+    if main_color and not main_fill then
+        clay.ignore(w, "color", "is not a solid or a gradient and is transparent")
+    elseif main_color and not main and not border and border_width > 0 then
+        clay.ignore(w, "color", "is not solid and the outline is black")
     end
     if bg and not background then
-        clay.ignore(w, "bg", "is not solid and is transparent")
+        clay.ignore(w, "bg", "is not a solid or a gradient and is transparent")
     end
     if border_color and not border then
         clay.ignore(w, "border_color", "is not solid and is transparent")
     end
     if check_color and not check_fill then
-        clay.ignore(w, "check_color", "is not solid and is transparent")
+        clay.ignore(w, "check_color", "is not a solid or a gradient and is transparent")
     end
     if check_border_color and not check_border then
         clay.ignore(w, "check_border_color", "is not solid and is transparent")
     end
 
     local background_shape = w:get_shape() or shape.rectangle
-    local border_width = w:get_border_width() or 1
     local stroke = border or main or { 0, 0, 0, 1 }
     local outline = { w = "grow", h = "grow", fill = background,
         stroke = border_width > 0 and stroke or nil, stroke_width = border_width,
@@ -247,7 +252,7 @@ local function describe_checkbox(w, fg, st, item, bound)
         local check_shape = w:get_check_shape() or background_shape
         local check_border_width = w:get_check_border_width() or 0
         check = { float = true, w = "grow", h = "grow",
-            fill = check_fill or main or stroke,
+            fill = check_fill or main_fill or stroke,
             stroke = check_border_width > 0 and (check_border or { 0, 0, 0, 1 }) or nil,
             stroke_width = check_border_width,
             shape = function(width, height)

@@ -355,25 +355,30 @@ end
 local function describe_slider(w)
     local p = w._private
     local bbw = p.bar_border_width or beautiful.slider_bar_border_width or 0
-    local bar_border = clay.solid_rgba(p.bar_border_color or beautiful.slider_bar_border_color)
+    local bar_border_color = p.bar_border_color or beautiful.slider_bar_border_color
+    local bar_border = clay.solid_rgba(bar_border_color)
+    if bar_border_color and not bar_border then
+        clay.ignore(w, "bar_border_color", "is not solid and is transparent")
+    end
     bbw = bar_border and clay.pixels(w, "bar_border_width", bbw) or 0
 
     local bar_color = p.bar_color or beautiful.slider_bar_color
     local active = p.bar_active_color or beautiful.slider_bar_active_color
     local handle_color = p.handle_color or beautiful.slider_handle_color
     local handle_border_color = p.handle_border_color or beautiful.slider_handle_border_color
-    local background = clay.solid_rgba(bar_color)
-    local active_fill = clay.solid_rgba(active)
-    local handle_fill = clay.solid_rgba(handle_color)
+    -- `slider:draw` set the bar and handle patterns in the widget's box.
+    local background = clay.fill(bar_color)
+    local active_fill = clay.fill(active)
+    local handle_fill = clay.fill(handle_color)
     local handle_stroke = clay.solid_rgba(handle_border_color)
     if bar_color and not background then
-        clay.ignore(w, "bar_color", "is not solid and is transparent")
+        clay.ignore(w, "bar_color", "is not a solid or a gradient and is transparent")
     end
     if active and not active_fill then
-        clay.ignore(w, "bar_active_color", "is not solid and is transparent")
+        clay.ignore(w, "bar_active_color", "is not a solid or a gradient and is transparent")
     end
     if handle_color and not handle_fill then
-        clay.ignore(w, "handle_color", "is not solid and is transparent")
+        clay.ignore(w, "handle_color", "is not a solid or a gradient and is transparent")
     end
     if handle_border_color and not handle_stroke then
         clay.ignore(w, "handle_border_color", "is not solid and is transparent")
@@ -415,18 +420,26 @@ local function describe_slider(w)
     local handle_shape = p.handle_shape or beautiful.slider_handle_shape or properties.handle_shape
     handle_fill = handle_fill or background or { 0, 0, 0, 1 }
     if not handle_border_color then
-        handle_stroke = handle_fill
+        handle_stroke = not handle_fill.stops and handle_fill or nil
+        if hbw > 0 and not handle_stroke then
+            clay.ignore(w, handle_color and "handle_color" or "bar_color",
+                "is not solid and the handle border is not drawn")
+        end
     end
 
+    -- The bar's box starts at its margins, so its gradient moves back by
+    -- them; a bar centred without margins keeps the gradient in its box.
+    local bar_fill = clay.fill(bar_color, -bar_margins[1], -bar_margins[3])
     local bar = { w = "grow", h = bar_h or "grow", hsrc = p.bar_height and "user" or "theme" }
     if radius then
-        bar.bg, bar.radius = background, radius
+        bar.radius = radius
+        clay.bg_fill(bar, bar_fill)
         if bbw > 0 then
             bar.border, bar.bw = bar_border, {bbw, bbw, bbw, bbw}
         end
     else
         bar.clip = draws_active
-        bar.fill, bar.stroke, bar.stroke_width = background, bar_border, bbw
+        bar.fill, bar.stroke, bar.stroke_width = bar_fill, bar_border, bbw
         bar.shape = function(width, height)
             return clay.shape_ops(bar_shape, width - bbw, height - bbw, bbw / 2, bbw / 2)
         end

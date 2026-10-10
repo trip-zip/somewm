@@ -146,18 +146,9 @@ Widget-layer consumers (`naughty.list`, `awful.widget.tasklist`, `awful.widget.t
 
 These APIs exist and can be called without error, but have no effect on Wayland.
 
-| API | Status | Reason |
-|-----|--------|--------|
-| `awful.client.shape.update.all` | No-op | X11 Shape Extension unavailable on Wayland |
-| `awful.client.shape.update.bounding` | No-op | X11 Shape Extension unavailable on Wayland |
-| `awful.client.shape.update.clip` | No-op | X11 Shape Extension unavailable on Wayland |
-| `awful.client.shape.update.input` | No-op | X11 Shape Extension unavailable on Wayland |
-
 ### Client Shape (Rounded Corners)
 
-Location: `lua/awful/client/shape.lua`
-
-`shape_bounding`, `shape_clip` and `shape_input` are accepted but never read. They share one warning per client and always read nil, as do `client_shape_bounding`, `client_shape_clip` and `client_shape_input`. The `awful.client.shape.update.*` functions remain no-ops.
+`shape_bounding`, `shape_clip` and `shape_input` are accepted but never read. They share one warning per client and always read nil, as do `client_shape_bounding`, `client_shape_clip` and `client_shape_input`.
 
 ---
 

@@ -115,8 +115,19 @@ local steps = {
         return true
     end,
     wait_for_frame(function()
+        assert_above(parent_client, bar, "ontop parent above wibox")
         assert_above(child_client, parent_client, "inheriting child above parent")
         assert_above(child_client, bar, "inheriting child above wibox")
+    end),
+    function()
+        screen[1].selected_tag.layout = awful.layout.suit.tile
+        return true
+    end,
+    wait_for_frame(function()
+        assert(parent_client.width + 2 * parent_client.border_width == s.workarea.width, "ontop parent tiled to the workarea")
+        assert_above(parent_client, bar, "ontop parent above wibox under tile")
+        assert_above(child_client, parent_client, "inheriting child above ontop parent under tile")
+        assert_above(child_client, bar, "inheriting child above wibox under tile")
     end),
 
     function(count)

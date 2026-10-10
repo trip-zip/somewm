@@ -21,6 +21,7 @@ struct image_entry {
 	uint8_t filter;      /* cairo_filter_t + 1, 0 keeps cairo's default */
 	bool stretch;       /* Rastered once at its own size, scaled to the box by the scene. */
 	bool natural;       /* Paint at logical size from the top-left corner. */
+	uint8_t transform;  /* wl_output_transform the pixels are painted with. */
 };
 
 /* Hand an entry a new owned surface, releasing the previous source, and bump

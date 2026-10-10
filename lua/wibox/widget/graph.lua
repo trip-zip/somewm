@@ -620,12 +620,12 @@ end
 
 local function describe_graph(w)
     local p = w._private
-    local bg = clay.solid_rgba(p.background_color or prop_fallbacks.background_color)
+    local bg = clay.fill(p.background_color or prop_fallbacks.background_color)
     local bw = clay.pixels(w, "border_width", p.border_width or prop_fallbacks.border_width)
     if not bg then
-        clay.ignore(w, "background_color", "is not solid and is transparent")
+        clay.ignore(w, "background_color", "is not a solid or a gradient and is transparent")
     end
-    local node = { w = "grow", h = "grow", bg = bg, specs = {} }
+    local node = clay.bg_fill({ w = "grow", h = "grow", specs = {} }, bg)
     if bw > 0 then
         node.border = clay.solid_rgba(p.border_color or prop_fallbacks.border_color)
         if not node.border then
@@ -640,9 +640,10 @@ local function describe_graph(w)
     -- anchor at its bounding box (:2634-2636), and paint in order (:2603-2615).
     for g, values in ipairs(p.values) do
         if graph_should_draw_data_group(w, g) then
-            local fill = clay.solid_rgba(w:pick_data_group_color(g))
+            -- `graph:draw` set the value patterns inside the border.
+            local fill = clay.fill(w:pick_data_group_color(g), bw, bw)
             if not fill then
-                clay.ignore(w, "color", "holds a colour that is not solid, drawn transparent")
+                clay.ignore(w, "color", "holds a colour that is not a solid or a gradient, drawn transparent")
             end
             for _, value in ipairs(values) do
                 if value ~= value then
@@ -673,9 +674,9 @@ local function describe_graph(w)
         end
     end
     if p.nan_indication and has_nan then
-        local fill = clay.solid_rgba(p.nan_color or prop_fallbacks.nan_color)
+        local fill = clay.fill(p.nan_color or prop_fallbacks.nan_color, bw, bw)
         if not fill then
-            clay.ignore(w, "nan_color", "is not solid and is transparent")
+            clay.ignore(w, "nan_color", "is not a solid or a gradient and is transparent")
         else
             node.specs[#node.specs + 1] = {
                 float = true, w = "grow", h = "grow", fill = fill,

@@ -17,8 +17,13 @@ local gtable = require("gears.table")
 
 local rotate = { mt = {} }
 
+local transforms = { east = "90", south = "180", west = "270" }
+
 rotate._clay = { describe = function(w)
-    return clay.refuse(w, "direction", "needs a rotation, and Clay has no transforms")
+    local p = w._private
+    local specs = clay.whole_box(p.widget)
+    if specs[1] then specs[1].transform = transforms[p.direction] end
+    return { specs = specs }
 end }
 
 --- The widget to be rotated.

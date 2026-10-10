@@ -8,7 +8,6 @@
 
 -- Grab environment we need
 local gdebug = require("gears.debug")
-local set_shape = require("awful.client.shape").update.all
 local object = require("gears.object")
 local grect = require("gears.geometry").rectangle
 local gmath = require("gears.math")
@@ -57,7 +56,6 @@ client.swap = {}
 client.floating = {}
 client.dockable = {}
 client.property = {}
-client.shape = require("awful.client.shape")
 client.focus = require("awful.client.focus")
 
 --- The client default placement on the screen.
@@ -1445,18 +1443,17 @@ object.properties._legacy_accessors(client, "keys", "_keys", true, function(new_
     ) or false
 end, true, true, "keybinding")
 
+local shape_warned = false
+
 --- Set the client shape.
---
--- @DOC_awful_client_shape1_EXAMPLE@
 --
 -- @property shape
 -- @tparam[opt=gears.shape.rectangle] shape shape A gears.shape compatible function.
--- @propemits true false
 -- @see gears.shape
-function client.object.set_shape(self, shape)
-    client.property.set(self, "_shape", shape)
-    set_shape(self)
-    self:emit_signal("property::shape", shape)
+function client.object.set_shape()
+    if shape_warned then return end
+    shape_warned = true
+    gdebug.print_warning("awful.client: shape is not applied, the client stays rectangular")
 end
 
 -- Proxy those properties to decorate their accessors with an extra flag to

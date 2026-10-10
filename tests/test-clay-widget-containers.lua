@@ -245,6 +245,34 @@ local steps = {
         bar.visible = false
         return true
     end,
+
+    -- A gradient margin colour paints the four sides, the child on top.
+    function(count)
+        if count == 1 then
+            bar = wibox {
+                x = BX, y = BY, width = BW, height = BH,
+                visible = true, screen = s, bg = BAR_BG,
+            }
+            bar:setup {
+                widget = wibox.container.margin,
+                margins = 10, color = capture.gradient(0, BW),
+                capture.leaf_widget(math.huge, nil, "#00ff00"),
+            }
+            return nil
+        end
+        local shot = cap:shot()
+        local line = capture.dump_line(s, capture.gradient_record(0, 0, BW))
+        if not (line and cap:near(shot, 2, 5, "#ff0000") and cap:near(shot, BW - 3, 5, "#0000ff")) then
+            assert(count < 20, "the gradient margin never drew: " .. awesome._clay_tree(s))
+            return nil
+        end
+        cap:assert_pixel(shot, BW / 2, BH / 2, "#00ff00", "the child inside the gradient margin")
+        assert(line:match(" box 0,0 (%d+x%d+)") == BW .. "x" .. BH,
+            "the gradient leaf is not the margin's box: " .. line)
+        bar.visible = false
+        io.stderr:write("[PASS] a gradient margin colour draws red to blue around the child\n")
+        return true
+    end,
 }
 
 runner.run_steps(steps)

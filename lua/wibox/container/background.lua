@@ -15,7 +15,6 @@ local color = require("gears.color")
 local surface = require("gears.surface")
 local beautiful = require("beautiful")
 local gtable = require("gears.table")
-local gshape = require("gears.shape")
 local setmetatable = setmetatable
 local type = type
 
@@ -329,24 +328,13 @@ local function describe_background(w)
     end
 
     if p.background then
-        local solid = clay.solid_rgba(p.background)
-        if radius then
-            node.bg = solid
+        local fill = clay.fill(p.background)
+        if not fill then
+            clay.ignore(w, "bg", "is not a solid or a gradient and is transparent")
+        elseif radius then
+            clay.bg_fill(node, fill)
         else
-            node.fill = solid
-        end
-        if not solid then
-            local fill = clay.fill(p.background)
-            if not fill then
-                clay.ignore(w, "bg", "is not a solid or a gradient and is transparent")
-            else
-                node.fill = fill
-                if radius then
-                    node.shape = function(width, height)
-                        return clay.shape_ops(gshape.rounded_rect, width, height, 0, 0, radius)
-                    end
-                end
-            end
+            node.fill = fill
         end
     end
 

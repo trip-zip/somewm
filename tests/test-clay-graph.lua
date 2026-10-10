@@ -101,6 +101,26 @@ local steps = {
         io.stderr:write("[PASS] step shapes record rounded bar paths\n")
         return true
     end,
+    function(count)
+        if count == 1 then
+            graph = wibox.widget {
+                background_color = capture.gradient(0, 200), widget = wibox.widget.graph,
+            }
+            bar = wibox { x = geo.x + 100, y = geo.y + 100, width = 200, height = 40,
+                screen = s, visible = true, bg = BG,
+                widget = wibox.container.margin(graph) }
+            return nil
+        end
+        local line = capture.dump_line(s, capture.gradient_record(0, 0, 200))
+        if not (line and pixel(2, 20, "#ff0000") and pixel(197, 20, "#0000ff")) then
+            assert(count < 20, "the gradient background never drew: " .. awesome._clay_tree(s))
+            return nil
+        end
+        assert(line:find("wibox.widget.graph shape", 1, true), "the gradient is not on the graph: " .. line)
+        bar.visible = false
+        io.stderr:write("[PASS] a gradient background draws red to blue across the graph\n")
+        return true
+    end,
 }
 
 runner.run_steps(steps)

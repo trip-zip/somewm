@@ -112,22 +112,20 @@ runner.run_steps {
             local child = wibox.widget { forced_width = 40, forced_height = 10,
                 bg = "#ff0000", widget = wibox.container.background }
             bar.widget = wibox.layout.fixed.horizontal(
-                wibox.container.rotate(child, "east"),
-                wibox.container.mirror(child, { horizontal = true }))
+                wibox.container.place(wibox.container.rotate(child, "east")),
+                wibox.container.place(wibox.container.mirror(child, { horizontal = true })))
             return nil
         end
         local dump, log = nodes(), log_contents()
-        for _, refusal in ipairs {
-            "wibox.container.rotate direction needs a rotation, and Clay has no transforms",
-            "wibox.container.mirror reflection needs a reflection, and Clay has no transforms",
-        } do
-            local class = refusal:match("^%S+")
-            assert(not dump:find(class, 1, true), "the refused container was declared: " .. dump)
-            assert(log:find("wibox.clay: " .. refusal .. " and is left out of the tree", 1, true),
-                "the named refusal warning is missing: " .. class)
-        end
-        assert(not dump:find("wibox.container.background", 1, true), "the refused child was declared")
-        io.stderr:write("[PASS] rotation and reflection retain their named refusals\n")
+        local turned = dump:match("[^\n]*wibox.container.background transform 90 [^\n]*")
+        local mirrored = dump:match("[^\n]*wibox.container.background transform flipped [^\n]*")
+        assert(turned and select(3, box(turned)) == 10 and select(4, box(turned)) == 40,
+            "the rotated background is not 10x40: " .. dump)
+        assert(mirrored and select(3, box(mirrored)) == 40 and select(4, box(mirrored)) == 10,
+            "the mirrored background is not 40x10: " .. dump)
+        assert(not log:find("needs a rotation", 1, true) and not log:find("needs a reflection", 1, true),
+            "the log still refuses a rotation or reflection")
+        io.stderr:write("[PASS] rotation and reflection convert\n" .. turned .. "\n" .. mirrored .. "\n")
         return true
     end,
     function()

@@ -76,6 +76,35 @@ function capture:assert_pixel(shot, x, y, hex, what)
             what, x, y, r, g, b, hex))
 end
 
+-- Whether one pixel of a shot is within 12 of hex on every channel.
+function capture:near(shot, x, y, hex)
+    local r, g, b = self:pixel(shot, x, y)
+
+    return math.abs(r - tonumber(hex:sub(2, 3), 16)) <= 12
+        and math.abs(g - tonumber(hex:sub(4, 5), 16)) <= 12
+        and math.abs(b - tonumber(hex:sub(6, 7), 16)) <= 12
+end
+
+-- A red to blue linear gradient from x0 to x1, as a gears.color string.
+function capture.gradient(x0, x1)
+    return string.format("linear:%g,0:%g,0:0,#ff0000:1,#0000ff", x0, x1)
+end
+
+-- The fill record the dump prints for that gradient, its points at
+-- (x0, y) and (x1, y).
+function capture.gradient_record(x0, y, x1)
+    return string.format(" fill linear %g,%g %g,%g stops 0:1,0,0,1 1:0,0,1,1", x0, y, x1, y)
+end
+
+-- The line of screen s's dump that holds `text`, or nil.
+function capture.dump_line(s, text)
+    for line in awesome._clay_tree(s):gmatch("[^\n]+") do
+        if line:find(text, 1, true) then
+            return line
+        end
+    end
+end
+
 -- Compare the box with `captured`, allowing twenty frames for redraw.
 function capture:compare(count, captured, what)
     local shot = self:shot()

@@ -206,9 +206,9 @@ function margin.mt:__call(...)
     return new(...)
 end
 
---- wibox.container.margin -> Clay padding, and the margin color -> a Clay
--- border of the same widths, which covers exactly the ring `margin:draw`
--- fills with the even-odd rule.
+--- wibox.container.margin -> Clay padding, and a solid margin color -> a
+-- Clay border of the same widths, which covers exactly the ring
+-- `margin:draw` fills with the even-odd rule.
 local function describe_margin(w)
     local p = w._private
 
@@ -227,12 +227,24 @@ local function describe_margin(w)
     local node = { pad = pad, specs = clay.whole_box(p.widget) }
 
     if p.color then
-        local rgba = clay.solid_rgba(p.color)
+        local fill = clay.fill(p.color)
 
-        if not rgba then
-            clay.ignore(w, "color", "is not solid and is transparent")
+        if not fill then
+            clay.ignore(w, "color", "is not a solid or a gradient and is transparent")
+        elseif not fill.stops then
+            node.border, node.bw = fill, pad
         else
-            node.border, node.bw = rgba, pad
+            -- A gradient fills the four sides as one path, under the child.
+            table.insert(node.specs, 1, { float = true, w = "grow", h = "grow", fill = fill,
+                shape = function(width, height)
+                    return clay.shape_ops(function(cr)
+                        local inner = height - pad[3] - pad[4]
+                        cr:rectangle(0, 0, width, pad[3])
+                        cr:rectangle(0, height - pad[4], width, pad[4])
+                        cr:rectangle(0, pad[3], pad[1], inner)
+                        cr:rectangle(width - pad[2], pad[3], pad[2], inner)
+                    end, width, height)
+                end })
         end
     end
 

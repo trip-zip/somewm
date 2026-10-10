@@ -348,23 +348,28 @@ local function describe_progressbar(w)
     local bar_border_width = p.bar_border_width or beautiful.progressbar_bar_border_width
         or p.border_width or beautiful.progressbar_border_width or 0
     local bar_border = clay.solid_rgba(bar_border_color)
+    if bar_border_color and not bar_border then
+        clay.ignore(w, "bar_border_color", "is not solid and is transparent")
+    end
     local bbw = bar_border and clay.pixels(w, "bar_border_width", bar_border_width) or 0
 
-    local foreground = clay.solid_rgba(p.color or beautiful.progressbar_fg or "#ff0000")
-    local background = clay.solid_rgba(p.background_color or beautiful.progressbar_bg or "#ff0000aa")
     local bcol = p.border_color or beautiful.progressbar_border_color
     local border = bcol and clay.solid_rgba(bcol)
-    if not foreground then
-        clay.ignore(w, "color", "is not solid and is transparent")
-    end
-    if not background then
-        clay.ignore(w, "background_color", "is not solid and is transparent")
-    end
     if bcol and not border then
         clay.ignore(w, "border_color", "is not solid and is transparent")
     end
     local bw = p.border_width or beautiful.progressbar_border_width or 0
     bw = border and clay.pixels(w, "border_width", bw) or 0
+    -- A gradient starts where `progressbar.draw` set it, half a border width in.
+    local foreground = clay.fill(p.color or beautiful.progressbar_fg or "#ff0000", bbw / 2, bbw / 2)
+    local background = clay.fill(p.background_color or beautiful.progressbar_bg or "#ff0000aa",
+        bw / 2, bw / 2)
+    if not foreground then
+        clay.ignore(w, "color", "is not a solid or a gradient and is transparent")
+    end
+    if not background then
+        clay.ignore(w, "background_color", "is not a solid or a gradient and is transparent")
+    end
     local clip = p.clip ~= false and beautiful.progressbar_clip ~= false
     local margins, paddings = {}, {}
     for i, prop in ipairs { "margins", "paddings" } do
@@ -386,7 +391,8 @@ local function describe_progressbar(w)
     local ratio = max > 0 and math.max(0, math.min(1, value / max)) or 0
     local bg = { w = "grow", h = "grow" }
     if radius then
-        bg.bg, bg.radius = background, radius
+        bg.radius = radius
+        clay.bg_fill(bg, background)
         if bw > 0 then
             bg.border, bg.bw = border, { bw, bw, bw, bw }
         end
@@ -401,7 +407,8 @@ local function describe_progressbar(w)
     if ratio > 0 and foreground then
         bar = { w = { percent = ratio }, wsrc = "user", h = "grow" }
         if bar_radius then
-            bar.bg, bar.radius = foreground, bar_radius
+            bar.radius = bar_radius
+            clay.bg_fill(bar, foreground)
             if bbw > 0 then
                 bar.border, bar.bw = bar_border, {bbw, bbw, bbw, bbw}
             end

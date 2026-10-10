@@ -191,10 +191,19 @@ describe("wibox.widget.systray (SNI)", function()
             assert.is_same({ 3, 3, 3, 3 }, widget._clay.describe(widget).pad)
         end)
 
-        it("omits a gradient background", function()
+        it("fills a gradient background and omits a surface", function()
             beautiful_mock.bg_systray = "linear:0,0:10,0:0,#000000:1,#ffffff"
             local warning = stub(require("gears.debug"), "print_warning")
-            assert.is_nil(widget._clay.describe(widget).bg)
+            local node = widget._clay.describe(widget)
+            assert.is_nil(node.bg)
+            assert.is_same({ 0, 0, 10, 0 }, node.fill.linear)
+            assert.stub(warning).was_not_called()
+            local cairo = require("lgi").cairo
+            beautiful_mock.bg_systray = cairo.Pattern.create_for_surface(
+                cairo.ImageSurface(cairo.Format.ARGB32, 1, 1))
+            node = widget._clay.describe(widget)
+            assert.is_nil(node.bg)
+            assert.is_nil(node.fill)
             assert.stub(warning).was_called(1)
             warning:revert()
         end)

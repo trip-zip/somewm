@@ -20,7 +20,7 @@ local function warnings()
     local f = assert(io.open(assert(os.getenv('SOMEWM_TEST_LOG'))))
     local text = f:read('*a')
     f:close()
-    local _, count = text:gsub('drawin: shape masks are not read, set wibox.shape', '')
+    local _, count = text:gsub('drawin: shape_bounding, shape_clip and shape_input are not read, set wibox.shape', '')
     return count
 end
 local function click(x, y)

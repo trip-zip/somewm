@@ -341,17 +341,18 @@ read_text(lua_State *L, int idx, struct widget_node *n)
 
 	lua_getfield(L, idx, "text");
 	text = lua_tolstring(L, -1, &len);
-	if (!text || len > WIDGET_TEXT_MAX - text_len) {
+	if (!text || len + 1 > WIDGET_TEXT_MAX - text_len) {
 		lua_pop(L, 1);
 		return false;
 	}
 	memcpy(text_buf + text_len, text, len);
+	text_buf[text_len + len] = 0;
 	n->text = true;
 	n->widget = false;
 	n->identity = n->occurrence = 0;
 	n->text_off = (uint32_t)text_len;
 	n->text_len = (uint32_t)len;
-	text_len += len;
+	text_len += len + 1;
 	lua_pop(L, 1);
 
 	ok = read_text_attrs(L, idx, n)
@@ -437,6 +438,12 @@ read_node(lua_State *L, int idx, struct widget_node *n)
 	lua_getfield(L, idx, "occurrence");
 	n->occurrence = (uint32_t)lua_tointeger(L, -1);
 	lua_pop(L, 1);
+	static const char *const transforms[] = {
+		"normal", "90", "180", "270",
+		"flipped", "flipped-90", "flipped-180", "flipped-270",
+	};
+	if (!read_option(L, idx, "transform", transforms, 8, &n->transform))
+		return false;
 	lua_getfield(L, idx, "shape");
 	ok = lua_isnil(L, -1) || lua_isfunction(L, -1);
 	n->shape = lua_isfunction(L, -1) ? 1 : 0;
@@ -720,6 +727,10 @@ widget_leaves_set(struct widget_tree *d)
 			entry->natural = n->natural;
 			entry->gen++;
 		}
+		if (entry->transform != n->transform) {
+			entry->transform = n->transform;
+			entry->gen++;
+		}
 		if (n->vector) {
 			if (entry->vector != n->image) {
 				image_entry_set(entry, NULL);
@@ -993,6 +1004,10 @@ widget_nodes_set(lua_State *L, struct widget_tree *d, Monitor *m, int idx)
 		memcpy(slot->shape.fill, n->fill, sizeof(n->fill));
 		memcpy(slot->shape.stroke, n->stroke, sizeof(n->stroke));
 		slot->shape.stroke_width = n->stroke_width;
+		if (slot->shape.transform != n->transform) {
+			slot->shape.transform = n->transform;
+			slot->shape.gen = ++d->shape_generation;
+		}
 	}
 	lua_pop(L, 1);
 
