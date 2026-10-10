@@ -375,12 +375,17 @@ read_node(lua_State *L, int idx, struct widget_node *n)
 			|| !read_number(L, idx, "hmax", 0, 1e6, &n->max[1]))
 		return false;
 	n->gap = (uint16_t)gap;
-	lua_getfield(L, idx, "theme_size");
-	n->theme_size = lua_toboolean(L, -1);
-	lua_pop(L, 1);
 	if (!read_sizing(L, idx, "w", &n->sizing[0], &n->size[0])
 			|| !read_sizing(L, idx, "h", &n->sizing[1], &n->size[1]))
 		return false;
+	/* A word belongs to an axis that carries a number (spec D060). */
+	for (int axis = 0; axis < 2; axis++) {
+		if (n->sizing[axis] < WIDGET_SIZING_FIXED && n->min[axis] <= 0 && n->max[axis] <= 0)
+			continue;
+		lua_getfield(L, idx, axis ? "hsrc" : "wsrc");
+		n->src[axis] = declare_src_parse(lua_tostring(L, -1));
+		lua_pop(L, 1);
+	}
 
 	lua_getfield(L, idx, "align");
 	ok = lua_isnil(L, -1) || (lua_istable(L, -1)

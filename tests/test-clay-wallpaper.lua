@@ -43,6 +43,27 @@ local function assert_agrees()
 end
 
 local steps = {
+    function()
+        local wallpaper = require("awful.wallpaper") {}
+        for _ = 1, 2 do
+            wallpaper.uncovered_areas_color = "#ff0000"
+            wallpaper.dpi = 192
+        end
+        assert(wallpaper.uncovered_areas_color == nil)
+        assert(wallpaper.dpi == nil)
+        io.stderr:flush()
+        local f = assert(io.open(assert(os.getenv("SOMEWM_TEST_LOG"))))
+        local text = f:read("*a")
+        f:close()
+        for _, message in ipairs {
+            "awful.wallpaper: uncovered_areas_color is gone, the root wallpaper shows there",
+            "awful.wallpaper: dpi is gone, the output scale applies",
+        } do
+            local _, count = text:gsub(message, "")
+            assert(count == 1, message .. ": expected one warning, got " .. count)
+        end
+        return true
+    end,
     -- No wallpaper set: no leaf for it.
     function(count)
         if count == 1 then

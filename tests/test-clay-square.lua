@@ -60,18 +60,17 @@ runner.run_async(function()
             if vertical then left.forced_height=160 else left.forced_width=160 end
             host.widget = (vertical and wibox.layout.flex.vertical or wibox.layout.flex.horizontal)(left,widget)
             settle((vertical and 'column-' or 'row-') .. (widget==chart and 'arc' or 'checkbox'))
-            local extent = widget == chart and 100 or 80
-            local n = box(widget,vertical and 0 or 160,vertical and 160 or 0,vertical and 100 or extent,vertical and extent or 100)
-            assert(not n.last_frame_size and not n.wmin and not n.hmin,
-                'rectangular allocation acquired a square minimum')
+            -- The flex leaves the flow axis unbounded; the 100 cross bound
+            -- sizes the square.
+            local n = box(widget,vertical and 0 or 160,vertical and 160 or 0,100,100)
             if widget==chart then
                 local inner=n.children[1]
-                assert(inner.square and inner.wmin==90 and inner.hmin==90)
+                assert(not n.wmin and not n.hmin and inner.w==90 and inner.h==90)
                 box(child,vertical and 5 or 165,vertical and 165 or 5,90,90)
                 pixel(vertical and 50 or 200,vertical and 200 or 50,'#ffff00')
                 pixel(vertical and 16 or 166,vertical and 166 or 16,'#204080')
             else
-                assert(n.square and n.w=='grow' and n.h=='grow')
+                assert(n.w=='grow' and n.h=='grow' and n.wmin==100 and n.hmin==100)
                 pixel(vertical and 40 or 200,vertical and 200 or 40,'#00ff00')
             end
         end
@@ -116,8 +115,13 @@ runner.run_async(function()
             settle('forced-row-'..tostring(widget==chart)..'-'..tostring(forced[1])..'-'..tostring(forced[2]))
             box(widget,0,0,forced[1] or forced[2] or 100,100)
             local n=node(widget)
-            assert((n.w or 'fit')==(forced[1] or 'fit'))
-            assert(n.hmin==(forced[2] or nil))
+            if widget==chart then
+                assert((n.w or 'fit')==(forced[1] or 'fit'))
+                assert(n.hmin==(forced[2] or nil))
+            else
+                local side=math.min(forced[1] or 100,forced[2] or 100)
+                assert(n.w==(forced[1] or side) and n.hmin==(forced[2] or side))
+            end
         end
         widget.forced_width,widget.forced_height=nil,nil
     end

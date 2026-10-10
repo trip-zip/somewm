@@ -24,88 +24,6 @@ local setmetatable = setmetatable
 
 local textbox = { mt = {} }
 
---- Set the DPI of a Pango layout
-local function setup_dpi(box, dpi)
-    assert(dpi, "No DPI provided")
-    if box._private.dpi ~= dpi then
-        box._private.dpi = dpi
-        box._private.ctx:set_resolution(dpi)
-        box._private.layout:context_changed()
-    end
-end
-
-
-
-local function do_fit_return(self)
-    local _, logical = self._private.layout:get_pixel_extents()
-    if logical.width == 0 or logical.height == 0 then
-        return 0, 0
-    end
-    return logical.width, logical.height
-end
-
-
---- Get the preferred size of a textbox.
---
--- This returns the size that the textbox would use if infinite space were
--- available.
---
--- @method get_preferred_size
--- @tparam integer|screen s The screen on which the textbox will be displayed.
--- @treturn number The preferred width.
--- @treturn number The preferred height.
-function textbox:get_preferred_size(s)
-    return self:get_preferred_size_at_dpi(screen[s].dpi)
-end
-
---- Get the preferred height of a textbox at a given width.
---
--- This returns the height that the textbox would use when it is limited to the
--- given width.
---
--- @method get_height_for_width
--- @tparam number width The available width.
--- @tparam integer|screen s The screen on which the textbox will be displayed.
--- @treturn number The needed height.
-function textbox:get_height_for_width(width, s)
-    return self:get_height_for_width_at_dpi(width, screen[s].dpi)
-end
-
---- Get the preferred size of a textbox.
---
--- This returns the size that the textbox would use if infinite space were
--- available.
---
--- @method get_preferred_size_at_dpi
--- @tparam number dpi The DPI value to render at.
--- @treturn number The preferred width.
--- @treturn number The preferred height.
-function textbox:get_preferred_size_at_dpi(dpi)
-    local max_lines = 2^20
-    setup_dpi(self, dpi)
-    self._private.layout.width = -1 -- no width set
-    self._private.layout.height = -max_lines -- show this many lines per paragraph
-    return do_fit_return(self)
-end
-
---- Get the preferred height of a textbox at a given width.
---
--- This returns the height that the textbox would use when it is limited to the
--- given width.
---
--- @method get_height_for_width_at_dpi
--- @tparam number width The available width.
--- @tparam number dpi The DPI value to render at.
--- @treturn number The needed height.
-function textbox:get_height_for_width_at_dpi(width, dpi)
-    local max_lines = 2^20
-    setup_dpi(self, dpi)
-    self._private.layout.width = Pango.units_from_double(width)
-    self._private.layout.height = -max_lines -- show this many lines per paragraph
-    local _, h = do_fit_return(self)
-    return h
-end
-
 --- Set the text of the textbox.(with
 -- [Pango markup](https://docs.gtk.org/Pango/pango_markup.html)).
 --
@@ -461,7 +379,6 @@ local function new(text, ignore_markup)
     ret:connect_signal("widget::redraw_needed", invalidate_text_inputs)
     ret:connect_signal("widget::layout_changed", invalidate_text_inputs)
 
-    ret._private.dpi = -1
     ret._private.ctx = PangoCairo.font_map_get_default():create_context()
     ret._private.layout = Pango.Layout.new(ret._private.ctx)
     ret._private.layout:set_font_description(beautiful.get_font(beautiful.font))
@@ -484,27 +401,6 @@ end
 
 function textbox.mt.__call(_, ...)
     return new(...)
-end
-
---- Get geometry of text label, as if textbox would be created for it on the screen.
---
--- @tparam string text The text content, pango markup supported.
--- @tparam[opt=nil] integer|screen s The screen on which the textbox would be displayed.
--- @tparam[opt=beautiful.font] string font The font description as string.
--- @treturn table Geometry (width, height) hashtable.
--- @staticfct wibox.widget.textbox.get_markup_geometry
-function textbox.get_markup_geometry(text, s, font)
-    font = font or beautiful.font
-    local pctx = PangoCairo.font_map_get_default():create_context()
-    local playout = Pango.Layout.new(pctx)
-    playout:set_font_description(beautiful.get_font(font))
-    local dpi_scale = beautiful.xresources.get_dpi(s)
-    pctx:set_resolution(dpi_scale)
-    playout:context_changed()
-    local attr, parsed = Pango.parse_markup(text, -1, 0)
-    playout.attributes, playout.text = attr, parsed
-    local _, logical = playout:get_pixel_extents()
-    return logical
 end
 
 --- A Pango colour attribute, straight alpha 0-1.

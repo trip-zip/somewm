@@ -133,24 +133,6 @@ static inline void xutil_ungrab_server(void *connection) {
     xcb_ungrab_server(connection);
 }
 
-/** Get window shape (stub - returns NULL for Wayland) */
-static inline cairo_surface_t *xwindow_get_shape(xcb_window_t window, int kind) {
-    (void)window;
-    (void)kind;
-    return NULL;  /* No shape support for Wayland clients */
-}
-
-/** Set window shape (stub - does nothing for Wayland) */
-static inline void xwindow_set_shape(xcb_window_t window, int width, int height,
-                                     int kind, cairo_surface_t *surf, int offset) {
-    (void)window;
-    (void)width;
-    (void)height;
-    (void)kind;
-    (void)surf;
-    (void)offset;
-    /* No-op for Wayland */
-}
 
 /** Grab keys on window (stub - Wayland uses compositor keybindings) */
 static inline void xwindow_grabkeys(xcb_window_t window, void *keys) {

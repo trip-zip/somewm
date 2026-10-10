@@ -49,7 +49,7 @@ runner.run_async(function()
         local popup = awful.popup {screen=screen[1],visible=false,ontop=true,
             bg='#00ff00',border_width=0,shadow=false,
             preferred_positions={'bottom'},preferred_anchors={'middle'},
-            widget=custom('contribution-popup-content',function() return {w=20,h=10} end)}
+            widget=custom('contribution-popup-content',function() return {w=20,h=10,wsrc='user',hsrc='user'} end)}
         -- Select the original padding object, which no longer owns a separate
         -- Clay element. The public anchor must resolve its combined element.
         popup:move_next_to{widget=margin,x=0,y=0,width=1,height=1}

@@ -63,9 +63,9 @@ test-unit: test-lua-compat test-render
 	@./tests/run-unit.sh
 
 # C unit tests: hand-built commands and production-solver declarations.
-# Build both test binaries without rebuilding the whole compositor.
+# Build the test binaries without rebuilding the whole compositor.
 test-render: setup-test
-	@ninja -C build-test somewm test-render test-clay-solver
+	@ninja -C build-test somewm test-render test-clay-solver test-clay-aspect
 	@meson test -C build-test --suite unit --print-errorlogs --no-rebuild
 
 # Check mode tests (no compositor needed, tests somewm --check)

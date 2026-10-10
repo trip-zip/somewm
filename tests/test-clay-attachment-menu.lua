@@ -2,6 +2,15 @@ local runner=require('_runner')
 local awful=require('awful')
 local example=require('_clay_example')
 local menu, child
+
+-- The next frame compiles the menu again without an offer: no derived
+-- size, and no further scene change.
+local function settled(name)
+    local dump=awesome._clay_tree(screen[1])
+    assert(dump:match('roots flow 1 floating %d+ derived 0 '), 'derived size in '..name)
+    assert(awesome._test_redeclare()==0, name..': next frame changed the scene')
+    example.save(name, awesome._clay_tree(screen[1]))
+end
 local called=0
 runner.run_steps {
     function()
@@ -30,6 +39,7 @@ runner.run_steps {
         assert(a.target==require('wibox.clay').identity(menu.items[1]._background))
         assert(a.parent==6 and a.own==0)
         example.pixel(322,102,'#ff0000')
+        settled('menu-open')
         -- Move the parent using explicit input; child has no geometry callback.
         menu:hide(); menu:show {coords={x=400,y=200}}
         menu:item_enter(1); menu:exec(1,{exec=false})
@@ -39,6 +49,7 @@ runner.run_steps {
         local g=child.wibox:geometry()
         if g.x~=520 or g.y~=200 then assert(n<20,'submenu did not follow parent'); return end
         example.pixel(522,202,'#ff0000'); example.pixel(322,102,'#123456')
+        settled('menu-moved')
         child:exec(1,{exec=true})
         assert(called==1)
         return true

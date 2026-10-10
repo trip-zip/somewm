@@ -60,23 +60,27 @@ local steps = {
     end,
     function(count)
         if count == 1 then
-            layout.spacing = 5
+            layout.spacing = 10
+            bar.width = 100
+            layout:set_ratio(1, 0.5)
             return nil
         end
         local wired = bar._drawable._clay_wired
         local element = assert(wired[layout])[1].element
-        assert(element == bar._drawable._clay_tree and element.gap == 0,
-            "the ratio lost its host binding or ignored gap")
+        assert(element == bar._drawable._clay_tree and element.gap == 10,
+            "the ratio lost its host binding or gap")
+        assert(awesome._clay_tree(s):match("drawin[^\n]*100x40[^\n]* gap 10"),
+            "the dump omits the ratio gap")
         local x = 0
         for i, child in ipairs(layout:get_children()) do
-            local width = math.floor(bar.width * layout:get_ratio(i) + 0.5)
+            local width = math.floor((bar.width - 20) * layout:get_ratio(i) + 0.5)
             capture.assert_box(assert(wired[child])[1].element.box,
                 {x=x,y=0,width=width,height=bar.height}, "ratio allocation")
-            x = x + width
+            x = x + width + 10
         end
         assert(#awesome._test_widget_boxes(bar.drawin) == converted_boxes, "the converted box count changed")
         bar.visible = false
-        io.stderr:write("[PASS] spacing is ignored in the ratio\n")
+        io.stderr:write("[PASS] ratio shares exclude the two 10 pixel gaps\n")
         return true
     end,
 }

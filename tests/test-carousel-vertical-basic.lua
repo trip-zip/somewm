@@ -21,7 +21,6 @@ end
 
 local carousel = awful.layout.suit.carousel
 local vertical = carousel.vertical
-carousel.scroll_duration = 0
 
 local tag
 local c1, c2, c3

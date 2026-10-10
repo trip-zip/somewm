@@ -40,7 +40,8 @@ these artifacts changes an expectation.
 | Layer shell, overlay half | layer-shell-overlay | test-clay-attachment-layer-overlay |
 | Pinned bundled bar and titlebar | tidy-bundled-wibar; tidy-bundled-titlebar | test-clay-tidy-bundled |
 | Fold/retain boundaries, spacers, systray and native overlap | tidy-background-padding; tidy-padding-background; tidy-nested-backgrounds; tidy-shared-click-box; tidy-empty-and-spacer; tidy-systray-empty; tidy-systray-two; tidy-clay-overlap | test-clay-tidy-widgets |
-| Shared grid tracks, independent axes, counts, holes, spans, wrapping, borders, overlap and nesting | all19 tidy-grid-* files | test-clay-tidy-grid |
+| Grid cells, independent axes, counts, holes, spans, wrapping, borders, overlap and nesting | all 19 tidy-grid-* files | test-clay-tidy-grid |
+| Month and year calendars with an authored width | tidy-calendar-month; tidy-calendar-year | test-clay-calendar-presentation |
 | Stock-client declarations | tidy-fair-four; tidy-spiral-three; tidy-corner-nw-three; tidy-max-two; tidy-magnifier-three | test-clay-tidy-client-layouts |
 
 The resizable-split fixture exercises tile mouse resizing through
@@ -57,8 +58,9 @@ The centered clock remains a separate float, alongside any wallpaper widget tree
 
 Golden text specifies the declaration structure; it does not specify all
 geometry, identity, input, pixel or performance behavior. The integration
-fixtures assert those properties separately. Shared grid columns must stay
-aligned even when individual cells contain different widgets.
+fixtures assert those properties separately. A grid's columns align across
+rows when its size is decided and it is homogeneous, or when every cell in
+a column carries an authored size.
 
 Write expected text independently of the implementation and keep a failing
 comparison visible until the declaration matches. `SOMEWM_GOLDEN=record`

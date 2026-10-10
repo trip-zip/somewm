@@ -95,7 +95,7 @@ local steps = {
         assert(pixel(12, 12, "#ff0000") and pixel(12, 36, "#00ff00"),
             "the rows are not 24 high")
         assert(pixel(40, 12, BG), "the image paints beyond its square")
-        io.stderr:write("[PASS] the flex offers each row its share\n")
+        io.stderr:write("[PASS] each row holds its natural image\n")
         return true
     end,
     function(count)
@@ -108,13 +108,17 @@ local steps = {
         end
         local im = images(count, 3)
         if not im then return nil end
-        check_box(im[1], 0, 0, 20, 20)
-        check_box(im[2], 0, 25, 20, 20)
-        check_box(im[3], 0, 50, 20, 20)
+        -- With no height bound each image declares its natural 24, which is
+        -- each row's content minimum: the rows overflow the 70 high bar.
+        for _, line in ipairs(im) do
+            assert(line:find("w=fit>=24 user h=fit ", 1, true), line)
+        end
+        check_box(im[1], 0, 0, 24, 24)
+        check_box(im[2], 0, 29, 24, 24)
+        check_box(im[3], 0, 58, 24, 24)
         assert(pixel(10, 10, "#ff0000") and pixel(10, 35, "#00ff00")
-            and pixel(10, 60, "#0000ff"), "the rows are not 20 high")
-        assert(pixel(10, 22, BG), "the gap is painted")
-        io.stderr:write("[PASS] the share leaves out the gaps\n")
+            and pixel(10, 60, "#0000ff"), "the rows are not 24 high and 5 apart")
+        io.stderr:write("[PASS] the rows leave out the gaps\n")
         return true
     end,
     function(count)
@@ -131,7 +135,7 @@ local steps = {
         assert(pixel(10, 10, "#ff0000") and pixel(10, 30, "#00ff00"),
             "the rows are not capped at 20")
         assert(pixel(10, 50, BG), "the column paints below its rows")
-        io.stderr:write("[PASS] max_widget_size caps the share\n")
+        io.stderr:write("[PASS] max_widget_size caps the rows\n")
         return true
     end,
     function()

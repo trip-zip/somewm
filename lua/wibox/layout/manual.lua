@@ -228,7 +228,7 @@ local function describe_manual(w)
                 height = 0
             end
             node.specs[#node.specs + 1] = { widget = child, float = true,
-                x = pt.x, y = pt.y, w = width, h = height }
+                x = pt.x, y = pt.y, w = width, h = height, wsrc = "user", hsrc = "user" }
         end
     end
     return node

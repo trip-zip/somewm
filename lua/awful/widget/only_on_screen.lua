@@ -38,7 +38,7 @@ end
 
 only_on_screen._clay = { describe = function(w, _, st)
     if not should_display_on(w, st.context.screen) then
-        return { w = 0, h = 0 }
+        return { w = 0, h = 0, wsrc = "user", hsrc = "user" }
     end
     return { specs = require("wibox.clay").whole_box(w._private.widget) }
 end }

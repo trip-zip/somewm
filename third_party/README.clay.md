@@ -2,7 +2,7 @@
 
 Upstream revision: `e6cc36941ab2af5d81107617039d6f527a1c660b`.
 Header SHA256: `54aef6d5f96b14e296bebb6db4a755543e98fd7e6c188411afb2f22a4b4f7728`.
-The production header is byte-identical to this pin, also kept at `tests/clay/vendor/clay.h` as a provenance fixture for independent upstream comparisons. The license remains in `licenses/LICENSE.clay`.
+The production header is byte-identical to this pin: its SHA256 is the one above. The license remains in `licenses/LICENSE.clay`.
 
 No local header patch exists. The production solver tests compile this pinned header. Textbox containers carry widget identity, sizing and child alignment; their text children use the pinned `CLAY_TEXT` entry point.
 

@@ -251,37 +251,17 @@ function background:set_border_strategy(value)
 end
 
 --- The background image to use.
---
--- This property is deprecated. The `wibox.container.border` provides a much
--- more fine-grained support for background images. It is now out of the
--- `wibox.container.background` scope. `wibox.layout.stack` can also be used
--- to overlay a widget on top of a `wibox.widget.imagebox`. This solution
--- exposes all availible imagebox properties. Finally, if you wish to use the
--- `function` callback support, implement the `before_draw_children` method
--- on any widget. This gives you the same level of control without all the
--- `bgimage` corner cases.
---
--- If `image` is a function, it will be called with `(context, cr, width, height)`
--- as arguments. Any other arguments passed to this method will be appended.
---
+-- Paths and surfaces are supported; functions warn and clear the image.
 -- @deprecatedproperty bgimage
--- @tparam string|surface|function bgimage A background image or a function.
+-- @tparam string|surface bgimage A background image.
 -- @see gears.surface
--- @see wibox.container.border
--- @see wibox.widget.imagebox
--- @see wibox.layout.stack
 
-function background:set_bgimage(image, ...)
-    -- Unset stays unset: gears.surface.load(nil) answers an empty default
-    -- surface, which paints nothing and would still make the container a
-    -- painter to the Clay compile step (wibox.clay). The list widgets set
-    -- nil on every item.
-    if image == nil then
-        self._private.bgimage = nil
-    else
-        self._private.bgimage = type(image) == "function" and image or surface.load(image)
+function background:set_bgimage(image)
+    if type(image) == "function" then
+        require("gears.debug").print_warning("wibox.container.background: bgimage functions are not drawn")
+        image = nil
     end
-    self._private.bgimage_args = {...}
+    self._private.bgimage = image ~= nil and surface.load(image) or nil
     self:emit_signal("widget::redraw_needed")
     self:emit_signal("property::bgimage", image)
 end
@@ -343,9 +323,7 @@ local function describe_background(w)
         end
     end
 
-    if type(p.bgimage) == "function" then
-        clay.ignore(w, "bgimage", "is a function and is not drawn")
-    elseif p.bgimage then
+    if p.bgimage then
         node.specs = { { image = p.bgimage._native, name = "image", natural = true,
             w = "grow", h = "grow", children = clay.whole_box(p.widget) } }
     end

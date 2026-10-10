@@ -1316,104 +1316,48 @@ lua_class_t client_class;
  */
 
 /**
- * The client's bounding shape as set by awesome as a (native) cairo surface.
- *
- * The bounding shape is the outer shape of the client. It is outside of the
- * border.
- *
- * Do not use this directly unless you want total control over the shape (such
- * as shape with holes). Even then, it is usually recommended to use transparency
- * in the titlebars and a compositing manager. For the vast majority of use
- * cases, use the `shape` property.
+ * Shape masks are accepted but never read. All three mask properties share
+ * one warning per client and always read nil.
  *
  * @property shape_bounding
- * @tparam image shape_bounding
- * @propertydefault An A1 surface where all pixels are white.
+ * @tparam[opt=nil] image shape_bounding
  * @propemits false false
- * @see shape
- * @see gears.surface.apply_shape_bounding
- * @see gears.shape
- * @see shape_clip
- * @see shape_input
- * @see client_shape_bounding
- * @see client_shape_clip
- * @see gears.surface
  */
 
 /**
- * The client's clip shape as set by awesome as a (native) cairo surface.
- *
- * The shape_clip is the shape of the client *content*. It is *inside* the
- * border.
+ * Shape masks are accepted but never read. All three mask properties share
+ * one warning per client and always read nil.
  *
  * @property shape_clip
- * @tparam image shape_clip
- * @propertydefault An A1 surface where all pixels are white.
+ * @tparam[opt=nil] image shape_clip
  * @propemits false false
- * @see shape_bounding
- * @see shape_input
- * @see shape
- * @see gears.surface.apply_shape_bounding
- * @see gears.shape
- * @see client_shape_bounding
- * @see client_shape_clip
- * @see gears.surface
  */
 
 /**
- * The client's input shape as set by awesome as a (native) cairo surface.
- *
- * The input shape is the shape where mouse input will be passed to the
- * client rather than propagated below it.
+ * Shape masks are accepted but never read. All three mask properties share
+ * one warning per client and always read nil.
  *
  * @property shape_input
- * @tparam image shape_input
- * @propertydefault An A1 surface where all pixels are white.
+ * @tparam[opt=nil] image shape_input
  * @propemits false false
- * @see shape_bounding
- * @see shape_clip
- * @see shape
- * @see gears.surface.apply_shape_bounding
- * @see gears.shape
- * @see client_shape_bounding
- * @see client_shape_clip
- * @see gears.surface
  */
 
 /**
- * The client's bounding shape as set by the program as a (native) cairo surface.
+ * The child window mask always reads nil; masks are never read.
  *
  * @property client_shape_bounding
- * @tparam image client_shape_bounding
- * @propertydefault An A1 surface where all pixels are white.
+ * @tparam[opt=nil] image client_shape_bounding
  * @propemits false false
  * @readonly
- * @see shape_bounding
- * @see shape_clip
- * @see shape_input
- * @see shape
- * @see gears.surface.apply_shape_bounding
- * @see gears.shape
- * @see client_shape_clip
- * @see gears.surface
  */
 
 /**
- * The client's clip shape as set by the program as a (native) cairo surface.
+ * The child window mask always reads nil; masks are never read.
  *
  * @property client_shape_clip
- * @tparam image client_shape_clip
- * @propertydefault An A1 surface where all pixels are white.
+ * @tparam[opt=nil] image client_shape_clip
  * @propemits false false
  * @readonly
- * @see shape_bounding
- * @see shape_clip
- * @see shape_input
- * @see shape
- * @see gears.surface.apply_shape_bounding
- * @see gears.shape
- * @see client_shape_bounding
- * @see gears.surface
  */
 
 /**
@@ -3518,6 +3462,7 @@ client_titlebar_host(client_t *c, drawable_t *d, struct widget_host *out)
             .x = area.x + c->geometry.x - c->mon->m.x,
             .y = area.y + c->geometry.y - c->mon->m.y,
             .w = area.width, .h = area.height,
+            .src = { DECLARE_SRC_THEME, DECLARE_SRC_THEME },
             .radius = 0,
             .visible = client_isvisible(c),
             .in_parent = true,
@@ -4416,154 +4361,20 @@ luaA_client_get_size_hints(lua_State *L, client_t *c)
     return 1;
 }
 
-/** Get the client's child window bounding shape.
- * \param L The Lua VM state.
- * \param client The client object.
- * \return The number of elements pushed on stack.
- */
 static int
-luaA_client_get_client_shape_bounding(lua_State *L, client_t *c)
+luaA_client_get_shape_mask(lua_State *L, client_t *c)
 {
-    cairo_surface_t *surf = xwindow_get_shape(c->window, XCB_SHAPE_SK_BOUNDING);
-    if (!surf)
-        return 0;
-    /* lua has to make sure to free the ref or we have a leak */
-    lua_pushlightuserdata(L, surf);
+    lua_pushnil(L);
     return 1;
 }
 
-/** Get the client's frame window bounding shape.
- * \param L The Lua VM state.
- * \param client The client object.
- * \return The number of elements pushed on stack.
- */
 static int
-luaA_client_get_shape_bounding(lua_State *L, client_t *c)
+luaA_client_set_shape_mask(lua_State *L, client_t *c)
 {
-    cairo_surface_t *surf = xwindow_get_shape(c->frame_window, XCB_SHAPE_SK_BOUNDING);
-    if (!surf)
-        return 0;
-    /* lua has to make sure to free the ref or we have a leak */
-    lua_pushlightuserdata(L, surf);
-    return 1;
-}
-
-/** Set the client's frame window bounding shape.
- * \param L The Lua VM state.
- * \param client The client object.
- * \return The number of elements pushed on stack.
- */
-static int
-luaA_client_set_shape_bounding(lua_State *L, client_t *c)
-{
-    cairo_surface_t *surf = NULL;
-    if(!lua_isnil(L, -1))
-        surf = (cairo_surface_t *)lua_touserdata(L, -1);
-    xwindow_set_shape(c->frame_window,
-            c->geometry.width + (c->border_width * 2),
-            c->geometry.height + (c->border_width * 2),
-            XCB_SHAPE_SK_BOUNDING, surf, -c->border_width);
-    luaA_object_emit_signal(L, -3, "property::shape_bounding", 0);
-    return 0;
-}
-
-/** Get the client's child window clip shape.
- * \param L The Lua VM state.
- * \param client The client object.
- * \return The number of elements pushed on stack.
- */
-static int
-luaA_client_get_client_shape_clip(lua_State *L, client_t *c)
-{
-    cairo_surface_t *surf = xwindow_get_shape(c->window, XCB_SHAPE_SK_CLIP);
-    if (!surf)
-        return 0;
-    /* lua has to make sure to free the ref or we have a leak */
-    lua_pushlightuserdata(L, surf);
-    return 1;
-}
-
-/** Get the client's child window input shape.
- * \param L The Lua VM state.
- * \param client The client object.
- * \return The number of elements pushed on stack.
- */
-static int
-luaA_client_get_client_shape_input(lua_State *L, client_t *c)
-{
-    cairo_surface_t *surf = xwindow_get_shape(c->window, XCB_SHAPE_SK_INPUT);
-    if (!surf)
-        return 0;
-    /* lua has to make sure to free the ref or we have a leak */
-    lua_pushlightuserdata(L, surf);
-    return 1;
-}
-
-/** Get the client's frame window clip shape.
- * \param L The Lua VM state.
- * \param client The client object.
- * \return The number of elements pushed on stack.
- */
-static int
-luaA_client_get_shape_clip(lua_State *L, client_t *c)
-{
-    cairo_surface_t *surf = xwindow_get_shape(c->frame_window, XCB_SHAPE_SK_CLIP);
-    if (!surf)
-        return 0;
-    /* lua has to make sure to free the ref or we have a leak */
-    lua_pushlightuserdata(L, surf);
-    return 1;
-}
-
-/** Set the client's frame window clip shape.
- * \param L The Lua VM state.
- * \param client The client object.
- * \return The number of elements pushed on stack.
- */
-static int
-luaA_client_set_shape_clip(lua_State *L, client_t *c)
-{
-    cairo_surface_t *surf = NULL;
-    if(!lua_isnil(L, -1))
-        surf = (cairo_surface_t *)lua_touserdata(L, -1);
-    xwindow_set_shape(c->frame_window, c->geometry.width, c->geometry.height,
-            XCB_SHAPE_SK_CLIP, surf, 0);
-    luaA_object_emit_signal(L, -3, "property::shape_clip", 0);
-    return 0;
-}
-
-/** Get the client's frame window input shape.
- * \param L The Lua VM state.
- * \param client The client object.
- * \return The number of elements pushed on stack.
- */
-static int
-luaA_client_get_shape_input(lua_State *L, client_t *c)
-{
-    cairo_surface_t *surf = xwindow_get_shape(c->frame_window, XCB_SHAPE_SK_INPUT);
-    if (!surf)
-        return 0;
-    /* lua has to make sure to free the ref or we have a leak */
-    lua_pushlightuserdata(L, surf);
-    return 1;
-}
-
-/** Set the client's frame window input shape.
- * \param L The Lua VM state.
- * \param client The client object.
- * \return The number of elements pushed on stack.
- */
-static int
-luaA_client_set_shape_input(lua_State *L, client_t *c)
-{
-    cairo_surface_t *surf = NULL;
-    if(!lua_isnil(L, -1))
-        surf = (cairo_surface_t *)lua_touserdata(L, -1);
-    xwindow_set_shape(c->frame_window,
-            c->geometry.width + (c->border_width * 2),
-            c->geometry.height + (c->border_width * 2),
-            XCB_SHAPE_SK_INPUT, surf, -c->border_width);
-    luaA_object_emit_signal(L, -3, "property::shape_input", 0);
+    if (!c->shape_mask_warned) {
+        warn("client: shape masks are not read");
+        c->shape_mask_warned = true;
+    }
     return 0;
 }
 
@@ -4910,9 +4721,9 @@ client_class_setup(lua_State *L)
         { "aspect_ratio", (lua_class_propfunc_t) luaA_client_set_aspect_ratio, (lua_class_propfunc_t) luaA_client_get_aspect_ratio, (lua_class_propfunc_t) luaA_client_set_aspect_ratio },
         { "below", (lua_class_propfunc_t) luaA_client_set_below, (lua_class_propfunc_t) luaA_client_get_below, (lua_class_propfunc_t) luaA_client_set_below },
         { "class", NULL, (lua_class_propfunc_t) luaA_client_get_class, NULL },
-        { "client_shape_bounding", NULL, (lua_class_propfunc_t) luaA_client_get_client_shape_bounding, NULL },
-        { "client_shape_clip", NULL, (lua_class_propfunc_t) luaA_client_get_client_shape_clip, NULL },
-        { "client_shape_input", NULL, (lua_class_propfunc_t) luaA_client_get_client_shape_input, NULL },
+        { "client_shape_bounding", NULL, (lua_class_propfunc_t) luaA_client_get_shape_mask, NULL },
+        { "client_shape_clip", NULL, (lua_class_propfunc_t) luaA_client_get_shape_mask, NULL },
+        { "client_shape_input", NULL, (lua_class_propfunc_t) luaA_client_get_shape_mask, NULL },
         { "content", NULL, (lua_class_propfunc_t) luaA_client_get_content, NULL },
         { "first_tag", NULL, (lua_class_propfunc_t) luaA_client_get_first_tag, NULL },
         { "focusable", (lua_class_propfunc_t) luaA_client_set_focusable, (lua_class_propfunc_t) luaA_client_get_focusable, (lua_class_propfunc_t) luaA_client_set_focusable },
@@ -4940,9 +4751,9 @@ client_class_setup(lua_State *L)
         { "_scene_layer", NULL, (lua_class_propfunc_t) luaA_client_get__scene_layer, NULL },
         { "screen", NULL, (lua_class_propfunc_t) luaA_client_get_screen, (lua_class_propfunc_t) luaA_client_set_screen },
         { "shadow", (lua_class_propfunc_t) luaA_client_set_shadow, (lua_class_propfunc_t) luaA_client_get_shadow, (lua_class_propfunc_t) luaA_client_set_shadow },
-        { "shape_bounding", (lua_class_propfunc_t) luaA_client_set_shape_bounding, (lua_class_propfunc_t) luaA_client_get_shape_bounding, (lua_class_propfunc_t) luaA_client_set_shape_bounding },
-        { "shape_clip", (lua_class_propfunc_t) luaA_client_set_shape_clip, (lua_class_propfunc_t) luaA_client_get_shape_clip, (lua_class_propfunc_t) luaA_client_set_shape_clip },
-        { "shape_input", (lua_class_propfunc_t) luaA_client_set_shape_input, (lua_class_propfunc_t) luaA_client_get_shape_input, (lua_class_propfunc_t) luaA_client_set_shape_input },
+        { "shape_bounding", (lua_class_propfunc_t) luaA_client_set_shape_mask, (lua_class_propfunc_t) luaA_client_get_shape_mask, (lua_class_propfunc_t) luaA_client_set_shape_mask },
+        { "shape_clip", (lua_class_propfunc_t) luaA_client_set_shape_mask, (lua_class_propfunc_t) luaA_client_get_shape_mask, (lua_class_propfunc_t) luaA_client_set_shape_mask },
+        { "shape_input", (lua_class_propfunc_t) luaA_client_set_shape_mask, (lua_class_propfunc_t) luaA_client_get_shape_mask, (lua_class_propfunc_t) luaA_client_set_shape_mask },
         { "size_hints", NULL, (lua_class_propfunc_t) luaA_client_get_size_hints, NULL },
         { "size_hints_honor", (lua_class_propfunc_t) luaA_client_set_size_hints_honor, (lua_class_propfunc_t) luaA_client_get_size_hints_honor, (lua_class_propfunc_t) luaA_client_set_size_hints_honor },
         { "skip_taskbar", (lua_class_propfunc_t) luaA_client_set_skip_taskbar, (lua_class_propfunc_t) luaA_client_get_skip_taskbar, (lua_class_propfunc_t) luaA_client_set_skip_taskbar },

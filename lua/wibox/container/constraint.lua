@@ -175,6 +175,7 @@ local function describe_constraint(w)
     local node = { specs = clay.whole_box(p.widget) }
 
     for axis, limit in pairs({ w = p.width, h = p.height }) do
+        node[axis .. "src"] = "user"
         if strategy == "exact" then
             node[axis] = limit
         elseif strategy == "min" then

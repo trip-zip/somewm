@@ -15,7 +15,7 @@ runner.run_steps {
     function()
         shared = wibox.widget.base.make_widget()
         clay.describe_widget(shared, function()
-            return {w=50,h=20,bg={1,0,0,1}}
+            return {w=50,h=20,wsrc='user',hsrc='user',bg={1,0,0,1}}
         end, 'occurrence-leaf')
         layout = wibox.layout.fixed.horizontal(shared, shared)
         host = wibox {screen=screen[1],x=100,y=100,width=200,height=40,
@@ -40,7 +40,7 @@ runner.run_steps {
         end
         example.save('occurrences-before-insert',dump)
         local spacer = wibox.widget.base.make_widget()
-        clay.describe_widget(spacer,function() return {w=5,h=20} end,'occurrence-spacer')
+        clay.describe_widget(spacer,function() return {w=5,h=20,wsrc='user',hsrc='user'} end,'occurrence-spacer')
         layout:insert(1,spacer)
         last=nil
         return true

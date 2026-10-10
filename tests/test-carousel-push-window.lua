@@ -21,7 +21,6 @@ if not test_client.is_available() then
     return
 end
 
-carousel.scroll_duration = 0
 
 local tag
 local c1, c2, c3

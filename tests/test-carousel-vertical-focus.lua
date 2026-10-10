@@ -20,7 +20,6 @@ end
 
 local carousel = awful.layout.suit.carousel
 local vertical = carousel.vertical
-carousel.scroll_duration = 0
 carousel.set_center_mode("always")
 
 local tag

@@ -134,7 +134,10 @@ local steps = {
         -- tasklist's base layout, each down to its textbox, and the task's
         -- icon as an image element.
         assert(#items(list, "awful.widget.taglist") == 3, "expected three tags")
-        assert(#items(list, "wibox.layout.flex") == 1, "expected one task")
+        -- With one client the base flex and the task's row fold into the
+        -- tasklist element, which holds the task's icon margin and text.
+        assert(count(list, "wibox.layout.flex", false) == 0
+            and #items(list, "awful.widget.tasklist") == 2, "expected one task")
         assert(count(list, "text_role", false) == 4,
             "expected four text_role textboxes as text elements")
         assert(count(list, "icon_role", false) == 1

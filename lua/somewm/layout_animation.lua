@@ -8,22 +8,18 @@
 -- Usage in rc.lua:
 --     local layout_anim = require("somewm.layout_animation")
 --     layout_anim.duration = 0.15
---     layout_anim.easing   = "ease-out-cubic"
 --     layout_anim.enabled  = true   -- default
 --
 -- @module somewm.layout_animation
 ---------------------------------------------------------------------------
 
 local capi = { awesome = awesome }
+local gdebug = require("gears.debug")
 
 local fields = {
     --- Animation duration in seconds.
     -- @tfield number duration
     duration = 0.15,
-
-    --- Accepted and ignored: Clay eases out.
-    -- @tfield string easing
-    easing = "ease-out-cubic",
 
     --- Master switch. When false, layout changes snap instantly.
     -- @tfield boolean enabled
@@ -37,8 +33,12 @@ end
 local layout_animation = setmetatable({}, {
     __index = fields,
     __newindex = function(_, key, value)
-        fields[key] = value
-        push()
+        if key == "duration" or key == "enabled" then
+            fields[key] = value
+            push()
+        else
+            gdebug.print_warning("somewm.layout_animation: " .. tostring(key) .. " is not a field")
+        end
     end,
 })
 

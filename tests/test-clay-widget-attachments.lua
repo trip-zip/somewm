@@ -98,7 +98,7 @@ runner.run_async(function()
 
     -- Exercise the C reader and declaration's actual capture/point fields.
     clay.describe_widget(b,function()
-        return {w=40,h=60,bg=clay.solid_rgba('#00ff00'),
+        return {w=40,h=60,wsrc='user',hsrc='user',bg=clay.solid_rgba('#00ff00'),
             parent=0,own=0,passthrough=false}
     end,'capture-leaf')
     stack.forced_width,stack.forced_height=120,80
@@ -111,7 +111,7 @@ runner.run_async(function()
     -- parent at 120x80, with the leaf's independent 70x45 lookup area.
     b.forced_width,b.forced_height=nil,nil
     clay.describe_widget(b,function()
-        return {w="fit",h="fit",wmin=70,hmin=45,
+        return {w="fit",h="fit",wmin=70,hmin=45,wsrc='user',hsrc='user',
             bg=clay.solid_rgba('#00ff00'),parent=8,own=8}
     end,'minimum-leaf')
     b:emit_signal('widget::layout_changed'); async.sleep(0.2)
@@ -119,7 +119,7 @@ runner.run_async(function()
     pixel(60,40,'#00ff00'); pixel(130,40,'#101010')
     example.save('widget-overlap-minimum',awesome._clay_tree(s))
     local function frames()
-        return assert(tonumber(awesome._clay_tree(s):match('^[^\n]- frames (%d+) passes ')))
+        return assert(tonumber(awesome._clay_tree(s):match('^[^\n]- frames (%d+) ')))
     end
     local before=frames()
     bar.width=80

@@ -95,15 +95,15 @@ local function describe_scroll(w, _, st)
     end
     local along = p.dir == "h" and "w" or "h"
     local limit = p.space_for_scrolling <= 65535 and p.space_for_scrolling or nil
-    local first = { widget = p.widget, [along .. "max"] = limit }
+    local first = { widget = p.widget, [along .. "max"] = limit, [along .. "src"] = "user" }
     local children = { first }
     if p.scrolling then
-        children[2] = { [along] = p.extra_space }
-        children[3] = { widget = p.widget, [along .. "max"] = limit }
+        children[2] = { [along] = p.extra_space, [along .. "src"] = "user" }
+        children[3] = { widget = p.widget, [along .. "max"] = limit, [along .. "src"] = "user" }
     end
     local clip = { dir = p.dir == "h" and "x" or "y",
         scroll = p.dir == "h" and "x" or "y", [along] = "fit",
-        [along .. "max"] = p.max_size, children = children }
+        [along .. "max"] = p.max_size, [along .. "src"] = "user", children = children }
     p.content, p.drawable = clip, st.drawable
     arm_ticker(w)
     return { [along .. "max"] = "offer", specs = { clip } }

@@ -11,7 +11,8 @@ function capture.leaf_widget(width, height, color)
 
     w._clay = { describe = function()
         return { bg = require("wibox.clay").solid_rgba(color),
-            w = width == math.huge and "grow" or width, h = height or "grow" }
+            w = width == math.huge and "grow" or width, h = height or "grow",
+            wsrc = "user", hsrc = "user" }
     end, name = "leaf" }
     return w
 end

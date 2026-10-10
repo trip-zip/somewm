@@ -347,9 +347,8 @@ local function describe_progressbar(w)
     local bar_border_color = p.bar_border_color or beautiful.progressbar_bar_border_color
     local bar_border_width = p.bar_border_width or beautiful.progressbar_bar_border_width
         or p.border_width or beautiful.progressbar_border_width or 0
-    if bar_border_color and bar_border_width > 0 then
-        clay.ignore(w, "bar_border_width", "is not drawn")
-    end
+    local bar_border = clay.solid_rgba(bar_border_color)
+    local bbw = bar_border and clay.pixels(w, "bar_border_width", bar_border_width) or 0
 
     local foreground = clay.solid_rgba(p.color or beautiful.progressbar_fg or "#ff0000")
     local background = clay.solid_rgba(p.background_color or beautiful.progressbar_bg or "#ff0000aa")
@@ -400,13 +399,16 @@ local function describe_progressbar(w)
     end
     local bar
     if ratio > 0 and foreground then
-        bar = { w = { percent = ratio }, h = "grow" }
+        bar = { w = { percent = ratio }, wsrc = "user", h = "grow" }
         if bar_radius then
             bar.bg, bar.radius = foreground, bar_radius
+            if bbw > 0 then
+                bar.border, bar.bw = bar_border, {bbw, bbw, bbw, bbw}
+            end
         else
-            bar.fill = foreground
+            bar.fill, bar.stroke, bar.stroke_width = foreground, bar_border, bbw
             bar.shape = function(width, height)
-                return clay.shape_ops(bar_shape, width, height)
+                return clay.shape_ops(bar_shape, width - bbw, height - bbw, bbw / 2, bbw / 2)
             end
         end
     end

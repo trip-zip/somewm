@@ -1,4 +1,4 @@
--- Native aspect sizing retains the image producer's outward pixel rounding.
+-- An imagebox in a bar declares the bar's height times its aspect, unrounded.
 local runner=require('_runner')
 local async=require('_async')
 local wibox=require('wibox')
@@ -15,14 +15,12 @@ runner.run_async(function()
         retained[#retained+1]=bar
         for _,h in ipairs {24,21} do
             bar.height=h;awesome._test_redeclare();async.sleep(0.1)
-            local want=math.ceil(h*source[1]/source[2])
+            local dump=awesome._clay_tree(screen[1])
+            local want=string.format('image %dx%d w=fit>=%g user h=fit ',source[1],source[2],h*source[1]/source[2])
             local name='image-rounding-'..source[1]..'x'..source[2]..'-'..h
-            example.save(name,awesome._clay_tree(screen[1]))
-            local hit
-            for _,area in ipairs(bar:find_widgets(1,1)) do if area.widget==icon then hit=area end end
-            assert(hit and hit.width==want,name..' area expected '..want..', got '..tostring(hit and hit.width))
-            example.pixel(100+math.floor(want/2),100+math.floor(h/2),'#ff0000')
-            example.pixel(100+want,100,'#0000ff')
+            example.save(name,dump)
+            assert(dump:find(want,1,true),name..' expected '..want..'\n'..dump)
+            example.pixel(100+math.floor(h*source[1]/source[2]/2),100+math.floor(h/2),'#ff0000')
         end
         bar.visible=false
     end

@@ -97,7 +97,6 @@ capi.awesome.connect_signal("clay::_commit", function(s)
     for self in pairs(pending_empty) do
         if get_widget_context(self).screen == s then
             unconvert(self)
-            self._clay_offer = nil
             pending_empty[self] = nil
         end
     end
@@ -105,8 +104,8 @@ end)
 
 -- Compile the tree, hand it to the renderer and connect signals. The frame
 -- solves it and sends the boxes back as clay::solved.
-local function draw_converted(self, context, width, height)
-    local tree = wclay.compile(self, self._widget, context, width, height)
+local function draw_converted(self, context, width, height, words)
+    local tree = wclay.compile(self, self._widget, context, width, height, words)
     local stored, why = self.drawable:_clay_nodes(tree)
 
     if not stored then
@@ -133,7 +132,6 @@ local function place_solved(self, boxes)
     if not stored.tree then unconvert(self); return end
     wclay._publish(self, stored.tree, boxes)
     wire_widgets(self, stored.tree.widgets)
-    self._clay_offer = nil
 end
 
 local function do_redraw(self)
@@ -146,9 +144,8 @@ local function do_redraw(self)
 
     local success, geom = pcall(function() return self.drawable:geometry() end)
     if not success then return end
-    draw_converted(self, get_widget_context(self),
-        self._clay_offer and self._clay_offer.width or geom.width,
-        self._clay_offer and self._clay_offer.height or geom.height)
+    draw_converted(self, get_widget_context(self), geom.width, geom.height,
+        self.drawable._clay_words)
 end
 
 -- The frame is about to declare: compile every drawable marked since the
@@ -231,17 +228,15 @@ function drawable:set_bg(c)
     self._do_complete_repaint()
 end
 
---- Set the background image of the drawable
--- Surface images are described under the root; function images are ignored.
--- @param image A background image or a function
+--- Set the background image of the drawable.
+-- Paths and surfaces are supported; functions warn and clear the image.
+-- @param image A background image
 function drawable:set_bgimage(image)
-    -- Unset stays unset: gears.surface(nil) answers an empty default
-    -- surface, which would keep the drawable a painter to the compile step
-    -- (wibox.clay). awful.titlebar sets nil on every bar without an image.
-    if image ~= nil and type(image) ~= "function" then
-        image = surface(image)
+    if type(image) == "function" then
+        require("gears.debug").print_warning("wibox.drawable: bgimage functions are not drawn")
+        image = nil
     end
-
+    if image ~= nil then image = surface(image) end
     self.background_image = image
 
     self._do_complete_repaint()
@@ -385,26 +380,12 @@ function drawable.new(d, widget_context_skeleton, drawable_name)
 
     -- A redraw marks the drawable for the next frame and asks for one.
     ret.draw = function()
-        ret._clay_offer = nil
         pending[ret] = true
         d:_clay_dirty()
     end
-    ret._clay_compile = function() pending[ret] = true end
     ret._do_complete_repaint = function()
         ret:draw()
     end
-    d:connect_signal("clay::_settle", function(_, boxes, offer)
-        local stored = ret._clay_stored
-        if stored and stored.tree then
-            wclay._settle(stored.tree, boxes)
-            if stored.tree.offer_dependent
-                    and (offer.width ~= stored.width or offer.height ~= stored.height) then
-                ret._clay_offer = offer
-                ret._clay_compile()
-                d:_clay_grid_pending()
-            end
-        end
-    end)
     d:connect_signal("clay::solved", function(_, boxes) place_solved(ret, boxes) end)
 
     -- Geometry changes trigger a redraw.

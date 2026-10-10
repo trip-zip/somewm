@@ -58,10 +58,10 @@ runner.run_async(function()
         assert(line:find('attach ELEMENT',1,true))
         assert(not line:find('attach OUTPUT',1,true))
         assert(not line:find('available WORKAREA',1,true))
-        assert(line:find(override and 'w=fixed('..(ew+2*bw)..')'
-            or 'w=grow<='..((rw or 1200)+2*bw),1,true))
-        assert(line:find('h=grow<='..((rh or 800)+2*bw),1,true))
-        assert(line:find(' theme ',1,true))
+        -- launcher_width and the default size are theme; a passed size is user.
+        assert(line:find(override and 'w=fixed('..(ew+2*bw)..') theme'
+            or 'w=grow<='..((rw or 1200)+2*bw)..(rw and ' user' or ' theme'),1,true))
+        assert(line:find('h=grow<='..((rh or 800)+2*bw)..(rh and ' user' or ' theme'),1,true))
         local x,y,w,h = line:match(' box (%-?%d+),(%-?%d+) (%d+)x(%d+)')
         local left,top = (width-ew-2*bw)/2,60+(height-60-eh-2*bw)/2
         assert(tonumber(x)==edge(left) and tonumber(y)==edge(top), name..": "..line)
@@ -90,8 +90,7 @@ runner.run_async(function()
     async.sleep(.08)
     assert(box.popup.height == height-106)
     assert(box.popup.y == s.geometry.y+103)
-    assert(box.popup.widget ~= visible_widget, "workarea change retained stale pages")
-    local previous_widget = box.popup.widget
+    assert(box.popup.widget == visible_widget, "a workarea change replaced the content")
     box:hide()
     local reopened_scale = scale==2 and 1.25 or 2
     s.scale = reopened_scale
@@ -101,7 +100,7 @@ runner.run_async(function()
     local expected_width = width+1 < new_width and width+1 or new_width-6
     local expected_height = height+1 < new_height-100 and height+1 or new_height-106
     assert(box.popup.width==expected_width and box.popup.height==expected_height)
-    assert(box.popup.widget~=previous_widget,'output change retained stale page descriptions')
+    assert(box.popup.widget==visible_widget,'an output change replaced the content')
     assert(awesome._clay_tree(s):find(string.format('scale %.2f',reopened_scale),1,true))
     example.save('hotkeys-reopened-output',awesome._clay_tree(s))
     box:hide(); bar:remove()

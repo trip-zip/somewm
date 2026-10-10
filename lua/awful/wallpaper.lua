@@ -127,6 +127,7 @@
 -- @popupmod awful.wallpaper
 ---------------------------------------------------------------------------
 require("awful._compat")
+local gdebug = require("gears.debug")
 local gtable     = require( "gears.table"               )
 local gobject    = require( "gears.object"              )
 local base       = require( "wibox.widget.base"         )
@@ -467,6 +468,18 @@ for _, prop in ipairs {"bg", "fg"} do
     end
 end
 
+function module:set_uncovered_areas_color()
+    if self._private.uncovered_areas_color_warned then return end
+    self._private.uncovered_areas_color_warned = true
+    gdebug.print_warning("awful.wallpaper: uncovered_areas_color is gone, the root wallpaper shows there")
+end
+
+function module:set_dpi()
+    if self._private.dpi_warned then return end
+    self._private.dpi_warned = true
+    gdebug.print_warning("awful.wallpaper: dpi is gone, the output scale applies")
+end
+
 function module:get_uncovered_areas()
     local geo = type(self._private.panning_area) == "function" and
         self._private.panning_area(self) or
@@ -664,7 +677,7 @@ end
 -- @constructorfct awful.wallpaper
 -- @tparam table args
 -- @tparam[opt] wibox.widget args.widget The wallpaper widget.
--- @tparam[opt] number args.dpi The wallpaper DPI (dots per inch).
+-- @tparam[opt] number args.dpi Ignored with one warning per wallpaper.
 -- @tparam[opt] screen args.screen The wallpaper screen.
 -- @tparam[opt] table args.screens A list of screen for this wallpaper.
 --  Use this parameter as a remplacement for `args.screen` to manage multiscreen wallpaper.

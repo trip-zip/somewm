@@ -60,11 +60,11 @@ local function assert_declaration(label, G, tree)
     assert(pl and pt and pr and pb and X and Y and W and H,
         string.format("%s: expected padding and box for %d,%d %dx%d: %s",
             label, G.x, G.y, G.width, G.height, client_line))
-    local message = string.format("%s: expected box %d,%d %dx%d and w=fixed(%d) h=fixed(%d) user: %s",
+    local message = string.format("%s: expected box %d,%d %dx%d and w=fixed(%d) user h=fixed(%d) user: %s",
         label, G.x, G.y, G.width + pl + pr, G.height + pt + pb, W, H, client_line)
     assert(X == G.x and Y == G.y, message)
     assert(W == G.width + pl + pr and H == G.height + pt + pb, message)
-    assert(client_line:find(string.format("w=fixed(%d) h=fixed(%d) user", W, H), 1, true), message)
+    assert(client_line:find(string.format("w=fixed(%d) user h=fixed(%d) user", W, H), 1, true), message)
 end
 
 local steps = {

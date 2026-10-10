@@ -138,9 +138,6 @@ local separator = {}
 local function describe_separator(w)
     local p = w._private
     local s = p.shape or beautiful.separator_shape
-    if p.draw or beautiful.separator_draw then
-        clay.ignore(w, "draw", "is not applied")
-    end
     local col = p.color or beautiful.separator_color
     local fill = clay.solid_rgba(col)
     if col and not fill then
@@ -153,11 +150,13 @@ local function describe_separator(w)
         local orientation = p.orientation
         -- Clay rejects percentages over 1 (third_party/clay.h:2030-2033).
         local span_ratio = math.max(0, math.min(1, w.span_ratio or 1))
+        local thick = p.thickness and "user" or "theme"
+        local span = w.span_ratio and "user" or "theme"
         local child
         if orientation == "horizontal" then
-            child = { w = { percent = span_ratio }, h = thickness, bg = fill }
+            child = { w = { percent = span_ratio }, h = thickness, wsrc = span, hsrc = thick, bg = fill }
         elseif orientation == "vertical" then
-            child = { w = thickness, h = { percent = span_ratio }, bg = fill }
+            child = { w = thickness, h = { percent = span_ratio }, wsrc = thick, hsrc = span, bg = fill }
         else
             child = { w = "grow", h = "grow", fill = fill,
                 shape = function(width, height)

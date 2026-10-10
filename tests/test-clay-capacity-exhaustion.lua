@@ -27,15 +27,14 @@ runner.run_async(function()
     local width,height = p.width,p.height
     local targets = p._drawable:find_widgets(5,5)
     assert(#targets>0)
-    local publications,stages=0,0
+    local publications=0
     p.drawable:connect_signal('clay::solved',function() publications=publications+1 end)
-    p.drawable:connect_signal('clay::_settle',function() stages=stages+1 end)
     local before=frame()
-    awesome._test_clay_failure(s,2,capacity)
+    awesome._test_clay_failure(s,capacity)
     p.widget=wibox.widget.calendar.year({year=2026},'monospace 11')
-    assert(async.wait_for_condition(function() return frame()>before and stages>0 end,2,.01))
+    assert(async.wait_for_condition(function() return frame()>before end,2,.01))
     async.sleep(.1)
-    assert(publications==0,'an intermediate grid solve published geometry')
+    assert(publications==0,'a failed frame published geometry')
     assert(p._drawable._clay_tree==tree,'failed input replaced the public tree')
     assert(p.width==width and p.height==height,'failed input resized the popup')
     assert(realized()==pixels,'failed solve changed retained scene nodes')
@@ -46,7 +45,7 @@ runner.run_async(function()
     async.sleep(.25)
     assert(frame()==idle,'capacity failure scheduled another failed frame')
 
-    awesome._test_clay_failure(s,1,capacity)
+    awesome._test_clay_failure(s,capacity)
     p.widget=nil
     before=frame()
     assert(async.wait_for_condition(function() return frame()>before end,2,.01))
@@ -54,7 +53,7 @@ runner.run_async(function()
     assert(realized()==pixels,'failed removal changed pixels')
     assert(#p._drawable:find_widgets(5,5)==0,'failed removal answered widget hits before recovery')
 
-    awesome._test_clay_failure(s,0,0)
+    awesome._test_clay_failure(s,0)
     local replacement=wibox.widget { text='recovered',forced_width=180,forced_height=45,
         widget=wibox.widget.textbox }
     p.widget=wibox.container.margin(replacement,4,4,4,4)
@@ -78,7 +77,7 @@ runner.run_async(function()
     s.selected_tag.layout = {name='capacity-transition', arrange=function() end,
         _clay=function()
             return {role='WORKAREA', direction='row', children=showing and {
-                {role='SIDEBAR', w={fixed=240}, h='grow', transition={duration=2,
+                {role='SIDEBAR', w={fixed=240}, wsrc='user', h='grow', transition={duration=2,
                     properties='width', enter='collapse', exit='collapse'}}} or {}}
         end}
     awful.layout.arrange(s)
@@ -86,7 +85,7 @@ runner.run_async(function()
     local transition_dump = awesome._clay_tree(s)
     local width_now = tonumber(transition_dump:match('SIDEBAR [^\n]-box %-?%d+,%-?%d+ (%d+)x'))
     assert(width_now and width_now>0 and width_now<240, 'fixture did not start a transition')
-    awesome._test_clay_failure(s,1,capacity)
+    awesome._test_clay_failure(s,capacity)
     awesome._test_redeclare()
     local frozen=realized()
     local frozen_frame=frame()
@@ -94,7 +93,7 @@ runner.run_async(function()
     assert(frame()==frozen_frame and realized()==frozen, 'failed transition kept advancing')
     local failed_scroll = {overflow._private.drawable:_clay_scroll_get(overflow._private.content.id)}
     assert(failed_scroll[2]==nil, 'reinitialized context retained a scroll record')
-    awesome._test_clay_failure(s,0,0)
+    awesome._test_clay_failure(s,0)
     showing=false
     awful.layout.arrange(s)
     async.sleep(.1)

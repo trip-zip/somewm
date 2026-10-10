@@ -124,29 +124,6 @@ describe("wibox.widget.textbox", function()
             assert.is.equal(2, layout_changed)
         end)
     end)
-
-    describe("auxiliary", function()
-
-        it("can compute text geometry w/default font", function()
-            local text = "<b><i>test</i></b>"
-            local s = 1
-            local pango_geometry = textbox.get_markup_geometry(text, s)
-            local actual_textbox_width, actual_textbox_height = textbox(text):get_preferred_size(s)
-            assert.is.equal(pango_geometry.width, actual_textbox_width)
-            assert.is.equal(pango_geometry.height, actual_textbox_height)
-        end)
-
-        it("can compute text geometry w/hardcoded font", function()
-            local text = "<span font='Monospace 16'><b><i>test</i></b></span>"
-            local s = 1
-            local pango_geometry = textbox.get_markup_geometry(text, s)
-            local actual_textbox_width, actual_textbox_height = textbox(text):get_preferred_size(s)
-            assert.is.equal(pango_geometry.width, actual_textbox_width)
-            assert.is.equal(pango_geometry.height, actual_textbox_height)
-        end)
-
-    end)
-
 end)
 
 -- vim: filetype=lua:expandtab:shiftwidth=4:tabstop=8:softtabstop=4:textwidth=80

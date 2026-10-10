@@ -88,7 +88,7 @@ local function setup_origin_common(self, ctx)
         if style then
             handle:set_stylesheet(style)
         end
-        handle:set_dpi(self.border_image_dpi or ctx.dpi)
+        handle:set_dpi(ctx.dpi)
         local dim = handle:get_dimensions()
 
         if dim.width > 0 and dim.height > 0 then
@@ -323,30 +323,6 @@ function module:set_slice(value)
     self:emit_signal("widget::redraw_needed")
 end
 
---FIXME DPI support remains undocumented because it has unfixed corner
--- cases.
--- Set the DPI of the slice surface.
---
--- If this is set, the slicer will enable HiDPI mode. It will
--- resize the surface using the ratio created by the effective
--- DPI and the source DPI.
---
--- If the `border_image` is a `.svg` file, this will override the
--- SVG default DPI.
---
--- @DOC_wibox_container_border_dpi1_EXAMPLE@
---
--- @property border_image_dpi
--- @tparam[opt=nil] number border_image_dpi
-
-function module:set_border_image_dpi(value)
-    self._private.slice_cache = nil
-    self._private.background_widget = nil
-    self._private.original_md = nil
-    self._private.border_image_dpi = value
-    self:emit_signal("widget::redraw_needed")
-end
-
 --- Set a stylesheet for the slice surface.
 --
 -- This only affect `.svg` based assets. It does nothing for `.png`/`.jpg`
@@ -538,52 +514,6 @@ for _, mode in ipairs {"corners", "sides", "filling" } do
     end
 end
 
---- Stretch the child widget over the entire area.
---
--- By default, the widget honors the borders.
---
---@DOC_wibox_container_border_honor_borders1_EXAMPLE@
---
--- @property honor_borders
--- @tparam[opt=true] boolean honor_borders
--- @propemits true false
--- @see ontop
-
-function module:set_honor_borders(value)
-    if self._private.honor_borders == value then return end
-
-    self._private.honor_borders = value
-    self:emit_signal("property::honor_borders", value)
-    self:emit_signal("widget::layout_changed")
-end
-
---- Draw the child widget below or on top of the border.
---
--- `wibox.container.background` supports border clips because it knows the
--- shape of the border. `wibox.container.border` doesn't have this luxury
--- because the border is defined in an image and the "inner limit" could
--- be any pixel.
---
--- This proporty helps mitigate that by allowing the border to be drawn on
--- top of the child widget when `honor_borders` is set to false. When
--- `honor_borders` is `true`, it does nothing. In the example below, some
--- `paddings` are also necessary to look decent.
---
--- @DOC_wibox_container_border_ontop1_EXAMPLE@
---
--- @property ontop
--- @tparam[opt=true] boolean ontop
--- @propemits true false
--- @see honor_borders
--- @see paddings
-
-function module:set_ontop(value)
-    self._private.ontop = value
-
-    self:emit_signal("property::ontop", value)
-    self:emit_signal("widget::layout_changed")
-end
-
 --- Use the center portion of the `border_image` as a background.
 --
 -- @DOC_wibox_container_border_fill1_EXAMPLE@
@@ -683,48 +613,6 @@ function module:set_border_widgets(value)
     self:emit_signal("widget::layout_changed")
 end
 
---- Merge the corners widgets into the side widgets.
---
--- Rather than have corner widgets/images, let the side
--- widget span the entire area. This feature is coupled with
--- `border_widgets` and does nothing when only an image is present.
---
--- @DOC_wibox_container_border_border_merging1_EXAMPLE@
---
--- @property border_merging
--- @tparam table|nil border_merging
--- @tparam[opt=false] boolean border_merging.top Extend the `top` side
---  widget by replacing the `top_left` and `top_right` widgets.
--- @tparam[opt=false] boolean border_merging.bottom Extend the `bottom` side
---  widget by replacing the `bottom_left` and `bottom_right` widgets.
--- @tparam[opt=false] boolean border_merging.left Extend the `left` side
---  widget by replacing the `top_left` and `bottom_left` widgets.
--- @tparam[opt=false] boolean border_merging.right Extend the `right` side
---  widget by replacing the `top_right` and `bottom_right` widgets.
--- @propemits true false
-
-function module:set_border_merging(value)
-    self._private.border_merging = value
-
-    self:emit_signal("property::border_widgets", value)
-    self:emit_signal("widget::redraw_needed")
-    self:emit_signal("widget::layout_changed")
-end
-
---- When `border_widgets` is used, allow the border to grow due to corner widgets.
---
--- @DOC_wibox_container_border_expand_corners1_EXAMPLE@
---
--- @property expand_corners
--- @tparam[opt=false] boolean expand_corners
-
-function module:set_expand_corners(value)
-    self._private.expand_corners = value
-
-    self:emit_signal("widget::redraw_needed")
-    self:emit_signal("widget::layout_changed")
-end
-
 local function new(_, args)
     args = args or {}
 
@@ -732,7 +620,6 @@ local function new(_, args)
     ret._private.corners_fit_policy    = args.corners_fit_policy or "fit"
     ret._private.sides_fit_policy      = args.slides_fit_policy  or "fit"
     ret._private.filling_fit_policy    = args.filling_fit_policy or "fit"
-    ret._private.honor_borders         = args.honor_borders ~= false
     ret._private.fill                  = args.fill or false
     ret._private.slice                 = args.slice == nil and true or args.slice
 
@@ -747,21 +634,6 @@ local function describe_border(w, _, st)
 
     if p.pending_border_images then
         init_border_images(w)
-    end
-    if p.honor_borders == false then
-        return clay.refuse(w, "honor_borders", "is not drawn")
-    end
-    if p.ontop == false then
-        return clay.refuse(w, "ontop", "is not drawn")
-    end
-    if p.border_merging then
-        return clay.refuse(w, "border_merging", "is not drawn")
-    end
-    if p.expand_corners then
-        return clay.refuse(w, "expand_corners", "is not drawn")
-    end
-    if p.border_image_dpi then
-        return clay.refuse(w, "border_image_dpi", "is not drawn")
     end
     for _, mode in ipairs(fit_types) do
         if p[mode .. "_fit_policy"] ~= "fit" then
@@ -835,12 +707,12 @@ local function describe_border(w, _, st)
 
     for _, positions in ipairs(rows) do
         if positions[1] ~= 0 then
-            local row = { dir = "x", w = "grow", h = positions[1], children = {} }
+            local row = { dir = "x", w = "grow", h = positions[1], hsrc = "user", children = {} }
 
             for i, width in ipairs { m.left, "grow", m.right } do
                 if width ~= 0 then
                     local position = positions[i + 1]
-                    local cell = { w = width, h = "grow" }
+                    local cell = { w = width, wsrc = "user", h = "grow" }
 
                     if position ~= "fill" or p.fill then
                         local ib = images[position] or slices[position]

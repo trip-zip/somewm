@@ -26,6 +26,7 @@
 ---------------------------------------------------------------------------
 
 local fixed = require("wibox.layout.fixed")
+local clay = require("wibox.clay")
 local gtable = require("gears.table")
 
 local flex = {}
@@ -153,25 +154,18 @@ end
 --@DOC_fixed_COMMON@
 
 --- wibox.layout.flex: every child grows along the direction, with
--- `max_widget_size` as the ceiling, and across. Each is offered an equal
--- share of the box less the gaps, the engine's `space_per_item`. Clay grows
--- the smallest children first until they are all equal and then all together
+-- `max_widget_size` as the ceiling, and across. Clay grows the smallest
+-- children first until they are all equal and then all together
 -- (third_party/clay.h:2357-2391), so children of one size get the same share;
 -- a child whose content is wider than its share keeps that width and takes
 -- it from the others.
 local function describe_flex(w)
-    local node, along = fixed.describe_linear(w)
-
+    local node, along, across, spacing = fixed.describe_linear(w)
     local p = w._private
 
-    -- With no children there is nothing to share, and an empty layout that
-    -- says so takes no space of its own.
-    if #p.widgets > 0 then
-        node.share = along
-    end
-    for i, child in ipairs(p.widgets) do
-        node.specs[i] = { widget = child, w = "grow", h = "grow",
-            [along .. "max"] = p.max_widget_size }
+    for _, child in ipairs(p.widgets) do
+        clay.linear_spec(node, { widget = child, w = "grow", h = "grow",
+            [along .. "max"] = p.max_widget_size, [along .. "src"] = "user" }, p.spacing_widget, spacing, along, across)
     end
     return node
 end

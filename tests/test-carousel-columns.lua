@@ -20,7 +20,6 @@ if not test_client.is_available() then
 end
 
 local carousel = awful.layout.suit.carousel
-carousel.scroll_duration = 0
 
 local tag
 

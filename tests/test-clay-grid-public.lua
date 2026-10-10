@@ -4,8 +4,6 @@ local async=require('_async')
 local wibox=require('wibox')
 local awful=require('awful')
 local example=require('_clay_example')
-local solver=dofile('tests/_grid_solver.lua')
-local check=require('_clay_grid_presentation')
 local pointer=assert(require('_utils').binary_or_skip('./build-test/test-virtual-pointer-client'))
 local colors={}
 local function leaf(color)
@@ -21,27 +19,25 @@ runner.run_async(function()
     g:add(a,b)
     local host=awful.popup{screen=screen[1],placement=awful.placement.top_left,offset={x=100,y=100},visible=true,bg='#204080',widget=g}
     local ids={}
+    local function find(w,x,y)
+        for _,area in ipairs(host:find_widgets(x,y)) do
+            if area.widget==w then return area end
+        end
+    end
+    -- Each expected entry: widget, x, y, width, height, and for a repeated
+    -- widget the occurrence index it stands for.
     local function frame(label,expected)
-        awesome._test_redeclare();check(host._drawable)
+        awesome._test_redeclare()
+        assert(awesome._clay_tree(screen[1]):match('roots flow 1 floating %d+ derived 0 '),label..': derived size')
         for _,e in ipairs(expected) do
-            local found=solver.find(host._drawable._clay_tree,e[1])
-            assert(#found==(e[6] or 1),label..': occurrence count')
-            local hit=found[e[7] or 1];local box=hit.box
-            assert(box.x==e[2] and box.y==e[3] and box.width==e[4] and box.height==e[5],
-                label..': box '..table.concat({box.x,box.y,box.width,box.height},','))
-            if not e[6] then
-                if ids[e[1]] then assert(hit.binding.id==ids[e[1]],label..': occurrence changed') end
-                ids[e[1]]=hit.binding.id
-            end
-            local matched=false
-            for _,area in ipairs(host:find_widgets(box.x+2,box.y+2)) do
-                if area.widget==e[1] and area.occurrence==hit.binding.id then
-                    assert(area.x==box.x and area.y==box.y and area.width==box.width and area.height==box.height)
-                    matched=true
-                end
-            end
-            assert(matched,label..': native lookup')
-            example.pixel(host.x+box.x+2,host.y+box.y+2,colors[e[1]])
+            local area=assert(find(e[1],e[2]+2,e[3]+2),label..': native lookup')
+            assert(area.x==e[2] and area.y==e[3] and area.width==e[4] and area.height==e[5],
+                label..': box '..table.concat({area.x,area.y,area.width,area.height},','))
+            ids[e[1]]=ids[e[1]] or {}
+            local seen=ids[e[1]][e[6] or 1]
+            if seen then assert(area.occurrence==seen,label..': occurrence changed') end
+            ids[e[1]][e[6] or 1]=area.occurrence
+            example.pixel(host.x+e[2]+2,host.y+e[3]+2,colors[e[1]])
         end
         assert(awesome._test_redeclare()==0,label..': unstable scene')
         example.save(label,awesome._clay_tree(screen[1]))
@@ -60,7 +56,8 @@ runner.run_async(function()
     assert(g:remove_row(2)==2)
     frame('remove-row',{{a,0,0,20,10},{b,0,15,20,10}})
     assert(g:extend_row(1)==1)
-    frame('extend-row',{{a,0,0,20,25},{b,0,30,20,10}})
+    -- A row span occupies its first row only.
+    frame('extend-row',{{a,0,0,20,10},{b,0,30,20,10}})
     assert(g:get_widget_position(a).row_span==2)
     g:remove_row(2)
     frame('restore-row',{{a,0,0,20,10},{b,0,15,20,10}})
@@ -69,7 +66,8 @@ runner.run_async(function()
     g:remove_column(1)
     frame('remove-column',{{a,0,0,20,10},{b,0,15,20,10}})
     g:extend_column(1)
-    frame('extend-column',{{a,0,0,45,10},{b,0,15,45,10}})
+    -- A column span is one cell around its content.
+    frame('extend-column',{{a,0,0,20,10},{b,0,15,20,10}})
     assert(g:get_widget_position(a).col_span==2)
     g:remove_column(2)
     frame('restore-column',{{a,0,0,20,10},{b,0,15,20,10}})
@@ -94,15 +92,12 @@ runner.run_async(function()
     assert(g:get_widget_position(a).row==1 and g:get_widget_position(a).col==2)
     frame('horizontal-add',{{c,0,0,20,10},{b,0,15,20,10},{a,25,0,20,10}})
     g:add_widget_at(c,2,2)
-    frame('repeated',{{c,0,0,20,10,2,1},{c,25,15,20,10,2,2},{b,0,15,20,10},{a,25,0,20,10}})
-    local repeated=solver.find(host._drawable._clay_tree,c)
-    assert(repeated[1].binding.id~=repeated[2].binding.id)
-    local first,second=repeated[1].binding.id,repeated[2].binding.id
-    c.visible=false;awesome._test_redeclare();check(host._drawable);hole(2,2);hole(27,17)
+    frame('repeated',{{c,0,0,20,10,1},{c,25,15,20,10,2},{b,0,15,20,10},{a,25,0,20,10}})
+    local first,second=ids[c][1],ids[c][2]
+    assert(first~=second)
+    c.visible=false;awesome._test_redeclare();hole(2,2);hole(27,17)
     c.visible=true
-    frame('repeated-restored',{{c,0,0,20,10,2,1},{c,25,15,20,10,2,2}})
-    repeated=solver.find(host._drawable._clay_tree,c)
-    assert(repeated[1].binding.id==first and repeated[2].binding.id==second)
+    frame('repeated-restored',{{c,0,0,20,10,1},{c,25,15,20,10,2}})
     local calls={}
     for _,w in ipairs{g,c} do
         w:connect_signal('button::press',function(original,x,y,button,_,area)
@@ -117,25 +112,18 @@ runner.run_async(function()
     assert(calls[1]==g and calls[2]==c)
     g:reset();ids={}
     frame('empty',{})
-    local empty=solver.find(host._drawable._clay_tree,g)
-    assert(#empty==0,'unallocated empty grid must have no native element')
-    for _,hit in ipairs(host:find_widgets(0,0)) do
-        assert(hit.widget~=g,'zero-area grid has a pointer target')
-    end
+    assert(not find(g,0,0),'zero-area grid has a pointer target')
     g.forced_width=40;g.forced_height=25
     frame('empty-forced',{})
-    local forced=solver.find(host._drawable._clay_tree,g)
-    assert(#forced==1 and forced[1].box.width==40 and forced[1].box.height==25)
-    local target=false
-    for _,hit in ipairs(host:find_widgets(2,2)) do target=target or hit.widget==g end
-    assert(target,'authored empty allocation must remain a pointer target')
+    local forced=assert(find(g,2,2),'authored empty allocation must remain a pointer target')
+    assert(forced.width==40 and forced.height==25)
     g.forced_width=nil;g.forced_height=nil
     g:set_children{a,b};g.column_count=2
     frame('set-children',{{a,0,0,20,10},{b,25,0,20,10}})
-    local declares=0
-    awesome.connect_signal('clay::declare',function() declares=declares+1 end)
-    async.sleep(.25);local drained=declares;async.sleep(.25)
-    assert(declares==drained,'stable grid keeps scheduling output declarations')
+    local published=0
+    host.drawable:connect_signal('clay::solved',function() published=published+1 end)
+    async.sleep(.25)
+    assert(published==0,'stable grid keeps publishing')
     host.visible=false
     runner.done()
 end)

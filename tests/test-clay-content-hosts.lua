@@ -10,7 +10,7 @@ local pointer = assert(require('_utils').binary_or_skip('./build-test/test-virtu
 
 runner.run_async(function()
     local leaf = wibox.widget.base.make_widget()
-    clay.describe_widget(leaf, function() return {w = 40, h = 30, bg = {1, 0, 0, 1}} end,
+    clay.describe_widget(leaf, function() return {w = 40, h = 30, wsrc = 'user', hsrc = 'user', bg = {1, 0, 0, 1}} end,
         'content-host-leaf')
     local margin = wibox.container.margin(leaf, 4, 4, 4, 4)
     local background = wibox.container.background(margin, '#0000ff')

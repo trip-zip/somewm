@@ -416,6 +416,7 @@ local function create_popup(_, args)
         return { specs = { { widget = ii._private.widget, w = "grow", h = "grow" } },
             wmin = p.minimum_width, wmax = p.maximum_width,
             hmin = p.minimum_height, hmax = p.maximum_height,
+            wsrc = "user", hsrc = "user",
             fit = true }
     end, "awful.popup")
 

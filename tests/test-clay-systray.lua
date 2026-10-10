@@ -4,8 +4,7 @@
 -- wibox.widget.systray is a fixed layout with padding and a least size, and
 -- it centers each systray_icon's square slot across its direction. An icon
 -- fills that square, so the item's pixmap is the element: a converted tray
--- holds one image element per icon, and an urgent icon uses the same plain
--- image (third_party/clay.h:414-416).
+-- holds image elements for the icons and their overlays.
 --
 -- Run: make test-one TEST=tests/test-clay-systray.lua
 ---------------------------------------------------------------------------
@@ -18,7 +17,7 @@ local wibox = require("wibox")
 local s = screen[1]
 local BX, BY, BW, BH = 0, 0, 400, 24
 local cap = capture.new(s, BX, BY, BW, BH)
-local bar, tray, items, converted_boxes
+local bar, tray, items
 
 local function hide_foreign()
     local changed = false
@@ -143,14 +142,12 @@ local steps = {
         end)
 
         if ok then
-            converted_boxes = #awesome._test_widget_boxes(bar.drawin)
             io.stderr:write("[PASS] the renderer draws the icons\n")
             return true
         end
         assert(count_ < 20, "the icons were not drawn")
     end,
 
-    -- An urgent item draws as the plain icon.
     function(count_)
         if hide_foreign() then
             tray:_sync_items()
@@ -158,19 +155,54 @@ local steps = {
         end
         if count_ == 1 then
             items[2].status = "NeedsAttention"
+            beautiful.systray_urgent_bg = "#0000ff"
+            local transparent = string.char(0, 0, 0, 0)
+            local green = string.char(255, 0, 255, 0)
+            local row = transparent:rep(4) .. green:rep(8) .. transparent:rep(4)
+            items[2]:set_icon_pixmap(16, 16, transparent:rep(64) .. row:rep(8) .. transparent:rep(64))
             return nil
         end
 
         local _, list = nodes()
 
         if count(list, "image", true) == 2 then
-            assert(#awesome._test_widget_boxes(bar.drawin) == converted_boxes, "urgency changed the widget boxes")
-            io.stderr:write("[PASS] an urgent icon draws as the plain icon\n")
+            cap:assert_pixel(cap:shot(), 26, 2, "#0000ff", "the urgent icon corner")
+            io.stderr:write("[PASS] the urgent icon has its background\n")
             bar.visible = false
             return true
         end
         assert(count_ < 20, "the urgent icon did not convert")
     end,
+    function(count_)
+        if count_ == 1 then
+            beautiful.systray_overlay_size = 0.5
+            beautiful.systray_overlay_bg = "#ffff00"
+            beautiful.systray_overlay_shape = "rect"
+            items[1]:set_overlay_pixmap(pixmap(0x00, 0x00, 0xff, 16))
+            bar.visible = true
+            return nil
+        end
+        local _, list = nodes()
+        local floating
+        for _, node in ipairs(list) do
+            if node.line:find(" attach PARENT ", 1, true) then floating = node end
+        end
+        assert(floating, "the overlay is not a floating child:\n" .. awesome._clay_tree(s))
+        local target = floating.line:match(" target (%x+)")
+        local parent
+        for _, node in ipairs(list) do
+            if node.line:match("^    (%x+)") == target then parent = node end
+        end
+        assert(parent and parent.name == "wibox.widget.systray_icon",
+            "the overlay is not attached to its icon")
+        local shot = cap:shot()
+        cap:assert_pixel(shot, 20, 20, "#0000ff", "the overlay image")
+        cap:assert_pixel(shot, 15, 20, "#ffff00", "the overlay padding")
+        bar.visible = false
+        io.stderr:write("[PASS] the floating overlay paints its image and background\n")
+        return true
+    end,
+
 }
 
 runner.run_steps(steps)

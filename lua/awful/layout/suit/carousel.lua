@@ -64,9 +64,6 @@ carousel.width_presets = { 1/3, 1/2, 2/3, 1.0 }
 -- - "edge": scroll just enough to bring focused column into view, aligned to nearest edge
 carousel.center_mode = "on-overflow"
 
---- Accepted for compatibility; client transitions use somewm.layout_animation.
-carousel.scroll_duration = 0
-
 --- Peek width in pixels for showing adjacent column edges.
 -- @beautiful beautiful.carousel_peek_width
 -- @tparam[opt=0] number peek_width
@@ -216,6 +213,7 @@ function carousel._build_declarations(inputs)
     local function margin(size)
         local item = { role = "CAROUSEL_MARGIN", children = {} }
         item[axis], item[cross] = size, 1
+        item.wsrc, item.hsrc = "theme", "theme"
         children[#children + 1] = item
     end
     if inputs.centered and #inputs.columns > 0 then
@@ -228,10 +226,11 @@ function carousel._build_declarations(inputs)
             direction = vertical and "row" or "column",
             padding = gap, gap = 2 * gap, children = {} }
         group[axis], group[cross] = column.width_fraction, 1
+        group.wsrc, group.hsrc = "theme", "theme"
         for _, c in ipairs(column.clients) do
             -- Protocol minima remain on the surface; they must not change
             -- column fractions or the equal allocation of grouped clients.
-            local item = { client = c }
+            local item = { client = c, wsrc = "theme", hsrc = "theme" }
             item[axis], item[cross] = 1, 1 / #column.clients
             group.children[#group.children + 1] = item
         end

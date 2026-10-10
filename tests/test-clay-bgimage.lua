@@ -109,8 +109,16 @@ local steps = {
         local dump, head = nodes()
 
         assert(head and head:find("converted", 1, true), "the drawin has no tree")
-        assert(not dump:find(" image ", 1, true), "the refused painter has an image node")
-        io.stderr:write("[PASS] a function bgimage leaves out its container\n")
+        assert(not dump:find(" image ", 1, true), "the function image has an image node")
+        assert(bgb.bgimage == nil, "the container retained the function")
+        assert(head:find("converted: 3 nodes, 0 images", 1, true), head)
+        io.stderr:flush()
+        local f = assert(io.open(assert(os.getenv("SOMEWM_TEST_LOG"))))
+        local text = f:read("*a")
+        f:close()
+        local _, warnings = text:gsub("wibox.container.background: bgimage functions are not drawn", "")
+        assert(warnings == 1, "expected one setter warning, got " .. warnings)
+        io.stderr:write("[PASS] a function bgimage keeps its container without an image\n")
         return true
     end,
     function()

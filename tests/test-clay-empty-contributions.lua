@@ -59,7 +59,7 @@ runner.run_async(function()
         wibox.widget.textbox('AB')
     local spacer = wibox.widget.base.make_widget(nil, nil, {enable_properties = true})
     clay.describe_widget(spacer, function()
-        return { hmin = 16, bg = clay.solid_rgba('#00ff00') }
+        return { hmin = 16, hsrc = 'user', bg = clay.solid_rgba('#00ff00') }
     end, 'spacer')
     spacer.forced_width = 20
     local hidden = wibox.widget.textbox('hidden')

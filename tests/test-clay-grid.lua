@@ -81,19 +81,20 @@ local steps = {
             assert(count < 20, "the grid never converted: " .. (head or "no drawin"))
             return nil
         end
+        -- The drawin decides the grid's size: each column is half of 200
+        -- less the gap, each row a third of 100 less the gaps.
         local bg = backgrounds(dump)
-        check_box(bg[1], 0, 0, 40, 20)
-        check_box(bg[2], 45, 0, 40, 20)
-        check_box(bg[3], 0, 25, 40, 20)
-        check_box(bg[4], 0, 50, 85, 20)
+        check_box(bg[1], 0, 0, 98, 30)
+        check_box(bg[2], 103, 0, 97, 30)
+        check_box(bg[3], 0, 35, 98, 30)
+        check_box(bg[4], 0, 70, 200, 30)
         assert(pixel(10, 10, "#ff0000"), "A is not red")
-        assert(pixel(50, 10, "#00ff00"), "B is not green")
-        assert(pixel(42, 10, BG), "the gap is not background")
-        assert(pixel(10, 35, "#0000ff"), "C is not blue")
-        assert(pixel(50, 35, BG), "the hole is not background")
-        assert(pixel(60, 60, "#ffff00"), "D is not yellow")
-        assert(pixel(100, 10, BG), "the grid paints beyond its columns")
-        io.stderr:write("[PASS] homogeneous grid aligns cells, holes and a column span\n")
+        assert(pixel(150, 10, "#00ff00"), "B is not green")
+        assert(pixel(100, 10, BG), "the gap is not background")
+        assert(pixel(10, 50, "#0000ff"), "C is not blue")
+        assert(pixel(150, 50, BG), "the hole is not background")
+        assert(pixel(150, 80, "#ffff00"), "D is not yellow")
+        io.stderr:write("[PASS] homogeneous grid shares the drawin's size across cells, holes and a column span\n")
         return true
     end,
     function(count)
@@ -103,10 +104,10 @@ local steps = {
         end
         local _, dump = nodes()
         local bg = backgrounds(dump)
-        check_box(bg[1], 0, 0, 97, 30)
-        check_box(bg[2], 102, 0, 97, 30)
-        check_box(bg[3], 0, 35, 97, 30)
-        check_box(bg[4], 0, 70, 199, 30)
+        check_box(bg[1], 0, 0, 98, 30)
+        check_box(bg[2], 103, 0, 97, 30)
+        check_box(bg[3], 0, 35, 98, 30)
+        check_box(bg[4], 0, 70, 200, 30)
         assert(pixel(150, 10, "#00ff00"), "expanded B is not green")
         assert(pixel(10, 50, "#0000ff"), "expanded C is not blue")
         assert(pixel(150, 80, "#ffff00"), "expanded D is not yellow")
@@ -124,12 +125,12 @@ local steps = {
         check_box(bg[1], 0, 0, 20, 10)
         check_box(bg[2], 25, 0, 40, 10)
         check_box(bg[3], 0, 15, 20, 20)
-        check_box(bg[4], 0, 40, 65, 10)
+        check_box(bg[4], 0, 40, 30, 10)
         assert(pixel(30, 5, "#00ff00"), "measured B is not green")
         assert(pixel(22, 5, BG), "the measured gap is not background")
         assert(pixel(5, 25, "#0000ff"), "measured C is not blue")
-        assert(pixel(30, 45, "#ffff00"), "measured D is not yellow")
-        io.stderr:write("[PASS] non-homogeneous grid keeps measured columns and rows\n")
+        assert(pixel(20, 45, "#ffff00"), "measured D is not yellow")
+        io.stderr:write("[PASS] non-homogeneous grid sizes each row's cells to their content\n")
         return true
     end,
     function(count)

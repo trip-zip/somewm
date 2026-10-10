@@ -645,6 +645,20 @@ test('clay-solver', test_clay_solver, suite: 'unit',
     meson.current_source_dir() / 'tests/lsan-suppressions.txt'},
 )
 
+# Image sizing fixtures (R120 in ideas/clay-native-spec-structured.md) solved by
+# the pinned header alone: compiled here, nothing of somewm linked.
+test_clay_aspect = executable(
+  'test-clay-aspect',
+  'tests/test-clay-aspect.c',
+  include_directories: somewm_inc,
+  dependencies: [m_dep],
+  # The pin's CLAY_SIZING_* macros are partial designated initializers.
+  c_args: ['-Wno-missing-braces', '-Wno-missing-field-initializers'],
+  override_options: ['b_ndebug=false'],
+  install: false,
+)
+test('clay-aspect', test_clay_aspect, suite: 'unit')
+
 # Only render.c may create visible rectangles/buffers or mutate scene nodes.
 test('scene-writers', find_program('tests/check-scene-writers.sh'),
   args: [meson.current_build_dir() / 'somewm.p'],

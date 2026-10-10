@@ -60,8 +60,10 @@ local function describe_overflow(w, _, st)
         specs = { content } }
 
     if p.scrollbar_enabled then
-        local track = { [across] = scrollbar_width, [along] = "grow", track = true,
-            children = { { [across] = scrollbar_width, [along] = 0, thumb = true,
+        local track = { [across] = scrollbar_width, [across .. "src"] = "user",
+            [along] = "grow", track = true,
+            children = { { [across] = scrollbar_width, [across .. "src"] = "user",
+                [along] = 0, [along .. "src"] = "scroll", thumb = true,
                 children = clay.whole_box(p.scrollbar_widget) } } }
 
         if p.scrollbar_position == "left" or p.scrollbar_position == "top" then
@@ -75,6 +77,12 @@ local function describe_overflow(w, _, st)
 end
 
 overflow._clay = { describe = describe_overflow }
+
+-- The scroll record along the layout's direction: offset, content size and
+-- viewport size, or nothing before the first solve.
+function overflow:_scroll_record()
+    return scroll_record(self._private)
+end
 
 
 

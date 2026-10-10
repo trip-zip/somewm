@@ -8,6 +8,7 @@
 #include <cairo.h>
 #include <lua.h>
 
+#include "declare_src.h"
 #include "render.h"
 
 typedef struct drawin_t drawin_t;
@@ -69,6 +70,7 @@ struct widget_host {
 	bool inner_clip;      /* The decorated host clips its content through an inner element. */
 	int told[2];
 	bool fit[2];
+	uint8_t src[2];      /* enum declare_src of the host box and told axes */
 };
 
 /* One axis of a node's sizing, Clay's own types by name (Clay__SizingType,
@@ -112,7 +114,7 @@ struct widget_node {
 	float radius;
 	uint8_t sizing[2];   /* enum widget_sizing per axis */
 	float size[2];       /* the fixed size or percent */
-	bool theme_size; /* fixed dimensions supplied by a theme/producer slot */
+	uint8_t src[2];      /* enum declare_src per axis, from wsrc and hsrc */
 	float min[2];        /* Clay_SizingMinMax for fit and grow: the floor,
 	                      * and the ceiling, 0 for none, which is Clay's own
 	                      * convention (clay.h:1936) */

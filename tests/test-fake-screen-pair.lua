@@ -29,7 +29,7 @@ local steps = {
             local tree = awesome._clay_tree(physical)
             for _, s in ipairs { physical, left, right } do
                 local gg = s.geometry
-                assert(tree:find(string.format("SCREEN %d w=fixed(%d) h=fixed(%d)", s.index, gg.width, gg.height), 1, true))
+                assert(tree:find(string.format("SCREEN %d w=fixed(%d) user h=fixed(%d) user", s.index, gg.width, gg.height), 1, true))
             end
             assert(select(2, tree:gsub("\n%s*SCREEN %d+ ", "")) == 3)
             assert(select(2, tree:gsub("\n%s*WORKAREA ", "")) == 3)

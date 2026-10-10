@@ -177,6 +177,7 @@ struct client_t
      * when the Lua border_color property was never set. */
     float border_rgba[4];
     bool border_rgba_set;
+    bool shape_mask_warned;
     /** Shadow configuration (NULL = use defaults) */
     shadow_config_t *shadow_config;
     /** Native shadow style; the renderer owns shared tiles. */
