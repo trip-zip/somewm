@@ -335,7 +335,7 @@ ewmh_update_net_client_list(lua_State *L)
     xcb_window_t wins[globalconf.clients.len];
 
     foreach(client, globalconf.clients)
-        if((*client)->client_type == X11)
+        if((*client)->client_type == X11 && (*client)->scene)
             wins[n++] = (*client)->window;
 
     xcb_change_property(globalconf.connection, XCB_PROP_MODE_REPLACE,

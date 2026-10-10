@@ -202,6 +202,63 @@ local steps = {
         io.stderr:write("[PASS] the floating overlay paints its image and background\n")
         return true
     end,
+    -- The urgent item is items[2], at x 26 to 50. A new pixmap redraws it
+    -- and leaves four transparent columns on each side, so x 27 and 48 at
+    -- y 2 show the background: red leads blue at the left, blue at the right.
+    function(count_)
+        if count_ == 1 then
+            beautiful.systray_urgent_bg = capture.gradient(0, 24)
+            local transparent = string.char(0, 0, 0, 0)
+            local magenta = string.char(255, 255, 0, 255)
+            local row = transparent:rep(4) .. magenta:rep(8) .. transparent:rep(4)
+            items[2]:set_icon_pixmap(16, 16, transparent:rep(64) .. row:rep(8) .. transparent:rep(64))
+            bar.visible = true
+            return nil
+        end
+        if hide_foreign() then
+            tray:_sync_items()
+            return nil
+        end
+        local line = capture.dump_line(s, capture.gradient_record(0, 0, 24))
+        local shot = cap:shot()
+        local lr, _, lb = cap:pixel(shot, 27, 2)
+        local rr, _, rb = cap:pixel(shot, 48, 2)
+        if not (line and lr > lb and rr < rb) then
+            assert(count_ < 20, "the gradient urgent background never drew: " .. awesome._clay_tree(s))
+            return nil
+        end
+        assert(line:find("wibox.widget.systray_icon", 1, true), "the fill is not on the urgent item: " .. line)
+        bar.visible = false
+        io.stderr:write("[PASS] a gradient systray_urgent_bg draws red to blue across the urgent item\n")
+        return true
+    end,
+    -- The overlay is 12 wide at x 14 to 26 of items[1] with 2 of padding;
+    -- a new overlay pixmap redraws the icon. x 15 and 24 at y 20 are padding:
+    -- red leads blue at the left, blue at the right.
+    function(count_)
+        if count_ == 1 then
+            beautiful.systray_overlay_bg = capture.gradient(0, 12)
+            items[1]:set_overlay_pixmap(pixmap(0x00, 0xff, 0xff, 16))
+            bar.visible = true
+            return nil
+        end
+        if hide_foreign() then
+            tray:_sync_items()
+            return nil
+        end
+        local line = capture.dump_line(s, capture.gradient_record(0, 0, 12))
+        local shot = cap:shot()
+        local lr, _, lb = cap:pixel(shot, 15, 20)
+        local rr, _, rb = cap:pixel(shot, 24, 20)
+        if not (line and lr > lb and rr < rb) then
+            assert(count_ < 20, "the gradient overlay background never drew: " .. awesome._clay_tree(s))
+            return nil
+        end
+        assert(line:find(" attach PARENT ", 1, true), "the fill is not on the floating overlay: " .. line)
+        bar.visible = false
+        io.stderr:write("[PASS] a gradient systray_overlay_bg draws red to blue across the overlay\n")
+        return true
+    end,
     -- Spacing 48 makes the tray 2 + 24 + 48 + 24 + 2 = 100 wide; its top
     -- padding row holds no icon.
     function(count_)

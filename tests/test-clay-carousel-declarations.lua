@@ -85,7 +85,7 @@ runner.run_async(function()
             async.sleep(.02)
         end
         local c = assert(clients[i], 'client did not map')
-        c.floating, c.shadow, c.border_width, c.size_hints_honor = false, false, 1, true
+        c.floating, c.shadow, c.border_width = false, false, 1
         c:connect_signal('button::press', function(original)
             events[#events + 1] = original
         end)

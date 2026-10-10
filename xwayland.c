@@ -142,6 +142,8 @@ createnotifyx11(struct wl_listener *listener, void *data)
 
 	/* Assign unique client ID (Sway-style incrementing counter) */
 	c->id = next_client_id++;
+	/* Honored by default, as the property documents. */
+	c->size_hints_honor = true;
 
 	/* Link to XWayland surface (adapts X11 window linkage to XWayland) */
 	xsurface->data = c;
@@ -168,12 +170,6 @@ createnotifyx11(struct wl_listener *listener, void *data)
 	/* Add to global clients array (matches AwesomeWM client_manage line 2202) */
 	lua_pushvalue(L, -1);
 	client_array_push(&globalconf.clients, luaA_object_ref(L, -1));
-
-	/* Add to stack (matches AwesomeWM client_manage) */
-	stack_client_push(c);
-
-	/* Emit client::list signal (matches AwesomeWM line 2266) */
-	some_event_queue_class(&client_class, SIG_LIST);
 
 	/* Pop the client from the Lua stack */
 	lua_pop(L, 1);

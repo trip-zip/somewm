@@ -25,7 +25,7 @@ runner.run_steps({
   a=utils.find_client_by_class('hint_master');b=utils.find_client_by_class('hint_stack')
   if not a or not b then assert(n<30,'no clients');return end
   for _,c in ipairs{a,b} do
-   c.floating=false;c.border_width=1;c.shadow=false;c.size_hints_honor=true
+   c.floating=false;c.border_width=1;c.shadow=false
    awful.titlebar(c,{size=24})
   end
   if awful.client.tiled(screen[1])[1]~=a then a:swap(b) end

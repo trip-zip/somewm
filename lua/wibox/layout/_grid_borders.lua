@@ -62,7 +62,13 @@ function M.cell(widget, p, fg, cell, xs, ys, c, span, r, hole)
             if not groups[key].outer == not outer then nested[#nested+1] = groups[key] end
         end
     end
-    if hole then cell.bg = clay.solid_rgba(p.border_color.inner or fg) end
+    if hole then
+        local fill = clay.fill(p.border_color.inner or fg)
+        if not fill then
+            clay.ignore(widget, 'border_color', 'is not a solid or a gradient and the hole is transparent')
+        end
+        clay.bg_fill(cell, fill)
+    end
     for i=1,#nested-1 do
         for side=1,4 do pad[side] = pad[side] - nested[i].bw[side] end
     end

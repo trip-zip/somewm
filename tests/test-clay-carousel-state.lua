@@ -35,7 +35,7 @@ runner.run_async(function()
             return clients[i] ~= nil
         end, 2, .02), 'client did not map')
         local c = clients[i]
-        c.floating, c.shadow, c.border_width, c.size_hints_honor = false, false, 1, true
+        c.floating, c.shadow, c.border_width = false, false, 1
         columns[i] = {clients = {c}, width_fraction = .75}
     end
 

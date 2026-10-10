@@ -802,6 +802,12 @@ if have_xwayland
     dependencies: [xcb],
     install: false,
   )
+  test_x11_hints_client = executable(
+    'test-x11-hints-client',
+    'tests/test-x11-hints-client.c',
+    dependencies: [xcb, xcb_icccm],
+    install: false,
+  )
 endif
 # ==============================================================================
 # Install Data

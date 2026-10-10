@@ -3064,7 +3064,7 @@ luaA_client_get(lua_State *L)
     else
     {
         foreach(c, globalconf.clients)
-            if(screen == NULL || (*c)->screen == screen)
+            if((*c)->scene && (screen == NULL || (*c)->screen == screen))
             {
                 luaA_object_push(L, *c);
                 lua_rawseti(L, -2, i++);
