@@ -2,17 +2,19 @@
 #define SOMEWM_RENDER_IMAGE_H
 
 #include <cairo.h>
+#include <glib-object.h>
 #include <stdbool.h>
 #include <stdint.h>
 
-/* What an IMAGE command's imageData points at: one cairo surface the
- * renderer scales and rounds into the solved box. The entry's address is
+/* What an IMAGE command's imageData points at: a cairo surface or RsvgHandle the
+ * renderer decodes and rounds into the solved box. The entry's address is
  * stable for as long as its owner lives (a drawin's content, border, shadow
  * and widget images, objects/drawin.h), so Clay carries it across the solve;
  * gen bumps whenever the pixels change, which is what tells the renderer to
  * re-raster a node whose pointer never moved. */
 struct image_entry {
 	cairo_surface_t *native;
+	void *vector;
 	int width, height;
 	int src_x, src_y;   /* Logical source origin sampled at the box's top-left. */
 	uint64_t gen;
@@ -21,16 +23,19 @@ struct image_entry {
 	bool natural;       /* Paint at logical size from the top-left corner. */
 };
 
-/* Hand an entry a new owned surface, destroying the previous one, and bump
+/* Hand an entry a new owned surface, releasing the previous source, and bump
  * its generation so the renderer re-rasters. NULL clears the entry; clearing
  * an empty one is a no-op. */
 static inline void
 image_entry_set(struct image_entry *entry, cairo_surface_t *owned)
 {
-	if (!entry->native && !owned)
+	if (!entry->native && !entry->vector && !owned)
 		return;
 	if (entry->native)
 		cairo_surface_destroy(entry->native);
+	if (entry->vector)
+		g_object_unref(entry->vector);
+	entry->vector = NULL;
 	entry->native = owned;
 	entry->width = owned ? cairo_image_surface_get_width(owned) : 0;
 	entry->height = owned ? cairo_image_surface_get_height(owned) : 0;

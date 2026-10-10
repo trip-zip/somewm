@@ -208,8 +208,7 @@ local steps = {
         assert(count < 20, "dropping the shape did not convert the background again")
     end,
 
-    -- A hexagon draws unshaped: the tree stays converted and its pixels
-    -- match the unshaped bar.
+    -- The hexagon clips the converted tree while retaining its centre fill.
     function(count)
         if count == 1 then
             bar.shape = gshape.hexagon
@@ -217,7 +216,13 @@ local steps = {
         end
         assert(#awesome._test_widget_boxes(bar.drawin) == 3,
             "a hexagon put the drawable back on cairo")
-        return cap:compare(count, captured, "a hexagon drawn unshaped")
+        local shot = cap:shot()
+        local r, g, b = cap:pixel(shot, 0, 0)
+        assert(r ~= 0x10 or g ~= 0x10 or b ~= 0x10,
+            "the bar's colour shows outside the hexagon")
+        cap:assert_pixel(shot, BW / 2, BH / 2, "#ff0000",
+            "the leaf inside the hexagon")
+        return true
     end,
 
     function()

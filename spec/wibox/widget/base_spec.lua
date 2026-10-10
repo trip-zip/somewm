@@ -12,6 +12,31 @@ describe("wibox.widget.base", function()
         widget2 = base.make_widget()
     end)
 
+    describe("Clay descriptions", function()
+        it("describes a bare widget as an empty element", function()
+            assert.is_table(widget1._clay)
+            assert.is_same({}, widget1._clay.describe(widget1))
+        end)
+
+        it("describes a proxy through its original widget", function()
+            local proxy = base.make_widget(widget1)
+            assert.is_same({ specs = { { widget = widget1, w = "grow", h = "grow" } } },
+                proxy._clay.describe(proxy))
+        end)
+
+        it("keeps descriptions through declarative and value constructors", function()
+            for _, widget in ipairs {
+                base.make_widget_declarative {},
+                base.make_widget_from_value {},
+                base.make_widget_from_value(base.make_widget),
+                base.make_widget_from_value(widget1),
+            } do
+                assert.is_table(widget._clay)
+                assert.is_same({}, widget._clay.describe(widget))
+            end
+        end)
+    end)
+
     describe("caches", function()
         it("garbage collectable", function()
             local alive = setmetatable({ widget1, widget2 }, { __mode = "kv" })

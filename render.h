@@ -11,6 +11,7 @@ struct wlr_scene_tree;
 struct wlr_scene_node;
 
 struct render_state;
+struct render_text_attr;
 
 struct render_gradient {
 	int kind;
@@ -58,6 +59,8 @@ struct render_client_hooks {
 	 * cap reports overflow. NULL draws no shape leaves. */
 	size_t (*shape_ops)(void *data, const struct render_shape *shape,
 		float w, float h, float *ops, size_t cap);
+	size_t (*text_attrs)(void *data, void *userData, const char *chars,
+		const struct render_text_attr **attrs);
 	void *data;
 };
 
@@ -123,18 +126,18 @@ int render_device_len(int origin, int len, float scale);
  *
  * - bits 40-47, the opacity of an IMAGE command: 0 means unset, fully
  *   opaque, else 1 + opacity * 254.
- * - bits 48-55, the clip scope a RECTANGLE command opens, 0 for none. A
- *   scope is the rectangle's realized box and corner radius, named by this
+ * - bits 48-55, the clip scope a RECTANGLE or CUSTOM shape or clip mark
+ *   opens, 0 for none. A scope is the host's box and radius or path, named by this
  *   number under the word's bits 0-39, so two declarers never share one; it
  *   lives for the frame. A TEXT command opens no scope and carries its text
  *   flags here instead (render_text.h).
  * - bits 56-63, the scope the command is clipped by: 0 for none, a number a
- *   RECTANGLE earlier in the frame opened under the same bits 0-39, or
+ *   command earlier in the frame opened under the same bits 0-39, or
  *   RENDER_CLIP_BOUNDS for the bounds render_reconcile() was handed. A
- *   command is cut to the scope's box, rectangle and arc; a rectangle that
- *   opens a scope of its own composes it with the one it is clipped by.
+ *   command is cut to the scope's box and all its masks; a command that
+ *   opens a scope of its own intersects it with the one it is clipped by.
  *
- * These scopes provide rounded clipping. Clay's SCISSOR commands provide
+ * These scopes provide shaped clipping. Clay's SCISSOR commands provide
  * rectangular clipping for passive hosts, scrolling and the inspector;
  * the renderer intersects both kinds of clip when they overlap. */
 #define RENDER_UD_OWNER_MASK 0xFFFFFFFFFFULL
@@ -230,6 +233,12 @@ struct render_node_view {
 bool render_hit(struct render_state *rs, double x, double y,
 	bool (*accept)(void *user, const struct render_node_view *view,
 		double sx, double sy), void *user);
+
+/* Filter a Clay element candidate at a band-local point through its retained
+ * masks and its own shaped host. An element with no paint record adds no
+ * restriction; its ancestors still filter the subtree in the widget walk. */
+bool render_point_in_masks(struct render_state *rs, uint32_t element_id,
+	double x, double y);
 
 /* Walk the retained nodes in the last pass's draw order, bottom to top, for
  * the tree dump. Reads only what the reconcile already retained; it neither

@@ -272,6 +272,8 @@ describe("wibox.clay", function()
         local nodes = chain(compile(BG, w, BG))
 
         assert.is_equal(8, nodes[2].radius)
+        assert.is_same({ 0, 1, 0, 1 }, nodes[2].bg)
+        assert.is_nil(nodes[2].shape)
         assert.is_equal("leaf", nodes[3].name)
         assert.is_nil(nodes[3].radius)
     end)
@@ -283,16 +285,22 @@ describe("wibox.clay", function()
             end), BG))
 
         assert.is_equal(6, nodes[2].radius)
+    end)
+
+    it("fills nonrectangular backgrounds along their paths without warning", function()
         local warning = stub(gdebug, "print_warning")
         for _, shape in ipairs { gshape.circle, gshape.rounded_bar } do
             local w = background(leaf_widget(), "#00ff00", shape)
             local node = layout_node(w)
-            assert.is_equal(0, node.radius)
+            assert.is_nil(node.radius)
+            assert.is_nil(node.bg)
+            assert.is_nil(node.bw)
+            assert.is_function(node.shape)
+            assert.is_same({ 0, 1, 0, 1 }, node.fill)
+            assert.is_same(wclay.shape_ops(shape, 40, 20, 0, 0), node.shape(40, 20))
             assert.is_equal(1, #node.children)
         end
-        assert.stub(warning).was_called(1)
-        assert.stub(warning).was_called_with(
-            "wibox.clay: lua.wibox.container.background shape is not a rounded rectangle and draws as its box")
+        assert.stub(warning).was_called(0)
         warning:revert()
     end)
 
@@ -361,6 +369,7 @@ describe("wibox.clay", function()
     it("converts containers down to the first it cannot", function()
         local w = leaf_widget()
         local stopper = rotate(margin(w, 2, 2, 2, 2))
+        local warning = stub(gdebug, "print_warning")
         local tree, leaves = compile(BG,
             background(margin(stopper, 4, 4, 4, 4), "#00ff00"), BG)
         local nodes = chain(tree)
@@ -371,6 +380,20 @@ describe("wibox.clay", function()
         assert.is_same({ 0, 1, 0, 1 }, nodes[1].bg)
         assert.is_same({ 4, 4, 4, 4 }, nodes[1].pad)
         assert.is_nil(nodes[2])
+        assert.stub(warning).was_called_with("wibox.clay: lua.wibox.container.rotate direction "
+            .. "needs a rotation, and Clay has no transforms and is left out of the tree")
+        warning:revert()
+    end)
+
+    it("refuses reflection with a named warning", function()
+        local w = require("wibox.container.mirror")(leaf_widget(), { horizontal = true })
+        local warning = stub(gdebug, "print_warning")
+        assert.is_true(degraded(w))
+        assert.is_true(degraded(w))
+        assert.stub(warning).was_called(1)
+        assert.stub(warning).was_called_with("wibox.clay: lua.wibox.container.mirror reflection "
+            .. "needs a reflection, and Clay has no transforms and is left out of the tree")
+        warning:revert()
     end)
 
     it("carries the innermost background foreground to the leaf", function()
@@ -1450,6 +1473,36 @@ describe("wibox.clay radialprogressbar", function()
 end)
 
 describe("wibox.clay background", function()
+    it("insets a path border and pads its child for the inner strategy", function()
+        local w = background(leaf_widget(), BG)
+        w:set_shape(function(cr, width, height, radius)
+            gshape.partially_rounded_rect(cr, width, height, true, false, false, true,
+                radius or 8)
+        end, 6)
+        w.border_width, w.border_color, w.border_strategy = 2, "#0000ff", "inner"
+        local node = layout_node(w)
+        assert.is_nil(node.radius)
+        assert.is_nil(node.border)
+        assert.is_nil(node.bw)
+        assert.is_same(BG_RGBA, node.fill)
+        assert.is_same({ 0, 0, 1, 1 }, node.stroke)
+        assert.is_equal(2, node.stroke_width)
+        assert.is_same({ 2, 2, 2, 2 }, node.pad)
+        assert.is_equal(1, #node.children)
+        assert.is_same(wclay.shape_ops(gshape.partially_rounded_rect, 38, 18, 1, 1,
+            true, false, false, true, 6), node.shape(40, 20))
+    end)
+
+    it("fills a nonrectangular background with a gradient", function()
+        local w = background(leaf_widget(), "linear:0,0:40,0:0,#000000:1,#ffffff",
+            gshape.circle)
+        local node = layout_node(w)
+        assert.is_nil(node.radius)
+        assert.is_nil(node.bg)
+        assert.is_equal(2, #node.fill.stops)
+        assert.is_same(wclay.shape_ops(gshape.circle, 40, 20, 0, 0), node.shape(40, 20))
+    end)
+
     it("ignores a function bgimage and keeps the child", function()
         local w = background(leaf_widget(), BG)
         w.bgimage = function() end
@@ -1542,7 +1595,7 @@ describe("wibox.clay imagebox", function()
         assert.is_nil(image.last_frame_size)
     end)
 
-    it("ignores clipping and fit policy and refuses SVG handles", function()
+    it("declares a clip path, ignores fit policy and describes an SVG handle as a vector", function()
         local imagebox = require("wibox.widget.imagebox")
         local cairo = require("lgi").cairo
         local src = cairo.ImageSurface(cairo.Format.ARGB32, 20, 10)
@@ -1551,17 +1604,27 @@ describe("wibox.clay imagebox", function()
         local node = w._clay.describe(w)
         assert.is_equal(2, node.specs[1].aspect)
         assert.is_not_nil(node.specs[1].image)
-        assert.stub(warning).was_called(1)
+        assert.is_true(node.clip)
+        assert.is_nil(node.fill)
+        assert.is_nil(node.stroke)
+        assert.is_same(wclay.shape_ops(gshape.circle, 40, 40), node.shape(40, 40))
+        assert.stub(warning).was_not_called()
         w = imagebox(src)
         w.horizontal_fit_policy = "fit"
         assert.is_equal(2, w._clay.describe(w).specs[1].aspect)
-        assert.stub(warning).was_called(2)
+        assert.stub(warning).was_called(1)
+        local handle = require("lgi").Rsvg.Handle.new_from_data(
+            "<svg xmlns='http://www.w3.org/2000/svg' width='16' height='16'>"
+                .. "<circle cx='8' cy='8' r='8'/></svg>")
         w = imagebox()
-        w._private.handle = {}
-        assert.is_nil(w._clay.describe(w))
-        assert.stub(warning).was_called(3)
-        assert.stub(warning).was_called_with(
-            "wibox.clay: lua.wibox.widget.imagebox image is an SVG or has no size to render at and is left out of the tree")
+        w.image = handle
+        local spec = w._clay.describe(w).specs[1]
+        assert.is_true(spec.vector)
+        assert.is_equal(handle._native, spec.image)
+        assert.is_equal(16, spec.image_width)
+        assert.is_equal(16, spec.image_height)
+        assert.is_equal(1, spec.aspect)
+        assert.stub(warning).was_called(1)
         warning:revert()
     end)
 end)
@@ -1760,5 +1823,34 @@ describe("wibox.clay popup minimum allocation", function()
             if occurrence then assert.is_equal(occurrence,node.occurrence) end
             occurrence=node.occurrence
         end
+    end)
+end)
+
+
+describe("wibox.clay textbox markup", function()
+    local textbox = require("wibox.widget.textbox")
+    local old_font, warning
+    before_each(function()
+        old_font = awesome._clay_font
+        awesome._clay_font = function() return 1 end
+        warning = stub(gdebug, "print_warning")
+    end)
+    after_each(function()
+        awesome._clay_font = old_font
+        warning:revert()
+    end)
+    it("retains two colour spans without a warning", function()
+        local w = textbox("<span color='#ff0000'>red</span> <span color='#0000ff'>blue</span>")
+        w.font = "sans 10"
+        local spec = textbox._clay.describe(w, "#ffffff", {context=context}).specs[1]
+        assert.is_same({0,3,0,1,0,0,1, 4,8,0,0,0,1,1}, spec.attrs)
+        assert.stub(warning).was_called(0)
+    end)
+    it("warns once for a font change", function()
+        local w = textbox("<b>x</b> y")
+        w.font = "sans 10"
+        textbox._clay.describe(w, "#ffffff", {context=context})
+        textbox._clay.describe(w, "#ffffff", {context=context})
+        assert.stub(warning).was_called(1)
     end)
 end)

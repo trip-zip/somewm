@@ -8,6 +8,7 @@
 -- @supermodule wibox.widget.base
 ---------------------------------------------------------------------------
 
+local clay = require("wibox.clay")
 local error = error
 local setmetatable = setmetatable
 local tostring = tostring
@@ -16,8 +17,9 @@ local gtable = require("gears.table")
 
 local rotate = { mt = {} }
 
-
-
+rotate._clay = { describe = function(w)
+    return clay.refuse(w, "direction", "needs a rotation, and Clay has no transforms")
+end }
 
 --- The widget to be rotated.
 --

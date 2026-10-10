@@ -840,7 +840,7 @@ end
 -- keeps that widget's larger input area, even if today's boxes coincide.
 local image_fields = {}
 for key in pairs(fold_fields) do image_fields[key] = true end
-for _, key in ipairs {'image', 'natural', 'aspect', 'image_width', 'image_height'} do
+for _, key in ipairs {'image', 'vector', 'natural', 'aspect', 'image_width', 'image_height'} do
     image_fields[key] = true
 end
 

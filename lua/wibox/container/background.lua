@@ -332,12 +332,16 @@ local function describe_background(w)
     local bw = clay.pixels(w, "shape_border_width", p.shape_border_width)
     local radius = clay.shape_radius(p.shape, p.shape_args)
 
-    if not radius then
-        clay.ignore(w, "shape", "is not a rounded rectangle and draws as its box")
-        radius = 0
-    end
-
     local node = { radius = radius, specs = clay.whole_box(p.widget) }
+
+    if radius == nil then
+        node.clip = true
+        local unpack = unpack or table.unpack
+        node.shape = function(width, height)
+            return clay.shape_ops(p.shape, width - bw, height - bw, bw / 2, bw / 2,
+                unpack(p.shape_args or {}))
+        end
+    end
 
     if type(p.bgimage) == "function" then
         clay.ignore(w, "bgimage", "is a function and is not drawn")
@@ -347,15 +351,22 @@ local function describe_background(w)
     end
 
     if p.background then
-        node.bg = clay.solid_rgba(p.background)
-        if not node.bg then
+        local solid = clay.solid_rgba(p.background)
+        if radius then
+            node.bg = solid
+        else
+            node.fill = solid
+        end
+        if not solid then
             local fill = clay.fill(p.background)
             if not fill then
                 clay.ignore(w, "bg", "is not a solid or a gradient and is transparent")
             else
                 node.fill = fill
-                node.shape = function(width, height)
-                    return clay.shape_ops(gshape.rounded_rect, width, height, 0, 0, radius)
+                if radius then
+                    node.shape = function(width, height)
+                        return clay.shape_ops(gshape.rounded_rect, width, height, 0, 0, radius)
+                    end
                 end
             end
         end
@@ -363,12 +374,16 @@ local function describe_background(w)
 
     if bw > 0 then
         -- No color at all is black, which is what gears.color makes of nil.
-        node.border = clay.solid_rgba(p.shape_border_color or p.foreground
+        local border = clay.solid_rgba(p.shape_border_color or p.foreground
             or beautiful.fg_normal or "#000000")
-        if not node.border then
+        if not border then
             clay.ignore(w, "shape_border_color", "is not solid and the border is transparent")
         else
-            node.bw = { bw, bw, bw, bw }
+            if radius then
+                node.border, node.bw = border, { bw, bw, bw, bw }
+            else
+                node.stroke, node.stroke_width = border, bw
+            end
             if p.border_strategy == "inner" then
                 node.pad = { bw, bw, bw, bw }
             end

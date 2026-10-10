@@ -85,6 +85,10 @@ function imagebox._load_rsvg_handle(file, style)
     end
 
     if not err then
+        if style then
+            local _, widget = next(stylesheet_cache[style])
+            handle:set_stylesheet(widget and widget._private.stylesheet or style)
+        end
         rsvg_handle_cache[file] = rsvg_handle_cache[file] or setmetatable({}, {__mode = "k"})
         rsvg_handle_cache[file][style_ref] = rsvg_handle_cache[file][style_ref] or {}
         rsvg_handle_cache[file][style_ref]["handle"] = handle
@@ -660,11 +664,8 @@ local function describe_imagebox(w)
     if not p.image and not p.handle then
         return {}
     end
-    if not p.default or not p.image or p.handle then
-        return clay.refuse(w, "image", "is an SVG or has no size to render at")
-    end
-    if p.clip_shape then
-        clay.ignore(w, "clip_shape", "is not applied")
+    if not p.default then
+        return clay.refuse(w, "image", "has no size to render at")
     end
     if p.max_scaling_factor then
         clay.ignore(w, "max_scaling_factor", "is not applied")
@@ -675,7 +676,8 @@ local function describe_imagebox(w)
             clay.ignore(w, prop, "is drawn as auto")
         end
     end
-    local image = { image = p.image._native, name = "image",
+    local image = { image = (p.handle or p.image)._native, vector = p.handle ~= nil,
+        name = "image",
         aspect = p.default.width / p.default.height,
         image_resize = p.resize, image_downscale = p.downscale,
         image_width = p.default.width, image_height = p.default.height }
@@ -693,8 +695,17 @@ local function describe_imagebox(w)
             image[axis[1] .. "max"] = math.min(bound, image[axis[1] .. "max"] or math.huge)
         end
     end
-    return { specs = { image },
+    local node = { specs = { image },
         align = { x = p.halign or "left", y = p.valign or "top" } }
+    if p.clip_shape then
+        local unpack = unpack or table.unpack
+        node.clip = true
+        node.shape = function(width, height)
+            return clay.shape_ops(p.clip_shape, width, height, 0, 0,
+                unpack(p.clip_args or {}))
+        end
+    end
+    return node
 end
 
 imagebox._clay = { describe = describe_imagebox }

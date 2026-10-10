@@ -2948,8 +2948,7 @@ drawin_accepts_input_at(drawin_t *d, double local_x, double local_y)
 {
 	if (!d)
 		return true;
-	if (d->shape_input && cairo_image_surface_get_width(d->shape_input) == 0
-			&& cairo_image_surface_get_height(d->shape_input) == 0)
+	if (d->input_passthrough)
 		return false;
 	double r = d->shape_radius;
 	if (r <= 0)

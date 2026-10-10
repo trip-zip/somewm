@@ -10,6 +10,7 @@
  * SOMEWM_RENDER_VERIFY (the asan and test builds), never in release. */
 
 #include <assert.h>
+#include <librsvg/rsvg.h>
 #include <drm_fourcc.h>
 #include <inttypes.h>
 #include <math.h>
@@ -141,24 +142,30 @@ static struct cairo_buffer *cairo_buffer_create(int width, int height) {
 	return cb;
 }
 
-/* The nearest rounded clip an element sits under: a clip scope opened by a
- * rounded RECTANGLE (a rounded wibox's root, a rounded background).
- * wlr_scene clips to boxes, so a node whose realized box reaches one of the
- * arc's corner squares is rastered with the arc as its cairo clip instead.
- * radius 0 is no rounded clip at all. */
-struct clip_round {
+/* Masks use the host's solved pixels, independently of its cropped scene box.
+ * Path storage belongs to the retained shape node and survives through input. */
+struct clip_mask {
 	Clay_BoundingBox box;
 	float radius;
+	bool path;
+	const float *ops;
+	size_t len;
+	uint64_t gen, key;
 };
 
-/* A clip scope a RECTANGLE opened this frame (render.h): its realized box,
- * composed with whatever clipped it, and the nearest arc, its own or the
- * one it sits under. */
+#define CLIP_MASKS_MAX 16
+struct clip_masks {
+	size_t len;
+	uint64_t digest;
+	struct clip_mask items[CLIP_MASKS_MAX];
+};
+
+/* Each scope intersects its box and all shaped masks with its parent. */
 struct clip_scope {
 	uint64_t owner;
 	unsigned number;
 	Clay_BoundingBox box;
-	struct clip_round round;
+	struct clip_masks masks;
 };
 
 struct shadow_cache {
@@ -190,6 +197,8 @@ struct rnode {
 	int16_t z;
 	char *text;
 	int32_t text_len;
+	struct render_text_attr *text_attrs;
+	size_t text_attrs_len;
 	/* RECTANGLE: a scene rect. TEXT: a scene buffer. BORDER: a tree
 	 * holding four scene rects (top, right, bottom, left). CUSTOM: a
 	 * client scene tree the renderer borrowed, never owned. */
@@ -208,6 +217,7 @@ struct rnode {
 	uint64_t img_gen;
 	int img_src_x, img_src_y;
 	cairo_surface_t *img_native;
+	void *img_vector;
 	int img_width, img_height;
 	uint8_t img_filter;
 	bool img_stretch, img_natural;
@@ -226,9 +236,10 @@ struct rnode {
 	 * untouched run. A fifth raster key, and the only one not derivable from the
 	 * command: it comes from the clip, which can move while the command does not. */
 	int text_ellipsis;
-	/* The rounded clip this node's raster was cut to at a corner (radius 0
-	 * for none): a raster key like text_ellipsis, from its clip scope. */
-	struct clip_round mask;
+	/* The scope index is refreshed each frame for input. Only the digest
+	 * survives scope rebuilding as a raster cache key. */
+	size_t mask_scope;
+	uint64_t mask_digest;
 	/* Bytes of the cairo raster this node holds in the scene (0 for rects,
 	 * trees, and borrowed clients), kept so the per-state total is O(1). */
 	size_t raster_bytes;
@@ -268,8 +279,8 @@ struct render_state {
 	 * rather than O(N^2). Insert-only, rebuilt from nodes each pass. */
 	struct rnode_slot *map;
 	size_t map_cap;
-	/* The clip scopes of the frame being reconciled, in the order their
-	 * rectangles opened them. */
+	/* Clip scopes persist through input, in command order. Their storage is
+	 * reserved before reconciliation so scope pointers stay stable all frame. */
 	struct clip_scope *scopes;
 	size_t scopes_len, scopes_cap;
 	/* Profiling readback: resident cairo raster bytes across all live
@@ -277,6 +288,7 @@ struct render_state {
 	size_t raster_bytes;
 	int buffers_created;
 	bool shape_overflow_logged;
+	bool mask_overflow_logged;
 	/* A kind-swap (rounded <-> square rect or border) destroyed and recreated
 	 * a node under an unchanged command key this pass. The recreated scene
 	 * node was appended at the top of its sibling list, so the restack must
@@ -473,6 +485,7 @@ static struct rnode *rnode_add(struct render_state *rs, uint64_t key) {
 	 * declared opacity of 0.0 must not compare equal to the sentinel. */
 	n->opacity = 1.0f;
 	n->key = key;
+	n->mask_scope = SIZE_MAX;
 	return n;
 }
 
@@ -483,9 +496,12 @@ static struct rnode *rnode_add(struct render_state *rs, uint64_t key) {
 static void rnode_remove(struct render_state *rs, struct rnode *n,
 		const struct render_client_hooks *hooks) {
 	free(n->text);
+	free(n->text_attrs);
 	free(n->shape_ops);
 	if (n->img_native)
 		cairo_surface_destroy(n->img_native);
+	if (n->img_vector)
+		g_object_unref(n->img_vector);
 	if (n->shadow)
 		shadow_cache_release(rs, n->shadow);
 	else
@@ -582,9 +598,22 @@ static bool box_contains(Clay_BoundingBox outer, Clay_BoundingBox inner) {
  * rectangle, text, image): wlr_scene draws only square fills, so rounded or
  * measured content becomes a cairo buffer that is cropped to its clip. */
 
-/* Whether a realized box touches any of the four corner squares of a rounded
- * clip, which is where a box clip and the arc disagree. */
-static bool clip_round_hits(const struct clip_round *m, Clay_BoundingBox b) {
+static void shape_path(cairo_t *cr, const float *ops, size_t len);
+
+static cairo_t *mask_context(const struct clip_mask *mask) {
+	static cairo_t *cr;
+	if (cr == NULL) {
+		cairo_surface_t *surface = cairo_image_surface_create(CAIRO_FORMAT_A8, 1, 1);
+		cr = cairo_create(surface);
+		cairo_surface_destroy(surface);
+	}
+	cairo_new_path(cr);
+	shape_path(cr, mask->ops, mask->len);
+	return cr;
+}
+
+/* Rounded masks only differ from their box in the four corner squares. */
+static bool radius_hits(const struct clip_mask *m, Clay_BoundingBox b) {
 	float r = m->radius;
 	if (r <= 0) {
 		return false;
@@ -601,6 +630,25 @@ static bool clip_round_hits(const struct clip_round *m, Clay_BoundingBox b) {
 				b.y < c.y + c.height && c.y < b.y + b.height) {
 			return true;
 		}
+	}
+	return false;
+}
+
+/* Preserve scene rectangles when all their corners lie inside every path. */
+static bool mask_hits(const struct clip_masks *masks, Clay_BoundingBox box) {
+	for (size_t i = 0; masks && i < masks->len; i++) {
+		const struct clip_mask *m = &masks->items[i];
+		if (!m->path) {
+			if (radius_hits(m, box)) return true;
+			continue;
+		}
+		cairo_t *cr = mask_context(m);
+		double x = box.x - m->box.x, y = box.y - m->box.y;
+		if (!cairo_in_fill(cr, x, y) ||
+				!cairo_in_fill(cr, x + box.width, y) ||
+				!cairo_in_fill(cr, x, y + box.height) ||
+				!cairo_in_fill(cr, x + box.width, y + box.height))
+			return true;
 	}
 	return false;
 }
@@ -764,43 +812,67 @@ static void rnode_set_raster(struct render_state *rs, struct rnode *n,
  * clip like text and images. The node kind follows the corner radius, so a
  * radius toggling across frames swaps the kind (handled in the dispatcher). */
 
-/* Clip cr, which draws the device pixels of the buffer for box, to the rounded
- * clip m. The buffer's pixel 0 is device round((int)box.x * scale), as
- * buffer_apply_clip derives it, so the arc lands on the same device pixels
- * the scene crops the box to. */
-static void apply_clip_round(cairo_t *cr, Clay_BoundingBox box,
-		const struct clip_round *m, float scale) {
-	if (m == NULL || m->radius <= 0) {
-		return;
+/* Buffer and mask origins use the same device rounding as buffer_apply_clip.
+ * Restoring the matrix after appending a path preserves the accumulated clip. */
+static void apply_clip_mask(cairo_t *cr, Clay_BoundingBox box,
+		const struct clip_masks *masks, float scale) {
+	for (size_t i = 0; masks && i < masks->len; i++) {
+		const struct clip_mask *m = &masks->items[i];
+		int ox = (int)box.x, oy = (int)box.y;
+		int mx = (int)m->box.x, my = (int)m->box.y;
+		double x = device_len(ox, mx - ox, scale);
+		double y = device_len(oy, my - oy, scale);
+		if (m->path) {
+			cairo_matrix_t matrix;
+			cairo_get_matrix(cr, &matrix);
+			cairo_translate(cr, x, y);
+			cairo_scale(cr, scale, scale);
+			shape_path(cr, m->ops, m->len);
+			cairo_set_matrix(cr, &matrix);
+		} else {
+			double w = device_len(mx, (int)m->box.width, scale);
+			double h = device_len(my, (int)m->box.height, scale);
+			Clay_CornerRadius r = { m->radius, m->radius, m->radius, m->radius };
+			rounded_rect_path(cr, x, y, w, h, scale_corner_radius(r, scale));
+		}
+		cairo_clip(cr);
 	}
-	int ox = (int)box.x, oy = (int)box.y;
-	int mx = (int)m->box.x, my = (int)m->box.y;
-	double x = device_len(ox, mx - ox, scale);
-	double y = device_len(oy, my - oy, scale);
-	double w = device_len(mx, (int)m->box.width, scale);
-	double h = device_len(my, (int)m->box.height, scale);
-	Clay_CornerRadius r = { m->radius, m->radius, m->radius, m->radius };
-	rounded_rect_path(cr, x, y, w, h, scale_corner_radius(r, scale));
-	cairo_clip(cr);
 }
 
-/* Whether a node's retained mask differs from the one that applies now. */
-static bool clip_round_changed(const struct clip_round *have,
-		const struct clip_round *want) {
-	struct clip_round none = { 0 };
-	if (want == NULL) {
-		want = &none;
+static uint64_t mask_digest_bytes(uint64_t digest, const void *data, size_t len) {
+	const unsigned char *bytes = data;
+	for (size_t i = 0; i < len; i++) {
+		digest ^= bytes[i];
+		digest *= UINT64_C(1099511628211);
 	}
-	return memcmp(have, want, sizeof(*have)) != 0;
+	return digest;
 }
 
-static void clip_round_keep(struct clip_round *have, const struct clip_round *want) {
-	struct clip_round none = { 0 };
-	*have = want != NULL ? *want : none;
+/* Hash explicit fields without struct padding or storage addresses. Cache the
+ * result once per scope; path generation and geometry determine its pixels. */
+static uint64_t clip_masks_digest(const struct clip_masks *masks) {
+	uint64_t digest = masks->len ? UINT64_C(14695981039346656037) : 0;
+	for (size_t i = 0; i < masks->len; i++) {
+		const struct clip_mask *m = &masks->items[i];
+		float geometry[] = { m->box.x, m->box.y, m->box.width, m->box.height, m->radius };
+		uint64_t identity[] = { m->path, m->key, m->gen, m->len };
+		digest = mask_digest_bytes(digest, geometry, sizeof(geometry));
+		digest = mask_digest_bytes(digest, identity, sizeof(identity));
+	}
+	return digest;
+}
+
+static bool clip_mask_changed(const struct rnode *n, const struct clip_masks *want) {
+	return n->mask_digest != (want ? want->digest : 0);
+}
+
+static void clip_mask_keep(struct rnode *n, size_t scope, const struct clip_masks *want) {
+	n->mask_scope = scope;
+	n->mask_digest = want ? want->digest : 0;
 }
 
 static struct cairo_buffer *rasterize_rounded_rect(Clay_RenderCommand *cmd,
-		float scale, const struct clip_round *mask) {
+		float scale, const struct clip_masks *mask) {
 	Clay_RectangleRenderData *rd = &cmd->renderData.rectangle;
 	int w = device_len((int)cmd->boundingBox.x, (int)cmd->boundingBox.width, scale);
 	int h = device_len((int)cmd->boundingBox.y, (int)cmd->boundingBox.height, scale);
@@ -814,7 +886,7 @@ static struct cairo_buffer *rasterize_rounded_rect(Clay_RenderCommand *cmd,
 		return NULL;
 	}
 	cairo_t *cr = cairo_create(cb->surface);
-	apply_clip_round(cr, cmd->boundingBox, mask, scale);
+	apply_clip_mask(cr, cmd->boundingBox, mask, scale);
 	rounded_rect_path(cr, 0, 0, w, h, scale_corner_radius(rd->cornerRadius, scale));
 	/* Straight alpha as in rasterize_text; cairo premultiplies into ARGB32. */
 	cairo_set_source_rgba(cr,
@@ -885,7 +957,7 @@ static int reconcile_clip_mark(struct render_state *rs, struct rnode *n,
 
 static int reconcile_rounded_rect(struct render_state *rs, struct rnode *n,
 		Clay_RenderCommand *cmd, Clay_BoundingBox rbox,
-		const struct clip_round *mask) {
+		const struct clip_masks *mask) {
 	Clay_RectangleRenderData *rd = &cmd->renderData.rectangle;
 	int muts = 0;
 
@@ -905,11 +977,11 @@ static int reconcile_rounded_rect(struct render_state *rs, struct rnode *n,
 		!raster_size_equal(n->box, cmd->boundingBox, rs->scale) ||
 		n->raster_scale != rs->scale ||
 		memcmp(&n->data.rectangle, rd, sizeof(*rd)) != 0 ||
-		clip_round_changed(&n->mask, mask);
+		clip_mask_changed(n, mask) ||
+		(mask && !box_pos_equal(n->box, cmd->boundingBox));
 	if (raster_changed) {
 		rnode_set_raster(rs, n, sb, rasterize_rounded_rect(cmd, rs->scale, mask));
 		n->raster_scale = rs->scale;
-		clip_round_keep(&n->mask, mask);
 		muts++;
 	}
 
@@ -930,11 +1002,10 @@ static int reconcile_rounded_rect(struct render_state *rs, struct rnode *n,
  * recreate it. */
 static int reconcile_rectangle(struct render_state *rs, struct rnode *n,
 		Clay_RenderCommand *cmd, Clay_BoundingBox rbox,
-		const struct clip_round *mask) {
-	/* A square rect under a rounded clip's corner is a raster too: a scene
-	 * rect cannot follow the arc. */
+		const struct clip_masks *mask) {
+	/* A square rect crossing any shaped mask needs a raster. */
 	bool rounded = !corner_radius_zero(cmd->renderData.rectangle.cornerRadius) ||
-		mask != NULL;
+		mask_hits(mask, rbox);
 	if (n->node != NULL) {
 		enum wlr_scene_node_type want = rounded ?
 			WLR_SCENE_NODE_BUFFER : WLR_SCENE_NODE_RECT;
@@ -1262,7 +1333,8 @@ static int text_ellipsis_width(Clay_RenderCommand *cmd,
 }
 
 static struct cairo_buffer *rasterize_text(Clay_RenderCommand *cmd, float scale,
-		int max_width, const struct clip_round *mask) {
+		int max_width, const struct clip_masks *mask,
+        const struct render_text_attr *attrs, size_t attrs_len) {
 	Clay_TextRenderData *td = &cmd->renderData.text;
 	int width = device_len((int)cmd->boundingBox.x, (int)cmd->boundingBox.width, scale);
 	int height = device_len((int)cmd->boundingBox.y, (int)cmd->boundingBox.height, scale);
@@ -1293,11 +1365,46 @@ static struct cairo_buffer *rasterize_text(Clay_RenderCommand *cmd, float scale,
 		return NULL;
 	}
 	cairo_t *cr = cairo_create(cb->surface);
-	apply_clip_round(cr, cmd->boundingBox, mask, scale);
+	apply_clip_mask(cr, cmd->boundingBox, mask, scale);
 	/* Cairo takes straight alpha here, so no premultiply. */
 	cairo_set_source_rgba(cr,
 		clay_srgb(td->textColor.r), clay_srgb(td->textColor.g),
 		clay_srgb(td->textColor.b), clay_srgb(td->textColor.a));
+
+    PangoAttrList *list = pango_attr_list_new();
+    for (size_t i = 0; i < attrs_len; i++) {
+        const struct render_text_attr *a = &attrs[i];
+        PangoAttribute *attr = NULL;
+        switch (a->kind) {
+        case RENDER_TEXT_FOREGROUND:
+            attr = pango_attr_foreground_new(lroundf(a->value[0] * 65535),
+                lroundf(a->value[1] * 65535), lroundf(a->value[2] * 65535));
+            break;
+        case RENDER_TEXT_FOREGROUND_ALPHA:
+            attr = pango_attr_foreground_alpha_new(lroundf(a->value[0] * 65535));
+            break;
+        case RENDER_TEXT_BACKGROUND:
+            attr = pango_attr_background_new(lroundf(a->value[0] * 65535),
+                lroundf(a->value[1] * 65535), lroundf(a->value[2] * 65535));
+            break;
+        case RENDER_TEXT_BACKGROUND_ALPHA:
+            attr = pango_attr_background_alpha_new(lroundf(a->value[0] * 65535));
+            break;
+        case RENDER_TEXT_UNDERLINE:
+            attr = pango_attr_underline_new((PangoUnderline)a->value[0]);
+            break;
+        case RENDER_TEXT_STRIKETHROUGH:
+            attr = pango_attr_strikethrough_new(a->value[0] != 0);
+            break;
+        }
+        if (attr) {
+            attr->start_index = a->start;
+            attr->end_index = a->end;
+            pango_attr_list_insert(list, attr);
+        }
+    }
+    pango_layout_set_attributes(layout, list);
+    pango_attr_list_unref(list);
 
 	/* Device-sized glyphs, as measured by render_measure_text; no CTM scaling. */
 	pango_cairo_update_layout(cr, layout);
@@ -1317,9 +1424,22 @@ static bool text_data_equal(Clay_TextRenderData *a, Clay_TextRenderData *b) {
 
 static int reconcile_text(struct render_state *rs, struct rnode *n,
 		Clay_RenderCommand *cmd, Clay_BoundingBox rbox,
-		const Clay_BoundingBox *clip, const struct clip_round *mask) {
+		const Clay_BoundingBox *clip, const struct clip_masks *mask,
+        const struct render_client_hooks *hooks) {
 	Clay_TextRenderData *td = &cmd->renderData.text;
 	int muts = 0;
+
+    const struct render_text_attr *attrs = NULL;
+    size_t attrs_len = hooks && hooks->text_attrs
+        ? hooks->text_attrs(hooks->data, cmd->userData, td->stringContents.chars, &attrs) : 0;
+    bool attrs_changed = attrs_len != n->text_attrs_len
+        || (attrs_len && memcmp(n->text_attrs, attrs, attrs_len * sizeof(*attrs)) != 0);
+    if (attrs_changed) {
+        free(n->text_attrs);
+        n->text_attrs = attrs_len ? malloc(attrs_len * sizeof(*attrs)) : NULL;
+        n->text_attrs_len = n->text_attrs ? attrs_len : 0;
+        if (n->text_attrs) memcpy(n->text_attrs, attrs, attrs_len * sizeof(*attrs));
+    }
 
 	/* Length first, and the compare only for a non-empty run: an empty one
 	 * leaves n->text NULL, and memcmp(NULL, ..., 0) is undefined even though it
@@ -1345,18 +1465,19 @@ static int reconcile_text(struct render_state *rs, struct rnode *n,
 	 * own box never moved would keep the buffer truncated at the old width and
 	 * crop the mark itself in half. */
 	int ell = text_ellipsis_width(cmd, clip, rs->scale);
-	bool raster_changed = content_changed ||
+	bool raster_changed = content_changed || attrs_changed ||
 		!raster_size_equal(n->box, cmd->boundingBox, rs->scale) ||
 		n->raster_scale != rs->scale ||
 		n->text_ellipsis != ell ||
 		!text_data_equal(&n->data.text, td) ||
-		clip_round_changed(&n->mask, mask);
+		clip_mask_changed(n, mask) ||
+		(mask && !box_pos_equal(n->box, cmd->boundingBox));
 	struct wlr_scene_buffer *sb = wlr_scene_buffer_from_node(n->node);
 	if (raster_changed) {
-		rnode_set_raster(rs, n, sb, rasterize_text(cmd, rs->scale, ell, mask));
+		rnode_set_raster(rs, n, sb, rasterize_text(cmd, rs->scale, ell, mask,
+            n->text_attrs, n->text_attrs_len));
 		n->raster_scale = rs->scale;
 		n->text_ellipsis = ell;
-		clip_round_keep(&n->mask, mask);
 		muts++;
 	}
 
@@ -1381,9 +1502,9 @@ static int reconcile_text(struct render_state *rs, struct rnode *n,
 
 /* --- images ---
  *
- * An image entry (render_image.h) holds one native cairo surface. The image
- * rasters per node into a box-sized buffer: cairo scales the native into the
- * solved box and rounds the corners if asked. This mirrors reconcile_text
+ * An image entry (render_image.h) holds a cairo surface or RsvgHandle. The image
+ * rasters per node into a box-sized buffer: cairo scales the surface or librsvg
+ * decodes the document into the solved box and rounds the corners if asked. This mirrors reconcile_text
  * (raster on change, then crop to the clip), so an image clips inside a scroll
  * container for free.
  *
@@ -1396,7 +1517,7 @@ static int reconcile_text(struct render_state *rs, struct rnode *n,
  * at all. A zero-alpha ink never arrives: the solver stores no colour for it. */
 
 static struct cairo_buffer *rasterize_image(Clay_RenderCommand *cmd,
-		struct image_entry *entry, float scale, const struct clip_round *mask) {
+		struct image_entry *entry, float scale, const struct clip_masks *mask) {
 	int w = entry->stretch ? (int)ceilf(entry->width * scale)
 		: device_len((int)cmd->boundingBox.x, (int)cmd->boundingBox.width, scale);
 	int h = entry->stretch ? (int)ceilf(entry->height * scale)
@@ -1409,7 +1530,7 @@ static struct cairo_buffer *rasterize_image(Clay_RenderCommand *cmd,
 		return NULL;
 	}
 	cairo_t *cr = cairo_create(cb->surface);
-	apply_clip_round(cr, cmd->boundingBox, mask, scale);
+	apply_clip_mask(cr, cmd->boundingBox, mask, scale);
 
 	/* w and h are device pixels. Natural images scale only by the output
 	 * scale; other images scale to fill the box. The corner radii scale
@@ -1420,53 +1541,79 @@ static struct cairo_buffer *rasterize_image(Clay_RenderCommand *cmd,
 		rounded_rect_path(cr, 0, 0, w, h, radius);
 		cairo_clip(cr);
 	}
-	if (entry->natural || entry->stretch)
-		cairo_scale(cr, scale, scale);
-	else
-		cairo_scale(cr, (double)w / entry->width, (double)h / entry->height);
-	cairo_pattern_t *pattern = cairo_pattern_create_for_surface(entry->native);
-	/* Pattern matrices map into source coordinates: this places the source
-	 * at -src_x,-src_y in logical pixels, before the output scale. */
-	cairo_matrix_t matrix;
-	cairo_matrix_init_translate(&matrix, entry->src_x, entry->src_y);
-	cairo_pattern_set_matrix(pattern, &matrix);
-	if (entry->filter > 0)
-		cairo_pattern_set_filter(pattern, entry->filter - 1);
 	Clay_Color ink = cmd->renderData.image.backgroundColor;
-	if (ink.a > 0) {
-		cairo_set_source_rgba(cr, clay_srgb(ink.r), clay_srgb(ink.g),
-			clay_srgb(ink.b), clay_srgb(ink.a));
-		cairo_mask(cr, pattern);
+	if (entry->vector) {
+		double sx = entry->natural || entry->stretch ? scale : (double)w / entry->width;
+		double sy = entry->natural || entry->stretch ? scale : (double)h / entry->height;
+		RsvgRectangle viewport = { -entry->src_x * sx, -entry->src_y * sy,
+			entry->width * sx, entry->height * sy };
+		if (ink.a > 0)
+			cairo_push_group(cr);
+		rsvg_handle_render_document(entry->vector, cr, &viewport, NULL);
+		if (ink.a > 0) {
+			cairo_pattern_t *pattern = cairo_pop_group(cr);
+			cairo_set_source_rgba(cr, clay_srgb(ink.r), clay_srgb(ink.g),
+				clay_srgb(ink.b), clay_srgb(ink.a));
+			cairo_mask(cr, pattern);
+			cairo_pattern_destroy(pattern);
+		}
 	} else {
-		cairo_set_source(cr, pattern);
-		cairo_paint(cr);
+		if (entry->natural || entry->stretch)
+			cairo_scale(cr, scale, scale);
+		else
+			cairo_scale(cr, (double)w / entry->width, (double)h / entry->height);
+		cairo_pattern_t *pattern = cairo_pattern_create_for_surface(entry->native);
+		/* Pattern matrices map into source coordinates: this places the source
+		 * at -src_x,-src_y in logical pixels, before the output scale. */
+		cairo_matrix_t matrix;
+		cairo_matrix_init_translate(&matrix, entry->src_x, entry->src_y);
+		cairo_pattern_set_matrix(pattern, &matrix);
+		if (entry->filter > 0)
+			cairo_pattern_set_filter(pattern, entry->filter - 1);
+		if (ink.a > 0) {
+			cairo_set_source_rgba(cr, clay_srgb(ink.r), clay_srgb(ink.g),
+				clay_srgb(ink.b), clay_srgb(ink.a));
+			cairo_mask(cr, pattern);
+		} else {
+			cairo_set_source(cr, pattern);
+			cairo_paint(cr);
+		}
+		cairo_pattern_destroy(pattern);
 	}
-	cairo_pattern_destroy(pattern);
 
 	cairo_destroy(cr);
 	cairo_surface_flush(cb->surface);
 	return cb;
 }
 
-/* Whether a node-local point is inside the arcs a node draws within: its
- * own corner radius for a rounded rect, and the rounded clip a raster was
- * cut to at a corner. The pixels outside are transparent, and a shaped
- * wibox's mask took no input there either. sx, sy are relative to the scene
- * node, which sits at rbox. */
-static bool rnode_point_in_arcs(struct rnode *n, double sx, double sy) {
-	double px = sx + (n->rbox.x - n->box.x);
-	double py = sy + (n->rbox.y - n->box.y);
-	if (n->mask.radius > 0) {
-		Clay_CornerRadius r = { n->mask.radius, n->mask.radius,
-			n->mask.radius, n->mask.radius };
-		if (!point_in_rounded_rect(n->box.x + px, n->box.y + py,
-				n->mask.box.x, n->mask.box.y,
-				n->mask.box.width, n->mask.box.height, r)) {
-			return false;
+/* Band-local points and raster clips use the same host-local mask geometry. */
+static bool point_in_masks(const struct clip_masks *masks, double x, double y) {
+	for (size_t i = 0; masks && i < masks->len; i++) {
+		const struct clip_mask *m = &masks->items[i];
+		double mx = x - m->box.x, my = y - m->box.y;
+		if (m->path) {
+			if (!cairo_in_fill(mask_context(m), mx, my)) return false;
+		} else {
+			Clay_CornerRadius r = { m->radius, m->radius, m->radius, m->radius };
+			if (!point_in_rounded_rect(mx, my, 0, 0, m->box.width, m->box.height, r))
+				return false;
 		}
 	}
+	return true;
+}
+
+static const struct clip_masks *rnode_masks(struct render_state *rs, const struct rnode *n) {
+	return n->mask_scope == SIZE_MAX ? NULL : &rs->scopes[n->mask_scope].masks;
+}
+
+/* Input intersects inherited masks, then the rectangle's own corners.
+ * Scene-local coordinates start at the cropped box. */
+static bool rnode_point_in_arcs(struct render_state *rs, struct rnode *n,
+		double sx, double sy) {
+	if (!point_in_masks(rnode_masks(rs, n), sx + n->rbox.x, sy + n->rbox.y)) return false;
 	if ((uint32_t)(n->key >> 32) == CLAY_RENDER_COMMAND_TYPE_RECTANGLE) {
-		return point_in_rounded_rect(px, py, 0, 0, n->box.width,
+		return point_in_rounded_rect(sx + n->rbox.x - n->box.x,
+			sy + n->rbox.y - n->box.y, 0, 0, n->box.width,
 			n->box.height, n->data.rectangle.cornerRadius);
 	}
 	return true;
@@ -1481,7 +1628,7 @@ static bool image_data_equal(Clay_ImageRenderData *a, Clay_ImageRenderData *b) {
 
 static int reconcile_image(struct render_state *rs, struct rnode *n,
 		Clay_RenderCommand *cmd, Clay_BoundingBox rbox,
-		const struct clip_round *mask) {
+		const struct clip_masks *mask) {
 	struct image_entry *entry =
 		(struct image_entry *)cmd->renderData.image.imageData;
 	int muts = 0;
@@ -1493,29 +1640,36 @@ static int reconcile_image(struct render_state *rs, struct rnode *n,
 	}
 	struct wlr_scene_buffer *sb = wlr_scene_buffer_from_node(n->node);
 
-	/* An entry with no surface shows nothing. */
-	bool usable = entry != NULL && entry->native != NULL;
+	/* An entry with no source shows nothing. */
+	bool usable = entry != NULL && (entry->native != NULL || entry->vector != NULL);
 	bool raster_changed = is_new ||
 		((!entry || !entry->stretch)
 			&& !raster_size_equal(n->box, cmd->boundingBox, rs->scale)) ||
 		n->raster_scale != rs->scale ||
 		!image_data_equal(&n->data.image, &cmd->renderData.image) ||
 		(usable ? entry->native : NULL) != n->img_native ||
+		(usable ? entry->vector : NULL) != n->img_vector ||
 		(usable && (entry->gen != n->img_gen
 			|| entry->src_x != n->img_src_x || entry->src_y != n->img_src_y
 			|| entry->width != n->img_width || entry->height != n->img_height
 			|| entry->filter != n->img_filter || entry->stretch != n->img_stretch
 			|| entry->natural != n->img_natural)) ||
-		clip_round_changed(&n->mask, mask);
+		clip_mask_changed(n, mask) ||
+		(mask && !box_pos_equal(n->box, cmd->boundingBox));
 
 	if (raster_changed) {
 		rnode_set_raster(rs, n, sb,
 			usable ? rasterize_image(cmd, entry, rs->scale, mask) : NULL);
-		/* Hold the surface so its address cannot be reused while cached.
+		/* Hold the source so its address cannot be reused while cached.
 		 * This makes pointer identity lifetime-safe without an ID counter. */
-		cairo_surface_t *native = usable ? cairo_surface_reference(entry->native) : NULL;
+		cairo_surface_t *native = usable && entry->native
+			? cairo_surface_reference(entry->native) : NULL;
+		void *vector = usable && entry->vector ? g_object_ref(entry->vector) : NULL;
 		if (n->img_native)
 			cairo_surface_destroy(n->img_native);
+		if (n->img_vector)
+			g_object_unref(n->img_vector);
+		n->img_vector = vector;
 		n->img_native = native;
 		n->img_gen = usable ? entry->gen : 0;
 		n->img_src_x = usable ? entry->src_x : 0;
@@ -1526,7 +1680,6 @@ static int reconcile_image(struct render_state *rs, struct rnode *n,
 		n->img_stretch = usable && entry->stretch;
 		n->img_natural = usable && entry->natural;
 		n->raster_scale = rs->scale;
-		clip_round_keep(&n->mask, mask);
 		muts++;
 	}
 
@@ -1592,16 +1745,18 @@ static bool shape_point_in_path(struct rnode *n, double sx, double sy) {
 
 static struct cairo_buffer *rasterize_shape(Clay_RenderCommand *cmd,
 		const struct render_shape *shape, const float *ops, size_t len,
-		float scale, const struct clip_round *mask) {
+		float scale, const struct clip_masks *mask) {
 	int w = device_len((int)cmd->boundingBox.x, (int)cmd->boundingBox.width, scale);
 	int h = device_len((int)cmd->boundingBox.y, (int)cmd->boundingBox.height, scale);
-	if (len == 0 || w < 1 || h < 1)
+	if (len == 0 || w < 1 || h < 1
+			|| (!shape->gradient.kind && shape->fill[3] <= 0
+				&& (shape->stroke[3] <= 0 || shape->stroke_width <= 0)))
 		return NULL;
 	struct cairo_buffer *cb = cairo_buffer_create(w, h);
 	if (cb == NULL)
 		return NULL;
 	cairo_t *cr = cairo_create(cb->surface);
-	apply_clip_round(cr, cmd->boundingBox, mask, scale);
+	apply_clip_mask(cr, cmd->boundingBox, mask, scale);
 	cairo_scale(cr, scale, scale);
 	shape_path(cr, ops, len);
 	if (shape->gradient.kind) {
@@ -1935,7 +2090,7 @@ static int reconcile_shadow(struct render_state *rs, struct rnode *n,
 
 static int reconcile_shape(struct render_state *rs, struct rnode *n,
 		Clay_RenderCommand *cmd, Clay_BoundingBox rbox,
-		const struct clip_round *mask, const struct render_client_hooks *hooks) {
+		const struct clip_masks *mask, const struct render_client_hooks *hooks) {
 	static float ops[4096];
 	struct render_shape *shape = render_shape_of(cmd->renderData.custom.customData);
 	/* Lua may run in the hook: all raster inputs are copied before it. */
@@ -1948,6 +2103,7 @@ static int reconcile_shape(struct render_state *rs, struct rnode *n,
 	}
 	struct wlr_scene_buffer *sb = wlr_scene_buffer_from_node(n->node);
 	bool raster_changed = is_new ||
+		!box_size_equal(n->box, cmd->boundingBox) ||
 		!raster_size_equal(n->box, cmd->boundingBox, rs->scale) ||
 		n->raster_scale != rs->scale ||
 		n->data.custom.customData != cmd->renderData.custom.customData ||
@@ -1956,7 +2112,8 @@ static int reconcile_shape(struct render_state *rs, struct rnode *n,
 		memcmp(n->shape.fill, value.fill, sizeof(value.fill)) != 0 ||
 		memcmp(n->shape.stroke, value.stroke, sizeof(value.stroke)) != 0 ||
 		memcmp(&n->shape.stroke_width, &value.stroke_width, sizeof(value.stroke_width)) != 0 ||
-		clip_round_changed(&n->mask, mask);
+		clip_mask_changed(n, mask) ||
+		(mask && !box_pos_equal(n->box, cmd->boundingBox));
 	if (raster_changed) {
 		size_t cap = sizeof(ops) / sizeof(*ops);
 		size_t len = hooks && hooks->shape_ops ? hooks->shape_ops(hooks->data,
@@ -1977,7 +2134,6 @@ static int reconcile_shape(struct render_state *rs, struct rnode *n,
 		rnode_set_raster(rs, n, sb, rasterize_shape(cmd, &value,
 			n->shape_ops, n->shape_ops_len, rs->scale, mask));
 		n->raster_scale = rs->scale;
-		clip_round_keep(&n->mask, mask);
 		muts++;
 	}
 	float opacity = render_userdata_opacity(cmd->userData);
@@ -2208,9 +2364,8 @@ void *render_hit_userdata(struct render_state *rs, struct wlr_scene_node *node) 
 
 /* --- the reconcile pass --- */
 
-/* The scope a command's word names (render.h), or NULL for none, for one no
- * rectangle opened this frame, or for the bounds. Scanned from the newest:
- * a tree's commands follow the rectangle that opened their scope. */
+/* The scope a command's word names (render.h), or NULL when none was opened.
+ * Scan from the newest: children follow the command that opened their scope. */
 static const struct clip_scope *scope_named(struct render_state *rs,
 		void *word, unsigned number) {
 	uint64_t owner = (uintptr_t)word & RENDER_UD_OWNER_MASK;
@@ -2223,28 +2378,26 @@ static const struct clip_scope *scope_named(struct render_state *rs,
 	return NULL;
 }
 
-/* Open the scope a command's word says it opens (render.h), if any: its
- * realized box, and its arc when rounded, else the arc it sits under. */
+/* At most one scope opens per command; reconciliation reserves them all. */
 static void scope_open(struct render_state *rs, void *word, Clay_BoundingBox rbox,
-		const struct clip_scope *under, float radius) {
+		const struct clip_scope *under, struct clip_mask own) {
 	unsigned opens = render_userdata_byte(word, RENDER_UD_OPENS_SHIFT);
-	if (opens == 0) {
-		return;
-	}
-	struct clip_round inherited = under ? under->round : (struct clip_round){0};
-	if (rs->scopes_len == rs->scopes_cap) {
-		rs->scopes_cap = rs->scopes_cap ? rs->scopes_cap * 2 : 32;
-		p_realloc(&rs->scopes, rs->scopes_cap);
-	}
+	if (opens == 0) return;
+	assert(rs->scopes_len < rs->scopes_cap);
 	struct clip_scope *sc = &rs->scopes[rs->scopes_len++];
 	sc->owner = (uintptr_t)word & RENDER_UD_OWNER_MASK;
 	sc->number = opens;
 	sc->box = rbox;
-	if (radius > 0) {
-		sc->round.box = rbox;
-		sc->round.radius = radius;
-	} else {
-		sc->round = inherited;
+	sc->masks = under ? under->masks : (struct clip_masks){0};
+	if (own.path || own.radius > 0) {
+		if (sc->masks.len < CLIP_MASKS_MAX) {
+			sc->masks.items[sc->masks.len++] = own;
+			sc->masks.digest = clip_masks_digest(&sc->masks);
+		} else if (!rs->mask_overflow_logged) {
+			wlr_log(WLR_ERROR, "clip scope exceeds %d shaped masks; retaining outer masks",
+				CLIP_MASKS_MAX);
+			rs->mask_overflow_logged = true;
+		}
 	}
 }
 
@@ -2320,6 +2473,10 @@ int render_reconcile(struct render_state *rs, Clay_RenderCommandArray commands,
 	rs->visibility_batched = false;
 	rs->node_recreated = false;
 	rs->scopes_len = 0;
+	if ((size_t)commands.length > rs->scopes_cap) {
+		rs->scopes_cap = commands.length;
+		p_realloc(&rs->scopes, rs->scopes_cap);
+	}
 	int muts = 0;
 
 	/* Map reflects the pre-pass nodes; new nodes appended below get unique
@@ -2426,22 +2583,23 @@ int render_reconcile(struct render_state *rs, Clay_RenderCommandArray commands,
 			(cmd->commandType == CLAY_RENDER_COMMAND_TYPE_CUSTOM && !shadow);
 		Clay_BoundingBox rbox = (clip_top != NULL && clippable) ?
 			box_snap(box_intersect(cmd->boundingBox, *clip_top)) : cmd->boundingBox;
-		/* The arc of the nearest rounded clip, for a raster that reaches a
-		 * corner of it. */
-		const struct clip_round *mask = scope != NULL && clippable &&
-			clip_round_hits(&scope->round, rbox) ? &scope->round : NULL;
+		size_t mask_scope = scope && clippable && scope != &bounds_scope
+			? (size_t)(scope - rs->scopes) : SIZE_MAX;
+		const struct clip_masks *mask = scope && clippable && scope->masks.len
+			? &scope->masks : NULL;
 
 		switch (cmd->commandType) {
 		case CLAY_RENDER_COMMAND_TYPE_RECTANGLE:
 			muts += reconcile_rectangle(rs, n, cmd, rbox, mask);
 			scope_open(rs, cmd->userData, rbox, scope,
-				cmd->renderData.rectangle.cornerRadius.topLeft);
+				(struct clip_mask){ .box = cmd->boundingBox,
+					.radius = cmd->renderData.rectangle.cornerRadius.topLeft });
 			break;
 		case CLAY_RENDER_COMMAND_TYPE_BORDER:
 			muts += reconcile_border(rs, n, cmd, clip_top);
 			break;
 		case CLAY_RENDER_COMMAND_TYPE_TEXT:
-			muts += reconcile_text(rs, n, cmd, rbox, clip_top, mask);
+			muts += reconcile_text(rs, n, cmd, rbox, clip_top, mask, hooks);
 			break;
 		case CLAY_RENDER_COMMAND_TYPE_IMAGE:
 			muts += reconcile_image(rs, n, cmd, rbox, mask);
@@ -2452,7 +2610,8 @@ int render_reconcile(struct render_state *rs, Clay_RenderCommandArray commands,
 			if (clip_mark) {
 				muts += reconcile_clip_mark(rs, n, rbox);
 				scope_open(rs, cmd->userData, rbox, scope,
-					cmd->renderData.custom.cornerRadius.topLeft);
+					(struct clip_mask){ .box = cmd->boundingBox,
+						.radius = cmd->renderData.custom.cornerRadius.topLeft });
 				break;
 			}
 			if (shadow) {
@@ -2461,6 +2620,10 @@ int render_reconcile(struct render_state *rs, Clay_RenderCommandArray commands,
 			}
 			if (shape) {
 				muts += reconcile_shape(rs, n, cmd, rbox, mask, hooks);
+				scope_open(rs, cmd->userData, rbox, scope,
+					(struct clip_mask){ .box = cmd->boundingBox, .path = true,
+						.ops = n->shape_ops, .len = n->shape_ops_len,
+						.gen = n->shape.gen, .key = n->key });
 				break;
 			}
 			muts += reconcile_surface(rs, n, cmd, rbox, hooks);
@@ -2553,6 +2716,7 @@ int render_reconcile(struct render_state *rs, Clay_RenderCommandArray commands,
 			}
 		}
 
+		clip_mask_keep(n, mask_scope, mask);
 		n->box = cmd->boundingBox;
 		n->rbox = rbox;
 		/* The clip rbox was realized against, mirroring the rbox computation
@@ -2650,9 +2814,12 @@ void render_destroy(struct render_state *rs,
 			render_release(rs, &rs->nodes[i], hooks);
 		}
 		free(rs->nodes[i].text);
+		free(rs->nodes[i].text_attrs);
 		free(rs->nodes[i].shape_ops);
 		if (rs->nodes[i].img_native)
 			cairo_surface_destroy(rs->nodes[i].img_native);
+		if (rs->nodes[i].img_vector)
+			g_object_unref(rs->nodes[i].img_vector);
 		shadow_cache_release(rs, rs->nodes[i].shadow);
 	}
 	wlr_scene_node_destroy(&rs->tree->node);
@@ -2662,6 +2829,30 @@ void render_destroy(struct render_state *rs,
 	free(rs->map);
 	free(rs->scopes);
 	free(rs);
+}
+
+bool render_point_in_masks(struct render_state *rs, uint32_t element_id,
+		double x, double y) {
+	if (rs == NULL) return true;
+	/* These commands retain the element ID. Text lines and border sides use
+	 * derived IDs; their container's clip host filters the subtree instead. */
+	const uint32_t types[] = { CLAY_RENDER_COMMAND_TYPE_CUSTOM,
+		CLAY_RENDER_COMMAND_TYPE_RECTANGLE, CLAY_RENDER_COMMAND_TYPE_IMAGE };
+	for (size_t i = 0; i < sizeof(types) / sizeof(*types); i++) {
+		size_t idx = rmap_get(rs, (uint64_t)types[i] << 32 | element_id);
+		if (idx == SIZE_MAX) continue;
+		struct rnode *n = &rs->nodes[idx];
+		if (!point_in_masks(rnode_masks(rs, n), x, y)) return false;
+		unsigned opens = render_userdata_byte(n->user_data, RENDER_UD_OPENS_SHIFT);
+		const struct clip_scope *own = opens ? scope_named(rs, n->user_data, opens) : NULL;
+		if (own && !point_in_masks(&own->masks, x, y)) return false;
+		if (types[i] == CLAY_RENDER_COMMAND_TYPE_CUSTOM && !own && n->shape_ops &&
+				!shape_point_in_path(n, x - n->rbox.x, y - n->rbox.y)) return false;
+		if (types[i] == CLAY_RENDER_COMMAND_TYPE_RECTANGLE &&
+				!corner_radius_zero(n->data.rectangle.cornerRadius) &&
+				!rnode_point_in_arcs(rs, n, x - n->rbox.x, y - n->rbox.y)) return false;
+	}
+	return true;
 }
 
 /* The topmost node under a band-local point, walking the last frame's draw
@@ -2691,7 +2882,7 @@ bool render_hit(struct render_state *rs, double x, double y,
 			if (!border_point_in_ring(n, x - n->box.x, y - n->box.y)) {
 				continue;
 			}
-		} else if (!rnode_point_in_arcs(n, sx, sy)) {
+		} else if (!rnode_point_in_arcs(rs, n, sx, sy)) {
 			continue;
 		} else if (type == CLAY_RENDER_COMMAND_TYPE_CUSTOM && n->shape_ops != NULL
 				&& !shape_point_in_path(n, sx, sy)) {

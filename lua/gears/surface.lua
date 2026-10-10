@@ -203,6 +203,14 @@ end
 -- @staticfct apply_shape_bounding
 -- @noreturn
 function surface.apply_shape_bounding(draw, shape, ...)
+  if draw.set_shape then
+    local args, count = {...}, select('#', ...)
+    local unpack = unpack or table.unpack
+    draw.shape = function(cr, w, h)
+      return shape(cr, w, h, unpack(args, 1, count))
+    end
+    return
+  end
   local geo = draw:geometry()
 
   local img = cairo.ImageSurface(cairo.Format.A1, geo.width, geo.height)

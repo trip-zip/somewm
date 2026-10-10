@@ -1,3 +1,4 @@
+#include <librsvg/rsvg.h>
 /* Unit tests for the Clay reconciler: hand-built command arrays in, wlr_scene
  * out. No compositor and no output; wlr_scene is a plain data structure until
  * something drives an output from it, so the whole reconcile path runs in
@@ -738,6 +739,132 @@ static void test_scopes_from_the_word(void) {
 	fixture_finish(&f, &no_hooks);
 }
 
+static size_t circle_ops(void *data, const struct render_shape *shape,
+		float w, float h, float *ops, size_t cap) {
+	float x = w / 2, y = h / 2, r = fminf(w, h) / 2;
+	float k = r * 0.55228475f;
+	float path[] = { 0, x + r, y,
+		2, x + r, y + k, x + k, y + r, x, y + r,
+		2, x - k, y + r, x - r, y + k, x - r, y,
+		2, x - r, y - k, x - k, y - r, x, y - r,
+		2, x + k, y - r, x + r, y - k, x + r, y, 3 };
+	CHECK(cap >= sizeof(path) / sizeof(*path));
+	memcpy(ops, path, sizeof(path));
+	return sizeof(path) / sizeof(*path);
+}
+
+static bool accept_clip_child(void *user, const struct render_node_view *v,
+		double sx, double sy) {
+	return v->id == *(uint32_t *)user;
+}
+
+static uint32_t raster_pixel(struct wlr_scene_node *node, int x, int y) {
+	CHECK_EQ(node->type, WLR_SCENE_NODE_BUFFER);
+	if (node->type != WLR_SCENE_NODE_BUFFER) return 0;
+	struct wlr_scene_buffer *sb = wlr_scene_buffer_from_node(node);
+	void *data;
+	uint32_t format, pixel = 0;
+	size_t pitch;
+	bool readable = wlr_buffer_begin_data_ptr_access(sb->buffer,
+		WLR_BUFFER_DATA_PTR_ACCESS_READ, &data, &format, &pitch);
+	CHECK(readable);
+	if (readable) {
+		pixel = ((uint32_t *)((char *)data + y * pitch))[x];
+		wlr_buffer_end_data_ptr_access(sb->buffer);
+	}
+	return pixel;
+}
+
+static void test_path_scopes_from_the_word(void) {
+	struct fixture f;
+	fixture_init(&f);
+	struct render_shape shape = { .gen = 1, .fill = { 1, 0, 0, 1 } };
+	struct render_client_hooks hooks = no_hooks;
+	hooks.shape_ops = circle_ops;
+	Clay_RenderCommand cmds[] = {
+		cmd_custom(10, (uintptr_t)render_shape_tag(&shape), 10, 20, 40, 40),
+		cmd_rect(1, 10, 20, 40, 40, 0),
+		cmd_rect(2, 25, 35, 10, 10, 0),
+		cmd_rect(11, 10, 20, 40, 40, 4),
+		cmd_rect(3, 10, 20, 40, 40, 0),
+		cmd_rect(12, 20, 30, 20, 20, 8),
+		cmd_rect(4, 20, 30, 20, 20, 0),
+	};
+	cmds[0].userData = word(7, 1, 0);
+	cmds[1].userData = word(7, 0, 1);
+	cmds[2].userData = word(7, 0, 1);
+	cmds[3].userData = word(7, 2, 1);
+	cmds[4].userData = word(7, 0, 2);
+	cmds[5].userData = word(7, 3, 2);
+	cmds[6].userData = word(7, 0, 3);
+	render_reconcile(f.rs, commands_of(cmds, 7), &hooks, no_bounds);
+	struct wlr_scene_tree *tree = render_tree(f.parent);
+	CHECK_EQ(child_at(tree, 1)->type, WLR_SCENE_NODE_BUFFER);
+	CHECK_EQ(child_at(tree, 2)->type, WLR_SCENE_NODE_RECT);
+	CHECK_EQ(raster_pixel(child_at(tree, 1), 1, 1), 0);
+	CHECK_EQ(raster_pixel(child_at(tree, 1), 20, 20), 0xffff0000u);
+	/* This point clears the inner radius of four but is outside the circle. */
+	CHECK_EQ(raster_pixel(child_at(tree, 4), 4, 2), 0);
+	/* This smaller host is inside the circle but still cuts its own corners. */
+	CHECK_EQ(raster_pixel(child_at(tree, 6), 1, 1), 0);
+	CHECK_EQ(raster_pixel(child_at(tree, 6), 10, 10), 0xffff0000u);
+	CHECK(!render_point_in_masks(f.rs, 1, 11, 21));
+	CHECK(render_point_in_masks(f.rs, 1, 30, 40));
+	CHECK(!render_point_in_masks(f.rs, 10, 11, 21));
+	CHECK(render_point_in_masks(f.rs, 10, 30, 40));
+	CHECK(!render_point_in_masks(f.rs, 4, 21, 31));
+	CHECK(render_point_in_masks(f.rs, 4, 30, 40));
+	CHECK(render_point_in_masks(f.rs, 999, 11, 21));
+	uint32_t child = 1;
+	CHECK(!render_hit(f.rs, 11, 21, accept_clip_child, &child));
+	CHECK(render_hit(f.rs, 30, 40, accept_clip_child, &child));
+	child = 4;
+	CHECK(!render_hit(f.rs, 21, 31, accept_clip_child, &child));
+	CHECK(render_hit(f.rs, 30, 40, accept_clip_child, &child));
+	CHECK_EQ(render_reconcile(f.rs, commands_of(cmds, 7), &hooks, no_bounds), 0);
+	CHECK_EQ(render_buffers_created(f.rs), 0);
+	/* An earlier scope shifts indices without changing the masks or pixels. */
+	Clay_RenderCommand shifted[8];
+	shifted[0] = cmd_rect(99, 100, 100, 20, 20, 5);
+	shifted[0].userData = word(7, 4, 0);
+	memcpy(shifted + 1, cmds, sizeof(cmds));
+	render_reconcile(f.rs, commands_of(shifted, 8), &hooks, no_bounds);
+	CHECK_EQ(render_buffers_created(f.rs), 1);
+	CHECK(!render_point_in_masks(f.rs, 1, 11, 21));
+	CHECK(render_point_in_masks(f.rs, 1, 30, 40));
+	CHECK(render_hit(f.rs, 30, 40, accept_clip_child, &child));
+	render_reconcile(f.rs, commands_of(cmds, 7), &hooks, no_bounds);
+	CHECK_EQ(render_buffers_created(f.rs), 0);
+	CHECK(!render_point_in_masks(f.rs, 1, 11, 21));
+	CHECK(render_point_in_masks(f.rs, 1, 30, 40));
+	/* Changing the shape generation invalidates every dependent raster. */
+	shape.gen++;
+	CHECK(render_reconcile(f.rs, commands_of(cmds, 7), &hooks, no_bounds) > 0);
+	CHECK_EQ(render_buffers_created(f.rs), 6);
+	CHECK_EQ(render_reconcile(f.rs, commands_of(cmds, 7), &hooks, no_bounds), 0);
+	/* An unpainted shape still supplies its path to the clipping query. */
+	shape.fill[3] = 0;
+	shape.gen++;
+	render_reconcile(f.rs, commands_of(cmds, 7), &hooks, no_bounds);
+	CHECK(!render_point_in_masks(f.rs, 10, 11, 21));
+	CHECK(render_point_in_masks(f.rs, 10, 30, 40));
+	/* Moving under a stationary mask must redraw its buffer-local clip. */
+	cmds[1].boundingBox.x += 10;
+	render_reconcile(f.rs, commands_of(cmds, 7), &hooks, no_bounds);
+	CHECK_EQ(raster_pixel(child_at(tree, 1), 10, 1), 0xffff0000u);
+	/* A child moving clear of a path becomes a scene rectangle again. */
+	cmds[1].boundingBox = (Clay_BoundingBox){25, 35, 10, 10};
+	render_reconcile(f.rs, commands_of(cmds, 7), &hooks, no_bounds);
+	CHECK_EQ(child_at(tree, 1)->type, WLR_SCENE_NODE_RECT);
+	/* Removing the host clears the retained scope before its ops are freed. */
+	cmds[1].boundingBox = (Clay_BoundingBox){10, 20, 40, 40};
+	render_reconcile(f.rs, commands_of(&cmds[1], 1), &hooks, no_bounds);
+	CHECK(render_point_in_masks(f.rs, 1, 11, 21));
+	child = 1;
+	CHECK(render_hit(f.rs, 11, 21, accept_clip_child, &child));
+	fixture_finish(&f, &hooks);
+}
+
 static void test_border_clips_to_the_bounds(void) {
 	struct fixture f;
 	fixture_init(&f);
@@ -928,6 +1055,65 @@ static void test_text_rasters_once_per_change(void) {
 	CHECK_EQ(render_reconcile(f.rs, commands_of(cmds, 1), &no_hooks, no_bounds), 0);
 
 	fixture_finish(&f, &no_hooks);
+}
+
+static size_t markup_attrs(void *data, void *word, const char *chars,
+        const struct render_text_attr **attrs) {
+    (void)word;
+    CHECK(strcmp(chars, "abcdef") == 0);
+    *attrs = data;
+    return 1;
+}
+
+static void test_text_attributes(void) {
+    struct fixture f;
+    fixture_init(&f);
+    struct render_text_attr attr = {
+        .start = 0, .end = 3, .kind = RENDER_TEXT_FOREGROUND, .value = {1, 0, 0, 1},
+    };
+    struct render_client_hooks hooks = {.text_attrs = markup_attrs, .data = &attr};
+    Clay_RenderCommand cmds[] = {cmd_text(1, 0, 0, 80, 20, "abcdef", false)};
+    cmds[0].renderData.text.fontId = render_font_intern("monospace 12px");
+    CHECK(render_reconcile(f.rs, commands_of(cmds, 1), &hooks, no_bounds) > 0);
+    struct wlr_scene_node *node = child_at(render_tree(f.parent), 0);
+    Clay_TextElementConfig config = {.fontId = cmds[0].renderData.text.fontId, .fontSize = 12};
+    Clay_Dimensions prefix = render_measure_text((Clay_StringSlice){.chars="abcde", .length=5}, &config, NULL);
+    Clay_Dimensions full = render_measure_text(cmds[0].renderData.text.stringContents, &config, NULL);
+    /* The first glyph's columns and the last glyph's. No brightness or grey
+     * test: the font, hinting and subpixel order are the host's. */
+    int w = (int)(full.width - prefix.width), last = (int)prefix.width;
+    uint32_t first_px[20][16], last_px[20][16];
+    CHECK(w > 0 && w <= 16);
+    bool red = false, only_red = true;
+    for (int y = 0; y < 20; y++) {
+        for (int x = 0; x < w; x++) {
+            first_px[y][x] = raster_pixel(node, x, y);
+            last_px[y][x] = raster_pixel(node, last + x, y);
+            red |= (first_px[y][x] & 0x00ff0000) != 0;
+            only_red &= (first_px[y][x] & 0x0000ffff) == 0;
+        }
+    }
+    CHECK(red);
+    CHECK(only_red);
+    CHECK_EQ(render_reconcile(f.rs, commands_of(cmds, 1), &hooks, no_bounds), 0);
+    attr.value[0] = 0;
+    attr.value[1] = 1;
+    CHECK_EQ(render_reconcile(f.rs, commands_of(cmds, 1), &hooks, no_bounds), 1);
+    CHECK_EQ(render_reconcile(f.rs, commands_of(cmds, 1), &hooks, no_bounds), 0);
+
+    /* With no attributes the last glyph is the same pixels, the first is not. */
+    CHECK_EQ(render_reconcile(f.rs, commands_of(cmds, 1), &no_hooks, no_bounds), 1);
+    node = child_at(render_tree(f.parent), 0);
+    bool first_same = true, last_same = true;
+    for (int y = 0; y < 20; y++) {
+        for (int x = 0; x < w; x++) {
+            first_same &= raster_pixel(node, x, y) == first_px[y][x];
+            last_same &= raster_pixel(node, last + x, y) == last_px[y][x];
+        }
+    }
+    CHECK(!first_same);
+    CHECK(last_same);
+    fixture_finish(&f, &hooks);
 }
 
 static void test_text_crops_to_its_clip(void) {
@@ -1227,6 +1413,43 @@ static void test_image_rerasters_on_generation_bump(void) {
 	CHECK_EQ(render_buffers_created(g.rs), 0);
 	CHECK_EQ(render_raster_bytes(g.rs), 0);
 	fixture_finish(&g, &no_hooks);
+}
+
+static void test_vector_image(void) {
+	struct fixture f;
+	fixture_init(&f);
+	const char svg[] = "<svg xmlns='http://www.w3.org/2000/svg' width='16' height='16'>"
+		"<circle cx='8' cy='8' r='8' fill='red'/></svg>";
+	GError *error = NULL;
+	RsvgHandle *handle = rsvg_handle_new_from_data((const guint8 *)svg,
+		sizeof(svg) - 1, &error);
+	CHECK(handle != NULL);
+	CHECK(error == NULL);
+	struct image_entry entry = { .vector = handle, .width = 16, .height = 16, .gen = 1 };
+	Clay_RenderCommand cmds[] = { cmd_image(1, 0, 0, 32, 32, &entry) };
+	render_reconcile(f.rs, commands_of(cmds, 1), &no_hooks, no_bounds);
+	struct wlr_scene_buffer *sb = wlr_scene_buffer_from_node(
+		child_at(render_tree(f.parent), 0));
+	CHECK(sb->buffer != NULL);
+	if (sb->buffer) {
+		void *data;
+		uint32_t format;
+		size_t pitch;
+		bool readable = wlr_buffer_begin_data_ptr_access(sb->buffer,
+			WLR_BUFFER_DATA_PTR_ACCESS_READ, &data, &format, &pitch);
+		CHECK(readable);
+		if (readable) {
+			CHECK_EQ(((uint32_t *)((char *)data + 16 * pitch))[16], 0xffff0000u);
+			CHECK_EQ(((uint32_t *)data)[0], 0);
+			wlr_buffer_end_data_ptr_access(sb->buffer);
+		}
+	}
+	CHECK_EQ(render_reconcile(f.rs, commands_of(cmds, 1), &no_hooks, no_bounds), 0);
+	entry.gen++;
+	CHECK_EQ(render_reconcile(f.rs, commands_of(cmds, 1), &no_hooks, no_bounds), 1);
+	CHECK_EQ(render_buffers_created(f.rs), 1);
+	fixture_finish(&f, &no_hooks);
+	g_object_unref(handle);
 }
 
 /* Read the actual device raster at integer and fractional scales.
@@ -1586,6 +1809,39 @@ static void test_shape_leaf(void) {
 	fixture_finish(&f, &no_hooks);
 }
 
+static void test_shape_stroke_scope(void) {
+	struct fixture f;
+	fixture_init(&f);
+	struct render_shape shape = { .gen = 1,
+		.stroke = {0, 1, 0, 1}, .stroke_width = 4 };
+	struct render_client_hooks hooks = no_hooks;
+	hooks.shape_ops = circle_ops;
+	Clay_RenderCommand cmds[] = {
+		cmd_custom(10, (uintptr_t)render_shape_tag(&shape), 0, 0, 40, 40),
+		cmd_rect(11, 0, 0, 40, 40, 0),
+	};
+	cmds[0].userData = word(7, 1, 0);
+	cmds[1].userData = word(7, 0, 1);
+	render_reconcile(f.rs, commands_of(cmds, 2), &hooks, no_bounds);
+	uint32_t leaf = 10;
+	CHECK(render_hit(f.rs, 20, 1, accept_clip_child, &leaf));
+	CHECK(!render_hit(f.rs, 20, 20, accept_clip_child, &leaf));
+	uint32_t child = 11;
+	CHECK(!render_hit(f.rs, 1, 1, accept_clip_child, &child));
+	CHECK(render_hit(f.rs, 20, 20, accept_clip_child, &child));
+	CHECK_EQ(raster_pixel(child_at(render_tree(f.parent), 1), 1, 1), 0);
+	CHECK_EQ(raster_pixel(child_at(render_tree(f.parent), 1), 20, 20), 0xffff0000u);
+	shape.stroke_width = 0;
+	render_reconcile(f.rs, commands_of(cmds, 2), &hooks, no_bounds);
+	CHECK_EQ(render_buffers_created(f.rs), 0);
+	CHECK_EQ(wlr_scene_buffer_from_node(child_at(render_tree(f.parent), 0))->buffer, NULL);
+	CHECK(!render_point_in_masks(f.rs, 10, 1, 1));
+	CHECK(render_point_in_masks(f.rs, 10, 20, 20));
+	CHECK(!render_hit(f.rs, 1, 1, accept_clip_child, &child));
+	CHECK(render_hit(f.rs, 20, 20, accept_clip_child, &child));
+	fixture_finish(&f, &hooks);
+}
+
 static void test_shadow_tiles(void) {
 	struct fixture f;
 	fixture_init(&f);
@@ -1742,13 +1998,17 @@ int main(void) {
 		{ "custom crops to its clip", test_custom_crops_to_its_clip },
 		{ "float boxes round", test_float_boxes_round },
 		{ "text rasters once per change", test_text_rasters_once_per_change },
+		{ "text attributes", test_text_attributes },
 		{ "text crops to its clip", test_text_crops_to_its_clip },
 		{ "fractional text matches Pango", test_fractional_text_clipping },
 		{ "raster readback lifetime", test_raster_readback_lifetime },
 		{ "output backdrop", test_output_backdrop },
 		{ "image rerasters on generation bump", test_image_rerasters_on_generation_bump },
+		{ "vector image", test_vector_image },
 		{ "image source origin", test_image_source_origin },
 		{ "shape leaf", test_shape_leaf },
+		{ "shape stroke scope", test_shape_stroke_scope },
+		{ "path scopes from the word", test_path_scopes_from_the_word },
 		{ "fractional moves refresh rasters", test_fractional_moves_refresh_rasters },
 		{ "stretched image crop uses source extent", test_stretched_image_crop_uses_source_extent },
 		{ "shared shadow tiles", test_shadow_tiles },
