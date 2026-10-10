@@ -30,6 +30,8 @@ struct widget_tree {
 	uint64_t shape_generation; /* survives temporary removal of shape slots */
 	char *text;
 	size_t text_len;
+	struct render_text_attr *text_attrs;
+	size_t text_attrs_len;
 	/* What the last compile answered (enum widget_nodes_state),
 	 * for the tree dump. */
 	uint8_t state;
@@ -63,6 +65,7 @@ struct widget_host {
 	 * sized, instead of being told the host box and floating at it. An
 	 * axis with a told length (a bar that does not stretch) is fixed. */
 	bool flow;
+	bool path_clip;       /* The frame carries the root scope as a path. */
 	bool inner_clip;      /* The decorated host clips its content through an inner element. */
 	int told[2];
 	bool fit[2];
@@ -122,8 +125,9 @@ struct widget_node {
 	bool passthrough;    /* floats pass pointer hits to siblings by default */
 	bool floating;       /* attached to the parent, off the flow */
 	uint16_t attach;     /* 1-based earlier node in this tree, 0 means parent */
-	/* The widget's own cairo surface, referenced by an image entry. */
+	/* The widget's cairo surface or RsvgHandle, referenced by an image entry. */
 	const void *image;
+	bool vector;
 	uint8_t filter;      /* cairo_filter_t + 1, 0 keeps cairo's default */
 	bool natural;
 	float aspect;
@@ -151,6 +155,7 @@ struct widget_node {
 	 * identity, bindings, alignment and published box. Text has no children. */
 	bool text;
 	uint32_t text_off, text_len;
+	uint32_t attr_off, attr_len;
 	uint16_t font;       /* render_font_intern's id */
 	uint8_t wrap;        /* Clay_TextElementConfigWrapMode */
 	uint8_t text_align;  /* Clay_TextAlignment */

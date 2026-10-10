@@ -32,9 +32,19 @@ runner.run_steps {
         return true
     end,
     function()
+        local function warnings()
+            io.stderr:flush()
+            local f = assert(io.open(assert(os.getenv('SOMEWM_TEST_LOG'))))
+            local text = f:read('*a')
+            f:close()
+            local _, count = text:gsub('drawin: shape masks are not read, set wibox.shape', '')
+            return count
+        end
+        local before = warnings()
         a.shape_bounding = cairo.ImageSurface.create(cairo.Format.A1, 1, 1)._native
         assert(rawget(a, 'shape_bounding') == nil, 'a forced key is not stored on the wibox table')
-        assert(a.drawin.shape_bounding ~= nil, 'a forced key reaches the drawin')
+        assert(a.drawin.shape_bounding == nil, 'mask getters return nil')
+        assert(warnings() == before + 1, 'the forced key reaches the drawin warning')
         return true
     end,
     function()

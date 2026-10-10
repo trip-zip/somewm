@@ -37,7 +37,7 @@ local function block(bar)
     local d = bar.drawin
     -- The drawin's own line, not the command line that draws it: a whole
     -- drawin's image leaf names itself the same way.
-    local want = string.format("  %s screen %d %dx%d+%d+%d ", d.type == "tooltip" and "TOOLTIP" or d.border_width > 0 and "WIBOX" or "drawin", s.index,
+    local want = string.format("  %s screen %d %dx%d+%d+%d ", d.type == "tooltip" and "TOOLTIP" or (d.border_width > 0 or type(d.shape) == "function") and "WIBOX" or "drawin", s.index,
         d.width, d.height, d.x, d.y)
     local head, nodes = nil, {}
 
@@ -361,9 +361,17 @@ local steps = {
         mouse.coords({ x = 100, y = 100 })
     end),
 
-    bar_step({ what = "a bar of another shape converts unshaped", shape = gshape.hexagon },
-        function(head)
+    bar_step({ what = "a bar of another shape converts as a path", shape = gshape.hexagon,
+        widget = { widget = wibox.container.background, bg = "#101010" } },
+        function(head, _, bar)
             assert(head:find("converted", 1, true) and not head:find("whole:", 1, true), head)
+            local cap = capture.new(s, bar.x, bar.y, bar.width, bar.height)
+            local shot = cap:shot()
+            local r, g, b = cap:pixel(shot, 0, 0)
+            assert(r ~= 0x10 or g ~= 0x10 or b ~= 0x10,
+                "the bar's colour shows outside the hexagon")
+            cap:assert_pixel(shot, bar.width / 2, bar.height / 2, "#101010",
+                "the bar inside the hexagon")
         end),
 
     bar_step({ what = "a translucent bar converts", opacity = 0.5 },

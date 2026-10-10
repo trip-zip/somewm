@@ -379,10 +379,6 @@ local function describe_progressbar(w)
 
     local bg_shape = p.shape or beautiful.progressbar_shape or shape.rectangle
     local radius = clay.shape_radius(bg_shape)
-    if radius == nil and clip then
-        clay.ignore(w, "clip", "is not cut to the shape")
-        clip = false
-    end
     local bar_shape = p.bar_shape or beautiful.progressbar_bar_shape or shape.rectangle
     local bar_radius = clay.shape_radius(bar_shape)
     local max = p.max_value
@@ -396,6 +392,7 @@ local function describe_progressbar(w)
             bg.border, bg.bw = border, { bw, bw, bw, bw }
         end
     else
+        bg.clip = clip
         bg.fill, bg.stroke, bg.stroke_width = background, border, bw
         bg.shape = function(width, height)
             return clay.shape_ops(bg_shape, width - bw, height - bw, bw / 2, bw / 2)

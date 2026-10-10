@@ -407,9 +407,6 @@ local function describe_slider(w)
     end
     local bar_shape = p.bar_shape or beautiful.slider_bar_shape or properties.bar_shape
     local radius = clay.shape_radius(bar_shape)
-    if draws_active and radius == nil then
-        clay.ignore(w, "bar_shape", "does not cut the active bar")
-    end
 
     local value = p.value or p.min or 0
     local maximum = p.maximum or properties.maximum
@@ -426,6 +423,7 @@ local function describe_slider(w)
     if radius then
         bar.bg, bar.radius = background, radius
     else
+        bar.clip = draws_active
         bar.fill = background
         bar.shape = function(width, height)
             return clay.shape_ops(bar_shape, width, height)

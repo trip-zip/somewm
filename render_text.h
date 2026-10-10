@@ -7,6 +7,21 @@
 #include "clay.h"
 #include "render.h"
 
+enum render_text_attr_kind {
+    RENDER_TEXT_FOREGROUND,
+    RENDER_TEXT_FOREGROUND_ALPHA,
+    RENDER_TEXT_BACKGROUND,
+    RENDER_TEXT_BACKGROUND_ALPHA,
+    RENDER_TEXT_UNDERLINE,
+    RENDER_TEXT_STRIKETHROUGH,
+};
+
+struct render_text_attr {
+    uint32_t start, end;
+    uint8_t kind;
+    float value[4];
+};
+
 /* The font table and the shared text setup, ported from kiln (ui.h:115-163,
  * ui.c). The table is file-static in render_text.c rather than a field of an
  * owner object because the raster path is handed a render command and a scale

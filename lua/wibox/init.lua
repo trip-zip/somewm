@@ -19,7 +19,7 @@ local object = require("gears.object")
 local grect =  require("gears.geometry").rectangle
 local beautiful = require("beautiful")
 local base = require("wibox.widget.base")
-local cairo = require("lgi").cairo
+local clay = require("wibox.clay")
 local color = require("gears.color")
 
 
@@ -100,75 +100,19 @@ end
 
 function wibox:_apply_shape()
     local shape = self._shape
-
     if not shape then
-        self.shape_bounding = nil
-        self.shape_clip = nil
-        -- Clear surface references so they can be GC'd
-        self._shape_bounding_surface = nil
-        self._shape_clip_surface = nil
+        self.drawin.shape = nil
         return
     end
-
-    local geo = self:geometry()
     local bw = self.border_width
-    local total_w = geo.width + 2*bw
-    local total_h = geo.height + 2*bw
-
-    -- Get screen scale for HiDPI support
-    local s = self:get_screen()
-    local scale = s and s.scale or 1
-
-    -- First handle the bounding shape (things including the border)
-    -- Scale surface dimensions for HiDPI, use cr:scale() so Cairo draws in logical coords
-    -- Use ARGB32 instead of A1 for anti-aliased edges on curved shapes
-    local scaled_total_w = math.ceil(total_w * scale)
-    local scaled_total_h = math.ceil(total_h * scale)
-    local img = cairo.ImageSurface(cairo.Format.ARGB32, scaled_total_w, scaled_total_h)
-    local cr = cairo.Context(img)
-    cr:set_antialias(cairo.Antialias.BEST)
-    cr:scale(scale, scale)
-
-    -- We just draw the shape in its full size (logical coordinates)
-    -- Use white with full alpha as the mask color (alpha channel is what matters)
-    cr:set_source_rgba(1, 1, 1, 1)
-    shape(cr, total_w, total_h)
-    cr:set_operator(cairo.Operator.SOURCE)
-    cr:fill()
-    self.shape_bounding = img._native
-    -- NOTE: Do NOT call img:finish() here!
-    -- In X11/AwesomeWM, finish() is safe because X11's shape extension immediately
-    -- copies the data. In Wayland/somewm, we read the surface data later in C,
-    -- so the surface must stay alive. Store reference to prevent GC.
-    self._shape_bounding_surface = img
-
-    -- Now handle the clip shape (things excluding the border)
-    -- Use ARGB32 instead of A1 for anti-aliased edges on curved shapes
-    local scaled_w = math.ceil(geo.width * scale)
-    local scaled_h = math.ceil(geo.height * scale)
-    img = cairo.ImageSurface(cairo.Format.ARGB32, scaled_w, scaled_h)
-    cr = cairo.Context(img)
-    cr:set_antialias(cairo.Antialias.BEST)
-    cr:scale(scale, scale)
-
-    -- We give the shape the same arguments as for the bounding shape and draw
-    -- it in its full size (the translate is to compensate for the smaller
-    -- surface)
-    cr:translate(-bw, -bw)
-    cr:set_source_rgba(1, 1, 1, 1)
-    shape(cr, total_w, total_h)
-    cr:set_operator(cairo.Operator.SOURCE)
-    cr:fill_preserve()
-    -- Now we remove an area of width 'bw' again around the shape (We use 2*bw
-    -- since half of that is on the outside and only half on the inside)
-    cr:set_source_rgba(0, 0, 0, 0)
-    cr:set_line_width(2*bw)
-    cr:stroke()
-    self.shape_clip = img._native
-    -- NOTE: Do NOT call img:finish() here! (see comment above for shape_bounding)
-    self._shape_clip_surface = img
-
-
+    local r = clay.shape_radius(shape)
+    if r then
+        self.drawin.shape = math.max(r - bw, 0)
+    else
+        self.drawin.shape = function(w, h)
+            return clay.shape_ops(shape, w - bw, h - bw, bw / 2, bw / 2)
+        end
+    end
 end
 
 function wibox:set_shape(shape)
@@ -184,15 +128,7 @@ end
 function wibox:set_input_passthrough(value)
     rawset(self, "_input_passthrough", value)
 
-    if not value then
-        self.shape_input = nil
-        self._shape_input_surface = nil
-    else
-        local img = cairo.ImageSurface(cairo.Format.A1, 0, 0)
-        self.shape_input = img._native
-        -- NOTE: Do NOT call img:finish() here! (see comment in _apply_shape)
-        self._shape_input_surface = img
-    end
+    self.drawin.input_passthrough = value
 
     self:emit_signal("property::input_passthrough", value)
 end
@@ -354,9 +290,7 @@ local function new(args)
     -- Make sure the wibox is drawn at least once
     ret.draw()
 
-    ret:connect_signal("property::geometry", ret._apply_shape)
     ret:connect_signal("property::border_width", ret._apply_shape)
-    ret:connect_signal("property::border_color", ret._apply_shape)
 
     -- If a value is not found, look in the drawin
     setmetatable(ret, wibox_metatable)

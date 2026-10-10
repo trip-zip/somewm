@@ -20,6 +20,17 @@ local BX, BY, BW, BH = 0, 0, 400, 24
 local cap = capture.new(s, BX, BY, BW, BH)
 local bar, tray, items, converted_boxes
 
+local function hide_foreign()
+    local changed = false
+    for _, item in ipairs(systray_item.get_items()) do
+        if item ~= items[1] and item ~= items[2] and item.status ~= "Passive" then
+            item.status = "Passive"
+            changed = true
+        end
+    end
+    return changed
+end
+
 -- A solid ARGB32 pixmap of one color, in the network byte order the item
 -- takes (StatusNotifierItem's).
 local function pixmap(r, g, b, size)
@@ -71,11 +82,7 @@ local steps = {
             items[2]:set_icon_pixmap(pixmap(0x00, 0xff, 0x00, 16))
             -- The host session's own tray items reach a nested compositor
             -- over the shared bus; a passive item is left out of the tray.
-            for _, item in ipairs(systray_item.get_items()) do
-                if item ~= items[1] and item ~= items[2] then
-                    item.status = "Passive"
-                end
-            end
+            hide_foreign()
             tray = wibox.widget.systray()
             tray:_sync_items()
             bar = wibox {
@@ -89,6 +96,10 @@ local steps = {
             return nil
         end
 
+        if hide_foreign() then
+            tray:_sync_items()
+            return nil
+        end
         local head, list = nodes()
 
         if not head or (head:find("converted", 1, true) and #list == 0) then
@@ -100,7 +111,12 @@ local steps = {
             "the tray is not a converted element")
         -- Each icon fills its own square, so the image owns that slot and
         -- the widget around it is not declared.
-        assert(count(list, "image", true) == 2, "expected two icon images")
+        local lines = {}
+        for _, node in ipairs(list) do
+            lines[#lines + 1] = node.line
+        end
+        assert(count(list, "image", true) == 2,
+            "expected two icon images, dump:\n" .. table.concat(lines, "\n"))
         assert(count(list, "wibox.widget.systray_icon", false) == 0,
             "an icon kept a container it fills")
 
@@ -136,6 +152,10 @@ local steps = {
 
     -- An urgent item draws as the plain icon.
     function(count_)
+        if hide_foreign() then
+            tray:_sync_items()
+            return nil
+        end
         if count_ == 1 then
             items[2].status = "NeedsAttention"
             return nil

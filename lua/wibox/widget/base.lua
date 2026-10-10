@@ -772,6 +772,8 @@ function base.make_widget(proxy, widget_name, args)
         proxy:connect_signal("widget::redraw_needed", function()
             ret:emit_signal("widget::redraw_needed")
         end)
+    else
+        rawset(ret, "_clay", { describe = function() return {} end })
     end
 
     -- Add functions.

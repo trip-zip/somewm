@@ -507,30 +507,18 @@ function textbox.get_markup_geometry(text, s, font)
     return logical
 end
 
---- The color a Pango foreground attribute names, straight alpha 0-1.
+--- A Pango colour attribute, straight alpha 0-1.
 local function attr_rgba(attr)
     local c = lgi_core.record.cast(attr, Pango.AttrColor).color
 
     return { c.red / 65535, c.green / 65535, c.blue / 65535, 1 }
 end
 
-local function same_rgba(a, b)
-    if not a or not b then
-        return a == b
-    end
-    return a[1] == b[1] and a[2] == b[2] and a[3] == b[3] and a[4] == b[4]
-end
+local unsupported_attrs = { "RISE", "SHAPE", "SCALE", "LETTER_SPACING", "LINE_HEIGHT" }
+local draw_attrs = { "FOREGROUND", "FOREGROUND_ALPHA", "BACKGROUND",
+    "BACKGROUND_ALPHA", "UNDERLINE", "STRIKETHROUGH" }
 
---- Pango attributes a Clay text element has no field for.
-local unsupported_attrs = {
-    "UNDERLINE", "STRIKETHROUGH", "RISE", "SHAPE", "SCALE", "LETTER_SPACING",
-    "BACKGROUND", "FOREGROUND_ALPHA", "BACKGROUND_ALPHA", "LINE_HEIGHT",
-}
-
---- The text with the first run's font and color. Unsupported attributes
--- are ignored (third_party/clay.h:374-398). Pango's own
--- attribute iterator answers, so a `<span font_desc color>` around escaped
--- text, which is what the taglist and tasklist labels are, is one run.
+--- Keep the first font and collect metric-neutral attributes at byte ranges.
 local function text_run(w, layout)
     local text = layout.text or ""
     local desc = layout:get_font_description()
@@ -550,15 +538,36 @@ local function text_run(w, layout)
         return text, desc, nil
     end
     local run_desc, run_color, first
+    local runs = {}
 
     first = true
     repeat
-        local start = it:range()
+        local start, finish = it:range()
 
         if start < #text then
             for _, name in ipairs(unsupported_attrs) do
                 if Pango.AttrType[name] and it:get(Pango.AttrType[name]) then
                     clay.ignore(w, "markup", "uses an attribute a text element has no field for, which is not drawn")
+                end
+            end
+
+            for kind, name in ipairs(draw_attrs) do
+                local attr = it:get(Pango.AttrType[name])
+                if attr then
+                    local value
+                    if name == "FOREGROUND" or name == "BACKGROUND" then
+                        value = attr_rgba(attr)
+                    else
+                        local v = lgi_core.record.cast(attr, Pango.AttrInt).value
+                        if name == "FOREGROUND_ALPHA" or name == "BACKGROUND_ALPHA" then
+                            v = v / 65535
+                        end
+                        value = { v, 0, 0, 0 }
+                    end
+                    runs[#runs + 1] = start
+                    runs[#runs + 1] = math.min(finish, #text)
+                    runs[#runs + 1] = kind - 1
+                    for i = 1, 4 do runs[#runs + 1] = value[i] end
                 end
             end
 
@@ -569,13 +578,12 @@ local function text_run(w, layout)
             it:get_font(d, nil, nil)
             if first then
                 run_desc, run_color, first = d, color, false
-            elseif d:to_string() ~= run_desc:to_string()
-                    or not same_rgba(color, run_color) then
+            elseif d:to_string() ~= run_desc:to_string() then
                 clay.ignore(w, "markup", "has more than one run and is drawn as one")
             end
         end
     until not it:next()
-    return text, run_desc or desc, run_color
+    return text, run_desc or desc, run_color, #runs > 0 and runs or nil
 end
 
 --- wibox.widget.textbox -> an element aligning one CLAY_TEXT child, which
@@ -585,8 +593,8 @@ end
 -- an absolute size at the context's dpi (render_text.h), since Clay's
 -- fontSize is a whole number (third_party/clay.h:374-398). Clay wraps by
 -- words and never by character, and the renderer ellipsizes a line at its
--- clip. What a text config has no field for is ignored: markup uses the
--- first font and color, justify, indent and line spacing are not applied,
+-- clip. Markup uses the first font; colour, alpha, background, underline and strikethrough spans
+-- draw at raster time. Justify, indent and line spacing are not applied,
 -- and start and middle ellipses use the end. Only a face that cannot be
 -- interned is refused.
 -- Pango inputs do not depend on a grid's natural/minimum/height offer.
@@ -624,7 +632,7 @@ local function text_inputs(w, dpi)
         ellipsize = "END"
     end
 
-    local text, desc, color = text_run(w, layout)
+    local text, desc, color, attrs = text_run(w, layout)
     -- Equal descriptions at the same DPI name the same native font. Keep this
     -- immutable input alive with its textboxes; neither layout offers nor text
     -- content affect it. Copy before scaling so Pango's layout stays untouched.
@@ -649,7 +657,7 @@ local function text_inputs(w, dpi)
         [layout:get_alignment()] or "left"
 
     cached = { dpi = dpi, text = text, font = font_input.font, font_input = font_input,
-        color = color, halign = halign, ellipsize = ellipsize == "END" }
+        color = color, attrs = attrs, halign = halign, ellipsize = ellipsize == "END" }
     p.clay_text_inputs = cached
     return cached
 end
@@ -677,7 +685,7 @@ local function describe_textbox(w, fg, st)
         color = { 0, 0, 0, 0 }
     end
     return { align = { x = inputs.halign, y = w._private.valign or "center" },
-        specs = { { text = inputs.text, font = inputs.font, color = color, wrap = "words",
+        specs = { { text = inputs.text, font = inputs.font, color = color, attrs = inputs.attrs, wrap = "words",
             halign = inputs.halign, ellipsize = inputs.ellipsize, name = "text" } } }
 end
 

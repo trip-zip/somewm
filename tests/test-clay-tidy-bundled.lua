@@ -8,6 +8,17 @@ local example = require('_clay_example')
 local checks = example.batch()
 local utils = require('_utils')
 local s = screen[1]
+local function hide_foreign()
+    local changed = false
+    for _, item in ipairs(systray_item.get_items()) do
+        if item.status ~= 'Passive' then
+            item.status = 'Passive'
+            changed = true
+        end
+    end
+    if changed then awesome.emit_signal('systray::update') end
+    return changed
+end
 local bar, c, clock, previous
 local buffers = {}
 local function image(size, red, green, blue)
@@ -41,6 +52,7 @@ local function resized(size, titlebar)
             return
         end
         if n < 4 then return end
+        if hide_foreign() then return end
         icons(size, titlebar)
         example.save('bundled-icons-'..(titlebar and 'titlebar-' or 'bar-')..size,
             awesome._clay_tree(s))
@@ -49,6 +61,7 @@ local function resized(size, titlebar)
 end
 local function settled(name)
     return function(n)
+        if hide_foreign() then return end
         local dump = awesome._clay_tree(s)
         if n<3 or previous~=dump then
             previous=dump
@@ -73,7 +86,7 @@ require('_runner').run_steps {
         for _, name in ipairs{'web','chat','media','misc'} do
             awful.tag.add(name, {screen=s, layout=awful.layout.suit.tile})
         end
-        for _, item in ipairs(systray_item.get_items()) do item.status='Passive' end
+        hide_foreign()
         local launcher = awful.widget.launcher {image=beautiful.awesome_icon,
             menu=awful.menu {items={}}}
         local tags = awful.widget.taglist {screen=s, filter=awful.widget.taglist.filter.all}
@@ -94,7 +107,11 @@ require('_runner').run_steps {
         return true
     end,
     settled('tidy-bundled-wibar'),
-    function() icons(32, false); return true end,
+    function(n)
+        if hide_foreign() then return end
+        icons(32, false)
+        return true
+    end,
     resized(48, false),
     resized(32, false),
     function()
@@ -133,7 +150,11 @@ require('_runner').run_steps {
         return true
     end,
     settled('tidy-bundled-titlebar'),
-    function() icons(30, true); return true end,
+    function(n)
+        if hide_foreign() then return end
+        icons(30, true)
+        return true
+    end,
     resized(42, true),
     resized(30, true),
     function() c:kill(); return true end,

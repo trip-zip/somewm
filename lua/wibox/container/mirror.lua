@@ -8,6 +8,7 @@
 -- @supermodule wibox.widget.base
 ---------------------------------------------------------------------------
 
+local clay = require("wibox.clay")
 local type = type
 local error = error
 local ipairs = ipairs
@@ -17,7 +18,9 @@ local gtable = require("gears.table")
 
 local mirror = { mt = {} }
 
-
+mirror._clay = { describe = function(w)
+    return clay.refuse(w, "reflection", "needs a reflection, and Clay has no transforms")
+end }
 
 --- The widget to be reflected.
 --

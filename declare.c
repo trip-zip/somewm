@@ -246,11 +246,42 @@ shape_ops(void *data, const struct render_shape *shape, float w, float h,
 	return len;
 }
 
+static size_t
+text_attrs(void *data, void *userData, const char *chars,
+    const struct render_text_attr **attrs)
+{
+    enum declare_kind kind = 0;
+    void *owner = declare_handle_get(declare_userdata_handle(userData), &kind);
+    struct widget_tree *tree = NULL;
+    *attrs = NULL;
+    if (!owner) return 0;
+    if (kind == DECLARE_KIND_DRAWIN) {
+        tree = &((drawin_t *)owner)->widgets;
+    } else if (kind == DECLARE_KIND_TITLEBAR) {
+        drawable_t *drawable = owner;
+        Client *c = drawable->owner_type == DRAWABLE_OWNER_CLIENT ? drawable->owner.client : NULL;
+        if (c)
+            for (int bar = 0; bar < CLIENT_TITLEBAR_COUNT; bar++)
+                if (c->titlebar[bar].drawable == drawable)
+                    tree = &c->titlebar[bar].widgets;
+    }
+    if (!tree || !tree->text) return 0;
+    for (size_t i = 0; i < tree->nodes_len; i++) {
+        const struct widget_node *n = &tree->nodes[i];
+        if (n->text && n->attr_len && tree->text + n->text_off == chars) {
+            *attrs = tree->text_attrs + n->attr_off;
+            return n->attr_len;
+        }
+    }
+    return 0;
+}
+
 void
 declare_set_client_hooks(const struct render_client_hooks *hooks)
 {
 	client_hooks = *hooks;
 	client_hooks.shape_ops = shape_ops;
+	client_hooks.text_attrs = text_attrs;
 }
 
 /* --- the handle registry --- */
@@ -535,7 +566,7 @@ leaf_userdata(uint64_t handle, float opacity)
 			<< RENDER_UD_OPACITY_SHIFT));
 }
 
-/* The word with its two clip bytes (render.h): the scope a rectangle opens
+/* The word with its two clip bytes (render.h): the scope a command opens
  * and the scope the command is clipped by. */
 static void *
 userdata_clip(void *word, unsigned opens, unsigned clipped_by)
@@ -1912,8 +1943,8 @@ declare_widget_subtree(const struct widget_host *host, size_t i, Clay_ElementId 
     if (recording && recording->exhausted) return widget_subtree_end(d, i);
 	const struct widget_node *n = &d->nodes[i];
 	void *word = userdata_clip(userdata,
-		i == 0 && host->inner_clip ? 0 : n->clip_opens,
-		i == 0 && host->inner_clip ? n->clip_opens : n->clip_by);
+		i == 0 && (host->inner_clip || host->path_clip) ? 0 : n->clip_opens,
+		i == 0 && (host->inner_clip || host->path_clip) ? n->clip_opens : n->clip_by);
 	Clay_ElementDeclaration e;
 	size_t next = i + 1;
 	ids[i] = id.id;
@@ -1985,9 +2016,7 @@ declare_widget_subtree(const struct widget_host *host, size_t i, Clay_ElementId 
 				? CLAY_SIZING_FIXED(host->h) : widget_sizing(n, 1),
 		};
 	}
-	/* A shaped drawin's masks, as the root's corners (drawin.h
-	 * shape_radius), which the root's clip scope carries to every node
-	 * under it. */
+	/* The content radius clips every node under a rounded drawin's root. */
 	if (i == 0 && host->radius > 0)
 		e.cornerRadius = (Clay_CornerRadius) { host->radius,
 			host->radius, host->radius, host->radius };
@@ -2146,6 +2175,22 @@ inner_clip_id(uint64_t handle)
 	return Clay__HashStringWithOffset(CLAY_STRING("CLIP"), (uint32_t)handle, 0);
 }
 
+static void
+drawin_path_frame(drawin_t *d, Clay_ElementDeclaration *frame)
+{
+	const color_t *color = &d->border_color_parsed;
+	d->shape.shape.stroke[0] = color->red;
+	d->shape.shape.stroke[1] = color->green;
+	d->shape.shape.stroke[2] = color->blue;
+	d->shape.shape.stroke[3] = color->alpha;
+	d->shape.shape.stroke_width = d->border_width;
+	frame->custom.customData = render_shape_tag(&d->shape.shape);
+	frame->userData = userdata_clip(leaf_userdata(
+		declare_handle_for(d, DECLARE_KIND_DRAWIN), 1), d->widgets.nodes[0].clip_opens, 0);
+	frame->border = (Clay_BorderElementConfig){0};
+	frame->cornerRadius = (Clay_CornerRadius){0};
+}
+
 /* A decorated host clips its padded content through an inner renderer
  * element, while its border and shadow keep their own areas. Rounded
  * content retains its separate mask scope. */
@@ -2157,11 +2202,11 @@ declare_widget_frame(drawin_t *d, struct widget_host *host, Clay_ElementId id,
 	void *word = leaf_userdata(handle, d->opacity >= 0 ? (float)d->opacity : 1.0f);
 	int16_t z = slot->floating.zIndex;
 	const struct widget_node *n = &host->tree->nodes[0];
-	if (!d->border_width && !shadow_get_effective_config(d->shadow_config, true)->enabled) {
+	if (!host->path_clip && !d->border_width && !shadow_get_effective_config(d->shadow_config, true)->enabled) {
 		declare_widget_slot(host, id, slot, role, src, z, word);
 		return;
 	}
-	host->inner_clip = host->radius <= 0 && n->radius == 0 && !n->shape;
+	host->inner_clip = !host->path_clip && host->radius <= 0 && n->radius == 0 && !n->shape;
 	native_open(id);
 	native_configure(slot);
 	record_open(role, handle, id, slot, src, host);
@@ -2218,7 +2263,7 @@ declare_drawin(drawin_t *d, Monitor *m, int16_t z)
 	struct widget_host host;
 	if (!drawin_widget_host(d, &host))
 		return;
-	if (!bw && !shadow_get_effective_config(d->shadow_config, true)->enabled) {
+	if (!host.path_clip && !bw && !shadow_get_effective_config(d->shadow_config, true)->enabled) {
 		declare_widget_tree(&host, z, leaf_userdata(handle, opacity));
 		return;
 	}
@@ -2237,6 +2282,8 @@ declare_drawin(drawin_t *d, Monitor *m, int16_t z)
 	};
 	if (host.radius > 0)
 		frame.cornerRadius = (Clay_CornerRadius){host.radius, host.radius, host.radius, host.radius};
+	if (host.path_clip)
+		drawin_path_frame(d, &frame);
 	host.flow = true;
 	host.told[0] = d->width;
 	host.told[1] = d->height;
@@ -2535,7 +2582,7 @@ declare_bar(drawin_t *d, Monitor *m, int16_t z)
 		slot.floating.zIndex = z;
 		slot.floating.pointerCaptureMode = CLAY_POINTER_CAPTURE_MODE_PASSTHROUGH;
 	}
-	if (d->bar.stretch && !mg[0] && !mg[1] && !mg[2] && !mg[3]) {
+	if (!bar->host.path_clip && d->bar.stretch && !mg[0] && !mg[1] && !mg[2] && !mg[3]) {
 		declare_widget_slot(&bar->host, id, &slot, "WIBAR", DECLARE_SRC_THEME,
 			z, leaf_userdata(handle, opacity));
 		return;
@@ -2543,7 +2590,26 @@ declare_bar(drawin_t *d, Monitor *m, int16_t z)
 	native_open(id);
 	native_configure(&slot);
 	record_open("WIBAR", handle, id, &slot, DECLARE_SRC_THEME, &bar->host);
+	if (bar->host.path_clip) {
+		int bw = d->border_width;
+		Clay_ElementDeclaration frame = {
+			.layout = {
+				.sizing = {
+					bar->host.told[0] ? CLAY_SIZING_FIXED(bar->host.told[0] + 2 * bw) : CLAY_SIZING_GROW(0),
+					bar->host.told[1] ? CLAY_SIZING_FIXED(bar->host.told[1] + 2 * bw) : CLAY_SIZING_GROW(0),
+				},
+				.padding = {bw, bw, bw, bw},
+			},
+		};
+		drawin_path_frame(d, &frame);
+		Clay_ElementId frame_id = Clay__HashStringWithOffset(CLAY_STRING("WIBOX"), (uint32_t)handle, 0);
+		native_open(frame_id);
+		native_configure(&frame);
+		record_open("WIBOX", handle, frame_id, &frame, DECLARE_SRC_THEME, &bar->host);
+	}
 	declare_widget_tree(&bar->host, z, leaf_userdata(handle, opacity));
+	if (bar->host.path_clip)
+		native_close();
 	native_close();
 }
 
@@ -2697,6 +2763,8 @@ attachment_decoration(drawin_t *d, Clay_ElementDeclaration *slot)
         float r = d->shape_radius;
         slot->cornerRadius = (Clay_CornerRadius){r, r, r, r};
     }
+    if (d->shape.ref != LUA_NOREF)
+        drawin_path_frame(d, slot);
     return (Clay_Dimensions){bw, bw};
 }
 
@@ -2950,7 +3018,7 @@ output_wallpaper_fill(Monitor *m, Clay_ElementId id, Clay_ElementDeclaration *o)
 			|| candidate->bar.edge || candidate->attachment.kind
 			|| candidate->ontop || candidate->border_width
 			|| (candidate->opacity >= 0 && candidate->opacity != 1)
-			|| candidate->shape_radius > 0)
+			|| candidate->shape_radius > 0 || candidate->shape.ref != LUA_NOREF)
 		return;
 	/* A desktop layer between OUTPUT and the wallpaper must retain its
 	 * previous occlusion. The ordinary wallpaper float supplies that order. */
@@ -3430,25 +3498,28 @@ pointer_over(Clay_ElementIdArray ids, Clay_ElementId id)
 	return false;
 }
 
-/* The preorder indices of the widget nodes Clay's pointer query named, in
- * preorder: parents before children, a stack's children bottom to top,
- * which is the order find_widgets has always answered in. */
+/* Clay supplies candidates in preorder. Renderer masks remove a rejected
+ * element and all its descendants without changing Clay's capture state. */
 static size_t
 widget_hits_walk(struct widget_tree *d, size_t i, Clay_ElementId id,
-	Clay_ElementIdArray ids, int *out, int *n, int cap, bool *captured)
+	Clay_ElementIdArray ids, int *out, int *n, int cap, bool *captured,
+	struct render_state *render, double x, double y, bool masked)
 {
 	const struct widget_node *node = &d->nodes[i];
 	size_t next = i + 1;
 
+	masked = masked || !render_point_in_masks(render, id.id, x, y);
 	if (pointer_over(ids, id)) {
-		if (node->widget && *n < cap)
+		if (!masked && node->widget && *n < cap)
 			out[(*n)++] = (int)i;
+		/* The scene==clay check describes Clay's rectangular traversal,
+		 * including capturing floats whose shaped pixels reject this point. */
 		if (node->floating && !node->passthrough)
 			*captured = true;
 	}
 	for (uint16_t k = 0; k < node->children; k++)
 		next = widget_hits_walk(d, next, widget_child_id(d, next, id, k),
-			ids, out, n, cap, captured);
+			ids, out, n, cap, captured, render, x, y, masked);
 	return next;
 }
 
@@ -3505,7 +3576,8 @@ declare_widget_hits(const struct widget_host *host, double x, double y, int *out
 	ids = Clay_GetPointerOverIds();
 	root_id = (Clay_ElementId) {.id = d->root_id};
 	bool captured = false;
-	widget_hits_walk(d, 0, root_id, ids, out, &n, cap, &captured);
+	widget_hits_walk(d, 0, root_id, ids, out, &n, cap, &captured,
+		band->render, host->x + x, host->y + y, false);
 #ifdef SOMEWM_RENDER_VERIFY
 	/* A capturing widget float stops Clay before the host root. It still
 	 * belongs to the scene's drawable; otherwise the query must reach the
@@ -4768,9 +4840,10 @@ dump_widget_line(buffer_t *buf, const struct widget_host *host, size_t i, Clay_E
 	buffer_addf(buf, "    %08x %*s%s", id.id, depth * 2, "",
 		n->name ? n->name : "-");
 	if (n->image) {
-		buffer_addf(buf, " image %dx%d", cairo_image_surface_get_width(
-			(cairo_surface_t *)n->image),
-			cairo_image_surface_get_height((cairo_surface_t *)n->image));
+		buffer_addf(buf, " image %dx%d", n->vector ? (int)n->image_size[0]
+			: cairo_image_surface_get_width((cairo_surface_t *)n->image),
+			n->vector ? (int)n->image_size[1]
+			: cairo_image_surface_get_height((cairo_surface_t *)n->image));
 		if (n->filter) {
 			static const char *const filters[] = {
 				"fast", "good", "best", "nearest", "bilinear"
@@ -4783,7 +4856,7 @@ dump_widget_line(buffer_t *buf, const struct widget_host *host, size_t i, Clay_E
 		buffer_adds(buf, " shape");
 	if (!n->widget && !n->text && !n->image)
 		buffer_adds(buf, " spacer");
-	if (n->clip_opens && !(i == 0 && host->inner_clip))
+	if (n->clip_opens && !(i == 0 && (host->inner_clip || host->path_clip)))
 		buffer_adds(buf, " clip");
 	if (n->scroll) {
 		Clay_ElementDeclaration e = { 0 };

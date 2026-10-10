@@ -108,6 +108,7 @@ jobs:
             libcairo2-dev \
             libpango1.0-dev \
             libgdk-pixbuf-2.0-dev \
+            librsvg2-dev \
             libglib2.0-dev \
             libgirepository1.0-dev \
             gir1.2-pango-1.0 \
@@ -259,6 +260,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+            librsvg2-dev \
             luajit lua5.1 lua5.2 lua5.3 lua5.4
 
       - name: Parse lua/ with every interpreter
@@ -322,6 +324,7 @@ jobs:
             libcairo2-dev \
             libpango1.0-dev \
             libgdk-pixbuf-2.0-dev \
+            librsvg2-dev \
             libglib2.0-dev
 
       - name: Checkout

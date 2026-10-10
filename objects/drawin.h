@@ -55,9 +55,7 @@ typedef struct drawin_t {
 	bool ontop;                    /* Should drawin be above other windows? */
 	char *cursor;                  /* Mouse cursor name (e.g., "left_ptr") */
 
-	/* Surface scale override (somewm extension, not in AwesomeWM).
-	 * 0.0 = auto (use output scale), >0.0 = force this scale for masks and borders.
-	 * Avoids HiDPI CPU upscaling for content like screenshot overlays. */
+	/* Stored surface_scale compatibility value; rendering uses the output scale. */
 	float scale_override;
 
 	/* Screen assignment */
@@ -72,18 +70,11 @@ typedef struct drawin_t {
 	/* Shadow support (compositor-level, replaces picom shadows) */
 	shadow_config_t *shadow_config;         /* Per-drawin override (NULL = use defaults) */
 
-	/* Shape properties (AwesomeWM compatibility)
-	 * These are cairo_surface_t* alpha masks, either A1 (AwesomeWM's
-	 * format) or ARGB32 (somewm's, for anti-aliased edges).
-	 * NULL means no custom shape (full rectangle). */
-	cairo_surface_t *shape_bounding;        /* Visual bounding shape (rounded corners, etc.) */
-	cairo_surface_t *shape_clip;            /* Drawing clip region */
-	cairo_surface_t *shape_input;           /* Input hit-test region (click-through) */
-	/* Content corner radius of rounded bounding and clip masks, including
-	 * bordered shapes. -1 means the masks are not one rounded rectangle
-	 * and the converted drawin draws unshaped. Set at every mask change. */
+	struct widget_shape shape;
+	/* Content corner radius; -1 selects the path or an unshaped rectangle. */
 	float shape_radius;
-	bool shape_warned;
+	bool shape_mask_warned;
+	bool input_passthrough;
 
 	/* Native shadow style; tiles are shared by the renderer. */
 	struct render_shadow shadow;

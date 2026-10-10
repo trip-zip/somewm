@@ -3,12 +3,13 @@
  *
  * lua/wibox/clay.lua walks a drawable's widget tree and describes what Clay
  * can solve as a tree of nodes. This file reads the description off the Lua
- * stack, stores it on the owner, and references image surfaces. It holds no Clay:
+ * stack, stores it on the owner, and references image sources. It holds no Clay:
  * declaring the tree is declare.c's and drawing it is the renderer's, so a
  * node here is nothing but the numbers Lua handed over.
  */
 
 #include <string.h>
+#include <math.h>
 
 #include <lauxlib.h>
 
@@ -182,6 +183,50 @@ read_word(lua_State *L, int idx, const char *name, const char *const *words,
  * a redraw reads into both and usually finds the stored tree unchanged. */
 static char text_buf[WIDGET_TEXT_MAX];
 static size_t text_len;
+static struct render_text_attr text_attrs_buf[WIDGET_TEXT_MAX];
+static size_t text_attrs_len;
+
+static bool
+read_text_attrs(lua_State *L, int idx, struct widget_node *n)
+{
+    lua_getfield(L, idx, "attrs");
+    if (lua_isnil(L, -1)) {
+        lua_pop(L, 1);
+        return true;
+    }
+    bool ok = lua_istable(L, -1);
+    size_t count = ok ? luaA_rawlen(L, -1) : 0;
+    ok = ok && count % 7 == 0 && count / 7 <= WIDGET_TEXT_MAX - text_attrs_len;
+    n->attr_off = (uint32_t)text_attrs_len;
+    n->attr_len = (uint32_t)(count / 7);
+    for (size_t i = 0; ok && i < count; i += 7) {
+        double v[7];
+        for (int k = 0; k < 7; k++) {
+            lua_rawgeti(L, -1, i + k + 1);
+            v[k] = lua_tonumber(L, -1);
+            ok = ok && lua_type(L, -1) == LUA_TNUMBER && isfinite(v[k]);
+            lua_pop(L, 1);
+        }
+        ok = ok && v[0] >= 0 && v[0] <= v[1] && v[1] <= n->text_len
+            && v[0] == floor(v[0]) && v[1] == floor(v[1])
+            && v[2] >= RENDER_TEXT_FOREGROUND && v[2] <= RENDER_TEXT_STRIKETHROUGH
+            && v[2] == floor(v[2]);
+        for (int k = 3; ok && k < 7; k++) {
+            double max = k == 3 && v[2] == RENDER_TEXT_UNDERLINE
+                ? PANGO_UNDERLINE_ERROR_LINE : 1;
+            ok = v[k] >= 0 && v[k] <= max;
+        }
+        if (!ok) break;
+        struct render_text_attr *attr = &text_attrs_buf[text_attrs_len++];
+        memset(attr, 0, sizeof(*attr));
+        attr->start = (uint32_t)v[0];
+        attr->end = (uint32_t)v[1];
+        attr->kind = (uint8_t)v[2];
+        for (int k = 0; k < 4; k++) attr->value[k] = (float)v[k + 3];
+    }
+    lua_pop(L, 1);
+    return ok;
+}
 
 /* A text node: the run, appended to the scratch text, and its config, in
  * Clay's own words (Clay_TextElementConfigWrapMode, Clay_TextAlignment). */
@@ -210,7 +255,8 @@ read_text(lua_State *L, int idx, struct widget_node *n)
 	text_len += len;
 	lua_pop(L, 1);
 
-	ok = read_number(L, idx, "font", 0, UINT16_MAX, &font)
+	ok = read_text_attrs(L, idx, n)
+		&& read_number(L, idx, "font", 0, UINT16_MAX, &font)
 		&& read_quad(L, idx, "color", n->fg)
 		&& read_word(L, idx, "wrap", wraps, 3, &n->wrap)
 		&& read_word(L, idx, "halign", aligns, 3, &n->text_align);
@@ -361,6 +407,10 @@ read_node(lua_State *L, int idx, struct widget_node *n)
 	ok = ok && (lua_isnil(L, -1) || lua_isboolean(L, -1));
 	n->passthrough = lua_isnil(L, -1) || lua_toboolean(L, -1);
 	lua_pop(L, 1);
+	lua_getfield(L, idx, "vector");
+	ok = ok && (lua_isnil(L, -1) || lua_isboolean(L, -1));
+	n->vector = lua_toboolean(L, -1);
+	lua_pop(L, 1);
 	lua_getfield(L, idx, "image");
 	if (lua_islightuserdata(L, -1)) {
 		n->image = lua_touserdata(L, -1);
@@ -373,7 +423,7 @@ read_node(lua_State *L, int idx, struct widget_node *n)
 				|| !read_number(L, idx, "image_width", 0, 1e6, &n->image_size[0])
 				|| !read_number(L, idx, "image_height", 0, 1e6, &n->image_size[1]))
 			return false;
-		if (n->aspect > 0 && (n->image_size[0] <= 0 || n->image_size[1] <= 0)) {
+		if (!n->vector && n->aspect > 0 && (n->image_size[0] <= 0 || n->image_size[1] <= 0)) {
 			n->image_size[0] = cairo_image_surface_get_width((cairo_surface_t *)n->image);
 			n->image_size[1] = cairo_image_surface_get_height((cairo_surface_t *)n->image);
 		}
@@ -498,18 +548,19 @@ read_tree(lua_State *L, int idx, struct widget_node *nodes, size_t *len,
 		(*leaves)++;
 	n->clip_by = (uint8_t)clip_by;
 
+	lua_getfield(L, idx, "clip");
+	bool shape_clip = n->shape && lua_toboolean(L, -1);
+	lua_pop(L, 1);
 	lua_getfield(L, idx, "children");
 	ok = lua_isnil(L, -1) || (lua_istable(L, -1) && !n->text);
 	count = ok ? luaA_rawlen(L, -1) : 0;
 	n->children = (uint16_t)count;
-	if (ok && (*len == 1 || (n->radius > 0 && count > 0))) {
+	if (ok && (*len == 1 || ((n->radius > 0 || shape_clip) && count > 0))) {
 		if (*clips == WIDGET_CLIPS_MAX)
 			ok = false;
 		n->clip_opens = (uint8_t)++*clips;
 		clip_by = n->clip_opens;
 	}
-	if (n->shape && count > 0 && n->clip_opens)
-		ok = false;
 	for (size_t i = 0; ok && i < count; i++) {
 		lua_rawgeti(L, -1, (int)i + 1);
 		ok = read_tree(L, lua_gettop(L), nodes, len, leaves, clip_by, clips, shapes, anchors);
@@ -556,12 +607,17 @@ widget_leaves_set(struct widget_tree *d)
 			entry->natural = n->natural;
 			entry->gen++;
 		}
-		/* The widget's own surface: referenced, and a new reference only
-		 * when it is another surface, so its generation moves with it. */
-		cairo_surface_t *surface = (cairo_surface_t *)n->image;
-
-		if (entry->native != surface)
-			image_entry_set(entry, cairo_surface_reference(surface));
+		if (n->vector) {
+			if (entry->vector != n->image) {
+				image_entry_set(entry, NULL);
+				entry->vector = g_object_ref((void *)n->image);
+				entry->width = n->image_size[0];
+				entry->height = n->image_size[1];
+				entry->gen++;
+			}
+		} else if (entry->native != n->image) {
+			image_entry_set(entry, cairo_surface_reference((cairo_surface_t *)n->image));
+		}
 	}
 }
 
@@ -600,6 +656,7 @@ size_t widget_tree_bytes(const struct widget_tree *d)
 {
     return sizeof(*d) + d->nodes_len * (sizeof(*d->nodes) + sizeof(*d->ids))
         + d->bindings_len * sizeof(*d->bindings) + d->text_len
+        + d->text_attrs_len * sizeof(*d->text_attrs)
         + d->leaves_len * sizeof(*d->leaves) + d->shapes_len * sizeof(*d->shapes);
 }
 
@@ -628,16 +685,21 @@ static bool widget_writable(struct widget_tree *d)
     if (copy.field) memcpy(copy.field, d->field, d->count * sizeof(*d->field)); \
 } while (0)
     DUP(nodes, nodes_len); DUP(bindings, bindings_len); DUP(text, text_len);
+    DUP(text_attrs, text_attrs_len);
     DUP(leaves, leaves_len); DUP(shapes, shapes_len);
 #undef DUP
     if ((d->nodes_len && !copy.nodes) || (d->bindings_len && !copy.bindings)
             || (d->text_len && !copy.text) || (d->leaves_len && !copy.leaves)
-            || (d->shapes_len && !copy.shapes)) {
+            || (d->shapes_len && !copy.shapes)
+            || (d->text_attrs_len && !copy.text_attrs)) {
+        free(copy.text_attrs);
         free(copy.nodes); free(copy.bindings); free(copy.text); free(copy.leaves); free(copy.shapes);
         return false;
     }
-    for (size_t i = 0; i < copy.leaves_len; i++)
+    for (size_t i = 0; i < copy.leaves_len; i++) {
         if (copy.leaves[i].native) cairo_surface_reference(copy.leaves[i].native);
+        if (copy.leaves[i].vector) g_object_ref(copy.leaves[i].vector);
+    }
     for (size_t i = 0; i < copy.shapes_len; i++) {
         lua_rawgeti(globalconf.L, LUA_REGISTRYINDEX, copy.shapes[i].ref);
         copy.shapes[i].ref = luaL_ref(globalconf.L, LUA_REGISTRYINDEX);
@@ -674,6 +736,8 @@ widget_nodes_clear(struct widget_tree *d)
 	d->scrolls = 0;
 	p_delete(&d->text);
 	d->text_len = 0;
+	p_delete(&d->text_attrs);
+	d->text_attrs_len = 0;
 	d->declared = false;
 }
 
@@ -747,6 +811,7 @@ widget_nodes_set(lua_State *L, struct widget_tree *d, Monitor *m, int idx)
 	unsigned clips = 0;
 
 	text_len = 0;
+	text_attrs_len = 0;
 	binding_len = 0;
 	if (!lua_istable(L, idx))
 		return nodes_drop(d, WIDGET_NODES_NONE);
@@ -820,6 +885,9 @@ widget_nodes_set(lua_State *L, struct widget_tree *d, Monitor *m, int idx)
 	p_delete(&d->text);
 	d->text = text_len ? p_dup(text_buf, text_len) : NULL;
 	d->text_len = text_len;
+	p_delete(&d->text_attrs);
+	d->text_attrs = text_attrs_len ? p_dup(text_attrs_buf, text_attrs_len) : NULL;
+	d->text_attrs_len = text_attrs_len;
 	d->declared = false;
 	return true;
 }

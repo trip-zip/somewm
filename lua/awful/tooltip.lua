@@ -59,6 +59,17 @@ local capi = {mouse=mouse, awesome=awesome}
 
 local tooltip = { mt = {} }
 
+local align_attachments = {
+    top_left     = { 'top', 'back' },
+    left         = { 'left', 'middle' },
+    bottom_left  = { 'bottom', 'back' },
+    right        = { 'right', 'middle' },
+    top_right    = { 'top', 'front' },
+    bottom_right = { 'bottom', 'front' },
+    top          = { 'top', 'middle' },
+    bottom       = { 'bottom', 'middle' },
+}
+
 --- The tooltip border color.
 -- @beautiful beautiful.tooltip_border_color
 -- @param color
@@ -102,23 +113,36 @@ local function set_geometry(self)
     local gaps = self._private.gaps
     local pos = self.preferred_positions
     local anchors = self.preferred_alignments
+    local align
     if self.mode == 'mouse' and not self._private.preferred_positions then
-        -- Default tooltips open inward from the hover input snapshot. These
-        -- select attachment points only; no tooltip or sibling rectangle is
-        -- measured or corrected after the solve. Explicit positions win.
-        pos = {self._private.hover_position or 'bottom'}
-        if not self._private.preferred_alignments then
-            anchors = {self._private.hover_anchor or 'front'}
+        align = align_attachments[self._private.align]
+        if align then
+            pos, anchors = {align[1]}, {align[2]}
+        else
+            -- Default tooltips open inward from the hover input snapshot.
+            pos = {self._private.hover_position or 'bottom'}
+            if not self._private.preferred_alignments then
+                anchors = {self._private.hover_anchor or 'front'}
+            end
         end
     end
     local direction = type(pos)=='table' and pos[1] or pos or 'bottom'
     local gap = type(gaps)=='number' and gaps or (gaps and gaps[direction]) or 0
     local offset = {x=direction=='left' and -gap or direction=='right' and gap or 0,
         y=direction=='top' and -gap or direction=='bottom' and gap or 0}
-    self.current_position = attachment.next_to(w, self._private.target or capi.mouse.current_widget,
-        pos or {'bottom'}, anchors or {'middle'}, offset, 2)
+    if align then
+        local name = self._private.align
+        offset.x = offset.x + ((name == 'right' or name == 'bottom_right') and 1 or 0)
+        offset.y = offset.y + ((name == 'bottom' or name == 'bottom_right') and 1 or 0)
+        w.screen = capi.mouse.screen
+        self.current_position = attachment.next_to(w, capi.mouse.coords(),
+            {align[1]}, {align[2]}, offset, 1)
+    else
+        self.current_position = attachment.next_to(w, self._private.target or capi.mouse.current_widget,
+            pos or {'bottom'}, anchors or {'middle'}, offset, 2)
+    end
     local a=w.drawin.attachment
-    a.passthrough=true; a.hover=true
+    a.passthrough=true; a.hover=not align
     w.drawin.attachment=a
 end
 
@@ -237,11 +261,11 @@ end
 -- @see align
 
 function tooltip:get_align()
-    return self._private.align
+    return self._private.align or "right"
 end
 
 function tooltip:set_align(value)
-    if not align_convert[value] then
+    if not align_attachments[value] then
         return
     end
 
@@ -268,10 +292,10 @@ function tooltip:set_shape(s)
 end
 
 --- Set the tooltip positioning mode.
--- Tooltips attach to their widget. The default mouse mode chooses inward
--- attachment points from the pointer input captured when opening. Outside
--- mode uses the preferred positions and alignments. Explicit preferred
--- positions also override the default mouse policy.
+-- Tooltips attach to their widget by default, choosing inward attachment
+-- points from the pointer input captured when opening. An explicit mouse-mode
+-- align attaches to the pointer. Outside mode uses the preferred positions
+-- and alignments. Explicit preferred positions also override the mouse policy.
 --
 -- **mouse:**
 --
@@ -614,7 +638,8 @@ function tooltip.new(args)
     rawset(self,"_private", {})
 
     self._private.visible = false
-    self._private.align   = args.align or beautiful.tooltip_align  or "right"
+    local align = args.align or beautiful.tooltip_align
+    self._private.align   = align_attachments[align] and align or nil
     self._private.shape   = args.shape or beautiful.tooltip_shape
                                 or shape.rectangle
     self._private.gaps  = args.gaps or beautiful.tooltip_gaps or {

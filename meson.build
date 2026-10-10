@@ -96,6 +96,7 @@ cairo = dependency('cairo')
 cairo_xlib = dependency('cairo-xlib')
 pangocairo = dependency('pangocairo')
 gdk_pixbuf = dependency('gdk-pixbuf-2.0')
+librsvg = dependency('librsvg-2.0', version: '>=2.52')
 
 # Xwayland dependencies (optional)
 if xwayland_option.enabled() or xwayland_option.auto()
@@ -550,6 +551,7 @@ all_deps = [
   cairo_xlib,
   pangocairo,
   gdk_pixbuf,
+  librsvg,
   lua_dep,
   wlroots,
   m_dep,
@@ -615,7 +617,7 @@ test_render = executable(
   ['tests/test-render.c', render_sources],
   include_directories: somewm_inc,
   link_with: clay_lib,
-  dependencies: [wlroots, wayland_server, cairo, pangocairo, m_dep],
+  dependencies: [wlroots, wayland_server, cairo, pangocairo, librsvg, m_dep],
   c_args: ['-DSOMEWM_RENDER_VERIFY'],
   install: false,
 )
@@ -633,7 +635,7 @@ test_clay_solver = executable(
   'test-clay-solver',
   ['tests/test-clay-solver.c', render_sources],
   include_directories: somewm_inc,
-  dependencies: [wlroots, wayland_server, cairo, pangocairo, m_dep],
+  dependencies: [wlroots, wayland_server, cairo, pangocairo, librsvg, m_dep],
   c_args: ['-DSOMEWM_RENDER_VERIFY'],
   override_options: ['b_ndebug=false'],
   install: false,
