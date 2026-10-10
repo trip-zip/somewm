@@ -139,6 +139,11 @@ runner.run_async(function()
     g:remove(c);g:remove(a);g:add_widget_at(a,1,1,2,1);frame('row-span')
     assert(warnings('wibox.layout.grid row_span occupies its first row only')==1)
     pixel(popup,15,15,'#ff0000');pixel(popup,15,45,'#ffffff')
+    g.border_color={inner=gradient,outer='#ffffff'};frame('hole-gradient')
+    assert(awesome._clay_tree(screen[1]):find(' fill linear 0,0 63,0 stops 0:1,0,0,1 1:0,0,1,1',1,true),'the hole carries no fill record')
+    assert(not pcall(pixel,popup,2,45,'#ffffff'),'the hole is still white')
+    assert(warnings('wibox.layout.grid border_color is not a solid color and is transparent')==1)
+    g.border_color='#ffffff'
     local ab=hit(popup,a,10,10)
     assert(ab.height==20)
     local calls={}

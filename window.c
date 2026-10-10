@@ -477,6 +477,8 @@ createnotify(struct wl_listener *listener, void *data)
 	/* Initialize opacity to -1 (unset) so commitnotify doesn't apply 0% opacity.
 	 * -1 means "use default" (fully opaque). 0 would mean fully transparent. */
 	c->opacity = -1;
+	/* Honored by default, as the property documents. */
+	c->size_hints_honor = true;
 
 	/* Link to Wayland surface (adapts X11 window linkage to Wayland) */
 	toplevel->base->data = c;
@@ -504,12 +506,6 @@ createnotify(struct wl_listener *listener, void *data)
 	 * Duplicate client on stack, then take a reference for the array */
 	lua_pushvalue(L, -1);
 	client_array_push(&globalconf.clients, luaA_object_ref(L, -1));
-
-	/* Add to stack (matches AwesomeWM client_manage) */
-	stack_client_push(c);
-
-	/* Emit client::list signal (matches AwesomeWM line 2266) */
-	some_event_queue_class(&client_class, SIG_LIST);
 
 	/* Keep client on Lua stack - it will be used by mapnotify() later
 	 * DO NOT emit manage signal here - AwesomeWM emits it at end of client_manage,
@@ -875,11 +871,12 @@ mapnotify(struct wl_listener *listener, void *data)
 	if (c->client_type == X11 && c->window == XCB_NONE) {
 		c->window = c->surface.xwayland->window_id;
 		client_array_push(&globalconf.clients, c);
-		stack_client_push(c);
-		luaA_class_emit_signal(globalconf_get_lua_State(),
-			&client_class, "list", 0);
 	}
 #endif
+
+	/* Listed from the first map, as AwesomeWM's client_manage does. */
+	stack_client_push(c);
+	some_event_queue_class(&client_class, SIG_LIST);
 
 	/* Handle unmanaged clients first: they skip the manage machinery */
 	if (client_is_unmanaged(c)) {

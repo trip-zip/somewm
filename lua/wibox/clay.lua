@@ -330,28 +330,36 @@ function clay.systray_icon(w)
         return clay.refuse(w, "icon", "has no pixmap and no icon file to draw")
     end
 
+    local fill = clay.fill(background)
+    if background and not fill then
+        clay.ignore(w, urgent and "urgent_bg" or "hover_bg", "is not a solid or a gradient and is transparent")
+    end
     local word = p.forced_size and "user" or "theme"
-    local node = { w = sw, h = sh, wsrc = word, hsrc = word, bg = solid_rgba(background),
+    local node = clay.bg_fill({ w = sw, h = sh, wsrc = word, hsrc = word,
         align = { x = "center", y = "center" },
         specs = { { image = surface, name = "image",
             aspect = iw / ih, image_width = iw, image_height = ih,
-            wmax = sw, hmax = sh, wsrc = word, hsrc = word } } }
+            wmax = sw, hmax = sh, wsrc = word, hsrc = word } } }, fill)
     if item.overlay_icon and beautiful.systray_show_overlay ~= false then
         local overlay_size = style.overlay_size or beautiful.systray_overlay_size or 0.33
         local extent = clay.round(overlay_size <= 1 and overlay_size * size or overlay_size)
-        local bg = solid_rgba(style.overlay_bg or beautiful.systray_overlay_bg)
-        local padding = bg and clay.pixels(w, "overlay_padding",
+        local overlay_bg = style.overlay_bg or beautiful.systray_overlay_bg
+        local overlay_fill = clay.fill(overlay_bg)
+        if overlay_bg and not overlay_fill then
+            clay.ignore(w, "overlay_bg", "is not a solid or a gradient and is transparent")
+        end
+        local padding = overlay_fill and clay.pixels(w, "overlay_padding",
             style.overlay_padding or beautiful.systray_overlay_padding or 2) or 0
         local position = style.overlay_position or beautiful.systray_overlay_position or "bottom_right"
         local corner = ({top_left = 0, bottom_left = 2, top_right = 6, bottom_right = 8})[position] or 8
         local overlay_shape = style.overlay_shape or beautiful.systray_overlay_shape or "circle"
-        node.specs[2] = { float = true, parent = corner, own = corner,
-            w = extent, h = extent, wsrc = "theme", hsrc = "theme", bg = bg,
+        node.specs[2] = clay.bg_fill({ float = true, parent = corner, own = corner,
+            w = extent, h = extent, wsrc = "theme", hsrc = "theme",
             pad = {padding, padding, padding, padding},
-            radius = bg and (overlay_shape == "circle" and extent / 2
+            radius = overlay_fill and (overlay_shape == "circle" and extent / 2
                 or overlay_shape == "rounded_rect" and extent / 4 or nil) or nil,
             children = { { image = item.overlay_icon, name = "image",
-                w = "grow", h = "grow" } } }
+                w = "grow", h = "grow" } } }, overlay_fill)
     end
     return node
 end

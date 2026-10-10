@@ -96,7 +96,7 @@ runner.run_async(function()
         if wide then break end
         async.sleep(0.02)
     end
-    wide=assert(wide);wide.floating,wide.shadow,wide.border_width,wide.size_hints_honor=false,false,1,true
+    wide=assert(wide);wide.floating,wide.shadow,wide.border_width=false,false,1
     clients[1]=wide
     for i,wanted in ipairs(clients) do
         local current=awful.client.tiled(s)[i]

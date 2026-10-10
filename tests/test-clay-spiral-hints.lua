@@ -19,7 +19,6 @@ runner.run_async(function()
     end
     assert(a and b)
     for _, c in ipairs {a, b} do c.floating, c.shadow, c.border_width = false, false, 1 end
-    a.size_hints_honor = true
     if awful.client.tiled(s)[1] ~= a then a:swap(b) end
     s.selected_tag.gap, s.selected_tag.master_width_factor = 0, 0.5
     local failures, events = {}, {}

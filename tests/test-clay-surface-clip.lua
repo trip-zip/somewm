@@ -72,7 +72,7 @@ runner.run_async(function()
             c = utils.find_client_by_class(class)
             return c ~= nil
         end, 2, .02), 'client did not map: ' .. class)
-        c.floating, c.shadow, c.border_width, c.size_hints_honor = false, false, 1, true
+        c.floating, c.shadow, c.border_width = false, false, 1
         inputs.columns = {{clients = {c}, width_fraction = 1}}
         return c
     end
