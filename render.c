@@ -1498,6 +1498,18 @@ static int reconcile_text(struct render_state *rs, struct rnode *n,
 	Clay_TextRenderData *td = &cmd->renderData.text;
 	int muts = 0;
 
+	/* Clay emits a line of length -1 when a word wider than its box is
+	 * followed by a space and a newline (clay.h:2614-2615). It is an empty
+	 * line: nothing reads the slice, and its box is -spaceWidth wide, so
+	 * the node stays hidden below. */
+	if (td->stringContents.length < 0) {
+		if (n->node == NULL) {
+			n->node = &wlr_scene_buffer_create(rs->tree, NULL)->node;
+			rs->created++;
+		}
+		return 0;
+	}
+
     const struct render_text_attr *attrs = NULL;
     size_t attrs_len = hooks && hooks->text_attrs
         ? hooks->text_attrs(hooks->data, cmd->userData, td->stringContents.chars, &attrs) : 0;

@@ -1112,6 +1112,32 @@ static void test_text_rasters_once_per_change(void) {
 	fixture_finish(&f, &no_hooks);
 }
 
+/* Clay's line of length -1: a word wider than its box, a space, a newline
+ * (clay.h:2614-2615). Its chars sit at the newline and its box is
+ * -spaceWidth wide. It draws nothing and copies nothing. */
+static void test_text_negative_length_is_empty(void) {
+	struct fixture f;
+	fixture_init(&f);
+	const char *rest = "\nb";
+	Clay_RenderCommand cmds[] = { cmd_text(1, 0, 20, -7, 20, rest, false) };
+	cmds[0].renderData.text.stringContents.length = -1;
+
+	render_reconcile(f.rs, commands_of(cmds, 1), &no_hooks, no_bounds);
+	struct wlr_scene_tree *rt = render_tree(f.parent);
+	CHECK_EQ(child_count(rt), 1);
+	CHECK(!child_at(rt, 0)->enabled);
+	CHECK_EQ(render_raster_bytes(f.rs), 0);
+	CHECK_EQ(render_reconcile(f.rs, commands_of(cmds, 1), &no_hooks, no_bounds), 0);
+
+	/* The same line with real text draws. */
+	cmds[0] = cmd_text(1, 0, 20, 7, 20, "b", false);
+	render_reconcile(f.rs, commands_of(cmds, 1), &no_hooks, no_bounds);
+	CHECK(child_at(rt, 0)->enabled);
+	CHECK(render_raster_bytes(f.rs) > 0);
+
+	fixture_finish(&f, &no_hooks);
+}
+
 static size_t markup_attrs(void *data, void *word, const char *chars,
         const struct render_text_attr **attrs) {
     (void)word;
@@ -2054,6 +2080,7 @@ int main(void) {
 		{ "custom crops to its clip", test_custom_crops_to_its_clip },
 		{ "float boxes round", test_float_boxes_round },
 		{ "text rasters once per change", test_text_rasters_once_per_change },
+		{ "text of length -1 is an empty line", test_text_negative_length_is_empty },
 		{ "text attributes", test_text_attributes },
 		{ "text crops to its clip", test_text_crops_to_its_clip },
 		{ "fractional text matches Pango", test_fractional_text_clipping },
