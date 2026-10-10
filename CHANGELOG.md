@@ -2,6 +2,85 @@
 
 All notable changes to somewm will be documented in this file.
 
+## [2.0.1] - 2026-10-10
+
+Patch release. 37 commits since 2.0.0: drawing tablets, touchscreens, fake
+screens, hot-reload fixes, `somewm --check`, and builds on more platforms.
+Only additions to the API, apart from shadow `clip_directional` no longer
+having an effect; existing rc.lua configs run unchanged.
+
+### Added
+
+- Drawing tablets (tablet-v2). Pressure, tilt, distance, rotation, slider,
+  wheel, and pad buttons, rings and strips reach apps that support tablets;
+  other apps, wibars and titlebars get pointer motion and a left click on tip.
+  `awful.input.rules` take `tool_mode`, `map_to_output`, `map_to_region` and
+  `map_from_region`
+- `map_to_output` takes a connector name, a `"make model serial"` identifier
+  that survives the connector being renumbered, or a list tried in order
+- Touchscreens (`wl_touch`). A tap clicks apps that do not handle touch,
+  wibars and titlebars included; `emulate_pointer = false` in a touch rule
+  turns that off. When only one output is enabled, a touch device or tablet
+  maps onto it by default
+- `awesome.dpms_ignore_activity = true` stops input from turning monitors back
+  on after DPMS off
+- A panic prints Lua and C tracebacks
+- An unsupported input device is logged
+- `somewm --check` flags a GTK app run inside the compositor,
+  `Gtk.IconTheme.get_default()` and bare `xrdb`, and links each finding to its
+  section on the migration page
+
+### Changed
+
+- Client and wibox shadows are a rounded nine-patch: the frame grown by
+  `spread`, moved by its offset and faded over `radius` on every side, with
+  `corner_radius` applied and the color's alpha multiplying `opacity`. This
+  removes the double-blended fill and the hard corner cutoffs.
+  `clip_directional` and `beautiful.shadow_clip` no longer have an effect
+- The boot scan of the config only warns; a matched X11 pattern no longer
+  makes somewm skip the config
+- Type and range errors from somewm's C functions no longer carry a traceback
+  inside the error message
+
+### Fixed
+
+- `awesome.startup` is true during a hot-reload, as it is on an AwesomeWM
+  restart
+- Moving the pointer over an open popup after a hot-reload no longer reads
+  freed memory
+- Fake screens are arranged and show their own tags, each has its own workarea
+  from its wibar struts, and a wibar moves to a remaining screen when its fake
+  screen is removed
+- Titlebar button events on the left, right and bottom titlebars carry
+  titlebar-relative coordinates, so clicks land on the right button
+- Key bindings accept literal Unicode keys such as `"ä"`, and prompts count
+  UTF-8 characters correctly
+- libinput settings such as `tap_to_click` and `accel_speed` apply to every
+  input device, not only pointers
+- `c.content` and `root.content` crop client-side decoration shadow margins
+  instead of squeezing them in, and follow the buffer transform
+- Fractional `awful.placement` margins and offsets are rounded to whole
+  pixels; they grew an attached drawable by a pixel per pass until the stack
+  overflowed. Port of AwesomeWM PR #4122
+- `somewm --check` and the boot scan read the same files: the whole config,
+  including modules required without a dot in the name, found through Lua's
+  package path, but not somewm's own libraries or installed rocks, which
+  `--check` no longer reports missing. `somewm --check rc.lua` with no
+  directory reads the whole config
+- `somewm --check` reports each finding once with its line, no longer takes
+  `xsettingsd` for `xset`, and reports an unbound `get_xproperty` or
+  `set_xproperty` call as critical rather than a warning, since the config
+  cannot load
+- `somewm-client test start` keeps the nested compositor's log when the start
+  fails, instead of deleting it right after printing its path
+- The default config starts without warnings: an absent XDG data directory is
+  treated as empty rather than warned about, and when no output is at scale 1
+  `root.cursor()` accepts cursor names and XWayland gets its root cursor
+- The systemd session wrapper no longer deletes other Wayland sessions'
+  sockets from `XDG_RUNTIME_DIR`
+- Builds on libcs without `execinfo` or `dlvsym`, such as musl; on 32-bit
+  platforms; and on distributions whose PAM ships no `pam.pc`, such as Debian
+
 ## [2.0.0] - 2026-08-28
 
 Major release. 202 commits since 1.4.0. The Lua/C boundary is reworked: C
