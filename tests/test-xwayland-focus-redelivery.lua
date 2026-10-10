@@ -21,24 +21,15 @@ local function is_headless()
 end
 
 if is_headless() then
-    io.stderr:write("SKIP: XWayland tests require visual mode (HEADLESS=0)\n")
-    io.stderr:write("Test finished successfully.\n")
-    awesome.quit()
-    return
+    return runner.skip("XWayland tests require visual mode (HEADLESS=0)")
 end
 
 if not x11_client.is_available() then
-    io.stderr:write("SKIP: no X11 application available (install xterm)\n")
-    io.stderr:write("Test finished successfully.\n")
-    awesome.quit()
-    return
+    return runner.skip("no X11 application available (install xterm)")
 end
 
 if not test_client.is_available() then
-    io.stderr:write("SKIP: no Wayland terminal available for test clients\n")
-    io.stderr:write("Test finished successfully.\n")
-    awesome.quit()
-    return
+    return runner.skip("no Wayland terminal available for test clients")
 end
 
 local wayland_c
@@ -129,7 +120,7 @@ local steps = {
             io.stderr:write("[TEST] Cleanup\n")
             if wayland_c and wayland_c.valid then wayland_c:kill() end
             if x11_c and x11_c.valid then x11_c:kill() end
-            os.execute("pkill -9 xterm 2>/dev/null")
+            x11_client.terminate()
         end
         if #client.get() == 0 then return true end
         if count >= 10 then

@@ -8,10 +8,7 @@ local example = require('_clay_example')
 local s = screen[1]
 
 if os.getenv("WLR_BACKENDS") == "headless" then
-    io.stderr:write("SKIP: XWayland tests require visual mode (HEADLESS=0)\n")
-    io.stderr:write("Test finished successfully.\n")
-    awesome.quit()
-    return
+    return runner.skip("XWayland tests require visual mode (HEADLESS=0)")
 end
 
 local HINTS_CLIENT = utils.binary_or_skip('./build-test/test-x11-hints-client')

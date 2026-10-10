@@ -141,7 +141,7 @@ local steps = {
             return true
         end
         if count >= 10 then
-            os.execute("pkill -9 test-transient-client 2>/dev/null")
+            if type(proc_pid) == "number" then awesome.kill(proc_pid, 9) end
             return true
         end
     end,

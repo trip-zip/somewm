@@ -20,10 +20,7 @@ local runner = require("_runner")
 
 -- Skip if _test_add_output is not available (shouldn't happen, but be safe)
 if not awesome._test_add_output then
-    io.stderr:write("SKIP: awesome._test_add_output not available\n")
-    io.stderr:write("Test finished successfully.\n")
-    awesome.quit()
-    return
+    return runner.skip("awesome._test_add_output not available")
 end
 
 -- Force naughty.layout.box to load — this registers the

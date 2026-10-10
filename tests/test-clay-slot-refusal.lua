@@ -7,9 +7,7 @@ local test_client = require('_client')
 local s = screen[1]
 
 if not test_client.is_available() then
-    io.stderr:write('Test finished successfully.\n')
-    awesome.quit()
-    return
+    return runner.skip('no terminal available for test clients')
 end
 
 local function wait_client(class)

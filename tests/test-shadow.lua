@@ -19,10 +19,7 @@ local wibox = require("wibox")
 
 -- Skip test if no terminal available (needed for client shadow tests)
 if not test_client.is_available() then
-    io.stderr:write("SKIP: No terminal available for spawning test clients\n")
-    io.stderr:write("Test finished successfully.\n")
-    awesome.quit()
-    return
+    return runner.skip("No terminal available for spawning test clients")
 end
 
 local test_wibox_1 = nil

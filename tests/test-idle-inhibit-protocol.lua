@@ -26,10 +26,7 @@ local function is_test_client_available()
 end
 
 if not is_test_client_available() then
-    io.stderr:write("SKIP: test-idle-inhibit-client not found (run make build-test)\n")
-    io.stderr:write("Test finished successfully.\n")
-    awesome.quit()
-    return
+    return runner.skip("test-idle-inhibit-client not found (run make build-test)")
 end
 
 local fired = {}
@@ -114,7 +111,7 @@ local steps = {
             return true
         end
         if count >= 10 then
-            os.execute("pkill -9 test-idle-inhibit-client 2>/dev/null")
+            if type(proc_pid) == "number" then awesome.kill(proc_pid, 9) end
             return true
         end
     end,

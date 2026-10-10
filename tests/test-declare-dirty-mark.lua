@@ -80,11 +80,8 @@ local steps = {
 -- the Wayland fd busy and would drain a stranded frame idle, masking the
 -- bug (same reasoning as test-widget-idle-repaint.lua).
 if not (os.getenv("WLR_BACKENDS") or ""):find("headless", 1, true) then
-    runner.run_direct()
-    io.stderr:write("[SKIP] test-declare-dirty-mark: needs the headless backend "
-        .. "(HEADLESS=1); a nested parent compositor masks the bug under test.\n")
-    runner.done()
-    return
+    return runner.skip("needs the headless backend (HEADLESS=1); "
+        .. "a nested parent compositor masks the bug under test")
 end
 
 runner.run_steps(steps)

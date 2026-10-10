@@ -19,10 +19,7 @@ local test_client = require("_client")
 local awful  = require("awful")
 
 if not test_client.is_available() then
-    io.stderr:write("SKIP: no terminal available\n")
-    io.stderr:write("Test finished successfully.\n")
-    awesome.quit()
-    return
+    return runner.skip("no terminal available")
 end
 
 -- Force-kill all spawned processes and wait for clients to disappear.

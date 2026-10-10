@@ -33,6 +33,7 @@ local running = false
 timer.start_new(1, function()
     if not running then
         io.stderr:write("Error: run_steps() was never called.\n")
+        io.stderr:write("Test failed.\n")
         if not runner.quit_awesome_on_error then
             io.stderr:write("Keeping awesome open...\n")
             return  -- keep awesome open on error.
@@ -82,17 +83,9 @@ function runner.assert_no_errors()
     assert(count == 0, 'compositor log contains '..count..' unhandled Lua errors')
 end
 
---- When using run_direct(), this function indicates that the test is now done.
--- @tparam[opt=nil] string message An error message explaining the test failure, if it failed.
-function runner.done(message)
-    if message then
-        io.stderr:write("Error: " .. message .. "\n")
-        if not runner.quit_awesome_on_error then
-            io.stderr:write("Keeping awesome open...\n")
-            return
-        end
-    end
-
+-- Remove leftover clients, write the result line and quit (persistent mode
+-- keeps the compositor and only resets the running flag).
+local function finish(result_line)
     local client_count = #client.get()
     if client_count > 0 then
         io.stderr:write(string.format(
@@ -106,8 +99,8 @@ function runner.done(message)
         end
     end
 
-    if not message then
-        io.stderr:write("Test finished successfully.\n")
+    if result_line then
+        io.stderr:write(result_line)
     end
 
     -- In persistent mode, don't quit - just reset the running flag
@@ -117,6 +110,29 @@ function runner.done(message)
     end
 
     awesome.quit()
+end
+
+--- When using run_direct(), this function indicates that the test is now done.
+-- @tparam[opt=nil] string message An error message explaining the test failure, if it failed.
+function runner.done(message)
+    if message then
+        io.stderr:write("Error: " .. message .. "\n")
+        io.stderr:write("Test failed.\n")
+        if not runner.quit_awesome_on_error then
+            io.stderr:write("Keeping awesome open...\n")
+            return
+        end
+    end
+    finish(not message and "Test finished successfully.\n")
+end
+
+--- End the test without running it. The runner counts it as skipped, never
+-- as passed. Call it before run_steps()/run_async() or from inside run_async(),
+-- then return.
+-- @tparam string reason Why the test cannot run here.
+function runner.skip(reason)
+    io.stderr:write("[SKIP] " .. reason .. "\n")
+    finish("Test skipped.\n")
 end
 
 --- This function is called to indicate that a test does not use the run_steps()

@@ -210,7 +210,6 @@ jobs:
             ! -name 'test-xwayland-*' \
             ! -name 'test-layer-shell-*' \
             ! -name 'test-dbus-error.lua' \
-            ! -name 'test-leak-client.lua' \
             ! -name 'test-transient-stacking.lua' \
             ! -name 'test-output-fake-screen.lua' \
             $(printf '! -name %s ' $spawning) \

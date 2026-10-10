@@ -25,7 +25,7 @@ end
 local s = screen[1]
 local geo = s.geometry
 local bar
-local c
+local c, proc_pid
 
 local function solved_offscreen(role, right)
     local dump=awesome._clay_tree(s)
@@ -86,7 +86,7 @@ local steps = {
 
     function(count)
         if count == 1 then
-            awful.spawn(TEST_CLIENT)
+            proc_pid = awful.spawn(TEST_CLIENT)
         end
         c = utils.find_client_by_class("transient_test_parent")
         return c and true or nil
@@ -123,7 +123,7 @@ local steps = {
             return true
         end
         if count >= 10 then
-            os.execute("pkill -9 test-transient-client 2>/dev/null")
+            if type(proc_pid) == "number" then awesome.kill(proc_pid, 9) end
             return true
         end
     end,

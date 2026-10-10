@@ -14,10 +14,7 @@ local CLIENT = "./build-test/test-session-lock-client"
 
 local f = io.open(CLIENT, "r")
 if not f then
-    io.stderr:write("SKIP: " .. CLIENT .. " not built\n")
-    io.stderr:write("Test finished successfully.\n")
-    awesome.quit()
-    return
+    return runner.skip(CLIENT .. " not built")
 end
 f:close()
 
