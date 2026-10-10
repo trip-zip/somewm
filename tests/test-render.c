@@ -422,6 +422,61 @@ static void test_add_remove_move(void) {
 	fixture_finish(&f, &no_hooks);
 }
 
+/* Elements 1 to 3 are in the tree; 2 leaves when gone_2 is set. */
+static bool gone_2;
+static bool declared_1_to_3(void *data, uint32_t id) {
+	(void)data;
+	return id >= 1 && id <= 3 && !(id == 2 && gone_2);
+}
+
+static void test_retained_node_returns(void) {
+	struct fixture f;
+	fixture_init(&f);
+	struct render_client_hooks hooks = no_hooks;
+	hooks.declared = declared_1_to_3;
+	gone_2 = false;
+	Clay_RenderCommand cmds[] = {
+		cmd_rect(1, 0, 0, 100, 20, 0),
+		cmd_rect(2, 0, 30, 100, 20, 0),
+		cmd_rect(3, 0, 60, 100, 20, 0),
+	};
+	Clay_RenderCommand without[] = { cmds[0], cmds[2] };
+
+	render_reconcile(f.rs, commands_of(cmds, 3), &hooks, no_bounds);
+	struct wlr_scene_tree *rt = render_tree(f.parent);
+	struct wlr_scene_node *second = child_at(rt, 1);
+
+	/* The command vanishes, its element stays: the node goes dark, nothing
+	 * is destroyed or moved. */
+	CHECK_EQ(render_reconcile(f.rs, commands_of(without, 2), &hooks, no_bounds), 1);
+	CHECK_EQ(render_node_count(f.rs), 3);
+	CHECK_EQ(child_count(rt), 3);
+	CHECK(!second->enabled);
+	CHECK_EQ(render_nodes_swept(f.rs), 0);
+	CHECK_EQ(render_reconcile(f.rs, commands_of(without, 2), &hooks, no_bounds), 0);
+
+	/* It returns with a new colour: the same node, enabled and recoloured. */
+	cmds[1].renderData.rectangle.backgroundColor = (Clay_Color) { 0, 255, 0, 255 };
+	CHECK_EQ(render_reconcile(f.rs, commands_of(cmds, 3), &hooks, no_bounds), 2);
+	CHECK_EQ(render_nodes_created(f.rs), 0);
+	CHECK_EQ(child_count(rt), 3);
+	CHECK(child_at(rt, 1) == second);
+	CHECK(second->enabled);
+	struct wlr_scene_rect *rect = wlr_scene_rect_from_node(second);
+	CHECK(rect->color[0] == 0.0f && rect->color[1] == 1.0f && rect->color[3] == 1.0f);
+	CHECK_EQ(render_reconcile(f.rs, commands_of(cmds, 3), &hooks, no_bounds), 0);
+
+	/* The element leaves with its command: the node is destroyed. */
+	render_reconcile(f.rs, commands_of(without, 2), &hooks, no_bounds);
+	gone_2 = true;
+	render_reconcile(f.rs, commands_of(without, 2), &hooks, no_bounds);
+	CHECK_EQ(render_nodes_swept(f.rs), 1);
+	CHECK_EQ(render_node_count(f.rs), 2);
+	CHECK_EQ(child_count(rt), 2);
+
+	fixture_finish(&f, &hooks);
+}
+
 static void test_kind_swap_destroys_and_restacks(void) {
 	struct fixture f;
 	fixture_init(&f);
@@ -476,9 +531,9 @@ static void test_restack_only_when_order_changed(void) {
 	CHECK_EQ(render_reconcile(f.rs, commands_of(cmds, 3), &no_hooks, no_bounds), 0);
 
 	/* Same commands, new draw order: the scene follows, and the restack is
-	 * the only mutation (one raise per node). */
+	 * the only mutation (3 moves to the bottom; 1 and 2 stay in order). */
 	Clay_RenderCommand swapped[] = { cmds[2], cmds[0], cmds[1] };
-	CHECK_EQ(render_reconcile(f.rs, commands_of(swapped, 3), &no_hooks, no_bounds), 3);
+	CHECK_EQ(render_reconcile(f.rs, commands_of(swapped, 3), &no_hooks, no_bounds), 1);
 	CHECK_EQ(child_at(rt, 0)->x, 40);
 	CHECK_EQ(child_at(rt, 1)->x, 0);
 	CHECK_EQ(child_at(rt, 2)->x, 20);
@@ -1985,6 +2040,7 @@ int main(void) {
 		{ "visibility batch guards", test_visibility_batch_guards },
 		{ "identical frame reconciles to zero", test_identical_frame_reconciles_to_zero },
 		{ "add, remove and move", test_add_remove_move },
+		{ "retained node returns", test_retained_node_returns },
 		{ "kind swap destroys and restacks", test_kind_swap_destroys_and_restacks },
 		{ "restack only when order changed", test_restack_only_when_order_changed },
 		{ "clip stack", test_clip_stack },

@@ -62,6 +62,10 @@ struct render_client_hooks {
 		float w, float h, float *ops, size_t cap);
 	size_t (*text_attrs)(void *data, void *userData, const char *chars,
 		const struct render_text_attr **attrs);
+	/* Whether the element with this id is in the current frame's tree. A
+	 * node whose command vanished is kept, disabled, while its element is;
+	 * NULL sweeps it at once. */
+	bool (*declared)(void *data, uint32_t id);
 	void *data;
 };
 
@@ -248,12 +252,16 @@ void render_walk(struct render_state *rs,
 	void (*fn)(void *user, const struct render_node_view *view), void *user);
 
 /* Profiling readback, logged on every solve so a long-running session can
- * assert growth stays proportional to on-screen content: live retained nodes,
- * resident cairo raster bytes across them, and buffers allocated by the last
+ * assert growth stays proportional to on-screen content: live retained nodes
+ * (including those kept disabled for an element still in the tree), resident
+ * cairo raster bytes across them, and buffers allocated by the last
  * reconcile pass. */
 size_t render_node_count(struct render_state *rs);
 size_t render_raster_bytes(struct render_state *rs);
 int render_buffers_created(struct render_state *rs);
+/* Scene nodes the last reconcile pass created and destroyed. */
+int render_nodes_created(struct render_state *rs);
+int render_nodes_swept(struct render_state *rs);
 /* Whether the last reconcile temporarily hid its enabled ancestor while
  * replacing owned primitive nodes. Stable and observable scenes never batch. */
 bool render_visibility_batched(struct render_state *rs);

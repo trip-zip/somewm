@@ -129,6 +129,26 @@ describe("wibox.clay", function()
         end
     end)
 
+    it("lowers a natural image to the flow cap under a flex child", function()
+        local cairo = require("lgi").cairo
+        local imagebox = require("wibox.widget.imagebox")
+        local flex = require("wibox.layout.flex")
+        local surface = cairo.ImageSurface(cairo.Format.ARGB32, 48, 48)
+        local layout = flex.vertical(imagebox(surface), imagebox(surface))
+        local drawable = { background_color = BG, foreground_color = BG, background_image = nil }
+        local tree = wclay.compile(drawable, layout, context, 20, 100, {w = 'user', h = 'user'})
+        local children = node_for(tree, layout).children
+        assert.is_equal(2, #children)
+        for _, child in ipairs(children) do
+            local image = child.children[1]
+            assert.is_equal('fit', image.w)
+            assert.is_equal(20, image.wmin)
+            assert.is_equal('user', image.wsrc)
+            assert.is_equal('fit', image.h)
+            assert.is_nil(image.hmin)
+        end
+    end)
+
     it("declares the bound times the aspect, within the scaling flags", function()
         local cairo = require('lgi').cairo
         local imagebox = require('wibox.widget.imagebox')
@@ -136,7 +156,7 @@ describe("wibox.clay", function()
         local function image()
             return node_for(compile(BG, icon, BG), icon).children[1]
         end
-        assert.is_equal(200, image().wmin)
+        assert.is_equal(100, image().wmin)
         icon.upscale = false
         assert.is_equal(20, image().wmin)
         icon.upscale = true

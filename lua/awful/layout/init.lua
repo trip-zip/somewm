@@ -365,6 +365,7 @@ end
 -- leaf placed at x or y and sized on the same axis is taken and left out.
 local describe_client = require("awful.client.clay").describe
 local slot_warned = setmetatable({}, {__mode = "k"})
+local refused_warned = setmetatable({}, {__mode = "k"})
 local function expand(node, taken)
     if node.client then
         taken[node.client] = true
@@ -433,7 +434,14 @@ capi.awesome.connect_signal("clay::declare", function()
                     end
                 end
                 described[s] = (current._clay or #tree.children > 0) and {tree = tree} or nil
-                s:_clay_layout(tree)
+                local stored, reason = s:_clay_layout(tree)
+                if stored then
+                    refused_warned[s] = nil
+                elseif reason and not refused_warned[s] then
+                    refused_warned[s] = true
+                    gdebug.print_warning("awful.layout: screen " .. s.index ..
+                        " layout tree refused (" .. reason .. "), showing nothing")
+                end
             end)
         end
     end

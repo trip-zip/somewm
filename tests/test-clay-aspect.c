@@ -160,11 +160,11 @@ int main(void)
 			{ CLAY_SIZING_FIT(40), CLAY_SIZING_FIT(0) }, 2,
 			{ CLAY_SIZING_FIT(0), CLAY_SIZING_GROW(0) }, 2,
 			{ 40, 20, 2, 2 }, { 156, 24, 44, 0 }, { 200, 24, 0, 0 } },
-		/* No bound through a FIT cross axis: natural minimum, slack inside the wrap. */
-		{ "R120 row 13: 200x24 > FIT wrap pad 2 > FIT(64) x FIT(0), no bound", false, false, 200, 24,
-			{ CLAY_SIZING_FIT(64), CLAY_SIZING_FIT(0) }, 2,
+		/* A FIT cross axis passes the bound as a cap: (24 - 4) * 2 = 40. */
+		{ "R120 row 13: 200x24 > FIT wrap pad 2 > FIT(40) x FIT(0), cap 40", false, false, 200, 24,
+			{ CLAY_SIZING_FIT(40), CLAY_SIZING_FIT(0) }, 2,
 			{ CLAY_SIZING_FIT(0), CLAY_SIZING_FIT(0) }, 2,
-			{ 40, 20, 2, 2 }, { 132, 24, 68, 0 }, { 200, 24, 0, 0 } },
+			{ 40, 20, 2, 2 }, { 156, 24, 44, 0 }, { 200, 24, 0, 0 } },
 		/* A GROW row on its parent's flow axis with a sibling row: the column's
 		 * 24 is not the row's bound. Declared as if it were, the aspect height
 		 * takes the whole column and the second row gets nothing. */
@@ -182,6 +182,11 @@ int main(void)
 		{ "R120 row 16: 200x24, 16x16 source, FIT(24) x FIT(0), bound 24", false, false, 200, 24,
 			{ CLAY_SIZING_FIT(24), CLAY_SIZING_FIT(0) }, 1, {0}, 0,
 			{ 24, 24, 0, 0 }, { 176, 24, 24, 0 }, { 200, 24, 0, 0 } },
+		/* A column's height through a FIT wrap padded 7: cap 28 - 14, 48x48 source. */
+		{ "R120 row 17: column 200x28 > FIT wrap pad 7 > FIT(14) x FIT(0), cap 14", true, false, 200, 28,
+			{ CLAY_SIZING_FIT(14), CLAY_SIZING_FIT(0) }, 1,
+			{ CLAY_SIZING_FIT(0), CLAY_SIZING_FIT(0) }, 7,
+			{ 14, 14, 7, 7 }, { 200, 0, 0, 28 }, { 200, 28, 0, 0 } },
 	};
 	for (size_t i = 0; i < sizeof rows / sizeof rows[0]; i++)
 		run(&rows[i]);

@@ -2,6 +2,30 @@
 
 All notable changes to somewm will be documented in this file.
 
+## [Unreleased]
+
+### Added
+
+- awful.widget.calendar_popup.month and .year take a width argument,
+  defaulting to beautiful.calendar_popup_width, and the popup is an
+  awful.popup placed by its position inside the workarea; awful.popup gains
+  honor_workarea.
+
+### Fixed
+
+- A widget tree of up to 4096 nodes shows; a year calendar popup, about 2300
+  nodes, showed nothing.
+- A client max size hint of 1,000,000 or more no longer bounds its surface
+  and no longer blanks its tag; the client warns once naming the hint
+- A tiled desktop-type client draws at its cell above the wallpaper wibox;
+  before, it sat under the wallpaper and the bars.
+- An image inside a column slot takes the column's height as a cap, as 2.0's
+  fit did; before it declared its natural size and the bar overflowed.
+- A popup placed with awful.placement.centered is sized by its widget at the
+  popup band, as the other placements are; before it was boxed at 600 px at
+  the notification band. A menubar without a width spans the workarea as it
+  did in 2.0.
+
 ## [2.0.1] - 2026-10-10
 
 Patch release. 37 commits since 2.0.0: drawing tablets, touchscreens, fake

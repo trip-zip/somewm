@@ -274,6 +274,9 @@ int main(int argc, char *argv[]) {
     if (argc > 3)
         xdg_toplevel_set_min_size(g_parent_toplevel, atoi(argv[3]),
             argc > 5 ? atoi(argv[5]) : 0);
+    if (argc > 6)
+        xdg_toplevel_set_max_size(g_parent_toplevel, atoi(argv[6]),
+            argc > 7 ? atoi(argv[7]) : 0);
     xdg_toplevel_set_title(g_parent_toplevel, "Transient Parent");
 
     /* Initial commit to get configure event */

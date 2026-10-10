@@ -48,19 +48,23 @@ function M.next_to(w, target, positions, anchors, offset, kind)
     w.drawin.attachment=a
     return position,anchor
 end
-function M.corner(w, name, offset, kind, size)
+-- A corner attachment is sized by its tree within its limits.
+-- Only a caller passing kind 3 is a launcher.
+-- A launcher takes its caller's width, else the theme's, else grows to its target.
+function M.corner(w, name, offset, kind, size, workarea)
     local point=assert(M.points[name], 'unknown attachment point: '..tostring(name))
-    local launcher = name=='centered'
-    local override = require('beautiful').launcher_width
-    w.drawin.attachment={kind=kind or (launcher and 3 or 1),parent=point,own=point,
-        width=launcher and (size and size.width or override or w.minimum_width or 600) or 0,
-        height=size and size.height,
-        bounded=size and true,
-        width_override=launcher and override or nil,
-        -- width_override wins in declare.c, so it decides the width's word.
-        wsrc=launcher and (override and 'theme' or size and size.wsrc
-            or w.minimum_width and 'user' or 'theme') or nil,
-        hsrc=size and size.hsrc,
+    local a={kind=kind or 1,parent=point,own=point,workarea=workarea or nil,
         x=offset and offset.x or 0,y=offset and offset.y or 0}
+    if a.kind==3 then
+        -- width_override wins in declare.c, so it decides the width's word.
+        local override=require('beautiful').launcher_width
+        a.width=size and size.width or nil
+        a.width_override=override or nil
+        a.wsrc=override and 'theme' or size and size.wsrc or nil
+        a.height=size and size.height
+        a.hsrc=size and size.hsrc
+        a.bounded=size and true
+    end
+    w.drawin.attachment=a
 end
 return M

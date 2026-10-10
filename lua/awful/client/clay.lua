@@ -3,6 +3,7 @@
 -- suite's {client = c} leaves through describe before handing the tree to
 -- the screen; declare.c reads no client field to compose it.
 local capi = {mousegrabber = mousegrabber}
+local gdebug = require("gears.debug")
 
 local clay = {}
 
@@ -18,14 +19,27 @@ local function bar(c, name, side, horizontal)
     return {name = name, host = drawable, w = size, h = "grow", wsrc = "theme"}
 end
 
+-- A max hint at or past the reader's range leaves its axis unbounded, as
+-- the protocol's 0 does; the client warns once per field.
+local unbounded_warned = setmetatable({}, {__mode = "k"})
 local function surface(c, fullscreen)
     local node = {name = "SURFACE", surface = c, float = true, w = "grow", h = "grow",
         opacity = c.opacity}
     if c.size_hints_honor and not fullscreen then
         local hints = c.size_hints
         for key, field in pairs(bounds) do
-            if (hints[field] or 0) > 0 then
-                node[key] = hints[field]
+            local value = hints[field] or 0
+            if value >= 1e6 and (key == "wmax" or key == "hmax") then
+                local warned = unbounded_warned[c] or {}
+                unbounded_warned[c] = warned
+                if not warned[field] then
+                    warned[field] = true
+                    gdebug.print_warning("awful.client.clay: client " .. tostring(c.class) ..
+                        " " .. field .. " " .. string.format("%d", value) ..
+                        " is past the solver's range, the axis is unbounded")
+                end
+            elseif value > 0 then
+                node[key] = value
                 node.wsrc, node.hsrc = "protocol", "protocol"
             end
         end

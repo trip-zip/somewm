@@ -2,9 +2,10 @@
  * test-x11-hints-client - X11 client with WM_NORMAL_HINTS.
  *
  * minmax sets P_MIN_SIZE 300x200 and P_MAX_SIZE 900x700; base sets only
- * BASE_SIZE 300x200. Used by test-x11-size-hints-tile.lua.
+ * BASE_SIZE 300x200. Used by test-x11-size-hints-tile.lua. desktop sets
+ * base's hints and _NET_WM_WINDOW_TYPE_DESKTOP.
  *
- * Usage: test-x11-hints-client <wm-class> minmax|base
+ * Usage: test-x11-hints-client <wm-class> minmax|base|desktop
  */
 
 #include <stdio.h>
@@ -14,8 +15,9 @@
 #include <xcb/xcb_icccm.h>
 
 int main(int argc, char *argv[]) {
-    if (argc != 3 || (strcmp(argv[2], "minmax") && strcmp(argv[2], "base"))) {
-        fprintf(stderr, "Usage: %s <wm-class> minmax|base\n", argv[0]);
+    if (argc != 3 || (strcmp(argv[2], "minmax") && strcmp(argv[2], "base")
+                      && strcmp(argv[2], "desktop"))) {
+        fprintf(stderr, "Usage: %s <wm-class> minmax|base|desktop\n", argv[0]);
         return 1;
     }
     const char *wm_class = argv[1];
@@ -66,6 +68,25 @@ int main(int argc, char *argv[]) {
         xcb_icccm_size_hints_set_base_size(&hints, 300, 200);
     }
     xcb_icccm_set_wm_normal_hints(conn, win, &hints);
+
+    if (strcmp(argv[2], "desktop") == 0) {
+        xcb_intern_atom_cookie_t ck[2] = {
+            xcb_intern_atom(conn, 0, 19, "_NET_WM_WINDOW_TYPE"),
+            xcb_intern_atom(conn, 0, 27, "_NET_WM_WINDOW_TYPE_DESKTOP"),
+        };
+        xcb_atom_t atoms[2];
+        for (int i = 0; i < 2; i++) {
+            xcb_intern_atom_reply_t *r = xcb_intern_atom_reply(conn, ck[i], NULL);
+            if (!r) {
+                fprintf(stderr, "Failed to intern atom\n");
+                return 1;
+            }
+            atoms[i] = r->atom;
+            free(r);
+        }
+        xcb_change_property(conn, XCB_PROP_MODE_REPLACE, win, atoms[0],
+                            XCB_ATOM_ATOM, 32, 1, &atoms[1]);
+    }
 
     xcb_gcontext_t gc = xcb_generate_id(conn);
     uint32_t gc_values[] = { screen->white_pixel };

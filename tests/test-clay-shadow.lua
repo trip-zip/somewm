@@ -49,8 +49,8 @@ local function shadow(dump, owner, band, frame, ox, oy, radius)
         assert(dump:find(line,1,true) < dump:find(head,1,true),
             'shadow must precede its owner in the dump')
     end
-    assert(line:find('w=grow h=grow attach PARENT',1,true),line)
-    assert(line:find(('offset %d,%d expand %d,%d band %d custom'):format(ox,oy,radius,radius,band),1,true),line)
+    assert(line:find('w=fit h=fit attach PARENT offset 0,0 band '..band..' custom',1,true),line)
+    assert(not line:find('expand',1,true),line)
     local b = box(line)
     assert(b.x==frame.x+ox-radius and b.y==frame.y+oy-radius and
         b.width==frame.width+2*radius and b.height==frame.height+2*radius,line)
@@ -109,7 +109,7 @@ runner.run_async(function()
     assert(awesome._test_redeclare()==0,'idle shadow scene must not mutate')
     local centered = {radius=12,offset_x=0,offset_y=0,spread=0,corner_radius=0,opacity=0.75,color='#000000'}
     c.shadow,d.shadow = centered,centered
-    wait_for(function() return record(awesome._clay_tree(screen[1]),'SHADOW','SHADOW_CLIENT'):find('offset 0,0',1,true) end)
+    wait_for(function() local l=record(awesome._clay_tree(screen[1]),'SHADOW','SHADOW_CLIENT'); return l and box(l).x==cf.x-12 end)
     dump=save('shadow-four-edges')
     for _,f in ipairs{cf,df} do
         for _,p in ipairs{{f.x-5,f.y+40},{f.x+f.width+4,f.y+40},{f.x+40,f.y-5},{f.x+40,f.y+f.height+4}} do dark(p[1],p[2]) end
@@ -168,7 +168,7 @@ runner.run_async(function()
     example.pixel(f.x+f.width-1,f.y+15,'#00ff00');dark(f.x+f.width+4,f.y+20)
     save('shadow-popup-style-change')
     popup.shadow={radius=6,offset_x=6,offset_y=6,corner_radius=8,opacity=0.5,color='#00000080',clip_directional=false}
-    wait_for(function() return record(awesome._clay_tree(screen[1]),'SHADOW','screen 1'):find('expand 6,6',1,true) end)
+    wait_for(function() local l=record(awesome._clay_tree(screen[1]),'SHADOW','screen 1'); return l and box(l).x==f.x end)
     example.pixel(f.x+f.width+1,f.y+20,'#bfbfbf')
     save('shadow-color-alpha-and-rounded-tiles')
     popup.shadow={radius=6,offset_x=6,offset_y=6,corner_radius=8,opacity=0.5,color='#00000080',clip_directional=true}

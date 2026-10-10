@@ -325,12 +325,22 @@ text_attrs(void *data, void *userData, const char *chars,
     return 0;
 }
 
+/* Read after the solve, during the reconcile, like the shadow owner boxes:
+ * Clay prunes every element the frame did not declare. */
+static bool
+declared(void *data, uint32_t id)
+{
+	(void)data;
+	return Clay_GetElementData((Clay_ElementId){.id = id}).found;
+}
+
 void
 declare_set_client_hooks(const struct render_client_hooks *hooks)
 {
 	client_hooks = *hooks;
 	client_hooks.shape_ops = shape_ops;
 	client_hooks.text_attrs = text_attrs;
+	client_hooks.declared = declared;
 }
 
 /* --- the handle registry --- */
@@ -554,15 +564,21 @@ declare_leaf(const char *role, uint64_t handle, enum declare_src wsrc,
  *
  * A flow element has no band; a floating
  * element's band is its zIndex. Clay sorts floating tree roots by zIndex
- * (every floating element is one, clay.h:2102-2107; the sort is at
- * clay.h:2603-2615 and is stable), so declaration order decides only within
+ * (every floating element is one, clay.h:2154-2159; the sort is at
+ * clay.h:2703-2714 and is stable), so declaration order decides only within
  * a band. A window's band comes from its stacking attribute; a transient
  * that sets none of its own inherits its parent's. Layer-shell background
  * and bottom, desktop clients and drawins, plain wiboxes and fullscreen
  * backing elements each use the bands declared below.
  * The flow root is in that sort too, at zIndex 0,
  * so what draws under the bars (a wallpaper wibox, a desktop client, the
- * background and bottom layers) carries a negative band. */
+ * background and bottom layers) carries a negative band.
+ * Clay places each root from its parent's box (clay.h:2720-2726), which is
+ * written when the parent is walked (clay.h:3091); a root below 0 is walked
+ * before the flow root, so a parent inside the flow still has the last
+ * frame's box. A band below the flow root therefore belongs only to a root
+ * attached to the output: a tiled client's band floors at 0, and its
+ * surface follows its frame. */
 enum {
 	Z_LAYER_BACKGROUND = -8,
 	Z_CLIENT_DESKTOP = -6,
@@ -854,8 +870,10 @@ clay_color(const float rgba[4])
 	};
 }
 
-/* Keep the native decoration and its band in the declaration tree. The
- * renderer places it from the completed owner box and authored style. */
+/* A shadow is paint: the renderer draws it from its owner's solved box and
+ * the authored offset, spread and radius. Its element holds identity, band
+ * and order only; Clay would place a lower-band float from its parent's
+ * previous-frame box (clay.h:2720-2726), so no box of its own is declared. */
 static void
 declare_shadow(struct render_shadow *shadow, const shadow_config_t *override,
 	bool drawin, uint64_t handle, const Clay_ElementDeclaration *owner)
@@ -878,11 +896,8 @@ declare_shadow(struct render_shadow *shadow, const shadow_config_t *override,
 	shadow->offset_x = config->offset_x;
 	shadow->offset_y = config->offset_y;
 	Clay_ElementDeclaration e = {
-		.layout.sizing = {CLAY_SIZING_GROW(0), CLAY_SIZING_GROW(0)},
 		.floating = {
 			.attachTo = CLAY_ATTACH_TO_PARENT,
-			.offset = {config->offset_x, config->offset_y},
-			.expand = {config->spread + value.radius, config->spread + value.radius},
 			.zIndex = owner->floating.attachTo != CLAY_ATTACH_TO_NONE
 				? owner->floating.zIndex - 1 : -1,
 			.pointerCaptureMode = CLAY_POINTER_CAPTURE_MODE_PASSTHROUGH,
@@ -1409,7 +1424,7 @@ widget_node_decl(const struct widget_node *n, int16_t z,
 	if (n->floating) {
 		/* A widget float: off the flow, attached to its parent, in the
 		 * drawin's band (a floating element is its own tree root, sorted
-		 * by zIndex and then declaration order, clay.h:2603-2615). */
+		 * by zIndex and then declaration order, clay.h:2703-2714). */
 		e.floating.offset = (Clay_Vector2) { n->offset[0], n->offset[1] };
 		e.floating.attachTo = CLAY_ATTACH_TO_PARENT;
 		e.floating.zIndex = z;
@@ -1498,7 +1513,7 @@ declare_composite(const struct widget_host *host, size_t i, int16_t z,
 			return i + 1;
 		e.floating = (Clay_FloatingElementConfig) {
 			.attachTo = CLAY_ATTACH_TO_PARENT,
-			.zIndex = client_z(c),
+			.zIndex = client_z(c) < 0 ? z : client_z(c),
 			.pointerCaptureMode = CLAY_POINTER_CAPTURE_MODE_PASSTHROUGH,
 			/* Clipped where an in-flow surface would be: by the slot's
 			 * enclosing clip, a carousel's scroll among them. */
@@ -1590,6 +1605,8 @@ declare_layout_client(const struct widget_host *host, size_t i, Clay_ElementDecl
             return end;
     }
     int16_t z = client_z(c);
+    if (z < 0 && n->attach != WIDGET_ATTACH_OUTPUT)
+        z = 0;
     Clay_ElementId cell = Clay__HashStringWithOffset(CLAY_STRING("client.cell"),
         (uint32_t)n->client, 0);
     if (n->floating) {
@@ -1615,7 +1632,7 @@ declare_layout_client(const struct widget_host *host, size_t i, Clay_ElementDecl
         native_close();
         return end;
     }
-    if (z == Z_CLIENT_NORMAL) {
+    if (z == Z_CLIENT_NORMAL || z == 0) {
         declare_client_frame(host, i, 0, e, n->src[0], n->src[1], ids);
         return end;
     }
@@ -2504,7 +2521,7 @@ declare_attachment(drawin_t *d, Monitor *m)
 {
     if (d->attachment.kind == 2 && !d->attachment.target) return false;
     bool bounded = d->attachment.kind == 3 && d->attachment.bounded;
-    uint32_t target = bounded ? workarea_id(m).id
+    uint32_t target = bounded || d->attachment.workarea ? workarea_id(m).id
         : d->attachment.target ? attachment_target(d) : screen_root_id(m).id;
     if (!target || bars_len == LENGTH(bars)) return false;
     if (d->attachment.hover && !Clay_PointerOver((Clay_ElementId){.id=target})) return false;
@@ -2548,7 +2565,8 @@ declare_attachment(drawin_t *d, Monitor *m)
         slot.layout.sizing.width = d->attachment.width_override >= 0
             ? CLAY_SIZING_FIXED(d->attachment.width_override + 2*decoration.width)
             : bounded ? CLAY_SIZING_GROW(0, d->attachment.width + 2*decoration.width)
-            : CLAY_SIZING_FIXED(d->attachment.width + 2*decoration.width);
+            : d->attachment.width ? CLAY_SIZING_FIXED(d->attachment.width + 2*decoration.width)
+            : CLAY_SIZING_GROW(0);
         if (bounded)
             slot.layout.sizing.height = CLAY_SIZING_GROW(0, d->attachment.height + 2*decoration.height);
     }
@@ -4301,15 +4319,17 @@ inspector_emit_closed(Monitor *m)
 
 /* --- the solved tree dump (somewm-client clay tree) ---
  *
- * Per band: a header of counters, the root and derived counts, the tree as
- * Clay holds it after the solve (its roots in command order, one element per
- * line, indented, named by what somewm recorded for the id), the drawins it
- * refused, then the realized list:
- * one line per retained node in draw order, read back from what the last
- * reconcile retained (render.h). Nothing here solves or declares: the dump
- * reports the frame the output drew. The realized list doubles as a
- * tree==scene check in release builds, where the verifier is compiled out,
- * by printing the renderer's own mismatch answer.
+ * Per band: a header of counters (the frame's commands, its scene mutations,
+ * the scene nodes it created and swept, the nodes held including those kept
+ * dark for an element still in the tree), the root and derived counts, the
+ * tree as Clay holds it after the solve (its roots in command order, one
+ * element per line, indented, named by what somewm recorded for the id), the
+ * drawins it refused, then the realized list: one line per node the frame's
+ * commands drew, in draw order, read back from the last reconcile (render.h).
+ * Nothing here solves or declares: the dump reports the frame the output drew.
+ * The realized list doubles as a tree==scene check in release builds, where
+ * the verifier is compiled out, by printing the renderer's own mismatch
+ * answer.
  *
  * Every box a line prints is in logical coordinates with both edges rounded
  * to whole pixels, so an element's box is the box the scene realizes and the
@@ -5118,10 +5138,11 @@ dump_band(buffer_t *buf, struct declare_band *band, Monitor *m)
         o->name, o->scale, m->declare->inspector_width ? "on" : "off",
         band->frames, capacity.elements, capacity.capacity, capacity.map, capacity.freeIds,
         band->inspector_authored, band->inspector_elements, band->inspector_strings);
-	buffer_addf(buf, "  commands %d mutations %d nodes %zu raster_bytes %zu "
-		"buffers %d declare %" PRId64 "us solve %" PRId64 "us "
+	buffer_addf(buf, "  commands %d mutations %d created %d swept %d nodes %zu "
+		"raster_bytes %zu buffers %d declare %" PRId64 "us solve %" PRId64 "us "
 		"reconcile %" PRId64 "us\n",
 		band->commands, band->mutations,
+		render_nodes_created(band->render), render_nodes_swept(band->render),
 		render_node_count(band->render),
 		render_raster_bytes(band->render),
 		render_buffers_created(band->render),

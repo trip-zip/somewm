@@ -178,7 +178,11 @@ function M.run(name)
             if name~='centered-launcher' then return true end
             local g=popup:geometry()
             assert(g.width==600 and g.x==340 and math.abs(g.y+g.height/2-360)<=1)
-            assert(awesome._clay_tree(s):find('parent CENTER own CENTER',1,true))
+            local dump=awesome._clay_tree(s)
+            assert(dump:find('parent CENTER own CENTER',1,true))
+            local line=assert(dump:match('\n(  POPUP [^\n]*)'),dump)
+            assert(line:find('band 80',1,true),line)
+            assert(not dump:find('LAUNCHER',1,true),dump)
             example.pixel(g.x+2,g.y+2,'#ff0000')
             popup.visible=false
             local b=require('beautiful')
@@ -194,9 +198,12 @@ function M.run(name)
             if dump:find('Terminal',1,true) or not dump:find('Run:',1,true) then
                 assert(n<30,'menubar did not replace launcher'); return
             end
-            local x,y,w,h=dump:match('LAUNCHER [^\n]- box (%d+),(%d+) (%d+)x(%d+)')
-            assert(tonumber(w)==600 and tonumber(x)==340)
-            assert(math.abs(tonumber(y)+tonumber(h)/2-360)<=1)
+            local line=assert(dump:match('\n(  LAUNCHER [^\n]*)'),dump)
+            local x,y,w,h=line:match(' box (%d+),(%d+) (%d+)x(%d+)')
+            -- No width and no theme width: the launcher spans the workarea.
+            assert(tonumber(w)==s.workarea.width and tonumber(x)==s.workarea.x,line)
+            assert(line:find('attach ELEMENT',1,true) and line:find(' w=grow h=',1,true),line)
+            assert(math.abs(tonumber(y)+tonumber(h)/2-(s.workarea.y+s.workarea.height/2))<=1,line)
             example.pixel(tonumber(x)+2,tonumber(y)+tonumber(h)-2,'#0000ff')
             _keygrabber.inject('z',true); _keygrabber.inject('z',false)
             return true

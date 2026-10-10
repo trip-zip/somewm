@@ -103,6 +103,7 @@ typedef struct drawin_t {
         float x, y, width, height;
         float width_override; /* Negative means no fixed theme width. */
         bool bounded; /* A launcher grows within WORKAREA using authored maxima. */
+        bool workarea; /* A corner point of WORKAREA, not of the screen. */
         uint8_t src[2]; /* enum declare_src of width and height, from wsrc and hsrc */
         uint16_t gap;
         uint8_t position;

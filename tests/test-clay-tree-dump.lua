@@ -71,7 +71,7 @@ local steps = {
     function()
         local header = assert_line("the output header", "output ", "scale ")
         assert(header:find("inspector "), "the header has no inspector word")
-        assert_line("the counters", "commands ", "mutations ", "nodes ",
+        assert_line("the counters", "commands ", "mutations ", "created ", "swept ", "nodes ",
             "raster_bytes ", "buffers ", "declare ", "solve ", "reconcile ")
         return true
     end,
