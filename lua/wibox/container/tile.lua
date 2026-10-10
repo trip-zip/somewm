@@ -10,6 +10,7 @@
 -- @containermod wibox.container.tile
 -- @supermodule wibox.container.place
 local place = require("wibox.container.place")
+local clay = require("wibox.clay")
 local gtable = require("gears.table")
 
 local module = {mt = {}}
@@ -37,22 +38,6 @@ local module = {mt = {}}
 -- @propemits true false
 -- @see horizontal_spacing
 
---- Avoid painting incomplete horizontal tiles.
---
---@DOC_wibox_container_tile_horizontal_crop_EXAMPLE@
---
--- @property horizontal_crop
--- @tparam[opt=false] boolean horizontal_crop
--- @see vertical_crop
-
---- Avoid painting incomplete vertical tiles.
---
---@DOC_wibox_container_tile_vertical_crop_EXAMPLE@
---
--- @property vertical_crop
--- @tparam[opt=false] boolean vertical_crop
--- @see horizontal_crop
-
 --- Enable or disable the tiling.
 --
 -- When set to `false`, this container behaves exactly like
@@ -67,8 +52,6 @@ local defaults = {
     horizontal_spacing = 0,
     vertical_spacing   = 0,
     tiled              = true,
-    horizontal_crop    = false,
-    vertical_crop      = false,
 }
 
 for prop in pairs(defaults) do
@@ -86,6 +69,8 @@ for prop in pairs(defaults) do
         return self._private[prop]
     end
 end
+
+clay.retire(module, {"horizontal_crop", "vertical_crop"})
 
 local function new(_, args)
     args = args or {}
@@ -136,8 +121,6 @@ end
 -- @tparam string args.valign Either `top`, `bottom` or `center`.
 -- @tparam number args.horizontal_spacing The horizontal spacing between the tiled.
 -- @tparam number args.vertical_spacing The vertical spacing between the tiled.
--- @tparam boolean args.horizontal_crop Avoid painting incomplete horizontal tiles.
--- @tparam boolean args.vertical_crop Avoid painting incomplete vertical tiles.
 -- @tparam boolean args.tiled Enable or disable the tiling.
 -- @tparam wibox.widget args.widget The widget to be placed.
 -- @tparam boolean args.fill_vertical Fill the vertical space.

@@ -620,7 +620,7 @@ read_bindings(lua_State *L, int idx, struct widget_node *n)
 
 static bool
 read_tree(lua_State *L, int idx, struct widget_node *nodes, size_t *len,
-	size_t *leaves, unsigned clip_by, unsigned *clips, int shapes, int anchors)
+	size_t *leaves, unsigned clip_by, unsigned *clips, int shapes)
 {
 	struct widget_node *n;
 	size_t count;
@@ -635,30 +635,17 @@ read_tree(lua_State *L, int idx, struct widget_node *nodes, size_t *len,
 	memset(n, 0, sizeof(*n));
 	if (!read_node(L, idx, n) || (!n->text && !read_bindings(L, idx, n)))
 		return false;
-	/* References can only target an earlier declaration in this very tree.
-	 * Do not accept cached indices, cross-host targets or forward references. */
+	/* "output" attaches a float to the screen's root. */
 	lua_getfield(L, idx, "_attach");
-	if (lua_type(L, -1) == LUA_TSTRING) {
-		bool output = !strcmp(lua_tostring(L, -1), "output");
+	if (!lua_isnil(L, -1)) {
+		bool output = lua_type(L, -1) == LUA_TSTRING && !strcmp(lua_tostring(L, -1), "output");
 		lua_pop(L, 1);
 		if (!output || n->text || !n->floating)
 			return false;
 		n->attach = WIDGET_ATTACH_OUTPUT;
-		lua_pushnil(L);
-	} else if (!lua_isnil(L, -1)) {
-		lua_rawget(L, anchors);
-		lua_Integer target = lua_tointeger(L, -1);
-		if (n->text || !n->floating || target <= 0 || (size_t)target >= *len
-				|| nodes[target - 1].text) {
-			lua_pop(L, 1);
-			return false;
-		}
-		n->attach = (uint16_t)target;
+	} else {
+		lua_pop(L, 1);
 	}
-	lua_pop(L, 1);
-	lua_pushvalue(L, idx);
-	lua_pushinteger(L, *len);
-	lua_rawset(L, anchors);
 	if (n->shape) {
 		if (n->image)
 			return false;
@@ -687,7 +674,7 @@ read_tree(lua_State *L, int idx, struct widget_node *nodes, size_t *len,
 	}
 	for (size_t i = 0; ok && i < count; i++) {
 		lua_rawgeti(L, -1, (int)i + 1);
-		ok = read_tree(L, lua_gettop(L), nodes, len, leaves, clip_by, clips, shapes, anchors);
+		ok = read_tree(L, lua_gettop(L), nodes, len, leaves, clip_by, clips, shapes);
 		lua_pop(L, 1);
 	}
 	lua_pop(L, 1);
@@ -959,9 +946,7 @@ widget_nodes_set(lua_State *L, struct widget_tree *d, Monitor *m, int idx)
 	 * the two failures that are a size and not a malformed table. */
 	lua_newtable(L);
 	int shapes = lua_gettop(L);
-	lua_newtable(L);
-	bool ok = read_tree(L, idx, nodes, &len, &leaves, 0, &clips, shapes, lua_gettop(L));
-	lua_pop(L, 1);
+	bool ok = read_tree(L, idx, nodes, &len, &leaves, 0, &clips, shapes);
 	size_t scrolls = 0;
 	for (size_t i = 0; i < len; i++)
 		scrolls += nodes[i].scroll != 0;

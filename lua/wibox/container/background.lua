@@ -47,41 +47,7 @@ function background:set_children(children)
     self:set_widget(children[1])
 end
 
---- Stretch the background gradient horizontally.
---
--- This only works for linear or radial gradients. It does nothing
--- for solid colors, `bgimage` or raster patterns.
---
---@DOC_wibox_container_background_stretch_horizontally_EXAMPLE@
---
--- @property stretch_horizontally
--- @tparam[opt=false] boolean stretch_horizontally
--- @propemits true false
--- @see stretch_vertically
--- @see bg
--- @see gears.color
-
---- Stretch the background gradient vertically.
---
--- This only works for linear or radial gradients. It does nothing
--- for solid colors, `bgimage` or raster patterns.
---
---@DOC_wibox_container_background_stretch_vertically_EXAMPLE@
---
--- @property stretch_vertically
--- @tparam[opt=false] boolean stretch_vertically
--- @propemits true false
--- @see stretch_horizontally
--- @see bg
--- @see gears.color
-
-for _, orientation in ipairs {"horizontally", "vertically"} do
-    background["set_stretch_"..orientation] = function(self, value)
-        self._private["stretch_"..orientation] = value
-        self:emit_signal("widget::redraw_needed")
-        self:emit_signal("property::stretch_"..orientation, value)
-    end
-end
+clay.retire(background, {"stretch_horizontally", "stretch_vertically"})
 
 --- The background color/pattern/gradient to use.
 --

@@ -36,16 +36,6 @@ local checkbox = {}
 -- @beautiful beautiful.checkbox_border_color
 -- @param color
 
---- The checked part border color.
---
--- @beautiful beautiful.checkbox_check_border_color
--- @param color
-
---- The checked part border width.
---
--- @beautiful beautiful.checkbox_check_border_width
--- @param number
-
 --- The checked part filling color.
 --
 -- @beautiful beautiful.checkbox_check_color
@@ -54,13 +44,6 @@ local checkbox = {}
 --- The outer (unchecked area) shape.
 --
 -- @beautiful beautiful.checkbox_shape
--- @tparam gears.shape|function shape
--- @see gears.shape
-
---- The checked part shape.
---
--- If none is set, then the `shape` property will be used.
--- @beautiful beautiful.checkbox_check_shape
 -- @tparam gears.shape|function shape
 -- @see gears.shape
 
@@ -105,22 +88,6 @@ local checkbox = {}
 -- @propbeautiful
 -- @propemits true false
 
---- The checked part border color.
---
--- @property check_border_color
--- @tparam color|nil check_border_color
--- @propbeautiful
--- @propemits true false
-
---- The checked part border width.
---
--- @property check_border_width
--- @tparam number|nil check_border_width
--- @propbeautiful
--- @negativeallowed false
--- @propertyunit pixel
--- @propemits true false
-
 --- The checked part filling color.
 --
 -- @property check_color
@@ -133,16 +100,6 @@ local checkbox = {}
 --@DOC_wibox_widget_checkbox_shape_EXAMPLE@
 -- @property shape
 -- @tparam shape|nil shape
--- @propbeautiful
--- @propemits true false
--- @see gears.shape
-
---- The checked part shape.
---
--- If none is set, then the `shape` property will be used.
---@DOC_wibox_widget_checkbox_check_shape_EXAMPLE@
--- @property check_shape
--- @tparam shape|nil check_shape
 -- @propbeautiful
 -- @propemits true false
 -- @see gears.shape
@@ -187,13 +144,12 @@ end
 -- The child widget area
 local function content_workarea(self, width, height)
     local padding = self._private.paddings or {}
-    local offset = self:get_check_border_width() or 0
     local wa = outline_workarea(self, width, height)
 
-    wa.x      = offset + wa.x + (padding.left or 1)
-    wa.y      = offset + wa.y + (padding.top  or 1)
-    wa.width  = wa.width  - (padding.left or 1) - (padding.right  or 1) - 2*offset
-    wa.height = wa.height - (padding.top  or 1) - (padding.bottom or 1) - 2*offset
+    wa.x      = wa.x + (padding.left or 1)
+    wa.y      = wa.y + (padding.top  or 1)
+    wa.width  = wa.width  - (padding.left or 1) - (padding.right  or 1)
+    wa.height = wa.height - (padding.top  or 1) - (padding.bottom or 1)
 
     return wa
 end
@@ -210,7 +166,6 @@ local function describe_checkbox(w, fg, st, item, bound)
     local bg = w:get_bg()
     local border_color = w:get_border_color()
     local check_color = w:get_check_color()
-    local check_border_color = w:get_check_border_color()
     -- A gradient starts where `draw` set it: at each work area's corner.
     local outline_wa, content_wa = outline_workarea(w, side, side), content_workarea(w, side, side)
     local main = clay.solid_rgba(main_color)
@@ -218,7 +173,6 @@ local function describe_checkbox(w, fg, st, item, bound)
     local background = clay.fill(bg, outline_wa.x, outline_wa.y)
     local border = clay.solid_rgba(border_color)
     local check_fill = clay.fill(check_color, content_wa.x, content_wa.y)
-    local check_border = clay.solid_rgba(check_border_color)
     local border_width = w:get_border_width() or 1
     if main_color and not main_fill then
         clay.ignore(w, "color", "is not a solid or a gradient and is transparent")
@@ -234,9 +188,6 @@ local function describe_checkbox(w, fg, st, item, bound)
     if check_color and not check_fill then
         clay.ignore(w, "check_color", "is not a solid or a gradient and is transparent")
     end
-    if check_border_color and not check_border then
-        clay.ignore(w, "check_border_color", "is not solid and is transparent")
-    end
 
     local background_shape = w:get_shape() or shape.rectangle
     local stroke = border or main or { 0, 0, 0, 1 }
@@ -249,16 +200,12 @@ local function describe_checkbox(w, fg, st, item, bound)
         end }
     local check
     if w._private.checked then
-        local check_shape = w:get_check_shape() or background_shape
-        local check_border_width = w:get_check_border_width() or 0
         check = { float = true, w = "grow", h = "grow",
             fill = check_fill or main_fill or stroke,
-            stroke = check_border_width > 0 and (check_border or { 0, 0, 0, 1 }) or nil,
-            stroke_width = check_border_width,
             shape = function(width, height)
                 local size = math.min(width, height)
                 local wa = content_workarea(w, size, size)
-                return clay.shape_ops(check_shape, wa.width, wa.height, wa.x, wa.y)
+                return clay.shape_ops(background_shape, wa.width, wa.height, wa.x, wa.y)
             end }
     end
     return { w = side, h = side, wsrc = src, hsrc = src, specs = { outline, check } }
@@ -270,9 +217,8 @@ checkbox._clay = { describe = describe_checkbox }
 -- @property checked
 -- @tparam[opt=false] boolean checked
 
-for _, prop in ipairs {"border_width", "bg", "border_color", "check_border_color",
-    "check_border_width", "check_color", "shape", "check_shape", "paddings",
-    "checked", "color" } do
+for _, prop in ipairs {"border_width", "bg", "border_color", "check_color", "shape",
+    "paddings", "checked", "color" } do
     checkbox["set_"..prop] = function(self, value)
         self._private[prop] = value
         self:emit_signal("property::"..prop, value)
@@ -282,6 +228,8 @@ for _, prop in ipairs {"border_width", "bg", "border_color", "check_border_color
         return self._private[prop] or beautiful["checkbox_"..prop]
     end
 end
+
+clay.retire(checkbox, {"check_border_color", "check_border_width", "check_shape"})
 
 function checkbox:set_paddings(val)
     self._private.paddings = type(val) == "number" and {

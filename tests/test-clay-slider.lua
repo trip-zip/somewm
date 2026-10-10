@@ -99,18 +99,6 @@ local steps = {
         io.stderr:write("[PASS] the handle shape is a circle\n")
         return true
     end,
-    function(count)
-        if count == 1 then
-            slider.bar_border_width = 2
-            slider.bar_border_color = "#ffff00"
-            slider.bar_active_color = nil
-            return nil
-        end
-        assert(pixel(50, 16, "#ffff00"), "the bar top border is not yellow")
-        assert(pixel(50, 20, "#00ff00"), "the bar centre is not green")
-        io.stderr:write("[PASS] the slider bar border paints inside its top edge\n")
-        return true
-    end,
     function()
         bar.drawin.drawable:emit_signal("button::press", 30, 20, 1, {})
         assert(slider.value == 15, "the press did not set the slider value to 15")

@@ -11,7 +11,7 @@ local pointer = assert(require('_utils').binary_or_skip('./build-test/test-virtu
 runner.run_async(function()
     local g=wibox.layout.grid()
     g.column_count=3; g.spacing=5
-    g.minimum_column_width=10; g.minimum_row_height=20
+    g.minimum_row_height=20
     g.expand={horizontal=true,vertical=false}
     local ws={}
     for i=1,7 do
@@ -87,7 +87,7 @@ runner.run_async(function()
     -- axes. The host clips overflow.
     local small=wibox.layout.grid()
     small.column_count=3; small.row_count=2; small.spacing=5; small.expand=true
-    small.minimum_column_width=10; small.minimum_row_height=20
+    small.minimum_row_height=20
     local child=wibox.container.background(nil,'#ff0000')
     child.forced_width=10; child.forced_height=20; small:add(child)
     local host=wibox{screen=screen[1],x=100,y=100,width=25,height=25,

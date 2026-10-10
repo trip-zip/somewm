@@ -156,20 +156,7 @@ local progressbar = { mt = {} }
 -- @property ticks
 -- @tparam[opt=false] boolean ticks
 -- @propemits true false
--- @see ticks_gap
 -- @see ticks_size
-
---- The progressbar ticks gap.
---
--- @DOC_wibox_widget_progressbar_ticks_gap_EXAMPLE@
---
--- @property ticks_gap
--- @tparam[opt=1] number ticks_gap
--- @propertyunit pixel
--- @negativeallowed false
--- @propemits true false
--- @see ticks_size
--- @see ticks
 
 --- The progressbar ticks size.
 --
@@ -184,7 +171,6 @@ local progressbar = { mt = {} }
 -- @propertyunit pixel
 -- @negativeallowed false
 -- @propemits true false
--- @see ticks_gap
 -- @see ticks
 
 --- The maximum value the progressbar should handle.
@@ -331,7 +317,7 @@ local progressbar = { mt = {} }
 
 local properties = { "border_color", "color"     , "background_color",
                      "value"       , "max_value" , "ticks",
-                     "ticks_gap"   , "ticks_size", "border_width",
+                     "ticks_size"  , "border_width",
                      "shape"       , "bar_shape" , "bar_border_width",
                      "clip"        , "margins"   , "bar_border_color",
                      "paddings",
@@ -467,6 +453,8 @@ function progressbar:set_max_value(max_value)
 end
 
 -- Build properties function
+clay.retire(progressbar, {"ticks_gap"})
+
 for _, prop in ipairs(properties) do
     if not progressbar["set_" .. prop] then
         progressbar["set_" .. prop] = function(pbar, value)
@@ -499,7 +487,6 @@ end
 -- @tparam[opt] gears.shape args.shape The progressbar shape.
 -- @tparam[opt] boolean args.clip Force the inner part (the bar) to fit in the background shape.
 -- @tparam[opt] boolean args.ticks The progressbar to draw ticks.
--- @tparam[opt] number args.ticks_gap The progressbar ticks gap.
 -- @tparam[opt] number args.ticks_size The progressbar ticks size.
 -- @tparam[opt] number args.max_value The maximum value the progressbar should handle.
 -- @tparam[opt] table|number args.margins The progressbar margins.

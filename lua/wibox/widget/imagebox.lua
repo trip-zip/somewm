@@ -178,19 +178,6 @@ end
 -- @tparam[opt=nil] image|nil image
 -- @propemits false false
 
---- Return the source image width.
---
--- For SVG images, this may be affected by the DPI and might not
--- reflect the size the images will be rendered at. For PNG or
--- JPG images, this will return the file resolution.
---
--- @property source_width
--- @tparam number source_width
--- @propertydefault This depends on the source image.
--- @negativeallowed false
--- @see image
--- @see source_height
-
 --- Return the source image height.
 --
 -- For SVG images, this may be affected by the DPI and might not
@@ -202,7 +189,6 @@ end
 -- @propertydefault This depends on the source image.
 -- @negativeallowed false
 -- @see image
--- @see source_width
 
 --- Set the `imagebox` image.
 --
@@ -362,34 +348,20 @@ end
 -- @tparam[opt=96] number|table dpi
 -- @negativeallowed false
 -- @propemits true false
--- @see auto_dpi
 
---- Use the object DPI when rendering the SVG.
---
--- By default, the SVG are interpreted as-is. When this property is set,
--- the screen DPI will be passed to the SVG renderer. Depending on which
--- tool was used to create the `.svg`, this may do nothing at all. However,
--- for example, if the `.svg` uses `<text>` elements and doesn't have an
--- hardcoded stylesheet, the result will differ.
---
--- @property auto_dpi
--- @tparam[opt=false] boolean auto_dpi
--- @propemits true false
--- @see dpi
+function imagebox:set_dpi(value)
+    local old = self._private.dpi
 
-for _, prop in ipairs {"dpi", "auto_dpi"} do
-    imagebox["set_" .. prop] = function(self, value)
-        local old = self._private[prop]
+    -- It will be set in :fit and :draw. The handle is shared
+    -- by multiple imagebox, so it cannot be set just once.
+    self._private.dpi = value
 
-        -- It will be set in :fit and :draw. The handle is shared
-        -- by multiple imagebox, so it cannot be set just once.
-        self._private[prop] = value
-
-        self:emit_signal("widget::redraw_needed")
-        self:emit_signal("widget::layout_changed")
-        self:emit_signal("property::" .. prop, value, old)
-    end
+    self:emit_signal("widget::redraw_needed")
+    self:emit_signal("widget::layout_changed")
+    self:emit_signal("property::dpi", value, old)
 end
+
+clay.retire(imagebox, {"auto_dpi", "source_width"})
 
 function imagebox:set_stylesheet(value)
     if value == self._private.stylesheet_og then return end

@@ -62,9 +62,9 @@ local oracles={
     ['tidy-grid-borders']={63,63,{{0,0,1,63,white},{0,0,63,1,white},{31,0,1,63,white},
         {0,31,63,1,white},{62,0,1,63,white},{0,62,63,1,white},
         {6,6,20,20,leaves[1]},{37,6,20,20,leaves[2]},{6,37,20,20,leaves[3]},{37,37,20,20,leaves[4]}}},
-    -- The span is its content wide; the hole is its floor and is filled.
-    ['tidy-grid-border-span-hole']={51,63,{{0,0,1,63,white},{0,0,32,1,white},{31,0,1,31,white},
-        {0,31,51,1,white},{31,31,20,32,white},{0,62,31,1,white},
+    -- The span is its content wide; the hole is its padding wide and is filled.
+    ['tidy-grid-border-span-hole']={43,63,{{0,0,1,63,white},{0,0,32,1,white},{31,0,1,31,white},
+        {0,31,43,1,white},{31,31,12,32,white},{0,62,31,1,white},
         {6,6,20,20,leaves[1]},{6,37,20,20,leaves[2]}}},
     -- The dashed column border is drawn as a solid line inside the outer
     -- and row borders around it.
@@ -87,7 +87,7 @@ runner.run_async(function()
     end
     assert(warnings('wibox.layout.grid dashes is drawn as a solid line')==1,'dashes warned more or less than once')
     local g=wibox.layout.grid();g.column_count=2;g.spacing=5
-    g.minimum_column_width=20;g.minimum_row_height=20
+    g.minimum_row_height=20
     g.border_width=1;g.border_color='#ffffff'
     local a,b,c,d=tidy.leaf(20,20,'#ff0000'),tidy.leaf(20,20,'#00ff00'),tidy.leaf(20,20,'#0000ff'),tidy.leaf(20,20,'#ffff00')
     g:add(a,b,c,d)
@@ -97,10 +97,11 @@ runner.run_async(function()
     -- Columns follow each row's content: only the first row widens.
     a.forced_width=40;frame('size-grow');geometry(popup,83,63)
     a.forced_width=nil;frame('size-restore');geometry(popup,63,63)
-    d.visible=false;frame('hide');pixel(popup,45,45,'#ffffff')
+    -- An empty cell takes no width beyond its padding, and is filled.
+    d.visible=false;frame('hide');pixel(popup,37,45,'#ffffff')
     assert(not hit(popup,d,45,45))
     d.visible=true;frame('show');pixel(popup,45,45,'#ffff00')
-    g:remove(d);frame('remove');pixel(popup,45,45,'#ffffff')
+    g:remove(d);frame('remove');pixel(popup,37,45,'#ffffff')
     g:add_widget_at(d,2,2);frame('reinsert');pixel(popup,45,45,'#ffff00')
     g.border_color={inner='#ff00ff',outer='#00ffff'};frame('colors')
     pixel(popup,0,15,'#00ffff');pixel(popup,31,15,'#ff00ff');pixel(popup,15,31,'#ff00ff')
@@ -131,14 +132,14 @@ runner.run_async(function()
     g:add_column_border(2,3,{color='#00ffff'});frame('custom-span')
     geometry(popup,65,63);pixel(popup,32,45,'#00ffff');pixel(popup,20,15,'#ff0000')
     g:add_column_border(2,nil,{});frame('custom-span-restore')
-    a.visible=false;frame('hidden-span');pixel(popup,15,15,'#ffffff')
+    a.visible=false;frame('hidden-span');pixel(popup,3,15,'#ffffff')
     a.visible=true;frame('restored-span');pixel(popup,15,15,'#ff0000')
     g:remove(a);g:add_widget_at(a,1,1);g:add_widget_at(b,1,2);frame('span-restore')
     pixel(popup,31,15,'#ffffff');pixel(popup,40,15,'#00ff00')
     -- A row span occupies its first row; the slot below it is a hole.
     g:remove(c);g:remove(a);g:add_widget_at(a,1,1,2,1);frame('row-span')
     assert(warnings('wibox.layout.grid row_span occupies its first row only')==1)
-    pixel(popup,15,15,'#ff0000');pixel(popup,15,45,'#ffffff')
+    pixel(popup,15,15,'#ff0000');pixel(popup,3,45,'#ffffff')
     g.border_color={inner=gradient,outer='#ffffff'};frame('hole-gradient')
     assert(awesome._clay_tree(screen[1]):find(' fill linear 0,0 63,0 stops 0:1,0,0,1 1:0,0,1,1',1,true),'the hole carries no fill record')
     assert(not pcall(pixel,popup,2,45,'#ffffff'),'the hole is still white')
@@ -169,7 +170,7 @@ runner.run_async(function()
     -- Wrapping text in a bordered grid with an authored width: the row
     -- follows the text in one frame.
     g=wibox.layout.grid();g.column_count=2;g.spacing=5
-    g.minimum_column_width=20;g.minimum_row_height=20
+    g.minimum_row_height=20
     g.border_width=1;g.border_color='#ffffff'
     g.forced_width=100;g.expand={horizontal=true,vertical=false}
     local t=wibox.widget.textbox('aa aa aa aa');t.font='monospace 10';t.wrap='word';g:add(t,tidy.leaf(20,20,'#00ff00'))

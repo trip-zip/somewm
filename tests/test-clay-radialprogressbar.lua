@@ -32,7 +32,7 @@ local steps = {
         if count == 1 then
             progress = wibox.widget {
                 value = 0.6, color = "#ff0000", border_color = "#0000ff",
-                border_width = 4, paddings = 2,
+                border_width = 4,
                 widget = wibox.container.radialprogressbar,
             }
             -- The empty margin hands the progressbar the whole wibox box.
@@ -85,7 +85,7 @@ local steps = {
             return nil
         end
         -- The content spacer opens its clip scope once it has a child.
-        check_box(awesome._clay_tree(s):match("[^\n]* spacer clip[^\n]*"), 4, 4, 192, 32)
+        check_box(awesome._clay_tree(s):match("[^\n]* spacer clip[^\n]*"), 2, 2, 196, 36)
         assert(pixel(100, 20, "#00ff00"), "the child centre is not green")
         assert(pixel(100, 2, "#0000ff"), "the child hides the blue outline")
         assert(pixel(5, 5, BG), "the child paints outside its pill")

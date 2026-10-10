@@ -1176,14 +1176,13 @@ describe("wibox.clay stack", function()
         local l = stack(leaf_widget(10, 5), leaf_widget(20, 5))
 
         l.spacing = 3
-        l.horizontal_offset = 4
         l.vertical_offset = 1
 
         local node = layout_node(l)
 
         assert.is_same({ 3, 0, 3, 0 }, node.pad)
         assert.is_nil(node.children[1].x)
-        assert.is_same({ 7, 4 }, {node.children[2].x, node.children[2].y})
+        assert.is_same({ 3, 4 }, {node.children[2].x, node.children[2].y})
     end)
 
     it("declares only the first child with top_only", function()
@@ -1200,19 +1199,19 @@ describe("wibox.clay stack", function()
         local l = stack(leaf_widget(10, 5), leaf_widget(20, 5))
 
         local warning = stub(gdebug, "print_warning")
-        l.horizontal_offset = -2
+        l.vertical_offset = -2
         local node = layout_node(l)
         for _, child in ipairs(node.children) do
-            assert.is_equal(child.float and 0 or nil, child.x)
+            assert.is_equal(child.float and 0 or nil, child.y)
             assert.is_nil(child.pad)
         end
         assert.stub(warning).was_called(1)
         warning:revert()
         warning = stub(gdebug, "print_warning")
-        l.horizontal_offset = 1.5
+        l.vertical_offset = 1.5
         node = layout_node(l)
-        assert.is_nil(node.children[1].x)
-        assert.is_equal(2, node.children[2].x)
+        assert.is_nil(node.children[1].y)
+        assert.is_equal(2, node.children[2].y)
         assert.stub(warning).was_called(0)
         warning:revert()
 
@@ -1248,9 +1247,9 @@ describe("wibox.clay place", function()
         local host = {background_color = BG}
         local context = {}
         wclay.compile(host, stack, context, 200, 100)
-        stack.horizontal_offset = 7
+        stack.vertical_offset = 7
         local tree = wclay.compile(host, stack, context, 200, 100)
-        assert.is_equal(7, node_for(tree, b).x)
+        assert.is_equal(7, node_for(tree, b).y)
         assert.is_nil(node_for(tree, a).float)
         assert.is_same({x="center", y="center"}, node_for(tree, a).align)
     end)
@@ -1301,16 +1300,13 @@ describe("wibox.clay place", function()
 end)
 
 describe("wibox.clay ratio", function()
-    it("declares spacing and ignores the inner fill strategy", function()
+    it("declares spacing", function()
         local ratio = require("wibox.layout.ratio")
         local l = ratio.horizontal(leaf_widget(), leaf_widget())
         local warning = stub(gdebug, "print_warning")
         l.spacing = 5
         assert.is_equal(5, layout_node(l).gap)
         assert.stub(warning).was_not_called()
-        l.inner_fill_strategy = "justify"
-        assert.is_equal(2, #layout_node(l).children)
-        assert.stub(warning).was_called(1)
         warning:revert()
     end)
 end)
@@ -1398,82 +1394,6 @@ describe("wibox.clay grid", function()
         local warning = stub(gdebug, "print_warning")
         assert.is_not_nil(layout_node(w))
         assert.is_not_nil(layout_node(w))
-        assert.stub(warning).was_called(0)
-        warning:revert()
-    end)
-end)
-
-describe("wibox.clay border", function()
-    local border = require("wibox.container.border")
-    local cairo = require("lgi").cairo
-    local function describe(w)
-        return border._clay.describe(w, nil, setmetatable({ context = context }, {
-            __index = function(_, key) error("border read compiler state: " .. key) end,
-        }))
-    end
-
-    it("declares authored sides without any host dimensions or source image", function()
-        local w = border { widget = leaf_widget(), borders = { left = 4, top = 3, bottom = 7 },
-            paddings = { left = 2, right = 1, top = 5, bottom = 6 } }
-        local node = describe(w)
-        assert.is_equal(3, node.specs[1].h)
-        assert.is_equal("grow", node.specs[2].h)
-        assert.is_equal(7, node.specs[3].h)
-        assert.is_same({2, 1, 5, 6}, node.specs[2].children[2].pad)
-        assert.is_equal(4, node.specs[2].children[1].w)
-        assert.is_equal(2, #node.specs[2].children)
-    end)
-
-    it("crops asymmetric source inputs and replaces slices when borders change", function()
-        local w = border { border_image = cairo.ImageSurface(cairo.Format.ARGB32, 30, 20),
-            borders = { left = 4, right = 6, top = 3, bottom = 7 } }
-        describe(w)
-        local first = w._private.slice_cache[96]
-        assert.is_equal(20, first.top._private.default.width)
-        assert.is_equal(10, first.left._private.default.height)
-        assert.is_equal(6, first.bottom_right._private.default.width)
-        describe(w)
-        assert.is_equal(first, w._private.slice_cache[96])
-        w.borders = { left = 2, right = 5, top = 1, bottom = 4 }
-        describe(w)
-        local second = w._private.slice_cache[96]
-        assert.is_not.equal(first, second)
-        assert.is_equal(23, second.top._private.default.width)
-        assert.is_equal(15, second.left._private.default.height)
-        w.border_image = cairo.ImageSurface(cairo.Format.ARGB32, 60, 40)
-        describe(w)
-        assert.is_equal(53, w._private.slice_cache[96].top._private.default.width)
-        assert.is_equal(35, w._private.slice_cache[96].left._private.default.height)
-    end)
-
-    it("bounds slices by the source and skips empty sides", function()
-        local w = border { border_image = cairo.ImageSurface(cairo.Format.ARGB32, 30, 20),
-            borders = { left = 30, top = 20 } }
-        local node = describe(w)
-        assert.is_equal(14, node.specs[1].children[1].w)
-        assert.is_equal(9, node.specs[1].h)
-        assert.is_nil(w._private.slice_cache[96].right)
-        w.borders = { left = 15, right = 15, top = 10, bottom = 10 }
-        describe(w)
-        assert.is_equal(2, w._private.slice_cache[96].fill._private.default.width)
-        assert.is_equal(2, w._private.slice_cache[96].fill._private.default.height)
-    end)
-
-    it("keeps unsliced authored padding independent of source size", function()
-        local w = border { widget = leaf_widget(), slice = false, borders = 40, paddings = 2,
-            border_image = cairo.ImageSurface(cairo.Format.ARGB32, 30, 20) }
-        assert.is_same({42, 42, 42, 42}, describe(w).specs[1].pad)
-    end)
-
-    it("rounds borders silently", function()
-        local border = require("wibox.container.border")
-        local cairo = require("lgi").cairo
-        local src = cairo.ImageSurface(cairo.Format.ARGB32, 30, 30)
-        local w = border { widget = leaf_widget(), border_image = src, borders = 3.4 }
-        local warning = stub(gdebug, "print_warning")
-        local node = layout_node(w)
-        assert.is_equal(3, node.children[1].h)
-        assert.is_equal(3, node.children[1].children[1].w)
         assert.stub(warning).was_called(0)
         warning:revert()
     end)
@@ -1719,7 +1639,7 @@ end)
 describe("wibox.clay slider", function()
     it("rounds height, fills a gradient handle and uses the bar color for a surface", function()
         local w = require("wibox.widget.slider")()
-        w.bar_border_width, w.bar_height, w.bar_color = 2, 4.4, "#0000ff"
+        w.bar_height, w.bar_color = 4.4, "#0000ff"
         local warning = stub(gdebug, "print_warning")
         local node = w._clay.describe(w)
         assert.is_equal(4, node.specs[1].children[1].h)
@@ -1956,17 +1876,6 @@ describe("wibox.clay authored properties", function()
         warning:revert()
     end)
 
-    it("declares slider bar borders", function()
-        local warning = stub(gdebug, "print_warning")
-        local w = require("wibox.widget.slider")()
-        w.bar_shape, w.bar_border_width, w.bar_border_color = gshape.rounded_rect, 2, "#00ff00"
-        local bar = w._clay.describe(w).specs[1].children[1]
-        assert.is_same({0, 1, 0, 1}, bar.border)
-        assert.is_same({2, 2, 2, 2}, bar.bw)
-        assert.stub(warning).was_not_called()
-        warning:revert()
-    end)
-
     it("declares tray backgrounds and floating overlays", function()
         local beautiful = require("beautiful")
         local warning = stub(gdebug, "print_warning")
@@ -2015,5 +1924,43 @@ describe("wibox.clay authored properties", function()
         assert.is_equal(32, w._clay.describe(w).specs[1].w)
         assert.stub(warning).was_not_called()
         warning:revert()
+    end)
+end)
+
+describe("wibox.clay retired properties", function()
+    it("warns once that each is ignored and reads nil", function()
+        local retired = {
+            {require("wibox.layout.stack")(), {"horizontal_offset"}},
+            {require("wibox.layout.grid")(), {"minimum_column_width", "superpose"}},
+            {require("wibox.layout.ratio").horizontal(), {"inner_fill_strategy"}},
+            {background(), {"stretch_horizontally", "stretch_vertically"}},
+            {require("wibox.container.radialprogressbar")(), {"paddings"}},
+            {require("wibox.container.tile")(), {"horizontal_crop", "vertical_crop"}},
+            {require("wibox.widget.imagebox")(), {"auto_dpi", "source_width"}},
+            {require("wibox.widget.progressbar")(), {"ticks_gap"}},
+            -- The slider takes each name in its constructor table first.
+            {require("wibox.widget.slider"), {"bar_border_color", "bar_border_width", "handle_margins"}},
+            {require("wibox.widget.calendar").month({year = 2026, month = 10}),
+                {"empty_cell_mode", "empty_color", "empty_widget"}},
+            {require("wibox.widget.checkbox")(), {"check_border_color", "check_border_width", "check_shape"}},
+        }
+        for _, case in ipairs(retired) do
+            for _, name in ipairs(case[2]) do
+                local warning = stub(gdebug, "print_warning")
+                local w = case[1]
+                if not w.is_widget then
+                    w = w { [name] = 1, bar_height = 4 }
+                    assert.is_nil(w._private[name])
+                    assert.is_equal(4, w._private.bar_height)
+                else
+                    w[name] = 1
+                end
+                w[name] = 2
+                assert.stub(warning).was_called(1)
+                assert.matches(" " .. name .. " is ignored$", warning.calls[1].refs[1])
+                assert.is_nil(w[name])
+                warning:revert()
+            end
+        end
     end)
 end)

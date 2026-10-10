@@ -45,23 +45,6 @@ local slider = {mt={}}
 -- @tparam color|nil handle_color
 -- @propemits true false
 
---- The slider handle margins.
---
---@DOC_wibox_widget_slider_handle_margins_EXAMPLE@
---
--- @property handle_margins
--- @tparam[opt={}] table|number|nil handle_margins
--- @tparam[opt=0] number handle_margins.left
--- @tparam[opt=0] number handle_margins.right
--- @tparam[opt=0] number handle_margins.top
--- @tparam[opt=0] number handle_margins.bottom
--- @propertyunit pixel
--- @propertytype number A single value used for all sides.
--- @propertytype table A different value for each side. The side names are:
--- @negativeallowed true
--- @propemits true false
--- @propbeautiful
-
 --- The slider handle width.
 --
 --@DOC_wibox_widget_slider_handle_width_EXAMPLE@
@@ -157,23 +140,6 @@ local slider = {mt={}}
 -- @propbeautiful
 -- @propemits true false
 
---- The bar (background) border width.
--- @property bar_border_width
--- @tparam[opt=0] number|nil bar_border_width
--- @propertyunit pixel
--- @negativeallowed false
--- @propemits true false
--- @propbeautiful
-
---- The bar (background) border_color.
---
---@DOC_wibox_widget_slider_bar_border_EXAMPLE@
---
--- @property bar_border_color
--- @tparam color|nil bar_border_color
--- @propbeautiful
--- @propemits true false
-
 --- The slider value.
 --
 --@DOC_wibox_widget_slider_value_EXAMPLE@
@@ -196,16 +162,6 @@ local slider = {mt={}}
 -- @tparam[opt=100] number maximum
 -- @negativeallowed true
 -- @propemits true false
-
---- The bar (background) border width.
---
--- @beautiful beautiful.slider_bar_border_width
--- @param number
-
---- The bar (background) border color.
---
--- @beautiful beautiful.slider_bar_border_color
--- @param color
 
 --- The handle border_color.
 --
@@ -262,15 +218,6 @@ local slider = {mt={}}
 -- @tparam[opt=0] number margins.top
 -- @tparam[opt=0] number margins.bottom
 
---- The slider handle margins.
---
--- @beautiful beautiful.slider_handle_margins
--- @tparam[opt={}] table margins
--- @tparam[opt=0] number margins.left
--- @tparam[opt=0] number margins.right
--- @tparam[opt=0] number margins.top
--- @tparam[opt=0] number margins.bottom
-
 --- The bar (background) color.
 --
 -- @beautiful beautiful.slider_bar_color
@@ -287,7 +234,6 @@ local properties = {
     -- Handle
     handle_shape         = shape.rectangle,
     handle_color         = false,
-    handle_margins       = {},
     handle_width         = false,
     handle_border_width  = 0,
     handle_border_color  = false,
@@ -299,8 +245,6 @@ local properties = {
     bar_color            = false,
     bar_active_color     = false,
     bar_margins          = {},
-    bar_border_width     = 0,
-    bar_border_color     = false,
 
     -- Content
     value                = 0,
@@ -342,6 +286,9 @@ function slider:set_value(value)
     end
 end
 
+local retired = {"bar_border_color", "bar_border_width", "handle_margins"}
+clay.retire(slider, retired)
+
 local function get_extremums(self)
     local min = self._private.minimum or properties.minimum
     local max = self._private.maximum or properties.maximum
@@ -354,14 +301,6 @@ end
 
 local function describe_slider(w)
     local p = w._private
-    local bbw = p.bar_border_width or beautiful.slider_bar_border_width or 0
-    local bar_border_color = p.bar_border_color or beautiful.slider_bar_border_color
-    local bar_border = clay.solid_rgba(bar_border_color)
-    if bar_border_color and not bar_border then
-        clay.ignore(w, "bar_border_color", "is not solid and is transparent")
-    end
-    bbw = bar_border and clay.pixels(w, "bar_border_width", bbw) or 0
-
     local bar_color = p.bar_color or beautiful.slider_bar_color
     local active = p.bar_active_color or beautiful.slider_bar_active_color
     local handle_color = p.handle_color or beautiful.slider_handle_color
@@ -386,14 +325,10 @@ local function describe_slider(w)
 
     local margins = p.bar_margins or beautiful.slider_bar_margins
     local bar_h = p.bar_height or (not margins and beautiful.slider_bar_height)
-    local bar_margins, handle_margins = {}, {}
-    for i, prop in ipairs { "bar_margins", "handle_margins" } do
-        local value = p[prop] or beautiful["slider_" .. prop]
-        local sides = i == 1 and bar_margins or handle_margins
-        for j, side in ipairs { "left", "right", "top", "bottom" } do
-            local v = type(value) == "number" and value or (value and value[side] or 0)
-            sides[j] = clay.pixels(w, prop .. "." .. side, v)
-        end
+    local bar_margins = {}
+    for j, side in ipairs { "left", "right", "top", "bottom" } do
+        local v = type(margins) == "number" and margins or (margins and margins[side] or 0)
+        bar_margins[j] = clay.pixels(w, "bar_margins." .. side, v)
     end
     if bar_h then
         bar_h = clay.pixels(w, "bar_height", bar_h)
@@ -434,14 +369,11 @@ local function describe_slider(w)
     if radius then
         bar.radius = radius
         clay.bg_fill(bar, bar_fill)
-        if bbw > 0 then
-            bar.border, bar.bw = bar_border, {bbw, bbw, bbw, bbw}
-        end
     else
         bar.clip = draws_active
-        bar.fill, bar.stroke, bar.stroke_width = bar_fill, bar_border, bbw
+        bar.fill = bar_fill
         bar.shape = function(width, height)
-            return clay.shape_ops(bar_shape, width - bbw, height - bbw, bbw / 2, bbw / 2)
+            return clay.shape_ops(bar_shape, width, height)
         end
     end
     if draws_active then
@@ -465,12 +397,8 @@ local function describe_slider(w)
             stroke = hbw > 0 and handle_stroke or nil, stroke_width = hbw,
             shape = function(width, height)
                 local handle_width = hw or math.floor(height / 2)
-                local handle_height = height
-                local xo, yo = handle_margins[1], handle_margins[3]
-                handle_width = handle_width - handle_margins[1] - handle_margins[2]
-                handle_height = handle_height - handle_margins[3] - handle_margins[4]
                 local rel = math.floor(rate * (width - handle_width))
-                return clay.shape_ops(handle_shape, handle_width, handle_height, xo + rel, yo)
+                return clay.shape_ops(handle_shape, handle_width, height, rel, 0)
             end },
     } }
 end
@@ -518,7 +446,6 @@ end
 -- @tparam[opt={}] table args
 -- @tparam[opt] gears.shape args.handle_shape The slider handle shape.
 -- @tparam[opt] color args.handle_color The slider handle color.
--- @tparam[opt] table args.handle_margins The slider handle margins.
 -- @tparam[opt] number args.handle_width The slider handle width.
 -- @tparam[opt] color args.handle_border_color The handle border_color.
 -- @tparam[opt] number args.handle_border_width The handle border width.
@@ -530,8 +457,6 @@ end
 -- @tparam[opt] color args.bar_color The bar (background) color.
 -- @tparam[opt] color args.bar_active_color The bar (active) color.
 -- @tparam[opt] table args.bar_margins The bar (background) margins.
--- @tparam[opt] number args.bar_border_width The bar (background) border width.
--- @tparam[opt] color args.bar_border_color The bar (background) border_color.
 -- @tparam[opt] number args.value The slider value.
 -- @tparam[opt] number args.minimum The slider minimum value.
 -- @tparam[opt] number args.maximum The slider maximum value.
@@ -540,9 +465,17 @@ local function new(args)
         enable_properties = true,
     })
 
-    gtable.crush(ret._private, args or {})
+    args = args or {}
+    local private = gtable.clone(args, false)
+    for _, name in ipairs(retired) do private[name] = nil end
+    gtable.crush(ret._private, private)
 
     gtable.crush(ret, slider, true)
+
+    -- A retired name warns through its setter and is not kept.
+    for _, name in ipairs(retired) do
+        if args[name] ~= nil then ret["set_" .. name](ret, args[name]) end
+    end
 
     ret:connect_signal("button::press", mouse_press)
 

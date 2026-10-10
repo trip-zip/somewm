@@ -122,41 +122,20 @@ function stack:raise_widget(widget, recursive)
     end
 end
 
---- Add an horizontal offset to each layers.
+--- Add an vertical offset to each layers.
 --
 -- Note that this reduces the overall size of each widgets by the sum of all
 -- layers offsets.
 --
 --@DOC_wibox_layout_stack_offset_EXAMPLE@
 --
--- @property horizontal_offset
--- @tparam[opt=0] number horizontal_offset
--- @propertyunit pixel
--- @negativeallowed true
--- @propemits true false
--- @see vertical_offset
-
---- Add an vertical offset to each layers.
---
--- Note that this reduces the overall size of each widgets by the sum of all
--- layers offsets.
---
 -- @property vertical_offset
 -- @tparam[opt=0] number vertical_offset
 -- @propertyunit pixel
 -- @negativeallowed true
 -- @propemits true false
--- @see horizontal_offset
 
-function stack:set_horizontal_offset(value)
-    self._private.h_offset = value
-    self:emit_signal("widget::layout_changed")
-    self:emit_signal("property::horizontal_offset", value)
-end
-
-function stack:get_horizontal_offset()
-    return self._private.h_offset
-end
+clay.retire(stack, {"horizontal_offset"})
 
 function stack:set_vertical_offset(value)
     self._private.v_offset = value
@@ -178,7 +157,6 @@ local function new(...)
 
     gtable.crush(ret, stack, true)
 
-    ret._private.h_offset = 0
     ret._private.v_offset = 0
 
     return ret
@@ -195,7 +173,6 @@ end
 local function describe_stack(w)
     local p = w._private
     local spacing = clay.pixels(w, "spacing", p.spacing)
-    local ho = clay.pixels(w, "horizontal_offset", p.h_offset)
     local vo = clay.pixels(w, "vertical_offset", p.v_offset)
 
     local specs = {}
@@ -204,7 +181,7 @@ local function describe_stack(w)
         local k = i - 1
 
         specs[i] = { widget = child, stack = true, w = "grow", h = "grow",
-            x = spacing + k * ho, y = spacing + k * vo }
+            x = spacing, y = spacing + k * vo }
     end
 
     return { specs = specs, stack = true, top_only = p.top_only }

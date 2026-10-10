@@ -57,13 +57,13 @@ runner.run_async(function()
     stack:raise(2); async.sleep(0.2)
     pixel(10,10,'#ff0000'); pixel(10,40,'#101010')
     stack.top_only=false; stack.spacing=3
-    stack.horizontal_offset=4; stack.vertical_offset=2
+    stack.vertical_offset=2
     async.sleep(0.2)
-    check(a,3,3,100,20); check(b,7,5,40,60)
+    check(a,3,3,100,20); check(b,3,5,40,60)
     example.save('widget-overlap-offsets',awesome._clay_tree(s))
 
     -- FIT width follows the first child; the taller float cannot size it.
-    stack.spacing=0; stack.horizontal_offset=0; stack.vertical_offset=0
+    stack.spacing=0; stack.vertical_offset=0
     stack.forced_width=nil; stack.forced_height=nil
     bar.widget=wibox.layout.fixed.horizontal(stack)
     async.sleep(0.2)

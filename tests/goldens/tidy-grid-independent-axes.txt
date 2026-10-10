@@ -8,12 +8,12 @@ output
     drawable w=fit h=fit row
       wibox.layout.grid w=fixed(225) user h=fixed(80) user column gap 5
         - spacer w=grow h=fit user row gap 5
-          - spacer w=grow user h=grow row
+          - spacer w=grow h=grow row
             wibox.widget.base w=grow user h=grow user row
-          - spacer w=grow user h=grow row
+          - spacer w=grow h=grow row
             wibox.widget.base w=grow user h=grow user row
         - spacer w=grow h=fit user row gap 5
-          - spacer w=grow user h=grow row
+          - spacer w=grow h=grow row
             wibox.widget.base w=grow user h=grow user row
-          - spacer w=grow user h=grow row
+          - spacer w=grow h=grow row
             wibox.widget.base w=grow user h=grow user row

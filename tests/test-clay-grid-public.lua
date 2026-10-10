@@ -14,7 +14,7 @@ local function leaf(color)
 end
 runner.run_async(function()
     local g=wibox.layout.grid()
-    g.spacing=5;g.minimum_column_width=20;g.minimum_row_height=10
+    g.spacing=5;g.minimum_row_height=10
     local a,b,c=leaf('#ff0000'),leaf('#00ff00'),leaf('#0000ff')
     g:add(a,b)
     local host=awful.popup{screen=screen[1],placement=awful.placement.top_left,offset={x=100,y=100},visible=true,bg='#204080',widget=g}
@@ -62,7 +62,7 @@ runner.run_async(function()
     g:remove_row(2)
     frame('restore-row',{{a,0,0,20,10},{b,0,15,20,10}})
     g:insert_column(1)
-    frame('insert-column',{{a,25,0,20,10},{b,25,15,20,10}});hole(2,2)
+    frame('insert-column',{{a,5,0,20,10},{b,5,15,20,10}});hole(2,2)
     g:remove_column(1)
     frame('remove-column',{{a,0,0,20,10},{b,0,15,20,10}})
     g:extend_column(1)
@@ -85,7 +85,7 @@ runner.run_async(function()
     frame('restored',{{c,0,0,20,10},{b,0,15,20,10}})
     g.column_count=3;g.row_count=3
     frame('forced-counts',{{c,0,0,20,10},{b,0,15,20,10}})
-    assert(host.width==70 and host.height==40)
+    assert(host.width==30 and host.height==40)
     g.column_count=nil;g.row_count=nil
     g.orientation='horizontal';assert(g.orientation=='horizontal')
     g:add(a);ids[a]=nil
@@ -95,7 +95,9 @@ runner.run_async(function()
     frame('repeated',{{c,0,0,20,10,1},{c,25,15,20,10,2},{b,0,15,20,10},{a,25,0,20,10}})
     local first,second=ids[c][1],ids[c][2]
     assert(first~=second)
-    c.visible=false;awesome._test_redeclare();hole(2,2);hole(27,17)
+    -- Hidden, both of c's cells are empty columns and take no width.
+    c.visible=false;awesome._test_redeclare();hole(2,2)
+    for _,hit in ipairs(host:find_widgets(27,17)) do assert(hit.widget~=c,'hidden occurrence acquired a target') end
     c.visible=true
     frame('repeated-restored',{{c,0,0,20,10,1},{c,25,15,20,10,2}})
     local calls={}

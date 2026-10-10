@@ -450,6 +450,14 @@ function clay.refuse(who, property, what)
     return nil
 end
 
+--- Properties a class no longer has: setting one warns once that it is
+-- ignored and changes nothing, and reading one answers nil.
+function clay.retire(class, names)
+    for _, name in ipairs(names) do
+        class["set_" .. name] = function(w) clay.ignore(w, name, "is ignored") end
+    end
+end
+
 --- A square widget's side and its word: on each axis its forced size or
 -- the bound of its box, less `pad` (left, right, top, bottom); the smaller
 -- of the axes that have one, nil when neither has.
@@ -733,7 +741,6 @@ local function flip_offset(v) return -v end
 local function transformed(node, word, container)
     local t = transforms[word]
     local reversed = { [t.x[1]] = t.x[2], [t.y[1]] = t.y[2] }
-    local copies = {}
     -- above names the nearest widget, which a scroll's own clip node is under.
     local function copy(n, above)
         above = n.name or above
@@ -751,7 +758,6 @@ local function transformed(node, word, container)
         end
         local c = {}
         for key, value in pairs(n) do c[key] = value end
-        copies[n] = c
         c.transform = word
         if n.text then c.wrap = "none" end
         if t.turn then
@@ -781,7 +787,6 @@ local function transformed(node, word, container)
             local o = axis_map(t, { x = n.x or 0, y = n.y or 0 }, flip_offset)
             c.x, c.y = o.x, o.y
         end
-        if copies[n._attach] then c._attach = copies[n._attach] end
         if n.children then
             local children, flow = {}, {}
             for i, child in ipairs(n.children) do
@@ -860,7 +865,7 @@ local function same_spec(a, b)
     for _, k in ipairs(spec_keys) do
         local x, y = a[k], b[k]
 
-        if x ~= y and not (k ~= '_attach' and type(x) == "table" and type(y) == "table"
+        if x ~= y and not (type(x) == "table" and type(y) == "table"
                 and x.percent == y.percent) then
             return false
         end
