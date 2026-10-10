@@ -41,7 +41,7 @@ local function set_position(self)
     if p.placement then
         for name in pairs(attachment.points) do
             if p.placement == placement[name] then
-                attachment.corner(self, name, p.offset)
+                attachment.corner(self, name, p.offset, nil, nil, p.honor_workarea)
                 return
             end
         end
@@ -329,6 +329,26 @@ function popup:set_offset(offset)
     self:emit_signal("property::offset", offset)
 end
 
+--- Place the popup at a corner, edge or centre of the workarea instead of the screen.
+--
+-- It applies when `placement` is one of the `awful.placement` corner,
+-- edge or centre functions, such as `awful.placement.top_right`.
+--
+-- @property honor_workarea
+-- @tparam[opt=false] boolean honor_workarea
+-- @propemits true false
+-- @see placement
+
+function popup:set_honor_workarea(value)
+    self._private.honor_workarea = value
+    self:_apply_size_now(false)
+    self:emit_signal("property::honor_workarea", value)
+end
+
+function popup:get_honor_workarea()
+    return self._private.honor_workarea or false
+end
+
 --- Set the placement function.
 --
 -- @property placement
@@ -373,6 +393,7 @@ end
 -- @tparam string|table args.preferred_positions
 -- @tparam string|table args.preferred_anchors
 -- @tparam table|number args.offset The X and Y offset compared to the parent object
+-- @tparam boolean args.honor_workarea Place at the workarea rather than the screen
 -- @tparam boolean args.hide_on_right_click Whether or not to hide the popup on
 --  right clicks.
 -- @constructorfct awful.popup
@@ -441,7 +462,7 @@ local function create_popup(_, args)
     -- First, apply the limits to avoid a flicker with large width or height
     -- when set_position is called before the limits
     for _,v in ipairs{"minimum_width", "minimum_height", "maximum_height",
-      "maximum_width", "offset", "placement","preferred_positions",
+      "maximum_width", "offset", "honor_workarea", "placement","preferred_positions",
       "preferred_anchors", "hide_on_right_click"} do
         if args[v] ~= nil then
             w["set_"..v](w, args[v])

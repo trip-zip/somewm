@@ -3,7 +3,7 @@ local awful=require('awful')
 local wibox=require('wibox')
 local naughty=require('naughty')
 local example=require('_clay_example')
-local popup, launcher, notification, bar, pid
+local popup, notification, bar, pid
 local function box(width,height,color,placement,offset)
  return awful.popup {screen=screen[1],visible=true,ontop=true,bg=color,border_width=0,shadow=false,
   minimum_width=width,maximum_width=width,placement=placement,offset=offset,
@@ -30,8 +30,13 @@ runner.run_steps {
  function(n)
   if n<3 then return end
   example.pixel(1030,18,'#00ff00') -- notification 90 over popup 80
-  require('beautiful').launcher_width=1280
-  launcher=box(1280,720,'#0000ff',awful.placement.centered)
+  local beautiful=require('beautiful')
+  beautiful.menubar_bg_normal='#0000ff';beautiful.menubar_border_width=0
+  beautiful.launcher_width=1280
+  local menubar=require('menubar')
+  menubar.menu_gen.generate=function(done) done({}) end
+  menubar.geometry={height=720}
+  menubar.show(screen[1])
   return true
  end,
  function(n)
@@ -48,7 +53,7 @@ runner.run_steps {
  end,
  function(n)
   if n<3 then return end
-  example.pixel(1030,18,'#0000ff');launcher.visible=false;return true
+  example.pixel(1030,18,'#0000ff');require('menubar').hide();return true
  end,
  function(n)
   if n<3 then return end
@@ -61,7 +66,7 @@ runner.run_steps {
  function(n)
   if n<3 then return end
   example.pixel(1030,18,'#ff00ff');bar.visible=false
-  io.stderr:write('[PASS] root.content overlap: 60 < 80 < notification90 < later launcher90 < 100; removals reveal each lower band\n')
+  io.stderr:write('[PASS] root.content overlap: 60 < 80 < notification90 < later menubar90 < 100; removals reveal each lower band\n')
   return true
  end,
 }

@@ -517,15 +517,16 @@ function menubar.show(scr)
     local geometry = menubar.geometry
     instance.geometry = {
         height = geometry.height or gmath.round(theme.get_font_height(font) * 1.5),
-        width = geometry.width or theme.launcher_width or 600,
+        width = geometry.width or theme.launcher_width,
     }
     instance.wibox.screen = scr
     instance.wibox.widget.forced_height = instance.geometry.height
+    -- Without a width the launcher spans the workarea, as 2.0's did.
     require('awful._attachment').corner(instance.wibox, 'centered',
-        {x=geometry.x or 0,y=geometry.y or 0}, 3)
+        {x=geometry.x or 0,y=geometry.y or 0}, 3, nil, true)
     local a=instance.wibox.drawin.attachment
-    a.width=instance.geometry.width
-    a.wsrc=geometry.width and not theme.launcher_width and 'user' or 'theme'
+    a.width=geometry.width
+    a.wsrc=geometry.width and not a.width_override and 'user' or a.wsrc
     instance.wibox.drawin.attachment=a
 
     current_item = 1

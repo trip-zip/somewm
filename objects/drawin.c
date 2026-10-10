@@ -450,6 +450,8 @@ luaA_drawin_set_attachment(lua_State *L, drawin_t *d)
         lua_pop(L, 1);
         lua_getfield(L, -1, "bounded");
         next.bounded = lua_toboolean(L, -1); lua_pop(L, 1);
+        lua_getfield(L, -1, "workarea");
+        next.workarea = lua_toboolean(L, -1); lua_pop(L, 1);
         lua_getfield(L, -1, "wsrc");
         next.src[0] = declare_src_parse(lua_tostring(L, -1)); lua_pop(L, 1);
         lua_getfield(L, -1, "hsrc");
@@ -481,6 +483,9 @@ luaA_drawin_get_attachment(lua_State *L, drawin_t *d)
     if (d->attachment.bounded) {
         ATTACH_NUMBER(height);
         lua_pushboolean(L, true); lua_setfield(L, -2, "bounded");
+    }
+    if (d->attachment.workarea) {
+        lua_pushboolean(L, true); lua_setfield(L, -2, "workarea");
     }
     if (d->attachment.width_override >= 0) { ATTACH_NUMBER(width_override); }
 #undef ATTACH_NUMBER

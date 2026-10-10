@@ -200,12 +200,11 @@ struct widget_node {
 /* Clip scopes a tree may open: a byte of the word numbers them (render.h). */
 #define WIDGET_CLIPS_MAX 255
 
-/* A tree with more nodes than this shows nothing. A busy bar (taglist plus
- * tasklist) is a few hundred nodes; Clay's default context holds 8192
- * elements (clay.h:1019), shared by every drawin on the output. The ordinary
- * row/cell/text tree for a twelve-month calendar exceeds 1024; keep room for
- * that real composition while retaining the aggregate output budget below. */
-#define WIDGET_NODES_MAX 2048
+/* A tree with more nodes than this shows nothing. The cap was sized for a
+ * plain year calendar; awful.widget.calendar_popup.year wraps every cell in
+ * a background, a margin and a textbox, 2319 nodes for twelve months. The
+ * output budget (over_budget, widget.c) still bounds the aggregate. */
+#define WIDGET_NODES_MAX 4096
 
 /* Folding can bind many original widgets to a small native tree. Bound the
  * input walk as well, including a malformed cyclic binding list. */

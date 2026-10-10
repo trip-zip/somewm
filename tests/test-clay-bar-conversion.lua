@@ -386,9 +386,10 @@ local steps = {
         what = "a tree past the node cap shows nothing", bg = "#123456",
         widget = (function()
             local row = { layout = wibox.layout.fixed.horizontal }
-            for i = 1, 1100 do
-                -- Two real nodes per item exceed 2048 without exhausting the
-                -- Lua call stack before the native node-budget check runs.
+            for i = 1, 2150 do
+                -- Two real nodes per item build the tree past WIDGET_NODES_MAX
+                -- (widget.h) without exhausting the Lua call stack before the
+                -- native node-budget check runs.
                 row[i] = { leaf_widget(10, 10, "#ff0000"), margins = 1,
                     widget = wibox.container.margin }
             end
@@ -404,7 +405,7 @@ local steps = {
     end),
     function(count)
         if count == 1 then
-            -- Sixteen chains of about 901 nodes pass the 12288-node output budget at the fourteenth bar; each chain stays under the 2048-per-tree cap.
+            -- Sixteen chains of about 901 nodes pass the 12288-node output budget at the fourteenth bar; each chain stays under WIDGET_NODES_MAX (widget.h).
             for i = 1, 16 do
                 local w = leaf_widget(10, 10, "#ff0000")
 

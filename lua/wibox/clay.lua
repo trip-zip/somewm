@@ -524,10 +524,11 @@ local empty_list = {}
 local no_padding = {0, 0, 0, 0}
 
 -- An image declares one number, its minimum on the axis its parent lays out
--- along: the authored cross-axis bound times its aspect, never above a cap
--- the describer gave and never below its natural size when it may not
--- shrink; its natural size when that bound is undefined. The cross axis
--- follows from the aspect. A told axis and `image_resize = false` stay told.
+-- along: the cross-axis bound or cap times its aspect, or its natural size
+-- when the cross axis has neither, lowered to the flow-axis bound or cap
+-- when that is smaller; never above a cap the describer gave and never
+-- below its natural size when it may not shrink. The cross axis follows
+-- from the aspect. A told axis and `image_resize = false` stay told.
 local function size_image(node, bound, along)
     local nw, nh = node.image_width, node.image_height
     if not node.image or not node.aspect or node.aspect <= 0
@@ -538,10 +539,14 @@ local function size_image(node, bound, along)
         local f, c = along, along == 'w' and 'h' or 'w'
         local natural = f == 'w' and nw or nh
         local size, src = natural, node[f .. 'src']
-        if bound[c] then
-            size = f == 'w' and bound[c] * node.aspect or bound[c] / node.aspect
-            src = bound[c .. 'src']
+        local across, word = bound[c], bound[c .. 'src']
+        if not across then across, word = bound[c .. 'cap'], bound[c .. 'capsrc'] end
+        if across then
+            size, src = f == 'w' and across * node.aspect or across / node.aspect, word
         end
+        local cap, capword = bound[f], bound[f .. 'src']
+        if not cap then cap, capword = bound[f .. 'cap'], bound[f .. 'capsrc'] end
+        if cap and cap < size then size, src = cap, capword end
         if node[f .. 'max'] and node[f .. 'max'] < size then
             size, src = node[f .. 'max'], node[f .. 'src']
         end
@@ -615,7 +620,8 @@ end
 -- children: its own FIXED size, or the bound its parent gave its box;
 -- nothing for a PERCENT size. Each number keeps the word of the size it came
 -- from. `wdecided` and `hdecided` say whether the box is decided: by its own
--- FIXED size, or as its parent's allocation decided it.
+-- FIXED size, or as its parent's allocation decided it. Without a bound, the
+-- cap its parent gave its box (`wcap`, `hcap`) passes on the same way.
 local function node_bound(node, box)
     local own, inner, pad = {}, {}, node.pad or no_padding
     for i, k in ipairs(axes) do
@@ -629,15 +635,22 @@ local function node_bound(node, box)
             own[k], own[k .. 'src'] = size, src
             inner[k] = math.max(0, size - pad[2 * i - 1] - pad[2 * i])
             inner[k .. 'src'] = src
+        elseif box[k .. 'cap'] then
+            own[k .. 'cap'], own[k .. 'capsrc'] = box[k .. 'cap'], box[k .. 'capsrc']
+            inner[k .. 'cap'] = math.max(0, box[k .. 'cap'] - pad[2 * i - 1] - pad[2 * i])
+            inner[k .. 'capsrc'] = box[k .. 'capsrc']
         end
     end
     return inner, own
 end
 
 -- The bound of a child's box: its FIXED size, or its parent's bound when it
--- grows across its parent's flow, overlays it or is its only child. The box
--- is decided when Clay sizes it from the ancestors alone: FIXED, or GROW or
--- PERCENT in a decided parent. A FIT size follows its content (clay.h:2373,
+-- grows across its parent's flow, overlays it or is its only child, else
+-- its parent's cap. A FIT child takes its parent's bound or cap as a cap
+-- only: it may solve smaller (D045). A GROW child beside siblings on the
+-- flow takes neither: its share is Clay's to solve. The box is decided
+-- when Clay sizes it from the ancestors alone: FIXED, or GROW or PERCENT in
+-- a decided parent. A FIT size follows its content (clay.h:2373,
 -- 2387-2394).
 local function spec_bound(spec, inner, along, only)
     local box = {}
@@ -649,6 +662,10 @@ local function spec_bound(spec, inner, along, only)
             box[k], box[k .. 'src'] = spec[k], spec[k .. 'src']
         elseif spec[k] == 'grow' and (k ~= along or only or spec.float or spec.stack) then
             box[k], box[k .. 'src'] = inner[k], inner[k .. 'src']
+            box[k .. 'cap'], box[k .. 'capsrc'] = inner[k .. 'cap'], inner[k .. 'capsrc']
+        elseif (spec[k] or 'fit') == 'fit' then
+            box[k .. 'cap'], box[k .. 'capsrc'] = inner[k] or inner[k .. 'cap'],
+                inner[k .. (inner[k] and 'src' or 'capsrc')]
         end
     end
     return box
@@ -1107,6 +1124,8 @@ function compile_node(st, widget, parent, fg, offer, spec, alpha, parent_fit, al
             and entry.offer.w == offer.w and entry.offer.h == offer.h
             and entry.offer.wsrc == offer.wsrc and entry.offer.hsrc == offer.hsrc
             and entry.offer.wdecided == offer.wdecided and entry.offer.hdecided == offer.hdecided
+            and entry.offer.wcap == offer.wcap and entry.offer.hcap == offer.hcap
+            and entry.offer.wcapsrc == offer.wcapsrc and entry.offer.hcapsrc == offer.hcapsrc
             and same_spec(entry.spec, spec) then
         st.reused = st.reused + 1
         return entry.node
@@ -1379,8 +1398,17 @@ function clay.compile(self, root, context, width, height, words)
         cache = cache, stale = cache.stale,
         drawable = self.drawable }
     cache.stale = {}
-    local bound = self._attachment_fit and {} or { w = width, h = height,
-        wsrc = words and words.w, hsrc = words and words.h, wdecided = true, hdecided = true }
+    local bound = {}
+    if not self._attachment_fit then
+        -- A stretched bar's length is the output's (drawin.c:91): the drawin
+        -- holds no authored number on that axis and its tree receives none.
+        local size = { w = width, h = height }
+        bound.wdecided, bound.hdecided = true, true
+        for _, k in ipairs(axes) do
+            local word = words and words[k]
+            if word ~= "output" then bound[k], bound[k .. "src"] = size[k], word end
+        end
+    end
     local node = root and compile_node(st, root, owner, self.foreground_color, bound,
         { w = "grow", h = "grow" }, 1, self._attachment_fit and 3 or 0, "w")
     finish_children(st, owner, building)
