@@ -28,15 +28,54 @@
 #include "objects/client.h"
 #include "objects/screen.h"
 
+/* Every field a tree is read by. widget_nodes_set keeps their interned
+ * strings in an array in the registry, and a read indexes it: lua_getfield
+ * would intern the name again for every field of every node each frame. */
+#define KEYS(X) X(name) X(spacer) X(identity) X(occurrence) X(transform) \
+	X(shape) X(text) X(fill) X(stops) X(linear) X(radial) X(stroke) \
+	X(stroke_width) X(pad) X(bw) X(bg) X(border) X(radius) X(radii) X(x) X(y) \
+	X(gap) X(wmin) X(hmin) X(wmax) X(hmax) X(w) X(h) X(percent) X(wsrc) X(hsrc) \
+	X(align) X(dir) X(float) X(parent) X(own) X(passthrough) X(vector) X(image) \
+	X(aspect) X(image_width) X(image_height) X(filter) X(natural) X(track) \
+	X(thumb) X(scroll) X(transition) X(duration) X(properties) X(exit_order) \
+	X(enter) X(exit) X(client) X(surface) X(host) X(opacity) X(probe) X(attrs) \
+	X(font) X(color) X(wrap) X(halign) X(ellipsize) X(bindings) X(item) X(id) \
+	X(next) X(_attach) X(clip) X(children)
+
+enum key {
+#define KEY_ENUM(k) KEY_##k,
+	KEYS(KEY_ENUM)
+#undef KEY_ENUM
+};
+
+static const char *const key_names[] = {
+#define KEY_NAME(k) #k,
+	KEYS(KEY_NAME)
+#undef KEY_NAME
+};
+
+/* The stack index of that array while a tree is read. */
+static int keys;
+
+/* lua_getfield(L, idx, key_names[k]). */
+static void
+getfield(lua_State *L, int idx, enum key k)
+{
+	if (idx < 0 && idx > LUA_REGISTRYINDEX)
+		idx = lua_gettop(L) + idx + 1;
+	lua_rawgeti(L, keys, k + 1);
+	lua_gettable(L, idx);
+}
+
 /* A four-number array field (pad, bw, bg, border), left at zero when the
  * field is absent. False for a field that is present but not four numbers,
  * which is a compile-step bug rather than a config to ride out. */
 static bool
-read_quad(lua_State *L, int idx, const char *name, float *out)
+read_quad(lua_State *L, int idx, enum key name, float *out)
 {
 	bool ok = true;
 
-	lua_getfield(L, idx, name);
+	getfield(L, idx, name);
 	if (lua_isnil(L, -1)) {
 		lua_pop(L, 1);
 		return true;
@@ -61,12 +100,12 @@ read_quad(lua_State *L, int idx, const char *name, float *out)
  * the wrong type. Refusing rather than raising lets the caller clear the
  * malformed tree and report its state without unwinding the redraw. */
 static bool
-read_number(lua_State *L, int idx, const char *name, double min, double max,
+read_number(lua_State *L, int idx, enum key name, double min, double max,
 	float *out)
 {
 	bool ok;
 
-	lua_getfield(L, idx, name);
+	getfield(L, idx, name);
 	if (lua_isnumber(L, -1)) {
 		double v = lua_tonumber(L, -1);
 
@@ -84,19 +123,19 @@ read_number(lua_State *L, int idx, const char *name, double min, double max,
  * CLAY_SIZING_GROW, a number for CLAY_SIZING_FIXED, or { percent = p }
  * for CLAY_SIZING_PERCENT (third_party/clay.h:72,294-295). */
 static bool
-read_sizing(lua_State *L, int idx, const char *name, uint8_t *sizing,
+read_sizing(lua_State *L, int idx, enum key name, uint8_t *sizing,
 	float *size)
 {
 	const char *s;
 	bool ok = true;
 
-	lua_getfield(L, idx, name);
+	getfield(L, idx, name);
 	if (lua_type(L, -1) == LUA_TNUMBER) {
 		*sizing = WIDGET_SIZING_FIXED;
 		*size = (float)lua_tonumber(L, -1);
 		ok = *size >= 0;
 	} else if (lua_istable(L, -1)) {
-		lua_getfield(L, -1, "percent");
+		getfield(L, -1, KEY_percent);
 		double p = lua_tonumber(L, -1);
 
 		/* Reject outside 0-1 before Clay's error (third_party/clay.h:2030-2033). */
@@ -121,12 +160,12 @@ read_sizing(lua_State *L, int idx, const char *name, uint8_t *sizing,
  * Clay's own enum value: Clay_LayoutAlignmentX and Y both order their
  * enumerators start, end, center. */
 static bool
-read_align(lua_State *L, int idx, const char *name, uint8_t *out)
+read_align(lua_State *L, int idx, enum key name, uint8_t *out)
 {
 	const char *s;
 	bool ok = true;
 
-	lua_getfield(L, idx, name);
+	getfield(L, idx, name);
 	s = lua_tostring(L, -1);
 	if (!s || strcmp(s, "left") == 0 || strcmp(s, "top") == 0)
 		*out = 0;
@@ -161,13 +200,13 @@ intern_name(const char *name)
 /* One of a small set of words, as the index of the Clay enumerator it names,
  * false for any other value. */
 static bool
-read_word(lua_State *L, int idx, const char *name, const char *const *words,
+read_word(lua_State *L, int idx, enum key name, const char *const *words,
 	size_t count, uint8_t *out)
 {
 	const char *s;
 	bool ok = false;
 
-	lua_getfield(L, idx, name);
+	getfield(L, idx, name);
 	s = lua_tostring(L, -1);
 	for (size_t i = 0; s && i < count; i++) {
 		if (strcmp(s, words[i]) == 0) {
@@ -181,19 +220,19 @@ read_word(lua_State *L, int idx, const char *name, const char *const *words,
 
 /* A word field that may be absent, which leaves *out at its default. */
 static bool
-read_option(lua_State *L, int idx, const char *name, const char *const *words,
+read_option(lua_State *L, int idx, enum key name, const char *const *words,
 	size_t count, uint8_t *out)
 {
-	lua_getfield(L, idx, name);
+	getfield(L, idx, name);
 	bool absent = lua_isnil(L, -1);
 	lua_pop(L, 1);
 	return absent || read_word(L, idx, name, words, count, out);
 }
 
 static bool
-field_is(lua_State *L, int idx, const char *name, const char *word)
+field_is(lua_State *L, int idx, enum key name, const char *word)
 {
-	lua_getfield(L, idx, name);
+	getfield(L, idx, name);
 	bool same = lua_isstring(L, -1) && !strcmp(lua_tostring(L, -1), word);
 	lua_pop(L, 1);
 	return same;
@@ -216,7 +255,7 @@ read_transition(lua_State *L, int idx, struct widget_node *n)
 	uint8_t property = 0;
 	bool ok;
 
-	lua_getfield(L, idx, "transition");
+	getfield(L, idx, KEY_transition);
 	if (lua_isnil(L, -1)) {
 		lua_pop(L, 1);
 		return true;
@@ -225,12 +264,12 @@ read_transition(lua_State *L, int idx, struct widget_node *n)
 	n->transition = true;
 	n->exit_order = CLAY_EXIT_TRANSITION_ORDERING_NATURAL_ORDER;
 	ok = lua_istable(L, t)
-		&& read_number(L, t, "duration", 0, 1e6, &n->duration)
-		&& read_option(L, t, "properties", properties, 5, &property)
-		&& read_option(L, t, "exit_order", orders, 3, &n->exit_order);
+		&& read_number(L, t, KEY_duration, 0, 1e6, &n->duration)
+		&& read_option(L, t, KEY_properties, properties, 5, &property)
+		&& read_option(L, t, KEY_exit_order, orders, 3, &n->exit_order);
 	n->transition_properties = bits[property];
-	n->enter_collapse = ok && field_is(L, t, "enter", "collapse");
-	n->exit_collapse = ok && field_is(L, t, "exit", "collapse");
+	n->enter_collapse = ok && field_is(L, t, KEY_enter, "collapse");
+	n->exit_collapse = ok && field_is(L, t, KEY_exit, "collapse");
 	lua_pop(L, 1);
 	return ok;
 }
@@ -239,9 +278,9 @@ read_transition(lua_State *L, int idx, struct widget_node *n)
  * the client's declare handle. A client that has gone keeps a handle no
  * client answers to, so the frame skips it. */
 static bool
-read_client(lua_State *L, int idx, const char *name, uint64_t *out)
+read_client(lua_State *L, int idx, enum key name, uint64_t *out)
 {
-	lua_getfield(L, idx, name);
+	getfield(L, idx, name);
 	client_t *c = lua_isnil(L, -1) ? NULL : luaA_toudata(L, -1, &client_class);
 	bool ok = lua_isnil(L, -1) || c;
 	lua_pop(L, 1);
@@ -255,7 +294,7 @@ read_client(lua_State *L, int idx, const char *name, uint64_t *out)
 static bool
 read_host(lua_State *L, int idx, struct widget_node *n)
 {
-	lua_getfield(L, idx, "host");
+	getfield(L, idx, KEY_host);
 	drawable_t *d = lua_isnil(L, -1) ? NULL : luaA_toudata(L, -1, &drawable_class);
 	bool ok = lua_isnil(L, -1) || d;
 	lua_pop(L, 1);
@@ -268,12 +307,12 @@ static bool
 read_composite(lua_State *L, int idx, struct widget_node *n)
 {
 	n->opacity = 1;
-	if (!read_client(L, idx, "client", &n->client)
-			|| !read_client(L, idx, "surface", &n->surface)
+	if (!read_client(L, idx, KEY_client, &n->client)
+			|| !read_client(L, idx, KEY_surface, &n->surface)
 			|| !read_host(L, idx, n)
-			|| !read_number(L, idx, "opacity", 0, 1, &n->opacity))
+			|| !read_number(L, idx, KEY_opacity, 0, 1, &n->opacity))
 		return false;
-	lua_getfield(L, idx, "probe");
+	getfield(L, idx, KEY_probe);
 	n->probe = n->surface && lua_toboolean(L, -1);
 	lua_pop(L, 1);
 	if (n->client || n->surface || n->host)
@@ -291,7 +330,7 @@ static size_t text_attrs_len;
 static bool
 read_text_attrs(lua_State *L, int idx, struct widget_node *n)
 {
-    lua_getfield(L, idx, "attrs");
+    getfield(L, idx, KEY_attrs);
     if (lua_isnil(L, -1)) {
         lua_pop(L, 1);
         return true;
@@ -342,7 +381,7 @@ read_text(lua_State *L, int idx, struct widget_node *n)
 	float font = 0;
 	bool ok;
 
-	lua_getfield(L, idx, "text");
+	getfield(L, idx, KEY_text);
 	text = lua_tolstring(L, -1, &len);
 	if (!text || len + 1 > WIDGET_TEXT_MAX - text_len) {
 		lua_pop(L, 1);
@@ -359,12 +398,12 @@ read_text(lua_State *L, int idx, struct widget_node *n)
 	lua_pop(L, 1);
 
 	ok = read_text_attrs(L, idx, n)
-		&& read_number(L, idx, "font", 0, UINT16_MAX, &font)
-		&& read_quad(L, idx, "color", n->fg)
-		&& read_word(L, idx, "wrap", wraps, 3, &n->wrap)
-		&& read_word(L, idx, "halign", aligns, 3, &n->text_align);
+		&& read_number(L, idx, KEY_font, 0, UINT16_MAX, &font)
+		&& read_quad(L, idx, KEY_color, n->fg)
+		&& read_word(L, idx, KEY_wrap, wraps, 3, &n->wrap)
+		&& read_word(L, idx, KEY_halign, aligns, 3, &n->text_align);
 	n->font = (uint16_t)font;
-	lua_getfield(L, idx, "ellipsize");
+	getfield(L, idx, KEY_ellipsize);
 	n->ellipsize = lua_toboolean(L, -1);
 	lua_pop(L, 1);
 	return ok;
@@ -375,15 +414,15 @@ read_fill(lua_State *L, int idx, struct widget_node *n)
 {
 	struct render_gradient *g = &n->gradient;
 	memset(g, 0, sizeof(*g));
-	lua_getfield(L, idx, "fill");
+	getfield(L, idx, KEY_fill);
 	if (!lua_istable(L, -1)) {
 		lua_pop(L, 1);
-		return read_quad(L, idx, "fill", n->fill);
+		return read_quad(L, idx, KEY_fill, n->fill);
 	}
-	lua_getfield(L, -1, "stops");
+	getfield(L, -1, KEY_stops);
 	if (lua_isnil(L, -1)) {
 		lua_pop(L, 2);
-		return read_quad(L, idx, "fill", n->fill);
+		return read_quad(L, idx, KEY_fill, n->fill);
 	}
 	bool ok = lua_istable(L, -1);
 	size_t count = ok ? luaA_rawlen(L, -1) : 0;
@@ -401,11 +440,11 @@ read_fill(lua_State *L, int idx, struct widget_node *n)
 		lua_pop(L, 1);
 	}
 	lua_pop(L, 1);
-	lua_getfield(L, -1, "linear");
+	getfield(L, -1, KEY_linear);
 	g->kind = 1;
 	if (lua_isnil(L, -1)) {
 		lua_pop(L, 1);
-		lua_getfield(L, -1, "radial");
+		getfield(L, -1, KEY_radial);
 		g->kind = 2;
 	}
 	ok = ok && lua_istable(L, -1);
@@ -428,43 +467,43 @@ read_node(lua_State *L, int idx, struct widget_node *n)
 
 	if (!lua_istable(L, idx))
 		return false;
-	lua_getfield(L, idx, "name");
+	getfield(L, idx, KEY_name);
 	if (lua_isstring(L, -1))
 		n->name = intern_name(lua_tostring(L, -1));
 	lua_pop(L, 1);
-	lua_getfield(L, idx, "spacer");
+	getfield(L, idx, KEY_spacer);
 	n->widget = !lua_toboolean(L, -1);
 	lua_pop(L, 1);
-	lua_getfield(L, idx, "identity");
+	getfield(L, idx, KEY_identity);
 	n->identity = (uint32_t)lua_tointeger(L, -1);
 	lua_pop(L, 1);
-	lua_getfield(L, idx, "occurrence");
+	getfield(L, idx, KEY_occurrence);
 	n->occurrence = (uint32_t)lua_tointeger(L, -1);
 	lua_pop(L, 1);
 	static const char *const transforms[] = {
 		"normal", "90", "180", "270",
 		"flipped", "flipped-90", "flipped-180", "flipped-270",
 	};
-	if (!read_option(L, idx, "transform", transforms, 8, &n->transform))
+	if (!read_option(L, idx, KEY_transform, transforms, 8, &n->transform))
 		return false;
-	lua_getfield(L, idx, "shape");
+	getfield(L, idx, KEY_shape);
 	ok = lua_isnil(L, -1) || lua_isfunction(L, -1);
 	n->shape = lua_isfunction(L, -1) ? 1 : 0;
 	lua_pop(L, 1);
 	if (!ok)
 		return false;
-	lua_getfield(L, idx, "text");
+	getfield(L, idx, KEY_text);
 	ok = lua_isnil(L, -1);
 	lua_pop(L, 1);
 	if (!ok)
 		return !n->shape && read_text(L, idx, n);
 	if (!read_fill(L, idx, n)
-			|| !read_quad(L, idx, "stroke", n->stroke)
-			|| !read_number(L, idx, "stroke_width", 0, 1e6, &n->stroke_width))
+			|| !read_quad(L, idx, KEY_stroke, n->stroke)
+			|| !read_number(L, idx, KEY_stroke_width, 0, 1e6, &n->stroke_width))
 		return false;
-	if (!read_quad(L, idx, "pad", pad) || !read_quad(L, idx, "bw", bw)
-			|| !read_quad(L, idx, "bg", n->bg)
-			|| !read_quad(L, idx, "border", n->border))
+	if (!read_quad(L, idx, KEY_pad, pad) || !read_quad(L, idx, KEY_bw, bw)
+			|| !read_quad(L, idx, KEY_bg, n->bg)
+			|| !read_quad(L, idx, KEY_border, n->border))
 		return false;
 	for (int i = 0; i < 4; i++) {
 		if (pad[i] < 0 || pad[i] > UINT16_MAX
@@ -474,59 +513,59 @@ read_node(lua_State *L, int idx, struct widget_node *n)
 		n->bw[i] = (uint16_t)bw[i];
 	}
 
-	if (!read_number(L, idx, "radius", 0, 1e6, &n->radius)
-			|| !read_quad(L, idx, "radii", n->radii)
-			|| !read_number(L, idx, "x", -1e6, 1e6, &n->offset[0])
-			|| !read_number(L, idx, "y", -1e6, 1e6, &n->offset[1])
-			|| !read_number(L, idx, "gap", 0, UINT16_MAX, &gap)
-			|| !read_number(L, idx, "wmin", 0, 1e6, &n->min[0])
-			|| !read_number(L, idx, "hmin", 0, 1e6, &n->min[1])
-			|| !read_number(L, idx, "wmax", 0, 1e6, &n->max[0])
-			|| !read_number(L, idx, "hmax", 0, 1e6, &n->max[1]))
+	if (!read_number(L, idx, KEY_radius, 0, 1e6, &n->radius)
+			|| !read_quad(L, idx, KEY_radii, n->radii)
+			|| !read_number(L, idx, KEY_x, -1e6, 1e6, &n->offset[0])
+			|| !read_number(L, idx, KEY_y, -1e6, 1e6, &n->offset[1])
+			|| !read_number(L, idx, KEY_gap, 0, UINT16_MAX, &gap)
+			|| !read_number(L, idx, KEY_wmin, 0, 1e6, &n->min[0])
+			|| !read_number(L, idx, KEY_hmin, 0, 1e6, &n->min[1])
+			|| !read_number(L, idx, KEY_wmax, 0, 1e6, &n->max[0])
+			|| !read_number(L, idx, KEY_hmax, 0, 1e6, &n->max[1]))
 		return false;
 	n->gap = (uint16_t)gap;
-	if (!read_sizing(L, idx, "w", &n->sizing[0], &n->size[0])
-			|| !read_sizing(L, idx, "h", &n->sizing[1], &n->size[1]))
+	if (!read_sizing(L, idx, KEY_w, &n->sizing[0], &n->size[0])
+			|| !read_sizing(L, idx, KEY_h, &n->sizing[1], &n->size[1]))
 		return false;
 	/* A word belongs to an axis that carries a number (spec D060). */
 	for (int axis = 0; axis < 2; axis++) {
 		if (n->sizing[axis] < WIDGET_SIZING_FIXED && n->min[axis] <= 0 && n->max[axis] <= 0)
 			continue;
-		lua_getfield(L, idx, axis ? "hsrc" : "wsrc");
+		getfield(L, idx, axis ? KEY_hsrc : KEY_wsrc);
 		n->src[axis] = declare_src_parse(lua_tostring(L, -1));
 		lua_pop(L, 1);
 	}
 
-	lua_getfield(L, idx, "align");
+	getfield(L, idx, KEY_align);
 	ok = lua_isnil(L, -1) || (lua_istable(L, -1)
-		&& read_align(L, lua_gettop(L), "x", &n->align[0])
-		&& read_align(L, lua_gettop(L), "y", &n->align[1]));
+		&& read_align(L, lua_gettop(L), KEY_x, &n->align[0])
+		&& read_align(L, lua_gettop(L), KEY_y, &n->align[1]));
 	lua_pop(L, 1);
 
-	lua_getfield(L, idx, "dir");
+	getfield(L, idx, KEY_dir);
 	dir = lua_tostring(L, -1);
 	n->vertical = dir && strcmp(dir, "y") == 0;
 	lua_pop(L, 1);
 
-	lua_getfield(L, idx, "float");
+	getfield(L, idx, KEY_float);
 	n->floating = lua_toboolean(L, -1);
 	lua_pop(L, 1);
 	float parent = 0, own = 0;
-	if (!read_number(L, idx, "parent", 0, 8, &parent)
-			|| !read_number(L, idx, "own", 0, 8, &own)
+	if (!read_number(L, idx, KEY_parent, 0, 8, &parent)
+			|| !read_number(L, idx, KEY_own, 0, 8, &own)
 			|| parent != floorf(parent) || own != floorf(own))
 		return false;
 	n->parent = parent;
 	n->own = own;
-	lua_getfield(L, idx, "passthrough");
+	getfield(L, idx, KEY_passthrough);
 	ok = ok && (lua_isnil(L, -1) || lua_isboolean(L, -1));
 	n->passthrough = lua_isnil(L, -1) || lua_toboolean(L, -1);
 	lua_pop(L, 1);
-	lua_getfield(L, idx, "vector");
+	getfield(L, idx, KEY_vector);
 	ok = ok && (lua_isnil(L, -1) || lua_isboolean(L, -1));
 	n->vector = lua_toboolean(L, -1);
 	lua_pop(L, 1);
-	lua_getfield(L, idx, "image");
+	getfield(L, idx, KEY_image);
 	if (lua_islightuserdata(L, -1)) {
 		n->image = lua_touserdata(L, -1);
 	} else if (!lua_isnil(L, -1)) {
@@ -534,9 +573,9 @@ read_node(lua_State *L, int idx, struct widget_node *n)
 	}
 	lua_pop(L, 1);
 	if (n->image) {
-		if (!read_number(L, idx, "aspect", 0, 1e6, &n->aspect)
-				|| !read_number(L, idx, "image_width", 0, 1e6, &n->image_size[0])
-				|| !read_number(L, idx, "image_height", 0, 1e6, &n->image_size[1]))
+		if (!read_number(L, idx, KEY_aspect, 0, 1e6, &n->aspect)
+				|| !read_number(L, idx, KEY_image_width, 0, 1e6, &n->image_size[0])
+				|| !read_number(L, idx, KEY_image_height, 0, 1e6, &n->image_size[1]))
 			return false;
 		if (!n->vector && n->aspect > 0 && (n->image_size[0] <= 0 || n->image_size[1] <= 0)) {
 			n->image_size[0] = cairo_image_surface_get_width((cairo_surface_t *)n->image);
@@ -546,32 +585,32 @@ read_node(lua_State *L, int idx, struct widget_node *n)
 			"fast", "good", "best", "nearest", "bilinear"
 		};
 
-		lua_getfield(L, idx, "filter");
+		getfield(L, idx, KEY_filter);
 		bool has_filter = !lua_isnil(L, -1);
 		lua_pop(L, 1);
 		if (has_filter) {
-			if (read_word(L, idx, "filter", filters, 5, &n->filter))
+			if (read_word(L, idx, KEY_filter, filters, 5, &n->filter))
 				n->filter++;
 			else
 				ok = false;
 		}
-		lua_getfield(L, idx, "natural");
+		getfield(L, idx, KEY_natural);
 		n->natural = lua_toboolean(L, -1);
 		lua_pop(L, 1);
 	}
-	lua_getfield(L, idx, "track");
+	getfield(L, idx, KEY_track);
 	n->track = lua_toboolean(L, -1);
 	lua_pop(L, 1);
-	lua_getfield(L, idx, "thumb");
+	getfield(L, idx, KEY_thumb);
 	n->thumb = lua_toboolean(L, -1);
 	lua_pop(L, 1);
-	lua_getfield(L, idx, "scroll");
+	getfield(L, idx, KEY_scroll);
 	bool has_scroll = !lua_isnil(L, -1);
 	lua_pop(L, 1);
 	if (has_scroll) {
 		static const char *const axes[] = { "x", "y", "both" };
 
-		if (!read_word(L, idx, "scroll", axes, 3, &n->scroll))
+		if (!read_word(L, idx, KEY_scroll, axes, 3, &n->scroll))
 			return false;
 		n->scroll++;
 	}
@@ -591,26 +630,26 @@ static bool
 read_bindings(lua_State *L, int idx, struct widget_node *n)
 {
 	n->binding_start = (uint32_t)binding_len;
-	lua_getfield(L, idx, "bindings");
+	getfield(L, idx, KEY_bindings);
 	while (lua_istable(L, -1)) {
 		if (binding_len == WIDGET_BINDINGS_MAX) {
 			lua_pop(L, 1);
 			return false;
 		}
-		lua_getfield(L, -1, "item");
+		getfield(L, -1, KEY_item);
 		if (!lua_istable(L, -1)) {
 			lua_pop(L, 2);
 			return false;
 		}
-		lua_getfield(L, -1, "identity");
+		getfield(L, -1, KEY_identity);
 		uint32_t identity = (uint32_t)lua_tointeger(L, -1);
 		lua_pop(L, 1);
-		lua_getfield(L, -1, "id");
+		getfield(L, -1, KEY_id);
 		uint32_t occurrence = (uint32_t)lua_tointeger(L, -1);
 		lua_pop(L, 2);
 		binding_buf[binding_len++] = (struct widget_binding) {identity, occurrence};
 		n->binding_count++;
-		lua_getfield(L, -1, "next");
+		getfield(L, -1, KEY_next);
 		lua_remove(L, -2);
 	}
 	bool ok = lua_isnil(L, -1);
@@ -636,7 +675,7 @@ read_tree(lua_State *L, int idx, struct widget_node *nodes, size_t *len,
 	if (!read_node(L, idx, n) || (!n->text && !read_bindings(L, idx, n)))
 		return false;
 	/* "output" attaches a float to the screen's root. */
-	lua_getfield(L, idx, "_attach");
+	getfield(L, idx, KEY__attach);
 	if (!lua_isnil(L, -1)) {
 		bool output = lua_type(L, -1) == LUA_TSTRING && !strcmp(lua_tostring(L, -1), "output");
 		lua_pop(L, 1);
@@ -650,17 +689,17 @@ read_tree(lua_State *L, int idx, struct widget_node *nodes, size_t *len,
 		if (n->image)
 			return false;
 		n->shape = (uint16_t)luaA_rawlen(L, shapes) + 1;
-		lua_getfield(L, idx, "shape");
+		getfield(L, idx, KEY_shape);
 		lua_rawseti(L, shapes, n->shape);
 	}
 	if (n->image)
 		(*leaves)++;
 	n->clip_by = (uint8_t)clip_by;
 
-	lua_getfield(L, idx, "clip");
+	getfield(L, idx, KEY_clip);
 	bool shape_clip = n->shape && lua_toboolean(L, -1);
 	lua_pop(L, 1);
-	lua_getfield(L, idx, "children");
+	getfield(L, idx, KEY_children);
 	ok = lua_isnil(L, -1) || (lua_istable(L, -1) && !n->text);
 	count = ok ? luaA_rawlen(L, -1) : 0;
 	n->children = (uint16_t)count;
@@ -944,6 +983,20 @@ widget_nodes_set(lua_State *L, struct widget_tree *d, Monitor *m, int idx)
 	/* read_tree refuses a tree of its own cap's size before reading a node
 	 * of it, so a full scratch tree and a tree past the clip scopes are
 	 * the two failures that are a size and not a malformed table. */
+	lua_pushlightuserdata(L, &keys);
+	lua_rawget(L, LUA_REGISTRYINDEX);
+	if (lua_isnil(L, -1)) {
+		lua_pop(L, 1);
+		lua_createtable(L, countof(key_names), 0);
+		for (int i = 0; i < countof(key_names); i++) {
+			lua_pushstring(L, key_names[i]);
+			lua_rawseti(L, -2, i + 1);
+		}
+		lua_pushlightuserdata(L, &keys);
+		lua_pushvalue(L, -2);
+		lua_rawset(L, LUA_REGISTRYINDEX);
+	}
+	keys = lua_gettop(L);
 	lua_newtable(L);
 	int shapes = lua_gettop(L);
 	bool ok = read_tree(L, idx, nodes, &len, &leaves, 0, &clips, shapes);
@@ -951,7 +1004,7 @@ widget_nodes_set(lua_State *L, struct widget_tree *d, Monitor *m, int idx)
 	for (size_t i = 0; i < len; i++)
 		scrolls += nodes[i].scroll != 0;
 	if (!ok || over_budget(d, m, len, scrolls)) {
-		lua_pop(L, 1);
+		lua_pop(L, 2);
 		enum widget_nodes_state why = ok ? WIDGET_NODES_OVER_BUDGET
 			: len == WIDGET_NODES_MAX || binding_len == WIDGET_BINDINGS_MAX || clips > WIDGET_CLIPS_MAX
 			? WIDGET_NODES_OVER_BUDGET : WIDGET_NODES_MALFORMED;
@@ -998,7 +1051,7 @@ widget_nodes_set(lua_State *L, struct widget_tree *d, Monitor *m, int idx)
 			slot->shape.gen = ++d->shape_generation;
 		}
 	}
-	lua_pop(L, 1);
+	lua_pop(L, 2);
 
 	d->state = WIDGET_NODES_CONVERTED;
 	p_delete(&d->nodes);

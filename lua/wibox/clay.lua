@@ -148,6 +148,10 @@ end
 
 clay.shape_radius = shape_radius
 
+-- Resolved once: a method looked up on the pattern goes through lgi's
+-- element search, a string match per call.
+local pattern_type, pattern_rgba = cairo.Pattern.get_type, cairo.SolidPattern.get_rgba
+
 --- The straight-alpha components of a solid color pattern, or nil for a
 -- gradient, a surface pattern, or no color at all. A solid color carries
 -- four components (third_party/clay.h:223-225); the renderer uses straight alpha.
@@ -158,11 +162,11 @@ local function solid_rgba(col)
 
     local pattern = gcolor(col)
 
-    if pattern:get_type() ~= "SOLID" then
+    if pattern_type(pattern) ~= "SOLID" then
         return nil
     end
 
-    local status, r, g, b, a = pattern:get_rgba()
+    local status, r, g, b, a = pattern_rgba(pattern)
 
     if status ~= "SUCCESS" then
         return nil
@@ -176,7 +180,7 @@ end
 function clay.fill(col, dx, dy)
     if not col then return nil end
     local pattern = gcolor(col)
-    local kind = pattern:get_type()
+    local kind = pattern_type(pattern)
     if kind == "SOLID" then return solid_rgba(col) end
     if kind ~= "LINEAR" and kind ~= "RADIAL" then return nil end
     local status, count = pattern:get_color_stop_count()
@@ -224,10 +228,16 @@ end
 -- counts that size, as the engine's `:fit` counted it through a container
 -- that hands its child the whole box. Fit gives way to what the child said.
 -- A floor from either side stands, and the larger of two.
--- A number the parent gives carries the parent's source word.
-local function merge_sizing(node, spec)
-    for _, k in ipairs { "w", "h" } do
+-- A number the parent gives carries the parent's source word. A grow on an
+-- axis `parent_fit` names counts as fit (fit_grow).
+local axes, floors, caps = {"w", "h"}, {"wmin", "hmin"}, {"wmax", "hmax"}
+local function merge_sizing(node, spec, parent_fit)
+    for i, k in ipairs(axes) do
         local src = k .. "src"
+        local size = spec[k]
+        if size == "grow" and (i == 1 and parent_fit % 2 == 1 or i == 2 and parent_fit >= 2) then
+            size = "fit"
+        end
         if spec.float or spec.stack then
             -- Overlaid children keep their own size, including the stack's
             -- in-flow content. An explicit manual allocation can enlarge it.
@@ -239,23 +249,23 @@ local function merge_sizing(node, spec)
             else
                 node[k] = node[k] or spec[k]
             end
-        elseif spec[k] == "grow" then
+        elseif size == "grow" then
             if type(node[k]) == "number" then
                 node[k .. "min"] = node[k]
             end
             node[k] = "grow"
         elseif node[k] == nil then
-            node[k] = spec[k]
-            if spec[k] ~= nil and type(spec[k]) ~= "string" then node[src] = spec[src] end
+            node[k] = size
+            if size ~= nil and type(size) ~= "string" then node[src] = spec[src] end
         end
     end
-    for _, k in ipairs { "wmin", "hmin" } do
+    for _, k in ipairs(floors) do
         if spec[k] and (not node[k] or spec[k] >= node[k]) then
             node[k], node[k:sub(1, 1) .. "src"] = spec[k], spec[k:sub(1, 1) .. "src"]
         end
     end
     -- A cap from either side stands, and the tighter of two.
-    for _, k in ipairs { "wmax", "hmax" } do
+    for _, k in ipairs(caps) do
         if spec[k] and (not node[k] or spec[k] <= node[k]) then
             node[k], node[k:sub(1, 1) .. "src"] = spec[k], spec[k:sub(1, 1) .. "src"]
         end
@@ -498,19 +508,23 @@ end
 --- The node a widget compiles to, plus any foreground it puts in force, or
 -- nil for a hidden or refused widget. `node.specs` sizes its children.
 -- A forced size overrides the size returned by the describer.
+local painters = { "draw", "fit", "layout", "before_draw_children", "after_draw_children" }
 local function describe(w, fg, st, item, offer)
     local record = w._clay
 
     if w._private.visible == false then return nil end
-    local methods = {}
-    for _, method in ipairs { "draw", "fit", "layout", "before_draw_children", "after_draw_children" } do
-        if rawget(w, method) ~= nil then methods[#methods + 1] = ":" .. method end
+    local methods
+    for _, method in ipairs(painters) do
+        if rawget(w, method) ~= nil then
+            methods = methods or {}
+            methods[#methods + 1] = ":" .. method
+        end
     end
-    if #methods > 0 or not record then
+    if methods or not record then
         local name = class_name(w) or "?"
         if not warned[name] then
             warned[name] = true
-            local reason = #methods > 0 and "draws itself (" .. table.concat(methods, ", ") .. ")"
+            local reason = methods and "draws itself (" .. table.concat(methods, ", ") .. ")"
                 or "has no describer"
             gdebug.print_warning("wibox.clay: " .. name .. " " .. reason .. " and is left out of the tree")
         end
@@ -527,7 +541,6 @@ local function describe(w, fg, st, item, offer)
     return node, node_fg
 end
 
-local axes = {"w", "h"}
 local empty_list = {}
 local no_padding = {0, 0, 0, 0}
 
@@ -887,6 +900,7 @@ local function occurrence(st, widget, parent)
         assert(next_occurrence < 4294967296, 'widget occurrence IDs exhausted')
         item = {id = next_occurrence, identity = clay.identity(widget), widget = widget, parent = parent,
             slots = {}, children = {}}
+        item.bindings = {item = item}
     end
     slots[#slots + 1] = item
     building.children[#building.children + 1] = item
@@ -979,6 +993,7 @@ local function join_bindings(prefix, tail)
     return {item = prefix.item, next = join_bindings(prefix.next, tail)}
 end
 
+local extents, paints = {'w','h','wmin','hmin','wmax','hmax'}, {'bg','border','bw','radius'}
 local function combine(node, opaque_host, host)
     if #(node.children or empty_list) == 0 or padded(node) then return node end
     local child = node.children[1]
@@ -1009,7 +1024,7 @@ local function combine(node, opaque_host, host)
             result.children[#result.children + 1] = node.children[i]
         end
     end
-    for _, key in ipairs {'w','h','wmin','hmin','wmax','hmax'} do
+    for _, key in ipairs(extents) do
         local from = node
         if (key == 'w' or key == 'h') and (node[key] or 'fit') == 'fit'
                 and type(child[key]) == 'number' then
@@ -1024,7 +1039,7 @@ local function combine(node, opaque_host, host)
         end
     end
     if painted(node) and not covered then
-        for _, key in ipairs {'bg','border','bw','radius'} do result[key] = node[key] end
+        for _, key in ipairs(paints) do result[key] = node[key] end
     end
     -- The inner object names the shared element, since it is the one that
     -- stays as wrappers around it come and go. A list is the exception: it
@@ -1153,16 +1168,10 @@ function compile_node(st, widget, parent, fg, offer, spec, alpha, parent_fit, al
     end
 
     if node.fit then offer = {} end
-    local allocation = spec
-    if parent_fit ~= 0 and not spec.float and not spec.stack then
-        allocation = {}
-        for key, value in pairs(spec) do allocation[key] = value end
-        fit_grow(allocation, parent_fit)
-    end
     resolve_size(node, offer, along)
     local intrinsic_w, intrinsic_h = node.w, node.h
     local inner, box = node_bound(node, offer)
-    merge_sizing(node, allocation)
+    merge_sizing(node, spec, parent_fit)
     fit_grow(node, parent_fit)
     if node.fit then node.w, node.h = 'fit', 'fit' end
 
@@ -1201,7 +1210,7 @@ function compile_node(st, widget, parent, fg, offer, spec, alpha, parent_fit, al
     node.widget = widget
     node.identity = item.identity
     node.occurrence = item.id
-    node.bindings = {item = item}
+    node.bindings = item.bindings
     if alpha ~= 1 then fade(node, alpha) end
     if parent.widget then node = combine_image(node) end
     node = combine(node, st.opaque_host)
@@ -1247,10 +1256,13 @@ function compile_node(st, widget, parent, fg, offer, spec, alpha, parent_fit, al
         if spec.passthrough ~= nil then node.passthrough = spec.passthrough end
     end
 
-    local inputs = {}
-    for _, k in ipairs(spec_keys) do inputs[k] = spec[k] end
-    cache.entries[item] = { node = node, fg = fg, alpha = alpha, offer = given,
-        spec = inputs, parent_fit = parent_fit }
+    -- A recompiled occurrence refills its entry.
+    if not entry then
+        entry = { spec = {} }
+        cache.entries[item] = entry
+    end
+    entry.node, entry.fg, entry.alpha, entry.offer, entry.parent_fit = node, fg, alpha, given, parent_fit
+    for _, k in ipairs(spec_keys) do entry.spec[k] = spec[k] end
     finish_children(st, item, building)
     st.active[widget] = nil
     return node
@@ -1275,10 +1287,12 @@ end
 
 -- Commit geometry and binding targets before invoking public solved callbacks.
 function clay._publish(self, tree, boxes)
-    local index, callbacks, scrolled, k = {}, {}, {}, 0
+    -- The index is refilled in place: a new tree rarely changes its length.
+    local index, n, callbacks, scrolled, k = self._clay_index or {}, 0, {}, {}, 0
     -- above is the nearest widget above node.
     local function place(node, above)
-        index[#index + 1] = node
+        n = n + 1
+        index[n] = node
         if not node.text and not node.client and (not node.spacer or node.scroll) then
             k = k + 1
             node.box = boxes[k]
@@ -1295,6 +1309,7 @@ function clay._publish(self, tree, boxes)
         if node.solved then callbacks[#callbacks + 1] = node end
     end
     place(tree)
+    for i = #index, n + 1, -1 do index[i] = nil end
     self._clay_tree, self._clay_index = tree, index
     local protected_call = require('gears.protected_call')
     for _, node in ipairs(callbacks) do protected_call(node.solved, node) end

@@ -157,10 +157,19 @@ function clay.describe(c, allocation)
         box.border, box.bw = {c:_border_rgba()}, {bw, bw, bw, bw}
     end
     -- Loading somewm.layout_animation turns the transition on; without it
-    -- a frame snaps.
+    -- a frame snaps and declares none, so Clay solves the frame once
+    -- (third_party/clay.h:4613).
     local animation = package.loaded["somewm.layout_animation"]
-    frame.transition = {properties = "box", duration = animation and animation.enabled
-        and not capi.mousegrabber.isrunning() and animation.duration or 0}
+    if animation then
+        -- A client's first frame with a record declares duration 0: a
+        -- record Clay adds to a frame already on screen starts from an
+        -- empty box (third_party/clay.h:4706-4711), and duration 0 lands it
+        -- on the box that frame (clay.h:4977-4981).
+        frame.transition = {properties = "box", duration = c._private.clay_transition
+            and animation.enabled and not capi.mousegrabber.isrunning()
+            and animation.duration or 0}
+        c._private.clay_transition = true
+    end
     local pad = allocation.pad
     if not (allocation.float and pad and (pad[1] ~= 0 or pad[2] ~= 0 or pad[3] ~= 0 or pad[4] ~= 0)) then
         return frame
