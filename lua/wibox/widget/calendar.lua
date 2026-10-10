@@ -68,12 +68,6 @@ local properties = { "date"        , "font"         , "spacing" , "week_numbers"
 -- @beautiful beautiful.flex_height
 -- @param boolean Cells can skretch to fill the empty space.
 
---- Set the color for the empty space where there are no date widgets.
---
--- This happens when the month doesn't start on a Sunday or stop on a Saturday.
--- @beautiful beautiful.calendar_empty_color
--- @param color The empty area color.
-
 --- The calendar date.
 --
 -- E.g.. `{day=21, month=2, year=2005}`, `{month=2, year=2005}, {year=2005}`
@@ -175,33 +169,6 @@ local properties = { "date"        , "font"         , "spacing" , "week_numbers"
 -- @propertytype table Specify a different value for the inner and outer borders.
 -- @see border_width
 -- @see wibox.layout.grid.border_color
-
---- Set the color for the empty cells.
---
--- @property empty_color
--- @tparam[opt=nil] color|nil empty_color
--- @usebeautiful beautiful.calendar_empty_color
--- @see empty_widget
--- @see empty_cell_mode
-
---- Set a widget for the empty cells.
---
--- @property empty_widget
--- @tparam[opt=nil] widget|nil empty_widget
--- @see empty_color
--- @see empty_cell_mode
-
---- How should the cells outside of the current month should be handled.
---
--- @property empty_cell_mode
--- @tparam[opt="merged"] string empty_cell_mode
--- @propertyvalue "merged" Merge all cells and display the `empty_widget` or
---  `empty_color`.
--- @propertyvalue "split" Display one `empty_widget` per day rather than merge
---  them.
--- @propertyvalue "rolling" Display the dates from the previous or next month.
--- @see empty_widget
--- @see empty_color
 
 --- Make a textbox
 -- @tparam string text Text of the textbox
@@ -401,6 +368,8 @@ function calendar:set_date(date)
 end
 
 
+clay.retire(calendar, {"empty_cell_mode", "empty_color", "empty_widget"})
+
 -- Build properties function
 for _, prop in ipairs(properties) do
     -- setter
@@ -452,7 +421,6 @@ local function get_calendar(type, date, font)
     ret._private.long_weekdays = beautiful.calendar_long_weekdays or false
     ret._private.flex_height   = beautiful.calendar_flex_height or false
     ret._private.fn_embed      = function (w, _) return w end
-    ret._private.empty_widget  = bgcontainer(beautiful.calendar_empty_color)
 
     -- header specific
     ret._private.subtype = type=="year" and "monthheader" or "fullheader"

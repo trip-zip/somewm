@@ -1,4 +1,4 @@
--- Public grid inputs for the 19 accepted grid shapes.
+-- Public grid inputs for the 18 accepted grid shapes.
 local wibox = require('wibox')
 local tidy = require('_clay_tidy')
 local example = require('_clay_example')
@@ -9,7 +9,6 @@ local colors = {'#ff0000', '#00ff00', '#0000ff', '#ffff00',
 local function grid(args)
     local g = wibox.layout.grid()
     g.spacing = 5
-    g.minimum_column_width = 10
     g.minimum_row_height = 10
     for key, value in pairs(args or {}) do g[key] = value end
     return g
@@ -80,11 +79,11 @@ add('independent-axes', {column_count=2, homogeneous=false, forced_width=225,
     forced_height=80, expand={horizontal=true, vertical=false}}, unequal, {225,80},
     {{0,0,110,20}, {115,0,110,20}, {0,25,110,30}, {115,25,110,30}})
 -- No requested track extent in the empty default case.
-add('empty', {minimum_column_width=0, minimum_row_height=0}, {})
-add('empty-minima', {column_count=3, row_count=2}, {}, {40,25})
-add('one-item', {column_count=3, minimum_row_height=20}, {{40,20}}, {70,20},
+add('empty', {minimum_row_height=0}, {})
+add('empty-minima', {column_count=3, row_count=2}, {}, {10,25})
+add('one-item', {column_count=3, minimum_row_height=20}, {{40,20}}, {50,20},
     {{0,0,40,20}})
-add('two-items', {column_count=3, minimum_row_height=20}, {{40,20}, {70,20}}, {130,20},
+add('two-items', {column_count=3, minimum_row_height=20}, {{40,20}, {70,20}}, {120,20},
     {{0,0,40,20}, {45,0,70,20}})
 add('seven-items', {column_count=3, minimum_row_height=20, forced_width=300,
     expand={horizontal=true, vertical=false}},
@@ -92,8 +91,8 @@ add('seven-items', {column_count=3, minimum_row_height=20, forced_width=300,
     {{0,0,97,20}, {102,0,96,20}, {203,0,97,20}, {0,25,97,20},
         {102,25,96,20}, {203,25,97,20}, {0,50,97,20}})
 add('intentional-holes', {column_count=3, homogeneous=false},
-    {{40,10,1,1}, {30,10,1,3}, {20,20,2,2}}, {90,35},
-    {{0,0,40,10}, {60,0,30,10}, {15,15,20,20}})
+    {{40,10,1,1}, {30,10,1,3}, {20,20,2,2}}, {80,35},
+    {{0,0,40,10}, {50,0,30,10}, {5,15,20,20}})
 add('column-spans', {column_count=3, forced_width=300,
     homogeneous={horizontal=true, vertical=false},
     expand={horizontal=true, vertical=false}},
@@ -117,20 +116,13 @@ local squares = {{20,20}, {20,20}, {20,20}, {20,20}}
 add('borders', {column_count=2, border_width={inner=1,outer=1},
     border_color='#ffffff'}, squares, {63,63},
     {{6,6,20,20}, {37,6,20,20}, {6,37,20,20}, {37,37,20,20}})
-add('border-span-hole', {column_count=2, minimum_column_width=20,
+add('border-span-hole', {column_count=2,
     minimum_row_height=20, border_width={inner=1,outer=1}, border_color='#ffffff'},
-    {{20,20,1,1,1,2}, {20,20,2,1}}, {51,63}, {{6,6,20,20}, {6,37,20,20}})
+    {{20,20,1,1,1,2}, {20,20,2,1}}, {43,63}, {{6,6,20,20}, {6,37,20,20}})
 add('custom-border', {column_count=2, border_width={inner=1,outer=2},
     border_color='#ffffff'}, squares, {67,65},
     {{7,7,20,20}, {40,7,20,20}, {7,38,20,20}, {40,38,20,20}}, function(g)
         g:add_column_border(2, 3, {color='#00ffff', dashes={4,2}, dash_offset=1, caps='round'})
-    end)
-add('native-overlap', {column_count=2, homogeneous=false, superpose=true},
-    {{40,20}, {70,20}}, {115,20}, nil, function(g, widgets)
-        local float = tidy.leaf(0, 0, '#0000ff')
-        float.forced_width, float.forced_height = 200, 60
-        g:add_widget_at(float, 1, 2)
-        widgets[#widgets + 1] = float
     end)
 add('nested', {column_count=2, homogeneous=false}, {}, {75,45}, nil, function(g)
     for _, size in ipairs{10,20} do
@@ -140,5 +132,5 @@ add('nested', {column_count=2, homogeneous=false}, {}, {75,45}, nil, function(g)
     end
 end)
 
-assert(#cases == 19)
+assert(#cases == 18)
 tidy.run(cases)

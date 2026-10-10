@@ -323,42 +323,7 @@ function ratio:insert(index, widget)
     return true
 end
 
---- Set how the space of invisible or `0x0` sized widget is redistributed.
---
---@DOC_wibox_layout_ratio_strategy_EXAMPLE@
---
--- @property inner_fill_strategy
--- @tparam[opt="default"] string inner_fill_strategy One of the value listed above.
--- @propertyvalue "default" Honor the ratio and do not redistribute the space.
--- @propertyvalue "justify" Distribute the space among remaining widgets.
--- @propertyvalue "center" Squash remaining widgets and leave equal space on both side.
--- @propertyvalue "inner_spacing" Add equal spacing between all widgets.
--- @propertyvalue "spacing" Add equal spacing between all widgets and on the outside.
--- @propertyvalue "left" Squash remaining widgets and leave empty space on the left.
--- @propertyvalue "right" Squash remaining widgets and leave empty space on the right.
--- @propemits true false
-
-function ratio:get_inner_fill_strategy()
-    return self._private.inner_fill_strategy or "default"
-end
-
-local valid_strategies = {
-    default       = true,
-    justify       = true,
-    center        = true,
-    inner_spacing = true,
-    spacing       = true,
-    left          = true,
-    right         = true
-}
-
-function ratio:set_inner_fill_strategy(strategy)
-    assert(valid_strategies[strategy] ~= nil, "Invalid strategy: "..(strategy or ""))
-
-    self._private.inner_fill_strategy = strategy
-    self:emit_signal("widget::layout_changed")
-    self:emit_signal("property::inner_fill_strategy", strategy)
-end
+clay.retire(ratio, {"inner_fill_strategy"})
 
 local function get_layout(dir, widget1, ...)
     local ret = flex[dir](widget1, ...)
@@ -391,10 +356,6 @@ end
 local function describe_ratio(w)
     local node, along, across, spacing = fixed.describe_linear(w)
 
-    if w:get_inner_fill_strategy() ~= "default" then
-        clay.ignore(w, "inner_fill_strategy",
-            "is not applied; the space the ratios leave stays at the end")
-    end
     for k, child in ipairs(w._private.widgets) do
         local share = math.max(0, math.min(1, w._private.ratios[k] or 0))
         clay.linear_spec(node, { widget = child, [along] = { percent = share }, [along .. "src"] = "user", [across] = "grow" },

@@ -32,12 +32,13 @@ local gtable = require("gears.table")
 local gmath = require("gears.math")
 local gcolor = require("gears.color")
 local base = require("wibox.widget.base")
+local clay = require("wibox.clay")
 local constructor = require("wibox.layout._grid_constructor")
 
 local grid = { mt = {} }
 
 local properties = {
-    "orientation", "superpose",
+    "orientation",
     "forced_row_count", "forced_column_count",
 }
 
@@ -59,29 +60,13 @@ local dir_properties = { "spacing", "homogeneous", "expand" }
 --  row is filled, creating it if it does not exist.
 -- @property orientation
 
---- Allow to superpose widgets in the same cell.
--- If false, check before adding a new widget if it will superpose with another
--- widget and prevent from adding it.
---
---@DOC_wibox_layout_grid_superpose_EXAMPLE@
--- @tparam[opt=false] boolean superpose
--- @property superpose
-
---- Set the minimum size for the columns.
+--- Set the minimum size for the rows.
 --
 --@DOC_wibox_layout_grid_min_size_EXAMPLE@
--- @tparam[opt=0] number minimum_column_width Minimum size of the columns.
--- @property minimum_column_width
--- @propertyunit pixel
--- @negativeallowed false
--- @see minimum_row_height
-
---- Set the minimum size for the rows.
 -- @tparam[opt=0] number minimum_row_height Minimum size of the rows.
 -- @property minimum_row_height
 -- @propertyunit pixel
 -- @negativeallowed false
--- @see minimum_column_width
 
 --- The spacing between rows and columns.
 --
@@ -303,12 +288,8 @@ function grid:add_widget_at(child, row, col, row_span, col_span)
     child = base.make_widget_from_value(child)
     base.check_widget(child)
 
-    -- test if the new widget superpose with existing ones
-    local superpose = find_widgets_at(
-        self._private.widgets, row, col, row_span, col_span
-    )
-
-    if not self._private.superpose and superpose then
+    -- A widget never covers another
+    if find_widgets_at(self._private.widgets, row, col, row_span, col_span) then
         return false
     end
 
@@ -738,27 +719,16 @@ function grid:get_column_count()
     return self._private.forced_num_cols or self._private.num_cols
 end
 
-function grid:set_minimum_column_width(val)
-    if self._private.min_cols_size ~= val then
-        self._private.min_cols_size = val
-        update_dimension(self)
-        self:emit_signal("property::minimum_column_width", val)
-        self:emit_signal("widget::layout_changed")
-    end
-end
-
 function grid:set_minimum_row_height(val)
     if self._private.min_rows_size ~= val then
         self._private.min_rows_size = val
         update_dimension(self)
-        self:emit_signal("property::minimum_column_width", val)
+        self:emit_signal("property::minimum_row_height", val)
         self:emit_signal("widget::layout_changed")
     end
 end
 
-function grid:get_minimum_column_width()
-    return self._private.min_cols_size
-end
+clay.retire(grid, {"minimum_column_width", "superpose"})
 
 function grid:get_minimum_row_height()
     return self._private.min_rows_size
@@ -964,11 +934,9 @@ local function new(orientation)
     ret._private.num_rows = 0
     ret._private.num_cols = 0
 
-    ret._private.superpose       = false
     ret._private.forced_num_rows = nil
     ret._private.forced_num_cols = nil
     ret._private.min_rows_size   = 0
-    ret._private.min_cols_size   = 0
 
     ret._private.horizontal_homogeneous = true
     ret._private.vertical_homogeneous   = true

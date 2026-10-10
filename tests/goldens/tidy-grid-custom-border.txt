@@ -7,14 +7,14 @@ output
     clip w=grow h=grow row
     wibox.layout.grid w=fit h=fit column
       - spacer w=grow h=fit user row
-        - spacer w=fit user h=grow row pad 7,5,7,5
-          wibox.widget.base w=grow user h=grow user row
-        - spacer w=fit user h=grow row pad 0,2,2,0
-          - spacer w=grow h=grow row pad 8,5,5,5
-            wibox.widget.base w=grow user h=grow user row
+        - spacer w=fit h=grow row pad 7,5,7,5
+          wibox.widget.base w=fit user h=grow user row
+        - spacer w=fit h=grow row pad 0,2,2,0
+          - spacer w=fit h=grow row pad 8,5,5,5
+            wibox.widget.base w=fit user h=grow user row
       - spacer w=grow h=fit user row
-        - spacer w=fit user h=grow row pad 7,5,6,7
-          wibox.widget.base w=grow user h=grow user row
-        - spacer w=fit user h=grow row pad 0,2,1,2
-          - spacer w=grow h=grow row pad 8,5,5,5
-            wibox.widget.base w=grow user h=grow user row
+        - spacer w=fit h=grow row pad 7,5,6,7
+          wibox.widget.base w=fit user h=grow user row
+        - spacer w=fit h=grow row pad 0,2,1,2
+          - spacer w=fit h=grow row pad 8,5,5,5
+            wibox.widget.base w=fit user h=grow user row

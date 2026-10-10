@@ -132,8 +132,7 @@ struct widget_node {
 	uint8_t parent, own; /* Clay_FloatingAttachPointType, top left by default */
 	bool passthrough;    /* floats pass pointer hits to siblings by default */
 	bool floating;       /* attached to the parent, off the flow */
-	uint16_t attach;     /* 1-based earlier node in this tree, 0 means parent,
-	                      * WIDGET_ATTACH_OUTPUT the screen's root */
+	uint16_t attach;     /* 0 means parent, WIDGET_ATTACH_OUTPUT the screen's root */
 	/* A client composite's root: the client's declare handle, 0 for none.
 	 * A composite always has children. */
 	uint64_t client;

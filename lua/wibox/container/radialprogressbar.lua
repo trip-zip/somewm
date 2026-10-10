@@ -37,14 +37,6 @@ local radialprogressbar = { mt = {} }
 -- @beautiful beautiful.radialprogressbar_border_width
 -- @param number
 
---- The padding between the outline and the progressbar.
--- @beautiful beautiful.radialprogressbar_paddings
--- @tparam[opt=0] table|number paddings A number or a table
--- @tparam[opt=0] number paddings.top
--- @tparam[opt=0] number paddings.bottom
--- @tparam[opt=0] number paddings.left
--- @tparam[opt=0] number paddings.right
-
 local function outline_workarea(self, width, height)
     local border_width = self._private.border_width or
         beautiful.radialprogressbar_border_width or default_outline_width
@@ -89,31 +81,6 @@ end
 function radialprogressbar:reset()
     self:set_widget(nil)
 end
-
-for _,v in ipairs {"left", "right", "top", "bottom"} do
-    radialprogressbar["set_"..v.."_padding"] = function(self, val)
-        self._private.paddings = self._private.paddings or {}
-        self._private.paddings[v] = val
-        self:emit_signal("widget::redraw_needed")
-        self:emit_signal("widget::layout_changed")
-    end
-end
-
---- The padding between the outline and the progressbar.
---
---@DOC_wibox_container_radialprogressbar_padding_EXAMPLE@
--- @property paddings
--- @tparam[opt=0] table|number|nil paddings A number or a table
--- @tparam[opt=0] number paddings.top
--- @tparam[opt=0] number paddings.bottom
--- @tparam[opt=0] number paddings.left
--- @tparam[opt=0] number paddings.right
--- @propertytype number A single value for each sides.
--- @propertytype table A different value for each side.
--- @negativeallowed false
--- @propertyunit pixel
--- @propbeautiful
--- @propemits false false
 
 --- The progressbar value.
 --
@@ -182,7 +149,7 @@ end
 -- @propemits true false
 
 for _, prop in ipairs {"max_value", "min_value", "border_color", "color",
-    "border_width", "paddings"} do
+    "border_width"} do
     radialprogressbar["set_"..prop] = function(self, value)
         self._private[prop] = value
         self:emit_signal("property::"..prop, value)
@@ -193,17 +160,7 @@ for _, prop in ipairs {"max_value", "min_value", "border_color", "color",
     end
 end
 
-function radialprogressbar:set_paddings(val)
-    self._private.paddings = type(val) == "number" and {
-        left   = val,
-        right  = val,
-        top    = val,
-        bottom = val,
-    } or val or {}
-    self:emit_signal("property::paddings")
-    self:emit_signal("widget::redraw_needed")
-    self:emit_signal("widget::layout_changed")
-end
+clay.retire(radialprogressbar, {"paddings"})
 
 --- Returns a new radialprogressbar layout.
 --
@@ -244,11 +201,8 @@ local function describe_radialprogressbar(w)
     local bw = w._private.border_width or
         beautiful.radialprogressbar_border_width or default_outline_width
     local percent = w._percent or 0
-    local padding = w._private.paddings or {}
-    local pad = {}
-    for i, side in ipairs { "left", "right", "top", "bottom" } do
-        pad[i] = clay.pixels(w, "paddings." .. side, bw / 2 + (padding[side] or 0))
-    end
+    local half = clay.pixels(w, "border_width", bw / 2)
+    local pad = { half, half, half, half }
 
     -- The renderer fits PILL to half the shorter side, cutting the child
     -- to the same pill as before_draw_children.

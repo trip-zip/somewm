@@ -7,10 +7,10 @@ output
     clip w=grow h=grow row
     wibox.layout.grid w=fit h=fit column gap 5
       - spacer w=grow h=fit user row gap 5
-        - spacer w=fit user h=grow row
-        - spacer w=fit user h=grow row
-        - spacer w=fit user h=grow row
+        - spacer w=fit h=grow row
+        - spacer w=fit h=grow row
+        - spacer w=fit h=grow row
       - spacer w=grow h=fit user row gap 5
-        - spacer w=fit user h=grow row
-        - spacer w=fit user h=grow row
-        - spacer w=fit user h=grow row
+        - spacer w=fit h=grow row
+        - spacer w=fit h=grow row
+        - spacer w=fit h=grow row

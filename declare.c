@@ -1738,8 +1738,7 @@ declare_widget_subtree(const struct widget_host *host, size_t i, Clay_ElementId 
 	e = root_decl ? *root_decl : widget_node_decl(n, z, word);
 	if (n->attach) {
 		e.floating.attachTo = CLAY_ATTACH_TO_ELEMENT_WITH_ID;
-		e.floating.parentId = n->attach == WIDGET_ATTACH_OUTPUT
-			? screen_root_id(host->m).id : ids[n->attach - 1];
+		e.floating.parentId = screen_root_id(host->m).id;
 	}
 	if (n->client)
 		return declare_layout_client(host, i, &e, ids);

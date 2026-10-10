@@ -72,16 +72,6 @@ local steps = {
     end,
     function(count)
         if count == 1 then
-            checkbox.check_shape = gshape.circle
-            return nil
-        end
-        assert(pixel(20, 20, "#ff0000"), "the circular check centre is not red")
-        assert(pixel(3, 3, "#00ff00"), "the circular check hides the green corner")
-        io.stderr:write("[PASS] the circular check leaves the green corner visible\n")
-        return true
-    end,
-    function(count)
-        if count == 1 then
             checkbox.shape = gshape.circle
             return nil
         end
