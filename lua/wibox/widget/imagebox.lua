@@ -655,7 +655,7 @@ end
 --- wibox.widget.imagebox -> an element aligning one image leaf. The compiler
 -- composes its size from the surface, scaling flags and authored constraints.
 -- The renderer references the surface and scales it into the solved box.
--- Clip shapes, fit policies and scaling caps are ignored.
+-- Non-auto fit policies are ignored.
 -- An SVG handle or an image with no default size is refused.
 local function describe_imagebox(w)
     local p = w._private
@@ -667,9 +667,6 @@ local function describe_imagebox(w)
     if not p.default then
         return clay.refuse(w, "image", "has no size to render at")
     end
-    if p.max_scaling_factor then
-        clay.ignore(w, "max_scaling_factor", "is not applied")
-    end
     for _, axis in ipairs { "horizontal", "vertical" } do
         local prop = axis .. "_fit_policy"
         if (p[prop] or "auto") ~= "auto" then
@@ -680,19 +677,27 @@ local function describe_imagebox(w)
         name = "image",
         aspect = p.default.width / p.default.height,
         image_resize = p.resize, image_downscale = p.downscale,
-        image_width = p.default.width, image_height = p.default.height }
+        image_width = p.default.width, image_height = p.default.height,
+        wsrc = "user", hsrc = "user" }
 
     if p.upscale == false or p.resize == false then
         image.wmax, image.hmax = p.default.width, p.default.height
     end
-    -- Authored axes constrain the image content even when the original widget
-    -- receives a larger GROW allocation. They do not override that allocation.
-    for _, axis in ipairs {{"w", "forced_width"}, {"h", "forced_height"}} do
-        local bound = p[axis[2]]
-        if bound == 0 then
-            image[axis[1]] = 0
-        elseif bound then
-            image[axis[1] .. "max"] = math.min(bound, image[axis[1] .. "max"] or math.huge)
+    if (p.max_scaling_factor or 0) > 0 then
+        image.wmax = math.min(image.wmax or math.huge, p.default.width * p.max_scaling_factor)
+        image.hmax = math.min(image.hmax or math.huge, p.default.height * p.max_scaling_factor)
+    end
+    -- A forced axis tells the image its size, within the caps above; the
+    -- original widget keeps the larger GROW allocation its parent gives it.
+    -- With both forced, only the one that binds is told, so the image keeps
+    -- its aspect inside the forced box.
+    local forced = { w = p.forced_width, h = p.forced_height }
+    if forced.w and forced.h then
+        if forced.h * image.aspect <= forced.w then forced.w = nil else forced.h = nil end
+    end
+    for _, axis in ipairs { "w", "h" } do
+        if forced[axis] then
+            image[axis] = math.min(forced[axis], image[axis .. "max"] or math.huge)
         end
     end
     local node = { specs = { image },

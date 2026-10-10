@@ -41,18 +41,20 @@ local function describe(s, horizontal)
     local items = {}
     local count = math.min(rows, n - (column - 1) * rows)
     for i = (column - 1) * rows + 1, math.min(column * rows, n) do
-      local item = {client = clients[i], w = 1, h = 1}
+      local item = {client = clients[i], w = 1, h = 1, wsrc = "theme", hsrc = "theme"}
       if gap > 0 then
         item = {role = "CELL", direction = "row", padding = gap,
           children = {item}}
       end
       item[axis], item[cross] = 1, 1 / count
+      item.wsrc, item.hsrc = "theme", "theme"
       items[#items + 1] = item
     end
     local group = #items == 1 and items[1] or {
       role = "ROW", direction = horizontal and "row" or "column",
       children = items}
     group[axis], group[cross] = 1 / columns, 1
+    group.wsrc, group.hsrc = "theme", "theme"
     groups[#groups + 1] = group
   end
   return {role = "WORKAREA", direction = horizontal and "column" or "row",

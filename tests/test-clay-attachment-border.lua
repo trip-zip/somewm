@@ -12,7 +12,7 @@ runner.run_async(function()
     root.wallpaper(require('gears.color')('#ffffff'))
     local leaf = wibox.widget.base.make_widget(nil, nil, {enable_properties = true})
     clay.describe_widget(leaf, function()
-        return {w = leaf.forced_width, h = 40, bg = {1, 0, 0, 1}}
+        return {w = leaf.forced_width, h = 40, wsrc = 'user', hsrc = 'user', bg = {1, 0, 0, 1}}
     end, 'attachment-border-content')
     leaf.forced_width = 80
     local popup = awful.popup {screen = screen[1], visible = true, ontop = true,
@@ -53,7 +53,8 @@ runner.run_async(function()
         assert(not id or id == next_id, 'decoration changed original occurrence ID')
         id = next_id
         local head = assert(dump:match('POPUP [^\n]+'))
-        assert(head:find(bw > 0 and ' theme ' or ' user ', 1, true), head)
+        -- A content-sized root stays FIT; the authored leaf keeps its element.
+        assert(head:find(' w=fit h=fit ', 1, true), head)
         if head:find(' image ', 1, true) then structural[#structural + 1] = name end
     end
     for _, width in ipairs {80, 160, 40} do

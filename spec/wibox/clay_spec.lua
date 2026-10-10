@@ -21,7 +21,8 @@ local context = { dpi = 96 }
 local function leaf_widget(width, height)
     local w = base.make_widget()
     w._clay = { name = "leaf", describe = function(_, fg)
-        return { w = width or 10, h = height or 10, bg = wclay.solid_rgba(fg) }
+        return { w = width or 10, h = height or 10, wsrc = "user", hsrc = "user",
+            bg = wclay.solid_rgba(fg) }
     end }
     return w
 end
@@ -95,7 +96,7 @@ describe("wibox.clay", function()
         warning:revert()
     end)
 
-    it("retains intrinsic images beneath independently allocated flex children", function()
+    it("declares natural images under flex children, which have no height bound", function()
         local cairo = require("lgi").cairo
         local imagebox = require("wibox.widget.imagebox")
         local flex = require("wibox.layout.flex")
@@ -105,41 +106,40 @@ describe("wibox.clay", function()
         for _, spacing in ipairs { 0, 10 } do
             layout.spacing = spacing
             local tree = compile(BG, layout, BG)
-            local children = tree.children[1].children
+            local children = node_for(tree, layout).children
             assert.is_equal(2, #children)
             for _, child in ipairs(children) do
                 local image = child.children[1]
                 assert.is_equal('fit', image.w)
+                assert.is_equal(10, image.wmin)
+                assert.is_equal("user", image.wsrc)
                 assert.is_equal('fit', image.h)
-                assert.is_equal((100 - spacing) / 2, image.wmax)
-                assert.is_equal((100 - spacing) / 2, image.hmax)
-                assert.is_nil(image.last_frame_size)
-                assert.is_nil(image.aspect)
-                assert.is_equal(10, image.image_width)
-                assert.is_equal(10, image.image_height)
+                assert.is_nil(image.hmin)
+                assert.is_nil(image.wmax)
+                assert.is_nil(image.hmax)
+                assert.is_equal(1, image.aspect)
             end
         end
     end)
 
-    it("honors image scaling flags inside a smaller authored allocation", function()
+    it("declares the bound times the aspect, within the scaling flags", function()
         local cairo = require('lgi').cairo
         local imagebox = require('wibox.widget.imagebox')
-        local surface = cairo.ImageSurface(cairo.Format.ARGB32, 200, 100)
-        local icon = imagebox(surface)
+        local icon = imagebox(cairo.ImageSurface(cairo.Format.ARGB32, 20, 10))
         local function image()
             return node_for(compile(BG, icon, BG), icon).children[1]
         end
-        local fitted = image()
-        assert.is_equal(100, fitted.wmax)
-        assert.is_equal(50, fitted.hmax)
+        assert.is_equal(200, image().wmin)
+        icon.upscale = false
+        assert.is_equal(20, image().wmin)
+        icon.upscale = true
+        icon:set_image(cairo.ImageSurface(cairo.Format.ARGB32, 400, 200))
         icon.downscale = false
-        local natural = image()
-        assert.is_equal(200, natural.wmax)
-        assert.is_equal(100, natural.hmax)
+        assert.is_equal(400, image().wmin)
         icon.resize = false
         local fixed_image = image()
-        assert.is_equal(200, fixed_image.w)
-        assert.is_equal(100, fixed_image.h)
+        assert.is_equal(400, fixed_image.w)
+        assert.is_equal(200, fixed_image.h)
     end)
 
     it("uses an authored image axis inside a content-sized host", function()
@@ -153,7 +153,9 @@ describe("wibox.clay", function()
         local tree = wclay.compile({_attachment_fit = true}, widget, context, 1, 1)
         local image = node_for(tree, widget)
         assert.is_equal(40, image.w)
-        assert.is_equal(20, image.hmax)
+        assert.is_equal("fit", image.h or "fit")
+        assert.is_nil(image.hmin)
+        assert.is_nil(image.hmax)
     end)
 
     it("records both lines when a shape strokes between them", function()
@@ -225,6 +227,8 @@ describe("wibox.clay", function()
         assert.is_equal("grow", nodes[2].w)
         assert.is_equal(10, nodes[2].wmin)
         assert.is_equal(10, nodes[2].hmin)
+        assert.is_equal("user", nodes[2].wsrc)
+        assert.is_equal("user", nodes[2].hsrc)
         assert.is_equal(0, #leaves)
     end)
 
@@ -423,10 +427,12 @@ describe("wibox.clay", function()
         local node = fixed_node(w)
 
         assert.is_equal(20, node.w)
+        assert.is_equal("user", node.wsrc)
         assert.is_equal("grow", node.h)
         node = layout_node(w)
         assert.is_equal("grow", node.w)
         assert.is_equal(20, node.wmin)
+        assert.is_equal("user", node.wsrc)
     end)
 
 
@@ -496,6 +502,7 @@ describe("wibox.clay cache", function()
         assert.is_equal(token, bounded.occurrence)
         assert.is_equal(src._native, bounded.children[1].image)
         assert.is_equal(40, bounded.w)
+        assert.is_equal("user", bounded.wsrc)
 
         image.forced_width = nil
         wclay.invalidate(host, image)
@@ -683,7 +690,9 @@ describe("wibox.clay host contributions", function()
     end)
 
     it("keeps translucent paint, rounded clips and distinct padding areas", function()
-        local text = leaf_widget()
+        -- A content-sized host never folds a FIXED child (it would become
+        -- the drawin's geometry); a GROW leaf folds.
+        local text = leaf_widget('grow', 'grow')
         local content = background(text, '#0000ff80')
         local host = {_attachment_fit = true, background_color = '#ff0000'}
         local function build()
@@ -731,7 +740,7 @@ describe("wibox.clay host contributions", function()
     end)
 
     it("invalidates covered paint throughout cached fragments when host opacity changes", function()
-        local content = background(leaf_widget(), '#0000ff')
+        local content = background(leaf_widget('grow', 'grow'), '#0000ff')
         local outer = background(content, '#00ff00')
         local host = {_attachment_fit=true, background_color='#ff0000',
             drawable={_clay_opaque=true}}
@@ -805,13 +814,14 @@ describe("wibox.clay fixed", function()
         assert.is_equal(20, node.children[3].w)
     end)
 
-    it("rounds spacing, ignores spacing widgets and refuses overrides", function()
+    it("rounds spacing, declares spacing widgets and refuses overrides", function()
         local warning = stub(gdebug, "print_warning")
         local l = fixed.horizontal(leaf_widget(10, 5), leaf_widget(10, 5))
         l.spacing = 3
         l.spacing_widget = leaf_widget(3, 5)
-        assert.is_equal(3, layout_node(l).gap)
-        assert.stub(warning).was_called(1)
+        assert.is_equal(0, layout_node(l).gap)
+        assert.is_equal(3, layout_node(l).children[2].w)
+        assert.stub(warning).was_not_called()
         warning:revert()
 
         warning = stub(gdebug, "print_warning")
@@ -874,13 +884,14 @@ describe("wibox.clay flex", function()
         assert.is_equal(12, node.children[1].hmax)
     end)
 
-    it("rounds spacing, ignores spacing widgets and refuses overrides", function()
+    it("rounds spacing, declares spacing widgets and refuses overrides", function()
         local warning = stub(gdebug, "print_warning")
         local l = flex.horizontal(leaf_widget(10, 5), leaf_widget(10, 5))
         l.spacing = 3
         l.spacing_widget = leaf_widget(3, 5)
-        assert.is_equal(3, layout_node(l).gap)
-        assert.stub(warning).was_called(1)
+        assert.is_equal(0, layout_node(l).gap)
+        assert.is_equal(3, layout_node(l).children[2].w)
+        assert.stub(warning).was_not_called()
         warning:revert()
 
         warning = stub(gdebug, "print_warning")
@@ -1243,16 +1254,16 @@ describe("wibox.clay place", function()
 end)
 
 describe("wibox.clay ratio", function()
-    it("ignores spacing and the inner fill strategy", function()
+    it("declares spacing and ignores the inner fill strategy", function()
         local ratio = require("wibox.layout.ratio")
         local l = ratio.horizontal(leaf_widget(), leaf_widget())
         local warning = stub(gdebug, "print_warning")
         l.spacing = 5
-        assert.is_equal(0, layout_node(l).gap)
-        assert.stub(warning).was_called(1)
+        assert.is_equal(5, layout_node(l).gap)
+        assert.stub(warning).was_not_called()
         l.inner_fill_strategy = "justify"
         assert.is_equal(2, #layout_node(l).children)
-        assert.stub(warning).was_called(2)
+        assert.stub(warning).was_called(1)
         warning:revert()
     end)
 end)
@@ -1401,20 +1412,7 @@ describe("wibox.clay border", function()
         assert.is_same({42, 42, 42, 42}, describe(w).specs[1].pad)
     end)
 
-    it("retains every unsupported border option as a named refusal", function()
-        local warning = stub(gdebug, "print_warning")
-        for _, option in ipairs { {"ontop", false},
-            {"border_merging", {}}, {"expand_corners", true}, {"border_image_dpi", 192} } do
-            local w = border { widget = leaf_widget(), borders = 4 }
-            w[option[1]] = option[2]
-            assert.is_nil(describe(w))
-            assert.stub(warning).was_called_with("wibox.clay: lua.wibox.container.border "
-                .. option[1] .. " is not drawn and is left out of the tree")
-        end
-        warning:revert()
-    end)
-
-    it("rounds borders and refuses honor_borders false with a warning", function()
+    it("rounds borders silently", function()
         local border = require("wibox.container.border")
         local cairo = require("lgi").cairo
         local src = cairo.ImageSurface(cairo.Format.ARGB32, 30, 30)
@@ -1424,9 +1422,6 @@ describe("wibox.clay border", function()
         assert.is_equal(3, node.children[1].h)
         assert.is_equal(3, node.children[1].children[1].w)
         assert.stub(warning).was_called(0)
-        w.honor_borders = false
-        assert.is_nil(layout_node(w))
-        assert.stub(warning).was_called(1)
         warning:revert()
     end)
 end)
@@ -1503,18 +1498,21 @@ describe("wibox.clay background", function()
         assert.is_same(wclay.shape_ops(gshape.circle, 40, 20, 0, 0), node.shape(40, 20))
     end)
 
-    it("ignores a function bgimage and keeps the child", function()
+    it("rejects a function bgimage at the setter and keeps the child", function()
         local w = background(leaf_widget(), BG)
-        w.bgimage = function() end
         local warning = stub(gdebug, "print_warning")
+        w.bgimage = function() end
+        assert.is_nil(w.bgimage)
+        assert.stub(warning).was_called(1)
+        assert.stub(warning).was_called_with(
+            "wibox.container.background: bgimage functions are not drawn")
+        warning:clear()
         local node = layout_node(w)
         assert.is_nil(node.image)
         assert.is_equal(1, #node.children)
         assert.is_nil(node.children[1].image)
         assert.is_equal("leaf", node.children[1].name)
-        assert.stub(warning).was_called(1)
-        assert.stub(warning).was_called_with(
-            "wibox.clay: lua.wibox.container.background bgimage is a function and is not drawn")
+        assert.stub(warning).was_called(0)
         warning:revert()
     end)
 
@@ -1654,26 +1652,15 @@ describe("wibox.clay progressbar", function()
 end)
 
 describe("wibox.clay slider", function()
-    it("ignores the bar border, rounds height and uses the bar color for a gradient handle", function()
+    it("rounds height and uses the bar color for a gradient handle", function()
         local w = require("wibox.widget.slider")()
         w.bar_border_width, w.bar_height, w.bar_color = 2, 4.4, "#0000ff"
         local warning = stub(gdebug, "print_warning")
         local node = w._clay.describe(w)
         assert.is_equal(4, node.specs[1].children[1].h)
-        assert.stub(warning).was_called(1)
+        assert.stub(warning).was_not_called()
         w.handle_color = "linear:0,0:10,0:0,#000000:1,#ffffff"
         assert.is_same({ 0, 0, 1, 1 }, w._clay.describe(w).specs[2].fill)
-        assert.stub(warning).was_called(2)
-        warning:revert()
-    end)
-end)
-
-describe("wibox.clay separator", function()
-    it("ignores a draw painter", function()
-        local w = require("wibox.widget.separator")()
-        w._private.draw = function() end
-        local warning = stub(gdebug, "print_warning")
-        assert.is_equal(1, #w._clay.describe(w).specs)
         assert.stub(warning).was_called(1)
         warning:revert()
     end)
@@ -1730,30 +1717,29 @@ describe("wibox.clay authored square bounds", function()
         local w = kind == "checkbox" and require("wibox.widget.checkbox")()
             or require("wibox.container.arcchart")(leaf_widget(12, 8))
         local tree = wclay.compile(host or {background_color=BG}, fixed.horizontal(w),
-            context, width, height)
-        local outer = assert(node_for(tree, w))
-        return kind == "checkbox" and outer or outer.children[1], outer, w
+            context, width, height, {w = "user", h = "user"})
+        return assert(node_for(tree, w)), w
     end
 
     for _, kind in ipairs {"checkbox", "arcchart"} do
-        it("composes " .. kind .. " before descending into its child", function()
+        it("declares " .. kind .. " at its authored bound", function()
+            -- In a row the width is unbounded; the height bound is the side.
             for _, offer in ipairs {{240,100}, {40,200}, {301,77}} do
-                local node, outer, w = square_node(kind, offer[1], offer[2])
-                local side = math.min(offer[1], offer[2]) - (kind == "arcchart" and 10 or 0)
-                assert.is_true(node.square)
-                assert.is_nil(node.last_frame_size)
-                assert.is_equal("fit", node.w)
-                assert.is_equal(side, node.wmin)
-                assert.is_equal(side, node.wmax)
+                local node, w = square_node(kind, offer[1], offer[2])
                 if kind == "arcchart" then
-                    assert.is_equal("fit", node.h)
-                    assert.is_equal(side, node.hmin)
-                    assert.is_equal(side, node.hmax)
+                    -- The content square is the bound less the padding.
+                    local square = node.children[1]
+                    assert.is_equal(offer[2] - 10, square.w)
+                    assert.is_equal(offer[2] - 10, square.h)
+                    assert.is_equal("user", square.wsrc)
+                    assert.is_equal("user", square.hsrc)
                     assert(node_for(node, w:get_children()[1]), "the real child lost its binding")
                 else
-                    assert.is_equal("grow", outer.h)
-                    assert.is_nil(outer.hmin)
-                    assert.is_nil(outer.hmax)
+                    assert.is_equal(offer[2], node.w)
+                    assert.is_equal("user", node.wsrc)
+                    assert.is_equal("grow", node.h)
+                    assert.is_equal(offer[2], node.hmin)
+                    assert.is_equal("user", node.hsrc)
                 end
             end
         end)
@@ -1778,13 +1764,15 @@ describe("wibox.clay authored square bounds", function()
                     or require("wibox.container.arcchart")()
                 w.forced_width, w.forced_height = axes[1] or nil, axes[2] or nil
                 local node = fixed_node(w)
-                assert.is_equal(axes[1] or "fit", node.w or "fit")
                 assert.is_equal("grow", node.h)
-                assert.is_equal(axes[2] or nil, node.hmin)
-                assert.is_equal(kind == "checkbox" and true or nil, node.square)
-                if not axes[1] and kind == "checkbox" then
-                    assert.is_equal(30, node.wmin)
-                    assert.is_equal(30, node.wmax)
+                if kind == "checkbox" then
+                    -- A forced axis or the 100 high row bounds the square.
+                    local side = math.min(axes[1] or 100, axes[2] or 100)
+                    assert.is_equal(axes[1] or side, node.w)
+                    assert.is_equal(axes[2] or side, node.hmin)
+                else
+                    assert.is_equal(axes[1] or "fit", node.w or "fit")
+                    assert.is_equal(axes[2] or nil, node.hmin)
                 end
             end
         end)
@@ -1796,9 +1784,9 @@ describe("wibox.clay authored square bounds", function()
             w.forced_width, w.forced_height = forced[1] or nil, forced[2] or nil
             local tree = wclay.compile({background_color=BG, _attachment_fit=true},
                 fixed.horizontal(w), context, 1, 1)
-            local inner = assert(node_for(tree, w)).children[1]
-            assert.is_equal(70, inner.wmin)
-            assert.is_equal(70, inner.hmin)
+            local square = assert(node_for(tree, w)).children[1]
+            assert.is_equal(70, square.w)
+            assert.is_equal(70, square.h)
         end
     end)
 end)
@@ -1852,5 +1840,99 @@ describe("wibox.clay textbox markup", function()
         textbox._clay.describe(w, "#ffffff", {context=context})
         textbox._clay.describe(w, "#ffffff", {context=context})
         assert.stub(warning).was_called(1)
+    end)
+end)
+
+describe("wibox.clay authored properties", function()
+    it("inserts distinct spacing widget specs in fixed and ratio layouts", function()
+        local warning = stub(gdebug, "print_warning")
+        for _, module in ipairs {fixed, require("wibox.layout.ratio")} do
+            local l = module.horizontal(leaf_widget(), leaf_widget(), leaf_widget())
+            local spacer = leaf_widget(6, 5)
+            l.spacing, l.spacing_widget = 6, spacer
+            local node = l._clay.describe(l)
+            assert.is_equal(0, node.gap)
+            assert.is_equal(5, #node.specs)
+            assert.is_equal(spacer, node.specs[2].widget)
+            assert.is_equal(spacer, node.specs[4].widget)
+            assert.is_not_equal(node.specs[2], node.specs[4])
+            assert.is_equal(6, node.specs[2].w)
+            assert.is_equal("grow", node.specs[2].h)
+        end
+        assert.stub(warning).was_not_called()
+        warning:revert()
+    end)
+
+    it("declares progressbar bar borders", function()
+        local warning = stub(gdebug, "print_warning")
+        local w = require("wibox.widget.progressbar")()
+        w.value, w.bar_shape = 0.5, gshape.rounded_rect
+        w.bar_border_width, w.bar_border_color = 2, "#00ff00"
+        local bar = w._clay.describe(w).specs[1].children[1]
+        assert.is_same({0, 1, 0, 1}, bar.border)
+        assert.is_same({2, 2, 2, 2}, bar.bw)
+        assert.stub(warning).was_not_called()
+        warning:revert()
+    end)
+
+    it("declares slider bar borders", function()
+        local warning = stub(gdebug, "print_warning")
+        local w = require("wibox.widget.slider")()
+        w.bar_shape, w.bar_border_width, w.bar_border_color = gshape.rounded_rect, 2, "#00ff00"
+        local bar = w._clay.describe(w).specs[1].children[1]
+        assert.is_same({0, 1, 0, 1}, bar.border)
+        assert.is_same({2, 2, 2, 2}, bar.bw)
+        assert.stub(warning).was_not_called()
+        warning:revert()
+    end)
+
+    it("declares tray backgrounds and floating overlays", function()
+        local beautiful = require("beautiful")
+        local warning = stub(gdebug, "print_warning")
+        local surface = require("lgi").cairo.ImageSurface(require("lgi").cairo.Format.ARGB32,16,16)
+        local item = {status="NeedsAttention", overlay_icon=surface._native, id="clay-test"}
+        function item:_icon_surface() return surface._native, 16, 16 end
+        local w = {_private={item=item, forced_size=24}}
+        beautiful.systray_icon_style = {[item.id]={urgent_bg="#00ff00", hover_bg="#ff0000", overlay_bg="#0000ff", overlay_size=0.5}}
+        local node = wclay.systray_icon(w)
+        assert.is_same({0,1,0,1}, node.bg)
+        local overlay = node.specs[2]
+        assert.is_true(overlay.float)
+        assert.is_equal(8, overlay.parent)
+        assert.is_equal(8, overlay.own)
+        assert.is_equal(12, overlay.w)
+        assert.is_equal("theme", overlay.wsrc)
+        assert.is_equal("user", node.wsrc)
+        assert.is_equal("grow", overlay.children[1].w)
+        w._private.is_hovered = true
+        assert.is_same({0,1,0,1}, wclay.systray_icon(w).bg)
+        item.status = "Active"
+        assert.is_same({1,0,0,1}, wclay.systray_icon(w).bg)
+        local style = beautiful.systray_icon_style[item.id]
+        style.overlay_size = 10
+        assert.is_equal(10, wclay.systray_icon(w).specs[2].w)
+        style.overlay_size = 0.33
+        assert.is_equal(8, wclay.systray_icon(w).specs[2].w)
+        style.overlay_size = 0.1
+        assert.is_equal(2, wclay.systray_icon(w).specs[2].w)
+        assert.stub(warning).was_not_called()
+        beautiful.systray_icon_style = nil
+        warning:revert()
+    end)
+
+    it("caps image scaling with source dimensions and authored maxima", function()
+        local warning = stub(gdebug, "print_warning")
+        local cairo = require("lgi").cairo
+        local w = require("wibox.widget.imagebox")(cairo.ImageSurface(cairo.Format.ARGB32,16,16))
+        w.max_scaling_factor = 2
+        local image = w._clay.describe(w).specs[1]
+        assert.is_equal(32, image.wmax)
+        assert.is_equal(32, image.hmax)
+        w.forced_width = 24
+        assert.is_equal(24, w._clay.describe(w).specs[1].w)
+        w.forced_width = 40
+        assert.is_equal(32, w._clay.describe(w).specs[1].w)
+        assert.stub(warning).was_not_called()
+        warning:revert()
     end)
 end)

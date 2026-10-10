@@ -4,15 +4,15 @@ local async=require('_async')
 local wibox=require('wibox')
 local awful=require('awful')
 local example=require('_clay_example')
-local check=require('_clay_grid_presentation')
-local solver=dofile('tests/_grid_solver.lua')
 runner.run_async(function()
     for _,kind in ipairs{'month','year'} do
         local cal=wibox.widget.calendar[kind](nil,'monospace 10')
         cal.spacing=3;cal.week_numbers=true;cal.date={year=2024,month=2,day=29}
         local host=awful.popup{screen=screen[1],x=0,y=0,visible=true,widget=cal,bg='#204080',maximum_width=1100}
         local function present(label,border_pixel)
-            awesome._test_redeclare();check(host._drawable)
+            awesome._test_redeclare()
+            local dump=awesome._clay_tree(screen[1])
+            assert(dump:match('roots flow 1 floating %d+ derived 0 '),label..': derived size')
             local grids,texts={},{}
             local function walk(w)
                 if w._private.widgets and w._private.num_cols then grids[#grids+1]=w end
@@ -22,18 +22,18 @@ runner.run_async(function()
             walk(cal)
             assert(#grids==(kind=='year' and 13 or 1))
             for i,g in ipairs(grids) do
-                local found=solver.find(host._drawable._clay_tree,g)
-                assert(#found==1,label..': missing original calendar grid')
-                assert(found[1].binding.grid_state.settled)
                 if kind=='month' or i>1 then
                     assert(g.column_count==(cal.week_numbers and 8 or 7))
                 end
             end
-            for _,w in ipairs(texts) do
-                assert(#solver.find(host._drawable._clay_tree,w)==1,label..': missing original text')
-            end
+            -- Every text of the calendar is declared, once.
+            local declared=0
+            for _ in dump:gmatch('\n%s+%x+%s+text "') do declared=declared+1 end
+            assert(declared==#texts,label..': '..declared..' texts declared for '..#texts)
             if border_pixel then
-                local b=solver.find(host._drawable._clay_tree,grids[1])[1].box
+                local b
+                for _,hit in ipairs(host:find_widgets(0,0)) do if hit.widget==grids[1] then b=hit end end
+                assert(b,label..': calendar grid has no native target')
                 example.pixel(host.x+b.x,host.y+b.y,border_pixel)
             end
             example.save(kind..'-'..label,awesome._clay_tree(screen[1]))

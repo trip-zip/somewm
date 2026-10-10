@@ -8,7 +8,7 @@ local M = {}
 function M.leaf(width, height, color)
     local widget = wibox.widget.base.make_widget(nil, nil, {enable_properties=true})
     clay.describe_widget(widget, function()
-        return { wmin = width, hmin = height, bg = clay.solid_rgba(color) }
+        return { wmin = width, hmin = height, wsrc = 'user', hsrc = 'user', bg = clay.solid_rgba(color) }
     end, 'wibox.widget.base')
     return widget
 end

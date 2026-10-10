@@ -79,18 +79,6 @@ local dpi = beautiful.xresources.apply_dpi
 
 local matcher = require("gears.matcher")()
 
-local live_popups = setmetatable({}, {__mode = "k"})
-capi.screen.connect_signal("property::workarea", function(s)
-    for popup, target in pairs(live_popups) do
-        local drawin = popup.popup.drawin
-        if not drawin or not drawin.valid or not drawin.visible then
-            live_popups[popup] = nil
-        elseif target == s then
-            popup:show()
-        end
-    end
-end)
-
 -- Stripped copy of this module https://github.com/copycat-killer/lain/blob/master/util/markup.lua:
 local markup = {}
 -- Set the font.
@@ -318,6 +306,10 @@ widget.labels = {
 -- @beautiful beautiful.hotkeys_group_margin
 -- @tparam int hotkeys_group_margin
 
+--- Rows in one column; a longer group continues in the next column.
+-- @beautiful beautiful.hotkeys_rows
+-- @tparam[opt=20] int hotkeys_rows
+
 
 --- Create an instance of widget with hotkeys help.
 -- @tparam[opt] table args Configuration options for the widget.
@@ -358,6 +350,7 @@ widget.labels = {
 -- @usebeautiful beautiful.hotkeys_font
 -- @usebeautiful beautiful.hotkeys_description_font
 -- @usebeautiful beautiful.hotkeys_group_margin
+-- @usebeautiful beautiful.hotkeys_rows
 -- @usebeautiful beautiful.bg_normal Fallback.
 -- @usebeautiful beautiful.fg_normal Fallback.
 -- @usebeautiful beautiful.fg_minimize Fallback.
@@ -403,6 +396,9 @@ function widget.new(args)
         local settings = {}
         settings.width = args.width or dpi(1200)
         settings.height = args.height or dpi(800)
+        -- The config's own size, or the default.
+        settings.width_authored = args.width ~= nil
+        settings.height_authored = args.height ~= nil
         settings.bg = args.bg or
             beautiful.hotkeys_bg or beautiful.bg_normal
         settings.fg = args.fg or
@@ -428,10 +424,11 @@ function widget.new(args)
             beautiful.hotkeys_description_font or "Monospace 8"
         settings.group_margin = args.group_margin or
             beautiful.hotkeys_group_margin or dpi(6)
+        settings.rows = beautiful.hotkeys_rows or 20
         settings.label_colors = beautiful.xresources.get_current_theme()
         for _, key in ipairs {"width", "height", "bg", "fg", "border_width", "border_color",
             "shape", "modifiers_fg", "label_bg", "label_fg", "override_label_bgs", "opacity",
-            "font", "description_font", "group_margin", "label_colors"} do
+            "font", "description_font", "group_margin", "rows", "label_colors"} do
             if not self._loaded_settings or self[key] == self._loaded_settings[key] then
                 self[key] = settings[key]
             end
@@ -618,171 +615,64 @@ function widget.new(args)
         return margin
     end
 
-    function widget_instance:_create_group_columns(column_layouts, group, keys, s, wibox_height)
-        local line_height = math.max(
-            beautiful.get_font_height(self.font),
-            beautiful.get_font_height(self.description_font)
-        )
-        local group_label_height = line_height + self.group_margin
-        -- -1 for possible pagination:
-        local max_height_px = wibox_height - group_label_height
-
-        local joined_descriptions = ""
-        for i, key in ipairs(keys) do
-            joined_descriptions = joined_descriptions .. key.description .. (i~=#keys and "\n" or "")
+    -- One column per group, a group longer than `rows` continuing in the
+    -- next columns; Clay sizes each column to its text.
+    function widget_instance:_create_columns(available_groups, show_awesome_keys)
+        local columns = wibox.layout.overflow.horizontal()
+        local function add_column(...)
+            local column = wibox.container.margin(wibox.layout.fixed.vertical(...))
+            column:set_left(self.group_margin)
+            columns:add(column)
         end
-        -- +1 for group label:
-        local items_height = gstring.linecount(joined_descriptions) * line_height + group_label_height
-        local current_column
-        local available_height_px = max_height_px
-        local add_new_column = true
-        for i, column in ipairs(column_layouts) do
-            if ((column.height_px + items_height) < max_height_px) or
-                (i == #column_layouts and column.height_px < max_height_px / 2)
-            then
-                current_column = column
-                add_new_column = false
-                available_height_px = max_height_px - current_column.height_px
-                break
-            end
-        end
-        local function split(records, available_height)
-            local descriptions = {}
-            for _, record in ipairs(records) do descriptions[#descriptions+1] = record.description end
-            local height = gstring.linecount(table.concat(descriptions, "\n")) * line_height + group_label_height
-            if height <= available_height then return records end
-            -- Consume at least one record even when its indivisible text
-            -- exceeds the budget. Only nonempty leftovers need a marker.
-            local count = math.max(1, math.ceil((available_height - group_label_height*2) / line_height) - 1)
-            local head, tail = {}, {}
-            for i, record in ipairs(records) do
-                table.insert(i <= count and head or tail, record)
-            end
-            if #tail == 0 then return head end
-            head[#head+1] = {key="▽", description=""}
-            return head, tail
-        end
-        local overlap_leftovers
-        keys, overlap_leftovers = split(keys, available_height_px)
-        if not current_column then
-            current_column = {layout=wibox.layout.fixed.vertical()}
-        end
-        current_column.layout:add(self:_group_label(group))
-
-        local function insert_keys(ik_keys, ik_add_new_column)
-            local max_label_width = 0
-            local joined_labels = ""
-            for i, key in ipairs(ik_keys) do
-                local modifiers = key.mod
-                if not modifiers or modifiers == "none" then
-                    modifiers = ""
-                else
-                    modifiers = markup.fg(self.modifiers_fg, modifiers.."+")
-                end
-                local key_label = ""
-                if key.keylist and #key.keylist > 1 then
-                    for each_key_idx, each_key in ipairs(key.keylist) do
-                        key_label = key_label .. gstring.xml_escape(each_key)
-                        if each_key_idx ~= #key.keylist then
-                            key_label = key_label .. markup.fg(self.modifiers_fg, '/')
-                        end
-                    end
-                elseif key.key then
-                    key_label = gstring.xml_escape(key.key)
-                end
-                local rendered_hotkey = markup.font(self.font,
-                    modifiers .. key_label .. " "
-                ) .. markup.font(self.description_font,
-                    key.description or ""
-                )
-                local label_width = wibox.widget.textbox.get_markup_geometry(rendered_hotkey, s).width
-                if label_width > max_label_width then
-                    max_label_width = label_width
-                end
-                joined_labels = joined_labels .. rendered_hotkey .. (i~=#ik_keys and "\n" or "")
-                end
-            current_column.layout:add(wibox.widget.textbox(joined_labels))
-            local max_width = max_label_width + self.group_margin
-            if not current_column.max_width or (max_width > current_column.max_width) then
-                current_column.max_width = max_width
-            end
-            -- +1 for group label:
-            current_column.height_px = (current_column.height_px or 0) +
-                gstring.linecount(joined_labels)*line_height + group_label_height
-            if ik_add_new_column then
-                table.insert(column_layouts, current_column)
-            end
-        end
-
-        insert_keys(keys, add_new_column)
-        while overlap_leftovers do
-            current_column = {layout=wibox.layout.fixed.vertical()}
-            keys, overlap_leftovers = split(overlap_leftovers, max_height_px)
-            insert_keys(keys, true)
-        end
-    end
-
-    function widget_instance:_page_budget(s)
-        local wa = s.workarea
-        -- The budget decides group splitting and column membership on each page.
-        local width = self.width < wa.width and self.width or math.max(0, wa.width - self.border_width * 2)
-        local height = self.height < wa.height and self.height or math.max(0, wa.height - self.border_width * 2)
-        return width, height
-    end
-
-    function widget_instance:_create_pages(s, available_groups, show_awesome_keys)
-        local wibox_width, wibox_height = self:_page_budget(s)
-
-        -- arrange hotkey groups into columns
-        local column_layouts = {}
         for _, group in ipairs(available_groups) do
             local keys = gtable.join(
                 show_awesome_keys and self._cached_awful_keys[group] or nil,
                 self._additional_hotkeys[group]
             )
-            if #keys > 0 then
-                self:_create_group_columns(column_layouts, group, keys, s, wibox_height)
+            for first = 1, #keys, self.rows do
+                local labels = {}
+                for i = first, math.min(first + self.rows - 1, #keys) do
+                    local key = keys[i]
+                    local modifiers = key.mod
+                    if not modifiers or modifiers == "none" then
+                        modifiers = ""
+                    else
+                        modifiers = markup.fg(self.modifiers_fg, modifiers.."+")
+                    end
+                    local key_label = ""
+                    if key.keylist and #key.keylist > 1 then
+                        for each_key_idx, each_key in ipairs(key.keylist) do
+                            key_label = key_label .. gstring.xml_escape(each_key)
+                            if each_key_idx ~= #key.keylist then
+                                key_label = key_label .. markup.fg(self.modifiers_fg, '/')
+                            end
+                        end
+                    elseif key.key then
+                        key_label = gstring.xml_escape(key.key)
+                    end
+                    labels[#labels+1] = markup.font(self.font, modifiers .. key_label .. " ")
+                        .. markup.font(self.description_font, key.description or "")
+                end
+                if first + self.rows <= #keys then
+                    labels[#labels+1] = markup.font(self.font, "▽ ")
+                end
+                local text = wibox.widget.textbox(table.concat(labels, "\n"))
+                if first == 1 then
+                    add_column(self:_group_label(group), text)
+                else
+                    add_column(text)
+                end
             end
         end
-
-        -- arrange columns into pages
-        local available_width_px = wibox_width
-        local pages = {}
-        local columns = wibox.layout.fixed.horizontal()
-        local previous_page_last_layout
-        for _, item in ipairs(column_layouts) do
-            if previous_page_last_layout and item.max_width > available_width_px then
-                previous_page_last_layout:add(
-                    self:_group_label("PgDn - Next Page", self.label_bg)
-                )
-                table.insert(pages, columns)
-                columns = wibox.layout.fixed.horizontal()
-                available_width_px = wibox_width - item.max_width
-                item.layout:insert(
-                    1, self:_group_label("PgUp - Prev Page", self.label_bg)
-                )
-            else
-                available_width_px = available_width_px - item.max_width
-            end
-            local column_margin = wibox.container.margin()
-            column_margin:set_widget(item.layout)
-            column_margin:set_left(self.group_margin)
-            columns:add(column_margin)
-            previous_page_last_layout = item.layout
-        end
-        table.insert(pages, columns)
-
-        return pages
+        return columns
     end
 
-    function widget_instance:_page_inputs(s, available_groups, show_awesome_keys)
-        local wa, output = s.workarea, s.geometry
-        local inputs = {wa.width, wa.height, output.width, output.height, s.dpi, s.scale,
-            beautiful.launcher_width or false, self._content_revision, show_awesome_keys,
+    function widget_instance:_content_inputs(available_groups, show_awesome_keys)
+        local inputs = {self._content_revision, show_awesome_keys,
             table.concat(available_groups, "\0")}
-        for _, key in ipairs {"width", "height", "bg", "fg", "border_width", "border_color",
+        for _, key in ipairs {"bg", "fg", "border_width", "border_color",
             "shape", "modifiers_fg", "label_bg", "label_fg", "override_label_bgs", "opacity",
-            "font", "description_font", "group_margin"} do
+            "font", "description_font", "group_margin", "rows"} do
             local value = self[key]
             inputs[#inputs+1] = (key == "font" or key == "description_font")
                 and type(value) ~= "string" and value and value:to_string() or tostring(value)
@@ -796,14 +686,15 @@ function widget.new(args)
 
     function widget_instance:_create_wibox(s, available_groups, show_awesome_keys)
         s = get_screen(s)
-        local pages = self:_create_pages(s, available_groups, show_awesome_keys)
         local owner = self
         local function place_launcher(p)
             require("awful._attachment").corner(p, "centered", nil, 3,
-                {width=owner.width, height=owner.height})
+                {width=owner.width, height=owner.height,
+                    wsrc=owner._loaded_settings.width_authored and "user" or "theme",
+                    hsrc=owner._loaded_settings.height_authored and "user" or "theme"})
         end
         local mypopup = awful.popup {
-            widget = pages[1],
+            widget = self:_create_columns(available_groups, show_awesome_keys),
             ontop = true,
             bg=self.bg,
             fg=self.fg,
@@ -816,9 +707,8 @@ function widget.new(args)
         }
 
         local widget_obj = {
-            current_page = 1,
             popup = mypopup,
-            inputs = self:_page_inputs(s, available_groups, show_awesome_keys),
+            inputs = self:_content_inputs(available_groups, show_awesome_keys),
         }
 
         -- Set up the mouse buttons to hide the popup
@@ -829,39 +719,35 @@ function widget.new(args)
             awful.button({ }, 3, function () widget_obj:hide() end)
         }
 
-        function widget_obj.page_next(w_self)
-            if w_self.current_page == #pages then return end
-            w_self.current_page = w_self.current_page + 1
-            w_self.popup:set_widget(pages[w_self.current_page])
+        -- The page keys move the scroll offset by one viewport.
+        local function page(w_self, direction)
+            local columns = w_self.popup.widget
+            local offset, content, viewport = columns:_scroll_record()
+            if offset and content > viewport then
+                columns.scroll_factor = (direction * viewport - offset) / (content - viewport)
+            end
         end
-        function widget_obj.page_prev(w_self)
-            if w_self.current_page == 1 then return end
-            w_self.current_page = w_self.current_page - 1
-            w_self.popup:set_widget(pages[w_self.current_page])
-        end
+        function widget_obj.page_next(w_self) page(w_self, 1) end
+        function widget_obj.page_prev(w_self) page(w_self, -1) end
         function widget_obj.show(w_self)
-            local inputs = owner:_page_inputs(s, available_groups, show_awesome_keys)
+            local inputs = owner:_content_inputs(available_groups, show_awesome_keys)
             local changed = #inputs ~= #w_self.inputs
             for i, value in ipairs(inputs) do
                 if value ~= w_self.inputs[i] then changed = true; break end
             end
+            local p = w_self.popup
             if changed then
                 owner._colors_counter.group_title = nil
-                pages = owner:_create_pages(s, available_groups, show_awesome_keys)
-                w_self.current_page = math.min(w_self.current_page, #pages)
-                local p = w_self.popup
                 for _, key in ipairs {"bg", "fg", "opacity", "border_width", "border_color", "shape"} do
                     if owner[key] ~= nil then p[key] = owner[key] end
                 end
-                p.placement = place_launcher
-                p:set_widget(pages[w_self.current_page])
+                p:set_widget(owner:_create_columns(available_groups, show_awesome_keys))
                 w_self.inputs = inputs
             end
-            w_self.popup.visible = true
-            live_popups[w_self] = s
+            p.placement = place_launcher
+            p.visible = true
         end
         function widget_obj.hide(w_self)
-            live_popups[w_self] = nil
             w_self.popup.visible = false
             if w_self.keygrabber then
                 awful.keygrabber.stop(w_self.keygrabber)

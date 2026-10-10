@@ -1,8 +1,6 @@
 -- Public grid diagnostic retaining every example, reducer and golden assertion.
 -- Behavioral checks run even when a tree representation differs.
 local tidy = require('_clay_tidy')
-local solver=dofile('tests/_grid_solver.lua')
-local check=require('_clay_grid_presentation')
 local pointer=assert(require('_utils').binary_or_skip('./build-test/test-virtual-pointer-client'))
 local original_run = tidy.run
 local cases
@@ -17,7 +15,6 @@ for _, case in ipairs(cases) do
         require('beautiful').font = 'monospace 10'
         state = case.create()
         awesome._test_redeclare()
-        check(state.popup._drawable)
         previous = nil
         return true
     end
@@ -43,42 +40,53 @@ for _, case in ipairs(cases) do
         return true
     end
     steps[#steps+1] = function(n)
-        local found=solver.find(state.popup._drawable._clay_tree,state.grid)
+        local function find(w,x,y)
+            for _,hit in ipairs(state.popup:find_widgets(x,y)) do
+                if hit.widget==w then return hit end
+            end
+        end
+        local b=find(state.grid,0,0)
         if case.name=='tidy-grid-empty' then
-            assert(#found==0,'empty unallocated grid must be omitted')
-            for _,hit in ipairs(state.popup:find_widgets(0,0)) do assert(hit.widget~=state.grid) end
+            assert(not b,'empty unallocated grid must be omitted')
             io.stderr:write('[INPUT] '..case.name..' empty=true no_grid_target=true\n')
             return true
         end
-        assert(#found==1)
-        local b=found[1].box
+        assert(b)
         if case.name=='tidy-grid-wrapped-text' then
-            assert(b.width==90 and b.height==65)
+            -- Half of 90 less the gap is 42.5: the boxes round to 43 and 42,
+            -- and each row is as tall as its tallest text.
+            local dump=awesome._clay_tree(screen[1])
+            local heights={}
             for i,w in ipairs(state.widgets) do
-                local box=solver.find(state.popup._drawable._clay_tree,w)[1].box
-                assert(box.x==b.x+((i-1)%2)*47 and box.y==b.y+(i>2 and 45 or 0))
-                assert(box.width==42 and box.height==(i>2 and 20 or 40))
-                assert(box.height>=w:get_height_for_width(box.width,screen[1]))
+                local quoted='"'..w.text:gsub('%p','%%%0')..'"'
+                heights[i]=tonumber(dump:match(quoted..' font=%d+ box %-?%d+,%-?%d+ %d+x(%d+)'))
+            end
+            local rows={math.max(heights[1],heights[2]),math.max(heights[3],heights[4])}
+            assert(b.width==90 and b.height==rows[1]+5+rows[2])
+            for i,w in ipairs(state.widgets) do
+                local x,y=((i-1)%2)*48,i>2 and rows[1]+5 or 0
+                local box=assert(find(w,b.x+x+1,b.y+y+1))
+                assert(box.x==b.x+x and box.y==b.y+y)
+                assert(box.width==(i%2==1 and 43 or 42) and box.height==rows[i>2 and 2 or 1])
             end
         elseif case.name=='tidy-grid-nested' then
             for i,inner in ipairs(state.grid:get_children()) do
                 local size=i==1 and 10 or 20
-                local ib=solver.find(state.popup._drawable._clay_tree,inner)[1].box
+                local ib=assert(find(inner,b.x+(i==1 and 0 or 30)+1,b.y+1))
                 assert(ib.x==b.x+(i==1 and 0 or 30) and ib.y==b.y)
                 assert(ib.width==size*2+5 and ib.height==45)
                 for j,w in ipairs(inner:get_children()) do
-                    local box=solver.find(state.popup._drawable._clay_tree,w)[1].box
-                    assert(box.x==ib.x+((j-1)%2)*(size+5) and box.y==ib.y+math.floor((j-1)/2)*(size+5))
-                    assert(box.width==size and box.height==size)
+                    local x,y=ib.x+((j-1)%2)*(size+5),ib.y+math.floor((j-1)/2)*(size+5)
+                    local box=assert(find(w,x+1,y+1))
+                    assert(box.x==x and box.y==y and box.width==size and box.height==size)
                 end
             end
         end
         if n==1 then
             state.presses=0;state.releases=0
             state.grid:connect_signal('button::press',function(w,x,y,button,_,area)
-                assert(w==state.grid and area.widget==w and area.occurrence==found[1].binding.id)
+                assert(w==state.grid and area.widget==w and area.occurrence==b.occurrence)
                 assert(x==2 and y==2 and button==1)
-                check(state.popup._drawable)
                 state.presses=state.presses+1
             end)
             state.grid:connect_signal('button::release',function() state.releases=state.releases+1 end)

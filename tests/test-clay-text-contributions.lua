@@ -85,7 +85,7 @@ runner.run_async(function()
         for _,hit in ipairs(host:find_widgets(110,44)) do if hit.widget==label then target=hit end end
         assert(target)
         local content=wibox.widget.base.make_widget()
-        clay.describe_widget(content,function() return {w=20,h=10,bg={0,1,0,1}} end,'text-popup-content')
+        clay.describe_widget(content,function() return {w=20,h=10,wsrc='user',hsrc='user',bg={0,1,0,1}} end,'text-popup-content')
         local popup=awful.popup{screen=screen[1],visible=false,bg='#00ff00',border_width=0,
             shadow=false,preferred_positions={'right'},preferred_anchors={'front'},widget=content}
         kept_hosts[#kept_hosts+1]=popup

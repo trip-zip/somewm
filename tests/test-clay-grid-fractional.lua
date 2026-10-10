@@ -1,11 +1,9 @@
--- Fractional native origins, integer track rounding and scale-dependent calendars.
+-- Fractional native origins, percent cells and scale-dependent calendars.
 local runner=require('_runner')
 local async=require('_async')
 local wibox=require('wibox')
 local awful=require('awful')
 local example=require('_clay_example')
-local solver=dofile('tests/_grid_solver.lua')
-local check=require('_clay_grid_presentation')
 local pointer=assert(require('_utils').binary_or_skip('./build-test/test-virtual-pointer-client'))
 runner.run_async(function()
     local s=screen[1]
@@ -17,32 +15,31 @@ runner.run_async(function()
     local layout=wibox.layout.manual()
     layout:add_at(g,{x=10.5,y=20.5,width=200.5,height=60.5})
     local host=wibox{screen=s,x=20,y=20,width=250,height=100,visible=true,bg='#204080',widget=layout}
+    local function find(w,x,y)
+        for _,hit in ipairs(host:find_widgets(x,y)) do
+            if hit.widget==w then return hit end
+        end
+    end
+    -- Spacing 2.5 is held as 3: each cell is (200.5 - 3) / 2 = 98.75 wide
+    -- from x 10.5, and the one homogeneous row fills the authored 60.5.
     local function frame(label)
-        awesome._test_redeclare();check(host._drawable)
-        local ga=solver.find(host._drawable._clay_tree,g)[1]
-        assert(ga.binding.grid_state.columns[1]==98 and ga.binding.grid_state.columns[2]==98)
+        awesome._test_redeclare()
         for i,w in ipairs{a,b} do
-            local found=solver.find(host._drawable._clay_tree,w);assert(#found==1)
-            local box=found[1].box
             local x=i==1 and 11 or 112
-            assert(box.x==x and box.y==21 and box.width==98 and box.height==10,
+            local box=assert(find(w,x+2,23),label..': native lookup')
+            assert(box.x==x and box.y==21 and box.width==(i==1 and 98 or 99) and box.height==60,
                 label..': '..table.concat({box.x,box.y,box.width,box.height},','))
-            local matched=false
-            for _,hit in ipairs(host:find_widgets(x+2,23)) do
-                if hit.widget==w then assert(hit.occurrence==found[1].binding.id);matched=true end
-            end
-            assert(matched)
             example.pixel(host.x+x+2,host.y+23,i==1 and '#ff0000' or '#00ff00')
         end
         example.pixel(host.x+110,host.y+23,'#204080')
         example.save(label,awesome._clay_tree(s))
         assert(awesome._test_redeclare()==0)
-        io.stderr:write('[FRACTIONAL] '..label..' native_origin=10.5,20.5 tracks=98,98 geometry=pixels=lookup\n')
+        io.stderr:write('[FRACTIONAL] '..label..' native_origin=10.5,20.5 cells=98.75 geometry=pixels=lookup\n')
     end
     local pressed,released=0,0
     b:connect_signal('button::press',function(_,x,y,button,_,area)
         assert(x==2 and y==2 and button==1)
-        assert(area.occurrence==solver.find(host._drawable._clay_tree,b)[1].binding.id)
+        assert(area.occurrence==find(b,114,23).occurrence)
         pressed=pressed+1
     end)
     b:connect_signal('button::release',function() released=released+1 end)
@@ -61,29 +58,30 @@ runner.run_async(function()
         local initial
         for _,scale in ipairs{1,1.5,2,1} do
             s.dpi=96*scale;s.scale=scale;async.sleep(.1)
-            awesome._test_redeclare();check(host._drawable)
-            local count=0
-            local target
-            local function walk(w)
-                if w.set_text then
-                    local found=solver.find(host._drawable._clay_tree,w)
-                    assert(#found==1 and found[1].box.width>0 and found[1].box.height>0)
-                    count=count+1
-                    target=target or w
-                end
-                for _,child in ipairs(w._private.container and {w._private.container} or w:get_children()) do walk(child) end
+            awesome._test_redeclare()
+            local dump=awesome._clay_tree(s)
+            -- Every text the calendar shows has a solved, non-empty box.
+            local count,box=0
+            for x,y,w,h in dump:gmatch('text "[^"\n]*" font=%d+ box (%-?%d+),(%-?%d+) (%d+)x(%d+)') do
+                assert(tonumber(w)>0 and tonumber(h)>0)
+                count=count+1
+                box=box or {x=tonumber(x)-host.x,y=tonumber(y)-host.y}
             end
-            walk(cal);assert(count>(kind=='year' and 400 or 30))
+            assert(count>(kind=='year' and 400 or 30))
+            local found
+            for _,hit in ipairs(host:find_widgets(box.x+1,box.y+1)) do
+                if hit.widget.set_text then found=hit end
+            end
+            local target=assert(found,'first text has no native target').widget
             assert(host._drawable._widget_context.dpi==s.dpi)
             if not initial then initial={host.width,host.height}
             elseif scale==1 then assert(host.width==initial[1] and host.height==initial[2],'DPI restoration') end
-            local found=solver.find(host._drawable._clay_tree,target)[1]
-            local box=found.box
+            box=found
             local delivered,released=0,0
             local function press(_,x,y,button,_,area)
-                assert(x==1 and y==1 and button==1 and area.occurrence==found.binding.id,
-                    string.format('delivered local=%g,%g occurrence=%s expected=%s',x,y,tostring(area.occurrence),tostring(found.binding.id)))
-                check(host._drawable);delivered=delivered+1
+                assert(x==1 and y==1 and button==1 and area.occurrence==found.occurrence,
+                    string.format('delivered local=%g,%g occurrence=%s expected=%s',x,y,tostring(area.occurrence),tostring(found.occurrence)))
+                delivered=delivered+1
             end
             local function release() released=released+1 end
             target:connect_signal('button::press',press)

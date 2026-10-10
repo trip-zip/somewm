@@ -355,9 +355,8 @@ end
 local function describe_slider(w)
     local p = w._private
     local bbw = p.bar_border_width or beautiful.slider_bar_border_width or 0
-    if bbw > 0 then
-        clay.ignore(w, "bar_border_width", "is not drawn")
-    end
+    local bar_border = clay.solid_rgba(p.bar_border_color or beautiful.slider_bar_border_color)
+    bbw = bar_border and clay.pixels(w, "bar_border_width", bbw) or 0
 
     local bar_color = p.bar_color or beautiful.slider_bar_color
     local active = p.bar_active_color or beautiful.slider_bar_active_color
@@ -419,14 +418,17 @@ local function describe_slider(w)
         handle_stroke = handle_fill
     end
 
-    local bar = { w = "grow", h = bar_h or "grow" }
+    local bar = { w = "grow", h = bar_h or "grow", hsrc = p.bar_height and "user" or "theme" }
     if radius then
         bar.bg, bar.radius = background, radius
+        if bbw > 0 then
+            bar.border, bar.bw = bar_border, {bbw, bbw, bbw, bbw}
+        end
     else
         bar.clip = draws_active
-        bar.fill = background
+        bar.fill, bar.stroke, bar.stroke_width = background, bar_border, bbw
         bar.shape = function(width, height)
-            return clay.shape_ops(bar_shape, width, height)
+            return clay.shape_ops(bar_shape, width - bbw, height - bbw, bbw / 2, bbw / 2)
         end
     end
     if draws_active then

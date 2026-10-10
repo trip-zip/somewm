@@ -9,7 +9,7 @@ local pointer=assert(require('_utils').binary_or_skip('./build-test/test-virtual
 
 runner.run_async(function()
     local shared=wibox.widget.base.make_widget(nil,nil,{enable_properties=true})
-    clay.describe_widget(shared,function() return {w=50,h=20,bg={1,0,0,1}} end,'attachment-occurrence')
+    clay.describe_widget(shared,function() return {w=50,h=20,wsrc='user',hsrc='user',bg={1,0,0,1}} end,'attachment-occurrence')
     local row=wibox.layout.fixed.horizontal(shared,shared)
     local host=wibox{screen=screen[1],x=100,y=100,width=200,height=40,
         visible=true,bg='#204080',widget=row}
@@ -46,7 +46,7 @@ runner.run_async(function()
     example.save('attachment-occurrence-inspector',inspected)
     screen[1].inspector=false
     local spacer=wibox.widget.base.make_widget()
-    clay.describe_widget(spacer,function() return {w=10,h=20} end,'attachment-spacer')
+    clay.describe_widget(spacer,function() return {w=10,h=20,wsrc='user',hsrc='user'} end,'attachment-spacer')
     row:insert(1,spacer)
     async.sleep(0.2)
     assert(popup.x==210 and popup.y==100 and popup.drawin.attachment.occurrence==token,
@@ -115,7 +115,7 @@ runner.run_async(function()
     -- No host has compiled this fresh widget yet. One copy is in a popup
     -- declared after the dependent popup; the fallback must still detect it.
     local fresh=wibox.widget.base.make_widget()
-    clay.describe_widget(fresh,function() return {w=50,h=20,bg={1,0,0,1}} end,'fresh-target')
+    clay.describe_widget(fresh,function() return {w=50,h=20,wsrc='user',hsrc='user',bg={1,0,0,1}} end,'fresh-target')
     local early=wibox{screen=screen[1],x=700,y=300,width=80,height=40,
         visible=true,bg='#204080',widget=fresh}
     local dependent=awful.popup{screen=screen[1],visible=false,bg='#00ff00',shadow=false,

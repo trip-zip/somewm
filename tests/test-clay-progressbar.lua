@@ -90,6 +90,17 @@ local steps = {
     end,
     function(count)
         if count == 1 then
+            progressbar.bar_border_width = 2
+            progressbar.bar_border_color = "#00ff00"
+            return nil
+        end
+        assert(pixel(99, 20, "#00ff00"), "the bar right border is not green")
+        assert(pixel(50, 20, "#ff0000"), "the bordered bar centre is not red")
+        io.stderr:write("[PASS] the bar border paints inside its right edge\n")
+        return true
+    end,
+    function(count)
+        if count == 1 then
             progressbar.value = 0
             return nil
         end

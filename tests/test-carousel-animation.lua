@@ -28,7 +28,6 @@ local steps = {
         tag = screen.primary.tags[1]
         tag:view_only()
         tag.layout = carousel
-        carousel.scroll_duration = 0
         carousel.set_center_mode("always")
         return true
     end,
@@ -70,7 +69,6 @@ local steps = {
     -- Enable animation, focus c3, wait for it to reach target
     function(count)
         if count == 1 then
-            carousel.scroll_duration = 0.15  -- short but testable
             client.focus = c3
             c3:raise()
             awful.layout.arrange(screen.primary)
@@ -96,7 +94,6 @@ local steps = {
     -- Test retarget: animate to c1, then immediately switch to c2
     function(count)
         if count == 1 then
-            carousel.scroll_duration = 0.3
             client.focus = c1
             c1:raise()
             awful.layout.arrange(screen.primary)
@@ -128,7 +125,6 @@ local steps = {
     -- Cleanup
     function(count)
         if count == 1 then
-            carousel.scroll_duration = 0
             carousel.set_center_mode("on-overflow")
             for _, c in ipairs(client.get()) do
                 if c.valid then c:kill() end

@@ -75,7 +75,6 @@ local steps = {
         t:view_only()
         t.layout = awful.layout.suit.tile
         awful.screen.focus(physical)
-        carousel.scroll_duration = 0
         return true
     end,
 }

@@ -200,9 +200,9 @@ end
 
 
 
-local function describe_checkbox(w, fg, st, item, offer)
-    if not offer.w_definite and not offer.h_definite
-        and not w.forced_width and not w.forced_height then
+local function describe_checkbox(w, fg, st, item, bound)
+    local side, src = clay.square_side(w, bound)
+    if not side then
         return clay.refuse(w, "size", "has no definite axis; force a size or put it in a sized host")
     end
 
@@ -256,8 +256,7 @@ local function describe_checkbox(w, fg, st, item, offer)
                 return clay.shape_ops(check_shape, wa.width, wa.height, wa.x, wa.y)
             end }
     end
-    local node = { square = true, specs = { outline, check } }
-    return node
+    return { w = side, h = side, wsrc = src, hsrc = src, specs = { outline, check } }
 end
 
 checkbox._clay = { describe = describe_checkbox }

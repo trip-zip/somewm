@@ -304,18 +304,6 @@ luaA_drawable_clay_scroll_set(lua_State *L)
 	return 0;
 }
 
-/* Called only by the private helper's declaration-update path. */
-static int
-luaA_drawable_clay_grid_pending(lua_State *L)
-{
-	drawable_t *d = (drawable_t *)lua_touserdata(L, 1);
-	struct widget_host host;
-
-	if (drawable_widget_host(d, &host) && host.m->declare)
-		declare_output_grid_pending(host.m->declare);
-	return 0;
-}
-
 /** The widget nodes under a drawable-local point, as Clay's pointer query
  * answers it (declare_widget_hits): the preorder index of each, from 1,
  * outermost first. Empty for a drawable without a declared tree.
@@ -382,6 +370,23 @@ luaA_drawable_get_clay_opaque(lua_State *L, lua_object_t *obj)
 	return 1;
 }
 
+/* The words of the box the drawable hands its widget tree, as its host
+ * declares them: {w = word, h = word}. */
+static int
+luaA_drawable_get_clay_words(lua_State *L, lua_object_t *obj)
+{
+	struct widget_host host;
+
+	if (!drawable_widget_host((drawable_t *)obj, &host))
+		return 0;
+	lua_createtable(L, 0, 2);
+	lua_pushstring(L, declare_src_names[host.src[0]]);
+	lua_setfield(L, -2, "w");
+	lua_pushstring(L, declare_src_names[host.src[1]]);
+	lua_setfield(L, -2, "h");
+	return 1;
+}
+
 /** __index metamethod for property access */
 static int
 luaA_drawable_index(lua_State *L)
@@ -411,6 +416,8 @@ luaA_drawable_index(lua_State *L)
 	}
 	if (strcmp(key, "_clay_opaque") == 0)
 		return luaA_drawable_get_clay_opaque(L, (lua_object_t *)d);
+	if (strcmp(key, "_clay_words") == 0)
+		return luaA_drawable_get_clay_words(L, (lua_object_t *)d);
 
 	/* Not found */
 	return 0;
@@ -441,7 +448,6 @@ drawable_class_setup(lua_State *L)
 		{ "_clay_dirty", luaA_drawable_clay_dirty },
 		{ "_clay_scroll_set", luaA_drawable_clay_scroll_set },
 		{ "_clay_scroll_get", luaA_drawable_clay_scroll_get },
-		{ "_clay_grid_pending", luaA_drawable_clay_grid_pending },
 		{ "_clay_hits", luaA_drawable_clay_hits },
 		LUA_OBJECT_META(drawable)
 		{ NULL, NULL }

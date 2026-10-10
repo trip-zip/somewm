@@ -74,7 +74,7 @@ function magnifier._clay(s)
     local gap = n == 1 and t.gap_single_client == false and 0 or t.gap
     local share = n > 1 and math.sqrt(t.master_width_factor) or nil
     floating[clients[focused]] = {attach_to = "workarea", center = true,
-      w = share, h = share, padding = gap}
+      w = share, h = share, wsrc = "user", hsrc = "user", padding = gap}
     -- Background clients start after the focused client and wrap around.
     for offset = 1, n - 1 do
       local c = clients[(focused + offset - 1) % n + 1]

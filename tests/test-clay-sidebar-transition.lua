@@ -32,10 +32,11 @@ local function expect(dump, role, wanted)
 end
 
 -- The exiting sidebar is no longer declared: Clay holds it, so the dump
--- prints it as an element of its own with no role.
+-- prints it as an element of its own with no role, sized from its
+-- transition record.
 local function exiting(dump)
     for text in dump:gmatch('[^\n]+') do
-        local w = text:match('^%s+%- w=fixed%((%d+)%) h=fixed%(720%)')
+        local w = text:match('^%s+%- w=fixed%((%d+)%) transition h=fixed%(720%) transition')
         if w then return tonumber(w), text end
     end
 end
@@ -65,7 +66,7 @@ runner.run_async(function()
         _clay = function()
             local children = {}
             if showing then
-                children[1] = {role = 'SIDEBAR', w = {fixed = 240}, h = 'grow',
+                children[1] = {role = 'SIDEBAR', w = {fixed = 240}, wsrc = 'user', h = 'grow',
                     transition = {duration = duration, properties = 'width',
                         enter = 'collapse', exit = 'collapse', exit_order = 'natural'}}
             end

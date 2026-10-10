@@ -40,7 +40,7 @@ local function save(name)
     example.save(name,dump)
     return dump
 end
-local function shadow(dump, owner, band, src, frame, ox, oy, radius)
+local function shadow(dump, owner, band, frame, ox, oy, radius)
     local line = assert(record(dump,'SHADOW',owner),'missing SHADOW '..owner)
     if owner=='screen 1' then
         -- A shadow floats one band below its owner, so Clay lists it as a
@@ -49,7 +49,7 @@ local function shadow(dump, owner, band, src, frame, ox, oy, radius)
         assert(dump:find(line,1,true) < dump:find(head,1,true),
             'shadow must precede its owner in the dump')
     end
-    assert(line:find('w=grow h=grow '..src..' attach PARENT',1,true),line)
+    assert(line:find('w=grow h=grow attach PARENT',1,true),line)
     assert(line:find(('offset %d,%d expand %d,%d band %d custom'):format(ox,oy,radius,radius,band),1,true),line)
     local b = box(line)
     assert(b.x==frame.x+ox-radius and b.y==frame.y+oy-radius and
@@ -92,8 +92,8 @@ runner.run_async(function()
     end)
     local cf,df = box(record(dump,'CLIENT','SHADOW_CLIENT')),box(record(dump,'WIBOX','screen 1'))
     assert(record(dump,'WIBOX','screen 1'):find('radius 8',1,true),'rounded frame missing on first open')
-    shadow(dump,'SHADOW_CLIENT',19,'theme',cf,-15,-15,12)
-    shadow(dump,'screen 1',24,'theme',df,-15,-15,12)
+    shadow(dump,'SHADOW_CLIENT',19,cf,-15,-15,12)
+    shadow(dump,'screen 1',24,df,-15,-15,12)
     for _,f in ipairs{cf,df} do
         dark(f.x-20,f.y+40); dark(f.x+40,f.y-20)
         example.pixel(f.x-28,f.y+40,'#ffffff')
@@ -115,8 +115,8 @@ runner.run_async(function()
         for _,p in ipairs{{f.x-5,f.y+40},{f.x+f.width+4,f.y+40},{f.x+40,f.y-5},{f.x+40,f.y+f.height+4}} do dark(p[1],p[2]) end
         for _,p in ipairs{{f.x-13,f.y+40},{f.x+f.width+12,f.y+40},{f.x+40,f.y-13},{f.x+40,f.y+f.height+12}} do example.pixel(p[1],p[2],'#ffffff') end
     end
-    shadow(dump,'SHADOW_CLIENT',19,'user',cf,0,0,12)
-    shadow(dump,'screen 1',24,'user',df,0,0,12)
+    shadow(dump,'SHADOW_CLIENT',19,cf,0,0,12)
+    shadow(dump,'screen 1',24,df,0,0,12)
     -- A rounded border's paint is independent of drawin content opacity.
     d.shadow=false
     d.shape=function(cr,w,h) require('gears.shape').rounded_rect(cr,w,h,10) end
@@ -138,7 +138,7 @@ runner.run_async(function()
     -- Inspect the first observed solved frame at each new width, including first open.
     -- Never wait for the shadow to catch up to the border/content frame.
     local leaf = wibox.widget.base.make_widget(nil,nil,{enable_properties=true})
-    clay.describe_widget(leaf,function() return {w=leaf.forced_width,h=40,bg={1,0,0,1}} end,'shadow-popup-content')
+    clay.describe_widget(leaf,function() return {w=leaf.forced_width,h=40,wsrc='user',hsrc='user',bg={1,0,0,1}} end,'shadow-popup-content')
     leaf.forced_width=80
     local popup=awful.popup {screen=screen[1],visible=true,ontop=true,bg='#ff0000',
         border_width=3,border_color='#0000ff',shadow={radius=6,offset_x=6,offset_y=6,opacity=1},
@@ -150,7 +150,7 @@ runner.run_async(function()
             if line and box(line).width==width+6 then return tree end
         end)
         local f=box(record(dump,'POPUP','screen 1'))
-        shadow(dump,'screen 1',79,'user',f,6,6,6)
+        shadow(dump,'screen 1',79,f,6,6,6)
         example.pixel(f.x+1,f.y+15,'#0000ff')
         example.pixel(f.x+f.width-1,f.y+15,'#0000ff')
         example.pixel(f.x+4,f.y+15,'#ff0000')
@@ -164,7 +164,7 @@ runner.run_async(function()
         if line and box(line).width==50 then return tree end
     end)
     local f=box(record(dump,'POPUP','screen 1'))
-    shadow(dump,'screen 1',79,'user',f,0,0,12)
+    shadow(dump,'screen 1',79,f,0,0,12)
     example.pixel(f.x+f.width-1,f.y+15,'#00ff00');dark(f.x+f.width+4,f.y+20)
     save('shadow-popup-style-change')
     popup.shadow={radius=6,offset_x=6,offset_y=6,corner_radius=8,opacity=0.5,color='#00000080',clip_directional=false}
@@ -198,7 +198,7 @@ runner.run_async(function()
     end)
     for _,name in ipairs{'SHADOW_TILE_A','SHADOW_TILE_B'} do
         local frame=box(record(dump,'CLIENT',name));local content=box(record(dump,'SURFACE',name))
-        shadow(dump,name,-1,'theme',frame,-15,-15,12)
+        shadow(dump,name,-1,frame,-15,-15,12)
         dark(frame.x-1,frame.y+50)
         example.pixel(content.x+1,content.y+50,'#404040')
         example.pixel(content.x+content.width-2,content.y+50,'#404040')

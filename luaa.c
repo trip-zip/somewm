@@ -1239,9 +1239,9 @@ static int luaA_awesome_test_clay_capacity(lua_State *L)
 static int luaA_awesome_test_clay_failure(lua_State *L)
 {
     screen_t *s = luaA_checkscreen(L, 1);
-    int pass = luaL_checkinteger(L, 2), elements = luaL_checkinteger(L, 3);
-    luaL_argcheck(L, pass >= 0 && elements >= 0 && elements <= 2 * CLAY_ELEMENTS_MAX, 2, "invalid failure injection");
-    declare_test_failure(s->monitor->declare, pass, elements);
+    int elements = luaL_checkinteger(L, 2);
+    luaL_argcheck(L, elements >= 0 && elements <= 2 * CLAY_ELEMENTS_MAX, 2, "invalid failure injection");
+    declare_test_failure(s->monitor->declare, elements);
     return 0;
 }
 #endif
@@ -1511,7 +1511,7 @@ luaA_awesome_clay_scroll_set(lua_State *L)
         Clay_SetCurrentContext(context);
         clay_scroll_set(id, x, y);
         Clay_SetCurrentContext(previous);
-        declare_output_scroll_written(s->monitor->declare);
+        declare_output_mark_dirty(s->monitor->declare);
     }
     return 0;
 }

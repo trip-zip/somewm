@@ -2,10 +2,7 @@ local runner=require('_runner')
 local async=require('_async')
 local wibox=require('wibox')
 local awful=require('awful')
-local clay=require('wibox.clay')
 local example=require('_clay_example')
-local check=require('_clay_grid_presentation')
-local solver=dofile('tests/_grid_solver.lua')
 local pointer=assert(require('_utils').binary_or_skip('./build-test/test-virtual-pointer-client'))
 local GLib=require('lgi').GLib
 local function now() return GLib.get_monotonic_time()/1000 end
@@ -23,14 +20,12 @@ runner.run_async(function()
             end
             return child
         end
-        w.date={year=2026,month=1,day=16}
+        -- A year calendar marks today in the current year; a past year keeps
+        -- its golden independent of the clock.
+        w.date=kind=='year' and {year=2025} or {year=2026,month=1,day=16}
         w:connect_signal('button::press',function(_,x,y,button,_,area)
-            check(host._drawable)
             assert(button==1 and area.widget==w)
-            local matches=solver.find(host._drawable._clay_tree,w)
-            assert(#matches==1 and matches[1].binding.id==area.occurrence)
-            local b=matches[1].box
-            assert(x>=0 and y>=0 and x<b.width and y<b.height)
+            assert(x>=0 and y>=0 and x<area.width and y<area.height)
             assert(now()>=finished,'pointer dispatched before transaction finished')
             presses=presses+1
             io.stderr:write(string.format('[INPUT42] %s press occurrence=%s x=%g y=%g presented=true\n',phase,tostring(area.occurrence),x,y))
@@ -53,21 +48,19 @@ runner.run_async(function()
         mutate()
         awesome._test_redeclare()
         finished=now()
-        check(host._drawable)
-        example.save(label..'-presented',awesome._clay_tree(screen[1]))
-        local found=solver.find(host._drawable._clay_tree,day)
-        assert(#found==1,'original first-day occurrence missing')
-        local b=found[1].box
-        local hits=host:find_widgets(b.x+1,b.y+1)
-        local matched=false
-        for _,hit in ipairs(hits) do
-            if hit.widget==day then
-                assert(hit.occurrence==found[1].binding.id)
-                assert(hit.x==b.x and hit.y==b.y and hit.width==b.width and hit.height==b.height)
-                matched=true
-            end
+        local dump=awesome._clay_tree(screen[1])
+        assert(dump:match('roots flow 1 floating %d+ derived 0 '),label..': derived size')
+        example.save(label..'-presented',dump)
+        -- The first text reading as the day's is the first of January, inside
+        -- its background.
+        local quoted='"'..day.widget.text:gsub('%p','%%%0')..'"'
+        local tx,ty=dump:match('text '..quoted..' font=%d+ box (%-?%d+),(%-?%d+) ')
+        assert(tx,'first-day text missing')
+        local b
+        for _,hit in ipairs(host:find_widgets(tx-host.x,ty-host.y)) do
+            if hit.widget==day then b=hit end
         end
-        assert(matched,'presented day missing from native pointer query')
+        assert(b,'presented day missing from native pointer query')
         example.pixel(host.x+b.x+1,host.y+b.y+1,'#d03020')
         if queued then
             assert(async.wait_for_condition(function() return presses==1 and releases==1 end,2,.01),'queued pointer not delivered')
@@ -75,7 +68,7 @@ runner.run_async(function()
         presses=0;releases=0
         local delivered=0
         local function pressed(_,x,y,button,_,area)
-            assert(button==1 and area.occurrence==found[1].binding.id and x==1 and y==1)
+            assert(button==1 and area.occurrence==b.occurrence and x==1 and y==1)
             example.pixel(host.x+b.x+1,host.y+b.y+1,'#d03020')
             delivered=delivered+1
         end
@@ -90,10 +83,15 @@ runner.run_async(function()
     transition('first-year',function()
         cal=calendar('year');host=awful.popup{screen=screen[1],x=10,y=10,visible=true,widget=cal,bg='#204080',maximum_width=1100}
     end)
+    -- Without an authored width the calendar's cells take their content
+    -- size (warned); with one they share it equally.
     transition('month-switch',function() cal=calendar('month');host.widget=cal end)
+    transition('month-width',function() cal.forced_width=400 end)
+    example.check('tidy-calendar-month',awesome._clay_tree(screen[1]))
     transition('year-switch',function() cal=calendar('year');host.widget=cal end,true)
     local initial_height=host.height
     transition('width-grow',function() cal.forced_width=900 end,true)
+    example.check('tidy-calendar-year',awesome._clay_tree(screen[1]))
     transition('width-shrink',function() cal.forced_width=550 end,true)
     transition('width-restore',function() cal.forced_width=nil end)
     transition('font-grow',function() cal.font='monospace 14' end,true)

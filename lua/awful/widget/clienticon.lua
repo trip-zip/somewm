@@ -66,8 +66,9 @@ client.connect_signal("property::icon", function(c)
     end
 end)
 
--- The compiler fits the client's natural icon dimensions to its authored
--- offer. A client without an icon contributes an empty element.
+-- The compiler sizes the client's icon from its authored bound, or the
+-- client's own icon size without one. A client without an icon contributes
+-- an empty element.
 local clay = require("wibox.clay")
 
 clay.describe_class(clienticon, function(w)
@@ -78,7 +79,7 @@ clay.describe_class(clienticon, function(w)
     end
 
     local image = { image = s._native, name = "image", aspect = sw / sh,
-        image_width = sw, image_height = sh }
+        image_width = sw, image_height = sh, wsrc = "protocol", hsrc = "protocol" }
 
     return { specs = { image } }
 end)

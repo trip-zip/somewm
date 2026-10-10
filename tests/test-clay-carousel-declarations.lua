@@ -117,7 +117,7 @@ runner.run_async(function()
             local surfaces = boxes(dump, 'SURFACE')
             assert(surfaces[1][3] == 800 and surfaces[1][4] == 500,
                 'protocol minimum must overhang its allocated slot')
-            assert(dump:find('w=grow>=800 h=grow>=500 protocol', 1, true))
+            assert(dump:find('w=grow>=800 protocol h=grow>=500 protocol', 1, true))
             example.pixel(20,20,'#cc0000')
             example.pixel(vertical and 700 or 20, vertical and 20 or 400, '#00cc00')
             example.pixel(1000,600,'#0000cc')
@@ -188,19 +188,18 @@ runner.run_async(function()
     beautiful.carousel_default_column_width = .5
     beautiful.carousel_peek_width = 20
     beautiful.carousel_dynamic_peek_width = -1
-    carousel.scroll_duration = 0
     s.selected_tag.gap = 0
     local provenance = {
         {layout = carousel, mode = 'always', name = 'horizontal-centered',
-            column = 'CAROUSEL_COLUMN - w=percent(0.5) h=percent(1) column',
-            margin = 'CAROUSEL_MARGIN - w=percent(0.25) h=percent(1) row'},
+            column = 'CAROUSEL_COLUMN - w=percent(0.5) theme h=percent(1) theme column',
+            margin = 'CAROUSEL_MARGIN - w=percent(0.25) theme h=percent(1) theme row'},
         {layout = carousel, mode = 'never', name = 'horizontal-peek',
-            column = 'CAROUSEL_COLUMN - w=percent(0.5) h=percent(1) column'},
+            column = 'CAROUSEL_COLUMN - w=percent(0.5) theme h=percent(1) theme column'},
         {layout = carousel.vertical, mode = 'always', name = 'vertical-centered',
-            column = 'CAROUSEL_COLUMN - w=percent(1) h=percent(0.5) row',
-            margin = 'CAROUSEL_MARGIN - w=percent(1) h=percent(0.25) row'},
+            column = 'CAROUSEL_COLUMN - w=percent(1) theme h=percent(0.5) theme row',
+            margin = 'CAROUSEL_MARGIN - w=percent(1) theme h=percent(0.25) theme row'},
         {layout = carousel.vertical, mode = 'never', name = 'vertical-peek',
-            column = 'CAROUSEL_COLUMN - w=percent(1) h=percent(0.5) row'},
+            column = 'CAROUSEL_COLUMN - w=percent(1) theme h=percent(0.5) theme row'},
     }
     for _, case in ipairs(provenance) do
         beautiful.carousel_center_mode = case.mode

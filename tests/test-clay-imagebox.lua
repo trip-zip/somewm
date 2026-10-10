@@ -4,7 +4,7 @@
 -- A converted imagebox holds one image leaf whose pixels are the widget's
 -- own surface, with the image's aspect ratio: the renderer scales the
 -- surface into the box Clay solved (third_party/clay.h:414-416). A clip
--- shape is ignored.
+-- shape clips the image.
 --
 -- Run: make test-one TEST=tests/test-clay-imagebox.lua
 ---------------------------------------------------------------------------
@@ -19,7 +19,7 @@ local cairo = require("lgi").cairo
 local s = screen[1]
 local BX, BY, BW, BH = 0, 0, 400, 24
 local cap = capture.new(s, BX, BY, BW, BH)
-local bar
+local bar, capped
 
 local function solid(color)
     local img = cairo.ImageSurface(cairo.Format.ARGB32, 16, 16)
@@ -135,6 +135,28 @@ local steps = {
         end
         assert(count < 20, "the images were not drawn")
     end,
+    function(count)
+        if count == 1 then
+            bar.width, bar.height = 64, 64
+            cap = capture.new(s, BX, BY, 64, 64)
+            capped = wibox.widget.imagebox(solid("#ff0000"))
+            capped.max_scaling_factor = 2
+            capped.halign, capped.valign = "center", "center"
+            bar.widget = capped
+            bar.visible = true
+            return nil
+        end
+        local _, list = nodes()
+        local image = assert(imageboxes(list)[1]).image
+        capture.assert_box(image.box, {x=16,y=16,width=32,height=32}, "capped image")
+        local shot = cap:shot()
+        cap:assert_pixel(shot, 0, 0, "#101010", "the box corner")
+        cap:assert_pixel(shot, 32, 32, "#ff0000", "the capped image")
+        bar.visible = false
+        io.stderr:write("[PASS] the image scaling cap centers a 32x32 image\n")
+        return true
+    end,
+
 }
 
 runner.run_steps(steps)

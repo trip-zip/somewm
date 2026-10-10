@@ -26,7 +26,7 @@ runner.run_async(function()
         w:connect_signal('button::press',function(original,x,y,button,_,area)
             assert(original==w and area.widget==w)
             assert(button==1)
-            assert(x==2 and y==(w==g and 52 or 2), 'wrong local input coordinates')
+            assert(x==2 and y==(w==g and 72 or 2), 'wrong local input coordinates')
             calls[#calls+1]=w
         end)
     end
@@ -49,39 +49,42 @@ runner.run_async(function()
         assert(r==32 and green==64 and b==128,'spacer/gap paints')
     end
     async.sleep(.3)
-    for i,w in ipairs(ws) do area(w,((i-1)%3)*105,math.floor((i-1)/3)*25,100,20) end
-    no_widget(110,55); no_widget(215,55); no_widget(102,5)
+    -- The wibox decides both axes: columns are a third of 310 less the gaps,
+    -- rows a third of 100 less the gaps.
+    for i,w in ipairs(ws) do area(w,((i-1)%3)*105,math.floor((i-1)/3)*35,100,30) end
+    no_widget(110,85); no_widget(215,85); no_widget(102,5)
     example.save('constructor-seven',awesome._clay_tree(screen[1]))
-    awful.spawn{pointer,'click','102','152','1280','720','left'}
+    awful.spawn{pointer,'click','102','172','1280','720','left'}
     async.sleep(.3)
     assert(#calls==2 and calls[1]==g and calls[2]==ws[7],'original parent/child input order')
     ws[2].visible=false
     async.sleep(.2)
-    no_widget(110,5); area(ws[3],210,0,100,20)
+    no_widget(110,5); area(ws[3],210,0,100,30)
     ws[2].visible=true
     async.sleep(.2)
-    area(ws[2],105,0,100,20)
+    area(ws[2],105,0,100,30)
     g:remove(ws[2])
     async.sleep(.2)
-    no_widget(110,5); area(ws[3],210,0,100,20)
+    no_widget(110,5); area(ws[3],210,0,100,30)
     g:add_widget_at(ws[2],1,2)
     bar.width=400
     async.sleep(.2)
-    area(ws[2],135,0,130,20); area(ws[7],0,50,130,20)
+    area(ws[2],135,0,130,30); area(ws[7],0,70,130,30)
     example.save('constructor-resized',awesome._clay_tree(screen[1]))
     g.orientation='horizontal'; g.row_count=4
     local extra=wibox.container.background(nil,'#00ff00'); g:add(extra)
     async.sleep(.2)
     local pos=g:get_widget_position(extra)
     assert(pos.row==4 and pos.col==1,'horizontal membership did not follow existing API')
-    area(extra,0,75,130,20)
+    -- Four rows of (100 - 15) / 4 = 21.25.
+    area(extra,0,79,130,21)
     g.column_count=4; bar.width=415
     async.sleep(.2)
-    area(ws[3],210,0,100,20); area(extra,0,75,100,20)
+    area(ws[3],210,0,100,21); area(extra,0,79,100,21)
     example.save('constructor-count-orientation',awesome._clay_tree(screen[1]))
     bar.visible=false
-    -- Authored cell floors survive a host smaller than the grid on both axes.
-    -- The host clips overflow; native cells retain their intentional extent.
+    -- An authored child size survives a host smaller than the grid on both
+    -- axes. The host clips overflow.
     local small=wibox.layout.grid()
     small.column_count=3; small.row_count=2; small.spacing=5; small.expand=true
     small.minimum_column_width=10; small.minimum_row_height=20

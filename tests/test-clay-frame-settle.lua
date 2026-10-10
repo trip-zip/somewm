@@ -1,8 +1,7 @@
 ---------------------------------------------------------------------------
 -- A frame compiles pending inputs, declares, solves and publishes geometry,
--- then reconciles once. Only the grid helper's dependency stages repeat
--- within the frame. A popup receives its content size as a published property,
--- and a second synchronous frame leaves the settled scene unchanged.
+-- then reconciles once. A popup receives its content size as a published
+-- property, and a second synchronous frame leaves the settled scene unchanged.
 ---------------------------------------------------------------------------
 
 local runner = require("_runner")
@@ -18,19 +17,19 @@ local function settled(what)
     assert(n == 0, what .. ": the settled frame mutated " .. n .. " nodes")
 end
 
--- The boxes with the given height, in x order.
+-- The boxes with the given height and narrower than the drawin, in x order.
 local function boxes_of_height(drawin, height)
     local out = {}
     for _, b in ipairs(awesome._test_widget_boxes(drawin)) do
-        if b.height == height then out[#out + 1] = b end
+        if b.height == height and b.width < drawin.width then out[#out + 1] = b end
     end
     table.sort(out, function(a, b) return a.x < b.x end)
     return out
 end
 
 local steps = {
-    -- The grid helper measures cells and updates shared column declarations.
-    -- Its dependency stages finish before the frame's single reconcile.
+    -- The drawin decides the grid's size: each cell is half of 200 less the
+    -- gap, and fills the one row.
     function()
         local g = wibox.layout.grid()
         g.spacing = 5
@@ -42,14 +41,14 @@ local steps = {
             screen = s, visible = true, bg = "#204080", widget = g }
 
         assert(awesome._test_redeclare() > 0, "the bar declared nothing")
-        local cells = boxes_of_height(bar.drawin, 10)
+        local cells = boxes_of_height(bar.drawin, 100)
         assert(#cells == 2, #cells .. " cells, expected 2")
-        assert(cells[1].x == 0 and cells[1].width == 40,
-            "the narrow cell is " .. cells[1].width .. " wide at " .. cells[1].x)
-        assert(cells[2].x == 45 and cells[2].width == 40,
-            "the wide cell is " .. cells[2].width .. " wide at " .. cells[2].x)
+        assert(cells[1].x == 0 and cells[1].width == 98,
+            "the first cell is " .. cells[1].width .. " wide at " .. cells[1].x)
+        assert(cells[2].x == 103 and cells[2].width == 97,
+            "the second cell is " .. cells[2].width .. " wide at " .. cells[2].x)
         settled("the grid")
-        io.stderr:write("[PASS] a grid's told columns land in the frame that declares it\n")
+        io.stderr:write("[PASS] a grid's cells land in the frame that declares it\n")
         return true
     end,
 

@@ -389,19 +389,16 @@ function ratio.vertical(...)
 end
 
 local function describe_ratio(w)
-    local node, along, across = fixed.describe_linear(w)
+    local node, along, across, spacing = fixed.describe_linear(w)
 
-    if w._private.spacing ~= 0 then
-        clay.ignore(w, "spacing", "is not drawn")
-        node.gap = 0
-    end
     if w:get_inner_fill_strategy() ~= "default" then
         clay.ignore(w, "inner_fill_strategy",
             "is not applied; the space the ratios leave stays at the end")
     end
     for k, child in ipairs(w._private.widgets) do
         local share = math.max(0, math.min(1, w._private.ratios[k] or 0))
-        node.specs[k] = { widget = child, [along] = { percent = share }, [across] = "grow" }
+        clay.linear_spec(node, { widget = child, [along] = { percent = share }, [along .. "src"] = "user", [across] = "grow" },
+            w._private.spacing_widget, spacing, along, across)
     end
     return node
 end

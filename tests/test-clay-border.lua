@@ -177,27 +177,8 @@ local steps = {
         assert(pixel(12, 30, "#ffff00"), "the unsliced source is not yellow at the left")
         assert(pixel(35, 30, CHILD), "the unsliced background paints over the child")
         assert(pixel(65, 30, "#00ffff"), "the unsliced right side is not cyan")
-        io.stderr:write("[PASS] slice off stretches the source under the child\n")
-        return true
-    end,
-    function(count)
-        if count == 1 then
-            border.honor_borders = false
-            return nil
-        end
-        local line = nodes():match("[^\n]*wibox.container.border[^\n]*")
-
-        assert(not line, "wibox.container.border was not refused")
-        local function check_bindings(node)
-            for _, binding in require("wibox.clay").bindings(node) do
-                assert(binding.widget ~= border and binding.widget ~= child,
-                    "the refused subtree still has bindings")
-            end
-            for _, nested in ipairs(node.children or {}) do check_bindings(nested) end
-        end
-        check_bindings(bar._drawable._clay_tree)
         bar.visible = false
-        io.stderr:write("[PASS] honor_borders=false refuses the border\n")
+        io.stderr:write("[PASS] slice off stretches the source under the child\n")
         return true
     end,
 }

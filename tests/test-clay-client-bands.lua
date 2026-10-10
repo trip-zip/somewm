@@ -57,7 +57,7 @@ runner.run_steps({
   return true
  end,
  wait(function()
-  assert(line(b):find('w=fixed(202) h=fixed(186) user',1,true),'float dimensions must be user inputs')
+  assert(line(b):find('w=fixed(202) user h=fixed(186) user',1,true),'float dimensions must be user inputs')
   assert(line(b):find('attach OUTPUT offset 0,0 band 20',1,true),'float attachment')
   assert(pixel(50,100)=='#0033cc','float not above tile or raise order wrong')
   assert(pixel(50,16)=='#ffff00','float titlebar not above normal wibar')

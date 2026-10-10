@@ -4,7 +4,6 @@ local async = require('_async')
 local awful = require('awful')
 local wibox = require('wibox')
 local check = require('_clay_capacity')
-local presentation = require('_clay_grid_presentation')
 local s = screen[1]
 local pane = check.id('Clay__DebugViewOuterScrollPane')
 
@@ -32,7 +31,7 @@ runner.run_async(function()
                     end
                     local dump, elements, map = check.check(s)
                     assert(s.inspector and dump:find('inspector on', 1, true))
-                    presentation(host._drawable)
+                    assert(dump:match('roots flow 1 floating %d+ derived 0 '), 'derived size')
                     io.stderr:write(string.format('[CAPACITY] %s font=%s bottom=%s elements=%d map=%d\n',
                         kind, font, tostring(bottom), elements, map))
                     async.sleep(.01)

@@ -47,9 +47,9 @@ local function describe(s, orientation)
   local gap = (t.gap_single_client ~= false
       or not (n == 1 and t.master_fill_policy == "expand")) and t.gap or 0
   local function leaf(c)
-    local item = {client = c, w = 1, h = 1}
+    local item = {client = c, w = 1, h = 1, wsrc = "theme", hsrc = "theme"}
     if gap > 0 then
-      item = {role = "CELL", direction = "row", w = 1, h = 1,
+      item = {role = "CELL", direction = "row", w = 1, h = 1, wsrc = "theme", hsrc = "theme",
         padding = gap, children = {item}}
     end
     return item
@@ -57,13 +57,14 @@ local function describe(s, orientation)
   local function group(direction, items)
     if #items == 1 then return items[1] end
     local axis = direction == "row" and "w" or "h"
-    for _, item in ipairs(items) do item[axis] = 1 / #items end
-    return {role = "STACK", direction = direction, w = 1, h = 1, children = items}
+    for _, item in ipairs(items) do item[axis], item[axis .. "src"] = 1 / #items, "theme" end
+    return {role = "STACK", direction = direction, w = 1, h = 1, wsrc = "theme", hsrc = "theme", children = items}
   end
   local function split(direction, first, second, forward)
     local axis = direction == "row" and "w" or "h"
     first[axis], second[axis] = factor, 1 - factor
-    return {role = "STACK", direction = direction, w = 1, h = 1,
+    first[axis .. "src"], second[axis .. "src"] = "user", "user"
+    return {role = "STACK", direction = direction, w = 1, h = 1, wsrc = "theme", hsrc = "theme",
       children = forward and {first, second} or {second, first}}
   end
   local root = {role = "WORKAREA", direction = row_privileged and "column" or "row", children = {}}
@@ -72,7 +73,7 @@ local function describe(s, orientation)
   local axis = row_privileged and "h" or "w"
   if n == 1 then
     root.center = t.master_fill_policy ~= "expand"
-    if root.center then master[axis] = factor end
+    if root.center then master[axis], master[axis .. "src"] = factor, "user" end
     root.children = {master}
   elseif n == 2 then
     -- With only a slave, split along the privileged axis; there is no

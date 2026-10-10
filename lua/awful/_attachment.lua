@@ -57,6 +57,10 @@ function M.corner(w, name, offset, kind, size)
         height=size and size.height,
         bounded=size and true,
         width_override=launcher and override or nil,
+        -- width_override wins in declare.c, so it decides the width's word.
+        wsrc=launcher and (override and 'theme' or size and size.wsrc
+            or w.minimum_width and 'user' or 'theme') or nil,
+        hsrc=size and size.hsrc,
         x=offset and offset.x or 0,y=offset and offset.y or 0}
 end
 return M

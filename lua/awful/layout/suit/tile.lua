@@ -98,17 +98,17 @@ local function describe(s, orientation)
       gap = gap, padding = gap, children = {} }
   local masters = math.min(t.master_count, n)
   root.center = masters == n and t.master_fill_policy ~= "expand"
-  local function run(first, last, share, role)
+  local function run(first, last, share, role, word)
     if first > last then return end
     local group = { role = role, direction = cross, gap = gap, children = {} }
     if first == last then group.client = clients[first] else
       for i = first, last do group.children[#group.children+1] = { client = clients[i] } end
     end
-    group[axis] = share
+    group[axis], group[axis .. "src"] = share, word
     root.children[#root.children+1] = group
   end
   local function master()
-    run(1, masters, (masters < n or root.center) and t.master_width_factor or nil, "MASTER")
+    run(1, masters, (masters < n or root.center) and t.master_width_factor or nil, "MASTER", "user")
   end
   if not reverse then master() end
   local columns = math.min(t.column_count, n-masters)

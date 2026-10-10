@@ -61,7 +61,7 @@ runner.run_async(function()
         local dump = awesome._clay_tree(s)
         example.save(name, dump)
         assert(solved > before, 'solved callback did not run')
-        assert(tonumber(dump:match('\n  roots flow %d+ floating %d+ derived (%d+)\n'))
+        assert(tonumber(dump:match('\n  roots flow %d+ floating %d+ derived (%d+) legacy %d+\n'))
             == 0, dump)
         assert(not dump:find('[tree!=scene]', 1, true), dump)
         local actual = {}

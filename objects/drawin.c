@@ -78,10 +78,18 @@ drawin_widget_host(drawin_t *d, struct widget_host *out)
 		.id = (uint32_t)declare_handle_for(d, DECLARE_KIND_DRAWIN),
 		.x = d->x - m->m.x, .y = d->y - m->m.y,
 		.w = d->width, .h = d->height,
+		.src = { DECLARE_SRC_USER, DECLARE_SRC_USER },
 		.radius = d->shape_radius,
 		.path_clip = d->shape.ref != LUA_NOREF,
 		.visible = d->visible,
 	};
+	/* A bar's thickness is the theme's; its length the output's when it
+	 * stretches, the theme's otherwise. */
+	if (d->bar.edge != DRAWIN_EDGE_NONE) {
+		bool horizontal = d->bar.edge == DRAWIN_EDGE_TOP || d->bar.edge == DRAWIN_EDGE_BOTTOM;
+		out->src[horizontal ? 1 : 0] = DECLARE_SRC_THEME;
+		out->src[horizontal ? 0 : 1] = d->bar.stretch ? DECLARE_SRC_OUTPUT : DECLARE_SRC_THEME;
+	}
 	return true;
 }
 
@@ -442,6 +450,10 @@ luaA_drawin_set_attachment(lua_State *L, drawin_t *d)
         lua_pop(L, 1);
         lua_getfield(L, -1, "bounded");
         next.bounded = lua_toboolean(L, -1); lua_pop(L, 1);
+        lua_getfield(L, -1, "wsrc");
+        next.src[0] = declare_src_parse(lua_tostring(L, -1)); lua_pop(L, 1);
+        lua_getfield(L, -1, "hsrc");
+        next.src[1] = declare_src_parse(lua_tostring(L, -1)); lua_pop(L, 1);
         lua_getfield(L, -1, "passthrough");
         next.passthrough = lua_toboolean(L, -1); lua_pop(L, 1);
         lua_getfield(L, -1, "hover");
@@ -472,6 +484,12 @@ luaA_drawin_get_attachment(lua_State *L, drawin_t *d)
     }
     if (d->attachment.width_override >= 0) { ATTACH_NUMBER(width_override); }
 #undef ATTACH_NUMBER
+    if (d->attachment.src[0]) {
+        lua_pushstring(L, declare_src_names[d->attachment.src[0]]); lua_setfield(L, -2, "wsrc");
+    }
+    if (d->attachment.src[1]) {
+        lua_pushstring(L, declare_src_names[d->attachment.src[1]]); lua_setfield(L, -2, "hsrc");
+    }
     lua_pushboolean(L, d->attachment.passthrough); lua_setfield(L, -2, "passthrough");
     lua_pushboolean(L, d->attachment.hover); lua_setfield(L, -2, "hover");
     return 1;
@@ -493,19 +511,6 @@ static int
 luaA_drawin_get_cursor(lua_State *L, drawin_t *drawin)
 {
 	lua_pushstring(L, drawin->cursor);
-	return 1;
-}
-
-/** drawin.surface_scale - Get surface scale override (somewm extension).
- * Returns the override value, or 0 (auto) if not set.
- * \param L The Lua VM state.
- * \param drawin The drawin object.
- * \return The number of elements pushed on stack.
- */
-static int
-luaA_drawin_get_surface_scale(lua_State *L, drawin_t *drawin)
-{
-	lua_pushnumber(L, drawin->scale_override);
 	return 1;
 }
 
@@ -1104,30 +1109,6 @@ luaA_drawin_set_cursor(lua_State *L, drawin_t *drawin)
 	return 0;
 }
 
-/** Set the drawin surface_scale override (somewm extension).
- * 0 = auto (use output scale), >0 = force this scale for drawable surface.
- * Recreates the drawable surface at the new scale.
- * \param L The Lua VM state.
- * \param drawin The drawin object.
- * \return The number of elements pushed on stack.
- */
-static int
-luaA_drawin_set_surface_scale(lua_State *L, drawin_t *drawin)
-{
-	float scale = (float)lua_tonumber(L, -1);
-	if (scale < 0.0f)
-		scale = 0.0f;
-	if (scale != drawin->scale_override)
-	{
-		drawin->scale_override = scale;
-		/* Recreate the drawable surface at the new scale */
-		if (drawin->visible)
-			drawin_update_drawing(L, -3);
-		luaA_object_emit_signal(L, -3, "property::surface_scale", 0);
-	}
-	return 0;
-}
-
 /** Set the drawin x (AwesomeWM signature).
  * \param L The Lua VM state.
  * \param drawin The drawin object.
@@ -1431,7 +1412,6 @@ drawin_class_setup(lua_State *L)
 		{ "type", (lua_class_propfunc_t) luaA_drawin_set_type, (lua_class_propfunc_t) luaA_drawin_get_type, (lua_class_propfunc_t) luaA_drawin_set_type },
 		{ "_opacity", (lua_class_propfunc_t) luaA_drawin_set_opacity, (lua_class_propfunc_t) luaA_drawin_get_opacity, (lua_class_propfunc_t) luaA_drawin_set_opacity },
 		{ "shadow", (lua_class_propfunc_t) luaA_drawin_set_shadow, (lua_class_propfunc_t) luaA_drawin_get_shadow, (lua_class_propfunc_t) luaA_drawin_set_shadow },
-		{ "surface_scale", (lua_class_propfunc_t) luaA_drawin_set_surface_scale, (lua_class_propfunc_t) luaA_drawin_get_surface_scale, (lua_class_propfunc_t) luaA_drawin_set_surface_scale },
 		{ "border_width", (lua_class_propfunc_t) luaA_drawin_set_border_width, (lua_class_propfunc_t) luaA_drawin_get_border_width, (lua_class_propfunc_t) luaA_drawin_set_border_width },
 		{ "_border_width", (lua_class_propfunc_t) luaA_drawin_set_border_width, (lua_class_propfunc_t) luaA_drawin_get_border_width, (lua_class_propfunc_t) luaA_drawin_set_border_width },
 		{ "border_color", (lua_class_propfunc_t) luaA_drawin_set_border_color, (lua_class_propfunc_t) luaA_drawin_get_border_color, (lua_class_propfunc_t) luaA_drawin_set_border_color },

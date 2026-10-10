@@ -43,7 +43,8 @@ runner.run_async(function()
             icon = wibox.widget.base.make_widget(nil,nil,{enable_properties=true})
             clay.describe_widget(icon, function()
                 return {specs={{image=src._native, name='image', aspect=2,
-                    image_width=20, image_height=10, wmax=capped and 20 or icon._private.forced_width, hmax=capped and 10 or icon._private.forced_height}}}
+                    image_width=20, image_height=10, wmax=capped and 20 or icon._private.forced_width, hmax=capped and 10 or icon._private.forced_height,
+                    wsrc='user', hsrc='user'}}}
             end, 'intrinsic-image')
         end
         local margin = wibox.container.margin(icon,0,0,0,0)

@@ -55,9 +55,6 @@ typedef struct drawin_t {
 	bool ontop;                    /* Should drawin be above other windows? */
 	char *cursor;                  /* Mouse cursor name (e.g., "left_ptr") */
 
-	/* Stored surface_scale compatibility value; rendering uses the output scale. */
-	float scale_override;
-
 	/* Screen assignment */
 	struct screen_t *screen;       /* Which screen this drawin belongs to */
 
@@ -106,6 +103,7 @@ typedef struct drawin_t {
         float x, y, width, height;
         float width_override; /* Negative means no fixed theme width. */
         bool bounded; /* A launcher grows within WORKAREA using authored maxima. */
+        uint8_t src[2]; /* enum declare_src of width and height, from wsrc and hsrc */
         uint16_t gap;
         uint8_t position;
         bool passthrough, hover;

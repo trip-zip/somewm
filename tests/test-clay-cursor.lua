@@ -23,8 +23,8 @@ local APP_ID = "cursor_client"
 local function cursor_record(s)
     local dump = awesome._clay_tree(s)
     for line in dump:gmatch("[^\n]+") do
-        local name, w, h, src, ox, oy = line:match("^  cursor (%S+) w=fixed%((%d+)%) "
-            .. "h=fixed%((%d+)%) (%a+) attach ROOT offset (%-?%d+),(%-?%d+) band 32767")
+        local name, w, src, h, ox, oy = line:match("^  cursor (%S+) w=fixed%((%d+)%) (%a+) "
+            .. "h=fixed%((%d+)%) %a+ attach ROOT offset (%-?%d+),(%-?%d+) band 32767")
         if name then
             return { name = name, w = tonumber(w), h = tonumber(h), src = src,
                 x = tonumber(ox), y = tonumber(oy) }, dump

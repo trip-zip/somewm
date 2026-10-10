@@ -49,8 +49,9 @@ local function describe(s, is_spiral)
     for i = n - 1, 1, -1 do
         local horizontal = i % 2 == 1
         local head = leaf(clients[i])
-        head[horizontal and "w" or "h"] = i == 1
-            and (t.master_width_factor + 0.5) / 2 or 0.5
+        local axis = horizontal and "w" or "h"
+        head[axis] = i == 1 and (t.master_width_factor + 0.5) / 2 or 0.5
+        head[axis .. "src"] = i == 1 and "user" or "theme"
         local reverse = is_spiral and (i % 4 == 3 or i % 4 == 0)
         tail = {role = i == 1 and "WORKAREA" or "STACK",
             direction = horizontal and "row" or "column",

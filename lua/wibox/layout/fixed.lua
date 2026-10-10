@@ -316,20 +316,18 @@ end
 --@DOC_fixed_COMMON@
 
 --- What wibox.layout.fixed and flex share: a layout direction and a child
--- gap in whole pixels (third_party/clay.h:344). A spacing widget, a widget
--- placed between the children rather than a gap, is not drawn.
+-- gap in whole pixels (third_party/clay.h:344), or a spacing widget
+-- placed between the children.
 -- Returns the node and the axis names along and across the direction.
 local function describe_linear(w)
     local p = w._private
     local spacing = clay.pixels(w, "spacing", p.spacing)
 
-    if spacing ~= 0 and p.spacing_widget then
-        clay.ignore(w, "spacing_widget", "is not drawn")
-    end
+    local gap = spacing > 0 and p.spacing_widget and 0 or spacing
     if p.dir == "y" then
-        return { dir = "y", gap = spacing, specs = {} }, "h", "w"
+        return { dir = "y", gap = gap, specs = {} }, "h", "w", spacing
     end
-    return { dir = "x", gap = spacing, specs = {} }, "w", "h"
+    return { dir = "x", gap = gap, specs = {} }, "w", "h", spacing
 end
 
 --- wibox.layout.fixed: every child at its content size along the direction,
@@ -341,7 +339,7 @@ end
 -- whose `:fit` was zero. A child that contributes nothing is left out of the
 -- tree instead, so it costs no gap either.
 local function describe_fixed(w)
-    local node, along, across = describe_linear(w)
+    local node, along, across, spacing = describe_linear(w)
 
     local p = w._private
 
@@ -351,7 +349,7 @@ local function describe_fixed(w)
         if i == #p.widgets and p.fill_space then
             spec[along] = "grow"
         end
-        node.specs[i] = spec
+        clay.linear_spec(node, spec, p.spacing_widget, spacing, along, across)
     end
     return node
 end

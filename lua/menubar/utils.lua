@@ -16,7 +16,6 @@ local theme = require("beautiful")
 local lgi = require("lgi")
 local gio = lgi.Gio
 local glib = lgi.GLib
-local w_textbox = require("wibox.widget.textbox")
 local gdebug = require("gears.debug")
 local protected_call = require("gears.protected_call")
 local unpack = unpack or table.unpack -- luacheck: globals unpack (compatibility with Lua 5.1)
@@ -426,14 +425,6 @@ function utils.parse_dir(dir_path, callback)
         call_callback(callback, result)
     end)
 end
-
--- luacov: disable
-
-function utils.compute_text_width(text, s, font)
-    return w_textbox.get_markup_geometry(text, s, font)['width']
-end
-
--- luacov: enable
 
 return utils
 

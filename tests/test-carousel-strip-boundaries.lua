@@ -14,7 +14,6 @@ local utils = require("_utils")
 local awful = require("awful")
 local carousel = awful.layout.suit.carousel
 
-carousel.scroll_duration = 0
 
 if not test_client.is_available() then
     io.stderr:write("Test finished successfully.\n")

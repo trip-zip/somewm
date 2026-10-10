@@ -1,4 +1,4 @@
--- Page membership measurements never supply element rectangles or authored bounds.
+-- Hotkeys help is one horizontal overflow of columns; the page keys scroll it by a viewport.
 local runner = require('_runner')
 local async = require('_async')
 local awful = require('awful')
@@ -7,16 +7,26 @@ local wibox = require('wibox')
 local help = require('awful.hotkeys_popup.widget')
 local example = require('_clay_example')
 
-local function entries(widget, counts)
-    if widget.get_text then
-        for entry in widget:get_text():gmatch('ENTRY%d%d%d') do counts[entry]=(counts[entry] or 0)+1 end
+-- Every ENTRY in the dump's text nodes, with the box of the node holding it.
+local function entries(dump)
+    local counts, boxes = {}, {}
+    for text, y, h in dump:gmatch('text "(.-)" font=%d+ box %-?%d+,(%-?%d+) %d+x(%d+)') do
+        for entry in text:gmatch('ENTRY%d%d%d') do
+            counts[entry] = (counts[entry] or 0) + 1
+            boxes[#boxes+1] = {tonumber(y), tonumber(h)}
+        end
     end
-    for _,child in ipairs(widget:get_children()) do entries(child,counts) end
+    return counts, boxes
+end
+
+local function launcher(dump)
+    return dump:match('\n(  LAUNCHER .-)\n  %S') or dump:match('\n(  LAUNCHER .*)')
 end
 
 runner.run_async(function()
     local s = screen[1]
     s.scale = tonumber(os.getenv('SOMEWM_TEXT_TEST_SCALE') or '1')
+    beautiful.hotkeys_rows = 5
     async.sleep(.1)
     local bar = awful.wibar {screen=s,position='top',height=60,widget=wibox.widget.textbox('bar')}
     local instance = help.new {width=300,height=160,border_width=3,bg='#204080',fg='#ffffff',
@@ -31,53 +41,57 @@ runner.run_async(function()
     async.sleep(.08)
     local box = select(2,next(instance._cached_wiboxes[s]))
     local popup = box.popup
-    local function traverse(expected,label)
-        for _=1,200 do box:page_prev() end
-        assert(box.current_page==1)
-        _keygrabber.inject('Prior',true); _keygrabber.inject('Prior',false)
-        assert(box.current_page==1)
-        local found, pages = {},0
-        while true do
-            async.sleep(.02)
-            pages=pages+1
-            assert(pages<=expected,'unbounded page navigation')
-            local current = {}
-            entries(popup.widget,current)
-            assert(next(current),'empty or marker-only page')
-            assert(popup.height<=instance.height, 'ordinary records overflow the page height')
-            local function visible_records(widget)
-                if widget.get_text and widget:get_text():find('ENTRY%d%d%d') then
-                    local bound = assert(popup._drawable._clay_wired[widget])[1].element.box
-                    assert(bound.y>=0 and bound.y+bound.height<=popup.height,
-                        'record allocation is outside its reachable page')
-                end
-                for _,child in ipairs(widget:get_children()) do visible_records(child) end
-            end
-            visible_records(popup.widget)
-            for key,count in pairs(current) do found[key]=(found[key] or 0)+count end
-            assert(not current.ENTRY999,'filtered group leaked into pages')
-            local first = popup.widget:get_children()[1]
-            assert(first and popup._drawable._clay_wired[first], 'original column lost its input binding')
-            assert(#popup:find_widgets(10,10)>0)
-            example.save(label..'-page-'..pages,awesome._clay_tree(s))
-            local previous = box.current_page
-            _keygrabber.inject('Next',true); _keygrabber.inject('Next',false)
-            if box.current_page==previous then break end
+    local function key(name)
+        _keygrabber.inject(name,true); _keygrabber.inject(name,false)
+        async.sleep(.05)
+        return popup.widget:_scroll_record()
+    end
+    local function near(a,b) return math.abs(a-b)<.01 end
+    local function traverse(expected,columns,label)
+        local dump = awesome._clay_tree(s)
+        local root = assert(launcher(dump))
+        local _,overflows = root:gsub(' scroll=x scrolled=','')
+        assert(overflows==1,'one horizontal overflow node')
+        assert(not root:find('w=fit>=',1,true),'a column was told a minimum')
+        assert(not root:find('derived',1,true))
+        local _,margins = root:gsub('wibox%.container%.margin w=fit h=grow row pad %d+,0,0,0','')
+        assert(margins==columns,'one FIT column per five rows: '..margins)
+        local counts, boxes = entries(root)
+        local count = 0
+        for entry,n in pairs(counts) do assert(n==1,'entry repeated: '..entry); count=count+1 end
+        assert(count==expected,'lost entries: '..count..' expected '..expected)
+        assert(not counts.ENTRY999,'filtered group leaked into the columns')
+        for _,b in ipairs(boxes) do
+            local top = popup.y-s.geometry.y
+            assert(b[1]>=top and b[1]+b[2]<=top+popup.height,'a record lies outside the popup height')
         end
-        assert(pages>=3,'fixture must exercise several pages')
-        local count=0
-        for key,n in pairs(found) do assert(n==1,'entry repeated: '..key);count=count+1 end
-        assert(count==expected, 'lost entries: '..count..' expected '..expected)
-        for i=1,expected do assert(found[string.format('ENTRY%03d',i)],'entry unreachable') end
-        local last = box.current_page
-        _keygrabber.inject('Prior',true); _keygrabber.inject('Prior',false)
-        assert(box.current_page==last-1)
-        _keygrabber.inject('Next',true); _keygrabber.inject('Next',false)
-        assert(box.current_page==last)
+        local _,markers = root:gsub('▽','')
+        assert(markers==columns-2,'leftover markers: '..markers)
+        assert(not root:find('Next Page',1,true) and not root:find('Prev Page',1,true))
+        assert(popup._drawable._clay_wired[popup.widget:get_children()[1]],'first column lost its input binding')
+        assert(#popup:find_widgets(10,10)>0)
+        example.save(label..'-start',dump)
+
+        local offset, content, viewport = key('Prior')
+        assert(near(offset,0) and content>viewport*2,'the fixture must overflow by several viewports: '..table.concat({tostring(offset),tostring(content),tostring(viewport)},' '))
+        local pages = 0
+        repeat
+            local previous = offset
+            offset = key('Next')
+            pages = pages+1
+            assert(pages<=content/viewport+1,'unbounded page navigation')
+            assert(near(offset,math.max(previous-viewport,viewport-content)),
+                'Next did not scroll by one viewport: '..previous..' -> '..offset)
+            assert(awesome._clay_tree(s):find(string.format('scroll=x scrolled=%g ',-offset),1,true))
+        until near(offset,previous)
+        assert(near(offset,viewport-content),'Next stopped before the end')
+        example.save(label..'-end',awesome._clay_tree(s))
+        assert(near(key('Prior'),math.min(offset+viewport,0)))
+        assert(near(key('Next'),viewport-content))
         _keygrabber.inject('Escape',true); _keygrabber.inject('Escape',false)
         assert(not popup.visible)
     end
-    traverse(102,'initial')
+    traverse(102,21,'initial')
     instance:show_help(nil,s,{show_awesome_keys=false})
     local same = popup.widget
     box:hide()
@@ -95,8 +109,8 @@ runner.run_async(function()
     async.sleep(.08)
     assert(popup.width==380 and popup.height==240)
     assert(assert(awesome._clay_tree(s):match('  LAUNCHER [^\n]+'))
-        :find('w=fixed(386) h=grow<=246 theme',1,true))
-    traverse(103,'refreshed')
+        :find('w=fixed(386) theme h=grow<=246 user',1,true))
+    traverse(103,22,'refreshed')
     beautiful.launcher_width=nil
     bar:remove()
 
@@ -107,16 +121,10 @@ runner.run_async(function()
         h:add_hotkeys {wide={{modifiers={},keys={a=string.rep('W',100)..' ENTRY001',b='ENTRY002'}}}}
         local shown = h:_create_wibox(s,{'wide'},false)
         shown:show();async.sleep(.08)
-        local counts={}
-        for _=1,4 do
-            local current={};entries(shown.popup.widget,current);assert(next(current))
-            for key,n in pairs(current) do counts[key]=(counts[key] or 0)+n end
-            local previous=shown.current_page;shown:page_next()
-            if previous==shown.current_page then break end
-            async.sleep(.02)
-        end
+        local dump = awesome._clay_tree(s)
+        local counts = entries(assert(launcher(dump)))
         assert(counts.ENTRY001==1 and counts.ENTRY002==1)
-        example.save('oversized-first-'..height,awesome._clay_tree(s))
+        example.save('oversized-first-'..height,dump)
         shown:hide()
     end
     beautiful.hotkeys_font,beautiful.hotkeys_description_font='Monospace 8','Monospace 8'
@@ -152,8 +160,9 @@ runner.run_async(function()
     imported:show_help(nil,s)
     async.sleep(.08)
     assert(select(2,next(imported._cached_wiboxes[s])).popup==imported_popup)
-    local imported_entries={};entries(imported_popup.widget,imported_entries)
+    local imported_entries = entries(assert(launcher(awesome._clay_tree(s))))
     assert(imported_entries.ENTRY001==1 and imported_entries.ENTRY002==1)
     imported_box:hide()
+    beautiful.hotkeys_rows = nil
     runner.done()
 end)
