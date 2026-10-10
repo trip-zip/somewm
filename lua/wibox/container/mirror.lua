@@ -19,7 +19,13 @@ local gtable = require("gears.table")
 local mirror = { mt = {} }
 
 mirror._clay = { describe = function(w)
-    return clay.refuse(w, "reflection", "needs a reflection, and Clay has no transforms")
+    local p = w._private
+    local specs = clay.whole_box(p.widget)
+    if specs[1] then
+        specs[1].transform = p.horizontal and (p.vertical and "180" or "flipped")
+            or p.vertical and "flipped-180" or nil
+    end
+    return { specs = specs }
 end }
 
 --- The widget to be reflected.

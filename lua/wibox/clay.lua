@@ -171,8 +171,9 @@ local function solid_rgba(col)
     return { r, g, b, a }
 end
 
---- A solid fill or a linear or radial gradient in logical pixels.
-function clay.fill(col)
+--- A solid fill or a linear or radial gradient in logical pixels, the
+-- gradient's points moved by dx and dy.
+function clay.fill(col, dx, dy)
     if not col then return nil end
     local pattern = gcolor(col)
     local kind = pattern:get_type()
@@ -183,6 +184,9 @@ function clay.fill(col)
     local points = kind == "LINEAR" and { pattern:get_linear_points() }
         or { pattern:get_radial_circles() }
     if table.remove(points, 1) ~= "SUCCESS" then return nil end
+    for i = 1, #points, kind == "LINEAR" and 2 or 3 do
+        points[i], points[i + 1] = points[i] + (dx or 0), points[i + 1] + (dy or 0)
+    end
     local fill = { stops = {} }
     fill[kind == "LINEAR" and "linear" or "radial"] = points
     for i = 0, count - 1 do
@@ -191,6 +195,21 @@ function clay.fill(col)
         fill.stops[#fill.stops + 1] = stop
     end
     return fill
+end
+
+--- Put a fill record on a node that paints its colour as bg: a solid is
+-- the bg, a gradient fills a shape of the node's own box at its radius.
+function clay.bg_fill(node, fill)
+    if fill and fill.stops then
+        local radius = node.radius or 0
+        node.fill = fill
+        node.shape = function(width, height)
+            return clay.shape_ops(gshape.rounded_rect, width, height, 0, 0, radius)
+        end
+    else
+        node.bg = fill
+    end
+    return node
 end
 
 --- The spec for a container's only child: the whole padded box, which is
@@ -340,8 +359,8 @@ end
 --- wibox.widget.systray -> the fixed layout it is, with the padding and
 -- the background its overrides add (`beautiful.systray_paddings`,
 -- `beautiful.bg_systray`) and the least size its `:fit` answers. More than
--- one row is drawn as one; a non-solid background is ignored. Padding
--- and spacing round to uint16 pixels
+-- one row is drawn as one; a background that is not a solid or a gradient
+-- is ignored. Padding and spacing round to uint16 pixels
 -- (third_party/clay.h:330-335, 344).
 function clay.systray(w)
     local p = w._private
@@ -365,9 +384,9 @@ function clay.systray(w)
         [along .. "src"] = w.base_size and "user" or "theme" }
 
     if beautiful.bg_systray then
-        node.bg = solid_rgba(beautiful.bg_systray)
-        if not node.bg then
-            clay.ignore(w, "bg_systray", "is not solid and is transparent")
+        clay.bg_fill(node, clay.fill(beautiful.bg_systray))
+        if not node.bg and not node.fill then
+            clay.ignore(w, "bg_systray", "is not a solid or a gradient and is transparent")
         end
     end
     for _, child in ipairs(p.widgets) do
@@ -659,6 +678,105 @@ local function fit_grow(node, parent_fit)
     if node.h == 'grow' and parent_fit >= 2 then node.h = 'fit' end
 end
 
+-- Per transform: where the new x and y come from (the old axis, and whether
+-- the map flips it), and which pad/bw sides of {left, right, top, bottom}
+-- land on each side.
+local transforms = {
+    ["90"] = { turn = true, x = {"y", false}, y = {"x", true}, sides = {3, 4, 2, 1} },
+    ["270"] = { turn = true, x = {"y", true}, y = {"x", false}, sides = {4, 3, 1, 2} },
+    ["180"] = { x = {"x", true}, y = {"y", true}, sides = {2, 1, 4, 3} },
+    ["flipped"] = { x = {"x", true}, y = {"y", false}, sides = {2, 1, 3, 4} },
+    ["flipped-180"] = { x = {"x", false}, y = {"y", true}, sides = {1, 2, 4, 3} },
+}
+local align_steps = { left = 0, top = 0, center = 1, right = 2, bottom = 2 }
+local align_words = { x = { [0] = "left", "center", "right" }, y = { [0] = "top", "center", "bottom" } }
+
+-- Alignment steps (0 start, 1 center, 2 end) or offsets (negate) per axis.
+local function axis_map(t, old, flip)
+    local new = {}
+    for _, axis in ipairs { "x", "y" } do
+        local v = old[t[axis][1]]
+        new[axis] = t[axis][2] and flip(v) or v
+    end
+    return new
+end
+local function flip_step(v) return 2 - v end
+local function flip_offset(v) return -v end
+
+-- A rotated or mirrored copy of a compiled subtree. The input is a cached
+-- declaration, so every node is copied and none is written.
+local function transformed(node, word, container)
+    local t = transforms[word]
+    local reversed = { [t.x[1]] = t.x[2], [t.y[1]] = t.y[2] }
+    local copies = {}
+    -- above names the nearest widget, which a scroll's own clip node is under.
+    local function copy(n, above)
+        above = n.name or above
+        if n.transform then
+            return clay.refuse(container, "widget", "holds a " .. (above or "widget")
+                .. " that is already rotated or mirrored, and transforms do not nest")
+        end
+        if n.scroll then
+            return clay.refuse(container, "widget", "holds a " .. (above or "scroll")
+                .. ", and a scroll does not rotate")
+        end
+        if n.text and n.text:find("\n", 1, true) then
+            return clay.refuse(container, "widget",
+                "holds a textbox with more than one line, and a rotated run is one line")
+        end
+        local c = {}
+        for key, value in pairs(n) do c[key] = value end
+        copies[n] = c
+        c.transform = word
+        if n.text then c.wrap = "none" end
+        if t.turn then
+            for _, pair in ipairs { {"w", "h"}, {"wmin", "hmin"}, {"wmax", "hmax"}, {"wsrc", "hsrc"} } do
+                c[pair[1]], c[pair[2]] = n[pair[2]], n[pair[1]]
+            end
+            if n.aspect then c.aspect = 1 / n.aspect end
+            c.dir = n.dir == "y" and "x" or "y"
+        end
+        for _, key in ipairs { "pad", "bw" } do
+            local v, s = n[key], t.sides
+            if v then c[key] = { v[s[1]], v[s[2]], v[s[3]], v[s[4]] } end
+        end
+        local align = n.align or {}
+        local a = axis_map(t, { x = align_steps[align.x or "left"],
+            y = align_steps[align.y or "top"] }, flip_step)
+        if n.align or a.x ~= 0 or a.y ~= 0 then
+            c.align = { x = align_words.x[a.x], y = align_words.y[a.y] }
+        end
+        for _, key in ipairs { "parent", "own" } do
+            if n[key] then
+                local p = axis_map(t, { x = math.floor(n[key] / 3), y = n[key] % 3 }, flip_step)
+                c[key] = p.x * 3 + p.y
+            end
+        end
+        if n.x or n.y then
+            local o = axis_map(t, { x = n.x or 0, y = n.y or 0 }, flip_offset)
+            c.x, c.y = o.x, o.y
+        end
+        if copies[n._attach] then c._attach = copies[n._attach] end
+        if n.children then
+            local children, flow = {}, {}
+            for i, child in ipairs(n.children) do
+                children[i] = copy(child, above)
+                if not children[i] then return nil end
+                if not child.float then flow[#flow + 1] = i end
+            end
+            if reversed[n.dir == "y" and "y" or "x"] then
+                for i = 1, math.floor(#flow / 2) do
+                    local a, b = flow[i], flow[#flow + 1 - i]
+                    children[a], children[b] = children[b], children[a]
+                end
+            end
+            c.children = children
+        end
+        return c
+    end
+    return copy(node)
+end
+
 local function compile_specs(st, specs, parent, fg, bound, box, alpha, parent_fit, along, stack)
     local nodes = {}
 
@@ -679,8 +797,19 @@ local function compile_specs(st, specs, parent, fg, bound, box, alpha, parent_fi
         local spec_box = spec_bound(spec, outer, along, #specs == 1 or stack)
 
         if spec.widget then
-            node = compile_node(st, spec.widget, parent, fg, spec_box, spec, alpha,
-                spec.float and 0 or parent_fit, along)
+            local child_box, child_along, child_fit = spec_box, along, parent_fit
+            if transforms[spec.transform] and transforms[spec.transform].turn then
+                -- The child is compiled in its own frame, where the axes are exchanged.
+                child_box = {}
+                for key, value in pairs(spec_box) do
+                    child_box[(key:gsub("^[wh]", { w = "h", h = "w" }))] = value
+                end
+                child_along = along == "w" and "h" or "w"
+                child_fit = (parent_fit % 2) * 2 + math.floor(parent_fit / 2)
+            end
+            node = compile_node(st, spec.widget, parent, fg, child_box, spec, alpha,
+                spec.float and 0 or child_fit, child_along)
+            if node and spec.transform then node = transformed(node, spec.transform, parent.widget) end
         else
             node = spec
             node.spacer = true

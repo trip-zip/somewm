@@ -361,14 +361,30 @@ function layout.getname(_layout)
 end
 
 -- A suite's {client = c} leaves become client composites; a composite
--- already has children. Every client the tree took is marked in taken.
+-- already has children. Every client the tree took is marked in taken. A
+-- leaf placed at x or y and sized on the same axis is taken and left out.
 local describe_client = require("awful.client.clay").describe
+local slot_warned = setmetatable({}, {__mode = "k"})
 local function expand(node, taken)
     if node.client then
         taken[node.client] = true
+        if (node.x ~= nil and type(node.w) ~= "number")
+                or (node.y ~= nil and type(node.h) ~= "number") then
+            if not slot_warned[node.client] then
+                slot_warned[node.client] = true
+                gdebug.print_warning("awful.layout: client " ..
+                    (node.client.class or node.client.name or "?") ..
+                    " is placed at x,y and sized on the same axis, and is left out of the tree")
+            end
+            return nil
+        end
         return node.children and node or describe_client(node.client, node)
     end
-    for i, child in ipairs(node.children or {}) do node.children[i] = expand(child, taken) end
+    if node.children then
+        local children = {}
+        for _, child in ipairs(node.children) do children[#children + 1] = expand(child, taken) end
+        node.children = children
+    end
     return node
 end
 

@@ -121,6 +121,29 @@ local steps = {
         io.stderr:write("[PASS] a press sets the converted slider value to 15\n")
         return true
     end,
+    function(count)
+        if count == 1 then
+            slider = wibox.widget {
+                value = 50, minimum = 0, maximum = 100,
+                bar_color = capture.gradient(0, 200), handle_color = "#00ff00",
+                handle_width = 20, bar_height = 10, widget = wibox.widget.slider,
+            }
+            bar = wibox { x = geo.x + 100, y = geo.y + 100, width = 200, height = 40,
+                screen = s, visible = true, bg = BG,
+                widget = wibox.container.margin(slider) }
+            return nil
+        end
+        local line = capture.dump_line(s, capture.gradient_record(0, 0, 200))
+        if not (line and pixel(2, 20, "#ff0000") and pixel(197, 20, "#0000ff")) then
+            assert(count < 20, "the gradient bar never drew: " .. awesome._clay_tree(s))
+            return nil
+        end
+        check_box(line, 0, 15, 200, 10)
+        assert(pixel(100, 20, "#00ff00"), "the handle is not green over the gradient")
+        bar.visible = false
+        io.stderr:write("[PASS] a gradient bar colour draws red to blue across the bar\n")
+        return true
+    end,
 }
 
 runner.run_steps(steps)

@@ -54,6 +54,13 @@ struct render_text_attr {
 #define RENDER_FONT_ERR_FULL (-2)
 int32_t render_font_intern(const char *name);
 
+/* The entry that draws id's face with a wl_output_transform: id itself for 0,
+ * else one entry per (id, transform), made on first use. Clay keys its measure
+ * cache on the font id, so a rotated run measures apart from a plain one.
+ * id itself when the table is full. */
+int32_t render_font_transformed(int32_t id, uint8_t transform);
+uint8_t render_font_transform(int32_t id);
+
 /* Replace entry 0's face: the one Clay's debug view draws with (fontId 0),
  * and the fallback for an id past the table. The only rewrite the table
  * allows, because no interned declaration ever names id 0 (an interned

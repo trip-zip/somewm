@@ -4396,7 +4396,7 @@ static int
 luaA_client_set_shape_mask(lua_State *L, client_t *c)
 {
     if (!c->shape_mask_warned) {
-        warn("client: shape masks are not read");
+        warn("client: shape_bounding, shape_clip and shape_input are not read, the client stays rectangular");
         c->shape_mask_warned = true;
     }
     return 0;

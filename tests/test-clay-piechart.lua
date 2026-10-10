@@ -108,6 +108,32 @@ local steps = {
         io.stderr:write("[PASS] the border colour leaves labels in the foreground\n")
         return true
     end,
+    -- The pie's radius is a quarter of the 200 square, 50, about its
+    -- centre: the first slice is the lower half, x 50 to 150.
+    function(count)
+        if count == 1 then
+            chart = wibox.widget {
+                data_list = { { "a", 1 }, { "b", 1 } },
+                colors = { capture.gradient(50, 150), "#00ff00" },
+                border_width = 0, display_labels = false,
+                widget = wibox.widget.piechart,
+            }
+            bar = wibox { x = geo.x + 100, y = geo.y + 100, width = 200, height = 200,
+                screen = s, visible = true, bg = BG,
+                widget = wibox.container.margin(chart) }
+            return nil
+        end
+        local line = capture.dump_line(s, capture.gradient_record(50, 0, 150))
+        if not (line and pixel(52, 101, "#ff0000") and pixel(147, 101, "#0000ff")) then
+            assert(count < 20, "the gradient slice never drew: " .. awesome._clay_tree(s))
+            return nil
+        end
+        check_box(line, 0, 0, 200, 200)
+        assert(pixel(100, 60, "#00ff00"), "the second slice is not green")
+        bar.visible = false
+        io.stderr:write("[PASS] a gradient slice colour draws red to blue across the slice\n")
+        return true
+    end,
 }
 
 runner.run_steps(steps)

@@ -139,9 +139,9 @@ local function describe_separator(w)
     local p = w._private
     local s = p.shape or beautiful.separator_shape
     local col = p.color or beautiful.separator_color
-    local fill = clay.solid_rgba(col)
+    local fill = clay.fill(col)
     if col and not fill then
-        clay.ignore(w, "color", "is not solid and is transparent")
+        clay.ignore(w, "color", "is not a solid or a gradient and is transparent")
         fill = { 0, 0, 0, 0 }
     end
     fill = fill or { 0, 0, 0, 1 }
@@ -154,9 +154,11 @@ local function describe_separator(w)
         local span = w.span_ratio and "user" or "theme"
         local child
         if orientation == "horizontal" then
-            child = { w = { percent = span_ratio }, h = thickness, wsrc = span, hsrc = thick, bg = fill }
+            child = clay.bg_fill({ w = { percent = span_ratio }, h = thickness,
+                wsrc = span, hsrc = thick }, fill)
         elseif orientation == "vertical" then
-            child = { w = thickness, h = { percent = span_ratio }, wsrc = thick, hsrc = span, bg = fill }
+            child = clay.bg_fill({ w = thickness, h = { percent = span_ratio },
+                wsrc = thick, hsrc = span }, fill)
         else
             child = { w = "grow", h = "grow", fill = fill,
                 shape = function(width, height)

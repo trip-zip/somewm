@@ -26,6 +26,10 @@ static struct {
 	const char *name;
 	PangoFontDescription *desc;
 	double px; /* the description's own absolute size, 0 for none */
+	/* The entry name, desc and px are read from: its own index, or for a
+	 * transformed entry the plain one it was made from. */
+	int base;
+	uint8_t transform; /* wl_output_transform, 0 for a plain entry */
 } render_fonts[RENDER_MAX_FONTS];
 static int render_fonts_len;
 
@@ -40,13 +44,14 @@ static void render_fonts_init(void) {
 	}
 	render_fonts[0].name = strdup(RENDER_FONT_FAMILY);
 	render_fonts[0].desc = pango_font_description_from_string(RENDER_FONT_FAMILY);
+	render_fonts[0].base = 0;
 	render_fonts_len = 1;
 }
 
 int32_t render_font_intern(const char *name) {
 	render_fonts_init();
 	for (int i = 0; i < render_fonts_len; i++) {
-		if (strcmp(render_fonts[i].name, name) == 0) {
+		if (render_fonts[i].transform == 0 && strcmp(render_fonts[i].name, name) == 0) {
 			return i;
 		}
 	}
@@ -73,7 +78,29 @@ int32_t render_font_intern(const char *name) {
 	render_fonts[render_fonts_len].name = strdup(name);
 	render_fonts[render_fonts_len].desc = desc;
 	render_fonts[render_fonts_len].px = px;
+	render_fonts[render_fonts_len].base = render_fonts_len;
+	render_fonts[render_fonts_len].transform = 0;
 	return render_fonts_len++;
+}
+
+int32_t render_font_transformed(int32_t id, uint8_t transform) {
+	render_fonts_init();
+	if (transform == 0 || id < 0 || id >= render_fonts_len)
+		return id;
+	for (int i = 0; i < render_fonts_len; i++) {
+		if (render_fonts[i].base == id && render_fonts[i].transform == transform)
+			return i;
+	}
+	if (render_fonts_len == RENDER_MAX_FONTS)
+		return id;
+	render_fonts[render_fonts_len].base = id;
+	render_fonts[render_fonts_len].transform = transform;
+	return render_fonts_len++;
+}
+
+uint8_t render_font_transform(int32_t id) {
+	render_fonts_init();
+	return id >= 0 && id < render_fonts_len ? render_fonts[id].transform : 0;
 }
 
 int render_font_set_default(const char *name) {
@@ -101,7 +128,7 @@ void render_set_text(PangoLayout *layout, const char *text, int len,
 	/* An id past the table resolves to entry 0 rather than aborting: the id is
 	 * whatever a declaration put in the field, and Clay's debug view writes 0
 	 * into it without interning anything. */
-	int id = font_id < render_fonts_len ? font_id : 0;
+	int id = render_fonts[font_id < render_fonts_len ? font_id : 0].base;
 	PangoFontDescription *desc = render_fonts[id].desc;
 	double px = font_size > 0 ? (double)font_size : render_fonts[id].px;
 	/* Entry 0's own size wins over the 16 the debug view hardcodes, so a
@@ -156,9 +183,26 @@ Clay_Dimensions render_measure_text(Clay_StringSlice text,
 	 * Never bounded, whatever the declaration asked for: what a truncated run is
 	 * bounded BY is derived from the box this measurement produces, so bounding
 	 * the measurement too would feed that derivation its own output. */
+	int width, height;
+	uint8_t transform = render_font_transform(config->fontId);
+	if (transform == 1 || transform == 3) {
+		/* 90 or 270. Clay measures one word at a time and sums them on a
+		 * line, so the first word answers for the whole run, swapped, and
+		 * every later word and Clay's own space probe answer nothing. The
+		 * width is then the run's height, the height its width, and Clay
+		 * emits one line. */
+		const char *first = text.baseChars;
+		while (*first == ' ')
+			first++;
+		if (text.chars != first)
+			return (Clay_Dimensions) { 0 };
+		render_set_text(render_measure_layout, text.baseChars, -1,
+			config->fontId, config->fontSize, scale, 0);
+		pango_layout_get_pixel_size(render_measure_layout, &width, &height);
+		return (Clay_Dimensions) { .width = height / scale, .height = width / scale };
+	}
 	render_set_text(render_measure_layout, text.chars, text.length,
 		config->fontId, config->fontSize, scale, 0);
-	int width, height;
 	pango_layout_get_pixel_size(render_measure_layout, &width, &height);
 
 	return (Clay_Dimensions) { .width = width / scale, .height = height / scale };

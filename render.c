@@ -219,7 +219,7 @@ struct rnode {
 	cairo_surface_t *img_native;
 	void *img_vector;
 	int img_width, img_height;
-	uint8_t img_filter;
+	uint8_t img_filter, img_transform;
 	bool img_stretch, img_natural;
 	struct render_shape shape;
 	struct shadow_cache *shadow;
@@ -1312,6 +1312,44 @@ static int reconcile_border(struct render_state *rs, struct rnode *n,
 	return muts;
 }
 
+/* The map from a frame drawn unrotated into a (w, h) box: a point (x, y) of
+ * the old frame lands at the point the transform's point map gives. */
+static void transform_matrix(cairo_matrix_t *m, uint8_t t, double w, double h) {
+	cairo_matrix_init_identity(m);
+	switch (t) {
+	case WL_OUTPUT_TRANSFORM_90:
+		cairo_matrix_translate(m, 0, h);
+		cairo_matrix_rotate(m, -G_PI_2);
+		break;
+	case WL_OUTPUT_TRANSFORM_180:
+		cairo_matrix_translate(m, w, h);
+		cairo_matrix_rotate(m, G_PI);
+		break;
+	case WL_OUTPUT_TRANSFORM_270:
+		cairo_matrix_translate(m, w, 0);
+		cairo_matrix_rotate(m, G_PI_2);
+		break;
+	case WL_OUTPUT_TRANSFORM_FLIPPED:
+		cairo_matrix_translate(m, w, 0);
+		cairo_matrix_scale(m, -1, 1);
+		break;
+	case WL_OUTPUT_TRANSFORM_FLIPPED_180:
+		cairo_matrix_translate(m, 0, h);
+		cairo_matrix_scale(m, 1, -1);
+		break;
+	}
+}
+
+static void apply_transform(cairo_t *cr, uint8_t t, double w, double h) {
+	cairo_matrix_t m;
+	transform_matrix(&m, t, w, h);
+	cairo_transform(cr, &m);
+}
+
+static bool transform_turns(uint8_t t) {
+	return t == WL_OUTPUT_TRANSFORM_90 || t == WL_OUTPUT_TRANSFORM_270;
+}
+
 /* --- text --- */
 
 /* Pango's bound is relative to the original run, even when its left side is
@@ -1325,10 +1363,13 @@ static int text_ellipsis_width(Clay_RenderCommand *cmd,
 			((uintptr_t)cmd->userData & RENDER_TEXT_ELLIPSIZE) == 0) {
 		return 0;
 	}
-	double avail = (double)clip->x + clip->width - cmd->boundingBox.x;
-	int natural = (int)round((double)cmd->boundingBox.width * scale);
-	int bound = (int)round(fmax(0, fmin(avail,
-		cmd->boundingBox.width)) * scale);
+	bool turn = transform_turns(render_font_transform(cmd->renderData.text.fontId));
+	const Clay_BoundingBox *box = &cmd->boundingBox;
+	double avail = turn ? (double)clip->y + clip->height - box->y
+		: (double)clip->x + clip->width - box->x;
+	double run = turn ? box->height : box->width;
+	int natural = (int)round(run * scale);
+	int bound = (int)round(fmax(0, fmin(avail, run)) * scale);
 	return bound > 0 && bound < natural ? bound : 0;
 }
 
@@ -1353,6 +1394,12 @@ static struct cairo_buffer *rasterize_text(Clay_RenderCommand *cmd, float scale,
 		td->stringContents.length, td->fontId, td->fontSize, scale, 0);
 	int natural_width, natural_height;
 	pango_layout_get_pixel_size(layout, &natural_width, &natural_height);
+	uint8_t t = render_font_transform(td->fontId);
+	if (transform_turns(t)) {
+		int swap = natural_width;
+		natural_width = natural_height;
+		natural_height = swap;
+	}
 	width = width > natural_width ? width : natural_width;
 	height = height > natural_height ? height : natural_height;
 	if (max_width > 0) {
@@ -1407,6 +1454,7 @@ static struct cairo_buffer *rasterize_text(Clay_RenderCommand *cmd, float scale,
     pango_attr_list_unref(list);
 
 	/* Device-sized glyphs, as measured by render_measure_text; no CTM scaling. */
+	apply_transform(cr, t, width, height);
 	pango_cairo_update_layout(cr, layout);
 	pango_cairo_show_layout(cr, layout);
 
@@ -1518,9 +1566,10 @@ static int reconcile_text(struct render_state *rs, struct rnode *n,
 
 static struct cairo_buffer *rasterize_image(Clay_RenderCommand *cmd,
 		struct image_entry *entry, float scale, const struct clip_masks *mask) {
-	int w = entry->stretch ? (int)ceilf(entry->width * scale)
+	bool turn = transform_turns(entry->transform);
+	int w = entry->stretch ? (int)ceilf((turn ? entry->height : entry->width) * scale)
 		: device_len((int)cmd->boundingBox.x, (int)cmd->boundingBox.width, scale);
-	int h = entry->stretch ? (int)ceilf(entry->height * scale)
+	int h = entry->stretch ? (int)ceilf((turn ? entry->width : entry->height) * scale)
 		: device_len((int)cmd->boundingBox.y, (int)cmd->boundingBox.height, scale);
 	if (w < 1 || h < 1 || entry->width < 1 || entry->height < 1) {
 		return NULL;
@@ -1541,10 +1590,13 @@ static struct cairo_buffer *rasterize_image(Clay_RenderCommand *cmd,
 		rounded_rect_path(cr, 0, 0, w, h, radius);
 		cairo_clip(cr);
 	}
+	/* The frame the image is painted into, before the transform turns it. */
+	apply_transform(cr, entry->transform, w, h);
+	int fw = turn ? h : w, fh = turn ? w : h;
 	Clay_Color ink = cmd->renderData.image.backgroundColor;
 	if (entry->vector) {
-		double sx = entry->natural || entry->stretch ? scale : (double)w / entry->width;
-		double sy = entry->natural || entry->stretch ? scale : (double)h / entry->height;
+		double sx = entry->natural || entry->stretch ? scale : (double)fw / entry->width;
+		double sy = entry->natural || entry->stretch ? scale : (double)fh / entry->height;
 		RsvgRectangle viewport = { -entry->src_x * sx, -entry->src_y * sy,
 			entry->width * sx, entry->height * sy };
 		if (ink.a > 0)
@@ -1561,7 +1613,7 @@ static struct cairo_buffer *rasterize_image(Clay_RenderCommand *cmd,
 		if (entry->natural || entry->stretch)
 			cairo_scale(cr, scale, scale);
 		else
-			cairo_scale(cr, (double)w / entry->width, (double)h / entry->height);
+			cairo_scale(cr, (double)fw / entry->width, (double)fh / entry->height);
 		cairo_pattern_t *pattern = cairo_pattern_create_for_surface(entry->native);
 		/* Pattern matrices map into source coordinates: this places the source
 		 * at -src_x,-src_y in logical pixels, before the output scale. */
@@ -1653,7 +1705,8 @@ static int reconcile_image(struct render_state *rs, struct rnode *n,
 			|| entry->src_x != n->img_src_x || entry->src_y != n->img_src_y
 			|| entry->width != n->img_width || entry->height != n->img_height
 			|| entry->filter != n->img_filter || entry->stretch != n->img_stretch
-			|| entry->natural != n->img_natural)) ||
+			|| entry->natural != n->img_natural
+			|| entry->transform != n->img_transform)) ||
 		clip_mask_changed(n, mask) ||
 		(mask && !box_pos_equal(n->box, cmd->boundingBox));
 
@@ -1679,6 +1732,7 @@ static int reconcile_image(struct render_state *rs, struct rnode *n,
 		n->img_filter = usable ? entry->filter : 0;
 		n->img_stretch = usable && entry->stretch;
 		n->img_natural = usable && entry->natural;
+		n->img_transform = usable ? entry->transform : 0;
 		n->raster_scale = rs->scale;
 		muts++;
 	}
@@ -1769,6 +1823,12 @@ static struct cairo_buffer *rasterize_shape(Clay_RenderCommand *cmd,
 			const float *c = g->stops[i];
 			cairo_pattern_add_color_stop_rgba(pattern, c[0], c[1], c[2], c[3], c[4]);
 		}
+		/* The points were authored in the unrotated box. */
+		cairo_matrix_t m;
+		transform_matrix(&m, shape->transform, cmd->boundingBox.width,
+			cmd->boundingBox.height);
+		cairo_matrix_invert(&m);
+		cairo_pattern_set_matrix(pattern, &m);
 		cairo_set_source(cr, pattern);
 		cairo_fill_preserve(cr);
 		cairo_pattern_destroy(pattern);

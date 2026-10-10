@@ -257,8 +257,10 @@ shape_ops(void *data, const struct render_shape *shape, float w, float h,
 {
 	lua_State *L = globalconf.L;
 	int ref = ((const struct widget_shape *)shape)->ref;
-	lua_pushnumber(L, w);
-	lua_pushnumber(L, h);
+	uint8_t t = shape->transform;
+	bool turn = t == WL_OUTPUT_TRANSFORM_90 || t == WL_OUTPUT_TRANSFORM_270;
+	lua_pushnumber(L, turn ? h : w);
+	lua_pushnumber(L, turn ? w : h);
 	lua_rawgeti(L, LUA_REGISTRYINDEX, ref);
 	if (!luaA_dofunction(L, 2, 1))
 		return 0;
@@ -275,6 +277,21 @@ shape_ops(void *data, const struct render_shape *shape, float w, float h,
 		}
 	}
 	lua_pop(L, 1);
+	/* The path was drawn in the unrotated box; carry its points into (w, h). */
+	for (size_t i = 0; t && len <= cap && i < len; ) {
+		float op = ops[i++];
+		size_t points = op == 0 || op == 1 ? 1 : op == 2 ? 3 : 0;
+		for (size_t k = 0; k < points && i + 1 < len; k++, i += 2) {
+			float x = ops[i], y = ops[i + 1];
+			switch (t) {
+			case WL_OUTPUT_TRANSFORM_90: ops[i] = y; ops[i + 1] = h - x; break;
+			case WL_OUTPUT_TRANSFORM_180: ops[i] = w - x; ops[i + 1] = h - y; break;
+			case WL_OUTPUT_TRANSFORM_270: ops[i] = w - y; ops[i + 1] = x; break;
+			case WL_OUTPUT_TRANSFORM_FLIPPED: ops[i] = w - x; break;
+			case WL_OUTPUT_TRANSFORM_FLIPPED_180: ops[i + 1] = h - y; break;
+			}
+		}
+	}
 	return len;
 }
 
@@ -1643,7 +1660,7 @@ declare_widget_subtree(const struct widget_host *host, size_t i, Clay_ElementId 
 			.userData = (void *)((uintptr_t)word
 				| (n->ellipsize ? RENDER_TEXT_ELLIPSIZE : 0)),
 			.textColor = clay_color(n->fg),
-			.fontId = n->font,
+			.fontId = render_font_transformed(n->font, n->transform),
 			.wrapMode = n->wrap,
 			.textAlignment = n->text_align,
 		};
@@ -4557,6 +4574,23 @@ dump_scrollbar_sizing(buffer_t *buf, const struct widget_node *n,
 	dump_word(buf, DECLARE_SRC_SCROLL);
 }
 
+/* A gradient fill record, as the describer declared it. */
+static void
+dump_gradient(buffer_t *buf, const struct render_gradient *g)
+{
+	const float *p = g->points;
+
+	if (g->kind == 1)
+		buffer_addf(buf, " fill linear %g,%g %g,%g stops", p[0], p[1], p[2], p[3]);
+	else
+		buffer_addf(buf, " fill radial %g,%g,%g %g,%g,%g stops",
+			p[0], p[1], p[2], p[3], p[4], p[5]);
+	for (int i = 0; i < g->count; i++) {
+		const float *c = g->stops[i];
+		buffer_addf(buf, " %g:%g,%g,%g,%g", c[0], c[1], c[2], c[3], c[4]);
+	}
+}
+
 /* One line for a widget node: what the tree says the node is and the box
  * the last solve gave it. Widget lines carry the element id and a four
  * space prefix, which is what the widget tests read. */
@@ -4588,6 +4622,14 @@ dump_widget_line(buffer_t *buf, const struct widget_host *host, size_t i, Clay_E
 			buffer_adds(buf, " natural");
 	} else if (n->shape)
 		buffer_adds(buf, " shape");
+	static const char *const transforms[] = {
+		"normal", "90", "180", "270",
+		"flipped", "flipped-90", "flipped-180", "flipped-270",
+	};
+	if (n->transform && !n->text)
+		buffer_addf(buf, " transform %s", transforms[n->transform]);
+	if (n->gradient.kind)
+		dump_gradient(buf, &n->gradient);
 	if (!n->widget && !n->text && !n->image)
 		buffer_adds(buf, " spacer");
 	if (n->clip_opens && !(i == 0 && (host->inner_clip || host->path_clip)))
@@ -4602,6 +4644,8 @@ dump_widget_line(buffer_t *buf, const struct widget_host *host, size_t i, Clay_E
 	if (n->text) {
 		buffer_addf(buf, " \"%.*s\" font=%u", (int)n->text_len,
 			d->text + n->text_off, n->font);
+		if (n->transform)
+			buffer_addf(buf, " transform %s", transforms[n->transform]);
 	} else if (i == 0 && host->flow) {
 		for (int axis = 0; axis < 2; axis++) {
 			buffer_adds(buf, axis ? " h=" : " w=");

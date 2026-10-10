@@ -125,6 +125,25 @@ local steps = {
         io.stderr:write("[PASS] ticks are ignored in the progressbar\n")
         return true
     end,
+    function(count)
+        if count == 1 then
+            progressbar = wibox.widget { value = 1, color = capture.gradient(0, 200),
+                widget = wibox.widget.progressbar }
+            bar = wibox { x = geo.x + 100, y = geo.y + 100, width = 200, height = 40,
+                screen = s, visible = true, bg = BG,
+                widget = wibox.container.margin(progressbar) }
+            return nil
+        end
+        local line = capture.dump_line(s, capture.gradient_record(0, 0, 200))
+        if not (line and pixel(2, 20, "#ff0000") and pixel(197, 20, "#0000ff")) then
+            assert(count < 20, "the gradient bar never drew: " .. awesome._clay_tree(s))
+            return nil
+        end
+        assert(line:find(" w=percent", 1, true), "the gradient is not on the bar: " .. line)
+        bar.visible = false
+        io.stderr:write("[PASS] a gradient colour draws red to blue across the bar\n")
+        return true
+    end,
 }
 
 runner.run_steps(steps)

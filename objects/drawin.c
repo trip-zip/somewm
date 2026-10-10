@@ -1308,7 +1308,7 @@ static int
 luaA_drawin_set_shape_mask(lua_State *L, drawin_t *d)
 {
 	if (!d->shape_mask_warned) {
-		warn("drawin: shape masks are not read, set wibox.shape");
+		warn("drawin: shape_bounding, shape_clip and shape_input are not read, set wibox.shape");
 		d->shape_mask_warned = true;
 	}
 	return 0;

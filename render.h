@@ -26,6 +26,7 @@ struct render_shape {
 	struct render_gradient gradient;
 	float stroke[4];
 	float stroke_width;
+	uint8_t transform;   /* wl_output_transform of the path and gradient */
 };
 
 /* How the renderer reaches client surfaces. resolve returns the client's

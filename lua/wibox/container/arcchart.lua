@@ -266,11 +266,13 @@ local function describe_arcchart(w, fg, st, item, bound)
     local thickness = math.max(border_width, w:get_thickness() or 5)
     local offset = thickness + 2 * border_width
     local bg = w:get_bg()
-    local background = clay.solid_rgba(bg)
+    -- A gradient starts where `after_draw_children` set it: the ring's
+    -- half its width in, the arcs half a border width in.
+    local background = clay.fill(bg, offset / 2, offset / 2)
     local border_color = w:get_border_color()
     local border = clay.solid_rgba(border_color or "#000000")
     if bg and not background then
-        clay.ignore(w, "bg", "is not solid and is transparent")
+        clay.ignore(w, "bg", "is not a solid or a gradient and is transparent")
     end
     if border_color and not border then
         clay.ignore(w, "border_color", "is not solid and the border is transparent")
@@ -278,9 +280,9 @@ local function describe_arcchart(w, fg, st, item, bound)
     local colors = w:get_colors() or {}
     local fills = {}
     for k, col in pairs(colors) do
-        fills[k] = clay.solid_rgba(col)
+        fills[k] = clay.fill(col, border_width / 2, border_width / 2)
         if col and not fills[k] then
-            clay.ignore(w, "colors", "holds a colour that is not solid, drawn transparent")
+            clay.ignore(w, "colors", "holds a colour that is not a solid or a gradient, drawn transparent")
         end
     end
 
@@ -316,7 +318,16 @@ local function describe_arcchart(w, fg, st, item, bound)
         { w = side, h = side, wsrc = src, hsrc = src, radius = PILL, children = content },
     } }
     local specs = node.specs
-    if background then
+    if background and background.stops then
+        -- The ring is a circle stroked `offset` wide: the band from the
+        -- box's half side inwards by `offset`, which a fill can carry.
+        specs[#specs + 1] = {
+            float = true, w = "grow", h = "grow", fill = background,
+            shape = function(width, height)
+                return clay.shape_ops(shape.arc, width, height, 0, 0, offset, 0, 2 * math.pi)
+            end,
+        }
+    elseif background then
         specs[#specs + 1] = {
             float = true, w = "grow", h = "grow", stroke = background,
             stroke_width = thickness + 2 * border_width,
@@ -337,10 +348,10 @@ local function describe_arcchart(w, fg, st, item, bound)
             if colors[k] then
                 fill = fills[k]
             else
-                fill = fill or clay.solid_rgba(fg)
+                fill = fill or clay.fill(fg, border_width / 2, border_width / 2)
             end
             if not fill then
-                clay.ignore(w, "colors", "holds a colour that is not solid, drawn transparent")
+                clay.ignore(w, "colors", "holds a colour that is not a solid or a gradient, drawn transparent")
             else
                 specs[#specs + 1] = {
                     float = true, w = "grow", h = "grow", fill = fill,

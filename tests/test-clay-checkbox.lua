@@ -103,6 +103,29 @@ local steps = {
         io.stderr:write("[PASS] unchecking removes the check and reveals the green fill\n")
         return true
     end,
+    -- The fill is painted 98 wide from x 1, inside half the 2 pixel border;
+    -- the gradient is authored from there, so its record moves by 1.
+    function(count)
+        if count == 1 then
+            checkbox = wibox.widget {
+                checked = false, bg = capture.gradient(0, 98), border_width = 2,
+                border_color = "#ffffff", widget = wibox.widget.checkbox,
+            }
+            bar = wibox { x = geo.x + 100, y = geo.y + 100, width = 200, height = 100,
+                screen = s, visible = true, bg = BG,
+                widget = wibox.container.margin(checkbox) }
+            return nil
+        end
+        local line = capture.dump_line(s, capture.gradient_record(1, 1, 99))
+        if not (line and pixel(3, 50, "#ff0000") and pixel(96, 50, "#0000ff")) then
+            assert(count < 20, "the gradient fill never drew: " .. awesome._clay_tree(s))
+            return nil
+        end
+        assert(pixel(0, 50, "#ffffff"), "the outline is not white")
+        bar.visible = false
+        io.stderr:write("[PASS] a gradient bg draws red to blue inside the outline\n")
+        return true
+    end,
 }
 
 runner.run_steps(steps)

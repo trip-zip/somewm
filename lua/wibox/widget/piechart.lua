@@ -226,9 +226,9 @@ local function describe_piechart(w, fg)
         local start_angle = start
         local end_angle = start + 2 * math.pi * (v / sum)
         local col = colors and colors[math.fmod(count, col_count) + 1]
-        local fill = clay.solid_rgba(col)
+        local fill = clay.fill(col)
         if col and not fill then
-            clay.ignore(w, "colors", "holds a colour that is not solid, drawn transparent")
+            clay.ignore(w, "colors", "holds a colour that is not a solid or a gradient, drawn transparent")
         elseif fill or stroke then
             specs[#specs + 1] = {
                 float = true, w = "grow", h = "grow", fill = fill,

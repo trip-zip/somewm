@@ -16,6 +16,13 @@ local DEFINITE = { w = 100, h = 100, w_definite = true, h_definite = true }
 local BG = gcolor("#102030")
 local BG_RGBA = { 0x10/255, 0x20/255, 0x30/255, 1 }
 local context = { dpi = 96 }
+local GRADIENT = "linear:0,0:10,0:0,#000000:1,#ffffff"
+
+-- A surface pattern, which is neither a solid nor a gradient.
+local function surface_pattern()
+    local cairo = require("lgi").cairo
+    return cairo.Pattern.create_for_surface(cairo.ImageSurface(cairo.Format.ARGB32, 1, 1))
+end
 
 -- A described color leaf with a preferred size.
 local function leaf_widget(width, height)
@@ -371,11 +378,10 @@ describe("wibox.clay", function()
     end)
 
     it("converts containers down to the first it cannot", function()
-        local w = leaf_widget()
-        local stopper = rotate(margin(w, 2, 2, 2, 2))
+        local stopper = base.make_widget(nil, "spec-stopper")
+        stopper.draw = function() end
         local warning = stub(gdebug, "print_warning")
-        local tree, leaves = compile(BG,
-            background(margin(stopper, 4, 4, 4, 4), "#00ff00"), BG)
+        local tree = compile(BG, background(margin(stopper, 4, 4, 4, 4), "#00ff00"), BG)
         local nodes = chain(tree)
 
         -- The refused subtree is absent; purposeful padding belongs to the
@@ -384,19 +390,40 @@ describe("wibox.clay", function()
         assert.is_same({ 0, 1, 0, 1 }, nodes[1].bg)
         assert.is_same({ 4, 4, 4, 4 }, nodes[1].pad)
         assert.is_nil(nodes[2])
-        assert.stub(warning).was_called_with("wibox.clay: lua.wibox.container.rotate direction "
-            .. "needs a rotation, and Clay has no transforms and is left out of the tree")
+        assert.stub(warning).was_called_with("wibox.clay: spec-stopper draws itself (:draw) "
+            .. "and is left out of the tree")
         warning:revert()
     end)
 
-    it("refuses reflection with a named warning", function()
-        local w = require("wibox.container.mirror")(leaf_widget(), { horizontal = true })
+    it("rotates and mirrors the child's description", function()
         local warning = stub(gdebug, "print_warning")
-        assert.is_true(degraded(w))
-        assert.is_true(degraded(w))
+        for _, case in ipairs {
+            { rotate(nil, "east"), "90", { 3, 4, 2, 1 }, 4, 10 },
+            { require("wibox.container.mirror")(nil, { horizontal = true }), "flipped", { 2, 1, 3, 4 }, 10, 4 },
+        } do
+            local w = leaf_widget(10, 4)
+            local m = margin(w, 1, 2, 3, 4)
+            case[1].widget = m
+            local tree = compile(BG, case[1], BG)
+            local outer, leaf = node_for(tree, m), node_for(tree, w)
+            assert.is_equal(case[2], outer.transform)
+            assert.is_same(case[3], outer.pad)
+            assert.is_equal(case[2], leaf.transform)
+            assert.is_same({ case[4], case[5] }, { leaf.wmin or leaf.w, leaf.hmin or leaf.h })
+        end
+        assert.stub(warning).was_called(0)
+        warning:revert()
+    end)
+
+    it("refuses a rotate around a mirror", function()
+        local warning = stub(gdebug, "print_warning")
+        local leaf = leaf_widget()
+        local turned = rotate(require("wibox.container.mirror")(leaf, { horizontal = true }), "east")
+        local tree = compile(BG, margin(turned, 1, 1, 1, 1), BG)
+        assert.is_nil(node_for(tree, leaf))
+        assert.is_same({}, node_for(tree, turned).children)
         assert.stub(warning).was_called(1)
-        assert.stub(warning).was_called_with("wibox.clay: lua.wibox.container.mirror reflection "
-            .. "needs a reflection, and Clay has no transforms and is left out of the tree")
+        assert.is_truthy(warning.calls[1].vals[1]:find("transforms do not nest", 1, true))
         warning:revert()
     end)
 
@@ -1310,13 +1337,19 @@ describe("wibox.clay margin", function()
         assert.is_same({ 1, 2, 3, 4 }, layout_node(w).pad)
     end)
 
-    it("rounds margins and ignores a gradient color", function()
+    it("rounds margins, fills a gradient color and ignores a surface", function()
         local w = margin(leaf_widget(), 1.5, 1.5, 1.5, 1.5)
         local warning = stub(gdebug, "print_warning")
         assert.is_same({ 2, 2, 2, 2 }, layout_node(w).pad)
+        w.color = GRADIENT
+        local node = layout_node(w)
+        assert.is_nil(node.border)
+        assert.is_same({ 0, 0, 10, 0 }, node.children[1].fill.linear)
         assert.stub(warning).was_called(0)
-        w.color = "linear:0,0:10,0:0,#000000:1,#ffffff"
-        assert.is_nil(layout_node(w).border)
+        w.color = surface_pattern()
+        node = layout_node(w)
+        assert.is_nil(node.border)
+        assert.is_equal(1, #node.children)
         assert.stub(warning).was_called(1)
         warning:revert()
     end)
@@ -1427,7 +1460,7 @@ describe("wibox.clay border", function()
 end)
 
 describe("wibox.clay arcchart", function()
-    it("keeps asymmetric padding and omits transparent strokes and arcs", function()
+    it("keeps asymmetric padding, fills gradients and omits transparent strokes and arcs", function()
         local arcchart = require("wibox.container.arcchart")
         local w = arcchart()
         w.values, w.colors = { 1, 1 }, { "#ff0000", "#00ff00" }
@@ -1438,13 +1471,19 @@ describe("wibox.clay arcchart", function()
         local node = w._clay.describe(w, BG, nil, nil, DEFINITE)
         assert.is_same({ 14, 10, 12, 12 }, node.pad)
         assert.stub(warning).was_called(0)
-        w.bg = "linear:0,0:10,0:0,#000000:1,#ffffff"
+        w.bg = GRADIENT
+        local ring = w._clay.describe(w, BG, nil, nil, DEFINITE).specs[2]
+        assert.is_nil(ring.stroke)
+        assert.is_same({ 5, 5, 15, 5 }, ring.fill.linear)
+        w.colors = { "#ff0000", GRADIENT }
+        assert.is_same({ 1, 1, 11, 1 }, w._clay.describe(w, BG, nil, nil, DEFINITE).specs[4].fill.linear)
+        assert.stub(warning).was_called(0)
+        w.border_color = GRADIENT
         assert.is_equal(#node.specs - 1, #w._clay.describe(w, BG, nil, nil, DEFINITE).specs)
         assert.stub(warning).was_called(1)
-        w.border_color = w.bg
-        w.colors = { "#ff0000", w.bg }
-        assert.is_equal(2, #w._clay.describe(w, BG, nil, nil, DEFINITE).specs)
-        assert.stub(warning).was_called(3)
+        w.colors = { "#ff0000", surface_pattern() }
+        assert.is_equal(#node.specs - 2, #w._clay.describe(w, BG, nil, nil, DEFINITE).specs)
+        assert.stub(warning).was_called(2)
         warning:revert()
     end)
 end)
@@ -1628,14 +1667,20 @@ describe("wibox.clay imagebox", function()
 end)
 
 describe("wibox.clay progressbar", function()
-    it("ignores ticks, rounds margins and omits a gradient bar", function()
+    it("ignores ticks, rounds margins, fills a gradient bar and omits a surface bar", function()
         local w = require("wibox.widget.progressbar")()
         w.ticks, w.margins, w.value = true, 1.5, 0.5
         local warning = stub(gdebug, "print_warning")
         local node = w._clay.describe(w)
         assert.is_same({ 2, 2, 2, 2 }, node.pad)
         assert.stub(warning).was_called(1)
-        w.color = "linear:0,0:10,0:0,#000000:1,#ffffff"
+        w.color = GRADIENT
+        local bar = w._clay.describe(w).specs[1].children[1]
+        assert.is_nil(bar.bg)
+        assert.is_same({ 0, 0, 10, 0 }, bar.fill.linear)
+        assert.is_function(bar.shape)
+        assert.stub(warning).was_called(1)
+        w.color = surface_pattern()
         assert.is_equal(0, #w._clay.describe(w).specs[1].children)
         assert.stub(warning).was_called(2)
         warning:revert()
@@ -1652,26 +1697,38 @@ describe("wibox.clay progressbar", function()
 end)
 
 describe("wibox.clay slider", function()
-    it("rounds height and uses the bar color for a gradient handle", function()
+    it("rounds height, fills a gradient handle and uses the bar color for a surface", function()
         local w = require("wibox.widget.slider")()
         w.bar_border_width, w.bar_height, w.bar_color = 2, 4.4, "#0000ff"
         local warning = stub(gdebug, "print_warning")
         local node = w._clay.describe(w)
         assert.is_equal(4, node.specs[1].children[1].h)
+        w.handle_color = GRADIENT
+        assert.is_same({ 0, 0, 10, 0 }, w._clay.describe(w).specs[2].fill.linear)
         assert.stub(warning).was_not_called()
-        w.handle_color = "linear:0,0:10,0:0,#000000:1,#ffffff"
+        w.handle_color = surface_pattern()
         assert.is_same({ 0, 0, 1, 1 }, w._clay.describe(w).specs[2].fill)
         assert.stub(warning).was_called(1)
+        w.handle_color, w.handle_border_width, w.bar_color = nil, 1, GRADIENT
+        assert.is_nil(w._clay.describe(w).specs[2].stroke)
+        assert.stub(warning).was_called(2)
+        assert.matches("slider bar_color is not solid and the handle border is not drawn",
+            warning.calls[2].vals[1], 1, true)
         warning:revert()
     end)
 end)
 
 describe("wibox.clay checkbox", function()
-    it("uses the main color for a gradient check", function()
+    it("fills a gradient check at the content corner and uses the main color for a surface", function()
         local w = require("wibox.widget.checkbox")()
         w.checked, w.color = true, "#0000ff"
-        w.check_color = "linear:0,0:10,0:0,#000000:1,#ffffff"
+        w.check_color = GRADIENT
         local warning = stub(gdebug, "print_warning")
+        -- The content corner is half the 1 pixel border plus the 1 pixel padding.
+        assert.is_same({ 1.5, 1.5, 11.5, 1.5 },
+            w._clay.describe(w, nil, nil, nil, DEFINITE).specs[2].fill.linear)
+        assert.stub(warning).was_not_called()
+        w.check_color = surface_pattern()
         assert.is_same({ 0, 0, 1, 1 }, w._clay.describe(w, nil, nil, nil, DEFINITE).specs[2].fill)
         assert.stub(warning).was_called(1)
         warning:revert()
@@ -1679,7 +1736,7 @@ describe("wibox.clay checkbox", function()
 end)
 
 describe("wibox.clay graph", function()
-    it("rounds the border and omits a gradient data group", function()
+    it("rounds the border, fills a gradient data group and omits a surface one", function()
         local w = require("wibox.widget.graph")()
         w.border_width, w.border_color, w.color = 1.4, "#0000ff", "#ff0000"
         w:add_value(0.5)
@@ -1688,7 +1745,10 @@ describe("wibox.clay graph", function()
         assert.is_same({ 1, 1, 1, 1 }, node.bw)
         assert.is_equal(1, #node.specs)
         assert.stub(warning).was_called(0)
-        w.color = "linear:0,0:10,0:0,#000000:1,#ffffff"
+        w.color = GRADIENT
+        assert.is_same({ 1, 1, 11, 1 }, w._clay.describe(w).specs[1].fill.linear)
+        assert.stub(warning).was_called(0)
+        w.color = surface_pattern()
         assert.is_equal(0, #w._clay.describe(w).specs)
         assert.stub(warning).was_called(1)
         warning:revert()
@@ -1696,13 +1756,14 @@ describe("wibox.clay graph", function()
 end)
 
 describe("wibox.clay piechart", function()
-    it("omits a gradient sector", function()
+    it("fills a gradient sector and omits a surface one", function()
         local w = require("wibox.widget.piechart")()
         w.data_list, w.display_labels = { { "a", 1 }, { "b", 1 } }, false
-        w.colors, w.border_color = { "#ff0000", "#0000ff" }, "#000000"
+        w.colors, w.border_color = { "#ff0000", GRADIENT }, "#000000"
         local warning = stub(gdebug, "print_warning")
-        assert.is_equal(2, #w._clay.describe(w, BG).specs)
-        w.colors = { "#ff0000", "linear:0,0:10,0:0,#000000:1,#ffffff" }
+        assert.is_same({ 0, 0, 10, 0 }, w._clay.describe(w, BG).specs[2].fill.linear)
+        assert.stub(warning).was_not_called()
+        w.colors = { "#ff0000", surface_pattern() }
         assert.is_equal(1, #w._clay.describe(w, BG).specs)
         assert.stub(warning).was_called(1)
         warning:revert()

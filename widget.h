@@ -172,6 +172,9 @@ struct widget_node {
 	 * children are cut to its arc as the container's own clip cut them.
 	 * Numbered here rather than by Lua, from the tree's shape alone. */
 	uint8_t clip_opens, clip_by;
+	/* The wl_output_transform its shape, gradient, text or image is drawn
+	 * with; Lua already rotated the description. */
+	uint8_t transform;
 
 	/* A text element (CLAY_TEXT): the run in the drawin's widget_text buffer
 	 * and its Clay_TextElementConfig. fontSize is 0; the interned face carries

@@ -202,6 +202,31 @@ local steps = {
         io.stderr:write("[PASS] the floating overlay paints its image and background\n")
         return true
     end,
+    -- Spacing 48 makes the tray 2 + 24 + 48 + 24 + 2 = 100 wide; its top
+    -- padding row holds no icon.
+    function(count_)
+        if count_ == 1 then
+            beautiful.bg_systray = capture.gradient(0, 100)
+            tray:set_spacing(48)
+            bar.visible = true
+            return nil
+        end
+        if hide_foreign() then
+            tray:_sync_items()
+            return nil
+        end
+        local shot = cap:shot()
+        local line = capture.dump_line(s, capture.gradient_record(0, 0, 100))
+        if not (line and cap:near(shot, 2, 1, "#ff0000") and cap:near(shot, 97, 1, "#0000ff")) then
+            assert(count_ < 20, "the gradient tray never drew: " .. awesome._clay_tree(s))
+            return nil
+        end
+        assert(line:find("wibox.widget.systray shape", 1, true) and line:find(" box 0,0 100x", 1, true),
+            "the gradient is not on the 100 wide tray: " .. line)
+        bar.visible = false
+        io.stderr:write("[PASS] a gradient bg_systray draws red to blue across the tray\n")
+        return true
+    end,
 
 }
 
