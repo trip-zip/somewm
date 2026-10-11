@@ -160,6 +160,8 @@ end
 
 --- Set a textbox wrap mode.
 --
+-- Clay wraps text at words in every mode; "char" warns once that it does.
+--
 -- @DOC_wibox_widget_textbox_wrap1_EXAMPLE@
 --
 -- @property wrap
@@ -171,6 +173,7 @@ end
 
 function textbox:set_wrap(mode)
     local allowed = { word = "WORD", char = "CHAR", word_char = "WORD_CHAR" }
+    if mode == "char" then clay.ignore(self, "wrap", 'is "char" and wraps at words') end
     if allowed[mode] then
         if self._private.layout:get_wrap() == allowed[mode] then
             return
