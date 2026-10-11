@@ -72,7 +72,7 @@ carousel.peek_width = 0
 --- Dynamic peek width in pixels. Columns at the edges of the strip will have this applied
 -- as their peek width. Negative values are ignored and cause edge columns to use
 -- peek_width instead.
--- @beautiful beautiful.carousel_dynamic_peek
+-- @beautiful beautiful.carousel_dynamic_peek_width
 -- @tparam[opt=-1] number dynamic_peek_width
 carousel.dynamic_peek_width = -1
 

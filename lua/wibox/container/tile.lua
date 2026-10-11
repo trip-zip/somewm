@@ -41,7 +41,8 @@ local module = {mt = {}}
 --- Enable or disable the tiling.
 --
 -- When set to `false`, this container behaves exactly like
--- `wibox.container.place`.
+-- `wibox.container.place`. When `true`, it does too: one copy is drawn,
+-- and it warns once.
 --
 --@DOC_wibox_container_tile_tiled_EXAMPLE@
 --
@@ -71,6 +72,13 @@ for prop in pairs(defaults) do
 end
 
 clay.retire(module, {"horizontal_crop", "vertical_crop"})
+
+module._clay = { attachment = true, describe = function(w)
+    if w._private.tiled then
+        clay.ignore("wibox.container.tile", "tiled", "is true and one copy is drawn")
+    end
+    return place._clay.describe(w)
+end }
 
 local function new(_, args)
     args = args or {}

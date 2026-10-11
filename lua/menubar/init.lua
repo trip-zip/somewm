@@ -74,6 +74,11 @@ end
 -- @beautiful beautiful.menubar_font
 -- @param[opt=beautiful.font] font
 
+--- The launcher's width, ahead of `menubar.geometry.width`. Without either,
+-- the launcher spans the workarea.
+-- @beautiful beautiful.launcher_width
+-- @tparam[opt=nil] number launcher_width
+
 
 -- menubar
 local menubar = { menu_entries = {} }
