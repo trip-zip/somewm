@@ -138,6 +138,10 @@ All notable changes to somewm will be documented in this file.
   repeated the widget across its box.
 - A fractional padding, gap, offset or border width rounds to the nearest whole
   pixel. 2.0 kept the fraction.
+- The interactive awful.screenshot's overlay covers the screen under the
+  pointer when snipping starts, rather than the whole root; 2.0 drew it across
+  every output. A drag that crosses screens still selects its root-space box,
+  and the rectangle shows on the screen it started on.
 
 ### Removed
 
