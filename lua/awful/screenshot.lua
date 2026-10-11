@@ -27,6 +27,7 @@
 -- Grab environment we need
 local capi = {
     root         = root,
+    mouse        = mouse,
     screen       = screen,
     client       = client,
     mousegrabber = mousegrabber
@@ -185,7 +186,10 @@ end
 -- cases. It did not seem appropriate to make that change as a part of the pull
 -- request that was creating the screenshot API, as it would clutter and
 -- confuse the change.
-local function show_frame(self, surface, geo)
+--
+-- The frame covers the screen under the pointer, since a drawin is declared
+-- on the output hosting its screen only.
+local function show_frame(self, surface, geo, s)
     local col = self._private.frame_color
           or beautiful.screenshot_frame_color
           or "#ff0000"
@@ -194,7 +198,7 @@ local function show_frame(self, surface, geo)
         or beautiful.screenshot_frame_shape
         or gears.shape.rectangle
 
-    local w, h = root.size()
+    local sg = s.geometry
 
     self._private.selection_widget = wibox.widget {
         border_width  = 3,
@@ -205,7 +209,6 @@ local function show_frame(self, surface, geo)
         widget        = wibox.widget.separator
     }
     self._private.selection_widget.point = {x=0, y=0}
-    self._private.selection_widget.fit = function() return 0,0 end
 
     self._private.canvas_widget = wibox.widget {
         widget = wibox.layout.manual
@@ -216,16 +219,19 @@ local function show_frame(self, surface, geo)
         widget = wibox.widget.imagebox
     }
 
-    self._private.imagebox.point = geo
+    self._private.imagebox.point = {
+        x = geo.x - sg.x, y = geo.y - sg.y, width = geo.width, height = geo.height,
+    }
     self._private.canvas_widget:add(self._private.imagebox)
     self._private.canvas_widget:add(self._private.selection_widget)
 
     self._private.frame = wibox {
         ontop   = true,
-        x       = 0,
-        y       = 0,
-        width   = w,
-        height  = h,
+        screen  = s,
+        x       = sg.x,
+        y       = sg.y,
+        width   = sg.width,
+        height  = sg.height,
         widget  = self._private.canvas_widget,
         visible = true,
     }
@@ -282,7 +288,8 @@ local function start_snipping(self, surface, geometry, method)
 
     local pressed = false
 
-    show_frame(self, surface, geometry)
+    local s = capi.mouse.screen
+    show_frame(self, surface, geometry, s)
 
     local function ret_mg_callback(mouse_data, accept, reject)
         for btn, status in pairs(mouse_data.buttons) do
@@ -313,20 +320,15 @@ local function start_snipping(self, surface, geometry, method)
                 -- Released
                 return self:accept()
             else
-                -- Update position
-                self._private.selection_widget.point.x = min_x
-                self._private.selection_widget.point.y = min_y
-                self._private.selection_widget.fit = function()
-                    return self._private.selected_geometry.width, self._private.selected_geometry.height
-                end
-                self._private.selection_widget:emit_signal("widget::layout_changed")
-                self._private.canvas_widget:emit_signal("widget::redraw_needed")
+                -- Update position, in the frame's space
+                self._private.canvas_widget:move_widget(self._private.selection_widget, {
+                    x = min_x - s.geometry.x, y = min_y - s.geometry.y,
+                    width = max_x - min_x, height = max_y - min_y,
+                })
+                self._private.selection_widget.visible = true
             end
         elseif accept then
             pressed = true
-            self._private.selection_widget.visible = true
-            self._private.selection_widget.point.x = mouse_data.x
-            self._private.selection_widget.point.y = mouse_data.y
             self._private.mg_first_pnt[1] = mouse_data.x
             self._private.mg_first_pnt[2] = mouse_data.y
         end
