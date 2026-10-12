@@ -145,6 +145,8 @@ typedef struct InputSettings {
 typedef struct InputRule {
     char *type;                     /* e.g. "touchpad", "pointer", "tablet", "tablet-tool-pen", "tablet-tool", "touch"; NULL=match any */
     char *name;                     /* device name substring, NULL=match any */
+    char *xkb_model;                /* keyboard rules only: per-device XKB model
+                                      (e.g. "microsoftmult"), NULL=seat default */
     InputSettings properties;
 } InputRule;
 
