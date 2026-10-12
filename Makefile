@@ -117,12 +117,22 @@ test-asan: asan
 	@meson test -C build-asan --suite unit --print-errorlogs
 	@SOMEWM=./build-asan/somewm SOMEWM_CLIENT=./build-asan/somewm-client ./tests/run-integration.sh
 
-# CI mode: headless (for automated testing environments)
-test-ci: build-test test-unit test-signal test-ipc-socket test-restart
-	@HEADLESS=1 \
+# The integration tests CI runs, headless, here and in CI's integration step.
+# Tests that need external apps or spawn clients are left out.
+test-ci: build-test
+	@spawning=$$(grep -rl 'require.*_client' tests/test-*.lua | xargs -I{} basename {}); \
+	 tests=$$(find tests -name 'test-*.lua' -type f \
+	   ! -name 'test-xwayland-*' \
+	   ! -name 'test-layer-shell-*' \
+	   ! -name 'test-dbus-error.lua' \
+	   ! -name 'test-transient-stacking.lua' \
+	   ! -name 'test-output-fake-screen.lua' \
+	   $$(printf '! -name %s ' $$spawning) \
+	   | sort); \
+	 HEADLESS=1 LIBSEAT_BACKEND=noop TEST_TIMEOUT=45 \
 	 SOMEWM=./build-test/somewm \
 	 SOMEWM_CLIENT=./build-test/somewm-client \
-	 ./tests/run-integration.sh
+	 ./tests/run-integration.sh $$tests
 
 # Fast test suite using persistent compositor (10x faster)
 test-fast: build-test
