@@ -6,6 +6,9 @@ All notable changes to somewm will be documented in this file.
 
 ### Added
 
+- awesome._active_modifiers reports current keyboard modifiers, including
+  root.fake_input presses, so awful.keyboard can release held modifiers.
+
 - client.shape: nil, a corner radius in pixels, or a gears.shape function.
   gears.surface.apply_shape_bounding sets it on a client as it sets
   wibox.shape. gears.shape.rounded_rect, or a function drawing its path, is
