@@ -6,6 +6,10 @@ All notable changes to somewm will be documented in this file.
 
 ### Fixed
 
+- client.icon rejects LGI surface records and other non-pointer values with a
+  Lua type error instead of interpreting userdata storage as a Cairo surface.
+  Assign awesome.load_image() or a Cairo surface's _native pointer instead.
+
 - Systray registrations share one pending property fetch per item, preventing duplicate icons after a reload and allowing retries when the fetch fails.
 
 - wibox.widget.textbox keeps its last applied font when setting a font fails, so a rejected name can be retried.
