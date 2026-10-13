@@ -22,6 +22,43 @@ describe("wibox.widget.textbox", function()
         widget = textbox()
     end)
 
+    describe("failed font changes", function()
+        local get_font
+        before_each(function()
+            get_font = beautiful.get_font
+        end)
+        after_each(function()
+            beautiful.get_font = get_font
+        end)
+
+        for _, failure in ipairs({ "lookup", "description" }) do
+            it("preserves the applied font after a " .. failure .. " failure", function()
+                local original = widget:get_font()
+                local attempts = 0
+                beautiful.get_font = function(name)
+                    if name == "bad font" then
+                        attempts = attempts + 1
+                        if failure == "lookup" then
+                            error("font lookup failed")
+                        end
+                        return false
+                    end
+                    return get_font(name)
+                end
+
+                assert.has_error(function() widget:set_font("bad font") end)
+                assert.equals(original, widget:get_font())
+                assert.has_error(function() widget:set_font("bad font") end)
+                assert.equals(2, attempts)
+                widget:set_font("Monospace 20")
+                assert.equals("Monospace 20", widget:get_font())
+                assert.has_error(function() widget:set_font("bad font") end)
+                assert.equals(3, attempts)
+                assert.equals("Monospace 20", widget:get_font())
+            end)
+        end
+    end)
+
     describe("emitting signals", function()
         local redraw_needed, layout_changed
         before_each(function()
