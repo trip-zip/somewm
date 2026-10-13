@@ -1,8 +1,4 @@
 -- Test: awesome._active_modifiers reports the currently held modifiers.
---
--- It used to be a static empty table set once at startup, so
--- awful.keyboard.emulate_key_combination never released held modifiers and
--- Lua could not query modifier state at all.
 
 local runner = require("_runner")
 

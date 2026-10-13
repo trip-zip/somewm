@@ -2380,7 +2380,6 @@ const luaL_Reg awesome_methods[] = {
 	{ NULL, NULL }
 };
 
-/** awesome.__index handler for property access */
 /** Get currently active modifiers, served as awesome._active_modifiers.
  * Reads the keyboard group's xkb state, so it covers real keys and
  * root.fake_input keys.
@@ -2408,7 +2407,7 @@ luaA_get_active_modifiers(lua_State *L)
 	return 1;
 }
 
-
+/** awesome.__index handler for property access */
 static int
 luaA_awesome_index(lua_State *L)
 {
