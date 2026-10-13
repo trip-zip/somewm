@@ -8,6 +8,8 @@ This directory contains the test suite for somewm, including both unit tests and
 
 Unit tests test individual Lua modules in isolation using the busted framework. These tests run quickly and don't require a running compositor.
 
+The surface tests require the Gdk 3.0 typelib (`gir1.2-gdk-3.0` on Debian and Ubuntu, provided by `gtk3` on Arch) for pixel comparisons. They do not require `DISPLAY` or `WAYLAND_DISPLAY`.
+
 **Location**: `spec/`
 **Framework**: busted
 **Runner**: `tests/run-unit.sh`
