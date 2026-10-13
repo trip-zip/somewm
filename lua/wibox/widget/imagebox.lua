@@ -28,25 +28,20 @@ local lgi = require("lgi")
 local cairo = lgi.cairo
 
 local base = require("wibox.widget.base")
+local clay = require("wibox.clay")
 local surface = require("gears.surface")
 local gtable = require("gears.table")
 local gdebug = require("gears.debug")
 local gfs = require("gears.filesystem")
 local setmetatable = setmetatable
 local type = type
-local math = math
 
-local unpack = unpack or table.unpack -- luacheck: globals unpack (compatibility with Lua 5.1)
 
 -- Placeholder table to represent an emty stylesheet.
 -- It has to be defined here to avoid being GCed
 local empty_stylesheet = {}
 
-local policies_to_extents = {
-    ["pad"]     = cairo.Extend.PAD,
-    ["repeat"]  = cairo.Extend.REPEAT,
-    ["reflect"] = cairo.Extend.REFLECT,
-}
+
 
 -- Safe load for optional Rsvg module
 local Rsvg = nil
@@ -90,6 +85,10 @@ function imagebox._load_rsvg_handle(file, style)
     end
 
     if not err then
+        if style then
+            local _, widget = next(stylesheet_cache[style])
+            handle:set_stylesheet(widget and widget._private.stylesheet or style)
+        end
         rsvg_handle_cache[file] = rsvg_handle_cache[file] or setmetatable({}, {__mode = "k"})
         rsvg_handle_cache[file][style_ref] = rsvg_handle_cache[file][style_ref] or {}
         rsvg_handle_cache[file][style_ref]["handle"] = handle
@@ -170,210 +169,14 @@ function imagebox._get_stylesheet(self, content_or_path)
     end
 end
 
----Update the cached size depending on the stylesheet and dpi.
---
--- It's necessary because a single RSVG handle can be used by
--- many imageboxes. So DPI and Stylesheet need to be set each time.
-local function update_dpi(self, ctx)
-    if not self._private.handle then return end
 
-    local dpi = self._private.auto_dpi and
-        ctx.dpi or
-        self._private.dpi or
-        nil
 
-    local need_dpi = dpi and
-        self._private.last_dpi ~= dpi
-
-    local need_style = self._private.handle.set_stylesheet and
-        self._private.stylesheet
-
-    local old_size = self._private.default and self._private.default.width
-
-    if dpi and dpi ~= self._private.cache.dpi then
-        if type(dpi) == "table" then
-            self._private.handle:set_dpi_x_y(dpi.x, dpi.y)
-        else
-            self._private.handle:set_dpi(dpi)
-        end
-    end
-
-    if need_style and self._private.cache.stylesheet ~= self._private.stylesheet then
-        self._private.handle:set_stylesheet(self._private.stylesheet)
-    end
-
-    -- Reload the size.
-    if need_dpi or (need_style and self._private.stylesheet ~= self._private.last_stylesheet) then
-        set_handle(self, self._private.handle, self._private.cache)
-    end
-
-    self._private.last_dpi = dpi
-    self._private.cache.dpi = dpi
-    self._private.last_stylesheet = self._private.stylesheet
-    self._private.cache.stylesheet = self._private.stylesheet
-
-    -- This can happen in the constructor when `dpi` is set after `image`.
-    if old_size and old_size ~= self._private.default.width then
-        self:emit_signal("widget::redraw_needed")
-        self:emit_signal("widget::layout_changed")
-    end
-end
-
--- Draw an imagebox with the given cairo context in the given geometry.
-function imagebox:draw(ctx, cr, width, height)
-    if width == 0 or height == 0 or not self._private.default then return end
-
-    -- For valign = "top" and halign = "left"
-    local translate = {
-        x = 0,
-        y = 0,
-    }
-
-    update_dpi(self, ctx)
-
-    local w, h = self._private.default.width, self._private.default.height
-
-    local policy = {
-        w = self._private.horizontal_fit_policy or "auto",
-        h = self._private.vertical_fit_policy or "auto"
-    }
-
-    if self._private.resize then
-        -- That's for the "fit" policy.
-        local aspects = {
-            w = width / w,
-            h = height / h
-        }
-
-        for _, aspect in ipairs {"w", "h"} do
-            if self._private.upscale == false and (w < width and h < height) then
-                aspects[aspect] = 1
-            elseif self._private.downscale == false and (w >= width and h >= height) then
-                aspects[aspect] = 1
-            elseif policy[aspect] == "none" or policies_to_extents[policy[aspect]] then
-                aspects[aspect] = 1
-            elseif policy[aspect] == "auto" then
-                aspects[aspect] = math.min(width / w, height / h)
-            end
-        end
-
-        if self._private.halign == "center" then
-            translate.x = math.floor((width - w*aspects.w)/2)
-        elseif self._private.halign == "right" then
-            translate.x = math.floor(width - (w*aspects.w))
-        end
-
-        if self._private.valign == "center" then
-            translate.y = math.floor((height - h*aspects.h)/2)
-        elseif self._private.valign == "bottom" then
-            translate.y = math.floor(height - (h*aspects.h))
-        end
-
-        cr:translate(translate.x, translate.y)
-
-        -- Before using the scale, make sure it is below the threshold.
-        local threshold, max_factor = self._private.max_scaling_factor, math.max(aspects.w, aspects.h)
-
-        if threshold and threshold > 0 and threshold < max_factor then
-            aspects.w = (aspects.w*threshold)/max_factor
-            aspects.h = (aspects.h*threshold)/max_factor
-        end
-
-        -- Set the clip
-        if self._private.clip_shape then
-            cr:clip(self._private.clip_shape(cr, w*aspects.w, h*aspects.h, unpack(self._private.clip_args)))
-        end
-
-        cr:scale(aspects.w, aspects.h)
-    else
-        if self._private.halign == "center" then
-            translate.x = math.floor((width - w)/2)
-        elseif self._private.halign == "right" then
-            translate.x = math.floor(width - w)
-        end
-
-        if self._private.valign == "center" then
-            translate.y = math.floor((height - h)/2)
-        elseif self._private.valign == "bottom" then
-            translate.y = math.floor(height - h)
-        end
-
-        cr:translate(translate.x, translate.y)
-
-        -- Set the clip
-        if self._private.clip_shape then
-            cr:clip(self._private.clip_shape(cr, w, h, unpack(self._private.clip_args)))
-        end
-    end
-
-    if self._private.handle then
-        self._private.handle:render_cairo(cr)
-    else
-        -- Yes, it is possible that the vertical or horizontal policies both
-        -- have extends, but Cairo doesn't support this. So be it.
-        local pol = policies_to_extents[policy.w]
-        pol = pol or policies_to_extents[policy.h]
-
-        if pol then
-            local pat = cairo.Pattern.create_for_surface(self._private.image)
-            pat:set_extend(pol)
-            cr:set_source(pat)
-        else
-            cr:set_source_surface(self._private.image, 0, 0)
-        end
-
-        local filter = self._private.scaling_quality
-
-        if filter then
-            cr:get_source():set_filter(cairo.Filter[filter:upper()])
-        end
-
-        cr:paint()
-    end
-end
-
--- Fit the imagebox into the given geometry
-function imagebox:fit(ctx, width, height)
-    if not self._private.default then return 0, 0 end
-
-    update_dpi(self, ctx)
-
-    local w, h = self._private.default.width, self._private.default.height
-
-    if w <= width and h <= height and self._private.upscale == false then
-        return w, h
-    end
-
-    if (w < width or h < height) and self._private.downscale == false then
-        return w, h
-    end
-
-    if self._private.resize or w > width or h > height then
-        local aspect = math.min(width / w, height / h)
-        return w * aspect, h * aspect
-    end
-
-    return w, h
-end
 
 --- The image rendered by the `imagebox`.
 --
 -- @property image
 -- @tparam[opt=nil] image|nil image
 -- @propemits false false
-
---- Return the source image width.
---
--- For SVG images, this may be affected by the DPI and might not
--- reflect the size the images will be rendered at. For PNG or
--- JPG images, this will return the file resolution.
---
--- @property source_width
--- @tparam number source_width
--- @propertydefault This depends on the source image.
--- @negativeallowed false
--- @see image
--- @see source_height
 
 --- Return the source image height.
 --
@@ -386,7 +189,6 @@ end
 -- @propertydefault This depends on the source image.
 -- @negativeallowed false
 -- @see image
--- @see source_width
 
 --- Set the `imagebox` image.
 --
@@ -546,34 +348,20 @@ end
 -- @tparam[opt=96] number|table dpi
 -- @negativeallowed false
 -- @propemits true false
--- @see auto_dpi
 
---- Use the object DPI when rendering the SVG.
---
--- By default, the SVG are interpreted as-is. When this property is set,
--- the screen DPI will be passed to the SVG renderer. Depending on which
--- tool was used to create the `.svg`, this may do nothing at all. However,
--- for example, if the `.svg` uses `<text>` elements and doesn't have an
--- hardcoded stylesheet, the result will differ.
---
--- @property auto_dpi
--- @tparam[opt=false] boolean auto_dpi
--- @propemits true false
--- @see dpi
+function imagebox:set_dpi(value)
+    local old = self._private.dpi
 
-for _, prop in ipairs {"dpi", "auto_dpi"} do
-    imagebox["set_" .. prop] = function(self, value)
-        local old = self._private[prop]
+    -- It will be set in :fit and :draw. The handle is shared
+    -- by multiple imagebox, so it cannot be set just once.
+    self._private.dpi = value
 
-        -- It will be set in :fit and :draw. The handle is shared
-        -- by multiple imagebox, so it cannot be set just once.
-        self._private[prop] = value
-
-        self:emit_signal("widget::redraw_needed")
-        self:emit_signal("widget::layout_changed")
-        self:emit_signal("property::" .. prop, value, old)
-    end
+    self:emit_signal("widget::redraw_needed")
+    self:emit_signal("widget::layout_changed")
+    self:emit_signal("property::dpi", value, old)
 end
+
+clay.retire(imagebox, {"auto_dpi", "source_width"})
 
 function imagebox:set_stylesheet(value)
     if value == self._private.stylesheet_og then return end
@@ -835,6 +623,69 @@ end
 function imagebox.mt:__call(...)
     return new(...)
 end
+
+--- wibox.widget.imagebox -> an element aligning one image leaf. The compiler
+-- composes its size from the surface, scaling flags and authored constraints.
+-- The renderer references the surface and scales it into the solved box.
+-- Non-auto fit policies are ignored.
+-- An SVG handle or an image with no default size is refused.
+local function describe_imagebox(w)
+    local p = w._private
+
+    -- No image: nothing to draw, and no size, as `imagebox:fit` answers.
+    if not p.image and not p.handle then
+        return {}
+    end
+    if not p.default then
+        return clay.refuse(w, "image", "has no size to render at")
+    end
+    for _, axis in ipairs { "horizontal", "vertical" } do
+        local prop = axis .. "_fit_policy"
+        if (p[prop] or "auto") ~= "auto" then
+            clay.ignore(w, prop, "is drawn as auto")
+        end
+    end
+    local image = { image = (p.handle or p.image)._native, vector = p.handle ~= nil,
+        name = "image",
+        aspect = p.default.width / p.default.height,
+        image_resize = p.resize, image_downscale = p.downscale,
+        image_width = p.default.width, image_height = p.default.height,
+        wsrc = "user", hsrc = "user" }
+
+    if p.upscale == false or p.resize == false then
+        image.wmax, image.hmax = p.default.width, p.default.height
+    end
+    if (p.max_scaling_factor or 0) > 0 then
+        image.wmax = math.min(image.wmax or math.huge, p.default.width * p.max_scaling_factor)
+        image.hmax = math.min(image.hmax or math.huge, p.default.height * p.max_scaling_factor)
+    end
+    -- A forced axis tells the image its size, within the caps above; the
+    -- original widget keeps the larger GROW allocation its parent gives it.
+    -- With both forced, only the one that binds is told, so the image keeps
+    -- its aspect inside the forced box.
+    local forced = { w = p.forced_width, h = p.forced_height }
+    if forced.w and forced.h then
+        if forced.h * image.aspect <= forced.w then forced.w = nil else forced.h = nil end
+    end
+    for _, axis in ipairs { "w", "h" } do
+        if forced[axis] then
+            image[axis] = math.min(forced[axis], image[axis .. "max"] or math.huge)
+        end
+    end
+    local node = { specs = { image },
+        align = { x = p.halign or "left", y = p.valign or "top" } }
+    if p.clip_shape then
+        local unpack = unpack or table.unpack
+        node.clip = true
+        node.shape = function(width, height)
+            return clay.shape_ops(p.clip_shape, width, height, 0, 0,
+                unpack(p.clip_args or {}))
+        end
+    end
+    return node
+end
+
+imagebox._clay = { describe = describe_imagebox }
 
 return setmetatable(imagebox, imagebox.mt)
 

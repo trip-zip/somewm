@@ -1,7 +1,7 @@
 ---------------------------------------------------------------------------
 --- Test: minimized clients stay minimized after tag switch
 --
--- Regression test for #217: minimized clients reappear when switching
+-- Regression test: minimized clients reappear when switching
 -- tags away and back. The fix replaces client_on_selected_tags() with
 -- client_isvisible() in arrange() so minimized/hidden state is respected.
 ---------------------------------------------------------------------------
@@ -12,9 +12,7 @@ local utils = require("_utils")
 local awful = require("awful")
 
 if not test_client.is_available() then
-    io.stderr:write("Test finished successfully.\n")
-    awesome.quit()
-    return
+    return runner.skip("no terminal available for test clients")
 end
 
 local c1
@@ -70,7 +68,7 @@ local steps = {
         assert(c1.minimized,
             "Client should still be minimized after tag switch")
         assert(not c1:isvisible(),
-            "BUG #217: Minimized client became visible after tag switch!")
+            "Minimized client became visible after tag switch!")
         io.stderr:write("[TEST] PASS: client stayed minimized after tag switch\n")
         return true
     end,

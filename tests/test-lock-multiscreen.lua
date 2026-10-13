@@ -1,9 +1,9 @@
 ---------------------------------------------------------------------------
 -- Test: Lock multi-screen support
 --
--- Covers: MULTI-1 through MULTI-5, MULTI-7, cover API integration
+-- Covers lock surfaces and cover registration across multiple screens.
 --
--- Note: MULTI-6 (interactive screen removal while locked) requires
+-- Note: Interactive screen removal while locked requires
 -- _test_remove_output which doesn't exist yet. Skipped.
 ---------------------------------------------------------------------------
 
@@ -14,10 +14,7 @@ local lock = require("_lock_helper")
 
 -- Skip if _test_add_output is not available
 if not awesome._test_add_output then
-    io.stderr:write("SKIP: awesome._test_add_output not available\n")
-    io.stderr:write("Test finished successfully.\n")
-    awesome.quit()
-    return
+    return runner.skip("awesome._test_add_output not available")
 end
 
 local initial_screen_count = screen.count()

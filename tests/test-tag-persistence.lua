@@ -16,18 +16,12 @@ local awful = require("awful")
 
 -- This test requires 2 outputs
 if screen.count() < 2 then
-    io.stderr:write("SKIP: test-tag-persistence requires WLR_WL_OUTPUTS=2\n")
-    io.stderr:write("Test finished successfully.\n")
-    awesome.quit()
-    return
+    return runner.skip("test-tag-persistence requires WLR_WL_OUTPUTS=2")
 end
 
 -- Skip if no terminal for client spawning
 if not test_client.is_available() then
-    io.stderr:write("SKIP: no terminal available for client spawning\n")
-    io.stderr:write("Test finished successfully.\n")
-    awesome.quit()
-    return
+    return runner.skip("no terminal available for client spawning")
 end
 
 print("TEST: tag-persistence: screen.count()=" .. screen.count())
@@ -228,14 +222,6 @@ local steps = {
         print("TEST:   client on screen " .. my_client.screen.index
             .. ", tag=" .. tags[1].name)
         return true
-    end,
-
-    -- Step 9: Cleanup
-    function(count)
-        if count == 1 then
-            my_client:kill()
-        end
-        return #client.get() == 0
     end,
 }
 

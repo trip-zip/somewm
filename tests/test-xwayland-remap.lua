@@ -21,19 +21,13 @@ local function is_headless()
 end
 
 if is_headless() then
-    io.stderr:write("SKIP: XWayland remap test requires visual mode (HEADLESS=0)\n")
-    io.stderr:write("Test finished successfully.\n")
-    awesome.quit()
-    return
+    return runner.skip("XWayland remap test requires visual mode (HEADLESS=0)")
 end
 
 -- Skip if python3 not available
 local python3_check = os.execute("which python3 >/dev/null 2>&1")
 if not python3_check then
-    io.stderr:write("SKIP: python3 not available for X11 helper\n")
-    io.stderr:write("Test finished successfully.\n")
-    awesome.quit()
-    return
+    return runner.skip("python3 not available for X11 helper")
 end
 
 local awful = require("awful")

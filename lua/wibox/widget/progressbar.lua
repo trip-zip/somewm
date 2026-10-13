@@ -39,10 +39,10 @@ local setmetatable = setmetatable
 local ipairs = ipairs
 local math = math
 local base = require("wibox.widget.base")
-local color = require("gears.color")
 local beautiful = require("beautiful")
 local shape = require("gears.shape")
 local gtable = require("gears.table")
+local clay = require("wibox.clay")
 
 local progressbar = { mt = {} }
 
@@ -156,20 +156,7 @@ local progressbar = { mt = {} }
 -- @property ticks
 -- @tparam[opt=false] boolean ticks
 -- @propemits true false
--- @see ticks_gap
 -- @see ticks_size
-
---- The progressbar ticks gap.
---
--- @DOC_wibox_widget_progressbar_ticks_gap_EXAMPLE@
---
--- @property ticks_gap
--- @tparam[opt=1] number ticks_gap
--- @propertyunit pixel
--- @negativeallowed false
--- @propemits true false
--- @see ticks_size
--- @see ticks
 
 --- The progressbar ticks size.
 --
@@ -184,7 +171,6 @@ local progressbar = { mt = {} }
 -- @propertyunit pixel
 -- @negativeallowed false
 -- @propemits true false
--- @see ticks_gap
 -- @see ticks
 
 --- The maximum value the progressbar should handle.
@@ -331,208 +317,111 @@ local progressbar = { mt = {} }
 
 local properties = { "border_color", "color"     , "background_color",
                      "value"       , "max_value" , "ticks",
-                     "ticks_gap"   , "ticks_size", "border_width",
+                     "ticks_size"  , "border_width",
                      "shape"       , "bar_shape" , "bar_border_width",
                      "clip"        , "margins"   , "bar_border_color",
                      "paddings",
                    }
 
-function progressbar.draw(pbar, _, cr, width, height)
-    local ticks_gap = pbar._private.ticks_gap or 1
-    local ticks_size = pbar._private.ticks_size or 4
 
-    -- We want one pixel wide lines
-    cr:set_line_width(1)
 
-    local max_value = pbar._private.max_value
-
-    local value = math.min(max_value, math.max(0, pbar._private.value))
-
-    if value >= 0 then
-        value = value / max_value
+local function describe_progressbar(w)
+    local p = w._private
+    if p.ticks then
+        clay.ignore(w, "ticks", "are not drawn")
     end
-    local border_width = pbar._private.border_width
-        or beautiful.progressbar_border_width or 0
+    local bar_border_color = p.bar_border_color or beautiful.progressbar_bar_border_color
+    local bar_border_width = p.bar_border_width or beautiful.progressbar_bar_border_width
+        or p.border_width or beautiful.progressbar_border_width or 0
+    local bar_border = clay.solid_rgba(bar_border_color)
+    if bar_border_color and not bar_border then
+        clay.ignore(w, "bar_border_color", "is not solid and is transparent")
+    end
+    local bbw = bar_border and clay.pixels(w, "bar_border_width", bar_border_width) or 0
 
-    local bcol = pbar._private.border_color or beautiful.progressbar_border_color
-
-    border_width = bcol and border_width or 0
-
-    local bg = pbar._private.background_color or
-        beautiful.progressbar_bg or "#ff0000aa"
-
-    local bg_width, bg_height = width, height
-
-    local clip = pbar._private.clip ~= false and beautiful.progressbar_clip ~= false
-
-    -- Apply the margins
-    local margin = pbar._private.margins or beautiful.progressbar_margins
-
-    if margin then
-        if type(margin) == "number" then
-            cr:translate(margin, margin)
-            bg_width, bg_height = bg_width - 2*margin, bg_height - 2*margin
-        else
-            cr:translate(margin.left or 0, margin.top or 0)
-            bg_height = bg_height -
-                (margin.top  or 0) - (margin.bottom or 0)
-            bg_width = bg_width   -
-                (margin.left or 0) - (margin.right  or 0)
+    local bcol = p.border_color or beautiful.progressbar_border_color
+    local border = bcol and clay.solid_rgba(bcol)
+    if bcol and not border then
+        clay.ignore(w, "border_color", "is not solid and is transparent")
+    end
+    local bw = p.border_width or beautiful.progressbar_border_width or 0
+    bw = border and clay.pixels(w, "border_width", bw) or 0
+    -- A gradient starts where `progressbar.draw` set it, half a border width in.
+    local foreground = clay.fill(p.color or beautiful.progressbar_fg or "#ff0000", bbw / 2, bbw / 2)
+    local background = clay.fill(p.background_color or beautiful.progressbar_bg or "#ff0000aa",
+        bw / 2, bw / 2)
+    if not foreground then
+        clay.ignore(w, "color", "is not a solid or a gradient and is transparent")
+    end
+    if not background then
+        clay.ignore(w, "background_color", "is not a solid or a gradient and is transparent")
+    end
+    local clip = p.clip ~= false and beautiful.progressbar_clip ~= false
+    local margins, paddings = {}, {}
+    for i, prop in ipairs { "margins", "paddings" } do
+        local value = p[prop] or beautiful["progressbar_" .. prop]
+        local sides = i == 1 and margins or paddings
+        for j, side in ipairs { "left", "right", "top", "bottom" } do
+            local v = type(value) == "number" and value or (value and value[side] or 0)
+            sides[j] = clay.pixels(w, prop .. "." .. side, v)
         end
     end
 
-    -- Draw the background shape
-    if border_width > 0 then
-        -- Cairo draw half of the border outside of the path area
-        cr:translate(border_width/2, border_width/2)
-        bg_width, bg_height = bg_width - border_width, bg_height - border_width
-        cr:set_line_width(border_width)
-    end
-
-    local background_shape = pbar._private.shape or
-        beautiful.progressbar_shape or shape.rectangle
-
-    background_shape(cr, bg_width, bg_height)
-
-    cr:set_source(color(bg))
-
-    local over_drawn_width  = bg_width  + border_width
-    local over_drawn_height = bg_height + border_width
-
-    if border_width > 0 then
-        cr:fill_preserve()
-
-        -- Draw the border
-        cr:set_source(color(bcol))
-
-        cr:stroke()
-
-        over_drawn_width  = over_drawn_width  - 2*border_width
-        over_drawn_height = over_drawn_height - 2*border_width
+    local bg_shape = p.shape or beautiful.progressbar_shape or shape.rectangle
+    local radius = clay.shape_radius(bg_shape)
+    local bar_shape = p.bar_shape or beautiful.progressbar_bar_shape or shape.rectangle
+    local bar_radius = clay.shape_radius(bar_shape)
+    local max = p.max_value
+    local value = math.min(max, math.max(0, p.value))
+    -- Clay rejects percentages over 1 (third_party/clay.h:2030-2033).
+    local ratio = max > 0 and math.max(0, math.min(1, value / max)) or 0
+    local bg = { w = "grow", h = "grow" }
+    if radius then
+        bg.radius = radius
+        clay.bg_fill(bg, background)
+        if bw > 0 then
+            bg.border, bg.bw = border, { bw, bw, bw, bw }
+        end
     else
-        cr:fill()
+        bg.clip = clip
+        bg.fill, bg.stroke, bg.stroke_width = background, border, bw
+        bg.shape = function(width, height)
+            return clay.shape_ops(bg_shape, width - bw, height - bw, bw / 2, bw / 2)
+        end
     end
-
-    -- Undo the translation
-    cr:translate(-border_width/2, -border_width/2)
-
-    -- Make sure the bar stay in the shape
-    if clip then
-        background_shape(cr, bg_width, bg_height)
-        cr:clip()
-        cr:translate(border_width, border_width)
-    else
-        -- Assume the background size is irrelevant to the bar itself
-        if type(margin) == "number" then
-            cr:translate(-margin, -margin)
+    local bar
+    if ratio > 0 and foreground then
+        bar = { w = { percent = ratio }, wsrc = "user", h = "grow" }
+        if bar_radius then
+            bar.radius = bar_radius
+            clay.bg_fill(bar, foreground)
+            if bbw > 0 then
+                bar.border, bar.bw = bar_border, {bbw, bbw, bbw, bbw}
+            end
         else
-            cr:translate(-(margin.left or 0), -(margin.top or 0))
-        end
-
-        over_drawn_height = height
-        over_drawn_width  = width
-    end
-
-    -- Apply the padding
-    local padding = pbar._private.paddings or beautiful.progressbar_paddings
-
-    if padding then
-        if type(padding) == "number" then
-            cr:translate(padding, padding)
-            over_drawn_height = over_drawn_height - 2*padding
-            over_drawn_width  = over_drawn_width  - 2*padding
-        else
-            cr:translate(padding.left or 0, padding.top or 0)
-
-            over_drawn_height = over_drawn_height -
-                (padding.top  or 0) - (padding.bottom or 0)
-            over_drawn_width = over_drawn_width   -
-                (padding.left or 0) - (padding.right  or 0)
-        end
-    end
-
-    over_drawn_width  = math.max(over_drawn_width , 0)
-    over_drawn_height = math.max(over_drawn_height, 0)
-
-    local rel_x = over_drawn_width * value
-
-
-    -- Draw the progressbar shape
-
-    local explicit_bar_shape = pbar._private.bar_shape or beautiful.progressbar_bar_shape
-    local bar_shape = explicit_bar_shape or shape.rectangle
-
-    local bar_border_width = pbar._private.bar_border_width or
-        beautiful.progressbar_bar_border_width or pbar._private.border_width or
-        beautiful.progressbar_border_width or 0
-
-    local bar_border_color = pbar._private.bar_border_color or
-        beautiful.progressbar_bar_border_color
-
-    bar_border_width = bar_border_color and bar_border_width or 0
-
-    over_drawn_width  = over_drawn_width  - bar_border_width
-    over_drawn_height = over_drawn_height - bar_border_width
-    cr:translate(bar_border_width/2, bar_border_width/2)
-
-    if pbar._private.ticks and explicit_bar_shape then
-        local tr_off = 0
-
-        -- Make all the shape and fill later in case the `color` is a gradient.
-        for _=0, width / (ticks_size+ticks_gap)-border_width do
-            bar_shape(cr, ticks_size - (bar_border_width/2), over_drawn_height)
-            cr:translate(ticks_size+ticks_gap, 0)
-            tr_off = tr_off + ticks_size+ticks_gap
-        end
-
-        -- Re-align the (potential) color gradients to 0,0.
-        cr:translate(-tr_off, 0)
-
-        if bar_border_width > 0 then
-            cr:set_source(color(bar_border_color))
-            cr:set_line_width(bar_border_width)
-            cr:stroke_preserve()
-        end
-
-        cr:set_source(color(pbar._private.color or beautiful.progressbar_fg or "#ff0000"))
-
-        cr:fill()
-    else
-        bar_shape(cr, rel_x, over_drawn_height)
-
-        cr:set_source(color(pbar._private.color or beautiful.progressbar_fg or "#ff0000"))
-
-        if bar_border_width > 0 then
-            cr:fill_preserve()
-            cr:set_source(color(bar_border_color))
-            cr:set_line_width(bar_border_width)
-            cr:stroke()
-        else
-            cr:fill()
-        end
-    end
-
-    -- Legacy "ticks" bars. It looks horrible, but to avoid breaking the
-    -- behavior, so be it.
-    if pbar._private.ticks  and not explicit_bar_shape then
-        for i=0, width / (ticks_size+ticks_gap)-border_width do
-            local rel_offset = over_drawn_width / 1 - (ticks_size+ticks_gap) * i
-
-            if rel_offset <= rel_x then
-                cr:rectangle(rel_offset,
-                                border_width,
-                                ticks_gap,
-                                over_drawn_height)
+            bar.fill, bar.stroke, bar.stroke_width = foreground, bar_border, bbw
+            bar.shape = function(width, height)
+                return clay.shape_ops(bar_shape, width - bbw, height - bbw, bbw / 2, bbw / 2)
             end
         end
-        cr:set_source(color(pbar._private.background_color or "#000000aa"))
-        cr:fill()
     end
+    -- Percent contributes no fit content (third_party/clay.h:2273), and
+    -- uses its grow parent's size minus padding and gaps (:2292-2293).
+    if clip then
+        bg.pad = { bw + paddings[1], bw + paddings[2],
+            bw + paddings[3], bw + paddings[4] }
+        bg.children = { bar }
+        return { w = "grow", h = "grow", pad = margins, specs = { bg } }
+    end
+    -- Floating grow elements take their parent's box (third_party/clay.h:2224-2237)
+    -- and paint in declaration order at equal zIndex (:2603-2615).
+    return { w = "grow", h = "grow", specs = {
+        { float = true, w = "grow", h = "grow", pad = margins, children = { bg } },
+        { float = true, w = "grow", h = "grow", pad = paddings, children = { bar } },
+    } }
 end
 
-function progressbar:fit(_, width, height)
-    return width, height
-end
+progressbar._clay = { describe = describe_progressbar }
 
 --- Set the progressbar value.
 --
@@ -564,6 +453,8 @@ function progressbar:set_max_value(max_value)
 end
 
 -- Build properties function
+clay.retire(progressbar, {"ticks_gap"})
+
 for _, prop in ipairs(properties) do
     if not progressbar["set_" .. prop] then
         progressbar["set_" .. prop] = function(pbar, value)
@@ -596,7 +487,6 @@ end
 -- @tparam[opt] gears.shape args.shape The progressbar shape.
 -- @tparam[opt] boolean args.clip Force the inner part (the bar) to fit in the background shape.
 -- @tparam[opt] boolean args.ticks The progressbar to draw ticks.
--- @tparam[opt] number args.ticks_gap The progressbar ticks gap.
 -- @tparam[opt] number args.ticks_size The progressbar ticks size.
 -- @tparam[opt] number args.max_value The maximum value the progressbar should handle.
 -- @tparam[opt] table|number args.margins The progressbar margins.

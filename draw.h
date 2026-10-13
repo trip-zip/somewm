@@ -19,21 +19,8 @@
 #include <gdk-pixbuf/gdk-pixbuf.h>
 #include <lua.h>
 
-#ifdef XWAYLAND
 #include <xcb/xcb.h>
-#endif
 
-/** Create a Cairo surface from raw ARGB data
- *
- * Converts raw ARGB pixel data to a Cairo image surface with premultiplied alpha.
- * The data is copied, so the caller retains ownership of the input data.
- *
- * \param width Width of the image in pixels
- * \param height Height of the image in pixels
- * \param data Pointer to ARGB pixel data (format: 0xAARRGGBB per pixel)
- * \return A new Cairo image surface, or NULL on error
- */
-cairo_surface_t *draw_surface_from_data(int width, int height, uint32_t *data);
 
 /** Create a Cairo surface from a GdkPixbuf
  *
@@ -72,12 +59,6 @@ cairo_surface_t *draw_load_image(lua_State *L, const char *path, GError **error)
  * Note: We use void* instead of xcb_screen_t* because somewm's globalconf.screen
  * is not an xcb_screen_t* like in AwesomeWM. These stubs just return NULL anyway.
  */
-#ifdef XWAYLAND
 void *draw_find_visual(const void *s, uint32_t visual);
-void *draw_default_visual(const void *s);
-void *draw_argb_visual(const void *s);
-uint8_t draw_visual_depth(const void *s, uint32_t vis);
-void draw_test_cairo_xcb(void);
-#endif
 
 #endif /* DRAW_H */

@@ -10,8 +10,7 @@
 
 -- Grab environment we need
 local ipairs = ipairs
-local math = math
-local capi = { screen = screen }
+local client = require("awful.client")
 
 --- The spiral layout layoutbox icon.
 -- @beautiful beautiful.layout_spiral
@@ -25,81 +24,58 @@ local capi = { screen = screen }
 
 local spiral = {}
 
-local function do_spiral(p, is_spiral)
-    local t = p.tag or capi.screen[p.screen].selected_tag
-    local wa = p.workarea
-    local cls = p.clients
-    local n = #cls
-    local old_width, old_height = wa.width, 2 * wa.height
-    -- The left window of the spiral is considered th mw.
-    -- mwfact offset of 0.5 makes the spiral be split at the center
-    -- of the screen for the default mwfact.
-    -- Without the offset, the mw would occupy a smaller part on the left screen
-    -- and could not be resized to its fullest extent.
-    local mwfact = t.master_width_factor + 0.5
-
-    for k, c in ipairs(cls) do
-        if k == 1 and n ~= 1 then
-            wa.width, old_width = math.floor((wa.width / 2) * mwfact), wa.width
-        elseif k == 2 then
-            wa.width, old_width = math.ceil((old_width / 2) * (2 - mwfact)), wa.width
-            if k ~= n then
-                wa.height, old_height = math.floor(wa.height / 2), wa.height
-            end
-        elseif k % 2 == 0 then
-            wa.width, old_width = math.ceil(old_width / 2), wa.width
-            if k ~= n then
-                wa.height, old_height = math.floor(wa.height / 2), wa.height
-            end
-        else
-            wa.height, old_height = math.ceil(old_height / 2), wa.height
-            if k ~= n then
-                wa.width, old_width = math.floor(wa.width / 2), wa.width
-            end
+-- Membership and dimensionless shares only. The native tree owns every box.
+-- A nonzero gap is the existing per-client inset, represented by a real
+-- cell so it does not alter the percentage split of its parent region.
+local function describe(s, is_spiral)
+    local t = s.selected_tag
+    local clients = client.tiled(s)
+    local n = #clients
+    local gap = n == 1 and t.gap_single_client == false and 0 or t.gap
+    local function leaf(c)
+        local item = {client = c, w = "grow", h = "grow"}
+        if gap > 0 then
+            return {name = "CELL", dir = "x", pad = {gap, gap, gap, gap},
+                w = "grow", h = "grow", children = {item}}
         end
-
-        if k % 4 == 0 and is_spiral then
-            wa.x = wa.x - wa.width
-        elseif k % 2 == 0 then
-            wa.x = wa.x + old_width
-        elseif k % 4 == 3 and k < n and is_spiral then
-            wa.x = wa.x + math.ceil(old_width / 2)
-        end
-
-        if k % 4 == 1 and k ~= 1 and is_spiral then
-            wa.y = wa.y - wa.height
-        elseif k % 2 == 1 and k ~= 1 then
-            wa.y = wa.y + old_height
-        elseif k % 4 == 0 and k < n and is_spiral then
-            wa.y = wa.y + math.ceil(old_height / 2)
-        end
-
-        local g = {
-            x = wa.x,
-            y = wa.y,
-            width = wa.width,
-            height = wa.height
-        }
-        p.geometries[c] = g
+        return item
     end
+    local tail = n > 0 and leaf(clients[n]) or nil
+    for i = n - 1, 1, -1 do
+        local horizontal = i % 2 == 1
+        local head = leaf(clients[i])
+        local axis = horizontal and "w" or "h"
+        head[axis] = {percent = i == 1 and (t.master_width_factor + 0.5) / 2 or 0.5}
+        head[axis .. "src"] = i == 1 and "user" or "theme"
+        local reverse = is_spiral and (i % 4 == 3 or i % 4 == 0)
+        tail = {name = i == 1 and "WORKAREA" or "STACK",
+            dir = horizontal and "x" or "y", w = "grow", h = "grow",
+            children = reverse and {tail, head} or {head, tail}}
+    end
+    if n < 2 then
+        return {name = "WORKAREA", dir = "x", children = {tail}}
+    end
+    return tail
 end
+
+-- Retain the layout method's public shape; arrange is scheduled through
+-- awful.layout and the native declaration producer below.
+local function arrange() end
 
 --- Dwindle layout.
 -- @clientlayout awful.layout.suit.spiral.dwindle
 -- @usebeautiful beautiful.layout_dwindle
 spiral.dwindle = {}
 spiral.dwindle.name = "dwindle"
-function spiral.dwindle.arrange(p)
-    return do_spiral(p, false)
-end
+spiral.dwindle.arrange = arrange
+spiral.dwindle._clay = function(s) return describe(s, false) end
 
 --- Spiral layout.
 -- @clientlayout awful.layout.suit.spiral.name
 -- @usebeautiful beautiful.layout_spiral
 spiral.name = "spiral"
-function spiral.arrange(p)
-    return do_spiral(p, true)
-end
+spiral.arrange = arrange
+spiral._clay = function(s) return describe(s, true) end
 
 return spiral
 

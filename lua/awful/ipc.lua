@@ -355,6 +355,7 @@ local function register_builtin_commands()
   local awful_client = require("awful.client")
   local awful_screen = require("awful.screen")
   local awful_tag = require("awful.tag")
+  local awful_layout = require("awful.layout")
   local awful_placement = require("awful.placement")
   local awful_spawn = require("awful.spawn")
 
@@ -772,8 +773,6 @@ local function register_builtin_commands()
         error("Invalid factor: " .. factor_str .. " (must be between 0 and 1)")
       end
       tag.master_width_factor = factor
-      -- Trigger layout refresh
-      awful_layout.arrange(tag.screen)
       return string.format("Set tag '%s' master_width_factor to %.2f", tag.name, factor)
     else
       return string.format("Tag '%s' master_width_factor: %.2f", tag.name, tag.master_width_factor or 0.5)
@@ -783,8 +782,6 @@ local function register_builtin_commands()
   -- =================================================================
   -- LAYOUT COMMANDS
   -- =================================================================
-
-  local awful_layout = require("awful.layout")
 
   --- layout.list - List all available layouts for the current tag
   ipc.register("layout.list", function()
@@ -947,7 +944,7 @@ local function register_builtin_commands()
       capi.awesome.kill(pid, 9) -- SIGKILL
       return string.format("Force-killed client (pid=%d)", pid)
     else
-      capi.client.kill(c)
+      c:kill()
       return string.format("Killed client %s", target)
     end
   end)
@@ -984,7 +981,7 @@ local function register_builtin_commands()
   --- client.close <ID|focused> - Close a client gracefully
   ipc.register("client.close", function(target)
     local c = resolve_client(target)
-    capi.client.kill(c)
+    c:kill()
     return string.format("Closed client %s", target or "focused")
   end)
 
@@ -1884,6 +1881,34 @@ local function register_builtin_commands()
     end
     menubar.show()
     return "Showing application launcher (menubar)"
+  end)
+
+  -- =================================================================
+  -- CLAY COMMANDS
+  -- =================================================================
+
+  --- clay.tree [screen] - Dump the solved Clay tree
+  -- Reports what the last frame solved and reconciled on every output, or on
+  -- one screen: counters per band, then one line per retained node in draw
+  -- order.
+  ipc.register("clay.tree", function(target)
+    local s = nil
+
+    if target then
+      local index = tonumber(target)
+
+      if not index or not capi.screen[index] then
+        error("Screen not found: " .. tostring(target))
+      end
+      s = capi.screen[index]
+    end
+
+    local dump = capi.awesome._clay_tree(s)
+
+    if dump == "" then
+      return "No output has a Clay tree"
+    end
+    return dump
   end)
 
   -- =================================================================
@@ -3360,8 +3385,7 @@ local function register_builtin_commands()
         },
         valign = "center",
         halign = "center",
-        tiled  = false,
-        widget = wibox.container.tile,
+        widget = wibox.container.place,
       }
     }
     return string.format("Set wallpaper to %s on screen %d", path, s.index)

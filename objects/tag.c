@@ -142,50 +142,6 @@ is_client_tagged(client_t *c, tag_t *t)
 	return false;
 }
 
-/** Get the index of the tag with focused client or first selected
- * \return Its index
- */
-int
-tags_get_current_or_first_selected_index(void)
-{
-	/* Consider "current desktop" a tag, that has focused window,
-	 * basically a tag user actively interacts with.
-	 * If no focused windows are present, fallback to first selected.
-	 */
-	if (globalconf.focus.client)
-	{
-		foreach(tag, globalconf.tags)
-		{
-			if ((*tag)->selected && is_client_tagged(globalconf.focus.client, *tag))
-				return tag_array_indexof(&globalconf.tags, tag);
-		}
-	}
-	foreach(tag, globalconf.tags)
-	{
-		if ((*tag)->selected)
-			return tag_array_indexof(&globalconf.tags, tag);
-	}
-	return 0;
-}
-
-void
-tag_unref_simplified(tag_t **tag)
-{
-	luaA_object_unref(globalconf.L, *tag);
-}
-
-bool
-tag_get_selected(tag_t *tag)
-{
-	return tag->selected;
-}
-
-char *
-tag_get_name(tag_t *tag)
-{
-	return tag->name;
-}
-
 /* ========================================================================
  * Tag Lua API - property getters/setters
  * ======================================================================== */
@@ -214,9 +170,7 @@ luaA_tag_set_name(lua_State *L, tag_t *tag)
 	p_delete(&tag->name);
 	tag->name = a_strdup(buf);
 	luaA_object_emit_signal(L, -3, "property::name", 0);
-#ifdef XWAYLAND
 	ewmh_update_net_desktop_names();
-#endif
 	return 0;
 }
 
@@ -233,9 +187,6 @@ tag_view(lua_State *L, int udx, bool view)
 	{
 		tag->selected = view;
 		banning_need_update();
-		foreach(screen, globalconf.screens)
-			screen_update_workarea(*screen);
-
 		luaA_object_emit_signal(L, udx, "property::selected", 0);
 
 		/* Arrange the monitor for the tag's screen.  Fake screens have no
@@ -324,10 +275,8 @@ luaA_tag_set_activated(lua_State *L, tag_t *tag)
 		}
 		luaA_object_unref(L, tag);
 	}
-#ifdef XWAYLAND
 	ewmh_update_net_numbers_of_desktop();
 	ewmh_update_net_desktop_names();
-#endif
 
 	luaA_object_emit_signal(L, -3, "property::activated", 0);
 

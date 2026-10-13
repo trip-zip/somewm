@@ -1,4 +1,4 @@
--- Unit tests for keygrabber key release event handling (issue #409).
+-- Unit tests for keygrabber key release event handling.
 --
 -- Tests that the Lua-level runner() logic correctly handles "release" events:
 -- stop_event, keyreleased_callback, keybinding on_release, signal emission.

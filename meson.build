@@ -1,28 +1,26 @@
 project(
   'somewm',
   'c',
-  version: '2.0.0',
+  version: '2.0.1',
   license: 'GPL-3.0-or-later',
   default_options: [
     'c_std=gnu11',
     'warning_level=2',
     'werror=true',
-    # Vendored code is not ours to keep warning-clean, and wlroots 0.19.3 is old enough
-    # that newer compilers flag it. Subproject-scoped overrides are the only form that
-    # cascades to nested subprojects; subproject() default_options does not. Entries for
-    # subprojects that never get configured are ignored, so this lists everything wlroots
-    # can pull in: its own wraps, plus libdisplay-info's transitive v4l-utils.
-    'wlroots-0.19:werror=false',
-    'wlroots-0.20:werror=false',
+    # Only the wraps in subprojects/ are ever used: wlroots' own wraps follow its git
+    # HEAD, and a library missing from the system should fail naming it.
+    'wrap_mode=nopromote',
+    # Vendored code is not ours to keep warning-clean. Subproject-scoped overrides are the
+    # only form that cascades to nested subprojects; subproject() default_options does not.
+    'wlroots:werror=false',
     'wayland:werror=false',
     'wayland-protocols:werror=false',
     'libdrm:werror=false',
     'libxkbcommon:werror=false',
     'pixman:werror=false',
-    'seatd:werror=false',
-    'libliftoff:werror=false',
+    # Ubuntu 24.04 ships libdisplay-info 0.1.1 and wlroots needs 0.2.0
+    'libdisplay-info:default_library=static',
     'libdisplay-info:werror=false',
-    'v4l-utils:werror=false',
   ],
 )
 
@@ -49,36 +47,30 @@ endif
 
 cc = meson.get_compiler('c')
 
+# third_party holds vendored headers; clay.h is included as <clay.h> by the
+# renderer and compiled once by clay_impl.c below.
+somewm_inc = include_directories('.', 'third_party')
+
+# The renderer, named once: the compositor links it and the C unit test compiles
+# it again with the verifier forced on.
+render_sources = files('render.c', 'render_text.c')
+
 # Math library (for round(), etc.)
 m_dep = cc.find_library('m', required: false)
-
-# ==============================================================================
-# Options
-# ==============================================================================
-
-xwayland_option = get_option('xwayland')
 
 # ==============================================================================
 # Dependencies
 # ==============================================================================
 
 # Core dependencies
-wayland_server = dependency('wayland-server')
-wayland_protocols = dependency('wayland-protocols')
-xkbcommon = dependency('xkbcommon')
 libinput = dependency('libinput')
 # Check for 3-finger drag support (libinput 1.27+)
 have_3fg_drag = cc.has_function('libinput_device_config_3fg_drag_get_finger_count',
                                  dependencies: libinput)
-libdrm = dependency('libdrm')
 # backtrace() is in glibc; musl and the BSDs need libexecinfo, else none
 execinfo_dep = cc.find_library('execinfo', required: false)
 have_execinfo = cc.has_function('backtrace_symbols_fd', prefix: '#include <execinfo.h>',
                                 dependencies: execinfo_dep)
-# Not linked directly; wlroots pulls it in. Probed only so the wlroots version choice
-# below can read its version, so not required: with no pixman-1.pc at all, wlroots
-# resolves pixman through its own wrap and the floor below stops applying.
-pixman = dependency('pixman-1', required: false)
 dbus = dependency('dbus-1')
 glib = dependency('glib-2.0')
 gio = dependency('gio-2.0')
@@ -88,15 +80,11 @@ cairo = dependency('cairo')
 cairo_xlib = dependency('cairo-xlib')
 pangocairo = dependency('pangocairo')
 gdk_pixbuf = dependency('gdk-pixbuf-2.0')
+librsvg = dependency('librsvg-2.0', version: '>=2.52')
 
-# Xwayland dependencies (optional)
-if xwayland_option.enabled() or xwayland_option.auto()
-  xcb = dependency('xcb', required: xwayland_option)
-  xcb_icccm = dependency('xcb-icccm', required: xwayland_option)
-  have_xwayland = xcb.found() and xcb_icccm.found()
-else
-  have_xwayland = false
-endif
+# XWayland window management
+xcb = dependency('xcb')
+xcb_icccm = dependency('xcb-icccm')
 
 # Lua detection - honor -Dlua_pkg=<name> if set, otherwise:
 # LuaJIT preferred, then 5.5 > 5.4 > 5.3 > 5.2 > 5.1
@@ -128,80 +116,32 @@ lgi_output = lgi_check_result.stdout().strip()
 lgi_version = lgi_output.split('Found lgi ')[-1].split('\n')[0]
 message('Found LGI version: ' + lgi_version)
 
-# wlroots 0.19 or 0.20. wlroots 0.20 raises floors that stable distros do not meet yet
-# (Debian 13 ships wayland-server 1.23.1, libdrm 2.4.124, xkbcommon 1.7.0, pixman 0.44),
-# so fall back to 0.19 there rather than failing to configure.
+# wlroots 0.20.2, built from subprojects/wlroots.wrap and linked statically.
 #
-# Mirrors what wlroots 0.20 asks of its own dependencies: meson.build for wayland-server,
-# libdrm and xkbcommon, protocol/meson.build for wayland-protocols, render/pixman for
-# pixman. All of these have a wrap fallback upstream except render/pixman's stricter
-# >=0.46.0, which has none and so hard-fails; the rest merely make wlroots source-build a
-# core system library, which is worth avoiding too. Hence all of them are listed.
-wlroots_020_floors = {
-  # name: [minimum, installed]
-  'wayland-server': ['>=1.24.0', wayland_server.version()],
-  'libdrm': ['>=2.4.129', libdrm.version()],
-  'xkbcommon': ['>=1.8.0', xkbcommon.version()],
-  'wayland-protocols': ['>=1.47', wayland_protocols.version()],
-}
-if pixman.found()
-  wlroots_020_floors += {'pixman-1': ['>=0.46.0', pixman.version()]}
-endif
+# Its floors are looked up here first, so somewm and wlroots share one copy of each: a
+# system library that meets its floor is used, an older or missing one is built from the
+# pinned wrap of the same name. default_options repeat what wlroots passes for each.
+wayland_server = dependency('wayland-server', version: '>=1.24.0', fallback: 'wayland',
+  default_options: ['default_library=static', 'tests=false', 'documentation=false'])
+libdrm = dependency('libdrm', version: '>=2.4.129', fallback: 'libdrm',
+  default_options: ['default_library=static', 'auto_features=disabled', 'tests=false'])
+xkbcommon = dependency('xkbcommon', version: '>=1.8.0', fallback: 'libxkbcommon',
+  default_options: ['default_library=static', 'enable-tools=false', 'enable-x11=false',
+                    'enable-docs=false', 'enable-xkbregistry=false'])
+wayland_protocols = dependency('wayland-protocols', version: '>=1.47',
+  fallback: 'wayland-protocols', default_options: ['tests=false'])
 
-wlroots_020_unmet = []
-foreach name, floor : wlroots_020_floors
-  if not floor[1].version_compare(floor[0])
-    wlroots_020_unmet += name + ' ' + floor[1] + ' (need ' + floor[0] + ')'
-  endif
-endforeach
+# somewm does not link pixman. wlroots asks for 0.43 with a fallback, then render/pixman
+# asks for 0.46 with none, so a system pixman between the two fails the second lookup.
+# Asking for 0.46 first puts the wrap's pixman in place for both: it overrides pixman-1.
+dependency('pixman-1', version: '>=0.46.0', fallback: 'pixman',
+  default_options: ['default_library=static', 'tests=disabled', 'demos=disabled'])
 
-# An installed wlroots 0.20 met those floors when it was built, so it outranks the probe:
-# a distro that backports 0.20 onto older deps should still get 0.20.
-wlroots_020 = dependency('wlroots-0.20', version: '>=0.20.0', static: false,
-                         required: false, allow_fallback: false)
-
-wlroots_version = get_option('wlroots_version')
-if wlroots_version == 'auto'
-  if wlroots_020.found() or wlroots_020_unmet.length() == 0
-    wlroots_version = '0.20'
-  else
-    wlroots_version = '0.19'
-    message('Selecting wlroots 0.19, too old for 0.20: ' + ', '.join(wlroots_020_unmet))
-  endif
-elif wlroots_version == '0.20' and not wlroots_020.found() and wlroots_020_unmet.length() != 0
-  error('wlroots 0.20 requires newer dependencies than this system has: '
-    + ', '.join(wlroots_020_unmet)
-    + '. Use -Dwlroots_version=0.19 or upgrade them.')
-endif
-
-if wlroots_version == '0.20'
-  wlroots = wlroots_020
-else
-  wlroots = dependency('wlroots-0.19', version: '>=0.19.3', static: false,
-                       required: false, allow_fallback: false)
-endif
-
-if not wlroots.found()
-  message('System wlroots ' + wlroots_version + ' not found, building from subproject...')
-
-  wlroots_options = [
-    'examples=false',
-    'default_library=static',
-  ]
-  if have_xwayland
-    wlroots_options += 'xwayland=enabled'
-  else
-    wlroots_options += 'xwayland=disabled'
-  endif
-
-  # One wrap per version: subprojects/wlroots-<version>.wrap, checked out into a
-  # matching directory. Adding a version is a new wrap plus a meson_options.txt choice.
-  wlroots_proj = subproject('wlroots-' + wlroots_version, default_options: wlroots_options)
-  wlroots = wlroots_proj.get_variable('wlroots')
-endif
-
-# The Debian CI job greps this line to prove `auto` picks 0.19 there; keep the wording.
-message('Using wlroots version: ' + wlroots_version)
+# Backends are named, not auto: auto drops one whose library is missing or too old (DRM
+# without libdisplay-info 0.2) and the build succeeds without it.
+wlroots_options = ['default_library=static', 'renderers=gles2', 'examples=false',
+                   'backends=drm,libinput,x11', 'xwayland=enabled']
+wlroots = subproject('wlroots', default_options: wlroots_options).get_variable('wlroots')
 
 # PAM authentication (optional, for lock screen)
 pam_option = get_option('pam')
@@ -307,6 +247,21 @@ xdg_shell_client_code = custom_target(
   command: [wayland_scanner, 'private-code', '@INPUT@', '@OUTPUT@'],
 )
 
+# ext-session-lock-v1 client protocol (header + code) for the lock test client
+ext_session_lock_client_header = custom_target(
+  'ext-session-lock-v1-client-protocol.h',
+  input: wayland_protocols_dir / 'staging/ext-session-lock/ext-session-lock-v1.xml',
+  output: 'ext-session-lock-v1-client-protocol.h',
+  command: [wayland_scanner, 'client-header', '@INPUT@', '@OUTPUT@'],
+)
+
+ext_session_lock_client_code = custom_target(
+  'ext-session-lock-v1-client-protocol.c',
+  input: wayland_protocols_dir / 'staging/ext-session-lock/ext-session-lock-v1.xml',
+  output: 'ext-session-lock-v1-client-protocol.c',
+  command: [wayland_scanner, 'private-code', '@INPUT@', '@OUTPUT@'],
+)
+
 # linux-dmabuf-v1 client protocol (header + code) for the DMA-BUF test client
 linux_dmabuf_client_header = custom_target(
   'linux-dmabuf-v1-client-protocol.h',
@@ -382,15 +337,11 @@ add_project_arguments(
   '-DDATADIR="' + get_option('prefix') / get_option('datadir') + '"',
   '-DSYSCONFDIR="' + get_option('sysconfdir') + '"',
   '-DSOMEWM_LIBDIR="' + get_option('prefix') / get_option('libdir') + '"',
-  '-DWLROOTS_VERSION="' + wlroots_version + '"',
+  '-DWLROOTS_VERSION="' + wlroots.version() + '"',
   '-DLGI_VERSION="' + lgi_version + '"',
   '-DWITH_DBUS',
   language: 'c',
 )
-
-if have_xwayland
-  add_project_arguments('-DXWAYLAND', language: 'c')
-endif
 
 if have_3fg_drag
   add_project_arguments('-DHAVE_LIBINPUT_3FG_DRAG', language: 'c')
@@ -412,6 +363,23 @@ if get_option('bench')
   add_project_arguments('-DSOMEWM_BENCH', language: 'c')
 endif
 
+# The Clay tree==scene verifier. Derived from the build directory's own options
+# rather than passed in by the Makefile, so a dir that was configured before this
+# option existed still gets the right answer, and reconfiguring a dir to use a
+# sanitizer turns the verifier on with it. b_sanitize is a string in older meson
+# and an array in newer, hence the format.
+render_verify = get_option('render_verify')
+if render_verify.auto()
+  sanitizers = '@0@'.format(get_option('b_sanitize'))
+  render_verify_on = sanitizers.contains('address') or \
+    sanitizers.contains('undefined') or get_option('test_pam')
+else
+  render_verify_on = render_verify.enabled()
+endif
+if render_verify_on
+  add_project_arguments('-DSOMEWM_RENDER_VERIFY', language: 'c')
+endif
+
 # Development flags
 add_project_arguments(
   '-Wno-unused-parameter',
@@ -429,10 +397,14 @@ add_project_arguments(
 
 somewm_sources = [
   'somewm.c',
+  'loop.c',
+  'version.c',
   'somewm_api.c',
   'xwayland.c',
   'protocols.c',
   'monitor.c',
+  'declare.c',
+  'widget.c',
   'input.c',
   'window.c',
   'focus.c',
@@ -445,7 +417,6 @@ somewm_sources = [
   'ewmh.c',
   'event.c',
   'xkb.c',
-  'systray.c',
   'shadow.c',
   'strut.c',
   'property.c',
@@ -482,7 +453,6 @@ somewm_sources = [
   'objects/keybinding.c',
   # objects/awesome.c merged into luaa.c
   'objects/button.c',
-  'objects/wibox.c',
   'objects/ipc.c',
   'objects/selection_getter.c',
   'objects/selection_acquire.c',
@@ -508,28 +478,40 @@ all_deps = [
   cairo_xlib,
   pangocairo,
   gdk_pixbuf,
+  librsvg,
   lua_dep,
   wlroots,
   m_dep,
   execinfo_dep,
+  xcb,
+  xcb_icccm,
 ]
-
-if have_xwayland
-  all_deps += [xcb, xcb_icccm]
-endif
 
 if have_pam
   all_deps += [pam_dep]
 endif
 
+# Clay is header-only; clay_impl.c is the single translation unit that compiles
+# it. Its own static library so -w applies to the vendored code and nothing else:
+# clay.h is not ours to keep clean against this project's warning set.
+clay_lib = static_library(
+  'clay',
+  'clay_impl.c',
+  include_directories: somewm_inc,
+  c_args: ['-w'],
+  dependencies: [m_dep],
+)
+
 somewm_exe = executable(
   'somewm',
   somewm_sources,
+  render_sources,
   protocol_headers,
   keyboard_shortcuts_inhibit_client_header,
   keyboard_shortcuts_inhibit_client_code,
   dependencies: all_deps,
-  include_directories: include_directories('.'),
+  include_directories: somewm_inc,
+  link_with: clay_lib,
   install: true,
 )
 
@@ -552,6 +534,65 @@ somewm_client = executable(
   install: true,
 )
 
+# The Clay reconciler's unit test: hand-built command arrays in, wlr_scene out.
+# It compiles the renderer itself rather than linking the compositor, so the
+# tree==scene verifier is on here whatever -Drender_verify says for the build.
+test_render = executable(
+  'test-render',
+  ['tests/test-render.c', render_sources],
+  include_directories: somewm_inc,
+  link_with: clay_lib,
+  dependencies: [wlroots, wayland_server, cairo, pangocairo, librsvg, m_dep],
+  c_args: ['-DSOMEWM_RENDER_VERIFY'],
+  install: false,
+)
+
+# The suppressions keep an ASAN run of this test reporting only allocations the
+# renderer owns; fontconfig and pango cache fonts process-wide and never free.
+test('render', test_render, suite: 'unit',
+  env: {'LSAN_OPTIONS': 'suppressions=' +
+    meson.current_source_dir() / 'tests/lsan-suppressions.txt'},
+)
+
+# Compile the production pin in the solver test TU so it can inspect actual
+# declarations independently. Do not link clay_lib (a second implementation).
+test_clay_solver = executable(
+  'test-clay-solver',
+  ['tests/test-clay-solver.c', render_sources],
+  include_directories: somewm_inc,
+  dependencies: [wlroots, wayland_server, cairo, pangocairo, librsvg, m_dep],
+  c_args: ['-DSOMEWM_RENDER_VERIFY'],
+  override_options: ['b_ndebug=false'],
+  install: false,
+)
+test('clay-solver', test_clay_solver, suite: 'unit',
+  env: {'LSAN_OPTIONS': 'suppressions=' +
+    meson.current_source_dir() / 'tests/lsan-suppressions.txt'},
+)
+
+# Image sizing fixtures (R120 in ideas/clay-native-spec-structured.md) solved by
+# the pinned header alone: compiled here, nothing of somewm linked.
+test_clay_aspect = executable(
+  'test-clay-aspect',
+  'tests/test-clay-aspect.c',
+  include_directories: somewm_inc,
+  dependencies: [m_dep],
+  # The pin's CLAY_SIZING_* macros are partial designated initializers.
+  c_args: ['-Wno-missing-braces', '-Wno-missing-field-initializers'],
+  override_options: ['b_ndebug=false'],
+  install: false,
+)
+test('clay-aspect', test_clay_aspect, suite: 'unit')
+
+# Only render.c may create visible rectangles/buffers or mutate scene nodes.
+test('scene-writers', find_program('tests/check-scene-writers.sh'),
+  args: [meson.current_build_dir() / 'somewm.p'],
+  depends: somewm_exe, suite: 'unit',
+)
+
+test('scene-writers-controls', find_program('tests/test-scene-writers.sh'),
+  suite: 'unit')
+
 # Test layer-shell client for deterministic integration tests
 test_layer_client = executable(
   'test-layer-client',
@@ -561,11 +602,20 @@ test_layer_client = executable(
   install: false,
 )
 
-# Test XDG transient client for stacking regression tests (issue #276)
+# Test XDG transient client for stacking regression tests
 test_transient_client = executable(
   'test-transient-client',
   ['tests/test-transient-client.c', xdg_shell_client_code],
   xdg_shell_client_header,
+  dependencies: [wayland_client],
+  install: false,
+)
+
+# Test ext-session-lock client for the session-lock path
+test_session_lock_client = executable(
+  'test-session-lock-client',
+  ['tests/test-session-lock-client.c', ext_session_lock_client_code],
+  ext_session_lock_client_header,
   dependencies: [wayland_client],
   install: false,
 )
@@ -670,14 +720,18 @@ test_virtual_pointer_client = executable(
 # X11 client that grabs the pointer like a game (confined grab, blank cursor)
 # and logs focus/button events to a marker file. Used by
 # test-xwayland-pointer-grab-click.lua.
-if have_xwayland
-  test_x11_grab_client = executable(
-    'test-x11-grab-client',
-    'tests/test-x11-grab-client.c',
-    dependencies: [xcb],
-    install: false,
-  )
-endif
+test_x11_grab_client = executable(
+  'test-x11-grab-client',
+  'tests/test-x11-grab-client.c',
+  dependencies: [xcb],
+  install: false,
+)
+test_x11_hints_client = executable(
+  'test-x11-hints-client',
+  'tests/test-x11-hints-client.c',
+  dependencies: [xcb, xcb_icccm],
+  install: false,
+)
 # ==============================================================================
 # Install Data
 # ==============================================================================
@@ -771,9 +825,8 @@ configure_file(
 
 summary({
   'Version': version,
-  'wlroots': wlroots_version + (wlroots.type_name() == 'internal' ? ' (subproject)' : ' (system)'),
+  'wlroots': wlroots.version(),
   'Lua': lua_dep.name() + ' ' + lua_dep.version(),
   'LGI': lgi_version,
-  'Xwayland': have_xwayland,
   'Systemd': have_systemd,
 }, section: 'Configuration')

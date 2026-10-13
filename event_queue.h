@@ -25,6 +25,7 @@ enum {
 	SIG_PROPERTY_Y,
 	SIG_PROPERTY_WIDTH,
 	SIG_PROPERTY_HEIGHT,
+	SIG_PROPERTY_BORDER_COLOR,
 
 	/* Focus signals */
 	SIG_PROPERTY_ACTIVE,   /* 1 arg: bool */

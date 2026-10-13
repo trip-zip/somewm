@@ -306,6 +306,10 @@ widget.labels = {
 -- @beautiful beautiful.hotkeys_group_margin
 -- @tparam int hotkeys_group_margin
 
+--- Rows in one column; a longer group continues in the next column.
+-- @beautiful beautiful.hotkeys_rows
+-- @tparam[opt=20] int hotkeys_rows
+
 
 --- Create an instance of widget with hotkeys help.
 -- @tparam[opt] table args Configuration options for the widget.
@@ -346,6 +350,7 @@ widget.labels = {
 -- @usebeautiful beautiful.hotkeys_font
 -- @usebeautiful beautiful.hotkeys_description_font
 -- @usebeautiful beautiful.hotkeys_group_margin
+-- @usebeautiful beautiful.hotkeys_rows
 -- @usebeautiful beautiful.bg_normal Fallback.
 -- @usebeautiful beautiful.fg_normal Fallback.
 -- @usebeautiful beautiful.fg_minimize Fallback.
@@ -374,8 +379,8 @@ function widget.new(args)
         _cached_awful_keys = {},
         _colors_counter = {},
         _group_list = {},
-        _widget_settings_loaded = false,
         _keygroups = {},
+        _content_revision = 0,
     }
     for k, v in pairs(awful.key.keygroups) do
         widget_instance._keygroups[k] = {}
@@ -388,36 +393,47 @@ function widget.new(args)
 
 
     function widget_instance:_load_widget_settings()
-        if self._widget_settings_loaded then return end
-        self.width = args.width or dpi(1200)
-        self.height = args.height or dpi(800)
-        self.bg = args.bg or
+        local settings = {}
+        settings.width = args.width or dpi(1200)
+        settings.height = args.height or dpi(800)
+        -- The config's own size, or the default.
+        settings.width_authored = args.width ~= nil
+        settings.height_authored = args.height ~= nil
+        settings.bg = args.bg or
             beautiful.hotkeys_bg or beautiful.bg_normal
-        self.fg = args.fg or
+        settings.fg = args.fg or
             beautiful.hotkeys_fg or beautiful.fg_normal
-        self.border_width = args.border_width or
+        settings.border_width = args.border_width or
             beautiful.hotkeys_border_width or beautiful.border_width
-        self.border_color = args.border_color or
-            beautiful.hotkeys_border_color or self.fg
-        self.shape = args.shape or beautiful.hotkeys_shape
-        self.modifiers_fg = args.modifiers_fg or
+        settings.border_color = args.border_color or
+            beautiful.hotkeys_border_color or settings.fg
+        settings.shape = args.shape or beautiful.hotkeys_shape
+        settings.modifiers_fg = args.modifiers_fg or
             beautiful.hotkeys_modifiers_fg or beautiful.bg_minimize or "#555555"
-        self.label_bg = args.label_bg or
-            beautiful.hotkeys_label_bg or self.fg
-        self.label_fg = args.label_fg or
-            beautiful.hotkeys_label_fg or self.bg
-        self.override_label_bgs = args.override_label_bgs or
+        settings.label_bg = args.label_bg or
+            beautiful.hotkeys_label_bg or settings.fg
+        settings.label_fg = args.label_fg or
+            beautiful.hotkeys_label_fg or settings.bg
+        settings.override_label_bgs = args.override_label_bgs or
             beautiful.hotkeys_override_label_bgs or false
-        self.opacity = args.opacity or
+        settings.opacity = args.opacity or
             beautiful.hotkeys_opacity or 1
-        self.font = args.font or
+        settings.font = args.font or
             beautiful.hotkeys_font or "Monospace Bold 9"
-        self.description_font = args.description_font or
+        settings.description_font = args.description_font or
             beautiful.hotkeys_description_font or "Monospace 8"
-        self.group_margin = args.group_margin or
+        settings.group_margin = args.group_margin or
             beautiful.hotkeys_group_margin or dpi(6)
-        self.label_colors = beautiful.xresources.get_current_theme()
-        self._widget_settings_loaded = true
+        settings.rows = beautiful.hotkeys_rows or 20
+        settings.label_colors = beautiful.xresources.get_current_theme()
+        for _, key in ipairs {"width", "height", "bg", "fg", "border_width", "border_color",
+            "shape", "modifiers_fg", "label_bg", "label_fg", "override_label_bgs", "opacity",
+            "font", "description_font", "group_margin", "rows", "label_colors"} do
+            if not self._loaded_settings or self[key] == self._loaded_settings[key] then
+                self[key] = settings[key]
+            end
+        end
+        self._loaded_settings = settings
     end
 
 
@@ -536,9 +552,33 @@ function widget.new(args)
 
 
     function widget_instance:_import_awful_keys()
-        if next(self._cached_awful_keys) then
-            return
+        local inputs = {self.merge_duplicates, self.hide_without_description}
+        local labels = {}
+        for key in pairs(self.labels) do labels[#labels+1] = key end
+        table.sort(labels)
+        for _, key in ipairs(labels) do
+            inputs[#inputs+1], inputs[#inputs+2] = key, self.labels[key]
         end
+        for _, data in ipairs(awful.key.hotkeys) do
+            inputs[#inputs+1] = tostring(data.description)
+            inputs[#inputs+1] = tostring(data.group)
+            inputs[#inputs+1] = table.concat(data.mod, "\0")
+            inputs[#inputs+1] = #data.keys
+            for _, pair in ipairs(data.keys) do inputs[#inputs+1] = tostring(pair[1]) end
+        end
+        local previous = self._awful_key_inputs
+        local changed = not previous or #inputs ~= #previous
+        if not changed then
+            for i, value in ipairs(inputs) do
+                if value ~= previous[i] then changed = true; break end
+            end
+        end
+        if not changed then return end
+        self._awful_key_inputs = inputs
+        self._cached_awful_keys = {}
+        self._group_list = {}
+        for group in pairs(self._additional_hotkeys) do self._group_list[group] = true end
+        self._content_revision = self._content_revision + 1
         for _, data in pairs(awful.key.hotkeys) do
             for _, key_pair in ipairs(data.keys) do
                 self:_add_hotkey(key_pair[1], data, self._cached_awful_keys)
@@ -575,160 +615,86 @@ function widget.new(args)
         return margin
     end
 
-    function widget_instance:_create_group_columns(column_layouts, group, keys, s, wibox_height)
-        local line_height = math.max(
-            beautiful.get_font_height(self.font),
-            beautiful.get_font_height(self.description_font)
-        )
-        local group_label_height = line_height + self.group_margin
-        -- -1 for possible pagination:
-        local max_height_px = wibox_height - group_label_height
-
-        local joined_descriptions = ""
-        for i, key in ipairs(keys) do
-            joined_descriptions = joined_descriptions .. key.description .. (i~=#keys and "\n" or "")
+    -- One column per group, a group longer than `rows` continuing in the
+    -- next columns; Clay sizes each column to its text.
+    function widget_instance:_create_columns(available_groups, show_awesome_keys)
+        local columns = wibox.layout.overflow.horizontal()
+        local function add_column(...)
+            local column = wibox.container.margin(wibox.layout.fixed.vertical(...))
+            column:set_left(self.group_margin)
+            columns:add(column)
         end
-        -- +1 for group label:
-        local items_height = gstring.linecount(joined_descriptions) * line_height + group_label_height
-        local current_column
-        local available_height_px = max_height_px
-        local add_new_column = true
-        for i, column in ipairs(column_layouts) do
-            if ((column.height_px + items_height) < max_height_px) or
-                (i == #column_layouts and column.height_px < max_height_px / 2)
-            then
-                current_column = column
-                add_new_column = false
-                available_height_px = max_height_px - current_column.height_px
-                break
-            end
-        end
-        local overlap_leftovers
-        if items_height > available_height_px then
-            local new_keys = {}
-            overlap_leftovers = {}
-            -- +1 for group title and +1 for possible hyphen (v):
-            local available_height_items = (available_height_px - group_label_height*2) / line_height
-            for i=1,#keys do
-                table.insert(((i<available_height_items) and new_keys or overlap_leftovers), keys[i])
-            end
-            keys = new_keys
-            table.insert(keys, {key="▽", description=""})
-        end
-        if not current_column then
-            current_column = {layout=wibox.layout.fixed.vertical()}
-        end
-        current_column.layout:add(self:_group_label(group))
-
-        local function insert_keys(ik_keys, ik_add_new_column)
-            local max_label_width = 0
-            local joined_labels = ""
-            for i, key in ipairs(ik_keys) do
-                local modifiers = key.mod
-                if not modifiers or modifiers == "none" then
-                    modifiers = ""
-                else
-                    modifiers = markup.fg(self.modifiers_fg, modifiers.."+")
-                end
-                local key_label = ""
-                if key.keylist and #key.keylist > 1 then
-                    for each_key_idx, each_key in ipairs(key.keylist) do
-                        key_label = key_label .. gstring.xml_escape(each_key)
-                        if each_key_idx ~= #key.keylist then
-                            key_label = key_label .. markup.fg(self.modifiers_fg, '/')
-                        end
-                    end
-                elseif key.key then
-                    key_label = gstring.xml_escape(key.key)
-                end
-                local rendered_hotkey = markup.font(self.font,
-                    modifiers .. key_label .. " "
-                ) .. markup.font(self.description_font,
-                    key.description or ""
-                )
-                local label_width = wibox.widget.textbox.get_markup_geometry(rendered_hotkey, s).width
-                if label_width > max_label_width then
-                    max_label_width = label_width
-                end
-                joined_labels = joined_labels .. rendered_hotkey .. (i~=#ik_keys and "\n" or "")
-                end
-            current_column.layout:add(wibox.widget.textbox(joined_labels))
-            local max_width = max_label_width + self.group_margin
-            if not current_column.max_width or (max_width > current_column.max_width) then
-                current_column.max_width = max_width
-            end
-            -- +1 for group label:
-            current_column.height_px = (current_column.height_px or 0) +
-                gstring.linecount(joined_labels)*line_height + group_label_height
-            if ik_add_new_column then
-                table.insert(column_layouts, current_column)
-            end
-        end
-
-        insert_keys(keys, add_new_column)
-        if overlap_leftovers then
-            current_column = {layout=wibox.layout.fixed.vertical()}
-            insert_keys(overlap_leftovers, true)
-        end
-    end
-
-    function widget_instance:_create_wibox(s, available_groups, show_awesome_keys)
-        s = get_screen(s)
-        local wa = s.workarea
-        local wibox_height = (self.height < wa.height) and self.height or
-            (wa.height - self.border_width * 2)
-        local wibox_width = (self.width < wa.width) and self.width or
-            (wa.width - self.border_width * 2)
-
-        -- arrange hotkey groups into columns
-        local column_layouts = {}
         for _, group in ipairs(available_groups) do
             local keys = gtable.join(
                 show_awesome_keys and self._cached_awful_keys[group] or nil,
                 self._additional_hotkeys[group]
             )
-            if #keys > 0 then
-                self:_create_group_columns(column_layouts, group, keys, s, wibox_height)
+            for first = 1, #keys, self.rows do
+                local labels = {}
+                for i = first, math.min(first + self.rows - 1, #keys) do
+                    local key = keys[i]
+                    local modifiers = key.mod
+                    if not modifiers or modifiers == "none" then
+                        modifiers = ""
+                    else
+                        modifiers = markup.fg(self.modifiers_fg, modifiers.."+")
+                    end
+                    local key_label = ""
+                    if key.keylist and #key.keylist > 1 then
+                        for each_key_idx, each_key in ipairs(key.keylist) do
+                            key_label = key_label .. gstring.xml_escape(each_key)
+                            if each_key_idx ~= #key.keylist then
+                                key_label = key_label .. markup.fg(self.modifiers_fg, '/')
+                            end
+                        end
+                    elseif key.key then
+                        key_label = gstring.xml_escape(key.key)
+                    end
+                    labels[#labels+1] = markup.font(self.font, modifiers .. key_label .. " ")
+                        .. markup.font(self.description_font, key.description or "")
+                end
+                if first + self.rows <= #keys then
+                    labels[#labels+1] = markup.font(self.font, "▽ ")
+                end
+                local text = wibox.widget.textbox(table.concat(labels, "\n"))
+                if first == 1 then
+                    add_column(self:_group_label(group), text)
+                else
+                    add_column(text)
+                end
             end
         end
+        return columns
+    end
 
-        -- arrange columns into pages
-        local available_width_px = wibox_width
-        local pages = {}
-        local columns = wibox.layout.fixed.horizontal()
-        local previous_page_last_layout
-        for _, item in ipairs(column_layouts) do
-            if item.max_width > available_width_px then
-                previous_page_last_layout:add(
-                    self:_group_label("PgDn - Next Page", self.label_bg)
-                )
-                table.insert(pages, columns)
-                columns = wibox.layout.fixed.horizontal()
-                available_width_px = wibox_width - item.max_width
-                item.layout:insert(
-                    1, self:_group_label("PgUp - Prev Page", self.label_bg)
-                )
-            else
-                available_width_px = available_width_px - item.max_width
-            end
-            local column_margin = wibox.container.margin()
-            column_margin:set_widget(item.layout)
-            column_margin:set_left(self.group_margin)
-            columns:add(column_margin)
-            previous_page_last_layout = item.layout
+    function widget_instance:_content_inputs(available_groups, show_awesome_keys)
+        local inputs = {self._content_revision, show_awesome_keys,
+            table.concat(available_groups, "\0")}
+        for _, key in ipairs {"bg", "fg", "border_width", "border_color",
+            "shape", "modifiers_fg", "label_bg", "label_fg", "override_label_bgs", "opacity",
+            "font", "description_font", "group_margin", "rows"} do
+            local value = self[key]
+            inputs[#inputs+1] = (key == "font" or key == "description_font")
+                and type(value) ~= "string" and value and value:to_string() or tostring(value)
         end
-        table.insert(pages, columns)
-
-        -- Function to place the widget in the center and account for the
-        -- workarea. This will be called in the placement field of the
-        -- awful.popup constructor.
-        local place_func = function(c)
-            awful.placement.centered(c, {honor_workarea = true})
+        for _, group in ipairs(available_groups) do
+            inputs[#inputs+1] = tostring(self.group_rules[group] and self.group_rules[group].color)
         end
+        for i=0,15 do inputs[#inputs+1] = tostring(self.label_colors["color"..string.format("%x",i)]) end
+        return inputs
+    end
 
-        -- Construct the popup with the widget
+    function widget_instance:_create_wibox(s, available_groups, show_awesome_keys)
+        s = get_screen(s)
+        local owner = self
+        local function place_launcher(p)
+            require("awful._attachment").corner(p, "centered", nil, 3,
+                {width=owner.width, height=owner.height,
+                    wsrc=owner._loaded_settings.width_authored and "user" or "theme",
+                    hsrc=owner._loaded_settings.height_authored and "user" or "theme"})
+        end
         local mypopup = awful.popup {
-            widget = pages[1],
+            widget = self:_create_columns(available_groups, show_awesome_keys),
             ontop = true,
             bg=self.bg,
             fg=self.fg,
@@ -736,15 +702,13 @@ function widget.new(args)
             border_width = self.border_width,
             border_color = self.border_color,
             shape = self.shape,
-            placement = place_func,
-            minimum_width = wibox_width,
-            minimum_height = wibox_height,
+            placement = place_launcher,
             screen = s,
         }
 
         local widget_obj = {
-            current_page = 1,
             popup = mypopup,
+            inputs = self:_content_inputs(available_groups, show_awesome_keys),
         }
 
         -- Set up the mouse buttons to hide the popup
@@ -755,18 +719,33 @@ function widget.new(args)
             awful.button({ }, 3, function () widget_obj:hide() end)
         }
 
-        function widget_obj.page_next(w_self)
-            if w_self.current_page == #pages then return end
-            w_self.current_page = w_self.current_page + 1
-            w_self.popup:set_widget(pages[w_self.current_page])
+        -- The page keys move the scroll offset by one viewport.
+        local function page(w_self, direction)
+            local columns = w_self.popup.widget
+            local offset, content, viewport = columns:_scroll_record()
+            if offset and content > viewport then
+                columns.scroll_factor = (direction * viewport - offset) / (content - viewport)
+            end
         end
-        function widget_obj.page_prev(w_self)
-            if w_self.current_page == 1 then return end
-            w_self.current_page = w_self.current_page - 1
-            w_self.popup:set_widget(pages[w_self.current_page])
-        end
+        function widget_obj.page_next(w_self) page(w_self, 1) end
+        function widget_obj.page_prev(w_self) page(w_self, -1) end
         function widget_obj.show(w_self)
-            w_self.popup.visible = true
+            local inputs = owner:_content_inputs(available_groups, show_awesome_keys)
+            local changed = #inputs ~= #w_self.inputs
+            for i, value in ipairs(inputs) do
+                if value ~= w_self.inputs[i] then changed = true; break end
+            end
+            local p = w_self.popup
+            if changed then
+                owner._colors_counter.group_title = nil
+                for _, key in ipairs {"bg", "fg", "opacity", "border_width", "border_color", "shape"} do
+                    if owner[key] ~= nil then p[key] = owner[key] end
+                end
+                p:set_widget(owner:_create_columns(available_groups, show_awesome_keys))
+                w_self.inputs = inputs
+            end
+            p.placement = place_launcher
+            p.visible = true
         end
         function widget_obj.hide(w_self)
             w_self.popup.visible = false
@@ -865,6 +844,7 @@ function widget.new(args)
             end
         end
         self:_sort_hotkeys(self._additional_hotkeys)
+        self._content_revision = self._content_revision + 1
     end
 
     --- Add hotkey group rules for third-party applications.

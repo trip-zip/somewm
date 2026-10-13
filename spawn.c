@@ -33,18 +33,6 @@ typedef struct {
 /* Array of running children (for exit callback tracking) */
 static GArray *running_children = NULL;
 
-/** Initialize program spawner.
- * X11-only: Sets up libstartup-notification monitor.
- * Wayland uses XDG Activation protocol instead.
- */
-void
-spawn_init(void)
-{
-    /* X11-only: sn_xcb_display_new(), sn_monitor_context_new().
-     * Wayland startup notification is handled via wlr_xdg_activation_v1. */
-}
-
-
 /* Helper: Find child by PID */
 static running_child_t *
 find_child(GPid pid)

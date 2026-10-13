@@ -37,23 +37,8 @@ jobs:
             pkg: lua5.3
             dev_package: liblua5.3-dev
             interpreter: lua5.3
-        wlroots:
-          - ver: 0.20.0
-            short: '0.20'
-        # The Lua axis and the wlroots axis do not interact - the only
-        # version-conditional code in the tree is COMPAT_XWAYLAND_SET_CURSOR - so 0.19
-        # gets one leg rather than a full cross product.
-        include:
-          - lua:
-              name: LuaJIT
-              pkg: luajit
-              dev_package: libluajit-5.1-dev
-              interpreter: luajit
-            wlroots:
-              ver: 0.19.3
-              short: '0.19'
 
-    name: Build & Test (${{ matrix.lua.name }}, wlroots ${{ matrix.wlroots.short }})
+    name: Build & Test (${{ matrix.lua.name }})
 
     steps:
       - name: Checkout
@@ -66,6 +51,9 @@ jobs:
           sudo apt-get update
           sudo DEBIAN_FRONTEND=noninteractive TZ=Etc/UTC apt-get install -y --no-install-recommends \
             build-essential \
+            fonts-noto-cjk \
+            wlr-randr \
+            grim \
             dpkg-dev \
             ninja-build \
             python3-pip \
@@ -80,6 +68,8 @@ jobs:
             bc \
             libdrm-dev \
             libgbm-dev \
+            libegl-dev \
+            libgles-dev \
             libpixman-1-dev \
             libudev-dev \
             libseat-dev \
@@ -94,6 +84,9 @@ jobs:
             libxcb-xfixes0-dev \
             libxcb-xinput-dev \
             libxcb-util-dev \
+            libxcb-dri3-dev \
+            libxcb-present-dev \
+            libxcb-shm0-dev \
             hwdata \
             libdisplay-info-dev \
             libliftoff-dev \
@@ -105,6 +98,7 @@ jobs:
             libcairo2-dev \
             libpango1.0-dev \
             libgdk-pixbuf-2.0-dev \
+            librsvg2-dev \
             libglib2.0-dev \
             libgirepository1.0-dev \
             gir1.2-pango-1.0 \
@@ -117,15 +111,15 @@ jobs:
             xwayland \
             zsh
 
+      - name: Show test font resolution
+        env:
+          FONTCONFIG_FILE: ${{ github.workspace }}/tests/fonts.conf
+        run: |
+          fc-match -v sans | grep -E 'family|fontversion'
+          fc-match -v monospace | grep -E 'family|fontversion'
+
       - name: Upgrade meson
         run: python3 -m pip install --upgrade --break-system-packages meson
-
-      - name: Cache deps
-        id: cache-deps
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
-        with:
-          path: ~/deps-install
-          key: deps-wlroots-${{ matrix.wlroots.ver }}-${{ runner.os }}
 
       - name: Cache Lua 5.2 CI deps
         if: matrix.lua.pkg == 'lua5.2'
@@ -133,20 +127,6 @@ jobs:
         with:
           path: ~/lua-5.2-ci
           key: deps-lua5.2-ci-lgi-0.9.2-busted-2.3.0-${{ runner.os }}}-v2
-
-      - name: Build wlroots ${{ matrix.wlroots.ver }}
-        if: steps.cache-deps.outputs.cache-hit != 'true'
-        run: |
-          mkdir -p ~/deps-install
-          export PKG_CONFIG_PATH=$HOME/deps-install/share/pkgconfig:$HOME/deps-install/lib/x86_64-linux-gnu/pkgconfig:$PKG_CONFIG_PATH
-          cd ~
-          git clone --depth 1 --branch ${{ matrix.wlroots.ver }} https://gitlab.freedesktop.org/wlroots/wlroots.git
-          cd wlroots
-          # 0.19.3 predates this runner's compiler; its own werror=true default would
-          # fail on warnings that are not ours to fix.
-          meson setup build --prefix=$HOME/deps-install -Dexamples=false -Dxwayland=enabled -Dwerror=false
-          ninja -C build
-          ninja -C build install
 
       - name: Prepare Lua 5.2 CI deps
         if: matrix.lua.pkg == 'lua5.2'
@@ -174,47 +154,23 @@ jobs:
           sudo cp -a "$HOME/lua-5.2-ci/lib/lua/5.2/." /usr/local/lib/lua/5.2/
           sudo install -Dm755 "$HOME/lua-5.2-ci/bin/busted" /usr/local/bin/busted
 
-        # Add manually built deps to paths
-      - name: Set paths
-        run: |
-          echo "PATH=$HOME/deps-install/bin:$PATH" >> $GITHUB_ENV
-          echo "PKG_CONFIG_PATH=$HOME/deps-install/share/pkgconfig:$HOME/deps-install/lib/x86_64-linux-gnu/pkgconfig:$PKG_CONFIG_PATH" >> $GITHUB_ENV
-          echo "LD_LIBRARY_PATH=$HOME/deps-install/lib/x86_64-linux-gnu:$LD_LIBRARY_PATH" >> $GITHUB_ENV
-
-      # -Dxwayland=enabled is forced, not left on auto: COMPAT_XWAYLAND_SET_CURSOR is the
-      # only version-conditional code in the tree and it only compiles under XWAYLAND.
       - name: Build somewm
         run: |
-          make build-test LUA_PKG=${{ matrix.lua.pkg }} \
-            MESON_OPTS="-Dwlroots_version=${{ matrix.wlroots.short }} -Dxwayland=enabled"
+          make build-test LUA_PKG=${{ matrix.lua.pkg }}
 
       - name: Run unit tests
         run: make test-unit
 
       - name: Run integration tests (non-spawning only)
-        run: |
-          # Exclude tests that need external apps or client spawning
-          spawning=$(grep -rl 'require.*_client' tests/test-*.lua | xargs -I{} basename {})
-          tests=$(find tests -name 'test-*.lua' -type f \
-            ! -name 'test-xwayland-*' \
-            ! -name 'test-layer-shell-*' \
-            ! -name 'test-dbus-error.lua' \
-            ! -name 'test-leak-client.lua' \
-            ! -name 'test-transient-stacking.lua' \
-            ! -name 'test-output-fake-screen.lua' \
-            $(printf '! -name %s ' $spawning) \
-            | sort)
-          timeout 300 bash tests/run-integration.sh $tests
-        timeout-minutes: 6
-        env:
-          SOMEWM: ./build-test/somewm
-          SOMEWM_CLIENT: ./build-test/somewm-client
-          HEADLESS: 1
-          LIBSEAT_BACKEND: noop
-          TEST_TIMEOUT: 45
+        run: timeout 1500 make test-ci
+        timeout-minutes: 30
 
       - name: Run restart / hot-reload tests
-        run: timeout 900 make test-restart
+        # No X client can connect on the runners, so the X11 restart test is
+        # left out the way the integration step leaves out test-xwayland-*.
+        run: |
+          tests=$(find tests/restart -maxdepth 1 -name '*.sh' -type f ! -name 'lib.sh' ! -name 'x11-*' | sort)
+          SOMEWM=./build-test/somewm SOMEWM_CLIENT=./build-test/somewm-client timeout 900 ./tests/run-restart.sh $tests
         timeout-minutes: 16
         env:
           LIBSEAT_BACKEND: noop
@@ -233,8 +189,6 @@ jobs:
           path: build-test/restart-artifacts/
           if-no-files-found: ignore
 
-  # Debian stable ships wayland-server 1.23.1, libdrm 2.4.124 and xkbcommon 1.7.0,
-  # all below wlroots 0.20's floors. Build there to keep the wlroots 0.19 path working.
   lua-compat:
     runs-on: ubuntu-26.04
     steps:
@@ -245,6 +199,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+            librsvg2-dev \
             luajit lua5.1 lua5.2 lua5.3 lua5.4
 
       - name: Parse lua/ with every interpreter
@@ -259,7 +214,7 @@ jobs:
       DEBIAN_FRONTEND: noninteractive
       TZ: Etc/UTC
 
-    name: Build (Debian stable, wlroots 0.19)
+    name: Build (Debian stable, vendored floors)
 
     steps:
       - name: Install dependencies
@@ -282,7 +237,6 @@ jobs:
             libgbm-dev \
             libegl-dev \
             libgles-dev \
-            libvulkan-dev \
             libpixman-1-dev \
             libudev-dev \
             libseat-dev \
@@ -297,6 +251,9 @@ jobs:
             libxcb-xfixes0-dev \
             libxcb-xinput-dev \
             libxcb-util-dev \
+            libxcb-dri3-dev \
+            libxcb-present-dev \
+            libxcb-shm0-dev \
             hwdata \
             libdisplay-info-dev \
             libliftoff-dev \
@@ -308,21 +265,108 @@ jobs:
             libcairo2-dev \
             libpango1.0-dev \
             libgdk-pixbuf-2.0-dev \
-            libglib2.0-dev
+            librsvg2-dev \
+            libglib2.0-dev \
+            libffi-dev \
+            libexpat1-dev \
+            libxml2-dev \
+            bison
 
       - name: Checkout
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
-      # No -Dwlroots_version here: auto must pick 0.19 on its own, which is what a
-      # user running plain `meson setup build` on Debian stable gets. -Dxwayland is
-      # forced because the 0.19/0.20 cursor difference only compiles under XWAYLAND.
-      # Build-only: busted is not packaged in Debian, so unit tests run on the
-      # ubuntu matrix legs instead.
+      # wayland, libdrm, xkbcommon, pixman and wayland-protocols are all older here than
+      # wlroots 0.20.2 needs, so each must be built from its wrap, and wlroots once.
+      # Build-only: busted is not packaged here, so unit tests run on the matrix legs.
       - name: Configure
         run: |
           git config --global --add safe.directory "$GITHUB_WORKSPACE"
-          meson setup build -Dlua_pkg=lua5.3 -Dxwayland=enabled | tee setup.log
-          grep -q 'Using wlroots version: 0.19' setup.log
+          meson setup build -Dlua_pkg=lua5.3 | tee setup.log
+          for p in wayland libdrm libxkbcommon pixman wayland-protocols wlroots; do
+            test "$(grep -c "^Executing subproject $p " setup.log)" = 1
+          done
+
+      - name: Build
+        run: ninja -C build
+
+  build-ubuntu-lts:
+    runs-on: ubuntu-24.04
+    env:
+      DEBIAN_FRONTEND: noninteractive
+      TZ: Etc/UTC
+
+    name: Build (Ubuntu 24.04, vendored floors)
+
+    steps:
+      - name: Install dependencies
+        # libxcb-errors is not packaged on 24.04; wlroots builds without it.
+        run: |
+          sudo apt-get update
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+            build-essential \
+            ca-certificates \
+            git \
+            meson \
+            ninja-build \
+            pkg-config \
+            wayland-protocols \
+            libwayland-dev \
+            libwayland-bin \
+            libxkbcommon-dev \
+            libinput-dev \
+            libdbus-1-dev \
+            libdrm-dev \
+            libgbm-dev \
+            libegl-dev \
+            libgles-dev \
+            libpixman-1-dev \
+            libudev-dev \
+            libseat-dev \
+            libxcb1-dev \
+            libxcb-icccm4-dev \
+            libxcb-composite0-dev \
+            libxcb-render0-dev \
+            libxcb-render-util0-dev \
+            libxcb-res0-dev \
+            libxcb-ewmh-dev \
+            libxcb-xfixes0-dev \
+            libxcb-xinput-dev \
+            libxcb-util-dev \
+            libxcb-dri3-dev \
+            libxcb-present-dev \
+            libxcb-shm0-dev \
+            hwdata \
+            libdisplay-info-dev \
+            libliftoff-dev \
+            libpam0g-dev \
+            xwayland \
+            lua5.3 \
+            liblua5.3-dev \
+            lua-lgi \
+            libcairo2-dev \
+            libpango1.0-dev \
+            libgdk-pixbuf-2.0-dev \
+            librsvg2-dev \
+            libglib2.0-dev \
+            libffi-dev \
+            libexpat1-dev \
+            libxml2-dev \
+            bison
+
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      # wayland, libdrm, xkbcommon, pixman and wayland-protocols are all older here than
+      # wlroots 0.20.2 needs, so each must be built from its wrap, and wlroots once.
+      # Build-only: busted is not packaged here, so unit tests run on the matrix legs.
+      - name: Configure
+        run: |
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          meson setup build -Dlua_pkg=lua5.3 | tee setup.log
+          for p in wayland libdrm libxkbcommon pixman wayland-protocols wlroots; do
+            test "$(grep -c "^Executing subproject $p " setup.log)" = 1
+          done
+          test "$(grep -c '^Executing subproject wlroots:libdisplay-info' setup.log)" = 1
 
       - name: Build
         run: ninja -C build

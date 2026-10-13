@@ -4,16 +4,37 @@
 ---------------------------------------------------------------------------
 
 local base = require("wibox.widget.base")
-local no_parent = base.no_parent_I_know_what_I_am_doing
 
 describe("wibox.widget.base", function()
     local widget1, widget2
     before_each(function()
         widget1 = base.make_widget()
         widget2 = base.make_widget()
-        widget1.layout = function()
-            return { base.place_widget_at(widget2, 0, 0, 1, 1) }
-        end
+    end)
+
+    describe("Clay descriptions", function()
+        it("describes a bare widget as an empty element", function()
+            assert.is_table(widget1._clay)
+            assert.is_same({}, widget1._clay.describe(widget1))
+        end)
+
+        it("describes a proxy through its original widget", function()
+            local proxy = base.make_widget(widget1)
+            assert.is_same({ specs = { { widget = widget1, w = "grow", h = "grow" } } },
+                proxy._clay.describe(proxy))
+        end)
+
+        it("keeps descriptions through declarative and value constructors", function()
+            for _, widget in ipairs {
+                base.make_widget_declarative {},
+                base.make_widget_from_value {},
+                base.make_widget_from_value(base.make_widget),
+                base.make_widget_from_value(widget1),
+            } do
+                assert.is_table(widget._clay)
+                assert.is_same({}, widget._clay.describe(widget))
+            end
+        end)
     end)
 
     describe("caches", function()
@@ -26,27 +47,6 @@ describe("wibox.widget.base", function()
             assert.is.equal(0, #alive)
         end)
 
-        it("simple cache clear", function()
-            local alive = setmetatable({ widget1, widget2 }, { __mode = "kv" })
-            base.layout_widget(no_parent, { "fake context" }, widget1, 20, 20)
-            assert.is.equal(2, #alive)
-
-            widget1, widget2 = nil, nil
-            collectgarbage("collect")
-            assert.is.equal(0, #alive)
-        end)
-
-        it("self-reference cache clear", function()
-            widget2.widget = widget1
-
-            local alive = setmetatable({ widget1, widget2 }, { __mode = "kv" })
-            base.layout_widget(no_parent, { "fake context" }, widget1, 20, 20)
-            assert.is.equal(2, #alive)
-
-            widget1, widget2 = nil, nil
-            collectgarbage("collect")
-            assert.is.equal(0, #alive)
-        end)
     end)
 
     describe("setup", function()

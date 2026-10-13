@@ -1,5 +1,5 @@
 ---------------------------------------------------------------------------
---- Test for issue #239: NumLock breaks wibar scroll bindings.
+--- Test: NumLock breaks wibar scroll bindings.
 ---
 --- Verifies that awesome._set_keyboard_setting("numlock", bool) toggles
 --- NumLock without crashing, exercising the full path:

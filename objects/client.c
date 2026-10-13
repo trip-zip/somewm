@@ -112,8 +112,10 @@
 #include "../property.h"
 #include "../screenshot_compose.h"
 
-/* Forward declaration - applies client geometry to wlroots scene graph */
-void apply_geometry_to_wlroots(client_t *c);
+#include "../declare.h"
+
+/* Forward declarations - window.c's configure-client-to-box seam */
+void client_configure_to_box(client_t *c);
 
 #include <math.h>
 #include <stdio.h>
@@ -128,8 +130,6 @@ void apply_geometry_to_wlroots(client_t *c);
 #include <wlr/types/wlr_buffer.h>
 #include <wlr/types/wlr_compositor.h>
 #include <drm_fourcc.h>
-
-#include "../systray.h"
 
 /* External references to somewm.c globals */
 extern struct wlr_renderer *drw;
@@ -1316,104 +1316,48 @@ lua_class_t client_class;
  */
 
 /**
- * The client's bounding shape as set by awesome as a (native) cairo surface.
- *
- * The bounding shape is the outer shape of the client. It is outside of the
- * border.
- *
- * Do not use this directly unless you want total control over the shape (such
- * as shape with holes). Even then, it is usually recommended to use transparency
- * in the titlebars and a compositing manager. For the vast majority of use
- * cases, use the `shape` property.
+ * Shape masks are accepted but never read. All three mask properties share
+ * one warning per client and always read nil.
  *
  * @property shape_bounding
- * @tparam image shape_bounding
- * @propertydefault An A1 surface where all pixels are white.
+ * @tparam[opt=nil] image shape_bounding
  * @propemits false false
- * @see shape
- * @see gears.surface.apply_shape_bounding
- * @see gears.shape
- * @see shape_clip
- * @see shape_input
- * @see client_shape_bounding
- * @see client_shape_clip
- * @see gears.surface
  */
 
 /**
- * The client's clip shape as set by awesome as a (native) cairo surface.
- *
- * The shape_clip is the shape of the client *content*. It is *inside* the
- * border.
+ * Shape masks are accepted but never read. All three mask properties share
+ * one warning per client and always read nil.
  *
  * @property shape_clip
- * @tparam image shape_clip
- * @propertydefault An A1 surface where all pixels are white.
+ * @tparam[opt=nil] image shape_clip
  * @propemits false false
- * @see shape_bounding
- * @see shape_input
- * @see shape
- * @see gears.surface.apply_shape_bounding
- * @see gears.shape
- * @see client_shape_bounding
- * @see client_shape_clip
- * @see gears.surface
  */
 
 /**
- * The client's input shape as set by awesome as a (native) cairo surface.
- *
- * The input shape is the shape where mouse input will be passed to the
- * client rather than propagated below it.
+ * Shape masks are accepted but never read. All three mask properties share
+ * one warning per client and always read nil.
  *
  * @property shape_input
- * @tparam image shape_input
- * @propertydefault An A1 surface where all pixels are white.
+ * @tparam[opt=nil] image shape_input
  * @propemits false false
- * @see shape_bounding
- * @see shape_clip
- * @see shape
- * @see gears.surface.apply_shape_bounding
- * @see gears.shape
- * @see client_shape_bounding
- * @see client_shape_clip
- * @see gears.surface
  */
 
 /**
- * The client's bounding shape as set by the program as a (native) cairo surface.
+ * The child window mask always reads nil; masks are never read.
  *
  * @property client_shape_bounding
- * @tparam image client_shape_bounding
- * @propertydefault An A1 surface where all pixels are white.
+ * @tparam[opt=nil] image client_shape_bounding
  * @propemits false false
  * @readonly
- * @see shape_bounding
- * @see shape_clip
- * @see shape_input
- * @see shape
- * @see gears.surface.apply_shape_bounding
- * @see gears.shape
- * @see client_shape_clip
- * @see gears.surface
  */
 
 /**
- * The client's clip shape as set by the program as a (native) cairo surface.
+ * The child window mask always reads nil; masks are never read.
  *
  * @property client_shape_clip
- * @tparam image client_shape_clip
- * @propertydefault An A1 surface where all pixels are white.
+ * @tparam[opt=nil] image client_shape_clip
  * @propemits false false
  * @readonly
- * @see shape_bounding
- * @see shape_clip
- * @see shape_input
- * @see shape
- * @see gears.surface.apply_shape_bounding
- * @see gears.shape
- * @see client_shape_bounding
- * @see gears.surface
  */
 
 /**
@@ -1569,16 +1513,46 @@ typedef enum {
 
 static area_t titlebar_get_area(client_t *c, client_titlebar_t bar);
 static drawable_t *titlebar_get_drawable(lua_State *L, client_t *c, int cl_idx, client_titlebar_t bar);
-static void client_resize_do(client_t *c, area_t geometry, bool silent);
+int luaA_client_geometry_is_solved(lua_State *L);
+
+static void client_resize_do(client_t *c, area_t geometry, bool silent, bool solved);
 static void client_set_maximized_common(lua_State *L, int cidx, bool s, const char* type, const int val);
 
-/** Collect a client.
- * \param L The Lua VM state.
- * \return The number of element pushed on stack.
- */
+typedef struct client_xproperty {
+    struct client_xproperty *next;
+    char *name;
+    int type;
+    union {
+        bool boolean;
+        lua_Number number;
+        struct {
+            char *data;
+            size_t len;
+        } string;
+    } value;
+} client_xproperty_t;
+
+static void
+client_xproperty_free(client_xproperty_t *property)
+{
+    if (property->type == LUA_TSTRING)
+        free(property->value.string.data);
+    free(property->name);
+    free(property);
+}
+
+/** Release resources owned by the client userdata. */
 static void
 client_wipe(client_t *c)
 {
+    if (c->shape_ref)
+        luaL_unref(globalconf_get_lua_State(), LUA_REGISTRYINDEX, c->shape_ref);
+    while (c->xproperties) {
+        client_xproperty_t *property = c->xproperties;
+        c->xproperties = property->next;
+        client_xproperty_free(property);
+    }
+
     /* Cleanup button array (AwesomeWM pattern - DO_NOTHING means Lua GC handles buttons) */
     button_array_wipe(&c->buttons);
 
@@ -1605,17 +1579,11 @@ client_wipe(client_t *c)
         c->icons.len = c->icons.size = 0;
     }
 
-    /* Cleanup titlebar scene buffers.
-     * NOTE: Don't manually destroy - they're children of c->scene and are
-     * automatically destroyed when the parent scene tree is destroyed.
-     * Manually destroying them here causes double-free crashes. */
     for (int i = 0; i < CLIENT_TITLEBAR_COUNT; i++) {
-        c->titlebar[i].scene_buffer = NULL;
+        declare_handle_drop(c->titlebar[i].drawable);
+        widget_nodes_clear(&c->titlebar[i].widgets);
     }
 
-    /* Shadow scene nodes are children of c->scene and destroyed with it.
-     * We own the texture buffers though and must free them. */
-    shadow_release(&c->shadow);
     if (c->shadow_config) {
         free(c->shadow_config);
         c->shadow_config = NULL;
@@ -1662,10 +1630,22 @@ client_set_urgent(lua_State *L, int cidx, bool urgent)
     }
 DO_CLIENT_SET_PROPERTY(group_window)
 DO_CLIENT_SET_PROPERTY(type)
-DO_CLIENT_SET_PROPERTY(transient_for)
 DO_CLIENT_SET_PROPERTY(pid)
 DO_CLIENT_SET_PROPERTY(skip_taskbar)
 #undef DO_CLIENT_SET_PROPERTY
+
+/* The next stack refresh lifts a transient right above its parent. */
+void
+client_set_transient_for(lua_State *L, int cidx, client_t *value)
+{
+    client_t *c = luaA_checkudata(L, cidx, &client_class);
+    if(c->transient_for != value)
+    {
+        c->transient_for = value;
+        stack_windows();
+        luaA_object_emit_signal(L, cidx, "property::transient_for", 0);
+    }
+}
 
 #define DO_CLIENT_SET_STRING_PROPERTY2(prop, signal) \
     void \
@@ -1869,30 +1849,6 @@ client_getbywin(xcb_window_t w)
     return NULL;
 }
 
-client_t *
-client_getbynofocuswin(xcb_window_t w)
-{
-    foreach(c, globalconf.clients)
-        if((*c)->nofocus_window == w)
-            return *c;
-
-    return NULL;
-}
-
-/** Get a client by its frame window.
- * \param w The client window to find.
- * \return A client pointer if found, NULL otherwise.
- */
-client_t *
-client_getbyframewin(xcb_window_t w)
-{
-    foreach(c, globalconf.clients)
-        if((*c)->frame_window == w)
-            return *c;
-
-    return NULL;
-}
-
 /** Unfocus a client (internal).
  * \param c The client.
  * \param sync Emit the signals now instead of queueing them. Required when the
@@ -1972,9 +1928,9 @@ client_ban(client_t *c)
         if(!c->scene)
             return;
 
-        /* Wayland: hide in scene graph (equivalent to xcb_unmap_window) */
-        wlr_scene_node_set_enabled(&c->scene->node, false);
-
+        /* The reconciler hides it: banning is a declare filter
+         * (client_isvisible in declarable_client), and banning_refresh()'s
+         * caller marks every output dirty once the sweep has to run. */
         c->isbanned = true;
 
         client_ban_unfocus(c);
@@ -2039,7 +1995,7 @@ client_focus_update(client_t *c)
     globalconf.focus.client = c;
 
     /* According to EWMH, we have to remove the urgent state from a client.
-     * This should be done also for the current/focused client (FS#1310). */
+     * This should be done also for the current/focused client. */
     luaA_object_push(L, c);
     client_set_urgent(L, -1, false);
 
@@ -2120,78 +2076,54 @@ client_focus_refresh(void)
     globalconf.focus.need_update = false;
 }
 
-/** Apply pending border updates (AwesomeWM deferred border pattern for Wayland).
- * This function iterates through all clients and applies any pending border changes
- * to the wlr_scene_rect nodes if border_need_update is true.
+/** The C focus recolour: record the colour (client_border_rgba reads it when
+ * the Lua border_color property was never set) and queue
+ * property::border_color, on which awful.layout describes the frame again.
  */
-static void
-client_border_refresh(void)
+void
+client_set_border_color(client_t *c, const float color[4])
 {
-    foreach(_c, globalconf.clients)
-    {
-        client_t *c = *_c;
+    lua_State *L = globalconf_get_lua_State();
 
-        /* Check if border needs update */
-        if(!c->border_need_update)
-            continue;
-
-        c->border_need_update = false;
-
-        /* Skip if client has no scene (not yet mapped) */
-        if(!c->scene || !c->border[0])
-            continue;
-
-        /* Sync wlroots border width (bw) with Lua-facing border_width;
-         * client_geometry_refresh() runs right after this and applies the
-         * new width to the border rects, surface offset and shadow.
-         * Fullscreen keeps bw at 0 (matches setfullscreen()), so a
-         * border_color change while fullscreen doesn't re-grow the frame. */
-        c->bw = c->fullscreen ? 0 : c->border_width;
-
-        /* Update border color if initialized (matches AwesomeWM window_border_refresh pattern) */
-        if(c->border_color.initialized) {
-            float color_floats[4];
-            int i;
-
-            color_to_floats(&c->border_color, color_floats);
-
-            /* Apply color to all 4 border rectangles */
-            for(i = 0; i < 4; i++)
-                wlr_scene_rect_set_color(c->border[i], color_floats);
-        }
-    }
+    memcpy(c->border_rgba, color, 4 * sizeof(float));
+    c->border_rgba_set = true;
+    luaA_object_push(L, c);
+    some_event_queue_signal0(L, -1, SIG_PROPERTY_BORDER_COLOR);
+    lua_pop(L, 1);
 }
 
-/** Apply pending geometry changes to wlroots scene graph.
- *
- * This is the Wayland equivalent of AwesomeWM's X11 client_geometry_refresh().
- * Lua layout code calculates positions via c:geometry({...}), which updates
- * c->geometry in the C struct. This function applies those changes to the
- * actual wlroots scene nodes.
- *
- * Called from client_refresh() during the refresh cycle.
+/** The border the frame draws: border_width, none when fullscreen or for
+ * an unmanaged (override-redirect) client.
  */
-static void
-client_geometry_refresh(void)
+int
+client_border(client_t *c)
 {
-    foreach(_c, globalconf.clients)
-    {
-        client_t *c = *_c;
+    if (c->client_type == X11 && c->surface.xwayland
+            && c->surface.xwayland->override_redirect)
+        return 0;
+    return c->fullscreen ? 0 : c->border_width;
+}
 
-        if (!c || !c->mon)
-            continue;
-
-        /* Apply c->geometry to wlroots scene graph */
-        apply_geometry_to_wlroots(c);
-    }
+/** The border color the declare pass draws for c: the Lua border_color
+ * property when set, else the C-side focus recolor, else the theme default
+ * (urgent-aware). Straight-alpha 0-1 floats.
+ */
+void
+client_border_rgba(client_t *c, float out[4])
+{
+    if (c->border_color.initialized)
+        color_to_floats(&c->border_color, out);
+    else if (c->border_rgba_set)
+        memcpy(out, c->border_rgba, 4 * sizeof(float));
+    else
+        memcpy(out, c->urgent ? globalconf.appearance.urgentcolor
+                              : globalconf.appearance.bordercolor,
+               4 * sizeof(float));
 }
 
 void
 client_refresh(void)
 {
-    /* Border refresh first: it syncs c->bw, which the geometry pass reads */
-    client_border_refresh();
-    client_geometry_refresh();
     client_focus_refresh();
 }
 
@@ -2213,7 +2145,6 @@ client_destroy_later(void)
     if(globalconf.destroy_later_windows.len == 0)
         return;
 
-#ifdef XWAYLAND
     /* Only destroy if we have an X11 connection (XWayland is enabled and connected) */
     if(!globalconf.connection)
     {
@@ -2231,7 +2162,6 @@ client_destroy_later(void)
     }
     if (ignored_enterleave)
         client_restore_enterleave_events();
-#endif
 
     /* Everything's done, clear the list */
     globalconf.destroy_later_windows.len = 0;
@@ -2278,18 +2208,6 @@ client_get_undecorated_geometry(client_t *c)
         }
     }
     return geometry;
-}
-
-/** Send a synthetic configure event to a window.
- */
-void
-client_send_configure(client_t *c)
-{
-    area_t geometry = c->geometry;
-
-    if (!c->fullscreen)
-        client_remove_titlebar_geometry(c, &geometry);
-    xwindow_configure(c->window, geometry, c->border_width);
 }
 
 /** Apply size hints to the client's new geometry.
@@ -2398,13 +2316,13 @@ client_apply_size_hints(client_t *c, area_t geometry)
 }
 
 static void
-client_resize_do(client_t *c, area_t geometry, bool silent)
+client_resize_do(client_t *c, area_t geometry, bool silent, bool solved)
 {
     lua_State *L = globalconf_get_lua_State();
     area_t old_geometry;
     screen_t *new_screen = c->screen;
 
-    if(!silent && (!new_screen || !screen_area_in_screen(new_screen, geometry)))
+    if(!silent && !solved && (!new_screen || !screen_area_in_screen(new_screen, geometry)))
         new_screen = screen_getbycoord(geometry.x, geometry.y);
 
     /* Also store geometry including border */
@@ -2416,13 +2334,12 @@ client_resize_do(client_t *c, area_t geometry, bool silent)
      * any lag causes menus to appear at stale positions (e.g. Steam dropdowns).
      * The deferred xwm_schedule_flush() inside wlr_xwayland_surface_configure()
      * delivers the update on the next event loop iteration. */
-#ifdef XWAYLAND
     if (c->client_type == X11 && c->surface.xwayland
             && (old_geometry.x != geometry.x || old_geometry.y != geometry.y)) {
         int tl = c->fullscreen ? 0 : c->titlebar[CLIENT_TITLEBAR_LEFT].size;
         int tt = c->fullscreen ? 0 : c->titlebar[CLIENT_TITLEBAR_TOP].size;
-        int16_t cx = geometry.x + c->bw + tl;
-        int16_t cy = geometry.y + c->bw + tt;
+        int16_t cx = geometry.x + client_border(c) + tl;
+        int16_t cy = geometry.y + client_border(c) + tt;
         if (cx != c->surface.xwayland->x || cy != c->surface.xwayland->y) {
             wlr_xwayland_surface_configure(c->surface.xwayland,
                     cx, cy,
@@ -2430,7 +2347,6 @@ client_resize_do(client_t *c, area_t geometry, bool silent)
                     c->surface.xwayland->height);
         }
     }
-#endif
 
     if(!silent)
     {
@@ -2476,16 +2392,28 @@ client_resize_do(client_t *c, area_t geometry, bool silent)
         area.y += geometry.y;
         if (c->fullscreen)
             area.width = area.height = 0;
-        drawable_set_geometry(L, -1, area);
+        drawable_set_geometry(L, -1, area, solved);
 
         /* Pop the client and the drawable */
         lua_pop(L, 2);
     }
 
-    /* Geometry will be applied to wlroots in the deferred refresh cycle.
-     * This matches AwesomeWM's pattern: client_resize_do() only updates state,
-     * and client_geometry_refresh() applies to the window system.
-     */
+    /* The frame around the client (position, borders, shadow) follows
+     * c->geometry at the next dirty frame; the configure leg runs now so
+     * the client learns its size in this cycle (titlebar-only changes
+     * shift the surface without moving the declared box, so the
+     * reconciler's configure hook alone would miss them). */
+    client_configure_to_box(c);
+    if (!solved && c->mon && c->mon->declare)
+        declare_output_mark_dirty(c->mon->declare);
+}
+
+/* The frame solve is authoritative; never apply protocol hints to the slot. */
+void
+client_set_solved_geometry(client_t *c, area_t geometry)
+{
+    if (!AREA_EQUAL(c->geometry, geometry))
+        client_resize_do(c, geometry, false, true);
 }
 
 /** Resize client window.
@@ -2541,7 +2469,7 @@ client_resize(client_t *c, area_t geometry, bool honor_hints, bool silent)
 
     if(!AREA_EQUAL(c->geometry, geometry))
     {
-        client_resize_do(c, geometry, silent);
+        client_resize_do(c, geometry, silent, false);
 
         return true;
     }
@@ -2562,11 +2490,9 @@ client_set_minimized(lua_State *L, int cidx, bool s)
     if(c->minimized != s)
     {
         c->minimized = s;
+        /* The reconciler hides and shows it: banning_need_update() marks
+         * every output once banning_refresh() has to run. */
         banning_need_update();
-
-        /* Wayland: Hide/show the client's scene node */
-        if(c->scene)
-            wlr_scene_node_set_enabled(&c->scene->node, !s);
 
         /* xdg state is not set here. property::minimized below reaches
          * arrange(), which calls client_set_suspended() - one configure
@@ -2576,8 +2502,6 @@ client_set_minimized(lua_State *L, int cidx, bool s)
         if(c->toplevel_handle)
             wlr_foreign_toplevel_handle_v1_set_minimized(c->toplevel_handle, s);
 
-        if(strut_has_value(&c->strut))
-            screen_update_workarea(c->screen);
         luaA_object_emit_signal(L, cidx, "property::minimized", 0);
     }
 }
@@ -2596,8 +2520,6 @@ client_set_hidden(lua_State *L, int cidx, bool s)
     {
         c->hidden = s;
         banning_need_update();
-        if(strut_has_value(&c->strut))
-            screen_update_workarea(c->screen);
         luaA_object_emit_signal(L, cidx, "property::hidden", 0);
     }
 }
@@ -2617,8 +2539,6 @@ client_set_sticky(lua_State *L, int cidx, bool s)
         c->sticky = s;
         banning_need_update();
         ewmh_client_update_desktop(c);
-        if(strut_has_value(&c->strut))
-            screen_update_workarea(c->screen);
         luaA_object_emit_signal(L, cidx, "property::sticky", 0);
     }
 }
@@ -2693,7 +2613,7 @@ client_set_fullscreen(lua_State *L, int cidx, bool s)
         if(c->toplevel_handle)
             wlr_foreign_toplevel_handle_v1_set_fullscreen(c->toplevel_handle, s);
         /* Force a client resize, so that titlebars get shown/hidden */
-        client_resize_do(c, c->geometry, false);
+        client_resize_do(c, c->geometry, false, false);
         stack_windows();
     }
 }
@@ -2749,7 +2669,7 @@ client_set_maximized_common(lua_State *L, int cidx, bool s, const char* type, co
             luaA_object_emit_signal(L, abs_cidx, "property::maximized", 0);
             if(c->toplevel_handle)
                 wlr_foreign_toplevel_handle_v1_set_maximized(c->toplevel_handle, c->maximized);
-            /* xdg-shell state is not written here. apply_geometry_to_wlroots()
+            /* xdg-shell state is not written here. client_configure_to_box()
              * reconciles it, so it batches into the same configure as the
              * size change (same as fullscreen). */
         }
@@ -2888,9 +2808,7 @@ client_unban(client_t *c)
         if(!c->scene)
             return;
 
-        /* Wayland: show in scene graph (equivalent to xcb_map_window) */
-        wlr_scene_node_set_enabled(&c->scene->node, true);
-
+        /* The reconciler shows it again; see client_ban(). */
         c->isbanned = false;
 
         /* An unbanned client shouldn't be minimized or hidden */
@@ -2918,7 +2836,10 @@ client_unmanage(client_t *c, client_unmanage_t reason)
     {
         client_t *tc = *_tc;
         if(tc->transient_for == c)
+        {
             tc->transient_for = NULL;
+            stack_windows();
+        }
     }
 
     /* Emit synchronously: this client is invalidated before the event queue is
@@ -2980,9 +2901,6 @@ client_unmanage(client_t *c, client_unmanage_t reason)
 
     some_event_queue_class(&client_class, SIG_LIST);
 
-    if(strut_has_value(&c->strut))
-        screen_update_workarea(c->screen);
-
     /* Get rid of all titlebars */
     for (client_titlebar_t bar = CLIENT_TITLEBAR_TOP; bar < CLIENT_TITLEBAR_COUNT; bar++) {
         if (c->titlebar[bar].drawable == NULL)
@@ -2994,6 +2912,9 @@ client_unmanage(client_t *c, client_unmanage_t reason)
             event_drawable_under_mouse(L, -1);
             lua_pop(L, 1);
         }
+
+        declare_handle_drop(c->titlebar[bar].drawable);
+        widget_nodes_clear(&c->titlebar[bar].widgets);
 
         /* Forget about the drawable */
         luaA_object_push(L, c);
@@ -3050,23 +2971,19 @@ client_unmanage(client_t *c, client_unmanage_t reason)
     if (c->client_type == XDGShell) {
         c->surface.xdg = NULL;
     }
-#ifdef XWAYLAND
     else if (c->client_type == X11) {
         /* X11 window invalidation handled below */
     }
-#endif
 
     /* set client as invalid (X11/XWayland compatibility) */
     c->window = XCB_NONE;
 
-#ifdef XWAYLAND
     /* For XWayland UNMAP: keep the Lua reference alive so that re-mapping
      * the same surface (e.g., Discord close-to-tray then re-open) can push
      * the client object to Lua.  The reference will be released by
      * destroynotify() when the XWayland surface is actually destroyed. */
     if (c->client_type == X11 && reason == CLIENT_UNMANAGE_UNMAP)
         return;
-#endif
 
     luaA_object_unref(L, c);
 }
@@ -3090,14 +3007,12 @@ client_kill(client_t *c)
         return;
     }
 
-#ifdef XWAYLAND
     if (c->client_type == X11 && c->surface.xwayland) {
         /* Use wlroots' XWayland close which properly sends WM_DELETE_WINDOW
          * or force-closes the window. This is more reliable than manual XCB. */
         wlr_xwayland_surface_close(c->surface.xwayland);
         return;
     }
-#endif
 
     warn("client_kill: Unknown client type or invalid surface");
 }
@@ -3139,7 +3054,7 @@ luaA_client_get(lua_State *L)
     else
     {
         foreach(c, globalconf.clients)
-            if(screen == NULL || (*c)->screen == screen)
+            if((*c)->scene && (screen == NULL || (*c)->screen == screen))
             {
                 luaA_object_push(L, *c);
                 lua_rawseti(L, -2, i++);
@@ -3210,71 +3125,6 @@ client_set_icon(client_t *c, cairo_surface_t *s)
     if (s && cairo_surface_status(s) == CAIRO_STATUS_SUCCESS)
         cairo_surface_array_push(&array, draw_dup_image_surface(s));
     client_set_icons(c, array);
-}
-
-
-/** Set a client icon.
- * \param c The client to change.
- * \param icon A bitmap containing the icon.
- * \param mask A mask for the bitmap (optional)
- */
-void
-client_set_icon_from_pixmaps(client_t *c, xcb_pixmap_t icon, xcb_pixmap_t mask)
-{
-    xcb_get_geometry_cookie_t geom_icon_c, geom_mask_c;
-    xcb_get_geometry_reply_t *geom_icon_r, *geom_mask_r = NULL;
-    cairo_surface_t *s_icon, *result;
-
-    geom_icon_c = xcb_get_geometry_unchecked(globalconf.connection, icon);
-    if (mask)
-        geom_mask_c = xcb_get_geometry_unchecked(globalconf.connection, mask);
-    geom_icon_r = xcb_get_geometry_reply(globalconf.connection, geom_icon_c, NULL);
-    if (mask)
-        geom_mask_r = xcb_get_geometry_reply(globalconf.connection, geom_mask_c, NULL);
-
-    if (!geom_icon_r || (mask && !geom_mask_r))
-        goto out;
-    if ((geom_icon_r->depth != 1 && geom_icon_r->depth != globalconf.screen->root_depth)
-            || (geom_mask_r && geom_mask_r->depth != 1))
-    {
-        warn("Got pixmaps with depth (%d, %d) while processing icon, but only depth 1 and %d are allowed",
-                geom_icon_r->depth, geom_mask_r ? geom_mask_r->depth : 0, globalconf.screen->root_depth);
-        goto out;
-    }
-
-    if (geom_icon_r->depth == 1)
-        s_icon = cairo_xcb_surface_create_for_bitmap(globalconf.connection,
-                globalconf.screen, icon, geom_icon_r->width, geom_icon_r->height);
-    else
-        s_icon = cairo_xcb_surface_create(globalconf.connection, icon, globalconf.default_visual,
-                geom_icon_r->width, geom_icon_r->height);
-    result = s_icon;
-
-    if (mask)
-    {
-        cairo_surface_t *s_mask;
-        cairo_t *cr;
-
-        result = cairo_surface_create_similar(s_icon, CAIRO_CONTENT_COLOR_ALPHA, geom_icon_r->width, geom_icon_r->height);
-        s_mask = cairo_xcb_surface_create_for_bitmap(globalconf.connection,
-                globalconf.screen, mask, geom_icon_r->width, geom_icon_r->height);
-        cr = cairo_create(result);
-
-        cairo_set_source_surface(cr, s_icon, 0, 0);
-        cairo_mask_surface(cr, s_mask, 0, 0);
-        cairo_surface_destroy(s_mask);
-        cairo_destroy(cr);
-    }
-
-    client_set_icon(c, result);
-
-    cairo_surface_destroy(result);
-    if (result != s_icon)
-        cairo_surface_destroy(s_icon);
-
-out:
-    p_delete(&geom_icon_r);
-    p_delete(&geom_mask_r);
 }
 
 
@@ -3433,37 +3283,57 @@ luaA_client_get_first_tag(lua_State *L, client_t *c)
     return 0;
 }
 
-/** Get the wlroots scene-graph layer the client currently lives in.
+/** The size the client's last commit drew when it is not the size it was
+ * configured, {width, height} in logical pixels, else nil. Read by
+ * awful.client.clay. */
+static int
+luaA_client_get__committed_size(lua_State *L, client_t *c)
+{
+    if (!c->committed_width)
+        return 0;
+    lua_createtable(L, 0, 2);
+    lua_pushinteger(L, c->committed_width);
+    lua_setfield(L, -2, "width");
+    lua_pushinteger(L, c->committed_height);
+    lua_setfield(L, -2, "height");
+    return 1;
+}
+
+/** Get the stacking layer the client currently draws in.
  * Returns the layer name as a string, or nil if the client has no scene
- * node or its parent is not one of the known top-level layers. Intended
- * for integration tests that verify stacking behavior.
+ * node. Intended for integration tests that verify stacking behavior; the
+ * names are the pre-Clay scene layers, now derived from the same
+ * classification the declare pass orders bands by.
  */
 static int
 luaA_client_get__scene_layer(lua_State *L, client_t *c)
 {
-    static const char *const layer_names[NUM_LAYERS] = {
-        [LyrBg]      = "background",
-        [LyrBottom]  = "bottom",
-        [LyrTile]    = "tile",
-        [LyrFloat]   = "float",
-        [LyrWibox]   = "wibox",
-        [LyrTop]     = "top",
-        [LyrFS]      = "fullscreen",
-        [LyrOverlay] = "overlay",
-        [LyrBlock]   = "block",
+    static const char *const layer_names[WINDOW_LAYER_COUNT] = {
+        [WINDOW_LAYER_DESKTOP]    = "background",
+        [WINDOW_LAYER_BELOW]      = "bottom",
+        [WINDOW_LAYER_NORMAL]     = "tile",
+        [WINDOW_LAYER_ABOVE]      = "top",
+        [WINDOW_LAYER_FULLSCREEN] = "fullscreen",
+        [WINDOW_LAYER_ONTOP]      = "overlay",
     };
+    window_layer_t layer;
 
-    if (!c->scene || !c->scene->node.parent)
+    if (!c->scene)
         return 0;
 
-    for (int i = 0; i < NUM_LAYERS; i++) {
-        if ((void *)c->scene->node.parent == (void *)layers[i]) {
-            lua_pushstring(L, layer_names[i]);
-            return 1;
-        }
+    /* Unmanaged (override-redirect) clients draw above everything
+     * (declare.c's z table); every other client draws in the layer
+     * stack_client_effective_layer() names. */
+    if (c->client_type == X11 && c->surface.xwayland
+            && c->surface.xwayland->override_redirect) {
+        lua_pushstring(L, "overlay");
+        return 1;
     }
-
-    return 0;
+    layer = stack_client_effective_layer(c);
+    if (!layer_names[layer])
+        return 0;
+    lua_pushstring(L, layer_names[layer]);
+    return 1;
 }
 
 /** Raise a client on top of others which are on the same layer.
@@ -3542,7 +3412,7 @@ static area_t
 titlebar_get_area(client_t *c, client_titlebar_t bar)
 {
     area_t result = c->geometry;
-    int bw = c->bw;
+    int bw = client_border(c);
 
     /* Wayland deviation: titlebars must be inset by border_width.
      * In X11, borders are drawn OUTSIDE the frame by the X server.
@@ -3588,6 +3458,34 @@ titlebar_get_area(client_t *c, client_titlebar_t bar)
     return result;
 }
 
+bool
+client_titlebar_host(client_t *c, drawable_t *d, struct widget_host *out)
+{
+    if (!c->mon || !d)
+        return false;
+    for (client_titlebar_t bar = CLIENT_TITLEBAR_TOP; bar < CLIENT_TITLEBAR_COUNT; bar++) {
+        if (c->titlebar[bar].drawable != d)
+            continue;
+        area_t area = titlebar_get_area(c, bar);
+
+        *out = (struct widget_host) {
+            .tree = &c->titlebar[bar].widgets,
+            .m = c->mon,
+            .drawable = d,
+            .id = (uint32_t)declare_handle_for(d, DECLARE_KIND_TITLEBAR),
+            .x = area.x + c->geometry.x - c->mon->m.x,
+            .y = area.y + c->geometry.y - c->mon->m.y,
+            .w = area.width, .h = area.height,
+            .src = { DECLARE_SRC_THEME, DECLARE_SRC_THEME },
+            .radius = 0,
+            .visible = client_isvisible(c),
+            .in_parent = true,
+        };
+        return true;
+    }
+    return false;
+}
+
 drawable_t *
 client_get_drawable_offset(client_t *c, int *x, int *y)
 {
@@ -3606,101 +3504,17 @@ client_get_drawable_offset(client_t *c, int *x, int *y)
     return NULL;
 }
 
-drawable_t *
-client_get_drawable(client_t *c, int x, int y)
-{
-    return client_get_drawable_offset(c, &x, &y);
-}
-
-static void
-client_refresh_titlebar_partial(client_t *c, client_titlebar_t bar, int16_t x, int16_t y, uint16_t width, uint16_t height)
-{
-    drawable_t *d = c->titlebar[bar].drawable;
-    struct wlr_buffer *buffer;
-    area_t area;
-
-    if (!d || !d->refreshed || !c->titlebar[bar].scene_buffer)
-        return;
-
-    /* Get titlebar geometry */
-    area = titlebar_get_area(c, bar);
-
-    /* Create buffer from drawable's Cairo surface */
-    buffer = drawable_create_buffer(d);
-    if (!buffer)
-        return;
-
-    /* Update scene buffer - same pattern as drawin */
-    wlr_scene_buffer_set_buffer_with_damage(
-        c->titlebar[bar].scene_buffer, buffer, NULL);
-    wlr_scene_buffer_set_dest_size(
-        c->titlebar[bar].scene_buffer, area.width, area.height);
-
-    wlr_buffer_drop(buffer);
-}
-
-#define HANDLE_TITLEBAR_REFRESH(name, index)                                                \
-static void                                                                                 \
-client_refresh_titlebar_ ## name(client_t *c)                                               \
-{                                                                                           \
-    area_t area = titlebar_get_area(c, index);                                              \
-    client_refresh_titlebar_partial(c, index, area.x, area.y, area.width, area.height);     \
-}
-HANDLE_TITLEBAR_REFRESH(top, CLIENT_TITLEBAR_TOP)
-HANDLE_TITLEBAR_REFRESH(right, CLIENT_TITLEBAR_RIGHT)
-HANDLE_TITLEBAR_REFRESH(bottom, CLIENT_TITLEBAR_BOTTOM)
-HANDLE_TITLEBAR_REFRESH(left, CLIENT_TITLEBAR_LEFT)
-
-/**
- * Refresh all titlebars that are in the specified rectangle
- */
-void
-client_refresh_partial(client_t *c, int16_t x, int16_t y, uint16_t width, uint16_t height)
-{
-    for (client_titlebar_t bar = CLIENT_TITLEBAR_TOP; bar < CLIENT_TITLEBAR_COUNT; bar++) {
-        client_refresh_titlebar_partial(c, bar, x, y, width, height);
-    }
-}
-
 static drawable_t *
 titlebar_get_drawable(lua_State *L, client_t *c, int cl_idx, client_titlebar_t bar)
 {
     if (c->titlebar[bar].drawable == NULL)
     {
         cl_idx = luaA_absindex(L, cl_idx);
-        switch (bar) {
-        case CLIENT_TITLEBAR_TOP:
-            drawable_allocator(L, (drawable_refresh_callback) client_refresh_titlebar_top, c);
-            break;
-        case CLIENT_TITLEBAR_BOTTOM:
-            drawable_allocator(L, (drawable_refresh_callback) client_refresh_titlebar_bottom, c);
-            break;
-        case CLIENT_TITLEBAR_RIGHT:
-            drawable_allocator(L, (drawable_refresh_callback) client_refresh_titlebar_right, c);
-            break;
-        case CLIENT_TITLEBAR_LEFT:
-            drawable_allocator(L, (drawable_refresh_callback) client_refresh_titlebar_left, c);
-            break;
-        default:
-            fatal("Unknown titlebar kind %d\n", (int) bar);
-        }
+        drawable_allocator(L);
         c->titlebar[bar].drawable = luaA_object_ref_item(L, cl_idx, -1);
 
-        /* Create scene buffer for rendering (Wayland-specific) */
-        if (!c->titlebar[bar].scene_buffer && c->scene) {
-            area_t area;
-            c->titlebar[bar].scene_buffer = wlr_scene_buffer_create(c->scene, NULL);
-
-            /* Store drawable pointer (not client!) and set owner (AwesomeWM pattern) */
-            c->titlebar[bar].scene_buffer->node.data = c->titlebar[bar].drawable;
-            c->titlebar[bar].drawable->owner_type = DRAWABLE_OWNER_CLIENT;
-            c->titlebar[bar].drawable->owner.client = c;
-
-            /* Position relative to client geometry (titlebars occupy space inside geometry) */
-            area = titlebar_get_area(c, bar);
-            wlr_scene_node_set_position(&c->titlebar[bar].scene_buffer->node,
-                                          area.x, area.y);
-        }
+        c->titlebar[bar].drawable->owner_type = DRAWABLE_OWNER_CLIENT;
+        c->titlebar[bar].drawable->owner.client = c;
     }
 
     return c->titlebar[bar].drawable;
@@ -3758,40 +3572,9 @@ titlebar_resize(lua_State *L, int cidx, client_t *c, client_titlebar_t bar, int 
     }
 
     c->titlebar[bar].size = size;
-    client_resize_do(c, geometry, false);
-
-    /* Update scene buffer visibility and position (Wayland-specific) */
-    if (c->titlebar[bar].scene_buffer) {
-        wlr_scene_node_set_enabled(&c->titlebar[bar].scene_buffer->node, size > 0);
-        if (size > 0) {
-            area_t area = titlebar_get_area(c, bar);
-            wlr_scene_node_set_position(&c->titlebar[bar].scene_buffer->node,
-                                        area.x, area.y);
-        }
-    }
+    client_resize_do(c, geometry, false, false);
 
     luaA_object_emit_signal(L, cidx, property_name, 0);
-}
-
-/** Update all titlebar scene buffer positions based on current geometry.
- * Called from apply_geometry_to_wlroots() when client geometry changes.
- * In X11, drawable_set_geometry() implicitly repositions windows.
- * In Wayland, we must explicitly update scene_buffer positions.
- */
-void
-client_update_titlebar_positions(client_t *c)
-{
-    for (client_titlebar_t bar = CLIENT_TITLEBAR_TOP; bar < CLIENT_TITLEBAR_COUNT; bar++) {
-        if (c->titlebar[bar].scene_buffer) {
-            bool visible = c->titlebar[bar].size > 0 && !c->fullscreen;
-            wlr_scene_node_set_enabled(&c->titlebar[bar].scene_buffer->node, visible);
-            if (visible) {
-                area_t area = titlebar_get_area(c, bar);
-                wlr_scene_node_set_position(&c->titlebar[bar].scene_buffer->node,
-                                            area.x, area.y);
-            }
-        }
-    }
 }
 
 #define HANDLE_TITLEBAR(name, index)                              \
@@ -4015,7 +3798,13 @@ luaA_client_set_icon(lua_State *L, client_t *c)
 {
     cairo_surface_t *surf = NULL;
     if(!lua_isnil(L, -1))
+    {
+        if(!lua_islightuserdata(L, -1))
+            return luaL_error(L, "client.icon expects light userdata or nil, got %s; "
+                              "use awesome.load_image() or a Cairo surface's _native pointer",
+                              luaA_typename(L, -1));
         surf = (cairo_surface_t *)lua_touserdata(L, -1);
+    }
     client_set_icon(c, surf);
     return 0;
 }
@@ -4073,47 +3862,6 @@ luaA_client_set_urgent(lua_State *L, client_t *c)
     return 0;
 }
 
-/** Recursively apply opacity to all buffer nodes in a scene tree. */
-static void
-apply_opacity_to_tree(struct wlr_scene_node *node, float opacity)
-{
-    if (node->type == WLR_SCENE_NODE_BUFFER) {
-        struct wlr_scene_buffer *buf = wlr_scene_buffer_from_node(node);
-        wlr_scene_buffer_set_opacity(buf, opacity);
-    } else if (node->type == WLR_SCENE_NODE_TREE) {
-        struct wlr_scene_tree *tree = wlr_scene_tree_from_node(node);
-        struct wlr_scene_node *child;
-        wl_list_for_each(child, &tree->children, link) {
-            apply_opacity_to_tree(child, opacity);
-        }
-    }
-}
-
-/** Apply opacity to all buffers in the client's scene tree.
- * This includes titlebars and the XDG surface content.
- * Native Wayland compositing - no picom needed.
- * Non-static so it can be called from somewm.c on surface commits.
- */
-void
-client_apply_opacity_to_scene(client_t *c, float opacity)
-{
-    int i;
-
-    /* Apply to titlebars (scene buffers we control) */
-    for (i = 0; i < CLIENT_TITLEBAR_COUNT; i++) {
-        if (c->titlebar[i].scene_buffer) {
-            wlr_scene_buffer_set_opacity(c->titlebar[i].scene_buffer, opacity);
-        }
-    }
-
-    /* Apply to XDG surface subtree - recursively traverse all nodes.
-     * wlr_scene_xdg_surface_create() creates a nested tree structure,
-     * so we need to recurse to find all buffer nodes. */
-    if (c->scene_surface) {
-        apply_opacity_to_tree(&c->scene_surface->node, opacity);
-    }
-}
-
 /** Get client opacity.
  * \param L The Lua VM state.
  * \param c The client.
@@ -4141,14 +3889,15 @@ luaA_client_set_opacity(lua_State *L, client_t *c)
     if (lua_isnil(L, -1)) {
         /* nil = unset, restore to fully opaque */
         c->opacity = -1;
-        client_apply_opacity_to_scene(c, 1.0f);
     } else {
         double opacity = lua_tonumber(L, -1);
         if (opacity < 0 || opacity > 1)
             return luaL_error(L, "opacity must be between 0 and 1");
         c->opacity = opacity;
-        client_apply_opacity_to_scene(c, (float)opacity);
     }
+    /* The surface leaf declares the opacity; the next frame applies it. */
+    if (c->mon && c->mon->declare)
+        declare_output_mark_dirty(c->mon->declare);
 
     luaA_object_emit_signal(L, -3, "property::opacity", 0);
     return 0;
@@ -4188,7 +3937,7 @@ luaA_client_get_shadow(lua_State *L, client_t *c)
         shadow_config_to_lua(L, c->shadow_config);
     } else {
         const shadow_config_t *eff = shadow_get_effective_config(NULL, false);
-        if (eff->enabled && c->shadow.tree) {
+        if (eff->enabled) {
             shadow_config_to_lua(L, eff);
         } else {
             lua_pushboolean(L, false);
@@ -4219,11 +3968,7 @@ luaA_client_set_shadow(lua_State *L, client_t *c)
     }
     *c->shadow_config = new_config;
 
-    /* Update shadow if client is mapped */
-    if (c->scene) {
-        shadow_update_config(&c->shadow, c->scene, &new_config,
-            c->geometry.width + 2 * c->bw, c->geometry.height + 2 * c->bw);
-    }
+    declare_mark_all_dirty();
 
     luaA_object_emit_signal(L, -3, "property::shadow", 0);
     return 0;
@@ -4398,7 +4143,7 @@ luaA_client_get_content(lua_State *L, client_t *c)
     cairo_t *cr;
     int dst_width  = c->geometry.width;
     int dst_height = c->geometry.height;
-    struct screenshot_render_data rdata;
+    struct screenshot_render_data rdata = { 0 };
 
     /* Logical client size without decorations - what we return to Lua. */
     dst_width  -= c->titlebar[CLIENT_TITLEBAR_LEFT].size + c->titlebar[CLIENT_TITLEBAR_RIGHT].size;
@@ -4421,7 +4166,7 @@ luaA_client_get_content(lua_State *L, client_t *c)
      * GPU-accelerated apps); reading via the scene buffer ensures wlroots'
      * synchronization, which was missing in the previous
      * direct-from-wlr_surface->buffer path that came back blank for DMA-BUF
-     * clients (issue #539).
+     * clients.
      *
      * wlr_scene_node_for_each_buffer reports (sx, sy) accumulated from the
      * starting node down INCLUDING the starting node's own position, which
@@ -4500,12 +4245,10 @@ luaA_client_get_focusable(lua_State *L, client_t *c)
          * For XWayland clients, use wlr_xwayland_surface_icccm_input_model()
          * because the WM_TAKE_FOCUS xcb_atom_t stub is 0 and client_hasproto()
          * compares against real non-zero atom values, so it always fails. */
-#ifdef XWAYLAND
         if (c->client_type == X11)
             ret = wlr_xwayland_surface_icccm_input_model(c->surface.xwayland)
                   != WLR_ICCCM_INPUT_MODEL_NONE;
         else
-#endif
             ret = client_hasproto(c, WM_TAKE_FOCUS);
     }
 
@@ -4549,6 +4292,20 @@ luaA_client_get_size_hints(lua_State *L, client_t *c)
         lua_pushinteger(L, c->size_hints.height);
         lua_setfield(L, -2, "height");
         lua_setfield(L, -2, u_or_p);
+    }
+
+    if(c->client_type == XDGShell && c->surface.xdg && c->surface.xdg->toplevel)
+    {
+        /* An XDG toplevel's committed minimum and maximum; 0 is none. */
+        struct wlr_xdg_toplevel_state *hints = &c->surface.xdg->toplevel->current;
+        lua_pushinteger(L, hints->min_width);
+        lua_setfield(L, -2, "min_width");
+        lua_pushinteger(L, hints->min_height);
+        lua_setfield(L, -2, "min_height");
+        lua_pushinteger(L, hints->max_width);
+        lua_setfield(L, -2, "max_width");
+        lua_pushinteger(L, hints->max_height);
+        lua_setfield(L, -2, "max_height");
     }
 
     if(c->size_hints.flags & XCB_ICCCM_SIZE_HINT_P_MIN_SIZE)
@@ -4636,154 +4393,75 @@ luaA_client_get_size_hints(lua_State *L, client_t *c)
     return 1;
 }
 
-/** Get the client's child window bounding shape.
- * \param L The Lua VM state.
- * \param client The client object.
- * \return The number of elements pushed on stack.
+/** The client's shape: nil, a number (one corner radius in pixels for all
+ * four corners) or a shape function. A function is read by awful.client.clay:
+ * `gears.shape.rounded_rect`, or a closure drawing its path, becomes that
+ * radius; any other function warns once naming the client, which stays
+ * square. A titlebar takes the corners on its edge and the surface the rest.
+ * `gears.surface.apply_shape_bounding` sets this on a client.
+ *
+ * @property shape
+ * @tparam[opt=nil] number|function|nil shape
+ * @propemits false false
+ * @see gears.shape
+ * @see gears.surface.apply_shape_bounding
  */
 static int
-luaA_client_get_client_shape_bounding(lua_State *L, client_t *c)
+luaA_client_get_shape(lua_State *L, client_t *c)
 {
-    cairo_surface_t *surf = xwindow_get_shape(c->window, XCB_SHAPE_SK_BOUNDING);
-    if (!surf)
-        return 0;
-    /* lua has to make sure to free the ref or we have a leak */
-    lua_pushlightuserdata(L, surf);
+    if (c->shape_ref)
+        lua_rawgeti(L, LUA_REGISTRYINDEX, c->shape_ref);
+    else if (c->shape_radius > 0)
+        lua_pushnumber(L, c->shape_radius);
+    else
+        lua_pushnil(L);
     return 1;
 }
 
-/** Get the client's frame window bounding shape.
- * \param L The Lua VM state.
- * \param client The client object.
- * \return The number of elements pushed on stack.
- */
 static int
-luaA_client_get_shape_bounding(lua_State *L, client_t *c)
+luaA_client_set_shape(lua_State *L, client_t *c)
 {
-    cairo_surface_t *surf = xwindow_get_shape(c->frame_window, XCB_SHAPE_SK_BOUNDING);
-    if (!surf)
+    int type = lua_type(L, -1);
+    if (type != LUA_TNIL && type != LUA_TNUMBER && type != LUA_TFUNCTION)
+        return luaL_error(L, "shape must be nil, a number or a function");
+    if (type == LUA_TNUMBER && lua_tonumber(L, -1) < 0)
+        return luaL_error(L, "shape radius must be at least 0");
+    bool same = !c->shape_ref
+        && ((type == LUA_TNIL && c->shape_radius <= 0)
+            || (type == LUA_TNUMBER && lua_tonumber(L, -1) == c->shape_radius));
+    if (type == LUA_TFUNCTION && c->shape_ref) {
+        lua_rawgeti(L, LUA_REGISTRYINDEX, c->shape_ref);
+        same = lua_rawequal(L, -1, -2);
+        lua_pop(L, 1);
+    }
+    if (same)
         return 0;
-    /* lua has to make sure to free the ref or we have a leak */
-    lua_pushlightuserdata(L, surf);
-    return 1;
-}
-
-/** Set the client's frame window bounding shape.
- * \param L The Lua VM state.
- * \param client The client object.
- * \return The number of elements pushed on stack.
- */
-static int
-luaA_client_set_shape_bounding(lua_State *L, client_t *c)
-{
-    cairo_surface_t *surf = NULL;
-    if(!lua_isnil(L, -1))
-        surf = (cairo_surface_t *)lua_touserdata(L, -1);
-    xwindow_set_shape(c->frame_window,
-            c->geometry.width + (c->border_width * 2),
-            c->geometry.height + (c->border_width * 2),
-            XCB_SHAPE_SK_BOUNDING, surf, -c->border_width);
-    luaA_object_emit_signal(L, -3, "property::shape_bounding", 0);
+    if (c->shape_ref)
+        luaL_unref(L, LUA_REGISTRYINDEX, c->shape_ref);
+    c->shape_ref = 0;
+    c->shape_radius = type == LUA_TNUMBER ? lua_tonumber(L, -1) : 0;
+    if (type == LUA_TFUNCTION) {
+        lua_pushvalue(L, -1);
+        c->shape_ref = luaL_ref(L, LUA_REGISTRYINDEX);
+    }
+    luaA_object_emit_signal(L, -3, "property::shape", 0);
     return 0;
 }
 
-/** Get the client's child window clip shape.
- * \param L The Lua VM state.
- * \param client The client object.
- * \return The number of elements pushed on stack.
- */
 static int
-luaA_client_get_client_shape_clip(lua_State *L, client_t *c)
+luaA_client_get_shape_mask(lua_State *L, client_t *c)
 {
-    cairo_surface_t *surf = xwindow_get_shape(c->window, XCB_SHAPE_SK_CLIP);
-    if (!surf)
-        return 0;
-    /* lua has to make sure to free the ref or we have a leak */
-    lua_pushlightuserdata(L, surf);
+    lua_pushnil(L);
     return 1;
 }
 
-/** Get the client's child window input shape.
- * \param L The Lua VM state.
- * \param client The client object.
- * \return The number of elements pushed on stack.
- */
 static int
-luaA_client_get_client_shape_input(lua_State *L, client_t *c)
+luaA_client_set_shape_mask(lua_State *L, client_t *c)
 {
-    cairo_surface_t *surf = xwindow_get_shape(c->window, XCB_SHAPE_SK_INPUT);
-    if (!surf)
-        return 0;
-    /* lua has to make sure to free the ref or we have a leak */
-    lua_pushlightuserdata(L, surf);
-    return 1;
-}
-
-/** Get the client's frame window clip shape.
- * \param L The Lua VM state.
- * \param client The client object.
- * \return The number of elements pushed on stack.
- */
-static int
-luaA_client_get_shape_clip(lua_State *L, client_t *c)
-{
-    cairo_surface_t *surf = xwindow_get_shape(c->frame_window, XCB_SHAPE_SK_CLIP);
-    if (!surf)
-        return 0;
-    /* lua has to make sure to free the ref or we have a leak */
-    lua_pushlightuserdata(L, surf);
-    return 1;
-}
-
-/** Set the client's frame window clip shape.
- * \param L The Lua VM state.
- * \param client The client object.
- * \return The number of elements pushed on stack.
- */
-static int
-luaA_client_set_shape_clip(lua_State *L, client_t *c)
-{
-    cairo_surface_t *surf = NULL;
-    if(!lua_isnil(L, -1))
-        surf = (cairo_surface_t *)lua_touserdata(L, -1);
-    xwindow_set_shape(c->frame_window, c->geometry.width, c->geometry.height,
-            XCB_SHAPE_SK_CLIP, surf, 0);
-    luaA_object_emit_signal(L, -3, "property::shape_clip", 0);
-    return 0;
-}
-
-/** Get the client's frame window input shape.
- * \param L The Lua VM state.
- * \param client The client object.
- * \return The number of elements pushed on stack.
- */
-static int
-luaA_client_get_shape_input(lua_State *L, client_t *c)
-{
-    cairo_surface_t *surf = xwindow_get_shape(c->frame_window, XCB_SHAPE_SK_INPUT);
-    if (!surf)
-        return 0;
-    /* lua has to make sure to free the ref or we have a leak */
-    lua_pushlightuserdata(L, surf);
-    return 1;
-}
-
-/** Set the client's frame window input shape.
- * \param L The Lua VM state.
- * \param client The client object.
- * \return The number of elements pushed on stack.
- */
-static int
-luaA_client_set_shape_input(lua_State *L, client_t *c)
-{
-    cairo_surface_t *surf = NULL;
-    if(!lua_isnil(L, -1))
-        surf = (cairo_surface_t *)lua_touserdata(L, -1);
-    xwindow_set_shape(c->frame_window,
-            c->geometry.width + (c->border_width * 2),
-            c->geometry.height + (c->border_width * 2),
-            XCB_SHAPE_SK_INPUT, surf, -c->border_width);
-    luaA_object_emit_signal(L, -3, "property::shape_input", 0);
+    if (!c->shape_mask_warned) {
+        warn("client: shape_bounding, shape_clip and shape_input are not read, the client stays rectangular");
+        c->shape_mask_warned = true;
+    }
     return 0;
 }
 
@@ -4926,36 +4604,49 @@ client_checker(client_t *c)
     if (c->client_type == XDGShell)
         return c->surface.xdg != NULL;
 
-#ifdef XWAYLAND
     /* For X11 clients, check if window ID exists */
     if (c->client_type == X11)
         return c->window != XCB_NONE;
-#endif
 
     /* For other types (LayerShell, etc.), assume valid if we have the struct */
     return true;
 }
 
-/** Get an X property on a client (stub for Wayland compatibility).
- * On Wayland, X properties don't exist - always returns nil.
- * This allows AwesomeWM configs using awful.client.property.persist() to load
- * without errors, even though the persistence mechanism doesn't apply.
+/** Get a named value from the client's C-owned property store.
+ * Values retain their Lua scalar type across hot reloads; missing names return nil.
  *
  * \param L The Lua VM state.
- * \return Number of elements pushed on stack (1 - nil).
+ * \return Number of elements pushed on stack (1).
  */
 static int
 luaA_client_get_xproperty(lua_State *L)
 {
-    /* X properties don't exist on Wayland - return nil */
+    client_t *c = luaA_checkudata(L, 1, &client_class);
+    const char *name = luaL_checkstring(L, 2);
+
+    for (client_xproperty_t *property = c->xproperties; property; property = property->next) {
+        if (strcmp(property->name, name) != 0)
+            continue;
+        switch (property->type) {
+        case LUA_TBOOLEAN:
+            lua_pushboolean(L, property->value.boolean);
+            break;
+        case LUA_TNUMBER:
+            lua_pushnumber(L, property->value.number);
+            break;
+        case LUA_TSTRING:
+            lua_pushlstring(L, property->value.string.data, property->value.string.len);
+            break;
+        }
+        return 1;
+    }
     lua_pushnil(L);
     return 1;
 }
 
-/** Set an X property on a client (stub for Wayland compatibility).
- * On Wayland, X properties don't exist - silently ignored.
- * This allows AwesomeWM configs using awful.client.property.persist() to load
- * without errors, even though the persistence mechanism doesn't apply.
+/** Store a named boolean, number or string on the client; nil removes it.
+ * The client owns the copied value independently of the Lua state, so it survives
+ * hot reloads and is freed with the client. No X property registration is needed.
  *
  * \param L The Lua VM state.
  * \return Number of elements pushed on stack (0).
@@ -4963,32 +4654,92 @@ luaA_client_get_xproperty(lua_State *L)
 static int
 luaA_client_set_xproperty(lua_State *L)
 {
-    /* X properties don't exist on Wayland - no-op */
+    client_t *c = luaA_checkudata(L, 1, &client_class);
+    const char *name = luaL_checkstring(L, 2);
+    int type = lua_type(L, 3);
+    if (type != LUA_TNIL && type != LUA_TBOOLEAN && type != LUA_TNUMBER && type != LUA_TSTRING)
+        return luaL_argerror(L, 3, "expected boolean, number, string or nil");
+
+    client_xproperty_t **slot = &c->xproperties;
+    while (*slot && strcmp((*slot)->name, name) != 0)
+        slot = &(*slot)->next;
+
+    client_xproperty_t *property = *slot;
+    if (type == LUA_TNIL) {
+        if (property) {
+            *slot = property->next;
+            client_xproperty_free(property);
+        }
+        return 0;
+    }
+
+    if (!property) {
+        property = p_new(client_xproperty_t, 1);
+        property->name = p_dup(name, strlen(name) + 1);
+        *slot = property;
+    } else if (property->type == LUA_TSTRING) {
+        free(property->value.string.data);
+    }
+    property->type = type;
+    switch (type) {
+    case LUA_TBOOLEAN:
+        property->value.boolean = lua_toboolean(L, 3);
+        break;
+    case LUA_TNUMBER:
+        property->value.number = lua_tonumber(L, 3);
+        break;
+    case LUA_TSTRING: {
+        size_t len;
+        const char *value = lua_tolstring(L, 3, &len);
+        property->value.string.data = p_new(char, len + 1);
+        memcpy(property->value.string.data, value, len);
+        property->value.string.len = len;
+        break;
+    }
+    }
     return 0;
 }
 
 /** client:_border_is_focus_color() -> boolean
  *
  * Returns true if the client's rendered border color matches the
- * compositor's focus color. Reads directly from wlr_scene_rect.
+ * compositor's focus color. Reads the same color the declare pass draws.
  */
 static int
 luaA_client_border_is_focus_color(lua_State *L)
 {
     client_t *c = luaA_checkudata(L, 1, &client_class);
-    if (!c || !c->border[0]) {
+    if (!c || !c->scene) {
         lua_pushboolean(L, 0);
         return 1;
     }
 
     const float *focus = globalconf.appearance.focuscolor;
-    const float *actual = c->border[0]->color;
+    float actual[4];
 
+    client_border_rgba(c, actual);
     int matches = (actual[0] == focus[0] && actual[1] == focus[1] &&
                    actual[2] == focus[2] && actual[3] == focus[3]);
 
     lua_pushboolean(L, matches);
     return 1;
+}
+
+/** client:_border_rgba() -> r, g, b, a
+ *
+ * The border colour the frame draws (client_border_rgba), straight alpha
+ * 0-1, for lua/awful/client/clay.lua.
+ */
+static int
+luaA_client_border_rgba(lua_State *L)
+{
+    client_t *c = luaA_checkudata(L, 1, &client_class);
+    float rgba[4];
+
+    client_border_rgba(c, rgba);
+    for (int i = 0; i < 4; i++)
+        lua_pushnumber(L, rgba[i]);
+    return 4;
 }
 
 /** client:_border_is_normal_color() -> boolean
@@ -5000,14 +4751,15 @@ static int
 luaA_client_border_is_normal_color(lua_State *L)
 {
     client_t *c = luaA_checkudata(L, 1, &client_class);
-    if (!c || !c->border[0]) {
+    if (!c || !c->scene) {
         lua_pushboolean(L, 0);
         return 1;
     }
 
     const float *normal = globalconf.appearance.bordercolor;
-    const float *actual = c->border[0]->color;
+    float actual[4];
 
+    client_border_rgba(c, actual);
     int matches = (actual[0] == normal[0] && actual[1] == normal[1] &&
                    actual[2] == normal[2] && actual[3] == normal[3]);
 
@@ -5037,6 +4789,7 @@ client_class_setup(lua_State *L)
         { "isvisible", luaA_client_isvisible },
         { "has_keyboard_focus", luaA_client_has_keyboard_focus },
         { "geometry", luaA_client_geometry },
+        { "_clay_geometry_is_solved", luaA_client_geometry_is_solved },
         { "_set_geometry_silent", luaA_client_set_geometry_silent },
         { "apply_size_hints", luaA_client_apply_size_hints },
         { "tags", luaA_client_tags },
@@ -5054,6 +4807,7 @@ client_class_setup(lua_State *L)
         { "set_xproperty", luaA_client_set_xproperty },
         { "_border_is_focus_color", luaA_client_border_is_focus_color },
         { "_border_is_normal_color", luaA_client_border_is_normal_color },
+        { "_border_rgba", luaA_client_border_rgba },
         { NULL, NULL }
     };
 
@@ -5070,9 +4824,9 @@ client_class_setup(lua_State *L)
         { "aspect_ratio", (lua_class_propfunc_t) luaA_client_set_aspect_ratio, (lua_class_propfunc_t) luaA_client_get_aspect_ratio, (lua_class_propfunc_t) luaA_client_set_aspect_ratio },
         { "below", (lua_class_propfunc_t) luaA_client_set_below, (lua_class_propfunc_t) luaA_client_get_below, (lua_class_propfunc_t) luaA_client_set_below },
         { "class", NULL, (lua_class_propfunc_t) luaA_client_get_class, NULL },
-        { "client_shape_bounding", NULL, (lua_class_propfunc_t) luaA_client_get_client_shape_bounding, NULL },
-        { "client_shape_clip", NULL, (lua_class_propfunc_t) luaA_client_get_client_shape_clip, NULL },
-        { "client_shape_input", NULL, (lua_class_propfunc_t) luaA_client_get_client_shape_input, NULL },
+        { "client_shape_bounding", NULL, (lua_class_propfunc_t) luaA_client_get_shape_mask, NULL },
+        { "client_shape_clip", NULL, (lua_class_propfunc_t) luaA_client_get_shape_mask, NULL },
+        { "client_shape_input", NULL, (lua_class_propfunc_t) luaA_client_get_shape_mask, NULL },
         { "content", NULL, (lua_class_propfunc_t) luaA_client_get_content, NULL },
         { "first_tag", NULL, (lua_class_propfunc_t) luaA_client_get_first_tag, NULL },
         { "focusable", (lua_class_propfunc_t) luaA_client_set_focusable, (lua_class_propfunc_t) luaA_client_get_focusable, (lua_class_propfunc_t) luaA_client_set_focusable },
@@ -5098,11 +4852,13 @@ client_class_setup(lua_State *L)
         { "pid", NULL, (lua_class_propfunc_t) luaA_client_get_pid, NULL },
         { "role", NULL, (lua_class_propfunc_t) luaA_client_get_role, NULL },
         { "_scene_layer", NULL, (lua_class_propfunc_t) luaA_client_get__scene_layer, NULL },
+        { "_committed_size", NULL, (lua_class_propfunc_t) luaA_client_get__committed_size, NULL },
         { "screen", NULL, (lua_class_propfunc_t) luaA_client_get_screen, (lua_class_propfunc_t) luaA_client_set_screen },
         { "shadow", (lua_class_propfunc_t) luaA_client_set_shadow, (lua_class_propfunc_t) luaA_client_get_shadow, (lua_class_propfunc_t) luaA_client_set_shadow },
-        { "shape_bounding", (lua_class_propfunc_t) luaA_client_set_shape_bounding, (lua_class_propfunc_t) luaA_client_get_shape_bounding, (lua_class_propfunc_t) luaA_client_set_shape_bounding },
-        { "shape_clip", (lua_class_propfunc_t) luaA_client_set_shape_clip, (lua_class_propfunc_t) luaA_client_get_shape_clip, (lua_class_propfunc_t) luaA_client_set_shape_clip },
-        { "shape_input", (lua_class_propfunc_t) luaA_client_set_shape_input, (lua_class_propfunc_t) luaA_client_get_shape_input, (lua_class_propfunc_t) luaA_client_set_shape_input },
+        { "shape", (lua_class_propfunc_t) luaA_client_set_shape, (lua_class_propfunc_t) luaA_client_get_shape, (lua_class_propfunc_t) luaA_client_set_shape },
+        { "shape_bounding", (lua_class_propfunc_t) luaA_client_set_shape_mask, (lua_class_propfunc_t) luaA_client_get_shape_mask, (lua_class_propfunc_t) luaA_client_set_shape_mask },
+        { "shape_clip", (lua_class_propfunc_t) luaA_client_set_shape_mask, (lua_class_propfunc_t) luaA_client_get_shape_mask, (lua_class_propfunc_t) luaA_client_set_shape_mask },
+        { "shape_input", (lua_class_propfunc_t) luaA_client_set_shape_mask, (lua_class_propfunc_t) luaA_client_get_shape_mask, (lua_class_propfunc_t) luaA_client_set_shape_mask },
         { "size_hints", NULL, (lua_class_propfunc_t) luaA_client_get_size_hints, NULL },
         { "size_hints_honor", (lua_class_propfunc_t) luaA_client_set_size_hints_honor, (lua_class_propfunc_t) luaA_client_get_size_hints_honor, (lua_class_propfunc_t) luaA_client_set_size_hints_honor },
         { "skip_taskbar", (lua_class_propfunc_t) luaA_client_set_skip_taskbar, (lua_class_propfunc_t) luaA_client_get_skip_taskbar, (lua_class_propfunc_t) luaA_client_set_skip_taskbar },

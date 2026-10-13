@@ -4,7 +4,6 @@
  * Handles X11 client lifecycle, configuration, activation, and EWMH
  * initialization for XWayland surfaces.
  */
-#ifdef XWAYLAND
 
 #include <signal.h>
 #include <stdio.h>
@@ -22,9 +21,9 @@
 
 #include "somewm.h"
 #include "somewm_api.h"
-#include "wlr_compat.h"
 #include "event_queue.h"
 #include "xwayland.h"
+#include "declare.h"
 #include "globalconf.h"
 #include "common/luaobject.h"
 #include "objects/signal.h"
@@ -106,14 +105,18 @@ configurex11(struct wl_listener *listener, void *data)
 		return;
 	}
 	if (client_is_unmanaged(c)) {
-		wlr_scene_node_set_position(&c->scene->node, event->x, event->y);
+		/* Unmanaged geometry is the client's own; record it and let the
+		 * next frame declare the tree at the new box. */
+		c->geometry = (struct wlr_box){.x = event->x, .y = event->y,
+				.width = event->width, .height = event->height};
+		declare_mark_all_dirty();
 		wlr_xwayland_surface_configure(c->surface.xwayland,
 				event->x, event->y, event->width, event->height);
 		return;
 	}
 	if (some_client_get_floating(c)) {
-		resize(c, (struct wlr_box){.x = event->x - c->bw,
-				.y = event->y - c->bw, .width = event->width,
+		resize(c, (struct wlr_box){.x = event->x - client_border(c),
+				.y = event->y - client_border(c), .width = event->width,
 				.height = event->height}, 0);
 	} else {
 		arrange(c->mon);
@@ -137,6 +140,8 @@ createnotifyx11(struct wl_listener *listener, void *data)
 
 	/* Assign unique client ID (Sway-style incrementing counter) */
 	c->id = next_client_id++;
+	/* Honored by default, as the property documents. */
+	c->size_hints_honor = true;
 
 	/* Link to XWayland surface (adapts X11 window linkage to XWayland) */
 	xsurface->data = c;
@@ -144,7 +149,6 @@ createnotifyx11(struct wl_listener *listener, void *data)
 	c->client_type = X11;
 	/* Set the window ID for EWMH/X11 property lookups */
 	c->window = xsurface->window_id;
-	c->bw = client_is_unmanaged(c) ? 0 : get_border_width();
 
 	/* NOTE: Do NOT call ewmh_client_check_hints() here!
 	 * At this point the XWayland surface exists but may not be fully initialized.
@@ -164,12 +168,6 @@ createnotifyx11(struct wl_listener *listener, void *data)
 	/* Add to global clients array (matches AwesomeWM client_manage line 2202) */
 	lua_pushvalue(L, -1);
 	client_array_push(&globalconf.clients, luaA_object_ref(L, -1));
-
-	/* Add to stack (matches AwesomeWM client_manage) */
-	stack_client_push(c);
-
-	/* Emit client::list signal (matches AwesomeWM line 2266) */
-	some_event_queue_class(&client_class, SIG_LIST);
 
 	/* Pop the client from the Lua stack */
 	lua_pop(L, 1);
@@ -230,7 +228,8 @@ xwaylandready(struct wl_listener *listener, void *data)
 
 	/* Set the default XWayland cursor to match the rest of somewm. */
 	if ((xcursor = wlr_xcursor_manager_get_xcursor(cursor_mgr, "default", 1)))
-		COMPAT_XWAYLAND_SET_CURSOR(xwayland, xcursor->images[0]);
+		wlr_xwayland_set_cursor(xwayland, wlr_xcursor_image_get_buffer(xcursor->images[0]),
+			xcursor->images[0]->hotspot_x, xcursor->images[0]->hotspot_y);
 
 	/* Initialize XCB connection for EWMH support (AwesomeWM pattern) */
 	conn = xcb_connect(xwayland->display_name, NULL);
@@ -308,4 +307,3 @@ xwayland_cleanup(void)
 	}
 }
 
-#endif /* XWAYLAND */

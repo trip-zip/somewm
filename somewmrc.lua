@@ -267,8 +267,7 @@ screen.connect_signal("request::wallpaper", function(s)
                 },
                 valign = "center",
                 halign = "center",
-                tiled  = false,
-                widget = wibox.container.tile,
+                widget = wibox.container.place,
             }
         }
     else
@@ -410,27 +409,25 @@ screen.connect_signal("request::desktop_decoration", function(s)
         position  = "top",
         screen    = s,
         widget    = {
-            layout = wibox.layout.stack,
+            layout = wibox.layout.align.horizontal,
+            expand = "none",
             {
-                layout = wibox.layout.align.horizontal,
-                {
-                    layout = wibox.layout.fixed.horizontal,
-                    mylauncher,
-                    s.mytaglist,
-                    s.mypromptbox,
-                    s.mytasklist,
-                },
-                { widget = wibox.container.background },
-                {
-                    layout = wibox.layout.fixed.horizontal,
-                    wibox.widget.systray(),
-                    s.mylayoutbox,
-                },
+                layout = wibox.layout.fixed.horizontal,
+                mylauncher,
+                s.mytaglist,
+                s.mypromptbox,
+                s.mytasklist,
             },
             {
                 mytextclock,
-                halign = "center",
-                widget = wibox.container.place,
+                top    = dpi(6),
+                bottom = dpi(6),
+                widget = wibox.container.margin,
+            },
+            {
+                layout = wibox.layout.fixed.horizontal,
+                wibox.widget.systray(),
+                s.mylayoutbox,
             },
         }
     }
@@ -480,6 +477,13 @@ awful.keyboard.append_global_keybindings({
         key         = "Escape",
         on_press    = function() awesome.lock() end,
         description = "lock screen",
+        group       = "somewm",
+    },
+    awful.key {
+        modifiers   = { modkey, "Shift" },
+        key         = "i",
+        on_press    = function() require("somewm.inspector").toggle() end,
+        description = "toggle the clay inspector",
         group       = "somewm",
     },
     awful.key {
@@ -1062,7 +1066,11 @@ client.connect_signal("request::titlebars", function(c)
 
     awful.titlebar(c).widget = {
         {
-            awful.titlebar.widget.iconwidget(c),
+            {
+                awful.titlebar.widget.iconwidget(c),
+                left   = dpi(6),
+                widget = wibox.container.margin,
+            },
             buttons = buttons,
             layout  = wibox.layout.fixed.horizontal
         },

@@ -16,10 +16,7 @@ local runner = require("_runner")
 local test_client = require("_client")
 
 if not test_client.is_available() then
-    io.stderr:write("SKIP: no Wayland terminal available for test clients\n")
-    io.stderr:write("Test finished successfully.\n")
-    awesome.quit()
-    return
+    return runner.skip("no Wayland terminal available for test clients")
 end
 
 local client_a, client_b

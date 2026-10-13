@@ -17,10 +17,9 @@ tests/bench/results/
 build/
 build-bench/
 builddir/
-subprojects/wlroots/
-subprojects/wlroots-0.19/
-subprojects/wlroots-0.20/
-subprojects/packagecache/
+# Each wrap unpacks into a directory here; only the .wrap files are tracked
+subprojects/*/
+!subprojects/packagefiles/
 
 # Development tooling & reports (local only)
 tools/

@@ -1,0 +1,255 @@
+#ifndef SOMEWM_WIDGET_H
+#define SOMEWM_WIDGET_H
+
+#include <stdbool.h>
+#include <stddef.h>
+#include <stdint.h>
+
+#include <cairo.h>
+#include <lua.h>
+
+#include "declare_src.h"
+#include "render.h"
+
+typedef struct drawin_t drawin_t;
+typedef struct Monitor Monitor;
+
+struct widget_storage;
+
+struct widget_tree {
+	struct widget_storage *storage;
+	struct widget_node *nodes;
+	uint32_t *ids;
+	size_t nodes_len;
+	struct widget_binding *bindings;
+	size_t bindings_len;
+	size_t scrolls;
+	struct image_entry *leaves;
+	size_t leaves_len;
+	struct widget_shape *shapes;
+	size_t shapes_len;
+	uint64_t shape_generation; /* survives temporary removal of shape slots */
+	char *text;
+	size_t text_len;
+	struct render_text_attr *text_attrs;
+	size_t text_attrs_len;
+	/* What the last compile answered (enum widget_nodes_state),
+	 * for the tree dump. */
+	uint8_t state;
+	/* Whether the declare pass has put this tree in front of Clay yet.
+	 * Clay's element hashmap is persistent and answers a lookup with the
+	 * last box an id ever had (third_party/clay.h:1740-1754, 4283-4292),
+	 * so without this a tree that changed since
+	 * the last frame would read back the boxes of the one it replaced. */
+	bool declared;
+    bool publish_pending;
+	/* The actual root element of the completed declaration, including a
+	 * host slot that owns its drawable contribution directly. No geometry. */
+	uint32_t root_id;
+	/* A compatible wallpaper contribution binds all its equal-area wrappers
+	 * to OUTPUT itself, without declaring those wrappers again. */
+	bool output_fill;
+};
+
+/* A converted widget tree at a box on an output. */
+struct widget_host {
+	struct widget_tree *tree;
+	Monitor *m;
+	/* The drawable the tree draws, which hears clay::solved. */
+	struct drawable_t *drawable;
+	uint32_t id;          /* The owner's declare handle id. */
+	int x, y, w, h;       /* Output-local box. */
+	float radius;        /* Shaped drawin corners, 0 for titlebars. */
+	float radii[4];      /* A titlebar's corners from its client's shape,
+	                      * top-left, top-right, bottom-right, bottom-left. */
+	bool visible;
+	bool in_parent;
+	/* The root fills the element it is declared in, a slot the frame
+	 * sized, instead of being told the host box and floating at it. An
+	 * axis with a told length (a bar that does not stretch) is fixed. */
+	bool flow;
+	bool path_clip;       /* The frame carries the root scope as a path. */
+	bool inner_clip;      /* The decorated host clips its content through an inner element. */
+	bool layout;          /* A screen's client layout: records every node, no userData. */
+	int told[2];
+	bool fit[2];
+	uint8_t src[2];      /* enum declare_src of the host box and told axes */
+};
+
+/* One axis of a node's sizing, Clay's own types by name (Clay__SizingType,
+ * clay.h): fit wraps the content, grow fills the parent, fixed is told. Fit
+ * is Clay's default and this tree's: a node that says nothing fits. */
+enum widget_sizing {
+	WIDGET_SIZING_FIT = 0,
+	WIDGET_SIZING_GROW,
+	WIDGET_SIZING_FIXED,
+	WIDGET_SIZING_PERCENT,
+};
+
+/* Original Lua identities bound to actual elements, without geometry. */
+struct widget_binding {
+	uint32_t identity, occurrence;
+};
+
+/* One converted widget node, as lua/wibox/clay.lua describes it.
+ *
+ * The tree is stored in preorder: a node's subtree is the `children` nodes
+ * that follow it, each with its own subtree. A node is pure description: what
+ * it is (direction, sizing, gap, alignment, padding, colors, radius), never
+ * where it is. Image leaves reference widget surfaces through the owner's
+ * image entries, also numbered in preorder.
+ *
+ * Colors are straight alpha, 0-1, as everywhere else on this side; an alpha
+ * of zero means the node draws no fill or no ring. */
+struct widget_node {
+	/* The declarative id or full widget class name, interned for the program's
+	 * lifetime so the struct still compares by memcmp. The element id and
+	 * both dump lines read it. Synthetic nodes may supply a role name;
+	 * NULL when the node has no name. */
+	const char *name;
+	uint32_t identity; /* Original Lua object identity, shared by its occurrences. */
+	uint32_t occurrence; /* Stable Lua placement token, unique across hosts. */
+	uint32_t binding_start, binding_count;
+	uint16_t pad[4];     /* left, right, top, bottom */
+	uint16_t bw[4];      /* border widths, same order */
+	float bg[4];
+	float border[4];
+	float radius;
+	/* A surface leaf's or titlebar host's corners from the client's shape,
+	 * top-left, top-right, bottom-right, bottom-left. */
+	float radii[4];
+	uint8_t sizing[2];   /* enum widget_sizing per axis */
+	float size[2];       /* the fixed size or percent */
+	uint8_t src[2];      /* enum declare_src per axis, from wsrc and hsrc */
+	float min[2];        /* Clay_SizingMinMax for fit and grow: the floor,
+	                      * and the ceiling, 0 for none, which is Clay's own
+	                      * convention (clay.h:1936) */
+	float max[2];
+	uint8_t align[2];    /* child alignment per axis, Clay_LayoutAlignmentX/Y */
+	uint16_t gap;        /* between children, along the direction */
+	bool vertical;       /* children top to bottom, else left to right */
+	float offset[2];     /* Clay_FloatingElementConfig.offset */
+	uint8_t parent, own; /* Clay_FloatingAttachPointType, top left by default */
+	bool passthrough;    /* floats pass pointer hits to siblings by default */
+	bool floating;       /* attached to the parent, off the flow */
+	uint16_t attach;     /* 0 means parent, WIDGET_ATTACH_OUTPUT the screen's root */
+	/* A client composite's root: the client's declare handle, 0 for none.
+	 * A composite always has children. */
+	uint64_t client;
+	/* A composite's pixels leaf: the client's declare handle, with the
+	 * surface's opacity. */
+	uint64_t surface;
+	float opacity;
+	/* The surface leaf is the client's configure probe: it sends its
+	 * solved size as the configure and draws nothing. */
+	bool probe;
+	/* The drawable whose compiled tree is declared in flow here, by its
+	 * titlebar declare handle. */
+	uint64_t host;
+	/* The box's own transition (Clay_TransitionElementConfig): the
+	 * properties are Clay_TransitionProperty bits, exit_order a
+	 * Clay_ExitTransitionSiblingOrdering. */
+	bool transition, enter_collapse, exit_collapse;
+	uint8_t exit_order;
+	uint16_t transition_properties;
+	float duration;
+	/* The widget's cairo surface or RsvgHandle, referenced by an image entry. */
+	const void *image;
+	bool vector;
+	uint8_t filter;      /* cairo_filter_t + 1, 0 keeps cairo's default */
+	bool natural;
+	float aspect;
+	float image_size[2];
+	uint8_t scroll;      /* 0 none, 1 x, 2 y, 3 both */
+	bool track, thumb;
+	/* The child offset this scroll node last declared; written only where
+	 * declare.c declares it, so a moved record publishes the tree. */
+	float scrolled[2];
+	uint16_t shape;
+	float fill[4];
+	struct render_gradient gradient;
+	float stroke[4];
+	float stroke_width;
+	bool widget;         /* stands for a widget, so has a box Lua reads back */
+	uint16_t children;
+	/* The clip scope this node opens, numbered within the drawin from 1,
+	 * and the one it is clipped by, 0 for none (render.h says how the
+	 * renderer reads the two). The root opens one, so nothing draws
+	 * outside the drawin, and so does a rounded container, so its
+	 * children are cut to its arc as the container's own clip cut them.
+	 * Numbered here rather than by Lua, from the tree's shape alone. */
+	uint8_t clip_opens, clip_by;
+	/* The wl_output_transform its shape, gradient, text or image is drawn
+	 * with; Lua already rotated the description. */
+	uint8_t transform;
+
+	/* A text element (CLAY_TEXT): the run in the drawin's widget_text buffer
+	 * and its Clay_TextElementConfig. fontSize is 0; the interned face carries
+	 * its own size (render_text.h). The parent container owns the widget's
+	 * identity, bindings, alignment and published box. Text has no children. */
+	bool text;
+	uint32_t text_off, text_len;
+	uint32_t attr_off, attr_len;
+	uint16_t font;       /* render_font_intern's id */
+	uint8_t wrap;        /* Clay_TextElementConfigWrapMode */
+	uint8_t text_align;  /* Clay_TextAlignment */
+	bool ellipsize;      /* RENDER_TEXT_ELLIPSIZE on the config's userData */
+	float fg[4];
+};
+
+/* The text every text node of one drawin holds, together. Clay's render
+ * commands slice it, so it lives until the next tree replaces it. */
+#define WIDGET_TEXT_MAX 65536
+
+/* A float node's _attach = "output": the screen's root element. */
+#define WIDGET_ATTACH_OUTPUT UINT16_MAX
+
+/* Clip scopes a tree may open: a byte of the word numbers them (render.h). */
+#define WIDGET_CLIPS_MAX 255
+
+/* A tree with more nodes than this shows nothing. The cap was sized for a
+ * plain year calendar; awful.widget.calendar_popup.year wraps every cell in
+ * a background, a margin and a textbox, 2319 nodes for twelve months. The
+ * output budget (over_budget, widget.c) still bounds the aggregate. */
+#define WIDGET_NODES_MAX 4096
+
+/* Folding can bind many original widgets to a small native tree. Bound the
+ * input walk as well, including a malformed cyclic binding list. */
+#define WIDGET_BINDINGS_MAX 65536
+
+/* Admission budget for native widget nodes. Host decoration, clients and
+ * retained transitions are counted by Clay's runtime capacity checks. This
+ * budget leaves headroom but does not prove ID or command capacity sufficient. */
+#define WIDGET_NODES_OUTPUT_MAX 12288
+
+/* Clay has 100 clip records per output. Declaration reserves scrolling
+ * before granting the remaining records to hosts for overflow sizing. */
+#define WIDGET_SCROLLS_OUTPUT_MAX 100
+
+/* What the last widget_nodes_set() answered, kept so the tree dump can say
+ * why a drawin shows nothing. Zero is a
+ * drawin no redraw has compiled yet, so a field that was never written reads
+ * as the fact it stands for. */
+enum widget_nodes_state {
+	WIDGET_NODES_UNTRIED = 0,
+	WIDGET_NODES_CONVERTED,
+	/* The compile step (lua/wibox/clay.lua) returned no tree at all. */
+	WIDGET_NODES_NONE,
+	WIDGET_NODES_MALFORMED,
+	WIDGET_NODES_OVER_BUDGET,
+};
+
+/* Replace the stored tree with the compiled table at idx.
+ * NONE, MALFORMED and OVER_BUDGET show nothing. */
+bool widget_nodes_set(lua_State *L, struct widget_tree *d, Monitor *m, int idx);
+void widget_nodes_clear(struct widget_tree *d);
+/* Retain immutable payloads and a separate solved ID mapping until release. */
+struct widget_tree *widget_tree_hold(struct widget_tree *d);
+void widget_tree_release(struct widget_tree *d);
+size_t widget_tree_bytes(const struct widget_tree *d);
+bool widget_tree_referenced(const struct widget_tree *d);
+
+/* Point image entries at their widget surfaces. */
+void widget_leaves_set(struct widget_tree *d);
+
+#endif

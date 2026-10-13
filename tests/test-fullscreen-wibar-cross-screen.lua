@@ -19,9 +19,7 @@ local utils = require("_utils")
 local awful = require("awful")
 
 if not test_client.is_available() then
-    io.stderr:write("Test finished successfully.\n")
-    awesome.quit()
-    return
+    return runner.skip("no terminal available for test clients")
 end
 
 local fake_screen

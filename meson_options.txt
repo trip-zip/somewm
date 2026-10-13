@@ -1,19 +1,4 @@
 option(
-  'xwayland',
-  type: 'feature',
-  value: 'auto',
-  description: 'Enable Xwayland support',
-)
-
-option(
-  'wlroots_version',
-  type: 'combo',
-  choices: ['auto', '0.20', '0.19'],
-  value: 'auto',
-  description: 'wlroots version to build against. auto = 0.20 when it is already installed or the system deps satisfy its floors, else 0.19.',
-)
-
-option(
   'pam',
   type: 'feature',
   value: 'auto',
@@ -46,4 +31,11 @@ option(
   type: 'string',
   value: '',
   description: 'Force a specific Lua pkg-config name (e.g. lua5.5, luajit). Empty = autodetect (LuaJIT > 5.5 > 5.4 > ... > 5.1).',
+)
+
+option(
+  'render_verify',
+  type: 'feature',
+  value: 'auto',
+  description: 'Compile the Clay tree==scene verifier into the renderer. It walks every retained node after each reconcile and aborts on divergence. auto = on for a sanitizer or test build, off otherwise.',
 )

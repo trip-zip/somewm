@@ -108,6 +108,11 @@ local arrange_lock = false
 -- Delay one arrange call per screen.
 local delayed_arrange = {}
 
+-- Screens whose layout describes at the next frame's clay::declare, and per
+-- screen the table it described, which the solve publishes boxes onto.
+local pending_describe = {}
+local described = setmetatable({}, {__mode = "k"})
+
 --- Get the current layout.
 -- @tparam screen screen The screen.
 -- @return The layout function.
@@ -228,47 +233,72 @@ function layout.parameters(t, screen)
     return p
 end
 
+-- The arrange layout.arrange queues for a screen: the delayed call runs it,
+-- or the frame's clay::declare first when the frame comes before it.
+local function run_arrange(screen)
+    if not screen.valid then
+        -- Screen was removed
+        delayed_arrange[screen] = nil
+        return
+    end
+    if arrange_lock then return end
+    arrange_lock = true
+
+    -- protected call to ensure that arrange_lock will be reset
+    protected_call(function()
+        -- The next frame's clay::declare describes the screen; a screen
+        -- with neither a tree nor a client asks for that frame only to
+        -- drop what it described.
+        local current = layout.get(screen)
+        pending_describe[screen] = true
+        if current._clay or described[screen] or #screen.clients > 0 then
+            capi.awesome._clay_dirty()
+        end
+        if current._clay then return end
+        local p = layout.parameters(nil, screen)
+
+        local useless_gap = p.useless_gap
+
+        p.geometries = setmetatable({}, {__mode = "k"})
+        layout.get(screen).arrange(p)
+
+        for c, g in pairs(p.geometries) do
+            g.width = math.max(1, g.width - c.border_width * 2 - useless_gap * 2)
+            g.height = math.max(1, g.height - c.border_width * 2 - useless_gap * 2)
+            g.x = g.x + useless_gap
+            g.y = g.y + useless_gap
+            c:geometry(g)
+        end
+    end)
+    arrange_lock = false
+    delayed_arrange[screen] = nil
+
+    screen:emit_signal("arrange")
+end
+
 --- Arrange a screen using its current layout.
 -- @tparam screen screen The screen to arrange.
 -- @noreturn
 -- @staticfct awful.layout.arrange
-function layout.arrange(screen)
+function layout.arrange(screen, geometry_only)
     screen = get_screen(screen)
     if not screen or delayed_arrange[screen] then
         return
     end
+    if geometry_only and layout.get(screen)._clay then
+        local published = true
+        for _, c in ipairs(screen.clients) do
+            if not c:_clay_geometry_is_solved() then
+                published = false
+                break
+            end
+        end
+        if published then return end
+    end
     delayed_arrange[screen] = true
 
     timer.delayed_call(function()
-        if not screen.valid then
-            -- Screen was removed
-            delayed_arrange[screen] = nil
-            return
-        end
-        if arrange_lock then return end
-        arrange_lock = true
-
-        -- protected call to ensure that arrange_lock will be reset
-        protected_call(function()
-            local p = layout.parameters(nil, screen)
-
-            local useless_gap = p.useless_gap
-
-            p.geometries = setmetatable({}, {__mode = "k"})
-            layout.get(screen).arrange(p)
-
-            for c, g in pairs(p.geometries) do
-                g.width = math.max(1, g.width - c.border_width * 2 - useless_gap * 2)
-                g.height = math.max(1, g.height - c.border_width * 2 - useless_gap * 2)
-                g.x = g.x + useless_gap
-                g.y = g.y + useless_gap
-                c:geometry(g)
-            end
-        end)
-        arrange_lock = false
-        delayed_arrange[screen] = nil
-
-        screen:emit_signal("arrange")
+        if delayed_arrange[screen] then run_arrange(screen) end
     end)
 end
 
@@ -330,25 +360,118 @@ function layout.getname(_layout)
     return _layout.name
 end
 
-local function arrange_prop_nf(obj)
-    if not client.object.get_floating(obj) then
-        layout.arrange(obj.screen)
+-- A suite's {client = c} leaves become client composites; a composite
+-- already has children. Every client the tree took is marked in taken. A
+-- leaf placed at x or y and sized on the same axis is taken and left out.
+local describe_client = require("awful.client.clay").describe
+local slot_warned = setmetatable({}, {__mode = "k"})
+local refused_warned = setmetatable({}, {__mode = "k"})
+local function expand(node, taken)
+    if node.client then
+        taken[node.client] = true
+        if (node.x ~= nil and type(node.w) ~= "number")
+                or (node.y ~= nil and type(node.h) ~= "number") then
+            if not slot_warned[node.client] then
+                slot_warned[node.client] = true
+                gdebug.print_warning("awful.layout: client " ..
+                    (node.client.class or node.client.name or "?") ..
+                    " is placed at x,y and sized on the same axis, and is left out of the tree")
+            end
+            return nil
+        end
+        return node.children and node or describe_client(node.client, node)
     end
+    if node.children then
+        local children = {}
+        for _, child in ipairs(node.children) do children[#children + 1] = expand(child, taken) end
+        node.children = children
+    end
+    return node
 end
 
+-- A visible client the suite did not take floats at its own box, attached
+-- to the screen: the output's box when fullscreen, else its geometry plus
+-- the border, which lies right of and below the geometry origin.
+local function root_allocation(c, s, user)
+    if c.fullscreen then
+        return {float = true, _attach = "output", w = "grow", h = "grow",
+            wsrc = "output", hsrc = "output"}
+    end
+    local bw, word = c.border_width, user and "user" or "legacy"
+    return {float = true, _attach = "output", x = c.x - s.geometry.x, y = c.y - s.geometry.y,
+        w = c.width + 2 * bw, h = c.height + 2 * bw, wsrc = word, hsrc = word}
+end
+
+-- Describe each arranged screen at the frame's clay::declare and hand the
+-- node table to the screen; the solve publishes its boxes back onto the
+-- table. The suite's tree, or an empty root without one, ends with the
+-- clients it did not take, bottom to top, each at its own box.
+capi.awesome.connect_signal("clay::declare", function()
+    -- A geometry C changed marks the frame dirty at once while the arrange
+    -- waits for its delayed call; run it now, or this frame solves the stored
+    -- tree and its readback writes the old box over the new one.
+    local queued = {}
+    for s in pairs(delayed_arrange) do queued[#queued + 1] = s end
+    for _, s in ipairs(queued) do
+        if delayed_arrange[s] then run_arrange(s) end
+    end
+    local batch = pending_describe
+    pending_describe = {}
+    for s in pairs(batch) do
+        if s.valid then
+            protected_call(function()
+                local current = layout.get(s)
+                local taken = {}
+                local tree = current._clay and expand(current._clay(s), taken)
+                    or {name = "WORKAREA", w = "grow", h = "grow", children = {}}
+                tree.children = tree.children or {}
+                local visible = s.clients
+                for i = #visible, 1, -1 do
+                    local c = visible[i]
+                    if not taken[c] then
+                        local user = c.floating or current == layout.suit.floating
+                        table.insert(tree.children, describe_client(c, root_allocation(c, s, user)))
+                    end
+                end
+                described[s] = (current._clay or #tree.children > 0) and {tree = tree} or nil
+                local stored, reason = s:_clay_layout(tree)
+                if stored then
+                    refused_warned[s] = nil
+                elseif reason and not refused_warned[s] then
+                    refused_warned[s] = true
+                    gdebug.print_warning("awful.layout: screen " .. s.index ..
+                        " layout tree refused (" .. reason .. "), showing nothing")
+                end
+            end)
+        end
+    end
+end)
+
+capi.screen.connect_signal("clay::solved", function(s, boxes)
+    local state = described[s]
+    if state then require("wibox.clay")._publish(state, state.tree, boxes) end
+end)
+
+-- Every client of a screen is described by its layout pass, so every
+-- property the composite or its allocation reads arranges the screen.
 local function arrange_prop(obj) layout.arrange(obj.screen) end
 
-capi.client.connect_signal("property::size_hints_honor", arrange_prop_nf)
-capi.client.connect_signal("property::struts", arrange_prop)
-capi.client.connect_signal("property::minimized", arrange_prop_nf)
-capi.client.connect_signal("property::sticky", arrange_prop_nf)
-capi.client.connect_signal("property::fullscreen", arrange_prop_nf)
-capi.client.connect_signal("property::maximized_horizontal", arrange_prop_nf)
-capi.client.connect_signal("property::maximized_vertical", arrange_prop_nf)
-capi.client.connect_signal("property::border_width", arrange_prop_nf)
-capi.client.connect_signal("property::hidden", arrange_prop_nf)
-capi.client.connect_signal("property::floating", arrange_prop)
-capi.client.connect_signal("property::geometry", arrange_prop_nf)
+for _, signal in ipairs{"property::size_hints_honor", "property::struts",
+        "property::minimized", "property::sticky", "property::fullscreen",
+        "property::maximized_horizontal", "property::maximized_vertical",
+        "property::border_width", "property::hidden", "property::floating",
+        -- What the client composite reads (awful.client.clay).
+        "property::border_color", "property::opacity", "property::shadow", "property::shape",
+        "property::size_hints", "property::urgent", "property::titlebar_top",
+        "property::titlebar_right", "property::titlebar_bottom", "property::titlebar_left",
+        "property::_committed_size", "focus", "unfocus"} do
+    capi.client.connect_signal(signal, arrange_prop)
+end
+-- An authored move of a floating client describes it again; a tiled
+-- client's geometry that the solve published skips.
+capi.client.connect_signal("property::geometry", function(c)
+    layout.arrange(c.screen, not client.object.get_floating(c))
+end)
 capi.client.connect_signal("property::screen", function(c, old_screen)
     if old_screen then
         layout.arrange(old_screen)

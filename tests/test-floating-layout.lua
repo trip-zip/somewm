@@ -8,7 +8,6 @@
 -- may choose smaller sizes even when given workarea-sized set_size,
 -- so we capture geometry at the earliest possible moment.
 --
--- Regression test for PR #321 (acd0fa4) / issue #371
 -- Run with: HEADLESS=1 make test-one TEST=tests/test-floating-layout.lua
 
 local awful = require("awful")

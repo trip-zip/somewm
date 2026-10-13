@@ -1,7 +1,7 @@
 ---------------------------------------------------------------------------
 --- Test: carousel regression tests for fixed bugs
 --
--- Regression tests for bugs reported in PR #351:
+-- Carousel layout regression tests:
 -- 1. Scroll offset breaks after column destruction/merge
 -- 2. Default column width from beautiful not respected
 -- 3. Client geometry uses screen instead of workarea
@@ -15,12 +15,9 @@ local beautiful = require("beautiful")
 local carousel = awful.layout.suit.carousel
 
 if not test_client.is_available() then
-    io.stderr:write("Test finished successfully.\n")
-    awesome.quit()
-    return
+    return runner.skip("no terminal available for test clients")
 end
 
-carousel.scroll_duration = 0
 
 local tag
 local c1, c2, c3
@@ -36,7 +33,7 @@ local steps = {
     end,
 
     ---------------------------------------------------------------------------
-    -- Bug 1: Scroll offset follows focused column after column operations
+    -- Scroll offset follows focused column after column operations
     -- Uses consume/expel to trigger column destruction without killing clients.
     ---------------------------------------------------------------------------
 
@@ -115,7 +112,7 @@ local steps = {
         return true
     end,
 
-    -- Cleanup bug 1 clients
+    -- Cleanup scroll-offset clients
     function(count)
         if count == 1 then
             for _, c in ipairs(client.get()) do
@@ -127,7 +124,7 @@ local steps = {
     end,
 
     ---------------------------------------------------------------------------
-    -- Bug 2: Default column width from beautiful
+    -- Default column width from beautiful
     ---------------------------------------------------------------------------
 
     function(count)
@@ -166,7 +163,7 @@ local steps = {
         return true
     end,
 
-    -- Cleanup bug 2
+    -- Cleanup column-width clients
     function(count)
         if count == 1 then
             for _, c in ipairs(client.get()) do
@@ -178,7 +175,7 @@ local steps = {
     end,
 
     ---------------------------------------------------------------------------
-    -- Bug 3: Workarea vs screen geometry
+    -- Workarea vs screen geometry
     ---------------------------------------------------------------------------
 
     function(count)
@@ -188,13 +185,18 @@ local steps = {
         end
 
         local c = utils.find_client_by_class("regbug_wa")
-        if not c then return nil end
-
-        if count < 3 then return nil end
+        if not c or client.focus ~= c then return nil end
 
         local wa = screen.primary.workarea
         local g = c:geometry()
         local bw = c.border_width or 0
+
+        if not (g.x >= wa.x - 1
+            and g.x + g.width + 2 * bw <= wa.x + wa.width + 1
+            and g.y >= wa.y - 1
+            and g.y + g.height + 2 * bw <= wa.y + wa.height + 1) then
+            return nil
+        end
 
         io.stderr:write(string.format(
             "[TEST] Workarea check: client geo=[%d,%d %dx%d], wa=[%d,%d %dx%d]\n",
@@ -212,7 +214,8 @@ local steps = {
             string.format("Client bottom edge %d should be <= workarea bottom %d",
                 g.y + g.height + 2 * bw, wa.y + wa.height))
 
-        io.stderr:write("[TEST] PASS: client geometry uses workarea, not screen geometry\n")
+        io.stderr:write(string.format(
+            "[TEST] PASS: client geometry uses workarea, not screen geometry (count=%d)\n", count))
         return true
     end,
 

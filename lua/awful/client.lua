@@ -8,7 +8,6 @@
 
 -- Grab environment we need
 local gdebug = require("gears.debug")
-local set_shape = require("awful.client.shape").update.all
 local object = require("gears.object")
 local grect = require("gears.geometry").rectangle
 local gmath = require("gears.math")
@@ -57,7 +56,6 @@ client.swap = {}
 client.floating = {}
 client.dockable = {}
 client.property = {}
-client.shape = require("awful.client.shape")
 client.focus = require("awful.client.focus")
 
 --- The client default placement on the screen.
@@ -694,11 +692,6 @@ function client.object.set_floating(c, s)
     c = c or capi.client.focus
     if c and client.property.get(c, "floating") ~= s then
         client.property.set(c, "floating", s)
-        local scr = c.screen
-        if s == true then
-            c:geometry(client.property.get(c, "floating_geometry"))
-        end
-        c.screen = scr
 
         if s then
             c:emit_signal("request::border", "floating", {})
@@ -1449,20 +1442,6 @@ object.properties._legacy_accessors(client, "keys", "_keys", true, function(new_
         type(new_btns[1]) == "key" or new_btns[1]._is_capi_key
     ) or false
 end, true, true, "keybinding")
-
---- Set the client shape.
---
--- @DOC_awful_client_shape1_EXAMPLE@
---
--- @property shape
--- @tparam[opt=gears.shape.rectangle] shape shape A gears.shape compatible function.
--- @propemits true false
--- @see gears.shape
-function client.object.set_shape(self, shape)
-    client.property.set(self, "_shape", shape)
-    set_shape(self)
-    self:emit_signal("property::shape", shape)
-end
 
 -- Proxy those properties to decorate their accessors with an extra flag to
 -- define when they are set by the user. This allows to "manage" the value of

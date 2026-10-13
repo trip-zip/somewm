@@ -1,4 +1,8 @@
 #include "luaa.h"
+#include "declare.h"
+#include "clay_impl.h"
+#include "render_text.h"
+#include "widget.h"
 #include "draw.h"  /* Must be before globalconf.h to avoid type conflicts */
 #include "globalconf.h"
 
@@ -12,6 +16,7 @@
 
 #include "objects/tag.h"
 #include "objects/client.h"
+#include "stack.h"
 #include "objects/screen.h"
 #include "objects/output.h"
 #include "objects/drawin.h"
@@ -27,7 +32,6 @@
 /* objects/awesome.h merged into this file */
 #include "animation.h"
 #include "ewmh.h"
-#include "objects/wibox.h"
 #include "objects/ipc.h"
 #include "objects/root.h"
 #include "objects/button.h"
@@ -65,7 +69,6 @@ static lua_State *luaA_create_fresh_state(void);
 #include <dlfcn.h>
 
 /* Includes merged from objects/awesome.c */
-#include "systray.h"
 #include "somewm_api.h"
 #include "somewm_internal.h"
 #include "protocols.h"
@@ -111,7 +114,6 @@ xcb_atom_t _NET_STARTUP_ID = 0;
 xcb_atom_t WM_DELETE_WINDOW = 0;
 xcb_atom_t WM_PROTOCOLS = 0;
 
-#ifdef XWAYLAND
 /* EWMH atoms - Extended Window Manager Hints for XWayland compatibility */
 
 /* Root Window Atoms (WM capabilities) */
@@ -172,7 +174,6 @@ xcb_atom_t _NET_WM_STRUT_PARTIAL = 0;
 
 /* UTF8_STRING atom for text properties */
 xcb_atom_t UTF8_STRING = 0;
-#endif /* XWAYLAND */
 
 /* Global handler storage for object property miss handlers */
 luaA_class_handlers_t client_handlers = {LUA_REFNIL, LUA_REFNIL};
@@ -225,132 +226,6 @@ extern const struct luaL_Reg awesome_dbus_lib[];
 static int luaA_dofunction_on_error(lua_State *L);
 
 /* ==========================================================================
- * X11 compatibility stubs (AwesomeWM API parity)
- * ========================================================================== */
-
-/** Check if a composite manager is running (X11-only stub).
- * X11: Checks _NET_WM_CM_Sn selection ownership.
- * Wayland: Always has compositing built-in.
- * \return true (Wayland always composites)
- */
-static bool
-composite_manager_running(void)
-{
-    /* X11-only: checks _NET_WM_CM_Sn selection.
-     * Wayland always has compositing. */
-    return true;
-}
-
-/* X11 modifier map indices (for get_modifier_name compatibility) */
-#ifndef XCB_MAP_INDEX_SHIFT
-#define XCB_MAP_INDEX_SHIFT   0
-#define XCB_MAP_INDEX_LOCK    1
-#define XCB_MAP_INDEX_CONTROL 2
-#define XCB_MAP_INDEX_1       3  /* Mod1 / Alt */
-#define XCB_MAP_INDEX_2       4
-#define XCB_MAP_INDEX_3       5
-#define XCB_MAP_INDEX_4       6  /* Super */
-#define XCB_MAP_INDEX_5       7
-#endif
-
-/** Get modifier name from map index.
- * \param map_index X11 modifier map index (0-7).
- * \return Modifier name string or NULL.
- */
-static const char *
-get_modifier_name(int map_index)
-{
-    switch (map_index) {
-        case XCB_MAP_INDEX_SHIFT:   return "Shift";
-        case XCB_MAP_INDEX_LOCK:    return "Lock";
-        case XCB_MAP_INDEX_CONTROL: return "Control";
-        case XCB_MAP_INDEX_1:       return "Mod1"; /* Alt */
-        case XCB_MAP_INDEX_2:       return "Mod2";
-        case XCB_MAP_INDEX_3:       return "Mod3";
-        case XCB_MAP_INDEX_4:       return "Mod4";
-        case XCB_MAP_INDEX_5:       return "Mod5";
-    }
-    return NULL;
-}
-
-/** Get modifier key mappings (X11-only stub).
- * X11: Uses xcb_get_modifier_mapping to get keycodes for each modifier.
- * Wayland: Modifiers are handled via xkbcommon.
- * \return Table mapping modifier names to key tables (empty in Wayland)
- */
-static int
-luaA_get_modifiers(lua_State *L)
-{
-    /* X11-only: uses xcb_get_modifier_mapping.
-     * Wayland uses xkbcommon for modifier handling. */
-    lua_newtable(L);
-    return 1;
-}
-
-/** Get currently active modifiers (X11-only stub).
- * X11: Queries XCB for current modifier state.
- * Wayland: Use xkbcommon state instead.
- * \return Table of active modifier names (empty in Wayland stub)
- */
-static int
-luaA_get_active_modifiers(lua_State *L)
-{
-    /* X11-only: uses XCB to query active modifiers.
-     * Wayland gets modifier state from xkbcommon. */
-    lua_newtable(L);
-    return 1;
-}
-
-/* ==========================================================================
- * AwesomeWM API aliases (renamed functions)
- * ========================================================================== */
-
-/* Forward declarations for aliased functions */
-static int luaA_awesome_quit(lua_State *L);
-static int luaA_awesome_sync(lua_State *L);
-static int luaA_awesome_set_preferred_icon_size(lua_State *L);
-static int luaA_awesome_get_key_name(lua_State *L);
-
-/** AwesomeWM name: add_to_search_path (somewm: luaA_add_search_paths)
- * Note: somewm's luaA_add_search_paths() has a different signature and adds
- * all standard paths at once. This stub provides API symbol compatibility.
- */
-static void
-add_to_search_path(lua_State *L, const char *path)
-{
-    (void)L;
-    (void)path;
-}
-
-/** AwesomeWM name: luaA_get_key_name (somewm: luaA_awesome_get_key_name) */
-static int
-luaA_get_key_name(lua_State *L)
-{
-    return luaA_awesome_get_key_name(L);
-}
-
-/** AwesomeWM name: luaA_quit (somewm: luaA_awesome_quit) */
-static int
-luaA_quit(lua_State *L)
-{
-    return luaA_awesome_quit(L);
-}
-
-/** AwesomeWM name: luaA_set_preferred_icon_size (somewm: luaA_awesome_set_preferred_icon_size) */
-static int
-luaA_set_preferred_icon_size(lua_State *L)
-{
-    return luaA_awesome_set_preferred_icon_size(L);
-}
-
-/** AwesomeWM name: luaA_sync (somewm: luaA_awesome_sync) */
-static int
-luaA_sync(lua_State *L)
-{
-    return luaA_awesome_sync(L);
-}
-
-/* ==========================================================================
  * Signal emitters (AwesomeWM API parity)
  * ========================================================================== */
 
@@ -398,7 +273,7 @@ luaA_class_newindex_miss_property(lua_State *L, lua_object_t *obj)
 }
 
 /* ==========================================================================
- * Phase 2: Core functions (AwesomeWM API parity)
+ * Core functions
  * ========================================================================== */
 
 /** Cleanup function called before exit or exec.
@@ -416,19 +291,6 @@ awesome_atexit(bool restart)
     if (!restart && globalconf.L) {
         luaA_cleanup();
     }
-}
-
-/** Cold-restart the compositor by exec'ing self.
- * Uses static somewm_argv (safe from globalconf memset wipe).
- * Only used as fallback; normal restart path is hot-reload.
- */
-void
-awesome_restart(void)
-{
-    awesome_atexit(true);
-    execvp(somewm_argv[0], somewm_argv);
-    /* If we get here, exec failed */
-    warn("restart failed: execvp(%s) failed: %s", somewm_argv[0], strerror(errno));
 }
 
 /** GLib idle callback for deferred hot-reload.
@@ -545,138 +407,6 @@ luaA_restart(lua_State *L)
     g_idle_add(hot_reload_idle_callback, NULL);
     return 0;
 }
-
-/** Convert Lua value to string (Lua 5.1 compatibility).
- * \param L The Lua state.
- * \param idx Stack index.
- * \param len Output: string length.
- * \return String representation.
- */
-static const char *
-luaA_tolstring(lua_State *L, int idx, size_t *len)
-{
-#if LUA_VERSION_NUM >= 502
-    return luaL_tolstring(L, idx, len);
-#else
-    /* Manual conversion for Lua 5.1 */
-    if (luaL_callmeta(L, idx, "__tostring")) {
-        if (!lua_isstring(L, -1))
-            luaL_error(L, "'__tostring' must return a string");
-    } else {
-        switch (lua_type(L, idx)) {
-            case LUA_TNUMBER:
-                lua_pushfstring(L, "%s", lua_tostring(L, idx));
-                break;
-            case LUA_TSTRING:
-                lua_pushvalue(L, idx);
-                break;
-            case LUA_TBOOLEAN:
-                lua_pushstring(L, lua_toboolean(L, idx) ? "true" : "false");
-                break;
-            case LUA_TNIL:
-                lua_pushliteral(L, "nil");
-                break;
-            default:
-                lua_pushfstring(L, "%s: %p", luaL_typename(L, idx),
-                                lua_topointer(L, idx));
-                break;
-        }
-    }
-    return lua_tolstring(L, -1, len);
-#endif
-}
-
-/** Convert single UTF-8 character to UTF-32 codepoint.
- * \param input UTF-8 encoded string.
- * \param length Length of input.
- * \return UTF-32 codepoint, or 0 on error.
- */
-static uint32_t
-one_utf8_to_utf32(const char *input, const size_t length)
-{
-    gunichar c = g_utf8_get_char_validated(input, length);
-    if (c == (gunichar)-1 || c == (gunichar)-2)
-        return 0;
-    /* Verify it's a single character by checking round-trip length */
-    char buf[8];
-    if ((size_t)g_unichar_to_utf8(c, buf) != length)
-        return 0;
-    return (uint32_t)c;
-}
-
-/** Setup Unix signal name/number table in awesome.unix_signal.
- * Called during Lua initialization to populate the signal table.
- * \param L The Lua state.
- */
-static void
-setup_awesome_signals(lua_State *L)
-{
-    /* Signal setup is handled by luaA_signal_setup() in objects/signal.c */
-    /* This is an alias for AwesomeWM API parity */
-    luaA_signal_setup(L);
-}
-
-/** Typedef for config file validation callback (AwesomeWM pattern). */
-typedef bool luaA_config_callback(const char *);
-
-/** Find configuration file path.
- * \param xdg XDG handle (unused in somewm, kept for API compat).
- * \param confpatharg User-specified config path (or NULL).
- * \param callback Validation callback (or NULL).
- * \return Path to config file, or NULL if not found.
- */
-const char *
-luaA_find_config(void *xdg, const char *confpatharg,
-                 luaA_config_callback *callback)
-{
-    (void)xdg;
-    (void)callback;
-
-    /* If user specified a path, use it */
-    if (confpatharg)
-        return confpatharg;
-
-    /* custom_confpath is defined later in this file as a static variable */
-    return NULL;  /* Caller should handle NULL by using default paths */
-}
-
-/** Parse rc.lua configuration file.
- * \param xdg XDG handle (unused in somewm).
- * \param confpatharg User-specified config path (or NULL).
- * \return true on success.
- */
-bool
-luaA_parserc(void *xdg, const char *confpatharg)
-{
-    (void)xdg;
-    (void)confpatharg;
-    /* Delegates to luaA_loadrc() which is the somewm implementation */
-    luaA_loadrc();
-    return true;
-}
-
-/* ==========================================================================
- * AwesomeWM API parity symbol table
- * ==========================================================================
- * These symbols exist for API parity with AwesomeWM. They're exported or
- * referenced here to ensure they're available for the api-parity tool and
- * for any code that expects AwesomeWM's exact symbol names.
- */
-__attribute__((used)) static const void *awesomewm_api_parity_symbols[] = {
-    (void *)composite_manager_running,
-    (void *)get_modifier_name,
-    (void *)luaA_get_modifiers,
-    (void *)luaA_get_active_modifiers,
-    (void *)add_to_search_path,
-    (void *)luaA_get_key_name,
-    (void *)luaA_quit,
-    (void *)luaA_set_preferred_icon_size,
-    (void *)luaA_sync,
-    (void *)luaA_tolstring,
-    (void *)one_utf8_to_utf32,
-    (void *)setup_awesome_signals,
-    NULL
-};
 
 /* ==========================================================================
  * awesome module (merged from objects/awesome.c)
@@ -955,8 +685,8 @@ rebuild_keyboard_keymap(void)
  * Lua callers can invoke awesome.sync() from inside a signal emit (e.g. a
  * `request::manage` rule that wants the configure flushed before it does
  * something else), and a synchronous flush in that context can call
- * wl_client_destroy() on a hung-up peer mid-emit and abort wlroots. See
- * trip-zip/somewm#530. The flush now runs at the next event-loop idle, so
+ * wl_client_destroy() on a hung-up peer mid-emit and abort wlroots.
+ * The flush runs at the next event-loop idle, so
  * it is best-effort: bytes are guaranteed to leave the compositor before
  * the next poll blocks, but not before the call returns to Lua. Lua code
  * that depended on the synchronous semantics needs to defer follow-up
@@ -1494,9 +1224,289 @@ luaA_awesome_test_add_output(lua_State *L)
 	return 1;
 }
 
+#ifdef TEST_PAM
+static int luaA_awesome_test_clay_capacity(lua_State *L)
+{
+    int capacity = luaL_checkinteger(L, 1);
+    int failures = luaL_optinteger(L, 2, 0);
+    luaL_argcheck(L, capacity >= 64 && capacity <= CLAY_ELEMENTS_MAX, 1, "capacity outside test range");
+    luaL_argcheck(L, failures >= 0, 2, "negative failure count");
+    declare_test_capacity(capacity, failures);
+    return 0;
+}
+
+static int luaA_awesome_test_clay_failure(lua_State *L)
+{
+    screen_t *s = luaA_checkscreen(L, 1);
+    int elements = luaL_checkinteger(L, 2);
+    luaL_argcheck(L, elements >= 0 && elements <= 2 * CLAY_ELEMENTS_MAX, 2, "invalid failure injection");
+    declare_test_failure(s->monitor->declare, elements);
+    return 0;
+}
+#endif
+
+static int
+luaA_awesome_clay_dirty(lua_State *L)
+{
+    declare_mark_all_dirty();
+    return 0;
+}
+
+/** awesome._test_redeclare: run the frame for every output now and report
+ * the scene mutations that took. Nothing else having changed between two
+ * calls, the second must return 0 (see tests/test-declare-zero-mutations.lua).
+ * \return Number of scene mutations
+ */
+static int
+luaA_awesome_test_redeclare(lua_State *L)
+{
+	Monitor *m;
+	int mutations = 0, n;
+
+	declare_mark_all_dirty();
+	wl_list_for_each(m, some_get_monitors(), link) {
+		if (!m->declare || !m->wlr_output->enabled)
+			continue;
+		n = declare_output_frame(m->declare, m);
+		if (n > 0)
+			mutations += n;
+	}
+	lua_pushinteger(L, mutations);
+	return 1;
+}
+
+/** The draw order of a screen's windows, wiboxes and layer surfaces,
+ * bottom to top.
+ * Reads the screen's completed command order, so a test can assert stacking
+ * directly instead of inferring it from attributes
+ * (see tests/test-declare-order.lua).
+ * \param screen The screen to read.
+ * \return Array of the objects drawn, bottom first.
+ */
+static int
+luaA_awesome_test_declare_order(lua_State *L)
+{
+	enum { ORDER_CAP = 256 };
+	screen_t *s = luaA_checkscreen(L, 1);
+	void *objects[ORDER_CAP];
+	int n;
+
+	/* A screen with no monitor draws nothing. Report that as an empty
+	 * order, not nil: the caller iterates the result. */
+	if (!s->monitor || !s->monitor->declare) {
+		lua_createtable(L, 0, 0);
+		return 1;
+	}
+	n = declare_output_order(s->monitor->declare, objects,
+		ORDER_CAP);
+	lua_createtable(L, n, 0);
+	for (int i = 0; i < n; i++) {
+		luaA_object_push(L, objects[i]);
+		lua_rawseti(L, -2, i + 1);
+	}
+	return 1;
+}
+
+/** The boxes Clay solves for a drawin's converted widget tree, outermost
+ * first, drawin-local.
+ * What the last frame solved (see tests/test-clay-widget-layouts.lua).
+ * Empty for a drawin whose widget tree did not convert.
+ * \param drawin The drawin to solve.
+ * \return Array of { x, y, width, height } tables.
+ */
+static int
+luaA_awesome_test_widget_boxes(lua_State *L)
+{
+	drawin_t *d = luaA_todrawin(L, 1);
+	int boxes[WIDGET_NODES_MAX][4];
+	struct widget_host host;
+	bool found = d ? drawin_widget_host(d, &host)
+		: drawable_widget_host(luaA_checkudata(L, 1, &drawable_class), &host);
+	int n = found ? declare_widget_boxes(&host, boxes) : 0;
+
+	lua_createtable(L, n, 0);
+	for (int i = 0; i < n; i++) {
+		static const char *keys[] = { "x", "y", "width", "height" };
+
+		lua_createtable(L, 0, 4);
+		for (int k = 0; k < 4; k++) {
+			lua_pushinteger(L, boxes[i][k]);
+			lua_setfield(L, -2, keys[k]);
+		}
+		lua_rawseti(L, -2, i + 1);
+	}
+	return 1;
+}
+
+/** Intern a Pango font description for a converted textbox, and answer the
+ * id its text element declares as fontId (render_text.h). Nil for a
+ * description the font table refuses, which keeps that textbox drawing
+ * itself.
+ * \param desc The description, with an absolute size or none.
+ * \return The font id, or nil.
+ */
+static int
+luaA_awesome_clay_font(lua_State *L)
+{
+	int32_t id = render_font_intern(luaL_checkstring(L, 1));
+
+	if (id < 0)
+		lua_pushnil(L);
+	else
+		lua_pushinteger(L, id);
+	return 1;
+}
+
+/** Raw bytes of an image surface box, for tests that compare pixels: the
+ * rows, each width * 4 bytes, in cairo's own byte order. Plain Lua has no
+ * ffi to read them.
+ * \param native The surface's _native pointer.
+ * \param x, y, width, height The box, inside the surface.
+ * \return The bytes as one string.
+ */
+static int
+luaA_awesome_surface_pixels(lua_State *L)
+{
+	cairo_surface_t *surface = lua_touserdata(L, 1);
+	int x = luaL_checkinteger(L, 2), y = luaL_checkinteger(L, 3);
+	int width = luaL_checkinteger(L, 4), height = luaL_checkinteger(L, 5);
+	cairo_format_t format;
+	const unsigned char *data;
+	int stride;
+	luaL_Buffer b;
+
+	if (!surface || cairo_surface_get_type(surface) != CAIRO_SURFACE_TYPE_IMAGE)
+		return luaL_error(L, "not an image surface");
+	format = cairo_image_surface_get_format(surface);
+	if (format != CAIRO_FORMAT_ARGB32 && format != CAIRO_FORMAT_RGB24)
+		return luaL_error(L, "not a 32-bit surface");
+	if (x < 0 || y < 0 || width < 0 || height < 0
+			|| x + width > cairo_image_surface_get_width(surface)
+			|| y + height > cairo_image_surface_get_height(surface))
+		return luaL_error(L, "box outside the surface");
+	cairo_surface_flush(surface);
+	data = cairo_image_surface_get_data(surface);
+	stride = cairo_image_surface_get_stride(surface);
+	luaL_buffinit(L, &b);
+	for (int row = y; row < y + height; row++)
+		luaL_addlstring(&b, (const char *)data + row * stride + x * 4, width * 4);
+	luaL_pushresult(&b);
+	return 1;
+}
+
+/** Style the Clay debug inspector (declare.h), for somewm.inspector: a
+ * table of six colors as {r, g, b, a} in 0-255 under bg, bg_alt, border,
+ * fg, bg_selected and highlight, the panel width, and the font for entry 0
+ * of the font table, all required. Process-global; every screen showing
+ * the panel re-solves.
+ * \param style The style table.
+ * \return Nil, or the reason the font was refused.
+ */
+static int
+luaA_awesome_inspector_style(lua_State *L)
+{
+	static const char *const keys[] = {
+		"bg", "bg_alt", "border", "fg", "bg_selected", "highlight" };
+	struct declare_inspector_style style;
+	int err;
+
+	luaL_checktype(L, 1, LUA_TTABLE);
+	for (size_t i = 0; i < countof(keys); i++) {
+		lua_getfield(L, 1, keys[i]);
+		if (!lua_istable(L, -1))
+			return luaL_error(L, "inspector style: %s is not a color", keys[i]);
+		for (int c = 0; c < 4; c++) {
+			lua_rawgeti(L, -1, c + 1);
+			style.colors[i][c] = (float)luaL_checknumber(L, -1);
+			lua_pop(L, 1);
+		}
+		lua_pop(L, 1);
+	}
+	lua_getfield(L, 1, "width");
+	style.width = (float)luaL_checknumber(L, -1);
+	lua_getfield(L, 1, "font");
+	err = declare_inspector_style(&style, luaL_checkstring(L, -1));
+	if (err == RENDER_FONT_ERR_SIZE)
+		lua_pushliteral(L, "carries a point size, name one in px");
+	else
+		lua_pushnil(L);
+	return 1;
+}
+
+/** The solved Clay tree of every screen, or of one screen, as text.
+ * Backs `somewm-client clay tree`: reads back what the last reconcile
+ * retained (declare.h), so it reports the frame the output drew rather than
+ * solving again.
+ * \param screen Optional screen to report; every output when absent.
+ * \return The dump.
+ */
+static int
+luaA_awesome_clay_tree(lua_State *L)
+{
+	Monitor *m = NULL;
+	char *dump;
+
+	if (!lua_isnoneornil(L, 1)) {
+		screen_t *s = luaA_checkscreen(L, 1);
+
+		if (!s->monitor) {
+			lua_pushliteral(L, "");
+			return 1;
+		}
+		m = s->monitor;
+	}
+	dump = declare_dump(m);
+	lua_pushstring(L, dump);
+	p_delete(&dump);
+	return 1;
+}
+
+static int
+luaA_awesome_clay_scroll_get(lua_State *L)
+{
+    screen_t *s = luaA_checkscreen(L, 1);
+    Clay_ElementId id = { .id = luaL_checkinteger(L, 2) };
+    Clay_Context *context = s->monitor ? declare_output_context(s->monitor->declare) : NULL;
+
+    if (context) {
+        Clay_Context *previous = Clay_GetCurrentContext();
+        Clay_SetCurrentContext(context);
+        Clay_ScrollContainerData data = Clay_GetScrollContainerData(id);
+        Clay_SetCurrentContext(previous);
+        if (data.found) {
+            lua_pushnumber(L, data.scrollPosition->x);
+            lua_pushnumber(L, data.scrollPosition->y);
+            lua_pushnumber(L, data.contentDimensions.width);
+            lua_pushnumber(L, data.contentDimensions.height);
+            lua_pushnumber(L, data.scrollContainerDimensions.width);
+            lua_pushnumber(L, data.scrollContainerDimensions.height);
+            return 6;
+        }
+    }
+    return 0;
+}
+
+static int
+luaA_awesome_clay_scroll_set(lua_State *L)
+{
+    screen_t *s = luaA_checkscreen(L, 1);
+    Clay_ElementId id = { .id = luaL_checkinteger(L, 2) };
+    float x = luaL_checknumber(L, 3), y = luaL_checknumber(L, 4);
+    Clay_Context *context = s->monitor ? declare_output_context(s->monitor->declare) : NULL;
+
+    if (context) {
+        Clay_Context *previous = Clay_GetCurrentContext();
+        Clay_SetCurrentContext(context);
+        clay_scroll_set(id, x, y);
+        Clay_SetCurrentContext(previous);
+        declare_output_mark_dirty(s->monitor->declare);
+    }
+    return 0;
+}
+
 /** Reload shadow settings from beautiful theme.
  * Call this after changing beautiful.shadow_* values to apply them.
- * Regenerates shadow textures and updates all existing shadows.
+ * Refreshes effective styles; the renderer updates shared tiles as needed.
  */
 static int
 luaA_awesome_shadow_reload(lua_State *L)
@@ -1504,23 +1514,7 @@ luaA_awesome_shadow_reload(lua_State *L)
 	/* Reload config from beautiful */
 	shadow_load_beautiful_defaults(L);
 
-	/* Update all existing client shadows */
-	foreach(c, globalconf.clients) {
-		const shadow_config_t *config = shadow_get_effective_config(
-			(*c)->shadow_config, false);
-		shadow_update_config(&(*c)->shadow, (*c)->scene, config,
-			(*c)->geometry.width + 2 * (*c)->bw,
-			(*c)->geometry.height + 2 * (*c)->bw);
-	}
-
-	/* Update all existing drawin shadows */
-	foreach(d, globalconf.drawins) {
-		drawin_t *drawin = *d;
-		const shadow_config_t *config = shadow_get_effective_config(
-			drawin->shadow_config, true);
-		shadow_update_config(&drawin->shadow, drawin->scene_tree, config,
-			drawin->width, drawin->height);
-	}
+	declare_mark_all_dirty();
 
 	return 0;
 }
@@ -1543,7 +1537,7 @@ luaA_awesome_lock(lua_State *L)
 		return 1;
 	}
 
-	/* EDGE-1: Refuse to lock without a registered lock surface.
+	/* Refuse to lock without a registered lock surface.
 	 * Locking without a surface leaves the user with no way to authenticate
 	 * and no recovery path (VT switch is also blocked). */
 	if (!lua_lock_surface) {
@@ -1552,7 +1546,7 @@ luaA_awesome_lock(lua_State *L)
 		return 1;
 	}
 
-	/* EDGE-3: Refuse to lock if ext-session-lock is active.
+	/* Refuse to lock if ext-session-lock is active.
 	 * Two independent lock mechanisms competing causes undefined behavior. */
 	if (some_is_ext_session_locked()) {
 		fprintf(stderr, "somewm: lock() called while ext-session-lock is active, refusing\n");
@@ -2110,7 +2104,7 @@ luaA_awesome_dpms_on(lua_State *L)
 
 /** Notify that a drawin is being destroyed.
  * Clears any lock surface/cover pointers that reference this drawin.
- * Called from drawin_wipe() to prevent dangling pointers (EDGE-2).
+ * Called from drawin_wipe() to prevent dangling pointers.
  */
 void
 some_notify_drawin_destroyed(drawin_t *w)
@@ -2336,7 +2330,6 @@ const luaL_Reg awesome_methods[] = {
 	{ "xrdb_get_value", luaA_awesome_xrdb_get_value },
 	{ "register_xproperty", luaA_awesome_register_xproperty },
 	{ "pixbuf_to_surface", luaA_pixbuf_to_surface },
-	{ "systray", luaA_systray },
 	{ "sync", luaA_awesome_sync },
 	{ "_set_input_setting", luaA_awesome_set_input_setting },
 	{ "_set_input_rules", luaA_awesome_set_input_rules },
@@ -2347,7 +2340,21 @@ const luaL_Reg awesome_methods[] = {
 	{ "load_image", luaA_load_image },
 	{ "restart", luaA_restart },
 	{ "shadow_reload", luaA_awesome_shadow_reload },
+#ifdef TEST_PAM
+    { "_test_clay_capacity", luaA_awesome_test_clay_capacity },
+    { "_test_clay_failure", luaA_awesome_test_clay_failure },
+#endif
 	{ "_test_add_output", luaA_awesome_test_add_output },
+	{ "_test_redeclare", luaA_awesome_test_redeclare },
+	{ "_clay_dirty", luaA_awesome_clay_dirty },
+	{ "_clay_tree", luaA_awesome_clay_tree },
+	{ "_clay_scroll_get", luaA_awesome_clay_scroll_get },
+	{ "_clay_scroll_set", luaA_awesome_clay_scroll_set },
+	{ "_clay_font", luaA_awesome_clay_font },
+	{ "_surface_pixels", luaA_awesome_surface_pixels },
+	{ "_inspector_style", luaA_awesome_inspector_style },
+	{ "_test_declare_order", luaA_awesome_test_declare_order },
+	{ "_test_widget_boxes", luaA_awesome_test_widget_boxes },
 	/* Lock API methods */
 	{ "lock", luaA_awesome_lock },
 	{ "unlock", luaA_awesome_unlock },
@@ -2678,7 +2685,6 @@ luaA_awesome_set_conffile(lua_State *L, const char *conffile)
 
 /* End of awesome module code */
 
-#ifdef XWAYLAND
 /** Initialize EWMH atoms (Extended Window Manager Hints).
  * This function interns all 46 EWMH atoms from the X server.
  * Uses the batched cookie pattern from AwesomeWM for efficiency:
@@ -2866,7 +2872,6 @@ init_ewmh_atoms(xcb_connection_t *conn)
 	if (reply) { UTF8_STRING = reply->atom; free(reply); }
 
 }
-#endif /* XWAYLAND */
 
 /** UTF-8 aware string length computing.
  * \param L The Lua VM state.
@@ -3051,8 +3056,8 @@ luaA_add_search_paths(const char **paths, int count)
 }
 
 /** Point a Lua state at every directory somewm loads modules from: the
- * development tree, the installed datadir, any -L/--search paths, and the
- * user library directory.
+ * development tree, the installed datadir unless SOMEWM_SKIP_INSTALLED_LUA=1,
+ * any -L/--search paths, and the user library directory.
  *
  * Boot, the post-reload rebuild, and `--check` all call this, so what the
  * checker believes require() can find is what require() can actually find.
@@ -3061,6 +3066,8 @@ static void
 luaA_setup_package_paths(lua_State *L)
 {
 	const char *cur_path;
+	const char *skip_installed = getenv("SOMEWM_SKIP_INSTALLED_LUA");
+	const bool use_installed = !skip_installed || strcmp(skip_installed, "1") != 0;
 
 	/* Add lua/ directory to package.path for require() support */
 	lua_getglobal(L, "package");
@@ -3068,11 +3075,12 @@ luaA_setup_package_paths(lua_State *L)
 	cur_path = lua_tostring(L, -1);
 	lua_pop(L, 1);
 
-	/* Prepend lua paths: development paths first, then system-wide paths */
+	/* Prepend development paths and, when enabled, the installed datadir. */
 	lua_pushfstring(L,
-		"./lua/?.lua;./lua/?/init.lua;./lua/lib/?.lua;./lua/lib/?/init.lua;"
-		DATADIR "/somewm/lua/?.lua;" DATADIR "/somewm/lua/?/init.lua;"
-		DATADIR "/somewm/lua/lib/?.lua;" DATADIR "/somewm/lua/lib/?/init.lua;%s",
+		"./lua/?.lua;./lua/?/init.lua;./lua/lib/?.lua;./lua/lib/?/init.lua;%s%s",
+		use_installed ?
+			DATADIR "/somewm/lua/?.lua;" DATADIR "/somewm/lua/?/init.lua;"
+			DATADIR "/somewm/lua/lib/?.lua;" DATADIR "/somewm/lua/lib/?/init.lua;" : "",
 		cur_path);
 	lua_setfield(L, -2, "path");
 
@@ -3081,10 +3089,11 @@ luaA_setup_package_paths(lua_State *L)
 	cur_path = lua_tostring(L, -1);
 	lua_pop(L, 1);
 
-	/* Prepend C module paths: development paths first, then system-wide paths */
+	/* Keep the existing system C module paths in both modes. */
 	lua_pushfstring(L,
-		"./lua/?.so;./lua/lib/?.so;"
-		DATADIR "/somewm/lua/?.so;" DATADIR "/somewm/lua/lib/?.so;%s",
+		"./lua/?.so;./lua/lib/?.so;%s%s",
+		use_installed ?
+			DATADIR "/somewm/lua/?.so;" DATADIR "/somewm/lua/lib/?.so;" : "",
 		cur_path);
 	lua_setfield(L, -2, "cpath");
 
@@ -3214,7 +3223,6 @@ luaA_register_state(lua_State *L)
 	selection_setup(L); /* Creates "selection" global from class globals */
 
 	luaA_mouse_setup(L);
-	luaA_wibox_setup(L);
 	luaA_ipc_setup(L);
 	systray_item_class_setup(L);  /* SNI systray item class */
 
@@ -4948,13 +4956,14 @@ luaA_state_teardown_lua(lua_State *L, bool lua_safe)
 static void
 luaA_state_teardown_c(lua_State *L, const char *label, bool exit_emitted)
 {
+    declare_state_clear();
 	/* lua_close() dlcloses the C modules the state loaded, and
 	 * libgirepository cannot survive an unload/reload cycle (GType
 	 * registration is process-global). Pin lgi's libraries resident
 	 * before the state goes away. */
 	somewm_pin_lgi_libs();
 
-	/* Layer surfaces last: detaching earlier would make arrangelayers() take
+	/* Layer surfaces last: detaching earlier would make layer_keyboard_focus() take
 	 * the no-Lua-object branch mid-teardown, which force-grants keyboard
 	 * focus to whichever surface asked for it. */
 	layer_surface_hot_reload_detach();
@@ -5002,25 +5011,15 @@ luaA_state_drop_object_pointers(void)
 	globalconf.mouse_under.ptr.client = NULL;
 	globalconf.primary_screen = NULL;
 
-	/* Destroy old drawin scene trees now, or they persist as duplicates
-	 * behind the ones the rebuilt state creates. */
+	/* Retire the renderer's view of the old drawins now, or their retained
+	 * leaves persist as duplicates behind the ones the rebuilt state
+	 * creates. */
 	foreach(d, globalconf.drawins) {
 		drawin_t *w = *d;
-		shadow_release(&w->shadow);
-		if (w->scene_tree) {
-			wlr_scene_node_destroy(&w->scene_tree->node);
-			w->scene_tree = NULL;
-			w->scene_buffer = NULL;
-			w->border_buffer = NULL;
-		}
+		declare_handle_drop(w);
 	}
 	globalconf.drawins.len = 0;
-
-	/* The systray scene tree is a child of the parent drawin's tree, so the
-	 * loop above already destroyed it. Both pointers dangle; NULL them, or
-	 * drawin_wipe() destroys the freed scene node again at close. */
-	globalconf.systray.parent = NULL;
-	globalconf.systray.scene_tree = NULL;
+	declare_mark_all_dirty();
 
 	/* Reset screen_refs before closing (entries become invalid) */
 	luaA_screen_refs_reset();
@@ -5079,6 +5078,11 @@ clients_detach(client_snapshot_t **out, int *out_count)
 		/* Remove all wlroots listeners */
 		client_remove_all_listeners(c);
 
+		for (j = 0; j < CLIENT_TITLEBAR_COUNT; j++) {
+			declare_handle_drop(c->titlebar[j].drawable);
+			widget_nodes_clear(&c->titlebar[j].widgets);
+		}
+
 		/* Copy entire client_t via memcpy */
 		memcpy(&snap->data, c, sizeof(client_t));
 		snap->was_mapped = (c->scene != NULL);
@@ -5106,12 +5110,10 @@ clients_detach(client_snapshot_t **out, int *out_count)
 			if (c->surface.xdg)
 				c->surface.xdg->data = &snap->data;
 		}
-#ifdef XWAYLAND
 		else {
 			if (c->surface.xwayland)
 				c->surface.xwayland->data = &snap->data;
 		}
-#endif
 		/* Also update scene node back-pointers */
 		client_set_node_data(c, &snap->data);
 
@@ -5126,14 +5128,14 @@ clients_detach(client_snapshot_t **out, int *out_count)
 		c->alt_icon_name = NULL;
 		c->machine = NULL;
 		c->startup_id = NULL;
+		c->xproperties = NULL;
 		c->role = NULL;
 		c->keys.tab = NULL; c->keys.len = c->keys.size = 0;
 		c->icons.tab = NULL; c->icons.len = c->icons.size = 0;
 		c->buttons.tab = NULL; c->buttons.len = c->buttons.size = 0;
 		c->protocols.atoms = NULL; c->protocols.atoms_len = 0;
-		/* Don't let GC touch shadow textures - snapshot owns them */
-		for (j = 0; j < SHADOW_TEXTURE_COUNT; j++)
-			c->shadow.textures[j] = NULL;
+		/* The rebuilt client starts with a fresh native shadow descriptor. */
+		memset(&c->shadow, 0, sizeof(c->shadow));
 		c->shadow_config = NULL;
 		/* Don't let GC destroy the scene tree */
 		c->scene = NULL;
@@ -5189,13 +5191,10 @@ clients_restore(lua_State *L, client_snapshot_t *snaps, int num_clients)
 		c->toplevel_handle = NULL;
 		c->screen = NULL;
 		c->transient_for = NULL;
+		stack_windows();
 		for (j = 0; j < CLIENT_TITLEBAR_COUNT; j++) {
 			c->titlebar[j].drawable = NULL;
 			c->titlebar[j].size = 0;
-			if (c->titlebar[j].scene_buffer) {
-				wlr_scene_node_destroy(&c->titlebar[j].scene_buffer->node);
-				c->titlebar[j].scene_buffer = NULL;
-			}
 		}
 
 		/* Re-register wlroots listeners */
@@ -5206,12 +5205,10 @@ clients_restore(lua_State *L, client_snapshot_t *snaps, int num_clients)
 			if (c->surface.xdg)
 				c->surface.xdg->data = c;
 		}
-#ifdef XWAYLAND
 		else {
 			if (c->surface.xwayland)
 				c->surface.xwayland->data = c;
 		}
-#endif
 		client_set_node_data(c, c);
 
 		/* Reference and push to arrays */
@@ -5233,6 +5230,7 @@ clients_restore(lua_State *L, client_snapshot_t *snaps, int num_clients)
 			if (snaps[j].data.id == snaps[i].transient_for_id) {
 				globalconf.clients.tab[base + i]->transient_for =
 					globalconf.clients.tab[base + j];
+				stack_windows();
 				break;
 			}
 		}
@@ -5818,6 +5816,11 @@ luaA_hot_reload(void)
 	 * Phase B2: Snapshot and detach clients
 	 * ================================================================ */
 
+	/* Release borrowed trees before clients_detach clears client scene pointers. */
+	declare_hot_reload();
+	foreach(drawin, globalconf.drawins)
+		widget_nodes_clear(&(*drawin)->widgets);
+
 	if (!clients_detach(&client_snaps, &num_clients)) {
 		fprintf(stderr, "somewm: hot-reload: failed to allocate client snapshots\n");
 		goto fail;
@@ -6172,6 +6175,7 @@ void
 luaA_cleanup(void)
 {
 	if (globalconf_L) {
+        declare_state_clear();
 		/* Clean up the signal system first */
 		luaA_signal_cleanup();
 
@@ -6195,25 +6199,6 @@ luaA_cleanup(void)
 		 * so we're just wiping the (now empty) array pointers. */
 		globalconf_wipe();
 	}
-}
-
-/** Load and execute a Lua file with error reporting.
- * Wrapper around luaL_dofile with better error messages.
- *
- * \param L The Lua VM state.
- * \param path Path to the Lua file to load.
- * \return 0 on success, -1 on error.
- */
-int
-luaA_dofunction_from_file(lua_State *L, const char *path)
-{
-	if (luaL_dofile(L, path) != 0) {
-		fprintf(stderr, "somewm:Lua error in %s: %s\n",
-		        path, lua_tostring(L, -1));
-		lua_pop(L, 1);  /* Remove error message */
-		return -1;
-	}
-	return 0;
 }
 
 /** Initialize the global configuration structure.
@@ -6290,10 +6275,6 @@ globalconf_wipe(void)
 	if (globalconf.wallpaper) {
 		cairo_surface_destroy(globalconf.wallpaper);
 		globalconf.wallpaper = NULL;
-	}
-	if (globalconf.wallpaper_buffer_node) {
-		wlr_scene_node_destroy(&globalconf.wallpaper_buffer_node->node);
-		globalconf.wallpaper_buffer_node = NULL;
 	}
 
 	/* Zero out the structure */

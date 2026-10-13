@@ -30,13 +30,23 @@ runner.run_async(function()
     end, nil)
     assert(mousegrabber.isrunning(), "mousegrabber did not start")
 
-    local function inject(action, arg)
+    local function inject(action, arg, ready)
         records = {}
         awful.spawn(string.format("%s %s %d %d %d %d %s",
                                   VPOINTER, action, cx, cy, sg.width, sg.height, arg))
-        -- 2 motion callbacks (client double-sends the move) + press + release
-        async.wait_for_condition(function() return #records >= 4 end, 5)
+        async.wait_for_condition(ready, 5)
         return records
+    end
+
+    local function tick_ready(flag)
+        return function()
+            for i, r in ipairs(records) do
+                if r[flag] and records[i + 1] and not records[i + 1][flag] then
+                    return true
+                end
+            end
+            return false
+        end
     end
 
     -- One scroll tick: press call with the flag set, then a release call.
@@ -51,13 +61,13 @@ runner.run_async(function()
             label .. ": no release call after the " .. flag .. " press")
     end
 
-    local recs = inject("scroll", "down")
+    local recs = inject("scroll", "down", tick_ready("b5"))
     assert_tick(recs, "b5", "scroll down")
     for _, r in ipairs(recs) do
         assert(not r.b4, "scroll down: buttons[4] flagged")
     end
 
-    recs = inject("scroll", "up")
+    recs = inject("scroll", "up", tick_ready("b4"))
     assert_tick(recs, "b4", "scroll up")
     for _, r in ipairs(recs) do
         assert(not r.b5, "scroll up: buttons[5] flagged")
@@ -65,7 +75,7 @@ runner.run_async(function()
 
     -- BTN_SIDE (X11 button 8) must not appear as scroll (regression: it was
     -- tracked in slot 4).
-    recs = inject("click", "side")
+    recs = inject("click", "side", function() return #records >= 4 end)
     assert(#recs > 0, "side click: grabber saw no events")
     for _, r in ipairs(recs) do
         assert(not r.b4 and not r.b5, "side click: flagged as scroll")

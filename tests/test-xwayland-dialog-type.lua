@@ -5,7 +5,7 @@
 -- transient_for) get the correct client.type in Lua. This exercises the
 -- property_update_xwayland_properties() window type detection path.
 --
--- Regression test for #337: XWayland dialogs tile instead of float because
+-- Regression test: XWayland dialogs tile instead of float because
 -- _NET_WM_WINDOW_TYPE was never read for non-transient X11 clients.
 ---------------------------------------------------------------------------
 
@@ -19,19 +19,13 @@ local function is_headless()
 end
 
 if is_headless() then
-    io.stderr:write("SKIP: XWayland dialog type test requires visual mode\n")
-    io.stderr:write("Test finished successfully.\n")
-    awesome.quit()
-    return
+    return runner.skip("XWayland dialog type test requires visual mode")
 end
 
 -- Skip if python3 not available
 local python3_check = os.execute("which python3 >/dev/null 2>&1")
 if not python3_check then
-    io.stderr:write("SKIP: python3 not available for X11 helper\n")
-    io.stderr:write("Test finished successfully.\n")
-    awesome.quit()
-    return
+    return runner.skip("python3 not available for X11 helper")
 end
 
 local awful = require("awful")
@@ -108,7 +102,7 @@ for i, tc in ipairs(test_cases) do
             string.format("client must be XWayland: class=%s", tc.class))
         assert(my_client.type == tc.expected,
             string.format(
-                "regression #337: expected type '%s', got '%s' for class=%s",
+                "expected type '%s', got '%s' for class=%s",
                 tc.expected, tostring(my_client.type), tc.class
             ))
 

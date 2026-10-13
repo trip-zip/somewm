@@ -1,8 +1,8 @@
 ---------------------------------------------------------------------------
 -- Test: Lock focus save/restore
 --
--- Covers: BEH-5 (save focus on lock), BEH-6 (restore on unlock),
---         BEH-7 (focustop fallback if saved client is gone)
+-- Covers saving focus on lock, restoring it on unlock, and falling back to
+-- focustop when the saved client is gone.
 ---------------------------------------------------------------------------
 
 local runner = require("_runner")
@@ -11,10 +11,7 @@ local lock = require("_lock_helper")
 local test_client = require("_client")
 
 if not test_client.is_available() then
-    io.stderr:write("SKIP: No terminal available for test clients\n")
-    io.stderr:write("Test finished successfully.\n")
-    awesome.quit()
-    return
+    return runner.skip("No terminal available for test clients")
 end
 
 local focused_before_lock = nil
@@ -34,7 +31,7 @@ runner.run_steps({
         return true
     end,
 
-    -- Step 3: BEH-5/6 - Lock saves focus, unlock restores it
+    -- Step 3: Lock saves focus, unlock restores it
     function()
         focused_before_lock = client.focus
         assert(focused_before_lock ~= nil, "should have focus before lock")
@@ -49,9 +46,9 @@ runner.run_steps({
     function(count)
         if count < 2 then return end
         assert(client.focus == focused_before_lock,
-            "BEH-6: focus should be restored to pre-lock client")
+            "focus should be restored to pre-lock client")
         assert(focused_before_lock:has_keyboard_focus(),
-            "BEH-6: pre-lock client should have Wayland keyboard focus after unlock")
+            "pre-lock client should have Wayland keyboard focus after unlock")
         return true
     end,
 

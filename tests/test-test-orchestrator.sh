@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# Test suite for `somewm-client test ...` (issue #158 orchestrator).
+# Test suite for `somewm-client test ...`.
 #
 # Spawns a headless nested somewm under the orchestrator and exercises the
 # start / eval / list / stop / --force / already-running paths. Does not

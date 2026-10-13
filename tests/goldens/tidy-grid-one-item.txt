@@ -1,0 +1,12 @@
+output
+  roots flow 1 floating 1 derived 0 legacy 0
+  Clay__RootContainer w=fixed(1280) output h=fixed(720) output row
+    OUTPUT WL-1 w=fixed(1280) output h=fixed(720) output column
+      WORKAREA - w=grow h=grow row
+  POPUP screen 1 converted w=fit h=fit user row pad 1,1,1,1 attach OUTPUT band 80
+    clip w=grow h=grow row
+    wibox.layout.grid w=fit h=fit user row gap 5
+      - spacer w=fit h=grow row
+        wibox.widget.base w=fit user h=grow user row
+      - spacer w=fit h=grow row
+      - spacer w=fit h=grow row

@@ -1,0 +1,9 @@
+output
+  roots flow 1 floating 1 derived 0 legacy 0
+  Clay__RootContainer w=fixed(1280) output h=fixed(720) output row
+    OUTPUT WL-1 w=fixed(1280) output h=fixed(720) output column
+      WIBAR screen 1 converted clip w=grow h=fixed(32) theme row
+      WORKAREA - w=grow h=grow row
+        CLIENT desk_client w=grow h=grow column pad 1,1,1,1
+          SLOT desk_client w=grow h=grow row
+  SURFACE desk_client w=grow h=grow attach PARENT band 0 custom

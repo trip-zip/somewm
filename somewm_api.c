@@ -22,7 +22,6 @@
 #include <wlr/xwayland.h>
 
 #include "somewm_api.h"
-#include "wlr_compat.h"
 #include "xkb.h"
 #include "objects/signal.h"
 #include "objects/screen.h"
@@ -35,6 +34,7 @@
 #include "focus.h"
 #include "input.h"
 #include "window.h"
+#include "declare.h"
 #include "monitor.h"
 #include "somewm_internal.h"
 
@@ -55,152 +55,6 @@ struct kb_group_device {
 /*
  * Client API Implementation
  */
-
-const char *
-some_client_get_title(Client *c)
-{
-	if (!c)
-		return NULL;
-	return client_get_title(c);
-}
-
-const char *
-some_client_get_appid(Client *c)
-{
-	if (!c)
-		return NULL;
-	return client_get_appid(c);
-}
-
-int
-some_client_get_fullscreen(Client *c)
-{
-	return c ? c->fullscreen : 0;
-}
-
-int
-some_client_get_urgent(Client *c)
-{
-	return c ? c->urgent : 0;
-}
-
-Monitor *
-some_client_get_monitor(Client *c)
-{
-	return c ? c->mon : NULL;
-}
-
-void
-some_client_get_geometry(Client *c, struct wlr_box *geom)
-{
-	if (!c || !geom)
-		return;
-	client_get_geometry(c, geom);
-}
-
-void
-some_client_set_floating(Client *c, int floating)
-{
-	lua_State *L;
-
-	if (!c)
-		return;
-
-	/* Set floating via Lua property system (AwesomeWM-compatible) */
-	L = globalconf_get_lua_State();
-	if (!L)
-		return;
-
-	luaA_object_push(L, c);
-	lua_pushboolean(L, floating);
-	lua_setfield(L, -2, "floating");
-	lua_pop(L, 1);
-}
-
-void
-some_client_set_fullscreen(Client *c, int fullscreen)
-{
-	if (!c)
-		return;
-	setfullscreen(c, fullscreen);
-}
-
-void
-some_client_focus(Client *c, int lift)
-{
-	focusclient(c, lift);
-}
-
-void
-some_client_close(Client *c)
-{
-	if (!c)
-		return;
-	client_send_close(c);
-}
-
-void
-some_client_resize(Client *c, struct wlr_box geom, int interact)
-{
-	if (!c)
-		return;
-	resize(c, geom, interact);
-}
-
-void
-some_client_kill(Client *c)
-{
-	Arg arg;
-	if (!c)
-		return;
-	arg = (Arg){.v = (void *)c};
-	killclient(&arg);
-}
-
-void
-some_client_move_to_monitor(Client *c, Monitor *m, uint32_t tags)
-{
-	/* Simplified - tags parameter ignored */
-	(void)tags;
-	if (!c || !m)
-		return;
-	setmon(c, m, 0);
-}
-
-void
-some_client_set_geometry(Client *c, int x, int y, int w, int h)
-{
-	struct wlr_box geom = {.x = x, .y = y, .width = w, .height = h};
-	if (!c)
-		return;
-	resize(c, geom, 0);
-}
-
-void
-some_client_move(Client *c, int x, int y)
-{
-	struct wlr_box geom;
-	if (!c)
-		return;
-	some_client_get_geometry(c, &geom);
-	geom.x = x;
-	geom.y = y;
-	resize(c, geom, 0);
-}
-
-void
-some_client_zoom(void)
-{
-	Arg arg = {0};
-	zoom(&arg);
-}
-
-void
-some_client_swapstack(int direction)
-{
-	Arg arg = {.i = direction};
-	swapstack(&arg);
-}
 
 Client *
 some_get_focused_client(void)
@@ -236,14 +90,6 @@ some_monitor_get_geometry(Monitor *m, struct wlr_box *geom)
 }
 
 void
-some_monitor_get_window_area(Monitor *m, struct wlr_box *geom)
-{
-	if (!m || !geom)
-		return;
-	*geom = m->w;
-}
-
-void
 some_monitor_arrange(Monitor *m)
 {
 	if (!m)
@@ -269,57 +115,9 @@ some_monitor_at(double lx, double ly)
 	return xytomon(lx, ly);
 }
 
-Monitor *
-some_monitor_from_direction(Monitor *from, enum wlr_direction dir)
-{
-	if (!from)
-		from = selmon;
-	return dirtomon(dir);
-}
-
-void
-some_focus_monitor(Monitor *m)
-{
-	Client *c;
-	if (!m)
-		return;
-	/* Focus the topmost client on the monitor */
-	c = focustop(m);
-	if (c) {
-		focusclient(c, 1);
-	}
-	selmon = m;
-}
-
-void
-some_focus_monitor_direction(enum wlr_direction dir)
-{
-	Arg arg;
-	arg.i = dir;
-	focusmon(&arg);
-}
-
-void
-some_move_client_to_monitor_direction(enum wlr_direction dir)
-{
-	Arg arg;
-	arg.i = dir;
-	tagmon(&arg);
-}
-
 /*
  * Spawn API Implementation
  */
-
-void
-some_spawn_command(const char *cmd)
-{
-	Arg arg;
-	if (!cmd)
-		return;
-	arg = (Arg){.v = (const char *[]){ "/bin/sh", "-c", cmd, NULL }};
-	spawn(&arg);
-}
 
 /*
  * Settings API Implementation
@@ -342,14 +140,6 @@ some_set_new_client_placement(int placement)
  */
 
 /* Layout functions removed - layouts now managed in Lua */
-
-void
-some_arrange_all(void)
-{
-	Monitor *m;
-	wl_list_for_each(m, &mons, link)
-		arrange(m);
-}
 
 /*
  * Global state accessors
@@ -391,11 +181,9 @@ some_set_seat_keyboard_focus(Client *c)
 	/* Check if surface is ready for keyboard input.
 	 * For XWayland clients, wlr_surface->mapped may be false at map time;
 	 * use c->scene (set by mapnotify) as the readiness indicator instead. */
-#ifdef XWAYLAND
 	if (c->client_type == X11)
 		surface_ready = (c->scene != NULL);
 	else
-#endif
 		surface_ready = surface->mapped;
 
 	if (!surface_ready) {
@@ -406,7 +194,6 @@ some_set_seat_keyboard_focus(Client *c)
 	}
 
 	if (seat->keyboard_state.focused_surface == surface) {
-#ifdef XWAYLAND
 		if (c->client_type == X11) {
 			struct wlr_pointer_constraint_v1 *constraint =
 				wlr_pointer_constraints_v1_constraint_for_surface(
@@ -427,7 +214,6 @@ some_set_seat_keyboard_focus(Client *c)
 			client_activate_surface(surface, 0);
 			wlr_seat_keyboard_notify_clear_focus(seat);
 		} else
-#endif
 			/* XDG: early return — re-entering the same surface is a
 			 * no-op in wlroots, and the clear→re-enter cycle would
 			 * disrupt active popup grabs. */
@@ -444,7 +230,6 @@ some_set_seat_keyboard_focus(Client *c)
 		Client *old_c = NULL;
 		LayerSurface *old_l = NULL;
 		int old_client_type = -1;
-		int unused_lx, unused_ly;
 
 		if (old) {
 			old_client_type = toplevel_from_wlr_surface(old, &old_c, &old_l);
@@ -458,12 +243,12 @@ some_set_seat_keyboard_focus(Client *c)
 					wlr_xdg_popup_destroy(popup);
 			}
 
-			/* A top-layer layer-shell surface (rofi, session lock, etc.)
-			 * owns the seat until it relinquishes focus: skip activation
-			 * changes and let the layer surface dismiss itself first. */
-			if (old_client_type == LayerShell && old_l
-			    && wlr_scene_node_coords(&old_l->scene->node,
-			                             &unused_lx, &unused_ly)
+			/* A mapped top-layer layer-shell surface (rofi, session lock,
+			 * etc.) owns the seat until it relinquishes focus: skip
+			 * activation changes and let the layer surface dismiss itself
+			 * first. Mapped is the declared fact; its scene node stays
+			 * until the next frame parks it. */
+			if (old_client_type == LayerShell && old_l && old_l->mapped
 			    && old_l->layer_surface->current.layer
 			           >= ZWLR_LAYER_SHELL_V1_LAYER_TOP)
 				return;
@@ -483,14 +268,12 @@ some_set_seat_keyboard_focus(Client *c)
 		}
 	}
 
-#ifdef XWAYLAND
 	/* Sway pattern: inform XWayland of the active seat on every focus
 	 * change to an X11 client. Required for proper keyboard delivery. */
 	if (c->client_type == X11) {
 		extern struct wlr_xwayland *xwayland;
 		wlr_xwayland_set_seat(xwayland, seat);
 	}
-#endif
 
 	/* Activate the new surface before delivering keyboard enter. For XDG
 	 * toplevels this sends xdg_toplevel.configure{activated=true}; Chromium
@@ -515,12 +298,10 @@ some_set_seat_keyboard_focus(Client *c)
 		 * Needed for XWayland clients that may lack a keyboard device. */
 		wlr_seat_keyboard_notify_enter(seat, surface, NULL, 0, NULL);
 	}
-#ifdef XWAYLAND
 	/* Activate X11 surface after keyboard enter — sends FocusIn event.
 	 * Safe because X11 clients use X11 popup mechanisms, not XDG grabs. */
 	if (c->client_type == X11)
 		client_activate_surface(surface, 1);
-#endif
 
 	/* Update pointer constraint for the newly focused surface, mirroring
 	 * focusclient(). Without this a constraint created around a Lua-path
@@ -577,12 +358,6 @@ some_client_has_keyboard_focus(Client *c)
 	return (focused_surface == client_surf);
 }
 
-struct wlr_cursor *
-some_get_cursor(void)
-{
-	return cursor;
-}
-
 /*
  * Cursor Theme API
  */
@@ -630,45 +405,22 @@ some_update_cursor_theme(const char *theme_name, uint32_t size)
 	if (wlr_xcursor_manager_get_xcursor(cursor_mgr, cursor_name, 1.0) == NULL) {
 		cursor_name = "default";
 	}
-	wlr_cursor_set_xcursor(cursor, cursor_mgr, cursor_name);
+	/* The images every output copied came from the old manager. */
+	cursor_image.gen++;
+	cursor_set_xcursor(cursor_name);
+	declare_cursor_changed();
 
-#ifdef XWAYLAND
 	/* Sync XWayland cursor if running */
 	struct wlr_xcursor *xcursor = wlr_xcursor_manager_get_xcursor(cursor_mgr, "default", 1);
 	if (xcursor && xwayland) {
-		COMPAT_XWAYLAND_SET_CURSOR(xwayland, xcursor->images[0]);
+		wlr_xwayland_set_cursor(xwayland, wlr_xcursor_image_get_buffer(xcursor->images[0]),
+			xcursor->images[0]->hotspot_x, xcursor->images[0]->hotspot_y);
 	}
-#endif
-}
-
-struct wl_list *
-some_get_keyboard_groups(void)
-{
-	/* kb_group is a single KeyboardGroup, not a list, but included for API completeness */
-	return NULL;
 }
 
 /*
  * Scene & compositor state accessors
  */
-
-struct wlr_scene *
-some_get_scene(void)
-{
-	return scene;
-}
-
-struct wlr_scene_tree **
-some_get_layers(void)
-{
-	return layers;
-}
-
-struct wlr_output_layout *
-some_get_output_layout(void)
-{
-	return output_layout;
-}
 
 struct wl_display *
 some_get_display(void)
@@ -680,24 +432,6 @@ struct wl_event_loop *
 some_get_event_loop(void)
 {
 	return event_loop;
-}
-
-struct wlr_layer_shell_v1 *
-some_get_layer_shell(void)
-{
-	return layer_shell;
-}
-
-struct wlr_renderer *
-some_get_renderer(void)
-{
-	return drw;
-}
-
-struct wlr_allocator *
-some_get_allocator(void)
-{
-	return alloc;
 }
 
 /*
@@ -719,59 +453,6 @@ some_compositor_quit(void)
 /*
  * Enhanced Client API
  */
-
-/* Client hierarchy */
-Client *
-some_client_get_parent(Client *c)
-{
-	if (!c)
-		return NULL;
-	return client_get_parent(c);
-}
-
-int
-some_client_has_children(Client *c)
-{
-	if (!c)
-		return 0;
-	return client_has_children(c);
-}
-
-/* Visibility & state */
-int
-some_client_is_visible(Client *c, Monitor *m)
-{
-	/* Use array-based check instead of bitmask for AwesomeWM compatibility.
-	 * Note: monitor parameter is kept for API compatibility, but the function
-	 * now gets the monitor from the client itself. */
-	(void)m; /* Unused - kept for API compatibility */
-	return client_on_selected_tags(c) ? 1 : 0;
-}
-
-int
-some_client_is_focused(Client *c)
-{
-	if (!c || !selmon)
-		return 0;
-	/* Check if this client is the top of the focus stack on the selected monitor */
-	return (focustop(selmon) == c);
-}
-
-int
-some_client_is_stopped(Client *c)
-{
-	if (!c)
-		return 0;
-	return client_is_stopped(c);
-}
-
-int
-some_client_is_float_type(Client *c)
-{
-	if (!c)
-		return 0;
-	return client_is_float_type(c);
-}
 
 /* Get the floating state from Lua's authoritative property system.
  * This matches AwesomeWM's approach: C doesn't store floating state,
@@ -813,371 +494,6 @@ some_client_get_floating(Client *c)
 	return result;
 }
 
-/* Properties */
-void
-some_client_set_urgent(Client *c, int urgent)
-{
-	lua_State *L;
-
-	if (!c)
-		return;
-	/* Use proper API for signal emission */
-	L = globalconf_get_lua_State();
-	luaA_object_push(L, c);
-	client_set_urgent(L, -1, urgent);
-	lua_pop(L, 1);
-	printstatus();
-}
-
-void
-some_client_set_border_width(Client *c, unsigned int bw)
-{
-	if (!c)
-		return;
-	c->bw = bw;
-}
-
-void
-some_client_set_border_color(Client *c, const float color[4])
-{
-	if (!c || !color)
-		return;
-	client_set_border_color(c, color);
-}
-
-void
-some_client_set_ontop(Client *c, int ontop)
-{
-	if (!c)
-		return;
-	c->ontop = ontop;
-	stack_refresh();
-}
-
-void
-some_client_set_above(Client *c, int above)
-{
-	if (!c)
-		return;
-	c->above = above;
-	stack_refresh();
-}
-
-void
-some_client_set_below(Client *c, int below)
-{
-	if (!c)
-		return;
-	c->below = below;
-	stack_refresh();
-}
-
-void
-some_client_set_window_type(Client *c, window_type_t window_type)
-{
-	if (!c)
-		return;
-	c->type = window_type;
-	stack_refresh();
-}
-
-int
-some_client_get_ontop(Client *c)
-{
-	return c ? c->ontop : 0;
-}
-
-int
-some_client_get_above(Client *c)
-{
-	return c ? c->above : 0;
-}
-
-int
-some_client_get_below(Client *c)
-{
-	return c ? c->below : 0;
-}
-
-window_type_t
-some_client_get_window_type(Client *c)
-{
-	return c ? c->type : WINDOW_TYPE_NORMAL;
-}
-
-Client *
-some_client_get_transient_for(Client *c)
-{
-	return c ? c->transient_for : NULL;
-}
-
-
-void
-some_client_set_sticky(Client *c, int sticky)
-{
-	Monitor *m;
-
-	if (!c || c->sticky == sticky)
-		return;
-
-	c->sticky = sticky;
-
-	/* Sticky clients are visible on all tags, so arrange all monitors */
-	wl_list_for_each(m, some_get_monitors(), link)
-		arrange(m);
-
-	/* Emit property change signal */
-	luaA_emit_signal_global_with_client("client::property::sticky", c);
-}
-
-int
-some_client_get_sticky(Client *c)
-{
-	return c ? c->sticky : 0;
-}
-
-void
-some_client_set_minimized(Client *c, int minimized)
-{
-	if (!c || c->minimized == minimized)
-		return;
-
-	c->minimized = minimized;
-
-	/* Minimized clients are unmapped from scene */
-	if (c->scene && c->scene->node.enabled != !minimized)
-		wlr_scene_node_set_enabled(&c->scene->node, !minimized);
-
-	/* Update arrangements */
-	if (c->mon)
-		arrange(c->mon);
-
-	/* Emit property change signal */
-	luaA_emit_signal_global_with_client("client::property::minimized", c);
-}
-
-int
-some_client_get_minimized(Client *c)
-{
-	return c ? c->minimized : 0;
-}
-
-void
-some_client_set_hidden(Client *c, int hidden)
-{
-	if (!c || c->hidden == hidden)
-		return;
-
-	c->hidden = hidden;
-
-	/* Hidden clients are not shown in scene */
-	if (c->scene && c->scene->node.enabled != !hidden)
-		wlr_scene_node_set_enabled(&c->scene->node, !hidden);
-
-	/* Update arrangements */
-	if (c->mon)
-		arrange(c->mon);
-
-	/* Emit property change signal */
-	luaA_emit_signal_global_with_client("client::property::hidden", c);
-}
-
-int
-some_client_get_hidden(Client *c)
-{
-	return c ? c->hidden : 0;
-}
-
-void
-some_client_set_modal(Client *c, int modal)
-{
-	if (!c || c->modal == modal)
-		return;
-
-	c->modal = modal;
-
-	/* Modal windows affect stacking */
-	stack_refresh();
-
-	/* Emit property change signal */
-	luaA_emit_signal_global_with_client("client::property::modal", c);
-}
-
-int
-some_client_get_modal(Client *c)
-{
-	return c ? c->modal : 0;
-}
-
-void
-some_client_set_skip_taskbar(Client *c, int skip_taskbar)
-{
-	if (!c || c->skip_taskbar == skip_taskbar)
-		return;
-
-	c->skip_taskbar = skip_taskbar;
-
-	/* Emit property change signal */
-	luaA_emit_signal_global_with_client("client::property::skip_taskbar", c);
-}
-
-int
-some_client_get_skip_taskbar(Client *c)
-{
-	return c ? c->skip_taskbar : 0;
-}
-
-void
-some_client_set_focusable(Client *c, int focusable)
-{
-	if (!c)
-		return;
-
-	c->focusable = focusable;
-	c->focusable_set = 1;
-
-	/* Emit property change signal */
-	luaA_emit_signal_global_with_client("client::property::focusable", c);
-}
-
-int
-some_client_get_focusable(Client *c)
-{
-	if (!c)
-		return 0;
-
-	/* If explicitly set, use that value */
-	if (c->focusable_set)
-		return c->focusable;
-
-	/* Default: most clients are focusable */
-	return 1;
-}
-
-void
-some_client_set_maximized(Client *c, int maximized)
-{
-	if (!c || c->maximized == maximized)
-		return;
-
-	c->maximized = maximized;
-
-	if (maximized) {
-		/* Maximized sets both horizontal and vertical */
-		c->maximized_horizontal = 1;
-		c->maximized_vertical = 1;
-
-		/* Maximized is mutually exclusive with fullscreen */
-		if (c->fullscreen)
-			some_client_set_fullscreen(c, 0);
-
-		/* Set XDG toplevel maximize state if applicable */
-		if (c->client_type == XDGShell && c->surface.xdg->toplevel)
-			wlr_xdg_toplevel_set_maximized(c->surface.xdg->toplevel, 1);
-	} else {
-		c->maximized_horizontal = 0;
-		c->maximized_vertical = 0;
-
-		/* Clear XDG toplevel maximize state if applicable */
-		if (c->client_type == XDGShell && c->surface.xdg->toplevel)
-			wlr_xdg_toplevel_set_maximized(c->surface.xdg->toplevel, 0);
-	}
-
-	/* Rearrange monitor to apply new geometry */
-	if (c->mon)
-		arrange(c->mon);
-
-	/* Emit property change signals */
-	luaA_emit_signal_global_with_client("client::property::maximized", c);
-	luaA_emit_signal_global_with_client("client::property::maximized_horizontal", c);
-	luaA_emit_signal_global_with_client("client::property::maximized_vertical", c);
-}
-
-int
-some_client_get_maximized(Client *c)
-{
-	return c ? c->maximized : 0;
-}
-
-void
-some_client_set_maximized_horizontal(Client *c, int maximized_horizontal)
-{
-	if (!c || c->maximized_horizontal == maximized_horizontal)
-		return;
-
-	c->maximized_horizontal = maximized_horizontal;
-
-	/* Update combined maximized state */
-	c->maximized = c->maximized_horizontal && c->maximized_vertical;
-
-	if (maximized_horizontal && c->fullscreen)
-		some_client_set_fullscreen(c, 0);
-
-	/* Rearrange monitor to apply new geometry */
-	if (c->mon)
-		arrange(c->mon);
-
-	/* Emit property change signal */
-	luaA_emit_signal_global_with_client("client::property::maximized_horizontal", c);
-	if (c->maximized)
-		luaA_emit_signal_global_with_client("client::property::maximized", c);
-}
-
-int
-some_client_get_maximized_horizontal(Client *c)
-{
-	return c ? c->maximized_horizontal : 0;
-}
-
-void
-some_client_set_maximized_vertical(Client *c, int maximized_vertical)
-{
-	if (!c || c->maximized_vertical == maximized_vertical)
-		return;
-
-	c->maximized_vertical = maximized_vertical;
-
-	/* Update combined maximized state */
-	c->maximized = c->maximized_horizontal && c->maximized_vertical;
-
-	if (maximized_vertical && c->fullscreen)
-		some_client_set_fullscreen(c, 0);
-
-	/* Rearrange monitor to apply new geometry */
-	if (c->mon)
-		arrange(c->mon);
-
-	/* Emit property change signal */
-	luaA_emit_signal_global_with_client("client::property::maximized_vertical", c);
-	if (c->maximized)
-		luaA_emit_signal_global_with_client("client::property::maximized", c);
-}
-
-int
-some_client_get_maximized_vertical(Client *c)
-{
-	return c ? c->maximized_vertical : 0;
-}
-
-/* Stack manipulation */
-void
-some_client_raise(Client *c)
-{
-	if (!c)
-		return;
-	stack_client_append(c);
-	stack_refresh();
-}
-
-void
-some_client_lower(Client *c)
-{
-	if (!c)
-		return;
-	stack_client_push(c);
-	stack_refresh();
-}
-
 /* Surface access */
 struct wlr_surface *
 some_client_get_surface(Client *c)
@@ -1186,171 +502,6 @@ some_client_get_surface(Client *c)
 		return NULL;
 	return client_surface(c);
 }
-
-const char *
-some_client_get_name(Client *c)
-{
-	if (!c)
-		return NULL;
-	return c->name;
-}
-
-const char *
-some_client_get_class(Client *c)
-{
-	if (!c)
-		return NULL;
-	return c->class;
-}
-
-const char *
-some_client_get_instance(Client *c)
-{
-	if (!c)
-		return NULL;
-	return c->instance;
-}
-
-const char *
-some_client_get_role(Client *c)
-{
-	if (!c)
-		return NULL;
-	return c->role;
-}
-
-const char *
-some_client_get_machine(Client *c)
-{
-	if (!c)
-		return NULL;
-	return c->machine;
-}
-
-const char *
-some_client_get_startup_id(Client *c)
-{
-	if (!c)
-		return NULL;
-	return c->startup_id;
-}
-
-const char *
-some_client_get_icon_name(Client *c)
-{
-	if (!c)
-		return NULL;
-	return c->icon_name;
-}
-
-uint32_t
-some_client_get_pid(Client *c)
-{
-	return c ? c->pid : 0;
-}
-
-/** some_client_update_metadata - Update cached metadata from surface
- * This should be called when a client is created or when surface properties change.
- * Reads properties from the underlying Wayland/X11 surface and caches them.
- */
-void
-some_client_update_metadata(Client *c)
-{
-	struct wlr_xdg_toplevel *toplevel;
-
-	if (!c)
-		return;
-
-	/* Free old cached values */
-	free(c->name);
-	free(c->class);
-	free(c->instance);
-	free(c->role);
-	free(c->machine);
-	free(c->startup_id);
-	free(c->icon_name);
-	c->name = c->class = c->instance = c->role = NULL;
-	c->machine = c->startup_id = c->icon_name = NULL;
-	c->pid = 0;
-
-	/* Update based on client type */
-	if (c->client_type == XDGShell) {
-		struct wl_client *wl_client;
-		struct wlr_surface *surface;
-
-		toplevel = c->surface.xdg->toplevel;
-
-		/* Window title from XDG toplevel */
-		if (toplevel->title)
-			c->name = strdup(toplevel->title);
-
-		/* app_id is the Wayland equivalent of WM_CLASS */
-		if (toplevel->app_id)
-			c->class = strdup(toplevel->app_id);
-
-		/* Get PID from wl_client */
-		surface = c->surface.xdg->surface;
-		if (surface && surface->resource) {
-			pid_t pid;
-			wl_client = wl_resource_get_client(surface->resource);
-			wl_client_get_credentials(wl_client, &pid, NULL, NULL);
-			c->pid = (uint32_t)pid;
-		}
-
-		/* instance and role don't exist in Wayland (X11 only) */
-		c->instance = NULL;
-		c->role = NULL;
-	}
-#ifdef XWAYLAND
-	else if (c->client_type == X11) {
-		/* X11 clients: read properties from X11 */
-		/* WM_NAME (window title) */
-		if (c->surface.xwayland->title)
-			c->name = strdup(c->surface.xwayland->title);
-
-		/* WM_CLASS (class and instance) */
-		if (c->surface.xwayland->class)
-			c->class = strdup(c->surface.xwayland->class);
-		if (c->surface.xwayland->instance)
-			c->instance = strdup(c->surface.xwayland->instance);
-
-		/* PID */
-		c->pid = c->surface.xwayland->pid;
-
-		/* For more detailed X11 properties, we'd need xcb queries
-		 * but role and machine are rarely used, so skip for now */
-		c->role = NULL;
-		c->machine = NULL;
-	}
-#endif
-
-	/* Emit property change signals for metadata that changed */
-	luaA_emit_signal_global_with_client("client::property::name", c);
-	luaA_emit_signal_global_with_client("client::property::class", c);
-	luaA_emit_signal_global_with_client("client::property::instance", c);
-	luaA_emit_signal_global_with_client("client::property::pid", c);
-}
-
-/*
- * Tag System API Implementation
- */
-
-/* Tag constants */
-int
-some_get_tag_count(void)
-{
-	return some_tagcount();
-}
-
-uint32_t
-some_get_tag_mask(void)
-{
-	return some_tagmask();
-}
-
-/*
- * Config Array Access API Implementation
- */
 
 /*
  * Get monitor output name (e.g., "HDMI-A-1", "eDP-1")
@@ -1435,38 +586,6 @@ some_get_cursor_position(double *x, double *y)
 }
 
 /*
- * Start interactive move of focused client
- * NOTE: This is now a no-op - move/resize is handled by Lua mousegrabber
- * via awful.mouse.client.move() called from client button bindings in rc.lua
- */
-void
-some_client_start_move(void)
-{
-	/* No-op: Lua mousegrabber handles move */
-}
-
-/*
- * Start interactive resize of focused client
- * NOTE: This is now a no-op - move/resize is handled by Lua mousegrabber
- * via awful.mouse.client.resize() called from client button bindings in rc.lua
- */
-void
-some_client_start_resize(void)
-{
-	/* No-op: Lua mousegrabber handles resize */
-}
-
-/*
- * Toggle floating mode for focused client
- */
-void
-some_client_togglefloating(void)
-{
-	Arg arg = {0};
-	togglefloating(&arg);
-}
-
-/*
  * Set cursor position (warp cursor)
  * If silent is true, motion events are suppressed
  */
@@ -1482,6 +601,7 @@ some_set_cursor_position(double x, double y, int silent)
 	}
 
 	wlr_cursor_warp(cursor, NULL, x, y);
+	declare_cursor_changed();
 }
 
 /*
@@ -1551,64 +671,6 @@ some_drawin_under_cursor(void)
 	xytonode(cursor->x, cursor->y, NULL, NULL, NULL, &d, NULL, NULL, NULL);
 
 	return d;
-}
-
-/*
- * Warp cursor to center of specified monitor
- */
-void
-some_warp_cursor_to_monitor(Monitor *m)
-{
-	struct wlr_box box;
-	extern struct wlr_output_layout *output_layout;
-
-	if (!m || !m->wlr_output || !cursor)
-		return;
-
-	/* Get monitor geometry from output layout */
-	wlr_output_layout_get_box(output_layout, m->wlr_output, &box);
-
-	/* Warp to center of monitor */
-	wlr_cursor_warp(cursor, NULL,
-		box.x + box.width / 2,
-		box.y + box.height / 2);
-}
-
-/*
- * Apply drawin struts (from Lua wibars) to a usable area
- * This is called from arrangelayers() to preserve wibar struts
- */
-void
-some_monitor_apply_drawin_struts(Monitor *m, struct wlr_box *area)
-{
-	extern lua_State *globalconf_L;
-
-	if (!globalconf_L || !m || !area)
-		return;
-
-	luaA_monitor_apply_drawin_struts(globalconf_L, m, area);
-}
-
-/*
- * Focus a client
- */
-void
-some_focus_client(Client *c, int lift)
-{
-	focusclient(c, lift);
-}
-
-/*
- * Get the top focusable client on a monitor and focus it
- * Returns the focused client
- */
-Client *
-some_focus_top_client(Monitor *m)
-{
-	Client *c = focustop(m);
-	if (c)
-		focusclient(c, 1);
-	return c;
 }
 
 /*

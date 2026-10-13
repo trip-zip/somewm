@@ -7,7 +7,9 @@
 ---------------------------------------------------------------------------
 
 -- Grab environment we need
-local pairs = pairs
+local ipairs = ipairs
+local capi = { client = client }
+local client = require("awful.client")
 
 local max = {}
 
@@ -21,33 +23,30 @@ local max = {}
 -- @param surface
 -- @see gears.surface
 
-local function fmax(p, fs)
-  -- Fullscreen?
-  local area
-  if fs then
-    area = p.geometry
-  else
-    area = p.workarea
+-- Each tiled client floats over the workarea, or the output, bottom first.
+local function describe(s, fullscreen)
+  local gap = s.selected_tag.gap_single_client == false and 0 or s.selected_tag.gap
+  local tiled, children = {}, {}
+  for _, c in ipairs(client.tiled(s)) do tiled[c] = true end
+  local stacked = capi.client.get(s, true)
+  for i = #stacked, 1, -1 do
+    if tiled[stacked[i]] then
+      children[#children + 1] = {client = stacked[i], float = true, w = "grow", h = "grow",
+        pad = {gap, gap, gap, gap}, _attach = fullscreen and "output" or nil}
+    end
   end
-
-  for _, c in pairs(p.clients) do
-    local g = {
-      x = area.x,
-      y = area.y,
-      width = area.width,
-      height = area.height,
-    }
-    p.geometries[c] = g
-  end
+  return {name = "WORKAREA", dir = "x", children = children}
 end
+
+-- Public method shape is retained; awful.layout schedules native declarations.
+local function arrange() end
 
 --- Maximized layout.
 -- @clientlayout awful.layout.suit.max
 -- @usebeautiful beautiful.layout_max
 max.name = "max"
-function max.arrange(p)
-  return fmax(p, false)
-end
+max.arrange = arrange
+max._clay = function(s) return describe(s, false) end
 function max.skip_gap(nclients, t) -- luacheck: no unused args
   return true
 end
@@ -58,9 +57,8 @@ end
 max.fullscreen = {}
 max.fullscreen.name = "fullscreen"
 max.fullscreen.skip_gap = max.skip_gap
-function max.fullscreen.arrange(p)
-  return fmax(p, true)
-end
+max.fullscreen.arrange = arrange
+max.fullscreen._clay = function(s) return describe(s, true) end
 
 return max
 

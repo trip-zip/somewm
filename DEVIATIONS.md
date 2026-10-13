@@ -9,10 +9,9 @@ This document tracks all known differences between somewm and AwesomeWM. These e
 | Systray | X11 `_NET_SYSTEMTRAY` embed | StatusNotifierItem D-Bus (SNI) | X11 tray protocol doesn't exist on Wayland |
 | Titlebar borders | Outside frame (X server draws) | Inset by `border_width` | Scene graph positioning differs |
 | Window visibility | `xcb_map_window()` shows immediately | Content must exist before showing | Prevents smearing artifacts |
-| WM restart | `awesome.restart()` re-execs the process | In-process Lua hot-reload (clients survive) | Wayland compositor can't re-exec; tears down and rebuilds Lua VM instead |
+| WM restart | `awesome.restart()` re-execs the process | In-process Lua hot-reload (clients and persistent client properties survive) | Wayland compositor can't re-exec; tears down and rebuilds Lua VM instead |
 | GTK theme detection | Creates GTK widgets, queries `GtkStyleContext` | Parses `gtk-3.0/settings.ini` and `gtk-4.0/settings.ini` | Creating GTK windows inside a compositor is unsafe |
 | Xresources | Queries `xrdb` server | Parses `~/.Xresources` file directly | No `xrdb` server on Wayland |
-| Wibox shape surfaces | 1-bit (`cairo.Format.A1`) | Full ARGB32 with anti-aliasing | Enables anti-aliased rounded corners and HiDPI scaling |
 | Client-drawn titlebar buttons | No equivalent (X11 apps ask via `_NET_WM_STATE`) | `xdg_toplevel.set_maximized` / `set_minimized` set `c.maximized` / `c.minimized` | GTK and Chromium draw their own titlebars; the requests go through the same `request::geometry` path `awful.permissions` already governs |
 | Config/cache paths | `~/.config/awesome/`, `~/.cache/awesome/` | `~/.config/somewm/`, `~/.cache/somewm/` | Rebranded |
 
@@ -34,6 +33,7 @@ This document tracks all known differences between somewm and AwesomeWM. These e
 **WM Restart**
 - AwesomeWM re-execs itself via `execvp()`, restarting the entire process
 - SomeWM performs in-process Lua hot-reload: tears down the Lua VM, rebuilds it from `rc.lua`, and reattaches existing clients
+- Persistent awful.client properties, including floating state and single-instance IDs, also survive a hot reload.
 - wlroots, the scene graph, and client surfaces are untouched during reload
 - The old Lua state is closed, so a module must release what it registered with GLib or GDBus when `"exit"` is emitted, or its callback outlives the state it points into
 - A source sweep in C and an LD_PRELOAD closure guard (`lgi_closure_guard.so`) back that contract up and report when it is broken. The sweep destroys any GLib source the closed state still owned, so it never dispatches; the guard cannot do the same, since libffi reads a closure's `cif` (which lives in the closed state) before the guard is entered
@@ -47,19 +47,12 @@ This document tracks all known differences between somewm and AwesomeWM. These e
 **GTK Theme Detection**
 - AwesomeWM's `beautiful/gtk.lua` creates actual GTK+ 3 widgets via LGI and queries `GtkStyleContext` for live theme colors
 - SomeWM parses `~/.config/gtk-3.0/settings.ini` and `~/.config/gtk-4.0/settings.ini` directly, with Adwaita Dark as the fallback
-- Theme detection is less accurate — complex GTK CSS that the file parser cannot read will be missed
+- Theme detection is less accurate because complex GTK CSS that the file parser cannot read will be missed
 
 **Xresources**
 - AwesomeWM's `beautiful/xresources.lua` queries the X server's resource database via `xrdb`
 - SomeWM's `gears/xresources.lua` parses `~/.Xresources` directly, falling back to Catppuccin Mocha defaults
 - This means `Xft.dpi` and other resources work, but dynamically loaded resources (via `xrdb -merge`) won't be picked up
-
-**Wibox Shape Surfaces**
-- AwesomeWM uses 1-bit alpha masks for shape bounding/clip/input surfaces
-- SomeWM uses full ARGB32 surfaces with `cairo.Antialias.BEST`, producing anti-aliased rounded corners
-- Shape surfaces are scaled by `screen.scale` for HiDPI
-- Surface references are retained (not finished) because the C side reads them asynchronously on Wayland, unlike X11 which copies immediately
-- SomeWM adds a `shape_border` property on wibox for colored anti-aliased shape borders
 
 **Window Type Handling**
 - Native Wayland clients may not set a window type, resulting in `c.type == nil`
@@ -153,20 +146,9 @@ Widget-layer consumers (`naughty.list`, `awful.widget.tasklist`, `awful.widget.t
 
 These APIs exist and can be called without error, but have no effect on Wayland.
 
-| API | Status | Reason |
-|-----|--------|--------|
-| `awful.client.shape.update.all` | No-op | X11 Shape Extension unavailable on Wayland |
-| `awful.client.shape.update.bounding` | No-op | X11 Shape Extension unavailable on Wayland |
-| `awful.client.shape.update.clip` | No-op | X11 Shape Extension unavailable on Wayland |
-| `awful.client.shape.update.input` | No-op | X11 Shape Extension unavailable on Wayland |
-
 ### Client Shape (Rounded Corners)
 
-Location: `lua/awful/client/shape.lua`
-
-AwesomeWM uses the X11 Shape Extension (`xcb_shape_mask()`) to apply non-rectangular window shapes (e.g. rounded corners via `gears.shape.rounded_rect`). Wayland has no equivalent protocol-level feature. The `awful.client.shape.update.*` functions are no-ops so that user configs referencing `client.shape_bounding` or `client.shape_clip` load without error.
-
-See `ideas/Shapes.md` for technical rationale and potential future approaches (shader-based clipping, custom render pass).
+`shape_bounding`, `shape_clip` and `shape_input` are accepted but never read. They share one warning per client and always read nil, as do `client_shape_bounding`, `client_shape_clip` and `client_shape_input`.
 
 ---
 
@@ -186,7 +168,7 @@ These APIs exist as stubs for compatibility but don't function:
 
 ### X Property APIs
 
-The global stubs (`luaA_register_xproperty()`, `luaA_set_xproperty()`, `luaA_get_xproperty()` in `property.c`) and per-client stubs (`luaA_client_get_xproperty()`, `luaA_client_set_xproperty()` in `objects/client.c`) return "not yet implemented" warnings.
+The global APIs (`luaA_register_xproperty()`, `luaA_set_xproperty()`, `luaA_get_xproperty()` in `property.c`) remain stubs. The per-client methods (`luaA_client_get_xproperty()`, `luaA_client_set_xproperty()` in `objects/client.c`) use a client-owned store of named booleans, numbers and strings; nil removes an entry. This store survives Lua hot reloads and is freed with the client, without reading or writing X11 properties.
 
 X11 properties were used for:
 - Storing persistent per-window state
@@ -195,7 +177,6 @@ X11 properties were used for:
 
 Wayland alternatives (not yet implemented):
 - D-Bus for IPC
-- Compositor-side storage for persistent state
 
 ### XKB Layout Functions
 
@@ -262,11 +243,10 @@ These modifications to AwesomeWM's Lua libraries were necessary for Wayland comp
 |------|--------|--------|
 | `wibox/widget/systray.lua` | Complete rewrite | SNI D-Bus protocol replaces X11 XEmbed |
 | `beautiful/gtk.lua` | Complete rewrite | File parsing replaces live GTK widget queries |
-| `wibox/init.lua` | ARGB32 shape masks (AwesomeWM uses A1), HiDPI scaling, surface lifetime, `shape_border` | Wayland scene graph and compositing model; ARGB32 gives anti-aliased edges on curved shapes. The rendering path accepts either format, so a config may still assign A1 masks. |
 | `wibox/drawable.lua` | HiDPI scale-change handler | Recreates surfaces when `screen.scale` changes |
 | `awful/client.lua` | `c.type or "normal"` fallback | Native Wayland clients may not set window type |
 | `awful/permissions/init.lua` | Layer surface keyboard focus handlers | Wayland layer-shell has no X11 equivalent |
-| `awful/mouse/snap.lua` | ARGB32 shapes, surface lifetime | Same Wayland surface patterns as `wibox/init.lua` |
+| `awful/mouse/snap.lua` | Snap preview uses `wibox.shape` | The renderer draws and clips the authored path. |
 | `gears/filesystem.lua` | `somewm/` paths | Rebranded config/cache directories |
 | `naughty/dbus.lua` | `awesome.version or "somewm-dev"` fallback | Version string safety |
 
@@ -282,6 +262,8 @@ These modifications to AwesomeWM's Lua libraries were necessary for Wayland comp
 | `gears.wallpaper` | `awful.wallpaper` | Deprecated upstream; somewmrc already uses `awful.wallpaper`. Removing it also deletes the somewm-side machinery that existed only to serve it: the `require()` hook that recorded wallpaper globals and the per-screen wallpaper cache in `root.c` (`root.wallpaper_cache_show`/`_has`/`_clear`/`_preload`), which `awful.wallpaper` never populated. An rc.lua calling `gears.wallpaper.*` errors. release/1.4 keeps it, matching AwesomeWM master. |
 | `awesome.api_level` | none | 2.0 is a hard reset and does not promise behavior across versions, so there is nothing for a config to select. Reading it now returns `nil`, so an rc.lua that compares it to a number errors. Three library behaviors that used to branch on it are now fixed at what level 4 did: `awful.autofocus` loads without a warning, `awful.permissions` does not wire `mouse::enter` to `request::autoactivate` (rc.lua does that), and `wibox.widget.base.make_widget` still defaults `enable_properties` to `false`. |
 | `gears.debug.deprecate_class` | none | Existed only to proxy a class that moved between API levels. No callers in the tree. |
+| `_wibox` | `wibox` | An undocumented C module that put a layer-shell surface on screen and showed a buffer Lua drew into it, from before drawins rendered through the scene. No callers in the tree. |
+| `awesome.systray` | `wibox.widget.systray` | The X11 tray's C entry point, kept as a host that painted StatusNotifierItem icons into a wibox's pixels. Nothing in the tree called it: the systray widget draws every icon itself, and a wibox hosting it could not convert to Clay. Calling it now errors with a nil field. |
 | `awful.util` | `gears.*` | 34 of its 38 functions already redirected to `gears.*` with a deprecation warning, so those move to the function that warning named (`awful.util.table.join` is `gears.table.join`, `awful.util.get_cache_dir` is `gears.filesystem.get_cache_dir`, and so on). Most are a straight module swap; the six that need more are listed under the table. The remaining four had no `gears` equivalent: `checkfile` was inlined into its only consumer, and `eval`, `restart` and `geticonpath` are gone, as is the `shell` field. An rc.lua touching any `awful.util` field errors, since the module itself no longer exists. |
 
 The `awful.util` redirects whose `gears` name differs, plus the two whose
@@ -345,7 +327,7 @@ with `naughty.notification { message = ... }`. The constructor still accepts
 A further set of `@deprecatedproperty` entries documented names that had no
 getter or setter behind them: the ten directional `wibox.layout.grid`
 properties (`forced_num_rows`, `min_cols_size`, `horizontal_spacing`, and so
-on), `wibox.container.background.shape_border_width`/`_color`,
+on), the old background border aliases,
 `naughty.notification.text`, and `wibox.widget.textbox.align`. Assigning to any
 of them was already a silent no-op. Only the documentation was removed. The
 `text` entry covers the property only; the constructor argument of the same name
@@ -522,21 +504,31 @@ Modern D-Bus tray protocol instead of X11 embed. Implementation:
 
 ### Carousel Layout
 
-A niri-inspired scrollable tiling layout with no AwesomeWM equivalent. Clients are arranged in columns on an infinite horizontal (or vertical) strip, with the viewport auto-scrolling to keep the focused column visible.
+`awful.layout.suit.carousel` and its vertical variant declare a scroll container
+of percent columns with the peek as padding on the scroll axis. Reconciled client membership
+forms columns with equal percentage client slots, gap padding and twice-gap
+separation. Centered end margins are percentages of the viewport; a dynamic-peek
+trail is an authored theme size. Clay solves client boxes, centers short content
+and clamps scrolling. Surface protocol minima do not change column fractions.
 
-**Layout registration:** `lua/awful/layout/suit/init.lua` is modified to include `carousel = require("awful.layout.suit.carousel")`. This is the only change to a Sacred Lua file in this feature.
+The viewport position is Clay's scroll record. Switching tags starts it at 0 because
+Clay drops undeclared records. Focus-follow reads solved column boxes and requests
+at most one more solve. Gestures pan the record and center the nearest column on
+release. A wheel over a client does not pan the viewport.
+`carousel.get().position` reports the viewport's scroll position.
 
-**New Lua APIs (underscore-prefixed, internal use):**
+`carousel.scroll_duration` is gone. Scrolling animates client
+slots through `somewm.layout_animation` when enabled and snaps when disabled.
+No Lua or C compositor path interpolates a client box; Clay owns those transitions.
+`awesome.start_animation` remains a public frame-synced tick source with easing
+and cancellable handles for animating things other than client boxes.
+`client:_set_geometry_silent(geo)` remains available, but carousel does not call it.
 
-| API | Object | Purpose |
-|-----|--------|---------|
-| `client:_set_geometry_silent(geo)` | client | Set geometry without emitting signals or reassigning screens. Used by layouts that position clients offscreen (e.g. scrolling). |
-| `awesome.start_animation(duration, easing, tick_fn, done_fn)` | awesome | Frame-synced animation with easing. Returns a handle with `:cancel()` and `:is_active()`. |
-
-**C-side changes:**
-- `client_resize()` gains a `silent` parameter to skip signal emission and screen reassignment
-- `commitnotify` in `somewm.c` skips `resize()` for tiled clients so offscreen positioning is not clamped
-- `animation.c` provides the C-side animation tick loop, integrated into `some_refresh()`
+`carousel._build_declarations(inputs)` accepts reconciled `columns`, `vertical`,
+`gap`, `peek`, `centered` and authored pixel `lead` and `trail` margins.
+Non-client slots publish solved IDs, boxes and scroll records before the root's
+`solved` callback. `carousel._native` implements target selection, follow, pan and
+nearest-column selection against those results.
 
 ### `somewm.*` - SomeWM-Only Lua Namespace
 
@@ -544,16 +536,15 @@ Lazy-loaded namespace for somewm-specific Lua modules that have no AwesomeWM equ
 
 ### `somewm.layout_animation` - Animated Layout Transitions
 
-Hooks into `screen::arrange` and smoothly animates tiled clients from their previous geometry to the new one. Covers all arrange triggers: mwfact changes, client spawn/kill, layout switches, column count changes.
+Animates tiled clients from their previous geometry to the new one. Covers all arrange triggers: mwfact changes, client spawn/kill, layout switches, column count changes.
 
 ```lua
 local layout_anim = require("somewm.layout_animation")
 layout_anim.duration = 0.15          -- seconds
-layout_anim.easing   = "ease-out-cubic"
 layout_anim.enabled  = true           -- default
 ```
 
-Animation is skipped when disabled, during mousegrabber (direct manipulation), when the geometry delta is negligible (< 2px), or on a client's first arrange.
+Animation is skipped when disabled, during mousegrabber (direct manipulation), or on a client's first arrange. See "Layout animation runs in Clay" for what drives it.
 
 ### Layer Surface Rules
 

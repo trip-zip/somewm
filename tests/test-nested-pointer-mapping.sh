@@ -4,13 +4,13 @@
 # must map to the output the host window belongs to.
 #
 # Nested backends create one pointer per output, reporting 0..1 within that
-# output's host window. Before the fix the cursor mapped it across the whole
-# layout, so with two outputs the pointer landed at twice its real x.
+# output's host window. Mapping across the whole layout would double the x
+# coordinate with two equal outputs.
 #
 # Runs a headless "outer" somewm hosting an "inner" somewm on the Wayland
-# backend with two outputs, hovers the centre of the inner's second output
-# window, and asserts the inner cursor is at the centre of its second screen.
-# Needs two compositors, so it is a process-level test rather than Lua/IPC.
+# backend with two outputs, hovers the centre of each output window, and
+# asserts the inner cursor is at the centre of the corresponding screen.
+# Both compositors use private sockets and a temporary runtime directory.
 #
 # Usage: ./tests/test-nested-pointer-mapping.sh [somewm] [somewm-client]
 
@@ -83,16 +83,23 @@ for i in $(seq 50); do
     sleep 0.1
 done
 
-# Hover the centre of WL-2's window; route it through real motion handling.
-outer 'mouse.coords({ x = 959, y = 180 }) mouse._fake_motion(1, 0)' >/dev/null
-sleep 0.5
+# Enter each host window before sending motion within it: a Wayland enter
+# selects the nested pointer but does not emit an absolute motion event.
+# Normalize injected coordinates to the outer output's actual size.
+read -r outer_width outer_height <<<"$(outer 'local g = screen[1].geometry return string.format("%d %d", g.width, g.height)')"
+for expected in 1 2; do
+    WAYLAND_DISPLAY=wayland-0 "$ROOT_DIR/build-test/test-virtual-pointer-client" \
+        move "$(( (expected - 1) * 640 + 319 ))" 180 "$outer_width" "$outer_height" || fail "pointer injection failed"
+    WAYLAND_DISPLAY=wayland-0 "$ROOT_DIR/build-test/test-virtual-pointer-client" \
+        move "$(( (expected - 1) * 640 + 320 ))" 180 "$outer_width" "$outer_height" || fail "pointer injection failed"
+    sleep 0.5
+    got="$(inner "local g = screen[$expected].geometry local c = mouse.coords() return string.format(\"%d %d %d\", mouse.screen.index, c.x - g.x, g.width)")"
+    read -r scr x w <<<"$got"
+    [ "${scr:-}" = "$expected" ] || fail "inner cursor on screen ${scr:-?}, expected $expected (got: $got)"
+    [ $(( x - w / 2 )) -ge -3 ] && [ $(( x - w / 2 )) -le 3 ] ||
+        fail "inner cursor at x=$x within screen $expected, expected ~$(( w / 2 )) (got: $got)"
+done
 
-got="$(inner 'local g = screen[2].geometry local c = mouse.coords() return string.format("%d %d %d", mouse.screen.index, c.x - g.x, g.width)')"
-read -r scr x w <<<"$got"
-[ "${scr:-}" = 2 ] || fail "inner cursor on screen ${scr:-?}, expected 2 (got: $got)"
-[ $(( x - w / 2 )) -ge -3 ] && [ $(( x - w / 2 )) -le 3 ] ||
-    fail "inner cursor at x=$x within screen 2, expected ~$(( w / 2 )) (got: $got)"
-
-echo "--- PASS: nested pointer mapped to its own output (screen $scr, x=$x of $w)"
+echo "--- PASS: nested pointers mapped to both outputs"
 echo "PASS"
 exit 0

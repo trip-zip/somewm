@@ -35,10 +35,7 @@ local function read_file(path)
 end
 
 if not file_exists(TEST_LAYER_CLIENT) then
-    io.stderr:write("SKIP: test-layer-client not found (run meson compile first)\n")
-    io.stderr:write("Test finished successfully.\n")
-    awesome.quit()
-    return
+    return runner.skip("test-layer-client not found (run meson compile first)")
 end
 
 local marker = string.format("/tmp/somewm-test-pointer-enter-%d.mark", os.time() * 1000 + math.random(0, 999))
