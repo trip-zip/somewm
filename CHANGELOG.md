@@ -6,6 +6,8 @@ All notable changes to somewm will be documented in this file.
 
 ### Fixed
 
+- Systray registrations share one pending property fetch per item, preventing duplicate icons after a reload and allowing retries when the fetch fails.
+
 - wibox.widget.textbox keeps its last applied font when setting a font fails, so a rejected name can be retried.
 
 ## [1.4.6] - 2026-09-24
