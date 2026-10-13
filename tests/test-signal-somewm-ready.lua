@@ -7,10 +7,6 @@
 --   * Subscribing AFTER the cold-boot emission does NOT see a cached
 --     value (signals in the C signal system are edge-triggered, which
 --     is exactly why the property exists alongside the signal).
---   * awesome.restart() leaves awesome.somewm_ready true because the
---     globalconf flag is C-side state that survives Lua VM rebuild.
---     The post-restart re-emission is verified by manual smoke testing
---     (see somewm-client eval examples in plans/fishlive-autostart).
 ---------------------------------------------------------------------------
 
 local runner = require("_runner")
