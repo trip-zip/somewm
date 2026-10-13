@@ -566,6 +566,15 @@ test_transient_client = executable(
   install: false,
 )
 
+# Test XDG client that sends maximize, minimize and unmap requests on signals
+test_csd_state_client = executable(
+  'test-csd-state-client',
+  ['tests/test-csd-state-client.c', xdg_shell_client_code],
+  xdg_shell_client_header,
+  dependencies: [wayland_client],
+  install: false,
+)
+
 # Test XDG client that opens a real xdg_popup, for hit-testing regressions
 test_popup_client = executable(
   'test-popup-client',

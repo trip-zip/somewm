@@ -1572,6 +1572,22 @@ initialcommitnotify(struct wl_listener *listener, void *data)
 	Client *c = wl_container_of(listener, c, initial_commit);
 	Monitor *m;
 
+	/* The commit that unmapped this client's toplevel with a null buffer.
+	 * wlroots keeps the toplevel, reset to one never configured, and
+	 * client_unmanage() left this client invalid: a new client takes the
+	 * toplevel as createnotify() does, so its next initial commit is
+	 * configured and its next map managed. A client unmanaged from Lua keeps
+	 * its surface mapped and is left alone. */
+	if (!c->surface.xdg && !((struct wlr_surface *)data)->mapped) {
+		struct wlr_xdg_toplevel_decoration_v1 *deco = c->decoration;
+
+		client_remove_all_listeners(c);
+		createnotify(NULL, wlr_xdg_toplevel_try_from_wlr_surface(data));
+		if (deco)
+			createdecoration(NULL, deco);
+		luaA_object_unref(globalconf_get_lua_State(), c);
+		return;
+	}
 	if (!c->surface.xdg || !c->surface.xdg->initial_commit)
 		return;
 
@@ -4025,14 +4041,10 @@ destroynotify(struct wl_listener *listener, void *data)
 
 	if (already_unmanaged) {
 		/* Client already removed from array by unmapnotify, skip client_unmanage.
-		 * For XWayland clients, client_unmanage(UNMAP) kept the Lua reference
-		 * alive to allow re-mapping.  Release it now. */
-#ifdef XWAYLAND
-		if (c->client_type == X11) {
-			lua_State *L = globalconf_get_lua_State();
-			luaA_object_unref(L, c);
-		}
-#endif
+		 * client_unmanage(UNMAP) kept the Lua reference alive to allow
+		 * re-mapping.  Release it now. */
+		lua_State *L = globalconf_get_lua_State();
+		luaA_object_unref(L, c);
 	} else {
 		/* Edge case: client still in array (destroyed without unmap), need to unmanage */
 		client_unmanage(c, CLIENT_UNMANAGE_DESTROYED);
