@@ -62,11 +62,12 @@ runner.run_async(function()
     end
     assert(screen.count() == 2, 'requires the two-output lane')
     local retired_drawins = {}
-    for _, case in ipairs({'portrait', 'landscape', 'surface', 'false', 'default'}) do
-        local path = os.tmpname() .. '.png'
+    local letterboxed = {}
+    for _, case in ipairs({'portrait', 'landscape', 'overlay', 'false', 'default'}) do
+        local orientation = case == 'landscape' and 'landscape' or 'portrait'
+        local path = 'tests/fixtures/lock-wallpaper-' .. orientation .. '.png'
         local iw, ih = 500, 1100
         if case == 'landscape' then iw, ih = 1100, 500 end
-        assert(os.execute(string.format('magick -size %dx%d xc:"#cc6633" %s', iw, ih, path)))
         local opts = {bg_color = '#336699', clock_format = '12:00',
             date_format = 'Monday', lock_screen = screen[2]}
         beautiful.lockscreen_wallpaper = path
@@ -75,8 +76,8 @@ runner.run_async(function()
             opts.wallpaper = path
             beautiful.lockscreen_wallpaper = '/does/not/exist'
             beautiful.lockscreen_wallpaper_overlay = nil
-        elseif case == 'surface' then
-            opts.wallpaper = gears.surface.load(path)
+        elseif case == 'overlay' then
+            opts.wallpaper = path
             opts.wallpaper_overlay = '#000000aa'
             beautiful.lockscreen_wallpaper = '/does/not/exist'
             beautiful.lockscreen_wallpaper_overlay = '#ff0000'
@@ -122,9 +123,23 @@ runner.run_async(function()
                     local shot = gears.surface.load(shot_path)
                     local dir = os.getenv('SOMEWM_EXAMPLE_EVIDENCE')
                     if dir then shot:write_to_png(dir .. '/' .. case .. '-lock-' .. s.index .. '.png') end
-                    pixel(shot, box[1] + math.floor(ew / 2), box[2] + 3, '#442211')
-                    local lx, ly = 3, 3
-                    pixel(shot, lx, ly, '#112233')
+                    pixel(shot, math.floor(box[1] + box[3] / 2),
+                        math.floor(box[2] + math.min(3, box[4] / 2)), '#442211')
+                    -- Sample a margin only when the solved image leaves one.
+                    local lx, ly
+                    if box[1] >= 1 then
+                        lx, ly = math.floor(box[1] / 2), 0
+                    elseif box[2] >= 1 then
+                        lx, ly = 0, math.floor(box[2] / 2)
+                    elseif g.width - box[1] - box[3] >= 1 then
+                        lx, ly = math.floor((box[1] + box[3] + g.width) / 2), 0
+                    elseif g.height - box[2] - box[4] >= 1 then
+                        lx, ly = 0, math.floor((box[2] + box[4] + g.height) / 2)
+                    end
+                    if lx then
+                        pixel(shot, lx, ly, '#112233')
+                        letterboxed[s] = true
+                    end
                     os.remove(shot_path)
                 end
                 local overlay
@@ -183,7 +198,10 @@ runner.run_async(function()
                 wait_dump(s, function(tree) return image_line(tree) == nil end, 'wallpaper removal')
             end
         end
-        os.remove(path)
+    end
+    if headless then
+        -- Different fixture aspects must exercise a letterbox on each output.
+        for s in screen do assert(letterboxed[s], 'no letterbox pixel checked on screen ' .. s.index) end
     end
     runner.done()
 end)
