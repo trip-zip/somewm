@@ -217,6 +217,8 @@ All notable changes to somewm will be documented in this file.
 
 ### Fixed
 
+- Systray registrations share one pending property fetch per item, preventing duplicate icons after a reload and allowing retries when the fetch fails.
+
 - wibox.widget.textbox keeps its last applied font when setting a font fails, so a rejected name can be retried.
 - somewm-client tag commands use the loaded layout module, so adding a tag and setting its gap, layout or master width factor no longer fail on an undefined global.
 - A toplevel's bounds are the workarea, never the size it drew. A GTK window that drew its own size once (ghostty) was sent that size as its bounds and stayed at it, 800 wide in a full cell, whatever the compositor asked afterwards.
