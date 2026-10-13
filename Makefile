@@ -9,7 +9,7 @@
 
 -include .local.mk
 
-.PHONY: all install uninstall clean setup setup-test reconfigure test test-unit test-render test-lua-compat test-check test-signal test-ipc-socket test-integration test-orchestrator test-cache-equivalence test-restart test-one-restart test-asan test-one test-visual test-one-visual test-ci test-fast build-test build-bench bench-run bench-run-live bench-json bench-baseline bench-compare bench-check bench-memory bench-flamegraph bench-diff bench-heaptrack profile profile-lua profile-save profile-diff
+.PHONY: all install uninstall clean setup setup-test reconfigure test test-unit test-render test-lua-compat test-check test-signal test-nested-pointer test-ipc-socket test-integration test-orchestrator test-cache-equivalence test-restart test-one-restart test-asan test-one test-visual test-one-visual test-ci test-fast build-test build-bench bench-run bench-run-live bench-json bench-baseline bench-compare bench-check bench-memory bench-flamegraph bench-diff bench-heaptrack profile profile-lua profile-save profile-diff
 
 # Default build: optimized release, no sanitizers
 all:
@@ -54,7 +54,7 @@ reconfigure:
 # =============================================================================
 
 # Run all tests (fast, no ASAN)
-test: test-unit test-check test-signal test-ipc-socket test-orchestrator test-cache-equivalence test-restart test-integration
+test: test-unit test-check test-signal test-nested-pointer test-ipc-socket test-orchestrator test-cache-equivalence test-restart test-integration
 
 # Parse lua/ with every installed Lua version (no compositor needed)
 test-lua-compat:
@@ -82,6 +82,10 @@ test-signal: build-test
 test-ipc-socket: build-test
 	@./tests/test-ipc-socket-handoff.sh ./build-test/somewm ./build-test/somewm-client
 	@./tests/test-ipc-socket-live-owner.sh ./build-test/somewm ./build-test/somewm-client
+
+# Nested-backend pointer mapping: two compositors, one hosting the other
+test-nested-pointer: build-test
+	@./tests/test-nested-pointer-mapping.sh ./build-test/somewm ./build-test/somewm-client
 
 # Test orchestrator (somewm-client test ...): spawns headless nested compositor
 test-orchestrator: build-test
@@ -148,11 +152,15 @@ ifndef TEST
 	@echo "Usage: make test-one TEST=tests/test-my-feature.lua"
 	@exit 1
 endif
+ifeq ($(TEST),tests/test-nested-pointer-mapping.sh)
+	@./tests/test-nested-pointer-mapping.sh ./build-test/somewm ./build-test/somewm-client
+else
 	@VERBOSE=1 \
 	 TEST_TIMEOUT=10 \
 	 SOMEWM=./build-test/somewm \
 	 SOMEWM_CLIENT=./build-test/somewm-client \
 	 ./tests/run-integration.sh $(TEST)
+endif
 
 # Visual test mode - watch tests run in a window (like AwesomeWM's Xephyr)
 test-visual: build-test

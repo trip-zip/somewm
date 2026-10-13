@@ -217,6 +217,8 @@ All notable changes to somewm will be documented in this file.
 
 ### Fixed
 
+- Nested X11 and Wayland pointers map to their host output, so multiple outputs no longer stretch absolute pointer coordinates across the whole layout.
+
 - client.icon rejects LGI surface records and other non-pointer values with a
   Lua type error instead of interpreting userdata storage as a Cairo surface.
   Assign awesome.load_image() or a Cairo surface's _native pointer instead.
