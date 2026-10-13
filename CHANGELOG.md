@@ -4,6 +4,10 @@ All notable changes to somewm will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+
+- wibox.widget.textbox keeps its last applied font when setting a font fails, so a rejected name can be retried.
+
 ## [1.4.6] - 2026-09-24
 
 Patch release. 35 commits since 1.4.5: drawing tablets, touchscreens, hot-reload
