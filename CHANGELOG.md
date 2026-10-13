@@ -6,6 +6,8 @@ All notable changes to somewm will be documented in this file.
 
 ### Fixed
 
+- awesome._active_modifiers reports current keyboard modifiers, including
+  root.fake_input presses, so awful.keyboard can release held modifiers.
 - wibox.widget.textbox keeps its last applied font when setting a font fails, so a rejected name can be retried.
 - Systray registrations share one pending property fetch per item, preventing duplicate icons after a reload and allowing retries when the fetch fails.
 - Surface unit tests select Gdk 3.0 explicitly so systems with Gdk 4 installed use the pixel comparison API they require.
