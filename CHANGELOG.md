@@ -285,6 +285,10 @@ All notable changes to somewm will be documented in this file.
 - A client that draws larger than its cell, as a terminal moved from a bigger
   screen does, no longer grows the cell, the row and the screen's workarea; its
   drawing is cut at the cell and it is asked for the cell.
+- A Wayland window that hides by dropping its buffer and shows again is
+  configured, maps and is managed again, as a new client object, as AwesomeWM does
+  for a window withdrawn and mapped again. Before, it waited for a configure
+  that never came and never showed again.
 - make install removes the installed Lua tree (somewm/lua in the install's
   datadir) before installing, so a module removed since the last install is
   gone. Before, 2.0's wibox.hierarchy and wibox.container.border stayed and
