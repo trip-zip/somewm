@@ -9,6 +9,7 @@
  * - On SIGUSR1: xdg_toplevel_set_maximized()
  * - On SIGUSR2: xdg_toplevel_unset_maximized()
  * - On SIGHUP:  xdg_toplevel_set_minimized()
+ * - On SIGALRM: unmap with a null buffer, then commit again to map anew
  * - On SIGTERM: clean shutdown
  *
  * Usage: test-csd-state-client
@@ -191,6 +192,7 @@ int main(int argc, char *argv[]) {
     sigaction(SIGUSR1, &sa_state, NULL);
     sigaction(SIGUSR2, &sa_state, NULL);
     sigaction(SIGHUP, &sa_state, NULL);
+    sigaction(SIGALRM, &sa_state, NULL);
 
     /* Connect to Wayland */
     g_display = wl_display_connect(NULL);
@@ -242,6 +244,15 @@ int main(int argc, char *argv[]) {
             case SIGHUP:
                 fprintf(stderr, "[test-csd-state-client] requesting minimize\n");
                 xdg_toplevel_set_minimized(g_toplevel);
+                break;
+            case SIGALRM:
+                /* The commit below is the initial commit of the reset
+                 * toplevel; its configure attaches a buffer and maps. */
+                fprintf(stderr, "[test-csd-state-client] unmapping and mapping again\n");
+                wl_surface_attach(g_surface, NULL, 0, 0);
+                wl_surface_commit(g_surface);
+                xdg_toplevel_set_app_id(g_toplevel, "csd_test");
+                xdg_toplevel_set_title(g_toplevel, "CSD State Test");
                 break;
             }
             wl_surface_commit(g_surface);
