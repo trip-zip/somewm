@@ -4282,7 +4282,13 @@ luaA_client_set_icon(lua_State *L, client_t *c)
 {
     cairo_surface_t *surf = NULL;
     if(!lua_isnil(L, -1))
+    {
+        if(!lua_islightuserdata(L, -1))
+            return luaL_error(L, "client.icon expects light userdata or nil, got %s; "
+                              "use awesome.load_image() or a Cairo surface's _native pointer",
+                              luaA_typename(L, -1));
         surf = (cairo_surface_t *)lua_touserdata(L, -1);
+    }
     client_set_icon(c, surf);
     return 0;
 }
