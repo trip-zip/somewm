@@ -6,6 +6,10 @@ All notable changes to somewm will be documented in this file.
 
 ### Fixed
 
+- A Wayland window that hides by dropping its buffer and shows again is
+  configured, maps and is managed again, as a new client object, as AwesomeWM does
+  for a window withdrawn and mapped again. Before, it waited for a configure
+  that never came and never showed again.
 - awesome._active_modifiers reports current keyboard modifiers, including
   root.fake_input presses, so awful.keyboard can release held modifiers.
 - wibox.widget.textbox keeps its last applied font when setting a font fails, so a rejected name can be retried.
