@@ -6,6 +6,14 @@ All notable changes to somewm will be documented in this file.
 
 ### Added
 
+- The lock screen shows an image, theme.lockscreen_wallpaper and
+  theme.lockscreen_wallpaper_overlay, or the wallpaper and wallpaper_overlay
+  options of lockscreen.init; the image is letterboxed like the desktop
+  wallpaper and dimmed by the overlay colour.
+- A childless wibox.container.background inside wibox.layout.stack paints
+  its colour over the stack again, and a floating wibox.container.place keeps
+  its whole allocation.
+
 - awesome._active_modifiers reports current keyboard modifiers, including
   root.fake_input presses, so awful.keyboard can release held modifiers.
 

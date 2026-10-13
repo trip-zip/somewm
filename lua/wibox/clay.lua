@@ -1193,10 +1193,11 @@ function compile_node(st, widget, parent, fg, offer, spec, alpha, parent_fit, al
     node.stack, node.top_only = nil, nil
     if spec.stack and not empty then
         -- Test participation before the stack's default GROW allocation can
-        -- turn an empty layout into a spacer. Authored extents still count.
+        -- turn an empty layout into a spacer. Painted backgrounds participate
+        -- because a stack gives even childless backgrounds its whole box.
         local w, h = node.w, node.h
         node.w, node.h = intrinsic_w, intrinsic_h
-        empty = inert(node, "w")
+        empty = inert(node, "w") and not (node.bg and node.bg[4] ~= 0)
         node.w, node.h = w, h
     end
     if empty then
@@ -1226,33 +1227,10 @@ function compile_node(st, widget, parent, fg, offer, spec, alpha, parent_fit, al
         end
     end
     if spec.float then
-        -- A floating place fills its parent's area only to align its child.
-        -- Native attach points express that placement without another box.
-        -- Authored bounds and nested floats keep their distinct areas.
-        local child = node.children and node.children[1]
-        local place = widget._clay.attachment and child and #node.children == 1
-            and not child.float and not child.text
-        for _, axis in ipairs(axes) do
-            place = place and type(node[axis] or "fit") == "string"
-                and not node[axis .. "min"] and not node[axis .. "max"]
-        end
-        local point
-        if place then
-            local align = node.align or {}
-            local x = child.w == "grow" and 0
-                or ({ left = 0, center = 1, right = 2 })[align.x or "center"]
-            local y = child.h == "grow" and 0
-                or ({ top = 0, center = 1, bottom = 2 })[align.y or "center"]
-            point = x * 3 + y
-            local result = {}
-            for key, value in pairs(child) do result[key] = value end
-            result.bindings = {item = item, next = child.bindings}
-            node = result
-        end
         node.float = true
         node._attach = spec._attach
         node.x, node.y = spec.x or node.x, spec.y or node.y
-        node.parent, node.own = point or spec.parent or node.parent, point or spec.own or node.own
+        node.parent, node.own = spec.parent or node.parent, spec.own or node.own
         if spec.passthrough ~= nil then node.passthrough = spec.passthrough end
     end
 

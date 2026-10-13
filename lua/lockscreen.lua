@@ -46,7 +46,9 @@ local defaults = {
     font_large   = "sans bold 48",
     clock_format = "%H:%M",
     date_format  = "%A, %B %d",
-    lock_screen  = nil,  -- screen object or function()->screen; default: screen.primary
+    lock_screen  = nil, -- screen object or function()->screen; default: screen.primary
+    wallpaper    = nil,
+    wallpaper_overlay = "#000000aa",
 }
 
 -- Count UTF-8 codepoints in a string (LuaJIT lacks the utf8 library)
@@ -175,6 +177,32 @@ local function build_interactive_layout()
     })
 end
 
+-- Build the same full-box background layers for covers and the password surface.
+local function build_root(interactive)
+    local ui = interactive and build_interactive_layout() or nil
+    if not config.wallpaper then
+        return ui or wibox.widget({
+            bg = config.bg_color,
+            widget = wibox.container.background,
+        })
+    end
+    local layers = wibox.layout.stack()
+    layers:add(wibox.widget({
+        image = config.wallpaper,
+        upscale = true,
+        downscale = true,
+        halign = "center",
+        valign = "center",
+        widget = wibox.widget.imagebox,
+    }))
+    layers:add(wibox.widget({
+        bg = config.wallpaper_overlay,
+        widget = wibox.container.background,
+    }))
+    if ui then layers:add(ui.widget) end
+    return layers
+end
+
 -- Determine which screen should get the interactive lock UI
 local function get_interactive_screen()
     if config.lock_screen then
@@ -197,13 +225,14 @@ local function create_cover(s)
         width = s.geometry.width,
         height = s.geometry.height,
     })
+    wb.widget = build_root(false)
     awesome.add_lock_cover(wb)
     return wb
 end
 
 -- Create the interactive wibox for the password screen
 local function create_interactive(s)
-    local layout = build_interactive_layout()
+    local layout = build_root(true)
     local wb = wibox({
         visible = false,
         ontop = true,
@@ -259,18 +288,28 @@ function lockscreen.init(opts)
         error_color  = "bg_urgent",
     }
     for k, default in pairs(defaults) do
-        config[k] = (opts[k])
-            or beautiful["lockscreen_" .. k]
-            or (theme_fallbacks[k] and beautiful[theme_fallbacks[k]])
-            or default
+        local value = opts[k]
+        if value == nil then value = beautiful["lockscreen_" .. k] end
+        if value == nil and theme_fallbacks[k] then
+            value = beautiful[theme_fallbacks[k]]
+        end
+        if value == nil then value = default end
+        config[k] = value
     end
     -- Special case: font fallback to beautiful.font
-    if not opts.font and not beautiful.lockscreen_font then
+    if opts.font == nil and beautiful.lockscreen_font == nil then
         config.font = beautiful.font or defaults.font
     end
     -- lock_screen is not a beautiful property
     if opts.lock_screen ~= nil then
         config.lock_screen = opts.lock_screen
+    end
+    config.wallpaper = opts.wallpaper
+    if config.wallpaper == nil then
+        config.wallpaper = beautiful.lockscreen_wallpaper
+    end
+    if config.wallpaper then
+        config.wallpaper = gears.surface.load(config.wallpaper)
     end
 
     -- Build surfaces for all screens
