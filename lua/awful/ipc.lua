@@ -355,6 +355,7 @@ local function register_builtin_commands()
   local awful_client = require("awful.client")
   local awful_screen = require("awful.screen")
   local awful_tag = require("awful.tag")
+  local awful_layout = require("awful.layout")
   local awful_placement = require("awful.placement")
   local awful_spawn = require("awful.spawn")
 
@@ -772,8 +773,6 @@ local function register_builtin_commands()
         error("Invalid factor: " .. factor_str .. " (must be between 0 and 1)")
       end
       tag.master_width_factor = factor
-      -- Trigger layout refresh
-      awful_layout.arrange(tag.screen)
       return string.format("Set tag '%s' master_width_factor to %.2f", tag.name, factor)
     else
       return string.format("Tag '%s' master_width_factor: %.2f", tag.name, tag.master_width_factor or 0.5)
@@ -783,8 +782,6 @@ local function register_builtin_commands()
   -- =================================================================
   -- LAYOUT COMMANDS
   -- =================================================================
-
-  local awful_layout = require("awful.layout")
 
   --- layout.list - List all available layouts for the current tag
   ipc.register("layout.list", function()

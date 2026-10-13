@@ -217,6 +217,7 @@ All notable changes to somewm will be documented in this file.
 
 ### Fixed
 
+- somewm-client tag commands use the loaded layout module, so adding a tag and setting its gap, layout or master width factor no longer fail on an undefined global.
 - A toplevel's bounds are the workarea, never the size it drew. A GTK window that drew its own size once (ghostty) was sent that size as its bounds and stayed at it, 800 wide in a full cell, whatever the compositor asked afterwards.
 - wibox.layout.grid emitted property::minimum_column_width when
   minimum_row_height changed.
