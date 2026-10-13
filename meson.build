@@ -363,20 +363,13 @@ if get_option('bench')
   add_project_arguments('-DSOMEWM_BENCH', language: 'c')
 endif
 
-# The Clay tree==scene verifier. Derived from the build directory's own options
-# rather than passed in by the Makefile, so a dir that was configured before this
-# option existed still gets the right answer, and reconfiguring a dir to use a
-# sanitizer turns the verifier on with it. b_sanitize is a string in older meson
-# and an array in newer, hence the format.
-render_verify = get_option('render_verify')
-if render_verify.auto()
-  sanitizers = '@0@'.format(get_option('b_sanitize'))
-  render_verify_on = sanitizers.contains('address') or \
-    sanitizers.contains('undefined') or get_option('test_pam')
-else
-  render_verify_on = render_verify.enabled()
-endif
-if render_verify_on
+# The Clay tree==scene verifier walks every retained node after each reconcile
+# and aborts on divergence. It is on for a sanitizer or test build only, and is
+# not an option, so a packager's --auto-features enabled cannot turn it on.
+# b_sanitize is a string in older meson and an array in newer, hence the format.
+sanitizers = '@0@'.format(get_option('b_sanitize'))
+if sanitizers.contains('address') or sanitizers.contains('undefined') or \
+    get_option('test_pam')
   add_project_arguments('-DSOMEWM_RENDER_VERIFY', language: 'c')
 endif
 
@@ -536,7 +529,7 @@ somewm_client = executable(
 
 # The Clay reconciler's unit test: hand-built command arrays in, wlr_scene out.
 # It compiles the renderer itself rather than linking the compositor, so the
-# tree==scene verifier is on here whatever -Drender_verify says for the build.
+# tree==scene verifier is on here whatever the build's sanitizer and test settings are.
 test_render = executable(
   'test-render',
   ['tests/test-render.c', render_sources],
