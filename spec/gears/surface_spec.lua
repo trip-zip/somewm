@@ -3,13 +3,11 @@ local color = require("gears.color")
 local lgi = require("lgi")
 local cairo = lgi.cairo
 
--- GDK requires a display environment to initialize
--- Skip these tests gracefully in headless environments
-local gdk_ok, gdk = pcall(function() return lgi.Gdk end)
+local gdk_ok, gdk = pcall(lgi.require, "Gdk", "3.0")
 if not gdk_ok then
     describe("gears.surface", function()
-        it("SKIPPED: GDK not available (no display)", function()
-            pending("GDK requires a display environment")
+        it("SKIPPED: Gdk 3.0 typelib not available", function()
+            pending("Missing Gdk 3.0 typelib: " .. tostring(gdk))
         end)
     end)
     return
