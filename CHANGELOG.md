@@ -220,6 +220,8 @@ All notable changes to somewm will be documented in this file.
 
 ### Fixed
 
+- Packages built with `--auto-features enabled`, such as Arch's `arch-meson`, no longer abort when the pointer moves from the bar into a menu. The renderer's debug verifier is on only in sanitizer and test builds, and the `render_verify` build option is gone.
+
 - Nested X11 and Wayland pointers map to their host output, so multiple outputs no longer stretch absolute pointer coordinates across the whole layout.
 
 - client.icon rejects LGI surface records and other non-pointer values with a
