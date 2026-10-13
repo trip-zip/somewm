@@ -1123,6 +1123,53 @@ describe("wibox.clay stack", function()
         assert.is_equal(1, #layout_node(l).children)
     end)
 
+    it("keeps a childless painted background after the stack image", function()
+        local cairo = require("lgi").cairo
+        local image = require("wibox.widget.imagebox")(
+            cairo.ImageSurface(cairo.Format.ARGB32, 50, 110))
+        local overlay = background(nil, "#000000aa")
+        local node = layout_node(stack(image, overlay))
+        local image_node, overlay_node = node_for(node, image), node_for(node, overlay)
+        local image_leaf = image_node
+        while not image_leaf.image do image_leaf = assert(image_leaf.children[1]) end
+        assert.is_not_nil(image_leaf.image)
+        assert.is_true(overlay_node.float)
+        assert.is_equal("grow", overlay_node.w)
+        assert.is_equal("grow", overlay_node.h)
+        assert.is_same({0, 0, 0, 170/255}, overlay_node.bg)
+        assert.is_equal(0, #(overlay_node.children or {}))
+        local order = {}
+        local function visit(n)
+            if n.image or n == overlay_node then order[#order + 1] = n end
+            for _, child in ipairs(n.children or {}) do visit(child) end
+        end
+        visit(node)
+        assert.is_same({image_leaf, overlay_node}, order)
+    end)
+
+    it("omits a childless transparent background in a stack", function()
+        local image = leaf_widget(50, 110)
+        local overlay = background(nil, "#00000000")
+        local node = layout_node(stack(image, overlay))
+        assert.is_nil(node_for(node, overlay))
+        assert.is_not_nil(node_for(node, image))
+    end)
+
+    it("sizes FIT stack content after a childless painted background", function()
+        local text = require("wibox.widget.textbox")("content")
+        local paint = background(nil, "#000000aa")
+        local l = stack(paint, text)
+        local font = stub(awesome, "_clay_font", function() return 1 end)
+        local node = wclay.compile({_attachment_fit = true, background_color = BG},
+            l, context, 100, 100)
+        font:revert()
+        local content = assert(node_for(node, text))
+        assert.is_nil(content.float)
+        assert.is_equal("content", content.children[1].text)
+        assert.is_equal("fit", node.w)
+        assert.is_equal("fit", node.h)
+    end)
+
     it("folds equal content boxes while keeping later floats and bindings", function()
         local a, b = leaf_widget(10, 5), leaf_widget(20, 6)
         local row = fixed.horizontal(a)
@@ -1223,23 +1270,6 @@ end)
 
 describe("wibox.clay place", function()
     local place = require("wibox.container.place")
-
-    it("attaches a floating child at native points and keeps both bindings", function()
-        local child = leaf_widget(10, 20)
-        local c = place(child, "right", "bottom")
-        local stack = require("wibox.layout.stack")(leaf_widget(1, 1), c)
-        local tree = layout_node(stack)
-        local node = node_for(tree, c)
-        assert.is_equal(node, node_for(tree, child))
-        assert.is_equal("leaf", node.name)
-        assert.is_true(node.float)
-        assert.is_equal(8, node.parent)
-        assert.is_equal(8, node.own)
-        assert.is_equal(10, node.w)
-        c.forced_width = 30
-        tree = layout_node(stack)
-        assert.is_not_equal(node_for(tree, c), node_for(tree, child))
-    end)
 
     it("invalidates cached float positions when the stack offsets change", function()
         local a, b = place(leaf_widget(10, 20)), leaf_widget(20, 30)

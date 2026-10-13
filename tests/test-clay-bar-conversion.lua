@@ -156,11 +156,17 @@ local steps = {
                 assert(node_named(nodes, name),
                     "no " .. name .. " in the solved tree")
             end
-            assert(not node_named(nodes, "wibox.container.place"),
-                "the floating place must contribute attachment points")
+            assert(node_named(nodes, "wibox.container.place"),
+                "the floating place must retain its own allocation")
             local margin = assert(bar:get_children_by_id("inset_margin")[1])
             local background = assert(bar:get_children_by_id("inset_background")[1])
             local bound = bar._drawable._clay_wired
+            local place = bar.widget:get_children()[2]
+            local placed = assert(bound[place][1].element)
+            capture.assert_box(placed.box,
+                {x=0, y=0, width=bar.width, height=bar.height}, "floating place")
+            assert(placed ~= bound[background][1].element,
+                "the floating place must have a separate box from its child")
             assert(bound[bar.widget][1].element ==
                 bound[bar.widget:get_children()[1]][1].element,
                 "the stack did not fold into its in-flow align")
