@@ -270,7 +270,7 @@ read_transition_properties(lua_State *L, int idx, uint16_t *out)
     if (lua_isnil(L, -1)) {
         *out = CLAY_TRANSITION_PROPERTY_BOUNDING_BOX;
     } else if (lua_istable(L, -1)) {
-        size_t count = lua_objlen(L, -1);
+        size_t count = luaA_rawlen(L, -1);
         ok = count > 0;
         for (size_t i = 1; ok && i <= count; i++) {
             lua_rawgeti(L, -1, i);

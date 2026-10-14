@@ -129,13 +129,20 @@ runner.run_async(function()
     bar.visible = true
     async.sleep(.08)
     local shadow_alpha = alpha('WIBOX', 520, 20)
+    assert(shadow_alpha > 0 and shadow_alpha < 1, 'shadow alpha did not interpolate: ' .. shadow_alpha)
     local shadow_mid = pixels(621, 30)
+    local shadow_after = alpha('WIBOX', 520, 20)
     async.sleep(.22)
     local shadow_final = pixels(621, 30)
     for i, value in ipairs(shadow_mid) do
-        assert(shadow_final[i] < value and value < 32, 'shadow did not fade: mid=' .. value .. ' final=' .. shadow_final[i] .. ' alpha=' .. shadow_alpha .. '\n' .. dump())
-        local expected = 32 + (shadow_final[i] - 32) * (1 - shadow_alpha)
-        assert(math.abs(value - expected) <= 3, 'shadow pixel disagrees with fade alpha')
+        -- The CPU capture is immediate; grim can capture a later animation frame.
+        if i <= 3 then
+            assert(shadow_final[i] < value and value < 32, 'shadow did not fade: mid=' .. value .. ' final=' .. shadow_final[i] .. ' alpha=' .. shadow_alpha .. '\n' .. dump())
+        end
+        local low = 32 + (shadow_final[i] - 32) * (1 - math.min(shadow_alpha, shadow_after))
+        local high = 32 + (shadow_final[i] - 32) * (1 - math.max(shadow_alpha, shadow_after))
+        assert(value >= low - 3 and value <= high + 3,
+            'shadow pixel disagrees with fade alpha: ' .. value .. ' expected ' .. low .. '..' .. high .. '\n' .. dump())
     end
     bar.visible = false
     async.sleep(.1)
