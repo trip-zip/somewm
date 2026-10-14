@@ -325,6 +325,10 @@ commitnotify(struct wl_listener *listener, void *data)
 	if (c->resize) {
 		if (c->resize <= c->surface.xdg->current.configure_serial) {
 			c->resize = 0;
+			/* clients_settle skips pending resizes; publish the solved geometry
+			 * on a new frame now that this commit has acknowledged the size. */
+			if (c->mon && c->mon->declare)
+				declare_output_mark_dirty(c->mon->declare);
 		}
 	}
 
