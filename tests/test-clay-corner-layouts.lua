@@ -22,13 +22,20 @@ runner.run_async(function()
         return true
     end
     local function capture(name,known_old_error)
-        -- A frame after this change, then every client answering its configure.
+        -- Configure reports precede buffer commits, so wait for the pixels too.
         local start=frames(awesome._clay_tree(s))
         awesome._clay_dirty()
-        async.wait_for_condition(function()
+        assert(async.wait_for_condition(function()
             local dump=awesome._clay_tree(s)
-            return frames(dump)>start and configured(dump)
-        end,2,0.02)
+            if frames(dump)<=start or not configured(dump) then return false end
+            if native or not known_old_error then
+                for i,c in ipairs(clients) do
+                    local g=c:geometry()
+                    if not pcall(example.pixel,g.x+math.floor(g.width/2),g.y+math.floor(g.height/2),'#'..colors[i]:sub(3)) then return false end
+                end
+            end
+            return true
+        end,2,0.02),name..': frame, configure and client pixels did not settle')
         local dump=awesome._clay_tree(s)
         if not dump:find('derived 0',1,true) then failures[#failures+1]=name end
         example.save(name,dump)
@@ -54,11 +61,10 @@ runner.run_async(function()
         if count>0 then
             reports[count]=os.tmpname()
             awful.spawn{binary,'CORNER_'..count,reports[count],'0',colors[count]}
-            for _=1,30 do
+            assert(async.wait_for_condition(function()
                 clients[count]=utils.find_client_by_class('CORNER_'..count)
-                if clients[count] then break end
-                async.sleep(0.02)
-            end
+                return clients[count]~=nil
+            end,0.6,0.02),'corner client did not map')
             local c=assert(clients[count]);c.floating,c.shadow,c.border_width=false,false,1
         end
         for i,wanted in ipairs(clients) do
@@ -119,14 +125,23 @@ runner.run_async(function()
             s.selected_tag.gap,s.selected_tag.gap_single_client=8,true
             s.selected_tag.master_width_factor=.5
             for _,orientation in ipairs{'nw','ne','sw','se'} do
+                local start=frames(awesome._clay_tree(s))
                 s.selected_tag.layout=awful.layout.suit.corner[orientation]
-                async.sleep(.12)
+                assert(async.wait_for_condition(function()
+                    local dump=awesome._clay_tree(s)
+                    if frames(dump)<=start or not configured(dump) then return false end
+                    for _,c in ipairs(clients) do
+                        local g=c:geometry()
+                        if not pcall(example.pixel,g.x+6,g.y+6,'#cc6600') then return false end
+                    end
+                    return true
+                end,2,0.02),'corner '..orientation..': titlebar pixels did not settle')
                 for i,c in ipairs(clients) do
                     local g=c:geometry()
                     example.pixel(g.x+6,g.y+6,'#cc6600')
                     events={}
                     awful.spawn{pointer,'click',tostring(g.x+6),tostring(g.y+6),'1280','720','left'}
-                    for _=1,30 do if #events==2 then break end;async.sleep(.02) end
+                    async.wait_for_condition(function() return #events==2 end,0.6,0.02)
                     assert(table.concat(events,',')=='button::press'..i..',button::release'..i,
                         'wrong original titlebar input: '..table.concat(events,','))
                 end
@@ -138,8 +153,12 @@ runner.run_async(function()
         s.selected_tag.master_count=1
         s.selected_tag.layout=awful.layout.suit.corner.nw
     end
+    local start=frames(awesome._clay_tree(s))
     s.inspector=true
-    async.sleep(.12)
+    assert(async.wait_for_condition(function()
+        local dump=awesome._clay_tree(s)
+        return frames(dump)>start and dump:find('inspector on',1,true)
+    end,2,0.02),'corner inspector did not reach the dump')
     example.save('corner-inspector',awesome._clay_tree(s))
     s.inspector=false
     for _,c in ipairs(clients) do c:kill() end

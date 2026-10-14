@@ -162,6 +162,8 @@ jobs:
         run: make test-unit
 
       - name: Run integration tests (non-spawning only)
+        env:
+          JOBS: 1
         run: timeout 1500 make test-ci
         timeout-minutes: 30
 
