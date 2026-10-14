@@ -41,7 +41,7 @@ All notable changes to somewm will be documented in this file.
 - beautiful.launcher_width: the menubar launcher's width, ahead of
   menubar.geometry.width; without either the launcher spans the workarea.
 
-- Client animation by trigger: `c.animate = {appear, disappear, tag, focus,
+- Client animation by trigger: `c.animation = {appear, disappear, tag, focus,
   maximize, floating}` and the rule property of the same name, with the theme
   keys beautiful.animation_appear and animation_disappear (grow, slide_left,
   slide_right, slide_up, slide_down, fade) and the durations
@@ -49,15 +49,18 @@ All notable changes to somewm will be documented in this file.
   animation_tag_duration, animation_focus_duration,
   animation_maximize_duration and animation_floating_duration. A focus change
   eases the border colour. With a tag duration set, a tag switch grows clients
-  in and out unless c.animate.tag names another entrance. A client exit
+  in and out unless c.animation.tag names another entrance. A client exit
   animates its frame only; the surface snaps.
-- `animate = {visible = {duration, enter, exit}}` on wibox and awful.popup,
+- `animation = {visible = {duration, enter, exit}}` on wibox and awful.popup,
   with the same entrances. A drawin's exit drops its shadow at once.
-- `widget.animate = {property = duration}` for bg, border_color, border_width,
+- `widget.animation = {property = duration}` for bg, border_color, border_width,
   forced_width, forced_height and the progressbar and slider value, and
   `widget:animate{property = value, duration = d}` for one change. Positions
   snap. Past 200 transition records per output the remaining nodes snap, with
   one warning.
+  The `.animation` property stores the policy separately from the `:animate`
+  method. With `widget.animation = false`, the method applies values immediately
+  and remains callable. Policy changes emit `property::animation`.
 
 ### Changed
 

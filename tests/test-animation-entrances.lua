@@ -45,10 +45,12 @@ end
 runner.run_async(function()
     local popup = awful.popup {
         screen = s, placement = awful.placement.top_left, visible = false, shadow = false,
-        animate = {visible = {duration = 1, enter = 'slide_left', exit = 'slide_left'}},
+        animation = {visible = {duration = 1, enter = 'slide_left', exit = 'slide_left'}},
         widget = capture.leaf_widget(200, 100, '#ff0000'),
     }
-    assert(popup.animate.visible.enter == 'slide_left', 'popup did not forward animate')
+    assert(popup.animation.visible.enter == 'slide_left', 'popup did not forward animation')
+    local policy_changes = 0
+    popup:connect_signal('property::animation', function() policy_changes = policy_changes + 1 end)
     popup.visible = true
     async.sleep(.3)
     local x, _, w = box('POPUP')
@@ -64,7 +66,7 @@ runner.run_async(function()
     assert(not leaving_popup() and not box('POPUP'), 'popup survived its exit: ' .. dump())
 
     for _, style in ipairs({'slide_right', 'slide_up', 'slide_down'}) do
-        popup.animate = {visible = {duration = .2, enter = style, exit = style}}
+        popup.animation = {visible = {duration = .2, enter = style, exit = style}}
         popup.visible = true
         async.sleep(.06)
         local px, py = box('POPUP')
@@ -80,11 +82,14 @@ runner.run_async(function()
         popup.visible = false
         async.sleep(.22)
     end
+    assert(policy_changes == 3, 'popup did not forward policy changes')
+    popup.animation = nil
+    assert(popup.animation == nil and policy_changes == 4, 'popup did not clear its policy')
     local bar = wibox {screen = s, x = 0, y = 0, width = 120, height = 80,
         visible = false, shadow = false,
-        animate = {visible = {duration = .2, enter = 'slide_left', exit = 'slide_left'}},
+        animation = {visible = {duration = .2, enter = 'slide_left', exit = 'slide_left'}},
         widget = capture.leaf_widget(120, 80, '#00ff00')}
-    assert(bar.animate and bar.animate.visible.duration == .2, 'wibox did not store animate')
+    assert(bar.animation and bar.animation.visible.duration == .2, 'wibox did not store animation')
     bar.visible = true
     async.sleep(.06)
     local bx = box('WIBOX')
@@ -101,7 +106,7 @@ runner.run_async(function()
     beautiful.animation_tag_duration = .2
     ruled.client.append_rule {
         rule = {class = 'ENTRANCE_CLIENT'},
-        properties = {animate = {appear = 'grow'}, border_width = 0, floating = false},
+        properties = {animation = {appear = 'grow'}, border_width = 0, floating = false},
     }
     s.selected_tag.layout = awful.layout.suit.tile
     local report = os.tmpname()

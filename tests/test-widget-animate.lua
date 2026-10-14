@@ -57,27 +57,27 @@ end
 
 runner.run_async(function()
     local background = wibox.container.background(nil, '#202020')
-    background.animate = {bg = 1}
+    background.animation = {bg = 1}
     background.forced_height = 50
     local progress = wibox.widget.progressbar()
     progress.value, progress.max_value = .2, 1
     progress.color, progress.background_color = '#00ff00', '#000000'
     progress.forced_height = 20
-    progress.animate = {value = 1}
+    progress.animation = {value = 1}
     local parent = wibox.layout.fixed.vertical(background, progress)
     local bar = wibox {screen = s, x = 0, y = 0, width = 200, height = 70,
         visible = true, ontop = true, shadow = false, widget = parent}
     local sized = wibox.container.background(nil, '#000000')
     sized.forced_width, sized.forced_height = 80, 40
     sized.border_color, sized.border_width = '#202020', 2
-    sized.animate = {border_color = 1, border_width = 1, forced_width = 1, forced_height = 1}
+    sized.animation = {border_color = 1, border_width = 1, forced_width = 1, forced_height = 1}
     local size_bar = wibox {screen = s, x = 700, y = 0, width = 200, height = 100,
         visible = true, ontop = true, shadow = false, widget = wibox.container.place(sized, "left", "top")}
     local slider = wibox.widget.slider()
     slider.bar_color, slider.bar_active_color = '#000000', '#00ff00'
     slider.handle_color, slider.handle_width = '#000000', 4
     slider.bar_height, slider.bar_margins, slider.value = 20, 0, 20
-    slider.animate = {value = 1}
+    slider.animation = {value = 1}
     local slider_bar = wibox {screen = s, x = 950, y = 0, width = 200, height = 20,
         visible = true, ontop = true, shadow = false, widget = slider}
     async.sleep(.15)
@@ -109,7 +109,7 @@ runner.run_async(function()
     color_exact(706, 10, 224)
     assert(dump():find('box 700,0 160x80', 1, true), 'forced sizes did not settle')
     size_bar.visible, slider_bar.visible = false, false
-    parent.animate = false
+    parent.animation = false
     background.bg, progress.value = '#202020', .2
     async.sleep(.1)
     color_exact(20, 20, 32)
@@ -123,17 +123,17 @@ runner.run_async(function()
         warnings[#warnings + 1] = message
         original_warning(message)
     end
-    background.animate = {bg = 1, x = 1}
+    background.animation = {bg = 1, x = 1}
     async.sleep(.1)
-    background.animate = {bg = 1, x = 1}
+    background.animation = {bg = 1, x = 1}
     async.sleep(.1)
     debug.print_warning = original_warning
     local count = 0
     for _, warning in ipairs(warnings) do
-        if warning:find('animate.x', 1, true) and warning:find('changes snap', 1, true) then count = count + 1 end
+        if warning:find('animation.x', 1, true) and warning:find('changes snap', 1, true) then count = count + 1 end
     end
     assert(count == 1, 'unsupported property did not warn once')
-    parent.animate = nil
+    parent.animation = nil
     local plain = wibox.container.background(nil, '#202020')
     local one_shot = wibox {screen = s, x = 220, y = 0, width = 70, height = 50,
         visible = true, ontop = true, shadow = false, widget = plain}
@@ -149,6 +149,13 @@ runner.run_async(function()
     plain.bg = '#202020'
     async.sleep(.1)
     color_exact(240, 20, 32)
+    plain.animation = false
+    plain:animate {bg = '#e0e0e0', duration = 1}
+    async.sleep(.1)
+    color_exact(240, 20, 224)
+    assert(plain.animation == false, 'request replaced the disabled policy')
+    plain.animation = nil
+    assert(plain.animation == nil and type(plain.animate) == 'function', 'policy reset hid the method')
     one_shot.visible = false
     bar.visible = false
 
@@ -156,7 +163,7 @@ runner.run_async(function()
     for _ = 1, 250 do
         local widget = wibox.container.background(nil, '#202020')
         widget.forced_height = 2
-        widget.animate = {bg = 1}
+        widget.animation = {bg = 1}
         widgets:add(widget)
     end
     local budget = wibox {screen = s, x = 300, y = 0, width = 100, height = 500,

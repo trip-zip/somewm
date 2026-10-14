@@ -51,8 +51,8 @@ typedef struct drawin_t {
 	bool geometry_dirty;           /* Pending geometry update flag */
 
 	/* Properties */
-    int animate_ref;
-    struct widget_transition animate;
+    int animation_ref;
+    struct widget_transition animation;
 	bool visible;                  /* Is drawin currently displayed? */
 	bool ontop;                    /* Should drawin be above other windows? */
 	char *cursor;                  /* Mouse cursor name (e.g., "left_ptr") */

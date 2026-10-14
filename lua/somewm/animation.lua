@@ -21,17 +21,17 @@ local seen = setmetatable({}, {__mode = "k"})
 -- @tparam[opt=nil] number animation_floating_duration
 
 --- A client mapping, in seconds; needs an entrance from
--- `animation_appear` or `c.animate.appear`.
+-- `animation_appear` or `c.animation.appear`.
 -- @beautiful beautiful.animation_appear_duration
 -- @tparam[opt=nil] number animation_appear_duration
 
 --- A client closing, in seconds; needs an entrance from
--- `animation_disappear` or `c.animate.disappear`.
+-- `animation_disappear` or `c.animation.disappear`.
 -- @beautiful beautiful.animation_disappear_duration
 -- @tparam[opt=nil] number animation_disappear_duration
 
 --- A tag switch, in seconds. Clients grow in and out unless
--- `c.animate.tag` names another entrance.
+-- `c.animation.tag` names another entrance.
 -- @beautiful beautiful.animation_tag_duration
 -- @tparam[opt=nil] number animation_tag_duration
 
@@ -58,7 +58,7 @@ local theme_keys = {
     tag = "animation_tag_duration",
 }
 
-local function object_field(object) return object.animate end
+local function object_field(object) return object.animation end
 
 local function one_shot(_object, trigger, policy)
     return policy and policy.once and policy.once[trigger]

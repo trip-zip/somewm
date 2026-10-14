@@ -511,7 +511,7 @@ end
 local painters = { "draw", "fit", "layout", "before_draw_children", "after_draw_children" }
 local function describe(w, fg, st, item, offer)
     local record = w._clay
-    local field = w._private.animate
+    local field = w._private.animation
     local once = st.animation_once[w]
     if once == nil then
         once = require("wibox.widget.base").take_animation(w) or false
@@ -523,7 +523,7 @@ local function describe(w, fg, st, item, offer)
     for _, settings in ipairs{type(field) == "table" and field or {}, once or {}} do
         for property in pairs(settings) do
             if not supported[property] then
-                clay.ignore(w, "animate." .. property, "is unsupported; changes snap")
+                clay.ignore(w, "animation." .. property, "is unsupported; changes snap")
             end
         end
     end
@@ -563,7 +563,7 @@ local function describe(w, fg, st, item, offer)
                 local setting = policy.once and policy.once[property]
                     or type(field) == "table" and field[property]
                 if type(setting) == "number" then
-                    clay.ignore(w, "animate." .. property, "uses a custom fill or stroke; changes snap")
+                    clay.ignore(w, "animation." .. property, "uses a custom fill or stroke; changes snap")
                 end
             else mapping[property] = word end
         end
@@ -1187,7 +1187,7 @@ function compile_node(st, widget, parent, fg, offer, spec, alpha, parent_fit, al
     local item = occurrence(st, widget, parent)
     local entry = cache.entries[item]
 
-    item.animation_off = parent.animation_off or widget._private.animate == false
+    item.animation_off = parent.animation_off or widget._private.animation == false
     alpha = alpha * (widget._private.opacity or 1)
     if entry and parent.widget and not st.stale[item]
             and entry.fg == fg and entry.alpha == alpha

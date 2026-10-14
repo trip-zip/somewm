@@ -34,13 +34,13 @@ describe("somewm.animation", function()
     end)
     it("reads object overrides ahead of both theme levels", function()
         theme.animation_duration, theme.animation_layout_duration = 0.5, 0.4
-        assert.equals(0.2, settled({animate = {layout = 0.2}}, "layout").duration)
-        assert.equals(0, settled({animate = false}, "layout").duration)
+        assert.equals(0.2, settled({animation = {layout = 0.2}}, "layout").duration)
+        assert.equals(0, settled({animation = false}, "layout").duration)
     end)
     it("reads each trigger and theme default on every call", function()
         theme.animation_duration = 0.5
         for _, trigger in ipairs({"layout", "maximize", "floating", "focus"}) do
-            local object = {animate = {}}
+            local object = {animation = {}}
             assert.equals(0.5, settled(object, trigger).duration)
             theme["animation_" .. trigger .. "_duration"] = 0.3
             assert.equals(0.3, animation.word(object, trigger).duration)
@@ -88,37 +88,37 @@ describe("somewm.animation", function()
         assert.equals(1, animation.word(object, {"layout", "focus"}).duration)
         theme.animation_layout_duration = 2
         assert.equals(2, animation.word(object, {"layout", "focus"}).duration)
-        object.animate = false
+        object.animation = false
         assert.equals(0, animation.word(object, {"layout", "focus"}).duration)
     end)
     it("returns policy durations without marking the first declaration seen", function()
-        local object = {animate = {focus = 1}}
+        local object = {animation = {focus = 1}}
         assert.equals(1, animation.duration(object, "focus"))
         assert.equals(0, animation.duration(object, "layout"))
         assert.equals(0, animation.word(object, "focus").duration)
         theme.animation_focus_duration = 2
         assert.equals(1, animation.duration(object, "focus"))
-        object.animate = nil
+        object.animation = nil
         assert.equals(2, animation.duration(object, "focus"))
         theme.animation_focus_duration = nil
         theme.animation_duration = 0.4
         assert.equals(0.4, animation.duration(object, "focus"))
-        object.animate = false
+        object.animation = false
         assert.equals(0, animation.duration(object, "focus"))
     end)
     it("declares the border word whenever the object has a focus duration", function()
-        local object = {animate = {focus = 1}}
+        local object = {animation = {focus = 1}}
         assert.same({properties = {"box", "border_color"}, duration = 0},
             animation.word(object, "layout"))
         assert.same({"box", "border_color"}, animation.word(object, "layout").properties)
-        object.animate.focus = 0
+        object.animation.focus = 0
         assert.equals("box", animation.word(object, "layout").properties)
     end)
     it("selects authored entrance and departure styles by trigger", function()
         theme.animation_appear, theme.animation_appear_duration = "slide_left", 1
         theme.animation_disappear, theme.animation_disappear_duration = "slide_right", 2
         theme.animation_tag_duration = 0.5
-        local object = {animate = {appear = "grow", tag = "slide_up"}}
+        local object = {animation = {appear = "grow", tag = "slide_up"}}
         local word = animation.word(object, "appear")
         assert.equals("grow", word.enter)
         assert.equals(1, word.duration)
@@ -128,7 +128,7 @@ describe("somewm.animation", function()
         assert.equals(0.5, word.tag_duration)
         assert.equals("slide_up", animation.word(object, "tag").enter)
         assert.is_nil(animation.word(object, "layout").enter)
-        object.animate = false
+        object.animation = false
         assert.is_nil(animation.word(object, "appear").enter)
     end)
     it("snaps configured objects without a matching duration", function()
@@ -136,13 +136,13 @@ describe("somewm.animation", function()
         assert.equals(0, settled({}, "floating").duration)
     end)
     it("retains a snap record when configuration disappears", function()
-        local object = {animate = {layout = 0.3}}
+        local object = {animation = {layout = 0.3}}
         settled(object, "layout")
-        object.animate = nil
+        object.animation = nil
         assert.same({properties = "box", duration = 0}, animation.word(object, "layout"))
     end)
     it("snaps during mouse grabs and while globally disabled", function()
-        local object = {animate = {layout = 0.3}}
+        local object = {animation = {layout = 0.3}}
         settled(object, "layout")
         grabbing = true
         assert.equals(0, animation.word(object, "layout").duration)

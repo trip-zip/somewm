@@ -89,13 +89,13 @@ runner.run_async(function()
     beautiful.animation_focus_duration = nil
     ruled.client.append_rule {
         rule = {class = 'FOCUS_ANIMATION_3'},
-        properties = {animate = {focus = 1}, focus = false, floating = false, border_width = 8,
+        properties = {animation = {focus = 1}, focus = false, floating = false, border_width = 8,
             border_color = beautiful.border_normal},
     }
     reports[3] = os.tmpname()
     awful.spawn{binary, 'FOCUS_ANIMATION_3', reports[3], '0', 'ff0000cc', '0'}
     clients[3] = assert(async.wait_for_client('FOCUS_ANIMATION_3', 2))
-    assert(clients[3].animate.focus == 1, 'rule did not set focus duration')
+    assert(clients[3].animation.focus == 1, 'rule did not set focus duration')
     clients[3].shadow = false
     client.focus = clients[2]
     async.sleep(1.2)

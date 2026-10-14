@@ -309,21 +309,33 @@ function base.widget:get_opacity()
     return self._private.opacity
 end
 
-function base.widget:get_animate()
-    local value = self._private.animate
-    return value == nil and animate_once or value
+--- Request one animated change to the named properties.
+-- A disabled animation policy applies the values immediately.
+-- @tparam table values Target property values and a duration in seconds.
+-- @method animate
+function base.widget:animate(values)
+    animate_once(self, values)
 end
 
-function base.widget:set_animate(value)
-    assert(value == nil or value == false or type(value) == "table", "animate must be a table or false")
+--- Persistent animation durations by property, or false to disable the subtree.
+-- Assigning nil removes this widget's policy. The animate method stays callable.
+-- @property animation
+-- @tparam[opt=nil] table|boolean animation
+-- @propemits true false
+function base.widget:get_animation()
+    return self._private.animation
+end
+
+function base.widget:set_animation(value)
+    assert(value == nil or value == false or type(value) == "table", "animation must be a table or false")
     if type(value) == "table" then
         local copy = {}
         for key, duration in pairs(value) do copy[key] = duration end
-        value = setmetatable(copy, {__call = function(_, widget, values) animate_once(widget, values) end})
+        value = copy
     end
-    self._private.animate = value
+    self._private.animation = value
     self:emit_signal("widget::layout_changed")
-    self:emit_signal("property::animate")
+    self:emit_signal("property::animation")
 end
 
 --- Set the widget's forced width.
@@ -834,7 +846,7 @@ function base.make_widget(proxy, widget_name, args)
     --TODO v6 Remove this
     if not args.enable_properties then
         mt.__index = function(_, key)
-            if key == "animate" then return base.widget.get_animate(ret) end
+            if key == "animation" then return base.widget.get_animation(ret) end
             if key == "buttons" then
                 return base.widget.get_buttons(ret)
             end
@@ -842,8 +854,8 @@ function base.make_widget(proxy, widget_name, args)
             return rawget(ret, key)
         end
         mt.__newindex = function(_, key, value)
-            if key == "animate" then
-                base.widget.set_animate(ret, value)
+            if key == "animation" then
+                base.widget.set_animation(ret, value)
             elseif key == "buttons" then
                 base.widget.set_buttons(ret, value)
             else

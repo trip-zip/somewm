@@ -39,15 +39,15 @@ runner.run_async(function()
     local ruled_before_arrange = false
     ruled.client.append_rule {
         rule = {class = 'ANIMATION_DISABLED'},
-        properties = {animate = false, floating = false, border_width = 0},
+        properties = {animation = false, floating = false, border_width = 0},
         callback = function(c)
-            assert(c.animate == false, 'rule did not store animate')
+            assert(c.animation == false, 'rule did not store animation')
         end,
     }
     local function arranged()
         local c = utils.find_client_by_class('ANIMATION_DISABLED')
         if c then
-            assert(c.animate == false, 'animate rule missed the first arrange')
+            assert(c.animation == false, 'animation rule missed the first arrange')
             ruled_before_arrange = true
         end
     end
@@ -103,11 +103,14 @@ runner.run_async(function()
     exact(c, target)
     beautiful.animation_layout_duration = 0
     other.minimized = false
-    c.animate = false
+    local policy_changes = 0
+    c:connect_signal('property::animation', function() policy_changes = policy_changes + 1 end)
+    c.animation = false
     c.maximized = false
     c:swap(other)
     async.sleep(.1)
-    c.animate = nil
+    c.animation = nil
+    assert(policy_changes == 2, 'client did not signal policy changes')
     t.master_width_factor = .7
     async.sleep(.02)
     local widths = {box(c)[3], box(other)[3]}

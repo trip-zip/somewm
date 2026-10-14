@@ -461,7 +461,7 @@ for _, signal in ipairs{"property::size_hints_honor", "property::struts",
         "property::maximized", "property::maximized_horizontal", "property::maximized_vertical",
         "property::border_width", "property::hidden", "property::floating",
         -- What the client composite reads (awful.client.clay).
-        "property::border_color", "property::opacity", "property::shadow", "property::shape",
+        "property::animation", "property::border_color", "property::opacity", "property::shadow", "property::shape",
         "property::size_hints", "property::urgent", "property::titlebar_top",
         "property::titlebar_right", "property::titlebar_bottom", "property::titlebar_left",
         "property::_committed_size", "focus", "unfocus"} do

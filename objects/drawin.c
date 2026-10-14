@@ -176,7 +176,7 @@ drawin_allocator(lua_State *L)
 	drawin->screen = NULL;
 	drawin->drawable = NULL;  /* Set after drawable creation */
 
-	drawin->animate_ref = LUA_NOREF;
+	drawin->animation_ref = LUA_NOREF;
 	drawin->shape.ref = LUA_NOREF;
 	drawin->shape_radius = -1;
 
@@ -240,8 +240,8 @@ drawin_wipe(drawin_t *w)
 	/* Wipe button array */
 	button_array_wipe(&w->buttons);
 
-	luaL_unref(globalconf_get_lua_State(), LUA_REGISTRYINDEX, w->animate_ref);
-	w->animate_ref = LUA_NOREF;
+	luaL_unref(globalconf_get_lua_State(), LUA_REGISTRYINDEX, w->animation_ref);
+	w->animation_ref = LUA_NOREF;
 	luaL_unref(globalconf_get_lua_State(), LUA_REGISTRYINDEX, w->shape.ref);
 	w->shape.ref = LUA_NOREF;
 
@@ -1250,18 +1250,18 @@ luaA_drawin_set_shadow(lua_State *L, drawin_t *drawin)
 }
 
 static int
-luaA_drawin_get_animate(lua_State *L, drawin_t *d)
+luaA_drawin_get_animation(lua_State *L, drawin_t *d)
 {
-    if (d->animate_ref != LUA_NOREF) lua_rawgeti(L, LUA_REGISTRYINDEX, d->animate_ref);
+    if (d->animation_ref != LUA_NOREF) lua_rawgeti(L, LUA_REGISTRYINDEX, d->animation_ref);
     else lua_pushnil(L);
     return 1;
 }
 
 static int
-luaA_drawin_set_animate(lua_State *L, drawin_t *d)
+luaA_drawin_set_animation(lua_State *L, drawin_t *d)
 {
     if (!lua_isnil(L, -1) && !lua_istable(L, -1))
-        return luaL_error(L, "animate must be a table or nil");
+        return luaL_error(L, "animation must be a table or nil");
     struct widget_transition transition = {0};
     if (lua_istable(L, -1)) {
         lua_getfield(L, -1, "visible");
@@ -1270,14 +1270,14 @@ luaA_drawin_set_animate(lua_State *L, drawin_t *d)
         lua_setfield(L, -2, "transition");
         bool ok = widget_read_transition(L, lua_gettop(L), &transition);
         lua_pop(L, 2);
-        if (!ok) return luaL_error(L, "animate.visible has an invalid transition");
+        if (!ok) return luaL_error(L, "animation.visible has an invalid transition");
     }
-    luaL_unref(L, LUA_REGISTRYINDEX, d->animate_ref);
-    d->animate_ref = LUA_NOREF;
-    if (!lua_isnil(L, -1)) { lua_pushvalue(L, -1); d->animate_ref = luaL_ref(L, LUA_REGISTRYINDEX); }
-    d->animate = transition;
+    luaL_unref(L, LUA_REGISTRYINDEX, d->animation_ref);
+    d->animation_ref = LUA_NOREF;
+    if (!lua_isnil(L, -1)) { lua_pushvalue(L, -1); d->animation_ref = luaL_ref(L, LUA_REGISTRYINDEX); }
+    d->animation = transition;
     declare_mark_all_dirty();
-    luaA_object_emit_signal(L, -3, "property::animate", 0);
+    luaA_object_emit_signal(L, -3, "property::animation", 0);
     return 0;
 }
 
@@ -1440,7 +1440,7 @@ drawin_class_setup(lua_State *L)
 
 	const lua_class_property_t properties[] = {
 		{ "drawable", NULL, (lua_class_propfunc_t) luaA_drawin_get_drawable, NULL },
-		{ "animate", (lua_class_propfunc_t) luaA_drawin_set_animate, (lua_class_propfunc_t) luaA_drawin_get_animate, (lua_class_propfunc_t) luaA_drawin_set_animate },
+		{ "animation", (lua_class_propfunc_t) luaA_drawin_set_animation, (lua_class_propfunc_t) luaA_drawin_get_animation, (lua_class_propfunc_t) luaA_drawin_set_animation },
 		{ "visible", (lua_class_propfunc_t) luaA_drawin_set_visible, (lua_class_propfunc_t) luaA_drawin_get_visible, (lua_class_propfunc_t) luaA_drawin_set_visible },
 		{ "ontop", (lua_class_propfunc_t) luaA_drawin_set_ontop, (lua_class_propfunc_t) luaA_drawin_get_ontop, (lua_class_propfunc_t) luaA_drawin_set_ontop },
 		{ "attachment", (lua_class_propfunc_t) luaA_drawin_set_attachment, (lua_class_propfunc_t) luaA_drawin_get_attachment, (lua_class_propfunc_t) luaA_drawin_set_attachment },

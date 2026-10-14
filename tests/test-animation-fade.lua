@@ -76,7 +76,7 @@ runner.run_async(function()
     mouse.coords{x = 1200, y = 650}
     local popup = awful.popup {
         screen = s, placement = awful.placement.top_left, visible = false, shadow = false, bg = "#00000000",
-        animate = {visible = {duration = 1, enter = 'fade', exit = 'fade'}},
+        animation = {visible = {duration = 1, enter = 'fade', exit = 'fade'}},
         widget = capture.leaf_widget(200, 100, '#e0e0e0'),
     }
     async.sleep(.1)
@@ -94,7 +94,7 @@ runner.run_async(function()
     exact(20, 20, 32)
     assert(not dump():match('POPUP screen'), 'popup survived its fade exit')
 
-    popup.animate = {visible = {duration = .25, enter = 'fade', exit = 'fade'}}
+    popup.animation = {visible = {duration = .25, enter = 'fade', exit = 'fade'}}
     popup.opacity = .5
     popup.visible = true
     async.sleep(.08)
@@ -106,7 +106,7 @@ runner.run_async(function()
 
     local bar = wibox {screen = s, x = 500, y = 0, width = 120, height = 60,
         visible = false, shadow = false, bg = '#00000000',
-        animate = {visible = {duration = .25, enter = 'fade', exit = 'fade'}},
+        animation = {visible = {duration = .25, enter = 'fade', exit = 'fade'}},
         widget = capture.leaf_widget(120, 60, '#e0e0e0')}
     bar.visible = true
     async.sleep(.08)
@@ -125,7 +125,7 @@ runner.run_async(function()
     beautiful.shadow_opacity, beautiful.shadow_color = .75, '#000000'
     awesome.shadow_reload()
     bar.shadow = true
-    bar.animate = {visible = {duration = .25, enter = 'fade'}}
+    bar.animation = {visible = {duration = .25, enter = 'fade'}}
     bar.visible = true
     async.sleep(.08)
     local shadow_alpha = alpha('WIBOX', 520, 20)
@@ -150,7 +150,7 @@ runner.run_async(function()
     beautiful.animation_appear_duration = 1
     ruled.client.append_rule {
         rule = {class = 'FADE_CLIENT'},
-        properties = {animate = {appear = 'fade'}, floating = true, border_width = 0,
+        properties = {animation = {appear = 'fade'}, floating = true, border_width = 0,
             shadow = false, x = 300, y = 100, width = 200, height = 100},
     }
     local report = os.tmpname()
@@ -175,7 +175,7 @@ runner.run_async(function()
     local function chrome_client(class, animation)
         ruled.client.append_rule {
             rule = {class = class},
-            properties = {animate = animation, floating = false, border_width = 0, shadow = false},
+            properties = {animation = animation, floating = false, border_width = 0, shadow = false},
         }
         local path = os.tmpname()
         awful.spawn{binary, class, path, '0', 'ffe0e0e0', '0', '0', '0', '16'}

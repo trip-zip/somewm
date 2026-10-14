@@ -2141,8 +2141,8 @@ declare_widget_frame(drawin_t *d, struct widget_host *host, Clay_ElementId id,
 	uint64_t handle = declare_handle_for(d, DECLARE_KIND_DRAWIN);
 	void *word = leaf_userdata(handle, d->opacity >= 0 ? (float)d->opacity : 1.0f);
 	int16_t z = slot->floating.zIndex;
-    if (d->animate.enabled) {
-        slot->transition = transition_config(&d->animate);
+    if (d->animation.enabled) {
+        slot->transition = transition_config(&d->animation);
         slot->transition.enter.trigger = CLAY_TRANSITION_ENTER_TRIGGER_ON_FIRST_PARENT_FRAME;
     }
 	const struct widget_node *n = &host->tree->nodes[0];
@@ -2213,14 +2213,14 @@ declare_drawin(drawin_t *d, Monitor *m, int16_t z)
 	struct widget_host host;
 	if (!drawin_widget_host(d, &host))
 		return;
-	if (!d->animate.enabled && !host.path_clip && !bw && !shadow_get_effective_config(d->shadow_config, true)->enabled) {
+	if (!d->animation.enabled && !host.path_clip && !bw && !shadow_get_effective_config(d->shadow_config, true)->enabled) {
 		declare_widget_tree(&host, z, leaf_userdata(handle, opacity));
 		return;
 	}
 	Clay_ElementDeclaration frame = leaf_at(z, x - bw, y - bw,
 		d->width + 2 * bw, d->height + 2 * bw);
-    if (d->animate.enabled) {
-        frame.transition = transition_config(&d->animate);
+    if (d->animation.enabled) {
+        frame.transition = transition_config(&d->animation);
         frame.transition.enter.trigger = CLAY_TRANSITION_ENTER_TRIGGER_ON_FIRST_PARENT_FRAME;
     }
     if (frame.transition.properties & CLAY_TRANSITION_PROPERTY_OVERLAY_COLOR) {
