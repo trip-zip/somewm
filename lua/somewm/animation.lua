@@ -2,6 +2,52 @@ local beautiful = require("beautiful")
 local capi = {mousegrabber = mousegrabber}
 local animation = {layout_duration = 0, enabled = true}
 local seen = setmetatable({}, {__mode = "k"})
+--- The duration for every trigger that has none of its own, in seconds.
+-- Unset, nothing animates; 0 snaps.
+-- @beautiful beautiful.animation_duration
+-- @tparam[opt=nil] number animation_duration
+
+--- Tiled clients moving between slots, in seconds; 0 snaps.
+-- Requiring `somewm.layout_animation` sets 0.15.
+-- @beautiful beautiful.animation_layout_duration
+-- @tparam[opt=0] number animation_layout_duration
+
+--- A client maximizing or going fullscreen, in seconds.
+-- @beautiful beautiful.animation_maximize_duration
+-- @tparam[opt=nil] number animation_maximize_duration
+
+--- A client toggling floating, in seconds.
+-- @beautiful beautiful.animation_floating_duration
+-- @tparam[opt=nil] number animation_floating_duration
+
+--- A client mapping, in seconds; needs an entrance from
+-- `animation_appear` or `c.animate.appear`.
+-- @beautiful beautiful.animation_appear_duration
+-- @tparam[opt=nil] number animation_appear_duration
+
+--- A client closing, in seconds; needs an entrance from
+-- `animation_disappear` or `c.animate.disappear`.
+-- @beautiful beautiful.animation_disappear_duration
+-- @tparam[opt=nil] number animation_disappear_duration
+
+--- A tag switch, in seconds. Clients grow in and out unless
+-- `c.animate.tag` names another entrance.
+-- @beautiful beautiful.animation_tag_duration
+-- @tparam[opt=nil] number animation_tag_duration
+
+--- The border colour easing on a focus change, in seconds.
+-- @beautiful beautiful.animation_focus_duration
+-- @tparam[opt=nil] number animation_focus_duration
+
+--- The entrance every client maps with: `grow`, `slide_left`,
+-- `slide_right`, `slide_up`, `slide_down` or `fade`.
+-- @beautiful beautiful.animation_appear
+-- @tparam[opt=nil] string animation_appear
+
+--- The exit every client closes with, same words as `animation_appear`.
+-- @beautiful beautiful.animation_disappear
+-- @tparam[opt=nil] string animation_disappear
+
 local theme_keys = {
     layout = "animation_layout_duration",
     maximize = "animation_maximize_duration",
