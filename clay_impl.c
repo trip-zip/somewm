@@ -10,6 +10,7 @@
 
 #include "clay_impl.h"
 #include <string.h>
+#include <stdlib.h>
 
 struct clay_capacity clay_capacity(void)
 {
@@ -139,6 +140,110 @@ clay_element_declaration(Clay_ElementId id, Clay_ElementDeclaration *out)
 		return false;
 	*out = item->layoutElement->config;
 	return true;
+}
+
+size_t
+clay_transition_snapshot(struct clay_transition_baseline **states, size_t *capacity)
+{
+    Clay_Context *context = Clay_GetCurrentContext();
+    size_t needed = (size_t)context->layoutElementsHashMapInternal.length;
+    if (needed > *capacity) {
+        void *next = realloc(*states, needed * sizeof(**states));
+        if (!next) return 0;
+        *states = next;
+        *capacity = needed;
+    }
+    size_t len = 0;
+    for (int32_t i = 0; i < context->layoutElementsHashMapInternal.length; i++) {
+        Clay_LayoutElementHashMapItem *item = &context->layoutElementsHashMapInternal.internalArray[i];
+        if (item->generation != context->generation + 1 || !item->layoutElement || item->layoutElement->isTextElement)
+            continue;
+        Clay_ElementDeclaration *config = &item->layoutElement->config;
+        (*states)[len++] = (struct clay_transition_baseline){item->elementId.id,
+            {item->boundingBox, config->backgroundColor, config->overlayColor, config->border.color, config->border.width}};
+    }
+    return len;
+}
+
+bool
+clay_transition_admit(const struct clay_transition_baseline *states, size_t len)
+{
+    Clay_Context *context = Clay_GetCurrentContext();
+    Clay_ElementId id = {.id = Clay__GetOpenLayoutElement()->id};
+    for (int32_t i = 0; i < context->transitionDatas.length; i++)
+        if (context->transitionDatas.internalArray[i].elementId == id.id) return true;
+    if (context->transitionDatas.length >= context->transitionDatas.capacity) return false;
+    for (size_t i = 0; i < len; i++) {
+        if (states[i].id != id.id) continue;
+        Clay_LayoutElement *parent = Clay__GetParentElement();
+        Clay__TransitionDataInternalArray_Add(&context->transitionDatas, (Clay__TransitionDataInternal){
+            .elementId = id.id, .parentId = parent->id,
+            .initialState = states[i].state, .currentState = states[i].state, .targetState = states[i].state,
+        });
+        break;
+    }
+    return true;
+}
+
+void
+clay_exit_initial(Clay_TransitionCallbackArguments *arguments)
+{
+    if (arguments->transitionState != CLAY_TRANSITION_STATE_EXITING || arguments->elapsedTime != 0) return;
+    Clay_Context *context = Clay_GetCurrentContext();
+    for (int32_t i = 0; i < context->transitionDatas.length; i++) {
+        Clay__TransitionDataInternal *record = &context->transitionDatas.internalArray[i];
+        if (&record->currentState != arguments->current) continue;
+        record->initialState = record->currentState;
+        arguments->initial = record->initialState;
+        return;
+    }
+}
+
+void
+clay_entrances_first(void)
+{
+    Clay_Context *context = Clay_GetCurrentContext();
+    Clay__TransitionDataInternal *records = context->transitionDatas.internalArray;
+    int32_t first = 0;
+    for (int32_t i = 0; i < context->transitionDatas.length; i++) {
+        Clay_LayoutElementHashMapItem *item = Clay__GetHashMapItem(records[i].elementId);
+        if (!item->appearedThisFrame || !records[i].elementThisFrame->config.transition.enter.setInitialState)
+            continue;
+        Clay__TransitionDataInternal entering = records[i];
+        memmove(&records[first + 1], &records[first], (size_t)(i - first) * sizeof(*records));
+        records[first++] = entering;
+    }
+}
+
+void
+clay_reenter(Clay_ElementId id, bool appearing)
+{
+    Clay_LayoutElementHashMapItem *item = Clay__GetHashMapItem(id.id);
+    if (item == &Clay_LayoutElementHashMapItem_DEFAULT) return;
+    if (appearing) item->appearedThisFrame = true;
+    Clay_Context *context = Clay_GetCurrentContext();
+    for (int32_t i = 0; i < context->transitionDatas.length; i++) {
+        Clay__TransitionDataInternal *data = Clay__TransitionDataInternalArray_Get(&context->transitionDatas, i);
+        if (data->elementId == id.id) data->elapsedTime = 0;
+    }
+}
+
+void
+clay_exit_transition(Clay_ElementId id, Clay_TransitionElementConfig transition)
+{
+    Clay_LayoutElementHashMapItem *item = Clay__GetHashMapItem(id.id);
+    if (item == &Clay_LayoutElementHashMapItem_DEFAULT
+            || item->generation != Clay_GetCurrentContext()->generation + 1
+            || !item->layoutElement || item->layoutElement->isTextElement)
+        return;
+    item->layoutElement->config.transition = transition;
+    Clay_Context *context = Clay_GetCurrentContext();
+    for (int32_t i = 0; i < context->transitionDatas.length; i++) {
+        Clay__TransitionDataInternal *data = Clay__TransitionDataInternalArray_Get(&context->transitionDatas, i);
+        if (data->elementId != id.id) continue;
+        data->elementThisFrame->config.transition = transition;
+        data->transitionOut = transition.exit.setFinalState != NULL;
+    }
 }
 
 void

@@ -41,6 +41,24 @@ All notable changes to somewm will be documented in this file.
 - beautiful.launcher_width: the menubar launcher's width, ahead of
   menubar.geometry.width; without either the launcher spans the workarea.
 
+- Client animation by trigger: `c.animate = {appear, disappear, tag, focus,
+  maximize, floating}` and the rule property of the same name, with the theme
+  keys beautiful.animation_appear and animation_disappear (grow, slide_left,
+  slide_right, slide_up, slide_down, fade) and the durations
+  animation_appear_duration, animation_disappear_duration,
+  animation_tag_duration, animation_focus_duration,
+  animation_maximize_duration and animation_floating_duration. A focus change
+  eases the border colour. With a tag duration set, a tag switch grows clients
+  in and out unless c.animate.tag names another entrance. A client exit
+  animates its frame only; the surface snaps.
+- `animate = {visible = {duration, enter, exit}}` on wibox and awful.popup,
+  with the same entrances. A drawin's exit drops its shadow at once.
+- `widget.animate = {property = duration}` for bg, border_color, border_width,
+  forced_width, forced_height and the progressbar and slider value, and
+  `widget:animate{property = value, duration = d}` for one change. Positions
+  snap. Past 200 transition records per output the remaining nodes snap, with
+  one warning.
+
 ### Changed
 
 - somewm always builds with XWayland support; the -Dxwayland build option is
@@ -137,10 +155,10 @@ All notable changes to somewm will be documented in this file.
 - A shape function is used as the path it traces; anything else it does, such
   as setting a source or painting, is dropped. 2.0 ran it on the widget's cairo
   context.
-- Without somewm.layout_animation loaded, a client frame declares no
-  transition, so an output with clients solves its layout once per frame
-  instead of twice. A client's first frame after the module loads, or after
-  a reload, does not animate.
+- A client frame declares a transition only when the layout duration is above
+  0, so an output with clients solves its layout once per frame instead of
+  twice. A client's first frame after the duration is set, or after a reload,
+  does not animate.
 - A textbox wraps at words whatever its wrap is; wrap = "char" warns once. 2.0
   broke inside a word for "char", and for the default "word_char" when a word
   did not fit the line.
@@ -153,6 +171,10 @@ All notable changes to somewm will be documented in this file.
   pointer when snipping starts, rather than the whole root; 2.0 drew it across
   every output. A drag that crosses screens still selects its root-space box,
   and the rectangle shows on the screen it started on.
+
+- `somewm.layout_animation` is deprecated. Layout changes animate when
+  `somewm.animation.layout_duration` or `beautiful.animation_layout_duration`
+  is above 0; requiring the old module still sets 0.15 as it always did.
 
 ### Removed
 
@@ -197,8 +219,8 @@ All notable changes to somewm will be documented in this file.
 - `awful.wallpaper` `uncovered_areas_color`, `dpi` and `get_dpi`. Setting one
   warns once: the root wallpaper shows in the uncovered areas, and the output
   scale applies.
-- `carousel.scroll_duration`. Scrolling animates client slots through
-  `somewm.layout_animation`.
+- `carousel.scroll_duration`. Scrolling animates client slots over the layout
+  duration.
 - `somewm.layout_animation.easing`. Clay animates the transition; setting it
   warns.
 - The drawin `surface_scale` property. A drawin has no surface of its own to
@@ -225,6 +247,8 @@ All notable changes to somewm will be documented in this file.
   `base.fit_widget` and `base.layout_widget`, which are gone.
 - The wibox `__tostring`. `tostring()` of a wibox prints the table, where 2.0
   printed `wibox: <drawable> (<table>)`.
+
+- `awesome.start_animation`. An animation is a transition on the declaration.
 
 ### Fixed
 

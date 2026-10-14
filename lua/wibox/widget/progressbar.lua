@@ -325,7 +325,7 @@ local properties = { "border_color", "color"     , "background_color",
 
 
 
-local function describe_progressbar(w)
+local function describe_progressbar(w, _, st, item)
     local p = w._private
     if p.ticks then
         clay.ignore(w, "ticks", "are not drawn")
@@ -390,7 +390,7 @@ local function describe_progressbar(w)
         end
     end
     local bar
-    if ratio > 0 and foreground then
+    if foreground then
         bar = { w = { percent = ratio }, wsrc = "user", h = "grow" }
         if bar_radius then
             bar.radius = bar_radius
@@ -404,6 +404,10 @@ local function describe_progressbar(w)
                 return clay.shape_ops(bar_shape, width - bbw, height - bbw, bbw / 2, bbw / 2)
             end
         end
+    end
+    if bar then
+        clay.animate(w, bar, {value = "width"}, st, item)
+        if ratio == 0 and not bar.transition then bar = nil end
     end
     -- Percent contributes no fit content (third_party/clay.h:2273), and
     -- uses its grow parent's size minus padding and gaps (:2292-2293).
@@ -421,7 +425,7 @@ local function describe_progressbar(w)
     } }
 end
 
-progressbar._clay = { describe = describe_progressbar }
+progressbar._clay = { describe = describe_progressbar, animate_value = true }
 
 --- Set the progressbar value.
 --

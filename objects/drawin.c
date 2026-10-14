@@ -176,6 +176,7 @@ drawin_allocator(lua_State *L)
 	drawin->screen = NULL;
 	drawin->drawable = NULL;  /* Set after drawable creation */
 
+	drawin->animate_ref = LUA_NOREF;
 	drawin->shape.ref = LUA_NOREF;
 	drawin->shape_radius = -1;
 
@@ -239,6 +240,8 @@ drawin_wipe(drawin_t *w)
 	/* Wipe button array */
 	button_array_wipe(&w->buttons);
 
+	luaL_unref(globalconf_get_lua_State(), LUA_REGISTRYINDEX, w->animate_ref);
+	w->animate_ref = LUA_NOREF;
 	luaL_unref(globalconf_get_lua_State(), LUA_REGISTRYINDEX, w->shape.ref);
 	w->shape.ref = LUA_NOREF;
 
@@ -1247,6 +1250,38 @@ luaA_drawin_set_shadow(lua_State *L, drawin_t *drawin)
 }
 
 static int
+luaA_drawin_get_animate(lua_State *L, drawin_t *d)
+{
+    if (d->animate_ref != LUA_NOREF) lua_rawgeti(L, LUA_REGISTRYINDEX, d->animate_ref);
+    else lua_pushnil(L);
+    return 1;
+}
+
+static int
+luaA_drawin_set_animate(lua_State *L, drawin_t *d)
+{
+    if (!lua_isnil(L, -1) && !lua_istable(L, -1))
+        return luaL_error(L, "animate must be a table or nil");
+    struct widget_transition transition = {0};
+    if (lua_istable(L, -1)) {
+        lua_getfield(L, -1, "visible");
+        lua_newtable(L);
+        lua_pushvalue(L, -2);
+        lua_setfield(L, -2, "transition");
+        bool ok = widget_read_transition(L, lua_gettop(L), &transition);
+        lua_pop(L, 2);
+        if (!ok) return luaL_error(L, "animate.visible has an invalid transition");
+    }
+    luaL_unref(L, LUA_REGISTRYINDEX, d->animate_ref);
+    d->animate_ref = LUA_NOREF;
+    if (!lua_isnil(L, -1)) { lua_pushvalue(L, -1); d->animate_ref = luaL_ref(L, LUA_REGISTRYINDEX); }
+    d->animate = transition;
+    declare_mark_all_dirty();
+    luaA_object_emit_signal(L, -3, "property::animate", 0);
+    return 0;
+}
+
+static int
 luaA_drawin_get_shape(lua_State *L, drawin_t *d)
 {
 	if (d->shape.ref != LUA_NOREF)
@@ -1405,6 +1440,7 @@ drawin_class_setup(lua_State *L)
 
 	const lua_class_property_t properties[] = {
 		{ "drawable", NULL, (lua_class_propfunc_t) luaA_drawin_get_drawable, NULL },
+		{ "animate", (lua_class_propfunc_t) luaA_drawin_set_animate, (lua_class_propfunc_t) luaA_drawin_get_animate, (lua_class_propfunc_t) luaA_drawin_set_animate },
 		{ "visible", (lua_class_propfunc_t) luaA_drawin_set_visible, (lua_class_propfunc_t) luaA_drawin_get_visible, (lua_class_propfunc_t) luaA_drawin_set_visible },
 		{ "ontop", (lua_class_propfunc_t) luaA_drawin_set_ontop, (lua_class_propfunc_t) luaA_drawin_get_ontop, (lua_class_propfunc_t) luaA_drawin_set_ontop },
 		{ "attachment", (lua_class_propfunc_t) luaA_drawin_set_attachment, (lua_class_propfunc_t) luaA_drawin_get_attachment, (lua_class_propfunc_t) luaA_drawin_set_attachment },

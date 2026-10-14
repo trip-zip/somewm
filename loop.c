@@ -19,7 +19,6 @@
 #include "luaa.h"
 #include "stack.h"
 #include "banning.h"
-#include "animation.h"
 #include "event_queue.h"
 #include "input.h"
 #include "objects/client.h"
@@ -280,22 +279,13 @@ some_refresh(void)
 	clock_gettime(CLOCK_MONOTONIC, &bench_ts[1]);
 #endif
 
-	/* Step 1.5: Tick frame-synced animations - tick callbacks that modify
-	 * client geometry will have their changes applied by client_refresh()
-	 * in the same cycle. */
-	animation_tick_all();
-
-#ifdef SOMEWM_BENCH
-	clock_gettime(CLOCK_MONOTONIC, &bench_ts[2]);
-#endif
-
 	/* Step 2: Refresh drawins (wibox/panels) FIRST - matches AwesomeWM order
 	 * AwesomeWM calls drawin_refresh() BEFORE client_refresh() in awesome_refresh().
 	 * This ensures wibar geometry is applied before client layout calculations. */
 	drawin_refresh();
 
 #ifdef SOMEWM_BENCH
-	clock_gettime(CLOCK_MONOTONIC, &bench_ts[3]);
+	clock_gettime(CLOCK_MONOTONIC, &bench_ts[2]);
 #endif
 
 	/* Step 3: Apply client changes (geometry, borders, focus)
@@ -303,7 +293,7 @@ some_refresh(void)
 	client_refresh();
 
 #ifdef SOMEWM_BENCH
-	clock_gettime(CLOCK_MONOTONIC, &bench_ts[4]);
+	clock_gettime(CLOCK_MONOTONIC, &bench_ts[3]);
 #endif
 
 	/* Step 4: Update client visibility (banning) */
@@ -323,7 +313,7 @@ some_refresh(void)
 		motionnotify(0, NULL, 0, 0, 0, 0);
 
 #ifdef SOMEWM_BENCH
-	clock_gettime(CLOCK_MONOTONIC, &bench_ts[5]);
+	clock_gettime(CLOCK_MONOTONIC, &bench_ts[4]);
 #endif
 
 	/* Step 5: Update window stacking (Z-order)
@@ -331,7 +321,7 @@ some_refresh(void)
 	stack_refresh();
 
 #ifdef SOMEWM_BENCH
-	clock_gettime(CLOCK_MONOTONIC, &bench_ts[6]);
+	clock_gettime(CLOCK_MONOTONIC, &bench_ts[5]);
 #endif
 
 	/* Step 6: Destroy windows queued for deferred destruction (XWayland only)
@@ -339,10 +329,10 @@ some_refresh(void)
 	client_destroy_later();
 
 #ifdef SOMEWM_BENCH
-	clock_gettime(CLOCK_MONOTONIC, &bench_ts[7]);
+	clock_gettime(CLOCK_MONOTONIC, &bench_ts[6]);
 	for (int i = 0; i < BENCH_STAGE_COUNT; i++)
 		bench_stage_record(i, timespec_diff_ns(&bench_ts[i], &bench_ts[i + 1]));
-	bench_record_frame_time(timespec_diff_ns(&bench_ts[0], &bench_ts[7]));
+	bench_record_frame_time(timespec_diff_ns(&bench_ts[0], &bench_ts[6]));
 #endif
 
 	in_refresh = false;

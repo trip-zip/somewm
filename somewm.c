@@ -78,7 +78,6 @@
 #include "globalconf.h"
 #include "luaa.h"
 #include "stack.h"
-#include "animation.h"
 #include "ipc.h"
 #include "dbus.h"
 #include "objects/spawn.h"
@@ -243,9 +242,6 @@ cleanup(void)
 
 	/* Destroy Wayland clients while Lua is still alive so signal handlers work. */
 	wl_display_destroy_clients(dpy);
-
-	/* Free animations before Lua state (they hold registry refs) */
-	animation_cleanup();
 
 	/* Drain pending event queue refs before tearing down the Lua state.
 	 * client_unmanage() runs during wl_display_destroy_clients() and
@@ -1078,10 +1074,6 @@ setup(void)
 
 	luaA_init();
 	some_event_queue_init();
-
-	/* Initialize animation subsystem. The handle metatable is registered per
-	 * state by luaA_register_state, so only the event-loop side is set up here. */
-	animation_init(event_loop);
 
 	/* Initialize D-Bus for notifications (AwesomeWM compatibility) */
 	a_dbus_init();

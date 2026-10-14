@@ -162,7 +162,6 @@ local modkey = "Mod4"
 -- between positions on layout changes, mwfact tweaks, client spawn/close, etc.
 -- local layout_anim = require("somewm.layout_animation")
 -- layout_anim.duration = 0.15
--- layout_anim.easing   = "ease-out-cubic"
 
 -- Custom IPC commands. After reload, callable as:
 --   somewm-client run focused-tag

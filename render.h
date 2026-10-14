@@ -111,6 +111,10 @@ void render_set_output_id(struct render_state *rs, uint32_t id);
 bool render_shadow_box(struct render_state *rs, uint32_t id, Clay_BoundingBox *box);
 
 /* Move the per-output UI tree to the output's position in the layout. */
+void render_fades_begin(struct render_state *rs);
+void render_fade_carrier(struct render_state *rs, const Clay_RenderCommand *cmd);
+void render_fade_alias(struct render_state *rs, uint64_t owner, uint64_t ancestor);
+
 void render_set_position(struct render_state *rs, int x, int y);
 
 /* The output's scale, applied to every raster from the next reconcile on: buffers

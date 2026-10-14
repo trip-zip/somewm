@@ -258,6 +258,12 @@ struct rnode_slot {
 };
 
 struct render_state {
+    struct fade_value {uint64_t owner; uint32_t id; float alpha; bool opened;} *fades;
+    size_t fades_len, fades_cap;
+    bool fades_prepared;
+    struct fade_alias {uint64_t owner, ancestor; bool seen;} *fade_aliases;
+    size_t fade_aliases_len, fade_aliases_cap;
+    float fade_factor;
 	uint32_t output_id;
 	bool visibility_batched;
 	struct shadow_cache *shadows;
@@ -334,6 +340,67 @@ struct render_state *render_create(struct wlr_scene_tree *parent) {
 	rs->tree = wlr_scene_tree_create(parent);
 	rs->scale = 1.0f;
 	return rs;
+}
+
+void render_fades_begin(struct render_state *rs)
+{
+    rs->fades_len = 0;
+    rs->fades_prepared = true;
+}
+
+void render_fade_carrier(struct render_state *rs, const Clay_RenderCommand *cmd)
+{
+    Clay_Color color = cmd->renderData.overlayColor.color;
+    if (color.r != 0 || color.g != 0 || color.b != 0 || color.a < 0 || color.a > 1) {
+        wlr_log(WLR_ERROR, "unsupported overlay tint");
+        abort();
+    }
+    if (rs->fades_len == rs->fades_cap) {
+        rs->fades_cap = rs->fades_cap ? rs->fades_cap * 2 : 8;
+        p_realloc(&rs->fades, rs->fades_cap);
+    }
+    rs->fades[rs->fades_len++] = (struct fade_value){
+        .owner = (uintptr_t)cmd->userData & RENDER_UD_OWNER_MASK, .id = cmd->id, .alpha = color.a};
+}
+
+static struct fade_value *fade_value(struct render_state *rs, uint32_t id)
+{
+    for (size_t i = 0; i < rs->fades_len; i++)
+        if (rs->fades[i].id == id) return &rs->fades[i];
+    return NULL;
+}
+
+/* Floating titlebars and protocol popups use their frame's carrier through authored owner links. */
+void render_fade_alias(struct render_state *rs, uint64_t owner, uint64_t ancestor)
+{
+    for (size_t i = 0; i < rs->fade_aliases_len; i++) {
+        if (rs->fade_aliases[i].owner != owner) continue;
+        rs->fade_aliases[i].ancestor = ancestor;
+        return;
+    }
+    if (rs->fade_aliases_len == rs->fade_aliases_cap) {
+        rs->fade_aliases_cap = rs->fade_aliases_cap ? rs->fade_aliases_cap * 2 : 8;
+        p_realloc(&rs->fade_aliases, rs->fade_aliases_cap);
+    }
+    rs->fade_aliases[rs->fade_aliases_len++] = (struct fade_alias){.owner = owner, .ancestor = ancestor};
+}
+
+static float command_opacity(struct render_state *rs, const Clay_RenderCommand *cmd)
+{
+    return render_userdata_opacity(cmd->userData) * rs->fade_factor;
+}
+
+static float fade_factor(struct render_state *rs, uint64_t owner)
+{
+    for (size_t i = 0; i < rs->fades_len; i++)
+        if (rs->fades[i].owner == owner && owner) return 1 - rs->fades[i].alpha;
+    for (size_t i = 0; i < rs->fade_aliases_len; i++)
+        if (rs->fade_aliases[i].owner == owner) {
+            rs->fade_aliases[i].seen = true;
+            for (size_t j = 0; j < rs->fades_len; j++)
+                if (rs->fades[j].owner == rs->fade_aliases[i].ancestor) return 1 - rs->fades[j].alpha;
+        }
+    return 1;
 }
 
 void render_set_enabled(struct render_state *rs, bool on) {
@@ -1050,7 +1117,7 @@ static int reconcile_rect_raster(struct render_state *rs, struct rnode *n,
 		muts++;
 	}
 
-	float opacity = render_userdata_opacity(cmd->userData);
+	float opacity = command_opacity(rs, cmd);
 	if (is_new || opacity != n->opacity) {
 		wlr_scene_buffer_set_opacity(sb, opacity);
 		n->opacity = opacity;
@@ -1087,7 +1154,7 @@ static int reconcile_rectangle(struct render_state *rs, struct rnode *n,
 	}
 	return raster ? reconcile_rect_raster(rs, n, cmd, rbox, mask)
 		: reconcile_rect(rs, n, cmd->boundingBox, rbox, rd->backgroundColor,
-			render_userdata_opacity(cmd->userData), rd->cornerRadius, NULL,
+			command_opacity(rs, cmd), rd->cornerRadius, NULL,
 			(Clay_CornerRadius){0}, mask);
 }
 
@@ -1159,7 +1226,7 @@ static int reconcile_border(struct render_state *rs, struct rnode *n,
 		box.width - bw.left - bw.right, box.height - bw.top - bw.bottom };
 	bool ring = hole.width <= 0 || hole.height <= 0;
 	return reconcile_rect(rs, n, box, rbox, bd->color,
-		render_userdata_opacity(cmd->userData), bd->cornerRadius,
+		command_opacity(rs, cmd), bd->cornerRadius,
 		ring ? NULL : &hole, inset_corner_radius(bd->cornerRadius, bw), mask);
 }
 
@@ -1392,7 +1459,7 @@ static int reconcile_text(struct render_state *rs, struct rnode *n,
 		muts++;
 	}
 
-	float opacity = render_userdata_opacity(cmd->userData);
+	float opacity = command_opacity(rs, cmd);
 	if (opacity != n->opacity) {
 		wlr_scene_buffer_set_opacity(sb, opacity);
 		n->opacity = opacity;
@@ -1591,7 +1658,7 @@ static int reconcile_image(struct render_state *rs, struct rnode *n,
 		muts++;
 	}
 
-	float opacity = render_userdata_opacity(cmd->userData);
+	float opacity = command_opacity(rs, cmd);
 	if (opacity != n->opacity) {
 		wlr_scene_buffer_set_opacity(sb, opacity);
 		n->opacity = opacity;
@@ -1930,6 +1997,8 @@ static int reconcile_shadow(struct render_state *rs, struct rnode *n,
 {
 	const struct render_shadow *style = render_shadow_of(cmd->renderData.custom.customData);
 	bool fresh = n->node == NULL;
+    float opacity = command_opacity(rs, cmd);
+    bool opacity_changed = opacity != n->opacity;
 	bool changed = fresh || n->raster_scale != rs->scale
 		|| n->shadow->style.radius != style->radius
 		|| n->shadow->style.corner_radius != style->corner_radius
@@ -1953,12 +2022,16 @@ static int reconcile_shadow(struct render_state *rs, struct rnode *n,
 		n->shadow = cache;
 		n->raster_bytes = cache->bytes; /* per-command footprint, shared in state total */
 		n->raster_scale = rs->scale;
-		float color[4] = {style->rgba[0] * style->rgba[3],
-			style->rgba[1] * style->rgba[3], style->rgba[2] * style->rgba[3], style->rgba[3]};
-		for (int i = 0; i < SHADOW_FILL_COUNT; i++)
-			wlr_scene_rect_set_color(n->shadow_fills[i], color);
 		muts++;
 	}
+    if (changed || opacity_changed) {
+        float color[4] = {style->rgba[0] * style->rgba[3] * opacity,
+            style->rgba[1] * style->rgba[3] * opacity, style->rgba[2] * style->rgba[3] * opacity,
+            style->rgba[3] * opacity};
+        for (int i = 0; i < SHADOW_FILL_COUNT; i++)
+            wlr_scene_rect_set_color(n->shadow_fills[i], color);
+        if (!changed) muts++;
+    }
 	int r = style->radius, cr = style->corner_radius, cs = r + cr;
 	int w = (int)cmd->boundingBox.width, h = (int)cmd->boundingBox.height;
 	int mw = w - 2 * cs, mh = h - 2 * cs;
@@ -1990,6 +2063,7 @@ static int reconcile_shadow(struct render_state *rs, struct rnode *n,
 		}
 		if (tile) {
 			struct wlr_scene_buffer *sb = n->shadow_tiles[i];
+            if (opacity_changed) wlr_scene_buffer_set_opacity(sb, opacity);
 			if (sb->dst_width != b[2] || sb->dst_height != b[3]) {
 				wlr_scene_buffer_set_dest_size(sb, b[2], b[3]);
 				muts++;
@@ -2002,6 +2076,7 @@ static int reconcile_shadow(struct render_state *rs, struct rnode *n,
 			}
 		}
 	}
+    n->opacity = opacity;
 	return muts;
 }
 
@@ -2053,7 +2128,7 @@ static int reconcile_shape(struct render_state *rs, struct rnode *n,
 		n->raster_scale = rs->scale;
 		muts++;
 	}
-	float opacity = render_userdata_opacity(cmd->userData);
+	float opacity = command_opacity(rs, cmd);
 	if (opacity != n->opacity) {
 		wlr_scene_buffer_set_opacity(sb, opacity);
 		n->opacity = opacity;
@@ -2110,7 +2185,7 @@ static int reconcile_surface(struct render_state *rs, struct rnode *n,
 	}
 
 	int muts = 0;
-	float opacity = render_userdata_opacity(cmd->userData);
+	float opacity = command_opacity(rs, cmd);
 	bool first_borrow = n->node == NULL;
 	if (first_borrow) {
 		wlr_scene_node_reparent(&tree->node, rs->tree);
@@ -2454,6 +2529,10 @@ int render_reconcile(struct render_state *rs, Clay_RenderCommandArray commands,
 	rs->visibility_batched = false;
 	rs->node_recreated = false;
 	rs->scopes_len = 0;
+    if (!rs->fades_prepared) rs->fades_len = 0;
+    rs->fades_prepared = false;
+    rs->fade_factor = 1;
+    for (size_t i = 0; i < rs->fade_aliases_len; i++) rs->fade_aliases[i].seen = false;
 	if ((size_t)commands.length > rs->scopes_cap) {
 		rs->scopes_cap = commands.length;
 		p_realloc(&rs->scopes, rs->scopes_cap);
@@ -2491,10 +2570,21 @@ int render_reconcile(struct render_state *rs, Clay_RenderCommandArray commands,
 	size_t build_len = 0;
 	for (int32_t i = 0; i < commands.length; i++) {
 		Clay_RenderCommand *cmd = Clay_RenderCommandArray_Get(&commands, i);
+        if (cmd->commandType == CLAY_RENDER_COMMAND_TYPE_OVERLAY_COLOR_START) {
+            struct fade_value *value = fade_value(rs, cmd->id);
+            if (!value) {
+                render_fade_carrier(rs, cmd);
+                value = &rs->fades[rs->fades_len - 1];
+            }
+            value->opened = true;
+        }
+        rs->fade_factor = fade_factor(rs, ((uintptr_t)cmd->userData & RENDER_UD_OWNER_MASK));
 		Clay_RenderCommand decoration;
 		if (cmd->commandType == CLAY_RENDER_COMMAND_TYPE_CUSTOM &&
 				cmd->renderData.custom.customData != RENDER_CLIP_MARK &&
 				((uintptr_t)cmd->renderData.custom.customData & RENDER_SHADOW_TAG)) {
+            struct fade_value *value = fade_value(rs, render_shadow_of(cmd->renderData.custom.customData)->owner_id);
+            rs->fade_factor = value ? 1 - value->alpha : 1;
 			decoration = *cmd;
 			decoration.boundingBox = shadow_owner_box(
 				render_shadow_of(cmd->renderData.custom.customData));
@@ -2649,6 +2739,17 @@ int render_reconcile(struct render_state *rs, Clay_RenderCommandArray commands,
 			clip_depth++;
 			break;
 		}
+		case CLAY_RENDER_COMMAND_TYPE_OVERLAY_COLOR_START:
+            break;
+        case CLAY_RENDER_COMMAND_TYPE_OVERLAY_COLOR_END: {
+            struct fade_value *value = fade_value(rs, cmd->id);
+            if (!value || !value->opened) {
+                wlr_log(WLR_ERROR, "unmatched fade end");
+                abort();
+            }
+            value->opened = false;
+            break;
+        }
 		case CLAY_RENDER_COMMAND_TYPE_SCISSOR_END:
 			if (clip_depth > 0) {
 				clip_depth--;
@@ -2657,8 +2758,7 @@ int render_reconcile(struct render_state *rs, Clay_RenderCommandArray commands,
 			}
 			break;
 		default:
-			/* Unsupported commands (including pinned overlay-color scopes)
-			 * are rejected; their properties remain unexposed in M0a. */
+			/* Every emitted command must have a reconciler. */
 			wlr_log(WLR_ERROR, "unhandled render command type %d",
 				cmd->commandType);
 			abort();
@@ -2812,11 +2912,18 @@ int render_reconcile(struct render_state *rs, Clay_RenderCommandArray commands,
 	verify_order(rs);
 #endif
 
+    for (size_t i = 0; i < rs->fade_aliases_len;) {
+        if (rs->fade_aliases[i].seen) i++;
+        else rs->fade_aliases[i] = rs->fade_aliases[--rs->fade_aliases_len];
+    }
+
 	return muts;
 }
 
 void render_destroy(struct render_state *rs,
 		const struct render_client_hooks *hooks) {
+    free(rs->fades);
+    free(rs->fade_aliases);
 	/* Borrowed trees must leave before the render tree is destroyed, or
 	 * the clients' scene nodes would be destroyed with it. */
 	for (size_t i = 0; i < rs->len; i++) {

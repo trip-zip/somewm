@@ -299,7 +299,7 @@ end
 
 
 
-local function describe_slider(w)
+local function describe_slider(w, _, st, item)
     local p = w._private
     local bar_color = p.bar_color or beautiful.slider_bar_color
     local active = p.bar_active_color or beautiful.slider_bar_active_color
@@ -377,17 +377,18 @@ local function describe_slider(w)
         end
     end
     if draws_active then
-        bar.children = { { w = "grow", h = "grow", fill = active_fill,
+        local fill = {w = {percent = math.max(0, math.min(1, rate))}, h = "grow", fill = active_fill,
             shape = function(width, height)
                 local slider_height = bar_h and height or height + bar_margins[3] + bar_margins[4]
                 local handle_width = hw or math.floor(slider_height / 2)
-                local baw = math.floor(rate * width - (handle_width - hbw / 2) * (rate - 0.5))
-                if baw <= 0 then
-                    return {}
-                end
+                local baw = math.floor(width - (handle_width - hbw / 2) * (rate - 0.5))
+                if baw <= 0 then return {} end
                 return clay.shape_ops(shape.rectangle, 0.99 * baw, height)
-            end } }
+            end}
+        clay.animate(w, fill, {value = "width"}, st, item)
+        bar.children = {fill}
     end
+
     -- Floating grow elements take their parent's box (third_party/clay.h:2224-2237)
     -- and paint in declaration order at equal zIndex (:2603-2615).
     return { w = "grow", h = "grow", specs = {
@@ -403,7 +404,7 @@ local function describe_slider(w)
     } }
 end
 
-slider._clay = { describe = describe_slider }
+slider._clay = { describe = describe_slider, animate_value = true }
 
 -- Move the handle to the correct location
 local function move_handle(self, width, x, _)

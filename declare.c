@@ -82,12 +82,24 @@ struct scrollbar_record {
 	Clay_Dimensions content, box;
 };
 
+struct exit_owner { uint64_t handle; int ref; };
+
 struct declare_band {
     bool exhausted, context_valid, inspector_refused;
     bool inspector_solving, inspector_collision_logged;
     int inspector_elements, inspector_strings, inspector_authored;
     char *retained_dump;
     struct clay_capacity committed_capacity;
+    const struct declare_record *previous_records;
+    size_t previous_records_len;
+    struct clay_transition_baseline *transition_baselines;
+    size_t transition_baselines_len, transition_baselines_cap;
+    bool transition_budget_warned;
+    const char *output_name;
+    uint32_t *entrances;
+    size_t entrances_len, entrances_cap;
+    struct exit_owner *exit_owners;
+    size_t exit_owners_len, exit_owners_cap;
     uint64_t *command_handles;
     size_t command_handles_len;
     struct declared_host *hosts;
@@ -185,8 +197,11 @@ struct declare_record {
 	Clay_CornerRadius radius;
 	/* A widget tree root: the host whose nodes the dump walks under it. */
 	bool has_host;
+    bool client_exit;
+    struct widget_transition exit_policy;
 	struct widget_host host;
 };
+
 
 struct declare_output {
 	struct wlr_output *wlr_output;
@@ -372,10 +387,26 @@ declare_begin_layout(void)
 static struct declare_band *recording;
 
 static void
+root_entrance(Clay_ElementId id, const Clay_ElementDeclaration *declaration)
+{
+    if (recording->exhausted) return;
+    if (!declaration->transition.enter.setInitialState) return;
+    for (size_t i = 0; i < recording->previous_records_len; i++)
+        if (recording->previous_records[i].id == id.id) return;
+    clay_reenter(id, true);
+    if (recording->entrances_len == recording->entrances_cap) {
+        recording->entrances_cap = recording->entrances_cap ? recording->entrances_cap * 2 : 8;
+        p_realloc(&recording->entrances, recording->entrances_cap);
+    }
+    recording->entrances[recording->entrances_len++] = id.id;
+}
+
+static void
 record_begin(struct declare_band *band)
 {
 	recording = band;
 	band->records_len = 0;
+    band->entrances_len = 0;
 	band->settle_len = 0;
 }
 
@@ -409,7 +440,18 @@ static void native_configure(const Clay_ElementDeclaration *declaration)
         fprintf(stderr, "clay scrolling declarations exceed 100 records; retained scene\n");
         return;
     }
-    Clay__ConfigureOpenElementPtr(declaration);
+    Clay_ElementDeclaration configured = *declaration;
+    if (configured.transition.handler) {
+        if (!clay_transition_admit(recording->transition_baselines, recording->transition_baselines_len)) {
+            configured.transition = (Clay_TransitionElementConfig){0};
+            if (!recording->transition_budget_warned) {
+                recording->transition_budget_warned = true;
+                fprintf(stderr, "clay output %s: drawin %llu exceeds 200 transition records; remaining nodes snap\n",
+                    recording->output_name, (unsigned long long)declare_userdata_handle(configured.userData));
+            }
+        }
+    }
+    Clay__ConfigureOpenElementPtr(&configured);
     if (clip) clay_clip_restore();
 }
 
@@ -453,8 +495,37 @@ declare_element_word(struct declare_band *band, Clay_ElementId id,
 	*w = (struct element_word) { .id = id.id, .src = { wsrc, hsrc } };
 }
 
-/* Record one declared element: what somewm knows about the id, for the
- * dump to name it by. */
+/* Exit subtrees still refer to their owners' shape and shadow storage. */
+static void
+hold_exit_owner(struct declare_band *band, uint64_t handle)
+{
+    for (size_t i = 0; i < band->exit_owners_len; i++)
+        if (band->exit_owners[i].handle == handle) return;
+    enum declare_kind kind;
+    void *owner = declare_handle_get(handle, &kind);
+    if (!owner || (kind != DECLARE_KIND_CLIENT && kind != DECLARE_KIND_DRAWIN)) return;
+    if (band->exit_owners_len == band->exit_owners_cap) {
+        band->exit_owners_cap = band->exit_owners_cap ? band->exit_owners_cap * 2 : 8;
+        p_realloc(&band->exit_owners, band->exit_owners_cap);
+    }
+    luaA_object_push(globalconf_L, owner);
+    band->exit_owners[band->exit_owners_len++] = (struct exit_owner) {
+        handle, luaL_ref(globalconf_L, LUA_REGISTRYINDEX)};
+}
+
+static void
+release_exit_owners(struct declare_band *band, const uint64_t *owners, size_t len)
+{
+    for (size_t i = 0; i < band->exit_owners_len;) {
+        struct exit_owner owner = band->exit_owners[i];
+        bool used = false;
+        for (size_t j = 0; j < len; j++) used |= owners[j] == owner.handle;
+        if (used) { i++; continue; }
+        if (globalconf_L) luaL_unref(globalconf_L, LUA_REGISTRYINDEX, owner.ref);
+        band->exit_owners[i] = band->exit_owners[--band->exit_owners_len];
+    }
+}
+
 static void
 record_open(const char *role, uint64_t handle, Clay_ElementId id,
 	const Clay_ElementDeclaration *decl, enum declare_src wsrc,
@@ -497,6 +568,19 @@ record_open(const char *role, uint64_t handle, Clay_ElementId id,
 	if (host)
 		r->host = *host;
 	band->records_len++;
+    if (decl->transition.exit.setFinalState) hold_exit_owner(band, handle);
+}
+
+static void
+record_client_exit(const struct widget_node *n)
+{
+    if (!recording || recording->exhausted || !recording->records_len
+            || !n->name || strcmp(n->name, "CLIENT") || !n->transition.enabled) return;
+    struct declare_record *record = &recording->records[recording->records_len - 1];
+    record->client_exit = true;
+    record->exit_policy = n->transition;
+    if (n->transition.exit_state || n->transition.tag_exit)
+        hold_exit_owner(recording, n->client);
 }
 
 static uint64_t
@@ -963,7 +1047,7 @@ screen_hosted(screen_t *s, Monitor *m)
  * surface, shadow margins included. Creation order keeps parents first. */
 static void
 declare_popups(struct wlr_surface *parent, Clay_ElementId parent_id,
-	int geo_x, int geo_y)
+	int geo_x, int geo_y, uint64_t ancestor)
 {
 	Popup *p;
 
@@ -977,6 +1061,7 @@ declare_popups(struct wlr_surface *parent, Clay_ElementId parent_id,
 		if (popup->parent != parent || !p->tree || !surface->mapped)
 			continue;
 		handle = declare_handle_for(p, DECLARE_KIND_POPUP);
+        render_fade_alias(recording->render, handle, ancestor);
 		id = Clay__HashStringWithOffset(CLAY_STRING("popup"), (uint32_t)handle, 0);
 		Clay_ElementDeclaration s = {
 			.layout.sizing = { CLAY_SIZING_FIXED(surface->current.width),
@@ -993,7 +1078,7 @@ declare_popups(struct wlr_surface *parent, Clay_ElementId parent_id,
 			.userData = leaf_userdata(handle, 1.0f),
 		};
 		declare_leaf("popup", handle, DECLARE_SRC_PROTOCOL, DECLARE_SRC_PROTOCOL, id, &s);
-		declare_popups(surface, id, geo.x, geo.y);
+		declare_popups(surface, id, geo.x, geo.y, ancestor);
 	}
 }
 
@@ -1003,6 +1088,7 @@ declare_popups(struct wlr_surface *parent, Clay_ElementId parent_id,
 static bool
 transition_ease_out(Clay_TransitionCallbackArguments arguments)
 {
+    clay_exit_initial(&arguments);
 	bool complete = Clay_EaseOut(arguments);
 	Clay_BoundingBox *box = &arguments.current->boundingBox;
 
@@ -1018,6 +1104,67 @@ transition_collapse(Clay_TransitionData state, Clay_TransitionProperty propertie
     if (properties & CLAY_TRANSITION_PROPERTY_WIDTH) state.boundingBox.width = 0;
     if (properties & CLAY_TRANSITION_PROPERTY_HEIGHT) state.boundingBox.height = 0;
     return state;
+}
+
+static Clay_TransitionData
+transition_slide_left(Clay_TransitionData state, Clay_TransitionProperty properties)
+{
+    (void)properties;
+    state.boundingBox.x = -state.boundingBox.width;
+    return state;
+}
+
+static Clay_TransitionData
+transition_slide_right(Clay_TransitionData state, Clay_TransitionProperty properties)
+{
+    (void)properties;
+    state.boundingBox.x = Clay_GetLayoutDimensions().width;
+    return state;
+}
+
+static Clay_TransitionData
+transition_slide_up(Clay_TransitionData state, Clay_TransitionProperty properties)
+{
+    (void)properties;
+    state.boundingBox.y = -state.boundingBox.height;
+    return state;
+}
+
+static Clay_TransitionData
+transition_slide_down(Clay_TransitionData state, Clay_TransitionProperty properties)
+{
+    (void)properties;
+    state.boundingBox.y = Clay_GetLayoutDimensions().height;
+    return state;
+}
+
+static Clay_TransitionData
+transition_fade(Clay_TransitionData state, Clay_TransitionProperty properties)
+{
+    (void)properties;
+    state.overlayColor.a = 1;
+    return state;
+}
+
+typedef Clay_TransitionData (*transition_state_fn)(Clay_TransitionData, Clay_TransitionProperty);
+static transition_state_fn
+transition_state(uint8_t state)
+{
+    static transition_state_fn const states[] = {NULL, transition_collapse,
+        transition_slide_left, transition_slide_right, transition_slide_up, transition_slide_down, transition_fade};
+    return state < LENGTH(states) ? states[state] : NULL;
+}
+
+static Clay_TransitionElementConfig
+transition_config(const struct widget_transition *n)
+{
+    return (Clay_TransitionElementConfig) {
+        .handler = transition_ease_out, .duration = n->duration,
+        .properties = n->properties,
+        .enter = {.setInitialState = transition_state(n->enter_state)},
+        .exit = {.setFinalState = transition_state(n->exit_state ? n->exit_state : n->tag_exit),
+            .siblingOrdering = n->exit_order},
+    };
 }
 
 static bool
@@ -1201,7 +1348,7 @@ declare_unmanaged_clients(Monitor *m)
 		s.custom.customData = (void *)(uintptr_t)handle;
 		s.userData = leaf_userdata(handle, 1.0f);
 		declare_leaf("SURFACE", handle, DECLARE_SRC_PROTOCOL, DECLARE_SRC_PROTOCOL, id, &s);
-		declare_popups(client_surface(c), id, 0, 0);
+		declare_popups(client_surface(c), id, 0, 0, handle);
 	}
 }
 
@@ -1414,17 +1561,7 @@ widget_node_decl(const struct widget_node *n, int16_t z,
 			.vertical = n->scroll & 2,
 		};
 	}
-	if (n->transition)
-		e.transition = (Clay_TransitionElementConfig) {
-			.handler = transition_ease_out,
-			.duration = n->duration,
-			.properties = n->transition_properties,
-			.enter.setInitialState = n->enter_collapse ? transition_collapse : NULL,
-			.exit = {
-				.setFinalState = n->exit_collapse ? transition_collapse : NULL,
-				.siblingOrdering = n->exit_order,
-			},
-		};
+	if (n->transition.enabled) e.transition = transition_config(&n->transition);
 	if (n->floating) {
 		/* A widget float: off the flow, attached to its parent, in the
 		 * drawin's band (a floating element is its own tree root, sorted
@@ -1504,6 +1641,7 @@ declare_composite(const struct widget_host *host, size_t i, int16_t z,
 
 		if (drawable && drawable_widget_host(drawable, &bar) && bar.tree->nodes_len > 0) {
 			bar.flow = true;
+            render_fade_alias(recording->render, n->host, handle);
 			memcpy(bar.radii, n->radii, sizeof(bar.radii));
 			declare_widget_slot(&bar, id, &e, name, n->src[0], n->src[1], z,
 				leaf_userdata(n->host, 1.0f));
@@ -1536,13 +1674,14 @@ declare_composite(const struct widget_host *host, size_t i, int16_t z,
 		declare_leaf(name, n->surface, n->src[0], n->src[1], id, &e);
 		/* The client's popups attach to its surface leaf. */
 		if (!n->probe)
-			declare_popups(client_surface(c), id, 0, 0);
+			declare_popups(client_surface(c), id, 0, 0, handle);
 		return i + 1;
 	}
 	e = widget_node_decl(n, z, userdata_clip(leaf_userdata(handle, 1.0f), 0, clip));
 	native_open(id);
 	native_configure(&e);
 	record_open(name, handle, id, &e, n->src[0], n->src[1], NULL);
+    record_client_exit(n);
 	size_t next = i + 1;
 	for (uint16_t k = 0; k < n->children; k++)
 		next = declare_composite(host, next, z, handle, clamp, ids);
@@ -1571,6 +1710,7 @@ declare_client_frame(const struct widget_host *host, size_t i, int16_t z,
 	const struct widget_node *n = &d->nodes[i];
 	Client *c = declare_handle_get(n->client, NULL);
 	bool clamp = client_clamps_to_monitor(c);
+    e->transition.enter.trigger = CLAY_TRANSITION_ENTER_TRIGGER_ON_FIRST_PARENT_FRAME;
 	const char *name = n->name ? n->name : "-";
 
 	if (frame_holds_chrome(d, i)) {
@@ -1581,8 +1721,11 @@ declare_client_frame(const struct widget_host *host, size_t i, int16_t z,
 
 		ids[i] = frame.id;
 		native_open(frame);
-		native_configure(e);
+        e->userData = leaf_userdata(n->client, 1.0f);
+        native_configure(e);
+		root_entrance(frame, e);
 		record_open(name, n->client, frame, e, wsrc, hsrc, NULL);
+    record_client_exit(n);
 		composite_probed = true;
 		declare_client_frame(host, i + 1, z, &chrome, d->nodes[i + 1].src[0],
 			d->nodes[i + 1].src[1], ids);
@@ -1611,8 +1754,11 @@ declare_client_frame(const struct widget_host *host, size_t i, int16_t z,
 	e->userData = userdata_clip(leaf_userdata(n->client, 1.0f), 0,
 		clamp ? RENDER_CLIP_BOUNDS : 0);
 	native_open(id);
-	native_configure(e);
+    native_configure(e);
+    if (!e->transition.handler) clay_exit_transition(id, (Clay_TransitionElementConfig){0});
+	root_entrance(id, e);
 	record_open(name, n->client, id, e, wsrc, hsrc, NULL);
+    record_client_exit(n);
 	declare_shadow(&c->shadow, c->shadow_config, false, n->client, e);
 	size_t next = i + 1;
 	for (uint16_t k = 0; k < n->children; k++)
@@ -1790,7 +1936,7 @@ declare_widget_subtree(const struct widget_host *host, size_t i, Clay_ElementId 
 		e.custom.customData = render_shape_tag(&d->shapes[n->shape - 1].shape);
 
 	/* Once it exits, Clay solves it from its transition record. */
-	if (host->layout && n->transition)
+	if (host->layout && n->transition.enabled)
 		declare_element_word(recording, id, DECLARE_SRC_TRANSITION, DECLARE_SRC_TRANSITION);
 	native_open(id);
 	if (n->scroll) {
@@ -1851,6 +1997,7 @@ declare_widget_subtree(const struct widget_host *host, size_t i, Clay_ElementId 
 		}
 	}
 	native_configure(&e);
+    if (i == 0 && root_decl) root_entrance(id, &e);
 	/* A layout prints a line per node; its tree has no widget lines. */
 	if (host->layout)
 		record_open(n->name ? n->name : "-", 0, id, &e, n->src[0], n->src[1], NULL);
@@ -1945,6 +2092,7 @@ declare_widget_slot(const struct widget_host *host, Clay_ElementId id,
 		hsrc = n->src[1];
 	}
 	e.floating = slot->floating;
+    if (slot->transition.handler) e.transition = slot->transition;
 	if (!n->binding_count && n->children <= 1)
 		e.layout.layoutDirection = slot->layout.layoutDirection;
 	if (host->radius > 0)
@@ -1993,6 +2141,10 @@ declare_widget_frame(drawin_t *d, struct widget_host *host, Clay_ElementId id,
 	uint64_t handle = declare_handle_for(d, DECLARE_KIND_DRAWIN);
 	void *word = leaf_userdata(handle, d->opacity >= 0 ? (float)d->opacity : 1.0f);
 	int16_t z = slot->floating.zIndex;
+    if (d->animate.enabled) {
+        slot->transition = transition_config(&d->animate);
+        slot->transition.enter.trigger = CLAY_TRANSITION_ENTER_TRIGGER_ON_FIRST_PARENT_FRAME;
+    }
 	const struct widget_node *n = &host->tree->nodes[0];
 	if (!host->path_clip && !d->border_width && !shadow_get_effective_config(d->shadow_config, true)->enabled) {
 		declare_widget_slot(host, id, slot, role, wsrc, hsrc, z, word);
@@ -2000,7 +2152,8 @@ declare_widget_frame(drawin_t *d, struct widget_host *host, Clay_ElementId id,
 	}
 	host->inner_clip = !host->path_clip && host->radius <= 0 && n->radius == 0 && !n->shape;
 	native_open(id);
-	native_configure(slot);
+    native_configure(slot);
+	root_entrance(id, slot);
 	record_open(role, handle, id, slot, wsrc, hsrc, host);
 	declare_shadow(&d->shadow, d->shadow_config, true, handle, slot);
 	if (host->inner_clip) {
@@ -2060,12 +2213,19 @@ declare_drawin(drawin_t *d, Monitor *m, int16_t z)
 	struct widget_host host;
 	if (!drawin_widget_host(d, &host))
 		return;
-	if (!host.path_clip && !bw && !shadow_get_effective_config(d->shadow_config, true)->enabled) {
+	if (!d->animate.enabled && !host.path_clip && !bw && !shadow_get_effective_config(d->shadow_config, true)->enabled) {
 		declare_widget_tree(&host, z, leaf_userdata(handle, opacity));
 		return;
 	}
 	Clay_ElementDeclaration frame = leaf_at(z, x - bw, y - bw,
 		d->width + 2 * bw, d->height + 2 * bw);
+    if (d->animate.enabled) {
+        frame.transition = transition_config(&d->animate);
+        frame.transition.enter.trigger = CLAY_TRANSITION_ENTER_TRIGGER_ON_FIRST_PARENT_FRAME;
+    }
+    if (frame.transition.properties & CLAY_TRANSITION_PROPERTY_OVERLAY_COLOR) {
+        frame.userData = leaf_userdata(handle, opacity);
+    }
 	frame.floating.attachTo = CLAY_ATTACH_TO_ELEMENT_WITH_ID;
 	frame.floating.parentId = screen_root_id(m).id;
     struct wlr_box origin = screen_origin(m);
@@ -2086,7 +2246,8 @@ declare_drawin(drawin_t *d, Monitor *m, int16_t z)
 	host.told[1] = d->height;
 	Clay_ElementId frame_id = Clay__HashStringWithOffset(CLAY_STRING("WIBOX"), id, 0);
 	native_open(frame_id);
-	native_configure(&frame);
+    native_configure(&frame);
+	root_entrance(frame_id, &frame);
 	record_open("WIBOX", handle, frame_id, &frame, DECLARE_SRC_USER, DECLARE_SRC_USER, &host);
 	declare_shadow(&d->shadow, d->shadow_config, true, handle, &frame);
 	declare_widget_tree(&host, z, leaf_userdata(handle, opacity));
@@ -2282,7 +2443,7 @@ declare_layer_slot(LayerSurface *l, Monitor *m, enum wlr_edges edge, int16_t z)
 	enum declare_src src = edge == WLR_EDGE_NONE || told ? DECLARE_SRC_PROTOCOL : DECLARE_SRC_NONE;
 	declare_leaf("layer.surface", handle, src, src, id, &leaf);
 	native_close();
-	declare_popups(ls->surface, id, 0, 0);
+	declare_popups(ls->surface, id, 0, 0, handle);
 }
 
 /* The layer surfaces that float, oldest first at the bottom of their band
@@ -3661,6 +3822,10 @@ declare_band_wipe(struct declare_band *band)
     free(band->words);
     free(band->settle);
     free(band->command_handles);
+    release_exit_owners(band, NULL, 0);
+    free(band->exit_owners);
+    free(band->entrances);
+    free(band->transition_baselines);
 	render_destroy(band->render, &client_hooks);
 	wlr_scene_node_destroy(&band->tree->node);
 	free(band->arena);
@@ -3762,6 +3927,7 @@ declare_state_clear(void)
         free(band->retained_dump);
         band->retained_dump = NULL;
         band->command_handles_len = 0;
+        release_exit_owners(band, NULL, 0);
         Clay_SetCurrentContext(band->clay);
         int width, height;
         wlr_output_effective_resolution(m->declare->wlr_output, &width, &height);
@@ -3841,7 +4007,9 @@ static bool native_try(struct native_pass *pass)
 {
     struct declare_band *band = pass->band;
     record_begin(band);
+    band->output_name = pass->m->declare->wlr_output->name;
     clay_clips_begin(band->inspector_authored, Clay_IsDebugModeEnabled());
+    band->transition_baselines_len = clay_transition_snapshot(&band->transition_baselines, &band->transition_baselines_cap);
     declare_begin_layout();
     declare_scene(pass->m);
     if (!band->exhausted && band->fail_elements) {
@@ -3871,7 +4039,11 @@ static bool native_try(struct native_pass *pass)
         }
     } else band->inspector_authored = 0;
     band->inspector_solving = Clay_IsDebugModeEnabled();
+    clay_entrances_first();
     *pass->commands = Clay_EndLayout(pass->elapse);
+    /* A new entrance starts on this frame, regardless of the band's prior frame interval. */
+    for (size_t i = 0; i < band->entrances_len; i++)
+        clay_reenter((Clay_ElementId){.id = band->entrances[i]}, false);
     band->inspector_solving = false;
     band->exhausted |= clay_capacity_failed();
     return !band->exhausted;
@@ -3978,6 +4150,29 @@ declare_output_frame(struct declare_output *dout, Monitor *m)
 	Clay_UpdateScrollContainers(false,
 		(Clay_Vector2) { dout->scroll_x, dout->scroll_y }, dt);
 	dout->scroll_x = dout->scroll_y = 0;
+    /* Select the authored departure policy before Clay copies an omitted client subtree. */
+    for (size_t i = 0; i < old_len; i++) {
+        struct declare_record *record = &old_records[i];
+        if (!record->client_exit) continue;
+        Client *c = declare_handle_get(record->handle, NULL);
+        if (c && declarable_client(c)) {
+            clay_exit_transition((Clay_ElementId){.id = record->id}, (Clay_TransitionElementConfig){0});
+            continue;
+        }
+        struct widget_transition policy = record->exit_policy;
+        bool tagged = c && client_has_surface(c);
+        if (tagged) policy.exit_state = policy.tag_exit;
+        policy.duration = tagged ? policy.tag_duration : policy.exit_duration;
+        if (policy.exit_state == WIDGET_TRANSITION_GROW)
+            policy.properties |= CLAY_TRANSITION_PROPERTY_DIMENSIONS;
+        else if (policy.exit_state >= WIDGET_TRANSITION_SLIDE_LEFT && policy.exit_state <= WIDGET_TRANSITION_SLIDE_DOWN)
+            policy.properties |= CLAY_TRANSITION_PROPERTY_POSITION;
+        else if (policy.exit_state == WIDGET_TRANSITION_FADE)
+            policy.properties |= CLAY_TRANSITION_PROPERTY_OVERLAY_COLOR;
+        clay_exit_transition((Clay_ElementId){.id = record->id}, transition_config(&policy));
+    }
+    band->previous_records = old_records;
+    band->previous_records_len = old_len;
     struct native_pass pass = {band, m, elapse, &commands, &declared};
     if (!native_try(&pass)) goto failed;
 	/* Collapsing a track changes the content's box too. Compare both
@@ -4021,8 +4216,14 @@ declare_output_frame(struct declare_output *dout, Monitor *m)
 
     next_handles = malloc((size_t)(commands.length + 1) * sizeof(*next_handles));
     if (!next_handles) goto failed;
-    for (int i = 0; i < commands.length; i++)
-        next_handles[i] = declare_userdata_handle(commands.internalArray[i].userData);
+    /* A shadow is emitted before its frame, so collect the frame carrier with the owner handles. */
+    render_fades_begin(band->render);
+    for (int i = 0; i < commands.length; i++) {
+        Clay_RenderCommand *cmd = &commands.internalArray[i];
+        next_handles[i] = declare_userdata_handle(cmd->userData);
+        if (cmd->commandType == CLAY_RENDER_COMMAND_TYPE_OVERLAY_COLOR_START)
+            render_fade_carrier(band->render, cmd);
+    }
     next_len = solved_len;
     next_hosts = calloc(next_len ? next_len : 1, sizeof(*next_hosts));
     if (!next_hosts) goto failed;
@@ -4063,10 +4264,13 @@ declare_output_frame(struct declare_output *dout, Monitor *m)
             if (record->host.tree == next_hosts[j].host.tree)
                 record->host.tree = next_hosts[j].view;
     }
+    band->previous_records = NULL;
+    band->previous_records_len = 0;
     free(old_records);
     free(band->command_handles);
     band->command_handles = next_handles;
     band->command_handles_len = commands.length;
+    release_exit_owners(band, next_handles, commands.length);
     band->committed_capacity = clay_capacity();
     band->context_valid = true;
     free(band->retained_dump);
@@ -4146,6 +4350,8 @@ failed:
     free(next_hosts);
     free(retired);
     free(band->records);
+    band->previous_records = NULL;
+    band->previous_records_len = 0;
     band->records = old_records;
     band->records_len = old_len;
     band->records_cap = old_cap;
@@ -4394,6 +4600,8 @@ command_name(uint32_t type)
 	case CLAY_RENDER_COMMAND_TYPE_IMAGE:		return "IMAGE";
 	case CLAY_RENDER_COMMAND_TYPE_SCISSOR_START:	return "SCISSOR_START";
 	case CLAY_RENDER_COMMAND_TYPE_SCISSOR_END:	return "SCISSOR_END";
+    case CLAY_RENDER_COMMAND_TYPE_OVERLAY_COLOR_START: return "FADE_START";
+    case CLAY_RENDER_COMMAND_TYPE_OVERLAY_COLOR_END: return "FADE_END";
 	case CLAY_RENDER_COMMAND_TYPE_CUSTOM:		return "CUSTOM";
 	default:					return "UNKNOWN";
 	}
@@ -4575,7 +4783,9 @@ dump_node(void *user, const struct render_node_view *v)
 	else if (v->probe)
 		buffer_adds(buf, " configure");
 	else if (!v->has_node && v->type != CLAY_RENDER_COMMAND_TYPE_SCISSOR_START
-			&& v->type != CLAY_RENDER_COMMAND_TYPE_SCISSOR_END)
+			&& v->type != CLAY_RENDER_COMMAND_TYPE_SCISSOR_END
+            && v->type != CLAY_RENDER_COMMAND_TYPE_OVERLAY_COLOR_START
+            && v->type != CLAY_RENDER_COMMAND_TYPE_OVERLAY_COLOR_END)
 		buffer_adds(buf, " no-node");
 	if (v->rbox.width != v->box.width || v->rbox.height != v->box.height
 			|| v->rbox.x != v->box.x || v->rbox.y != v->box.y)
@@ -4903,6 +5113,11 @@ dump_record_line(buffer_t *buf, struct declare_band *band,
 		buffer_adds(buf, " custom");
 	if (r->image)
 		buffer_adds(buf, " image");
+    Clay_ElementDeclaration declaration;
+    if (clay_element_declaration((Clay_ElementId){.id = r->id}, &declaration)
+            && (declaration.transition.properties & CLAY_TRANSITION_PROPERTY_OVERLAY_COLOR)) {
+        buffer_addf(buf, " fade_alpha %.6f", declaration.overlayColor.a);
+    }
 	if (data.found) {
 		Clay_BoundingBox b = dump_box(data.boundingBox);
 
@@ -4957,6 +5172,9 @@ dump_clay_line(buffer_t *buf, struct declare_band *band,
 				: c->floating.attachTo == CLAY_ATTACH_TO_ROOT ? "ROOT" : "ELEMENT",
 				c->floating.offset.x, c->floating.offset.y, c->floating.zIndex);
 	}
+    if (!el->text && (el->config.transition.properties & CLAY_TRANSITION_PROPERTY_OVERLAY_COLOR)) {
+        buffer_addf(buf, " fade_alpha %.6f", el->config.overlayColor.a);
+    }
 	if (data.found) {
 		Clay_BoundingBox b = dump_box(data.boundingBox);
 

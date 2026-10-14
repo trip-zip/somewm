@@ -4,6 +4,8 @@ local runner = require('_runner')
 local async = require('_async')
 local awful = require('awful')
 local utils = require('_utils')
+local capture = require('_widget_capture')
+local surface = require('gears.surface')
 local binary = assert(utils.binary_or_skip('./build-test/test-transient-client'))
 local s = screen[1]
 
@@ -62,12 +64,13 @@ runner.run_async(function()
     c._border_width = 0
 
     local showing, duration = false, 1
+    local sidebar_width, shade = 240, .2
     local fixture = {name = 'sidebar-fixture', arrange = function() end,
         _clay = function()
             local children = {}
             if showing then
-                children[1] = {name = 'SIDEBAR', w = 240, wsrc = 'user', h = 'grow',
-                    transition = {duration = duration, properties = 'width',
+                children[1] = {name = 'SIDEBAR', w = sidebar_width, bg = {shade, shade, shade, 1}, wsrc = 'user', h = 'grow',
+                    transition = {duration = duration, properties = {'width', 'background'},
                         enter = 'collapse', exit = 'collapse', exit_order = 'natural'}}
             end
             children[#children + 1] = {client = c, w = 'grow', h = 'grow'}
@@ -106,6 +109,21 @@ runner.run_async(function()
     expect(entered, 'SIDEBAR', {0, 0, 240, 720})
     expect(entered, 'CLIENT', {240, 0, 1040, 720})
     assert(configured() == '1040 720', 'configure after enter: ' .. configured())
+
+    sidebar_width, shade = 320, .8
+    awful.layout.arrange(s)
+    async.sleep(.3)
+    local changing = dump()
+    local growing = box(changing, 'SIDEBAR')[3]
+    assert(growing > 240 and growing < 320, 'sidebar width mid-change: ' .. growing)
+    local red, green, blue = capture.read(surface(s.content), 20, 300)
+    assert(red > 51 and red < 204 and green == red and blue == red,
+        'sidebar background did not interpolate: ' .. red .. ',' .. green .. ',' .. blue)
+    async.sleep(.9)
+    assert(capture.read(surface(s.content), 20, 300) == 204, 'sidebar background did not settle')
+    sidebar_width = 240
+    awful.layout.arrange(s)
+    async.sleep(1.1)
 
     -- Exiting: the sidebar shrinks where it stands, holding no space.
     showing = false

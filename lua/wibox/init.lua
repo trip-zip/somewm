@@ -33,6 +33,7 @@ wibox.widget = require("wibox.widget")
 wibox.drawable = require("wibox.drawable")
 
 local force_forward = {
+    animate = true,
     shape_bounding = true,
     shape_clip = true,
     shape_input = true,
@@ -219,6 +220,7 @@ local function setup_signals(w)
     end
 
     obj = w.drawin
+    clone_signal("property::animate")
     clone_signal("property::border_color")
     clone_signal("property::border_width")
     clone_signal("property::buttons")

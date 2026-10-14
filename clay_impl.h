@@ -13,11 +13,22 @@ bool clay_capacity_failed(void);
 bool clay_inspector_fits(int *elements, int *strings);
 bool clay_inspector_duplicate(int first_inspector_element);
 
+struct clay_transition_baseline {
+    uint32_t id;
+    Clay_TransitionData state;
+};
+size_t clay_transition_snapshot(struct clay_transition_baseline **states, size_t *capacity);
+bool clay_transition_admit(const struct clay_transition_baseline *states, size_t len);
+
 void clay_scroll_set(Clay_ElementId id, float x, float y);
 void clay_clips_begin(int inspector_start, bool inspecting);
 Clay_Vector2 clay_scroll_offset(Clay_ElementId id);
 void clay_clip_restore(void);
 /* Read a non-text element in the current declaration, without solving it. */
+void clay_entrances_first(void);
+void clay_exit_initial(Clay_TransitionCallbackArguments *arguments);
+void clay_reenter(Clay_ElementId id, bool appearing);
+void clay_exit_transition(Clay_ElementId id, Clay_TransitionElementConfig transition);
 bool clay_element_declaration(Clay_ElementId id, Clay_ElementDeclaration *out);
 /* Borrow the current context's last completed command array for readback. */
 Clay_RenderCommandArray clay_render_commands(void);

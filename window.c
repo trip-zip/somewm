@@ -55,7 +55,6 @@
 #include "shadow.h"
 #include "declare.h"
 #include "render.h"
-#include "animation.h"
 #include "event.h"
 #include "draw.h"
 #include "objects/spawn.h"

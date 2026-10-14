@@ -327,7 +327,8 @@ local function describe_background(w)
     return node, p.foreground
 end
 
-background._clay = { describe = describe_background }
+background._clay = { describe = describe_background,
+    animate_properties = {bg = "background", border_color = "border_color", border_width = "border_width"} }
 
 return setmetatable(background, background.mt)
 

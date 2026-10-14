@@ -17,6 +17,29 @@ local table = table
 
 local base = {}
 
+local pending_animation = setmetatable({}, {__mode = "k"})
+
+function base.take_animation(widget)
+    local pending = pending_animation[widget]
+    pending_animation[widget] = nil
+    return pending
+end
+
+local function animate_once(widget, values)
+    assert(type(values) == "table" and type(values.duration) == "number" and values.duration >= 0,
+        "animate requires a nonnegative duration")
+    local pending = {}
+    for property, value in pairs(values) do
+        if property ~= "duration" then
+            pending[property] = values.duration
+            local setter = widget["set_" .. property]
+            if setter then setter(widget, value) else widget[property] = value end
+        end
+    end
+    pending_animation[widget] = pending
+    widget:emit_signal("widget::layout_changed")
+end
+
 -- {{{ Properties available on all widgets
 
 --- Get or set the children elements.
@@ -284,6 +307,23 @@ end
 -- @hidden
 function base.widget:get_opacity()
     return self._private.opacity
+end
+
+function base.widget:get_animate()
+    local value = self._private.animate
+    return value == nil and animate_once or value
+end
+
+function base.widget:set_animate(value)
+    assert(value == nil or value == false or type(value) == "table", "animate must be a table or false")
+    if type(value) == "table" then
+        local copy = {}
+        for key, duration in pairs(value) do copy[key] = duration end
+        value = setmetatable(copy, {__call = function(_, widget, values) animate_once(widget, values) end})
+    end
+    self._private.animate = value
+    self:emit_signal("widget::layout_changed")
+    self:emit_signal("property::animate")
 end
 
 --- Set the widget's forced width.
@@ -794,6 +834,7 @@ function base.make_widget(proxy, widget_name, args)
     --TODO v6 Remove this
     if not args.enable_properties then
         mt.__index = function(_, key)
+            if key == "animate" then return base.widget.get_animate(ret) end
             if key == "buttons" then
                 return base.widget.get_buttons(ret)
             end
@@ -801,7 +842,9 @@ function base.make_widget(proxy, widget_name, args)
             return rawget(ret, key)
         end
         mt.__newindex = function(_, key, value)
-            if key == "buttons" then
+            if key == "animate" then
+                base.widget.set_animate(ret, value)
+            elseif key == "buttons" then
                 base.widget.set_buttons(ret, value)
             else
                 rawset(ret, key, value)

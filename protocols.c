@@ -39,7 +39,6 @@
 #include "objects/mousegrabber.h"
 #include "stack.h"
 #include "banning.h"
-#include "animation.h"
 #include "protocols.h"
 
 
