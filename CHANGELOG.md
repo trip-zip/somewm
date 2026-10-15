@@ -262,6 +262,8 @@ All notable changes to somewm will be documented in this file.
 
 ### Fixed
 
+- Explicitly positioned `awful.popup` windows size to their content and respect size limits when a border, shadow or visibility animation adds an outer frame, instead of remaining at their initial 1×1 geometry.
+
 - Packages built with `--auto-features enabled`, such as Arch's `arch-meson`, no longer abort when the pointer moves from the bar into a menu. The renderer's debug verifier is on only in sanitizer and test builds, and the `render_verify` build option is gone.
 
 - Nested X11 and Wayland pointers map to their host output, so multiple outputs no longer stretch absolute pointer coordinates across the whole layout.

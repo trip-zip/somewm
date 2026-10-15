@@ -2279,6 +2279,14 @@ declare_drawin(drawin_t *d, Monitor *m, int16_t z)
 	}
 	Clay_ElementDeclaration frame = leaf_at(z, x - bw, y - bw,
 		d->width + 2 * bw, d->height + 2 * bw);
+	/* Content-sized popups keep their widget limits inside the frame.
+	 * Its padding adds the border without constraining content to the
+	 * drawin's initial geometry or the last animation sample. */
+	const struct widget_node *root = &d->widgets.nodes[0];
+	host.fit[0] = root->sizing[0] == WIDGET_SIZING_FIT;
+	host.fit[1] = root->sizing[1] == WIDGET_SIZING_FIT;
+	if (host.fit[0]) frame.layout.sizing.width = CLAY_SIZING_FIT(0);
+	if (host.fit[1]) frame.layout.sizing.height = CLAY_SIZING_FIT(0);
     if (d->animation.enabled) {
         frame.transition = transition_config(&d->animation);
         frame.transition.enter.trigger = CLAY_TRANSITION_ENTER_TRIGGER_ON_FIRST_PARENT_FRAME;
