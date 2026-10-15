@@ -37,6 +37,46 @@ describe("wibox.widget.base", function()
         end)
     end)
 
+    describe("animation policy and requests", function()
+        for _, properties in ipairs {false, true} do
+            it("keeps animate callable with properties " .. tostring(properties), function()
+                local widget = base.make_widget(nil, nil, {enable_properties = properties})
+                local animate = widget.animate
+                local changes = 0
+                widget:connect_signal("property::animation", function() changes = changes + 1 end)
+                assert.is_nil(widget.animation)
+                assert.is_function(animate)
+
+                widget.animation = false
+                assert.is_false(widget:get_animation())
+                widget:animate {forced_width = 100, duration = .5}
+                assert.equals(100, widget:get_forced_width())
+                assert.is_false(widget.animation)
+                assert.equals(1, changes)
+
+                local policy = {forced_width = .2}
+                widget.animation = policy
+                assert.same(policy, widget:get_animation())
+                assert.is_nil(getmetatable(widget.animation))
+                policy.forced_width = .9
+                assert.equals(.2, widget.animation.forced_width)
+                local edited = widget.animation
+                edited.forced_width = .7
+                assert.equals(.2, widget.animation.forced_width)
+                widget.animation = edited
+                assert.equals(.7, widget.animation.forced_width)
+                widget:animate {forced_width = 120, duration = .5}
+                assert.equals(120, widget:get_forced_width())
+                assert.equals(animate, widget.animate)
+
+                widget:set_animation(nil)
+                assert.is_nil(widget.animation)
+                assert.equals(animate, widget.animate)
+                assert.equals(4, changes)
+            end)
+        end
+    end)
+
     describe("caches", function()
         it("garbage collectable", function()
             local alive = setmetatable({ widget1, widget2 }, { __mode = "kv" })

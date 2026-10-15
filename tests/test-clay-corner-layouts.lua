@@ -17,18 +17,28 @@ runner.run_async(function()
         for i,c in ipairs(clients) do
             local f=assert(io.open(reports[i]));local w,h=f:read('*a'):match('(%d+)%s+(%d+)');f:close()
             local sw,sh=dump:match('SURFACE '..c.class..' [^\n]-box %-?%d+,%-?%d+ (%d+)x(%d+)')
-            if w~=sw or h~=sh then return false end
+            if w~=sw or h~=sh or not c:_clay_geometry_is_solved() then return false end
         end
         return true
     end
     local function capture(name,known_old_error)
-        -- A frame after this change, then every client answering its configure.
+        -- Configure reports precede buffer commits, so wait for the client pixels too.
         local start=frames(awesome._clay_tree(s))
+        local pixel_error
         awesome._clay_dirty()
-        async.wait_for_condition(function()
+        local ready=async.wait_for_condition(function()
             local dump=awesome._clay_tree(s)
-            return frames(dump)>start and configured(dump)
+            if frames(dump)<=start or not configured(dump) then return false end
+            if native or not known_old_error then
+                for i,c in ipairs(clients) do
+                    local g=c:geometry()
+                    local ok,err=pcall(example.pixel,g.x+math.floor(g.width/2),g.y+math.floor(g.height/2),'#'..colors[i]:sub(3))
+                    if not ok then pixel_error=err;return false end
+                end
+            end
+            return true
         end,2,0.02)
+        assert(ready,name..': clients did not settle: '..tostring(pixel_error)..'\n'..awesome._clay_tree(s))
         local dump=awesome._clay_tree(s)
         if not dump:find('derived 0',1,true) then failures[#failures+1]=name end
         example.save(name,dump)
@@ -120,7 +130,7 @@ runner.run_async(function()
             s.selected_tag.master_width_factor=.5
             for _,orientation in ipairs{'nw','ne','sw','se'} do
                 s.selected_tag.layout=awful.layout.suit.corner[orientation]
-                async.sleep(.12)
+                capture(string.format('corner-%s-%d-titlebars',orientation,count))
                 for i,c in ipairs(clients) do
                     local g=c:geometry()
                     example.pixel(g.x+6,g.y+6,'#cc6600')
@@ -130,7 +140,6 @@ runner.run_async(function()
                     assert(table.concat(events,',')=='button::press'..i..',button::release'..i,
                         'wrong original titlebar input: '..table.concat(events,','))
                 end
-                capture(string.format('corner-%s-%d-titlebars',orientation,count))
             end
             for _,c in ipairs(clients) do awful.titlebar.hide(c) end
         end

@@ -511,6 +511,23 @@ end
 local painters = { "draw", "fit", "layout", "before_draw_children", "after_draw_children" }
 local function describe(w, fg, st, item, offer)
     local record = w._clay
+    local field = w._private.animation
+    local once = st.animation_once[w]
+    if once == nil then
+        once = require("wibox.widget.base").take_animation(w) or false
+        st.animation_once[w] = once
+    end
+    local supported = {forced_width = true, forced_height = true}
+    for property in pairs(record and record.animate_properties or {}) do supported[property] = true end
+    if record and record.animate_value then supported.value = true end
+    for _, settings in ipairs{type(field) == "table" and field or {}, once or {}} do
+        for property in pairs(settings) do
+            if not supported[property] then
+                clay.ignore(w, "animation." .. property, "is unsupported; changes snap")
+            end
+        end
+    end
+    st.animation_policies[item] = {field = field, once = once or nil, off = item.animation_off, item = item}
 
     if w._private.visible == false then return nil end
     local methods
@@ -537,8 +554,28 @@ local function describe(w, fg, st, item, offer)
         local p = w._private
         if p.forced_width then node.w, node.wsrc = p.forced_width, "user" end
         if p.forced_height then node.h, node.hsrc = p.forced_height, "user" end
+        local mapping = {forced_width = "width", forced_height = "height"}
+        for property, word in pairs(record.animate_properties or {}) do
+            local custom = property == "bg" and (node.fill or node.shape)
+                or property ~= "bg" and node.stroke
+            if custom then
+                local policy = st.animation_policies[item]
+                local setting = policy.once and policy.once[property]
+                    or type(field) == "table" and field[property]
+                if type(setting) == "number" then
+                    clay.ignore(w, "animation." .. property, "uses a custom fill or stroke; changes snap")
+                end
+            else mapping[property] = word end
+        end
+        clay.animate(w, node, mapping, st, item)
     end
     return node, node_fg
+end
+
+function clay.animate(w, node, mapping, st, item)
+    if not st then return end
+    local policy = st.animation_policies[item]
+    node.transition = require("somewm.animation").widget_word(w, mapping, policy)
 end
 
 local empty_list = {}
@@ -938,7 +975,7 @@ end
 local fold_fields = {}
 for _, key in ipairs {'w','h','wmin','hmin','wmax','hmax','pad','bg','border','bw',
         'radius','dir','gap','align','children','name','widget','identity',
-        'occurrence','bindings','spacer','owner','box','wsrc','hsrc'} do fold_fields[key] = true end
+        'occurrence','bindings','spacer','owner','box','wsrc','hsrc','transition'} do fold_fields[key] = true end
 
 -- An opaque rectangular child completely covers a plain background at the
 -- same area. Keeping only that child's paint preserves source-over order,
@@ -994,6 +1031,15 @@ local function join_bindings(prefix, tail)
 end
 
 local extents, paints = {'w','h','wmin','hmin','wmax','hmax'}, {'bg','border','bw','radius'}
+local function size_transition(node)
+    local word = node.transition
+    if not word then return false end
+    for _, property in ipairs(type(word.properties) == "table" and word.properties or {word.properties}) do
+        if property == "width" or property == "height" or property == "size" or property == "box" then return true end
+    end
+    return false
+end
+
 local function combine(node, opaque_host, host)
     if #(node.children or empty_list) == 0 or padded(node) then return node end
     local child = node.children[1]
@@ -1006,7 +1052,10 @@ local function combine(node, opaque_host, host)
     for key in pairs(child) do
         if not fold_fields[key] then return node end
     end
+    if size_transition(node) or size_transition(child) then return node end
+    if node.transition and child.transition then return node end
     local covered = opaque_host and covers_background(node, child)
+    if covered and node.transition then return node end
     if painted(node) and painted(child) and not covered then return node end
     for _, axis in ipairs(axes) do
         if not same_axis(node, child, axis, host) then return node end
@@ -1015,6 +1064,7 @@ local function combine(node, opaque_host, host)
     -- its shared binding tail is mutated by a different parent occurrence.
     local result = {}
     for key, value in pairs(child) do result[key] = value end
+    result.transition = node.transition or child.transition
     if #node.children > 1 then
         result.children = {}
         for _, grandchild in ipairs(child.children or empty_list) do
@@ -1137,9 +1187,11 @@ function compile_node(st, widget, parent, fg, offer, spec, alpha, parent_fit, al
     local item = occurrence(st, widget, parent)
     local entry = cache.entries[item]
 
+    item.animation_off = parent.animation_off or widget._private.animation == false
     alpha = alpha * (widget._private.opacity or 1)
     if entry and parent.widget and not st.stale[item]
             and entry.fg == fg and entry.alpha == alpha
+            and entry.animation_off == item.animation_off
             and entry.parent_fit == parent_fit
             and entry.offer.w == offer.w and entry.offer.h == offer.h
             and entry.offer.wsrc == offer.wsrc and entry.offer.hsrc == offer.hsrc
@@ -1239,6 +1291,7 @@ function compile_node(st, widget, parent, fg, offer, spec, alpha, parent_fit, al
         entry = { spec = {} }
         cache.entries[item] = entry
     end
+    entry.animation_off = item.animation_off
     entry.node, entry.fg, entry.alpha, entry.offer, entry.parent_fit = node, fg, alpha, given, parent_fit
     for _, k in ipairs(spec_keys) do entry.spec[k] = spec[k] end
     finish_children(st, item, building)
@@ -1392,7 +1445,7 @@ function clay.compile(self, root, context, width, height, words)
     end
     local building = {slots = {}, children = {}}
     local st = { building = {[owner] = building}, compiled = 0, reused = 0,
-        active = {}, context = context, opaque_host = opaque_host,
+        active = {}, animation_policies = {}, animation_once = {}, context = context, opaque_host = opaque_host,
         cache = cache, stale = cache.stale,
         drawable = self.drawable }
     cache.stale = {}

@@ -1224,6 +1224,21 @@ capi.client.connect_signal("property::motif_wm_hints", function(c)
     c:emit_signal("property::requests_no_titlebar")
 end)
 
+--- Persistent animation policy, or false to suppress client and titlebar animations.
+-- Policies are copied on assignment and access; reassign an edited copy to apply it.
+-- @property animation
+-- @tparam[opt=nil] table|boolean animation
+function client.object.get_animation(c)
+    local value = client.property.get(c, "animation")
+    return type(value) == "table" and gtable.clone(value) or value
+end
+
+function client.object.set_animation(c, value)
+    assert(value == nil or value == false or type(value) == "table", "animation must be a table or false")
+    client.property.set(c, "animation", type(value) == "table" and gtable.clone(value) or value)
+    capi.awesome._clay_dirty()
+end
+
 -- Get a client property (internal).
 -- @tparam client c The client.
 -- @tparam string prop The property name.

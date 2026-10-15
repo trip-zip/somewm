@@ -30,7 +30,6 @@ void bench_frame_stats_reset(void);
 
 typedef enum {
     BENCH_STAGE_LUA_REFRESH,
-    BENCH_STAGE_ANIMATION,
     BENCH_STAGE_DRAWIN,
     BENCH_STAGE_CLIENT,
     BENCH_STAGE_BANNING,

@@ -40,7 +40,6 @@
 #include "objects/layer_surface.h"
 #include "objects/signal.h"
 #include "banning.h"
-#include "animation.h"
 
 /* macros */
 

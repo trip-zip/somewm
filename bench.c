@@ -94,7 +94,6 @@ bench_frame_stats_reset(void)
 
 const char *bench_stage_names[BENCH_STAGE_COUNT] = {
     "lua_refresh",
-    "animation",
     "drawin",
     "client",
     "banning",

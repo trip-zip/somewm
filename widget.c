@@ -38,6 +38,7 @@
 	X(align) X(dir) X(float) X(parent) X(own) X(passthrough) X(vector) X(image) \
 	X(aspect) X(image_width) X(image_height) X(filter) X(natural) X(track) \
 	X(thumb) X(scroll) X(transition) X(duration) X(properties) X(exit_order) \
+    X(exit_duration) X(tag_exit) X(tag_duration) \
 	X(enter) X(exit) X(client) X(surface) X(host) X(opacity) X(probe) X(attrs) \
 	X(font) X(color) X(wrap) X(halign) X(ellipsize) X(bindings) X(item) X(id) \
 	X(next) X(_attach) X(clip) X(children)
@@ -63,6 +64,7 @@ getfield(lua_State *L, int idx, enum key k)
 {
 	if (idx < 0 && idx > LUA_REGISTRYINDEX)
 		idx = lua_gettop(L) + idx + 1;
+	if (!keys) { lua_getfield(L, idx, key_names[k]); return; }
 	lua_rawgeti(L, keys, k + 1);
 	lua_gettable(L, idx);
 }
@@ -230,12 +232,66 @@ read_option(lua_State *L, int idx, enum key name, const char *const *words,
 }
 
 static bool
-field_is(lua_State *L, int idx, enum key name, const char *word)
+read_transition_property(lua_State *L, int idx, uint16_t *out)
 {
-	getfield(L, idx, name);
-	bool same = lua_isstring(L, -1) && !strcmp(lua_tostring(L, -1), word);
-	lua_pop(L, 1);
-	return same;
+    static const char *const words[] = {
+        "box", "position", "size", "width", "height", "background",
+        "border_color", "border_width", "border" };
+    static const uint16_t bits[] = {
+        CLAY_TRANSITION_PROPERTY_BOUNDING_BOX, CLAY_TRANSITION_PROPERTY_POSITION,
+        CLAY_TRANSITION_PROPERTY_DIMENSIONS, CLAY_TRANSITION_PROPERTY_WIDTH,
+        CLAY_TRANSITION_PROPERTY_HEIGHT, CLAY_TRANSITION_PROPERTY_BACKGROUND_COLOR,
+        CLAY_TRANSITION_PROPERTY_BORDER_COLOR, CLAY_TRANSITION_PROPERTY_BORDER_WIDTH,
+        CLAY_TRANSITION_PROPERTY_BORDER };
+    const char *word = lua_type(L, idx) == LUA_TSTRING ? lua_tostring(L, idx) : NULL;
+    for (size_t i = 0; word && i < sizeof(bits) / sizeof(bits[0]); i++) {
+        if (!strcmp(word, words[i])) {
+            *out |= bits[i];
+            return true;
+        }
+    }
+    if (word && !strcmp(word, "corner_radius")) {
+        static bool warned;
+        if (!warned) {
+            luaA_warn(L, "transition.properties: corner_radius is unsupported by Clay; radius changes snap");
+            warned = true;
+        }
+        return true;
+    }
+    return false;
+}
+
+static bool
+read_transition_properties(lua_State *L, int idx, uint16_t *out)
+{
+    getfield(L, idx, KEY_properties);
+    bool ok = true;
+    *out = 0;
+    if (lua_isnil(L, -1)) {
+        *out = CLAY_TRANSITION_PROPERTY_BOUNDING_BOX;
+    } else if (lua_istable(L, -1)) {
+        size_t count = luaA_rawlen(L, -1);
+        ok = count > 0;
+        for (size_t i = 1; ok && i <= count; i++) {
+            lua_rawgeti(L, -1, i);
+            ok = read_transition_property(L, -1, out);
+            lua_pop(L, 1);
+        }
+    } else {
+        ok = read_transition_property(L, -1, out);
+    }
+    lua_pop(L, 1);
+    return ok;
+}
+
+static bool
+read_transition_state(lua_State *L, int idx, enum key key, uint8_t *out)
+{
+    static const char *const words[] = {
+        "none", "grow", "slide_left", "slide_right", "slide_up", "slide_down", "fade", "collapse" };
+    bool ok = read_option(L, idx, key, words, 8, out);
+    if (*out == 7) *out = WIDGET_TRANSITION_GROW;
+    return ok;
 }
 
 /* A layout node's own transition, Clay's config in Lua words: what to
@@ -245,33 +301,52 @@ field_is(lua_State *L, int idx, enum key name, const char *word)
 static bool
 read_transition(lua_State *L, int idx, struct widget_node *n)
 {
-	static const char *const properties[] = {
-		"box", "position", "size", "width", "height" };
-	static const uint16_t bits[] = {
-		CLAY_TRANSITION_PROPERTY_BOUNDING_BOX, CLAY_TRANSITION_PROPERTY_POSITION,
-		CLAY_TRANSITION_PROPERTY_DIMENSIONS, CLAY_TRANSITION_PROPERTY_WIDTH,
-		CLAY_TRANSITION_PROPERTY_HEIGHT };
-	static const char *const orders[] = { "underneath", "natural", "above" };
-	uint8_t property = 0;
-	bool ok;
+    static const char *const orders[] = { "underneath", "natural", "above" };
+    bool ok;
 
-	getfield(L, idx, KEY_transition);
-	if (lua_isnil(L, -1)) {
-		lua_pop(L, 1);
-		return true;
-	}
-	int t = lua_gettop(L);
-	n->transition = true;
-	n->exit_order = CLAY_EXIT_TRANSITION_ORDERING_NATURAL_ORDER;
-	ok = lua_istable(L, t)
-		&& read_number(L, t, KEY_duration, 0, 1e6, &n->duration)
-		&& read_option(L, t, KEY_properties, properties, 5, &property)
-		&& read_option(L, t, KEY_exit_order, orders, 3, &n->exit_order);
-	n->transition_properties = bits[property];
-	n->enter_collapse = ok && field_is(L, t, KEY_enter, "collapse");
-	n->exit_collapse = ok && field_is(L, t, KEY_exit, "collapse");
-	lua_pop(L, 1);
-	return ok;
+    getfield(L, idx, KEY_transition);
+    if (lua_isnil(L, -1)) {
+        lua_pop(L, 1);
+        return true;
+    }
+    int t = lua_gettop(L);
+    n->transition.enabled = true;
+    n->transition.exit_order = CLAY_EXIT_TRANSITION_ORDERING_NATURAL_ORDER;
+    ok = lua_istable(L, t)
+        && read_number(L, t, KEY_duration, 0, 1e6, &n->transition.duration)
+        && read_transition_properties(L, t, &n->transition.properties)
+        && read_option(L, t, KEY_exit_order, orders, 3, &n->transition.exit_order)
+        && read_transition_state(L, t, KEY_enter, &n->transition.enter_state)
+        && read_transition_state(L, t, KEY_exit, &n->transition.exit_state)
+        && read_transition_state(L, t, KEY_tag_exit, &n->transition.tag_exit);
+    n->transition.exit_duration = n->transition.tag_duration = n->transition.duration;
+    ok = ok && read_number(L, t, KEY_exit_duration, 0, 1e6, &n->transition.exit_duration)
+        && read_number(L, t, KEY_tag_duration, 0, 1e6, &n->transition.tag_duration);
+    getfield(L, t, KEY_properties);
+    bool implicit = lua_isnil(L, -1);
+    lua_pop(L, 1);
+    if (implicit && (n->transition.enter_state || n->transition.exit_state)) n->transition.properties = 0;
+    if ((n->transition.enter_state >= WIDGET_TRANSITION_SLIDE_LEFT && n->transition.enter_state <= WIDGET_TRANSITION_SLIDE_DOWN)
+            || (n->transition.exit_state >= WIDGET_TRANSITION_SLIDE_LEFT && n->transition.exit_state <= WIDGET_TRANSITION_SLIDE_DOWN))
+        n->transition.properties |= CLAY_TRANSITION_PROPERTY_POSITION;
+    if (implicit && (n->transition.enter_state == WIDGET_TRANSITION_GROW || n->transition.exit_state == WIDGET_TRANSITION_GROW))
+        n->transition.properties |= CLAY_TRANSITION_PROPERTY_DIMENSIONS;
+    if (n->transition.enter_state == WIDGET_TRANSITION_FADE || n->transition.exit_state == WIDGET_TRANSITION_FADE)
+        n->transition.properties |= CLAY_TRANSITION_PROPERTY_OVERLAY_COLOR;
+    lua_pop(L, 1);
+    return ok;
+}
+
+bool
+widget_read_transition(lua_State *L, int idx, struct widget_transition *transition)
+{
+    struct widget_node node = {0};
+    int saved_keys = keys;
+    keys = 0;
+    bool ok = read_transition(L, idx, &node);
+    keys = saved_keys;
+    *transition = node.transition;
+    return ok;
 }
 
 /* A client composite's root (client) and its pixels leaf (surface), kept as

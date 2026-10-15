@@ -1130,6 +1130,10 @@ composite_scene_node_to_cairo(struct wlr_scene_node *node, void *data)
 		 * draws it. */
 		cairo_save(rdata->cr);
 		cairo_translate(rdata->cr, lx + rdata->offset_x, ly + rdata->offset_y);
+        /* A cropped border's hole may extend outside its scene rectangle.
+         * Even-odd filling must not paint that outside part of the hole. */
+        cairo_rectangle(rdata->cr, 0, 0, rect->width, rect->height);
+        cairo_clip(rdata->cr);
 		composite_clip_rounded(rdata->cr, rect->clips, rect->clips_len);
 		cairo_set_source_rgba(rdata->cr,
 		                      a > 0 ? rect->color[0] / a : 0,

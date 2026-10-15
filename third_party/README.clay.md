@@ -35,8 +35,15 @@ Grid dependency stages use private geometry copies and private callbacks. Public
 | `clay_inspector_duplicate` | Reads the last `layoutElements` entry and its ID-map item to distinguish generated inspector collisions from authored duplicates. |
 | `clay_render_commands` | Borrows `renderCommands` from the completed layout for readback. |
 | `clay_element_declaration` | Reads the ID map, `generation` and the mapped element configuration to expose a non-text declaration in the current frame. |
+| `clay_entrances_first` | Moves appearing transition records before exits while preserving each group's order, so exit removal by swap-back cannot skip an entrance's first advance. |
+| `clay_reenter` | Marks a root absent from the prior declarations as appearing again and resets its transition clock before and after its first solve, so a cached exit or the band's prior frame interval cannot advance the new entrance. |
+| `clay_exit_transition` | Writes the prior element and transition configurations and departure flag from an authored client policy before an omitted subtree is copied for its exit; geometry and scene state are untouched. |
 | `clay_scroll_set` | Uses `Clay_GetScrollContainerData` to write a matching `scrollContainerDatas.scrollPosition`; it does not address the context directly. |
 | `clay_root_count` | Reads `layoutElementTreeRoots.length` for tree-dump traversal. |
 | `clay_root_element` | Reads a `layoutElementTreeRoots` entry's `layoutElementIndex` to locate a dump root. |
-| `clay_element_view` | Reads `layoutElements` and the ID map for names, child indices, text or container configuration, floating state and exit state in the tree dump. |
+| `clay_element_view` | Reads `layoutElements` and the ID map for names, child indices, text or container configuration, floating state and exit state in the tree dump. It reads the matching `transitionDatas` state to distinguish entrance clipping from settled overhang. |
 | `clay_transitions_active` | Reads `transitionDatas` states to request further frames until every transition is idle. |
+| `clay_transition_snapshot` | Copies the last published non-text boxes and colors into output-owned storage before ephemeral declarations are reset. |
+| `clay_transition_admit` | Checks the pinned transition array capacity and seeds newly configured records from the last published state, so a one-shot starts at the displayed value. |
+| `clay_exit_initial` | Seeds the first exit callback from the record's current state. Pinned Clay retains an entrance's initial state until the next idle frame; a visibility change before that frame must exit from the displayed state. |
+| `clay_transition_userdata` | Finds the active callback's transition record by its current-state pointer and reads the element's owner metadata, so disabled owners also suppress cached descendant transitions and retained exits. |

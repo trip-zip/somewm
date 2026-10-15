@@ -520,8 +520,6 @@ release. A wheel over a client does not pan the viewport.
 `carousel.scroll_duration` is gone. Scrolling animates client
 slots through `somewm.layout_animation` when enabled and snaps when disabled.
 No Lua or C compositor path interpolates a client box; Clay owns those transitions.
-`awesome.start_animation` remains a public frame-synced tick source with easing
-and cancellable handles for animating things other than client boxes.
 `client:_set_geometry_silent(geo)` remains available, but carousel does not call it.
 
 `carousel._build_declarations(inputs)` accepts reconciled `columns`, `vertical`,

@@ -2,11 +2,14 @@
 -- the titlebar hosts, the slot and the surface leaf. awful.layout expands a
 -- suite's {client = c} leaves through describe before handing the tree to
 -- the screen; declare.c reads no client field to compose it.
-local capi = {mousegrabber = mousegrabber}
 local gdebug = require("gears.debug")
 local wclay = require("wibox.clay")
 
+local animation = require("somewm.animation")
+local capi = {client = client}
+local GLib = require("lgi").GLib
 local clay = {}
+local previous = setmetatable({}, {__mode = "k"})
 
 local allocation_keys = {"w", "h", "wsrc", "hsrc", "float", "x", "y", "parent", "own", "_attach"}
 local bounds = {wmin = "min_width", wmax = "max_width", hmin = "min_height", hmax = "max_height"}
@@ -156,20 +159,47 @@ function clay.describe(c, allocation)
     if bw > 0 then
         box.border, box.bw = {c:_border_rgba()}, {bw, bw, bw, bw}
     end
-    -- Loading somewm.layout_animation turns the transition on; without it
-    -- a frame snaps and declares none, so Clay solves the frame once
-    -- (third_party/clay.h:4613).
-    local animation = package.loaded["somewm.layout_animation"]
-    if animation then
-        -- A client's first frame with a record declares duration 0: a
-        -- record Clay adds to a frame already on screen starts from an
-        -- empty box (third_party/clay.h:4706-4711), and duration 0 lands it
-        -- on the box that frame (clay.h:4977-4981).
-        frame.transition = {properties = "box", duration = c._private.clay_transition
-            and animation.enabled and not capi.mousegrabber.isrunning()
-            and animation.duration or 0}
-        c._private.clay_transition = true
+    local state = previous[c]
+    local focused = capi.client.focus == c
+    local now = GLib.get_monotonic_time()
+    local trigger, started = "layout", nil
+    local focus_started = state and state.focus_started
+    if not state then
+        trigger, started = "appear", now
+    elseif state.hidden then
+        trigger, started = "tag", now
+    else
+        if state.maximized ~= c.maximized or state.fullscreen ~= fullscreen then
+            trigger, started = "maximize", now
+        elseif state.floating ~= c.floating then
+            trigger, started = "floating", now
+        elseif state.started and (now - state.started) / 1e6 < animation.duration(c, state.trigger) then
+            -- clay.h:4727 reads the duration from the current declaration each frame,
+            -- so a redeclare while the transition runs must not change it.
+            trigger, started = state.trigger, state.started
+        end
+        if state.focused ~= focused then focus_started = now end
     end
+    local triggers = trigger
+    if focus_started and (now - focus_started) / 1e6 < animation.duration(c, "focus") then
+        triggers = {trigger, "focus"}
+    else
+        focus_started = nil
+    end
+    frame.transition = animation.word(c, triggers)
+    if (trigger == "appear" or trigger == "tag") and not (frame.transition and frame.transition.enter) then
+        trigger, started = "layout", nil
+    end
+    if frame.transition and (frame.transition.enter == "grow" or frame.transition.enter == "collapse"
+        or frame.transition.exit == "grow" or frame.transition.exit == "collapse"
+        or frame.transition.tag_exit == "grow" or frame.transition.tag_exit == "collapse") then
+        frame.scroll = "both"
+    end
+    if box ~= frame and frame.transition and type(frame.transition.properties) == "table" then
+        box.transition = {properties = "border_color", duration = frame.transition.duration}
+    end
+    previous[c] = {maximized = c.maximized, fullscreen = fullscreen, floating = c.floating,
+        trigger = trigger, started = started, focused = focused, focus_started = focus_started}
     local pad = allocation.pad
     if not (allocation.float and pad and (pad[1] ~= 0 or pad[2] ~= 0 or pad[3] ~= 0 or pad[4] ~= 0)) then
         return frame
@@ -178,6 +208,17 @@ function clay.describe(c, allocation)
     for _, key in ipairs(allocation_keys) do cell[key], frame[key] = allocation[key], nil end
     frame.w, frame.h, frame.wsrc, frame.hsrc = {percent = 1}, {percent = 1}, "theme", "theme"
     return cell
+end
+
+if capi.client.connect_signal then
+    capi.client.connect_signal("request::manage", function(c) previous[c] = nil end)
+end
+if tag and tag.connect_signal then
+    tag.connect_signal("property::selected", function()
+        for c, state in pairs(previous) do
+            if c.valid and not c:isvisible() then state.hidden = true end
+        end
+    end)
 end
 
 return clay

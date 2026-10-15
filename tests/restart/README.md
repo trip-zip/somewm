@@ -132,17 +132,6 @@ release it on `"exit"` reddens whichever reload test runs next.
   `root.keys` hides.
 - `idle-timeout-unref-smoke`: releasing an idle timeout after a reload does
   not free unrelated slots in the new state's registry.
-- `animation-metatable-after-restart`: animation handles keep their methods
-  after a reload; the handle metatable is registered per state, which covers
-  the config-timeout path too.
-- `animation-ticks-after-restart`: an animation still advances on an
-  otherwise idle loop after a reload; the keepalive timer belongs to the
-  wl_event_loop and is disarmed at reload, not removed. The test has to leave
-  the instance alone while the animation runs: it arms the animation in one
-  eval, sleeps in the shell, and reads the result in a second. Any poll loop
-  drives a refresh per eval and rescues the animation it is watching.
-  `animation-metatable-after-restart` stays green through this failure mode,
-  since a handle keeps its methods whether or not it ticks.
 - `search-paths-after-restart`: a rebuilt state resolves modules from the same
   search paths as boot. Boot and reload used to keep two hand-maintained
   copies of the registration list, which had drifted; both now run

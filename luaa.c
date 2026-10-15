@@ -30,7 +30,6 @@
 #include "objects/mousegrabber.h"
 #include "objects/gesture.h"
 /* objects/awesome.h merged into this file */
-#include "animation.h"
 #include "ewmh.h"
 #include "objects/ipc.h"
 #include "objects/root.h"
@@ -2368,8 +2367,6 @@ const luaL_Reg awesome_methods[] = {
 	{ "set_idle_timeout", luaA_awesome_set_idle_timeout },
 	{ "clear_idle_timeout", luaA_awesome_clear_idle_timeout },
 	{ "clear_all_idle_timeouts", luaA_awesome_clear_all_idle_timeouts },
-	/* Animation API */
-	{ "start_animation", luaA_start_animation },
 	/* DPMS (display power management) API methods */
 	{ "dpms_off", luaA_awesome_dpms_off },
 	{ "dpms_on", luaA_awesome_dpms_on },
@@ -3240,7 +3237,6 @@ luaA_register_state(lua_State *L)
 	luaA_awesome_setup(L);
 	luaA_root_setup(L);
 	button_class_setup(L); /* Setup button class (AwesomeWM class system) */
-	animation_setup(L);  /* Metatable for awesome.start_animation handles */
 
 	/* Setup selection classes (must be before selection_setup) */
 	selection_getter_class_setup(L);
@@ -4936,9 +4932,6 @@ luaA_cleanup_stale_glib_sources(const char *label, bool exit_emitted)
 static void
 luaA_state_teardown_lua(lua_State *L, bool lua_safe)
 {
-	/* Cancel in-flight animations */
-	animation_hot_reload(L);
-
 	/* Release every C-held ref into the state being closed. Each unrefs
 	 * against L and nowhere else: a ref taken here is an integer slot in
 	 * this state's registry, and unreffing it against the state that

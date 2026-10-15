@@ -17,6 +17,29 @@ local table = table
 
 local base = {}
 
+local pending_animation = setmetatable({}, {__mode = "k"})
+
+function base.take_animation(widget)
+    local pending = pending_animation[widget]
+    pending_animation[widget] = nil
+    return pending
+end
+
+local function animate_once(widget, values)
+    assert(type(values) == "table" and type(values.duration) == "number" and values.duration >= 0,
+        "animate requires a nonnegative duration")
+    local pending = {}
+    for property, value in pairs(values) do
+        if property ~= "duration" then
+            pending[property] = values.duration
+            local setter = widget["set_" .. property]
+            if setter then setter(widget, value) else widget[property] = value end
+        end
+    end
+    pending_animation[widget] = pending
+    widget:emit_signal("widget::layout_changed")
+end
+
 -- {{{ Properties available on all widgets
 
 --- Get or set the children elements.
@@ -284,6 +307,35 @@ end
 -- @hidden
 function base.widget:get_opacity()
     return self._private.opacity
+end
+
+--- Request one animated change to the named properties.
+-- A disabled animation policy applies the values immediately.
+-- @tparam table values Target property values and a duration in seconds.
+-- @method animate
+function base.widget:animate(values)
+    animate_once(self, values)
+end
+
+--- Persistent animation durations by property, or false to disable the subtree.
+-- Assigning nil removes this widget's policy. The animate method stays callable.
+-- Policies are copied on assignment and access; reassign an edited copy to apply it.
+-- @property animation
+-- @tparam[opt=nil] table|boolean animation
+-- @propemits true false
+function base.widget:get_animation()
+    local value = self._private.animation
+    return type(value) == "table" and gtable.clone(value) or value
+end
+
+function base.widget:set_animation(value)
+    assert(value == nil or value == false or type(value) == "table", "animation must be a table or false")
+    if type(value) == "table" then
+        value = gtable.clone(value)
+    end
+    self._private.animation = value
+    self:emit_signal("widget::layout_changed")
+    self:emit_signal("property::animation")
 end
 
 --- Set the widget's forced width.
@@ -794,6 +846,7 @@ function base.make_widget(proxy, widget_name, args)
     --TODO v6 Remove this
     if not args.enable_properties then
         mt.__index = function(_, key)
+            if key == "animation" then return base.widget.get_animation(ret) end
             if key == "buttons" then
                 return base.widget.get_buttons(ret)
             end
@@ -801,7 +854,9 @@ function base.make_widget(proxy, widget_name, args)
             return rawget(ret, key)
         end
         mt.__newindex = function(_, key, value)
-            if key == "buttons" then
+            if key == "animation" then
+                base.widget.set_animation(ret, value)
+            elseif key == "buttons" then
                 base.widget.set_buttons(ret, value)
             else
                 rawset(ret, key, value)

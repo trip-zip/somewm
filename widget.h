@@ -101,6 +101,13 @@ struct widget_binding {
  *
  * Colors are straight alpha, 0-1, as everywhere else on this side; an alpha
  * of zero means the node draws no fill or no ring. */
+struct widget_transition {
+    bool enabled;
+    uint8_t enter_state, exit_state, tag_exit, exit_order;
+    uint16_t properties;
+    float duration, exit_duration, tag_duration;
+};
+
 struct widget_node {
 	/* The declarative id or full widget class name, interned for the program's
 	 * lifetime so the struct still compares by memcmp. The element id and
@@ -149,10 +156,7 @@ struct widget_node {
 	/* The box's own transition (Clay_TransitionElementConfig): the
 	 * properties are Clay_TransitionProperty bits, exit_order a
 	 * Clay_ExitTransitionSiblingOrdering. */
-	bool transition, enter_collapse, exit_collapse;
-	uint8_t exit_order;
-	uint16_t transition_properties;
-	float duration;
+	struct widget_transition transition;
 	/* The widget's cairo surface or RsvgHandle, referenced by an image entry. */
 	const void *image;
 	bool vector;
@@ -238,6 +242,13 @@ enum widget_nodes_state {
 	WIDGET_NODES_MALFORMED,
 	WIDGET_NODES_OVER_BUDGET,
 };
+
+enum widget_transition_state {
+    WIDGET_TRANSITION_NONE, WIDGET_TRANSITION_GROW,
+    WIDGET_TRANSITION_SLIDE_LEFT, WIDGET_TRANSITION_SLIDE_RIGHT,
+    WIDGET_TRANSITION_SLIDE_UP, WIDGET_TRANSITION_SLIDE_DOWN, WIDGET_TRANSITION_FADE,
+};
+bool widget_read_transition(lua_State *L, int idx, struct widget_transition *transition);
 
 /* Replace the stored tree with the compiled table at idx.
  * NONE, MALFORMED and OVER_BUDGET show nothing. */

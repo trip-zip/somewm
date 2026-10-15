@@ -34,6 +34,7 @@
 #include "globalconf.h"
 #include "somewm_api.h"
 #include "input.h"
+#include "declare.h"
 
 #include <string.h>
 #include <stdbool.h>
@@ -124,6 +125,7 @@ luaA_mousegrabber_stop(lua_State *L)
     /* Mark as inactive */
     mousegrabber_active = false;
 
+    declare_mark_all_dirty();
     return 0;
 }
 
@@ -188,6 +190,7 @@ luaA_mousegrabber_run(lua_State *L)
     /* Mark mousegrabber as active */
     mousegrabber_active = true;
 
+    declare_mark_all_dirty();
     return 0;
 }
 

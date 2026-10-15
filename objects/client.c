@@ -2900,6 +2900,7 @@ client_unmanage(client_t *c, client_unmanage_t reason)
     lua_pop(L, 1);
 
     some_event_queue_class(&client_class, SIG_LIST);
+    declare_mark_all_dirty();
 
     /* Get rid of all titlebars */
     for (client_titlebar_t bar = CLIENT_TITLEBAR_TOP; bar < CLIENT_TITLEBAR_COUNT; bar++) {
