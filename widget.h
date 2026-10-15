@@ -70,6 +70,7 @@ struct widget_host {
 	bool flow;
 	bool path_clip;       /* The frame carries the root scope as a path. */
 	bool inner_clip;      /* The decorated host clips its content through an inner element. */
+	bool frame_clip;      /* A growing frame opens WIDGET_FRAME_SCOPE around the root. */
 	bool layout;          /* A screen's client layout: records every node, no userData. */
 	int told[2];
 	bool fit[2];
@@ -209,8 +210,10 @@ struct widget_node {
 /* A float node's _attach = "output": the screen's root element. */
 #define WIDGET_ATTACH_OUTPUT UINT16_MAX
 
-/* Clip scopes a tree may open: a byte of the word numbers them (render.h). */
-#define WIDGET_CLIPS_MAX 255
+/* Clip scopes a tree may open: a byte of the word numbers them (render.h).
+ * The two numbers above are a growing frame's scope and RENDER_CLIP_BOUNDS. */
+#define WIDGET_CLIPS_MAX 253
+#define WIDGET_FRAME_SCOPE 254
 
 /* A tree with more nodes than this shows nothing. The cap was sized for a
  * plain year calendar; awful.widget.calendar_popup.year wraps every cell in
