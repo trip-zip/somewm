@@ -284,14 +284,107 @@ read_transition_properties(lua_State *L, int idx, uint16_t *out)
     return ok;
 }
 
+static const char *const transition_words[] = {
+    "none", "grow", "slide_left", "slide_right", "slide_up", "slide_down", "fade" };
+
+static int
+transition_word(lua_State *L, int idx)
+{
+    const char *word = lua_type(L, idx) == LUA_TSTRING ? lua_tostring(L, idx) : NULL;
+    if (word && !strcmp(word, "collapse")) return 1;
+    for (size_t i = 0; word && i < sizeof(transition_words) / sizeof(transition_words[0]); i++)
+        if (!strcmp(word, transition_words[i])) return i;
+    return -1;
+}
+
+static void
+transition_conflict(lua_State *L, int list, enum key key, int kept, int refused)
+{
+    static const char registry_key;
+    lua_pushlightuserdata(L, (void *)&registry_key);
+    lua_rawget(L, LUA_REGISTRYINDEX);
+    if (lua_isnil(L, -1)) {
+        lua_pop(L, 1);
+        lua_newtable(L);
+        lua_newtable(L);
+        lua_pushliteral(L, "k");
+        lua_setfield(L, -2, "__mode");
+        lua_setmetatable(L, -2);
+        lua_pushlightuserdata(L, (void *)&registry_key);
+        lua_pushvalue(L, -2);
+        lua_rawset(L, LUA_REGISTRYINDEX);
+    }
+    lua_pushvalue(L, list);
+    lua_rawget(L, -2);
+    if (lua_isnil(L, -1)) {
+        lua_pop(L, 1);
+        lua_newtable(L);
+        lua_pushvalue(L, list);
+        lua_pushvalue(L, -2);
+        lua_rawset(L, -4);
+    }
+    int pair = key * 49 + MIN(kept, refused) * 7 + MAX(kept, refused);
+    lua_rawgeti(L, -1, pair);
+    bool warned = lua_toboolean(L, -1);
+    lua_pop(L, 1);
+    if (!warned) {
+        lua_pushboolean(L, true);
+        lua_rawseti(L, -2, pair);
+        luaA_warn(L, "transition.%s: %s + %s conflict; %s is ignored, %s remains active",
+            key_names[key], transition_words[kept], transition_words[refused],
+            transition_words[refused], transition_words[kept]);
+    }
+    lua_pop(L, 2);
+}
+
 static bool
 read_transition_state(lua_State *L, int idx, enum key key, uint8_t *out)
 {
-    static const char *const words[] = {
-        "none", "grow", "slide_left", "slide_right", "slide_up", "slide_down", "fade", "collapse" };
-    bool ok = read_option(L, idx, key, words, 8, out);
-    if (*out == 7) *out = WIDGET_TRANSITION_GROW;
+    getfield(L, idx, key);
+    int list = lua_gettop(L);
+    bool array = lua_istable(L, list), ok = true;
+    size_t count = array ? luaA_rawlen(L, list) : !lua_isnil(L, list);
+    if (array) {
+        size_t entries = 0;
+        lua_pushnil(L);
+        while (lua_next(L, list)) {
+            double index = lua_tonumber(L, -2);
+            ok = ok && lua_type(L, -2) == LUA_TNUMBER && index >= 1
+                && index <= count && index == floor(index);
+            entries++;
+            lua_pop(L, 1);
+        }
+        ok = ok && count > 0 && entries == count;
+    }
+    int first = -1, slide = -1;
+    *out = 0;
+    for (size_t i = 1; ok && i <= count; i++) {
+        if (array) lua_rawgeti(L, list, i);
+        int word = transition_word(L, -1);
+        if (array) lua_pop(L, 1);
+        if (word < 0) { ok = false; break; }
+        bool position = word >= 2 && word <= 5;
+        int conflict = first >= 0 && word != first && (first == 0 || word == 0) ? first
+            : position && slide >= 0 && word != slide ? slide : -1;
+        if (conflict >= 0) {
+            transition_conflict(L, list, key, conflict, word);
+            continue;
+        }
+        if (first < 0) first = word;
+        if (position) slide = word;
+        if (word) *out |= 1 << (word - 1);
+    }
+    if (first == 0) *out = WIDGET_TRANSITION_NONE;
+    lua_pop(L, 1);
     return ok;
+}
+
+uint16_t
+widget_transition_properties(uint8_t state)
+{
+    return ((state & WIDGET_TRANSITION_SLIDE) ? CLAY_TRANSITION_PROPERTY_POSITION : 0)
+        | ((state & WIDGET_TRANSITION_GROW) ? CLAY_TRANSITION_PROPERTY_DIMENSIONS : 0)
+        | ((state & WIDGET_TRANSITION_FADE) ? CLAY_TRANSITION_PROPERTY_OVERLAY_COLOR : 0);
 }
 
 /* A layout node's own transition, Clay's config in Lua words: what to
@@ -325,14 +418,11 @@ read_transition(lua_State *L, int idx, struct widget_node *n)
     getfield(L, t, KEY_properties);
     bool implicit = lua_isnil(L, -1);
     lua_pop(L, 1);
-    if (implicit && (n->transition.enter_state || n->transition.exit_state)) n->transition.properties = 0;
-    if ((n->transition.enter_state >= WIDGET_TRANSITION_SLIDE_LEFT && n->transition.enter_state <= WIDGET_TRANSITION_SLIDE_DOWN)
-            || (n->transition.exit_state >= WIDGET_TRANSITION_SLIDE_LEFT && n->transition.exit_state <= WIDGET_TRANSITION_SLIDE_DOWN))
-        n->transition.properties |= CLAY_TRANSITION_PROPERTY_POSITION;
-    if (implicit && (n->transition.enter_state == WIDGET_TRANSITION_GROW || n->transition.exit_state == WIDGET_TRANSITION_GROW))
-        n->transition.properties |= CLAY_TRANSITION_PROPERTY_DIMENSIONS;
-    if (n->transition.enter_state == WIDGET_TRANSITION_FADE || n->transition.exit_state == WIDGET_TRANSITION_FADE)
-        n->transition.properties |= CLAY_TRANSITION_PROPERTY_OVERLAY_COLOR;
+    if (implicit && ((n->transition.enter_state | n->transition.exit_state) & ~WIDGET_TRANSITION_NONE))
+        n->transition.properties = 0;
+    uint16_t properties = widget_transition_properties(n->transition.enter_state | n->transition.exit_state);
+    if (!implicit) properties &= ~CLAY_TRANSITION_PROPERTY_DIMENSIONS;
+    n->transition.properties |= properties;
     lua_pop(L, 1);
     return ok;
 }

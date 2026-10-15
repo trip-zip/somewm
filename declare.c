@@ -1125,62 +1125,62 @@ transition_ease_out(Clay_TransitionCallbackArguments arguments)
 	return complete;
 }
 
-/* Entering from, and exiting to, nothing on the animated axes. */
 static Clay_TransitionData
-transition_collapse(Clay_TransitionData state, Clay_TransitionProperty properties)
+transition_compose(Clay_TransitionData state, Clay_TransitionProperty properties, uint8_t effects)
 {
-    if (properties & CLAY_TRANSITION_PROPERTY_WIDTH) state.boundingBox.width = 0;
-    if (properties & CLAY_TRANSITION_PROPERTY_HEIGHT) state.boundingBox.height = 0;
+    if (effects & WIDGET_TRANSITION_SLIDE_LEFT) state.boundingBox.x = -state.boundingBox.width;
+    if (effects & WIDGET_TRANSITION_SLIDE_RIGHT) state.boundingBox.x = Clay_GetLayoutDimensions().width;
+    if (effects & WIDGET_TRANSITION_SLIDE_UP) state.boundingBox.y = -state.boundingBox.height;
+    if (effects & WIDGET_TRANSITION_SLIDE_DOWN) state.boundingBox.y = Clay_GetLayoutDimensions().height;
+    if (effects & WIDGET_TRANSITION_GROW) {
+        if (properties & CLAY_TRANSITION_PROPERTY_WIDTH) state.boundingBox.width = 0;
+        if (properties & CLAY_TRANSITION_PROPERTY_HEIGHT) state.boundingBox.height = 0;
+    }
+    if (effects & WIDGET_TRANSITION_FADE) state.overlayColor.a = 1;
     return state;
 }
 
-static Clay_TransitionData
-transition_slide_left(Clay_TransitionData state, Clay_TransitionProperty properties)
-{
-    (void)properties;
-    state.boundingBox.x = -state.boundingBox.width;
-    return state;
-}
-
-static Clay_TransitionData
-transition_slide_right(Clay_TransitionData state, Clay_TransitionProperty properties)
-{
-    (void)properties;
-    state.boundingBox.x = Clay_GetLayoutDimensions().width;
-    return state;
-}
-
-static Clay_TransitionData
-transition_slide_up(Clay_TransitionData state, Clay_TransitionProperty properties)
-{
-    (void)properties;
-    state.boundingBox.y = -state.boundingBox.height;
-    return state;
-}
-
-static Clay_TransitionData
-transition_slide_down(Clay_TransitionData state, Clay_TransitionProperty properties)
-{
-    (void)properties;
-    state.boundingBox.y = Clay_GetLayoutDimensions().height;
-    return state;
-}
-
-static Clay_TransitionData
-transition_fade(Clay_TransitionData state, Clay_TransitionProperty properties)
-{
-    (void)properties;
-    state.overlayColor.a = 1;
-    return state;
-}
+#define TRANSITION_VARIANTS(X, name, bits) \
+    X(name, bits) \
+    X(name##_grow, (bits) | WIDGET_TRANSITION_GROW) \
+    X(name##_fade, (bits) | WIDGET_TRANSITION_FADE) \
+    X(name##_grow_fade, (bits) | WIDGET_TRANSITION_GROW | WIDGET_TRANSITION_FADE)
+#define TRANSITION_STATES(X) \
+    X(grow, WIDGET_TRANSITION_GROW) \
+    X(fade, WIDGET_TRANSITION_FADE) \
+    X(grow_fade, WIDGET_TRANSITION_GROW | WIDGET_TRANSITION_FADE) \
+    TRANSITION_VARIANTS(X, slide_left, WIDGET_TRANSITION_SLIDE_LEFT) \
+    TRANSITION_VARIANTS(X, slide_right, WIDGET_TRANSITION_SLIDE_RIGHT) \
+    TRANSITION_VARIANTS(X, slide_up, WIDGET_TRANSITION_SLIDE_UP) \
+    TRANSITION_VARIANTS(X, slide_down, WIDGET_TRANSITION_SLIDE_DOWN)
+#define TRANSITION_ADAPTER(name, bits) \
+    static Clay_TransitionData transition_##name(Clay_TransitionData state, Clay_TransitionProperty properties) \
+    { return transition_compose(state, properties, bits); }
+TRANSITION_STATES(TRANSITION_ADAPTER)
+#undef TRANSITION_ADAPTER
 
 typedef Clay_TransitionData (*transition_state_fn)(Clay_TransitionData, Clay_TransitionProperty);
+static transition_state_fn const transition_states[] = {
+#define TRANSITION_ENTRY(name, bits) [bits] = transition_##name,
+    TRANSITION_STATES(TRANSITION_ENTRY)
+#undef TRANSITION_ENTRY
+};
+#undef TRANSITION_STATES
+#undef TRANSITION_VARIANTS
+
 static transition_state_fn
 transition_state(uint8_t state)
 {
-    static transition_state_fn const states[] = {NULL, transition_collapse,
-        transition_slide_left, transition_slide_right, transition_slide_up, transition_slide_down, transition_fade};
-    return state < LENGTH(states) ? states[state] : NULL;
+    return state < LENGTH(transition_states) ? transition_states[state] : NULL;
+}
+
+static uint8_t
+transition_effects(transition_state_fn state)
+{
+    if (state)
+        for (size_t i = 1; i < LENGTH(transition_states); i++)
+            if (transition_states[i] == state) return i;
+    return 0;
 }
 
 static Clay_TransitionElementConfig
@@ -2235,14 +2235,8 @@ animation_constraints(struct render_state *render, int32_t index, Clay_BoundingB
         uint64_t owner = declare_userdata_handle(view.config.userData);
         unsigned kind = owner >> 32;
         Clay_TransitionElementConfig *transition = &view.config.transition;
-        bool slide_in = transition->enter.setInitialState == transition_slide_left
-            || transition->enter.setInitialState == transition_slide_right
-            || transition->enter.setInitialState == transition_slide_up
-            || transition->enter.setInitialState == transition_slide_down;
-        bool slide_out = transition->exit.setFinalState == transition_slide_left
-            || transition->exit.setFinalState == transition_slide_right
-            || transition->exit.setFinalState == transition_slide_up
-            || transition->exit.setFinalState == transition_slide_down;
+        bool slide_in = transition_effects(transition->enter.setInitialState) & WIDGET_TRANSITION_SLIDE;
+        bool slide_out = transition_effects(transition->exit.setFinalState) & WIDGET_TRANSITION_SLIDE;
         if (kind == DECLARE_KIND_DRAWIN && ((view.entering && slide_in) || (view.exiting && slide_out)))
             render_constraint(render, owner, bounds, false);
         if (kind == DECLARE_KIND_CLIENT && (transition->properties
@@ -4251,12 +4245,7 @@ declare_output_frame(struct declare_output *dout, Monitor *m)
         bool tagged = c && client_has_surface(c);
         if (tagged) policy.exit_state = policy.tag_exit;
         policy.duration = tagged ? policy.tag_duration : policy.exit_duration;
-        if (policy.exit_state == WIDGET_TRANSITION_GROW)
-            policy.properties |= CLAY_TRANSITION_PROPERTY_DIMENSIONS;
-        else if (policy.exit_state >= WIDGET_TRANSITION_SLIDE_LEFT && policy.exit_state <= WIDGET_TRANSITION_SLIDE_DOWN)
-            policy.properties |= CLAY_TRANSITION_PROPERTY_POSITION;
-        else if (policy.exit_state == WIDGET_TRANSITION_FADE)
-            policy.properties |= CLAY_TRANSITION_PROPERTY_OVERLAY_COLOR;
+        policy.properties |= widget_transition_properties(policy.exit_state);
         clay_exit_transition((Clay_ElementId){.id = record->id}, transition_config(&policy));
     }
     band->previous_records = old_records;
