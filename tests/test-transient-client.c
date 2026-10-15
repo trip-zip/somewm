@@ -10,12 +10,12 @@
  * - On SIGTERM: clean shutdown
  *
  * Usage: test-transient-client [app_id [report [min_w [color [min_h [max_w
- *        [max_h [cell [stale [bounds_report]]]]]]]]]]
+ *        [max_h [cell [stale [bounds_report [configure_history]]]]]]]]]]]
  * With a cell size, each configure is answered with the configured size
  * rounded down to whole cells, never below one cell. With a stale count N,
  * the first N configures that carry a new size are acknowledged and
  * answered with a buffer at the previous size. A bounds report holds the
- * last bounds received.
+ * last bounds received. A configure history appends every configured size.
  */
 
 #include <errno.h>
@@ -52,6 +52,7 @@ static struct xdg_toplevel *g_child_toplevel;
 
 static uint32_t g_width = 200, g_height = 200;
 static const char *g_configure_report, *g_bounds_report;
+static const char *g_configure_history;
 static uint32_t g_parent_color = 0xFF404040;
 /* Commit whole cells of this size, as a terminal does; 0 commits the
  * configured size. */
@@ -161,6 +162,12 @@ static void toplevel_configure(void *data, struct xdg_toplevel *toplevel,
         fprintf(report, "%d %d\n", w, h);
         fclose(report);
     }
+    if (g_configure_history && toplevel == g_parent_toplevel) {
+        FILE *report = fopen(g_configure_history, "a");
+        if (!report) abort();
+        fprintf(report, "%d %d\n", w, h);
+        fclose(report);
+    }
 }
 
 static void toplevel_close(void *data, struct xdg_toplevel *toplevel) {
@@ -262,6 +269,7 @@ int main(int argc, char *argv[]) {
     if (argc > 8) g_cell = strtoul(argv[8], NULL, 10);
     if (argc > 9) g_stale = strtoul(argv[9], NULL, 10);
     g_bounds_report = argc > 10 ? argv[10] : NULL;
+    g_configure_history = argc > 11 ? argv[11] : NULL;
 
     /* Setup signal handlers.
      * Use sigaction WITHOUT SA_RESTART so that wl_display_dispatch() returns

@@ -51,17 +51,18 @@ local seen = setmetatable({}, {__mode = "k"})
 
 --- The entrance every client maps with: `grow`, `slide_left`,
 -- `slide_right`, `slide_up`, `slide_down` or `fade`.
+-- A list combines effects simultaneously, with at most one slide plus grow and fade.
 -- @beautiful beautiful.animation_appear
--- @tparam[opt=nil] string animation_appear
+-- @tparam[opt=nil] string|table animation_appear
 
 --- The exit every client closes with, same words as `animation_appear`.
 -- @beautiful beautiful.animation_disappear
--- @tparam[opt=nil] string animation_disappear
+-- @tparam[opt=nil] string|table animation_disappear
 
 --- The entrance and exit on a tag switch, same words as `animation_appear`.
 -- Defaults to `grow`; `c.animation.tag` can override it.
 -- @beautiful beautiful.animation_tag
--- @tparam[opt="grow"] string animation_tag
+-- @tparam[opt="grow"] string|table animation_tag
 
 local theme_keys = {
     layout = "animation_layout_duration",
@@ -97,14 +98,49 @@ function animation.duration(object, trigger, policy)
     return trigger == "layout" and animation.layout_duration or 0
 end
 
-local function entrance(object, name)
+local entrances = setmetatable({}, {__mode = "k"})
+
+local function entrance_value(object, name)
     local field = object_field(object)
     if field == false then return nil end
-    local value = type(field) == "table" and field[name] or nil
+    local value
+    if type(field) == "table" then value = field[name] end
     if value == false then return nil end
-    if type(value) == "string" then return value end
+    if type(value) == "string" or type(value) == "table" then return value end
     value = beautiful["animation_" .. name]
-    return type(value) == "string" and value or name == "tag" and "grow" or nil
+    return (type(value) == "string" or type(value) == "table") and value or name == "tag" and "grow" or nil
+end
+
+local function entrance(object, name)
+    local value = entrance_value(object, name)
+    if type(value) ~= "table" then return value end
+    local cached = entrances[object] or {}
+    entrances[object] = cached
+    local previous = cached[name]
+    local same = previous ~= nil
+    for key, word in pairs(value) do same = same and previous[key] == word end
+    for key, word in pairs(previous or {}) do same = same and value[key] == word end
+    if not same then
+        previous = {}
+        for key, word in pairs(value) do previous[key] = word end
+        cached[name] = previous
+    end
+    return previous
+end
+
+function animation.has_effect(value, effect)
+    if type(value) ~= "table" then value = {value} end
+    if value[1] == "none" then return effect == "none" end
+    local slide
+    for _, word in ipairs(value) do
+        if word == "collapse" then word = "grow" end
+        if word == "slide_left" or word == "slide_right" or word == "slide_up" or word == "slide_down" then
+            slide = slide or word
+            if slide ~= word then word = nil end
+        end
+        if word ~= "none" and word == effect then return true end
+    end
+    return false
 end
 
 function animation.word(object, trigger)

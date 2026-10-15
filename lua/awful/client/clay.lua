@@ -236,9 +236,9 @@ function clay.describe(c, allocation)
     if (trigger == "appear" or trigger == "tag") and not (frame.transition and frame.transition.enter) then
         trigger, started = "layout", nil
     end
-    if frame.transition and (frame.transition.enter == "grow" or frame.transition.enter == "collapse"
-        or frame.transition.exit == "grow" or frame.transition.exit == "collapse"
-        or frame.transition.tag_exit == "grow" or frame.transition.tag_exit == "collapse") then
+    if frame.transition and (animation.has_effect(frame.transition.enter, "grow")
+        or animation.has_effect(frame.transition.exit, "grow")
+        or animation.has_effect(frame.transition.tag_exit, "grow")) then
         frame.scroll = "both"
     end
     if box ~= frame and frame.transition and type(frame.transition.properties) == "table" then

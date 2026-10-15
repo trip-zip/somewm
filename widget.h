@@ -245,10 +245,13 @@ enum widget_nodes_state {
 };
 
 enum widget_transition_state {
-    WIDGET_TRANSITION_NONE, WIDGET_TRANSITION_GROW,
-    WIDGET_TRANSITION_SLIDE_LEFT, WIDGET_TRANSITION_SLIDE_RIGHT,
-    WIDGET_TRANSITION_SLIDE_UP, WIDGET_TRANSITION_SLIDE_DOWN, WIDGET_TRANSITION_FADE,
+    WIDGET_TRANSITION_NONE = 64, WIDGET_TRANSITION_GROW = 1,
+    WIDGET_TRANSITION_SLIDE_LEFT = 2, WIDGET_TRANSITION_SLIDE_RIGHT = 4,
+    WIDGET_TRANSITION_SLIDE_UP = 8, WIDGET_TRANSITION_SLIDE_DOWN = 16,
+    WIDGET_TRANSITION_FADE = 32,
+    WIDGET_TRANSITION_SLIDE = 30,
 };
+uint16_t widget_transition_properties(uint8_t state);
 bool widget_read_transition(lua_State *L, int idx, struct widget_transition *transition);
 
 /* Replace the stored tree with the compiled table at idx.

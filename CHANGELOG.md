@@ -41,6 +41,12 @@ All notable changes to somewm will be documented in this file.
 - beautiful.launcher_width: the menubar launcher's width, ahead of
   menubar.geometry.width; without either the launcher spans the workarea.
 
+- Client and drawin entrances and exits accept lists such as
+  `{"fade", "slide_left"}` to compose simultaneous effects in one transition.
+  One slide, grow and fade can run together with one duration; existing strings
+  still work. Repeated effects and collapse-as-grow are deduplicated. Conflicting
+  slide directions, or none with another effect, warn once and keep the first
+  named effect so incompatible settings are not silently ignored.
 - Client animation by trigger: `c.animation = {appear, disappear, tag, focus,
   maximize, floating}` and the rule property of the same name, with the theme
   keys beautiful.animation_appear, animation_disappear and animation_tag
@@ -264,6 +270,8 @@ All notable changes to somewm will be documented in this file.
 
 ### Fixed
 
+- An explicit `disappear = "none"` or `exit = "none"` closes without an
+  animation instead of falling back to the tag exit.
 - Xwayland content-size requests are declared inside the Clay client frame,
   so repeated and partial requests no longer shift or shrink decorated
   floating windows. Geometry replies use the completed solve, with request

@@ -131,6 +131,60 @@ describe("somewm.animation", function()
         object.animation = false
         assert.is_nil(animation.word(object, "appear").enter)
     end)
+    it("accepts effect lists from client policies and theme fallbacks", function()
+        theme.animation_duration = 1
+        theme.animation_appear = {"fade", "slide_left"}
+        theme.animation_disappear = {"grow", "fade"}
+        theme.animation_tag = {"fade", "slide_up"}
+        local object = {animation = {appear = {"grow", "fade", "slide_right"}}}
+        local word = animation.word(object, "appear")
+        assert.same({"grow", "fade", "slide_right"}, word.enter)
+        assert.same({"grow", "fade"}, word.exit)
+        assert.same({"fade", "slide_up"}, word.tag_exit)
+        assert.equals(1, word.duration)
+        object.animation = nil
+        assert.same({"fade", "slide_left"}, animation.word(object, "appear").enter)
+        object.animation = {appear = false, tag = false}
+        assert.is_nil(animation.word(object, "appear").enter)
+        assert.is_nil(animation.word(object, "tag").tag_exit)
+    end)
+    it("keeps list occurrences stable across copied policy reads", function()
+        theme.animation_duration = 1
+        local object = {animation = {appear = {"grow", "fade"}}}
+        local first = animation.word(object, "appear").enter
+        object.animation = {appear = {"grow", "fade"}}
+        assert.equals(first, animation.word(object, "appear").enter)
+        object.animation.appear[1] = "slide_left"
+        assert.same({"grow", "fade"}, first)
+        assert.same({"slide_left", "fade"}, animation.word(object, "appear").enter)
+    end)
+    it("recognizes grow in either order and respects a leading none", function()
+        for _, value in ipairs {"grow", "collapse", {"fade", "grow"}, {"collapse", "fade"}, {"grow", "none"}} do
+            assert.is_true(animation.has_effect(value, "grow"))
+        end
+        for _, value in ipairs {"fade", {"none", "grow"}, {"fade", "slide_left"}} do
+            assert.is_false(animation.has_effect(value, "grow"))
+        end
+        assert.is_false(animation.has_effect(nil, "grow"))
+    end)
+    it("disables composed client policies without changing duration precedence", function()
+        theme.animation_duration = 2
+        theme.animation_appear_duration = 1
+        local object = {animation = {appear = {"fade", "grow"}, disappear = {"fade", "slide_left"}}}
+        assert.equals(1, animation.word(object, "appear").duration)
+        grabbing = true
+        local word = animation.word(object, "appear")
+        assert.equals(0, word.duration)
+        assert.equals(0, word.exit_duration)
+        grabbing = false
+        animation.enabled = false
+        assert.equals(0, animation.word(object, "appear").duration)
+        animation.enabled = true
+        object.animation = false
+        word = animation.word(object, "appear")
+        assert.is_nil(word.enter)
+        assert.equals(0, word.duration)
+    end)
     it("snaps configured objects without a matching duration", function()
         theme.animation_maximize_duration = 0.4
         assert.equals(0, settled({}, "floating").duration)
