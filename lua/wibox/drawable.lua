@@ -156,7 +156,16 @@ end
 -- The frame is about to declare: compile every drawable marked since the
 -- last time. A compile that marks a drawable again (its own describer
 -- changing a widget) lands in the next batch.
+local animations_disabled
 capi.awesome.connect_signal("clay::declare", function()
+    local disabled = not require("somewm.animation").enabled or mousegrabber.isrunning()
+    if disabled ~= animations_disabled then
+        animations_disabled = disabled
+        for self in pairs(visible_drawables) do
+            self._clay_cache = nil
+            pending[self] = true
+        end
+    end
     local batch = pending
 
     pending = {}

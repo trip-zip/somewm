@@ -152,6 +152,17 @@ describe("somewm.animation", function()
         animation.enabled = true
         assert.equals(0.3, animation.word(object, "layout").duration)
     end)
+    it("requests a frame when the global switch changes", function()
+        local old = _G.awesome
+        local frames = 0
+        _G.awesome = {_clay_dirty = function() frames = frames + 1 end}
+        animation.enabled = false
+        animation.enabled = false
+        animation.enabled = true
+        _G.awesome = old
+        assert.equals(2, frames)
+        assert.is_true(animation.enabled)
+    end)
     it("selects one-shot durations ahead of widget fields and suppresses descendants", function()
         local object, item = {}, {}
         local policy = {item = item, field = {bg = 1}}

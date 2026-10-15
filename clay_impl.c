@@ -199,6 +199,18 @@ clay_exit_initial(Clay_TransitionCallbackArguments *arguments)
     }
 }
 
+void *
+clay_transition_userdata(const Clay_TransitionCallbackArguments *arguments)
+{
+    Clay_Context *context = Clay_GetCurrentContext();
+    for (int32_t i = 0; i < context->transitionDatas.length; i++) {
+        Clay__TransitionDataInternal *record = &context->transitionDatas.internalArray[i];
+        if (&record->currentState == arguments->current)
+            return record->elementThisFrame->config.userData;
+    }
+    return NULL;
+}
+
 void
 clay_entrances_first(void)
 {

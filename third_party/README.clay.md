@@ -46,3 +46,4 @@ Grid dependency stages use private geometry copies and private callbacks. Public
 | `clay_transition_snapshot` | Copies the last published non-text boxes and colors into output-owned storage before ephemeral declarations are reset. |
 | `clay_transition_admit` | Checks the pinned transition array capacity and seeds newly configured records from the last published state, so a one-shot starts at the displayed value. |
 | `clay_exit_initial` | Seeds the first exit callback from the record's current state. Pinned Clay retains an entrance's initial state until the next idle frame; a visibility change before that frame must exit from the displayed state. |
+| `clay_transition_userdata` | Finds the active callback's transition record by its current-state pointer and reads the element's owner metadata, so disabled owners also suppress cached descendant transitions and retained exits. |

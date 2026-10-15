@@ -1,6 +1,16 @@
 local beautiful = require("beautiful")
 local capi = {mousegrabber = mousegrabber}
-local animation = {layout_duration = 0, enabled = true}
+local enabled = true
+local animation = setmetatable({layout_duration = 0}, {
+    __index = function(_, key) if key == "enabled" then return enabled end end,
+    __newindex = function(self, key, value)
+        if key ~= "enabled" then rawset(self, key, value); return end
+        assert(type(value) == "boolean", "animation.enabled must be a boolean")
+        if enabled == value then return end
+        enabled = value
+        if awesome and awesome._clay_dirty then awesome._clay_dirty() end
+    end,
+})
 local seen = setmetatable({}, {__mode = "k"})
 --- The duration for every trigger that has none of its own, in seconds.
 -- Unset, nothing animates; 0 snaps.

@@ -319,19 +319,19 @@ end
 
 --- Persistent animation durations by property, or false to disable the subtree.
 -- Assigning nil removes this widget's policy. The animate method stays callable.
+-- Policies are copied on assignment and access; reassign an edited copy to apply it.
 -- @property animation
 -- @tparam[opt=nil] table|boolean animation
 -- @propemits true false
 function base.widget:get_animation()
-    return self._private.animation
+    local value = self._private.animation
+    return type(value) == "table" and gtable.clone(value) or value
 end
 
 function base.widget:set_animation(value)
     assert(value == nil or value == false or type(value) == "table", "animation must be a table or false")
     if type(value) == "table" then
-        local copy = {}
-        for key, duration in pairs(value) do copy[key] = duration end
-        value = copy
+        value = gtable.clone(value)
     end
     self._private.animation = value
     self:emit_signal("widget::layout_changed")

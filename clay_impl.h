@@ -27,6 +27,7 @@ void clay_clip_restore(void);
 /* Read a non-text element in the current declaration, without solving it. */
 void clay_entrances_first(void);
 void clay_exit_initial(Clay_TransitionCallbackArguments *arguments);
+void *clay_transition_userdata(const Clay_TransitionCallbackArguments *arguments);
 void clay_reenter(Clay_ElementId id, bool appearing);
 void clay_exit_transition(Clay_ElementId id, Clay_TransitionElementConfig transition);
 bool clay_element_declaration(Clay_ElementId id, Clay_ElementDeclaration *out);

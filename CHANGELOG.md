@@ -61,6 +61,13 @@ All notable changes to somewm will be documented in this file.
   The `.animation` property stores the policy separately from the `:animate`
   method. With `widget.animation = false`, the method applies values immediately
   and remains callable. Policy changes emit `property::animation`.
+- Animation policies on clients, wiboxes, popups and widgets are copied on
+  assignment and access. Reassign an edited policy to apply it and notify
+  observers. `animation = false` suppresses the object and its descendant
+  animations; `nil` removes the override. The global
+  `somewm.animation.enabled` switch and mouse grabs also suppress drawin
+  transitions. Active transitions finish on the next rendered frame when
+  disabled, including retained exits.
 
 ### Changed
 

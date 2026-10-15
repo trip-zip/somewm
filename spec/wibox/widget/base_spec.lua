@@ -60,6 +60,11 @@ describe("wibox.widget.base", function()
                 assert.is_nil(getmetatable(widget.animation))
                 policy.forced_width = .9
                 assert.equals(.2, widget.animation.forced_width)
+                local edited = widget.animation
+                edited.forced_width = .7
+                assert.equals(.2, widget.animation.forced_width)
+                widget.animation = edited
+                assert.equals(.7, widget.animation.forced_width)
                 widget:animate {forced_width = 120, duration = .5}
                 assert.equals(120, widget:get_forced_width())
                 assert.equals(animate, widget.animate)
@@ -67,7 +72,7 @@ describe("wibox.widget.base", function()
                 widget:set_animation(nil)
                 assert.is_nil(widget.animation)
                 assert.equals(animate, widget.animate)
-                assert.equals(3, changes)
+                assert.equals(4, changes)
             end)
         end
     end)

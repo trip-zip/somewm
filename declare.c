@@ -1083,6 +1083,27 @@ declare_popups(struct wlr_surface *parent, Clay_ElementId parent_id,
 	}
 }
 
+static bool animations_disabled;
+
+static bool animation_owner_disabled(void *userdata)
+{
+    enum declare_kind kind = 0;
+    void *owner = declare_handle_get(declare_userdata_handle(userdata), &kind);
+    if (!owner) return false;
+    if (kind == DECLARE_KIND_DRAWIN) return ((drawin_t *)owner)->animation_disabled;
+    Client *client = kind == DECLARE_KIND_CLIENT ? owner : NULL;
+    if (kind == DECLARE_KIND_TITLEBAR) {
+        drawable_t *drawable = owner;
+        if (drawable->owner_type == DRAWABLE_OWNER_CLIENT) client = drawable->owner.client;
+    }
+    if (!client) return false;
+    luaA_object_push(globalconf_L, client);
+    lua_getfield(globalconf_L, -1, "animation");
+    bool disabled = lua_isboolean(globalconf_L, -1) && !lua_toboolean(globalconf_L, -1);
+    lua_pop(globalconf_L, 2);
+    return disabled;
+}
+
 /* Clay's ease-out on whole pixels. The scene truncates at its boundary, so
  * a fractional box leaves a one pixel seam between an animating element and
  * its neighbour for as long as the animation runs. */
@@ -1090,6 +1111,9 @@ static bool
 transition_ease_out(Clay_TransitionCallbackArguments arguments)
 {
     clay_exit_initial(&arguments);
+    if (animations_disabled || animation_owner_disabled(clay_transition_userdata(&arguments))) {
+        arguments.duration = 0;
+    }
 	bool complete = Clay_EaseOut(arguments);
 	Clay_BoundingBox *box = &arguments.current->boundingBox;
 
@@ -4147,6 +4171,15 @@ declare_output_frame(struct declare_output *dout, Monitor *m)
     band->scrollbar_records_len = 0;
     solved_len = 0;
     luaA_emit_signal_global("clay::declare");
+    lua_getfield(globalconf_L, LUA_REGISTRYINDEX, "_LOADED");
+    lua_getfield(globalconf_L, -1, "somewm.animation");
+    animations_disabled = globalconf.mousegrabber != LUA_REFNIL;
+    if (lua_istable(globalconf_L, -1)) {
+        lua_getfield(globalconf_L, -1, "enabled");
+        animations_disabled = animations_disabled || !lua_toboolean(globalconf_L, -1);
+        lua_pop(globalconf_L, 1);
+    }
+    lua_pop(globalconf_L, 2);
     if (band->exhausted) goto failed;
 	start = now_us();
     in_frame = true;

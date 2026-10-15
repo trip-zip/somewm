@@ -1252,19 +1252,41 @@ luaA_drawin_set_shadow(lua_State *L, drawin_t *drawin)
 	return 0;
 }
 
+/* Policies contain small tables of transition settings. Copy both directions
+ * so editing a returned table cannot disagree with the parsed transition. */
+static void
+copy_animation(lua_State *L, int index, unsigned depth)
+{
+    index = luaA_absindex(L, index);
+    if (!lua_istable(L, index)) { lua_pushvalue(L, index); return; }
+    if (depth > 16) luaL_error(L, "animation tables are nested too deeply");
+    luaL_checkstack(L, 5, "copying animation policy");
+    lua_newtable(L);
+    lua_pushnil(L);
+    while (lua_next(L, index)) {
+        lua_pushvalue(L, -2);
+        copy_animation(L, -2, depth + 1);
+        lua_rawset(L, -5);
+        lua_pop(L, 1);
+    }
+}
+
 static int
 luaA_drawin_get_animation(lua_State *L, drawin_t *d)
 {
     if (d->animation_ref != LUA_NOREF) lua_rawgeti(L, LUA_REGISTRYINDEX, d->animation_ref);
     else lua_pushnil(L);
+    copy_animation(L, -1, 0);
     return 1;
 }
 
 static int
 luaA_drawin_set_animation(lua_State *L, drawin_t *d)
 {
-    if (!lua_isnil(L, -1) && !lua_istable(L, -1))
-        return luaL_error(L, "animation must be a table or nil");
+    if (!lua_isnil(L, -1) && !lua_istable(L, -1)
+            && !(lua_isboolean(L, -1) && !lua_toboolean(L, -1)))
+        return luaL_error(L, "animation must be a table, false or nil");
+    copy_animation(L, -1, 0);
     struct widget_transition transition = {0};
     if (lua_istable(L, -1)) {
         lua_getfield(L, -1, "visible");
@@ -1275,9 +1297,11 @@ luaA_drawin_set_animation(lua_State *L, drawin_t *d)
         lua_pop(L, 2);
         if (!ok) return luaL_error(L, "animation.visible has an invalid transition");
     }
+    d->animation_disabled = lua_isboolean(L, -1) && !lua_toboolean(L, -1);
+    int ref = lua_isnil(L, -1) ? LUA_NOREF : luaL_ref(L, LUA_REGISTRYINDEX);
+    if (ref == LUA_NOREF) lua_pop(L, 1);
     luaL_unref(L, LUA_REGISTRYINDEX, d->animation_ref);
-    d->animation_ref = LUA_NOREF;
-    if (!lua_isnil(L, -1)) { lua_pushvalue(L, -1); d->animation_ref = luaL_ref(L, LUA_REGISTRYINDEX); }
+    d->animation_ref = ref;
     d->animation = transition;
     declare_mark_all_dirty();
     luaA_object_emit_signal(L, -3, "property::animation", 0);

@@ -228,9 +228,18 @@ local steps = {
 
     function(count)
         local wa = screen.primary.workarea
-        local _, actual_w = master_width_matches(0.8)
+        local master = awful.client.visible(screen.primary)[1]
+        local actual_w
+        for line in awesome._clay_tree(screen.primary):gmatch('[^\n]+') do
+            if master and line:find('CLIENT ' .. master.class .. ' ', 1, true) then
+                actual_w = tonumber(line:match('box %-?%d+,%-?%d+ (%d+)x%d+'))
+                break
+            end
+        end
+        assert(actual_w, 'master frame missing from the solved tree')
 
-        -- A snap is never caught between the two widths; an animation is.
+        -- The displayed frame can advance before the application acknowledges
+        -- a resize. Final client geometry is checked by master_width_matches.
         if actual_w > wa.width * 0.5 + 10 and actual_w < wa.width * 0.8 - 10 then
             io.stderr:write(string.format(
                 "[TEST] PASS: mid-animation master.w=%d\n", actual_w))
