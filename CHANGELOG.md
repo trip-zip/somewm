@@ -272,6 +272,8 @@ All notable changes to somewm will be documented in this file.
 
 - An explicit `disappear = "none"` or `exit = "none"` closes without an
   animation instead of falling back to the tag exit.
+- A bordered or shadowed wibox or popup that grows in or out shows its
+  content inside the growing frame, instead of at its full size behind it.
 - Xwayland content-size requests are declared inside the Clay client frame,
   so repeated and partial requests no longer shift or shrink decorated
   floating windows. Geometry replies use the completed solve, with request

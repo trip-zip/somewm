@@ -1887,7 +1887,8 @@ declare_widget_subtree(const struct widget_host *host, size_t i, Clay_ElementId 
 	const struct widget_node *n = &d->nodes[i];
 	void *word = host->layout ? NULL : userdata_clip(userdata,
 		i == 0 && (host->inner_clip || host->path_clip) ? 0 : n->clip_opens,
-		i == 0 && (host->inner_clip || host->path_clip) ? n->clip_opens : n->clip_by);
+		i == 0 && (host->inner_clip || host->path_clip) ? n->clip_opens
+		: i == 0 && host->frame_clip ? WIDGET_FRAME_SCOPE : n->clip_by);
 	Clay_ElementDeclaration e;
 	size_t next = i + 1;
 	ids[i] = id.id;
@@ -2165,6 +2166,21 @@ drawin_path_frame(drawin_t *d, Clay_ElementDeclaration *frame)
 	frame->cornerRadius = (Clay_CornerRadius){0};
 }
 
+/* Clay moves only the transitioning frame's box; the tree inside solves at
+ * its settled size. A grow clips that tree to the frame through a scope the
+ * frame opens. A path frame already opens the root scope itself. */
+static bool
+frame_grow_clip(const drawin_t *d, Clay_ElementDeclaration *frame)
+{
+    if (!d->animation.enabled || frame->custom.customData
+            || !((d->animation.enter_state | d->animation.exit_state | d->animation.tag_exit)
+                & WIDGET_TRANSITION_GROW))
+        return false;
+    frame->custom.customData = RENDER_CLIP_MARK;
+    frame->userData = userdata_clip(frame->userData, WIDGET_FRAME_SCOPE, 0);
+    return true;
+}
+
 /* A decorated host clips its padded content through an inner renderer
  * element, while its border and shadow keep their own areas. Rounded
  * content retains its separate mask scope. */
@@ -2189,6 +2205,7 @@ declare_widget_frame(drawin_t *d, struct widget_host *host, Clay_ElementId id,
 	native_open(id);
     if (d->animation.enabled && !slot->userData)
         slot->userData = leaf_userdata(handle, 1.0f);
+    host->frame_clip = frame_grow_clip(d, slot);
     native_configure(slot);
 	root_entrance(id, slot);
 	record_open(role, handle, id, slot, wsrc, hsrc, host);
@@ -2211,7 +2228,8 @@ declare_widget_frame(drawin_t *d, struct widget_host *host, Clay_ElementId id,
 			.clip = { .horizontal = native_clip && n->sizing[0] == WIDGET_SIZING_FIXED,
 				.vertical = native_clip && n->sizing[1] == WIDGET_SIZING_FIXED },
 			.custom.customData = RENDER_CLIP_MARK,
-			.userData = userdata_clip(word, n->clip_opens, 0),
+			.userData = userdata_clip(word, n->clip_opens,
+				host->frame_clip ? WIDGET_FRAME_SCOPE : 0),
 		};
 		native_open(inner_clip_id(handle));
 		native_configure(&inner);
@@ -2314,6 +2332,7 @@ declare_drawin(drawin_t *d, Monitor *m, int16_t z)
 		frame.cornerRadius = (Clay_CornerRadius){host.radius, host.radius, host.radius, host.radius};
 	if (host.path_clip)
 		drawin_path_frame(d, &frame);
+	host.frame_clip = frame_grow_clip(d, &frame);
 	host.flow = true;
 	host.told[0] = d->width;
 	host.told[1] = d->height;
