@@ -724,6 +724,12 @@ test_x11_hints_client = executable(
   dependencies: [xcb, xcb_icccm],
   install: false,
 )
+test_x11_configure_client = executable(
+  'test-x11-configure-client',
+  'tests/test-x11-configure-client.c',
+  dependencies: [xcb, xcb_icccm],
+  install: false,
+)
 # ==============================================================================
 # Install Data
 # ==============================================================================

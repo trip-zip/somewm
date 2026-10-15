@@ -379,7 +379,14 @@ local function expand(node, taken)
             end
             return nil
         end
-        return node.children and node or describe_client(node.client, node)
+        if node.children then
+            -- A custom composite owns its allocation, but still consumes
+            -- the X11 request so the completed solve can acknowledge it.
+            local request = node.client._x11_configure
+            node.x11_configure_serial = request and request.serial or nil
+            return node
+        end
+        return describe_client(node.client, node)
     end
     if node.children then
         local children = {}
@@ -456,7 +463,7 @@ end)
 -- property the composite or its allocation reads arranges the screen.
 local function arrange_prop(obj) layout.arrange(obj.screen) end
 
-for _, signal in ipairs{"property::size_hints_honor", "property::struts",
+for _, signal in ipairs{"property::_x11_configure", "property::size_hints_honor", "property::struts",
         "property::minimized", "property::sticky", "property::fullscreen",
         "property::maximized", "property::maximized_horizontal", "property::maximized_vertical",
         "property::border_width", "property::hidden", "property::floating",

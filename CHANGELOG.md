@@ -264,6 +264,13 @@ All notable changes to somewm will be documented in this file.
 
 ### Fixed
 
+- Xwayland content-size requests are declared inside the Clay client frame,
+  so repeated and partial requests no longer shift or shrink decorated
+  floating windows. Geometry replies use the completed solve, with request
+  masks, gravity, size limits and compositor allocations respected.
+- Xwayland clients default to full opacity, keeping Steam and Proton windows
+  visible after switching tags without needing a hover to redraw them.
+
 - Explicitly positioned `awful.popup` windows size to their content and respect size limits when a border, shadow or visibility animation adds an outer frame, instead of remaining at their initial 1×1 geometry.
 
 - Packages built with `--auto-features enabled`, such as Arch's `arch-meson`, no longer abort when the pointer moves from the bar into a menu. The renderer's debug verifier is on only in sanitizer and test builds, and the `render_verify` build option is gone.

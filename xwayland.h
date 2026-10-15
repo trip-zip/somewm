@@ -7,7 +7,17 @@
 #ifndef XWAYLAND_H
 #define XWAYLAND_H
 
+#include <stdint.h>
+#include <lua.h>
+
 struct wl_listener;
+struct client_t;
+struct wlr_box;
+
+int luaA_client_get_x11_configure(lua_State *L, struct client_t *c);
+void xwayland_geometry_authored(struct client_t *c);
+void xwayland_publish_geometry(struct client_t *c, struct wlr_box frame,
+        uint32_t request_serial);
 
 void xwayland_setup(void);
 void xwayland_cleanup(void);

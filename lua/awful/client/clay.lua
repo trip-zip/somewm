@@ -124,6 +124,7 @@ end
 function clay.describe(c, allocation)
     local frame = {name = "CLIENT", client = c, dir = "y"}
     for _, key in ipairs(allocation_keys) do frame[key] = allocation[key] end
+    local reference
     local fullscreen = c.fullscreen
     local bw = fullscreen and 0 or c.border_width
     local top, right, bottom, left
@@ -133,6 +134,18 @@ function clay.describe(c, allocation)
         bottom = bar(c, "TITLEBAR_BOTTOM", "bottom", true)
         left = bar(c, "TITLEBAR_LEFT", "left", false)
     end
+    local request = c._x11_configure
+    frame.x11_configure_serial = request and request.serial or nil
+    -- Only a freely floating allocation accepts protocol geometry. Tiled,
+    -- fullscreen, maximized and aspect-constrained clients acknowledge the
+    -- solved policy. An explicit layout allocation remains authoritative.
+    local pad = allocation.pad
+    local padded = pad and (pad[1] ~= 0 or pad[2] ~= 0 or pad[3] ~= 0 or pad[4] ~= 0)
+    local accept = request and request.gravity and allocation.float
+        and allocation._attach == "output" and not padded
+        and allocation.wsrc == "user" and allocation.hsrc == "user"
+        and not fullscreen and not c.maximized and c.aspect_ratio == 0
+        and not c.maximized_horizontal and not c.maximized_vertical
     local committed = c._committed_size
     local pixels = surface(c, fullscreen)
     local slot = {name = "SLOT", w = "grow", h = "grow", children = {pixels}}
@@ -156,6 +169,39 @@ function clay.describe(c, allocation)
     end
     box.children = around(top, right, bottom, left, slot, "CLIENT_BODY")
     box.pad = {bw, bw, bw, bw}
+    if accept then
+        -- The requested content is a measurement inside the slot. FIT and
+        -- protocol limits let Clay size that slot, then fit its titlebars
+        -- and border around it. No content-to-frame dimension arithmetic.
+        local desired = {name = "X11_CONTENT_REQUEST", w = request.width or 0,
+            h = request.height or 0, wsrc = "protocol", hsrc = "protocol"}
+        table.insert(slot.children, 1, desired)
+        for key, field in pairs(bounds) do pixels[key] = request[field] end
+        for _, axis in ipairs {"w", "h"} do
+            if request[axis == "w" and "width" or "height"] then
+                frame[axis], frame[axis .. "src"] = "fit", "protocol"
+                slot[axis], slot[axis .. "src"] = "fit", "protocol"
+                slot[axis .. "min"], slot[axis .. "max"] = pixels[axis .. "min"], pixels[axis .. "max"]
+                for _, child in ipairs(box.children) do
+                    if child.name == "CLIENT_BODY" then child[axis] = "fit" end
+                end
+            end
+        end
+        -- Position requests are interpreted against the last measured
+        -- frame/content pair. StaticGravity is a content-origin reference;
+        -- other gravities attach matching points of the frame and the
+        -- protocol reference box, so Clay resolves their size-dependent shift.
+        frame.x, frame.y = request.x - c.screen.geometry.x, request.y - c.screen.geometry.y
+        if request.gravity ~= 10 then
+            local g = request.gravity - 1
+            local point = (g % 3) * 3 + math.floor(g / 3)
+            reference = {name = "X11_REFERENCE", float = true, _attach = "output",
+                x = frame.x, y = frame.y, w = request.reference_width,
+                h = request.reference_height, wsrc = "protocol", hsrc = "protocol", children = {frame}}
+            frame.x, frame.y, frame._attach = 0, 0, nil
+            frame.parent, frame.own = point, point
+        end
+    end
     if bw > 0 then
         box.border, box.bw = {c:_border_rgba()}, {bw, bw, bw, bw}
     end
@@ -200,9 +246,8 @@ function clay.describe(c, allocation)
     end
     previous[c] = {maximized = c.maximized, fullscreen = fullscreen, floating = c.floating,
         trigger = trigger, started = started, focused = focused, focus_started = focus_started}
-    local pad = allocation.pad
-    if not (allocation.float and pad and (pad[1] ~= 0 or pad[2] ~= 0 or pad[3] ~= 0 or pad[4] ~= 0)) then
-        return frame
+    if not (allocation.float and padded) then
+        return reference or frame
     end
     local cell = {name = "CELL", client = c, pad = pad, children = {frame}}
     for _, key in ipairs(allocation_keys) do cell[key], frame[key] = allocation[key], nil end

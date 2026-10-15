@@ -143,6 +143,7 @@ struct widget_node {
 	/* A client composite's root: the client's declare handle, 0 for none.
 	 * A composite always has children. */
 	uint64_t client;
+	uint32_t x11_configure_serial; /* request consumed by this client declaration */
 	/* A composite's pixels leaf: the client's declare handle, with the
 	 * surface's opacity. */
 	uint64_t surface;

@@ -92,6 +92,16 @@ associatex11(struct wl_listener *listener, void *data)
 	LISTEN(&surface->events.unmap, &c->unmap, unmapnotify);
 }
 
+static void
+xwayland_configure_changed(Client *c)
+{
+    lua_State *L = globalconf_get_lua_State();
+    luaA_object_push(L, c);
+    luaA_object_emit_signal(L, -1, "property::_x11_configure", 0);
+    lua_pop(L, 1);
+    if (c->mon && c->mon->declare) declare_output_mark_dirty(c->mon->declare);
+}
+
 void
 configurex11(struct wl_listener *listener, void *data)
 {
@@ -114,13 +124,125 @@ configurex11(struct wl_listener *listener, void *data)
 				event->x, event->y, event->width, event->height);
 		return;
 	}
-	if (some_client_get_floating(c)) {
-		resize(c, (struct wlr_box){.x = event->x - client_border(c),
-				.y = event->y - client_border(c), .width = event->width,
-				.height = event->height}, 0);
-	} else {
-		arrange(c->mon);
-	}
+	/* Preserve only the requested fields. wlroots fills omitted fields with
+	 * current content geometry; those must not become frame constraints. */
+	if (event->mask & XCB_CONFIG_WINDOW_X) c->x11_configure.requested.x = event->x;
+	if (event->mask & XCB_CONFIG_WINDOW_Y) c->x11_configure.requested.y = event->y;
+	if (event->mask & XCB_CONFIG_WINDOW_WIDTH) c->x11_configure.requested.width = event->width;
+	if (event->mask & XCB_CONFIG_WINDOW_HEIGHT) c->x11_configure.requested.height = event->height;
+	c->x11_configure.mask |= event->mask;
+	if (++c->x11_configure.serial == 0) ++c->x11_configure.serial;
+	c->x11_configure.pending = true;
+
+	/* The declaration must see the request before a dirty frame can answer
+	 * it. This signal schedules Lua's layout pass; it changes no geometry. */
+	xwayland_configure_changed(c);
+}
+
+/* Invalidate a cached protocol-sized declaration when Lua or compositor
+ * policy authors a newer frame. It must not settle over that newer intent. */
+void
+xwayland_geometry_authored(Client *c)
+{
+    if (c->client_type != X11) return;
+    c->x11_configure.mask = 0;
+    if (++c->x11_configure.serial == 0) ++c->x11_configure.serial;
+}
+
+/* The protocol adapter supplies content intent and a gravity reference;
+ * the Lua composite fits the frame around the content in Clay. */
+int
+luaA_client_get_x11_configure(lua_State *L, Client *c)
+{
+    if (c->client_type != X11 || !c->x11_configure.pending) return 0;
+    struct wlr_box frame = c->x11_configure.frame;
+    struct wlr_box content = c->x11_configure.content;
+    struct wlr_box request = c->x11_configure.requested;
+    uint16_t mask = c->x11_configure.mask;
+    if (frame.width <= 0) {
+        /* Before its first solve there are no published decorations. */
+        frame = content = (struct wlr_box) {c->surface.xwayland->x,
+            c->surface.xwayland->y, c->surface.xwayland->width,
+            c->surface.xwayland->height};
+    }
+    int gravity = XCB_GRAVITY_NORTH_WEST;
+    if (c->surface.xwayland->size_hints &&
+            (c->surface.xwayland->size_hints->flags & XCB_ICCCM_SIZE_HINT_P_WIN_GRAVITY))
+        gravity = c->surface.xwayland->size_hints->win_gravity;
+    if (gravity < XCB_GRAVITY_NORTH_WEST || gravity > XCB_GRAVITY_STATIC)
+        gravity = XCB_GRAVITY_NORTH_WEST;
+
+    lua_createtable(L, 0, 12);
+#define FIELD(name, value) do { lua_pushinteger(L, (value)); lua_setfield(L, -2, (name)); } while (0)
+    FIELD("serial", c->x11_configure.serial);
+    if (!mask) return 1;
+    if (mask & XCB_CONFIG_WINDOW_WIDTH) FIELD("width", request.width);
+    if (mask & XCB_CONFIG_WINDOW_HEIGHT) FIELD("height", request.height);
+    FIELD("gravity", gravity);
+    xcb_size_hints_t *hints = c->surface.xwayland->size_hints;
+    if (c->size_hints_honor && hints) {
+        if (hints->flags & XCB_ICCCM_SIZE_HINT_P_MIN_SIZE) {
+            if (hints->min_width > 0) FIELD("min_width", hints->min_width);
+            if (hints->min_height > 0) FIELD("min_height", hints->min_height);
+        }
+        if (hints->flags & XCB_ICCCM_SIZE_HINT_P_MAX_SIZE) {
+            if (hints->max_width > 0 && hints->max_width < 1000000) FIELD("max_width", hints->max_width);
+            if (hints->max_height > 0 && hints->max_height < 1000000) FIELD("max_height", hints->max_height);
+        }
+    }
+    /* StaticGravity references the content origin. Translate that input
+     * using the measured solve, without calculating decoration layout. */
+    FIELD("x", mask & XCB_CONFIG_WINDOW_X ? request.x -
+        (gravity == XCB_GRAVITY_STATIC ? content.x - frame.x : 0) : frame.x);
+    FIELD("y", mask & XCB_CONFIG_WINDOW_Y ? request.y -
+        (gravity == XCB_GRAVITY_STATIC ? content.y - frame.y : 0) : frame.y);
+    FIELD("reference_width", mask & XCB_CONFIG_WINDOW_X ?
+        (mask & XCB_CONFIG_WINDOW_WIDTH ? request.width : content.width) : frame.width);
+    FIELD("reference_height", mask & XCB_CONFIG_WINDOW_Y ?
+        (mask & XCB_CONFIG_WINDOW_HEIGHT ? request.height : content.height) : frame.height);
+#undef FIELD
+    return 1;
+}
+
+/* Only the completed reconciliation publishes managed X11 geometry. The
+ * frame's request serial proves that this declaration consumed the intent,
+ * including a denied request or an accepted request that changed nothing. */
+void
+xwayland_publish_geometry(Client *c, struct wlr_box frame, uint32_t request_serial)
+{
+    struct wlr_box content = c->surface_box;
+    if (c->client_type != X11 || client_is_unmanaged(c) || c->window == XCB_NONE
+            || !client_surface(c) || !client_surface(c)->mapped
+            || content.width <= 0 || content.height <= 0)
+        return;
+    bool pending = c->x11_configure.pending;
+    if ((pending || request_serial) && request_serial != c->x11_configure.serial) return;
+    struct wlr_box previous_frame = c->x11_configure.frame;
+    struct wlr_box previous_content = c->x11_configure.content;
+    c->x11_configure.frame = frame;
+    c->x11_configure.content = content;
+    struct wlr_xwayland_surface *xs = c->surface.xwayland;
+    /* A first solve, or changed decorations, can change StaticGravity's
+     * content-origin reference. Redeclare against the measured inset before
+     * replying; never guess a titlebar extent in the protocol handler. */
+    if (pending && xs->size_hints
+            && (xs->size_hints->flags & XCB_ICCCM_SIZE_HINT_P_WIN_GRAVITY)
+            && xs->size_hints->win_gravity == XCB_GRAVITY_STATIC
+            && (((c->x11_configure.mask & XCB_CONFIG_WINDOW_X)
+                    && (previous_frame.width <= 0 || content.x - frame.x != previous_content.x - previous_frame.x))
+                || ((c->x11_configure.mask & XCB_CONFIG_WINDOW_Y)
+                    && (previous_frame.height <= 0 || content.y - frame.y != previous_content.y - previous_frame.y)))) {
+        xwayland_configure_changed(c);
+        return;
+    }
+    if (xs->fullscreen != c->fullscreen)
+        wlr_xwayland_surface_set_fullscreen(xs, c->fullscreen);
+    if (pending || xs->x != content.x || xs->y != content.y
+            || xs->width != content.width || xs->height != content.height)
+        wlr_xwayland_surface_configure(xs, content.x, content.y,
+            content.width, content.height);
+    c->x11_configure.pending = false;
+    c->x11_configure.mask = 0;
 }
 
 void
@@ -137,6 +259,10 @@ createnotifyx11(struct wl_listener *listener, void *data)
 	/* Create Lua client object (matches AwesomeWM client_manage line 2138) */
 	c = client_new(L);
 	/* client_new() leaves the client on the Lua stack at index -1 */
+	/* Match native clients: unset opacity reads as fully opaque in the
+	 * Clay surface declaration. Zero-initialized clients disappear when
+	 * their scene is borrowed again (for example after a tag switch). */
+	c->opacity = -1;
 
 	/* Assign unique client ID (Sway-style incrementing counter) */
 	c->id = next_client_id++;

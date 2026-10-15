@@ -52,6 +52,7 @@
 #include "stack.h"
 #include "widget.h"
 #include "window.h"
+#include "xwayland.h"
 #include "common/buffer.h"
 #include "common/lualib.h"
 #include "luaa.h"
@@ -150,7 +151,7 @@ struct declare_band {
 	 * handle and frame id: what clients_settle reads back. */
 	struct settle_frame {
 		uint64_t handle;
-		uint32_t id;
+		uint32_t id, x11_configure_serial;
 	} *settle;
 	size_t settle_len, settle_cap;
 };
@@ -176,6 +177,8 @@ declare_src_parse(const char *word)
 }
 
 struct declare_record {
+    bool client_frame;
+    uint32_t x11_configure_serial;
 	const char *role;
 	uint64_t handle;       /* the object it stands for, 0 for none */
 	int screen_index;     /* SCREEN ownership captured at declaration */
@@ -1326,6 +1329,8 @@ clients_settle(Monitor *m, struct declare_band *band)
         Client *c = declare_handle_get(band->settle[i].handle, NULL);
         Clay_ElementData data = Clay_GetElementData((Clay_ElementId) { .id = band->settle[i].id });
         if (!c || c->mon != m || !data.found) continue;
+        if (c->client_type == X11 && band->settle[i].x11_configure_serial
+                && band->settle[i].x11_configure_serial != c->x11_configure.serial) continue;
         /* A pending configure means the chrome still wraps an older answer. */
         if (c->resize) continue;
         /* A fullscreen client's box is the monitor's. */
@@ -1764,7 +1769,7 @@ declare_client_frame(const struct widget_host *host, size_t i, int16_t z,
 	/* A box the user or a config's layout authored (both axes fixed, spec
 	 * D050) is the client's geometry already, and a queued geometry change
 	 * may be newer than the tree that declared it: it is never read back. */
-	bool authored = n->sizing[0] == WIDGET_SIZING_FIXED && n->sizing[1] == WIDGET_SIZING_FIXED
+	bool authored = !n->x11_configure_serial && n->sizing[0] == WIDGET_SIZING_FIXED && n->sizing[1] == WIDGET_SIZING_FIXED
 		&& (n->src[0] == DECLARE_SRC_USER || n->src[0] == DECLARE_SRC_LEGACY);
 
 	if (!authored && recording) {
@@ -1773,7 +1778,7 @@ declare_client_frame(const struct widget_host *host, size_t i, int16_t z,
 			band->settle_cap = band->settle_cap ? band->settle_cap * 2 : 16;
 			p_realloc(&band->settle, band->settle_cap);
 		}
-		band->settle[band->settle_len++] = (struct settle_frame) { n->client, id.id };
+		band->settle[band->settle_len++] = (struct settle_frame) { n->client, id.id, n->x11_configure_serial };
 	}
 	ids[i] = id.id;
 	e->userData = userdata_clip(leaf_userdata(n->client, 1.0f), 0,
@@ -1783,6 +1788,11 @@ declare_client_frame(const struct widget_host *host, size_t i, int16_t z,
     if (!e->transition.handler) clay_exit_transition(id, (Clay_TransitionElementConfig){0});
 	root_entrance(id, e);
 	record_open(name, n->client, id, e, wsrc, hsrc, NULL);
+    if (recording && !recording->exhausted && recording->records_len) {
+        struct declare_record *record = &recording->records[recording->records_len - 1];
+        record->client_frame = true;
+        record->x11_configure_serial = n->x11_configure_serial;
+    }
     record_client_exit(n);
 	declare_shadow(&c->shadow, c->shadow_config, false, n->client, e);
 	size_t next = i + 1;
@@ -4398,6 +4408,21 @@ declare_output_frame(struct declare_output *dout, Monitor *m)
 		&client_hooks, (Clay_BoundingBox) { 0, 0, m->m.width, m->m.height });
 	in_frame = false;
 	band->reconcile_us = now_us() - start;
+    /* X11 carries position and size in one reply. All render hooks must
+     * have installed this solve before any managed X11 client sees it. */
+    for (size_t i = 0; i < band->records_len; i++) {
+        struct declare_record *record = &band->records[i];
+        if (!record->client_frame) continue;
+        Client *c = declare_handle_get(record->handle, NULL);
+        if (!c || c->client_type != X11 || c->mon != m) continue;
+        Clay_ElementData data = Clay_GetElementData((Clay_ElementId){.id = record->id});
+        if (!data.found) continue;
+        Clay_BoundingBox b = data.boundingBox;
+        int x = lroundf(b.x), y = lroundf(b.y);
+        xwayland_publish_geometry(c, (struct wlr_box){m->m.x + x, m->m.y + y,
+            lroundf(b.x + b.width) - x, lroundf(b.y + b.height) - y},
+            record->x11_configure_serial);
+    }
 	in_pass = false;
 	/* A transition that has not settled needs the next frame to advance
 	 * it, and one more to settle on; when every record is idle the output

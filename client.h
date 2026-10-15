@@ -288,6 +288,8 @@ static inline uint32_t
 client_set_size(Client *c, uint32_t width, uint32_t height)
 {
 	if (client_is_x11(c)) {
+		/* Managed X11 replies are published atomically after reconciliation. */
+		if (!client_is_unmanaged(c)) return 0;
 		/* X11 position = content origin (after border + titlebars).
 		 * Configure if size OR position changed. Position-only changes
 		 * must also be sent so X11 clients know where they are — without
