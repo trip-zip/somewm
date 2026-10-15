@@ -43,21 +43,23 @@ All notable changes to somewm will be documented in this file.
 
 - Client animation by trigger: `c.animation = {appear, disappear, tag, focus,
   maximize, floating}` and the rule property of the same name, with the theme
-  keys beautiful.animation_appear and animation_disappear (grow, slide_left,
-  slide_right, slide_up, slide_down, fade) and the durations
+  keys beautiful.animation_appear, animation_disappear and animation_tag
+  (grow, slide_left, slide_right, slide_up, slide_down, fade) and the durations
   animation_appear_duration, animation_disappear_duration,
   animation_tag_duration, animation_focus_duration,
-  animation_maximize_duration and animation_floating_duration. A focus change
-  eases the border colour. With a tag duration set, a tag switch grows clients
-  in and out unless c.animation.tag names another entrance. A client exit
-  animates its frame only; the surface snaps.
+  animation_maximize_duration and animation_floating_duration.
+  beautiful.animation_duration supplies the fallback for triggers without
+  their own duration, including layout. A focus change eases the border
+  colour. With a tag duration set, a tag switch grows clients in and out
+  unless c.animation.tag or beautiful.animation_tag names another entrance.
+  A client exit animates its frame only; the surface snaps.
 - `animation = {visible = {duration, enter, exit}}` on wibox and awful.popup,
   with the same entrances. A drawin's exit drops its shadow at once.
 - `widget.animation = {property = duration}` for bg, border_color, border_width,
   forced_width, forced_height and the progressbar and slider value, and
   `widget:animate{property = value, duration = d}` for one change. Positions
-  snap. Past 200 transition records per output the remaining nodes snap, with
-  one warning.
+  snap. Past 200 transition records per output, including configured idle
+  records, the remaining nodes snap, with one warning.
   The `.animation` property stores the policy separately from the `:animate`
   method. With `widget.animation = false`, the method applies values immediately
   and remains callable. Policy changes emit `property::animation`.

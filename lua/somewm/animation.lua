@@ -13,12 +13,12 @@ local animation = setmetatable({layout_duration = 0}, {
 })
 local seen = setmetatable({}, {__mode = "k"})
 --- The duration for every trigger that has none of its own, in seconds.
--- Unset, nothing animates; 0 snaps.
+-- Applies to layout too. With no duration configured, nothing animates; 0 snaps.
 -- @beautiful beautiful.animation_duration
 -- @tparam[opt=nil] number animation_duration
 
 --- Tiled clients moving between slots, in seconds; 0 snaps.
--- Requiring `somewm.layout_animation` sets 0.15.
+-- Requiring the deprecated `somewm.layout_animation` sets 0.15.
 -- @beautiful beautiful.animation_layout_duration
 -- @tparam[opt=0] number animation_layout_duration
 
@@ -41,7 +41,7 @@ local seen = setmetatable({}, {__mode = "k"})
 -- @tparam[opt=nil] number animation_disappear_duration
 
 --- A tag switch, in seconds. Clients grow in and out unless
--- `c.animation.tag` names another entrance.
+-- `c.animation.tag` or `animation_tag` names another entrance.
 -- @beautiful beautiful.animation_tag_duration
 -- @tparam[opt=nil] number animation_tag_duration
 
@@ -57,6 +57,11 @@ local seen = setmetatable({}, {__mode = "k"})
 --- The exit every client closes with, same words as `animation_appear`.
 -- @beautiful beautiful.animation_disappear
 -- @tparam[opt=nil] string animation_disappear
+
+--- The entrance and exit on a tag switch, same words as `animation_appear`.
+-- Defaults to `grow`; `c.animation.tag` can override it.
+-- @beautiful beautiful.animation_tag
+-- @tparam[opt="grow"] string animation_tag
 
 local theme_keys = {
     layout = "animation_layout_duration",
