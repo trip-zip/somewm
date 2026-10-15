@@ -45,6 +45,7 @@ struct clay_element_view {
 	bool text;
 	bool floating;
 	bool exiting;
+    bool entering;
 	Clay_ElementDeclaration config;   /* when !text */
 	Clay_String text_string;          /* when text */
 	uint16_t font;                    /* when text */

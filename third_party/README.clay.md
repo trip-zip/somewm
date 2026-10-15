@@ -41,7 +41,7 @@ Grid dependency stages use private geometry copies and private callbacks. Public
 | `clay_scroll_set` | Uses `Clay_GetScrollContainerData` to write a matching `scrollContainerDatas.scrollPosition`; it does not address the context directly. |
 | `clay_root_count` | Reads `layoutElementTreeRoots.length` for tree-dump traversal. |
 | `clay_root_element` | Reads a `layoutElementTreeRoots` entry's `layoutElementIndex` to locate a dump root. |
-| `clay_element_view` | Reads `layoutElements` and the ID map for names, child indices, text or container configuration, floating state and exit state in the tree dump. |
+| `clay_element_view` | Reads `layoutElements` and the ID map for names, child indices, text or container configuration, floating state and exit state in the tree dump. It reads the matching `transitionDatas` state to distinguish entrance clipping from settled overhang. |
 | `clay_transitions_active` | Reads `transitionDatas` states to request further frames until every transition is idle. |
 | `clay_transition_snapshot` | Copies the last published non-text boxes and colors into output-owned storage before ephemeral declarations are reset. |
 | `clay_transition_admit` | Checks the pinned transition array capacity and seeds newly configured records from the last published state, so a one-shot starts at the displayed value. |

@@ -103,6 +103,14 @@ void render_destroy(struct render_state *rs,
 int render_reconcile(struct render_state *rs, Clay_RenderCommandArray commands,
 	const struct render_client_hooks *hooks, Clay_BoundingBox bounds);
 
+/* Per-frame owner bounds. A clip cuts all paint and input, including shadows.
+ * A border bound fits the border ring to the visible frame without resizing
+ * the owner's content or changing its protocol geometry. The owner's surface
+ * is clipped inside that ring; its separate popup surfaces remain independent. */
+void render_constraints_begin(struct render_state *rs);
+void render_constraint(struct render_state *rs, uint64_t owner,
+    Clay_BoundingBox box, bool border);
+
 /* Identify OUTPUT, whose own rectangle and untinted image paint below all
  * other commands. Zero leaves every element in ordinary command order. */
 void render_set_output_id(struct render_state *rs, uint32_t id);
@@ -165,6 +173,7 @@ int render_device_len(int origin, int len, float scale);
 #define RENDER_CLIP_MARK ((void *)(uintptr_t)UINT64_MAX)
 struct render_shadow {
 	uint64_t gen;
+    uint64_t owner;
 	int radius, corner_radius;
 	float rgba[4];
 	uint32_t owner_id;

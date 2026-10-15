@@ -257,7 +257,15 @@ struct rnode_slot {
 	bool used;
 };
 
+struct owner_constraint {
+    uint64_t owner;
+    Clay_BoundingBox clip, border, content;
+    bool clips, fits_border, clips_content;
+};
+
 struct render_state {
+    struct owner_constraint *constraints;
+    size_t constraints_len, constraints_cap;
     struct fade_value {uint64_t owner; uint32_t id; float alpha; bool opened;} *fades;
     size_t fades_len, fades_cap;
     bool fades_prepared;
@@ -642,6 +650,59 @@ static bool box_empty(Clay_BoundingBox b) {
 static Clay_BoundingBox box_inf(void) {
 	Clay_BoundingBox b = { -CLIP_INF, -CLIP_INF, 2.0f * CLIP_INF, 2.0f * CLIP_INF };
 	return b;
+}
+
+void render_constraints_begin(struct render_state *rs) {
+    rs->constraints_len = 0;
+}
+
+void render_constraint(struct render_state *rs, uint64_t owner,
+        Clay_BoundingBox box, bool border) {
+    struct owner_constraint *entry = NULL;
+    for (size_t i = 0; i < rs->constraints_len; i++)
+        if (rs->constraints[i].owner == owner) entry = &rs->constraints[i];
+    if (!entry) {
+        if (rs->constraints_len == rs->constraints_cap) {
+            rs->constraints_cap = rs->constraints_cap ? rs->constraints_cap * 2 : 16;
+            p_realloc(&rs->constraints, rs->constraints_cap);
+        }
+        entry = &rs->constraints[rs->constraints_len++];
+        *entry = (struct owner_constraint){ .owner = owner };
+    }
+    if (border) {
+        entry->border = entry->fits_border ? box_intersect(entry->border, box) : box;
+        entry->fits_border = true;
+    } else {
+        entry->clip = entry->clips ? box_intersect(entry->clip, box) : box;
+        entry->clips = true;
+    }
+}
+
+static struct owner_constraint *owner_constraint(struct render_state *rs, void *word) {
+    uint64_t owner = (uintptr_t)word & RENDER_UD_OWNER_MASK;
+    for (size_t i = 0; i < rs->constraints_len; i++)
+        if (rs->constraints[i].owner == owner) return &rs->constraints[i];
+    return NULL;
+}
+
+/* Floating surfaces follow the frame's border in command order. Their drawn
+ * size can lag behind the animated allocation, so keep their pixels inside
+ * the fitted ring. Derive the inset before reconciling any command, without
+ * changing the size sent to the client or clipping its separate popups. */
+static void border_content_constraints(struct render_state *rs, Clay_RenderCommandArray commands) {
+    for (size_t i = 0; i < rs->constraints_len; i++)
+        rs->constraints[i].clips_content = false;
+    for (int32_t i = 0; i < commands.length; i++) {
+        Clay_RenderCommand *cmd = Clay_RenderCommandArray_Get(&commands, i);
+        if (cmd->commandType != CLAY_RENDER_COMMAND_TYPE_BORDER) continue;
+        struct owner_constraint *constraint = owner_constraint(rs, cmd->userData);
+        if (!constraint || !constraint->fits_border) continue;
+        Clay_BoundingBox box = box_snap(box_intersect(cmd->boundingBox, constraint->border));
+        Clay_BorderWidth bw = cmd->renderData.border.width;
+        constraint->content = (Clay_BoundingBox){box.x + bw.left, box.y + bw.top,
+            fmaxf(0, box.width - bw.left - bw.right), fmaxf(0, box.height - bw.top - bw.bottom)};
+        constraint->clips_content = true;
+    }
 }
 
 /* inner lies within outer, with a half-pixel tolerance for float noise. */
@@ -1993,7 +2054,7 @@ static Clay_BoundingBox shadow_owner_box(const struct render_shadow *style)
 }
 
 static int reconcile_shadow(struct render_state *rs, struct rnode *n,
-		Clay_RenderCommand *cmd)
+		Clay_RenderCommand *cmd, Clay_BoundingBox rbox)
 {
 	const struct render_shadow *style = render_shadow_of(cmd->renderData.custom.customData);
 	bool fresh = n->node == NULL;
@@ -2050,28 +2111,36 @@ static int reconcile_shadow(struct render_state *rs, struct rnode *n,
 		bool tile = i < SHADOW_SLICE_COUNT;
 		struct wlr_scene_node *node = tile ? &n->shadow_tiles[i]->node
 			: &n->shadow_fills[i-SHADOW_SLICE_COUNT]->node;
-		bool show = fits && b[2] > 0 && b[3] > 0 && (!tile || n->shadow->tiles[i]);
+        Clay_BoundingBox full = {cmd->boundingBox.x + b[0], cmd->boundingBox.y + b[1], b[2], b[3]};
+        Clay_BoundingBox cut = box_intersect(full, rbox);
+        int px = (int)(cut.x - rbox.x), py = (int)(cut.y - rbox.y);
+        bool show = fits && !box_empty(cut) && (!tile || n->shadow->tiles[i]);
 		if (node->enabled != show) {
 			wlr_scene_node_set_enabled(node, show);
 			muts++;
 		}
 		if (!show)
 			continue;
-		if (node->x != b[0] || node->y != b[1]) {
-			wlr_scene_node_set_position(node, b[0], b[1]);
+        if (node->x != px || node->y != py) {
+            wlr_scene_node_set_position(node, px, py);
 			muts++;
 		}
 		if (tile) {
 			struct wlr_scene_buffer *sb = n->shadow_tiles[i];
             if (opacity_changed) wlr_scene_buffer_set_opacity(sb, opacity);
-			if (sb->dst_width != b[2] || sb->dst_height != b[3]) {
-				wlr_scene_buffer_set_dest_size(sb, b[2], b[3]);
-				muts++;
-			}
+            if (changed || !box_pos_equal(n->box, cmd->boundingBox)
+                    || !box_size_equal(n->box, cmd->boundingBox)
+                    || !box_pos_equal(n->rbox, rbox) || !box_size_equal(n->rbox, rbox)) {
+                Clay_RenderCommand tile_cmd = {.boundingBox = full};
+                struct cairo_buffer *raster = n->shadow->tiles[i];
+                buffer_apply_clip(sb, &tile_cmd, cut, rs->scale,
+                    raster->base.width, raster->base.height);
+                muts++;
+            }
 		} else {
 			struct wlr_scene_rect *rect = n->shadow_fills[i-SHADOW_SLICE_COUNT];
-			if (rect->width != b[2] || rect->height != b[3]) {
-				wlr_scene_rect_set_size(rect, b[2], b[3]);
+            if (rect->width != (int)cut.width || rect->height != (int)cut.height) {
+                wlr_scene_rect_set_size(rect, (int)cut.width, (int)cut.height);
 				muts++;
 			}
 		}
@@ -2522,6 +2591,7 @@ static bool can_batch_visibility(struct render_state *rs,
 
 int render_reconcile(struct render_state *rs, Clay_RenderCommandArray commands,
 		const struct render_client_hooks *hooks, Clay_BoundingBox bounds) {
+    border_content_constraints(rs, commands);
 	rs->gen++;
 	rs->buffers_created = 0;
 	rs->created = 0;
@@ -2579,11 +2649,20 @@ int render_reconcile(struct render_state *rs, Clay_RenderCommandArray commands,
             value->opened = true;
         }
         rs->fade_factor = fade_factor(rs, ((uintptr_t)cmd->userData & RENDER_UD_OWNER_MASK));
+        const struct owner_constraint *constraint = owner_constraint(rs, cmd->userData);
+        Clay_RenderCommand fitted;
+        if (cmd->commandType == CLAY_RENDER_COMMAND_TYPE_BORDER && constraint && constraint->fits_border) {
+            fitted = *cmd;
+            fitted.boundingBox = box_intersect(cmd->boundingBox, constraint->border);
+            cmd = &fitted;
+        }
 		Clay_RenderCommand decoration;
 		if (cmd->commandType == CLAY_RENDER_COMMAND_TYPE_CUSTOM &&
 				cmd->renderData.custom.customData != RENDER_CLIP_MARK &&
 				((uintptr_t)cmd->renderData.custom.customData & RENDER_SHADOW_TAG)) {
-            struct fade_value *value = fade_value(rs, render_shadow_of(cmd->renderData.custom.customData)->owner_id);
+            const struct render_shadow *style = render_shadow_of(cmd->renderData.custom.customData);
+            constraint = owner_constraint(rs, (void *)(uintptr_t)style->owner);
+            struct fade_value *value = fade_value(rs, style->owner_id);
             rs->fade_factor = value ? 1 - value->alpha : 1;
 			decoration = *cmd;
 			decoration.boundingBox = shadow_owner_box(
@@ -2638,6 +2717,16 @@ int render_reconcile(struct render_state *rs, Clay_RenderCommandArray commands,
 			clip = box_intersect(clip, scope->box);
 			clipped = true;
 		}
+        if (constraint && constraint->clips) {
+            clip = box_intersect(clip, constraint->clip);
+            clipped = true;
+        }
+        if (constraint && constraint->clips_content
+                && cmd->commandType == CLAY_RENDER_COMMAND_TYPE_CUSTOM
+                && ((uintptr_t)cmd->renderData.custom.customData & ~RENDER_PROBED_TAG) == constraint->owner) {
+            clip = box_intersect(clip, constraint->content);
+            clipped = true;
+        }
 		const Clay_BoundingBox *clip_top = clipped ? &clip : NULL;
 		bool clip_mark = cmd->commandType == CLAY_RENDER_COMMAND_TYPE_CUSTOM &&
 			cmd->renderData.custom.customData == RENDER_CLIP_MARK;
@@ -2650,8 +2739,10 @@ int render_reconcile(struct render_state *rs, Clay_RenderCommandArray commands,
 			cmd->commandType == CLAY_RENDER_COMMAND_TYPE_TEXT ||
 			cmd->commandType == CLAY_RENDER_COMMAND_TYPE_IMAGE || clip_mark || shape ||
 			(cmd->commandType == CLAY_RENDER_COMMAND_TYPE_CUSTOM && !shadow);
-		Clay_BoundingBox rbox = (clip_top != NULL && clippable) ?
-			box_snap(box_intersect(cmd->boundingBox, *clip_top)) : cmd->boundingBox;
+        bool shadow_clipped = shadow && constraint && constraint->clips;
+        Clay_BoundingBox rbox = (clip_top != NULL && clippable) ?
+            box_snap(box_intersect(cmd->boundingBox, *clip_top)) : shadow_clipped
+            ? box_snap(box_intersect(cmd->boundingBox, constraint->clip)) : cmd->boundingBox;
 		size_t mask_scope = scope && clippable && scope != &bounds_scope
 			? (size_t)(scope - rs->scopes) : SIZE_MAX;
 		const struct clip_masks *mask = scope && clippable && scope->masks.len
@@ -2684,7 +2775,7 @@ int render_reconcile(struct render_state *rs, Clay_RenderCommandArray commands,
 				break;
 			}
 			if (shadow) {
-				muts += reconcile_shadow(rs, n, cmd);
+				muts += reconcile_shadow(rs, n, cmd, rbox);
 				break;
 			}
 			if ((uintptr_t)cmd->renderData.custom.customData & RENDER_PROBE_TAG) {
@@ -2804,7 +2895,8 @@ int render_reconcile(struct render_state *rs, Clay_RenderCommandArray commands,
 		n->rbox = rbox;
 		/* The clip rbox was realized against, mirroring the rbox computation
 		 * above: the active clip for a clippable node, else unbounded. */
-		n->clip = (clip_top != NULL && clippable) ? *clip_top : box_inf();
+		n->clip = (clip_top != NULL && clippable) ? *clip_top
+            : shadow_clipped ? constraint->clip : box_inf();
 		n->data = cmd->renderData;
 	}
 	/* OUTPUT is unclipped. Its two paint nodes precede even negative-band
@@ -2922,7 +3014,8 @@ int render_reconcile(struct render_state *rs, Clay_RenderCommandArray commands,
 
 void render_destroy(struct render_state *rs,
 		const struct render_client_hooks *hooks) {
-    free(rs->fades);
+    free(rs->constraints);
+	free(rs->fades);
     free(rs->fade_aliases);
 	/* Borrowed trees must leave before the render tree is destroyed, or
 	 * the clients' scene nodes would be destroyed with it. */

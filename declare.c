@@ -975,6 +975,7 @@ declare_shadow(struct render_shadow *shadow, const shadow_config_t *override,
 		value.gen = shadow->gen + 1;
 		*shadow = value;
 	}
+    shadow->owner = handle;
 	shadow->owner_id = Clay_GetOpenElementId();
 	shadow->spread = config->spread;
 	shadow->offset_x = config->offset_x;
@@ -2152,6 +2153,8 @@ declare_widget_frame(drawin_t *d, struct widget_host *host, Clay_ElementId id,
 	}
 	host->inner_clip = !host->path_clip && host->radius <= 0 && n->radius == 0 && !n->shape;
 	native_open(id);
+    if (d->animation.enabled && !slot->userData)
+        slot->userData = leaf_userdata(handle, 1.0f);
     native_configure(slot);
 	root_entrance(id, slot);
 	record_open(role, handle, id, slot, wsrc, hsrc, host);
@@ -2183,6 +2186,39 @@ declare_widget_frame(drawin_t *d, struct widget_host *host, Clay_ElementId id,
 	if (host->inner_clip)
 		native_close();
 	native_close();
+}
+
+/* Keep slide entrances and exits on their declaring output. Settled drawins
+ * may still overhang an output edge. Client borders wrap the visible part of
+ * their committed chrome when the allocation is animating around it. Read the
+ * solved tree so retained exits need no live Lua object or registry pointer. */
+static void
+animation_constraints(struct render_state *render, int32_t index, Clay_BoundingBox bounds)
+{
+    struct clay_element_view view;
+    clay_element_view(index, &view);
+    if (!view.text && view.config.transition.handler) {
+        uint64_t owner = declare_userdata_handle(view.config.userData);
+        unsigned kind = owner >> 32;
+        Clay_TransitionElementConfig *transition = &view.config.transition;
+        bool slide_in = transition->enter.setInitialState == transition_slide_left
+            || transition->enter.setInitialState == transition_slide_right
+            || transition->enter.setInitialState == transition_slide_up
+            || transition->enter.setInitialState == transition_slide_down;
+        bool slide_out = transition->exit.setFinalState == transition_slide_left
+            || transition->exit.setFinalState == transition_slide_right
+            || transition->exit.setFinalState == transition_slide_up
+            || transition->exit.setFinalState == transition_slide_down;
+        if (kind == DECLARE_KIND_DRAWIN && ((view.entering && slide_in) || (view.exiting && slide_out)))
+            render_constraint(render, owner, bounds, false);
+        if (kind == DECLARE_KIND_CLIENT && (transition->properties
+                & (CLAY_TRANSITION_PROPERTY_WIDTH | CLAY_TRANSITION_PROPERTY_HEIGHT))) {
+            Clay_ElementData data = Clay_GetElementData((Clay_ElementId){.id = view.id});
+            if (data.found) render_constraint(render, owner, data.boundingBox, true);
+        }
+    }
+    for (uint16_t i = 0; i < view.children_len; i++)
+        animation_constraints(render, view.children[i], bounds);
 }
 
 /* --- drawins ---
@@ -2223,8 +2259,9 @@ declare_drawin(drawin_t *d, Monitor *m, int16_t z)
         frame.transition = transition_config(&d->animation);
         frame.transition.enter.trigger = CLAY_TRANSITION_ENTER_TRIGGER_ON_FIRST_PARENT_FRAME;
     }
-    if (frame.transition.properties & CLAY_TRANSITION_PROPERTY_OVERLAY_COLOR) {
-        frame.userData = leaf_userdata(handle, opacity);
+    if (d->animation.enabled) {
+        frame.userData = leaf_userdata(handle,
+            frame.transition.properties & CLAY_TRANSITION_PROPERTY_OVERLAY_COLOR ? opacity : 1.0f);
     }
 	frame.floating.attachTo = CLAY_ATTACH_TO_ELEMENT_WITH_ID;
 	frame.floating.parentId = screen_root_id(m).id;
@@ -4310,6 +4347,11 @@ declare_output_frame(struct declare_output *dout, Monitor *m)
 		assert(owner.found);
 		shadow->owner_box = owner.boundingBox;
 	}
+    render_constraints_begin(band->render);
+    for (int32_t i = 0; i < clay_root_count(); i++) {
+        animation_constraints(band->render, clay_root_element(i),
+            (Clay_BoundingBox){0, 0, m->m.width, m->m.height});
+    }
 	render_set_output_id(band->render, output_id(m).id);
 	band->mutations = render_reconcile(band->render, commands,
 		&client_hooks, (Clay_BoundingBox) { 0, 0, m->m.width, m->m.height });

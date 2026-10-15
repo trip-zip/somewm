@@ -2288,6 +2288,79 @@ static void test_shadow_tiles(void) {
 	fixture_finish(&f, &no_hooks);
 }
 
+static void test_animated_border_surface(void) {
+    struct fixture f;
+    struct fake_clients fc;
+    struct render_client_hooks hooks;
+    fixture_init_clients(&f, &fc, &hooks);
+    Clay_RenderCommand cmds[] = {
+        cmd_border(10, 20, 30, 100, 80, 6, 0),
+        cmd_custom(11, 1, 26, 36, 88, 68),
+        cmd_custom(12, 2, 70, 40, 40, 30),
+    };
+    for (size_t i = 0; i < 3; i++) cmds[i].userData = (void *)(uintptr_t)1;
+    render_constraints_begin(f.rs);
+    render_constraint(f.rs, 1, (Clay_BoundingBox){20, 30, 60, 50}, true);
+    render_reconcile(f.rs, commands_of(cmds, 2), &hooks, no_bounds);
+    CHECK_EQ(fc.clip_w, 48);
+    CHECK_EQ(fc.clip_h, 38);
+    CHECK_EQ(fc.configured_w, 88);
+    CHECK_EQ(fc.configured_h, 68);
+    CHECK_EQ(render_reconcile(f.rs, commands_of(cmds, 2), &hooks, no_bounds), 0);
+    /* A popup shares input ownership, but has its own surface handle. */
+    render_reconcile(f.rs, commands_of(cmds, 3), &hooks, no_bounds);
+    CHECK_EQ(fc.clip_w, 0);
+    CHECK_EQ(fc.clip_h, 0);
+    render_constraints_begin(f.rs);
+    render_reconcile(f.rs, commands_of(cmds, 2), &hooks, no_bounds);
+    CHECK_EQ(fc.clip_w, 0);
+    CHECK_EQ(fc.clip_h, 0);
+    fixture_finish(&f, &hooks);
+}
+
+static void test_owner_bounds(void) {
+    struct fixture f;
+    fixture_init(&f);
+    struct render_shadow style = {.gen = 1, .owner = 42, .radius = 12,
+        .rgba = {0, 0, 0, .75f}, .owner_box = {-30, 50, 80, 60}};
+    Clay_RenderCommand cmds[] = {
+        cmd_custom(1, (uintptr_t)render_shadow_tag(&style), 0, 0, 0, 0),
+        cmd_border(2, 10, 10, 100, 80, 4, 0),
+        cmd_rect(3, -30, 50, 80, 60, 0),
+    };
+    cmds[1].userData = (void *)(uintptr_t)43;
+    cmds[2].userData = (void *)(uintptr_t)42;
+    render_constraints_begin(f.rs);
+    render_constraint(f.rs, 42, (Clay_BoundingBox){0, 0, 200, 200}, false);
+    render_constraint(f.rs, 43, (Clay_BoundingBox){10, 10, 60, 50}, true);
+    CHECK(render_reconcile(f.rs, commands_of(cmds, 3), &no_hooks, no_bounds) > 0);
+    struct wlr_scene_tree *tree = render_tree(f.parent);
+    struct wlr_scene_tree *shadow = wlr_scene_tree_from_node(child_at(tree, 0));
+    CHECK_EQ(shadow->node.x, 0);
+    struct wlr_scene_node *node;
+    wl_list_for_each(node, &shadow->children, link) {
+        if (node->enabled) CHECK(node->x >= 0);
+    }
+    struct wlr_scene_buffer *edge = wlr_scene_buffer_from_node(child_at(shadow, 4));
+    CHECK(edge->src_box.x > 0);
+    struct wlr_scene_rect *border = wlr_scene_rect_from_node(child_at(tree, 1));
+    CHECK_EQ(border->width, 60);
+    CHECK_EQ(border->height, 50);
+    CHECK_EQ(border->cutout_box.width, 52);
+    CHECK_EQ(border->cutout_box.height, 42);
+    CHECK_EQ(wlr_scene_rect_from_node(child_at(tree, 2))->width, 50);
+    CHECK_EQ(render_reconcile(f.rs, commands_of(cmds, 3), &no_hooks, no_bounds), 0);
+    render_constraints_begin(f.rs);
+    render_reconcile(f.rs, commands_of(cmds, 3), &no_hooks, no_bounds);
+    CHECK_EQ(shadow->node.x, -42);
+    CHECK_EQ(edge->src_box.x, 0);
+    CHECK_EQ(edge->dst_width, 80);
+    CHECK_EQ(border->width, 100);
+    CHECK_EQ(border->cutout_box.width, 92);
+    CHECK_EQ(wlr_scene_rect_from_node(child_at(tree, 2))->width, 80);
+    fixture_finish(&f, &no_hooks);
+}
+
 /* Author expected positions independently of the stale decoration command. */
 static void test_shadow_current_owner(void) {
 	struct fixture f;
@@ -2426,6 +2499,8 @@ int main(void) {
 		{ "stretched image crop uses source extent", test_stretched_image_crop_uses_source_extent },
 		{ "shared shadow tiles", test_shadow_tiles },
 		{ "shadow follows current owner", test_shadow_current_owner },
+        { "owner bounds fit borders and crop shadow tiles", test_owner_bounds },
+        { "animated borders exclude their surface pixels", test_animated_border_surface },
 		{ "font interning", test_font_interning },
 		{ "measure is monotonic", test_measure_is_monotonic },
 		{ "a border's ring matches its rect", test_border_ring_matches_its_rect },

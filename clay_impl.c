@@ -289,6 +289,16 @@ clay_element_view(int32_t index, struct clay_element_view *out)
 		out->font = el->textConfig.fontId;
 	} else {
 		out->config = el->config;
+        if (el->config.transition.handler) {
+            Clay_Context *context = Clay_GetCurrentContext();
+            for (int32_t i = 0; i < context->transitionDatas.length; i++) {
+                Clay__TransitionDataInternal *transition = &context->transitionDatas.internalArray[i];
+                if (transition->elementId == el->id) {
+                    out->entering = transition->state == CLAY_TRANSITION_STATE_ENTERING;
+                    break;
+                }
+            }
+        }
 		out->floating = el->config.floating.attachTo != CLAY_ATTACH_TO_NONE;
 	}
 }

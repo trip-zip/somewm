@@ -835,9 +835,12 @@ drawin_moveresize(lua_State *L, int udx, int x, int y, int width, int height, bo
 	if (old_height != drawin->height)
 		luaA_object_emit_signal(L, udx, "property::height", 0);
 
-	/* Update screen assignment if position changed */
-	if (old_x != drawin->x || old_y != drawin->y)
-		drawin_assign_screen(L, drawin, udx);
+    /* An animated attachment can pass through a neighboring output. Keep
+     * its declaring screen until an authored geometry change moves it. */
+    if ((!solved || !drawin->animation.enabled)
+            && (old_x != drawin->x || old_y != drawin->y)) {
+        drawin_assign_screen(L, drawin, udx);
+    }
 
 	/* Size change requires border entry refresh */
 	if (old_width != drawin->width || old_height != drawin->height)
