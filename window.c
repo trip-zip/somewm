@@ -1771,6 +1771,8 @@ resize(Client *c, struct wlr_box geo, int interact)
 		}
 	}
 
+	if (!AREA_EQUAL(old_geometry, c->geometry)) xwayland_geometry_authored(c);
+
 	/* The new box lands through the declare pass: the reconciler moves the
 	 * frame and runs the configure leg when the solved box changed. */
 	if (c->mon->declare)

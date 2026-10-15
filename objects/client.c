@@ -103,6 +103,7 @@
 #include "objects/window.h"  /* For window_set_border_width() */
 #include "../event_queue.h"
 #include "../somewm_api.h"
+#include "../xwayland.h"
 /* #include "../somewm_types.h" - not needed, causes Client/client_t conflict */
 #include "../stack.h"
 #include "common/util.h"
@@ -2329,24 +2330,9 @@ client_resize_do(client_t *c, area_t geometry, bool silent, bool solved)
     old_geometry = c->geometry;
     c->geometry = geometry;
 
-    /* For XWayland clients, sync position to X11 immediately (not deferred to
-     * refresh cycle). X11 clients use their position for popup placement, so
-     * any lag causes menus to appear at stale positions (e.g. Steam dropdowns).
-     * The deferred xwm_schedule_flush() inside wlr_xwayland_surface_configure()
-     * delivers the update on the next event loop iteration. */
-    if (c->client_type == X11 && c->surface.xwayland
-            && (old_geometry.x != geometry.x || old_geometry.y != geometry.y)) {
-        int tl = c->fullscreen ? 0 : c->titlebar[CLIENT_TITLEBAR_LEFT].size;
-        int tt = c->fullscreen ? 0 : c->titlebar[CLIENT_TITLEBAR_TOP].size;
-        int16_t cx = geometry.x + client_border(c) + tl;
-        int16_t cy = geometry.y + client_border(c) + tt;
-        if (cx != c->surface.xwayland->x || cy != c->surface.xwayland->y) {
-            wlr_xwayland_surface_configure(c->surface.xwayland,
-                    cx, cy,
-                    c->surface.xwayland->width,
-                    c->surface.xwayland->height);
-        }
-    }
+    /* An authored frame change supersedes pending X11 content intent. Its
+     * acknowledgement still waits for a declaration with the same serial. */
+    if (!solved) xwayland_geometry_authored(c);
 
     if(!silent)
     {
@@ -4854,6 +4840,7 @@ client_class_setup(lua_State *L)
         { "pid", NULL, (lua_class_propfunc_t) luaA_client_get_pid, NULL },
         { "role", NULL, (lua_class_propfunc_t) luaA_client_get_role, NULL },
         { "_scene_layer", NULL, (lua_class_propfunc_t) luaA_client_get__scene_layer, NULL },
+        { "_x11_configure", NULL, (lua_class_propfunc_t) luaA_client_get_x11_configure, NULL },
         { "_committed_size", NULL, (lua_class_propfunc_t) luaA_client_get__committed_size, NULL },
         { "screen", NULL, (lua_class_propfunc_t) luaA_client_get_screen, (lua_class_propfunc_t) luaA_client_set_screen },
         { "shadow", (lua_class_propfunc_t) luaA_client_set_shadow, (lua_class_propfunc_t) luaA_client_get_shadow, (lua_class_propfunc_t) luaA_client_set_shadow },

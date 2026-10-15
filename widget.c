@@ -39,7 +39,7 @@
 	X(aspect) X(image_width) X(image_height) X(filter) X(natural) X(track) \
 	X(thumb) X(scroll) X(transition) X(duration) X(properties) X(exit_order) \
     X(exit_duration) X(tag_exit) X(tag_duration) \
-	X(enter) X(exit) X(client) X(surface) X(host) X(opacity) X(probe) X(attrs) \
+	X(enter) X(exit) X(x11_configure_serial) X(client) X(surface) X(host) X(opacity) X(probe) X(attrs) \
 	X(font) X(color) X(wrap) X(halign) X(ellipsize) X(bindings) X(item) X(id) \
 	X(next) X(_attach) X(clip) X(children)
 
@@ -382,6 +382,13 @@ static bool
 read_composite(lua_State *L, int idx, struct widget_node *n)
 {
 	n->opacity = 1;
+	getfield(L, idx, KEY_x11_configure_serial);
+	double serial = lua_isnil(L, -1) ? 0 : lua_tonumber(L, -1);
+	bool valid_serial = lua_isnil(L, -1) || (lua_isnumber(L, -1)
+		&& serial >= 0 && serial <= UINT32_MAX && serial == floor(serial));
+	lua_pop(L, 1);
+	if (!valid_serial) return false;
+	n->x11_configure_serial = (uint32_t)serial;
 	if (!read_client(L, idx, KEY_client, &n->client)
 			|| !read_client(L, idx, KEY_surface, &n->surface)
 			|| !read_host(L, idx, n)

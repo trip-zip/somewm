@@ -331,7 +331,7 @@ ewmh_update_net_client_list(lua_State *L)
     if (!globalconf.connection || !globalconf.screen)
         return 0;
 
-    xcb_window_t wins[globalconf.clients.len];
+    xcb_window_t wins[MAX(1, globalconf.clients.len)];
 
     foreach(client, globalconf.clients)
         if((*client)->client_type == X11 && (*client)->scene)
@@ -354,7 +354,7 @@ ewmh_update_net_client_list_stacking(void)
     if (!globalconf.connection || !globalconf.screen)
         return;
 
-    xcb_window_t wins[globalconf.stack.len];
+    xcb_window_t wins[MAX(1, globalconf.stack.len)];
 
     foreach(client, globalconf.stack)
         if((*client)->client_type == X11)

@@ -162,6 +162,14 @@ struct client_t
      * configure leg sends and clips to. Empty until the first frame that
      * declares the client. */
     struct wlr_box surface_box;
+    /* X11 requests are content intent, separate from authored frame geometry.
+     * The measured frame/content pair comes from one completed Clay solve. */
+    struct {
+        struct wlr_box requested, frame, content;
+        uint32_t serial;
+        uint16_t mask;
+        bool pending;
+    } x11_configure;
     /** The size the client's last commit drew, when it is not the size of
      * the configure that commit acknowledged; 0,0 when they match. The
      * composite draws this size (awful.client.clay, _committed_size). */
