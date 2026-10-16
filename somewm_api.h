@@ -26,7 +26,7 @@ typedef struct drawin_t drawin_t;
 int some_client_get_floating(Client *c);
 
 /* Focus synchronization API - internal use */
-void some_set_seat_keyboard_focus(Client *c);
+void some_set_seat_keyboard_focus(Client *c, bool focus_changed);
 Client *some_client_from_surface(struct wlr_surface *surface);
 
 /* Client queries */

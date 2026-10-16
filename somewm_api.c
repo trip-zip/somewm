@@ -159,9 +159,11 @@ some_get_seat(void)
  * and potential focus loops.
  *
  * \param c The client to give seat keyboard focus (or NULL to clear focus)
+ * \param focus_changed Whether Lua focus changed; X11 same-surface focus
+ * re-delivery runs only when this is true.
  */
 void
-some_set_seat_keyboard_focus(Client *c)
+some_set_seat_keyboard_focus(Client *c, bool focus_changed)
 {
 	struct wlr_surface *surface;
 	struct wlr_keyboard *kb;
@@ -207,6 +209,8 @@ some_set_seat_keyboard_focus(Client *c)
 				cursorconstrain(constraint);
 				return;
 			}
+			if (!focus_changed)
+				return;
 			/* KWin pattern: force focus re-delivery for X11 clients.
 			 * wlroots skips re-entry to the same surface, so we must
 			 * deactivate→clear→re-enter to deliver a new FocusIn event.
