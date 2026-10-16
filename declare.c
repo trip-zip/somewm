@@ -793,6 +793,8 @@ declare_hit(struct wlr_scene_node *node, enum declare_kind *kind)
 static bool declarable_client(Client *c);
 
 struct hit_walk {
+    struct render_state *render;
+    Monitor *monitor;
 	struct declare_hit *out;
 	double lx, ly;
 };
@@ -825,7 +827,13 @@ hit_accept(void *user, const struct render_node_view *v, double sx, double sy)
 		 * the point. */
 		if (!d->visible)
 			return false;
-		if (!drawin_accepts_input_at(d, w->lx - d->x, w->ly - d->y))
+		double dx = w->lx - w->monitor->m.x, dy = w->ly - w->monitor->m.y;
+		struct render_presentation pose = render_owner_presentation(w->render,
+			declare_handle_for(d, DECLARE_KIND_DRAWIN));
+		if (!render_unpresent(pose, &dx, &dy)) return false;
+		dx += w->monitor->m.x - d->x;
+		dy += w->monitor->m.y - d->y;
+		if (!drawin_accepts_input_at(d, dx, dy))
 			return false;
 		*out = (struct declare_hit) { kind, d, NULL, 0, 0 };
 		return true;
@@ -919,6 +927,8 @@ hit_accept(void *user, const struct render_node_view *v, double sx, double sy)
 static bool
 hit_band(struct declare_band *band, Monitor *m, struct hit_walk *w)
 {
+	w->render = band->render;
+    w->monitor = m;
 	return band->render && render_hit(band->render, w->lx - m->m.x,
 		w->ly - m->m.y, hit_accept, w);
 }
@@ -935,7 +945,7 @@ hit_output(Monitor *m, struct hit_walk *w)
 void
 declare_hit_at(double lx, double ly, struct declare_hit *out)
 {
-	struct hit_walk w = { out, lx, ly };
+	struct hit_walk w = {.out = out, .lx = lx, .ly = ly};
 	Monitor *under = xytomon(lx, ly), *m;
 
 	*out = (struct declare_hit) { 0 };
@@ -1126,7 +1136,7 @@ transition_ease_out(Clay_TransitionCallbackArguments arguments)
 }
 
 static Clay_TransitionData
-transition_compose(Clay_TransitionData state, Clay_TransitionProperty properties, uint8_t effects)
+transition_compose(Clay_TransitionData state, Clay_TransitionProperty properties, uint16_t effects)
 {
     if (effects & WIDGET_TRANSITION_SLIDE_LEFT) state.boundingBox.x = -state.boundingBox.width;
     if (effects & WIDGET_TRANSITION_SLIDE_RIGHT) state.boundingBox.x = Clay_GetLayoutDimensions().width;
@@ -1136,19 +1146,36 @@ transition_compose(Clay_TransitionData state, Clay_TransitionProperty properties
         if (properties & CLAY_TRANSITION_PROPERTY_WIDTH) state.boundingBox.width = 0;
         if (properties & CLAY_TRANSITION_PROPERTY_HEIGHT) state.boundingBox.height = 0;
     }
-    if (effects & WIDGET_TRANSITION_FADE) state.overlayColor.a = 1;
+    if (effects & (WIDGET_TRANSITION_FADE | WIDGET_TRANSITION_SCALES)) {
+        unsigned anchor = effects & WIDGET_TRANSITION_SCALE ? 1
+            : effects & WIDGET_TRANSITION_SCALE_TOP ? 2
+            : effects & WIDGET_TRANSITION_SCALE_BOTTOM ? 3
+            : effects & WIDGET_TRANSITION_SCALE_LEFT ? 4
+            : effects & WIDGET_TRANSITION_SCALE_RIGHT ? 5 : 0;
+        state.overlayColor = (Clay_Color){anchor != 0, !!(effects & WIDGET_TRANSITION_FADE), anchor, 1};
+    }
     return state;
 }
 
-#define TRANSITION_VARIANTS(X, name, bits) \
+#define TRANSITION_PAIR(X, name, bits) \
     X(name, bits) \
-    X(name##_grow, (bits) | WIDGET_TRANSITION_GROW) \
-    X(name##_fade, (bits) | WIDGET_TRANSITION_FADE) \
-    X(name##_grow_fade, (bits) | WIDGET_TRANSITION_GROW | WIDGET_TRANSITION_FADE)
+    X(name##_fade, (bits) | WIDGET_TRANSITION_FADE)
+#define TRANSITION_VARIANTS(X, name, bits) \
+    TRANSITION_PAIR(X, name, bits) \
+    TRANSITION_PAIR(X, name##_grow, (bits) | WIDGET_TRANSITION_GROW) \
+    TRANSITION_PAIR(X, name##_scale, (bits) | WIDGET_TRANSITION_SCALE) \
+    TRANSITION_PAIR(X, name##_scale_top, (bits) | WIDGET_TRANSITION_SCALE_TOP) \
+    TRANSITION_PAIR(X, name##_scale_bottom, (bits) | WIDGET_TRANSITION_SCALE_BOTTOM) \
+    TRANSITION_PAIR(X, name##_scale_left, (bits) | WIDGET_TRANSITION_SCALE_LEFT) \
+    TRANSITION_PAIR(X, name##_scale_right, (bits) | WIDGET_TRANSITION_SCALE_RIGHT)
 #define TRANSITION_STATES(X) \
-    X(grow, WIDGET_TRANSITION_GROW) \
+    TRANSITION_PAIR(X, grow, WIDGET_TRANSITION_GROW) \
+    TRANSITION_PAIR(X, scale, WIDGET_TRANSITION_SCALE) \
+    TRANSITION_PAIR(X, scale_top, WIDGET_TRANSITION_SCALE_TOP) \
+    TRANSITION_PAIR(X, scale_bottom, WIDGET_TRANSITION_SCALE_BOTTOM) \
+    TRANSITION_PAIR(X, scale_left, WIDGET_TRANSITION_SCALE_LEFT) \
+    TRANSITION_PAIR(X, scale_right, WIDGET_TRANSITION_SCALE_RIGHT) \
     X(fade, WIDGET_TRANSITION_FADE) \
-    X(grow_fade, WIDGET_TRANSITION_GROW | WIDGET_TRANSITION_FADE) \
     TRANSITION_VARIANTS(X, slide_left, WIDGET_TRANSITION_SLIDE_LEFT) \
     TRANSITION_VARIANTS(X, slide_right, WIDGET_TRANSITION_SLIDE_RIGHT) \
     TRANSITION_VARIANTS(X, slide_up, WIDGET_TRANSITION_SLIDE_UP) \
@@ -1167,14 +1194,15 @@ static transition_state_fn const transition_states[] = {
 };
 #undef TRANSITION_STATES
 #undef TRANSITION_VARIANTS
+#undef TRANSITION_PAIR
 
 static transition_state_fn
-transition_state(uint8_t state)
+transition_state(uint16_t state)
 {
     return state < LENGTH(transition_states) ? transition_states[state] : NULL;
 }
 
-static uint8_t
+static uint16_t
 transition_effects(transition_state_fn state)
 {
     if (state)
@@ -1189,6 +1217,7 @@ transition_config(const struct widget_transition *n)
     return (Clay_TransitionElementConfig) {
         .handler = transition_ease_out, .duration = n->duration,
         .properties = n->properties,
+        .interactionHandling = CLAY_TRANSITION_ALLOW_INTERACTIONS_WHILE_TRANSITIONING_POSITION,
         .enter = {.setInitialState = transition_state(n->enter_state)},
         .exit = {.setFinalState = transition_state(n->exit_state ? n->exit_state : n->tag_exit),
             .siblingOrdering = n->exit_order},
@@ -3609,9 +3638,23 @@ static const struct widget_tree *published_tree(const struct widget_host *host)
     return NULL;
 }
 
+static struct render_presentation host_presentation(const struct widget_host *host)
+{
+    if (!host->m || !host->m->declare || !host->drawable)
+        return (struct render_presentation){.scale = 1, .fade = 1};
+    enum declare_kind kind = host->drawable->owner_type == DRAWABLE_OWNER_DRAWIN
+        ? DECLARE_KIND_DRAWIN : DECLARE_KIND_TITLEBAR;
+    return render_owner_presentation(host->m->declare->band.render, handle_pack(kind, host->id));
+}
+
 int
 declare_widget_hits(const struct widget_host *host, double x, double y, int *out, int cap)
 {
+	x += host->x;
+	y += host->y;
+	if (!render_unpresent(host_presentation(host), &x, &y)) return 0;
+	x -= host->x;
+	y -= host->y;
 	if (!host->visible || x < 0 || y < 0 || x >= host->w || y >= host->h)
 		return 0;
 
@@ -4145,9 +4188,9 @@ static void dump_tree(buffer_t *buf, struct declare_band *band);
 
 static bool shares_payload(struct widget_tree *tree, struct declared_host *hosts, size_t length)
 {
-    for (size_t i = 0; i < length; i++)
-        if (tree->storage == hosts[i].view->storage) return true;
-    return false;
+	for (size_t i = 0; i < length; i++)
+		if (tree->storage == hosts[i].view->storage) return true;
+	return false;
 }
 
 int
@@ -4317,8 +4360,12 @@ declare_output_frame(struct declare_output *dout, Monitor *m)
     for (int i = 0; i < commands.length; i++) {
         Clay_RenderCommand *cmd = &commands.internalArray[i];
         next_handles[i] = declare_userdata_handle(cmd->userData);
-        if (cmd->commandType == CLAY_RENDER_COMMAND_TYPE_OVERLAY_COLOR_START)
+        if (cmd->commandType == CLAY_RENDER_COMMAND_TYPE_OVERLAY_COLOR_START) {
             render_fade_carrier(band->render, cmd);
+            Clay_ElementData element = Clay_GetElementData((Clay_ElementId){.id = cmd->id});
+            assert(element.found);
+            render_carrier_box(band->render, cmd->id, element.boundingBox);
+        }
     }
     next_len = solved_len;
     next_hosts = calloc(next_len ? next_len : 1, sizeof(*next_hosts));
@@ -4888,6 +4935,10 @@ dump_node(void *user, const struct render_node_view *v)
 		(int)box.width, (int)box.height,
 		(int)rbox.x, (int)rbox.y,
 		(int)rbox.width, (int)rbox.height);
+	Clay_BoundingBox pbox = v->presented;
+	if (memcmp(&pbox, &v->rbox, sizeof(pbox))) {
+		buffer_addf(buf, "presented %d,%d %dx%d ", (int)pbox.x, (int)pbox.y, (int)pbox.width, (int)pbox.height);
+	}
 	dump_what(buf, v->id, v->user_data);
 	if (v->raster_bytes)
 		buffer_addf(buf, " raster=%zu", v->raster_bytes);
@@ -4900,8 +4951,8 @@ dump_node(void *user, const struct render_node_view *v)
 		buffer_adds(buf, " configure");
 	else if (!v->has_node && v->type != CLAY_RENDER_COMMAND_TYPE_SCISSOR_START
 			&& v->type != CLAY_RENDER_COMMAND_TYPE_SCISSOR_END
-            && v->type != CLAY_RENDER_COMMAND_TYPE_OVERLAY_COLOR_START
-            && v->type != CLAY_RENDER_COMMAND_TYPE_OVERLAY_COLOR_END)
+			&& v->type != CLAY_RENDER_COMMAND_TYPE_OVERLAY_COLOR_START
+			&& v->type != CLAY_RENDER_COMMAND_TYPE_OVERLAY_COLOR_END)
 		buffer_adds(buf, " no-node");
 	if (v->rbox.width != v->box.width || v->rbox.height != v->box.height
 			|| v->rbox.x != v->box.x || v->rbox.y != v->box.y)
@@ -5101,6 +5152,9 @@ dump_widget_line(buffer_t *buf, const struct widget_host *host, size_t i, Clay_E
 
 		buffer_addf(buf, " box %d,%d %dx%d",
 			(int)b.x, (int)b.y, (int)b.width, (int)b.height);
+		Clay_BoundingBox pbox = render_present_box(host_presentation(host), data.boundingBox);
+		if (host_presentation(host).scale != 1)
+			buffer_addf(buf, " presented %d,%d %dx%d", (int)pbox.x, (int)pbox.y, (int)pbox.width, (int)pbox.height);
 	} else
 		buffer_adds(buf, " box -");
 	buffer_adds(buf, "\n");
@@ -5149,6 +5203,17 @@ dump_axis(buffer_t *buf, Clay_SizingAxis a, uint8_t src)
 	dump_word(buf, src);
 }
 
+static void dump_presentation(buffer_t *buf, struct render_state *render, uint64_t owner,
+		Clay_Color color, Clay_BoundingBox box)
+{
+	static const char *const anchors[] = {"none", "center", "top", "bottom", "left", "right"};
+	struct render_presentation pose = render_carrier_decode(color);
+	Clay_BoundingBox presented = render_present_box(render_owner_presentation(render, owner), box);
+	buffer_addf(buf, " scale %.6f anchor %s presented %d,%d %dx%d",
+		pose.scale, anchors[pose.anchor], (int)presented.x, (int)presented.y,
+		(int)presented.width, (int)presented.height);
+}
+
 /* One line for a recorded element: its role, the object it stands for,
  * its sizing with where a fixed number came from, its flow, its attachment
  * when it floats, and its box. SHADOW reports the renderer's owner-relative
@@ -5169,8 +5234,8 @@ dump_record_line(buffer_t *buf, struct declare_band *band,
 		data.found = render_shadow_box(band->render, r->id, &data.boundingBox);
 
 	buffer_addf(buf, "  %*s%s ", d * 2, "", r->role);
-    if (r->screen_index)
-        buffer_addf(buf, "%d", r->screen_index);
+	if (r->screen_index)
+		buffer_addf(buf, "%d", r->screen_index);
 	else if (r->handle)
 		dump_object(buf, r->handle);
 	else
@@ -5216,24 +5281,25 @@ dump_record_line(buffer_t *buf, struct declare_band *band,
 			buffer_addf(buf, " expand %g,%g", r->expand.width, r->expand.height);
 		buffer_addf(buf, " band %d", r->band);
 	}
-        if (r->floating && (!strcmp(r->role, "POPUP") || !strcmp(r->role, "TOOLTIP")
-                || !strcmp(r->role, "NOTIFICATIONS") || !strcmp(r->role, "LAUNCHER")
-                || !strcmp(r->role, "LAYER_OVERLAY"))) {
-            static const char *points[] = { "LEFT_TOP", "LEFT_CENTER", "LEFT_BOTTOM",
-                "TOP_CENTER", "CENTER", "BOTTOM_CENTER", "RIGHT_TOP", "RIGHT_CENTER", "RIGHT_BOTTOM" };
-            buffer_addf(buf, " target %08x parent %s own %s pointer %s", r->attach_id,
-                points[r->points.parent], points[r->points.element],
-                r->passthrough ? "passthrough" : "capture");
-        }
+		if (r->floating && (!strcmp(r->role, "POPUP") || !strcmp(r->role, "TOOLTIP")
+				|| !strcmp(r->role, "NOTIFICATIONS") || !strcmp(r->role, "LAUNCHER")
+				|| !strcmp(r->role, "LAYER_OVERLAY"))) {
+			static const char *points[] = { "LEFT_TOP", "LEFT_CENTER", "LEFT_BOTTOM",
+				"TOP_CENTER", "CENTER", "BOTTOM_CENTER", "RIGHT_TOP", "RIGHT_CENTER", "RIGHT_BOTTOM" };
+			buffer_addf(buf, " target %08x parent %s own %s pointer %s", r->attach_id,
+				points[r->points.parent], points[r->points.element],
+				r->passthrough ? "passthrough" : "capture");
+		}
 	if (r->custom)
 		buffer_adds(buf, " custom");
 	if (r->image)
 		buffer_adds(buf, " image");
-    Clay_ElementDeclaration declaration;
-    if (clay_element_declaration((Clay_ElementId){.id = r->id}, &declaration)
-            && (declaration.transition.properties & CLAY_TRANSITION_PROPERTY_OVERLAY_COLOR)) {
-        buffer_addf(buf, " fade_alpha %.6f", declaration.overlayColor.a);
-    }
+	Clay_ElementDeclaration declaration;
+	if (clay_element_declaration((Clay_ElementId){.id = r->id}, &declaration)
+			&& (declaration.transition.properties & CLAY_TRANSITION_PROPERTY_OVERLAY_COLOR)) {
+		buffer_addf(buf, " fade_alpha %.6f", declaration.overlayColor.g > 0 ? declaration.overlayColor.a : 0);
+		dump_presentation(buf, band->render, r->handle, declaration.overlayColor, data.boundingBox);
+	}
 	if (data.found) {
 		Clay_BoundingBox b = dump_box(data.boundingBox);
 
@@ -5288,9 +5354,11 @@ dump_clay_line(buffer_t *buf, struct declare_band *band,
 				: c->floating.attachTo == CLAY_ATTACH_TO_ROOT ? "ROOT" : "ELEMENT",
 				c->floating.offset.x, c->floating.offset.y, c->floating.zIndex);
 	}
-    if (!el->text && (el->config.transition.properties & CLAY_TRANSITION_PROPERTY_OVERLAY_COLOR)) {
-        buffer_addf(buf, " fade_alpha %.6f", el->config.overlayColor.a);
-    }
+	if (!el->text && (el->config.transition.properties & CLAY_TRANSITION_PROPERTY_OVERLAY_COLOR)) {
+		buffer_addf(buf, " fade_alpha %.6f", el->config.overlayColor.g > 0 ? el->config.overlayColor.a : 0);
+		dump_presentation(buf, band->render, declare_userdata_handle(el->config.userData),
+			el->config.overlayColor, data.boundingBox);
+	}
 	if (data.found) {
 		Clay_BoundingBox b = dump_box(data.boundingBox);
 
@@ -5523,12 +5591,12 @@ dump_band(buffer_t *buf, struct declare_band *band, Monitor *m)
 	 * solves. */
 	previous = Clay_GetCurrentContext();
 	Clay_SetCurrentContext(band->clay);
-    struct clay_capacity capacity = band->context_valid ? clay_capacity() : band->committed_capacity;
-    if (!capacity.capacity) capacity.capacity = clay_capacity().capacity;
-    buffer_addf(buf, "output %s scale %.2f inspector %s frames %d elements %d/%d map %d free %d inspector_input %d bounds %d/%d\n",
-        o->name, o->scale, m->declare->inspector_width ? "on" : "off",
-        band->frames, capacity.elements, capacity.capacity, capacity.map, capacity.freeIds,
-        band->inspector_authored, band->inspector_elements, band->inspector_strings);
+	struct clay_capacity capacity = band->context_valid ? clay_capacity() : band->committed_capacity;
+	if (!capacity.capacity) capacity.capacity = clay_capacity().capacity;
+	buffer_addf(buf, "output %s scale %.2f inspector %s frames %d elements %d/%d map %d free %d inspector_input %d bounds %d/%d\n",
+		o->name, o->scale, m->declare->inspector_width ? "on" : "off",
+		band->frames, capacity.elements, capacity.capacity, capacity.map, capacity.freeIds,
+		band->inspector_authored, band->inspector_elements, band->inspector_strings);
 	buffer_addf(buf, "  commands %d mutations %d created %d swept %d nodes %zu "
 		"raster_bytes %zu buffers %d declare %" PRId64 "us solve %" PRId64 "us "
 		"reconcile %" PRId64 "us\n",
@@ -5538,8 +5606,8 @@ dump_band(buffer_t *buf, struct declare_band *band, Monitor *m)
 		render_raster_bytes(band->render),
 		render_buffers_created(band->render),
 		band->declare_us, band->solve_us, band->reconcile_us);
-    if (band->context_valid) dump_tree(buf, band);
-    else if (band->retained_dump) buffer_adds(buf, band->retained_dump);
+	if (band->context_valid) dump_tree(buf, band);
+	else if (band->retained_dump) buffer_adds(buf, band->retained_dump);
 	dump_refused(buf, m);
 	buffer_adds(buf, "  realized:\n");
 	render_walk(band->render, dump_node, buf);

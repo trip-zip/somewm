@@ -131,12 +131,17 @@ end
 function animation.has_effect(value, effect)
     if type(value) ~= "table" then value = {value} end
     if value[1] == "none" then return effect == "none" end
-    local slide
+    local slide, size
     for _, word in ipairs(value) do
         if word == "collapse" then word = "grow" end
         if word == "slide_left" or word == "slide_right" or word == "slide_up" or word == "slide_down" then
             slide = slide or word
             if slide ~= word then word = nil end
+        end
+        if word == "grow" or word == "scale" or word == "scale_top" or word == "scale_bottom"
+            or word == "scale_left" or word == "scale_right" then
+            size = size or word
+            if size ~= word then word = nil end
         end
         if word ~= "none" and word == effect then return true end
     end

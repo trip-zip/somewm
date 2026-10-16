@@ -22,6 +22,7 @@
 #include <wlr/interfaces/wlr_buffer.h>
 #include <wlr/render/interface.h>
 #include <wlr/types/wlr_scene.h>
+#include <wlr/types/wlr_compositor.h>
 #include <wlr/util/log.h>
 
 #include "common/util.h"
@@ -182,6 +183,7 @@ struct shadow_cache {
 /* One retained record per (command id, command type). */
 struct rnode {
 	uint64_t key;
+    struct render_presentation presentation;
 	/* box is Clay's solved box; rbox is the realized box after clipping to
 	 * the active SCISSOR scope (equal to box when no clip applies). box
 	 * drives raster/content diffs; rbox drives node position, size, and the
@@ -266,7 +268,7 @@ struct owner_constraint {
 struct render_state {
     struct owner_constraint *constraints;
     size_t constraints_len, constraints_cap;
-    struct fade_value {uint64_t owner; uint32_t id; float alpha; bool opened;} *fades;
+    struct fade_value {uint64_t owner; uint32_t id; struct render_presentation pose; bool opened;} *fades;
     size_t fades_len, fades_cap;
     bool fades_prepared;
     struct fade_alias {uint64_t owner, ancestor; bool seen;} *fade_aliases;
@@ -317,6 +319,186 @@ struct render_state {
 
 static void shadow_cache_release(struct render_state *rs, struct shadow_cache *cache);
 
+struct presentation_node {
+    struct wlr_addon addon;
+    struct wl_listener commit;
+    struct wlr_scene_node *node;
+    struct render_presentation pose;
+    int x, y, width, height, parent_x, parent_y;
+    int presented_parent_x, presented_parent_y;
+    float radii[4], cutout_radii[4];
+    float opacity;
+    struct wlr_box cutout;
+    struct wlr_render_rounded_clip clips[WLR_SCENE_ROUNDED_CLIPS];
+    size_t clips_len;
+    bool applied, enabled;
+};
+
+static void presentation_destroy(struct wlr_addon *addon)
+{
+    struct presentation_node *p = wl_container_of(addon, p, addon);
+    wl_list_remove(&p->commit.link);
+    wlr_addon_finish(addon);
+    free(p);
+}
+
+static const struct wlr_addon_interface presentation_impl = {
+    .name = "somewm presentation", .destroy = presentation_destroy,
+};
+
+static struct presentation_node *presentation_node(struct wlr_scene_node *node)
+{
+    struct wlr_addon *addon = wlr_addon_find(&node->addons, NULL, &presentation_impl);
+    return addon ? wl_container_of(addon, (struct presentation_node *)NULL, addon) : NULL;
+}
+
+static struct wlr_box presentation_local_box(struct presentation_node *p, struct wlr_box box)
+{
+    Clay_BoundingBox b = render_present_box(p->pose, (Clay_BoundingBox){
+        p->parent_x + p->x + box.x, p->parent_y + p->y + box.y, box.width, box.height});
+    Clay_BoundingBox origin = render_present_box(p->pose, (Clay_BoundingBox){
+        p->parent_x + p->x, p->parent_y + p->y, 0, 0});
+    return (struct wlr_box){b.x - origin.x, b.y - origin.y, b.width, b.height};
+}
+
+static void presentation_apply(struct presentation_node *p)
+{
+    struct wlr_scene_node *node = p->node;
+    Clay_BoundingBox b = render_present_box(p->pose, (Clay_BoundingBox){
+        p->parent_x + p->x, p->parent_y + p->y, p->width, p->height});
+    wlr_scene_node_set_position(node, b.x - p->presented_parent_x, b.y - p->presented_parent_y);
+    bool visible = p->enabled && p->pose.scale > 0
+        && (node->type == WLR_SCENE_NODE_TREE || (b.width > 0 && b.height > 0));
+    wlr_scene_node_set_enabled(node, visible);
+    float radii[4], cutout_radii[4];
+    struct wlr_render_rounded_clip clips[WLR_SCENE_ROUNDED_CLIPS];
+    for (int i = 0; i < 4; i++) {
+        radii[i] = p->radii[i] * p->pose.scale;
+        cutout_radii[i] = p->cutout_radii[i] * p->pose.scale;
+    }
+    for (size_t i = 0; i < p->clips_len; i++) {
+        clips[i].box = presentation_local_box(p, p->clips[i].box);
+        for (int j = 0; j < 4; j++) clips[i].radii[j] = p->clips[i].radii[j] * p->pose.scale;
+    }
+    if (node->type == WLR_SCENE_NODE_RECT) {
+        struct wlr_scene_rect *rect = wlr_scene_rect_from_node(node);
+        struct wlr_box cutout = presentation_local_box(p, p->cutout);
+        if (p->cutout.width > 0) {
+            int left = p->cutout.x > 0 ? MAX(1, lroundf(p->cutout.x * p->pose.scale)) : 0;
+            int top = p->cutout.y > 0 ? MAX(1, lroundf(p->cutout.y * p->pose.scale)) : 0;
+            int right = p->width - p->cutout.x - p->cutout.width;
+            int bottom = p->height - p->cutout.y - p->cutout.height;
+            right = right > 0 ? MAX(1, lroundf(right * p->pose.scale)) : 0;
+            bottom = bottom > 0 ? MAX(1, lroundf(bottom * p->pose.scale)) : 0;
+            cutout = (struct wlr_box){left, top, MAX(0, (int)b.width - left - right),
+                MAX(0, (int)b.height - top - bottom)};
+        }
+        wlr_scene_rect_set_size(rect, b.width, b.height);
+        wlr_scene_rect_set_corner_radii(rect, radii);
+        wlr_scene_rect_set_cutout(rect, p->cutout.width ? &cutout : NULL, cutout_radii);
+        wlr_scene_rect_set_rounded_clips(rect, clips, p->clips_len);
+    } else if (node->type == WLR_SCENE_NODE_BUFFER) {
+        struct wlr_scene_buffer *sb = wlr_scene_buffer_from_node(node);
+        if (b.width > 0 && b.height > 0) wlr_scene_buffer_set_dest_size(sb, b.width, b.height);
+        wlr_scene_buffer_set_corner_radii(sb, radii);
+        wlr_scene_buffer_set_rounded_clips(sb, clips, p->clips_len);
+    }
+    p->applied = true;
+}
+
+static void presentation_commit(struct wl_listener *listener, void *data)
+{
+    struct presentation_node *p = wl_container_of(listener, p, commit);
+    if (!p->applied) return;
+    struct wlr_scene_buffer *sb = wlr_scene_buffer_from_node(p->node);
+    p->width = sb->dst_width;
+    p->height = sb->dst_height;
+    p->x = p->node->x;
+    p->y = p->node->y;
+    p->enabled = p->node->enabled;
+    presentation_apply(p);
+    wlr_scene_buffer_set_opacity(sb, p->opacity);
+}
+
+static void presentation_restore(struct wlr_scene_node *node)
+{
+    struct presentation_node *p = presentation_node(node);
+    if (p && p->applied) {
+        wlr_scene_node_set_position(node, p->x, p->y);
+        wlr_scene_node_set_enabled(node, p->enabled);
+        if (node->type == WLR_SCENE_NODE_RECT) {
+            struct wlr_scene_rect *rect = wlr_scene_rect_from_node(node);
+            wlr_scene_rect_set_size(rect, p->width, p->height);
+            wlr_scene_rect_set_corner_radii(rect, p->radii);
+            wlr_scene_rect_set_cutout(rect, p->cutout.width ? &p->cutout : NULL, p->cutout_radii);
+            wlr_scene_rect_set_rounded_clips(rect, p->clips, p->clips_len);
+        } else if (node->type == WLR_SCENE_NODE_BUFFER) {
+            struct wlr_scene_buffer *sb = wlr_scene_buffer_from_node(node);
+            wlr_scene_buffer_set_dest_size(sb, p->width, p->height);
+            wlr_scene_buffer_set_corner_radii(sb, p->radii);
+            wlr_scene_buffer_set_rounded_clips(sb, p->clips, p->clips_len);
+        }
+        p->applied = false;
+    }
+    if (node->type == WLR_SCENE_NODE_TREE) {
+        struct wlr_scene_node *child;
+        wl_list_for_each(child, &wlr_scene_tree_from_node(node)->children, link)
+            presentation_restore(child);
+    }
+}
+
+static void presentation_tree(struct wlr_scene_node *node, struct render_presentation pose,
+        int parent_x, int parent_y, int presented_parent_x, int presented_parent_y,
+        bool borrowed, bool root)
+{
+    int x = node->x, y = node->y;
+    struct presentation_node *p = presentation_node(node);
+    bool transform = !borrowed || root || node->type != WLR_SCENE_NODE_TREE;
+    if (transform) {
+        if (!p) {
+            p = calloc(1, sizeof(*p));
+            p->node = node;
+            wl_list_init(&p->commit.link);
+            wlr_addon_init(&p->addon, &node->addons, NULL, &presentation_impl);
+            if (borrowed && node->type == WLR_SCENE_NODE_BUFFER) {
+                struct wlr_scene_surface *surface = wlr_scene_surface_try_from_buffer(wlr_scene_buffer_from_node(node));
+                if (surface) {
+                    p->commit.notify = presentation_commit;
+                    wl_signal_add(&surface->surface->events.commit, &p->commit);
+                }
+            }
+        }
+        p->pose = pose;
+        p->x = x; p->y = y;
+        p->parent_x = parent_x; p->parent_y = parent_y;
+        p->presented_parent_x = presented_parent_x; p->presented_parent_y = presented_parent_y;
+        p->enabled = node->enabled;
+        if (node->type == WLR_SCENE_NODE_RECT) {
+            struct wlr_scene_rect *rect = wlr_scene_rect_from_node(node);
+            p->width = rect->width; p->height = rect->height;
+            memcpy(p->radii, rect->corner_radii, sizeof(p->radii));
+            p->cutout = rect->cutout_box;
+            memcpy(p->cutout_radii, rect->cutout_radii, sizeof(p->cutout_radii));
+            p->clips_len = rect->clips_len;
+            memcpy(p->clips, rect->clips, sizeof(p->clips));
+        } else if (node->type == WLR_SCENE_NODE_BUFFER) {
+            struct wlr_scene_buffer *sb = wlr_scene_buffer_from_node(node);
+            p->width = sb->dst_width; p->height = sb->dst_height;
+            p->opacity = sb->opacity;
+            memcpy(p->radii, sb->corner_radii, sizeof(p->radii));
+            p->clips_len = sb->clips_len;
+            memcpy(p->clips, sb->clips, sizeof(p->clips));
+        }
+        presentation_apply(p);
+    }
+    if (node->type == WLR_SCENE_NODE_TREE) {
+        struct wlr_scene_node *child;
+        wl_list_for_each(child, &wlr_scene_tree_from_node(node)->children, link)
+            presentation_tree(child, pose, parent_x + x, parent_y + y,
+                presented_parent_x + node->x, presented_parent_y + node->y, borrowed, false);
+    }
+}
+
 /* The retained node that drew a scene node: the hit node is the retained
  * node itself (rect, buffer) or a descendant of it (a square border's side
  * rect under its tree). */
@@ -356,19 +538,55 @@ void render_fades_begin(struct render_state *rs)
     rs->fades_prepared = true;
 }
 
-void render_fade_carrier(struct render_state *rs, const Clay_RenderCommand *cmd)
+struct render_presentation render_carrier_decode(Clay_Color color)
 {
-    Clay_Color color = cmd->renderData.overlayColor.color;
-    if (color.r != 0 || color.g != 0 || color.b != 0 || color.a < 0 || color.a > 1) {
+    if (color.a < 0 || color.a > 1 || color.r < 0 || color.g < 0 || color.b < 0
+            || color.r > color.a + .00001f || color.g > color.a + .00001f
+            || color.b > 5 * color.a + .00001f) {
         wlr_log(WLR_ERROR, "unsupported overlay tint");
         abort();
     }
+    return (struct render_presentation){
+        .scale = color.r > 0 ? 1 - color.a : 1,
+        .fade = color.g > 0 ? 1 - color.a : 1,
+        .anchor = color.a > 0 ? lroundf(color.b / color.a) : 0,
+    };
+}
+
+Clay_BoundingBox render_present_box(struct render_presentation p, Clay_BoundingBox b)
+{
+    float x = roundf(p.origin.x + p.scale * (b.x - p.origin.x));
+    float y = roundf(p.origin.y + p.scale * (b.y - p.origin.y));
+    return (Clay_BoundingBox){x, y,
+        roundf(p.origin.x + p.scale * (b.x + b.width - p.origin.x)) - x,
+        roundf(p.origin.y + p.scale * (b.y + b.height - p.origin.y)) - y};
+}
+
+bool render_unpresent(struct render_presentation p, double *x, double *y)
+{
+    if (p.scale <= 0) return false;
+    *x = p.origin.x + (*x - p.origin.x) / p.scale;
+    *y = p.origin.y + (*y - p.origin.y) / p.scale;
+    return true;
+}
+
+static Clay_BoundingBox unpresent_box(struct render_presentation p, Clay_BoundingBox b)
+{
+    if (p.scale <= 0) return b;
+    return (Clay_BoundingBox){p.origin.x + (b.x - p.origin.x) / p.scale,
+        p.origin.y + (b.y - p.origin.y) / p.scale, b.width / p.scale, b.height / p.scale};
+}
+
+void render_fade_carrier(struct render_state *rs, const Clay_RenderCommand *cmd)
+{
+    Clay_Color color = cmd->renderData.overlayColor.color;
+    struct render_presentation pose = render_carrier_decode(color);
     if (rs->fades_len == rs->fades_cap) {
         rs->fades_cap = rs->fades_cap ? rs->fades_cap * 2 : 8;
         p_realloc(&rs->fades, rs->fades_cap);
     }
     rs->fades[rs->fades_len++] = (struct fade_value){
-        .owner = (uintptr_t)cmd->userData & RENDER_UD_OWNER_MASK, .id = cmd->id, .alpha = color.a};
+        .owner = (uintptr_t)cmd->userData & RENDER_UD_OWNER_MASK, .id = cmd->id, .pose = pose};
 }
 
 static struct fade_value *fade_value(struct render_state *rs, uint32_t id)
@@ -376,6 +594,15 @@ static struct fade_value *fade_value(struct render_state *rs, uint32_t id)
     for (size_t i = 0; i < rs->fades_len; i++)
         if (rs->fades[i].id == id) return &rs->fades[i];
     return NULL;
+}
+
+void render_carrier_box(struct render_state *rs, uint32_t id, Clay_BoundingBox box)
+{
+    struct fade_value *v = fade_value(rs, id);
+    if (!v) return;
+    v->pose.origin = (Clay_Vector2){
+        box.x + box.width * (v->pose.anchor == 4 ? 0 : v->pose.anchor == 5 ? 1 : .5f),
+        box.y + box.height * (v->pose.anchor == 2 ? 0 : v->pose.anchor == 3 ? 1 : .5f)};
 }
 
 /* Floating titlebars and protocol popups use their frame's carrier through authored owner links. */
@@ -398,17 +625,18 @@ static float command_opacity(struct render_state *rs, const Clay_RenderCommand *
     return render_userdata_opacity(cmd->userData) * rs->fade_factor;
 }
 
-static float fade_factor(struct render_state *rs, uint64_t owner)
+struct render_presentation render_owner_presentation(struct render_state *rs, uint64_t owner)
 {
+    if (!rs) return (struct render_presentation){.scale = 1, .fade = 1};
     for (size_t i = 0; i < rs->fades_len; i++)
-        if (rs->fades[i].owner == owner && owner) return 1 - rs->fades[i].alpha;
+        if (rs->fades[i].owner == owner && owner) return rs->fades[i].pose;
     for (size_t i = 0; i < rs->fade_aliases_len; i++)
         if (rs->fade_aliases[i].owner == owner) {
             rs->fade_aliases[i].seen = true;
             for (size_t j = 0; j < rs->fades_len; j++)
-                if (rs->fades[j].owner == rs->fade_aliases[i].ancestor) return 1 - rs->fades[j].alpha;
+                if (rs->fades[j].owner == rs->fade_aliases[i].ancestor) return rs->fades[j].pose;
         }
-    return 1;
+    return (struct render_presentation){.scale = 1, .fade = 1};
 }
 
 void render_set_enabled(struct render_state *rs, bool on) {
@@ -457,6 +685,7 @@ void render_tree_set_opacity(struct wlr_scene_node *node, float opacity) {
 static void render_release(struct render_state *rs, struct rnode *n,
 		const struct render_client_hooks *hooks) {
 	if (hooks->release(hooks->data, n->handle, rs) && n->node != NULL) {
+        presentation_restore(n->node);
 		render_park(n->node);
 	}
 }
@@ -553,6 +782,7 @@ static struct rnode *rnode_add(struct render_state *rs, uint64_t key) {
 	/* Matches wlroots' default: a fresh scene buffer is opaque, so a
 	 * declared opacity of 0.0 must not compare equal to the sentinel. */
 	n->opacity = 1.0f;
+	n->presentation = (struct render_presentation){.scale = 1, .fade = 1};
 	n->key = key;
 	n->mask_scope = SIZE_MAX;
 	return n;
@@ -2343,7 +2573,12 @@ static struct wl_list *placed_below(struct render_state *rs,
  * is the only case where a declared node may be off). The verifier below
  * aborts on it; the tree dump prints it, so a release build without the
  * verifier still reports the divergence rather than drawing it silently. */
-static bool rnode_scene_mismatch(const struct rnode *n) {
+static bool rnode_scene_mismatch(const struct rnode *original) {
+    struct rnode transformed = *original;
+    transformed.box = render_present_box(original->presentation, original->box);
+    transformed.rbox = render_present_box(original->presentation, original->rbox);
+    transformed.clip = render_present_box(original->presentation, original->clip);
+    const struct rnode *n = &transformed;
 	if (n->node == NULL || n->retained) {
 		return false;
 	}
@@ -2591,7 +2826,7 @@ static bool can_batch_visibility(struct render_state *rs,
 
 int render_reconcile(struct render_state *rs, Clay_RenderCommandArray commands,
 		const struct render_client_hooks *hooks, Clay_BoundingBox bounds) {
-    border_content_constraints(rs, commands);
+	border_content_constraints(rs, commands);
 	rs->gen++;
 	rs->buffers_created = 0;
 	rs->created = 0;
@@ -2599,10 +2834,10 @@ int render_reconcile(struct render_state *rs, Clay_RenderCommandArray commands,
 	rs->visibility_batched = false;
 	rs->node_recreated = false;
 	rs->scopes_len = 0;
-    if (!rs->fades_prepared) rs->fades_len = 0;
-    rs->fades_prepared = false;
-    rs->fade_factor = 1;
-    for (size_t i = 0; i < rs->fade_aliases_len; i++) rs->fade_aliases[i].seen = false;
+	if (!rs->fades_prepared) rs->fades_len = 0;
+	rs->fades_prepared = false;
+	rs->fade_factor = 1;
+	for (size_t i = 0; i < rs->fade_aliases_len; i++) rs->fade_aliases[i].seen = false;
 	if ((size_t)commands.length > rs->scopes_cap) {
 		rs->scopes_cap = commands.length;
 		p_realloc(&rs->scopes, rs->scopes_cap);
@@ -2613,11 +2848,11 @@ int render_reconcile(struct render_state *rs, Clay_RenderCommandArray commands,
 	 * keys and are never looked up again this pass, so it stays valid. */
 	rmap_rebuild(rs);
 	size_t pre_len = rs->len;
-    rs->visibility_batched = can_batch_visibility(rs, commands);
-    if (rs->visibility_batched) {
-        wlr_scene_node_set_enabled(&rs->tree->node, false);
-        muts++;
-    }
+	rs->visibility_batched = can_batch_visibility(rs, commands);
+	if (rs->visibility_batched) {
+		wlr_scene_node_set_enabled(&rs->tree->node, false);
+		muts++;
+	}
 
 	/* One capacity for both, so p_realloc rather than p_grow: the second
 	 * p_grow would see the capacity the first already raised. */
@@ -2640,30 +2875,33 @@ int render_reconcile(struct render_state *rs, Clay_RenderCommandArray commands,
 	size_t build_len = 0;
 	for (int32_t i = 0; i < commands.length; i++) {
 		Clay_RenderCommand *cmd = Clay_RenderCommandArray_Get(&commands, i);
-        if (cmd->commandType == CLAY_RENDER_COMMAND_TYPE_OVERLAY_COLOR_START) {
-            struct fade_value *value = fade_value(rs, cmd->id);
-            if (!value) {
-                render_fade_carrier(rs, cmd);
-                value = &rs->fades[rs->fades_len - 1];
-            }
-            value->opened = true;
-        }
-        rs->fade_factor = fade_factor(rs, ((uintptr_t)cmd->userData & RENDER_UD_OWNER_MASK));
-        const struct owner_constraint *constraint = owner_constraint(rs, cmd->userData);
-        Clay_RenderCommand fitted;
-        if (cmd->commandType == CLAY_RENDER_COMMAND_TYPE_BORDER && constraint && constraint->fits_border) {
-            fitted = *cmd;
-            fitted.boundingBox = box_intersect(cmd->boundingBox, constraint->border);
-            cmd = &fitted;
-        }
+		if (cmd->commandType == CLAY_RENDER_COMMAND_TYPE_OVERLAY_COLOR_START) {
+			struct fade_value *value = fade_value(rs, cmd->id);
+			if (!value) {
+				render_fade_carrier(rs, cmd);
+				value = &rs->fades[rs->fades_len - 1];
+			}
+			value->opened = true;
+		}
+		struct render_presentation presentation = render_owner_presentation(rs,
+			(uintptr_t)cmd->userData & RENDER_UD_OWNER_MASK);
+		rs->fade_factor = presentation.fade;
+		const struct owner_constraint *constraint = owner_constraint(rs, cmd->userData);
+		Clay_RenderCommand fitted;
+		if (cmd->commandType == CLAY_RENDER_COMMAND_TYPE_BORDER && constraint && constraint->fits_border) {
+			fitted = *cmd;
+			fitted.boundingBox = box_intersect(cmd->boundingBox, constraint->border);
+			cmd = &fitted;
+		}
 		Clay_RenderCommand decoration;
 		if (cmd->commandType == CLAY_RENDER_COMMAND_TYPE_CUSTOM &&
 				cmd->renderData.custom.customData != RENDER_CLIP_MARK &&
 				((uintptr_t)cmd->renderData.custom.customData & RENDER_SHADOW_TAG)) {
-            const struct render_shadow *style = render_shadow_of(cmd->renderData.custom.customData);
-            constraint = owner_constraint(rs, (void *)(uintptr_t)style->owner);
-            struct fade_value *value = fade_value(rs, style->owner_id);
-            rs->fade_factor = value ? 1 - value->alpha : 1;
+			const struct render_shadow *style = render_shadow_of(cmd->renderData.custom.customData);
+			constraint = owner_constraint(rs, (void *)(uintptr_t)style->owner);
+			struct fade_value *value = fade_value(rs, style->owner_id);
+			presentation = value ? value->pose : (struct render_presentation){.scale = 1, .fade = 1};
+			rs->fade_factor = presentation.fade;
 			decoration = *cmd;
 			decoration.boundingBox = shadow_owner_box(
 				render_shadow_of(cmd->renderData.custom.customData));
@@ -2695,6 +2933,7 @@ int render_reconcile(struct render_state *rs, Clay_RenderCommandArray commands,
 		if (n == NULL) {
 			n = rnode_add(rs, key);
 		}
+		if (n->node && n->presentation.scale != 1) presentation_restore(n->node);
 		bool is_new = n->node == NULL;
 		n->gen = rs->gen;
 		n->retained = false;
@@ -2714,19 +2953,20 @@ int render_reconcile(struct render_state *rs, Clay_RenderCommandArray commands,
 			clipped = true;
 		}
 		if (scope != NULL) {
-			clip = box_intersect(clip, scope->box);
+			clip = box_intersect(clip, scope == &bounds_scope
+				? unpresent_box(presentation, scope->box) : scope->box);
 			clipped = true;
 		}
-        if (constraint && constraint->clips) {
-            clip = box_intersect(clip, constraint->clip);
-            clipped = true;
-        }
-        if (constraint && constraint->clips_content
-                && cmd->commandType == CLAY_RENDER_COMMAND_TYPE_CUSTOM
-                && ((uintptr_t)cmd->renderData.custom.customData & ~RENDER_PROBED_TAG) == constraint->owner) {
-            clip = box_intersect(clip, constraint->content);
-            clipped = true;
-        }
+		if (constraint && constraint->clips) {
+			clip = box_intersect(clip, unpresent_box(presentation, constraint->clip));
+			clipped = true;
+		}
+		if (constraint && constraint->clips_content
+				&& cmd->commandType == CLAY_RENDER_COMMAND_TYPE_CUSTOM
+				&& ((uintptr_t)cmd->renderData.custom.customData & ~RENDER_PROBED_TAG) == constraint->owner) {
+			clip = box_intersect(clip, constraint->content);
+			clipped = true;
+		}
 		const Clay_BoundingBox *clip_top = clipped ? &clip : NULL;
 		bool clip_mark = cmd->commandType == CLAY_RENDER_COMMAND_TYPE_CUSTOM &&
 			cmd->renderData.custom.customData == RENDER_CLIP_MARK;
@@ -2739,10 +2979,10 @@ int render_reconcile(struct render_state *rs, Clay_RenderCommandArray commands,
 			cmd->commandType == CLAY_RENDER_COMMAND_TYPE_TEXT ||
 			cmd->commandType == CLAY_RENDER_COMMAND_TYPE_IMAGE || clip_mark || shape ||
 			(cmd->commandType == CLAY_RENDER_COMMAND_TYPE_CUSTOM && !shadow);
-        bool shadow_clipped = shadow && constraint && constraint->clips;
-        Clay_BoundingBox rbox = (clip_top != NULL && clippable) ?
-            box_snap(box_intersect(cmd->boundingBox, *clip_top)) : shadow_clipped
-            ? box_snap(box_intersect(cmd->boundingBox, constraint->clip)) : cmd->boundingBox;
+		bool shadow_clipped = shadow && constraint && constraint->clips;
+		Clay_BoundingBox rbox = (clip_top != NULL && clippable) ?
+			box_snap(box_intersect(cmd->boundingBox, *clip_top)) : shadow_clipped
+			? box_snap(box_intersect(cmd->boundingBox, unpresent_box(presentation, constraint->clip))) : cmd->boundingBox;
 		size_t mask_scope = scope && clippable && scope != &bounds_scope
 			? (size_t)(scope - rs->scopes) : SIZE_MAX;
 		const struct clip_masks *mask = scope && clippable && scope->masks.len
@@ -2831,16 +3071,16 @@ int render_reconcile(struct render_state *rs, Clay_RenderCommandArray commands,
 			break;
 		}
 		case CLAY_RENDER_COMMAND_TYPE_OVERLAY_COLOR_START:
-            break;
-        case CLAY_RENDER_COMMAND_TYPE_OVERLAY_COLOR_END: {
-            struct fade_value *value = fade_value(rs, cmd->id);
-            if (!value || !value->opened) {
-                wlr_log(WLR_ERROR, "unmatched fade end");
-                abort();
-            }
-            value->opened = false;
-            break;
-        }
+			break;
+		case CLAY_RENDER_COMMAND_TYPE_OVERLAY_COLOR_END: {
+			struct fade_value *value = fade_value(rs, cmd->id);
+			if (!value || !value->opened) {
+				wlr_log(WLR_ERROR, "unmatched fade end");
+				abort();
+			}
+			value->opened = false;
+			break;
+		}
 		case CLAY_RENDER_COMMAND_TYPE_SCISSOR_END:
 			if (clip_depth > 0) {
 				clip_depth--;
@@ -2896,8 +3136,15 @@ int render_reconcile(struct render_state *rs, Clay_RenderCommandArray commands,
 		/* The clip rbox was realized against, mirroring the rbox computation
 		 * above: the active clip for a clippable node, else unbounded. */
 		n->clip = (clip_top != NULL && clippable) ? *clip_top
-            : shadow_clipped ? constraint->clip : box_inf();
+			: shadow_clipped ? unpresent_box(presentation, constraint->clip) : box_inf();
 		n->data = cmd->renderData;
+		if (n->node && presentation.scale != 1) {
+			presentation_tree(n->node, presentation, 0, 0, 0, 0, n->borrowed, true);
+			muts++;
+		} else if (n->presentation.scale != presentation.scale) {
+			muts++;
+		}
+		n->presentation = presentation;
 	}
 	/* OUTPUT is unclipped. Its two paint nodes precede even negative-band
 	 * roots; colour is an underlay and never an image tint. */
@@ -2990,12 +3237,12 @@ int render_reconcile(struct render_state *rs, Clay_RenderCommandArray commands,
 		}
 	}
 
-    /* The pass never yields. Restore the prior enabled state before any
-     * completed geometry, pixels or pointer targeting can be consumed. */
-    if (rs->visibility_batched) {
-        wlr_scene_node_set_enabled(&rs->tree->node, true);
-        muts++;
-    }
+	/* The pass never yields. Restore the prior enabled state before any
+	 * completed geometry, pixels or pointer targeting can be consumed. */
+	if (rs->visibility_batched) {
+		wlr_scene_node_set_enabled(&rs->tree->node, true);
+		muts++;
+	}
 
 #ifdef SOMEWM_RENDER_VERIFY
 	for (size_t i = 0; i < rs->len; i++) {
@@ -3004,10 +3251,10 @@ int render_reconcile(struct render_state *rs, Clay_RenderCommandArray commands,
 	verify_order(rs);
 #endif
 
-    for (size_t i = 0; i < rs->fade_aliases_len;) {
-        if (rs->fade_aliases[i].seen) i++;
-        else rs->fade_aliases[i] = rs->fade_aliases[--rs->fade_aliases_len];
-    }
+	for (size_t i = 0; i < rs->fade_aliases_len;) {
+		if (rs->fade_aliases[i].seen) i++;
+		else rs->fade_aliases[i] = rs->fade_aliases[--rs->fade_aliases_len];
+	}
 
 	return muts;
 }
@@ -3082,14 +3329,16 @@ bool render_hit(struct render_state *rs, double x, double y,
 		}
 		struct rnode *n = &rs->nodes[idx];
 		uint32_t type = (uint32_t)(n->key >> 32);
-		double sx = x - n->rbox.x, sy = y - n->rbox.y;
+		double px = x, py = y;
+		if (!render_unpresent(n->presentation, &px, &py)) continue;
+		double sx = px - n->rbox.x, sy = py - n->rbox.y;
 
 		if (n->node == NULL || box_empty(n->rbox)
 				|| sx < 0 || sy < 0 || sx >= n->rbox.width || sy >= n->rbox.height) {
 			continue;
 		}
 		if (type == CLAY_RENDER_COMMAND_TYPE_BORDER) {
-			if (!border_point_in_ring(n, x - n->box.x, y - n->box.y)) {
+			if (!border_point_in_ring(n, px - n->box.x, py - n->box.y)) {
 				continue;
 			}
 		} else if (!rnode_point_in_arcs(rs, n, sx, sy)) {
@@ -3104,11 +3353,12 @@ bool render_hit(struct render_state *rs, double x, double y,
 				.z = n->z,
 				.box = n->box,
 				.rbox = n->rbox,
+			.presented = render_present_box(n->presentation, n->rbox),
 				.has_node = true,
 				.clip_mark = type == CLAY_RENDER_COMMAND_TYPE_CUSTOM
 					&& n->data.custom.customData == RENDER_CLIP_MARK,
 				.user_data = n->user_data,
-			}, sx, sy)) {
+			}, px - n->box.x, py - n->box.y)) {
 			return true;
 		}
 	}
@@ -3132,6 +3382,7 @@ void render_walk(struct render_state *rs,
 			.z = n->z,
 			.box = n->box,
 			.rbox = n->rbox,
+			.presented = render_present_box(n->presentation, n->rbox),
 			.raster_bytes = n->raster_bytes,
 			.has_node = n->node != NULL,
 			.clip_mark = (uint32_t)(n->key >> 32) == CLAY_RENDER_COMMAND_TYPE_CUSTOM

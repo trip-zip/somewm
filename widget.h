@@ -104,7 +104,8 @@ struct widget_binding {
  * of zero means the node draws no fill or no ring. */
 struct widget_transition {
     bool enabled;
-    uint8_t enter_state, exit_state, tag_exit, exit_order;
+    uint16_t enter_state, exit_state, tag_exit;
+    uint8_t exit_order;
     uint16_t properties;
     float duration, exit_duration, tag_duration;
 };
@@ -248,13 +249,17 @@ enum widget_nodes_state {
 };
 
 enum widget_transition_state {
-    WIDGET_TRANSITION_NONE = 64, WIDGET_TRANSITION_GROW = 1,
+    WIDGET_TRANSITION_NONE = 2048, WIDGET_TRANSITION_GROW = 1,
     WIDGET_TRANSITION_SLIDE_LEFT = 2, WIDGET_TRANSITION_SLIDE_RIGHT = 4,
     WIDGET_TRANSITION_SLIDE_UP = 8, WIDGET_TRANSITION_SLIDE_DOWN = 16,
     WIDGET_TRANSITION_FADE = 32,
     WIDGET_TRANSITION_SLIDE = 30,
+    WIDGET_TRANSITION_SCALE = 64, WIDGET_TRANSITION_SCALE_TOP = 128,
+    WIDGET_TRANSITION_SCALE_BOTTOM = 256, WIDGET_TRANSITION_SCALE_LEFT = 512,
+    WIDGET_TRANSITION_SCALE_RIGHT = 1024,
+    WIDGET_TRANSITION_SCALES = 1984,
 };
-uint16_t widget_transition_properties(uint8_t state);
+uint16_t widget_transition_properties(uint16_t state);
 bool widget_read_transition(lua_State *L, int idx, struct widget_transition *transition);
 
 /* Replace the stored tree with the compiled table at idx.
