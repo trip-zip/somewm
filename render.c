@@ -3140,6 +3140,10 @@ int render_reconcile(struct render_state *rs, Clay_RenderCommandArray commands,
 		n->data = cmd->renderData;
 		if (n->node && presentation.scale != 1) {
 			presentation_tree(n->node, presentation, 0, 0, 0, 0, n->borrowed, true);
+			/* A tree carries no size for presentation_apply to test, so a
+			 * picture scaled below one pixel is disabled here. */
+			if (box_empty(render_present_box(presentation, rbox)))
+				wlr_scene_node_set_enabled(n->node, false);
 			muts++;
 		} else if (n->presentation.scale != presentation.scale) {
 			muts++;
