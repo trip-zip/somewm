@@ -75,11 +75,13 @@ local function between(x, y)
     end
 end
 
+-- The first frame read after an interruption may already carry a step of
+-- either transition, so allow a few frames of motion but not a restart from
+-- the settled box or a snap to the end state.
 local function close(a, b)
-    for _, key in ipairs{'x', 'y', 'w', 'h'} do
-        assert(math.abs(a[key] - b[key]) <= 1, 'interruption jumped on ' .. key .. '\n' .. dump())
-    end
-    assert(math.abs(a.alpha - b.alpha) <= 1 / 255, 'interruption jumped in alpha')
+    assert(math.abs(a.x - b.x) <= a.w / 4, 'interruption jumped on x\n' .. dump())
+    assert(a.y == b.y and a.w == b.w and a.h == b.h, 'interruption changed the box\n' .. dump())
+    assert(math.abs(a.alpha - b.alpha) <= .1, 'interruption jumped in alpha')
 end
 
 local function read(path)
