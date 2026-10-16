@@ -203,8 +203,16 @@ runner.run_async(function()
     before = assert(box('WIBOX'))
     moving.x = 600
     next_frame()
-    close(before, assert(box('WIBOX')))
+    -- The first rendered frame may already carry one animation step, so it
+    -- continues forward from `before`: no restart off-screen, no snap to the
+    -- new x (a quarter of the remaining distance is several frames of motion),
+    -- and the fade neither resets nor completes.
     previous = assert(box('WIBOX'))
+    assert(previous.x >= before.x and previous.x < before.x + (600 - before.x) / 4,
+        'interruption jumped on x\n' .. dump())
+    assert(previous.y == before.y and previous.w == before.w and previous.h == before.h,
+        'interruption changed the box\n' .. dump())
+    assert(previous.alpha <= before.alpha and previous.alpha > 0, 'interruption jumped in alpha')
     for _ = 1, 6 do
         async.sleep(.2)
         local current = assert(box('WIBOX'))
