@@ -49,9 +49,10 @@ local seen = setmetatable({}, {__mode = "k"})
 -- @beautiful beautiful.animation_focus_duration
 -- @tparam[opt=nil] number animation_focus_duration
 
---- The entrance every client maps with: `grow`, `slide_left`,
--- `slide_right`, `slide_up`, `slide_down` or `fade`.
--- A list combines effects simultaneously, with at most one slide plus grow and fade.
+--- The entrance every client maps with: `grow`, `scale`, `scale_top`,
+-- `scale_bottom`, `scale_left`, `scale_right`, `slide_left`, `slide_right`,
+-- `slide_up`, `slide_down` or `fade`. A list combines effects simultaneously,
+-- with at most one slide, one size effect (`grow` or a scale word) and `fade`.
 -- @beautiful beautiful.animation_appear
 -- @tparam[opt=nil] string|table animation_appear
 
