@@ -12,6 +12,10 @@ All notable changes to somewm will be documented in this file.
   that never came and never showed again.
 - awesome._active_modifiers reports current keyboard modifiers, including
   root.fake_input presses, so awful.keyboard can release held modifiers.
+- A click on an X11 client that already has focus no longer sends it FocusOut
+  then FocusIn. Steam context menus closed on the click that should have
+  chosen an item, and fullscreen games such as Terraria left and re-entered
+  fullscreen on every click.
 - wibox.widget.textbox keeps its last applied font when setting a font fails, so a rejected name can be retried.
 - Systray registrations share one pending property fetch per item, preventing duplicate icons after a reload and allowing retries when the fetch fails.
 - Surface unit tests select Gdk 3.0 explicitly so systems with Gdk 4 installed use the pixel comparison API they require.

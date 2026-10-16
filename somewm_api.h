@@ -49,7 +49,7 @@ window_type_t some_client_get_window_type(Client *c);
 Client *some_client_get_transient_for(Client *c);
 
 /* Focus synchronization API - internal use */
-void some_set_seat_keyboard_focus(Client *c);
+void some_set_seat_keyboard_focus(Client *c, bool focus_changed);
 void some_update_pointer_constraint(struct wlr_surface *surface);
 Client *some_client_from_surface(struct wlr_surface *surface);
 
