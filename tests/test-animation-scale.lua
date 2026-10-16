@@ -79,6 +79,15 @@ local function pixel(image, x, y, value)
         string.format('pixel %d,%d: %d,%d,%d expected %d\n%s', x, y, r, g, b, value, dump()))
 end
 
+-- Headless, grim lands frames after a dump read. An entrance's picture only
+-- grows and moves one way, so the screenshot's picture lies between the
+-- boxes read just before and just after it.
+local function bracketed(role)
+    local before = assert(frame(role), dump())
+    local image = shot()
+    return before, image, assert(frame(role), dump())
+end
+
 local function same_box(a, b)
     return a.x == b.x and a.y == b.y and a.w == b.w and a.h == b.h
 end
@@ -203,15 +212,18 @@ runner.run_async(function()
         popup.animation = {visible = {duration = 1, enter = effects, exit = effects}}
         popup.visible = true
         async.sleep(.3)
-        local mid = assert(frame('WIBOX'), dump())
+        local mid, image, later = bracketed('WIBOX')
         assert(mid.w == final.w and mid.h == final.h and mid.scale > 0 and mid.scale < 1, dump())
         local slide = effects[2] == 'slide_up'
         local fade = effects[#effects] == 'fade'
         assert(not slide or mid.y > -final.h and mid.y < final.y, dump())
         assert(not fade or math.abs(mid.fade - mid.scale) < .00001, dump())
-        local image = shot()
-        local p = mid.presented
-        local r, g, b = capture.read(image, p.x + math.floor(p.w / 2), p.y + math.floor(p.h / 2))
+        -- Sample inside both boxes, so inside the screenshot's picture.
+        local p, q = mid.presented, later.presented
+        local x0, x1 = math.max(p.x, q.x), math.min(p.x + p.w, q.x + q.w)
+        local y0, y1 = math.max(p.y, q.y), math.min(p.y + p.h, q.y + q.h)
+        assert(x0 < x1 and y0 < y1, 'picture moved past itself between reads\n' .. dump())
+        local r, g, b = capture.read(image, math.floor((x0 + x1) / 2), math.floor((y0 + y1) / 2))
         if fade then assert(r > 32 and r < 224 and r == g and g == b, 'composed scale did not blend')
         else assert(r == 224 and g == 224 and b == 224, 'slide lost scaled content') end
         async.sleep(.9)
@@ -293,22 +305,25 @@ runner.run_async(function()
     rounded.visible = true
     async.sleep(.3)
     local function corners()
-        local box = assert(frame('WIBOX'), dump())
-        local image = shot()
-        local p = box.presented
-        local radius = 24 * box.scale
-        pixel(image, p.x + 1, p.y + 1, 32)
-        pixel(image, p.x + math.ceil(radius) + 2, p.y + 2, 224)
+        local _, image, after = bracketed('WIBOX')
+        -- Measure the screenshot's own picture: scan out from the center
+        -- anchor along the middle row and column to its edges.
+        local cx, cy, left, top = 600, 350, 600, 350
+        while left > 500 and capture.read(image, left - 1, cy) ~= 32 do left = left - 1 end
+        while top > 300 and capture.read(image, cx, top - 1) ~= 32 do top = top - 1 end
+        local radius = math.ceil(24 * (cx - left) / 100)
+        pixel(image, left + 1, top + 1, 32)
+        pixel(image, left + radius + 2, top + 2, 224)
         local partial = false
-        for y = p.y, p.y + math.ceil(radius) do
-            for x = p.x, p.x + math.ceil(radius) do
+        for y = top, top + radius do
+            for x = left, left + radius do
                 local red = capture.read(image, x, y)
                 local alpha = (red - 32) / 192
                 if alpha > .05 and alpha < .95 then partial = true end
             end
         end
         assert(partial, 'rounded clip has no antialiased corner coverage')
-        return box.scale
+        return after.scale
     end
     assert(corners() < 1, 'corner sample was not mid-flight')
     async.sleep(.9)
