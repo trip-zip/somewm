@@ -122,6 +122,16 @@ bool render_shadow_box(struct render_state *rs, uint32_t id, Clay_BoundingBox *b
 void render_fades_begin(struct render_state *rs);
 void render_fade_carrier(struct render_state *rs, const Clay_RenderCommand *cmd);
 void render_fade_alias(struct render_state *rs, uint64_t owner, uint64_t ancestor);
+struct render_presentation {
+    float scale, fade;
+    unsigned anchor;
+    Clay_Vector2 origin;
+};
+struct render_presentation render_carrier_decode(Clay_Color color);
+void render_carrier_box(struct render_state *rs, uint32_t id, Clay_BoundingBox box);
+struct render_presentation render_owner_presentation(struct render_state *rs, uint64_t owner);
+Clay_BoundingBox render_present_box(struct render_presentation pose, Clay_BoundingBox box);
+bool render_unpresent(struct render_presentation pose, double *x, double *y);
 
 void render_set_position(struct render_state *rs, int x, int y);
 
@@ -246,6 +256,7 @@ struct render_node_view {
 	int16_t z;
 	Clay_BoundingBox box;   /* solved geometry, or owner-relative shadow geometry */
 	Clay_BoundingBox rbox;  /* what was realized, after the clip */
+	Clay_BoundingBox presented;
 	size_t raster_bytes;    /* nonzero for a node holding a cairo raster */
 	bool has_node;          /* false for a SCISSOR marker, a clip mark or a
 				 * dead surface */

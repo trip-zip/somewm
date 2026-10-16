@@ -285,7 +285,8 @@ read_transition_properties(lua_State *L, int idx, uint16_t *out)
 }
 
 static const char *const transition_words[] = {
-    "none", "grow", "slide_left", "slide_right", "slide_up", "slide_down", "fade" };
+    "none", "grow", "slide_left", "slide_right", "slide_up", "slide_down", "fade",
+    "scale", "scale_top", "scale_bottom", "scale_left", "scale_right" };
 
 static int
 transition_word(lua_State *L, int idx)
@@ -323,7 +324,8 @@ transition_conflict(lua_State *L, int list, enum key key, int kept, int refused)
         lua_pushvalue(L, -2);
         lua_rawset(L, -4);
     }
-    int pair = key * 49 + MIN(kept, refused) * 7 + MAX(kept, refused);
+    int count = sizeof(transition_words) / sizeof(*transition_words);
+    int pair = key * count * count + MIN(kept, refused) * count + MAX(kept, refused);
     lua_rawgeti(L, -1, pair);
     bool warned = lua_toboolean(L, -1);
     lua_pop(L, 1);
@@ -338,7 +340,7 @@ transition_conflict(lua_State *L, int list, enum key key, int kept, int refused)
 }
 
 static bool
-read_transition_state(lua_State *L, int idx, enum key key, uint8_t *out)
+read_transition_state(lua_State *L, int idx, enum key key, uint16_t *out)
 {
     getfield(L, idx, key);
     int list = lua_gettop(L);
@@ -356,7 +358,7 @@ read_transition_state(lua_State *L, int idx, enum key key, uint8_t *out)
         }
         ok = ok && count > 0 && entries == count;
     }
-    int first = -1, slide = -1;
+    int first = -1, slide = -1, size = -1;
     *out = 0;
     for (size_t i = 1; ok && i <= count; i++) {
         if (array) lua_rawgeti(L, list, i);
@@ -364,14 +366,17 @@ read_transition_state(lua_State *L, int idx, enum key key, uint8_t *out)
         if (array) lua_pop(L, 1);
         if (word < 0) { ok = false; break; }
         bool position = word >= 2 && word <= 5;
+        bool sizing = word == 1 || word >= 7;
         int conflict = first >= 0 && word != first && (first == 0 || word == 0) ? first
-            : position && slide >= 0 && word != slide ? slide : -1;
+            : position && slide >= 0 && word != slide ? slide
+            : sizing && size >= 0 && word != size ? size : -1;
         if (conflict >= 0) {
             transition_conflict(L, list, key, conflict, word);
             continue;
         }
         if (first < 0) first = word;
         if (position) slide = word;
+        if (sizing) size = word;
         if (word) *out |= 1 << (word - 1);
     }
     if (first == 0) *out = WIDGET_TRANSITION_NONE;
@@ -380,11 +385,11 @@ read_transition_state(lua_State *L, int idx, enum key key, uint8_t *out)
 }
 
 uint16_t
-widget_transition_properties(uint8_t state)
+widget_transition_properties(uint16_t state)
 {
     return ((state & WIDGET_TRANSITION_SLIDE) ? CLAY_TRANSITION_PROPERTY_POSITION : 0)
         | ((state & WIDGET_TRANSITION_GROW) ? CLAY_TRANSITION_PROPERTY_DIMENSIONS : 0)
-        | ((state & WIDGET_TRANSITION_FADE) ? CLAY_TRANSITION_PROPERTY_OVERLAY_COLOR : 0);
+        | ((state & (WIDGET_TRANSITION_FADE | WIDGET_TRANSITION_SCALES)) ? CLAY_TRANSITION_PROPERTY_OVERLAY_COLOR : 0);
 }
 
 /* A layout node's own transition, Clay's config in Lua words: what to

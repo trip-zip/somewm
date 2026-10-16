@@ -6,6 +6,12 @@ All notable changes to somewm will be documented in this file.
 
 ### Added
 
+- Client and drawin animation effects `scale`, `scale_top`, `scale_bottom`,
+  `scale_left` and `scale_right` scale the complete picture about its center or
+  an edge midpoint without changing layout allocation or client configure sizes.
+  Scale composes with fade and one slide. Grow (including its collapse alias)
+  and the five scale effects share one size group: conflicting effects warn
+  once and keep the first.
 - The lock screen shows an image, theme.lockscreen_wallpaper and
   theme.lockscreen_wallpaper_overlay, or the wallpaper and wallpaper_overlay
   options of lockscreen.init; the image is letterboxed like the desktop
@@ -79,6 +85,8 @@ All notable changes to somewm will be documented in this file.
 
 ### Changed
 
+- Widgets in a wibox or popup receive pointer events while its entrance
+  animation runs; previously the entrance window swallowed them.
 - somewm always builds with XWayland support; the -Dxwayland build option is
   gone, and a build without it had not compiled. Building needs xcb, xcb-icccm
   and Xwayland installed, and running X11 applications needs the Xwayland
