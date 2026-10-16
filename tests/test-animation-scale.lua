@@ -446,6 +446,20 @@ runner.run_async(function()
     assert(sizes(paths[3]) == expected, 'client snap changed configure sizes')
     animation.enabled = true
     finish(c, paths)
+    -- A long entrance starts below one pixel: the client stays dark rather
+    -- than an enabled surface with an empty picture.
+    beautiful.animation_appear_duration = 1000
+    c, paths = spawn('SCALE_TINY', 'scale')
+    assert(async.wait_for_condition(function()
+        local entering = frame('CLIENT', 'SCALE_TINY')
+        return entering and entering.scale > 0
+    end, 2, .001), 'entrance did not start\n' .. dump())
+    next_frame()
+    local tiny = assert(frame('CLIENT', 'SCALE_TINY'), dump())
+    assert(tiny.scale > 0 and tiny.presented.w == 0, 'entrance was not below one pixel\n' .. dump())
+    pixel(shot(), 500, 300, 32)
+    beautiful.animation_appear_duration = 1
+    finish(c, paths)
     wall:remove_screen(s)
     io.stderr:write('[PASS] scale boxes, pixels, anchors, input, glyphs, composition, interruption, snap and configure sizes\n')
     runner.done()
