@@ -33,8 +33,14 @@ make test-one TEST=tests/test-foo.lua  # Single test (handy for TDD)
 |------|-------|
 | AwesomeWM C reference | [`objects/`](https://github.com/awesomeWM/awesome/tree/master/objects), [`luaclass.c`](https://github.com/awesomeWM/awesome/blob/master/luaclass.c) |
 | somewm C bindings | `objects/*.c` |
-| Wayland deviations | `DEVIATIONS.md` |
+| Compatibility and upgrades | [Versioned documentation](https://somewm.org/docs/next/reference/deviations/) |
 | Integration test examples | `tests/` |
+
+## Documentation
+
+The versioned website is the maintained reference for behaviour and compatibility. `DEVIATIONS.md` contains links only.
+
+A public behaviour change needs a changelog entry and an update to its API reference in [somewm-docs](https://github.com/trip-zip/somewm-docs). A change that requires configuration edits also belongs in the affected release's upgrade guide, with a replacement or an explicit limitation. Architectural reasons belong in the concept pages. Keep compatibility summaries linked to these accounts rather than copying their details.
 
 ## AI Usage
 

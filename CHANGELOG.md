@@ -253,7 +253,7 @@ All notable changes to somewm will be documented in this file.
   scale.
 - The drawable `refresh` method and `surface` property. A drawable holds no
   cairo surface.
-- `awesome.systray`; see [`DEVIATIONS.md`](DEVIATIONS.md) under "Removed APIs".
+- `awesome.systray`; use `wibox.widget.systray`. See the [2.0 to 2.1 upgrade guide](https://somewm.org/docs/next/getting-started/upgrading-from-2.0/#classes-and-properties).
 - `wibox.widget.textbox:get_preferred_size`,
   `wibox.widget.textbox:get_preferred_size_at_dpi`,
   `wibox.widget.textbox:get_height_for_width`,
