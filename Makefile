@@ -18,7 +18,8 @@ all:
 
 # AddressSanitizer + UBSan build (separate dir, for development)
 asan:
-	@test -d build-asan || meson setup build-asan -Db_sanitize=address,undefined $(if $(LUA_PKG),-Dlua_pkg=$(LUA_PKG),) $(MESON_OPTS)
+	@test -d build-asan || meson setup build-asan -Db_sanitize=address,undefined -Dtest_pam=true $(if $(LUA_PKG),-Dlua_pkg=$(LUA_PKG),) $(MESON_OPTS)
+	meson configure build-asan -Dtest_pam=true
 	ninja -C build-asan
 
 # Configure the test build dir without building anything in it
