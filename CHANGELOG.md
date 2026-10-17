@@ -280,6 +280,8 @@ All notable changes to somewm will be documented in this file.
 
 ### Fixed
 
+- A tree dump taken in the last frames of a right-anchored scale animation
+  read past its list of anchor names.
 - A tree dump taken in the same dispatch a client unmapped read freed
   memory. The dead client's surface now reads as `no-node` until the next
   frame drops it.

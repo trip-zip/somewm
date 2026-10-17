@@ -43,11 +43,12 @@ runner.run_steps({
     end,
     function(count)
         local a, b = clients[1]:geometry().width, clients[2]:geometry().width
-        if a == b then
-            assert(count < 20, "the tiled client widths never differed")
+        local width = math.floor(w + 0.5)
+        if (a == width) == (b == width) then
+            assert(count < 20, "tiled clients did not settle to exactly one master width")
             return
         end
-        master = a > b and clients[1] or clients[2]
+        master = a == width and clients[1] or clients[2]
         awful.titlebar(master, { size = 30 }):setup {
             nil,
             nil,
