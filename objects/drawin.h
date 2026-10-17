@@ -52,6 +52,7 @@ typedef struct drawin_t {
 
 	/* Properties */
     int animation_ref;
+    bool animation_foreign;
     bool animation_disabled;
     struct widget_transition animation;
 	bool visible;                  /* Is drawin currently displayed? */
