@@ -103,7 +103,7 @@ HEADLESS=1 SOMEWM=./build-test/somewm SOMEWM_CLIENT=./build-test/somewm-client \
 # Need two outputs
 HEADLESS=1 WLR_HEADLESS_OUTPUTS=2 SOMEWM=./build-test/somewm SOMEWM_CLIENT=./build-test/somewm-client \
     ./tests/run-integration.sh tests/test-screen-hotplug.lua tests/test-selmon-mouse-motion.lua tests/test-tag-persistence.lua \
-    tests/test-screenshot-interactive-two-outputs.lua
+    tests/test-screenshot-interactive-two-outputs.lua tests/test-carousel-output-clip.lua
 ```
 
 ### Run Specific Test
