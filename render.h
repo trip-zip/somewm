@@ -46,7 +46,7 @@ struct render_shape {
  *
  * The renderer holds no client knowledge: window.c implements these (handle =
  * the client, resolve returns c->scene) and declare.c hands them to every
- * reconcile. */
+ * reconcile, dump walk and hit backmap. */
 struct render_client_hooks {
 	struct wlr_scene_tree *(*resolve)(void *data, uint64_t handle);
 	void (*configure)(void *data, uint64_t handle, int width, int height);
@@ -244,7 +244,8 @@ render_userdata_opacity(void *ud)
  * render_state did not draw. Works for every command type, which is what
  * makes it the input backmap: BORDER and TEXT nodes carry no element id
  * but do carry their element's word. */
-void *render_hit_userdata(struct render_state *rs, struct wlr_scene_node *node);
+void *render_hit_userdata(struct render_state *rs, struct wlr_scene_node *node,
+	const struct render_client_hooks *hooks);
 
 /* One retained node, as the tree dump reads it back (declare.c formats the
  * line). The renderer names no object: user_data is the declarer's word and
@@ -283,8 +284,9 @@ bool render_point_in_masks(struct render_state *rs, uint32_t element_id,
 
 /* Walk the retained nodes in the last pass's draw order, bottom to top, for
  * the tree dump. Reads only what the reconcile already retained; it neither
- * solves nor touches the scene. */
-void render_walk(struct render_state *rs,
+ * solves nor touches the scene. A surface whose client died since that pass
+ * resolves to NULL through hooks and reads as no node. */
+void render_walk(struct render_state *rs, const struct render_client_hooks *hooks,
 	void (*fn)(void *user, const struct render_node_view *view), void *user);
 
 /* Profiling readback, logged on every solve so a long-running session can

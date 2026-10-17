@@ -499,17 +499,27 @@ static void presentation_tree(struct wlr_scene_node *node, struct render_present
     }
 }
 
+/* A node's scene pointer, read only after a borrowed tree resolves: a client
+ * can die between frames, and then its tree is gone while the record still
+ * holds the pointer (render.h). The record forgets it there. */
+static struct wlr_scene_node *rnode_scene_node(struct rnode *n,
+		const struct render_client_hooks *hooks) {
+	if (n->borrowed && n->node != NULL && hooks->resolve(hooks->data, n->handle) == NULL)
+		n->node = NULL;
+	return n->node;
+}
+
 /* The retained node that drew a scene node: the hit node is the retained
  * node itself (rect, buffer) or a descendant of it (a square border's side
  * rect under its tree). */
 static struct rnode *rnode_for_scene_node(struct render_state *rs,
-		struct wlr_scene_node *node) {
+		struct wlr_scene_node *node, const struct render_client_hooks *hooks) {
 	if (node == NULL) {
 		return NULL;
 	}
 	for (size_t i = 0; i < rs->len; i++) {
 		struct rnode *n = &rs->nodes[i];
-		if (n->node == NULL) {
+		if (rnode_scene_node(n, hooks) == NULL) {
 			continue;
 		}
 		for (struct wlr_scene_node *c = node; c != NULL;
@@ -2713,8 +2723,9 @@ static void verify_order(struct render_state *rs) {
 
 /* --- the scene-node-to-Clay-id backmap --- */
 
-void *render_hit_userdata(struct render_state *rs, struct wlr_scene_node *node) {
-	struct rnode *n = rnode_for_scene_node(rs, node);
+void *render_hit_userdata(struct render_state *rs, struct wlr_scene_node *node,
+		const struct render_client_hooks *hooks) {
+	struct rnode *n = rnode_for_scene_node(rs, node, hooks);
 	return n != NULL ? n->user_data : NULL;
 }
 
@@ -2933,7 +2944,7 @@ int render_reconcile(struct render_state *rs, Clay_RenderCommandArray commands,
 		if (n == NULL) {
 			n = rnode_add(rs, key);
 		}
-		if (n->node && n->presentation.scale != 1) presentation_restore(n->node);
+		if (rnode_scene_node(n, hooks) && n->presentation.scale != 1) presentation_restore(n->node);
 		bool is_new = n->node == NULL;
 		n->gen = rs->gen;
 		n->retained = false;
@@ -3370,6 +3381,7 @@ bool render_hit(struct render_state *rs, double x, double y,
 }
 
 void render_walk(struct render_state *rs,
+		const struct render_client_hooks *hooks,
 		void (*fn)(void *user, const struct render_node_view *view),
 		void *user) {
 	for (size_t i = 0; i < rs->order_len; i++) {
@@ -3379,6 +3391,7 @@ void render_walk(struct render_state *rs,
 			continue;
 		}
 		struct rnode *n = &rs->nodes[idx];
+		rnode_scene_node(n, hooks);
 
 		fn(user, &(struct render_node_view) {
 			.type = (uint32_t)(n->key >> 32),
