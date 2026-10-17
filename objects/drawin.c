@@ -1255,17 +1255,16 @@ luaA_drawin_set_shadow(lua_State *L, drawin_t *drawin)
 /* Policies contain small tables of transition settings. Copy both directions
  * so editing a returned table cannot disagree with the parsed transition. */
 static void
-copy_animation(lua_State *L, int index, unsigned depth)
+copy_animation(lua_State *L, int index)
 {
     index = luaA_absindex(L, index);
     if (!lua_istable(L, index)) { lua_pushvalue(L, index); return; }
-    if (depth > 16) luaL_error(L, "animation tables are nested too deeply");
     luaL_checkstack(L, 5, "copying animation policy");
     lua_newtable(L);
     lua_pushnil(L);
     while (lua_next(L, index)) {
         lua_pushvalue(L, -2);
-        copy_animation(L, -2, depth + 1);
+        copy_animation(L, -2);
         lua_rawset(L, -5);
         lua_pop(L, 1);
     }
@@ -1276,19 +1275,27 @@ luaA_drawin_get_animation(lua_State *L, drawin_t *d)
 {
     if (d->animation_ref != LUA_NOREF) lua_rawgeti(L, LUA_REGISTRYINDEX, d->animation_ref);
     else lua_pushnil(L);
-    copy_animation(L, -1, 0);
+    if (!d->animation_foreign) copy_animation(L, -1);
     return 1;
 }
 
 static int
 luaA_drawin_set_animation(lua_State *L, drawin_t *d)
 {
-    if (!lua_isnil(L, -1) && !lua_istable(L, -1)
-            && !(lua_isboolean(L, -1) && !lua_toboolean(L, -1)))
-        return luaL_error(L, "animation must be a table, false or nil");
-    copy_animation(L, -1, 0);
+    int value = lua_gettop(L);
+    lua_getglobal(L, "require");
+    lua_pushliteral(L, "somewm.animation_policy");
+    lua_call(L, 1, 1);
+    lua_getfield(L, -1, "prepare");
+    lua_remove(L, -2);
+    lua_pushvalue(L, value - 2);
+    lua_pushvalue(L, value);
+    lua_pushliteral(L, "drawin");
+    lua_call(L, 3, 2);
+    bool foreign = lua_toboolean(L, -1);
+    lua_pop(L, 1);
     struct widget_transition transition = {0};
-    if (lua_istable(L, -1)) {
+    if (!foreign && lua_istable(L, -1)) {
         lua_getfield(L, -1, "visible");
         lua_newtable(L);
         lua_pushvalue(L, -2);
@@ -1302,6 +1309,7 @@ luaA_drawin_set_animation(lua_State *L, drawin_t *d)
     if (ref == LUA_NOREF) lua_pop(L, 1);
     luaL_unref(L, LUA_REGISTRYINDEX, d->animation_ref);
     d->animation_ref = ref;
+    d->animation_foreign = foreign;
     d->animation = transition;
     declare_mark_all_dirty();
     luaA_object_emit_signal(L, -3, "property::animation", 0);

@@ -85,6 +85,8 @@ All notable changes to somewm will be documented in this file.
 
 ### Changed
 
+- Assigning a table that is not an animation policy to widget.animation, client.animation or a wibox's animation
+  keeps the table as the object's own field and warns once, instead of copying it. Configs that already used that name for their own objects (yoru, KwesomeDE) load again.
 - Widgets in a wibox or popup receive pointer events while its entrance
   animation runs; previously the entrance window swallowed them.
 - somewm always builds with XWayland support; the -Dxwayland build option is

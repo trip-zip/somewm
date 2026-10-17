@@ -10,6 +10,7 @@
 local object = require("gears.object")
 local gdebug = require("gears.debug")
 local gtable = require("gears.table")
+local animation_policy = require("somewm.animation_policy")
 local setmetatable = setmetatable
 local pairs = pairs
 local type = type
@@ -320,18 +321,28 @@ end
 --- Persistent animation durations by property, or false to disable the subtree.
 -- Assigning nil removes this widget's policy. The animate method stays callable.
 -- Policies are copied on assignment and access; reassign an edited copy to apply it.
+-- A policy has string keys and numeric durations, with no metatable.
+-- Other tables retain their identity and supply no animation policy.
 -- @property animation
 -- @tparam[opt=nil] table|boolean animation
 -- @propemits true false
 function base.widget:get_animation()
+    if self._private.animation_value then return self._private.animation_value end
     local value = self._private.animation
-    return type(value) == "table" and gtable.clone(value) or value
+    return type(value) == "table" and gtable.clone(value, false) or value
 end
 
 function base.widget:set_animation(value)
     assert(value == nil or value == false or type(value) == "table", "animation must be a table or false")
+    self._private.animation_value = nil
     if type(value) == "table" then
-        value = gtable.clone(value)
+        if animation_policy.widget(value) then
+            value = gtable.clone(value, false)
+        else
+            animation_policy.warn(self)
+            self._private.animation_value = value
+            value = nil
+        end
     end
     self._private.animation = value
     self:emit_signal("widget::layout_changed")

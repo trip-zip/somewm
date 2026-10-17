@@ -12,6 +12,7 @@ local object = require("gears.object")
 local grect = require("gears.geometry").rectangle
 local gmath = require("gears.math")
 local gtable = require("gears.table")
+local animation_policy = require("somewm.animation_policy")
 local amousec = require("awful.mouse.client")
 local pcommon = require("awful.permissions._common")
 local pairs = pairs
@@ -1226,16 +1227,19 @@ end)
 
 --- Persistent animation policy, or false to suppress client and titlebar animations.
 -- Policies are copied on assignment and access; reassign an edited copy to apply it.
+-- Other tables retain their identity and supply no animation policy.
 -- @property animation
 -- @tparam[opt=nil] table|boolean animation
 function client.object.get_animation(c)
     local value = client.property.get(c, "animation")
-    return type(value) == "table" and gtable.clone(value) or value
+    if c._private.animation_foreign then return value end
+    return animation_policy.copy(value)
 end
 
 function client.object.set_animation(c, value)
-    assert(value == nil or value == false or type(value) == "table", "animation must be a table or false")
-    client.property.set(c, "animation", type(value) == "table" and gtable.clone(value) or value)
+    local stored, foreign = animation_policy.prepare(c, value, "client")
+    c._private.animation_foreign = foreign
+    client.property.set(c, "animation", stored)
     capi.awesome._clay_dirty()
 end
 

@@ -75,7 +75,10 @@ local theme_keys = {
     tag = "animation_tag_duration",
 }
 
-local function object_field(object) return object.animation end
+local function object_field(object)
+    if object._private and object._private.animation_foreign then return nil end
+    return object.animation
+end
 
 local function one_shot(_object, trigger, policy)
     return policy and policy.once and policy.once[trigger]
