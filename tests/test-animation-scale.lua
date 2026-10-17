@@ -9,15 +9,20 @@ local animation = require('somewm.animation')
 local capture = require('_widget_capture')
 local surface = require('gears.surface')
 local shape = require('gears.shape')
+local GLib = require('lgi').GLib
 local utils = require('_utils')
 local binary = assert(utils.binary_or_skip('./build-test/test-transient-client'))
 local pointer = assert(utils.binary_or_skip('./build-test/test-virtual-pointer-client'))
 local s = screen[1]
+local anchors = {none = true, center = true, top = true, bottom = true, left = true, right = true}
 
 local function dump()
     local text = awesome._clay_tree(s)
     assert(not text:find('[tree!=scene]', 1, true), text)
     assert(text:match('derived 0'), text)
+    for anchor in text:gmatch(' anchor (%S+)') do
+        assert(anchors[anchor], 'invalid scale anchor: ' .. anchor .. '\n' .. text)
+    end
     return text
 end
 
@@ -345,6 +350,25 @@ runner.run_async(function()
         popup.visible = false
         async.sleep(.05)
     end
+    -- A right anchor reads as 8 for 0.137% of the duration near rest. Durations
+    -- 0.13% apart put those spans end to end across 26ms, longer than a frame.
+    local carriers = {}
+    for i = 0, 19 do
+        carriers[i + 1] = wibox {screen = s, x = 600 + 30 * i, y = 20, width = 20, height = 20,
+            visible = false, shadow = false, bg = '#e0e0e0',
+            animation = {visible = {duration = 1.0013 ^ i, enter = 'scale_right'}}}
+    end
+    for _, carrier in ipairs(carriers) do carrier.visible = true end
+    local settled = GLib.get_monotonic_time() + 1.1e6
+    assert(async.wait_for_condition(function()
+        dump()
+        return GLib.get_monotonic_time() > settled
+    end, 5, .001))
+    for _, carrier in ipairs(carriers) do
+        carrier.animation = false
+        carrier.visible = false
+    end
+    async.sleep(.05)
     local function warnings()
         local count = 0
         for line in read(assert(os.getenv('SOMEWM_TEST_LOG'))):gmatch('[^\n]+') do

@@ -556,10 +556,11 @@ struct render_presentation render_carrier_decode(Clay_Color color)
         wlr_log(WLR_ERROR, "unsupported overlay tint");
         abort();
     }
+    /* Clay rounds blue and alpha separately, so near rest b / a can pass 5. */
     return (struct render_presentation){
         .scale = color.r > 0 ? 1 - color.a : 1,
         .fade = color.g > 0 ? 1 - color.a : 1,
-        .anchor = color.a > 0 ? lroundf(color.b / color.a) : 0,
+        .anchor = color.a > 0 ? lroundf(fminf(color.b / color.a, 5)) : 0,
     };
 }
 
