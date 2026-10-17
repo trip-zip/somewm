@@ -278,6 +278,9 @@ All notable changes to somewm will be documented in this file.
 
 ### Fixed
 
+- A tree dump taken in the same dispatch a client unmapped read freed
+  memory. The dead client's surface now reads as `no-node` until the next
+  frame drops it.
 - An explicit `disappear = "none"` or `exit = "none"` closes without an
   animation instead of falling back to the tag exit.
 - A bordered or shadowed wibox or popup that grows in or out shows its

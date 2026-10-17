@@ -195,7 +195,7 @@ static void test_primitives(void) {
 			assert(frame % 2 ? mutations == 0 : mutations > 0);
 			assert(surface->node.x == 4 && surface->node.y == 76 && surface->node.enabled);
 			int count = 0;
-			render_walk(rs, inspect_primitive, &count);
+			render_walk(rs, &hooks, inspect_primitive, &count);
 			assert(count == 8);
 		}
 		render_destroy(rs, &hooks);
@@ -246,7 +246,7 @@ static void test_clips(void) {
 		int mutations = render_reconcile(rs, commands, &hooks, (Clay_BoundingBox){0,0,200,160});
 		assert(frame ? mutations == 0 : mutations > 0);
 		int count = 0;
-		render_walk(rs, inspect_clip, &count);
+		render_walk(rs, &hooks, inspect_clip, &count);
 		assert(count == 1);
 	}
 	render_destroy(rs, &hooks);

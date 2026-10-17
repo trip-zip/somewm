@@ -780,7 +780,7 @@ declare_hit(struct wlr_scene_node *node, enum declare_kind *kind)
 
 		if (!dout)
 			continue;
-		ud = render_hit_userdata(dout->band.render, node);
+		ud = render_hit_userdata(dout->band.render, node, &client_hooks);
 		if (ud)
 			return declare_handle_get(
 				declare_userdata_handle(ud), kind);
@@ -5610,7 +5610,7 @@ dump_band(buffer_t *buf, struct declare_band *band, Monitor *m)
 	else if (band->retained_dump) buffer_adds(buf, band->retained_dump);
 	dump_refused(buf, m);
 	buffer_adds(buf, "  realized:\n");
-	render_walk(band->render, dump_node, buf);
+	render_walk(band->render, &client_hooks, dump_node, buf);
 	Clay_SetCurrentContext(previous);
 }
 
