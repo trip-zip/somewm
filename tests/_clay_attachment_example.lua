@@ -203,7 +203,8 @@ function M.run(name)
             -- No width and no theme width: the launcher spans the workarea.
             assert(tonumber(w)==s.workarea.width and tonumber(x)==s.workarea.x,line)
             assert(line:find('attach ELEMENT',1,true) and line:find(' w=grow h=',1,true),line)
-            assert(math.abs(tonumber(y)+tonumber(h)/2-(s.workarea.y+s.workarea.height/2))<=1,line)
+            -- At the workarea's top edge, under the top bar, as in 2.0.
+            assert(tonumber(y)==s.workarea.y,line)
             example.pixel(tonumber(x)+2,tonumber(y)+tonumber(h)-2,'#0000ff')
             _keygrabber.inject('z',true); _keygrabber.inject('z',false)
             return true
