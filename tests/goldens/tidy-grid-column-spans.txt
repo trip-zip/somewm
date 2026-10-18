@@ -3,20 +3,24 @@ output
   Clay__RootContainer w=fixed(1280) output h=fixed(720) output row
     OUTPUT WL-1 w=fixed(1280) output h=fixed(720) output column
       WORKAREA - w=grow h=grow row
-  POPUP screen 1 converted w=fit h=fit row pad 1,1,1,1 attach OUTPUT band 80
-    clip w=grow h=grow row
-    drawable w=fit h=fit row
-      wibox.layout.grid w=fixed(300) user h=fit column gap 5
-        - spacer w=grow h=fit user row gap 5
-          - spacer w=percent(1) user h=grow row
-            wibox.widget.base w=grow user h=grow user row
-        - spacer w=grow h=fit user row gap 5
-          - spacer w=percent(0.666667) user h=grow row
-            wibox.widget.base w=grow user h=grow user row
-          - spacer w=percent(0.333333) user h=grow row
-            wibox.widget.base w=grow user h=grow user row
-        - spacer w=grow h=fit user row gap 5
-          - spacer w=percent(0.333333) user h=grow row
-            wibox.widget.base w=grow user h=grow user row
-          - spacer w=percent(0.666667) user h=grow row
-            wibox.widget.base w=grow user h=grow user row
+  POINT - w=grow h=grow column attach OUTPUT band 80
+    POINT - w=grow h=grow user row
+    POINT - w=grow h=fit row
+      POINT - w=grow user h=grow row
+      POPUP screen 1 converted w=fit h=fit row pad 1,1,1,1
+        clip w=grow h=grow row
+        drawable w=fit h=fit row
+          wibox.layout.grid w=fixed(300) user h=fit column gap 5
+            - spacer w=grow h=fit user row gap 5
+              - spacer w=percent(1) user h=grow row
+                wibox.widget.base w=grow user h=grow user row
+            - spacer w=grow h=fit user row gap 5
+              - spacer w=percent(0.666667) user h=grow row
+                wibox.widget.base w=grow user h=grow user row
+              - spacer w=percent(0.333333) user h=grow row
+                wibox.widget.base w=grow user h=grow user row
+            - spacer w=grow h=fit user row gap 5
+              - spacer w=percent(0.333333) user h=grow row
+                wibox.widget.base w=grow user h=grow user row
+              - spacer w=percent(0.666667) user h=grow row
+                wibox.widget.base w=grow user h=grow user row

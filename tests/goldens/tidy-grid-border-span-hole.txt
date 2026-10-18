@@ -3,13 +3,17 @@ output
   Clay__RootContainer w=fixed(1280) output h=fixed(720) output row
     OUTPUT WL-1 w=fixed(1280) output h=fixed(720) output column
       WORKAREA - w=grow h=grow row
-  POPUP screen 1 converted w=fit h=fit row pad 1,1,1,1 attach OUTPUT band 80
-    clip w=grow h=grow row
-    wibox.layout.grid w=fit h=fit column
-      - spacer w=grow h=fit user row
-        - spacer w=fit h=grow row pad 6,6,6,5
-          wibox.widget.base w=fit user h=grow user row
-      - spacer w=grow h=fit user row
-        - spacer w=fit h=grow row pad 6,5,6,6
-          wibox.widget.base w=fit user h=grow user row
-        - spacer w=fit h=grow row pad 6,6,6,6
+  POINT - w=grow h=grow column attach OUTPUT band 80
+    POINT - w=grow h=grow user row
+    POINT - w=grow h=fit row
+      POINT - w=grow user h=grow row
+      POPUP screen 1 converted w=fit h=fit row pad 1,1,1,1
+        clip w=grow h=grow row
+        wibox.layout.grid w=fit h=fit column
+          - spacer w=grow h=fit user row
+            - spacer w=fit h=grow row pad 6,6,6,5
+              wibox.widget.base w=fit user h=grow user row
+          - spacer w=grow h=fit user row
+            - spacer w=fit h=grow row pad 6,5,6,6
+              wibox.widget.base w=fit user h=grow user row
+            - spacer w=fit h=grow row pad 6,6,6,6
