@@ -280,6 +280,12 @@ All notable changes to somewm will be documented in this file.
 
 ### Fixed
 
+- A menu opened at a point (a tray icon's menu, `awful.menu:show`) slides
+  back inside its screen instead of opening past the edge, as on AwesomeWM.
+  Submenus still open to the right of their item.
+- Tray menu separators are a line instead of an item labelled `---`. A
+  `beautiful.systray_menu_callback` now receives them as `{ new = ... }`
+  entries.
 - A tree dump taken in the last frames of a right-anchored scale animation
   read past its list of anchor names.
 - A tree dump taken in the same dispatch a client unmapped read freed

@@ -996,7 +996,9 @@ declare_shadow(struct render_shadow *shadow, const shadow_config_t *override,
 	Clay_ElementDeclaration e = {
 		.floating = {
 			.attachTo = CLAY_ATTACH_TO_PARENT,
-			.zIndex = owner->floating.attachTo != CLAY_ATTACH_TO_NONE
+			/* A frame held in flow by a float (a point menu, a notification
+			 * stack) carries its band in its own zIndex. */
+			.zIndex = owner->floating.attachTo != CLAY_ATTACH_TO_NONE || owner->floating.zIndex
 				? owner->floating.zIndex - 1 : -1,
 			.pointerCaptureMode = CLAY_POINTER_CAPTURE_MODE_PASSTHROUGH,
 			.clipTo = CLAY_CLIP_TO_NONE,
@@ -2222,8 +2224,11 @@ declare_widget_frame(drawin_t *d, struct widget_host *host, Clay_ElementId id,
 	void *word = leaf_userdata(handle, d->opacity >= 0 ? (float)d->opacity : 1.0f);
 	int16_t z = slot->floating.zIndex;
     if (d->animation.enabled) {
+        /* A caller whose holder exits with the slot keeps its exit trigger. */
+        Clay_TransitionExitTriggerType exit_trigger = slot->transition.exit.trigger;
         slot->transition = transition_config(&d->animation);
         slot->transition.enter.trigger = CLAY_TRANSITION_ENTER_TRIGGER_ON_FIRST_PARENT_FRAME;
+        slot->transition.exit.trigger = exit_trigger;
     }
 	const struct widget_node *n = &host->tree->nodes[0];
 	if (!host->path_clip && !d->border_width && !shadow_get_effective_config(d->shadow_config, true)->enabled) {
@@ -2846,6 +2851,61 @@ attachment_decoration(drawin_t *d, Clay_ElementDeclaration *slot)
     return (Clay_Dimensions){bw, bw};
 }
 
+/* A spacer that grows up to the point, or nothing before a point at the
+ * edge: a GROW max of 0 is unbounded (clay.h:1936-1948). */
+static Clay_SizingAxis
+point_spacer(float point)
+{
+    return point > 0 ? CLAY_SIZING_GROW(0, point) : CLAY_SIZING_FIXED(0);
+}
+
+/* A point attachment stays on its screen, as AwesomeWM's menu did: a float
+ * over the screen holds the slot in flow behind a spacer on each axis, and
+ * a spacer grows up to the point but only into the space the slot leaves
+ * (clay.h:2447-2490), so the slot sits at the point or against the far
+ * edge. The float paints nothing and passes the pointer through. The slot's
+ * own floating config stays for its band; Clay reads it only when attachTo
+ * is set. Closed by two native_close() calls. */
+static void
+open_point_area(Clay_ElementId id, Clay_ElementDeclaration *slot)
+{
+    Clay_ElementDeclaration area = {
+        .layout = {
+            .sizing = { CLAY_SIZING_GROW(0), CLAY_SIZING_GROW(0) },
+            .layoutDirection = CLAY_TOP_TO_BOTTOM,
+        },
+        .floating = slot->floating,
+    };
+    area.floating.offset = (Clay_Vector2){0, 0};
+    area.floating.pointerCaptureMode = CLAY_POINTER_CAPTURE_MODE_PASSTHROUGH;
+    Clay_ElementId area_id = Clay__HashStringWithOffset(CLAY_STRING("POINT"), id.id, 0);
+    native_open(area_id);
+    native_configure(&area);
+    record_open("POINT", 0, area_id, &area, DECLARE_SRC_NONE, DECLARE_SRC_NONE, NULL);
+
+    Clay_ElementDeclaration above = {
+        .layout.sizing = { CLAY_SIZING_GROW(0), point_spacer(slot->floating.offset.y) },
+    };
+    declare_leaf("POINT", 0, DECLARE_SRC_NONE, DECLARE_SRC_USER,
+        Clay__HashStringWithOffset(CLAY_STRING("POINT.y"), id.id, 0), &above);
+    Clay_ElementDeclaration row = {
+        .layout.sizing = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIT(0) },
+    };
+    Clay_ElementId row_id = Clay__HashStringWithOffset(CLAY_STRING("POINT.row"), id.id, 0);
+    native_open(row_id);
+    native_configure(&row);
+    record_open("POINT", 0, row_id, &row, DECLARE_SRC_NONE, DECLARE_SRC_NONE, NULL);
+    Clay_ElementDeclaration before = {
+        .layout.sizing = { point_spacer(slot->floating.offset.x), CLAY_SIZING_GROW(0) },
+    };
+    declare_leaf("POINT", 0, DECLARE_SRC_USER, DECLARE_SRC_NONE,
+        Clay__HashStringWithOffset(CLAY_STRING("POINT.x"), id.id, 0), &before);
+
+    slot->floating.attachTo = CLAY_ATTACH_TO_NONE;
+    slot->floating.offset = (Clay_Vector2){0, 0};
+    slot->transition.exit.trigger = CLAY_TRANSITION_EXIT_TRIGGER_WHEN_PARENT_EXITS;
+}
+
 static bool
 declare_attachment(drawin_t *d, Monitor *m)
 {
@@ -2904,9 +2964,18 @@ declare_attachment(drawin_t *d, Monitor *m)
         (uint32_t)handle, 0);
     const char *role = d->attachment.kind == 3 ? "LAUNCHER"
         : d->attachment.kind == 2 ? "TOOLTIP" : "POPUP";
+    bool point = d->attachment.kind == 1 && !d->attachment.target && !d->attachment.workarea
+        && d->attachment.parent == CLAY_ATTACH_POINT_LEFT_TOP
+        && d->attachment.own == CLAY_ATTACH_POINT_LEFT_TOP;
+    if (point)
+        open_point_area(id, &slot);
     declare_widget_frame(d, &a->host, id, &slot, role,
         d->attachment.kind == 3 ? d->attachment.src[0] : n->src[0],
         bounded ? d->attachment.src[1] : n->src[1]);
+    if (point) {
+        native_close();
+        native_close();
+    }
     return true;
 }
 

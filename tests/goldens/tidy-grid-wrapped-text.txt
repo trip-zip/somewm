@@ -3,21 +3,25 @@ output
   Clay__RootContainer w=fixed(1280) output h=fixed(720) output row
     OUTPUT WL-1 w=fixed(1280) output h=fixed(720) output column
       WORKAREA - w=grow h=grow row
-  POPUP screen 1 converted w=fit h=fit row pad 1,1,1,1 attach OUTPUT band 80
-    clip w=grow h=grow row
-    drawable w=fit h=fit row
-      wibox.layout.grid w=fixed(90) user h=fit column gap 5
-        - spacer w=grow h=fit user row gap 5
-          - spacer w=percent(0.5) user h=grow row
-            wibox.widget.textbox w=grow h=grow row
-              text "aa aa aa" font=1
-          - spacer w=percent(0.5) user h=grow row
-            wibox.widget.textbox w=grow h=grow row
-              text "bb bb bb bb" font=1
-        - spacer w=grow h=fit user row gap 5
-          - spacer w=percent(0.5) user h=grow row
-            wibox.widget.textbox w=grow h=grow row
-              text "cc cc" font=1
-          - spacer w=percent(0.5) user h=grow row
-            wibox.widget.textbox w=grow h=grow row
-              text "dd" font=1
+  POINT - w=grow h=grow column attach OUTPUT band 80
+    POINT - w=grow h=grow user row
+    POINT - w=grow h=fit row
+      POINT - w=grow user h=grow row
+      POPUP screen 1 converted w=fit h=fit row pad 1,1,1,1
+        clip w=grow h=grow row
+        drawable w=fit h=fit row
+          wibox.layout.grid w=fixed(90) user h=fit column gap 5
+            - spacer w=grow h=fit user row gap 5
+              - spacer w=percent(0.5) user h=grow row
+                wibox.widget.textbox w=grow h=grow row
+                  text "aa aa aa" font=1
+              - spacer w=percent(0.5) user h=grow row
+                wibox.widget.textbox w=grow h=grow row
+                  text "bb bb bb bb" font=1
+            - spacer w=grow h=fit user row gap 5
+              - spacer w=percent(0.5) user h=grow row
+                wibox.widget.textbox w=grow h=grow row
+                  text "cc cc" font=1
+              - spacer w=percent(0.5) user h=grow row
+                wibox.widget.textbox w=grow h=grow row
+                  text "dd" font=1

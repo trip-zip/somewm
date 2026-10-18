@@ -1142,6 +1142,20 @@ end
 
 local DBUSMENU_IFACE = "com.canonical.dbusmenu"
 
+-- A DBusMenu separator as an awful.menu entry: a line that hovering does not
+-- highlight and clicking does not run.
+local function separator_entry(_, args)
+    local separator = require("wibox.widget.separator")
+    return {
+        widget = separator { orientation = "horizontal" },
+        height = require("beautiful.xresources").apply_dpi(8),
+        theme = setmetatable({
+            bg_focus = args.theme.bg_normal,
+            fg_focus = args.theme.fg_normal,
+        }, { __index = args.theme }),
+    }
+end
+
 --- Parse a DBusMenu layout recursively.
 -- @tparam GVariant layout The menu layout variant (ia{sv}av format)
 -- @tparam table cache Property cache from GetLayout
@@ -1192,8 +1206,7 @@ local function parse_dbusmenu_layout(layout, cache)
             label = label:gsub("_", "")
 
             if item_type == "separator" then
-                -- Separator
-                table.insert(items, { "---" })
+                table.insert(items, { new = separator_entry })
             elseif child_children:n_children() > 0 then
                 -- Submenu
                 local submenu = parse_dbusmenu_layout(child_variant, cache)
@@ -1212,7 +1225,7 @@ local function parse_dbusmenu_layout(layout, cache)
                 })
             end
         elseif item_type == "separator" and visible then
-            table.insert(items, { "---" })
+            table.insert(items, { new = separator_entry })
         end
     end
 
