@@ -1,5 +1,7 @@
 -- The bundled bar is three groups in one align, the clock between them.
 -- The widget table matches somewmrc.lua; clock, tags and tasks are fixed.
+-- Each group has an equal half, so the clock stays centered however wide
+-- the groups are: tasks shrink to share it and anything wider is clipped.
 local awful = require('awful')
 local wibox = require('wibox')
 local gears = require('gears')
@@ -24,22 +26,43 @@ local function image(size)
     return surface
 end
 local function task(title)
-    return wibox.widget {
+    local entry = wibox.widget {
         {
-            { text = title, widget = wibox.widget.textbox },
-            left = 6, right = 6,
-            widget = wibox.container.margin,
+            {
+                {image = image(16), widget = wibox.widget.imagebox},
+                left = 6, right = 2, top = 4, bottom = 4,
+                widget = wibox.container.margin,
+            },
+            {
+                {
+                    {
+                        {text = title, widget = wibox.widget.textbox},
+                        id = 'title_role',
+                        widget = wibox.container.scroll.horizontal,
+                    },
+                    halign = 'left',
+                    widget = wibox.container.place,
+                },
+                right = 6,
+                widget = wibox.container.margin,
+            },
+            layout = wibox.layout.fixed.horizontal,
         },
         bg = '#3c3836',
         widget = wibox.container.background,
     }
+    entry:get_children_by_id('title_role')[1]:pause()
+    return entry
 end
--- Each entry is about 130 px; two fit the left half, five do not and still fit the bar.
-local function tasks(count)
+-- Short titles leave two tasks at their full width inside the left half.
+local function tasks(count, title)
     local row = {id = 'tasks', spacing = 4, layout = wibox.layout.fixed.horizontal}
-    for i = 1, count do row[#row + 1] = task('Terminal number ' .. i) end
+    for i = 1, count do row[#row + 1] = task((title or 'Terminal number ') .. i) end
     return wibox.widget(row)
 end
+local long_title = 'jimmy@jimmy: ~/tools/some/a/long/working/directory number '
+-- One word cannot wrap or shrink: wider than its half for a reason other than tasks.
+local wide_word = string.rep('Wide', 60)
 
 -- The dump's widget nodes as {line, name, x, y, w, h, parent, in_bar}.
 -- An id line's indent after the id is its depth.
@@ -92,8 +115,21 @@ local function expect(case, ok, message)
     if not ok then failures[#failures + 1] = case .. ': ' .. message end
 end
 
-local function check(case, dump, centred)
+-- The realized TEXT command drawn for a text node, by its solved box.
+local function realized(dump, node)
+    local box = string.format('box %d,%d %dx%d rbox ', node.x, node.y, node.w, node.h)
+    for line in dump:gmatch('\n  %x+ TEXT [^\n]*') do
+        if line:find(box, 1, true) then
+            local x, y, w, h = line:match('rbox (%-?%d+),(%-?%d+) (%d+)x(%d+)')
+            return {x = tonumber(x), y = tonumber(y), w = tonumber(w), h = tonumber(h)}
+        end
+    end
+    error('no realized TEXT at ' .. box)
+end
+
+local function check(case, dump, opts)
     local nodes, bar = parse(dump)
+    expect(case, dump:match('roots flow %d+ floating %d+ derived 0 legacy 0'), 'derived or legacy sizes in the dump')
     for _, n in ipairs(nodes) do
         if n.in_bar then
             expect(case, not n.line:find(' attach ', 1, true), 'float in the bar: ' .. n.line)
@@ -101,25 +137,52 @@ local function check(case, dump, centred)
         end
         expect(case, not n.line:find('target ' .. bar.id, 1, true), 'float on the bar: ' .. n.line)
     end
-    local clock = ancestor(find(nodes, '^text "Fri Sep 12'), 'wibox.container.background')
-    local list = find(nodes, '^tasks ')
-    local left = list.parent
+    local clock_text = find(nodes, '^text "Fri Sep 12')
+    local clock = ancestor(clock_text, 'wibox.container.background')
     local right = find(nodes, '^wibox%.widget%.systray ').parent
-    print(string.format('%s: bar %d+%d left %d+%d tasks %d+%d clock %d+%d right %d+%d', case,
-        bar.x, bar.w, left.x, left.w, list.x, list.w, clock.x, clock.w, right.x, right.w))
+    local half = find(nodes, '^%- spacer clip ')
+    print(string.format('%s: bar %d+%d half %d+%d clock %d+%d right %d+%d', case,
+        bar.x, bar.w, half.x, half.w, clock.x, clock.w, right.x, right.w))
     expect(case, clock.in_bar, 'the clock is outside the bar subtree')
-    if centred then
-        local off = math.abs((clock.x + clock.w / 2) - (bar.x + bar.w / 2))
-        expect(case, off <= 1, string.format('clock centre is %.1f px off the bar centre', off))
-    end
-    expect(case, list.x + list.w <= clock.x, string.format(
-        'tasks end at %d, past the clock at %d', list.x + list.w, clock.x))
-    expect(case, left.x + left.w <= clock.x and clock.x + clock.w <= right.x,
+    local off = math.abs((clock.x + clock.w / 2) - (bar.x + bar.w / 2))
+    expect(case, off <= 1, string.format('clock centre is %.1f px off the bar centre', off))
+    expect(case, half.x + half.w <= clock.x and clock.x + clock.w <= right.x,
         'groups out of order: left, clock, right')
+    if opts.tasks then
+        local list = find(nodes, '^tasks ')
+        expect(case, list.x + list.w <= clock.x, string.format(
+            'tasks end at %d, past the clock at %d', list.x + list.w, clock.x))
+        local widths = {}
+        for _, n in ipairs(nodes) do
+            if n.parent == list then widths[#widths + 1] = n.w end
+            if n.name == 'text' and n.line:find('^text "' .. (opts.title or 'Terminal')) then
+                local drawn = realized(dump, n)
+                expect(case, n.h == clock_text.h, string.format('title on %d lines: %s',
+                    math.floor(n.h / clock_text.h), n.line))
+                if opts.shrunk then
+                    expect(case, drawn.w > 0 and drawn.w < n.w and drawn.x + drawn.w <= clock.x,
+                        'title not cut to its task: ' .. n.line)
+                else
+                    expect(case, drawn.w == n.w, 'title cut inside its half: ' .. n.line)
+                end
+            end
+        end
+        expect(case, #widths == opts.tasks, #widths .. ' tasks, expected ' .. opts.tasks)
+        table.sort(widths)
+        expect(case, widths[#widths] - widths[1] <= 1, string.format(
+            'tasks are %d to %d px wide', widths[1], widths[#widths]))
+    end
+    if opts.wide then
+        local word = find(nodes, '^text "WideWide')
+        local drawn = realized(dump, word)
+        expect(case, word.x + word.w > half.x + half.w, 'the wide word fits its half')
+        expect(case, drawn.x + drawn.w <= half.x + half.w, string.format(
+            'the wide word is drawn to %d, past its half at %d', drawn.x + drawn.w, half.x + half.w))
+    end
 end
 
 local bar, left, previous
-local function settled(name, centred)
+local function settled(name, opts)
     return function(n)
         if hide_foreign() then return end
         local dump = awesome._clay_tree(s)
@@ -128,7 +191,7 @@ local function settled(name, centred)
             assert(n < 30, name .. ' did not settle')
             return
         end
-        check(name, dump, centred)
+        check(name, dump, opts)
         return true
     end
 end
@@ -180,14 +243,21 @@ require('_runner').run_steps {
         }}
         return true
     end,
-    settled('bar with tasks inside its half', true),
+    settled('bar with tasks inside its half', {tasks = 2}),
     function()
-        -- Wider than the half: the clock leaves the centre, never the order.
-        left:set(4, tasks(5))
+        -- Long titles: the tasks share what the half leaves them, each title cut.
+        left:set(4, tasks(6, long_title))
         previous = nil
         return true
     end,
-    settled('bar with tasks past its half', false),
+    settled('bar with many long-titled tasks', {tasks = 6, title = 'jimmy@', shrunk = true}),
+    function()
+        -- Wider than the half for another reason: clipped at the half.
+        left:set(4, wibox.widget {id = 'tasks', text = wide_word, widget = wibox.widget.textbox})
+        previous = nil
+        return true
+    end,
+    settled('bar with a group wider than its half', {wide = true}),
     function()
         bar:remove()
         for _, f in ipairs(failures) do io.stderr:write(f, '\n') end
