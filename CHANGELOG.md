@@ -85,6 +85,7 @@ All notable changes to somewm will be documented in this file.
 
 ### Changed
 
+- wibox.layout.align with expand = "none" gives each outer widget half of what the middle widget leaves, as v2.0.0 and AwesomeWM do, so the middle stays centered. An outer widget wider than its half shrinks its contents and is cut at the half. The bundled bar's tasks shrink to share the left half, and each title ends in an ellipsis.
 - Assigning a table that is not an animation policy to widget.animation, client.animation or a wibox's animation
   keeps the table as the object's own field and warns once, instead of copying it. Configs that already used that name for their own objects (yoru, KwesomeDE) load again.
 - Widgets in a wibox or popup receive pointer events while its entrance
@@ -174,9 +175,6 @@ All notable changes to somewm will be documented in this file.
   not used. The wlroots 0.19 path and `-Dwlroots_version` are gone. A distro
   whose wayland, libdrm, xkbcommon, pixman or wayland-protocols is older than
   wlroots 0.20.2 gets that library built alongside it.
-- wibox.layout.align with expand none lets an outer widget wider than its half
-  push the centre widget off centre instead of cutting the outer widget at the
-  half; v2.0.0 cut it.
 - A function bgimage on a wibox or a wibox.container.background is not drawn;
   setting one warns and clears the image. 2.0 called it to paint the
   background.

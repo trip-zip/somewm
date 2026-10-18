@@ -797,9 +797,9 @@ read_node(lua_State *L, int idx, struct widget_node *n)
 /* The subtree rooted at the table at idx, in preorder, into nodes. A leaf
  * has no children; anything else lists them under `children`. clip_by is
  * the scope the subtree sits in, and clips counts the scopes opened so far
- * (widget.h clip_opens): the root opens one, and so does a rounded node
- * with children. Past WIDGET_CLIPS_MAX, clips is left one over and the tree
- * is refused. */
+ * (widget.h clip_opens): the root opens one, and so does a rounded or
+ * clipping node with children. Past WIDGET_CLIPS_MAX, clips is left one
+ * over and the tree is refused. */
 static struct widget_binding binding_buf[WIDGET_BINDINGS_MAX];
 static size_t binding_len;
 
@@ -874,7 +874,7 @@ read_tree(lua_State *L, int idx, struct widget_node *nodes, size_t *len,
 	n->clip_by = (uint8_t)clip_by;
 
 	getfield(L, idx, KEY_clip);
-	bool shape_clip = n->shape && lua_toboolean(L, -1);
+	bool clip = lua_toboolean(L, -1);
 	lua_pop(L, 1);
 	getfield(L, idx, KEY_children);
 	ok = lua_isnil(L, -1) || (lua_istable(L, -1) && !n->text);
@@ -882,7 +882,7 @@ read_tree(lua_State *L, int idx, struct widget_node *nodes, size_t *len,
 	n->children = (uint16_t)count;
 	if (n->client && !count)
 		ok = false;
-	if (ok && (*len == 1 || ((n->radius > 0 || shape_clip) && count > 0))) {
+	if (ok && (*len == 1 || ((n->radius > 0 || clip) && count > 0))) {
 		if (*clips == WIDGET_CLIPS_MAX)
 			ok = false;
 		n->clip_opens = (uint8_t)++*clips;

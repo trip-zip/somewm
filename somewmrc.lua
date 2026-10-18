@@ -392,7 +392,17 @@ screen.connect_signal("request::desktop_decoration", function(s)
                     widget = wibox.container.margin,
                 },
                 {
-                    { id = "text_role", widget = wibox.widget.textbox },
+                    -- A paused scroll clips the title, so a task can shrink
+                    -- below its title, which then ends in an ellipsis.
+                    {
+                        {
+                            { id = "text_role", widget = wibox.widget.textbox },
+                            id     = "title_role",
+                            widget = wibox.container.scroll.horizontal,
+                        },
+                        halign = "left",
+                        widget = wibox.container.place,
+                    },
                     id     = "text_margin_role",
                     right  = dpi(6),
                     widget = wibox.container.margin,
@@ -401,6 +411,9 @@ screen.connect_signal("request::desktop_decoration", function(s)
             },
             id     = "background_role",
             widget = wibox.container.background,
+            create_callback = function(self)
+                self:get_children_by_id("title_role")[1]:pause()
+            end,
         },
     }
 

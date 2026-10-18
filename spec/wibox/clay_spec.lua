@@ -1029,10 +1029,10 @@ describe("wibox.clay align", function()
         local node = layout_node(l)
         -- The middle slot holds nothing and takes nothing, so it is absent.
         assert.is_equal(2, #node.children)
-        assert.is_same({ x = "left", y = "top" }, node.children[1].align)
-        assert.is_same({ x = "right", y = "top" }, node.children[2].align)
-        assert.is_equal(l.first, node.children[1].children[1].widget)
-        assert.is_equal(l.third, node.children[2].children[1].widget)
+        assert.is_same({ x = "left", y = "top" }, node.children[1].children[1].align)
+        assert.is_same({ x = "right", y = "top" }, node.children[2].children[1].align)
+        assert.is_equal(l.first, node.children[1].children[1].children[1].widget)
+        assert.is_equal(l.third, node.children[2].children[1].children[1].widget)
         assert.stub(warning).was_called(1)
         warning:revert()
 
@@ -1041,7 +1041,7 @@ describe("wibox.clay align", function()
         assert.is_equal(0, #layout_node(l).children)
     end)
 
-    it("none: the second centers in the whole, the outer widgets pinned to their edges", function()
+    it("none: equal halves around the second, the outer widgets pinned to their edges", function()
         local l = align.horizontal(stub(10), stub(20), stub(30))
 
         l.expand = "none"
@@ -1049,26 +1049,51 @@ describe("wibox.clay align", function()
         local node = layout_node(l)
 
         assert.is_equal(3, #node.children)
-        -- Two grow wrappers around the second, each holding one outer widget.
-        assert.is_true(node.children[1].spacer)
-        assert.is_equal("grow", node.children[1].w)
-        assert.is_same({ x = "left", y = "top" }, node.children[1].align)
-        assert.is_equal(10, node.children[1].children[1].w)
+        -- Each half grows and clips, and holds a whole share that reports
+        -- no width of its own, so the halves start equal whatever they hold.
+        local first, third = node.children[1], node.children[3]
+        for _, half in ipairs { first, third } do
+            assert.is_true(half.spacer)
+            assert.is_equal("grow", half.w)
+            assert.is_true(half.clip)
+            assert.is_same({ percent = 1 }, half.children[1].w)
+            assert.is_equal("user", half.children[1].wsrc)
+        end
+        assert.is_same({ x = "left", y = "top" }, first.children[1].align)
+        assert.is_equal(10, first.children[1].children[1].w)
         assert.is_equal(20, node.children[2].w)
-        assert.is_same({ x = "right", y = "top" }, node.children[3].align)
-        assert.is_equal(30, node.children[3].children[1].w)
+        assert.is_same({ x = "right", y = "top" }, third.children[1].align)
+        assert.is_equal(30, third.children[1].children[1].w)
 
-        -- A missing outer widget leaves its wrapper empty.
+        -- A missing outer widget leaves its half empty, with no clip.
         l = align.horizontal(nil, stub(20), stub(30))
         l.expand = "none"
         node = layout_node(l)
         assert.is_equal(0, #node.children[1].children)
+        assert.is_nil(node.children[1].clip)
 
         l = align.vertical(leaf_widget(5, 10), leaf_widget(5, 20), nil)
         l.expand = "none"
         node = layout_node(l)
+        assert.is_true(node.children[1].clip)
+        assert.is_same({ percent = 1 }, node.children[1].children[1].h)
+        assert.is_equal(10, node.children[1].children[1].children[1].h)
         assert.is_same({ x = "left", y = "bottom" }, node.children[3].align)
-        assert.is_equal(10, node.children[1].children[1].h)
+    end)
+
+    it("none in a content-sized box: the halves keep what they hold", function()
+        local l = align.horizontal(stub(10), stub(20), stub(30))
+
+        l.expand = "none"
+
+        local node = fixed_node(l)
+
+        assert.is_equal(3, #node.children)
+        assert.is_nil(node.children[1].clip)
+        assert.is_same({ x = "left", y = "top" }, node.children[1].align)
+        assert.is_equal(10, node.children[1].children[1].w)
+        assert.is_same({ x = "right", y = "top" }, node.children[3].align)
+        assert.is_equal(30, node.children[3].children[1].w)
     end)
 
     it("is refused for an override", function()

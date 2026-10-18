@@ -209,17 +209,16 @@ end
 -- `expand` mode says: fit for the slots the engine asked `:fit`, grow for
 -- the ones it gave what was left. Empty elements stand in where the engine
 -- leaves space: a grow spacer where a missing second widget would have
--- been, and in "none" mode a grow wrapper around each outer widget, aligned
--- to its edge, so the second centers in the whole width as the engine
--- centers it.
+-- been, and in "none" mode a half around each outer widget, aligned to its
+-- edge, so the second centers in the whole width as the engine centers it.
 --
 -- A slot that grows starts at the size of what it holds and is only ever
--- given more (clay.h:1815-1827 sums a child's content, 2357-2391 grows),
+-- given more (clay.h:1886-1895 sums a child's content, 2443-2486 grows),
 -- and the compress pass will not take it below that content
--- (clay.h:2334-2338). So a grown slot whose own subtree converted keeps a
+-- (clay.h:2401-2441). So a grown slot whose own subtree converted keeps a
 -- content width larger than the share the engine would have given it, and
 -- takes that width from the slots beside it.
-local function describe_align(w)
+local function describe_align(w, _, _, _, offer)
     local p = w._private
 
 
@@ -272,16 +271,28 @@ local function describe_align(w)
         return node
     end
 
-    -- "none": the second at its fit, the outer widgets at theirs, each
-    -- pinned to its edge of a half that grows.
-    specs[1] = { [along] = "grow", [across] = "grow",
-        align = { x = "left", y = "top" },
-        children = { p.first and slot(p.first, "fit") } }
+    -- "none": the second at its fit, each outer widget pinned to its edge
+    -- of an equal half. A PERCENT element reports no length while its
+    -- parent closes (clay.h:1937-1945) and takes its share afterwards
+    -- (clay.h:2387-2398), so two GROW halves that each hold one start equal
+    -- and split what the second leaves, whatever they hold. Content longer
+    -- than its half is compressed to its minimum, and the renderer cuts the
+    -- rest at the half (widget.h clip_opens), which spends no scroll record.
+    -- A content-sized align has no length to split and its halves keep
+    -- what they hold.
+    local function half(widget, align)
+        local children = { widget and slot(widget, "fit") }
+        if not widget or not offer[along .. "decided"] then
+            return { [along] = "grow", [across] = "grow", align = align, children = children }
+        end
+        return { [along] = "grow", [across] = "grow", clip = true,
+            children = { { [along] = { percent = 1 }, [along .. "src"] = "user",
+                [across] = "grow", align = align, children = children } } }
+    end
+    specs[1] = half(p.first, { x = "left", y = "top" })
     specs[2] = slot(p.second, "fit")
-    specs[3] = { [along] = "grow", [across] = "grow",
-        align = p.dir == "y" and { x = "left", y = "bottom" }
-            or { x = "right", y = "top" },
-        children = { p.third and slot(p.third, "fit") } }
+    specs[3] = half(p.third, p.dir == "y" and { x = "left", y = "bottom" }
+        or { x = "right", y = "top" })
     return node
 end
 

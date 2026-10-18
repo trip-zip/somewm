@@ -183,8 +183,10 @@ struct widget_node {
 	 * and the one it is clipped by, 0 for none (render.h says how the
 	 * renderer reads the two). The root opens one, so nothing draws
 	 * outside the drawin, and so does a rounded container, so its
-	 * children are cut to its arc as the container's own clip cut them.
-	 * Numbered here rather than by Lua, from the tree's shape alone. */
+	 * children are cut to its arc as the container's own clip cut them,
+	 * and a node with `clip`, cut to its shape or else its box. Unlike a
+	 * scroll node it spends no Clay scroll record and keeps its
+	 * children's minimum. Numbered here rather than by Lua. */
 	uint8_t clip_opens, clip_by;
 	/* The wl_output_transform its shape, gradient, text or image is drawn
 	 * with; Lua already rotated the description. */
