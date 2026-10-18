@@ -57,6 +57,11 @@ runner.run_async(function()
 
     local dump, lines, items, viewport = until_dump(function(_, l)
         return l:find('"▶▶"', 1, true) end, 'the right label never showed')
+    -- The launcher opens at the workarea's top-left corner, as in 2.0.
+    local lx, ly = lines:match('^  LAUNCHER [^\n]* box (%-?%d+),(%-?%d+) ')
+    local wa, origin = screen[1].workarea, screen[1].geometry
+    assert(tonumber(lx) == wa.x - origin.x and tonumber(ly) == wa.y - origin.y, string.format(
+        'the launcher opens at %s,%s, not the workarea corner %d,%d', lx, ly, wa.x - origin.x, wa.y - origin.y))
     assert(#items == 41 and items[41].name == 'Exec: ', 'every item is declared: ' .. #items)
     assert(viewport:find('scrolled=0 ', 1, true) and not lines:find('"◀◀"', 1, true))
     local _, fit = lines:gsub('background_role w=fit h=grow ', '')
@@ -68,7 +73,7 @@ runner.run_async(function()
     repeat
         key('Right')
         selected = selected + 1
-        dump, lines, items, viewport = until_dump(function(_, _, i, v)
+        _, _, items, viewport = until_dump(function(_, _, i, v)
             return inside(i[selected], v) end, 'the selected item lies outside the viewport: ' .. selected)
     until not viewport:find('scrolled=0 ', 1, true)
     assert(selected > 2, 'the first items fit without scrolling')

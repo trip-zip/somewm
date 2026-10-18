@@ -115,12 +115,13 @@ end
 --- The composite for c at a layout's allocation: the frame carries the
 -- allocation's sizing, words and float; a padded float is a cell holding
 -- the frame at its whole inset. When the client drew a size other than the
--- one configured (c._committed_size), the frame holds the chrome, which
--- wraps the surface at the drawn size from the frame's top-left, and the
--- probe, the frame's box less the border and bars, whose size is what the
--- client is configured. The chrome clips: a clip element takes none of its
--- children's minimum (third_party/clay.h:1893-1925), so a drawn size past
--- the allocation is cut at it and never grows the frame.
+-- one configured (c._committed_size), the frame holds a cut filling it,
+-- with the chrome inside, which wraps the surface at the drawn size from
+-- the frame's top-left, and the probe, the frame's box less the border and
+-- bars, whose size is what the client is configured. The chrome clips: a
+-- clip element takes none of its children's minimum (third_party/clay.h:
+-- 1893-1925), so a drawn size past the allocation is cut at it, and the
+-- cut keeps the drawn size out of the frame's length.
 function clay.describe(c, allocation)
     local frame = {name = "CLIENT", client = c, dir = "y"}
     for _, key in ipairs(allocation_keys) do frame[key] = allocation[key] end
@@ -157,12 +158,18 @@ function clay.describe(c, allocation)
     if not fullscreen then
         assign_corners(c, bw, top, right, bottom, left, pixels)
     end
-    local box = frame
+    local box, cut = frame
     if committed then
         box = {name = "CHROME", client = c, dir = "y", w = "fit", h = "fit", scroll = "both"}
+        -- A PERCENT element reports no length while its parent closes
+        -- (third_party/clay.h:1934-1953), so the cut gives the frame none of
+        -- the drawn size and the cell never follows what the client drew,
+        -- which the next configure would follow in turn.
+        cut = {name = "CHROME_CUT", w = {percent = 1}, h = {percent = 1},
+            wsrc = "theme", hsrc = "theme", dir = "y", children = {box}}
         local probe = surface(c, fullscreen)
         probe.name, probe.probe, probe.opacity = "CONFIGURE", true, nil
-        frame.children = {box, {name = "PROBE", float = true, w = "grow", h = "grow", dir = "y",
+        frame.children = {cut, {name = "PROBE", float = true, w = "grow", h = "grow", dir = "y",
             pad = {bw, bw, bw, bw}, children = around(spacer("PROBE_TOP", top), spacer("PROBE_RIGHT", right),
                 spacer("PROBE_BOTTOM", bottom), spacer("PROBE_LEFT", left),
                 {name = "PROBE_SLOT", w = "grow", h = "grow", children = {probe}}, "PROBE_BODY")}}
@@ -240,6 +247,10 @@ function clay.describe(c, allocation)
         or animation.has_effect(frame.transition.exit, "grow")
         or animation.has_effect(frame.transition.tag_exit, "grow")) then
         frame.scroll = "both"
+        -- A clipping frame leaves its children at their size while it
+        -- animates; the cut clips in the chrome's place, so a larger chrome
+        -- keeps its size too, as it would in the frame directly.
+        if cut then cut.scroll, box.scroll = "both", nil end
     end
     if box ~= frame and frame.transition and type(frame.transition.properties) == "table" then
         box.transition = {properties = "border_color", duration = frame.transition.duration}

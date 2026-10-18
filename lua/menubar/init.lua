@@ -518,7 +518,8 @@ function menubar.show(scr)
         menubar.refresh(scr)
     end
 
-    -- Width/font are content inputs; OUTPUT owns the centered position.
+    -- Width/font are content inputs; OUTPUT owns the position, the
+    -- workarea's top-left corner, under a top bar as in 2.0.
     local geometry = menubar.geometry
     instance.geometry = {
         height = geometry.height or gmath.round(theme.get_font_height(font) * 1.5),
@@ -527,7 +528,7 @@ function menubar.show(scr)
     instance.wibox.screen = scr
     instance.wibox.widget.forced_height = instance.geometry.height
     -- Without a width the launcher spans the workarea, as 2.0's did.
-    require('awful._attachment').corner(instance.wibox, 'centered',
+    require('awful._attachment').corner(instance.wibox, 'top_left',
         {x=geometry.x or 0,y=geometry.y or 0}, 3, nil, true)
     local a=instance.wibox.drawin.attachment
     a.width=geometry.width

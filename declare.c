@@ -1569,6 +1569,20 @@ widget_child_id(struct widget_tree *d, size_t child, Clay_ElementId parent,
 	return Clay__HashStringWithOffset(key, index, parent.id);
 }
 
+/* A PERCENT axis with its max zeroed. The percent shares a union with the
+ * min/max pair, and CLAY_SIZING_PERCENT stores only the percent, leaving
+ * max unspecified; Clay still clamps a container's height to that max
+ * while it propagates its children's heights up (third_party/clay.h:
+ * 2645-2690), so a stray max let a PERCENT container pass its content's
+ * height to its parent, which a zero max reports as nothing, as Clay
+ * reports a PERCENT element when it closes (third_party/clay.h:1934-1953).
+ * The percent is written through min, the member it overlaps. */
+static Clay_SizingAxis
+clay_percent(float percent)
+{
+	return (Clay_SizingAxis) { .size.minMax = { percent, 0 }, .type = CLAY__SIZING_TYPE_PERCENT };
+}
+
 static Clay_SizingAxis
 widget_sizing(const struct widget_node *n, int axis)
 {
@@ -1577,7 +1591,7 @@ widget_sizing(const struct widget_node *n, int axis)
 		return CLAY_SIZING_FIXED(n->size[axis]);
 	case WIDGET_SIZING_PERCENT:
 		/* Percent has no min/max clamps (third_party/clay.h:1863-1871). */
-		return CLAY_SIZING_PERCENT(n->size[axis]);
+		return clay_percent(n->size[axis]);
 	case WIDGET_SIZING_GROW:
 		return CLAY_SIZING_GROW(n->min[axis], n->max[axis]);
 	default:
@@ -1751,12 +1765,14 @@ declare_composite(const struct widget_host *host, size_t i, int16_t z,
 }
 
 /* A frame whose client drew a size other than the one configured holds
- * two children (awful.client.clay): the chrome, which is the client's box
- * around the size drawn, and the configure probe filling the frame. */
+ * two children (awful.client.clay): the cut filling the frame, which holds
+ * the chrome, the client's box around the size drawn, and the configure
+ * probe filling the frame. */
 static bool
 frame_holds_chrome(const struct widget_tree *d, size_t i)
 {
-	return d->nodes[i].children == 2 && d->nodes[i + 1].client;
+	return d->nodes[i].children == 2 && !d->nodes[i + 1].client
+		&& d->nodes[i + 1].children == 1 && d->nodes[i + 2].client;
 }
 
 /* The composite's frame, under the id clients_settle reads it by. The
@@ -1778,19 +1794,30 @@ declare_client_frame(const struct widget_host *host, size_t i, int16_t z,
 		Clay_ElementId frame = Clay__HashStringWithOffset((Clay_String) {
 			.isStaticallyAllocated = true, .length = (int32_t)strlen(name), .chars = name,
 		}, (uint32_t)n->client, 0);
-		Clay_ElementDeclaration chrome = widget_node_decl(&d->nodes[i + 1], z, NULL);
+		const struct widget_node *cut = &d->nodes[i + 1];
+		const char *cut_name = cut->name ? cut->name : "-";
+		Clay_ElementId cut_id = Clay__HashStringWithOffset((Clay_String) {
+			.isStaticallyAllocated = true, .length = (int32_t)strlen(cut_name), .chars = cut_name,
+		}, (uint32_t)n->client, 0);
+		Clay_ElementDeclaration cut_e = widget_node_decl(cut, z, NULL);
+		Clay_ElementDeclaration chrome = widget_node_decl(&d->nodes[i + 2], z, NULL);
 
 		ids[i] = frame.id;
+		ids[i + 1] = cut_id.id;
 		native_open(frame);
         e->userData = leaf_userdata(n->client, 1.0f);
         native_configure(e);
 		root_entrance(frame, e);
 		record_open(name, n->client, frame, e, wsrc, hsrc, NULL);
     record_client_exit(n);
+		native_open(cut_id);
+		native_configure(&cut_e);
+		record_open(cut_name, n->client, cut_id, &cut_e, cut->src[0], cut->src[1], NULL);
 		composite_probed = true;
-		declare_client_frame(host, i + 1, z, &chrome, d->nodes[i + 1].src[0],
-			d->nodes[i + 1].src[1], ids);
+		declare_client_frame(host, i + 2, z, &chrome, d->nodes[i + 2].src[0],
+			d->nodes[i + 2].src[1], ids);
 		composite_probed = false;
+		native_close();
 		declare_composite(host, widget_subtree_end(d, i + 1), z, n->client, clamp, ids);
 		native_close();
 		return;
@@ -2254,8 +2281,8 @@ declare_widget_frame(drawin_t *d, struct widget_host *host, Clay_ElementId id,
 		bool native_clip = host_clip(host);
 		Clay_ElementDeclaration inner = {
 			.layout = {
-				.sizing = { native_clip ? CLAY_SIZING_GROW(0) : CLAY_SIZING_PERCENT(1),
-					native_clip ? CLAY_SIZING_GROW(0) : CLAY_SIZING_PERCENT(1) },
+				.sizing = { native_clip ? CLAY_SIZING_GROW(0) : clay_percent(1),
+					native_clip ? CLAY_SIZING_GROW(0) : clay_percent(1) },
 				.layoutDirection = slot->layout.layoutDirection,
 				.childAlignment = slot->layout.childAlignment,
 			},
