@@ -94,6 +94,7 @@ jobs:
             libglib2.0-bin \
             libdrm-dev \
             libgbm-dev \
+            libegl1 \
             libpixman-1-dev \
             libudev-dev \
             libseat-dev \
