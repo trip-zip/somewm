@@ -146,8 +146,8 @@ start_somewm() {
     # immediately and the IPC connection test fails.
     rm -f "$SOCKET"
 
-    # Start compositor (uses XDG_CONFIG_HOME for config)
-    timeout $TEST_TIMEOUT "$SOMEWM" > "$LOG" 2>&1 &
+    # Each compositor owns a private session bus for notifications and systray items.
+    timeout "$TEST_TIMEOUT" dbus-run-session -- "$SOMEWM" > "$LOG" 2>&1 &
     SOMEWM_PID=$!
 
     # Wait for socket

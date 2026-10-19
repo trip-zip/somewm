@@ -3,13 +3,6 @@ local async = require("_async")
 local test_client = require("_client")
 local surface = require("gears.surface")
 local cairo = require("lgi").cairo
-local ffi = require("ffi")
-
-ffi.cdef[[
-void cairo_surface_flush(void *surface);
-unsigned char *cairo_image_surface_get_data(void *surface);
-int cairo_image_surface_get_stride(void *surface);
-]]
 
 local function pixels(image)
     local width, height = image:get_width(), image:get_height()
@@ -17,14 +10,13 @@ local function pixels(image)
     local cr = cairo.Context(copy)
     cr:set_source_surface(image, 0, 0)
     cr:paint()
-    ffi.C.cairo_surface_flush(copy._native)
-    local data = ffi.C.cairo_image_surface_get_data(copy._native)
-    local stride = ffi.C.cairo_image_surface_get_stride(copy._native)
-    local rows = {}
-    for y = 0, height - 1 do
-        rows[#rows + 1] = ffi.string(data + y * stride, width * 4)
-    end
-    return table.concat(rows)
+    local path = os.tmpname()
+    copy:write_to_png(path)
+    local file = assert(io.open(path, "rb"))
+    local data = file:read("*a")
+    file:close()
+    assert(os.remove(path))
+    return data
 end
 
 assert(test_client.is_available(), "no terminal available for test clients")
@@ -64,13 +56,15 @@ runner.run_async(function()
     end
     check_icon()
 
-    for _, value in ipairs({ image, newproxy(true), {}, 42, true, "icon",
+    local userdata = assert(io.tmpfile())
+    for _, value in ipairs({ image, userdata, {}, 42, true, "icon",
             function() end }) do
         local ok, err = pcall(function() c.icon = value end)
         assert(not ok, "invalid icon assignment must raise a Lua error")
         assert(err:find("got " .. type(value), 1, true), err)
         check_icon()
     end
+    userdata:close()
 
     c.icon = nil
     assert(c.icon == nil, "nil must clear the icon")

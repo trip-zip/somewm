@@ -32,6 +32,8 @@ Integration tests run somewm in headless mode and execute test scenarios via IPC
 **Framework**: Custom step-wise runner (`tests/_runner.lua`)
 **Runner**: `tests/run-integration.sh`
 
+The runner requires `dbus-run-session` and starts each compositor on a private session bus for notification and systray tests.
+
 Set `SOMEWM_TEST_LOG_DIR` to retain each test's compositor log as `<test-filename>.log` in that directory. Without it, the runner removes its temporary logs when it exits.
 
 ### Restart Tests (`tests/restart/`)

@@ -34,7 +34,7 @@ local steps = {
         assert(f, GRAB_CLIENT .. " not found")
         f:close()
         local pid = awful.spawn(string.format(
-            "%s /dev/null %s 0 0 50 50 no-grab", GRAB_CLIENT, CLASS))
+            "%s /dev/null %s 0 0 50 50", GRAB_CLIENT, CLASS))
         assert(type(pid) == "number", "spawn failed: " .. tostring(pid))
         return true
     end,
