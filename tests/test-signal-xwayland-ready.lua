@@ -12,9 +12,12 @@
 -- A missing Xwayland binary fails step 2.
 ---------------------------------------------------------------------------
 -- timeout: 30
+-- luacheck: globals awesome.log_level
 
 local runner = require("_runner")
 local awful = require("awful")
+
+awesome.log_level = "debug"
 
 local GRAB_CLIENT = "./build-test/test-x11-grab-client"
 local CLASS = "xwayland_ready_probe"

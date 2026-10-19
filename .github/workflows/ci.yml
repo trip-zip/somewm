@@ -226,6 +226,15 @@ jobs:
           HEADLESS: 1
           LIBSEAT_BACKEND: noop
           TEST_TIMEOUT: 45
+          SOMEWM_TEST_LOG_DIR: build-test/integration-artifacts
+
+      - name: Upload integration test logs
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: integration-logs-${{ matrix.lua.name }}-wlroots-${{ matrix.wlroots.short }}
+          path: build-test/integration-artifacts/
+          if-no-files-found: ignore
 
       - name: Run restart / hot-reload tests
         run: timeout 900 make test-restart
