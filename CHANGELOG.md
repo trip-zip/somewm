@@ -4,6 +4,14 @@ All notable changes to somewm will be documented in this file.
 
 ## [Unreleased]
 
+## [2.1.0] - 2026-10-18
+
+Minor release. 67 commits since 2.0.1. Every bar, popup, client and widget
+is declared in one Clay tree per output, which somewm solves and draws,
+with animation effects and an inspector. The 22 Removed entries include
+widget `fit` and `draw` methods and `textbox:get_preferred_size`. rc.lua
+configs that avoid the removals and the Changed cases below run unchanged.
+
 ### Added
 
 - Client and drawin animation effects `scale`, `scale_top`, `scale_bottom`,
