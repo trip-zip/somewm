@@ -85,8 +85,12 @@ int main(int argc, char *argv[]) {
     uint16_t h = (uint16_t)atoi(argv[6]);
 
     xcb_connection_t *conn = xcb_connect(NULL, NULL);
-    if (xcb_connection_has_error(conn)) {
-        fprintf(stderr, "Failed to connect to X display\n");
+    int connection_error = xcb_connection_has_error(conn);
+    if (connection_error) {
+        const char *display = getenv("DISPLAY");
+        fprintf(stderr, "Failed to connect to X display %s (XCB error %d)\n",
+                display ? display : "(unset)", connection_error);
+        xcb_disconnect(conn);
         return 1;
     }
     xcb_screen_t *screen =
