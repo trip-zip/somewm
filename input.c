@@ -44,6 +44,7 @@
 #include "event.h"
 #include "event_queue.h"
 #include "monitor.h"
+#include "declare.h"
 #include "globalconf.h"
 #include "client.h"
 #include "common/luaobject.h"
@@ -132,7 +133,7 @@ static void createtabletpad(struct wlr_tablet_pad *pad);
 static void createtouch(struct wlr_touch *touch);
 void cursorconstrain(struct wlr_pointer_constraint_v1 *constraint);
 void cursorwarptohint(void);
-void apply_input_settings_to_device(struct libinput_device *device);
+static void apply_input_settings_to_device(struct wlr_input_device *base);
 void mouse_emit_leave(lua_State *L);
 void mouse_emit_client_enter(lua_State *L, client_t *c);
 void mouse_emit_drawin_enter(lua_State *L, drawin_t *d);
@@ -154,7 +155,7 @@ void xytonode(double x, double y, struct wlr_surface **psurface,
 
 /* Tracked pointer device for runtime libinput configuration */
 typedef struct {
-	struct libinput_device *libinput_dev;
+	struct wlr_pointer *pointer;
 	struct wl_listener destroy;
 	struct wl_list link;
 } TrackedPointer;
@@ -379,6 +380,27 @@ axisnotify(struct wl_listener *listener, void *data)
 	wlr_idle_notifier_v1_notify_activity(idle_notifier, seat);
 	some_notify_activity();
 
+	Client *c = NULL;
+	LayerSurface *l = NULL;
+	drawin_t *drawin = NULL;
+	drawable_t *titlebar_drawable = NULL;
+	xytonode(cursor->x, cursor->y, NULL, &c, &l, &drawin, &titlebar_drawable, NULL, NULL);
+
+	/* Clay multiplies delta by ten: a wheel notch of 15 moves content
+	 * 30 pixels. Wheel down moves the content up. */
+	if (!session_is_locked() && event->delta != 0) {
+		if (!c && !l) {
+			if (event->orientation == WL_POINTER_AXIS_VERTICAL_SCROLL)
+				declare_wheel(0, -event->delta / 5);
+			else
+				declare_wheel(-event->delta / 5, 0);
+		}
+		/* The inspector swallows input over its panel. Ordinary widgets
+		 * still receive buttons 4/5 and clients still receive the axis. */
+		if (declare_inspector_covers(cursor->x, cursor->y))
+			return;
+	}
+
 	/* Handle scroll wheel for mousebindings and the mousegrabber
 	 * (AwesomeWM compatibility).
 	 * Convert axis events to X11-style button 4/5/6/7 press+release events.
@@ -432,13 +454,7 @@ axisnotify(struct wl_listener *listener, void *data)
 			lua_State *L = globalconf_get_lua_State();
 			struct wlr_keyboard *keyboard = wlr_seat_get_keyboard(seat);
 			uint32_t mods = keyboard ? wlr_keyboard_get_modifiers(keyboard) : 0;
-			Client *c = NULL;
-			drawin_t *drawin = NULL;
-			drawable_t *titlebar_drawable = NULL;
 			int rel_x, rel_y;
-
-			/* Find what's under the cursor */
-			xytonode(cursor->x, cursor->y, NULL, &c, NULL, &drawin, &titlebar_drawable, NULL, NULL);
 
 			if (drawin) {
 				/* Scroll on drawin (wibox) */
@@ -540,6 +556,18 @@ buttonpress(struct wl_listener *listener, void *data)
 		if (some_is_lua_locked() && drawin != some_get_lua_lock_surface())
 			return;
 
+		/* The Clay inspector's seat mirror learns every left press; a press
+		 * inside its panel is the panel's, with the edge its next solve
+		 * turns into a click, and reaches neither Lua nor a client. */
+		{
+			bool inside = declare_inspector_covers(cursor->x, cursor->y);
+
+			declare_inspector_pointer(event->button == BTN_LEFT ? 1 : -1,
+				inside && event->button == BTN_LEFT);
+			if (inside)
+				return;
+		}
+
 		/* Get keyboard modifiers */
 		keyboard = wlr_seat_get_keyboard(seat);
 		mods = keyboard ? wlr_keyboard_get_modifiers(keyboard) : 0;
@@ -626,6 +654,12 @@ buttonpress(struct wl_listener *listener, void *data)
 
 		/* NOTE: C-level move/resize exit handling removed - Lua mousegrabber handles this now */
 		cursor_mode = CurNormal;
+
+		/* The inspector's mirror learns the left release wherever it lands;
+		 * one inside the panel goes nowhere else, like its press. */
+		declare_inspector_pointer(event->button == BTN_LEFT ? 0 : -1, false);
+		if (declare_inspector_covers(cursor->x, cursor->y))
+			return;
 
 		/* Check if a drawin was released over */
 		if (!session_is_locked()) {
@@ -726,6 +760,17 @@ motionabsolute(struct wl_listener *listener, void *data)
 	 * so we have to warp the mouse there. Also, some hardware emits these events. */
 	struct wlr_pointer_motion_absolute_event *event = data;
 	double lx, ly, dx, dy;
+
+	/* Nested X11/Wayland backends create one pointer per output whose 0..1
+	 * range covers only that output's host window (output_name). Without a
+	 * mapping wlr_cursor spans the whole layout, so with 2+ outputs the
+	 * cursor lands far from the real pointer. Resolved per event so output
+	 * hotplug can never leave a stale mapping behind. */
+	if (event->pointer->output_name) {
+		Monitor *m = some_monitor_by_name(event->pointer->output_name);
+		wlr_cursor_map_input_to_output(cursor, &event->pointer->base,
+			m ? m->wlr_output : NULL);
+	}
 
 	if (!event->time_msec) /* this is 0 with virtual pointers */
 		wlr_cursor_warp_absolute(cursor, &event->pointer->base, event->x, event->y);
@@ -829,8 +874,8 @@ motionnotify(uint32_t time, struct wlr_input_device *device, double dx, double d
 		if (active_constraint) {
 			toplevel_from_wlr_surface(active_constraint->surface, &c, NULL);
 			if (c && active_constraint->surface == seat->pointer_state.focused_surface) {
-				sx = cursor->x - c->geometry.x - c->bw;
-				sy = cursor->y - c->geometry.y - c->bw;
+				sx = cursor->x - c->geometry.x - client_border(c);
+				sy = cursor->y - c->geometry.y - client_border(c);
 				if (wlr_region_confine(&active_constraint->region, sx, sy,
 						sx + dx, sy + dy, &sx_confined, &sy_confined)) {
 					dx = sx_confined - sx;
@@ -856,9 +901,24 @@ motionnotify(uint32_t time, struct wlr_input_device *device, double dx, double d
 		}
 	}
 
-	/* Update drag icon's position */
-	wlr_scene_node_set_position(&drag_icon->node, (int)round(cursor->x), (int)round(cursor->y));
+	/* The Clay inspector's seat mirror: a moved cursor re-solves the panel
+	 * it is over (and the one it left), for the hovered row. */
+	declare_inspector_pointer(-1, false);
 
+	/* A drag icon rides the pointer: its leaf is declared at the cursor
+	 * on the output under it, so every motion re-declares. */
+	if (seat->drag && seat->drag->icon)
+		declare_mark_all_dirty();
+	declare_cursor_changed();
+
+    /* Accessibility observes real motion without taking the pointer grab.
+     * Focus refreshes use time == 0 and must not count as shake samples. */
+    if (time) {
+        lua_State *L = globalconf_get_lua_State();
+        lua_pushnumber(L, cursor->x);
+        lua_pushnumber(L, cursor->y);
+        luaA_signal_emit(L, "_accessibility::motion", 2);
+    }
 
 	/* If drag source became invalid, clear it. */
 	if (seat->drag && drag_source_client) {
@@ -986,25 +1046,10 @@ motionnotify(uint32_t time, struct wlr_input_device *device, double dx, double d
 	if (!surface && !seat->drag) {
 		drawin_t *hover_drawin = NULL;
 		xytonode(cursor->x, cursor->y, NULL, NULL, NULL, &hover_drawin, NULL, NULL, NULL);
-		const char *cursor_name = (hover_drawin && hover_drawin->cursor)
-			? hover_drawin->cursor
-			: (selected_root_cursor ? selected_root_cursor : "default");
-		/* When transitioning from a client cursor surface to the root cursor,
-		 * reset magnification: cursor_scale may have accumulated while the
-		 * client cursor was displayed (some_set_cursor_scale updates the
-		 * scale but does not apply it while cursor_is_surface is true). */
-		if (cursor_is_surface) {
-			cursor_scale = 1.0f;
-		}
-		/* Skip redundant updates on plain motion: some_apply_cursor() does
-		 * strdup + wlr_cursor_set_* on every call, and this fires on every
-		 * pointer motion event. Only call when something actually changed. */
-		if (cursor_is_surface
-				|| !current_cursor_name
-				|| strcmp(current_cursor_name, cursor_name) != 0
-				|| cursor_scale != last_applied_scale) {
-			some_apply_cursor(cursor_name);
-		}
+		if (hover_drawin && hover_drawin->cursor)
+			cursor_set_xcursor(hover_drawin->cursor);
+		else
+			cursor_set_xcursor(selected_root_cursor ? selected_root_cursor : "default");
 	}
 
 	/* Tablet-capable clients should receive stylus motion via tablet-v2 only.
@@ -1025,15 +1070,20 @@ motionnotify(uint32_t time, struct wlr_input_device *device, double dx, double d
 		}
 	}
 
-	/* Emit pointer::motion for Lua consumers (e.g., shake detection).
-	 * This replaces polling-based detection with event-driven detection,
-	 * eliminating timer wakeups when the pointer is idle. */
-	lua_State *L = globalconf_get_lua_State();
-	lua_pushnumber(L, cursor->x);
-	lua_pushnumber(L, cursor->y);
-	luaA_signal_emit(L, "pointer::motion", 2);
-
 	pointerfocus(c, surface, sx, sy, time);
+}
+
+/* Whether the surface belongs to an ext-session-lock client's lock surface
+ * for some output, the one client allowed the pointer while locked. */
+static bool
+surface_is_session_lock(struct wlr_surface *surface)
+{
+	Monitor *m;
+
+	wl_list_for_each(m, &mons, link)
+		if (m->lock_surface && m->lock_surface->surface == surface)
+			return true;
+	return false;
 }
 
 void
@@ -1053,8 +1103,12 @@ pointerfocus(Client *c, struct wlr_surface *surface, double sx, double sy,
 		return;
 	}
 
-	/* Don't give pointer focus to clients when Lua-locked */
-	if (some_is_lua_locked()) {
+	/* Don't give pointer focus to a desktop client while the session is
+	 * locked. The lock backdrop takes every point below it (declare.c),
+	 * so the only surface that can reach here is an ext-session-lock
+	 * client's own, and that one keeps the pointer: swaylock and its kind
+	 * need motion. */
+	if (session_is_locked() && !surface_is_session_lock(surface)) {
 		wlr_seat_pointer_notify_clear_focus(seat);
 		return;
 	}
@@ -1363,8 +1417,10 @@ cursorwarptohint(void)
 
 	toplevel_from_wlr_surface(active_constraint->surface, &c, NULL);
 	if (c && active_constraint->current.cursor_hint.enabled) {
-		wlr_cursor_warp(cursor, NULL, sx + c->geometry.x + c->bw, sy + c->geometry.y + c->bw);
+		wlr_cursor_warp(cursor, NULL, sx + c->geometry.x + client_border(c),
+			sy + c->geometry.y + client_border(c));
 		wlr_seat_pointer_warp(active_constraint->seat, sx, sy);
+		declare_cursor_changed();
 	}
 }
 
@@ -1476,10 +1532,28 @@ destroykeyboardgroup(struct wl_listener *listener, void *data)
 
 /* Determine device type string for input rule matching */
 static const char *
-get_input_device_type(struct libinput_device *device)
+get_input_device_type(struct wlr_input_device *base)
 {
-	return libinput_device_config_tap_get_finger_count(device) > 0
-		? "touchpad" : "pointer";
+	switch (base->type) {
+	case WLR_INPUT_DEVICE_KEYBOARD:
+		return "keyboard";
+	case WLR_INPUT_DEVICE_POINTER: {
+		struct libinput_device *libinput_dev =
+			wlr_libinput_get_device_handle(base);
+		return libinput_device_config_tap_get_finger_count(libinput_dev) > 0
+			? "touchpad" : "pointer";
+	}
+	case WLR_INPUT_DEVICE_TOUCH:
+		return "touch";
+	case WLR_INPUT_DEVICE_TABLET:
+		return "tablet";
+	case WLR_INPUT_DEVICE_TABLET_PAD:
+		return "tablet-pad";
+	case WLR_INPUT_DEVICE_SWITCH:
+		return "switch";
+	default:
+		return NULL;
+	}
 }
 
 static const char *
@@ -1510,12 +1584,12 @@ tablet_tool_type_to_rule_type(enum wlr_tablet_tool_type type)
 /* A rule's `type` can match on either of two independent axes: the device
  * class (`primary`, e.g. "tablet") or, for tablets, which tool triggered
  * the current event (`secondary`, e.g. "tablet-tool-pen"). Plain pointer/
- * touchpad devices only have a `primary` axis (see resolve_input_settings());
- * tablets pass both, since `primary` is always the constant "tablet" while
- * `secondary` varies per event (see resolve_tablet_settings()) - so
- * `{type="tablet"}` matches any tool on any tablet, `{type="tablet-tool-pen"}`
- * matches a pen on any tablet, and both can be combined with `name` (always
- * the tablet's own name, never the tool's) to narrow to one device. */
+ * touchpad devices only have a `primary` axis, while tablets pass both, since
+ * `primary` is always the constant "tablet" while `secondary` varies per event
+ * (see resolve_tablet_settings()) - so `{type="tablet"}` matches any tool on
+ * any tablet, `{type="tablet-tool-pen"}` matches a pen on any tablet, and both
+ * can be combined with `name` (always the tablet's own name, never the tool's)
+ * to narrow to one device. */
 static bool
 input_rule_type_matches(const char *rule_type, const char *primary, const char *secondary)
 {
@@ -1723,23 +1797,22 @@ tablet_map_coords(const struct InputSettings *s, double in_x, double in_y,
 	return input_map_coords(s, tx, ty, out_lx, out_ly);
 }
 
-/* Resolve effective input settings for a device by overlaying matching rules
- * on top of the global defaults. String fields in the result are borrowed
- * pointers (not owned), so the caller must not free them. */
+/* Apply resolved input settings to an input device */
 static void
-resolve_input_settings(struct libinput_device *device, struct InputSettings *out)
-{
-	const char *dev_type = get_input_device_type(device);
-	const char *dev_name = libinput_device_get_name(device);
-	resolve_input_settings_for_types(dev_type, NULL, dev_name, out);
-}
-
-/* Apply resolved input settings to a single libinput device */
-void
-apply_input_settings_to_device(struct libinput_device *device)
+apply_input_settings_to_device(struct wlr_input_device *base)
 {
 	struct InputSettings s;
-	resolve_input_settings(device, &s);
+	struct libinput_device *device;
+	const char *dev_type = NULL;
+	const char *dev_name = NULL;
+
+	if (!wlr_input_device_is_libinput(base))
+		return;
+
+	dev_type = get_input_device_type(base);
+	device = wlr_libinput_get_device_handle(base);
+	dev_name = libinput_device_get_name(device);
+	resolve_input_settings_for_types(dev_type, NULL, dev_name, &s);
 
 	if (libinput_device_config_tap_get_finger_count(device)) {
 		if (s.tap_to_click >= 0)
@@ -1858,14 +1931,26 @@ apply_input_settings_to_device(struct libinput_device *device)
 	}
 }
 
-/* Apply input settings to all tracked pointer devices */
+/* Apply input settings to all tracked libinput devices */
 void
 apply_input_settings_to_all_devices(void)
 {
 	TrackedPointer *tp;
-	wl_list_for_each(tp, &tracked_pointers, link) {
-		apply_input_settings_to_device(tp->libinput_dev);
-	}
+	TrackedTouch *tc;
+	TrackedTablet *tt;
+	TrackedTabletPad *ttp;
+
+	wl_list_for_each(tp, &tracked_pointers, link)
+		apply_input_settings_to_device(&tp->pointer->base);
+
+	wl_list_for_each(tc, &tracked_touches, link)
+		apply_input_settings_to_device(&tc->touch->base);
+
+	wl_list_for_each(tt, &tracked_tablets, link)
+		apply_input_settings_to_device(&tt->tablet->base);
+
+	wl_list_for_each(ttp, &tracked_tablet_pads, link)
+		apply_input_settings_to_device(&ttp->pad->base);
 }
 
 /* primary is the constant "tablet" (see input_rule_type_matches()); only
@@ -2638,6 +2723,10 @@ createtablet(struct wlr_tablet *tablet)
 	LISTEN(&tablet->events.button, &tt->button, tabletnotifybutton);
 	LISTEN(&tablet->base.events.destroy, &tt->destroy, destroytrackedtablet);
 
+	/* Apply settings from globalconf to actual wlr_input_device(s), thus tablet tools,
+	 * such as pens and pencils are excluded */
+	apply_input_settings_to_device(&tablet->base);
+
 	wlr_cursor_attach_input_device(cursor, &tablet->base);
 
 	wlr_log(WLR_INFO,
@@ -2680,6 +2769,9 @@ createtabletpad(struct wlr_tablet_pad *pad)
 	LISTEN(&pad->events.attach_tablet, &tp->attach_tablet, tabletpadnotifyattach);
 	LISTEN(&pad->base.events.destroy, &tp->destroy, destroytrackedtabletpad);
 
+	/* Apply settings from globalconf to libinput device */
+	apply_input_settings_to_device(&pad->base);
+
 	wlr_log(WLR_INFO,
 		"[tablet-pad] new device name=%s buttons=%zu rings=%zu strips=%zu",
 		pad->base.name ? pad->base.name : "(unknown)",
@@ -2718,6 +2810,9 @@ createtouch(struct wlr_touch *touch)
 	LISTEN(&touch->events.frame, &tc->frame, touchnotifyframe);
 	LISTEN(&touch->base.events.destroy, &tc->destroy, destroytrackedtouch);
 
+	/* Apply settings from globalconf to libinput device */
+	apply_input_settings_to_device(&touch->base);
+
 	wlr_cursor_attach_input_device(cursor, &touch->base);
 
 	wlr_log(WLR_INFO, "[touch] new device name=%s",
@@ -2727,21 +2822,16 @@ createtouch(struct wlr_touch *touch)
 void
 createpointer(struct wlr_pointer *pointer)
 {
-	struct libinput_device *device;
 	TrackedPointer *tp;
 
-	if (wlr_input_device_is_libinput(&pointer->base)
-			&& (device = wlr_libinput_get_device_handle(&pointer->base))) {
+	/* Apply settings from globalconf */
+	apply_input_settings_to_device(&pointer->base);
 
-		/* Apply settings from globalconf */
-		apply_input_settings_to_device(device);
-
-		/* Track this device for runtime reconfiguration */
-		tp = ecalloc(1, sizeof(*tp));
-		tp->libinput_dev = device;
-		wl_list_insert(&tracked_pointers, &tp->link);
-		LISTEN(&pointer->base.events.destroy, &tp->destroy, destroytrackedpointer);
-	}
+	/* Track this device for runtime reconfiguration */
+	tp = ecalloc(1, sizeof(*tp));
+	tp->pointer = pointer;
+	wl_list_insert(&tracked_pointers, &tp->link);
+	LISTEN(&pointer->base.events.destroy, &tp->destroy, destroytrackedpointer);
 
 	wlr_cursor_attach_input_device(cursor, &pointer->base);
 }
@@ -2872,220 +2962,155 @@ virtualpointer(struct wl_listener *listener, void *data)
 		wlr_cursor_map_input_to_output(cursor, device, event->suggested_output);
 }
 
-/** Check if a drawin accepts input at a given point (relative to drawin).
- * Returns true if input should be accepted, false if it should pass through.
- * Used for implementing click-through regions via shape_input and shape_bounding.
- *
- * In X11/AwesomeWM, shape_bounding affects both visual AND input regions.
- * shape_input takes precedence if set; otherwise shape_bounding is used.
- */
+/* Input follows the content's rounded box, unless the drawin passes it through. */
 bool
 drawin_accepts_input_at(drawin_t *d, double local_x, double local_y)
 {
-	cairo_surface_t *shape;
-	int width, height;
-	unsigned char *data;
-	int stride;
-	int px, py;
-	int byte_offset, bit_offset;
-
 	if (!d)
 		return true;
-
-	/* shape_input takes precedence over shape_bounding */
-	shape = d->shape_input;
-
-	/* If no shape_input, fall back to shape_bounding (X11 compatibility) */
-	if (!shape)
-		shape = d->shape_bounding;
-
-	/* No shape = accept all input */
-	if (!shape)
-		return true;
-
-	/* Verify surface is valid before accessing (fixes issue #197) */
-	if (cairo_surface_status(shape) != CAIRO_STATUS_SUCCESS)
-		return true;
-
-	/* Get shape dimensions */
-	width = cairo_image_surface_get_width(shape);
-	height = cairo_image_surface_get_height(shape);
-
-	/* 0x0 surface means pass through ALL input (AwesomeWM convention) */
-	if (width == 0 || height == 0)
+	if (d->input_passthrough)
 		return false;
-
-	/* Convert coordinates to integers */
-	px = (int)local_x;
-	py = (int)local_y;
-
-	/* Bounds check - outside shape = don't accept */
-	if (px < 0 || py < 0 || px >= width || py >= height)
-		return false;
-
-	/* Get pixel data (A1 format: 1 bit per pixel, packed) */
-	cairo_surface_flush(shape);
-	data = cairo_image_surface_get_data(shape);
-	stride = cairo_image_surface_get_stride(shape);
-
-	/* A1 format: pixels packed 8 per byte, LSB first */
-	byte_offset = (py * stride) + (px / 8);
-	bit_offset = px % 8;
-
-	return (data[byte_offset] >> bit_offset) & 1;
+	double r = d->shape_radius;
+	if (r <= 0)
+		return true;
+	double dx = local_x < r ? r - local_x
+		: local_x > d->width - r ? local_x - (d->width - r) : 0;
+	double dy = local_y < r ? r - local_y
+		: local_y > d->height - r ? local_y - (d->height - r) : 0;
+	return dx == 0 || dy == 0 || dx * dx + dy * dy <= r * r;
 }
 
 /* WAYLAND-DEVIATION: pdrawable parameter for titlebar hit-testing
  * AwesomeWM: Uses client_get_drawable_offset() to iterate titlebar geometries
  * after receiving a frame_window event (objects/client.c:3501).
- * somewm: The wlroots scene graph already knows which node is at (x,y), so we
- * extract the drawable directly from node->data during the scene walk. This
- * achieves the same result (titlebar clicks emit signals on the drawable) but
- * uses scene graph spatial queries instead of post-hoc geometry iteration.
+ * somewm: the declared tree names what is under the point (declare_hit_at),
+ * a titlebar's drawable included, so the drawable comes straight from the
+ * walk rather than from post-hoc geometry iteration.
  */
-/** Is \a client one this compositor currently tracks? */
-static bool
-is_client_valid(Client *client)
-{
-	if (client == NULL)
-		return false;
-
-	foreach(elem, globalconf.clients)
-		if (*elem == client)
-			return true;
-
-	return false;
-}
-
-/** Is \a ptr a layer surface this compositor currently tracks? */
-static bool
-is_layersurface_valid(void *ptr)
-{
-	Monitor *m;
-	LayerSurface *l;
-	int i;
-
-	if (ptr == NULL)
-		return false;
-
-	wl_list_for_each(m, &mons, link)
-		for (i = 0; i < 4; i++)
-			wl_list_for_each(l, &m->layers[i], link)
-				if (l == ptr)
-					return true;
-
-	return false;
-}
-
 void
 xytonode(double x, double y, struct wlr_surface **psurface,
 		Client **pc, LayerSurface **pl, drawin_t **pd, drawable_t **pdrawable, double *nx, double *ny)
 {
-	struct wlr_scene_node *node, *pnode;
-	struct wlr_surface *surface = NULL;
+	struct declare_hit hit;
 	Client *c = NULL;
 	LayerSurface *l = NULL;
 	drawin_t *d = NULL;
 	drawable_t *titlebar_drawable = NULL;
-	int layer;
 
-	/* Safety check: scene must be initialized */
-	if (!scene) {
-		if (psurface) *psurface = NULL;
-		if (pc) *pc = NULL;
-		if (pl) *pl = NULL;
-		if (pd) *pd = NULL;
-		if (pdrawable) *pdrawable = NULL;
-		return;
+	declare_hit_at(x, y, &hit);
+	switch (hit.kind) {
+	case DECLARE_KIND_CLIENT:
+		c = hit.object;
+		break;
+	case DECLARE_KIND_LAYER:
+		l = hit.object;
+		break;
+	case DECLARE_KIND_DRAWIN:
+		d = hit.object;
+		break;
+	case DECLARE_KIND_TITLEBAR:
+		titlebar_drawable = hit.object;
+		c = titlebar_drawable->owner.client;
+		break;
+	default:
+		break;
 	}
 
-	for (layer = NUM_LAYERS - 1; !surface && layer >= 0; layer--) {
-		/* Safety check: layer tree must exist */
-		if (!layers[layer])
-			continue;
-		if (!(node = wlr_scene_node_at(&layers[layer]->node, x, y, nx, ny)))
-			continue;
-
-
-		if (node->type == WLR_SCENE_NODE_BUFFER) {
-			struct wlr_scene_buffer *buffer = wlr_scene_buffer_from_node(node);
-			struct wlr_scene_surface *scene_surface = wlr_scene_surface_try_from_buffer(buffer);
-
-
-			if (scene_surface) {
-				surface = scene_surface->surface;
-			} else {
-				/* Check if this buffer belongs to a drawin or titlebar */
-
-				/* node->data now stores drawable pointer (AwesomeWM pattern) */
-				if (node->data) {
-					drawable_t *drawable = (drawable_t *)node->data;
-
-					if (drawable->owner_type == DRAWABLE_OWNER_DRAWIN) {
-						/* This is a drawin's drawable */
-						drawin_t *candidate = drawable->owner.drawin;
-						/* Check shape_input to see if input passes through */
-						if (drawin_accepts_input_at(candidate, x - candidate->x, y - candidate->y)) {
-							d = candidate;
-							/* For drawins, we found what we need - skip client check */
-							goto found;
-						}
-						/* Input passes through this drawin, continue searching */
-					} else if (drawable->owner_type == DRAWABLE_OWNER_CLIENT) {
-						/* This is a titlebar drawable - store it and set client
-						 * Matches AwesomeWM event.c:76-77 client_get_drawable_offset() */
-						c = drawable->owner.client;
-						titlebar_drawable = drawable;
-						/* Continue to found label with client and titlebar_drawable set */
-					}
-				}
-			}
-		} else {
-			/* Skip parent walk for non-buffer nodes (e.g., scene rects) -
-			 * these are background elements that shouldn't intercept input */
-			continue;
-		}
-		/* Walk the tree to find a node that knows the client */
-		for (pnode = node; pnode && !c && !d; ) {
-			/* Check if this node has a drawin */
-			if (pnode->data && layer == LyrWibox) {
-				drawin_t *candidate = (drawin_t *)pnode->data;
-				/* Check shape_input to see if input passes through */
-				if (drawin_accepts_input_at(candidate, x - candidate->x, y - candidate->y)) {
-					d = candidate;
-					break;
-				}
-				/* Input passes through, continue searching to parent (don't set c) */
-			} else {
-				/* Not a drawin - could be a client */
-				c = pnode->data;
-			}
-			/* Safely traverse to parent - stop if we reach root */
-			if (!pnode->parent)
-				break;
-			pnode = &pnode->parent->node;
-		}
-		/* pnode->data is whatever that node's owner stored: a live
-		 * client, a live layer surface, or a pointer whose owner is
-		 * gone. Decide which by membership, never by reading a
-		 * discriminator through the pointer itself. */
-		if (c && !is_client_valid(c)) {
-			l = is_layersurface_valid(c) ? (LayerSurface *)c : NULL;
-			c = NULL;
-		}
-	}
-
-found:
-	/* Validate client pointer - ensure it's still in globalconf.clients
-	 * to avoid returning stale pointers from scene graph data fields */
-	if (c && pc && !is_client_valid(c))
-		c = NULL;  /* Stale pointer - don't return it */
-
-	if (psurface) *psurface = surface;
+	if (psurface) *psurface = hit.surface;
 	if (pc) *pc = c;
 	if (pl) *pl = l;
 	if (pd) *pd = d;
 	if (pdrawable) *pdrawable = titlebar_drawable;
+	if (nx) *nx = hit.sx;
+	if (ny) *ny = hit.sy;
+}
+
+struct cursor_image cursor_image;
+
+static void
+cursor_surface_forget(void)
+{
+	if (!cursor_image.surface)
+		return;
+	wl_list_remove(&cursor_image.surface_destroy.link);
+	wl_list_remove(&cursor_image.surface_commit.link);
+	declare_handle_drop(cursor_image.surface);
+	cursor_image.surface = NULL;
+	cursor_image.tree = NULL;
+	cursor_image.render_owner = NULL;
+}
+
+/* The client's cursor surface is gone, and wlroots destroyed its scene tree
+ * with it; the next frame declares no leaf for it and the renderer forgets
+ * the borrow it can no longer resolve. */
+static void
+cursor_surface_destroy(struct wl_listener *listener, void *data)
+{
+	cursor_surface_forget();
+	cursor_image.gen++;
+	declare_cursor_changed();
+}
+
+/* A commit can move the hotspot by the buffer offset (wl_pointer.set_cursor)
+ * and change the size the leaf is declared at. */
+static void
+cursor_surface_commit(struct wl_listener *listener, void *data)
+{
+	cursor_image.hotspot_x -= cursor_image.surface->current.dx;
+	cursor_image.hotspot_y -= cursor_image.surface->current.dy;
+	cursor_image.gen++;
+	declare_cursor_changed();
+}
+
+static void
+cursor_surface_drop(void)
+{
+	if (!cursor_image.surface)
+		return;
+	wlr_scene_node_destroy(&cursor_image.tree->node);
+	cursor_surface_forget();
+}
+
+void
+cursor_set_xcursor(const char *name)
+{
+	if (!cursor_image.surface && cursor_image.name
+			&& !strcmp(cursor_image.name, name))
+		return;
+	cursor_surface_drop();
+	free(cursor_image.name);
+	cursor_image.name = strdup(name);
+	cursor_image.gen++;
+	declare_cursor_changed();
+}
+
+/* A NULL surface hides the pointer, as wl_pointer.set_cursor says. */
+void
+cursor_set_surface(struct wlr_surface *surface, int hotspot_x, int hotspot_y)
+{
+    declare_cursor_magnify(1, 0);
+	if (surface == cursor_image.surface && !cursor_image.name
+			&& hotspot_x == cursor_image.hotspot_x
+			&& hotspot_y == cursor_image.hotspot_y)
+		return;
+	if (surface != cursor_image.surface) {
+		cursor_surface_drop();
+		if (surface) {
+			cursor_image.surface = surface;
+			cursor_image.tree = wlr_scene_subsurface_tree_create(
+				window_parked_tree(), surface);
+			cursor_image.surface_destroy.notify = cursor_surface_destroy;
+			wl_signal_add(&surface->events.destroy, &cursor_image.surface_destroy);
+			cursor_image.surface_commit.notify = cursor_surface_commit;
+			wl_signal_add(&surface->events.commit, &cursor_image.surface_commit);
+		}
+	}
+	free(cursor_image.name);
+	cursor_image.name = NULL;
+	cursor_image.hotspot_x = hotspot_x;
+	cursor_image.hotspot_y = hotspot_y;
+	cursor_image.gen++;
+	declare_cursor_changed();
 }
 
 void
@@ -3099,15 +3124,9 @@ setcursor(struct wl_listener *listener, void *data)
 	if (cursor_mode != CurNormal && cursor_mode != CurPressed)
 		return;
 	/* This can be sent by any client, so we check to make sure this one
-	 * actually has pointer focus first. If so, we can tell the cursor to
-	 * use the provided surface as the cursor image. It will set the
-	 * hardware cursor on the output that it's currently on and continue to
-	 * do so as the cursor moves between outputs. */
-	if (event->seat_client == seat->pointer_state.focused_client) {
-		cursor_is_surface = true;
-		wlr_cursor_set_surface(cursor, event->surface,
-				event->hotspot_x, event->hotspot_y);
-	}
+	 * actually has pointer focus first. */
+	if (event->seat_client == seat->pointer_state.focused_client)
+		cursor_set_surface(event->surface, event->hotspot_x, event->hotspot_y);
 }
 
 void
@@ -3120,7 +3139,7 @@ setcursorshape(struct wl_listener *listener, void *data)
 	 * actually has pointer focus first. If so, we can tell the cursor to
 	 * use the provided cursor shape. */
 	if (event->seat_client == seat->pointer_state.focused_client)
-		some_apply_cursor(wlr_cursor_shape_v1_name(event->shape));
+		cursor_set_xcursor(wlr_cursor_shape_v1_name(event->shape));
 }
 
 void
@@ -3194,6 +3213,8 @@ destroydragicon(struct wl_listener *listener, void *data)
 {
 	wl_list_remove(&listener->link);
 	free(listener);
+	declare_handle_drop(data);
+	declare_mark_all_dirty();
 }
 
 void
@@ -3209,6 +3230,8 @@ startdrag(struct wl_listener *listener, void *data)
 	if (!drag->icon)
 		return;
 
-	drag->icon->data = &wlr_scene_drag_icon_create(drag_icon, drag->icon)->node;
+	/* Born parked; the frame that declares it borrows it into a band. */
+	drag->icon->data = wlr_scene_drag_icon_create(window_parked_tree(), drag->icon);
 	LISTEN_STATIC(&drag->icon->events.destroy, destroydragicon);
+	declare_mark_all_dirty();
 }

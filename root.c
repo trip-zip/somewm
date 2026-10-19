@@ -23,6 +23,8 @@
 #include "objects/client.h"
 #include "screenshot_compose.h"
 #include "somewm_types.h"
+#include "declare.h"
+#include "input.h"
 #include <xkbcommon/xkbcommon.h>
 #include <wlr/types/wlr_seat.h>
 #include <wlr/types/wlr_data_device.h>
@@ -30,6 +32,7 @@
 #include <wlr/types/wlr_output_layout.h>
 #include <linux/input-event-codes.h>
 #include <time.h>
+#include <wlr/render/interface.h>
 #include <wlr/types/wlr_scene.h>
 #include <wlr/render/wlr_renderer.h>
 #include <wlr/render/wlr_texture.h>
@@ -40,6 +43,7 @@
 #include <wlr/util/transform.h>
 #include <cairo.h>
 #include <drm_fourcc.h>
+#include <math.h>
 #include <string.h>
 
 /* External references to somewm.c globals */
@@ -53,7 +57,6 @@ extern struct wlr_cursor *cursor;
 extern struct wlr_xcursor_manager *cursor_mgr;
 extern struct wlr_seat *seat;
 extern char* selected_root_cursor;
-extern float cursor_scale;
 
 /* External function to find surface at coordinates (from somewm.c) */
 extern void xytonode(double x, double y, struct wlr_surface **psurface,
@@ -64,19 +67,6 @@ extern void xytonode(double x, double y, struct wlr_surface **psurface,
 static int miss_index_handler = LUA_REFNIL;
 static int miss_newindex_handler = LUA_REFNIL;
 static int miss_call_handler = LUA_REFNIL;
-
-/** Convert string to X11 keycode (X11-only stub).
- * \param s The key name string.
- * \return The keycode (always 0 in Wayland).
- */
-static xcb_keycode_t __attribute__((unused))
-_string_to_key_code(const char *s)
-{
-    /* X11-only: Uses XStringToKeysym and xcb_key_symbols_get_keycode.
-     * Wayland uses xkb_keymap_key_by_name or keysym_to_keycode. */
-    (void)s;
-    return 0;
-}
 
 /** root._remove_key(key) - Remove a global keybinding
  *
@@ -437,6 +427,9 @@ luaA_root_fake_input(lua_State *L)
 		/* XKB keycodes are evdev keycodes + 8 */
 		wlr_seat_keyboard_notify_key(seat, timestamp, keycode - 8, state);
 
+		/* Necessary to ensure fake modifier presses function */
+		some_xkb_fake_key(keycode, state == WL_KEYBOARD_KEY_STATE_PRESSED);
+
 	} else if (strcmp(event_type, "button_press") == 0 || strcmp(event_type, "button_release") == 0) {
 		/* Button event - update pointer focus to match cursor position first */
 		int button;
@@ -450,6 +443,18 @@ luaA_root_fake_input(lua_State *L)
 		state = (strcmp(event_type, "button_press") == 0)
 			? WL_POINTER_BUTTON_STATE_PRESSED
 			: WL_POINTER_BUTTON_STATE_RELEASED;
+
+		/* A fake left button reaches the Clay inspector's panel as a real
+		 * one does (input.c buttonpress), and stops there when inside it. */
+		{
+			bool inside = declare_inspector_covers(cursor->x, cursor->y);
+			bool press = state == WL_POINTER_BUTTON_STATE_PRESSED;
+
+			declare_inspector_pointer(button == 1 ? press : -1,
+				inside && press && button == 1);
+			if (inside)
+				return 0;
+		}
 
 		/* Find what surface is under the cursor and update pointer focus
 		 * This ensures the button event goes to the correct window */
@@ -626,35 +631,31 @@ luaA_root_cursor(lua_State *L)
 	}
 	free(selected_root_cursor);
 	selected_root_cursor = strdup(cursor_name);
-	/* Update the displayed cursor unless a client is focused AND the pointer
-	 * is over it (in which case the client owns the cursor image). The prior
-	 * guard checked only global focus, which left the cursor stuck on a stale
-	 * "watch" on an output with no focused client — e.g. the internal screen
-	 * after a reload — until pointer motion triggered the motion handler. */
-	if(some_get_focused_client() == NULL || some_object_under_cursor() == NULL) {
-		some_apply_cursor(cursor_name);
+	struct wlr_surface *surface = NULL;
+    xytonode(cursor->x, cursor->y, &surface, NULL, NULL, NULL, NULL, NULL, NULL);
+    if (!surface) {
+		cursor_set_xcursor(cursor_name);
 	}
 	return 0;
 }
 
-/** root.cursor_scale([scale]) - Get or set the cursor magnification scale.
- * Called with no arguments, returns the current scale (1.0 = normal size).
- * Called with a scale >= 1.0, magnifies the cursor by that factor using a
- * pre-loaded high-resolution cursor image, so animating the scale does not
- * reload the cursor theme from disk. Pass 1.0 to restore the normal cursor.
- * \param scale (optional) Magnification factor (>= 1.0)
- * \return Current scale if called as getter
- */
+/* Private transport for awful.accessibility; the Lua module owns policy. */
 static int
-luaA_root_cursor_scale(lua_State *L)
+luaA_root_cursor_magnify(lua_State *L)
 {
-	if (lua_gettop(L) >= 1) {
-		float scale = (float)luaL_checknumber(L, 1);
-		some_set_cursor_scale(scale);
-		return 0;
-	}
-	lua_pushnumber(L, cursor_scale);
-	return 1;
+    if (lua_gettop(L)) {
+        double scale = luaL_checknumber(L, 1);
+        double duration = luaL_optnumber(L, 2, 0);
+        luaL_argcheck(L, isfinite(scale) && scale >= 1 && scale <= 16, 1,
+            "scale must be finite and between 1 and 16");
+        luaL_argcheck(L, isfinite(duration) && duration >= 0 && duration <= 60, 2,
+            "duration must be finite and between 0 and 60");
+        /* A client owns its uploaded cursor, including a hidden cursor. */
+        if (!cursor_image.name) scale = 1;
+        declare_cursor_magnify(scale, duration);
+    }
+    lua_pushnumber(L, declare_cursor_magnification());
+    return 1;
 }
 
 /** root.cursor_theme([name]) - Get or set cursor theme
@@ -731,61 +732,41 @@ luaA_root_drawins(lua_State *L)
 	return 1;
 }
 
-/** Set the wallpaper from a Cairo pattern, covering the full output layout. */
+/** Paint the wallpaper from a Cairo pattern, covering the full output
+ * layout. Each output shows its crop as a Clay image leaf (declare.c), so
+ * setting it is a repaint of the surface and a dirty mark. */
 static bool
 root_set_wallpaper(cairo_pattern_t *pattern)
 {
 	struct wlr_box layout_box;
-	wlr_output_layout_get_box(output_layout, NULL, &layout_box);
-	int width = layout_box.width;
-	int height = layout_box.height;
+	cairo_surface_t *surface;
+	cairo_t *cr;
 
-	if (width <= 0 || height <= 0)
+	wlr_output_layout_get_box(output_layout, NULL, &layout_box);
+	if (layout_box.width <= 0 || layout_box.height <= 0)
 		return false;
 
-	cairo_surface_t *surface = NULL;
-	struct wlr_buffer *buffer = NULL;
-
-	surface = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, width, height);
-	if (cairo_surface_status(surface) != CAIRO_STATUS_SUCCESS)
-		goto fail;
-
-	cairo_t *cr = cairo_create(surface);
+	surface = cairo_image_surface_create(CAIRO_FORMAT_ARGB32,
+		layout_box.width, layout_box.height);
+	if (cairo_surface_status(surface) != CAIRO_STATUS_SUCCESS) {
+		cairo_surface_destroy(surface);
+		return false;
+	}
+	cr = cairo_create(surface);
 	cairo_set_source(cr, pattern);
 	cairo_set_operator(cr, CAIRO_OPERATOR_SOURCE);
 	cairo_paint(cr);
 	cairo_destroy(cr);
 	cairo_surface_flush(surface);
 
-	buffer = drawable_create_buffer_from_data(
-		width, height,
-		cairo_image_surface_get_data(surface),
-		cairo_image_surface_get_stride(surface)
-	);
-	if (!buffer)
-		goto fail;
-
-	struct wlr_scene_buffer *scene_node = wlr_scene_buffer_create(layers[0], buffer);
-	if (!scene_node)
-		goto fail;
-	wlr_scene_node_set_position(&scene_node->node, 0, 0);
-	wlr_buffer_drop(buffer);
-
-	if (globalconf.wallpaper_buffer_node)
-		wlr_scene_node_destroy(&globalconf.wallpaper_buffer_node->node);
-	globalconf.wallpaper_buffer_node = scene_node;
-
 	if (globalconf.wallpaper)
 		cairo_surface_destroy(globalconf.wallpaper);
 	globalconf.wallpaper = surface;
+	globalconf.wallpaper_gen++;
+	declare_mark_all_dirty();
 
 	luaA_emit_signal_global("wallpaper_changed");
 	return true;
-
-fail:
-	if (buffer) wlr_buffer_drop(buffer);
-	if (surface) cairo_surface_destroy(surface);
-	return false;
 }
 
 /** root._wallpaper([pattern]) - Get or set wallpaper
@@ -868,6 +849,7 @@ luaA_root_set_call_handler(lua_State *L)
 void
 luaA_root_hot_reload(lua_State *L)
 {
+    declare_cursor_magnify(1, 0);
 	luaL_unref(L, LUA_REGISTRYINDEX, miss_index_handler);
 	luaL_unref(L, LUA_REGISTRYINDEX, miss_newindex_handler);
 	luaL_unref(L, LUA_REGISTRYINDEX, miss_call_handler);
@@ -885,132 +867,6 @@ luaA_root_hot_reload(lua_State *L)
 
 /* struct screenshot_render_data is declared in screenshot_compose.h so it can
  * be shared with objects/client.c. */
-
-/** Composite a Cairo surface onto the screenshot at the given position.
- * Used to directly composite widget content from drawable surfaces.
- */
-static void
-composite_cairo_surface(cairo_t *cr, cairo_surface_t *surface,
-                        int x, int y, int width, int height)
-{
-	if (!surface || cairo_surface_status(surface) != CAIRO_STATUS_SUCCESS)
-		return;
-
-	cairo_save(cr);
-	cairo_set_source_surface(cr, surface, x, y);
-	/* Use OVER operator to handle transparency */
-	cairo_set_operator(cr, CAIRO_OPERATOR_OVER);
-	cairo_rectangle(cr, x, y, width, height);
-	cairo_fill(cr);
-	cairo_restore(cr);
-}
-
-/** Composite all widgets directly from their drawable Cairo surfaces.
- * This bypasses wlroots scene buffers which may have NULL content between frames.
- * Note: Wallpaper is handled separately in luaA_root_get_content().
- */
-static void
-composite_widgets_directly(cairo_t *cr, bool ontop_only)
-{
-	int i, bar;
-	drawin_t *drawin;
-	client_t *c;
-	bool is_ontop;
-
-	/* Composite visible drawins filtered by ontop state */
-	for (i = 0; i < globalconf.drawins.len; i++) {
-		drawin = globalconf.drawins.tab[i];
-		if (!drawin || !drawin->visible || !drawin->drawable)
-			continue;
-
-		/* Filter by ontop to ensure correct z-order in screenshots */
-		if (drawin->ontop != ontop_only)
-			continue;
-
-		if (drawin->drawable->surface &&
-		    cairo_surface_status(drawin->drawable->surface) == CAIRO_STATUS_SUCCESS) {
-			cairo_surface_t *surface_to_composite = drawin->drawable->surface;
-			cairo_surface_t *masked_surface = NULL;
-
-			/* Apply shape_bounding mask if set (for rounded corners etc.) */
-			if (drawin->shape_bounding &&
-			    cairo_surface_status(drawin->shape_bounding) == CAIRO_STATUS_SUCCESS) {
-				masked_surface = drawin_apply_shape_mask(
-					drawin->drawable->surface, drawin->shape_bounding);
-				if (masked_surface)
-					surface_to_composite = masked_surface;
-			}
-
-			composite_cairo_surface(cr, surface_to_composite,
-			                        drawin->x, drawin->y,
-			                        drawin->width, drawin->height);
-
-			/* Clean up temporary masked surface */
-			if (masked_surface)
-				cairo_surface_destroy(masked_surface);
-		}
-	}
-
-	/* Composite client titlebars filtered by ontop/fullscreen state */
-	for (i = 0; i < globalconf.clients.len; i++) {
-		c = globalconf.clients.tab[i];
-		if (!c)
-			continue;
-
-		/* Filter by ontop/fullscreen to ensure correct z-order */
-		is_ontop = c->ontop || c->fullscreen;
-		if (is_ontop != ontop_only)
-			continue;
-
-		for (bar = 0; bar < CLIENT_TITLEBAR_COUNT; bar++) {
-			drawable_t *d = c->titlebar[bar].drawable;
-			int size = c->titlebar[bar].size;
-			int tb_x, tb_y, tb_w, tb_h;
-
-			if (!d || !d->surface || size <= 0)
-				continue;
-
-			if (cairo_surface_status(d->surface) != CAIRO_STATUS_SUCCESS)
-				continue;
-
-			/* Calculate titlebar position based on client geometry and bar type */
-			switch (bar) {
-			case CLIENT_TITLEBAR_TOP:
-				tb_x = c->geometry.x;
-				tb_y = c->geometry.y;
-				tb_w = c->geometry.width;
-				tb_h = size;
-				break;
-			case CLIENT_TITLEBAR_BOTTOM:
-				tb_x = c->geometry.x;
-				tb_y = c->geometry.y + c->geometry.height - size;
-				tb_w = c->geometry.width;
-				tb_h = size;
-				break;
-			case CLIENT_TITLEBAR_LEFT:
-				tb_x = c->geometry.x;
-				tb_y = c->geometry.y + c->titlebar[CLIENT_TITLEBAR_TOP].size;
-				tb_w = size;
-				tb_h = c->geometry.height -
-				       c->titlebar[CLIENT_TITLEBAR_TOP].size -
-				       c->titlebar[CLIENT_TITLEBAR_BOTTOM].size;
-				break;
-			case CLIENT_TITLEBAR_RIGHT:
-				tb_x = c->geometry.x + c->geometry.width - size;
-				tb_y = c->geometry.y + c->titlebar[CLIENT_TITLEBAR_TOP].size;
-				tb_w = size;
-				tb_h = c->geometry.height -
-				       c->titlebar[CLIENT_TITLEBAR_TOP].size -
-				       c->titlebar[CLIENT_TITLEBAR_BOTTOM].size;
-				break;
-			default:
-				continue;
-			}
-
-			composite_cairo_surface(cr, d->surface, tb_x, tb_y, tb_w, tb_h);
-		}
-	}
-}
 
 /** Orient a source box of sw x sh under transform t, the way the scene
  * renderer orients a buffer. */
@@ -1038,13 +894,49 @@ composite_transform_matrix(cairo_matrix_t *m, enum wl_output_transform t,
 	}
 }
 
+/** The box with its corners cut by radii (top-left, top-right,
+ * bottom-right, bottom-left), fitted to the box by the edge rule the
+ * renderers use; a plain rectangle when every radius is 0. */
+static void
+composite_rounded_path(cairo_t *cr, double x, double y, double w, double h,
+                       const float radii[4])
+{
+	float r[4];
+	double deg = 3.14159265358979323846 / 180.0;
+
+	wlr_render_fit_corner_radii(r, radii, w, h);
+	if (r[0] == 0 && r[1] == 0 && r[2] == 0 && r[3] == 0) {
+		cairo_rectangle(cr, x, y, w, h);
+		return;
+	}
+	cairo_new_sub_path(cr);
+	cairo_arc(cr, x + w - r[1], y + r[1], r[1], -90.0 * deg, 0.0);
+	cairo_arc(cr, x + w - r[2], y + h - r[2], r[2], 0.0, 90.0 * deg);
+	cairo_arc(cr, x + r[3], y + h - r[3], r[3], 90.0 * deg, 180.0 * deg);
+	cairo_arc(cr, x + r[0], y + r[0], r[0], 180.0 * deg, 270.0 * deg);
+	cairo_close_path(cr);
+}
+
+/** Clip to every rounded clip of a node, in node-local coordinates. */
+static void
+composite_clip_rounded(cairo_t *cr, const struct wlr_render_rounded_clip *clips,
+                       size_t len)
+{
+	for (size_t i = 0; i < len; i++) {
+		const struct wlr_box *b = &clips[i].box;
+
+		composite_rounded_path(cr, b->x, b->y, b->width, b->height, clips[i].radii);
+		cairo_clip(cr);
+	}
+}
+
 /** Paint buf_surface, the pixels of scene_buffer's buffer, at the node
  * position the way the scene renderer would place them.
  *
  * Honours src_box (the crop wlroots sets when a surface is clipped to its xdg
  * window geometry), dst_width/dst_height and transform. Deliberately ignores
- * blend_mode and the wait timeline, which do not apply to a cairo target, and
- * does not yet honour opacity or filter_mode.
+ * blend_mode, filter_mode and the wait timeline, which do not apply to a
+ * cairo target; opacity is painted.
  */
 static void
 composite_paint(struct screenshot_render_data *rdata, cairo_surface_t *buf_surface,
@@ -1075,13 +967,16 @@ composite_paint(struct screenshot_render_data *rdata, cairo_surface_t *buf_surfa
 
 	cairo_save(rdata->cr);
 	cairo_translate(rdata->cr, sx + rdata->offset_x, sy + rdata->offset_y);
-	cairo_rectangle(rdata->cr, 0, 0, dst_width, dst_height);
+	/* The buffer's corner radii and rounded clips, as the output cuts it. */
+	composite_rounded_path(rdata->cr, 0, 0, dst_width, dst_height,
+		scene_buffer->corner_radii);
 	cairo_clip(rdata->cr);
+	composite_clip_rounded(rdata->cr, scene_buffer->clips, scene_buffer->clips_len);
 	cairo_scale(rdata->cr, dst_width / tw, dst_height / th);
 	cairo_transform(rdata->cr, &m);
 	cairo_translate(rdata->cr, -src.x, -src.y);
 	cairo_set_source_surface(rdata->cr, buf_surface, 0, 0);
-	cairo_paint(rdata->cr);
+	cairo_paint_with_alpha(rdata->cr, scene_buffer->opacity);
 	cairo_restore(rdata->cr);
 }
 
@@ -1187,14 +1082,115 @@ composite_scene_buffer_to_cairo(struct wlr_scene_buffer *scene_buffer,
 		free(pixels);
 }
 
+
+/** Composite one scene node and its children onto a cairo target.
+ *
+ * wlr_scene_node_for_each_buffer only reaches buffers, and the renderer draws
+ * a flat color as a wlr_scene_rect (render.c): a converted widget container's
+ * background is a rectangle and nothing else, and so is the backing behind a
+ * non-opaque fullscreen surface. Walking once covers both kinds, in the order
+ * the compositor stacks them.
+ *
+ * Shared with objects/screen.c via screenshot_compose.h.
+ */
+/* Whether a node's layout box reaches the target at all. */
+static bool
+within_bounds(const struct screenshot_render_data *rdata, int x, int y,
+              int w, int h)
+{
+	if (rdata->bound_w <= 0 || rdata->bound_h <= 0)
+		return true;
+	return !(x + w <= rdata->bound_x || x >= rdata->bound_x + rdata->bound_w
+		|| y + h <= rdata->bound_y || y >= rdata->bound_y + rdata->bound_h);
+}
+
+void
+composite_scene_node_to_cairo(struct wlr_scene_node *node, void *data)
+{
+	struct screenshot_render_data *rdata = data;
+	struct wlr_scene_node *child;
+	enum declare_kind kind;
+	int lx, ly;
+
+	if (!node->enabled)
+		return;
+	/* The pointer image is never in a capture, as under X11, where the
+	 * cursor sprite is not in the framebuffer XGetImage reads. */
+	if (declare_hit(node, &kind) && kind == DECLARE_KIND_CURSOR)
+		return;
+
+	switch (node->type) {
+	case WLR_SCENE_NODE_BUFFER: {
+		struct wlr_scene_buffer *buffer = wlr_scene_buffer_from_node(node);
+		int w, h;
+
+		if (!wlr_scene_node_coords(node, &lx, &ly) || !buffer->buffer)
+			return;
+		/* The size it draws at, not the size of its pixels: a shadow
+		 * edge is a one-pixel texture stretched the length of a client,
+		 * and culling on the texture would drop it. */
+		w = buffer->dst_width > 0 ? buffer->dst_width : buffer->buffer->width;
+		h = buffer->dst_height > 0 ? buffer->dst_height : buffer->buffer->height;
+		if (!within_bounds(rdata, lx, ly, w, h))
+			return;
+		if (rdata->skip_wallpaper && declare_hit(node, &kind)
+				&& kind == DECLARE_KIND_WALLPAPER)
+			return;
+		composite_scene_buffer_to_cairo(buffer, lx, ly, rdata);
+		return;
+	}
+	case WLR_SCENE_NODE_RECT: {
+		struct wlr_scene_rect *rect = wlr_scene_rect_from_node(node);
+		float a = rect->color[3];
+
+		if (!wlr_scene_node_coords(node, &lx, &ly))
+			return;
+		if (!within_bounds(rdata, lx, ly, rect->width, rect->height))
+			return;
+		/* Scene rect colors are premultiplied; cairo wants straight. The
+		 * rect's radii, its cutout and its rounded clips, as the output
+		 * draws it. */
+		cairo_save(rdata->cr);
+		cairo_translate(rdata->cr, lx + rdata->offset_x, ly + rdata->offset_y);
+        /* A cropped border's hole may extend outside its scene rectangle.
+         * Even-odd filling must not paint that outside part of the hole. */
+        cairo_rectangle(rdata->cr, 0, 0, rect->width, rect->height);
+        cairo_clip(rdata->cr);
+		composite_clip_rounded(rdata->cr, rect->clips, rect->clips_len);
+		cairo_set_source_rgba(rdata->cr,
+		                      a > 0 ? rect->color[0] / a : 0,
+		                      a > 0 ? rect->color[1] / a : 0,
+		                      a > 0 ? rect->color[2] / a : 0, a);
+		composite_rounded_path(rdata->cr, 0, 0, rect->width, rect->height,
+		                       rect->corner_radii);
+		if (rect->cutout_box.width > 0) {
+			struct wlr_box b = rect->cutout_box;
+
+			composite_rounded_path(rdata->cr, b.x, b.y, b.width, b.height,
+			                       rect->cutout_radii);
+			cairo_set_fill_rule(rdata->cr, CAIRO_FILL_RULE_EVEN_ODD);
+		}
+		cairo_fill(rdata->cr);
+		cairo_restore(rdata->cr);
+		return;
+	}
+	case WLR_SCENE_NODE_TREE:
+		wl_list_for_each(child, &wlr_scene_tree_from_node(node)->children, link)
+			composite_scene_node_to_cairo(child, rdata);
+		return;
+	}
+}
+
 /** root.content([preserve_alpha]) - Get screenshot of entire desktop
  *
- * Returns a Cairo surface containing the current desktop content.
- * Uses CPU-side compositing to avoid GPU buffer compatibility issues.
+ * Returns a Cairo surface of the whole layout, composited on the CPU from
+ * the scene: every node the renderer reconciled from the Clay tree, plus the
+ * client surfaces it borrowed, in draw order. Nothing is read from a
+ * drawable's own surface.
  *
- * \param preserve_alpha Optional boolean. If true, skips wallpaper compositing
- *        and clears to transparent, preserving alpha channel of transparent windows.
- *        Default is false (normal screenshot with wallpaper).
+ * \param preserve_alpha Optional boolean. If true, OUTPUT's wallpaper image is left
+ *        out and the ground is transparent, preserving the alpha channel of
+ *        transparent windows. Default is false.
  * \return cairo_surface_t* as lightuserdata
  */
 static int
@@ -1204,7 +1200,7 @@ luaA_root_get_content(lua_State *L)
 	cairo_surface_t *surface;
 	cairo_t *cr;
 	int width, height;
-	struct screenshot_render_data rdata;
+	struct screenshot_render_data rdata = { 0 };
 	bool preserve_alpha = false;
 
 	/* Check for optional preserve_alpha parameter */
@@ -1226,36 +1222,19 @@ luaA_root_get_content(lua_State *L)
 
 	cr = cairo_create(surface);
 
-	if (preserve_alpha) {
-		/* Clear to fully transparent for alpha-preserving screenshots */
-		cairo_set_operator(cr, CAIRO_OPERATOR_SOURCE);
-		cairo_set_source_rgba(cr, 0, 0, 0, 0);
-		cairo_paint(cr);
-		cairo_set_operator(cr, CAIRO_OPERATOR_OVER);
-	} else {
-		/* Clear to black and composite wallpaper (normal behavior) */
+	/* A fresh image surface is transparent; the ground under an opaque
+	 * capture is black, as behind the outputs. */
+	if (!preserve_alpha) {
 		cairo_set_source_rgb(cr, 0, 0, 0);
 		cairo_paint(cr);
-
-		/* Composite wallpaper as background */
-		if (globalconf.wallpaper)
-			composite_cairo_surface(cr, globalconf.wallpaper, 0, 0, width, height);
 	}
 
-	/* Set up render data - no offset since we're using layout coordinates */
+	/* Layout coordinates, no offset; bound_w stays zero: the whole layout
+	 * is the target. */
 	rdata.cr = cr;
 	rdata.renderer = drw;
-	rdata.offset_x = 0;
-	rdata.offset_y = 0;
-
-	/* Iterate scene buffers for client content (GPU-rendered surfaces) */
-	wlr_scene_node_for_each_buffer(&scene->tree.node,
-		composite_scene_buffer_to_cairo, &rdata);
-
-	/* Composite widgets in z-order: normal first, then ontop.
-	 * This ensures correct layering where ontop popups appear above titlebars. */
-	composite_widgets_directly(cr, false);  /* Normal widgets */
-	composite_widgets_directly(cr, true);   /* Ontop widgets */
+	rdata.skip_wallpaper = preserve_alpha;
+	composite_scene_node_to_cairo(&scene->tree.node, &rdata);
 
 	cairo_destroy(cr);
 
@@ -1297,9 +1276,9 @@ const luaL_Reg root_methods[] = {
 	{ "_remove_key", luaA_root_remove_key },
 	{ "_wallpaper", luaA_root_wallpaper },
 	{ "cursor", luaA_root_cursor },
+    { "_cursor_magnify", luaA_root_cursor_magnify },
 	{ "cursor_theme", luaA_root_cursor_theme },
 	{ "cursor_size", luaA_root_cursor_size },
-	{ "cursor_scale", luaA_root_cursor_scale },
 	{ "fake_input", luaA_root_fake_input },
 	{ "fake_drag_start", luaA_root_fake_drag_start },
 	{ "fake_drag_end", luaA_root_fake_drag_end },

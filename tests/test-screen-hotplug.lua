@@ -20,18 +20,12 @@ local awful = require("awful")
 
 -- This test requires 2 outputs
 if screen.count() < 2 then
-    io.stderr:write("SKIP: test-screen-hotplug requires WLR_WL_OUTPUTS=2\n")
-    io.stderr:write("Test finished successfully.\n")
-    awesome.quit()
-    return
+    return runner.skip("test-screen-hotplug requires WLR_WL_OUTPUTS=2")
 end
 
 -- Skip if no terminal for client spawning
 if not test_client.is_available() then
-    io.stderr:write("SKIP: no terminal available for client spawning\n")
-    io.stderr:write("Test finished successfully.\n")
-    awesome.quit()
-    return
+    return runner.skip("no terminal available for client spawning")
 end
 
 print("TEST: screen-hotplug: screen.count()=" .. screen.count())
@@ -64,7 +58,7 @@ local steps = {
             print("TEST: Step 2 - Client spawned: " .. tostring(my_client.name)
                 .. " on screen " .. tostring(my_client.screen and my_client.screen.index or "nil"))
         end
-        return my_client ~= nil
+        return my_client ~= nil or nil
     end,
 
     -- Step 3: Verify client is on a valid screen with tags
@@ -96,14 +90,6 @@ local steps = {
             print("TEST:   no focused client (OK for headless)")
         end
         return true
-    end,
-
-    -- Step 5: Cleanup
-    function(count)
-        if count == 1 then
-            my_client:kill()
-        end
-        return #client.get() == 0
     end,
 }
 

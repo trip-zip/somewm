@@ -1,19 +1,4 @@
 option(
-  'xwayland',
-  type: 'feature',
-  value: 'auto',
-  description: 'Enable Xwayland support',
-)
-
-option(
-  'wlroots_version',
-  type: 'combo',
-  choices: ['auto', '0.20', '0.19'],
-  value: 'auto',
-  description: 'wlroots version to build against. auto = 0.20 when it is already installed or the system deps satisfy its floors, else 0.19.',
-)
-
-option(
   'pam',
   type: 'feature',
   value: 'auto',

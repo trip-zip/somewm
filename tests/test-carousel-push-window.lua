@@ -16,12 +16,9 @@ local awful = require("awful")
 local carousel = awful.layout.suit.carousel
 
 if not test_client.is_available() then
-    io.stderr:write("Test finished successfully.\n")
-    awesome.quit()
-    return
+    return runner.skip("no terminal available for test clients")
 end
 
-carousel.scroll_duration = 0
 
 local tag
 local c1, c2, c3

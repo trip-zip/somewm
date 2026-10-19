@@ -35,6 +35,8 @@
 #include "color.h"
 #include "objects/window.h"
 #include "shadow.h"
+#include "render.h"
+#include "widget.h"
 
 /* Forward declarations */
 typedef struct screen_t screen_t;
@@ -150,24 +152,51 @@ struct client_t
     /** Wayland surface union */
     union {
         struct wlr_xdg_surface *xdg;
-#ifdef XWAYLAND
         struct wlr_xwayland_surface *xwayland;
-#endif
     } surface;
     /** Scene tree for this client */
     struct wlr_scene_tree *scene;
+    /** The render_state currently borrowing scene (render.h owner token) */
+    void *render_owner;
+    /** The surface leaf's last solved box, layout coordinates: what the
+     * configure leg sends and clips to. Empty until the first frame that
+     * declares the client. */
+    struct wlr_box surface_box;
+    /* X11 requests are content intent, separate from authored frame geometry.
+     * The measured frame/content pair comes from one completed Clay solve. */
+    struct {
+        struct wlr_box requested, frame, content;
+        uint32_t serial;
+        uint16_t mask;
+        bool pending;
+    } x11_configure;
+    /** The size the client's last commit drew, when it is not the size of
+     * the configure that commit acknowledged; 0,0 when they match. The
+     * composite draws this size (awful.client.clay, _committed_size). */
+    int committed_width, committed_height;
+    /** Realized crop relative to surface_box; width 0 means no crop. */
+    struct wlr_box surface_clip;
+    /** The corner radii the renderer last handed window.c for the surface
+     * (render.h corners), logical pixels, zeros for square corners. */
+    float surface_radii[4];
+    /** The shape property: a registry ref of its function, 0 for none, or
+     * its radius, 0 for none. */
+    int shape_ref;
+    float shape_radius;
     /** Scene surface node */
     struct wlr_scene_tree *scene_surface;
     /** Popup parent tree: tracks scene_surface's position but is exempt
      * from client_get_clip()'s content clip (mirrors LayerSurface::popups),
      * since context menus routinely extend beyond the parent's bounds. */
-    struct wlr_scene_tree *popups;
-    /** Border rectangles */
-    struct wlr_scene_rect *border[4];
+    /** C-side border recolor (focus tracking): the declare pass reads this
+     * when the Lua border_color property was never set. */
+    float border_rgba[4];
+    bool border_rgba_set;
+    bool shape_mask_warned;
     /** Shadow configuration (NULL = use defaults) */
     shadow_config_t *shadow_config;
-    /** Shadow scene nodes */
-    shadow_nodes_t shadow;
+    /** Native shadow style; the renderer owns shared tiles. */
+    struct render_shadow shadow;
     /** Wayland listeners */
     struct wl_listener initial_commit; /* For initial XDG commit before scene surface exists */
     struct wl_listener commit;         /* For subsequent commits after scene surface exists */
@@ -180,13 +209,11 @@ struct client_t
     struct wl_listener request_fullscreen;  /* Renamed to avoid conflict with bool fullscreen */
     struct wl_listener set_decoration_mode;
     struct wl_listener destroy_decoration;
-#ifdef XWAYLAND
     struct wl_listener activate;
     struct wl_listener associate;
     struct wl_listener dissociate;
     struct wl_listener configure;
     struct wl_listener set_hints;
-#endif
     /** Decoration */
     struct wlr_xdg_toplevel_decoration_v1 *decoration;
     struct wlr_foreign_toplevel_handle_v1 *toplevel_handle;
@@ -197,10 +224,12 @@ struct client_t
     struct wl_listener foreign_request_minimize;
     /** Pending resize serial for Wayland configure */
     uint32_t resize;
-    /** Set when we re-sent a configure because actual geometry didn't match
-     *  the acked configure. Prevents infinite loop with clients that
-     *  intentionally render smaller (e.g. terminals rounding to cell size). */
-    bool configure_resent;
+    /** Re-sends of the acknowledged size since the committed size last
+     * changed, when the last one went out (monotonic ms) and the timer that
+     * sends the next (configure_retry() in window.c). */
+    int configure_retries;
+    int64_t configure_retry_msec;
+    struct wl_event_source *configure_retry;
     /** Previous geometry for restore */
     area_t prev;
     /** Size bounds */
@@ -219,11 +248,8 @@ struct client_t
     /** Monitor this client is on (somewm addition) */
     Monitor *mon;
     /* c->tags bitmask removed - tags now managed by arrays (tag->clients) */
-    /** Border width (somewm compat - duplicates border_width from WINDOW_OBJECT_HEADER) */
-    unsigned int bw;
-    /** Floating state removed - now managed entirely by Lua property system (AwesomeWM-compatible).
-     * C code queries floating state via some_client_get_floating() which calls Lua's c.floating property.
-     * This matches AwesomeWM where C doesn't store floating state. */
+    /** Named scalar properties owned by the client across Lua hot reloads. */
+    struct client_xproperty *xproperties;
     /** Client name */
     char *name, *alt_name, *icon_name, *alt_icon_name;
     /** WM_CLASS stuff */
@@ -314,6 +340,8 @@ struct client_t
         int max_aspect_num, max_aspect_den;
         int win_gravity;
     } size_hints;
+    /** An XDG toplevel's min and max at its last commit, to tell a change. */
+    int32_t xdg_bounds[4];
 
     /* X11 visualtype - not needed for Wayland */
     /* xcb_visualtype_t *visualtype; */
@@ -337,8 +365,7 @@ struct client_t
         uint16_t size;
         /** The drawable for this bar. */
         drawable_t *drawable;
-        /** Scene buffer for rendering (Wayland-specific) */
-        struct wlr_scene_buffer *scene_buffer;
+        struct widget_tree widgets;
     } titlebar[CLIENT_TITLEBAR_COUNT];
     /** Motif WM hints, with an additional MWM_HINTS_AWESOME_SET bit */
     motif_wm_hints_t motif_wm_hints;
@@ -366,8 +393,6 @@ LUA_OBJECT_FUNCS(client_class, client_t, client)
 bool client_on_selected_tags(client_t *);
 bool clients_share_tags(client_t *, client_t *);
 client_t * client_getbywin(xcb_window_t);
-client_t * client_getbynofocuswin(xcb_window_t);
-client_t * client_getbyframewin(xcb_window_t);
 
 void client_ban(client_t *);
 void client_ban_unfocus(client_t *);
@@ -399,28 +424,26 @@ void client_set_startup_id(lua_State *L, int, char *);
 void client_set_alt_name(lua_State *L, int, char *);
 void client_set_group_window(lua_State *, int, uint32_t);  /* Changed from xcb_window_t */
 /* TODO: Define cairo_surface_array_t or use inline struct */
-/* void client_set_icons(client_t *, cairo_surface_array_t); */
-/* void client_set_icon_from_pixmaps(client_t *, xcb_pixmap_t, xcb_pixmap_t); */
 void client_set_skip_taskbar(lua_State *, int, bool);
 void client_focus(client_t *);
 bool client_focus_update(client_t *);
 void client_focus_refresh(void);
 void client_refresh(void);
+void client_border_rgba(client_t *, float out[4]);
+void client_set_border_color(client_t *, const float color[4]);
+int client_border(client_t *);
 void client_destroy_later(void);
 bool client_hasproto(client_t *, uint32_t);  /* Changed from xcb_atom_t */
 void client_ignore_enterleave_events(void);
 void client_restore_enterleave_events(void);
-void client_refresh_partial(client_t *, int16_t, int16_t, uint16_t, uint16_t);
 void client_class_setup(lua_State *);
-void client_send_configure(client_t *);
 void client_find_transient_for(client_t *);
 void client_emit_scanned(void);
 void client_emit_scanning(void);
-drawable_t *client_get_drawable(client_t *, int, int);
 drawable_t *client_get_drawable_offset(client_t *, int *, int *);
 area_t client_get_undecorated_geometry(client_t *);
-void client_apply_opacity_to_scene(client_t *, float);
-void client_update_titlebar_positions(client_t *);
+void client_set_solved_geometry(client_t *c, area_t geometry);
+bool client_titlebar_host(client_t *c, drawable_t *d, struct widget_host *out);
 
 /* Forward declarations for inline functions
  * Note: luaA_object_emit_signal() is declared in awm_luaobject.h (included above) */

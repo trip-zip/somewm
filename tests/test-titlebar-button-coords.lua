@@ -21,10 +21,7 @@ local VPOINTER = utils.binary_or_skip("./build-test/test-virtual-pointer-client"
 if not VPOINTER then return end
 
 if not test_client.is_available() then
-    io.stderr:write("SKIP: no terminal available\n")
-    io.stderr:write("Test finished successfully.\n")
-    awesome.quit()
-    return
+    return runner.skip("no terminal available")
 end
 
 local SIZE = 24

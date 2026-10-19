@@ -79,7 +79,7 @@ describe("awful.permissions.tag", function()
 
     local permissions = require("awful.permissions")
 
-    -- Regression for issue #575: a transient client requests a tag while
+    -- Regression: a transient client requests a tag while
     -- its parent (transient_for) has no screen assigned yet and no tags.
     -- The handler must not dereference the parent's nil screen.
     it("falls back instead of crashing when transient_for.screen is nil", function()

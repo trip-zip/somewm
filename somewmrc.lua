@@ -162,7 +162,6 @@ local modkey = "Mod4"
 -- between positions on layout changes, mwfact tweaks, client spawn/close, etc.
 -- local layout_anim = require("somewm.layout_animation")
 -- layout_anim.duration = 0.15
--- layout_anim.easing   = "ease-out-cubic"
 
 -- Custom IPC commands. After reload, callable as:
 --   somewm-client run focused-tag
@@ -267,8 +266,7 @@ screen.connect_signal("request::wallpaper", function(s)
                 },
                 valign = "center",
                 halign = "center",
-                tiled  = false,
-                widget = wibox.container.tile,
+                widget = wibox.container.place,
             }
         }
     else
@@ -394,7 +392,17 @@ screen.connect_signal("request::desktop_decoration", function(s)
                     widget = wibox.container.margin,
                 },
                 {
-                    { id = "text_role", widget = wibox.widget.textbox },
+                    -- A paused scroll clips the title, so a task can shrink
+                    -- below its title, which then ends in an ellipsis.
+                    {
+                        {
+                            { id = "text_role", widget = wibox.widget.textbox },
+                            id     = "title_role",
+                            widget = wibox.container.scroll.horizontal,
+                        },
+                        halign = "left",
+                        widget = wibox.container.place,
+                    },
                     id     = "text_margin_role",
                     right  = dpi(6),
                     widget = wibox.container.margin,
@@ -403,6 +411,9 @@ screen.connect_signal("request::desktop_decoration", function(s)
             },
             id     = "background_role",
             widget = wibox.container.background,
+            create_callback = function(self)
+                self:get_children_by_id("title_role")[1]:pause()
+            end,
         },
     }
 
@@ -410,27 +421,25 @@ screen.connect_signal("request::desktop_decoration", function(s)
         position  = "top",
         screen    = s,
         widget    = {
-            layout = wibox.layout.stack,
+            layout = wibox.layout.align.horizontal,
+            expand = "none",
             {
-                layout = wibox.layout.align.horizontal,
-                {
-                    layout = wibox.layout.fixed.horizontal,
-                    mylauncher,
-                    s.mytaglist,
-                    s.mypromptbox,
-                    s.mytasklist,
-                },
-                { widget = wibox.container.background },
-                {
-                    layout = wibox.layout.fixed.horizontal,
-                    wibox.widget.systray(),
-                    s.mylayoutbox,
-                },
+                layout = wibox.layout.fixed.horizontal,
+                mylauncher,
+                s.mytaglist,
+                s.mypromptbox,
+                s.mytasklist,
             },
             {
                 mytextclock,
-                halign = "center",
-                widget = wibox.container.place,
+                top    = dpi(6),
+                bottom = dpi(6),
+                widget = wibox.container.margin,
+            },
+            {
+                layout = wibox.layout.fixed.horizontal,
+                wibox.widget.systray(),
+                s.mylayoutbox,
             },
         }
     }
@@ -480,6 +489,13 @@ awful.keyboard.append_global_keybindings({
         key         = "Escape",
         on_press    = function() awesome.lock() end,
         description = "lock screen",
+        group       = "somewm",
+    },
+    awful.key {
+        modifiers   = { modkey, "Shift" },
+        key         = "i",
+        on_press    = function() require("somewm.inspector").toggle() end,
+        description = "toggle the clay inspector",
         group       = "somewm",
     },
     awful.key {
@@ -1062,7 +1078,11 @@ client.connect_signal("request::titlebars", function(c)
 
     awful.titlebar(c).widget = {
         {
-            awful.titlebar.widget.iconwidget(c),
+            {
+                awful.titlebar.widget.iconwidget(c),
+                left   = dpi(6),
+                widget = wibox.container.margin,
+            },
             buttons = buttons,
             layout  = wibox.layout.fixed.horizontal
         },

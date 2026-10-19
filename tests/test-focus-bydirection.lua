@@ -1,4 +1,4 @@
--- Test for https://github.com/awesomeWM/awesome/pull/3225
+-- Test directional focus between horizontally arranged clients.
 
 local runner = require("_runner")
 local awful = require("awful")
@@ -6,10 +6,7 @@ local test_client = require("_client")
 
 -- Skip if no test client available
 if not test_client.is_available() then
-    io.stderr:write("SKIP: no terminal available for test clients\n")
-    io.stderr:write("Test finished successfully.\n")
-    awesome.quit()
-    return
+    return runner.skip("no terminal available for test clients")
 end
 
 -- Ensure clients are placed next to each other horizontally

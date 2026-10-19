@@ -1,0 +1,21 @@
+output
+  roots flow 1 floating 1 derived 0 legacy 0
+  Clay__RootContainer w=fixed(1280) output h=fixed(720) output row
+    OUTPUT WL-1 w=fixed(1280) output h=fixed(720) output column
+      WORKAREA - w=grow h=grow row
+        CLIENT CLIENT_A w=grow h=grow column pad 2,2,2,2
+          TITLEBAR CLIENT_A converted clip w=grow h=fixed(30) theme row
+            wibox.container.margin w=fit h=grow row pad 6,0,0,0
+              awful.widget.clienticon w=fit h=grow row
+                image image 512x512 w=fit theme h=fit
+            wibox.widget.textbox w=grow h=grow row
+              text "Example" font=1
+            wibox.layout.fixed w=fit h=grow row
+              wibox.widget.imagebox w=fit h=grow row
+                image image 240x240 w=fit theme h=fit
+              wibox.widget.imagebox w=fit h=grow row
+                image image 240x240 w=fit theme h=fit
+              wibox.widget.imagebox w=fit h=grow row
+                image image 240x240 w=fit theme h=fit
+          SLOT CLIENT_A w=grow h=grow row
+  SURFACE CLIENT_A w=grow h=grow attach PARENT band 20 custom

@@ -1,0 +1,37 @@
+output
+  roots flow 1 floating 0 derived 0 legacy 0
+  Clay__RootContainer w=fixed(1280) output h=fixed(720) output row
+    OUTPUT WL-1 w=fixed(1280) output h=fixed(720) output column
+      WIBAR screen 1 converted clip w=grow h=fixed(32) theme row
+        - spacer clip w=grow h=grow row
+          - spacer w=percent(1) user h=grow row
+            wibox.layout.fixed w=fit h=grow row
+              wibox.widget.imagebox w=fit h=grow row
+                image image 24x24 w=fit theme h=fit
+              awful.widget.taglist w=fit h=grow row
+                background_role w=fit h=grow row pad 4,4,0,0
+                  text_role w=fit h=grow row
+                    text "dev" font=1
+                background_role w=fit h=grow row pad 4,4,0,0
+                  text_role w=fit h=grow row
+                    text "web" font=1
+                background_role w=fit h=grow row pad 4,4,0,0
+                  text_role w=fit h=grow row
+                    text "chat" font=1
+                background_role w=fit h=grow row pad 4,4,0,0
+                  text_role w=fit h=grow row
+                    text "media" font=1
+                background_role w=fit h=grow row pad 4,4,0,0
+                  text_role w=fit h=grow row
+                    text "misc" font=1
+        wibox.container.margin w=fit h=grow row pad 0,0,6,6
+          wibox.container.background w=fit h=grow row pad 8,8,0,0
+            wibox.widget.textbox w=fit h=grow row
+              text "Fri Sep 12  09:14" font=1
+        - spacer clip w=grow h=grow row
+          - spacer w=percent(1) user h=grow row
+            wibox.layout.fixed w=fit h=grow row
+              wibox.widget.systray w=fit theme h=grow row
+              imagebox w=fit h=grow row
+                image image 240x240 w=fit theme h=fit
+      WORKAREA - w=grow h=grow row

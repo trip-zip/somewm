@@ -1,16 +1,26 @@
 {
   lib,
   stdenv,
+  fetchurl,
   cairo,
   dbus,
   gdk-pixbuf,
   glib,
+  glslang,
   gobject-introspection,
   harfbuzz,
+  hwdata,
+  lcms2,
+  libdisplay-info,
   libdrm,
+  libgbm,
+  libGL,
   libinput,
+  libliftoff,
   librsvg,
   libxcb,
+  libxcb-errors,
+  libxcb-render-util,
   libxcb-util,
   libxcb-wm,
   libxkbcommon,
@@ -20,11 +30,12 @@
   ninja,
   pam,
   pango,
+  pixman,
   pkg-config,
+  seatd,
   wayland,
   wayland-protocols,
   wayland-scanner,
-  wlroots_0_20,
   xwayland,
   gtk3Support ? true,
   gtk3 ? null,
@@ -41,6 +52,12 @@ let
     with ps;
     [lgi ldbus] ++ (extraLuaPackages ps)
   );
+
+  # The tarball subprojects/wlroots.wrap names, so meson builds it without a download.
+  wlrootsSrc = fetchurl {
+    url = "https://gitlab.freedesktop.org/wlroots/wlroots/-/releases/0.20.2/downloads/wlroots-0.20.2.tar.gz";
+    sha256 = "80c567d2ed4efb2cfa6b077f22c7a710d9c78ba4e185a75e8694001114af0733";
+  };
 in
 stdenv.mkDerivation {
   pname = "somewm";
@@ -51,7 +68,9 @@ stdenv.mkDerivation {
   strictDeps = true;
 
   nativeBuildInputs = [
+    glslang
     gobject-introspection
+    hwdata
     makeWrapper
     meson
     ninja
@@ -66,25 +85,44 @@ stdenv.mkDerivation {
     gdk-pixbuf
     glib
     harfbuzz
+    lcms2
+    libdisplay-info
     libdrm
+    libgbm
+    libGL
     libinput
+    libliftoff
     librsvg
     libxkbcommon
     luajit
     luaEnv
     pam
     pango
+    pixman
+    seatd
     wayland
     wayland-protocols
-    wlroots_0_20
     libxcb
+    libxcb-errors
+    libxcb-render-util
     libxcb-wm
     libxcb-util
     xwayland
   ]
   ++ lib.optional gtk3Support gtk3;
 
-  mesonFlags = [ "-Dsystemd=disabled" ];
+  preConfigure = ''
+    mkdir -p subprojects/packagecache
+    cp ${wlrootsSrc} subprojects/packagecache/wlroots-0.20.2.tar.gz
+  '';
+
+  mesonFlags = [
+    "-Dsystemd=disabled"
+    "--wrap-mode=nodownload"
+  ];
+
+  # wlroots is linked in; its headers, static library and .pc are not installed.
+  mesonInstallFlags = [ "--skip-subprojects" ];
 
   postFixup =
     let

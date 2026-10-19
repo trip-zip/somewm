@@ -8,7 +8,7 @@
 --
 -- The wibox accepts arguments for the calendar widget: `font`, `spacing`, `week_numbers`,
 -- `start_sunday`, `long_weekdays`.
--- It also accepts the extra arguments `opacity`, `bg`, `screen` and `position`.
+-- It also accepts the extra arguments `opacity`, `bg`, `screen`, `position`, `margin` and `width`.
 -- `opacity` and `bg` apply to the wibox itself, they are mainly useful to manage opacity
 -- by setting `opacity` for the false opacity or setting `bg="#00000000"` for compositor opacity.
 -- The `screen` argument forces the display of the wibox to this screen (instead of the focused screen by default).
@@ -31,6 +31,7 @@ local gears = require("gears")
 local wibox = require("wibox")
 local base = require("wibox.widget.base")
 local ascreen = require("awful.screen")
+local apopup = require("awful.popup")
 local abutton = require("awful.button")
 local beautiful = require("beautiful")
 
@@ -44,6 +45,12 @@ local styles = { "year", "month", "yearheader", "monthheader", "header", "weekda
 -- Each table property can also be defined by `beautiful.calendar_[flag]_[property]=val`.
 -- @beautiful beautiful.calendar_style
 -- @tparam cell_properties table Table of cell style properties
+
+--- The calendar width, when the popup is created without a `width`.
+--
+-- With neither, the popup follows the calendar's content.
+-- @beautiful beautiful.calendar_popup_width
+-- @tparam[opt=nil] number calendar_popup_width
 
 --- Cell properties.
 --
@@ -168,43 +175,14 @@ local function parse_all_options(args)
     return props
 end
 
---- Make the geometry of a wibox
--- @tparam widget widget Calendar widget
--- @tparam object screen Screen where to display the calendar (default to focused)
--- @tparam string position Two characters position of the calendar (default "cc")
--- @treturn number,number,number,number Geometry of the calendar, list of x, y, width, height
-local function get_geometry(widget, screen, position)
-    local pos = position or "cc"
-    local s = screen or ascreen.focused()
-    local margin = widget._calendar_margin or 0
-    local wa = s.workarea
-    local width, height = widget:fit({screen=s, dpi=s.dpi}, wa.width, wa.height)
-
-    width  = width  < wa.width  and width  or wa.width
-    height = height < wa.height and height or wa.height
-
-
-    -- Set to position: pos = tl, tc, tr
-    --                        cl, cc, cr
-    --                        bl, bc, br
-    local x,y
-    if pos:sub(1,1) == "t" then
-        y = wa.y + margin
-    elseif pos:sub(1,1) == "b" then
-        y = wa.y + wa.height - (height + margin)
-    else  --if pos:sub(1,1) == "c" then
-        y = wa.y + math.floor((wa.height - height) / 2)
-    end
-    if pos:sub(2,2) == "l" then
-        x = wa.x + margin
-    elseif pos:sub(2,2) == "r" then
-        x = wa.x + wa.width - (width + margin)
-    else  --if pos:sub(2,2) == "c" then
-        x = wa.x + math.floor((wa.width - width) / 2)
-    end
-
-    return {x=x, y=y, width=width, height=height}
-end
+-- The awful.placement point for each two-character position, and the sign of
+-- the margin on each axis: an attachment offset moves right and down at every
+-- point (declare.c declare_attachment), so it points inward here.
+local placements = {
+    tl = { "top_left",     1,  1 }, tc = { "top",      0,  1 }, tr = { "top_right",    -1,  1 },
+    cl = { "left",         1,  0 }, cc = { "centered", 0,  0 }, cr = { "right",        -1,  0 },
+    bl = { "bottom_left",  1, -1 }, bc = { "bottom",   0, -1 }, br = { "bottom_right", -1, -1 },
+}
 
 --- Call the calendar with offset
 -- @tparam number offset Offset with respect to current month or year
@@ -231,11 +209,12 @@ function calendar_popup:call_calendar(offset, position, screen)
         date = {year=raw_date.year + self.offset}
     end
 
-    -- set date and screen before updating geometry
     widget:set_date(date)
     self:set_screen(s)
-    -- update geometry (depends on date and screen)
-    self:geometry(get_geometry(widget, s, pos))
+    local place = assert(placements[pos], "unknown calendar position: " .. tostring(pos))
+    local margin = self._private.margin
+    self:set_offset { x = place[2] * margin, y = place[3] * margin }
+    self:set_placement(place[1])
     return self
 end
 
@@ -305,6 +284,7 @@ end
 -- @tparam string args.font Calendar font
 -- @tparam number args.spacing Calendar spacing
 -- @tparam number args.margin Margin around calendar widget
+-- @tparam number args.width Calendar width
 -- @tparam boolean args.week_numbers Show weeknumbers
 -- @tparam boolean args.start_sunday Start week on Sunday
 -- @tparam boolean args.long_weekdays Format the weekdays with three characters instead of two
@@ -320,27 +300,30 @@ end
 local function get_cal_wibox(caltype, args)
     args = args or {}
 
-    local ret = wibox{ ontop   = true,
-                       opacity = args.opacity or 1,
-                       bg      = args.bg or gears.color.transparent
+    local ret = apopup {
+        ontop   = true,
+        opacity = args.opacity or 1,
+        bg      = args.bg or gears.color.transparent,
+        screen  = args.screen,
+        honor_workarea = true,
+        visible = false,
+        widget  = wibox.widget {
+            font          = args.font or beautiful.font,
+            spacing       = args.spacing,
+            week_numbers  = args.week_numbers,
+            start_sunday  = args.start_sunday,
+            long_weekdays = args.long_weekdays,
+            forced_width  = args.width or beautiful.calendar_popup_width,
+            fn_embed      = embed(parse_all_options(args)),
+            widget = caltype == "year" and wibox.widget.calendar.year or wibox.widget.calendar.month
+        },
     }
-    gears.table.crush(ret, calendar_popup, false)
+    -- Raw: the month or year `offset` is the calendar's own field, apart
+    -- from the popup's `offset` property, which carries the margin.
+    gears.table.crush(ret, calendar_popup, true)
 
-    ret.offset   = 0
-    ret.position = args.position  or "cc"
-    ret.screen   = args.screen
-
-    local widget = wibox.widget {
-        font          = args.font or beautiful.font,
-        spacing       = args.spacing,
-        week_numbers  = args.week_numbers,
-        start_sunday  = args.start_sunday,
-        long_weekdays = args.long_weekdays,
-        fn_embed      = embed(parse_all_options(args)),
-        _calendar_margin = args.margin,
-        widget = caltype == "year" and wibox.widget.calendar.year or wibox.widget.calendar.month
-    }
-    ret:set_widget(widget)
+    ret.position = args.position or "cc"
+    ret._private.margin = args.margin or 0
 
     ret.buttons = {
         abutton({ }, 1, function ()
@@ -377,6 +360,7 @@ end
 -- @tparam string args.font Calendar font
 -- @tparam number args.spacing Calendar spacing
 -- @tparam number args.margin Margin around calendar widget
+-- @tparam number args.width Calendar width
 -- @tparam boolean args.week_numbers Show weeknumbers
 -- @tparam boolean args.start_sunday Start week on Sunday
 -- @tparam boolean args.long_weekdays Format the weekdays with three characters instead of two
@@ -389,6 +373,7 @@ end
 -- @treturn wibox A wibox containing the calendar
 -- @constructorfct awful.widget.calendar_popup.month
 -- @usebeautiful beautiful.calendar_style
+-- @usebeautiful beautiful.calendar_popup_width
 function calendar_popup.month(args)
     return get_cal_wibox("month", args)
 end
@@ -411,6 +396,7 @@ end
 -- @tparam string args.font Calendar font
 -- @tparam number args.spacing Calendar spacing
 -- @tparam number args.margin Margin around calendar widget
+-- @tparam number args.width Calendar width
 -- @tparam boolean args.week_numbers Show weeknumbers
 -- @tparam boolean args.start_sunday Start week on Sunday
 -- @tparam boolean args.long_weekdays Format the weekdays with three characters instead of two
@@ -425,6 +411,7 @@ end
 -- @tparam table args.style_focus Cell style for the current day cell (see `cell_properties`)
 -- @treturn wibox A wibox containing the calendar
 -- @constructorfct awful.widget.calendar_popup.year
+-- @usebeautiful beautiful.calendar_popup_width
 function calendar_popup.year(args)
     return get_cal_wibox("year", args)
 end

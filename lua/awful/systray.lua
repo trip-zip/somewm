@@ -40,6 +40,7 @@ local systray = {
         bus = nil,
         watcher_proxy = nil,
         items = {},  -- item_key -> item object
+        pending_items = {},
         item_data = {},  -- item -> {item_key, icon_surface} (Lua-side data)
         host_registered = false,
         idle_id = nil,  -- a GLib idle armed but not yet fired
@@ -334,12 +335,19 @@ local function register_item(service, path)
     path = path or "/StatusNotifierItem"
 
     local item_key = service .. path
-    if systray._private.items[item_key] then
+    if systray._private.items[item_key] or systray._private.pending_items[item_key] then
         -- Already registered
         return
     end
 
+    local pending = systray._private.pending_items
+    local claim = {}
+    pending[item_key] = claim
     fetch_item_properties(service, path, function(props)
+        if pending ~= systray._private.pending_items or pending[item_key] ~= claim then
+            return
+        end
+        pending[item_key] = nil
         if not props then
             return
         end
@@ -569,7 +577,7 @@ local function register_item(service, path)
             end
         end
 
-        -- Set baseline icon fingerprint for badge detection (BEH-7)
+        -- Set baseline icon fingerprint for badge detection
         item_data.baseline_icon_fingerprint = systray._compute_icon_fingerprint(
             icon_name, initial_raw_data)
 
@@ -863,6 +871,7 @@ unregister_item = function(service, path)
     path = path or "/StatusNotifierItem"
     local item_key = service .. path
 
+    systray._private.pending_items[item_key] = nil
     local item = systray._private.items[item_key]
     if item then
         systray._private.items[item_key] = nil
@@ -1022,6 +1031,7 @@ local function watch_for_watcher()
             for key, item in pairs(systray._private.items) do
                 capi.awesome.emit_signal("systray::removed", item)
             end
+            systray._private.pending_items = {}
             systray._private.items = {}
             systray._private.item_data = {}  -- Clear Lua-side data too
         end)
@@ -1132,6 +1142,20 @@ end
 
 local DBUSMENU_IFACE = "com.canonical.dbusmenu"
 
+-- A DBusMenu separator as an awful.menu entry: a line that hovering does not
+-- highlight and clicking does not run.
+local function separator_entry(_, args)
+    local separator = require("wibox.widget.separator")
+    return {
+        widget = separator { orientation = "horizontal" },
+        height = require("beautiful.xresources").apply_dpi(8),
+        theme = setmetatable({
+            bg_focus = args.theme.bg_normal,
+            fg_focus = args.theme.fg_normal,
+        }, { __index = args.theme }),
+    }
+end
+
 --- Parse a DBusMenu layout recursively.
 -- @tparam GVariant layout The menu layout variant (ia{sv}av format)
 -- @tparam table cache Property cache from GetLayout
@@ -1182,8 +1206,7 @@ local function parse_dbusmenu_layout(layout, cache)
             label = label:gsub("_", "")
 
             if item_type == "separator" then
-                -- Separator
-                table.insert(items, { "---" })
+                table.insert(items, { new = separator_entry })
             elseif child_children:n_children() > 0 then
                 -- Submenu
                 local submenu = parse_dbusmenu_layout(child_variant, cache)
@@ -1202,7 +1225,7 @@ local function parse_dbusmenu_layout(layout, cache)
                 })
             end
         elseif item_type == "separator" and visible then
-            table.insert(items, { "---" })
+            table.insert(items, { new = separator_entry })
         end
     end
 
@@ -1335,6 +1358,7 @@ function systray._cleanup()
     end
 
     -- Clear state
+    systray._private.pending_items = {}
     systray._private.items = {}
     systray._private.item_data = {}
     systray._private.signal_sub_ids = {}

@@ -33,15 +33,12 @@
 #include "common/util.h"
 #include "globalconf.h"
 #include "somewm_api.h"
+#include "input.h"
+#include "declare.h"
 
-#include <wlr/types/wlr_cursor.h>
-#include <wlr/types/wlr_xcursor_manager.h>
 #include <string.h>
 #include <stdbool.h>
 #include <unistd.h>
-
-/* External cursor manager from somewm.c */
-extern struct wlr_xcursor_manager *cursor_mgr;
 
 /* Track mousegrabber state */
 static bool mousegrabber_active = false;
@@ -92,10 +89,8 @@ mousegrabber_handleevent(lua_State *L, int x, int y, uint16_t mask)
 void
 mousegrabber_hot_reload(lua_State *L)
 {
-    struct wlr_cursor *cursor = some_get_cursor();
-
-    if (cursor && cursor_mgr && mousegrabber_active)
-        some_apply_cursor("default");
+    if (mousegrabber_active)
+        cursor_set_xcursor("default");
 
     free(mousegrabber_cursor_name);
     mousegrabber_cursor_name = NULL;
@@ -112,13 +107,8 @@ mousegrabber_hot_reload(lua_State *L)
 int
 luaA_mousegrabber_stop(lua_State *L)
 {
-    struct wlr_cursor *cursor;
-
     /* Restore default cursor */
-    cursor = some_get_cursor();
-    if (cursor && cursor_mgr) {
-        some_apply_cursor("default");
-    }
+    cursor_set_xcursor("default");
 
     /* Free cursor name if set */
     if (mousegrabber_cursor_name) {
@@ -135,6 +125,7 @@ luaA_mousegrabber_stop(lua_State *L)
     /* Mark as inactive */
     mousegrabber_active = false;
 
+    declare_mark_all_dirty();
     return 0;
 }
 
@@ -160,7 +151,6 @@ luaA_mousegrabber_stop(lua_State *L)
 static int
 luaA_mousegrabber_run(lua_State *L)
 {
-    struct wlr_cursor *cursor;
     const char *cursor_name = NULL;
 
     log_debug("mousegrabber_run called");
@@ -188,21 +178,19 @@ luaA_mousegrabber_run(lua_State *L)
     }
 
     /* Set cursor if specified */
-    cursor = some_get_cursor();
-    if (cursor && cursor_mgr && cursor_name) {
+    if (cursor_name) {
         /* Store cursor name for cleanup */
         if (mousegrabber_cursor_name) {
             free(mousegrabber_cursor_name);
         }
         mousegrabber_cursor_name = strdup(cursor_name);
-
-        /* Set the cursor */
-        some_apply_cursor(cursor_name);
+        cursor_set_xcursor(cursor_name);
     }
 
     /* Mark mousegrabber as active */
     mousegrabber_active = true;
 
+    declare_mark_all_dirty();
     return 0;
 }
 

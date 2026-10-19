@@ -24,10 +24,7 @@ local VPOINTER    = "./build-test/test-virtual-pointer-client"
 local CLASS       = "grab_click"
 
 if os.getenv("WLR_BACKENDS") == "headless" then
-    io.stderr:write("SKIP: XWayland tests require visual mode (HEADLESS=0)\n")
-    io.stderr:write("Test finished successfully.\n")
-    awesome.quit()
-    return
+    return runner.skip("XWayland tests require visual mode (HEADLESS=0)")
 end
 
 local function file_exists(path)
@@ -37,10 +34,7 @@ end
 
 for _, bin in ipairs({ GRAB_CLIENT, VPOINTER }) do
     if not file_exists(bin) then
-        io.stderr:write("SKIP: " .. bin .. " not found (run meson compile first)\n")
-        io.stderr:write("Test finished successfully.\n")
-        awesome.quit()
-        return
+        return runner.skip(bin .. " not found (run meson compile first)")
     end
 end
 

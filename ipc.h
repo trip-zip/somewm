@@ -21,13 +21,6 @@ int ipc_init(struct wl_event_loop *event_loop);
  */
 void ipc_cleanup(void);
 
-/**
- * Get the IPC socket path
- * Useful for error messages and debugging
- *
- * @return Path to the IPC socket file
- */
-const char *ipc_get_socket_path(void);
 
 /**
  * Send response to IPC client

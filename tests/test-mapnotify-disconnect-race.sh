@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
 # Reproducer for the wl_display_flush_clients re-entrance crash inside
-# mapnotify (window.c). See trip-zip/somewm#530.
+# mapnotify (window.c).
 #
 # Spawns a nested somewm and repeatedly launches a tiny xdg-shell client that
 # disconnects right after its mapping commit. Without the fix, one of the

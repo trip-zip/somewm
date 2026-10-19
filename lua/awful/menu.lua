@@ -147,82 +147,32 @@ local function load_theme(a, b)
 end
 
 
-local function item_position(self, child)
-    local a, b = "height", "width"
-    local dir = self.layout.dir or "y"
-    if dir == "x" then  a, b = b, a  end
-
-    local in_dir, other = 0, self[b]
-    local num = gtable.hasitem(self.child, child)
-    if num then
-        for i = 0, num - 1 do
-            local item = self.items[i]
-            if item then
-                other = math.max(other, item[b])
-                in_dir = in_dir + item[a]
-            end
-        end
-    end
-    local w, h = other, in_dir
-    if dir == "x" then  w, h = h, w  end
-    return w, h
-end
-
-
-local function set_coords(self, s, m_coords)
-    local s_geometry = s.workarea
-    local screen_w = s_geometry.x + s_geometry.width
-    local screen_h = s_geometry.y + s_geometry.height
-
-    self.width = self.wibox.width
-    self.height = self.wibox.height
-
-    self.x = self.wibox.x
-    self.y = self.wibox.y
-
+-- Menus fit their declared items. Submenus attach to the opening item;
+-- top-level menus use the pointer (or the caller's explicit point) as input.
+local function set_coords(self, s, coords)
+    self.wibox.screen = s
+    local attachment = require('awful._attachment')
     if self.parent then
-        local w, h = item_position(self.parent, self)
-        w = w + self.parent.theme.border_width
-
-        self.y = self.parent.y + h + self.height > screen_h and
-                 screen_h - self.height or self.parent.y + h
-        self.x = self.parent.x + w + self.width > screen_w and
-                 self.parent.x - self.width or self.parent.x + w
-    else
-        if m_coords == nil then
-            m_coords = capi.mouse.coords()
-            m_coords.x = m_coords.x + 1
-            m_coords.y = m_coords.y + 1
+        local index = gtable.hasitem(self.parent.child, self)
+        local item = index and self.parent.items[index]
+        if item then
+            attachment.next_to(self.wibox, item._background, {'right'}, {'front'})
         end
-        self.y = m_coords.y < s_geometry.y and s_geometry.y or m_coords.y
-        self.x = m_coords.x < s_geometry.x and s_geometry.x or m_coords.x
-
-        self.y = self.y + self.height > screen_h and
-                 screen_h - self.height or self.y
-        self.x = self.x + self.width  > screen_w and
-                 screen_w - self.width  or self.x
+    else
+        local point=coords or capi.mouse.coords()
+        local origin=s.geometry
+        self.wibox.drawin.attachment={kind=1,parent=0,own=0,
+            x=point.x-origin.x+(coords and 0 or 1),
+            y=point.y-origin.y+(coords and 0 or 1)}
     end
-
-    self.wibox.x = self.x
-    self.wibox.y = self.y
 end
-
 
 local function set_size(self)
-    local in_dir, other, a, b = 0, 0, "height", "width"
-    local dir = self.layout.dir or "y"
-    if dir == "x" then  a, b = b, a  end
     for _, item in ipairs(self.items) do
-        other = math.max(other, item[b])
-        in_dir = in_dir + item[a]
+        item._background.forced_width = item.width
+        item._background.forced_height = item.height
     end
-    self[a], self[b] = in_dir, other
-    if in_dir > 0 and other > 0 then
-        self.wibox[a] = in_dir
-        self.wibox[b] = other
-        return true
-    end
-    return false
+    return #self.items>0
 end
 
 
@@ -771,7 +721,12 @@ function menu.new(args, parent)
         border_width = _menu.theme.border_width,
         type = "popup_menu" })
     _menu.wibox.visible = false
+    _menu.wibox._drawable._attachment_fit = true
     _menu.wibox:set_widget(_menu.layout)
+    _menu.wibox:connect_signal('property::geometry', function()
+        local g=_menu.wibox:geometry()
+        _menu.x,_menu.y,_menu.width,_menu.height=g.x,g.y,g.width,g.height
+    end)
     set_size(_menu)
 
     _menu.x = _menu.wibox.x

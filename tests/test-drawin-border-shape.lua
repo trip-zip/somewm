@@ -1,75 +1,55 @@
----------------------------------------------------------------------------
--- Test: Drawin borders follow shape_bounding
---
--- Regression test for issue #172: borders should be clipped to match
--- the shape_bounding mask, not remain rectangular.
---
--- Verifies properties are correctly set. The C code applies shape to
--- border when both are present - that's an implementation detail verified
--- by code review, not pixel-peeping.
----------------------------------------------------------------------------
-
-local runner = require("_runner")
-local wibox = require("wibox")
-local gears = require("gears")
-
-local test_wibox = nil
-
-local steps = {
-    -- Step 1: Create wibox with shape and border
+local runner = require('_runner')
+local capture = require('_widget_capture')
+local surface = require('gears.surface')
+local wibox = require('wibox')
+local shape = require('gears.shape')
+local box, below
+local function pixel(x, y, color)
+    local r, g, b = capture.read(surface(root.content()), box.x + x, box.y + y)
+    assert(string.format('#%02x%02x%02x', r, g, b) == color,
+        string.format('pixel %d,%d: #%02x%02x%02x expected %s', x,y,r,g,b,color))
+end
+runner.run_steps {
     function()
-        test_wibox = wibox {
-            x = 50, y = 50,
-            width = 200, height = 100,
-            visible = true,
-            bg = "#ff0000",
-            border_width = 4,
-            border_color = "#00ff00",
-            ontop = true,
-            shape = function(cr, w, h)
-                gears.shape.rounded_rect(cr, w, h, 20)
-            end,
-        }
-        io.stderr:write("[TEST] Created wibox with rounded shape and border\n")
+        screen[1].scale = 1
+        below = wibox { x=40, y=40, width=100, height=100, screen=screen[1],
+            visible=true, shadow=false, bg='#0000ff', border_width=0 }
+        box = wibox { x=50, y=50, width=40, height=40, screen=screen[1],
+            visible=true, shadow=false, bg='#ff0000', border_width=4,
+            border_color='#00ff00', shape=function(cr,w,h) shape.rounded_rect(cr,w,h,12) end }
         return true
     end,
-
-    -- Step 2: Verify border properties are set
-    function()
-        assert(test_wibox.border_width == 4, "border_width should be 4")
-        assert(test_wibox.border_color == "#00ff00", "border_color should be green")
-        io.stderr:write("[PASS] Border properties verified\n")
+    function(count)
+        if count < 5 then return end
+        assert(box.drawin.shape == 8, 'rounded shape is a content radius')
+        pixel(20,20,'#ff0000')
+        pixel(-4,-4,'#0000ff')
+        pixel(20,-2,'#00ff00')
+        box.shape = shape.circle
         return true
     end,
-
-    -- Step 3: Verify shape is set (this is what makes border follow shape)
-    function()
-        assert(test_wibox.shape ~= nil, "shape should be set")
-        assert(type(test_wibox.shape) == "function", "shape should be a function")
-        io.stderr:write("[PASS] Shape property verified\n")
+    function(count)
+        if count < 5 then return end
+        assert(type(box.drawin.shape) == 'function', 'circle is a path recorder')
+        pixel(20,20,'#ff0000')
+        pixel(0,0,'#0000ff')
+        pixel(20,-2,'#00ff00')
+        surface.apply_shape_bounding(box, shape.partially_rounded_rect, true, false, true, false, 12)
         return true
     end,
-
-    -- Step 4: Verify drawable exists and is valid
-    function()
-        local drawable = test_wibox.drawable
-        assert(drawable ~= nil, "drawable should exist")
-        assert(drawable.valid == true, "drawable should be valid")
-        io.stderr:write("[PASS] Drawable exists and is valid\n")
+    function(count)
+        if count < 5 then return end
+        assert(type(box.drawin.shape) == 'function', 'surface helper sets the wibox shape')
+        pixel(-4,-4,'#0000ff')
+        pixel(39,0,'#ff0000')
+        box.shape = nil
         return true
     end,
-
-    -- Step 5: Cleanup
-    function()
-        if test_wibox then
-            test_wibox.visible = false
-            test_wibox = nil
-        end
-        io.stderr:write("[TEST] Cleanup complete\n")
+    function(count)
+        if count < 5 then return end
+        assert(box.drawin.shape == nil, 'nil clears the shape')
+        pixel(0,0,'#ff0000')
+        box.visible, below.visible = false, false
         return true
     end,
 }
-
-runner.run_steps(steps)
-
--- vim: filetype=lua:expandtab:shiftwidth=4:tabstop=8:softtabstop=4:textwidth=80

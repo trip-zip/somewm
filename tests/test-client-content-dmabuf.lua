@@ -1,5 +1,5 @@
 ---------------------------------------------------------------------------
--- Pixel-content test for c.content with a DMA-BUF client (issue #539).
+-- Pixel-content test for c.content with a DMA-BUF client.
 --
 -- The companion C client (test-dmabuf-pattern-client) allocates a linear
 -- ARGB8888 buffer via gbm, fills it with a 4-quadrant pattern (TL=red,
@@ -23,10 +23,7 @@ local async  = require("_async")
 
 local ok_ffi, ffi = pcall(require, "ffi")
 if not ok_ffi then
-    io.stderr:write("SKIP: ffi not available (non-LuaJIT build)\n")
-    io.stderr:write("Test finished successfully.\n")
-    awesome.quit()
-    return
+    return runner.skip("ffi not available (non-LuaJIT build)")
 end
 
 ffi.cdef[[
@@ -55,10 +52,7 @@ end
 
 local BINARY = find_binary()
 if not BINARY then
-    io.stderr:write("SKIP: test-dmabuf-pattern-client not found (gbm dep missing or not built)\n")
-    io.stderr:write("Test finished successfully.\n")
-    awesome.quit()
-    return
+    return runner.skip("test-dmabuf-pattern-client not found (gbm dep missing or not built)")
 end
 
 local function pixel_rgb(raw_surface, x, y)
@@ -85,14 +79,11 @@ runner.run_async(function()
     local c = async.wait_for_client(APP_ID, 5)
     if not c then
         os.execute("kill -9 " .. pid .. " 2>/dev/null")
-        io.stderr:write("SKIP: dmabuf client never appeared (no DRM render node?)\n")
-        io.stderr:write("Test finished successfully.\n")
-        runner.done()
-        return
+        return runner.skip("dmabuf client never appeared (no DRM render node?)")
     end
 
     -- Position the client at a non-zero scene coord. The first version of the
-    -- scene-tree-walk fix (#539) used wlr_scene_node_coords as an "origin" to
+    -- scene-tree-walk fix used wlr_scene_node_coords as an "origin" to
     -- offset buffer positions; that math broke for any client not at (0, 0)
     -- because wlr_scene_node_for_each_buffer reports positions relative to
     -- the starting node, not scene-absolute. Tests that left the client at

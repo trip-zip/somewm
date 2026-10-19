@@ -9,7 +9,7 @@
 
 -include .local.mk
 
-.PHONY: all install uninstall clean setup reconfigure test test-unit test-lua-compat test-check test-signal test-integration test-orchestrator test-restart test-one-restart test-asan test-one test-visual test-one-visual test-ci test-fast build-test build-bench bench-run bench-run-live bench-json bench-baseline bench-compare bench-check bench-memory bench-flamegraph bench-diff bench-heaptrack profile profile-lua profile-save profile-diff
+.PHONY: all install uninstall clean setup setup-test reconfigure test test-unit test-render test-lua-compat test-check test-signal test-nested-pointer test-ipc-socket test-integration test-orchestrator test-cache-equivalence test-restart test-one-restart test-asan test-one test-visual test-one-visual test-ci test-fast build-test build-bench bench-run bench-run-live bench-json bench-baseline bench-compare bench-check bench-memory bench-flamegraph bench-diff bench-heaptrack profile profile-lua profile-save profile-diff
 
 # Default build: optimized release, no sanitizers
 all:
@@ -18,16 +18,22 @@ all:
 
 # AddressSanitizer + UBSan build (separate dir, for development)
 asan:
-	@test -d build-asan || meson setup build-asan -Db_sanitize=address,undefined $(if $(LUA_PKG),-Dlua_pkg=$(LUA_PKG),) $(MESON_OPTS)
+	@test -d build-asan || meson setup build-asan -Db_sanitize=address,undefined -Dtest_pam=true $(if $(LUA_PKG),-Dlua_pkg=$(LUA_PKG),) $(MESON_OPTS)
+	meson configure build-asan -Dtest_pam=true
 	ninja -C build-asan
 
-# Build for tests: NO ASAN (fast) - explicitly disable sanitizers, enable test PAM stub
-build-test:
+# Configure the test build dir without building anything in it
+setup-test:
 	@test -d build-test || meson setup build-test -Db_sanitize=none -Dtest_pam=true $(if $(LUA_PKG),-Dlua_pkg=$(LUA_PKG),) $(MESON_OPTS)
+
+# Build for tests: NO ASAN (fast) - explicitly disable sanitizers, enable test PAM stub
+build-test: setup-test
 	ninja -C build-test
 
+# meson install never deletes, and a stale 2.0 module would shadow the error a config should get.
 install:
-	meson install -C build
+	dir=$$(meson introspect build --buildoptions | python3 -c 'import json, os, sys; o = {x["name"]: x["value"] for x in json.load(sys.stdin)}; print(os.path.join(o["prefix"], o["datadir"], "somewm", "lua"))') && rm -rf "$(DESTDIR)$$dir"
+	meson install -C build --skip-subprojects
 
 uninstall:
 	ninja -C build uninstall
@@ -49,27 +55,46 @@ reconfigure:
 # =============================================================================
 
 # Run all tests (fast, no ASAN)
-test: test-unit test-check test-signal test-orchestrator test-restart test-integration
+test: test-unit test-check test-signal test-nested-pointer test-ipc-socket test-orchestrator test-cache-equivalence test-restart test-integration
 
 # Parse lua/ with every installed Lua version (no compositor needed)
 test-lua-compat:
 	@./tests/check-lua-compat.sh
 
-# Unit tests only (busted, no compositor needed)
-test-unit: test-lua-compat
+# Unit tests only (busted and the C renderer test; no compositor needed)
+test-unit: test-lua-compat test-render
 	@./tests/run-unit.sh
+
+# C unit tests: hand-built commands and production-solver declarations.
+# Build the test binaries without rebuilding the whole compositor.
+test-render: setup-test
+	@ninja -C build-test somewm test-render test-clay-solver test-clay-aspect
+	@meson test -C build-test --suite unit --print-errorlogs --no-rebuild
 
 # Check mode tests (no compositor needed, tests somewm --check)
 test-check: build-test
 	@./tests/test-check-mode.sh ./build-test/somewm
 
-# SIGTERM regression test (issue 613): a headless somewm must exit on SIGTERM
+# SIGTERM regression test: a headless somewm must exit on SIGTERM
 test-signal: build-test
 	@./tests/test-signal-term.sh ./build-test/somewm
+
+# An exiting somewm leaves a newer instance's IPC socket alone
+test-ipc-socket: build-test
+	@./tests/test-ipc-socket-handoff.sh ./build-test/somewm ./build-test/somewm-client
+	@./tests/test-ipc-socket-live-owner.sh ./build-test/somewm ./build-test/somewm-client
+
+# Nested-backend pointer mapping: two compositors, one hosting the other
+test-nested-pointer: build-test
+	@./tests/test-nested-pointer-mapping.sh ./build-test/somewm ./build-test/somewm-client
 
 # Test orchestrator (somewm-client test ...): spawns headless nested compositor
 test-orchestrator: build-test
 	@./tests/test-test-orchestrator.sh ./build-test/somewm ./build-test/somewm-client
+
+# The bundled config dumps the same tree with the fragment cache off
+test-cache-equivalence: build-test
+	@./tests/test-clay-cache-equivalence.sh ./build-test/somewm ./build-test/somewm-client
 
 # Restart tests: assertions on both sides of a real awesome.restart()
 test-restart: build-test
@@ -91,16 +116,28 @@ endif
 test-integration: build-test
 	@SOMEWM=./build-test/somewm SOMEWM_CLIENT=./build-test/somewm-client ./tests/run-integration.sh
 
-# Integration tests with ASAN (slower, catches memory bugs)
+# Integration tests with ASAN (slower, catches memory bugs). The C unit tests
+# run here too, since the ASAN build is where they are worth the most.
 test-asan: asan
+	@meson test -C build-asan --suite unit --print-errorlogs
 	@SOMEWM=./build-asan/somewm SOMEWM_CLIENT=./build-asan/somewm-client ./tests/run-integration.sh
 
-# CI mode: headless (for automated testing environments)
-test-ci: build-test test-unit test-signal test-restart
-	@HEADLESS=1 \
+# The integration tests CI runs, headless, here and in CI's integration step.
+# Tests that need external apps or spawn clients are left out.
+test-ci: build-test
+	@spawning=$$(grep -rl 'require.*_client' tests/test-*.lua | xargs -I{} basename {}); \
+	 tests=$$(find tests -name 'test-*.lua' -type f \
+	   ! -name 'test-xwayland-*' \
+	   ! -name 'test-layer-shell-*' \
+	   ! -name 'test-dbus-error.lua' \
+	   ! -name 'test-transient-stacking.lua' \
+	   ! -name 'test-output-fake-screen.lua' \
+	   $$(printf '! -name %s ' $$spawning) \
+	   | sort); \
+	 HEADLESS=1 LIBSEAT_BACKEND=noop TEST_TIMEOUT=45 \
 	 SOMEWM=./build-test/somewm \
 	 SOMEWM_CLIENT=./build-test/somewm-client \
-	 ./tests/run-integration.sh
+	 ./tests/run-integration.sh $$tests
 
 # Fast test suite using persistent compositor (10x faster)
 test-fast: build-test
@@ -116,11 +153,15 @@ ifndef TEST
 	@echo "Usage: make test-one TEST=tests/test-my-feature.lua"
 	@exit 1
 endif
+ifeq ($(TEST),tests/test-nested-pointer-mapping.sh)
+	@./tests/test-nested-pointer-mapping.sh ./build-test/somewm ./build-test/somewm-client
+else
 	@VERBOSE=1 \
 	 TEST_TIMEOUT=10 \
 	 SOMEWM=./build-test/somewm \
 	 SOMEWM_CLIENT=./build-test/somewm-client \
 	 ./tests/run-integration.sh $(TEST)
+endif
 
 # Visual test mode - watch tests run in a window (like AwesomeWM's Xephyr)
 test-visual: build-test

@@ -8,6 +8,8 @@ This directory contains the test suite for somewm, including both unit tests and
 
 Unit tests test individual Lua modules in isolation using the busted framework. These tests run quickly and don't require a running compositor.
 
+The surface tests require the Gdk 3.0 typelib (`gir1.2-gdk-3.0` on Debian and Ubuntu, provided by `gtk3` on Arch) for pixel comparisons. They do not require `DISPLAY` or `WAYLAND_DISPLAY`.
+
 **Location**: `spec/`
 **Framework**: busted
 **Runner**: `tests/run-unit.sh`
@@ -36,6 +38,10 @@ Integration tests run somewm in headless mode and execute test scenarios via IPC
 **Location**: `tests/test-*.lua`
 **Framework**: Custom step-wise runner (`tests/_runner.lua`)
 **Runner**: `tests/run-integration.sh`
+
+The nested runner never loads the installed SomeWM Lua tree, while system Lua modules remain available.
+
+Goldens and pixel expectations are written against Noto Sans CJK KR and Noto Sans Mono CJK KR, pinned by `tests/fonts.conf`.
 
 ## Running Tests
 
@@ -70,18 +76,34 @@ make test-check
 make test-integration
 ```
 
+JOBS sets the number of workers, default 4, and JOBS=1 runs the tests one after another. The nested compositor windows must float on the host during a run, since a tiled one takes the host's size and every geometry test fails.
+
+The compositor's output goes to a temporary log that the runner deletes when it exits, so grepping the runner's own output does not see it. Set SOMEWM_TEST_LOG_DIR to an absolute path to keep one log per test, named after the test file (`test-foo.lua.log`): `SOMEWM_TEST_LOG_DIR=/tmp/somewm-logs make test-integration`.
+
 Example output:
 ```
-Running integration tests...
-=== Running test-simple.lua ===
-PASS: test-simple.lua
+--- PASS: test-simple.lua (0.31s)
+--- SKIP: test-declare-dirty-mark.lua (needs the headless backend (HEADLESS=1); a nested parent compositor masks the bug under test)
 
-================================
-Test Summary:
-  Total:  1
-  Passed: 1
-  Failed: 0
-================================
+PASS
+ok	1 passed, 1 skipped	1.02s
+```
+
+A failed run prints `FAIL`, the failed tests, then `FAIL	N passed, K failed, M skipped	T s`, and exits 1. Skips never change the exit code.
+
+A test that cannot run in the current setup calls `runner.skip(reason)` and returns. It writes `[SKIP] <reason>` and the marker line `Test skipped.`, never `Test finished successfully.`, and the runner counts it apart from the passes.
+
+Some tests only run in their own setup. Each of these is one command:
+
+```bash
+# Need the headless backend: a nested parent compositor masks the bug
+HEADLESS=1 SOMEWM=./build-test/somewm SOMEWM_CLIENT=./build-test/somewm-client \
+    ./tests/run-integration.sh tests/test-declare-dirty-mark.lua tests/test-widget-idle-repaint.lua
+
+# Need two outputs
+HEADLESS=1 WLR_HEADLESS_OUTPUTS=2 SOMEWM=./build-test/somewm SOMEWM_CLIENT=./build-test/somewm-client \
+    ./tests/run-integration.sh tests/test-screen-hotplug.lua tests/test-selmon-mouse-motion.lua tests/test-tag-persistence.lua \
+    tests/test-screenshot-interactive-two-outputs.lua tests/test-carousel-output-clip.lua
 ```
 
 ### Run Specific Test
@@ -175,6 +197,8 @@ Unit tests run with mocked globals defined in `spec/preload.lua`:
 - `beautiful` initialized with dummy theme
 
 ### Integration Test Environment
+
+A test whose first lines contain `-- timeout: N` gets N seconds instead of `TEST_TIMEOUT`; `test-clay-inspector-calendar` uses this override.
 
 Integration tests run in an isolated environment:
 - **Config**: Minimal test config (`tests/rc.lua`)

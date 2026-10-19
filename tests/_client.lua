@@ -74,9 +74,11 @@ local function spawn_client(_, class, title, sn_rules, callback)
 
     local exe, class_flag, exec_flag = terminal_cmd[1], terminal_cmd[2], terminal_cmd[3]
 
-    -- Pin kitty initial size so cold-cache kitty doesn't size itself to the bounds hint.
+    -- Pin kitty's initial size and disable remembering window size. Otherwise kitty
+    -- uses the size the last kitty wrote to its cache on exit, which can be a whole
+    -- tiled workarea.
     local extra = (exe == "kitty")
-        and " -o initial_window_width=400 -o initial_window_height=300"
+        and " -o initial_window_width=400 -o initial_window_height=300 -o remember_window_size=no"
         or ""
 
     -- Build command

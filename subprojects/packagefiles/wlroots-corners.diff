@@ -1,0 +1,1565 @@
+diff -ruN a/include/render/gles2.h b/include/render/gles2.h
+--- a/include/render/gles2.h	2026-07-07 15:46:09.000000000 -0600
++++ b/include/render/gles2.h	2026-10-09 12:47:16.391226292 -0600
+@@ -28,6 +28,15 @@
+ 	GLint gl_format, gl_type;
+ };
+ 
++// The uniforms every round program reads, beside its own
++struct wlr_gles2_round_uniforms {
++	GLint size;
++	GLint radii;
++	GLint clip_count;
++	GLint clip_boxes;
++	GLint clip_radii;
++};
++
+ struct wlr_gles2_tex_shader {
+ 	GLuint program;
+ 	GLint proj;
+@@ -35,6 +44,9 @@
+ 	GLint tex;
+ 	GLint alpha;
+ 	GLint pos_attrib;
++	// Set on the round programs only: the destination box size in pixels,
++	// its corner radii, and the rounded clips relative to it
++	struct wlr_gles2_round_uniforms round;
+ };
+ 
+ struct wlr_gles2_renderer {
+@@ -80,9 +92,25 @@
+ 			GLint color;
+ 			GLint pos_attrib;
+ 		} quad;
++		// A rect with corner radii, a cutout or rounded clips, chosen only
++		// when it has one of them
++		struct {
++			GLuint program;
++			GLint proj;
++			GLint color;
++			GLint pos_attrib;
++			GLint cutout_box;
++			GLint cutout_radii;
++			struct wlr_gles2_round_uniforms round;
++		} quad_round;
+ 		struct wlr_gles2_tex_shader tex_rgba;
+ 		struct wlr_gles2_tex_shader tex_rgbx;
+ 		struct wlr_gles2_tex_shader tex_ext;
++		// The same three with corner radii and a rounded clip, chosen only
++		// when a texture is drawn with either
++		struct wlr_gles2_tex_shader tex_rgba_round;
++		struct wlr_gles2_tex_shader tex_rgbx_round;
++		struct wlr_gles2_tex_shader tex_ext_round;
+ 	} shaders;
+ 
+ 	struct wl_list buffers; // wlr_gles2_buffer.link
+diff -ruN a/include/render/pixman.h b/include/render/pixman.h
+--- a/include/render/pixman.h	2026-07-07 15:46:09.000000000 -0600
++++ b/include/render/pixman.h	2026-10-09 12:47:16.391402310 -0600
+@@ -14,11 +14,44 @@
+ 
+ struct wlr_pixman_buffer;
+ 
++// The A8 coverage tiles of one radius, one per corner (top-left, top-right,
++// bottom-right, bottom-left), made on first use
++struct wlr_pixman_corner_tiles {
++	int radius;
++	pixman_image_t *images[4];
++	struct wl_list link; // wlr_pixman_renderer.corner_tiles
++};
++
++// What a rounded mask was built from: the box size, its radii, the cutout
++// and the clips relative to the box, and the alpha. Compared bytewise, so it
++// is zeroed before it is filled.
++struct wlr_pixman_rounded_mask_key {
++	int width, height;
++	float radii[4];
++	struct wlr_box cutout;
++	float cutout_radii[4];
++	struct wlr_render_rounded_clip clips[WLR_RENDER_ROUNDED_CLIPS];
++	size_t clips_len;
++	float alpha;
++};
++
++// A cached rounded mask, newest first; the list holds one reference and
++// each use takes its own
++#define WLR_PIXMAN_ROUNDED_MASKS 64
++struct wlr_pixman_rounded_mask {
++	struct wlr_pixman_rounded_mask_key key;
++	pixman_image_t *image;
++	struct wl_list link; // wlr_pixman_renderer.rounded_masks
++};
++
+ struct wlr_pixman_renderer {
+ 	struct wlr_renderer wlr_renderer;
+ 
+ 	struct wl_list buffers; // wlr_pixman_buffer.link
+ 	struct wl_list textures; // wlr_pixman_texture.link
++	struct wl_list corner_tiles; // wlr_pixman_corner_tiles.link
++	struct wl_list rounded_masks; // wlr_pixman_rounded_mask.link
++	size_t rounded_masks_len;
+ 
+ 	struct wlr_drm_format_set drm_formats;
+ };
+diff -ruN a/include/wlr/render/interface.h b/include/wlr/render/interface.h
+--- a/include/wlr/render/interface.h	2026-07-07 15:46:09.000000000 -0600
++++ b/include/wlr/render/interface.h	2026-10-09 12:47:16.391468292 -0600
+@@ -78,6 +78,14 @@
+ void wlr_render_texture_options_get_dst_box(const struct wlr_render_texture_options *options,
+ 	struct wlr_box *box);
+ float wlr_render_texture_options_get_alpha(const struct wlr_render_texture_options *options);
++// Whether a corner radius or a rounded clip is set
++bool wlr_render_texture_options_is_rounded(const struct wlr_render_texture_options *options);
++// Whether a corner radius, the cutout or a rounded clip is set
++bool wlr_render_rect_options_is_rounded(const struct wlr_render_rect_options *options);
++// The radii a box of this size draws: by the edge rule of
++// struct wlr_render_rounded_clip
++void wlr_render_fit_corner_radii(float dst[static 4], const float radii[static 4],
++	double width, double height);
+ void wlr_render_rect_options_get_box(const struct wlr_render_rect_options *options,
+ 	const struct wlr_buffer *buffer, struct wlr_box *box);
+ 
+diff -ruN a/include/wlr/render/pass.h b/include/wlr/render/pass.h
+--- a/include/wlr/render/pass.h	2026-07-07 15:46:09.000000000 -0600
++++ b/include/wlr/render/pass.h	2026-10-09 12:47:16.391527623 -0600
+@@ -75,6 +75,18 @@
+ };
+ 
+ /**
++ * A box cut by four corner radii (top-left, top-right, bottom-right,
++ * bottom-left). Where the two radii on one edge add up to more than the edge,
++ * all four shrink by the smallest such ratio, as CSS border-radius does.
++ */
++struct wlr_render_rounded_clip {
++	struct wlr_box box;
++	float radii[4];
++};
++
++#define WLR_RENDER_ROUNDED_CLIPS 4
++
++/**
+  * Filter modes.
+  */
+ enum wlr_scale_filter_mode {
+@@ -95,6 +107,14 @@
+ 	const float *alpha;
+ 	/* Clip region, leave NULL to disable clipping */
+ 	const pixman_region32_t *clip;
++	/* Corner radii in destination pixels: top-left, top-right, bottom-right,
++	 * bottom-left. Pixels of dst_box outside an arc are not drawn. Leave all
++	 * zero to draw the whole box. */
++	float corner_radii[4];
++	/* Rounded clips in destination coordinates: only pixels inside every
++	 * clip are drawn. Leave clips_len 0 to disable them. */
++	struct wlr_render_rounded_clip clips[WLR_RENDER_ROUNDED_CLIPS];
++	size_t clips_len;
+ 	/* Transform applied to the source texture */
+ 	enum wl_output_transform transform;
+ 	/* Filtering */
+@@ -147,6 +167,15 @@
+ 	struct wlr_render_color color;
+ 	/* Clip region, leave NULL to disable clipping */
+ 	const pixman_region32_t *clip;
++	/* Corner radii in destination pixels, as for a texture */
++	float corner_radii[4];
++	/* A rounded hole in destination coordinates: pixels inside it are not
++	 * drawn. Leave the width 0 for none. */
++	struct wlr_box cutout;
++	float cutout_radii[4];
++	/* Rounded clips, as for a texture */
++	struct wlr_render_rounded_clip clips[WLR_RENDER_ROUNDED_CLIPS];
++	size_t clips_len;
+ 	/* Blend mode */
+ 	enum wlr_render_blend_mode blend_mode;
+ };
+diff -ruN a/include/wlr/types/wlr_scene.h b/include/wlr/types/wlr_scene.h
+--- a/include/wlr/types/wlr_scene.h	2026-07-07 15:46:09.000000000 -0600
++++ b/include/wlr/types/wlr_scene.h	2026-10-09 12:47:16.391618241 -0600
+@@ -22,6 +22,7 @@
+ #include <pixman.h>
+ #include <time.h>
+ #include <wayland-server-core.h>
++#include <wlr/render/pass.h>
+ #include <wlr/render/wlr_renderer.h>
+ #include <wlr/types/wlr_damage_ring.h>
+ #include <wlr/types/wlr_linux_dmabuf_v1.h>
+@@ -138,11 +139,26 @@
+ 	} WLR_PRIVATE;
+ };
+ 
++/** The most rounded clips a rect or buffer node carries */
++#define WLR_SCENE_ROUNDED_CLIPS WLR_RENDER_ROUNDED_CLIPS
++
+ /** A scene-graph node displaying a solid-colored rectangle */
+ struct wlr_scene_rect {
+ 	struct wlr_scene_node node;
+ 	int width, height;
+ 	float color[4];
++
++	// Corner radii in logical pixels: top-left, top-right, bottom-right,
++	// bottom-left. Pixels outside an arc are not drawn and are not opaque.
++	float corner_radii[4];
++	// A rounded hole in node-local logical pixels, the inside of a border
++	// ring; width 0 for none.
++	struct wlr_box cutout_box;
++	float cutout_radii[4];
++	// Rounded clips in node-local logical pixels: only pixels inside every
++	// clip are drawn.
++	struct wlr_render_rounded_clip clips[WLR_SCENE_ROUNDED_CLIPS];
++	size_t clips_len;
+ };
+ 
+ struct wlr_scene_outputs_update_event {
+@@ -198,6 +214,15 @@
+ 	enum wlr_color_encoding color_encoding;
+ 	enum wlr_color_range color_range;
+ 
++	// Corner radii in logical pixels: top-left, top-right, bottom-right,
++	// bottom-left. Pixels outside an arc are not drawn and are not opaque.
++	// All zero draws the whole buffer.
++	float corner_radii[4];
++	// Rounded clips in node-local logical pixels: only pixels inside every
++	// clip are drawn.
++	struct wlr_render_rounded_clip clips[WLR_SCENE_ROUNDED_CLIPS];
++	size_t clips_len;
++
+ 	struct {
+ 		uint64_t active_outputs;
+ 		struct wlr_texture *texture;
+@@ -470,6 +495,27 @@
+ void wlr_scene_rect_set_color(struct wlr_scene_rect *rect, const float color[static 4]);
+ 
+ /**
++ * Set the corner radii of a rectangle node, in logical pixels, as for a
++ * buffer. All zero (the default) draws the whole rectangle.
++ */
++void wlr_scene_rect_set_corner_radii(struct wlr_scene_rect *rect,
++	const float radii[static 4]);
++
++/**
++ * Set a rounded hole in node-local logical pixels: pixels inside the box,
++ * cut by its radii, are not drawn. NULL (the default) removes it; radii is
++ * read only with a box.
++ */
++void wlr_scene_rect_set_cutout(struct wlr_scene_rect *rect,
++	const struct wlr_box *box, const float radii[4]);
++
++/**
++ * Set the rounded clips of a rectangle node, as for a buffer.
++ */
++void wlr_scene_rect_set_rounded_clips(struct wlr_scene_rect *rect,
++	const struct wlr_render_rounded_clip *clips, size_t len);
++
++/**
+  * Add a node displaying a buffer to the scene-graph.
+  *
+  * If the buffer is NULL, this node will not be displayed.
+@@ -549,6 +595,23 @@
+ 	enum wl_output_transform transform);
+ 
+ /**
++ * Set the corner radii cutting the buffer, in logical pixels: top-left,
++ * top-right, bottom-right, bottom-left. All zero (the default) draws the
++ * whole buffer. Radii that do not fit an edge shrink by the edge rule of
++ * struct wlr_render_rounded_clip.
++ */
++void wlr_scene_buffer_set_corner_radii(struct wlr_scene_buffer *scene_buffer,
++	const float radii[static 4]);
++
++/**
++ * Set the rounded clips in node-local logical pixels: only pixels inside
++ * every clip are drawn. len 0 (the default) removes them; len is at most
++ * WLR_SCENE_ROUNDED_CLIPS.
++ */
++void wlr_scene_buffer_set_rounded_clips(struct wlr_scene_buffer *scene_buffer,
++	const struct wlr_render_rounded_clip *clips, size_t len);
++
++/**
+ * Sets the opacity of this buffer
+ */
+ void wlr_scene_buffer_set_opacity(struct wlr_scene_buffer *scene_buffer,
+diff -ruN a/render/gles2/pass.c b/render/gles2/pass.c
+--- a/render/gles2/pass.c	2026-07-07 15:46:09.000000000 -0600
++++ b/render/gles2/pass.c	2026-10-09 12:47:16.391741090 -0600
+@@ -1,6 +1,7 @@
+ #include <stdlib.h>
+ #include <assert.h>
+ #include <pixman.h>
++#include <string.h>
+ #include <time.h>
+ #include <unistd.h>
+ #include <wlr/render/drm_syncobj.h>
+@@ -164,6 +165,27 @@
+ 	}
+ }
+ 
++// The box size, its radii and its rounded clips, relative to the box origin
++static void set_round_uniforms(const struct wlr_gles2_round_uniforms *round,
++		const struct wlr_box *box, const float radii[static 4],
++		const struct wlr_render_rounded_clip *clips, size_t clips_len) {
++	GLfloat boxes[WLR_RENDER_ROUNDED_CLIPS][4], clip_radii[WLR_RENDER_ROUNDED_CLIPS][4];
++	for (size_t i = 0; i < clips_len; i++) {
++		boxes[i][0] = clips[i].box.x - box->x;
++		boxes[i][1] = clips[i].box.y - box->y;
++		boxes[i][2] = clips[i].box.width;
++		boxes[i][3] = clips[i].box.height;
++		memcpy(clip_radii[i], clips[i].radii, sizeof(clip_radii[i]));
++	}
++	glUniform2f(round->size, box->width, box->height);
++	glUniform4fv(round->radii, 1, radii);
++	glUniform1i(round->clip_count, clips_len);
++	if (clips_len > 0) {
++		glUniform4fv(round->clip_boxes, clips_len, &boxes[0][0]);
++		glUniform4fv(round->clip_radii, clips_len, &clip_radii[0][0]);
++	}
++}
++
+ static void render_pass_add_texture(struct wlr_render_pass *wlr_pass,
+ 		const struct wlr_render_texture_options *options) {
+ 	struct wlr_gles2_render_pass *pass = get_render_pass(wlr_pass);
+@@ -171,20 +193,21 @@
+ 	struct wlr_gles2_texture *texture = gles2_get_texture(options->texture);
+ 
+ 	struct wlr_gles2_tex_shader *shader = NULL;
++	bool round = wlr_render_texture_options_is_rounded(options);
+ 
+ 	switch (texture->target) {
+ 	case GL_TEXTURE_2D:
+ 		if (texture->has_alpha) {
+-			shader = &renderer->shaders.tex_rgba;
++			shader = round ? &renderer->shaders.tex_rgba_round : &renderer->shaders.tex_rgba;
+ 		} else {
+-			shader = &renderer->shaders.tex_rgbx;
++			shader = round ? &renderer->shaders.tex_rgbx_round : &renderer->shaders.tex_rgbx;
+ 		}
+ 		break;
+ 	case GL_TEXTURE_EXTERNAL_OES:
+ 		// EGL_EXT_image_dma_buf_import_modifiers requires
+ 		// GL_OES_EGL_image_external
+ 		assert(renderer->exts.OES_egl_image_external);
+-		shader = &renderer->shaders.tex_ext;
++		shader = round ? &renderer->shaders.tex_ext_round : &renderer->shaders.tex_ext;
+ 		break;
+ 	default:
+ 		abort();
+@@ -223,7 +246,9 @@
+ 		}
+ 	}
+ 
+-	setup_blending(!texture->has_alpha && alpha == 1.0 ?
++	// A cut corner is transparent whatever the texture is, so it blends
++	setup_blending(round ? WLR_RENDER_BLEND_MODE_PREMULTIPLIED :
++		!texture->has_alpha && alpha == 1.0 ?
+ 		WLR_RENDER_BLEND_MODE_NONE : options->blend_mode);
+ 
+ 	glUseProgram(shader->program);
+@@ -246,6 +271,10 @@
+ 	glUniform1f(shader->alpha, alpha);
+ 	set_proj_matrix(shader->proj, pass->projection_matrix, &dst_box);
+ 	set_tex_matrix(shader->tex_proj, options->transform, &src_fbox);
++	if (round) {
++		set_round_uniforms(&shader->round, &dst_box, options->corner_radii,
++			options->clips, options->clips_len);
++	}
+ 
+ 	render(&dst_box, options->clip, shader->pos_attrib);
+ 
+@@ -264,6 +293,21 @@
+ 	wlr_render_rect_options_get_box(options, wlr_buffer, &box);
+ 
+ 	push_gles2_debug(renderer);
++	if (wlr_render_rect_options_is_rounded(options)) {
++		// A cut corner or the cutout is transparent, so it blends
++		setup_blending(WLR_RENDER_BLEND_MODE_PREMULTIPLIED);
++		glUseProgram(renderer->shaders.quad_round.program);
++		set_proj_matrix(renderer->shaders.quad_round.proj, pass->projection_matrix, &box);
++		glUniform4f(renderer->shaders.quad_round.color, color->r, color->g, color->b, color->a);
++		set_round_uniforms(&renderer->shaders.quad_round.round, &box,
++			options->corner_radii, options->clips, options->clips_len);
++		glUniform4f(renderer->shaders.quad_round.cutout_box, options->cutout.x - box.x,
++			options->cutout.y - box.y, options->cutout.width, options->cutout.height);
++		glUniform4fv(renderer->shaders.quad_round.cutout_radii, 1, options->cutout_radii);
++		render(&box, options->clip, renderer->shaders.quad_round.pos_attrib);
++		pop_gles2_debug(renderer);
++		return;
++	}
+ 	enum wlr_render_blend_mode blend_mode =
+ 		color->a == 1.0 ? WLR_RENDER_BLEND_MODE_NONE : options->blend_mode;
+ 	if (blend_mode == WLR_RENDER_BLEND_MODE_NONE &&
+diff -ruN a/render/gles2/renderer.c b/render/gles2/renderer.c
+--- a/render/gles2/renderer.c	2026-07-07 15:46:09.000000000 -0600
++++ b/render/gles2/renderer.c	2026-10-09 12:47:16.391842779 -0600
+@@ -22,9 +22,13 @@
+ 
+ #include "common_vert_src.h"
+ #include "quad_frag_src.h"
++#include "quad_round_frag_src.h"
+ #include "tex_rgba_frag_src.h"
+ #include "tex_rgbx_frag_src.h"
+ #include "tex_external_frag_src.h"
++#include "tex_rgba_round_frag_src.h"
++#include "tex_rgbx_round_frag_src.h"
++#include "tex_external_round_frag_src.h"
+ 
+ static const struct wlr_renderer_impl renderer_impl;
+ static const struct wlr_render_timer_impl render_timer_impl;
+@@ -219,6 +223,10 @@
+ 	glDeleteProgram(renderer->shaders.tex_rgba.program);
+ 	glDeleteProgram(renderer->shaders.tex_rgbx.program);
+ 	glDeleteProgram(renderer->shaders.tex_ext.program);
++	glDeleteProgram(renderer->shaders.tex_rgba_round.program);
++	glDeleteProgram(renderer->shaders.tex_rgbx_round.program);
++	glDeleteProgram(renderer->shaders.tex_ext_round.program);
++	glDeleteProgram(renderer->shaders.quad_round.program);
+ 	pop_gles2_debug(renderer);
+ 
+ 	if (renderer->exts.KHR_debug) {
+@@ -466,6 +474,33 @@
+ 	return 0;
+ }
+ 
++static void get_round_uniforms(GLuint prog, struct wlr_gles2_round_uniforms *round) {
++	round->size = glGetUniformLocation(prog, "size");
++	round->radii = glGetUniformLocation(prog, "radii");
++	round->clip_count = glGetUniformLocation(prog, "clip_count");
++	round->clip_boxes = glGetUniformLocation(prog, "clip_boxes");
++	round->clip_radii = glGetUniformLocation(prog, "clip_radii");
++}
++
++// A texture program with corner radii and rounded clips. The sampler is
++// looked up as "tex" like the plain programs, which the external shader
++// names texture0; the lookup then fails and the sampler keeps unit 0.
++static bool link_round_tex_program(struct wlr_gles2_renderer *renderer,
++		struct wlr_gles2_tex_shader *shader, const GLchar *frag_src) {
++	GLuint prog = link_program(renderer, common_vert_src, frag_src);
++	if (!prog) {
++		return false;
++	}
++	shader->program = prog;
++	shader->proj = glGetUniformLocation(prog, "proj");
++	shader->tex_proj = glGetUniformLocation(prog, "tex_proj");
++	shader->tex = glGetUniformLocation(prog, "tex");
++	shader->alpha = glGetUniformLocation(prog, "alpha");
++	shader->pos_attrib = glGetAttribLocation(prog, "pos");
++	get_round_uniforms(prog, &shader->round);
++	return true;
++}
++
+ static bool check_gl_ext(const char *exts, const char *ext) {
+ 	size_t extlen = strlen(ext);
+ 	const char *end = exts + strlen(exts);
+@@ -677,6 +712,28 @@
+ 		renderer->shaders.tex_ext.pos_attrib = glGetAttribLocation(prog, "pos");
+ 	}
+ 
++	if (!link_round_tex_program(renderer, &renderer->shaders.tex_rgba_round,
++				tex_rgba_round_frag_src) ||
++			!link_round_tex_program(renderer, &renderer->shaders.tex_rgbx_round,
++				tex_rgbx_round_frag_src) ||
++			(renderer->exts.OES_egl_image_external &&
++			!link_round_tex_program(renderer, &renderer->shaders.tex_ext_round,
++				tex_external_round_frag_src))) {
++		goto error;
++	}
++
++	renderer->shaders.quad_round.program = prog =
++		link_program(renderer, common_vert_src, quad_round_frag_src);
++	if (!renderer->shaders.quad_round.program) {
++		goto error;
++	}
++	renderer->shaders.quad_round.proj = glGetUniformLocation(prog, "proj");
++	renderer->shaders.quad_round.color = glGetUniformLocation(prog, "color");
++	renderer->shaders.quad_round.pos_attrib = glGetAttribLocation(prog, "pos");
++	renderer->shaders.quad_round.cutout_box = glGetUniformLocation(prog, "cutout_box");
++	renderer->shaders.quad_round.cutout_radii = glGetUniformLocation(prog, "cutout_radii");
++	get_round_uniforms(prog, &renderer->shaders.quad_round.round);
++
+ 	pop_gles2_debug(renderer);
+ 
+ 	wlr_egl_unset_current(renderer->egl);
+@@ -697,6 +754,10 @@
+ 	glDeleteProgram(renderer->shaders.tex_rgba.program);
+ 	glDeleteProgram(renderer->shaders.tex_rgbx.program);
+ 	glDeleteProgram(renderer->shaders.tex_ext.program);
++	glDeleteProgram(renderer->shaders.tex_rgba_round.program);
++	glDeleteProgram(renderer->shaders.tex_rgbx_round.program);
++	glDeleteProgram(renderer->shaders.tex_ext_round.program);
++	glDeleteProgram(renderer->shaders.quad_round.program);
+ 
+ 	pop_gles2_debug(renderer);
+ 
+diff -ruN a/render/gles2/shaders/common.vert b/render/gles2/shaders/common.vert
+--- a/render/gles2/shaders/common.vert	2026-07-07 15:46:09.000000000 -0600
++++ b/render/gles2/shaders/common.vert	2026-10-09 12:47:16.391946121 -0600
+@@ -2,9 +2,13 @@
+ uniform mat3 tex_proj;
+ attribute vec2 pos;
+ varying vec2 v_texcoord;
++// The position inside the destination box, 0 to 1 on each axis; read by the
++// round shaders only.
++varying vec2 v_pos;
+ 
+ void main() {
+ 	vec3 pos3 = vec3(pos, 1.0);
+ 	gl_Position = vec4(pos3 * proj, 1.0);
+ 	v_texcoord = (pos3 * tex_proj).xy;
++	v_pos = pos;
+ }
+diff -ruN a/render/gles2/shaders/meson.build b/render/gles2/shaders/meson.build
+--- a/render/gles2/shaders/meson.build	2026-07-07 15:46:09.000000000 -0600
++++ b/render/gles2/shaders/meson.build	2026-10-09 12:47:16.391998769 -0600
+@@ -4,9 +4,13 @@
+ shaders = [
+ 	'common.vert',
+ 	'quad.frag',
++	'quad_round.frag',
+ 	'tex_rgba.frag',
+ 	'tex_rgbx.frag',
+ 	'tex_external.frag',
++	'tex_rgba_round.frag',
++	'tex_rgbx_round.frag',
++	'tex_external_round.frag',
+ ]
+ 
+ foreach name : shaders
+diff -ruN a/render/gles2/shaders/quad_round.frag b/render/gles2/shaders/quad_round.frag
+--- a/render/gles2/shaders/quad_round.frag	1969-12-31 17:00:00.000000000 -0700
++++ b/render/gles2/shaders/quad_round.frag	2026-10-09 12:47:16.392039795 -0600
+@@ -0,0 +1,72 @@
++#ifdef GL_FRAGMENT_PRECISION_HIGH
++precision highp float;
++#else
++precision mediump float;
++#endif
++
++varying vec2 v_pos;
++uniform vec4 color;
++uniform vec4 cutout_box;
++uniform vec4 cutout_radii;
++uniform vec2 size;
++uniform vec4 radii;
++uniform int clip_count;
++uniform vec4 clip_boxes[4];
++uniform vec4 clip_radii[4];
++
++// Radii (top-left, top-right, bottom-right, bottom-left) that fit a box of
++// this size, by the rule CSS border-radius uses: where the two radii on one
++// edge add up to more than the edge, all four shrink by the smallest such
++// ratio.
++vec4 fit_radii(vec2 box, vec4 r) {
++	float f = 1.0;
++	if (r.x + r.y > box.x) f = min(f, box.x / (r.x + r.y));
++	if (r.w + r.z > box.x) f = min(f, box.x / (r.w + r.z));
++	if (r.x + r.w > box.y) f = min(f, box.y / (r.x + r.w));
++	if (r.y + r.z > box.y) f = min(f, box.y / (r.y + r.z));
++	return r * f;
++}
++
++// One corner's coverage, d the point's offset from the arc centre pointing
++// out of the box: a one pixel ramp on the arc.
++float arc_alpha(vec2 d, float r) {
++	return r > 0.0 ? 1.0 - smoothstep(-0.5, 0.5, length(max(d, 0.0)) - r) : 1.0;
++}
++
++// Coverage of a point p, in pixels from the box origin, in a box of the given
++// size cut by four radii: 1 inside, 0 outside, a one pixel ramp on the edges
++// and arcs. Each corner cuts only its own square.
++float corner_alpha(vec2 p, vec2 box, vec4 r) {
++	r = fit_radii(box, r);
++	vec2 inside = min(p, box - p);
++	float alpha = smoothstep(-0.5, 0.5, min(inside.x, inside.y));
++	alpha *= arc_alpha(vec2(r.x - p.x, r.x - p.y), r.x);
++	alpha *= arc_alpha(vec2(p.x - box.x + r.y, r.y - p.y), r.y);
++	alpha *= arc_alpha(vec2(p.x - box.x + r.z, p.y - box.y + r.z), r.z);
++	alpha *= arc_alpha(vec2(r.w - p.x, p.y - box.y + r.w), r.w);
++	return alpha;
++}
++
++// The box coverage times every rounded clip's, clip boxes relative to the
++// box origin.
++float round_coverage(vec2 p) {
++	float coverage = corner_alpha(p, size, radii);
++	for (int i = 0; i < 4; i++) {
++		if (i >= clip_count) {
++			break;
++		}
++		coverage *= corner_alpha(p - clip_boxes[i].xy, clip_boxes[i].zw, clip_radii[i]);
++	}
++	return coverage;
++}
++
++// The colour times the box coverage, less the cutout's (cutout_box relative
++// to the box origin, width 0 for none).
++void main() {
++	vec2 p = v_pos * size;
++	float coverage = round_coverage(p);
++	if (cutout_box.z > 0.0) {
++		coverage *= 1.0 - corner_alpha(p - cutout_box.xy, cutout_box.zw, cutout_radii);
++	}
++	gl_FragColor = color * coverage;
++}
+diff -ruN a/render/gles2/shaders/tex_external_round.frag b/render/gles2/shaders/tex_external_round.frag
+--- a/render/gles2/shaders/tex_external_round.frag	1969-12-31 17:00:00.000000000 -0700
++++ b/render/gles2/shaders/tex_external_round.frag	2026-10-09 12:47:16.392085480 -0600
+@@ -0,0 +1,67 @@
++#extension GL_OES_EGL_image_external : require
++
++#ifdef GL_FRAGMENT_PRECISION_HIGH
++precision highp float;
++#else
++precision mediump float;
++#endif
++
++varying vec2 v_texcoord;
++varying vec2 v_pos;
++uniform float alpha;
++uniform samplerExternalOES texture0;
++uniform vec2 size;
++uniform vec4 radii;
++uniform int clip_count;
++uniform vec4 clip_boxes[4];
++uniform vec4 clip_radii[4];
++
++// Radii (top-left, top-right, bottom-right, bottom-left) that fit a box of
++// this size, by the rule CSS border-radius uses: where the two radii on one
++// edge add up to more than the edge, all four shrink by the smallest such
++// ratio.
++vec4 fit_radii(vec2 box, vec4 r) {
++	float f = 1.0;
++	if (r.x + r.y > box.x) f = min(f, box.x / (r.x + r.y));
++	if (r.w + r.z > box.x) f = min(f, box.x / (r.w + r.z));
++	if (r.x + r.w > box.y) f = min(f, box.y / (r.x + r.w));
++	if (r.y + r.z > box.y) f = min(f, box.y / (r.y + r.z));
++	return r * f;
++}
++
++// One corner's coverage, d the point's offset from the arc centre pointing
++// out of the box: a one pixel ramp on the arc.
++float arc_alpha(vec2 d, float r) {
++	return r > 0.0 ? 1.0 - smoothstep(-0.5, 0.5, length(max(d, 0.0)) - r) : 1.0;
++}
++
++// Coverage of a point p, in pixels from the box origin, in a box of the given
++// size cut by four radii: 1 inside, 0 outside, a one pixel ramp on the edges
++// and arcs. Each corner cuts only its own square.
++float corner_alpha(vec2 p, vec2 box, vec4 r) {
++	r = fit_radii(box, r);
++	vec2 inside = min(p, box - p);
++	float alpha = smoothstep(-0.5, 0.5, min(inside.x, inside.y));
++	alpha *= arc_alpha(vec2(r.x - p.x, r.x - p.y), r.x);
++	alpha *= arc_alpha(vec2(p.x - box.x + r.y, r.y - p.y), r.y);
++	alpha *= arc_alpha(vec2(p.x - box.x + r.z, p.y - box.y + r.z), r.z);
++	alpha *= arc_alpha(vec2(r.w - p.x, p.y - box.y + r.w), r.w);
++	return alpha;
++}
++
++// The box coverage times every rounded clip's, clip boxes relative to the
++// box origin.
++float round_coverage(vec2 p) {
++	float coverage = corner_alpha(p, size, radii);
++	for (int i = 0; i < 4; i++) {
++		if (i >= clip_count) {
++			break;
++		}
++		coverage *= corner_alpha(p - clip_boxes[i].xy, clip_boxes[i].zw, clip_radii[i]);
++	}
++	return coverage;
++}
++
++void main() {
++	gl_FragColor = texture2D(texture0, v_texcoord) * alpha * round_coverage(v_pos * size);
++}
+diff -ruN a/render/gles2/shaders/tex_rgba_round.frag b/render/gles2/shaders/tex_rgba_round.frag
+--- a/render/gles2/shaders/tex_rgba_round.frag	1969-12-31 17:00:00.000000000 -0700
++++ b/render/gles2/shaders/tex_rgba_round.frag	2026-10-09 12:47:16.392126747 -0600
+@@ -0,0 +1,65 @@
++#ifdef GL_FRAGMENT_PRECISION_HIGH
++precision highp float;
++#else
++precision mediump float;
++#endif
++
++varying vec2 v_texcoord;
++varying vec2 v_pos;
++uniform float alpha;
++uniform sampler2D tex;
++uniform vec2 size;
++uniform vec4 radii;
++uniform int clip_count;
++uniform vec4 clip_boxes[4];
++uniform vec4 clip_radii[4];
++
++// Radii (top-left, top-right, bottom-right, bottom-left) that fit a box of
++// this size, by the rule CSS border-radius uses: where the two radii on one
++// edge add up to more than the edge, all four shrink by the smallest such
++// ratio.
++vec4 fit_radii(vec2 box, vec4 r) {
++	float f = 1.0;
++	if (r.x + r.y > box.x) f = min(f, box.x / (r.x + r.y));
++	if (r.w + r.z > box.x) f = min(f, box.x / (r.w + r.z));
++	if (r.x + r.w > box.y) f = min(f, box.y / (r.x + r.w));
++	if (r.y + r.z > box.y) f = min(f, box.y / (r.y + r.z));
++	return r * f;
++}
++
++// One corner's coverage, d the point's offset from the arc centre pointing
++// out of the box: a one pixel ramp on the arc.
++float arc_alpha(vec2 d, float r) {
++	return r > 0.0 ? 1.0 - smoothstep(-0.5, 0.5, length(max(d, 0.0)) - r) : 1.0;
++}
++
++// Coverage of a point p, in pixels from the box origin, in a box of the given
++// size cut by four radii: 1 inside, 0 outside, a one pixel ramp on the edges
++// and arcs. Each corner cuts only its own square.
++float corner_alpha(vec2 p, vec2 box, vec4 r) {
++	r = fit_radii(box, r);
++	vec2 inside = min(p, box - p);
++	float alpha = smoothstep(-0.5, 0.5, min(inside.x, inside.y));
++	alpha *= arc_alpha(vec2(r.x - p.x, r.x - p.y), r.x);
++	alpha *= arc_alpha(vec2(p.x - box.x + r.y, r.y - p.y), r.y);
++	alpha *= arc_alpha(vec2(p.x - box.x + r.z, p.y - box.y + r.z), r.z);
++	alpha *= arc_alpha(vec2(r.w - p.x, p.y - box.y + r.w), r.w);
++	return alpha;
++}
++
++// The box coverage times every rounded clip's, clip boxes relative to the
++// box origin.
++float round_coverage(vec2 p) {
++	float coverage = corner_alpha(p, size, radii);
++	for (int i = 0; i < 4; i++) {
++		if (i >= clip_count) {
++			break;
++		}
++		coverage *= corner_alpha(p - clip_boxes[i].xy, clip_boxes[i].zw, clip_radii[i]);
++	}
++	return coverage;
++}
++
++void main() {
++	gl_FragColor = texture2D(tex, v_texcoord) * alpha * round_coverage(v_pos * size);
++}
+diff -ruN a/render/gles2/shaders/tex_rgbx_round.frag b/render/gles2/shaders/tex_rgbx_round.frag
+--- a/render/gles2/shaders/tex_rgbx_round.frag	1969-12-31 17:00:00.000000000 -0700
++++ b/render/gles2/shaders/tex_rgbx_round.frag	2026-10-09 12:47:16.392164277 -0600
+@@ -0,0 +1,66 @@
++#ifdef GL_FRAGMENT_PRECISION_HIGH
++precision highp float;
++#else
++precision mediump float;
++#endif
++
++varying vec2 v_texcoord;
++varying vec2 v_pos;
++uniform float alpha;
++uniform sampler2D tex;
++uniform vec2 size;
++uniform vec4 radii;
++uniform int clip_count;
++uniform vec4 clip_boxes[4];
++uniform vec4 clip_radii[4];
++
++// Radii (top-left, top-right, bottom-right, bottom-left) that fit a box of
++// this size, by the rule CSS border-radius uses: where the two radii on one
++// edge add up to more than the edge, all four shrink by the smallest such
++// ratio.
++vec4 fit_radii(vec2 box, vec4 r) {
++	float f = 1.0;
++	if (r.x + r.y > box.x) f = min(f, box.x / (r.x + r.y));
++	if (r.w + r.z > box.x) f = min(f, box.x / (r.w + r.z));
++	if (r.x + r.w > box.y) f = min(f, box.y / (r.x + r.w));
++	if (r.y + r.z > box.y) f = min(f, box.y / (r.y + r.z));
++	return r * f;
++}
++
++// One corner's coverage, d the point's offset from the arc centre pointing
++// out of the box: a one pixel ramp on the arc.
++float arc_alpha(vec2 d, float r) {
++	return r > 0.0 ? 1.0 - smoothstep(-0.5, 0.5, length(max(d, 0.0)) - r) : 1.0;
++}
++
++// Coverage of a point p, in pixels from the box origin, in a box of the given
++// size cut by four radii: 1 inside, 0 outside, a one pixel ramp on the edges
++// and arcs. Each corner cuts only its own square.
++float corner_alpha(vec2 p, vec2 box, vec4 r) {
++	r = fit_radii(box, r);
++	vec2 inside = min(p, box - p);
++	float alpha = smoothstep(-0.5, 0.5, min(inside.x, inside.y));
++	alpha *= arc_alpha(vec2(r.x - p.x, r.x - p.y), r.x);
++	alpha *= arc_alpha(vec2(p.x - box.x + r.y, r.y - p.y), r.y);
++	alpha *= arc_alpha(vec2(p.x - box.x + r.z, p.y - box.y + r.z), r.z);
++	alpha *= arc_alpha(vec2(r.w - p.x, p.y - box.y + r.w), r.w);
++	return alpha;
++}
++
++// The box coverage times every rounded clip's, clip boxes relative to the
++// box origin.
++float round_coverage(vec2 p) {
++	float coverage = corner_alpha(p, size, radii);
++	for (int i = 0; i < 4; i++) {
++		if (i >= clip_count) {
++			break;
++		}
++		coverage *= corner_alpha(p - clip_boxes[i].xy, clip_boxes[i].zw, clip_radii[i]);
++	}
++	return coverage;
++}
++
++void main() {
++	gl_FragColor = vec4(texture2D(tex, v_texcoord).rgb, 1.0) * alpha *
++		round_coverage(v_pos * size);
++}
+diff -ruN a/render/pass.c b/render/pass.c
+--- a/render/pass.c	2026-07-07 15:46:09.000000000 -0600
++++ b/render/pass.c	2026-10-09 12:47:16.392221303 -0600
+@@ -61,6 +61,40 @@
+ 	return *options->alpha;
+ }
+ 
++static bool radii_set(const float radii[static 4]) {
++	return radii[0] > 0 || radii[1] > 0 || radii[2] > 0 || radii[3] > 0;
++}
++
++bool wlr_render_texture_options_is_rounded(const struct wlr_render_texture_options *options) {
++	return radii_set(options->corner_radii) || options->clips_len > 0;
++}
++
++bool wlr_render_rect_options_is_rounded(const struct wlr_render_rect_options *options) {
++	return radii_set(options->corner_radii) || options->cutout.width > 0 ||
++		options->clips_len > 0;
++}
++
++void wlr_render_fit_corner_radii(float dst[static 4], const float radii[static 4],
++		double width, double height) {
++	// Each edge with the two radii on it: top, right, bottom, left
++	double edges[4][3] = {
++		{ width, radii[0], radii[1] },
++		{ height, radii[1], radii[2] },
++		{ width, radii[3], radii[2] },
++		{ height, radii[0], radii[3] },
++	};
++	double f = 1.0;
++	for (int i = 0; i < 4; i++) {
++		double sum = edges[i][1] + edges[i][2];
++		if (sum > edges[i][0] && edges[i][0] / sum < f) {
++			f = edges[i][0] / sum;
++		}
++	}
++	for (int i = 0; i < 4; i++) {
++		dst[i] = radii[i] > 0 ? radii[i] * f : 0;
++	}
++}
++
+ void wlr_render_rect_options_get_box(const struct wlr_render_rect_options *options,
+ 		const struct wlr_buffer *buffer, struct wlr_box *box) {
+ 	if (wlr_box_empty(&options->box)) {
+diff -ruN a/render/pixman/pass.c b/render/pixman/pass.c
+--- a/render/pixman/pass.c	2026-07-07 15:46:09.000000000 -0600
++++ b/render/pixman/pass.c	2026-10-09 12:47:16.392323623 -0600
+@@ -1,5 +1,7 @@
+ #include <assert.h>
++#include <math.h>
+ #include <stdlib.h>
++#include <string.h>
+ #include "render/pixman.h"
+ 
+ static const struct wlr_render_pass_impl render_pass_impl;
+@@ -36,6 +38,220 @@
+ 	abort();
+ }
+ 
++// A corner's coverage tile: a radius by radius A8 square whose arc centre is
++// the square's inner corner, with the one pixel ramp of the GLES2
++// corner_alpha. Cached on the renderer per radius and corner.
++static pixman_image_t *corner_tile(struct wlr_pixman_renderer *renderer,
++		int radius, int corner) {
++	struct wlr_pixman_corner_tiles *tiles = NULL, *entry;
++	wl_list_for_each(entry, &renderer->corner_tiles, link) {
++		if (entry->radius == radius) {
++			tiles = entry;
++			break;
++		}
++	}
++	if (tiles == NULL) {
++		tiles = calloc(1, sizeof(*tiles));
++		if (tiles == NULL) {
++			return NULL;
++		}
++		tiles->radius = radius;
++		wl_list_insert(&renderer->corner_tiles, &tiles->link);
++	}
++	if (tiles->images[corner] != NULL) {
++		return tiles->images[corner];
++	}
++
++	pixman_image_t *image = pixman_image_create_bits(PIXMAN_a8, radius, radius, NULL, 0);
++	if (image == NULL) {
++		return NULL;
++	}
++	uint8_t *data = (uint8_t *)pixman_image_get_data(image);
++	int stride = pixman_image_get_stride(image);
++	double cx = corner == 0 || corner == 3 ? radius : 0;
++	double cy = corner == 0 || corner == 1 ? radius : 0;
++	for (int y = 0; y < radius; y++) {
++		for (int x = 0; x < radius; x++) {
++			double dx = x + 0.5 - cx, dy = y + 0.5 - cy;
++			double dist = sqrt(dx * dx + dy * dy) - radius;
++			// 1 - smoothstep(-0.5, 0.5, dist)
++			double t = dist + 0.5;
++			t = t < 0 ? 0 : t > 1 ? 1 : t;
++			double coverage = 1.0 - t * t * (3.0 - 2.0 * t);
++			data[y * stride + x] = (uint8_t)(coverage * 255.0 + 0.5);
++		}
++	}
++	tiles->images[corner] = image;
++	return image;
++}
++
++// Multiply each nonzero corner's tile into the mask at the corners of the
++// box at (x, y) of the given size, the radii fitted to the box.
++static bool mask_cut_corners(struct wlr_pixman_renderer *renderer,
++		pixman_image_t *mask, int x, int y, int width, int height,
++		const float radii[static 4]) {
++	float fit[4];
++	wlr_render_fit_corner_radii(fit, radii, width, height);
++	for (int i = 0; i < 4; i++) {
++		int r = roundf(fit[i]);
++		if (r <= 0) {
++			continue;
++		}
++		pixman_image_t *tile = corner_tile(renderer, r, i);
++		if (tile == NULL) {
++			return false;
++		}
++		pixman_image_composite32(PIXMAN_OP_IN, tile, NULL, mask, 0, 0, 0, 0,
++			i == 0 || i == 3 ? x : x + width - r,
++			i == 0 || i == 1 ? y : y + height - r, r, r);
++	}
++	return true;
++}
++
++// An opaque A8 mask of the given size with its corners cut.
++static pixman_image_t *box_mask(struct wlr_pixman_renderer *renderer,
++		int width, int height, const float radii[static 4]) {
++	pixman_image_t *mask = pixman_image_create_bits(PIXMAN_a8, width, height, NULL, 0);
++	if (mask == NULL) {
++		return NULL;
++	}
++	pixman_image_fill_rectangles(PIXMAN_OP_SRC, mask,
++		&(pixman_color_t){ .alpha = 0xFFFF }, 1,
++		&(pixman_rectangle16_t){ 0, 0, width, height });
++	if (!mask_cut_corners(renderer, mask, 0, 0, width, height, radii)) {
++		pixman_image_unref(mask);
++		return NULL;
++	}
++	return mask;
++}
++
++// What a mask is built from, relative to the box, zeroed so it compares
++// bytewise
++static void rounded_mask_key(struct wlr_pixman_rounded_mask_key *key,
++		const struct wlr_box *box, const float radii[static 4],
++		const struct wlr_box *cutout, const float *cutout_radii,
++		const struct wlr_render_rounded_clip *clips, size_t clips_len, float alpha) {
++	memset(key, 0, sizeof(*key));
++	key->width = box->width;
++	key->height = box->height;
++	memcpy(key->radii, radii, sizeof(key->radii));
++	if (cutout != NULL && cutout->width > 0) {
++		key->cutout = (struct wlr_box){
++			.x = cutout->x - box->x,
++			.y = cutout->y - box->y,
++			.width = cutout->width,
++			.height = cutout->height,
++		};
++		memcpy(key->cutout_radii, cutout_radii, sizeof(key->cutout_radii));
++	}
++	for (size_t i = 0; i < clips_len; i++) {
++		key->clips[i].box = (struct wlr_box){
++			.x = clips[i].box.x - box->x,
++			.y = clips[i].box.y - box->y,
++			.width = clips[i].box.width,
++			.height = clips[i].box.height,
++		};
++		memcpy(key->clips[i].radii, clips[i].radii, sizeof(key->clips[i].radii));
++	}
++	key->clips_len = clips_len;
++	key->alpha = alpha;
++}
++
++// An A8 mask of the key's size: opaque, the corners cut, less the cutout
++// (width 0 for none), zero outside every rounded clip, times alpha when it is
++// not 1. The cutout is a rounded box mask taken out of it, so its corners are
++// exact wherever they overlap.
++static pixman_image_t *build_rounded_mask(struct wlr_pixman_renderer *renderer,
++		const struct wlr_pixman_rounded_mask_key *key) {
++	int width = key->width, height = key->height;
++	pixman_image_t *mask = box_mask(renderer, width, height, key->radii);
++	if (mask == NULL) {
++		return NULL;
++	}
++	bool ok = true;
++
++	const struct wlr_box *cutout = &key->cutout;
++	if (cutout->width > 0) {
++		pixman_image_t *hole = box_mask(renderer, cutout->width, cutout->height,
++			key->cutout_radii);
++		ok = hole != NULL;
++		if (ok) {
++			pixman_image_composite32(PIXMAN_OP_OUT_REVERSE, hole, NULL, mask,
++				0, 0, 0, 0, cutout->x, cutout->y, cutout->width, cutout->height);
++			pixman_image_unref(hole);
++		}
++	}
++
++	for (size_t i = 0; ok && i < key->clips_len; i++) {
++		struct wlr_box clip = key->clips[i].box;
++		pixman_region32_t outside;
++		pixman_region32_init_rect(&outside, 0, 0, width, height);
++		pixman_region32_t keep;
++		pixman_region32_init_rect(&keep, clip.x, clip.y, clip.width, clip.height);
++		pixman_region32_subtract(&outside, &outside, &keep);
++		int n;
++		const pixman_box32_t *boxes = pixman_region32_rectangles(&outside, &n);
++		pixman_image_fill_boxes(PIXMAN_OP_SRC, mask, &(pixman_color_t){0}, n, boxes);
++		pixman_region32_fini(&keep);
++		pixman_region32_fini(&outside);
++		ok = mask_cut_corners(renderer, mask, clip.x, clip.y, clip.width,
++			clip.height, key->clips[i].radii);
++	}
++
++	if (!ok) {
++		pixman_image_unref(mask);
++		return NULL;
++	}
++	if (key->alpha != 1) {
++		pixman_image_t *fill = pixman_image_create_solid_fill(&(struct pixman_color){
++			.alpha = 0xFFFF * key->alpha,
++		});
++		pixman_image_composite32(PIXMAN_OP_IN, fill, NULL, mask,
++			0, 0, 0, 0, 0, 0, width, height);
++		pixman_image_unref(fill);
++	}
++	return mask;
++}
++
++// The mask for a box with its radii, cutout, clips and alpha: a referenced
++// hit from the renderer's cache, or one built now and kept at its head, the
++// oldest dropped past WLR_PIXMAN_ROUNDED_MASKS. The caller unrefs its use.
++static pixman_image_t *rounded_mask(struct wlr_pixman_renderer *renderer,
++		const struct wlr_box *box, const float radii[static 4],
++		const struct wlr_box *cutout, const float *cutout_radii,
++		const struct wlr_render_rounded_clip *clips, size_t clips_len, float alpha) {
++	struct wlr_pixman_rounded_mask_key key;
++	rounded_mask_key(&key, box, radii, cutout, cutout_radii, clips, clips_len, alpha);
++
++	struct wlr_pixman_rounded_mask *entry;
++	wl_list_for_each(entry, &renderer->rounded_masks, link) {
++		if (memcmp(&entry->key, &key, sizeof(key)) == 0) {
++			return pixman_image_ref(entry->image);
++		}
++	}
++
++	pixman_image_t *mask = build_rounded_mask(renderer, &key);
++	if (mask == NULL) {
++		return NULL;
++	}
++	entry = calloc(1, sizeof(*entry));
++	if (entry == NULL) {
++		return mask;
++	}
++	entry->key = key;
++	entry->image = mask;
++	wl_list_insert(&renderer->rounded_masks, &entry->link);
++	if (++renderer->rounded_masks_len > WLR_PIXMAN_ROUNDED_MASKS) {
++		struct wlr_pixman_rounded_mask *oldest =
++			wl_container_of(renderer->rounded_masks.prev, oldest, link);
++		pixman_image_unref(oldest->image);
++		wl_list_remove(&oldest->link);
++		free(oldest);
++		renderer->rounded_masks_len--;
++	}
++	return pixman_image_ref(mask);
++}
++
+ static void render_pass_add_texture(struct wlr_render_pass *wlr_pass,
+ 		const struct wlr_render_texture_options *options) {
+ 	struct wlr_pixman_render_pass *pass = get_render_pass(wlr_pass);
+@@ -64,7 +280,13 @@
+ 
+ 	pixman_image_t *mask = NULL;
+ 	float alpha = wlr_render_texture_options_get_alpha(options);
+-	if (alpha != 1) {
++	if (wlr_render_texture_options_is_rounded(options)) {
++		mask = rounded_mask(buffer->renderer, &dst_box, options->corner_radii,
++			NULL, NULL, options->clips, options->clips_len, alpha);
++		// A cut corner is transparent whatever the texture is, so it blends
++		op = PIXMAN_OP_OVER;
++	}
++	if (mask == NULL && alpha != 1) {
+ 		mask = pixman_image_create_solid_fill(&(struct pixman_color){
+ 			.alpha = 0xFFFF * alpha,
+ 		});
+@@ -218,12 +440,24 @@
+ 
+ 	pixman_image_t *fill = pixman_image_create_solid_fill(&color);
+ 
++	// A rounded rect is the fill through its coverage mask, so it blends
++	pixman_image_t *mask = NULL;
++	if (wlr_render_rect_options_is_rounded(options) && box.width > 0 && box.height > 0) {
++		mask = rounded_mask(buffer->renderer, &box, options->corner_radii,
++			&options->cutout, options->cutout_radii, options->clips,
++			options->clips_len, 1);
++		op = PIXMAN_OP_OVER;
++	}
++
+ 	pixman_image_set_clip_region32(buffer->image, options->clip);
+-	pixman_image_composite32(op, fill, NULL, buffer->image,
++	pixman_image_composite32(op, fill, mask, buffer->image,
+ 		0, 0, 0, 0, box.x, box.y, box.width, box.height);
+ 	pixman_image_set_clip_region32(buffer->image, NULL);
+ 
+ 	pixman_image_unref(fill);
++	if (mask != NULL) {
++		pixman_image_unref(mask);
++	}
+ }
+ 
+ static const struct wlr_render_pass_impl render_pass_impl = {
+diff -ruN a/render/pixman/renderer.c b/render/pixman/renderer.c
+--- a/render/pixman/renderer.c	2026-07-07 15:46:09.000000000 -0600
++++ b/render/pixman/renderer.c	2026-10-09 12:47:16.392428828 -0600
+@@ -287,6 +287,24 @@
+ 		wlr_texture_destroy(&tex->wlr_texture);
+ 	}
+ 
++	struct wlr_pixman_corner_tiles *tiles, *tiles_tmp;
++	wl_list_for_each_safe(tiles, tiles_tmp, &renderer->corner_tiles, link) {
++		for (size_t i = 0; i < 4; i++) {
++			if (tiles->images[i] != NULL) {
++				pixman_image_unref(tiles->images[i]);
++			}
++		}
++		wl_list_remove(&tiles->link);
++		free(tiles);
++	}
++
++	struct wlr_pixman_rounded_mask *mask, *mask_tmp;
++	wl_list_for_each_safe(mask, mask_tmp, &renderer->rounded_masks, link) {
++		pixman_image_unref(mask->image);
++		wl_list_remove(&mask->link);
++		free(mask);
++	}
++
+ 	wlr_drm_format_set_finish(&renderer->drm_formats);
+ 
+ 	free(renderer);
+@@ -330,6 +348,8 @@
+ 	renderer->wlr_renderer.features.output_color_transform = false;
+ 	wl_list_init(&renderer->buffers);
+ 	wl_list_init(&renderer->textures);
++	wl_list_init(&renderer->corner_tiles);
++	wl_list_init(&renderer->rounded_masks);
+ 
+ 	size_t len = 0;
+ 	const uint32_t *formats = get_pixman_drm_formats(&len);
+diff -ruN a/types/scene/wlr_scene.c b/types/scene/wlr_scene.c
+--- a/types/scene/wlr_scene.c	2026-07-07 15:46:09.000000000 -0600
++++ b/types/scene/wlr_scene.c	2026-10-09 13:05:33.974851413 -0600
+@@ -4,6 +4,7 @@
+ #include <wlr/backend.h>
+ #include <wlr/render/swapchain.h>
+ #include <wlr/render/drm_syncobj.h>
++#include <wlr/render/interface.h>
+ #include <wlr/render/wlr_renderer.h>
+ #include <wlr/types/wlr_color_management_v1.h>
+ #include <wlr/types/wlr_compositor.h>
+@@ -256,6 +257,77 @@
+ 	return _scene_nodes_in_box(node, box, iterator, user_data, x, y);
+ }
+ 
++static bool radii_set(const float radii[static 4]) {
++	return radii[0] > 0 || radii[1] > 0 || radii[2] > 0 || radii[3] > 0;
++}
++
++static bool scene_buffer_has_corners(const struct wlr_scene_buffer *scene_buffer) {
++	return radii_set(scene_buffer->corner_radii) || scene_buffer->clips_len > 0;
++}
++
++static bool scene_rect_is_rounded(const struct wlr_scene_rect *scene_rect) {
++	return radii_set(scene_rect->corner_radii) || scene_rect->cutout_box.width > 0 ||
++		scene_rect->clips_len > 0;
++}
++
++// Store a clip list, zeroing the unused entries; whether it changed.
++static bool set_rounded_clips(struct wlr_render_rounded_clip dst[static WLR_SCENE_ROUNDED_CLIPS],
++		size_t *dst_len, const struct wlr_render_rounded_clip *clips, size_t len) {
++	assert(len <= WLR_SCENE_ROUNDED_CLIPS);
++	struct wlr_render_rounded_clip want[WLR_SCENE_ROUNDED_CLIPS] = {0};
++	if (len > 0) {
++		memcpy(want, clips, len * sizeof(*clips));
++	}
++	if (*dst_len == len && memcmp(dst, want, sizeof(want)) == 0) {
++		return false;
++	}
++	memcpy(dst, want, sizeof(want));
++	*dst_len = len;
++	return true;
++}
++
++// The box at (x, y) inset past its corner arcs: the largest plain rectangle
++// no arc reaches, one rect so it costs no allocation. An opaque region only
++// has to be inside the opaque pixels, so the thin bands beside the arcs are
++// given up rather than built. Corners are ordered top-left, top-right,
++// bottom-right, bottom-left.
++static struct wlr_box box_inside_corners(int x, int y, int width, int height,
++		const float radii[static 4]) {
++	int r[4];
++	for (int i = 0; i < 4; i++) {
++		r[i] = radii[i] > 0 ? (int)ceilf(radii[i]) : 0;
++	}
++	int left = r[0] > r[3] ? r[0] : r[3], right = r[1] > r[2] ? r[1] : r[2];
++	int top = r[0] > r[1] ? r[0] : r[1], bottom = r[2] > r[3] ? r[2] : r[3];
++	struct wlr_box box = {
++		.x = x + left,
++		.y = y + top,
++		.width = width - left - right,
++		.height = height - top - bottom,
++	};
++	if (box.width <= 0 || box.height <= 0) {
++		box = (struct wlr_box){0};
++	}
++	return box;
++}
++
++// A cut corner and everything outside a rounded clip may show what is below,
++// so neither is opaque: a buffer's region is kept inside its box less its
++// corners and inside each clip's box less the clip's, every one a single
++// rect. The buffer is at (x, y) with the given size.
++static void subtract_rounded(pixman_region32_t *opaque, int x, int y,
++		int width, int height, const float radii[static 4],
++		const struct wlr_render_rounded_clip *clips, size_t clips_len) {
++	struct wlr_box keep = box_inside_corners(x, y, width, height, radii);
++	pixman_region32_intersect_rect(opaque, opaque, keep.x, keep.y, keep.width, keep.height);
++	for (size_t i = 0; i < clips_len; i++) {
++		struct wlr_box clip = clips[i].box;
++		keep = box_inside_corners(x + clip.x, y + clip.y, clip.width, clip.height,
++			clips[i].radii);
++		pixman_region32_intersect_rect(opaque, opaque, keep.x, keep.y, keep.width, keep.height);
++	}
++}
++
+ static void scene_node_opaque_region(struct wlr_scene_node *node, int x, int y,
+ 		pixman_region32_t *opaque) {
+ 	int width, height;
+@@ -281,12 +353,27 @@
+ 			pixman_region32_copy(opaque, &scene_buffer->opaque_region);
+ 			pixman_region32_intersect_rect(opaque, opaque, 0, 0, width, height);
+ 			pixman_region32_translate(opaque, x, y);
++			subtract_rounded(opaque, x, y, width, height, scene_buffer->corner_radii,
++				scene_buffer->clips, scene_buffer->clips_len);
+ 			return;
+ 		}
+ 	}
+ 
+ 	pixman_region32_fini(opaque);
+ 	pixman_region32_init_rect(opaque, x, y, width, height);
++	if (node->type == WLR_SCENE_NODE_BUFFER) {
++		struct wlr_scene_buffer *scene_buffer = wlr_scene_buffer_from_node(node);
++		subtract_rounded(opaque, x, y, width, height, scene_buffer->corner_radii,
++			scene_buffer->clips, scene_buffer->clips_len);
++	} else if (node->type == WLR_SCENE_NODE_RECT) {
++		struct wlr_scene_rect *scene_rect = wlr_scene_rect_from_node(node);
++		// A rounded rect counts nothing as opaque, as the raster it replaces
++		// did: any region it reported would split what is under it into
++		// strips on every commit, and a ring's hole shows what is below.
++		if (scene_rect_is_rounded(scene_rect)) {
++			pixman_region32_clear(opaque);
++		}
++	}
+ }
+ 
+ struct scene_update_data {
+@@ -366,6 +453,54 @@
+ 	wlr_box_transform(box, box, transform, data->trans_width, data->trans_height);
+ }
+ 
++// Corner radii in buffer pixels: scaled by the output scale and moved to the
++// corner the output transform moves them to, as transform_output_box moves a
++// box. Each corner is a unit square of a 2 by 2 box; where it lands names
++// its corner in buffer space.
++static void transform_corner_radii(float dst[static 4], const float src[static 4],
++		const struct render_data *data) {
++	enum wl_output_transform transform = wlr_output_transform_invert(data->transform);
++	for (int i = 0; i < 4; i++) {
++		struct wlr_box corner = {
++			.x = i == 0 || i == 3 ? 0 : 1,
++			.y = i == 0 || i == 1 ? 0 : 1,
++			.width = 1,
++			.height = 1,
++		};
++		wlr_box_transform(&corner, &corner, transform, 2, 2);
++		int j = corner.x == 0 ? (corner.y == 0 ? 0 : 3) : (corner.y == 0 ? 1 : 2);
++		dst[j] = src[i] * data->scale;
++	}
++}
++
++// A node-local rounded box at node position (x, y), moved into the
++// buffer-pixel space the render pass draws in.
++static void render_rounded_box(struct wlr_render_rounded_clip *dst,
++		const struct wlr_box *box, const float radii[static 4], int x, int y,
++		const struct render_data *data) {
++	dst->box = (struct wlr_box){
++		.x = x + box->x,
++		.y = y + box->y,
++		.width = box->width,
++		.height = box->height,
++	};
++	transform_output_box(&dst->box, data);
++	transform_corner_radii(dst->radii, radii, data);
++}
++
++// A node's corner radii and rounded clips in the buffer-pixel space of its
++// destination box, for the render pass.
++static void render_corners(float dst_radii[static 4],
++		struct wlr_render_rounded_clip *dst_clips, size_t *dst_len,
++		const float radii[static 4], const struct wlr_render_rounded_clip *clips,
++		size_t clips_len, int x, int y, const struct render_data *data) {
++	transform_corner_radii(dst_radii, radii, data);
++	for (size_t i = 0; i < clips_len; i++) {
++		render_rounded_box(&dst_clips[i], &clips[i].box, clips[i].radii, x, y, data);
++	}
++	*dst_len = clips_len;
++}
++
+ static void scene_output_damage(struct wlr_scene_output *scene_output,
+ 		const pixman_region32_t *damage) {
+ 	struct wlr_output *output = scene_output->output;
+@@ -799,6 +934,41 @@
+ 	scene_node_update(&rect->node, NULL);
+ }
+ 
++void wlr_scene_rect_set_corner_radii(struct wlr_scene_rect *rect,
++		const float radii[static 4]) {
++	if (memcmp(rect->corner_radii, radii, sizeof(rect->corner_radii)) == 0) {
++		return;
++	}
++
++	memcpy(rect->corner_radii, radii, sizeof(rect->corner_radii));
++	scene_node_update(&rect->node, NULL);
++}
++
++void wlr_scene_rect_set_cutout(struct wlr_scene_rect *rect,
++		const struct wlr_box *box, const float radii[4]) {
++	struct wlr_box cutout_box = {0};
++	float cutout_radii[4] = {0};
++	if (box != NULL && box->width > 0 && box->height > 0) {
++		cutout_box = *box;
++		memcpy(cutout_radii, radii, sizeof(cutout_radii));
++	}
++	if (wlr_box_equal(&rect->cutout_box, &cutout_box) &&
++			memcmp(rect->cutout_radii, cutout_radii, sizeof(cutout_radii)) == 0) {
++		return;
++	}
++
++	rect->cutout_box = cutout_box;
++	memcpy(rect->cutout_radii, cutout_radii, sizeof(cutout_radii));
++	scene_node_update(&rect->node, NULL);
++}
++
++void wlr_scene_rect_set_rounded_clips(struct wlr_scene_rect *rect,
++		const struct wlr_render_rounded_clip *clips, size_t len) {
++	if (set_rounded_clips(rect->clips, &rect->clips_len, clips, len)) {
++		scene_node_update(&rect->node, NULL);
++	}
++}
++
+ static void scene_buffer_handle_buffer_release(struct wl_listener *listener,
+ 		void *data) {
+ 	struct wlr_scene_buffer *scene_buffer =
+@@ -1107,6 +1277,23 @@
+ 	scene_node_update(&scene_buffer->node, NULL);
+ }
+ 
++void wlr_scene_buffer_set_corner_radii(struct wlr_scene_buffer *scene_buffer,
++		const float radii[static 4]) {
++	if (memcmp(scene_buffer->corner_radii, radii, sizeof(scene_buffer->corner_radii)) == 0) {
++		return;
++	}
++
++	memcpy(scene_buffer->corner_radii, radii, sizeof(scene_buffer->corner_radii));
++	scene_node_update(&scene_buffer->node, NULL);
++}
++
++void wlr_scene_buffer_set_rounded_clips(struct wlr_scene_buffer *scene_buffer,
++		const struct wlr_render_rounded_clip *clips, size_t len) {
++	if (set_rounded_clips(scene_buffer->clips, &scene_buffer->clips_len, clips, len)) {
++		scene_node_update(&scene_buffer->node, NULL);
++	}
++}
++
+ void wlr_scene_buffer_set_transform(struct wlr_scene_buffer *scene_buffer,
+ 		enum wl_output_transform transform) {
+ 	if (scene_buffer->transform == transform) {
+@@ -1388,6 +1575,41 @@
+ 	struct wlr_scene_node *node;
+ };
+ 
++// Whether (px, py) is inside the box with its corners cut by radii
++// (top-left, top-right, bottom-right, bottom-left), the shape the renderers
++// draw, radii fitted by the edge rule.
++static bool point_in_rounded_box(double px, double py, int x, int y,
++		int width, int height, const float radii[static 4]) {
++	if (px < x || py < y || px >= x + width || py >= y + height) {
++		return false;
++	}
++	float r[4];
++	wlr_render_fit_corner_radii(r, radii, width, height);
++	for (int i = 0; i < 4; i++) {
++		bool left = i == 0 || i == 3, top = i == 0 || i == 1;
++		double cx = left ? x + r[i] : x + width - r[i];
++		double cy = top ? y + r[i] : y + height - r[i];
++		double dx = left ? cx - px : px - cx, dy = top ? cy - py : py - cy;
++		if (r[i] > 0 && dx > 0 && dy > 0 && dx * dx + dy * dy > r[i] * r[i]) {
++			return false;
++		}
++	}
++	return true;
++}
++
++// Whether (px, py) is inside every rounded clip.
++static bool point_in_rounded_clips(double px, double py,
++		const struct wlr_render_rounded_clip *clips, size_t clips_len) {
++	for (size_t i = 0; i < clips_len; i++) {
++		struct wlr_box clip = clips[i].box;
++		if (!point_in_rounded_box(px, py, clip.x, clip.y, clip.width, clip.height,
++				clips[i].radii)) {
++			return false;
++		}
++	}
++	return true;
++}
++
+ static bool scene_node_at_iterator(struct wlr_scene_node *node,
+ 		int lx, int ly, void *data) {
+ 	struct node_at_data *at_data = data;
+@@ -1398,10 +1620,40 @@
+ 	if (node->type == WLR_SCENE_NODE_BUFFER) {
+ 		struct wlr_scene_buffer *scene_buffer = wlr_scene_buffer_from_node(node);
+ 
++		// A point in a cut corner or outside the rounded clip is not drawn,
++		// so it is not a hit; the surface's input region applies inside.
++		if (scene_buffer_has_corners(scene_buffer)) {
++			int width, height;
++			scene_node_get_size(node, &width, &height);
++			if (!point_in_rounded_box(rx, ry, 0, 0, width, height,
++					scene_buffer->corner_radii) ||
++					!point_in_rounded_clips(rx, ry, scene_buffer->clips,
++						scene_buffer->clips_len)) {
++				return false;
++			}
++		}
++
+ 		if (scene_buffer->point_accepts_input &&
+ 				!scene_buffer->point_accepts_input(scene_buffer, &rx, &ry)) {
+ 			return false;
+ 		}
++	} else if (node->type == WLR_SCENE_NODE_RECT) {
++		struct wlr_scene_rect *scene_rect = wlr_scene_rect_from_node(node);
++
++		// A point in a cut corner, in the cutout or outside a rounded clip
++		// is not drawn, so it is not a hit.
++		if (scene_rect_is_rounded(scene_rect)) {
++			struct wlr_box cutout = scene_rect->cutout_box;
++			if (!point_in_rounded_box(rx, ry, 0, 0, scene_rect->width,
++					scene_rect->height, scene_rect->corner_radii) ||
++					(cutout.width > 0 && point_in_rounded_box(rx, ry, cutout.x,
++						cutout.y, cutout.width, cutout.height,
++						scene_rect->cutout_radii)) ||
++					!point_in_rounded_clips(rx, ry, scene_rect->clips,
++						scene_rect->clips_len)) {
++				return false;
++			}
++		}
+ 	}
+ 
+ 	at_data->rx = rx;
+@@ -1485,7 +1737,7 @@
+ 	case WLR_SCENE_NODE_RECT:;
+ 		struct wlr_scene_rect *scene_rect = wlr_scene_rect_from_node(node);
+ 
+-		wlr_render_pass_add_rect(data->render_pass, &(struct wlr_render_rect_options){
++		struct wlr_render_rect_options rect_options = {
+ 			.box = dst_box,
+ 			.color = {
+ 				.r = scene_rect->color[0],
+@@ -1494,7 +1746,21 @@
+ 				.a = scene_rect->color[3],
+ 			},
+ 			.clip = &render_region,
+-		});
++		};
++		if (scene_rect_is_rounded(scene_rect)) {
++			render_corners(rect_options.corner_radii, rect_options.clips,
++				&rect_options.clips_len, scene_rect->corner_radii,
++				scene_rect->clips, scene_rect->clips_len, x, y, data);
++			if (scene_rect->cutout_box.width > 0) {
++				struct wlr_render_rounded_clip cutout;
++				render_rounded_box(&cutout, &scene_rect->cutout_box,
++					scene_rect->cutout_radii, x, y, data);
++				rect_options.cutout = cutout.box;
++				memcpy(rect_options.cutout_radii, cutout.radii,
++					sizeof(rect_options.cutout_radii));
++			}
++		}
++		wlr_render_pass_add_rect(data->render_pass, &rect_options);
+ 		break;
+ 	case WLR_SCENE_NODE_BUFFER:;
+ 		struct wlr_scene_buffer *scene_buffer = wlr_scene_buffer_from_node(node);
+@@ -1538,7 +1804,7 @@
+ 			WLR_COLOR_TRANSFER_FUNCTION_SRGB, &srgb_lum);
+ 		float luminance_multiplier = get_luminance_multiplier(&src_lum, &srgb_lum);
+ 
+-		wlr_render_pass_add_texture(data->render_pass, &(struct wlr_render_texture_options) {
++		struct wlr_render_texture_options texture_options = {
+ 			.texture = texture,
+ 			.src_box = scene_buffer->src_box,
+ 			.dst_box = dst_box,
+@@ -1556,7 +1822,13 @@
+ 			.luminance_multiplier = &luminance_multiplier,
+ 			.wait_timeline = scene_buffer->wait_timeline,
+ 			.wait_point = scene_buffer->wait_point,
+-		});
++		};
++		if (scene_buffer_has_corners(scene_buffer)) {
++			render_corners(texture_options.corner_radii, texture_options.clips,
++				&texture_options.clips_len, scene_buffer->corner_radii,
++				scene_buffer->clips, scene_buffer->clips_len, x, y, data);
++		}
++		wlr_render_pass_add_texture(data->render_pass, &texture_options);
+ 
+ 		struct wlr_scene_output_sample_event sample_event = {
+ 			.output = data->output,
+@@ -1943,7 +2215,10 @@
+ 		struct wlr_scene_rect *rect = wlr_scene_rect_from_node(node);
+ 		float *black = (float[4]){ 0.f, 0.f, 0.f, 1.f };
+ 
+-		if (memcmp(rect->color, black, sizeof(float) * 4) == 0) {
++		// A rounded rect shows what is below its cut parts, which the
++		// background would cover
++		if (memcmp(rect->color, black, sizeof(float) * 4) == 0 &&
++				!scene_rect_is_rounded(rect)) {
+ 			return false;
+ 		}
+ 	}
+@@ -2088,6 +2363,11 @@
+ 		return SCANOUT_INELIGIBLE;
+ 	}
+ 
++	// A cut corner or a rounded clip is drawn by the renderer
++	if (scene_buffer_has_corners(buffer)) {
++		return SCANOUT_INELIGIBLE;
++	}
++
+ 	// The native size of the buffer after any transform is applied
+ 	int default_width = buffer->buffer->width;
+ 	int default_height = buffer->buffer->height;

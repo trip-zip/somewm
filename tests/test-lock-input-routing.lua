@@ -1,12 +1,11 @@
 ---------------------------------------------------------------------------
 -- Test: Lock input routing (observable Lua-level effects)
 --
--- Covers: SEC-9 (no client focus while locked), SEC-10, SEC-11
+-- Covers client focus and activation while locked.
 --
 -- Note: Key/button injection via root.fake_input bypasses the compositor's
--- keypress() handler, so SEC-3/5/6/7/8/12 cannot be directly tested from
--- Lua. Those are verified by code review of somewm.c. This test verifies
--- the observable Lua-level effects of locking.
+-- keypress() handler in input.c, so this fixture only checks observable
+-- Lua-level effects of locking; it does not exercise native key filtering.
 ---------------------------------------------------------------------------
 
 local runner = require("_runner")
@@ -15,10 +14,7 @@ local lock = require("_lock_helper")
 local test_client = require("_client")
 
 if not test_client.is_available() then
-    io.stderr:write("SKIP: No terminal available for test clients\n")
-    io.stderr:write("Test finished successfully.\n")
-    awesome.quit()
-    return
+    return runner.skip("No terminal available for test clients")
 end
 
 runner.run_steps({
@@ -58,7 +54,7 @@ runner.run_steps({
         return true
     end,
 
-    -- Step 4: SEC-11: activate attempt while locked should not change wlroots focus
+    -- Step 4: activate attempt while locked should not change wlroots focus
     -- (c:activate runs through Lua, but the compositor blocks real input)
     function()
         -- Just verify we can call activate without crashing while locked

@@ -1,7 +1,7 @@
 ---------------------------------------------------------------------------
 -- Test: Lock API basics
 --
--- Covers: SEC-1, SEC-2, BEH-1, BEH-2, EDGE-1, lock signals
+-- Covers lock signals, repeated lock/unlock, authentication and surface requirements.
 ---------------------------------------------------------------------------
 
 local runner = require("_runner")
@@ -30,7 +30,7 @@ runner.run_steps({
         return true
     end,
 
-    -- Step 2: BEH-2 - unlock when not locked returns true
+    -- Step 2: unlock when not locked returns true
     function()
         assert(not awesome.locked, "should not be locked yet")
         local result = awesome.unlock()
@@ -50,7 +50,7 @@ runner.run_steps({
         return true
     end,
 
-    -- Step 4: BEH-1 - second lock() doesn't re-emit signal
+    -- Step 4: second lock() doesn't re-emit signal
     function()
         signals = {}
         local result = awesome.lock()
@@ -59,7 +59,7 @@ runner.run_steps({
         return true
     end,
 
-    -- Step 5: SEC-1 - unlock without authenticate fails
+    -- Step 5: unlock without authenticate fails
     function()
         assert(awesome.locked, "should still be locked")
         local result = awesome.unlock()
@@ -68,7 +68,7 @@ runner.run_steps({
         return true
     end,
 
-    -- Step 6: SEC-2 - authenticate, unlock, re-lock, verify auth state reset
+    -- Step 6: authenticate, unlock, re-lock, verify auth state reset
     function()
         local authed = awesome.authenticate(lock.TEST_PASSWORD)
         assert(authed == true, "authenticate should succeed")
@@ -111,7 +111,7 @@ runner.run_steps({
         return true
     end,
 
-    -- Step 9: EDGE-1 - clear_lock_surface then lock() returns false
+    -- Step 9: clear_lock_surface then lock() returns false
     function()
         awesome.clear_lock_surface()
         local result = awesome.lock()

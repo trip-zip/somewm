@@ -116,7 +116,7 @@ end
 -- This should be called at the end of tests to clean up.
 function module.terminate()
     for _, pid in ipairs(spawned_pids) do
-        os.execute("kill " .. pid .. " 2>/dev/null")
+        awesome.kill(pid, 9)
     end
     spawned_pids = {}
 end

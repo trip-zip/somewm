@@ -15,10 +15,9 @@
 -- @supermodule wibox.layout.fixed
 ---------------------------------------------------------------------------
 
-local base  = require("wibox.widget.base" )
+local clay = require("wibox.clay")
 local fixed = require("wibox.layout.fixed")
 local table = table
-local pairs = pairs
 local gtable  = require("gears.table")
 
 local stack = {mt={}}
@@ -69,35 +68,6 @@ local stack = {mt={}}
 -- @propemits true false
 -- @interface layout
 
-function stack:layout(_, width, height)
-    local result = {}
-    local spacing = self._private.spacing
-
-    width  = width  - math.abs(self._private.h_offset * #self._private.widgets) - 2*spacing
-    height = height - math.abs(self._private.v_offset * #self._private.widgets) - 2*spacing
-
-    local h_off, v_off = spacing, spacing
-
-    for _, v in pairs(self._private.widgets) do
-        table.insert(result, base.place_widget_at(v, h_off, v_off, width, height))
-        h_off, v_off = h_off + self._private.h_offset, v_off + self._private.v_offset
-        if self._private.top_only then break end
-    end
-
-    return result
-end
-
-function stack:fit(context, orig_width, orig_height)
-    local max_w, max_h = 0,0
-    local spacing = self._private.spacing
-
-    for _, v in pairs(self._private.widgets) do
-        local w, h = base.fit_widget(self, context, v, orig_width, orig_height)
-        max_w, max_h = math.max(max_w, w+2*spacing), math.max(max_h, h+2*spacing)
-    end
-
-    return math.min(max_w, orig_width), math.min(max_h, orig_height)
-end
 
 --- If only the first stack widget is drawn.
 --
@@ -152,41 +122,20 @@ function stack:raise_widget(widget, recursive)
     end
 end
 
---- Add an horizontal offset to each layers.
+--- Add an vertical offset to each layers.
 --
 -- Note that this reduces the overall size of each widgets by the sum of all
 -- layers offsets.
 --
 --@DOC_wibox_layout_stack_offset_EXAMPLE@
 --
--- @property horizontal_offset
--- @tparam[opt=0] number horizontal_offset
--- @propertyunit pixel
--- @negativeallowed true
--- @propemits true false
--- @see vertical_offset
-
---- Add an vertical offset to each layers.
---
--- Note that this reduces the overall size of each widgets by the sum of all
--- layers offsets.
---
 -- @property vertical_offset
 -- @tparam[opt=0] number vertical_offset
 -- @propertyunit pixel
 -- @negativeallowed true
 -- @propemits true false
--- @see horizontal_offset
 
-function stack:set_horizontal_offset(value)
-    self._private.h_offset = value
-    self:emit_signal("widget::layout_changed")
-    self:emit_signal("property::horizontal_offset", value)
-end
-
-function stack:get_horizontal_offset()
-    return self._private.h_offset
-end
+clay.retire(stack, {"horizontal_offset"})
 
 function stack:set_vertical_offset(value)
     self._private.v_offset = value
@@ -208,7 +157,6 @@ local function new(...)
 
     gtable.crush(ret, stack, true)
 
-    ret._private.h_offset = 0
     ret._private.v_offset = 0
 
     return ret
@@ -219,6 +167,28 @@ function stack.mt:__call(...)
 end
 
 --@DOC_fixed_COMMON@
+
+--- The first participating child is content; later children are floats.
+-- The compiler selects content after hidden/refused children are omitted.
+local function describe_stack(w)
+    local p = w._private
+    local spacing = clay.pixels(w, "spacing", p.spacing)
+    local vo = clay.pixels(w, "vertical_offset", p.v_offset)
+
+    local specs = {}
+
+    for i, child in ipairs(p.widgets) do
+        local k = i - 1
+
+        specs[i] = { widget = child, stack = true, w = "grow", h = "grow",
+            x = spacing, y = spacing + k * vo }
+    end
+
+    return { specs = specs, stack = true, top_only = p.top_only }
+end
+
+-- Fixed's constructor builds stack, so widget_name names fixed.
+stack._clay = { describe = describe_stack, name = "wibox.layout.stack" }
 
 return setmetatable(stack, stack.mt)
 -- vim: filetype=lua:expandtab:shiftwidth=4:tabstop=8:softtabstop=4:textwidth=80

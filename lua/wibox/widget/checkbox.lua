@@ -17,6 +17,7 @@ local base      = require( "wibox.widget.base" )
 local beautiful = require( "beautiful"         )
 local shape     = require( "gears.shape"       )
 local gtable    = require( "gears.table"       )
+local clay      = require( "wibox.clay"        )
 
 local checkbox = {}
 
@@ -35,16 +36,6 @@ local checkbox = {}
 -- @beautiful beautiful.checkbox_border_color
 -- @param color
 
---- The checked part border color.
---
--- @beautiful beautiful.checkbox_check_border_color
--- @param color
-
---- The checked part border width.
---
--- @beautiful beautiful.checkbox_check_border_width
--- @param number
-
 --- The checked part filling color.
 --
 -- @beautiful beautiful.checkbox_check_color
@@ -53,13 +44,6 @@ local checkbox = {}
 --- The outer (unchecked area) shape.
 --
 -- @beautiful beautiful.checkbox_shape
--- @tparam gears.shape|function shape
--- @see gears.shape
-
---- The checked part shape.
---
--- If none is set, then the `shape` property will be used.
--- @beautiful beautiful.checkbox_check_shape
 -- @tparam gears.shape|function shape
 -- @see gears.shape
 
@@ -104,22 +88,6 @@ local checkbox = {}
 -- @propbeautiful
 -- @propemits true false
 
---- The checked part border color.
---
--- @property check_border_color
--- @tparam color|nil check_border_color
--- @propbeautiful
--- @propemits true false
-
---- The checked part border width.
---
--- @property check_border_width
--- @tparam number|nil check_border_width
--- @propbeautiful
--- @negativeallowed false
--- @propertyunit pixel
--- @propemits true false
-
 --- The checked part filling color.
 --
 -- @property check_color
@@ -132,16 +100,6 @@ local checkbox = {}
 --@DOC_wibox_widget_checkbox_shape_EXAMPLE@
 -- @property shape
 -- @tparam shape|nil shape
--- @propbeautiful
--- @propemits true false
--- @see gears.shape
-
---- The checked part shape.
---
--- If none is set, then the `shape` property will be used.
---@DOC_wibox_widget_checkbox_check_shape_EXAMPLE@
--- @property check_shape
--- @tparam shape|nil check_shape
 -- @propbeautiful
 -- @propemits true false
 -- @see gears.shape
@@ -186,87 +144,81 @@ end
 -- The child widget area
 local function content_workarea(self, width, height)
     local padding = self._private.paddings or {}
-    local offset = self:get_check_border_width() or 0
     local wa = outline_workarea(self, width, height)
 
-    wa.x      = offset + wa.x + (padding.left or 1)
-    wa.y      = offset + wa.y + (padding.top  or 1)
-    wa.width  = wa.width  - (padding.left or 1) - (padding.right  or 1) - 2*offset
-    wa.height = wa.height - (padding.top  or 1) - (padding.bottom or 1) - 2*offset
+    wa.x      = wa.x + (padding.left or 1)
+    wa.y      = wa.y + (padding.top  or 1)
+    wa.width  = wa.width  - (padding.left or 1) - (padding.right  or 1)
+    wa.height = wa.height - (padding.top  or 1) - (padding.bottom or 1)
 
     return wa
 end
 
-local function draw(self, _, cr, width, height)
-    local size = math.min(width, height)
 
-    local background_shape = self:get_shape() or shape.rectangle
-    local border_width = self:get_border_width() or 1
 
-    local main_color = self:get_color()
-    local bg = self:get_bg()
-    local border_color = self:get_border_color()
-
-    -- If no color is set, it will fallback to the default one
-    if border_color or main_color then
-        cr:set_source(color(border_color or main_color))
+local function describe_checkbox(w, fg, st, item, bound)
+    local side, src = clay.square_side(w, bound)
+    if not side then
+        return clay.refuse(w, "size", "has no definite axis; force a size or put it in a sized host")
     end
 
-    local wa = outline_workarea(self, size, size)
-    cr:translate(wa.x, wa.y)
-    background_shape(cr, wa.width, wa.height)
-    cr:set_line_width(border_width)
-
-    if bg then
-        cr:save()
-        cr:set_source(color(bg))
-        cr:fill_preserve()
-        cr:restore()
+    local main_color = w:get_color()
+    local bg = w:get_bg()
+    local border_color = w:get_border_color()
+    local check_color = w:get_check_color()
+    -- A gradient starts where `draw` set it: at each work area's corner.
+    local outline_wa, content_wa = outline_workarea(w, side, side), content_workarea(w, side, side)
+    local main = clay.solid_rgba(main_color)
+    local main_fill = clay.fill(main_color, content_wa.x, content_wa.y)
+    local background = clay.fill(bg, outline_wa.x, outline_wa.y)
+    local border = clay.solid_rgba(border_color)
+    local check_fill = clay.fill(check_color, content_wa.x, content_wa.y)
+    local border_width = w:get_border_width() or 1
+    if main_color and not main_fill then
+        clay.ignore(w, "color", "is not a solid or a gradient and is transparent")
+    elseif main_color and not main and not border and border_width > 0 then
+        clay.ignore(w, "color", "is not solid and the outline is black")
+    end
+    if bg and not background then
+        clay.ignore(w, "bg", "is not a solid or a gradient and is transparent")
+    end
+    if border_color and not border then
+        clay.ignore(w, "border_color", "is not solid and is transparent")
+    end
+    if check_color and not check_fill then
+        clay.ignore(w, "check_color", "is not a solid or a gradient and is transparent")
     end
 
-    cr:stroke()
-
-    cr:translate(-wa.x, -wa.y)
-
-    -- Draw the checked part
-    if self._private.checked then
-        local col = self:get_check_color() or main_color
-        border_color = self:get_check_border_color()
-        border_width = self:get_check_border_width() or 0
-        local check_shape = self:get_check_shape() or background_shape
-
-        wa = content_workarea(self, size, size)
-        cr:translate(wa.x, wa.y)
-
-        check_shape(cr, wa.width, wa.height)
-
-        if col then
-            cr:set_source(color(col))
-        end
-
-        if border_width > 0 then
-            cr:fill_preserve()
-            cr:set_line_width(border_width)
-            cr:set_source(color(border_color))
-            cr:stroke()
-        else
-            cr:fill()
-        end
+    local background_shape = w:get_shape() or shape.rectangle
+    local stroke = border or main or { 0, 0, 0, 1 }
+    local outline = { w = "grow", h = "grow", fill = background,
+        stroke = border_width > 0 and stroke or nil, stroke_width = border_width,
+        shape = function(width, height)
+            local size = math.min(width, height)
+            local wa = outline_workarea(w, size, size)
+            return clay.shape_ops(background_shape, wa.width, wa.height, wa.x, wa.y)
+        end }
+    local check
+    if w._private.checked then
+        check = { float = true, w = "grow", h = "grow",
+            fill = check_fill or main_fill or stroke,
+            shape = function(width, height)
+                local size = math.min(width, height)
+                local wa = content_workarea(w, size, size)
+                return clay.shape_ops(background_shape, wa.width, wa.height, wa.x, wa.y)
+            end }
     end
+    return { w = side, h = side, wsrc = src, hsrc = src, specs = { outline, check } }
 end
 
-local function fit(_, _, w, h)
-    local size = math.min(w, h)
-    return size, size
-end
+checkbox._clay = { describe = describe_checkbox }
 
 --- If the checkbox is checked.
 -- @property checked
 -- @tparam[opt=false] boolean checked
 
-for _, prop in ipairs {"border_width", "bg", "border_color", "check_border_color",
-    "check_border_width", "check_color", "shape", "check_shape", "paddings",
-    "checked", "color" } do
+for _, prop in ipairs {"border_width", "bg", "border_color", "check_color", "shape",
+    "paddings", "checked", "color" } do
     checkbox["set_"..prop] = function(self, value)
         self._private[prop] = value
         self:emit_signal("property::"..prop, value)
@@ -276,6 +228,8 @@ for _, prop in ipairs {"border_width", "bg", "border_color", "check_border_color
         return self._private[prop] or beautiful["checkbox_"..prop]
     end
 end
+
+clay.retire(checkbox, {"check_border_color", "check_border_width", "check_shape"})
 
 function checkbox:set_paddings(val)
     self._private.paddings = type(val) == "number" and {
@@ -306,8 +260,6 @@ local function new(checked, args)
     ret._private.checked = checked
     ret._private.color = args.color and color(args.color) or nil
 
-    rawset(ret, "fit" , fit )
-    rawset(ret, "draw", draw)
 
     return ret
 end

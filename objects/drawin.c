@@ -4,6 +4,7 @@
 #include "signal.h"
 #include "button.h"
 #include "luaa.h"
+#include "common/lualib.h"
 #include "common/luaclass.h"
 #include "common/luaobject.h"
 #include "../somewm_api.h"
@@ -11,24 +12,13 @@
 #include "common/util.h"
 #include "../globalconf.h"
 #include "../shadow.h"
+#include "../declare.h"
+#include "../widget.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
-#include <wlr/types/wlr_scene.h>
 #include <wlr/types/wlr_output.h>
-#include <wlr/render/allocator.h>
-#include <wlr/render/wlr_texture.h>
-#include <wlr/render/wlr_renderer.h>
-#include <wlr/types/wlr_buffer.h>
-#include <wlr/interfaces/wlr_buffer.h>
-#include <wlr/render/pass.h>
-#include <drm_fourcc.h>
-
-/* Access to global state from somewm.c */
-extern struct wlr_scene_tree *layers[];
-extern struct wlr_renderer *drw;
-extern struct wlr_allocator *alloc;
 
 /* AwesomeWM class system - drawin class */
 lua_class_t drawin_class;
@@ -40,191 +30,7 @@ extern void signal_array_init(signal_array_t *arr);
 extern void signal_array_wipe(signal_array_t *arr);
 
 /* Forward declarations for workarea updates */
-extern void screen_update_workarea(screen_t *screen);
 
-/* Forward declaration for drawable refresh callback */
-static void drawin_refresh_drawable(drawin_t *drawin);
-
-/** Get the effective scale for a drawin's drawable surface.
- * Returns scale_override if set (>0), otherwise the output scale.
- * Used by drawable_get_scale() and direct scale queries in drawin.c.
- */
-static float
-drawin_get_effective_scale(drawin_t *d)
-{
-	if (d->scale_override > 0.0f)
-		return d->scale_override;
-	if (d->screen && d->screen->monitor && d->screen->monitor->wlr_output)
-		return d->screen->monitor->wlr_output->scale;
-	return 1.0f;
-}
-
-/* ========================================================================
- * Border Buffer Implementation (for shaped borders)
- * ========================================================================
- * Same pattern as shadow_buffer in shadow.c - wraps Cairo data for wlr_buffer.
- */
-
-struct border_buffer {
-	struct wlr_buffer base;
-	void *data;
-	int width;
-	int height;
-	size_t stride;
-};
-
-static void border_buffer_destroy(struct wlr_buffer *wlr_buffer)
-{
-	struct border_buffer *buffer = wl_container_of(wlr_buffer, buffer, base);
-	free(buffer->data);
-	free(buffer);
-}
-
-static bool border_buffer_begin_data_ptr_access(
-	struct wlr_buffer *wlr_buffer, uint32_t flags, void **data,
-	uint32_t *format, size_t *stride)
-{
-	struct border_buffer *buffer = wl_container_of(wlr_buffer, buffer, base);
-	*data = buffer->data;
-	*format = DRM_FORMAT_ARGB8888;
-	*stride = buffer->stride;
-	return true;
-}
-
-static void border_buffer_end_data_ptr_access(struct wlr_buffer *wlr_buffer)
-{
-	/* Nothing to do */
-}
-
-static const struct wlr_buffer_impl border_buffer_impl = {
-	.destroy = border_buffer_destroy,
-	.begin_data_ptr_access = border_buffer_begin_data_ptr_access,
-	.end_data_ptr_access = border_buffer_end_data_ptr_access,
-};
-
-/**
- * Create a wlr_buffer from a cairo surface.
- * Caller must destroy the cairo surface separately.
- */
-static struct wlr_buffer *
-border_buffer_from_cairo(cairo_surface_t *surface)
-{
-	struct border_buffer *buffer;
-	int width, height;
-	size_t stride, size;
-	unsigned char *src_data;
-
-	if (!surface || cairo_surface_status(surface) != CAIRO_STATUS_SUCCESS)
-		return NULL;
-
-	if (cairo_image_surface_get_format(surface) != CAIRO_FORMAT_ARGB32)
-		return NULL;
-
-	width = cairo_image_surface_get_width(surface);
-	height = cairo_image_surface_get_height(surface);
-	stride = (size_t)cairo_image_surface_get_stride(surface);
-	src_data = cairo_image_surface_get_data(surface);
-
-	if (width <= 0 || height <= 0 || !src_data)
-		return NULL;
-
-	buffer = calloc(1, sizeof(*buffer));
-	if (!buffer)
-		return NULL;
-
-	size = stride * (size_t)height;
-	buffer->data = malloc(size);
-	if (!buffer->data) {
-		free(buffer);
-		return NULL;
-	}
-
-	memcpy(buffer->data, src_data, size);
-	buffer->width = width;
-	buffer->height = height;
-	buffer->stride = stride;
-
-	wlr_buffer_init(&buffer->base, &border_buffer_impl, width, height);
-
-	return &buffer->base;
-}
-
-/**
- * Border buffers never accept input - they are purely visual decoration.
- * This callback ensures input events pass through to the content beneath.
- */
-static bool border_point_accepts_input(struct wlr_scene_buffer *buffer,
-                                       double *sx, double *sy)
-{
-	(void)buffer;
-	(void)sx;
-	(void)sy;
-	return false;
-}
-
-/**
- * Render border as a Cairo surface.
- * If shape_border is set (pre-rendered anti-aliased border from Lua), use it.
- * Otherwise, render a simple rectangular border.
- * Returns an ARGB32 surface that caller must destroy.
- * Returns NULL if border_width is 0 or allocation fails.
- */
-static cairo_surface_t *
-drawin_render_border(drawin_t *d)
-{
-	int bw = d->border_width;
-	if (bw <= 0)
-		return NULL;
-
-	/* If we have a pre-rendered anti-aliased border from Lua, use it.
-	 * This provides smooth edges via Cairo's vector stroke rendering. */
-	if (d->shape_border &&
-		cairo_surface_status(d->shape_border) == CAIRO_STATUS_SUCCESS) {
-		/* Return a copy since caller expects to destroy it */
-		int w = cairo_image_surface_get_width(d->shape_border);
-		int h = cairo_image_surface_get_height(d->shape_border);
-		cairo_surface_t *copy = cairo_image_surface_create(
-			CAIRO_FORMAT_ARGB32, w, h);
-		if (cairo_surface_status(copy) != CAIRO_STATUS_SUCCESS) {
-			cairo_surface_destroy(copy);
-			return NULL;
-		}
-		cairo_t *cr = cairo_create(copy);
-		cairo_set_source_surface(cr, d->shape_border, 0, 0);
-		cairo_paint(cr);
-		cairo_destroy(cr);
-		return copy;
-	}
-
-	/* Fallback: render simple rectangular border (no shape) */
-	int total_w = d->width + 2 * bw;
-	int total_h = d->height + 2 * bw;
-
-	cairo_surface_t *surface = cairo_image_surface_create(
-		CAIRO_FORMAT_ARGB32, total_w, total_h);
-	if (cairo_surface_status(surface) != CAIRO_STATUS_SUCCESS) {
-		cairo_surface_destroy(surface);
-		return NULL;
-	}
-
-	cairo_t *cr = cairo_create(surface);
-
-	/* Draw rectangular border ring using even-odd fill rule */
-	color_t *bc = &d->border_color_parsed;
-	cairo_set_source_rgba(cr,
-		bc->red / 255.0, bc->green / 255.0,
-		bc->blue / 255.0, bc->alpha / 255.0);
-
-	/* Outer rectangle */
-	cairo_rectangle(cr, 0, 0, total_w, total_h);
-	/* Inner cutout */
-	cairo_rectangle(cr, bw, bw, d->width, d->height);
-	cairo_set_fill_rule(cr, CAIRO_FILL_RULE_EVEN_ODD);
-	cairo_fill(cr);
-
-	cairo_destroy(cr);
-	return surface;
-}
 
 /** Ensure drawable has a surface with correct geometry.
  * Matches AwesomeWM's drawin_update_drawing (drawin.c:194-200).
@@ -242,7 +48,7 @@ drawin_update_drawing(lua_State *L, int widx)
 		.y = w->y,
 		.width = w->width,
 		.height = w->height
-	});
+	}, false);
 	lua_pop(L, 1);
 }
 
@@ -250,250 +56,41 @@ drawin_update_drawing(lua_State *L, int widx)
  * This updates the scene graph buffer with new Cairo-rendered content
  */
 
-/* Read one pixel from a CAIRO_FORMAT_A1 surface row. Cairo packs A1
- * into native-endian 32-bit words; on little-endian the leftmost
- * pixel is bit (x & 31) of word (x >> 5). Caller ensures bounds. */
-static inline int
-shape_a1_get(const unsigned char *data, int stride, int x, int y)
+void
+drawin_mark_dirty(drawin_t *drawin)
 {
-	const uint32_t *row = (const uint32_t *)(data + y * stride);
-	uint32_t word = row[x >> 5];
-#if defined(__BYTE_ORDER__) && __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
-	return (word >> (31 - (x & 31))) & 1u;
-#else
-	return (word >> (x & 31)) & 1u;
-#endif
+	Monitor *m = luaA_monitor_get_by_screen(globalconf_get_lua_State(), drawin->screen);
+	if (m && m->declare)
+		declare_output_mark_dirty(m->declare);
 }
 
-/** Apply a shape mask to a cairo surface.
- * Returns a copy of src with each pixel scaled by the shape's coverage,
- * or NULL if either surface is unusable or the shape is neither A1 nor
- * ARGB32. Caller must destroy the returned surface.
- *
- * Both mask formats are in use: gears.surface.apply_shape_bounding and
- * AwesomeWM's wibox:_apply_shape produce A1, while somewm's own
- * _apply_shape and awful.mouse.snap produce ARGB32 for anti-aliased
- * edges. Reading one as the other walks off the end of the buffer,
- * since A1 rows are ~32x smaller.
- */
-cairo_surface_t *
-drawin_apply_shape_mask(cairo_surface_t *src, cairo_surface_t *shape)
+bool
+drawin_widget_host(drawin_t *d, struct widget_host *out)
 {
-	cairo_surface_t *dst;
-	cairo_format_t shape_format;
-	unsigned char *src_data, *dst_data, *shape_data;
-	int src_stride, dst_stride, shape_stride;
-	int width, height, shape_width, shape_height;
-	int x, y;
+	Monitor *m = luaA_monitor_get_by_screen(globalconf_get_lua_State(), d->screen);
+	if (!m)
+		return false;
 
-	if (!src || !shape)
-		return NULL;
-
-	/* Check if surfaces are still valid (not finished by GC) */
-	if (cairo_surface_status(src) != CAIRO_STATUS_SUCCESS ||
-	    cairo_surface_status(shape) != CAIRO_STATUS_SUCCESS)
-		return NULL;
-
-	shape_format = cairo_image_surface_get_format(shape);
-	if (shape_format != CAIRO_FORMAT_A1 && shape_format != CAIRO_FORMAT_ARGB32) {
-		warn("drawin: ignoring shape mask in unsupported cairo format %d",
-		     shape_format);
-		return NULL;
+	*out = (struct widget_host) {
+		.tree = &d->widgets,
+		.m = m,
+		.drawable = d->drawable,
+		.id = (uint32_t)declare_handle_for(d, DECLARE_KIND_DRAWIN),
+		.x = d->x - m->m.x, .y = d->y - m->m.y,
+		.w = d->width, .h = d->height,
+		.src = { DECLARE_SRC_USER, DECLARE_SRC_USER },
+		.radius = d->shape_radius,
+		.path_clip = d->shape.ref != LUA_NOREF,
+		.visible = d->visible,
+	};
+	/* A bar's thickness is the theme's; its length the output's when it
+	 * stretches, the theme's otherwise. */
+	if (d->bar.edge != DRAWIN_EDGE_NONE) {
+		bool horizontal = d->bar.edge == DRAWIN_EDGE_TOP || d->bar.edge == DRAWIN_EDGE_BOTTOM;
+		out->src[horizontal ? 1 : 0] = DECLARE_SRC_THEME;
+		out->src[horizontal ? 0 : 1] = d->bar.stretch ? DECLARE_SRC_OUTPUT : DECLARE_SRC_THEME;
 	}
-
-	cairo_surface_flush(src);
-	cairo_surface_flush(shape);
-
-	width = cairo_image_surface_get_width(src);
-	height = cairo_image_surface_get_height(src);
-	shape_width = cairo_image_surface_get_width(shape);
-	shape_height = cairo_image_surface_get_height(shape);
-
-	dst = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, width, height);
-	if (cairo_surface_status(dst) != CAIRO_STATUS_SUCCESS) {
-		cairo_surface_destroy(dst);
-		return NULL;
-	}
-
-	src_data = cairo_image_surface_get_data(src);
-	dst_data = cairo_image_surface_get_data(dst);
-	shape_data = cairo_image_surface_get_data(shape);
-
-	/* Check for NULL data pointers (surface may have been finished by GC) */
-	if (!src_data || !dst_data || !shape_data) {
-		cairo_surface_destroy(dst);
-		return NULL;
-	}
-
-	src_stride = cairo_image_surface_get_stride(src);
-	dst_stride = cairo_image_surface_get_stride(dst);
-	shape_stride = cairo_image_surface_get_stride(shape);
-
-	/* Copy pixels, applying shape alpha mask.
-	 * Note: The shape surface may be at logical scale while the source
-	 * surface is at physical (HiDPI) scale. We need to scale coordinates
-	 * when looking up shape alpha. */
-	for (y = 0; y < height; y++) {
-		uint32_t *src_row = (uint32_t *)(src_data + y * src_stride);
-		uint32_t *dst_row = (uint32_t *)(dst_data + y * dst_stride);
-
-		/* Map physical y to logical shape y */
-		int shape_y = (shape_height > 0) ? (y * shape_height / height) : 0;
-
-		for (x = 0; x < width; x++) {
-			uint8_t shape_alpha = 0;
-
-			/* Map physical x to logical shape x */
-			int shape_x = (shape_width > 0) ? (x * shape_width / width) : 0;
-
-			/* Check if this pixel is within shape bounds.
-			 * Outside shape bounds = alpha 0 (transparent) */
-			if (shape_x < shape_width && shape_y < shape_height) {
-				if (shape_format == CAIRO_FORMAT_A1) {
-					/* 1 bit per pixel, fully in or fully out */
-					shape_alpha = shape_a1_get(shape_data, shape_stride,
-								   shape_x, shape_y) ? 255 : 0;
-				} else {
-					/* ARGB32: 4 bytes per pixel, alpha is byte 3 (on little-endian) */
-					int pixel_offset = (shape_y * shape_stride) + (shape_x * 4);
-					shape_alpha = shape_data[pixel_offset + 3];
-				}
-			}
-
-			if (shape_alpha == 255) {
-				/* Fully opaque - copy directly */
-				dst_row[x] = src_row[x];
-			} else if (shape_alpha == 0) {
-				/* Fully transparent. Cairo uses premultiplied
-				 * alpha, so RGB must be zeroed too. */
-				dst_row[x] = 0;
-			} else {
-				/* Partial alpha - blend (premultiplied alpha) */
-				uint32_t pixel = src_row[x];
-				uint8_t b = (pixel >> 0) & 0xFF;
-				uint8_t g = (pixel >> 8) & 0xFF;
-				uint8_t r = (pixel >> 16) & 0xFF;
-				uint8_t a = (pixel >> 24) & 0xFF;
-
-				/* Multiply all channels by shape_alpha/255 */
-				b = (b * shape_alpha) / 255;
-				g = (g * shape_alpha) / 255;
-				r = (r * shape_alpha) / 255;
-				a = (a * shape_alpha) / 255;
-
-				dst_row[x] = ((uint32_t)a << 24) | (r << 16) | (g << 8) | b;
-			}
-		}
-	}
-
-	cairo_surface_mark_dirty(dst);
-	return dst;
-}
-
-static void
-drawin_refresh_drawable(drawin_t *drawin)
-{
-	drawable_t *d;
-	struct wlr_buffer *buffer;
-	cairo_surface_t *clipped_surface = NULL;
-	cairo_surface_t *masked_surface = NULL;
-	cairo_surface_t *work_surface = NULL;
-
-	if (!drawin || !drawin->scene_buffer || !drawin->drawable) {
-		return;
-	}
-
-	d = drawin->drawable;
-
-	/* Ensure we have a Cairo surface with content */
-	if (!d->surface || !d->refreshed) {
-		return;
-	}
-
-	work_surface = d->surface;
-
-	/* Clear stale shape surfaces that were finished by Lua GC */
-	if (drawin->shape_clip &&
-	    cairo_surface_status(drawin->shape_clip) != CAIRO_STATUS_SUCCESS) {
-		cairo_surface_destroy(drawin->shape_clip);
-		drawin->shape_clip = NULL;
-	}
-	if (drawin->shape_bounding &&
-	    cairo_surface_status(drawin->shape_bounding) != CAIRO_STATUS_SUCCESS) {
-		cairo_surface_destroy(drawin->shape_bounding);
-		drawin->shape_bounding = NULL;
-	}
-
-	/* Apply shape_clip first (clips the drawable content area)
-	 * In AwesomeWM, shape_clip restricts what's visible within the content area */
-	if (drawin->shape_clip) {
-		clipped_surface = drawin_apply_shape_mask(work_surface, drawin->shape_clip);
-		if (clipped_surface)
-			work_surface = clipped_surface;
-	}
-
-	/* Apply shape_bounding mask (clips the whole window including border)
-	 * This is applied after shape_clip, chaining off its result if any */
-	if (drawin->shape_bounding) {
-		masked_surface = drawin_apply_shape_mask(work_surface, drawin->shape_bounding);
-		if (masked_surface)
-			work_surface = masked_surface;
-	}
-
-	/* Create SHM buffer from the final surface
-	 * This uses the shared buffer implementation in drawable.c */
-	if (work_surface != d->surface) {
-		cairo_surface_flush(work_surface);
-		buffer = drawable_create_buffer_from_data(
-			cairo_image_surface_get_width(work_surface),
-			cairo_image_surface_get_height(work_surface),
-			cairo_image_surface_get_data(work_surface),
-			cairo_image_surface_get_stride(work_surface));
-	} else {
-		buffer = drawable_create_buffer(d);
-	}
-
-	/* Clean up temporary surfaces */
-	if (clipped_surface)
-		cairo_surface_destroy(clipped_surface);
-	if (masked_surface)
-		cairo_surface_destroy(masked_surface);
-
-	if (!buffer) {
-		return;
-	}
-
-	/* Update scene buffer with new content
-	 * NULL damage region means entire buffer is new */
-	wlr_scene_buffer_set_buffer_with_damage(drawin->scene_buffer, buffer, NULL);
-
-	/* Set the destination size to match drawin geometry for proper hit-testing
-	 * Without this, wlroots uses the buffer's intrinsic size for hit detection,
-	 * which breaks mouse input on the wibox */
-	wlr_scene_buffer_set_dest_size(drawin->scene_buffer, drawin->width, drawin->height);
-
-	/* Apply opacity if set (native Wayland compositing - no picom needed) */
-	if (drawin->opacity >= 0)
-		wlr_scene_buffer_set_opacity(drawin->scene_buffer, (float)drawin->opacity);
-
-	/* Drop our reference - scene buffer holds its own reference */
-	wlr_buffer_drop(buffer);
-
-	/* Enable scene node now that we have valid content.
-	 * This is the Wayland equivalent of X11's map-then-draw pattern:
-	 * we only show the drawin once content is ready, avoiding smearing. */
-	if (drawin->visible && drawin->scene_tree) {
-		wlr_scene_node_set_enabled(&drawin->scene_tree->node, true);
-		/* Show shadow too */
-		shadow_set_visible(&drawin->shadow, true);
-	}
-
-	/* Schedule a frame render on the output to ensure content is displayed
-	 * immediately, not waiting for the next external event. This mirrors
-	 * AwesomeWM's xcb_flush() which sends pending X requests immediately.
-	 * In Wayland, we request the compositor to render a new frame. */
-	if (drawin->screen && drawin->screen->monitor && drawin->screen->monitor->wlr_output)
-		wlr_output_schedule_frame(drawin->screen->monitor->wlr_output);
+	return true;
 }
 
 /** Assign screen to drawin based on its position
@@ -506,17 +103,19 @@ drawin_assign_screen(lua_State *L, drawin_t *drawin, int drawin_idx)
 	screen_t *new_screen;
 	screen_t *old_screen = drawin->screen;
 
-	/* Get monitor at drawin's position */
-	m = some_monitor_at((double)drawin->x, (double)drawin->y);
-	if (!m) {
-		/* No monitor at this position, try getting focused monitor */
-		m = some_get_focused_monitor();
-	}
+	/* Prefer the Awesome-compatible screen whose geometry contains the
+	 * drawin.  A 4K output may be split into fake screens; mapping through the
+	 * physical Monitor first would assign the right-half wibar to the left
+	 * physical screen and leave fake screen 2 without a top strut. */
+	new_screen = luaA_screen_getbycoord(L, drawin->x, drawin->y);
 
-	if (m) {
-		new_screen = luaA_screen_get_by_monitor(L, m);
-	} else {
-		new_screen = NULL;
+	if (!new_screen) {
+		/* Fall back to the physical monitor for layouts with gaps or before
+		 * screen geometry has been initialized. */
+		m = some_monitor_at((double)drawin->x, (double)drawin->y);
+		if (!m)
+			m = some_get_focused_monitor();
+		new_screen = m ? luaA_screen_get_by_monitor(L, m) : NULL;
 	}
 
 	/* If screen changed, update and emit signal */
@@ -577,62 +176,22 @@ drawin_allocator(lua_State *L)
 	drawin->screen = NULL;
 	drawin->drawable = NULL;  /* Set after drawable creation */
 
-	/* Initialize shape properties (NULL = no custom shape) */
-	drawin->shape_bounding = NULL;
-	drawin->shape_clip = NULL;
-	drawin->shape_input = NULL;
-	drawin->shape_border = NULL;
+	drawin->animation_ref = LUA_NOREF;
+	drawin->shape.ref = LUA_NOREF;
+	drawin->shape_radius = -1;
 
 	/* Initialize signal and button arrays */
 	signal_array_init(&drawin->signals);
 	button_array_init(&drawin->buttons);
 
-	/* Create scene graph nodes for rendering (Wayland-specific)
-	 * This replaces AwesomeWM's X11 window creation */
-	drawin->scene_tree = wlr_scene_tree_create(layers[LyrWibox]);
-	drawin->scene_buffer = wlr_scene_buffer_create(drawin->scene_tree, NULL);
-	drawin->scene_tree->node.data = drawin;
-
-	/* Set initial position */
-	wlr_scene_node_set_position(&drawin->scene_tree->node, drawin->x, drawin->y);
-
-	/* Start disabled (not visible until visible=true) */
-	wlr_scene_node_set_enabled(&drawin->scene_tree->node, false);
-
-	/* Create border scene buffer (shaped border support)
-	 * Border is rendered as a single Cairo surface that respects shape_bounding */
-	drawin->border_buffer = wlr_scene_buffer_create(drawin->scene_tree, NULL);
-	if (drawin->border_buffer) {
-		drawin->border_buffer->node.data = drawin;
-		/* Position border at (-border_width, -border_width) relative to content */
-		wlr_scene_node_set_position(&drawin->border_buffer->node, 0, 0);
-		/* Border renders below content (has 1px overlap for AA seam coverage) */
-		wlr_scene_node_lower_to_bottom(&drawin->border_buffer->node);
-		/* Border never accepts input - purely visual decoration */
-		drawin->border_buffer->point_accepts_input = border_point_accepts_input;
-		/* Use bilinear filtering for smooth rendering at fractional scales */
-		wlr_scene_buffer_set_filter_mode(drawin->border_buffer,
-			WLR_SCALE_FILTER_BILINEAR);
-	}
+	/* No scene nodes: the renderer draws a drawin from its image entries
+	 * (shadow, border, content), which the declare pass hands out. */
 	drawin->border_need_update = true;
 	drawin->border_color_parsed.initialized = false;
 
-	/* Create shadow (compositor-level, replaces picom shadows)
-	 * Shadow is created initially but disabled - enabled when visible=true */
-	{
-		const shadow_config_t *shadow_config = shadow_get_effective_config(
-			drawin->shadow_config, true);
-		if (shadow_config && shadow_config->enabled) {
-			shadow_create(drawin->scene_tree, &drawin->shadow, shadow_config,
-				drawin->width, drawin->height);
-			/* Shadow starts hidden like the rest of the drawin */
-			shadow_set_visible(&drawin->shadow, false);
-		}
-	}
-
 	/* Create drawable object for rendering (AwesomeWM pattern)
 	 * Stack: [drawin] */
-	drawable_allocator(L, (drawable_refresh_callback)drawin_refresh_drawable, drawin);
+	drawable_allocator(L);
 	/* Stack: [drawin, drawable] */
 
 	/* Store drawable in drawin's uservalue table (AwesomeWM: drawin.c:430)
@@ -640,9 +199,6 @@ drawin_allocator(lua_State *L)
 	drawin->drawable = luaA_object_ref_item(L, -2, -1);
 	/* Stack: [drawin] */
 
-	/* Store drawable pointer (not drawin!) and set owner (AwesomeWM pattern)
-	 * MUST happen AFTER drawable is created */
-	drawin->scene_buffer->node.data = drawin->drawable;
 	drawin->drawable->owner_type = DRAWABLE_OWNER_DRAWIN;
 	drawin->drawable->owner.drawin = drawin;
 
@@ -662,17 +218,14 @@ drawin_wipe(drawin_t *w)
 	if (!w)
 		return;
 
-	/* If this drawin was hosting the systray, clean it up */
-	if (globalconf.systray.parent == w) {
-		if (globalconf.systray.scene_tree) {
-			wlr_scene_node_destroy(&globalconf.systray.scene_tree->node);
-			globalconf.systray.scene_tree = NULL;
-		}
-		globalconf.systray.parent = NULL;
-	}
-
-	/* Clear any lock surface/cover pointers referencing this drawin (EDGE-2) */
+	/* Clear any lock surface/cover pointers referencing this drawin */
 	some_notify_drawin_destroyed(w);
+
+	/* Retire the renderer's view: the handle so a later resolve answers
+	 * NULL, and the entry surfaces the declare pass hands out. */
+	declare_handle_drop(w);
+	widget_nodes_clear(&w->widgets);
+
 
 	/* Note: drawable reference cleanup handled by class system */
 	w->drawable = NULL;
@@ -687,38 +240,19 @@ drawin_wipe(drawin_t *w)
 	/* Wipe button array */
 	button_array_wipe(&w->buttons);
 
-	/* Free shape surfaces */
-	if (w->shape_bounding) {
-		cairo_surface_destroy(w->shape_bounding);
-		w->shape_bounding = NULL;
-	}
-	if (w->shape_clip) {
-		cairo_surface_destroy(w->shape_clip);
-		w->shape_clip = NULL;
-	}
-	if (w->shape_input) {
-		cairo_surface_destroy(w->shape_input);
-		w->shape_input = NULL;
-	}
-	if (w->shape_border) {
-		cairo_surface_destroy(w->shape_border);
-		w->shape_border = NULL;
-	}
+    /* During lua_close the global state is already detached. The closing
+     * VM releases its registry itself; ordinary collection still unrefs. */
+    lua_State *L = globalconf_get_lua_State();
+    if (L) {
+        luaL_unref(L, LUA_REGISTRYINDEX, w->animation_ref);
+        luaL_unref(L, LUA_REGISTRYINDEX, w->shape.ref);
+    }
+    w->animation_ref = LUA_NOREF;
+    w->shape.ref = LUA_NOREF;
 
-	/* Shadow scene nodes are children of scene_tree and destroyed with it.
-	 * We own the texture buffers though and must free them. */
-	shadow_release(&w->shadow);
 	if (w->shadow_config) {
 		free(w->shadow_config);
 		w->shadow_config = NULL;
-	}
-
-	/* Destroy scene graph nodes */
-	if (w->scene_tree) {
-		wlr_scene_node_destroy(&w->scene_tree->node);
-		w->scene_tree = NULL;
-		w->scene_buffer = NULL;  /* Child node destroyed with parent */
-		w->border_buffer = NULL; /* Child node destroyed with parent */
 	}
 }
 
@@ -796,6 +330,184 @@ luaA_drawin_get_ontop(lua_State *L, drawin_t *drawin)
 	return 1;
 }
 
+static const char *const sides[] = { "left", "right", "top", "bottom" };
+static const char *const aligns[] = { "centered", "start", "end" };
+
+/** drawin.bar - The edge the drawin is a bar at, or nil (declare.c). */
+static int
+luaA_drawin_get_bar(lua_State *L, drawin_t *drawin)
+{
+	static const char *const edges[] = { NULL, "top", "bottom", "left", "right" };
+
+	if (!drawin->bar.edge) {
+		lua_pushnil(L);
+		return 1;
+	}
+	lua_createtable(L, 0, 5);
+	lua_pushstring(L, edges[drawin->bar.edge]);
+	lua_setfield(L, -2, "edge");
+	lua_pushboolean(L, drawin->bar.reserve);
+	lua_setfield(L, -2, "reserve");
+	lua_pushboolean(L, drawin->bar.stretch);
+	lua_setfield(L, -2, "stretch");
+	lua_pushstring(L, aligns[drawin->bar.align]);
+	lua_setfield(L, -2, "align");
+	lua_createtable(L, 0, 4);
+	for (size_t i = 0; i < 4; i++) {
+		lua_pushinteger(L, drawin->bar.margins[i]);
+		lua_setfield(L, -2, sides[i]);
+	}
+	lua_setfield(L, -2, "margins");
+	return 1;
+}
+
+/** drawin.bar - Make the drawin a bar: a table with `edge` (top, bottom,
+ * left or right), `reserve` (false floats it at the edge without reserving
+ * space), `margins` (left, right, top, bottom, whole pixels), `stretch`
+ * (false keeps the drawin's own length along the edge) and `align` (start,
+ * end or centered, for a bar that does not stretch), or nil for a drawin
+ * placed by its geometry. */
+static int
+luaA_drawin_set_bar(lua_State *L, drawin_t *drawin)
+{
+	static const char *const edges[] = { "top", "bottom", "left", "right" };
+
+	if (lua_isnil(L, -1)) {
+		drawin->bar.edge = DRAWIN_EDGE_NONE;
+	} else {
+		const char *edge;
+
+		luaA_checktable(L, -1);
+		lua_getfield(L, -1, "edge");
+		edge = luaL_checkstring(L, -1);
+		drawin->bar.edge = DRAWIN_EDGE_NONE;
+		for (size_t i = 0; i < countof(edges); i++)
+			if (strcmp(edge, edges[i]) == 0)
+				drawin->bar.edge = (uint8_t)(i + 1);
+		if (!drawin->bar.edge)
+			luaL_error(L, "bar.edge must be top, bottom, left or right");
+		lua_pop(L, 1);
+		lua_getfield(L, -1, "reserve");
+		drawin->bar.reserve = lua_isnil(L, -1) || lua_toboolean(L, -1);
+		lua_pop(L, 1);
+		lua_getfield(L, -1, "stretch");
+		drawin->bar.stretch = lua_isnil(L, -1) || lua_toboolean(L, -1);
+		lua_pop(L, 1);
+		lua_getfield(L, -1, "align");
+		drawin->bar.align = 0;
+		for (size_t i = 1; i < countof(aligns); i++)
+			if (lua_isstring(L, -1) && strcmp(lua_tostring(L, -1), aligns[i]) == 0)
+				drawin->bar.align = (uint8_t)i;
+		lua_pop(L, 1);
+		lua_getfield(L, -1, "margins");
+		for (size_t i = 0; i < 4; i++) {
+			double v = 0;
+
+			if (lua_istable(L, -1)) {
+				lua_getfield(L, -1, sides[i]);
+				v = lua_tonumber(L, -1);
+				lua_pop(L, 1);
+			}
+			drawin->bar.margins[i] = (uint16_t)MAX(0, MIN(UINT16_MAX, floor(v + 0.5)));
+		}
+		lua_pop(L, 1);
+	}
+	declare_mark_all_dirty();
+	luaA_object_emit_signal(L, -3, "property::bar", 0);
+	return 0;
+}
+
+/* Genuine attachment inputs; no sibling rectangle crosses this boundary. */
+static int
+luaA_drawin_set_attachment(lua_State *L, drawin_t *d)
+{
+    typeof(d->attachment) next = {0};
+    if (!lua_isnil(L, -1)) {
+        luaA_checktable(L, -1);
+#define ATTACH_NUMBER(field, low, high) do { lua_getfield(L, -1, #field); \
+        double v = lua_isnil(L, -1) ? 0 : luaL_checknumber(L, -1); \
+        if (!isfinite(v) || v < (low) || v > (high)) \
+            return luaL_error(L, "invalid attachment " #field); \
+        next.field = v; lua_pop(L, 1); } while (0)
+        ATTACH_NUMBER(kind, 0, 4); ATTACH_NUMBER(target, 0, UINT32_MAX);
+        ATTACH_NUMBER(occurrence, 0, UINT32_MAX);
+        lua_getfield(L, -1, "host");
+        if (lua_isuserdata(L, -1)) {
+            drawable_t *host = luaA_checkudata(L, -1, &drawable_class);
+            if (host->owner_type == DRAWABLE_OWNER_DRAWIN)
+                next.host = (uint32_t)declare_handle_for(host->owner.drawin, DECLARE_KIND_DRAWIN);
+            else if (host->owner_type == DRAWABLE_OWNER_CLIENT)
+                next.host = (uint32_t)declare_handle_for(host, DECLARE_KIND_TITLEBAR);
+        } else {
+            double id = lua_isnil(L, -1) ? 0 : luaL_checknumber(L, -1);
+            if (!isfinite(id) || id < 0 || id > UINT32_MAX)
+                return luaL_error(L, "invalid attachment host");
+            next.host = id;
+        }
+        lua_pop(L, 1);
+        ATTACH_NUMBER(parent, 0, 8); ATTACH_NUMBER(own, 0, 8);
+        ATTACH_NUMBER(x, -INT_MAX, INT_MAX); ATTACH_NUMBER(y, -INT_MAX, INT_MAX);
+        ATTACH_NUMBER(width, 0, UINT16_MAX);
+        ATTACH_NUMBER(height, 0, UINT16_MAX);
+        ATTACH_NUMBER(width_override, 0, UINT16_MAX);
+        ATTACH_NUMBER(gap, 0, UINT16_MAX);
+        ATTACH_NUMBER(position, 0, 8);
+#undef ATTACH_NUMBER
+        lua_getfield(L, -1, "width_override");
+        if (lua_isnil(L, -1)) next.width_override = -1;
+        lua_pop(L, 1);
+        lua_getfield(L, -1, "bounded");
+        next.bounded = lua_toboolean(L, -1); lua_pop(L, 1);
+        lua_getfield(L, -1, "workarea");
+        next.workarea = lua_toboolean(L, -1); lua_pop(L, 1);
+        lua_getfield(L, -1, "wsrc");
+        next.src[0] = declare_src_parse(lua_tostring(L, -1)); lua_pop(L, 1);
+        lua_getfield(L, -1, "hsrc");
+        next.src[1] = declare_src_parse(lua_tostring(L, -1)); lua_pop(L, 1);
+        lua_getfield(L, -1, "passthrough");
+        next.passthrough = lua_toboolean(L, -1); lua_pop(L, 1);
+        lua_getfield(L, -1, "hover");
+        next.hover = lua_toboolean(L, -1); lua_pop(L, 1);
+    }
+    if (!memcmp(&next, &d->attachment, sizeof(next))) return 0;
+    d->attachment = next;
+    d->attachment_ambiguous = false;
+    drawin_mark_dirty(d);
+    return 0;
+}
+
+static int
+luaA_drawin_get_attachment(lua_State *L, drawin_t *d)
+{
+    if (!d->attachment.kind) { lua_pushnil(L); return 1; }
+    lua_newtable(L);
+#define ATTACH_NUMBER(field) do { lua_pushnumber(L, d->attachment.field); \
+    lua_setfield(L, -2, #field); } while (0)
+    ATTACH_NUMBER(kind); ATTACH_NUMBER(target); ATTACH_NUMBER(parent);
+    ATTACH_NUMBER(occurrence);
+    ATTACH_NUMBER(host);
+    ATTACH_NUMBER(own); ATTACH_NUMBER(x); ATTACH_NUMBER(y); ATTACH_NUMBER(width);
+    ATTACH_NUMBER(gap); ATTACH_NUMBER(position);
+    if (d->attachment.bounded) {
+        ATTACH_NUMBER(height);
+        lua_pushboolean(L, true); lua_setfield(L, -2, "bounded");
+    }
+    if (d->attachment.workarea) {
+        lua_pushboolean(L, true); lua_setfield(L, -2, "workarea");
+    }
+    if (d->attachment.width_override >= 0) { ATTACH_NUMBER(width_override); }
+#undef ATTACH_NUMBER
+    if (d->attachment.src[0]) {
+        lua_pushstring(L, declare_src_names[d->attachment.src[0]]); lua_setfield(L, -2, "wsrc");
+    }
+    if (d->attachment.src[1]) {
+        lua_pushstring(L, declare_src_names[d->attachment.src[1]]); lua_setfield(L, -2, "hsrc");
+    }
+    lua_pushboolean(L, d->attachment.passthrough); lua_setfield(L, -2, "passthrough");
+    lua_pushboolean(L, d->attachment.hover); lua_setfield(L, -2, "hover");
+    return 1;
+}
+
 /** drawin.opacity - Get opacity (AwesomeWM signature) */
 static int
 luaA_drawin_get_opacity(lua_State *L, drawin_t *drawin)
@@ -812,19 +524,6 @@ static int
 luaA_drawin_get_cursor(lua_State *L, drawin_t *drawin)
 {
 	lua_pushstring(L, drawin->cursor);
-	return 1;
-}
-
-/** drawin.surface_scale - Get surface scale override (somewm extension).
- * Returns the override value, or 0 (auto) if not set.
- * \param L The Lua VM state.
- * \param drawin The drawin object.
- * \return The number of elements pushed on stack.
- */
-static int
-luaA_drawin_get_surface_scale(lua_State *L, drawin_t *drawin)
-{
-	lua_pushnumber(L, drawin->scale_override);
 	return 1;
 }
 
@@ -942,6 +641,11 @@ luaA_drawin_set_border_width(lua_State *L, drawin_t *drawin)
 	/* Mark for deferred border update (AwesomeWM pattern) */
 	if (old_width != new_width) {
 		drawin->border_need_update = true;
+		if (drawin->screen && drawin->screen->monitor
+				&& drawin->screen->monitor->declare)
+			drawin_mark_dirty(drawin);
+		else
+			declare_mark_all_dirty();
 		luaA_object_emit_signal(L, -3, "property::border_width", 0);
 	}
 
@@ -964,6 +668,8 @@ luaA_drawin_get_border_color(lua_State *L, drawin_t *drawin)
 static int
 luaA_drawin_set_border_color(lua_State *L, drawin_t *drawin)
 {
+	color_t old_color = drawin->border_color;
+
 	/* Parse color from Lua (can be string or table) */
 	if (!luaA_tocolor(L, -1, &drawin->border_color)) {
 		return luaL_error(L, "Invalid color format");
@@ -975,6 +681,15 @@ luaA_drawin_set_border_color(lua_State *L, drawin_t *drawin)
 	/* Mark for deferred border update */
 	if (drawin->border_color.initialized) {
 		drawin->border_need_update = true;
+	}
+
+	if (old_color.initialized != drawin->border_color.initialized
+			|| color_to_uint32(&old_color) != color_to_uint32(&drawin->border_color)) {
+		if (drawin->screen && drawin->screen->monitor
+				&& drawin->screen->monitor->declare)
+			drawin_mark_dirty(drawin);
+		else
+			declare_mark_all_dirty();
 	}
 
 	/* Emit signal */
@@ -1045,15 +760,6 @@ luaA_drawin_struts(lua_State *L)
 			lua_pushvalue(L, 1);  /* Push drawin */
 			luaA_awm_object_emit_signal(L, -1, "property::struts", 0);
 			lua_pop(L, 1);
-
-			/* We don't know the correct screen, update them all.
-			 * globalconf.screens is unpopulated here; the live list is
-			 * behind luaA_screen_get_all(). */
-			screen_t *all[16];
-			int n = countof(all);
-			luaA_screen_get_all(L, all, &n);
-			for (int i = 0; i < n; i++)
-				screen_update_workarea(all[i]);
 		}
 
 		return 0;
@@ -1084,9 +790,10 @@ luaA_drawin_struts(lua_State *L)
  * \param y The new y coordinate.
  * \param width The new width.
  * \param height The new height.
+ * \param solved Publish a solved box without invalidating declarations.
  */
 static void
-drawin_moveresize(lua_State *L, int udx, int x, int y, int width, int height)
+drawin_moveresize(lua_State *L, int udx, int x, int y, int width, int height, bool solved)
 {
 	drawin_t *drawin = luaA_checkudata(L, udx, &drawin_class);
 	int old_x = drawin->x;
@@ -1103,7 +810,7 @@ drawin_moveresize(lua_State *L, int udx, int x, int y, int width, int height)
 		drawin->height = height;
 	drawin->geometry_dirty = true;
 
-	/* Propagate geometry to drawable (this creates the Cairo surface) */
+	/* Authored sizes invalidate the drawable; solved sizes only publish. */
 	if (drawin->drawable) {
 		drawable_t *d = drawin->drawable;
 		int old_dwidth = d->geometry.width;
@@ -1114,50 +821,10 @@ drawin_moveresize(lua_State *L, int udx, int x, int y, int width, int height)
 		d->geometry.width = drawin->width;
 		d->geometry.height = drawin->height;
 
-		/* If size changed, recreate surface */
-		if (old_dwidth != drawin->width || old_dheight != drawin->height) {
-			/* Clean up old surface */
-			if (d->surface) {
-				cairo_surface_finish(d->surface);
-				cairo_surface_destroy(d->surface);
-				d->surface = NULL;
-			}
-
-			/* Clean up old buffer */
-			if (d->buffer) {
-				wlr_buffer_drop(d->buffer);
-				d->buffer = NULL;
-			}
-
-			/* Create new surface if we have valid dimensions */
-			if (drawin->width > 0 && drawin->height > 0) {
-				/* Get scale for HiDPI support.
-				 * Use floorf to match what Cairo will actually draw with device_scale. */
-				float scale = drawin_get_effective_scale(drawin);
-				int scaled_width = (int)floorf(drawin->width * scale);
-				int scaled_height = (int)floorf(drawin->height * scale);
-				if (scaled_width < 1) scaled_width = 1;
-				if (scaled_height < 1) scaled_height = 1;
-
-				d->surface = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, scaled_width, scaled_height);
-				if (cairo_surface_status(d->surface) != CAIRO_STATUS_SUCCESS) {
-					cairo_surface_destroy(d->surface);
-					d->surface = NULL;
-				} else {
-					/* Set device scale so Cairo draws in logical coordinates */
-					cairo_surface_set_device_scale(d->surface, scale, scale);
-					d->surface_scale = scale;
-
-					/* Emit property::surface signal on drawable
-					 * AwesomeWM pattern: push from drawin's uservalue table */
-					luaA_object_push_item(L, udx, drawin->drawable);
-					luaA_object_emit_signal(L, -1, "property::surface", 0);
-					lua_pop(L, 1);
-				}
-				/* Note: Don't call refresh_callback here!
-				 * AwesomeWM pattern: Lua draws on surface, then calls drawable:refresh()
-				 * which triggers refresh_callback. Calling it here would copy an empty surface. */
-			}
+		if (!solved && (old_dwidth != drawin->width || old_dheight != drawin->height)) {
+			luaA_object_push_item(L, udx, drawin->drawable);
+			luaA_object_emit_signal(L, -1, "property::surface", 0);
+			lua_pop(L, 1);
 		}
 	}
 
@@ -1173,39 +840,52 @@ drawin_moveresize(lua_State *L, int udx, int x, int y, int width, int height)
 	if (old_height != drawin->height)
 		luaA_object_emit_signal(L, udx, "property::height", 0);
 
-	/* Update screen assignment if position changed */
-	if (old_x != drawin->x || old_y != drawin->y)
-		drawin_assign_screen(L, drawin, udx);
+    /* An animated attachment can pass through a neighboring output. Keep
+     * its declaring screen until an authored geometry change moves it. */
+    if ((!solved || !drawin->animation.enabled)
+            && (old_x != drawin->x || old_y != drawin->y)) {
+        drawin_assign_screen(L, drawin, udx);
+    }
 
-	/* Update workarea if struts are set and drawin is visible */
-	if (drawin->visible && drawin->screen &&
-	    (drawin->strut.left || drawin->strut.right || drawin->strut.top || drawin->strut.bottom)) {
-		screen_update_workarea(drawin->screen);
-	}
-
-	/* Update scene graph node position if position changed */
-	if (drawin->scene_tree && (old_x != drawin->x || old_y != drawin->y))
-		wlr_scene_node_set_position(&drawin->scene_tree->node, drawin->x, drawin->y);
-
-	/* Update scene buffer destination size if size changed */
-	if (drawin->scene_buffer && (old_width != drawin->width || old_height != drawin->height))
-		wlr_scene_buffer_set_dest_size(drawin->scene_buffer, drawin->width, drawin->height);
-
-	/* Size change requires border + shadow refresh */
+	/* Size change requires border entry refresh */
 	if (old_width != drawin->width || old_height != drawin->height)
 		drawin->border_need_update = true;
+
+	/* Authored geometry re-declares all outputs because a move can
+	 * change which screen the drawin sits on. */
+	if (!solved && (old_x != drawin->x || old_y != drawin->y
+			|| old_width != drawin->width || old_height != drawin->height))
+		declare_mark_all_dirty();
 }
 
-/** Set drawin geometry (wrapper for external callers)
- * This is called when the object IS in the registry (not during construction).
- */
+/** Reassign a drawin after its screen has been removed.
+ * The caller must remove the old screen from the screen list first so the
+ * coordinate lookup cannot select the invalid screen again. */
 void
-luaA_drawin_set_geometry(lua_State *L, drawin_t *drawin, int x, int y, int width, int height)
+luaA_drawin_reassign_screen(lua_State *L, drawin_t *drawin)
 {
-	/* Push drawin to stack, then call drawin_moveresize with stack index */
+	screen_t *old_screen;
+
+	if (!drawin)
+		return;
+
+	old_screen = drawin->screen;
 	luaA_object_push(L, drawin);
-	drawin_moveresize(L, -1, x, y, width, height);
+	drawin_assign_screen(L, drawin, -1);
 	lua_pop(L, 1);
+
+	if (old_screen != drawin->screen)
+		declare_mark_all_dirty();
+}
+
+void
+luaA_drawin_set_solved_geometry(lua_State *L, drawin_t *drawin,
+        int x, int y, int width, int height)
+{
+    luaA_object_push(L, drawin);
+    if (luaA_toudata(L, -1, &drawin_class))
+        drawin_moveresize(L, -1, x, y, width, height, true);
+    lua_pop(L, 1);
 }
 
 /** Set drawin visibility (AwesomeWM pattern - takes stack index)
@@ -1216,6 +896,8 @@ luaA_drawin_set_geometry(lua_State *L, drawin_t *drawin, int x, int y, int width
 static void
 drawin_set_visible(lua_State *L, int udx, bool v)
 {
+	if (declare_in_frame())
+		luaL_error(L, "drawin visibility changed from inside a frame");
 	drawin_t *drawin = luaA_checkudata(L, udx, &drawin_class);
 	if (drawin->visible == v)
 		return;  /* No change */
@@ -1245,41 +927,8 @@ drawin_set_visible(lua_State *L, int udx, bool v)
 		/* Trigger restacking - AwesomeWM calls stack_windows() when mapping drawin */
 		stack_windows();
 
-		/* Ensure drawable has surface before signal (AwesomeWM drawin.c:343-344)
-		 * This is critical: Lua's do_redraw() needs a surface to draw to.
-		 * Without this, the refresh callback never fires and popups don't show.
-		 *
-		 * Also check if scale has changed since surface was created. This handles
-		 * on-demand popups (launcher, menubar, hotkeys_popup) that weren't visible
-		 * when scale changed - they need surface recreation when shown. */
-		if (drawin->drawable) {
-			drawable_t *d = drawin->drawable;
-			float current_scale = drawin_get_effective_scale(drawin);
-
-			/* Recreate surface if: no surface, scale unknown (0), or scale changed */
-			bool need_recreate = !d->surface ||
-			                     d->surface_scale == 0 ||
-			                     d->surface_scale != current_scale;
-			if (need_recreate) {
-				drawin_update_drawing(L, udx);
-			}
-		}
-
-		/* Wayland-specific: if drawin was invisible during a screen geometry
-		 * change (e.g., scale change), its geometry may be stale. Auto-shrink
-		 * if it starts at screen origin and extends beyond screen bounds.
-		 * This handles lockscreen overlays created at init (scale=1.0) that
-		 * become visible after scale changes. */
-		if (drawin->screen) {
-			screen_t *s = drawin->screen;
-			if (drawin->x == s->geometry.x && drawin->y == s->geometry.y &&
-			    (drawin->width > s->geometry.width ||
-			     drawin->height > s->geometry.height)) {
-				drawin_moveresize(L, udx,
-					s->geometry.x, s->geometry.y,
-					s->geometry.width, s->geometry.height);
-			}
-		}
+		if (drawin->drawable)
+			drawin_update_drawing(L, udx);
 	} else {
 		/* Unregister from object registry (AwesomeWM drawin.c:402) */
 		luaA_object_unref(L, drawin);
@@ -1296,161 +945,21 @@ drawin_set_visible(lua_State *L, int udx, bool v)
 	/* Emit signal using the passed stack index (matches AwesomeWM exactly) */
 	luaA_object_emit_signal(L, udx, "property::visible", 0);
 
-	/* Update workarea if struts are set */
-	if (drawin->screen &&
-	    (drawin->strut.left || drawin->strut.right || drawin->strut.top || drawin->strut.bottom)) {
-		screen_update_workarea(drawin->screen);
-	}
+	/* Visibility changes update the declared tree. */
+	declare_mark_all_dirty();
 
-	/* Scene node visibility - differs from AwesomeWM's X11 approach:
-	 * In X11, xcb_map_window() maps immediately and content shows when ready.
-	 * In Wayland, we MUST have content before showing, otherwise we get smearing.
-	 *
-	 * When becoming visible: don't enable scene node yet. Let drawin_refresh_drawable()
-	 * enable it when content is actually ready.
-	 * When becoming invisible: disable scene node immediately. */
-	if (drawin->scene_tree) {
-		if (!v) {
-			/* Hiding: disable immediately */
-			wlr_scene_node_set_enabled(&drawin->scene_tree->node, false);
-		} else {
-			/* Showing: if content is already ready, refresh and enable.
-			 * Otherwise, wait for Lua's drawable:refresh() callback to enable. */
-			if (drawin->drawable) {
-				drawable_t *d = drawin->drawable;
-				if (d->surface && d->refreshed) {
-					drawin_refresh_drawable(drawin);
-					/* drawin_refresh_drawable will enable the node */
-				}
-			}
-		}
-	}
 }
 
-/** Set strut and update workarea */
-void
-luaA_drawin_set_strut(lua_State *L, drawin_t *drawin, strut_t strut)
-{
-	strut_t old_strut = drawin->strut;
-
-	if (old_strut.left == strut.left &&
-	    old_strut.right == strut.right &&
-	    old_strut.top == strut.top &&
-	    old_strut.bottom == strut.bottom)
-		return;  /* No change */
-
-	drawin->strut = strut;
-
-	luaA_object_push(L, drawin);
-	luaA_awm_object_emit_signal(L, -1, "property::struts", 0);
-	lua_pop(L, 1);
-
-	/* Update workarea if drawin is visible */
-	if (drawin->visible && drawin->screen) {
-		screen_update_workarea(drawin->screen);
-	}
-}
-
-/** Apply pending geometry changes
- * TODO: This will update wlr_scene_node position when rendering is implemented
- */
+/** Apply pending geometry changes */
 void
 luaA_drawin_apply_geometry(drawin_t *drawin)
 {
-	if (!drawin->geometry_dirty)
-		return;
-
 	drawin->geometry_dirty = false;
-
-	/* TODO: Update scene graph position when rendering is implemented */
-	/* if (drawin->scene_tree) {
-		wlr_scene_node_set_position(&drawin->scene_tree->node,
-		                             drawin->x, drawin->y);
-	} */
-}
-
-/** Refresh a single drawin's border visuals
- * Renders border as a Cairo surface with shape_bounding mask applied.
- * Borders are positioned OUTSIDE the content area.
- */
-static void
-drawin_border_refresh_single(drawin_t *d)
-{
-	int bw;
-	cairo_surface_t *border_surface;
-	struct wlr_buffer *wlr_buf;
-
-	/* Skip if no update needed */
-	if (!d->border_need_update) {
-		return;
-	}
-
-	d->border_need_update = false;
-
-	/* Skip if no scene tree (not yet created) */
-	if (!d->scene_tree || !d->border_buffer)
-		return;
-
-	/* Update shadow geometry (independent of border width) */
-	{
-		const shadow_config_t *shadow_config = shadow_get_effective_config(
-			d->shadow_config, true);
-		if (shadow_config && shadow_config->enabled) {
-			if (d->shadow.tree) {
-				shadow_update_geometry(&d->shadow, shadow_config,
-					d->width, d->height);
-			} else {
-				shadow_create(d->scene_tree, &d->shadow, shadow_config,
-					d->width, d->height);
-			}
-		}
-	}
-
-	bw = d->border_width;
-
-	/* If no border width, hide the border buffer */
-	if (bw <= 0) {
-		wlr_scene_buffer_set_buffer(d->border_buffer, NULL);
-		return;
-	}
-
-	/* Render the border as a Cairo surface with shape mask applied */
-	border_surface = drawin_render_border(d);
-	if (!border_surface) {
-		wlr_scene_buffer_set_buffer(d->border_buffer, NULL);
-		return;
-	}
-
-	/* Convert Cairo surface to wlr_buffer */
-	wlr_buf = border_buffer_from_cairo(border_surface);
-	cairo_surface_destroy(border_surface);
-
-	if (!wlr_buf) {
-		wlr_scene_buffer_set_buffer(d->border_buffer, NULL);
-		return;
-	}
-
-	/* Update the scene buffer with new border content */
-	wlr_scene_buffer_set_buffer(d->border_buffer, wlr_buf);
-	wlr_buffer_drop(wlr_buf);  /* Scene buffer holds its own reference */
-
-	/* Set destination size (required for wlr_scene to know buffer dimensions) */
-	int total_w = d->width + 2 * bw;
-	int total_h = d->height + 2 * bw;
-	wlr_scene_buffer_set_dest_size(d->border_buffer, total_w, total_h);
-
-	/* Position border so it surrounds the content
-	 * Border surface origin is at top-left corner of border area */
-	wlr_scene_node_set_position(&d->border_buffer->node, -bw, -bw);
 }
 
 /** Refresh all visible drawins (AwesomeWM compatibility)
- * Applies pending geometry changes for all visible drawins.
- * Called from some_refresh() main loop.
- *
- * In AwesomeWM this does xcb_configure_window and border refresh.
- * In Wayland, geometry is already applied via wlr_scene_node_set_position
- * in luaA_drawin_set_geometry(), borders use wlr_scene_rect.
+ * Called from some_refresh() main loop. Geometry was already recorded by
+ * drawin_moveresize(); the declare pass reads geometry and border style.
  */
 void
 drawin_refresh(void)
@@ -1459,16 +968,10 @@ drawin_refresh(void)
 	{
 		drawin_t *d = *item;
 
-		/* Apply pending geometry changes
-		 * In AwesomeWM this does xcb_configure_window
-		 * In Wayland, geometry already applied via wlr_scene_node_set_position
-		 * in luaA_drawin_set_geometry(), so just clear the flag */
 		if (d->geometry_dirty) {
 			d->geometry_dirty = false;
 		}
 
-		/* Apply pending border changes (mirrors window_border_refresh in AwesomeWM) */
-		drawin_border_refresh_single(d);
 	}
 }
 
@@ -1509,7 +1012,7 @@ luaA_drawin_geometry(lua_State *L)
 			height = (int)ceil(lua_tonumber(L, -1));
 		lua_pop(L, 1);
 
-		drawin_moveresize(L, 1, x, y, width, height);
+		drawin_moveresize(L, 1, x, y, width, height, false);
 
 		return 0;
 	}
@@ -1553,12 +1056,12 @@ luaA_drawin_gc(lua_State *L)
 		/* Wipe button array */
 		button_array_wipe(&drawin->buttons);
 
-		/* Destroy scene graph nodes */
-		if (drawin->scene_tree) {
-			wlr_scene_node_destroy(&drawin->scene_tree->node);
-			drawin->scene_tree = NULL;
-			drawin->scene_buffer = NULL;  /* Child node destroyed with parent */
-		}
+		/* Retire the renderer's view and drop the retained leaves at the
+		 * next frame */
+		declare_handle_drop(drawin);
+		widget_nodes_clear(&drawin->widgets);
+
+		declare_mark_all_dirty();
 	}
 	return 0;
 }
@@ -1622,30 +1125,6 @@ luaA_drawin_set_cursor(lua_State *L, drawin_t *drawin)
 	return 0;
 }
 
-/** Set the drawin surface_scale override (somewm extension).
- * 0 = auto (use output scale), >0 = force this scale for drawable surface.
- * Recreates the drawable surface at the new scale.
- * \param L The Lua VM state.
- * \param drawin The drawin object.
- * \return The number of elements pushed on stack.
- */
-static int
-luaA_drawin_set_surface_scale(lua_State *L, drawin_t *drawin)
-{
-	float scale = (float)lua_tonumber(L, -1);
-	if (scale < 0.0f)
-		scale = 0.0f;
-	if (scale != drawin->scale_override)
-	{
-		drawin->scale_override = scale;
-		/* Recreate the drawable surface at the new scale */
-		if (drawin->visible)
-			drawin_update_drawing(L, -3);
-		luaA_object_emit_signal(L, -3, "property::surface_scale", 0);
-	}
-	return 0;
-}
-
 /** Set the drawin x (AwesomeWM signature).
  * \param L The Lua VM state.
  * \param drawin The drawin object.
@@ -1655,7 +1134,7 @@ static int
 luaA_drawin_set_x(lua_State *L, drawin_t *drawin)
 {
 	int x = (int)round(lua_tonumber(L, -1));
-	drawin_moveresize(L, -3, x, drawin->y, drawin->width, drawin->height);
+	drawin_moveresize(L, -3, x, drawin->y, drawin->width, drawin->height, false);
 	return 0;
 }
 
@@ -1668,7 +1147,7 @@ static int
 luaA_drawin_set_y(lua_State *L, drawin_t *drawin)
 {
 	int y = (int)round(lua_tonumber(L, -1));
-	drawin_moveresize(L, -3, drawin->x, y, drawin->width, drawin->height);
+	drawin_moveresize(L, -3, drawin->x, y, drawin->width, drawin->height, false);
 	return 0;
 }
 
@@ -1682,7 +1161,7 @@ luaA_drawin_set_width(lua_State *L, drawin_t *drawin)
 {
 	int width = (int)ceil(lua_tonumber(L, -1));
 	if (width < 1) width = 1;
-	drawin_moveresize(L, -3, drawin->x, drawin->y, width, drawin->height);
+	drawin_moveresize(L, -3, drawin->x, drawin->y, width, drawin->height, false);
 	return 0;
 }
 
@@ -1696,7 +1175,7 @@ luaA_drawin_set_height(lua_State *L, drawin_t *drawin)
 {
 	int height = (int)ceil(lua_tonumber(L, -1));
 	if (height < 1) height = 1;
-	drawin_moveresize(L, -3, drawin->x, drawin->y, drawin->width, height);
+	drawin_moveresize(L, -3, drawin->x, drawin->y, drawin->width, height, false);
 	return 0;
 }
 
@@ -1721,11 +1200,17 @@ luaA_drawin_set_opacity(lua_State *L, drawin_t *drawin)
 
 	if(drawin->opacity != opacity)
 	{
+		if (declare_in_frame())
+			return luaL_error(L, "widget tree changed from inside a frame");
+		bool was_opaque = drawin->opacity < 0 || drawin->opacity == 1;
 		drawin->opacity = opacity;
-		/* Wayland: apply opacity via scene buffer */
-		if (drawin->scene_buffer)
-			wlr_scene_buffer_set_opacity(drawin->scene_buffer,
-				opacity >= 0 ? (float)opacity : 1.0f);
+		/* Opacity rides the content leaf's userData word (declare.c) */
+		declare_mark_all_dirty();
+		if (was_opaque != (opacity < 0 || opacity == 1)) {
+			luaA_object_push_item(L, -3, drawin->drawable);
+			luaA_object_emit_signal(L, -1, "property::_clay_opaque", 0);
+			lua_pop(L, 1);
+		}
 		luaA_object_emit_signal(L, -3, "property::opacity", 0);
 	}
 	return 0;
@@ -1739,7 +1224,7 @@ luaA_drawin_get_shadow(lua_State *L, drawin_t *drawin)
 		shadow_config_to_lua(L, drawin->shadow_config);
 	} else {
 		const shadow_config_t *eff = shadow_get_effective_config(NULL, true);
-		if (eff->enabled && drawin->shadow.tree) {
+		if (eff->enabled) {
 			shadow_config_to_lua(L, eff);
 		} else {
 			lua_pushboolean(L, false);
@@ -1766,245 +1251,146 @@ luaA_drawin_set_shadow(lua_State *L, drawin_t *drawin)
 	}
 	*drawin->shadow_config = new_config;
 
-	/* Update shadow if scene tree exists */
-	if (drawin->scene_tree) {
-		shadow_update_config(&drawin->shadow, drawin->scene_tree, &new_config,
-			drawin->width, drawin->height);
-		/* Match drawin visibility */
-		shadow_set_visible(&drawin->shadow, drawin->visible);
-	}
-
-	/* Ensure shadow gets refreshed with correct geometry on next cycle */
-	drawin->border_need_update = true;
+	declare_mark_all_dirty();
 
 	luaA_object_emit_signal(L, -3, "property::shadow", 0);
 	return 0;
 }
 
-/** drawin.shape_bounding - Get visual bounding shape (AwesomeWM signature) */
-static int
-luaA_drawin_get_shape_bounding(lua_State *L, drawin_t *drawin)
+/* Policies contain small tables of transition settings. Copy both directions
+ * so editing a returned table cannot disagree with the parsed transition. */
+static void
+copy_animation(lua_State *L, int index)
 {
-	if (!drawin->shape_bounding)
-		return 0;
-	/* lua has to make sure to free the ref or we have a leak */
-	lua_pushlightuserdata(L, drawin->shape_bounding);
+    index = luaA_absindex(L, index);
+    if (!lua_istable(L, index)) { lua_pushvalue(L, index); return; }
+    luaL_checkstack(L, 5, "copying animation policy");
+    lua_newtable(L);
+    lua_pushnil(L);
+    while (lua_next(L, index)) {
+        lua_pushvalue(L, -2);
+        copy_animation(L, -2);
+        lua_rawset(L, -5);
+        lua_pop(L, 1);
+    }
+}
+
+static int
+luaA_drawin_get_animation(lua_State *L, drawin_t *d)
+{
+    if (d->animation_ref != LUA_NOREF) lua_rawgeti(L, LUA_REGISTRYINDEX, d->animation_ref);
+    else lua_pushnil(L);
+    if (!d->animation_foreign) copy_animation(L, -1);
+    return 1;
+}
+
+static int
+luaA_drawin_set_animation(lua_State *L, drawin_t *d)
+{
+    int value = lua_gettop(L);
+    lua_getglobal(L, "require");
+    lua_pushliteral(L, "somewm.animation_policy");
+    lua_call(L, 1, 1);
+    lua_getfield(L, -1, "prepare");
+    lua_remove(L, -2);
+    lua_pushvalue(L, value - 2);
+    lua_pushvalue(L, value);
+    lua_pushliteral(L, "drawin");
+    lua_call(L, 3, 2);
+    bool foreign = lua_toboolean(L, -1);
+    lua_pop(L, 1);
+    struct widget_transition transition = {0};
+    if (!foreign && lua_istable(L, -1)) {
+        lua_getfield(L, -1, "visible");
+        lua_newtable(L);
+        lua_pushvalue(L, -2);
+        lua_setfield(L, -2, "transition");
+        bool ok = widget_read_transition(L, lua_gettop(L), &transition);
+        lua_pop(L, 2);
+        if (!ok) return luaL_error(L, "animation.visible has an invalid transition");
+    }
+    d->animation_disabled = lua_isboolean(L, -1) && !lua_toboolean(L, -1);
+    int ref = lua_isnil(L, -1) ? LUA_NOREF : luaL_ref(L, LUA_REGISTRYINDEX);
+    if (ref == LUA_NOREF) lua_pop(L, 1);
+    luaL_unref(L, LUA_REGISTRYINDEX, d->animation_ref);
+    d->animation_ref = ref;
+    d->animation_foreign = foreign;
+    d->animation = transition;
+    declare_mark_all_dirty();
+    luaA_object_emit_signal(L, -3, "property::animation", 0);
+    return 0;
+}
+
+static int
+luaA_drawin_get_shape(lua_State *L, drawin_t *d)
+{
+	if (d->shape.ref != LUA_NOREF)
+		lua_rawgeti(L, LUA_REGISTRYINDEX, d->shape.ref);
+	else if (d->shape_radius >= 0)
+		lua_pushnumber(L, d->shape_radius);
+	else
+		lua_pushnil(L);
 	return 1;
 }
 
-/** Deep copy a cairo surface to avoid lifetime issues with Lua GC.
- * When Lua GC calls cairo_surface_finish(), it frees the backing data
- * even if we hold a reference. Making a copy ensures we own the data.
- */
-static cairo_surface_t *
-drawin_copy_surface(cairo_surface_t *src)
+static int
+luaA_drawin_set_shape(lua_State *L, drawin_t *d)
 {
-	cairo_surface_t *dst;
-	cairo_t *cr;
-	int width, height;
-
-	if (!src)
-		return NULL;
-
-	/* Check if source is still valid */
-	if (cairo_surface_status(src) != CAIRO_STATUS_SUCCESS)
-		return NULL;
-
-	width = cairo_image_surface_get_width(src);
-	height = cairo_image_surface_get_height(src);
-
-	if (width <= 0 || height <= 0)
-		return NULL;
-
-	/* Create new surface with same format and dimensions */
-	dst = cairo_image_surface_create(
-		cairo_image_surface_get_format(src), width, height);
-
-	if (cairo_surface_status(dst) != CAIRO_STATUS_SUCCESS) {
-		cairo_surface_destroy(dst);
-		return NULL;
+	int type = lua_type(L, -1);
+	if (type != LUA_TNIL && type != LUA_TNUMBER && type != LUA_TFUNCTION)
+		return luaL_error(L, "shape must be nil, a number or a function");
+	bool same = d->shape.ref == LUA_NOREF
+		&& ((type == LUA_TNIL && d->shape_radius < 0)
+			|| (type == LUA_TNUMBER && lua_tonumber(L, -1) == d->shape_radius));
+	if (type == LUA_TFUNCTION && d->shape.ref != LUA_NOREF) {
+		lua_rawgeti(L, LUA_REGISTRYINDEX, d->shape.ref);
+		same = lua_rawequal(L, -1, -2);
+		lua_pop(L, 1);
 	}
-
-	/* Copy the content */
-	cr = cairo_create(dst);
-	cairo_set_source_surface(cr, src, 0, 0);
-	cairo_set_operator(cr, CAIRO_OPERATOR_SOURCE);
-	cairo_paint(cr);
-	cairo_destroy(cr);
-
-	return dst;
-}
-
-/** Set the drawin's bounding shape (AwesomeWM signature).
- * \param L The Lua VM state.
- * \param drawin The drawin object.
- * \return The number of elements pushed on stack.
- */
-static int
-luaA_drawin_set_shape_bounding(lua_State *L, drawin_t *drawin)
-{
-	cairo_surface_t *surf = NULL;
-	cairo_surface_t *copy = NULL;
-
-	if(!lua_isnil(L, -1))
-		surf = (cairo_surface_t *)lua_touserdata(L, -1);
-
-	/* The drawin might have been resized. Apply pending geometry first.
-	 * (Matches AwesomeWM's drawin_apply_moveresize() call) */
-	luaA_drawin_apply_geometry(drawin);
-
-	/* Make a deep copy of the surface to avoid Lua GC freeing it.
-	 * cairo_surface_finish() frees backing data even with refs held. */
-	if (surf)
-		copy = drawin_copy_surface(surf);
-
-	if (drawin->shape_bounding)
-		cairo_surface_destroy(drawin->shape_bounding);
-
-	drawin->shape_bounding = copy;
-
-	/* Trigger redraw to apply shape (Wayland equivalent of xwindow_set_shape) */
-	if (drawin->visible)
-		drawin_refresh_drawable(drawin);
-
-	/* Trigger border refresh to apply shape to border */
-	drawin->border_need_update = true;
-
-	luaA_object_emit_signal(L, -3, "property::shape_bounding", 0);
+	if (same)
+		return 0;
+	luaL_unref(L, LUA_REGISTRYINDEX, d->shape.ref);
+	d->shape.ref = LUA_NOREF;
+	d->shape_radius = type == LUA_TNUMBER ? lua_tonumber(L, -1) : -1;
+	if (type == LUA_TFUNCTION) {
+		lua_pushvalue(L, -1);
+		d->shape.ref = luaL_ref(L, LUA_REGISTRYINDEX);
+	}
+	d->shape.shape.gen++;
+	drawin_mark_dirty(d);
+	luaA_object_emit_signal(L, -3, "property::shape", 0);
 	return 0;
 }
 
-/** drawin.shape_clip - Get drawing clip shape (AwesomeWM signature) */
 static int
-luaA_drawin_get_shape_clip(lua_State *L, drawin_t *drawin)
+luaA_drawin_get_input_passthrough(lua_State *L, drawin_t *d)
 {
-	if (!drawin->shape_clip)
-		return 0;
-	/* lua has to make sure to free the ref or we have a leak */
-	lua_pushlightuserdata(L, drawin->shape_clip);
+	lua_pushboolean(L, d->input_passthrough);
 	return 1;
 }
 
-/** Set the drawin's clip shape (AwesomeWM signature).
- * \param L The Lua VM state.
- * \param drawin The drawin object.
- * \return The number of elements pushed on stack.
- */
 static int
-luaA_drawin_set_shape_clip(lua_State *L, drawin_t *drawin)
+luaA_drawin_set_input_passthrough(lua_State *L, drawin_t *d)
 {
-	cairo_surface_t *surf = NULL;
-	cairo_surface_t *copy = NULL;
-
-	if(!lua_isnil(L, -1))
-		surf = (cairo_surface_t *)lua_touserdata(L, -1);
-
-	/* The drawin might have been resized. Apply pending geometry first.
-	 * (Matches AwesomeWM's drawin_apply_moveresize() call) */
-	luaA_drawin_apply_geometry(drawin);
-
-	/* Make a deep copy of the surface to avoid Lua GC freeing it.
-	 * cairo_surface_finish() frees backing data even with refs held. */
-	if (surf)
-		copy = drawin_copy_surface(surf);
-
-	if (drawin->shape_clip)
-		cairo_surface_destroy(drawin->shape_clip);
-
-	drawin->shape_clip = copy;
-
-	/* Trigger redraw to apply shape (Wayland equivalent of xwindow_set_shape) */
-	if (drawin->visible)
-		drawin_refresh_drawable(drawin);
-
-	luaA_object_emit_signal(L, -3, "property::shape_clip", 0);
+	d->input_passthrough = lua_toboolean(L, -1);
+	luaA_object_emit_signal(L, -3, "property::input_passthrough", 0);
 	return 0;
 }
 
-/** drawin.shape_input - Get input hit-test shape (AwesomeWM signature) */
 static int
-luaA_drawin_get_shape_input(lua_State *L, drawin_t *drawin)
+luaA_drawin_get_shape_mask(lua_State *L, drawin_t *d)
 {
-	if (!drawin->shape_input)
-		return 0;
-	/* lua has to make sure to free the ref or we have a leak */
-	lua_pushlightuserdata(L, drawin->shape_input);
+	lua_pushnil(L);
 	return 1;
 }
 
-/** Set the drawin's input shape (AwesomeWM signature).
- * \param L The Lua VM state.
- * \param drawin The drawin object.
- * \return The number of elements pushed on stack.
- */
 static int
-luaA_drawin_set_shape_input(lua_State *L, drawin_t *drawin)
+luaA_drawin_set_shape_mask(lua_State *L, drawin_t *d)
 {
-	cairo_surface_t *surf = NULL;
-	cairo_surface_t *copy = NULL;
-
-	if(!lua_isnil(L, -1))
-		surf = (cairo_surface_t *)lua_touserdata(L, -1);
-
-	/* The drawin might have been resized. Apply pending geometry first.
-	 * (Matches AwesomeWM's drawin_apply_moveresize() call) */
-	luaA_drawin_apply_geometry(drawin);
-
-	/* Make a deep copy of the surface to avoid Lua GC freeing it.
-	 * cairo_surface_finish() frees backing data even with refs held. */
-	if (surf)
-		copy = drawin_copy_surface(surf);
-
-	if (drawin->shape_input)
-		cairo_surface_destroy(drawin->shape_input);
-
-	drawin->shape_input = copy;
-
-	/* Note: No redraw needed for input shape - it's checked at input time.
-	 * A 0x0 surface means pass through ALL input (AwesomeWM convention). */
-
-	luaA_object_emit_signal(L, -3, "property::shape_input", 0);
-	return 0;
-}
-
-/** drawin.shape_border - Get pre-rendered border surface */
-static int
-luaA_drawin_get_shape_border(lua_State *L, drawin_t *drawin)
-{
-	if (!drawin->shape_border)
-		return 0;
-	lua_pushlightuserdata(L, drawin->shape_border);
-	return 1;
-}
-
-/** Set the drawin's pre-rendered border surface.
- * This is an ARGB32 surface rendered in Lua with anti-aliased edges.
- * \param L The Lua VM state.
- * \param drawin The drawin object.
- * \return The number of elements pushed on stack.
- */
-static int
-luaA_drawin_set_shape_border(lua_State *L, drawin_t *drawin)
-{
-	cairo_surface_t *surf = NULL;
-	cairo_surface_t *copy = NULL;
-
-	if(!lua_isnil(L, -1))
-		surf = (cairo_surface_t *)lua_touserdata(L, -1);
-
-	/* Make a deep copy of the surface to avoid Lua GC freeing it. */
-	if (surf)
-		copy = drawin_copy_surface(surf);
-
-	if (drawin->shape_border)
-		cairo_surface_destroy(drawin->shape_border);
-
-	drawin->shape_border = copy;
-
-	/* Trigger border refresh to use the new pre-rendered surface */
-	drawin->border_need_update = true;
-
-	luaA_object_emit_signal(L, -3, "property::shape_border", 0);
+	if (!d->shape_mask_warned) {
+		warn("drawin: shape_bounding, shape_clip and shape_input are not read, set wibox.shape");
+		d->shape_mask_warned = true;
+	}
 	return 0;
 }
 
@@ -2094,8 +1480,11 @@ drawin_class_setup(lua_State *L)
 
 	const lua_class_property_t properties[] = {
 		{ "drawable", NULL, (lua_class_propfunc_t) luaA_drawin_get_drawable, NULL },
+		{ "animation", (lua_class_propfunc_t) luaA_drawin_set_animation, (lua_class_propfunc_t) luaA_drawin_get_animation, (lua_class_propfunc_t) luaA_drawin_set_animation },
 		{ "visible", (lua_class_propfunc_t) luaA_drawin_set_visible, (lua_class_propfunc_t) luaA_drawin_get_visible, (lua_class_propfunc_t) luaA_drawin_set_visible },
 		{ "ontop", (lua_class_propfunc_t) luaA_drawin_set_ontop, (lua_class_propfunc_t) luaA_drawin_get_ontop, (lua_class_propfunc_t) luaA_drawin_set_ontop },
+		{ "attachment", (lua_class_propfunc_t) luaA_drawin_set_attachment, (lua_class_propfunc_t) luaA_drawin_get_attachment, (lua_class_propfunc_t) luaA_drawin_set_attachment },
+		{ "bar", (lua_class_propfunc_t) luaA_drawin_set_bar, (lua_class_propfunc_t) luaA_drawin_get_bar, (lua_class_propfunc_t) luaA_drawin_set_bar },
 		{ "cursor", (lua_class_propfunc_t) luaA_drawin_set_cursor, (lua_class_propfunc_t) luaA_drawin_get_cursor, (lua_class_propfunc_t) luaA_drawin_set_cursor },
 		{ "x", (lua_class_propfunc_t) luaA_drawin_set_x, (lua_class_propfunc_t) luaA_drawin_get_x, (lua_class_propfunc_t) luaA_drawin_set_x },
 		{ "y", (lua_class_propfunc_t) luaA_drawin_set_y, (lua_class_propfunc_t) luaA_drawin_get_y, (lua_class_propfunc_t) luaA_drawin_set_y },
@@ -2104,15 +1493,15 @@ drawin_class_setup(lua_State *L)
 		{ "type", (lua_class_propfunc_t) luaA_drawin_set_type, (lua_class_propfunc_t) luaA_drawin_get_type, (lua_class_propfunc_t) luaA_drawin_set_type },
 		{ "_opacity", (lua_class_propfunc_t) luaA_drawin_set_opacity, (lua_class_propfunc_t) luaA_drawin_get_opacity, (lua_class_propfunc_t) luaA_drawin_set_opacity },
 		{ "shadow", (lua_class_propfunc_t) luaA_drawin_set_shadow, (lua_class_propfunc_t) luaA_drawin_get_shadow, (lua_class_propfunc_t) luaA_drawin_set_shadow },
-		{ "surface_scale", (lua_class_propfunc_t) luaA_drawin_set_surface_scale, (lua_class_propfunc_t) luaA_drawin_get_surface_scale, (lua_class_propfunc_t) luaA_drawin_set_surface_scale },
 		{ "border_width", (lua_class_propfunc_t) luaA_drawin_set_border_width, (lua_class_propfunc_t) luaA_drawin_get_border_width, (lua_class_propfunc_t) luaA_drawin_set_border_width },
 		{ "_border_width", (lua_class_propfunc_t) luaA_drawin_set_border_width, (lua_class_propfunc_t) luaA_drawin_get_border_width, (lua_class_propfunc_t) luaA_drawin_set_border_width },
 		{ "border_color", (lua_class_propfunc_t) luaA_drawin_set_border_color, (lua_class_propfunc_t) luaA_drawin_get_border_color, (lua_class_propfunc_t) luaA_drawin_set_border_color },
 		{ "_border_color", (lua_class_propfunc_t) luaA_drawin_set_border_color, (lua_class_propfunc_t) luaA_drawin_get_border_color, (lua_class_propfunc_t) luaA_drawin_set_border_color },
-		{ "shape_bounding", (lua_class_propfunc_t) luaA_drawin_set_shape_bounding, (lua_class_propfunc_t) luaA_drawin_get_shape_bounding, (lua_class_propfunc_t) luaA_drawin_set_shape_bounding },
-		{ "shape_clip", (lua_class_propfunc_t) luaA_drawin_set_shape_clip, (lua_class_propfunc_t) luaA_drawin_get_shape_clip, (lua_class_propfunc_t) luaA_drawin_set_shape_clip },
-		{ "shape_input", (lua_class_propfunc_t) luaA_drawin_set_shape_input, (lua_class_propfunc_t) luaA_drawin_get_shape_input, (lua_class_propfunc_t) luaA_drawin_set_shape_input },
-		{ "shape_border", (lua_class_propfunc_t) luaA_drawin_set_shape_border, (lua_class_propfunc_t) luaA_drawin_get_shape_border, (lua_class_propfunc_t) luaA_drawin_set_shape_border },
+		{ "input_passthrough", (lua_class_propfunc_t) luaA_drawin_set_input_passthrough, (lua_class_propfunc_t) luaA_drawin_get_input_passthrough, (lua_class_propfunc_t) luaA_drawin_set_input_passthrough },
+		{ "shape", (lua_class_propfunc_t) luaA_drawin_set_shape, (lua_class_propfunc_t) luaA_drawin_get_shape, (lua_class_propfunc_t) luaA_drawin_set_shape },
+		{ "shape_bounding", (lua_class_propfunc_t) luaA_drawin_set_shape_mask, (lua_class_propfunc_t) luaA_drawin_get_shape_mask, (lua_class_propfunc_t) luaA_drawin_set_shape_mask },
+		{ "shape_clip", (lua_class_propfunc_t) luaA_drawin_set_shape_mask, (lua_class_propfunc_t) luaA_drawin_get_shape_mask, (lua_class_propfunc_t) luaA_drawin_set_shape_mask },
+		{ "shape_input", (lua_class_propfunc_t) luaA_drawin_set_shape_mask, (lua_class_propfunc_t) luaA_drawin_get_shape_mask, (lua_class_propfunc_t) luaA_drawin_set_shape_mask },
 	};
 	luaA_class_add_properties(&drawin_class, properties, countof(properties));
 }

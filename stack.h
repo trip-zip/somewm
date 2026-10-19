@@ -13,6 +13,10 @@
  * Order from bottom to top:
  * DESKTOP -> BELOW -> NORMAL -> ABOVE -> FULLSCREEN -> ONTOP
  *
+ * These name a client's stacking class, not the draw order: declare.c's
+ * z table is the order of record, and it interleaves drawins and
+ * layer-shell surfaces between these layers.
+ *
  * Note: Floating is a LAYOUT concept, not a STACKING concept.
  * Floating windows go to NORMAL layer. Use c.above/c.ontop for Z-order.
  */
@@ -54,5 +58,14 @@ void stack_windows(void);
  * Call after property changes (ontop, above, below, fullscreen, focus)
  */
 void stack_refresh(void);
+
+/** The stacking layer a client's own attributes place it in.
+ * WINDOW_LAYER_IGNORE for a transient that sets none of its own. */
+window_layer_t stack_client_layer(Client *c);
+
+/** The layer a client draws in: its own if it sets one, else the nearest
+ * one up the transient chain. The one statement of the inherit rule, read
+ * by the declare pass and by client._scene_layer. */
+window_layer_t stack_client_effective_layer(Client *c);
 
 #endif /* STACK_H */

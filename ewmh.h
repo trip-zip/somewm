@@ -25,7 +25,6 @@
 #include "objects/client.h"
 #include "strut.h"
 
-#ifdef XWAYLAND
 #include <xcb/xcb.h>
 
 void ewmh_init(xcb_connection_t *conn, int screen_nbr);
@@ -40,23 +39,6 @@ void ewmh_update_window_type(xcb_window_t window, uint32_t type);
 
 /* somewm-specific - not in AwesomeWM */
 void ewmh_update_net_desktop_geometry(xcb_connection_t *conn, int phys_screen);
-
-#else  /* !XWAYLAND */
-
-/* Pure Wayland stubs - EWMH not needed without XWayland */
-
-void ewmh_init(void *conn, int screen_nbr);
-void ewmh_init_lua(void);
-void ewmh_update_net_numbers_of_desktop(void);
-void ewmh_update_net_desktop_names(void);
-void ewmh_update_net_client_list_stacking(void);
-void ewmh_client_check_hints(client_t *c);
-void ewmh_client_update_desktop(client_t *c);
-void ewmh_update_strut(void *window, strut_t *strut);
-void ewmh_update_window_type(void *window, uint32_t type);
-void ewmh_update_net_desktop_geometry(void *conn, int phys_screen);
-
-#endif  /* XWAYLAND */
 
 #endif /* SOMEWM_EWMH_H */
 /* vim: filetype=c:expandtab:shiftwidth=4:tabstop=8:softtabstop=4:textwidth=80 */

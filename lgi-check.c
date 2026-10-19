@@ -93,7 +93,7 @@ static int fail(lua_State *L, int installed)
         fprintf(stderr, "  Fedora:        sudo dnf install lua-lgi\n");
 #if LUA_VERSION_NUM >= 505
         fprintf(stderr, "\n");
-        fprintf(stderr, "Note: Lua 5.5 support landed in lgi upstream (PR #359) but\n");
+        fprintf(stderr, "Note: Lua 5.5 requires a matching lgi build, but\n");
         fprintf(stderr, "distros may not ship a matching package yet. Build lgi from\n");
         fprintf(stderr, "source against Lua 5.5: https://github.com/lgi-devs/lgi\n");
 #endif
@@ -109,8 +109,8 @@ static int fail(lua_State *L, int installed)
         fprintf(stderr, "\n");
         fprintf(stderr, "If that error mentions 'fromarray' / 'lgi.record expected,\n");
         fprintf(stderr, "got table', your lgi predates GLib 2.88's enum-class change\n");
-        fprintf(stderr, "and needs the upstream fix (lgi-devs/lgi#352, not yet\n");
-        fprintf(stderr, "released). Any lgi without that patch breaks on GLib >= 2.88.\n");
+        fprintf(stderr, "and needs enum-class compatibility with GLib >= 2.88.\n");
+        fprintf(stderr, "An incompatible lgi build cannot load those namespaces.\n");
         fprintf(stderr, "This is not a somewm bug.\n");
         fprintf(stderr, "\n");
         fprintf(stderr, "Update lgi to a build that includes the fix, or pin\n");

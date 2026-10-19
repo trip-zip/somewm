@@ -80,10 +80,6 @@ void window_set_opacity(lua_State *L, int idx, double opacity);
  */
 void window_set_border_width(lua_State *L, int idx, int width);
 
-/** Refresh window borders (C API).
- * \param window The window object.
- */
-void window_border_refresh(window_t *window);
 
 /** Get window type as string.
  * \param L The Lua VM state.
@@ -92,10 +88,5 @@ void window_border_refresh(window_t *window);
  */
 int luaA_window_get_type(lua_State *L, window_t *window);
 
-/** Translate window type enum to value.
- * \param type The window type.
- * \return The translated value.
- */
-uint32_t window_translate_type(window_type_t type);
 
 #endif /* SOMEWM_WINDOW_H */

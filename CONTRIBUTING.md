@@ -14,8 +14,9 @@ If your PR is a bugfix that applies to both, target `release/1.4` and it will be
 ## Building
 
 ```bash
-make                  # Build with ASAN
-make build-test       # Build without ASAN (faster)
+make                  # Release build
+make asan             # AddressSanitizer + UBSan build
+make build-test       # Build used by the test suite
 ```
 
 ## Testing
@@ -32,8 +33,14 @@ make test-one TEST=tests/test-foo.lua  # Single test (handy for TDD)
 |------|-------|
 | AwesomeWM C reference | [`objects/`](https://github.com/awesomeWM/awesome/tree/master/objects), [`luaclass.c`](https://github.com/awesomeWM/awesome/blob/master/luaclass.c) |
 | somewm C bindings | `objects/*.c` |
-| Wayland deviations | `DEVIATIONS.md` |
+| Compatibility and upgrades | [Versioned documentation](https://somewm.org/docs/next/reference/deviations/) |
 | Integration test examples | `tests/` |
+
+## Documentation
+
+The versioned website is the maintained reference for behaviour and compatibility. `DEVIATIONS.md` contains links only.
+
+A public behaviour change needs a changelog entry and an update to its API reference in [somewm-docs](https://github.com/trip-zip/somewm-docs). A change that requires configuration edits also belongs in the affected release's upgrade guide, with a replacement or an explicit limitation. Architectural reasons belong in the concept pages. Keep compatibility summaries linked to these accounts rather than copying their details.
 
 ## AI Usage
 
@@ -45,7 +52,6 @@ AI tools are welcome, but:
 ## Submitting a PR
 
 - Discuss your approach in an [issue](https://github.com/trip-zip/somewm/issues) or [discussion](https://github.com/trip-zip/somewm/discussions) before opening a PR
-- Fix bugs in C, not by patching Lua libraries
 - Include a test when possible (`tests/test-*.lua`)
 - Run `make test-unit && make test-integration` before pushing
 - If porting an AwesomeWM PR, add an entry to `UPSTREAM_PORTS.md`

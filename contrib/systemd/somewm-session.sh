@@ -4,9 +4,6 @@
 # Launch somewm as a systemd user service with proper session lifecycle.
 # Display managers should use this as their Exec entry.
 
-# Clean up any stale Wayland sockets before starting
-[ -n "$XDG_RUNTIME_DIR" ] && rm -f "$XDG_RUNTIME_DIR"/wayland-* 2>/dev/null
-
 # Source environment.d configs for TTY parity with display manager sessions
 for _conf in "$HOME/.config/environment.d/"*.conf; do
     [ -f "$_conf" ] || continue
@@ -76,5 +73,5 @@ systemctl --user unset-environment \
     XDG_SESSION_TYPE \
     XDG_CURRENT_DESKTOP
 
-# Clean up Wayland sockets
-[ -n "$XDG_RUNTIME_DIR" ] && rm -f "$XDG_RUNTIME_DIR"/wayland-* 2>/dev/null
+# The compositor owns its sockets and removes them on shutdown. Other
+# Wayland sessions may share XDG_RUNTIME_DIR, so do not remove their sockets.

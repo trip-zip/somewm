@@ -4,7 +4,7 @@
  * 4-quadrant pattern (TL=red, TR=green, BL=blue, BR=yellow), imports it as
  * a wl_buffer through zwp_linux_dmabuf_v1, and attaches it to an
  * xdg_toplevel. Used by test-client-content-dmabuf.lua to assert c.content
- * returns real pixels for DMA-BUF clients (issue #539).
+ * returns real pixels for DMA-BUF clients.
  *
  * Buffer is intentionally a DMA-BUF (not SHM) so the compositor exercises
  * its scene-tree walk + GPU texture readback path inside

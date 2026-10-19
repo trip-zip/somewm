@@ -97,27 +97,6 @@ color_init_from_string(color_t *color, const char *colstr)
     return true;
 }
 
-/** Convert color_t to Cairo color format
- *
- * Cairo uses doubles in the range 0.0-1.0 for color components.
- *
- * \param color Source color
- * \param r Pointer to store red (0.0-1.0)
- * \param g Pointer to store green (0.0-1.0)
- * \param b Pointer to store blue (0.0-1.0)
- * \param a Pointer to store alpha (0.0-1.0)
- */
-void
-color_to_cairo(const color_t *color, double *r, double *g, double *b, double *a)
-{
-    if (!color) return;
-
-    if (r) *r = color->red / 255.0;
-    if (g) *g = color->green / 255.0;
-    if (b) *b = color->blue / 255.0;
-    if (a) *a = color->alpha / 255.0;
-}
-
 /** Convert color_t to float array for wlroots
  *
  * wlr_scene_rect_set_color() expects float[4] in RGBA format with 0.0-1.0 range.
@@ -153,25 +132,6 @@ color_to_uint32(const color_t *color)
            ((uint32_t)color->red   << 16) |
            ((uint32_t)color->green << 8)  |
            ((uint32_t)color->blue);
-}
-
-/** Convert color_t to uint32_t in RGBA format
- *
- * Format: 0xRRGGBBAA
- * Alternative format for systems that prefer RGBA ordering.
- *
- * \param color Source color
- * \return uint32_t in RGBA format
- */
-uint32_t
-color_to_uint32_rgba(const color_t *color)
-{
-    if (!color) return 0;
-
-    return ((uint32_t)color->red   << 24) |
-           ((uint32_t)color->green << 16) |
-           ((uint32_t)color->blue  << 8)  |
-           ((uint32_t)color->alpha);
 }
 
 /** Push a color as a hex string onto the Lua stack

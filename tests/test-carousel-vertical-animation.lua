@@ -1,8 +1,8 @@
 ---------------------------------------------------------------------------
---- Test: vertical carousel scroll animation
+--- Test: Clay layout animation drives the vertical carousel strip
 --
 -- Verifies that carousel.vertical:
--- 1. Duration 0 snaps instantly (no animation)
+-- 1. Disabled layout animation snaps instantly
 -- 2. Duration > 0 starts animation that reaches the target on y-axis
 -- 3. Mid-animation retarget smoothly switches to new target
 ---------------------------------------------------------------------------
@@ -13,13 +13,12 @@ local utils = require("_utils")
 local awful = require("awful")
 
 if not test_client.is_available() then
-    io.stderr:write("Test finished successfully.\n")
-    awesome.quit()
-    return
+    return runner.skip("no terminal available for test clients")
 end
 
 local carousel = awful.layout.suit.carousel
 local vertical = carousel.vertical
+local layout_animation = require("somewm.layout_animation")
 
 local tag
 local c1, c2, c3
@@ -30,7 +29,7 @@ local steps = {
         tag = screen.primary.tags[1]
         tag:view_only()
         tag.layout = vertical
-        carousel.scroll_duration = 0
+        layout_animation.enabled = false
         carousel.set_center_mode("always")
         return true
     end,
@@ -54,7 +53,7 @@ local steps = {
         if c3 and client.focus == c3 then return true end
     end,
 
-    -- Test instant snap (duration=0): focus c1, verify it settles into view.
+    -- Test instant snap with layout animation disabled: focus c1, verify it settles into view.
     -- Re-assert focus each poll so a late focus-on-manage can't leave the
     -- carousel centered on another client, then snap and check position.
     function(count)
@@ -79,7 +78,8 @@ local steps = {
     -- Enable animation, focus c3, wait for it to reach target
     function(count)
         if count == 1 then
-            carousel.scroll_duration = 0.15
+            layout_animation.enabled = true
+            layout_animation.duration = 0.15
             client.focus = c3
             c3:raise()
             awful.layout.arrange(screen.primary)
@@ -103,7 +103,7 @@ local steps = {
     -- Test retarget: animate to c1, then immediately switch to c2
     function(count)
         if count == 1 then
-            carousel.scroll_duration = 0.3
+            layout_animation.duration = 0.3
             client.focus = c1
             c1:raise()
             awful.layout.arrange(screen.primary)
@@ -133,7 +133,7 @@ local steps = {
     -- Cleanup
     function(count)
         if count == 1 then
-            carousel.scroll_duration = 0
+            layout_animation.enabled = false
             carousel.set_center_mode("on-overflow")
             for _, c in ipairs(client.get()) do
                 if c.valid then c:kill() end

@@ -131,7 +131,6 @@ int luaA_check_config(const char *config_path, bool use_color, int min_severity)
 /* Helper functions for module/class registration */
 void luaA_openlib(lua_State *L, const char *name,
                   const luaL_Reg methods[], const luaL_Reg meta[]);
-int luaA_dofunction_from_file(lua_State *L, const char *path);
 
 /* AwesomeWM compatibility: Object property miss handlers
  * Stores handlers for dynamic property access on C objects
@@ -234,17 +233,14 @@ int luaA_default_newindex(lua_State *L);
 /* X11 atom extern declarations (defined in objects/luaa.c) */
 #include <xcb/xcb.h>
 
-#ifdef XWAYLAND
 /* EWMH atom initialization */
 void init_ewmh_atoms(xcb_connection_t *conn);
-#endif
 
 extern xcb_atom_t WM_TAKE_FOCUS;
 extern xcb_atom_t _NET_STARTUP_ID;
 extern xcb_atom_t WM_DELETE_WINDOW;
 extern xcb_atom_t WM_PROTOCOLS;
 
-#ifdef XWAYLAND
 /* EWMH atoms - Extended Window Manager Hints for XWayland compatibility */
 
 /* Root Window Atoms (WM capabilities) */
@@ -305,7 +301,6 @@ extern xcb_atom_t _NET_WM_STRUT_PARTIAL;
 
 /* UTF8_STRING atom for text properties */
 extern xcb_atom_t UTF8_STRING;
-#endif /* XWAYLAND */
 
 /* AwesomeWM API parity - debug miss property handlers
  * Note: luaA_class_index_miss_property and luaA_class_newindex_miss_property

@@ -158,10 +158,6 @@ void layer_surface_unfocus(layer_surface_t *ls);
  */
 int luaA_layer_surface_get(lua_State *L);
 
-/**
- * Refresh layer surfaces (called from main event loop if needed).
- */
-void layer_surface_refresh(void);
 
 /**
  * Get the layer name as a string.

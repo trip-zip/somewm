@@ -1,5 +1,5 @@
 ---------------------------------------------------------------------------
---- Reproduction test for issue #233: XKB keyboard layout switching doesn't
+--- Reproduction test: XKB keyboard layout switching doesn't
 --- persist with multi-layout keymaps.
 ---
 --- Three bugs in somewm_api.c:

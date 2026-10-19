@@ -53,9 +53,7 @@ struct wlr_xdg_activation_v1;
 struct wlr_xdg_decoration_manager_v1;
 struct wlr_xdg_shell;
 
-#ifdef XWAYLAND
 struct wlr_xwayland;
-#endif
 
 /* Core compositor state */
 extern int running;
@@ -88,12 +86,6 @@ extern struct wlr_cursor_shape_manager_v1 *cursor_shape_mgr;
 /* Input state */
 extern struct wlr_cursor *cursor;
 extern struct wlr_xcursor_manager *cursor_mgr;
-extern struct wlr_xcursor_manager *cursor_mgr_hires;
-extern uint32_t cursor_base_size;
-extern float cursor_scale;
-extern float last_applied_scale;
-extern char *current_cursor_name;
-extern bool cursor_is_surface;
 extern struct wlr_seat *seat;
 extern KeyboardGroup *kb_group;
 extern void *exclusive_focus;
@@ -120,9 +112,6 @@ extern struct wl_list tracked_touches;
 extern struct wlr_tablet_manager_v2 *tablet_v2_mgr;
 
 /* Scene elements */
-extern struct wlr_scene_tree *drag_icon;
-extern struct wlr_scene_rect *root_bg;
-extern struct wlr_scene_rect *locked_bg;
 
 /* Session lock state */
 extern int locked;
@@ -136,10 +125,7 @@ extern uint32_t next_client_id;
 extern int new_client_placement;
 
 /* Layer mapping (ZWLR_LAYER_SHELL_* -> Lyr* enum) */
-extern const int layermap[];
 
-#ifdef XWAYLAND
 extern struct wlr_xwayland *xwayland;
-#endif
 
 #endif /* SOMEWM_H */

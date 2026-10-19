@@ -28,7 +28,6 @@
 #include "common/util.h"
 #include "event_queue.h"
 
-#ifdef XWAYLAND
 #include <xcb/xcb.h>
 #include <xcb/xcb_atom.h>
 #include <string.h>
@@ -332,10 +331,10 @@ ewmh_update_net_client_list(lua_State *L)
     if (!globalconf.connection || !globalconf.screen)
         return 0;
 
-    xcb_window_t wins[globalconf.clients.len];
+    xcb_window_t wins[MAX(1, globalconf.clients.len)];
 
     foreach(client, globalconf.clients)
-        if((*client)->client_type == X11)
+        if((*client)->client_type == X11 && (*client)->scene)
             wins[n++] = (*client)->window;
 
     xcb_change_property(globalconf.connection, XCB_PROP_MODE_REPLACE,
@@ -355,7 +354,7 @@ ewmh_update_net_client_list_stacking(void)
     if (!globalconf.connection || !globalconf.screen)
         return;
 
-    xcb_window_t wins[globalconf.stack.len];
+    xcb_window_t wins[MAX(1, globalconf.stack.len)];
 
     foreach(client, globalconf.stack)
         if((*client)->client_type == X11)
@@ -569,61 +568,5 @@ ewmh_init_lua(void)
     luaA_class_connect_signal(L, &client_class, "untagged", ewmh_update_net_current_desktop);
     luaA_class_connect_signal(L, &tag_class, "property::selected", ewmh_update_net_current_desktop);
 }
-
-#else  /* !XWAYLAND */
-
-/* Pure Wayland stubs - EWMH not needed without XWayland */
-
-void ewmh_init(void *conn, int screen_nbr)
-{
-    (void)conn; (void)screen_nbr;
-}
-
-void ewmh_client_check_hints(client_t *c)
-{
-    (void)c;
-}
-
-void ewmh_update_net_client_list_stacking(void)
-{
-    /* No-op */
-}
-
-void ewmh_update_net_numbers_of_desktop(void)
-{
-    /* No-op */
-}
-
-void ewmh_update_net_desktop_names(void)
-{
-    /* No-op */
-}
-
-void ewmh_update_net_desktop_geometry(void *conn, int phys_screen)
-{
-    (void)conn; (void)phys_screen;
-}
-
-void ewmh_client_update_desktop(client_t *c)
-{
-    (void)c;
-}
-
-void ewmh_update_strut(void *window, strut_t *strut)
-{
-    (void)window; (void)strut;
-}
-
-void ewmh_update_window_type(void *window, uint32_t type)
-{
-    (void)window; (void)type;
-}
-
-void ewmh_init_lua(void)
-{
-    /* No-op */
-}
-
-#endif  /* XWAYLAND */
 
 /* vim: filetype=c:expandtab:shiftwidth=4:tabstop=8:softtabstop=4:textwidth=80 */

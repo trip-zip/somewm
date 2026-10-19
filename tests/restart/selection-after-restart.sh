@@ -13,7 +13,7 @@
 # count watchers. Note that a dispatch to the *live* watcher also logs a non-object
 # line: selection objects are never entered into the object registry, so
 # luaA_object_push cannot find them and the signal never reaches Lua. That is a
-# separate, pre-existing defect (issue 659); it is why the expected count here is 2
+# separate object-registry defect; it is why the expected count here is 2
 # rather than 0. A third line is the abandoned watcher.
 
 . "$(dirname "$0")/lib.sh"

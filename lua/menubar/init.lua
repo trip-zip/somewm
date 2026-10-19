@@ -74,6 +74,11 @@ end
 -- @beautiful beautiful.menubar_font
 -- @param[opt=beautiful.font] font
 
+--- The launcher's width, ahead of `menubar.geometry.width`. Without either,
+-- the launcher spans the workarea.
+-- @beautiful beautiful.launcher_width
+-- @tparam[opt=nil] number launcher_width
+
 
 -- menubar
 local menubar = { menu_entries = {} }
@@ -114,17 +119,13 @@ menubar.geometry = { width = nil,
 -- @tfield number right_margin
 menubar.right_margin = theme.xresources.apply_dpi(8)
 
---- Label used for "Next page", default "▶▶".
+--- Label shown while more items lie to the right, default "▶▶".
 -- @tfield[opt="▶▶"] string right_label
 menubar.right_label = "▶▶"
 
---- Label used for "Previous page", default "◀◀".
+--- Label shown while more items lie to the left, default "◀◀".
 -- @tfield[opt="◀◀"] string left_label
 menubar.left_label = "◀◀"
-
--- awful.widget.common.list_update adds spacing of dpi(4) between items.
--- @tfield number list_spacing
-local list_spacing = theme.xresources.apply_dpi(4)
 
 --- Allows user to specify custom parameters for prompt.run function
 -- (like colors). This will merge with the default parameters, overriding affected values.
@@ -134,6 +135,7 @@ menubar.prompt_args = {}
 -- Private section
 local current_item = 1
 local previous_item = nil
+local previous_scroll = 0
 local current_category = nil
 local shownitems = nil
 local instance = nil
@@ -205,7 +207,9 @@ local function perform_action(o)
         current_category = o.key
         local new_prompt = shownitems[current_item].name .. ": "
         previous_item = current_item
+        previous_scroll = instance.items.scroll_factor
         current_item = 1
+        instance.items.scroll_factor = 0
         return true, "", new_prompt
     elseif shownitems[current_item].cmdline then
         awful.spawn(shownitems[current_item].cmdline)
@@ -222,58 +226,44 @@ local function perform_action(o)
     end
 end
 
--- Cut item list to return only current page.
--- @tparam table all_items All items list.
--- @tparam str query Search query.
--- @tparam number|screen scr Screen
--- @return table List of items for current page.
-local function get_current_page(all_items, query, scr)
+-- Show the side labels while the scroll record says items lie beyond
+-- that side of the viewport by half a pixel or more (Clay solves in float32).
+local function update_labels()
+    local offset, content, viewport = instance.items:_scroll_record()
+    local left = offset ~= nil and offset <= -.5
+    local right = offset ~= nil and content + offset >= viewport + .5
+    if left == instance.left_shown and right == instance.right_shown then return end
+    instance.left_shown, instance.right_shown = left, right
+    instance.left_label:set_text(menubar.left_label)
+    instance.right_label:set_text(menubar.right_label)
+    local children = { instance.prompt }
+    if left then children[#children+1] = instance.left_label end
+    children[#children+1] = instance.items
+    if right then children[#children+1] = instance.right_label end
+    instance.row:set_children(children)
+end
 
-    local compute_text_width = function(text, s)
-        return wibox.widget.textbox.get_markup_geometry(text, s, instance.font)['width']
-    end
+-- The box the last solve gave a widget of the menubar.
+local function solved_box(widget)
+    local occurrences = widget and instance.wibox._drawable._clay_wired[widget]
+    return occurrences and occurrences[1].element and occurrences[1].element.box
+end
 
-    scr = get_screen(scr)
-    if not instance.prompt.width then
-        instance.prompt.width = compute_text_width(instance.prompt.prompt, scr)
+-- Scroll so the selected item lies inside the viewport: when it does not,
+-- it becomes the first visible item, as a new page used to start with it.
+local function show_current_item()
+    local offset, content, viewport = instance.items:_scroll_record()
+    local list = solved_box(common_args.w)
+    local box = solved_box(common_args.w:get_children()[current_item])
+    if not (offset and list and box) or content <= viewport then return end
+    local start = box.x - list.x
+    if start < -offset or start + box.width > viewport - offset then
+        instance.items.scroll_factor = start / (content - viewport)
     end
-    if not menubar.left_label_width then
-        menubar.left_label_width = compute_text_width(menubar.left_label, scr)
-    end
-    if not menubar.right_label_width then
-        menubar.right_label_width = compute_text_width(menubar.right_label, scr)
-    end
-    local border_width = theme.menubar_border_width or theme.menu_border_width or 0
-    local available_space = instance.geometry.width - menubar.right_margin -
-        menubar.right_label_width - menubar.left_label_width -
-        compute_text_width(query..' ', scr) - instance.prompt.width - border_width * 2
-        -- space character is added as input cursor placeholder
-
-    local width_sum = 0
-    local current_page = {}
-    for i, item in ipairs(all_items) do
-        item.width = item.width or (
-            compute_text_width(label(item), scr) +
-            (item.icon and (instance.geometry.height + list_spacing) or 0) + list_spacing * 2
-        )
-        if width_sum + item.width > available_space then
-            if current_item < i then
-                table.insert(current_page, { name = menubar.right_label, icon = nil })
-                break
-            end
-            current_page = { { name = menubar.left_label, icon = nil }, item, }
-            width_sum = item.width
-        else
-            table.insert(current_page, item)
-            width_sum = width_sum + item.width
-        end
-    end
-    return current_page
 end
 
 --- Update the menubar according to the command entered by user.
--- @tparam number|screen scr Screen
-local function menulist_update(scr)
+local function menulist_update()
     local query = instance.query or ""
     shownitems = {}
     local pattern = gstring.query_to_pattern(query)
@@ -389,9 +379,9 @@ local function menulist_update(scr)
         table.insert(shownitems, { name = "", cmdline = query, icon = nil })
     end
 
-    common.list_update(common_args.w, nil, label,
-                       common_args.data,
-                       get_current_page(shownitems, query, scr))
+    common.list_update(common_args.w, nil, label, common_args.data, shownitems)
+    instance.reveal = true
+    update_labels()
 end
 
 --- Refresh menubar's cache by reloading .desktop files.
@@ -403,7 +393,7 @@ function menubar.refresh(scr)
     menubar.menu_gen.generate(function(entries)
         menubar.menu_entries = entries
         if instance then
-            menulist_update(scr)
+            menulist_update()
         end
     end)
 end
@@ -416,27 +406,33 @@ end
 local function prompt_keypressed_callback(mod, key, comm)
     if key == "Left" or (mod.Control and key == "j") then
         current_item = math.max(current_item - 1, 1)
+        show_current_item()
         return true
     elseif key == "Right" or (mod.Control and key == "k") then
-        current_item = current_item + 1
+        current_item = math.min(current_item + 1, #shownitems)
+        show_current_item()
         return true
     elseif key == "BackSpace" then
         if comm == "" and current_category then
             current_category = nil
             current_item = previous_item
+            instance.items.scroll_factor = previous_scroll
             return true, nil, "Run: "
         end
     elseif key == "Escape" then
         if current_category then
             current_category = nil
             current_item = previous_item
+            instance.items.scroll_factor = previous_scroll
             return true, nil, "Run: "
         end
     elseif key == "Home" then
         current_item = 1
+        show_current_item()
         return true
     elseif key == "End" then
         current_item = #shownitems
+        show_current_item()
         return true
     elseif key == "Return" or key == "KP_Enter" then
         if mod.Control then
@@ -481,6 +477,8 @@ function menubar.show(scr)
             menubar.refresh(scr)
         end
 
+        local items = wibox.layout.overflow.horizontal(common_args.w)
+        items.scrollbar_enabled = false
         instance = {
             wibox = wibox{
                 ontop = true,
@@ -490,16 +488,28 @@ function menubar.show(scr)
                 border_color = border_color,
                 font = font,
             },
-            widget = common_args.w,
+            items = items,
+            row = wibox.layout.fixed.horizontal(),
+            left_label = wibox.widget.textbox(),
+            right_label = wibox.widget.textbox(),
             prompt = awful.widget.prompt(),
             query = nil,
             count_table = nil,
             font = font,
         }
-        local layout = wibox.layout.fixed.horizontal()
-        layout:add(instance.prompt)
-        layout:add(instance.widget)
-        instance.wibox:set_widget(layout)
+        instance.wibox._drawable._attachment_fit = true
+        instance.wibox:set_widget(wibox.container.margin(instance.row, 0, menubar.right_margin))
+        -- A solve that changes the content or the viewport changes the
+        -- scroll record the side labels follow; a changed list scrolls
+        -- the kept selection into view once it has solved.
+        instance.wibox._drawable.drawable:connect_signal("clay::solved", function()
+            if instance.reveal then
+                instance.reveal = false
+                show_current_item()
+            end
+            update_labels()
+        end)
+        items:connect_signal("property::scroll_factor", update_labels)
     end
 
     if instance.wibox.visible then -- Menu already shown, exit
@@ -508,18 +518,27 @@ function menubar.show(scr)
         menubar.refresh(scr)
     end
 
-    -- Set position and size
-    local scrgeom = scr.workarea
+    -- Width/font are content inputs; OUTPUT owns the position, the
+    -- workarea's top-left corner, under a top bar as in 2.0.
     local geometry = menubar.geometry
-    instance.geometry = {x = geometry.x or scrgeom.x,
-                             y = geometry.y or scrgeom.y,
-                             height = geometry.height or gmath.round(theme.get_font_height(font) * 1.5),
-                             width = (geometry.width or scrgeom.width) - border_width * 2}
-    instance.wibox:geometry(instance.geometry)
+    instance.geometry = {
+        height = geometry.height or gmath.round(theme.get_font_height(font) * 1.5),
+        width = geometry.width or theme.launcher_width,
+    }
+    instance.wibox.screen = scr
+    instance.wibox.widget.forced_height = instance.geometry.height
+    -- Without a width the launcher spans the workarea, as 2.0's did.
+    require('awful._attachment').corner(instance.wibox, 'top_left',
+        {x=geometry.x or 0,y=geometry.y or 0}, 3, nil, true)
+    local a=instance.wibox.drawin.attachment
+    a.width=geometry.width
+    a.wsrc=geometry.width and not a.width_override and 'user' or a.wsrc
+    instance.wibox.drawin.attachment=a
 
     current_item = 1
     current_category = nil
-    menulist_update(scr)
+    instance.items.scroll_factor = 0
+    menulist_update()
 
     local default_prompt_args = {
         prompt              = "Run: ",
@@ -529,7 +548,7 @@ function menubar.show(scr)
         done_callback       = menubar.hide,
         changed_callback    = function(query)
             instance.query = query
-            menulist_update(scr)
+            menulist_update()
         end,
         keypressed_callback = prompt_keypressed_callback
     }

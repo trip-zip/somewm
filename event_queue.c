@@ -26,6 +26,7 @@ static const char *signal_names[SIG_COUNT] = {
 	[SIG_PROPERTY_Y]         = "property::y",
 	[SIG_PROPERTY_WIDTH]     = "property::width",
 	[SIG_PROPERTY_HEIGHT]    = "property::height",
+	[SIG_PROPERTY_BORDER_COLOR] = "property::border_color",
 	[SIG_PROPERTY_ACTIVE]    = "property::active",
 	[SIG_FOCUS]              = "focus",
 	[SIG_UNFOCUS]            = "unfocus",

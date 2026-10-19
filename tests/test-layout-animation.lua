@@ -6,6 +6,7 @@
 -- 2. Animates mwfact changes smoothly (clients reach target geometry)
 -- 3. Handles rapid retargeting (multiple changes converge)
 -- 4. Skips animation during mousegrabber (mouse drag)
+-- 5. Animates on the way, not only at the end
 ---------------------------------------------------------------------------
 
 local runner = require("_runner")
@@ -15,9 +16,7 @@ local awful = require("awful")
 local layout_animation = require("somewm.layout_animation")
 
 if not test_client.is_available() then
-    io.stderr:write("Test finished successfully.\n")
-    awesome.quit()
-    return
+    return runner.skip("no terminal available for test clients")
 end
 
 local tag
@@ -205,6 +204,50 @@ local steps = {
             assert(false, "mwfact did not snap during mousegrabber")
         end
         return nil
+    end,
+
+    ---------------------------------------------------------------------------
+    -- Test 5: the animation is visible on the way, not only at its end
+    ---------------------------------------------------------------------------
+    function(count)
+        if count == 1 then
+            layout_animation.enabled = false
+            tag.master_width_factor = 0.5
+            return nil
+        end
+        -- Nothing happens for over a second first: an output frames when
+        -- something dirties it, so the frame that starts the animation
+        -- arrives long after the last one and must not count that gap as
+        -- elapsed time.
+        if count < 14 then return nil end
+        layout_animation.duration = 1
+        layout_animation.enabled = true
+        tag.master_width_factor = 0.8
+        return true
+    end,
+
+    function(count)
+        local wa = screen.primary.workarea
+        local master = awful.client.visible(screen.primary)[1]
+        local actual_w
+        for line in awesome._clay_tree(screen.primary):gmatch('[^\n]+') do
+            if master and line:find('CLIENT ' .. master.class .. ' ', 1, true) then
+                actual_w = tonumber(line:match('box %-?%d+,%-?%d+ (%d+)x%d+'))
+                break
+            end
+        end
+        assert(actual_w, 'master frame missing from the solved tree')
+
+        -- The displayed frame can advance before the application acknowledges
+        -- a resize. Final client geometry is checked by master_width_matches.
+        if actual_w > wa.width * 0.5 + 10 and actual_w < wa.width * 0.8 - 10 then
+            io.stderr:write(string.format(
+                "[TEST] PASS: mid-animation master.w=%d\n", actual_w))
+            return true
+        end
+        assert(count < 8, string.format(
+            "master never animated: w=%d, wanted between %d and %d",
+            actual_w, wa.width * 0.5, wa.width * 0.8))
     end,
 
     ---------------------------------------------------------------------------

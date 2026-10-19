@@ -1,7 +1,7 @@
 ---------------------------------------------------------------------------
 -- Test: DPMS API
 --
--- Covers: BEH-13, BEH-14, BEH-15, DPMS signals
+-- Covers DPMS state changes and signals.
 --
 -- Note: In headless mode, monitor sleep/wake may be no-ops at the hardware
 -- level, but the signal emission and state tracking are still exercised.
@@ -59,11 +59,11 @@ runner.run_steps({
         return true
     end,
 
-    -- BEH-15 (auto-wake on activity) cannot be tested from Lua because
+    -- Auto-wake on activity cannot be tested from Lua because
     -- root.fake_input("motion_notify") calls motionnotify() directly,
     -- which does not go through some_notify_activity(). The auto-wake
-    -- path is verified by code review of the real input handlers
-    -- (motionrelative, motionabsolute, buttonpress, keypress) in somewm.c.
+    -- path runs through the real input handlers
+    -- (motionrelative, motionabsolute, buttonpress, keypress) in input.c.
 }, { kill_clients = false })
 
 -- vim: filetype=lua:expandtab:shiftwidth=4:tabstop=8:softtabstop=4:textwidth=80

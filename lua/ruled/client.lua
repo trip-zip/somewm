@@ -620,7 +620,7 @@ crules._execute = function(_, c, props, callbacks)
 
     -- Apply the remaining properties (after known race conditions are handled).
     for property, value in pairs(props) do
-        if property ~= "focus" and property ~= "shape" and type(value) == "function" then
+        if property ~= "focus" and property ~= "shape" and not force_ignore[property] and type(value) == "function" then
             value = value(c, props)
         end
 
@@ -630,7 +630,7 @@ crules._execute = function(_, c, props, callbacks)
         if not ignore then
             if module.extra_properties[property] then
                 module.extra_properties[property](c, value, props)
-            elseif type(c[property]) == "function" then
+            elseif property ~= "shape" and type(c[property]) == "function" then
                 c[property](c, value)
             else
                 c[property] = value
@@ -665,11 +665,6 @@ crules._execute = function(_, c, props, callbacks)
 end
 
 function module.execute(...) crules:_execute(...) end
-
--- TODO v5 deprecate this
-function module.completed_with_payload_callback(c, props, callbacks)
-    module.execute(c, props, callbacks)
-end
 
 gobject._setup_class_signals(module)
 
