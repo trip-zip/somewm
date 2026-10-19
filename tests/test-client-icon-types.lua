@@ -27,9 +27,7 @@ local function pixels(image)
     return table.concat(rows)
 end
 
-if not test_client.is_available() then
-    return runner.skip("no terminal available for test clients")
-end
+assert(test_client.is_available(), "no terminal available for test clients")
 
 local image = surface.load_uncached(
     "tests/xdg/icons/hicolor/16x16/apps/somewm-test-app-icon.png")

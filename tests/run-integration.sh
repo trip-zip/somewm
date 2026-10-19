@@ -68,6 +68,9 @@ fi
 # Setup temp directory and log file
 TMP_DIR=$(mktemp -d)
 LOG="$TMP_DIR/somewm.log"
+if [ -n "$SOMEWM_TEST_LOG_DIR" ]; then
+    mkdir -p "$SOMEWM_TEST_LOG_DIR"
+fi
 
 # Create isolated runtime directory for test compositor
 TEST_RUNTIME_DIR="$TMP_DIR/runtime"
@@ -367,6 +370,10 @@ if [ "$PERSISTENT" = 1 ]; then
             tail -30 "$LOG" | sed 's/^/    /'
         fi
 
+        if [ -n "$SOMEWM_TEST_LOG_DIR" ]; then
+            cp "$LOG" "$SOMEWM_TEST_LOG_DIR/$test_name.log"
+        fi
+
         # Clear the success marker from log for next test
         > "$LOG"
     done
@@ -399,6 +406,9 @@ else
             # Show log on failure
             echo "    Log output:"
             tail -30 "$LOG" | sed 's/^/    /'
+        fi
+        if [ -n "$SOMEWM_TEST_LOG_DIR" ]; then
+            cp "$LOG" "$SOMEWM_TEST_LOG_DIR/$test_name.log"
         fi
     done
 fi
