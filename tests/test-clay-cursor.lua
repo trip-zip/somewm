@@ -59,6 +59,7 @@ end
 local s = screen[1]
 local wb, client_pid, c, s2
 local normal_width, scaled_width
+local original_size = root.cursor_size()
 
 runner.run_steps({
     -- The compositor parks the pointer at 100,100; the themed leaf is there.
@@ -203,6 +204,7 @@ runner.run_steps({
         end
         s2 = screen[screen.count()]
         s2.scale = 1.5
+        root.cursor_size(48)
         root._cursor_magnify(3, 0)
         return true
     end,
@@ -231,7 +233,11 @@ runner.run_steps({
     function(count)
         if not s2 then return true end
         local rec = cursor_record(s2)
-        if rec and math.abs(rec.w * 3 - scaled_width) <= 3 then return true end
+        if rec and math.abs(rec.w * 3 - scaled_width) <= 3 then
+            assert(root.cursor_size() == 48, "magnification changed the larger base size")
+            root.cursor_size(original_size)
+            return true
+        end
         assert(count < 30, "magnification did not respect the fractional output scale")
     end,
 }, { wait_per_step = 5 })

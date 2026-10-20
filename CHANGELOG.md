@@ -12,6 +12,9 @@ All notable changes to somewm will be documented in this file.
   shakes and restores the normal size after inactivity. Properties, theme
   defaults and start/end signals configure the behaviour. Client-uploaded
   cursor surfaces retain their size; themed cursors use cached larger images.
+  `cursor_finder_animated = false` holds static rings and changes magnification
+  immediately. `stop_cursor_finder()` cancels the locator. Magnification is
+  relative to the base size configured with `root.cursor_size()` or `XCURSOR_SIZE`.
 
 ## [2.1.0] - 2026-10-18
 

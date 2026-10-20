@@ -22,6 +22,7 @@ local accessibility = {mt = {}}
 local methods = {}
 local active, shake_owner, default_instance
 local motion_connected = false
+local activation_revision, exiting = 0, false
 local on_motion, update_motion
 
 --- Allow explicit and shake activation.
@@ -35,6 +36,12 @@ local on_motion, update_motion
 -- @tparam[opt=rings] string cursor_finder_effect
 -- @propemits true false
 -- @beautiful beautiful.accessibility_cursor_finder_effect
+
+--- Animate the locator; false holds stationary rings and changes cursor size immediately.
+-- @property cursor_finder_animated
+-- @tparam[opt=true] boolean cursor_finder_animated
+-- @propemits true false
+-- @beautiful beautiful.accessibility_cursor_finder_animated
 
 --- Ring duration in seconds.
 -- @property cursor_finder_duration
@@ -135,6 +142,7 @@ local on_motion, update_motion
 local defaults = {
     cursor_finder_enabled = true,
     cursor_finder_effect = "rings",
+    cursor_finder_animated = true,
     cursor_finder_duration = 0.8,
     cursor_finder_radius = 100,
     cursor_finder_color = "#ff6600",
@@ -199,9 +207,10 @@ end
 
 --- End this instance's locator and immediately restore normal cursor size.
 -- Other instances are unaffected. Disabling the finder also calls this method.
--- @method stop
-function methods:stop()
+-- @method stop_cursor_finder
+function methods:stop_cursor_finder()
     local p = self._private
+    p.magnify_token = (p.magnify_token or 0) + 1
     stop_timer(p.deflate_timer)
     stop_timer(p.finish_timer)
     clear_rings(self)
@@ -219,7 +228,7 @@ end
 
 local function finish_if_idle(self)
     if active == self and not self._private.rings_active and not self._private.magnifying then
-        self:stop()
+        self:stop_cursor_finder()
     end
 end
 
@@ -242,6 +251,7 @@ local function show_rings(self)
     p.overlay = p.overlay or wibox {ontop = true, bg = "#00000000",
         input_passthrough = true, shadow = false, animation = false, type = "utility"}
     p.overlay:geometry {width = size, height = size}
+    p.overlay.animation = false
     p.overlay.widget = stack
     local coords = capi.mouse.coords()
     follow(self, coords.x, coords.y)
@@ -258,15 +268,18 @@ local function show_rings(self)
         p.commit = nil
         timer.delayed_call(function()
             if active ~= self or token ~= p.ring_token then return end
-            p.overlay.animation = nil
-            for _, ring in ipairs(rings) do
-                ring:animate {forced_width = 0, forced_height = 0,
-                    -- Keep a painted border in the target declaration while its
-                    -- colour transitions; the overlay hides at completion.
-                    border_color = faded, duration = duration}
+            if self.cursor_finder_animated then
+                p.overlay.animation = nil
+                for _, ring in ipairs(rings) do
+                    ring:animate {forced_width = 0, forced_height = 0,
+                        -- Keep a painted border in the target declaration while its
+                        -- colour transitions; the overlay hides at completion.
+                        border_color = faded, duration = duration}
+                end
             end
             p.ring_timer = timer {timeout = duration, single_shot = true, autostart = true,
                 callback = function()
+                    if active ~= self or token ~= p.ring_token then return end
                     clear_rings(self)
                     finish_if_idle(self)
                 end}
@@ -277,6 +290,7 @@ end
 
 local function magnify(self)
     local p = self._private
+    p.magnify_token = (p.magnify_token or 0) + 1
     stop_timer(p.deflate_timer)
     stop_timer(p.finish_timer)
     local current = capi.root._cursor_magnify()
@@ -284,15 +298,19 @@ local function magnify(self)
         and p.target + self.cursor_finder_over_magnification or self.cursor_finder_magnification
     p.target = math.min(target, self.cursor_finder_max_scale)
     p.magnifying = true
-    capi.root._cursor_magnify(p.target, self.cursor_finder_inflate_duration)
+    local token = p.magnify_token
+    local duration = self.cursor_finder_animated and self.cursor_finder_inflate_duration or 0
+    capi.root._cursor_magnify(p.target, duration)
     p.deflate_timer = timer {timeout = self.cursor_finder_deflate_delay, single_shot = true,
         autostart = true, callback = function()
+            if active ~= self or token ~= p.magnify_token then return end
             p.target, p.samples = 1, {}
             p.cooldown_until = now() + self.cursor_finder_cooldown
-            local duration = self.cursor_finder_deflate_duration
+            local duration = self.cursor_finder_animated and self.cursor_finder_deflate_duration or 0
             capi.root._cursor_magnify(1, duration)
             p.finish_timer = timer {timeout = math.max(0.001, duration), single_shot = true,
                 autostart = true, callback = function()
+                    if active ~= self or token ~= p.magnify_token then return end
                     p.magnifying = false
                     finish_if_idle(self)
                 end}
@@ -306,8 +324,13 @@ end
 -- @signal cursor_finder::start Emitted once when a locator becomes active.
 -- @signal cursor_finder::end Emitted when it finishes or is stopped.
 function methods:find_cursor()
-    if not self.cursor_finder_enabled then return end
-    if active and active ~= self then active:stop() end
+    if exiting or not self.cursor_finder_enabled then return end
+    activation_revision = activation_revision + 1
+    local revision = activation_revision
+    if active and active ~= self then active:stop_cursor_finder() end
+    -- An end handler may activate another locator or disable this one.
+    -- The latest activation takes precedence over the interrupted request.
+    if revision ~= activation_revision or not self.cursor_finder_enabled then return end
     local starting = active ~= self
     active = self
     if has_rings(self) then show_rings(self) end
@@ -396,7 +419,8 @@ for property, default in pairs(defaults) do
             self._private.samples = {}
         end
         if previous ~= effective then
-            if property == "cursor_finder_enabled" or property == "cursor_finder_effect" then self:stop() end
+            if property == "cursor_finder_enabled" or property == "cursor_finder_effect"
+                or property == "cursor_finder_animated" then self:stop_cursor_finder() end
             self:emit_signal("property::" .. property, effective)
         end
         update_motion()
@@ -434,14 +458,15 @@ function accessibility.find_cursor()
 end
 
 --- Stop the default instance's locator.
--- @staticfct awful.accessibility.stop
-function accessibility.stop()
-    if default_instance then default_instance:stop() end
+-- @staticfct awful.accessibility.stop_cursor_finder
+function accessibility.stop_cursor_finder()
+    if default_instance then default_instance:stop_cursor_finder() end
 end
 
 function accessibility.mt:__call(args) return accessibility.new(args) end
 capi.awesome.connect_signal("exit", function()
-    if active then active:stop() end
+    exiting = true
+    if active then active:stop_cursor_finder() end
     shake_owner = nil
     update_motion()
 end)

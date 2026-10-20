@@ -8,7 +8,7 @@ check_eval hr-a11y "magnification starts" \
 sw_reload hr-a11y || finish
 check_eval hr-a11y "reload restores normal cursor" 'return root._cursor_magnify()' 1
 check_eval hr-a11y "new state can activate locator" \
-    'A11Y = require("awful.accessibility") {cursor_finder_effect="magnify", cursor_finder_inflate_duration=0, cursor_finder_deflate_delay=30}; A11Y:find_cursor(); return root._cursor_magnify()' 3
+    'A11Y = require("awful.accessibility") {cursor_finder_effect="both", cursor_finder_animated=false, cursor_finder_deflate_delay=30}; A11Y:find_cursor(); return root._cursor_magnify()' 3
 sw_reload hr-a11y || finish
 check_eval hr-a11y "second reload restores normal cursor" 'return root._cursor_magnify()' 1
 sw_check_log_clean hr-a11y

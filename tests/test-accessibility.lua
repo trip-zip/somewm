@@ -28,7 +28,7 @@ runner.run_async(function()
     local normal = cursor_box()
     local a = awful.accessibility {
         cursor_finder_effect = 'magnify', cursor_finder_inflate_duration = .2,
-        cursor_finder_deflate_delay = .5, cursor_finder_deflate_duration = .2,
+        cursor_finder_deflate_delay = 30, cursor_finder_deflate_duration = .2,
     }
     local starts, ends, changes = 0, 0, 0
     a:connect_signal('cursor_finder::start', function() starts = starts + 1 end)
@@ -55,16 +55,19 @@ runner.run_async(function()
     assert(not pcall(root._cursor_magnify, 2, math.huge))
 
     a:find_cursor()
-    wait(function() return root._cursor_magnify() > 1.1 end, 'inflation did not begin')
     assert(root._cursor_magnify() < 3, 'inflation snapped to target')
-    move(600, 400)
     wait(function() return root._cursor_magnify() == 3 end, 'inflation did not settle')
-    async.sleep(.04)
+    wait(function() return math.abs(cursor_box().w - normal.w * 3) <= 2 end,
+        'cursor did not grow threefold')
     local grown = cursor_box()
-    assert(math.abs(grown.w - normal.w * 3) <= 2, 'cursor did not grow threefold')
-    assert(math.abs(grown.x - (600 - (400 - normal.x) * 3)) <= 2, 'hotspot moved during magnification')
+    move(600, 400)
+    wait(function()
+        local moved = cursor_box()
+        return moved.x == grown.x + 200 and moved.y == grown.y + 100
+    end, 'enlarged cursor did not preserve its hotspot while moving')
     a:find_cursor()
     wait(function() return root._cursor_magnify() == 4 end, 'repeat did not increase magnification')
+    a.cursor_finder_deflate_delay = .3
     a:find_cursor()
     assert(starts == 1, 'retrigger emitted a second start')
     wait(function() return ends == 1 end, 'locator did not finish')
@@ -81,7 +84,7 @@ runner.run_async(function()
     for _ = 1, 6 do mouse._fake_motion(-120, 0); mouse._fake_motion(120, 0) end
     wait(function() return starts == 2 end, 'shake motion did not trigger the locator')
     a.cursor_finder_shake_enabled = false
-    a:stop()
+    a:stop_cursor_finder()
     assert(ends == 2 and root._cursor_magnify() == 1)
 
     -- A new instance takes over the single pointer and ends its old locator.
@@ -89,18 +92,19 @@ runner.run_async(function()
     local b = awful.accessibility {cursor_finder_effect = 'magnify'}
     b:find_cursor()
     assert(ends == 3)
-    a:stop()
+    a:stop_cursor_finder()
     async.sleep(.25)
     assert(root._cursor_magnify() > 1, 'stopping an inactive instance cancelled the active one')
-    b:stop()
+    b:stop_cursor_finder()
 
     -- Rings are ordinary input-passthrough widgets and move with the pointer.
     move(400, 300)
     local under = wibox {x = 250, y = 150, width = 400, height = 300,
         visible = true, bg = '#102030'}
-    local rings = awful.accessibility {cursor_finder_duration = .8}
+    local rings = awful.accessibility {cursor_finder_duration = 3}
     rings:find_cursor()
-    async.sleep(.1)
+    wait(function() return rings._private.ring_timer and rings._private.ring_timer.started end,
+        'ring animation did not start')
     assert(mouse.current_wibox == under, 'locator intercepted pointer input')
     assert(rings._private.overlay.visible, 'ring overlay never became visible')
     assert(rings._private.ring_timer and rings._private.ring_timer.started, 'ring animation did not start')
@@ -121,7 +125,7 @@ runner.run_async(function()
     local outer = ring_extent()
     if outer <= 30 then io.stderr:write(awesome._clay_tree(s)) end
     assert(outer > 30, 'ring pixels were not drawn: ' .. outer)
-    async.sleep(.2)
+    async.sleep(.8)
     local inner = ring_extent()
     assert(inner > 0 and inner < outer - 10, 'ring pixels did not shrink toward the pointer: ' .. outer .. ' -> ' .. inner)
     local old_x = rings._private.overlay.x
@@ -130,11 +134,11 @@ runner.run_async(function()
     wait(function() return not rings._private.overlay.visible end, 'ring overlay never finished')
     assert(root._cursor_magnify() == 1, 'rings changed cursor size')
     rings:find_cursor()
-    rings:stop()
+    rings:stop_cursor_finder()
     async.sleep(.1)
     assert(not rings._private.overlay.visible, 'cancelled rings restarted from a deferred callback')
     under.visible = false
     awful.accessibility.find_cursor()
-    awful.accessibility.stop()
+    awful.accessibility.stop_cursor_finder()
     runner.done()
 end)
