@@ -9,13 +9,16 @@
  * - On SIGUSR1: creates second toplevel with set_parent (app_id: "transient_test_child")
  * - On SIGTERM: clean shutdown
  *
- * Usage: test-transient-client [app_id [report [min_w [color [min_h [max_w
+ * Usage: test-transient-client [--subsurfaces] [app_id [report [min_w [color [min_h [max_w
  *        [max_h [cell [stale [bounds_report [configure_history]]]]]]]]]]]
  * With a cell size, each configure is answered with the configured size
  * rounded down to whole cells, never below one cell. With a stale count N,
  * the first N configures that carry a new size are acknowledged and
  * answered with a buffer at the previous size. A bounds report holds the
  * last bounds received. A configure history appends every configured size.
+ * With --subsurfaces, SIGUSR1 creates or repaints a desynchronized white
+ * subsurface, and SIGUSR2 destroys it. Each action writes its sequence
+ * number to <report>.subsurface after a Wayland roundtrip.
  */
 
 #include <errno.h>
@@ -35,6 +38,10 @@ static struct wl_display *g_display;
 static struct wl_registry *g_registry;
 static struct wl_compositor *g_compositor;
 static struct wl_shm *g_shm;
+static struct wl_subcompositor *g_subcompositor;
+static struct wl_subsurface *g_subsurface;
+static bool g_subsurfaces;
+static volatile sig_atomic_t g_remove_child;
 static struct xdg_wm_base *g_xdg_wm_base;
 
 static bool g_running = true;
@@ -69,6 +76,11 @@ static void handle_sigterm(int sig) {
 static void handle_sigusr1(int sig) {
     (void)sig;
     g_spawn_child = true;
+}
+
+static void handle_sigusr2(int sig) {
+    (void)sig;
+    g_remove_child = true;
 }
 
 /* Create a simple shared memory buffer */
@@ -219,6 +231,8 @@ static void registry_global(void *data, struct wl_registry *reg,
             &wl_compositor_interface, 4);
     } else if (strcmp(interface, wl_shm_interface.name) == 0) {
         g_shm = wl_registry_bind(reg, name, &wl_shm_interface, 1);
+    } else if (strcmp(interface, wl_subcompositor_interface.name) == 0) {
+        g_subcompositor = wl_registry_bind(reg, name, &wl_subcompositor_interface, 1);
     } else if (strcmp(interface, xdg_wm_base_interface.name) == 0) {
         g_xdg_wm_base = wl_registry_bind(reg, name,
             &xdg_wm_base_interface, 5);
@@ -264,6 +278,11 @@ static void create_child(void) {
 }
 
 int main(int argc, char *argv[]) {
+    if (argc > 1 && strcmp(argv[1], "--subsurfaces") == 0) {
+        g_subsurfaces = true;
+        argc--;
+        argv++;
+    }
     g_configure_report = argc > 2 ? argv[2] : NULL;
     if (argc > 4) g_parent_color = strtoul(argv[4], NULL, 16);
     if (argc > 8) g_cell = strtoul(argv[8], NULL, 10);
@@ -280,6 +299,8 @@ int main(int argc, char *argv[]) {
     sigaction(SIGTERM, &sa_term, NULL);
     sigaction(SIGINT, &sa_term, NULL);
     sigaction(SIGUSR1, &sa_usr1, NULL);
+    struct sigaction sa_usr2 = { .sa_handler = handle_sigusr2 };
+    if (g_subsurfaces) sigaction(SIGUSR2, &sa_usr2, NULL);
 
     /* Connect to Wayland */
     g_display = wl_display_connect(NULL);
@@ -292,7 +313,7 @@ int main(int argc, char *argv[]) {
     wl_registry_add_listener(g_registry, &registry_listener, NULL);
     wl_display_roundtrip(g_display);
 
-    if (!g_compositor || !g_shm || !g_xdg_wm_base) {
+    if (!g_compositor || !g_shm || !g_xdg_wm_base || (g_subsurfaces && !g_subcompositor)) {
         fprintf(stderr, "Missing required Wayland globals\n");
         return 1;
     }
@@ -326,7 +347,42 @@ int main(int argc, char *argv[]) {
      * SIGUSR1 may arrive while poll() is blocking. A short timeout ensures
      * we don't miss the signal flag. */
     while (g_running) {
-        if (g_spawn_child) {
+        if (g_subsurfaces && (g_spawn_child || g_remove_child)) {
+            static unsigned sequence;
+            if (g_remove_child && g_child_surface) {
+                wl_subsurface_destroy(g_subsurface);
+                wl_surface_destroy(g_child_surface);
+                g_subsurface = NULL;
+                g_child_surface = NULL;
+                wl_surface_commit(g_parent_surface);
+            } else if (g_spawn_child && !g_child_surface) {
+                g_child_surface = wl_compositor_create_surface(g_compositor);
+                g_subsurface = wl_subcompositor_get_subsurface(g_subcompositor,
+                    g_child_surface, g_parent_surface);
+                wl_subsurface_set_position(g_subsurface, 50, 50);
+                wl_subsurface_set_desync(g_subsurface);
+                struct wl_buffer *buffer = create_buffer(100, 100, 0xffffffff);
+                if (!buffer) abort();
+                wl_surface_attach(g_child_surface, buffer, 0, 0);
+                wl_surface_commit(g_child_surface);
+                wl_surface_commit(g_parent_surface);
+                wl_buffer_destroy(buffer);
+            } else if (g_spawn_child) {
+                wl_surface_damage_buffer(g_child_surface, 0, 0, 100, 100);
+                wl_surface_commit(g_child_surface);
+            }
+            g_spawn_child = false;
+            g_remove_child = false;
+            if (wl_display_roundtrip(g_display) < 0) break;
+            if (g_configure_report) {
+                char path[1024];
+                snprintf(path, sizeof(path), "%s.subsurface", g_configure_report);
+                FILE *report = fopen(path, "w");
+                if (!report) abort();
+                fprintf(report, "%u\n", ++sequence);
+                fclose(report);
+            }
+        } else if (g_spawn_child) {
             g_spawn_child = false;
             create_child();
         }
@@ -363,6 +419,7 @@ done:
     fprintf(stderr, "[test-transient-client] shutting down\n");
 
     /* Cleanup child */
+    if (g_subsurface) wl_subsurface_destroy(g_subsurface);
     if (g_child_toplevel) xdg_toplevel_destroy(g_child_toplevel);
     if (g_child_xdg_surface) xdg_surface_destroy(g_child_xdg_surface);
     if (g_child_surface) wl_surface_destroy(g_child_surface);

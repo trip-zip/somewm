@@ -279,9 +279,7 @@ initialcommitnotify(struct wl_listener *listener, void *data)
 static void client_apply_corners(Client *c);
 static void configure_retry_arm(Client *c);
 
-/* Handle subsequent XDG commits - resizing and opacity.
- * This listener is registered in mapnotify AFTER wlr_scene_xdg_surface_create
- * so it fires AFTER wlroots' internal surface_reconfigure() which resets opacity. */
+/* Handle subsequent XDG commits after wlroots updates the scene surface. */
 void
 commitnotify(struct wl_listener *listener, void *data)
 {
@@ -358,12 +356,6 @@ commitnotify(struct wl_listener *listener, void *data)
 		luaA_object_emit_signal(L, -1, "property::size_hints", 0);
 		lua_pop(L, 1);
 	}
-
-	/* Re-apply opacity after wlroots' surface_reconfigure() resets it to 1.0.
-	 * Our listener fires after wlroots' because we registered it after
-	 * wlr_scene_xdg_surface_create() in mapnotify(). */
-	if (c->opacity >= 0)
-		render_tree_set_opacity(&c->scene_surface->node, (float)c->opacity);
 }
 
 /* The popup's toplevel and its output; -1 with no toplevel yet. */
@@ -518,8 +510,7 @@ createnotify(struct wl_listener *listener, void *data)
 	/* Assign unique client ID (Sway-style incrementing counter) */
 	c->id = next_client_id++;
 
-	/* Initialize opacity to -1 (unset) so commitnotify doesn't apply 0% opacity.
-	 * -1 means "use default" (fully opaque). 0 would mean fully transparent. */
+	/* -1 means unset (fully opaque); 0 means fully transparent. */
 	c->opacity = -1;
 	/* Honored by default, as the property documents. */
 	c->size_hints_honor = true;
@@ -529,10 +520,8 @@ createnotify(struct wl_listener *listener, void *data)
 	c->surface.xdg = toplevel->base;
 	c->client_type = XDGShell;
 
-	/* Register Wayland event listeners (adapts X11 event masks to Wayland signals)
-	 * Note: The main commit listener is registered in mapnotify() AFTER wlr_scene_xdg_surface_create()
-	 * so our listener fires AFTER wlroots' internal surface_reconfigure() which resets opacity.
-	 * We use a separate listener for the initial commit to handle pre-map setup. */
+	/* The initial commit handles pre-map setup. mapnotify registers the
+	 * main commit listener after creating the wlroots scene surface. */
 	LISTEN(&toplevel->base->surface->events.commit, &c->initial_commit, initialcommitnotify);
 	LISTEN(&toplevel->base->surface->events.map, &c->map, mapnotify);
 	LISTEN(&toplevel->base->surface->events.unmap, &c->unmap, unmapnotify);
@@ -891,9 +880,7 @@ mapnotify(struct wl_listener *listener, void *data)
 
 	client_set_node_data(c, c);
 
-	/* Register commit listener AFTER wlr_scene_xdg_surface_create() so our listener
-	 * fires AFTER wlroots' internal surface_reconfigure() which resets opacity to 1.0.
-	 * This allows our compositor-controlled opacity to take effect.
+	/* Register after scene creation so commits see wlroots' updated surface.
 	 * Only for XDG clients - commitnotify references XDG-specific fields.
 	 * XWayland uses configurex11 for resize, not commits. */
 	if (c->client_type == XDGShell) {
