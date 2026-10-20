@@ -58,6 +58,8 @@ end
 
 local s = screen[1]
 local wb, client_pid, c, s2
+local normal_width, scaled_width
+local original_size = root.cursor_size()
 
 runner.run_steps({
     -- The compositor parks the pointer at 100,100; the themed leaf is there.
@@ -66,6 +68,7 @@ runner.run_steps({
         local rec = until_cursor(s, p.x, p.y, "theme", count)
         if not rec then return end
         assert(rec.w > 0 and rec.h > 0)
+        normal_width = rec.w
         return true
     end,
 
@@ -101,6 +104,21 @@ runner.run_steps({
         return true
     end,
 
+    -- Magnification survives theme rebuilding without rebuilding it per frame.
+    function()
+        root._cursor_magnify(3, 0)
+        root.cursor_theme(root.cursor_theme())
+        return true
+    end,
+    function(count)
+        local rec = cursor_record(s)
+        if not rec or rec.w < normal_width * 2 then
+            assert(count < 30, "theme rebuild lost cursor magnification")
+            return
+        end
+        return true
+    end,
+
     -- A client with pointer focus sets a 16x16 cursor surface, hotspot 3,5.
     function()
         client_pid = awful.spawn(string.format("%s --app-id %s --size 300x200 --cursor 16x16+3+5",
@@ -128,6 +146,9 @@ runner.run_steps({
     function(count)
         local rec = until_cursor(s, 700, 300, "protocol", count)
         if not rec then return end
+        assert(root._cursor_magnify() == 1, "client cursor retained magnification")
+        root._cursor_magnify(3, 0)
+        assert(root._cursor_magnify() == 1, "uploaded cursor was magnified")
         assert(rec.w == 16 and rec.h == 16 and rec.x == 700 - 3 and rec.y == 300 - 5,
             string.format("client cursor leaf %dx%d+%d+%d, expected 16x16+697+295",
                 rec.w, rec.h, rec.x, rec.y))
@@ -183,6 +204,8 @@ runner.run_steps({
         end
         s2 = screen[screen.count()]
         s2.scale = 1.5
+        root.cursor_size(48)
+        root._cursor_magnify(3, 0)
         return true
     end,
     function(count)
@@ -203,7 +226,19 @@ runner.run_steps({
         if not rec then return end
         local other = cursor_record(s)
         assert(not other, "screen 1 still declares the pointer image")
+        scaled_width = rec.w
+        root._cursor_magnify(1, 0)
         return true
+    end,
+    function(count)
+        if not s2 then return true end
+        local rec = cursor_record(s2)
+        if rec and math.abs(rec.w * 3 - scaled_width) <= 3 then
+            assert(root.cursor_size() == 48, "magnification changed the larger base size")
+            root.cursor_size(original_size)
+            return true
+        end
+        assert(count < 30, "magnification did not respect the fractional output scale")
     end,
 }, { wait_per_step = 5 })
 

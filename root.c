@@ -631,10 +631,31 @@ luaA_root_cursor(lua_State *L)
 	}
 	free(selected_root_cursor);
 	selected_root_cursor = strdup(cursor_name);
-	if(some_get_focused_client() == NULL) {
+	struct wlr_surface *surface = NULL;
+    xytonode(cursor->x, cursor->y, &surface, NULL, NULL, NULL, NULL, NULL, NULL);
+    if (!surface) {
 		cursor_set_xcursor(cursor_name);
 	}
 	return 0;
+}
+
+/* Private transport for awful.accessibility; the Lua module owns policy. */
+static int
+luaA_root_cursor_magnify(lua_State *L)
+{
+    if (lua_gettop(L)) {
+        double scale = luaL_checknumber(L, 1);
+        double duration = luaL_optnumber(L, 2, 0);
+        luaL_argcheck(L, isfinite(scale) && scale >= 1 && scale <= 16, 1,
+            "scale must be finite and between 1 and 16");
+        luaL_argcheck(L, isfinite(duration) && duration >= 0 && duration <= 60, 2,
+            "duration must be finite and between 0 and 60");
+        /* A client owns its uploaded cursor, including a hidden cursor. */
+        if (!cursor_image.name) scale = 1;
+        declare_cursor_magnify(scale, duration);
+    }
+    lua_pushnumber(L, declare_cursor_magnification());
+    return 1;
 }
 
 /** root.cursor_theme([name]) - Get or set cursor theme
@@ -828,6 +849,7 @@ luaA_root_set_call_handler(lua_State *L)
 void
 luaA_root_hot_reload(lua_State *L)
 {
+    declare_cursor_magnify(1, 0);
 	luaL_unref(L, LUA_REGISTRYINDEX, miss_index_handler);
 	luaL_unref(L, LUA_REGISTRYINDEX, miss_newindex_handler);
 	luaL_unref(L, LUA_REGISTRYINDEX, miss_call_handler);
@@ -1254,6 +1276,7 @@ const luaL_Reg root_methods[] = {
 	{ "_remove_key", luaA_root_remove_key },
 	{ "_wallpaper", luaA_root_wallpaper },
 	{ "cursor", luaA_root_cursor },
+    { "_cursor_magnify", luaA_root_cursor_magnify },
 	{ "cursor_theme", luaA_root_cursor_theme },
 	{ "cursor_size", luaA_root_cursor_size },
 	{ "fake_input", luaA_root_fake_input },

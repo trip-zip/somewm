@@ -240,10 +240,15 @@ drawin_wipe(drawin_t *w)
 	/* Wipe button array */
 	button_array_wipe(&w->buttons);
 
-	luaL_unref(globalconf_get_lua_State(), LUA_REGISTRYINDEX, w->animation_ref);
-	w->animation_ref = LUA_NOREF;
-	luaL_unref(globalconf_get_lua_State(), LUA_REGISTRYINDEX, w->shape.ref);
-	w->shape.ref = LUA_NOREF;
+    /* During lua_close the global state is already detached. The closing
+     * VM releases its registry itself; ordinary collection still unrefs. */
+    lua_State *L = globalconf_get_lua_State();
+    if (L) {
+        luaL_unref(L, LUA_REGISTRYINDEX, w->animation_ref);
+        luaL_unref(L, LUA_REGISTRYINDEX, w->shape.ref);
+    }
+    w->animation_ref = LUA_NOREF;
+    w->shape.ref = LUA_NOREF;
 
 	if (w->shadow_config) {
 		free(w->shadow_config);

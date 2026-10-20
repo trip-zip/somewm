@@ -45,6 +45,8 @@ void declare_mark_all_dirty(void);
  * pointer is where the last frame declared it with the same image, so the
  * hit-test rerun a frame ends with cannot start another frame. */
 void declare_cursor_changed(void);
+void declare_cursor_magnify(double scale, double duration);
+double declare_cursor_magnification(void);
 /* Release retained nodes while their owning objects are still alive. */
 void declare_hot_reload(void);
 void declare_state_clear(void);

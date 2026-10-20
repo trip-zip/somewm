@@ -9,6 +9,7 @@
 require("awful._compat")
 
 local ret = {
+    accessibility = require("awful.accessibility");
     client = require("awful.client");
     completion = require("awful.completion");
     layout = require("awful.layout");

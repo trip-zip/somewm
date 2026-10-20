@@ -4,6 +4,18 @@ All notable changes to somewm will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- `awful.accessibility`: a configurable pointer locator with shrinking rings,
+  temporary cursor magnification, or both. `find_cursor()` works from a
+  keybinding; optional shake detection increases magnification on repeated
+  shakes and restores the normal size after inactivity. Properties, theme
+  defaults and start/end signals configure the behaviour. Client-uploaded
+  cursor surfaces retain their size; themed cursors use cached larger images.
+  `cursor_finder_animated = false` holds static rings and changes magnification
+  immediately. `stop_cursor_finder()` cancels the locator. Magnification is
+  relative to the base size configured with `root.cursor_size()` or `XCURSOR_SIZE`.
+
 ## [2.1.0] - 2026-10-18
 
 Minor release. 67 commits since 2.0.1. Every bar, popup, client and widget

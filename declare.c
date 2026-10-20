@@ -2020,6 +2020,14 @@ declare_widget_subtree(const struct widget_host *host, size_t i, Clay_ElementId 
 				? CLAY_SIZING_FIXED(host->h) : widget_sizing(n, 1),
 		};
 	}
+    /* A passthrough drawin's root and floating descendants must let Clay
+     * reach the drawable below it, just as render_hit does. */
+    if (e.floating.attachTo != CLAY_ATTACH_TO_NONE) {
+        enum declare_kind kind;
+        void *owner = declare_handle_get(declare_userdata_handle(userdata), &kind);
+        if (owner && kind == DECLARE_KIND_DRAWIN && ((drawin_t *)owner)->input_passthrough)
+            e.floating.pointerCaptureMode = CLAY_POINTER_CAPTURE_MODE_PASSTHROUGH;
+    }
 	/* The content radius clips every node under a rounded drawin's root. */
 	if (i == 0 && host->radius > 0)
 		e.cornerRadius = (Clay_CornerRadius) { host->radius,
@@ -2958,7 +2966,7 @@ declare_attachment(drawin_t *d, Monitor *m)
             .attachPoints = { .parent = d->attachment.parent, .element = d->attachment.own },
             .offset = { d->attachment.x, d->attachment.y },
             .zIndex = Z_POPUP,
-            .pointerCaptureMode = d->attachment.passthrough
+            .pointerCaptureMode = d->attachment.passthrough || d->input_passthrough
                 ? CLAY_POINTER_CAPTURE_MODE_PASSTHROUGH : CLAY_POINTER_CAPTURE_MODE_CAPTURE,
         },
     };
@@ -3423,14 +3431,46 @@ cursor_mark(void)
 			declare_output_mark_dirty(m->declare);
 }
 
+/* Magnification is sampled on the output frame clock before authoring the
+ * cursor box. Position and hotspot always use the latest pointer, so moving
+ * during inflation never interpolates pointer motion. One seat-wide clock
+ * keeps an interrupted animation continuous when crossing outputs. */
+static double cursor_scale_from = 1, cursor_scale_target = 1;
+static double cursor_scale_duration;
+static int64_t cursor_scale_started;
+
+double
+declare_cursor_magnification(void)
+{
+    if (cursor_scale_duration <= 0) return cursor_scale_target;
+    double t = (g_get_monotonic_time() - cursor_scale_started) / (cursor_scale_duration * 1e6);
+    if (t >= 1) {
+        cursor_scale_duration = 0;
+        return cursor_scale_target;
+    }
+    t = fmax(0, t);
+    double eased = t < .5 ? 4 * t * t * t : 1 - pow(-2 * t + 2, 3) / 2;
+    return cursor_scale_from + (cursor_scale_target - cursor_scale_from) * eased;
+}
+
+void
+declare_cursor_magnify(double scale, double duration)
+{
+    cursor_scale_from = declare_cursor_magnification();
+    cursor_scale_target = scale;
+    cursor_scale_started = g_get_monotonic_time();
+    cursor_scale_duration = cursor_scale_from == scale ? 0 : duration;
+    cursor_mark();
+}
+
 /* The xcursor frame this output shows for the themed name, or NULL when the
  * theme has neither it nor "default". An animated cursor shows its first
  * frame: a frame per animation step would keep an idle output declaring
  * for as long as a busy cursor is up. */
 static const struct wlr_xcursor_image *
-cursor_xcursor_frame(Monitor *m)
+cursor_xcursor_frame(Monitor *m, float multiplier)
 {
-	float scale = m->wlr_output->scale;
+	float scale = m->wlr_output->scale * multiplier;
 	struct wlr_xcursor *xc;
 
 	wlr_xcursor_manager_load(cursor_mgr, scale);
@@ -3492,10 +3532,16 @@ declare_cursor(Monitor *m)
 			Clay__HashStringWithOffset(CLAY_STRING("cursor"),
 			(uint32_t)handle, 0), &s);
 	} else if (cursor_image.name) {
-		const struct wlr_xcursor_image *frame = cursor_xcursor_frame(m);
-		float scale = m->wlr_output->scale;
+		const struct wlr_xcursor_image *normal = cursor_xcursor_frame(m, 1);
+        double magnification = declare_cursor_magnification();
+        const struct wlr_xcursor_image *frame = magnification > 1
+            ? cursor_xcursor_frame(m, 4) : normal;
+        if (!frame) frame = normal;
+        float scale = m->wlr_output->scale / magnification;
+        if (cursor_scale_duration > 0)
+            declare_output_mark_dirty(dout);
 
-		if (!frame)
+		if (!frame || !normal)
 			return;
 		if (dout->cursor_frame != frame || dout->cursor_gen != cursor_image.gen) {
 			image_entry_set(&dout->cursor, cursor_frame_surface(frame));
@@ -3505,10 +3551,13 @@ declare_cursor(Monitor *m)
 		if (!dout->cursor.native)
 			return;
 		handle = declare_handle_for(cursor, DECLARE_KIND_CURSOR);
-		s = leaf_at(Z_CURSOR, x - (int)round(frame->hotspot_x / scale),
-			y - (int)round(frame->hotspot_y / scale),
-			(int)round(frame->width / scale),
-			(int)round(frame->height / scale));
+        int width = (int)round(normal->width / scale);
+        int height = (int)round(normal->height / scale);
+        /* Theme sizes may use different artwork and hotspot proportions.
+         * Anchor the image actually displayed at its own scaled hotspot. */
+        int hx = (int)round((double)frame->hotspot_x * width / frame->width);
+        int hy = (int)round((double)frame->hotspot_y * height / frame->height);
+        s = leaf_at(Z_CURSOR, x - hx, y - hy, width, height);
 		s.image.imageData = &dout->cursor;
 		s.userData = leaf_userdata(handle, 1.0f);
 		declare_leaf("cursor", handle, DECLARE_SRC_THEME, DECLARE_SRC_THEME,

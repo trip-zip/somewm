@@ -911,6 +911,14 @@ motionnotify(uint32_t time, struct wlr_input_device *device, double dx, double d
 		declare_mark_all_dirty();
 	declare_cursor_changed();
 
+    /* Accessibility observes real motion without taking the pointer grab.
+     * Focus refreshes use time == 0 and must not count as shake samples. */
+    if (time) {
+        lua_State *L = globalconf_get_lua_State();
+        lua_pushnumber(L, cursor->x);
+        lua_pushnumber(L, cursor->y);
+        luaA_signal_emit(L, "_accessibility::motion", 2);
+    }
 
 	/* If drag source became invalid, clear it. */
 	if (seat->drag && drag_source_client) {
@@ -3080,6 +3088,7 @@ cursor_set_xcursor(const char *name)
 void
 cursor_set_surface(struct wlr_surface *surface, int hotspot_x, int hotspot_y)
 {
+    declare_cursor_magnify(1, 0);
 	if (surface == cursor_image.surface && !cursor_image.name
 			&& hotspot_x == cursor_image.hotspot_x
 			&& hotspot_y == cursor_image.hotspot_y)
