@@ -50,7 +50,11 @@ let
   luaEnv = luajit.withPackages (
     ps:
     with ps;
-    [lgi ldbus] ++ (extraLuaPackages ps)
+    [
+      lgi
+      ldbus
+    ]
+    ++ (extraLuaPackages ps)
   );
 
   # The tarball subprojects/wlroots.wrap names, so meson builds it without a download.
@@ -70,7 +74,6 @@ stdenv.mkDerivation {
   nativeBuildInputs = [
     glslang
     gobject-introspection
-    hwdata
     makeWrapper
     meson
     ninja
@@ -85,6 +88,7 @@ stdenv.mkDerivation {
     gdk-pixbuf
     glib
     harfbuzz
+    hwdata
     lcms2
     libdisplay-info
     libdrm
@@ -102,6 +106,7 @@ stdenv.mkDerivation {
     seatd
     wayland
     wayland-protocols
+    wayland-scanner
     libxcb
     libxcb-errors
     libxcb-render-util
@@ -116,10 +121,7 @@ stdenv.mkDerivation {
     cp ${wlrootsSrc} subprojects/packagecache/wlroots-0.20.2.tar.gz
   '';
 
-  mesonFlags = [
-    "-Dsystemd=disabled"
-    "--wrap-mode=nodownload"
-  ];
+  mesonFlags = [ "-Dsystemd=disabled" ];
 
   # wlroots is linked in; its headers, static library and .pc are not installed.
   mesonInstallFlags = [ "--skip-subprojects" ];
