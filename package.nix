@@ -67,6 +67,9 @@ stdenv.mkDerivation {
 
   strictDeps = true;
 
+  # wlroots looks up wayland-scanner as a build-machine dependency.
+  depsBuildBuild = [ pkg-config ];
+
   nativeBuildInputs = [
     glslang
     gobject-introspection
@@ -118,7 +121,6 @@ stdenv.mkDerivation {
 
   mesonFlags = [
     "-Dsystemd=disabled"
-    "--wrap-mode=nodownload"
   ];
 
   # wlroots is linked in; its headers, static library and .pc are not installed.

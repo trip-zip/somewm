@@ -2440,7 +2440,8 @@ static void test_verifier_catches_divergence(void) {
 	if (pid == 0) {
 		/* The abort's own diagnostic is the expected output here, not a
 		 * failure to report. */
-		freopen("/dev/null", "w", stderr);
+		if (!freopen("/dev/null", "w", stderr))
+			_exit(1);
 		struct fixture f;
 		fixture_init(&f);
 		Clay_RenderCommand cmds[] = { cmd_rect(1, 0, 0, 10, 10, 0) };
