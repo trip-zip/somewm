@@ -21,6 +21,7 @@
 #include <pango/pangocairo.h>
 #include <wlr/interfaces/wlr_buffer.h>
 #include <wlr/render/interface.h>
+#include <wlr/types/wlr_alpha_modifier_v1.h>
 #include <wlr/types/wlr_scene.h>
 #include <wlr/types/wlr_compositor.h>
 #include <wlr/util/log.h>
@@ -327,7 +328,6 @@ struct presentation_node {
     int x, y, width, height, parent_x, parent_y;
     int presented_parent_x, presented_parent_y;
     float radii[4], cutout_radii[4];
-    float opacity;
     struct wlr_box cutout;
     struct wlr_render_rounded_clip clips[WLR_SCENE_ROUNDED_CLIPS];
     size_t clips_len;
@@ -417,7 +417,6 @@ static void presentation_commit(struct wl_listener *listener, void *data)
     p->y = p->node->y;
     p->enabled = p->node->enabled;
     presentation_apply(p);
-    wlr_scene_buffer_set_opacity(sb, p->opacity);
 }
 
 static void presentation_restore(struct wlr_scene_node *node)
@@ -484,7 +483,6 @@ static void presentation_tree(struct wlr_scene_node *node, struct render_present
         } else if (node->type == WLR_SCENE_NODE_BUFFER) {
             struct wlr_scene_buffer *sb = wlr_scene_buffer_from_node(node);
             p->width = sb->dst_width; p->height = sb->dst_height;
-            p->opacity = sb->opacity;
             memcpy(p->radii, sb->corner_radii, sizeof(p->radii));
             p->clips_len = sb->clips_len;
             memcpy(p->clips, sb->clips, sizeof(p->clips));
@@ -680,9 +678,57 @@ void render_park(struct wlr_scene_node *node) {
 	wlr_scene_node_set_enabled(node, false);
 }
 
-void render_tree_set_opacity(struct wlr_scene_node *node, float opacity) {
+/* Surface commits and clip changes replace wlroots' buffer opacity. Keep
+ * the declared value with each scene surface, including subsurfaces added
+ * after the tree was borrowed. Scene destruction owns the listeners. */
+struct surface_opacity {
+	struct wlr_addon addon;
+	struct wl_listener commit;
+	struct wlr_scene_buffer *buffer;
+	float value; /* Compositor multiplier, before the surface's alpha modifier. */
+};
+
+static void render_tree_set_opacity(struct wlr_scene_node *node, float opacity);
+
+static void surface_opacity_destroy(struct wlr_addon *addon) {
+	struct surface_opacity *p = wl_container_of(addon, p, addon);
+	wl_list_remove(&p->commit.link);
+	wlr_addon_finish(addon);
+	free(p);
+}
+
+static const struct wlr_addon_interface surface_opacity_impl = {
+	.name = "somewm surface opacity", .destroy = surface_opacity_destroy,
+};
+
+static void surface_opacity_commit(struct wl_listener *listener, void *data) {
+	struct surface_opacity *p = wl_container_of(listener, p, commit);
+	/* wlroots adds new subsurface scene nodes before emitting the parent's
+	 * commit, and may also reconfigure existing child clips on that commit. */
+	render_tree_set_opacity(&p->buffer->node.parent->node, p->value);
+}
+
+static void render_tree_set_opacity(struct wlr_scene_node *node, float opacity) {
 	if (node->type == WLR_SCENE_NODE_BUFFER) {
-		wlr_scene_buffer_set_opacity(wlr_scene_buffer_from_node(node), opacity);
+		struct wlr_scene_buffer *buffer = wlr_scene_buffer_from_node(node);
+		struct wlr_scene_surface *surface = wlr_scene_surface_try_from_buffer(buffer);
+		if (surface) {
+			struct wlr_addon *addon = wlr_addon_find(&node->addons, NULL, &surface_opacity_impl);
+			struct surface_opacity *p = addon ? wl_container_of(addon, p, addon) : NULL;
+			if (!p) {
+				p = calloc(1, sizeof(*p));
+				if (!p) abort();
+				p->buffer = buffer;
+				wlr_addon_init(&p->addon, &node->addons, NULL, &surface_opacity_impl);
+				p->commit.notify = surface_opacity_commit;
+				wl_signal_add(&surface->surface->events.commit, &p->commit);
+			}
+			p->value = opacity;
+			const struct wlr_alpha_modifier_surface_v1_state *alpha =
+				wlr_alpha_modifier_v1_get_surface_state(surface->surface);
+			if (alpha) opacity *= alpha->multiplier;
+		}
+		wlr_scene_buffer_set_opacity(buffer, opacity);
 	} else if (node->type == WLR_SCENE_NODE_TREE) {
 		struct wlr_scene_node *child;
 		wl_list_for_each(child, &wlr_scene_tree_from_node(node)->children, link)
@@ -2497,13 +2543,12 @@ static int reconcile_surface(struct render_state *rs, struct rnode *n,
 	int muts = 0;
 	float opacity = command_opacity(rs, cmd);
 	bool first_borrow = n->node == NULL;
+	bool surface_changed = first_borrow;
 	if (first_borrow) {
 		wlr_scene_node_reparent(&tree->node, rs->tree);
 		wlr_scene_node_set_enabled(&tree->node, true);
 		n->node = &tree->node;
 		hooks->borrow(hooks->data, handle, rs);
-		render_tree_set_opacity(n->node, opacity);
-		n->opacity = opacity;
 		muts++;
 	} else if (n->node != &tree->node) {
 		/* One handle, one scene tree, for the toplevel's whole life. */
@@ -2517,12 +2562,14 @@ static int reconcile_surface(struct render_state *rs, struct rnode *n,
 	if (!(data & RENDER_PROBED_TAG) && !box_size_equal(n->box, cmd->boundingBox)) {
 		hooks->configure(hooks->data, handle,
 			(int)cmd->boundingBox.width, (int)cmd->boundingBox.height);
+		surface_changed = true;
 		muts++;
 	}
 	struct wlr_box clip = surface_clip_box(cmd->boundingBox, rbox);
 	struct wlr_box previous_clip = surface_clip_box(n->box, n->rbox);
 	if (hooks->clip != NULL && (first_borrow || !wlr_box_equal(&clip, &previous_clip))) {
 		hooks->clip(hooks->data, handle, clip.x, clip.y, clip.width, clip.height);
+		surface_changed = true;
 		muts++;
 	}
 	Clay_CornerRadius radius = cmd->renderData.custom.cornerRadius;
@@ -2530,12 +2577,13 @@ static int reconcile_surface(struct render_state *rs, struct rnode *n,
 			memcmp(&radius, &n->data.custom.cornerRadius, sizeof(radius)) != 0)) {
 		hooks->corners(hooks->data, handle, (const float[4]) { radius.topLeft,
 			radius.topRight, radius.bottomRight, radius.bottomLeft });
+		surface_changed = true;
 		muts++;
 	}
-	if (opacity != n->opacity) {
+	if (surface_changed || opacity != n->opacity) {
 		render_tree_set_opacity(n->node, opacity);
 		n->opacity = opacity;
-		muts++;
+		if (!first_borrow) muts++;
 	}
 	return muts;
 }

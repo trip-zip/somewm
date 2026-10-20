@@ -84,11 +84,6 @@ struct wlr_scene_tree *render_parked_tree(struct wlr_scene_tree *root);
  * and disable it. */
 void render_park(struct wlr_scene_node *node);
 
-/* Apply a declared opacity to every buffer under a borrowed surface tree.
- * The reconcile applies the word's opacity; a surface commit resets
- * wlroots' buffers to opaque, so the commit path re-applies it. */
-void render_tree_set_opacity(struct wlr_scene_node *node, float opacity);
-
 /* Show or hide everything this render_state drew, without dropping the retained
  * nodes, so a band that is raised again does not first flash its last frame. */
 void render_set_enabled(struct render_state *rs, bool on);
