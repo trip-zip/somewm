@@ -12,6 +12,14 @@ All notable changes to somewm will be documented in this file.
 - client.icon rejects LGI surface records and other non-pointer values with a Lua type error instead of interpreting userdata storage as a Cairo surface. Assign awesome.load_image() or a Cairo surface's _native pointer instead.
 - Drawable shared-memory buffers retain their allocation length and use it when unmapping, keeping allocation and teardown sizes paired.
 - The XWayland readiness test starts an X client and checks the ready signal and property instead of reporting success when lazy startup has not occurred.
+- Screen sharing through xdg-desktop-portal-wlr works without a manual
+  `dbus-update-activation-environment` in rc.lua. somewm now exports
+  `WAYLAND_DISPLAY`, `DISPLAY` and `XDG_CURRENT_DESKTOP` to the systemd user
+  manager and the D-Bus activation environment at startup, and sets
+  `XDG_CURRENT_DESKTOP=somewm` when nothing set it, so `somewm.portal` matches.
+- Screen shares no longer freeze on the first frame. somewm now offers
+  ext-image-copy-capture-v1 with output capture sources, which
+  xdg-desktop-portal-wlr uses in place of wlr-screencopy.
 
 ## [1.4.6] - 2026-09-24
 
