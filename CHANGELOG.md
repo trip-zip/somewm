@@ -16,6 +16,17 @@ All notable changes to somewm will be documented in this file.
   immediately. `stop_cursor_finder()` cancels the locator. Magnification is
   relative to the base size configured with `root.cursor_size()` or `XCURSOR_SIZE`.
 
+### Fixed
+
+- Screen sharing through xdg-desktop-portal-wlr works without a manual
+  `dbus-update-activation-environment` in rc.lua. somewm now exports
+  `WAYLAND_DISPLAY`, `DISPLAY` and `XDG_CURRENT_DESKTOP` to the systemd user
+  manager and the D-Bus activation environment at startup, and sets
+  `XDG_CURRENT_DESKTOP=somewm` when nothing set it, so `somewm.portal` matches.
+- Screen shares no longer freeze on the first frame. somewm now offers
+  ext-image-copy-capture-v1 with output capture sources, which
+  xdg-desktop-portal-wlr uses in place of wlr-screencopy.
+
 ## [2.1.0] - 2026-10-18
 
 Minor release. 67 commits since 2.0.1. Every bar, popup, client and widget
