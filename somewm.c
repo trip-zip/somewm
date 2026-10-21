@@ -38,6 +38,8 @@
 #include <wlr/types/wlr_drm.h>
 #include <wlr/types/wlr_export_dmabuf_v1.h>
 #include <wlr/types/wlr_foreign_toplevel_management_v1.h>
+#include <wlr/types/wlr_ext_image_capture_source_v1.h>
+#include <wlr/types/wlr_ext_image_copy_capture_v1.h>
 #include <wlr/types/wlr_fractional_scale_v1.h>
 #include <wlr/types/wlr_gamma_control_v1.h>
 #include <wlr/types/wlr_idle_inhibit_v1.h>
@@ -5942,6 +5944,38 @@ printstatus(void)
 	/* Status output removed - use Lua signals (client.connect_signal) instead */
 }
 
+/* Hand WAYLAND_DISPLAY, DISPLAY and XDG_CURRENT_DESKTOP to the systemd user
+ * manager and the D-Bus activation environment, so the services they start
+ * (xdg-desktop-portal and its wlr backend above all) can find this session.
+ * Without it the portal has no display to capture and somewm.portal's UseIn
+ * never matches. Only a session on real hardware owns those variables; a
+ * nested or headless instance would overwrite the host's. */
+static void
+export_session_environment(void)
+{
+	static const char *const names[] = {
+		"WAYLAND_DISPLAY", "DISPLAY", "XDG_CURRENT_DESKTOP"
+	};
+	const char *argv[LENGTH(names) + 3];
+	int argc = 0;
+
+	if (!session)
+		return;
+
+	argv[argc++] = "dbus-update-activation-environment";
+	argv[argc++] = "--systemd";
+	for (size_t i = 0; i < LENGTH(names); i++)
+		if (getenv(names[i]))
+			argv[argc++] = names[i];
+	argv[argc] = NULL;
+
+	pid_t pid = fork();
+	if (pid != 0)
+		return;
+	execvp(argv[0], (char *const *)argv);
+	_exit(127);
+}
+
 void
 powermgrsetmode(struct wl_listener *listener, void *data)
 {
@@ -6691,6 +6725,8 @@ run(char *startup_cmd)
 	if (!socket)
 		die("startup: display_add_socket_auto");
 	setenv("WAYLAND_DISPLAY", socket, 1);
+	setenv("XDG_CURRENT_DESKTOP", "somewm", 0);
+	export_session_environment();
 
 	/* Emit screen::scanning signal before backend starts creating monitors */
 	if (globalconf_L) {
@@ -7169,6 +7205,10 @@ setup(void)
 	wlr_data_device_manager_create(dpy);
 	wlr_export_dmabuf_manager_v1_create(dpy);
 	wlr_screencopy_manager_v1_create(dpy);
+	/* xdg-desktop-portal-wlr prefers this over screencopy. Through screencopy
+	 * alone, its screen shares stopped after the first frame. */
+	wlr_ext_image_copy_capture_manager_v1_create(dpy, 1);
+	wlr_ext_output_image_capture_source_manager_v1_create(dpy, 1);
 	wlr_data_control_manager_v1_create(dpy);
 	wlr_primary_selection_v1_device_manager_create(dpy);
 	wlr_viewporter_create(dpy);
