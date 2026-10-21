@@ -16,7 +16,9 @@
 -- the parent (CLAY_SIZING_PERCENT, clay.h:66-72, 289-297). A container
 -- says which of the first two each child gets; a widget's own preference (a
 -- forced size, a place that fills) refines fit and never overrides grow,
--- since fit is the content size and that preference is the content.
+-- since fit is the content size and that preference is the content. A
+-- widget that declares grow itself takes what it is offered, and every box
+-- up to the nearest decided size grows with it (takes_offer).
 --
 -- The authored bound (spec D045) starts with the drawin dimensions at the
 -- root and reaches a node through FIXED sizes and filling GROW sizes, less
@@ -656,7 +658,7 @@ end
 local inert_fields = {}
 for _, key in ipairs {'w','h','wmin','hmin','wmax','hmax','pad','dir','gap',
         'align','children','name','widget','identity','occurrence','bindings',
-        'spacer','owner','bg','radius','box'} do inert_fields[key] = true end
+        'spacer','owner','bg','radius','box','wgreedy','hgreedy'} do inert_fields[key] = true end
 
 local function inert(node, along)
     if #(node.children or empty_list) ~= 0 or padded(node) or (node.radius or 0) > 0 then return false end
@@ -757,8 +759,30 @@ local function fit_children(node, children)
 end
 
 local function fit_grow(node, parent_fit)
-    if node.w == 'grow' and parent_fit % 2 == 1 then node.w = 'fit' end
-    if node.h == 'grow' and parent_fit >= 2 then node.h = 'fit' end
+    if node.w == 'grow' and parent_fit % 2 == 1 and not node.wgreedy then node.w = 'fit' end
+    if node.h == 'grow' and parent_fit >= 2 and not node.hgreedy then node.h = 'fit' end
+end
+
+-- A widget whose describer declared grow takes what it is offered on that
+-- axis (wgreedy, hgreedy), as its `:fit` returned the offer: slider,
+-- progressbar, separator, graph, piechart, manual, a place that fills.
+-- Clay sizes a FIT or GROW box to its content (clay.h:1886-1940), where
+-- such a widget counts nothing, so every box between it and the nearest
+-- decided size grows on that axis too, as the engine's `:fit` passed the
+-- offer up. A told or percent size stops it; a popup's content-sized root
+-- takes its authored maximum (clay.compile).
+local function takes_offer(node)
+    for _, k in ipairs(axes) do
+        local greedy = k .. 'greedy'
+        if type(node[k]) == 'number' or type(node[k]) == 'table' then
+            node[greedy] = nil
+        else
+            for _, child in ipairs(node.children or empty_list) do
+                if child[greedy] and not child.float then node[greedy] = true end
+            end
+            if node[greedy] and not node.fit then node[k] = 'grow' end
+        end
+    end
 end
 
 -- Per transform: where the new x and y come from (the old axis, and whether
@@ -811,7 +835,8 @@ local function transformed(node, word, container)
         c.transform = word
         if n.text then c.wrap = "none" end
         if t.turn then
-            for _, pair in ipairs { {"w", "h"}, {"wmin", "hmin"}, {"wmax", "hmax"}, {"wsrc", "hsrc"} } do
+            for _, pair in ipairs { {"w", "h"}, {"wmin", "hmin"}, {"wmax", "hmax"}, {"wsrc", "hsrc"},
+                    {"wgreedy", "hgreedy"} } do
                 c[pair[1]], c[pair[2]] = n[pair[2]], n[pair[1]]
             end
             if n.aspect then c.aspect = 1 / n.aspect end
@@ -898,6 +923,7 @@ local function compile_specs(st, specs, parent, fg, bound, box, alpha, parent_fi
             node.children = spec.children
                 and compile_specs(st, spec.children, parent, fg, inner, own, alpha,
                     fit_children(node, spec.children), spec.dir == "y" and "h" or "w") or nil
+            takes_offer(node)
             if alpha ~= 1 then fade(node, alpha) end
         end
         if node and not inert(node, along) then
@@ -975,7 +1001,8 @@ end
 local fold_fields = {}
 for _, key in ipairs {'w','h','wmin','hmin','wmax','hmax','pad','bg','border','bw',
         'radius','dir','gap','align','children','name','widget','identity',
-        'occurrence','bindings','spacer','owner','box','wsrc','hsrc','transition'} do fold_fields[key] = true end
+        'occurrence','bindings','spacer','owner','box','wsrc','hsrc','transition',
+        'wgreedy','hgreedy'} do fold_fields[key] = true end
 
 -- An opaque rectangular child completely covers a plain background at the
 -- same area. Keeping only that child's paint preserves source-over order,
@@ -1065,6 +1092,7 @@ local function combine(node, opaque_host, host)
     local result = {}
     for key, value in pairs(child) do result[key] = value end
     result.transition = node.transition or child.transition
+    result.wgreedy, result.hgreedy = node.wgreedy or child.wgreedy, node.hgreedy or child.hgreedy
     if #node.children > 1 then
         result.children = {}
         for _, grandchild in ipairs(child.children or empty_list) do
@@ -1222,6 +1250,7 @@ function compile_node(st, widget, parent, fg, offer, spec, alpha, parent_fit, al
     if node.fit then offer = {} end
     resolve_size(node, offer, along)
     local intrinsic_w, intrinsic_h = node.w, node.h
+    node.wgreedy, node.hgreedy = intrinsic_w == 'grow' or nil, intrinsic_h == 'grow' or nil
     local inner, box = node_bound(node, offer)
     merge_sizing(node, spec, parent_fit)
     fit_grow(node, parent_fit)
@@ -1230,6 +1259,7 @@ function compile_node(st, widget, parent, fg, offer, spec, alpha, parent_fit, al
     node.children = compile_specs(st, node.specs or empty_list, item, node_fg or fg, inner, box, alpha,
         fit_children(node, node.stack and {true} or node.specs or empty_list),
         node.dir == "y" and "h" or "w", node.stack and node)
+    takes_offer(node)
     if not node.stack and #node.children == 1 then
         local child = node.children[1]
         local fitting = fit_children(node, node.children)
@@ -1487,6 +1517,9 @@ function clay.compile(self, root, context, width, height, words)
             tree.wmin, tree.wmax = node.wmin, node.wmax
             tree.hmin, tree.hmax = node.hmin, node.hmax
             tree.wsrc, tree.hsrc = node.wsrc, node.hsrc
+            -- Content that takes its offer takes the authored maximum.
+            if node.wgreedy and tree.wmax then tree.wmin = tree.wmax end
+            if node.hgreedy and tree.hmax then tree.hmin = tree.hmax end
             node.wmin, node.wmax, node.hmin, node.hmax = nil, nil, nil, nil
             -- Positive host minima make the content fill the whole axis.
             node.w = (tree.wmin or 0) > 0 and 'grow'

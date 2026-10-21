@@ -26,6 +26,10 @@ All notable changes to somewm will be documented in this file.
 - Screen shares no longer freeze on the first frame. somewm now offers
   ext-image-copy-capture-v1 with output capture sources, which
   xdg-desktop-portal-wlr uses in place of wlr-screencopy.
+- Sliders, progressbars, separators, graphs, piecharts, manual layouts and
+  filling places inside another container fill the space their layout gives
+  them again, as in 2.0. An awful.popup holding one grows to its
+  maximum_width and maximum_height.
 
 ## [2.1.0] - 2026-10-18
 
