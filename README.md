@@ -4,9 +4,9 @@ A Lua framework for building your Wayland desktop. Layouts, widgets, keybindings
 
 SomeWM has a complete widget system, a signal-driven object model, and a compositor runtime, all wired together so every piece can talk to every other piece. Write a widget that reacts to window focus changes. Build a layout that adapts to screen geometry. Script your entire workflow from `rc.lua` or from the command line.
 
-Built on [wlroots](https://gitlab.freedesktop.org/wlroots/wlroots) 0.20.2, built from source as part of the somewm build. Compatible with [AwesomeWM's](https://github.com/awesomeWM/awesome) Lua API - existing configs, widgets, and themes carry over.
+Built on [wlroots](https://gitlab.freedesktop.org/wlroots/wlroots) 0.20.2, built from source as part of the somewm build. Runs [AwesomeWM](https://github.com/awesomeWM/awesome) configs: keybindings, rules, themes and the stock widgets carry over.
 
-> **This branch (`main`) is 2.0-dev.** If you want 100% AwesomeWM parity, use the [`release/1.4`](https://github.com/trip-zip/somewm/tree/release/1.4) branch or install `somewm` from the [AUR](https://aur.archlinux.org/packages/somewm).
+> **This branch (`main`) is SomeWM 2.x.** Widgets that draw themselves (their own `fit` or `draw`, often built with `wibox.widget.base.make_widget`), `wibox.hierarchy` and the textbox measuring functions were removed in 2.1. If your config needs them, use SomeWM 1.4. See [Choosing a version](#choosing-a-version).
 
 <p align="center">
   <img src="screenshots/default.png" alt="Default configuration" width="45%">
@@ -16,12 +16,25 @@ Built on [wlroots](https://gitlab.freedesktop.org/wlroots/wlroots) 0.20.2, built
   <em>Default config (left) and a styled config (right)</em>
 </p>
 
+## Choosing a version
+
+|  | 1.4 | 2.x |
+| --- | --- | --- |
+| Branch | [`release/1.4`](https://github.com/trip-zip/somewm/tree/release/1.4) | `main` |
+| AUR | [`somewm`](https://aur.archlinux.org/packages/somewm) | `somewm-git` |
+| Lua API | AwesomeWM's, follows AwesomeWM master | AwesomeWM's, minus what 2.1 removed |
+| Receives | Crash fixes, build fixes, AwesomeWM ports | Features and fixes |
+
+Use 1.4 if your config has widgets with their own `fit` or `draw`, walks `wibox.hierarchy`, or measures text with `textbox:get_preferred_size`. On 2.x such a widget is left out and the log names it. Otherwise use 2.x. The [2.0 to 2.1 upgrade guide](https://somewm.org/docs/next/getting-started/upgrading-from-2.0/) lists everything that was removed.
+
+Only the newest 2.x release gets fixes. 2.0 ended at 2.0.1. `somewm-git` builds `main` and moves to each new 2.x release when it lands, including releases that remove API.
+
 ## Install
 
 **Arch Linux (AUR):**
 ```bash
-yay -S somewm      # Stable 1.4
-yay -S somewm-git  # Development (this branch)
+yay -S somewm      # 1.4
+yay -S somewm-git  # 2.x, builds main
 ```
 
 **From source:**

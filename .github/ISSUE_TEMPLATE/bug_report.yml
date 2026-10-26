@@ -7,21 +7,23 @@ body:
       value: |
         ## Which branch is this bug on?
 
-        somewm has two active branches and we triage them very differently:
+        somewm has two release lines:
 
-        - **`release/1.4`** is the stable AwesomeWM 4.4 parity branch. Bugs here are regressions against AwesomeWM and take priority.
-        - **`main`** is 2.0-dev. It is actively being rewritten and breakage is expected.
+        - **1.4** (`release/1.4`, AUR `somewm`) is the AwesomeWM-compatible line. Bugs here are regressions against AwesomeWM.
+        - **2.x** (`main`, AUR `somewm-git`, any 2.x release) is the current line. Only the newest 2.x release gets fixes.
 
-        Not sure which one you're on? Check [CONTRIBUTING.md#branches](https://github.com/trip-zip/somewm/blob/main/CONTRIBUTING.md#branches) or pick "Not sure" below and we'll help.
+        `somewm --version` tells you which: v1.4.x is 1.4, anything from v2.0 on is 2.x.
+
+        If the log says a widget "draws itself ... and is left out of the tree", that is a 2.1 removal, not a bug. See [Choosing a version](https://github.com/trip-zip/somewm#choosing-a-version).
 
   - type: dropdown
     id: branch
     attributes:
-      label: Branch
-      description: Which branch of somewm is this bug on?
+      label: Version
+      description: Which release line is this bug on?
       options:
-        - release/1.4 (stable, AwesomeWM 4.4 parity)
-        - main (2.0-dev, unstable)
+        - 1.4 (release/1.4)
+        - 2.x (main or a 2.x release)
         - Not sure, need help figuring it out
     validations:
       required: true
@@ -110,5 +112,5 @@ body:
           required: true
         - label: I have tested with a minimal `rc.lua` (or `rc_fallback.lua`) to confirm this is not a bug in my own config.
           required: true
-        - label: I have read [CONTRIBUTING.md#branches](https://github.com/trip-zip/somewm/blob/main/CONTRIBUTING.md#branches) and selected the correct branch above.
+        - label: I have checked `somewm --version` and selected the matching version above.
           required: true

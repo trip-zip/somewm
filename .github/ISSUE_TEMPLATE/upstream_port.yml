@@ -12,7 +12,7 @@ body:
         1. An AwesomeWM 4.4 feature or API that somewm 1.4 doesn't fully implement, or
         2. A fix or feature merged into [AwesomeWM master](https://github.com/awesomeWM/awesome) that should be backported to somewm.
 
-        For new features that don't exist in AwesomeWM, use the **Feature request (2.0)** template instead.
+        For new features that don't exist in AwesomeWM, use the **Feature request (2.x)** template instead.
 
         Before filing, check [`UPSTREAM_PORTS.md`](https://github.com/trip-zip/somewm/blob/release/1.4/UPSTREAM_PORTS.md) to see if the port is already tracked.
 
