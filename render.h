@@ -64,7 +64,9 @@ struct render_client_hooks {
 	 * cap reports overflow. NULL draws no shape leaves. */
 	size_t (*shape_ops)(void *data, const struct render_shape *shape,
 		float w, float h, float *ops, size_t cap);
-	size_t (*text_attrs)(void *data, void *userData, const char *chars,
+	/* The attributes of the text element whose string starts at base, as
+	 * byte ranges into that whole string. */
+	size_t (*text_attrs)(void *data, void *userData, const char *base,
 		const struct render_text_attr **attrs);
 	/* Whether the element with this id is in the current frame's tree. A
 	 * node whose command vanished is kept, disabled, while its element is;

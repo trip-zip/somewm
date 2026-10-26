@@ -1736,6 +1736,22 @@ static bool text_data_equal(Clay_TextRenderData *a, Clay_TextRenderData *b) {
 		a->letterSpacing == b->letterSpacing && a->lineHeight == b->lineHeight;
 }
 
+/* Clips a's byte range to [off, end) and makes it relative to off. False
+ * when nothing of it lies on that line. */
+static bool line_attr(struct render_text_attr *a, uint32_t off, uint32_t end) {
+	if (a->end <= off || a->start >= end) return false;
+	a->start = MAX(a->start, off) - off;
+	a->end = MIN(a->end, end) - off;
+	return true;
+}
+
+/* Field by field: a struct copy need not keep its padding, so memcmp could
+ * report every frame as a change and re-raster the line. */
+static bool attr_equal(const struct render_text_attr *a, const struct render_text_attr *b) {
+	return a->start == b->start && a->end == b->end && a->kind == b->kind &&
+		memcmp(a->value, b->value, sizeof(a->value)) == 0;
+}
+
 static int reconcile_text(struct render_state *rs, struct rnode *n,
 		Clay_RenderCommand *cmd, Clay_BoundingBox rbox,
 		const Clay_BoundingBox *clip, const struct clip_masks *mask,
@@ -1755,16 +1771,33 @@ static int reconcile_text(struct render_state *rs, struct rnode *n,
 		return 0;
 	}
 
+    /* Clay emits one command per line, a slice of the element's string
+     * (clay.h:2995). The hook's ranges index the whole string; the node keeps
+     * them clipped to this line and relative to its first byte. Compare first
+     * and copy only on change, so an unchanged line allocates nothing. */
     const struct render_text_attr *attrs = NULL;
     size_t attrs_len = hooks && hooks->text_attrs
-        ? hooks->text_attrs(hooks->data, cmd->userData, td->stringContents.chars, &attrs) : 0;
-    bool attrs_changed = attrs_len != n->text_attrs_len
-        || (attrs_len && memcmp(n->text_attrs, attrs, attrs_len * sizeof(*attrs)) != 0);
+        ? hooks->text_attrs(hooks->data, cmd->userData, td->stringContents.baseChars, &attrs) : 0;
+    uint32_t off = (uint32_t)(td->stringContents.chars - td->stringContents.baseChars);
+    uint32_t end = off + (uint32_t)td->stringContents.length;
+    size_t line_len = 0;
+    bool attrs_changed = false;
+    for (size_t i = 0; i < attrs_len; i++) {
+        struct render_text_attr a = attrs[i];
+        if (!line_attr(&a, off, end)) continue;
+        attrs_changed |= line_len >= n->text_attrs_len
+            || !attr_equal(&n->text_attrs[line_len], &a);
+        line_len++;
+    }
+    attrs_changed |= line_len != n->text_attrs_len;
     if (attrs_changed) {
         free(n->text_attrs);
-        n->text_attrs = attrs_len ? malloc(attrs_len * sizeof(*attrs)) : NULL;
-        n->text_attrs_len = n->text_attrs ? attrs_len : 0;
-        if (n->text_attrs) memcpy(n->text_attrs, attrs, attrs_len * sizeof(*attrs));
+        n->text_attrs = line_len ? malloc(line_len * sizeof(*attrs)) : NULL;
+        n->text_attrs_len = 0;
+        for (size_t i = 0; n->text_attrs && i < attrs_len; i++) {
+            struct render_text_attr a = attrs[i];
+            if (line_attr(&a, off, end)) n->text_attrs[n->text_attrs_len++] = a;
+        }
     }
 
 	/* Length first, and the compare only for a non-empty run: an empty one
