@@ -26,6 +26,9 @@ All notable changes to somewm will be documented in this file.
 
 ### Fixed
 
+- Textbox markup that spans several lines keeps its colours, backgrounds,
+  underlines and strikethroughs past the first line, as in 2.0. Since 2.1
+  every later line drew in the first span's colour.
 - Screen sharing through xdg-desktop-portal-wlr works without a manual
   `dbus-update-activation-environment` in rc.lua. somewm now exports
   `WAYLAND_DISPLAY`, `DISPLAY` and `XDG_CURRENT_DESKTOP` to the systemd user

@@ -3,7 +3,7 @@ local capture = require("_widget_capture")
 local wibox = require("wibox")
 
 local s = screen[1]
-local cap = capture.new(s, 0, 0, 400, 24)
+local cap = capture.new(s, 0, 0, 400, 64)
 local bar, label, plain_box, plain_shot
 local failures = {}
 local function check(ok, message)
@@ -16,14 +16,16 @@ local function log()
     file:close()
     return text
 end
-local function box()
-    local inside = false
+-- The bar's nth TEXT command; Clay emits one per line.
+local function box(n)
+    local seen = 0
     for line in awesome._clay_tree(s):gmatch("[^\n]+") do
-        if line:match("^  drawin screen") then
-            inside = line:find("400x24+0+0", 1, true) ~= nil
-        elseif inside and line:match("^    %x+ +text ") then
-            local x, y, w, h = line:match("box (%d+),(%d+) (%d+)x(%d+)")
-            if x then return {x=tonumber(x), y=tonumber(y), w=tonumber(w), h=tonumber(h)} end
+        if line:match("^  %x+ TEXT ") and line:find("drawin screen 1 400x64+0+0", 1, true) then
+            seen = seen + 1
+            if seen == (n or 1) then
+                local x, y, w, h = line:match(" box (%d+),(%d+) (%d+)x(%d+)")
+                return {x=tonumber(x), y=tonumber(y), w=tonumber(w), h=tonumber(h)}
+            end
         end
     end
 end
@@ -39,18 +41,34 @@ local function longest(shot, b, from, to)
     end
     return best
 end
+local function has(shot, b, pred)
+    for y = b.y, b.y + b.h - 1 do
+        for x = b.x, b.x + b.w - 1 do
+            if pred(cap:pixel(shot, x, y)) then return true end
+        end
+    end
+    return false
+end
+local function is_red(r, g, v) return r > 100 and g < 50 and v < 50 end
+local function is_blue(r, g, v) return v > 100 and r < 50 and g < 50 end
 local cases = {
     {"colours", "red blue", "<span color='#ff0000'>red</span> <span color='#0000ff'>blue</span>",
         function(shot, b)
-            local red, blue = false, false
-            local y = b.y + math.floor(b.h / 2)
-            for x = b.x, b.x + b.w - 1 do
-                local r, g, v = cap:pixel(shot, x, y)
-                if x < b.x + b.w / 2 then red = red or r > 100 and g < 50 and v < 50
-                else blue = blue or v > 100 and r < 50 and g < 50 end
-            end
-            check(red, "first word has red pixels")
-            check(blue, "second word has blue pixels")
+            local half = math.floor(b.w / 2)
+            check(has(shot, {x=b.x, y=b.y, w=half, h=b.h}, is_red), "first word has red pixels")
+            check(has(shot, {x=b.x + half, y=b.y, w=b.w - half, h=b.h}, is_blue),
+                "second word has blue pixels")
+        end},
+    {"lines", "red\nblue\nblue",
+        "<span color='#ff0000'>red</span>\n<span color='#0000ff'>blue\nblue</span>",
+        function(shot)
+            local second, third = box(2), box(3)
+            check(second and third, "each line has its own text command")
+            if not (second and third) then return end
+            check(has(shot, second, is_blue) and not has(shot, second, is_red),
+                "second line draws its own span's colour")
+            check(has(shot, third, is_blue) and not has(shot, third, is_red),
+                "a span across a newline colours the next line")
         end},
     {"underline", "under", "<u>under</u>", function(shot, b)
         local from = b.y + math.floor(b.h * 0.7)
@@ -63,14 +81,8 @@ local cases = {
             "strikethrough crosses the word continuously")
     end},
     {"background", "bg", "<span background='#00ff00'>bg</span>", function(shot, b)
-        local green = false
-        for y = b.y, b.y + b.h - 1 do
-            for x = b.x, b.x + b.w - 1 do
-                local r, g, v = cap:pixel(shot, x, y)
-                green = green or g > 200 and r < 30 and v < 30
-            end
-        end
-        check(green, "background paints green outside glyphs")
+        check(has(shot, b, function(r, g, v) return g > 200 and r < 30 and v < 30 end),
+            "background paints green outside glyphs")
     end},
     {"alpha", "half", "<span alpha='50%'>half</span>", function(shot, b)
         local peak = 0
@@ -88,7 +100,7 @@ local cases = {
 }
 local steps = {function()
     label = wibox.widget.textbox()
-    bar = wibox {x=0, y=0, width=400, height=24, screen=s,
+    bar = wibox {x=0, y=0, width=400, height=64, screen=s,
         bg="#101010", fg="#ffffff", visible=true}
     bar:setup {layout=wibox.layout.fixed.horizontal, label}
     return true

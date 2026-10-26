@@ -315,7 +315,7 @@ shape_ops(void *data, const struct render_shape *shape, float w, float h,
 }
 
 static size_t
-text_attrs(void *data, void *userData, const char *chars,
+text_attrs(void *data, void *userData, const char *base,
     const struct render_text_attr **attrs)
 {
     enum declare_kind kind = 0;
@@ -336,7 +336,7 @@ text_attrs(void *data, void *userData, const char *chars,
     if (!tree || !tree->text) return 0;
     for (size_t i = 0; i < tree->nodes_len; i++) {
         const struct widget_node *n = &tree->nodes[i];
-        if (n->text && n->attr_len && tree->text + n->text_off == chars) {
+        if (n->text && n->attr_len && tree->text + n->text_off == base) {
             *attrs = tree->text_attrs + n->attr_off;
             return n->attr_len;
         }

@@ -1228,10 +1228,10 @@ static void test_text_negative_length_is_empty(void) {
 	fixture_finish(&f, &no_hooks);
 }
 
-static size_t markup_attrs(void *data, void *word, const char *chars,
+static size_t markup_attrs(void *data, void *word, const char *base,
         const struct render_text_attr **attrs) {
     (void)word;
-    CHECK(strcmp(chars, "abcdef") == 0);
+    CHECK(strcmp(base, "abcdef") == 0);
     *attrs = data;
     return 1;
 }
