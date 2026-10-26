@@ -34,6 +34,7 @@ Grid dependency stages use private geometry copies and private callbacks. Public
 | `clay_inspector_fits` | Reads `layoutElements.length`, `maxElementCount`, `dynamicStringData.capacity` and ID-map lengths to bound debug-view elements, temporary strings and live IDs before traversal. |
 | `clay_inspector_duplicate` | Reads the last `layoutElements` entry and its ID-map item to distinguish generated inspector collisions from authored duplicates. |
 | `clay_render_commands` | Borrows `renderCommands` from the completed layout for readback. |
+| `clay_measure_text` | Calls `Clay__MeasureTextCached` for a run and reads `unwrappedDimensions` from the cache item it returns, for `textbox:get_preferred_size`. Adds the run to the measure cache as a declared text element would. |
 | `clay_element_declaration` | Reads the ID map, `generation` and the mapped element configuration to expose a non-text declaration in the current frame. |
 | `clay_entrances_first` | Moves appearing transition records before exits while preserving each group's order, so exit removal by swap-back cannot skip an entrance's first advance. |
 | `clay_reenter` | Marks a root absent from the prior declarations as appearing again and resets its transition clock before and after its first solve, so a cached exit or the band's prior frame interval cannot advance the new entrance. |

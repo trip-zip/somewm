@@ -1356,6 +1356,30 @@ luaA_awesome_clay_font(lua_State *L)
 	return 1;
 }
 
+/** Measure a text run in an interned font as a text element on a screen's
+ * output fits to when nothing bounds its width.
+ * \param font The id from _clay_font.
+ * \param text The run, markup already removed.
+ * \param s The screen.
+ * \return The width and height, or nil when the output has no context.
+ */
+static int
+luaA_awesome_clay_measure(lua_State *L)
+{
+	size_t len;
+	int32_t font = luaL_checkinteger(L, 1);
+	const char *text = luaL_checklstring(L, 2, &len);
+	screen_t *s = luaA_checkscreen(L, 3);
+	float width, height;
+
+	if (!declare_measure_text(luaA_monitor_get_by_screen(L, s), font, text, len,
+			&width, &height))
+		return 0;
+	lua_pushnumber(L, width);
+	lua_pushnumber(L, height);
+	return 2;
+}
+
 /** Raw bytes of an image surface box, for tests that compare pixels: the
  * rows, each width * 4 bytes, in cairo's own byte order. Plain Lua has no
  * ffi to read them.
@@ -2350,6 +2374,7 @@ const luaL_Reg awesome_methods[] = {
 	{ "_clay_scroll_get", luaA_awesome_clay_scroll_get },
 	{ "_clay_scroll_set", luaA_awesome_clay_scroll_set },
 	{ "_clay_font", luaA_awesome_clay_font },
+	{ "_clay_measure", luaA_awesome_clay_measure },
 	{ "_surface_pixels", luaA_awesome_surface_pixels },
 	{ "_inspector_style", luaA_awesome_inspector_style },
 	{ "_test_declare_order", luaA_awesome_test_declare_order },

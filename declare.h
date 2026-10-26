@@ -19,6 +19,10 @@ typedef struct drawin_t drawin_t;
 struct declare_output;
 #define CLAY_ELEMENTS_MAX 65536
 size_t declare_widget_budget(struct declare_output *dout);
+/* Measure a text run as a text element on m's output would fit to.
+ * False when the output has no context. Safe inside and between frames. */
+bool declare_measure_text(struct Monitor *m, int32_t font, const char *text,
+	size_t len, float *width, float *height);
 void declare_output_resource_failure(struct declare_output *dout);
 /* Private test-build controls for newly created contexts and solve failures. */
 void declare_test_capacity(int capacity, int allocation_failures);

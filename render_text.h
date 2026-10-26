@@ -110,8 +110,9 @@ PangoContext *render_text_context(void);
 /* The scale of the output currently solving, set by the declare pass before
  * each Clay pass so the measure callback below measures text at that output's
  * device size. Its own channel rather than the callback's userData, which is
- * fixed at Clay_SetMeasureTextFunction time, once per context. */
-void render_text_set_measure_scale(float scale);
+ * fixed at Clay_SetMeasureTextFunction time, once per context. Returns the
+ * scale it replaces, for a measurement between frames to restore. */
+float render_text_set_measure_scale(float scale);
 
 /* Clay's measure callback, handed to Clay_SetMeasureTextFunction once per
  * context. Pure and callable at any point in a solve, because Clay caches

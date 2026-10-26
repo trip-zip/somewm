@@ -16,7 +16,7 @@ local gdebug = require("gears.debug")
 local beautiful = require("beautiful")
 local lgi = require("lgi")
 local lgi_core = require("lgi.core")
-local capi = { awesome = _G.awesome }
+local capi = { awesome = _G.awesome, screen = _G.screen }
 local gtable = require("gears.table")
 local Pango = lgi.Pango
 local PangoCairo = lgi.PangoCairo
@@ -596,6 +596,58 @@ local function describe_textbox(w, fg, st)
     return { align = { x = inputs.halign, y = w._private.valign or "center" },
         specs = { { text = inputs.text, font = inputs.font, color = color, attrs = inputs.attrs, wrap = "words",
             halign = inputs.halign, ellipsize = inputs.ellipsize, name = "text" } } }
+end
+
+local function preferred_size(w, dpi, s)
+    local inputs = text_inputs(w, dpi)
+    if not inputs or not inputs.text then return 0, 0 end
+    local width, height = capi.awesome._clay_measure(inputs.font, inputs.text, s)
+    -- Whole pixels, rounded up: a size rounded down would wrap the text.
+    return math.ceil(width or 0), math.ceil(height or 0)
+end
+
+--- Get the preferred size of a textbox.
+--
+-- This returns the size the textbox fits to when nothing limits its width,
+-- as Clay measures it on the screen's output, rounded up to whole pixels.
+-- Markup is measured in its first font, the font the textbox draws it in.
+--
+-- @method get_preferred_size
+-- @tparam integer|screen s The screen on which the textbox will be displayed.
+-- @treturn number The preferred width.
+-- @treturn number The preferred height.
+function textbox:get_preferred_size(s)
+    s = capi.screen[s]
+    return preferred_size(self, s.dpi, s)
+end
+
+--- Get the preferred size of a textbox at a given DPI.
+--
+-- This returns the size the textbox fits to when nothing limits its width,
+-- measured on the primary screen's output.
+--
+-- @method get_preferred_size_at_dpi
+-- @tparam number dpi The DPI value to render at.
+-- @treturn number The preferred width.
+-- @treturn number The preferred height.
+function textbox:get_preferred_size_at_dpi(dpi)
+    return preferred_size(self, dpi, capi.screen.primary)
+end
+
+--- Get geometry of text label, as if textbox would be created for it on the screen.
+--
+-- @tparam string text The text content, pango markup supported.
+-- @tparam[opt=nil] integer|screen s The screen on which the textbox would be
+--   displayed. Defaults to the primary screen.
+-- @tparam[opt=beautiful.font] string font The font description as string.
+-- @treturn table Geometry (x, y, width, height) hashtable.
+-- @staticfct wibox.widget.textbox.get_markup_geometry
+function textbox.get_markup_geometry(text, s, font)
+    local w = new()
+    w:set_font(font or beautiful.font)
+    w:set_markup(text)
+    local width, height = w:get_preferred_size(s or capi.screen.primary)
+    return { x = 0, y = 0, width = width, height = height }
 end
 
 textbox._clay = { describe = describe_textbox }

@@ -18,6 +18,7 @@ local gio = lgi.Gio
 local glib = lgi.GLib
 local gdebug = require("gears.debug")
 local protected_call = require("gears.protected_call")
+local w_textbox = require("wibox.widget.textbox")
 local unpack = unpack or table.unpack -- luacheck: globals unpack (compatibility with Lua 5.1)
 
 local utils = {}
@@ -424,6 +425,27 @@ function utils.parse_dir(dir_path, callback)
         parser(gio.File.new_for_path(dir_path), result)
         call_callback(callback, result)
     end)
+end
+
+--- Compute the width a textbox fits to on a screen.
+-- @tparam wibox.widget.textbox textbox The textbox.
+-- @tparam[opt=mouse.screen] integer|screen s The screen.
+-- @treturn number The width.
+-- @staticfct menubar.utils.compute_textbox_width
+function utils.compute_textbox_width(textbox, s)
+    s = screen[s or mouse.screen]
+    local w, _ = textbox:get_preferred_size(s)
+    return w
+end
+
+--- Compute the width a piece of markup fits to on a screen.
+-- @tparam string text The text, pango markup supported.
+-- @tparam[opt] integer|screen s The screen.
+-- @tparam[opt=beautiful.font] string font The font description.
+-- @treturn number The width.
+-- @staticfct menubar.utils.compute_text_width
+function utils.compute_text_width(text, s, font)
+    return w_textbox.get_markup_geometry(text, s, font).width
 end
 
 return utils

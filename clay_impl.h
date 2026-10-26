@@ -31,6 +31,9 @@ void *clay_transition_userdata(const Clay_TransitionCallbackArguments *arguments
 void clay_reenter(Clay_ElementId id, bool appearing);
 void clay_exit_transition(Clay_ElementId id, Clay_TransitionElementConfig transition);
 bool clay_element_declaration(Clay_ElementId id, Clay_ElementDeclaration *out);
+/* The size a text element of this run and font fits to when nothing bounds
+ * its width, from the current context's measure cache. */
+Clay_Dimensions clay_measure_text(Clay_String text, int32_t font);
 /* Borrow the current context's last completed command array for readback. */
 Clay_RenderCommandArray clay_render_commands(void);
 
