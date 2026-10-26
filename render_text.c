@@ -162,8 +162,11 @@ PangoContext *render_text_context(void) {
 	return context;
 }
 
-void render_text_set_measure_scale(float scale) {
+float render_text_set_measure_scale(float scale) {
+	float previous = render_measure_scale;
+
 	render_measure_scale = scale > 0.0f ? scale : 1.0f;
+	return previous;
 }
 
 Clay_Dimensions render_measure_text(Clay_StringSlice text,

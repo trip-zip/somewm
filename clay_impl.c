@@ -12,6 +12,24 @@
 #include <string.h>
 #include <stdlib.h>
 
+Clay_Dimensions clay_measure_text(Clay_String text, int32_t font)
+{
+    Clay_TextElementConfig config = {.fontId = (uint16_t)font};
+    Clay__MeasureTextCacheItem *measured;
+    int32_t lines = 0;
+
+    if (text.length == 0) return (Clay_Dimensions){0};
+    measured = Clay__MeasureTextCached(&text, &config);
+    /* Unbounded, the wrap pass only breaks at newlines, one line each and
+     * none after a trailing one; every line is the run's height
+     * (clay.h:2589-2636). */
+    for (int32_t i = 0; i < text.length; i++)
+        lines += text.chars[i] == '\n';
+    if (text.chars[text.length - 1] != '\n') lines++;
+    return (Clay_Dimensions){measured->unwrappedDimensions.width,
+        measured->unwrappedDimensions.height * lines};
+}
+
 struct clay_capacity clay_capacity(void)
 {
     Clay_Context *c = Clay_GetCurrentContext();

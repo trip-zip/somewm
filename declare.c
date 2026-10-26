@@ -3989,6 +3989,26 @@ size_t declare_widget_budget(struct declare_output *dout)
     return capacity > 8192 ? MIN((size_t)(capacity / 2 - 4096), (size_t)12288) : 256;
 }
 
+bool declare_measure_text(Monitor *m, int32_t font, const char *text,
+	size_t len, float *width, float *height)
+{
+    struct declare_band *band = m && m->declare ? &m->declare->band : NULL;
+    if (!band || !band->clay) return false;
+    Clay_Context *previous = Clay_GetCurrentContext();
+    /* The cache holds widths at the band's scale until declare_band_update
+     * resets it, so measure at that scale. */
+    float scale = render_text_set_measure_scale(
+        band->scale > 0.0f ? band->scale : m->declare->wlr_output->scale);
+    Clay_SetCurrentContext(band->clay);
+    Clay_Dimensions d = clay_measure_text(
+        (Clay_String){.length = (int32_t)len, .chars = text}, font);
+    Clay_SetCurrentContext(previous);
+    render_text_set_measure_scale(scale);
+    *width = d.width;
+    *height = d.height;
+    return true;
+}
+
 void declare_output_resource_failure(struct declare_output *dout)
 {
     if (dout) dout->band.exhausted = true;

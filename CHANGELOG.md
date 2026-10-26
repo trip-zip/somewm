@@ -15,6 +15,14 @@ All notable changes to somewm will be documented in this file.
   `cursor_finder_animated = false` holds static rings and changes magnification
   immediately. `stop_cursor_finder()` cancels the locator. Magnification is
   relative to the base size configured with `root.cursor_size()` or `XCURSOR_SIZE`.
+- `wibox.widget.textbox:get_preferred_size`, `get_preferred_size_at_dpi`,
+  `wibox.widget.textbox.get_markup_geometry`, `menubar.utils.compute_text_width`
+  and `menubar.utils.compute_textbox_width` return, removed in 2.1. Clay measures
+  the text, so the answer is the size the textbox draws at on that screen's
+  output, rounded up to whole pixels. Markup is measured in its first font.
+  `get_height_for_width` stays removed: a wrapped height exists only after
+  Clay solves the frame. Give the popup a `maximum_width` and it wraps and
+  sizes itself.
 
 ### Fixed
 
