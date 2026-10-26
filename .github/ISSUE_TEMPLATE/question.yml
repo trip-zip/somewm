@@ -22,10 +22,10 @@ body:
   - type: dropdown
     id: branch
     attributes:
-      label: Which branch does this apply to?
+      label: Which version does this apply to?
       options:
-        - release/1.4 (stable)
-        - main (2.0-dev)
+        - 1.4 (release/1.4)
+        - 2.x (main or a 2.x release)
         - Doesn't matter / general question
     validations:
       required: false

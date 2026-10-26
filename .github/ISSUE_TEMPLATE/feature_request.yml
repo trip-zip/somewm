@@ -1,11 +1,11 @@
-name: Feature request (2.0)
-description: Suggest a new feature for somewm 2.0 (main branch)
+name: Feature request (2.x)
+description: Suggest a new feature for somewm 2.x (main branch)
 labels: [enhancement, "2.x"]
 body:
   - type: markdown
     attributes:
       value: |
-        ## New features target `main` (2.0-dev) only
+        ## New features target `main` (2.x) only
 
         `release/1.4` is parity-locked to AwesomeWM 4.4 and accepts bug fixes and upstream ports only.
 

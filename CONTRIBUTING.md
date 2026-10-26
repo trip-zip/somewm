@@ -1,15 +1,19 @@
 # Contributing to somewm
 
-**The public Lua API should be preserved where possible.** Function signatures, signal names, and property names should stay compatible so existing `rc.lua` configs work, but some changes are inevitable as 2.0 evolves.
+**The public Lua API should be preserved where possible.** Function signatures, signal names, and property names should stay compatible so existing `rc.lua` configs work, but some changes are inevitable as 2.x evolves.
 
 Lua libraries (`lua/awful/`, `lua/gears/`, `lua/wibox/`, `lua/naughty/`) were originally copied from [AwesomeWM](https://github.com/awesomeWM/awesome/tree/master/lib). When in doubt, check AwesomeWM's source for how things are supposed to work.
 
 ## Branches
 
-- **`release/1.4`**: AwesomeWM compatibility branch. Tracks AwesomeWM master, ports upstream PRs, and maintains strict(ish) API parity. Bugfixes and upstream ports go here.
-- **`main`**: SomeWM 2.0. New architecture, new features, Wayland-native direction. The public Lua API stays compatible, but internals and new capabilities diverge from AwesomeWM.
+SomeWM has two lines. No other branch receives fixes.
 
-If your PR is a bugfix that applies to both, target `release/1.4` and it will be cherry-picked to `main`.
+- **`release/1.4`**: SomeWM 1.4, the AwesomeWM-compatible line. It follows AwesomeWM master and takes crash fixes, build and distro fixes, and ports of AwesomeWM PRs. New features go to `main`.
+- **`main`**: SomeWM 2.x. Each 2.x release replaces the one before it; there are no 2.0.x or 2.1.x branches. Fixes land on `main` and ship in the next 2.x release. `main` does not track AwesomeWM.
+
+Target the branch where the bug reproduces. If it reproduces on both, open the PR against either one and say so in the description. Code both lines share (protocols, input, XWayland, portals, build) is cherry-picked to the other line. Widget and rendering code has differed since 2.1, so a fix there needs its own PR for each branch.
+
+A change that removes or renames public Lua API is built on a feature branch and merges to `main` as the next minor release. It needs a `CHANGELOG.md` line and an entry in the upgrade guide.
 
 ## Building
 
@@ -54,4 +58,4 @@ AI tools are welcome, but:
 - Discuss your approach in an [issue](https://github.com/trip-zip/somewm/issues) or [discussion](https://github.com/trip-zip/somewm/discussions) before opening a PR
 - Include a test when possible (`tests/test-*.lua`)
 - Run `make test-unit && make test-integration` before pushing
-- If porting an AwesomeWM PR, add an entry to `UPSTREAM_PORTS.md`
+- If porting an AwesomeWM PR, target `release/1.4` and add an entry to `UPSTREAM_PORTS.md`

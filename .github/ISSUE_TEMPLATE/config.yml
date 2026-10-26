@@ -1,8 +1,8 @@
 blank_issues_enabled: false
 contact_links:
-  - name: Branching model (release/1.4 vs main)
-    url: https://github.com/trip-zip/somewm/blob/main/CONTRIBUTING.md#branches
-    about: Not sure whether your issue belongs on release/1.4 or main? Read this first.
+  - name: Choosing a version (1.4 vs 2.x)
+    url: https://github.com/trip-zip/somewm#choosing-a-version
+    about: Not sure whether your issue belongs on 1.4 or 2.x? Read this first.
   - name: AwesomeWM Documentation
     url: https://awesomewm.org/doc/api/
     about: somewm uses the same Lua API as AwesomeWM - check their docs first.
