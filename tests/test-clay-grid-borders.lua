@@ -173,7 +173,8 @@ runner.run_async(function()
     g.minimum_row_height=20
     g.border_width=1;g.border_color='#ffffff'
     g.forced_width=100;g.expand={horizontal=true,vertical=false}
-    local t=wibox.widget.textbox('aa aa aa aa');t.font='monospace 10';t.wrap='word';g:add(t,tidy.leaf(20,20,'#00ff00'))
+    local t=wibox.widget.textbox('aa aa aa aa');t.font='monospace 10';t.wrap='word';t.ellipsize='none'
+    g:add(t,tidy.leaf(20,20,'#00ff00'))
     popup=awful.popup{screen=screen[1],x=100,y=100,visible=true,widget=g,bg='#204080'}
     frame('text');local height=grid_box(popup).height
     t.text='aa aa aa aa aa aa aa aa';frame('content-grow');assert(grid_box(popup).height>height)

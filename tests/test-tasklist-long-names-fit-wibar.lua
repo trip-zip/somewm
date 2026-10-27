@@ -21,11 +21,16 @@ local names = {
 -- Doubled, the three names are wider together than a 1280 px bar.
 for i, name in ipairs(names) do names[i] = name .. ', ' .. name end
 
+-- The textbox is a cut node around its text: x and width are the node's,
+-- the extent the text is drawn in; height is the text's own.
 local function box(dump, text)
+    local cut
     for line in dump:gmatch('[^\n]+') do
-        if line:find('text "' .. text, 1, true) then
-            local x, y, w, h = line:match(' box (%-?%d+),(%-?%d+) (%d+)x(%d+)')
-            if x then return tonumber(x), tonumber(y), tonumber(w), tonumber(h) end
+        if line:find(' cut=', 1, true) then cut = line end
+        if line:find('text "' .. text, 1, true) and cut then
+            local x, y, w = cut:match(' box (%-?%d+),(%-?%d+) (%d+)x%d+')
+            local h = line:match(' box %-?%d+,%-?%d+ %d+x(%d+)')
+            if x and h then return tonumber(x), tonumber(y), tonumber(w), tonumber(h) end
         end
     end
 end

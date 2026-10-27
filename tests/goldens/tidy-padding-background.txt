@@ -11,4 +11,5 @@ output
         clip w=grow h=grow row
         wibox.container.margin w=fit h=fit row pad 8,8,0,0
           wibox.container.background w=fit h=fit row
-            text "12:34" font=1
+            wibox.widget.textbox cut=both w=fit h=fit row
+              text "12:34" font=1

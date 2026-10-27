@@ -8,8 +8,9 @@ output
             wibox.container.margin w=fit h=grow row pad 6,0,0,0
               awful.widget.clienticon w=fit h=grow row
                 image image 512x512 w=fit theme h=fit
-            wibox.widget.textbox w=grow h=grow row
-              text "Example" font=1
+            wibox.layout.flex w=grow h=grow row
+              wibox.widget.textbox cut=both w=grow h=grow row
+                text "Example" font=1
             wibox.layout.fixed w=fit h=grow row
               wibox.widget.imagebox w=fit h=grow row
                 image image 240x240 w=fit theme h=fit

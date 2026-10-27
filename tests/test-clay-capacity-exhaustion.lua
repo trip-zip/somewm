@@ -10,8 +10,16 @@ local function frame()
     return tonumber(awesome._clay_tree(s):match(' frames (%d+)'))
 end
 
+-- The retained nodes by id, box and raster. The owner label after the box
+-- is looked up in the drawin's node store, which a failed frame has already
+-- replaced with its input, so a widget's node reads as its drawin's.
 local function realized()
-    return awesome._clay_tree(s):match('  realized:\n(.*)')
+    local out = {}
+    for line in awesome._clay_tree(s):match('  realized:\n(.*)'):gmatch('[^\n]+') do
+        local head = line:match('^.-rbox %-?%d+,%-?%d+ %d+x%d+') or line
+        out[#out + 1] = head .. (line:match(' raster=%d+') or '')
+    end
+    return table.concat(out, '\n')
 end
 
 runner.run_async(function()

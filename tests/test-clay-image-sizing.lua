@@ -84,12 +84,16 @@ runner.run_async(function()
             local hits={}
             click_y=p[6]<p[2] and p[2]-2 or 2
             for _,hit in ipairs(bar:find_widgets(2,click_y)) do hits[hit.widget]=hit end
+            -- The row's children take the bar's height, as AwesomeWM's fixed
+            -- layout gives them. A forced height taller than the bar keeps
+            -- it, since a fixed size never compresses; the text beside it
+            -- still takes the bar's.
             for _,w in ipairs {margin,icon} do
-                capture.assert_box(assert(hits[w]),{x=0,y=0,width=p[5],height=math.max(p[2],20,p[7] or 0)},'original allocation')
+                capture.assert_box(assert(hits[w]),{x=0,y=0,width=p[5],height=math.max(p[2],p[7] or 0)},'original allocation')
             end
             local text_hit
             for _,hit in ipairs(bar:find_widgets(p[5]+2,2)) do if hit.widget==text then text_hit=hit end end
-            capture.assert_box(assert(text_hit),{x=p[5],y=0,width=400-p[5],height=math.max(p[2],20,p[7] or 0)},'independent text')
+            capture.assert_box(assert(text_hit),{x=p[5],y=0,width=400-p[5],height=p[2]},'independent text')
             local node=assert(binding(bar._drawable._clay_tree,icon))
             if token then assert(node.occurrence==token,'original occurrence changed') end
             token=node.occurrence

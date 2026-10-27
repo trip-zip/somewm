@@ -5,5 +5,6 @@ output
       LAYER_BAR test-layer-bar w=grow h=fixed(40) protocol row
         layer.surface test-layer-bar w=grow h=fixed(40) protocol custom
       WIBAR screen 1 converted clip w=grow h=fixed(28) theme row
-        text "bar" font=1
+        wibox.widget.textbox cut=both w=grow h=grow row
+          text "bar" font=1
       WORKAREA - w=grow h=grow row

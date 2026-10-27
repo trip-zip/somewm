@@ -3,12 +3,16 @@ output
   Clay__RootContainer w=fixed(1280) output h=fixed(720) output row
     OUTPUT WL-1 w=fixed(1280) output h=fixed(720) output column image
       WIBAR screen 1 converted clip w=grow h=fixed(20) theme row
-        text "top" font=1
+        wibox.widget.textbox cut=both w=grow h=grow row
+          text "top" font=1
       MIDDLE - w=grow h=grow row
-        WIBAR screen 1 converted clip w=fixed(30) theme h=grow row
-          text "left" font=1
+        WIBAR screen 1 converted clip w=fixed(30) theme h=grow column
+          wibox.widget.textbox cut=both w=grow h=grow row
+            text "left" font=1
         WORKAREA - w=grow h=grow row
-        WIBAR screen 1 converted clip w=fixed(30) theme h=grow row
-          text "right" font=1
+        WIBAR screen 1 converted clip w=fixed(30) theme h=grow column
+          wibox.widget.textbox cut=both w=grow h=grow row
+            text "right" font=1
       WIBAR screen 1 converted clip w=grow h=fixed(20) theme row
-        text "bottom" font=1
+        wibox.widget.textbox cut=both w=grow h=grow row
+          text "bottom" font=1

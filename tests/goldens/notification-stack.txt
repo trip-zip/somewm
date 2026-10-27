@@ -3,7 +3,8 @@ output
   Clay__RootContainer w=fixed(1280) output h=fixed(720) output row
     OUTPUT WL-1 w=fixed(1280) output h=fixed(720) output column image
       WIBAR screen 1 converted clip w=grow h=fixed(28) theme row
-        text "bar" font=1
+        wibox.widget.textbox cut=both w=grow h=grow row
+          text "bar" font=1
       WORKAREA - w=grow h=grow row
   NOTIFICATIONS - w=fixed(320) theme h=fit column gap 8 attach OUTPUT band 90
     NOTIFICATION screen 1 converted clip w=grow h=fit row

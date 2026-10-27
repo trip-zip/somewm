@@ -24,6 +24,22 @@ All notable changes to somewm will be documented in this file.
   Clay solves the frame. Give the popup a `maximum_width` and it wraps and
   sizes itself.
 
+### Changed
+
+- A textbox's `ellipsize` picks between Clay's two text behaviors. Set (the
+  default, `"end"`), the text keeps one line per newline, and a squeezed line
+  is cut with an ellipsis, as a bar label is in AwesomeWM. `"none"` wraps by
+  words and never cuts. AwesomeWM did both at once, wrapping to the width and
+  ellipsizing the last line that fit the height, which Clay cannot express. A
+  textbox that relied on the default to wrap a paragraph now needs
+  `ellipsize = "none"`; notification titles and bodies set it.
+- A wibox's or bar's contents are squeezed to fit it, as in AwesomeWM and 2.0:
+  Clay takes width from the largest child first, down to each child's
+  minimum. 2.1.0 laid the contents out at their own size and cut them at the
+  edge, so a long tasklist pushed the widgets after it off the screen. The
+  order differs from AwesomeWM's fixed layout, which fills in order and drops
+  what does not fit: here the later widget stays and the largest shrinks.
+
 ### Fixed
 
 - Textbox markup that spans several lines keeps its colours, backgrounds,

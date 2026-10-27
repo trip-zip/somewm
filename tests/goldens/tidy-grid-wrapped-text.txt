@@ -13,15 +13,15 @@ output
           wibox.layout.grid w=fixed(90) user h=fit column gap 5
             - spacer w=grow h=fit user row gap 5
               - spacer w=percent(0.5) user h=grow row
-                wibox.widget.textbox w=grow h=grow row
+                wibox.widget.textbox cut=both w=grow h=grow row
                   text "aa aa aa" font=1
               - spacer w=percent(0.5) user h=grow row
-                wibox.widget.textbox w=grow h=grow row
+                wibox.widget.textbox cut=both w=grow h=grow row
                   text "bb bb bb bb" font=1
             - spacer w=grow h=fit user row gap 5
               - spacer w=percent(0.5) user h=grow row
-                wibox.widget.textbox w=grow h=grow row
+                wibox.widget.textbox cut=both w=grow h=grow row
                   text "cc cc" font=1
               - spacer w=percent(0.5) user h=grow row
-                wibox.widget.textbox w=grow h=grow row
+                wibox.widget.textbox cut=both w=grow h=grow row
                   text "dd" font=1

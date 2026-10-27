@@ -62,7 +62,7 @@ runner.run_steps({
     end,
     function(count)
         local dump = awesome._clay_tree(s)
-        local client_line, declaration, scissor, rectangle, leaf, id
+        local client_line, declaration, rectangle, leaf
         local named = "titlebar " .. master.class
         for line in dump:gmatch("[^\n]+") do
             if line:find("CLIENT " .. master.class .. " ", 1, true) then
@@ -71,21 +71,19 @@ runner.run_steps({
             if line:find("TITLEBAR " .. master.class .. " converted:", 1, true) then
                 declaration = line
             end
-            if line:find(named, 1, true) and line:find("SCISSOR_START", 1, true) then
-                scissor = line
-                id = line:match("^%s*(%x%x%x%x%x%x%x%x) ")
-            end
         end
+        -- The titlebar draws two rectangles: its own background and the
+        -- 30x30 leaf.
         for line in dump:gmatch("[^\n]+") do
             if line:find(named, 1, true) and line:find("RECTANGLE", 1, true) then
-                if id and line:match("^%s*(%x%x%x%x%x%x%x%x) ") == id then
-                    rectangle = line
-                elseif line:match(" box %-?%d+,%-?%d+ 30x30 ") then
+                if line:match(" box %-?%d+,%-?%d+ 30x30 ") then
                     leaf = line
+                else
+                    rectangle = line
                 end
             end
         end
-        if not declaration or not scissor or not rectangle or not leaf then
+        if not declaration or not rectangle or not leaf then
             assert(count < 20, "the converted titlebar nodes never appeared:\n" .. dump)
             return
         end
@@ -98,14 +96,13 @@ runner.run_steps({
         local evidence = os.getenv("SOMEWM_EXAMPLE_EVIDENCE")
         if evidence then
             local file = assert(io.open(evidence .. "/titlebar-clip-rounding.txt", "w"))
-            file:write(declaration, "\n", scissor, "\n", rectangle, "\n", leaf, "\n")
+            file:write(declaration, "\n", rectangle, "\n", leaf, "\n")
             file:close()
         end
         assert(declaration:find(" " .. width .. "x30", 1, true), declaration)
         local x, y = declaration:match(" box (%-?%d+),(%-?%d+) ")
         x, y = tonumber(x), tonumber(y)
         assert(rectangle:find(boxes(x, y, width), 1, true), rectangle)
-        assert(scissor:find(boxes(x, y, width), 1, true), scissor)
         assert(leaf:find(boxes(x + width - 30, y, 30), 1, true), leaf)
         for line in dump:gmatch("[^\n]+") do
             if line:find(named, 1, true) then

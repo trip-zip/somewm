@@ -1621,8 +1621,12 @@ static bool transform_turns(uint8_t t) {
 /* Pango's bound is relative to the original run, even when its left side is
  * cropped. Read the effective clip itself: intersecting it with the run and
  * then reconstructing its right edge can lose enough precision to turn a
- * fully contained run into an ellipsis. Quantize only at the device-pixel
- * boundary, without first discarding fractional logical widths. */
+ * fully contained run into an ellipsis. The run's box is realized
+ * (box_snap) and the clip is solved, so quantize each edge at the device
+ * scale and take the difference, as device_len does. A clip edge within
+ * float noise of the run's own edge is the run's edge: Clay solves in
+ * float32, and a solved edge a hair below a realized edge that sits on a
+ * half pixel would otherwise round the other way. */
 static int text_ellipsis_width(Clay_RenderCommand *cmd,
 		const Clay_BoundingBox *clip, float scale) {
 	if (clip == NULL ||
@@ -1631,11 +1635,15 @@ static int text_ellipsis_width(Clay_RenderCommand *cmd,
 	}
 	bool turn = transform_turns(render_font_transform(cmd->renderData.text.fontId));
 	const Clay_BoundingBox *box = &cmd->boundingBox;
-	double avail = turn ? (double)clip->y + clip->height - box->y
-		: (double)clip->x + clip->width - box->x;
-	double run = turn ? box->height : box->width;
-	int natural = (int)round(run * scale);
-	int bound = (int)round(fmax(0, fmin(avail, run)) * scale);
+	double start = turn ? box->y : box->x;
+	double end = start + (turn ? box->height : box->width);
+	double clip_end = turn ? (double)clip->y + clip->height
+		: (double)clip->x + clip->width;
+	if (clip_end >= end - 1e-3)
+		return 0;
+	long origin = lround(start * scale);
+	int natural = (int)(lround(end * scale) - origin);
+	int bound = (int)(lround(clip_end * scale) - origin);
 	return bound > 0 && bound < natural ? bound : 0;
 }
 

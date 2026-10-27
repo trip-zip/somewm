@@ -37,7 +37,7 @@
 	X(gap) X(wmin) X(hmin) X(wmax) X(hmax) X(w) X(h) X(percent) X(wsrc) X(hsrc) \
 	X(align) X(dir) X(float) X(parent) X(own) X(passthrough) X(vector) X(image) \
 	X(aspect) X(image_width) X(image_height) X(filter) X(natural) X(track) \
-	X(thumb) X(scroll) X(transition) X(duration) X(properties) X(exit_order) \
+	X(thumb) X(scroll) X(cut) X(transition) X(duration) X(properties) X(exit_order) \
     X(exit_duration) X(tag_exit) X(tag_duration) \
 	X(enter) X(exit) X(x11_configure_serial) X(client) X(surface) X(host) X(opacity) X(probe) X(attrs) \
 	X(font) X(color) X(wrap) X(halign) X(ellipsize) X(bindings) X(item) X(id) \
@@ -781,15 +781,22 @@ read_node(lua_State *L, int idx, struct widget_node *n)
 	getfield(L, idx, KEY_thumb);
 	n->thumb = lua_toboolean(L, -1);
 	lua_pop(L, 1);
+	static const char *const axes[] = { "x", "y", "both" };
 	getfield(L, idx, KEY_scroll);
 	bool has_scroll = !lua_isnil(L, -1);
 	lua_pop(L, 1);
 	if (has_scroll) {
-		static const char *const axes[] = { "x", "y", "both" };
-
 		if (!read_word(L, idx, KEY_scroll, axes, 3, &n->scroll))
 			return false;
 		n->scroll++;
+	}
+	getfield(L, idx, KEY_cut);
+	bool has_cut = !lua_isnil(L, -1);
+	lua_pop(L, 1);
+	if (has_cut) {
+		if (!read_word(L, idx, KEY_cut, axes, 3, &n->cut))
+			return false;
+		n->cut++;
 	}
 	return ok && read_transition(L, idx, n) && read_composite(L, idx, n);
 }
@@ -1134,7 +1141,7 @@ over_budget(struct widget_tree *d, Monitor *m, size_t len, size_t scrolls)
 	}
 	/* Inspector clips share this native budget; declare.c
 	 * reserves their records before it admits any host sizing clips. */
-	return total > declare_widget_budget(m->declare) || scrolls > WIDGET_SCROLLS_OUTPUT_MAX;
+	return total > declare_widget_budget(m->declare) || scrolls >= WIDGET_SCROLLS_OUTPUT_MAX;
 }
 
 bool

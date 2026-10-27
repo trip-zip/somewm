@@ -4,4 +4,5 @@ output
     OUTPUT WL-1 w=fixed(1280) output h=fixed(720) output column image
       WORKAREA - w=grow h=grow row
   WIBAR screen 1 converted clip w=grow h=fixed(28) theme row attach PARENT band 60
-    text "bar" font=1
+    wibox.widget.textbox cut=both w=grow h=grow row
+      text "bar" font=1
