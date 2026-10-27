@@ -9,7 +9,9 @@ FROM ubuntu:26.04
 ARG LUA_INTERPRETER
 ARG LUA_DEV_PACKAGE
 
-ENV DEBIAN_FRONTEND=noninteractive TZ=Etc/UTC
+# The hosted runners export LANG=C.UTF-8 and the compositor adopts it at
+# startup; test-prompt-unicode asserts that it did.
+ENV DEBIAN_FRONTEND=noninteractive TZ=Etc/UTC LANG=C.UTF-8
 
 RUN ln -fs /usr/share/zoneinfo/Etc/UTC /etc/localtime \
  && echo Etc/UTC > /etc/timezone \
