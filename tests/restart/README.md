@@ -29,7 +29,9 @@ bash tests/restart/restart-executes.sh                   # standalone, for debug
 
 Environment: `KEEP_LOGS=1` keeps instance logs for passing tests,
 `SOMEWM_EVAL_PACE` tunes the delay between evals (default 0.5s; rapid-fire evals
-return empty), `REQUIRE_ALL=1` turns a SKIP into a suite failure (CI uses this).
+return empty), `REQUIRE_ALL=1` turns a SKIP into a suite failure (CI uses this),
+`JOBS` sets how many tests run at once (default 4; `JOBS=1` runs them one after
+another). Every test names its instances uniquely, so they do not collide.
 
 Instance logs land in `build-test/restart-artifacts/`.
 
