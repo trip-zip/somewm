@@ -2885,8 +2885,12 @@ static bool scene_visibility_quiet(struct wlr_scene_node *node,
     return true;
 }
 
+/* IMAGE covers the cursor, which every output declares; leaving it out
+ * kept the batch from ever engaging on a real screen. The buffer-listener
+ * check in scene_visibility_quiet is what guards a toggle, not the type. */
 static bool batch_command_type(uint32_t type) {
     return type == CLAY_RENDER_COMMAND_TYPE_RECTANGLE ||
+        type == CLAY_RENDER_COMMAND_TYPE_IMAGE ||
         type == CLAY_RENDER_COMMAND_TYPE_BORDER ||
         type == CLAY_RENDER_COMMAND_TYPE_TEXT ||
         type == CLAY_RENDER_COMMAND_TYPE_SCISSOR_START ||

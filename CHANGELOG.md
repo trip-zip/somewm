@@ -42,6 +42,10 @@ All notable changes to somewm will be documented in this file.
 
 ### Fixed
 
+- A frame that adds thousands of scene nodes, such as the inspector over a
+  year calendar, took seconds: wlroots walked the scene once per node. The
+  renderer's batched visibility toggle now engages on outputs with a cursor,
+  and the same frame takes about 100 ms.
 - Textbox markup that spans several lines keeps its colours, backgrounds,
   underlines and strikethroughs past the first line, as in 2.0. Since 2.1
   every later line drew in the first span's colour.

@@ -5760,13 +5760,14 @@ dump_band(buffer_t *buf, struct declare_band *band, Monitor *m)
 		band->frames, capacity.elements, capacity.capacity, capacity.map, capacity.freeIds,
 		band->inspector_authored, band->inspector_elements, band->inspector_strings);
 	buffer_addf(buf, "  commands %d mutations %d created %d swept %d nodes %zu "
-		"raster_bytes %zu buffers %d declare %" PRId64 "us solve %" PRId64 "us "
+		"raster_bytes %zu buffers %d batched %d declare %" PRId64 "us solve %" PRId64 "us "
 		"reconcile %" PRId64 "us\n",
 		band->commands, band->mutations,
 		render_nodes_created(band->render), render_nodes_swept(band->render),
 		render_node_count(band->render),
 		render_raster_bytes(band->render),
 		render_buffers_created(band->render),
+		render_visibility_batched(band->render),
 		band->declare_us, band->solve_us, band->reconcile_us);
 	if (band->context_valid) dump_tree(buf, band);
 	else if (band->retained_dump) buffer_adds(buf, band->retained_dump);
