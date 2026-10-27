@@ -17,6 +17,7 @@
 #   REQUIRE_ALL=1           treat SKIP as a suite failure (CI)
 #   SOMEWM_EVAL_PACE        seconds between evals (default 0.5)
 #   RESTART_TEST_TIMEOUT    per-test timeout in seconds (default 180)
+#   JOBS                    tests run at once (default 4); JOBS=1 is serial
 
 set -u
 
@@ -36,7 +37,8 @@ export SOMEWM SOMEWM_CLIENT
 RESTART_TEST_TIMEOUT=${RESTART_TEST_TIMEOUT:-180}
 REQUIRE_ALL=${REQUIRE_ALL:-0}
 KEEP_LOGS=${KEEP_LOGS:-0}
-export KEEP_LOGS
+JOBS=${JOBS:-4}
+export KEEP_LOGS RESTART_TEST_TIMEOUT REQUIRE_ALL
 
 if [ ! -x "$SOMEWM" ]; then
     echo "Error: somewm binary not found at $SOMEWM" >&2
@@ -49,12 +51,14 @@ if [ ! -x "$SOMEWM_CLIENT" ]; then
 fi
 
 ARTIFACT_DIR=${SOMEWM_RESTART_ARTIFACTS:-$(dirname "$SOMEWM")/restart-artifacts}
-export SOMEWM_RESTART_ARTIFACTS="$ARTIFACT_DIR"
+export SOMEWM_RESTART_ARTIFACTS="$ARTIFACT_DIR" ARTIFACT_DIR
 rm -rf "$ARTIFACT_DIR"
 mkdir -p "$ARTIFACT_DIR"
 
 # One private runtime dir for the whole suite; instances live under
-# $XDG_RUNTIME_DIR/somewm-test/<name>/ and are torn down per test.
+# $XDG_RUNTIME_DIR/somewm-test/<name>/ and are torn down per test. Every
+# test names its instances uniquely and the orchestrator gives each one its
+# own runtime subdir and socket, so tests can run at the same time.
 SUITE_RUNTIME=$(mktemp -d)
 chmod 700 "$SUITE_RUNTIME"
 export SOMEWM_RESTART_RUNTIME="$SUITE_RUNTIME"
@@ -75,6 +79,7 @@ if [ -z "$DBUS_RUN_SESSION" ]; then
     echo "Warning: dbus-run-session not found, D-Bus tests will skip" >&2
     export SOMEWM_NO_DBUS=1
 fi
+export DBUS_RUN_SESSION
 
 if [ $# -eq 0 ]; then
     tests=$(find tests/restart -maxdepth 1 -name '*.sh' -type f ! -name 'lib.sh' | sort)
@@ -82,17 +87,17 @@ else
     tests="$*"
 fi
 
-pass_n=0; fail_n=0; xfail_n=0; xpass_n=0; skip_n=0; error_n=0
-failed_tests=""
-suite_start=$(date +%s.%N)
-
-for t in $tests; do
+# Run one test and leave its verdict in $ARTIFACT_DIR/<name>.verdict and
+# the text to print in <name>.report. Nothing is printed here: workers run
+# at the same time, and the main loop prints the reports in test order.
+run_one() {
+    local t="$1" name declared status_file err_file start out rc dur
+    local asserted assert_failed pass_c fail_c verdict detail green outcome
     name=$(basename "$t" .sh)
     if [ ! -f "$t" ]; then
-        echo "Error: no such test: $t" >&2
-        error_n=$((error_n + 1))
-        failed_tests="$failed_tests $name"
-        continue
+        echo "Error: no such test: $t" > "$ARTIFACT_DIR/$name.report"
+        echo "ERROR 0" > "$ARTIFACT_DIR/$name.verdict"
+        return
     fi
 
     # Read the xfail declaration statically, so the classification survives a
@@ -145,60 +150,79 @@ for t in $tests; do
     esac
 
     if [ "$outcome" = SKIP ]; then
-        verdict=SKIP; skip_n=$((skip_n + 1))
+        verdict=SKIP
         [ "$REQUIRE_ALL" = 1 ] && { green=0; detail="skipped under REQUIRE_ALL=1"; }
     elif [ -z "$declared" ]; then
         verdict=$outcome
-        case $outcome in
-            PASS)  pass_n=$((pass_n + 1)) ;;
-            FAIL)  fail_n=$((fail_n + 1)); green=0 ;;
-            ERROR) error_n=$((error_n + 1)); green=0 ;;
-        esac
+        case $outcome in FAIL|ERROR) green=0 ;; esac
     else
         case $outcome in
-            PASS) verdict=XPASS; detail="$declared appears fixed"
-                  xpass_n=$((xpass_n + 1)); green=0 ;;
+            PASS) verdict=XPASS; detail="$declared appears fixed"; green=0 ;;
             # An expected failure has to fail for its own reason: an assertion
             # must be what failed, which FAIL already means. Anything else
             # lands in the ERROR arm below as a broken test, not a pinned
             # defect. A first-assertion failure is a legitimate xfail, so this
             # must not also demand a passing assertion.
-            FAIL) verdict=XFAIL; detail="$declared"; xfail_n=$((xfail_n + 1)) ;;
-            ERROR) verdict=ERROR; error_n=$((error_n + 1)); green=0
+            FAIL) verdict=XFAIL; detail="$declared" ;;
+            ERROR) verdict=ERROR; green=0
                    detail="xfail $declared: ${detail:-broken}" ;;
         esac
     fi
 
-    printf -- '--- %s: %s (%.2fs)\n' "$verdict" "$name" "$dur"
-    [ -n "$detail" ] && echo "    $detail"
+    {
+        printf -- '--- %s: %s (%.2fs)\n' "$verdict" "$name" "$dur"
+        [ -n "$detail" ] && echo "    $detail"
 
-    if [ "$green" = 0 ]; then
-        failed_tests="$failed_tests $name"
-        echo "$out" | sed 's/^/    /'
-        if [ -s "$err_file" ]; then
-            echo "    --- stderr ---"
-            tail -20 "$err_file" | sed 's/^/    /'
+        if [ "$green" = 0 ]; then
+            echo "$out" | sed 's/^/    /'
+            if [ -s "$err_file" ]; then
+                echo "    --- stderr ---"
+                tail -20 "$err_file" | sed 's/^/    /'
+            fi
+            for log in "$ARTIFACT_DIR/$name-"*.log; do
+                [ -f "$log" ] || continue
+                echo "    --- $log ---"
+                tail -60 "$log" | sed 's/^/    /'
+                echo "    --- hot-reload markers ---"
+                grep -E 'hot-reload:|lgi_guard:|stale GLib sources|outlived the state|FORCEFULLY ABORTED|FATAL:' \
+                    "$log" | sed 's/^/    /' || echo "    (none)"
+            done
+            if [ "$verdict" = XPASS ]; then
+                echo "    Delete the '# xfail: $declared' line from $t"
+                echo "    and update tests/restart/README.md."
+            fi
+        else
+            echo "$out" | grep -E '^  (ok|FAIL|info):' | sed 's/^/    /' || true
+            rm -f "$err_file"
+            if [ "$KEEP_LOGS" != 1 ]; then
+                rm -f "$ARTIFACT_DIR/$name-"*.log
+            fi
         fi
-        for log in "$ARTIFACT_DIR/$name-"*.log; do
-            [ -f "$log" ] || continue
-            echo "    --- $log ---"
-            tail -60 "$log" | sed 's/^/    /'
-            echo "    --- hot-reload markers ---"
-            grep -E 'hot-reload:|lgi_guard:|stale GLib sources|outlived the state|FORCEFULLY ABORTED|FATAL:' \
-                "$log" | sed 's/^/    /' || echo "    (none)"
-        done
-        if [ "$verdict" = XPASS ]; then
-            echo "    Delete the '# xfail: $declared' line from $t"
-            echo "    and update tests/restart/README.md."
-        fi
-    else
-        echo "$out" | grep -E '^  (ok|FAIL|info):' | sed 's/^/    /' || true
-        rm -f "$err_file"
-        if [ "$KEEP_LOGS" != 1 ]; then
-            rm -f "$ARTIFACT_DIR/$name-"*.log
-        fi
-    fi
+    } > "$ARTIFACT_DIR/$name.report"
+    echo "$verdict $green" > "$ARTIFACT_DIR/$name.verdict"
     rm -f "$status_file"
+}
+export -f run_one
+
+suite_start=$(date +%s.%N)
+printf '%s\n' $tests | xargs -P "$JOBS" -n 1 bash -c 'run_one "$0"'
+
+pass_n=0; fail_n=0; xfail_n=0; xpass_n=0; skip_n=0; error_n=0
+failed_tests=""
+for t in $tests; do
+    name=$(basename "$t" .sh)
+    cat "$ARTIFACT_DIR/$name.report"
+    read -r verdict green < "$ARTIFACT_DIR/$name.verdict"
+    case $verdict in
+        PASS)  pass_n=$((pass_n + 1)) ;;
+        FAIL)  fail_n=$((fail_n + 1)) ;;
+        XFAIL) xfail_n=$((xfail_n + 1)) ;;
+        XPASS) xpass_n=$((xpass_n + 1)) ;;
+        SKIP)  skip_n=$((skip_n + 1)) ;;
+        ERROR) error_n=$((error_n + 1)) ;;
+    esac
+    [ "$green" = 0 ] && failed_tests="$failed_tests $name"
+    rm -f "$ARTIFACT_DIR/$name.report" "$ARTIFACT_DIR/$name.verdict"
 done
 
 suite_dur=$(echo "$(date +%s.%N) - $suite_start" | bc)
