@@ -44,10 +44,6 @@ runner.run_async(function()
                     local report = dir and assert(io.open(dir .. '/' .. name .. '.geometry', 'w'))
                     for i, c in ipairs(clients) do
                         local g = c:geometry()
-                        local f = assert(io.open(reports[i]))
-                        local w, h = f:read('*a'):match('(%d+)%s+(%d+)')
-                        f:close()
-                        assert(tonumber(w) and tonumber(h), 'missing configure')
                         local sw, sh
                         for line in dump:gmatch('[^\n]+') do
                             if line:match('^%s+SURFACE ' .. c.class .. ' ') then
@@ -55,6 +51,8 @@ runner.run_async(function()
                                 break
                             end
                         end
+                        local w, h = utils.wait_for_configure(reports[i], sw, sh)
+                        assert(tonumber(w) and tonumber(h), 'missing configure')
                         assert(w == sw and h == sh, 'configure differs from solved surface: ' .. name .. ' ' .. c.class)
                         example.pixel(g.x + math.floor(g.width / 2), g.y + math.floor(g.height / 2), '#' .. colors[i]:sub(3))
                         if report then report:write(string.format('%s %d %d %d %d configure %s %s\n', c.class, g.x, g.y, g.width, g.height, w, h)) end
