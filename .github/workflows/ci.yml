@@ -15,11 +15,44 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # One image per Lua variant, from .github/ci.Dockerfile, tagged by that
+  # file's hash. The build runs only when the tag is missing from GHCR, so a
+  # normal run spends about 20s here and the matrix skips apt entirely.
+  image:
+    runs-on: ubuntu-latest
+    permissions:
+      packages: write
+    outputs:
+      prefix: ${{ steps.tag.outputs.prefix }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Tag
+        id: tag
+        run: echo "prefix=ghcr.io/${{ github.repository }}-ci:${{ hashFiles('.github/ci.Dockerfile') }}" >> "$GITHUB_OUTPUT"
+
+      - name: Build and push missing images
+        run: |
+          set -eu
+          echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+          for v in "luajit libluajit-5.1-dev" "lua5.2 liblua5.2-dev" "lua5.3 liblua5.3-dev"; do
+            set -- $v
+            ref="${{ steps.tag.outputs.prefix }}-$1"
+            if docker manifest inspect "$ref" >/dev/null 2>&1; then
+              echo "$ref exists"
+              continue
+            fi
+            docker build -f .github/ci.Dockerfile \
+              --build-arg LUA_INTERPRETER="$1" --build-arg LUA_DEV_PACKAGE="$2" \
+              -t "$ref" .github
+            docker push "$ref"
+          done
+
   build-and-test:
-    runs-on: ubuntu-26.04
-    env:
-      DEBIAN_FRONTEND: noninteractive
-      TZ: Etc/UTC
+    needs: image
+    runs-on: ubuntu-latest
+    container: ${{ needs.image.outputs.prefix }}-${{ matrix.lua.interpreter }}
 
     strategy:
       fail-fast: false
@@ -27,15 +60,12 @@ jobs:
         lua:
           - name: LuaJIT
             pkg: luajit
-            dev_package: libluajit-5.1-dev
             interpreter: luajit
           - name: Lua 5.2
             pkg: lua5.2
-            dev_package: liblua5.2-dev
             interpreter: lua5.2
           - name: Lua 5.3
             pkg: lua5.3
-            dev_package: liblua5.3-dev
             interpreter: lua5.3
 
     name: Build & Test (${{ matrix.lua.name }})
@@ -44,72 +74,8 @@ jobs:
       - name: Checkout
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
-      - name: Install dependencies
-        run: |
-          sudo ln -fs /usr/share/zoneinfo/Etc/UTC /etc/localtime
-          sudo sh -c 'echo Etc/UTC > /etc/timezone'
-          sudo apt-get update
-          sudo DEBIAN_FRONTEND=noninteractive TZ=Etc/UTC apt-get install -y --no-install-recommends \
-            build-essential \
-            fonts-noto-cjk \
-            wlr-randr \
-            grim \
-            dpkg-dev \
-            ninja-build \
-            python3-pip \
-            pkg-config \
-            wayland-protocols \
-            libwayland-dev \
-            libxkbcommon-dev \
-            libinput-dev \
-            libdbus-1-dev \
-            dbus \
-            libglib2.0-bin \
-            bc \
-            libdrm-dev \
-            libgbm-dev \
-            libegl-dev \
-            libgles-dev \
-            libpixman-1-dev \
-            libudev-dev \
-            libseat-dev \
-            libxcb1-dev \
-            libxcb-icccm4-dev \
-            libxcb-composite0-dev \
-            libxcb-render0-dev \
-            libxcb-render-util0-dev \
-            libxcb-res0-dev \
-            libxcb-ewmh-dev \
-            libxcb-errors-dev \
-            libxcb-xfixes0-dev \
-            libxcb-xinput-dev \
-            libxcb-util-dev \
-            libxcb-dri3-dev \
-            libxcb-present-dev \
-            libxcb-shm0-dev \
-            hwdata \
-            libdisplay-info-dev \
-            libliftoff-dev \
-            ${{ matrix.lua.interpreter }} \
-            ${{ matrix.lua.dev_package }} \
-            lua-busted \
-            lua-lgi \
-            luarocks \
-            libcairo2-dev \
-            libpango1.0-dev \
-            libgdk-pixbuf-2.0-dev \
-            librsvg2-dev \
-            libglib2.0-dev \
-            libgirepository1.0-dev \
-            gir1.2-pango-1.0 \
-            gir1.2-gdk-3.0 \
-            gir1.2-rsvg-2.0 \
-            libxml2-dev \
-            bison \
-            foot \
-            xterm \
-            xwayland \
-            zsh
+      - name: Trust the checkout
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
 
       - name: Show test font resolution
         env:
@@ -117,42 +83,6 @@ jobs:
         run: |
           fc-match -v sans | grep -E 'family|fontversion'
           fc-match -v monospace | grep -E 'family|fontversion'
-
-      - name: Upgrade meson
-        run: python3 -m pip install --upgrade --break-system-packages meson
-
-      - name: Cache Lua 5.2 CI deps
-        if: matrix.lua.pkg == 'lua5.2'
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
-        with:
-          path: ~/lua-5.2-ci
-          key: deps-lua5.2-ci-lgi-0.9.2-busted-2.3.0-${{ runner.os }}}-v2
-
-      - name: Prepare Lua 5.2 CI deps
-        if: matrix.lua.pkg == 'lua5.2'
-        run: |
-          set -eu
-          mkdir -p "$HOME/lua-5.2-ci"
-
-          # Ubuntu no longer ships these modules for Lua 5.2 (just 5.1 and 5.3), so build them from source.
-          if [ ! -f "$HOME/lua-5.2-ci/share/lua/5.2/lgi/init.lua" ]; then
-            sudo sed -i 's/^Types: deb$/Types: deb deb-src/' /etc/apt/sources.list.d/ubuntu.sources
-            sudo apt-get update
-            cd /tmp
-            apt-get source lua-lgi
-            cd lua-lgi-*/
-            make -C lgi LUA_VERSION=5.2 PREFIX="$HOME/lua-5.2-ci" LUA_CFLAGS="$(pkg-config --cflags lua5.2)" VERSION=0.9.2
-            make -C lgi install LUA_VERSION=5.2 PREFIX="$HOME/lua-5.2-ci" LUA_CFLAGS="$(pkg-config --cflags lua5.2)" VERSION=0.9.2
-          fi
-
-          if [ ! -x "$HOME/lua-5.2-ci/bin/busted" ]; then
-            luarocks --lua-version=5.2 --tree="$HOME/lua-5.2-ci" install busted 2.3.0-1
-          fi
-
-          sudo mkdir -p /usr/local/share/lua/5.2 /usr/local/lib/lua/5.2
-          sudo cp -a "$HOME/lua-5.2-ci/share/lua/5.2/." /usr/local/share/lua/5.2/
-          sudo cp -a "$HOME/lua-5.2-ci/lib/lua/5.2/." /usr/local/lib/lua/5.2/
-          sudo install -Dm755 "$HOME/lua-5.2-ci/bin/busted" /usr/local/bin/busted
 
       - name: Build somewm
         run: |
