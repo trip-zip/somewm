@@ -52,7 +52,15 @@ jobs:
   build-and-test:
     needs: image
     runs-on: ubuntu-latest
-    container: ${{ needs.image.outputs.prefix }}-${{ matrix.lua.interpreter }}
+    permissions:
+      contents: read
+      packages: read
+    # The package is private, so the pull needs the token.
+    container:
+      image: ${{ needs.image.outputs.prefix }}-${{ matrix.lua.interpreter }}
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
 
     strategy:
       fail-fast: false
