@@ -24,13 +24,16 @@ jobs:
       packages: write
     outputs:
       prefix: ${{ steps.tag.outputs.prefix }}
+      compat: ${{ steps.tag.outputs.compat }}
     steps:
       - name: Checkout
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
       - name: Tag
         id: tag
-        run: echo "prefix=ghcr.io/${{ github.repository }}-ci:${{ hashFiles('.github/ci.Dockerfile') }}" >> "$GITHUB_OUTPUT"
+        run: |
+          echo "prefix=ghcr.io/${{ github.repository }}-ci:${{ hashFiles('.github/ci.Dockerfile') }}" >> "$GITHUB_OUTPUT"
+          echo "compat=ghcr.io/${{ github.repository }}-ci:${{ hashFiles('.github/lua-compat.Dockerfile') }}-compat" >> "$GITHUB_OUTPUT"
 
       - name: Build and push missing images
         run: |
@@ -48,6 +51,11 @@ jobs:
               -t "$ref" .github
             docker push "$ref"
           done
+          ref="${{ steps.tag.outputs.compat }}"
+          if ! docker manifest inspect "$ref" >/dev/null 2>&1; then
+            docker build -f .github/lua-compat.Dockerfile -t "$ref" .github
+            docker push "$ref"
+          fi
 
   build-and-test:
     needs: image
@@ -103,6 +111,46 @@ jobs:
         run: timeout 1500 make test-ci
         timeout-minutes: 30
 
+  # The restart suite is 38 serial compositor starts, about 250s. Its own job
+  # runs it beside the integration step instead of after it.
+  restart-tests:
+    needs: image
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: read
+    container:
+      image: ${{ needs.image.outputs.prefix }}-${{ matrix.lua.interpreter }}
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+
+    strategy:
+      fail-fast: false
+      matrix:
+        lua:
+          - name: LuaJIT
+            pkg: luajit
+            interpreter: luajit
+          - name: Lua 5.2
+            pkg: lua5.2
+            interpreter: lua5.2
+          - name: Lua 5.3
+            pkg: lua5.3
+            interpreter: lua5.3
+
+    name: Restart (${{ matrix.lua.name }})
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Trust the checkout
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+
+      - name: Build somewm
+        run: make build-test LUA_PKG=${{ matrix.lua.pkg }}
+
       - name: Run restart / hot-reload tests
         # No X client can connect on the runners, so the X11 restart test is
         # left out the way the integration step leaves out test-xwayland-*.
@@ -113,10 +161,10 @@ jobs:
         env:
           LIBSEAT_BACKEND: noop
           REQUIRE_ALL: 1
-          # The suite runs in ~150s and its slowest test takes ~13s, so 60s per
-          # test is generous. The default 180 is not: a handful of hung tests
-          # would spend the 900s budget above, and an outer kill reports no
-          # verdict at all, where a per-test timeout names the test that hung.
+          # The slowest test takes ~15s, so 60s per test is generous. The
+          # default 180 is not: a handful of hung tests would spend the 900s
+          # budget above, and an outer kill reports no verdict at all, where a
+          # per-test timeout names the test that hung.
           RESTART_TEST_TIMEOUT: 60
 
       - name: Upload restart test logs
@@ -128,17 +176,19 @@ jobs:
           if-no-files-found: ignore
 
   lua-compat:
-    runs-on: ubuntu-26.04
+    needs: image
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: read
+    container:
+      image: ${{ needs.image.outputs.compat }}
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-
-      - name: Install Lua interpreters
-        run: |
-          sudo apt-get update
-          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-            librsvg2-dev \
-            luajit lua5.1 lua5.2 lua5.3 lua5.4
 
       - name: Parse lua/ with every interpreter
         run: ./tests/check-lua-compat.sh
