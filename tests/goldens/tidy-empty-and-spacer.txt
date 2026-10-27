@@ -10,8 +10,8 @@ output
       POPUP screen 1 converted w=fit h=fit row pad 1,1,1,1
         clip w=grow h=grow row
         wibox.layout.fixed w=fit h=fit row gap 4
-          wibox.widget.textbox w=fit h=grow row
+          wibox.widget.textbox cut=both w=fit h=grow row
             text "A" font=1
           wibox.widget.base w=fixed(20) user h=grow user row
-          wibox.widget.textbox w=fit h=grow row
+          wibox.widget.textbox cut=both w=fit h=grow row
             text "B" font=1

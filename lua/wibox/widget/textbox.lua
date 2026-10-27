@@ -500,12 +500,17 @@ end
 -- .childAlignment } }) { CLAY_TEXT(text, CLAY_TEXT_CONFIG({ .fontId,
 -- .textColor, .wrapMode, .textAlignment })) }`. The face is interned with
 -- an absolute size at the context's dpi (render_text.h), since Clay's
--- fontSize is a whole number (third_party/clay.h:374-398). Clay wraps by
--- words and never by character, and the renderer ellipsizes a line at its
--- clip. Markup uses the first font; colour, alpha, background, underline and strikethrough spans
--- draw at raster time. Justify, indent and line spacing are not applied,
--- and start and middle ellipses use the end. Only a face that cannot be
--- interned is refused.
+-- fontSize is a whole number (third_party/clay.h:374-398). `ellipsize`
+-- picks one of Clay's two text behaviors, since Clay has no truncation: with
+-- it set (the default), the textbox is a cut node (widget.h) holding text
+-- that breaks only at newlines: the box it is given bounds it on both axes,
+-- as Pango's did, and a squeezed line is cut at the node's edge where the
+-- renderer draws the ellipsis; with "none", the text wraps by words (never
+-- by character) and is never cut. Markup uses the first
+-- font; colour, alpha, background, underline and strikethrough spans draw at
+-- raster time. Justify, indent and line spacing are not applied, and start
+-- and middle ellipses use the end. Only a face that cannot be interned is
+-- refused.
 -- Pango inputs do not depend on a grid's natural/minimum/height offer.
 -- Cache only the semantic text inputs, never declarations or solved geometry.
 -- Widget signals invalidate content/style; DPI has its own cache key. Fit calls
@@ -594,7 +599,9 @@ local function describe_textbox(w, fg, st)
         color = { 0, 0, 0, 0 }
     end
     return { align = { x = inputs.halign, y = w._private.valign or "center" },
-        specs = { { text = inputs.text, font = inputs.font, color = color, attrs = inputs.attrs, wrap = "words",
+        cut = inputs.ellipsize and "both" or nil,
+        specs = { { text = inputs.text, font = inputs.font, color = color, attrs = inputs.attrs,
+            wrap = inputs.ellipsize and "newlines" or "words",
             halign = inputs.halign, ellipsize = inputs.ellipsize, name = "text" } } }
 end
 

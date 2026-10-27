@@ -49,7 +49,7 @@ runner.run_async(function()
     local box = wibox {screen = s, x = 100, y = 100, width = 160, height = 60,
         visible = true, bg = '#000000', fg = '#ffffff',
         widget = wibox.container.constraint(wibox.widget {
-            widget = wibox.widget.textbox, wrap = 'word', text = text}, 'max', 160)}
+            widget = wibox.widget.textbox, wrap = 'word', ellipsize = 'none', text = text}, 'max', 160)}
     async.sleep(0.2)
     local dump = awesome._clay_tree(s)
     example.save('text-newline-after-wide-word', dump)

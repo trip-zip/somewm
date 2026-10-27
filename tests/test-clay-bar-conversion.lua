@@ -206,11 +206,12 @@ local steps = {
                 "the original stack/align lost the host allocation")
         end),
 
-    -- A tree wider than its bar lays out at its own size and is cut at the
-    -- bar's edge, never squeezed into it: the leaf after a long text sits
-    -- past the edge, where the engine put it.
+    -- A tree wider than its bar is squeezed into it: the text, the largest
+    -- child, gives up the width the leaf needs, and the leaf stays inside
+    -- the bar. AwesomeWM's fixed layout gives the text the whole bar and
+    -- drops the leaf; the leaf staying is the difference.
     bar_step({
-        what = "an overflowing bar is cut, not squeezed",
+        what = "an overflowing bar squeezes its text and keeps the leaf",
         widget = {
             layout = wibox.layout.fixed.horizontal,
             wibox.widget.textbox(("wide "):rep(40)),
@@ -223,13 +224,11 @@ local steps = {
         local text = bar._drawable._clay_wired[children[1]][1].element.box
         local leaf = bar._drawable._clay_wired[children[2]][1].element.box
 
-        assert(text.width > bar.width, string.format(
-            "the text was squeezed to %d in a bar of %d", text.width, bar.width))
+        assert(text.width == bar.width - 30, string.format(
+            "the text takes %d of a bar of %d, want %d", text.width, bar.width, bar.width - 30))
         assert(leaf.x == text.width and leaf.width == 30, string.format(
             "the leaf sits at %d+%d, want %d+30", leaf.x, leaf.width, text.width))
-        -- The host header is the real root; the allocated textbox retains
-        -- its container around the native glyph beside the color leaf.
-        assert(text.x == 0 and leaf.y == 0, "overflow changed original local coordinates")
+        assert(text.x == 0 and leaf.y == 0, "squeezing changed original local coordinates")
     end),
 
     -- A transparent bar converts: its root draws nothing and still takes

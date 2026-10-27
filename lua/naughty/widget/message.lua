@@ -60,6 +60,8 @@ local function new(args)
     args = args or {}
     local tb = textbox()
     tb:set_wrap("word")
+    -- The body wraps at the notification's width, as AwesomeWM's does.
+    tb:set_ellipsize("none")
     tb:set_font(beautiful.notification_font)
     tb._private.notification = {}
 

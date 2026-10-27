@@ -29,6 +29,7 @@ Grid dependency stages use private geometry copies and private callbacks. Public
 | `clay_clips_begin` | Copies `scrollContainerDatas`, clears its length and restores inspector records identified by their `layoutElements` addresses so authored scroll containers claim the remaining records first. |
 | `clay_scroll_offset` | Reads the application copy of `scrollContainerDatas` by element ID to recover an offset before redeclaration; it does not access the current context directly. |
 | `clay_clip_restore` | Reads the open element through `openLayoutElementStack` and `layoutElements`; writes the matching `scrollContainerDatas` record, updates its element pointer and marks it open this frame. |
+| `clay_clip_release` | Reads the open element and removes its `scrollContainerDatas` record, so a cut node (a clip that never scrolls) spends none of the 100; its clip config still sizes and clips it. |
 | `clay_declaration_full` | Reads `layoutElements.length` and `.capacity` to stop application declarations before the element array fills. |
 | `clay_capacity_failed` | Reads `booleanWarnings` for element, ID-map, measured-text and render-command exhaustion after solving. |
 | `clay_inspector_fits` | Reads `layoutElements.length`, `maxElementCount`, `dynamicStringData.capacity` and ID-map lengths to bound debug-view elements, temporary strings and live IDs before traversal. |

@@ -10,4 +10,5 @@ output
       POPUP screen 1 converted w=fit h=fit row pad 1,1,1,1
         clip w=grow h=grow row
         wibox.container.background w=fit h=fit row
-          text "Click" font=1
+          wibox.widget.textbox cut=both w=fit h=fit row
+            text "Click" font=1

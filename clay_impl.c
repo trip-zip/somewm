@@ -104,6 +104,20 @@ void clay_clip_restore(void)
     }
 }
 
+/* A cut node clips without scrolling. Its clip config alone drives sizing
+ * and the scissor (clay.h:1894, 2406, 2823); the record Clay added when it
+ * was configured is only scroll state, so give it back at once. */
+void clay_clip_release(void)
+{
+    Clay_Context *c = Clay_GetCurrentContext();
+    Clay_LayoutElement *element = Clay__GetOpenLayoutElement();
+    for (int i = 0; i < c->scrollContainerDatas.length; i++) {
+        if (c->scrollContainerDatas.internalArray[i].layoutElement != element) continue;
+        Clay__ScrollContainerDataInternalArray_RemoveSwapback(&c->scrollContainerDatas, i);
+        return;
+    }
+}
+
 bool clay_declaration_full(void)
 {
     Clay_Context *c = Clay_GetCurrentContext();

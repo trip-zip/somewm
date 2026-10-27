@@ -168,6 +168,12 @@ struct widget_node {
 	float aspect;
 	float image_size[2];
 	uint8_t scroll;      /* 0 none, 1 x, 2 y, 3 both */
+	/* A cut node is a Clay clip that never scrolls: Clay excludes its
+	 * children from its minimum (clay.h:1894-1896), so it compresses below
+	 * their content, and the renderer cuts what overflows. declare.c gives
+	 * its scroll record back right after configuring it, so it spends none
+	 * of the 100. Same axis values as scroll. */
+	uint8_t cut;
 	bool track, thumb;
 	/* The child offset this scroll node last declared; written only where
 	 * declare.c declares it, so a moved record publishes the tree. */
@@ -233,8 +239,9 @@ struct widget_node {
  * budget leaves headroom but does not prove ID or command capacity sufficient. */
 #define WIDGET_NODES_OUTPUT_MAX 12288
 
-/* Clay has 100 clip records per output. Declaration reserves scrolling
- * before granting the remaining records to hosts for overflow sizing. */
+/* Clay has 100 scroll records per output (clay.h:2251). Scrolling nodes
+ * and the inspector hold at most 99 of them; the last is passed through by
+ * cut nodes, each of which claims and releases it in turn. */
 #define WIDGET_SCROLLS_OUTPUT_MAX 100
 
 /* What the last widget_nodes_set() answered, kept so the tree dump can say

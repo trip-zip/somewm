@@ -98,7 +98,7 @@ local steps = {
                 bar.drawin.x, bar.drawin.y))
         -- The textbox converts to a text element: the tree names it and
         -- its run, and the renderer draws the run as a TEXT command.
-        assert_line("the textbox element", "wibox.widget.textbox w=")
+        assert_line("the textbox element", "wibox.widget.textbox cut=both w=")
         assert_line("the text run", 'text "bar" font=')
         assert_line("the text command", "TEXT")
         assert_agrees()

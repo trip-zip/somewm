@@ -108,17 +108,18 @@ local steps = {
         end
         local im = images(count, 3)
         if not im then return nil end
-        -- With no height bound each image declares its natural 24, which is
-        -- each row's content minimum: the rows overflow the 70 high bar.
+        -- Each image declares its natural 24, but three of them and two gaps
+        -- do not fit 70: the rows compress to equal 20s, as AwesomeWM's flex
+        -- gives each (70 - 10) / 3.
         for _, line in ipairs(im) do
             assert(line:find("w=fit>=24 user h=fit ", 1, true), line)
         end
-        check_box(im[1], 0, 0, 24, 24)
-        check_box(im[2], 0, 29, 24, 24)
-        check_box(im[3], 0, 58, 24, 24)
+        check_box(im[1], 0, 0, 20, 20)
+        check_box(im[2], 0, 25, 20, 20)
+        check_box(im[3], 0, 50, 20, 20)
         assert(pixel(10, 10, "#ff0000") and pixel(10, 35, "#00ff00")
-            and pixel(10, 60, "#0000ff"), "the rows are not 24 high and 5 apart")
-        io.stderr:write("[PASS] the rows leave out the gaps\n")
+            and pixel(10, 60, "#0000ff"), "the rows are not 20 high and 5 apart")
+        io.stderr:write("[PASS] the rows share the bar and leave out the gaps\n")
         return true
     end,
     function(count)

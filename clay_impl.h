@@ -24,6 +24,7 @@ void clay_scroll_set(Clay_ElementId id, float x, float y);
 void clay_clips_begin(int inspector_start, bool inspecting);
 Clay_Vector2 clay_scroll_offset(Clay_ElementId id);
 void clay_clip_restore(void);
+void clay_clip_release(void);
 /* Read a non-text element in the current declaration, without solving it. */
 void clay_entrances_first(void);
 void clay_exit_initial(Clay_TransitionCallbackArguments *arguments);

@@ -108,8 +108,8 @@ struct declare_band {
     struct widget_tree **retired;
     size_t retired_len;
     int fail_elements;
-    size_t host_clips_left, clips_declared;
-    bool clip_warning;
+    size_t clips_declared;
+    bool cut_pending;    /* configuring a cut node: no record is counted */
     /* The scrollbar records of this band's last frame. */
     struct scrollbar_record scrollbar_records[WIDGET_SCROLLS_OUTPUT_MAX * 2];
     size_t scrollbar_records_len;
@@ -438,7 +438,8 @@ static void native_configure(const Clay_ElementDeclaration *declaration)
 {
     if (recording && recording->exhausted) return;
     bool clip = declaration->clip.horizontal || declaration->clip.vertical;
-    if (clip && recording && recording->clips_declared++ == WIDGET_SCROLLS_OUTPUT_MAX) {
+    if (clip && recording && !recording->cut_pending
+            && recording->clips_declared++ == WIDGET_SCROLLS_OUTPUT_MAX) {
         recording->exhausted = true;
         fprintf(stderr, "clay scrolling declarations exceed 100 records; retained scene\n");
         return;
@@ -1630,10 +1631,10 @@ widget_node_decl(const struct widget_node *n, int16_t z,
 		e.border.width = (Clay_BorderWidth) {
 			n->bw[0], n->bw[1], n->bw[2], n->bw[3], 0 };
 	}
-	if (n->scroll) {
+	if (n->scroll || n->cut) {
 		e.clip = (Clay_ClipElementConfig) {
-			.horizontal = n->scroll & 1,
-			.vertical = n->scroll & 2,
+			.horizontal = (n->scroll | n->cut) & 1,
+			.vertical = (n->scroll | n->cut) & 2,
 		};
 	}
 	if (n->transition.enabled) e.transition = transition_config(&n->transition);
@@ -1653,22 +1654,6 @@ widget_node_decl(const struct widget_node *n, int16_t z,
 	return e;
 }
 
-/* Scrolling takes its records before hosts. A host without a native record
- * still opens its renderer scope, but its children use compressible sizing. */
-static bool host_clip(const struct widget_host *host)
-{
-    if (recording->host_clips_left) {
-        recording->host_clips_left--;
-        return true;
-    }
-    if (!recording->clip_warning) {
-        recording->clip_warning = true;
-        fprintf(stderr, "clay host clip budget exhausted on %s: host %u, widget %s; renderer clips compressed content\n",
-            host->m->wlr_output->name, host->id,
-            host->tree->nodes[0].widget ? "bound root" : "anonymous root");
-    }
-    return false;
-}
 
 static size_t
 widget_subtree_end(const struct widget_tree *d, size_t i)
@@ -1984,11 +1969,9 @@ declare_widget_subtree(const struct widget_host *host, size_t i, Clay_ElementId 
 		return declare_layout_client(host, i, &e, ids);
 	if (host->inner_clip && n->floating)
 		e.floating.clipTo = CLAY_CLIP_TO_ATTACHED_PARENT;
-	/* A native clip preserves natural overflow sizing while records remain.
-	 * Pixel clipping is always supplied by the root's renderer scope. */
-	if (i == 0 && !host->inner_clip && !host->layout && n->sizing[0] == WIDGET_SIZING_FIXED
-			&& n->sizing[1] == WIDGET_SIZING_FIXED && !n->scroll && host_clip(host))
-		e.clip = (Clay_ClipElementConfig) {.horizontal = true, .vertical = true};
+	/* The root declares no Clay clip: a clipping parent never compresses its
+	 * children (clay.h:2406-2408), and a root's content must fit its drawin.
+	 * The root's renderer scope clips the pixels. */
 	if (i == 0 && host->flow && !root_decl) {
 		/* A bar's root fills the slot the frame sized for it; the
 		 * drawin's geometry is what this element solves to. */
@@ -2098,7 +2081,14 @@ declare_widget_subtree(const struct widget_host *host, size_t i, Clay_ElementId 
 			declare_output_mark_dirty(host->m->declare);
 		}
 	}
-	native_configure(&e);
+	if (n->cut) {
+		recording->cut_pending = true;
+		native_configure(&e);
+		recording->cut_pending = false;
+		if (!recording->exhausted)
+			clay_clip_release();
+	} else
+		native_configure(&e);
     if (i == 0 && root_decl) root_entrance(id, &e);
 	/* A layout prints a line per node; its tree has no widget lines. */
 	if (host->layout)
@@ -2282,20 +2272,25 @@ declare_widget_frame(drawin_t *d, struct widget_host *host, Clay_ElementId id,
 	if (host->inner_clip) {
 		/* Fills the slot's padded box and carries the root's clip scope,
 		 * so the border paints outside it with the slot's own metadata.
-		 * A FIT or GROW child of a clipping axis keeps its content's
-		 * size (third_party/clay.h:2407, 2502), so a root that is not
-		 * FIXED leaves that axis to the renderer's clip and is bounded
-		 * by the frame's box. */
-		bool native_clip = host_clip(host);
+		 * It declares no Clay clip, so the tree compresses into it. On an
+		 * axis of definite length (fixed, or a fit whose floor is its
+		 * ceiling) it is the frame's whole box and the renderer cuts what
+		 * cannot compress. A PERCENT element reports no length while its
+		 * parent closes (clay.h:1937-1945), so a content-sized axis grows. */
+		bool definite[2];
+		for (int a = 0; a < 2; a++)
+			definite[a] = n->sizing[a] == WIDGET_SIZING_FIXED
+				|| (n->sizing[a] == WIDGET_SIZING_FIT && n->max[a] > 0
+					&& n->min[a] == n->max[a]);
 		Clay_ElementDeclaration inner = {
 			.layout = {
-				.sizing = { native_clip ? CLAY_SIZING_GROW(0) : clay_percent(1),
-					native_clip ? CLAY_SIZING_GROW(0) : clay_percent(1) },
+				.sizing = {
+					definite[0] ? clay_percent(1) : CLAY_SIZING_GROW(0),
+					definite[1] ? clay_percent(1) : CLAY_SIZING_GROW(0),
+				},
 				.layoutDirection = slot->layout.layoutDirection,
 				.childAlignment = slot->layout.childAlignment,
 			},
-			.clip = { .horizontal = native_clip && n->sizing[0] == WIDGET_SIZING_FIXED,
-				.vertical = native_clip && n->sizing[1] == WIDGET_SIZING_FIXED },
 			.custom.customData = RENDER_CLIP_MARK,
 			.userData = userdata_clip(word, n->clip_opens,
 				host->frame_clip ? WIDGET_FRAME_SCOPE : 0),
@@ -3222,7 +3217,7 @@ output_wallpaper_fill(Monitor *m, Clay_ElementId id, Clay_ElementDeclaration *o)
 	for (size_t i = 0; i < tree->nodes_len; i++) {
 		const struct widget_node *n = &tree->nodes[i];
 		if (n->children > 1 || n->shape || n->text || n->floating
-				|| n->scroll || n->radius || n->border[3] || n->aspect
+				|| n->scroll || n->cut || n->radius || n->border[3] || n->aspect
 				|| n->pad[0] || n->pad[1] || n->pad[2] || n->pad[3])
 			return;
 		/* The host's fixed axes already equal OUTPUT; descendants must
@@ -3644,14 +3639,14 @@ static bool clips_prepare(Monitor *m)
     for (size_t i = 0; i < screen_declarations_len; i++)
         scrolls += screen_declarations[i].screen->layout.scrolls;
     size_t inspector = Clay_IsDebugModeEnabled() ? 3 : 0;
-    if (scrolls + inspector > WIDGET_SCROLLS_OUTPUT_MAX) {
+    /* One record stays free for cut nodes to pass through (widget.h). */
+    if (scrolls + inspector >= WIDGET_SCROLLS_OUTPUT_MAX) {
         recording->exhausted = true;
         recording->inspector_refused = inspector != 0;
         fprintf(stderr, "clay scrolling budget exhausted on %s: %zu scrolling records and %zu inspector records; retained scene\n",
             m->wlr_output->name, scrolls, inspector);
         return false;
     }
-    recording->host_clips_left = WIDGET_SCROLLS_OUTPUT_MAX - scrolls - inspector;
     recording->clips_declared = inspector;
     return true;
 }
@@ -5254,6 +5249,8 @@ dump_widget_line(buffer_t *buf, const struct widget_host *host, size_t i, Clay_E
 		buffer_addf(buf, " scroll=%s scrolled=%g", n->scroll == 1 ? "x" : "y",
 			offset == 0 ? 0 : -offset);
 	}
+	if (n->cut)
+		buffer_addf(buf, " cut=%s", n->cut == 1 ? "x" : n->cut == 2 ? "y" : "both");
 	if (n->text) {
 		buffer_addf(buf, " \"%.*s\" font=%u", (int)n->text_len,
 			d->text + n->text_off, n->font);
