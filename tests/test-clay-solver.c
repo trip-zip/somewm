@@ -15,6 +15,8 @@
 #include "render_text.h"
 
 #include <assert.h>
+#include <math.h>
+#include <pango/pangocairo.h>
 #include <signal.h>
 #include <setjmp.h>
 #include <stdio.h>
@@ -309,7 +311,144 @@ static void test_overlay_rejected(void) {
 	}
 	stop_context(arena);
 }
+static void check_whole_run_label(const char *value, float scale) {
+    const char *font_name = "DejaVu Sans 13.333333px";
+    int font = render_font_intern(font_name);
+    Clay_String text = {.chars = value, .length = strlen(value)};
+    int whole = render_font_for_run(font, text.chars, text.length);
+    bool spaces_only = strspn(value, " ") == strlen(value);
+    assert((whole == font) == spaces_only);
+    assert(render_font_for_run(font, "", 0) == font);
+    assert(render_font_for_run(font, "   ", 3) == font);
+    assert(render_font_for_run(font, "a\nb", 3) == font);
+    assert(render_font_for_run(font, "a\0b", 3) == font);
+    int rotated = render_font_transformed(whole, 1);
+    assert(render_font_transform(rotated) == 1);
+    assert(rotated == render_font_for_run(render_font_transformed(font, 1), text.chars, text.length));
+
+    void *arena = start_context();
+    Clay_SetMeasureTextFunction(render_measure_text, NULL);
+    render_text_set_measure_scale(scale);
+    PangoContext *context = render_text_context();
+    PangoLayout *layout = pango_layout_new(context);
+    g_object_unref(context);
+    PangoFontDescription *desc = pango_font_description_from_string(font_name);
+    pango_font_description_set_absolute_size(desc, pango_font_description_get_size(desc) * (double)scale);
+    pango_layout_set_font_description(layout, desc);
+    pango_font_description_free(desc);
+    pango_layout_set_text(layout, text.chars, text.length);
+    int w, h;
+    pango_layout_get_pixel_size(layout, &w, &h);
+    Clay_TextElementConfig words = {.fontId = font};
+    Clay_TextElementConfig label = {.fontId = whole, .wrapMode = CLAY_TEXT_WRAP_NEWLINES,
+        .textColor = {255,255,255,255}, .userData = (void *)RENDER_TEXT_ELLIPSIZE};
+    Clay__MeasureTextCacheItem before = *Clay__MeasureTextCached(&text, &words);
+    Clay__MeasureTextCacheItem *measured = Clay__MeasureTextCached(&text, &label);
+    assert(measured->unwrappedDimensions.width == w / scale);
+    if (!spaces_only) assert(measured->minWidth == w / scale);
+    Clay__MeasureTextCacheItem *after = Clay__MeasureTextCached(&text, &words);
+    assert(before.id == after->id);
+    assert((after->id == measured->id) == spaces_only);
+    assert(before.minWidth == after->minWidth);
+    assert(before.unwrappedDimensions.width == after->unwrappedDimensions.width);
+    if (spaces_only) {
+        /* Whitespace reserves width without a glyph buffer to compare. */
+        g_object_unref(layout);
+        stop_context(arena);
+        render_text_set_measure_scale(1);
+        return;
+    }
+
+    Clay_String phrase = CLAY_STRING("  one two three  ");
+    Clay_TextElementConfig phrase_label = label;
+    phrase_label.fontId = render_font_for_run(font, phrase.chars, phrase.length);
+    pango_layout_set_text(layout, phrase.chars, phrase.length);
+    int phrase_width, phrase_height;
+    pango_layout_get_pixel_size(layout, &phrase_width, &phrase_height);
+    measured = Clay__MeasureTextCached(&phrase, &phrase_label);
+    assert(measured->unwrappedDimensions.width == phrase_width / scale);
+    assert(measured->minWidth == phrase_width / scale);
+    Clay__MeasureTextCacheItem *wrapped = Clay__MeasureTextCached(&phrase, &words);
+    assert(wrapped->minWidth < measured->minWidth);
+    pango_layout_set_text(layout, text.chars, text.length);
+
+    for (int clipped = 0; clipped < 2; clipped++) {
+        int parent_width = clipped ? 20 : 300;
+        Clay_BeginLayout();
+        open_node(600, (Clay_ElementDeclaration){
+            .layout.sizing = {CLAY_SIZING_FIXED(parent_width), CLAY_SIZING_FIXED(40)},
+            .clip.horizontal = true});
+        for (int i = 0; i < 5; i++) Clay__OpenTextElement(text, label);
+        Clay__CloseElement();
+        Clay_RenderCommandArray commands = Clay_EndLayout(0);
+        int labels = 0;
+        for (int i = 0; i < commands.length; i++) {
+            Clay_RenderCommand *cmd = &commands.internalArray[i];
+            if (cmd->commandType != CLAY_RENDER_COMMAND_TYPE_TEXT) continue;
+            assert(cmd->boundingBox.width == w / scale);
+            assert(cmd->boundingBox.height == h / scale);
+            assert(cmd->boundingBox.y == 0);
+            assert(cmd->renderData.text.stringContents.length == text.length);
+            labels++;
+        }
+        assert(labels == 5);
+        struct wlr_scene *scene = wlr_scene_create();
+        struct render_state *rs = render_create(&scene->tree);
+        render_set_scale(rs, scale);
+        struct render_client_hooks hooks = {0};
+        render_reconcile(rs, commands, &hooks, (Clay_BoundingBox){0,0,300,160});
+        assert(render_reconcile(rs, commands, &hooks, (Clay_BoundingBox){0,0,300,160}) == 0);
+        struct wlr_scene_tree *tree = wl_container_of(scene->tree.children.next, tree, node.link);
+        struct wlr_scene_node *node = wl_container_of(tree->children.next, node, link);
+        struct wlr_scene_buffer *sb = wlr_scene_buffer_from_node(node);
+        int scene_width = lroundf(w / scale);
+        assert(sb->dst_width == (scene_width > parent_width ? parent_width : scene_width));
+        int bw = sb->buffer->width, bh = sb->buffer->height;
+        /* Scene edges round to logical pixels; retain every natural glyph pixel. */
+        assert(bw >= w && bw <= w + 1 && bh >= h && bh <= h + 1);
+        cairo_surface_t *reference = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, bw, bh);
+        cairo_t *cr = cairo_create(reference);
+        pango_layout_set_width(layout, clipped ? parent_width * scale * PANGO_SCALE : -1);
+        pango_layout_set_ellipsize(layout, clipped ? PANGO_ELLIPSIZE_END : PANGO_ELLIPSIZE_NONE);
+        cairo_set_source_rgba(cr, 1, 1, 1, 1);
+        pango_cairo_show_layout(cr, layout);
+        cairo_surface_flush(reference);
+        void *pixels;
+        uint32_t format;
+        size_t stride;
+        assert(wlr_buffer_begin_data_ptr_access(sb->buffer, WLR_BUFFER_DATA_PTR_ACCESS_READ,
+            &pixels, &format, &stride));
+        for (int y = 0; y < bh; y++)
+            assert(memcmp((char *)pixels + y * stride,
+                cairo_image_surface_get_data(reference) + y * cairo_image_surface_get_stride(reference),
+                bw * 4) == 0);
+        wlr_buffer_end_data_ptr_access(sb->buffer);
+        cairo_destroy(cr);
+        cairo_surface_destroy(reference);
+        render_destroy(rs, &hooks);
+        wlr_scene_node_destroy(&scene->tree.node);
+    }
+    g_object_unref(layout);
+    stop_context(arena);
+    render_text_set_measure_scale(1);
+}
+
+static void test_whole_run_labels(void) {
+    const char *labels[] = {
+        "dev", "  ", "  media ", "日本語", "  media", "media  ",
+        "one   two", "   ", "a long tag name beside a long window title",
+    };
+    const float scales[] = {1, 1.5f, 0.8f};
+    for (size_t i = 0; i < sizeof(labels) / sizeof(labels[0]); i++) {
+        for (size_t j = 0; j < sizeof(scales) / sizeof(scales[0]); j++) {
+            fprintf(stderr, "label %s at scale %g\n", labels[i], scales[j]);
+            check_whole_run_label(labels[i], scales[j]);
+        }
+    }
+}
+
 int main(void) {
+	test_whole_run_labels(); puts("ok whole-run label sizing, cache isolation, pixels and ellipsis at three scales");
 	test_primitives(); puts("ok pinned primitives, mixed identities, structural negative, repeated frames and teardown");
 	test_clips(); puts("ok 12 nested clips, three frames");
 	test_layers();

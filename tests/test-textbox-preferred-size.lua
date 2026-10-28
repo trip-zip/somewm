@@ -49,6 +49,13 @@ runner.run_async(function()
     assert(near(w1, pw) and near(h1, ph),
         ("one line measured %gx%g, drawn %dx%d"):format(w1, h1, pw, ph))
 
+    local circle = wibox.widget.textbox("  ")
+    circle.font = "DejaVu Sans 10"
+    local cw, ch = circle:get_preferred_size(s)
+    pw, ph = solved(circle)
+    assert(near(cw, pw) and near(ch, ph),
+        ("padded icon measured %gx%g, drawn %dx%d"):format(cw, ch, pw, ph))
+
     local three = wibox.widget.textbox("first\na much longer second line\nthird")
     local w3, h3 = three:get_preferred_size(s)
     assert(near(h3, 3 * h1), ("three lines measured %g high, one line %g"):format(h3, h1))
@@ -79,6 +86,9 @@ runner.run_async(function()
     async.sleep(0.05)
     local fw, fh = one:get_preferred_size(s)
     pw, ph = solved(one)
+    local cfw, cfh = circle:get_preferred_size(s)
+    local cpw, cph = solved(circle)
+    assert(near(cfw, cpw) and near(cfh, cph), "fractional padded icon size differs")
     s.scale = 1
     assert(near(fw, pw) and near(fh, ph),
         ("at scale 1.5 measured %gx%g, drawn %dx%d"):format(fw, fh, pw, ph))

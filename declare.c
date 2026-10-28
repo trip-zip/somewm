@@ -1950,6 +1950,8 @@ declare_widget_subtree(const struct widget_host *host, size_t i, Clay_ElementId 
 			.wrapMode = n->wrap,
 			.textAlignment = n->text_align,
 		};
+		if (n->wrap != CLAY_TEXT_WRAP_WORDS)
+			cfg.fontId = render_font_for_run(cfg.fontId, d->text + n->text_off, n->text_len);
 		native_text((Clay_String) {
 			.length = (int32_t)n->text_len,
 			.chars = d->text + n->text_off,
@@ -3996,7 +3998,8 @@ bool declare_measure_text(Monitor *m, int32_t font, const char *text,
         band->scale > 0.0f ? band->scale : m->declare->wlr_output->scale);
     Clay_SetCurrentContext(band->clay);
     Clay_Dimensions d = clay_measure_text(
-        (Clay_String){.length = (int32_t)len, .chars = text}, font);
+        (Clay_String){.length = (int32_t)len, .chars = text},
+        render_font_for_run(font, text, len));
     Clay_SetCurrentContext(previous);
     render_text_set_measure_scale(scale);
     *width = d.width;
