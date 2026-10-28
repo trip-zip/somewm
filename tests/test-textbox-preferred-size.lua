@@ -31,6 +31,11 @@ end
 
 local function near(a, b) return math.abs(a - b) < 1 end
 
+-- Preferred sizes round up; popup geometry rounds to the nearest logical pixel.
+local function fits(preferred, drawn)
+    return preferred >= drawn and preferred - drawn <= 1
+end
+
 runner.run_async(function()
     async.sleep(0.01)
     local s = screen[1]
@@ -48,6 +53,13 @@ runner.run_async(function()
     local pw, ph = solved(one)
     assert(near(w1, pw) and near(h1, ph),
         ("one line measured %gx%g, drawn %dx%d"):format(w1, h1, pw, ph))
+
+    local circle = wibox.widget.textbox("  ")
+    circle.font = "DejaVu Sans 10"
+    local cw, ch = circle:get_preferred_size(s)
+    pw, ph = solved(circle)
+    assert(near(cw, pw) and near(ch, ph),
+        ("padded icon measured %gx%g, drawn %dx%d"):format(cw, ch, pw, ph))
 
     local three = wibox.widget.textbox("first\na much longer second line\nthird")
     local w3, h3 = three:get_preferred_size(s)
@@ -79,8 +91,12 @@ runner.run_async(function()
     async.sleep(0.05)
     local fw, fh = one:get_preferred_size(s)
     pw, ph = solved(one)
+    local cfw, cfh = circle:get_preferred_size(s)
+    local cpw, cph = solved(circle)
+    assert(fits(cfw, cpw) and fits(cfh, cph),
+        ("fractional padded icon measured %gx%g, drawn %dx%d"):format(cfw, cfh, cpw, cph))
     s.scale = 1
-    assert(near(fw, pw) and near(fh, ph),
+    assert(fits(fw, pw) and fits(fh, ph),
         ("at scale 1.5 measured %gx%g, drawn %dx%d"):format(fw, fh, pw, ph))
 
     -- A fake screen has no output of its own; it measures on the one it covers.

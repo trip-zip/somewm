@@ -54,6 +54,11 @@ struct render_text_attr {
 #define RENDER_FONT_ERR_FULL (-2)
 int32_t render_font_intern(const char *name);
 
+/* Select whole-run measurement for an unwrapped, NUL-terminated string.
+ * Empty strings, spaces alone, newlines and embedded NULs keep word measurement.
+ * The mode occupies a fontId bit so Clay caches it separately from word widths. */
+int32_t render_font_for_run(int32_t id, const char *text, size_t len);
+
 /* The entry that draws id's face with a wl_output_transform: id itself for 0,
  * else one entry per (id, transform), made on first use. Clay keys its measure
  * cache on the font id, so a rotated run measures apart from a plain one.

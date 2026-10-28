@@ -17,6 +17,7 @@
  * reused, so this is what bounds a config building description strings in a
  * loop instead of naming a fixed set: past it interning refuses. */
 #define RENDER_MAX_FONTS 64
+#define RENDER_FONT_WHOLE_RUN (1u << 15)
 
 /* Ids are write-once: an entry is appended, never rewritten, so a live
  * declaration's id keeps meaning the face it was interned for. Rewriting one
@@ -83,23 +84,35 @@ int32_t render_font_intern(const char *name) {
 	return render_fonts_len++;
 }
 
+int32_t render_font_for_run(int32_t id, const char *text, size_t len) {
+	if (id < 0 || memchr(text, '\n', len) || memchr(text, '\0', len))
+		return id;
+	for (size_t i = 0; i < len; i++)
+		if (text[i] != ' ') return id | RENDER_FONT_WHOLE_RUN;
+	return id;
+}
+
 int32_t render_font_transformed(int32_t id, uint8_t transform) {
 	render_fonts_init();
-	if (transform == 0 || id < 0 || id >= render_fonts_len)
-		return id;
+	if (id < 0) return id;
+	int32_t mode = id & RENDER_FONT_WHOLE_RUN;
+	id &= ~RENDER_FONT_WHOLE_RUN;
+	if (transform == 0 || id >= render_fonts_len)
+		return id | mode;
 	for (int i = 0; i < render_fonts_len; i++) {
 		if (render_fonts[i].base == id && render_fonts[i].transform == transform)
-			return i;
+			return i | mode;
 	}
 	if (render_fonts_len == RENDER_MAX_FONTS)
-		return id;
+		return id | mode;
 	render_fonts[render_fonts_len].base = id;
 	render_fonts[render_fonts_len].transform = transform;
-	return render_fonts_len++;
+	return render_fonts_len++ | mode;
 }
 
 uint8_t render_font_transform(int32_t id) {
 	render_fonts_init();
+	id &= ~RENDER_FONT_WHOLE_RUN;
 	return id >= 0 && id < render_fonts_len ? render_fonts[id].transform : 0;
 }
 
@@ -125,6 +138,7 @@ int render_font_set_default(const char *name) {
 void render_set_text(PangoLayout *layout, const char *text, int len,
 		uint16_t font_id, uint16_t font_size, float scale, int max_width) {
 	render_fonts_init();
+	font_id &= ~RENDER_FONT_WHOLE_RUN;
 	/* An id past the table resolves to entry 0 rather than aborting: the id is
 	 * whatever a declaration put in the field, and Clay's debug view writes 0
 	 * into it without interning anything. */
@@ -188,12 +202,12 @@ Clay_Dimensions render_measure_text(Clay_StringSlice text,
 	 * the measurement too would feed that derivation its own output. */
 	int width, height;
 	uint8_t transform = render_font_transform(config->fontId);
-	if (transform == 1 || transform == 3) {
-		/* 90 or 270. Clay measures one word at a time and sums them on a
-		 * line, so the first word answers for the whole run, swapped, and
-		 * every later word and Clay's own space probe answer nothing. The
-		 * width is then the run's height, the height its width, and Clay
-		 * emits one line. */
+	bool turn = transform == 1 || transform == 3;
+	if (turn || (config->fontId & RENDER_FONT_WHOLE_RUN)) {
+		/* The first word reports the full run. Other words and Clay's space
+		 * probe report zero. Only unwrapped labels use this mode, so Clay
+		 * never uses these widths to choose word breaks. Rotated text swaps
+		 * the full run's axes. These source strings are NUL-terminated. */
 		const char *first = text.baseChars;
 		while (*first == ' ')
 			first++;
@@ -202,7 +216,8 @@ Clay_Dimensions render_measure_text(Clay_StringSlice text,
 		render_set_text(render_measure_layout, text.baseChars, -1,
 			config->fontId, config->fontSize, scale, 0);
 		pango_layout_get_pixel_size(render_measure_layout, &width, &height);
-		return (Clay_Dimensions) { .width = height / scale, .height = width / scale };
+		return (Clay_Dimensions) { .width = (turn ? height : width) / scale,
+			.height = (turn ? width : height) / scale };
 	}
 	render_set_text(render_measure_layout, text.chars, text.length,
 		config->fontId, config->fontSize, scale, 0);
