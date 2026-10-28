@@ -39,6 +39,10 @@ All notable changes to somewm will be documented in this file.
   edge, so a long tasklist pushed the widgets after it off the screen. The
   order differs from AwesomeWM's fixed layout, which fills in order and drops
   what does not fit: here the later widget stays and the largest shrinks.
+- The warning for a widget left out because it defines `:fit`, `:layout` or
+  `:draw` names the file and line of that method and links the porting
+  guide. Widgets whose methods come from different lines warn separately. A
+  widget from the config is named by its path under `~/.config/somewm/`.
 
 ### Fixed
 

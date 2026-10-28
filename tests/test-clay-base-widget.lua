@@ -102,7 +102,7 @@ runner.run_steps {
             return nil
         end
         assert(not nodes():find("bare-painter", 1, true), "the painter was declared")
-        assert(log_contents():find("bare-painter draws itself (:draw)", 1, true),
+        assert(log_contents():find("bare-painter defines :draw at", 1, true),
             "the self-drawing refusal warning is missing")
         io.stderr:write("[PASS] a base widget with :draw is still refused\n")
         return true

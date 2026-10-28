@@ -14,7 +14,7 @@ body:
 
         `somewm --version` tells you which: v1.4.x is 1.4, anything from v2.0 on is 2.x.
 
-        If the log says a widget "draws itself ... and is left out of the tree", that is a 2.1 removal, not a bug. See [Choosing a version](https://github.com/trip-zip/somewm#choosing-a-version).
+        If the log says a widget "defines ... which 2.1 never calls", that is a 2.1 removal, not a bug. See [Create or port a custom widget](https://somewm.org/docs/guides/custom-widgets).
 
   - type: dropdown
     id: branch
