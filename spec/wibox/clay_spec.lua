@@ -25,6 +25,12 @@ local function surface_pattern()
 end
 
 -- A described color leaf with a preferred size.
+-- The file name and line a function is defined at, as the refusal names it.
+local function defined_here(fn)
+    local info = debug.getinfo(fn, "S")
+    return info.short_src:match("[^/]+$") .. ":" .. info.linedefined
+end
+
 local function leaf_widget(width, height)
     local w = base.make_widget()
     w._clay = { name = "leaf", describe = function(_, fg)
@@ -410,8 +416,37 @@ describe("wibox.clay", function()
         assert.is_same({ 0, 1, 0, 1 }, nodes[1].bg)
         assert.is_same({ 4, 4, 4, 4 }, nodes[1].pad)
         assert.is_nil(nodes[2])
-        assert.stub(warning).was_called_with("wibox.clay: spec-stopper draws itself (:draw) "
-            .. "and is left out of the tree")
+        assert.stub(warning).was_called(1)
+        local message = warning.calls[1].refs[1]
+        assert.matches("^wibox%.clay: spec%-stopper defines :draw at .*" .. defined_here(stopper.draw)
+            .. ", which 2%.1 never calls%. The widget and its children are left out of the tree%."
+            .. " See https://somewm%.org/docs/guides/custom%-widgets$", message)
+        warning:revert()
+    end)
+
+    it("warns once per place a refused widget's painters are defined", function()
+        -- The name gears.object.modulename derives for a module in the config.
+        local config = require("gears.filesystem").get_xdg_config_home() .. "somewm/"
+        local module_name = ("@" .. config .. "ui/panels/components"):gsub("/", ".")
+        local function painter()
+            local w = base.make_widget(nil, module_name)
+            w.fit = function() end
+            return w
+        end
+        local function other()
+            local w = base.make_widget(nil, "spec-painters")
+            w.fit = function() end
+            return w
+        end
+        local messages = {}
+        local warning = stub(gdebug, "print_warning", function(text) messages[#messages + 1] = text end)
+        local first, second, third = painter(), painter(), other()
+        compile(BG, fixed.horizontal(first, second, third), BG)
+
+        assert.is_equal(2, #messages)
+        assert.matches("^wibox%.clay: ui%.panels%.components defines :fit at ", messages[1])
+        assert.matches(defined_here(first.fit), messages[1], 1, true)
+        assert.matches(defined_here(third.fit), messages[2], 1, true)
         warning:revert()
     end)
 

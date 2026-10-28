@@ -431,13 +431,17 @@ end
 --
 -- `gears.object.modulename` derives `widget_name` from the source path and
 -- only trims it at a `lib/` directory; somewm installs its library under
--- `lua/`, so the name arrives with the path still in front of it.
+-- `lua/`, and a config's modules live under `$XDG_CONFIG_HOME/somewm/`, so
+-- the name arrives with the path still in front of it.
+local config_dir = (require("gears.filesystem").get_xdg_config_home() .. "somewm/"):gsub("/", ".")
 local function class_name(w)
     local name = w._clay and w._clay.name or w.widget_name
 
     if not name then
         return nil
     end
+    local _, config_end = name:find(config_dir, 1, true)
+    if config_end then name = name:sub(config_end + 1) end
     return (name:gsub("^.*%.lua%.", ""):gsub("^[^%a]+", ""))
 end
 
@@ -511,6 +515,19 @@ end
 -- nil for a hidden or refused widget. `node.specs` sizes its children.
 -- A forced size overrides the size returned by the describer.
 local painters = { "draw", "fit", "layout", "before_draw_children", "after_draw_children" }
+
+-- Where a painter method is defined, as `file:line` with the home directory
+-- as `~`. Painters that share a name but come from different lines warn
+-- separately.
+local home = os.getenv("HOME")
+local function defined_at(fn)
+    if type(fn) ~= "function" then return "?" end
+    local info = debug.getinfo(fn, "S")
+    local file = info.source:sub(1, 1) == "@" and info.source:sub(2) or info.short_src
+    if home and file:sub(1, #home + 1) == home .. "/" then file = "~" .. file:sub(#home + 1) end
+    return file .. ":" .. info.linedefined
+end
+
 local function describe(w, fg, st, item, offer)
     local record = w._clay
     local field = w._private.animation
@@ -541,11 +558,15 @@ local function describe(w, fg, st, item, offer)
     end
     if methods or not record then
         local name = class_name(w) or "?"
-        if not warned[name] then
-            warned[name] = true
-            local reason = methods and "draws itself (" .. table.concat(methods, ", ") .. ")"
-                or "has no describer"
-            gdebug.print_warning("wibox.clay: " .. name .. " " .. reason .. " and is left out of the tree")
+        local where = methods and defined_at(rawget(w, methods[1]:sub(2)))
+        local key = name .. " " .. (where or "")
+        if not warned[key] then
+            warned[key] = true
+            gdebug.print_warning("wibox.clay: " .. name .. (methods
+                and " defines " .. table.concat(methods, ", ") .. " at " .. where
+                    .. ", which 2.1 never calls. The widget and its children are left out of the tree."
+                    .. " See https://somewm.org/docs/guides/custom-widgets"
+                or " has no describer and is left out of the tree"))
         end
         return nil
     end
