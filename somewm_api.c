@@ -596,6 +596,8 @@ some_get_cursor_position(double *x, double *y)
 void
 some_set_cursor_position(double x, double y, int silent)
 {
+	Monitor *mon;
+
 	if (!cursor)
 		return;
 
@@ -605,6 +607,11 @@ some_set_cursor_position(double x, double y, int silent)
 	}
 
 	wlr_cursor_warp(cursor, NULL, x, y);
+	/* wlr_cursor_warp() does not call motionnotify(), so update selmon here.
+	 * Layer-shell clients without an explicit output use selmon. */
+	mon = xytomon(cursor->x, cursor->y);
+	if (mon)
+		selmon = mon;
 	declare_cursor_changed();
 }
 
