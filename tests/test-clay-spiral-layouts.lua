@@ -36,7 +36,7 @@ runner.run_async(function()
                 s.selected_tag.gap, s.selected_tag.gap_single_client = gap, true
                 for _, factor in ipairs {0.25, 0.5, 0.75} do
                     s.selected_tag.master_width_factor = factor
-                    async.sleep(0.10)
+                    utils.wait_for_solve(s)
                     local name = string.format('%s-%d-gap%d-factor%d', kind, count, gap, factor * 100)
                     local dump = awesome._clay_tree(s)
                     if not dump:find('derived 0', 1, true) then failures[#failures + 1] = name end
@@ -82,11 +82,11 @@ runner.run_async(function()
             for _, kind in ipairs {'spiral', 'dwindle'} do
                 s.selected_tag.layout = kind == 'spiral' and awful.layout.suit.spiral or awful.layout.suit.spiral.dwindle
                 s.selected_tag.gap, s.selected_tag.master_width_factor = 8, 0.5
-                async.sleep(0.15)
+                utils.wait_for_solve(s)
                 local name = kind .. '-' .. count .. '-titlebars'
                 for i, c in ipairs(clients) do
                     local g = c:geometry()
-                    example.pixel(g.x + 6, g.y + 6, '#cc6600')
+                    example.wait_pixel(g.x + 6, g.y + 6, '#cc6600')
                     events = {}
                     awful.spawn {pointer, 'click', tostring(g.x + 6), tostring(g.y + 6), '1280', '720', 'left'}
                     for _ = 1, 30 do if #events == 2 then break end; async.sleep(0.02) end

@@ -40,7 +40,7 @@ runner.run_async(function()
         local previous_config={}
         for sequence,factor in ipairs{.5,0,1,.5} do
             s.selected_tag.master_width_factor=factor
-            async.sleep(.15)
+            utils.wait_for_solve(s)
             local key=name..'-factor'..factor..(sequence==4 and '-restored' or '')
             local dump=awesome._clay_tree(s)
             example.save(key,dump)
@@ -49,7 +49,7 @@ runner.run_async(function()
             if zero then
                 -- Empty native surfaces stay declared, while their scene nodes
                 -- are disabled. They must not cover or receive B's real click.
-                example.pixel(700,400,'#00cc00')
+                example.wait_pixel(700,400,'#00cc00')
                 events={}
                 awful.spawn{pointer,'click','700','400','1280','720','left'}
                 for _=1,30 do if #events==2 then break end;async.sleep(.02) end
@@ -59,15 +59,15 @@ runner.run_async(function()
             local out=dir and assert(io.open(dir..'/'..key..'.geometry','w'))
             for i,c in ipairs(clients) do
                 local g=c:geometry()
-                local f=assert(io.open(reports[i]));local config=f:read('*a');f:close()
                 local sw,sh=dump:match('SURFACE '..c.class..' [^\n]-box %-?%d+,%-?%d+ (%d+)x(%d+)')
-                local cw,ch=config:match('(%d+)%s+(%d+)')
-                if tonumber(sw)>0 and tonumber(sh)>0 then
+                local positive=tonumber(sw)>0 and tonumber(sh)>0
+                if positive then
+                    local cw,ch=utils.wait_for_configure(reports[i],sw,sh)
                     assert(cw==sw and ch==sh,'positive surface configure mismatch: '..key)
-                else
-                    -- The existing protocol path skips zero-area configures.
-                    assert(config==previous_config[i],'empty surface sent a new size: '..key)
                 end
+                local f=assert(io.open(reports[i]));local config=f:read('*a');f:close()
+                -- The existing protocol path skips zero-area configures.
+                assert(positive or config==previous_config[i],'empty surface sent a new size: '..key)
                 previous_config[i]=config
                 if out then out:write(c.class,' ',g.x,' ',g.y,' ',g.width,' ',g.height,' configure ',config,'\n') end
             end
