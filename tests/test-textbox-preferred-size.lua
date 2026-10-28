@@ -31,6 +31,11 @@ end
 
 local function near(a, b) return math.abs(a - b) < 1 end
 
+-- Preferred sizes round up; popup geometry rounds to the nearest logical pixel.
+local function fits(preferred, drawn)
+    return preferred >= drawn and preferred - drawn <= 1
+end
+
 runner.run_async(function()
     async.sleep(0.01)
     local s = screen[1]
@@ -88,9 +93,10 @@ runner.run_async(function()
     pw, ph = solved(one)
     local cfw, cfh = circle:get_preferred_size(s)
     local cpw, cph = solved(circle)
-    assert(near(cfw, cpw) and near(cfh, cph), "fractional padded icon size differs")
+    assert(fits(cfw, cpw) and fits(cfh, cph),
+        ("fractional padded icon measured %gx%g, drawn %dx%d"):format(cfw, cfh, cpw, cph))
     s.scale = 1
-    assert(near(fw, pw) and near(fh, ph),
+    assert(fits(fw, pw) and fits(fh, ph),
         ("at scale 1.5 measured %gx%g, drawn %dx%d"):format(fw, fh, pw, ph))
 
     -- A fake screen has no output of its own; it measures on the one it covers.
