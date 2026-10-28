@@ -17,10 +17,7 @@ tests/bench/results/
 build/
 build-bench/
 builddir/
-subprojects/wlroots/
-subprojects/wlroots-0.19/
-subprojects/wlroots-0.20/
-subprojects/packagecache/
+subprojects/*/
 
 # Development tooling & reports (local only)
 tools/

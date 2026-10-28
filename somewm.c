@@ -5552,6 +5552,20 @@ is_client_valid(Client* client)
 	return false;
 }
 
+/** Is \a ptr a drawin this compositor currently tracks? */
+static bool
+is_drawin_valid(void *ptr)
+{
+	if (ptr == NULL)
+		return false;
+
+	foreach(elem, globalconf.drawins)
+		if (*elem == ptr)
+			return true;
+
+	return false;
+}
+
 /** Is \a ptr a layer surface this compositor currently tracks? */
 static bool
 is_layersurface_valid(void *ptr)
@@ -8358,8 +8372,15 @@ xytonode(double x, double y, struct wlr_surface **psurface,
 			} else {
 				/* Check if this buffer belongs to a drawin or titlebar */
 
-				/* node->data now stores drawable pointer (AwesomeWM pattern) */
-				if (node->data) {
+				/* A drawin's border buffer stores the drawin; its
+				 * content buffer stores the drawable. */
+				if (is_drawin_valid(node->data)) {
+					drawin_t *candidate = node->data;
+					if (drawin_accepts_input_at(candidate, x - candidate->x, y - candidate->y)) {
+						d = candidate;
+						goto found;
+					}
+				} else if (node->data) {
 					drawable_t *drawable = (drawable_t *)node->data;
 
 					if (drawable->owner_type == DRAWABLE_OWNER_DRAWIN) {
@@ -8389,7 +8410,7 @@ xytonode(double x, double y, struct wlr_surface **psurface,
 		/* Walk the tree to find a node that knows the client */
 		for (pnode = node; pnode && !c && !d; ) {
 			/* Check if this node has a drawin */
-			if (pnode->data && layer == LyrWibox) {
+			if (layer == LyrWibox && is_drawin_valid(pnode->data)) {
 				drawin_t *candidate = (drawin_t *)pnode->data;
 				/* Check shape_input to see if input passes through */
 				if (drawin_accepts_input_at(candidate, x - candidate->x, y - candidate->y)) {
