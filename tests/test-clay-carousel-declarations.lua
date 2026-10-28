@@ -64,9 +64,7 @@ runner.run_async(function()
         assert(not dump:find('[tree!=scene]', 1, true), dump)
         for i, c in ipairs(clients) do
             local w, h = dump:match('SURFACE ' .. c.class .. ' [^\n]-box %-?%d+,%-?%d+ (%d+)x(%d+)')
-            local f = assert(io.open(reports[i]))
-            local cw, ch = f:read('*a'):match('(%d+)%s+(%d+)')
-            f:close()
+            local cw, ch = utils.wait_for_configure(reports[i], w, h)
             assert(cw == w and ch == h, 'configure differs from solved surface: ' .. c.class)
         end
         return dump
@@ -118,9 +116,9 @@ runner.run_async(function()
             assert(surfaces[1][3] == 800 and surfaces[1][4] == 500,
                 'protocol minimum must overhang its allocated slot')
             assert(dump:find('w=grow>=800 protocol h=grow>=500 protocol', 1, true))
-            example.pixel(20,20,'#cc0000')
-            example.pixel(vertical and 700 or 20, vertical and 20 or 400, '#00cc00')
-            example.pixel(1000,600,'#0000cc')
+            example.wait_pixel(20,20,'#cc0000')
+            example.wait_pixel(vertical and 700 or 20, vertical and 20 or 400, '#00cc00')
+            example.wait_pixel(1000,600,'#0000cc')
         end
     end
 
@@ -153,7 +151,7 @@ runner.run_async(function()
         expect(dump, 'CAROUSEL_VIEWPORT', {{40,40,1200,640}})
         assert(dump:find('SCISSOR_START z=-    box 40,40 1200x640', 1, true), dump)
         assert(dump:find('SCISSOR_END', 1, true), dump)
-        example.pixel(50,50,'#cc0000')
+        example.wait_pixel(50,50,'#cc0000')
         events = {}
         local finished = false
         awful.spawn.easy_async({pointer, 'click', '50', '50', '1280', '720', 'left'},

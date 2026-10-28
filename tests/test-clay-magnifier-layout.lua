@@ -46,14 +46,13 @@ runner.run_async(function()
                     local report=dir and assert(io.open(dir..'/'..name..'.geometry','w'))
                     for i,c in ipairs(clients) do
                         local g=c:geometry()
-                        local f=assert(io.open(reports[i]))
-                        local w,h=f:read('*a'):match('(%d+)%s+(%d+)');f:close()
                         local sw,sh=dump:match('SURFACE '..c.class..' [^\n]-box %-?%d+,%-?%d+ (%d+)x(%d+)')
+                        local w,h=utils.wait_for_configure(reports[i],sw,sh)
                         assert(w==sw and h==sh,name..': configure differs from solved surface')
                         if i==focused then
-                            example.pixel(g.x+math.floor(g.width/2),g.y+math.floor(g.height/2),'#'..colors[i]:sub(3))
+                            example.wait_pixel(g.x+math.floor(g.width/2),g.y+math.floor(g.height/2),'#'..colors[i]:sub(3))
                         else
-                            example.pixel(g.x+10,g.y+30,'#'..colors[i]:sub(3))
+                            example.wait_pixel(g.x+10,g.y+30,'#'..colors[i]:sub(3))
                         end
                         if report then report:write(string.format('%s %d %d %d %d configure %s %s\n',c.class,g.x,g.y,g.width,g.height,w,h)) end
                     end
@@ -92,10 +91,9 @@ runner.run_async(function()
         local dump=awesome._clay_tree(s)
         local line=assert(dump:match('SURFACE MAG_1 [^\n]+'))
         local width=tonumber(line:match('box %-?%d+,%-?%d+ (%d+)x'))
-        local f=assert(io.open(reports[1]))
-        local configured=tonumber(f:read('*a'):match('(%d+)'));f:close()
+        local configured=tonumber((utils.wait_for_configure(reports[1],tostring(width))))
         assert(width==1400 and configured==width and line:find('w=grow>=1400',1,true),'focused surface minimum was lost')
-        example.pixel(1000,400,'#cc0000')
+        example.wait_pixel(1000,400,'#cc0000')
         example.save('magnifier-focused-minimum-gap'..gap,dump)
     end
     s.inspector=true

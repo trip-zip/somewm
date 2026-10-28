@@ -59,9 +59,7 @@ runner.run_async(function()
     end
 
     local function configure(width, height)
-        local f = assert(io.open(report))
-        local w, h = f:read('*a'):match('(%d+)%s+(%d+)')
-        f:close()
+        local w, h = utils.wait_for_configure(report, tostring(width), tostring(height))
         assert(tonumber(w) == width and tonumber(h) == height,
             'configure: ' .. tostring(w) .. ' ' .. tostring(h))
     end
