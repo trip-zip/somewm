@@ -18,9 +18,9 @@ local function bar(c, name, side, horizontal)
     local drawable, size = c["titlebar_" .. side](c)
     if size == 0 then return nil end
     if horizontal then
-        return {name = name, host = drawable, w = "grow", h = size, hsrc = "theme"}
+        return {name = name, host = drawable, w = "grow", h = size, hsrc = "theme", opacity = c.opacity}
     end
-    return {name = name, host = drawable, w = size, h = "grow", wsrc = "theme"}
+    return {name = name, host = drawable, w = size, h = "grow", wsrc = "theme", opacity = c.opacity}
 end
 
 -- A max hint at or past the reader's range leaves its axis unbounded, as
