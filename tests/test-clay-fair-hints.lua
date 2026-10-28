@@ -40,7 +40,7 @@ runner.run_async(function()
                 for _,gap in ipairs{0,8} do
                     s.selected_tag.gap,s.selected_tag.gap_single_client=gap,true
                     client.focus=clients[1];clients[1]:raise()
-                    async.sleep(0.12)
+                    utils.wait_for_solve(s)
                     local name=kind..'-'..count..'-minimum-gap'..gap
                     local dump=awesome._clay_tree(s)
                     example.save(name,dump)
@@ -102,10 +102,15 @@ runner.run_async(function()
         if current~=wanted then current:swap(wanted) end
     end
     s.selected_tag.layout,s.selected_tag.gap=awful.layout.suit.fair,0
-    async.sleep(0.12)
-    local dump=awesome._clay_tree(s)
+    -- The killed client unmanages and the wide one commits its minimum over
+    -- later frames; solve until both show, then assert.
+    local dump,g
+    for _=1,25 do
+        utils.wait_for_solve(s)
+        dump,g=awesome._clay_tree(s),wide:geometry()
+        if g.width==638 and dump:find('box 1,1 1600x500\n',1,true) then break end
+    end
     example.save('fairv-4-wide-gap0',dump)
-    local g=wide:geometry()
     assert(g.x==0 and g.y==0 and g.width==638 and g.height==358,'wide minimum moved its cell')
     assert(dump:match('WORKAREA [^\n]- box 0,0 1280x720\n'),'wide minimum resized WORKAREA')
     assert(dump:match('SURFACE FAIR_HINT_WIDE [^\n]-w=grow>=1600 protocol h=grow>=500 protocol[^\n]- box 1,1 1600x500\n'),

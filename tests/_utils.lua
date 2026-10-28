@@ -529,6 +529,23 @@ function utils.wait_for_configure(report, want_w, want_h)
     return w, h
 end
 
+-- Arrange s, wait for the solve after it, then for each client's geometry to
+-- equal its solved box, up to 2 seconds each. The dump shows the solve at
+-- once, but c:geometry() takes it a refresh later. A read before either can
+-- see the previous layout, and a configure report can still agree with it.
+function utils.wait_for_solve(s)
+    local async = require("_async")
+    require("awful").layout.arrange(s)
+    assert(async.wait_for_signal(screen, "clay::solved", 2,
+        function(solved) return solved == s end), "screen did not solve")
+    assert(async.wait_for_condition(function()
+        for _, c in ipairs(s.clients) do
+            if not c:_clay_geometry_is_solved() then return false end
+        end
+        return true
+    end, 2, 0.02), "client geometry did not follow the solve")
+end
+
 return utils
 
 -- vim: filetype=lua:expandtab:shiftwidth=4:tabstop=8:softtabstop=4:textwidth=80
