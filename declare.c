@@ -1704,7 +1704,7 @@ declare_composite(const struct widget_host *host, size_t i, int16_t z,
             render_fade_alias(recording->render, n->host, handle);
 			memcpy(bar.radii, n->radii, sizeof(bar.radii));
 			declare_widget_slot(&bar, id, &e, name, n->src[0], n->src[1], z,
-				leaf_userdata(n->host, 1.0f));
+				leaf_userdata(n->host, n->opacity));
 		} else {
 			native_open(id);
 			native_configure(&e);

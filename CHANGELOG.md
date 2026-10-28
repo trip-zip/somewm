@@ -61,6 +61,8 @@ All notable changes to somewm will be documented in this file.
   filling places inside another container fill the space their layout gives
   them again, as in 2.0. An awful.popup holding one grows to its
   maximum_width and maximum_height.
+- A client's opacity applies to its titlebars again, as in 2.0. Since 2.1
+  the titlebars stayed opaque while the window faded.
 
 ## [2.1.0] - 2026-10-18
 
