@@ -54,7 +54,7 @@ runner.run_async(function()
                         local w, h = utils.wait_for_configure(reports[i], sw, sh)
                         assert(tonumber(w) and tonumber(h), 'missing configure')
                         assert(w == sw and h == sh, 'configure differs from solved surface: ' .. name .. ' ' .. c.class)
-                        example.pixel(g.x + math.floor(g.width / 2), g.y + math.floor(g.height / 2), '#' .. colors[i]:sub(3))
+                        example.wait_pixel(g.x + math.floor(g.width / 2), g.y + math.floor(g.height / 2), '#' .. colors[i]:sub(3))
                         if report then report:write(string.format('%s %d %d %d %d configure %s %s\n', c.class, g.x, g.y, g.width, g.height, w, h)) end
                     end
                     if report then report:close() end
@@ -93,10 +93,8 @@ runner.run_async(function()
                     assert(table.concat(events, ',') == 'button::press' .. i .. ',button::release' .. i,
                         'original titlebar input changed: ' .. table.concat(events, ','))
                     local dump = awesome._clay_tree(s)
-                    local f = assert(io.open(reports[i]))
-                    local w, h = f:read('*a'):match('(%d+)%s+(%d+)')
-                    f:close()
                     local sw, sh = dump:match('SURFACE ' .. c.class .. ' [^\n]-box %-?%d+,%-?%d+ (%d+)x(%d+)')
+                    local w, h = utils.wait_for_configure(reports[i], sw, sh)
                     assert(w == sw and h == sh, 'titlebar configure differs from solved surface')
                 end
                 example.save(name, awesome._clay_tree(s))

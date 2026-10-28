@@ -514,8 +514,8 @@ end
 
 -- Read the "w h" a test client writes to its report after each configure.
 -- The client truncates and rewrites the file, so a read can see nothing or
--- the previous size; poll until it holds the wanted size, up to 2 seconds.
--- Returns the last read either way; the caller asserts.
+-- the previous size; poll until it holds the wanted size (height optional),
+-- up to 2 seconds. Returns the last read either way; the caller asserts.
 function utils.wait_for_configure(report, want_w, want_h)
     local async = require("_async")
     local w, h
@@ -523,7 +523,7 @@ function utils.wait_for_configure(report, want_w, want_h)
         local f = assert(io.open(report))
         w, h = f:read("*a"):match("(%d+)%s+(%d+)")
         f:close()
-        if w == want_w and h == want_h then break end
+        if w == want_w and (want_h == nil or h == want_h) then break end
         async.sleep(0.02)
     end
     return w, h

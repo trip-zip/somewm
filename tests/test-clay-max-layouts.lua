@@ -48,9 +48,8 @@ runner.run_async(function()
                         local g = c:geometry()
                         assert(g.x == area.x + gap and g.y == area.y + gap and g.width + 2 + 2*gap == area.width and g.height + 2 + 2*gap == area.height,
                             name .. ': client frame differs from attachment area')
-                        local f = assert(io.open(reports[i]))
-                        local w,h = f:read('*a'):match('(%d+)%s+(%d+)'); f:close()
                         local sw,sh = dump:match('SURFACE ' .. c.class .. ' [^\n]-box %-?%d+,%-?%d+ (%d+)x(%d+)')
+                        local w,h = utils.wait_for_configure(reports[i], sw, sh)
                         assert(w == sw and h == sh, name .. ': configure differs from solved surface')
                         if report then report:write(string.format('%s %d %d %d %d configure %s %s\n', c.class, g.x,g.y,g.width,g.height,w,h)) end
                     end
@@ -64,7 +63,7 @@ runner.run_async(function()
                 async.sleep(0.08)
                 local g = c:geometry()
                 local x,y = g.x + 100, g.y + 100
-                example.pixel(x,y,'#' .. colors[i]:sub(3))
+                example.wait_pixel(x,y,'#' .. colors[i]:sub(3))
                 local events = {}
                 local function press(original,lx,ly,button)
                     assert(original == c and lx == 100 and ly == 100 and button == 1)
@@ -108,11 +107,10 @@ runner.run_async(function()
             local dump = awesome._clay_tree(s)
             local line = assert(dump:match('SURFACE MAX_1 [^\n]+'))
             local width = tonumber(line:match('box %-?%d+,%-?%d+ (%d+)x'))
-            local f = assert(io.open(reports[1]))
-            local configured = tonumber(f:read('*a'):match('(%d+)')); f:close()
+            local configured = tonumber((utils.wait_for_configure(reports[1], tostring(width))))
             assert(width == 1400 and configured == width and line:find('w=grow>=1400',1,true),
                 'native surface protocol floor/configure changed')
-            example.pixel(1100,100,'#cc0000')
+            example.wait_pixel(1100,100,'#cc0000')
             example.save(kind .. '-gap' .. gap .. '-protocol-minimum',dump)
         end
     end

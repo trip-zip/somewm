@@ -53,8 +53,7 @@ runner.run_async(function()
                     end
                     local line=assert(dump:match('SURFACE CORNER_HINT_1 [^\n]+'))
                     local sw,sh=line:match('box %-?%d+,%-?%d+ (%d+)x(%d+)')
-                    local f=assert(io.open(reports[1]))
-                    local cw,ch=f:read('*a'):match('(%d+)%s+(%d+)');f:close()
+                    local cw,ch=utils.wait_for_configure(reports[1],sw,sh)
                     assert(sw==cw and sh==ch,'configure differs from solved surface')
                     if tonumber(sw)~=math.max(900,width-2-2*gap) then failures[#failures+1]=name..'-surface-minimum' end
                     assert(line:find('w=grow>=900',1,true),'protocol floor absent')

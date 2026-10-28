@@ -56,4 +56,16 @@ function example.pixel(x, y, want)
     assert(got == want, string.format('pixel (%d,%d): want %s, have %s', x, y, want, got))
 end
 
+-- A configure report precedes the client's buffer commit and the frame that
+-- shows it. Poll the rendered pixel up to 2 seconds, then assert as pixel does.
+function example.wait_pixel(x, y, want)
+    local async = require('_async')
+    for _ = 1, 100 do
+        local r, g, b = capture.read(surface(root.content()), x, y)
+        if string.format('#%02x%02x%02x', r, g, b) == want then break end
+        async.sleep(0.02)
+    end
+    example.pixel(x, y, want)
+end
+
 return example
