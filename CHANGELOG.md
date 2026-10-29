@@ -4,13 +4,21 @@ All notable changes to somewm will be documented in this file.
 
 ## [Unreleased]
 
+## [2.1.1] - 2026-10-29
+
+Patch release. 25 commits since 2.1.0. The textbox measuring functions
+return, and a bar's contents shrink to fit it again. Four Changed entries
+alter behavior: a textbox's default `ellipsize` no longer wraps, contents are
+squeezed largest first, the left-out widget warning names its source, and
+line separators draw their border. Other rc.lua configs run unchanged.
+
 ### Added
 
 - `awful.accessibility`: a configurable pointer locator with shrinking rings,
   temporary cursor magnification, or both. `find_cursor()` works from a
   keybinding; optional shake detection increases magnification on repeated
   shakes and restores the normal size after inactivity. Properties, theme
-  defaults and start/end signals configure the behaviour. Client-uploaded
+  defaults and start/end signals configure the behavior. Client-uploaded
   cursor surfaces retain their size; themed cursors use cached larger images.
   `cursor_finder_animated = false` holds static rings and changes magnification
   immediately. `stop_cursor_finder()` cancels the locator. Magnification is
@@ -50,13 +58,28 @@ All notable changes to somewm will be documented in this file.
 
 ### Fixed
 
+- Layer-shell clients without an output, such as rofi, open on the screen
+  selected with awful.screen.focus_bydirection or awful.screen.focus_relative,
+  not the screen the cursor last moved on.
+- A border inside a wibox with a rounded or path shape is cut to that shape.
+  Before, it drew past the parent's corners and took clicks there.
+- A one-line label is measured as one Pango run, the way it is drawn. A label
+  that mixes fonts through fallback, such as tag glyphs in a wibar, is no
+  longer squashed.
+- Client opacity holds in Firefox, Thunderbird and other clients that draw
+  into subsurfaces. Before, a subsurface repaint drew it opaque again.
+- root.size_mm() returns the physical size of the root window from the average
+  pixel density of the outputs instead of a density weighted by pixel count
+  that scaled with resolution. Configs that derive DPI from it when Xft.dpi is
+  unset got a wrong value on every multi-output setup.
+- The Nix package builds under nixpkgs' meson hook and with fortify flags.
 - A frame that adds thousands of scene nodes, such as the inspector over a
   year calendar, took seconds: wlroots walked the scene once per node. The
   renderer's batched visibility toggle now engages on outputs with a cursor,
   and the same frame takes about 100 ms.
-- Textbox markup that spans several lines keeps its colours, backgrounds,
+- Textbox markup that spans several lines keeps its colors, backgrounds,
   underlines and strikethroughs past the first line, as in 2.0. Since 2.1
-  every later line drew in the first span's colour.
+  every later line drew in the first span's color.
 - Screen sharing through xdg-desktop-portal-wlr works without a manual
   `dbus-update-activation-environment` in rc.lua. somewm now exports
   `WAYLAND_DISPLAY`, `DISPLAY` and `XDG_CURRENT_DESKTOP` to the systemd user
