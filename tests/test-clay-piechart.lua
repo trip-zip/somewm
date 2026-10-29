@@ -94,6 +94,9 @@ local steps = {
         end
         assert(glyph, "the bottom label glyph is not lit")
         assert(pixel(100, 20, "#ffffff"), "the top label line is not white")
+        -- Inside the corner the bottom leader turns, outside the pie: a
+        -- filled leader closes into a wedge there.
+        assert(pixel(97, 80, BG) and pixel(96, 84, BG), "the bottom leader is filled as a wedge")
         io.stderr:write("[PASS] labels paint lines, ticks, dots and glyphs\n")
         return true
     end,

@@ -34,6 +34,13 @@ local function horizontal_pixels()
     assert(pixel(100, 14, BG), "the line extends above its thickness")
 end
 
+local function bordered_pixels()
+    assert(pixel(100, 16, "#ffff00") and pixel(100, 23, "#ffff00"), "the top or bottom border is missing")
+    assert(pixel(50, 20, "#ffff00") and pixel(149, 20, "#ffff00"), "the end borders are missing")
+    assert(pixel(100, 20, "#ff0000"), "the fill is not red inside the border")
+    assert(pixel(100, 14, BG) and pixel(100, 25, BG), "the border lies outside the line")
+end
+
 local steps = {
     function(count)
         if count == 1 then
@@ -108,6 +115,40 @@ local steps = {
         assert(line:find(" w=percent", 1, true), "the gradient is not on the line: " .. line)
         bar.visible = false
         io.stderr:write("[PASS] a gradient colour draws red to blue along the line\n")
+        return true
+    end,
+    -- The 8 px line spans x 50 to 150 and y 16 to 24; the 2 px border lies
+    -- inside it, around a 4 px fill.
+    function(count)
+        if count == 1 then
+            separator = wibox.widget.separator {
+                orientation = "horizontal", span_ratio = 0.5, thickness = 8,
+                color = "#ff0000", border_width = 2, border_color = "#ffff00",
+            }
+            bar = wibox { x = geo.x + 100, y = geo.y + 100, width = 200, height = 40,
+                screen = s, visible = true, bg = BG, widget = separator }
+            return nil
+        end
+        if not pixel(100, 20, "#ff0000") then
+            assert(count < 20, "the bordered line never drew: " .. awesome._clay_tree(s))
+            return nil
+        end
+        bordered_pixels()
+        io.stderr:write("[PASS] a horizontal line draws its border inside the line\n")
+        return true
+    end,
+    function(count)
+        if count == 1 then
+            separator.orientation = "auto"
+            return nil
+        end
+        if not awesome._clay_tree(s):find(" shape ", 1, true) then
+            assert(count < 20, "the auto line never drew as a shape: " .. awesome._clay_tree(s))
+            return nil
+        end
+        bordered_pixels()
+        bar.visible = false
+        io.stderr:write("[PASS] an auto line draws its border inside the line\n")
         return true
     end,
 }

@@ -23,29 +23,33 @@ local module = {}
 local piechart = {}
 
 
-local function label_path(cr,angle,radius,center_x,center_y,text)
+-- The leader's three points: on the slice, out along its angle, then across.
+local function leader(angle,radius,center_x,center_y)
     local edge_x = center_x+(radius/2)*math.cos(angle)
     local edge_y = center_y+(radius/2)*math.sin(angle)
+    local x, y = edge_x+radius*math.cos(angle), edge_y+radius*math.sin(angle)
+    return edge_x, edge_y, x, y, x+(x>center_x and radius/2 or -radius/2)
+end
 
-    cr:move_to(edge_x, edge_y)
-
-    cr:rel_line_to(radius*math.cos(angle), radius*math.sin(angle))
-
-    local x,y = cr:get_current_point()
-
-    cr:rel_line_to(x > center_x and radius/2 or -radius/2, 0)
+-- The filled part of a label: the text and a dot at each end of the leader.
+-- The leader is stroked separately; in a filled path its open line would
+-- close into a wedge, so each part starts its own subpath.
+local function label_path(cr,angle,radius,center_x,center_y,text)
+    local edge_x, edge_y, x, y, end_x = leader(angle, radius, center_x, center_y)
 
     local ext = cr:text_extents(text)
 
-    cr:rel_move_to(
-        (x>center_x and radius/2.5 or (-radius/2.5 - ext.width)),
-        ext.height/2
+    cr:move_to(
+        end_x+(x>center_x and radius/2.5 or (-radius/2.5 - ext.width)),
+        y+ext.height/2
     )
 
     cr:text_path(text)
 
+    cr:new_sub_path()
     cr:arc(edge_x, edge_y,2,0,2*math.pi)
-    cr:arc(x+(x>center_x and radius/2 or -radius/2),y,2,0,2*math.pi)
+    cr:new_sub_path()
+    cr:arc(end_x,y,2,0,2*math.pi)
 end
 
 local function compute_sum(data)
@@ -254,14 +258,11 @@ local function describe_piechart(w, fg)
             stroke_width = 2,
             shape = function(width, height)
                 local radius = (height > width and width or height) / 4
-                local center_x, center_y = width / 2, height / 2
                 return clay.shape_ops(function(cr)
-                    local edge_x = center_x + (radius / 2) * math.cos(angle)
-                    local edge_y = center_y + (radius / 2) * math.sin(angle)
+                    local edge_x, edge_y, x, y, end_x = leader(angle, radius, width / 2, height / 2)
                     cr:move_to(edge_x, edge_y)
-                    cr:rel_line_to(radius * math.cos(angle), radius * math.sin(angle))
-                    local x = cr:get_current_point()
-                    cr:rel_line_to(x > center_x and radius / 2 or -radius / 2, 0)
+                    cr:line_to(x, y)
+                    cr:line_to(end_x, y)
                 end, width, height)
             end,
         }
