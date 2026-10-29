@@ -145,6 +145,12 @@ local function describe_separator(w)
         fill = { 0, 0, 0, 0 }
     end
     fill = fill or { 0, 0, 0, 1 }
+    local bw = p.border_width or beautiful.separator_border_width or 0
+    local bc = p.border_color or beautiful.separator_border_color
+    local stroke = bw > 0 and bc and clay.solid_rgba(bc) or nil
+    if bw > 0 and bc and not stroke then
+        clay.ignore(w, "border_color", "is not solid and is transparent")
+    end
     if not s then
         local thickness = p.thickness or beautiful.separator_thickness or 1
         local orientation = p.orientation
@@ -152,24 +158,28 @@ local function describe_separator(w)
         local span_ratio = math.max(0, math.min(1, w.span_ratio or 1))
         local thick = p.thickness and "user" or "theme"
         local span = w.span_ratio and "user" or "theme"
+        -- The border lies inside the line, as it lies inside a shape's box.
+        local border = stroke and { bw, bw, bw, bw }
         local child
         if orientation == "horizontal" then
             child = clay.bg_fill({ w = { percent = span_ratio }, h = thickness,
-                wsrc = span, hsrc = thick }, fill)
+                wsrc = span, hsrc = thick, border = stroke, bw = border }, fill)
         elseif orientation == "vertical" then
             child = clay.bg_fill({ w = thickness, h = { percent = span_ratio },
-                wsrc = thick, hsrc = span }, fill)
+                wsrc = thick, hsrc = span, border = stroke, bw = border }, fill)
         else
+            local inset = stroke and bw or 0
             child = { w = "grow", h = "grow", fill = fill,
+                stroke = stroke, stroke_width = stroke and bw,
                 shape = function(width, height)
                     if width > height then
                         local lw = width * span_ratio
-                        return clay.shape_ops(gshape.rectangle, lw, thickness,
-                            (width - lw) / 2, height / 2 - thickness / 2)
+                        return clay.shape_ops(gshape.rectangle, lw - inset, thickness - inset,
+                            (width - lw + inset) / 2, (height - thickness + inset) / 2)
                     end
                     local lh = height * span_ratio
-                    return clay.shape_ops(gshape.rectangle, thickness, lh,
-                        width / 2 - thickness / 2, (height - lh) / 2)
+                    return clay.shape_ops(gshape.rectangle, thickness - inset, lh - inset,
+                        (width - thickness + inset) / 2, (height - lh + inset) / 2)
                 end }
         end
         -- Percent contributes no fit content (third_party/clay.h:2273),
@@ -177,19 +187,8 @@ local function describe_separator(w)
         return { w = "grow", h = "grow", align = { x = "center", y = "center" },
             specs = { child } }
     end
-    local bw = p.border_width or beautiful.separator_border_width or 0
-    local bc = p.border_color or beautiful.separator_border_color
-    local stroke
-    if bw > 0 then
-        if bc then
-            stroke = clay.solid_rgba(bc)
-            if not stroke then
-                clay.ignore(w, "border_color", "is not solid and is transparent")
-            end
-        else
-            fill = nil
-        end
-    end
+    -- A border width without a color draws nothing, as upstream's shape path.
+    if bw > 0 and not bc then fill = nil end
     return { w = "grow", h = "grow", specs = {
         { w = "grow", h = "grow", fill = fill, stroke = stroke, stroke_width = bw,
             shape = function(width, height)

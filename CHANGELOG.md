@@ -43,6 +43,10 @@ All notable changes to somewm will be documented in this file.
   `:draw` names the file and line of that method and links the porting
   guide. Widgets whose methods come from different lines warn separately. A
   widget from the config is named by its path under `~/.config/somewm/`.
+- `wibox.widget.separator` draws `border_width` and `border_color` on its
+  line, inside the line's thickness. AwesomeWM and 2.0 drew the border only
+  when `shape` was set, so a theme that sets both without a shape now shows
+  a border on every line separator.
 
 ### Fixed
 
@@ -67,6 +71,14 @@ All notable changes to somewm will be documented in this file.
   maximum_width and maximum_height.
 - A client's opacity applies to its titlebars again, as in 2.0. Since 2.1
   the titlebars stayed opaque while the window faded.
+- `wibox.widget.piechart` strokes its label leaders as lines again. Since 2.1
+  each leader was filled as a wedge.
+- A textbox inside `wibox.container.scroll` scrolls whole instead of ending
+  in an ellipsis at the viewport. A textbox ellipsizes only where its own
+  box cuts it.
+- At fractional scales a textbox that fits, such as one under
+  `wibox.container.rotate` with `direction = "west"`, no longer ends in a
+  spurious ellipsis.
 
 ## [2.1.0] - 2026-10-18
 

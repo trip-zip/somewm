@@ -1676,17 +1676,17 @@ static bool transform_turns(uint8_t t) {
 /* --- text --- */
 
 /* Pango's bound is relative to the original run, even when its left side is
- * cropped. Read the effective clip itself: intersecting it with the run and
- * then reconstructing its right edge can lose enough precision to turn a
- * fully contained run into an ellipsis. The run's box is realized
- * (box_snap) and the clip is solved, so quantize each edge at the device
- * scale and take the difference, as device_len does. A clip edge within
- * float noise of the run's own edge is the run's edge: Clay solves in
- * float32, and a solved edge a hair below a realized edge that sits on a
- * half pixel would otherwise round the other way. */
-static int text_ellipsis_width(Clay_RenderCommand *cmd,
-		const Clay_BoundingBox *clip, float scale) {
-	if (clip == NULL ||
+ * cropped. The cut is the textbox's own clip, the box it was given: a clip
+ * further out (a scroll's viewport) moves the run through it and never
+ * shortens it. The cut is solved, so it is compared with the run's solved
+ * end: the realized box (box_snap) can round past that end, which would read
+ * a whole run as cut. A cut edge within float noise of the run's own edge is
+ * the run's edge, since Clay solves in float32. The bound then quantizes the
+ * realized start and the cut's edge at the device scale and takes the
+ * difference, as device_len does. */
+static int text_ellipsis_width(Clay_RenderCommand *cmd, Clay_BoundingBox solved,
+		const Clay_BoundingBox *cut, float scale) {
+	if (cut == NULL ||
 			((uintptr_t)cmd->userData & RENDER_TEXT_ELLIPSIZE) == 0) {
 		return 0;
 	}
@@ -1694,13 +1694,15 @@ static int text_ellipsis_width(Clay_RenderCommand *cmd,
 	const Clay_BoundingBox *box = &cmd->boundingBox;
 	double start = turn ? box->y : box->x;
 	double end = start + (turn ? box->height : box->width);
-	double clip_end = turn ? (double)clip->y + clip->height
-		: (double)clip->x + clip->width;
-	if (clip_end >= end - 1e-3)
+	double solved_end = turn ? (double)solved.y + solved.height
+		: (double)solved.x + solved.width;
+	double cut_end = turn ? (double)cut->y + cut->height
+		: (double)cut->x + cut->width;
+	if (cut_end >= solved_end - 1e-3)
 		return 0;
 	long origin = lround(start * scale);
 	int natural = (int)(lround(end * scale) - origin);
-	int bound = (int)(lround(clip_end * scale) - origin);
+	int bound = (int)(lround(cut_end * scale) - origin);
 	return bound > 0 && bound < natural ? bound : 0;
 }
 
@@ -1818,8 +1820,8 @@ static bool attr_equal(const struct render_text_attr *a, const struct render_tex
 }
 
 static int reconcile_text(struct render_state *rs, struct rnode *n,
-		Clay_RenderCommand *cmd, Clay_BoundingBox rbox,
-		const Clay_BoundingBox *clip, const struct clip_masks *mask,
+		Clay_RenderCommand *cmd, Clay_BoundingBox solved, Clay_BoundingBox rbox,
+		const Clay_BoundingBox *cut, const struct clip_masks *mask,
         const struct render_client_hooks *hooks) {
 	Clay_TextRenderData *td = &cmd->renderData.text;
 	int muts = 0;
@@ -1889,7 +1891,7 @@ static int reconcile_text(struct render_state *rs, struct rnode *n,
 	 * bound joins the raster keys. Without it, narrowing a clip over a run whose
 	 * own box never moved would keep the buffer truncated at the old width and
 	 * crop the mark itself in half. */
-	int ell = text_ellipsis_width(cmd, clip, rs->scale);
+	int ell = text_ellipsis_width(cmd, solved, cut, rs->scale);
 	bool raster_changed = content_changed || attrs_changed ||
 		!raster_size_equal(n->box, cmd->boundingBox, rs->scale) ||
 		n->raster_scale != rs->scale ||
@@ -3030,6 +3032,8 @@ int render_reconcile(struct render_state *rs, Clay_RenderCommandArray commands,
 	 * top of this stack and the scope its word names. Depth is bounded by
 	 * tree nesting; the cap is a backstop, not a real limit. */
 	Clay_BoundingBox clip_stack[CLIP_STACK_MAX];
+	/* Each scissor's own box, before the enclosing clips cut it. */
+	Clay_BoundingBox clip_own[CLIP_STACK_MAX];
 	int clip_depth = 0;
 	const struct clip_scope bounds_scope = { .box = bounds };
 
@@ -3070,8 +3074,10 @@ int render_reconcile(struct render_state *rs, Clay_RenderCommandArray commands,
 			cmd = &decoration;
 		}
 		/* The scissor command stays solved for the clip stack and
-		 * text_ellipsis_width. Every realized box rounds once, including
-		 * the clipped intersection below. */
+		 * text_ellipsis_width, which also reads the text's solved box.
+		 * Every realized box rounds once, including the clipped
+		 * intersection below. */
+		Clay_BoundingBox solved = cmd->boundingBox;
 		if (cmd->commandType != CLAY_RENDER_COMMAND_TYPE_SCISSOR_START) {
 			cmd->boundingBox = box_snap(cmd->boundingBox);
 		}
@@ -3161,7 +3167,9 @@ int render_reconcile(struct render_state *rs, Clay_RenderCommandArray commands,
 			muts += reconcile_border(rs, n, cmd, rbox, mask);
 			break;
 		case CLAY_RENDER_COMMAND_TYPE_TEXT:
-			muts += reconcile_text(rs, n, cmd, rbox, clip_top, mask, hooks);
+			muts += reconcile_text(rs, n, cmd, solved, rbox, clip_depth > 0
+				&& clip_depth <= CLIP_STACK_MAX ? &clip_own[clip_depth - 1] : NULL,
+				mask, hooks);
 			break;
 		case CLAY_RENDER_COMMAND_TYPE_IMAGE:
 			muts += reconcile_image(rs, n, cmd, rbox, mask);
@@ -3221,6 +3229,9 @@ int render_reconcile(struct render_state *rs, Clay_RenderCommandArray commands,
 			if (!cmd->renderData.clip.vertical && !both) {
 				sc.y = -CLIP_INF;
 				sc.height = 2.0f * CLIP_INF;
+			}
+			if (clip_depth < CLIP_STACK_MAX) {
+				clip_own[clip_depth] = sc;
 			}
 			if (clip_depth > 0) {
 				sc = box_intersect(clip_stack[(clip_depth < CLIP_STACK_MAX
