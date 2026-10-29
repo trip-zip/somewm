@@ -4,8 +4,24 @@ All notable changes to somewm will be documented in this file.
 
 ## [Unreleased]
 
+## [1.4.7] - 2026-10-28
+
+Patch release. 20 commits since 1.4.6: a hit-test crash on shaped wiboxes,
+layer-shell placement after a keyboard screen switch, X11 focus on click,
+screen sharing. No API changes; existing rc.lua configs run unchanged.
+
 ### Fixed
 
+- Pointer motion into the transparent part of a shaped wibox, such as the
+  corner of a rounded popup, no longer crashes somewm. The hit test read a
+  drawable as a drawin and dereferenced past its allocation.
+- Layer-shell clients without an output, such as rofi, open on the screen
+  selected with awful.screen.focus_bydirection or awful.screen.focus_relative,
+  not the screen the cursor last moved on.
+- root.size_mm() returns the physical size of the root window from the average
+  pixel density of the outputs instead of a density weighted by pixel count
+  that scaled with resolution. Configs that derive DPI from it when Xft.dpi is
+  unset got a wrong value on every multi-output setup.
 - A Wayland window that hides by dropping its buffer and shows again is
   configured, maps and is managed again, as a new client object, as AwesomeWM does
   for a window withdrawn and mapped again. Before, it waited for a configure
