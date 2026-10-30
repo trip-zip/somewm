@@ -18,7 +18,6 @@
 #include "globalconf.h"
 #include "luaa.h"
 #include "ewmh.h"
-#include "banning.h"
 #include "event_queue.h"
 #include "input.h"
 #include "objects/client.h"
@@ -296,30 +295,10 @@ some_refresh(void)
 	clock_gettime(CLOCK_MONOTONIC, &bench_ts[3]);
 #endif
 
-	/* Step 4: Update client visibility (banning) */
-	bool banning_pending = globalconf.need_lazy_banning;
-	banning_refresh();
-	/* Banning is a declare filter (declare.c): re-solve when it ran. */
-	if (banning_pending)
-		declare_mark_all_dirty();
-
-	/* Step 4.5: Re-evaluate pointer focus after visibility changes.
-	 * When scene nodes are disabled (banned) wlroots sends wl_pointer.leave,
-	 * but re-enabling them does not automatically send wl_pointer.enter.
-	 * Without this, clients (notably Chromium) that were unbanned under a
-	 * stationary cursor never regain pointer focus and stop receiving all
-	 * input until the user moves the mouse. */
-	if (banning_pending)
-		motionnotify(0, NULL, 0, 0, 0, 0);
-
-#ifdef SOMEWM_BENCH
-	clock_gettime(CLOCK_MONOTONIC, &bench_ts[4]);
-#endif
-
 	ewmh_stacking_refresh();
 
 #ifdef SOMEWM_BENCH
-	clock_gettime(CLOCK_MONOTONIC, &bench_ts[5]);
+	clock_gettime(CLOCK_MONOTONIC, &bench_ts[4]);
 #endif
 
 	/* Step 6: Destroy windows queued for deferred destruction (XWayland only)
@@ -327,10 +306,10 @@ some_refresh(void)
 	client_destroy_later();
 
 #ifdef SOMEWM_BENCH
-	clock_gettime(CLOCK_MONOTONIC, &bench_ts[6]);
+	clock_gettime(CLOCK_MONOTONIC, &bench_ts[5]);
 	for (int i = 0; i < BENCH_STAGE_COUNT; i++)
 		bench_stage_record(i, timespec_diff_ns(&bench_ts[i], &bench_ts[i + 1]));
-	bench_record_frame_time(timespec_diff_ns(&bench_ts[0], &bench_ts[6]));
+	bench_record_frame_time(timespec_diff_ns(&bench_ts[0], &bench_ts[5]));
 #endif
 
 	in_refresh = false;

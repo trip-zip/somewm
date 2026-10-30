@@ -96,7 +96,6 @@ const char *bench_stage_names[BENCH_STAGE_COUNT] = {
     "lua_refresh",
     "drawin",
     "client",
-    "banning",
     "stack",
     "destroy",
 };

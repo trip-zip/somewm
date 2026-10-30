@@ -6309,7 +6309,6 @@ globalconf_init(lua_State *L)
 	globalconf.primary_screen = NULL;
 
 	/* Initialize flags */
-	globalconf.need_lazy_banning = false;
 
 	/* Initialize grabbers */
 	globalconf.keygrabber = LUA_REFNIL;

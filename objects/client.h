@@ -288,10 +288,6 @@ struct client_t
     bool modal;
     /** True if the client is on top */
     bool ontop;
-    /** True if a client is banned to a position outside the viewport.
-     * Note that the geometry remains unchanged and that the window is still mapped.
-     */
-    bool isbanned;
     /** true if the client must be skipped from task bar client list */
     bool skip_taskbar;
     /** True if the client cannot have focus */
@@ -390,9 +386,7 @@ bool client_on_selected_tags(client_t *);
 bool clients_share_tags(client_t *, client_t *);
 client_t * client_getbywin(xcb_window_t);
 
-void client_ban(client_t *);
-void client_ban_unfocus(client_t *);
-void client_unban(client_t *);
+void client_visibility_changed(void);
 bool client_resize(client_t *, area_t, bool, bool);
 void client_unmanage(client_t *, client_unmanage_t);
 void client_kill(client_t *);
@@ -462,16 +456,12 @@ client_isfixed(client_t *c)
             && c->size_hints_honor);
 }
 
-/** Returns true if a client is tagged with one of the tags of the
- * specified screen and is not hidden. Note that "banned" clients are included.
- * \param c The client to check.
- * \param screen Virtual screen number.
- * \return true if the client is visible, false otherwise.
- */
 static inline bool
 client_isvisible(client_t *c)
 {
-    return (!c->hidden && !c->minimized && client_on_selected_tags(c));
+	/* Before a node exists at map, rules can already set these flags. */
+	bool hidden = c->node ? c->node->hidden : c->hidden || c->minimized;
+	return !hidden && client_on_selected_tags(c);
 }
 
 #endif

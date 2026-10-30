@@ -1246,9 +1246,8 @@ declarable_client(Client *c)
 	if (!c || !c->scene || !client_surface(c)
 			|| !client_surface(c)->mapped)
 		return false;
-	/* Banning's visibility fact (tags, minimized) becomes a declare
-	 * filter: an undeclared client's tree is released disabled by the
-	 * sweep. Unmanaged clients are not tag-tracked. */
+	/* The sweep releases an undeclared client's scene tree disabled.
+	 * Unmanaged clients are not tag-tracked. */
 	return client_is_unmanaged(c) || client_isvisible(c);
 }
 

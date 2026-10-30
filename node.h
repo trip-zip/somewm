@@ -91,7 +91,6 @@ struct node {
 	struct node *parent;
 	struct wl_list link; /* parent->children, tail is top */
 	struct wl_list children;
-	bool mounted;
 	bool hidden;
 	bool protected;
 	const char *label; /* owned copy, NULL allowed */
