@@ -6,7 +6,7 @@
 #include <stdint.h>
 
 #include <cairo.h>
-#include <lua.h>
+typedef struct lua_State lua_State;
 
 #include "declare_src.h"
 #include "render.h"

@@ -80,6 +80,7 @@
 #include "globalconf.h"
 #include "luaa.h"
 #include "stack.h"
+#include "node.h"
 #include "ipc.h"
 #include "dbus.h"
 #include "objects/spawn.h"
@@ -1326,6 +1327,13 @@ main(int argc, char *argv[])
 
 	ensure_lgi_guard(argc, argv);
 	unsetenv("LD_PRELOAD");  /* Guard is loaded; don't leak to children */
+
+#ifndef NDEBUG
+	/* SOMEWM_NODE_SELFTEST=1 checks node mutations once before startup continues. */
+	const char *node_selftest_env = getenv("SOMEWM_NODE_SELFTEST");
+	if (node_selftest_env && strcmp(node_selftest_env, "1") == 0)
+		node_selftest();
+#endif
 
 	/* string.wlen() uses mbstowcs(), which needs the environment's character
 	 * locale. Leave numeric parsing and formatting in the C locale. */
