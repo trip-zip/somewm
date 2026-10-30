@@ -39,7 +39,6 @@
 #include "objects/output.h"
 #include "objects/layer_surface.h"
 #include "objects/signal.h"
-#include "banning.h"
 
 /* macros */
 
@@ -526,8 +525,7 @@ rendermon(struct wl_listener *listener, void *data)
 	 * here. While the session is locked the same pass adds the lock
 	 * section on top (declare.h). When the scene changed, what sits under
 	 * the stationary pointer may have too (a surface mapped under it, a
-	 * tag switch): re-evaluate pointer focus, the way banning_refresh()
-	 * does after visibility flips. */
+	 * tag switch): re-evaluate pointer focus after reconciliation. */
 	if (m->declare && declare_output_frame(m->declare, m) > 0)
 		motionnotify(0, NULL, 0, 0, 0, 0);
 
@@ -778,7 +776,6 @@ updatemons(struct wl_listener *listener, void *data)
 				lua_pop(globalconf_L, 1);
 			}
 
-			banning_refresh();
 			some_refresh();
 		}
 	}

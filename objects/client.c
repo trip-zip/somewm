@@ -96,7 +96,6 @@
 #include "common/lualib.h"
 #include "signal.h"
 #include "../globalconf.h"
-#include "../banning.h"
 #include "../ewmh.h"
 #include "../draw.h"        /* For draw_find_visual() - must be before x11_compat.h */
 #include "../x11_compat.h"  /* X11 stub functions for Wayland */
@@ -2024,38 +2023,13 @@ client_hasproto(client_t *c, xcb_atom_t atom)
     return false;
 }
 
-/** Prepare banning a client by running all needed lua events.
- * \param c The client.
- */
-void client_ban_unfocus(client_t *c)
-{
-    /* Wait until the last moment to take away the focus from the window. */
-    if(globalconf.focus.client == c) {
-        client_unfocus(c, false);
-    }
-}
-
-/** Ban client and move it out of the viewport.
- * \param c The client.
- */
 void
-client_ban(client_t *c)
+client_visibility_changed(void)
 {
-    if(!c->isbanned)
-    {
-        /* Wayland deviation: scene is created at map time, but clients are added
-         * to globalconf.clients at create time (to match AwesomeWM signal timing).
-         * X11's frame_window exists immediately, but our scene may not yet. */
-        if(!c->scene)
-            return;
-
-        /* The reconciler hides it: banning is a declare filter
-         * (client_isvisible in declarable_client), and banning_refresh()'s
-         * caller marks every output dirty once the sweep has to run. */
-        c->isbanned = true;
-
-        client_ban_unfocus(c);
-    }
+	declare_mark_all_dirty();
+	client_t *c = globalconf.focus.client;
+	if (c && !client_isvisible(c))
+		client_unfocus(c, false);
 }
 
 /** This is part of The Bob Marley Algorithm: we ignore enter and leave window
@@ -2592,25 +2566,25 @@ client_resize(client_t *c, area_t geometry, bool honor_hints, bool silent)
 void
 client_set_minimized(lua_State *L, int cidx, bool s)
 {
-    client_t *c = luaA_checkudata(L, cidx, &client_class);
+	client_t *c = luaA_checkudata(L, cidx, &client_class);
 
-    if(c->minimized != s)
-    {
-        c->minimized = s;
-        /* The reconciler hides and shows it: banning_need_update() marks
-         * every output once banning_refresh() has to run. */
-        banning_need_update();
+	if(c->minimized != s)
+	{
+		c->minimized = s;
+		if (c->node)
+			c->node->hidden = c->minimized || c->hidden;
+		client_visibility_changed();
 
-        /* xdg state is not set here. property::minimized below reaches
-         * arrange(), which calls client_set_suspended() - one configure
-         * carrying suspended and the new size together, instead of a bare
-         * suspended change a frame ahead of the size. */
+		/* xdg state is not set here. property::minimized below reaches
+		 * arrange(), which calls client_set_suspended() - one configure
+		 * carrying suspended and the new size together, instead of a bare
+		 * suspended change a frame ahead of the size. */
 
-        if(c->toplevel_handle)
-            wlr_foreign_toplevel_handle_v1_set_minimized(c->toplevel_handle, s);
+		if(c->toplevel_handle)
+			wlr_foreign_toplevel_handle_v1_set_minimized(c->toplevel_handle, s);
 
-        luaA_object_emit_signal(L, cidx, "property::minimized", 0);
-    }
+		luaA_object_emit_signal(L, cidx, "property::minimized", 0);
+	}
 }
 
 /** Set a client hidden, or not.
@@ -2621,14 +2595,16 @@ client_set_minimized(lua_State *L, int cidx, bool s)
 static void
 client_set_hidden(lua_State *L, int cidx, bool s)
 {
-    client_t *c = luaA_checkudata(L, cidx, &client_class);
+	client_t *c = luaA_checkudata(L, cidx, &client_class);
 
-    if(c->hidden != s)
-    {
-        c->hidden = s;
-        banning_need_update();
-        luaA_object_emit_signal(L, cidx, "property::hidden", 0);
-    }
+	if(c->hidden != s)
+	{
+		c->hidden = s;
+		if (c->node)
+			c->node->hidden = c->minimized || c->hidden;
+		client_visibility_changed();
+		luaA_object_emit_signal(L, cidx, "property::hidden", 0);
+	}
 }
 
 /** Set a client sticky, or not.
@@ -2639,15 +2615,15 @@ client_set_hidden(lua_State *L, int cidx, bool s)
 void
 client_set_sticky(lua_State *L, int cidx, bool s)
 {
-    client_t *c = luaA_checkudata(L, cidx, &client_class);
+	client_t *c = luaA_checkudata(L, cidx, &client_class);
 
-    if(c->sticky != s)
-    {
-        c->sticky = s;
-        banning_need_update();
-        ewmh_client_update_desktop(c);
-        luaA_object_emit_signal(L, cidx, "property::sticky", 0);
-    }
+	if(c->sticky != s)
+	{
+		c->sticky = s;
+		client_visibility_changed();
+		ewmh_client_update_desktop(c);
+		luaA_object_emit_signal(L, cidx, "property::sticky", 0);
+	}
 }
 
 /** Set a client focusable, or not.
@@ -2899,33 +2875,6 @@ client_set_ontop(lua_State *L, int cidx, bool s)
 		c->ontop = s;
 		client_update_layer(c);
         luaA_object_emit_signal(L, cidx, "property::ontop", 0);
-    }
-}
-
-/** Unban a client and move it back into the viewport.
- * \param c The client.
- */
-void
-client_unban(client_t *c)
-{
-    lua_State *L = globalconf_get_lua_State();
-    if(c->isbanned)
-    {
-        /* Wayland deviation: see comment in client_ban() */
-        if(!c->scene)
-            return;
-
-        /* The reconciler shows it again; see client_ban(). */
-        c->isbanned = false;
-
-        /* An unbanned client shouldn't be minimized or hidden */
-        luaA_object_push(L, c);
-        client_set_minimized(L, -1, false);
-        client_set_hidden(L, -1, false);
-        lua_pop(L, 1);
-
-        if (globalconf.focus.client == c)
-            globalconf.focus.need_update = true;
     }
 }
 

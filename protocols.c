@@ -37,7 +37,6 @@
 #include "objects/layer_surface.h"
 #include "objects/signal.h"
 #include "objects/mousegrabber.h"
-#include "banning.h"
 #include "protocols.h"
 
 

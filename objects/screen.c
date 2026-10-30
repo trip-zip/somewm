@@ -1989,9 +1989,8 @@ screen_client_moveto(client_t *c, screen_t *new_screen, bool doresize)
 	if (new_screen) {
 		Monitor *new_mon = luaA_monitor_get_by_screen(L, new_screen);
 		if (new_mon && new_mon != c->mon) {
-			extern void banning_need_update(void);
 			c->mon = new_mon;
-			banning_need_update();
+			client_visibility_changed();
 		}
 	}
 

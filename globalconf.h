@@ -202,9 +202,6 @@ typedef struct
     /** Layer shell surfaces (panels, launchers, lock screens) */
     layer_surface_array_t layer_surfaces;
 
-    /** Do we need to refresh client visibility? */
-    bool need_lazy_banning;
-
     /* ========== RUNTIME STATE ========== */
 
     /** Accumulated error messages from rc.lua loading (AwesomeWM-compatible) */

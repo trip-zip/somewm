@@ -2,7 +2,7 @@
 --
 -- Tests the tag view path with full compositor pipeline per iteration.
 -- Each iteration: switch tag -> yield -> some_refresh() runs layout,
--- banning, stacking, geometry application.
+-- stacking, geometry application.
 --
 -- Run: somewm-client eval "dofile('tests/bench/bench-tag-switch.lua')"
 -- Then poll: somewm-client eval "return _bench_results.tag_switch or 'PENDING'"

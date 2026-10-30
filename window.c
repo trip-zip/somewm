@@ -48,7 +48,6 @@
 #include "objects/layer_surface.h"
 #include "objects/signal.h"
 #include "objects/button.h"
-#include "banning.h"
 #include "ewmh.h"
 #include "property.h"
 #include "shadow.h"
@@ -1871,6 +1870,7 @@ client_node_attach(Client *c, Monitor *m)
 {
 	if (!c->node)
 		return;
+	c->node->hidden = c->minimized || c->hidden;
 	struct node *parent = c->screen && c->screen->node
 		? c->screen->node : declare_node_root(m);
 	if (c->node->parent != parent)
@@ -1935,7 +1935,7 @@ setmon(Client *c, Monitor *m, uint32_t newtags)
 		resize(c, c->geometry, 0);
 		/* Tags managed by Lua/arrays, no c->tags assignment needed */
 		/* Mark that client visibility needs refresh when moving monitors */
-		banning_need_update();
+		client_visibility_changed();
 		setfullscreen(c, c->fullscreen); /* This will call arrange(c->mon) */
 		/* Note: setfloating() removed - Lua manages floating state via property system */
 	}

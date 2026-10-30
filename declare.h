@@ -47,7 +47,7 @@ void declare_output_update(struct declare_output *dout, int lx, int ly);
 void declare_output_mark_dirty(struct declare_output *dout);
 
 /* Mark every output dirty: for facts without one owning output (stacking
- * order, banning, a drawin whose screen assignment may be stale). */
+ * order, client visibility, a drawin whose screen assignment may be stale). */
 void declare_mark_all_dirty(void);
 
 /* The pointer moved or its image changed: the output under the pointer and
