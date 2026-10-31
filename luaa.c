@@ -5122,7 +5122,20 @@ typedef struct {
 	/* transient_for client ID (since pointer becomes invalid after lua_close) */
 	uint32_t transient_for_id;
 	bool has_transient_for;
+	char **tag_names;
+	int num_tag_names;
 } client_snapshot_t;
+
+static void
+client_snapshots_free(client_snapshot_t *snaps, int count)
+{
+	for (int i = 0; i < count; i++) {
+		for (int j = 0; j < snaps[i].num_tag_names; j++)
+			free(snaps[i].tag_names[j]);
+		free(snaps[i].tag_names);
+	}
+	free(snaps);
+}
 
 /** Detach every client from wlroots and copy it to heap snapshots.
  *
@@ -5134,9 +5147,9 @@ typedef struct {
  * Leaves globalconf empty of clients: the snapshots are the only handle on them
  * until clients_restore() runs.
  *
- * \param out Receives the snapshot array (caller frees), NULL if there are none.
+ * \param out Receives snapshots to release with client_snapshots_free(), or NULL.
  * \param out_count Receives the number of snapshots.
- * \return false if the array could not be allocated.
+ * \return false if snapshots or tag names could not be allocated.
  */
 static bool
 clients_detach(client_snapshot_t **out, int *out_count)
@@ -5152,6 +5165,30 @@ clients_detach(client_snapshot_t **out, int *out_count)
 		snaps = calloc(num_clients, sizeof(client_snapshot_t));
 		if (!snaps)
 			return false;
+	}
+
+	/* Allocate tag names before detaching anything so failure leaves clients live. */
+	for (i = 0; i < num_clients; i++) {
+		client_t *c = globalconf.clients.tab[i];
+		client_snapshot_t *snap = &snaps[i];
+		int count = 0;
+
+		foreach(tag, globalconf.tags)
+			if ((*tag)->name && is_client_tagged(c, *tag))
+				count++;
+		if (!count)
+			continue;
+		snap->tag_names = calloc(count, sizeof(char *));
+		if (!snap->tag_names)
+			goto fail;
+		foreach(tag, globalconf.tags) {
+			if (!(*tag)->name || !is_client_tagged(c, *tag))
+				continue;
+			char *name = strdup((*tag)->name);
+			if (!name)
+				goto fail;
+			snap->tag_names[snap->num_tag_names++] = name;
+		}
 	}
 
 	for (i = 0; i < num_clients; i++) {
@@ -5240,6 +5277,10 @@ clients_detach(client_snapshot_t **out, int *out_count)
 	*out = snaps;
 	*out_count = num_clients;
 	return true;
+
+fail:
+	client_snapshots_free(snaps, num_clients);
+	return false;
 }
 
 /** Re-create snapshotted clients as userdata in a fresh Lua state and hook
@@ -5550,6 +5591,7 @@ luaA_loadrc(void)
 
 			if (!globalconf_L) {
 				fprintf(stderr, "somewm: FATAL: failed to reinitialize Lua after timeout\n");
+				client_snapshots_free(snaps, num_snaps);
 				break;
 			}
 
@@ -5561,7 +5603,7 @@ luaA_loadrc(void)
 			luaA_output_hot_reload(globalconf_L);
 
 			clients_restore(globalconf_L, snaps, num_snaps);
-			free(snaps);
+			client_snapshots_free(snaps, num_snaps);
 
 			/* Record the error for notification */
 			luaA_startup_error("Config loading timed out (exceeded 10 seconds)");
@@ -5889,7 +5931,7 @@ luaA_hot_reload(void)
 	 * Phase B2: Snapshot and detach clients
 	 * ================================================================ */
 
-	/* Release borrowed trees before clients_detach clears client scene pointers. */
+	/* Borrow hooks follow node owners through the snapshots and restored clients. */
 	declare_hot_reload();
 	foreach(drawin, globalconf.drawins)
 		widget_nodes_clear(&(*drawin)->widgets);
@@ -5921,7 +5963,7 @@ luaA_hot_reload(void)
 		tag_snaps[i].name = t->name;
 		t->name = NULL;
 
-		/* Clear clients array so tag_wipe doesn't iterate stale pointers */
+		/* Recreated tags get new client arrays. tag_wipe must not visit old clients. */
 		t->clients.tab = NULL;
 		t->clients.len = t->clients.size = 0;
 	}
@@ -6118,10 +6160,8 @@ luaA_hot_reload(void)
 	/* Client scanning: triggers awful.mouse/keyboard/rules setup */
 	client_emit_scanning();
 
-	/* Save client array order before manage signals. Rule callbacks
-	 * (e.g. to_secondary_section) call client:swap() which reorders
-	 * globalconf.clients. We need the manage loop to run for tags and
-	 * properties, but must preserve the pre-reload tiling order. */
+	/* globalconf.clients stores tiling order. Rule callbacks can reorder it
+	 * with client:swap(), so restore it after request::manage. */
 	client_t **saved_order = NULL;
 	if (num_clients > 0) {
 		saved_order = malloc(num_clients * sizeof(client_t *));
@@ -6149,6 +6189,27 @@ luaA_hot_reload(void)
 				c->screen = globalconf.screens.tab[0];
 		}
 		client_node_attach(c, c->mon);
+		if (c->screen && client_snaps[i].num_tag_names > 0) {
+			luaA_object_push(L, c->screen);
+			lua_getfield(L, -1, "tags");
+			int count = lua_objlen(L, -1);
+
+			/* screen.tags is in index order. Each duplicate name claims one tag. */
+			for (int j = 0; j < client_snaps[i].num_tag_names; j++) {
+				for (int k = 1; k <= count; k++) {
+					lua_rawgeti(L, -1, k);
+					tag_t *t = luaA_checkudata(L, -1, &tag_class);
+					if (t->screen == c->screen && t->name
+							&& !strcmp(t->name, client_snaps[i].tag_names[j])
+							&& !is_client_tagged(c, t)) {
+						tag_client(L, c);
+						break;
+					}
+					lua_pop(L, 1);
+				}
+			}
+			lua_pop(L, 2);
+		}
 	}
 
 	for (i = 0; i < num_clients; i++) {
@@ -6245,7 +6306,7 @@ cleanup:
 			free(systray_snaps[i].bus_name);
 			free(systray_snaps[i].object_path);
 		}
-	free(client_snaps);
+	client_snapshots_free(client_snaps, num_clients);
 	free(screen_snaps);
 	free(tag_snaps);
 	free(systray_snaps);
