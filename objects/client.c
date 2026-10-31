@@ -105,7 +105,6 @@
 #include "../somewm_api.h"
 #include "../xwayland.h"
 /* #include "../somewm_types.h" - not needed, causes Client/client_t conflict */
-#include "../stack.h"
 #include "common/util.h"
 #include "../event.h"
 #include "../shadow.h"
@@ -1632,20 +1631,139 @@ client_set_urgent(lua_State *L, int cidx, bool urgent)
         } \
     }
 DO_CLIENT_SET_PROPERTY(group_window)
-DO_CLIENT_SET_PROPERTY(type)
 DO_CLIENT_SET_PROPERTY(pid)
 DO_CLIENT_SET_PROPERTY(skip_taskbar)
 #undef DO_CLIENT_SET_PROPERTY
 
-/* The next stack refresh lifts a transient right above its parent. */
+static enum node_layer
+client_layer_word(client_t *c)
+{
+	if (c->client_type == X11 && c->surface.xwayland
+			&& c->surface.xwayland->override_redirect)
+		return LAYER_UNMANAGED;
+	if (c->ontop)
+		return LAYER_ONTOP;
+	if (c->fullscreen)
+		return LAYER_FULLSCREEN;
+	if (c->above)
+		return LAYER_ABOVE;
+	if (c->below)
+		return LAYER_BELOW;
+	if (c->transient_for)
+		return LAYER_INHERIT;
+	if (c->type == WINDOW_TYPE_DESKTOP)
+		return LAYER_DESKTOP;
+	return LAYER_NORMAL;
+}
+
+void
+client_update_layer(client_t *c)
+{
+	if (c->node)
+		c->node->layer = client_layer_word(c);
+	declare_mark_all_dirty();
+}
+
+enum node_layer
+client_effective_layer(client_t *c)
+{
+	while (c && c->node) {
+		if (c->node->layer != LAYER_INHERIT)
+			return c->node->layer;
+		c = c->transient_for;
+	}
+	return LAYER_NORMAL;
+}
+
+/* Snapshot the siblings before moving them so a rider keeps its order
+ * relative to the other transients of the same owner. */
+static struct node *
+client_place_riders(client_t *c, struct node *after, client_t **siblings, int len)
+{
+	for (int i = 0; i < len; i++) {
+		client_t *rider = siblings[i];
+		if (rider->transient_for == c) {
+			node_insert_after(after, rider->node);
+			after = client_place_riders(rider, rider->node, siblings, len);
+		}
+	}
+	return after;
+}
+
+static void
+client_restack_above(client_t *c)
+{
+	if (!c->node || !c->node->parent)
+		return;
+	client_t **siblings = NULL;
+	int len = 0;
+	struct node *n;
+	wl_list_for_each(n, &c->node->parent->children, link)
+		if (n->kind == NODE_CLIENT)
+			len++;
+	p_realloc(&siblings, len);
+	int i = 0;
+	wl_list_for_each(n, &c->node->parent->children, link)
+		if (n->kind == NODE_CLIENT)
+			siblings[i++] = n->owner;
+	client_place_riders(c, c->node, siblings, len);
+	p_delete(&siblings);
+}
+
+void
+client_restack(client_t *c)
+{
+	int depth = 0;
+	for (client_t *owner = c->transient_for; owner; owner = owner->transient_for)
+		depth++;
+	for (; depth >= 0; depth--) {
+		client_t *owner = c;
+		for (int i = 0; i < depth; i++)
+			owner = owner->transient_for;
+		if (owner->node) {
+			node_raise(owner->node);
+			client_restack_above(owner);
+		}
+	}
+	declare_mark_all_dirty();
+	ewmh_stacking_changed();
+}
+
+void
+client_raise(client_t *c)
+{
+	client_restack(c);
+	lua_State *L = globalconf_get_lua_State();
+	luaA_object_push(L, c);
+	luaA_object_emit_signal(L, -1, "raised", 0);
+	lua_pop(L, 1);
+}
+
+void
+client_set_type(lua_State *L, int cidx, window_type_t value)
+{
+	client_t *c = luaA_checkudata(L, cidx, &client_class);
+	if (c->type != value) {
+		c->type = value;
+		client_update_layer(c);
+		luaA_object_emit_signal(L, cidx, "property::type", 0);
+	}
+}
+
 void
 client_set_transient_for(lua_State *L, int cidx, client_t *value)
 {
     client_t *c = luaA_checkudata(L, cidx, &client_class);
     if(c->transient_for != value)
     {
-        c->transient_for = value;
-        stack_windows();
+		c->transient_for = value;
+		client_update_layer(c);
+		ewmh_stacking_changed();
+		if (value && c->node && value->node && c->node->parent
+				&& c->node->parent == value->node->parent) {
+			node_insert_after(value->node, c->node);
+			client_restack_above(c);
+		}
         luaA_object_emit_signal(L, cidx, "property::transient_for", 0);
     }
 }
@@ -1700,15 +1818,15 @@ client_find_transient_for(client_t *c)
     tmp = tc = client_getbywin(c->transient_for_window);
 
     /* Verify that there are no loops in the transient_for relation after we are done */
-    for(counter = 0; tmp != NULL && counter <= globalconf.stack.len; counter++)
+	for(counter = 0; tmp != NULL && counter <= globalconf.clients.len; counter++)
     {
         if (tmp == c)
             /* We arrived back at the client we started from, so there is a loop */
-            counter = globalconf.stack.len+1;
+			counter = globalconf.clients.len+1;
         tmp = tmp->transient_for;
     }
 
-    if (counter > globalconf.stack.len)
+	if (counter > globalconf.clients.len)
     {
         /* There was a loop, so unset .transient_for */
         tc = NULL;
@@ -2592,7 +2710,8 @@ client_set_fullscreen(lua_State *L, int cidx, bool s)
         }
         abs_cidx = luaA_absindex(L, cidx);
         lua_pushliteral(L, "fullscreen");
-        c->fullscreen = s;
+		c->fullscreen = s;
+		client_update_layer(c);
         /* Synchronous: the request::geometry handler updates c->geometry
          * via c:geometry(...), and client_resize_do() below uses c->geometry
          * immediately. Queueing would leave the immediate resize operating
@@ -2603,7 +2722,6 @@ client_set_fullscreen(lua_State *L, int cidx, bool s)
             wlr_foreign_toplevel_handle_v1_set_fullscreen(c->toplevel_handle, s);
         /* Force a client resize, so that titlebars get shown/hidden */
         client_resize_do(c, c->geometry, false, false);
-        stack_windows();
     }
 }
 
@@ -2663,7 +2781,7 @@ client_set_maximized_common(lua_State *L, int cidx, bool s, const char* type, co
              * size change (same as fullscreen). */
         }
 
-        stack_windows();
+		declare_mark_all_dirty();
     }
 }
 
@@ -2710,8 +2828,8 @@ client_set_above(lua_State *L, int cidx, bool s)
             client_set_ontop(L, cidx, false);
             client_set_fullscreen(L, cidx, false);
         }
-        c->above = s;
-        stack_windows();
+		c->above = s;
+		client_update_layer(c);
         luaA_object_emit_signal(L, cidx, "property::above", 0);
     }
 }
@@ -2735,8 +2853,8 @@ client_set_below(lua_State *L, int cidx, bool s)
             client_set_ontop(L, cidx, false);
             client_set_fullscreen(L, cidx, false);
         }
-        c->below = s;
-        stack_windows();
+		c->below = s;
+		client_update_layer(c);
         luaA_object_emit_signal(L, cidx, "property::below", 0);
     }
 }
@@ -2754,7 +2872,7 @@ client_set_modal(lua_State *L, int cidx, bool s)
     if(c->modal != s)
     {
         c->modal = s;
-        stack_windows();
+		declare_mark_all_dirty();
         luaA_object_emit_signal(L, cidx, "property::modal", 0);
     }
 }
@@ -2778,8 +2896,8 @@ client_set_ontop(lua_State *L, int cidx, bool s)
             client_set_below(L, cidx, false);
             client_set_fullscreen(L, cidx, false);
         }
-        c->ontop = s;
-        stack_windows();
+		c->ontop = s;
+		client_update_layer(c);
         luaA_object_emit_signal(L, cidx, "property::ontop", 0);
     }
 }
@@ -2826,8 +2944,8 @@ client_unmanage(client_t *c, client_unmanage_t reason)
         client_t *tc = *_tc;
         if(tc->transient_for == c)
         {
-            tc->transient_for = NULL;
-            stack_windows();
+			tc->transient_for = NULL;
+			client_update_layer(tc);
         }
     }
 
@@ -2853,13 +2971,13 @@ client_unmanage(client_t *c, client_unmanage_t reason)
     }
 
     /* remove client from global list and everywhere else */
-    foreach(elem, globalconf.clients)
-        if(*elem == c)
-        {
-            client_array_remove(&globalconf.clients, elem);
-            break;
-        }
-    stack_client_remove(c);
+	foreach(elem, globalconf.clients) {
+		if (*elem == c) {
+			client_array_remove(&globalconf.clients, elem);
+			break;
+		}
+	}
+	ewmh_stacking_changed();
     for(int i = 0; i < globalconf.tags.len; i++)
         untag_client(c, globalconf.tags.tab[i]);
 
@@ -3036,12 +3154,18 @@ luaA_client_get(lua_State *L)
     lua_newtable(L);
     if(stacked)
     {
-        foreach_reverse(c, globalconf.stack)
-            if(screen == NULL || (*c)->screen == screen)
-            {
-                luaA_object_push(L, *c);
-                lua_rawseti(L, -2, i++);
-            }
+		foreach(item, globalconf.screens) {
+			screen_t *s = *item;
+			if (!s->node || (screen && screen != s))
+				continue;
+			struct node *n;
+			wl_list_for_each_reverse(n, &s->node->children, link) {
+				if (n->kind != NODE_CLIENT)
+					continue;
+				luaA_object_push(L, n->owner);
+				lua_rawseti(L, -2, i++);
+			}
+		}
     }
     else
     {
@@ -3291,41 +3415,20 @@ luaA_client_get__committed_size(lua_State *L, client_t *c)
     return 1;
 }
 
-/** Get the stacking layer the client currently draws in.
- * Returns the layer name as a string, or nil if the client has no scene
- * node. Intended for integration tests that verify stacking behavior; the
- * names are the pre-Clay scene layers, now derived from the same
- * classification the declare pass orders bands by.
- */
 static int
 luaA_client_get__scene_layer(lua_State *L, client_t *c)
 {
-    static const char *const layer_names[WINDOW_LAYER_COUNT] = {
-        [WINDOW_LAYER_DESKTOP]    = "background",
-        [WINDOW_LAYER_BELOW]      = "bottom",
-        [WINDOW_LAYER_NORMAL]     = "tile",
-        [WINDOW_LAYER_ABOVE]      = "top",
-        [WINDOW_LAYER_FULLSCREEN] = "fullscreen",
-        [WINDOW_LAYER_ONTOP]      = "overlay",
-    };
-    window_layer_t layer;
-
-    if (!c->scene)
-        return 0;
-
-    /* Unmanaged (override-redirect) clients draw above everything
-     * (declare.c's z table); every other client draws in the layer
-     * stack_client_effective_layer() names. */
-    if (c->client_type == X11 && c->surface.xwayland
-            && c->surface.xwayland->override_redirect) {
-        lua_pushstring(L, "overlay");
-        return 1;
-    }
-    layer = stack_client_effective_layer(c);
-    if (!layer_names[layer])
-        return 0;
-    lua_pushstring(L, layer_names[layer]);
-    return 1;
+	static const char *const layer_names[] = {
+		[LAYER_DESKTOP] = "background",
+		[LAYER_BELOW] = "bottom",
+		[LAYER_NORMAL] = "tile",
+		[LAYER_ABOVE] = "top",
+		[LAYER_FULLSCREEN] = "fullscreen",
+		[LAYER_ONTOP] = "overlay",
+		[LAYER_UNMANAGED] = "overlay",
+	};
+	lua_pushstring(L, layer_names[client_effective_layer(c)]);
+	return 1;
 }
 
 /** Raise a client on top of others which are on the same layer.
@@ -3345,8 +3448,8 @@ luaA_client_raise(lua_State *L)
 
     /* Avoid sending the signal if nothing was done */
     if (c->transient_for == NULL &&
-        globalconf.stack.len &&
-        globalconf.stack.tab[globalconf.stack.len-1] == c)
+		c->node && c->node->parent &&
+		c->node->parent->children.prev == &c->node->link)
         return 0;
 
     client_raise(c);
@@ -3370,14 +3473,19 @@ luaA_client_lower(lua_State *L)
     client_t *c = luaA_checkudata(L, 1, &client_class);
 
     /* Avoid sending the signal if nothing was done */
-    if (globalconf.stack.len && globalconf.stack.tab[0] == c)
+	if (c->node && c->node->parent &&
+		c->node->parent->children.next == &c->node->link)
         return 0;
 
-    stack_client_push(c);
+	if (c->node)
+		node_lower(c->node);
 
     /* Traverse all transient layers. */
     for(client_t *tc = c->transient_for; tc; tc = tc->transient_for)
-        stack_client_push(tc);
+		if (tc->node)
+			node_lower(tc->node);
+	declare_mark_all_dirty();
+	ewmh_stacking_changed();
 
     /* Notify the listeners */
     luaA_object_push(L, c);
@@ -3847,7 +3955,7 @@ luaA_client_set_below(lua_State *L, client_t *c)
 static int
 luaA_client_set_above(lua_State *L, client_t *c)
 {
-    client_set_above(L, -3, luaA_checkboolean(L, -1));
+	client_set_above(L, -3, !lua_isnil(L, -1) && luaA_checkboolean(L, -1));
     return 0;
 }
 

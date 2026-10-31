@@ -33,7 +33,6 @@
 #include "objects/layer_surface.h"
 #include "objects/screen.h"
 #include "objects/signal.h"
-#include "stack.h"
 
 #include "somewm_internal.h"
 
@@ -50,10 +49,8 @@ focusclient(Client *c, int lift)
 	if (session_is_locked())
 		return;
 
-	/* Raise client in stacking order if requested: the stack is the
-	 * declaration order within a band. */
 	if (c && lift)
-		stack_client_append(c);
+		client_restack(c);
 
 	if (c && client_surface(c) == old)
 		return;
@@ -64,18 +61,7 @@ focusclient(Client *c, int lift)
 			wlr_xdg_popup_destroy(popup);
 	}
 
-	/* Put the new client atop the focus stack and select its monitor */
 	if (c && !client_is_unmanaged(c)) {
-		/* Remove from current position in focus stack */
-		foreach(elem, globalconf.stack) {
-			if (*elem == c) {
-				client_array_remove(&globalconf.stack, elem);
-				break;
-			}
-		}
-		/* Add to front of stack (most recent = index 0) */
-		client_array_push(&globalconf.stack, c);
-
 		selmon = c->mon;
 		/* Clear urgent flag via proper API to emit property::urgent signal */
 		luaA_object_push(globalconf_L, c);
@@ -90,11 +76,8 @@ focusclient(Client *c, int lift)
 
 	/* Deactivate old client if focus is changing */
 	if (old && (!c || client_surface(c) != old)) {
-		/* If a mapped overlay is focused, don't focus or activate the
-		 * client, but only update its position in the focus stack to
-		 * render its border with focuscolor and focus it after the
-		 * overlay is closed. Mapped is the declared fact; the scene
-		 * node stays until the next frame parks it. */
+		/* A mapped top or overlay surface retains keyboard focus.
+		 * Its scene node remains until the next frame parks it. */
 		if (old_client_type == LayerShell && old_l->mapped
 				&& old_l->layer_surface->current.layer >= ZWLR_LAYER_SHELL_V1_LAYER_TOP) {
 			return;
@@ -128,7 +111,6 @@ focusclient(Client *c, int lift)
 		/* With no client, all we have left is to clear focus (deferred pattern) */
 		globalconf.focus.client = NULL;
 		globalconf.focus.need_update = true;
-		stack_windows();
 		return;
 	}
 
@@ -138,11 +120,6 @@ focusclient(Client *c, int lift)
 	/* Set pending focus change for AwesomeWM compatibility (Lua code may check this) */
 	globalconf.focus.client = c;
 	globalconf.focus.need_update = true;
-
-	/* Trigger stack refresh: stack_client_layer() depends on which client
-	 * has focus (e.g. fullscreen clients only get WINDOW_LAYER_FULLSCREEN
-	 * when focused or when the focused client is on a different screen). */
-	stack_windows();
 
 	/* Activate the new client */
 	client_activate_surface(client_surface(c), 1);
@@ -202,22 +179,30 @@ focusclient(Client *c, int lift)
 	}
 
 	some_event_queue_global(SIG_CLIENT_FOCUS);
-
-	/* Refresh stacking order (affects fullscreen layer) */
-	stack_refresh();
 }
 
-/* We probably should change the name of this: it sounds like it
- * will focus the topmost client of this mon, when actually will
- * only return that client */
 Client *
 focustop(Monitor *m)
 {
-	foreach(c, globalconf.stack) {
-		if (client_on_selected_tags(*c) && (*c)->mon == m)
-			return *c;
+	Client *top = NULL;
+	enum node_layer layer = LAYER_INHERIT;
+	foreach(item, globalconf.screens) {
+		screen_t *s = *item;
+		if (luaA_monitor_get_by_screen(globalconf_L, s) != m || !s->node)
+			continue;
+		struct node *n;
+		wl_list_for_each(n, &s->node->children, link) {
+			if (n->kind != NODE_CLIENT)
+				continue;
+			Client *c = n->owner;
+			enum node_layer candidate = client_effective_layer(c);
+			if (client_on_selected_tags(c) && candidate >= layer) {
+				top = c;
+				layer = candidate;
+			}
+		}
 	}
-	return NULL;
+	return top;
 }
 
 /* Single entry point for restoring focus after something closed, unlocked,

@@ -1,14 +1,5 @@
 #!/usr/bin/env bash
-#
-# client.get() order must be identical across a hot-reload.
-#
-# This is the regression test for the Phase E fix that used client_array_append
-# instead of client_array_push to stop globalconf.clients reversing.
-# tests/test-hot-reload-client-order.lua named that fix but only printed the
-# pre-restart order and asserted nothing afterwards, so the guard has never
-# actually run.
-#
-# Both helpers share one app_id, so order by pid.
+# Manage order and client sibling order survive a hot reload independently.
 
 . "$(dirname "$0")/lib.sh"
 
@@ -34,9 +25,17 @@ before=$EVAL_VALUE
 info "phase-1 order: $before"
 check_match "phase-1 order lists both clients" "$before" "^[0-9]+,[0-9]+$"
 
+check_eval hr-order "raise the older client" "local c = client.get(); for _, v in ipairs(c) do if v.pid == $pid_a then v:raise(); return true end end" true
+STACK='local t = {}; for _, c in ipairs(client.get(nil, true)) do t[#t+1] = tostring(c.pid) end; return table.concat(t, ",")'
+sw_eval hr-order "$STACK"
+stack_before=$EVAL_VALUE
+check "raised client is first in stacking order" "$stack_before" "$pid_a,$pid_b"
+
 sw_reload hr-order || finish
 
 check_eval hr-order "client.get() order is unchanged across the reload" "$ORDER" "$before"
+
+check_eval hr-order "raised client remains on top after reload" "$STACK" "$stack_before"
 
 sw_check_log_clean hr-order "post-reload log"
 

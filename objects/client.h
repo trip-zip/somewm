@@ -37,6 +37,7 @@
 #include "shadow.h"
 #include "render.h"
 #include "widget.h"
+#include "node.h"
 
 /* Forward declarations */
 typedef struct screen_t screen_t;
@@ -203,6 +204,7 @@ struct client_t
     struct wl_listener unmap;
     struct wl_listener destroy;
     struct wl_listener set_title;
+	struct wl_listener set_parent;
     struct wl_listener request_fullscreen;  /* Renamed to avoid conflict with bool fullscreen */
     struct wl_listener set_decoration_mode;
     struct wl_listener destroy_decoration;
@@ -373,9 +375,6 @@ struct client_t
  * client_t = AwesomeWM Lua-exposed client struct (objects/client.c)
  * These are the same struct, aliased for different contexts */
 
-/* Now include stack.h which expects Client type */
-#include "../stack.h"
-
 #ifndef CLIENT_ARRAY_T_DEFINED
 #define CLIENT_ARRAY_T_DEFINED
 ARRAY_TYPE(client_t *, client)
@@ -442,41 +441,10 @@ area_t client_get_undecorated_geometry(client_t *);
 void client_set_solved_geometry(client_t *c, area_t geometry);
 bool client_titlebar_host(client_t *c, drawable_t *d, struct widget_host *out);
 
-/* Forward declarations for inline functions
- * Note: luaA_object_emit_signal() is declared in awm_luaobject.h (included above) */
-
-/** Put client on top of the stack.
- * \param c The client to raise.
- */
-static inline void
-client_raise(client_t *c)
-{
-    client_t *tc = c;
-    int counter = 0;
-    lua_State *L;  /* C90: declare all variables at top */
-
-    /* Find number of transient layers. */
-    for(counter = 0; tc->transient_for; counter++)
-        tc = tc->transient_for;
-
-    /* Push them in reverse order. */
-    for(; counter > 0; counter--)
-    {
-        tc = c;
-        for(int i = 0; i < counter; i++)
-            tc = tc->transient_for;
-        stack_client_append(tc);
-    }
-
-    /* Push c on top of the stack. */
-    stack_client_append(c);
-
-    /* Notify the listeners */
-    L = globalconf_get_lua_State();
-    luaA_object_push(L, c);
-    luaA_object_emit_signal(L, -1, "raised", 0);
-    lua_pop(L, 1);
-}
+void client_update_layer(client_t *c);
+enum node_layer client_effective_layer(client_t *c);
+void client_restack(client_t *c);
+void client_raise(client_t *c);
 
 /** Check if a client has fixed size.
  * \param c A client.

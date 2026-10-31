@@ -167,8 +167,6 @@ typedef struct
     /** All managed clients */
     client_array_t clients;
 
-    /** Client stacking order (bottom to top) */
-    client_array_t stack;
 
     /** Input focus information */
     struct

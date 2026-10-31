@@ -3189,18 +3189,17 @@ requeststartdrag(struct wl_listener *listener, void *data)
 void
 destroydrag(struct wl_listener *listener, void *data)
 {
-	Client *c = focustop(selmon);
+	Client *c = globalconf.focus.client;
 
-	/* seat->drag is already NULL at this point (wlroots clears it before
-	 * emitting destroy). Re-focus so border colors are properly updated.
-	 *
-	 * focusclient() skips border color updates when the same client is
-	 * already focused (early return at surface == old check), so explicitly
-	 * apply the focus color here for the common case where the focused
-	 * client didn't change during the drag. */
-	if (c && !client_is_unmanaged(c))
-		client_set_border_color(c, get_focuscolor());
-	focusclient(c, 0);
+	/* wlroots clears seat->drag before emitting destroy. Restore the
+	 * focus border that focusclient suppresses while dragging. */
+	if (c) {
+		if (!client_is_unmanaged(c))
+			client_set_border_color(c, get_focuscolor());
+		focusclient(c, 0);
+	} else {
+		focus_restore(selmon);
+	}
 	motionnotify(0, NULL, 0, 0, 0, 0);
 	wl_list_remove(&listener->link);
 	free(listener);

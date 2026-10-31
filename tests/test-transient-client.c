@@ -16,6 +16,8 @@
  * the first N configures that carry a new size are acknowledged and
  * answered with a buffer at the previous size. A bounds report holds the
  * last bounds received. A configure history appends every configured size.
+ * With --late-parent, the child maps first without a parent. SIGUSR1 maps
+ * the owner and SIGUSR2 links the child to it.
  * With --subsurfaces, SIGUSR1 creates or repaints a desynchronized white
  * subsurface, and SIGUSR2 destroys it. Each action writes its sequence
  * number to <report>.subsurface after a Wayland roundtrip.
@@ -41,6 +43,7 @@ static struct wl_shm *g_shm;
 static struct wl_subcompositor *g_subcompositor;
 static struct wl_subsurface *g_subsurface;
 static bool g_subsurfaces;
+static bool g_late_parent;
 static volatile sig_atomic_t g_remove_child;
 static struct xdg_wm_base *g_xdg_wm_base;
 
@@ -265,8 +268,8 @@ static void create_child(void) {
     g_child_toplevel = xdg_surface_get_toplevel(g_child_xdg_surface);
     xdg_toplevel_add_listener(g_child_toplevel, &toplevel_listener, NULL);
 
-    /* Set parent relationship — this is the key part for transient stacking */
-    xdg_toplevel_set_parent(g_child_toplevel, g_parent_toplevel);
+	if (!g_late_parent)
+		xdg_toplevel_set_parent(g_child_toplevel, g_parent_toplevel);
     xdg_toplevel_set_app_id(g_child_toplevel, "transient_test_child");
     xdg_toplevel_set_title(g_child_toplevel, "Transient Child");
 
@@ -278,6 +281,11 @@ static void create_child(void) {
 }
 
 int main(int argc, char *argv[]) {
+	if (argc > 1 && strcmp(argv[1], "--late-parent") == 0) {
+		g_late_parent = true;
+		argc--;
+		argv++;
+	}
     if (argc > 1 && strcmp(argv[1], "--subsurfaces") == 0) {
         g_subsurfaces = true;
         argc--;
@@ -300,7 +308,7 @@ int main(int argc, char *argv[]) {
     sigaction(SIGINT, &sa_term, NULL);
     sigaction(SIGUSR1, &sa_usr1, NULL);
     struct sigaction sa_usr2 = { .sa_handler = handle_sigusr2 };
-    if (g_subsurfaces) sigaction(SIGUSR2, &sa_usr2, NULL);
+	if (g_subsurfaces || g_late_parent) sigaction(SIGUSR2, &sa_usr2, NULL);
 
     /* Connect to Wayland */
     g_display = wl_display_connect(NULL);
@@ -336,8 +344,11 @@ int main(int argc, char *argv[]) {
             argc > 7 ? atoi(argv[7]) : 0);
     xdg_toplevel_set_title(g_parent_toplevel, "Transient Parent");
 
-    /* Initial commit to get configure event */
-    wl_surface_commit(g_parent_surface);
+	/* Late-parent mode maps the child before committing the owner. */
+	if (g_late_parent)
+		create_child();
+	else
+		wl_surface_commit(g_parent_surface);
     wl_display_roundtrip(g_display);
 
     fprintf(stderr, "[test-transient-client] running (pid=%d)\n", getpid());
@@ -347,7 +358,14 @@ int main(int argc, char *argv[]) {
      * SIGUSR1 may arrive while poll() is blocking. A short timeout ensures
      * we don't miss the signal flag. */
     while (g_running) {
-        if (g_subsurfaces && (g_spawn_child || g_remove_child)) {
+		if (g_late_parent && (g_spawn_child || g_remove_child)) {
+			if (g_spawn_child)
+				wl_surface_commit(g_parent_surface);
+			if (g_remove_child)
+				xdg_toplevel_set_parent(g_child_toplevel, g_parent_toplevel);
+			g_spawn_child = false;
+			g_remove_child = false;
+		} else if (g_subsurfaces && (g_spawn_child || g_remove_child)) {
             static unsigned sequence;
             if (g_remove_child && g_child_surface) {
                 wl_subsurface_destroy(g_subsurface);

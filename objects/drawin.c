@@ -8,7 +8,6 @@
 #include "common/luaclass.h"
 #include "common/luaobject.h"
 #include "../somewm_api.h"
-#include "../stack.h"
 #include "common/util.h"
 #include "../globalconf.h"
 #include "../shadow.h"
@@ -28,6 +27,32 @@ lua_class_t drawin_class;
 /* Forward declarations for signal array helpers (shared with screen.c) */
 extern void signal_array_init(signal_array_t *arr);
 extern void signal_array_wipe(signal_array_t *arr);
+
+/* An ontop bar uses a lower band than a plain ontop wibox. Desktop and
+ * splash types take precedence over ontop. Notification type takes
+ * precedence over bar placement. */
+static enum node_layer
+drawin_layer_word(drawin_t *d)
+{
+	if (d->type == WINDOW_TYPE_DESKTOP || d->type == WINDOW_TYPE_SPLASH)
+		return LAYER_WIBOX_DESKTOP;
+	if (d->ontop) {
+		if (d->type == WINDOW_TYPE_NOTIFICATION)
+			return LAYER_NOTIFICATION;
+		if (d->bar.edge)
+			return LAYER_BAR_ONTOP;
+		return LAYER_WIBOX_ONTOP;
+	}
+	return LAYER_WIBOX;
+}
+
+static void
+drawin_update_layer(drawin_t *d)
+{
+	if (d->node)
+		d->node->layer = drawin_layer_word(d);
+	declare_mark_all_dirty();
+}
 
 /* Forward declarations for workarea updates */
 
@@ -164,6 +189,7 @@ drawin_allocator(lua_State *L)
 	drawin->ontop = false;
 	drawin->cursor = strdup("left_ptr");
 	drawin->type = WINDOW_TYPE_NORMAL;
+	drawin_update_layer(drawin);
 	drawin->node->words.border[3] = 1;
 	drawin->strut.left = 0;
 	drawin->strut.right = 0;
@@ -372,6 +398,7 @@ luaA_drawin_set_bar(lua_State *L, drawin_t *drawin)
 
 	if (lua_isnil(L, -1)) {
 		drawin->bar.edge = DRAWIN_EDGE_NONE;
+		drawin_update_layer(drawin);
 	} else {
 		const char *edge;
 
@@ -382,6 +409,7 @@ luaA_drawin_set_bar(lua_State *L, drawin_t *drawin)
 		for (size_t i = 0; i < countof(edges); i++)
 			if (strcmp(edge, edges[i]) == 0)
 				drawin->bar.edge = (uint8_t)(i + 1);
+		drawin_update_layer(drawin);
 		if (!drawin->bar.edge)
 			luaL_error(L, "bar.edge must be top, bottom, left or right");
 		lua_pop(L, 1);
@@ -551,10 +579,6 @@ luaA_drawin_get_type(lua_State *L, drawin_t *drawin)
 	return 1;
 }
 
-/** drawin.type - Set window type (AwesomeWM signature)
- * Note: In Wayland, type doesn't map to any protocol concept (no _NET_WM_WINDOW_TYPE).
- * We store the value for Lua API compatibility but don't change layer behavior based on it.
- */
 static int
 luaA_drawin_set_type(lua_State *L, drawin_t *drawin)
 {
@@ -601,6 +625,7 @@ luaA_drawin_set_type(lua_State *L, drawin_t *drawin)
 
 	if (drawin->type != type) {
 		drawin->type = type;
+		drawin_update_layer(drawin);
 		luaA_object_emit_signal(L, -3, "property::type", 0);
 	}
 
@@ -915,8 +940,7 @@ drawin_set_visible(lua_State *L, int udx, bool v)
 		lua_pushvalue(L, udx);
 		luaA_object_ref_class(L, -1, &drawin_class);
 
-		/* Trigger restacking - AwesomeWM calls stack_windows() when mapping drawin */
-		stack_windows();
+		declare_mark_all_dirty();
 
 		if (drawin->drawable)
 			drawin_update_drawing(L, udx);
@@ -1090,7 +1114,7 @@ luaA_drawin_set_ontop(lua_State *L, drawin_t *drawin)
 	if(b != drawin->ontop)
 	{
 		drawin->ontop = b;
-		stack_windows();
+		drawin_update_layer(drawin);
 		luaA_object_emit_signal(L, -3, "property::ontop", 0);
 	}
 	return 0;

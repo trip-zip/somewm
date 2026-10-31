@@ -79,7 +79,6 @@
 #include "nested_inhibitor.h"
 #include "globalconf.h"
 #include "luaa.h"
-#include "stack.h"
 #include "node.h"
 #include "ipc.h"
 #include "dbus.h"

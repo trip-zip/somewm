@@ -48,7 +48,6 @@
 #include "objects/layer_surface.h"
 #include "objects/signal.h"
 #include "objects/button.h"
-#include "stack.h"
 #include "banning.h"
 #include "ewmh.h"
 #include "property.h"
@@ -76,7 +75,6 @@ void destroypopup(struct wl_listener *listener, void *data);
 void popup_unconstrain(Popup *p);
 void repositionpopup(struct wl_listener *listener, void *data);
 void requestdecorationmode(struct wl_listener *listener, void *data);
-void sync_tiling_reorder(Client *c);
 
 /* listener structs */
 struct wl_listener new_xdg_toplevel = {.notify = createnotify};
@@ -124,28 +122,6 @@ applybounds(Client *c, struct wlr_box *bbox)
 		c->geometry.x = bbox->x;
 	if (c->geometry.y + c->geometry.height <= bbox->y)
 		c->geometry.y = bbox->y;
-}
-
-/* Synchronize tiling order change (zoom operation) */
-void
-sync_tiling_reorder(Client *c)
-{
-	/* Safety check: if arrays not initialized yet, skip sync */
-	if (!globalconf.clients.tab) {
-		return;
-	}
-
-	/* Remove from current position in clients list */
-	foreach(elem, globalconf.clients) {
-		if (*elem == c) {
-			client_array_remove(&globalconf.clients, elem);
-			break;
-		}
-	}
-
-	/* Add to front of clients list (push = insert at position 0) */
-	client_array_push(&globalconf.clients, c);
-
 }
 
 /* Arrange one Awesome-compatible screen through the Lua layout engine. A
@@ -203,8 +179,7 @@ arrange(Monitor *m)
 		client_set_suspended(c, !client_isvisible(c));
 	}
 
-	/* Everything arrange changes (visibility, geometry, the fullscreen_bg
-	 * condition) lands through the declare pass at the next frame. Marked
+	/* Visibility and geometry changes reach the scene at the next frame. Marked
 	 * before the early returns below, which would otherwise leave a
 	 * visibility change with nothing to apply it. */
 	if (m->declare)
@@ -492,6 +467,20 @@ createdecoration(struct wl_listener *listener, void *data)
 	requestdecorationmode(&c->set_decoration_mode, deco);
 }
 
+static void
+client_parent_changed(struct wl_listener *listener, void *data)
+{
+	Client *c = wl_container_of(listener, c, set_parent);
+	/* mapnotify resolves the initial parent after attaching the client node. */
+	if (!c->scene)
+		return;
+	struct wlr_xdg_toplevel *parent = c->surface.xdg->toplevel->parent;
+	lua_State *L = globalconf_get_lua_State();
+	luaA_object_push(L, c);
+	client_set_transient_for(L, -1, parent ? parent->base->data : NULL);
+	lua_pop(L, 1);
+}
+
 void
 createnotify(struct wl_listener *listener, void *data)
 {
@@ -538,6 +527,7 @@ createnotify(struct wl_listener *listener, void *data)
 	LISTEN(&toplevel->events.request_maximize, &c->maximize, maximizenotify);
 	LISTEN(&toplevel->events.request_minimize, &c->minimize, minimizenotify);
 	LISTEN(&toplevel->events.set_title, &c->set_title, updatetitle);
+	LISTEN(&toplevel->events.set_parent, &c->set_parent, client_parent_changed);
 
 	/* Note: property_register_wayland_listeners() is called in mapnotify() after
 	 * the client is fully registered in Lua. Calling it here would fail because
@@ -605,6 +595,7 @@ client_remove_all_listeners(client_t *c)
 		}
 	} else
 	{
+		wl_list_remove(&c->set_parent.link);
 		wl_list_remove(&c->initial_commit.link);
 		/* commit.link is removed in unmapnotify for XDG clients.
 		 * Only remove here if unmapnotify didn't run (c->scene still set). */
@@ -674,6 +665,7 @@ client_reregister_listeners(client_t *c)
 		LISTEN(&toplevel->events.request_maximize, &c->maximize, maximizenotify);
 		LISTEN(&toplevel->events.request_minimize, &c->minimize, minimizenotify);
 		LISTEN(&toplevel->events.set_title, &c->set_title, updatetitle);
+		LISTEN(&toplevel->events.set_parent, &c->set_parent, client_parent_changed);
 
 		if (c->scene) {
 			/* Mapped: register commit (not initial_commit, since already mapped).
@@ -808,14 +800,6 @@ get_bordercolor(void)
 	return globalconf.appearance.bordercolor;
 }
 
-void
-killclient(const Arg *arg)
-{
-	Client *sel = focustop(selmon);
-	if (sel)
-		client_send_close(sel);
-}
-
 /* Re-entrance guard for wl_display_flush_clients() from inside a Wayland
  * signal emit such as surface->events.map. flush_clients can notice that a
  * peer client has hung up and synchronously call wl_client_destroy(), which
@@ -850,6 +834,18 @@ schedule_flush_clients(struct wl_display *display)
 
 	loop = wl_display_get_event_loop(display);
 	pending_flush_source = wl_event_loop_add_idle(loop, flush_clients_idle, display);
+}
+
+/* Unmanaged clients have no c->mon assignment to trust; each declares on
+ * exactly one output, the one under its center, so two outputs never fight
+ * over borrowing the same scene tree. */
+Monitor *
+monitor_for_unmanaged(Client *c)
+{
+	Monitor *m = xytomon(c->geometry.x + c->geometry.width / 2.0,
+		c->geometry.y + c->geometry.height / 2.0);
+
+	return m ? m : c->mon;
 }
 
 void
@@ -913,12 +909,16 @@ mapnotify(struct wl_listener *listener, void *data)
 		client_array_push(&globalconf.clients, c);
 	}
 
-	/* Listed from the first map, as AwesomeWM's client_manage does. */
-	stack_client_push(c);
+	client_update_layer(c);
 	some_event_queue_class(&client_class, SIG_LIST);
 
 	/* Handle unmanaged clients first: they skip the manage machinery */
 	if (client_is_unmanaged(c)) {
+		m = monitor_for_unmanaged(c);
+		c->screen = luaA_screen_get_by_monitor(globalconf_get_lua_State(), m);
+		client_node_attach(c, m);
+		node_lower(c->node);
+		ewmh_stacking_changed();
 		/* Unmanaged (override_redirect) X11 surfaces bypass the window
 		 * manager and must display above all managed windows. The
 		 * declare pass draws them at the top of the overlay band
@@ -982,13 +982,7 @@ mapnotify(struct wl_listener *listener, void *data)
 		 * This makes Lua's update_implicitly_floating() detect them as floating,
 		 * allowing user placement code in request::manage to work correctly. */
 		c->type = WINDOW_TYPE_DIALOG;
-
-		/* Set transient_for so Lua code can access c.transient_for property.
-		 * This is needed for placement rules like awful.placement.centered(c, {parent = c.transient_for}) */
 		L = globalconf_get_lua_State();
-		luaA_object_push(L, c);
-		client_set_transient_for(L, -1, p);
-		lua_pop(L, 1);
 
 		/* Copy tags from parent client (array-based)
 		 * Note: Floating is managed by Lua property system now.
@@ -1007,6 +1001,14 @@ mapnotify(struct wl_listener *listener, void *data)
 
 		/* Set monitor (setmon will handle resize, arrange, etc.) */
 		setmon(c, p->mon, 0);
+		node_lower(c->node);
+		ewmh_stacking_changed();
+
+		/* Both nodes must be attached before placing the transient above its owner. */
+		L = globalconf_get_lua_State();
+		luaA_object_push(L, c);
+		client_set_transient_for(L, -1, p);
+		lua_pop(L, 1);
 
 		/* Emit property and manage signals for transient clients too.
 		 * This is needed for Lua rules and placement code to work. */
@@ -1055,6 +1057,7 @@ mapnotify(struct wl_listener *listener, void *data)
 		 * For XWayland clients, keep the type established by X11 properties. */
 		if (c->client_type == XDGShell)
 			c->type = client_is_float_type(c) ? WINDOW_TYPE_DIALOG : WINDOW_TYPE_NORMAL;
+		client_update_layer(c);
 
 		/* Determine target monitor (but don't set c->mon yet - setmon() needs to do that) */
 		target_mon = xytomon(c->geometry.x, c->geometry.y);
@@ -1084,6 +1087,8 @@ mapnotify(struct wl_listener *listener, void *data)
 		if (!target_mon)
 			target_mon = selmon;
 		setmon(c, target_mon, 0);
+		node_lower(c->node);
+		ewmh_stacking_changed();
 
 		/* Push client to Lua stack for signal emission */
 		luaA_object_push(L, c);
@@ -1816,6 +1821,7 @@ setfullscreen(Client *c, int fullscreen)
 	int was_fullscreen = c->fullscreen;
 
 	c->fullscreen = fullscreen;
+	client_update_layer(c);
 	if (!c->mon || !client_surface(c)->mapped)
 		return;
 
@@ -1858,9 +1864,6 @@ setfullscreen(Client *c, int fullscreen)
 
 	arrange(c->mon);
 	printstatus();
-
-	/* Refresh stacking order (fullscreen layer changes) */
-	stack_refresh();
 }
 
 void
@@ -1937,126 +1940,6 @@ setmon(Client *c, Monitor *m, uint32_t newtags)
 		/* Note: setfloating() removed - Lua manages floating state via property system */
 	}
 	/* Note: focusclient() removed - Lua handles focus via request::activate signals */
-}
-
-void
-swapstack(const Arg *arg)
-{
-	Client *sel = focustop(selmon);
-	int sel_idx = -1;
-	int target_idx = -1;
-	int i;
-	Client *tmp;
-	lua_State *L;
-
-	if (!sel)
-		return;
-
-	if (globalconf.clients.len < 2)
-		return;
-
-	/* Find sel's position in clients array */
-	for (i = 0; i < globalconf.clients.len; i++) {
-		if (globalconf.clients.tab[i] == sel) {
-			sel_idx = i;
-			break;
-		}
-	}
-
-	if (sel_idx == -1)
-		return; /* Should never happen */
-
-	/* Find next/prev client on selected tags */
-	if (arg->i > 0) {
-		/* Search forward */
-		for (i = sel_idx + 1; i < globalconf.clients.len; i++) {
-			if (client_on_selected_tags(globalconf.clients.tab[i])) {
-				target_idx = i;
-				break;
-			}
-		}
-	} else {
-		/* Search backward */
-		for (i = sel_idx - 1; i >= 0; i--) {
-			if (client_on_selected_tags(globalconf.clients.tab[i])) {
-				target_idx = i;
-				break;
-			}
-		}
-	}
-
-	if (target_idx == -1)
-		return; /* No client found to swap with */
-
-	/* Swap the two clients in the array */
-	tmp = globalconf.clients.tab[sel_idx];
-	globalconf.clients.tab[sel_idx] = globalconf.clients.tab[target_idx];
-	globalconf.clients.tab[target_idx] = tmp;
-
-	/* Emit signals (matches AwesomeWM swap()) */
-	L = globalconf_get_lua_State();
-	if (L) {
-		Client *c = globalconf.clients.tab[target_idx]; /* original sel */
-		Client *swap = globalconf.clients.tab[sel_idx]; /* original target */
-
-		some_event_queue_class(&client_class, SIG_LIST);
-
-		/* First swapped signal on c (is_source=true) */
-		luaA_object_push(L, c);
-		luaA_object_push(L, swap);
-		lua_pushboolean(L, true);
-		some_event_queue_signal(L, -4, SIG_SWAPPED, 2);
-
-		/* Second swapped signal on swap (is_source=false) */
-		luaA_object_push(L, swap);
-		luaA_object_push(L, c);
-		lua_pushboolean(L, false);
-		some_event_queue_signal(L, -3, SIG_SWAPPED, 2);
-	}
-
-	arrange(selmon);
-}
-
-void
-tagmon(const Arg *arg)
-{
-	Client *sel = focustop(selmon);
-	if (sel) {
-		setmon(sel, dirtomon(arg->i), 0);
-		focus_restore(selmon);
-	}
-}
-
-void
-togglefloating(const Arg *arg)
-{
-	Client *sel = focustop(selmon);
-	lua_State *L;
-	int is_floating;
-
-	/* return if fullscreen */
-	if (!sel || sel->fullscreen)
-		return;
-
-	/* Call Lua to toggle floating: awful.client.floating.toggle(c)
-	 * This matches AwesomeWM's approach where C doesn't manage floating state */
-	L = globalconf_get_lua_State();
-	if (!L)
-		return;
-
-	/* Push client */
-	luaA_object_push(L, sel);
-
-	/* Get current floating state */
-	lua_getfield(L, -1, "floating");
-	is_floating = lua_toboolean(L, -1);
-	lua_pop(L, 1);
-
-	/* Set new floating state */
-	lua_pushboolean(L, !is_floating);
-	lua_setfield(L, -2, "floating");
-
-	lua_pop(L, 1); /* pop client */
 }
 
 void
@@ -2155,7 +2038,7 @@ updatetitle(struct wl_listener *listener, void *data)
 		lua_pop(L, 1);
 	}
 
-	if (c == focustop(c->mon))
+	if (c == globalconf.focus.client)
 		printstatus();
 
 	if (c->toplevel_handle) {
@@ -2163,44 +2046,4 @@ updatetitle(struct wl_listener *listener, void *data)
 		if (title)
 			wlr_foreign_toplevel_handle_v1_set_title(c->toplevel_handle, title);
 	}
-}
-
-
-void
-zoom(const Arg *arg)
-{
-	Client *c, *sel = focustop(selmon);
-	int found_idx = -1;
-	int i;
-
-	if (!sel || !selmon || some_client_get_floating(sel))
-		return;
-
-	/* Search for the first tiled window that is not sel, marking sel as
-	 * NULL if we pass it along the way */
-	for (i = 0; i < globalconf.clients.len; i++) {
-		c = globalconf.clients.tab[i];
-		if (client_on_selected_tags(c) && !some_client_get_floating(c)) {
-			if (c != sel) {
-				found_idx = i;
-				break;
-			}
-			sel = NULL;
-		}
-	}
-
-	/* Return if no other tiled window was found */
-	if (found_idx == -1)
-		return;
-
-	/* If we passed sel, move c to the front; otherwise, move sel to the
-	 * front */
-	if (!sel)
-		sel = c;
-
-	/* Remove sel from array and push to front */
-	sync_tiling_reorder(sel);
-
-	focusclient(sel, 1);
-	arrange(selmon);
 }
