@@ -26,7 +26,7 @@ local bar, plain, span, bold, empty
 -- The tree nodes of the bar's dump block.
 local function nodes()
     local d = bar.drawin
-    local want = string.format("  drawin screen %d %dx%d+%d+%d ", s.index,
+    local want = string.format("  WIBOX screen %d %dx%d+%d+%d ", s.index,
         d.width, d.height, d.x, d.y)
     local head, out = nil, {}
 

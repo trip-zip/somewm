@@ -22,7 +22,7 @@ end
 
 -- The bar's widget nodes: name, box and the widget objects bound to each.
 local function nodes(bar)
-    local want = string.format('  drawin screen %d %dx%d+%d+%d ', s.index,
+    local want = string.format('  WIBOX screen %d %dx%d+%d+%d ', s.index,
         bar.drawin.width, bar.drawin.height, bar.drawin.x, bar.drawin.y)
     local head, out = nil, {}
 
@@ -37,6 +37,7 @@ local function nodes(bar)
             head = line
         end
     end
+    table.remove(out, 1)
     return out
 end
 

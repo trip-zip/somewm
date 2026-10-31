@@ -28,7 +28,6 @@
 #include "common/luaobject.h"
 #include "objects/signal.h"
 #include "client.h"
-#include "stack.h"
 #include "ewmh.h"
 #include "common/util.h"
 
@@ -86,6 +85,13 @@ associatex11(struct wl_listener *listener, void *data)
 
 	if (!surface) {
 		return;
+	}
+
+	/* X11 can associate a new surface after unmap destroyed its nodes. */
+	if (!c->node) {
+		c->node = declare_node_create(NULL, NODE_CLIENT, DECLARE_KIND_CLIENT, c);
+		c->node->words.opacity = -1;
+		c->border_color_set = false;
 	}
 
 	LISTEN(&surface->events.map, &c->map, mapnotify);
@@ -258,11 +264,9 @@ createnotifyx11(struct wl_listener *listener, void *data)
 
 	/* Create Lua client object (matches AwesomeWM client_manage line 2138) */
 	c = client_new(L);
+	c->node = declare_node_create(NULL, NODE_CLIENT, DECLARE_KIND_CLIENT, c);
+	c->node->words.opacity = -1;
 	/* client_new() leaves the client on the Lua stack at index -1 */
-	/* Match native clients: unset opacity reads as fully opaque in the
-	 * Clay surface declaration. Zero-initialized clients disappear when
-	 * their scene is borrowed again (for example after a tag switch). */
-	c->opacity = -1;
 
 	/* Assign unique client ID (Sway-style incrementing counter) */
 	c->id = next_client_id++;

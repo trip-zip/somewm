@@ -365,7 +365,7 @@ luaA_drawable_get_clay_opaque(lua_State *L, lua_object_t *obj)
 {
 	drawable_t *d = (drawable_t *)obj;
 	double opacity = d->valid && d->owner_type == DRAWABLE_OWNER_DRAWIN
-		? d->owner.drawin->opacity : 1;
+		? d->owner.drawin->node->words.opacity : 1;
 	lua_pushboolean(L, opacity < 0 || opacity == 1);
 	return 1;
 }

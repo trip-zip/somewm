@@ -237,7 +237,7 @@ local steps = {
         local found = false
         if tree then
             for line in tree:gmatch("[^\n]+") do
-                if line:match("^%s*drawin screen " .. physical.index .. " 32x12%+")
+                if line:match("^%s*WIBOX screen " .. physical.index .. " 32x12%+")
                     and line:find("converted:", 1, true) then
                     found = true
                 end

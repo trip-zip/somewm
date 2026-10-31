@@ -23,6 +23,7 @@
 #include "globalconf.h"
 #include "objects/client.h"
 #include "objects/tag.h"
+#include "objects/screen.h"
 #include "luaa.h"
 #include "x11_compat.h"
 #include "common/util.h"
@@ -274,6 +275,8 @@ ewmh_client_check_hints(client_t *c)
     }
     free(reply);
 
+	client_update_layer(c);
+
     /* 4. Process _NET_WM_PID (process ID) */
     reply = xcb_get_property_reply(conn, cookies[3], NULL);
     if (reply && xcb_get_property_value_length(reply) > 0) {
@@ -344,23 +347,49 @@ ewmh_update_net_client_list(lua_State *L)
     return 0;
 }
 
+static bool stacking_changed;
+
+void
+ewmh_stacking_changed(void)
+{
+	stacking_changed = true;
+}
+
+void
+ewmh_stacking_refresh(void)
+{
+	if (!stacking_changed)
+		return;
+	stacking_changed = false;
+	ewmh_update_net_client_list_stacking();
+}
+
 /** Set the client list in stacking order, bottom to top.
  */
 void
 ewmh_update_net_client_list_stacking(void)
 {
-    int n = 0;
+	int n = 0;
 
-    if (!globalconf.connection || !globalconf.screen)
-        return;
+	if (!globalconf.connection || !globalconf.screen)
+		return;
 
-    xcb_window_t wins[MAX(1, globalconf.stack.len)];
+	xcb_window_t wins[MAX(1, globalconf.clients.len)];
+	foreach(item, globalconf.screens) {
+		screen_t *s = *item;
+		if (!s->node)
+			continue;
+		struct node *node;
+		wl_list_for_each(node, &s->node->children, link) {
+			if (node->kind != NODE_CLIENT)
+				continue;
+			Client *c = node->owner;
+			if (c->client_type == X11)
+				wins[n++] = c->window;
+		}
+	}
 
-    foreach(client, globalconf.stack)
-        if((*client)->client_type == X11)
-            wins[n++] = (*client)->window;
-
-    xcb_change_property(globalconf.connection, XCB_PROP_MODE_REPLACE,
+	xcb_change_property(globalconf.connection, XCB_PROP_MODE_REPLACE,
 			globalconf.screen->root,
 			_NET_CLIENT_LIST_STACKING, XCB_ATOM_WINDOW, 32, n, wins);
 }

@@ -6,7 +6,7 @@
 #include <stdint.h>
 
 #include <cairo.h>
-#include <lua.h>
+typedef struct lua_State lua_State;
 
 #include "declare_src.h"
 #include "render.h"
@@ -146,10 +146,8 @@ struct widget_node {
 	 * A composite always has children. */
 	uint64_t client;
 	uint32_t x11_configure_serial; /* request consumed by this client declaration */
-	/* A composite's pixels leaf: the client's declare handle, with the
-	 * surface's opacity. */
+	/* A composite's pixels leaf: the surface node's declare handle. */
 	uint64_t surface;
-	float opacity;
 	/* The surface leaf is the client's configure probe: it sends its
 	 * solved size as the configure and draws nothing. */
 	bool probe;

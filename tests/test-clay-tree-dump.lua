@@ -227,7 +227,7 @@ local steps = {
         end
 
         local d = lock_surface.drawin
-        local want = string.format("  drawin screen %d %dx%d+%d+%d ",
+        local want = string.format("  WIBOX screen %d %dx%d+%d+%d ",
             s.index, d.width, d.height, d.x, d.y)
         local found, backdrop, outputs = nil, nil, 0
 

@@ -319,13 +319,11 @@ layer_surface_allocator(lua_State *L)
 	/* Initialize WINDOW_OBJECT_HEADER fields */
 	ls->window = 0;
 	ls->frame_window = 0;
-	ls->opacity = -1.0;
 	ls->strut.left = 0;
 	ls->strut.right = 0;
 	ls->strut.top = 0;
 	ls->strut.bottom = 0;
 	ls->border_need_update = false;
-	ls->border_width = 0;
 	ls->type = WINDOW_TYPE_DOCK;  /* Layer surfaces are dock-like */
 	button_array_init(&ls->buttons);
 

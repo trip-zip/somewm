@@ -43,7 +43,7 @@ function helpers.timed(name, fn, iterations)
 end
 
 --- Run a function asynchronously, yielding to the event loop between iterations.
--- Each iteration gets a full some_refresh() cycle (layout, geometry, banning, stacking).
+-- Each iteration gets a full some_refresh() cycle (layout, geometry, stacking).
 -- Results are delivered via done_callback since IPC eval returns before completion.
 -- GC runs normally since we're measuring realistic compositor cost.
 function helpers.timed_async(name, fn, iterations, done_callback)

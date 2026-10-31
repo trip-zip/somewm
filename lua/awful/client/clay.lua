@@ -18,17 +18,16 @@ local function bar(c, name, side, horizontal)
     local drawable, size = c["titlebar_" .. side](c)
     if size == 0 then return nil end
     if horizontal then
-        return {name = name, host = drawable, w = "grow", h = size, hsrc = "theme", opacity = c.opacity}
+        return {name = name, host = drawable, w = "grow", h = size, hsrc = "theme"}
     end
-    return {name = name, host = drawable, w = size, h = "grow", wsrc = "theme", opacity = c.opacity}
+    return {name = name, host = drawable, w = size, h = "grow", wsrc = "theme"}
 end
 
 -- A max hint at or past the reader's range leaves its axis unbounded, as
 -- the protocol's 0 does; the client warns once per field.
 local unbounded_warned = setmetatable({}, {__mode = "k"})
 local function surface(c, fullscreen)
-    local node = {name = "SURFACE", surface = c, float = true, w = "grow", h = "grow",
-        opacity = c.opacity}
+    local node = {name = "SURFACE", surface = c, float = true, w = "grow", h = "grow"}
     if c.size_hints_honor and not fullscreen then
         local hints = c.size_hints
         for key, field in pairs(bounds) do
@@ -168,7 +167,7 @@ function clay.describe(c, allocation)
         cut = {name = "CHROME_CUT", w = {percent = 1}, h = {percent = 1},
             wsrc = "theme", hsrc = "theme", dir = "y", children = {box}}
         local probe = surface(c, fullscreen)
-        probe.name, probe.probe, probe.opacity = "CONFIGURE", true, nil
+        probe.name, probe.probe = "CONFIGURE", true
         frame.children = {cut, {name = "PROBE", float = true, w = "grow", h = "grow", dir = "y",
             pad = {bw, bw, bw, bw}, children = around(spacer("PROBE_TOP", top), spacer("PROBE_RIGHT", right),
                 spacer("PROBE_BOTTOM", bottom), spacer("PROBE_LEFT", left),

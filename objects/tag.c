@@ -12,7 +12,6 @@
 
 #include "tag.h"
 #include "screen.h"
-#include "banning.h"
 #include "client.h"
 #include "ewmh.h"
 #include "luaa.h"
@@ -87,7 +86,7 @@ tag_client(lua_State *L, client_t *c)
 	/* Bitmask sync removed - arrays maintained */
 
 	/* Mark that visibility needs update (AwesomeWM compatibility) */
-	banning_need_update();
+	client_visibility_changed();
 
 	/* Arrange the monitor to update layout and visibility immediately */
 	if (c->mon)
@@ -112,7 +111,7 @@ untag_client(client_t *c, tag_t *t)
 			/* Bitmask sync removed - arrays maintained */
 
 			/* Mark that visibility needs update (AwesomeWM compatibility) */
-			banning_need_update();
+			client_visibility_changed();
 
 			/* Arrange the monitor to update layout and visibility immediately */
 			if (c->mon)
@@ -186,7 +185,7 @@ tag_view(lua_State *L, int udx, bool view)
 	if (tag->selected != view)
 	{
 		tag->selected = view;
-		banning_need_update();
+		client_visibility_changed();
 		luaA_object_emit_signal(L, udx, "property::selected", 0);
 
 		/* Arrange the monitor for the tag's screen.  Fake screens have no
@@ -271,7 +270,7 @@ luaA_tag_set_activated(lua_State *L, tag_t *tag)
 		{
 			tag->selected = false;
 			luaA_object_emit_signal(L, -3, "property::selected", 0);
-			banning_need_update();
+			client_visibility_changed();
 		}
 		luaA_object_unref(L, tag);
 	}

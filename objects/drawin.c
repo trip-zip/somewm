@@ -8,7 +8,6 @@
 #include "common/luaclass.h"
 #include "common/luaobject.h"
 #include "../somewm_api.h"
-#include "../stack.h"
 #include "common/util.h"
 #include "../globalconf.h"
 #include "../shadow.h"
@@ -28,6 +27,32 @@ lua_class_t drawin_class;
 /* Forward declarations for signal array helpers (shared with screen.c) */
 extern void signal_array_init(signal_array_t *arr);
 extern void signal_array_wipe(signal_array_t *arr);
+
+/* An ontop bar uses a lower band than a plain ontop wibox. Desktop and
+ * splash types take precedence over ontop. Notification type takes
+ * precedence over bar placement. */
+static enum node_layer
+drawin_layer_word(drawin_t *d)
+{
+	if (d->type == WINDOW_TYPE_DESKTOP || d->type == WINDOW_TYPE_SPLASH)
+		return LAYER_WIBOX_DESKTOP;
+	if (d->ontop) {
+		if (d->type == WINDOW_TYPE_NOTIFICATION)
+			return LAYER_NOTIFICATION;
+		if (d->bar.edge)
+			return LAYER_BAR_ONTOP;
+		return LAYER_WIBOX_ONTOP;
+	}
+	return LAYER_WIBOX;
+}
+
+static void
+drawin_update_layer(drawin_t *d)
+{
+	if (d->node)
+		d->node->layer = drawin_layer_word(d);
+	declare_mark_all_dirty();
+}
 
 /* Forward declarations for workarea updates */
 
@@ -68,18 +93,21 @@ bool
 drawin_widget_host(drawin_t *d, struct widget_host *out)
 {
 	Monitor *m = luaA_monitor_get_by_screen(globalconf_get_lua_State(), d->screen);
+	struct node *parent = d->screen && d->screen->node
+		? d->screen->node : declare_node_root(NULL);
+	if (d->node->parent != parent)
+		node_append(parent, d->node);
 	if (!m)
 		return false;
-
 	*out = (struct widget_host) {
 		.tree = &d->widgets,
 		.m = m,
 		.drawable = d->drawable,
-		.id = (uint32_t)declare_handle_for(d, DECLARE_KIND_DRAWIN),
+		.id = (uint32_t)node_handle(d->node),
 		.x = d->x - m->m.x, .y = d->y - m->m.y,
 		.w = d->width, .h = d->height,
 		.src = { DECLARE_SRC_USER, DECLARE_SRC_USER },
-		.radius = d->shape_radius,
+		.radius = d->node->words.radius,
 		.path_clip = d->shape.ref != LUA_NOREF,
 		.visible = d->visible,
 	};
@@ -121,6 +149,8 @@ drawin_assign_screen(lua_State *L, drawin_t *drawin, int drawin_idx)
 	/* If screen changed, update and emit signal */
 	if (old_screen != new_screen) {
 		drawin->screen = new_screen;
+		struct widget_host host;
+		drawin_widget_host(drawin, &host);
 
 		/* Emit property::screen signal */
 		if (drawin_idx != 0) {
@@ -146,6 +176,8 @@ drawin_allocator(lua_State *L)
 	/* Call macro-generated drawin_new() to create and initialize the object
 	 * This sets up the userdata, metatable, and basic class infrastructure */
 	drawin = drawin_new(L);
+	drawin->node = declare_node_create(NULL, NODE_WIBOX, DECLARE_KIND_DRAWIN, drawin);
+	drawin->node->words.opacity = -1;
 
 	/* Initialize drawin object with AwesomeWM defaults */
 	drawin->x = 0;
@@ -155,12 +187,10 @@ drawin_allocator(lua_State *L)
 	drawin->geometry_dirty = false;
 	drawin->visible = false;
 	drawin->ontop = false;
-	drawin->opacity = -1.0;  /* -1 = inherit from parent/theme */
 	drawin->cursor = strdup("left_ptr");
 	drawin->type = WINDOW_TYPE_NORMAL;
-	drawin->border_width = 0;
-	drawin->border_color = (color_t){0, 0, 0, 255, false};  /* Uninitialized color */
-	drawin->border_color_parsed = (color_t){0, 0, 0, 255, false};
+	drawin_update_layer(drawin);
+	drawin->node->words.border[3] = 1;
 	drawin->strut.left = 0;
 	drawin->strut.right = 0;
 	drawin->strut.top = 0;
@@ -178,7 +208,7 @@ drawin_allocator(lua_State *L)
 
 	drawin->animation_ref = LUA_NOREF;
 	drawin->shape.ref = LUA_NOREF;
-	drawin->shape_radius = -1;
+	drawin->node->words.radius = -1;
 
 	/* Initialize signal and button arrays */
 	signal_array_init(&drawin->signals);
@@ -187,7 +217,6 @@ drawin_allocator(lua_State *L)
 	/* No scene nodes: the renderer draws a drawin from its image entries
 	 * (shadow, border, content), which the declare pass hands out. */
 	drawin->border_need_update = true;
-	drawin->border_color_parsed.initialized = false;
 
 	/* Create drawable object for rendering (AwesomeWM pattern)
 	 * Stack: [drawin] */
@@ -223,7 +252,8 @@ drawin_wipe(drawin_t *w)
 
 	/* Retire the renderer's view: the handle so a later resolve answers
 	 * NULL, and the entry surfaces the declare pass hands out. */
-	declare_handle_drop(w);
+	node_destroy(w->node);
+	w->node = NULL;
 	widget_nodes_clear(&w->widgets);
 
 
@@ -235,7 +265,6 @@ drawin_wipe(drawin_t *w)
 		free(w->cursor);
 		w->cursor = NULL;
 	}
-	/* Note: type is now an enum, border_color is a struct - no need to free */
 
 	/* Wipe button array */
 	button_array_wipe(&w->buttons);
@@ -249,11 +278,6 @@ drawin_wipe(drawin_t *w)
     }
     w->animation_ref = LUA_NOREF;
     w->shape.ref = LUA_NOREF;
-
-	if (w->shadow_config) {
-		free(w->shadow_config);
-		w->shadow_config = NULL;
-	}
 }
 
 /* NOTE: luaA_object_push, luaA_checkdrawin() and luaA_todrawin() are now
@@ -374,6 +398,7 @@ luaA_drawin_set_bar(lua_State *L, drawin_t *drawin)
 
 	if (lua_isnil(L, -1)) {
 		drawin->bar.edge = DRAWIN_EDGE_NONE;
+		drawin_update_layer(drawin);
 	} else {
 		const char *edge;
 
@@ -384,6 +409,7 @@ luaA_drawin_set_bar(lua_State *L, drawin_t *drawin)
 		for (size_t i = 0; i < countof(edges); i++)
 			if (strcmp(edge, edges[i]) == 0)
 				drawin->bar.edge = (uint8_t)(i + 1);
+		drawin_update_layer(drawin);
 		if (!drawin->bar.edge)
 			luaL_error(L, "bar.edge must be top, bottom, left or right");
 		lua_pop(L, 1);
@@ -435,9 +461,9 @@ luaA_drawin_set_attachment(lua_State *L, drawin_t *d)
         if (lua_isuserdata(L, -1)) {
             drawable_t *host = luaA_checkudata(L, -1, &drawable_class);
             if (host->owner_type == DRAWABLE_OWNER_DRAWIN)
-                next.host = (uint32_t)declare_handle_for(host->owner.drawin, DECLARE_KIND_DRAWIN);
+                next.host = (uint32_t)node_handle(host->owner.drawin->node);
             else if (host->owner_type == DRAWABLE_OWNER_CLIENT)
-                next.host = (uint32_t)declare_handle_for(host, DECLARE_KIND_TITLEBAR);
+                next.host = (uint32_t)node_handle(host->node);
         } else {
             double id = lua_isnil(L, -1) ? 0 : luaL_checknumber(L, -1);
             if (!isfinite(id) || id < 0 || id > UINT32_MAX)
@@ -512,10 +538,10 @@ luaA_drawin_get_attachment(lua_State *L, drawin_t *d)
 static int
 luaA_drawin_get_opacity(lua_State *L, drawin_t *drawin)
 {
-	if (drawin->opacity < 0)
+	if (drawin->node->words.opacity < 0)
 		lua_pushnil(L);
 	else
-		lua_pushnumber(L, drawin->opacity);
+		lua_pushnumber(L, drawin->node->words.opacity);
 	return 1;
 }
 
@@ -553,10 +579,6 @@ luaA_drawin_get_type(lua_State *L, drawin_t *drawin)
 	return 1;
 }
 
-/** drawin.type - Set window type (AwesomeWM signature)
- * Note: In Wayland, type doesn't map to any protocol concept (no _NET_WM_WINDOW_TYPE).
- * We store the value for Lua API compatibility but don't change layer behavior based on it.
- */
 static int
 luaA_drawin_set_type(lua_State *L, drawin_t *drawin)
 {
@@ -603,6 +625,7 @@ luaA_drawin_set_type(lua_State *L, drawin_t *drawin)
 
 	if (drawin->type != type) {
 		drawin->type = type;
+		drawin_update_layer(drawin);
 		luaA_object_emit_signal(L, -3, "property::type", 0);
 	}
 
@@ -622,7 +645,7 @@ luaA_drawin_get_drawable(lua_State *L, drawin_t *drawin)
 static int
 luaA_drawin_get_border_width(lua_State *L, drawin_t *drawin)
 {
-	lua_pushinteger(L, drawin->border_width);
+	lua_pushinteger(L, drawin->node->words.bw[0]);
 	return 1;
 }
 
@@ -630,13 +653,14 @@ luaA_drawin_get_border_width(lua_State *L, drawin_t *drawin)
 static int
 luaA_drawin_set_border_width(lua_State *L, drawin_t *drawin)
 {
-	int old_width = drawin->border_width;
+	int old_width = drawin->node->words.bw[0];
 	int new_width = (int)lua_tonumber(L, -1);
 
 	if (new_width < 0)
 		new_width = 0;
 
-	drawin->border_width = new_width;
+	for (int i = 0; i < 4; i++)
+		drawin->node->words.bw[i] = new_width;
 
 	/* Mark for deferred border update (AwesomeWM pattern) */
 	if (old_width != new_width) {
@@ -656,35 +680,26 @@ luaA_drawin_set_border_width(lua_State *L, drawin_t *drawin)
 static int
 luaA_drawin_get_border_color(lua_State *L, drawin_t *drawin)
 {
-	if (drawin->border_color.initialized) {
-		return luaA_pushcolor(L, &drawin->border_color);
-	} else {
-		lua_pushnil(L);
-		return 1;
-	}
+	return luaA_window_get_border_color(L, (window_t *)drawin);
 }
 
 /** drawin.border_color - Set border color (AwesomeWM signature) */
 static int
 luaA_drawin_set_border_color(lua_State *L, drawin_t *drawin)
 {
-	color_t old_color = drawin->border_color;
-
-	/* Parse color from Lua (can be string or table) */
-	if (!luaA_tocolor(L, -1, &drawin->border_color)) {
+	color_t color;
+	if (!luaA_tocolor(L, -1, &color))
 		return luaL_error(L, "Invalid color format");
-	}
 
-	/* Copy to parsed cache */
-	drawin->border_color_parsed = drawin->border_color;
+	float rgba[4];
+	color_to_floats(&color, rgba);
+	bool changed = !drawin->border_color_set
+		|| memcmp(rgba, drawin->node->words.border, sizeof(rgba));
+	memcpy(drawin->node->words.border, rgba, sizeof(rgba));
+	drawin->border_color_set = true;
+	drawin->border_need_update = true;
 
-	/* Mark for deferred border update */
-	if (drawin->border_color.initialized) {
-		drawin->border_need_update = true;
-	}
-
-	if (old_color.initialized != drawin->border_color.initialized
-			|| color_to_uint32(&old_color) != color_to_uint32(&drawin->border_color)) {
+	if (changed) {
 		if (drawin->screen && drawin->screen->monitor
 				&& drawin->screen->monitor->declare)
 			drawin_mark_dirty(drawin);
@@ -917,6 +932,7 @@ drawin_set_visible(lua_State *L, int udx, bool v)
 		}
 		if (!already_in_array) {
 			drawin_array_append(&globalconf.drawins, drawin);
+			node_append(drawin->node->parent, drawin->node);
 		}
 
 		/* Register drawin in object registry so luaA_object_push() can find it
@@ -924,8 +940,7 @@ drawin_set_visible(lua_State *L, int udx, bool v)
 		lua_pushvalue(L, udx);
 		luaA_object_ref_class(L, -1, &drawin_class);
 
-		/* Trigger restacking - AwesomeWM calls stack_windows() when mapping drawin */
-		stack_windows();
+		declare_mark_all_dirty();
 
 		if (drawin->drawable)
 			drawin_update_drawing(L, udx);
@@ -1051,14 +1066,14 @@ luaA_drawin_gc(lua_State *L)
 			free(drawin->cursor);
 			drawin->cursor = NULL;
 		}
-		/* Note: type is enum, border_color is struct - no need to free */
 
 		/* Wipe button array */
 		button_array_wipe(&drawin->buttons);
 
 		/* Retire the renderer's view and drop the retained leaves at the
 		 * next frame */
-		declare_handle_drop(drawin);
+		node_destroy(drawin->node);
+		drawin->node = NULL;
 		widget_nodes_clear(&drawin->widgets);
 
 		declare_mark_all_dirty();
@@ -1099,7 +1114,7 @@ luaA_drawin_set_ontop(lua_State *L, drawin_t *drawin)
 	if(b != drawin->ontop)
 	{
 		drawin->ontop = b;
-		stack_windows();
+		drawin_update_layer(drawin);
 		luaA_object_emit_signal(L, -3, "property::ontop", 0);
 	}
 	return 0;
@@ -1198,15 +1213,16 @@ luaA_drawin_set_opacity(lua_State *L, drawin_t *drawin)
 			return 0;  /* Invalid value, ignore (matches AwesomeWM) */
 	}
 
-	if(drawin->opacity != opacity)
+	float value = (float)opacity;
+	if(drawin->node->words.opacity != value)
 	{
 		if (declare_in_frame())
 			return luaL_error(L, "widget tree changed from inside a frame");
-		bool was_opaque = drawin->opacity < 0 || drawin->opacity == 1;
-		drawin->opacity = opacity;
-		/* Opacity rides the content leaf's userData word (declare.c) */
+		bool was_opaque = drawin->node->words.opacity < 0 || drawin->node->words.opacity == 1;
+		drawin->node->words.opacity = value;
+		/* Declaration applies opacity to content, leaving border and shadow unchanged. */
 		declare_mark_all_dirty();
-		if (was_opaque != (opacity < 0 || opacity == 1)) {
+		if (was_opaque != (value < 0 || value == 1)) {
 			luaA_object_push_item(L, -3, drawin->drawable);
 			luaA_object_emit_signal(L, -1, "property::_clay_opaque", 0);
 			lua_pop(L, 1);
@@ -1220,8 +1236,8 @@ luaA_drawin_set_opacity(lua_State *L, drawin_t *drawin)
 static int
 luaA_drawin_get_shadow(lua_State *L, drawin_t *drawin)
 {
-	if (drawin->shadow_config) {
-		shadow_config_to_lua(L, drawin->shadow_config);
+	if (drawin->node->words.shadow) {
+		shadow_config_to_lua(L, drawin->node->words.shadow);
 	} else {
 		const shadow_config_t *eff = shadow_get_effective_config(NULL, true);
 		if (eff->enabled) {
@@ -1244,12 +1260,12 @@ luaA_drawin_set_shadow(lua_State *L, drawin_t *drawin)
 	}
 
 	/* Allocate or update config */
-	if (!drawin->shadow_config) {
-		drawin->shadow_config = malloc(sizeof(shadow_config_t));
-		if (!drawin->shadow_config)
+	if (!drawin->node->words.shadow) {
+		drawin->node->words.shadow = malloc(sizeof(shadow_config_t));
+		if (!drawin->node->words.shadow)
 			return luaL_error(L, "out of memory");
 	}
-	*drawin->shadow_config = new_config;
+	*drawin->node->words.shadow = new_config;
 
 	declare_mark_all_dirty();
 
@@ -1326,8 +1342,8 @@ luaA_drawin_get_shape(lua_State *L, drawin_t *d)
 {
 	if (d->shape.ref != LUA_NOREF)
 		lua_rawgeti(L, LUA_REGISTRYINDEX, d->shape.ref);
-	else if (d->shape_radius >= 0)
-		lua_pushnumber(L, d->shape_radius);
+	else if (d->node->words.radius >= 0)
+		lua_pushnumber(L, d->node->words.radius);
 	else
 		lua_pushnil(L);
 	return 1;
@@ -1340,8 +1356,8 @@ luaA_drawin_set_shape(lua_State *L, drawin_t *d)
 	if (type != LUA_TNIL && type != LUA_TNUMBER && type != LUA_TFUNCTION)
 		return luaL_error(L, "shape must be nil, a number or a function");
 	bool same = d->shape.ref == LUA_NOREF
-		&& ((type == LUA_TNIL && d->shape_radius < 0)
-			|| (type == LUA_TNUMBER && lua_tonumber(L, -1) == d->shape_radius));
+		&& ((type == LUA_TNIL && d->node->words.radius < 0)
+			|| (type == LUA_TNUMBER && lua_tonumber(L, -1) == d->node->words.radius));
 	if (type == LUA_TFUNCTION && d->shape.ref != LUA_NOREF) {
 		lua_rawgeti(L, LUA_REGISTRYINDEX, d->shape.ref);
 		same = lua_rawequal(L, -1, -2);
@@ -1351,7 +1367,7 @@ luaA_drawin_set_shape(lua_State *L, drawin_t *d)
 		return 0;
 	luaL_unref(L, LUA_REGISTRYINDEX, d->shape.ref);
 	d->shape.ref = LUA_NOREF;
-	d->shape_radius = type == LUA_TNUMBER ? lua_tonumber(L, -1) : -1;
+	d->node->words.radius = type == LUA_TNUMBER ? lua_tonumber(L, -1) : -1;
 	if (type == LUA_TFUNCTION) {
 		lua_pushvalue(L, -1);
 		d->shape.ref = luaL_ref(L, LUA_REGISTRYINDEX);

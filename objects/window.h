@@ -31,23 +31,19 @@ ARRAY_TYPE(button_t *, button)
  * - window is 0 for native Wayland windows (no X11 window ID)
  */
 #define WINDOW_OBJECT_HEADER \
-    LUA_OBJECT_HEADER \
+	LUA_OBJECT_HEADER \
+	struct node *node; \
     /** Wayland surface ID (replaces X window number, 0 for Wayland) */ \
     uint32_t window; \
     /** Frame window (always 0 on Wayland, kept for API compat) */ \
     uint32_t frame_window; \
-    /** Opacity (0.0 to 1.0, or -1 for unset) */ \
-    double opacity; \
     /** Strut - reserved screen space */ \
     strut_t strut; \
     /** Button bindings */ \
     button_array_t buttons; \
     /** Do we have pending border changes? */ \
     bool border_need_update; \
-    /** Border color */ \
-    color_t border_color; \
-    /** Border width */ \
-    uint16_t border_width; \
+	bool border_color_set; \
     /** The window type */ \
     window_type_t type; \
     /** The border width callback */ \
@@ -79,6 +75,7 @@ void window_set_opacity(lua_State *L, int idx, double opacity);
  * \param width The border width.
  */
 void window_set_border_width(lua_State *L, int idx, int width);
+int luaA_window_get_border_color(lua_State *L, window_t *window);
 
 
 /** Get window type as string.

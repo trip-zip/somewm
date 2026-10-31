@@ -5,6 +5,7 @@ project(
   license: 'GPL-3.0-or-later',
   default_options: [
     'c_std=gnu11',
+    'b_ndebug=if-release',
     'warning_level=2',
     'werror=true',
     # Only the wraps in subprojects/ are ever used: wlroots' own wraps follow its git
@@ -405,8 +406,7 @@ somewm_sources = [
   'ipc.c',
   'color.c',
   'draw.c',
-  'stack.c',
-  'banning.c',
+  'node.c',
   'ewmh.c',
   'event.c',
   'xkb.c',

@@ -2,7 +2,7 @@
 --
 -- Tests property toggle signal overhead with full compositor pipeline
 -- per iteration. Each iteration: toggle 6 properties on all clients ->
--- yield -> some_refresh() processes property signals, banning, stacking.
+-- yield -> some_refresh() processes property signals, stacking.
 --
 -- Run: somewm-client eval "dofile('tests/bench/bench-client-churn.lua')"
 -- Then poll: somewm-client eval "return _bench_results.client_churn or 'PENDING'"

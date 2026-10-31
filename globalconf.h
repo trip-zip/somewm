@@ -167,8 +167,6 @@ typedef struct
     /** All managed clients */
     client_array_t clients;
 
-    /** Client stacking order (bottom to top) */
-    client_array_t stack;
 
     /** Input focus information */
     struct
@@ -203,9 +201,6 @@ typedef struct
 
     /** Layer shell surfaces (panels, launchers, lock screens) */
     layer_surface_array_t layer_surfaces;
-
-    /** Do we need to refresh client visibility? */
-    bool need_lazy_banning;
 
     /* ========== RUNTIME STATE ========== */
 

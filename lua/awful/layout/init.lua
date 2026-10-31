@@ -471,7 +471,7 @@ for _, signal in ipairs{"property::_x11_configure", "property::size_hints_honor"
         "property::animation", "property::border_color", "property::opacity", "property::shadow", "property::shape",
         "property::size_hints", "property::urgent", "property::titlebar_top",
         "property::titlebar_right", "property::titlebar_bottom", "property::titlebar_left",
-        "property::_committed_size", "focus", "unfocus"} do
+        "property::_committed_size", "property::transient_for", "focus", "unfocus"} do
     capi.client.connect_signal(signal, arrange_prop)
 end
 -- An authored move of a floating client describes it again; a tiled

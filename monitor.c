@@ -39,7 +39,6 @@
 #include "objects/output.h"
 #include "objects/layer_surface.h"
 #include "objects/signal.h"
-#include "banning.h"
 
 /* macros */
 
@@ -146,7 +145,6 @@ cleanupmon(struct wl_listener *listener, void *data)
 	in_updatemons = 0;
 
 	closemon(m);
-	declare_handle_drop(m);
 	declare_output_destroy(m->declare);
 	free(m);
 
@@ -527,8 +525,7 @@ rendermon(struct wl_listener *listener, void *data)
 	 * here. While the session is locked the same pass adds the lock
 	 * section on top (declare.h). When the scene changed, what sits under
 	 * the stationary pointer may have too (a surface mapped under it, a
-	 * tag switch): re-evaluate pointer focus, the way banning_refresh()
-	 * does after visibility flips. */
+	 * tag switch): re-evaluate pointer focus after reconciliation. */
 	if (m->declare && declare_output_frame(m->declare, m) > 0)
 		motionnotify(0, NULL, 0, 0, 0, 0);
 
@@ -731,9 +728,6 @@ updatemons(struct wl_listener *listener, void *data)
 		}
 		/* Don't move clients to the left output when plugging monitors */
 		arrange(m);
-		/* make sure fullscreen clients have the right size */
-		if ((c = focustop(m)) && c->fullscreen)
-			resize(c, m->m, 0);
 
 		/* Try to re-set the gamma LUT when updating monitors,
 		 * it's only really needed when enabling a disabled output, but meh. */
@@ -782,7 +776,6 @@ updatemons(struct wl_listener *listener, void *data)
 				lua_pop(globalconf_L, 1);
 			}
 
-			banning_refresh();
 			some_refresh();
 		}
 	}

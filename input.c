@@ -2970,7 +2970,7 @@ drawin_accepts_input_at(drawin_t *d, double local_x, double local_y)
 		return true;
 	if (d->input_passthrough)
 		return false;
-	double r = d->shape_radius;
+	double r = d->node->words.radius;
 	if (r <= 0)
 		return true;
 	double dx = local_x < r ? r - local_x
@@ -3034,7 +3034,7 @@ cursor_surface_forget(void)
 		return;
 	wl_list_remove(&cursor_image.surface_destroy.link);
 	wl_list_remove(&cursor_image.surface_commit.link);
-	declare_handle_drop(cursor_image.surface);
+	declare_cursor_node_forget();
 	cursor_image.surface = NULL;
 	cursor_image.tree = NULL;
 	cursor_image.render_owner = NULL;
@@ -3189,18 +3189,17 @@ requeststartdrag(struct wl_listener *listener, void *data)
 void
 destroydrag(struct wl_listener *listener, void *data)
 {
-	Client *c = focustop(selmon);
+	Client *c = globalconf.focus.client;
 
-	/* seat->drag is already NULL at this point (wlroots clears it before
-	 * emitting destroy). Re-focus so border colors are properly updated.
-	 *
-	 * focusclient() skips border color updates when the same client is
-	 * already focused (early return at surface == old check), so explicitly
-	 * apply the focus color here for the common case where the focused
-	 * client didn't change during the drag. */
-	if (c && !client_is_unmanaged(c))
-		client_set_border_color(c, get_focuscolor());
-	focusclient(c, 0);
+	/* wlroots clears seat->drag before emitting destroy. Restore the
+	 * focus border that focusclient suppresses while dragging. */
+	if (c) {
+		if (!client_is_unmanaged(c))
+			client_set_border_color(c, get_focuscolor());
+		focusclient(c, 0);
+	} else {
+		focus_restore(selmon);
+	}
 	motionnotify(0, NULL, 0, 0, 0, 0);
 	wl_list_remove(&listener->link);
 	free(listener);
@@ -3213,7 +3212,7 @@ destroydragicon(struct wl_listener *listener, void *data)
 {
 	wl_list_remove(&listener->link);
 	free(listener);
-	declare_handle_drop(data);
+	declare_drag_node_forget();
 	declare_mark_all_dirty();
 }
 

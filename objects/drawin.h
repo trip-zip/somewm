@@ -25,23 +25,9 @@ struct screen_t;
 struct drawable_t;
 struct widget_node;
 
-/* Drawin object structure - represents a drawable window (wibox/panel/popup)
- *
- * Uses WINDOW_OBJECT_HEADER for AwesomeWM compatibility.
- * Fields from WINDOW_OBJECT_HEADER:
- *   - LUA_OBJECT_HEADER (signals)
- *   - uint32_t window, frame_window (0 for Wayland)
- *   - double opacity
- *   - strut_t strut
- *   - button_array_t buttons
- *   - bool border_need_update
- *   - color_t border_color
- *   - uint16_t border_width
- *   - window_type_t type
- *   - void (*border_width_callback)(...)
- */
 typedef struct drawin_t {
 	WINDOW_OBJECT_HEADER           /* Base window fields from AwesomeWM */
+	uint32_t declared_gen;
 
 	/* Geometry */
 	int x;
@@ -66,14 +52,7 @@ typedef struct drawin_t {
 	 * Pointer retrieved via luaA_object_ref_item, pushed via luaA_object_push_item */
 	struct drawable_t *drawable;   /* Direct C pointer for callback access */
 
-	color_t border_color_parsed;            /* Cached parsed color for efficient refresh */
-
-	/* Shadow support (compositor-level, replaces picom shadows) */
-	shadow_config_t *shadow_config;         /* Per-drawin override (NULL = use defaults) */
-
 	struct widget_shape shape;
-	/* Content corner radius; -1 selects the path or an unshaped rectangle. */
-	float shape_radius;
 	bool shape_mask_warned;
 	bool input_passthrough;
 

@@ -37,6 +37,7 @@
 #include "shadow.h"
 #include "render.h"
 #include "widget.h"
+#include "node.h"
 
 /* Forward declarations */
 typedef struct screen_t screen_t;
@@ -141,6 +142,7 @@ typedef struct client_t client_t;
 struct client_t
 {
     WINDOW_OBJECT_HEADER
+	struct node *surface_node;
 
     /* === Wayland/wlroots specific fields (not in AwesomeWM) === */
     /** Unique client ID (auto-incrementing, Sway-style) */
@@ -179,10 +181,8 @@ struct client_t
     /** The corner radii the renderer last handed window.c for the surface
      * (render.h corners), logical pixels, zeros for square corners. */
     float surface_radii[4];
-    /** The shape property: a registry ref of its function, 0 for none, or
-     * its radius, 0 for none. */
+	/** Registry reference to the shape function, 0 for none. */
     int shape_ref;
-    float shape_radius;
     /** Scene surface node */
     struct wlr_scene_tree *scene_surface;
     /** Popup parent tree: tracks scene_surface's position but is exempt
@@ -193,8 +193,6 @@ struct client_t
     float border_rgba[4];
     bool border_rgba_set;
     bool shape_mask_warned;
-    /** Shadow configuration (NULL = use defaults) */
-    shadow_config_t *shadow_config;
     /** Native shadow style; the renderer owns shared tiles. */
     struct render_shadow shadow;
     /** Wayland listeners */
@@ -206,6 +204,7 @@ struct client_t
     struct wl_listener unmap;
     struct wl_listener destroy;
     struct wl_listener set_title;
+	struct wl_listener set_parent;
     struct wl_listener request_fullscreen;  /* Renamed to avoid conflict with bool fullscreen */
     struct wl_listener set_decoration_mode;
     struct wl_listener destroy_decoration;
@@ -289,10 +288,6 @@ struct client_t
     bool modal;
     /** True if the client is on top */
     bool ontop;
-    /** True if a client is banned to a position outside the viewport.
-     * Note that the geometry remains unchanged and that the window is still mapped.
-     */
-    bool isbanned;
     /** true if the client must be skipped from task bar client list */
     bool skip_taskbar;
     /** True if the client cannot have focus */
@@ -376,9 +371,6 @@ struct client_t
  * client_t = AwesomeWM Lua-exposed client struct (objects/client.c)
  * These are the same struct, aliased for different contexts */
 
-/* Now include stack.h which expects Client type */
-#include "../stack.h"
-
 #ifndef CLIENT_ARRAY_T_DEFINED
 #define CLIENT_ARRAY_T_DEFINED
 ARRAY_TYPE(client_t *, client)
@@ -394,9 +386,7 @@ bool client_on_selected_tags(client_t *);
 bool clients_share_tags(client_t *, client_t *);
 client_t * client_getbywin(xcb_window_t);
 
-void client_ban(client_t *);
-void client_ban_unfocus(client_t *);
-void client_unban(client_t *);
+void client_visibility_changed(void);
 bool client_resize(client_t *, area_t, bool, bool);
 void client_unmanage(client_t *, client_unmanage_t);
 void client_kill(client_t *);
@@ -445,41 +435,10 @@ area_t client_get_undecorated_geometry(client_t *);
 void client_set_solved_geometry(client_t *c, area_t geometry);
 bool client_titlebar_host(client_t *c, drawable_t *d, struct widget_host *out);
 
-/* Forward declarations for inline functions
- * Note: luaA_object_emit_signal() is declared in awm_luaobject.h (included above) */
-
-/** Put client on top of the stack.
- * \param c The client to raise.
- */
-static inline void
-client_raise(client_t *c)
-{
-    client_t *tc = c;
-    int counter = 0;
-    lua_State *L;  /* C90: declare all variables at top */
-
-    /* Find number of transient layers. */
-    for(counter = 0; tc->transient_for; counter++)
-        tc = tc->transient_for;
-
-    /* Push them in reverse order. */
-    for(; counter > 0; counter--)
-    {
-        tc = c;
-        for(int i = 0; i < counter; i++)
-            tc = tc->transient_for;
-        stack_client_append(tc);
-    }
-
-    /* Push c on top of the stack. */
-    stack_client_append(c);
-
-    /* Notify the listeners */
-    L = globalconf_get_lua_State();
-    luaA_object_push(L, c);
-    luaA_object_emit_signal(L, -1, "raised", 0);
-    lua_pop(L, 1);
-}
+void client_update_layer(client_t *c);
+enum node_layer client_effective_layer(client_t *c);
+void client_restack(client_t *c);
+void client_raise(client_t *c);
 
 /** Check if a client has fixed size.
  * \param c A client.
@@ -497,16 +456,12 @@ client_isfixed(client_t *c)
             && c->size_hints_honor);
 }
 
-/** Returns true if a client is tagged with one of the tags of the
- * specified screen and is not hidden. Note that "banned" clients are included.
- * \param c The client to check.
- * \param screen Virtual screen number.
- * \return true if the client is visible, false otherwise.
- */
 static inline bool
 client_isvisible(client_t *c)
 {
-    return (!c->hidden && !c->minimized && client_on_selected_tags(c));
+	/* Before a node exists at map, rules can already set these flags. */
+	bool hidden = c->node ? c->node->hidden : c->hidden || c->minimized;
+	return !hidden && client_on_selected_tags(c);
 }
 
 #endif

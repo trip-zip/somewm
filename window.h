@@ -54,13 +54,10 @@ const float *get_focuscolor(void);
 const float *get_bordercolor(void);
 
 /* Client commands */
+Monitor *monitor_for_unmanaged(Client *c);
+void client_node_attach(Client *c, Monitor *m);
 void setmon(Client *c, Monitor *m, uint32_t newtags);
 void setfullscreen(Client *c, int fullscreen);
-void killclient(const Arg *arg);
-void swapstack(const Arg *arg);
-void zoom(const Arg *arg);
-void togglefloating(const Arg *arg);
-void tagmon(const Arg *arg);
 
 /* Listener management (hot-reload) */
 void client_remove_all_listeners(client_t *c);
@@ -91,6 +88,7 @@ void client_scene_node_destroy(Client* c);
  * element attached to its parent's surface element (declare.c) and borrowed
  * by the renderer at the box Clay solves, like a client. */
 typedef struct Popup {
+	struct node *node;
 	struct wlr_xdg_popup *popup;
 	struct wlr_scene_tree *tree;   /* NULL until the initial commit */
 	void *render_owner;

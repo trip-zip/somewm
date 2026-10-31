@@ -70,7 +70,7 @@ local steps = {
         return true
     end,
     function(count)
-        if not solved_offscreen('drawin screen',true) then
+        if not solved_offscreen('WIBOX screen',true) then
             assert(count<19,'offscreen declaration did not settle:\n'..awesome._clay_tree(s))
             return
         end
@@ -79,7 +79,7 @@ local steps = {
         return true
     end,
     function(count)
-        if not solved_offscreen('drawin screen',false) then assert(count<30);return end
+        if not solved_offscreen('WIBOX screen',false) then assert(count<30);return end
         assert_declared(bar, "wibox past the left edge")
         return true
     end,
