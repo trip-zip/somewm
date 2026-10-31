@@ -141,6 +141,7 @@ typedef struct client_t client_t;
 struct client_t
 {
     WINDOW_OBJECT_HEADER
+	struct node *surface_node;
 
     /* === Wayland/wlroots specific fields (not in AwesomeWM) === */
     /** Unique client ID (auto-incrementing, Sway-style) */
@@ -179,10 +180,8 @@ struct client_t
     /** The corner radii the renderer last handed window.c for the surface
      * (render.h corners), logical pixels, zeros for square corners. */
     float surface_radii[4];
-    /** The shape property: a registry ref of its function, 0 for none, or
-     * its radius, 0 for none. */
+	/** Registry reference to the shape function, 0 for none. */
     int shape_ref;
-    float shape_radius;
     /** Scene surface node */
     struct wlr_scene_tree *scene_surface;
     /** Popup parent tree: tracks scene_surface's position but is exempt
@@ -193,8 +192,6 @@ struct client_t
     float border_rgba[4];
     bool border_rgba_set;
     bool shape_mask_warned;
-    /** Shadow configuration (NULL = use defaults) */
-    shadow_config_t *shadow_config;
     /** Native shadow style; the renderer owns shared tiles. */
     struct render_shadow shadow;
     /** Wayland listeners */

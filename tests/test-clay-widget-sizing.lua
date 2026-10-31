@@ -23,12 +23,14 @@ local bar, leaves
 -- The dump block for the bar: the drawin line and the tree nodes under it.
 local function block()
     local d = bar.drawin
-    local want = string.format("  drawin screen %d %dx%d+%d+%d ", s.index,
+    local want = string.format("  WIBOX screen %d %dx%d+%d+%d ", s.index,
         d.width, d.height, d.x, d.y)
-    local head, nodes = nil, {}
+    local head, nodes, skip_root = nil, {}, true
 
     for line in awesome._clay_tree(s):gmatch("[^\n]+") do
-        if head then
+        if head and skip_root then
+            skip_root = false
+        elseif head then
             local indent, name, w, h = line:match(
                 "^    %x+ ( *)([%w_.-]+).- w=(%S+) h=(%S+)")
             if not indent then

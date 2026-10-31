@@ -131,6 +131,7 @@ node_free_subtree(struct node *n)
 	}
 	nodes[n->id] = NULL;
 	free((void *)n->label);
+	free(n->words.shadow);
 	free(n);
 }
 
@@ -148,6 +149,7 @@ node_tree_destroy(struct node_tree *t)
 	node_changed(t);
 	nodes[t->root.id] = NULL;
 	free((void *)t->root.label);
+	free(t->root.words.shadow);
 	free(t);
 }
 

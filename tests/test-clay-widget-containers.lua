@@ -43,7 +43,7 @@ local steps = {
         if #awesome._test_widget_boxes(shaped.drawin) > 0 then
             local d = shaped.drawin
             local line = awesome._clay_tree(s):match(string.format(
-                "  drawin screen %d %dx%d%%+%d%%+%d [^\n]*", s.index,
+                "  WIBOX screen %d %dx%d%%+%d%%+%d [^\n]*", s.index,
                 d.width, d.height, d.x, d.y))
 
             assert(line and line:find("radius 4", 1, true),

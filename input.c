@@ -2970,7 +2970,7 @@ drawin_accepts_input_at(drawin_t *d, double local_x, double local_y)
 		return true;
 	if (d->input_passthrough)
 		return false;
-	double r = d->shape_radius;
+	double r = d->node->words.radius;
 	if (r <= 0)
 		return true;
 	double dx = local_x < r ? r - local_x
@@ -3034,7 +3034,7 @@ cursor_surface_forget(void)
 		return;
 	wl_list_remove(&cursor_image.surface_destroy.link);
 	wl_list_remove(&cursor_image.surface_commit.link);
-	declare_handle_drop(cursor_image.surface);
+	declare_cursor_node_forget();
 	cursor_image.surface = NULL;
 	cursor_image.tree = NULL;
 	cursor_image.render_owner = NULL;
@@ -3213,7 +3213,7 @@ destroydragicon(struct wl_listener *listener, void *data)
 {
 	wl_list_remove(&listener->link);
 	free(listener);
-	declare_handle_drop(data);
+	declare_drag_node_forget();
 	declare_mark_all_dirty();
 }
 

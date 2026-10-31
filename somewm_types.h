@@ -104,6 +104,7 @@ struct Monitor {
 	struct wl_listener request_state;
 	struct wl_listener destroy_lock_surface;
 	struct wlr_session_lock_surface_v1 *lock_surface;
+	struct node *lock_node;
 	void *lock_render_owner;
 	struct wlr_box m; /* monitor area, layout-relative */
 	struct wlr_box w; /* window area, layout-relative */
@@ -141,6 +142,7 @@ struct layer_surface_t;
 typedef struct LayerSurface {
 	/* Must keep this field first */
 	unsigned int type; /* LayerShell */
+	struct node *node;
 
 	Monitor *mon;
 	struct wlr_scene_tree *scene;

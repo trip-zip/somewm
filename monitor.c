@@ -146,7 +146,6 @@ cleanupmon(struct wl_listener *listener, void *data)
 	in_updatemons = 0;
 
 	closemon(m);
-	declare_handle_drop(m);
 	declare_output_destroy(m->declare);
 	free(m);
 
