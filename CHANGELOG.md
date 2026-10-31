@@ -4,6 +4,17 @@ All notable changes to somewm will be documented in this file.
 
 ## [Unreleased]
 
+### Changed
+
+- A client's border fades with `client.opacity`, as in AwesomeWM. A translucent client no longer shows a solid border.
+- A fullscreen client keeps its opaque backing when it loses focus. Before, only the focused fullscreen client had one, so a translucent fullscreen window that lost focus showed what was behind it.
+- A wibar whose type is desktop, splash or notification stacks in that type's band instead of the bar's. awful.wibar's default type is dock, so a config has to set it to see a change.
+
+### Fixed
+
+- A client keeps its tags across a hot reload. Before, a client with no tag rule moved to the selected tag.
+- A hot reload keeps the screen contents in place instead of redrawing them from blank and replaying every window's enter animation.
+
 ## [2.1.1] - 2026-10-29
 
 Patch release. 25 commits since 2.1.0. The textbox measuring functions
