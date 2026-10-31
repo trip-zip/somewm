@@ -4282,8 +4282,6 @@ declare_hot_reload(void)
 		struct declare_output *dout = m->declare;
 		if (!dout || !dout->band.render)
 			continue;
-		render_destroy(dout->band.render, &client_hooks);
-		dout->band.render = render_create(dout->band.tree);
 		declare_band_update(&dout->band, dout->wlr_output, m->m.x, m->m.y);
 		declare_output_mark_dirty(dout);
 	}
