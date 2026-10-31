@@ -9,6 +9,7 @@
 #include "common/luaobject.h"
 #include "../somewm_api.h"
 #include "../declare.h"
+#include "../window.h"
 #include "../globalconf.h"
 #include "../event_queue.h"
 #include "common/util.h"
@@ -144,6 +145,8 @@ luaA_screen_new(lua_State *L, Monitor *m, int index)
 	luaA_object_ref(L, -1);  /* Store in object registry (pops the duplicate) */
 
 	/* Initialize screen fields (like AwesomeWM's screen_scan_randr_monitors) */
+	screen->node = declare_node_create(m, NODE_SCREEN, DECLARE_KIND_SCREEN, screen);
+	node_set_label(screen->node, "screen");
 	screen->monitor = m;
 	screen->index = index;
 	screen->valid = true;
@@ -168,6 +171,8 @@ luaA_screen_new(lua_State *L, Monitor *m, int index)
 		if (!new_refs) {
 			fprintf(stderr, "somewm: failed to allocate screen array\n");
 			luaL_unref(L, LUA_REGISTRYINDEX, ref);
+			node_destroy(screen->node);
+			screen->node = NULL;
 			return NULL;
 		}
 		screen_refs = new_refs;
@@ -432,6 +437,19 @@ luaA_screen_getbycoord(lua_State *L, int x, int y)
 	return nearest;
 }
 
+static void
+screen_node_destroy(screen_t *screen)
+{
+	if (!screen->node)
+		return;
+	/* Clients and hidden drawins can outlive the screen userdata. */
+	struct node *child, *tmp;
+	wl_list_for_each_safe(child, tmp, &screen->node->children, link)
+		node_append(declare_node_root(NULL), child);
+	node_destroy(screen->node);
+	screen->node = NULL;
+}
+
 /** Handle screen removal (AwesomeWM pattern)
  * Called when a monitor is disconnected. Emits "removed" signal on the screen
  * instance and relocates clients to the nearest screen.
@@ -474,6 +492,7 @@ screen_removed(lua_State *L, screen_t *screen)
 
 	/* Step 4: Mark screen as invalid */
 	widget_nodes_clear(&screen->layout);
+	screen_node_destroy(screen);
 	screen->valid = false;
 	screen->monitor = NULL;
 
@@ -1235,6 +1254,8 @@ luaA_screen_fake_add(lua_State *L)
 	}
 
 	/* Initialize virtual screen (no monitor) */
+	screen->node = declare_node_create(NULL, NODE_SCREEN, DECLARE_KIND_SCREEN, screen);
+	node_set_label(screen->node, "screen");
 	screen->monitor = NULL;  /* Virtual screen has no physical monitor */
 	screen->index = (int)(screen_count + 1);
 	screen->valid = true;
@@ -1279,6 +1300,8 @@ luaA_screen_fake_add(lua_State *L)
 		int *new_refs = realloc(screen_refs, new_cap * sizeof(int));
 		if (!new_refs) {
 			luaL_unref(L, LUA_REGISTRYINDEX, ref);
+			node_destroy(screen->node);
+			screen->node = NULL;
 			return luaL_error(L, "Failed to allocate screen array");
 		}
 		screen_refs = new_refs;
@@ -1841,6 +1864,7 @@ luaA_screen_gc(lua_State *L)
 {
 	screen_t *screen = luaA_toscreen(L, 1);
 	if (screen) {
+		screen_node_destroy(screen);
 		screen->valid = false;
 		widget_nodes_clear(&screen->layout);
 		signal_array_wipe(&screen->signals);
@@ -1964,6 +1988,8 @@ screen_client_moveto(client_t *c, screen_t *new_screen, bool doresize)
 			banning_need_update();
 		}
 	}
+
+	client_node_attach(c, c->mon);
 
 	if (!doresize) {
 		luaA_object_push(L, c);

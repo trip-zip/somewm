@@ -5,6 +5,7 @@
 #include <stdint.h>
 
 #include "render.h"
+#include "node.h"
 
 struct widget_host;
 struct wlr_output;
@@ -17,6 +18,11 @@ typedef struct drawin_t drawin_t;
  * flag the frame handler consumes. The lock screen is part of that tree,
  * not a second one. */
 struct declare_output;
+struct node *declare_node_root(Monitor *m);
+struct node *declare_node_create(Monitor *m, enum node_kind kind,
+    enum declare_kind owner_kind, void *owner);
+void declare_cursor_node_forget(void);
+void declare_drag_node_forget(void);
 #define CLAY_ELEMENTS_MAX 65536
 size_t declare_widget_budget(struct declare_output *dout);
 /* Measure a text run as a text element on m's output would fit to.
@@ -107,38 +113,9 @@ bool declare_inspector_covers(double lx, double ly);
  * window.c, set once at startup, before any output declares. */
 void declare_set_client_hooks(const struct render_client_hooks *hooks);
 
-/* Renderer handles: what the declare pass stores in a CUSTOM command and the
- * hooks get back. The kind rides the top 32 bits, a registry id the bottom.
- * Ids are assigned lazily at first declare; declare_handle_drop at object
- * destroy is what makes a later resolve of the dead handle return NULL. */
-enum declare_kind {
-	DECLARE_KIND_CLIENT = 1,
-	DECLARE_KIND_LAYER,
-	DECLARE_KIND_DRAWIN,
-	DECLARE_KIND_TITLEBAR,
-	/* The object is the Monitor whose wallpaper crop OUTPUT shows. */
-	DECLARE_KIND_WALLPAPER,
-	/* The object is a wlr_session_lock_surface_v1 (ext-session-lock);
-	 * its output's Monitor holds the borrow owner slot. */
-	DECLARE_KIND_LOCK,
-	/* The lock backdrop, whose object is the output's declare_output. It
-	 * draws the opaque cover and it answers the input walk with nothing,
-	 * which is what keeps the desktop below it from taking input. */
-	DECLARE_KIND_LOCK_BLOCK,
-	/* The object is the seat's wlr_drag_icon; its data is the scene tree
-	 * wlr_scene_drag_icon_create made for it. */
-	DECLARE_KIND_DRAG,
-	/* The object is a Popup (window.h): an xdg popup with its own tree. */
-	DECLARE_KIND_POPUP,
-	/* The pointer image (input.h, cursor_image): the object is the
-	 * wlr_cursor for a themed image leaf, or the client's cursor surface
-	 * for a borrowed one. It passes every hit through. */
-	DECLARE_KIND_CURSOR,
-};
-
-uint64_t declare_handle_for(void *object, enum declare_kind kind);
+/* Renderer handles store the node's owner_kind in the top 32 bits and its id
+ * in the bottom 32 bits. Destroying the node makes its handle resolve to NULL. */
 void *declare_handle_get(uint64_t handle, enum declare_kind *kind);
-void declare_handle_drop(void *object);
 
 /* Test hook (awesome._test_widget_boxes): the boxes the last solve gave a
  * drawin's converted widget tree (widget.h), in the tree's preorder, one per

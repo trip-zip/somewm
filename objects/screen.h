@@ -23,6 +23,7 @@ struct output_t;
 /* Screen object structure - wraps Monitor with signal support */
 typedef struct screen_t {
 	LUA_OBJECT_HEADER              /* Must be first for lua_object_t casting */
+	struct node *node;
 	Monitor *monitor;              /* Pointer to underlying wlroots Monitor */
 	int index;                     /* Screen index (1-based for Lua) */
 	bool valid;                    /* Is this screen still valid? */

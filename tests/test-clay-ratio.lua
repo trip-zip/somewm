@@ -69,7 +69,7 @@ local steps = {
         local element = assert(wired[layout])[1].element
         assert(element == bar._drawable._clay_tree and element.gap == 10,
             "the ratio lost its host binding or gap")
-        assert(awesome._clay_tree(s):match("drawin[^\n]*100x40[^\n]* gap 10"),
+        assert(awesome._clay_tree(s):match("WIBOX[^\n]*100x40[^\n]*\n    %x+ wibox%.layout%.ratio[^\n]* gap 10"),
             "the dump omits the ratio gap")
         local x = 0
         for i, child in ipairs(layout:get_children()) do

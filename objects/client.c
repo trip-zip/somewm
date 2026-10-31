@@ -1581,14 +1581,16 @@ client_wipe(client_t *c)
     }
 
     for (int i = 0; i < CLIENT_TITLEBAR_COUNT; i++) {
-        declare_handle_drop(c->titlebar[i].drawable);
+        if (c->titlebar[i].drawable) {
+            node_destroy(c->titlebar[i].drawable->node);
+            c->titlebar[i].drawable->node = NULL;
+        }
         widget_nodes_clear(&c->titlebar[i].widgets);
     }
 
-    if (c->shadow_config) {
-        free(c->shadow_config);
-        c->shadow_config = NULL;
-    }
+	node_destroy(c->node);
+	c->node = NULL;
+	c->surface_node = NULL;
 
     p_delete(&c->machine);
     p_delete(&c->class);
@@ -2099,10 +2101,10 @@ client_set_border_color(client_t *c, const float color[4])
 int
 client_border(client_t *c)
 {
-    if (c->client_type == X11 && c->surface.xwayland
-            && c->surface.xwayland->override_redirect)
-        return 0;
-    return c->fullscreen ? 0 : c->border_width;
+	if (c->client_type == X11 && c->surface.xwayland
+			&& c->surface.xwayland->override_redirect)
+		return 0;
+	return c->fullscreen || !c->node ? 0 : c->node->words.bw[0];
 }
 
 /** The border color the declare pass draws for c: the Lua border_color
@@ -2112,14 +2114,14 @@ client_border(client_t *c)
 void
 client_border_rgba(client_t *c, float out[4])
 {
-    if (c->border_color.initialized)
-        color_to_floats(&c->border_color, out);
-    else if (c->border_rgba_set)
-        memcpy(out, c->border_rgba, 4 * sizeof(float));
-    else
-        memcpy(out, c->urgent ? globalconf.appearance.urgentcolor
-                              : globalconf.appearance.bordercolor,
-               4 * sizeof(float));
+	if (c->node && c->border_color_set)
+		memcpy(out, c->node->words.border, 4 * sizeof(float));
+	else if (c->border_rgba_set)
+		memcpy(out, c->border_rgba, 4 * sizeof(float));
+	else
+		memcpy(out, c->urgent ? globalconf.appearance.urgentcolor
+							  : globalconf.appearance.bordercolor,
+			   4 * sizeof(float));
 }
 
 void
@@ -2193,22 +2195,23 @@ client_add_titlebar_geometry(client_t *c, area_t *geometry)
 area_t
 client_get_undecorated_geometry(client_t *c)
 {
-    area_t geometry = c->geometry;
-    if (!c->fullscreen) {
-        int diff_left = c->titlebar[CLIENT_TITLEBAR_LEFT].size;
-        int diff_right = c->titlebar[CLIENT_TITLEBAR_RIGHT].size;
-        int diff_top = c->titlebar[CLIENT_TITLEBAR_TOP].size;
-        int diff_bottom = c->titlebar[CLIENT_TITLEBAR_BOTTOM].size;
-        geometry.width -= diff_left + diff_right;
-        geometry.height -= diff_top + diff_bottom;
-        if (c->size_hints.flags & XCB_ICCCM_SIZE_HINT_P_WIN_GRAVITY) {
-            xwindow_translate_for_gravity(c->size_hints.win_gravity,
-                                          -diff_left - c->border_width, -diff_top - c->border_width,
-                                          -diff_right - c->border_width, -diff_bottom - c->border_width,
-                                          &geometry.x, &geometry.y);
-        }
-    }
-    return geometry;
+	area_t geometry = c->geometry;
+	if (!c->fullscreen) {
+		int bw = c->node ? c->node->words.bw[0] : 0;
+		int diff_left = c->titlebar[CLIENT_TITLEBAR_LEFT].size;
+		int diff_right = c->titlebar[CLIENT_TITLEBAR_RIGHT].size;
+		int diff_top = c->titlebar[CLIENT_TITLEBAR_TOP].size;
+		int diff_bottom = c->titlebar[CLIENT_TITLEBAR_BOTTOM].size;
+		geometry.width -= diff_left + diff_right;
+		geometry.height -= diff_top + diff_bottom;
+		if (c->size_hints.flags & XCB_ICCCM_SIZE_HINT_P_WIN_GRAVITY) {
+			xwindow_translate_for_gravity(c->size_hints.win_gravity,
+										  -diff_left - bw, -diff_top - bw,
+										  -diff_right - bw, -diff_bottom - bw,
+										  &geometry.x, &geometry.y);
+		}
+	}
+	return geometry;
 }
 
 /** Apply size hints to the client's new geometry.
@@ -2900,7 +2903,8 @@ client_unmanage(client_t *c, client_unmanage_t reason)
             lua_pop(L, 1);
         }
 
-        declare_handle_drop(c->titlebar[bar].drawable);
+        node_destroy(c->titlebar[bar].drawable->node);
+        c->titlebar[bar].drawable->node = NULL;
         widget_nodes_clear(&c->titlebar[bar].widgets);
 
         /* Forget about the drawable */
@@ -3460,7 +3464,7 @@ client_titlebar_host(client_t *c, drawable_t *d, struct widget_host *out)
             .tree = &c->titlebar[bar].widgets,
             .m = c->mon,
             .drawable = d,
-            .id = (uint32_t)declare_handle_for(d, DECLARE_KIND_TITLEBAR),
+            .id = (uint32_t)node_handle(d->node),
             .x = area.x + c->geometry.x - c->mon->m.x,
             .y = area.y + c->geometry.y - c->mon->m.y,
             .w = area.width, .h = area.height,
@@ -3503,6 +3507,10 @@ titlebar_get_drawable(lua_State *L, client_t *c, int cl_idx, client_titlebar_t b
 
         c->titlebar[bar].drawable->owner_type = DRAWABLE_OWNER_CLIENT;
         c->titlebar[bar].drawable->owner.client = c;
+		c->titlebar[bar].drawable->node = declare_node_create(c->mon, NODE_WIBOX,
+			DECLARE_KIND_TITLEBAR, c->titlebar[bar].drawable);
+		if (c->node)
+			node_append(c->node, c->titlebar[bar].drawable->node);
     }
 
     return c->titlebar[bar].drawable;
@@ -3858,11 +3866,9 @@ luaA_client_set_urgent(lua_State *L, client_t *c)
 static int
 luaA_client_get_opacity(lua_State *L, client_t *c)
 {
-    if (c->opacity >= 0)
-        lua_pushnumber(L, c->opacity);
-    else
-        lua_pushnumber(L, 1.0);  /* Default to fully opaque */
-    return 1;
+	lua_pushnumber(L, c->node && c->node->words.opacity >= 0
+		? c->node->words.opacity : 1);
+	return 1;
 }
 
 /** Set client opacity.
@@ -3874,21 +3880,22 @@ luaA_client_get_opacity(lua_State *L, client_t *c)
 static int
 luaA_client_set_opacity(lua_State *L, client_t *c)
 {
-    if (lua_isnil(L, -1)) {
-        /* nil = unset, restore to fully opaque */
-        c->opacity = -1;
-    } else {
-        double opacity = lua_tonumber(L, -1);
-        if (opacity < 0 || opacity > 1)
-            return luaL_error(L, "opacity must be between 0 and 1");
-        c->opacity = opacity;
-    }
-    /* The surface leaf declares the opacity; the next frame applies it. */
-    if (c->mon && c->mon->declare)
-        declare_output_mark_dirty(c->mon->declare);
+	if (!c->node)
+		return 0;
+	if (lua_isnil(L, -1)) {
+		c->node->words.opacity = -1;
+	} else {
+		double opacity = lua_tonumber(L, -1);
+		if (opacity < 0 || opacity > 1)
+			return luaL_error(L, "opacity must be between 0 and 1");
+		c->node->words.opacity = opacity;
+	}
+	/* Declaration applies the frame opacity to its leaves on the next frame. */
+	if (c->mon && c->mon->declare)
+		declare_output_mark_dirty(c->mon->declare);
 
-    luaA_object_emit_signal(L, -3, "property::opacity", 0);
-    return 0;
+	luaA_object_emit_signal(L, -3, "property::opacity", 0);
+	return 0;
 }
 
 static int
@@ -3921,17 +3928,21 @@ luaA_client_set_aspect_ratio(lua_State *L, client_t *c)
 static int
 luaA_client_get_shadow(lua_State *L, client_t *c)
 {
-    if (c->shadow_config) {
-        shadow_config_to_lua(L, c->shadow_config);
-    } else {
-        const shadow_config_t *eff = shadow_get_effective_config(NULL, false);
-        if (eff->enabled) {
-            shadow_config_to_lua(L, eff);
-        } else {
-            lua_pushboolean(L, false);
-        }
-    }
-    return 1;
+	if (!c->node) {
+		lua_pushnil(L);
+		return 1;
+	}
+	if (c->node->words.shadow) {
+		shadow_config_to_lua(L, c->node->words.shadow);
+	} else {
+		const shadow_config_t *eff = shadow_get_effective_config(NULL, false);
+		if (eff->enabled) {
+			shadow_config_to_lua(L, eff);
+		} else {
+			lua_pushboolean(L, false);
+		}
+	}
+	return 1;
 }
 
 /** Set client shadow configuration.
@@ -3942,24 +3953,25 @@ luaA_client_get_shadow(lua_State *L, client_t *c)
 static int
 luaA_client_set_shadow(lua_State *L, client_t *c)
 {
-    shadow_config_t new_config;
+	if (!c->node)
+		return 0;
+	shadow_config_t new_config;
 
-    if (!shadow_config_from_lua(L, -1, &new_config, false)) {
-        return luaL_error(L, "%s", lua_tostring(L, -1));
-    }
+	if (!shadow_config_from_lua(L, -1, &new_config, false)) {
+		return luaL_error(L, "%s", lua_tostring(L, -1));
+	}
 
-    /* Allocate or update config */
-    if (!c->shadow_config) {
-        c->shadow_config = malloc(sizeof(shadow_config_t));
-        if (!c->shadow_config)
-            return luaL_error(L, "out of memory");
-    }
-    *c->shadow_config = new_config;
+	if (!c->node->words.shadow) {
+		c->node->words.shadow = malloc(sizeof(shadow_config_t));
+		if (!c->node->words.shadow)
+			return luaL_error(L, "out of memory");
+	}
+	*c->node->words.shadow = new_config;
 
-    declare_mark_all_dirty();
+	declare_mark_all_dirty();
 
-    luaA_object_emit_signal(L, -3, "property::shadow", 0);
-    return 0;
+	luaA_object_emit_signal(L, -3, "property::shadow", 0);
+	return 0;
 }
 
 static int
@@ -4397,43 +4409,49 @@ luaA_client_get_size_hints(lua_State *L, client_t *c)
 static int
 luaA_client_get_shape(lua_State *L, client_t *c)
 {
-    if (c->shape_ref)
-        lua_rawgeti(L, LUA_REGISTRYINDEX, c->shape_ref);
-    else if (c->shape_radius > 0)
-        lua_pushnumber(L, c->shape_radius);
-    else
-        lua_pushnil(L);
-    return 1;
+	if (!c->node) {
+		lua_pushnumber(L, 0);
+		return 1;
+	}
+	if (c->shape_ref)
+		lua_rawgeti(L, LUA_REGISTRYINDEX, c->shape_ref);
+	else if (c->node->words.radius > 0)
+		lua_pushnumber(L, c->node->words.radius);
+	else
+		lua_pushnil(L);
+	return 1;
 }
 
 static int
 luaA_client_set_shape(lua_State *L, client_t *c)
 {
-    int type = lua_type(L, -1);
-    if (type != LUA_TNIL && type != LUA_TNUMBER && type != LUA_TFUNCTION)
-        return luaL_error(L, "shape must be nil, a number or a function");
-    if (type == LUA_TNUMBER && lua_tonumber(L, -1) < 0)
-        return luaL_error(L, "shape radius must be at least 0");
-    bool same = !c->shape_ref
-        && ((type == LUA_TNIL && c->shape_radius <= 0)
-            || (type == LUA_TNUMBER && lua_tonumber(L, -1) == c->shape_radius));
-    if (type == LUA_TFUNCTION && c->shape_ref) {
-        lua_rawgeti(L, LUA_REGISTRYINDEX, c->shape_ref);
-        same = lua_rawequal(L, -1, -2);
-        lua_pop(L, 1);
-    }
-    if (same)
-        return 0;
-    if (c->shape_ref)
-        luaL_unref(L, LUA_REGISTRYINDEX, c->shape_ref);
-    c->shape_ref = 0;
-    c->shape_radius = type == LUA_TNUMBER ? lua_tonumber(L, -1) : 0;
-    if (type == LUA_TFUNCTION) {
-        lua_pushvalue(L, -1);
-        c->shape_ref = luaL_ref(L, LUA_REGISTRYINDEX);
-    }
-    luaA_object_emit_signal(L, -3, "property::shape", 0);
-    return 0;
+	if (!c->node)
+		return 0;
+	int type = lua_type(L, -1);
+	if (type != LUA_TNIL && type != LUA_TNUMBER && type != LUA_TFUNCTION)
+		return luaL_error(L, "shape must be nil, a number or a function");
+	if (type == LUA_TNUMBER && lua_tonumber(L, -1) < 0)
+		return luaL_error(L, "shape radius must be at least 0");
+	bool same = !c->shape_ref
+		&& ((type == LUA_TNIL && c->node->words.radius <= 0)
+			|| (type == LUA_TNUMBER && lua_tonumber(L, -1) == c->node->words.radius));
+	if (type == LUA_TFUNCTION && c->shape_ref) {
+		lua_rawgeti(L, LUA_REGISTRYINDEX, c->shape_ref);
+		same = lua_rawequal(L, -1, -2);
+		lua_pop(L, 1);
+	}
+	if (same)
+		return 0;
+	if (c->shape_ref)
+		luaL_unref(L, LUA_REGISTRYINDEX, c->shape_ref);
+	c->shape_ref = 0;
+	c->node->words.radius = type == LUA_TNUMBER ? lua_tonumber(L, -1) : 0;
+	if (type == LUA_TFUNCTION) {
+		lua_pushvalue(L, -1);
+		c->shape_ref = luaL_ref(L, LUA_REGISTRYINDEX);
+	}
+	luaA_object_emit_signal(L, -3, "property::shape", 0);
+	return 0;
 }
 
 static int

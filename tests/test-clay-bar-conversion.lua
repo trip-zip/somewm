@@ -37,7 +37,9 @@ local function block(bar)
     local d = bar.drawin
     -- The drawin's own line, not the command line that draws it: a whole
     -- drawin's image leaf names itself the same way.
-    local want = string.format("  %s screen %d %dx%d+%d+%d ", d.type == "tooltip" and "TOOLTIP" or (d.border_width > 0 or type(d.shape) == "function") and "WIBOX" or "drawin", s.index,
+    local want = string.format("  %s screen %d %dx%d+%d+%d ", d.type == "tooltip" and "TOOLTIP" or "WIBOX", s.index,
+        d.width, d.height, d.x, d.y)
+    local refused = string.format("  drawin screen %d %dx%d+%d+%d nothing:", s.index,
         d.width, d.height, d.x, d.y)
     local head, nodes = nil, {}
 
@@ -50,7 +52,7 @@ local function block(bar)
             nodes[#nodes + 1] = {
                 id = id, depth = #indent / 2, name = name, line = line,
             }
-        elseif line:sub(1, #want) == want then
+        elseif line:sub(1, #want) == want or line:sub(1, #refused) == refused then
             head = line
         end
     end
@@ -147,7 +149,7 @@ local steps = {
         function(head, nodes, bar)
             assert(head:find("converted", 1, true),
                 "the bar did not convert: " .. head)
-            assert(head:find(" clip ", 1, true), "the actual host root lost its clip")
+            assert(nodes[1].line:find(" clip ", 1, true), "the actual host root lost its clip")
 
             for _, name in ipairs({
                 "wibox.layout.fixed",

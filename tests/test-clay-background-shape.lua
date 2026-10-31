@@ -48,7 +48,7 @@ local grim_done, grim_err, ppm
 
 local function nodes(bar)
     local d = bar.drawin
-    local want = string.format("  drawin screen %d %dx%d+%d+%d ", s.index,
+    local want = string.format("  WIBOX screen %d %dx%d+%d+%d ", s.index,
         d.width, d.height, d.x, d.y)
     local found, out = false, {}
     for line in awesome._clay_tree(s):gmatch("[^\n]+") do

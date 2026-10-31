@@ -88,10 +88,18 @@ client_scene_node_destroy(Client *c)
 {
 	if (client_has_surface(c))
 		client_surface_clear_scene_data(client_surface(c), c->scene);
-	/* c->scene_surface is a descendant of c->scene, destroyed recursively
-	 * along with it. Drop the render handle first so a later resolve
-	 * answers NULL instead of the dead tree. */
-	declare_handle_drop(c);
+	/* The renderer must not release the scene after it has been destroyed. */
+	for (int bar = 0; bar < CLIENT_TITLEBAR_COUNT; bar++) {
+		drawable_t *d = c->titlebar[bar].drawable;
+		if (d) {
+			node_destroy(d->node);
+			d->node = NULL;
+		}
+	}
+	node_destroy(c->node);
+	c->node = NULL;
+	c->surface_node = NULL;
+	c->render_owner = NULL;
 	wlr_scene_node_destroy(&c->scene->node);
 	c->scene = NULL;
 }
@@ -429,7 +437,7 @@ destroypopup(struct wl_listener *listener, void *data)
 	popup_dirty(p);
 	/* Drop the handle first, so the renderer's sweep leaves the tree
 	 * alone, then destroy it with its subsurface tree. */
-	declare_handle_drop(p);
+	node_destroy(p->node);
 	if (p->tree) {
 		client_surface_clear_scene_data(p->popup->base->surface, p->tree);
 		wlr_scene_node_destroy(&p->tree->node);
@@ -505,13 +513,13 @@ createnotify(struct wl_listener *listener, void *data)
 
 	/* Create Lua client object (matches AwesomeWM client_manage line 2138) */
 	c = client_new(L);
+	c->node = declare_node_create(NULL, NODE_CLIENT, DECLARE_KIND_CLIENT, c);
+	c->node->words.opacity = -1;
 	/* client_new() leaves the client on the Lua stack at index -1 */
 
 	/* Assign unique client ID (Sway-style incrementing counter) */
 	c->id = next_client_id++;
 
-	/* -1 means unset (fully opaque); 0 means fully transparent. */
-	c->opacity = -1;
 	/* Honored by default, as the property documents. */
 	c->size_hints_honor = true;
 
@@ -554,6 +562,7 @@ createpopup(struct wl_listener *listener, void *data)
 	struct wlr_xdg_popup *popup = data;
 	Popup *p = ecalloc(1, sizeof(*p));
 
+	p->node = declare_node_create(NULL, NODE_SURFACE, DECLARE_KIND_POPUP, p);
 	p->popup = popup;
 	wl_list_insert(popups.prev, &p->link);
 
@@ -856,6 +865,12 @@ mapnotify(struct wl_listener *listener, void *data)
 	int i;
 	lua_State *L;
 	tag_t *tag;
+
+	if (!c->surface_node) {
+		c->surface_node = declare_node_create(c->mon, NODE_SURFACE, DECLARE_KIND_CLIENT, c);
+		node_append(c->node, c->surface_node);
+	}
+	client_node_attach(c, c->mon);
 
 	/* Create scene tree for this client, parked until the first frame that
 	 * declares it borrows the tree into an output's band. The parked tree is
@@ -1849,6 +1864,22 @@ setfullscreen(Client *c, int fullscreen)
 }
 
 void
+client_node_attach(Client *c, Monitor *m)
+{
+	if (!c->node)
+		return;
+	struct node *parent = c->screen && c->screen->node
+		? c->screen->node : declare_node_root(m);
+	if (c->node->parent != parent)
+		node_append(parent, c->node);
+	for (int bar = 0; bar < CLIENT_TITLEBAR_COUNT; bar++) {
+		drawable_t *d = c->titlebar[bar].drawable;
+		if (d && d->node && d->node->parent != c->node)
+			node_append(c->node, d->node);
+	}
+}
+
+void
 setmon(Client *c, Monitor *m, uint32_t newtags)
 {
 	Monitor *oldmon = c->mon;
@@ -1871,6 +1902,7 @@ setmon(Client *c, Monitor *m, uint32_t newtags)
 
 	/* Update c->screen to match c->mon for Lua property access */
 	c->screen = luaA_screen_get_by_monitor(L, m);
+	client_node_attach(c, m);
 
 	/* Emit property::screen signal if screen changed (AwesomeWM pattern).
 	 * This triggers Lua tag management (awful/tag.lua) to assign client

@@ -24,6 +24,7 @@ typedef enum {
 /* Drawable geometry and owner, using the AwesomeWM class system. */
 typedef struct drawable_t {
 	LUA_OBJECT_HEADER  /* Adds signals, refs, class - replaces signal_array_t */
+	struct node *node;
 
 	/* X11 pixmap stub (for AwesomeWM compatibility) - always 0 on Wayland */
 	uint32_t pixmap;

@@ -32,12 +32,12 @@ runner.run_async(function()
     -- The margin folds into the drawin's root element as its padding.
     local lines, inside = {}, false
     for line in dump:gmatch('[^\n]+') do
-        if line:find('^  drawin screen 1 1280x28%+0%+300 ') then
+        if line:find('^  WIBOX screen 1 1280x28%+0%+300 ') then
             inside = true
-            assert(line:find(' pad 7,7,7,7 ', 1, true) and select(4, box(line)) == 28, line)
         elseif inside and line:find('^  %S') then break
         elseif inside then lines[#lines + 1] = line end
     end
+    assert(lines[1]:find(' pad 7,7,7,7 ', 1, true) and select(4, box(lines[1])) == 28, lines[1])
     local function find(pattern)
         for i, line in ipairs(lines) do
             if line:find(pattern) then return line, lines[i - 1] end

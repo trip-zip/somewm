@@ -39,7 +39,7 @@
 	X(aspect) X(image_width) X(image_height) X(filter) X(natural) X(track) \
 	X(thumb) X(scroll) X(cut) X(transition) X(duration) X(properties) X(exit_order) \
     X(exit_duration) X(tag_exit) X(tag_duration) \
-	X(enter) X(exit) X(x11_configure_serial) X(client) X(surface) X(host) X(opacity) X(probe) X(attrs) \
+	X(enter) X(exit) X(x11_configure_serial) X(client) X(surface) X(host) X(probe) X(attrs) \
 	X(font) X(color) X(wrap) X(halign) X(ellipsize) X(bindings) X(item) X(id) \
 	X(next) X(_attach) X(clip) X(children)
 
@@ -444,9 +444,7 @@ widget_read_transition(lua_State *L, int idx, struct widget_transition *transiti
     return ok;
 }
 
-/* A client composite's root (client) and its pixels leaf (surface), kept as
- * the client's declare handle. A client that has gone keeps a handle no
- * client answers to, so the frame skips it. */
+/* A missing node keeps a kind-only sentinel so declaration skips the client. */
 static bool
 read_client(lua_State *L, int idx, enum key name, uint64_t *out)
 {
@@ -454,9 +452,10 @@ read_client(lua_State *L, int idx, enum key name, uint64_t *out)
 	client_t *c = lua_isnil(L, -1) ? NULL : luaA_toudata(L, -1, &client_class);
 	bool ok = lua_isnil(L, -1) || c;
 	lua_pop(L, 1);
-	if (c)
-		*out = c->scene ? declare_handle_for(c, DECLARE_KIND_CLIENT)
-			: (uint64_t)DECLARE_KIND_CLIENT << 32;
+	if (c) {
+		struct node *node = name == KEY_surface ? c->surface_node : c->node;
+		*out = node ? node_handle(node) : (uint64_t)DECLARE_KIND_CLIENT << 32;
+	}
 	return ok;
 }
 
@@ -469,14 +468,13 @@ read_host(lua_State *L, int idx, struct widget_node *n)
 	bool ok = lua_isnil(L, -1) || d;
 	lua_pop(L, 1);
 	if (d)
-		n->host = declare_handle_for(d, DECLARE_KIND_TITLEBAR);
+		n->host = node_handle(d->node);
 	return ok;
 }
 
 static bool
 read_composite(lua_State *L, int idx, struct widget_node *n)
 {
-	n->opacity = 1;
 	getfield(L, idx, KEY_x11_configure_serial);
 	double serial = lua_isnil(L, -1) ? 0 : lua_tonumber(L, -1);
 	bool valid_serial = lua_isnil(L, -1) || (lua_isnumber(L, -1)
@@ -486,8 +484,7 @@ read_composite(lua_State *L, int idx, struct widget_node *n)
 	n->x11_configure_serial = (uint32_t)serial;
 	if (!read_client(L, idx, KEY_client, &n->client)
 			|| !read_client(L, idx, KEY_surface, &n->surface)
-			|| !read_host(L, idx, n)
-			|| !read_number(L, idx, KEY_opacity, 0, 1, &n->opacity))
+			|| !read_host(L, idx, n))
 		return false;
 	getfield(L, idx, KEY_probe);
 	n->probe = n->surface && lua_toboolean(L, -1);

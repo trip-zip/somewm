@@ -3,180 +3,181 @@ output
   Clay__RootContainer w=fixed(1280) output h=fixed(720) output row
     OUTPUT WL-1 w=fixed(1280) output h=fixed(720) output column
       WORKAREA - w=grow h=grow row
-  drawin screen 1 converted clip w=fit user h=fit row attach ROOT band 25
-    wibox.widget.calendar w=fixed(400) user h=fit row
-      wibox.container.background w=grow h=fit column gap 3
-        - spacer w=grow h=fit row gap 3
-          - spacer w=percent(1) user h=fit row
-            wibox.widget.textbox cut=both w=grow h=fit row
-              text "January 2026" font=1
-        - spacer w=grow h=fit row gap 3
-          - spacer w=percent(0.125) user h=grow row
-          - spacer w=percent(0.125) user h=grow row
-            wibox.widget.textbox cut=both w=grow h=grow row
-              text "Mo" font=1
-          - spacer w=percent(0.125) user h=grow row
-            wibox.widget.textbox cut=both w=grow h=grow row
-              text "Tu" font=1
-          - spacer w=percent(0.125) user h=grow row
-            wibox.widget.textbox cut=both w=grow h=grow row
-              text "We" font=1
-          - spacer w=percent(0.125) user h=grow row
-            wibox.widget.textbox cut=both w=grow h=grow row
-              text "Th" font=1
-          - spacer w=percent(0.125) user h=grow row
-            wibox.widget.textbox cut=both w=grow h=grow row
-              text "Fr" font=1
-          - spacer w=percent(0.125) user h=grow row
-            wibox.widget.textbox cut=both w=grow h=grow row
-              text "Sa" font=1
-          - spacer w=percent(0.125) user h=grow row
-            wibox.widget.textbox cut=both w=grow h=grow row
-              text "Su" font=1
-        - spacer w=grow h=fit row gap 3
-          - spacer w=percent(0.125) user h=grow row
-            wibox.widget.textbox cut=both w=grow h=grow row
-              text "01" font=1
-          - spacer w=percent(0.125) user h=grow row
-          - spacer w=percent(0.125) user h=grow row
-          - spacer w=percent(0.125) user h=grow row
-          - spacer w=percent(0.125) user h=grow row
-            wibox.container.background w=grow h=grow row
+  WIBOX screen 1 converted w=fit h=fit row attach OUTPUT band 25
+    drawable clip w=fit user h=fit row
+      wibox.widget.calendar w=fixed(400) user h=fit row
+        wibox.container.background w=grow h=fit column gap 3
+          - spacer w=grow h=fit row gap 3
+            - spacer w=percent(1) user h=fit row
+              wibox.widget.textbox cut=both w=grow h=fit row
+                text "January 2026" font=1
+          - spacer w=grow h=fit row gap 3
+            - spacer w=percent(0.125) user h=grow row
+            - spacer w=percent(0.125) user h=grow row
               wibox.widget.textbox cut=both w=grow h=grow row
-                text " 1" font=1
-          - spacer w=percent(0.125) user h=grow row
-            wibox.container.background w=grow h=grow row
+                text "Mo" font=1
+            - spacer w=percent(0.125) user h=grow row
               wibox.widget.textbox cut=both w=grow h=grow row
-                text " 2" font=1
-          - spacer w=percent(0.125) user h=grow row
-            wibox.container.background w=grow h=grow row
+                text "Tu" font=1
+            - spacer w=percent(0.125) user h=grow row
               wibox.widget.textbox cut=both w=grow h=grow row
-                text " 3" font=1
-          - spacer w=percent(0.125) user h=grow row
-            wibox.container.background w=grow h=grow row
+                text "We" font=1
+            - spacer w=percent(0.125) user h=grow row
               wibox.widget.textbox cut=both w=grow h=grow row
-                text " 4" font=1
-        - spacer w=grow h=fit row gap 3
-          - spacer w=percent(0.125) user h=grow row
-            wibox.widget.textbox cut=both w=grow h=grow row
-              text "02" font=1
-          - spacer w=percent(0.125) user h=grow row
-            wibox.container.background w=grow h=grow row
+                text "Th" font=1
+            - spacer w=percent(0.125) user h=grow row
               wibox.widget.textbox cut=both w=grow h=grow row
-                text " 5" font=1
-          - spacer w=percent(0.125) user h=grow row
-            wibox.container.background w=grow h=grow row
+                text "Fr" font=1
+            - spacer w=percent(0.125) user h=grow row
               wibox.widget.textbox cut=both w=grow h=grow row
-                text " 6" font=1
-          - spacer w=percent(0.125) user h=grow row
-            wibox.container.background w=grow h=grow row
+                text "Sa" font=1
+            - spacer w=percent(0.125) user h=grow row
               wibox.widget.textbox cut=both w=grow h=grow row
-                text " 7" font=1
-          - spacer w=percent(0.125) user h=grow row
-            wibox.container.background w=grow h=grow row
+                text "Su" font=1
+          - spacer w=grow h=fit row gap 3
+            - spacer w=percent(0.125) user h=grow row
               wibox.widget.textbox cut=both w=grow h=grow row
-                text " 8" font=1
-          - spacer w=percent(0.125) user h=grow row
-            wibox.container.background w=grow h=grow row
+                text "01" font=1
+            - spacer w=percent(0.125) user h=grow row
+            - spacer w=percent(0.125) user h=grow row
+            - spacer w=percent(0.125) user h=grow row
+            - spacer w=percent(0.125) user h=grow row
+              wibox.container.background w=grow h=grow row
+                wibox.widget.textbox cut=both w=grow h=grow row
+                  text " 1" font=1
+            - spacer w=percent(0.125) user h=grow row
+              wibox.container.background w=grow h=grow row
+                wibox.widget.textbox cut=both w=grow h=grow row
+                  text " 2" font=1
+            - spacer w=percent(0.125) user h=grow row
+              wibox.container.background w=grow h=grow row
+                wibox.widget.textbox cut=both w=grow h=grow row
+                  text " 3" font=1
+            - spacer w=percent(0.125) user h=grow row
+              wibox.container.background w=grow h=grow row
+                wibox.widget.textbox cut=both w=grow h=grow row
+                  text " 4" font=1
+          - spacer w=grow h=fit row gap 3
+            - spacer w=percent(0.125) user h=grow row
               wibox.widget.textbox cut=both w=grow h=grow row
-                text " 9" font=1
-          - spacer w=percent(0.125) user h=grow row
-            wibox.container.background w=grow h=grow row
+                text "02" font=1
+            - spacer w=percent(0.125) user h=grow row
+              wibox.container.background w=grow h=grow row
+                wibox.widget.textbox cut=both w=grow h=grow row
+                  text " 5" font=1
+            - spacer w=percent(0.125) user h=grow row
+              wibox.container.background w=grow h=grow row
+                wibox.widget.textbox cut=both w=grow h=grow row
+                  text " 6" font=1
+            - spacer w=percent(0.125) user h=grow row
+              wibox.container.background w=grow h=grow row
+                wibox.widget.textbox cut=both w=grow h=grow row
+                  text " 7" font=1
+            - spacer w=percent(0.125) user h=grow row
+              wibox.container.background w=grow h=grow row
+                wibox.widget.textbox cut=both w=grow h=grow row
+                  text " 8" font=1
+            - spacer w=percent(0.125) user h=grow row
+              wibox.container.background w=grow h=grow row
+                wibox.widget.textbox cut=both w=grow h=grow row
+                  text " 9" font=1
+            - spacer w=percent(0.125) user h=grow row
+              wibox.container.background w=grow h=grow row
+                wibox.widget.textbox cut=both w=grow h=grow row
+                  text "10" font=1
+            - spacer w=percent(0.125) user h=grow row
+              wibox.container.background w=grow h=grow row
+                wibox.widget.textbox cut=both w=grow h=grow row
+                  text "11" font=1
+          - spacer w=grow h=fit row gap 3
+            - spacer w=percent(0.125) user h=grow row
               wibox.widget.textbox cut=both w=grow h=grow row
-                text "10" font=1
-          - spacer w=percent(0.125) user h=grow row
-            wibox.container.background w=grow h=grow row
+                text "03" font=1
+            - spacer w=percent(0.125) user h=grow row
+              wibox.container.background w=grow h=grow row
+                wibox.widget.textbox cut=both w=grow h=grow row
+                  text "12" font=1
+            - spacer w=percent(0.125) user h=grow row
+              wibox.container.background w=grow h=grow row
+                wibox.widget.textbox cut=both w=grow h=grow row
+                  text "13" font=1
+            - spacer w=percent(0.125) user h=grow row
+              wibox.container.background w=grow h=grow row
+                wibox.widget.textbox cut=both w=grow h=grow row
+                  text "14" font=1
+            - spacer w=percent(0.125) user h=grow row
+              wibox.container.background w=grow h=grow row
+                wibox.widget.textbox cut=both w=grow h=grow row
+                  text "15" font=1
+            - spacer w=percent(0.125) user h=grow row
               wibox.widget.textbox cut=both w=grow h=grow row
-                text "11" font=1
-        - spacer w=grow h=fit row gap 3
-          - spacer w=percent(0.125) user h=grow row
-            wibox.widget.textbox cut=both w=grow h=grow row
-              text "03" font=1
-          - spacer w=percent(0.125) user h=grow row
-            wibox.container.background w=grow h=grow row
+                text "16" font=2
+            - spacer w=percent(0.125) user h=grow row
+              wibox.container.background w=grow h=grow row
+                wibox.widget.textbox cut=both w=grow h=grow row
+                  text "17" font=1
+            - spacer w=percent(0.125) user h=grow row
+              wibox.container.background w=grow h=grow row
+                wibox.widget.textbox cut=both w=grow h=grow row
+                  text "18" font=1
+          - spacer w=grow h=fit row gap 3
+            - spacer w=percent(0.125) user h=grow row
               wibox.widget.textbox cut=both w=grow h=grow row
-                text "12" font=1
-          - spacer w=percent(0.125) user h=grow row
-            wibox.container.background w=grow h=grow row
+                text "04" font=1
+            - spacer w=percent(0.125) user h=grow row
+              wibox.container.background w=grow h=grow row
+                wibox.widget.textbox cut=both w=grow h=grow row
+                  text "19" font=1
+            - spacer w=percent(0.125) user h=grow row
+              wibox.container.background w=grow h=grow row
+                wibox.widget.textbox cut=both w=grow h=grow row
+                  text "20" font=1
+            - spacer w=percent(0.125) user h=grow row
+              wibox.container.background w=grow h=grow row
+                wibox.widget.textbox cut=both w=grow h=grow row
+                  text "21" font=1
+            - spacer w=percent(0.125) user h=grow row
+              wibox.container.background w=grow h=grow row
+                wibox.widget.textbox cut=both w=grow h=grow row
+                  text "22" font=1
+            - spacer w=percent(0.125) user h=grow row
+              wibox.container.background w=grow h=grow row
+                wibox.widget.textbox cut=both w=grow h=grow row
+                  text "23" font=1
+            - spacer w=percent(0.125) user h=grow row
+              wibox.container.background w=grow h=grow row
+                wibox.widget.textbox cut=both w=grow h=grow row
+                  text "24" font=1
+            - spacer w=percent(0.125) user h=grow row
+              wibox.container.background w=grow h=grow row
+                wibox.widget.textbox cut=both w=grow h=grow row
+                  text "25" font=1
+          - spacer w=grow h=fit row gap 3
+            - spacer w=percent(0.125) user h=grow row
               wibox.widget.textbox cut=both w=grow h=grow row
-                text "13" font=1
-          - spacer w=percent(0.125) user h=grow row
-            wibox.container.background w=grow h=grow row
-              wibox.widget.textbox cut=both w=grow h=grow row
-                text "14" font=1
-          - spacer w=percent(0.125) user h=grow row
-            wibox.container.background w=grow h=grow row
-              wibox.widget.textbox cut=both w=grow h=grow row
-                text "15" font=1
-          - spacer w=percent(0.125) user h=grow row
-            wibox.widget.textbox cut=both w=grow h=grow row
-              text "16" font=2
-          - spacer w=percent(0.125) user h=grow row
-            wibox.container.background w=grow h=grow row
-              wibox.widget.textbox cut=both w=grow h=grow row
-                text "17" font=1
-          - spacer w=percent(0.125) user h=grow row
-            wibox.container.background w=grow h=grow row
-              wibox.widget.textbox cut=both w=grow h=grow row
-                text "18" font=1
-        - spacer w=grow h=fit row gap 3
-          - spacer w=percent(0.125) user h=grow row
-            wibox.widget.textbox cut=both w=grow h=grow row
-              text "04" font=1
-          - spacer w=percent(0.125) user h=grow row
-            wibox.container.background w=grow h=grow row
-              wibox.widget.textbox cut=both w=grow h=grow row
-                text "19" font=1
-          - spacer w=percent(0.125) user h=grow row
-            wibox.container.background w=grow h=grow row
-              wibox.widget.textbox cut=both w=grow h=grow row
-                text "20" font=1
-          - spacer w=percent(0.125) user h=grow row
-            wibox.container.background w=grow h=grow row
-              wibox.widget.textbox cut=both w=grow h=grow row
-                text "21" font=1
-          - spacer w=percent(0.125) user h=grow row
-            wibox.container.background w=grow h=grow row
-              wibox.widget.textbox cut=both w=grow h=grow row
-                text "22" font=1
-          - spacer w=percent(0.125) user h=grow row
-            wibox.container.background w=grow h=grow row
-              wibox.widget.textbox cut=both w=grow h=grow row
-                text "23" font=1
-          - spacer w=percent(0.125) user h=grow row
-            wibox.container.background w=grow h=grow row
-              wibox.widget.textbox cut=both w=grow h=grow row
-                text "24" font=1
-          - spacer w=percent(0.125) user h=grow row
-            wibox.container.background w=grow h=grow row
-              wibox.widget.textbox cut=both w=grow h=grow row
-                text "25" font=1
-        - spacer w=grow h=fit row gap 3
-          - spacer w=percent(0.125) user h=grow row
-            wibox.widget.textbox cut=both w=grow h=grow row
-              text "05" font=1
-          - spacer w=percent(0.125) user h=grow row
-            wibox.container.background w=grow h=grow row
-              wibox.widget.textbox cut=both w=grow h=grow row
-                text "26" font=1
-          - spacer w=percent(0.125) user h=grow row
-            wibox.container.background w=grow h=grow row
-              wibox.widget.textbox cut=both w=grow h=grow row
-                text "27" font=1
-          - spacer w=percent(0.125) user h=grow row
-            wibox.container.background w=grow h=grow row
-              wibox.widget.textbox cut=both w=grow h=grow row
-                text "28" font=1
-          - spacer w=percent(0.125) user h=grow row
-            wibox.container.background w=grow h=grow row
-              wibox.widget.textbox cut=both w=grow h=grow row
-                text "29" font=1
-          - spacer w=percent(0.125) user h=grow row
-            wibox.container.background w=grow h=grow row
-              wibox.widget.textbox cut=both w=grow h=grow row
-                text "30" font=1
-          - spacer w=percent(0.125) user h=grow row
-            wibox.container.background w=grow h=grow row
-              wibox.widget.textbox cut=both w=grow h=grow row
-                text "31" font=1
-          - spacer w=percent(0.125) user h=grow row
+                text "05" font=1
+            - spacer w=percent(0.125) user h=grow row
+              wibox.container.background w=grow h=grow row
+                wibox.widget.textbox cut=both w=grow h=grow row
+                  text "26" font=1
+            - spacer w=percent(0.125) user h=grow row
+              wibox.container.background w=grow h=grow row
+                wibox.widget.textbox cut=both w=grow h=grow row
+                  text "27" font=1
+            - spacer w=percent(0.125) user h=grow row
+              wibox.container.background w=grow h=grow row
+                wibox.widget.textbox cut=both w=grow h=grow row
+                  text "28" font=1
+            - spacer w=percent(0.125) user h=grow row
+              wibox.container.background w=grow h=grow row
+                wibox.widget.textbox cut=both w=grow h=grow row
+                  text "29" font=1
+            - spacer w=percent(0.125) user h=grow row
+              wibox.container.background w=grow h=grow row
+                wibox.widget.textbox cut=both w=grow h=grow row
+                  text "30" font=1
+            - spacer w=percent(0.125) user h=grow row
+              wibox.container.background w=grow h=grow row
+                wibox.widget.textbox cut=both w=grow h=grow row
+                  text "31" font=1
+            - spacer w=percent(0.125) user h=grow row

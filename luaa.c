@@ -1306,6 +1306,42 @@ luaA_awesome_test_declare_order(lua_State *L)
 	return 1;
 }
 
+static int
+luaA_awesome_test_node_id(lua_State *L)
+{
+	client_t *c = luaA_toudata(L, 1, &client_class);
+	drawin_t *d = luaA_todrawin(L, 1);
+	screen_t *s = luaA_toscreen(L, 1);
+	struct node *n = c ? c->node : d ? d->node : s ? s->node : NULL;
+	if (!n)
+		return luaL_error(L, "expected a client, drawin or screen with a node");
+	lua_pushinteger(L, n->id);
+	if (c) {
+		if (c->surface_node)
+			lua_pushinteger(L, c->surface_node->id);
+		else
+			lua_pushnil(L);
+		return 2;
+	}
+	return 1;
+}
+
+static int
+luaA_awesome_test_node_solved(lua_State *L)
+{
+	client_t *c = luaA_toudata(L, 1, &client_class);
+	drawin_t *d = luaA_todrawin(L, 1);
+	screen_t *s = luaA_toscreen(L, 1);
+	struct node *n = c ? c->node : d ? d->node : s ? s->node : NULL;
+	if (!n)
+		return luaL_error(L, "expected a client, drawin or screen with a node");
+	lua_pushinteger(L, n->solved.x);
+	lua_pushinteger(L, n->solved.y);
+	lua_pushinteger(L, n->solved.width);
+	lua_pushinteger(L, n->solved.height);
+	return 4;
+}
+
 /** The boxes Clay solves for a drawin's converted widget tree, outermost
  * first, drawin-local.
  * What the last frame solved (see tests/test-clay-widget-layouts.lua).
@@ -2379,6 +2415,8 @@ const luaL_Reg awesome_methods[] = {
 	{ "_inspector_style", luaA_awesome_inspector_style },
 	{ "_test_declare_order", luaA_awesome_test_declare_order },
 	{ "_test_widget_boxes", luaA_awesome_test_widget_boxes },
+	{ "_test_node_id", luaA_awesome_test_node_id },
+	{ "_test_node_solved", luaA_awesome_test_node_solved },
 	/* Lock API methods */
 	{ "lock", luaA_awesome_lock },
 	{ "unlock", luaA_awesome_unlock },
@@ -5061,7 +5099,8 @@ luaA_state_drop_object_pointers(void)
 	 * creates. */
 	foreach(d, globalconf.drawins) {
 		drawin_t *w = *d;
-		declare_handle_drop(w);
+		node_destroy(w->node);
+		w->node = NULL;
 	}
 	globalconf.drawins.len = 0;
 	declare_mark_all_dirty();
@@ -5124,12 +5163,23 @@ clients_detach(client_snapshot_t **out, int *out_count)
 		client_remove_all_listeners(c);
 
 		for (j = 0; j < CLIENT_TITLEBAR_COUNT; j++) {
-			declare_handle_drop(c->titlebar[j].drawable);
+			if (c->titlebar[j].drawable) {
+				node_destroy(c->titlebar[j].drawable->node);
+				c->titlebar[j].drawable->node = NULL;
+			}
 			widget_nodes_clear(&c->titlebar[j].widgets);
 		}
 
 		/* Copy entire client_t via memcpy */
 		memcpy(&snap->data, c, sizeof(client_t));
+		if (c->node)
+			c->node->owner = &snap->data;
+		if (c->surface_node)
+			c->surface_node->owner = &snap->data;
+		c->node = NULL;
+		c->surface_node = NULL;
+		for (j = 0; j < CLIENT_TITLEBAR_COUNT; j++)
+			c->titlebar[j].drawable = NULL;
 		snap->was_mapped = (c->scene != NULL);
 		snap->was_focused = (globalconf.focus.client == c);
 
@@ -5181,7 +5231,6 @@ clients_detach(client_snapshot_t **out, int *out_count)
 		c->protocols.atoms = NULL; c->protocols.atoms_len = 0;
 		/* The rebuilt client starts with a fresh native shadow descriptor. */
 		memset(&c->shadow, 0, sizeof(c->shadow));
-		c->shadow_config = NULL;
 		/* Don't let GC destroy the scene tree */
 		c->scene = NULL;
 	}
@@ -5226,6 +5275,10 @@ clients_restore(lua_State *L, client_snapshot_t *snaps, int num_clients)
 		c = client_new(L);
 		fresh_signals = c->signals;
 		memcpy(c, &cs->data, sizeof(client_t));
+		if (c->node)
+			c->node->owner = c;
+		if (c->surface_node)
+			c->surface_node->owner = c;
 		c->signals = fresh_signals;
 
 		/* Clear all Lua userdata pointers from the old state.
@@ -6114,6 +6167,7 @@ luaA_hot_reload(void)
 			else
 				c->screen = globalconf.screens.tab[0];
 		}
+		client_node_attach(c, c->mon);
 	}
 
 	for (i = 0; i < num_clients; i++) {

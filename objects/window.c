@@ -44,6 +44,7 @@
  */
 
 #include "objects/window.h"
+#include "node.h"
 #include "objects/button.h"
 #include "objects/screen.h"
 #include "common/luaclass.h"
@@ -116,12 +117,9 @@ luaA_window_struts(lua_State *L)
 static int
 luaA_window_get_opacity(lua_State *L, window_t *window)
 {
-    if(window->opacity >= 0)
-        lua_pushnumber(L, window->opacity);
-    else
-        /* Let's always return some "good" value */
-        lua_pushnumber(L, 1);
-    return 1;
+	lua_pushnumber(L, window->node && window->node->words.opacity >= 0
+		? window->node->words.opacity : 1);
+	return 1;
 }
 
 /** Set a window opacity.
@@ -132,15 +130,17 @@ luaA_window_get_opacity(lua_State *L, window_t *window)
 static int
 luaA_window_set_opacity(lua_State *L, window_t *window)
 {
-    if(lua_isnil(L, -1))
-        window_set_opacity(L, -3, -1);
-    else
-    {
-        double d = luaL_checknumber(L, -1);
-        if(d >= 0 && d <= 1)
-            window_set_opacity(L, -3, d);
-    }
-    return 0;
+	if (!window->node)
+		return 0;
+	if(lua_isnil(L, -1))
+		window_set_opacity(L, -3, -1);
+	else
+	{
+		double d = luaL_checknumber(L, -1);
+		if(d >= 0 && d <= 1)
+			window_set_opacity(L, -3, d);
+	}
+	return 0;
 }
 
 /** Set the window type.
@@ -206,8 +206,8 @@ luaA_window_set_type(lua_State *L, window_t *w)
 static int
 luaA_window_get_border_width(lua_State *L, window_t *window)
 {
-    lua_pushinteger(L, window->border_width);
-    return 1;
+	lua_pushinteger(L, window->node ? window->node->words.bw[0] : 0);
+	return 1;
 }
 
 /** Set opacity property (C API version).
@@ -218,19 +218,16 @@ luaA_window_get_border_width(lua_State *L, window_t *window)
 void
 window_set_opacity(lua_State *L, int idx, double opacity)
 {
-    window_t *window;
-    double old_opacity;
+	window_t *window = (window_t *)lua_touserdata(L, idx);
+	if (!window || !window->node)
+		return;
 
-    window = (window_t *)lua_touserdata(L, idx);
-    if (!window)
-        return;
+	float value = (float)opacity;
+	if (window->node->words.opacity == value)
+		return;
 
-    old_opacity = window->opacity;
-    if (old_opacity == opacity)
-        return;
-
-    window->opacity = opacity;
-    luaA_object_emit_signal(L, idx, "property::opacity", 0);
+	window->node->words.opacity = value;
+	luaA_object_emit_signal(L, idx, "property::opacity", 0);
 }
 
 /** Set border width property (C API version).
@@ -241,19 +238,22 @@ window_set_opacity(lua_State *L, int idx, double opacity)
 void
 window_set_border_width(lua_State *L, int idx, int width)
 {
-    window_t *window = luaA_checkudata(L, idx, &window_class);
-    uint16_t old_width = window->border_width;
+	window_t *window = luaA_checkudata(L, idx, &window_class);
+	if (!window->node)
+		return;
+	uint16_t old_width = window->node->words.bw[0];
 
-    if(width == window->border_width || width < 0)
-        return;
+	if(width == old_width || width < 0)
+		return;
 
-    window->border_need_update = true;
-    window->border_width = width;
+	window->border_need_update = true;
+	for (int i = 0; i < 4; i++)
+		window->node->words.bw[i] = width;
 
-    if(window->border_width_callback)
-        (*window->border_width_callback)(window, old_width, width);
+	if(window->border_width_callback)
+		(*window->border_width_callback)(window, old_width, width);
 
-    luaA_object_emit_signal(L, idx, "property::border_width", 0);
+	luaA_object_emit_signal(L, idx, "property::border_width", 0);
 }
 
 /** Set border width property (Lua property setter).
@@ -264,9 +264,10 @@ window_set_border_width(lua_State *L, int idx, int width)
 static int
 luaA_window_set_border_width(lua_State *L, window_t *window)
 {
-    (void)window;
-    window_set_border_width(L, -3, round(luaA_checknumber_range(L, -1, 0, MAX_X11_SIZE)));
-    return 0;
+	if (!window->node)
+		return 0;
+	window_set_border_width(L, -3, round(luaA_checknumber_range(L, -1, 0, MAX_X11_SIZE)));
+	return 0;
 }
 
 /** Get border color property.
@@ -274,10 +275,17 @@ luaA_window_set_border_width(lua_State *L, window_t *window)
  * \param window The window object.
  * \return The number of elements pushed on stack.
  */
-static int
+int
 luaA_window_get_border_color(lua_State *L, window_t *window)
 {
-    return luaA_pushcolor(L, &window->border_color);
+	if (!window->node || !window->border_color_set) {
+		lua_pushnil(L);
+		return 1;
+	}
+	const float *rgba = window->node->words.border;
+	color_t color = {lroundf(rgba[0] * 255), lroundf(rgba[1] * 255),
+		lroundf(rgba[2] * 255), lroundf(rgba[3] * 255), true};
+	return luaA_pushcolor(L, &color);
 }
 
 /** Set border color property.
@@ -288,15 +296,20 @@ luaA_window_get_border_color(lua_State *L, window_t *window)
 static int
 luaA_window_set_border_color(lua_State *L, window_t *window)
 {
-    const char *color_name = luaL_checkstring(L, -1);
+	if (!window->node)
+		return 0;
+	color_t color;
+	const char *color_name = luaL_checkstring(L, -1);
 
-    if(color_name && color_init_from_string(&window->border_color, color_name))
-    {
-        window->border_need_update = true;
-        luaA_object_emit_signal(L, -3, "property::border_color", 0);
-    }
+	if(color_name && color_init_from_string(&color, color_name))
+	{
+		color_to_floats(&color, window->node->words.border);
+		window->border_color_set = true;
+		window->border_need_update = true;
+		luaA_object_emit_signal(L, -3, "property::border_color", 0);
+	}
 
-    return 0;
+	return 0;
 }
 
 /** Get a window type (as string).

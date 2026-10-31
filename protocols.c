@@ -217,6 +217,7 @@ createlayersurface(struct wl_listener *listener, void *data)
 
 	l->layer_surface = layer_surface;
 	l->mon = layer_surface->output->data;
+	l->node = declare_node_create(l->mon, NODE_SURFACE, DECLARE_KIND_LAYER, l);
 	l->band = layer_surface->pending.layer;
 	/* Born parked; the reconciler borrows the tree into the output's band
 	 * once the declare pass sees the surface mapped. */
@@ -249,7 +250,7 @@ destroylayersurfacenotify(struct wl_listener *listener, void *data)
 	wl_list_remove(&l->destroy.link);
 	wl_list_remove(&l->unmap.link);
 	wl_list_remove(&l->surface_commit.link);
-	declare_handle_drop(l);
+	node_destroy(l->node);
 	wlr_scene_node_destroy(&l->scene->node);
 	declare_mark_all_dirty();
 	free(l);
@@ -448,7 +449,8 @@ destroylocksurface(struct wl_listener *listener, void *data)
 		m->lock_render_owner = NULL;
 	}
 	m->lock_surface = NULL;
-	declare_handle_drop(lock_surface);
+	node_destroy(m->lock_node);
+	m->lock_node = NULL;
 	declare_output_mark_dirty(m->declare);
 	wl_list_remove(&m->destroy_lock_surface.link);
 
@@ -481,6 +483,7 @@ createlocksurface(struct wl_listener *listener, void *data)
 	lock_surface->surface->data
 		= wlr_scene_subsurface_tree_create(lock->scene, lock_surface->surface);
 	m->lock_surface = lock_surface;
+	m->lock_node = declare_node_create(m, NODE_SURFACE, DECLARE_KIND_LOCK, lock_surface);
 
 	wlr_session_lock_surface_v1_configure(lock_surface, m->m.width, m->m.height);
 	declare_output_mark_dirty(m->declare);
