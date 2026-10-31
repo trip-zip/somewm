@@ -28,7 +28,6 @@
 #include "common/luaobject.h"
 #include "objects/signal.h"
 #include "client.h"
-#include "stack.h"
 #include "ewmh.h"
 #include "common/util.h"
 

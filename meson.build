@@ -406,7 +406,6 @@ somewm_sources = [
   'ipc.c',
   'color.c',
   'draw.c',
-  'stack.c',
   'node.c',
   'banning.c',
   'ewmh.c',

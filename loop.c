@@ -17,7 +17,7 @@
 #include "common/lualib.h"
 #include "globalconf.h"
 #include "luaa.h"
-#include "stack.h"
+#include "ewmh.h"
 #include "banning.h"
 #include "event_queue.h"
 #include "input.h"
@@ -316,9 +316,7 @@ some_refresh(void)
 	clock_gettime(CLOCK_MONOTONIC, &bench_ts[4]);
 #endif
 
-	/* Step 5: Update window stacking (Z-order)
-	 * This matches AwesomeWM's awesome_refresh() which calls stack_refresh() */
-	stack_refresh();
+	ewmh_stacking_refresh();
 
 #ifdef SOMEWM_BENCH
 	clock_gettime(CLOCK_MONOTONIC, &bench_ts[5]);

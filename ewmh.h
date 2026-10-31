@@ -31,6 +31,8 @@ void ewmh_init(xcb_connection_t *conn, int screen_nbr);
 void ewmh_init_lua(void);
 void ewmh_update_net_numbers_of_desktop(void);
 void ewmh_update_net_desktop_names(void);
+void ewmh_stacking_changed(void);
+void ewmh_stacking_refresh(void);
 void ewmh_update_net_client_list_stacking(void);
 void ewmh_client_check_hints(client_t *);
 void ewmh_client_update_desktop(client_t *);

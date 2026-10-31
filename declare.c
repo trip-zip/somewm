@@ -46,10 +46,8 @@
 #include "somewm_types.h"
 #include "globalconf.h"
 #include "client.h"
-#include "focus.h"
 #include "somewm_api.h"
 #include "monitor.h"
-#include "stack.h"
 #include "widget.h"
 #include "window.h"
 #include "xwayland.h"
@@ -701,6 +699,30 @@ enum {
 	Z_CURSOR = INT16_MAX,
 };
 
+/* Clients, geometry-placed wiboxes, floating bars and notification layouts
+ * read these bands. Layer-shell surfaces, the cursor, drag icon and lock
+ * section still read Z_* directly. LAYER_INHERIT resolves before lookup. */
+static const int16_t layer_band[] = {
+	[LAYER_INHERIT] = Z_CLIENT_NORMAL,
+	[LAYER_BACKGROUND] = Z_LAYER_BACKGROUND,
+	[LAYER_DESKTOP] = Z_CLIENT_DESKTOP,
+	[LAYER_WIBOX_DESKTOP] = Z_DRAWIN_BG,
+	[LAYER_BOTTOM] = Z_LAYER_BOTTOM,
+	[LAYER_BELOW] = Z_CLIENT_BELOW,
+	[LAYER_NORMAL] = Z_CLIENT_NORMAL,
+	[LAYER_WIBOX] = Z_DRAWIN,
+	[LAYER_ABOVE] = Z_CLIENT_ABOVE,
+	[LAYER_FULLSCREEN] = Z_CLIENT_FULLSCREEN,
+	[LAYER_ONTOP] = Z_CLIENT_ONTOP,
+	[LAYER_BAR_ONTOP] = Z_BAR_ONTOP,
+	[LAYER_TOP] = Z_LAYER_TOP,
+	[LAYER_WIBOX_ONTOP] = Z_DRAWIN_ONTOP,
+	[LAYER_NOTIFICATION] = Z_NOTIFICATION,
+	[LAYER_OVERLAY] = Z_LAYER_OVERLAY,
+	[LAYER_UNMANAGED] = Z_CLIENT_UNMANAGED,
+	[LAYER_CURSOR] = Z_CURSOR,
+};
+
 /* The placement every box somewm computes elsewhere enters with: a fixed
  * size at an explicit offset from the root, so Clay places it without
  * solving for it. */
@@ -1233,25 +1255,7 @@ declarable_client(Client *c)
 static int16_t
 client_z(Client *c)
 {
-	if (client_is_unmanaged(c))
-		return Z_CLIENT_UNMANAGED;
-	if (c->fullscreen)
-		return c->ontop ? Z_CLIENT_ONTOP : Z_CLIENT_FULLSCREEN;
-
-	switch (stack_client_effective_layer(c)) {
-	case WINDOW_LAYER_DESKTOP:
-		return Z_CLIENT_DESKTOP;
-	case WINDOW_LAYER_BELOW:
-		return Z_CLIENT_BELOW;
-	case WINDOW_LAYER_ABOVE:
-		return Z_CLIENT_ABOVE;
-	case WINDOW_LAYER_FULLSCREEN:
-		return Z_CLIENT_FULLSCREEN;
-	case WINDOW_LAYER_ONTOP:
-		return Z_CLIENT_ONTOP;
-	default:
-		return Z_CLIENT_NORMAL;
-	}
+	return layer_band[client_effective_layer(c)];
 }
 
 static void
@@ -1365,18 +1369,6 @@ clients_settle(Monitor *m, struct declare_band *band)
     }
 }
 
-/* Unmanaged clients have no c->mon assignment to trust; each declares on
- * exactly one output, the one under its center, so two outputs never fight
- * over borrowing the same scene tree. */
-static Monitor *
-monitor_for_unmanaged(Client *c)
-{
-	Monitor *m = xytomon(c->geometry.x + c->geometry.width / 2.0,
-		c->geometry.y + c->geometry.height / 2.0);
-
-	return m ? m : c->mon;
-}
-
 /* Each unmanaged client is its surface leaf at the protocol's box, above
  * every band a managed client uses, with its popups. */
 static void
@@ -1384,27 +1376,35 @@ declare_unmanaged_clients(Monitor *m)
 {
 	struct wlr_box origin = screen_origin(m);
 
-	foreach(node, globalconf.stack) {
-		Client *c = *node;
+	foreach(item, globalconf.screens) {
+		screen_t *screen = *item;
+		if (!screen_hosted(screen, m) || !screen->node)
+			continue;
+		struct node *n;
+		wl_list_for_each(n, &screen->node->children, link) {
+			if (n->kind != NODE_CLIENT)
+				continue;
+			Client *c = n->owner;
 
-		if (!c || !client_is_unmanaged(c))
-			continue;
-		if (monitor_for_unmanaged(c) != m)
-			continue;
-		if (!declarable_client(c))
-			continue;
-		uint64_t handle = node_handle(c->surface_node);
-		Clay_ElementId id = Clay__HashStringWithOffset(CLAY_STRING("SURFACE"),
-			(uint32_t)handle, 0);
-		Clay_ElementDeclaration s = leaf_at(client_z(c), c->geometry.x - origin.x,
-			c->geometry.y - origin.y, c->geometry.width, c->geometry.height);
+			if (!c || !client_is_unmanaged(c))
+				continue;
+			if (monitor_for_unmanaged(c) != m)
+				continue;
+			if (!declarable_client(c))
+				continue;
+			uint64_t handle = node_handle(c->surface_node);
+			Clay_ElementId id = Clay__HashStringWithOffset(CLAY_STRING("SURFACE"),
+				(uint32_t)handle, 0);
+			Clay_ElementDeclaration s = leaf_at(client_z(c), c->geometry.x - origin.x,
+				c->geometry.y - origin.y, c->geometry.width, c->geometry.height);
 
-		s.floating.attachTo = CLAY_ATTACH_TO_ELEMENT_WITH_ID;
-		s.floating.parentId = screen_root_id(m).id;
-		s.custom.customData = (void *)(uintptr_t)handle;
-		s.userData = leaf_userdata(handle, 1.0f);
-		declare_leaf("SURFACE", handle, DECLARE_SRC_PROTOCOL, DECLARE_SRC_PROTOCOL, id, &s);
-		declare_popups(client_surface(c), id, 0, 0, handle);
+			s.floating.attachTo = CLAY_ATTACH_TO_ELEMENT_WITH_ID;
+			s.floating.parentId = screen_root_id(m).id;
+			s.custom.customData = (void *)(uintptr_t)handle;
+			s.userData = leaf_userdata(handle, 1.0f);
+			declare_leaf("SURFACE", handle, DECLARE_SRC_PROTOCOL, DECLARE_SRC_PROTOCOL, id, &s);
+			declare_popups(client_surface(c), id, 0, 0, handle);
+		}
 	}
 }
 
@@ -1769,6 +1769,18 @@ declare_client_frame(const struct widget_host *host, size_t i, int16_t z,
 	struct widget_tree *d = host->tree;
 	const struct widget_node *n = &d->nodes[i];
 	Client *c = declare_handle_get(n->client, NULL);
+	/* Declared once, before the chrome recursion passes a resolved opacity.
+	 * The owner word applies the client's fade to the backing as to its frame. */
+	if (opacity < 0 && c->fullscreen && declarable_client(c)) {
+		Monitor *m = host->m;
+		Clay_ElementDeclaration bg = leaf_at(Z_FULLSCREEN_BG, 0, 0,
+			m->m.width, m->m.height);
+		bg.backgroundColor = clay_color(globalconf.appearance.fullscreen_bg);
+		bg.userData = leaf_userdata(n->client, 1.0f);
+		declare_leaf("fullscreen_bg", n->client, DECLARE_SRC_OUTPUT, DECLARE_SRC_OUTPUT,
+			Clay__HashStringWithOffset(CLAY_STRING("fullscreen_bg"),
+				(uint32_t)n->client, 0), &bg);
+	}
 	/* A negative argument reads the client's effective opacity.
 	 * Recursive chrome declarations reuse that value. */
 	if (opacity < 0)
@@ -2802,7 +2814,7 @@ declare_floating_bars(Monitor *m)
 			d = screen_drawin_next(active_screen->screen, d)) {
 
 		if (d->bar.edge && !bar_flows(d) && declarable_drawin(d))
-			declare_bar(d, m, d->ontop ? Z_BAR_ONTOP : Z_DRAWIN);
+			declare_bar(d, m, layer_band[d->node->layer]);
 	}
 }
 
@@ -2886,20 +2898,6 @@ popups_settle(Monitor *m)
 		if (w != d->width || h != d->height)
 			luaA_drawin_set_solved_geometry(globalconf_L, d, d->x, d->y, w, h);
 	}
-}
-
-/* The drawin band policy: desktop and splash below clients like the
- * wallpaper, an ontop drawin with the popups (a notification above them),
- * everything else placed by its geometry just above normal clients. */
-static int16_t
-drawin_z(drawin_t *d)
-{
-	if (d->type == WINDOW_TYPE_DESKTOP || d->type == WINDOW_TYPE_SPLASH)
-		return Z_DRAWIN_BG;
-	if (d->ontop)
-		return d->type == WINDOW_TYPE_NOTIFICATION
-			? Z_NOTIFICATION : Z_DRAWIN_ONTOP;
-	return Z_DRAWIN;
 }
 
 /* Only the authored border reserves space; shadow extents never size a slot. */
@@ -3007,7 +3005,7 @@ declare_attachment(drawin_t *d, Monitor *m)
     };
     if (d->attachment.kind == 3) {
         slot.layout.layoutDirection = CLAY_TOP_TO_BOTTOM;
-        slot.floating.zIndex = Z_NOTIFICATION;
+        slot.floating.zIndex = layer_band[LAYER_NOTIFICATION];
         a->host.fit[0] = false;
         if (bounded) {
             a->host.fit[1] = false;
@@ -3070,7 +3068,7 @@ declare_notifications(Monitor *m)
 				.attachTo = CLAY_ATTACH_TO_ELEMENT_WITH_ID, .parentId = screen_root_id(m).id,
 				.attachPoints = { .parent = position, .element = position },
 				.offset = {first->attachment.x, first->attachment.y},
-				.zIndex = Z_NOTIFICATION,
+				.zIndex = layer_band[LAYER_NOTIFICATION],
 				.pointerCaptureMode = CLAY_POINTER_CAPTURE_MODE_PASSTHROUGH,
 			},
 		};
@@ -3095,7 +3093,7 @@ declare_notifications(Monitor *m)
 			child.layout.padding = (Clay_Padding){decoration.width, decoration.width,
 				decoration.height, decoration.height};
 			Clay_ElementId id = Clay__HashStringWithOffset(CLAY_STRING("ATTACHMENT"), (uint32_t)handle, 0);
-			child.floating.zIndex = Z_NOTIFICATION;
+			child.floating.zIndex = layer_band[LAYER_NOTIFICATION];
 			declare_widget_frame(d, &a->host, id, &child, "NOTIFICATION", DECLARE_SRC_NONE, DECLARE_SRC_NONE);
 		}
 		native_close();
@@ -3117,9 +3115,9 @@ declare_drawins(Monitor *m)
 		if (d->widgets.output_fill)
 			continue;
 		if (drawin_covers_output(d, m))
-			declare_wallpaper_drawin(d, m, drawin_z(d));
+			declare_wallpaper_drawin(d, m, layer_band[d->node->layer]);
 		else
-			declare_drawin(d, m, drawin_z(d));
+			declare_drawin(d, m, layer_band[d->node->layer]);
 	}
 	declare_notifications(m);
 	/* Targets in other popups must be declared first, independent of the
@@ -3135,23 +3133,6 @@ declare_drawins(Monitor *m)
 			if (!done && declare_attachment(d, m)) progress = true;
 		}
 	} while (progress);
-}
-
-/* The opaque backing the xdg protocol requires under a non-opaque
- * fullscreen surface; replaces the per-monitor fullscreen_bg scene rect,
- * enabled under the same condition (arrange()'s focustop check). */
-static void
-declare_fullscreen_bg(Monitor *m)
-{
-	Client *c = focustop(m);
-
-	if (!c || !c->fullscreen)
-		return;
-
-	Clay_ElementDeclaration bg = leaf_at(Z_FULLSCREEN_BG, 0, 0, m->m.width, m->m.height);
-	bg.backgroundColor = clay_color(globalconf.appearance.fullscreen_bg);
-	declare_leaf("fullscreen_bg", 0, DECLARE_SRC_OUTPUT, DECLARE_SRC_OUTPUT,
-		Clay__HashStringWithOffset(CLAY_STRING("fullscreen_bg"), 0, 0), &bg);
 }
 
 /* The workarea: what the bars leave of the screen, where the clients go.
@@ -3712,8 +3693,6 @@ declare_scene(Monitor *m)
         screen_activate(NULL);
         if (recording->exhausted) return;
     }
-	declare_fullscreen_bg(m);
-    if (recording->exhausted) return;
 	declare_unmanaged_clients(m);
     if (recording->exhausted) return;
 	declare_drag_icon(m);

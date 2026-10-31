@@ -1,17 +1,5 @@
----------------------------------------------------------------------------
---- Test: fullscreen client stays above wibar when focus moves to another screen
---
--- Regression test: when a fullscreen client on screen 2 loses focus because
--- the user clicks a window on screen 1, the wibar on screen 2 should NOT
--- appear above the fullscreen window.
---
--- Root cause: client_layer_translator() only assigned WINDOW_LAYER_FULLSCREEN
--- when the client had focus. On Wayland (unlike X11's flat stacking model),
--- wlroots scene layers mean that LyrTop (where dock wibars live) is above
--- LyrTile (where unfocused fullscreen clients were demoted to). The fix keeps
--- fullscreen clients in WINDOW_LAYER_FULLSCREEN when the focused client is on
--- a different screen.
----------------------------------------------------------------------------
+-- Fullscreen is a layer word. Focus changes do not move a fullscreen client
+-- below the wibar, whether focus stays on its screen or moves to another.
 
 local runner = require("_runner")
 local test_client = require("_client")
@@ -96,12 +84,6 @@ local steps = {
         return true
     end,
 
-    -- Step 6: Verify fullscreen client on screen 2 is still fullscreen.
-    -- Before the fix, client_layer_translator() would return
-    -- WINDOW_LAYER_NORMAL (-> LyrTile) for this unfocused fullscreen client,
-    -- causing the wibar (at LyrTop) to appear above it. After the fix,
-    -- it returns WINDOW_LAYER_FULLSCREEN (-> LyrFS) because the focused
-    -- client is on a different screen.
     function()
         assert(c_fs.valid, "Fullscreen client should still be valid")
         assert(c_fs.fullscreen,
@@ -118,9 +100,6 @@ local steps = {
         return true
     end,
 
-    -- Step 7: Verify same-screen behavior is preserved: focusing another
-    -- client on the SAME screen should still demote the fullscreen client
-    -- (matching AwesomeWM behavior).
     function(count)
         if count == 1 then
             c_other:move_to_screen(fake_screen)
@@ -131,8 +110,8 @@ local steps = {
         if c_other.screen ~= c_fs.screen then return nil end
         assert(c_fs.fullscreen,
             "Fullscreen property should still be set")
-        io.stderr:write("[TEST] PASS: same-screen focus correctly allows " ..
-            "layer demotion for fullscreen client\n")
+        io.stderr:write("[TEST] PASS: same-screen focus preserves " ..
+            "the fullscreen property\n")
         return true
     end,
 

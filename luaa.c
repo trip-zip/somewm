@@ -16,7 +16,6 @@
 
 #include "objects/tag.h"
 #include "objects/client.h"
-#include "stack.h"
 #include "objects/screen.h"
 #include "objects/output.h"
 #include "objects/drawin.h"
@@ -5236,7 +5235,6 @@ clients_detach(client_snapshot_t **out, int *out_count)
 	}
 
 	globalconf.clients.len = 0;
-	globalconf.stack.len = 0;
 	globalconf.focus.client = NULL;
 
 	*out = snaps;
@@ -5289,7 +5287,7 @@ clients_restore(lua_State *L, client_snapshot_t *snaps, int num_clients)
 		c->toplevel_handle = NULL;
 		c->screen = NULL;
 		c->transient_for = NULL;
-		stack_windows();
+		client_update_layer(c);
 		for (j = 0; j < CLIENT_TITLEBAR_COUNT; j++) {
 			c->titlebar[j].drawable = NULL;
 			c->titlebar[j].size = 0;
@@ -5312,7 +5310,6 @@ clients_restore(lua_State *L, client_snapshot_t *snaps, int num_clients)
 		/* Reference and push to arrays */
 		lua_pushvalue(L, -1);
 		client_array_append(&globalconf.clients, luaA_object_ref(L, -1));
-		stack_client_append(c);
 
 		if (cs->was_focused)
 			focused_idx = i;
@@ -5328,11 +5325,13 @@ clients_restore(lua_State *L, client_snapshot_t *snaps, int num_clients)
 			if (snaps[j].data.id == snaps[i].transient_for_id) {
 				globalconf.clients.tab[base + i]->transient_for =
 					globalconf.clients.tab[base + j];
-				stack_windows();
+				client_update_layer(globalconf.clients.tab[base + i]);
 				break;
 			}
 		}
 	}
+
+	ewmh_stacking_changed();
 
 	/* Restore focus */
 	if (focused_idx >= 0)
@@ -5561,23 +5560,6 @@ luaA_loadrc(void)
 			luaA_screen_hot_reload(globalconf_L);
 			luaA_output_hot_reload(globalconf_L);
 
-			/* globalconf.screens still holds the screen pointers the
-			 * close freed. Refill it from what was just rebuilt, since
-			 * the client snapshots address their screen by index into
-			 * it. */
-			{
-				/* 64 is far beyond any real multi-monitor setup */
-				screen_t *screen_ptrs[64];
-				int n = 64;
-
-				globalconf.screens.len = 0;
-				luaA_screen_get_all(globalconf_L, screen_ptrs, &n);
-				if (n == 64)
-					warn("screen snapshot full at 64, extra screens dropped");
-				for (int s = 0; s < n; s++)
-					screen_array_push(&globalconf.screens, screen_ptrs[s]);
-			}
-
 			clients_restore(globalconf_L, snaps, num_snaps);
 			free(snaps);
 
@@ -5755,6 +5737,7 @@ luaA_create_fresh_state(void)
  * client_snapshot_t is above luaA_loadrc(), which needs the same detach. */
 
 typedef struct {
+	struct node *node;
 	Monitor *monitor;
 	int index;
 	struct wlr_box geometry;
@@ -5870,12 +5853,7 @@ luaA_hot_reload(void)
 
 	luaA_state_teardown_lua(L, true);
 
-	/* ================================================================
-	 * Phase B1: Snapshot screens FIRST (needed for index lookups)
-	 * ================================================================
-	 * Screens are stored in screen.c's internal screen_refs array,
-	 * not in globalconf.screens. Use luaA_screen_get_all() to access them.
-	 */
+	/* Screen indices resolve the client snapshots below. */
 	{
 		/* 64 is far beyond any real multi-monitor setup */
 		screen_t *screen_ptrs[64];
@@ -5891,14 +5869,11 @@ luaA_hot_reload(void)
 				num_screens = 0;
 				goto fail;
 			}
-			/* Also temporarily populate globalconf.screens for index lookups */
-			for (i = 0; i < num_screens; i++) {
-				screen_array_push(&globalconf.screens, screen_ptrs[i]);
-			}
 		}
 
 		for (i = 0; i < num_screens; i++) {
 			screen_t *s = screen_ptrs[i];
+			screen_snaps[i].node = s->node;
 			screen_snaps[i].monitor = s->monitor;
 			screen_snaps[i].index = s->index;
 			screen_snaps[i].geometry = s->geometry;
@@ -5955,8 +5930,12 @@ luaA_hot_reload(void)
 	 * Phase C: Close old Lua state
 	 * ================================================================ */
 
-	/* Everything is snapshotted and owned resources are NULL'd (clients,
-	 * the stack and the focus went with clients_detach). Drop the rest. */
+	/* Screen nodes keep client sibling order while their userdata is replaced. */
+	for (i = 0; i < num_screens; i++) {
+		screen_t *screen = screen_snaps[i].node->owner;
+		screen->node = NULL;
+		screen_snaps[i].node->owner = NULL;
+	}
 	luaA_state_drop_object_pointers();
 
 	luaA_state_teardown_c(L, "hot-reload", true);
@@ -6090,6 +6069,9 @@ luaA_hot_reload(void)
 		screen_snapshot_t *ss = &screen_snaps[i];
 		screen_t *screen = luaA_screen_new(L, ss->monitor, ss->index);
 		if (screen) {
+			node_destroy(screen->node);
+			screen->node = ss->node;
+			screen->node->owner = screen;
 			screen->geometry = ss->geometry;
 			screen->workarea = ss->workarea;
 			screen->lifecycle = ss->lifecycle;
@@ -6097,7 +6079,6 @@ luaA_hot_reload(void)
 				screen->name = ss->name;
 				ss->name = NULL;  /* Transferred ownership */
 			}
-			screen_array_push(&globalconf.screens, screen);
 		}
 		lua_pop(L, 1);  /* luaA_screen_new leaves screen on stack */
 	}
@@ -6313,7 +6294,6 @@ globalconf_init(lua_State *L)
 
 	/* Initialize arrays to empty state */
 	client_array_init(&globalconf.clients);
-	client_array_init(&globalconf.stack);
 	tag_array_init(&globalconf.tags);
 	key_array_init(&globalconf.keys);
 	button_array_init(&globalconf.buttons);
@@ -6362,7 +6342,6 @@ globalconf_wipe(void)
 
 	/* Wipe arrays - uses DO_NOTHING dtor so it doesn't free the objects */
 	client_array_wipe(&globalconf.clients);
-	client_array_wipe(&globalconf.stack);
 	tag_array_wipe(&globalconf.tags);
 	screen_array_wipe(&globalconf.screens);
 	drawin_array_wipe(&globalconf.drawins);

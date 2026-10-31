@@ -54,14 +54,10 @@ const float *get_focuscolor(void);
 const float *get_bordercolor(void);
 
 /* Client commands */
+Monitor *monitor_for_unmanaged(Client *c);
 void client_node_attach(Client *c, Monitor *m);
 void setmon(Client *c, Monitor *m, uint32_t newtags);
 void setfullscreen(Client *c, int fullscreen);
-void killclient(const Arg *arg);
-void swapstack(const Arg *arg);
-void zoom(const Arg *arg);
-void togglefloating(const Arg *arg);
-void tagmon(const Arg *arg);
 
 /* Listener management (hot-reload) */
 void client_remove_all_listeners(client_t *c);

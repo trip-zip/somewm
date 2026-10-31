@@ -25,7 +25,6 @@
 #include "xkb.h"
 #include "objects/signal.h"
 #include "objects/screen.h"
-#include "stack.h"
 #include "banning.h"
 #include "globalconf.h"
 

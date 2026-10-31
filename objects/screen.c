@@ -64,6 +64,7 @@ void
 luaA_screen_refs_reset(void)
 {
 	screen_count = 0;
+	globalconf.screens.len = 0;
 	/* Keep allocated capacity for reuse. */
 	primary_screen = NULL;
 	screens_scanned = false;
@@ -179,6 +180,7 @@ luaA_screen_new(lua_State *L, Monitor *m, int index)
 		screen_capacity = new_cap;
 	}
 	screen_refs[screen_count++] = ref;
+	screen_array_append(&globalconf.screens, screen);
 
 	/* Screen userdata is still on stack for caller */
 	return screen;
@@ -512,6 +514,7 @@ screen_removed(lua_State *L, screen_t *screen)
 			memmove(&screen_refs[i], &screen_refs[i + 1],
 			        (screen_count - i - 1) * sizeof(int));
 			screen_count--;
+			screen_array_remove(&globalconf.screens, &globalconf.screens.tab[i]);
 
 			/* Re-index remaining screens */
 			for (size_t j = i; j < screen_count; j++) {
@@ -1308,6 +1311,7 @@ luaA_screen_fake_add(lua_State *L)
 		screen_capacity = new_cap;
 	}
 	screen_refs[screen_count++] = ref;
+	screen_array_append(&globalconf.screens, screen);
 
 	/* Create synthetic virtual output so screen.output is never nil */
 	screen->virtual_output = luaA_output_new_virtual(L, NULL);
@@ -1444,6 +1448,8 @@ luaA_screen_swap(lua_State *L)
 		tmp_ref = screen_refs[ref_s_idx];
 		screen_refs[ref_s_idx] = screen_refs[ref_swap_idx];
 		screen_refs[ref_swap_idx] = tmp_ref;
+		globalconf.screens.tab[ref_s_idx] = swap;
+		globalconf.screens.tab[ref_swap_idx] = s;
 
 		/* Update indices */
 		s->index = ref_swap_idx + 1;
