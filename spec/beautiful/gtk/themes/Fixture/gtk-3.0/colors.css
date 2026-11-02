@@ -1,0 +1,11 @@
+/* @define-color theme_bg_color #ff0000; */
+@define-color base #353535;
+@define-color theme_bg_color @base;
+@define-color theme_fg_color mix(#f6f5f4, #2e3436, 0.3);
+@define-color theme_selected_bg_color shade(@base, 1.2);
+@define-color osd_bg alpha(#000000, 0.35);
+@define-color theme_text_color white;
+@define-color theme_selected_fg_color white;
+@define-color error_color #cc0000;
+@define-color warning_color #f57900;
+@define-color success_color #33d17a;

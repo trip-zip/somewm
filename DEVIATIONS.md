@@ -10,7 +10,7 @@ This document tracks all known differences between somewm and AwesomeWM. These e
 | Titlebar borders | Outside frame (X server draws) | Inset by `border_width` | Scene graph positioning differs |
 | Window visibility | `xcb_map_window()` shows immediately | Content must exist before showing | Prevents smearing artifacts |
 | WM restart | `awesome.restart()` re-execs the process | In-process Lua hot-reload (clients survive) | Wayland compositor can't re-exec; tears down and rebuilds Lua VM instead |
-| GTK theme detection | Creates GTK widgets, queries `GtkStyleContext` | Parses `gtk-3.0/settings.ini` and `gtk-4.0/settings.ini` | Creating GTK windows inside a compositor is unsafe |
+| GTK theme detection | Creates GTK widgets, queries `GtkStyleContext` | Reads the theme's `@define-color` declarations from its CSS | GTK needs a display, and the compositor is the display |
 | Xresources | Queries `xrdb` server | Parses `~/.Xresources` file directly | No `xrdb` server on Wayland |
 | Wibox shape surfaces | 1-bit (`cairo.Format.A1`) | Full ARGB32 with anti-aliasing | Enables anti-aliased rounded corners and HiDPI scaling |
 | Config/cache paths | `~/.config/awesome/`, `~/.cache/awesome/` | `~/.config/somewm/`, `~/.cache/somewm/` | Rebranded |
@@ -45,8 +45,8 @@ This document tracks all known differences between somewm and AwesomeWM. These e
 
 **GTK Theme Detection**
 - AwesomeWM's `beautiful/gtk.lua` creates actual GTK+ 3 widgets via LGI and queries `GtkStyleContext` for live theme colors
-- SomeWM parses `~/.config/gtk-3.0/settings.ini` and `~/.config/gtk-4.0/settings.ini` directly, with Adwaita Dark as the fallback
-- Theme detection is less accurate — complex GTK CSS that the file parser cannot read will be missed
+- SomeWM finds the theme the way GTK 3 does on Wayland (`GTK_THEME`, then gsettings `gtk-theme`, then `settings.ini`) and reads its `@define-color` declarations
+- Colors the theme defines by name match AwesomeWM. Without widgets, a theme that does not name them gets `bg_color` for the menubar, header button, `wm_bg` and unfocused border colors, `selected_fg_color` for `error_fg_color`, its `borders` color for button borders, and Adwaita's radius 5 and width 1
 
 **Xresources**
 - AwesomeWM's `beautiful/xresources.lua` queries the X server's resource database via `xrdb`
@@ -177,7 +177,7 @@ These modifications to AwesomeWM's Lua libraries were necessary for Wayland comp
 | File | Change | Reason |
 |------|--------|--------|
 | `wibox/widget/systray.lua` | Complete rewrite | SNI D-Bus protocol replaces X11 XEmbed |
-| `beautiful/gtk.lua` | Complete rewrite | File parsing replaces live GTK widget queries |
+| `beautiful/gtk.lua` | Complete rewrite | Theme CSS parsing replaces live GTK widget queries |
 | `beautiful/init.lua` | `get_font_height()` returns 0 for unloadable fonts | Avoids hard errors from themes naming missing fonts |
 | `wibox/init.lua` | ARGB32 shapes, HiDPI scaling, surface lifetime, `shape_border`; `border_width` reads 0 (not nil) when unset and border/opacity setters mirror into the drawin | Wayland scene graph and compositing model; C-side scene math needs concrete values |
 | `wibox/drawable.lua` | HiDPI scale-change handler | Recreates surfaces when `screen.scale` changes |
