@@ -241,6 +241,7 @@ struct rnode {
 	/* Keep dimensions after wlroots releases the CPU buffer on upload. */
 	int raster_width, raster_height;
 	bool borrowed;
+	struct render_surface_origin surface_origin;
 	/* Its command vanished while its element stayed in the tree: the node
 	 * is kept, disabled, out of the order, until the command returns or the
 	 * element leaves. */
@@ -2667,11 +2668,15 @@ static int reconcile_surface(struct render_state *rs, struct rnode *n,
 	}
 	struct wlr_box clip = surface_clip_box(cmd->boundingBox, rbox);
 	struct wlr_box previous_clip = surface_clip_box(n->box, n->rbox);
-	if (hooks->clip != NULL && (first_borrow || !wlr_box_equal(&clip, &previous_clip))) {
+	struct render_surface_origin origin = hooks->surface_origin
+		? hooks->surface_origin(hooks->data, handle) : (struct render_surface_origin){0};
+	if (hooks->clip != NULL && (first_borrow || !wlr_box_equal(&clip, &previous_clip)
+			|| origin.x != n->surface_origin.x || origin.y != n->surface_origin.y)) {
 		hooks->clip(hooks->data, handle, clip.x, clip.y, clip.width, clip.height);
 		surface_changed = true;
 		muts++;
 	}
+	n->surface_origin = origin;
 	Clay_CornerRadius radius = cmd->renderData.custom.cornerRadius;
 	if (hooks->corners != NULL && (first_borrow ||
 			memcmp(&radius, &n->data.custom.cornerRadius, sizeof(radius)) != 0)) {

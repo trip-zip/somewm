@@ -12,7 +12,12 @@
  * - On SIGALRM: unmap with a null buffer, then commit again to map anew
  * - On SIGTERM: clean shutdown
  *
- * Usage: test-csd-state-client
+ * With --geometry-offset REPORT, draw colored edges inside a 20-pixel
+ * margin that disappears when maximized. SIGWINCH toggles that margin
+ * without changing the window size. REPORT records each commit as
+ * commits, configures, origin x, origin y, width, height.
+ *
+ * Usage: test-csd-state-client [--geometry-offset REPORT]
  */
 
 #include <errno.h>
@@ -44,6 +49,9 @@ static struct xdg_surface *g_xdg_surface;
 static struct xdg_toplevel *g_toplevel;
 
 static uint32_t g_width = 200, g_height = 200;
+static bool g_maximized, g_offset_flipped;
+static const char *g_report;
+static uint32_t g_margin, g_commits, g_configures;
 
 /* Signal handlers */
 static void handle_sigterm(int sig) {
@@ -81,8 +89,20 @@ static struct wl_buffer *create_buffer(uint32_t w, uint32_t h, uint32_t color) {
         return NULL;
     }
 
-    for (int i = 0; i < (int)(w * h); i++)
-        data[i] = color;
+    for (uint32_t y = 0; y < h; y++) {
+        for (uint32_t x = 0; x < w; x++) {
+            uint32_t pixel = color;
+            if (g_report) {
+                if (x < g_margin || y < g_margin || x >= w - g_margin || y >= h - g_margin)
+                    pixel = 0;
+                else if (y < g_margin + 8)
+                    pixel = 0xFFFF0000;
+                else if (x < g_margin + 8)
+                    pixel = 0xFF00FF00;
+            }
+            data[y * w + x] = pixel;
+        }
+    }
     munmap(data, size);
 
     struct wl_shm_pool *pool = wl_shm_create_pool(g_shm, fd, size);
@@ -94,17 +114,35 @@ static struct wl_buffer *create_buffer(uint32_t w, uint32_t h, uint32_t color) {
     return buffer;
 }
 
+static void draw(void) {
+    g_margin = g_report && (g_maximized == g_offset_flipped) ? 20 : 0;
+    if (g_report)
+        xdg_surface_set_window_geometry(g_xdg_surface, g_margin, g_margin, g_width, g_height);
+    struct wl_buffer *buffer = create_buffer(g_width + 2 * g_margin,
+        g_height + 2 * g_margin, 0xFF996633);
+    if (buffer) {
+        wl_surface_attach(g_surface, buffer, 0, 0);
+        wl_surface_damage_buffer(g_surface, 0, 0, INT32_MAX, INT32_MAX);
+        wl_surface_commit(g_surface);
+        g_commits++;
+        if (g_report) {
+            FILE *report = fopen(g_report, "w");
+            if (report) {
+                fprintf(report, "%u %u %u %u %u %u\n", g_commits, g_configures,
+                    g_margin, g_margin, g_width, g_height);
+                fclose(report);
+            }
+        }
+    }
+}
+
 /* xdg_surface callbacks */
 static void xdg_surface_configure(void *data,
         struct xdg_surface *xdg_surface, uint32_t serial) {
     (void)data;
     xdg_surface_ack_configure(xdg_surface, serial);
-
-    struct wl_buffer *buffer = create_buffer(g_width, g_height, 0xFF996633);
-    if (buffer) {
-        wl_surface_attach(g_surface, buffer, 0, 0);
-        wl_surface_commit(g_surface);
-    }
+    g_configures++;
+    draw();
 }
 
 static const struct xdg_surface_listener xdg_surface_listener = {
@@ -114,7 +152,13 @@ static const struct xdg_surface_listener xdg_surface_listener = {
 /* xdg_toplevel callbacks */
 static void toplevel_configure(void *data, struct xdg_toplevel *toplevel,
         int32_t w, int32_t h, struct wl_array *states) {
-    (void)data; (void)toplevel; (void)states;
+    (void)data; (void)toplevel;
+    g_maximized = false;
+    uint32_t *state;
+    wl_array_for_each(state, states) {
+        if (*state == XDG_TOPLEVEL_STATE_MAXIMIZED)
+            g_maximized = true;
+    }
     if (w > 0) g_width = w;
     if (h > 0) g_height = h;
 }
@@ -180,7 +224,10 @@ static const struct wl_registry_listener registry_listener = {
 };
 
 int main(int argc, char *argv[]) {
-    (void)argc; (void)argv;
+    if (argc == 3 && strcmp(argv[1], "--geometry-offset") == 0)
+        g_report = argv[2];
+    else if (argc != 1)
+        return 1;
 
     /* Setup signal handlers.
      * No SA_RESTART, so poll() returns EINTR and we act on the request
@@ -193,6 +240,7 @@ int main(int argc, char *argv[]) {
     sigaction(SIGUSR2, &sa_state, NULL);
     sigaction(SIGHUP, &sa_state, NULL);
     sigaction(SIGALRM, &sa_state, NULL);
+    sigaction(SIGWINCH, &sa_state, NULL);
 
     /* Connect to Wayland */
     g_display = wl_display_connect(NULL);
@@ -245,6 +293,11 @@ int main(int argc, char *argv[]) {
                 fprintf(stderr, "[test-csd-state-client] requesting minimize\n");
                 xdg_toplevel_set_minimized(g_toplevel);
                 break;
+            case SIGWINCH:
+                g_offset_flipped = !g_offset_flipped;
+                draw();
+                wl_display_flush(g_display);
+                continue;
             case SIGALRM:
                 /* The commit below is the initial commit of the reset
                  * toplevel; its configure attaches a buffer and maps. */
