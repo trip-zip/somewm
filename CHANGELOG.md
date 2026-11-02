@@ -4,6 +4,12 @@ All notable changes to somewm will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+
+- `beautiful.gtk.get_theme_variables()` returns the colors of the active GTK
+  theme, so the stock gtk theme matches it. It returned Adwaita colors for
+  every theme.
+
 ## [1.4.7] - 2026-10-28
 
 Patch release. 20 commits since 1.4.6: a hit-test crash on shaped wiboxes,
