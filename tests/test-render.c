@@ -180,6 +180,7 @@ struct fake_clients {
 	int borrows, releases, repositions;
 	int configured_w, configured_h, configures;
 	int clip_x, clip_y, clip_w, clip_h, clips;
+	struct render_surface_origin origins[FAKE_CLIENTS];
 	float radii[4];
 	int corners;
 };
@@ -230,6 +231,11 @@ static void fake_clip(void *data, uint64_t handle, int x, int y, int width, int 
 	fc->clips++;
 }
 
+static struct render_surface_origin fake_surface_origin(void *data, uint64_t handle) {
+	struct fake_clients *fc = data;
+	return fc->origins[handle];
+}
+
 static void fake_corners(void *data, uint64_t handle, const float radii[4]) {
 	struct fake_clients *fc = data;
 	(void)handle;
@@ -253,6 +259,7 @@ static void fake_clients_init(struct fake_clients *fc,
 		.release = fake_release,
 		.reposition = fake_reposition,
 		.clip = fake_clip,
+		.surface_origin = fake_surface_origin,
 		.corners = fake_corners,
 		.data = fc,
 	};
@@ -1018,6 +1025,19 @@ static void test_client_surface_hooks(void) {
 
 	CHECK_EQ(render_reconcile(f.rs, commands_of(cmds, 2), &hooks, no_bounds), 0);
 	CHECK_EQ(fc.repositions, 2);
+
+	/* Changing the window origin reapplies only that surface's logical clip. */
+	int clips = fc.clips;
+	fc.origins[1] = (struct render_surface_origin){20, 30};
+	CHECK(render_reconcile(f.rs, commands_of(cmds, 2), &hooks, no_bounds) > 0);
+	CHECK_EQ(fc.clips, clips + 1);
+	CHECK_EQ(fc.clip_x, 0);
+	CHECK_EQ(fc.clip_y, 0);
+	CHECK_EQ(fc.clip_w, 0);
+	CHECK_EQ(fc.configures, 2);
+	CHECK_EQ(fc.repositions, 2);
+	CHECK_EQ(render_reconcile(f.rs, commands_of(cmds, 2), &hooks, no_bounds), 0);
+	CHECK_EQ(fc.clips, clips + 1);
 
 	/* A move re-derives anything keyed to the tree's scene position. */
 	cmds[1].boundingBox.x = 500;

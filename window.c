@@ -259,6 +259,7 @@ initialcommitnotify(struct wl_listener *listener, void *data)
 }
 
 static void client_apply_corners(Client *c);
+static void client_apply_surface_clip(Client *c);
 static void configure_retry_arm(Client *c);
 
 /* Handle subsequent XDG commits after wlroots updates the scene surface. */
@@ -270,6 +271,13 @@ commitnotify(struct wl_listener *listener, void *data)
 	/* Skip initial commit - handled by initialcommitnotify */
 	if (c->surface.xdg->initial_commit)
 		return;
+
+	struct wlr_box geometry = c->surface.xdg->geometry;
+	if (geometry.x != c->surface_origin.x || geometry.y != c->surface_origin.y) {
+		c->surface_origin = (struct render_surface_origin){geometry.x, geometry.y};
+		if (c->mon && c->mon->declare)
+			declare_output_mark_dirty(c->mon->declare);
+	}
 
 #ifdef SOMEWM_BENCH
 	bench_manage_end(c);
@@ -1474,7 +1482,15 @@ hook_clip(void *data, uint64_t handle, int x, int y, int width, int height)
 	if (!c)
 		return;
 	c->surface_clip = clip;
-	client_configure_to_box(c);
+	client_apply_surface_clip(c);
+}
+
+static struct render_surface_origin
+hook_surface_origin(void *data, uint64_t handle)
+{
+	Client *c = handle_client(handle);
+
+	return c ? c->surface_origin : (struct render_surface_origin){0};
 }
 
 static void
@@ -1485,7 +1501,7 @@ hook_corners(void *data, uint64_t handle, const float radii[4])
 	if (!c)
 		return;
 	memcpy(c->surface_radii, radii, sizeof(c->surface_radii));
-	client_configure_to_box(c);
+	client_apply_surface_clip(c);
 }
 
 static void
@@ -1541,6 +1557,7 @@ window_setup_render_hooks(void)
 		.release = hook_release,
 		.reposition = hook_reposition,
 		.clip = hook_clip,
+		.surface_origin = hook_surface_origin,
 		.corners = hook_corners,
 	};
 
@@ -1636,7 +1653,6 @@ void
 client_configure_to_box(Client *c)
 {
 	struct wlr_box box = c->surface_box;
-	struct wlr_box clip = { 0, 0, box.width, box.height };
 
 	if (!c->scene || !client_surface(c) || !client_surface(c)->mapped
 			|| box.width <= 0 || box.height <= 0)
@@ -1670,6 +1686,20 @@ client_configure_to_box(Client *c)
 			wlr_xdg_toplevel_set_maximized(c->surface.xdg->toplevel, !!c->maximized);
 		c->resize = client_set_size(c, box.width, box.height);
 	}
+
+	client_apply_surface_clip(c);
+}
+
+/* Translate the tree's solved clip using the current buffer origin.
+ * An origin-only commit changes no layout size and sends no configure. */
+static void
+client_apply_surface_clip(Client *c)
+{
+	struct wlr_box clip = { 0, 0, c->surface_box.width, c->surface_box.height };
+
+	if (!c->scene || !client_surface(c) || !client_surface(c)->mapped
+			|| clip.width <= 0 || clip.height <= 0)
+		return;
 
 	/* The clip is the solved box in surface coordinates: an oversized
 	 * buffer stays off the chrome. */

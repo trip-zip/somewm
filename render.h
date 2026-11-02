@@ -13,6 +13,10 @@ struct wlr_scene_node;
 struct render_state;
 struct render_text_attr;
 
+struct render_surface_origin {
+	int x, y;
+};
+
 struct render_gradient {
 	int kind;
 	float points[6];
@@ -53,6 +57,10 @@ struct render_client_hooks {
 	void (*borrow)(void *data, uint64_t handle, void *owner);
 	bool (*release)(void *data, uint64_t handle, void *owner);
 	void (*reposition)(void *data, uint64_t handle, int x, int y);
+	/* The window origin in surface coordinates. A change invalidates the
+	 * applied clip even when the solved box and crop are unchanged.
+	 * NULL means a fixed origin at 0,0. */
+	struct render_surface_origin (*surface_origin)(void *data, uint64_t handle);
 	/* Realized origin relative to the solved origin; width 0 removes the crop.
 	 * Optional, like reposition. */
 	void (*clip)(void *data, uint64_t handle, int x, int y, int width, int height);

@@ -178,6 +178,8 @@ struct client_t
     int committed_width, committed_height;
     /** Realized crop relative to surface_box; width 0 means no crop. */
     struct wlr_box surface_clip;
+    /* Last committed XDG origin, used to schedule reconciliation on change. */
+    struct render_surface_origin surface_origin;
     /** The corner radii the renderer last handed window.c for the surface
      * (render.h corners), logical pixels, zeros for square corners. */
     float surface_radii[4];
