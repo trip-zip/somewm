@@ -126,6 +126,34 @@ local steps = {
         notif:destroy()
         return true
     end,
+
+    -- A short message leaves the template narrower than the stack. The
+    -- background that draws the border still spans the whole box.
+    function(count)
+        if count == 1 then
+            notif = naughty.notification { title = "Test", message = "short", timeout = 0 }
+            return nil
+        end
+
+        local d = box_drawin()
+        local head, list
+
+        if d then
+            head, list = nodes(d)
+        end
+
+        local bg = list and first(list, "background_role")
+        if not bg then
+            assert(count < 20, "the short box never reached the dump")
+            return nil
+        end
+        assert(d.width == 320, "the box is not the stack's width: " .. head)
+        assert(bg.box.width == d.width,
+            "the background does not span the box: " .. bg.line)
+        io.stderr:write("[PASS] the background spans a short notification's box\n")
+        notif:destroy()
+        return true
+    end,
 }
 
 runner.run_steps(steps)

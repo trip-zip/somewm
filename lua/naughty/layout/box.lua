@@ -73,17 +73,21 @@ capi.screen.connect_signal("removed", function(scr)
 end)
 
 -- Each position is one Clay flow container. Lua supplies theme inputs and
--- membership only; resizing or dismissing a child reflows it in the solve.
+-- membership only. Resizing or dismissing a child reflows it in the solve.
+-- The stack width is also each box's minimum_width: without it the widget
+-- compiles content-sized and the stack stretches only its root.
 local positions = {top_left=0, top_middle=3, top_right=6,
     bottom_left=2, bottom_middle=5, bottom_right=8}
 local function update_position(position, preset)
     preset = preset or {}
     local point=positions[position]
     local padding=preset.padding or beautiful.notification_padding or dpi(16)
+    local width=beautiful.notification_width or dpi(320)
     for _, pos in pairs(by_position) do
         for _, wdg in ipairs(pos[position]) do
+            wdg.minimum_width = width
             wdg.drawin.attachment = {kind=4,position=point,parent=point,own=point,
-                width=beautiful.notification_width or dpi(320),
+                width=width,
                 gap=beautiful.notification_spacing or dpi(8),
                 x=point<3 and padding or point>5 and -padding or 0,
                 y=point%3==0 and padding or -padding}
