@@ -9,6 +9,9 @@ All notable changes to somewm will be documented in this file.
 - `beautiful.gtk.get_theme_variables()` returns the colors of the active GTK
   theme, so the stock gtk theme matches it. It returned Adwaita colors for
   every theme.
+- A hot reload reports only its own config errors and X11 warnings.
+  Before, once a reload had failed, every later reload showed that error
+  again, even after the config was fixed.
 
 ## [1.4.7] - 2026-10-28
 
