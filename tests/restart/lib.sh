@@ -547,6 +547,18 @@ sw_timeout_sandbox() {
     SW_TIMEOUT_CONFIG="$box/config"
 }
 
+# Start an instance in the sandbox above. The third argument selects which
+# configs/<dir> supplies the XDG rc.lua. The second is the config the fallback
+# loads.
+sw_start_sandboxed() {
+    local name="$1" fallback_rc="${2:-$ROOT_DIR/tests/rc.lua}" config_dir="${3:-hang}"
+    sw_timeout_sandbox "$config_dir"
+    sw_start_env "$name" "$SW_TIMEOUT_CWD" \
+        HOME="$SW_TIMEOUT_HOME" \
+        XDG_CONFIG_HOME="$SW_TIMEOUT_CONFIG" \
+        SOMEWM_TEST_FALLBACK_RC="$fallback_rc"
+}
+
 # Start an instance whose config hangs, and wait out the abort. Asserts the
 # startup gate: the hang really was aborted, and the fallback we control really
 # is what loaded.
@@ -559,13 +571,8 @@ sw_timeout_sandbox() {
 # The third selects which configs/<dir> supplies the hanging rc.lua, for tests
 # that need the dead config to have done something before it hung.
 sw_start_hung_config() {
-    local name="$1" fallback_rc="${2:-$ROOT_DIR/tests/rc.lua}" hang_dir="${3:-hang}"
-    sw_timeout_sandbox "$hang_dir"
-    sw_start_env "$name" "$SW_TIMEOUT_CWD" \
-        HOME="$SW_TIMEOUT_HOME" \
-        XDG_CONFIG_HOME="$SW_TIMEOUT_CONFIG" \
-        SOMEWM_TEST_FALLBACK_RC="$fallback_rc" \
-        || return 1
+    local name="$1"
+    sw_start_sandboxed "$@" || return 1
 
     if log_has "$name" "FORCEFULLY ABORTED after timeout"; then
         pass "the hanging config was aborted"

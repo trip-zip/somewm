@@ -254,15 +254,6 @@ cleanup(void)
 	/* Close Lua after clients are destroyed (matches AwesomeWM pattern) */
 	luaA_cleanup();
 
-	/* Cleanup startup_errors buffer */
-	buffer_wipe(&globalconf.startup_errors);
-
-	/* Cleanup x11_fallback info */
-	free(globalconf.x11_fallback.config_path);
-	free(globalconf.x11_fallback.pattern_desc);
-	free(globalconf.x11_fallback.suggestion);
-	free(globalconf.x11_fallback.line_content);
-
 	if (child_pid > 0) {
 		kill(-child_pid, SIGTERM);
 		waitpid(child_pid, NULL, 0);
