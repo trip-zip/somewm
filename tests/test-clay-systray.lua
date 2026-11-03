@@ -284,6 +284,37 @@ local steps = {
         io.stderr:write("[PASS] a gradient bg_systray draws red to blue across the tray\n")
         return true
     end,
+    -- horizontal = false on the existing tray stacks the icons: the second
+    -- icon sits below the first at the same x.
+    function(count_)
+        if count_ == 1 then
+            beautiful.bg_systray = nil
+            tray:set_spacing(0)
+            tray.horizontal = false
+            bar.visible = true
+            return nil
+        end
+        if hide_foreign() then
+            tray:_sync_items()
+            return nil
+        end
+        local icons = {}
+        for _, node in ipairs(select(2, nodes())) do
+            if node.image and node.box and node.box.width == 24 then
+                icons[#icons + 1] = node.box
+            end
+        end
+        if #icons < 2 then
+            assert(count_ < 20, "the vertical tray never reached the dump: " .. awesome._clay_tree(s))
+            return nil
+        end
+        assert(icons[1].x == icons[2].x and icons[2].y == icons[1].y + 24,
+            string.format("icons at %d,%d and %d,%d, want one below the other",
+                icons[1].x, icons[1].y, icons[2].x, icons[2].y))
+        bar.visible = false
+        io.stderr:write("[PASS] horizontal = false stacks the icons\n")
+        return true
+    end,
 
 }
 

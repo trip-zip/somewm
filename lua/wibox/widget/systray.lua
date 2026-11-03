@@ -89,8 +89,7 @@ end
 function systray:set_horizontal(horiz)
     horizontal = get_args(self, horiz)
     if instance then
-        -- Note: Changing direction after creation requires recreating the widget
-        -- The horizontal setting primarily affects widget creation
+        instance._private.dir = horizontal and "x" or "y"
         instance:emit_signal("widget::layout_changed")
         instance:emit_signal("property::horizontal", horiz)
     end
@@ -225,6 +224,10 @@ local function new(revers)
     local ret = horizontal and fixed.horizontal() or fixed.vertical()
 
     gtable.crush(ret, systray, true)
+    -- fixed copies its constructor onto the instance as `horizontal`, which
+    -- would make `tray.horizontal = false` replace it instead of calling
+    -- set_horizontal.
+    rawset(ret, "horizontal", nil)
 
     ret._private.icon_widgets = {}
 
