@@ -221,17 +221,22 @@ typedef struct
 
     /* ========== RUNTIME STATE ========== */
 
-    /** Accumulated error messages from rc.lua loading (AwesomeWM-compatible) */
-    buffer_t startup_errors;
-
-    /** X11 pattern that caused config fallback (for actionable user feedback) */
+    /** What the last config load reported. luaA_loadrc() clears it before
+     * trying any config, so a hot reload never reports an earlier load.
+     * Anything describing one load belongs here. */
     struct {
-        char *config_path;    /* Path to the config that was skipped */
-        int line_number;      /* Line where pattern was found */
-        char *pattern_desc;   /* Human-readable description (e.g., "io.popen with xrandr") */
-        char *suggestion;     /* Migration suggestion */
-        char *line_content;   /* The actual line of code (truncated) */
-    } x11_fallback;
+        /** Accumulated error messages (AwesomeWM-compatible) */
+        buffer_t startup_errors;
+
+        /** First X11 pattern the prescan found */
+        struct {
+            char *config_path;    /* Config the pattern is in */
+            int line_number;      /* Line where pattern was found */
+            char *pattern_desc;   /* Human-readable description (e.g., "io.popen with xrandr") */
+            char *suggestion;     /* Migration suggestion */
+            char *line_content;   /* The actual line of code (truncated) */
+        } x11_fallback;
+    } load;
 
     /** The key grabber function (Lua registry ref) */
     int keygrabber;

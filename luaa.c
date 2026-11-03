@@ -2304,32 +2304,32 @@ luaA_awesome_index(lua_State *L)
 		return luaA_get_active_modifiers(L);
 
 	if (A_STREQ(key, "startup_errors")) {
-		if (globalconf.startup_errors.len == 0)
+		if (globalconf.load.startup_errors.len == 0)
 			return 0;
-		lua_pushstring(L, globalconf.startup_errors.s);
+		lua_pushstring(L, globalconf.load.startup_errors.s);
 		return 1;
 	}
 
 	if (A_STREQ(key, "x11_fallback_info")) {
-		if (!globalconf.x11_fallback.config_path)
+		if (!globalconf.load.x11_fallback.config_path)
 			return 0;
 
 		lua_newtable(L);
 
-		lua_pushstring(L, globalconf.x11_fallback.config_path);
+		lua_pushstring(L, globalconf.load.x11_fallback.config_path);
 		lua_setfield(L, -2, "config_path");
 
-		lua_pushinteger(L, globalconf.x11_fallback.line_number);
+		lua_pushinteger(L, globalconf.load.x11_fallback.line_number);
 		lua_setfield(L, -2, "line_number");
 
-		lua_pushstring(L, globalconf.x11_fallback.pattern_desc);
+		lua_pushstring(L, globalconf.load.x11_fallback.pattern_desc);
 		lua_setfield(L, -2, "pattern");
 
-		lua_pushstring(L, globalconf.x11_fallback.suggestion);
+		lua_pushstring(L, globalconf.load.x11_fallback.suggestion);
 		lua_setfield(L, -2, "suggestion");
 
-		if (globalconf.x11_fallback.line_content) {
-			lua_pushstring(L, globalconf.x11_fallback.line_content);
+		if (globalconf.load.x11_fallback.line_content) {
+			lua_pushstring(L, globalconf.load.x11_fallback.line_content);
 			lua_setfield(L, -2, "line_content");
 		}
 
@@ -3266,11 +3266,23 @@ static void
 luaA_startup_error(const char *err)
 {
 	/* Add separator if there are existing errors */
-	if (globalconf.startup_errors.len > 0)
-		buffer_addsl(&globalconf.startup_errors, "\n\n");
+	if (globalconf.load.startup_errors.len > 0)
+		buffer_addsl(&globalconf.load.startup_errors, "\n\n");
 
 	/* Append the new error */
-	buffer_adds(&globalconf.startup_errors, err);
+	buffer_adds(&globalconf.load.startup_errors, err);
+}
+
+/** Free what the last config load reported and leave it empty. */
+static void
+luaA_load_report_wipe(void)
+{
+	buffer_wipe(&globalconf.load.startup_errors);
+	free(globalconf.load.x11_fallback.config_path);
+	free(globalconf.load.x11_fallback.pattern_desc);
+	free(globalconf.load.x11_fallback.suggestion);
+	free(globalconf.load.x11_fallback.line_content);
+	p_clear(&globalconf.load.x11_fallback, 1);
 }
 
 /** Error handler for lua_pcall (AwesomeWM pattern)
@@ -4034,12 +4046,12 @@ luaA_prescan_file(const char *config_path, const char *config_dir, int depth)
 			}
 
 			/* Store first detected pattern for Lua notification */
-			if (!globalconf.x11_fallback.config_path) {
-				globalconf.x11_fallback.config_path = strdup(config_path);
-				globalconf.x11_fallback.line_number = line_num;
-				globalconf.x11_fallback.pattern_desc = strdup(pattern->description);
-				globalconf.x11_fallback.suggestion = strdup(pattern->suggestion);
-				globalconf.x11_fallback.line_content = strndup(line_start, line_len);
+			if (!globalconf.load.x11_fallback.config_path) {
+				globalconf.load.x11_fallback.config_path = strdup(config_path);
+				globalconf.load.x11_fallback.line_number = line_num;
+				globalconf.load.x11_fallback.pattern_desc = strdup(pattern->description);
+				globalconf.load.x11_fallback.suggestion = strdup(pattern->suggestion);
+				globalconf.load.x11_fallback.line_content = strndup(line_start, line_len);
 			}
 
 			/* Keep scanning so every issue is reported */
@@ -5192,6 +5204,9 @@ luaA_loadrc(void)
 		fprintf(stderr, "somewm: Lua not initialized, cannot load config\n");
 		return;
 	}
+
+	/* The config-timeout abort retries inside this call and keeps its error. */
+	luaA_load_report_wipe();
 
 	/* If custom config path was specified via -c flag, use only that */
 	if (custom_confpath) {
@@ -6568,10 +6583,6 @@ globalconf_init(lua_State *L)
 	/* Initialize icon size preference */
 	globalconf.preferred_icon_size = 0;  /* 0 = no preference */
 
-	/* Initialize startup errors buffer (AwesomeWM compatibility)
-	 * This accumulates all errors during config loading */
-	buffer_init(&globalconf.startup_errors);
-
 	/* Initialize X11 stubs */
 	globalconf.connection = NULL;
 	globalconf.timestamp = 0;
@@ -6606,6 +6617,8 @@ globalconf_wipe(void)
 		wlr_scene_node_destroy(&globalconf.wallpaper_buffer_node->node);
 		globalconf.wallpaper_buffer_node = NULL;
 	}
+
+	luaA_load_report_wipe();
 
 	/* Zero out the structure */
 	memset(&globalconf, 0, sizeof(globalconf));
