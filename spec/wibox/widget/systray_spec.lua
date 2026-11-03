@@ -250,6 +250,16 @@ describe("wibox.widget.systray (SNI)", function()
             -- 3 icons * 24px + 2 gaps * 10px = 72 + 20 = 92px minimum
             assert.is_true(w >= 92)
         end)
+
+        it("stacks the icons after horizontal = false", function()
+            mock_items = { "item1", "item2", "item3" }
+            widget:_sync_items()
+            widget.horizontal = false
+
+            local w, h = widget:fit(context, 1000, 1000)
+            assert.is_equal(24, w)
+            assert.is_equal(72, h)
+        end)
     end)
 
     describe("layout with max_rows", function()
