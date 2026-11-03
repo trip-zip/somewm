@@ -15,6 +15,7 @@ All notable changes to somewm will be documented in this file.
 - `beautiful.gtk.get_theme_variables()` returns the colors of the active GTK theme, so the stock gtk theme matches it. Before, it returned Adwaita colors for every theme.
 - A client keeps its tags across a hot reload. Before, a client with no tag rule moved to the selected tag.
 - A hot reload keeps the screen contents in place instead of redrawing them from blank and replaying every window's enter animation.
+- A hot reload reports only its own config errors and X11 warnings. Before, once a reload had failed, every later reload showed that error again, even after the config was fixed.
 
 ## [2.1.1] - 2026-10-29
 
