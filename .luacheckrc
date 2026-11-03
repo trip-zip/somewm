@@ -16,6 +16,9 @@ files["somewmrc.lua"].allow_defined_top = true
 files["tests/restart/configs/*"].allow_defined_top = true
 files["tests/restart/configs/*"].ignore = {"131"}
 
+-- This restart fixture fails to compile on purpose.
+exclude_files = {"tests/restart/configs/reload-report/somewm/rc.lua"}
+
 -- This file itself
 files[".luacheckrc"].ignore = {"111", "112", "131"}
 
