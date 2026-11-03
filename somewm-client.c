@@ -180,6 +180,7 @@ print_usage(const char *progname)
 
 	fprintf(stderr, "WALLPAPER:\n");
 	fprintf(stderr, "  wallpaper set <path> [screen]  Set wallpaper from image\n");
+	fprintf(stderr, "  wallpaper fill <path> [screen]  Set wallpaper from image filling the entire screen without borders\n");
 	fprintf(stderr, "  wallpaper color <hex> [screen]  Set solid color wallpaper\n\n");
 
 	fprintf(stderr, "NOTIFICATIONS:\n");
@@ -476,7 +477,7 @@ print_completions(const char *shell)
 		printf("      COMPREPLY=( $(compgen -W \"get set\" -- \"${cur}\") )\n");
 		printf("      ;;\n");
 		printf("    wallpaper)\n");
-		printf("      COMPREPLY=( $(compgen -W \"set color\" -- \"${cur}\") )\n");
+		printf("      COMPREPLY=( $(compgen -W \"set fill color\" -- \"${cur}\") )\n");
 		printf("      ;;\n");
 		printf("    output)\n");
 		printf("      COMPREPLY=( $(compgen -W \"list\" -- \"${cur}\") )\n");
@@ -554,7 +555,7 @@ print_completions(const char *shell)
 		printf("        mouse) _values 'subcommand' coords screen ;;\n");
 		printf("        titlebar) _values 'subcommand' show hide toggle ;;\n");
 		printf("        theme) _values 'subcommand' get set ;;\n");
-		printf("        wallpaper) _values 'subcommand' set color ;;\n");
+		printf("        wallpaper) _values 'subcommand' set fill color ;;\n");
 		printf("        output) _values 'subcommand' list ;;\n");
 		printf("        dpms) _values 'subcommand' on off status ;;\n");
 		printf("        idle) _values 'subcommand' timeout status clear ;;\n");
@@ -628,7 +629,7 @@ print_completions(const char *shell)
 		printf("# Theme subcommands\n");
 		printf("complete -c somewm-client -n '__fish_seen_subcommand_from theme' -a 'get set'\n");
 		printf("# Wallpaper subcommands\n");
-		printf("complete -c somewm-client -n '__fish_seen_subcommand_from wallpaper' -a 'set color'\n");
+		printf("complete -c somewm-client -n '__fish_seen_subcommand_from wallpaper' -a 'set fill color'\n");
 		printf("# Output subcommands\n");
 		printf("complete -c somewm-client -n '__fish_seen_subcommand_from output' -a 'list'\n");
 		printf("# DPMS subcommands\n");

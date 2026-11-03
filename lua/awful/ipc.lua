@@ -3403,6 +3403,50 @@ local function register_builtin_commands()
     return string.format("Set wallpaper color to %s", color)
   end)
 
+  --- wallpaper.fill <path> [screen] - Set wallpaper from image file filling the entire screen without borders
+  ipc.register("wallpaper.fill", function(path, screen_arg)
+    if not path then
+      error("Usage: wallpaper fill <path> [screen]")
+    end
+    local image = gears_surface.load_uncached(path)
+    local s = resolve_screen(screen_arg)
+
+    local image_width, image_height = image:get_width(), image:get_height()
+    local screen_width, screen_height = s.geometry.width, s.geometry.height
+
+    local scale = math.max(screen_width / image_width, screen_height / image_height)
+
+    local surface = cairo.ImageSurface.create(
+        cairo.Format.ARGB32,
+        screen_width,
+        screen_height
+    )
+
+    local cr = cairo.Context(surface)
+
+    -- Scale from center
+    cr:translate(screen_width / 2, screen_height / 2)
+    cr:scale(scale, scale)
+    cr:translate(-image_width / 2, -image_height / 2)
+
+    cr:set_source_surface(image, 0, 0)
+    cr:paint()
+
+    local wallpaper = require("awful.wallpaper")
+    local wibox = require("wibox")
+
+    local img = wibox.widget.imagebox()
+    img.image = surface
+    img.resize = true
+
+    wallpaper {
+        screen = s,
+        widget = img,
+    }
+
+    return string.format("Set wallpaper to %s on screen %d", path, s.index)
+  end)
+
   -- =================================================================
   -- COMMANDS LIST (for shell completions)
   -- =================================================================
