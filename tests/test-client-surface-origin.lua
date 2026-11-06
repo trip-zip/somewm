@@ -47,8 +47,6 @@ runner.run_async(function()
             mouse.coords {x = x, y = y}
             assert(mouse.object_under_pointer() == c, 'surface edge lost input')
         end
-        assert(not awesome._clay_tree(s):find('[tree!=scene]', 1, true),
-            'surface realization disagrees with the tree')
     end
 
     settled(20)

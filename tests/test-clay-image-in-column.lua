@@ -27,7 +27,6 @@ runner.run_async(function()
     local dump = awesome._clay_tree(screen[1])
     example.save('image-in-column', dump)
     assert(dump:match('roots flow %d+ floating %d+ derived 0 legacy 0'), dump)
-    assert(not dump:find('[tree!=scene]', 1, true), dump)
 
     -- The margin folds into the drawin's root element as its padding.
     local lines, inside = {}, false

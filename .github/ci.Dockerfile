@@ -40,6 +40,7 @@ RUN ln -fs /usr/share/zoneinfo/Etc/UTC /etc/localtime \
       libgbm-dev \
       libegl-dev \
       libgles-dev \
+      libgl1-mesa-dri \
       libpixman-1-dev \
       libudev-dev \
       libseat-dev \

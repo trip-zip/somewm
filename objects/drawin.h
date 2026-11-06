@@ -34,6 +34,7 @@ typedef struct drawin_t {
 	int y;
 	int width;
 	int height;
+	bool ui_dirty;
 	bool geometry_dirty;           /* Pending geometry update flag */
 
 	/* Properties */
@@ -102,6 +103,11 @@ enum drawin_edge {
 	DRAWIN_EDGE_LEFT,
 	DRAWIN_EDGE_RIGHT,
 };
+
+extern const char *const drawin_sides[5];
+int luaA_drawin_get(lua_State *L);
+drawin_t *drawin_ui_create(lua_State *L, struct screen_t *screen);
+void drawin_ui_release(lua_State *L, drawin_t *d);
 
 bool drawin_widget_host(drawin_t *d, struct widget_host *out);
 /* Rectangular attachment borders are native Clay paint, without a raster. */

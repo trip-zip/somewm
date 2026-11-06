@@ -18,7 +18,6 @@ local anchors = {none = true, center = true, top = true, bottom = true, left = t
 
 local function dump()
     local text = awesome._clay_tree(s)
-    assert(not text:find('[tree!=scene]', 1, true), text)
     assert(text:match('derived 0'), text)
     for anchor in text:gmatch(' anchor (%S+)') do
         assert(anchors[anchor], 'invalid scale anchor: ' .. anchor .. '\n' .. text)

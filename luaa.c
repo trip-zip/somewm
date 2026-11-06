@@ -15,6 +15,7 @@
 #endif
 
 #include "objects/tag.h"
+#include "objects/node_face.h"
 #include "objects/client.h"
 #include "objects/screen.h"
 #include "objects/output.h"
@@ -76,7 +77,6 @@ static lua_State *luaA_create_fresh_state(void);
 #include "xkb.h"
 #include <xkbcommon/xkbcommon.h>
 #include <wayland-server-core.h>
-#include <wlr/types/wlr_scene.h>
 #include <wlr/backend/wayland.h>
 #include <wlr/types/wlr_buffer.h>
 #include <drm_fourcc.h>
@@ -87,7 +87,6 @@ static volatile sig_atomic_t config_timeout_fired = 0;
 static lua_State *config_timeout_L = NULL;
 static sigjmp_buf config_timeout_jmp;
 static volatile sig_atomic_t config_timeout_jmp_valid = 0;
-
 
 /* Legacy global Lua state pointer - now just an alias for globalconf.L */
 lua_State *globalconf_L = NULL;
@@ -1251,9 +1250,9 @@ luaA_awesome_clay_dirty(lua_State *L)
 }
 
 /** awesome._test_redeclare: run the frame for every output now and report
- * the scene mutations that took. Nothing else having changed between two
+ * the draw mutations that took. Nothing else having changed between two
  * calls, the second must return 0 (see tests/test-declare-zero-mutations.lua).
- * \return Number of scene mutations
+ * \return Number of draw mutations
  */
 static int
 luaA_awesome_test_redeclare(lua_State *L)
@@ -1507,11 +1506,11 @@ luaA_awesome_clay_tree(lua_State *L)
 	if (!lua_isnoneornil(L, 1)) {
 		screen_t *s = luaA_checkscreen(L, 1);
 
-		if (!s->monitor) {
+		m = luaA_monitor_get_by_screen(L, s);
+		if (!m) {
 			lua_pushliteral(L, "");
 			return 1;
 		}
-		m = s->monitor;
 	}
 	dump = declare_dump(m);
 	lua_pushstring(L, dump);
@@ -1564,7 +1563,7 @@ luaA_awesome_clay_scroll_set(lua_State *L)
 
 /** Reload shadow settings from beautiful theme.
  * Call this after changing beautiful.shadow_* values to apply them.
- * Refreshes effective styles; the renderer updates shared tiles as needed.
+ * Refreshes the styles read by the shadow draw pass.
  */
 static int
 luaA_awesome_shadow_reload(lua_State *L)
@@ -1794,31 +1793,6 @@ luaA_awesome_clear_lock_covers(lua_State *L)
 	return 0;
 }
 
-/** Force-unlock and release the lock refs at hot-reload.
- * The refs are unref'd against the state being closed, like every other
- * C-held ref in the teardown.
- *
- * Staying locked is unrecoverable. The lock surface's scene tree is destroyed
- * later in the reload, so there is no lock UI left to authenticate through,
- * and while the session reports locked the compositor skips keybindings, VT
- * switch and terminate. Same reasoning as the force-unlock in
- * some_notify_drawin_destroyed(), and the same order: clear the flag first,
- * because focusclient() and focus_restore() early-return while locked.
- *
- * Must run before the client snapshot: the deactivate path restores focus to
- * pre_lock_focused_client, which needs a live c->scene, and clears it.
- *
- * The config-timeout path calls this too. There it is belt and braces: that
- * path closes the state, and the drawin GC notify already force-unlocks when
- * the lock surface is finalized. But that unlock depends on GC ordering, and
- * it leaves lua_authenticated and the cover ref array alone.
- *
- * \param L The state being torn down.
- * \param lua_safe Whether that state can still run Lua. False on the
- * config-timeout path, where the unlock is scene-only: the full deactivate ends
- * in focusclient()/focus_restore(), which emit request::focus_restore,
- * property::urgent and the unfocus signals.
- */
 static void
 lock_hot_reload(lua_State *L, bool lua_safe)
 {
@@ -2340,7 +2314,6 @@ luaA_awesome_bench_stats(lua_State *L)
     }
 
     /* Memory counters */
-    extern struct wlr_scene *scene;
     lua_newtable(L);
     lua_pushnumber(L, lua_gc(L, LUA_GCCOUNT, 0) + lua_gc(L, LUA_GCCOUNTB, 0) / 1024.0);
     lua_setfield(L, -2, "lua_kb");
@@ -2348,16 +2321,7 @@ luaA_awesome_bench_stats(lua_State *L)
     lua_setfield(L, -2, "clients");
     lua_pushinteger(L, (lua_Integer)globalconf.drawins.len);
     lua_setfield(L, -2, "drawins");
-    if (scene) {
-        int trees = 0, rects = 0, buffers = 0;
-        bench_count_scene_nodes(&scene->tree.node, &trees, &rects, &buffers);
-        lua_pushinteger(L, trees);
-        lua_setfield(L, -2, "scene_trees");
-        lua_pushinteger(L, rects);
-        lua_setfield(L, -2, "scene_rects");
-        lua_pushinteger(L, buffers);
-        lua_setfield(L, -2, "scene_buffers");
-    }
+
     lua_setfield(L, -2, "memory");
 
     return 1;
@@ -3288,6 +3252,7 @@ luaA_register_state(lua_State *L)
 	luaA_signal_setup(L);
 	key_class_setup(L);  /* AwesomeWM key object class */
 	tag_class_setup(L);
+	node_face_class_setup(L);
 	window_class_setup(L);  /* Setup window base class first */
 	client_class_setup(L);
 	screen_class_setup(L);
@@ -4620,7 +4585,6 @@ check_mode_print_report(const char *config_path, bool use_color)
 static void
 check_mode_scan_file(const char *config_path, const char *config_dir, int depth);
 
-
 /** Scan requires in check mode */
 static void
 check_mode_scan_requires(const char *content, const char *config_dir,
@@ -5125,7 +5089,7 @@ luaA_state_drop_object_pointers(void)
 typedef struct {
 	/* Full copy of client_t fields we need to preserve */
 	client_t data;
-	/* Was client mapped (had scene tree)? */
+	/* Whether the surface was mapped before the reload. */
 	bool was_mapped;
 	/* Screen index for remapping (0-based, -1 if none) */
 	int screen_index;
@@ -5228,7 +5192,7 @@ clients_detach(client_snapshot_t **out, int *out_count)
 		c->surface_node = NULL;
 		for (j = 0; j < CLIENT_TITLEBAR_COUNT; j++)
 			c->titlebar[j].drawable = NULL;
-		snap->was_mapped = (c->scene != NULL);
+		snap->was_mapped = some_client_is_mapped(c);
 		snap->was_focused = (globalconf.focus.client == c);
 
 		/* Find screen index */
@@ -5257,8 +5221,6 @@ clients_detach(client_snapshot_t **out, int *out_count)
 			if (c->surface.xwayland)
 				c->surface.xwayland->data = &snap->data;
 		}
-		/* Also update scene node back-pointers */
-		client_set_node_data(c, &snap->data);
 
 		/* NULL out owned resources in the OLD Lua userdata so that
 		 * client_wipe (called during lua_close GC) doesn't free them.
@@ -5279,8 +5241,6 @@ clients_detach(client_snapshot_t **out, int *out_count)
 		c->protocols.atoms = NULL; c->protocols.atoms_len = 0;
 		/* The rebuilt client starts with a fresh native shadow descriptor. */
 		memset(&c->shadow, 0, sizeof(c->shadow));
-		/* Don't let GC destroy the scene tree */
-		c->scene = NULL;
 	}
 
 	globalconf.clients.len = 0;
@@ -5309,7 +5269,7 @@ clients_restore(lua_State *L, client_snapshot_t *snaps, int num_clients)
 	 * appends exactly one per snapshot, in order, and nothing else appends
 	 * in between. Reading them back from there rather than from a scratch
 	 * array is what keeps this function unable to fail: an allocation that
-	 * failed here would leave every wlr_surface->data and scene node.data
+	 * failed here would leave the protocol and node owner pointers
 	 * pointing at snapshots the caller is about to free. */
 	int base = globalconf.clients.len;
 	int focused_idx = -1;
@@ -5358,7 +5318,6 @@ clients_restore(lua_State *L, client_snapshot_t *snaps, int num_clients)
 			if (c->surface.xwayland)
 				c->surface.xwayland->data = c;
 		}
-		client_set_node_data(c, c);
 
 		/* Reference and push to arrays */
 		lua_pushvalue(L, -1);

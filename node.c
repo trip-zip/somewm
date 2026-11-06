@@ -5,6 +5,7 @@
 #include <string.h>
 
 #include "node.h"
+#include "objects/ui_box.h"
 
 static uint64_t next_id = 1;
 static struct node **nodes;
@@ -129,8 +130,8 @@ node_free_subtree(struct node *n)
 		struct node *child = wl_container_of(n->children.next, child, link);
 		node_free_subtree(child);
 	}
+	ui_box_release(n);
 	nodes[n->id] = NULL;
-	free((void *)n->label);
 	free(n->words.shadow);
 	free(n);
 }
@@ -148,7 +149,6 @@ node_tree_destroy(struct node_tree *t)
 	}
 	node_changed(t);
 	nodes[t->root.id] = NULL;
-	free((void *)t->root.label);
 	free(t->root.words.shadow);
 	free(t);
 }
@@ -315,14 +315,7 @@ node_lower(struct node *n)
 void
 node_set_label(struct node *n, const char *label)
 {
-	char *copy = NULL;
-	if (label) {
-		size_t size = strlen(label) + 1;
-		copy = node_alloc(size);
-		memcpy(copy, label, size);
-	}
-	free((void *)n->label);
-	n->label = copy;
+	n->label = label ? widget_intern_name(label) : NULL;
 	node_changed(n->tree);
 	assert(node_check_integrity(n));
 }

@@ -58,6 +58,7 @@
 #include "globalconf.h"
 #include "objects/client.h"
 #include "objects/drawin.h"
+#include "objects/node_face.h"
 #include "objects/screen.h"
 
 static int miss_index_handler    = LUA_REFNIL;
@@ -221,10 +222,10 @@ luaA_mouse_object_under_pointer(lua_State *L)
     client_t *client;
 
     if ((drawin = some_drawin_under_cursor()))
-        return luaA_object_push(L, drawin);
+        return node_owner_push(L, drawin->node);
 
     if ((client = some_object_under_cursor()))
-        return luaA_object_push(L, client);
+        return node_owner_push(L, client->node);
 
     return 0;
 }

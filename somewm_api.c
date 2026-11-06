@@ -63,8 +63,7 @@ some_get_focused_client(void)
 Client *
 some_client_at(double lx, double ly)
 {
-	/* This is a simplified version - real implementation would need
-	 * to use wlr_scene functions to find the client at coordinates */
+
 	foreach(client, globalconf.clients) {
 		Client *c = *client;
 		if (c->geometry.x <= lx && lx < c->geometry.x + c->geometry.width &&
@@ -178,11 +177,8 @@ some_set_seat_keyboard_focus(Client *c, bool focus_changed)
 		return;
 	}
 
-	/* Check if surface is ready for keyboard input.
-	 * For XWayland clients, wlr_surface->mapped may be false at map time;
-	 * use c->scene (set by mapnotify) as the readiness indicator instead. */
 	if (c->client_type == X11)
-		surface_ready = (c->scene != NULL);
+		surface_ready = some_client_is_mapped(c);
 	else
 		surface_ready = surface->mapped;
 
@@ -1073,3 +1069,5 @@ layer_surface_revoke_keyboard(LayerSurface *ls)
 		focusclient(focustop(selmon), 1);
 	}
 }
+
+bool some_client_is_mapped(Client *c) { return client_is_mapped(c); }

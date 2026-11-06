@@ -27,16 +27,16 @@ enum declare_kind {
 	 * draws the opaque cover and it answers the input walk with nothing,
 	 * which is what keeps the desktop below it from taking input. */
 	DECLARE_KIND_LOCK_BLOCK,
-	/* The object is the seat's wlr_drag_icon; its data is the scene tree
-	 * wlr_scene_drag_icon_create made for it. */
+
 	DECLARE_KIND_DRAG,
-	/* The object is a Popup (window.h): an xdg popup with its own tree. */
+	/* The object is a Popup (window.h): an xdg popup with its own surface. */
 	DECLARE_KIND_POPUP,
 	/* The pointer image (input.h, cursor_image): the object is the
 	 * wlr_cursor for a themed image leaf, or the client's cursor surface
 	 * for a borrowed one. It passes every hit through. */
 	DECLARE_KIND_CURSOR,
 	DECLARE_KIND_SCREEN,
+	DECLARE_KIND_UI_BOX,
 };
 
 enum node_kind {
@@ -81,7 +81,33 @@ struct node_words {
 	float opacity;
 	shadow_config_t *shadow; /* owned, NULL selects the theme */
 	struct widget_transition transition;
+	int animation_ref;
+	bool animation_disabled;
 	uint8_t scroll;
+	float aspect;
+	uint16_t between;
+	float position[2];
+	uint8_t placed, cut;
+	uint8_t size_words, plain_grow, edge;
+	bool no_reserve, restrict_set, input_passthrough;
+	char *cursor;
+	struct {
+		bool set;
+		uint32_t to, target, host;
+		uint8_t parent, own;
+		float x, y;
+	} attachment;
+	int attachment_ref;
+	float fg[4], default_fg[4];
+	uint16_t font, default_font;
+	char *font_name, *text;
+	size_t text_len;
+	uint8_t wrap;
+	bool ellipsize;
+	const void *image;
+	int image_ref;
+	bool vector;
+	float image_size[2];
 };
 
 struct node {
@@ -92,8 +118,9 @@ struct node {
 	struct wl_list link; /* parent->children, tail is top */
 	struct wl_list children;
 	bool hidden;
+	bool ui_box;
 	bool protected;
-	const char *label; /* owned copy, NULL allowed */
+	const char *label; /* interned, NULL allowed */
 	struct node_words words;
 	bool has_box;
 	struct wlr_box box;

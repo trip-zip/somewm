@@ -66,7 +66,7 @@ bool declare_in_frame(void);
  * the drawables that changed and store their trees, the output's scene
  * declares into its Clay context and solves. Changed trees and trees with
  * scroll records send clay::solved with their boxes and ids, and the commands
- * reconcile into wlr_scene. A clay::solved handler
+ * reconcile draw records. A clay::solved handler
  * that dirties the output again gets one more declare and solve before the
  * reconcile. Returns the mutation count, or -1 when the output was clean
  * and nothing ran. While the session is locked the same pass adds the lock
@@ -134,6 +134,8 @@ Clay_Context *declare_widget_context(const struct widget_host *host);
  * nodes that stand for a widget, outermost first, up to cap. 0 until the
  * tree has been declared, and while a failed context awaits a valid frame. */
 int declare_widget_hits(const struct widget_host *host, double x, double y, int *out, int cap);
+/* Resolve a hit index against the same published tree, with its host-local origin. */
+uint32_t declare_widget_identity(const struct widget_host *host, int index, int origin[2]);
 
 /* Test hook (awesome._test_declare_order): the output's draw order for the
  * last completed solve, bottom to top. No declaration, solve or scene
@@ -180,7 +182,12 @@ void declare_hit_at(double lx, double ly, struct declare_hit *out);
 
 /* The screenshot backmap: the object whose leaf drew node, or NULL for a
  * node no band drew. Searches every output's band. */
-struct wlr_scene_node;
-void *declare_hit(struct wlr_scene_node *node, enum declare_kind *kind);
+
+struct paint;
+struct render_draw_params;
+void declare_draw(struct declare_output *, struct paint *, Monitor *, const struct render_draw_params *);
+void declare_finish(struct declare_output *);
+void declare_reset_paint(struct declare_output *);
+void declare_damage(struct declare_output *, int x, int y);
 
 #endif

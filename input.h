@@ -43,10 +43,7 @@ void pointerfocus(Client *c, struct wlr_surface *surface,
 struct cursor_image {
 	char *name;
 	struct wlr_surface *surface;
-	/* The surface's scene tree, born parked and borrowed by the output
-	 * that declares it (its declare handle is the surface); NULL again
-	 * once wlroots destroyed it with the surface. */
-	struct wlr_scene_tree *tree;
+
 	void *render_owner;
 	int hotspot_x, hotspot_y;
 	uint64_t gen;

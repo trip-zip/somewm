@@ -13,7 +13,6 @@ local s = screen[1]
 
 local function frame(class)
     local dump = awesome._clay_tree(s)
-    assert(not dump:find('[tree!=scene]', 1, true), dump)
     for line in dump:gmatch('[^\n]+') do
         if line:find('CLIENT ' .. (class or 'BORDER_FRAME') .. ' ', 1, true) then
             local x, y, w, h = line:match('box (%-?%d+),(%-?%d+) (%d+)x(%d+)')

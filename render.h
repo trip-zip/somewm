@@ -7,8 +7,9 @@
 
 #include "clay.h"
 
-struct wlr_scene_tree;
-struct wlr_scene_node;
+struct wlr_surface;
+struct paint;
+struct render_box { float x, y, width, height; };
 
 struct render_state;
 struct render_text_attr;
@@ -33,26 +34,15 @@ struct render_shape {
 	uint8_t transform;   /* wl_output_transform of the path and gradient */
 };
 
-/* How the renderer reaches client surfaces. resolve returns the client's
- * scene tree for a handle, or NULL if the client is gone (then the
- * renderer must not touch any stored pointer). configure asks the client
- * to match its solved box. borrow records the render_state that reparented
- * the tree as its current owner. release returns a borrowed tree to its
- * home parent, disabled, but only if the caller is still the owner: after a
- * client migrates to another output, the old output's sweep must not
- * disable a node the new owner is showing. release answers whether the
- * caller was the owner; the renderer then parks the tree itself. The owner
- * token is an opaque render_state pointer. reposition notes that a borrowed tree moved this
- * frame (its solved position changed), so the owner can re-derive anything
- * keyed to the tree's scene position, namely xdg-popup unconstrain and X11
- * root coordinates; x and y are the tree's new position, band-local. C to
- * C, never Lua; optional (a NULL reposition is not called).
- *
- * The renderer holds no client knowledge: window.c implements these (handle =
- * the client, resolve returns c->scene) and declare.c hands them to every
- * reconcile, dump walk and hit backmap. */
+/* resolve returns a live root surface or NULL. borrow and release track the
+ * render_state owning the handle, so an old output cannot release a new owner.
+ * configure and reposition receive solved logical geometry; reposition is
+ * band-local. Draw callbacks use the render_draw data, other callbacks use data. */
 struct render_client_hooks {
-	struct wlr_scene_tree *(*resolve)(void *data, uint64_t handle);
+    void (*drawn)(void *data, uint64_t handle, struct wlr_surface *surface);
+    void (*sample)(void *data, struct wlr_surface *surface, struct render_box box, float scale);
+    bool (*skip)(void *data, uint64_t handle, bool cursor, bool wallpaper);
+	struct wlr_surface *(*resolve)(void *data, uint64_t handle);
 	void (*configure)(void *data, uint64_t handle, int width, int height);
 	void (*borrow)(void *data, uint64_t handle, void *owner);
 	bool (*release)(void *data, uint64_t handle, void *owner);
@@ -83,16 +73,22 @@ struct render_client_hooks {
 	void *data;
 };
 
-struct render_state *render_create(struct wlr_scene_tree *parent);
-
-/* The disabled tree, under root, where surface trees live while no output
- * declares them: born there, and returned there on release. Created on first
- * use. */
-struct wlr_scene_tree *render_parked_tree(struct wlr_scene_tree *root);
-
-/* Reparent the node to the parked tree under its own scene root
- * and disable it. */
-void render_park(struct wlr_scene_node *node);
+struct render_state *render_create(void);
+struct render_draw_params {
+    float scale;
+    int origin_x, origin_y;
+    bool skip_cursor, skip_wallpaper;
+    int width, height;
+};
+/* A NULL paint visits visible surfaces for damage collection before acquisition. */
+void render_draw(struct render_state *rs, struct paint *p,
+    const struct render_client_hooks *hooks, void *data,
+    const struct render_draw_params *params);
+/* Release borrowed texture handles after paint_end. */
+void render_finish(struct render_state *rs);
+void render_set_paint(struct render_state *rs, struct paint *p, uint64_t generation);
+size_t render_damage(struct render_state *rs, struct render_box *out, size_t cap);
+size_t render_clip_overflows(struct render_state *rs);
 
 /* Show or hide everything this render_state drew, without dropping the retained
  * nodes, so a band that is raised again does not first flash its last frame. */
@@ -100,11 +96,8 @@ void render_set_enabled(struct render_state *rs, bool on);
 void render_destroy(struct render_state *rs,
 	const struct render_client_hooks *hooks);
 
-/* Reconcile a solved command array into the scene. Returns the number of
- * scene mutations performed (0 for an identical frame). bounds is the box a
- * command clipped by RENDER_CLIP_BOUNDS is cut to (the output). Afterwards,
- * in builds compiled with SOMEWM_RENDER_VERIFY, the tree==scene verifier
- * compares every command box against the scene and aborts on divergence. */
+/* Returns the number of records whose draw changed, including order and
+ * presence. bounds clips commands carrying RENDER_CLIP_BOUNDS. */
 int render_reconcile(struct render_state *rs, Clay_RenderCommandArray commands,
 	const struct render_client_hooks *hooks, Clay_BoundingBox bounds);
 
@@ -138,14 +131,7 @@ struct render_presentation render_owner_presentation(struct render_state *rs, ui
 Clay_BoundingBox render_present_box(struct render_presentation pose, Clay_BoundingBox box);
 bool render_unpresent(struct render_presentation pose, double *x, double *y);
 
-void render_set_position(struct render_state *rs, int x, int y);
-
-/* The output's scale, applied to every raster from the next reconcile on: buffers
- * are sized in device pixels (edges rounded in device space, so shared tile edges
- * cannot seam) and content is drawn at device density, so a fractional output is
- * sharp. Clay still solves in logical px (wlr_output_effective_resolution divides
- * by scale), so this touches only the raster, never the layout. A change re-rasters
- * this output's nodes (scale joins the raster cache key). */
+/* Raster density only. The layout stays in logical pixels. */
 void render_set_scale(struct render_state *rs, float scale);
 
 /* The device length of a logical span, rounded at both edges: what every
@@ -157,7 +143,7 @@ int render_device_len(int origin, int len, float scale);
  * render commands untouched, and the renderer retains it per node. The word
  * is a packed integer, never a pointer, so a retained command can never
  * dangle into freed declarer state. Bits 0-39 are the declarer's to encode
- * and to get back from render_hit_userdata(); the renderer reads the three
+ * and to read through render_node_view.user_data; the renderer reads the three
  * bytes above them:
  *
  * - bits 40-47, the opacity of an IMAGE command: 0 means unset, fully
@@ -177,14 +163,8 @@ int render_device_len(int origin, int len, float scale);
  * rectangular clipping for passive hosts, scrolling and the inspector;
  * the renderer intersects both kinds of clip when they overlap. */
 #define RENDER_UD_OWNER_MASK 0xFFFFFFFFFFULL
-/* The customData of a CUSTOM command that names no client: the element opens
- * the scope its word says and is realized as a fully transparent rect, which
- * wlr_scene leaves out of the render list (scene_node_invisible, an alpha of
- * 0) and still hit-tests (scene_node_at_iterator checks no alpha). That is
- * how a container with no fill clips what it holds, and how a transparent
- * drawin's root takes input over its whole box as a wibox does (Clay emits a
- * RECTANGLE only for a fill, clay.h:2780, and a CUSTOM command regardless,
- * clay.h:2875). All ones, a value no handle takes. */
+
+/* An input host that opens a clip scope without drawing pixels. */
 #define RENDER_CLIP_MARK ((void *)(uintptr_t)UINT64_MAX)
 struct render_shadow {
 	uint64_t gen;
@@ -244,17 +224,6 @@ render_userdata_opacity(void *ud)
 	return byte ? (float)(byte - 1) / 254.0f : 1.0f;
 }
 
-/* The retained userData word of the command that drew node (the node itself,
- * or an ancestor for a border's side rects), or 0 for a node this
- * render_state did not draw. Works for every command type, which is what
- * makes it the input backmap: BORDER and TEXT nodes carry no element id
- * but do carry their element's word. */
-void *render_hit_userdata(struct render_state *rs, struct wlr_scene_node *node,
-	const struct render_client_hooks *hooks);
-
-/* One retained node, as the tree dump reads it back (declare.c formats the
- * line). The renderer names no object: user_data is the declarer's word and
- * id its Clay element id, both handed back untouched. */
 struct render_node_view {
 	uint32_t type;   /* Clay_RenderCommandType */
 	uint32_t id;     /* the Clay element id; TEXT and BORDER carry a
@@ -263,12 +232,23 @@ struct render_node_view {
 	Clay_BoundingBox box;   /* solved geometry, or owner-relative shadow geometry */
 	Clay_BoundingBox rbox;  /* what was realized, after the clip */
 	Clay_BoundingBox presented;
+	Clay_Color color;
+	Clay_CornerRadius radii;
+	float opacity;
+	bool shown;
+	/* ARGB32 pixels borrowed until the next reconcile or render_destroy. */
+	const unsigned char *pixels;
+	size_t stride;
+	int raster_width, raster_height;
+	/* Submitted source crop in device pixels; zero means the full raster. */
+	Clay_BoundingBox crop;
+	int dst_width, dst_height;
 	size_t raster_bytes;    /* nonzero for a node holding a cairo raster */
+	bool borrowed;
 	bool has_node;          /* false for a SCISSOR marker, a clip mark or a
 				 * dead surface */
 	bool clip_mark;         /* a CUSTOM command carrying RENDER_CLIP_MARK */
 	bool probe;             /* a CUSTOM command carrying RENDER_PROBE_TAG */
-	bool mismatch;          /* the scene disagrees with rbox */
 	void *user_data;
 };
 
@@ -287,10 +267,7 @@ bool render_hit(struct render_state *rs, double x, double y,
 bool render_point_in_masks(struct render_state *rs, uint32_t element_id,
 	double x, double y);
 
-/* Walk the retained nodes in the last pass's draw order, bottom to top, for
- * the tree dump. Reads only what the reconcile already retained; it neither
- * solves nor touches the scene. A surface whose client died since that pass
- * resolves to NULL through hooks and reads as no node. */
+/* Visits retained records in draw order. A dead surface reads as no draw. */
 void render_walk(struct render_state *rs, const struct render_client_hooks *hooks,
 	void (*fn)(void *user, const struct render_node_view *view), void *user);
 
@@ -302,11 +279,12 @@ void render_walk(struct render_state *rs, const struct render_client_hooks *hook
 size_t render_node_count(struct render_state *rs);
 size_t render_raster_bytes(struct render_state *rs);
 int render_buffers_created(struct render_state *rs);
-/* Scene nodes the last reconcile pass created and destroyed. */
+
+/* Draws gained and lost during the last reconcile. */
 int render_nodes_created(struct render_state *rs);
 int render_nodes_swept(struct render_state *rs);
-/* Whether the last reconcile temporarily hid its enabled ancestor while
- * replacing owned primitive nodes. Stable and observable scenes never batch. */
-bool render_visibility_batched(struct render_state *rs);
+
+void render_draw_surface(struct render_state *, struct paint *, struct wlr_surface *,
+    int width, int height, struct render_surface_origin, const float radii[4]);
 
 #endif

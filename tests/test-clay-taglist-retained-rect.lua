@@ -1,10 +1,10 @@
 ---------------------------------------------------------------------------
--- Test: a tag switch creates and destroys no scene node
+-- Test: tag switches retain background records
 --
--- A taglist item's background declares a rectangle only while it has a
--- colour. Its scene node stays, disabled, while the element is in the tree,
--- so after one cycle through the tags every switch reads created 0 swept 0
--- in the dump header, and the red background still follows the selection.
+-- A taglist item's background draws only while it has a color. Its record
+-- stays while the element is in the tree. After one cycle, every switch
+-- gains one draw and loses one draw, and the record count does not move.
+-- The red background still follows the selection.
 ---------------------------------------------------------------------------
 
 local runner = require('_runner')
@@ -70,6 +70,7 @@ runner.run_async(function()
     local index = 1
     runs[index] = {red_run()}
     local dump
+    local cycle_nodes
     for switch = 1, 10 do
         awful.tag.viewnext(s)
         gears.timer.run_delayed_calls_now()
@@ -78,6 +79,7 @@ runner.run_async(function()
         local line = dump:match('commands %d+ mutations %d+[^\n]*')
         local created = tonumber(line:match('created (%d+)'))
         local swept = tonumber(line:match('swept (%d+)'))
+        local nodes = tonumber(line:match('nodes (%d+)'))
         local mutations = tonumber(line:match('mutations (%d+)'))
         assert(created and swept, 'the header has no created/swept: ' .. line)
         io.stderr:write(string.format('switch %d: created %d swept %d mutations %d\n',
@@ -103,9 +105,13 @@ runner.run_async(function()
         assert(not red(capture.read(gsurface(root.content()), mid, wb.y + 1)),
             'switch ' .. switch .. ': the previous item is still red')
 
-        if switch > 5 then
-            assert(created == 0 and swept == 0, string.format(
-                'switch %d: created %d swept %d, expected 0 and 0', switch, created, swept))
+        if switch == 5 then
+            cycle_nodes = assert(nodes, 'the header has no nodes: ' .. line)
+        elseif switch > 5 then
+            assert(created == 1 and swept == 1, string.format(
+                'switch %d: created %d swept %d, expected 1 and 1', switch, created, swept))
+            assert(nodes == cycle_nodes, string.format(
+                'switch %d: nodes %s, expected %d', switch, tostring(nodes), cycle_nodes))
         end
     end
     example.save('taglist-retained-rect', dump)

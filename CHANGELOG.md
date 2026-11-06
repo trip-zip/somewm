@@ -4,6 +4,18 @@ All notable changes to somewm will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- `ui.box` draws a box with size, layout, paint, content, animation, position, attachment, cursor and input_passthrough words, nested or alone, with pointer signals, as the first pieces of the 2.2 `ui` preview.
+- `screen.tree`, `client.parent` and `client.children` expose the compositor's node tree. Client nodes can be reordered among their siblings.
+
+### Changed
+
+- Rounded corners, shadows and shaped clips are drawn by somewm's own renderer.
+- `WLR_RENDERER=pixman` is no longer supported.
+- The linux-drm-syncobj protocol is no longer advertised. Clients fall back to implicit sync.
+- `ui.box` x and y are offsets from its parent screen. Moving a box keeps its screen parent.
+
 ## [2.1.2] - 2026-11-06
 
 Patch release. 13 commits since 2.1.1. Client borders fade with opacity,

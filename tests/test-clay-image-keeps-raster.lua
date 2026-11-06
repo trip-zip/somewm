@@ -1,3 +1,4 @@
+-- A text change replaces one record raster. The adjacent image is unchanged.
 local runner = require('_runner')
 local async = require('_async')
 local awful = require('awful')

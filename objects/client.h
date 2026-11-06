@@ -26,7 +26,6 @@
 #include <stdbool.h>
 #include <stdint.h>
 #include <wayland-server-core.h>
-#include <wlr/types/wlr_scene.h>
 #include <wlr/util/box.h>
 #include "common/luaclass.h"
 #include "common/luaobject.h"
@@ -156,9 +155,8 @@ struct client_t
         struct wlr_xdg_surface *xdg;
         struct wlr_xwayland_surface *xwayland;
     } surface;
-    /** Scene tree for this client */
-    struct wlr_scene_tree *scene;
-    /** The render_state currently borrowing scene (render.h owner token) */
+
+    /** The render_state currently borrowing the surface (render.h owner token) */
     void *render_owner;
     /** The surface leaf's last solved box, layout coordinates: what the
      * configure leg sends and clips to. Empty until the first frame that
@@ -178,6 +176,7 @@ struct client_t
     int committed_width, committed_height;
     /** Realized crop relative to surface_box; width 0 means no crop. */
     struct wlr_box surface_clip;
+    struct wlr_box draw_clip;
     /* Last committed XDG origin, used to schedule reconciliation on change. */
     struct render_surface_origin surface_origin;
     /** The corner radii the renderer last handed window.c for the surface
@@ -185,21 +184,17 @@ struct client_t
     float surface_radii[4];
 	/** Registry reference to the shape function, 0 for none. */
     int shape_ref;
-    /** Scene surface node */
-    struct wlr_scene_tree *scene_surface;
-    /** Popup parent tree: tracks scene_surface's position but is exempt
-     * from client_get_clip()'s content clip (mirrors LayerSurface::popups),
-     * since context menus routinely extend beyond the parent's bounds. */
+
     /** C-side border recolor (focus tracking): the declare pass reads this
      * when the Lua border_color property was never set. */
     float border_rgba[4];
     bool border_rgba_set;
     bool shape_mask_warned;
-    /** Native shadow style; the renderer owns shared tiles. */
+    /** Native shadow style read by the renderer. */
     struct render_shadow shadow;
     /** Wayland listeners */
-    struct wl_listener initial_commit; /* For initial XDG commit before scene surface exists */
-    struct wl_listener commit;         /* For subsequent commits after scene surface exists */
+    struct wl_listener initial_commit; /* For initial XDG commit before mapping */
+    struct wl_listener commit;         /* For subsequent commits after mapping */
     struct wl_listener map;
     struct wl_listener maximize;
     struct wl_listener minimize;

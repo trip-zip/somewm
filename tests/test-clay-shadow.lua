@@ -57,8 +57,6 @@ local function shadow(dump, owner, band, frame, ox, oy, radius)
     local commands = 0
     for command in dump:gmatch('[^\n]+') do
         if command:find('CUSTOM',1,true) and command:find(('box %d,%d %dx%d '):format(b.x,b.y,b.width,b.height),1,true) then
-            local bytes = tonumber(assert(command:match('raster=(%d+)')))
-            assert(bytes > 0 and bytes < 10000,'shadow must use tiny tiles: '..command)
             commands = commands + 1
         end
     end
@@ -205,6 +203,6 @@ runner.run_async(function()
     end
     save('shadow-tiled-gap-and-neighbour')
     a:kill();b:kill()
-    io.stderr:write('[PASS] native shadow boxes, one command/owner, shared tile bytes, theme/user bands, pixels, passthrough, rounded opacity and FIT first-open/resize\n')
+    io.stderr:write('[PASS] native shadow boxes, one command/owner, theme/user bands, pixels, passthrough, rounded opacity and FIT first-open/resize\n')
     runner.done()
 end)

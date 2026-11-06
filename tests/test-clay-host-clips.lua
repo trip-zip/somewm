@@ -62,7 +62,6 @@ runner.run_steps {
         assert(#{p.drawable:_clay_scroll_get(p.content.id)}==6,
             'replacing host identities exhausted persistent clip records')
         example.pixel(hosts[101].x+40,hosts[101].y+12,'#ffffff')
-        assert(not awesome._clay_tree(s):find('[tree!=scene]',1,true))
         for _,h in ipairs(hosts) do h.visible=false end
         scroll:pause(); scroll_host.visible=false; decorated.visible=false
         io.stderr:write('[PASS] 120 hosts stay clipped, scrolling takes priority, decorated content stays inside its border, and replacement retains the desktop\n')

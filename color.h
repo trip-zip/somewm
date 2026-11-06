@@ -45,13 +45,7 @@ typedef struct {
  */
 bool color_init_from_string(color_t *color, const char *colstr);
 
-
-/** Convert color_t to float array for wlroots (0.0-1.0)
- * Format: float[4] = {r, g, b, a} where each is 0.0-1.0
- * This is the format used by wlr_scene_rect_set_color()
- * \param color Source color
- * \param floats Pointer to float[4] array to fill
- */
+/* Straight RGBA channels in the range 0 to 1. */
 void color_to_floats(const color_t *color, float floats[static 4]);
 
 /** Convert color_t to uint32_t ARGB format
@@ -60,7 +54,6 @@ void color_to_floats(const color_t *color, float floats[static 4]);
  * \return uint32_t in ARGB format
  */
 uint32_t color_to_uint32(const color_t *color);
-
 
 /** Push a color as a hex string onto the Lua stack
  * Format: "#RRGGBB" or "#RRGGBBAA" if alpha < 0xff

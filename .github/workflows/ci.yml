@@ -66,6 +66,7 @@ jobs:
     # The package is private, so the pull needs the token.
     container:
       image: ${{ needs.image.outputs.prefix }}-${{ matrix.lua.interpreter }}
+      options: --device /dev/udmabuf
       credentials:
         username: ${{ github.actor }}
         password: ${{ secrets.GITHUB_TOKEN }}
@@ -120,6 +121,7 @@ jobs:
       contents: read
       packages: read
     container:
+      options: --device /dev/udmabuf
       image: ${{ needs.image.outputs.prefix }}-${{ matrix.lua.interpreter }}
       credentials:
         username: ${{ github.actor }}

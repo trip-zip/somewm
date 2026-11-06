@@ -151,11 +151,11 @@ static int
 luaA_layer_surface_get_geometry(lua_State *L, layer_surface_t *ls)
 {
 	lua_newtable(L);
-	if (ls->ls && ls->ls->scene_layer) {
+	if (ls->ls && ls->ls->layer_surface) {
 		/* Get actual geometry from scene layer */
-		lua_pushinteger(L, ls->ls->scene->node.x);
+		lua_pushinteger(L, ls->ls->geom.x);
 		lua_setfield(L, -2, "x");
-		lua_pushinteger(L, ls->ls->scene->node.y);
+		lua_pushinteger(L, ls->ls->geom.y);
 		lua_setfield(L, -2, "y");
 		lua_pushinteger(L, ls->ls->layer_surface->current.actual_width);
 		lua_setfield(L, -2, "width");

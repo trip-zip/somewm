@@ -25,6 +25,7 @@
 #include "render_text.h"
 #include "objects/drawable.h"
 #include "objects/drawin.h"
+#include "objects/ui_box.h"
 #include "objects/client.h"
 #include "objects/screen.h"
 
@@ -181,10 +182,12 @@ read_align(lua_State *L, int idx, enum key name, uint8_t *out)
 	return ok;
 }
 
+const char *const widget_axes[] = { "x", "y", "both" };
+
 /* Intern node names for the program's lifetime so element id strings stay
  * valid and tree nodes compare by memcmp. */
-static const char *
-intern_name(const char *name)
+const char *
+widget_intern_name(const char *name)
 {
 	static const char **names;
 	static size_t len, cap;
@@ -643,7 +646,7 @@ read_node(lua_State *L, int idx, struct widget_node *n)
 		return false;
 	getfield(L, idx, KEY_name);
 	if (lua_isstring(L, -1))
-		n->name = intern_name(lua_tostring(L, -1));
+		n->name = widget_intern_name(lua_tostring(L, -1));
 	lua_pop(L, 1);
 	getfield(L, idx, KEY_spacer);
 	n->widget = !lua_toboolean(L, -1);
@@ -778,12 +781,11 @@ read_node(lua_State *L, int idx, struct widget_node *n)
 	getfield(L, idx, KEY_thumb);
 	n->thumb = lua_toboolean(L, -1);
 	lua_pop(L, 1);
-	static const char *const axes[] = { "x", "y", "both" };
 	getfield(L, idx, KEY_scroll);
 	bool has_scroll = !lua_isnil(L, -1);
 	lua_pop(L, 1);
 	if (has_scroll) {
-		if (!read_word(L, idx, KEY_scroll, axes, 3, &n->scroll))
+		if (!read_word(L, idx, KEY_scroll, widget_axes, 3, &n->scroll))
 			return false;
 		n->scroll++;
 	}
@@ -791,7 +793,7 @@ read_node(lua_State *L, int idx, struct widget_node *n)
 	bool has_cut = !lua_isnil(L, -1);
 	lua_pop(L, 1);
 	if (has_cut) {
-		if (!read_word(L, idx, KEY_cut, axes, 3, &n->cut))
+		if (!read_word(L, idx, KEY_cut, widget_axes, 3, &n->cut))
 			return false;
 		n->cut++;
 	}
@@ -1250,6 +1252,122 @@ widget_nodes_set(lua_State *L, struct widget_tree *d, Monitor *m, int idx)
 	p_delete(&d->text_attrs);
 	d->text_attrs = text_attrs_len ? p_dup(text_attrs_buf, text_attrs_len) : NULL;
 	d->text_attrs_len = text_attrs_len;
+	d->declared = false;
+	return true;
+}
+
+static bool
+compile_box_node(lua_State *L, struct node *box, struct widget_node *nodes,
+	size_t *len, unsigned *clips, uint8_t clip_by, const float fg[4],
+	uint16_t font, float opacity, const float offer[2], bool off)
+{
+	if (*len == WIDGET_NODES_MAX) return false;
+	struct widget_node *n = &nodes[(*len)++];
+	const struct node_words *w = &box->words;
+	*n = (struct widget_node){.name = box->label ? box->label : "ui.box",
+		.identity = box->id, .occurrence = box->id, .widget = true,
+		.gap = w->gap, .vertical = w->vertical, .radius = w->radius,
+		.aspect = w->aspect, .cut = w->cut, .between = w->between,
+		.clip_by = clip_by};
+	off = off || w->animation_disabled;
+	ui_box_transition(L, box, off, &n->transition);
+	memcpy(n->sizing, w->sizing, sizeof(n->sizing));
+	memcpy(n->size, w->size, sizeof(n->size));
+	memcpy(n->min, w->min, sizeof(n->min));
+	memcpy(n->max, w->max, sizeof(n->max));
+	memcpy(n->pad, w->pad, sizeof(n->pad));
+	memcpy(n->bw, w->bw, sizeof(n->bw));
+	memcpy(n->align, w->align, sizeof(n->align));
+	memcpy(n->bg, w->bg, sizeof(n->bg));
+	memcpy(n->border, w->border, sizeof(n->border));
+	if (*len != 1) opacity *= w->opacity;
+	n->bg[3] *= opacity;
+	n->border[3] *= opacity;
+	if (w->fg[3] >= 0) fg = w->fg;
+	if (w->font_name) font = w->font;
+	float available[2];
+	for (int a = 0; a < 2; a++) {
+		float size = w->sizing[a] == WIDGET_SIZING_FIXED ? w->size[a]
+			: w->sizing[a] == WIDGET_SIZING_PERCENT && offer[a] >= 0 ? offer[a] * w->size[a] : offer[a];
+		if (w->max[a] > 0 && (size < 0 || size > w->max[a])) size = w->max[a];
+		available[a] = size < 0 ? -1 : fmaxf(0, size - w->pad[a * 2] - w->pad[a * 2 + 1]);
+	}
+	struct node *child;
+	wl_list_for_each(child, &box->children, link)
+		if (!child->hidden) n->children++;
+	if (w->text || w->image) n->children = 1;
+	if (*len == 1 || ((w->radius > 0 || w->cut) && n->children)) {
+		if (*clips == WIDGET_CLIPS_MAX) return false;
+		n->clip_opens = ++*clips;
+		clip_by = n->clip_opens;
+	}
+	if (w->text || w->image) {
+		if (*len == WIDGET_NODES_MAX) return false;
+		struct widget_node *leaf = &nodes[(*len)++];
+		*leaf = (struct widget_node){.clip_by = clip_by};
+		if (w->text) {
+			if (w->text_len + 1 > WIDGET_TEXT_MAX - text_len) return false;
+			*leaf = (struct widget_node){.text = true, .text_off = text_len,
+				.text_len = w->text_len, .font = font, .wrap = w->wrap,
+				.ellipsize = w->ellipsize, .clip_by = clip_by,
+				.text_align = w->align[0] == 2 ? 1 : w->align[0] == 1 ? 2 : 0};
+			memcpy(leaf->fg, fg, sizeof(leaf->fg));
+			leaf->fg[3] *= opacity;
+			memcpy(text_buf + text_len, w->text, w->text_len + 1);
+			text_len += w->text_len + 1;
+		} else {
+			n->align[0] = n->align[1] = 2;
+			leaf->image = w->image;
+			leaf->vector = w->vector;
+			memcpy(leaf->image_size, w->image_size, sizeof(leaf->image_size));
+			float scale = 1;
+			if (available[0] >= 0) scale = available[0] / w->image_size[0];
+			if (available[1] >= 0) {
+				float sy = available[1] / w->image_size[1];
+				if (available[0] < 0 || sy < scale) scale = sy;
+			}
+			for (int a = 0; a < 2; a++) leaf->min[a] = w->image_size[a] * scale;
+		}
+	}
+	wl_list_for_each(child, &box->children, link)
+		if (!child->hidden && !compile_box_node(L, child, nodes, len, clips, clip_by,
+			fg, font, opacity, available, off)) return false;
+	return true;
+}
+
+bool
+widget_compile_box(lua_State *L, drawin_t *drawin)
+{
+	struct widget_tree *d = &drawin->widgets;
+	Monitor *m = luaA_monitor_get_by_screen(L, drawin->screen);
+	if (!widget_writable(d)) {
+		declare_output_resource_failure(m ? m->declare : NULL);
+		return false;
+	}
+	static struct widget_node nodes[WIDGET_NODES_MAX];
+	size_t len = 0;
+	unsigned clips = 0;
+	drawin->ui_dirty = false;
+	text_len = 0;
+	const struct node_words *w = &drawin->node->words;
+	if (!compile_box_node(L, drawin->node, nodes, &len, &clips, 0,
+			w->default_fg, w->default_font, 1, (float[2]){-1, -1}, false)
+			|| over_budget(d, m, len, 0)) {
+		warn("ui.box tree over the output's element budget, showing nothing");
+		return nodes_drop(d, WIDGET_NODES_OVER_BUDGET);
+	}
+	p_delete(&d->nodes);
+	d->nodes = p_dup(nodes, len);
+	d->nodes_len = len;
+	p_realloc(&d->ids, len);
+	p_delete(&d->text);
+	d->text = text_len ? p_dup(text_buf, text_len) : NULL;
+	d->text_len = text_len;
+	size_t leaves = 0;
+	for (size_t i = 0; i < len; i++) if (nodes[i].image) leaves++;
+	leaves_count(d, leaves);
+	widget_leaves_set(d);
+	d->state = WIDGET_NODES_CONVERTED;
 	d->declared = false;
 	return true;
 }

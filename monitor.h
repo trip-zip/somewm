@@ -42,4 +42,17 @@ extern struct wl_listener output_mgr_apply;
 extern struct wl_listener output_mgr_test;
 extern struct wl_listener output_power_mgr_set_mode;
 
+#include <cairo.h>
+#include "render.h"
+extern struct paint *painter;
+extern uint64_t paint_generation;
+extern struct wlr_gamma_control_manager_v1 *gamma_manager;
+void monitor_make_current(void);
+void monitor_update_surfaces(void);
+void monitor_damage_device(Monitor *, struct render_box);
+void monitor_damage_box(Monitor *, struct render_box);
+void monitor_gamma_changed(struct wl_listener *, void *);
+cairo_surface_t *monitor_capture(int x, int y, int width, int height, bool preserve_alpha);
+cairo_surface_t *monitor_capture_client(Client *c, int width, int height);
+
 #endif /* MONITOR_H */

@@ -87,6 +87,7 @@
  */
 
 #include "objects/client.h"
+#include "node_face.h"
 #include "objects/screen.h"
 #include "objects/tag.h"
 #include "objects/drawable.h"
@@ -109,7 +110,7 @@
 #include "../shadow.h"
 #include "objects/spawn.h"
 #include "../property.h"
-#include "../screenshot_compose.h"
+#include "../monitor.h"
 
 #include "../declare.h"
 
@@ -121,7 +122,6 @@ void client_configure_to_box(client_t *c);
 #include <string.h>
 #include <wayland-server-core.h>
 #include <wlr/types/wlr_foreign_toplevel_management_v1.h>
-#include <wlr/types/wlr_scene.h>
 #include <wlr/types/wlr_xdg_shell.h>
 #include <wlr/render/wlr_renderer.h>
 #include <wlr/render/wlr_texture.h>
@@ -132,7 +132,6 @@ void client_configure_to_box(client_t *c);
 
 /* External references to somewm.c globals */
 extern struct wlr_renderer *drw;
-extern struct wlr_scene_tree *layers[NUM_LAYERS];
 
 /* X11-specific includes commented out - not needed for Wayland
 #include "common/atoms.h"
@@ -2229,7 +2228,7 @@ client_refresh(void)
  * and destroyed here during the refresh cycle.
  *
  * For native Wayland clients, there are no X11 windows to destroy - cleanup happens
- * via wlroots scene graph and listener cleanup in destroynotify().
+ * via node and listener cleanup in destroynotify().
  */
 void
 client_destroy_later(void)
@@ -2735,7 +2734,6 @@ client_set_maximized_common(lua_State *L, int cidx, bool s, const char* type, co
         c->maximized_vertical   = !!(next & CLIENT_MAXIMIZED_V   );
         c->maximized            = !!(next & CLIENT_MAXIMIZED_BOTH);
 
-
         /* Request the changes to be applied.
          * Synchronous: the Lua handler applies the new geometry via
          * c:geometry(...) and the property::maximized_* signals below
@@ -3119,7 +3117,7 @@ luaA_client_get(lua_State *L)
     else
     {
         foreach(c, globalconf.clients)
-            if((*c)->scene && (screen == NULL || (*c)->screen == screen))
+            if(some_client_is_mapped(*c) && (screen == NULL || (*c)->screen == screen))
             {
                 luaA_object_push(L, *c);
                 lua_rawseti(L, -2, i++);
@@ -3191,7 +3189,6 @@ client_set_icon(client_t *c, cairo_surface_t *s)
         cairo_surface_array_push(&array, draw_dup_image_surface(s));
     client_set_icons(c, array);
 }
-
 
 /** Kill a client.
  *
@@ -3463,11 +3460,8 @@ titlebar_get_area(client_t *c, client_titlebar_t bar)
     area_t result = c->geometry;
     int bw = client_border(c);
 
-    /* Wayland deviation: titlebars must be inset by border_width.
-     * In X11, borders are drawn OUTSIDE the frame by the X server.
-     * In Wayland, we draw borders as scene rects outside the geometry,
-     * with the scene tree origin at the outer border corner, so
-     * titlebars (inside the geometry) start at a border_width inset. */
+    /* Titlebar coordinates start at the outer border corner.
+     * Inset them by border_width to place them inside the frame. */
     result.x = bw;
     result.y = bw;
 
@@ -3518,6 +3512,7 @@ client_titlebar_host(client_t *c, drawable_t *d, struct widget_host *out)
         area_t area = titlebar_get_area(c, bar);
 
         *out = (struct widget_host) {
+            .role = "widgets",
             .tree = &c->titlebar[bar].widgets,
             .m = c->mon,
             .drawable = d,
@@ -3929,7 +3924,7 @@ luaA_client_get_opacity(lua_State *L, client_t *c)
 }
 
 /** Set client opacity.
- * Applies transparency to the client's scene buffers using wlroots compositing.
+ * Stores the opacity word read by the renderer for the client's surface.
  * \param L The Lua VM state.
  * \param c The client.
  * \return Number of elements pushed on stack.
@@ -4196,50 +4191,12 @@ luaA_client_get_motif_wm_hints(lua_State *L, client_t *c)
 static int
 luaA_client_get_content(lua_State *L, client_t *c)
 {
-    cairo_surface_t *surface;
-    cairo_t *cr;
-    int dst_width  = c->geometry.width;
-    int dst_height = c->geometry.height;
-    struct screenshot_render_data rdata = { 0 };
-
-    /* Logical client size without decorations - what we return to Lua. */
-    dst_width  -= c->titlebar[CLIENT_TITLEBAR_LEFT].size + c->titlebar[CLIENT_TITLEBAR_RIGHT].size;
-    dst_height -= c->titlebar[CLIENT_TITLEBAR_TOP].size + c->titlebar[CLIENT_TITLEBAR_BOTTOM].size;
-
-    if (dst_width <= 0 || dst_height <= 0)
-        return 0;
-
-    if (!c->scene_surface)
-        return 0;
-
-    surface = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, dst_width, dst_height);
-    if (cairo_surface_status(surface) != CAIRO_STATUS_SUCCESS)
-        return 0;
-
-    cr = cairo_create(surface);
-
-    /* Walk the client's scene subtree and composite each buffer. The shared
-     * helper handles SHM (terminals) and the GPU/DMA-BUF readback (Firefox,
-     * GPU-accelerated apps); reading via the scene buffer ensures wlroots'
-     * synchronization, which was missing in the previous
-     * direct-from-wlr_surface->buffer path that came back blank for DMA-BUF
-     * clients.
-     *
-     * wlr_scene_node_for_each_buffer reports (sx, sy) accumulated from the
-     * starting node down INCLUDING the starting node's own position, which
-     * for c->scene_surface is the (bw + titlebar) inset within c->scene.
-     * Subtract it so buffers land at the content origin of the capture. */
-    rdata.cr        = cr;
-    rdata.renderer  = drw;
-    rdata.offset_x  = -c->scene_surface->node.x;
-    rdata.offset_y  = -c->scene_surface->node.y;
-    wlr_scene_node_for_each_buffer(&c->scene_surface->node,
-                                   composite_scene_buffer_to_cairo, &rdata);
-
-    cairo_destroy(cr);
-    cairo_surface_mark_dirty(surface);
-
-    /* lua has to make sure to free the ref or we have a leak */
+    int width = c->geometry.width - c->titlebar[CLIENT_TITLEBAR_LEFT].size
+        - c->titlebar[CLIENT_TITLEBAR_RIGHT].size;
+    int height = c->geometry.height - c->titlebar[CLIENT_TITLEBAR_TOP].size
+        - c->titlebar[CLIENT_TITLEBAR_BOTTOM].size;
+    cairo_surface_t *surface = monitor_capture_client(c, width, height);
+    if (!surface) return 0;
     lua_pushlightuserdata(L, surface);
     return 1;
 }
@@ -4772,7 +4729,7 @@ static int
 luaA_client_border_is_focus_color(lua_State *L)
 {
     client_t *c = luaA_checkudata(L, 1, &client_class);
-    if (!c || !c->scene) {
+    if (!c || !some_client_is_mapped(c)) {
         lua_pushboolean(L, 0);
         return 1;
     }
@@ -4814,7 +4771,7 @@ static int
 luaA_client_border_is_normal_color(lua_State *L)
 {
     client_t *c = luaA_checkudata(L, 1, &client_class);
-    if (!c || !c->scene) {
+    if (!c || !some_client_is_mapped(c)) {
         lua_pushboolean(L, 0);
         return 1;
     }
@@ -4828,6 +4785,18 @@ luaA_client_border_is_normal_color(lua_State *L)
 
     lua_pushboolean(L, matches);
     return 1;
+}
+
+static int
+luaA_client_get_parent(lua_State *L, client_t *c)
+{
+    return node_face_push(L, c->node ? c->node->parent : NULL);
+}
+
+static int
+luaA_client_get_children(lua_State *L, client_t *c)
+{
+    return node_face_children(L, c->node);
 }
 
 void
@@ -4883,6 +4852,8 @@ client_class_setup(lua_State *L)
     luaA_class_set_tostring(&client_class, (lua_class_propfunc_t) client_tostring);
 
     const lua_class_property_t properties[] = {
+        { "parent", NULL, (lua_class_propfunc_t) luaA_client_get_parent, NULL },
+        { "children", NULL, (lua_class_propfunc_t) luaA_client_get_children, NULL },
         { "above", (lua_class_propfunc_t) luaA_client_set_above, (lua_class_propfunc_t) luaA_client_get_above, (lua_class_propfunc_t) luaA_client_set_above },
         { "aspect_ratio", (lua_class_propfunc_t) luaA_client_set_aspect_ratio, (lua_class_propfunc_t) luaA_client_get_aspect_ratio, (lua_class_propfunc_t) luaA_client_set_aspect_ratio },
         { "below", (lua_class_propfunc_t) luaA_client_set_below, (lua_class_propfunc_t) luaA_client_get_below, (lua_class_propfunc_t) luaA_client_set_below },

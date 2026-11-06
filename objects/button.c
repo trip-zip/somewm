@@ -7,6 +7,7 @@
  */
 
 #include "button.h"
+#include "ui_box.h"
 #include "luaa.h"
 #include "common/luaclass.h"
 #include "common/luaobject.h"
@@ -452,6 +453,11 @@ luaA_drawin_button_check(void *drawin_ptr, int x, int y, uint32_t button,
 
 	if (!drawin) {
 		return 0;
+	}
+
+	if (drawin->node && drawin->node->ui_box) {
+		ui_box_button(L, drawin, x, y, translate_button_code(button), mods, is_press);
+		return 1;
 	}
 
 	/* Push drawin object to stack */

@@ -12,7 +12,6 @@
 #include <wayland-server-core.h>
 #include <wlr/types/wlr_compositor.h>
 #include <wlr/types/wlr_fractional_scale_v1.h>
-#include <wlr/types/wlr_scene.h>
 #include <wlr/types/wlr_xcursor_manager.h>
 #include <wlr/xcursor.h>
 #include <wlr/xwayland.h>
@@ -436,4 +435,3 @@ xwayland_cleanup(void)
 		xwayland = NULL;
 	}
 }
-

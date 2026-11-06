@@ -12,6 +12,7 @@
 #include "../globalconf.h"
 #include "../shadow.h"
 #include "../declare.h"
+#include "../event.h"
 #include "../widget.h"
 #include <stdio.h>
 #include <stdlib.h>
@@ -25,6 +26,8 @@ lua_class_t drawin_class;
 /* NOTE: LUA_OBJECT_FUNCS is now in drawin.h, not here */
 
 /* Forward declarations for signal array helpers (shared with screen.c) */
+static void drawin_set_visible(lua_State *L, int udx, bool v);
+
 extern void signal_array_init(signal_array_t *arr);
 extern void signal_array_wipe(signal_array_t *arr);
 
@@ -100,6 +103,7 @@ drawin_widget_host(drawin_t *d, struct widget_host *out)
 	if (!m)
 		return false;
 	*out = (struct widget_host) {
+		.role = "drawin",
 		.tree = &d->widgets,
 		.m = m,
 		.drawable = d->drawable,
@@ -111,6 +115,14 @@ drawin_widget_host(drawin_t *d, struct widget_host *out)
 		.path_clip = d->shape.ref != LUA_NOREF,
 		.visible = d->visible,
 	};
+	if (d->node->ui_box) {
+		const struct node_words *w = &d->node->words;
+		out->x = w->position[0] + d->screen->geometry.x - m->m.x;
+		out->y = w->position[1] + d->screen->geometry.y - m->m.y;
+		if (w->sizing[0] == WIDGET_SIZING_FIXED) out->w = w->size[0];
+		if (w->sizing[1] == WIDGET_SIZING_FIXED) out->h = w->size[1];
+		out->visible = !d->node->hidden;
+	}
 	/* A bar's thickness is the theme's; its length the output's when it
 	 * stretches, the theme's otherwise. */
 	if (d->bar.edge != DRAWIN_EDGE_NONE) {
@@ -121,11 +133,9 @@ drawin_widget_host(drawin_t *d, struct widget_host *out)
 	return true;
 }
 
-/** Assign screen to drawin based on its position
- * Called when drawin geometry changes
- */
+/** Select a screen from the drawin's plane coordinates. */
 static void
-drawin_assign_screen(lua_State *L, drawin_t *drawin, int drawin_idx)
+drawin_reassign_screen(lua_State *L, drawin_t *drawin, int drawin_idx)
 {
 	Monitor *m;
 	screen_t *new_screen;
@@ -153,10 +163,18 @@ drawin_assign_screen(lua_State *L, drawin_t *drawin, int drawin_idx)
 		drawin_widget_host(drawin, &host);
 
 		/* Emit property::screen signal */
-		if (drawin_idx != 0) {
+		if (drawin_idx != 0 && !(drawin->node && drawin->node->ui_box)) {
 			luaA_awm_object_emit_signal(L, drawin_idx, "property::screen", 0);
 		}
 	}
+}
+
+static void
+drawin_assign_screen(lua_State *L, drawin_t *drawin, int drawin_idx)
+{
+	if (drawin->node && drawin->node->ui_box)
+		return;
+	drawin_reassign_screen(L, drawin, drawin_idx);
 }
 
 /* ========================================================================
@@ -231,10 +249,41 @@ drawin_allocator(lua_State *L)
 	drawin->drawable->owner_type = DRAWABLE_OWNER_DRAWIN;
 	drawin->drawable->owner.drawin = drawin;
 
-	/* Assign initial screen based on position */
-	drawin_assign_screen(L, drawin, -1);
+	/* Class construction passes properties at index 2. ui.box passes its
+	 * default screen and attaches the host in drawin_ui_create. */
+	if (lua_istable(L, 2)) drawin_assign_screen(L, drawin, -1);
 
 	return drawin;
+}
+
+drawin_t *
+drawin_ui_create(lua_State *L, screen_t *screen)
+{
+	drawin_t *d = drawin_allocator(L);
+	d->screen = screen;
+	d->node->ui_box = true;
+	node_append(screen->node, d->node);
+	drawin_set_visible(L, -1, true);
+	return d;
+}
+
+void
+drawin_ui_release(lua_State *L, drawin_t *d)
+{
+	bool detached = !d->node;
+	d->node = NULL;
+	luaA_object_push(L, d);
+	drawin_set_visible(L, -1, false);
+	lua_pop(L, 1);
+	if (globalconf.mouse_under.type == UNDER_DRAWIN && globalconf.mouse_under.ptr.drawin == d)
+		globalconf.mouse_under.type = UNDER_NONE;
+	if (globalconf.drawable_under_mouse == d->drawable) {
+		lua_pushnil(L);
+		event_drawable_under_mouse(L, -1);
+		lua_pop(L, 1);
+	}
+	if (detached) declare_mark_all_dirty();
+	widget_nodes_clear(&d->widgets);
 }
 
 /** Collector for drawin objects (AwesomeWM class system)
@@ -354,7 +403,7 @@ luaA_drawin_get_ontop(lua_State *L, drawin_t *drawin)
 	return 1;
 }
 
-static const char *const sides[] = { "left", "right", "top", "bottom" };
+const char *const drawin_sides[] = { "left", "right", "top", "bottom", "between" };
 static const char *const aligns[] = { "centered", "start", "end" };
 
 /** drawin.bar - The edge the drawin is a bar at, or nil (declare.c). */
@@ -379,7 +428,7 @@ luaA_drawin_get_bar(lua_State *L, drawin_t *drawin)
 	lua_createtable(L, 0, 4);
 	for (size_t i = 0; i < 4; i++) {
 		lua_pushinteger(L, drawin->bar.margins[i]);
-		lua_setfield(L, -2, sides[i]);
+		lua_setfield(L, -2, drawin_sides[i]);
 	}
 	lua_setfield(L, -2, "margins");
 	return 1;
@@ -430,7 +479,7 @@ luaA_drawin_set_bar(lua_State *L, drawin_t *drawin)
 			double v = 0;
 
 			if (lua_istable(L, -1)) {
-				lua_getfield(L, -1, sides[i]);
+				lua_getfield(L, -1, drawin_sides[i]);
 				v = lua_tonumber(L, -1);
 				lua_pop(L, 1);
 			}
@@ -836,24 +885,26 @@ drawin_moveresize(lua_State *L, int udx, int x, int y, int width, int height, bo
 		d->geometry.width = drawin->width;
 		d->geometry.height = drawin->height;
 
-		if (!solved && (old_dwidth != drawin->width || old_dheight != drawin->height)) {
+		if (!(drawin->node && drawin->node->ui_box) && !solved
+				&& (old_dwidth != drawin->width || old_dheight != drawin->height)) {
 			luaA_object_push_item(L, udx, drawin->drawable);
 			luaA_object_emit_signal(L, -1, "property::surface", 0);
 			lua_pop(L, 1);
 		}
 	}
 
-	/* Emit property signals using passed stack index (like AwesomeWM) */
-	if (old_x != drawin->x || old_y != drawin->y || old_width != drawin->width || old_height != drawin->height)
-		luaA_object_emit_signal(L, udx, "property::geometry", 0);
-	if (old_x != drawin->x)
-		luaA_object_emit_signal(L, udx, "property::x", 0);
-	if (old_y != drawin->y)
-		luaA_object_emit_signal(L, udx, "property::y", 0);
-	if (old_width != drawin->width)
-		luaA_object_emit_signal(L, udx, "property::width", 0);
-	if (old_height != drawin->height)
-		luaA_object_emit_signal(L, udx, "property::height", 0);
+	if (!(drawin->node && drawin->node->ui_box)) {
+		if (old_x != drawin->x || old_y != drawin->y || old_width != drawin->width || old_height != drawin->height)
+			luaA_object_emit_signal(L, udx, "property::geometry", 0);
+		if (old_x != drawin->x)
+			luaA_object_emit_signal(L, udx, "property::x", 0);
+		if (old_y != drawin->y)
+			luaA_object_emit_signal(L, udx, "property::y", 0);
+		if (old_width != drawin->width)
+			luaA_object_emit_signal(L, udx, "property::width", 0);
+		if (old_height != drawin->height)
+			luaA_object_emit_signal(L, udx, "property::height", 0);
+	}
 
     /* An animated attachment can pass through a neighboring output. Keep
      * its declaring screen until an authored geometry change moves it. */
@@ -886,7 +937,7 @@ luaA_drawin_reassign_screen(lua_State *L, drawin_t *drawin)
 
 	old_screen = drawin->screen;
 	luaA_object_push(L, drawin);
-	drawin_assign_screen(L, drawin, -1);
+	drawin_reassign_screen(L, drawin, -1);
 	lua_pop(L, 1);
 
 	if (old_screen != drawin->screen)
@@ -940,9 +991,7 @@ drawin_set_visible(lua_State *L, int udx, bool v)
 		lua_pushvalue(L, udx);
 		luaA_object_ref_class(L, -1, &drawin_class);
 
-		declare_mark_all_dirty();
-
-		if (drawin->drawable)
+		if (drawin->drawable && !(drawin->node && drawin->node->ui_box))
 			drawin_update_drawing(L, udx);
 	} else {
 		/* Unregister from object registry (AwesomeWM drawin.c:402) */
@@ -958,10 +1007,11 @@ drawin_set_visible(lua_State *L, int udx, bool v)
 	}
 
 	/* Emit signal using the passed stack index (matches AwesomeWM exactly) */
-	luaA_object_emit_signal(L, udx, "property::visible", 0);
+	if (drawin->node && !drawin->node->ui_box)
+		luaA_object_emit_signal(L, udx, "property::visible", 0);
 
-	/* Visibility changes update the declared tree. */
-	declare_mark_all_dirty();
+	/* Box constructors and detach dirty once after their node edits. */
+	if (drawin->node && !drawin->node->ui_box) declare_mark_all_dirty();
 
 }
 
@@ -1414,7 +1464,7 @@ luaA_drawin_set_shape_mask(lua_State *L, drawin_t *d)
  * @treturn table A table with drawins.
  * @staticfct get
  */
-static int
+int
 luaA_drawin_get(lua_State *L)
 {
 	int i = 1;
@@ -1422,6 +1472,7 @@ luaA_drawin_get(lua_State *L)
 	lua_newtable(L);
 
 	foreach(d, globalconf.drawins) {
+		if ((*d)->node && (*d)->node->ui_box) continue;
 		luaA_object_push(L, *d);
 		lua_rawseti(L, -2, i++);
 	}

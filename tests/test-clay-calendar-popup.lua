@@ -33,7 +33,6 @@ runner.run_async(function()
     end
     local function clean(dump)
         assert(dump:match('roots flow %d+ floating %d+ derived 0 legacy 0'), dump)
-        assert(not dump:find('[tree!=scene]', 1, true), dump)
     end
     -- The cell lines of every grid: rows are its children, cells theirs.
     local function cells(dump)

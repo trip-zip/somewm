@@ -9,7 +9,6 @@ local capture = require('_widget_capture')
 
 local function frame(s)
     local dump = awesome._clay_tree(s)
-    assert(not dump:find('[tree!=scene]', 1, true), dump)
     return dump:match('\n(  WIBOX [^\n]+)'), dump
 end
 

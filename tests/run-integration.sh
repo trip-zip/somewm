@@ -49,7 +49,8 @@ export XDG_DATA_DIRS="$ROOT_DIR/tests/xdg:${XDG_DATA_DIRS:-/usr/local/share:/usr
 if [ "$HEADLESS" = 1 ]; then
     export WLR_BACKENDS=headless
     # A renderer already in the environment (WLR_RENDERER=gles2) stays
-    export WLR_RENDERER=${WLR_RENDERER:-pixman}
+    export WLR_RENDERER=${WLR_RENDERER:-gles2}
+    export WLR_RENDERER_FORCE_SOFTWARE=${WLR_RENDERER_FORCE_SOFTWARE:-1}
 else
     export WLR_BACKENDS=wayland
     # Use GPU renderer in visual mode

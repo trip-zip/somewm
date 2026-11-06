@@ -37,7 +37,6 @@ local function inspect()
                     width = tonumber(width), height = tonumber(height) }
             end
         end
-        assert(not line:find("[tree!=scene]", 1, true), line)
     end
     local a, b = rows.first, rows.second
     assert(a and b, "both mixed text siblings must appear in the inspector")

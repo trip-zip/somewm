@@ -37,6 +37,7 @@
 #include <unistd.h>
 #include <wayland-client.h>
 #include "xdg-shell-client-protocol.h"
+#include "fractional-scale-v1-client-protocol.h"
 
 /* Globals */
 static struct wl_display *g_display;
@@ -45,6 +46,8 @@ static struct wl_compositor *g_compositor;
 static uint32_t g_compositor_version = 0;
 static struct wl_shm *g_shm;
 static struct xdg_wm_base *g_xdg_wm_base;
+static struct wp_fractional_scale_manager_v1 *g_fractional_manager;
+static struct wp_fractional_scale_v1 *g_fractional_scale;
 
 static struct wl_surface *g_surface;
 static struct xdg_surface *g_xdg_surface;
@@ -57,6 +60,7 @@ static int g_transform = 0;
 static int g_pending_scale = 1;
 static int g_current_scale = 0;     /* 0 = nothing committed yet */
 static char g_marker_path[256];
+static char g_fractional_marker_path[256];
 
 static volatile sig_atomic_t g_running = 1;
 
@@ -199,6 +203,21 @@ static const struct wl_surface_listener surface_listener = {
     .preferred_buffer_transform = surface_preferred_buffer_transform,
 };
 
+static void fractional_preferred_scale(void *data,
+                                      struct wp_fractional_scale_v1 *fractional,
+                                      uint32_t scale) {
+    (void)data; (void)fractional;
+    FILE *f = fopen(g_fractional_marker_path, "a");
+    if (f) {
+        fprintf(f, "fractional=%u\n", scale);
+        fclose(f);
+    }
+}
+
+static const struct wp_fractional_scale_v1_listener fractional_listener = {
+    .preferred_scale = fractional_preferred_scale,
+};
+
 /* xdg_surface */
 static void xdg_surface_configure(void *data, struct xdg_surface *xs,
                                   uint32_t serial) {
@@ -267,6 +286,9 @@ static void registry_global(void *data, struct wl_registry *reg,
     } else if (strcmp(interface, xdg_wm_base_interface.name) == 0) {
         g_xdg_wm_base = wl_registry_bind(reg, name, &xdg_wm_base_interface, 5);
         xdg_wm_base_add_listener(g_xdg_wm_base, &xdg_wm_base_listener, NULL);
+    } else if (strcmp(interface, wp_fractional_scale_manager_v1_interface.name) == 0) {
+        g_fractional_manager = wl_registry_bind(
+            reg, name, &wp_fractional_scale_manager_v1_interface, 1);
     }
 }
 
@@ -302,6 +324,10 @@ int main(int argc, char *argv[]) {
              "/tmp/test-content-pattern-%d.scale", (int)getpid());
     unlink(g_marker_path);
 
+    snprintf(g_fractional_marker_path, sizeof(g_fractional_marker_path),
+             "/tmp/test-content-pattern-%d.fractional", (int)getpid());
+    unlink(g_fractional_marker_path);
+
     struct sigaction sa = { .sa_handler = handle_term };
     sigaction(SIGTERM, &sa, NULL);
     sigaction(SIGINT, &sa, NULL);
@@ -326,6 +352,12 @@ int main(int argc, char *argv[]) {
     g_surface = wl_compositor_create_surface(g_compositor);
     if (g_compositor_version >= 6)
         wl_surface_add_listener(g_surface, &surface_listener, NULL);
+
+    if (g_fractional_manager) {
+        g_fractional_scale = wp_fractional_scale_manager_v1_get_fractional_scale(
+            g_fractional_manager, g_surface);
+        wp_fractional_scale_v1_add_listener(g_fractional_scale, &fractional_listener, NULL);
+    }
 
     g_xdg_surface = xdg_wm_base_get_xdg_surface(g_xdg_wm_base, g_surface);
     xdg_surface_add_listener(g_xdg_surface, &xdg_surface_listener, NULL);
@@ -371,10 +403,13 @@ done:
     fprintf(stderr, "[content-pattern-client] shutting down\n");
 
     unlink(g_marker_path);
+    unlink(g_fractional_marker_path);
 
     if (g_toplevel)     xdg_toplevel_destroy(g_toplevel);
     if (g_xdg_surface)  xdg_surface_destroy(g_xdg_surface);
+    if (g_fractional_scale) wp_fractional_scale_v1_destroy(g_fractional_scale);
     if (g_surface)      wl_surface_destroy(g_surface);
+    if (g_fractional_manager) wp_fractional_scale_manager_v1_destroy(g_fractional_manager);
     if (g_xdg_wm_base)  xdg_wm_base_destroy(g_xdg_wm_base);
     if (g_shm)          wl_shm_destroy(g_shm);
     if (g_compositor)   wl_compositor_destroy(g_compositor);

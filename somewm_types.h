@@ -13,8 +13,8 @@
 #include <wlr/types/wlr_keyboard_group.h>
 #include <wlr/types/wlr_layer_shell_v1.h>
 #include <wlr/types/wlr_output.h>
+#include <wlr/types/wlr_damage_ring.h>
 #include <wlr/types/wlr_pointer_constraints_v1.h>
-#include <wlr/types/wlr_scene.h>
 #include <wlr/types/wlr_session_lock_v1.h>
 #include <wlr/types/wlr_xdg_decoration_v1.h>
 #include <wlr/types/wlr_xdg_shell.h>
@@ -27,9 +27,6 @@
  * (awful.mouse.client.move/resize) instead of C-level cursor_mode state machine */
 enum { CurNormal, CurPressed }; /* cursor */
 enum { XDGShell, LayerShell, X11 }; /* client types */
-/* scene layers: the output bands, then the parent an ext-session-lock
- * client's surfaces are created under before the declare pass borrows them */
-enum { LyrDesktop, LyrBlock, NUM_LAYERS };
 
 /* Window types (for stacking and EWMH) - AwesomeWM compatibility */
 typedef enum {
@@ -98,7 +95,9 @@ typedef struct {
 struct Monitor {
 	struct wl_list link;
 	struct wlr_output *wlr_output;
-	struct wlr_scene_output *scene_output;
+	struct wlr_damage_ring damage;
+	uint64_t sample_generation;
+	struct wl_listener needs_frame, output_commit;
 	struct wl_listener frame;
 	struct wl_listener destroy;
 	struct wl_listener request_state;
@@ -145,8 +144,7 @@ typedef struct LayerSurface {
 	struct node *node;
 
 	Monitor *mon;
-	struct wlr_scene_tree *scene;
-	/* The render_state currently borrowing scene (render.h owner token) */
+	/* The render_state currently borrowing the surface (render.h owner token) */
 	void *render_owner;
 	/* Output-local position of the surface leaf, written by the renderer's
 	 * reposition hook (window.c) for the surface's popups. */
@@ -154,7 +152,6 @@ typedef struct LayerSurface {
 	/* The zwlr layer this surface last committed to, keyed to the
 	 * m->layers list holding it (= its declare band). */
 	uint32_t band;
-	struct wlr_scene_layer_surface_v1 *scene_layer;
 	struct wl_list link;
 	int mapped;
 	struct wlr_layer_surface_v1 *layer_surface;
@@ -175,7 +172,6 @@ typedef struct {
 
 /* SessionLock structure */
 typedef struct {
-	struct wlr_scene_tree *scene;
 
 	struct wlr_session_lock_v1 *lock;
 	struct wl_listener new_surface;

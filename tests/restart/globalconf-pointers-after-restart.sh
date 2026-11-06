@@ -36,7 +36,7 @@ check_eval hr-gc "pointer motion before the reload" \
 
 sw_reload hr-gc || finish
 
-# The lock surface died with its scene tree, so staying locked would leave no
+# The lock surface died with its surface records, so staying locked would leave no
 # way back in.
 check_eval hr-gc "the session is not locked after the reload" \
     'return tostring(awesome.locked)' false

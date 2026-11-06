@@ -40,8 +40,6 @@ local function surface_box(left)
 end
 
 local function assert_agrees()
-    assert(not awesome._clay_tree(s):find("[tree!=scene]", 1, true),
-        "the scene disagrees with the tree")
 end
 
 local function assert_pixel(x, y, red, green, blue)

@@ -108,7 +108,6 @@ runner.run_steps({
             if line:find(named, 1, true) then
                 assert(not line:find("[solved!=realized]", 1, true), line)
             end
-            assert(not line:find("[tree!=scene]", 1, true), line)
         end
         for _, c in ipairs(clients) do c:kill() end
         return true

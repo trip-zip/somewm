@@ -15,6 +15,8 @@ typedef struct drawin_t drawin_t;
 typedef struct Monitor Monitor;
 
 struct widget_storage;
+struct node;
+bool widget_compile_box(lua_State *L, drawin_t *d);
 
 struct widget_tree {
 	struct widget_storage *storage;
@@ -51,8 +53,12 @@ struct widget_tree {
 	bool output_fill;
 };
 
+extern const char *const widget_axes[3];
+const char *widget_intern_name(const char *name);
+
 /* A converted widget tree at a box on an output. */
 struct widget_host {
+	const char *role;
 	struct widget_tree *tree;
 	Monitor *m;
 	/* The drawable the tree draws, which hears clay::solved. */
@@ -121,6 +127,7 @@ struct widget_node {
 	uint32_t binding_start, binding_count;
 	uint16_t pad[4];     /* left, right, top, bottom */
 	uint16_t bw[4];      /* border widths, same order */
+	uint16_t between;
 	float bg[4];
 	float border[4];
 	float radius;

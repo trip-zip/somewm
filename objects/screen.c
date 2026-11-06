@@ -1,4 +1,5 @@
 #include "screen.h"
+#include "node_face.h"
 #include "output.h"
 #include "client.h"
 #include "drawin.h"
@@ -14,14 +15,13 @@
 #include "../event_queue.h"
 #include "common/util.h"
 #include "../x11_compat.h"
-#include "../screenshot_compose.h"
+#include "../monitor.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <limits.h>
 #include <cairo.h>
 #include <drm_fourcc.h>
-#include <wlr/types/wlr_scene.h>
 #include <wlr/types/wlr_output.h>
 #include <wlr/interfaces/wlr_buffer.h>
 #include <wlr/render/wlr_renderer.h>
@@ -37,7 +37,6 @@ extern Monitor *selmon;
 extern struct wl_list mons;  /* Global monitor list from somewm.c */
 
 /* External references for screenshot support */
-extern struct wlr_scene *scene;
 extern struct wlr_renderer *drw;
 
 /* Global array of screen objects - stores Lua registry references */
@@ -956,7 +955,7 @@ luaA_screen_get_managed(lua_State *L)
 
 /* ========== SCREEN CONTENT (SCREENSHOT) SUPPORT ========== */
 
-/** Get screenshot of this screen, composited on the CPU from the scene.
+/** Draw this screen's records into an offscreen target and read its pixels.
  * \param L Lua state
  * \param s Screen object
  * \return 1 (cairo surface lightuserdata on stack)
@@ -964,50 +963,12 @@ luaA_screen_get_managed(lua_State *L)
 static int
 luaA_screen_get_content(lua_State *L, screen_t *s)
 {
-	cairo_surface_t *surface;
-	cairo_t *cr;
-	struct screenshot_render_data rdata = { 0 };
-	int width, height;
-
-	if (!s || !s->valid)
-		return 0;
-
-	width = s->geometry.width;
-	height = s->geometry.height;
-
-	if (width <= 0 || height <= 0)
-		return 0;
-
-	/* Create Cairo surface for this screen */
-	surface = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, width, height);
-	if (cairo_surface_status(surface) != CAIRO_STATUS_SUCCESS)
-		return 0;
-
-	cr = cairo_create(surface);
-
-	/* Clear to black */
-	cairo_set_source_rgb(cr, 0, 0, 0);
-	cairo_paint(cr);
-
-	/* Scene coordinates are the layout's; this target is the screen's. */
-	rdata.cr = cr;
-	rdata.renderer = drw;
-	rdata.offset_x = -s->geometry.x;
-	rdata.offset_y = -s->geometry.y;
-	rdata.bound_x = s->geometry.x;
-	rdata.bound_y = s->geometry.y;
-	rdata.bound_w = width;
-	rdata.bound_h = height;
-
-	/* The scene is the reconciled tree: OUTPUT's fill, the chrome the
-	 * renderer drew, and the client surfaces it borrowed, in draw order. */
-	composite_scene_node_to_cairo(&scene->tree.node, &rdata);
-
-	cairo_destroy(cr);
-
-	/* Return surface as lightuserdata */
-	lua_pushlightuserdata(L, surface);
-	return 1;
+    if (!s || !s->valid) return 0;
+    cairo_surface_t *surface = monitor_capture(s->geometry.x, s->geometry.y,
+        s->geometry.width, s->geometry.height, false);
+    if (!surface) return 0;
+    lua_pushlightuserdata(L, surface);
+    return 1;
 }
 
 /* ========== END SCREEN CONTENT SUPPORT ========== */
@@ -1609,7 +1570,6 @@ luaA_screen_call(lua_State *L)
 	int index;
 	screen_t *prev;
 
-
 	/* For iteration: screen(state, control_var) where L[1]=self, L[2]=state, L[3]=control_var
 	 * For direct call: screen(index) where L[1]=self, L[2]=index */
 
@@ -1712,6 +1672,9 @@ luaA_screen_index(lua_State *L)
 	s = luaA_checkscreen(L, 1);
 	(void)s;  /* Used for validation */
 
+	if (strcmp(key, "tree") == 0)
+		return node_face_push(L, s->node);
+
 	/* Check for properties */
 	if (strcmp(key, "geometry") == 0)
 		return luaA_screen_get_geometry(L);
@@ -1775,6 +1738,9 @@ luaA_screen_newindex(lua_State *L)
 {
 	screen_t *screen = luaA_checkscreen(L, 1);
 	const char *key = luaL_checkstring(L, 2);
+
+	if (strcmp(key, "tree") == 0)
+		return luaL_error(L, "screen.tree is read-only");
 
 	/* Only 'name' property is writable */
 	if (strcmp(key, "name") == 0) {
@@ -1950,7 +1916,7 @@ luaA_monitor_get_by_screen(lua_State *L, screen_t *screen)
 	/* A screen created by screen.fake_add() has no Monitor pointer.  Associate
 	 * it with the physical output whose geometry contains the fake rectangle so
 	 * clients moved to a fake screen still participate in that output's arrange
-	 * and scene update passes. */
+	 * and declaration passes. */
 	struct wlr_box monitor_geometry;
 	wl_list_for_each(m, &mons, link) {
 		some_monitor_get_geometry(m, &monitor_geometry);

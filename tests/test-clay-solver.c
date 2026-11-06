@@ -25,7 +25,6 @@
 #include <sys/resource.h>
 #include <sys/wait.h>
 #include <unistd.h>
-#include <wlr/types/wlr_scene.h>
 
 static Clay_ElementId id(uint32_t value) { return (Clay_ElementId){ .id = value }; }
 static void clay_error(Clay_ErrorData error) {
@@ -70,14 +69,14 @@ static void box(Clay_BoundingBox got, float x, float y, float w, float h) {
 	}
 	assert(got.x == x && got.y == y && got.width == w && got.height == h);
 }
-static struct wlr_scene_tree *resolve(void *data, uint64_t handle) {
+static struct wlr_surface *resolve(void *data, uint64_t handle) {
 	assert(handle == 1);
 	return data;
 }
 static bool release(void *data, uint64_t handle, void *owner) {
 	(void)data; (void)owner;
 	assert(handle == 1);
-	return true;   /* the renderer parks the tree */
+	return true;
 }
 static void borrow(void *data, uint64_t handle, void *owner) {
 	(void)data; (void)owner;
@@ -152,9 +151,21 @@ static bool structure_matches(void) {
 	}
 	return true;
 }
+struct first_view {
+    uint32_t type;
+    bool found;
+    struct render_node_view view;
+};
+static void collect_first(void *data, const struct render_node_view *v) {
+    struct first_view *first = data;
+    if (!first->found && v->type == first->type) {
+        first->found = true;
+        first->view = *v;
+    }
+}
 static void inspect_primitive(void *data, const struct render_node_view *v) {
 	int *count = data;
-	assert(!v->mismatch && v->has_node);
+	assert(v->has_node);
 	if (v->type == CLAY_RENDER_COMMAND_TYPE_TEXT || v->type == CLAY_RENDER_COMMAND_TYPE_IMAGE)
 		assert(v->raster_bytes > 0);
 	(*count)++;
@@ -163,9 +174,10 @@ static void test_primitives(void) {
 	/* Repeated construction after teardown also catches stale current-context use. */
 	for (int cycle = 0; cycle < 3; cycle++) {
 		void *arena = start_context();
-		struct wlr_scene *scene = wlr_scene_create();
-		struct wlr_scene_tree *surface = wlr_scene_tree_create(&scene->tree);
-		struct render_state *rs = render_create(&scene->tree);
+
+		/* The non-NULL root is never dereferenced by reconciliation. */
+        struct wlr_surface *surface = (struct wlr_surface *)(uintptr_t)1;
+		struct render_state *rs = render_create();
 		struct render_client_hooks hooks = {.resolve = resolve, .release = release,
 			.configure = configure, .borrow = borrow, .data = surface};
 		struct image_entry image = {0};
@@ -195,13 +207,15 @@ static void test_primitives(void) {
 			box(Clay_GetElementData(id(102)).boundingBox, 100, 0, 20, 20);
 			int mutations = render_reconcile(rs, commands, &hooks, (Clay_BoundingBox){0,0,200,160});
 			assert(frame % 2 ? mutations == 0 : mutations > 0);
-			assert(surface->node.x == 4 && surface->node.y == 76 && surface->node.enabled);
+			struct first_view client = {.type = CLAY_RENDER_COMMAND_TYPE_CUSTOM};
+			render_walk(rs, &hooks, collect_first, &client);
+			assert(client.found && client.view.shown);
+			box(client.view.rbox, 4, 76, 24, 16);
 			int count = 0;
 			render_walk(rs, &hooks, inspect_primitive, &count);
 			assert(count == 8);
 		}
 		render_destroy(rs, &hooks);
-		wlr_scene_node_destroy(&scene->tree.node);
 		image_entry_set(&image, NULL);
 		stop_context(arena);
 	}
@@ -209,7 +223,6 @@ static void test_primitives(void) {
 
 static void inspect_clip(void *data, const struct render_node_view *v) {
 	int *count = data;
-	assert(!v->mismatch);
 	if (v->type == CLAY_RENDER_COMMAND_TYPE_RECTANGLE) {
 		box(v->rbox, 0, 0, 68, 68);
 		assert(v->has_node);
@@ -221,8 +234,8 @@ static void inspect_clip(void *data, const struct render_node_view *v) {
  * M0b gaps; this test does not certify either contract or unbounded capacity. */
 static void test_clips(void) {
 	void *arena = start_context();
-	struct wlr_scene *scene = wlr_scene_create();
-	struct render_state *rs = render_create(&scene->tree);
+
+	struct render_state *rs = render_create();
 	struct render_client_hooks hooks = {0}; /* No CUSTOM commands. */
 	for (int frame = 0; frame < 3; frame++) {
 		Clay_BeginLayout();
@@ -252,7 +265,6 @@ static void test_clips(void) {
 		assert(count == 1);
 	}
 	render_destroy(rs, &hooks);
-	wlr_scene_node_destroy(&scene->tree.node);
 	stop_context(arena);
 }
 /* The spec's layer fixture (E030): roots A, B, C as 501, 502, 503. */
@@ -300,8 +312,8 @@ static void test_overlay_rejected(void) {
 		if (!child) {
 			setrlimit(RLIMIT_CORE, &(struct rlimit){0, 0});
 			if (end) { commands.internalArray += 2; commands.length = 1; }
-			struct wlr_scene *scene = wlr_scene_create();
-			struct render_state *rs = render_create(&scene->tree);
+
+			struct render_state *rs = render_create();
 			render_reconcile(rs, commands, &(struct render_client_hooks){0}, (Clay_BoundingBox){0,0,200,160});
 			_exit(0);
 		}
@@ -392,18 +404,19 @@ static void check_whole_run_label(const char *value, float scale) {
             labels++;
         }
         assert(labels == 5);
-        struct wlr_scene *scene = wlr_scene_create();
-        struct render_state *rs = render_create(&scene->tree);
+
+        struct render_state *rs = render_create();
         render_set_scale(rs, scale);
         struct render_client_hooks hooks = {0};
         render_reconcile(rs, commands, &hooks, (Clay_BoundingBox){0,0,300,160});
         assert(render_reconcile(rs, commands, &hooks, (Clay_BoundingBox){0,0,300,160}) == 0);
-        struct wlr_scene_tree *tree = wl_container_of(scene->tree.children.next, tree, node.link);
-        struct wlr_scene_node *node = wl_container_of(tree->children.next, node, link);
-        struct wlr_scene_buffer *sb = wlr_scene_buffer_from_node(node);
+        struct first_view first = {.type = CLAY_RENDER_COMMAND_TYPE_TEXT};
+        render_walk(rs, &hooks, collect_first, &first);
+        assert(first.found && first.view.pixels);
+        struct render_node_view view = first.view;
         int scene_width = lroundf(w / scale);
-        assert(sb->dst_width == (scene_width > parent_width ? parent_width : scene_width));
-        int bw = sb->buffer->width, bh = sb->buffer->height;
+        assert(view.dst_width == (scene_width > parent_width ? parent_width : scene_width));
+        int bw = view.raster_width, bh = view.raster_height;
         /* Scene edges round to logical pixels; retain every natural glyph pixel. */
         assert(bw >= w && bw <= w + 1 && bh >= h && bh <= h + 1);
         cairo_surface_t *reference = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, bw, bh);
@@ -413,20 +426,15 @@ static void check_whole_run_label(const char *value, float scale) {
         cairo_set_source_rgba(cr, 1, 1, 1, 1);
         pango_cairo_show_layout(cr, layout);
         cairo_surface_flush(reference);
-        void *pixels;
-        uint32_t format;
-        size_t stride;
-        assert(wlr_buffer_begin_data_ptr_access(sb->buffer, WLR_BUFFER_DATA_PTR_ACCESS_READ,
-            &pixels, &format, &stride));
+        const unsigned char *pixels = view.pixels;
+        size_t stride = view.stride;
         for (int y = 0; y < bh; y++)
             assert(memcmp((char *)pixels + y * stride,
                 cairo_image_surface_get_data(reference) + y * cairo_image_surface_get_stride(reference),
                 bw * 4) == 0);
-        wlr_buffer_end_data_ptr_access(sb->buffer);
         cairo_destroy(cr);
         cairo_surface_destroy(reference);
         render_destroy(rs, &hooks);
-        wlr_scene_node_destroy(&scene->tree.node);
     }
     g_object_unref(layout);
     stop_context(arena);

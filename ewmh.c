@@ -1,3 +1,4 @@
+#include "somewm_api.h"
 /*
  * ewmh.c - EWMH support functions
  *
@@ -337,7 +338,7 @@ ewmh_update_net_client_list(lua_State *L)
     xcb_window_t wins[MAX(1, globalconf.clients.len)];
 
     foreach(client, globalconf.clients)
-        if((*client)->client_type == X11 && (*client)->scene)
+        if((*client)->client_type == X11 && some_client_is_mapped(*client))
             wins[n++] = (*client)->window;
 
     xcb_change_property(globalconf.connection, XCB_PROP_MODE_REPLACE,

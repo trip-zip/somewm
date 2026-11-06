@@ -3,7 +3,6 @@
 #ifdef SOMEWM_BENCH
 
 #include <string.h>
-#include <wlr/types/wlr_scene.h>
 
 /* --- Shared stats computation --- */
 
@@ -372,26 +371,6 @@ bench_render_reset(void)
 {
     bench_render_index = 0;
     bench_render_count = 0;
-}
-
-void
-bench_count_scene_nodes(struct wlr_scene_node *root,
-                        int *trees, int *rects, int *buffers)
-{
-    if (!root) return;
-
-    switch (root->type) {
-    case WLR_SCENE_NODE_TREE: (*trees)++; break;
-    case WLR_SCENE_NODE_RECT: (*rects)++; break;
-    case WLR_SCENE_NODE_BUFFER: (*buffers)++; break;
-    }
-
-    if (root->type == WLR_SCENE_NODE_TREE) {
-        struct wlr_scene_tree *tree = wlr_scene_tree_from_node(root);
-        struct wlr_scene_node *child;
-        wl_list_for_each(child, &tree->children, link)
-            bench_count_scene_nodes(child, trees, rects, buffers);
-    }
 }
 
 /* --- Full reset --- */

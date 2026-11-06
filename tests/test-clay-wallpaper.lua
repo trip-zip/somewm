@@ -37,8 +37,6 @@ end
 
 local function assert_agrees()
     for _, line in ipairs(lines()) do
-        assert(not line:find("[tree!=scene]", 1, true),
-            "the scene disagrees with the tree: " .. line)
     end
 end
 

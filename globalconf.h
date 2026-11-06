@@ -35,7 +35,6 @@
 #include <cairo.h>
 
 /* Forward declarations */
-struct wlr_scene_buffer;
 typedef struct client_t client_t;
 typedef struct tag_t tag_t;
 typedef struct screen_t screen_t;
@@ -166,7 +165,6 @@ typedef struct
 
     /** All managed clients */
     client_array_t clients;
-
 
     /** Input focus information */
     struct
@@ -328,7 +326,6 @@ typedef struct
      *  reached the screen; exposed to Lua as awesome._test_frame_count. Not
      *  preserved across hot-reload (globalconf is zeroed by globalconf_wipe). */
     unsigned long frame_commit_count;
-
 
     /* ========== WALLPAPER SUPPORT ========== */
 

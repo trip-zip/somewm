@@ -76,11 +76,6 @@ void bench_render_stats_get(uint64_t *count, uint64_t *min_ns, uint64_t *max_ns,
                             uint64_t *avg_ns, uint64_t *p99_ns);
 void bench_render_reset(void);
 
-/* Scene node counting (called at query time, not per-frame) */
-struct wlr_scene_node;
-void bench_count_scene_nodes(struct wlr_scene_node *root,
-                             int *trees, int *rects, int *buffers);
-
 /* --- Full reset --- */
 
 void bench_reset_all(void);

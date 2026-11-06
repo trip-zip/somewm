@@ -37,6 +37,12 @@ client_surface(Client *c)
 	return c->surface.xdg->surface;
 }
 
+static inline bool
+client_is_mapped(Client *c)
+{
+    return client_has_surface(c) && client_surface(c) && client_surface(c)->mapped;
+}
+
 static inline int
 toplevel_from_wlr_surface(struct wlr_surface *s, Client **pc, LayerSurface **pl)
 {

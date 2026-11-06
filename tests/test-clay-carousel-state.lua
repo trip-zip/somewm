@@ -63,7 +63,6 @@ runner.run_async(function()
         assert(solved > before, 'solved callback did not run')
         assert(tonumber(dump:match('\n  roots flow %d+ floating %d+ derived (%d+) legacy %d+\n'))
             == 0, dump)
-        assert(not dump:find('[tree!=scene]', 1, true), dump)
         local actual = {}
         for line in dump:gmatch('[^\n]+') do
             if line:match('^%s*CLIENT ') then

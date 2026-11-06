@@ -49,7 +49,6 @@ end
 local function header(dump)
     assert(dump:find('\n  roots flow %d+ floating %d+ derived 0 legacy 0\n'),
         'header not derived 0 legacy 0')
-    assert(not dump:find('[tree!=scene]', 1, true), 'tree and scene differ')
 end
 
 runner.run_async(function()
