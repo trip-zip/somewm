@@ -1,5 +1,5 @@
 ---------------------------------------------------------------------------
--- Test: screenshots read the scene and nothing else
+-- Test: screenshots read the records and nothing else
 --
 -- root.content() and screen.content composite what the renderer drew:
 -- every node of the reconciled Clay tree. A drawin's pixels come from its
@@ -8,7 +8,7 @@
 -- leaf, root.content(true) leaves it out for a transparent capture, and a
 -- translucent drawin captures at its opacity.
 --
--- Run: make test-one TEST=tests/test-screenshot-reads-the-scene.lua
+-- Run: make test-one TEST=tests/test-screenshot-reads-the-records.lua
 ---------------------------------------------------------------------------
 
 local runner = require("_runner")

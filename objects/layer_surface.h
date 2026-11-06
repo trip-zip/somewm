@@ -21,8 +21,6 @@
 /* Forward declarations */
 struct screen_t;
 struct wlr_layer_surface_v1;
-struct wlr_scene_tree;
-struct wlr_scene_layer_surface_v1;
 
 /* LayerSurface is defined in somewm_types.h */
 #include "../somewm_types.h"
@@ -157,7 +155,6 @@ void layer_surface_unfocus(layer_surface_t *ls);
  * @return Number of values pushed (1 - the array).
  */
 int luaA_layer_surface_get(lua_State *L);
-
 
 /**
  * Get the layer name as a string.

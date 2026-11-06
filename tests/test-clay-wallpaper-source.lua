@@ -70,7 +70,6 @@ local function check(name)
         local g, scale = s.geometry, s.scale
         local dump = awesome._clay_tree(s)
         assert(dump:find('derived 0',1,true),dump)
-        assert(not dump:find('[tree!=scene]',1,true),dump)
         local outputs, images, first = 0, 0
         local realized = false
         for line in dump:gmatch('[^\n]+') do

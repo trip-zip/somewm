@@ -61,7 +61,6 @@ runner.run_async(function()
         example.save(name, dump)
         assert(tonumber(dump:match('roots flow %d+ floating %d+ derived (%d+)'))
             == 0, dump)
-        assert(not dump:find('[tree!=scene]', 1, true), dump)
         for i, c in ipairs(clients) do
             local w, h = dump:match('SURFACE ' .. c.class .. ' [^\n]-box %-?%d+,%-?%d+ (%d+)x(%d+)')
             local cw, ch = utils.wait_for_configure(reports[i], w, h)

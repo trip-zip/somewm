@@ -97,13 +97,6 @@ color_init_from_string(color_t *color, const char *colstr)
     return true;
 }
 
-/** Convert color_t to float array for wlroots
- *
- * wlr_scene_rect_set_color() expects float[4] in RGBA format with 0.0-1.0 range.
- *
- * \param color Source color
- * \param floats Pointer to float[4] array to fill (RGBA order)
- */
 void
 color_to_floats(const color_t *color, float floats[static 4])
 {

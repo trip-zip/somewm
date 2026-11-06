@@ -54,7 +54,6 @@ runner.run_async(function()
         example.save(name, dump)
         assert(tonumber(dump:match('\n  roots flow %d+ floating %d+ derived (%d+) legacy %d+\n'))
             == 0, dump)
-        assert(not dump:find('[tree!=scene]', 1, true), dump)
         return dump
     end
 
@@ -167,7 +166,6 @@ runner.run_async(function()
     example.save('surface-clip-popup', popup_dump)
     assert(line:find('box 631,671 120x120', 1, true), line)
     assert(not line:find('[solved!=realized]', 1, true), line)
-    assert(not popup_dump:find('[tree!=scene]', 1, true), popup_dump)
     example.pixel(640,700,'#4080c0')
 
     s.selected_tag.layout = awful.layout.suit.tile

@@ -8,7 +8,7 @@
  *
  * Buffer is intentionally a DMA-BUF (not SHM) so the compositor exercises
  * its scene-tree walk + GPU texture readback path inside
- * composite_scene_buffer_to_cairo().
+ * the offscreen record draw.
  *
  * Lifecycle: SIGTERM/SIGINT for clean exit. App ID: "dmabuf_pattern_test".
  */

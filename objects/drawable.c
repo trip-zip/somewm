@@ -437,6 +437,8 @@ void
 drawable_class_setup(lua_State *L)
 {
 	static const struct luaL_Reg drawable_methods[] = {
+		{ "connect_signal", luaA_drawable_class_connect_signal },
+		{ "disconnect_signal", luaA_drawable_class_disconnect_signal },
 		{ NULL, NULL }
 	};
 

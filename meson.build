@@ -54,7 +54,7 @@ somewm_inc = include_directories('.', 'third_party')
 
 # The renderer, named once: the compositor links it and the C unit test compiles
 # it again with the verifier forced on.
-render_sources = files('render.c', 'render_text.c')
+render_sources = files('render.c', 'render_text.c', 'paint.c')
 
 # Math library (for round(), etc.)
 m_dep = cc.find_library('m', required: false)
@@ -248,6 +248,20 @@ xdg_shell_client_code = custom_target(
   command: [wayland_scanner, 'private-code', '@INPUT@', '@OUTPUT@'],
 )
 
+fractional_scale_client_header = custom_target(
+  'fractional-scale-v1-client-protocol.h',
+  input: wayland_protocols_dir / 'staging/fractional-scale/fractional-scale-v1.xml',
+  output: 'fractional-scale-v1-client-protocol.h',
+  command: [wayland_scanner, 'client-header', '@INPUT@', '@OUTPUT@'],
+)
+
+fractional_scale_client_code = custom_target(
+  'fractional-scale-v1-client-protocol.c',
+  input: wayland_protocols_dir / 'staging/fractional-scale/fractional-scale-v1.xml',
+  output: 'fractional-scale-v1-client-protocol.c',
+  command: [wayland_scanner, 'private-code', '@INPUT@', '@OUTPUT@'],
+)
+
 # ext-session-lock-v1 client protocol (header + code) for the lock test client
 ext_session_lock_client_header = custom_target(
   'ext-session-lock-v1-client-protocol.h',
@@ -364,16 +378,6 @@ if get_option('bench')
   add_project_arguments('-DSOMEWM_BENCH', language: 'c')
 endif
 
-# The Clay tree==scene verifier walks every retained node after each reconcile
-# and aborts on divergence. It is on for a sanitizer or test build only, and is
-# not an option, so a packager's --auto-features enabled cannot turn it on.
-# b_sanitize is a string in older meson and an array in newer, hence the format.
-sanitizers = '@0@'.format(get_option('b_sanitize'))
-if sanitizers.contains('address') or sanitizers.contains('undefined') or \
-    get_option('test_pam')
-  add_project_arguments('-DSOMEWM_RENDER_VERIFY', language: 'c')
-endif
-
 # Development flags
 add_project_arguments(
   '-Wno-unused-parameter',
@@ -434,6 +438,8 @@ somewm_sources = [
   # Objects
   'objects/window.c',
   'objects/tag.c',
+  'objects/node_face.c',
+  'objects/ui_box.c',
   'objects/client.c',
   'objects/screen.c',
   'objects/output.c',
@@ -526,16 +532,15 @@ somewm_client = executable(
   install: true,
 )
 
-# The Clay reconciler's unit test: hand-built command arrays in, wlr_scene out.
+# The Clay reconciler's unit test: hand-built command arrays in, retained views and rasters out.
 # It compiles the renderer itself rather than linking the compositor, so the
-# tree==scene verifier is on here whatever the build's sanitizer and test settings are.
+# draw pass uses the same paint library as the compositor.
 test_render = executable(
   'test-render',
   ['tests/test-render.c', render_sources],
   include_directories: somewm_inc,
   link_with: clay_lib,
-  dependencies: [wlroots, wayland_server, cairo, pangocairo, librsvg, m_dep],
-  c_args: ['-DSOMEWM_RENDER_VERIFY'],
+  dependencies: [wlroots, wayland_server, cairo, pangocairo, librsvg, m_dep, dependency('egl'), dependency('glesv2')],
   install: false,
 )
 
@@ -546,14 +551,26 @@ test('render', test_render, suite: 'unit',
     meson.current_source_dir() / 'tests/lsan-suppressions.txt'},
 )
 
+test_paint = executable(
+  'test-paint',
+  ['tests/test-paint.c', 'paint.c'],
+  include_directories: include_directories('.'),
+  dependencies: [dependency('egl'), dependency('glesv2'), m_dep],
+  override_options: ['b_ndebug=false'],
+  install: false,
+)
+test('paint', test_paint, suite: 'unit',
+  env: {'LSAN_OPTIONS': 'suppressions=' +
+    meson.current_source_dir() / 'tests/lsan-suppressions.txt'},
+)
+
 # Compile the production pin in the solver test TU so it can inspect actual
 # declarations independently. Do not link clay_lib (a second implementation).
 test_clay_solver = executable(
   'test-clay-solver',
   ['tests/test-clay-solver.c', render_sources],
   include_directories: somewm_inc,
-  dependencies: [wlroots, wayland_server, cairo, pangocairo, librsvg, m_dep],
-  c_args: ['-DSOMEWM_RENDER_VERIFY'],
+  dependencies: [wlroots, wayland_server, cairo, pangocairo, librsvg, m_dep, dependency('egl'), dependency('glesv2')],
   override_options: ['b_ndebug=false'],
   install: false,
 )
@@ -576,13 +593,13 @@ test_clay_aspect = executable(
 )
 test('clay-aspect', test_clay_aspect, suite: 'unit')
 
-# Only render.c may create visible rectangles/buffers or mutate scene nodes.
-test('scene-writers', find_program('tests/check-scene-writers.sh'),
+# Only paint.c calls GL. monitor.c binds the EGL context.
+test('gl-callers', find_program('tests/check-gl-callers.sh'),
   args: [meson.current_build_dir() / 'somewm.p'],
   depends: somewm_exe, suite: 'unit',
 )
 
-test('scene-writers-controls', find_program('tests/test-scene-writers.sh'),
+test('gl-callers-controls', find_program('tests/test-gl-callers.sh'),
   suite: 'unit')
 
 # Test layer-shell client for deterministic integration tests
@@ -653,8 +670,8 @@ test_csd_state_client = executable(
 # scale, used by test-client-content-pattern.lua to verify HiDPI c.content.
 test_content_pattern_client = executable(
   'test-content-pattern-client',
-  ['tests/test-content-pattern-client.c', xdg_shell_client_code],
-  xdg_shell_client_header,
+  ['tests/test-content-pattern-client.c', xdg_shell_client_code, fractional_scale_client_code],
+  [xdg_shell_client_header, fractional_scale_client_header],
   dependencies: [wayland_client],
   install: false,
 )

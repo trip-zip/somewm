@@ -151,7 +151,7 @@ static const struct wl_registry_listener registry_listener = {
 int
 main(int argc, char **argv)
 {
-	(void)argc; (void)argv;
+	int before_map = argc > 1 && strcmp(argv[1], "--before-map") == 0;
 
 	g_display = wl_display_connect(NULL);
 	if (!g_display) {
@@ -183,6 +183,14 @@ main(int argc, char **argv)
 			fprintf(stderr, "dispatch failed before configure\n");
 			return 1;
 		}
+	}
+
+	if (before_map) {
+		wl_display_flush(g_display);
+		int fd = wl_display_get_fd(g_display);
+		if (fd >= 0)
+			close(fd);
+		_exit(0);
 	}
 
 	struct wl_buffer *buf = create_buffer(g_width, g_height);

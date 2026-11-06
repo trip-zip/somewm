@@ -57,8 +57,6 @@ end
 
 local function assert_agrees()
     for line in dump():gmatch("[^\n]+") do
-        assert(not line:find("[tree!=scene]", 1, true),
-            "the scene disagrees with the tree: " .. line)
     end
 end
 

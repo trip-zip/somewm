@@ -14,7 +14,6 @@ local seconds = 3
 local function dump()
     local text = awesome._clay_tree(s)
     assert(text:find('output ', 1, true), 'missing published output')
-    assert(not text:find('[tree!=scene]', 1, true), text)
     return text
 end
 

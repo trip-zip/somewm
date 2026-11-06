@@ -17,7 +17,6 @@
 #include <wlr/types/wlr_idle_notify_v1.h>
 #include <wlr/types/wlr_layer_shell_v1.h>
 #include <wlr/types/wlr_fractional_scale_v1.h>
-#include <wlr/types/wlr_scene.h>
 #include <wlr/types/wlr_seat.h>
 #include <wlr/types/wlr_session_lock_v1.h>
 #include <wlr/types/wlr_xdg_activation_v1.h>
@@ -38,7 +37,6 @@
 #include "objects/signal.h"
 #include "objects/mousegrabber.h"
 #include "protocols.h"
-
 
 /* Forward declaration for wlr_input_device (used by motionnotify extern) */
 struct wlr_input_device;
@@ -151,7 +149,7 @@ commitlayersurfacenotify(struct wl_listener *listener, void *data)
 		layer_surface_emit_manage(ls, "new");
 	}
 
-	/* A layer change moves the surface between declare bands; the scene
+	/* A layer change moves the surface between declare bands; the renderer
 	 * tree itself stays wherever the reconciler put it. */
 	if (l->band != layer_surface->current.layer) {
 		l->band = layer_surface->current.layer;
@@ -217,21 +215,9 @@ createlayersurface(struct wl_listener *listener, void *data)
 	l->mon = layer_surface->output->data;
 	l->node = declare_node_create(l->mon, NODE_SURFACE, DECLARE_KIND_LAYER, l);
 	l->band = layer_surface->pending.layer;
-	/* Born parked; the reconciler borrows the tree into the output's band
-	 * once the declare pass sees the surface mapped. */
-	l->scene_layer = wlr_scene_layer_surface_v1_create(window_parked_tree(),
-			layer_surface);
-	/* Register commit listener AFTER wlr_scene_layer_surface_v1_create() so our
-	 * listener fires AFTER wlroots' internal scene commit handler. This lets
-	 * the scene graph reflect the new buffer before the commit handler calls
-	 * motionnotify(0, ...) to re-evaluate pointer focus on map. */
 	LISTEN(&surface->events.commit, &l->surface_commit, commitlayersurfacenotify);
-	l->scene = l->scene_layer->tree;
-	surface->data = l->scene;
-	l->scene->node.data = l;
 
 	wl_list_insert(&l->mon->layers[l->band], &l->link);
-	wlr_surface_send_enter(surface, layer_surface->output);
 }
 
 void
@@ -249,7 +235,6 @@ destroylayersurfacenotify(struct wl_listener *listener, void *data)
 	wl_list_remove(&l->unmap.link);
 	wl_list_remove(&l->surface_commit.link);
 	node_destroy(l->node);
-	wlr_scene_node_destroy(&l->scene->node);
 	declare_mark_all_dirty();
 	free(l);
 }
@@ -295,23 +280,19 @@ unmaplayersurfacenotify(struct wl_listener *listener, void *data)
 bool
 some_is_idle_inhibited(void)
 {
-	int unused_lx, unused_ly;
 	struct wlr_idle_inhibitor_v1 *inhibitor;
 
 	if (!idle_inhibit_mgr)
 		return false;
 
 	wl_list_for_each(inhibitor, &idle_inhibit_mgr->inhibitors, link) {
-		/* An unmapped surface must not inhibit, and its scene tree may
-		 * already be gone (the !tree case below counts as inhibited). */
+		/* Unmapped surfaces do not inhibit idle. */
 		if (!inhibitor->surface->mapped)
 			continue;
 
 		struct wlr_surface *surface = wlr_surface_get_root_surface(inhibitor->surface);
-		struct wlr_scene_tree *tree = surface->data;
 
-		if (globalconf.appearance.bypass_surface_visibility || (!tree
-				|| wlr_scene_node_coords(&tree->node, &unused_lx, &unused_ly))) {
+		if (globalconf.appearance.bypass_surface_visibility || window_surface_visible(surface)) {
 			return true;
 		}
 	}
@@ -338,7 +319,6 @@ int
 some_push_idle_inhibitors(lua_State *L)
 {
 	int idx = 1;
-	int lx, ly;
 	struct wlr_idle_inhibitor_v1 *inhibitor;
 
 	if (!idle_inhibit_mgr) {
@@ -349,9 +329,8 @@ some_push_idle_inhibitors(lua_State *L)
 	lua_newtable(L);
 	wl_list_for_each(inhibitor, &idle_inhibit_mgr->inhibitors, link) {
 		struct wlr_surface *surface = wlr_surface_get_root_surface(inhibitor->surface);
-		struct wlr_scene_tree *tree = surface->data;
 		bool visible = globalconf.appearance.bypass_surface_visibility
-			|| (!tree || wlr_scene_node_coords(&tree->node, &lx, &ly));
+			|| window_surface_visible(surface);
 
 		Client *c = some_client_from_surface(surface);
 
@@ -426,7 +405,6 @@ destroy:
 	wl_list_remove(&lock->unlock.link);
 	wl_list_remove(&lock->destroy.link);
 
-	wlr_scene_node_destroy(&lock->scene->node);
 	cur_lock = NULL;
 	free(lock);
 }
@@ -437,15 +415,7 @@ destroylocksurface(struct wl_listener *listener, void *data)
 	Monitor *m = wl_container_of(listener, m, destroy_lock_surface);
 	struct wlr_session_lock_surface_v1 *surface, *lock_surface = m->lock_surface;
 
-	/* A borrowed tree outlives the lock container. Park it before dropping
-	 * the handle, while its wl_surface can still outlive the lock protocol
-	 * object; the renderer's release hook cannot resolve a dropped handle. */
-	if (m->lock_render_owner) {
-		struct wlr_scene_tree *tree = lock_surface->surface->data;
-
-		render_park(&tree->node);
-		m->lock_render_owner = NULL;
-	}
+	m->lock_render_owner = NULL;
 	m->lock_surface = NULL;
 	node_destroy(m->lock_node);
 	m->lock_node = NULL;
@@ -475,11 +445,8 @@ destroysessionlock(struct wl_listener *listener, void *data)
 void
 createlocksurface(struct wl_listener *listener, void *data)
 {
-	SessionLock *lock = wl_container_of(listener, lock, new_surface);
 	struct wlr_session_lock_surface_v1 *lock_surface = data;
 	Monitor *m = lock_surface->output->data;
-	lock_surface->surface->data
-		= wlr_scene_subsurface_tree_create(lock->scene, lock_surface->surface);
 	m->lock_surface = lock_surface;
 	m->lock_node = declare_node_create(m, NODE_SURFACE, DECLARE_KIND_LOCK, lock_surface);
 
@@ -510,7 +477,6 @@ locksession(struct wl_listener *listener, void *data)
 	lock = session_lock->data = ecalloc(1, sizeof(*lock));
 	focusclient(NULL, 0);
 
-	lock->scene = wlr_scene_tree_create(layers[LyrBlock]);
 	cur_lock = lock->lock = session_lock;
 	locked = 1;
 	declare_mark_all_dirty();
@@ -677,7 +643,6 @@ char *activation_token_create(const char *app_id)
 	slot->timeout_id = g_timeout_add_seconds(20, activation_token_timeout,
 		strdup(token_name));
 
-
 	return slot->token;
 }
 
@@ -693,7 +658,6 @@ void activation_token_cleanup(const char *token)
 		if (strcmp(pending_tokens[i].token, token) == 0) {
 			/* Cancel timeout */
 			g_source_remove(pending_tokens[i].timeout_id);
-
 
 			free(pending_tokens[i].token);
 			free(pending_tokens[i].app_id);

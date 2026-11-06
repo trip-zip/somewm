@@ -161,4 +161,6 @@ void somewm_pin_lgi_libs(void);
  */
 const char *some_test_add_output(unsigned int width, unsigned int height);
 
+bool some_client_is_mapped(Client *c);
+
 #endif /* SOMEWM_API_H */

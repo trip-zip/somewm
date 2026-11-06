@@ -41,7 +41,6 @@
 #include <wlr/types/wlr_idle_notify_v1.h>
 #include <wlr/types/wlr_layer_shell_v1.h>
 #include <wlr/types/wlr_linux_dmabuf_v1.h>
-#include <wlr/types/wlr_linux_drm_syncobj_v1.h>
 #include <wlr/types/wlr_output.h>
 #include <wlr/types/wlr_output_layout.h>
 #include <wlr/types/wlr_output_management_v1.h>
@@ -51,7 +50,6 @@
 #include <wlr/types/wlr_pointer_gestures_v1.h>
 #include <wlr/types/wlr_presentation_time.h>
 #include <wlr/types/wlr_primary_selection_v1.h>
-#include <wlr/types/wlr_scene.h>
 #include <wlr/types/wlr_screencopy_v1.h>
 #include <wlr/types/wlr_seat.h>
 #include <wlr/types/wlr_session_lock_v1.h>
@@ -92,6 +90,8 @@
 #include "xwayland.h"
 #include "protocols.h"
 #include "monitor.h"
+#include "paint.h"
+#include <wlr/render/gles2.h>
 #include "input.h"
 #include "window.h"
 #include "declare.h"
@@ -122,8 +122,6 @@ void *exclusive_focus;
 struct wl_display *dpy;
 struct wl_event_loop *event_loop;
 struct wlr_backend *backend;
-struct wlr_scene *scene;
-struct wlr_scene_tree *layers[NUM_LAYERS];
 Client *drag_source_client;
 struct wlr_renderer *drw;
 struct wlr_allocator *alloc;
@@ -274,9 +272,9 @@ cleanup(void)
 	wlr_backend_destroy(backend);
 
 	wl_display_destroy(dpy);
-	/* Destroy after the wayland display (when the monitors are already destroyed)
-	   to avoid destroying them with an invalid scene output. */
-	wlr_scene_node_destroy(&scene->tree.node);
+
+	monitor_make_current();
+	paint_destroy(painter);
 }
 
 void
@@ -357,7 +355,6 @@ some_activate_lua_lock(void)
 	declare_mark_all_dirty();
 }
 
-/** The scene half of deactivating the lock: the tree only, no Lua. */
 static void
 lua_lock_scene_restore(void)
 {
@@ -377,7 +374,7 @@ some_deactivate_lua_lock(void)
 	lua_lock_scene_restore();
 
 	/* Restore focus to pre-lock client if still valid, otherwise top client */
-	if (pre_lock_focused_client && pre_lock_focused_client->scene) {
+	if (pre_lock_focused_client && client_is_mapped(pre_lock_focused_client)) {
 		focusclient(pre_lock_focused_client, 1);
 	} else {
 		focus_restore(selmon);
@@ -386,14 +383,6 @@ some_deactivate_lua_lock(void)
 	motionnotify(0, NULL, 0, 0, 0, 0);
 }
 
-/** Deactivate Lua-controlled lock mode without touching Lua.
- *
- * For the config-timeout abort, which unlocks on a state siglongjmp left
- * mid-execution. The focus tail of some_deactivate_lua_lock() reaches
- * request::focus_restore, property::urgent and the unfocus signals, none of
- * which may run on that state. The scene is restored either way, since the
- * lock UI is destroyed by the rebuild that follows.
- */
 void
 some_deactivate_lua_lock_no_focus(void)
 {
@@ -401,8 +390,6 @@ some_deactivate_lua_lock_no_focus(void)
 	pre_lock_focused_client = NULL;
 }
 
-/** A cover registered during an active lock: re-solve the lock scene so it
- * joins, still under the lock surface (declare_lock_scene's order). */
 void
 some_promote_lock_cover(drawin_t *d)
 {
@@ -501,7 +488,6 @@ cursor_to_client_coordinates(Client *client, double *sx, double *sy) {
 	*sx = cursor->x - (client->geometry.x + bw + tl);
 	*sy = cursor->y - (client->geometry.y + bw + tt);
 }
-
 
 /* moveresize() function removed - move/resize now handled by Lua mousegrabber
  * (awful.mouse.client.move/resize) via client button bindings in rc.lua */
@@ -612,18 +598,8 @@ run(char *startup_cmd)
 			}
 		}
 
-		/* Ensure all drawables created during startup have their content
-		 * pushed to scene buffers. This fixes the timing issue where wiboxes
-		 * don't appear until an external event triggers some_refresh().
-		 * In AwesomeWM, xcb_flush() sends everything immediately after config
-		 * loads; in Wayland we need to explicitly refresh all drawables. */
 		some_refresh();
 
-		/* Compositor reached steady state: rc.lua loaded, screens scanned,
-		 * clients managed, drawables pushed to scene. Subscribers can now
-		 * safely spawn long-lived helpers, register tray hosts, etc.
-		 * The flag lets luaA_hot_reload() re-emit for late subscribers
-		 * after rc.lua reload (this branch only runs on cold boot). */
 		globalconf.somewm_ready_seen = true;
 		luaA_emit_signal_global("somewm::ready");
 	}
@@ -739,6 +715,15 @@ run(char *startup_cmd)
  * Scene graph layer changes happen via arrange() when Lua updates property::floating.
  * This matches AwesomeWM's approach where C doesn't manage floating state. */
 
+static struct wl_listener gamma_listener = {.notify = monitor_gamma_changed};
+static struct wl_listener gamma_destroy_listener;
+
+static void gamma_manager_destroyed(struct wl_listener *listener, void *data)
+{
+    wl_list_remove(&gamma_listener.link);
+    wl_list_remove(&gamma_destroy_listener.link);
+}
+
 void
 setup(void)
 {
@@ -768,7 +753,6 @@ setup(void)
 		sigaction(sig[i], &sa, NULL);
 	wlr_log_init(globalconf.log_level, NULL);
 
-
 	/* The Wayland display is managed by libwayland. It handles accepting
 	 * clients from the Unix socket, manging Wayland globals, and so on. */
 	dpy = wl_display_create();
@@ -784,10 +768,6 @@ setup(void)
 	/* Ask the host compositor to forward Mod4 combos when nested. */
 	nested_inhibitor_init(backend);
 
-	/* Initialize the scene graph used to lay out windows */
-	scene = wlr_scene_create();
-	for (i = 0; i < NUM_LAYERS; i++)
-		layers[i] = wlr_scene_tree_create(&scene->tree);
 	window_setup_render_hooks();
 
 	/* Autocreates a renderer, either Pixman, GLES2 or Vulkan for us. The user
@@ -796,28 +776,20 @@ setup(void)
 	 * supports for shared memory, this configures that for clients. */
 	if (!(drw = wlr_renderer_autocreate(backend)))
 		die("couldn't create renderer\n"
-			"Try setting WLR_RENDERER=gles2 or WLR_RENDERER=pixman\n"
+			"Try setting WLR_RENDERER=gles2\n"
 			"Run with WLR_DEBUG=1 for more details");
+    if (!wlr_renderer_is_gles2(drw)) die("somewm draws with GLES2; WLR_RENDERER=pixman is not supported");
+    monitor_make_current();
+    painter = paint_create();
+    if (!painter) die("couldn't create paint renderer");
 	wl_signal_add(&drw->events.lost, &gpu_reset);
 
-	/* Create shm, drm and linux_dmabuf interfaces by ourselves.
-	 * The simplest way is to call:
-	 *      wlr_renderer_init_wl_display(drw);
-	 * but we need to create the linux_dmabuf interface manually to integrate it
-	 * with wlr_scene. */
 	wlr_renderer_init_wl_shm(drw, dpy);
 
-	if (wlr_renderer_get_texture_formats(drw, WLR_BUFFER_CAP_DMABUF)) {
+	if (wlr_renderer_get_drm_fd(drw) >= 0
+			&& wlr_renderer_get_texture_formats(drw, WLR_BUFFER_CAP_DMABUF)) {
 		wlr_drm_create(dpy, drw);
-		wlr_scene_set_linux_dmabuf_v1(scene,
-				wlr_linux_dmabuf_v1_create_with_renderer(dpy, 5, drw));
-	}
-
-	{
-		int drm_fd;
-		if ((drm_fd = wlr_renderer_get_drm_fd(drw)) >= 0 && drw->features.timeline
-				&& backend->features.timeline)
-			wlr_linux_drm_syncobj_manager_v1_create(dpy, 1, drm_fd);
+		wlr_linux_dmabuf_v1_create_with_renderer(dpy, 5, drw);
 	}
 
 	/* Autocreates an allocator for us.
@@ -834,6 +806,7 @@ setup(void)
 	 * the clients cannot set the selection directly without compositor approval,
 	 * see the setsel() function. */
 	compositor = wlr_compositor_create(dpy, 6, drw);
+	window_track_surfaces();
 	wlr_subcompositor_create(dpy);
 	wlr_data_device_manager_create(dpy);
 	wlr_export_dmabuf_manager_v1_create(dpy);
@@ -855,7 +828,10 @@ setup(void)
 	activation = wlr_xdg_activation_v1_create(dpy);
 	wl_signal_add(&activation->events.request_activate, &request_activate);
 
-	wlr_scene_set_gamma_control_manager_v1(scene, wlr_gamma_control_manager_v1_create(dpy));
+	gamma_manager = wlr_gamma_control_manager_v1_create(dpy);
+	wl_signal_add(&gamma_manager->events.set_gamma, &gamma_listener);
+	gamma_destroy_listener.notify = gamma_manager_destroyed;
+	wl_signal_add(&gamma_manager->events.destroy, &gamma_destroy_listener);
 
 	power_mgr = wlr_output_power_manager_v1_create(dpy);
 	wl_signal_add(&power_mgr->events.set_mode, &output_power_mgr_set_mode);
@@ -1124,7 +1100,6 @@ spawn(const Arg *arg)
 		die("somewm: execvp %s failed:", ((char **)arg->v)[0]);
 	}
 }
-
 
 /* Search paths for Lua modules - set via -L/--search flag */
 #define MAX_SEARCH_PATHS 16
@@ -1440,3 +1415,7 @@ usage:
 	    "  -k, --check CONFIG       Check config for Wayland compatibility issues\n"
 	    "      --check-level LEVEL   Minimum severity for non-zero exit: critical, warning (default), info", argv[0]);
 }
+
+struct paint *painter;
+uint64_t paint_generation = 1;
+struct wlr_gamma_control_manager_v1 *gamma_manager;

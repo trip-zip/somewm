@@ -1,5 +1,5 @@
 /*
- * window.h - Window lifecycle, geometry, and scene graph management
+ * window.h - Window lifecycle, geometry, and surface management
  *
  * XDG shell handlers, geometry application, layout arrangement,
  * appearance helpers, and client commands.
@@ -40,9 +40,7 @@ void fullscreennotify(struct wl_listener *listener, void *data);
 void client_configure_to_box(Client *c);
 bool client_clamps_to_monitor(Client *c);
 void window_setup_render_hooks(void);
-/* The disabled parking tree new and released surface trees live in until
- * the reconciler borrows them into a band. */
-struct wlr_scene_tree *window_parked_tree(void);
+
 void resize(Client *c, struct wlr_box geo, int interact);
 void applybounds(Client *c, struct wlr_box *bbox);
 
@@ -62,35 +60,18 @@ void setfullscreen(Client *c, int fullscreen);
 /* Listener management (hot-reload) */
 void client_remove_all_listeners(client_t *c);
 void client_reregister_listeners(client_t *c);
-void client_set_node_data(client_t *c, void *ptr);
 
 /* Listener structs */
 extern struct wl_listener new_xdg_toplevel;
 extern struct wl_listener new_xdg_popup;
 extern struct wl_listener new_xdg_decoration;
 
-static inline struct wlr_scene_tree *
-client_surface_get_scene_tree(struct wlr_surface *surface)
-{
-	return surface ? surface->data : NULL;
-}
+void client_node_destroy(Client *c);
 
-static inline void
-client_surface_clear_scene_data(struct wlr_surface *surface, struct wlr_scene_tree *st)
-{
-	if (surface && surface->data == st)
-		surface->data = NULL;
-}
-
-void client_scene_node_destroy(Client* c);
-
-/* An xdg popup: its own surface tree, born parked, declared as a floating
- * element attached to its parent's surface element (declare.c) and borrowed
- * by the renderer at the box Clay solves, like a client. */
+/* An xdg popup declared as a floating element attached to its parent's surface. */
 typedef struct Popup {
 	struct node *node;
 	struct wlr_xdg_popup *popup;
-	struct wlr_scene_tree *tree;   /* NULL until the initial commit */
 	void *render_owner;
 	struct wl_list link;           /* in popups, creation order */
 	struct wl_listener commit;
@@ -99,5 +80,10 @@ typedef struct Popup {
 } Popup;
 /* Every live popup, parents before their nested popups. */
 extern struct wl_list popups;
+
+void window_track_surfaces(void);
+void window_surface_sweep(Monitor *, bool remove_all);
+void window_surface_frame_done(Monitor *, const struct timespec *);
+bool window_surface_visible(struct wlr_surface *);
 
 #endif /* WINDOW_H */

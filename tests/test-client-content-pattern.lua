@@ -242,6 +242,7 @@ runner.run_async(function()
     for _, pid in ipairs(pids) do
         os.execute("kill -9 " .. pid .. " 2>/dev/null")
         os.execute("rm -f /tmp/test-content-pattern-" .. pid .. ".scale")
+        os.remove("/tmp/test-content-pattern-" .. pid .. ".fractional")
     end
     for _, c in ipairs(client.get()) do c:kill() end
     async.wait_for_no_clients(3)

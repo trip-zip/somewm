@@ -17,7 +17,14 @@
 #include <wlr/types/wlr_output_layout.h>
 #include <wlr/types/wlr_output_management_v1.h>
 #include <wlr/types/wlr_output_power_management_v1.h>
-#include <wlr/types/wlr_scene.h>
+#include <EGL/egl.h>
+#include <wlr/render/egl.h>
+#include <wlr/render/gles2.h>
+#include <wlr/render/swapchain.h>
+#include <wlr/types/wlr_buffer.h>
+#include <wlr/types/wlr_gamma_control_v1.h>
+#include <wlr/util/transform.h>
+#include "paint.h"
 #include <wlr/types/wlr_seat.h>
 #include <wlr/types/wlr_session_lock_v1.h>
 #include <wlr/types/wlr_xcursor_manager.h>
@@ -49,6 +56,8 @@
 #include "bench.h"
 
 /* Module-private state */
+static void output_needs_frame(struct wl_listener *, void *);
+static void output_committed(struct wl_listener *, void *);
 static int in_updatemons;
 static int updatemons_pending;
 
@@ -131,6 +140,8 @@ cleanupmon(struct wl_listener *listener, void *data)
 	wl_list_remove(&m->frame.link);
 	wl_list_remove(&m->link);
 	wl_list_remove(&m->request_state.link);
+	wl_list_remove(&m->needs_frame.link);
+	wl_list_remove(&m->output_commit.link);
 	if (m->lock_surface)
 		destroylocksurface(&m->destroy_lock_surface, NULL);
 	m->wlr_output->data = NULL;
@@ -140,11 +151,13 @@ cleanupmon(struct wl_listener *listener, void *data)
 	 * (e.g. presentation_time, gamma) to the output being destroyed, causing
 	 * wlr_output_finish() assertion failure. */
 	in_updatemons = 1;
-	wlr_scene_output_destroy(m->scene_output);
+	window_surface_sweep(m, true);
+	wlr_damage_ring_finish(&m->damage);
 	wlr_output_layout_remove(output_layout, m->wlr_output);
 	in_updatemons = 0;
 
 	closemon(m);
+	monitor_make_current();
 	declare_output_destroy(m->declare);
 	free(m);
 
@@ -229,6 +242,8 @@ createmon(struct wl_listener *listener, void *data)
 
 	m = wlr_output->data = ecalloc(1, sizeof(*m));
 	m->wlr_output = wlr_output;
+	wlr_damage_ring_init(&m->damage);
+	wlr_damage_ring_add_whole(&m->damage);
 
 	for (i = 0; i < LENGTH(m->layers); i++)
 		wl_list_init(&m->layers[i]);
@@ -251,6 +266,8 @@ createmon(struct wl_listener *listener, void *data)
 	wlr_output_state_set_mode(&state, wlr_output_preferred_mode(wlr_output));
 
 	/* Set up event listeners */
+	LISTEN(&wlr_output->events.needs_frame, &m->needs_frame, output_needs_frame);
+	LISTEN(&wlr_output->events.commit, &m->output_commit, output_committed);
 	LISTEN(&wlr_output->events.frame, &m->frame, rendermon);
 	LISTEN(&wlr_output->events.destroy, &m->destroy, cleanupmon);
 	LISTEN(&wlr_output->events.request_state, &m->request_state, requestmonstate);
@@ -263,7 +280,10 @@ createmon(struct wl_listener *listener, void *data)
 		wl_list_remove(&m->frame.link);
 		wl_list_remove(&m->destroy.link);
 		wl_list_remove(&m->request_state.link);
+	wl_list_remove(&m->needs_frame.link);
+	wl_list_remove(&m->output_commit.link);
 		wlr_output->data = NULL;
+		wlr_damage_ring_finish(&m->damage);
 		free(m);
 		return;
 	}
@@ -289,7 +309,6 @@ createmon(struct wl_listener *listener, void *data)
 	 * display, which Wayland clients can see to find out information about the
 	 * output (such as DPI, scale factor, manufacturer, etc).
 	 */
-	m->scene_output = wlr_scene_output_create(scene, wlr_output);
 	m->declare = declare_output_create(wlr_output);
 
 	/* Create screen object BEFORE adding to layout.
@@ -367,8 +386,16 @@ gpureset(struct wl_listener *listener, void *data)
 	struct wlr_renderer *old_drw = drw;
 	struct wlr_allocator *old_alloc = alloc;
 	struct Monitor *m;
+    monitor_make_current();
+    wl_list_for_each(m, &mons, link) declare_reset_paint(m->declare);
+    paint_destroy(painter);
 	if (!(drw = wlr_renderer_autocreate(backend)))
 		die("couldn't recreate renderer");
+    if (!wlr_renderer_is_gles2(drw)) die("somewm draws with GLES2; WLR_RENDERER=pixman is not supported");
+    monitor_make_current();
+    painter = paint_create();
+    if (!painter) die("couldn't recreate paint renderer");
+    paint_generation++;
 
 	if (!(alloc = wlr_allocator_autocreate(backend, drw)))
 		die("couldn't recreate allocator");
@@ -380,6 +407,8 @@ gpureset(struct wl_listener *listener, void *data)
 
 	wl_list_for_each(m, &mons, link) {
 		wlr_output_init_render(m->wlr_output, alloc, drw);
+		wlr_damage_ring_add_whole(&m->damage);
+		wlr_output_schedule_frame(m->wlr_output);
 	}
 
 	wlr_allocator_destroy(old_alloc);
@@ -490,65 +519,102 @@ powermgrsetmode(struct wl_listener *listener, void *data)
 	updatemons(NULL, NULL);
 }
 
+static void sample_surfaces(Monitor *m)
+{
+    int width, height;
+    wlr_output_transformed_resolution(m->wlr_output, &width, &height);
+    struct render_draw_params params = {.scale = m->wlr_output->scale,
+        .width = width, .height = height};
+    m->sample_generation++;
+    Monitor *band;
+    wl_list_for_each(band, &mons, link) {
+        if (!band->wlr_output->enabled) continue;
+        params.origin_x = band->m.x - m->m.x;
+        params.origin_y = band->m.y - m->m.y;
+        declare_draw(band->declare, NULL, m, &params);
+    }
+    window_surface_sweep(m, false);
+}
+
+void monitor_update_surfaces(void)
+{
+    Monitor *m;
+    wl_list_for_each(m, &mons, link)
+        if (m->wlr_output->enabled) sample_surfaces(m);
+    some_recompute_idle_inhibit();
+}
+
 void
 rendermon(struct wl_listener *listener, void *data)
 {
-	/* This function is called every time an output is ready to display a frame,
-	 * generally at the output's refresh rate (e.g. 60Hz). */
-	Monitor *m = wl_container_of(listener, m, frame);
-	Client *c;
-	struct timespec now;
-	bool presented = false;
-
-	/* Safety: scene_output may not exist yet if frame fires before createmon
-	 * finishes (possible on NVIDIA), or output may be disabled */
-	if (!m->scene_output)
-		return;
-	if (!m->wlr_output->enabled)
-		goto skip;
-
-	/* Render if no XDG clients have an outstanding resize and are visible on
-	 * this monitor. */
-	foreach(client, globalconf.clients) {
-		c = *client;
-		if (c->resize && !some_client_get_floating(c) && c->mon == m && !client_is_stopped(c))
-			goto skip;
-	}
-
-#ifdef SOMEWM_BENCH
-	struct timespec bench_render_start, bench_render_end;
-	clock_gettime(CLOCK_MONOTONIC, &bench_render_start);
-#endif
-	/* The Clay frame: when the output is dirty, have Lua compile what
-	 * changed, declare the scene, solve, and reconcile into wlr_scene
-	 * before the commit below presents it. A clean output does zero work
-	 * here. While the session is locked the same pass adds the lock
-	 * section on top (declare.h). When the scene changed, what sits under
-	 * the stationary pointer may have too (a surface mapped under it, a
-	 * tag switch): re-evaluate pointer focus after reconciliation. */
-	if (m->declare && declare_output_frame(m->declare, m) > 0)
-		motionnotify(0, NULL, 0, 0, 0, 0);
-
-	/* needs_frame is true only when there is something to present;
-	 * wlr_scene_output_commit() returns true without presenting otherwise, so
-	 * sample it first to count only real presents. */
-	presented = wlr_scene_output_needs_frame(m->scene_output);
-	if (!wlr_scene_output_commit(m->scene_output, NULL)) {
-		wlr_log(WLR_DEBUG, "[HOTPLUG] rendermon commit failed: %s",
-			m->wlr_output->name);
-	} else {
-		if (presented)
-			globalconf.frame_commit_count++;
-#ifdef SOMEWM_BENCH
-		clock_gettime(CLOCK_MONOTONIC, &bench_render_end);
-		bench_render_record(timespec_diff_ns(&bench_render_start, &bench_render_end));
-		bench_input_commit_flush();
-#endif
-	}
-
-skip:
-	clock_gettime(CLOCK_MONOTONIC, &now);
-	wlr_scene_output_send_frame_done(m->scene_output, &now);
+    Monitor *m = wl_container_of(listener, m, frame);
+    struct wlr_output *o = m->wlr_output;
+    struct timespec now;
+    if (!m->declare || !o->enabled) return;
+    foreach(client, globalconf.clients) {
+        Client *c = *client;
+        if (c->resize && !some_client_get_floating(c) && c->mon == m && !client_is_stopped(c))
+            goto done;
+    }
+    monitor_make_current();
+    if (declare_output_frame(m->declare, m) > 0) motionnotify(0, NULL, 0, 0, 0, 0);
+    Monitor *band;
+    wl_list_for_each(band, &mons, link) declare_damage(band->declare, band->m.x, band->m.y);
+    int width, height;
+    wlr_output_transformed_resolution(o, &width, &height);
+    struct render_draw_params params = {.scale = o->scale, .width = width, .height = height};
+    sample_surfaces(m);
+    some_recompute_idle_inhibit();
+    if (!pixman_region32_not_empty(&m->damage.current) && !m->gamma_lut_changed && !o->needs_frame) goto done;
+    struct wlr_output_state state;
+    wlr_output_state_init(&state);
+    struct wlr_buffer *buffer = NULL;
+    pixman_region32_t damage;
+    pixman_region32_init(&damage);
+    if (!wlr_output_configure_primary_swapchain(o, &state, &o->swapchain)
+            || !(buffer = wlr_swapchain_acquire(o->swapchain))) goto failed;
+    monitor_make_current();
+    unsigned int fbo = wlr_gles2_renderer_get_buffer_fbo(drw, buffer);
+    wlr_damage_ring_rotate_buffer(&m->damage, buffer, &damage);
+    int count;
+    pixman_box32_t *rects = pixman_region32_rectangles(&damage, &count);
+    struct paint_box *boxes = ecalloc(count ? count : 1, sizeof(*boxes));
+    for (int i = 0; i < count; i++)
+        boxes[i] = (struct paint_box){rects[i].x1, rects[i].y1,
+            rects[i].x2 - rects[i].x1, rects[i].y2 - rects[i].y1};
+    bool began = paint_begin(painter, fbo, buffer->width, buffer->height, o->transform, boxes, count);
+    free(boxes);
+    if (!began) goto failed;
+    paint_clear(painter, (struct paint_color){0, 0, 0, 1});
+    wl_list_for_each(band, &mons, link) {
+        if (!band->wlr_output->enabled) continue;
+        params.origin_x = band->m.x - m->m.x;
+        params.origin_y = band->m.y - m->m.y;
+        declare_draw(band->declare, painter, m, &params);
+    }
+    bool painted = paint_end(painter);
+    wl_list_for_each(band, &mons, link) declare_finish(band->declare);
+    if (!painted) goto failed;
+    wlr_output_state_set_buffer(&state, buffer);
+    wlr_output_state_set_damage(&state, &damage);
+    if (m->gamma_lut_changed) {
+        struct wlr_gamma_control_v1 *control = wlr_gamma_control_manager_v1_get_control(gamma_manager, o);
+        if (!wlr_gamma_control_v1_apply(control, &state) && control)
+            wlr_gamma_control_v1_send_failed_and_destroy(control);
+    }
+    if (!wlr_output_commit_state(o, &state)) goto failed;
+    m->gamma_lut_changed = false;
+    globalconf.frame_commit_count++;
+    goto finish;
+failed:
+    wlr_damage_ring_add_whole(&m->damage);
+finish:
+    if (buffer) wlr_buffer_unlock(buffer);
+    pixman_region32_fini(&damage);
+    wlr_output_state_finish(&state);
+done:
+    clock_gettime(CLOCK_MONOTONIC, &now);
+    window_surface_frame_done(m, &now);
 }
 
 void
@@ -665,6 +731,7 @@ updatemons(struct wl_listener *listener, void *data)
 
 			/* Remove this output from the layout to avoid cursor enter inside it */
 			wlr_output_layout_remove(output_layout, m->wlr_output);
+			window_surface_sweep(m, true);
 			closemon(m);
 			m->m = m->w = (struct wlr_box){0};
 		}
@@ -687,7 +754,7 @@ updatemons(struct wl_listener *listener, void *data)
 		/* Get the effective monitor geometry to use for surfaces */
 		wlr_output_layout_get_box(output_layout, m->wlr_output, &m->m);
 		m->w = m->m;
-		wlr_scene_output_set_position(m->scene_output, m->m.x, m->m.y);
+		wlr_damage_ring_add_whole(&m->damage);
 		declare_output_update(m->declare, m->m.x, m->m.y);
 
 		if (m->lock_surface)
@@ -835,4 +902,116 @@ xytomon(double x, double y)
 {
 	struct wlr_output *o = wlr_output_layout_output_at(output_layout, x, y);
 	return o ? o->data : NULL;
+}
+
+void monitor_make_current(void)
+{
+    struct wlr_egl *egl = wlr_gles2_renderer_get_egl(drw);
+    if (!eglMakeCurrent(wlr_egl_get_display(egl), EGL_NO_SURFACE, EGL_NO_SURFACE,
+                wlr_egl_get_context(egl))) die("couldn't bind paint context");
+}
+
+void monitor_damage_device(Monitor *m, struct render_box b)
+{
+    if (b.width <= 0 || b.height <= 0) return;
+    struct wlr_output *o = m->wlr_output;
+    int width, height;
+    wlr_output_transformed_resolution(o, &width, &height);
+    struct wlr_box box = {floorf(b.x), floorf(b.y),
+        ceilf(b.x + b.width) - floorf(b.x), ceilf(b.y + b.height) - floorf(b.y)};
+    struct wlr_box bounds = {0, 0, width, height};
+    if (!wlr_box_intersection(&box, &box, &bounds)) return;
+    wlr_box_transform(&box, &box, wlr_output_transform_invert(o->transform), width, height);
+    wlr_damage_ring_add_box(&m->damage, &box);
+    if (o->enabled) wlr_output_schedule_frame(o);
+}
+
+void monitor_damage_box(Monitor *m, struct render_box b)
+{
+    b.x = (b.x - m->m.x) * m->wlr_output->scale;
+    b.y = (b.y - m->m.y) * m->wlr_output->scale;
+    b.width *= m->wlr_output->scale;
+    b.height *= m->wlr_output->scale;
+    monitor_damage_device(m, b);
+}
+
+static void output_needs_frame(struct wl_listener *listener, void *data)
+{
+    Monitor *m = wl_container_of(listener, m, needs_frame);
+    wlr_output_schedule_frame(m->wlr_output);
+}
+
+static void output_committed(struct wl_listener *listener, void *data)
+{
+    Monitor *m = wl_container_of(listener, m, output_commit);
+    struct wlr_output_event_commit *event = data;
+    if (!(event->state->committed & (WLR_OUTPUT_STATE_MODE | WLR_OUTPUT_STATE_SCALE
+                    | WLR_OUTPUT_STATE_TRANSFORM | WLR_OUTPUT_STATE_ENABLED))) return;
+    wlr_damage_ring_add_whole(&m->damage);
+    if (m->wlr_output->enabled) {
+        m->gamma_lut_changed = true;
+        wlr_output_schedule_frame(m->wlr_output);
+    } else window_surface_sweep(m, true);
+}
+
+void monitor_gamma_changed(struct wl_listener *listener, void *data)
+{
+    struct wlr_gamma_control_manager_v1_set_gamma_event *event = data;
+    Monitor *m = event->output->data;
+    if (!m) return;
+    m->gamma_lut_changed = true;
+    wlr_output_schedule_frame(event->output);
+}
+
+static cairo_surface_t *capture(int x, int y, int width, int height,
+        bool preserve_alpha, Client *client)
+{
+    if (width <= 0 || height <= 0) return NULL;
+    monitor_make_current();
+    struct paint_target *target = paint_target_create(painter, width, height);
+    if (!target) return NULL;
+    cairo_surface_t *surface = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, width, height);
+    struct render_state *rs = NULL;
+    bool ok = cairo_surface_status(surface) == CAIRO_STATUS_SUCCESS
+        && paint_begin(painter, paint_target_fbo(target), width, height, 0, NULL, 0);
+    Monitor *m;
+    if (ok) {
+        paint_clear(painter, (struct paint_color){0, 0, 0, preserve_alpha ? 0 : 1});
+        if (client) {
+            rs = render_create();
+            render_draw_surface(rs, painter, client_surface(client), width, height,
+                client->surface_origin, client->surface_radii);
+        } else {
+            wl_list_for_each(m, &mons, link) {
+                if (!m->wlr_output->enabled) continue;
+                struct render_draw_params params = {.scale = 1,
+                    .origin_x = m->m.x - x, .origin_y = m->m.y - y,
+                    .skip_cursor = true, .skip_wallpaper = preserve_alpha,
+                    .width = width, .height = height};
+                declare_draw(m->declare, painter, NULL, &params);
+            }
+        }
+        ok = paint_end(painter);
+        if (ok) ok = paint_readback(painter, (struct paint_box){0, 0, width, height},
+            cairo_image_surface_get_stride(surface), cairo_image_surface_get_data(surface));
+    }
+    if (rs) render_destroy(rs, NULL);
+    wl_list_for_each(m, &mons, link) declare_finish(m->declare);
+    paint_target_destroy(target);
+    if (!ok) {
+        cairo_surface_destroy(surface);
+        return NULL;
+    }
+    cairo_surface_mark_dirty(surface);
+    return surface;
+}
+
+cairo_surface_t *monitor_capture(int x, int y, int width, int height, bool preserve_alpha)
+{
+    return capture(x, y, width, height, preserve_alpha, NULL);
+}
+
+cairo_surface_t *monitor_capture_client(Client *c, int width, int height)
+{
+    return client_is_mapped(c) ? capture(0, 0, width, height, true, c) : NULL;
 }

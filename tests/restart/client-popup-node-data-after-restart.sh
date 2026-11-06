@@ -1,24 +1,7 @@
 #!/usr/bin/env bash
 #
-# Every scene node carrying a back-pointer to a client must name the client_t
-# the current Lua state owns.
-#
-# A hot-reload frees every client_t and builds new ones. clients_restore() used
-# to re-point only Client::scene and Client::scene_surface, leaving
-# Client::popups and the four border rects aimed at the freed userdata.
-# xytonode() walks a hit node's ancestors reading node.data, so the first
-# pointer motion over an open popup read through freed memory and took the
-# session down with it.
-#
-# The popup is the reachable half. It is the only stale node that is ever an
-# ancestor of a hit-testable buffer: the borders are siblings of the content
-# tree, and xytonode skips non-buffer hits, so they never enter the walk.
-#
-# What this asserts is the misresolution, not the crash. Whether the stale read
-# faults depends on whether the freed Lua arena has been returned to the OS,
-# which one reload in a sandbox will not do. The pointer is equally wrong
-# either way, so the popup failing to resolve to its client is the reliable
-# signal and the segfault is the same defect on a longer-lived session.
+# After a reload, pointer motion over client content and an open popup must
+# resolve to the client_t owned by the current Lua state.
 
 . "$(dirname "$0")/lib.sh"
 
@@ -63,9 +46,8 @@ else
     finish
 fi
 
-# mouse::move carries whatever xytonode() resolved the pointer to, which is the
-# read that crashed. mouse.current_client is no use here: it geometry-scans
-# globalconf.clients and never walks the scene graph at all.
+# The event's client is resolved by the input walk, unlike the geometric
+# search used by mouse.current_client.
 ARM='local c; for _, x in ipairs(client.get()) do if x.class == "popup_test" then c = x end end; if not c then return "no client" end; _G.HIT = "none"; c:connect_signal("mouse::move", function(cc) _G.HIT = cc.class end); return "armed"'
 
 # Sent twice: the first motion only establishes the cursor position.
@@ -76,9 +58,7 @@ move_to() {
 
 check_eval hr-popup "a mouse::move probe can be armed" "$ARM" armed
 
-# Over the client's own content first. This resolves through Client::scene_surface,
-# which the reload always re-pointed correctly, so it proves the probe works
-# before the interesting case relies on it.
+# Check the content before probing the popup.
 check_eval hr-popup "pointer motion over the client content" \
     "$(move_to 200 200)" moved
 check_eval hr-popup "the content resolves to its client" \

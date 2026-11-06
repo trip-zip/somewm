@@ -14,7 +14,6 @@ runner.run_async(function()
     assert(dump:find('derived 0 legacy 0',1,true),'header')
     local line=assert(dump:match('\n( *%x+ CUSTOM [^\n]*widget wibox.container.background[^\n]*)'),dump)
     io.stderr:write('[UNFILLED SHAPE] '..line..'\n')
-    assert(not dump:find('[tree!=scene]',1,true),line)
     assert(line:find('box 4,4 20x54 rbox 4,4 20x24 widget wibox.container.background',1,true),line)
     assert(awesome._test_redeclare()==0)
     bar.visible=false

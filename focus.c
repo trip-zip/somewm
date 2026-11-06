@@ -14,7 +14,6 @@
 #include <wlr/types/wlr_keyboard.h>
 #include <wlr/types/wlr_layer_shell_v1.h>
 #include <wlr/types/wlr_pointer_constraints_v1.h>
-#include <wlr/types/wlr_scene.h>
 #include <wlr/types/wlr_seat.h>
 #include <wlr/types/wlr_xdg_shell.h>
 #include <wlr/xwayland.h>
@@ -132,13 +131,9 @@ focusclient(Client *c, int lift)
 	 * client_focus_refresh() runs. We must apply focus now. */
 	surface = client_surface(c);
 
-	/* Check if surface is ready for keyboard input.
-	 * For XWayland clients, wlr_surface->mapped may be false even when the XWayland
-	 * map event has fired. We use c->scene as the indicator that mapnotify() has
-	 * processed this client and it's ready for input. */
 	int surface_ready;
 	if (c->client_type == X11) {
-		surface_ready = (surface && c->scene != NULL);
+		surface_ready = (surface && some_client_is_mapped(c));
 	} else
 	{
 		surface_ready = (surface && surface->mapped);

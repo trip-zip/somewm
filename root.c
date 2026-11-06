@@ -20,20 +20,21 @@
 #include "globalconf.h"
 #include "objects/drawable.h"
 #include "objects/drawin.h"
+#include "objects/ui_box.h"
 #include "objects/client.h"
-#include "screenshot_compose.h"
+#include "monitor.h"
 #include "somewm_types.h"
 #include "declare.h"
 #include "input.h"
 #include <xkbcommon/xkbcommon.h>
 #include <wlr/types/wlr_seat.h>
+#include <wlr/types/wlr_keyboard.h>
 #include <wlr/types/wlr_data_device.h>
 #include <wlr/types/wlr_cursor.h>
 #include <wlr/types/wlr_output_layout.h>
 #include <linux/input-event-codes.h>
 #include <time.h>
 #include <wlr/render/interface.h>
-#include <wlr/types/wlr_scene.h>
 #include <wlr/render/wlr_renderer.h>
 #include <wlr/render/wlr_texture.h>
 #include <wlr/render/pass.h>
@@ -48,8 +49,6 @@
 
 /* External references to somewm.c globals */
 extern struct wlr_output_layout *output_layout;
-extern struct wlr_scene_tree *layers[];
-extern struct wlr_scene *scene;
 extern struct wlr_renderer *drw;
 extern struct wlr_allocator *alloc;
 extern struct wl_list mons;
@@ -463,6 +462,17 @@ luaA_root_fake_input(lua_State *L)
 			wlr_seat_pointer_notify_enter(seat, surface, sx, sy);
 		}
 
+		drawin_t *host = NULL;
+		xytonode(cursor->x, cursor->y, NULL, NULL, NULL, &host, NULL, NULL, NULL);
+		if (host && host->node && host->node->ui_box) {
+			struct wlr_keyboard *keyboard = wlr_seat_get_keyboard(seat);
+			uint32_t mods = keyboard ? wlr_keyboard_get_modifiers(keyboard) : 0;
+			ui_box_button(L, host, (int)cursor->x - host->x, (int)cursor->y - host->y,
+				button, mods & ~(WLR_MODIFIER_CAPS | WLR_MODIFIER_MOD2),
+				state == WL_POINTER_BUTTON_STATE_PRESSED);
+			return 0;
+		}
+
 		wlr_seat_pointer_notify_button(seat, timestamp, button_code, state);
 
 	} else if (strcmp(event_type, "motion_notify") == 0) {
@@ -725,16 +735,7 @@ luaA_root_tags(lua_State *L)
 static int
 luaA_root_drawins(lua_State *L)
 {
-	int i;
-
-	lua_createtable(L, globalconf.drawins.len, 0);
-
-	for (i = 0; i < globalconf.drawins.len; i++) {
-		luaA_object_push(L, globalconf.drawins.tab[i]);
-		lua_rawseti(L, -2, i + 1);
-	}
-
-	return 1;
+	return luaA_drawin_get(L);
 }
 
 /** Paint the wallpaper from a Cairo pattern, covering the full output
@@ -868,384 +869,16 @@ luaA_root_hot_reload(lua_State *L)
 	button_array_init(&globalconf.buttons);
 }
 
-/* ========== SCREENSHOT SUPPORT ========== */
-
-/* struct screenshot_render_data is declared in screenshot_compose.h so it can
- * be shared with objects/client.c. */
-
-/** Orient a source box of sw x sh under transform t, the way the scene
- * renderer orients a buffer. */
-static void
-composite_transform_matrix(cairo_matrix_t *m, enum wl_output_transform t,
-                           double sw, double sh)
-{
-	switch (t) {
-	case WL_OUTPUT_TRANSFORM_90:
-		cairo_matrix_init(m, 0, -1, 1, 0, 0, sw); break;
-	case WL_OUTPUT_TRANSFORM_180:
-		cairo_matrix_init(m, -1, 0, 0, -1, sw, sh); break;
-	case WL_OUTPUT_TRANSFORM_270:
-		cairo_matrix_init(m, 0, 1, -1, 0, sh, 0); break;
-	case WL_OUTPUT_TRANSFORM_FLIPPED:
-		cairo_matrix_init(m, -1, 0, 0, 1, sw, 0); break;
-	case WL_OUTPUT_TRANSFORM_FLIPPED_90:
-		cairo_matrix_init(m, 0, 1, 1, 0, 0, 0); break;
-	case WL_OUTPUT_TRANSFORM_FLIPPED_180:
-		cairo_matrix_init(m, 1, 0, 0, -1, 0, sh); break;
-	case WL_OUTPUT_TRANSFORM_FLIPPED_270:
-		cairo_matrix_init(m, 0, -1, -1, 0, sh, sw); break;
-	default:
-		cairo_matrix_init_identity(m); break;
-	}
-}
-
-/** The box with its corners cut by radii (top-left, top-right,
- * bottom-right, bottom-left), fitted to the box by the edge rule the
- * renderers use; a plain rectangle when every radius is 0. */
-static void
-composite_rounded_path(cairo_t *cr, double x, double y, double w, double h,
-                       const float radii[4])
-{
-	float r[4];
-	double deg = 3.14159265358979323846 / 180.0;
-
-	wlr_render_fit_corner_radii(r, radii, w, h);
-	if (r[0] == 0 && r[1] == 0 && r[2] == 0 && r[3] == 0) {
-		cairo_rectangle(cr, x, y, w, h);
-		return;
-	}
-	cairo_new_sub_path(cr);
-	cairo_arc(cr, x + w - r[1], y + r[1], r[1], -90.0 * deg, 0.0);
-	cairo_arc(cr, x + w - r[2], y + h - r[2], r[2], 0.0, 90.0 * deg);
-	cairo_arc(cr, x + r[3], y + h - r[3], r[3], 90.0 * deg, 180.0 * deg);
-	cairo_arc(cr, x + r[0], y + r[0], r[0], 180.0 * deg, 270.0 * deg);
-	cairo_close_path(cr);
-}
-
-/** Clip to every rounded clip of a node, in node-local coordinates. */
-static void
-composite_clip_rounded(cairo_t *cr, const struct wlr_render_rounded_clip *clips,
-                       size_t len)
-{
-	for (size_t i = 0; i < len; i++) {
-		const struct wlr_box *b = &clips[i].box;
-
-		composite_rounded_path(cr, b->x, b->y, b->width, b->height, clips[i].radii);
-		cairo_clip(cr);
-	}
-}
-
-/** Paint buf_surface, the pixels of scene_buffer's buffer, at the node
- * position the way the scene renderer would place them.
- *
- * Honours src_box (the crop wlroots sets when a surface is clipped to its xdg
- * window geometry), dst_width/dst_height and transform. Deliberately ignores
- * blend_mode, filter_mode and the wait timeline, which do not apply to a
- * cairo target; opacity is painted.
- */
-static void
-composite_paint(struct screenshot_render_data *rdata, cairo_surface_t *buf_surface,
-                struct wlr_scene_buffer *scene_buffer, int sx, int sy)
-{
-	enum wl_output_transform t = wlr_output_transform_invert(scene_buffer->transform);
-	bool swaps = t & WL_OUTPUT_TRANSFORM_90;
-	struct wlr_fbox src = scene_buffer->src_box;
-	int dst_width, dst_height;
-	double tw, th;
-	cairo_matrix_t m;
-
-	if (wlr_fbox_empty(&src))
-		src = (struct wlr_fbox){ 0, 0, scene_buffer->buffer->width,
-		                        scene_buffer->buffer->height };
-
-	tw = swaps ? src.height : src.width;
-	th = swaps ? src.width : src.height;
-
-	dst_width = scene_buffer->dst_width;
-	dst_height = scene_buffer->dst_height;
-	if (dst_width <= 0 || dst_height <= 0) {
-		dst_width = tw;
-		dst_height = th;
-	}
-
-	composite_transform_matrix(&m, t, src.width, src.height);
-
-	cairo_save(rdata->cr);
-	cairo_translate(rdata->cr, sx + rdata->offset_x, sy + rdata->offset_y);
-	/* The buffer's corner radii and rounded clips, as the output cuts it. */
-	composite_rounded_path(rdata->cr, 0, 0, dst_width, dst_height,
-		scene_buffer->corner_radii);
-	cairo_clip(rdata->cr);
-	composite_clip_rounded(rdata->cr, scene_buffer->clips, scene_buffer->clips_len);
-	cairo_scale(rdata->cr, dst_width / tw, dst_height / th);
-	cairo_transform(rdata->cr, &m);
-	cairo_translate(rdata->cr, -src.x, -src.y);
-	cairo_set_source_surface(rdata->cr, buf_surface, 0, 0);
-	cairo_paint_with_alpha(rdata->cr, scene_buffer->opacity);
-	cairo_restore(rdata->cr);
-}
-
-/** Callback for wlr_scene_output_for_each_buffer
- * Reads pixels from each scene buffer and composites onto Cairo surface.
- * Handles both SHM buffers (widgets) and GPU buffers (clients).
- *
- * Shared with objects/client.c via screenshot_compose.h.
- */
-void
-composite_scene_buffer_to_cairo(struct wlr_scene_buffer *scene_buffer,
-                                int sx, int sy, void *data)
-{
-	struct screenshot_render_data *rdata = data;
-	struct wlr_buffer *buffer;
-	cairo_surface_t *buf_surface;
-	int buf_width, buf_height;
-	void *shm_data;
-	uint32_t shm_format;
-	size_t shm_stride;
-	void *pixels = NULL;
-	size_t stride;
-	bool need_free = false;
-	cairo_format_t cairo_fmt;
-
-	if (!scene_buffer->buffer)
-		return;
-
-	buffer = scene_buffer->buffer;
-	buf_width = buffer->width;
-	buf_height = buffer->height;
-
-	if (buf_width <= 0 || buf_height <= 0)
-		return;
-
-	/* First try direct buffer access (works for SHM buffers - widgets) */
-	if (wlr_buffer_begin_data_ptr_access(buffer, WLR_BUFFER_DATA_PTR_ACCESS_READ,
-	                                     &shm_data, &shm_format, &shm_stride)) {
-		/* Direct access succeeded - this is an SHM buffer */
-
-		/* Check format compatibility with Cairo */
-		if (shm_format == DRM_FORMAT_ARGB8888 || shm_format == DRM_FORMAT_XRGB8888) {
-			cairo_fmt = (shm_format == DRM_FORMAT_ARGB8888) ?
-			            CAIRO_FORMAT_ARGB32 : CAIRO_FORMAT_RGB24;
-			/* Use actual buffer dimensions, not dst dimensions */
-			buf_surface = cairo_image_surface_create_for_data(
-				shm_data, cairo_fmt, buf_width, buf_height, shm_stride);
-
-			if (cairo_surface_status(buf_surface) == CAIRO_STATUS_SUCCESS) {
-				composite_paint(rdata, buf_surface, scene_buffer, sx, sy);
-				cairo_surface_destroy(buf_surface);
-			}
-		}
-		wlr_buffer_end_data_ptr_access(buffer);
-		return;
-	}
-
-	/* Direct access failed - try GPU texture path (for DMA-BUF/GPU buffers) */
-	{
-		struct wlr_texture *texture;
-
-		texture = wlr_texture_from_buffer(rdata->renderer, buffer);
-		if (!texture)
-			return;
-
-		/* Read at full buffer resolution, not dst (logical) dimensions */
-		stride = buf_width * 4;
-		pixels = malloc(stride * buf_height);
-		if (!pixels) {
-			wlr_texture_destroy(texture);
-			return;
-		}
-		need_free = true;
-
-		if (!wlr_texture_read_pixels(texture, &(struct wlr_texture_read_pixels_options){
-			.data = pixels,
-			.format = DRM_FORMAT_ARGB8888,
-			.stride = stride,
-			.src_box = { .x = 0, .y = 0, .width = buf_width, .height = buf_height },
-		})) {
-			free(pixels);
-			wlr_texture_destroy(texture);
-			return;
-		}
-
-		wlr_texture_destroy(texture);
-	}
-
-	/* Create Cairo surface at full buffer resolution */
-	buf_surface = cairo_image_surface_create_for_data(
-		pixels, CAIRO_FORMAT_ARGB32, buf_width, buf_height, stride);
-
-	if (cairo_surface_status(buf_surface) != CAIRO_STATUS_SUCCESS) {
-		if (need_free)
-			free(pixels);
-		return;
-	}
-
-	composite_paint(rdata, buf_surface, scene_buffer, sx, sy);
-
-	cairo_surface_destroy(buf_surface);
-	if (need_free)
-		free(pixels);
-}
-
-
-/** Composite one scene node and its children onto a cairo target.
- *
- * wlr_scene_node_for_each_buffer only reaches buffers, and the renderer draws
- * a flat color as a wlr_scene_rect (render.c): a converted widget container's
- * background is a rectangle and nothing else, and so is the backing behind a
- * non-opaque fullscreen surface. Walking once covers both kinds, in the order
- * the compositor stacks them.
- *
- * Shared with objects/screen.c via screenshot_compose.h.
- */
-/* Whether a node's layout box reaches the target at all. */
-static bool
-within_bounds(const struct screenshot_render_data *rdata, int x, int y,
-              int w, int h)
-{
-	if (rdata->bound_w <= 0 || rdata->bound_h <= 0)
-		return true;
-	return !(x + w <= rdata->bound_x || x >= rdata->bound_x + rdata->bound_w
-		|| y + h <= rdata->bound_y || y >= rdata->bound_y + rdata->bound_h);
-}
-
-void
-composite_scene_node_to_cairo(struct wlr_scene_node *node, void *data)
-{
-	struct screenshot_render_data *rdata = data;
-	struct wlr_scene_node *child;
-	enum declare_kind kind;
-	int lx, ly;
-
-	if (!node->enabled)
-		return;
-	/* The pointer image is never in a capture, as under X11, where the
-	 * cursor sprite is not in the framebuffer XGetImage reads. */
-	if (declare_hit(node, &kind) && kind == DECLARE_KIND_CURSOR)
-		return;
-
-	switch (node->type) {
-	case WLR_SCENE_NODE_BUFFER: {
-		struct wlr_scene_buffer *buffer = wlr_scene_buffer_from_node(node);
-		int w, h;
-
-		if (!wlr_scene_node_coords(node, &lx, &ly) || !buffer->buffer)
-			return;
-		/* The size it draws at, not the size of its pixels: a shadow
-		 * edge is a one-pixel texture stretched the length of a client,
-		 * and culling on the texture would drop it. */
-		w = buffer->dst_width > 0 ? buffer->dst_width : buffer->buffer->width;
-		h = buffer->dst_height > 0 ? buffer->dst_height : buffer->buffer->height;
-		if (!within_bounds(rdata, lx, ly, w, h))
-			return;
-		if (rdata->skip_wallpaper && declare_hit(node, &kind)
-				&& kind == DECLARE_KIND_WALLPAPER)
-			return;
-		composite_scene_buffer_to_cairo(buffer, lx, ly, rdata);
-		return;
-	}
-	case WLR_SCENE_NODE_RECT: {
-		struct wlr_scene_rect *rect = wlr_scene_rect_from_node(node);
-		float a = rect->color[3];
-
-		if (!wlr_scene_node_coords(node, &lx, &ly))
-			return;
-		if (!within_bounds(rdata, lx, ly, rect->width, rect->height))
-			return;
-		/* Scene rect colors are premultiplied; cairo wants straight. The
-		 * rect's radii, its cutout and its rounded clips, as the output
-		 * draws it. */
-		cairo_save(rdata->cr);
-		cairo_translate(rdata->cr, lx + rdata->offset_x, ly + rdata->offset_y);
-        /* A cropped border's hole may extend outside its scene rectangle.
-         * Even-odd filling must not paint that outside part of the hole. */
-        cairo_rectangle(rdata->cr, 0, 0, rect->width, rect->height);
-        cairo_clip(rdata->cr);
-		composite_clip_rounded(rdata->cr, rect->clips, rect->clips_len);
-		cairo_set_source_rgba(rdata->cr,
-		                      a > 0 ? rect->color[0] / a : 0,
-		                      a > 0 ? rect->color[1] / a : 0,
-		                      a > 0 ? rect->color[2] / a : 0, a);
-		composite_rounded_path(rdata->cr, 0, 0, rect->width, rect->height,
-		                       rect->corner_radii);
-		if (rect->cutout_box.width > 0) {
-			struct wlr_box b = rect->cutout_box;
-
-			composite_rounded_path(rdata->cr, b.x, b.y, b.width, b.height,
-			                       rect->cutout_radii);
-			cairo_set_fill_rule(rdata->cr, CAIRO_FILL_RULE_EVEN_ODD);
-		}
-		cairo_fill(rdata->cr);
-		cairo_restore(rdata->cr);
-		return;
-	}
-	case WLR_SCENE_NODE_TREE:
-		wl_list_for_each(child, &wlr_scene_tree_from_node(node)->children, link)
-			composite_scene_node_to_cairo(child, rdata);
-		return;
-	}
-}
-
-/** root.content([preserve_alpha]) - Get screenshot of entire desktop
- *
- * Returns a Cairo surface of the whole layout, composited on the CPU from
- * the scene: every node the renderer reconciled from the Clay tree, plus the
- * client surfaces it borrowed, in draw order. Nothing is read from a
- * drawable's own surface.
- *
- * \param preserve_alpha Optional boolean. If true, OUTPUT's wallpaper image is left
- *        out and the ground is transparent, preserving the alpha channel of
- *        transparent windows. Default is false.
- * \return cairo_surface_t* as lightuserdata
- */
 static int
 luaA_root_get_content(lua_State *L)
 {
-	struct wlr_box layout_box;
-	cairo_surface_t *surface;
-	cairo_t *cr;
-	int width, height;
-	struct screenshot_render_data rdata = { 0 };
-	bool preserve_alpha = false;
-
-	/* Check for optional preserve_alpha parameter */
-	if (lua_gettop(L) >= 1 && lua_isboolean(L, 1))
-		preserve_alpha = lua_toboolean(L, 1);
-
-	/* Get virtual screen size (bounding box of all outputs) */
-	wlr_output_layout_get_box(output_layout, NULL, &layout_box);
-	width = layout_box.width;
-	height = layout_box.height;
-
-	if (width <= 0 || height <= 0)
-		return 0;
-
-	/* Create Cairo surface for compositing */
-	surface = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, width, height);
-	if (cairo_surface_status(surface) != CAIRO_STATUS_SUCCESS)
-		return 0;
-
-	cr = cairo_create(surface);
-
-	/* A fresh image surface is transparent; the ground under an opaque
-	 * capture is black, as behind the outputs. */
-	if (!preserve_alpha) {
-		cairo_set_source_rgb(cr, 0, 0, 0);
-		cairo_paint(cr);
-	}
-
-	/* Layout coordinates, no offset; bound_w stays zero: the whole layout
-	 * is the target. */
-	rdata.cr = cr;
-	rdata.renderer = drw;
-	rdata.skip_wallpaper = preserve_alpha;
-	composite_scene_node_to_cairo(&scene->tree.node, &rdata);
-
-	cairo_destroy(cr);
-
-	/* Return surface as lightuserdata (Lua will use gears.surface to manage it) */
-	lua_pushlightuserdata(L, surface);
-	return 1;
+    struct wlr_box box;
+    wlr_output_layout_get_box(output_layout, NULL, &box);
+    bool preserve_alpha = lua_isboolean(L, 1) && lua_toboolean(L, 1);
+    cairo_surface_t *surface = monitor_capture(box.x, box.y, box.width, box.height, preserve_alpha);
+    if (!surface) return 0;
+    lua_pushlightuserdata(L, surface);
+    return 1;
 }
 
 /* ========== END SCREENSHOT SUPPORT ========== */

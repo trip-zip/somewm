@@ -1,5 +1,6 @@
 /* input.c - Input handling for somewm compositor */
 
+#include "objects/ui_box.h"
 #include <libinput.h>
 #include <linux/input-event-codes.h>
 #include <signal.h>
@@ -26,7 +27,6 @@
 #include <wlr/types/wlr_pointer_gestures_v1.h>
 #include <wlr/types/wlr_primary_selection.h>
 #include <wlr/types/wlr_relative_pointer_v1.h>
-#include <wlr/types/wlr_scene.h>
 #include <wlr/types/wlr_seat.h>
 #include <wlr/types/wlr_switch.h>
 #include <wlr/types/wlr_tablet_pad.h>
@@ -793,12 +793,15 @@ mouse_emit_leave(lua_State *L)
 		lua_pop(L, 1);
 	} else if (globalconf.mouse_under.type == UNDER_DRAWIN) {
 		drawin_t *d = globalconf.mouse_under.ptr.drawin;
-		luaA_object_push(L, d);
-		if (lua_isnil(L, -1)) {
-			warn("mouse::leave on unregistered drawin %p", (void*)d);
+		if (d->node && d->node->ui_box) {
+			ui_box_pointer_leave(L);
+		} else {
+			luaA_object_push(L, d);
+			if (lua_isnil(L, -1))
+				warn("mouse::leave on unregistered drawin %p", (void*)d);
+			some_event_queue_signal0(L, -1, SIG_MOUSE_LEAVE);
+			lua_pop(L, 1);
 		}
-		some_event_queue_signal0(L, -1, SIG_MOUSE_LEAVE);
-		lua_pop(L, 1);
 	}
 	globalconf.mouse_under.type = UNDER_NONE;
 
@@ -827,12 +830,13 @@ mouse_emit_client_enter(lua_State *L, client_t *c)
 void
 mouse_emit_drawin_enter(lua_State *L, drawin_t *d)
 {
-	luaA_object_push(L, d);
-	if (lua_isnil(L, -1)) {
-		warn("mouse::enter on unregistered drawin %p", (void*)d);
+	if (!(d->node && d->node->ui_box)) {
+		luaA_object_push(L, d);
+		if (lua_isnil(L, -1))
+			warn("mouse::enter on unregistered drawin %p", (void*)d);
+		some_event_queue_signal0(L, -1, SIG_MOUSE_ENTER);
+		lua_pop(L, 1);
 	}
-	some_event_queue_signal0(L, -1, SIG_MOUSE_ENTER);
-	lua_pop(L, 1);
 	globalconf.mouse_under.type = UNDER_DRAWIN;
 	globalconf.mouse_under.ptr.drawin = d;
 }
@@ -857,8 +861,8 @@ motionnotify(uint32_t time, struct wlr_input_device *device, double dx, double d
 			&& toplevel_from_wlr_surface(seat->pointer_state.focused_surface, &w, &l) >= 0) {
 		c = w;
 		surface = seat->pointer_state.focused_surface;
-		sx = cursor->x - (l ? l->scene->node.x : w->geometry.x);
-		sy = cursor->y - (l ? l->scene->node.y : w->geometry.y);
+		sx = cursor->x - (l ? (l->geom.x + l->mon->m.x) : w->geometry.x);
+		sy = cursor->y - (l ? (l->geom.y + l->mon->m.y) : w->geometry.y);
 	}
 
 	/* time is 0 in internal calls meant to restore pointer focus. */
@@ -1013,19 +1017,22 @@ motionnotify(uint32_t time, struct wlr_input_device *device, double dx, double d
 				mouse_emit_drawin_enter(L, current_drawin);
 			}
 
-			luaA_object_push(L, current_drawin);
-			if (lua_isnil(L, -1)) {
-				warn("mouse event on unregistered drawin %p", (void*)current_drawin);
-				lua_pop(L, 1);
-			} else {
-				luaA_object_push_item(L, -1, current_drawin->drawable);
-				event_drawable_under_mouse(L, -1);
-
-				some_event_queue_move(L, -1,
-					(int)cursor->x - current_drawin->x,
+			if (current_drawin->node && current_drawin->node->ui_box) {
+				ui_box_pointer_move(L, current_drawin, (int)cursor->x - current_drawin->x,
 					(int)cursor->y - current_drawin->y);
-
-				lua_pop(L, 2);
+			} else {
+				luaA_object_push(L, current_drawin);
+				if (lua_isnil(L, -1)) {
+					warn("mouse event on unregistered drawin %p", (void*)current_drawin);
+					lua_pop(L, 1);
+				} else {
+					luaA_object_push_item(L, -1, current_drawin->drawable);
+					event_drawable_under_mouse(L, -1);
+					some_event_queue_move(L, -1,
+						(int)cursor->x - current_drawin->x,
+						(int)cursor->y - current_drawin->y);
+					lua_pop(L, 2);
+				}
 			}
 
 		} else {
@@ -1046,8 +1053,10 @@ motionnotify(uint32_t time, struct wlr_input_device *device, double dx, double d
 	if (!surface && !seat->drag) {
 		drawin_t *hover_drawin = NULL;
 		xytonode(cursor->x, cursor->y, NULL, NULL, NULL, &hover_drawin, NULL, NULL, NULL);
-		if (hover_drawin && hover_drawin->cursor)
-			cursor_set_xcursor(hover_drawin->cursor);
+		const char *name = hover_drawin && hover_drawin->node && hover_drawin->node->ui_box
+			? ui_box_pointer_cursor(hover_drawin) : hover_drawin ? hover_drawin->cursor : NULL;
+		if (name)
+			cursor_set_xcursor(name);
 		else
 			cursor_set_xcursor(selected_root_cursor ? selected_root_cursor : "default");
 	}
@@ -2331,8 +2340,8 @@ touchnotifymotion(struct wl_listener *listener, void *data)
 	if (!surface || toplevel_from_wlr_surface(surface, &c, &l) < 0)
 		return;
 
-	sx = lx - (l ? l->scene->node.x : c->geometry.x);
-	sy = ly - (l ? l->scene->node.y : c->geometry.y);
+	sx = lx - (l ? (l->geom.x + l->mon->m.x) : c->geometry.x);
+	sy = ly - (l ? (l->geom.y + l->mon->m.y) : c->geometry.y);
 
 	wlr_seat_touch_notify_motion(seat, event->time_msec, event->touch_id, sx, sy);
 }
@@ -3036,13 +3045,9 @@ cursor_surface_forget(void)
 	wl_list_remove(&cursor_image.surface_commit.link);
 	declare_cursor_node_forget();
 	cursor_image.surface = NULL;
-	cursor_image.tree = NULL;
 	cursor_image.render_owner = NULL;
 }
 
-/* The client's cursor surface is gone, and wlroots destroyed its scene tree
- * with it; the next frame declares no leaf for it and the renderer forgets
- * the borrow it can no longer resolve. */
 static void
 cursor_surface_destroy(struct wl_listener *listener, void *data)
 {
@@ -3067,7 +3072,6 @@ cursor_surface_drop(void)
 {
 	if (!cursor_image.surface)
 		return;
-	wlr_scene_node_destroy(&cursor_image.tree->node);
 	cursor_surface_forget();
 }
 
@@ -3097,8 +3101,6 @@ cursor_set_surface(struct wlr_surface *surface, int hotspot_x, int hotspot_y)
 		cursor_surface_drop();
 		if (surface) {
 			cursor_image.surface = surface;
-			cursor_image.tree = wlr_scene_subsurface_tree_create(
-				window_parked_tree(), surface);
 			cursor_image.surface_destroy.notify = cursor_surface_destroy;
 			wl_signal_add(&surface->events.destroy, &cursor_image.surface_destroy);
 			cursor_image.surface_commit.notify = cursor_surface_commit;
@@ -3229,8 +3231,6 @@ startdrag(struct wl_listener *listener, void *data)
 	if (!drag->icon)
 		return;
 
-	/* Born parked; the frame that declares it borrows it into a band. */
-	drag->icon->data = wlr_scene_drag_icon_create(window_parked_tree(), drag->icon);
 	LISTEN_STATIC(&drag->icon->events.destroy, destroydragicon);
 	declare_mark_all_dirty();
 }

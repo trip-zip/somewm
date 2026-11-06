@@ -1,4 +1,4 @@
-/* window.c - Window lifecycle, geometry, and scene graph management */
+/* window.c - Window lifecycle, geometry and surface tracking */
 
 #include <math.h>
 #include <signal.h>
@@ -16,7 +16,6 @@
 #include <wlr/types/wlr_layer_shell_v1.h>
 #include <wlr/types/wlr_output.h>
 #include <wlr/types/wlr_output_layout.h>
-#include <wlr/types/wlr_scene.h>
 #include <wlr/types/wlr_seat.h>
 #include <wlr/types/wlr_session_lock_v1.h>
 #include <wlr/types/wlr_xcursor_manager.h>
@@ -30,6 +29,7 @@
 #include "somewm.h"
 #include "somewm_api.h"
 #include "window.h"
+#include <wlr/types/wlr_presentation_time.h>
 #include "event_queue.h"
 #include "monitor.h"
 #include "protocols.h"
@@ -81,11 +81,9 @@ struct wl_listener new_xdg_popup = {.notify = createpopup};
 struct wl_listener new_xdg_decoration = {.notify = createdecoration};
 
 void
-client_scene_node_destroy(Client *c)
+client_node_destroy(Client *c)
 {
-	if (client_has_surface(c))
-		client_surface_clear_scene_data(client_surface(c), c->scene);
-	/* The renderer must not release the scene after it has been destroyed. */
+
 	for (int bar = 0; bar < CLIENT_TITLEBAR_COUNT; bar++) {
 		drawable_t *d = c->titlebar[bar].drawable;
 		if (d) {
@@ -97,8 +95,6 @@ client_scene_node_destroy(Client *c)
 	c->node = NULL;
 	c->surface_node = NULL;
 	c->render_owner = NULL;
-	wlr_scene_node_destroy(&c->scene->node);
-	c->scene = NULL;
 }
 
 void
@@ -172,15 +168,12 @@ arrange(Monitor *m)
 	 * the mark below is what makes it re-derive one. */
 	foreach(client, globalconf.clients) {
 		c = *client;
-		if (!c->mon || c->mon != m || !c->scene)
+		if (!c->mon || c->mon != m || !client_is_mapped(c))
 			continue;
 
 		client_set_suspended(c, !client_isvisible(c));
 	}
 
-	/* Visibility and geometry changes reach the scene at the next frame. Marked
-	 * before the early returns below, which would otherwise leave a
-	 * visibility change with nothing to apply it. */
 	if (m->declare)
 		declare_output_mark_dirty(m->declare);
 
@@ -201,8 +194,6 @@ arrange(Monitor *m)
 	some_recompute_idle_inhibit();
 }
 
-/* Handle initial XDG commit - sets scale, capabilities, size.
- * This listener is registered in createnotify before wlr_scene_xdg_surface_create. */
 void
 initialcommitnotify(struct wl_listener *listener, void *data)
 {
@@ -258,11 +249,9 @@ initialcommitnotify(struct wl_listener *listener, void *data)
 	wlr_xdg_toplevel_set_size(c->surface.xdg->toplevel, 0, 0);
 }
 
-static void client_apply_corners(Client *c);
 static void client_apply_surface_clip(Client *c);
 static void configure_retry_arm(Client *c);
 
-/* Handle subsequent XDG commits after wlroots updates the scene surface. */
 void
 commitnotify(struct wl_listener *listener, void *data)
 {
@@ -306,7 +295,6 @@ commitnotify(struct wl_listener *listener, void *data)
 		lua_pop(L, 1);
 		if (c->mon && c->mon->declare)
 			declare_output_mark_dirty(c->mon->declare);
-		client_apply_corners(c);
 	}
 
 	/* mark a pending resize as completed */
@@ -371,11 +359,6 @@ popup_dirty(Popup *p)
 		declare_output_mark_dirty(m->declare);
 }
 
-/* XDG positioner policy stays here: the popup's geometry is unconstrained
- * against the output box in its toplevel's window-geometry coordinates,
- * which are the toplevel's configured geometry (last frame's allocation,
- * an input), never a scene coordinate. The result enters the tree as the
- * popup leaf's offset. */
 void
 popup_unconstrain(Popup *p)
 {
@@ -417,13 +400,9 @@ destroypopup(struct wl_listener *listener, void *data)
 	Popup *p = wl_container_of(listener, p, destroy);
 
 	popup_dirty(p);
-	/* Drop the handle first, so the renderer's sweep leaves the tree
-	 * alone, then destroy it with its subsurface tree. */
+	/* Invalidate the handle before freeing the popup the renderer resolves. */
 	node_destroy(p->node);
-	if (p->tree) {
-		client_surface_clear_scene_data(p->popup->base->surface, p->tree);
-		wlr_scene_node_destroy(&p->tree->node);
-	}
+
 	wl_list_remove(&p->link);
 	wl_list_remove(&p->commit.link);
 	wl_list_remove(&p->reposition.link);
@@ -451,13 +430,6 @@ commitpopup(struct wl_listener *listener, void *data)
 		return;
 	}
 
-	/* The popup's own tree, born parked: the surface at its origin, the
-	 * xdg geometry offset folded into the leaf's declared offset. The
-	 * node names the toplevel for the input owner walk. */
-	p->tree = wlr_scene_tree_create(window_parked_tree());
-	p->tree->node.data = c ? (void *)c : (void *)l;
-	wlr_scene_subsurface_tree_create(p->tree, p->popup->base->surface);
-	p->popup->base->surface->data = p->tree;
 	popup_unconstrain(p);
 }
 
@@ -479,7 +451,7 @@ client_parent_changed(struct wl_listener *listener, void *data)
 {
 	Client *c = wl_container_of(listener, c, set_parent);
 	/* mapnotify resolves the initial parent after attaching the client node. */
-	if (!c->scene)
+	if (!client_is_mapped(c))
 		return;
 	struct wlr_xdg_toplevel *parent = c->surface.xdg->toplevel->parent;
 	lua_State *L = globalconf_get_lua_State();
@@ -524,8 +496,6 @@ createnotify(struct wl_listener *listener, void *data)
 	c->surface.xdg = toplevel->base;
 	c->client_type = XDGShell;
 
-	/* The initial commit handles pre-map setup. mapnotify registers the
-	 * main commit listener after creating the wlroots scene surface. */
 	LISTEN(&toplevel->base->surface->events.commit, &c->initial_commit, initialcommitnotify);
 	LISTEN(&toplevel->base->surface->events.map, &c->map, mapnotify);
 	LISTEN(&toplevel->base->surface->events.unmap, &c->unmap, unmapnotify);
@@ -604,9 +574,9 @@ client_remove_all_listeners(client_t *c)
 	{
 		wl_list_remove(&c->set_parent.link);
 		wl_list_remove(&c->initial_commit.link);
-		/* commit.link is removed in unmapnotify for XDG clients.
-		 * Only remove here if unmapnotify didn't run (c->scene still set). */
-		if (c->scene) {
+		/* The commit listener exists only while the client is mapped:
+		 * mapnotify registers it and unmapnotify removes it. */
+		if (c->surface_node) {
 			wl_list_remove(&c->commit.link);
 		}
 		wl_list_remove(&c->map.link);
@@ -632,15 +602,6 @@ client_remove_all_listeners(client_t *c)
 	}
 }
 
-/** Re-register all wl_listeners for a client after hot-reload.
- * Called after Lua state is rebuilt. Registers the appropriate set of listeners
- * based on client type (XDG vs XWayland) and mapped state (scene != NULL).
- *
- * For mapped clients: registers the "already mapped" listener set (commit, not
- * initial_commit; plus foreign_toplevel and decoration listeners).
- * For unmapped clients: registers the "pre-map" listener set matching
- * createnotify/createnotifyx11.
- */
 void
 client_reregister_listeners(client_t *c)
 {
@@ -657,8 +618,7 @@ client_reregister_listeners(client_t *c)
 		LISTEN(&xsurface->events.set_hints, &c->set_hints, sethints);
 		LISTEN(&xsurface->events.set_title, &c->set_title, updatetitle);
 
-		/* If mapped (has surface association), register map/unmap */
-		if (c->scene && xsurface->surface) {
+		if (xsurface->surface) {
 			LISTEN(&xsurface->surface->events.map, &c->map, mapnotify);
 			LISTEN(&xsurface->surface->events.unmap, &c->unmap, unmapnotify);
 		}
@@ -674,7 +634,7 @@ client_reregister_listeners(client_t *c)
 		LISTEN(&toplevel->events.set_title, &c->set_title, updatetitle);
 		LISTEN(&toplevel->events.set_parent, &c->set_parent, client_parent_changed);
 
-		if (c->scene) {
+		if (c->surface_node) {
 			/* Mapped: register commit (not initial_commit, since already mapped).
 			 * Initialize initial_commit.link so client_remove_all_listeners
 			 * can safely call wl_list_remove on it during consecutive reloads. */
@@ -700,24 +660,6 @@ client_reregister_listeners(client_t *c)
 		LISTEN(&c->decoration->events.request_mode, &c->set_decoration_mode, requestdecorationmode);
 		LISTEN(&c->decoration->events.destroy, &c->destroy_decoration, destroydecoration);
 	}
-}
-
-/** Point every scene node that carries a back-pointer to this client at \a ptr.
- *
- * xytonode() reads these to answer "what is under the cursor", so each one
- * must name a live client_t. A hot-reload frees the old userdata and builds
- * new objects, so every node here has to be re-pointed: miss one and the
- * next motion event reads through freed memory.
- *
- * Keep this the only place that list lives.
- */
-void
-client_set_node_data(client_t *c, void *ptr)
-{
-	if (c->scene)
-		c->scene->node.data = ptr;
-	if (c->scene_surface)
-		c->scene_surface->node.data = ptr;
 }
 
 void
@@ -843,9 +785,6 @@ schedule_flush_clients(struct wl_display *display)
 	pending_flush_source = wl_event_loop_add_idle(loop, flush_clients_idle, display);
 }
 
-/* Unmanaged clients have no c->mon assignment to trust; each declares on
- * exactly one output, the one under its center, so two outputs never fight
- * over borrowing the same scene tree. */
 Monitor *
 monitor_for_unmanaged(Client *c)
 {
@@ -875,32 +814,6 @@ mapnotify(struct wl_listener *listener, void *data)
 	}
 	client_node_attach(c, c->mon);
 
-	/* Create scene tree for this client, parked until the first frame that
-	 * declares it borrows the tree into an output's band. The parked tree is
-	 * disabled, so nothing here can flash the surface at 0,0 before the
-	 * reconciler places it, and the borrow is what enables it. */
-	c->scene = wlr_scene_tree_create(window_parked_tree());
-	c->scene_surface = c->client_type == XDGShell
-			? wlr_scene_xdg_surface_create(c->scene, c->surface.xdg)
-			: wlr_scene_subsurface_tree_create(c->scene, client_surface(c));
-
-	/* Handle scene surface creation failure (can happen with XWayland/Electron apps) */
-	if (!c->scene_surface) {
-		warn("Failed to create scene surface for client (type=%d)", c->client_type);
-		client_scene_node_destroy(c);
-		assert(client_surface(c)->data == NULL);
-		return;
-	}
-
-	/* The surface's data names the borrowed tree, which the idle-inhibit
-	 * visibility check reads: parked, it has no scene coordinates. */
-	client_surface(c)->data = c->scene;
-
-	client_set_node_data(c, c);
-
-	/* Register after scene creation so commits see wlroots' updated surface.
-	 * Only for XDG clients - commitnotify references XDG-specific fields.
-	 * XWayland uses configurex11 for resize, not commits. */
 	if (c->client_type == XDGShell) {
 		LISTEN(&client_surface(c)->events.commit, &c->commit, commitnotify);
 	}
@@ -937,9 +850,6 @@ mapnotify(struct wl_listener *listener, void *data)
 		}
 		goto unset_fullscreen;
 	}
-
-	/* Border and shadow are drawn by the declare pass; the client shadow's
-	 * scene nodes are lazily created by the configure hook. */
 
 	/* Create foreign toplevel handle for external tools (rofi, taskbars, etc.) */
 	if (foreign_toplevel_mgr) {
@@ -1165,15 +1075,6 @@ mapnotify(struct wl_listener *listener, void *data)
 		 * the client could possibly composite a frame at the old geometry. */
 		schedule_flush_clients(dpy);
 
-		/* Enable scene node for new client if on selected tags (Wayland-specific).
-		 * Unlike AwesomeWM, we don't call arrange() here - that's triggered by Lua signals.
-		 * We only need to make the client visible in the scene graph.
-		 * AwesomeWM's client_manage() (objects/client.c:2278-2294) does NOT call arrange()
-		 * after request::manage - layout is handled by the Lua signal system.
-		 * Calling arrange() here would overwrite geometry set by Lua placement code.
-		 * Showing the client is the reconciler's: the mark at the end of
-		 * this function is what gets the declare pass to borrow the tree
-		 * in and enable it. */
 	}
 	printstatus();
 
@@ -1183,12 +1084,10 @@ mapnotify(struct wl_listener *listener, void *data)
 	 * now. This fixes games and clients that appear focused but don't
 	 * receive keyboard input. */
 	if (globalconf.focus.client == c && client_surface(c)) {
-		/* Use same surface_ready logic as focusclient(): for XWayland
-		 * clients, surface->mapped may be false even after map event,
-		 * so check c->scene instead. */
+
 		int ready;
 		if (c->client_type == X11)
-			ready = (c->scene != NULL);
+			ready = client_is_mapped(c);
 		else
 			ready = client_surface(c)->mapped;
 		if (ready && seat->keyboard_state.focused_surface != client_surface(c)) {
@@ -1351,27 +1250,13 @@ client_layout_clips_offscreen(Client *c)
 	return result;
 }
 
-/* --- render_client_hooks: how the reconciler reaches surface trees --- */
-
-/* Released trees park in the renderer's disabled tree, outside every
- * band: a tree no output declares (banned tag, unmapped, mid-migration)
- * must not linger in a band it no longer belongs to. New client and
- * layer-surface trees are also born there, so nothing shows before the
- * reconciler places it. */
-struct wlr_scene_tree *
-window_parked_tree(void)
-{
-	return render_parked_tree(&scene->tree);
-}
+/* --- render_client_hooks: how the reconciler reaches surfaces --- */
 
 /* The drag icon's borrow owner slot: one seat, one icon at a time. */
 static void *drag_render_owner;
 
-/* The scene tree and owner slot behind a handle. Clients, layer surfaces,
- * popups, the lock surface and the drag icon borrow; anything else (a dead
- * handle, a drawin) has no borrowed tree and returns false. */
 static bool
-handle_window(uint64_t handle, struct wlr_scene_tree **stree, void ***owner)
+handle_window(uint64_t handle, struct wlr_surface **surface_root, void ***owner)
 {
 	enum declare_kind kind;
 	void *obj = declare_handle_get(handle, &kind);
@@ -1380,34 +1265,33 @@ handle_window(uint64_t handle, struct wlr_scene_tree **stree, void ***owner)
 		return false;
 	switch (kind) {
 	case DECLARE_KIND_CLIENT:
-		*stree = ((Client *)obj)->scene;
+		*surface_root = client_has_surface((Client *)obj) ? client_surface((Client *)obj) : NULL;
 		*owner = &((Client *)obj)->render_owner;
 		return true;
 	case DECLARE_KIND_LAYER:
-		*stree = ((LayerSurface *)obj)->scene;
+		*surface_root = ((LayerSurface *)obj)->layer_surface->surface;
 		*owner = &((LayerSurface *)obj)->render_owner;
 		return true;
 	case DECLARE_KIND_POPUP:
-		*stree = ((Popup *)obj)->tree;
+		*surface_root = ((Popup *)obj)->popup->base->surface;
 		*owner = &((Popup *)obj)->render_owner;
 		return true;
 	case DECLARE_KIND_LOCK: {
 		struct wlr_session_lock_surface_v1 *ls = obj;
 
-		*stree = ls->surface->data;
+		*surface_root = ls->surface;
 		*owner = &((Monitor *)ls->output->data)->lock_render_owner;
 		return true;
 	}
 	case DECLARE_KIND_DRAG:
-		*stree = ((struct wlr_drag_icon *)obj)->data;
+		*surface_root = ((struct wlr_drag_icon *)obj)->surface;
 		*owner = &drag_render_owner;
 		return true;
 	case DECLARE_KIND_CURSOR:
-		/* A client's cursor surface; the themed image is an image leaf
-		 * with no tree to borrow. */
-		if (obj != cursor_image.surface || !cursor_image.tree)
+		/* The themed pointer uses an image leaf and has no surface to borrow. */
+		if (obj != cursor_image.surface)
 			return false;
-		*stree = cursor_image.tree;
+		*surface_root = cursor_image.surface;
 		*owner = &cursor_image.render_owner;
 		return true;
 	default:
@@ -1424,13 +1308,13 @@ handle_client(uint64_t handle)
 	return (c && kind == DECLARE_KIND_CLIENT) ? c : NULL;
 }
 
-static struct wlr_scene_tree *
+static struct wlr_surface *
 hook_resolve(void *data, uint64_t handle)
 {
-	struct wlr_scene_tree *stree;
+	struct wlr_surface *surface_root;
 	void **owner;
 
-	return handle_window(handle, &stree, &owner) ? stree : NULL;
+	return handle_window(handle, &surface_root, &owner) ? surface_root : NULL;
 }
 
 /* Both hooks write the solved surface box and run the configure leg: the
@@ -1472,13 +1356,8 @@ static void
 hook_clip(void *data, uint64_t handle, int x, int y, int width, int height)
 {
 	Client *c = handle_client(handle);
-	LayerSurface *l = handle_layer(handle);
 	struct wlr_box clip = {x, y, width, height};
 
-	if (l) {
-		wlr_scene_subsurface_tree_set_clip(&l->scene->node, width ? &clip : NULL);
-		return;
-	}
 	if (!c)
 		return;
 	c->surface_clip = clip;
@@ -1525,33 +1404,40 @@ hook_reposition(void *data, uint64_t handle, int x, int y)
 static void
 hook_borrow(void *data, uint64_t handle, void *owner_token)
 {
-	struct wlr_scene_tree *stree;
+	struct wlr_surface *surface_root;
 	void **owner;
 
-	if (handle_window(handle, &stree, &owner))
+	if (handle_window(handle, &surface_root, &owner))
 		*owner = owner_token;
 }
 
 static bool
 hook_release(void *data, uint64_t handle, void *owner_token)
 {
-	struct wlr_scene_tree *stree;
+	struct wlr_surface *surface_root;
 	void **owner;
 
-	if (!handle_window(handle, &stree, &owner))
+	if (!handle_window(handle, &surface_root, &owner))
 		return false;
-	/* Another output owns the tree now: leave it be. */
+	/* A migrated handle can only be released by its current owner. */
 	if (*owner != owner_token)
 		return false;
 	*owner = NULL;
 	return true;
 }
 
+static void hook_sample(void *, struct wlr_surface *, struct render_box, float);
+static void hook_drawn(void *, uint64_t, struct wlr_surface *);
+static bool hook_skip(void *, uint64_t, bool, bool);
+
 void
 window_setup_render_hooks(void)
 {
 	static const struct render_client_hooks hooks = {
 		.resolve = hook_resolve,
+        .sample = hook_sample,
+        .drawn = hook_drawn,
+        .skip = hook_skip,
 		.configure = hook_configure,
 		.borrow = hook_borrow,
 		.release = hook_release,
@@ -1565,13 +1451,6 @@ window_setup_render_hooks(void)
 	declare_set_client_hooks(&hooks);
 }
 
-/* Clamp to the assigned monitor only for layouts that intentionally
- * position tiled clients offscreen (carousel). For floating or unmanaged
- * clients (user-authoritative geometry) and for layouts that keep clients
- * within their workarea, skip the clamp so the scene graph can render the
- * surface on whichever outputs it overlaps, e.g. during a cross-monitor
- * drag where c->mon stays on the source monitor until the pointer crosses.
- * The declare pass clips the client's frame and surface to the output bounds. */
 bool
 client_clamps_to_monitor(Client *c)
 {
@@ -1579,67 +1458,6 @@ client_clamps_to_monitor(Client *c)
 		&& !client_is_unmanaged(c)
 		&& !some_client_get_floating(c)
 		&& client_layout_clips_offscreen(c);
-}
-
-struct corner_apply {
-	/* The window box in the client tree's coordinates, and its radii. */
-	struct wlr_box box;
-	const float *radii;
-};
-
-/* The window box's corners on one buffer of the surface tree, at (sx, sy)
- * in the client tree: the buffer that is the window box takes the radii as
- * its own corners; one that reaches into a corner square takes the window
- * box as a rounded clip; one that touches no corner takes zeros. */
-static void
-apply_corners_to_buffer(struct wlr_scene_buffer *buffer, int sx, int sy, void *data)
-{
-	static const float none[4];
-	struct corner_apply *a = data;
-	struct wlr_box own = { sx, sy, buffer->dst_width, buffer->dst_height };
-	bool touches = false;
-
-	if (own.width <= 0 && buffer->buffer) {
-		own.width = buffer->buffer->width;
-		own.height = buffer->buffer->height;
-	}
-	if (wlr_box_equal(&own, &a->box)) {
-		wlr_scene_buffer_set_corner_radii(buffer, a->radii);
-		wlr_scene_buffer_set_rounded_clips(buffer, NULL, 0);
-		return;
-	}
-	for (int i = 0; i < 4 && !touches; i++) {
-		int r = (int)ceilf(a->radii[i]);
-		struct wlr_box square = {
-			i == 0 || i == 3 ? a->box.x : a->box.x + a->box.width - r,
-			i == 0 || i == 1 ? a->box.y : a->box.y + a->box.height - r, r, r };
-
-		touches = r > 0 && wlr_box_intersection(&square, &square, &own);
-	}
-	wlr_scene_buffer_set_corner_radii(buffer, none);
-	if (touches) {
-		struct wlr_render_rounded_clip clip = {
-			.box = { a->box.x - sx, a->box.y - sy, a->box.width, a->box.height } };
-
-		memcpy(clip.radii, a->radii, sizeof(clip.radii));
-		wlr_scene_buffer_set_rounded_clips(buffer, &clip, 1);
-	} else {
-		wlr_scene_buffer_set_rounded_clips(buffer, NULL, 0);
-	}
-}
-
-/* The radii the renderer handed hook_corners, on every buffer the surface
- * tree holds now: a later commit can add a subsurface. The window box is
- * the size the client drew. */
-static void
-client_apply_corners(Client *c)
-{
-	struct corner_apply corners = {
-		.box = { 0, 0, c->committed_width ? c->committed_width : c->surface_box.width,
-			c->committed_height ? c->committed_height : c->surface_box.height },
-		.radii = c->surface_radii,
-	};
-	wlr_scene_node_for_each_buffer(&c->scene_surface->node, apply_corners_to_buffer, &corners);
 }
 
 /* The configure-client-to-box seam: the client-facing half of geometry
@@ -1654,7 +1472,7 @@ client_configure_to_box(Client *c)
 {
 	struct wlr_box box = c->surface_box;
 
-	if (!c->scene || !client_surface(c) || !client_surface(c)->mapped
+	if (!client_is_mapped(c)
 			|| box.width <= 0 || box.height <= 0)
 		return;
 
@@ -1697,7 +1515,7 @@ client_apply_surface_clip(Client *c)
 {
 	struct wlr_box clip = { 0, 0, c->surface_box.width, c->surface_box.height };
 
-	if (!c->scene || !client_surface(c) || !client_surface(c)->mapped
+	if (!client_is_mapped(c)
 			|| clip.width <= 0 || clip.height <= 0)
 		return;
 
@@ -1719,8 +1537,7 @@ client_apply_surface_clip(Client *c)
 			clip = crop;
 	}
 
-	wlr_scene_subsurface_tree_set_clip(&c->scene_surface->node, &clip);
-	client_apply_corners(c);
+	c->draw_clip = clip;
 }
 
 /* A client that acknowledged its size and committed another is sent that
@@ -1957,7 +1774,7 @@ setmon(Client *c, Monitor *m, uint32_t newtags)
 			wlr_foreign_toplevel_handle_v1_output_enter(c->toplevel_handle, m->wlr_output);
 	}
 
-	/* Scene graph sends surface leave/enter events on move and resize */
+	/* The draw hooks update surface output membership. */
 	if (oldmon)
 		arrange(oldmon);
 	if (m) {
@@ -1978,14 +1795,13 @@ unmapnotify(struct wl_listener *listener, void *data)
 	/* Called when the surface is unmapped, and should no longer be shown. */
 	Client *c = wl_container_of(listener, c, unmap);
 
-	/* Safety: If scene was never created (mapnotify failed), nothing to clean up */
-	if (!c->scene) {
+	if (!c->node) {
 		return;
 	}
 
 	/* Safety: If Lua destroyed during cleanup, skip Lua-dependent operations */
 	if (!globalconf_L) {
-		client_scene_node_destroy(c);
+		client_node_destroy(c);
 		return;
 	}
 
@@ -2010,11 +1826,7 @@ unmapnotify(struct wl_listener *listener, void *data)
 		wlr_seat_keyboard_clear_focus(seat);
 
 	if (client_is_unmanaged(c)) {
-		/* Unmanaged clients never reach client_unmanage(), so clear the
-		 * focus pointer here: the scene is destroyed below and a later
-		 * focusclient() would touch its freed borders. focusclient() skips
-		 * unmanaged clients, so they never got a "focus" signal and there
-		 * is no "unfocus" to emit. */
+
 		if (globalconf.focus.client == c) {
 			globalconf.focus.client = NULL;
 			globalconf.focus.need_update = true;
@@ -2033,13 +1845,11 @@ unmapnotify(struct wl_listener *listener, void *data)
 		client_unmanage(c, CLIENT_UNMANAGE_UNMAP);
 	}
 
-	/* Remove commit listener before destroying scene - only registered for XDG clients.
-	 * Must be done before surface destruction as wlroots asserts listener lists are empty. */
 	if (c->client_type == XDGShell) {
 		wl_list_remove(&c->commit.link);
 	}
 
-	client_scene_node_destroy(c);
+	client_node_destroy(c);
 
 	printstatus();
 	motionnotify(0, NULL, 0, 0, 0, 0);
@@ -2076,4 +1886,199 @@ updatetitle(struct wl_listener *listener, void *data)
 		if (title)
 			wlr_foreign_toplevel_handle_v1_set_title(c->toplevel_handle, title);
 	}
+}
+
+struct surface_output {
+    Monitor *output;
+    uint64_t generation;
+    uint32_t sequence;
+    struct render_box box;
+    bool entered;
+    struct wl_list link;
+};
+
+struct tracked_surface {
+    struct wlr_surface *surface;
+    struct wl_listener commit, destroy;
+    struct wl_list outputs, link;
+};
+
+static struct wl_list tracked_surfaces = {&tracked_surfaces, &tracked_surfaces};
+
+static void surface_committed(struct wl_listener *listener, void *data)
+{
+    Monitor *m;
+    wl_list_for_each(m, &mons, link)
+        if (m->wlr_output->enabled) wlr_output_schedule_frame(m->wlr_output);
+}
+
+static void surface_destroyed(struct wl_listener *listener, void *data)
+{
+    struct tracked_surface *t = wl_container_of(listener, t, destroy);
+    struct surface_output *s, *tmp;
+    wl_list_for_each_safe(s, tmp, &t->outputs, link) {
+        monitor_damage_device(s->output, s->box);
+        wl_list_remove(&s->link);
+        free(s);
+    }
+    wl_list_remove(&t->link);
+    wl_list_remove(&t->commit.link);
+    wl_list_remove(&t->destroy.link);
+    free(t);
+}
+
+static void surface_created(struct wl_listener *listener, void *data)
+{
+    struct tracked_surface *t = ecalloc(1, sizeof(*t));
+    t->surface = data;
+    wl_list_init(&t->outputs);
+    wl_list_insert(&tracked_surfaces, &t->link);
+    LISTEN(&t->surface->events.commit, &t->commit, surface_committed);
+    LISTEN(&t->surface->events.destroy, &t->destroy, surface_destroyed);
+}
+
+static struct wl_listener surface_created_listener = {.notify = surface_created};
+static struct wl_listener compositor_destroy_listener;
+
+static void compositor_destroyed(struct wl_listener *listener, void *data)
+{
+    wl_list_remove(&surface_created_listener.link);
+    wl_list_remove(&compositor_destroy_listener.link);
+}
+
+void window_track_surfaces(void)
+{
+    compositor_destroy_listener.notify = compositor_destroyed;
+    wl_signal_add(&compositor->events.new_surface, &surface_created_listener);
+    wl_signal_add(&compositor->events.destroy, &compositor_destroy_listener);
+}
+
+static struct surface_output *surface_output_get(struct wlr_surface *surface,
+        Monitor *m, bool create)
+{
+    struct tracked_surface *t;
+    wl_list_for_each(t, &tracked_surfaces, link) {
+        if (t->surface != surface) continue;
+        struct surface_output *s;
+        wl_list_for_each(s, &t->outputs, link)
+            if (s->output == m) return s;
+        if (!create) return NULL;
+        s = ecalloc(1, sizeof(*s));
+        s->output = m;
+        wl_list_insert(&t->outputs, &s->link);
+        return s;
+    }
+    return NULL;
+}
+
+static void hook_sample(void *data, struct wlr_surface *surface,
+        struct render_box box, float scale)
+{
+    Monitor *m = data;
+    if (!m) return;
+    struct surface_output *s = surface_output_get(surface, m, true);
+    if (!s) return;
+    s->generation = m->sample_generation;
+    if (!s->entered || memcmp(&s->box, &box, sizeof(box))) {
+        monitor_damage_device(m, s->box);
+        monitor_damage_device(m, box);
+    } else if (s->sequence != surface->current.seq) {
+        pixman_region32_t damage;
+        pixman_region32_init(&damage);
+        wlr_surface_get_effective_damage(surface, &damage);
+        int count;
+        pixman_box32_t *rects = pixman_region32_rectangles(&damage, &count);
+        for (int i = 0; i < count; i++) {
+            struct render_box b = {box.x + rects[i].x1 * scale - 1,
+                box.y + rects[i].y1 * scale - 1,
+                (rects[i].x2 - rects[i].x1) * scale + 2,
+                (rects[i].y2 - rects[i].y1) * scale + 2};
+            monitor_damage_device(m, b);
+        }
+        pixman_region32_fini(&damage);
+    }
+    s->box = box;
+    s->sequence = surface->current.seq;
+}
+
+/* The scale a surface is told after its outputs change: the largest scale
+ * among the outputs it has entered, never below 1, as wlr_scene sent it.
+ * A client told 0.8 may draw 0.8 of its configured size with no viewport. */
+static void surface_scale_update(struct wlr_surface *surface)
+{
+    struct tracked_surface *t;
+    wl_list_for_each(t, &tracked_surfaces, link) {
+        if (t->surface != surface) continue;
+        float scale = 1;
+        struct surface_output *s;
+        wl_list_for_each(s, &t->outputs, link)
+            if (s->entered && s->output->wlr_output->scale > scale)
+                scale = s->output->wlr_output->scale;
+        client_set_scale(surface, scale);
+        return;
+    }
+}
+
+static void hook_drawn(void *data, uint64_t handle, struct wlr_surface *surface)
+{
+    Monitor *m = data;
+    if (!m) return;
+    struct surface_output *s = surface_output_get(surface, m, true);
+    if (!s) return;
+    if (!s->entered) {
+        wlr_surface_send_enter(surface, m->wlr_output);
+        s->entered = true;
+        surface_scale_update(surface);
+    }
+    wlr_presentation_surface_textured_on_output(surface, m->wlr_output);
+}
+
+void window_surface_sweep(Monitor *m, bool remove_all)
+{
+    struct tracked_surface *t;
+    wl_list_for_each(t, &tracked_surfaces, link) {
+        struct surface_output *s, *tmp;
+        wl_list_for_each_safe(s, tmp, &t->outputs, link) {
+            if (s->output != m || (!remove_all && s->generation == m->sample_generation)) continue;
+            bool entered = s->entered;
+            if (entered) wlr_surface_send_leave(t->surface, m->wlr_output);
+            monitor_damage_device(m, s->box);
+            wl_list_remove(&s->link);
+            free(s);
+            if (entered) surface_scale_update(t->surface);
+        }
+    }
+    if (remove_all && globalconf_L) some_recompute_idle_inhibit();
+}
+
+void window_surface_frame_done(Monitor *m, const struct timespec *now)
+{
+    struct tracked_surface *t;
+    wl_list_for_each(t, &tracked_surfaces, link) {
+        struct surface_output *s = surface_output_get(t->surface, m, false);
+        if (s && s->generation == m->sample_generation)
+            wlr_surface_send_frame_done(t->surface, now);
+    }
+}
+
+bool window_surface_visible(struct wlr_surface *surface)
+{
+    if (!surface->mapped) return false;
+    struct tracked_surface *t;
+    wl_list_for_each(t, &tracked_surfaces, link) {
+        if (t->surface != surface) continue;
+        struct surface_output *s;
+        wl_list_for_each(s, &t->outputs, link)
+            if (s->generation == s->output->sample_generation
+                    && s->output->wlr_output->enabled) return true;
+    }
+    return false;
+}
+
+static bool hook_skip(void *data, uint64_t handle, bool skip_cursor, bool wallpaper)
+{
+    enum declare_kind kind;
+    declare_handle_get(handle, &kind);
+    return (skip_cursor && kind == DECLARE_KIND_CURSOR)
+        || (wallpaper && kind == DECLARE_KIND_WALLPAPER);
 }

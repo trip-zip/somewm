@@ -79,7 +79,6 @@ validate_name(const char *name)
 	return 0;
 }
 
-
 static int
 runtime_dir(char *out, size_t cap)
 {
@@ -164,7 +163,6 @@ rmtree(const char *path)
 	return 0;
 }
 
-
 static int
 info_write(const char *state_dir, const struct start_opts *opts, pid_t pid,
            const char *wl_socket_name, const char *resolved_config,
@@ -236,7 +234,6 @@ info_read_field(const char *state_dir, const char *key, char *out, size_t cap)
 	fclose(f);
 	return found;
 }
-
 
 static int
 write_pidfile_excl(const char *state_dir, pid_t pid)
@@ -408,7 +405,6 @@ kill_and_wait(pid_t pid, const char *sock_path)
 	return pid_alive(pid) ? -1 : 0;
 }
 
-
 extern int read_response(int sock);
 
 static int
@@ -429,7 +425,6 @@ ipc_call(const char *sock_path, const char *command)
 	close(s);
 	return rc < 0 ? 4 : rc;
 }
-
 
 static int
 parse_start_opts(int argc, char *argv[], struct start_opts *opts)
@@ -502,7 +497,6 @@ parse_start_opts(int argc, char *argv[], struct start_opts *opts)
 	return 0;
 }
 
-
 static int
 test_stop_named(const char *name)
 {
@@ -534,7 +528,6 @@ test_stop_named(const char *name)
 	printf("stopped test instance '%s'\n", name);
 	return 0;
 }
-
 
 static int
 exec_child(const struct start_opts *opts, const char *state_dir,
@@ -584,7 +577,8 @@ exec_child(const struct start_opts *opts, const char *state_dir,
 	} else if (opts->host == HOST_HEADLESS) {
 		setenv("WLR_BACKENDS", "headless", 1);
 		/* A renderer already in the environment (WLR_RENDERER=gles2) stays */
-		setenv("WLR_RENDERER", "pixman", 0);
+		setenv("WLR_RENDERER", "gles2", 0);
+		setenv("WLR_RENDERER_FORCE_SOFTWARE", "1", 0);
 		if (!getenv("WLR_WL_OUTPUTS"))
 			setenv("WLR_WL_OUTPUTS", "1", 1);
 	} else {
@@ -799,7 +793,6 @@ test_start(int argc, char *argv[])
 	return 0;
 }
 
-
 struct instance_summary {
 	char name[256];
 	char host[16];
@@ -892,7 +885,6 @@ test_list(int json_mode)
 		printf("(no test instances)\n");
 	return 0;
 }
-
 
 static int
 resolve_named_socket(const char *name, char *out, size_t cap)
@@ -1001,7 +993,6 @@ test_reload(int argc, char *argv[])
 	return ipc_call(sock_path, "reload\n");
 }
 
-
 static int
 test_logs(int argc, char *argv[])
 {
@@ -1036,7 +1027,6 @@ test_logs(int argc, char *argv[])
 	return 6;
 }
 
-
 static int
 test_stop_cmd(int argc, char *argv[])
 {
@@ -1054,7 +1044,6 @@ test_stop_cmd(int argc, char *argv[])
 		return 1;
 	return test_stop_named(name);
 }
-
 
 void
 test_orchestrator_print_usage(const char *progname)

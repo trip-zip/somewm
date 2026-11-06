@@ -60,7 +60,6 @@ runner.run_async(function()
         assert(r == 64 and green == 64 and b == 64, 'client pixels lost on migration')
         for _, output_screen in ipairs(screens) do
             local dump = awesome._clay_tree(output_screen)
-            assert(not dump:find('[tree!=scene]', 1, true), dump)
             assert(dump:find('TEXT', 1, true), 'tasklist/bar text disappeared')
         end
         if move == 24 then

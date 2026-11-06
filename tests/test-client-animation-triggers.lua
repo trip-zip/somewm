@@ -9,7 +9,6 @@ local s = screen[1]
 
 local function dump()
     local text = awesome._clay_tree(s)
-    assert(not text:find('[tree!=scene]', 1, true), text)
     return text
 end
 

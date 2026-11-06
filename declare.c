@@ -30,7 +30,8 @@
 #include <wlr/types/wlr_data_device.h>
 #include <wlr/types/wlr_layer_shell_v1.h>
 #include <wlr/types/wlr_output.h>
-#include <wlr/types/wlr_scene.h>
+#include "monitor.h"
+#include "paint.h"
 #include <wlr/types/wlr_xcursor_manager.h>
 #include <wlr/util/log.h>
 
@@ -113,7 +114,6 @@ struct declare_band {
     size_t scrollbar_records_len;
 	Clay_Context *clay;
 	void *arena;
-	struct wlr_scene_tree *tree;
 	struct render_state *render;
 	float scale;
 	/* The last frame's readback for the tree dump: what the solve
@@ -202,7 +202,6 @@ struct declare_record {
     struct widget_transition exit_policy;
 	struct widget_host host;
 };
-
 
 struct declare_output {
 	struct node_tree *tree;
@@ -688,7 +687,7 @@ enum {
 	/* The lock section. Above every band above, so a locked session shows
 	 * the backdrop and nothing else whatever the desktop declared: the
 	 * roots are sorted by zIndex (clay.h:3479-3492) and the reconcile
-	 * keeps that order in the scene (render.c:2505-2528). The backdrop is
+	 * keeps that order in its draw records. The backdrop is
 	 * also what stops the input walk (hit_accept, DECLARE_KIND_LOCK_BLOCK). */
 	Z_LOCK_BACKDROP = 200,
 	Z_LOCK_COVER = 210,
@@ -739,7 +738,7 @@ place_fixed(Clay_ElementDeclaration *decl, int16_t z, int x, int y,
 	 * the first floating one it hits unless it passes the pointer
 	 * through (clay.h:3913, Clay_SetPointerState); every root here does,
 	 * so a query under a drawin reaches the drawin's own tree whatever
-	 * lies above it. What takes input is the scene's to decide. */
+	 * lies above it. render_hit decides which record takes input. */
 	decl->floating.pointerCaptureMode = CLAY_POINTER_CAPTURE_MODE_PASSTHROUGH;
 }
 
@@ -774,32 +773,6 @@ userdata_clip(void *word, unsigned opens, unsigned clipped_by)
 	return (void *)((uintptr_t)word
 		| (uint64_t)opens << RENDER_UD_OPENS_SHIFT
 		| (uint64_t)clipped_by << RENDER_UD_CLIP_SHIFT);
-}
-
-/* The band that drew a node is the one whose render_state retains it, which
- * is not the band under the pointer: a drawin overhanging an output edge and
- * a floating client dragged clear of its monitor both draw on a neighbor
- * while the band that declared them stays where it is. Every band answers,
- * and a node belongs to at most one, so the first hit is the owner. Asking
- * all of them also covers a point in a gap between misaligned outputs, where
- * there is no monitor to ask. */
-void *
-declare_hit(struct wlr_scene_node *node, enum declare_kind *kind)
-{
-	Monitor *m;
-
-	wl_list_for_each(m, &mons, link) {
-		struct declare_output *dout = m->declare;
-		void *ud;
-
-		if (!dout)
-			continue;
-		ud = render_hit_userdata(dout->band.render, node, &client_hooks);
-		if (ud)
-			return declare_handle_get(
-				declare_userdata_handle(ud), kind);
-	}
-	return NULL;
 }
 
 /* --- the input walk (declare.h) --- */
@@ -839,7 +812,7 @@ hit_accept(void *user, const struct render_node_view *v, double sx, double sy)
 		 * drawin is unregistered at once and stays in the order until
 		 * the next solve. Only what the next frame would declare takes
 		 * the point. */
-		if (!d->visible)
+		if (!d->visible || d->node->hidden)
 			return false;
 		double dx = w->lx - w->monitor->m.x, dy = w->ly - w->monitor->m.y;
 		struct render_presentation pose = render_owner_presentation(w->render,
@@ -970,8 +943,6 @@ declare_hit_at(double lx, double ly, struct declare_hit *out)
 			return;
 }
 
-/* somewm colors are straight-alpha 0-1 floats; Clay_Color is 0-255.
- * The renderer premultiplies once when converting back for wlr_scene. */
 static Clay_Color
 clay_color(const float rgba[4])
 {
@@ -1088,7 +1059,7 @@ declare_popups(struct wlr_surface *parent, Clay_ElementId parent_id,
 		uint64_t handle;
 		Clay_ElementId id;
 
-		if (popup->parent != parent || !p->tree || !surface->mapped)
+		if (popup->parent != parent || !surface->mapped)
 			continue;
 		handle = node_handle(p->node);
         render_fade_alias(recording->render, handle, ancestor);
@@ -1119,7 +1090,10 @@ static bool animation_owner_disabled(void *userdata)
     enum declare_kind kind = 0;
     void *owner = declare_handle_get(declare_userdata_handle(userdata), &kind);
     if (!owner) return false;
-    if (kind == DECLARE_KIND_DRAWIN) return ((drawin_t *)owner)->animation_disabled;
+    if (kind == DECLARE_KIND_DRAWIN) {
+        drawin_t *d = owner;
+        return d->node && d->node->ui_box ? d->node->words.animation_disabled : d->animation_disabled;
+    }
     Client *client = kind == DECLARE_KIND_CLIENT ? owner : NULL;
     if (kind == DECLARE_KIND_TITLEBAR) {
         drawable_t *drawable = owner;
@@ -1133,9 +1107,6 @@ static bool animation_owner_disabled(void *userdata)
     return disabled;
 }
 
-/* Clay's ease-out on whole pixels. The scene truncates at its boundary, so
- * a fractional box leaves a one pixel seam between an animating element and
- * its neighbour for as long as the animation runs. */
 static bool
 transition_ease_out(Clay_TransitionCallbackArguments arguments)
 {
@@ -1243,11 +1214,10 @@ transition_config(const struct widget_transition *n)
 static bool
 declarable_client(Client *c)
 {
-	if (!c || !c->scene || !client_surface(c)
+	if (!c || !client_is_mapped(c) || !client_surface(c)
 			|| !client_surface(c)->mapped)
 		return false;
-	/* The sweep releases an undeclared client's scene tree disabled.
-	 * Unmanaged clients are not tag-tracked. */
+	/* Unmanaged clients are not tag-tracked. */
 	return client_is_unmanaged(c) || client_isvisible(c);
 }
 
@@ -1626,7 +1596,7 @@ widget_node_decl(const struct widget_node *n, int16_t z,
 	if (n->border[3] > 0) {
 		e.border.color = clay_color(n->border);
 		e.border.width = (Clay_BorderWidth) {
-			n->bw[0], n->bw[1], n->bw[2], n->bw[3], 0 };
+			n->bw[0], n->bw[1], n->bw[2], n->bw[3], n->between };
 	}
 	if (n->scroll || n->cut) {
 		e.clip = (Clay_ClipElementConfig) {
@@ -1650,7 +1620,6 @@ widget_node_decl(const struct widget_node *n, int16_t z,
 	}
 	return e;
 }
-
 
 static size_t
 widget_subtree_end(const struct widget_tree *d, size_t i)
@@ -1974,6 +1943,8 @@ declare_widget_subtree(const struct widget_host *host, size_t i, Clay_ElementId 
 
 	for (uint32_t k = 0; k < n->binding_count; k++)
 		attachment_bind(d->bindings[n->binding_start + k], host->id, id.id);
+	if (!n->binding_count && n->identity)
+		attachment_bind((struct widget_binding){n->identity, n->occurrence}, host->id, id.id);
 
 	e = root_decl ? *root_decl : widget_node_decl(n, z, word);
 	if (n->attach) {
@@ -2018,6 +1989,14 @@ declare_widget_subtree(const struct widget_host *host, size_t i, Clay_ElementId 
 				? CLAY_SIZING_FIXED(host->h) : widget_sizing(n, 1),
 		};
 	}
+    bool screen_box = false;
+    if (i == 0) {
+        enum declare_kind kind = 0;
+        drawin_t *owner = declare_handle_get(declare_userdata_handle(userdata), &kind);
+        screen_box = kind == DECLARE_KIND_DRAWIN && owner && owner->node && owner->node->ui_box;
+        if (screen_box && n->transition.enabled)
+            e.transition.enter.trigger = CLAY_TRANSITION_ENTER_TRIGGER_ON_FIRST_PARENT_FRAME;
+    }
     /* A passthrough drawin's root and floating descendants must let Clay
      * reach the drawable below it, just as render_hit does. */
     if (e.floating.attachTo != CLAY_ATTACH_TO_NONE) {
@@ -2104,7 +2083,7 @@ declare_widget_subtree(const struct widget_host *host, size_t i, Clay_ElementId 
 			clay_clip_release();
 	} else
 		native_configure(&e);
-    if (i == 0 && root_decl) root_entrance(id, &e);
+    if (i == 0 && (root_decl || screen_box)) root_entrance(id, &e);
 	/* A layout prints a line per node; its tree has no widget lines. */
 	if (host->layout)
 		record_open(n->name ? n->name : "-", 0, id, &e, n->src[0], n->src[1], NULL);
@@ -2113,7 +2092,7 @@ declare_widget_subtree(const struct widget_host *host, size_t i, Clay_ElementId 
 		 * a titlebar's root fills the slot the theme sized. The nodes
 		 * under it are the tree's own, walked from the store. A bar's
 		 * slot recorded itself with this host. */
-		record_open(host->in_parent ? "widgets" : "drawin",
+		record_open(host->role,
 			userdata ? declare_userdata_handle(userdata) : 0, id, &e,
 			n->sizing[0] == WIDGET_SIZING_FIXED ? host->src[0] : n->src[0],
 			n->sizing[1] == WIDGET_SIZING_FIXED ? host->src[1] : n->src[1], host);
@@ -2346,8 +2325,7 @@ animation_constraints(struct render_state *render, int32_t index, Clay_BoundingB
 /* --- drawins ---
  *
  * Native shadow float below the frame border and widget content.
- * Opacity applies to the content leaf only, matching the old scene-buffer
- * path, which never set opacity on the border or shadow. */
+ * Opacity applies only to the content leaf, not the border or shadow. */
 static void
 declare_drawin(drawin_t *d, Monitor *m, int16_t z)
 {
@@ -2366,6 +2344,12 @@ declare_drawin(drawin_t *d, Monitor *m, int16_t z)
 	struct widget_host host;
 	if (!drawin_widget_host(d, &host))
 		return;
+	if (d->node->ui_box) {
+		host.role = d->node->label ? d->node->label : "ui.box";
+		host.radius = -1;
+		declare_widget_tree(&host, z, leaf_userdata(handle, d->node->words.opacity));
+		return;
+	}
 	Clay_ElementDeclaration frame = leaf_at(z, x - bw, y - bw,
 		d->width + 2 * bw, d->height + 2 * bw);
 	/* Content-sized popups keep their widget limits inside the frame.
@@ -2468,7 +2452,7 @@ screen_drawin_next(screen_t *screen, drawin_t *previous)
 static bool
 declarable_drawin(drawin_t *d)
 {
-	return d->visible && d->widgets.nodes_len > 0;
+	return d->visible && !d->node->hidden && d->widgets.nodes_len > 0;
 }
 
 /* --- layer surfaces ---
@@ -2479,8 +2463,8 @@ declarable_drawin(drawin_t *d)
  * axis anchored to both sides (protocol). A surface with an exclusive zone
  * at an edge is a bar in the output's flow at that edge, the slot fixed
  * across it by the zone plus the margin there. Any other floats in its
- * layer's band over the workarea, which is what the zones leave and where
- * wlroots arranged it, or over the whole output for a zone of -1. A surface
+ * layer's band over the workarea left by the zones, or over the whole output
+ * for a zone of -1. A surface
  * is declared once it is initialized: its first configure carries the size
  * the tree solved, and it maps into it. Until it maps it takes no input
  * (hit_accept). */
@@ -2494,7 +2478,7 @@ static const int16_t layer_band_z[] = {
 static bool
 declarable_layer(LayerSurface *l, Monitor *m)
 {
-	return l->mon == m && l->scene && l->layer_surface->initialized;
+	return l->mon == m && l->layer_surface->initialized;
 }
 
 static void
@@ -2884,18 +2868,24 @@ nodes_settle(Monitor *m, struct declare_band *band)
 static void
 popups_settle(Monitor *m)
 {
-	for (drawin_t *d = screen_drawin_next(active_screen->screen, NULL); d;
-			d = screen_drawin_next(active_screen->screen, d)) {
+	for (drawin_t *d = screen_drawin_next(active_screen->screen, NULL), *next; d; d = next) {
+		/* Publishing geometry can reparent d under another screen. */
+		next = screen_drawin_next(active_screen->screen, d);
 		if (d->bar.edge || d->attachment.kind || !declarable_drawin(d)
-				|| d->widgets.nodes[0].sizing[0] != WIDGET_SIZING_FIT
-				|| d->widgets.nodes[0].sizing[1] != WIDGET_SIZING_FIT) continue;
+				|| (!d->node->ui_box && d->widgets.nodes[0].sizing[0] != WIDGET_SIZING_FIT
+				&& d->widgets.nodes[0].sizing[1] != WIDGET_SIZING_FIT)) continue;
 		uint64_t handle = node_handle(d->node);
 		Clay_ElementData root = Clay_GetElementData(widget_root_id((uint32_t)handle));
 		if (!root.found) continue;
 		Clay_BoundingBox b = root.boundingBox;
-		int w = (int)floorf(b.width + 0.5f), h = (int)floorf(b.height + 0.5f);
-		if (w != d->width || h != d->height)
-			luaA_drawin_set_solved_geometry(globalconf_L, d, d->x, d->y, w, h);
+		int w = d->node->ui_box || d->widgets.nodes[0].sizing[0] == WIDGET_SIZING_FIT
+			? (int)floorf(b.width + 0.5f) : d->width;
+		int h = d->node->ui_box || d->widgets.nodes[0].sizing[1] == WIDGET_SIZING_FIT
+			? (int)floorf(b.height + 0.5f) : d->height;
+		int x = d->node->ui_box ? (int)lroundf(b.x) + m->m.x : d->x;
+		int y = d->node->ui_box ? (int)lroundf(b.y) + m->m.y : d->y;
+		if (x != d->x || y != d->y || w != d->width || h != d->height)
+			luaA_drawin_set_solved_geometry(globalconf_L, d, x, y, w, h);
 	}
 }
 
@@ -3537,7 +3527,7 @@ declare_cursor(Monitor *m)
 		struct wlr_surface *surface = cursor_image.surface;
 		int w = surface->current.width, h = surface->current.height;
 
-		if (!cursor_image.tree || w < 1 || h < 1)
+		if (w < 1 || h < 1)
 			return;
 		if (!cursor_surface_node)
 			cursor_surface_node = declare_node_create(NULL, NODE_SURFACE, DECLARE_KIND_CURSOR, surface);
@@ -3766,8 +3756,7 @@ widget_hits_walk(struct widget_tree *d, size_t i, Clay_ElementId id,
 	if (pointer_over(ids, id)) {
 		if (!masked && node->widget && *n < cap)
 			out[(*n)++] = (int)i;
-		/* The scene==clay check describes Clay's rectangular traversal,
-		 * including capturing floats whose shaped pixels reject this point. */
+		/* Clay captures floats even when their shaped pixels reject this point. */
 		if (node->floating && !node->passthrough)
 			*captured = true;
 	}
@@ -3845,19 +3834,24 @@ declare_widget_hits(const struct widget_host *host, double x, double y, int *out
 	bool captured = false;
 	widget_hits_walk(d, 0, root_id, ids, out, &n, cap, &captured,
 		band->render, host->x + x, host->y + y, false);
-#ifdef SOMEWM_RENDER_VERIFY
-	/* A capturing widget float stops Clay before the host root. It still
-	 * belongs to the scene's drawable; otherwise the query must reach the
-	 * root to agree with the scene hit. */
-	if (!pointer_over(ids, root_id) && !captured) {
-		wlr_log(WLR_ERROR, "scene==clay: the scene hit drawable %dx%d+%d+%d "
-			"at %g,%g but Clay's query does not reach its root",
-			host->w, host->h, host->x + m->m.x, host->y + m->m.y, x, y);
-		abort();
-	}
-#endif
 	Clay_SetCurrentContext(previous);
 	return n;
+}
+
+uint32_t
+declare_widget_identity(const struct widget_host *host, int index, int origin[2])
+{
+	const struct widget_tree *d = published_tree(host);
+	if (!d || index < 0 || (size_t)index >= d->nodes_len) return 0;
+	Clay_Context *previous = Clay_GetCurrentContext();
+	Clay_SetCurrentContext(declare_widget_context(host));
+	Clay_ElementData box = Clay_GetElementData((Clay_ElementId){.id = d->ids[index]});
+	Clay_ElementData root = Clay_GetElementData((Clay_ElementId){.id = d->root_id});
+	Clay_SetCurrentContext(previous);
+	if (!box.found || !root.found) return 0;
+	origin[0] = (int)floorf(box.boundingBox.x - root.boundingBox.x + 0.5f);
+	origin[1] = (int)floorf(box.boundingBox.y - root.boundingBox.y + 0.5f);
+	return d->nodes[index].identity;
 }
 
 /* The boxes of host's tree in the current context: one lookup per node
@@ -3945,11 +3939,12 @@ solved_emit(void)
 	for (size_t i = 0; i < len; i++) {
         if (!solved_hosts[i].tree->publish_pending) continue;
         solved_hosts[i].tree->publish_pending = false;
+		struct node *n = node_by_id(solved_hosts[i].id);
+		if (n && n->ui_box) continue;
 		drawable_push(L, solved_hosts[i].drawable);
 		solved_signal(L, solved_hosts[i].tree);
 	}
 }
-
 
 int
 declare_output_order(struct declare_output *dout, void **objects,
@@ -4076,11 +4071,8 @@ handle_clay_error(Clay_ErrorData error)
     }
 }
 
-/* One band: an arena-backed Clay context and a render_state reconciling
- * into a fresh tree under parent. */
 static void
-declare_band_init(struct declare_band *band, struct wlr_output *wlr_output,
-	struct wlr_scene_tree *parent)
+declare_band_init(struct declare_band *band, struct wlr_output *wlr_output)
 {
     Clay_SetCurrentContext(NULL);
     Clay_SetMaxElementCount(context_capacity);
@@ -4108,18 +4100,11 @@ declare_band_init(struct declare_band *band, struct wlr_output *wlr_output,
         band->arena = NULL;
         return;
     }
-	/* Clay_Initialize left this the current context. Clay drops any
-	 * element whose box lies entirely outside layoutDimensions
-	 * (clay.h:2465), which saves draw calls in immediate mode and loses
-	 * windows here. Boxes are output-local, but the nodes they reconcile
-	 * into are not confined to the output: a floating client mid-drag and
-	 * a drawin overhanging an edge render on the neighbor while their box
-	 * is still relative to the output that declared them. wlr_scene does
-	 * the per-output culling. */
+
 	Clay_SetCullingEnabled(false);
 	Clay_SetMeasureTextFunction(render_measure_text, NULL);
-	band->tree = wlr_scene_tree_create(parent);
-	band->render = render_create(band->tree);
+	band->render = render_create();
+	render_set_paint(band->render, painter, paint_generation);
 }
 
 static void
@@ -4145,7 +4130,6 @@ declare_band_wipe(struct declare_band *band)
     free(band->entrances);
     free(band->transition_baselines);
 	render_destroy(band->render, &client_hooks);
-	wlr_scene_node_destroy(&band->tree->node);
 	free(band->arena);
 	p_delete(&band->records);
 	band->records_len = band->records_cap = 0;
@@ -4168,7 +4152,6 @@ declare_band_update(struct declare_band *band, struct wlr_output *wlr_output,
 		(Clay_Dimensions) { .width = width, .height = height });
 	declare_element_word(band, CLAY_ID("Clay__RootContainer"),
 		DECLARE_SRC_OUTPUT, DECLARE_SRC_OUTPUT);
-	render_set_position(band->render, lx, ly);
 	render_set_scale(band->render, wlr_output->scale);
 	if (band->scale != wlr_output->scale) {
 		/* Clay keys cached text widths on content and text config, while
@@ -4196,11 +4179,10 @@ declare_output_create(struct wlr_output *wlr_output)
 	dout->wlr_output = wlr_output;
 	dout->deadline = wl_event_loop_add_timer(
 		wl_display_get_event_loop(some_get_display()), deadline_fire, dout);
-	/* Every band lives in LyrDesktop; LyrBlock above it is the parent an
-	 * ext-session-lock client's surfaces are created under, before the
-	 * declare pass borrows them into this tree. */
-	declare_band_init(&dout->band, wlr_output, layers[LyrDesktop]);
+
+	declare_band_init(&dout->band, wlr_output);
 	dout->dirty = true;
+	wlr_output_schedule_frame(dout->wlr_output);
 	return dout;
 }
 
@@ -4416,7 +4398,7 @@ declare_output_frame(struct declare_output *dout, Monitor *m)
 		return -1;
     in_pass = true;
     if (!band->clay) {
-        declare_band_init(band, dout->wlr_output, layers[LyrDesktop]);
+        declare_band_init(band, dout->wlr_output);
         if (!band->clay) { dout->dirty = false; in_pass = false; return -1; }
         declare_band_update(band, dout->wlr_output, m->m.x, m->m.y);
     }
@@ -4441,6 +4423,11 @@ declare_output_frame(struct declare_output *dout, Monitor *m)
     band->scrollbar_records_len = 0;
     solved_len = 0;
     luaA_emit_signal_global("clay::declare");
+    foreach(item, globalconf.drawins) {
+        drawin_t *d = *item;
+        if (d->node && d->node->ui_box && d->ui_dirty)
+            widget_compile_box(globalconf_L, d);
+    }
     lua_getfield(globalconf_L, LUA_REGISTRYINDEX, "_LOADED");
     lua_getfield(globalconf_L, -1, "somewm.animation");
     animations_disabled = globalconf.mousegrabber != LUA_REFNIL;
@@ -4686,6 +4673,9 @@ declare_output_frame(struct declare_output *dout, Monitor *m)
 	band->transitioning = transitioning;
 	if (insp_closed)
 		inspector_emit_closed(m);
+    /* A nested backend can withhold frame callbacks while its box is hidden.
+     * Surface visibility must still follow the records reconciled by the deadline. */
+    monitor_update_surfaces();
     return band->mutations;
 
 failed:
@@ -4931,25 +4921,6 @@ inspector_emit_closed(Monitor *m)
 	lua_pop(L, 1);
 }
 
-/* --- the solved tree dump (somewm-client clay tree) ---
- *
- * Per band: a header of counters (the frame's commands, its scene mutations,
- * the scene nodes it created and swept, the nodes held including those kept
- * dark for an element still in the tree), the root and derived counts, the
- * tree as Clay holds it after the solve (its roots in command order, one
- * element per line, indented, named by what somewm recorded for the id), the
- * drawins it refused, then the realized list: one line per node the frame's
- * commands drew, in draw order, read back from the last reconcile (render.h).
- * Nothing here solves or declares: the dump reports the frame the output drew.
- * The realized list doubles as a tree==scene check in release builds, where
- * the verifier is compiled out, by printing the renderer's own mismatch
- * answer.
- *
- * Every box a line prints is in logical coordinates with both edges rounded
- * to whole pixels, so an element's box is the box the scene realizes and the
- * one a client's configure and geometry carry.
- */
-
 static const char *
 command_name(uint32_t type)
 {
@@ -5001,6 +4972,7 @@ static const char *const kind_names[] = {
 	[DECLARE_KIND_POPUP] = "popup",
 	[DECLARE_KIND_CURSOR] = "cursor",
 	[DECLARE_KIND_SCREEN] = "screen",
+	[DECLARE_KIND_UI_BOX] = "ui.box",
 };
 
 /* The object a handle names, bare: the record line puts its role before it
@@ -5016,6 +4988,7 @@ dump_object(buffer_t *buf, uint64_t handle)
 		return;
 	}
 	switch (kind) {
+	case DECLARE_KIND_UI_BOX: buffer_adds(buf, "ui.box"); break;
 	case DECLARE_KIND_SCREEN:
 		buffer_addf(buf, "%d", ((screen_t *)object)->index);
 		break;
@@ -5105,7 +5078,7 @@ dump_what(buffer_t *buf, uint32_t id, void *userdata)
  * Round both of its edges, the rule render.c realizes a box with and
  * client_solved_box writes a client's geometry with, so the line prints the
  * box on screen. Truncating instead loses the fractional edge of a GROW
- * split and reads a pixel short of what the scene and the configure carry.
+ * split and reads a pixel short of what the draw and the configure carry.
  * These stay logical coordinates; the scale is applied further down. */
 static Clay_BoundingBox
 dump_box(Clay_BoundingBox b)
@@ -5158,8 +5131,6 @@ dump_node(void *user, const struct render_node_view *v)
 	if (v->rbox.width != v->box.width || v->rbox.height != v->box.height
 			|| v->rbox.x != v->box.x || v->rbox.y != v->box.y)
 		buffer_adds(buf, " [solved!=realized]");
-	if (v->mismatch)
-		buffer_adds(buf, " [tree!=scene]");
 	buffer_adds(buf, "\n");
 }
 
@@ -5295,6 +5266,11 @@ dump_widget_line(buffer_t *buf, const struct widget_host *host, size_t i, Clay_E
 	if (n->text) {
 		buffer_addf(buf, " \"%.*s\" font=%u", (int)n->text_len,
 			d->text + n->text_off, n->font);
+		struct node *owner = node_by_id(host->id);
+		if (owner && owner->ui_box) {
+			static const char *const wraps[] = {"words", "newlines", "none"};
+			buffer_addf(buf, " wrap=%s ellipsize=%s", wraps[n->wrap], n->ellipsize ? "true" : "false");
+		}
 		if (n->transform)
 			buffer_addf(buf, " transform %s", transforms[n->transform]);
 	} else if (i == 0 && host->flow) {
@@ -5801,15 +5777,16 @@ dump_band(buffer_t *buf, struct declare_band *band, Monitor *m)
 		band->frames, capacity.elements, capacity.capacity, capacity.map, capacity.freeIds,
 		band->inspector_authored, band->inspector_elements, band->inspector_strings);
 	buffer_addf(buf, "  commands %d mutations %d created %d swept %d nodes %zu "
-		"raster_bytes %zu buffers %d batched %d declare %" PRId64 "us solve %" PRId64 "us "
+		"raster_bytes %zu buffers %d declare %" PRId64 "us solve %" PRId64 "us "
 		"reconcile %" PRId64 "us\n",
 		band->commands, band->mutations,
 		render_nodes_created(band->render), render_nodes_swept(band->render),
 		render_node_count(band->render),
 		render_raster_bytes(band->render),
 		render_buffers_created(band->render),
-		render_visibility_batched(band->render),
 		band->declare_us, band->solve_us, band->reconcile_us);
+	if (render_clip_overflows(band->render))
+		buffer_addf(buf, "  clip_overflows %zu\n", render_clip_overflows(band->render));
 	if (band->context_valid) dump_tree(buf, band);
 	else if (band->retained_dump) buffer_adds(buf, band->retained_dump);
 	dump_refused(buf, m);
@@ -5830,4 +5807,37 @@ declare_dump(Monitor *only)
 		dump_band(&buf, &m->declare->band, m);
 	}
 	return buffer_detach(&buf);
+}
+
+void declare_draw(struct declare_output *dout, struct paint *p, Monitor *output,
+        const struct render_draw_params *params)
+{
+    if (!dout || !dout->band.render) return;
+    render_set_paint(dout->band.render, painter, paint_generation);
+    render_draw(dout->band.render, p, &client_hooks, output, params);
+}
+
+void declare_finish(struct declare_output *dout)
+{
+    if (dout && dout->band.render) render_finish(dout->band.render);
+}
+
+void declare_reset_paint(struct declare_output *dout)
+{
+    if (dout && dout->band.render) render_set_paint(dout->band.render, NULL, 0);
+}
+
+void declare_damage(struct declare_output *dout, int x, int y)
+{
+    if (!dout || !dout->band.render) return;
+    struct render_box boxes[64];
+    size_t count;
+    while ((count = render_damage(dout->band.render, boxes, 64))) {
+        for (size_t i = 0; i < count; i++) {
+            boxes[i].x += x;
+            boxes[i].y += y;
+            Monitor *m;
+            wl_list_for_each(m, &mons, link) monitor_damage_box(m, boxes[i]);
+        }
+    }
 }

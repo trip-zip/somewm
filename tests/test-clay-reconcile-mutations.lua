@@ -1,17 +1,7 @@
----------------------------------------------------------------------------
--- Test: a frame mutates only the scene nodes its change reaches
---
--- Six textboxes in a row. The counts are read from the dump header's
--- `mutations`, which render_reconcile returns:
---   same-width markup on the third: 1, its buffer swap. Nothing moves.
---   wider markup on the third: 4, its buffer swap plus the three text
---     nodes after it moving right. A move alone writes no clip.
---   a background appears behind the second: 2, the new rect and one
---     restack placing it under the text. Every other node keeps its order.
---   that background goes: 1, the rect disabled. Its element is still in
---     the tree, so the node is kept for the colour's return, and a node
---     kept dark never reorders the rest.
----------------------------------------------------------------------------
+-- Mutations count records whose draw changed, including their draw position.
+-- Equal-width text changes one raster. Wider text also moves the next three.
+-- Adding or removing the second background changes seven draws: the background
+-- and the positions of the five following text records and the cursor.
 
 local runner = require('_runner')
 local async = require('_async')
@@ -26,7 +16,7 @@ local function expect(s, what, want)
     awesome._test_redeclare()
     local line, got = header(s)
     assert(got == want, string.format('%s: mutations %s, expected %d', what, tostring(got), want))
-    assert(awesome._test_redeclare() == 0, what .. ': the next frame mutated the scene')
+    assert(awesome._test_redeclare() == 0, what .. ': the next frame changed a draw')
     io.stderr:write(string.format('[PASS] %s: %s\n', what, line))
 end
 
@@ -62,9 +52,9 @@ runner.run_async(function()
     boxes[3].markup = '11111111'
     expect(s, 'wider markup', 4)
     bg.bg = '#ff0000'
-    expect(s, 'background appears', 2)
+    expect(s, 'background appears', 7)
     bg.bg = nil
-    expect(s, 'background goes', 1)
+    expect(s, 'background goes', 7)
 
     wb.visible = false
     runner.done()

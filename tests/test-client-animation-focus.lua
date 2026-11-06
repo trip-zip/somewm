@@ -1,3 +1,4 @@
+-- timeout: 45
 local runner = require('_runner')
 local async = require('_async')
 local awful = require('awful')
@@ -11,7 +12,6 @@ local s = screen[1]
 
 local function dump()
     local text = awesome._clay_tree(s)
-    assert(not text:find('[tree!=scene]', 1, true), text)
     return text
 end
 
@@ -52,9 +52,34 @@ local function pixels(c)
     return red, green, blue
 end
 
+-- A hosted runner can stall for a large part of a short transition, so a
+-- sample at a fixed delay may land before it starts or after it ends. Poll
+-- instead, against a transition long enough that a stall cannot skip the
+-- middle. pixels() waits on grim, so the loop runs here rather than inside
+-- a wait_for_condition predicate.
+local GLib = require('lgi').GLib
+local function between(value) return value > 32 and value < 224 end
+local function wait_all(list, test, message)
+    local deadline, last = GLib.get_monotonic_time() + 8e6
+    repeat
+        local good = true
+        for _, c in ipairs(list) do
+            local values = {pcall(pixels, c)}
+            if not table.remove(values, 1) then good, last = false, values[1] break end
+            for _, value in ipairs(values) do
+                if not test(value) then good, last = false, value break end
+            end
+            if not good then break end
+        end
+        if good then return end
+        async.sleep(.02)
+    until GLib.get_monotonic_time() > deadline
+    error(message .. ': ' .. tostring(last))
+end
+
 runner.run_async(function()
     beautiful.animation_layout_duration = 0
-    beautiful.animation_focus_duration = 1
+    beautiful.animation_focus_duration = 3
     beautiful.border_normal, beautiful.border_focus = '#202020', '#e0e0e0'
     local function focused(c) c.border_color = beautiful.border_focus end
     local function unfocused(c) c.border_color = beautiful.border_normal end
@@ -74,43 +99,27 @@ runner.run_async(function()
     mouse.coords{x = 1270, y = 710}
     client.focus = clients[1]
     focused(clients[1])
-    async.sleep(1.2)
-    for _, value in ipairs({pixels(clients[1])}) do assert(value == 224, 'initial focused border: ' .. value) end
+    wait_all({clients[1]}, function(v) return v == 224 end, 'initial focused border')
     client.focus = clients[2]
-    async.sleep(.3)
-    for _, c in ipairs(clients) do
-        for _, value in ipairs({pixels(c)}) do
-            assert(value > 32 and value < 224, 'border did not interpolate: ' .. value)
-        end
-    end
-    async.sleep(.9)
-    for _, value in ipairs({pixels(clients[2])}) do assert(value == 224, 'focused border did not settle: ' .. value) end
-    for _, value in ipairs({pixels(clients[1])}) do assert(value == 32, 'unfocused border did not settle: ' .. value) end
+    wait_all(clients, between, 'border did not interpolate')
+    wait_all({clients[2]}, function(v) return v == 224 end, 'focused border did not settle')
+    wait_all({clients[1]}, function(v) return v == 32 end, 'unfocused border did not settle')
     beautiful.animation_focus_duration = nil
     ruled.client.append_rule {
         rule = {class = 'FOCUS_ANIMATION_3'},
-        properties = {animation = {focus = 1}, focus = false, floating = false, border_width = 8,
+        properties = {animation = {focus = 3}, focus = false, floating = false, border_width = 8,
             border_color = beautiful.border_normal},
     }
     reports[3] = os.tmpname()
     awful.spawn{binary, 'FOCUS_ANIMATION_3', reports[3], '0', 'ff0000cc', '0'}
     clients[3] = assert(async.wait_for_client('FOCUS_ANIMATION_3', 2))
-    assert(clients[3].animation.focus == 1, 'rule did not set focus duration')
+    assert(clients[3].animation.focus == 3, 'rule did not set focus duration')
     clients[3].shadow = false
     client.focus = clients[2]
-    async.sleep(1.2)
-    for _, value in ipairs({pixels(clients[3])}) do
-        assert(value == 32, 'per-object unfocused border: ' .. value)
-    end
+    wait_all({clients[3]}, function(v) return v == 32 end, 'per-object unfocused border')
     client.focus = clients[3]
-    async.sleep(.3)
-    for _, value in ipairs({pixels(clients[3])}) do
-        assert(value > 32 and value < 224, 'per-object border faded from empty or snapped: ' .. value)
-    end
-    async.sleep(.9)
-    for _, value in ipairs({pixels(clients[3])}) do
-        assert(value == 224, 'per-object focused border did not settle: ' .. value)
-    end
+    wait_all({clients[3]}, between, 'per-object border faded from empty or snapped')
+    wait_all({clients[3]}, function(v) return v == 224 end, 'per-object focused border did not settle')
     client.disconnect_signal('focus', focused)
     client.disconnect_signal('unfocus', unfocused)
     for i, c in ipairs(clients) do c:kill(); os.remove(reports[i]) end

@@ -34,7 +34,6 @@ function M.check(s)
     assert(elements, dump)
     assert(tonumber(elements) < tonumber(capacity) and tonumber(map) < tonumber(capacity), dump)
     assert(not dump:find('Clay Error', 1, true), dump)
-    assert(not dump:find('[tree!=scene]', 1, true), dump)
     return dump, tonumber(elements), tonumber(map)
 end
 

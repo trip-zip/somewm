@@ -69,7 +69,6 @@ runner.run_async(function()
     assert(p._drawable._clay_tree~=tree)
     local recovered=p._drawable:find_widgets(5,5)
     assert(recovered[#recovered].widget==replacement,'recovery retained old input mappings')
-    assert(not awesome._clay_tree(s):find('[tree!=scene]',1,true))
     local overflow = wibox.layout.overflow.vertical()
     for _ = 1, 50 do
         overflow:add(wibox.widget {forced_height=20, bg='#33aa22', widget=wibox.container.background})
@@ -105,7 +104,6 @@ runner.run_async(function()
     showing=false
     awful.layout.arrange(s)
     async.sleep(.1)
-    assert(not awesome._clay_tree(s):find('[tree!=scene]',1,true))
     local recovered_scroll = {overflow._private.drawable:_clay_scroll_get(overflow._private.content.id)}
     assert(recovered_scroll[2]==0, 'new scroll record did not start at zero')
     assert(not awesome._clay_tree(s):find('SIDEBAR ',1,true),

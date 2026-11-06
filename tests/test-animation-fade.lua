@@ -1,4 +1,4 @@
--- timeout: 20
+-- timeout: 30
 local runner = require('_runner')
 local async = require('_async')
 local awful = require('awful')
@@ -13,7 +13,6 @@ local s = screen[1]
 
 local function dump()
     local text = awesome._clay_tree(s)
-    assert(not text:find('[tree!=scene]', 1, true), text)
     return text
 end
 
@@ -125,14 +124,23 @@ runner.run_async(function()
     beautiful.shadow_opacity, beautiful.shadow_color = .75, '#000000'
     awesome.shadow_reload()
     bar.shadow = true
-    bar.animation = {visible = {duration = .25, enter = 'fade'}}
+    -- Long enough that a stalled runner cannot skip the middle; the sample
+    -- polls each frame instead of trusting a fixed delay.
+    bar.animation = {visible = {duration = 2, enter = 'fade'}}
     bar.visible = true
-    async.sleep(.08)
-    local shadow_alpha = alpha('WIBOX', 520, 20)
-    assert(shadow_alpha > 0 and shadow_alpha < 1, 'shadow alpha did not interpolate: ' .. shadow_alpha)
+    local shadow_alpha
+    assert(async.wait_for_condition(function()
+        local ok, value = pcall(alpha, 'WIBOX', 520, 20)
+        shadow_alpha = ok and value or shadow_alpha
+        return ok and value > .2 and value < .8
+    end, 2, .01), 'shadow alpha did not interpolate: ' .. tostring(shadow_alpha))
     local shadow_mid = pixels(621, 30)
     local shadow_after = alpha('WIBOX', 520, 20)
-    async.sleep(.22)
+    assert(async.wait_for_condition(function()
+        local ok, value = pcall(alpha, 'WIBOX', 520, 20)
+        return ok and value == 0
+    end, 4, .02),
+        'shadow fade did not settle')
     local shadow_final = pixels(621, 30)
     for i, value in ipairs(shadow_mid) do
         -- The CPU capture is immediate; grim can capture a later animation frame.
