@@ -3411,40 +3411,25 @@ local function register_builtin_commands()
     local image = gears_surface.load_uncached(path)
     local s = resolve_screen(screen_arg)
 
-    local image_width, image_height = image:get_width(), image:get_height()
-    local screen_width, screen_height = s.geometry.width, s.geometry.height
-
-    local scale = math.max(screen_width / image_width, screen_height / image_height)
-
-    local surface = cairo.ImageSurface.create(
-        cairo.Format.ARGB32,
-        screen_width,
-        screen_height
-    )
-
-    local cr = cairo.Context(surface)
-
-    -- Scale from center
-    cr:translate(screen_width / 2, screen_height / 2)
-    cr:scale(scale, scale)
-    cr:translate(-image_width / 2, -image_height / 2)
-
-    cr:set_source_surface(image, 0, 0)
-    cr:paint()
+    local iw, ih = image:get_width(), image:get_height()
+    if iw == 0 or ih == 0 then
+      error("Image has zero dimensions: " .. path)
+    end
+    local sw, sh = s.geometry.width, s.geometry.height
+    local scale = math.max(sw / iw, sh / ih)
+    local cw, ch = iw * scale, ih * scale
 
     local wallpaper = require("awful.wallpaper")
     local wibox = require("wibox")
 
-    local img = wibox.widget.imagebox()
-    img.image = surface
-    img.resize = true
+    local img = wibox.widget.imagebox(path)
+    img.forced_width, img.forced_height = cw, ch
+    img.upscale, img.downscale = true, true
+    local layout = wibox.layout.manual()
+    layout:add_at(img, { x = -(cw - sw) / 2, y = -(ch - sh) / 2 })
+    wallpaper { screen = s, widget = layout }
 
-    wallpaper {
-        screen = s,
-        widget = img,
-    }
-
-    return string.format("Set wallpaper to %s on screen %d", path, s.index)
+    return string.format("Set wallpaper to %s on screen %d (fill)", path, s.index)
   end)
 
   -- =================================================================
