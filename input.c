@@ -466,8 +466,8 @@ axisnotify(struct wl_listener *listener, void *data)
 				luaA_drawin_button_check(drawin, rel_x, rel_y, button, CLEANMASK(mods), false);
 			} else if (c && (!client_is_unmanaged(c) || client_wants_focus(c))) {
 				/* Scroll on client */
-				rel_x = (int)cursor->x - c->geometry.x;
-				rel_y = (int)cursor->y - c->geometry.y;
+				rel_x = (int)cursor->x - c->geometry.x - client_border(c);
+				rel_y = (int)cursor->y - c->geometry.y - client_border(c);
 
 				/* Emit on titlebar drawable if applicable */
 				if (titlebar_drawable) {
@@ -586,8 +586,8 @@ buttonpress(struct wl_listener *listener, void *data)
 
 			} else if (c && (!client_is_unmanaged(c) || client_wants_focus(c))) {
 			/* Calculate client-relative coordinates */
-			rel_x = (int)cursor->x - c->geometry.x;
-			rel_y = (int)cursor->y - c->geometry.y;
+			rel_x = (int)cursor->x - c->geometry.x - client_border(c);
+			rel_y = (int)cursor->y - c->geometry.y - client_border(c);
 
 			/* If click is on a titlebar drawable, emit button signal on it
 			 * This matches AwesomeWM's event.c:76-84 where they call event_emit_button on titlebar drawable */
@@ -681,8 +681,8 @@ buttonpress(struct wl_listener *listener, void *data)
 				}
 			} else if (c) {
 				/* Released on client - check client button bindings */
-				int rel_x = (int)cursor->x - c->geometry.x;
-				int rel_y = (int)cursor->y - c->geometry.y;
+				int rel_x = (int)cursor->x - c->geometry.x - client_border(c);
+				int rel_y = (int)cursor->y - c->geometry.y - client_border(c);
 
 				/* If release is on a titlebar drawable, emit button signal on it */
 				if (titlebar_drawable) {
@@ -981,8 +981,8 @@ motionnotify(uint32_t time, struct wlr_input_device *device, double dx, double d
 				warn("mouse::move on unregistered client %p", (void*)current_client);
 			}
 			some_event_queue_move(L, -1,
-				(int)(cursor->x - current_client->geometry.x),
-				(int)(cursor->y - current_client->geometry.y));
+				(int)(cursor->x - current_client->geometry.x - client_border(current_client)),
+				(int)(cursor->y - current_client->geometry.y - client_border(current_client)));
 			lua_pop(L, 1);
 
 			/* Check if mouse is over a titlebar drawable - emit signals for widget hover */
@@ -995,8 +995,8 @@ motionnotify(uint32_t time, struct wlr_input_device *device, double dx, double d
 				event_drawable_under_mouse(L, -1);
 
 				/* Emit mouse::move on titlebar drawable with local coordinates */
-				int tb_x = (int)(cursor->x - current_client->geometry.x);
-				int tb_y = (int)(cursor->y - current_client->geometry.y);
+				int tb_x = (int)(cursor->x - current_client->geometry.x - client_border(current_client));
+				int tb_y = (int)(cursor->y - current_client->geometry.y - client_border(current_client));
 				client_get_drawable_offset(current_client, &tb_x, &tb_y);
 				some_event_queue_move(L, -1, tb_x, tb_y);
 
@@ -2290,8 +2290,8 @@ touchnotifydown(struct wl_listener *listener, void *data)
 				&& !touch_point_active_elsewhere(surface)) {
 			struct wlr_keyboard *keyboard = wlr_seat_get_keyboard(seat);
 			uint32_t mods = keyboard ? wlr_keyboard_get_modifiers(keyboard) : 0;
-			int rel_x = (int)lx - c->geometry.x;
-			int rel_y = (int)ly - c->geometry.y;
+			int rel_x = (int)lx - c->geometry.x - client_border(c);
+			int rel_y = (int)ly - c->geometry.y - client_border(c);
 
 			luaA_client_button_check(c, rel_x, rel_y, BTN_LEFT,
 			                        CLEANMASK(mods), true);

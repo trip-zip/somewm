@@ -16,6 +16,10 @@ All notable changes to somewm will be documented in this file.
 - The linux-drm-syncobj protocol is no longer advertised. Clients fall back to implicit sync.
 - `ui.box` x and y are offsets from its parent screen. Moving a box keeps its screen parent.
 
+### Fixed
+
+- Button and mouse signals on a client measure from inside the border, as in AwesomeWM. A click on the inner top-left corner reports 0,0, not border_width,border_width.
+
 ## [2.1.2] - 2026-11-06
 
 Patch release. 13 commits since 2.1.1. Client borders fade with opacity,

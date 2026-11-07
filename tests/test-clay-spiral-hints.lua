@@ -27,7 +27,7 @@ runner.run_async(function()
             c:connect_signal(signal, function(original, x, y, button, mods)
                 assert(original == c and button == 1 and #mods == 0)
                 local g = c:geometry()
-                assert(x == 700 - g.x and y == 100 - g.y)
+                assert(x == 700 - g.x - c.border_width and y == 100 - g.y - c.border_width)
                 events[#events + 1] = signal .. ':' .. c.class
             end)
         end

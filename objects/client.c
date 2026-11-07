@@ -2468,8 +2468,8 @@ client_resize_do(client_t *c, area_t geometry, bool silent, bool solved)
         area = titlebar_get_area(c, bar);
 
         /* Convert to global coordinates */
-        area.x += geometry.x;
-        area.y += geometry.y;
+        area.x += geometry.x + client_border(c);
+        area.y += geometry.y + client_border(c);
         if (c->fullscreen)
             area.width = area.height = 0;
         drawable_set_geometry(L, -1, area, solved);
@@ -3458,12 +3458,9 @@ static area_t
 titlebar_get_area(client_t *c, client_titlebar_t bar)
 {
     area_t result = c->geometry;
-    int bw = client_border(c);
 
-    /* Titlebar coordinates start at the outer border corner.
-     * Inset them by border_width to place them inside the frame. */
-    result.x = bw;
-    result.y = bw;
+    /* Areas start inside the border, like client-relative pointer coordinates. */
+    result.x = result.y = 0;
 
     // Let's try some ascii art (with borders):
     // +---------------------------+  <- border
@@ -3480,16 +3477,16 @@ titlebar_get_area(client_t *c, client_titlebar_t bar)
 
     switch (bar) {
     case CLIENT_TITLEBAR_BOTTOM:
-        result.y = bw + c->geometry.height - c->titlebar[bar].size;
+        result.y = c->geometry.height - c->titlebar[bar].size;
         /* Fall through */
     case CLIENT_TITLEBAR_TOP:
         result.height = c->titlebar[bar].size;
         break;
     case CLIENT_TITLEBAR_RIGHT:
-        result.x = bw + c->geometry.width - c->titlebar[bar].size;
+        result.x = c->geometry.width - c->titlebar[bar].size;
         /* Fall through */
     case CLIENT_TITLEBAR_LEFT:
-        result.y = bw + c->titlebar[CLIENT_TITLEBAR_TOP].size;
+        result.y = c->titlebar[CLIENT_TITLEBAR_TOP].size;
         result.width = c->titlebar[bar].size;
         result.height -= c->titlebar[CLIENT_TITLEBAR_TOP].size;
         result.height -= c->titlebar[CLIENT_TITLEBAR_BOTTOM].size;
@@ -3517,8 +3514,8 @@ client_titlebar_host(client_t *c, drawable_t *d, struct widget_host *out)
             .m = c->mon,
             .drawable = d,
             .id = (uint32_t)node_handle(d->node),
-            .x = area.x + c->geometry.x - c->mon->m.x,
-            .y = area.y + c->geometry.y - c->mon->m.y,
+            .x = area.x + c->geometry.x + client_border(c) - c->mon->m.x,
+            .y = area.y + c->geometry.y + client_border(c) - c->mon->m.y,
             .w = area.width, .h = area.height,
             .src = { DECLARE_SRC_THEME, DECLARE_SRC_THEME },
             .radius = 0,
