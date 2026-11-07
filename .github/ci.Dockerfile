@@ -4,7 +4,7 @@
 #
 # Packages come from the Ubuntu image's own mirror at build time, so a slow
 # runner mirror costs one rebuild instead of every run.
-FROM ubuntu:26.04
+FROM ubuntu:26.10
 
 ARG LUA_INTERPRETER
 ARG LUA_DEV_PACKAGE
@@ -30,6 +30,7 @@ RUN ln -fs /usr/share/zoneinfo/Etc/UTC /etc/localtime \
       pkg-config \
       wayland-protocols \
       libwayland-dev \
+      libwlroots-0.20-dev \
       libxkbcommon-dev \
       libinput-dev \
       libdbus-1-dev \

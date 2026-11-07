@@ -197,14 +197,14 @@ jobs:
         env:
           LUA_COMPAT_REQUIRED: luajit lua5.1 lua5.2 lua5.3 lua5.4
 
-  build-debian-stable:
+  build-debian-system:
     runs-on: ubuntu-latest
-    container: debian:trixie
+    container: debian:forky
     env:
       DEBIAN_FRONTEND: noninteractive
       TZ: Etc/UTC
 
-    name: Build (Debian stable, vendored floors)
+    name: Build (Debian testing, system wlroots)
 
     steps:
       - name: Install dependencies
@@ -219,6 +219,7 @@ jobs:
             pkg-config \
             wayland-protocols \
             libwayland-dev \
+            libwlroots-0.20-dev \
             libwayland-bin \
             libxkbcommon-dev \
             libinput-dev \
@@ -265,98 +266,13 @@ jobs:
       - name: Checkout
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
-      # wayland, libdrm, xkbcommon, pixman and wayland-protocols are all older here than
-      # wlroots 0.20.2 needs, so each must be built from its wrap, and wlroots once.
-      # Build-only: busted is not packaged here, so unit tests run on the matrix legs.
       - name: Configure
         run: |
           git config --global --add safe.directory "$GITHUB_WORKSPACE"
-          meson setup build -Dlua_pkg=lua5.3 | tee setup.log
-          for p in wayland libdrm libxkbcommon pixman wayland-protocols wlroots; do
-            test "$(grep -c "^Executing subproject $p " setup.log)" = 1
-          done
+          meson setup build -Dlua_pkg=lua5.3 --wrap-mode=nofallback
+          python3 -c 'import json, subprocess; info = json.loads(subprocess.check_output(["meson", "introspect", "build", "--projectinfo"])); assert not info["subprojects"], info["subprojects"]'
 
       - name: Build
-        run: ninja -C build
-
-  build-ubuntu-lts:
-    runs-on: ubuntu-24.04
-    env:
-      DEBIAN_FRONTEND: noninteractive
-      TZ: Etc/UTC
-
-    name: Build (Ubuntu 24.04, vendored floors)
-
-    steps:
-      - name: Install dependencies
-        # libxcb-errors is not packaged on 24.04; wlroots builds without it.
         run: |
-          sudo apt-get update
-          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-            build-essential \
-            ca-certificates \
-            git \
-            meson \
-            ninja-build \
-            pkg-config \
-            wayland-protocols \
-            libwayland-dev \
-            libwayland-bin \
-            libxkbcommon-dev \
-            libinput-dev \
-            libdbus-1-dev \
-            libdrm-dev \
-            libgbm-dev \
-            libegl-dev \
-            libgles-dev \
-            libpixman-1-dev \
-            libudev-dev \
-            libseat-dev \
-            libxcb1-dev \
-            libxcb-icccm4-dev \
-            libxcb-composite0-dev \
-            libxcb-render0-dev \
-            libxcb-render-util0-dev \
-            libxcb-res0-dev \
-            libxcb-ewmh-dev \
-            libxcb-xfixes0-dev \
-            libxcb-xinput-dev \
-            libxcb-util-dev \
-            libxcb-dri3-dev \
-            libxcb-present-dev \
-            libxcb-shm0-dev \
-            hwdata \
-            libdisplay-info-dev \
-            libliftoff-dev \
-            libpam0g-dev \
-            xwayland \
-            lua5.3 \
-            liblua5.3-dev \
-            lua-lgi \
-            libcairo2-dev \
-            libpango1.0-dev \
-            libgdk-pixbuf-2.0-dev \
-            librsvg2-dev \
-            libglib2.0-dev \
-            libffi-dev \
-            libexpat1-dev \
-            libxml2-dev \
-            bison
-
-      - name: Checkout
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
-
-      # wayland, libdrm, xkbcommon, pixman and wayland-protocols are all older here than
-      # wlroots 0.20.2 needs, so each must be built from its wrap, and wlroots once.
-      # Build-only: busted is not packaged here, so unit tests run on the matrix legs.
-      - name: Configure
-        run: |
-          git config --global --add safe.directory "$GITHUB_WORKSPACE"
-          meson setup build -Dlua_pkg=lua5.3 | tee setup.log
-          for p in wayland libdrm libxkbcommon pixman wayland-protocols wlroots; do
-            test "$(grep -c "^Executing subproject $p " setup.log)" = 1
-          done
-          test "$(grep -c '^Executing subproject wlroots:libdisplay-info' setup.log)" = 1
-
-      - name: Build
-        run: ninja -C build
+          ninja -C build
+          readelf -d build/somewm | grep 'NEEDED.*libwlroots-0.20.so'
