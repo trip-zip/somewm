@@ -775,10 +775,8 @@ setup(void)
 	 * The renderer is responsible for defining the various pixel formats it
 	 * supports for shared memory, this configures that for clients. */
 	if (!(drw = wlr_renderer_autocreate(backend)))
-		die("couldn't create renderer\n"
-			"Try setting WLR_RENDERER=gles2\n"
-			"Run with WLR_DEBUG=1 for more details");
-    if (!wlr_renderer_is_gles2(drw)) die("somewm draws with GLES2; WLR_RENDERER=pixman is not supported");
+		die("couldn't create renderer; somewm requires GLES2 (WLR_RENDERER=gles2); run with WLR_DEBUG=1 for more details");
+    if (!wlr_renderer_is_gles2(drw)) die("somewm requires GLES2; on a host without a GPU, use WLR_RENDERER=gles2 with a software GL stack");
     monitor_make_current();
     painter = paint_create();
     if (!painter) die("couldn't create paint renderer");
