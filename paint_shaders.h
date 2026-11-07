@@ -1,8 +1,8 @@
 #ifndef SOMEWM_PAINT_SHADERS_H
 #define SOMEWM_PAINT_SHADERS_H
 
-/* Corner coverage matches the rounded fragment shaders in
- * subprojects/packagefiles/wlroots-corners.diff. All programs share it. */
+/* All programs fit radii by the CSS border-radius rule and use a one pixel
+ * smoothstep on each corner arc. */
 
 static const char paint_shader_vertex[] =
     "attribute vec2 position;\n"
