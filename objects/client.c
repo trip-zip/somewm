@@ -4468,6 +4468,46 @@ luaA_client_set_shape(lua_State *L, client_t *c)
 	return 0;
 }
 
+/** The client's content corner radius in pixels, independent of its shape.
+ * A positive radius rounds all four content corners and shows the border
+ * color underneath. Titlebars keep the shape's corners. Nil or zero keeps
+ * the corners derived from shape, border width and titlebars unchanged.
+ * Fullscreen clients ignore it.
+ * Negative values are rejected.
+ *
+ * @property content_radius
+ * @tparam[opt=nil] number|nil content_radius
+ * @propemits false false
+ * @see shape
+ */
+static int
+luaA_client_get_content_radius(lua_State *L, client_t *c)
+{
+	if (c->node && c->node->words.content_radius > 0)
+		lua_pushnumber(L, c->node->words.content_radius);
+	else
+		lua_pushnil(L);
+	return 1;
+}
+
+static int
+luaA_client_set_content_radius(lua_State *L, client_t *c)
+{
+	if (!c->node)
+		return 0;
+	int type = lua_type(L, -1);
+	if (type != LUA_TNIL && type != LUA_TNUMBER)
+		return luaL_error(L, "content_radius must be nil or a number");
+	if (type == LUA_TNUMBER && lua_tonumber(L, -1) < 0)
+		return luaL_error(L, "content_radius must be at least 0");
+	float radius = type == LUA_TNUMBER ? lua_tonumber(L, -1) : 0;
+	if (radius == c->node->words.content_radius)
+		return 0;
+	c->node->words.content_radius = radius;
+	luaA_object_emit_signal(L, -3, "property::content_radius", 0);
+	return 0;
+}
+
 static int
 luaA_client_get_shape_mask(lua_State *L, client_t *c)
 {
@@ -4891,6 +4931,7 @@ client_class_setup(lua_State *L)
         { "screen", NULL, (lua_class_propfunc_t) luaA_client_get_screen, (lua_class_propfunc_t) luaA_client_set_screen },
         { "shadow", (lua_class_propfunc_t) luaA_client_set_shadow, (lua_class_propfunc_t) luaA_client_get_shadow, (lua_class_propfunc_t) luaA_client_set_shadow },
         { "shape", (lua_class_propfunc_t) luaA_client_set_shape, (lua_class_propfunc_t) luaA_client_get_shape, (lua_class_propfunc_t) luaA_client_set_shape },
+        { "content_radius", (lua_class_propfunc_t) luaA_client_set_content_radius, (lua_class_propfunc_t) luaA_client_get_content_radius, (lua_class_propfunc_t) luaA_client_set_content_radius },
         { "shape_bounding", (lua_class_propfunc_t) luaA_client_set_shape_mask, (lua_class_propfunc_t) luaA_client_get_shape_mask, (lua_class_propfunc_t) luaA_client_set_shape_mask },
         { "shape_clip", (lua_class_propfunc_t) luaA_client_set_shape_mask, (lua_class_propfunc_t) luaA_client_get_shape_mask, (lua_class_propfunc_t) luaA_client_set_shape_mask },
         { "shape_input", (lua_class_propfunc_t) luaA_client_set_shape_mask, (lua_class_propfunc_t) luaA_client_get_shape_mask, (lua_class_propfunc_t) luaA_client_set_shape_mask },
