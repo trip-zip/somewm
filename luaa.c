@@ -5184,6 +5184,9 @@ clients_detach(client_snapshot_t **out, int *out_count)
 
 		/* Copy entire client_t via memcpy */
 		memcpy(&snap->data, c, sizeof(client_t));
+		/* The slot belongs to the state being closed; the rule sets the shape
+		 * again on request::manage. */
+		snap->data.shape_ref = 0;
 		if (c->node)
 			c->node->owner = &snap->data;
 		if (c->surface_node)
