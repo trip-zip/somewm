@@ -4408,11 +4408,10 @@ luaA_client_get_size_hints(lua_State *L, client_t *c)
     return 1;
 }
 
-/** The client's shape: nil, a number (one corner radius in pixels for all
- * four corners) or a shape function. A function is read by awful.client.clay:
- * `gears.shape.rounded_rect`, or a closure drawing its path, becomes that
- * radius; any other function warns once naming the client, which stays
- * square. A titlebar takes the corners on its edge and the surface the rest.
+/** The client's shape: nil, a corner radius in pixels, or any shape function.
+ * The window, titlebars and border follow the path. A click outside the path
+ * reaches what is below. Fullscreen clients stay square.
+ * `gears.shape.rounded_rect` and closures drawing it use native corner radii.
  * `gears.surface.apply_shape_bounding` sets this on a client.
  *
  * @property shape

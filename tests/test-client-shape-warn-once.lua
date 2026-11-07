@@ -28,8 +28,6 @@ runner.run_steps {
         assert(warnings == 1, "expected one client warning, got " .. warnings)
         return true
     end,
-    -- A rounded rectangle is kept; any other shape is kept too and warns
-    -- once naming the client when the layout pass reads it.
     function()
         local c = utils.find_client_by_class("shape_warn_once")
         local gshape = require("gears.shape")
@@ -49,13 +47,15 @@ runner.run_steps {
         local f = assert(io.open(assert(os.getenv("SOMEWM_TEST_LOG"))))
         local text = f:read("*a")
         f:close()
-        local _, warnings = text:gsub(
-            "client: shape is not a rounded rectangle, the client stays square: shape_warn_once", "")
-        if warnings == 0 then
-            assert(count < 20, "a shape that is not a rounded rectangle warns")
+        assert(not text:find("client stays square", 1, true), "path shape warned")
+        local found = false
+        for line in awesome._clay_tree(c.screen):gmatch("[^\n]+") do
+            if line:find("CLIENT ", 1, true) and line:find(" shape ", 1, true) then found = true end
+        end
+        if not found then
+            assert(count < 15, "client frame has no path: " .. awesome._clay_tree(c.screen))
             return nil
         end
-        assert(warnings == 1, "expected one shape warning, got " .. warnings)
         return true
     end,
 }

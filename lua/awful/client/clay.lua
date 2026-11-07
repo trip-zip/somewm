@@ -10,6 +10,7 @@ local capi = {client = client}
 local GLib = require("lgi").GLib
 local clay = {}
 local previous = setmetatable({}, {__mode = "k"})
+local paths = setmetatable({}, {__mode = "k"})
 
 local allocation_keys = {"w", "h", "wsrc", "hsrc", "float", "x", "y", "parent", "own", "_attach"}
 local bounds = {wmin = "min_width", wmax = "max_width", hmin = "min_height", hmax = "max_height"}
@@ -50,24 +51,11 @@ local function surface(c, fullscreen)
     return node
 end
 
--- The radius c.shape stands for: a number as given; a function through
--- wibox.clay's rounded rectangle detection (gears.shape.rounded_rect or a
--- closure drawing its path). Any other function warns once per client and
--- function, naming the client, and the client is described square; c.shape
--- keeps what was set, as a wibox keeps its function.
-local shape_warned = setmetatable({}, {__mode = "k"})
 local function shape_radius(c)
     local shape = c.shape
     if shape == nil then return 0 end
     if type(shape) == "number" then return shape end
-    local r = wclay.shape_radius(shape)
-    if r then return r end
-    if shape_warned[c] ~= shape then
-        shape_warned[c] = shape
-        gdebug.print_warning("client: shape is not a rounded rectangle, the client stays square: "
-            .. tostring(c.class or c.name))
-    end
-    return 0
+    return wclay.shape_radius(shape)
 end
 
 -- The corners of the shape, less the border as a wibox's content takes
@@ -75,8 +63,8 @@ end
 -- rest. Nothing is authored when the client is square. A border stays
 -- square here and takes a click in the corner; without one the surface's
 -- own cut corner lets the click through.
-local function assign_corners(c, bw, top, right, bottom, left, pixels)
-    local r = math.max(shape_radius(c) - bw, 0)
+local function assign_corners(radius, bw, top, right, bottom, left, pixels)
+    local r = math.max(radius - bw, 0)
     if r <= 0 then return end
     local radii = {r, r, r, r}  -- top-left, top-right, bottom-right, bottom-left
     if top then top.radii = {r, r, 0, 0}; radii[1], radii[2] = 0, 0 end
@@ -154,8 +142,10 @@ function clay.describe(c, allocation)
         pixels.wmin, pixels.wmax, pixels.hmin, pixels.hmax = nil, nil, nil, nil
         slot.w, slot.h, slot.wsrc, slot.hsrc = committed.width, committed.height, "protocol", "protocol"
     end
-    if not fullscreen then
-        assign_corners(c, bw, top, right, bottom, left, pixels)
+    local radius = fullscreen and 0 or shape_radius(c)
+    local path = not fullscreen and radius == nil
+    if not fullscreen and radius then
+        assign_corners(radius, bw, top, right, bottom, left, pixels)
     end
     local box, cut = frame
     if committed then
@@ -208,7 +198,19 @@ function clay.describe(c, allocation)
             frame.parent, frame.own = point, point
         end
     end
-    if bw > 0 then
+    if path then
+        local shape = c.shape
+        frame.clip = true
+        local cached = paths[c]
+        if not cached or cached.shape ~= shape or cached.bw ~= bw then
+            cached = {shape = shape, bw = bw, ops = function(w, h)
+                return wclay.shape_ops(shape, w - bw, h - bw, bw / 2, bw / 2)
+            end}
+            paths[c] = cached
+        end
+        frame.shape = cached.ops
+        if bw > 0 then frame.stroke, frame.stroke_width = {c:_border_rgba()}, bw end
+    elseif bw > 0 then
         box.border, box.bw = {c:_border_rgba()}, {bw, bw, bw, bw}
     end
     local state = previous[c]
@@ -251,7 +253,7 @@ function clay.describe(c, allocation)
         -- keeps its size too, as it would in the frame directly.
         if cut then cut.scroll, box.scroll = "both", nil end
     end
-    if box ~= frame and frame.transition and type(frame.transition.properties) == "table" then
+    if not path and box ~= frame and frame.transition and type(frame.transition.properties) == "table" then
         box.transition = {properties = "border_color", duration = frame.transition.duration}
     end
     previous[c] = {maximized = c.maximized, fullscreen = fullscreen, floating = c.floating,

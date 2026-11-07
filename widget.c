@@ -1229,6 +1229,8 @@ widget_nodes_set(lua_State *L, struct widget_tree *d, Monitor *m, int idx)
 		memcpy(slot->shape.fill, n->fill, sizeof(n->fill));
 		memcpy(slot->shape.stroke, n->stroke, sizeof(n->stroke));
 		slot->shape.stroke_width = n->stroke_width;
+        slot->shape.stroke_transition = n->transition.enabled
+            && (n->transition.properties & CLAY_TRANSITION_PROPERTY_BORDER_COLOR);
 		if (slot->shape.transform != n->transform) {
 			slot->shape.transform = n->transform;
 			slot->shape.gen = ++d->shape_generation;

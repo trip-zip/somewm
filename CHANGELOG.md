@@ -6,12 +6,14 @@ All notable changes to somewm will be documented in this file.
 
 ### Added
 
+- `client.shape` takes any `gears.shape` function. The window, its titlebars and its border follow the path, and a click outside it reaches what is below.
 - `somewm-client wallpaper fill <path> [screen]` scales the image to cover the screen with no borders.
 - `ui.box` draws a box with size, layout, paint, content, animation, position, attachment, cursor and input_passthrough words, nested or alone, with pointer signals, as the first pieces of the 2.2 `ui` preview.
 - `screen.tree`, `client.parent` and `client.children` expose the compositor's node tree. Client nodes can be reordered among their siblings.
 
 ### Changed
 
+- Text, images and bars inside a shaped widget, wibox or popup are cut by the renderer. Moving or animating a shaped popup no longer redraws its contents.
 - Rounded corners, shadows and shaped clips are drawn by somewm's own renderer.
 - `WLR_RENDERER=pixman` is no longer supported.
 - The linux-drm-syncobj protocol is no longer advertised. Clients fall back to implicit sync.

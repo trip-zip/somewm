@@ -698,9 +698,7 @@ static uint32_t raster_pixel(struct render_node_view view, int x, int y) {
 	return ((const uint32_t *)(view.pixels + y * view.stride))[x];
 }
 
-/* A path cuts the rects under it as a raster of their fill, with their own
- * arcs as the buffer's radii; a rect clear of the path is a scene rect, and
- * a rounded host's arcs reach either as clips. */
+/* Path coverage and rounded clips compose on native rectangles. */
 static void test_path_scopes_from_the_word(void) {
 	struct fixture f;
 	fixture_init(&f);
@@ -724,17 +722,16 @@ static void test_path_scopes_from_the_word(void) {
 	cmds[5].userData = word(7, 3, 2);
 	cmds[6].userData = word(7, 0, 3);
 	render_reconcile(f.rs, commands_of(cmds, 7), &hooks, no_bounds);
-	CHECK(view_at(&f, 1).pixels != NULL);
+	CHECK(view_at(&f, 1).pixels == NULL);
+	CHECK(view_at(&f, 1).masked);
 	CHECK(view_at(&f, 2).pixels == NULL);
-	CHECK_EQ(raster_pixel(view_at(&f, 1), 1, 1), 0);
-	CHECK_EQ(raster_pixel(view_at(&f, 1), 20, 20), 0xffff0000u);
-	/* The rounded host the circle cuts: its fill rastered square, its own
-	 * arcs on the buffer. */
-	CHECK(view_at(&f, 3).pixels != NULL);
+	/* The rounded host keeps its own radii beside the path mask. */
+	CHECK(view_at(&f, 3).pixels == NULL);
+    CHECK(view_at(&f, 3).masked);
 	CHECK_EQ(view_at(&f, 3).radii.topLeft, 4);
 	/* This point clears the inner radius of four but is outside the circle;
-	 * the inner radius itself is a clip on the buffer. */
-	CHECK_EQ(raster_pixel(view_at(&f, 4), 4, 2), 0);
+	 * the inner radius itself is a painter clip. */
+	CHECK(view_at(&f, 4).masked);
 	uint32_t clipped = 3;
 	CHECK(!render_hit(f.rs, 10.5, 20.5, accept_clip_child, &clipped));
 	CHECK(render_hit(f.rs, 30, 40, accept_clip_child, &clipped));
@@ -775,11 +772,11 @@ static void test_path_scopes_from_the_word(void) {
 	CHECK_EQ(render_buffers_created(f.rs), 0);
 	CHECK(!render_point_in_masks(f.rs, 1, 11, 21));
 	CHECK(render_point_in_masks(f.rs, 1, 30, 40));
-	/* Changing the shape generation invalidates every raster under the path:
-	 * the shape and the three rects it cuts, not the two inside it. */
+	/* A generation with unchanged path content rebuilds only coverage. */
 	shape.gen++;
 	CHECK(render_reconcile(f.rs, commands_of(cmds, 7), &hooks, no_bounds) > 0);
-	CHECK_EQ(render_buffers_created(f.rs), 4);
+	CHECK_EQ(render_buffers_created(f.rs), 0);
+    CHECK_EQ(render_masks_created(f.rs), 1);
 	CHECK_EQ(render_reconcile(f.rs, commands_of(cmds, 7), &hooks, no_bounds), 0);
 	/* An unpainted shape still supplies its path to the clipping query. */
 	shape.fill[3] = 0;
@@ -787,14 +784,16 @@ static void test_path_scopes_from_the_word(void) {
 	render_reconcile(f.rs, commands_of(cmds, 7), &hooks, no_bounds);
 	CHECK(!render_point_in_masks(f.rs, 10, 11, 21));
 	CHECK(render_point_in_masks(f.rs, 10, 30, 40));
-	/* Moving under a stationary mask must redraw its buffer-local clip. */
+	/* A child moving under a stationary path keeps the shared coverage. */
 	cmds[1].boundingBox.x += 10;
 	render_reconcile(f.rs, commands_of(cmds, 7), &hooks, no_bounds);
-	CHECK_EQ(raster_pixel(view_at(&f, 1), 10, 1), 0xffff0000u);
-	/* A child moving clear of a path becomes a scene rectangle again. */
+	CHECK_EQ(render_buffers_created(f.rs), 0);
+    CHECK_EQ(render_masks_created(f.rs), 0);
+	/* A child moving clear of the path no longer samples coverage. */
 	cmds[1].boundingBox = (Clay_BoundingBox){25, 35, 10, 10};
 	render_reconcile(f.rs, commands_of(cmds, 7), &hooks, no_bounds);
 	CHECK(view_at(&f, 1).pixels == NULL);
+    CHECK(!view_at(&f, 1).masked);
 	/* Removing the host clears the retained scope before its ops are freed. */
 	cmds[1].boundingBox = (Clay_BoundingBox){10, 20, 40, 40};
 	render_reconcile(f.rs, commands_of(&cmds[1], 1), &hooks, no_bounds);
@@ -802,6 +801,207 @@ static void test_path_scopes_from_the_word(void) {
 	child = 1;
 	CHECK(render_hit(f.rs, 11, 21, accept_clip_child, &child));
 	fixture_finish(&f, &hooks);
+}
+
+
+static unsigned coverage(struct render_node_view v, int x, int y) {
+    CHECK(v.mask_pixels);
+    CHECK(x >= 0 && y >= 0 && x < v.mask_width && y < v.mask_height);
+    return v.mask_pixels && x >= 0 && y >= 0 && x < v.mask_width && y < v.mask_height
+        ? v.mask_pixels[y * v.mask_stride + x] : 0;
+}
+
+static size_t square_or_circle_ops(void *data, const struct render_shape *shape,
+        float w, float h, float *ops, size_t cap) {
+    if (shape->gen != 99) return circle_ops(data, shape, w, h, ops, cap);
+    float path[] = {0,0,0, 1,w,0, 1,w,h, 1,0,h, 3};
+    CHECK(cap >= sizeof(path)/sizeof(*path));
+    memcpy(ops, path, sizeof(path));
+    return sizeof(path)/sizeof(*path);
+}
+
+static void test_shared_path_coverage(void) {
+    struct fixture f;
+    struct fake_clients fc;
+    struct render_client_hooks hooks;
+    fixture_init_clients(&f, &fc, &hooks);
+    hooks.shape_ops = square_or_circle_ops;
+    struct render_shape shape = {.gen = 1}, square = {.gen = 99};
+    cairo_surface_t *source = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, 8, 8);
+    struct image_entry entry = {.native = source, .width = 8, .height = 8};
+    Clay_RenderCommand cmds[] = {
+        cmd_custom(10, (uintptr_t)render_shape_tag(&shape), 10, 20, 40, 40),
+        cmd_rect(1, 10, 20, 40, 40, 0),
+        cmd_rect(2, 25, 35, 10, 10, 0),
+        cmd_rect(3, 10, 20, 20, 20, 0),
+        cmd_rect(4, 30, 40, 20, 20, 0),
+        cmd_text(5, 10, 20, 30, 16, "mask", false),
+        cmd_image(6, 10, 20, 20, 20, &entry),
+        cmd_custom(7, 1, 10, 20, 40, 40),
+    };
+    cmds[0].userData = word(7, 1, 0);
+    for (size_t i = 1; i < 8; i++) cmds[i].userData = word(7, 0, 1);
+    Clay_RenderCommand plain[] = {cmds[5], cmds[6]};
+    plain[0].userData = plain[1].userData = NULL;
+    render_reconcile(f.rs, commands_of(plain, 2), &hooks, no_bounds);
+    size_t bytes = render_raster_bytes(f.rs);
+    render_reconcile(f.rs, commands_of(cmds, 8), &hooks, no_bounds);
+    CHECK_EQ(render_raster_bytes(f.rs), bytes);
+    CHECK_EQ(render_masks_created(f.rs), 1);
+    CHECK_EQ(view_at(&f, 1).raster_bytes, 0);
+    CHECK(view_at(&f, 1).masked);
+    CHECK(!view_at(&f, 2).masked);
+    CHECK(view_at(&f, 3).masked && view_at(&f, 4).masked);
+    CHECK(view_at(&f, 5).masked && view_at(&f, 6).masked);
+    CHECK(view_at(&f, 7).masked);
+    CHECK_EQ(view_at(&f, 1).mask_box.x, 10);
+    CHECK_EQ(view_at(&f, 1).mask_box.y, 20);
+    CHECK_EQ(view_at(&f, 1).mask_box.width, 40);
+    CHECK_EQ(coverage(view_at(&f, 0), 1, 1), 0);
+    CHECK_EQ(coverage(view_at(&f, 0), 20, 20), 255);
+    CHECK(!render_point_in_masks(f.rs, 7, 11, 21));
+    CHECK(render_point_in_masks(f.rs, 7, 30, 40));
+    CHECK_EQ(fc.corners, 1);
+    for (int i = 0; i < 4; i++) CHECK_EQ(fc.radii[i], 0);
+    for (size_t i = 0; i < 8; i++) {
+        cmds[i].boundingBox.x += 7;
+        cmds[i].boundingBox.y += 3;
+    }
+    render_reconcile(f.rs, commands_of(cmds, 8), &hooks, no_bounds);
+    CHECK_EQ(render_buffers_created(f.rs), 0);
+    CHECK_EQ(render_masks_created(f.rs), 0);
+    CHECK_EQ(render_raster_bytes(f.rs), bytes);
+    CHECK_EQ(view_at(&f, 1).mask_box.x, 17);
+    CHECK_EQ(view_at(&f, 1).mask_box.y, 23);
+    unsigned old = coverage(view_at(&f, 0), 20, 1);
+    cmds[3].boundingBox.x -= 10;
+    render_reconcile(f.rs, commands_of(cmds, 8), &hooks, no_bounds);
+    CHECK(view_at(&f, 3).masked);
+    CHECK_EQ(render_buffers_created(f.rs), 0);
+    CHECK_EQ(render_masks_created(f.rs), 0);
+    CHECK(old != coverage(view_at(&f, 0), 10, 1));
+    cmds[0].boundingBox.width = cmds[0].boundingBox.height = 48;
+    render_reconcile(f.rs, commands_of(cmds, 8), &hooks, no_bounds);
+    CHECK_EQ(render_masks_created(f.rs), 1);
+    CHECK_EQ(render_buffers_created(f.rs), 0);
+    shape.gen++;
+    render_reconcile(f.rs, commands_of(cmds, 8), &hooks, no_bounds);
+    CHECK_EQ(render_masks_created(f.rs), 1);
+    CHECK_EQ(render_buffers_created(f.rs), 0);
+    int width = view_at(&f, 0).mask_width;
+    render_set_scale(f.rs, 2);
+    render_reconcile(f.rs, commands_of(cmds, 8), &hooks, no_bounds);
+    CHECK_EQ(render_masks_created(f.rs), 1);
+    CHECK_EQ(view_at(&f, 0).mask_width, 2 * width);
+    render_set_scale(f.rs, 1.5f);
+    cmds[0].boundingBox.width = cmds[0].boundingBox.height = 49;
+    shape.fill[0] = shape.fill[3] = 1;
+    cmds[5].boundingBox.width = 31;
+    cmds[5].boundingBox.height = 17;
+    cmds[6].boundingBox.width = 21;
+    render_reconcile(f.rs, commands_of(cmds, 8), &hooks, no_bounds);
+    int resized_rasters = 0;
+    for (size_t i = 0; i < 8; i++) {
+        Clay_BoundingBox before = cmds[i].boundingBox;
+        cmds[i].boundingBox.x += 1;
+        cmds[i].boundingBox.y += 1;
+        Clay_BoundingBox after = cmds[i].boundingBox;
+        bool raster = cmds[i].commandType == CLAY_RENDER_COMMAND_TYPE_TEXT
+            || cmds[i].commandType == CLAY_RENDER_COMMAND_TYPE_IMAGE
+            || (cmds[i].commandType == CLAY_RENDER_COMMAND_TYPE_CUSTOM
+                && ((uintptr_t)cmds[i].renderData.custom.customData & RENDER_SHAPE_TAG));
+        if (raster) {
+            resized_rasters += render_device_len(before.x, before.width, 1.5f)
+                    != render_device_len(after.x, after.width, 1.5f)
+                || render_device_len(before.y, before.height, 1.5f)
+                    != render_device_len(after.y, after.height, 1.5f);
+        }
+    }
+    CHECK(resized_rasters > 0);
+    render_reconcile(f.rs, commands_of(cmds, 8), &hooks, no_bounds);
+    CHECK_EQ(render_buffers_created(f.rs), resized_rasters);
+    CHECK_EQ(render_masks_created(f.rs), 0);
+    for (size_t i = 1; i <= 4; i++) CHECK_EQ(view_at(&f, i).raster_bytes, 0);
+    shape.fill[3] = 0;
+    render_set_scale(f.rs, 1);
+    Clay_RenderCommand nested[] = {
+        cmd_rect(20, 10, 20, 40, 40, 12),
+        cmd_custom(10, (uintptr_t)render_shape_tag(&shape), 10, 20, 40, 40),
+        cmd_custom(11, (uintptr_t)render_shape_tag(&square), 10, 20, 30, 30),
+        cmd_rect(1, 10, 20, 30, 30, 0),
+    };
+    nested[0].userData = word(7, 1, 0);
+    nested[1].userData = word(7, 2, 1);
+    nested[2].userData = word(7, 3, 2);
+    nested[3].userData = word(7, 0, 3);
+    render_reconcile(f.rs, commands_of(nested, 4), &hooks, no_bounds);
+    CHECK_EQ(render_masks_created(f.rs), 2);
+    CHECK(view_at(&f, 3).masked);
+    CHECK_EQ(view_at(&f, 3).clips_len, 1);
+    CHECK_EQ(view_at(&f, 3).mask_box.width, 30);
+    CHECK_EQ(coverage(view_at(&f, 2), 1, 1), 0);
+    CHECK_EQ(coverage(view_at(&f, 2), 20, 20), 255);
+    render_clip_alias(f.rs, 8, 7, 3);
+    nested[3].userData = word(8, 0, 0);
+    render_reconcile(f.rs, commands_of(nested, 4), &hooks, no_bounds);
+    CHECK(view_at(&f, 3).masked);
+    CHECK(!render_point_in_masks(f.rs, 1, 11, 21));
+    struct paint_target *target = paint_target_create(test_painter, 80, 80);
+    CHECK(target);
+    for (int generation = 1; generation <= 2; generation++) {
+        render_set_paint(f.rs, test_painter, generation);
+        CHECK(paint_begin(test_painter, paint_target_fbo(target), 80, 80, 0, NULL, 0));
+        paint_clear(test_painter, (struct paint_color){0});
+        struct render_draw_params params = {.scale = 1, .origin_x = 5, .origin_y = 7,
+            .width = 80, .height = 80};
+        render_draw(f.rs, test_painter, &hooks, NULL, &params);
+        CHECK(paint_end(test_painter));
+        uint32_t pixels[80 * 80];
+        CHECK(paint_readback(test_painter, (struct paint_box){0,0,80,80}, 80 * 4, pixels));
+        CHECK_EQ(pixels[28 * 80 + 16], 0);
+        CHECK_EQ(pixels[47 * 80 + 35], 0xffff0000u);
+        render_finish(f.rs);
+    }
+    paint_target_destroy(target);
+    fixture_finish(&f, &hooks);
+    cairo_surface_destroy(source);
+}
+
+static void test_path_scope_overflow(void) {
+    struct fixture f;
+    fixture_init(&f);
+    struct render_client_hooks hooks = no_hooks;
+    hooks.shape_ops = circle_ops;
+    struct render_shape shape = {.gen = 1};
+    Clay_RenderCommand cmds[18];
+    for (int i = 0; i < 17; i++) {
+        cmds[i] = cmd_custom(100+i, (uintptr_t)render_shape_tag(&shape), 0, 0, 40, 40);
+        cmds[i].userData = word(7, i+1, i);
+    }
+    cmds[17] = cmd_rect(1, 0, 0, 40, 40, 0);
+    cmds[17].userData = word(7, 0, 17);
+    FILE *log = tmpfile();
+    CHECK(log);
+    int saved = dup(STDERR_FILENO);
+    CHECK(saved >= 0);
+    fflush(stderr);
+    CHECK(dup2(fileno(log), STDERR_FILENO) >= 0);
+    render_reconcile(f.rs, commands_of(cmds, 18), &hooks, no_bounds);
+    CHECK(view_at(&f, 17).masked);
+    CHECK(!render_point_in_masks(f.rs, 1, 1, 1));
+    CHECK(render_point_in_masks(f.rs, 1, 20, 20));
+    CHECK_EQ(render_reconcile(f.rs, commands_of(cmds, 18), &hooks, no_bounds), 0);
+    CHECK_EQ(render_masks_created(f.rs), 0);
+    fflush(stderr);
+    CHECK(dup2(saved, STDERR_FILENO) >= 0);
+    close(saved);
+    rewind(log);
+    char line[512];
+    int warnings = 0;
+    while (fgets(line, sizeof(line), log)) warnings += strstr(line, "clip scope exceeds") != NULL;
+    fclose(log);
+    CHECK_EQ(warnings, 1);
+    fixture_finish(&f, &hooks);
 }
 
 static void test_border_clips_to_the_bounds(void) {
@@ -1873,8 +2073,8 @@ static void test_shape_leaf(void) {
 	CHECK(render_reconcile(f.rs, commands_of(&cmd, 1), &hooks, no_bounds) > 0);
 	CHECK_EQ(render_buffers_created(f.rs), 1);
 	shape.gen++;
-	CHECK_EQ(render_reconcile(f.rs, commands_of(&cmd, 1), &hooks, no_bounds), 1);
-	CHECK_EQ(render_buffers_created(f.rs), 1);
+	CHECK_EQ(render_reconcile(f.rs, commands_of(&cmd, 1), &hooks, no_bounds), 0);
+	CHECK_EQ(render_buffers_created(f.rs), 0);
 	shape.gradient = (struct render_gradient) {
 		.kind = 1, .points = { 0, 0, 40, 40 }, .count = 2,
 		.stops = { { 0, 1, 0, 0, 1 }, { 1, 0, 0, 1, 1 } },
@@ -1914,8 +2114,10 @@ static void test_shape_stroke_scope(void) {
 	uint32_t child = 11;
 	CHECK(!render_hit(f.rs, 1, 1, accept_clip_child, &child));
 	CHECK(render_hit(f.rs, 20, 20, accept_clip_child, &child));
-	CHECK_EQ(raster_pixel(view_at(&f, 1), 1, 1), 0);
-	CHECK_EQ(raster_pixel(view_at(&f, 1), 20, 20), 0xffff0000u);
+	CHECK_EQ(view_at(&f, 1).raster_bytes, 0);
+    CHECK(view_at(&f, 1).masked);
+    CHECK_EQ(coverage(view_at(&f, 0), 1, 1), 0);
+    CHECK_EQ(coverage(view_at(&f, 0), 20, 20), 255);
 	shape.stroke_width = 0;
 	render_reconcile(f.rs, commands_of(cmds, 2), &hooks, no_bounds);
 	CHECK_EQ(render_buffers_created(f.rs), 0);
@@ -2151,6 +2353,8 @@ int main(void) {
 		{ "shape leaf", test_shape_leaf },
 		{ "shape stroke scope", test_shape_stroke_scope },
 		{ "path scopes from the word", test_path_scopes_from_the_word },
+        { "shared path coverage", test_shared_path_coverage },
+        { "path scope overflow", test_path_scope_overflow },
 		{ "fractional moves refresh rasters", test_fractional_moves_refresh_rasters },
 		{ "stretched image crop uses source extent", test_stretched_image_crop_uses_source_extent },
 		{ "shadow record", test_shadow_record },

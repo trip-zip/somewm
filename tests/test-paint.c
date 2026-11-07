@@ -185,6 +185,55 @@ static void texture_under_circle_mask(void) {
     finish(f);
 }
 
+static void rect_under_mask_and_rounded_clip(void) {
+    struct fixture f = begin(transparent);
+    unsigned char disc[64][64];
+    for (int y=0;y<64;y++) for (int x=0;x<64;x++)
+        disc[y][x] = hypotf(x+.5f-32,y+.5f-32) < 30 ? 255 : 0;
+    struct paint_mask *mask = paint_mask_upload(renderer,64,64,64,disc);
+    assert(mask);
+    struct paint_rect_params r = {.box={0,0,64,64}, .color=red,
+        .mask=mask, .mask_box={0,0,64,64}, .clips_len=1,
+        .clips={{{16,0,48,64},{24,24,24,24}}}};
+    paint_rect(renderer,&r);
+    expect(32,32,0xffff0000);
+    expect(20,8,0);
+    expect(61,15,0);
+    paint_mask_destroy(mask);
+    finish(f);
+}
+
+static void shared_mask_box(void) {
+    struct fixture f = begin(transparent);
+    unsigned char bytes[32][64];
+    for (int y=0;y<32;y++) for (int x=0;x<64;x++) bytes[y][x] = y >= 16 ? 255 : 0;
+    struct paint_mask *mask = paint_mask_upload(renderer,64,32,64,bytes);
+    assert(mask);
+    struct paint_rect_params r = {.box={4,8,20,32}, .color=red,
+        .mask=mask, .mask_box={0,8,64,32}};
+    paint_rect(renderer,&r);
+    r.box.x=36;
+    paint_rect(renderer,&r);
+    expect(10,10,0); expect(40,10,0);
+    expect(10,30,0xffff0000); expect(40,30,0xffff0000);
+    paint_mask_destroy(mask);
+    finish(f);
+}
+
+static void mask_straddling_box(void) {
+    struct fixture f = begin(transparent);
+    unsigned char bytes[16][16];
+    memset(bytes,255,sizeof(bytes));
+    struct paint_mask *mask = paint_mask_upload(renderer,16,16,16,bytes);
+    assert(mask);
+    struct paint_rect_params r = {.box={4,16,28,16}, .color=red,
+        .mask=mask, .mask_box={16,16,16,16}};
+    paint_rect(renderer,&r);
+    expect(10,24,0); expect(20,24,0xffff0000);
+    paint_mask_destroy(mask);
+    finish(f);
+}
+
 /* Rotate centered coordinates, then reflect the destination x coordinate.
  * This computes source sampling independently of the library's point switch. */
 static void source_point(float *x, float *y, int transform) {
@@ -386,6 +435,9 @@ int main(void) {
     RUN(texture_under_one_clip);
     RUN(texture_under_two_clips);
     RUN(texture_under_circle_mask);
+    RUN(rect_under_mask_and_rounded_clip);
+    RUN(shared_mask_box);
+    RUN(mask_straddling_box);
     RUN(texture_source_box_and_transform);
     RUN(texture_import);
     RUN(shadow_falloff);
