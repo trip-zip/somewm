@@ -65,12 +65,12 @@ runner.run_async(function()
                 local events={}
                 local function press(original,x,y,button,mods)
                     local g=c:geometry()
-                    assert(original==c and x==640-g.x and y==360-g.y and button==1 and #mods==0)
+                    assert(original==c and x==640-g.x-c.border_width and y==360-g.y-c.border_width and button==1 and #mods==0)
                     events[#events+1]='press'
                 end
                 local function release(original,x,y,button,mods)
                     local g=c:geometry()
-                    assert(original==c and x==640-g.x and y==360-g.y and button==1 and #mods==0)
+                    assert(original==c and x==640-g.x-c.border_width and y==360-g.y-c.border_width and button==1 and #mods==0)
                     events[#events+1]='release'
                 end
                 c:connect_signal('button::press',press);c:connect_signal('button::release',release)

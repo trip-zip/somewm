@@ -22,7 +22,7 @@ runner.run_async(function()
         for _,signal in ipairs{'button::press','button::release'} do
             c:connect_signal(signal,function(original,x,y,button,mods)
                 local g=c:geometry()
-                assert(original==c and x==700-g.x and y==400-g.y and button==1 and #mods==0)
+                assert(original==c and x==700-g.x-c.border_width and y==400-g.y-c.border_width and button==1 and #mods==0)
                 events[#events+1]=signal..i
             end)
         end

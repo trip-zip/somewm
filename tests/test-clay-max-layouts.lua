@@ -66,11 +66,11 @@ runner.run_async(function()
                 example.wait_pixel(x,y,'#' .. colors[i]:sub(3))
                 local events = {}
                 local function press(original,lx,ly,button)
-                    assert(original == c and lx == 100 and ly == 100 and button == 1)
+                    assert(original == c and lx == 100 - c.border_width and ly == 100 - c.border_width and button == 1)
                     events[#events+1] = 'press'
                 end
                 local function release(original,lx,ly,button)
-                    assert(original == c and lx == 100 and ly == 100 and button == 1)
+                    assert(original == c and lx == 100 - c.border_width and ly == 100 - c.border_width and button == 1)
                     events[#events+1] = 'release'
                 end
                 c:connect_signal('button::press',press)
