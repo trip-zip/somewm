@@ -31,6 +31,7 @@ struct render_shape {
 	struct render_gradient gradient;
 	float stroke[4];
 	float stroke_width;
+    bool stroke_transition;
 	uint8_t transform;   /* wl_output_transform of the path and gradient */
 };
 
@@ -120,6 +121,8 @@ bool render_shadow_box(struct render_state *rs, uint32_t id, Clay_BoundingBox *b
 void render_fades_begin(struct render_state *rs);
 void render_fade_carrier(struct render_state *rs, const Clay_RenderCommand *cmd);
 void render_fade_alias(struct render_state *rs, uint64_t owner, uint64_t ancestor);
+/* A titlebar inherits its client's path while retaining its own input owner. */
+void render_clip_alias(struct render_state *rs, uint64_t owner, uint64_t ancestor, unsigned scope);
 struct render_presentation {
     float scale, fade;
     unsigned anchor;
@@ -236,6 +239,14 @@ struct render_node_view {
 	Clay_CornerRadius radii;
 	float opacity;
 	bool shown;
+    bool masked;
+    Clay_BoundingBox mask_box; /* Scope box in logical coordinates. */
+    size_t clips_len;
+    /* A8 coverage owned by a scope leaf, borrowed until the next reconcile,
+     * renderer change or render_destroy. */
+    const unsigned char *mask_pixels;
+    size_t mask_stride;
+    int mask_width, mask_height;
 	/* ARGB32 pixels borrowed until the next reconcile or render_destroy. */
 	const unsigned char *pixels;
 	size_t stride;
@@ -274,11 +285,12 @@ void render_walk(struct render_state *rs, const struct render_client_hooks *hook
 /* Profiling readback, logged on every solve so a long-running session can
  * assert growth stays proportional to on-screen content: live retained nodes
  * (including those kept disabled for an element still in the tree), resident
- * cairo raster bytes across them, and buffers allocated by the last
+ * content raster bytes across them, and buffers allocated by the last
  * reconcile pass. */
 size_t render_node_count(struct render_state *rs);
 size_t render_raster_bytes(struct render_state *rs);
 int render_buffers_created(struct render_state *rs);
+int render_masks_created(struct render_state *rs);
 
 /* Draws gained and lost during the last reconcile. */
 int render_nodes_created(struct render_state *rs);

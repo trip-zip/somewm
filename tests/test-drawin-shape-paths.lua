@@ -24,9 +24,10 @@ local function warnings()
     return count
 end
 local function click(x, y)
+    local width, height = root.size()
     awful.spawn { './build-test/test-virtual-pointer-client', 'click',
         tostring(cases[1].box.x + x), tostring(cases[1].box.y + y),
-        tostring(s.geometry.width), tostring(s.geometry.height) }
+        tostring(width), tostring(height) }
 end
 runner.run_steps {
     function()
@@ -118,6 +119,20 @@ runner.run_steps {
     function(count)
         if count < 5 then return end
         check(below_clicks == 1 and circle_clicks == 1, 'centre click reaches circle')
+        cases[1].box.x = cases[1].box.x + 10
+        awesome._test_redeclare()
+        click(1, 1)
+        return true
+    end,
+    function(count)
+        if count < 5 then return end
+        check(below_clicks == 2 and circle_clicks == 1, 'moved corner reaches blue wibox')
+        click(20, 20)
+        return true
+    end,
+    function(count)
+        if count < 5 then return end
+        check(below_clicks == 2 and circle_clicks == 2, 'moved center reaches circle')
         cases[1].box.input_passthrough = true
         check(cases[1].box.drawin.input_passthrough == true, 'passthrough reaches drawin')
         click(20, 20)
@@ -125,7 +140,7 @@ runner.run_steps {
     end,
     function(count)
         if count < 5 then return end
-        check(below_clicks == 2 and circle_clicks == 1, 'passthrough centre reaches blue wibox')
+        check(below_clicks == 3 and circle_clicks == 2, 'passthrough centre reaches blue wibox')
         for _, case in ipairs(cases) do case.box.visible=false; case.below.visible=false end
         assert(#failures == 0, table.concat(failures, '\n'))
         return true
