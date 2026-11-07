@@ -6,6 +6,7 @@ All notable changes to somewm will be documented in this file.
 
 ### Added
 
+- `somewm-client wallpaper fill <path> [screen]` scales the image to cover the screen with no borders.
 - `ui.box` draws a box with size, layout, paint, content, animation, position, attachment, cursor and input_passthrough words, nested or alone, with pointer signals, as the first pieces of the 2.2 `ui` preview.
 - `screen.tree`, `client.parent` and `client.children` expose the compositor's node tree. Client nodes can be reordered among their siblings.
 
