@@ -469,7 +469,7 @@ for _, signal in ipairs{"property::_x11_configure", "property::size_hints_honor"
         "property::border_width", "property::hidden", "property::floating",
         -- What the client composite reads (awful.client.clay).
         "property::animation", "property::border_color", "property::opacity", "property::shadow", "property::shape",
-        "property::size_hints", "property::urgent", "property::titlebar_top",
+        "property::content_radius", "property::size_hints", "property::urgent", "property::titlebar_top",
         "property::titlebar_right", "property::titlebar_bottom", "property::titlebar_left",
         "property::_committed_size", "property::transient_for", "focus", "unfocus"} do
     capi.client.connect_signal(signal, arrange_prop)

@@ -147,6 +147,10 @@ function clay.describe(c, allocation)
     if not fullscreen and radius then
         assign_corners(radius, bw, top, right, bottom, left, pixels)
     end
+    local content_radius = not fullscreen and c.content_radius or 0
+    if content_radius > 0 then
+        pixels.radii = {content_radius, content_radius, content_radius, content_radius}
+    end
     local box, cut = frame
     if committed then
         box = {name = "CHROME", client = c, dir = "y", w = "fit", h = "fit", scroll = "both"}
@@ -212,6 +216,12 @@ function clay.describe(c, allocation)
         if bw > 0 then frame.stroke, frame.stroke_width = {c:_border_rgba()}, bw end
     elseif bw > 0 then
         box.border, box.bw = {c:_border_rgba()}, {bw, bw, bw, bw}
+    end
+    if content_radius > 0 then
+        local background = path and frame or box
+        background.bg = {c:_border_rgba()}
+        -- Shaped nodes paint fill through their path instead of bg.
+        if path then background.fill = background.bg end
     end
     local state = previous[c]
     local focused = capi.client.focus == c

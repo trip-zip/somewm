@@ -21,7 +21,8 @@ runner.run_steps {
  function(n)
   local d=awesome._clay_tree(screen[1])
   if not d:find('box 520,300 240x120',1,true) then assert(n<12,d);return end
-  local f=assert(io.open(report));assert(f:read('*a')=='240 120\n');f:close()
+  local f=io.open(report);local size=f and f:read('*a');if f then f:close() end
+  if size~='240 120\n' then assert(n<12,tostring(size));return end
   example.pixel(522,302,'#0000ff');example.pixel(518,302,'#123456')
   awesome.kill(pid,15);os.remove(report)
   io.stderr:write('[PASS] negative stretch margins and ignored unanchored margins: solved pixels/configures\n')
