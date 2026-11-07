@@ -31,7 +31,6 @@
 #include "event_queue.h"
 
 #include <xcb/xcb.h>
-#include <xcb/xcb_atom.h>
 #include <string.h>
 #include <stdlib.h>
 
