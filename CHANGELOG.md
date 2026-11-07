@@ -4,6 +4,13 @@ All notable changes to somewm will be documented in this file.
 
 ## [Unreleased]
 
+## [2.1.2] - 2026-11-06
+
+Patch release. 13 commits since 2.1.1. Client borders fade with opacity,
+fullscreen windows keep their opaque backing when unfocused, and wibars
+use their window type's stacking band. The rest are fixes. Other rc.lua
+configs run unchanged.
+
 ### Changed
 
 - A client's border fades with `client.opacity`, as in AwesomeWM. A translucent client no longer shows a solid border.
