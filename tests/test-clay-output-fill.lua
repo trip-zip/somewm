@@ -19,8 +19,8 @@ local function check(name, r, g, b)
     assert(math.abs(rr-r)<=1 and math.abs(gg-g)<=1 and math.abs(bb-b)<=1 and a==255)
     local dump=awesome._clay_tree(s)
     assert(not dump:match('\n%s*BACKGROUND '), dump)
-    -- the pointer image is a floating root of the screen under the pointer
-    local floating = dump:find('\n  cursor ',1,true) and 1 or 0
+    -- SCREEN and the pointer image are floating roots.
+    local floating = dump:find('\n  cursor ',1,true) and 2 or 1
     -- An output fill is OUTPUT's own paint and composes no size.
     assert(dump:find('roots flow 1 floating '..floating..' derived 0 legacy 0',1,true),dump)
     if name:find('image',1,true) then
@@ -97,7 +97,7 @@ runner.run_steps {
         end
         if n<4 then return end
         local dump=awesome._clay_tree(s)
-        local floating = dump:find('\n  cursor ',1,true) and 2 or 1
+        local floating = dump:find('\n  cursor ',1,true) and 3 or 2
         -- The imagebox declares its minimum from the wallpaper's own box.
         assert(dump:find('roots flow 1 floating '..floating..' derived 0 legacy 0',1,true),dump)
         example.save('imagebox-fill',dump)

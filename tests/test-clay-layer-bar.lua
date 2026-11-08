@@ -1,10 +1,9 @@
 ---------------------------------------------------------------------------
--- Test: a layer surface with an exclusive zone is a bar in the output's flow
+-- Test: a layer surface with an exclusive zone is a bar in the screen's flow
 --
--- The board's "Layer shell" example: a surface anchored top, left and right
--- with an exclusive zone is a LAYER_BAR under OUTPUT, grow by the zone
--- (protocol), holding its surface leaf; the workarea starts below it, under
--- the wibar declared before it; and nothing in the dump is derived.
+-- A surface anchored top, left and right with an exclusive zone is a
+-- LAYER_BAR under SCREEN. Its protocol zone sizes the bar, and the wibar
+-- and workarea follow it. Nothing in the dump is derived.
 --
 -- Run: make test-one TEST=tests/test-clay-layer-bar.lua
 ---------------------------------------------------------------------------
@@ -43,8 +42,8 @@ local steps = {
         return true
     end,
     function(count)
-        local line = dump_line("^      LAYER_BAR test%-layer%-bar ")
-        local leaf = dump_line("^        layer%.surface test%-layer%-bar ")
+        local line = dump_line("^    LAYER_BAR test%-layer%-bar ")
+        local leaf = dump_line("^      layer%.surface test%-layer%-bar ")
         if not line or not leaf then
             assert(count < 30, "the layer bar never joined the flow:\n"
                 .. awesome._clay_tree(s))

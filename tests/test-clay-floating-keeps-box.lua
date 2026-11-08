@@ -169,7 +169,7 @@ end
 
 steps[#steps + 1] = function(count)
     local tree = awesome._clay_tree(physical)
-    local restored = not tree:match("\n%s*SCREEN %d+ ")
+    local restored = select(2, tree:gsub("\n%s*SCREEN %d+ ", "")) == 1
         and physical.geometry.x == g.x and physical.geometry.width == g.width
     if not restored and count < 20 then return nil end
     assert(restored, "physical screen was not restored\n" .. tree)

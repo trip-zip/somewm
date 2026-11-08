@@ -48,11 +48,14 @@ local steps = {
 
     function(count)
         local tree = awesome._clay_tree(physical)
-        local restored = tree and not tree:match("\n%s*SCREEN %d+ ")
+        local restored = tree and select(2, tree:gsub("\n%s*SCREEN %d+ ", "")) == 1
             and physical.workarea.y == g.y + 24
         if not restored and count < 20 then return nil end
-        assert(tree and not tree:match("\n%s*SCREEN %d+ "),
-            "restored physical output still has a SCREEN subtree")
+        assert(tree and select(2, tree:gsub("\n%s*SCREEN %d+ ", "")) == 1,
+            "restored physical output must have one SCREEN subtree")
+        assert(tree:find(string.format("SCREEN %d w=fixed(%d) user h=fixed(%d) user",
+            physical.index, g.width, g.height), 1, true),
+            "restored SCREEN must have the output's size")
         assert(physical.workarea.y == g.y + 24,
             "restored physical workarea does not reserve its top wibar")
         right_bar.visible = false

@@ -1,10 +1,11 @@
 output
-  roots flow 1 floating 1 derived 0 legacy 0
+  roots flow 1 floating 2 derived 0 legacy 0
   Clay__RootContainer w=fixed(1280) output h=fixed(720) output row
     OUTPUT WL-1 w=fixed(1280) output h=fixed(720) output column image
-      WIBAR screen 1 converted clip w=grow h=fixed(28) theme row
-        wibox.widget.textbox cut=both w=grow h=grow row
-          text "bar" font=1
-      WORKAREA - w=grow h=grow row
+  SCREEN 1 w=fixed(1280) user h=fixed(720) user column attach OUTPUT band 0
+    WIBAR screen 1 converted clip w=grow h=fixed(28) theme row
+      wibox.widget.textbox cut=both w=grow h=grow row
+        text "bar" font=1
+    WORKAREA - w=grow h=grow row
   LAYER_OVERLAY test-layer-overlay w=fixed(240) protocol h=fixed(120) protocol row attach OUTPUT band 100
     layer.surface test-layer-overlay w=grow h=grow custom
