@@ -11,10 +11,11 @@ All notable changes to somewm will be documented in this file.
 - `somewm-client wallpaper fill <path> [screen]` scales the image to cover the screen with no borders.
 - `ui.box` draws a box with size, layout, paint, content, animation, position, attachment, cursor and input_passthrough words, nested or alone, with pointer signals, as the first pieces of the 2.2 `ui` preview.
 - `screen.tree`, `client.parent` and `client.children` expose the compositor's node tree. Client nodes can be reordered among their siblings.
+- While the session is locked, a lock cover's node reports `layer` as `lock_cover` and the lock surface's node as `lock_surface`.
 
 ### Changed
 
-- A wibox's node can be reordered among its siblings with `move_before`, `move_after`, `append`, `push` and `swap`; its draw order follows.
+- A wibox's node can be reordered among its siblings with `move_before`, `move_after`, `append`, `push` and `swap`, and its draw order follows. Reordering an attached wibox (a popup, tooltip or menu) or a notification does not change its draw order.
 - Text, images and bars inside a shaped widget, wibox or popup are cut by the renderer. Moving or animating a shaped popup no longer redraws its contents.
 - Rounded corners, shadows and shaped clips are drawn by somewm's own renderer.
 - `WLR_RENDERER=pixman` is no longer supported.
