@@ -75,7 +75,7 @@ local steps = {
         c.floating, c.shadow, c.border_width, c.border_color = true, false, 4, border
         c:geometry{x = x, y = y, width = w, height = h}
         c:connect_signal('property::content_radius', function() signals = signals + 1 end)
-        for _, value in ipairs{-1, '16', false, {}} do
+        for _, value in ipairs{-1, '16', false, {top_left = -1}} do
             assert(not pcall(function() c.content_radius = value end), 'invalid radius accepted')
         end
         assert(signals == 0, 'rejected values emitted a signal')
