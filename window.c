@@ -80,9 +80,21 @@ struct wl_listener new_xdg_toplevel = {.notify = createnotify};
 struct wl_listener new_xdg_popup = {.notify = createpopup};
 struct wl_listener new_xdg_decoration = {.notify = createdecoration};
 
+/* Popup protocol objects can outlive their parent's node. */
+void
+popup_nodes_detach(struct node *parent)
+{
+	if (!parent) return;
+	Popup *p;
+	wl_list_for_each(p, &popups, link)
+		if (node_contains(parent, p->node->parent))
+			node_append(declare_node_root(NULL), p->node);
+}
+
 void
 client_node_destroy(Client *c)
 {
+	popup_nodes_detach(c->node);
 
 	for (int bar = 0; bar < CLIENT_TITLEBAR_COUNT; bar++) {
 		drawable_t *d = c->titlebar[bar].drawable;
@@ -336,6 +348,29 @@ commitnotify(struct wl_listener *listener, void *data)
 	}
 }
 
+static void
+popup_node_attach(Popup *p)
+{
+	struct wlr_surface *surface = p->popup->parent;
+	if (!surface) return;
+	struct node *parent = NULL;
+	Popup *other;
+	wl_list_for_each(other, &popups, link)
+		if (other != p && other->popup->base->surface == surface) {
+			parent = other->node;
+			break;
+		}
+	if (!parent) {
+		Client *c = NULL;
+		LayerSurface *l = NULL;
+		int type = toplevel_from_wlr_surface(surface, &c, &l);
+		if (type == LayerShell && l) parent = l->node;
+		else if (type >= 0 && c) parent = c->surface_node ? c->surface_node : c->node;
+	}
+	if (parent && p->node->parent != parent)
+		node_append(parent, p->node);
+}
+
 /* The popup's toplevel and its output; -1 with no toplevel yet. */
 static int
 popup_toplevel(Popup *p, Client **c, LayerSurface **l, Monitor **m)
@@ -401,6 +436,7 @@ destroypopup(struct wl_listener *listener, void *data)
 
 	popup_dirty(p);
 	/* Invalidate the handle before freeing the popup the renderer resolves. */
+	popup_nodes_detach(p->node);
 	node_destroy(p->node);
 
 	wl_list_remove(&p->link);
@@ -418,6 +454,7 @@ commitpopup(struct wl_listener *listener, void *data)
 	Client *c = NULL;
 	Monitor *m;
 
+	popup_node_attach(p);
 	/* Every commit may change the size or geometry the leaf declares. */
 	if (!p->popup->base->initial_commit) {
 		popup_dirty(p);
@@ -531,7 +568,9 @@ createpopup(struct wl_listener *listener, void *data)
 
 	p->node = declare_node_create(NULL, NODE_SURFACE, DECLARE_KIND_POPUP, p);
 	p->popup = popup;
+	p->node->layer = LAYER_WIBOX_ONTOP;
 	wl_list_insert(popups.prev, &p->link);
+	popup_node_attach(p);
 
 	LISTEN(&popup->base->surface->events.commit, &p->commit, commitpopup);
 	LISTEN(&popup->events.reposition, &p->reposition, repositionpopup);
@@ -811,6 +850,10 @@ mapnotify(struct wl_listener *listener, void *data)
 	if (!c->surface_node) {
 		c->surface_node = declare_node_create(c->mon, NODE_SURFACE, DECLARE_KIND_CLIENT, c);
 		node_append(c->node, c->surface_node);
+		Popup *popup;
+		wl_list_for_each(popup, &popups, link)
+			if (popup->popup->parent == client_surface(c))
+				popup_node_attach(popup);
 	}
 	client_node_attach(c, c->mon);
 

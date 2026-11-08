@@ -1688,16 +1688,14 @@ luaA_awesome_set_lock_surface(lua_State *L)
 		                  luaL_typename(L, arg));
 	}
 
-	/* Clear old reference if any */
-	if (lua_lock_surface_ref != LUA_NOREF) {
-		luaL_unref(L, LUA_REGISTRYINDEX, lua_lock_surface_ref);
-		lua_lock_surface_ref = LUA_NOREF;
-	}
-
-	/* Store reference to prevent GC (store the original arg, wibox or drawin) */
+	drawin_t *previous = lua_lock_surface;
+	int previous_ref = lua_lock_surface_ref;
 	lua_pushvalue(L, arg);
 	lua_lock_surface_ref = luaL_ref(L, LUA_REGISTRYINDEX);
 	lua_lock_surface = d;
+	if (previous && previous != d) drawin_update_layer(previous);
+	drawin_update_layer(d);
+	if (previous_ref != LUA_NOREF) luaL_unref(L, LUA_REGISTRYINDEX, previous_ref);
 
 	return 0;
 }
@@ -1706,12 +1704,13 @@ luaA_awesome_set_lock_surface(lua_State *L)
 static int
 luaA_awesome_clear_lock_surface(lua_State *L)
 {
+	drawin_t *previous = lua_lock_surface;
+	lua_lock_surface = NULL;
+	if (previous) drawin_update_layer(previous);
 	if (lua_lock_surface_ref != LUA_NOREF) {
 		luaL_unref(L, LUA_REGISTRYINDEX, lua_lock_surface_ref);
 		lua_lock_surface_ref = LUA_NOREF;
 	}
-	lua_lock_surface = NULL;
-
 	return 0;
 }
 
@@ -1719,12 +1718,15 @@ luaA_awesome_clear_lock_surface(lua_State *L)
 static void
 remove_lock_cover_at(lua_State *L, int idx)
 {
-	luaL_unref(L, LUA_REGISTRYINDEX, lua_lock_cover_refs[idx]);
+	drawin_t *removed = lua_lock_covers[idx];
+	int ref = lua_lock_cover_refs[idx];
 	for (int j = idx; j < lua_lock_cover_count - 1; j++) {
 		lua_lock_covers[j] = lua_lock_covers[j + 1];
 		lua_lock_cover_refs[j] = lua_lock_cover_refs[j + 1];
 	}
 	lua_lock_cover_count--;
+	drawin_update_layer(removed);
+	luaL_unref(L, LUA_REGISTRYINDEX, ref);
 }
 
 /** awesome.add_lock_cover(wibox) - Register a cover surface for multi-monitor lock.
@@ -1753,10 +1755,7 @@ luaA_awesome_add_lock_cover(lua_State *L)
 	lua_lock_cover_refs[lua_lock_cover_count] = luaL_ref(L, LUA_REGISTRYINDEX);
 	lua_lock_covers[lua_lock_cover_count] = d;
 	lua_lock_cover_count++;
-
-	if (lua_locked)
-		some_promote_lock_cover(d);
-
+	drawin_update_layer(d);
 	return 0;
 }
 
@@ -1784,12 +1783,7 @@ luaA_awesome_remove_lock_cover(lua_State *L)
 static int
 luaA_awesome_clear_lock_covers(lua_State *L)
 {
-	for (int i = 0; i < lua_lock_cover_count; i++) {
-		luaL_unref(L, LUA_REGISTRYINDEX, lua_lock_cover_refs[i]);
-		lua_lock_covers[i] = NULL;
-	}
-	lua_lock_cover_count = 0;
-
+	while (lua_lock_cover_count) remove_lock_cover_at(L, lua_lock_cover_count - 1);
 	return 0;
 }
 

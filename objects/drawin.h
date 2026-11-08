@@ -144,6 +144,8 @@ void luaA_drawin_reassign_screen(lua_State *L, drawin_t *drawin);
 /* Drawin geometry synchronization */
 void luaA_drawin_apply_geometry(drawin_t *drawin);
 
+void drawin_update_layer(drawin_t *drawin);
+
 /* Mark the output this drawin is on stale, so the next frame re-declares it.
  * A no-op for a drawin with no screen yet, or a screen with no monitor. */
 void drawin_mark_dirty(drawin_t *drawin);

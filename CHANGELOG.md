@@ -14,6 +14,7 @@ All notable changes to somewm will be documented in this file.
 
 ### Changed
 
+- A wibox's node can be reordered among its siblings with `move_before`, `move_after`, `append`, `push` and `swap`; its draw order follows.
 - Text, images and bars inside a shaped widget, wibox or popup are cut by the renderer. Moving or animating a shaped popup no longer redraws its contents.
 - Rounded corners, shadows and shaped clips are drawn by somewm's own renderer.
 - `WLR_RENDERER=pixman` is no longer supported.

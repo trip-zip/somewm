@@ -67,6 +67,7 @@ extern struct wl_listener new_xdg_popup;
 extern struct wl_listener new_xdg_decoration;
 
 void client_node_destroy(Client *c);
+void popup_nodes_detach(struct node *parent);
 
 /* An xdg popup declared as a floating element attached to its parent's surface. */
 typedef struct Popup {
