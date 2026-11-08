@@ -31,6 +31,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/mman.h>
+#include <sys/stat.h>
 #include <unistd.h>
 #include <wayland-client.h>
 #include "xdg-shell-client-protocol.h"
@@ -157,6 +158,20 @@ static const struct xdg_surface_listener xdg_surface_listener = {
     .configure = xdg_surface_configure,
 };
 
+/* A test reads a report while this rewrites it, so it must never see an
+ * empty file: write a temporary file and rename it over the report. A path
+ * that is not a regular file, such as /dev/null, is written in place. */
+static void report_write(const char *path, const char *text) {
+    char tmp[1024];
+    struct stat st;
+    bool in_place = stat(path, &st) == 0 && !S_ISREG(st.st_mode);
+    snprintf(tmp, sizeof(tmp), "%s.tmp", path);
+    FILE *report = fopen(in_place ? path : tmp, "w");
+    if (!report || fputs(text, report) < 0 || fclose(report) != 0
+            || (!in_place && rename(tmp, path) != 0))
+        abort();
+}
+
 /* xdg_toplevel callbacks */
 static void toplevel_configure(void *data, struct xdg_toplevel *toplevel,
         int32_t w, int32_t h, struct wl_array *states) {
@@ -171,12 +186,10 @@ static void toplevel_configure(void *data, struct xdg_toplevel *toplevel,
         g_width = (uint32_t)w < g_cell ? g_cell : (uint32_t)w / g_cell * g_cell;
     if (g_cell && h > 0)
         g_height = (uint32_t)h < g_cell ? g_cell : (uint32_t)h / g_cell * g_cell;
-    if (g_configure_report && toplevel == g_parent_toplevel) {
-        FILE *report = fopen(g_configure_report, "w");
-        if (!report) abort();
-        fprintf(report, "%d %d\n", w, h);
-        fclose(report);
-    }
+    char size[32];
+    snprintf(size, sizeof(size), "%d %d\n", w, h);
+    if (g_configure_report && toplevel == g_parent_toplevel)
+        report_write(g_configure_report, size);
     if (g_configure_history && toplevel == g_parent_toplevel) {
         FILE *report = fopen(g_configure_history, "a");
         if (!report) abort();
@@ -194,10 +207,9 @@ static void toplevel_configure_bounds(void *data,
         struct xdg_toplevel *toplevel, int32_t w, int32_t h) {
     (void)data;
     if (g_bounds_report && toplevel == g_parent_toplevel) {
-        FILE *report = fopen(g_bounds_report, "w");
-        if (!report) abort();
-        fprintf(report, "%d %d\n", w, h);
-        fclose(report);
+        char size[32];
+        snprintf(size, sizeof(size), "%d %d\n", w, h);
+        report_write(g_bounds_report, size);
     }
 }
 
@@ -393,12 +405,10 @@ int main(int argc, char *argv[]) {
             g_remove_child = false;
             if (wl_display_roundtrip(g_display) < 0) break;
             if (g_configure_report) {
-                char path[1024];
+                char path[1024], text[16];
                 snprintf(path, sizeof(path), "%s.subsurface", g_configure_report);
-                FILE *report = fopen(path, "w");
-                if (!report) abort();
-                fprintf(report, "%u\n", ++sequence);
-                fclose(report);
+                snprintf(text, sizeof(text), "%u\n", ++sequence);
+                report_write(path, text);
             }
         } else if (g_spawn_child) {
             g_spawn_child = false;
