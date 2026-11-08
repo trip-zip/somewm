@@ -1934,7 +1934,7 @@ updatetitle(struct wl_listener *listener, void *data)
 struct surface_output {
     Monitor *output;
     uint64_t generation;
-    uint32_t sequence;
+    pixman_region32_t damage;
     struct render_box box;
     bool entered;
     struct wl_list link;
@@ -1948,8 +1948,18 @@ struct tracked_surface {
 
 static struct wl_list tracked_surfaces = {&tracked_surfaces, &tracked_surfaces};
 
+/* Every commit's damage is kept until each output samples the surface:
+ * a client may commit twice before the next output frame. */
 static void surface_committed(struct wl_listener *listener, void *data)
 {
+    struct tracked_surface *t = wl_container_of(listener, t, commit);
+    pixman_region32_t damage;
+    pixman_region32_init(&damage);
+    wlr_surface_get_effective_damage(t->surface, &damage);
+    struct surface_output *s;
+    wl_list_for_each(s, &t->outputs, link)
+        pixman_region32_union(&s->damage, &s->damage, &damage);
+    pixman_region32_fini(&damage);
     Monitor *m;
     wl_list_for_each(m, &mons, link)
         if (m->wlr_output->enabled) wlr_output_schedule_frame(m->wlr_output);
@@ -1962,6 +1972,7 @@ static void surface_destroyed(struct wl_listener *listener, void *data)
     wl_list_for_each_safe(s, tmp, &t->outputs, link) {
         monitor_damage_device(s->output, s->box);
         wl_list_remove(&s->link);
+        pixman_region32_fini(&s->damage);
         free(s);
     }
     wl_list_remove(&t->link);
@@ -2008,6 +2019,7 @@ static struct surface_output *surface_output_get(struct wlr_surface *surface,
         if (!create) return NULL;
         s = ecalloc(1, sizeof(*s));
         s->output = m;
+        pixman_region32_init(&s->damage);
         wl_list_insert(&t->outputs, &s->link);
         return s;
     }
@@ -2025,12 +2037,9 @@ static void hook_sample(void *data, struct wlr_surface *surface,
     if (!s->entered || memcmp(&s->box, &box, sizeof(box))) {
         monitor_damage_device(m, s->box);
         monitor_damage_device(m, box);
-    } else if (s->sequence != surface->current.seq) {
-        pixman_region32_t damage;
-        pixman_region32_init(&damage);
-        wlr_surface_get_effective_damage(surface, &damage);
+    } else {
         int count;
-        pixman_box32_t *rects = pixman_region32_rectangles(&damage, &count);
+        pixman_box32_t *rects = pixman_region32_rectangles(&s->damage, &count);
         for (int i = 0; i < count; i++) {
             struct render_box b = {box.x + rects[i].x1 * scale - 1,
                 box.y + rects[i].y1 * scale - 1,
@@ -2038,10 +2047,9 @@ static void hook_sample(void *data, struct wlr_surface *surface,
                 (rects[i].y2 - rects[i].y1) * scale + 2};
             monitor_damage_device(m, b);
         }
-        pixman_region32_fini(&damage);
     }
+    pixman_region32_clear(&s->damage);
     s->box = box;
-    s->sequence = surface->current.seq;
 }
 
 /* The scale a surface is told after its outputs change: the largest scale
@@ -2087,6 +2095,7 @@ void window_surface_sweep(Monitor *m, bool remove_all)
             if (entered) wlr_surface_send_leave(t->surface, m->wlr_output);
             monitor_damage_device(m, s->box);
             wl_list_remove(&s->link);
+            pixman_region32_fini(&s->damage);
             free(s);
             if (entered) surface_scale_update(t->surface);
         }
