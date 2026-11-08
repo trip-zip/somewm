@@ -438,7 +438,7 @@ luaA_screen_getbycoord(lua_State *L, int x, int y)
 	return nearest;
 }
 
-static void
+void
 screen_node_destroy(screen_t *screen)
 {
 	if (!screen->node)

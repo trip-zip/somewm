@@ -57,6 +57,7 @@ bool luaA_screen_scanned_done(void);
 void screen_added(lua_State *L, screen_t *screen);
 void luaA_screen_emit_all_added(lua_State *L);
 void screen_removed(lua_State *L, screen_t *screen);
+void screen_node_destroy(screen_t *screen);
 void luaA_screen_emit_list(lua_State *L);
 void luaA_screen_emit_viewports(lua_State *L);
 void luaA_screen_emit_primary_changed(lua_State *L, screen_t *screen);

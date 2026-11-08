@@ -5052,6 +5052,9 @@ luaA_state_teardown_c(lua_State *L, const char *label, bool exit_emitted)
 static void
 luaA_state_drop_object_pointers(void)
 {
+	/* The close frees the screen userdata a screen node names as owner.
+	 * The reload has already handed the nodes it keeps to the new screens. */
+	foreach(s, globalconf.screens) screen_node_destroy(*s);
 	globalconf.tags.len = 0;
 	globalconf.screens.len = 0;
 
