@@ -1,12 +1,12 @@
 ---------------------------------------------------------------------------
--- Test: the output is a column of bars around the workarea
+-- Test: the screen is a column of bars around the workarea
 --
--- Bars on all four edges: the top and bottom span OUTPUT, the left and
+-- Bars on all four edges: the top and bottom span SCREEN, the left and
 -- right sit inside the middle row with WORKAREA between them. A bar's height
 -- moves the workarea, read from the WORKAREA element's solved box. A wibar
 -- that does not stretch keeps its width and aligns along its edge. The
 -- three align expand modes give the three fit/grow patterns. An ontop wibar
--- floats over OUTPUT at band 60.
+-- floats over SCREEN at band 60.
 --
 -- Run: make test-one TEST=tests/test-clay-output-bars.lua
 ---------------------------------------------------------------------------
@@ -83,12 +83,12 @@ local steps = {
                 return nil
             end
         end
-        local top = block(bars.top, "      ")
-        local bottom = block(bars.bottom, "      ")
-        local middle = find("^      MIDDLE %- w=grow h=grow row")
-        local left = block(bars.left, "        ")
-        local right = block(bars.right, "        ")
-        local workarea = find("^        WORKAREA %- w=grow h=grow row")
+        local top = block(bars.top, "    ")
+        local bottom = block(bars.bottom, "    ")
+        local middle = find("^    MIDDLE %- w=grow h=grow row")
+        local left = block(bars.left, "      ")
+        local right = block(bars.right, "      ")
+        local workarea = find("^      WORKAREA %- w=grow h=grow row")
         assert(top and top:find(" w=grow h=fixed(20) theme row", 1, true), "top: " .. tostring(top))
         assert(bottom and bottom:find(" w=grow h=fixed(20) theme row", 1, true), "bottom: " .. tostring(bottom))
         assert(middle, "no middle row:\n" .. awesome._clay_tree(s))
@@ -126,7 +126,7 @@ local steps = {
         end
         assert(wa.height == geo.height - 64, "workarea height " .. wa.height)
         assert(bars.left:geometry().y == geo.y + 44, "the left bar did not reflow")
-        assert(find("^      WIBAR screen %d+ %d+x44%+%d+%+%d+ .* w=grow h=fixed%(44%) theme row"),
+        assert(find("^    WIBAR screen %d+ %d+x44%+%d+%+%d+ .* w=grow h=fixed%(44%) theme row"),
             "the top bar is not 44 high in the dump")
         io.stderr:write("[PASS] a bar height change reflows the workarea\n")
         return true
@@ -234,7 +234,7 @@ local steps = {
         return true
     end,
 
-    -- An ontop wibar floats over OUTPUT at band 60 and reserves nothing.
+    -- An ontop wibar floats over SCREEN at band 60 and reserves nothing.
     function(count)
         if count == 1 then
             for _, bar in pairs(bars) do bar.visible = false end

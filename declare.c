@@ -1015,20 +1015,17 @@ struct screen_declaration {
 };
 static struct screen_declaration *screen_declarations, *active_screen;
 static size_t screen_declarations_len;
-static bool screen_subtrees;
 
 static Clay_ElementId
-screen_root_id(Monitor *m)
+screen_root_id(void)
 {
-    return active_screen && screen_subtrees
-		? Clay__HashStringWithOffset(CLAY_STRING("SCREEN"), active_screen->screen->node->id, 0)
-        : output_id(m);
+    return Clay__HashStringWithOffset(CLAY_STRING("SCREEN"), active_screen->screen->node->id, 0);
 }
 
 static struct wlr_box
-screen_origin(Monitor *m)
+screen_origin(void)
 {
-    return active_screen && screen_subtrees ? active_screen->geometry : m->m;
+    return active_screen->geometry;
 }
 
 static bool
@@ -1236,7 +1233,6 @@ screens_clear(void)
     free(screen_declarations);
     screen_declarations = NULL;
     screen_declarations_len = 0;
-    screen_subtrees = false;
     screen_activate(NULL);
 }
 
@@ -1268,12 +1264,6 @@ screens_prepare(Monitor *m)
         };
     }
     free(screens);
-    screen_subtrees = screen_declarations_len != 1;
-    if (screen_declarations_len == 1) {
-        struct wlr_box g = screen_declarations[0].geometry;
-        screen_subtrees = g.x != m->m.x || g.y != m->m.y
-            || g.width != m->m.width || g.height != m->m.height;
-    }
     return true;
 }
 
@@ -1334,9 +1324,9 @@ clients_settle(Monitor *m, struct declare_band *band)
 }
 
 static void
-declare_unmanaged_client(Client *c, Monitor *m)
+declare_unmanaged_client(Client *c)
 {
-	struct wlr_box origin = screen_origin(m);
+	struct wlr_box origin = screen_origin();
 	uint64_t handle = node_handle(c->surface_node);
 	Clay_ElementId id = Clay__HashStringWithOffset(CLAY_STRING("SURFACE"),
 		(uint32_t)handle, 0);
@@ -1344,7 +1334,7 @@ declare_unmanaged_client(Client *c, Monitor *m)
 		c->geometry.x - origin.x, c->geometry.y - origin.y,
 		c->geometry.width, c->geometry.height);
 	e.floating.attachTo = CLAY_ATTACH_TO_ELEMENT_WITH_ID;
-	e.floating.parentId = screen_root_id(m).id;
+	e.floating.parentId = screen_root_id().id;
 	e.custom.customData = (void *)(uintptr_t)handle;
 	e.userData = leaf_userdata(handle, 1.0f);
 	declare_leaf("SURFACE", handle, DECLARE_SRC_PROTOCOL, DECLARE_SRC_PROTOCOL, id, &e);
@@ -1842,7 +1832,7 @@ declare_layout_client(const struct widget_host *host, size_t i, Clay_ElementDecl
      * its border, from the node's offset (screen-relative) and fixed size. */
     if (n->attach == WIDGET_ATTACH_OUTPUT && n->sizing[0] == WIDGET_SIZING_FIXED
             && n->sizing[1] == WIDGET_SIZING_FIXED && client_clamps_to_monitor(c)) {
-        struct wlr_box origin = screen_origin(host->m);
+        struct wlr_box origin = screen_origin();
         int bw = client_border(c);
         int x = n->offset[0] + origin.x - host->m->m.x + bw;
         int y = n->offset[1] + origin.y - host->m->m.y + bw;
@@ -1945,7 +1935,7 @@ declare_widget_subtree(const struct widget_host *host, size_t i, Clay_ElementId 
 	e = root_decl ? *root_decl : widget_node_decl(n, z, word);
 	if (n->attach) {
 		e.floating.attachTo = CLAY_ATTACH_TO_ELEMENT_WITH_ID;
-		e.floating.parentId = screen_root_id(host->m).id;
+		e.floating.parentId = screen_root_id().id;
 	}
 	if (n->client)
 		return declare_layout_client(host, i, &e, ids);
@@ -1962,19 +1952,17 @@ declare_widget_subtree(const struct widget_host *host, size_t i, Clay_ElementId 
 			host->fit[1] ? widget_sizing(n, 1) : host->told[1] ? CLAY_SIZING_FIXED(host->told[1]) : CLAY_SIZING_GROW(0),
 		};
 	} else if (i == 0 && !root_decl) {
-		/* A titlebar root attaches at its parent's origin; a drawin
-		 * uses its screen's origin when split, otherwise the output's
-		 * (third_party/clay.h:2074-2080,
-		 * 2625-2677). Fixed axes use the host box, while an awful.popup
-		 * fits within its tree's limits. */
+		/* A titlebar root attaches at its parent's origin; a drawin uses
+		 * its screen's origin. Fixed axes use the host box, while an
+		 * awful.popup fits within its tree's limits. */
 		e.floating.offset = host->in_parent ? (Clay_Vector2) { 0, 0 }
 			: (Clay_Vector2) { host->x, host->y };
 		e.floating.attachTo = host->in_parent
 			? CLAY_ATTACH_TO_PARENT : CLAY_ATTACH_TO_ROOT;
 		e.floating.zIndex = z;
-        if (!host->in_parent && active_screen && screen_subtrees) {
+        if (!host->in_parent && active_screen) {
             e.floating.attachTo = CLAY_ATTACH_TO_ELEMENT_WITH_ID;
-            e.floating.parentId = screen_root_id(host->m).id;
+            e.floating.parentId = screen_root_id().id;
             e.floating.offset.x -= active_screen->geometry.x - host->m->m.x;
             e.floating.offset.y -= active_screen->geometry.y - host->m->m.y;
         }
@@ -2365,8 +2353,8 @@ declare_drawin(drawin_t *d, Monitor *m, int16_t z)
             frame.transition.properties & CLAY_TRANSITION_PROPERTY_OVERLAY_COLOR ? opacity : 1.0f);
     }
 	frame.floating.attachTo = CLAY_ATTACH_TO_ELEMENT_WITH_ID;
-	frame.floating.parentId = screen_root_id(m).id;
-    struct wlr_box origin = screen_origin(m);
+	frame.floating.parentId = screen_root_id().id;
+    struct wlr_box origin = screen_origin();
     frame.floating.offset.x += m->m.x - origin.x;
     frame.floating.offset.y += m->m.y - origin.y;
 	frame.layout.padding = (Clay_Padding){bw, bw, bw, bw};
@@ -2394,12 +2382,12 @@ declare_drawin(drawin_t *d, Monitor *m, int16_t z)
 }
 
 /* A desktop drawin covering its screen (awful.wallpaper): a slot floating
- * over the output, grow by grow, holding the tree as a child that fills it,
+ * over the screen, grow by grow, holding the tree as a child that fills it,
  * so no number of its own enters the tree. */
 static bool
-drawin_covers_output(drawin_t *d, Monitor *m)
+drawin_covers_screen(drawin_t *d)
 {
-	struct wlr_box g = screen_origin(m);
+	struct wlr_box g = screen_origin();
     return d->type == WINDOW_TYPE_DESKTOP && d->x == g.x && d->y == g.y
         && d->width == g.width && d->height == g.height;
 }
@@ -2414,7 +2402,7 @@ declare_wallpaper_drawin(drawin_t *d, Monitor *m, int16_t z)
 		.layout.sizing = { CLAY_SIZING_GROW(0), CLAY_SIZING_GROW(0) },
 		.floating = {
 			.attachTo = CLAY_ATTACH_TO_ELEMENT_WITH_ID,
-			.parentId = screen_root_id(m).id,
+			.parentId = screen_root_id().id,
 			.zIndex = z,
 			.pointerCaptureMode = CLAY_POINTER_CAPTURE_MODE_PASSTHROUGH,
 		},
@@ -2805,12 +2793,6 @@ nodes_settle(Monitor *m, struct declare_band *band)
 		if (n && n->owner_kind == (r->handle >> 32))
 			node_set_solved(n, m, r->id);
 	}
-	/* A sole full-output screen shares OUTPUT instead of declaring SCREEN. */
-	if (!screen_subtrees && screen_declarations_len == 1) {
-		screen_t *s = screen_declarations[0].screen;
-		if (s->valid && s->node)
-			node_set_solved(s->node, m, output_id(m).id);
-	}
 }
 
 /* Content-sized drawins without an attachment also take their solved size.
@@ -2920,7 +2902,7 @@ declare_attachment(drawin_t *d, Monitor *m)
     if (d->attachment.kind == 2 && !d->attachment.target) return false;
     bool bounded = d->attachment.kind == 3 && d->attachment.bounded;
 	uint32_t target = bounded || d->attachment.workarea ? workarea_id().id
-        : d->attachment.target ? attachment_target(d) : screen_root_id(m).id;
+        : d->attachment.target ? attachment_target(d) : screen_root_id().id;
     if (!target || bars_len == LENGTH(bars)) return false;
     if (d->attachment.hover && !Clay_PointerOver((Clay_ElementId){.id=target})) return false;
     uint64_t handle = node_handle(d->node);
@@ -3007,7 +2989,7 @@ declare_notifications(Monitor *m)
 				.layoutDirection = CLAY_TOP_TO_BOTTOM, .childGap = first->attachment.gap,
 			},
 			.floating = {
-				.attachTo = CLAY_ATTACH_TO_ELEMENT_WITH_ID, .parentId = screen_root_id(m).id,
+				.attachTo = CLAY_ATTACH_TO_ELEMENT_WITH_ID, .parentId = screen_root_id().id,
 				.attachPoints = { .parent = position, .element = position },
 				.offset = {first->attachment.x, first->attachment.y},
 				.zIndex = layer_band[LAYER_NOTIFICATION],
@@ -3115,7 +3097,7 @@ output_fill_nodes(Monitor *m, struct node *n, struct output_fill *fill)
 	if (n->owner_kind == DECLARE_KIND_DRAWIN) {
 		drawin_t *d = n->owner;
 		d->widgets.output_fill = false;
-		if (!screen_subtrees && declarable_drawin(d) && d->type == WINDOW_TYPE_DESKTOP) {
+		if (declarable_drawin(d) && d->type == WINDOW_TYPE_DESKTOP) {
 			fill->desktops++;
 			fill->candidate = d;
 		}
@@ -3138,7 +3120,9 @@ output_wallpaper_fill(Monitor *m, Clay_ElementId id, Clay_ElementDeclaration *o)
 	struct output_fill selected = {0};
 	output_fill_nodes(m, &m->declare->tree->root, &selected);
 	drawin_t *candidate = selected.candidate;
-	if (selected.desktops != 1 || selected.covered || !drawin_covers_output(candidate, m)
+	if (selected.desktops != 1 || selected.covered || !candidate
+			|| candidate->x != m->m.x || candidate->y != m->m.y
+			|| candidate->width != m->m.width || candidate->height != m->m.height
 			|| candidate->bar.edge || candidate->attachment.kind
 			|| candidate->ontop || candidate->node->words.bw[0]
 			|| (candidate->node->words.opacity >= 0 ? candidate->node->words.opacity : 1.0f) != 1
@@ -3274,18 +3258,11 @@ declare_output(Monitor *m)
 	output_background(m, &o);
 	output_wallpaper_fill(m, id, &o);
 
-	/* The inspector's panel takes the right edge while it is up (Clay
-	 * narrows its own root by the same width, clay.h:4363): the desktop
-	 * reflows into what is left, as beside a right bar. */
-	if (inspector_declares(m->declare))
-		o.layout.padding.right = (uint16_t)Clay__debugViewWidth;
 	native_open(id);
 	native_configure(&o);
 	record_open("OUTPUT", handle, id, &o, DECLARE_SRC_OUTPUT, DECLARE_SRC_OUTPUT, NULL);
 }
 
-/* A sole full-output screen keeps its edge column in OUTPUT. Split outputs
- * give each screen a fixed floating subtree. */
 static bool
 declare_screen(Monitor *m, screen_t *screen)
 {
@@ -3293,26 +3270,28 @@ declare_screen(Monitor *m, screen_t *screen)
 	while (i < screen_declarations_len && screen_declarations[i].screen != screen) i++;
 	if (i == screen_declarations_len) return false;
 	screen_activate(&screen_declarations[i]);
-	if (screen_subtrees) {
-		struct wlr_box g = active_screen->geometry;
-		Clay_ElementId id = screen_root_id(m);
-		Clay_ElementDeclaration e = {
-			.layout = {
-				.sizing = {CLAY_SIZING_FIXED(g.width), CLAY_SIZING_FIXED(g.height)},
-				.layoutDirection = CLAY_TOP_TO_BOTTOM,
-			},
-			.floating = {
-				.attachTo = CLAY_ATTACH_TO_ELEMENT_WITH_ID, .parentId = output_id(m).id,
-				.offset = {g.x - m->m.x, g.y - m->m.y},
-				.pointerCaptureMode = CLAY_POINTER_CAPTURE_MODE_PASSTHROUGH,
-			},
-		};
-		native_open(id);
-		native_configure(&e);
-		record_open("SCREEN", node_handle(screen->node), id, &e, DECLARE_SRC_USER, DECLARE_SRC_USER, NULL);
-		if (!recording->exhausted)
-			recording->records[recording->records_len - 1].screen_index = active_screen->index;
-	}
+	struct wlr_box g = active_screen->geometry;
+	Clay_ElementId id = screen_root_id();
+	Clay_ElementDeclaration e = {
+		.layout = {
+			.sizing = {CLAY_SIZING_FIXED(g.width), CLAY_SIZING_FIXED(g.height)},
+			.layoutDirection = CLAY_TOP_TO_BOTTOM,
+		},
+		.floating = {
+			.attachTo = CLAY_ATTACH_TO_ELEMENT_WITH_ID, .parentId = output_id(m).id,
+			.offset = {g.x - m->m.x, g.y - m->m.y},
+			.pointerCaptureMode = CLAY_POINTER_CAPTURE_MODE_PASSTHROUGH,
+		},
+	};
+	/* Reserve the part of this screen covered by the output's inspector. */
+	if (inspector_declares(m->declare))
+		e.layout.padding.right = (uint16_t)MAX(0, MIN(g.width,
+			g.x + g.width - (m->m.x + m->m.width - (int)Clay__debugViewWidth)));
+	native_open(id);
+	native_configure(&e);
+	record_open("SCREEN", node_handle(screen->node), id, &e, DECLARE_SRC_USER, DECLARE_SRC_USER, NULL);
+	if (!recording->exhausted)
+		recording->records[recording->records_len - 1].screen_index = active_screen->index;
 	declare_screen_contents(m);
 	declare_notifications(m);
 	return true;
@@ -3661,7 +3640,7 @@ declare_walk(Monitor *m, struct node *n, const struct walk_path *path)
 		if (n->kind == NODE_CLIENT) {
 			if (client_is_unmanaged(c)) {
 				if (monitor_for_unmanaged(c) != m) return;
-				declare_unmanaged_client(c, m);
+				declare_unmanaged_client(c);
 			} else if (!node_record(n, NULL)) return;
 		} else if (!node_record(n, "SURFACE")) return;
 		break;
@@ -3678,7 +3657,7 @@ declare_walk(Monitor *m, struct node *n, const struct walk_path *path)
 		} else if (d->bar.edge) {
 			if (bar_flows(d)) return;
 			declare_bar(d, m, layer_band[n->layer]);
-		} else if (drawin_covers_output(d, m)) {
+		} else if (drawin_covers_screen(d)) {
 			declare_wallpaper_drawin(d, m, layer_band[n->layer]);
 		} else {
 			declare_drawin(d, m, layer_band[n->layer]);
@@ -3737,7 +3716,7 @@ declare_walk(Monitor *m, struct node *n, const struct walk_path *path)
 			if (child->owner_kind == DECLARE_KIND_DRAWIN
 					&& ((drawin_t *)child->owner)->attachment.kind)
 				declare_walk(m, child, &here);
-		if (screen_subtrees) native_close();
+		native_close();
 		screen_activate(saved_screen);
 	}
 	if (output) native_close();

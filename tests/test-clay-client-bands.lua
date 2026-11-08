@@ -58,13 +58,13 @@ runner.run_steps({
  end,
  wait(function()
   assert(line(b):find('w=fixed(202) user h=fixed(186) user',1,true),'float dimensions must be user inputs')
-  assert(line(b):find('attach OUTPUT offset 0,0 band 20',1,true),'float attachment')
+  assert(line(b):find('attach ELEMENT offset 0,0 band 20',1,true),'float attachment')
   assert(pixel(50,100)=='#0033cc','float not above tile or raise order wrong')
   assert(pixel(50,16)=='#ffff00','float titlebar not above normal wibar')
   assert(pixel(500,16)=='#0000ff','tiled client not below normal wibar')
   checks.check('bands-normal',awesome._clay_tree(screen[1]))
   before=blocks()
-  io.stderr:write('[PASS] user float attached OUTPUT band 20, pixels above tile and normal wibar\n')
+  io.stderr:write('[PASS] user float attached ELEMENT band 20, pixels above tile and normal wibar\n')
  end),
  function()b:raise();return true end,
  wait(function()

@@ -400,8 +400,8 @@ luaA_screen_emit_primary_changed(lua_State *L, screen_t *screen)
  * \param y Y coordinate
  * \return Screen containing or nearest to the point, or NULL
  */
-screen_t *
-luaA_screen_getbycoord(lua_State *L, int x, int y)
+static screen_t *
+screen_getbycoord_except(lua_State *L, int x, int y, screen_t *excluded)
 {
 	screen_t *nearest = NULL;
 	unsigned int nearest_dist = UINT_MAX;
@@ -416,7 +416,7 @@ luaA_screen_getbycoord(lua_State *L, int x, int y)
 		s = (screen_t *)lua_touserdata(L, -1);
 		lua_pop(L, 1);
 
-		if (!s || !s->valid)
+		if (!s || !s->valid || s == excluded)
 			continue;
 
 		/* Check if point is inside this screen */
@@ -436,6 +436,12 @@ luaA_screen_getbycoord(lua_State *L, int x, int y)
 	}
 
 	return nearest;
+}
+
+screen_t *
+luaA_screen_getbycoord(lua_State *L, int x, int y)
+{
+	return screen_getbycoord_except(L, x, y, NULL);
 }
 
 void
@@ -483,7 +489,7 @@ screen_removed(lua_State *L, screen_t *screen)
 		if ((*c)->screen == screen) {
 			int cx = (*c)->geometry.x + (*c)->geometry.width / 2;
 			int cy = (*c)->geometry.y + (*c)->geometry.height / 2;
-			screen_t *new_screen = luaA_screen_getbycoord(L, cx, cy);
+			screen_t *new_screen = screen_getbycoord_except(L, cx, cy, screen);
 
 			if (new_screen && new_screen != screen) {
 				screen_client_moveto(*c, new_screen, false);

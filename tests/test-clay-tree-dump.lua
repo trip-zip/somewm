@@ -167,7 +167,7 @@ local steps = {
         end
 
         local d = bar2.drawin
-        local want = string.format("      WIBAR screen 2 %dx%d+%d+%d ",
+        local want = string.format("    WIBAR screen 2 %dx%d+%d+%d ",
             d.width, d.height, d.x, d.y)
         local outputs, head, tree = {}, nil, {}
 

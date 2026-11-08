@@ -86,10 +86,10 @@ runner.run_async(function()
     c.shadow = false
     c.border_width = 1
 
-    -- Frame 1: floating, a root below the flow root attached to the output.
+    -- Frame 1: floating, a root below the flow root attached to the screen.
     local dump = frame()
     local cl, sl = line(dump, 'CLIENT'), line(dump, 'SURFACE')
-    assert(cl:find('^  CLIENT') and cl:find(' attach OUTPUT offset %S+ band %-6 '),
+    assert(cl:find('^  CLIENT') and cl:find(' attach ELEMENT offset %S+ band %-6 '),
         'floating CLIENT: ' .. cl)
     assert(sl:find(' attach PARENT offset %S+ band %-6 '), 'floating SURFACE: ' .. sl)
     local g, bw = c:geometry(), c.border_width
@@ -105,7 +105,7 @@ runner.run_async(function()
     dump = frame()
     cl, sl = line(dump, 'CLIENT'), line(dump, 'SURFACE')
     io.stderr:write('frame 2 CLIENT: ', cl, '\nframe 2 SURFACE: ', sl, '\n')
-    assert(dump:find('\n      WORKAREA [^\n]+\n        CLIENT desk_client ') and not cl:find(' band '),
+    assert(dump:find('\n    WORKAREA [^\n]+\n      CLIENT desk_client ') and not cl:find(' band '),
         'tiled CLIENT not in flow under WORKAREA: ' .. cl)
     same(box(cl), s.workarea, 'tiled CLIENT box')
     same(box(cl), {x = 0, y = 32, width = 1280, height = 688}, 'tiled CLIENT box')
