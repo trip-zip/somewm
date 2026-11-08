@@ -27,7 +27,6 @@ struct widget_node;
 
 typedef struct drawin_t {
 	WINDOW_OBJECT_HEADER           /* Base window fields from AwesomeWM */
-	uint32_t declared_gen;
 
 	/* Geometry */
 	int x;
