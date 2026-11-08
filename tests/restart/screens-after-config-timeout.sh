@@ -29,6 +29,11 @@ check_eval hr-scr "there is a primary screen" \
 check_eval hr-scr "the focused screen is the real one" \
     'return tostring(require("awful.screen").focused() == screen[1])' true
 
+# A node left over from the closed state names freed userdata as its owner.
+check_eval hr-scr "the output tree holds one node per screen" \
+    'local n = 1 for _, step in ipairs {"previous_sibling", "next_sibling"} do local c = screen[1].tree[step] while c do if c.kind == "screen" then n = n + 1 end c = c[step] end end return "screen_nodes=" .. n' \
+    'screen_nodes=1'
+
 if log_has hr-scr "non-object"; then
     fail "no signal was emitted on a stale screen ref" \
          "$(grep -F -- "non-object" "$(sw_log hr-scr)" | head -3)"
