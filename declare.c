@@ -129,12 +129,9 @@ struct declare_band {
 	 * starts from (third_party/clay.h:5068-5073). */
 	bool transitioning;
 	int64_t declare_us, solve_us, reconcile_us;
-	/* What the last frame's pass declared, in declaration order, for the
-	 * tree dump: the desktop-level elements (roots, client frames, bar
-	 * slots, leaves) with their parent, sizing and where each number came
-	 * from. A widget tree records its root only; the dump walks its nodes
-	 * from the retained widget_tree. Filled by declare_output_frame's pass
-	 * alone; queries read the completed declarations and commands. */
+	/* Desktop declarations in order, with parent, sizing and source words.
+	 * Widget roots retain their widget_tree for the dump to walk.
+	 * Queries read only completed declarations and commands. */
 	struct declare_record *records;
 	size_t records_len, records_cap;
 	/* Words declared for elements no record stands for: Clay's root,
@@ -145,13 +142,6 @@ struct declare_band {
 		uint8_t src[2];
 	} *words;
 	size_t words_len, words_cap;
-	/* The client frames this pass declared whose box Clay solves, by
-	 * handle and frame id: what clients_settle reads back. */
-	struct settle_frame {
-		uint64_t handle;
-		uint32_t id, x11_configure_serial;
-	} *settle;
-	size_t settle_len, settle_cap;
 };
 
 const char *const declare_src_names[DECLARE_SRC_COUNT] = {
@@ -175,7 +165,7 @@ declare_src_parse(const char *word)
 }
 
 struct declare_record {
-    bool client_frame;
+    bool client_frame, client_readback;
     uint32_t x11_configure_serial;
 	const char *role;
 	uint64_t handle;       /* the object it stands for, 0 for none */
@@ -404,8 +394,8 @@ declare_drag_node_forget(void)
 
 static uint32_t declare_gen;
 
-/* A layout is the unit of the once-per-drawin guard. Every layout must
- * start a new generation, including queries outside the frame walk. */
+/* node_set_solved reads each node once per layout, keyed on this
+ * generation. Every layout must start a new one. */
 static void
 declare_begin_layout(void)
 {
@@ -438,7 +428,6 @@ record_begin(struct declare_band *band)
 	recording = band;
 	band->records_len = 0;
     band->entrances_len = 0;
-	band->settle_len = 0;
 }
 
 static void
@@ -1005,7 +994,7 @@ static void declare_widget_slot(const struct widget_host *host, Clay_ElementId i
 static Clay_ElementId output_id(Monitor *m);
 static Clay_ElementId workarea_id(void);
 
-/* Each output pass pins its hosted screens and Lua descriptions until all
+/* Each output pins its hosted screens and Lua descriptions until all
  * boxes have been published. The active entry scopes screen composition;
  * output-only declarations run with no active screen. */
 struct screen_declaration {
@@ -1220,12 +1209,6 @@ client_z(Client *c)
 }
 
 static void
-screen_activate(struct screen_declaration *entry)
-{
-    active_screen = entry;
-}
-
-static void
 screens_clear(void)
 {
     for (size_t i = 0; i < screen_declarations_len; i++)
@@ -1233,7 +1216,7 @@ screens_clear(void)
     free(screen_declarations);
     screen_declarations = NULL;
     screen_declarations_len = 0;
-    screen_activate(NULL);
+    active_screen = NULL;
 }
 
 static bool
@@ -1304,17 +1287,18 @@ luaA_client_geometry_is_solved(lua_State *L)
     return 1;
 }
 
-/* The frames declare_client_frame listed write their solved boxes back;
- * an authored box was never listed. */
+/* Authored client boxes are never read back from the solve. */
 static void
 clients_settle(Monitor *m, struct declare_band *band)
 {
-    for (size_t i = 0; i < band->settle_len; i++) {
-        Client *c = declare_handle_get(band->settle[i].handle, NULL);
-        Clay_ElementData data = Clay_GetElementData((Clay_ElementId) { .id = band->settle[i].id });
+    for (size_t i = 0; i < band->records_len; i++) {
+        const struct declare_record *r = &band->records[i];
+        if (!r->client_readback) continue;
+        Client *c = declare_handle_get(r->handle, NULL);
+        Clay_ElementData data = Clay_GetElementData((Clay_ElementId) { .id = r->id });
         if (!c || c->mon != m || !data.found) continue;
-        if (c->client_type == X11 && band->settle[i].x11_configure_serial
-                && band->settle[i].x11_configure_serial != c->x11_configure.serial) continue;
+        if (c->client_type == X11 && r->x11_configure_serial
+                && r->x11_configure_serial != c->x11_configure.serial) continue;
         /* A pending configure means the chrome still wraps an older answer. */
         if (c->resize) continue;
         /* A fullscreen client's box is the monitor's. */
@@ -1360,7 +1344,7 @@ declare_unmanaged_client(Client *c)
  * and declare_hit has to resolve that node to the drawin (input.c then takes
  * drawin-local coordinates from the drawin's own box, not the node's).
  */
-/* This pass's widget identities resolve to their declared Clay elements. */
+/* Widget identities resolve to their declared Clay elements. */
 static struct { uint32_t identity, occurrence, host, id; } *attachment_targets;
 static size_t attachment_targets_len, attachment_targets_cap;
 
@@ -1778,20 +1762,6 @@ declare_client_frame(const struct widget_host *host, size_t i, int16_t z,
 	}
 	Clay_ElementId id = Clay__HashStringWithOffset(CLAY_STRING("client"),
 		(uint32_t)n->client, 0);
-	/* A box the user or a config's layout authored (both axes fixed, spec
-	 * D050) is the client's geometry already, and a queued geometry change
-	 * may be newer than the tree that declared it: it is never read back. */
-	bool authored = !n->x11_configure_serial && n->sizing[0] == WIDGET_SIZING_FIXED && n->sizing[1] == WIDGET_SIZING_FIXED
-		&& (n->src[0] == DECLARE_SRC_USER || n->src[0] == DECLARE_SRC_LEGACY);
-
-	if (!authored && recording) {
-		struct declare_band *band = recording;
-		if (band->settle_len == band->settle_cap) {
-			band->settle_cap = band->settle_cap ? band->settle_cap * 2 : 16;
-			p_realloc(&band->settle, band->settle_cap);
-		}
-		band->settle[band->settle_len++] = (struct settle_frame) { n->client, id.id, n->x11_configure_serial };
-	}
 	ids[i] = id.id;
 	native_open(id);
     native_configure(e);
@@ -1801,6 +1771,12 @@ declare_client_frame(const struct widget_host *host, size_t i, int16_t z,
     if (recording && !recording->exhausted && recording->records_len) {
         struct declare_record *record = &recording->records[recording->records_len - 1];
         record->client_frame = true;
+        /* A box the user or a config's layout authored (both axes fixed,
+         * spec D050) is the client's geometry already, and a queued geometry
+         * change may be newer than the tree that declared it: never read back. */
+        record->client_readback = n->x11_configure_serial
+            || n->sizing[0] != WIDGET_SIZING_FIXED || n->sizing[1] != WIDGET_SIZING_FIXED
+            || (n->src[0] != DECLARE_SRC_USER && n->src[0] != DECLARE_SRC_LEGACY);
         record->x11_configure_serial = n->x11_configure_serial;
     }
     record_client_exit(n);
@@ -2319,11 +2295,6 @@ declare_drawin(drawin_t *d, Monitor *m, int16_t z)
 	int x = d->x - m->m.x;
 	int y = d->y - m->m.y;
 	float opacity = d->node->words.opacity >= 0 ? d->node->words.opacity : 1.0f;
-
-	/* First declaration in this layout wins, including its z order. */
-	if (d->declared_gen == declare_gen)
-		return;
-	d->declared_gen = declare_gen;
 
 	struct widget_host host;
 	if (!drawin_widget_host(d, &host))
@@ -3269,7 +3240,7 @@ declare_screen(Monitor *m, screen_t *screen)
 	size_t i = 0;
 	while (i < screen_declarations_len && screen_declarations[i].screen != screen) i++;
 	if (i == screen_declarations_len) return false;
-	screen_activate(&screen_declarations[i]);
+	active_screen = &screen_declarations[i];
 	struct wlr_box g = active_screen->geometry;
 	Clay_ElementId id = screen_root_id();
 	Clay_ElementDeclaration e = {
@@ -3577,9 +3548,8 @@ static bool clips_prepare(Monitor *m)
     return true;
 }
 
-/* The record this frame declared for n with `role`, or with any role but
- * SHADOW when role is NULL. The walk reads it for nodes another pass
- * declared, such as client frames inside WORKAREA. */
+/* Find a declaration by node and role, excluding SHADOW when role is NULL.
+ * Hosted flow can declare a child before the walk reaches it. */
 static const struct declare_record *
 node_record(const struct node *n, const char *role)
 {
@@ -3717,7 +3687,7 @@ declare_walk(Monitor *m, struct node *n, const struct walk_path *path)
 					&& ((drawin_t *)child->owner)->attachment.kind)
 				declare_walk(m, child, &here);
 		native_close();
-		screen_activate(saved_screen);
+		active_screen = saved_screen;
 	}
 	if (output) native_close();
 }
@@ -4163,7 +4133,6 @@ declare_band_wipe(struct declare_band *band)
     free(band->retired);
     free(band->retained_dump);
     free(band->words);
-    free(band->settle);
     free(band->command_handles);
     release_exit_owners(band, NULL, 0);
     free(band->exit_owners);
@@ -4278,7 +4247,6 @@ declare_state_clear(void)
         band->retired = NULL;
         band->retired_len = 0;
         band->records_len = 0;
-        band->settle_len = 0;
         band->context_valid = false;
         free(band->retained_dump);
         band->retained_dump = NULL;
@@ -4646,11 +4614,11 @@ declare_output_frame(struct declare_output *dout, Monitor *m)
 	nodes_settle(m, band);
     bars_settle(m);
     for (size_t i = 0; i < screen_declarations_len; i++) {
-        screen_activate(&screen_declarations[i]);
+        active_screen = &screen_declarations[i];
 		popups_settle(m);
         workarea_settle(m);
     }
-    screen_activate(NULL);
+    active_screen = NULL;
     clients_settle(m, band);
     solved_emit();
     for (size_t i = 0; i < screen_declarations_len; i++) {
