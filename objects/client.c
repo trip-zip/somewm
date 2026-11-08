@@ -118,6 +118,7 @@
 void client_configure_to_box(client_t *c);
 
 #include <math.h>
+#include <float.h>
 #include <stdio.h>
 #include <string.h>
 #include <wayland-server-core.h>
@@ -4468,23 +4469,52 @@ luaA_client_set_shape(lua_State *L, client_t *c)
 	return 0;
 }
 
-/** The client's content corner radius in pixels, independent of its shape.
- * A positive radius rounds all four content corners and shows the border
- * color underneath. Titlebars keep the shape's corners. Nil or zero keeps
- * the corners derived from shape, border width and titlebars unchanged.
- * Fullscreen clients ignore it.
- * Negative values are rejected.
+static const char *const content_corner_names[] = {
+	"top_left", "top_right", "bottom_right", "bottom_left"
+};
+
+static float
+client_content_radius_value(lua_State *L)
+{
+	lua_Number radius = lua_tonumber(L, -1);
+	if (lua_type(L, -1) != LUA_TNUMBER || !isfinite(radius) || radius < 0 || radius > FLT_MAX)
+		luaL_error(L, "content_radius values must be finite, non-negative numbers within range");
+	return radius;
+}
+
+/** The client's content corner radii in logical pixels, independent of its shape.
+ * A positive number rounds all four corners equally. A table replaces all
+ * four radii; omitted corners are zero. An empty table makes the content
+ * square. Nil or numeric zero restores the corners derived from shape,
+ * border width and titlebars. Titlebars keep the shape's corners.
+ * Rounded content corners show the border color underneath, even without
+ * a border. Fullscreen clients ignore the radii without clearing them.
+ * Table assignments are copied. Reading a table returns a new table with
+ * all four fields; editing it has no effect until it is assigned again.
+ * Invalid keys, negative or non-finite radii, values outside the supported
+ * numeric range and non-numeric corner values raise an error without
+ * changing the property. Changing its value or form emits the signal.
  *
  * @property content_radius
- * @tparam[opt=nil] number|nil content_radius
+ * @tparam[opt=nil] number|table|nil content_radius
+ * @tparam[opt=0] number content_radius.top_left
+ * @tparam[opt=0] number content_radius.top_right
+ * @tparam[opt=0] number content_radius.bottom_right
+ * @tparam[opt=0] number content_radius.bottom_left
  * @propemits false false
  * @see shape
  */
 static int
 luaA_client_get_content_radius(lua_State *L, client_t *c)
 {
-	if (c->node && c->node->words.content_radius > 0)
-		lua_pushnumber(L, c->node->words.content_radius);
+	if (c->node && c->node->words.content_radius_table) {
+		lua_createtable(L, 0, 4);
+		for (int i = 0; i < 4; i++) {
+			lua_pushnumber(L, c->node->words.content_radii[i]);
+			lua_setfield(L, -2, content_corner_names[i]);
+		}
+	} else if (c->node && c->node->words.content_radii[0] > 0)
+		lua_pushnumber(L, c->node->words.content_radii[0]);
 	else
 		lua_pushnil(L);
 	return 1;
@@ -4496,14 +4526,35 @@ luaA_client_set_content_radius(lua_State *L, client_t *c)
 	if (!c->node)
 		return 0;
 	int type = lua_type(L, -1);
-	if (type != LUA_TNIL && type != LUA_TNUMBER)
-		return luaL_error(L, "content_radius must be nil or a number");
-	if (type == LUA_TNUMBER && lua_tonumber(L, -1) < 0)
-		return luaL_error(L, "content_radius must be at least 0");
-	float radius = type == LUA_TNUMBER ? lua_tonumber(L, -1) : 0;
-	if (radius == c->node->words.content_radius)
+	float radii[4] = {0};
+	bool per_corner = type == LUA_TTABLE;
+	if (type == LUA_TNUMBER) {
+		float radius = client_content_radius_value(L);
+		for (int i = 0; i < 4; i++) radii[i] = radius;
+	} else if (per_corner) {
+		lua_pushnil(L);
+		while (lua_next(L, -2)) {
+			if (lua_type(L, -2) != LUA_TSTRING)
+				return luaL_error(L, "content_radius corner keys must be names");
+			size_t length;
+			const char *key = lua_tolstring(L, -2, &length);
+			int corner = 0;
+			while (corner < 4 && (length != strlen(content_corner_names[corner])
+				|| memcmp(key, content_corner_names[corner], length))) corner++;
+			if (corner == 4)
+				return luaL_error(L, "unknown content_radius corner '%s'", key);
+			radii[corner] = client_content_radius_value(L);
+			lua_pop(L, 1);
+		}
+	} else if (type != LUA_TNIL) {
+		return luaL_error(L, "content_radius must be nil, a number or a corner table");
+	}
+	bool same = per_corner == c->node->words.content_radius_table;
+	for (int i = 0; i < 4; i++) same = same && radii[i] == c->node->words.content_radii[i];
+	if (same)
 		return 0;
-	c->node->words.content_radius = radius;
+	memcpy(c->node->words.content_radii, radii, sizeof(radii));
+	c->node->words.content_radius_table = per_corner;
 	luaA_object_emit_signal(L, -3, "property::content_radius", 0);
 	return 0;
 }

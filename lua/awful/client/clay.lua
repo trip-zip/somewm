@@ -148,8 +148,14 @@ function clay.describe(c, allocation)
         assign_corners(radius, bw, top, right, bottom, left, pixels)
     end
     local content_radius = not fullscreen and c.content_radius or 0
-    if content_radius > 0 then
+    local content_rounded
+    if type(content_radius) == "table" then
+        pixels.radii = {content_radius.top_left, content_radius.top_right,
+            content_radius.bottom_right, content_radius.bottom_left}
+        for _, r in ipairs(pixels.radii) do content_rounded = content_rounded or r > 0 end
+    elseif content_radius > 0 then
         pixels.radii = {content_radius, content_radius, content_radius, content_radius}
+        content_rounded = true
     end
     local box, cut = frame
     if committed then
@@ -217,7 +223,7 @@ function clay.describe(c, allocation)
     elseif bw > 0 then
         box.border, box.bw = {c:_border_rgba()}, {bw, bw, bw, bw}
     end
-    if content_radius > 0 then
+    if content_rounded then
         local background = path and frame or box
         background.bg = {c:_border_rgba()}
         -- Shaped nodes paint fill through their path instead of bg.

@@ -10,7 +10,7 @@ local shot = require('_shape_mask_capture')
 local c, report
 local ink, wallpaper = {32, 64, 96}, '#123456'
 local frame = {255, 0, 255}
-local radius, bar = 18, 20
+local radii, bar = {18, 18, 18, 18}, 20
 local steps = {}
 
 local function rgb(hex)
@@ -27,8 +27,7 @@ end
 local function bounds()
     local dump = awesome._clay_tree(screen[1])
     local line = assert(dump:match('\n( *SURFACE radius_updates [^\n]*)'))
-    local radii = table.concat({radius, radius, radius, radius}, ',')
-    assert(line:find(' radii ' .. radii, 1, true), line)
+    assert(line:find(' radii ' .. table.concat(radii, ','), 1, true), line)
     assert(not c._committed_size, 'client resize is pending')
     local x, y, w, h = line:match(' box (%S+),(%S+) (%S+)x(%S+)')
     local g = c:geometry()
@@ -49,18 +48,29 @@ end
 
 local function check(read, scale, label)
     local x, y, w, h = bounds()
+    local channel = 1
+    for i = 2, 3 do
+        if math.abs(ink[i] - frame[i]) > math.abs(ink[channel] - frame[channel]) then
+            channel = i
+        end
+    end
     local left, top = math.floor(x * scale + .5), math.floor(y * scale + .5)
     local right, bottom = math.floor((x + w) * scale + .5) - 1, math.floor((y + h) * scale + .5) - 1
-    local r = math.floor(radius * scale)
-    for _, corner in ipairs{{left, top, 1, 1}, {right, top, -1, 1},
+    for i, corner in ipairs{{left, top, 1, 1}, {right, top, -1, 1},
             {right, bottom, -1, -1}, {left, bottom, 1, -1}} do
         local function pixel(dx, dy)
             return {read(corner[1] + corner[3] * dx, corner[2] + corner[4] * dy)}
         end
-        near(pixel(0, 0), frame, label .. ' cut corner')
-        near(pixel(r, r), ink, label .. ' inside content')
-        near(pixel(math.floor(r * .24), math.floor(r * .24)), frame, label .. ' outside scaled arc')
-        near(pixel(math.floor(r * .4), math.floor(r * .4)), ink, label .. ' inside scaled arc')
+        local r = math.floor(radii[i] * scale)
+        -- A square corner's outermost pixel can blend along the rectangular
+        -- edge at fractional scale. One pixel inward must be opaque content.
+        local inset = r > 0 and 0 or 1
+        near(pixel(inset, inset), r > 0 and frame or ink, label .. ' corner')
+        near(pixel(math.max(r, 1), math.max(r, 1)), ink, label .. ' inside content')
+        if r > 0 then
+            near(pixel(math.floor(r * .24), math.floor(r * .24)), frame, label .. ' outside scaled arc')
+        end
+        near(pixel(math.max(1, math.floor(r * .4)), math.max(1, math.floor(r * .4))), ink, label .. ' inside scaled arc')
         near(pixel(-2, -2), frame, label .. ' titlebar join')
         local blended = 0
         for dy = 1, r - 2 do
@@ -68,12 +78,6 @@ local function check(read, scale, label)
                 local p = pixel(dx, dy)
                 -- Every arc pixel is a mixture of these two opaque colors.
                 -- Wallpaper leakage or a dark fringe breaks the other channels.
-                local channel = 1
-                for i = 2, 3 do
-                    if math.abs(ink[i] - frame[i]) > math.abs(ink[channel] - frame[channel]) then
-                        channel = i
-                    end
-                end
                 local coverage = (p[channel] - frame[channel]) / (ink[channel] - frame[channel])
                 assert(coverage >= -.02 and coverage <= 1.02, label .. ' edge has a third color')
                 near(p, {frame[1] + coverage * (ink[1] - frame[1]),
@@ -82,9 +86,9 @@ local function check(read, scale, label)
                 if coverage > .1 and coverage < .9 then blended = blended + 1 end
             end
         end
-        assert(blended > 0, label .. ' arc has no antialiased pixels')
+        assert(r == 0 or blended > 0, label .. ' arc has no antialiased pixels')
     end
-    io.stderr:write('[PASS] ' .. label .. ': four square titlebars, four filled cuts and blended arcs\n')
+    io.stderr:write('[PASS] ' .. label .. ': square titlebars, declared corners and blended arcs\n')
 end
 
 local function stage(label, setup)
@@ -141,16 +145,16 @@ end
 for _, scale in ipairs{1, 1.5} do
     stage('initial', function()
         screen[1].scale = scale
-        radius, frame = 18, rgb('#ff00ff')
-        c.content_radius, c.border_color = radius, '#ff00ff'
+        radii, frame = {18, 18, 18, 18}, rgb('#ff00ff')
+        c.content_radius, c.border_color = 18, '#ff00ff'
         for _, side in ipairs{'top', 'right', 'bottom', 'left'} do
             awful.titlebar(c, {position = side, size = bar, bg_normal = '#ff00ff', bg_focus = '#ff00ff'})
         end
         c:geometry{x = 40, y = 40, width = 300, height = 220}
     end)
     stage('resize and radius', function()
-        radius = 26
-        c.content_radius = radius
+        radii = {26, 26, 26, 26}
+        c.content_radius = 26
         c:geometry{x = 60, y = 50, width = 340, height = 260}
     end)
     stage('frame color', function()
@@ -159,6 +163,21 @@ for _, scale in ipairs{1, 1.5} do
         for _, side in ipairs{'top', 'right', 'bottom', 'left'} do
             awful.titlebar(c, {position = side, size = bar, bg_normal = '#17c589', bg_focus = '#17c589'})
         end
+    end)
+    stage('top corners', function()
+        radii = {18, 18, 0, 0}
+        c.content_radius = {top_left = 18, top_right = 18}
+    end)
+    for i, key in ipairs{'top_left', 'top_right', 'bottom_right', 'bottom_left'} do
+        stage(key .. ' alone', function()
+            radii = {0, 0, 0, 0}
+            radii[i] = 18
+            c.content_radius = {[key] = 18}
+        end)
+    end
+    stage('distinct corners', function()
+        radii = {12, 18, 26, 34}
+        c.content_radius = {top_left = 12, top_right = 18, bottom_right = 26, bottom_left = 34}
     end)
     steps[#steps + 1] = function() c.fullscreen = true; return true end
     steps[#steps + 1] = shot.wait(function()

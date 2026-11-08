@@ -78,7 +78,8 @@ struct node_words {
 	uint16_t bw[4];
 	float border[4];
 	float radius; /* 0 for an unshaped client, -1 for an unshaped drawin */
-	float content_radius;
+	float content_radii[4]; /* top-left, top-right, bottom-right, bottom-left */
+	bool content_radius_table;
 	float opacity;
 	shadow_config_t *shadow; /* owned, NULL selects the theme */
 	struct widget_transition transition;

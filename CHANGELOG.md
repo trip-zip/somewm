@@ -6,7 +6,7 @@ All notable changes to somewm will be documented in this file.
 
 ### Added
 
-- `client.content_radius` rounds the window content independently of its frame, with the border color visible in the cut corners.
+- `client.content_radius` rounds the window content independently of its frame, with one radius or a table of named corner radii; the cut corners show the border color.
 - `client.shape` takes any `gears.shape` function. The window, its titlebars and its border follow the path, and a click outside it reaches what is below.
 - `somewm-client wallpaper fill <path> [screen]` scales the image to cover the screen with no borders.
 - `ui.box` draws a box with size, layout, paint, content, animation, position, attachment, cursor and input_passthrough words, nested or alone, with pointer signals, as the first pieces of the 2.2 `ui` preview.
