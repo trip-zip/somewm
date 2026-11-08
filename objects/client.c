@@ -113,6 +113,7 @@
 #include "../monitor.h"
 
 #include "../declare.h"
+#include "../window.h"
 
 /* Forward declarations - window.c's configure-client-to-box seam */
 void client_configure_to_box(client_t *c);
@@ -1590,6 +1591,7 @@ client_wipe(client_t *c)
         widget_nodes_clear(&c->titlebar[i].widgets);
     }
 
+	popup_nodes_detach(c->node);
 	node_destroy(c->node);
 	c->node = NULL;
 	c->surface_node = NULL;

@@ -123,7 +123,6 @@ face_property(lua_State *L, lua_object_t *unused)
 		[NODE_WIBOX] = "box", [NODE_SURFACE] = "surface",
 		[NODE_BRANCH] = "branch",
 	};
-	/* Each band reads the highest public layer at or below it in declare.c's z table. */
 	static const char *const layers[] = {
 		[LAYER_INHERIT] = NULL,
 		[LAYER_BACKGROUND] = "background",
@@ -142,6 +141,10 @@ face_property(lua_State *L, lua_object_t *unused)
 		[LAYER_NOTIFICATION] = "top",
 		[LAYER_OVERLAY] = "overlay",
 		[LAYER_UNMANAGED] = "overlay",
+		[LAYER_DRAG] = "drag",
+		[LAYER_LOCK_BACKDROP] = "lock_backdrop",
+		[LAYER_LOCK_COVER] = "lock_cover",
+		[LAYER_LOCK_SURFACE] = "lock_surface",
 		[LAYER_CURSOR] = "overlay",
 	};
 	if (!strcmp(key, "id")) lua_pushnumber(L, n->id);
@@ -235,7 +238,8 @@ enum face_move { FACE_APPEND, FACE_PUSH, FACE_BEFORE, FACE_AFTER, FACE_SWAP };
 static bool
 node_reorderable(struct node *n)
 {
-	return n->kind == NODE_CLIENT || n->ui_box;
+	return n->kind == NODE_CLIENT || n->ui_box
+		|| (n->kind == NODE_WIBOX && n->owner_kind == DECLARE_KIND_DRAWIN);
 }
 
 static int
@@ -249,12 +253,13 @@ face_move(lua_State *L, enum face_move move)
 	/* drawin_widget_host restores a drawin's screen parent on refresh.
 	 * client_node_attach also owns the client parent. Lua only reorders. */
 	if (child->parent != parent)
-		return face_refuse(L, a, b, "changing parents is not in 2.2");
+		return face_refuse(L, a, b, "changing parents is not supported");
 	if (!parent || parent->kind == NODE_OUTPUT)
 		return face_refuse(L, a, b, "protected root");
-	if (!node_reorderable(child)
-		|| (move == FACE_SWAP && (!node_reorderable(b) || child->kind != b->kind)))
-		return face_refuse(L, a, b, "reordering a box is not in 2.2");
+	if (!node_reorderable(child) || (move == FACE_SWAP && !node_reorderable(b)))
+		return face_refuse(L, a, b, "node kind cannot be reordered");
+	if (move == FACE_SWAP && child->kind != b->kind)
+		return face_refuse(L, a, b, "cannot swap different node kinds");
 	if (a == b)
 		return face_refuse(L, a, b, "cannot move a node relative to itself");
 	struct node *nodes[] = { child, b };
@@ -305,7 +310,7 @@ face_detach(lua_State *L)
 	struct node *n = node_face_check(L, 1);
 	if (n->ui_box) { ui_box_detach(L, n); return 0; }
 	return face_refuse(L, n, n->parent && n->parent->kind != NODE_OUTPUT ? n->parent : n,
-		face_protected(n) ? "protected root: detach is not in 2.2" : "detach is not in 2.2");
+		face_protected(n) ? "protected root: detach is not supported" : "detach is not supported");
 }
 
 void

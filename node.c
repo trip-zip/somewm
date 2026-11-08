@@ -167,7 +167,7 @@ node_destroy(struct node *n)
 	node_changed(t);
 }
 
-static bool
+bool
 node_contains(const struct node *ancestor, const struct node *n)
 {
 	for (; n; n = n->parent)

@@ -37,6 +37,10 @@ extern void signal_array_wipe(signal_array_t *arr);
 static enum node_layer
 drawin_layer_word(drawin_t *d)
 {
+	if (session_is_locked() && some_is_lock_drawin(d))
+		return some_get_lua_lock_surface() == d ? LAYER_LOCK_SURFACE : LAYER_LOCK_COVER;
+	if (d->attachment.kind)
+		return d->attachment.kind >= 3 ? LAYER_NOTIFICATION : LAYER_WIBOX_ONTOP;
 	if (d->type == WINDOW_TYPE_DESKTOP || d->type == WINDOW_TYPE_SPLASH)
 		return LAYER_WIBOX_DESKTOP;
 	if (d->ontop) {
@@ -49,7 +53,7 @@ drawin_layer_word(drawin_t *d)
 	return LAYER_WIBOX;
 }
 
-static void
+void
 drawin_update_layer(drawin_t *d)
 {
 	if (d->node)
@@ -546,6 +550,7 @@ luaA_drawin_set_attachment(lua_State *L, drawin_t *d)
     }
     if (!memcmp(&next, &d->attachment, sizeof(next))) return 0;
     d->attachment = next;
+    drawin_update_layer(d);
     d->attachment_ambiguous = false;
     drawin_mark_dirty(d);
     return 0;

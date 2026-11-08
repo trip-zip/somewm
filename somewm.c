@@ -329,6 +329,16 @@ cleanuplisteners(void)
 /* Stores the focused client before locking, for restoration on unlock */
 static Client *pre_lock_focused_client = NULL;
 
+static void
+lock_drawin_layers(void)
+{
+	int count;
+	drawin_t **covers = some_get_lua_lock_covers(&count);
+	for (int i = 0; i < count; i++) drawin_update_layer(covers[i]);
+	drawin_t *surface = some_get_lua_lock_surface();
+	if (surface) drawin_update_layer(surface);
+}
+
 /** Activate Lua-controlled lock mode
  * - Has every output declare the lock section on its next frame
  * - Gives keyboard focus to lock surface
@@ -336,6 +346,7 @@ static Client *pre_lock_focused_client = NULL;
 void
 some_activate_lua_lock(void)
 {
+	lock_drawin_layers();
 	/* Save currently focused client for restoration on unlock. */
 	pre_lock_focused_client = globalconf.focus.client;
 
@@ -358,6 +369,7 @@ some_activate_lua_lock(void)
 static void
 lua_lock_scene_restore(void)
 {
+	lock_drawin_layers();
 	/* Dirty every output: the next frame declares no lock section, and
 	 * the lock drawins rejoin the ordinary declaration on that same
 	 * solve. */
@@ -388,13 +400,6 @@ some_deactivate_lua_lock_no_focus(void)
 {
 	lua_lock_scene_restore();
 	pre_lock_focused_client = NULL;
-}
-
-void
-some_promote_lock_cover(drawin_t *d)
-{
-	if (d)
-		declare_mark_all_dirty();
 }
 
 /** Clear pre_lock_focused_client if it matches the given client.

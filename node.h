@@ -62,6 +62,10 @@ enum node_layer {
 	LAYER_NOTIFICATION,
 	LAYER_OVERLAY,
 	LAYER_UNMANAGED,
+	LAYER_DRAG,
+	LAYER_LOCK_BACKDROP,
+	LAYER_LOCK_COVER,
+	LAYER_LOCK_SURFACE,
 	LAYER_CURSOR
 };
 
@@ -149,6 +153,7 @@ void node_tree_destroy(struct node_tree *t);
 struct node *node_create(struct node_tree *t, enum node_kind kind);
 void node_destroy(struct node *n);
 struct node *node_by_id(uint32_t id);
+bool node_contains(const struct node *ancestor, const struct node *n);
 bool node_append(struct node *parent, struct node *n);
 bool node_push(struct node *parent, struct node *n);
 bool node_insert_before(struct node *sibling, struct node *n);

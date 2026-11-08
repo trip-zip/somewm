@@ -119,6 +119,18 @@ layer_keyboard_focus(Monitor *m)
 	}
 }
 
+static enum node_layer
+layer_node_band(uint32_t layer)
+{
+	static const enum node_layer bands[] = {
+		[ZWLR_LAYER_SHELL_V1_LAYER_BACKGROUND] = LAYER_BACKGROUND,
+		[ZWLR_LAYER_SHELL_V1_LAYER_BOTTOM] = LAYER_BOTTOM,
+		[ZWLR_LAYER_SHELL_V1_LAYER_TOP] = LAYER_TOP,
+		[ZWLR_LAYER_SHELL_V1_LAYER_OVERLAY] = LAYER_OVERLAY,
+	};
+	return bands[layer];
+}
+
 void
 commitlayersurfacenotify(struct wl_listener *listener, void *data)
 {
@@ -153,6 +165,7 @@ commitlayersurfacenotify(struct wl_listener *listener, void *data)
 	 * tree itself stays wherever the reconciler put it. */
 	if (l->band != layer_surface->current.layer) {
 		l->band = layer_surface->current.layer;
+		l->node->layer = layer_node_band(l->band);
 		wl_list_remove(&l->link);
 		wl_list_insert(&l->mon->layers[l->band], &l->link);
 	}
@@ -215,6 +228,7 @@ createlayersurface(struct wl_listener *listener, void *data)
 	l->mon = layer_surface->output->data;
 	l->node = declare_node_create(l->mon, NODE_SURFACE, DECLARE_KIND_LAYER, l);
 	l->band = layer_surface->pending.layer;
+	l->node->layer = layer_node_band(l->band);
 	LISTEN(&surface->events.commit, &l->surface_commit, commitlayersurfacenotify);
 
 	wl_list_insert(&l->mon->layers[l->band], &l->link);
@@ -234,6 +248,7 @@ destroylayersurfacenotify(struct wl_listener *listener, void *data)
 	wl_list_remove(&l->destroy.link);
 	wl_list_remove(&l->unmap.link);
 	wl_list_remove(&l->surface_commit.link);
+	popup_nodes_detach(l->node);
 	node_destroy(l->node);
 	declare_mark_all_dirty();
 	free(l);
@@ -449,6 +464,7 @@ createlocksurface(struct wl_listener *listener, void *data)
 	Monitor *m = lock_surface->output->data;
 	m->lock_surface = lock_surface;
 	m->lock_node = declare_node_create(m, NODE_SURFACE, DECLARE_KIND_LOCK, lock_surface);
+	m->lock_node->layer = LAYER_LOCK_SURFACE;
 
 	wlr_session_lock_surface_v1_configure(lock_surface, m->m.width, m->m.height);
 	declare_output_mark_dirty(m->declare);
