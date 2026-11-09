@@ -6,6 +6,7 @@ All notable changes to somewm will be documented in this file.
 
 ### Added
 
+- `client.content_background_color` sets the color behind rounded content independently of the border color.
 - `client.content_radius` rounds the window content independently of its frame, with one radius or a table of named corner radii; the cut corners show the border color.
 - `client.shape` takes any `gears.shape` function. The window, its titlebars and its border follow the path, and a click outside it reaches what is below.
 - `somewm-client wallpaper fill <path> [screen]` scales the image to cover the screen with no borders.
@@ -15,6 +16,8 @@ All notable changes to somewm will be documented in this file.
 
 ### Changed
 
+- Rounded titlebars inset their widgets away from the corners. Set `corner_padding = false` in `awful.titlebar` to retain edge placement, or a number to choose the inset.
+- Numeric client shapes round and clip the entire frame, including its border and background, so changing `content_radius` no longer changes the outer silhouette.
 - A wibox's node can be reordered among its siblings with `move_before`, `move_after`, `append`, `push` and `swap`, and its draw order follows. Reordering an attached wibox (a popup, tooltip or menu) or a notification does not change its draw order.
 - Text, images and bars inside a shaped widget, wibox or popup are cut by the renderer. Moving or animating a shaped popup no longer redraws its contents.
 - Rounded corners, shadows and shaped clips are drawn by somewm's own renderer.

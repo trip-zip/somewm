@@ -28,6 +28,7 @@ local drawable = require("wibox.drawable")
 local imagebox = require("wibox.widget.imagebox")
 local textbox = require("wibox.widget.textbox")
 local base = require("wibox.widget.base")
+local wclay = require("wibox.clay")
 local capi = {
     client = client
 }
@@ -737,6 +738,10 @@ end
 -- @tparam[opt] string args.fg_focus
 -- @tparam[opt] string args.fg_urgent
 -- @tparam[opt] string args.font
+-- @tparam[opt=true] boolean|number args.corner_padding Inset widgets at rounded
+--   ends without moving the titlebar background. True uses the recognized
+--   client shape radius. A number sets both end insets in logical pixels,
+--   including for custom shapes. False leaves widget placement unchanged.
 -- @constructorfct awful.titlebar
 -- @treturn wibox.drawable The newly created titlebar object.
 -- @usebeautiful beautiful.titlebar_fg_normal
@@ -753,6 +758,9 @@ end
 -- @usebeautiful beautiful.titlebar_bgimage_urgent
 local function new(c, args)
     args = args or {}
+    assert(args.corner_padding == nil or type(args.corner_padding) == "boolean"
+        or type(args.corner_padding) == "number" and args.corner_padding >= 0
+            and args.corner_padding <= 65535, "corner_padding must be a boolean or a number from 0 to 65535")
     local position = args.position or "top"
     local size = args.size or gmath.round(beautiful.get_font_height(args.font) * 1.5)
     local d = get_titlebar_function(c, position)(c, size)
@@ -779,16 +787,50 @@ local function new(c, args)
             ret:set_bgimage(get_color("bgimage", c, args_))
         end
 
+        local function update_padding()
+            local setting = bars[position].args.corner_padding
+            local radius = c.shape
+            if type(radius) ~= "number" then radius = wclay.shape_radius(radius) or 0 end
+            radius = math.max(0, radius - c.border_width)
+            local first, last = radius, radius
+            if type(setting) == "number" then
+                first, last = setting, setting
+            elseif setting == false then
+                first, last = 0, 0
+            elseif position == "left" or position == "right" then
+                local _, top = c:titlebar_top()
+                local _, bottom = c:titlebar_bottom()
+                first, last = math.max(0, radius - top), math.max(0, radius - bottom)
+            end
+            first, last = math.min(65535, gmath.round(first)), math.min(65535, gmath.round(last))
+            local horizontal = position == "top" or position == "bottom"
+            local pad = horizontal and {first, last, 0, 0} or {0, 0, first, last}
+            local old = ret._clay_content_padding or {0, 0, 0, 0}
+            for i = 1, 4 do
+                if old[i] ~= pad[i] then
+                    ret._clay_content_padding = first + last > 0 and pad or nil
+                    ret._clay_cache = nil
+                    ret:draw()
+                    break
+                end
+            end
+        end
+
         bars[position] = {
             args = args,
             drawable = ret,
             font = args.font or beautiful.titlebar_font,
-            update_colors = update_colors
+            update_colors = update_colors,
+            update_padding = update_padding
         }
 
         -- Update the colors when focus changes
         c:connect_signal("property::active", update_colors)
         c:connect_signal("property::urgent", update_colors)
+        for _, signal in ipairs{"property::shape", "property::border_width",
+                "property::titlebar_top", "property::titlebar_bottom"} do
+            c:connect_signal(signal, update_padding)
+        end
 
         -- Inform the drawable when it becomes invisible
         c:connect_signal("request::unmanage", function()
@@ -801,6 +843,7 @@ local function new(c, args)
 
     -- Make sure the titlebar has the right colors applied
     bars[position].update_colors()
+    bars[position].update_padding()
 
     -- Handle declarative/recursive widget container
     ret.setup = base.widget.setup

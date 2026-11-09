@@ -1598,7 +1598,7 @@ widget_subtree_end(const struct widget_tree *d, size_t i)
 /* Set while a frame that holds a configure probe declares its chrome: the
  * surface leaf in it sends no configure (render.h RENDER_PROBED_TAG). */
 static bool composite_probed;
-static unsigned composite_path_scope;
+static unsigned composite_clip_scope;
 
 /* A node of a client composite as lua/awful/client/clay.lua describes it.
  * Every node carries the client's word, so a hit routes to the client and
@@ -1615,7 +1615,7 @@ declare_composite(const struct widget_host *host, size_t i, int16_t z,
 	struct widget_tree *d = host->tree;
 	const struct widget_node *n = &d->nodes[i];
 	const char *name = n->name ? n->name : "-";
-	unsigned clip = composite_path_scope ? composite_path_scope : clamp ? RENDER_CLIP_BOUNDS : 0;
+	unsigned clip = composite_clip_scope ? composite_clip_scope : clamp ? RENDER_CLIP_BOUNDS : 0;
 	/* The surface leaf keeps its id across moves because its surface node
 	 * lives and dies with the client node. */
 	Clay_ElementId id = Clay__HashStringWithOffset((Clay_String) {
@@ -1632,7 +1632,7 @@ declare_composite(const struct widget_host *host, size_t i, int16_t z,
 
 		if (drawable && drawable_widget_host(drawable, &bar) && bar.tree->nodes_len > 0) {
 			bar.flow = true;
-            render_clip_alias(recording->render, n->host, handle, composite_path_scope);
+            render_clip_alias(recording->render, n->host, handle, composite_clip_scope);
 			memcpy(bar.radii, n->radii, sizeof(bar.radii));
 			declare_widget_slot(&bar, id, &e, name, n->src[0], n->src[1], z,
 				leaf_userdata(n->host, opacity));
@@ -1719,14 +1719,19 @@ declare_client_frame(const struct widget_host *host, size_t i, int16_t z,
 	bool clamp = client_clamps_to_monitor(c);
     e->transition.enter.trigger = CLAY_TRANSITION_ENTER_TRIGGER_ON_FIRST_PARENT_FRAME;
 	const char *name = n->name ? n->name : "-";
-    unsigned inherited = composite_path_scope;
+    unsigned inherited = composite_clip_scope;
     unsigned by = inherited ? inherited : clamp ? RENDER_CLIP_BOUNDS : 0;
+    bool shaped = n->shape || n->radius > 0;
     if (n->shape) {
         e->custom.customData = render_shape_tag(&d->shapes[n->shape - 1].shape);
-        composite_path_scope = n->clip_opens;
+    } else if (shaped && e->backgroundColor.a == 0) {
+        e->custom.customData = RENDER_CLIP_MARK;
+    }
+    if (shaped) {
+        composite_clip_scope = n->clip_opens;
     }
     e->userData = userdata_clip(leaf_userdata(n->client, opacity),
-        n->shape ? n->clip_opens : 0, by);
+        shaped ? n->clip_opens : 0, by);
 
 	if (frame_holds_chrome(d, i)) {
 		Clay_ElementId frame = Clay__HashStringWithOffset((Clay_String) {
@@ -1757,7 +1762,7 @@ declare_client_frame(const struct widget_host *host, size_t i, int16_t z,
 		native_close();
 		declare_composite(host, widget_subtree_end(d, i + 1), z, n->client, opacity, clamp, ids);
 		native_close();
-        composite_path_scope = inherited;
+        composite_clip_scope = inherited;
 		return;
 	}
 	Clay_ElementId id = Clay__HashStringWithOffset(CLAY_STRING("client"),
@@ -1785,7 +1790,7 @@ declare_client_frame(const struct widget_host *host, size_t i, int16_t z,
 	for (uint16_t k = 0; k < n->children; k++)
 		next = declare_composite(host, next, z, n->client, opacity, clamp, ids);
 	native_close();
-    composite_path_scope = inherited;
+    composite_clip_scope = inherited;
 }
 
 /* A layout's client composite (spec D190). In flow in the normal layer the

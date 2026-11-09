@@ -1225,6 +1225,29 @@ capi.client.connect_signal("property::motif_wm_hints", function(c)
     c:emit_signal("property::requests_no_titlebar")
 end)
 
+--- The solid color behind independently rounded content corners.
+-- Nil follows `border_color`, including focus changes. An explicit color
+-- leaves the border color unchanged and does not follow titlebar colors.
+-- Match this to the titlebar background for a continuous frame.
+-- It has no effect without positive `content_radius` or in fullscreen.
+-- @property content_background_color
+-- @tparam[opt=nil] string|nil content_background_color A solid color string.
+-- @emits property::content_background_color
+function client.object.get_content_background_color(c)
+    return client.property.get(c, "content_background_color")
+end
+
+function client.object.set_content_background_color(c, value)
+    local rgba
+    if value ~= nil then
+        assert(type(value) == "string", "content_background_color must be nil or a solid color string")
+        rgba = {require("gears.color").parse_color(value)}
+        assert(#rgba == 4, "content_background_color must be a solid color")
+    end
+    c._private.content_background_rgba = rgba
+    client.property.set(c, "content_background_color", value)
+end
+
 --- Persistent animation policy, or false to suppress client and titlebar animations.
 -- Policies are copied on assignment and access; reassign an edited copy to apply it.
 -- Other tables retain their identity and supply no animation policy.
