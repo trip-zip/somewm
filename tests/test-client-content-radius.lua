@@ -97,19 +97,23 @@ end
 
 local function points(outer, inner, bw, top)
     bw, top = bw or 4, top or 0
-    return {{x, y, outer}, {x + bw, y + bw + top, inner},
+    return {{x, y, outer}, {x + bw + 1, y + bw + top + 1, inner},
         {x + bw + radius, y + bw + top + radius, ink},
         {x + w / 2, y + 1, bw > 0 and border or ink}}
 end
 
 case('a', nil, '16,16,16,16', true, function() return points(border, border) end)
--- Numeric shape rounds the surface while the border ring stays square.
+-- Numeric shape clips the border and background to the same outer corners.
 case('b', function() c.shape = 16; c.content_radius = nil end, '12,12,12,12', false,
-    function() return points(border, wallpaper) end)
+    function() return points(wallpaper, border) end)
 case('shape-zero', function() c.content_radius = 0 end, '12,12,12,12', false,
-    function() return points(border, wallpaper) end)
+    function() return points(wallpaper, border) end)
 case('c', function() c.content_radius = 16 end, '16,16,16,16', true,
-    function() return points(border, border) end)
+    function()
+        local p = points(wallpaper, border)
+        p[#p + 1] = {x + 8, y + 6, border}
+        return p
+    end)
 case('d', function() c.shape = nil; c.content_radius = nil end, nil, false,
     function() return points(border, ink) end)
 case('zero', function() c.content_radius = 0 end, nil, false,
@@ -160,12 +164,15 @@ end, '16,16,16,16', true, function()
     p[#p + 1] = {x + w + 3, y + h + 3, wallpaper}
     return p
 end, false, true)
-case('fullscreen', function() c.fullscreen = true end, nil, false, function()
+case('fullscreen', function()
+    c.content_background_color = bar_color
+    c.fullscreen = true
+end, nil, false, function()
     return {{0, 0, ink}, {radius, radius, ink}}
 end)
 steps[#steps + 1] = function()
     ruled.client.append_rule {id = 'content-radius', rule = {class = 'inner_rule'},
-        properties = {content_radius = 19, titlebars_enabled = false}}
+        properties = {content_radius = 19, content_background_color = bar_color, titlebars_enabled = false}}
     ruled_report = os.tmpname()
     awful.spawn{'./build-test/test-transient-client', 'inner_rule', ruled_report, '0', 'ff204060'}
     return true
@@ -174,6 +181,7 @@ steps[#steps + 1] = function(n)
     ruled_client = utils.find_client_by_class('inner_rule')
     if not ruled_client then assert(n < 30, 'ruled client did not map'); return end
     assert(ruled_client.content_radius == 19, 'rule did not pass the number unchanged')
+    assert(ruled_client.content_background_color == bar_color, 'rule did not set the fill color')
     io.stderr:write('[g] ruled.client content_radius = 19\n')
     ruled.client.remove_rule('content-radius')
     ruled_client:kill(); c:kill()

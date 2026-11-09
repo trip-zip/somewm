@@ -60,9 +60,7 @@ end
 
 -- The corners of the shape, less the border as a wibox's content takes
 -- them: a titlebar on an edge takes that edge's corners, the surface the
--- rest. Nothing is authored when the client is square. A border stays
--- square here and takes a click in the corner; without one the surface's
--- own cut corner lets the click through.
+-- rest. The frame clips all of these pieces to its outer radius.
 local function assign_corners(radius, bw, top, right, bottom, left, pixels)
     local r = math.max(radius - bw, 0)
     if r <= 0 then return end
@@ -175,6 +173,10 @@ function clay.describe(c, allocation)
     end
     box.children = around(top, right, bottom, left, slot, "CLIENT_BODY")
     box.pad = {bw, bw, bw, bw}
+    if radius and radius > 0 then
+        frame.radius, frame.clip = radius, true
+        box.radius = radius
+    end
     if accept then
         -- The requested content is a measurement inside the slot. FIT and
         -- protocol limits let Clay size that slot, then fit its titlebars
@@ -225,7 +227,7 @@ function clay.describe(c, allocation)
     end
     if content_rounded then
         local background = path and frame or box
-        background.bg = {c:_border_rgba()}
+        background.bg = c._private and c._private.content_background_rgba or {c:_border_rgba()}
         -- Shaped nodes paint fill through their path instead of bg.
         if path then background.fill = background.bg end
     end
