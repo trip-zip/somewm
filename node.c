@@ -24,7 +24,7 @@ static void
 node_init(struct node *n, struct node_tree *t, enum node_kind kind)
 {
 	/* Exhaustion must not wrap the counter and reuse an existing id. */
-	if (next_id > UINT32_MAX || next_id >= SIZE_MAX / sizeof(*nodes))
+	if (next_id >= UINT32_MAX || next_id >= SIZE_MAX / sizeof(*nodes))
 		abort();
 	if (next_id >= nodes_cap) {
 		size_t limit = SIZE_MAX / sizeof(*nodes);

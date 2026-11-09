@@ -80,7 +80,8 @@ typedef struct drawin_t {
     struct {
         uint8_t kind; /* 1 popup, 2 tooltip, 3 launcher, 4 notification */
         uint32_t target; /* Lua widget identity, 0 means OUTPUT. */
-        uint32_t host; /* Optional declare handle ID, 0 searches visible hosts. */
+        uint32_t host; /* Optional declare handle ID, 0 searches visible hosts,
+                        * UINT32_MAX names a destroyed host and matches nothing. */
         uint32_t occurrence; /* Event placement token, 0 selects an unambiguous target. */
         uint8_t parent, own; /* Clay attach point */
         float x, y, width, height;
