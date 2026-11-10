@@ -124,6 +124,52 @@ static void border_ring(void) {
     finish(f);
 }
 
+static void texture_backing_shared_arc(void) {
+    struct paint_texture *t = solid();
+    struct paint_texture_params q = texture_params(t);
+    q.dst = (struct paint_box){8, 8, 48, 48};
+    q.clips_len = 2;
+    q.clips[0] = (struct paint_clip){{8, 8, 48, 48}, {16, 16, 16, 16}};
+    q.clips[1] = q.clips[0];
+    q.background_clips = 1;
+    q.surface_alpha = 1;
+    struct fixture f = begin(blue);
+    paint_texture(renderer, &q);
+    uint32_t baseline[64 * 64];
+    assert(paint_readback(renderer, (struct paint_box){0, 0, 64, 64}, 64 * 4, baseline));
+    q.background = (struct paint_color){0, 1, 0, 1};
+    paint_clear(renderer, blue);
+    paint_texture(renderer, &q);
+    for (int y = 0; y < 64; y++) for (int x = 0; x < 64; x++)
+        expect(x, y, baseline[y * 64 + x]);
+
+    for (int i = 0; i < 4; i++) q.clips[1].radii[i] = 22;
+    paint_clear(renderer, blue);
+    paint_texture(renderer, &q);
+    expect(12, 14, 0xff00ff00);
+    expect(32, 32, 0xffff0000);
+    q.background = transparent;
+    paint_clear(renderer, blue);
+    paint_texture(renderer, &q);
+    expect(12, 14, 0xff0000ff);
+    finish(f);
+    paint_texture_destroy(t);
+}
+
+static void texture_backing_alpha(void) {
+    uint32_t half_red = 0x80800000;
+    struct paint_texture *t = paint_texture_upload(renderer, 1, 1, 4, &half_red);
+    assert(t);
+    struct paint_texture_params q = {.texture = t, .dst = {0, 0, 64, 64},
+        .src = {0, 0, 1, 1}, .alpha = .5f, .surface_alpha = .5f,
+        .background = {0, 1, 0, 1}};
+    struct fixture f = begin(transparent);
+    paint_texture(renderer, &q);
+    expect(32, 32, 0x80206000);
+    finish(f);
+    paint_texture_destroy(t);
+}
+
 static void texture_under_one_clip(void) {
     struct fixture f = begin(blue);
     struct paint_texture *t = solid();
@@ -432,6 +478,8 @@ int main(void) {
     RUN(rect_rounded_corners);
     RUN(rect_fit_radii);
     RUN(border_ring);
+    RUN(texture_backing_shared_arc);
+    RUN(texture_backing_alpha);
     RUN(texture_under_one_clip);
     RUN(texture_under_two_clips);
     RUN(texture_under_circle_mask);

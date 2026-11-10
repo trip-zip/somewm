@@ -226,10 +226,12 @@ function clay.describe(c, allocation)
         box.border, box.bw = {c:_border_rgba()}, {bw, bw, bw, bw}
     end
     if content_rounded then
-        local background = path and frame or box
-        background.bg = c._private and c._private.content_background_rgba or {c:_border_rgba()}
-        -- Shaped nodes paint fill through their path instead of bg.
-        if path then background.fill = background.bg end
+        -- Only the surface cutouts need backing. Painting behind titlebars
+        -- would tint their antialiased outer edges with this color.
+        -- Borderless backing shares the surface draw to avoid a separate
+        -- colored antialias layer. With a border, SLOT paints below its ring.
+        local backing = bw == 0 and pixels or slot
+        backing.bg = c._private and c._private.content_background_rgba or {c:_border_rgba()}
     end
     local state = previous[c]
     local focused = capi.client.focus == c

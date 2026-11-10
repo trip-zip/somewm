@@ -27,6 +27,7 @@ All notable changes to somewm will be documented in this file.
 
 ### Fixed
 
+- Rounded window borders remain intact with square content corners. Rounded content no longer leaves a colored fringe along borderless window edges or titlebars.
 - Removing a fake screen moves its clients to the screen under them.
 - A hot reload with a client whose `shape` is a function no longer ends the session.
 - Button and mouse signals on a client measure from inside the border, as in AwesomeWM. A click on the inner top-left corner reports 0,0, not border_width,border_width.

@@ -32,17 +32,17 @@ local function check_dump(name, r, background, titlebar, path)
         assert(frame .. '\n' .. surface == original, 'zero changed the nil-radius declaration')
     end
     if path then assert(frame:find(' shape ', 1, true), frame) end
-    local geometry = assert(frame:match(' box (.*)'))
+    local geometry = assert(line(dump, 'SLOT'):match(' box (.*)'))
     local fill
     for node in dump:gmatch('[^\n]+') do
-        if node:find(path and ' CUSTOM ' or ' RECTANGLE ', 1, true)
+        if (node:find(' RECTANGLE ', 1, true) or node:find(' background ', 1, true))
                 and node:find(' box ' .. geometry .. ' ', 1, true)
                 and node:find(' client inner_radius', 1, true) then
             fill = node
         end
     end
     if name ~= 'fullscreen' then
-        assert((fill ~= nil) == background, 'frame background: ' .. dump)
+        assert((fill ~= nil) == background, 'surface backing: ' .. dump)
     end
     if titlebar then
         local top = line(dump, 'TITLEBAR')
