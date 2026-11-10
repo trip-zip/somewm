@@ -1657,6 +1657,7 @@ declare_composite(const struct widget_host *host, size_t i, int16_t z,
 			 * enclosing clip, a carousel's scroll among them. */
 			.clipTo = CLAY_CLIP_TO_ATTACHED_PARENT,
 		};
+		e.backgroundColor = clay_color(n->bg);
 		/* The renderer groups animation and border clipping by the frame handle. */
 		e.custom.customData = (void *)(uintptr_t)(handle
 			| (n->probe ? RENDER_PROBE_TAG : composite_probed ? RENDER_PROBED_TAG : 0));
@@ -5145,6 +5146,8 @@ dump_node(void *user, const struct render_node_view *v)
 		buffer_addf(buf, "presented %d,%d %dx%d ", (int)pbox.x, (int)pbox.y, (int)pbox.width, (int)pbox.height);
 	}
 	dump_what(buf, v->id, v->user_data);
+	if (v->borrowed && v->color.a > 0)
+		buffer_addf(buf, " background %g,%g,%g,%g", v->color.r, v->color.g, v->color.b, v->color.a);
 	if (v->raster_bytes)
 		buffer_addf(buf, " raster=%zu", v->raster_bytes);
 	/* A SCISSOR marker, a clip mark and a configure probe realize no node
