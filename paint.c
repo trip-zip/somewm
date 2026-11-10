@@ -14,7 +14,7 @@ struct program {
     GLuint id;
     GLint size, radii, clip_count, clip_boxes, clip_radii;
     GLint masked, mask_tex, mask_box, color, cutout_box, cutout_radii;
-    GLint tex, alpha, blur;
+    GLint tex, alpha, blur, background, background_clips, surface_alpha;
 };
 
 struct paint {
@@ -103,6 +103,7 @@ static bool program_create(struct program *s, const char *prefix, const char *bo
     UNIFORM(mask_tex); UNIFORM(mask_box); UNIFORM(color);
     UNIFORM(cutout_box); UNIFORM(cutout_radii); UNIFORM(tex);
     UNIFORM(alpha); UNIFORM(blur);
+    UNIFORM(background); UNIFORM(background_clips); UNIFORM(surface_alpha);
 #undef UNIFORM
     return true;
 }
@@ -384,6 +385,10 @@ void paint_texture(struct paint *p, const struct paint_texture_params *params) {
     texture_parameters(t->target, params->nearest);
     glUniform1i(s->tex, 0);
     glUniform1f(s->alpha, params->alpha);
+    glUniform4f(s->background, params->background.r, params->background.g,
+        params->background.b, params->background.a);
+    glUniform1i(s->background_clips, params->background_clips);
+    glUniform1f(s->surface_alpha, params->surface_alpha);
     quad(p, params->dst, 0.5f, t, params->src, params->transform);
 }
 

@@ -1473,6 +1473,7 @@ end
 -- @treturn[1] table The node tree.
 -- @treturn[1] table The image leaves, in preorder.
 function clay.compile(self, root, context, width, height, words)
+    local padding = self._clay_content_padding
     local opaque_host = not self.drawable or self.drawable._clay_opaque ~= false
     local base_rgba = solid_rgba(self.background_color)
     local fill = not base_rgba and clay.fill(self.background_color)
@@ -1505,6 +1506,10 @@ function clay.compile(self, root, context, width, height, words)
         -- A stretched bar's length is the output's (drawin.c:91): the drawin
         -- holds no authored number on that axis and its tree receives none.
         local size = { w = width, h = height }
+        if padding then
+            size.w = math.max(0, width - padding[1] - padding[2])
+            size.h = math.max(0, height - padding[3] - padding[4])
+        end
         bound.wdecided, bound.hdecided = true, true
         for _, k in ipairs(axes) do
             local word = words and words[k]
@@ -1551,6 +1556,9 @@ function clay.compile(self, root, context, width, height, words)
         end
         node = combine_image(node)
         collect_leaves(node, st.leaves)
+    end
+    if padding and node then
+        node = {w = "grow", h = "grow", pad = padding, children = {node}}
     end
     if self.background_image then
         node = { image = self.background_image._native, name = "image", natural = true,

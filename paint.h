@@ -42,6 +42,12 @@ struct paint_texture_params {
     size_t clips_len;
     const struct paint_mask *mask;
     struct paint_box mask_box;
+    /* Composite backing into cutouts before applying opacity. The first
+     * background_clips entries bound both backing and texture; the rest cut
+     * only the texture. surface_alpha applies only to the sampled surface. */
+    struct paint_color background;
+    size_t background_clips;
+    float surface_alpha;
     bool nearest; /* False selects linear filtering. */
 };
 

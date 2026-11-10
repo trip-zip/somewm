@@ -2177,6 +2177,94 @@ static void test_animated_border_surface(void) {
     fixture_finish(&f, &hooks);
 }
 
+static bool hit_type(void *user, const struct render_node_view *view, double x, double y) {
+    *(uint32_t *)user = view->type;
+    return true;
+}
+
+static void test_surface_backing_input(void) {
+    struct fixture f;
+    struct fake_clients fc;
+    struct render_client_hooks hooks;
+    fixture_init_clients(&f, &fc, &hooks);
+    Clay_RenderCommand cmds[] = {
+        cmd_custom(10, 1, 10, 20, 80, 60),
+        cmd_rect(10, 10, 20, 80, 60, 16),
+    };
+    cmds[0].renderData.custom.cornerRadius = (Clay_CornerRadius){16, 16, 16, 16};
+    cmds[0].renderData.custom.backgroundColor = (Clay_Color){255, 0, 0, 255};
+    cmds[0].userData = cmds[1].userData = word(1, 0, 0);
+    render_reconcile(f.rs, commands_of(cmds, 2), &hooks, no_bounds);
+    uint32_t type = 0;
+    CHECK(render_hit(f.rs, 11, 21, hit_type, &type));
+    CHECK_EQ(type, CLAY_RENDER_COMMAND_TYPE_RECTANGLE);
+    CHECK(render_hit(f.rs, 40, 40, hit_type, &type));
+    CHECK_EQ(type, CLAY_RENDER_COMMAND_TYPE_CUSTOM);
+    CHECK_EQ(view_at(&f, 1).color.a, 0);
+    CHECK_EQ(render_reconcile(f.rs, commands_of(cmds, 2), &hooks, no_bounds), 0);
+    cmds[0].renderData.custom.backgroundColor = (Clay_Color){0, 255, 0, 255};
+    CHECK(render_reconcile(f.rs, commands_of(cmds, 2), &hooks, no_bounds) > 0);
+    cmds[0].renderData.custom.backgroundColor = (Clay_Color){0};
+    render_reconcile(f.rs, commands_of(cmds, 1), &hooks, no_bounds);
+    CHECK(!render_hit(f.rs, 11, 21, hit_type, &type));
+    CHECK(render_hit(f.rs, 40, 40, hit_type, &type));
+    CHECK_EQ(type, CLAY_RENDER_COMMAND_TYPE_CUSTOM);
+    fixture_finish(&f, &hooks);
+}
+
+static void test_rounded_border_surface(void) {
+    struct fixture f;
+    struct fake_clients fc;
+    struct render_client_hooks hooks;
+    fixture_init_clients(&f, &fc, &hooks);
+    Clay_RenderCommand cmds[] = {
+        cmd_rect(9, 22, 32, 96, 76, 0),
+        cmd_border(10, 20, 30, 100, 80, 2, 24),
+        cmd_custom(11, 1, 22, 32, 96, 76),
+        cmd_custom(12, 2, 22, 32, 40, 30),
+    };
+    for (size_t i = 0; i < 4; i++) cmds[i].userData = word(1, 0, 0);
+    render_constraints_begin(f.rs);
+    render_reconcile(f.rs, commands_of(cmds, 4), &hooks, no_bounds);
+    CHECK(!render_point_in_masks(f.rs, 11, 27.5, 37.5));
+    CHECK(render_point_in_masks(f.rs, 11, 44, 54));
+    CHECK(render_point_in_masks(f.rs, 9, 27.5, 37.5));
+    CHECK(render_point_in_masks(f.rs, 12, 27.5, 37.5));
+    CHECK_EQ(view_at(&f, 2).clips_len, 1);
+    CHECK_EQ(render_reconcile(f.rs, commands_of(cmds, 4), &hooks, no_bounds), 0);
+
+    /* Matching surface arcs keep a single antialias coverage. */
+    cmds[2].renderData.custom.cornerRadius = (Clay_CornerRadius){22, 22, 22, 22};
+    render_reconcile(f.rs, commands_of(cmds, 4), &hooks, no_bounds);
+    CHECK_EQ(view_at(&f, 2).clips_len, 0);
+    cmds[2].boundingBox.y += 32;
+    cmds[2].boundingBox.height -= 32;
+    cmds[2].renderData.custom.cornerRadius = (Clay_CornerRadius){0, 0, 22, 22};
+    render_reconcile(f.rs, commands_of(cmds, 4), &hooks, no_bounds);
+    CHECK_EQ(view_at(&f, 2).clips_len, 0);
+
+    cmds[2].renderData.custom.cornerRadius = (Clay_CornerRadius){0};
+    render_reconcile(f.rs, commands_of(cmds, 4), &hooks, no_bounds);
+    CHECK(!render_point_in_masks(f.rs, 11, 27.5, 102.5));
+    cmds[1].renderData.border.cornerRadius = (Clay_CornerRadius){0};
+    render_reconcile(f.rs, commands_of(cmds, 4), &hooks, no_bounds);
+    CHECK(render_point_in_masks(f.rs, 11, 27.5, 102.5));
+    CHECK_EQ(view_at(&f, 2).clips_len, 0);
+    CHECK_EQ(render_reconcile(f.rs, commands_of(cmds, 4), &hooks, no_bounds), 0);
+
+    /* A shrinking frame clips at its fitted border, not the older buffer. */
+    cmds[1].renderData.border.cornerRadius = (Clay_CornerRadius){24, 24, 24, 24};
+    cmds[2].boundingBox = (Clay_BoundingBox){22, 32, 96, 76};
+    render_constraints_begin(f.rs);
+    render_constraint(f.rs, 1, (Clay_BoundingBox){20, 30, 60, 50}, true);
+    render_reconcile(f.rs, commands_of(cmds, 4), &hooks, no_bounds);
+    CHECK(!render_point_in_masks(f.rs, 11, 72.5, 72.5));
+    CHECK(render_point_in_masks(f.rs, 11, 50, 50));
+    CHECK_EQ(view_at(&f, 2).rbox.width, 56);
+    CHECK_EQ(view_at(&f, 2).rbox.height, 46);
+    fixture_finish(&f, &hooks);
+}
+
 static void test_owner_bounds(void) {
     struct fixture f;
     fixture_init(&f);
@@ -2361,6 +2449,8 @@ int main(void) {
 		{ "shadow follows current owner", test_shadow_current_owner },
         { "owner bounds fit borders and crop shadows", test_owner_bounds },
         { "animated borders exclude their surface pixels", test_animated_border_surface },
+        { "rounded borders exclude square surface corners", test_rounded_border_surface },
+        { "surface backing preserves chrome input", test_surface_backing_input },
 		{ "font interning", test_font_interning },
 		{ "measure is monotonic", test_measure_is_monotonic },
 		{ "a border's ring matches its rect", test_border_ring_matches_its_rect },

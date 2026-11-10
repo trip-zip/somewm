@@ -99,7 +99,7 @@ struct rnode {
 	struct render_text_attr *text_attrs;
 	size_t text_attrs_len;
 
-    bool initialized, draws;
+    bool initialized, draws, backing_input;
     struct paint_rect_params paint;
     struct paint_texture *texture;
     cairo_surface_t *coverage;
@@ -162,6 +162,7 @@ struct rnode_slot {
 struct owner_constraint {
     uint64_t owner;
     Clay_BoundingBox clip, border, content;
+    Clay_CornerRadius content_radii;
     bool clips, fits_border, clips_content;
 };
 
@@ -516,8 +517,7 @@ void render_constraints_begin(struct render_state *rs) {
     rs->constraints_len = 0;
 }
 
-void render_constraint(struct render_state *rs, uint64_t owner,
-        Clay_BoundingBox box, bool border) {
+static struct owner_constraint *constraint_ensure(struct render_state *rs, uint64_t owner) {
     struct owner_constraint *entry = NULL;
     for (size_t i = 0; i < rs->constraints_len; i++)
         if (rs->constraints[i].owner == owner) entry = &rs->constraints[i];
@@ -529,6 +529,12 @@ void render_constraint(struct render_state *rs, uint64_t owner,
         entry = &rs->constraints[rs->constraints_len++];
         *entry = (struct owner_constraint){ .owner = owner };
     }
+    return entry;
+}
+
+void render_constraint(struct render_state *rs, uint64_t owner,
+        Clay_BoundingBox box, bool border) {
+    struct owner_constraint *entry = constraint_ensure(rs, owner);
     if (border) {
         entry->border = entry->fits_border ? box_intersect(entry->border, box) : box;
         entry->fits_border = true;
@@ -545,10 +551,25 @@ static struct owner_constraint *owner_constraint(struct render_state *rs, void *
     return NULL;
 }
 
-/* Floating surfaces follow the frame's border in command order. Their drawn
- * size can lag behind the animated allocation, so keep their pixels inside
- * the fitted ring. Derive the inset before reconciling any command, without
- * changing the size sent to the client or clipping its separate popups. */
+static bool corner_radius_zero(Clay_CornerRadius r) {
+	return r.topLeft == 0 && r.topRight == 0 &&
+		r.bottomLeft == 0 && r.bottomRight == 0;
+}
+
+static Clay_CornerRadius inset_corner_radius(Clay_CornerRadius r,
+		Clay_BorderWidth bw) {
+	return (Clay_CornerRadius){
+		fmax(0.0f, r.topLeft - fmaxf(bw.top, bw.left)),
+		fmax(0.0f, r.topRight - fmaxf(bw.top, bw.right)),
+		fmax(0.0f, r.bottomLeft - fmaxf(bw.bottom, bw.left)),
+		fmax(0.0f, r.bottomRight - fmaxf(bw.bottom, bw.right)),
+	};
+}
+
+/* Surface commands follow frame borders in paint order. Derive the hole
+ * before reconciliation, including when no transition is declared. A fitted
+ * border bounds an older buffer during resizing. Separate popups keep their
+ * own bounds, and the size sent to the client does not change. */
 static void border_content_constraints(struct render_state *rs, Clay_RenderCommandArray commands) {
     for (size_t i = 0; i < rs->constraints_len; i++)
         rs->constraints[i].clips_content = false;
@@ -556,11 +577,17 @@ static void border_content_constraints(struct render_state *rs, Clay_RenderComma
         Clay_RenderCommand *cmd = Clay_RenderCommandArray_Get(&commands, i);
         if (cmd->commandType != CLAY_RENDER_COMMAND_TYPE_BORDER) continue;
         struct owner_constraint *constraint = owner_constraint(rs, cmd->userData);
-        if (!constraint || !constraint->fits_border) continue;
-        Clay_BoundingBox box = box_snap(box_intersect(cmd->boundingBox, constraint->border));
+        if (!constraint) {
+            uint64_t owner = (uintptr_t)cmd->userData & RENDER_UD_OWNER_MASK;
+            if (!owner || corner_radius_zero(cmd->renderData.border.cornerRadius)) continue;
+            constraint = constraint_ensure(rs, owner);
+        }
+        Clay_BoundingBox box = box_snap(constraint->fits_border
+            ? box_intersect(cmd->boundingBox, constraint->border) : cmd->boundingBox);
         Clay_BorderWidth bw = cmd->renderData.border.width;
         constraint->content = (Clay_BoundingBox){box.x + bw.left, box.y + bw.top,
             fmaxf(0, box.width - bw.left - bw.right), fmaxf(0, box.height - bw.top - bw.bottom)};
+        constraint->content_radii = inset_corner_radius(cmd->renderData.border.cornerRadius, bw);
         constraint->clips_content = true;
     }
 }
@@ -625,16 +652,32 @@ static bool path_masks_hit(const struct clip_masks *masks, Clay_BoundingBox box)
 	return false;
 }
 
-static bool corner_radius_zero(Clay_CornerRadius r) {
-	return r.topLeft == 0 && r.topRight == 0 &&
-		r.bottomLeft == 0 && r.bottomRight == 0;
-}
-
 static void paint_radii(float out[4], Clay_CornerRadius r) {
 	out[0] = r.topLeft;
 	out[1] = r.topRight;
 	out[2] = r.bottomRight;
 	out[3] = r.bottomLeft;
+}
+
+/* Keep the border hole's arcs that the surface does not already apply.
+ * Applying an identical arc twice would multiply its antialias coverage. */
+static struct clip_mask surface_border_mask(const struct owner_constraint *constraint,
+        const Clay_RenderCommand *cmd) {
+    Clay_BoundingBox hole = constraint->content, box = cmd->boundingBox;
+    float radii[4], inner[4], own[4];
+    paint_radii(radii, constraint->content_radii);
+    paint_fit_radii(inner, radii, hole.width, hole.height);
+    paint_radii(radii, cmd->renderData.custom.cornerRadius);
+    paint_fit_radii(own, radii, box.width, box.height);
+    bool left = box.x == hole.x, top = box.y == hole.y;
+    bool right = box.x + box.width == hole.x + hole.width;
+    bool bottom = box.y + box.height == hole.y + hole.height;
+    if (left && top && inner[0] == own[0]) inner[0] = 0;
+    if (right && top && inner[1] == own[1]) inner[1] = 0;
+    if (right && bottom && inner[2] == own[2]) inner[2] = 0;
+    if (left && bottom && inner[3] == own[3]) inner[3] = 0;
+    return (struct clip_mask){.box = hole,
+        .radii = {inner[0], inner[1], inner[3], inner[2]}};
 }
 
 static bool point_in_rounded_rect(double px, double py, double x, double y,
@@ -890,16 +933,6 @@ static bool border_hole(const Clay_RenderCommand *cmd, Clay_BoundingBox *hole) {
 		cmd->boundingBox.width - bw.left - bw.right,
 		cmd->boundingBox.height - bw.top - bw.bottom };
 	return hole->width > 0 && hole->height > 0;
-}
-
-static Clay_CornerRadius inset_corner_radius(Clay_CornerRadius r,
-		Clay_BorderWidth bw) {
-	return (Clay_CornerRadius){
-		fmax(0.0f, r.topLeft - fmaxf(bw.top, bw.left)),
-		fmax(0.0f, r.topRight - fmaxf(bw.top, bw.right)),
-		fmax(0.0f, r.bottomLeft - fmaxf(bw.bottom, bw.left)),
-		fmax(0.0f, r.bottomRight - fmaxf(bw.bottom, bw.right)),
-	};
 }
 
 static int reconcile_rect(struct render_state *rs, struct rnode *n,
@@ -1687,10 +1720,8 @@ static const struct clip_scope *scope_named(struct render_state *rs,
 }
 
 /* At most one scope opens per command; reconciliation reserves them all. */
-static void scope_open(struct render_state *rs, struct rnode *n, void *word, Clay_BoundingBox rbox,
-		const struct clip_scope *under, struct clip_mask own) {
-	unsigned opens = render_userdata_byte(word, RENDER_UD_OPENS_SHIFT);
-	if (opens == 0) return;
+static struct clip_scope *scope_append(struct render_state *rs, struct rnode *n, void *word,
+        unsigned opens, Clay_BoundingBox rbox, const struct clip_scope *under, struct clip_mask own) {
 	assert(rs->scopes_len < rs->scopes_cap);
 	struct clip_scope *sc = &rs->scopes[rs->scopes_len++];
 	sc->owner = (uintptr_t)word & RENDER_UD_OWNER_MASK;
@@ -1711,6 +1742,13 @@ static void scope_open(struct render_state *rs, struct rnode *n, void *word, Cla
 			rs->mask_overflow_logged = true;
 		}
 	}
+    return sc;
+}
+
+static void scope_open(struct render_state *rs, struct rnode *n, void *word, Clay_BoundingBox rbox,
+        const struct clip_scope *under, struct clip_mask own) {
+    unsigned opens = render_userdata_byte(word, RENDER_UD_OPENS_SHIFT);
+    if (opens) scope_append(rs, n, word, opens, rbox, under, own);
 }
 
 static bool record_draws(const struct rnode *n) {
@@ -1748,7 +1786,9 @@ static void record_changed(struct render_state *rs, const struct rnode *old, str
         || memcmp(&old->surface_origin,&n->surface_origin,sizeof(n->surface_origin))
         || memcmp(&old->raster_placement,&n->raster_placement,sizeof(n->raster_placement))
         || old->mask_owner != n->mask_owner || old->mask_digest != n->mask_digest
-        || old->raster_serial != n->raster_serial || old->opacity != n->opacity;
+        || old->raster_serial != n->raster_serial || old->opacity != n->opacity
+        || (n->borrowed && memcmp(&old->data.custom.backgroundColor,
+            &n->data.custom.backgroundColor, sizeof(n->data.custom.backgroundColor)));
     if (!changed) return;
     damage_record(rs, old);
     if (n) record_mutated(rs,n);
@@ -1827,6 +1867,21 @@ int render_reconcile(struct render_state *rs, Clay_RenderCommandArray commands,
 	size_t build_len = 0;
 	for (int32_t i = 0; i < commands.length; i++) {
 		Clay_RenderCommand *cmd = Clay_RenderCommandArray_Get(&commands, i);
+        /* A surface paints its backing with the texture. Keep Clay's fill
+         * as input-only chrome in the cutouts, without changing command order. */
+        bool surface_background = false;
+        Clay_RenderCommand input;
+        if (i > 0 && cmd->commandType == CLAY_RENDER_COMMAND_TYPE_RECTANGLE) {
+            const Clay_RenderCommand *prior = Clay_RenderCommandArray_Get(&commands, i - 1);
+            uint64_t owner = (uintptr_t)prior->userData & RENDER_UD_OWNER_MASK;
+            surface_background = prior->id == cmd->id && prior->commandType == CLAY_RENDER_COMMAND_TYPE_CUSTOM
+                && owner && ((uintptr_t)prior->renderData.custom.customData & ~RENDER_PROBED_TAG) == owner;
+            if (surface_background) {
+                input = *cmd;
+                input.renderData.rectangle.backgroundColor = (Clay_Color){0};
+                cmd = &input;
+            }
+        }
 		if (cmd->commandType == CLAY_RENDER_COMMAND_TYPE_OVERLAY_COLOR_START) {
 			struct fade_value *value = fade_value(rs, cmd->id);
 			if (!value) {
@@ -1891,6 +1946,7 @@ int render_reconcile(struct render_state *rs, Clay_RenderCommandArray commands,
 		bool is_new = !n->initialized;
 		n->gen = rs->gen;
 		n->retained = false;
+        n->backing_input = surface_background;
 		n->z = cmd->zIndex;
 		n->user_data = cmd->userData;
 
@@ -1925,9 +1981,10 @@ int render_reconcile(struct render_state *rs, Clay_RenderCommandArray commands,
 			clip = box_intersect(clip, unpresent_box(presentation, constraint->clip));
 			clipped = true;
 		}
-		if (constraint && constraint->clips_content
-				&& cmd->commandType == CLAY_RENDER_COMMAND_TYPE_CUSTOM
-				&& ((uintptr_t)cmd->renderData.custom.customData & ~RENDER_PROBED_TAG) == constraint->owner) {
+		bool content = constraint && constraint->clips_content
+			&& cmd->commandType == CLAY_RENDER_COMMAND_TYPE_CUSTOM
+			&& ((uintptr_t)cmd->renderData.custom.customData & ~RENDER_PROBED_TAG) == constraint->owner;
+		if (content) {
 			clip = box_intersect(clip, constraint->content);
 			clipped = true;
 		}
@@ -1947,6 +2004,14 @@ int render_reconcile(struct render_state *rs, Clay_RenderCommandArray commands,
 		Clay_BoundingBox rbox = (clip_top != NULL && clippable) ?
 			box_snap(box_intersect(cmd->boundingBox, *clip_top)) : shadow_clipped
 			? box_snap(box_intersect(cmd->boundingBox, unpresent_box(presentation, constraint->clip))) : cmd->boundingBox;
+        /* The surface follows the border in paint order. Restrict only its
+         * pixels to the rounded hole; backing stays beneath the border's AA. */
+        if (content && !corner_radius_zero(constraint->content_radii)) {
+            struct clip_mask inner = surface_border_mask(constraint, cmd);
+            if (rounded_mask_hits(&inner, rbox))
+                scope = scope_append(rs, n, cmd->userData, 0, rbox,
+                    scope == &bounds_scope ? NULL : scope, inner);
+        }
 		size_t mask_scope = scope && clippable && scope != &bounds_scope
 			? (size_t)(scope - rs->scopes) : SIZE_MAX;
 		const struct clip_masks *mask = scope && clippable && scope->masks.len
@@ -2217,6 +2282,7 @@ static struct render_node_view rnode_view(const struct rnode *n) {
 		v.radii = n->data.border.cornerRadius;
 		break;
 	case CLAY_RENDER_COMMAND_TYPE_CUSTOM:
+        if (n->borrowed) v.color = n->data.custom.backgroundColor;
 		v.radii = n->data.custom.cornerRadius;
 		break;
 	}
@@ -2255,7 +2321,12 @@ bool render_hit(struct render_state *rs, double x, double y,
 				|| sx < 0 || sy < 0 || sx >= n->rbox.width || sy >= n->rbox.height) {
 			continue;
 		}
-		if (!rnode_point_in_arcs(rs, n, sx, sy)) {
+        if (n->backing_input) {
+            if (!point_in_masks(rnode_masks(rs, n), px, py)
+                    || point_in_rounded_rect(px, py, n->box.x, n->box.y,
+                        n->box.width, n->box.height, n->data.rectangle.cornerRadius))
+                continue;
+        } else if (!rnode_point_in_arcs(rs, n, sx, sy)) {
 			continue;
 		} else if (type == CLAY_RENDER_COMMAND_TYPE_BORDER
 				&& !border_point_in_ring(n, px - n->box.x, py - n->box.y)) {
@@ -2373,6 +2444,7 @@ struct surface_pass {
     struct render_state *rs;
     const struct rnode *record;
     struct paint *paint;
+    struct wlr_surface *root;
     const struct render_client_hooks *hooks;
     void *data;
     const struct render_draw_params *params;
@@ -2426,16 +2498,24 @@ static void draw_surface(struct wlr_surface *surface, int sx, int sy, void *data
         root.radii[i] *= params->scale*n->presentation.scale;
         rounded |= root.radii[i] > 0;
     }
-    if (rounded) draw.clips[draw.clips_len++] = root;
     const struct clip_masks *masks = rnode_masks(rs,n);
     for (size_t i=masks ? masks->len : 0;i>0;i--) {
         const struct clip_mask *mask = &masks->items[i-1];
         if (mask->path || !rounded_mask_hits(mask,n->rbox)) continue;
-        if (draw.clips_len == PAINT_CLIPS) { rs->clip_overflows++; break; }
+        if (draw.clips_len == PAINT_CLIPS - (rounded ? 1 : 0)) { rs->clip_overflows++; break; }
         struct paint_clip *clip = &draw.clips[draw.clips_len++];
         clip->box = presented_box(n,mask->box,params);
         paint_radii(clip->radii,mask->radii);
         for (int j=0;j<4;j++) clip->radii[j] *= params->scale*n->presentation.scale;
+    }
+    draw.background_clips = draw.clips_len;
+    if (rounded && draw.clips_len < PAINT_CLIPS) draw.clips[draw.clips_len++] = root;
+    if (surface == pass->root && n->data.custom.backgroundColor.a > 0) {
+        float rgba[4];
+        clay_color_to_float(n->data.custom.backgroundColor, rgba);
+        draw.background = (struct paint_color){rgba[0], rgba[1], rgba[2], rgba[3]};
+        draw.alpha = n->opacity;
+        draw.surface_alpha = alpha ? alpha->multiplier : 1;
     }
     paint_texture(pass->paint,&draw);
     if (pass->hooks && pass->hooks->drawn) pass->hooks->drawn(pass->data,n->handle,surface);
@@ -2458,12 +2538,12 @@ void render_draw(struct render_state *rs, struct paint *p,
         if (n->borrowed) {
             struct wlr_surface *surface = hooks->resolve(hooks->data,n->handle);
             if (surface) {
-                struct surface_pass pass = {rs,n,p,hooks,data,params};
+                struct surface_pass pass = {rs,n,p,surface,hooks,data,params};
                 wlr_surface_for_each_surface(surface,draw_surface,&pass);
             }
             continue;
         }
-        if (!p) continue;
+        if (!p || n->backing_input) continue;
         struct paint_box box = presented_box(n,n->rbox,params);
         if (!target_intersects(box,params)) continue;
         float scale = params->scale*n->presentation.scale;
@@ -2535,6 +2615,6 @@ void render_draw_surface(struct render_state *rs, struct paint *p,
     n.surface_origin = origin;
     n.data.custom.cornerRadius = (Clay_CornerRadius){radii[0], radii[1], radii[3], radii[2]};
     struct render_draw_params params = {.scale = 1, .width = width, .height = height};
-    struct surface_pass pass = {rs, &n, p, NULL, NULL, &params};
+    struct surface_pass pass = {rs, &n, p, surface, NULL, NULL, &params};
     wlr_surface_for_each_surface(surface, draw_surface, &pass);
 }

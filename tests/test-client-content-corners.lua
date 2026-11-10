@@ -41,7 +41,7 @@ steps[#steps + 1] = function(n)
     if not c then assert(n < 30, 'client did not map'); return end
     c.floating, c.shadow, c.animation = true, false, false
     c.border_width, c.border_color = 0, frame
-    c.shape = 24
+    c.shape = nil
     c:geometry{x = 40, y = 40, width = 300, height = 220}
     c:connect_signal('property::content_radius', function() signals = signals + 1 end)
     c.content_radius = 18
@@ -88,6 +88,7 @@ end
 steps[#steps + 1] = shot.wait(function() assert(enters == 1 and leaves == 0, 'square corner left client') end)
 steps[#steps + 1] = function()
     mouse.coords{x = 0, y = 0}; mouse._fake_motion(0, 0)
+    c.shape = 24
     c.content_radius = {}
     expect{0, 0, 0, 0}
     local before = signals
@@ -98,7 +99,7 @@ end
 shot.check_steps(steps, function()
     declaration(nil)
     assert(leaves == 1, 'outside client did not leave')
-    return {{40, 40, ink}, {339, 40, ink}, {40, 259, ink}, {339, 259, ink}}
+    return {{40, 40, wallpaper}, {339, 40, wallpaper}, {40, 259, wallpaper}, {339, 259, wallpaper}}
 end)
 for _, reset in ipairs{function() c.content_radius = nil end, function() c.content_radius = 0 end} do
     steps[#steps + 1] = function()

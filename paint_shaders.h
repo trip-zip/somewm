@@ -87,8 +87,14 @@ static const char paint_shader_rect[] =
     "    gl_FragColor = color * coverage * mask_coverage(p);\n"
     "}\n";
 
+/* Backing fills the difference between the enclosing mask and the content
+ * shape. Equal arcs contribute no backing, even in their antialias ramp.
+ * Texture coverage stays unchanged when the backing is added or removed. */
 static const char paint_shader_texture[] =
     "uniform float alpha;\n"
+    "uniform vec4 background;\n"
+    "uniform int background_clips;\n"
+    "uniform float surface_alpha;\n"
     "#ifdef EXTERNAL\n"
     "uniform samplerExternalOES tex;\n"
     "#else\n"
@@ -99,7 +105,24 @@ static const char paint_shader_texture[] =
     "#ifdef OPAQUE\n"
     "    c.a = 1.0;\n"
     "#endif\n"
-    "    gl_FragColor = c * alpha * round_coverage(v_pos * size) * mask_coverage(v_pos * size);\n"
+    "    vec2 p = v_pos * size;\n"
+    "    float mask = mask_coverage(p);\n"
+    "    float coverage = round_coverage(p) * mask;\n"
+    "    if (background.a > 0.0) {\n"
+    "        float outer = min(corner_alpha(p, size, vec4(0.0)), mask);\n"
+    "        float inner = corner_alpha(p, size, radii);\n"
+    "        for (int i = 0; i < 4; i++) {\n"
+    "            if (i >= clip_count) break;\n"
+    "            float clip = corner_alpha(p - clip_boxes[i].xy, clip_boxes[i].zw, clip_radii[i]);\n"
+    "            if (i < background_clips) outer = min(outer, clip);\n"
+    "            else inner = min(inner, clip);\n"
+    "        }\n"
+    "        c *= surface_alpha;\n"
+    "        float cutout = max(outer - inner, 0.0);\n"
+    "        gl_FragColor = (c * coverage + background * (cutout + (1.0 - c.a) * coverage)) * alpha;\n"
+    "    } else {\n"
+    "        gl_FragColor = c * alpha * coverage;\n"
+    "    }\n"
     "}\n";
 
 static const char paint_shader_shadow[] =

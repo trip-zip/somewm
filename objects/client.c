@@ -4489,8 +4489,10 @@ client_content_radius_value(lua_State *L)
  * four radii; omitted corners are zero. An empty table makes the content
  * square. Nil or numeric zero restores the corners derived from shape,
  * border width and titlebars. Titlebars keep the shape's corners.
- * Rounded content corners show the border color underneath, even without
- * a border. Fullscreen clients ignore the radii without clearing them.
+ * Rounded content corners show content_background_color underneath, or
+ * border_color when unset, even without a border. The outer shape clips
+ * the entire frame, including explicitly square content. Fullscreen
+ * clients ignore the radii without clearing them.
  * Table assignments are copied. Reading a table returns a new table with
  * all four fields; editing it has no effect until it is assigned again.
  * Invalid keys, negative or non-finite radii, values outside the supported
@@ -4505,6 +4507,7 @@ client_content_radius_value(lua_State *L)
  * @tparam[opt=0] number content_radius.bottom_left
  * @propemits false false
  * @see shape
+ * @see content_background_color
  */
 static int
 luaA_client_get_content_radius(lua_State *L, client_t *c)
