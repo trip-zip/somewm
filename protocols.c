@@ -110,9 +110,7 @@ layer_keyboard_focus(Monitor *m)
 					return;
 			} else {
 				/* Legacy behavior for surfaces without Lua objects */
-				focusclient(NULL, 0);
-				exclusive_focus = l;
-				client_notify_enter(l->layer_surface->surface, wlr_seat_get_keyboard(seat));
+				layer_surface_grant_keyboard(l);
 				return;
 			}
 		}
