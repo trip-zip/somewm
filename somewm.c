@@ -1527,6 +1527,22 @@ commitlayersurfacenotify(struct wl_listener *listener, void *data)
 				< ZWLR_LAYER_SHELL_V1_LAYER_TOP ? layers[LyrTop] : scene_layer));
 	}
 
+	/* A layer surface that drops keyboard interactivity loses keyboard
+	 * focus, e.g., lan-mouse when it releases its capture. Otherwise a
+	 * stale has_keyboard_focus keeps focus from being granted again. */
+	if ((layer_surface->current.committed & WLR_LAYER_SURFACE_V1_STATE_KEYBOARD_INTERACTIVITY)
+			&& layer_surface->current.keyboard_interactive
+				== ZWLR_LAYER_SURFACE_V1_KEYBOARD_INTERACTIVITY_NONE) {
+		if (l->lua_object && l->lua_object->has_keyboard_focus && globalconf_L) {
+			lua_State *Ls = globalconf_get_lua_State();
+			l->lua_object->has_keyboard_focus = false;
+			luaA_object_push(Ls, l->lua_object);
+			luaA_object_emit_signal(Ls, -1, "property::has_keyboard_focus", 0);
+			lua_pop(Ls, 1);
+		}
+		layer_surface_revoke_keyboard(l);
+	}
+
 	arrangelayers(l->mon);
 
 	/* When a layer surface maps, re-evaluate pointer focus so that
