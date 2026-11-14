@@ -60,6 +60,7 @@ static const char *signal_names[SIG_COUNT] = {
 	[SIG_PROPERTY_EXCLUSIVE_ZONE] = "property::exclusive_zone",
 	[SIG_PROPERTY_KEYBOARD_INTERACTIVE] = "property::keyboard_interactive",
 	[SIG_PROPERTY_MARGIN]        = "property::margin",
+	[SIG_PROPERTY_HAS_KEYBOARD_FOCUS] = "property::has_keyboard_focus",
 	[SIG_XKB_MAP_CHANGED]        = "xkb::map_changed",
 	[SIG_XKB_GROUP_CHANGED]      = "xkb::group_changed",
 	[SIG_IDLE_STOP]              = "idle::stop",

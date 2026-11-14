@@ -876,10 +876,17 @@ motionnotify(uint32_t time, struct wlr_input_device *device, double dx, double d
 		 * the "last constraint wins" bug breaking games like Minecraft. */
 
 		if (active_constraint) {
-			toplevel_from_wlr_surface(active_constraint->surface, &c, NULL);
-			if (c && active_constraint->surface == seat->pointer_state.focused_surface) {
-				sx = cursor->x - c->geometry.x - client_border(c);
-				sy = cursor->y - c->geometry.y - client_border(c);
+			toplevel_from_wlr_surface(active_constraint->surface, &c, &l);
+			if ((c || l) && active_constraint->surface == seat->pointer_state.focused_surface) {
+				/* Layer surfaces can hold constraints too, e.g., the
+				 * capture surface of lan-mouse at the screen edge. */
+				if (l) {
+					sx = cursor->x - l->geom.x - l->mon->m.x;
+					sy = cursor->y - l->geom.y - l->mon->m.y;
+				} else {
+					sx = cursor->x - c->geometry.x - client_border(c);
+					sy = cursor->y - c->geometry.y - client_border(c);
+				}
 				if (wlr_region_confine(&active_constraint->region, sx, sy,
 						sx + dx, sy + dy, &sx_confined, &sy_confined)) {
 					dx = sx_confined - sx;
