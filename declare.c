@@ -3283,7 +3283,7 @@ declare_drag_icon(Monitor *m)
 	uint64_t handle;
 	Clay_ElementDeclaration s;
 
-	if (!icon || !icon->data || !icon->surface->mapped
+	if (!icon || !icon->surface->mapped
 			|| xytomon(cursor->x, cursor->y) != m)
 		return;
 	handle = node_handle(drag_node);
@@ -3486,7 +3486,7 @@ seat_nodes_place(Monitor *m)
 	cursor_declared_y = (int)round(cursor->y);
 	cursor_declared_gen = cursor_image.gen;
 	struct wlr_drag_icon *icon = seat->drag ? seat->drag->icon : NULL;
-	if (icon && icon->data && icon->surface->mapped)
+	if (icon && icon->surface->mapped)
 		seat_node_place(&drag_node, m, DECLARE_KIND_DRAG, icon, LAYER_DRAG);
 	if (cursor_image.surface)
 		seat_node_place(&cursor_surface_node, m, DECLARE_KIND_CURSOR,
