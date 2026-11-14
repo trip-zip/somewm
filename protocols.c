@@ -205,15 +205,15 @@ commitlayersurfacenotify(struct wl_listener *listener, void *data)
 
 		luaA_object_push(L, l->lua_object);
 
-		if (committed & (1 << 5))  /* WLR_LAYER_SURFACE_V1_STATE_LAYER */
+		if (committed & WLR_LAYER_SURFACE_V1_STATE_LAYER)
 			some_event_queue_signal0(L, -1, SIG_PROPERTY_LAYER);
-		if (committed & (1 << 1))  /* WLR_LAYER_SURFACE_V1_STATE_ANCHOR */
+		if (committed & WLR_LAYER_SURFACE_V1_STATE_ANCHOR)
 			some_event_queue_signal0(L, -1, SIG_PROPERTY_ANCHOR);
-		if (committed & (1 << 2))  /* WLR_LAYER_SURFACE_V1_STATE_EXCLUSIVE_ZONE */
+		if (committed & WLR_LAYER_SURFACE_V1_STATE_EXCLUSIVE_ZONE)
 			some_event_queue_signal0(L, -1, SIG_PROPERTY_EXCLUSIVE_ZONE);
-		if (committed & (1 << 4))  /* WLR_LAYER_SURFACE_V1_STATE_KEYBOARD_INTERACTIVITY */
+		if (committed & WLR_LAYER_SURFACE_V1_STATE_KEYBOARD_INTERACTIVITY)
 			some_event_queue_signal0(L, -1, SIG_PROPERTY_KEYBOARD_INTERACTIVE);
-		if (committed & (1 << 3))  /* WLR_LAYER_SURFACE_V1_STATE_MARGIN */
+		if (committed & WLR_LAYER_SURFACE_V1_STATE_MARGIN)
 			some_event_queue_signal0(L, -1, SIG_PROPERTY_MARGIN);
 
 		lua_pop(L, 1);
