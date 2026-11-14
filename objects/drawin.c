@@ -513,10 +513,13 @@ luaA_drawin_set_attachment(lua_State *L, drawin_t *d)
         lua_getfield(L, -1, "host");
         if (lua_isuserdata(L, -1)) {
             drawable_t *host = luaA_checkudata(L, -1, &drawable_class);
+            struct node *n = NULL;
             if (host->owner_type == DRAWABLE_OWNER_DRAWIN)
-                next.host = (uint32_t)node_handle(host->owner.drawin->node);
+                n = host->owner.drawin->node;
             else if (host->owner_type == DRAWABLE_OWNER_CLIENT)
-                next.host = (uint32_t)node_handle(host->node);
+                n = host->node;
+            if (n)
+                next.host = (uint32_t)node_handle(n);
         } else {
             double id = lua_isnil(L, -1) ? 0 : luaL_checknumber(L, -1);
             if (!isfinite(id) || id < 0 || id > UINT32_MAX)
