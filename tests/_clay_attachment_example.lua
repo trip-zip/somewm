@@ -237,7 +237,7 @@ function M.run(name)
                 example.pixel(box.x+2,box.y+2,'#ff0000')
             end
             assert(#notification_boxes==3)
-            assert(notification_boxes[1].y==16)
+            assert(notification_boxes[1].y==28+16)
             for i=2,3 do
                 local prev=notification_boxes[i-1]
                 assert(notification_boxes[i].y==prev.y+prev.height+8)
