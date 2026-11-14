@@ -2943,7 +2943,8 @@ declare_attachment(drawin_t *d, Monitor *m)
     return true;
 }
 
-/* A nonempty notification position is one root float with flow children. */
+/* A nonempty notification position is one root float with flow children,
+ * on the workarea's corner like awful.placement's honor_workarea. */
 static void
 declare_notifications(Monitor *m)
 {
@@ -2963,7 +2964,7 @@ declare_notifications(Monitor *m)
 				.layoutDirection = CLAY_TOP_TO_BOTTOM, .childGap = first->attachment.gap,
 			},
 			.floating = {
-				.attachTo = CLAY_ATTACH_TO_ELEMENT_WITH_ID, .parentId = screen_root_id().id,
+				.attachTo = CLAY_ATTACH_TO_ELEMENT_WITH_ID, .parentId = workarea_id().id,
 				.attachPoints = { .parent = position, .element = position },
 				.offset = {first->attachment.x, first->attachment.y},
 				.zIndex = layer_band[LAYER_NOTIFICATION],
