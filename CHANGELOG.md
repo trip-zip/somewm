@@ -33,6 +33,11 @@ All notable changes to somewm will be documented in this file.
 - Removing a fake screen moves its clients to the screen under them.
 - A hot reload with a client whose `shape` is a function no longer ends the session.
 - Button and mouse signals on a client measure from inside the border, as in AwesomeWM. A click on the inner top-left corner reports 0,0, not border_width,border_width.
+- Attaching a popup or tooltip to the titlebar of a closed client no longer ends the session.
+- A hot reload with a hidden shaped wibox no longer ends the session.
+- Notifications no longer cover a wibar on the same screen edge.
+- Releasing a mouse button over a wibox or a root binding no longer leaves the button held, which made later clicks do nothing.
+- Pointer lock and confinement work on layer-shell surfaces, and a layer surface that gives up the keyboard can get it back.
 
 ## [2.1.2] - 2026-11-06
 
