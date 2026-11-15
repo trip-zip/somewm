@@ -75,7 +75,9 @@ local function check_geometry(size, copies, vertical)
     assert(math.abs(content - (size * copies + (copies - 1) * 40)) <= 1, diagnostic)
     for i, line in ipairs(backgrounds) do
         local bx, by, bw, bh = box(line, diagnostic)
-        assert(bw == (vertical and 20 or size) and bh == (vertical and size or 20), diagnostic)
+        -- The tree dump rounds each edge to a whole pixel.
+        assert(math.abs((vertical and bh or bw) - size) <= 1
+            and (vertical and bw or bh) == 20, diagnostic)
         local offset = -scrolled + (i - 1) * (size + 40)
         -- The tree dump rounds native float positions to whole pixels.
         assert(math.abs((vertical and by - y or bx - x) - offset) <= 1, diagnostic)

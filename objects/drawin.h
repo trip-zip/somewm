@@ -142,6 +142,8 @@ void luaA_drawin_reassign_screen(lua_State *L, drawin_t *drawin);
 
 /* Drawin geometry synchronization */
 void luaA_drawin_apply_geometry(drawin_t *drawin);
+void luaA_drawin_set_solved_geometry(lua_State *L, drawin_t *drawin,
+        int x, int y, int width, int height);
 
 void drawin_update_layer(drawin_t *drawin);
 

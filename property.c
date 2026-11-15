@@ -112,7 +112,7 @@ property_handle_toplevel_title(struct wl_listener *listener, void *data)
  * Called during initial client setup to fetch all properties at once
  * \param c The client
  */
-void
+static void
 property_update_wayland_properties(client_t *c)
 {
 	struct wlr_xdg_toplevel *toplevel;

@@ -4,7 +4,7 @@ A Lua framework for building your Wayland desktop. Layouts, widgets, keybindings
 
 SomeWM has a complete widget system, a signal-driven object model, and a compositor runtime, all wired together so every piece can talk to every other piece. Write a widget that reacts to window focus changes. Build a layout that adapts to screen geometry. Script your entire workflow from `rc.lua` or from the command line.
 
-Built on [wlroots](https://gitlab.freedesktop.org/wlroots/wlroots) 0.20.2 or newer in the 0.20 series, linked from the system library. Runs [AwesomeWM](https://github.com/awesomeWM/awesome) configs: keybindings, rules, themes and the stock widgets carry over.
+Built on [wlroots](https://gitlab.freedesktop.org/wlroots/wlroots) 0.20.2 or newer in the 0.20 series. Runs [AwesomeWM](https://github.com/awesomeWM/awesome) configs: keybindings, rules, themes and the stock widgets carry over.
 
 > **This branch (`main`) is SomeWM 2.x.** Widgets that draw themselves (their own `fit` or `draw`, often built with `wibox.widget.base.make_widget`), `wibox.hierarchy` and the textbox measuring functions were removed in 2.1. If your config needs them, use SomeWM 1.4. See [Choosing a version](#choosing-a-version).
 
@@ -47,7 +47,7 @@ sudo make install
 
 For Debian, Fedora, NixOS, and detailed instructions, see the [Installation Guide](https://somewm.org/docs/next/getting-started/installation).
 
-**wlroots.** Install wlroots 0.20.2 or newer in the 0.20 series and its development headers before building (`wlroots0.20` on Arch). It must include GLES2, XWayland, DRM, libinput, X11 and session support. Meson uses the installed shared library and fails if it is missing or incompatible. The build does not download or compile wlroots or its dependencies. Distros with older packages need a compatible wlroots installation first.
+**wlroots.** somewm links an installed wlroots 0.20.2 or newer in the 0.20 series when it finds one (`wlroots0.20` on Arch). It must include GLES2, XWayland, DRM, libinput, X11 and session support. When none is installed, the build downloads wlroots 0.20.2 and builds it into somewm. wlroots needs wayland 1.24.0, libdrm 2.4.129, xkbcommon 1.8.0, pixman 0.46.0, wayland-protocols 1.47 and libdisplay-info 0.2.0 or newer. Each one that is older is downloaded at a fixed version and built alongside it. Debian 13 and Ubuntu 24.04 build this way. Pass `--wrap-mode=nofallback` to `meson setup` to forbid downloads.
 
 **XWayland.** XWayland support is always built in, so xcb, xcb-icccm and Xwayland are required to build. X11 applications need the Xwayland binary at runtime.
 

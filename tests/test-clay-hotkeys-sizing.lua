@@ -36,7 +36,7 @@ runner.run_async(function()
         {'defaults',nil,nil,3,1200<width and 1200 or width-6,800<height-60 and 800 or height-66},
     }
     for _, case in ipairs(cases) do
-        local name,rw,rh,bw,ew,eh,override = unpack(case)
+        local name,rw,rh,bw,ew,eh,override = unpack(case, 1, 7)
         beautiful.launcher_width = override
         local instance = help.new {width=rw,height=rh,border_width=bw,bg='#204080',fg='#ffffff',
             border_color='#ff0000',shape=shape.rectangle,font='Monospace 8',description_font='Monospace 8'}

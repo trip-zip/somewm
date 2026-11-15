@@ -122,7 +122,7 @@ lua_class_t key_class;
  * \param keysym The keysym to get the name of.
  * \return A newly allocated string with the keysym name, or NULL on error.
  */
-char *
+static char *
 key_get_keysym_name(xkb_keysym_t keysym)
 {
 	const ssize_t bufsize = 64;

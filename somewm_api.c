@@ -269,7 +269,6 @@ some_set_seat_keyboard_focus(Client *c, bool focus_changed)
 	/* Sway pattern: inform XWayland of the active seat on every focus
 	 * change to an X11 client. Required for proper keyboard delivery. */
 	if (c->client_type == X11) {
-		extern struct wlr_xwayland *xwayland;
 		wlr_xwayland_set_seat(xwayland, seat);
 	}
 

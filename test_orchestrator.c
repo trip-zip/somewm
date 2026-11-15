@@ -405,8 +405,6 @@ kill_and_wait(pid_t pid, const char *sock_path)
 	return pid_alive(pid) ? -1 : 0;
 }
 
-extern int read_response(int sock);
-
 static int
 ipc_call(const char *sock_path, const char *command)
 {

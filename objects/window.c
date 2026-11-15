@@ -148,7 +148,7 @@ luaA_window_set_opacity(lua_State *L, window_t *window)
  * \param w The window object.
  * \return The number of elements pushed on stack.
  */
-int
+static int
 luaA_window_set_type(lua_State *L, window_t *w)
 {
     window_type_t type;

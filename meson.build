@@ -8,6 +8,20 @@ project(
     'b_ndebug=if-release',
     'warning_level=2',
     'werror=true',
+    # Only the wraps in subprojects/ are ever used: wlroots' own wraps follow its git
+    # HEAD, and a library missing from the system should fail naming it.
+    'wrap_mode=nopromote',
+    # Vendored code is not ours to keep warning-clean. Subproject-scoped overrides are the
+    # only form that cascades to nested subprojects. subproject() default_options does not.
+    'wlroots:werror=false',
+    'wayland:werror=false',
+    'wayland-protocols:werror=false',
+    'libdrm:werror=false',
+    'libxkbcommon:werror=false',
+    'pixman:werror=false',
+    # Ubuntu 24.04 ships libdisplay-info 0.1.1 and wlroots needs 0.2.0
+    'libdisplay-info:default_library=static',
+    'libdisplay-info:werror=false',
   ],
 )
 
@@ -103,19 +117,44 @@ lgi_output = lgi_check_result.stdout().strip()
 lgi_version = lgi_output.split('Found lgi ')[-1].split('\n')[0]
 message('Found LGI version: ' + lgi_version)
 
-wlroots = dependency('wlroots-0.20', version: ['>=0.20.2', '<0.21'],
-  method: 'pkg-config', static: false, allow_fallback: false)
-foreach feature : ['gles2_renderer', 'xwayland', 'drm_backend', 'libinput_backend', 'x11_backend', 'session']
-  if wlroots.get_variable(pkgconfig: 'have_' + feature, default_value: 'false') != 'true'
-    error('System wlroots must be built with ' + feature + ' support')
-  endif
-endforeach
+# wlroots dependency floors are looked up here first, so somewm and wlroots share one
+# copy of each: a system library that meets its floor is used, an older or missing one
+# is built from the pinned wrap. default_options repeat what wlroots passes for each.
+wayland_server = dependency('wayland-server', version: '>=1.24.0', fallback: 'wayland',
+  default_options: ['default_library=static', 'tests=false', 'documentation=false'])
+libdrm = dependency('libdrm', version: '>=2.4.129', fallback: 'libdrm',
+  default_options: ['default_library=static', 'auto_features=disabled', 'tests=false'])
+xkbcommon = dependency('xkbcommon', version: '>=1.8.0', fallback: 'libxkbcommon',
+  default_options: ['default_library=static', 'enable-tools=false', 'enable-x11=false',
+                    'enable-docs=false', 'enable-xkbregistry=false'])
+wayland_protocols = dependency('wayland-protocols', version: '>=1.47',
+  fallback: 'wayland-protocols', default_options: ['tests=false'])
 
-wayland_server = dependency('wayland-server', version: '>=1.24.0')
-libdrm = dependency('libdrm', version: '>=2.4.129')
-xkbcommon = dependency('xkbcommon', version: '>=1.8.0')
-wayland_protocols = dependency('wayland-protocols', version: '>=1.47')
-pixman = dependency('pixman-1')
+# wlroots asks for 0.43 with a fallback, then render/pixman asks for 0.46 with none,
+# so a system pixman between the two fails the second lookup.
+# Asking for 0.46 first puts the wrap's pixman in place for both: it overrides pixman-1.
+pixman = dependency('pixman-1', version: '>=0.46.0', fallback: 'pixman',
+  default_options: ['default_library=static', 'tests=disabled', 'demos=disabled'])
+
+# Backends are named, not auto: auto drops one whose library is missing or too old (DRM
+# without libdisplay-info 0.2) and the build succeeds without it.
+wlroots_options = ['default_library=static', 'renderers=gles2', 'examples=false',
+                   'backends=drm,libinput,x11', 'xwayland=enabled']
+# Meson applies static: false to fallback builds too. Look up system wlroots separately.
+wlroots = dependency('wlroots-0.20', version: ['>=0.20.2', '<0.21'],
+  method: 'pkg-config', static: false, required: false, allow_fallback: false)
+if not wlroots.found()
+  wlroots = dependency('wlroots-0.20', version: ['>=0.20.2', '<0.21'],
+    method: 'pkg-config', static: true, fallback: ['wlroots', 'wlroots'],
+    default_options: wlroots_options)
+else
+  foreach feature : ['gles2_renderer', 'xwayland', 'drm_backend', 'libinput_backend', 'x11_backend', 'session']
+    if wlroots.get_variable(pkgconfig: 'have_' + feature, default_value: 'false') != 'true'
+      error('System wlroots must be built with ' + feature + ' support')
+    endif
+  endforeach
+endif
+
 egl = dependency('egl')
 glesv2 = dependency('glesv2')
 
@@ -358,6 +397,9 @@ add_project_arguments(
   '-Wno-unused-parameter',
   '-Wshadow',
   '-Wunused-macros',
+  '-Wredundant-decls',
+  '-Wmissing-prototypes',
+  '-Wmissing-declarations',
   '-Wstringop-truncation',
   '-Wformat-truncation',
   # Note: -Wfloat-conversion omitted because dbus.c needs it disabled
@@ -776,7 +818,7 @@ if get_option('systemd').allowed()
   have_systemd = systemd_dep.found()
 
   if have_systemd
-    systemd_user_unit_dir = systemd_dep.get_variable('systemduserunitdir')
+    systemd_user_unit_dir = systemd_dep.get_variable('systemduserunitdir', pkgconfig_define: ['prefix', get_option('prefix')])
 
     configure_file(
       input: 'contrib/systemd/somewm.service.in',

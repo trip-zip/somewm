@@ -3,6 +3,7 @@
 
 #include <stdbool.h>
 #include <stdint.h>
+#include <lua.h>
 
 #include "render.h"
 #include "node.h"
@@ -189,5 +190,8 @@ void declare_draw(struct declare_output *, struct paint *, Monitor *, const stru
 void declare_finish(struct declare_output *);
 void declare_reset_paint(struct declare_output *);
 void declare_damage(struct declare_output *, int x, int y);
+
+/* client._clay_geometry_is_solved, registered in objects/client.c */
+int luaA_client_geometry_is_solved(lua_State *L);
 
 #endif

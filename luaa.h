@@ -114,6 +114,8 @@ void luaA_record_glib_source_baseline(void);
 void luaA_glib_source_protect(GSource *source);
 void luaA_cleanup(void);
 void luaA_set_argv(char **argv);
+void luaA_set_confpath(const char *path);
+void luaA_add_search_paths(const char **paths, int count);
 void luaA_hot_reload(void);
 
 /* awesome module (merged from objects/awesome.c) */
@@ -145,9 +147,6 @@ extern luaA_class_handlers_t client_handlers;
 extern luaA_class_handlers_t tag_handlers;
 extern luaA_class_handlers_t screen_handlers;
 extern luaA_class_handlers_t mouse_handlers;
-
-/* Handler helper functions */
-int luaA_registerfct(lua_State *L, int idx, int *ref);
 
 /* Lua version compatibility - matches AwesomeWM pattern */
 #if !(501 <= LUA_VERSION_NUM && LUA_VERSION_NUM < 506)

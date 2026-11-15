@@ -49,17 +49,8 @@ struct wlr_input_device;
 
 /* Forward declarations */
 static void destroyidleinhibitor(struct wl_listener *listener, void *data);
-void destroylayersurfacenotify(struct wl_listener *listener, void *data);
-void unmaplayersurfacenotify(struct wl_listener *listener, void *data);
 static void destroylock(SessionLock *lock, int unlock);
-void destroylocksurface(struct wl_listener *listener, void *data);
 static void destroysessionlock(struct wl_listener *listener, void *data);
-void unlocksession(struct wl_listener *listener, void *data);
-void foreign_toplevel_request_activate(struct wl_listener *listener, void *data);
-void foreign_toplevel_request_close(struct wl_listener *listener, void *data);
-void foreign_toplevel_request_fullscreen(struct wl_listener *listener, void *data);
-void foreign_toplevel_request_maximize(struct wl_listener *listener, void *data);
-void foreign_toplevel_request_minimize(struct wl_listener *listener, void *data);
 static gboolean activation_token_timeout(gpointer user_data);
 
 /* XDG Activation token tracking (Wayland startup notification) */

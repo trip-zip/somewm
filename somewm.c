@@ -72,6 +72,7 @@
 #include "somewm.h"
 #include "somewm_types.h"
 #include "somewm_api.h"
+#include "somewm_internal.h"
 #include "common/util.h"
 #include "common/lualib.h"
 #include "nested_inhibitor.h"
@@ -107,10 +108,8 @@
 static void cleanup(void);
 static void cleanuplisteners(void);
 static void handlesig(int signo);
-void printstatus(void);
 static void run(char *startup_cmd);
 static void setup(void);
-void spawn(const Arg *arg);
 
 /* variables */
 static pid_t child_pid = -1;
@@ -1108,10 +1107,6 @@ spawn(const Arg *arg)
 #define MAX_SEARCH_PATHS 16
 static const char *search_paths[MAX_SEARCH_PATHS];
 static int num_search_paths = 0;
-
-/* Declared in luaa.c */
-void luaA_add_search_paths(const char **paths, int count);
-void luaA_set_confpath(const char *path);
 
 /* ========================================================================
  * Test helpers — headless output hotplug simulation

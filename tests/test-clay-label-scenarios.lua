@@ -38,13 +38,14 @@ runner.run_async(function()
     for _, scale in ipairs{1, 1.5, .8, 1} do
         s.scale = scale
         settle()
-        local right = 0
+        local right, widest = 0, 0
         for _, tb in ipairs(labels) do
             local b = box(bar, tb)
             local preferred = tb:get_preferred_size(s)
             assert(math.abs(b.width - preferred) <= 1, 'label width differs: ' .. tb.text)
             assert(b.x >= right, 'labels overlap: ' .. tb.text)
             right = b.x + b.width
+            widest = math.max(widest, b.width)
         end
         local wide = cap:shot()
         local blank = box(bar, labels[#labels])
@@ -59,7 +60,8 @@ runner.run_async(function()
             initial = wide
         end
         local title_x = box(bar, title).x
-        bar.width = title_x + 70
+        -- Keep the title allowance wider than every label so only the title shrinks.
+        bar.width = title_x + widest + 5
         settle()
         local crowded = cap:shot()
         assert(box(bar, title).width < title:get_preferred_size(s), 'title was not constrained')

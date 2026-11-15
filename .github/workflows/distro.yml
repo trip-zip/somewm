@@ -1,0 +1,66 @@
+name: Distro builds
+
+on:
+  schedule:
+    - cron: '17 6 * * 1'
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'tests/distro/**'
+      - 'subprojects/*.wrap'
+      - 'meson.build'
+      - 'meson_options.txt'
+      - 'Makefile'
+      - 'contrib/**'
+      - '.github/workflows/distro.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  list-legs:
+    runs-on: ubuntu-latest
+    outputs:
+      legs: ${{ steps.list.outputs.legs }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - name: List legs
+        id: list
+        run: |
+          legs=$(python3 -c 'import json, pathlib; print(json.dumps(sorted(p.stem for p in pathlib.Path("tests/distro").glob("*.Dockerfile"))))')
+          printf '%s\n' "$legs"
+          printf 'legs=%s\n' "$legs" >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: list-legs
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        leg: ${{ fromJSON(needs.list-legs.outputs.legs) }}
+    name: Distro (${{ matrix.leg }})
+    env:
+      leg: ${{ matrix.leg }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - name: Build and test
+        shell: bash
+        run: |
+          status=0
+          printf '```text\n' >> "$GITHUB_STEP_SUMMARY"
+          ./tests/distro/run.sh "$leg" | tee -a "$GITHUB_STEP_SUMMARY" || status=$?
+          printf '```\n' >> "$GITHUB_STEP_SUMMARY"
+          exit "$status"
+      - name: Print failure log
+        if: failure()
+        run: cat "build-distro/$leg.log"

@@ -123,21 +123,11 @@ typedef struct screen_t screen_t;
 /* Key/button array functions - now implemented in objects/key.c */
 /* See objects/key.h for declarations of luaA_key_array_set and luaA_key_array_get */
 
-/* Missing class/object stubs */
-typedef struct lua_class_t lua_class_t;
-extern lua_class_t window_class;  /* Declare but don't define - will link error if actually used */
-
 /* Debug miss property handlers moved to luaa.c for AwesomeWM API parity */
 #ifndef SOMEWM_LUACLASS_INCLUDED
 /* Forward declare for when this is included before common/luaclass.h */
 struct lua_object_t;
 #endif
-
-/* X11 atoms (stubs for Wayland) */
-extern xcb_atom_t WM_TAKE_FOCUS;
-extern xcb_atom_t _NET_STARTUP_ID;
-extern xcb_atom_t WM_DELETE_WINDOW;
-extern xcb_atom_t WM_PROTOCOLS;
 
 /* X11 window gravity translation */
 static inline void xwindow_translate_for_gravity(int gravity, int16_t change_width, int16_t change_height,
