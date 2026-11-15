@@ -16,7 +16,11 @@
  * With --cursor WxH+HX+HY it answers every pointer enter with a solid blue
  * cursor surface of that size and hotspot (wl_pointer.set_cursor).
  *
+ * With --drag-icon the first button press starts a drag with a mapped 32x32
+ * icon surface (wl_data_device.start_drag).
+ *
  * Usage: test-pointer-logger --app-id ID --marker PATH [--size WxH] [--cursor WxH+HX+HY]
+ *                            [--drag-icon]
  */
 
 #include <signal.h>
@@ -46,6 +50,10 @@ static bool g_running = true;
 static int g_width = 600, g_height = 400;
 static int g_cursor_w, g_cursor_h, g_cursor_hx, g_cursor_hy;
 static struct wl_surface *g_cursor_surface;
+static bool g_drag_icon;
+static struct wl_data_device_manager *g_data_device_manager;
+static struct wl_data_device *g_data_device;
+static struct wl_surface *g_drag_surface;
 
 static const char *g_app_id = "pointer_logger";
 static const char *g_marker = NULL;
@@ -137,8 +145,16 @@ static void pointer_motion(void *data, struct wl_pointer *ptr, uint32_t time,
 
 static void pointer_button(void *data, struct wl_pointer *ptr, uint32_t serial,
         uint32_t time, uint32_t button, uint32_t state) {
-    (void)data; (void)ptr; (void)serial; (void)time;
+    (void)data; (void)ptr; (void)time;
     log_event("button %u %u", button, state);
+    if (g_drag_icon && !g_drag_surface && state == WL_POINTER_BUTTON_STATE_PRESSED) {
+        g_drag_surface = wl_compositor_create_surface(g_compositor);
+        g_data_device = wl_data_device_manager_get_data_device(g_data_device_manager, g_seat);
+        wl_data_device_start_drag(g_data_device, NULL, g_surface, g_drag_surface, serial);
+        wl_surface_attach(g_drag_surface, create_buffer(32, 32, 0xFF00FF00u), 0, 0);
+        wl_surface_damage_buffer(g_drag_surface, 0, 0, 32, 32);
+        wl_surface_commit(g_drag_surface);
+    }
 }
 
 static void pointer_axis(void *data, struct wl_pointer *ptr, uint32_t time,
@@ -242,6 +258,9 @@ static void registry_global(void *data, struct wl_registry *reg,
         g_compositor = wl_registry_bind(reg, name, &wl_compositor_interface, 4);
     } else if (strcmp(interface, wl_shm_interface.name) == 0) {
         g_shm = wl_registry_bind(reg, name, &wl_shm_interface, 1);
+    } else if (strcmp(interface, wl_data_device_manager_interface.name) == 0) {
+        g_data_device_manager = wl_registry_bind(reg, name,
+            &wl_data_device_manager_interface, 1);
     } else if (strcmp(interface, wl_seat_interface.name) == 0) {
         g_seat = wl_registry_bind(reg, name, &wl_seat_interface, 5);
         wl_seat_add_listener(g_seat, &seat_listener, NULL);
@@ -261,7 +280,7 @@ static const struct wl_registry_listener registry_listener = {
 };
 
 static void print_usage(const char *prog) {
-    fprintf(stderr, "Usage: %s --app-id ID --marker PATH [--size WxH] [--cursor WxH+HX+HY]\n", prog);
+    fprintf(stderr, "Usage: %s --app-id ID --marker PATH [--size WxH] [--cursor WxH+HX+HY] [--drag-icon]\n", prog);
 }
 
 int main(int argc, char *argv[]) {
@@ -282,6 +301,8 @@ int main(int argc, char *argv[]) {
                 print_usage(argv[0]);
                 return 1;
             }
+        } else if (strcmp(argv[i], "--drag-icon") == 0) {
+            g_drag_icon = true;
         } else if (strcmp(argv[i], "--help") == 0 || strcmp(argv[i], "-h") == 0) {
             print_usage(argv[0]);
             return 0;
@@ -305,7 +326,8 @@ int main(int argc, char *argv[]) {
     wl_registry_add_listener(g_registry, &registry_listener, NULL);
     wl_display_roundtrip(g_display);
 
-    if (!g_compositor || !g_shm || !g_xdg_wm_base) {
+    if (!g_compositor || !g_shm || !g_xdg_wm_base
+            || (g_drag_icon && (!g_data_device_manager || !g_seat))) {
         fprintf(stderr, "Missing required Wayland globals\n");
         return 1;
     }
@@ -329,6 +351,9 @@ int main(int argc, char *argv[]) {
     }
 
     if (g_cursor_surface) wl_surface_destroy(g_cursor_surface);
+    if (g_drag_surface) wl_surface_destroy(g_drag_surface);
+    if (g_data_device) wl_data_device_destroy(g_data_device);
+    if (g_data_device_manager) wl_data_device_manager_destroy(g_data_device_manager);
     if (g_toplevel) xdg_toplevel_destroy(g_toplevel);
     if (g_xdg_surface) xdg_surface_destroy(g_xdg_surface);
     if (g_surface) wl_surface_destroy(g_surface);
