@@ -148,12 +148,18 @@ end)
 describe("menubar.utils.parse_dir", function()
     local gdebug = require("gears.debug")
     local warning
+    local jit_was_on
 
     before_each(function()
         warning = stub(gdebug, "print_warning")
+        -- lgi's Gio.Async segfaults a standalone LuaJIT process when the JIT
+        -- is on. somewm itself does not crash on this path.
+        jit_was_on = jit and jit.status()
+        if jit_was_on then jit.off() end
     end)
 
     after_each(function()
+        if jit_was_on then jit.on() end
         warning:revert()
     end)
 

@@ -276,7 +276,7 @@ luaA_class_newindex_miss_property(lua_State *L, lua_object_t *obj)
 /** Cleanup function called before exit or exec.
  * \param restart True if we're about to restart (exec self).
  */
-void
+static void
 awesome_atexit(bool restart)
 {
     /* Reset signal handlers */

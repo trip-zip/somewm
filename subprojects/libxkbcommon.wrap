@@ -1,0 +1,10 @@
+[wrap-file]
+directory = libxkbcommon-xkbcommon-1.11.0
+source_url = https://github.com/xkbcommon/libxkbcommon/archive/refs/tags/xkbcommon-1.11.0.tar.gz
+source_filename = libxkbcommon-1.11.0.tar.xz
+source_hash = 78a6b14f16e9a55025978c252e53ce9e16a02bfdb929550b9a0db5af87db7e02
+source_fallback_url = https://github.com/mesonbuild/wrapdb/releases/download/libxkbcommon_1.11.0-2/libxkbcommon-1.11.0.tar.xz
+wrapdb_version = 1.11.0-2
+
+[provide]
+dependency_names = xkbcommon, xkbcommon-x11, xkbregistry

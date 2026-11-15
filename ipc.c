@@ -16,6 +16,7 @@
  */
 
 #include "ipc.h"
+#include "objects/ipc.h"
 #include "common/util.h"
 #include <errno.h>
 #include <stdbool.h>
@@ -489,8 +490,6 @@ ipc_broadcast(const char *message)
 static void
 ipc_process_command(struct ipc_client *client, const char *command)
 {
-	extern void ipc_dispatch_to_lua(int client_fd, const char *command);
-
 	/* Dispatch to Lua layer */
 	ipc_dispatch_to_lua(client->fd, command);
 }

@@ -6,7 +6,11 @@
  * declarations, and CLAY_IMPLEMENTATION is defined here and nowhere else. */
 
 #define CLAY_IMPLEMENTATION
+/* The pinned clay.h defines non-static functions with no prior prototype. */
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wmissing-prototypes"
 #include "clay.h"
+#pragma GCC diagnostic pop
 
 #include "clay_impl.h"
 #include <string.h>

@@ -8,6 +8,8 @@
 #pragma GCC diagnostic ignored "-Wunused-variable"
 #pragma GCC diagnostic ignored "-Wmissing-field-initializers"
 #pragma GCC diagnostic ignored "-Wsign-compare"
+/* The pinned clay.h defines non-static functions with no prior prototype. */
+#pragma GCC diagnostic ignored "-Wmissing-prototypes"
 #include "clay.h"
 #pragma GCC diagnostic pop
 

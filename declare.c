@@ -60,9 +60,6 @@
 #include "objects/drawin.h"
 #include "objects/screen.h"
 
-void luaA_drawin_set_solved_geometry(lua_State *L, drawin_t *drawin,
-        int x, int y, int width, int height);
-
 /* The output's Clay context plus the render_state its solved commands
  * reconcile into, and the readback the tree dump prints. */
 struct declared_host {

@@ -34,7 +34,6 @@
 /** Lua function to call on dofunction() error */
 extern lua_CFunction lualib_dofunction_on_error;
 
-void luaA_checkfunction(lua_State *, int);
 void luaA_checktable(lua_State *, int);
 
 /** Dump the Lua stack. Useful for debugging.

@@ -50,10 +50,6 @@ static screen_t *primary_screen = NULL;
 /* Track whether initial screen scanning is complete (for hotplug detection) */
 static bool screens_scanned = false;
 
-/* Forward declarations for signal array helpers (from signal.c) */
-extern void signal_array_init(signal_array_t *arr);
-extern void signal_array_wipe(signal_array_t *arr);
-
 /** Drop the screen_refs array at a Lua state swap.
  * The entries are registry refs owned by the state being torn down, so they are
  * dropped without unref: both paths close that state, which frees the registry
@@ -1908,7 +1904,6 @@ screen_area_in_screen(screen_t *s, area_t geom)
 Monitor *
 luaA_monitor_get_by_screen(lua_State *L, screen_t *screen)
 {
-	extern struct wl_list mons;
 	Monitor *m;
 
 	if (!screen)

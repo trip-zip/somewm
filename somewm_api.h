@@ -33,7 +33,6 @@ Client *some_client_from_surface(struct wlr_surface *surface);
 Client *some_get_focused_client(void);
 Client *some_client_at(double lx, double ly);
 int some_client_has_keyboard_focus(Client *c);  /* Check actual wlroots seat keyboard focus */
-int some_client_get_floating(Client *c);
 struct wlr_surface *some_client_get_surface(Client *c);
 
 /*

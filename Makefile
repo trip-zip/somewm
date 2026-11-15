@@ -54,6 +54,17 @@ reconfigure:
 # Testing
 # =============================================================================
 
+.PHONY: distro distro-all
+distro:
+	@steps="$${STEPS-}"; \
+	 if [ "$(QUICK)" = 1 ]; then steps=configure,build,release,install,smoke,package; fi; \
+	 STEPS="$$steps" TEST="$(TEST)" ./tests/distro/run.sh $(if $(JOBS),-j $(JOBS)) $(LEG)
+
+distro-all:
+	@steps="$${STEPS-}"; \
+	 if [ "$(QUICK)" = 1 ]; then steps=configure,build,release,install,smoke,package; fi; \
+	 STEPS="$$steps" TEST="$(TEST)" ./tests/distro/run.sh $(if $(JOBS),-j $(JOBS)) all
+
 # Run all tests (fast, no ASAN)
 test: test-unit test-check test-signal test-nested-pointer test-ipc-socket test-orchestrator test-cache-equivalence test-restart test-integration
 
@@ -125,7 +136,8 @@ test-asan: asan
 # The integration tests CI runs, headless, here and in CI's integration step.
 # Tests that need external apps or spawn clients are left out.
 test-ci: build-test
-	@spawning=$$(grep -rl 'require.*_client' tests/test-*.lua | xargs -I{} basename {}); \
+	@if [ -n "$(TEST)" ]; then tests="$(TEST)"; else \
+	 spawning=$$(grep -rl 'require.*_client' tests/test-*.lua | xargs -I{} basename {}); \
 	 tests=$$(find tests -name 'test-*.lua' -type f \
 	   ! -name 'test-xwayland-*' \
 	   ! -name 'test-layer-shell-*' \
@@ -133,7 +145,7 @@ test-ci: build-test
 	   ! -name 'test-transient-stacking.lua' \
 	   ! -name 'test-output-fake-screen.lua' \
 	   $$(printf '! -name %s ' $$spawning) \
-	   | sort); \
+	   | sort); fi; \
 	 HEADLESS=1 LIBSEAT_BACKEND=noop TEST_TIMEOUT=45 \
 	 SOMEWM=./build-test/somewm \
 	 SOMEWM_CLIENT=./build-test/somewm-client \

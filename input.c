@@ -80,12 +80,6 @@ static bool gesture_pinch_consumed = false;
 static bool gesture_hold_consumed = false;
 
 /* Forward declarations */
-void axisnotify(struct wl_listener *listener, void *data);
-void buttonpress(struct wl_listener *listener, void *data);
-void cursorframe(struct wl_listener *listener, void *data);
-void motionrelative(struct wl_listener *listener, void *data);
-void motionabsolute(struct wl_listener *listener, void *data);
-void inputdevice(struct wl_listener *listener, void *data);
 static void tabletnotifyaxis(struct wl_listener *listener, void *data);
 static void tabletnotifyproximity(struct wl_listener *listener, void *data);
 static void tabletnotifytip(struct wl_listener *listener, void *data);
@@ -100,9 +94,6 @@ static void touchnotifymotion(struct wl_listener *listener, void *data);
 static void touchnotifyup(struct wl_listener *listener, void *data);
 static void touchnotifycancel(struct wl_listener *listener, void *data);
 static void touchnotifyframe(struct wl_listener *listener, void *data);
-void virtualkeyboard(struct wl_listener *listener, void *data);
-void virtualpointer(struct wl_listener *listener, void *data);
-void createpointerconstraint(struct wl_listener *listener, void *data);
 static void createswitch(struct wlr_switch *sw);
 void gestureswipebegin(struct wl_listener *listener, void *data);
 void gestureswipeupdate(struct wl_listener *listener, void *data);
@@ -112,7 +103,6 @@ void gesturepinchupdate(struct wl_listener *listener, void *data);
 void gesturepinchend(struct wl_listener *listener, void *data);
 void gestureholdbegin(struct wl_listener *listener, void *data);
 void gestureholdend(struct wl_listener *listener, void *data);
-void destroypointerconstraint(struct wl_listener *listener, void *data);
 static void destroytrackedpointer(struct wl_listener *listener, void *data);
 static void destroytrackedtablet(struct wl_listener *listener, void *data);
 static void destroytrackedtabletpad(struct wl_listener *listener, void *data);
@@ -120,38 +110,19 @@ static void destroytrackedtablettool(struct wl_listener *listener, void *data);
 static void destroytrackedtouch(struct wl_listener *listener, void *data);
 static void destroyswitchtracker(struct wl_listener *listener, void *data);
 static void switchevent(struct wl_listener *listener, void *data);
-void motionnotify(uint32_t time, struct wlr_input_device *device, double dx, double dy,
-		double dx_unaccel, double dy_unaccel);
-void pointerfocus(Client *c, struct wlr_surface *surface, double sx, double sy,
-		uint32_t time);
-int keybinding(uint32_t mods, uint32_t keycode, xkb_keysym_t sym, xkb_keysym_t base_sym, bool is_keypress);
-void createkeyboard(struct wlr_keyboard *keyboard);
-KeyboardGroup *createkeyboardgroup(void);
-void createpointer(struct wlr_pointer *pointer);
 static void createtablet(struct wlr_tablet *tablet);
 static void createtabletpad(struct wlr_tablet_pad *pad);
 static void createtouch(struct wlr_touch *touch);
-void cursorconstrain(struct wlr_pointer_constraint_v1 *constraint);
-void cursorwarptohint(void);
 static void apply_input_settings_to_device(struct wlr_input_device *base);
 void mouse_emit_leave(lua_State *L);
 void mouse_emit_client_enter(lua_State *L, client_t *c);
 void mouse_emit_drawin_enter(lua_State *L, drawin_t *d);
-void setcursor(struct wl_listener *listener, void *data);
-void setcursorshape(struct wl_listener *listener, void *data);
-void keypress(struct wl_listener *listener, void *data);
-void keypressmod(struct wl_listener *listener, void *data);
-int keyrepeat(void *data);
-bool drawin_accepts_input_at(drawin_t *d, double local_x, double local_y);
 void setpsel(struct wl_listener *listener, void *data);
 void setsel(struct wl_listener *listener, void *data);
 void requeststartdrag(struct wl_listener *listener, void *data);
 void startdrag(struct wl_listener *listener, void *data);
 void destroydrag(struct wl_listener *listener, void *data);
 void destroydragicon(struct wl_listener *listener, void *data);
-void xytonode(double x, double y, struct wlr_surface **psurface,
-		Client **pc, LayerSurface **pl, drawin_t **pd, drawable_t **pdrawable,
-		double *nx, double *ny);
 
 /* Tracked pointer device for runtime libinput configuration */
 typedef struct {

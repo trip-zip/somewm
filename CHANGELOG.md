@@ -16,6 +16,8 @@ All notable changes to somewm will be documented in this file.
 
 ### Changed
 
+- somewm links an installed wlroots 0.20.2 or newer instead of always building its own. When none is installed, or a library wlroots needs is too old, the build downloads and builds them as before.
+- `make install` puts the systemd user unit under the install prefix. With the default prefix it moves to `/usr/local/lib/systemd/user/`. Delete the old `/usr/lib/systemd/user/somewm.service` and `somewm-shutdown.target` by hand.
 - Rounded titlebars inset their widgets away from the corners. Set `corner_padding = false` in `awful.titlebar` to retain edge placement, or a number to choose the inset.
 - Numeric client shapes round and clip the entire frame, including its border and background, so changing `content_radius` no longer changes the outer silhouette.
 - A wibox's node can be reordered among its siblings with `move_before`, `move_after`, `append`, `push` and `swap`, and its draw order follows. Reordering an attached wibox (a popup, tooltip or menu) or a notification does not change its draw order.
