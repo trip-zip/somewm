@@ -262,6 +262,20 @@ xdg_shell_client_code = custom_target(
   command: [wayland_scanner, 'private-code', '@INPUT@', '@OUTPUT@'],
 )
 
+pointer_constraints_client_header = custom_target(
+  'pointer-constraints-unstable-v1-client-protocol.h',
+  input: wayland_protocols_dir / 'unstable/pointer-constraints/pointer-constraints-unstable-v1.xml',
+  output: 'pointer-constraints-unstable-v1-client-protocol.h',
+  command: [wayland_scanner, 'client-header', '@INPUT@', '@OUTPUT@'],
+)
+
+pointer_constraints_client_code = custom_target(
+  'pointer-constraints-unstable-v1-client-protocol.c',
+  input: wayland_protocols_dir / 'unstable/pointer-constraints/pointer-constraints-unstable-v1.xml',
+  output: 'pointer-constraints-unstable-v1-client-protocol.c',
+  command: [wayland_scanner, 'private-code', '@INPUT@', '@OUTPUT@'],
+)
+
 fractional_scale_client_header = custom_target(
   'fractional-scale-v1-client-protocol.h',
   input: wayland_protocols_dir / 'staging/fractional-scale/fractional-scale-v1.xml',
@@ -625,8 +639,9 @@ test('gl-callers-controls', find_program('tests/test-gl-callers.sh'),
 # Test layer-shell client for deterministic integration tests
 test_layer_client = executable(
   'test-layer-client',
-  ['tests/test-layer-client.c', layer_shell_client_code, xdg_shell_client_code],
-  layer_shell_client_header,
+  ['tests/test-layer-client.c', layer_shell_client_code, xdg_shell_client_code,
+   pointer_constraints_client_code],
+  layer_shell_client_header, pointer_constraints_client_header,
   dependencies: [wayland_client],
   install: false,
 )
