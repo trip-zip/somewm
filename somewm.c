@@ -1053,7 +1053,7 @@ buttonpress(struct wl_listener *listener, void *data)
 
 	/* If mousegrabber is active, route event to Lua callback */
 	if (event_handle_mousegrabber(cursor->x, cursor->y, 0))
-		return; /* Don't process event further */
+		goto release;
 
 	switch (event->state) {
 	case WL_POINTER_BUTTON_STATE_PRESSED: {
@@ -1185,7 +1185,7 @@ buttonpress(struct wl_listener *listener, void *data)
 				/* Emit button release signals (AwesomeWM-compatible) */
 				if (luaA_drawin_button_check(drawin, rel_x, rel_y, event->button,
 				                             CLEANMASK(mods), false)) {
-					return;
+					goto release;
 				}
 			} else if (c) {
 				/* Released on client - check client button bindings */
@@ -1210,7 +1210,7 @@ buttonpress(struct wl_listener *listener, void *data)
 				if (luaA_root_button_check(L, event->button, CLEANMASK(mods),
 				                           cursor->x, cursor->y, false) > 0) {
 					/* Root button release binding matched and handled */
-					return;
+					goto release;
 				}
 			}
 		}
@@ -1222,14 +1222,22 @@ buttonpress(struct wl_listener *listener, void *data)
 	 * Lua callback processing (e.g., awful.mouse.client.move() grabbed it).
 	 * This ensures symmetric handling: if the press was consumed by starting
 	 * a mousegrabber, the client never sees either press or release. */
-	if (mousegrabber_isrunning()) {
-		return;
-	}
+	if (mousegrabber_isrunning())
+		goto release;
 
 	/* If the event wasn't handled by the compositor, notify the client with
 	 * pointer focus that a button press has occurred */
 	wlr_seat_pointer_notify_button(seat,
 			event->time_msec, event->button, event->state);
+	return;
+
+release:
+	/* A release whose press reached the seat must reach it too, or wlroots
+	 * keeps the button held and a drag never ends. wlroots drops a release
+	 * whose press it never saw. */
+	if (event->state == WL_POINTER_BUTTON_STATE_RELEASED)
+		wlr_seat_pointer_notify_button(seat,
+				event->time_msec, event->button, event->state);
 }
 
 void
