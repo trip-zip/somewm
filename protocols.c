@@ -49,17 +49,8 @@ struct wlr_input_device;
 
 /* Forward declarations */
 static void destroyidleinhibitor(struct wl_listener *listener, void *data);
-void destroylayersurfacenotify(struct wl_listener *listener, void *data);
-void unmaplayersurfacenotify(struct wl_listener *listener, void *data);
 static void destroylock(SessionLock *lock, int unlock);
-void destroylocksurface(struct wl_listener *listener, void *data);
 static void destroysessionlock(struct wl_listener *listener, void *data);
-void unlocksession(struct wl_listener *listener, void *data);
-void foreign_toplevel_request_activate(struct wl_listener *listener, void *data);
-void foreign_toplevel_request_close(struct wl_listener *listener, void *data);
-void foreign_toplevel_request_fullscreen(struct wl_listener *listener, void *data);
-void foreign_toplevel_request_maximize(struct wl_listener *listener, void *data);
-void foreign_toplevel_request_minimize(struct wl_listener *listener, void *data);
 static gboolean activation_token_timeout(gpointer user_data);
 
 /* XDG Activation token tracking (Wayland startup notification) */
@@ -110,9 +101,7 @@ layer_keyboard_focus(Monitor *m)
 					return;
 			} else {
 				/* Legacy behavior for surfaces without Lua objects */
-				focusclient(NULL, 0);
-				exclusive_focus = l;
-				client_notify_enter(l->layer_surface->surface, wlr_seat_get_keyboard(seat));
+				layer_surface_grant_keyboard(l);
 				return;
 			}
 		}
@@ -170,6 +159,22 @@ commitlayersurfacenotify(struct wl_listener *listener, void *data)
 		wl_list_insert(&l->mon->layers[l->band], &l->link);
 	}
 
+	/* A layer surface that drops keyboard interactivity loses keyboard
+	 * focus, e.g., lan-mouse when it releases its capture. Otherwise a
+	 * stale has_keyboard_focus keeps focus from being granted again. */
+	if ((layer_surface->current.committed & WLR_LAYER_SURFACE_V1_STATE_KEYBOARD_INTERACTIVITY)
+			&& layer_surface->current.keyboard_interactive
+				== ZWLR_LAYER_SURFACE_V1_KEYBOARD_INTERACTIVITY_NONE) {
+		if (l->lua_object && l->lua_object->has_keyboard_focus && globalconf_L) {
+			lua_State *L = globalconf_get_lua_State();
+			l->lua_object->has_keyboard_focus = false;
+			luaA_object_push(L, l->lua_object);
+			some_event_queue_signal0(L, -1, SIG_PROPERTY_HAS_KEYBOARD_FOCUS);
+			lua_pop(L, 1);
+		}
+		layer_surface_revoke_keyboard(l);
+	}
+
 	layer_keyboard_focus(l->mon);
 	if (l->mon && l->mon->declare)
 		declare_output_mark_dirty(l->mon->declare);
@@ -191,15 +196,15 @@ commitlayersurfacenotify(struct wl_listener *listener, void *data)
 
 		luaA_object_push(L, l->lua_object);
 
-		if (committed & (1 << 5))  /* WLR_LAYER_SURFACE_V1_STATE_LAYER */
+		if (committed & WLR_LAYER_SURFACE_V1_STATE_LAYER)
 			some_event_queue_signal0(L, -1, SIG_PROPERTY_LAYER);
-		if (committed & (1 << 1))  /* WLR_LAYER_SURFACE_V1_STATE_ANCHOR */
+		if (committed & WLR_LAYER_SURFACE_V1_STATE_ANCHOR)
 			some_event_queue_signal0(L, -1, SIG_PROPERTY_ANCHOR);
-		if (committed & (1 << 2))  /* WLR_LAYER_SURFACE_V1_STATE_EXCLUSIVE_ZONE */
+		if (committed & WLR_LAYER_SURFACE_V1_STATE_EXCLUSIVE_ZONE)
 			some_event_queue_signal0(L, -1, SIG_PROPERTY_EXCLUSIVE_ZONE);
-		if (committed & (1 << 4))  /* WLR_LAYER_SURFACE_V1_STATE_KEYBOARD_INTERACTIVITY */
+		if (committed & WLR_LAYER_SURFACE_V1_STATE_KEYBOARD_INTERACTIVITY)
 			some_event_queue_signal0(L, -1, SIG_PROPERTY_KEYBOARD_INTERACTIVE);
-		if (committed & (1 << 3))  /* WLR_LAYER_SURFACE_V1_STATE_MARGIN */
+		if (committed & WLR_LAYER_SURFACE_V1_STATE_MARGIN)
 			some_event_queue_signal0(L, -1, SIG_PROPERTY_MARGIN);
 
 		lua_pop(L, 1);

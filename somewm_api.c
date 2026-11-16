@@ -269,7 +269,6 @@ some_set_seat_keyboard_focus(Client *c, bool focus_changed)
 	/* Sway pattern: inform XWayland of the active seat on every focus
 	 * change to an X11 client. Required for proper keyboard delivery. */
 	if (c->client_type == X11) {
-		extern struct wlr_xwayland *xwayland;
 		wlr_xwayland_set_seat(xwayland, seat);
 	}
 
@@ -1050,6 +1049,11 @@ layer_surface_grant_keyboard(LayerSurface *ls)
 
 	/* Send keyboard enter to the layer surface */
 	client_notify_enter(ls->layer_surface->surface, wlr_seat_get_keyboard(seat));
+
+	/* Activate a pointer constraint of the layer surface, mirroring
+	 * focusclient(), e.g., the pointer lock of lan-mouse */
+	cursorconstrain(wlr_pointer_constraints_v1_constraint_for_surface(
+		pointer_constraints, ls->layer_surface->surface, seat));
 }
 
 void

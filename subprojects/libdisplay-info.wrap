@@ -1,0 +1,8 @@
+[wrap-file]
+directory = libdisplay-info-0.3.0
+source_url = https://gitlab.freedesktop.org/emersion/libdisplay-info/-/releases/0.3.0/downloads/libdisplay-info-0.3.0.tar.xz
+source_filename = libdisplay-info-0.3.0.tar.xz
+source_hash = 6ae77cd937f9cf7d1321d35c116062c4911e8447010a6a713ac4286f7a9d5987
+
+[provide]
+dependency_names = libdisplay-info

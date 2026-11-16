@@ -35,10 +35,6 @@
 #include "window.h"
 #include "somewm_internal.h"
 
-/* Forward declarations */
-void dissociatex11(struct wl_listener *listener, void *data);
-void sethints(struct wl_listener *listener, void *data);
-
 /* Local listeners */
 static struct wl_listener new_xwayland_surface;
 static struct wl_listener xwayland_ready_listener;
@@ -344,7 +340,7 @@ sethints(struct wl_listener *listener, void *data)
 	printstatus();
 }
 
-void
+static void
 xwaylandready(struct wl_listener *listener, void *data)
 {
 	struct wlr_xcursor *xcursor;

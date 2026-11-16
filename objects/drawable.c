@@ -38,10 +38,6 @@ LUA_OBJECT_FUNCS(drawable_class, drawable_t, drawable)
  * Object Signal Support - Per-instance signals
  * ============================================================================ */
 
-/* Forward declarations for signal array helpers */
-extern void signal_array_init(signal_array_t *arr);
-extern void signal_array_wipe(signal_array_t *arr);
-
 /* Forward declarations for internal helpers */
 /* ============================================================================
  * Drawable Object Lifecycle

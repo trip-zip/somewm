@@ -1057,8 +1057,10 @@ widget_nodes_clear(struct widget_tree *d)
         *d = (struct widget_tree) { .shape_generation = generation };
         return;
     }
-	for (size_t i = 0; i < d->shapes_len; i++)
-		luaL_unref(globalconf.L, LUA_REGISTRYINDEX, d->shapes[i].ref);
+	/* NULL during hot reload's lua_close(); the refs die with the state */
+	if (globalconf.L)
+		for (size_t i = 0; i < d->shapes_len; i++)
+			luaL_unref(globalconf.L, LUA_REGISTRYINDEX, d->shapes[i].ref);
 	p_delete(&d->shapes);
 	d->shapes_len = 0;
 	for (size_t i = 0; i < d->leaves_len; i++)

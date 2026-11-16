@@ -75,12 +75,6 @@ bool screen_area_in_screen(screen_t *, area_t);
 void screen_client_moveto(struct client_t *, screen_t *, bool);
 Monitor *luaA_monitor_get_by_screen(lua_State *, screen_t *);
 
-/* Object signal support
- * Note: luaA_object_emit_signal() is now declared in awm_luaobject.h
- * as it's a generic function for all object types */
-void signal_array_init(signal_array_t *arr);
-void signal_array_wipe(signal_array_t *arr);
-
 /* Hot-reload support */
 void luaA_screen_refs_reset(void);
 void luaA_screen_hot_reload(lua_State *L);

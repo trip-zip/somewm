@@ -14,4 +14,8 @@ int test_orchestrator_run(int argc, char *argv[], int json_mode);
 
 void test_orchestrator_print_usage(const char *progname);
 
+/* Defined in somewm-client.c. Prints the reply read from sock and returns
+ * 0, 1 for an error reply, or -1 when the read fails. */
+int read_response(int sock);
+
 #endif

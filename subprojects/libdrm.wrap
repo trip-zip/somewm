@@ -1,0 +1,10 @@
+[wrap-file]
+directory = libdrm-2.4.131
+source_url = https://dri.freedesktop.org/libdrm/libdrm-2.4.131.tar.xz
+source_filename = libdrm-2.4.131.tar.xz
+source_hash = 45ba9983b51c896406a3d654de81d313b953b76e6391e2797073d543c5f617d5
+source_fallback_url = https://wrapdb.mesonbuild.com/v2/libdrm_2.4.131-1/get_source/libdrm-2.4.131.tar.xz
+wrapdb_version = 2.4.131-1
+
+[provide]
+dependency_names = libdrm, libdrm_amdgpu, libdrm_etnaviv, libdrm_exynos, libdrm_freedreno, libdrm_intel, libdrm_nouveau, libdrm_omap, libdrm_radeon, libdrm_tegra

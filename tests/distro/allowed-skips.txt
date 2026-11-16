@@ -1,0 +1,10 @@
+test-carousel-output-clip.lua
+test-clay-desktop-client-bands.lua
+test-client-border-content.lua
+test-client-content-dmabuf.lua
+test-client-content-pattern.lua
+test-layer-surface-follows-screen-focus.lua
+test-screenshot-interactive-two-outputs.lua
+test-selmon-mouse-motion.lua
+test-titlebar-pointer-leak.lua
+test-x11-size-hints-tile.lua

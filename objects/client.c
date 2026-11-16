@@ -115,9 +115,6 @@
 #include "../declare.h"
 #include "../window.h"
 
-/* Forward declarations - window.c's configure-client-to-box seam */
-void client_configure_to_box(client_t *c);
-
 #include <math.h>
 #include <float.h>
 #include <stdio.h>
@@ -1513,7 +1510,6 @@ typedef enum {
 
 static area_t titlebar_get_area(client_t *c, client_titlebar_t bar);
 static drawable_t *titlebar_get_drawable(lua_State *L, client_t *c, int cl_idx, client_titlebar_t bar);
-int luaA_client_geometry_is_solved(lua_State *L);
 
 static void client_resize_do(client_t *c, area_t geometry, bool silent, bool solved);
 static void client_set_maximized_common(lua_State *L, int cidx, bool s, const char* type, const int val);
@@ -3159,7 +3155,6 @@ luaA_client_isvisible(lua_State *L)
 static int
 luaA_client_has_keyboard_focus(lua_State *L)
 {
-    extern int some_client_has_keyboard_focus(client_t *c);
     client_t *c = luaA_checkudata(L, 1, &client_class);
     lua_pushboolean(L, some_client_has_keyboard_focus(c));
     return 1;
@@ -3169,7 +3164,7 @@ luaA_client_has_keyboard_focus(lua_State *L)
  * \param L The Lua VM state.
  * \param array Array of icons to set.
  */
-void
+static void
 client_set_icons(client_t *c, cairo_surface_array_t array)
 {
     lua_State *L;

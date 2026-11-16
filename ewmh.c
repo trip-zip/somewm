@@ -409,7 +409,7 @@ ewmh_update_net_numbers_of_desktop(void)
 			_NET_NUMBER_OF_DESKTOPS, XCB_ATOM_CARDINAL, 32, 1, &count);
 }
 
-int
+static int
 ewmh_update_net_current_desktop(lua_State *L)
 {
     uint32_t idx = 0;

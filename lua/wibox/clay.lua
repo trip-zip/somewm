@@ -61,6 +61,10 @@ function clay.shape_ops(shape, w, h, dx, dy, ...)
     local ops = {}
     local kinds = { MOVE_TO = 0, LINE_TO = 1, CURVE_TO = 2, CLOSE_PATH = 3 }
     local function append_path()
+        local path_ops = awesome and awesome._path_ops
+        if path_ops then
+            return path_ops(probe._native, ops, dx, dy)
+        end
         for kind, points in probe:copy_path():pairs() do
             ops[#ops + 1] = kinds[kind]
             for _, point in ipairs(points) do

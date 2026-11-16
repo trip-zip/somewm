@@ -7,7 +7,10 @@
  * Usage: test-layer-client [--namespace NAME] [--keyboard exclusive|on_demand|none]
  */
 
+#include <errno.h>
+#include <poll.h>
 #include <signal.h>
+#include <sys/signalfd.h>
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -15,6 +18,7 @@
 #include <sys/mman.h>
 #include <unistd.h>
 #include <wayland-client.h>
+#include "pointer-constraints-unstable-v1-client-protocol.h"
 #include "wlr-layer-shell-unstable-v1-client-protocol.h"
 
 /* Globals */
@@ -44,11 +48,49 @@ static int32_t g_margin_top, g_margin_right, g_margin_bottom, g_margin_left;
 static const char *g_configure_report;
 static uint32_t g_color = 0x80808080;
 
-/* Signal handler for clean shutdown */
-static void handle_signal(int sig) {
-    (void)sig;
-    g_running = false;
+static struct zwp_pointer_constraints_v1 *g_constraints;
+static struct zwp_locked_pointer_v1 *g_lock;
+static struct zwp_confined_pointer_v1 *g_confine;
+static const char *g_constraint_mode;
+static const char *g_constraint_marker;
+
+static void constraint_event(const char *event) {
+    if (!g_constraint_marker) return;
+    FILE *f = fopen(g_constraint_marker, "a");
+    if (!f) return;
+    fprintf(f, "%s\n", event);
+    fclose(f);
 }
+
+static void pointer_locked(void *data, struct zwp_locked_pointer_v1 *lock) {
+    (void)data; (void)lock;
+    constraint_event("locked");
+}
+
+static void pointer_unlocked(void *data, struct zwp_locked_pointer_v1 *lock) {
+    (void)data; (void)lock;
+    constraint_event("unlocked");
+}
+
+static const struct zwp_locked_pointer_v1_listener locked_listener = {
+    .locked = pointer_locked,
+    .unlocked = pointer_unlocked,
+};
+
+static void pointer_confined(void *data, struct zwp_confined_pointer_v1 *confine) {
+    (void)data; (void)confine;
+    constraint_event("confined");
+}
+
+static void pointer_unconfined(void *data, struct zwp_confined_pointer_v1 *confine) {
+    (void)data; (void)confine;
+    constraint_event("unconfined");
+}
+
+static const struct zwp_confined_pointer_v1_listener confined_listener = {
+    .confined = pointer_confined,
+    .unconfined = pointer_unconfined,
+};
 
 /* Create a simple shared memory buffer */
 static struct wl_buffer *create_buffer(void) {
@@ -178,6 +220,19 @@ static void pointer_enter(void *data, struct wl_pointer *ptr,
         uint32_t serial, struct wl_surface *surf,
         wl_fixed_t sx, wl_fixed_t sy) {
     (void)data; (void)ptr; (void)serial; (void)surf; (void)sx; (void)sy;
+    if (g_constraint_mode && !g_lock && !g_confine) {
+        if (!strcmp(g_constraint_mode, "lock")) {
+            g_lock = zwp_pointer_constraints_v1_lock_pointer(g_constraints,
+                g_surface, ptr, NULL, ZWP_POINTER_CONSTRAINTS_V1_LIFETIME_PERSISTENT);
+            zwp_locked_pointer_v1_add_listener(g_lock, &locked_listener, NULL);
+        } else {
+            g_confine = zwp_pointer_constraints_v1_confine_pointer(g_constraints,
+                g_surface, ptr, NULL, ZWP_POINTER_CONSTRAINTS_V1_LIFETIME_PERSISTENT);
+            zwp_confined_pointer_v1_add_listener(g_confine, &confined_listener, NULL);
+        }
+        /* Commit the constraint state so its region uses the surface input area. */
+        wl_surface_commit(g_surface);
+    }
     fprintf(stderr, "[test-layer-client] pointer enter\n");
     if (g_pointer_marker) {
         FILE *f = fopen(g_pointer_marker, "w");
@@ -276,6 +331,9 @@ static void registry_global(void *data, struct wl_registry *reg,
     } else if (strcmp(interface, wl_seat_interface.name) == 0) {
         g_seat = wl_registry_bind(reg, name, &wl_seat_interface, 5);
         wl_seat_add_listener(g_seat, &seat_listener, NULL);
+    } else if (strcmp(interface, zwp_pointer_constraints_v1_interface.name) == 0) {
+        g_constraints = wl_registry_bind(reg, name,
+            &zwp_pointer_constraints_v1_interface, 1);
     } else if (strcmp(interface, zwlr_layer_shell_v1_interface.name) == 0) {
         /* Use version 1 - we don't need any v2+ features */
         uint32_t bind_version = version < 1 ? version : 1;
@@ -299,6 +357,9 @@ static void print_usage(const char *prog) {
     fprintf(stderr, "  --namespace NAME      Layer surface namespace (default: test-layer)\n");
     fprintf(stderr, "  --keyboard MODE       Keyboard interactivity: exclusive|on_demand|none\n");
     fprintf(stderr, "                        (default: exclusive)\n");
+    fprintf(stderr, "  --constrain MODE      Persistent pointer constraint: lock|confine\n");
+    fprintf(stderr, "  --constraint-marker P Append constraint events to P\n");
+    fprintf(stderr, "  SIGUSR1 drops keyboard interactivity. SIGUSR2 requests exclusive.\n");
     fprintf(stderr, "  --pointer-marker PATH Write \"entered\\n\" to PATH on wl_pointer.enter\n");
     fprintf(stderr, "  --anchor EDGES        Comma-separated anchor edges: top,bottom,left,right\n");
     fprintf(stderr, "                        (default: unanchored; compositor chooses position)\n");
@@ -328,6 +389,14 @@ int main(int argc, char *argv[]) {
                 print_usage(argv[0]);
                 return 1;
             }
+        } else if (strcmp(argv[i], "--constrain") == 0 && i + 1 < argc) {
+            g_constraint_mode = argv[++i];
+            if (strcmp(g_constraint_mode, "lock") && strcmp(g_constraint_mode, "confine")) {
+                print_usage(argv[0]);
+                return 1;
+            }
+        } else if (strcmp(argv[i], "--constraint-marker") == 0 && i + 1 < argc) {
+            g_constraint_marker = argv[++i];
         } else if (strcmp(argv[i], "--color") == 0 && i + 1 < argc) {
             g_color = (uint32_t)strtoul(argv[++i], NULL, 16);
         } else if (strcmp(argv[i], "--layer") == 0 && i + 1 < argc) {
@@ -380,9 +449,18 @@ int main(int argc, char *argv[]) {
         }
     }
 
-    /* Setup signal handlers */
-    signal(SIGTERM, handle_signal);
-    signal(SIGINT, handle_signal);
+    sigset_t mask;
+    sigemptyset(&mask);
+    sigaddset(&mask, SIGUSR1);
+    sigaddset(&mask, SIGUSR2);
+    sigaddset(&mask, SIGTERM);
+    sigaddset(&mask, SIGINT);
+    if (sigprocmask(SIG_BLOCK, &mask, NULL) < 0) return 1;
+    int signal_fd = signalfd(-1, &mask, SFD_CLOEXEC | SFD_NONBLOCK);
+    if (signal_fd < 0) {
+        perror("signalfd");
+        return 1;
+    }
 
     /* Connect to Wayland */
     g_display = wl_display_connect(NULL);
@@ -395,7 +473,8 @@ int main(int argc, char *argv[]) {
     wl_registry_add_listener(g_registry, &registry_listener, NULL);
     wl_display_roundtrip(g_display);
 
-    if (!g_compositor || !g_shm || !g_layer_shell) {
+    if (!g_compositor || !g_shm || !g_layer_shell
+            || (g_constraint_mode && (!g_constraints || !g_seat))) {
         fprintf(stderr, "Missing required Wayland globals\n");
         return 1;
     }
@@ -425,12 +504,42 @@ int main(int argc, char *argv[]) {
     fprintf(stderr, "[test-layer-client] running (namespace=%s, keyboard=%d)\n",
         g_namespace, g_keyboard_mode);
 
-    /* Event loop */
-    while (g_running && wl_display_dispatch(g_display) != -1) {
-        /* keep running */
+    while (g_running) {
+        if (wl_display_dispatch_pending(g_display) < 0) break;
+        if (wl_display_flush(g_display) < 0 && errno != EAGAIN) break;
+        struct pollfd fds[] = {
+            { .fd = wl_display_get_fd(g_display), .events = POLLIN },
+            { .fd = signal_fd, .events = POLLIN },
+        };
+        if (poll(fds, 2, -1) < 0) {
+            if (errno == EINTR) continue;
+            break;
+        }
+        if (fds[0].revents & (POLLERR | POLLHUP)) break;
+        if ((fds[0].revents & POLLIN) && wl_display_dispatch(g_display) < 0) break;
+        if (fds[1].revents & POLLIN) {
+            struct signalfd_siginfo info;
+            while (read(signal_fd, &info, sizeof(info)) == sizeof(info)) {
+                if (info.ssi_signo == SIGTERM || info.ssi_signo == SIGINT) {
+                    g_running = false;
+                } else {
+                    g_keyboard_mode = info.ssi_signo == SIGUSR1
+                        ? ZWLR_LAYER_SURFACE_V1_KEYBOARD_INTERACTIVITY_NONE
+                        : ZWLR_LAYER_SURFACE_V1_KEYBOARD_INTERACTIVITY_EXCLUSIVE;
+                    zwlr_layer_surface_v1_set_keyboard_interactivity(
+                        g_layer_surface, g_keyboard_mode);
+                    wl_surface_commit(g_surface);
+                }
+            }
+        }
     }
+    close(signal_fd);
 
     fprintf(stderr, "[test-layer-client] shutting down\n");
+
+    if (g_lock) zwp_locked_pointer_v1_destroy(g_lock);
+    if (g_confine) zwp_confined_pointer_v1_destroy(g_confine);
+    if (g_constraints) zwp_pointer_constraints_v1_destroy(g_constraints);
 
     /* Cleanup */
     if (g_layer_surface) zwlr_layer_surface_v1_destroy(g_layer_surface);

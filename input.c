@@ -80,12 +80,6 @@ static bool gesture_pinch_consumed = false;
 static bool gesture_hold_consumed = false;
 
 /* Forward declarations */
-void axisnotify(struct wl_listener *listener, void *data);
-void buttonpress(struct wl_listener *listener, void *data);
-void cursorframe(struct wl_listener *listener, void *data);
-void motionrelative(struct wl_listener *listener, void *data);
-void motionabsolute(struct wl_listener *listener, void *data);
-void inputdevice(struct wl_listener *listener, void *data);
 static void tabletnotifyaxis(struct wl_listener *listener, void *data);
 static void tabletnotifyproximity(struct wl_listener *listener, void *data);
 static void tabletnotifytip(struct wl_listener *listener, void *data);
@@ -100,9 +94,6 @@ static void touchnotifymotion(struct wl_listener *listener, void *data);
 static void touchnotifyup(struct wl_listener *listener, void *data);
 static void touchnotifycancel(struct wl_listener *listener, void *data);
 static void touchnotifyframe(struct wl_listener *listener, void *data);
-void virtualkeyboard(struct wl_listener *listener, void *data);
-void virtualpointer(struct wl_listener *listener, void *data);
-void createpointerconstraint(struct wl_listener *listener, void *data);
 static void createswitch(struct wlr_switch *sw);
 void gestureswipebegin(struct wl_listener *listener, void *data);
 void gestureswipeupdate(struct wl_listener *listener, void *data);
@@ -112,7 +103,6 @@ void gesturepinchupdate(struct wl_listener *listener, void *data);
 void gesturepinchend(struct wl_listener *listener, void *data);
 void gestureholdbegin(struct wl_listener *listener, void *data);
 void gestureholdend(struct wl_listener *listener, void *data);
-void destroypointerconstraint(struct wl_listener *listener, void *data);
 static void destroytrackedpointer(struct wl_listener *listener, void *data);
 static void destroytrackedtablet(struct wl_listener *listener, void *data);
 static void destroytrackedtabletpad(struct wl_listener *listener, void *data);
@@ -120,38 +110,19 @@ static void destroytrackedtablettool(struct wl_listener *listener, void *data);
 static void destroytrackedtouch(struct wl_listener *listener, void *data);
 static void destroyswitchtracker(struct wl_listener *listener, void *data);
 static void switchevent(struct wl_listener *listener, void *data);
-void motionnotify(uint32_t time, struct wlr_input_device *device, double dx, double dy,
-		double dx_unaccel, double dy_unaccel);
-void pointerfocus(Client *c, struct wlr_surface *surface, double sx, double sy,
-		uint32_t time);
-int keybinding(uint32_t mods, uint32_t keycode, xkb_keysym_t sym, xkb_keysym_t base_sym, bool is_keypress);
-void createkeyboard(struct wlr_keyboard *keyboard);
-KeyboardGroup *createkeyboardgroup(void);
-void createpointer(struct wlr_pointer *pointer);
 static void createtablet(struct wlr_tablet *tablet);
 static void createtabletpad(struct wlr_tablet_pad *pad);
 static void createtouch(struct wlr_touch *touch);
-void cursorconstrain(struct wlr_pointer_constraint_v1 *constraint);
-void cursorwarptohint(void);
 static void apply_input_settings_to_device(struct wlr_input_device *base);
 void mouse_emit_leave(lua_State *L);
 void mouse_emit_client_enter(lua_State *L, client_t *c);
 void mouse_emit_drawin_enter(lua_State *L, drawin_t *d);
-void setcursor(struct wl_listener *listener, void *data);
-void setcursorshape(struct wl_listener *listener, void *data);
-void keypress(struct wl_listener *listener, void *data);
-void keypressmod(struct wl_listener *listener, void *data);
-int keyrepeat(void *data);
-bool drawin_accepts_input_at(drawin_t *d, double local_x, double local_y);
 void setpsel(struct wl_listener *listener, void *data);
 void setsel(struct wl_listener *listener, void *data);
 void requeststartdrag(struct wl_listener *listener, void *data);
 void startdrag(struct wl_listener *listener, void *data);
 void destroydrag(struct wl_listener *listener, void *data);
 void destroydragicon(struct wl_listener *listener, void *data);
-void xytonode(double x, double y, struct wlr_surface **psurface,
-		Client **pc, LayerSurface **pl, drawin_t **pd, drawable_t **pdrawable,
-		double *nx, double *ny);
 
 /* Tracked pointer device for runtime libinput configuration */
 typedef struct {
@@ -535,7 +506,7 @@ buttonpress(struct wl_listener *listener, void *data)
 
 	/* If mousegrabber is active, route event to Lua callback */
 	if (event_handle_mousegrabber(cursor->x, cursor->y, 0))
-		return; /* Don't process event further */
+		goto release;
 
 	switch (event->state) {
 	case WL_POINTER_BUTTON_STATE_PRESSED: {
@@ -659,7 +630,7 @@ buttonpress(struct wl_listener *listener, void *data)
 		 * one inside the panel goes nowhere else, like its press. */
 		declare_inspector_pointer(event->button == BTN_LEFT ? 0 : -1, false);
 		if (declare_inspector_covers(cursor->x, cursor->y))
-			return;
+			goto release;
 
 		/* Check if a drawin was released over */
 		if (!session_is_locked()) {
@@ -677,7 +648,7 @@ buttonpress(struct wl_listener *listener, void *data)
 				/* Emit button release signals (AwesomeWM-compatible) */
 				if (luaA_drawin_button_check(drawin, rel_x, rel_y, event->button,
 				                             CLEANMASK(mods), false)) {
-					return;
+					goto release;
 				}
 			} else if (c) {
 				/* Released on client - check client button bindings */
@@ -702,7 +673,7 @@ buttonpress(struct wl_listener *listener, void *data)
 				if (luaA_root_button_check(L, event->button, CLEANMASK(mods),
 				                           cursor->x, cursor->y, false) > 0) {
 					/* Root button release binding matched and handled */
-					return;
+					goto release;
 				}
 			}
 		}
@@ -714,14 +685,22 @@ buttonpress(struct wl_listener *listener, void *data)
 	 * Lua callback processing (e.g., awful.mouse.client.move() grabbed it).
 	 * This ensures symmetric handling: if the press was consumed by starting
 	 * a mousegrabber, the client never sees either press or release. */
-	if (mousegrabber_isrunning()) {
-		return;
-	}
+	if (mousegrabber_isrunning())
+		goto release;
 
 	/* If the event wasn't handled by the compositor, notify the client with
 	 * pointer focus that a button press has occurred */
 	wlr_seat_pointer_notify_button(seat,
 			event->time_msec, event->button, event->state);
+	return;
+
+release:
+	/* A release whose press reached the seat must reach it too, or wlroots
+	 * keeps the button held and a drag never ends. wlroots drops a release
+	 * whose press it never saw. */
+	if (event->state == WL_POINTER_BUTTON_STATE_RELEASED)
+		wlr_seat_pointer_notify_button(seat,
+				event->time_msec, event->button, event->state);
 }
 
 void
@@ -876,10 +855,17 @@ motionnotify(uint32_t time, struct wlr_input_device *device, double dx, double d
 		 * the "last constraint wins" bug breaking games like Minecraft. */
 
 		if (active_constraint) {
-			toplevel_from_wlr_surface(active_constraint->surface, &c, NULL);
-			if (c && active_constraint->surface == seat->pointer_state.focused_surface) {
-				sx = cursor->x - c->geometry.x - client_border(c);
-				sy = cursor->y - c->geometry.y - client_border(c);
+			toplevel_from_wlr_surface(active_constraint->surface, &c, &l);
+			if ((c || l) && active_constraint->surface == seat->pointer_state.focused_surface) {
+				/* Layer surfaces can hold constraints too, e.g., the
+				 * capture surface of lan-mouse at the screen edge. */
+				if (l) {
+					sx = cursor->x - l->geom.x - l->mon->m.x;
+					sy = cursor->y - l->geom.y - l->mon->m.y;
+				} else {
+					sx = cursor->x - c->geometry.x - client_border(c);
+					sy = cursor->y - c->geometry.y - client_border(c);
+				}
 				if (wlr_region_confine(&active_constraint->region, sx, sy,
 						sx + dx, sy + dy, &sx_confined, &sy_confined)) {
 					dx = sx_confined - sx;

@@ -57,11 +57,6 @@ extern struct wlr_xcursor_manager *cursor_mgr;
 extern struct wlr_seat *seat;
 extern char* selected_root_cursor;
 
-/* External function to find surface at coordinates (from somewm.c) */
-extern void xytonode(double x, double y, struct wlr_surface **psurface,
-	Client **pc, LayerSurface **pl, drawin_t **pd, drawable_t **pdrawable,
-	double *nx, double *ny);
-
 /* Property miss handlers (AwesomeWM compatibility) */
 static int miss_index_handler = LUA_REFNIL;
 static int miss_newindex_handler = LUA_REFNIL;

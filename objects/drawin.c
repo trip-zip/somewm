@@ -25,11 +25,8 @@ lua_class_t drawin_class;
 
 /* NOTE: LUA_OBJECT_FUNCS is now in drawin.h, not here */
 
-/* Forward declarations for signal array helpers (shared with screen.c) */
+/* Forward declarations */
 static void drawin_set_visible(lua_State *L, int udx, bool v);
-
-extern void signal_array_init(signal_array_t *arr);
-extern void signal_array_wipe(signal_array_t *arr);
 
 /* An ontop bar uses a lower band than a plain ontop wibox. Desktop and
  * splash types take precedence over ontop. Notification type takes

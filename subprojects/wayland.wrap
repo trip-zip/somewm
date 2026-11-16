@@ -1,0 +1,11 @@
+[wrap-file]
+directory = wayland-1.24.0
+source_url = https://gitlab.freedesktop.org/wayland/wayland/-/releases/1.24.0/downloads/wayland-1.24.0.tar.xz
+source_filename = wayland-1.24.0.tar.xz
+source_hash = 82892487a01ad67b334eca83b54317a7c86a03a89cfadacfef5211f11a5d0536
+source_fallback_url = https://github.com/mesonbuild/wrapdb/releases/download/wayland_1.24.0-2/wayland-1.24.0.tar.xz
+wrapdb_version = 1.24.0-2
+
+[provide]
+dependency_names = wayland-client, wayland-cursor, wayland-egl, wayland-server
+program_names = wayland-scanner

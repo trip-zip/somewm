@@ -27,6 +27,16 @@
 #include <lua.h>
 #include <lauxlib.h>
 
+/* Exported on purpose. somewm resolves the lgi_guard_* functions with
+ * dlsym(), and the *_impl functions are the versioned libffi symbols. */
+int lgi_guard_live_count(int generation);
+void lgi_guard_bump_generation(void);
+void lgi_guard_mark_ready(void);
+ffi_status ffi_prep_closure_loc_impl(ffi_closure *closure, ffi_cif *cif,
+	void (*fun)(ffi_cif *, void *, void **, void *),
+	void *user_data, void *codeloc);
+void ffi_closure_free_impl(void *closure);
+
 /* ================================================================
  * Lgi internal structures (from lgi/callable.c, version 0.9.2)
  * Replicated here to validate closure state before dispatch.

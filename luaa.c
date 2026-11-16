@@ -276,7 +276,7 @@ luaA_class_newindex_miss_property(lua_State *L, lua_object_t *obj)
 /** Cleanup function called before exit or exec.
  * \param restart True if we're about to restart (exec self).
  */
-void
+static void
 awesome_atexit(bool restart)
 {
     /* Reset signal handlers */
@@ -1451,6 +1451,48 @@ luaA_awesome_surface_pixels(lua_State *L)
 	return 1;
 }
 
+/** Append a cairo context's current path to a Clay shape ops table: each
+ * element's cairo_path_data_type_t, then its points offset by (dx, dy).
+ * lgi's cairo.Path iteration costs tens of microseconds per element.
+ * \param native The context's _native pointer.
+ * \param ops The table to append to.
+ * \param dx, dy The offset, default 0.
+ */
+static int
+luaA_awesome_path_ops(lua_State *L)
+{
+	cairo_t *cr = lua_touserdata(L, 1);
+	double dx = luaL_optnumber(L, 3, 0), dy = luaL_optnumber(L, 4, 0);
+	cairo_path_t *path;
+	int n;
+
+	if (!cr)
+		return luaL_error(L, "not a cairo context");
+	luaL_checktype(L, 2, LUA_TTABLE);
+	path = cairo_copy_path(cr);
+	if (path->status != CAIRO_STATUS_SUCCESS) {
+		cairo_status_t status = path->status;
+		cairo_path_destroy(path);
+		return luaL_error(L, "%s", cairo_status_to_string(status));
+	}
+	n = luaA_rawlen(L, 2);
+	for (int i = 0; i < path->num_data; i += path->data[i].header.length) {
+		const cairo_path_data_t *d = &path->data[i];
+		int points = d->header.type == CAIRO_PATH_CURVE_TO ? 3
+			: d->header.type == CAIRO_PATH_CLOSE_PATH ? 0 : 1;
+		lua_pushinteger(L, d->header.type);
+		lua_rawseti(L, 2, ++n);
+		for (int p = 1; p <= points; p++) {
+			lua_pushnumber(L, d[p].point.x + dx);
+			lua_rawseti(L, 2, ++n);
+			lua_pushnumber(L, d[p].point.y + dy);
+			lua_rawseti(L, 2, ++n);
+		}
+	}
+	cairo_path_destroy(path);
+	return 0;
+}
+
 /** Style the Clay debug inspector (declare.h), for somewm.inspector: a
  * table of six colors as {r, g, b, a} in 0-255 under bg, bg_alt, border,
  * fg, bg_selected and highlight, the panel width, and the font for entry 0
@@ -2369,6 +2411,7 @@ const luaL_Reg awesome_methods[] = {
 	{ "_clay_font", luaA_awesome_clay_font },
 	{ "_clay_measure", luaA_awesome_clay_measure },
 	{ "_surface_pixels", luaA_awesome_surface_pixels },
+	{ "_path_ops", luaA_awesome_path_ops },
 	{ "_inspector_style", luaA_awesome_inspector_style },
 	{ "_test_declare_order", luaA_awesome_test_declare_order },
 	{ "_test_widget_boxes", luaA_awesome_test_widget_boxes },

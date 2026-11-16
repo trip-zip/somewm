@@ -15,6 +15,7 @@ tests/bench/results/
 
 # Meson build
 build/
+build-distro/
 build-bench/
 builddir/
 # Each wrap unpacks into a directory here; only the .wrap files are tracked

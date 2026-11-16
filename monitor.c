@@ -61,19 +61,6 @@ static void output_committed(struct wl_listener *, void *);
 static int in_updatemons;
 static int updatemons_pending;
 
-/* forward declarations */
-void cleanupmon(struct wl_listener *listener, void *data);
-void closemon(Monitor *m);
-void createmon(struct wl_listener *listener, void *data);
-void gpureset(struct wl_listener *listener, void *data);
-void outputmgrapply(struct wl_listener *listener, void *data);
-void outputmgrapplyortest(struct wlr_output_configuration_v1 *config, int test);
-void outputmgrtest(struct wl_listener *listener, void *data);
-void powermgrsetmode(struct wl_listener *listener, void *data);
-void rendermon(struct wl_listener *listener, void *data);
-void requestmonstate(struct wl_listener *listener, void *data);
-void updatemons(struct wl_listener *listener, void *data);
-
 /* listener structs */
 struct wl_listener gpu_reset = {.notify = gpureset};
 struct wl_listener layout_change = {.notify = updatemons};

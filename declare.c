@@ -60,9 +60,6 @@
 #include "objects/drawin.h"
 #include "objects/screen.h"
 
-void luaA_drawin_set_solved_geometry(lua_State *L, drawin_t *drawin,
-        int x, int y, int width, int height);
-
 /* The output's Clay context plus the render_state its solved commands
  * reconcile into, and the readback the tree dump prints. */
 struct declared_host {
@@ -2946,7 +2943,8 @@ declare_attachment(drawin_t *d, Monitor *m)
     return true;
 }
 
-/* A nonempty notification position is one root float with flow children. */
+/* A nonempty notification position is one root float with flow children,
+ * on the workarea's corner like awful.placement's honor_workarea. */
 static void
 declare_notifications(Monitor *m)
 {
@@ -2966,7 +2964,7 @@ declare_notifications(Monitor *m)
 				.layoutDirection = CLAY_TOP_TO_BOTTOM, .childGap = first->attachment.gap,
 			},
 			.floating = {
-				.attachTo = CLAY_ATTACH_TO_ELEMENT_WITH_ID, .parentId = screen_root_id().id,
+				.attachTo = CLAY_ATTACH_TO_ELEMENT_WITH_ID, .parentId = workarea_id().id,
 				.attachPoints = { .parent = position, .element = position },
 				.offset = {first->attachment.x, first->attachment.y},
 				.zIndex = layer_band[LAYER_NOTIFICATION],
@@ -3283,7 +3281,7 @@ declare_drag_icon(Monitor *m)
 	uint64_t handle;
 	Clay_ElementDeclaration s;
 
-	if (!icon || !icon->data || !icon->surface->mapped
+	if (!icon || !icon->surface->mapped
 			|| xytomon(cursor->x, cursor->y) != m)
 		return;
 	handle = node_handle(drag_node);
@@ -3486,7 +3484,7 @@ seat_nodes_place(Monitor *m)
 	cursor_declared_y = (int)round(cursor->y);
 	cursor_declared_gen = cursor_image.gen;
 	struct wlr_drag_icon *icon = seat->drag ? seat->drag->icon : NULL;
-	if (icon && icon->data && icon->surface->mapped)
+	if (icon && icon->surface->mapped)
 		seat_node_place(&drag_node, m, DECLARE_KIND_DRAG, icon, LAYER_DRAG);
 	if (cursor_image.surface)
 		seat_node_place(&cursor_surface_node, m, DECLARE_KIND_CURSOR,
