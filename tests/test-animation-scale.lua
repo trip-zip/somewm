@@ -241,11 +241,16 @@ runner.run_async(function()
     text.font = 'Noto Sans Mono CJK KR 40'
     local bar = wibox {screen = s, x = 500, y = 300, width = 240, height = 100,
         visible = false, shadow = false, bg = '#202020', fg = '#e0e0e0', widget = text,
-        animation = {visible = {duration = 1, enter = 'scale'}}}
+        animation = {visible = {duration = 20, enter = 'scale'}}}
     local entered = 0
     text:connect_signal('mouse::enter', function() entered = entered + 1 end)
+    -- The screenshot and each pointer client can take seconds on a loaded
+    -- runner. The entrance outlasts them and is snapped to its end below.
     bar.visible = true
-    async.sleep(.3)
+    assert(async.wait_for_condition(function()
+        local mid = frame('WIBOX')
+        return mid and mid.scale >= .25
+    end, 10, .02), 'bar entrance did not reach a quarter scale')
     local function text_box()
         for line in dump():gmatch('[^\n]+') do
             if line:find('wibox.widget.textbox', 1, true) then return bounds(line, 'presented') or bounds(line, 'box') end
@@ -270,10 +275,12 @@ runner.run_async(function()
     move(p.x + 2, p.y + p.h / 2)
     assert(async.wait_for_condition(function() return entered > 0 end, .1, .005), 'widget missed scaled edge\n' .. dump())
     move(1200, 650)
-    async.sleep(.9)
+    animation.enabled = false
+    next_frame()
     local large = text_box()
     assert(small.w < large.w and small.h < large.h, 'textbox dump did not scale')
     assert(rows > 0 and rows < glyph_rows(shot()), 'glyph rows did not scale')
+    animation.enabled = true
     bar.visible = false
     async.sleep(.05)
 
