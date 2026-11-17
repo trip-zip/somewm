@@ -86,7 +86,10 @@ runner.run_async(function()
         end
     end
     -- A minimum wider than the output sizes the surface; the cell and WORKAREA keep theirs.
-    clients[1]:kill()
+    -- Five tiled clients also give the wide one a 638 wide cell, so the old one must be gone first.
+    local old=clients[1]
+    old:kill()
+    assert(async.wait_for_condition(function() return not old.valid end,5,0.02),'killed client stayed managed')
     reports[5]=os.tmpname()
     awful.spawn{binary,'FAIR_HINT_WIDE',reports[5],'1600',colors[1],'500'}
     local wide
