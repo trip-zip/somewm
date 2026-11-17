@@ -56,6 +56,7 @@
 #include <wlr/types/wlr_output_power_management_v1.h>
 #include <wlr/types/wlr_pointer.h>
 #include <wlr/types/wlr_pointer_gestures_v1.h>
+#include <wlr/types/wlr_keyboard_shortcuts_inhibit_v1.h>
 #include <wlr/types/wlr_pointer_constraints_v1.h>
 #include <wlr/types/wlr_presentation_time.h>
 #include <wlr/types/wlr_primary_selection.h>
@@ -254,6 +255,7 @@ static void createtablet(struct wlr_tablet *tablet);
 static void createtabletpad(struct wlr_tablet_pad *pad);
 static void createtouch(struct wlr_touch *touch);
 static void createpointerconstraint(struct wl_listener *listener, void *data);
+static void createshortcutsinhibitor(struct wl_listener *listener, void *data);
 static void createpopup(struct wl_listener *listener, void *data);
 void cursorconstrain(struct wlr_pointer_constraint_v1 *constraint);
 static void cursorframe(struct wl_listener *listener, void *data);
@@ -432,6 +434,7 @@ static struct wlr_output_power_manager_v1 *power_mgr;
 static struct wlr_foreign_toplevel_manager_v1 *foreign_toplevel_mgr;
 
 struct wlr_pointer_constraints_v1 *pointer_constraints;
+static struct wlr_keyboard_shortcuts_inhibit_manager_v1 *shortcuts_inhibit_mgr;
 static struct wlr_relative_pointer_manager_v1 *relative_pointer_mgr;
 static struct wlr_pointer_constraint_v1 *active_constraint;
 
@@ -478,6 +481,7 @@ static struct wl_listener new_input_device = {.notify = inputdevice};
 static struct wl_listener new_virtual_keyboard = {.notify = virtualkeyboard};
 static struct wl_listener new_virtual_pointer = {.notify = virtualpointer};
 static struct wl_listener new_pointer_constraint = {.notify = createpointerconstraint};
+static struct wl_listener new_shortcuts_inhibitor = {.notify = createshortcutsinhibitor};
 static struct wl_listener new_output = {.notify = createmon};
 static struct wl_listener new_xdg_toplevel = {.notify = createnotify};
 static struct wl_listener new_xdg_popup = {.notify = createpopup};
@@ -1433,6 +1437,7 @@ cleanuplisteners(void)
 	wl_list_remove(&new_virtual_keyboard.link);
 	wl_list_remove(&new_virtual_pointer.link);
 	wl_list_remove(&new_pointer_constraint.link);
+	wl_list_remove(&new_shortcuts_inhibitor.link);
 	wl_list_remove(&new_xdg_toplevel.link);
 	wl_list_remove(&new_xdg_decoration.link);
 	wl_list_remove(&new_xdg_popup.link);
@@ -3435,6 +3440,35 @@ createpointer(struct wlr_pointer *pointer)
 	wlr_cursor_attach_input_device(cursor, &pointer->base);
 }
 
+/* keyboard-shortcuts-inhibit-v1: lets a client (lan-mouse capture surface,
+ * VM viewer, remote desktop, nested compositor) receive key combos that
+ * would otherwise trigger compositor keybindings. Like sway, every inhibitor
+ * is activated right away; whether it applies is decided per key event by
+ * checking it against the surface that currently has keyboard focus. */
+static void
+createshortcutsinhibitor(struct wl_listener *listener, void *data)
+{
+	struct wlr_keyboard_shortcuts_inhibitor_v1 *inhibitor = data;
+	wlr_keyboard_shortcuts_inhibitor_v1_activate(inhibitor);
+}
+
+/* True if the surface with keyboard focus has an active shortcuts inhibitor. */
+static bool
+shortcuts_inhibited(void)
+{
+	struct wlr_surface *focused = seat->keyboard_state.focused_surface;
+	struct wlr_keyboard_shortcuts_inhibitor_v1 *inhibitor;
+
+	if (!focused || !shortcuts_inhibit_mgr)
+		return false;
+	wl_list_for_each(inhibitor, &shortcuts_inhibit_mgr->inhibitors, link) {
+		if (inhibitor->surface == focused && inhibitor->seat == seat
+				&& inhibitor->active)
+			return true;
+	}
+	return false;
+}
+
 void
 createpointerconstraint(struct wl_listener *listener, void *data)
 {
@@ -4787,6 +4821,12 @@ keybinding(uint32_t mods, uint32_t keycode, xkb_keysym_t sym, xkb_keysym_t base_
 	surface = seat->keyboard_state.focused_surface;
 	focused = surface ? some_client_from_surface(surface) : NULL;
 
+	/* A focused surface with an active keyboard-shortcuts-inhibitor gets the
+	 * keys instead of the Lua bindings. The hardcoded Ctrl-Alt bindings below
+	 * stay available as an escape hatch. */
+	if (shortcuts_inhibited())
+		goto hardcoded;
+
 	/* Check client-specific Lua key objects first (AwesomeWM pattern)
 	 * Client keybindings pass the client as argument to the "press" or "release" signal */
 	if (focused && luaA_client_key_check_and_emit(focused, CLEANMASK(mods), keycode, sym, base_sym, is_keypress))
@@ -4796,6 +4836,7 @@ keybinding(uint32_t mods, uint32_t keycode, xkb_keysym_t sym, xkb_keysym_t base_
 	if (luaA_key_check_and_emit(CLEANMASK(mods), keycode, sym, base_sym, is_keypress))
 		return 1;
 
+hardcoded:
 	/* Hardcoded VT switching (compositor-level, non-configurable)
 	 * These are standard Linux keybindings that must work even if Lua crashes.
 	 * VT switching allows recovering from compositor hangs/crashes via Ctrl-Alt-F2.
@@ -7334,6 +7375,9 @@ setup(void)
 
 	pointer_constraints = wlr_pointer_constraints_v1_create(dpy);
 	wl_signal_add(&pointer_constraints->events.new_constraint, &new_pointer_constraint);
+
+	shortcuts_inhibit_mgr = wlr_keyboard_shortcuts_inhibit_v1_create(dpy);
+	wl_signal_add(&shortcuts_inhibit_mgr->events.new_inhibitor, &new_shortcuts_inhibitor);
 
 	relative_pointer_mgr = wlr_relative_pointer_manager_v1_create(dpy);
 
