@@ -21,6 +21,7 @@
 #include <wlr/types/wlr_input_device.h>
 #include <wlr/types/wlr_keyboard.h>
 #include <wlr/types/wlr_keyboard_group.h>
+#include <wlr/types/wlr_keyboard_shortcuts_inhibit_v1.h>
 #include <wlr/types/wlr_layer_shell_v1.h>
 #include <wlr/types/wlr_pointer.h>
 #include <wlr/types/wlr_pointer_constraints_v1.h>
@@ -205,6 +206,7 @@ struct wl_listener new_input_device = {.notify = inputdevice};
 struct wl_listener new_virtual_keyboard = {.notify = virtualkeyboard};
 struct wl_listener new_virtual_pointer = {.notify = virtualpointer};
 struct wl_listener new_pointer_constraint = {.notify = createpointerconstraint};
+struct wl_listener new_shortcuts_inhibitor = {.notify = createshortcutsinhibitor};
 struct wl_listener gesture_swipe_begin = {.notify = gestureswipebegin};
 struct wl_listener gesture_swipe_update = {.notify = gestureswipeupdate};
 struct wl_listener gesture_swipe_end = {.notify = gestureswipeend};
@@ -1136,6 +1138,23 @@ pointerfocus(Client *c, struct wlr_surface *surface, double sx, double sy,
 	wlr_seat_pointer_notify_motion(seat, time, sx, sy);
 }
 
+/* True if the surface with keyboard focus has an active shortcuts inhibitor. */
+static bool
+shortcuts_inhibited(void)
+{
+	struct wlr_surface *focused = seat->keyboard_state.focused_surface;
+	struct wlr_keyboard_shortcuts_inhibitor_v1 *inhibitor;
+
+	if (!focused || !shortcuts_inhibit_mgr)
+		return false;
+	wl_list_for_each(inhibitor, &shortcuts_inhibit_mgr->inhibitors, link) {
+		if (inhibitor->surface == focused && inhibitor->seat == seat
+				&& inhibitor->active)
+			return true;
+	}
+	return false;
+}
+
 int
 keybinding(uint32_t mods, uint32_t keycode, xkb_keysym_t sym, xkb_keysym_t base_sym, bool is_keypress)
 {
@@ -1159,6 +1178,12 @@ keybinding(uint32_t mods, uint32_t keycode, xkb_keysym_t sym, xkb_keysym_t base_
 	surface = seat->keyboard_state.focused_surface;
 	focused = surface ? some_client_from_surface(surface) : NULL;
 
+	/* A focused surface with an active keyboard-shortcuts-inhibitor gets the
+	 * keys instead of the Lua bindings. The hardcoded Ctrl-Alt bindings below
+	 * stay available as an escape hatch. */
+	if (shortcuts_inhibited())
+		goto hardcoded;
+
 	/* Check client-specific Lua key objects first (AwesomeWM pattern)
 	 * Client keybindings pass the client as argument to the "press" or "release" signal */
 	if (focused && luaA_client_key_check_and_emit(focused, CLEANMASK(mods), keycode, sym, base_sym, is_keypress))
@@ -1168,6 +1193,7 @@ keybinding(uint32_t mods, uint32_t keycode, xkb_keysym_t sym, xkb_keysym_t base_
 	if (luaA_key_check_and_emit(CLEANMASK(mods), keycode, sym, base_sym, is_keypress))
 		return 1;
 
+hardcoded:
 	/* Hardcoded VT switching (compositor-level, non-configurable)
 	 * These are standard Linux keybindings that must work even if Lua crashes.
 	 * VT switching allows recovering from compositor hangs/crashes via Ctrl-Alt-F2.
@@ -1358,6 +1384,18 @@ keyrepeat(void *data)
 		keybinding(group->mods, group->keycode, group->keysyms[i], group->base_sym, true);
 
 	return 0;
+}
+
+/* keyboard-shortcuts-inhibit-v1: lets a client (lan-mouse capture surface,
+ * VM viewer, remote desktop, nested compositor) receive key combos that
+ * would otherwise trigger compositor keybindings. Like sway, every inhibitor
+ * is activated right away; whether it applies is decided per key event by
+ * checking it against the surface that currently has keyboard focus. */
+void
+createshortcutsinhibitor(struct wl_listener *listener, void *data)
+{
+	struct wlr_keyboard_shortcuts_inhibitor_v1 *inhibitor = data;
+	wlr_keyboard_shortcuts_inhibitor_v1_activate(inhibitor);
 }
 
 void
