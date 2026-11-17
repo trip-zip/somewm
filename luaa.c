@@ -1986,6 +1986,9 @@ reset_all_idle_timers()
 void
 some_idle_timers_set_inhibit(bool inhibit)
 {
+	if (inhibit == idle_timers_inhibited)
+		return;
+
 	idle_timers_inhibited = inhibit;
 	reset_all_idle_timers();
 }

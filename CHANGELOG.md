@@ -29,6 +29,7 @@ All notable changes to somewm will be documented in this file.
 
 ### Fixed
 
+- Idle timeouts set with `awesome.set_idle_timeout` fire again while widgets or windows keep redrawing.
 - Rounded window borders remain intact with square content corners. Rounded content no longer leaves a colored fringe along borderless window edges or titlebars.
 - Removing a fake screen moves its clients to the screen under them.
 - A hot reload with a client whose `shape` is a function no longer ends the session.
