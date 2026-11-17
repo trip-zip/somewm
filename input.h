@@ -60,6 +60,9 @@ void keypress(struct wl_listener *listener, void *data);
 void keypressmod(struct wl_listener *listener, void *data);
 int keyrepeat(void *data);
 
+/* Keyboard shortcuts inhibit */
+void createshortcutsinhibitor(struct wl_listener *listener, void *data);
+
 /* Pointer constraints */
 void createpointerconstraint(struct wl_listener *listener, void *data);
 void destroypointerconstraint(struct wl_listener *listener, void *data);
@@ -96,6 +99,7 @@ extern struct wl_listener new_input_device;
 extern struct wl_listener new_virtual_keyboard;
 extern struct wl_listener new_virtual_pointer;
 extern struct wl_listener new_pointer_constraint;
+extern struct wl_listener new_shortcuts_inhibitor;
 extern struct wl_listener gesture_swipe_begin;
 extern struct wl_listener gesture_swipe_update;
 extern struct wl_listener gesture_swipe_end;

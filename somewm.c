@@ -45,6 +45,7 @@
 #include <wlr/types/wlr_output_layout.h>
 #include <wlr/types/wlr_output_management_v1.h>
 #include <wlr/types/wlr_output_power_management_v1.h>
+#include <wlr/types/wlr_keyboard_shortcuts_inhibit_v1.h>
 #include <wlr/types/wlr_pointer_constraints_v1.h>
 #include <wlr/types/wlr_relative_pointer_v1.h>
 #include <wlr/types/wlr_pointer_gestures_v1.h>
@@ -145,6 +146,7 @@ struct wlr_foreign_toplevel_manager_v1 *foreign_toplevel_mgr;
 
 struct wlr_pointer_constraints_v1 *pointer_constraints;
 struct wlr_relative_pointer_manager_v1 *relative_pointer_mgr;
+struct wlr_keyboard_shortcuts_inhibit_manager_v1 *shortcuts_inhibit_mgr;
 struct wlr_pointer_constraint_v1 *active_constraint;
 
 struct wlr_cursor *cursor;
@@ -302,6 +304,7 @@ cleanuplisteners(void)
 	wl_list_remove(&new_virtual_keyboard.link);
 	wl_list_remove(&new_virtual_pointer.link);
 	wl_list_remove(&new_pointer_constraint.link);
+	wl_list_remove(&new_shortcuts_inhibitor.link);
 	wl_list_remove(&new_xdg_toplevel.link);
 	wl_list_remove(&new_xdg_decoration.link);
 	wl_list_remove(&new_xdg_popup.link);
@@ -886,6 +889,9 @@ setup(void)
 
 	pointer_constraints = wlr_pointer_constraints_v1_create(dpy);
 	wl_signal_add(&pointer_constraints->events.new_constraint, &new_pointer_constraint);
+
+	shortcuts_inhibit_mgr = wlr_keyboard_shortcuts_inhibit_v1_create(dpy);
+	wl_signal_add(&shortcuts_inhibit_mgr->events.new_inhibitor, &new_shortcuts_inhibitor);
 
 	relative_pointer_mgr = wlr_relative_pointer_manager_v1_create(dpy);
 
