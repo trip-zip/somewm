@@ -10,6 +10,22 @@ local pointer = assert(utils.binary_or_skip('./build-test/test-virtual-pointer-c
 local s = screen[1]
 runner.run_async(function()
     local clients, reports, failures = {}, {}, {}
+    -- Solves, then waits until every client from `first` on fills the layout's
+    -- area inside `gap`. Returns that area. The asserts after it report a miss.
+    local function settle(kind, gap, first)
+        local area
+        utils.wait_for_solve(s)
+        async.wait_for_condition(function()
+            area = kind == 'max' and s.workarea or s.geometry
+            for i = (first or 0) + 1, #clients do
+                local g = clients[i]:geometry()
+                if g.x ~= area.x + gap or g.y ~= area.y + gap or g.width + 2 + 2*gap ~= area.width
+                    or g.height + 2 + 2*gap ~= area.height then return false end
+            end
+            return true
+        end, 2, 0.02)
+        return area
+    end
     local colors = {'ffcc0000', 'ff00cc00', 'ff0000cc'}
     local top = awful.wibar {screen=s, position='top', height=32, bg='#777777'}
     top.widget = wibox.container.background()
@@ -37,9 +53,8 @@ runner.run_async(function()
                 s.selected_tag.gap_single_client = true
                 for _, height in ipairs {32, 48} do
                     top.height = height
-                    async.sleep(0.12)
-                    local area = kind == 'max' and s.workarea or s.geometry
                     local name = string.format('%s-%d-gap%d-bar%d', kind, count, gap, height)
+                    local area = settle(kind, gap)
                     local dump = awesome._clay_tree(s)
                     if not dump:find('derived 0', 1, true) then failures[#failures+1] = name end
                     local dir = os.getenv('SOMEWM_EXAMPLE_EVIDENCE')
@@ -60,7 +75,7 @@ runner.run_async(function()
             for i, c in ipairs(clients) do
                 client.focus = c
                 c:raise()
-                async.sleep(0.08)
+                utils.wait_for_solve(s)
                 local g = c:geometry()
                 local x,y = g.x + 100, g.y + 100
                 example.wait_pixel(x,y,'#' .. colors[i]:sub(3))
@@ -88,8 +103,7 @@ runner.run_async(function()
         s.selected_tag.layout = kind == 'max' and awful.layout.suit.max or awful.layout.suit.max.fullscreen
         s.selected_tag.gap = 8
         s.selected_tag.gap_single_client = false
-        async.sleep(0.12)
-        local area = kind == 'max' and s.workarea or s.geometry
+        local area = settle(kind, 0)
         for _, c in ipairs(clients) do
             local g = c:geometry()
             assert(g.x == area.x and g.y == area.y and g.width + 2 == area.width and g.height + 2 == area.height,
@@ -103,7 +117,7 @@ runner.run_async(function()
         s.selected_tag.layout = kind == 'max' and awful.layout.suit.max or awful.layout.suit.max.fullscreen
         for _, gap in ipairs {0, 8} do
             s.selected_tag.gap, s.selected_tag.gap_single_client = gap, true
-            async.sleep(0.12)
+            settle(kind, gap, 1)
             local dump = awesome._clay_tree(s)
             local line = assert(dump:match('SURFACE MAX_1 [^\n]+'))
             local width = tonumber(line:match('box %-?%d+,%-?%d+ (%d+)x'))
@@ -115,7 +129,7 @@ runner.run_async(function()
         end
     end
     s.inspector = true
-    async.sleep(0.15)
+    utils.wait_for_solve(s)
     example.save('max-layout-inspector',awesome._clay_tree(s))
     s.inspector = false
     for _,c in ipairs(clients) do c:kill() end
