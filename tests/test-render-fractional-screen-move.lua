@@ -48,9 +48,9 @@ runner.run_async(function()
         assert(c.screen == s and c:isvisible(), 'client did not migrate')
         local g = c:geometry()
         assert(g.width == 240 and g.height == 160, 'logical allocation changed')
-        local f = assert(io.open(reports[1 + move % 3]))
-        local configured = f:read('*a'); f:close()
-        assert(configured == '240 160\n', 'client configure: '..configured)
+        -- The client writes its report after the compositor has moved it.
+        local w, h = utils.wait_for_configure(reports[1 + move % 3], '240', '160')
+        assert(w == '240' and h == '160', 'client configure: '..tostring(w)..' '..tostring(h))
         -- Read the composited client, independently of the tree dump.
         -- screen.content is the screen's logical size.
         local im = surface(s.content)
