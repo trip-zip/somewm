@@ -132,7 +132,12 @@ runner.run_steps({
         local surface = line(dump, 'SURFACE')
         assert(surface and surface:find('w=fixed(992) protocol h=fixed(608) protocol', 1, true),
             'the surface leaf is not at the committed size yet: ' .. tostring(surface))
-        assert(line(dump, 'CONFIGURE'), 'no configure probe in the dump')
+        -- The probe fills the frame, and the frame takes the committed size a
+        -- frame after the surface leaf does.
+        local probe_line, probe = line(dump, 'CONFIGURE')
+        assert(probe_line, 'no configure probe in the dump')
+        assert(probe.width == 992 and probe.height == 608,
+            'the configure probe has not followed the frame yet: ' .. probe_line)
         local g = c:geometry()
         assert(g.x == x and g.y == y and g.width == 992 and g.height == 608 + bar,
             string.format('geometry %d,%d %dx%d', g.x, g.y, g.width, g.height))
