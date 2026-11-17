@@ -64,3 +64,12 @@ jobs:
       - name: Print failure log
         if: failure()
         run: cat "build-distro/$leg.log"
+      - name: Upload test logs
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: distro-logs-${{ matrix.leg }}
+          path: |
+            build-distro/${{ matrix.leg }}.log
+            build-distro/${{ matrix.leg }}-*
+          if-no-files-found: ignore
