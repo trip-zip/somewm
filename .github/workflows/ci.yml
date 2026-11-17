@@ -109,8 +109,16 @@ jobs:
         run: make test-unit
 
       - name: Run integration tests (non-spawning only)
-        run: timeout 1500 make test-ci
+        run: SOMEWM_TEST_LOG_DIR="$GITHUB_WORKSPACE/build-test/integration-logs" timeout 1500 make test-ci
         timeout-minutes: 30
+
+      - name: Upload integration test logs
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: integration-logs-${{ matrix.lua.name }}
+          path: build-test/integration-logs/
+          if-no-files-found: ignore
 
   # The restart suite is 38 serial compositor starts, about 250s. Its own job
   # runs it beside the integration step instead of after it.
