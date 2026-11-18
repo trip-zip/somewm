@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 """X11 test helper: create an override_redirect window (simulates popup/menu).
 
-Usage: python3 x11_override_redirect.py <WM_CLASS> [x y width height]
+Usage: python3 x11_override_redirect.py <WM_CLASS> [x y width height [type]]
+
+type sets _NET_WM_WINDOW_TYPE, e.g. POPUP_MENU or TOOLTIP.
 
 Creates an override_redirect=True window, which bypasses the window manager.
 This is what Wine, Steam, and other X11 apps use for popup menus and tooltips.
@@ -82,6 +84,15 @@ x11.XSetClassHint.restype = ctypes.c_int
 x11.XStoreName.argtypes = [Display_p, Window, ctypes.c_char_p]
 x11.XStoreName.restype = ctypes.c_int
 
+x11.XInternAtom.argtypes = [Display_p, ctypes.c_char_p, ctypes.c_int]
+x11.XInternAtom.restype = Atom
+
+x11.XChangeProperty.argtypes = [
+    Display_p, Window, Atom, Atom, ctypes.c_int, ctypes.c_int,
+    ctypes.c_void_p, ctypes.c_int,
+]
+x11.XChangeProperty.restype = ctypes.c_int
+
 x11.XMapWindow.argtypes = [Display_p, Window]
 x11.XMapWindow.restype = ctypes.c_int
 
@@ -100,6 +111,8 @@ CWOverrideRedirect = (1 << 9)   # valuemask bit for override_redirect
 CWBackPixel = (1 << 1)          # valuemask bit for background_pixel
 InputOutput = 1
 CopyFromParent = 0
+XA_ATOM = 4
+PropModeReplace = 0
 
 # --- Globals ---
 
@@ -117,7 +130,8 @@ def main():
     global dpy, win
 
     if len(sys.argv) < 2:
-        print("Usage: %s <WM_CLASS> [x y width height]" % sys.argv[0], file=sys.stderr)
+        print("Usage: %s <WM_CLASS> [x y width height [type]]" % sys.argv[0],
+              file=sys.stderr)
         sys.exit(1)
 
     wm_class = sys.argv[1]
@@ -125,6 +139,7 @@ def main():
     wy = int(sys.argv[3]) if len(sys.argv) > 3 else 100
     ww = int(sys.argv[4]) if len(sys.argv) > 4 else 200
     wh = int(sys.argv[5]) if len(sys.argv) > 5 else 150
+    wtype = sys.argv[6] if len(sys.argv) > 6 else None
 
     # Open display
     dpy = x11.XOpenDisplay(None)
@@ -160,6 +175,11 @@ def main():
 
     # Set title
     x11.XStoreName(dpy, win, wm_class.encode())
+
+    if wtype:
+        atom = Atom(x11.XInternAtom(dpy, ("_NET_WM_WINDOW_TYPE_" + wtype).encode(), 0))
+        x11.XChangeProperty(dpy, win, x11.XInternAtom(dpy, b"_NET_WM_WINDOW_TYPE", 0),
+                            XA_ATOM, 32, PropModeReplace, ctypes.byref(atom), 1)
 
     # Map window
     x11.XMapWindow(dpy, win)
