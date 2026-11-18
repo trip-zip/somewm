@@ -52,9 +52,13 @@ runner.run_async(function()
                 async.sleep(.2)
                 check_size(380, 90)
                 if animated then
-                    local line = assert(frame(s))
-                    local alpha = tonumber(line:match('fade_alpha ([%d.]+)'))
-                    assert(alpha and alpha > 0 and alpha < 1, 'entrance did not fade: ' .. line)
+                    -- The first frame of the entrance dumps fade_alpha 1.
+                    local line
+                    assert(async.wait_for_condition(function()
+                        line = frame(s)
+                        local alpha = line and tonumber(line:match('fade_alpha ([%d.]+)'))
+                        return alpha and alpha > 0 and alpha < 1
+                    end, 2, .02), 'entrance did not fade: ' .. tostring(line))
                 end
                 resize(460, 110)
                 resize(220, 70)
