@@ -2,8 +2,20 @@
 --- Input device configuration for libinput and keyboard settings.
 --
 -- This module provides configuration for pointer/touchpad devices (via libinput)
--- and keyboard settings (XKB layout, repeat rate). These are somewm-specific
--- additions since AwesomeWM on X11 delegates input configuration to xinput.
+-- and keyboard settings (XKB layout, repeat rate). Per-device input rules
+-- (awful.input.rules) can override libinput settings for pointer devices and
+-- the XKB model of individual keyboards (properties.xkb_model).
+-- Model overrides use separate keyboard groups. Layout selection is shared,
+-- but held modifiers are local to each group. Rules match device-name
+-- substrings, not numeric vendor/product IDs. For example:
+--
+--    awful.input.rules = {
+--        { rule = { type = "keyboard", name = "Microsoft" }, properties = {
+--            xkb_model = "microsoftmult",
+--        } },
+--    }
+--
+-- These are somewm-specific additions since AwesomeWM on X11 delegates input configuration to xinput.
 --
 -- @author somewm contributors
 -- @copyright 2025 somewm contributors
