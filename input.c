@@ -342,6 +342,14 @@ gestureholdend(struct wl_listener *listener, void *data)
 	gesture_hold_consumed = false;
 }
 
+/* Root button bindings apply over the desktop: no window, no wibox, and
+ * no layer surface. */
+static bool
+on_desktop(Client *c, LayerSurface *l, drawin_t *drawin)
+{
+	return !c && !l && !drawin;
+}
+
 void
 axisnotify(struct wl_listener *listener, void *data)
 {
@@ -451,7 +459,7 @@ axisnotify(struct wl_listener *listener, void *data)
 				/* Emit on client (press + release) */
 				luaA_client_button_check(c, rel_x, rel_y, button, CLEANMASK(mods), true);
 				luaA_client_button_check(c, rel_x, rel_y, button, CLEANMASK(mods), false);
-			} else {
+			} else if (on_desktop(c, l, drawin)) {
 				/* Scroll on root/empty space */
 				luaA_root_button_check(L, button, CLEANMASK(mods), cursor->x, cursor->y, true);
 				luaA_root_button_check(L, button, CLEANMASK(mods), cursor->x, cursor->y, false);
@@ -598,7 +606,7 @@ buttonpress(struct wl_listener *listener, void *data)
 		 * wibar belongs to that wibar whether or not a widget consumed it:
 		 * AwesomeWM grabs root buttons on the root window, which a wibox click
 		 * never reaches. */
-		if (!c && !l && !drawin) {
+		if (on_desktop(c, l, drawin)) {
 			lua_State *L = globalconf_get_lua_State();
 
 			/* Check root button bindings */
@@ -620,6 +628,7 @@ buttonpress(struct wl_listener *listener, void *data)
 		break;
 	}
 	case WL_POINTER_BUTTON_STATE_RELEASED: {
+		LayerSurface *l = NULL;
 		drawin_t *drawin = NULL;
 		drawable_t *titlebar_drawable = NULL;
 
@@ -634,7 +643,7 @@ buttonpress(struct wl_listener *listener, void *data)
 
 		/* Check if a drawin was released over */
 		if (!session_is_locked()) {
-			xytonode(cursor->x, cursor->y, NULL, &c, NULL, &drawin, &titlebar_drawable, NULL, NULL);
+			xytonode(cursor->x, cursor->y, NULL, &c, &l, &drawin, &titlebar_drawable, NULL, NULL);
 
 			/* Get keyboard modifiers */
 			keyboard = wlr_seat_get_keyboard(seat);
@@ -665,7 +674,7 @@ buttonpress(struct wl_listener *listener, void *data)
 				 * Like press events, releases are passed through to the client. */
 				luaA_client_button_check(c, rel_x, rel_y, event->button,
 				                        CLEANMASK(mods), false);
-			} else {
+			} else if (on_desktop(c, l, drawin)) {
 				/* Released on empty space - check root button bindings */
 				lua_State *L = globalconf_get_lua_State();
 
