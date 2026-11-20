@@ -36,6 +36,7 @@ struct wlr_output_manager_v1;
 struct wlr_output_power_manager_v1;
 struct wlr_pointer_constraint_v1;
 struct wlr_pointer_constraints_v1;
+struct wlr_keyboard_shortcuts_inhibit_manager_v1;
 struct wlr_pointer_gestures_v1;
 struct wlr_relative_pointer_manager_v1;
 struct wlr_renderer;
@@ -90,6 +91,9 @@ extern char *selected_root_cursor;
 extern struct wlr_pointer_constraints_v1 *pointer_constraints;
 extern struct wlr_relative_pointer_manager_v1 *relative_pointer_mgr;
 extern struct wlr_pointer_constraint_v1 *active_constraint;
+
+/* Keyboard shortcuts inhibit */
+extern struct wlr_keyboard_shortcuts_inhibit_manager_v1 *shortcuts_inhibit_mgr;
 
 /* Pointer gestures */
 extern struct wlr_pointer_gestures_v1 *pointer_gestures;
